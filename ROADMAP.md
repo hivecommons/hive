@@ -260,6 +260,21 @@ discipline):
   the remaining saving — eliding stuffed issue/PR lists when the MCP
   pointer is present ([#8261](https://github.com/hivecommons/hive/issues/8261)) —
   shipped in [#8272](https://github.com/hivecommons/hive/pull/8272).
+- **Operator-facing admin MCP** — expose hive administration as Model Context
+  Protocol tools so an operator administers a hive by talking to an assistant
+  instead of driving the dashboard: an MCP endpoint on the dashboard mux plus a
+  stdio `cmd/` binary beside it, both thin shells over one transport-agnostic
+  tool package, reaching the hive over the dashboard REST API with a dashboard
+  token ([#8697](https://github.com/hivecommons/hive/issues/8697),
+  [design doc](https://github.com/hivecommons/hive/blob/v6/src/docs/design/admin-mcp.md)).
+  **RFC accepted; nothing merged.** Phase 0
+  ([#8698](https://github.com/hivecommons/hive/issues/8698)) closes the one gap
+  in the line's guard invariant — `handleKick` runs no `ioscan`, so a kick
+  prompt in the request body reaches the agent unscanned for every caller, the
+  dashboard's own Kick button included. Phase 1
+  ([#8699](https://github.com/hivecommons/hive/issues/8699)) is the tool package,
+  both transports, and the refusal contract; later phases add the read surface,
+  the preview-and-confirm write contract, and the operations themselves.
 - **Standby contributors** — a lane paused for budget hands its queue to
   volunteer contributors, behind a model floor
   ([#7629](https://github.com/hivecommons/hive/issues/7629),

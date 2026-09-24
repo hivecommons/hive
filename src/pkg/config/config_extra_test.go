@@ -902,9 +902,9 @@ func TestHostLabel_PrefersGHEFromAPIURLWhenBaseEmpty(t *testing.T) {
 // installed) has no bot and must yield an empty author, so the UI shows "—".
 func TestBotLogin_RequiresUsableApp(t *testing.T) {
 	// Real, installed App → bot login.
-	real := GitHubConfig{AppID: 5686, InstallationID: 42980, AppSlug: "kubestellar-hive-ghe"}
-	if got := real.BotLogin(); got != "kubestellar-hive-ghe[bot]" {
-		t.Errorf("installed App BotLogin() = %q, want kubestellar-hive-ghe[bot]", got)
+	real := GitHubConfig{AppID: 5686, InstallationID: 42980, AppSlug: LegacyEnterpriseGitHubAppSlug}
+	if got := real.BotLogin(); got != "hivecommons-hive-ghe[bot]" {
+		t.Errorf("installed App BotLogin() = %q, want hivecommons-hive-ghe[bot]", got)
 	}
 	// Placeholder sentinel app_id → no bot.
 	if got := (GitHubConfig{AppID: PlaceholderAppID, InstallationID: 42980}).BotLogin(); got != "" {

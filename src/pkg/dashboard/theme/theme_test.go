@@ -1,11 +1,26 @@
 package theme
 
 import (
+	"math"
 	"os"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
+)
+
+const (
+	wcagAAMinContrastRatio = 4.5
+	srgbMax                = 255
+	srgbLinearThreshold    = 0.03928
+	srgbLinearDivisor      = 12.92
+	srgbGammaOffset        = 0.055
+	srgbGammaScale         = 1.055
+	srgbGamma              = 2.4
+	luminanceRedWeight     = 0.2126
+	luminanceGreenWeight   = 0.7152
+	luminanceBlueWeight    = 0.0722
+	luminanceContrastBias  = 0.05
 )
 
 func TestLegacyThemeAliasesRemainValid(t *testing.T) {
@@ -102,7 +117,7 @@ func TestTokenAllowListMatchesDashboardRoot(t *testing.T) {
 }
 
 func TestCSSCompilesLegacyTokensToCanonicalAliases(t *testing.T) {
-	th := Theme{ID: "legacy", Tokens: map[string]string{
+	th := Theme{ID: "legacy", Dark: true, Tokens: map[string]string{
 		"--bg":     "#010203",
 		"--panel":  "#111213",
 		"--line":   "#212223",
@@ -134,7 +149,7 @@ func TestCSSCompilesLegacyTokensToCanonicalAliases(t *testing.T) {
 }
 
 func TestCSSCanonicalTokenWinsOverLegacyToken(t *testing.T) {
-	th := Theme{ID: "mixed", Tokens: map[string]string{
+	th := Theme{ID: "mixed", Dark: true, Tokens: map[string]string{
 		"--bg":        "#010203",
 		"--surface-0": "#aabbcc",
 	}, LightTokens: map[string]string{
@@ -156,52 +171,74 @@ func TestCSSCanonicalTokenWinsOverLegacyToken(t *testing.T) {
 	}
 }
 
-func TestDarkThemesUseSharedLightRemapInServedLightMode(t *testing.T) {
+func TestBuiltinThemesProvideAccessibleLightAndDarkModes(t *testing.T) {
 	for _, th := range Catalog() {
-		if !th.Dark || len(th.LightTokens) > 0 {
-			continue
+		dark := darkModeTokens(th)
+		light := lightModeTokens(th)
+		assertModeContrast(t, th.ID, "dark", dark)
+		assertModeContrast(t, th.ID, "light", light)
+		if dark["--surface-0"] == light["--surface-0"] && dark["--text"] == light["--text"] {
+			t.Fatalf("%s dark and light modes use the same main palette", th.ID)
+		}
+		accent := strings.TrimSpace(compileTokens(th.Tokens)["--accent"])
+		if accent != "" && strings.TrimSpace(dark["--accent"]) != accent {
+			t.Fatalf("%s dark mode lost accent: got %q want %q", th.ID, dark["--accent"], accent)
+		}
+		if accent != "" && strings.TrimSpace(light["--accent"]) != accent {
+			t.Fatalf("%s light mode lost accent: got %q want %q", th.ID, light["--accent"], accent)
 		}
 		css, err := CSS(th)
 		if err != nil {
 			t.Fatalf("CSS(%s): %v", th.ID, err)
 		}
-		lightBlock := cssBlock(t, css, "body.light-mode")
-		tokens := compileTokens(th.Tokens)
-		for _, token := range []string{"--surface-0", "--surface-2", "--text"} {
-			want := tokens[token]
-			if want == "" {
-				t.Fatalf("%s missing token %s", th.ID, token)
-			}
-			if strings.Contains(lightBlock, token+": "+want+";") {
-				t.Fatalf("%s served light-mode block re-emits dark %s=%s:\n%s", th.ID, token, want, lightBlock)
-			}
-		}
-		if accent := tokens["--accent"]; accent != "" && !strings.Contains(lightBlock, "--accent: "+accent+";") {
-			t.Fatalf("%s served light-mode block should keep accent %s:\n%s", th.ID, accent, lightBlock)
+		if !strings.Contains(css, ":root{\n") || !strings.Contains(css, "body.light-mode{\n") {
+			t.Fatalf("%s CSS must emit both mode blocks:\n%s", th.ID, css)
 		}
 	}
 }
 
-func TestPreviewCSSKeepsDarkThemesOwnPaletteInLightMode(t *testing.T) {
-	for _, th := range Catalog() {
-		if !th.Dark || len(th.LightTokens) > 0 {
-			continue
-		}
-		css, err := PreviewCSS(th)
-		if err != nil {
-			t.Fatalf("PreviewCSS(%s): %v", th.ID, err)
-		}
-		lightBlock := cssBlock(t, css, "body.light-mode")
-		for _, token := range []string{"--surface-0", "--surface-2", "--text"} {
-			want := compileTokens(th.Tokens)[token]
-			if want == "" {
-				t.Fatalf("%s missing token %s", th.ID, token)
-			}
-			if !strings.Contains(lightBlock, token+": "+want+";") {
-				t.Fatalf("%s preview light-mode block did not keep %s=%s:\n%s", th.ID, token, want, lightBlock)
-			}
-		}
+func assertModeContrast(t *testing.T, themeID, mode string, tokens map[string]string) {
+	t.Helper()
+	bg := strings.TrimSpace(tokens["--surface-0"])
+	text := strings.TrimSpace(tokens["--text"])
+	if bg == "" || text == "" {
+		t.Fatalf("%s %s mode missing --surface-0/--text: %#v", themeID, mode, tokens)
 	}
+	ratio, ok := contrastRatio(text, bg)
+	if !ok {
+		t.Fatalf("%s %s mode must use hex --surface-0/--text, got %s on %s", themeID, mode, text, bg)
+	}
+	if ratio < wcagAAMinContrastRatio {
+		t.Fatalf("%s %s mode contrast %.2f:1 for %s on %s, want at least %.1f:1", themeID, mode, ratio, text, bg, wcagAAMinContrastRatio)
+	}
+}
+
+func contrastRatio(fg, bg string) (float64, bool) {
+	frgb, ok := parseHexColor(fg)
+	if !ok {
+		return 0, false
+	}
+	brgb, ok := parseHexColor(bg)
+	if !ok {
+		return 0, false
+	}
+	fl := relativeLuminance(frgb)
+	bl := relativeLuminance(brgb)
+	if fl < bl {
+		fl, bl = bl, fl
+	}
+	return (fl + luminanceContrastBias) / (bl + luminanceContrastBias), true
+}
+
+func relativeLuminance(rgb [3]int) float64 {
+	channel := func(v int) float64 {
+		c := float64(v) / srgbMax
+		if c <= srgbLinearThreshold {
+			return c / srgbLinearDivisor
+		}
+		return math.Pow((c+srgbGammaOffset)/srgbGammaScale, srgbGamma)
+	}
+	return luminanceRedWeight*channel(rgb[0]) + luminanceGreenWeight*channel(rgb[1]) + luminanceBlueWeight*channel(rgb[2])
 }
 
 func TestBuiltinThemesDifferFromDefaultCoreTokens(t *testing.T) {
@@ -238,20 +275,6 @@ func TestBuiltinThemesDifferFromDefaultCoreTokens(t *testing.T) {
 			}
 		}
 	}
-}
-
-func cssBlock(t *testing.T, css, selector string) string {
-	t.Helper()
-	start := strings.Index(css, selector+"{")
-	if start < 0 {
-		t.Fatalf("CSS missing selector %s", selector)
-	}
-	start += len(selector) + 1
-	end := strings.Index(css[start:], "}")
-	if end < 0 {
-		t.Fatalf("CSS selector %s has no closing brace", selector)
-	}
-	return css[start : start+end]
 }
 
 func TestSanitizeCSSGuardrails(t *testing.T) {
@@ -389,5 +412,42 @@ func TestBuiltinAndCSSFailureBranches(t *testing.T) {
 	}
 	if _, err := ETag(bad); err == nil {
 		t.Fatal("ETag accepted invalid theme")
+	}
+}
+
+func TestPreviewHelpersAndDerivedModeBranches(t *testing.T) {
+	if got := CanonicalID(" openclaw "); got != "hive-dark" {
+		t.Fatalf("CanonicalID(openclaw) = %q, want hive-dark", got)
+	}
+	th := Theme{ID: "preview", Dark: true, Tokens: map[string]string{"--surface-0": "#000000", "--text": "#ffffff"}}
+	css, err := PreviewCSS(th)
+	if err != nil {
+		t.Fatalf("PreviewCSS: %v", err)
+	}
+	if !strings.Contains(css, "body.light-mode") || !strings.Contains(css, "--surface-0: #f1f6fc;") {
+		t.Fatalf("PreviewCSS did not derive a light palette with fallback accent:\n%s", css)
+	}
+	etag, err := PreviewETag(th)
+	if err != nil {
+		t.Fatalf("PreviewETag: %v", err)
+	}
+	if etag == "" || !strings.HasPrefix(etag, "\"") || !strings.HasSuffix(etag, "\"") {
+		t.Fatalf("PreviewETag = %q", etag)
+	}
+	dark := deriveModeTokens(map[string]string{"--accent": "not-a-color"}, false)
+	if dark["--accent"] != "not-a-color" || dark["--surface-0"] == "" {
+		t.Fatalf("dark derived palette lost invalid-but-allowed accent context: %#v", dark)
+	}
+	if got := mixHex("#000000", "#ffffff", -1); got != "#000000" {
+		t.Fatalf("mixHex negative ratio = %s, want base", got)
+	}
+	if got := mixHex("#000000", "#ffffff", 2); got != "#ffffff" {
+		t.Fatalf("mixHex high ratio = %s, want accent", got)
+	}
+	if got := mixHex("bad", "#ffffff", 0.5); got != "bad" {
+		t.Fatalf("mixHex invalid base = %s, want original base", got)
+	}
+	if _, ok := parseHexColor("#gggggg"); ok {
+		t.Fatal("parseHexColor accepted invalid hex")
 	}
 }

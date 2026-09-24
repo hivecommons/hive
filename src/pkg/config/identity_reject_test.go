@@ -50,7 +50,7 @@ func (c identityCombo) cfg() GitHubConfig {
 // on App 5686 ("ibm-hive"), citing pkg/hub/cluster_app_key_test.go. That
 // citation was to a TEST FIXTURE, not a deployment: "ibm-hive" appears in no
 // production config, no cluster entry, and on none of the 51 fleet spokes —
-// live clusters.json carries "kubestellar-hive-ghe" for vllm-d. The exception
+// live clusters.json used to carry "kubestellar-hive-ghe" for vllm-d. The exception
 // let a GHE App under a non-"ghe" slug pass validation, which is the exact
 // shape this file exists to reject. Any future exception here needs a citation
 // to live config, not to a fixture. It is enumerated

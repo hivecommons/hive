@@ -1244,6 +1244,38 @@ the stage that was on the task lease when the token was minted. The hub refuses
 that bearer with `stage_mismatch` after the run moves to another stage, while
 plain unstaged task tokens retain the existing behavior.
 
+
+
+### Pointing external extensions at Hive
+
+Hosted hives expose the copy-paste values under **Settings → Extensions**. All
+external tools connect to the same contributor relay WebSocket and authenticate
+with a contributor registration token minted from the existing `/contribute`
+flow:
+
+- **Relay URL:** `wss://<your-hive-host>/api/contribute/ws` (or the value shown
+  in the Extensions tab).
+- **Registration token:** open `/contribute` from the Extensions card and use
+  the existing register/reissue flow. Save the plaintext token; Hive stores only
+  its hash.
+- **Capabilities:** put the required token in
+  `capabilities.relay_capabilities` during relay auth.
+
+Per extension:
+
+- **Flue:** enable `runs.external.flue` in Settings → Extensions, choose
+  `shadow` or `report-only`, set the endpoint/workflow version if your Flue
+  runtime requires them, and have the peer declare `ext-exec/flue`. Builds
+  without the `extwork_flue` tag show the card as not built in and will not
+  dispatch Flue work until redeployed with that tag.
+- **Crustify / Wavefront:** enable `governor.work_source.wavefront`, provide
+  exactly one graph `path` or `url`, the target `repo`, and optional receipts
+  directory. The peer must declare `run-stage` so Wavefront nodes can be
+  delivered as staged run work.
+- **Generic relays / ClankeR:** use the same relay URL and registration token;
+  declare only the capabilities the relay actually supports. The Extensions tab
+  lists currently connected peers and their declared capabilities.
+
 External-execution items add engine-scoped tokens: `ext-exec/flue` and
 `ext-exec/omp` ([#8361](https://github.com/hivecommons/hive/issues/8361)). A
 run-stage item that names an external engine (`ext_exec: flue` or

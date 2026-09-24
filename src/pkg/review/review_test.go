@@ -61,6 +61,7 @@ func TestAggregateReportsMatrix(t *testing.T) {
 		{name: "fix cap requires human", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictChangesRequested)}, opts: AggregateOptions{FixAttempts: DefaultFixCycleCap}, want: VerdictRequiresHuman, human: true},
 		{name: "missing perspectives is disagreement", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictApprove)}, want: VerdictRequiresHuman, human: true},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := AggregateReports(tt.reps, tt.opts)
@@ -71,10 +72,34 @@ func TestAggregateReportsMatrix(t *testing.T) {
 	}
 }
 
+func TestOutOfScopeFindingsDoNotDriveVerdictOrConfidence(t *testing.T) {
+	outOfScope := outputschema.Finding{
+		Title:       "pre-existing config drift",
+		Severity:    outputschema.SeverityHigh,
+		Summary:     "real but unrelated to this issue",
+		File:        "pkg/config/config.go",
+		Line:        12,
+		ReviewScope: "out-of-scope",
+	}
+	reports := allApprove()
+	reports[0] = baseReport(PerspectiveCorrectness, VerdictChangesRequested, outOfScope)
+
+	got := AggregateReports(reports, AggregateOptions{})
+	if got.Verdict != VerdictApprove || !got.MergeEligible {
+		t.Fatalf("aggregate with only out-of-scope findings = %s merge=%v, want approve/merge", got.Verdict, got.MergeEligible)
+	}
+	if got.Confidence.Score != ConfidenceMax {
+		t.Fatalf("confidence = %+v, want clean max score", got.Confidence)
+	}
+	if len(got.Findings) != 1 || got.Findings[0].Finding.ReviewScope != "out-of-scope" {
+		t.Fatalf("aggregate should retain classified finding for reporting: %+v", got.Findings)
+	}
+}
+
 func TestPromptBuilders(t *testing.T) {
-	pr := PullRequest{Repo: "hivecommons/hive", Number: 2807, Title: "review swarm", Author: "bot", HeadSHA: testSHA, URL: "https://example.invalid/pr/2807"}
+	pr := PullRequest{Repo: "hivecommons/hive", Number: 2807, Title: "review swarm", Author: "bot", HeadSHA: testSHA, URL: "https://example.invalid/pr/2807", ScopeContract: "linked issue hivecommons/hive#8662 from the PR closing keyword"}
 	prompt := BuildPerspectivePrompt(PerspectiveSecurity, pr)
-	for _, want := range []string{"[review-perspective:security]", "hivecommons/hive#2807", "kind to \"review\"", "Allowed verdicts", testSHA} {
+	for _, want := range []string{"[review-perspective:security]", "hivecommons/hive#2807", "kind to \"review\"", "Allowed verdicts", testSHA, "SCOPE CONTRACT", "hivecommons/hive#8662", "review_scope"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}

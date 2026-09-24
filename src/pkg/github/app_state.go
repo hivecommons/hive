@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
@@ -471,32 +470,16 @@ func (d AppAuthDiagnosis) PushFlowGrants() string {
 		grant(d.ContentsPerm), grant(d.PullRequestsPerm), grant(d.WorkflowsPerm))
 }
 
-// keyFileReadable reports whether path exists and holds non-empty content.
-// This is the cheap, pre-flight detection of AppStateKeyMissing: it needs no
-// API round-trip and is the clearest possible signal that the operator's key
-// push has not landed.
-func keyFileReadable(path string) bool {
-	if strings.TrimSpace(path) == "" {
-		return false
-	}
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
-		return false
-	}
-	return info.Size() > 0
-}
-
 // DiagnoseAppAuth classifies this hive's GitHub App credential state against
 // expectedOwner (the org/user the hive targets).
 //
-// keyPaths are candidate private-key locations, checked in order. When NONE of
-// them holds content, the result is AppStateKeyMissing WITHOUT making any API
-// call — a missing key cannot possibly authenticate, and a failed round-trip
-// would only produce a less specific answer. Pass no paths to skip the
-// pre-flight and rely on the API classification alone.
+// keyPaths are retained for caller compatibility and diagnosis context. A
+// loaded AppAuth is the authority that a key exists, because it already parsed
+// one successfully; a nil receiver, or one with no loaded key, is
+// AppStateKeyMissing before any API call.
 //
-// A nil receiver, or one with no loaded key, is AppStateKeyMissing: a hive
-// that cannot sign a JWT has no credentials, which is an operator problem.
+// A hive that cannot sign a JWT has no credentials, which is an operator
+// problem.
 func (a *AppAuth) DiagnoseAppAuth(ctx context.Context, expectedOwner string, keyPaths ...string) AppAuthDiagnosis {
 	d := AppAuthDiagnosis{ExpectedAccount: expectedOwner}
 
@@ -507,21 +490,10 @@ func (a *AppAuth) DiagnoseAppAuth(ctx context.Context, expectedOwner string, key
 	d.InstallationID = a.InstallationID()
 	d.APIURL = a.APIURL()
 
-	// Cheap pre-flight: if we were given key locations and none of them holds
-	// content, the key is missing. No API call needed.
-	if len(keyPaths) > 0 {
-		anyReadable := false
-		for _, p := range keyPaths {
-			if keyFileReadable(p) {
-				anyReadable = true
-				break
-			}
-		}
-		if !anyReadable {
-			d.State = AppStateKeyMissing
-			return d
-		}
-	}
+	// Cheap pre-flight used to report key-missing when none of the configured
+	// paths held content. A loaded AppAuth is stronger evidence: it already read
+	// and parsed a key, possibly from a per-App-ID path older callers did not
+	// pass. Continue to the API classification instead of overriding it.
 
 	jwtToken, err := a.generateJWT()
 	if err != nil {

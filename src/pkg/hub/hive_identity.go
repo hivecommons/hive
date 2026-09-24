@@ -45,6 +45,16 @@ type HiveIdentity struct {
 	FromHiveIntent bool
 }
 
+func normalizeHiveIdentity(id HiveIdentity) HiveIdentity {
+	if id.AppSlug != "" && (id.AppID == config.PublicGitHubAppID || isPublicForgeHost(id.Forge)) {
+		id.AppSlug = config.NormalizePublicGitHubAppSlug(id.AppSlug)
+	}
+	if id.AppSlug != "" && (id.AppID == config.EnterpriseGitHubAppID || sameGitHubHost(id.Forge, forgeHostLabel(config.EnterpriseGitHubBaseURL))) {
+		id.AppSlug = config.NormalizeEnterpriseGitHubAppSlug(id.AppSlug)
+	}
+	return id
+}
+
 // ResolveHiveIdentity is the ONE answer to "what identity does this hive have".
 //
 // Precedence, generalising the rule resolveProvisionAppID already implements:
@@ -114,6 +124,7 @@ func ResolveHiveIdentity(h *SaaSHive, cluster *ClusterConfig) HiveIdentity {
 	if id.AppSlug == "" {
 		id.AppSlug = config.SlugOfAppID(id.AppID)
 	}
+	id = normalizeHiveIdentity(id)
 
 	elected := electedForgeForHive(h, cluster)
 	// FORGE IS PER-HIVE, NOT PER-CLUSTER. A CLAIMED hive that records no host
@@ -184,12 +195,12 @@ func ResolveHiveIdentity(h *SaaSHive, cluster *ClusterConfig) HiveIdentity {
 		if elect.AppSlug == "" {
 			elect.AppSlug = config.SlugOfAppID(elect.AppID)
 		}
-		return elect
+		return normalizeHiveIdentity(elect)
 	}
 	// The cluster names no App on the elected forge. Keep the hive's forge —
 	// its recorded intent is still the truth about where its repos live — but
 	// carry no App rather than the other forge's, which would 404.
-	return elect
+	return normalizeHiveIdentity(elect)
 }
 
 // ResolveHiveIdentityInFleet is ResolveHiveIdentity with a fleet-wide fallback
@@ -498,10 +509,14 @@ func clusterAppForForge(c *ClusterConfig, forge string) (clusterAppIdentity, boo
 			// Returning it would hand the caller a half-identity.
 			return clusterAppIdentity{}, false
 		}
-		return clusterAppIdentity{
-			AppID:   id.AppID,
-			AppSlug: strings.TrimSpace(id.AppSlug),
-		}, true
+		appSlug := strings.TrimSpace(id.AppSlug)
+		if id.AppID == config.PublicGitHubAppID || isPublicForgeHost(forge) {
+			appSlug = config.NormalizePublicGitHubAppSlug(appSlug)
+		}
+		if id.AppID == config.EnterpriseGitHubAppID || sameGitHubHost(forge, forgeHostLabel(config.EnterpriseGitHubBaseURL)) {
+			appSlug = config.NormalizeEnterpriseGitHubAppSlug(appSlug)
+		}
+		return clusterAppIdentity{AppID: id.AppID, AppSlug: appSlug}, true
 	}
 	return clusterAppIdentity{}, false
 }

@@ -38,6 +38,10 @@ type PullRequest struct {
 	// is written by the planner, not the PR author -- which is what keeps it
 	// on the right side of the Arm A finding above.
 	PlanWave string
+	// ScopeContract names the linked issue or lease task the PR is expected to
+	// satisfy. It is extracted before prompt construction so the reviewer gets
+	// the contract without seeing the author's whole PR rationale.
+	ScopeContract string
 }
 
 // Grounding thresholds, named so the numbers never appear bare in the prompt.
@@ -181,6 +185,7 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 		fmt.Fprintf(&b, "Author: @%s\n", strings.TrimPrefix(pr.Author, "@"))
 	}
 	fmt.Fprintf(&b, "Focus ONLY on %s. Do not duplicate other perspectives unless the issue is severe.\n\n", focus)
+	b.WriteString(scopeContractSection(pr))
 	b.WriteString(buildReadInstruction(pr))
 	b.WriteString(groundingSection(pr))
 	if p == PerspectivePlanMatch {
@@ -189,7 +194,7 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 	b.WriteString("\nReturn exactly one JSON object: the standard outputschema AgentReport fields plus perspective, verdict, repo, number, and head_sha.\n")
 	b.WriteString("Required AgentReport fields: lane, kind, findings, prs_opened, beads_filed, summary. Set kind to \"review\" and lane to \"review-swarm\". Use [] for empty arrays.\n")
 	b.WriteString(findingSchemaInstruction)
-	b.WriteString("Use approve only when this perspective finds no blocker. Use changes_requested for agent-fixable issues. Use requires_human for ambiguous/high-risk judgment. Use reject for fundamentally unsuitable or harmful PRs.\n")
+	b.WriteString("Use approve only when this perspective finds no IN-SCOPE blocker. Use changes_requested for agent-fixable in-scope issues. Use requires_human for ambiguous/high-risk in-scope judgment. Use reject for fundamentally unsuitable or harmful PRs. Out-of-scope findings alone must not lower the verdict.\n")
 	if opts.PostComments {
 		b.WriteString(buildPublishInstruction(pr, opts.AcknowledgeNoFindings, opts.Revise))
 	}
@@ -236,6 +241,7 @@ func buildReadInstruction(pr PullRequest) string {
 	} else {
 		fmt.Fprintf(&b, "  gh api repos/%s/contents/<path> --jq .content | base64 -d\n", pr.Repo)
 	}
+
 	fmt.Fprintf(&b, "  gh search code --repo %s '<changed symbol>'   # who calls it\n", pr.Repo)
 	b.WriteString("This was measured, not assumed: a reviewer reading the diff plus the surrounding tree found 67% of known defects at 1.4 false positives per PR, against 17% at 3.6 for the diff alone. Reading the tree is four times more effective AND quieter. A guard, early return, or caller you cannot see is the usual reason a real defect reads as fine.\n")
 	b.WriteString("Read widely; report narrowly. Only defects this diff introduces or exposes are in scope — pre-existing problems it does not touch stay out, however tempting. Reading the surrounding code tells you whether the change is safe; it is not an invitation to review the file.\n")
@@ -243,6 +249,20 @@ func buildReadInstruction(pr PullRequest) string {
 		fmt.Fprintf(&b, "Every citation must be code you actually read at head %s — in the diff or in the files around it. If the PR has moved on since, review the current head and say which revision you read.\n", pr.HeadSHA)
 	}
 	b.WriteString("If you cannot read the diff — fetch failed, or it is too large — return verdict requires_human and say so. Never infer the contents of a diff you did not read: an invented file:line is worse than no review at all.\n\n")
+	return b.String()
+}
+
+func scopeContractSection(pr PullRequest) string {
+	var b strings.Builder
+	b.WriteString("SCOPE CONTRACT — judge against the linked issue or lease task.\n")
+	if strings.TrimSpace(pr.ScopeContract) != "" {
+		fmt.Fprintf(&b, "Contract: %s.\n", strings.TrimSpace(pr.ScopeContract))
+	} else {
+		b.WriteString("No closing issue or lease task was found in the queue metadata. Treat the PR title plus diff as the narrow contract, and mark unrelated concerns out-of-scope.\n")
+	}
+	b.WriteString("- Classify every finding with review_scope: \"in-scope\" when it affects whether this PR satisfies that contract, or \"out-of-scope\" when it is a real adjacent/pre-existing concern for later work.\n")
+	b.WriteString("- Only in-scope findings may affect your verdict. Out-of-scope findings need file:line evidence too, but they do not block this PR; the hive will file them as backlog issues.\n")
+	b.WriteString("- If the contract is an issue reference, read that issue with `gh issue view` before deciding intent alignment; do not rely on the PR author's summary alone.\n\n")
 	return b.String()
 }
 
@@ -365,6 +385,7 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	}
 	b.WriteString("These are distinct questions, not one question asked several ways. A change can be correct and still leak a secret, or secure and still not do what its issue asked. Ask each one separately and answer it on its own evidence.\n")
 	b.WriteString("Report each finding under exactly one perspective — whichever it most belongs to. Do not restate one finding under several to look thorough; that is the padding failure mode, multiplied.\n\n")
+	b.WriteString(scopeContractSection(pr))
 	b.WriteString(buildReadInstruction(pr))
 	if hasPerspective(perspectives, PerspectivePlanMatch) {
 		b.WriteString(planMatchSection(pr))
@@ -375,7 +396,7 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	b.WriteString("Required AgentReport fields: lane, kind, findings, prs_opened, beads_filed, summary. Set kind to \"review\" and lane to \"review-swarm\". Use [] for empty arrays.\n")
 	fmt.Fprintf(&b, "Every object must carry the same repo (%s) and number (%d). Allowed perspective values: %s.\n", pr.Repo, pr.Number, joinPerspectives(perspectives))
 	b.WriteString(findingSchemaInstruction)
-	b.WriteString("Give each perspective its OWN verdict. Use approve only when THAT perspective finds no blocker. Use changes_requested for agent-fixable issues. Use requires_human for ambiguous/high-risk judgment. Use reject for fundamentally unsuitable or harmful PRs.\n")
+	b.WriteString("Give each perspective its OWN verdict. Use approve only when THAT perspective finds no in-scope blocker. Use changes_requested for agent-fixable in-scope issues. Use requires_human for ambiguous/high-risk in-scope judgment. Use reject for fundamentally unsuitable or harmful PRs. Out-of-scope findings alone must not lower any verdict.\n")
 	b.WriteString("A perspective you could not meaningfully assess is requires_human, not approve. Approving a perspective you did not actually consider is the one failure mode that makes this whole review worthless, because it is indistinguishable from having considered it.\n")
 	if opts.PostComments {
 		b.WriteString(buildCombinedPublishInstruction(pr, perspectives, opts))
@@ -425,10 +446,10 @@ func buildCombinedPublishInstruction(pr PullRequest, perspectives []Perspective,
 // the gap with {"repo","pr","verdict","summary"}: every verdict it produced
 // was rejected and every PR it judged was handed straight back to it.
 // TestVerdictSchemaExampleValidates keeps this literal honest.
-const VerdictSchemaExample = `{"lane":"review-swarm","kind":"review","perspective":"correctness","verdict":"requires_human","repo":"owner/repo","number":123,"head_sha":"<head commit sha>","summary":"one paragraph: the judgement and why","findings":[{"title":"short finding title","severity":"high","summary":"mechanism and consequence","file":"path/to/file.go","line":41}],"prs_opened":[],"beads_filed":[]}`
+const VerdictSchemaExample = `{"lane":"review-swarm","kind":"review","perspective":"correctness","verdict":"requires_human","repo":"owner/repo","number":123,"head_sha":"<head commit sha>","summary":"one paragraph: the judgement and why","findings":[{"title":"short finding title","severity":"high","summary":"mechanism and consequence","file":"path/to/file.go","line":41,"review_scope":"in-scope"}],"prs_opened":[],"beads_filed":[]}`
 
 const findingSchemaInstruction = "Allowed verdicts: approve, changes_requested, requires_human, reject.\n" +
-	"Each element of findings is an object with these keys: title (string, required), severity (one of info, low, medium, high, critical, required), summary (string, required — the mechanism and consequence; this is the field the collector reads, so never put the body under another name such as description or body), file (string, optional), line (integer, optional). A finding missing title, severity or summary fails validation and the ENTIRE verdict — every perspective — is discarded unrecorded.\n"
+	"Each element of findings is an object with these keys: title (string, required), severity (one of info, low, medium, high, critical, required), summary (string, required — the mechanism and consequence; this is the field the collector reads, so never put the body under another name such as description or body), file (string, optional), line (integer, optional), review_scope (required for new reports; exactly \"in-scope\" or \"out-of-scope\"). A finding missing title, severity or summary, or carrying any other review_scope value, fails validation and the ENTIRE verdict — every perspective — is discarded unrecorded.\n"
 
 func hasPerspective(ps []Perspective, want Perspective) bool {
 	for _, p := range ps {

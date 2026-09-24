@@ -114,6 +114,21 @@ func (s *Service) cmdRuns(ctx context.Context, args string) (string, error) {
 		return s.cmdRunsList(ctx)
 	}
 	switch strings.ToLower(fields[0]) {
+	case "list":
+		if len(fields) != 1 {
+			return "❌ Usage: `!runs list`", nil
+		}
+		return s.cmdRunsList(ctx)
+	case "status":
+		if len(fields) != 2 {
+			return "❌ Usage: `!runs status <key>`", nil
+		}
+		return s.cmdRunsShow(ctx, fields[1])
+	case "spec":
+		if len(fields) != 2 {
+			return "❌ Usage: `!runs spec <owner/repo#n>`", nil
+		}
+		return s.cmdRunsSpec(ctx, fields[1])
 	case "approve":
 		if len(fields) != 2 {
 			return "❌ Usage: `!runs approve <key>`", nil
@@ -134,7 +149,7 @@ func (s *Service) cmdRuns(ctx context.Context, args string) (string, error) {
 			return s.cmdRunsShowDetailed(ctx, fields[0])
 		}
 		if len(fields) != 1 {
-			return "❌ Usage: `!runs [key]` | `!runs <key> more` | `!runs approve <key>` | `!runs reject <key> <reason>`", nil
+			return "❌ Usage: `!runs list` | `!runs status <key>` | `!runs <key> more` | `!runs spec <owner/repo#n>` | `!runs approve <key>` | `!runs reject <key> <reason>`", nil
 		}
 		return s.cmdRunsShow(ctx, fields[0])
 	}
@@ -216,6 +231,20 @@ func formatRunDetailed(run runSnapshot) string {
 		lines = append(lines, append([]string{"Artifacts:"}, artifacts...)...)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (s *Service) cmdRunsSpec(ctx context.Context, target string) (string, error) {
+	if err := requireCommandOwner(ctx); err != nil {
+		return err.Error(), nil
+	}
+	body, err := json.Marshal(map[string]string{"target": strings.TrimSpace(target)})
+	if err != nil {
+		return "❌ Failed to start spec run", nil
+	}
+	if err := s.dashboardPost(ctx, "/api/runs/spec", body); err != nil {
+		return fmt.Sprintf("❌ Failed to start spec run `%s`: %s", target, err), nil
+	}
+	return fmt.Sprintf("✅ Started spec run `%s`.", target), nil
 }
 
 func (s *Service) cmdRunsApprove(ctx context.Context, key string) (string, error) {

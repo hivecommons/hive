@@ -5858,7 +5858,7 @@
           "Governor"
         ],
         "summary": "Update opt-in feature/observability settings",
-        "description": "Updates ioscan, OTel/tracing exporter, retro analysis, mint issuer/enabled, and plan-from-label settings. Every field is pointer-typed; absent fields are unchanged. The mint signing key path is never accepted or returned here. Requires owner role.",
+        "description": "Updates feature, observability, and Extensions settings. Every field is pointer-typed; absent fields are unchanged. The mint signing key path is never accepted or returned here. Requires owner role.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5914,6 +5914,95 @@
                   },
                   "planFromLabel": {
                     "type": "boolean"
+                  },
+                  "spektacularEnabled": {
+                    "type": "boolean"
+                  },
+                  "spektacularBinary": {
+                    "type": "string"
+                  },
+                  "spektacularPollS": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "maxStageRetries": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "runStages": {
+                    "type": "boolean",
+                    "description": "Ignored while Spektacular is enabled; then run stages are forced on."
+                  },
+                  "checkpointSpecEnabled": {
+                    "type": "boolean"
+                  },
+                  "checkpointPlanEnabled": {
+                    "type": "boolean"
+                  },
+                  "checkpointImplementEnabled": {
+                    "type": "boolean"
+                  },
+                  "triageEnabled": {
+                    "type": "boolean"
+                  },
+                  "triageSpecLabels": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "triageFixLabels": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "triageMinBodyChars": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "triageClarifyComment": {
+                    "type": "boolean"
+                  },
+                  "extFlueEnabled": {
+                    "type": "boolean"
+                  },
+                  "extFlueMode": {
+                    "type": "string",
+                    "enum": [
+                      "shadow",
+                      "report-only"
+                    ]
+                  },
+                  "extFlueEndpoint": {
+                    "type": "string"
+                  },
+                  "extFlueWorkflowVersion": {
+                    "type": "string"
+                  },
+                  "wavefrontEnabled": {
+                    "type": "boolean"
+                  },
+                  "wavefrontPath": {
+                    "type": "string"
+                  },
+                  "wavefrontUrl": {
+                    "type": "string"
+                  },
+                  "wavefrontRepo": {
+                    "type": "string"
+                  },
+                  "wavefrontReceiptsDir": {
+                    "type": "string"
+                  },
+                  "publicationEnabled": {
+                    "type": "boolean"
+                  },
+                  "publicationPrivateChannel": {
+                    "type": "string"
+                  },
+                  "publicationOwner": {
+                    "type": "string"
                   }
                 }
               }
@@ -5922,22 +6011,18 @@
         },
         "responses": {
           "200": {
-            "description": "Updated",
+            "description": "Persisted feature settings after the update.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "properties": {
-                    "status": {
-                      "type": "string"
-                    }
-                  }
+                  "additionalProperties": true
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid OTel endpoint or out-of-range sample ratio"
+            "description": "Validation error on OTel, runs, Flue, Wavefront, or other feature settings"
           },
           "403": {
             "description": "Requires owner role"
@@ -21139,6 +21224,85 @@
           },
           "503": {
             "description": "Run lease registry unavailable or unreadable."
+          }
+        }
+      }
+    },
+    "/api/runs/spec": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Start a Spektacular spec run for an issue",
+        "description": "Owner-only. Creates the initial spec-stage lease using the same admission path as run/spec triage. Requires runs.spektacular.enabled.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "target": {
+                    "type": "string",
+                    "description": "owner/repo#number"
+                  },
+                  "repo": {
+                    "type": "string"
+                  },
+                  "number": {
+                    "type": "integer"
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                },
+                "oneOf": [
+                  {
+                    "required": [
+                      "target"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "repo",
+                      "number"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Spec run admitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "stage": {
+                      "type": "string",
+                      "enum": [
+                        "spec"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid target, disabled Spektacular, or unavailable lease registry."
+          },
+          "403": {
+            "description": "Caller is not a verified owner."
           }
         }
       }

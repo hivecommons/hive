@@ -76,8 +76,8 @@ The notifier accepts `http://` and `https://` URLs in the Go sender, but product
 
 | Field | Required | Notes |
 |---|---:|---|
-| `notifications.discord.webhook` | yes for webhook notifications | Discord webhook URL. The sender posts `{"content":"**title**\nmessage"}`. |
-| `notifications.discord.factory_webhook` | yes for `notifications.github_activity.enabled` | Dedicated Discord webhook URL for org-wide GitHub issue/PR activity. The sender posts one-line `{"content":"🐝 [repo] ..."}` messages. |
+| `notifications.discord.webhook` | yes for webhook notifications | Discord webhook URL. The sender posts `{"content":"**title**\nmessage","flags":4}` — `flags: 4` is Discord's `SUPPRESS_EMBEDS`, so URLs in a notification render as plain links without a preview card. |
+| `notifications.discord.factory_webhook` | yes for `notifications.github_activity.enabled` | Dedicated Discord webhook URL for org-wide GitHub issue/PR activity. The sender posts one-line `{"content":"🐝 [repo] ... <url>","flags":4}` messages; the `<url>` wrapping and `SUPPRESS_EMBEDS` flag keep the channel free of link preview cards. |
 
 Use a Discord **webhook URL**, not a bot token, for notification delivery.
 

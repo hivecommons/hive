@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	httpTimeoutSeconds      = 10
+	httpTimeoutSeconds       = 10
 	errorDedupeWindowSeconds = 60
 )
 
@@ -147,12 +147,18 @@ func (n *Notifier) sendSlack(title, message string) {
 	defer func() { _ = resp.Body.Close() }()
 }
 
+// DiscordSuppressEmbeds is the Discord message flag (1<<2, SUPPRESS_EMBEDS)
+// that stops link previews from unfurling under every notification that
+// carries a URL. Alerts are one-liners; the preview card only adds noise.
+const DiscordSuppressEmbeds = 1 << 2
+
 func (n *Notifier) sendDiscordWebhook(title, message string) {
 	if !strings.HasPrefix(n.cfg.Discord.Webhook, "http://") && !strings.HasPrefix(n.cfg.Discord.Webhook, "https://") {
 		return
 	}
-	payload := map[string]string{
+	payload := map[string]any{
 		"content": fmt.Sprintf("**%s**\n%s", title, message),
+		"flags":   DiscordSuppressEmbeds,
 	}
 
 	body, err := json.Marshal(payload)

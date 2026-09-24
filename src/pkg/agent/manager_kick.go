@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -284,6 +285,9 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	// Ctrl+C at that prompt, leaving the subsequent task to be executed by
 	// bash. Clear its input with Ctrl+U alone. Goose skips clearing entirely.
 	backend := effectiveBackend(agent)
+	if backend == "agy" && agyHeadlessEnabled() && strings.TrimSpace(agent.Config.LaunchCmd) == "" {
+		return m.deliverAgyHeadlessKickLocked(agent, message, trigger)
+	}
 	if backend != "goose" {
 		if backend != codexBackend {
 			m.tmuxSendKeysForAgent(agent, "C-c")
@@ -352,6 +356,38 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	time.Sleep(textToEnterDelay)
 	m.tmuxSendEntersForAgent(agent)
 
+	return m.recordDeliveredKickLocked(agent, message, trigger)
+}
+
+// deliverAgyHeadlessKickLocked reports false when the prompt file could not
+// be written and the kick was therefore never sent.
+func (m *Manager) deliverAgyHeadlessKickLocked(agent *AgentProcess, message, trigger string) bool {
+	m.tmuxSendKeysForAgent(agent, "C-u")
+	time.Sleep(staleCheckDelay)
+
+	message = kickMessageWithSuffixes(message, false, resolveExplainMode(agent.Config, m.explainModeDefault()))
+	promptFile := filepath.Join(agentStateDir, fmt.Sprintf(".hive-agy-prompt-%s.txt", agent.Name))
+	if err := writeAgentStateFile(promptFile, []byte(message)); err != nil {
+		m.logger.Warn("failed to write agy headless prompt", "name", agent.Name, "error", err)
+		return false
+	}
+
+	model := agent.Config.Model
+	if agent.ModelOverride != "" {
+		model = agent.ModelOverride
+	}
+	model = normalizeModelNameForBackend(model, "agy", false)
+	cmd := agyHeadlessTurnShellCommand("agy", model, agent.Config.ReasoningEffort, promptFile)
+	m.tmuxSendLiteralForAgent(agent, cmd)
+	time.Sleep(textToEnterDelay)
+	m.tmuxSendEntersForAgent(agent)
+
+	return m.recordDeliveredKickLocked(agent, message, trigger)
+}
+
+// recordDeliveredKickLocked always returns true so the bool kick-delivery
+// contract (#5ded71e6c) can be satisfied with a single tail call.
+func (m *Manager) recordDeliveredKickLocked(agent *AgentProcess, message, trigger string) bool {
 	now := time.Now()
 	agent.LastKick = &now
 	agent.LastKickMessage = message

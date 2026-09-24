@@ -123,6 +123,9 @@ type Run struct {
 	Burndown        *RunBurndown    `json:"burndown,omitempty"`
 	TriageVerdict   string          `json:"triage_verdict,omitempty"`
 	TriageRationale string          `json:"triage_rationale,omitempty"`
+	ArtifactName    string          `json:"artifact_name,omitempty"`
+	DocumentStatus  string          `json:"document_status,omitempty"`
+	CurrentStep     string          `json:"current_step,omitempty"`
 }
 
 type RunSummary = Run
@@ -578,6 +581,7 @@ func (s *Server) activeRuns(includeTimeline bool) ([]Run, error) {
 			run.ReviewWaves = s.planReviewWaves(run.PlanEpicID)
 		}
 		events := append(s.LifecycleTimeline().ByIssue(lease.key), s.LifecycleTimeline().ByIssue(lease.leaseKey)...)
+		applyRunArtifactStatus(&run, events)
 		run.LastReceipt = latestRunReceipt(events)
 		if run.StageStartedAt == "" {
 			run.StageStartedAt = formatRunTime(timelineStageTime(events, lease.stage))
@@ -906,6 +910,29 @@ func mergeRunTimelineStages(stages []RunStage, events []timeline.Event) []RunSta
 		})
 	}
 	return out
+}
+
+func applyRunArtifactStatus(run *Run, events []timeline.Event) {
+	if run == nil {
+		return
+	}
+	for _, ev := range events {
+		if ev.Attrs == nil {
+			continue
+		}
+		if run.ArtifactName == "" {
+			run.ArtifactName = firstRunNonEmpty(ev.Attrs[stageAttrArtifact], ev.Attrs[stageAttrPath])
+		}
+		if run.DocumentStatus == "" {
+			run.DocumentStatus = ev.Attrs[stageAttrDocumentStatus]
+		}
+		if run.CurrentStep == "" {
+			run.CurrentStep = firstRunNonEmpty(ev.Attrs["current_step"], ev.Attrs["step"])
+		}
+		if run.ArtifactName != "" && run.DocumentStatus != "" && run.CurrentStep != "" {
+			return
+		}
+	}
 }
 
 func latestRunReceipt(events []timeline.Event) string {

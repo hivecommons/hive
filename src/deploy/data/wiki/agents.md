@@ -80,7 +80,7 @@ my-agent:
   enabled: true
   backend: copilot
   model: claude-opus-4.6
-  caveman_mode: full                    # lite | full | ultra | wenyan — compresses output ~65%
+  # caveman_mode: lite                  # optional, experimental: lite | full | ultra | wenyan; omit to disable
   beads_dir: /data/beads/my-agent
   stale_timeout: 1800
   restart_strategy: immediate

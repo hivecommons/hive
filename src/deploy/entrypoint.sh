@@ -405,7 +405,7 @@ if host and host.lower() != 'api.github.com' and host.lower() != 'github.com':
 #
 #   1. project.ai_author, when set — the operator's explicit choice, always wins.
 #   2. else, unless github.app_authored_prs is false, the App bot
-#      "<github.app_slug or kubestellar-hive>[bot]" — but ONLY when the App is
+#      "<github.app_slug or hivecommons-hive>[bot]" — but ONLY when the App is
 #      usable (real app_id, not the placeholder sentinel, and an
 #      installation_id), mirroring GitHubConfig.HasUsableApp(): a hive with no
 #      installed App has no bot that can author anything.
@@ -471,7 +471,12 @@ if not login and gh.get('app_authored_prs') is not False:
         app_id, inst_id = 0, 0
     # 999999999 is config.PlaceholderAppID — a claimed-but-unprovisioned hive.
     if app_id and app_id != 999999999 and inst_id:
-        login = ((gh.get('app_slug') or '').strip() or 'kubestellar-hive') + '[bot]'
+        slug = (gh.get('app_slug') or '').strip() or 'hivecommons-hive'
+        if slug.lower() == 'kubestellar-hive':
+            slug = 'hivecommons-hive'
+        if slug.lower() == 'kubestellar-hive-ghe':
+            slug = 'hivecommons-hive-ghe'
+        login = slug + '[bot]'
 if re.fullmatch(r'[A-Za-z0-9._-]+(\\[bot\\])?', login):
     print(login)
 " "$_hgbi_cfg" 2>/dev/null || true)"
