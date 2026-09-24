@@ -142,6 +142,14 @@ dark alpha tints. Initial values should preserve today's light rendering:
 
 ## Component variants
 
+Migration status:
+
+| Component area | Status |
+| --- | --- |
+| Buttons | [x] Operator SPA, contributor portal, and hub pages use `.hv-btn` plus the shared primary / secondary / ghost / danger / icon variants. |
+| Cards/surfaces | [ ] Pending A5 migration. |
+| Chips/badges/status | [ ] Pending A7 migration. |
+
 ### Buttons
 
 All shared button recipes use the `.hv-btn` base class plus a variant class,

@@ -130,29 +130,7 @@
     strong { color: var(--text); }
 
     /* ── Buttons ── */
-    .button, .btn-primary, .btn-secondary, .btn-github {
-      border-radius: .55rem;
-      justify-content: center;
-      align-items: center;
-      min-height: 3rem;
-      padding: .85rem 1.2rem;
-      font-weight: 800;
-      font-size: .92rem;
-      font-family: inherit;
-      display: inline-flex;
-      border: none;
-      cursor: pointer;
-      transition: all .2s;
-    }
-    .button.primary, .btn-primary { background: var(--amber); color: #17110a; }
-    .button.primary:hover, .btn-primary:hover:not(:disabled) { background: #f8d87a; }
-    .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
-    .button.secondary { color: var(--text); background: #80bfff1a; border: 1px solid #80bfff70; }
-    .button.secondary:hover { background: #80bfff2e; }
-    .button.tertiary, .btn-secondary { border: 1px solid var(--line); color: #d7deea; background: transparent; }
-    .button.tertiary:hover, .btn-secondary:hover { border-color: var(--amber); color: var(--text); }
-    .btn-github { gap: 8px; background: var(--panel-strong); color: var(--text); border: 1px solid var(--line); }
-    .btn-github:hover { border-color: var(--amber); }
+    .button, .btn-primary, .btn-secondary, .btn-github { text-decoration: none; }
     .btn-github svg { flex-shrink: 0; }
 
     /* ── Wizard flow ── */
@@ -318,7 +296,7 @@
              account: you tell us the repository URL yourself. -->
         <p>We use your GitHub identity to know who is asking &mdash; nothing more. We request <strong>no permissions</strong> on your account, and no passwords are stored.</p>
         <div id="login-area">
-          <a href="/login?redirect=/get-started" class="btn-github">
+          <a href="/login?redirect=/get-started" class="hv-btn btn-secondary btn-github">
             <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
             Login with GitHub
           </a>
@@ -331,7 +309,7 @@
               <span style="color:var(--green);font-size:0.8rem;margin-left:8px">✓ Authenticated</span>
             </div>
           </div>
-          <button class="btn-primary" onclick="goToStep(2)">Continue →</button>
+          <button class="hv-btn btn-primary btn-primary" onclick="goToStep(2)">Continue →</button>
         </div>
       </div>
 
@@ -366,11 +344,11 @@
           </p>
         </div>
         <div style="display:flex;gap:12px;margin-top:16px">
-          <button class="btn-secondary" onclick="goToStep(1)">← Back</button>
+          <button class="hv-btn btn-secondary btn-secondary" onclick="goToStep(1)">← Back</button>
           <!-- Enabled unconditionally: validation now happens ON click, so a
                disabled button would give the user no way to learn WHY it is
                disabled. continueFromRepos() refuses to advance on bad input. -->
-          <button class="btn-primary" id="repos-continue" onclick="continueFromRepos()">Continue →</button>
+          <button class="hv-btn btn-primary btn-primary" id="repos-continue" onclick="continueFromRepos()">Continue →</button>
         </div>
       </div>
 
@@ -459,8 +437,8 @@
           right GitHub instance for your repos. Nothing to install before then.
         </p>
         <div style="display:flex;gap:12px;margin-top:16px">
-          <button class="btn-secondary" onclick="goToStep(2)">← Back</button>
-          <button class="btn-primary" id="submit-request" onclick="submitRequest()">Request a Hive</button>
+          <button class="hv-btn btn-secondary btn-secondary" onclick="goToStep(2)">← Back</button>
+          <button class="hv-btn btn-primary btn-primary" id="submit-request" onclick="submitRequest()">Request a Hive</button>
         </div>
       </div>
     </div>

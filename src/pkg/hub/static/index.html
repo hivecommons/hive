@@ -111,22 +111,7 @@
     p { color: var(--muted); font-size: 1.02rem; line-height: 1.7; }
 
     /* ── Buttons ── */
-    .button {
-      border-radius: .55rem;
-      justify-content: center;
-      align-items: center;
-      min-height: 3rem;
-      padding: .85rem 1.2rem;
-      font-weight: 800;
-      display: inline-flex;
-      transition: all .2s;
-    }
-    .button.primary { background: var(--amber); color: #17110a; }
-    .button.primary:hover { background: #f8d87a; }
-    .button.secondary { color: var(--text); background: #80bfff1a; border: 1px solid #80bfff70; }
-    .button.secondary:hover { background: #80bfff2e; }
-    .button.tertiary { border: 1px solid var(--line); color: #d7deea; }
-    .button.tertiary:hover { border-color: var(--amber); color: var(--text); }
+    .button { text-decoration: none; }
 
     /* ── Hero ── */
     .hero {
@@ -686,10 +671,10 @@
         <div class="hero-dots" id="hero-dots" role="tablist" aria-label="Hero highlights"></div>
 
         <div class="hero-actions">
-          <a class="button primary" href="/get-started">Request a Hive</a>
-          <a class="button secondary" href="#how-it-works">See how it works</a>
-          <a class="button tertiary" href="https://arxiv.org/abs/2604.09388" target="_blank">Read the ACMM paper</a>
-          <a class="button tertiary" href="https://docs.hivecommons.dev" target="_blank" rel="noopener noreferrer">📖 New to Hive? Getting Started Guide</a>
+          <a class="hv-btn btn-primary button primary" href="/get-started">Request a Hive</a>
+          <a class="hv-btn btn-secondary button secondary" href="#how-it-works">See how it works</a>
+          <a class="hv-btn btn-ghost button tertiary" href="https://arxiv.org/abs/2604.09388" target="_blank">Read the ACMM paper</a>
+          <a class="hv-btn btn-ghost button tertiary" href="https://docs.hivecommons.dev" target="_blank" rel="noopener noreferrer">📖 New to Hive? Getting Started Guide</a>
         </div>
         <div class="hero-proof" id="hero-proof">
           <div>
@@ -976,20 +961,20 @@
           <div class="tag">Hosted</div>
           <h3>Get a hive for your project</h3>
           <p>Hosted on our infrastructure &mdash; no Kubernetes, no setup. Request one and invite contributors to run the agents.</p>
-          <div style="margin-top:1rem"><a class="button primary" href="/get-started">Request a Hive</a></div>
+          <div style="margin-top:1rem"><a class="hv-btn btn-primary button primary" href="/get-started">Request a Hive</a></div>
           <p style="font-size:.8rem;margin-top:.8rem"><a href="/get-started#self-host" style="color:var(--blue)">Prefer to self-host? →</a></p>
         </div>
         <div class="proof-card" id="contribute-compute">
           <div class="tag">Community</div>
           <h3>Contribute compute to a hive</h3>
           <p>Lend your AI CLI to run agents for a public project via ClankeR, the contributor relay. Pick a public hive from the table below, run the contribute command, and ClankeR hands your CLI tasks to work &mdash; your GitHub username shows up as a live contributor on that hive with the PRs you land, not as a new hive. Earn trust tiers as you complete tasks and climb the leaderboard.</p>
-          <div style="margin-top:1rem"><a class="button secondary" href="/get-started#contribute">Start contributing</a></div>
+          <div style="margin-top:1rem"><a class="hv-btn btn-secondary button secondary" href="/get-started#contribute">Start contributing</a></div>
         </div>
         <div class="proof-card">
           <div class="tag">Deterministic</div>
           <h3>A pipeline, not a prompt</h3>
           <p>Filtering, classification, and merge-gating are shell scripts that run <em>before</em> any LLM sees the work. Agents only get the judgment calls &mdash; and a coverage threshold decides what actually lands.</p>
-          <div style="margin-top:1rem"><a class="button tertiary" href="/learn">Learn the architecture</a></div>
+          <div style="margin-top:1rem"><a class="hv-btn btn-ghost button tertiary" href="/learn">Learn the architecture</a></div>
         </div>
       </div>
     </section>
@@ -1002,8 +987,8 @@
           <h2>Running in minutes</h2>
           <p>The recommended path starts with a hosted hive &mdash; no cluster or infrastructure required. Self-hosting is also fully supported.</p>
           <div style="margin-top:1.5rem;display:flex;gap:.8rem;flex-wrap:wrap">
-            <a class="button primary" href="/get-started">Request a Hive</a>
-            <a class="button tertiary" href="/get-started#self-host">Self-host guide</a>
+            <a class="hv-btn btn-primary button primary" href="/get-started">Request a Hive</a>
+            <a class="hv-btn btn-ghost button tertiary" href="/get-started#self-host">Self-host guide</a>
           </div>
         </div>
         <div class="install-list">
@@ -1343,9 +1328,9 @@
         }
       }
       if (_isLoggedIn) {
-        return '<button onclick="requestAccessInline(\'' + esc(hid) + '\',this)" style="padding:2px 8px;background:rgba(128,191,255,0.15);color:#80bfff;border:1px solid rgba(128,191,255,0.3);border-radius:4px;font-size:0.65rem;cursor:pointer">Request Access</button>';
+        return '<button class="hv-btn btn-secondary btn-sm" onclick="requestAccessInline(\'' + esc(hid) + '\',this)" >Request Access</button>';
       }
-      return '<button onclick="openContributeInfo(\'' + esc(h.name || h.id) + '\',\'' + esc(hid) + '\')" style="padding:2px 8px;background:rgba(116,223,154,0.15);color:#74df9a;border:1px solid rgba(116,223,154,0.3);border-radius:4px;font-size:0.65rem;cursor:pointer">Contribute</button>';
+      return '<button class="hv-btn btn-secondary btn-sm" onclick="openContributeInfo(\'' + esc(h.name || h.id) + '\',\'' + esc(hid) + '\')" >Contribute</button>';
     }
 
     async function requestAccessInline(hiveId, btn) {
@@ -1688,7 +1673,7 @@
       }
 
       area.innerHTML = '<p style="font-size:0.75rem;color:var(--muted);margin-bottom:8px">Request access to view the hive dashboard, agents, and config.</p>' +
-        '<button onclick="requestAccessFromModal()" id="contrib-req-btn" style="padding:8px 16px;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.85rem">Request Access</button>';
+        '<button class="hv-btn btn-secondary" onclick="requestAccessFromModal()" id="contrib-req-btn">Request Access</button>';
     }
 
     async function requestAccessFromModal() {
@@ -1783,7 +1768,7 @@
       <p style="color:var(--muted);font-size:0.9rem;line-height:1.6;margin-bottom:20px">Help this project by contributing to open issues and PRs. Login with GitHub to request access &mdash; the hive owner will be notified and can approve your request.</p>
       <div id="contrib-access-area"></div>
       <div style="display:flex;justify-content:flex-end;margin-top:12px">
-        <button onclick="closeContribModal()" style="padding:8px 20px;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--muted);cursor:pointer">Close</button>
+        <button class="hv-btn btn-secondary" onclick="closeContribModal()">Close</button>
       </div>
     </div>
   </div>

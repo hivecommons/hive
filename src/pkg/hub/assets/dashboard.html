@@ -383,9 +383,7 @@
     .journey-relay { display: inline-block; margin-left: 4px; padding: 3px 8px; border-radius: 9999px; font-size: 0.62rem; font-weight: 700; white-space: nowrap; cursor: help; background: rgba(45,212,191,0.15); color: #2dd4bf; border: 1px solid rgba(45,212,191,0.3); }
 
     /* ── Buttons ── */
-    .btn-primary { display: inline-flex; align-items: center; justify-content: center; padding: .72rem 1.2rem; background: var(--amber); color: #17110a; font-weight: 800; border-radius: .55rem; border: none; cursor: pointer; font-size: 0.85rem; transition: all .2s; }
-    .btn-primary:hover { background: #f8d87a; text-decoration: none; }
-    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { text-decoration: none; }
 
     /* ── Toasts & dialogs ── */
     .hive-toast { position: fixed; top: 70px; right: 24px; z-index: 200; padding: 12px 20px; border-radius: 8px; font-size: 0.85rem; max-width: 400px; animation: toast-in 0.3s ease; color: #fff; }
@@ -473,7 +471,7 @@
   <div id="impersonation-banner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#b45309;color:#fff;font-size:0.85rem;font-weight:600;padding:8px 16px;box-shadow:0 2px 8px rgba(0,0,0,0.4);text-align:center">
     <span style="margin-right:6px">&#128065;</span>
     <span id="impersonation-banner-text">Viewing as user — read-only</span>
-    <button type="button" onclick="exitImpersonation()" style="margin-left:14px;padding:3px 12px;background:#fff;color:#b45309;border:none;border-radius:4px;cursor:pointer;font-size:0.75rem;font-weight:700">Exit</button>
+    <button class="hv-btn btn-primary btn-sm" type="button" onclick="exitImpersonation()">Exit</button>
   </div>
   <header class="site-header">
     <a href="/" class="brand">
@@ -520,7 +518,7 @@
              title="Container-image pulls per release of the active release line: the pulls that landed while each of the last ~10 releases was the newest, of the public hive image (ghcr.io/hivecommons/hive). Derived from GitHub's cumulative download counter — pulls, not unique downloads."></div>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
-        <button class="btn-primary" id="btn-send-banner-top" style="display:none;background:#d97706" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
+        <button class="hv-btn btn-primary btn-primary" id="btn-send-banner-top" style="display:none" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
         <!-- Register-your-own-hive: for a user who self-installed a standalone
              hive and wants to attach it to THIS hub. Points at the self-host
              guide (get-started.html #self-host).
@@ -532,15 +530,15 @@
              pollution from unauthenticated sources"). The operator must issue
              the spoke a secret. The guide this links to now says so; keep the
              two in step if either changes. -->
-        <a class="btn-primary" id="btn-register-hive" href="/get-started#self-host" style="background:var(--surface);color:var(--text);border:1px solid var(--border);text-decoration:none" title="You self-host the hive and attach it to this hub (requires a HIVE_HUB_SECRET issued by the hub operator)">Register your own hive</a>
+        <a class="hv-btn btn-primary btn-primary" id="btn-register-hive" href="/get-started#self-host" style="background:var(--surface);color:var(--text);border:1px solid var(--border);text-decoration:none" title="You self-host the hive and attach it to this hub (requires a HIVE_HUB_SECRET issued by the hub operator)">Register your own hive</a>
         <!-- Request-a-hive: routes to the EXISTING Request-a-Hive wizard at
              /get-started (files a provision request via POST
              /api/saas/request-provision). Shown when the user has NO hosted
              quota (cannot self-create); hidden otherwise. No new modal. -->
-        <a class="btn-primary" id="btn-request-hive" href="/get-started" style="display:none;text-decoration:none" title="We host the hive for you — files a provision request">Request a hive</a>
+        <a class="hv-btn btn-primary btn-primary" id="btn-request-hive" href="/get-started" style="display:none;text-decoration:none" title="We host the hive for you — files a provision request">Request a hive</a>
         <!-- Self-create path, for users who DO have hosted quota. Hidden when the
              user has no quota (the Request-a-hive link above takes over). -->
-        <button class="btn-primary" id="btn-add-hive" disabled onclick="document.getElementById('create-modal').style.display='flex'">+ Add Hosted Hive</button>
+        <button class="hv-btn btn-primary btn-primary" id="btn-add-hive" disabled onclick="document.getElementById('create-modal').style.display='flex'">+ Add Hosted Hive</button>
       </div>
     </div>
 
@@ -626,7 +624,7 @@
     <div id="hub-banner-section" style="display:none;margin-top:48px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
         <h2 style="font-size:1.3rem;color:var(--accent)">Hub Banner</h2>
-        <button class="btn-primary" id="btn-clear-banner" style="background:rgba(239,68,68,0.15);color:#f87171;display:none" onclick="clearHubBanner()">Clear All Banners</button>
+        <button class="hv-btn btn-primary btn-primary btn-danger" id="btn-clear-banner" style="display:none" onclick="clearHubBanner()">Clear All Banners</button>
       </div>
       <div id="active-banner-display" style="display:none;padding:16px;border-radius:8px;border:1px solid var(--border);background:var(--surface);margin-bottom:16px">
         <div style="font-size:0.8rem;color:var(--muted);margin-bottom:8px">Active Banner</div>
@@ -671,7 +669,7 @@
           <th style="text-align:right">Max hives</th><th style="text-align:right">Pool min</th><th style="text-align:right">Pool target</th>
         </tr></thead><tbody id="scale-clusters-body"></tbody></table></div>
         <div style="display:flex;align-items:center;gap:12px;margin-top:14px">
-          <button class="btn-primary" onclick="saveScaleSettings()">Save Scale Settings</button>
+          <button class="hv-btn btn-primary btn-primary" onclick="saveScaleSettings()">Save Scale Settings</button>
           <span id="scale-save-status" style="font-size:0.8rem;color:var(--muted)"></span>
         </div>
       </div>
@@ -1217,8 +1215,8 @@
         '<div id="_country-preview" style="margin-top:8px;font-size:0.82rem;color:var(--muted);min-height:1.2em"></div>' +
         '<div id="_country-err" style="display:none;margin-top:8px;font-size:0.8rem;color:#f85149"></div>' +
         '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">' +
-        '<button data-act="no" style="' + btn + ';background:transparent;color:var(--text)">Cancel</button>' +
-        '<button data-act="yes" style="' + btn + ';background:var(--accent,#3fb950);color:#fff;border-color:transparent;font-weight:600">Save</button>' +
+        '<button class="hv-btn btn-secondary" data-act="no" style="' + btn + ';background:transparent;color:var(--text)">Cancel</button>' +
+        '<button class="hv-btn btn-secondary" data-act="yes" style="' + btn + ';background:var(--accent,#3fb950);color:#fff;border-color:transparent;font-weight:600">Save</button>' +
         '</div></div>';
 
       function close() {
@@ -1387,8 +1385,8 @@
         var overlay = document.createElement('div');
         overlay.className = 'hive-confirm-overlay';
         overlay.innerHTML = '<div class="hive-confirm"><p>' + (rawHTML ? msg : esc(msg)) + '</p><div class="hive-confirm-btns">' +
-          '<button style="padding:8px 16px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer">Cancel</button>' +
-          '<button style="padding:8px 16px;background:var(--red);color:#fff;border:none;border-radius:6px;cursor:pointer" id="hive-confirm-ok">Confirm</button></div></div>';
+          '<button class="hv-btn btn-primary">Cancel</button>' +
+          '<button class="hv-btn btn-danger" id="hive-confirm-ok">Confirm</button></div></div>';
         document.body.appendChild(overlay);
         var done = false;
         function finish(val) { if (done) return; done = true; overlay.remove(); document.removeEventListener('keydown', onKey); resolve(val); }
@@ -2129,7 +2127,7 @@
       var label = 'agent restarts: ' + first.name + ' ×' + count + '/24h';
       if (bad.length > 1) label = bad.length + ' restart storms';
       var reset = roleAtLeast(h.role, 'owner')
-        ? ' <button type="button" class="reset-agent-restarts" data-hive-id="' + escAttr(h.id) + '" data-agent-name="' + escAttr(first.name) + '" style="margin-left:4px;padding:0 5px;border-radius:9999px;border:1px solid rgba(248,81,73,0.45);background:transparent;color:#f85149;font-size:0.6rem;cursor:pointer">reset</button>'
+        ? ' <button type="button" class="hv-btn reset-agent-restarts btn-danger" data-hive-id="' + escAttr(h.id) + '" data-agent-name="' + escAttr(first.name) + '">reset</button>'
         : '';
       return '<span title="' + esc(title) + '" style="display:inline-block;margin-left:6px;padding:0 6px;' +
         'border-radius:9999px;font-size:0.62rem;font-weight:600;line-height:1.5;cursor:help;white-space:nowrap;' +
@@ -5858,7 +5856,7 @@
             var hubQueued = !hubIsUpgrading && (hubState === 'queued' || hubImageBuilding ||
               (hubState === '' && !isCurrent && hubBranchLatest && _hubAutoUpgrade));
             if (!isCurrent && hubBranchLatest && _isAdmin && !hubIsUpgrading && !hubQueued) {
-              hubUpgradeBtn = ' <button id="hub-upgrade-btn" onclick="upgradeHub(\'' + esc(hubHash) + '\')" style="padding:2px 8px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem;margin-left:6px;white-space:nowrap">Upgrade</button>';
+              hubUpgradeBtn = ' <button class="hv-btn btn-primary btn-sm" id="hub-upgrade-btn" onclick="upgradeHub(\'' + esc(hubHash) + '\')">Upgrade</button>';
             } else if (hubIsUpgrading) {
               hubUpgradeBtn = ' <span title="Upgrading to ' + esc(hubBranchLatest || '?') + '" style="display:inline-block;padding:2px 8px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:0.65rem;margin-left:6px;white-space:nowrap;opacity:0.8"><span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:3px"></span>Upgrading</span>';
             } else if (hubQueued) {
@@ -5870,7 +5868,7 @@
               var hubQueuedClickable = _isAdmin && !hubImageBuilding;
               hubUpgradeBtn = ' <span title="' + hubQueuedTitle + '"' + (hubQueuedClickable ? ' onclick="upgradeHub(\'' + esc(hubHash) + '\')" style="cursor:pointer;' : ' style="') + 'display:inline-block;padding:2px 8px;background:var(--surface);color:var(--muted);border:1px dashed var(--border);border-radius:4px;font-size:0.65rem;margin-left:6px;white-space:nowrap">queued</span>';
             } else if (hubLatestUnknown && _isAdmin) {
-              hubUpgradeBtn = ' <button disabled title="Waiting for latest version…" style="padding:2px 8px;background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;font-size:0.65rem;margin-left:6px;white-space:nowrap;cursor:not-allowed;opacity:0.5">Upgrade</button>';
+              hubUpgradeBtn = ' <button class="hv-btn btn-danger btn-sm" disabled title="Waiting for latest version…">Upgrade</button>';
             }
             if (isCurrent) { _hubUpgrading = false; }
             var hubAutoCheck = '';
@@ -6395,14 +6393,14 @@
         '<strong style="font-size:0.8rem;color:#60a5fa">' + ids.length + (ids.length === 1 ? ' hive' : ' hives') + ' selected</strong>' +
         (over ? '<span style="font-size:0.72rem;color:var(--red)">Over the ' + BULK_MAX_HIVES + '-hive limit — deselect some.</span>' : '') +
         '<span style="flex:1"></span>' +
-        '<button type="button" onclick="runBulkAction(\'restart\')" style="' + btn + '">Restart</button>' +
-        '<button type="button" onclick="runBulkAction(\'upgrade\')" style="' + btn + '">Upgrade to latest</button>' +
-        '<button type="button" onclick="runBulkAction(\'enable-auto-upgrade\')" style="' + btn + '">Auto: instant</button>' +
-        '<button type="button" onclick="runBulkAction(\'daily-auto-upgrade\')" style="' + btn + '" title="Upgrade at most once a day, midday — keeps a stable hive from being restarted mid-work, and puts a bad roll in staffed hours">Auto: daily 1pm ET</button>' +
-        '<button type="button" onclick="runBulkAction(\'weekly-auto-upgrade\')" style="' + btn + '" title="Upgrade at most once a week, Tuesday midday — the least disruptive cadence that still keeps the hive current">Auto: Tue 1pm ET</button>' +
-        '<button type="button" onclick="runBulkAction(\'disable-auto-upgrade\')" style="' + btn + '">Auto-upgrade off</button>' +
+        '<button class="hv-btn btn-primary" type="button" onclick="runBulkAction(\'restart\')" style="' + btn + '">Restart</button>' +
+        '<button class="hv-btn btn-primary" type="button" onclick="runBulkAction(\'upgrade\')" style="' + btn + '">Upgrade to latest</button>' +
+        '<button class="hv-btn btn-primary" type="button" onclick="runBulkAction(\'enable-auto-upgrade\')" style="' + btn + '">Auto: instant</button>' +
+        '<button class="hv-btn btn-primary" type="button" onclick="runBulkAction(\'daily-auto-upgrade\')" style="' + btn + '" title="Upgrade at most once a day, midday — keeps a stable hive from being restarted mid-work, and puts a bad roll in staffed hours">Auto: daily 1pm ET</button>' +
+        '<button class="hv-btn btn-primary" type="button" onclick="runBulkAction(\'weekly-auto-upgrade\')" style="' + btn + '" title="Upgrade at most once a week, Tuesday midday — the least disruptive cadence that still keeps the hive current">Auto: Tue 1pm ET</button>' +
+        '<button class="hv-btn btn-danger" type="button" onclick="runBulkAction(\'disable-auto-upgrade\')" style="' + btn + '">Auto-upgrade off</button>' +
         branchPicker +
-        '<button type="button" onclick="clearBulkSelection()" style="' + btn + ';color:var(--muted)">Clear</button>' +
+        '<button class="hv-btn btn-danger" type="button" onclick="clearBulkSelection()" style="' + btn + ';color:var(--muted)">Clear</button>' +
         '</div>';
       bar.style.display = '';
       var sel = document.getElementById('bulk-branch-select');
@@ -6639,12 +6637,12 @@
           '<div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:12px">' +
           /* Request-a-hive → the EXISTING Request-a-Hive wizard at /get-started
              (POST /api/saas/request-provision). We host it for you. */
-          '<a class="btn-primary" href="/get-started" style="text-decoration:none" title="We host the hive for you">Request a hive</a>' +
+          '<a class="hv-btn btn-primary btn-primary" href="/get-started" style="text-decoration:none" title="We host the hive for you">Request a hive</a>' +
           /* Register-your-own-hive → the EXISTING self-host guide at
              /get-started#self-host. Not self-service: the operator must issue
              the spoke a HIVE_HUB_SECRET or its heartbeats 401 (see #1077 and
              the note on the other copy of this CTA above). */
-          '<a class="btn-primary" href="/get-started#self-host" style="background:var(--surface);color:var(--text);border:1px solid var(--border);text-decoration:none" title="You self-host the hive and attach it to this hub">Register your own hive</a>' +
+          '<a class="hv-btn btn-primary btn-primary" href="/get-started#self-host" style="background:var(--surface);color:var(--text);border:1px solid var(--border);text-decoration:none" title="You self-host the hive and attach it to this hub">Register your own hive</a>' +
           '</div>' +
           '<p style="color:var(--muted);font-size:0.85rem">…or contribute to a public hive below.</p>' +
           '</div>';
@@ -6717,14 +6715,14 @@
         var contributeUrl = rb ? rb + '/contribute' : '';
         var actions = '';
         if (canConvert) {
-          actions = '<button onclick="openConvert(this)" data-hive-id="' + esc(h.id) + '" data-dash-url="' + esc(h.dashboardUrl||'') + '" data-org="' + esc(h.org) + '" data-repos="' + esc((h.repos||[]).join(', ')) + '" data-primary="' + esc(h.primaryRepo) + '" data-level="' + (h.acmmLevel||1) + '" data-name="' + esc(h.name||'') + '" style="padding:3px 10px;background:var(--accent);color:#000;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem;white-space:nowrap">Convert to Hosted</button>';
+          actions = '<button class="hv-btn btn-primary btn-sm" onclick="openConvert(this)" data-hive-id="' + esc(h.id) + '" data-dash-url="' + esc(h.dashboardUrl||'') + '" data-org="' + esc(h.org) + '" data-repos="' + esc((h.repos||[]).join(', ')) + '" data-primary="' + esc(h.primaryRepo) + '" data-level="' + (h.acmmLevel||1) + '" data-name="' + esc(h.name||'') + '">Convert to Hosted</button>';
           if (h.role === 'owner') {
-            actions += '<br style="margin-bottom:4px"><button onclick="removeLocalHive(\'' + esc(h.id) + '\')" style="margin-top:6px;padding:3px 10px;background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.65rem;white-space:nowrap" title="Remove from registry (does not delete the hive)">Remove</button>';
+            actions += '<br style="margin-bottom:4px"><button class="hv-btn btn-danger btn-sm" onclick="removeLocalHive(\'' + esc(h.id) + '\')" title="Remove from registry (does not delete the hive)">Remove</button>';
           }
         } else if (isHosted && (roleAtLeast(h.role, 'read-write'))) {
-          actions = '<button onclick="openAccessModal(\'' + esc(h.id) + '\',\'' + esc(h.dashboardUrl || '') + '\')" style="padding:3px 10px;background:var(--blue);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem;white-space:nowrap;margin-right:4px">Permissions</button>';
+          actions = '<button class="hv-btn btn-primary btn-sm" onclick="openAccessModal(\'' + esc(h.id) + '\',\'' + esc(h.dashboardUrl || '') + '\')">Permissions</button>';
           if (h.role === 'owner') {
-            actions += '<button onclick="deleteHive(\'' + esc(h.id) + '\')" style="padding:3px 10px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem;white-space:nowrap">Delete</button>';
+            actions += '<button class="hv-btn btn-danger btn-sm" onclick="deleteHive(\'' + esc(h.id) + '\')">Delete</button>';
           }
         }
         var menuId = 'hive-menu-' + i;
@@ -7152,8 +7150,8 @@
               '<div style="display:flex;align-items:center;justify-content:space-between">' +
               '<div>' + avatar + '<span style="font-size:0.85rem">' + esc(userLabel || rawUser) + '</span>' + authKey + '</div>' +
               '<div style="display:flex;gap:4px">' +
-              '<button onclick="inlineApproveAccess(\'' + esc(h.id) + '\',\'' + esc(pr.username) + '\',this)" style="padding:2px 8px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem">Approve</button>' +
-              '<button onclick="inlineDenyAccess(\'' + esc(h.id) + '\',\'' + esc(pr.username) + '\',this)" style="padding:2px 8px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem">Deny</button>' +
+              '<button class="hv-btn btn-primary btn-sm" onclick="inlineApproveAccess(\'' + esc(h.id) + '\',\'' + esc(pr.username) + '\',this)">Approve</button>' +
+              '<button class="hv-btn btn-danger btn-sm" onclick="inlineDenyAccess(\'' + esc(h.id) + '\',\'' + esc(pr.username) + '\',this)">Deny</button>' +
               '</div></div>' + noteHtml + '</div>';
           }).join('');
           var pendingRowStyle = _expandedPendingRows.has(String(h.id || '')) ? '' : 'display:none';
@@ -7565,7 +7563,7 @@
           ? 'background:color-mix(in srgb, var(--red) 18%, transparent);border:1px solid var(--red);color:var(--red)'
           : 'background:var(--surface);border:1px solid var(--border);color:var(--muted)');
       return '<span style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap" title="' + escAttr(t) + '">' +
-        '<button onclick="toggleUpgradePause(\'' + target + '\', ' + (sw.paused ? 'false' : 'true') + ')" style="' + btnStyle + '" aria-label="' + escAttr((sw.paused ? 'Resume ' : 'Pause ') + label) + '">' + icon + '</button>' +
+        '<button class="hv-btn btn-primary" onclick="toggleUpgradePause(\'' + target + '\', ' + (sw.paused ? 'false' : 'true') + ')" style="' + btnStyle + '" aria-label="' + escAttr((sw.paused ? 'Resume ' : 'Pause ') + label) + '">' + icon + '</button>' +
         '<span style="font-size:0.6rem;color:' + (sw.paused ? 'var(--red)' : 'var(--muted)') + ';font-weight:' + (sw.paused ? '700' : '400') + '">' + esc(label) + '</span>' +
         '</span>';
     }
@@ -8205,7 +8203,7 @@
           if (!dismissed[pKey]) {
             html += '<div style="background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.3);border-radius:8px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;gap:10px">' +
               '<span style="font-size:1.1rem">&#x1F514;</span><span style="flex:1;font-size:0.85rem;color:var(--text)">Access pending: <strong>' + pendingIds.map(esc).join(', ') + '</strong></span>' +
-              '<button onclick="dismissBanner(\'' + pKey.replace(/'/g,'') + '\',this)" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;padding:0 4px" title="Dismiss">&times;</button></div>';
+              '<button class="hv-btn btn-icon btn-sm" onclick="dismissBanner(\'' + pKey.replace(/'/g,'') + '\',this)" title="Dismiss">&times;</button></div>';
           }
         }
         if (acceptedIds.length) {
@@ -8213,7 +8211,7 @@
           if (!dismissed[aKey]) {
             html += '<div style="background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.3);border-radius:8px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;gap:10px">' +
               '<span style="font-size:1.1rem">&#x2705;</span><span style="flex:1;font-size:0.85rem;color:var(--text)">Access granted: <strong>' + acceptedIds.map(esc).join(', ') + '</strong> — Start contributing!</span>' +
-              '<button onclick="dismissBanner(\'' + aKey.replace(/'/g,'') + '\',this)" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;padding:0 4px" title="Dismiss">&times;</button></div>';
+              '<button class="hv-btn btn-icon btn-sm" onclick="dismissBanner(\'' + aKey.replace(/'/g,'') + '\',this)" title="Dismiss">&times;</button></div>';
           }
         }
         banner.innerHTML = html;
@@ -8268,7 +8266,7 @@
       el.innerHTML = '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px">' +
         '<span style="font-size:1.1rem">' + icon + '</span>' +
         '<span style="flex:1;font-size:0.85rem;color:var(--text)">' + msg + '</span>' +
-        '<button onclick="dismissBanner(\'' + esc(dismissKey) + '\',this)" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;padding:0 4px" title="Dismiss">&times;</button>' +
+        '<button class="hv-btn btn-icon btn-sm" onclick="dismissBanner(\'' + esc(dismissKey) + '\',this)" title="Dismiss">&times;</button>' +
         '</div>';
     }
 
@@ -8590,8 +8588,8 @@
           '<div style="font-size:0.7rem;color:var(--muted)">' + esc((pr.requested_at || '').substring(0, 10)) + '</div>' +
           '</div></div>' +
           '<div style="display:flex;gap:6px">' +
-          '<button onclick="openApproveModal(\'' + esc(pr.username) + '\')" style="padding:5px 14px;background:var(--green);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600">Approve</button>' +
-          '<button onclick="denyProvision(\'' + esc(pr.username) + '\',this)" style="padding:5px 14px;background:var(--red);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600">Deny</button>' +
+          '<button class="hv-btn btn-primary btn-sm" onclick="openApproveModal(\'' + esc(pr.username) + '\')">Approve</button>' +
+          '<button class="hv-btn btn-danger btn-sm" onclick="denyProvision(\'' + esc(pr.username) + '\',this)">Deny</button>' +
           '</div></div>';
       }).join('');
       list.innerHTML = rows;
@@ -8658,8 +8656,8 @@
         '<div style="font-size:0.72rem;color:var(--muted);margin-top:6px">Auto-pick chooses an available placeholder from the request&#39;s pool.</div>' +
         githubHostChoiceMarkup('approve', '', approveRequestHost, fld, lbl) +
         '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
-        '<button onclick="closeApproveModal()" style="padding:6px 16px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;cursor:pointer">Cancel</button>' +
-        '<button id="approve-submit" onclick="confirmApprove(\'' + esc(username) + '\')" style="padding:6px 16px;background:#3fb950;color:#000;border:none;border-radius:6px;cursor:pointer;font-weight:600">Approve</button>' +
+        '<button class="hv-btn btn-primary" onclick="closeApproveModal()">Cancel</button>' +
+        '<button class="hv-btn btn-primary" id="approve-submit" onclick="confirmApprove(\'' + esc(username) + '\')">Approve</button>' +
         '</div>';
       var overlay = document.createElement('div');
       overlay.id = 'approve-overlay';
@@ -10885,7 +10883,7 @@
           '<td>' + statusCell + '</td>' +
           '<td><input type="number" min="0" max="10" value="' + (u.saas_quota || 0) + '" style="width:50px;padding:4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);text-align:center" onchange="updateUser(\'' + esc(u.github_username) + '\',{saas_quota:parseInt(this.value)||0})"></td>' +
           '<td>' + (hiveCount > 0 ? '<a href="#" onclick="toggleAdminExpand(\'' + esc(u.github_username) + '\');return false" style="color:var(--blue);font-size:0.8rem">' + hiveCount + ' hive' + (hiveCount > 1 ? 's' : '') + '</a>' : '<span style="color:var(--muted)">0</span>') + '</td>' +
-          '<td>' + (isAdmin ? '' : '<button onclick="startImpersonation(\'' + esc(u.github_username) + '\')" title="See the hub exactly as this user does — read-only" style="padding:3px 10px;background:#b45309;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem">View as</button> <button onclick="updateUser(\'' + esc(u.github_username) + '\',{blocked:' + (!u.blocked) + '})" style="padding:3px 10px;background:' + (u.blocked ? 'var(--green)' : 'var(--amber)') + ';color:' + (u.blocked ? '#fff' : '#1a1a1a') + ';border:none;border-radius:4px;cursor:pointer;font-size:0.7rem">' + (u.blocked ? 'Unblock' : 'Block') + '</button> <button onclick="deleteUser(\'' + esc(u.github_username) + '\',' + hiveCount + ')" style="padding:3px 10px;background:#b02a2a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem">Delete</button>') + '</td>' +
+          '<td>' + (isAdmin ? '' : '<button class="hv-btn btn-primary btn-sm" onclick="startImpersonation(\'' + esc(u.github_username) + '\')" title="See the hub exactly as this user does — read-only">View as</button> <button class="hv-btn btn-danger btn-sm" onclick="updateUser(\'' + esc(u.github_username) + '\',{blocked:' + (!u.blocked) + '})" style="padding:3px 10px;background:' + (u.blocked ? 'var(--green)' : 'var(--amber)') + ';color:' + (u.blocked ? '#fff' : '#1a1a1a') + ';border:none;border-radius:4px;cursor:pointer;font-size:0.7rem">' + (u.blocked ? 'Unblock' : 'Block') + '</button> <button class="hv-btn btn-danger btn-sm" onclick="deleteUser(\'' + esc(u.github_username) + '\',' + hiveCount + ')">Delete</button>') + '</td>' +
           '</tr>' + renderContactPanelRow(u) + hiveRows;
       }).join('');
       document.getElementById('users-container').innerHTML =
@@ -11077,8 +11075,8 @@
         overlay.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:22px;max-width:460px;width:90%">' +
           '<h3 style="margin:0 0 10px 0;font-size:1rem">' + esc(opts.title || '') + '</h3>' + body +
           '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">' +
-          (opts.cancel ? '<button data-act="no" style="' + btn + ';background:transparent;color:var(--fg)">' + esc(opts.cancel) + '</button>' : '') +
-          '<button data-act="yes" style="' + btn + ';background:' + (opts.danger ? '#da3633' : 'var(--accent,#3fb950)') + ';color:#fff;border-color:transparent;font-weight:600">' + esc(opts.ok || 'OK') + '</button>' +
+          (opts.cancel ? '<button class="hv-btn btn-secondary" data-act="no" style="' + btn + ';background:transparent;color:var(--fg)">' + esc(opts.cancel) + '</button>' : '') +
+          '<button class="hv-btn btn-secondary" data-act="yes" style="' + btn + ';background:' + (opts.danger ? '#da3633' : 'var(--accent,#3fb950)') + ';color:#fff;border-color:transparent;font-weight:600">' + esc(opts.ok || 'OK') + '</button>' +
           '</div></div>';
         function done(v) {
           document.removeEventListener('keydown', onKey);
@@ -11117,8 +11115,8 @@
           '<h3 style="margin:0 0 12px 0;font-size:1rem">' + esc(title || '') + '</h3>' +
           '<input id="_hive-prompt-input" type="text" value="' + esc(defaultValue || '') + '" style="width:100%;padding:8px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;box-sizing:border-box;font-size:0.85rem">' +
           '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
-          '<button data-act="no" style="' + btn + ';background:transparent;color:var(--fg)">Cancel</button>' +
-          '<button data-act="yes" style="' + btn + ';background:var(--accent,#3fb950);color:#fff;border-color:transparent;font-weight:600">' + esc(opts.ok || 'Save') + '</button>' +
+          '<button class="hv-btn btn-secondary" data-act="no" style="' + btn + ';background:transparent;color:var(--fg)">Cancel</button>' +
+          '<button class="hv-btn btn-secondary" data-act="yes" style="' + btn + ';background:var(--accent,#3fb950);color:#fff;border-color:transparent;font-weight:600">' + esc(opts.ok || 'Save') + '</button>' +
           '</div></div>';
         function done(v) {
           document.removeEventListener('keydown', onKey);
@@ -11207,8 +11205,8 @@
         '<textarea id="assign-app-key" rows="4" style="' + fld + ';font-family:monospace;font-size:0.7rem" placeholder="-----BEGIN RSA PRIVATE KEY-----"></textarea>' +
         '</div>' +
         '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
-        '<button onclick="closeAssignModal()" style="padding:6px 16px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;cursor:pointer">Cancel</button>' +
-        '<button id="assign-submit" onclick="confirmAssign(\'' + esc(hiveId) + '\')" style="padding:6px 16px;background:#3fb950;color:#000;border:none;border-radius:6px;cursor:pointer;font-weight:600">Assign</button>' +
+        '<button class="hv-btn btn-primary" onclick="closeAssignModal()">Cancel</button>' +
+        '<button class="hv-btn btn-primary" id="assign-submit" onclick="confirmAssign(\'' + esc(hiveId) + '\')">Assign</button>' +
         '</div>';
       var overlay = document.createElement('div');
       overlay.id = 'assign-overlay';
@@ -11309,8 +11307,8 @@
         '<select id="orf-model" onchange="orfModelChange()" style="' + fld + ';margin-bottom:8px">' + opts + '</select>' +
         '<input id="orf-model-manual" placeholder="e.g. anthropic/claude-opus-4.8" style="display:none;' + fld + ';margin-bottom:8px">' +
         '<div style="display:flex;gap:8px;margin-top:4px">' +
-        '<button onclick="orfStart(\'' + esc(hiveId) + '\')" style="padding:7px 16px;background:var(--accent,#58a6ff);color:#000;border:none;border-radius:6px;cursor:pointer;font-weight:600">Generate QR</button>' +
-        '<button onclick="closeOrFundModal()" style="padding:7px 16px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;cursor:pointer">Close</button>' +
+        '<button class="hv-btn btn-primary" onclick="orfStart(\'' + esc(hiveId) + '\')">Generate QR</button>' +
+        '<button class="hv-btn btn-primary" onclick="closeOrFundModal()">Close</button>' +
         '</div>' +
         '<div id="orf-qr" style="margin-top:12px"></div>' +
         '<div id="orf-status" style="margin-top:8px;font-size:0.78rem"></div>';
@@ -11533,8 +11531,8 @@
         <div style="margin-bottom:12px">
           <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px">Message *</label>
           <div style="display:flex;gap:6px;margin-bottom:6px">
-            <button type="button" onclick="bannerFmtBold()" title="Bold (**text**)" style="padding:3px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);cursor:pointer;font-weight:700;font-size:0.8rem">B</button>
-            <button type="button" onclick="bannerFmtLink()" title="Insert link ([text](url))" style="padding:3px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);cursor:pointer;font-size:0.8rem">🔗 Link</button>
+            <button class="hv-btn btn-primary btn-sm" type="button" onclick="bannerFmtBold()" title="Bold (**text**)">B</button>
+            <button class="hv-btn btn-primary btn-sm" type="button" onclick="bannerFmtLink()" title="Insert link ([text](url))">🔗 Link</button>
           </div>
           <textarea id="banner-message" rows="3" maxlength="500" oninput="updateBannerPreview()" placeholder="Announce a new capability... — use the buttons above for bold and links" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem;resize:vertical;font-family:inherit"></textarea>
           <div style="font-size:0.7rem;color:var(--muted);display:flex;justify-content:space-between;margin-top:2px"><span>Markdown: <code>**bold**</code>, <code>[text](https://url)</code></span><span><span id="banner-char-count">0</span>/500</span></div>
@@ -11562,16 +11560,16 @@
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
             <label style="font-size:0.8rem;color:var(--muted)">Target Hives *</label>
             <div style="display:flex;gap:8px">
-              <button onclick="toggleAllBannerHives(true)" style="font-size:0.72rem;color:var(--accent);background:none;border:none;cursor:pointer;text-decoration:underline">Select All</button>
-              <button onclick="toggleAllBannerHives(false)" style="font-size:0.72rem;color:var(--muted);background:none;border:none;cursor:pointer;text-decoration:underline">Deselect All</button>
+              <button class="hv-btn btn-icon btn-sm" onclick="toggleAllBannerHives(true)">Select All</button>
+              <button class="hv-btn btn-icon btn-sm" onclick="toggleAllBannerHives(false)">Deselect All</button>
             </div>
           </div>
           <div id="banner-hive-list" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;background:var(--bg);padding:4px"></div>
         </div>
       </div>
       <div style="display:flex;justify-content:flex-end;gap:8px;padding:16px 32px 32px;flex-shrink:0">
-        <button onclick="document.getElementById('banner-modal').style.display='none'" style="padding:8px 20px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer">Cancel</button>
-        <button onclick="sendHubBanner()" class="btn-primary" id="btn-send-banner">Send Banner</button>
+        <button class="hv-btn btn-primary" onclick="document.getElementById('banner-modal').style.display='none'">Cancel</button>
+        <button onclick="sendHubBanner()" class="hv-btn btn-primary btn-primary" id="btn-send-banner">Send Banner</button>
       </div>
     </div>
   </div>
@@ -11681,8 +11679,8 @@
       </div>
       </div>
       <div style="display:flex;gap:12px;justify-content:flex-end;padding:16px 32px;border-top:1px solid var(--border);flex-shrink:0">
-        <button onclick="document.getElementById('create-modal').style.display='none'" style="padding:8px 20px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer">Cancel</button>
-        <button id="btn-go" onclick="createHive()" class="btn-primary">Go</button>
+        <button class="hv-btn btn-primary" onclick="document.getElementById('create-modal').style.display='none'">Cancel</button>
+        <button id="btn-go" onclick="createHive()" class="hv-btn btn-primary btn-primary">Go</button>
       </div>
     </div>
   </div>
@@ -11701,8 +11699,8 @@
           <option value="merger">Merger</option>
           <option value="owner">Owner</option>
         </select>
-        <button onclick="bulkChangeAccessRole()" class="btn-primary" style="padding:4px 10px;font-size:0.7rem">Change Role</button>
-        <button onclick="bulkRemoveAccess()" style="padding:4px 10px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem">Remove</button>
+        <button onclick="bulkChangeAccessRole()" class="hv-btn btn-primary btn-primary btn-sm">Change Role</button>
+        <button class="hv-btn btn-danger btn-sm" onclick="bulkRemoveAccess()">Remove</button>
       </div>
       <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
         <h3 style="font-size:0.9rem;margin-bottom:8px;color:var(--accent)">Pending Requests</h3>
@@ -11743,14 +11741,14 @@
               style="display:none;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
             <span id="access-expiry-never" style="font-size:0.7rem;color:var(--text)">Never</span>
           </span>
-          <button onclick="addAccess()" class="btn-primary" style="flex:0 0 auto;padding:8px 16px;font-size:0.8rem">Add</button>
+          <button onclick="addAccess()" class="hv-btn btn-primary btn-primary">Add</button>
         </div>
         <div id="access-role-hint" style="margin-top:6px;font-size:0.72rem;color:var(--muted);line-height:1.4"></div>
       </div>
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 32px;border-top:1px solid var(--border);flex-shrink:0">
-        <button id="access-export-btn" onclick="exportAccessCSV()" title="Download this hive's access list as CSV for audit/compliance" style="padding:8px 16px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;font-size:0.8rem">&#11015;&#65039; Export CSV</button>
-        <button onclick="document.getElementById('access-modal').style.display='none'" style="padding:8px 20px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer">Close</button>
+        <button class="hv-btn btn-primary" id="access-export-btn" onclick="exportAccessCSV()" title="Download this hive's access list as CSV for audit/compliance">&#11015;&#65039; Export CSV</button>
+        <button class="hv-btn btn-primary" onclick="document.getElementById('access-modal').style.display='none'">Close</button>
       </div>
     </div>
   </div>
@@ -11763,7 +11761,7 @@
         <div id="timeline-list"><div class="loading">Loading...</div></div>
       </div>
       <div style="display:flex;justify-content:flex-end;padding:16px 32px;border-top:1px solid var(--border);flex-shrink:0">
-        <button onclick="document.getElementById('timeline-modal').style.display='none'" style="padding:8px 20px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer">Close</button>
+        <button class="hv-btn btn-primary" onclick="document.getElementById('timeline-modal').style.display='none'">Close</button>
       </div>
     </div>
   </div>
@@ -11777,8 +11775,8 @@
         <textarea id="request-access-note" rows="4" placeholder="Explain why you should be granted access to this hive..." style="width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem;resize:vertical;box-sizing:border-box"></textarea>
       </div>
       <div style="display:flex;justify-content:flex-end;gap:8px;padding:16px 32px;border-top:1px solid var(--border)">
-        <button onclick="closeRequestAccessModal()" style="padding:8px 20px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer">Cancel</button>
-        <button id="request-access-submit" onclick="submitRequestAccess()" class="btn-primary" style="padding:8px 20px">Send Request</button>
+        <button class="hv-btn btn-primary" onclick="closeRequestAccessModal()">Cancel</button>
+        <button id="request-access-submit" onclick="submitRequestAccess()" class="hv-btn btn-primary btn-primary">Send Request</button>
       </div>
     </div>
   </div>
@@ -11964,8 +11962,8 @@
             '<div>' + avatar + '<span style="font-size:0.85rem">' + esc(userLabel || rawUser) + '</span> <span style="font-size:0.7rem;color:var(--muted)">' + esc(r.requested_at.substring(0,10)) + '</span>' + authKey + '</div>' +
             '<div style="display:flex;gap:4px">' +
             '<select id="req-role-' + esc(r.username) + '" title="Role to grant on approval" style="padding:2px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem"><option value="read" title="' + escAttr(roleDescription('read')) + '">Read</option><option value="read-write" title="' + escAttr(roleDescription('read-write')) + '">Read-Write</option><option value="merger" title="' + escAttr(roleDescription('merger')) + '">Merger</option></select>' +
-            '<button onclick="approveRequest(\'' + esc(r.username) + '\')" style="padding:2px 8px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem">Approve</button>' +
-            '<button onclick="denyRequest(\'' + esc(r.username) + '\')" style="padding:2px 8px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem">Deny</button>' +
+            '<button class="hv-btn btn-primary btn-sm" onclick="approveRequest(\'' + esc(r.username) + '\')">Approve</button>' +
+            '<button class="hv-btn btn-danger btn-sm" onclick="denyRequest(\'' + esc(r.username) + '\')">Deny</button>' +
             '</div></div>' + noteHtml + '</div>';
         }).join('');
       } catch(e) {}
@@ -12253,7 +12251,7 @@
               (_bulkAccessSel[u.username] ? ' checked' : '') +
               ' onchange="toggleBulkAccess(this, \'' + esc(u.username) + '\')" title="Select for bulk actions">';
           var removeBtn = canRemove ?
-            '<button onclick="removeAccess(\'' + esc(u.username) + '\')" style="padding:2px 8px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem">Remove</button>' :
+            '<button class="hv-btn btn-danger btn-sm" onclick="removeAccess(\'' + esc(u.username) + '\')">Remove</button>' :
             '<span style="font-size:0.6rem;color:var(--muted)">last owner</span>';
           // The role pill is an editable dropdown: changing it POSTs the new role
           // (the add endpoint upserts). The last owner's role is locked (shown as

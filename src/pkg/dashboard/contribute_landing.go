@@ -188,7 +188,7 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 				customStyleNoticeHTML = fmt.Sprintf(`<div class="lb-custom-style-note" id="leaderboard-custom-style-note" role="status">Custom style active: <code>%s</code></div>`, escapedSrc)
 			}
 		} else {
-			customStyleNoticeHTML = `<div class="lb-custom-style-note lb-custom-style-note--warn" id="leaderboard-custom-style-note" role="status">Custom style could not be loaded — using default <button type="button" data-action="dismiss-parent">Dismiss</button></div>`
+			customStyleNoticeHTML = `<div class="lb-custom-style-note lb-custom-style-note--warn" id="leaderboard-custom-style-note" role="status">Custom style could not be loaded — using default <button class="hv-btn btn-secondary" type="button" data-action="dismiss-parent">Dismiss</button></div>`
 		}
 	}
 
@@ -585,15 +585,14 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    The popover is an absolutely-positioned card toggled open by JS (aria-expanded),
    anchored to the wrapper so it sits just under the glyph. */
 .info-affordance{position:relative;display:inline-flex;align-items:center}
-.info-btn{background:none;border:0;padding:0 2px;margin-left:4px;color:var(--cc-muted-2);cursor:pointer;font-size:.85rem;line-height:1;vertical-align:middle}
-.info-btn:hover,.info-btn:focus{color:var(--cc-accent);outline:none}
+.info-btn{vertical-align:middle}
 .info-pop{position:absolute;top:130%%;left:0;z-index:40;width:300px;max-width:78vw;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:8px;padding:10px 12px;box-shadow:0 8px 24px rgba(1,4,9,.7);color:var(--cc-text-2);font-size:.74rem;line-height:1.5;font-weight:400;text-align:left;white-space:normal}
 .info-pop[hidden]{display:none}
 .info-pop h4{margin:0 0 4px;font-size:.76rem;color:var(--cc-text);font-weight:600}
 .info-pop ul{margin:4px 0 0;padding-left:16px}
 .info-pop li{margin:2px 0}
 .info-pop code{background:var(--cc-surface);border:1px solid var(--cc-border-2);border-radius:4px;padding:0 3px;font-size:.7rem}
-.custom-css-help .info-btn{font-size:.72rem;font-weight:600;color:var(--cc-accent)}
+.custom-css-help .info-btn{font-weight:var(--fw-semibold)}
 .custom-css-pop{width:min(320px,calc(100vw - 32px));z-index:10002}
 .custom-css-example{box-sizing:border-box;width:100%%;margin:6px 0 4px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text-2);font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:6px}
 /* Compact tier badge inline next to a connected clanker's identity. */
@@ -850,8 +849,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .admin-chip .x:hover{opacity:1;color:var(--cc-red)}
 .admin-addrow{display:flex;gap:6px;max-width:520px}
 .admin-addrow input{flex:1}
-.admin-addrow button,.admin-save{background:#238636;border:1px solid #2ea043;color:#fff;font-size:.75rem;padding:7px 12px;border-radius:8px;cursor:pointer;font-family:inherit;min-height:34px}
-.admin-addrow button{background:var(--cc-border-2);border-color:var(--cc-border);color:var(--cc-text-2)}
+.admin-addrow button,.admin-save{min-height:var(--control-min-h)}
 .admin-save{margin-top:0}
 .admin-save:disabled{opacity:.5;cursor:default}
 .admin-hr{border:none;border-top:1px solid var(--cc-border-2);margin:2px 0}
@@ -881,9 +879,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    identity (see .clanker-row grid), left-aligned and wrapping if the buttons
    don't fit the narrow column. */
 .admin-actions{display:flex;gap:6px;flex-wrap:wrap}
-.admin-act{background:var(--cc-border-2);border:1px solid var(--cc-border);color:var(--cc-text-2);font-size:.7rem;padding:3px 9px;border-radius:6px;cursor:pointer;font-family:inherit}
-.admin-act:hover{border-color:var(--cc-muted)}
-.admin-act.danger:hover{border-color:var(--cc-red);color:var(--cc-red)}
+.admin-act{white-space:nowrap}
 .op-msg-banner{border:1px solid var(--cc-amber);background:rgba(210,153,34,.10);border-radius:12px;padding:12px 14px;margin:0 0 16px;color:var(--cc-text-2);display:grid;gap:8px}
 .op-msg-banner b{color:var(--cc-text)}
 .op-msg-banner pre{white-space:pre-wrap;margin:0;font:inherit;color:var(--cc-text)}
@@ -934,16 +930,13 @@ select.admin-act{min-width:0;max-width:100%%}
    as one state. Left of #cc-live so status (queue live/stale) and posture
    (active/paused) sit as a pair. */
 #queue-suspend-wrap{display:inline-flex;align-items:center;gap:6px;margin-left:auto}
-.queue-suspend-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border-radius:999px;border:1px solid var(--cc-border);background:transparent;color:var(--cc-muted);cursor:pointer;line-height:0;transition:background .15s,color .15s,border-color .15s}
+.queue-suspend-btn{line-height:0}
 /* SVG glyph is centered by the flex-box; currentColor tracks the button state.
    Using an SVG (not a &#10074; bar glyph) so the pause bars sit dead-center —
    the light-vertical-bar character carries font side-bearing that pushed the
    pair off-center inside the circle. */
 .queue-suspend-btn svg{display:block;width:12px;height:12px;fill:currentColor}
-.queue-suspend-btn:hover{background:rgba(139,148,158,.12);color:var(--cc-text-2)}
-.queue-suspend-btn.paused{border-color:rgba(248,81,73,.35);color:var(--cc-red);background:rgba(248,81,73,.08)}
-.queue-suspend-btn.paused:hover{background:rgba(248,81,73,.16)}
-.queue-suspend-btn:disabled{opacity:.5;cursor:not-allowed}
+.queue-suspend-btn.paused{border-color:var(--status-error);color:var(--status-error)}
 /* Army roster header line under the clanker card */
 .cc-army{display:flex;align-items:center;gap:14px;padding:10px 20px;border-bottom:1px solid var(--cc-border-2);font-size:.78rem;color:var(--cc-muted)}
 .cc-army b{color:var(--cc-text);font-weight:600}
@@ -1101,15 +1094,13 @@ select.admin-act{min-width:0;max-width:100%%}
 /* Per-row "⋯" context affordance — owner/read-write only (rendered only when
    adminEnabled). Sits at the row's trailing edge, quiet until hover/open. */
 .cc-q-menu-wrap{position:relative;flex-shrink:0;margin-left:auto;align-self:center}
-.cc-q-menu-btn{background:none;border:none;color:var(--cc-muted-2);cursor:pointer;font-size:1rem;line-height:1;padding:4px 6px;border-radius:6px}
-.cc-q-menu-btn:hover,.cc-q-menu-btn[aria-expanded=true]{color:var(--cc-text);background:var(--cc-border-2)}
+.cc-q-menu-btn{line-height:1}
 .cc-q-menu{position:fixed;top:0;left:0;right:auto;bottom:auto;z-index:10002;min-width:190px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:10px;box-shadow:0 8px 28px rgba(1,4,9,.55);padding:6px;display:none}
 .cc-q-menu.open{display:block}
 /* Fixed-positioned so the per-row menu escapes the scrolling .cc-queue overflow
    clip; ccBindQueueMenus measures the trigger and flips/clamps inside the viewport
    (and visible queue panel) before paint. */
-.cc-q-menu button.cc-q-act{display:flex;align-items:center;gap:8px;width:100%%;background:none;border:none;color:var(--cc-text-2);font:inherit;font-size:.82rem;text-align:left;padding:7px 9px;border-radius:6px;cursor:pointer}
-.cc-q-menu button.cc-q-act:hover{background:var(--cc-border-2);color:var(--cc-text)}
+.cc-q-menu button.cc-q-act{justify-content:flex-start;width:100%%}
 .cc-q-menu-ic{color:var(--cc-muted-2);flex-shrink:0;width:16px;text-align:center}
 .cc-q-menu-sep{height:1px;background:var(--cc-border-2);margin:5px 2px}
 .cc-q-moverow{display:flex;align-items:center;gap:6px;padding:7px 9px}
@@ -1136,8 +1127,7 @@ select.admin-act{min-width:0;max-width:100%%}
 .cc-q-held-tag{margin-left:7px;font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--cc-amber);background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.3);border-radius:999px;padding:0 6px;vertical-align:middle}
 /* Resume-all (#queue-hold): a small amber header button. Hidden until there is at
    least one held issue and the viewer is owner/read-write (JS-toggled display). */
-.queue-resume-all-btn{margin-left:8px;font-size:.7rem;font-weight:600;color:var(--cc-amber);background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.35);border-radius:6px;padding:2px 8px;cursor:pointer;vertical-align:middle;line-height:1.4}
-.queue-resume-all-btn:hover{background:rgba(210,153,34,.2)}
+.queue-resume-all-btn{margin-left:var(--sp-4);vertical-align:middle}
 /* ── Opportunistic Work (#2592) — a small, CALM discovery panel. Intentionally
    quiet: no loud "recommended!" chrome, just a short curated list with a subtle
    heat dot and an unobtrusive "add to queue" affordance (owner/read-write only). */
@@ -1318,7 +1308,7 @@ select.admin-act{min-width:0;max-width:100%%}
 .help-links .links{display:flex;flex-wrap:wrap;gap:8px}
 .help-links a{display:inline-flex;align-items:center;gap:5px;color:var(--cc-accent);text-decoration:none;border:1px solid var(--cc-border);border-radius:999px;padding:4px 10px;background:var(--cc-bg)}
 .help-links a:hover{border-color:var(--cc-accent);text-decoration:none}
-.pb-copy{position:absolute;top:10px;right:12px;background:#238636;color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:.72rem;font-family:inherit}
+.pb-copy,.cc-copy-overlay{position:absolute;top:var(--sp-5);right:var(--sp-5)}
 @media(prefers-reduced-motion:reduce){
   .client-tile{transition:none!important}
 }
@@ -1330,8 +1320,7 @@ select.admin-act{min-width:0;max-width:100%%}
 .invite-banner .invite-tier{color:var(--cc-muted)}
 /* Trusted "Invite someone" action inside the Me card (issue #2598). */
 .me-invite{margin-top:12px;padding-top:12px;border-top:1px solid #ffffff14}
-.me-invite__btn{display:inline-flex;align-items:center;gap:6px;background:#1f6feb;color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:.82rem;font-family:inherit;cursor:pointer}
-.me-invite__btn:hover{background:#388bfd}
+.me-invite__btn{white-space:nowrap}
 .me-invite__row{display:none;margin-top:10px;gap:8px;align-items:center;flex-wrap:wrap}
 .me-invite__row.open{display:flex}
 .me-invite__link{flex:1 1 220px;min-width:0;background:var(--cc-bg-deep);color:var(--cc-text-2);border:1px solid var(--cc-border);border-radius:6px;padding:7px 10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem}
@@ -1437,9 +1426,7 @@ select.admin-act{min-width:0;max-width:100%%}
    role=tablist is announced as a stray tab. */
 .page-chrome{display:flex;align-items:stretch;background:var(--cc-surface);border-bottom:1px solid var(--cc-border)}
 .page-chrome>.page-tabs{flex:1 1 auto;min-width:0;background:none;border-bottom:none}
-.theme-toggle{flex:0 0 auto;align-self:center;display:inline-flex;align-items:center;gap:6px;margin:0 48px 0 12px;padding:5px 11px;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:999px;color:var(--cc-muted);font-family:inherit;font-size:.76rem;line-height:1;cursor:pointer}
-.theme-toggle:hover{color:var(--cc-text);border-color:var(--cc-muted)}
-.theme-toggle:focus-visible{outline:2px solid var(--cc-accent);outline-offset:2px}
+.theme-toggle{flex:0 0 auto;align-self:center;margin:var(--sp-0) var(--sp-9) var(--sp-0) var(--sp-5);line-height:1}
 .theme-toggle__glyph{font-size:.92rem;line-height:1}
 /* The swap must not animate. The sheet puts transitions on tiles, buttons, the
    ops rail and the quota bar; letting every one of them run at once turns a
@@ -1634,7 +1621,7 @@ select.admin-act{min-width:0;max-width:100%%}
 <p style="color:var(--cc-muted);margin-bottom:8px">Copy and paste these commands to get started:</p>
 <div id="onboarding-announcement" class="announcement-reverse" role="status"></div>
 <div style="margin-top:16px;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:8px;padding:16px;position:relative">
-<button id="copy-btn" style="position:absolute;top:8px;right:8px;background:#238636;color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:.75rem">Copy</button>
+<button id="copy-btn" class="hv-btn btn-primary btn-sm cc-copy-overlay">Copy</button>
 <pre id="copy-cmds" style="color:var(--cc-text);font-size:.85rem;margin:0;overflow-x:auto;white-space:pre"># Default shown: macOS + Claude Code + containerized mode.
 # Use the OS / CLI / Mode / Runtime selectors above to customize.
 brew install just gh
@@ -1649,7 +1636,7 @@ just contribute-hive</pre>
      tweak — deliberately NOT compressed into a deep-link URL. Prefilled per selected
      client by the script below; edits are preserved until the client changes. -->
 <div class="prompt-block">
-<button type="button" id="prompt-copy" class="pb-copy">Copy</button>
+<button type="button" id="prompt-copy" class="hv-btn btn-primary btn-sm pb-copy">Copy</button>
 <h4>Prompt to paste into <span id="prompt-tool">your tool</span></h4>
 <p class="pb-sub">Optional. Paste this into <span id="prompt-tool2">your tool</span> and it will walk you through joining this hive on your machine. Edit it freely &mdash; it is yours to customize.</p>
 <textarea id="prompt-text" spellcheck="false" aria-label="Customizable onboarding prompt"></textarea>
@@ -1971,7 +1958,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <p style="color:var(--cc-muted-2);font-size:.78rem;margin-top:8px">Don't see your CLI? <a href="https://github.com/hivecommons/hive/issues/new?title=CLI+request:+&labels=enhancement" target="_blank" style="color:var(--cc-accent)">Open an issue</a> and we'll add support for it.</p>
 <div id="onboarding-help-links" class="help-links" aria-label="Help and community links"><h4>Help &amp; community</h4><div class="links"></div></div>
 <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
-<button type="button" id="goto-leaderboard-tab" style="display:inline-block;padding:8px 20px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:8px;color:var(--cc-accent);text-decoration:none;font-size:.9rem;font-family:inherit;cursor:pointer">🏆 View Leaderboard</button>
+<button type="button" id="goto-leaderboard-tab" class="hv-btn btn-secondary">🏆 View Leaderboard</button>
 </div>
 <div class="how">
 <h3>What you bring vs. what the hive provides</h3>
@@ -2026,7 +2013,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <label for="admin-announcement-text">Contributor announcement</label>
 <textarea class="admin-textarea admin-textarea--announcement" id="admin-announcement-text" maxlength="500" placeholder="e.g. Hive upgrade at 18:00 UTC; relays may reconnect automatically."></textarea>
 <div class="admin-control-note">Stored as <code>hub.contribute_announcement</code>. The server rotates the announcement id when the text changes.</div>
-<div class="admin-action-row"><select id="admin-announcement-level"><option value="info">Info</option><option value="warning">Warning</option></select><input type="datetime-local" id="admin-announcement-expires"><button type="button" class="admin-save" id="admin-announcement-save">Save announcement</button></div>
+<div class="admin-action-row"><select id="admin-announcement-level"><option value="info">Info</option><option value="warning">Warning</option></select><input type="datetime-local" id="admin-announcement-expires"><button type="button" class="hv-btn btn-primary admin-save" id="admin-announcement-save">Save announcement</button></div>
 </div>
 </section>
 
@@ -2036,7 +2023,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <label for="admin-help-links-text">Help &amp; community links</label>
 <textarea class="admin-textarea admin-textarea--links" id="admin-help-links-text" maxlength="1200" placeholder="Chat with other contributors | https://discord.gg/your-hive&#10;Contributor docs | https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md"></textarea>
 <div class="admin-control-note">Stored as <code>contribute.help_links</code>. Use <code>https://discord.gg/...</code> invites for Discord; <code>https://discord.com/channels/server/channel</code> only opens for people already in that server.</div>
-<div class="admin-action-row"><button type="button" class="admin-save" id="admin-help-links-save">Save help links</button></div>
+<div class="admin-action-row"><button type="button" class="hv-btn btn-primary admin-save" id="admin-help-links-save">Save help links</button></div>
 </div>
 </section>
 
@@ -2084,7 +2071,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="admin-field">
 <label>Allowed models <span style="color:var(--cc-muted-2)">— wildcards (*) and /regex/. Empty = allow all.</span></label>
 <div class="admin-chips" id="admin-allow-models"></div>
-<div class="admin-addrow"><input type="text" id="admin-allow-model-input" placeholder="e.g. claude-opus*, /gemini-\d/"><button type="button" id="admin-add-model">Add</button></div>
+<div class="admin-addrow"><input type="text" id="admin-allow-model-input" placeholder="e.g. claude-opus*, /gemini-\d/"><button class="hv-btn btn-primary" type="button" id="admin-add-model">Add</button></div>
 <div class="admin-toggle" style="padding-top:8px"><div class="admin-switch" id="admin-reject-switch" data-key="contribute_reject_unknown_models"></div><div class="admin-toggle-sub">Reject unknown models at connect time (only when the allowlist is non-empty).</div></div>
 </div>
 </div>
@@ -2100,7 +2087,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <p class="ops-note" style="margin-top:0">Per-tier managed-queue limits. Enable/disable a tier and set tasks per hour / per day / concurrent. 0 means unlimited. Persists as <code>tier_limits</code> + <code>disabled_tiers</code>.</p>
 <div id="admin-tiers"></div>
 
-<button type="button" class="admin-save" id="admin-save-btn" disabled>Save filters</button>
+<button type="button" class="hv-btn btn-primary admin-save" id="admin-save-btn" disabled>Save filters</button>
 <p class="admin-note" id="admin-save-hint">Suspend / skip toggles apply immediately. Filter edits apply on Save. Both persist through <code>PUT /api/config/governor/hub</code>.</p>
 <hr class="admin-hr">
 <h3 style="font-size:.9rem;color:var(--cc-text);margin:0 0 4px">Wall moderation</h3>
@@ -2119,7 +2106,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <h1>Operations</h1>
 <div id="operator-message-banner-ops"></div>
 <p class="subtitle" style="font-size:.95rem">A live view over the contributor (&ldquo;clanker&rdquo;) fleet and its in-flight work. The panels below surface what this hive already knows; the per-clanker trust / revoke / remove controls are owner &amp; read-write only. Admin controls (suspend, admission filters) live under the <strong style="color:var(--cc-text)">Management</strong> tab.</p>
-<div id="ops-announcement" class="announcement-banner" role="status"><span class="ann-level"></span><span class="ann-text"></span><button type="button" data-action="dismiss-announcement" aria-label="Dismiss announcement">&times;</button></div>
+<div id="ops-announcement" class="announcement-banner" role="status"><span class="ann-level"></span><span class="ann-text"></span><button class="hv-btn btn-secondary" type="button" data-action="dismiss-announcement" aria-label="Dismiss announcement">&times;</button></div>
 <div id="ops-help-links" class="help-links" aria-label="Help and community links"><h4>Help &amp; community</h4><div class="links"></div></div>
 
 <!-- Two-region shell: a MAIN area (fleet / pipeline / queue / my-work) beside a
@@ -2211,7 +2198,7 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
 <form class="runs-lookup" id="cc-wall-form" autocomplete="off" style="display:none;padding:12px 20px;border-bottom:1px solid var(--cc-border)">
 <input type="text" id="cc-wall-text" maxlength="500" placeholder="Share a model/setup note (plain text, 500 chars)" aria-label="Wall post">
 <input type="text" id="cc-wall-model" placeholder="model tag (optional)" aria-label="Model tag" style="max-width:180px">
-<button type="submit" class="admin-act">Post</button>
+<button type="submit" class="hv-btn btn-secondary btn-sm admin-act">Post</button>
 </form>
 <div class="runs-list" id="cc-wall-list"><div class="ops-empty">Loading wall&hellip;</div></div>
 </div>
@@ -2223,13 +2210,13 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
 <div class="ops-card" id="effective-models-card" style="margin-bottom:20px">
 <div class="ops-card-head"><span class="feed-dot"></span><h3>Most effective models</h3><span class="ops-card-count" id="effective-models-count"></span></div>
 <div class="effective-controls" role="group" aria-label="Effective model filters">
-  <button type="button" class="effective-chip active" data-eff-window="7d">7d</button>
-  <button type="button" class="effective-chip" data-eff-window="30d">30d</button>
-  <button type="button" class="effective-chip" data-eff-window="all">All</button>
+  <button type="button" class="hv-btn btn-secondary btn-sm effective-chip active" data-eff-window="7d">7d</button>
+  <button type="button" class="hv-btn btn-secondary btn-sm effective-chip" data-eff-window="30d">30d</button>
+  <button type="button" class="hv-btn btn-secondary btn-sm effective-chip" data-eff-window="all">All</button>
   <span class="ops-filters__sep" aria-hidden="true"></span>
-  <button type="button" class="effective-chip active" data-eff-filter="all">All work</button>
-  <button type="button" class="effective-chip" data-eff-filter="contributor">Contributor relays</button>
-  <button type="button" class="effective-chip" data-eff-filter="hive">Hive agents</button>
+  <button type="button" class="hv-btn btn-secondary btn-sm effective-chip active" data-eff-filter="all">All work</button>
+  <button type="button" class="hv-btn btn-secondary btn-sm effective-chip" data-eff-filter="contributor">Contributor relays</button>
+  <button type="button" class="hv-btn btn-secondary btn-sm effective-chip" data-eff-filter="hive">Hive agents</button>
 </div>
 <div id="effective-models-ranked"><div class="ops-empty">Loading effective models&hellip;</div></div>
 <p class="ops-note" style="padding:10px 20px 14px;margin:0">Ranked by first-pass merge rate, then merged PR count. Rows below the sample threshold are listed under <b>Not enough data yet</b>; every number is an aggregate for model + CLI.</p>
@@ -2246,10 +2233,10 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
 <div class="ops-card">
 <div class="ops-card-head"><h3>Fleet work</h3><span class="ops-card-count" id="work-count"></span></div>
 <div class="ops-filters" role="tablist">
-<button class="ops-filter active" data-filter="all">All</button>
-<button class="ops-filter" data-filter="active">Active</button>
-<button class="ops-filter" data-filter="review">Review requests</button>
-<button class="ops-filter" data-filter="done">Done</button>
+<button class="hv-btn btn-secondary btn-sm ops-filter active" data-filter="all">All</button>
+<button class="hv-btn btn-secondary btn-sm ops-filter" data-filter="active">Active</button>
+<button class="hv-btn btn-secondary btn-sm ops-filter" data-filter="review">Review requests</button>
+<button class="hv-btn btn-secondary btn-sm ops-filter" data-filter="done">Done</button>
 <!-- Scope chips. A SEPARATE class from .ops-filter (they share styling, not
      wiring): the status handler deactivates every .ops-filter it finds, so
      folding these in would make picking "Mine" silently clear the status
@@ -2272,7 +2259,7 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
 <div class="ops-card-head"><h3>Contributor run history</h3><span class="ops-card-count" id="runs-count"></span></div>
 <form class="runs-lookup" id="runs-lookup" autocomplete="off">
 <input type="text" id="runs-user" name="username" placeholder="GitHub login, e.g. from the log rail" aria-label="Contributor GitHub login" spellcheck="false">
-<button type="submit" class="admin-act" id="runs-go">Look up</button>
+<button type="submit" class="hv-btn btn-secondary btn-sm admin-act" id="runs-go">Look up</button>
 </form>
 <div id="runs-message-actions"></div>
 <div class="runs-list" id="runs-list"><div class="ops-empty">Enter a contributor&rsquo;s login to see their recent runs: outcome, duration, the failure reason, and &mdash; for owners &mdash; what was on the agent&rsquo;s terminal when it stopped.</div></div>
@@ -2294,7 +2281,7 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
 <div class="ops-card card-accent" style="margin-top:20px">
 <div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span><!-- Resume-all (#queue-hold): bulk-clears the operator hold set. Hidden by default;
      ccRenderResumeAll() reveals it only for an owner/read-write viewer when at least
-     one issue is on hold. Themed confirm (adminConfirm), never native confirm. --><button type="button" class="queue-resume-all-btn" id="queue-resume-all-btn" style="display:none" title="Resume every held issue">&#x25B6; Resume all</button><!-- Cooldown explainer (#2649 companion): a circled-i affordance whose popover
+     one issue is on hold. Themed confirm (adminConfirm), never native confirm. --><button type="button" class="hv-btn btn-secondary btn-sm queue-resume-all-btn" id="queue-resume-all-btn" style="display:none" title="Resume every held issue">&#x25B6; Resume all</button><!-- Cooldown explainer (#2649 companion): a circled-i affordance whose popover
      explains what "in cooldown" in the count means and how an issue lands there.
      Numbers here are the REAL server constants (168h with-PR, ~4h no-PR, ~6h
      quarantine after 3 consecutive failures) — keep them in sync with
@@ -2322,7 +2309,7 @@ It clears automatically when the period elapses. An operator can shorten or disa
      (#queue-suspend-pill), which is read-only info. -->
 <span id="queue-suspend-wrap">
 <span class="pill pill-passed" id="queue-suspend-pill" style="display:none">active</span>
-<button type="button" class="queue-suspend-btn" id="queue-suspend-btn" title="Pause contributions" aria-label="Pause contributions" style="display:none"><span id="queue-suspend-icon"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg></span></button>
+<button type="button" class="hv-btn btn-icon btn-sm queue-suspend-btn btn-secondary" id="queue-suspend-btn" title="Pause contributions" aria-label="Pause contributions" style="display:none"><span id="queue-suspend-icon"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg></span></button>
 </span>
 <span class="cc-live stale" id="cc-live"><span class="cc-live-dot"></span><span id="cc-live-label">connecting</span></span></div>
 <!-- Playlist-style SEARCH (#2592). A pure VIEW filter over the loaded queue
@@ -2331,7 +2318,7 @@ It clears automatically when the period elapses. An operator can shorten or disa
 <div class="cc-q-search" id="cc-q-search-wrap">
   <span class="cc-q-search-ic" aria-hidden="true">&#x1F50D;</span>
   <input type="text" id="cc-q-search" placeholder="Filter queue by repo, number, title, or label&hellip;" aria-label="Filter the ready-work queue" autocomplete="off" spellcheck="false">
-  <button type="button" class="cc-q-search-clear" id="cc-q-search-clear" aria-label="Clear filter" title="Clear filter">&times;</button>
+  <button type="button" class="hv-btn btn-icon btn-sm cc-q-search-clear" id="cc-q-search-clear" aria-label="Clear filter" title="Clear filter">&times;</button>
 </div>
 <div class="cc-q-filternote" id="cc-q-filternote" style="display:none"></div>
 <!-- My label interests (#2637): a signed-in contributor's OPT-IN set of labels they
@@ -2347,7 +2334,7 @@ It clears automatically when the period elapses. An operator can shorten or disa
   <div class="cc-interests-chips" id="cc-interests-chips"></div>
   <div class="cc-interests-add">
     <input type="text" id="cc-interests-input" placeholder="e.g. nvidia" aria-label="Add a label interest" autocomplete="off" spellcheck="false">
-    <button type="button" id="cc-interests-add-btn">Add</button>
+    <button class="hv-btn btn-primary" type="button" id="cc-interests-add-btn">Add</button>
   </div>
 </div>
 <div class="cc-queue" id="cc-queue"><div class="ops-empty">Loading queue&hellip;</div></div>
@@ -2453,7 +2440,7 @@ It clears automatically when the period elapses. An operator can shorten or disa
      subtle sign-in prompt rather than an error. The SAME renderer serves the
      public route /contribute/dossier/{username}; owner-only controls are gated
      server-side there and by ME_IS_OWNER here. -->
-<div id="profile-announcement" class="announcement-banner" role="status"><span class="ann-level"></span><span class="ann-text"></span><button type="button" data-action="dismiss-announcement" aria-label="Dismiss announcement">&times;</button></div>
+<div id="profile-announcement" class="announcement-banner" role="status"><span class="ann-level"></span><span class="ann-text"></span><button class="hv-btn btn-secondary" type="button" data-action="dismiss-announcement" aria-label="Dismiss announcement">&times;</button></div>
 <div id="operator-message-banner-profile"></div>
 <div id="me-card-mount"></div>
 <div class="ops-card" id="dossier-wall-card" style="display:none;margin-top:20px">
@@ -3341,7 +3328,7 @@ function meInviteSection(p){
   if(!ME_IS_OWNER)return ''; // minting invites is never offered on someone else's record
   if(!p||!INVITE_TIERS[p.trust_tier])return '';
   return '<div class="me-invite">'
-    +'<button type="button" class="me-invite__btn" id="me-invite-btn">✉️ Invite someone to contribute</button>'
+    +'<button type="button" class="hv-btn btn-primary me-invite__btn" id="me-invite-btn">✉️ Invite someone to contribute</button>'
     +'<div class="me-invite__row" id="me-invite-row">'
       +'<input type="text" class="me-invite__link" id="me-invite-link" readonly aria-label="Invite link" value="">'
       +'<button type="button" class="me-invite__copy" id="me-invite-copy">Copy</button>'
@@ -3546,7 +3533,7 @@ function renderMeCard(mount,p){
     +'<div class="me-actions">'
       +'<a class="me-share" href="'+esc(meLinkedInURL(p))+'" target="_blank" rel="noopener noreferrer">\u{1F4E3} Share achievement on LinkedIn</a>'
       +'<span class="me-stylepick">Profile style <select id="me-style-select" aria-label="Profile style">'+styleOpts+'</select></span>'
-      +'<span class="info-affordance custom-css-help"><button type="button" class="info-btn" id="custom-css-info-btn" aria-haspopup="true" aria-expanded="false" aria-controls="custom-css-info-pop" aria-label="Custom CSS stylesheet help" title="Custom CSS">Custom CSS</button>'
+      +'<span class="info-affordance custom-css-help"><button type="button" class="hv-btn btn-icon btn-sm info-btn" id="custom-css-info-btn" aria-haspopup="true" aria-expanded="false" aria-controls="custom-css-info-pop" aria-label="Custom CSS stylesheet help" title="Custom CSS">Custom CSS</button>'
       +'<div class="info-pop custom-css-pop" id="custom-css-info-pop" role="tooltip" hidden><h4>Custom CSS</h4>'
       +'Use <code>?style=owner/repo/path/theme.css@ref</code> to load a theme. Example:'
       +'<input class="custom-css-example" readonly aria-label="Custom CSS example" value="?style=castrojo/themes/lb/bluefin.css@main" data-select-on-click="1">'
@@ -4193,7 +4180,7 @@ function renderAdminFilter(fieldId,label,noun,modeKey,kind){
       '<button type="button" data-mode="allow"'+(mode==='allow'?' class="on"':'')+'>Allow</button>'+
     '</div>'+
     '<div class="admin-chips">'+(chips||'<span class="admin-toggle-sub">none</span>')+'</div>'+
-    '<div class="admin-addrow"><input type="text" data-add-list="'+listKey+'" placeholder="add '+esc(noun)+'&hellip;"><button type="button" data-add-list-btn="'+listKey+'">Add</button></div>';
+    '<div class="admin-addrow"><input type="text" data-add-list="'+listKey+'" placeholder="add '+esc(noun)+'&hellip;"><button class="hv-btn btn-primary" type="button" data-add-list-btn="'+listKey+'">Add</button></div>';
 }
 
 function renderAdminModels(){
@@ -4246,7 +4233,7 @@ function renderAdminRepoFilter(repo){
       '<button type="button" data-mode="deny"'+(mode==='deny'?' class="on"':'')+'>Deny</button>'+
       '<button type="button" data-mode="allow"'+(mode==='allow'?' class="on"':'')+'>Allow</button></div>'+
       '<div class="admin-chips">'+(chips||'<span class="admin-toggle-sub">none</span>')+'</div>'+
-      '<div class="admin-addrow"><input type="text" data-repo-filter-add="'+listKey+'" data-repo="'+esc(repo)+'" placeholder="add '+esc(noun)+'&hellip;"><button type="button" data-repo-filter-add-btn="'+listKey+'" data-repo="'+esc(repo)+'">Add</button></div></div>';
+      '<div class="admin-addrow"><input type="text" data-repo-filter-add="'+listKey+'" data-repo="'+esc(repo)+'" placeholder="add '+esc(noun)+'&hellip;"><button class="hv-btn btn-primary" type="button" data-repo-filter-add-btn="'+listKey+'" data-repo="'+esc(repo)+'">Add</button></div></div>';
   }
   return '<details class="admin-repo-filter"'+(adminRepoHasFilter(f)?' open':'')+'><summary>Filters '+(adminRepoHasFilter(f)?'<span class="pill pill-warn">override</span>':'<span class="admin-toggle-sub">inherit hive-wide</span>')+'</summary>'+
     '<p class="admin-toggle-sub">Applied after hive-wide filters; allow mode narrows only this repo and deny mode extends the hive-wide deny lists.</p>'+
@@ -4781,19 +4768,19 @@ function clankerActingAsControl(c,cid){
   var opts='<option value="none"'+(!current?' selected':'')+'>none (general work)</option>'+
     roles.map(function(r){return '<option value="'+esc(r)+'"'+(r===current?' selected':'')+'>'+esc(r)+'</option>';}).join('');
   var tip=c.role_mismatch||'Owner assignment takes effect on the next task request and never rewrites the current in-flight task.';
-  return '<select class="admin-act" title="'+esc(tip)+'" data-cid="'+cid+'" data-role="agent-role">'+opts+'</select>';
+  return '<select class="hv-btn btn-secondary btn-sm admin-act" title="'+esc(tip)+'" data-cid="'+cid+'" data-role="agent-role">'+opts+'</select>';
 }
 function clankerAgentRoleGrantControl(c,cid){
   var grants=(c.agent_role_grants||[]).map(function(r){return String(r||'').trim().toLowerCase();}).filter(Boolean);
   var seen={};grants=grants.filter(function(r){if(seen[r])return false;seen[r]=true;return true;}).sort();
   var chips=grants.length?grants.map(function(r){
-    return '<span class="agent-role-chip">'+esc(r)+'<button type="button" aria-label="Remove '+esc(r)+' grant" title="Remove '+esc(r)+' grant" data-cid="'+cid+'" data-agent-role="'+esc(r)+'" data-role="agent-role-remove">&times;</button></span>';
+    return '<span class="agent-role-chip">'+esc(r)+'<button class="hv-btn btn-danger" type="button" aria-label="Remove '+esc(r)+' grant" title="Remove '+esc(r)+' grant" data-cid="'+cid+'" data-agent-role="'+esc(r)+'" data-role="agent-role-remove">&times;</button></span>';
   }).join(''):'<span class="clanker-sub">none</span>';
   var granted={};grants.forEach(function(r){granted[r]=true;});
   var addOpts=adminGrantableAgentRoles.filter(function(r){return !granted[r];}).map(function(r){return '<option value="'+esc(r)+'">'+esc(r)+'</option>';}).join('');
   var add=addOpts?('<select class="agent-role-add" title="Grant a privileged agent role" data-cid="'+cid+'" data-role="agent-role-add"><option value="">+ grant</option>'+addOpts+'</select>'):'';
   var tip='Defaults scanner, quality and outreach need no grant. Privileged roles require trusted+ tier, hive allow-listing and this per-contributor grant. Supervisor is never delegatable.';
-  return '<div class="agent-role-grants"><span class="agent-role-grants__label">Agent roles</span><span class="info-affordance"><button type="button" class="info-btn" tabindex="-1" aria-label="How agent-role grants work" title="'+tip+'">&#9432;</button></span>'+chips+add+'</div>';
+  return '<div class="agent-role-grants"><span class="agent-role-grants__label">Agent roles</span><span class="info-affordance"><button type="button" class="hv-btn btn-icon btn-sm info-btn" tabindex="-1" aria-label="How agent-role grants work" title="'+tip+'">&#9432;</button></span>'+chips+add+'</div>';
 }
 function updateContributorAgentRoleGrants(cid,removeRole,addRole){
   if(!cid)return;
@@ -4884,16 +4871,16 @@ function renderClankers(list){
       // so the operator understands it WITHOUT opening the confirm dialog.
       var reassignInfo='Reassign takes this clanker off its current task and immediately hands it the next-priority item, so it keeps working. The released task goes back to the ready queue for another contributor, and isn&rsquo;t re-offered to this clanker for a short window.';
       var requeueBtn=c.current_task
-        ?('<span class="info-affordance"><button type="button" class="admin-act" title="'+reassignInfo+'" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="requeue">Reassign</button>'+
-          '<button type="button" class="info-btn" tabindex="-1" aria-label="What does Reassign do?" title="'+reassignInfo+'">&#9432;</button></span>')
+        ?('<span class="info-affordance"><button type="button" class="hv-btn btn-secondary btn-sm admin-act" title="'+reassignInfo+'" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="requeue">Reassign</button>'+
+          '<button type="button" class="hv-btn btn-icon btn-sm info-btn" tabindex="-1" aria-label="What does Reassign do?" title="'+reassignInfo+'">&#9432;</button></span>')
         :'';
       actions='<div class="admin-actions" data-role-grants-cid="'+cid+'">'+
-        '<select class="admin-act" title="Set trust tier (maintainer voucher)" data-cid="'+cid+'" data-role="tier">'+opts+'</select>'+
+        '<select class="hv-btn btn-secondary btn-sm admin-act" title="Set trust tier (maintainer voucher)" data-cid="'+cid+'" data-role="tier">'+opts+'</select>'+
         '<label class="clanker-act-as">Acting as '+clankerActingAsControl(c,cid)+'</label>'+
         requeueBtn+
         ccOperatorMessageStatus(c)+
-        '<button type="button" class="admin-act" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="message">Message</button>'+        '<button type="button" class="admin-act danger" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="revoke">Revoke</button>'+
-        '<button type="button" class="admin-act danger" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="remove">Remove</button>'+
+        '<button type="button" class="hv-btn btn-secondary btn-sm admin-act" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="message">Message</button>'+        '<button type="button" class="hv-btn btn-danger btn-sm admin-act danger" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="revoke">Revoke</button>'+
+        '<button type="button" class="hv-btn btn-danger btn-sm admin-act danger" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="remove">Remove</button>'+
         clankerAgentRoleGrantControl(c,cid)+
         '</div>';
     }
@@ -5225,7 +5212,7 @@ function ccRenderRunsMessageAction(user){
   var el=document.getElementById('runs-message-actions');if(!el)return;
   user=(user||'').trim().replace(/^@/,'');
   if(!adminEnabled||!user){el.innerHTML='';return;}
-  el.innerHTML='<div class="admin-actions"><button type="button" class="admin-act" data-user="'+esc(user)+'" data-role="message-runs">Message '+esc(user)+'</button></div><div id="runs-message-form"></div>';
+  el.innerHTML='<div class="admin-actions"><button type="button" class="hv-btn btn-secondary btn-sm admin-act" data-user="'+esc(user)+'" data-role="message-runs">Message '+esc(user)+'</button></div><div id="runs-message-form"></div>';
 }
 onEl('runs-message-actions','click',function(e){var b=e.target;if(!adminEnabled||!b||b.getAttribute('data-role')!=='message-runs')return;ccToggleMessageForm(b.getAttribute('data-user'),b.getAttribute('data-user'),b);});
 
@@ -5242,7 +5229,7 @@ function ccToggleMessageForm(cid,user,btn){
   var old=host.querySelector('.op-msg-form'); if(old){old.remove();return;}
   var target=cid||user;
   var form=document.createElement('div'); form.className='op-msg-form';
-  form.innerHTML='<textarea maxlength="1000" placeholder="Short note for '+esc(user)+'"></textarea><button type="button" class="admin-act">Send</button>';
+  form.innerHTML='<textarea maxlength="1000" placeholder="Short note for '+esc(user)+'"></textarea><button type="button" class="hv-btn btn-secondary btn-sm admin-act">Send</button>';
   form.querySelector('button').addEventListener('click',function(){
     var text=form.querySelector('textarea').value;
     fetch('/api/contribute/operators/message',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contributor:target,text:text})})
@@ -5361,7 +5348,7 @@ function ccRenderOperatorMessages(messages){
   messages=(messages||[]).filter(function(m){return m&&!m.acknowledged_at;});
   var html='';
   if(messages.length){
-    html=messages.map(function(m){return '<div class="op-msg-banner"><b>Message from the hive operator</b><pre>'+esc(m.text||'')+'</pre><div class="op-msg-actions"><input class="op-msg-reply" data-id="'+esc(m.id)+'" placeholder="Optional short reply"><button type="button" class="admin-act" data-role="ack-operator-message" data-id="'+esc(m.id)+'">Acknowledge</button></div></div>';}).join('');
+    html=messages.map(function(m){return '<div class="op-msg-banner"><b>Message from the hive operator</b><pre>'+esc(m.text||'')+'</pre><div class="op-msg-actions"><input class="op-msg-reply" data-id="'+esc(m.id)+'" placeholder="Optional short reply"><button type="button" class="hv-btn btn-secondary btn-sm admin-act" data-role="ack-operator-message" data-id="'+esc(m.id)+'">Acknowledge</button></div></div>';}).join('');
   }
   mounts.forEach(function(el){if(el)el.innerHTML=html;});
 }
@@ -5415,9 +5402,9 @@ function ccWallPostHTML(p){
     evidence='<div class="ops-note">model evidence: '+(p.model_evidence.runs||0)+' runs · '+Math.round((p.model_evidence.verified_pr_share||0)*100)+'%% verified PR · '+Math.round((p.model_evidence.failure_rate||0)*100)+'%% failed</div>';
   }
   var controls='';
-  if(ccMeUsername&&p.author&&p.author.toLowerCase()===ccMeUsername.toLowerCase())controls+='<button type="button" class="admin-act" data-wall-del="'+esc(p.id)+'">delete</button>';
-  else if(ccMeUsername)controls+='<button type="button" class="admin-act" data-wall-flag="'+esc(p.id)+'">flag</button>';
-  if(adminEnabled)controls+='<button type="button" class="admin-act" data-wall-hide="'+esc(p.id)+'">hide</button>';
+  if(ccMeUsername&&p.author&&p.author.toLowerCase()===ccMeUsername.toLowerCase())controls+='<button type="button" class="hv-btn btn-secondary btn-sm admin-act" data-wall-del="'+esc(p.id)+'">delete</button>';
+  else if(ccMeUsername)controls+='<button type="button" class="hv-btn btn-secondary btn-sm admin-act" data-wall-flag="'+esc(p.id)+'">flag</button>';
+  if(adminEnabled)controls+='<button type="button" class="hv-btn btn-secondary btn-sm admin-act" data-wall-hide="'+esc(p.id)+'">hide</button>';
   var hidden=p.hidden?'<span class="pill pill-blocked">hidden</span> ':'';
   var tagLine=(tags.model||tags.backend||tags.repo)?'<div class="ops-note">'+(tags.model?('model '+esc(tags.model)+' '):'')+(tags.backend?('backend '+esc(tags.backend)+' '):'')+(tags.repo?('repo '+esc(tags.repo)):'')+'</div>':'';
   var head='<b>'+esc(p.author||'unknown')+'</b> '+tierBadge(p.author_trust_tier,'tier-lb')+' <span class="ops-note">'+(p.author_verified_prs||0)+' verified PRs</span>';
@@ -5887,12 +5874,12 @@ function ccQueueMenuHTML(key,pos,total,isHeld){
       '<input type="text" id="hr-'+esc(key)+'" class="cc-q-holdreason-input" maxlength="200" placeholder="Optional hold reason&hellip;" data-qkey="'+esc(key)+'" aria-label="Optional hold reason" autocomplete="off">'+
     '</div>');
   return '<span class="cc-q-menu-wrap">'+
-    '<button type="button" class="cc-q-menu-btn" aria-haspopup="true" aria-expanded="false" title="More actions" data-qkey="'+esc(key)+'">&#x22EF;</button>'+
+    '<button type="button" class="hv-btn btn-icon btn-sm cc-q-menu-btn" aria-haspopup="true" aria-expanded="false" title="More actions" data-qkey="'+esc(key)+'">&#x22EF;</button>'+
     '<div class="cc-q-menu" role="menu">'+
-      '<button type="button" class="cc-q-act" role="menuitem" data-act="top" data-qkey="'+esc(key)+'"'+(atTop?' disabled style="opacity:.5;cursor:default"':'')+'><span class="cc-q-menu-ic">&#x2B06;</span>Move to top</button>'+
-      '<button type="button" class="cc-q-act" role="menuitem" data-act="bottom" data-qkey="'+esc(key)+'"'+(atBottom?' disabled style="opacity:.5;cursor:default"':'')+'><span class="cc-q-menu-ic">&#x2B07;</span>Move to bottom</button>'+
+      '<button type="button" class="hv-btn btn-ghost btn-sm cc-q-act btn-danger" role="menuitem" data-act="top" data-qkey="'+esc(key)+'"'+(atTop?' disabled':'')+'><span class="cc-q-menu-ic">&#x2B06;</span>Move to top</button>'+
+      '<button type="button" class="hv-btn btn-ghost btn-sm cc-q-act btn-danger" role="menuitem" data-act="bottom" data-qkey="'+esc(key)+'"'+(atBottom?' disabled':'')+'><span class="cc-q-menu-ic">&#x2B07;</span>Move to bottom</button>'+
       '<div class="cc-q-menu-sep"></div>'+
-      '<button type="button" class="cc-q-act" role="menuitem" data-act="hold" data-held="'+(isHeld?'1':'0')+'" data-qkey="'+esc(key)+'"><span class="cc-q-menu-ic">'+holdIcon+'</span>'+holdLabel+'</button>'+
+      '<button type="button" class="hv-btn btn-ghost btn-sm cc-q-act" role="menuitem" data-act="hold" data-held="'+(isHeld?'1':'0')+'" data-qkey="'+esc(key)+'"><span class="cc-q-menu-ic">'+holdIcon+'</span>'+holdLabel+'</button>'+
       reasonRow+
       '<div class="cc-q-menu-sep"></div>'+
       '<div class="cc-q-moverow">'+
@@ -7005,7 +6992,7 @@ poll();setInterval(poll,3000);
 <div class="admin-modal">
 <h4 id="admin-confirm-title">Confirm</h4>
 <p id="admin-confirm-msg"></p>
-<div class="admin-modal-btns"><button type="button" id="admin-confirm-cancel">Cancel</button><button type="button" class="confirm" id="admin-confirm-ok">Confirm</button></div>
+<div class="admin-modal-btns"><button class="hv-btn btn-primary" type="button" id="admin-confirm-cancel">Cancel</button><button type="button" class="confirm" id="admin-confirm-ok">Confirm</button></div>
 </div>
 </div>
 <div style="margin-top:40px;padding:16px 0;border-top:1px solid var(--cc-border);font-size:.75rem;color:var(--cc-muted);display:flex;align-items:center;gap:8px">

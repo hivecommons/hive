@@ -115,20 +115,7 @@
     code { background: #17212d; border: 1px solid var(--line); padding: 2px 6px; border-radius: 4px; font-size: 0.85rem; color: var(--amber); }
 
     /* ── Buttons ── */
-    .button {
-      border-radius: .55rem;
-      justify-content: center;
-      align-items: center;
-      min-height: 3rem;
-      padding: .85rem 1.2rem;
-      font-weight: 800;
-      display: inline-flex;
-      transition: all .2s;
-    }
-    .button.primary { background: var(--amber); color: #17110a; }
-    .button.primary:hover { background: #f8d87a; }
-    .button.tertiary { border: 1px solid var(--line); color: #d7deea; }
-    .button.tertiary:hover { border-color: var(--amber); color: var(--text); }
+    .button { text-decoration: none; }
 
     /* ── ACMM ladder ── */
     .acmm-grid {
@@ -288,8 +275,8 @@
       <h1>How Hive works</h1>
       <p class="lede">Hive is an open source AI agent orchestration system. A fleet of specialized agents autonomously maintains software repositories &mdash; open source or private &mdash; triaging issues, writing fixes, opening PRs, and merging on green CI. A governor dynamically adjusts agent pace based on issue queue depth, and a deterministic pipeline gates every change.</p>
       <div style="margin-top:1.6rem;display:flex;gap:.8rem;flex-wrap:wrap">
-        <a class="button primary" href="/get-started">Request a Hive</a>
-        <a class="button tertiary" href="https://arxiv.org/abs/2604.09388" target="_blank">Read the ACMM paper</a>
+        <a class="hv-btn btn-primary button primary" href="/get-started">Request a Hive</a>
+        <a class="hv-btn btn-ghost button tertiary" href="https://arxiv.org/abs/2604.09388" target="_blank">Read the ACMM paper</a>
       </div>
     </section>
 
