@@ -237,14 +237,14 @@ else
   bad "the guard still repairs while its watcher is unavailable" "body never ran"
 fi
 
-# ── 6b. The watch depth reaches the credential (#5734) ──────────────────────
-# agy keeps its OAuth token one directory BELOW the watched dir, and
-# `inotifywait` without -r reports events only for entries directly inside the
-# watched directory — so the .gemini guard could never fire, for the entire life
-# of every container. It read as protection while doing nothing.
+# ── 6b. The watch depth reaches the credential without walking brain/ (#8712) ─
+# agy keeps its OAuth token one directory below .gemini, but its brain/ tree is
+# large and churny. The guard therefore watches antigravity-cli directly and
+# non-recursively: that still sees token rename/write events, without re-walking
+# thousands of directories on every event.
 #
 # Asserted by running hive_watch_once against a stub that records its argv,
-# because the whole failure was a flag that was not there.
+# because the old failures were flags and dispatch paths that looked plausible.
 ARGV_LOG="$WORK/inotify-argv.log"
 cat > "$STUB/inotifywait" <<STUBEOF
 #!/bin/sh
@@ -276,12 +276,18 @@ case "$FLAT_CALL" in
   *) ok "a non-recursive guard stays non-recursive" ;;
 esac
 
-# The dispatch itself: .gemini must be the recursive one, .claude must not be.
+# The dispatch itself: .gemini must be bounded to antigravity-cli and must not
+# recurse into agy's brain/ tree. .claude must not recurse either.
 GEMINI_DISPATCH="$(grep -E '^ *hive_guard_forever gemini ' "$ENTRYPOINT" || true)"
 case "$GEMINI_DISPATCH" in
-  *" -r "*|*" -r&"*|*" -r &"*) ok "the .gemini guard is dispatched recursively" ;;
-  *) bad "the .gemini guard is dispatched recursively" \
-         "agy's token is at .gemini/antigravity-cli/, one level below the watch: $GEMINI_DISPATCH" ;;
+  *"/data/home/.gemini/antigravity-cli/"*) ok "the .gemini guard watches agy's bounded state directory" ;;
+  *) bad "the .gemini guard watches agy's bounded state directory" \
+         "agy's token parent should be watched directly: $GEMINI_DISPATCH" ;;
+esac
+case "$GEMINI_DISPATCH" in
+  *" -r "*|*" -r&"*|*" -r &"*) bad "the .gemini guard is not recursive" \
+         "agy's brain/ tree is too large and churny for recursive inotify: $GEMINI_DISPATCH" ;;
+  *) ok "the .gemini guard is not recursive" ;;
 esac
 CLAUDE_DISPATCH="$(grep -E '^ *hive_guard_forever claude ' "$ENTRYPOINT" || true)"
 case "$CLAUDE_DISPATCH" in
@@ -297,7 +303,7 @@ if grep -qE 'mkdir -p[^&|;]*/data/home/\.gemini/antigravity-cli' "$ENTRYPOINT"; 
   ok "the credential's directory is pre-created at boot, before the watch is set up"
 else
   bad "the credential's directory is pre-created at boot" \
-      "a recursive watch established before agy creates .gemini/antigravity-cli/ may never cover it"
+      "the direct antigravity-cli watch cannot be established before the directory exists"
 fi
 
 # Restore the always-failing stub for any later test.
