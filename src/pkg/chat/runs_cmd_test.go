@@ -467,3 +467,47 @@ func TestFetchRunAndRunsPropagateDecodeErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestCmdRunsListStatusAndSpecAliases(t *testing.T) {
+	var specPosted bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.EscapedPath() {
+		case "/api/runs":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"key": "acme/widgets#7", "stage": "spec", "waiting_on": "agent"}})
+		case "/api/runs/acme%2Fwidgets%237":
+			_ = json.NewEncoder(w).Encode(map[string]any{"key": "acme/widgets#7", "stage": "spec", "gen": 1, "waiting_on": "agent"})
+		case "/api/runs/spec":
+			if r.Method != http.MethodPost {
+				t.Fatalf("spec method = %s", r.Method)
+			}
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode spec body: %v", err)
+			}
+			if body["target"] != "acme/widgets#9" {
+				t.Fatalf("spec body = %#v", body)
+			}
+			specPosted = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path %q", r.URL.EscapedPath())
+		}
+	}))
+	defer ts.Close()
+
+	s := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL, AllowedUsers: []string{"uid:owner"}}, discardLogger())
+	s.client = ts.Client()
+	ownerCtx := context.WithValue(context.Background(), commandRoleContextKey{}, "owner")
+	if got, err := s.cmdRuns(ownerCtx, "list"); err != nil || !strings.Contains(got, "acme/widgets#7") {
+		t.Fatalf("list = %q err=%v", got, err)
+	}
+	if got, err := s.cmdRuns(ownerCtx, "status acme/widgets#7"); err != nil || !strings.Contains(got, "Run `acme/widgets#7`") {
+		t.Fatalf("status = %q err=%v", got, err)
+	}
+	if got, err := s.cmdRuns(ownerCtx, "spec acme/widgets#9"); err != nil || !strings.Contains(got, "Started spec run") {
+		t.Fatalf("spec = %q err=%v", got, err)
+	}
+	if !specPosted {
+		t.Fatal("spec endpoint was not called")
+	}
+}

@@ -93,21 +93,37 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		RunWaitTimeoutSeconds      *int    `json:"runWaitTimeoutSeconds"`
 		RunWaitSeverity            *string `json:"runWaitSeverity"`
 
-		PlanMatchEnabled          *bool   `json:"planMatchEnabled"`
-		SpektacularEnabled        *bool   `json:"spektacularEnabled"`
-		SpektacularBinary         *string `json:"spektacularBinary"`
-		PublicationEnabled        *bool   `json:"publicationEnabled"`
-		PublicationPrivateChannel *string `json:"publicationPrivateChannel"`
-		PublicationOwner          *string `json:"publicationOwner"`
+		PlanMatchEnabled          *bool     `json:"planMatchEnabled"`
+		SpektacularEnabled        *bool     `json:"spektacularEnabled"`
+		SpektacularBinary         *string   `json:"spektacularBinary"`
+		SpektacularPollS          *int      `json:"spektacularPollS"`
+		MaxStageRetries           *int      `json:"maxStageRetries"`
+		RunStages                 *bool     `json:"runStages"`
+		TriageEnabled             *bool     `json:"triageEnabled"`
+		TriageSpecLabels          *[]string `json:"triageSpecLabels"`
+		TriageFixLabels           *[]string `json:"triageFixLabels"`
+		TriageMinBodyChars        *int      `json:"triageMinBodyChars"`
+		TriageClarifyComment      *bool     `json:"triageClarifyComment"`
+		PublicationEnabled        *bool     `json:"publicationEnabled"`
+		PublicationPrivateChannel *string   `json:"publicationPrivateChannel"`
+		PublicationOwner          *string   `json:"publicationOwner"`
 		// #8361: the report-only Flue external-execution binding. Endpoint
 		// and workflow version stay yaml-only; the dialog flips the toggle
 		// and picks the mode.
-		ExtFlueEnabled *bool   `json:"extFlueEnabled"`
-		ExtFlueMode    *string `json:"extFlueMode"`
+		ExtFlueEnabled         *bool   `json:"extFlueEnabled"`
+		ExtFlueMode            *string `json:"extFlueMode"`
+		ExtFlueEndpoint        *string `json:"extFlueEndpoint"`
+		ExtFlueWorkflowVersion *string `json:"extFlueWorkflowVersion"`
 		// #8361 step 9: the OMP workbench host, an independent toggle beside
 		// the Flue one. Workflow version stays yaml-only.
 		ExtOMPEnabled *bool   `json:"extOmpEnabled"`
 		ExtOMPMode    *string `json:"extOmpMode"`
+
+		WavefrontEnabled     *bool   `json:"wavefrontEnabled"`
+		WavefrontPath        *string `json:"wavefrontPath"`
+		WavefrontURL         *string `json:"wavefrontUrl"`
+		WavefrontRepo        *string `json:"wavefrontRepo"`
+		WavefrontReceiptsDir *string `json:"wavefrontReceiptsDir"`
 
 		ClaimsEnabled *bool `json:"claimsEnabled"`
 		ClaimsTTLS    *int  `json:"claimsTtlS"`
@@ -130,6 +146,8 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	cfg := s.deps.Config
+
 	// --- validate before mutating anything ---
 	endpoint := firstStringPtr(body.OTelEndpoint, body.TracingEndpoint)
 	if endpoint != nil {
@@ -151,6 +169,18 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	}
 	if body.ClaimsTTLS != nil && *body.ClaimsTTLS < 0 {
 		jsonError(w, "claims ttl_s must be zero (default) or positive", http.StatusBadRequest)
+		return
+	}
+	if body.SpektacularPollS != nil && *body.SpektacularPollS <= 0 {
+		jsonError(w, "spektacular poll interval must be positive", http.StatusBadRequest)
+		return
+	}
+	if body.MaxStageRetries != nil && *body.MaxStageRetries < 0 {
+		jsonError(w, "max stage retries must be zero (default) or positive", http.StatusBadRequest)
+		return
+	}
+	if body.TriageMinBodyChars != nil && *body.TriageMinBodyChars < 0 {
+		jsonError(w, "triage min body chars must be zero (default) or positive", http.StatusBadRequest)
 		return
 	}
 	if body.ExtFlueMode != nil && !config.ValidFlueBindingMode(*body.ExtFlueMode) {
@@ -195,6 +225,28 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
+	if body.WavefrontEnabled != nil || body.WavefrontPath != nil || body.WavefrontURL != nil || body.WavefrontRepo != nil || body.WavefrontReceiptsDir != nil {
+		probe := cfg.Governor.WorkSource.Wavefront
+		if body.WavefrontEnabled != nil {
+			probe.Enabled = *body.WavefrontEnabled
+		}
+		if body.WavefrontPath != nil {
+			probe.Path = strings.TrimSpace(*body.WavefrontPath)
+		}
+		if body.WavefrontURL != nil {
+			probe.URL = strings.TrimSpace(*body.WavefrontURL)
+		}
+		if body.WavefrontRepo != nil {
+			probe.Repo = strings.TrimSpace(*body.WavefrontRepo)
+		}
+		if body.WavefrontReceiptsDir != nil {
+			probe.ReceiptsDir = strings.TrimSpace(*body.WavefrontReceiptsDir)
+		}
+		if err := probe.Validate(); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 	if body.RotationProviders != nil {
 		knownBackends := governorFeatureBackendIDs()
 		for provider, providerCfg := range *body.RotationProviders {
@@ -228,7 +280,6 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// --- apply ---
-	cfg := s.deps.Config
 	if body.IoscanEnabled != nil {
 		v := *body.IoscanEnabled
 		cfg.Ioscan.Enabled = &v
@@ -308,9 +359,37 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	}
 	if body.SpektacularEnabled != nil {
 		cfg.Runs.Spektacular.Enabled = *body.SpektacularEnabled
+		if *body.SpektacularEnabled {
+			cfg.Governor.WorkSource.RunStages = true
+		}
 	}
 	if body.SpektacularBinary != nil {
 		cfg.Runs.Spektacular.Binary = strings.TrimSpace(*body.SpektacularBinary)
+	}
+	if body.SpektacularPollS != nil {
+		cfg.Runs.Spektacular.PollIntervalS = *body.SpektacularPollS
+	}
+	if body.MaxStageRetries != nil {
+		cfg.Runs.MaxStageRetries = *body.MaxStageRetries
+	}
+	if body.RunStages != nil && !cfg.Runs.Spektacular.Enabled {
+		cfg.Governor.WorkSource.RunStages = *body.RunStages
+	}
+	if body.TriageEnabled != nil {
+		cfg.Runs.Triage.Enabled = *body.TriageEnabled
+	}
+	if body.TriageSpecLabels != nil {
+		cfg.Runs.Triage.SpecLabels = trimStringSlice(*body.TriageSpecLabels)
+	}
+	if body.TriageFixLabels != nil {
+		cfg.Runs.Triage.FixLabels = trimStringSlice(*body.TriageFixLabels)
+	}
+	if body.TriageMinBodyChars != nil {
+		cfg.Runs.Triage.MinBodyChars = *body.TriageMinBodyChars
+	}
+	if body.TriageClarifyComment != nil {
+		v := *body.TriageClarifyComment
+		cfg.Runs.Triage.ClarifyComment = &v
 	}
 	if body.PublicationEnabled != nil {
 		cfg.Publication.Enabled = *body.PublicationEnabled
@@ -345,11 +424,32 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.ExtFlueMode != nil {
 		cfg.Runs.External.Flue.Mode = strings.TrimSpace(*body.ExtFlueMode)
 	}
+	if body.ExtFlueEndpoint != nil {
+		cfg.Runs.External.Flue.Endpoint = strings.TrimSpace(*body.ExtFlueEndpoint)
+	}
+	if body.ExtFlueWorkflowVersion != nil {
+		cfg.Runs.External.Flue.WorkflowVersion = strings.TrimSpace(*body.ExtFlueWorkflowVersion)
+	}
 	if body.ExtOMPEnabled != nil {
 		cfg.Runs.External.OMP.Enabled = *body.ExtOMPEnabled
 	}
 	if body.ExtOMPMode != nil {
 		cfg.Runs.External.OMP.Mode = strings.TrimSpace(*body.ExtOMPMode)
+	}
+	if body.WavefrontEnabled != nil {
+		cfg.Governor.WorkSource.Wavefront.Enabled = *body.WavefrontEnabled
+	}
+	if body.WavefrontPath != nil {
+		cfg.Governor.WorkSource.Wavefront.Path = strings.TrimSpace(*body.WavefrontPath)
+	}
+	if body.WavefrontURL != nil {
+		cfg.Governor.WorkSource.Wavefront.URL = strings.TrimSpace(*body.WavefrontURL)
+	}
+	if body.WavefrontRepo != nil {
+		cfg.Governor.WorkSource.Wavefront.Repo = strings.TrimSpace(*body.WavefrontRepo)
+	}
+	if body.WavefrontReceiptsDir != nil {
+		cfg.Governor.WorkSource.Wavefront.ReceiptsDir = strings.TrimSpace(*body.WavefrontReceiptsDir)
 	}
 	if body.RotationEnabled != nil {
 		cfg.Governor.Rotation.Enabled = *body.RotationEnabled
@@ -372,7 +472,7 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	}
 	s.auditFromRequest(r, "config_governor_features", auditDetail("section", "features"), "")
 	s.refreshAndPersist()
-	okResponse(w, map[string]string{"status": "updated"})
+	jsonResponse(w, s.featuresSectionWithLinked(cfg))
 }
 
 // featuresSectionResponse builds the opt-in-features payload for the governor
@@ -431,7 +531,9 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"extFlueEnabled":                  cfg.Runs.External.Flue.Enabled,
 		"extFlueMode":                     cfg.FlueBindingMode(),
 		"extFlueModes":                    config.FlueBindingModes(),
+		"extFlueEndpoint":                 cfg.Runs.External.Flue.Endpoint,
 		"extFlueEndpointSet":              strings.TrimSpace(cfg.Runs.External.Flue.Endpoint) != "",
+		"extFlueWorkflowVersion":          cfg.Runs.External.Flue.WorkflowVersion,
 		"extOmpEnabled":                   cfg.Runs.External.OMP.Enabled,
 		"extOmpMode":                      cfg.OMPBindingMode(),
 		"extOmpModes":                     config.ExternalBindingModes(),
@@ -458,6 +560,17 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"spektacularBinary":               cfg.Runs.Spektacular.Binary,
 		"spektacularPollS":                int(cfg.Runs.Spektacular.PollInterval().Seconds()),
 		"maxStageRetries":                 cfg.Runs.MaxStageRetriesOrDefault(),
+		"runStages":                       cfg.Governor.WorkSource.RunStages,
+		"triageEnabled":                   cfg.Runs.Triage.Enabled,
+		"triageSpecLabels":                cfg.Runs.Triage.EffectiveSpecLabels(),
+		"triageFixLabels":                 cfg.Runs.Triage.EffectiveFixLabels(),
+		"triageMinBodyChars":              cfg.Runs.Triage.EffectiveMinBodyChars(),
+		"triageClarifyComment":            cfg.Runs.Triage.ShouldClarifyComment(),
+		"wavefrontEnabled":                cfg.Governor.WorkSource.Wavefront.Enabled,
+		"wavefrontPath":                   cfg.Governor.WorkSource.Wavefront.Path,
+		"wavefrontUrl":                    cfg.Governor.WorkSource.Wavefront.URL,
+		"wavefrontRepo":                   cfg.Governor.WorkSource.Wavefront.Repo,
+		"wavefrontReceiptsDir":            cfg.Governor.WorkSource.Wavefront.ReceiptsDir,
 		"autonomyAutoPromote":             cfg.Autonomy.AutoPromote,
 		"autonomyAutoDemote":              cfg.Autonomy.AutoDemote,
 		"autonomyPromoteAfter":            cfg.Autonomy.EffectivePromoteAfter(),
@@ -470,6 +583,16 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"rotationProviders":               rotationCfg.Providers,
 		"rotationAgents":                  rotationCfg.AgentTiers,
 	}
+}
+
+func trimStringSlice(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func validRotationTier(tier string) bool {

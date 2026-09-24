@@ -21,12 +21,17 @@ runs:
     poll_interval_s: 30       # default
 ```
 
-The Governor dialog's Features panel exposes the toggle and the binary path
-under "Long-running runs"; the poll interval and the retry budget are yaml
-only. The same keys are accepted by `PUT /api/config/governor/features` as
-`spektacularEnabled` and `spektacularBinary`. The runner is installed at boot
-(`cmd/hive`, `wireSpektacularRunner`), so a change to the toggle takes effect
-on the next boot, like the other feature switches.
+Hosted hives with no config file can set this from **Settings → Extensions →
+Spektacular**. That card exposes the toggle, binary path, poll interval, stage
+retry budget, checkpoint gates, triage labels/options, and the run-stage work
+source flag. When Spektacular is enabled from the dashboard, Hive also sets
+`governor.work_source.run_stages=true` because staged leases must be visible to
+the work-source loop. The same backward-compatible keys remain accepted by
+`PUT /api/config/governor/features` (`spektacularEnabled`,
+`spektacularBinary`, plus the newer poll/retry/triage/checkpoint fields). The
+runner is installed at boot (`cmd/hive`, `wireSpektacularRunner`), so runner
+process changes take effect on the next boot; dashboard-visible config is
+persisted immediately.
 
 Package layout: `pkg/spektacular` owns the CLI boundary, the poll loop, and
 the receipt; `pkg/dashboard` exposes its lease registry as a primitives-only

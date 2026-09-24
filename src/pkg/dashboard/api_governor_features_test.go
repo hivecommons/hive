@@ -652,3 +652,61 @@ func TestCovGov_FeaturesExtOMPToggle(t *testing.T) {
 		t.Fatal("toggle off did not disable the host")
 	}
 }
+
+func TestCovGov_FeaturesExtensionsRoundTrip(t *testing.T) {
+	s := covApiServer(t)
+	body := map[string]any{
+		"spektacularEnabled":     true,
+		"spektacularPollS":       15,
+		"maxStageRetries":        4,
+		"triageEnabled":          true,
+		"triageSpecLabels":       []string{"design", "run/spec"},
+		"triageFixLabels":        []string{"bug"},
+		"triageMinBodyChars":     120,
+		"triageClarifyComment":   false,
+		"extFlueEnabled":         true,
+		"extFlueMode":            config.FlueBindingModeReportOnly,
+		"extFlueEndpoint":        " https://flue.example ",
+		"extFlueWorkflowVersion": " wf-v1 ",
+		"wavefrontEnabled":       true,
+		"wavefrontUrl":           "https://wavefront.example/graph.json",
+		"wavefrontRepo":          "acme/widgets",
+		"wavefrontReceiptsDir":   " /data/wavefront/receipts ",
+	}
+	if rec := doPut(s, "/api/config/governor/features", body); rec.Code != http.StatusOK {
+		t.Fatalf("extensions PUT: %d %s", rec.Code, rec.Body.String())
+	}
+	cfg := s.deps.Config
+	if !cfg.Runs.Spektacular.Enabled || cfg.Runs.Spektacular.PollIntervalS != 15 || cfg.Runs.MaxStageRetries != 4 || !cfg.Governor.WorkSource.RunStages {
+		t.Fatalf("spektacular config = %+v work_source=%+v", cfg.Runs, cfg.Governor.WorkSource)
+	}
+	if !cfg.Runs.Triage.Enabled || cfg.Runs.Triage.MinBodyChars != 120 || cfg.Runs.Triage.ShouldClarifyComment() {
+		t.Fatalf("triage config = %+v", cfg.Runs.Triage)
+	}
+	if cfg.Runs.External.Flue.Endpoint != "https://flue.example" || cfg.Runs.External.Flue.WorkflowVersion != "wf-v1" {
+		t.Fatalf("flue config = %+v", cfg.Runs.External.Flue)
+	}
+	if !cfg.Governor.WorkSource.Wavefront.Enabled || cfg.Governor.WorkSource.Wavefront.URL == "" || cfg.Governor.WorkSource.Wavefront.Repo != "acme/widgets" {
+		t.Fatalf("wavefront config = %+v", cfg.Governor.WorkSource.Wavefront)
+	}
+	got := featuresSectionResponse(cfg)
+	if got["runStages"] != true || got["extFlueEndpoint"] != "https://flue.example" || got["wavefrontRepo"] != "acme/widgets" {
+		t.Fatalf("features response = %v", got)
+	}
+}
+
+func TestCovGov_FeaturesExtensionsValidation(t *testing.T) {
+	s := covApiServer(t)
+	bad := []map[string]any{
+		{"spektacularPollS": 0},
+		{"maxStageRetries": -1},
+		{"triageMinBodyChars": -1},
+		{"wavefrontEnabled": true, "wavefrontPath": "graph.json", "wavefrontUrl": "https://wavefront.example/graph.json", "wavefrontRepo": "acme/widgets"},
+		{"wavefrontEnabled": true, "wavefrontUrl": "ftp://wavefront.example/graph.json", "wavefrontRepo": "acme/widgets"},
+	}
+	for _, body := range bad {
+		if rec := doPut(s, "/api/config/governor/features", body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("body %#v: got %d want 400 (%s)", body, rec.Code, rec.Body.String())
+		}
+	}
+}

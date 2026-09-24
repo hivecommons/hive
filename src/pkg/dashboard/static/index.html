@@ -8000,6 +8000,8 @@
             ${run.assignee ? `<span class="status-badge" title="Assignee">${escapeHtml(run.assignee)}</span>` : ''}
           </div>
           <div style="margin-top:10px;font-size:0.78rem;color:var(--muted)">${runArtifactLinks(run)}</div>
+          ${(run.artifact_name || run.document_status || run.current_step) ? `<div>${run.artifact_name ? `<span class="status-badge" title="Artifact name">artifact: ${escapeHtml(run.artifact_name)}</span>` : ''}${run.document_status ? `<span class="status-badge" title="Spektacular document_status">document: ${escapeHtml(run.document_status)}</span>` : ''}${run.current_step ? `<span class="status-badge" title="Spektacular current_step">step: ${escapeHtml(run.current_step)}</span>` : ''}</div>` : ''}
+          <div class="text-muted">Powered by <a href="https://docs.hivecommons.dev/docs/hive/spektacular-runs" target="_blank" rel="noopener">Spektacular</a></div>
           ${actions}
         </div>`;
       }).join('');
@@ -8049,7 +8051,9 @@
         panel.innerHTML = `<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start"><div><h3 style="margin:0 0 4px">${escapeHtml(run.title || run.key || 'Run detail')}</h3><div style="color:var(--muted);font-size:0.8rem">${escapeHtml(run.key || '')}${run.repo ? ' · ' + escapeHtml(run.repo) : ''}</div></div><button class="btn" data-action="closeRunDetail">Close</button></div>
           <div style="margin-top:12px">${runStageRail(run)}</div>
           <div style="margin-top:12px;font-size:0.82rem">Artifacts: ${runArtifactLinks(run)}</div>
+          ${(run.artifact_name || run.document_status || run.current_step) ? `<div><span class="status-badge">artifact: ${escapeHtml(run.artifact_name || 'unknown')}</span><span class="status-badge">document: ${escapeHtml(run.document_status || 'unknown')}</span><span class="status-badge">step: ${escapeHtml(run.current_step || 'unknown')}</span></div>` : ''}
           <h4 style="margin:14px 0 6px">Artifact chain</h4>${stages || '<div style="color:var(--muted);font-size:0.8rem">No stage artifacts recorded.</div>'}
+          <div class="text-muted">Powered by <a href="https://docs.hivecommons.dev/docs/hive/spektacular-runs" target="_blank" rel="noopener">Spektacular</a></div>
           <h4 style="margin:14px 0 6px">Approval and audit records</h4>${approval}`;
       } catch (e) {
         panel.innerHTML = `<div style="color:var(--red)">Failed to load run detail: ${escapeHtml(e && e.message ? e.message : e)}</div>`;
@@ -19439,7 +19443,7 @@ function burnAreaChart() {
     // which is read-only hub-synced user/role data. It sits next to Model
     // Gateways because both are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Project Observability', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Extensions', 'Project Observability', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -20054,6 +20058,7 @@ function burnAreaChart() {
         // The Features tab's Linear Agent panel loads install/session state
         // from its own endpoint (owner-only; the render is a static shell).
         if (tabId === 'Features') loadLinearAgentStatus();
+        if (tabId === 'Extensions') loadExtensionRelayStatus();
         if (tabId === 'Appearance') loadThemeConfig();
       }
       // Keep the Save button's enabled state in lockstep with the repos/default
@@ -20200,6 +20205,7 @@ function burnAreaChart() {
         case 'Security': return renderGovSecurity(d.security || {});
         case 'Access': return renderGovSecurity(d.security || {});
         case 'Features': return renderGovFeatures(d.features || {}, d.auto_merge || {}, d.review || {});
+        case 'Extensions': return renderGovExtensions(d.features || {});
         case 'Project Observability': return renderGovProjectObservability(d.project_observability || {});
         case 'Advisory': return renderGovAdvisory(d.advisory || {});
         case 'Work Source': return renderGovWorkSource(d.work_source || {});
@@ -25398,6 +25404,79 @@ function burnAreaChart() {
     // renderGovFeatures renders operational features that are not security posture
     // controls. ioscan moved to Security/Input Defense; OpenTelemetry and retro
     // stay here as observability/quality-loop settings.
+
+    function extensionRelayURL() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      return proto + '//' + location.host + '/api/contribute/ws';
+    }
+
+    function extensionCard(title, subtitle, body) {
+      return `<div>
+        <div><div><h3>${title}</h3><div>${subtitle}</div></div></div>${body}</div>`;
+    }
+
+    function renderRelayConnectionBlock(capability) {
+      const relayURL = extensionRelayURL();
+      return `<div>
+        <div>Connection</div>
+        <div class="config-field"><label>Relay URL</label><input type="text" readonly value="${esc(relayURL)}"></div>
+        <div class="config-field"><label>Required capability</label><input type="text" readonly value="${esc(capability)}"></div>
+        <div><a class="hv-btn btn-secondary btn-sm" href="/contribute" target="_blank" rel="noopener">Mint / rotate registration token</a><span>Uses the existing /contribute registration-token flow; paste the token into the external relay.</span></div>
+        <div><b>Connected peers declaring <code>${esc(capability)}</code></b><div id="ext-peers-${esc(capability).replace(/[^a-zA-Z0-9_-]/g,'-')}">Loading…</div></div>
+      </div>`;
+    }
+
+    function renderGovExtensions(f) {
+      const status = window._lastStatus || {};
+      const spek = status.spektacular || status.spektacular_status || (((status.health || {}).spektacular) || {});
+      const spekVersion = spek.version || spek.binary_version || 'unknown';
+      const runStagesAuto = !!f.spektacularEnabled;
+      const flueBuilt = !!f.extFlueLinked;
+      return `<div>
+        <p>Configure built-in and relay-backed extensions from the dashboard. Runner-process settings take effect on next boot where the existing runner reads config; relay lists update live when peers connect.</p>
+        ${extensionCard('Spektacular', 'Built-in long-running spec → plan → implement runner', `
+          <div class="config-toggle"><div class="config-toggle-switch ${f.spektacularEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="spektacularEnabled"></div><span class="config-toggle-label">Enabled</span></div>
+          <div class="config-field-row"><div class="config-field"><label>Binary</label><input type="text" value="${esc(f.spektacularBinary || '')}" placeholder="spektacular" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularBinary" data-arg-types="s,s,w"></div><div class="config-field"><label>Detected version</label><input type="text" readonly value="${esc(spekVersion)}"></div></div>
+          <div class="config-field-row"><div class="config-field"><label>Poll interval seconds</label><input type="number" min="1" step="1" value="${esc(String(f.spektacularPollS || 30))}" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularPollS" data-arg-types="s,s,N"></div><div class="config-field"><label>Max stage retries</label><input type="number" min="0" step="1" value="${esc(String(f.maxStageRetries || 2))}" data-change-action="markDirty" data-arg0="features" data-arg1="maxStageRetries" data-arg-types="s,s,N"></div></div>
+          <div><b>Checkpoints</b><div>${['Spec','Plan','Implement'].map(n => `<label><input type="checkbox" ${f['checkpoint'+n+'Enabled'] ? 'checked' : ''} data-change-action="markDirty" data-arg0="features" data-arg1="checkpoint${n}Enabled" data-arg-types="s,s,c"> ${n}</label>`).join('')}</div></div>
+          <div><b>Triage</b><div class="config-toggle"><div class="config-toggle-switch ${f.triageEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="triageEnabled"></div><span class="config-toggle-label">Enabled</span></div>
+            <div class="config-field-row"><div class="config-field"><label>Spec labels</label><input type="text" value="${esc((f.triageSpecLabels || []).join(', '))}" data-change-action="markCSVDirty" data-arg0="features" data-arg1="triageSpecLabels" data-arg-types="s,s,w"></div><div class="config-field"><label>Fix labels</label><input type="text" value="${esc((f.triageFixLabels || []).join(', '))}" data-change-action="markCSVDirty" data-arg0="features" data-arg1="triageFixLabels" data-arg-types="s,s,w"></div></div>
+            <div class="config-field-row"><div class="config-field"><label>Min body chars</label><input type="number" min="0" step="1" value="${esc(String(f.triageMinBodyChars || 80))}" data-change-action="markDirty" data-arg0="features" data-arg1="triageMinBodyChars" data-arg-types="s,s,N"></div><div class="config-field"><label>Clarify comment</label><select data-change-action="markBoolDirty" data-arg0="features" data-arg1="triageClarifyComment" data-arg-types="s,s,v"><option value="true" ${f.triageClarifyComment !== false ? 'selected' : ''}>true</option><option value="false" ${f.triageClarifyComment === false ? 'selected' : ''}>false</option></select></div></div>
+          </div>
+          <div><b>Run stages:</b> ${runStagesAuto ? '<span class="status-badge">auto on</span>' : '<span class="status-badge">manual/off</span>'} ${runStagesAuto ? 'Spektacular requires Governor work_source.run_stages, so Hive sets it automatically when enabled.' : 'Enable Spektacular to turn run-stage work on automatically.'}</div>
+          <p><a href="https://docs.hivecommons.dev/docs/hive/spektacular-runs" target="_blank" rel="noopener">Spektacular docs ↗</a></p>`)}
+        ${extensionCard('Flue', flueBuilt ? 'External workflow admission binding' : 'External workflow admission binding (not built into this binary)', `
+          ${flueBuilt ? '' : '<div>This binary was built without the extwork_flue tag; settings can be staged but no Flue peer will dispatch until a tagged build is deployed.</div>'}
+          <div class="config-toggle"><div class="config-toggle-switch ${f.extFlueEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="extFlueEnabled"></div><span class="config-toggle-label">Enabled</span></div>
+          <div class="config-field-row"><div class="config-field"><label>Mode</label><select data-change-action="markDirty" data-arg0="features" data-arg1="extFlueMode" data-arg-types="s,s,v">${(f.extFlueModes || ['shadow','report-only']).map(m => `<option value="${esc(m)}" ${(f.extFlueMode || 'shadow') === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div><div class="config-field"><label>Workflow version</label><input type="text" value="${esc(f.extFlueWorkflowVersion || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="extFlueWorkflowVersion" data-arg-types="s,s,w"></div></div>
+          <div class="config-field"><label>Endpoint</label><input type="text" value="${esc(f.extFlueEndpoint || '')}" placeholder="https://flue.example" data-change-action="markDirty" data-arg0="features" data-arg1="extFlueEndpoint" data-arg-types="s,s,w"></div>
+          ${renderRelayConnectionBlock('ext-exec/flue')}<p><a href="https://github.com/hivecommons/hive/blob/v6/src/docs/design/external-workflow-admission.md" target="_blank" rel="noopener">Flue admission docs ↗</a></p>`)}
+        ${extensionCard('Crustify / Wavefront', 'External migration graph work source over run-stage relays', `
+          <div class="config-toggle"><div class="config-toggle-switch ${f.wavefrontEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="wavefrontEnabled"></div><span class="config-toggle-label">Enabled</span></div>
+          <div class="config-field-row"><div class="config-field"><label>Graph path</label><input type="text" value="${esc(f.wavefrontPath || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="wavefrontPath" data-arg-types="s,s,w"></div><div class="config-field"><label>Graph URL</label><input type="text" value="${esc(f.wavefrontUrl || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="wavefrontUrl" data-arg-types="s,s,w"></div></div>
+          <div class="config-field-row"><div class="config-field"><label>Repo</label><input type="text" value="${esc(f.wavefrontRepo || '')}" placeholder="owner/repo" data-change-action="markDirty" data-arg0="features" data-arg1="wavefrontRepo" data-arg-types="s,s,w"></div><div class="config-field"><label>Receipts dir</label><input type="text" value="${esc(f.wavefrontReceiptsDir || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="wavefrontReceiptsDir" data-arg-types="s,s,w"></div></div>
+          ${renderRelayConnectionBlock('run-stage')}<p><a href="https://github.com/hivecommons/hive/blob/v6/src/docs/work-sources.md#wavefront" target="_blank" rel="noopener">Wavefront docs ↗</a></p>`)}
+        ${extensionCard('Relays', 'Generic contributor relay connection details', `${renderRelayConnectionBlock('*')}<p>Full fleet controls remain in <a href="#config/governor/Hub">Settings → Hub</a> and <a href="/contribute" target="_blank" rel="noopener">/contribute</a>.</p>`)}
+      </div>`;
+    }
+
+    async function loadExtensionRelayStatus() {
+      try {
+        const res = await fetch('/api/contribute/fleet');
+        const data = await res.json();
+        const peers = Array.isArray(data.clankers) ? data.clankers : [];
+        ['ext-exec/flue','run-stage','*'].forEach(cap => {
+          const id = 'ext-peers-' + cap.replace(/[^a-zA-Z0-9_-]/g,'-');
+          const el = document.getElementById(id);
+          if (!el) return;
+          const rows = peers.filter(p => cap === '*' || (((p.capabilities || {}).relay_capabilities || []).includes(cap)));
+          el.innerHTML = rows.length ? rows.map(p => `${esc(p.github_username || p.contributor_id || 'peer')} <span class="status-badge">${esc(((p.capabilities || {}).relay_capabilities || []).join(', ') || 'no capabilities')}</span>`).join('<br>') : 'None connected.';
+        });
+      } catch (e) {
+        document.querySelectorAll('[id^="ext-peers-"]').forEach(el => el.textContent = 'Unable to load relay fleet.');
+      }
+    }
+
     function renderGovFeatures(f, am, rv) {
       f = f || {};
       am = am || {};
@@ -25595,18 +25674,7 @@ function burnAreaChart() {
           <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Claims expire after ${Math.round(Number(f.claimsTtlS || 0) / 60)} minutes.</p>
         </div>
 
-        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Long-running runs <span class="config-info">i<span class="config-tooltip">Spec, plan, and implement stages on one lease. Off by default; an absent runs block is zero behaviour change.</span></span></div>
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${f.spektacularEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="spektacularEnabled"></div>
-            <span class="config-toggle-label">Spektacular stage runner <span class="config-info">i<span class="config-tooltip">Polls the spektacular status verb for every active stage lease and advances the lease when the artifact reaches document_status final. A lease that expires without final is retried up to runs.max_stage_retries (${esc(String(f.maxStageRetries || ''))}) and then escalated for a decision. Hive never opens a Spektacular file; see src/docs/spektacular.md.</span></span></span>
-          </div>
-          <div class="config-field" style="margin-top:10px">
-            <label>Spektacular binary <span class="config-info">i<span class="config-tooltip">Path of the spektacular executable the runner shells out to. Empty resolves spektacular through PATH.</span></span></label>
-            <input type="text" value="${esc(f.spektacularBinary || '')}" placeholder="spektacular" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularBinary" data-arg-types="s,s,w">
-            <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">Poll every ${esc(String(f.spektacularPollS || ''))}s (runs.spektacular.poll_interval_s, yaml only).</p>
-          </div>
-        </div>
+
 
         <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
           <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Provider rotation</div>
@@ -26214,6 +26282,15 @@ function burnAreaChart() {
       if (!el || el.classList.contains('disabled') || el.dataset.disabled === 'true') return;
       const isOn = el.classList.toggle('on');
       markDirty(section, key, isOn);
+    }
+
+    function markCSVDirty(section, key, value) {
+      const arr = String(value || '').split(',').map(s => s.trim()).filter(Boolean);
+      markDirty(section, key, arr);
+    }
+
+    function markBoolDirty(section, key, value) {
+      markDirty(section, key, value === true || value === 'true');
     }
 
     // markDirtyRecommendations reads the three Recommendations controls and

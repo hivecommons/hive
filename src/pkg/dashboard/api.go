@@ -90,6 +90,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/runs/{key}/checkpoint", s.handleRunCheckpointGet)
 	s.mux.HandleFunc("POST /api/runs/{key}/checkpoint", s.handleRunCheckpointDecision)
 	s.mux.HandleFunc("GET /api/runs/{key}", s.handleRunGet)
+	s.mux.HandleFunc("POST /api/runs/spec", s.handleRunSpecStart)
 	s.mux.HandleFunc("POST /api/runs/{key}/reset", s.handleRunReset)
 	s.mux.HandleFunc("GET /api/widget", s.handleWidget)
 	s.mux.HandleFunc("GET /api/pane/{agent}", s.handlePane)
