@@ -15,6 +15,8 @@ const TTYD_PORT = parseInt(process.env.HIVE_TTYD_PORT || '7681', 10);
 const TTYD_URL = `http://127.0.0.1:${TTYD_PORT}`;
 const DASHBOARD_TOKEN = process.env.HIVE_DASHBOARD_TOKEN || '';
 const STATIC_DIR = process.env.HIVE_STATIC_DIR || path.join(__dirname, 'public');
+const GO_PUBLIC_ASSET_PATHS = JSON.parse(fs.readFileSync(path.join(__dirname, 'dashboard_public_assets.json'), 'utf8'));
+const ASSET_PATH_RE = /\.(?:css|js|mjs|map|png|jpe?g|gif|svg|ico|webp|avif|woff2?|ttf|otf|eot|json|txt|xml|webmanifest)$/i;
 // SESSION_KEY was the symmetric key the `hive_hub_user` cookie used to be
 // verified with. AUDIT F23 DELETED THAT LANE — see verifyHubUserCookieEither.
 // The cookie is now verified ONLY against the Ed25519 SESSION_PUBLIC_KEY below,
@@ -1190,6 +1192,23 @@ app.use('/terminal', (req, res, next) => {
   next();
 }, ttydProxy);
 
+const publicAssetProxy = createProxyMiddleware({
+  target: GO_API_URL,
+  changeOrigin: true,
+  on: {
+    error(err, req, res) {
+      console.error(`[asset-proxy] ${req.method} ${redactURL(req.url)} → ${err.message}`);
+      if (res.writeHead) {
+        res.writeHead(502, { 'Content-Type': 'text/plain' });
+        res.end('Dashboard asset unavailable');
+      }
+    },
+  },
+});
+for (const assetPath of GO_PUBLIC_ASSET_PATHS) {
+  app.get(assetPath, publicAssetProxy);
+}
+
 app.use(express.static(STATIC_DIR, { index: false }));
 
 const indexPath = path.join(STATIC_DIR, 'index.html');
@@ -1206,6 +1225,14 @@ function serveIndex(_req, res) {
   // obtains the token only from an operator who pastes it (stored in
   // localStorage), so the served page carries no secret.
   res.sendFile(indexPath);
+}
+
+function serveAssetNotFound(_req, res) {
+  res.status(404).type('text/plain').send('Not found');
+}
+
+function isAssetLikePath(p) {
+  return ASSET_PATH_RE.test(p);
 }
 
 const contributeProxy = createProxyMiddleware({
@@ -1241,7 +1268,13 @@ const snapshotProxy = createProxyMiddleware({
 app.get('/snapshot', snapshotProxy);
 
 app.get('/', serveIndex);
-app.get('/{*splat}', serveIndex);
+app.get('/{*splat}', (req, res) => {
+  if (isAssetLikePath(req.path)) {
+    serveAssetNotFound(req, res);
+    return;
+  }
+  serveIndex(req, res);
+});
 
 const server = app.listen(PROXY_PORT, () => {
   console.log(`[hive-proxy] Dashboard proxy on :${PROXY_PORT} → Go API at ${GO_API_URL}`);

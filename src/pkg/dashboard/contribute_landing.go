@@ -13,6 +13,9 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 )
 
+const contributeDashboardAssetLinksHTML = `<link rel="stylesheet" href="/tokens.css">
+  <link rel="stylesheet" href="/components.css">`
+
 // handleContributeLanding renders the public sign-up page for ClankeR, the
 // contributor relay: it explains the deal, offers per-CLI copy-paste setup
 // commands, and shows a live feed of contributor activity.
@@ -228,7 +231,7 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 	if s.hubProxied() {
 		hubProxiedJS = "true"
 	}
-	fmt.Fprintf(&page, strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(`<!DOCTYPE html>
+	fmt.Fprintf(&page, strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(`<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Contribute to %s</title>
 <!-- #4549 theme FOUC guard. Runs BEFORE the stylesheet below is parsed, so a
      visitor who pinned a theme never sees a frame of the other one. Kept to the
@@ -239,8 +242,7 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
      sha256 for every inline script in the finished document (pkg/dashboard/webstatic);
      it is inline on*= ATTRIBUTES that are forbidden (ADR-0016), which is why the
      button dispatches through data-action instead of onclick. -->
-<link rel="stylesheet" href="/tokens.css">
-  <link rel="stylesheet" href="/components.css">
+{{DASHBOARD_ASSET_LINKS}}
 <script>
 (function(){try{var t=localStorage.getItem('hive.contribute.theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
 </script>
@@ -6951,7 +6953,7 @@ fetch('/api/version').then(function(r){return r.json()}).then(function(d){
   el.innerHTML=dot+' Hive v'+d.version+' ('+d.short+')' + (d.behind?' · <span style="color:var(--cc-amber)">update available</span>':' · up to date');
 }).catch(function(){});
 </script>
-</body></html>`, "{{HIVE_BRANCH}}", upstreamBranch()), "{{HIVE_HUB_PROXIED}}", hubProxiedJS), "{{KNOWLEDGE_STATE_PROTOCOL_VERSION}}", knowledgeStateProtocolVersionJS), projectName, webstatic.MichromaFontFaceCSS, themeHeadHTML, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURLJS, projectNameJS, tierTableRows, customStyleNoticeHTML)
+</body></html>`, "{{HIVE_BRANCH}}", upstreamBranch()), "{{HIVE_HUB_PROXIED}}", hubProxiedJS), "{{KNOWLEDGE_STATE_PROTOCOL_VERSION}}", knowledgeStateProtocolVersionJS), "{{DASHBOARD_ASSET_LINKS}}", contributeDashboardAssetLinksHTML), projectName, webstatic.MichromaFontFaceCSS, themeHeadHTML, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURLJS, projectNameJS, tierTableRows, customStyleNoticeHTML)
 	webstatic.ApplyDocumentScriptSrcElem(w, page.Bytes())
 	_, _ = w.Write(page.Bytes())
 }

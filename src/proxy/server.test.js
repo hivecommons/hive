@@ -5,11 +5,18 @@ import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import crypto from 'crypto';
+import { readFileSync } from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROXY_PORT = 19001;
 const GO_PORT = 19002;
 const TTYD_PORT = 19003;
+const TEST_STATIC_DIR = path.join(__dirname, 'testdata', 'public');
+const GO_PUBLIC_ASSET_PATHS = JSON.parse(readFileSync(path.join(__dirname, 'dashboard_public_assets.json'), 'utf8'));
+const GO_PUBLIC_ASSET_BODIES = Object.fromEntries(
+  GO_PUBLIC_ASSET_PATHS.map((assetPath) => [assetPath, `/* proxied ${assetPath} */\n`]),
+);
+const THEME_CSS_BODY = 'body{--theme-accent:#f0b429}\n';
 
 let goServer, ttydServer, proxyProcess;
 let mockSnapshotFrameAncestors = [];
@@ -48,6 +55,16 @@ function setupMockGoBackend() {
     if (req.url === '/api/snapshot/frame-ancestors') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ origins: mockSnapshotFrameAncestors }));
+      return;
+    }
+    if (req.url === '/api/theme.css') {
+      res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8' });
+      res.end(THEME_CSS_BODY);
+      return;
+    }
+    if (Object.prototype.hasOwnProperty.call(GO_PUBLIC_ASSET_BODIES, req.url)) {
+      res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8' });
+      res.end(GO_PUBLIC_ASSET_BODIES[req.url]);
       return;
     }
     if (req.url === '/snapshot') {
@@ -95,7 +112,7 @@ function startProxy(extraEnv = {}) {
         HIVE_API_PORT: String(GO_PORT),
         HIVE_TTYD_PORT: String(TTYD_PORT),
         HIVE_DASHBOARD_TOKEN: '',
-        HIVE_STATIC_DIR: __dirname,
+        HIVE_STATIC_DIR: TEST_STATIC_DIR,
         NODE_ENV: 'test',
         ...extraEnv,
       },
@@ -167,6 +184,32 @@ async function testHTTPHealth() {
   const data = await resp.json();
   assert.equal(data.status, 'ok');
   console.log('  ✓ /api/health returns 200');
+}
+
+async function testDashboardAssetsProxyToGo() {
+  for (const assetPath of GO_PUBLIC_ASSET_PATHS) {
+    const resp = await fetch(`http://localhost:${PROXY_PORT}${assetPath}`);
+    assert.equal(resp.status, 200, `${assetPath} status`);
+    assert.match(resp.headers.get('content-type') || '', /^text\/css\b/, `${assetPath} content type`);
+    assert.equal(await resp.text(), GO_PUBLIC_ASSET_BODIES[assetPath], `${assetPath} body`);
+  }
+  console.log(`  ✓ ${GO_PUBLIC_ASSET_PATHS.length} public dashboard asset(s) proxy to Go with text/css`);
+}
+
+async function testThemeCSSStillProxiesThroughAPI() {
+  const resp = await fetch(`http://localhost:${PROXY_PORT}/api/theme.css`);
+  assert.equal(resp.status, 200);
+  assert.match(resp.headers.get('content-type') || '', /^text\/css\b/);
+  assert.equal(await resp.text(), THEME_CSS_BODY);
+  console.log('  ✓ /api/theme.css still proxies to Go with text/css');
+}
+
+async function testUnknownAssetDoesNotFallBackToIndex() {
+  const resp = await fetch(`http://localhost:${PROXY_PORT}/missing-dashboard-asset.css`);
+  assert.equal(resp.status, 404);
+  assert.match(resp.headers.get('content-type') || '', /^text\/plain\b/);
+  assert.notEqual(await resp.text(), '<!doctype html><title>proxy test index</title>\n');
+  console.log('  ✓ unknown asset-looking paths return 404 instead of index.html');
 }
 
 async function testDefaultFrameDeny() {
@@ -969,6 +1012,9 @@ try {
   console.log('HTTP tests:');
   await testHTTPHealth();
   await testHTTPContributeStatus();
+  await testDashboardAssetsProxyToGo();
+  await testThemeCSSStillProxiesThroughAPI();
+  await testUnknownAssetDoesNotFallBackToIndex();
   await testDefaultFrameDeny();
 
   console.log('\nWebSocket tests:');
