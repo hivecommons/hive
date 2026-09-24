@@ -80,6 +80,31 @@ const (
 	receiptDirMode  = 0o755
 )
 
+// SetSpektacularStatus stores the startup Spektacular binary probe for /api/status.
+func (s *Server) SetSpektacularStatus(status FrontendSpektacular) {
+	if s == nil {
+		return
+	}
+	s.spektacularMu.Lock()
+	defer s.spektacularMu.Unlock()
+	copy := status
+	s.spektacularStatus = &copy
+}
+
+// SpektacularStatus returns a copy of the startup Spektacular binary probe.
+func (s *Server) SpektacularStatus() *FrontendSpektacular {
+	if s == nil {
+		return nil
+	}
+	s.spektacularMu.RLock()
+	defer s.spektacularMu.RUnlock()
+	if s.spektacularStatus == nil {
+		return nil
+	}
+	copy := *s.spektacularStatus
+	return &copy
+}
+
 // SetStageRunner installs the runner the hub's cleanup loop ticks. nil
 // removes it. Called once at boot when runs.spektacular.enabled is set; the
 // Features toggle therefore takes effect on the next boot, like the other
@@ -256,6 +281,30 @@ func (s *Server) RunTriageFixRetired(repo string, number int) bool {
 		}
 	}
 	return false
+}
+
+// ResolveRunStageWorkDir returns the per-stage worktree for an active run when
+// the contributor has created it, falling back to the contributor's shared repo
+// checkout. The Spektacular runner uses this to avoid ever polling from the hub
+// process cwd.
+func (s *Server) ResolveRunStageWorkDir(runKey, stage, identity, repo string, gen uint64) (string, error) {
+	if s == nil {
+		return "", errors.New("run lease registry unavailable")
+	}
+	candidates := []string{runStageWorktreePath(identity, runKey, stage, gen)}
+	if strings.TrimSpace(identity) != "" && strings.TrimSpace(repo) != "" {
+		candidates = append(candidates, filepath.Join(agentWorkspaceRoot, identity, filepath.FromSlash(strings.TrimSpace(repo))))
+	}
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		info, err := os.Stat(candidate)
+		if err == nil && info.IsDir() {
+			return candidate, nil
+		}
+	}
+	return "", nil
 }
 
 // VisitActiveStageLeases calls visit for every lease that carries a stage,

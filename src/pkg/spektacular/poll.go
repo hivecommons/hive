@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,6 +40,10 @@ type Stage struct {
 	Key string
 	// Repo is the repository the run targets.
 	Repo string
+	// WorkDir is the repo checkout or per-stage worktree that owns the
+	// Spektacular project for this lease. The runner refuses to poll when it is
+	// empty so the hub process cwd can never influence status.
+	WorkDir string
 	// Gen is the lease generation; a change means a retry or advance happened.
 	Gen uint64
 	// ExpiresAt is when the lease lapses without renewal. It is Hive's own
@@ -71,6 +76,9 @@ const (
 	// exists after having been observed, so a new document with a new name has
 	// most likely replaced it. The lease needs an explicit reset.
 	RefuseReplacedDocument = "replaced_document"
+	// RefuseMissingWorkDir: the registry could not resolve a repo checkout or
+	// per-stage worktree for the run, so polling would fall back to the hub cwd.
+	RefuseMissingWorkDir = "missing_workdir"
 )
 
 // Runner polls Spektacular for every active stage lease and drives the lease
@@ -232,9 +240,19 @@ func (r *Runner) tickStage(ctx context.Context, st Stage, state *stageState, now
 	// every tick so a lapsed lease is retried before the registry prunes it,
 	// whatever the poll cadence is.
 	if state.lastPolled.IsZero() || now.Sub(state.lastPolled) >= r.Poll {
+		dir := strings.TrimSpace(st.WorkDir)
+		if dir == "" {
+			state.refused = true
+			res.Refused++
+			err := &WorkDirError{RunKey: st.RunKey, Stage: st.Stage, Repo: st.Repo}
+			r.Registry.Refuse(st, RefuseMissingWorkDir, nil)
+			r.logger().Warn("[spektacular] refusing to poll without a repo workdir",
+				"run", st.RunKey, "stage", st.Stage, "artifact", st.Artifact, "repo", st.Repo, "error", err)
+			return
+		}
 		state.lastPolled = now
 		res.Polled++
-		status, err := r.Status(ctx, kind, st.Artifact)
+		status, err := r.statusInDir(ctx, dir, kind, st.Artifact)
 		switch {
 		case err == nil:
 			r.observe(ctx, st, state, status, now, res)
@@ -284,7 +302,7 @@ func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, statu
 	state.seenFinal = true
 	var plan *Plan
 	if st.Stage == StagePlan {
-		exported, err := r.ExportPlanWithFallback(ctx, st.Artifact)
+		exported, err := r.exportPlanWithFallbackInDir(ctx, st.WorkDir, st.Artifact)
 		if err != nil {
 			res.Errors++
 			r.logger().Warn("[spektacular] plan is final but task-list import failed; not advancing",

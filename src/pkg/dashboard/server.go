@@ -310,6 +310,9 @@ type Server struct {
 	stageRunner   StageRunner
 	stageRunnerMu sync.Mutex
 
+	spektacularMu     sync.RWMutex
+	spektacularStatus *FrontendSpektacular
+
 	// contributeMetrics holds the persistent hourly time-series behind the
 	// Operations + Leaderboard sparklines (queue depth, tasks/hour, fleet size,
 	// per-user completions). Lazily built via contributeMetricsStore() so the
@@ -480,6 +483,14 @@ type StatusPayload struct {
 	// healthy zero.
 	ReleaseLineLag *FrontendReleaseLineLag `json:"releaseLineLag,omitempty"`
 	Inception      *FrontendInception      `json:"inception,omitempty"`
+	Spektacular    *FrontendSpektacular    `json:"spektacular,omitempty"`
+}
+
+// FrontendSpektacular reports the configured stage-runner CLI detected at boot.
+type FrontendSpektacular struct {
+	Present bool   `json:"present"`
+	Version string `json:"version,omitempty"`
+	Binary  string `json:"binary"`
 }
 
 type FrontendInception struct {
@@ -1949,6 +1960,9 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 // Returns whether the snapshot was published; the mutation's own
 // refresh-after-mutation rebuild repaints shortly after a drop.
 func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) bool {
+	if status == nil {
+		return false
+	}
 	if s.deps != nil && s.deps.Config != nil {
 		status.ACMMLevel = detectACMMLevel(s.deps.Config)
 		status.ACMMPackAgents = buildACMMPackAgents(s.deps.Config)
@@ -2009,6 +2023,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	}
 
 	status.InferenceBackends = s.buildInferenceBackends()
+	status.Spektacular = s.SpektacularStatus()
 	if runs, err := s.activeRuns(false); err == nil {
 		status.Runs = runs
 		status.RunHistory = runHistoryFromProjection(runs, s.LifecycleTimeline().Journeys(0), SnapshotRunHistoryLimit)

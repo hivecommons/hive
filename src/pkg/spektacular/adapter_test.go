@@ -17,6 +17,7 @@ import (
 // fakeLeaseRegistry is a primitives-only registry the adapter drives, with
 // the same generation and expiry rules the dashboard applies.
 type fakeLeaseRegistry struct {
+	workDir    string
 	stage      string
 	gen        uint64
 	expiresAt  time.Time
@@ -39,6 +40,13 @@ func (f *fakeLeaseRegistry) VisitActiveStageLeases(visit func(runKey, key, stage
 		visit(testRunKey, testRepo+"!"+testRunKey+":"+f.stage, f.stage, testIdentity, testTaskID, testRepo, f.gen, f.expiresAt)
 	}
 	return nil
+}
+
+func (f *fakeLeaseRegistry) ResolveRunStageWorkDir(_, _, _, _ string, _ uint64) (string, error) {
+	if f.workDir != "" {
+		return f.workDir, nil
+	}
+	return "/workspace", nil
 }
 
 func (f *fakeLeaseRegistry) AdvanceStageLease(identity, taskID, to string, now time.Time, receipt []byte, attrs map[string]string) error {

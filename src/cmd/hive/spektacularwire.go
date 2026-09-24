@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -20,10 +21,20 @@ func wireSpektacularRunner(cfg *config.Config, srv *dashboard.Server, logger *sl
 	if cfg == nil || srv == nil || !cfg.Runs.Spektacular.Enabled {
 		return false
 	}
+	binary := cfg.Runs.Spektacular.BinaryOrDefault()
+	probe, err := spektacular.Probe(context.Background(), binary)
+	srv.SetSpektacularStatus(dashboard.FrontendSpektacular{Present: probe.Present, Version: probe.Version, Binary: probe.Binary})
+	if logger != nil {
+		if err != nil {
+			logger.Warn("[spektacular] binary not available", "binary", binary, "error", err)
+		} else {
+			logger.Info("[spektacular] binary detected", "binary", probe.Binary, "version", probe.Version)
+		}
+	}
 	srv.SetStageRunner(spektacular.NewHubRunner(cfg.Runs, srv, logger))
 	if logger != nil {
 		logger.Info("[spektacular] stage runner installed",
-			"binary", cfg.Runs.Spektacular.BinaryOrDefault(),
+			"binary", binary,
 			"poll", cfg.Runs.Spektacular.PollInterval().String(),
 			"max_stage_retries", cfg.Runs.MaxStageRetriesOrDefault())
 	}

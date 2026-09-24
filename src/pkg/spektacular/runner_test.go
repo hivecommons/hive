@@ -29,6 +29,7 @@ const (
 	testIdentity = "c-8303"
 	testPoll     = time.Minute
 	testLeaseTTL = 10 * time.Minute
+	testWorkDir  = "."
 )
 
 var t0 = time.Date(2026, 9, 22, 13, 0, 0, 0, time.UTC)
@@ -42,13 +43,15 @@ type scriptedExec struct {
 	exportErr  error
 	files      map[string]string
 	calls      [][]string
+	dirs       []string
 	idx        int
 }
 
-func (s *scriptedExec) exec(_ context.Context, args []string) ([]byte, error) {
+func (s *scriptedExec) exec(_ context.Context, dir string, args []string) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, append([]string(nil), args...))
+	s.dirs = append(s.dirs, dir)
 	if len(args) >= 2 && args[1] == verbExport {
 		if s.exportErr != nil {
 			if s.exportJSON != "" {
@@ -134,7 +137,7 @@ type fakeRegistry struct {
 func newFakeRegistry(stage string) *fakeRegistry {
 	return &fakeRegistry{present: true, gen: 1, stage: Stage{
 		RunKey: testRunKey, Artifact: testRunKey, Stage: stage, Identity: testIdentity,
-		TaskID: testTaskID, Repo: testRepo, Gen: 1, ExpiresAt: t0.Add(testLeaseTTL),
+		TaskID: testTaskID, Repo: testRepo, WorkDir: testWorkDir, Gen: 1, ExpiresAt: t0.Add(testLeaseTTL),
 	}}
 }
 
@@ -972,10 +975,10 @@ func fixtureExec(t *testing.T, scenario string) ExecFunc {
 	}
 	state := filepath.Join(t.TempDir(), "calls")
 	inner := BinaryExec(script)
-	return func(ctx context.Context, args []string) ([]byte, error) {
+	return func(ctx context.Context, dir string, args []string) ([]byte, error) {
 		t.Setenv("SPEK_FAKE_SCENARIO", scenario)
 		t.Setenv("SPEK_FAKE_STATE", state)
-		return inner(ctx, args)
+		return inner(ctx, dir, args)
 	}
 }
 
@@ -1060,11 +1063,11 @@ func TestBinaryExec_ReturnsStdoutOnFailure(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh not available")
 	}
-	out, err := BinaryExec("sh")(context.Background(), []string{"-c", `printf '{"error":"x"}'; echo oops >&2; exit 3`})
+	out, err := BinaryExec("sh")(context.Background(), "", []string{"-c", `printf '{"error":"x"}'; echo oops >&2; exit 3`})
 	if err == nil || !strings.Contains(string(out), `"error"`) || !strings.Contains(err.Error(), "oops") {
 		t.Fatalf("out=%q err=%v", out, err)
 	}
-	if out, err := BinaryExec("sh")(context.Background(), []string{"-c", "printf ok"}); err != nil || string(out) != "ok" {
+	if out, err := BinaryExec("sh")(context.Background(), "", []string{"-c", "printf ok"}); err != nil || string(out) != "ok" {
 		t.Fatalf("out=%q err=%v", out, err)
 	}
 }

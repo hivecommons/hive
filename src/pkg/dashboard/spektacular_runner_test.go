@@ -60,7 +60,7 @@ func (e *spekExec) push(kind string, statuses ...spektacular.DocumentStatus) {
 	}
 }
 
-func (e *spekExec) exec(_ context.Context, args []string) ([]byte, error) {
+func (e *spekExec) exec(_ context.Context, _ string, args []string) ([]byte, error) {
 	e.calls++
 	if len(args) > 3 && !(len(args) == 5 && args[1] == "export" && args[3] == "--format" && args[4] == "json") {
 		// The CLI has no --json flag; unexpected extra status args are usage errors.
@@ -91,6 +91,9 @@ func spekHub(t *testing.T) (*ContributeWSHub, *Server, *beads.Store, *hookCaptur
 	resetLifecycleStore()
 	hub, s := covK2Hub(t)
 	s.contributeHub = hub
+	oldRoot := agentWorkspaceRoot
+	agentWorkspaceRoot = t.TempDir()
+	t.Cleanup(func() { agentWorkspaceRoot = oldRoot })
 	old := runReceiptsDir
 	runReceiptsDir = filepath.Join(t.TempDir(), "receipts")
 	t.Cleanup(func() { runReceiptsDir = old })
@@ -119,6 +122,12 @@ func spekLease(t *testing.T, hub *ContributeWSHub, stage string, now time.Time) 
 	key := spekRepo + "!" + spekRunKey + ":" + stage
 	if err := hub.recordLeaseForKeyStage(spekIdentity, spekTaskID, spekRepo, 0, key, "contributor", stage, spekGen, now); err != nil {
 		t.Fatalf("record stage lease: %v", err)
+	}
+	if err := os.MkdirAll(runStageWorktreePath(spekIdentity, spekRunKey, stage, spekGen), 0o755); err != nil {
+		t.Fatalf("create run worktree: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(agentWorkspaceRoot, spekIdentity, filepath.FromSlash(spekRepo)), 0o755); err != nil {
+		t.Fatalf("create shared checkout: %v", err)
 	}
 }
 

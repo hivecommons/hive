@@ -48,6 +48,9 @@ type LeaseRegistry interface {
 	RetryStageLease(identity, taskID string, now time.Time) error
 	// RefuseStageLease records that the runner will not advance the lease.
 	RefuseStageLease(taskID string, attrs map[string]string)
+	// ResolveRunStageWorkDir returns the repo checkout or per-stage worktree that
+	// owns the Spektacular project for this stage. An empty result parks the lease.
+	ResolveRunStageWorkDir(runKey, stage, identity, repo string, gen uint64) (string, error)
 	// EscalateStageLease records a decision escalation for the run.
 	EscalateStageLease(runKey string, at time.Time, attrs map[string]string)
 	// ImportRunPlan admits taskList (the planner's task-list text) as the
@@ -69,12 +72,13 @@ func NewLeaseRegistryAdapter(reg LeaseRegistry) Registry {
 func (a *leaseAdapter) ActiveStages(time.Time) ([]Stage, error) {
 	out := []Stage{}
 	err := a.reg.VisitActiveStageLeases(func(runKey, key, stage, identity, taskID, repo string, gen uint64, expiresAt time.Time) {
+		workDir, _ := a.reg.ResolveRunStageWorkDir(runKey, stage, identity, repo, gen)
 		// The registry's run key may still be spelled as a file address
 		// (`<name>.md`, `<name>/plan.md`); the artifact Spektacular is asked
 		// about is always the bare name.
 		out = append(out, Stage{
 			RunKey: runKey, Artifact: ArtifactKey(runKey), Stage: stage, Key: key,
-			Identity: identity, TaskID: taskID, Repo: repo, Gen: gen, ExpiresAt: expiresAt,
+			Identity: identity, TaskID: taskID, Repo: repo, WorkDir: workDir, Gen: gen, ExpiresAt: expiresAt,
 		})
 	})
 	if err != nil {

@@ -623,6 +623,28 @@ RUN pip3 install --no-cache-dir --break-system-packages "pyyaml==${PYYAML_VERSIO
 RUN pip3 install --no-cache-dir --break-system-packages "specify-cli==${SPECIFY_CLI_VERSION}" 2>/dev/null || \
     pip3 install --no-cache-dir "specify-cli==${SPECIFY_CLI_VERSION}" 2>/dev/null || \
     echo "WARN: spec-kit (specify-cli) install failed — inception will generate facts without it"
+# Spektacular drives long-running spec/plan/implement runs. Pinned to the
+# latest release verified 2026-09-24; release checksums.txt publishes both
+# linux tarball hashes and is checked before installing.
+ARG SPEKTACULAR_VERSION=0.22.0
+RUN (ARCH="${TARGETARCH:-$(uname -m)}" && \
+    case "$ARCH" in \
+      amd64|x86_64) SPEKTACULAR_ARCH=x86_64 ;; \
+      arm64|aarch64) SPEKTACULAR_ARCH=arm64 ;; \
+      *) echo "unsupported arch for spektacular: $ARCH" >&2; exit 1 ;; \
+    esac && \
+    SPEKTACULAR_ASSET="spektacular_${SPEKTACULAR_VERSION}_linux_${SPEKTACULAR_ARCH}.tar.gz" && \
+    SPEKTACULAR_URL="https://github.com/hivecommons/spektacular/releases/download/${SPEKTACULAR_VERSION}/${SPEKTACULAR_ASSET}" && \
+    curl -fsSL --retry 5 --retry-delay 5 -o "/tmp/${SPEKTACULAR_ASSET}" "$SPEKTACULAR_URL" && \
+    curl -fsSL --retry 5 --retry-delay 5 -o /tmp/spektacular-checksums.txt \
+      "https://github.com/hivecommons/spektacular/releases/download/${SPEKTACULAR_VERSION}/checksums.txt" && \
+    grep "  ${SPEKTACULAR_ASSET}$" /tmp/spektacular-checksums.txt > /tmp/spektacular.sha256 && \
+    (cd /tmp && sha256sum -c spektacular.sha256) && \
+    tar -xzf "/tmp/${SPEKTACULAR_ASSET}" -C /tmp spektacular && \
+    install -m 0755 /tmp/spektacular /usr/local/bin/spektacular && \
+    rm -f "/tmp/${SPEKTACULAR_ASSET}" /tmp/spektacular-checksums.txt /tmp/spektacular.sha256 /tmp/spektacular && \
+    spektacular --version) || \
+    echo "WARN: spektacular install failed — long-running runs (runs.spektacular) will be unavailable"
 # pluk (TypeScript): structured event streaming for AI agent tmux sessions
 ARG PLUK_VERSION=0.8.0
 RUN (npm install -g --ignore-scripts --no-fund --no-audit "@hivecommons/pluk@${PLUK_VERSION}" || \

@@ -239,16 +239,20 @@ type Plan struct {
 	Tasks []PlanTask `json:"tasks"`
 }
 
-// ExecFunc runs the spektacular CLI with args and returns its stdout. A
+// ExecFunc runs the spektacular CLI with args in dir and returns its stdout. A
 // non-zero exit must be returned as a non-nil error while stdout is still
 // returned, so the caller can read the JSON error envelope the contract
-// promises.
-type ExecFunc func(ctx context.Context, args []string) ([]byte, error)
+// promises. dir may be empty for direct unit tests and probes; the stage
+// runner always supplies the repo checkout/worktree that owns the artifact.
+type ExecFunc func(ctx context.Context, dir string, args []string) ([]byte, error)
 
 // BinaryExec returns an ExecFunc that runs binary with the given args.
 func BinaryExec(binary string) ExecFunc {
-	return func(ctx context.Context, args []string) ([]byte, error) {
+	return func(ctx context.Context, dir string, args []string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, binary, args...)
+		if strings.TrimSpace(dir) != "" {
+			cmd.Dir = dir
+		}
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
@@ -286,6 +290,29 @@ type VerbError struct {
 
 func (e *VerbError) Error() string {
 	return fmt.Sprintf("spektacular %s %q: %s (%s)", e.Kind, e.Name, e.Message, e.Code)
+}
+
+// WorkDirError means the stage runner could not resolve a repository checkout
+// for a run. It is typed so callers and tests can distinguish an intentional
+// park from a CLI/status failure.
+type WorkDirError struct {
+	RunKey string
+	Stage  string
+	Repo   string
+}
+
+func (e *WorkDirError) Error() string {
+	parts := []string{"spektacular: no repo workdir resolved"}
+	if e.RunKey != "" {
+		parts = append(parts, "run="+e.RunKey)
+	}
+	if e.Stage != "" {
+		parts = append(parts, "stage="+e.Stage)
+	}
+	if e.Repo != "" {
+		parts = append(parts, "repo="+e.Repo)
+	}
+	return strings.Join(parts, " ")
 }
 
 // ContractError means the CLI produced output that does not match the #8301
@@ -357,6 +384,10 @@ func parseErrorEnvelope(data []byte) (env errorEnvelope, message string, ok bool
 // kind must be KindSpec or KindPlan; name is reduced to its bare artifact
 // name with ArtifactKey before it reaches the CLI.
 func (r *Runner) Status(ctx context.Context, kind, name string) (ArtifactStatus, error) {
+	return r.statusInDir(ctx, "", kind, name)
+}
+
+func (r *Runner) statusInDir(ctx context.Context, dir, kind, name string) (ArtifactStatus, error) {
 	if err := validateKind(kind); err != nil {
 		return ArtifactStatus{}, err
 	}
@@ -364,7 +395,7 @@ func (r *Runner) Status(ctx context.Context, kind, name string) (ArtifactStatus,
 	if name == "" {
 		return ArtifactStatus{}, &ContractError{Kind: kind, Reason: "empty artifact name"}
 	}
-	out, execErr := r.exec(ctx, []string{kind, verbStatus, name})
+	out, execErr := r.execInDir(ctx, dir, []string{kind, verbStatus, name})
 	if execErr != nil {
 		return ArtifactStatus{}, classifyExecError(kind, name, out, execErr)
 	}
@@ -401,11 +432,15 @@ func (r *Runner) Status(ctx context.Context, kind, name string) (ArtifactStatus,
 // runner needs and is still an open ask on the Spektacular side; the fixture
 // encodes its assumed shape.
 func (r *Runner) ExportPlan(ctx context.Context, name string) (Plan, error) {
+	return r.exportPlanInDir(ctx, "", name)
+}
+
+func (r *Runner) exportPlanInDir(ctx context.Context, dir, name string) (Plan, error) {
 	name = ArtifactKey(name)
 	if name == "" {
 		return Plan{}, &ContractError{Kind: KindPlan, Reason: "empty artifact name"}
 	}
-	out, execErr := r.exec(ctx, []string{KindPlan, verbExport, name, "--format", "json"})
+	out, execErr := r.execInDir(ctx, dir, []string{KindPlan, verbExport, name, "--format", "json"})
 	if execErr != nil {
 		return Plan{}, classifyExecError(KindPlan, name, out, execErr)
 	}
@@ -427,11 +462,15 @@ func (r *Runner) ExportPlan(ctx context.Context, name string) (Plan, error) {
 // read through `spektacular plan file read` so the CLI still owns store
 // access.
 func (r *Runner) ExportPlanWithFallback(ctx context.Context, name string) (Plan, error) {
-	plan, err := r.ExportPlan(ctx, name)
+	return r.exportPlanWithFallbackInDir(ctx, "", name)
+}
+
+func (r *Runner) exportPlanWithFallbackInDir(ctx context.Context, dir, name string) (Plan, error) {
+	plan, err := r.exportPlanInDir(ctx, dir, name)
 	if err == nil || !planExportUnavailable(err) {
 		return plan, err
 	}
-	fallback, fallbackErr := r.ExportPlanFallback(ctx, name)
+	fallback, fallbackErr := r.exportPlanFallbackInDir(ctx, dir, name)
 	if fallbackErr == nil {
 		return fallback, nil
 	}
@@ -443,12 +482,16 @@ func (r *Runner) ExportPlanWithFallback(ctx context.Context, name string) (Plan,
 // as the requested export verb. `<name>/plan.md` may carry lines like
 // `- [T1] Title (repo: owner/repo) (depends: T0) [agent_suitable]`.
 func (r *Runner) ExportPlanFallback(ctx context.Context, name string) (Plan, error) {
+	return r.exportPlanFallbackInDir(ctx, "", name)
+}
+
+func (r *Runner) exportPlanFallbackInDir(ctx context.Context, dir, name string) (Plan, error) {
 	name = ArtifactKey(name)
 	if name == "" {
 		return Plan{}, &ContractError{Kind: KindPlan, Reason: "empty artifact name"}
 	}
 	tasksPath := name + "/tasks.json"
-	out, err := r.readPlanFile(ctx, name, tasksPath)
+	out, err := r.readPlanFileInDir(ctx, dir, name, tasksPath)
 	if err == nil {
 		return parsePlanJSON(name, bytes.TrimSpace(out), "tasks.json")
 	}
@@ -456,15 +499,15 @@ func (r *Runner) ExportPlanFallback(ctx context.Context, name string) (Plan, err
 		return Plan{}, err
 	}
 	planPath := name + "/plan.md"
-	out, err = r.readPlanFile(ctx, name, planPath)
+	out, err = r.readPlanFileInDir(ctx, dir, name, planPath)
 	if err != nil {
 		return Plan{}, err
 	}
 	return ParsePlanMarkdown(name, out)
 }
 
-func (r *Runner) readPlanFile(ctx context.Context, name, path string) ([]byte, error) {
-	out, execErr := r.exec(ctx, []string{KindPlan, verbFile, verbRead, path})
+func (r *Runner) readPlanFileInDir(ctx context.Context, dir, name, path string) ([]byte, error) {
+	out, execErr := r.execInDir(ctx, dir, []string{KindPlan, verbFile, verbRead, path})
 	if execErr != nil {
 		return nil, classifyExecError(KindPlan, name, out, execErr)
 	}
@@ -624,11 +667,11 @@ func RenderTaskList(plan Plan) string {
 	return b.String()
 }
 
-func (r *Runner) exec(ctx context.Context, args []string) ([]byte, error) {
+func (r *Runner) execInDir(ctx context.Context, dir string, args []string) ([]byte, error) {
 	if r == nil || r.Exec == nil {
 		return nil, errors.New("spektacular: runner has no Exec")
 	}
-	return r.Exec(ctx, args)
+	return r.Exec(ctx, dir, args)
 }
 
 func validateKind(kind string) error {
