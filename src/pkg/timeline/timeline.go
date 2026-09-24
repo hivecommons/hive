@@ -69,6 +69,8 @@ const (
 	// when an artifact reached final; attrs carry the receipt digest and path
 	// (hivecommons/hive#8303).
 	KindStageReceipt Kind = "stage_receipt"
+	// KindStageApproval records an approval that released a held run stage.
+	KindStageApproval Kind = "stage_approval"
 )
 
 // progressKinds are the non-terminal stages in furthest-first order, used to
@@ -592,14 +594,15 @@ func (s *Store) Snapshot(n int, window time.Duration) TimelineDTO {
 
 // persistMaybeLocked writes the journeys file if persistence is enabled and
 // either the recorded stage is precious
-// (pr_opened/merged/blocked/stage_completed — outcomes and run transitions the
-// panel exists to keep) or the throttle interval has elapsed. Caller holds mu.
+// (pr_opened/merged/blocked/stage_completed/stage_approval — outcomes,
+// decisions, and run transitions the panel exists to keep) or the throttle
+// interval has elapsed. Caller holds mu.
 // Errors never propagate to producers; they are logged, throttled.
 func (s *Store) persistMaybeLocked(kind Kind) {
 	if s.path == "" || !s.dirty {
 		return
 	}
-	force := kind == KindPROpened || kind == KindMerged || kind == KindBlocked || kind == KindStageCompleted
+	force := kind == KindPROpened || kind == KindMerged || kind == KindBlocked || kind == KindStageCompleted || kind == KindStageApproval
 	if !force && time.Since(s.lastPersist) < persistMinInterval {
 		return
 	}

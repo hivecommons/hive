@@ -32,7 +32,7 @@ func TestAdmitRunIdempotentAndRequiresSpektacular(t *testing.T) {
 	if !ok {
 		t.Fatal("admitted lease not found")
 	}
-	if _, err := s.contributeHub.mutateLeaseStage(held.identity, held.taskID, StagePlan, leaseStageAdvance, "", now); err != nil {
+	if _, err := s.contributeHub.mutateLeaseStage(held.identity, held.taskID, StagePlan, leaseStageAdvance, "", now, time.Time{}); err != nil {
 		t.Fatalf("advance admitted lease: %v", err)
 	}
 	if err := s.AdmitTriagedRun("myorg/repo1", 8450, "feature", "spec", "feature label", now.Add(2*time.Minute)); err != nil {

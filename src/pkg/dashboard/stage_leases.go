@@ -62,6 +62,7 @@ const (
 	runCheckpointConfigSourceKey = "config_source"
 	runCheckpointReasonKey       = "checkpoint_reason"
 	runCheckpointActorKey        = "approval_actor"
+	runCheckpointEpicKey         = "plan_epic_id"
 	runCheckpointDisabledReason  = "checkpoint_disabled"
 )
 
@@ -344,7 +345,7 @@ func (s *Server) AdvanceStageLease(identity, taskID, to string, now time.Time, r
 	recordReceipt(advanced.identity)
 	if stage == StageSpec {
 		if decision := s.runCheckpointPolicy(StageSpec); !decision.blocks {
-			s.recordRunCheckpointAutoApproval(runKey, "", StageSpec, decision)
+			s.recordRunCheckpointAutoApproval(runKey, "", StageSpec, advanced.gen, now, decision)
 		}
 	}
 	return nil
@@ -669,13 +670,14 @@ func (s *Server) autoApproveRunCheckpoint(store *beads.Store, epic *beads.Bead, 
 	if err := planning.ApprovePlan(store, epic.ID); err != nil {
 		return fmt.Errorf("auto-approving %s checkpoint for %s: %w", stage, runKey, err)
 	}
-	s.recordRunCheckpointAutoApproval(runKey, epic.ID, stage, decision)
+	gen := s.activeRunStageGen(runKey, stage, time.Now())
+	s.recordRunCheckpointAutoApproval(runKey, epic.ID, stage, gen, time.Now(), decision)
 	return nil
 }
 
 // recordRunCheckpointAutoApproval leaves the paper trail for an approval no
 // human made: who (auto), which config said the checkpoint was off, and why.
-func (s *Server) recordRunCheckpointAutoApproval(runKey, epicID, stage string, decision runCheckpointPolicy) {
+func (s *Server) recordRunCheckpointAutoApproval(runKey, epicID, stage string, gen uint64, at time.Time, decision runCheckpointPolicy) {
 	if s == nil {
 		return
 	}
@@ -684,18 +686,56 @@ func (s *Server) recordRunCheckpointAutoApproval(runKey, epicID, stage string, d
 	}
 	detail := auditDetail("epic", epicID, "run", runKey, "surface", "plan", "stage", stage, runCheckpointConfigSourceKey, decision.source, runCheckpointReasonKey, decision.reason)
 	s.audit.Log(runCheckpointAutoActor, "plan_approve", detail, planning.ArchitectAgentName)
+	s.recordRunCheckpointApproval(runKey, epicID, stage, runCheckpointAutoActor, gen, at, map[string]string{
+		runCheckpointConfigSourceKey: decision.source,
+		runCheckpointReasonKey:       decision.reason,
+	})
+}
+
+func (s *Server) recordRunCheckpointApproval(runKey, epicID, stage, actor string, gen uint64, at time.Time, extra map[string]string) {
+	if s == nil || strings.TrimSpace(runKey) == "" {
+		return
+	}
+	if actor == "" {
+		actor = "unknown"
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	attrs := map[string]string{
+		stageAttrRunKey:       runKey,
+		stageAttrStage:        stage,
+		runCheckpointActorKey: actor,
+	}
+	if gen > 0 {
+		attrs[stageAttrGen] = strconv.FormatUint(gen, 10)
+	}
+	if epicID != "" {
+		attrs[runCheckpointEpicKey] = epicID
+	}
+	for k, v := range extra {
+		if strings.TrimSpace(v) != "" {
+			attrs[k] = v
+		}
+	}
 	s.LifecycleTimeline().Record(timeline.Event{
 		IssueRef: runKey,
-		Kind:     timeline.KindStageCompleted,
-		Agent:    runCheckpointAutoActor,
-		At:       time.Now().UnixMilli(),
-		Attrs: map[string]string{
-			stageAttrStage:               stage,
-			runCheckpointActorKey:        runCheckpointAutoActor,
-			runCheckpointConfigSourceKey: decision.source,
-			runCheckpointReasonKey:       decision.reason,
-		},
+		Kind:     timeline.KindStageApproval,
+		Agent:    actor,
+		At:       at.UnixMilli(),
+		Attrs:    attrs,
 	})
+}
+
+func (s *Server) activeRunStageGen(runKey, stage string, now time.Time) uint64 {
+	var gen uint64
+	_ = s.VisitActiveStageLeases(func(rk, _, st, _, _, repo string, g uint64, expiresAt time.Time) {
+		if gen != 0 || !s.sameRunKey(runKey, rk, repo) || st != stage || now.After(expiresAt) {
+			return
+		}
+		gen = g
+	})
+	return gen
 }
 
 // runKeyForEpic resolves the canonical run key an epic belongs to, preferring
@@ -713,22 +753,26 @@ func (s *Server) runKeyForEpic(repo, number, runKey string) string {
 // advanceApprovedPlanLease releases the lease AdvanceStageLease parked at the
 // plan checkpoint, once the plan has actually been approved. A run with no
 // live held plan lease is a no-op, not an error.
-func (s *Server) advanceApprovedPlanLease(runKey string, now time.Time) error {
+func (s *Server) advanceApprovedPlanLease(runKey, epicID, actor string, now time.Time) error {
 	if s == nil || s.contributeHub == nil || runKey == "" {
 		return nil
 	}
 	var identity, taskID string
+	var gen uint64
 	found := false
-	err := s.VisitActiveStageLeases(func(rk, _, stage, id, task, repo string, _ uint64, expiresAt time.Time) {
+	err := s.VisitActiveStageLeases(func(rk, _, stage, id, task, repo string, g uint64, expiresAt time.Time) {
 		if found || !s.sameRunKey(runKey, rk, repo) || stage != StagePlan || now.After(expiresAt) {
 			return
 		}
-		identity, taskID, found = id, task, true
+		identity, taskID, gen, found = id, task, g, true
 	})
 	if err != nil || !found {
 		return err
 	}
-	_, err = s.contributeHub.advanceLeaseStage(identity, taskID, StageImplement, now)
+	_, err = s.contributeHub.advanceLeaseStageAt(identity, taskID, StageImplement, now, now.Add(time.Millisecond))
+	if err == nil {
+		s.recordRunCheckpointApproval(runKey, epicID, StagePlan, actor, gen, now, nil)
+	}
 	return err
 }
 

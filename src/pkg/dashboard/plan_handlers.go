@@ -467,7 +467,7 @@ func (s *Server) handlePlanApprove(w http.ResponseWriter, r *http.Request) {
 	}
 	// Release the lease the plan checkpoint parked, now that the plan is
 	// approved (hivecommons/hive#8550).
-	if err := s.advanceApprovedPlanLease(runKey, time.Now()); err != nil {
+	if err := s.advanceApprovedPlanLease(runKey, epicID, requestUser(r), time.Now()); err != nil {
 		jsonError(w, err.Error(), http.StatusConflict)
 		return
 	}

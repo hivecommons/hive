@@ -271,11 +271,15 @@ func (h *ContributeWSHub) recordLeaseForKeyStage(identity, taskID, repo string, 
 }
 
 func (h *ContributeWSHub) advanceLeaseStage(identity, taskID, to string, now time.Time) (taskLease, error) {
-	return h.mutateLeaseStage(identity, taskID, to, leaseStageAdvance, "", now)
+	return h.advanceLeaseStageAt(identity, taskID, to, now, time.Time{})
+}
+
+func (h *ContributeWSHub) advanceLeaseStageAt(identity, taskID, to string, now, transitionAt time.Time) (taskLease, error) {
+	return h.mutateLeaseStage(identity, taskID, to, leaseStageAdvance, "", now, transitionAt)
 }
 
 func (h *ContributeWSHub) retryLeaseStage(identity, taskID string, now time.Time) (taskLease, error) {
-	return h.mutateLeaseStage(identity, taskID, "", leaseStageRetry, "", now)
+	return h.mutateLeaseStage(identity, taskID, "", leaseStageRetry, "", now, time.Time{})
 }
 
 // resetLeaseStage moves a run's lease BACK to an earlier stage (#8350): for
@@ -302,10 +306,10 @@ func (h *ContributeWSHub) resetLeaseStage(identity, taskID, to, reason string, n
 	if reason == "" {
 		return taskLease{}, errLeaseResetReason
 	}
-	return h.mutateLeaseStage(identity, taskID, to, leaseStageReset, reason, now)
+	return h.mutateLeaseStage(identity, taskID, to, leaseStageReset, reason, now, time.Time{})
 }
 
-func (h *ContributeWSHub) mutateLeaseStage(identity, taskID, to string, mode leaseStageMutation, reason string, now time.Time) (taskLease, error) {
+func (h *ContributeWSHub) mutateLeaseStage(identity, taskID, to string, mode leaseStageMutation, reason string, now, transitionAt time.Time) (taskLease, error) {
 	if identity == "" || taskID == "" {
 		return taskLease{}, fmt.Errorf("identity and taskID are required")
 	}
@@ -377,7 +381,7 @@ func (h *ContributeWSHub) mutateLeaseStage(identity, taskID, to string, mode lea
 	h.leaseMu.Unlock()
 
 	h.recordLeaseStageAudit(auditAction, taskID, from, to, reason, out)
-	h.emitLeaseStageTransition(from, to, reason, mode == leaseStageReset, out)
+	h.emitLeaseStageTransitionAt(from, to, reason, mode == leaseStageReset, out, transitionAt)
 	return out, nil
 }
 
@@ -400,10 +404,6 @@ func (h *ContributeWSHub) recordLeaseStageAudit(action, taskID, from, to, reason
 // `reason` and `attrs.reset = "true"` so a hook's `when:` can tell a step
 // back from a hand-off (`t.attrs.reset == "true"`), and the runs API reads
 // the reason back out of the timeline event as stage history.
-func (h *ContributeWSHub) emitLeaseStageTransition(from, to, reason string, reset bool, l taskLease) {
-	h.emitLeaseStageTransitionAt(from, to, reason, reset, l, time.Time{})
-}
-
 func (h *ContributeWSHub) emitLeaseStageTransitionAt(from, to, reason string, reset bool, l taskLease, at time.Time) {
 	if h == nil || h.server == nil {
 		return

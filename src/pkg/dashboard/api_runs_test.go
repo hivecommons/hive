@@ -167,6 +167,86 @@ func TestRunProjectionScrubsTitleAndDetailUsesTimeline(t *testing.T) {
 	}
 }
 
+func TestRunDetailSurfacesStageApprovalTimelineEvent(t *testing.T) {
+	s, deps := runsTestServer(t)
+	store, err := beads.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	epic, err := store.Create("approved run plan", beads.TypeEpic, beads.PriorityHigh, "architect", "")
+	if err != nil {
+		t.Fatalf("create epic: %v", err)
+	}
+	if err := store.Update(epic.ID, func(b *beads.Bead) {
+		b.Metadata[planning.MetaPlanStatus] = planning.PlanStatusApproved
+		b.Metadata[planning.MetaIssueRepo] = "myorg/repo1"
+		b.Metadata[planning.MetaIssueNumber] = "8582"
+	}); err != nil {
+		t.Fatalf("update epic: %v", err)
+	}
+	deps.BeadStores = map[string]*beads.Store{"architect": store}
+	const (
+		runKey = "myorg/repo1#8582"
+		actor  = "dana"
+		gen    = uint64(9)
+	)
+	if err := s.contributeHub.recordLeaseForKeyStage("alice", "task-8582", "myorg/repo1", 8582, runKey, "contributor", StageImplement, 10, time.Now()); err != nil {
+		t.Fatalf("record lease: %v", err)
+	}
+	base := time.Date(2026, 9, 24, 4, 0, 0, 0, time.UTC)
+	s.LifecycleTimeline().Record(timeline.Event{
+		IssueRef: runKey,
+		Kind:     timeline.KindStageReceipt,
+		Agent:    "alice",
+		At:       base.UnixMilli(),
+		Attrs: map[string]string{
+			stageAttrStage: StagePlan,
+			stageAttrGen:   strconv.FormatUint(gen, 10),
+			"receipt":      "sha256:plan",
+		},
+	})
+	s.LifecycleTimeline().Record(timeline.Event{
+		IssueRef: runKey,
+		Kind:     timeline.KindStageApproval,
+		Agent:    actor,
+		At:       base.Add(time.Minute).UnixMilli(),
+		Attrs: map[string]string{
+			stageAttrRunKey:       runKey,
+			stageAttrStage:        StagePlan,
+			stageAttrGen:          strconv.FormatUint(gen, 10),
+			runCheckpointEpicKey:  epic.ID,
+			runCheckpointActorKey: actor,
+		},
+	})
+
+	rec := doGet(s, "/api/runs/myorg%2Frepo1%238582")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET run detail = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var run Run
+	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
+		t.Fatalf("decode run: %v", err)
+	}
+	var approval *RunStage
+	for i := range run.Stages {
+		if run.Stages[i].Name == string(timeline.KindStageApproval) {
+			approval = &run.Stages[i]
+		}
+	}
+	if approval == nil {
+		t.Fatalf("stage approval not surfaced: %+v", run.Stages)
+	}
+	if approval.Status != "observed" || approval.Gen != gen || approval.Actor != actor || approval.At != formatRunTime(base.Add(time.Minute)) {
+		t.Fatalf("approval projection = %+v", approval)
+	}
+	if approval.Attrs[stageAttrRunKey] != runKey ||
+		approval.Attrs[stageAttrStage] != StagePlan ||
+		approval.Attrs[runCheckpointEpicKey] != epic.ID ||
+		approval.Attrs[runCheckpointActorKey] != actor {
+		t.Fatalf("approval attrs = %+v", approval.Attrs)
+	}
+}
+
 func TestRunImplementTaskCompleteEndsRunAndFiresHook(t *testing.T) {
 	s, deps := runsTestServer(t)
 	capture := &hookCapture{}

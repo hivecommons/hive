@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/timeline"
 )
 
 // The plan MUTATION routes (approve/reject/child) are owner-only as of audit
@@ -110,6 +112,67 @@ func TestHandlePlanApprove(t *testing.T) {
 	srv.mux.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusBadRequest {
 		t.Fatalf("double approve want 400, got %d", w2.Code)
+	}
+}
+
+func TestHandlePlanApproveRecordsHumanPlanApprovalEvent(t *testing.T) {
+	resetLifecycleStore()
+	srv, store, epic := planServer(t)
+	const (
+		runKey = "myorg/repo1#8582"
+		actor  = "dana"
+		gen    = uint64(7)
+	)
+	if err := store.Update(epic.ID, func(b *beads.Bead) {
+		b.Metadata[planning.MetaIssueRepo] = "myorg/repo1"
+		b.Metadata[planning.MetaIssueNumber] = "8582"
+		b.Metadata[planning.MetaRunKey] = runKey
+	}); err != nil {
+		t.Fatalf("tag epic issue: %v", err)
+	}
+	srv.contributeHub.persistTaskLedgers = false
+	if err := srv.contributeHub.recordLeaseForKeyStage("alice", "task-8582", "myorg/repo1", 8582, runKey, "contributor", StagePlan, gen, time.Now()); err != nil {
+		t.Fatalf("record run lease: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/api/plan/"+epic.ID+"/approve", nil)
+	markOwnerRequest(req)
+	req.Header.Set("X-Hive-User", actor)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	lease, ok := srv.contributeHub.runLeaseHolder(runKey, time.Now())
+	if !ok || lease.stage != StageImplement {
+		t.Fatalf("approve did not release held plan lease: %#v", lease)
+	}
+	events := srv.LifecycleTimeline().ByIssue(runKey)
+	var approval *timeline.Event
+	stageReceipts := 0
+	for i := range events {
+		if events[i].Kind == timeline.KindStageApproval {
+			approval = &events[i]
+		}
+		if events[i].Kind == timeline.KindStageReceipt {
+			stageReceipts++
+		}
+	}
+	if stageReceipts != 0 {
+		t.Fatalf("approve fabricated %d stage receipt events: %+v", stageReceipts, events)
+	}
+	if approval == nil {
+		t.Fatalf("approval event missing: %+v", events)
+	}
+	if approval.Agent != actor || approval.At <= 0 {
+		t.Fatalf("approval event actor/time = %q/%d", approval.Agent, approval.At)
+	}
+	if approval.Attrs[stageAttrRunKey] != runKey ||
+		approval.Attrs[stageAttrStage] != StagePlan ||
+		approval.Attrs[stageAttrGen] != strconv.FormatUint(gen, 10) ||
+		approval.Attrs[runCheckpointEpicKey] != epic.ID ||
+		approval.Attrs[runCheckpointActorKey] != actor {
+		t.Fatalf("approval attrs = %+v", approval.Attrs)
 	}
 }
 

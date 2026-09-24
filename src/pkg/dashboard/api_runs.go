@@ -32,10 +32,13 @@ const (
 )
 
 type RunStage struct {
-	Name    string `json:"name"`
-	Status  string `json:"status"`
-	Gen     uint64 `json:"gen"`
-	Receipt string `json:"receipt,omitempty"`
+	Name    string            `json:"name"`
+	Status  string            `json:"status"`
+	Gen     uint64            `json:"gen"`
+	Receipt string            `json:"receipt,omitempty"`
+	Actor   string            `json:"actor,omitempty"`
+	At      string            `json:"at,omitempty"`
+	Attrs   map[string]string `json:"attrs,omitempty"`
 	// Reason is the owner's explanation on a stage transition that carried one,
 	// today only an owner reset (#8350); it is read back from the timeline
 	// event so the run's history says why it stepped back.
@@ -876,7 +879,17 @@ func mergeRunTimelineStages(stages []RunStage, events []timeline.Event) []RunSta
 			receipt = firstRunNonEmpty(ev.Attrs["receipt"], ev.Attrs["receipt_digest"], ev.Attrs["path"], ev.Attrs["digest"])
 			reason = ev.Attrs["reason"]
 		}
-		out = append(out, RunStage{Name: name, Status: "observed", Gen: gen, Receipt: receipt, Reason: reason})
+		attrs := map[string]string(nil)
+		if len(ev.Attrs) > 0 {
+			attrs = make(map[string]string, len(ev.Attrs))
+			for k, v := range ev.Attrs {
+				attrs[k] = v
+			}
+		}
+		out = append(out, RunStage{
+			Name: name, Status: "observed", Gen: gen, Receipt: receipt, Reason: reason,
+			Actor: ev.Agent, At: formatRunTime(time.UnixMilli(ev.At)), Attrs: attrs,
+		})
 	}
 	return out
 }

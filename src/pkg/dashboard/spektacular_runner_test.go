@@ -262,7 +262,7 @@ func TestSpektacularRunner_LeaseWorksourceHookIntegration(t *testing.T) {
 	if err := planning.ApprovePlan(store, epic.ID); err != nil {
 		t.Fatalf("ApprovePlan: %v", err)
 	}
-	if err := s.advanceApprovedPlanLease(spekRunKey, approvalAt); err != nil {
+	if err := s.advanceApprovedPlanLease(spekRunKey, epic.ID, "test-operator", approvalAt); err != nil {
 		t.Fatalf("advance approved plan lease: %v", err)
 	}
 	if listed := spekListed(t, s); len(listed) != 1 || listed[0].Stage != StageImplement {

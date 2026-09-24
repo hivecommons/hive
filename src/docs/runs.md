@@ -69,6 +69,14 @@ convergence campaign, the detail response may include:
 
 `source` identifies the provider (`wavefront` or `audit`). `scope` is the total obligation count, `satisfied` is completed work, `remaining` is known outstanding work, and `unknown` is evidence that could not be classified. The block is omitted when no burndown source is wired for the run key.
 
+When a plan checkpoint holds a run, the runner records the plan stage receipt
+when the final plan arrives. A human approval that releases the held plan is
+recorded separately as a `stage_approval` timeline event rather than as another
+stage receipt. The event carries the run key, released stage (`plan`), held
+lease generation, approving actor, plan epic id, and timestamp; `GET
+/api/runs/{key}` includes it in the observed `stages` timeline between the held
+plan receipt and the implement-stage transition.
+
 When `governor.work_source.wavefront.enabled` is true, a final Spektacular plan
 that declares repositories with `[repo:<owner/name>]` annotations fans out the
 implement stage into one Wavefront implementation wave per repo. The run detail
