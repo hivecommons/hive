@@ -1,23 +1,23 @@
-# Spektacular stage runner
+# Spektacular (Spek) stage runner
 
-The Spektacular stage runner is the Hive side of long-running runs
+The Spektacular (Spek) stage runner is the Hive side of long-running runs
 (hivecommons/hive#8303, part of the #8290 umbrella). A run moves through the
-`spec`, `plan`, and `implement` stages on one task lease. Spektacular owns the
-state of each artifact; Hive owns the workflow: it asks Spektacular whether the
+`spec`, `plan`, and `implement` stages on one task lease. Spek owns the
+state of each artifact; Hive owns the workflow: it asks Spek whether the
 current artifact is finished and advances the lease when it is.
 
 The runner is OFF by default. With `runs.spektacular.enabled` unset or `false`
-Hive never starts a Spektacular process and every existing lease behaviour is
+Hive never starts a Spek process and every existing lease behaviour is
 unchanged.
 
-Every retained Spektacular run is also projected as a dashboard campaign under
+Every retained Spek run is also projected as a dashboard campaign under
 `GET /api/campaigns`. The campaign id is the stable run/spec key (the same bare
 artifact name the status verbs use), the engine is `Spektacular`, and the row
 links back to `/api/runs/{key}` when run detail is available. Picking up a
-Spektacular campaign does not copy artifact contents into Hive; `POST
+Spek campaign does not copy spek contents into Hive; `POST
 /api/campaigns/{id}/resume` returns the retained run projection and a CLI status
-command, while Spektacular reloads the current state from its working files and
-artifact backend.
+command, while Spek reloads the current state from its working files and
+spek backend.
 
 ## Enabling it
 
@@ -48,7 +48,7 @@ server through the `LeaseRegistry` interface.
 
 ## Triage
 
-The runs triage pass is separate from the Spektacular runner and is also OFF by
+The runs triage pass is separate from the Spek runner and is also OFF by
 default. When `runs.triage.enabled: true`, the scheduler classifies each
 incoming actionable GitHub issue before a direct-fix kick:
 
@@ -68,7 +68,7 @@ incoming actionable GitHub issue before a direct-fix kick:
 The decision is stored on the stage lease as `triage_verdict` and
 `triage_rationale`, surfaced by `GET /api/runs` and run detail, and copied into
 the first stage receipt timeline event. Owner reset with reason `triage_fix`
-retires a spec-stage run so the issue can return to the direct-fix path.
+retires a run in the `spec` stage so the issue can return to the direct-fix path.
 
 ```yaml
 runs:
@@ -107,21 +107,21 @@ error. Then:
   `advanceLeaseStage` path the API uses. That fires the `stage_completed` hook
   and CEL trigger and records the `lease_stage_advanced` audit entry exactly
   as a manual advance would.
-- `document_status: stale` means Spektacular strict mode invalidated the plan
-  after the spec changed. Hive refuses the plan-to-implement advance, parks the
+- `document_status: stale` means Spek strict mode invalidated the plan
+  after the spek changed. Hive refuses the plan-to-implement advance, parks the
   run with `waiting_on=human` and `waiting_reason=stale_plan`, and records a
   `blocked` timeline event. The lease is not retried; recovery is a fresh
   plan/re-approval.
 - The status payload's `artifact_id`, when present, is the durable
-  Spektacular artifact join key Hive stores in receipts and stage attributes.
+  Spek artifact join key Hive stores in receipts and stage attributes.
   The bare `name` remains the CLI address and backward-compatible display
   alias; older CLIs that lack `artifact_id` fall back to `name`.
 - Progress is decided by `document_status`, `current_step` and
   `completed_steps` only. The status document's `updated_at` is never read
   for a progress or staleness decision: it is workflow activity only while
-  Spektacular's in-progress state matches the artifact, and otherwise a file
+  Spek's in-progress state matches the artifact, and otherwise a file
   mtime that a `git checkout`, a reformat or a `touch` moves without anything
-  having happened. Spektacular may also omit it entirely when no workflow
+  having happened. Spek may also omit it entirely when no workflow
   state matches, so the parser treats an absent, `null` or empty
   `updated_at` (and an empty `created_at` / `closed_at`) as unknown. A stale
   stage is decided by Hive's own lease clock (the lease's expiry), never by
@@ -135,7 +135,7 @@ error. Then:
   (`lease_stage_escalated` in the audit log, a `blocked` timeline event with
   `severity=decision`). No third generation is ever minted; a person resets
   the stage or abandons the run.
-- The `implement` stage has no Spektacular document. The runner never polls
+- The `implement` stage has no Spek document. The runner never polls
   it; its completion is the existing hold-gated PR flow.
 
 Ticks are idempotent per lease generation: once a generation has advanced it
@@ -159,13 +159,13 @@ spektacular plan export <name> --format json
 (requested upstream in
 [spektacular#50](https://github.com/hivecommons/spektacular/issues/50)) and
 admits the returned tasks through `planning.DecomposeFromOutput` with
-`AutoApprove: false`. Spektacular's structure is rendered verbatim into the
+`AutoApprove: false`. Spek's structure is rendered verbatim into the
 planner's task-list shape (`[T1] title (depends: T2) [agent_suitable]`); no
 model is asked to redecompose an already-structured plan.
 
 Until that export verb exists, Hive falls back only when export is unavailable
 (for example `unknown_subcommand` for `plan export`). The fallback reads the
-plan artifact through Spektacular's existing store boundary:
+plan artifact through Spek's existing store boundary:
 
 ```
 spektacular plan file read <name>/tasks.json
@@ -214,13 +214,13 @@ not re-imported.
 The #8227 questions were answered on jumppad-labs/spektacular#45. The runner
 encodes the answers and still handles the alternatives it cannot rule out:
 
-- **The bare artifact name is the join key.** The stable key across spec,
+- **The bare artifact name is the join key.** The stable key across spek,
   plan and implement is the artifact name itself (`000057_git-commit`),
-  shared by convention across the spec file, the plan directory and the
+  shared by convention across the spek file, the plan directory and the
   changelog record, and recorded as the workflow's `data.name`. It is NOT the
   `spec:` / `plan:` frontmatter cross-references the status response also
-  carries: those are almost never populated (0 of 57 specs, 3 of 55 plans in
-  the Spektacular repository itself), so the runner surfaces them as
+  carries: those are almost never populated (0 of 57 speks, 3 of 55 plans in
+  the Spek repository itself), so the runner surfaces them as
   `ArtifactStatus.Spec` / `.Plan` for diagnostics only and never joins on
   them. Every spelling of an address (`<name>.md`, `<name>/plan.md`) reduces
   to the bare name before it reaches the CLI. If a status answer ever
@@ -237,7 +237,7 @@ encodes the answers and still handles the alternatives it cannot rule out:
 
 ## What Hive never does
 
-Hive never opens a Spektacular file. Every fact about an artifact reaches the
+Hive never opens a Spek file. Every fact about an artifact reaches the
 runner through the CLI boundary (`Runner.Exec`), which is also the seam tests
 replace. `TestNoDirectFileAccess` in `pkg/spektacular` scans the package for
 file access to keep it that way.
@@ -246,7 +246,7 @@ file access to keep it that way.
 
 `pkg/spektacular/testdata/spektacular-fake/spektacular` is a shell fake of the
 CLI. It encodes the per-artifact status contract exactly as
-jumppad-labs/spektacular#45 ships it, after the Spektacular maintainer's
+jumppad-labs/spektacular#45 ships it, after the Spek maintainer's
 review of 2026-09-23 answered the questions Hive had left open. The original
 assumptions from the first cut of the runner (PR #8398) and their fate:
 
@@ -255,7 +255,7 @@ Confirmed:
 1. `spektacular <spec|plan> status <name>` prints one JSON object with
    `kind`, `name`, `document_status` (`draft|final`), `current_step`,
    `completed_steps[]`, `created_at`, `updated_at`, `closed_at` (#8301). The
-   response also carries `error: false` (every Spektacular result does) and
+   response also carries `error: false` (every Spek result does) and
    the `spec` / `plan` frontmatter cross-references. `created_at` and
    `closed_at` are frontmatter dates emitted as RFC3339 midnight UTC.
 2. A missing artifact exits non-zero and prints the JSON error envelope on
@@ -284,7 +284,7 @@ Changed:
    may be `""` when the frontmatter carries no date. Both decode as unknown.
 8. There is no `--json` flag on any verb (`unknown flag: --json`); output is
    already JSON. Hive passes none. `spec file list` / `plan file list`
-   likewise take no flag; Hive does not call them today, but Spektacular may
+   likewise take no flag; Hive does not call them today, but Spek may
    add a `ModTime` per list entry so one list call can replace N status
    calls, which is the shape a future list-based poll would consume.
 9. `plan status <name>` reports `plan.md` only (`PlanFilePath` hardcodes

@@ -1,7 +1,7 @@
 # Runs
 
 Runs are long-lived, staged work items driven through the v5 HTTP API and the
-Spektacular stage runner. A live run is visible through `/api/runs`, individual
+Spektacular (Spek) stage runner. A live run is visible through `/api/runs`, individual
 run details are served at `/api/runs/{key}`, and approved plans release the
 `implement` stage through the existing plan approval API. The public run key is
 the canonical issue key, `<owner/repo>#<number>`, matching the contribute queue.
@@ -12,7 +12,7 @@ The layer-2 live acceptance test for #8466 lives in
 `src/test/runs_e2e_test.go` and is excluded from normal builds by the
 `integration` build tag.
 
-Run it against a live hive configured with the in-tree Spektacular fake:
+Run it against a live hive configured with the in-tree Spek fake:
 
 ```sh
 HIVE_URL=http://<host>:<port> \
@@ -91,11 +91,11 @@ lease generation, approving actor, plan epic id, and timestamp; `GET
 /api/runs/{key}` includes it in the observed `stages` timeline between the held
 plan receipt and the implement-stage transition.
 
-When Spektacular strict mode invalidates an approved plan, `plan status <name>`
+When Spek strict mode invalidates an approved plan, `plan status <name>`
 reports `document_status: stale`. Hive maps that status to a human hold instead
 of retrying or advancing: the run remains on the plan lease, `waiting_on` becomes
 `human` with `waiting_reason: stale_plan`, and the timeline records a blocked
-event until a fresh plan is reviewed and approved. Spektacular status
+event until a fresh plan is reviewed and approved. Spek status
 `artifact_id` is the join key Hive records in receipts and stage attributes;
 older CLIs that lack the field fall back to the historical `name` alias.
 
@@ -108,7 +108,7 @@ rule. Compact approvals and rejections post the chosen action plus the lease
 generation back to `/api/runs/{key}/checkpoint`; Hive refuses stale generations
 with `409 Conflict` and refuses non-owner decisions with `403 Forbidden`.
 
-When `governor.work_source.wavefront.enabled` is true, a final Spektacular plan
+When `governor.work_source.wavefront.enabled` is true, a final Spek plan
 that declares repositories with `[repo:<owner/name>]` annotations fans out the
 implement stage into one Wavefront implementation wave per repo. The run detail
 exposes the minted wave ids as `wave_ids`. With Wavefront disabled (the
@@ -146,7 +146,7 @@ subsequent reds.
 Long-running runs are the Hive workflow behind `spec` -> `plan` -> `implement`
 work. The workflow is default-off: with `runs.spektacular.enabled` unset or
 `false`, Hive does not create the first stage lease from inception and does not
-start the Spektacular poll loop.
+start the Spek poll loop.
 
 ## How a run starts
 

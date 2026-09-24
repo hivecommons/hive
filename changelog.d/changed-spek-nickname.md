@@ -1,0 +1,1 @@
+- Call Spektacular "Spek" in user-facing UI and docs, and call the outputs it creates "speks".
