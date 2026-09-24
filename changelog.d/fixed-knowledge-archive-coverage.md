@@ -1,0 +1,1 @@
+- Restore the v5 pkg/knowledge coverage floor by adding direct campaign archive unit coverage for handoff leases, revisions, restore, and validation paths.
