@@ -177,8 +177,8 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          cache: false
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
 
       - name: Install gotestsum
         run: |
@@ -192,6 +192,7 @@ jobs:
       # turning the ~2-minute per-job -race recompile into an incremental one.
       # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
       - name: Restore warm Go build cache
+        if: ${{ !contains(vars.HIVE_RUNNER_LABELS, 'hive-runners') }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
@@ -328,8 +329,8 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          cache: false
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
 
       - name: Install gotestsum
         run: |
@@ -343,6 +344,7 @@ jobs:
       # turning the ~2-minute per-job -race recompile into an incremental one.
       # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
       - name: Restore warm Go build cache
+        if: ${{ !contains(vars.HIVE_RUNNER_LABELS, 'hive-runners') }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
@@ -480,8 +482,8 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          cache: false
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
 
       # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
       # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
@@ -489,6 +491,7 @@ jobs:
       # turning the ~2-minute per-job -race recompile into an incremental one.
       # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
       - name: Restore warm Go build cache
+        if: ${{ !contains(vars.HIVE_RUNNER_LABELS, 'hive-runners') }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
@@ -613,8 +616,8 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          cache: false
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
 
       - name: Install gotestsum
         run: |
@@ -628,6 +631,7 @@ jobs:
       # turning the ~2-minute per-job -race recompile into an incremental one.
       # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
       - name: Restore warm Go build cache
+        if: ${{ !contains(vars.HIVE_RUNNER_LABELS, 'hive-runners') }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
@@ -763,8 +767,8 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          cache: false
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
 
       - name: Install gotestsum
         run: |
@@ -778,6 +782,7 @@ jobs:
       # turning the ~2-minute per-job -race recompile into an incremental one.
       # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
       - name: Restore warm Go build cache
+        if: ${{ !contains(vars.HIVE_RUNNER_LABELS, 'hive-runners') }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
@@ -1472,7 +1477,7 @@ jobs:
   # objects each. Push/schedule only: PR-scoped cache saves are invisible to
   # other branches and would only thrash the repo's 10GB cache budget.
   warm-build-cache:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && !contains(vars.HIVE_RUNNER_LABELS, 'hive-runners')
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     defaults:
       run:
@@ -1482,10 +1487,11 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          cache: false
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
 
       - name: Restore warm Go build cache
+        if: ${{ !contains(vars.HIVE_RUNNER_LABELS, 'hive-runners') }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
