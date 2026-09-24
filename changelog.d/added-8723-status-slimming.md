@@ -1,0 +1,1 @@
+- Added slimmer `/api/status` reads with field selection, `/api/status/summary`, gzip encoding, and mutation `minStatusSeq` floors. Fixes #8723.

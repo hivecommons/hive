@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/subtle"
 	"embed"
@@ -1123,6 +1124,7 @@ func (s *Server) registerCoreRoutes() {
 		}
 	}
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
+	s.mux.HandleFunc("GET /api/status/summary", s.handleStatusSummary)
 	s.mux.HandleFunc("GET /api/events", s.handleSSE)
 	s.mux.HandleFunc("POST /api/github-app/recheck", s.handleGitHubAppRecheck)
 	s.mux.HandleFunc("POST /api/github-app/install-clicked", s.handleGitHubAppInstallClicked)
@@ -2825,12 +2827,129 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	status := s.status
 	s.statusMu.RUnlock()
 
-	w.Header().Set("Content-Type", "application/json")
 	if status == nil {
-		jsonResponse(w, map[string]string{"status": "initializing"})
+		statusJSONResponse(w, r, map[string]string{"status": "initializing"})
 		return
 	}
-	jsonResponse(w, status)
+	statusJSONResponse(w, r, filterStatusPayload(status, r.URL.Query().Get("fields"), r.URL.Query().Get("omit")))
+}
+
+func (s *Server) handleStatusSummary(w http.ResponseWriter, r *http.Request) {
+	s.statusMu.RLock()
+	status := s.status
+	s.statusMu.RUnlock()
+
+	if status == nil {
+		statusJSONResponse(w, r, map[string]string{"status": "initializing"})
+		return
+	}
+	statusJSONResponse(w, r, buildStatusSummary(status))
+}
+
+func statusJSONResponse(w http.ResponseWriter, r *http.Request, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		if err := json.NewEncoder(w).Encode(data); err != nil {
+			slog.Warn("status json encode failed", "error", err)
+		}
+		return
+	}
+	w.Header().Set("Content-Encoding", "gzip")
+	w.Header().Add("Vary", "Accept-Encoding")
+	gz := gzip.NewWriter(w)
+	defer func() {
+		if err := gz.Close(); err != nil {
+			slog.Warn("status gzip close failed", "error", err)
+		}
+	}()
+	if err := json.NewEncoder(gz).Encode(data); err != nil {
+		slog.Warn("status json gzip encode failed", "error", err)
+	}
+}
+
+func filterStatusPayload(status *StatusPayload, fieldsCSV, omitCSV string) any {
+	if strings.TrimSpace(fieldsCSV) == "" && strings.TrimSpace(omitCSV) == "" {
+		return status
+	}
+	var full map[string]any
+	data, err := json.Marshal(status)
+	if err != nil || json.Unmarshal(data, &full) != nil {
+		return status
+	}
+	fields := csvSet(fieldsCSV)
+	if len(fields) > 0 {
+		selected := make(map[string]any, len(fields))
+		for key := range fields {
+			if v, ok := full[key]; ok {
+				selected[key] = v
+			}
+		}
+		return selected
+	}
+	for key := range csvSet(omitCSV) {
+		delete(full, key)
+	}
+	return full
+}
+
+func csvSet(csv string) map[string]bool {
+	out := map[string]bool{}
+	for _, part := range strings.Split(csv, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out[part] = true
+		}
+	}
+	return out
+}
+
+type StatusSummaryPayload struct {
+	Timestamp      string                `json:"timestamp"`
+	StatusSeq      uint64                `json:"statusSeq"`
+	StatusInstance string                `json:"statusInstance"`
+	HiveID         string                `json:"hiveId"`
+	Agents         []StatusSummaryAgent  `json:"agents"`
+	Governor       StatusSummaryGovernor `json:"governor"`
+	Budget         FrontendBudget        `json:"budget"`
+}
+
+type StatusSummaryAgent struct {
+	Name       string `json:"name"`
+	State      string `json:"state"`
+	Paused     bool   `json:"paused"`
+	Backend    string `json:"backend"`
+	Model      string `json:"model"`
+	Effort     string `json:"effort,omitempty"`
+	Restarts   int    `json:"restarts"`
+	NeedsLogin bool   `json:"needsLogin,omitempty"`
+}
+
+type StatusSummaryGovernor struct {
+	Mode string `json:"mode,omitempty"`
+}
+
+func buildStatusSummary(status *StatusPayload) StatusSummaryPayload {
+	agents := make([]StatusSummaryAgent, 0, len(status.Agents))
+	for _, a := range status.Agents {
+		agents = append(agents, StatusSummaryAgent{
+			Name: a.Name, State: a.State, Paused: a.Paused, Backend: a.CLI,
+			Model: a.Model, Effort: a.ReasoningEffort, Restarts: a.Restarts,
+			NeedsLogin: a.NeedsLogin,
+		})
+	}
+	return StatusSummaryPayload{
+		Timestamp: status.Timestamp, StatusSeq: status.StatusSeq, StatusInstance: status.StatusInstance,
+		HiveID: status.HiveID, Agents: agents, Governor: StatusSummaryGovernor{Mode: status.Governor.Mode}, Budget: status.Budget,
+	}
+}
+
+func (s *Server) currentStatusSeq() uint64 {
+	s.statusMu.RLock()
+	defer s.statusMu.RUnlock()
+	if s.status == nil {
+		return 0
+	}
+	return s.status.StatusSeq
 }
 
 func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {

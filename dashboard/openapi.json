@@ -1345,6 +1345,51 @@
         }
       }
     },
+    "/api/status/summary": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Compact hive status summary",
+        "description": "Returns the compact agent/governor/budget summary used by pollers that do not need the full repos[] payload. Honors Accept-Encoding: gzip like /api/status.",
+        "responses": {
+          "200": {
+            "description": "Compact status summary, or {\"status\": \"initializing\"} before the first status build.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "timestamp": {"type": "string"},
+                    "statusSeq": {"type": "integer", "format": "int64"},
+                    "statusInstance": {"type": "string"},
+                    "hiveId": {"type": "string"},
+                    "agents": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {"type": "string"},
+                          "state": {"type": "string"},
+                          "paused": {"type": "boolean"},
+                          "backend": {"type": "string"},
+                          "model": {"type": "string"},
+                          "effort": {"type": "string"},
+                          "restarts": {"type": "integer"},
+                          "needsLogin": {"type": "boolean"}
+                        }
+                      }
+                    },
+                    "governor": {"type": "object", "properties": {"mode": {"type": "string"}}},
+                    "budget": {"type": "object"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/events": {
       "get": {
         "tags": [
