@@ -1939,7 +1939,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="tab-panel" id="tab-manage" role="tabpanel" aria-labelledby="ptab-manage">
 <div class="ops">
 <h1>Management</h1>
-<p class="subtitle" style="font-size:.95rem">Operator admin controls for the contributor agent fleet, mirrored from the Governor Hub configuration. Owner &amp; read-write only &mdash; a read viewer sees no controls here. Live monitoring of the fleet lives under the <strong style="color:var(--text)">Operations</strong> tab.</p>
+<p class="subtitle" style="font-size:.95rem">Operator admin controls for the Contributor agent (ClankeR) fleet, mirrored from the Governor Hub configuration. Owner &amp; read-write only &mdash; a read viewer sees no controls here. Live monitoring of the fleet lives under the <strong style="color:var(--text)">Operations</strong> tab.</p>
 
 <!-- #2534 Operator admin controls. Hidden by default; shown only after /api/role
      reports owner or read-write. These mirror the Governor Hub config section
@@ -2050,7 +2050,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="ops">
 <h1>Operations</h1>
 <div id="operator-message-banner-ops"></div>
-<p class="subtitle" style="font-size:.95rem">A live view over the contributor agent fleet and its in-flight work. The panels below surface what this hive already knows; the per-contributor trust / revoke / remove controls are owner &amp; read-write only. Admin controls (suspend, admission filters) live under the <strong style="color:var(--text)">Management</strong> tab.</p>
+<p class="subtitle" style="font-size:.95rem">A live view over the Contributor agent (ClankeR) fleet and its in-flight work. The panels below surface what this hive already knows; the per-contributor trust / revoke / remove controls are owner &amp; read-write only. Admin controls (suspend, admission filters) live under the <strong style="color:var(--text)">Management</strong> tab.</p>
 <div id="ops-announcement" class="announcement-banner" role="status"><span class="ann-level"></span><span class="ann-text"></span><button class="hv-btn btn-secondary" type="button" data-action="dismiss-announcement" aria-label="Dismiss announcement">&times;</button></div>
 <div id="ops-help-links" class="help-links" aria-label="Help and community links"><h4>Help &amp; community</h4><div class="links"></div></div>
 
@@ -2065,7 +2065,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="ops-grid">
 <div>
 <div class="ops-card card-accent">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Connected contributor agents</h3><span class="ops-card-count count-strong" id="clanker-count"></span><!-- 7-day fleet-size trend (#persistent-history) --><span class="spark spark-inline" id="spark-fleet" title="Connected contributor agents, last 7 days (hourly)"></span></div>
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Connected contributor agents (ClankeR)</h3><span class="ops-card-count count-strong" id="clanker-count"></span><!-- 7-day fleet-size trend (#persistent-history) --><span class="spark spark-inline" id="spark-fleet" title="Connected contributor agents (ClankeR), last 7 days (hourly)"></span></div>
 <!-- Army roster header: live count + at-a-glance status split, fed by the fleet snapshot. -->
 <div class="cc-army" id="cc-army">
   <span style="color:var(--text);font-weight:600">Your army</span>

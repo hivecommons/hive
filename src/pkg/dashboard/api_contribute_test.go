@@ -299,7 +299,7 @@ func TestContributeLandingHasOpsTab(t *testing.T) {
 	iManage := strings.Index(body, `id="tab-manage"`)
 	iAdmin := strings.Index(body, `id="ops-admin"`)
 	iOps := strings.Index(body, `id="tab-ops"`)
-	iClankers := strings.Index(body, `<h3>Connected contributor agents</h3>`)
+	iClankers := strings.Index(body, `<h3>Connected contributor agents (ClankeR)</h3>`)
 	if iManage < 0 || iAdmin < 0 || iOps < 0 || iClankers < 0 {
 		t.Fatalf("missing anchors: manage=%d admin=%d ops=%d clankers=%d", iManage, iAdmin, iOps, iClankers)
 	}
@@ -307,7 +307,7 @@ func TestContributeLandingHasOpsTab(t *testing.T) {
 		t.Errorf("admin controls must render under Management (before Operations): manage=%d admin=%d ops=%d", iManage, iAdmin, iOps)
 	}
 	if iOps >= iClankers {
-		t.Errorf("Connected contributor agents must render under Operations (after tab-ops opens): ops=%d clankers=%d", iOps, iClankers)
+		t.Errorf("Connected contributor agents (ClankeR) must render under Operations (after tab-ops opens): ops=%d clankers=%d", iOps, iClankers)
 	}
 
 	// Existing onboarding content must still be present and unchanged.

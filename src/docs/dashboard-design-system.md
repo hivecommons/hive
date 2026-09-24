@@ -403,9 +403,9 @@ headers, visit the same route/viewport/theme, and pixel-diff the resulting PNGs.
 Record the viewport, theme, route, and intentional differences in the PR. Do
 not paste secrets or cluster-specific hostnames into docs, logs, or screenshots.
 
-## IA and naming glossary — implemented pending maintainer review
+## IA and naming glossary — implemented
 
-Implemented in [PR #8602](https://github.com/hivecommons/hive/pull/8602) for A10 `ui-ia-naming`; keep this section pending maintainer review until the group names and terminology are accepted. The source-of-truth details live in [dashboard glossary and sidebar IA](dashboard-glossary.md).
+Implemented in [PR #8602](https://github.com/hivecommons/hive/pull/8602) for A10 `ui-ia-naming`. The source-of-truth details live in [dashboard glossary and sidebar IA](dashboard-glossary.md).
 
 Sidebar groups now map the existing destinations without changing IDs, `data-action` handlers, or route hashes:
 
@@ -424,13 +424,13 @@ Terms:
 | --- | --- |
 | Agent | Runnable automation process or configured role. |
 | Contributor | Human/account participating through the contributor portal or relay. |
-| Contributor agent | A contributor's relay-backed automation process. |
+| Contributor agent (ClankeR) | A contributor's relay-backed worker; use the full form on first or prominent mention, then Contributor agent for repeated inline mentions. |
 | Governor | Policy engine that decides autonomy and merge/apply gates. |
 | Fleet | The set of agents or contributor agents under observation. |
 
-Avoid lowercase `clanker` in operator-facing copy. Keep **ClankeR** only where it names the contributor relay product/brand.
+Avoid lowercase `clanker` in operator-facing copy. Keep **ClankeR** where it names the contributor relay product/brand, including the full-form term Contributor agent (ClankeR). Internal `clanker-*` identifiers are stable and intentionally unchanged.
 
-Count badges use `.badge-count`; zero counts are hidden consistently.
+Count badges use `.badge-count`; zero counts render as dimmed `0` badges with `data-zero`.
 
 
 ### A5 surface migration notes

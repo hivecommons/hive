@@ -166,6 +166,13 @@
   justify-content: center;
 }
 
+.badge-count[data-zero],
+.badge-count.is-zero {
+  background: var(--surface-1);
+  border-color: var(--line-subtle);
+  color: var(--text-faint);
+}
+
 .badge-status[data-status="ok"],
 .status-dot[data-status="ok"] {
   --component-status: var(--status-ok);

@@ -2601,9 +2601,8 @@
     .status-badge[data-status="info"], .pause-badge[data-status="info"], .off-badge[data-status="info"], .on-demand-badge[data-status="info"], .summary-age[data-status="info"], #fleet-breaker-pill[data-status="info"] { --component-status: var(--status-info); }
     .status-badge[data-status="neutral"], .pause-badge[data-status="neutral"], .off-badge[data-status="neutral"], .on-demand-badge[data-status="neutral"], .summary-age[data-status="neutral"], #fleet-breaker-pill[data-status="neutral"] { --component-status: var(--status-neutral); }
     .nous-config-pill { background: color-mix(in srgb, var(--brand) 8%, transparent); border-color: color-mix(in srgb, var(--brand) 35%, transparent); color: var(--brand); cursor: pointer; }
-    /* sidebar count badges use the shared .badge-count recipe; JS hides zero counts. */
+    /* sidebar count badges use the shared .badge-count recipe; JS marks zero counts with data-zero. */
     .oc-nav-count { margin-left: auto; flex-shrink: 0; }
-    .oc-nav-count[hidden] { display: none; }
     /* pill size steps */
     .token-model-chip { padding: 4px 10px; font-size: var(--fs-sm); }
     .nous-config-pill { padding: 3px 10px; font-size: var(--fs-sm); }
@@ -3226,16 +3225,16 @@
     </div>
     <div class="oc-nav-group">
       <div class="oc-nav-label">Resources</div>
-      <a class="oc-nav-item" data-section="repos-section" data-action="ocNavigate" data-arg0="repos-section"><span class="oc-nav-emoji">📦</span><span class="oc-nav-text">Repos</span><span id="repos-sidebar-badge" class="badge-count oc-nav-count" hidden></span></a>
-      <a class="oc-nav-item" data-section="beads-section" data-action="ocNavigate" data-arg0="beads-section"><span class="oc-nav-emoji">🔮</span><span class="oc-nav-text">Beads</span><span id="beads-sidebar-badge" class="badge-count oc-nav-count" hidden></span></a>
-      <a class="oc-nav-item" data-section="contributors-section" data-action="ocNavigate" data-arg0="contributors-section"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count" hidden></span></a>
+      <a class="oc-nav-item" data-section="repos-section" data-action="ocNavigate" data-arg0="repos-section"><span class="oc-nav-emoji">📦</span><span class="oc-nav-text">Repos</span><span id="repos-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
+      <a class="oc-nav-item" data-section="beads-section" data-action="ocNavigate" data-arg0="beads-section"><span class="oc-nav-emoji">🔮</span><span class="oc-nav-text">Beads</span><span id="beads-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
+      <a class="oc-nav-item" data-section="contributors-section" data-action="ocNavigate" data-arg0="contributors-section"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
     </div>
     <div class="oc-nav-group">
       <div class="oc-nav-label">Intelligence</div>
       <a class="oc-nav-item" data-section="advisory-section" data-action="ocNavigate" data-arg0="advisory-section"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Advisory</span></a>
       <a class="oc-nav-item" data-section="acmm-eval-section" data-action="ocNavigate" data-arg0="acmm-eval-section"><span class="oc-nav-emoji">🎯</span><span class="oc-nav-text">ACMM Eval</span></a>
       <a class="oc-nav-item" data-section="inception-section" data-action="ocNavigate" data-arg0="inception-section"><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception</span></a>
-      <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" hidden></span></a>
+      <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item" data-section="nous-section" data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Strategy Lab</span></a>
     </div>
     <div class="oc-nav-group">
@@ -12425,15 +12424,12 @@ function burnAreaChart() {
     function setSidebarCountBadge(el, count, title) {
       if (!el) return;
       const n = Number(count) || 0;
-      if (n > 0) {
-        el.hidden = false;
-        el.textContent = n;
-        if (title) el.title = title;
-      } else {
-        el.hidden = true;
-        el.textContent = '';
-        el.removeAttribute('title');
-      }
+      el.hidden = false;
+      el.textContent = n;
+      if (n === 0) el.setAttribute('data-zero', '');
+      else el.removeAttribute('data-zero');
+      if (title) el.title = title;
+      else el.removeAttribute('title');
     }
 
     async function fetchKnowledgeStats() {
@@ -21530,7 +21526,7 @@ function burnAreaChart() {
         </div>
 
         <div class="config-field">
-          <label>Contributor Agent Roles <span class="config-info">i<span class="config-tooltip">Default roles scanner, quality, and outreach are always delegatable. Check privileged roles to let owners assign them from a contributor agent card; supervisor is never delegatable.</span></span></label>
+          <label>Contributor Agent Roles <span class="config-info">i<span class="config-tooltip">Default roles scanner, quality, and outreach are always delegatable. Check privileged roles to let owners assign them from a Contributor agent (ClankeR) card; supervisor is never delegatable.</span></span></label>
           <div style="display:flex;flex-direction:column;gap:var(--sp-3)">
             ${['scanner','quality','outreach'].map(function(r) {
               return '<label style="display:flex;align-items:center;gap:var(--sp-4);font-size:0.78rem;color:var(--muted)" title="Default contributor role; always delegatable"><input type="checkbox" checked disabled> ' + r + ' <span style="font-size:0.65rem;color:var(--green)">always on</span></label>';
@@ -28056,7 +28052,7 @@ function burnAreaChart() {
       { id: 'budget', label: 'Budget', desc: 'set a weekly token budget and watch the burn rate (Settings → Budget).', action: 'welcomeShowConfigTab', actionArg: 'Budget' },
       { id: 'notifications', label: 'Notifications', desc: 'route alerts to your channels (Settings → Notifications).', action: 'welcomeShowConfigTab', actionArg: 'Notifications' },
       { id: 'knowledge', label: 'Knowledge Base', desc: 'seed facts and patterns the agents reuse across passes.', action: 'welcomeShowSection', actionArg: 'knowledge-section' },
-      { id: 'contributors', label: 'Contributor Relay', desc: 'let outside contributors lend contributor agents, with a leaderboard.', action: 'welcomeShowSection', actionArg: 'contributors-section' },
+      { id: 'contributors', label: 'Contributor agent (ClankeR)', desc: 'let outside contributors lend contributor agents, with a leaderboard.', action: 'welcomeShowSection', actionArg: 'contributors-section' },
       { id: 'hub', label: 'Hub visibility', desc: 'make this hive public or private on the hub (Settings → Hub).', action: 'welcomeShowConfigTab', actionArg: 'Hub' },
       { id: 'backup', label: 'Backups', desc: 'set a backup encryption key, then download an encrypted archive of this hive from your account menu. No deployment or cluster access needed — the key is set right here (Settings → Security → Backup). Backups are refused while no key is set, so an archive is never written unencrypted.', action: 'welcomeShowConfigTab', actionArg: 'Security' },
       { id: 'trajectory', label: 'Trajectory Review <span class="welcome-more-tag">advanced</span>', desc: 'an LLM reviewer periodically reads each running agent’s transcript and pauses or alerts you if the agent drifts from the task it was given. Needs one OpenAI-compatible reviewer endpoint (LiteLLM, vLLM, or llm-d) — without it the lane stays inert (Settings → Features).', action: 'welcomeShowConfigTab', actionArg: TRAJECTORY_CONFIG_TAB },
