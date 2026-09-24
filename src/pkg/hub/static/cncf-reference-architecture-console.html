@@ -27,14 +27,49 @@
     --hub-article-ok-soft: color-mix(in srgb, var(--status-ok) var(--component-tint), transparent);
     --hub-article-error-soft: color-mix(in srgb, var(--status-error) var(--component-tint), transparent);
     --hub-article-measure: 68ch;
+    --hub-article-body-fs: 17px;
+    --hub-article-wrap-max: 1040px;
+    --hub-article-wrap-pad-x: clamp(1.1rem, 4vw, 3rem);
+    --hub-article-masthead-pad-top: 2.6rem;
+    --hub-article-masthead-pad-bottom: 2.2rem;
+    --hub-article-eyebrow-pad: .3rem .7rem;
+    --hub-article-h1-fs: clamp(1.9rem, 4.6vw, 3rem);
+    --hub-article-subtitle-fs: 1.12rem;
+    --hub-article-meta-pad-top: 1.3rem;
+    --hub-article-tag-pad: .12rem .5rem;
+    --hub-article-toc-fs: .86rem;
+    --hub-article-toc-link-pad: .28rem 0;
+    --hub-article-toc-link-pad-left: .7rem;
+    --hub-article-main-pad: 2rem 0 4rem;
+    --hub-article-h2-fs: clamp(1.3rem, 2.6vw, 1.7rem);
+    --hub-article-h3-fs: 1.06rem;
+    --hub-article-list-pad-left: 1.3rem;
+    --hub-article-code-fs: .86em;
+    --hub-article-code-radius: 5px;
+    --hub-article-card-pad: 1.1rem 1.2rem;
+    --hub-article-card-fs: .89rem;
+    --hub-article-dot-radius: 7px;
+    --hub-article-diagram-pad: 1.4rem 1rem;
+    --hub-article-panel-pad: 1.2rem 1.3rem;
+    --hub-article-panel-fs: .93rem;
+    --hub-article-panel-list-pad-left: 1.15rem;
+    --hub-article-rung-radius: 10px;
+    --hub-article-rung-pad: .7rem .9rem;
+    --hub-article-rung-lvl-fs: .95rem;
+    --hub-article-quote-pad: .9rem 1.2rem;
+    --hub-article-quote-fs: .95rem;
+    --hub-article-quote-radius: 0 8px 8px 0;
+    --hub-article-footer-pad: 2rem 0 3rem;
+    --hub-article-table-fs: .93rem;
+    --hub-article-cell-pad: .55rem .8rem;
   }
 
   body {
     margin: var(--sp-0); background: var(--surface-0); color: var(--text);
     font-family: var(--font-ui); line-height: 1.65;
-    font-size: 17px; -webkit-font-smoothing: antialiased;
+    font-size: var(--hub-article-body-fs); -webkit-font-smoothing: antialiased;
   }
-  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 clamp(1.1rem, 4vw, 3rem); }
+  .wrap { max-width: var(--hub-article-wrap-max); margin: 0 auto; padding: 0 var(--hub-article-wrap-pad-x); }
 
   /* ── Masthead ── */
   header.masthead {
@@ -43,29 +78,29 @@
       radial-gradient(1200px 240px at 12% -40%, color-mix(in srgb, var(--status-info) 12%, transparent), transparent),
       radial-gradient(900px 200px at 90% -60%, color-mix(in srgb, var(--brand) 14%, transparent), transparent);
   }
-  .masthead .wrap { padding-top: 2.6rem; padding-bottom: 2.2rem; }
+  .masthead .wrap { padding-top: var(--hub-article-masthead-pad-top); padding-bottom: var(--hub-article-masthead-pad-bottom); }
   .eyebrow {
     display: inline-flex; align-items: center; gap: var(--sp-4);
     font-size: var(--fs-sm); letter-spacing: .14em; text-transform: uppercase;
     font-weight: 700; color: var(--hub-article-link-strong);
     background: var(--hub-article-info-soft); border: 1px solid color-mix(in srgb, var(--status-info) 30%, transparent);
-    padding: .3rem .7rem; border-radius: var(--r-pill);
+    padding: var(--hub-article-eyebrow-pad); border-radius: var(--r-pill);
   }
   h1 {
-    font-size: clamp(1.9rem, 4.6vw, 3rem); line-height: 1.08;
+    font-size: var(--hub-article-h1-fs); line-height: 1.08;
     letter-spacing: -0.02em; margin: 1.1rem 0 .4rem; text-wrap: balance; font-weight: 800;
   }
-  .subtitle { color: var(--text-muted); font-size: 1.12rem; max-width: 60ch; margin: var(--sp-0); }
+  .subtitle { color: var(--text-muted); font-size: var(--hub-article-subtitle-fs); max-width: 60ch; margin: var(--sp-0); }
 
   .meta-grid {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: .1rem 1.6rem; margin-top: 1.9rem;
-    border-top: 1px solid var(--line-subtle); padding-top: 1.3rem;
+    border-top: 1px solid var(--line-subtle); padding-top: var(--hub-article-meta-pad-top);
   }
   .meta-grid dt { font-size: var(--fs-xs); letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint); font-weight: 700; }
   .meta-grid dd { margin: .15rem 0 .9rem; font-size: var(--fs-md); color: var(--text); }
   .tags { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .2rem; }
-  .tag { font-size: var(--fs-sm); font-family: var(--font-mono); color: var(--text-muted); background: var(--hub-article-inset); border: 1px solid var(--line-subtle); padding: .12rem .5rem; border-radius: var(--r); }
+  .tag { font-size: var(--fs-sm); font-family: var(--font-mono); color: var(--text-muted); background: var(--hub-article-inset); border: 1px solid var(--line-subtle); padding: var(--hub-article-tag-pad); border-radius: var(--r); }
 
   /* ── Layout with TOC ── */
   .shell { display: grid; grid-template-columns: 1fr; gap: var(--sp-0); }
@@ -75,42 +110,42 @@
   }
   nav.toc { padding: var(--sp-9) var(--sp-0); }
   nav.toc p { font-size: var(--fs-xs); letter-spacing: .12em; text-transform: uppercase; color: var(--text-faint); font-weight: 700; margin: 0 0 .7rem; }
-  nav.toc a { display: block; color: var(--text-muted); text-decoration: none; font-size: .86rem; padding: .28rem 0; border-left: 2px solid transparent; padding-left: .7rem; transition: color .15s, border-color .15s; }
+  nav.toc a { display: block; color: var(--text-muted); text-decoration: none; font-size: var(--hub-article-toc-fs); padding: var(--hub-article-toc-link-pad); border-left: 2px solid transparent; padding-left: var(--hub-article-toc-link-pad-left); transition: color .15s, border-color .15s; }
   nav.toc a:hover { color: var(--status-info); border-color: var(--status-info); }
 
-  main { padding: 2rem 0 4rem; min-width: 0; }
+  main { padding: var(--hub-article-main-pad); min-width: 0; }
   section { margin-bottom: 3rem; scroll-margin-top: 1.4rem; }
   section > p, section > ul, section > ol { max-width: var(--hub-article-measure); }
   h2 {
-    font-size: clamp(1.3rem, 2.6vw, 1.7rem); letter-spacing: -0.01em; font-weight: 750;
+    font-size: var(--hub-article-h2-fs); letter-spacing: -0.01em; font-weight: 750;
     margin: var(--sp-0) var(--sp-0) var(--sp-6); padding-bottom: var(--sp-4); border-bottom: 2px solid var(--line-subtle);
     display: flex; align-items: baseline; gap: .6rem;
   }
   h2 .num { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--status-info); font-weight: 700; letter-spacing: 0; }
-  h3 { font-size: 1.06rem; font-weight: 700; margin: 1.7rem 0 .5rem; color: var(--text); }
+  h3 { font-size: var(--hub-article-h3-fs); font-weight: 700; margin: 1.7rem 0 .5rem; color: var(--text); }
   p { margin: var(--sp-0) var(--sp-0) var(--sp-6); }
   a { color: var(--status-info); text-decoration-color: color-mix(in srgb, var(--status-info) 40%, transparent); text-underline-offset: 2px; }
   strong { color: var(--text); font-weight: 680; }
-  code { font-family: var(--font-mono); font-size: .86em; background: var(--hub-article-inset); border: 1px solid var(--line-subtle); border-radius: 5px; padding: .08em .38em; }
-  ul, ol { padding-left: 1.3rem; }
+  code { font-family: var(--font-mono); font-size: var(--hub-article-code-fs); background: var(--hub-article-inset); border: 1px solid var(--line-subtle); border-radius: var(--hub-article-code-radius); padding: .08em .38em; }
+  ul, ol { padding-left: var(--hub-article-list-pad-left); }
   li { margin: .35rem 0; }
 
   /* ── CNCF project cards ── */
   .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--sp-6); max-width: none; }
   .card {
     background: var(--hub-article-surface); border: 1px solid var(--line-subtle); border-radius: var(--r-lg);
-    padding: 1.1rem 1.2rem; display: flex; flex-direction: column; gap: .35rem;
+    padding: var(--hub-article-card-pad); display: flex; flex-direction: column; gap: .35rem;
   }
   .card .ch { display: flex; align-items: center; gap: .55rem; font-weight: 700; font-size: var(--fs-lg); }
-  .card .dot { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font-size: var(--fs-md); background: var(--hub-article-info-soft); flex: 0 0 auto; }
+  .card .dot { width: 26px; height: 26px; border-radius: var(--hub-article-dot-radius); display: grid; place-items: center; font-size: var(--fs-md); background: var(--hub-article-info-soft); flex: 0 0 auto; }
   .card .ver { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text-faint); }
-  .card p { font-size: .89rem; color: var(--text-muted); margin: .3rem 0 0; }
+  .card p { font-size: var(--hub-article-card-fs); color: var(--text-muted); margin: .3rem 0 0; }
 
   /* ── diagrams ── */
   figure { margin: var(--sp-8) var(--sp-0); }
   .diagram {
     background: var(--hub-article-surface); border: 1px solid var(--line-subtle); border-radius: var(--r-lg);
-    padding: 1.4rem 1rem; overflow-x: auto;
+    padding: var(--hub-article-diagram-pad); overflow-x: auto;
   }
   .diagram .mermaid { display: flex; justify-content: center; min-width: 0; }
   .diagram .mermaid svg { max-width: 100%; height: auto; }
@@ -119,38 +154,39 @@
   /* ── worked / didn't panels ── */
   .split { display: grid; grid-template-columns: 1fr; gap: var(--sp-6); max-width: none; }
   @media (min-width: 720px) { .split { grid-template-columns: 1fr 1fr; } }
-  .panel { border-radius: var(--r-lg); padding: 1.2rem 1.3rem; border: 1px solid var(--line-subtle); }
+  .panel { border-radius: var(--r-lg); padding: var(--hub-article-panel-pad); border: 1px solid var(--line-subtle); }
   .panel.good { background: var(--hub-article-ok-soft); border-color: color-mix(in srgb, var(--status-ok) 35%, transparent); }
   .panel.bad { background: var(--hub-article-error-soft); border-color: color-mix(in srgb, var(--status-error) 35%, transparent); }
   .panel h3 { margin-top: var(--sp-0); display: flex; align-items: center; gap: var(--sp-4); }
   .panel.good h3 { color: var(--status-ok); }
   .panel.bad h3 { color: var(--status-error); }
-  .panel ul { padding-left: 1.15rem; margin: var(--sp-0); }
-  .panel li { font-size: .93rem; }
+  .panel ul { padding-left: var(--hub-article-panel-list-pad-left); margin: var(--sp-0); }
+  .panel li { font-size: var(--hub-article-panel-fs); }
   .panel li strong { color: inherit; }
 
   /* ── ACMM ladder ── */
   .ladder { display: grid; gap: var(--sp-4); max-width: none; margin-top: var(--sp-4); }
-  .rung { display: grid; grid-template-columns: 3rem 1fr; gap: .9rem; align-items: center; background: var(--hub-article-surface); border: 1px solid var(--line-subtle); border-radius: 10px; padding: .7rem .9rem; border-left: 4px solid var(--rung); }
-  .rung .lvl { font-family: var(--font-mono); font-weight: 700; color: var(--rung); font-size: .95rem; }
+  .rung { display: grid; grid-template-columns: 3rem 1fr; gap: .9rem; align-items: center; background: var(--hub-article-surface); border: 1px solid var(--line-subtle); border-radius: var(--hub-article-rung-radius); padding: var(--hub-article-rung-pad); border-left: 4px solid var(--rung); }
+  .rung .lvl { font-family: var(--font-mono); font-weight: 700; color: var(--rung); font-size: var(--hub-article-rung-lvl-fs); }
   .rung .rd { font-size: var(--fs-md); color: var(--text-muted); }
   .rung .rd b { color: var(--text); }
 
-  blockquote { margin: 1.2rem 0; padding: .9rem 1.2rem; border-left: 3px solid var(--brand); background: var(--hub-article-brand-soft); border-radius: 0 8px 8px 0; color: var(--text-muted); font-size: .95rem; max-width: var(--hub-article-measure); }
+  blockquote { margin: 1.2rem 0; padding: var(--hub-article-quote-pad); border-left: 3px solid var(--brand); background: var(--hub-article-brand-soft); border-radius: var(--hub-article-quote-radius); color: var(--text-muted); font-size: var(--hub-article-quote-fs); max-width: var(--hub-article-measure); }
 
   footer { border-top: 1px solid var(--line-subtle); }
-  footer .wrap { padding: 2rem 0 3rem; color: var(--text-faint); font-size: var(--fs-base); }
+  footer .wrap { padding: var(--hub-article-footer-pad); color: var(--text-faint); font-size: var(--fs-base); }
   footer a { font-weight: 600; }
 
 
   /* -- tables -- */
   .tablewrap { overflow-x: auto; margin: var(--sp-6) var(--sp-0); max-width: none; }
-  table { border-collapse: collapse; width: 100%; font-size: .93rem; }
-  th, td { text-align: left; padding: .55rem .8rem; border-bottom: 1px solid var(--line-subtle); vertical-align: top; }
+  table { border-collapse: collapse; width: 100%; font-size: var(--hub-article-table-fs); }
+  th, td { text-align: left; padding: var(--hub-article-cell-pad); border-bottom: 1px solid var(--line-subtle); vertical-align: top; }
   thead th { font-size: var(--fs-sm); letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); font-weight: 700; border-bottom: 2px solid var(--line-subtle); }
   tbody tr:last-child td { border-bottom: none; }
 
   /* -- sibling-page nav -- */
+  .meta-wide { grid-column: 1 / -1; }
   .siblings { font-size: var(--fs-md); color: var(--text-faint); margin: 1.4rem 0 0; }
   .siblings a { font-weight: 600; }
 
@@ -167,14 +203,14 @@
     <dl class="meta-grid">
       <div><dt>Organisation</dt><dd>KubeStellar Console</dd></div>
       <div><dt>Team</dt><dd>KubeStellar Console maintainers</dd></div>
-      <div style="grid-column: 1 / -1;"><dt>Contact</dt><dd>Andy Anderson</dd></div>
+      <div class="meta-wide"><dt>Contact</dt><dd>Andy Anderson</dd></div>
       <div><dt>Date</dt><dd>2026-09-24</dd></div>
       <div><dt>Organisation size</dt><dd>Open-source community project</dd></div>
-      <div style="grid-column: 1 / -1;"><dt>User size</dt><dd>84 contributors; adoption through guided install missions with CNCF projects</dd></div>
+      <div class="meta-wide"><dt>User size</dt><dd>84 contributors; adoption through guided install missions with CNCF projects</dd></div>
       <div><dt>Industries</dt><dd>Open Source · Developer Tools</dd></div>
       <div><dt>Reference architectures</dt><dd>CI/CD · Platform Engineering · AI/ML</dd></div>
       <div><dt>Website</dt><dd><a href="https://console.kubestellar.io/">console.kubestellar.io</a></dd></div>
-      <div style="grid-column: 1 / -1;"><dt>Tags</dt><dd><span class="tags"><span class="tag">kubernetes</span><span class="tag">multi-cluster</span><span class="tag">autonomous-maintenance</span><span class="tag">platform-engineering</span><span class="tag">quality-gates</span></span></dd></div>
+      <div class="meta-wide"><dt>Tags</dt><dd><span class="tags"><span class="tag">kubernetes</span><span class="tag">multi-cluster</span><span class="tag">autonomous-maintenance</span><span class="tag">platform-engineering</span><span class="tag">quality-gates</span></span></dd></div>
     </dl>
   </div>
 </header>
