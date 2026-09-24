@@ -3912,6 +3912,10 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 					}
 				}
 				if verifiedPR != "" {
+					if completedTask != nil && completedTask.StandbyLane != "" {
+						h.recordVerifiedStandbyPR(s.contributor.profile.GitHubUsername, completedTask.StandbyLane,
+							completedTask.Repo, msg.PRURL, taskAssignedAt)
+					}
 					// Off the read loop, deliberately. This is cosmetic
 					// best-effort work that gates NOTHING — unlike
 					// verifyReportedPR above, whose result decides the cooldown

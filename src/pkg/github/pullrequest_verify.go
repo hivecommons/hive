@@ -66,6 +66,9 @@ type PRVerification struct {
 	// the completion cooldown while review is pending — so callers that need
 	// "a fix actually landed" must check this field explicitly.
 	Merged bool
+	// State is GitHub's pull request state ("open" or "closed"). Merged remains
+	// separate because a merged pull request is also closed.
+	State string
 	// MergedAt is GitHub's merge timestamp for merged PRs. It lets callers date
 	// effects of the merge to when the fix landed instead of when they observed it.
 	MergedAt time.Time
@@ -128,7 +131,7 @@ func (c *Client) VerifyReportedPR(ctx context.Context, expectedRepo, prURL, expe
 	baseRepo := pr.GetBase().GetRepo().GetFullName() // "owner/repo"
 	// Merged/Title are recorded even on the negative paths below: they describe
 	// the PR that was looked up, not the verdict.
-	v := PRVerification{Author: author, BaseRepo: baseRepo, Merged: pr.GetMerged(), MergedAt: pr.GetMergedAt().Time, Title: pr.GetTitle()}
+	v := PRVerification{Author: author, BaseRepo: baseRepo, Merged: pr.GetMerged(), State: pr.GetState(), MergedAt: pr.GetMergedAt().Time, Title: pr.GetTitle()}
 
 	if !prBaseRepoMatches(baseRepo, expectedRepo) {
 		v.Reason = fmt.Sprintf("PR base repo %q does not match assigned repo %q", baseRepo, expectedRepo)

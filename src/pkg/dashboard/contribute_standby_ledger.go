@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 	standbypkg "github.com/hivecommons/hive/pkg/standby"
 )
 
@@ -104,7 +105,94 @@ func (h *ContributeWSHub) appendStandbyOutcome(rec standbyOutcomeRecord) {
 	h.saveStandbyOutcomes()
 }
 
+func (h *ContributeWSHub) recordVerifiedStandbyPR(contributor, lane, repo, prURL string, assignedAt time.Time) {
+	if h == nil || contributor == "" || repo == "" || prURL == "" {
+		return
+	}
+	ref, err := ghpkg.ParsePRURL(prURL)
+	if err != nil {
+		return
+	}
+	cfg := standbypkg.Configuration{}
+	h.mu.RLock()
+	for _, conn := range h.connections {
+		if conn != nil && conn.profile != nil && strings.EqualFold(conn.profile.GitHubUsername, contributor) {
+			cfg = standbyConfigFromConnection(conn)
+			break
+		}
+	}
+	h.mu.RUnlock()
+	h.appendStandbyOutcome(standbyOutcomeRecord{
+		Key:          standbyOutcomeKey(contributor, cfg),
+		Lane:         lane,
+		Repo:         repo,
+		Number:       ref.Number,
+		DispatchedAt: assignedAt.UTC(),
+		Kind:         standbypkg.OutcomeOpen,
+	})
+}
+
+func (h *ContributeWSHub) reconcileOpenStandbyOutcomes() {
+	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
+		return
+	}
+	h.completedMu.Lock()
+	rows := append([]standbyOutcomeRecord(nil), h.standbyOutcomes...)
+	h.completedMu.Unlock()
+
+	settled := map[string]bool{}
+	for _, rec := range rows {
+		if rec.Kind == standbypkg.OutcomeMerged || rec.Kind == standbypkg.OutcomeClosedUnmerged || rec.Kind == standbypkg.OutcomeMergedAfterRework {
+			settled[standbyOutcomePRKey(rec)] = true
+		}
+	}
+
+	var add []standbyOutcomeRecord
+	for _, rec := range rows {
+		if rec.Kind != standbypkg.OutcomeOpen || rec.Repo == "" || rec.Number <= 0 || settled[standbyOutcomePRKey(rec)] {
+			continue
+		}
+		contributor, _, _ := strings.Cut(rec.Key, "|")
+		prURL := "https://github.com/" + rec.Repo + "/pull/" + strconv.Itoa(rec.Number)
+		detail := h.verifyReportedPRDetail(rec.Repo, prURL, contributor)
+		if !detail.Verified {
+			continue
+		}
+		kind := standbypkg.OutcomeUnknown
+		switch {
+		case detail.Merged:
+			kind = standbypkg.OutcomeMerged
+		case strings.EqualFold(detail.State, "closed"):
+			kind = standbypkg.OutcomeClosedUnmerged
+		default:
+			continue
+		}
+		add = append(add, standbyOutcomeRecord{
+			Key:          rec.Key,
+			Lane:         rec.Lane,
+			Repo:         rec.Repo,
+			Number:       rec.Number,
+			DispatchedAt: rec.DispatchedAt,
+			Kind:         kind,
+			OutcomeAt:    time.Now().UTC(),
+		})
+		settled[standbyOutcomePRKey(rec)] = true
+	}
+	if len(add) == 0 {
+		return
+	}
+	h.completedMu.Lock()
+	h.standbyOutcomes = append(h.standbyOutcomes, add...)
+	h.completedMu.Unlock()
+	h.saveStandbyOutcomes()
+}
+
+func standbyOutcomePRKey(rec standbyOutcomeRecord) string {
+	return rec.Key + "|" + rec.Repo + "#" + strconv.Itoa(rec.Number)
+}
+
 func (h *ContributeWSHub) standbySuspended(key string) (bool, int) {
+	h.reconcileOpenStandbyOutcomes()
 	h.completedMu.Lock()
 	defer h.completedMu.Unlock()
 	rows := standbypkg.OutcomesFor(h.standbyOutcomes, key)
