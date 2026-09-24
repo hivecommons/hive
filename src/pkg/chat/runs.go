@@ -65,7 +65,41 @@ type pendingCheckpointKey struct {
 type pendingCheckpoint struct {
 	RunKey  string
 	Stage   string
+	Gen     uint64
 	Authors map[string]struct{}
+	Payload runCheckpointPayload
+}
+
+type runCheckpointPayload struct {
+	RunKey          string                  `json:"run_key"`
+	Stage           string                  `json:"stage"`
+	Gen             uint64                  `json:"gen"`
+	Repo            string                  `json:"repo"`
+	Title           string                  `json:"title"`
+	Summary         string                  `json:"summary"`
+	SummaryMaxBytes int                     `json:"summary_max_bytes"`
+	Decisions       []runCheckpointDecision `json:"decisions"`
+	DashboardURL    string                  `json:"dashboard_url"`
+	Staleness       struct {
+		Fence string `json:"fence"`
+		Gen   uint64 `json:"gen"`
+	} `json:"staleness"`
+	Approvers struct {
+		Role                  string `json:"role"`
+		VerifiedOwnerRequired bool   `json:"verified_owner_required"`
+	} `json:"approvers"`
+}
+
+type runCheckpointDecision struct {
+	Action string `json:"action"`
+	Label  string `json:"label"`
+	Method string `json:"method"`
+	URL    string `json:"url"`
+}
+
+type runCheckpointDecisionRequest struct {
+	Action string `json:"action"`
+	Gen    uint64 `json:"gen"`
 }
 
 func (s *Service) registerRunsCommand() {
@@ -188,19 +222,16 @@ func (s *Service) cmdRunsApprove(ctx context.Context, key string) (string, error
 	if err := requireCommandOwner(ctx); err != nil {
 		return err.Error(), nil
 	}
-	run, err := s.fetchRun(ctx, key)
+	checkpoint, err := s.fetchRunCheckpoint(ctx, key)
 	if err != nil {
-		return fmt.Sprintf("❌ Failed to load run `%s`: %s", key, err), nil
+		return fmt.Sprintf("❌ Failed to load checkpoint `%s`: %s", key, err), nil
 	}
-	if run.PlanEpicID == "" {
-		return fmt.Sprintf("❌ Run `%s` has no plan_epic_id to approve.", key), nil
-	}
-	if err := s.dashboardPost(ctx, "/api/plan/"+url.PathEscape(run.PlanEpicID)+"/approve", nil); err != nil {
+	if err := s.postRunCheckpointDecision(ctx, checkpoint, "approve"); err != nil {
 		return fmt.Sprintf("❌ Failed to approve run `%s`: %s", key, err), nil
 	}
 	s.observeRunDecision(ctx, key)
 	s.clearPendingCheckpoint(key)
-	return fmt.Sprintf("✅ Approved run `%s` plan `%s`.", key, run.PlanEpicID), nil
+	return fmt.Sprintf("✅ Approved run `%s` checkpoint gen %d.", key, checkpoint.Gen), nil
 }
 
 func (s *Service) cmdRunsReject(ctx context.Context, key, reason string) (string, error) {
@@ -210,19 +241,16 @@ func (s *Service) cmdRunsReject(ctx context.Context, key, reason string) (string
 	if strings.TrimSpace(reason) == "" {
 		return "❌ Usage: `!runs reject <key> <reason>`", nil
 	}
-	run, err := s.fetchRun(ctx, key)
+	checkpoint, err := s.fetchRunCheckpoint(ctx, key)
 	if err != nil {
-		return fmt.Sprintf("❌ Failed to load run `%s`: %s", key, err), nil
+		return fmt.Sprintf("❌ Failed to load checkpoint `%s`: %s", key, err), nil
 	}
-	if run.PlanEpicID == "" {
-		return fmt.Sprintf("❌ Run `%s` has no plan_epic_id to reject.", key), nil
-	}
-	if err := s.dashboardPost(ctx, "/api/plan/"+url.PathEscape(run.PlanEpicID)+"/reject", nil); err != nil {
+	if err := s.postRunCheckpointDecision(ctx, checkpoint, "reject"); err != nil {
 		return fmt.Sprintf("❌ Failed to reject run `%s`: %s", key, err), nil
 	}
 	s.observeRunDecision(ctx, key)
 	s.clearPendingCheckpoint(key)
-	return fmt.Sprintf("✅ Rejected run `%s` plan `%s`: %s", key, run.PlanEpicID, reason), nil
+	return fmt.Sprintf("✅ Rejected run `%s` checkpoint gen %d: %s", key, checkpoint.Gen, reason), nil
 }
 
 func (s *Service) fetchRuns(ctx context.Context) ([]runSnapshot, error) {
@@ -248,6 +276,39 @@ func (s *Service) fetchRun(ctx context.Context, key string) (runSnapshot, error)
 		return runSnapshot{}, err
 	}
 	return run, nil
+}
+
+func (s *Service) fetchRunCheckpoint(ctx context.Context, key string) (runCheckpointPayload, error) {
+	data, err := s.dashboardGet(ctx, "/api/runs/"+url.PathEscape(key)+"/checkpoint")
+	if err != nil {
+		return runCheckpointPayload{}, err
+	}
+	var payload runCheckpointPayload
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return runCheckpointPayload{}, err
+	}
+	return payload, nil
+}
+
+func (s *Service) postRunCheckpointDecision(ctx context.Context, payload runCheckpointPayload, action string) error {
+	path := runCheckpointDecisionURL(payload, action)
+	if path == "" {
+		path = "/api/runs/" + url.PathEscape(payload.RunKey) + "/checkpoint"
+	}
+	body, err := json.Marshal(runCheckpointDecisionRequest{Action: action, Gen: payload.Gen})
+	if err != nil {
+		return err
+	}
+	return s.dashboardPost(ctx, path, body)
+}
+
+func runCheckpointDecisionURL(payload runCheckpointPayload, action string) string {
+	for _, decision := range payload.Decisions {
+		if strings.EqualFold(decision.Action, action) && strings.EqualFold(decision.Method, "POST") && strings.TrimSpace(decision.URL) != "" {
+			return decision.URL
+		}
+	}
+	return ""
 }
 
 func (s *Service) handlePendingCheckpointReply(ctx context.Context, msg Message, content string) bool {
@@ -285,8 +346,17 @@ func (s *Service) handlePendingCheckpointReply(ctx context.Context, msg Message,
 		return true
 	}
 	runKey := matches[0].RunKey
-	commandArgs := "approve " + runKey
-	if verb == "reject" {
+	checkpoint := matches[0].Payload
+	if checkpoint.RunKey == "" {
+		var err error
+		checkpoint, err = s.fetchRunCheckpoint(ctx, runKey)
+		if err != nil {
+			s.enqueue(fmt.Sprintf("❌ Failed to load checkpoint `%s`: %s", runKey, err))
+			return true
+		}
+	}
+	switch verb {
+	case "reject":
 		reason := ""
 		if len(parts) > 1 {
 			reason = strings.TrimSpace(parts[1])
@@ -295,15 +365,21 @@ func (s *Service) handlePendingCheckpointReply(ctx context.Context, msg Message,
 			s.enqueue(fmt.Sprintf("❌ Usage: `!runs reject %s <reason>`", runKey))
 			return true
 		}
-		commandArgs = "reject " + runKey + " " + reason
-	}
-	ctx = context.WithValue(ctx, commandRoleContextKey{}, role)
-	reply, err := s.cmdRuns(ctx, commandArgs)
-	if err != nil {
-		reply = fmt.Sprintf("❌ %s", err)
-	}
-	if reply != "" {
-		s.enqueue(reply)
+		if err := s.postRunCheckpointDecision(ctx, checkpoint, "reject"); err != nil {
+			s.enqueue(fmt.Sprintf("❌ Failed to reject run `%s`: %s", runKey, err))
+			return true
+		}
+		s.observeRunDecision(ctx, runKey)
+		s.clearPendingCheckpoint(runKey)
+		s.enqueue(fmt.Sprintf("✅ Rejected run `%s` checkpoint gen %d: %s", runKey, checkpoint.Gen, reason))
+	default:
+		if err := s.postRunCheckpointDecision(ctx, checkpoint, "approve"); err != nil {
+			s.enqueue(fmt.Sprintf("❌ Failed to approve run `%s`: %s", runKey, err))
+			return true
+		}
+		s.observeRunDecision(ctx, runKey)
+		s.clearPendingCheckpoint(runKey)
+		s.enqueue(fmt.Sprintf("✅ Approved run `%s` checkpoint gen %d.", runKey, checkpoint.Gen))
 	}
 	return true
 }
@@ -357,11 +433,18 @@ func (s *Service) enqueueRunCheckpoint(run runSnapshot) {
 		s.logger.Warn("chat: run checkpoint reached human gate with no owner allowlist", "run", run.Key)
 		return
 	}
+	payload, err := s.fetchRunCheckpoint(context.Background(), run.Key)
+	if err != nil {
+		s.logger.Warn("chat: failed to load run checkpoint payload", "run", run.Key, "error", err)
+		return
+	}
 	s.mu.Lock()
 	s.pendingCheckpoints[s.pendingCheckpointKey(run.Key)] = &pendingCheckpoint{
 		RunKey:  run.Key,
-		Stage:   run.Stage,
+		Stage:   payload.Stage,
+		Gen:     payload.Gen,
 		Authors: authors,
+		Payload: payload,
 	}
 	s.mu.Unlock()
 	orderedAuthors := make([]string, 0, len(authors))
@@ -370,24 +453,37 @@ func (s *Service) enqueueRunCheckpoint(run runSnapshot) {
 	}
 	sort.Strings(orderedAuthors)
 	for _, author := range orderedAuthors {
-		s.enqueue(s.formatRunCheckpointForAuthor(context.Background(), author, run))
+		s.enqueue(s.formatRunCheckpointForAuthor(context.Background(), author, payload))
 	}
 }
 
-func (s *Service) formatRunCheckpointForAuthor(ctx context.Context, author string, run runSnapshot) string {
-	summary := oneLineRunSummary(run)
+func (s *Service) formatRunCheckpointForAuthor(ctx context.Context, author string, payload runCheckpointPayload) string {
+	summary := strings.TrimSpace(payload.Summary)
+	if summary == "" {
+		summary = emptyDefault(payload.Title, payload.RunKey)
+	}
 	if record, ok, err := s.getPersona(ctx, author); err == nil && ok {
 		record = record.Normalize()
 		if record.Depth == persona.DepthTechnical || record.SummaryLength == persona.SummaryDetailed {
-			summary = strings.ReplaceAll(formatRunDetailed(run), "\n", " · ")
+			summary = checkpointTechnicalSummary(payload)
 		}
 	}
 	prefix := ""
 	if author != "" && len(s.allowedUsers) > 1 {
 		prefix = "For " + author + ": "
 	}
-	return fmt.Sprintf("%sRun %s stage %s needs a decision: %s. Reply approve or reject <reason>.%s",
-		prefix, run.Key, emptyDefault(run.Stage, "unknown"), summary, formatPromptArtifacts(run))
+	return fmt.Sprintf("%sRun %s stage %s gen %d needs a decision: %s. Reply approve or reject <reason>. Full artifact: %s",
+		prefix, payload.RunKey, emptyDefault(payload.Stage, "unknown"), payload.Gen, summary, emptyDefault(payload.DashboardURL, "dashboard"))
+}
+
+func checkpointTechnicalSummary(payload runCheckpointPayload) string {
+	parts := []string{
+		fmt.Sprintf("repo=%s", emptyDefault(payload.Repo, "unknown")),
+		fmt.Sprintf("title=%s", emptyDefault(payload.Title, payload.RunKey)),
+		fmt.Sprintf("summary=%s", strings.ReplaceAll(strings.TrimSpace(payload.Summary), "\n", " · ")),
+		fmt.Sprintf("fence=%s/%d", emptyDefault(payload.Staleness.Fence, "lease_gen"), payload.Staleness.Gen),
+	}
+	return strings.Join(parts, " · ")
 }
 
 func (s *Service) ownerAuthors() map[string]struct{} {

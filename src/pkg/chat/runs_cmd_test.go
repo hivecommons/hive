@@ -73,11 +73,16 @@ func TestCmdRunsApproveRejectOwnerGuardAndPlanRoutes(t *testing.T) {
 	var posts []string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.EscapedPath() {
-		case "/api/runs/acme%2Fwidgets%237":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"key": "acme/widgets#7", "stage": "plan", "waiting_on": "human", "plan_epic_id": "epic-7",
-			})
-		case "/api/plan/epic-7/approve", "/api/plan/epic-7/reject":
+		case "/api/runs/acme%2Fwidgets%237/checkpoint":
+			if r.Method == http.MethodGet {
+				writeRunCheckpointPayload(w, "acme/widgets#7", "Ship widgets", 2)
+				return
+			}
+			var body runCheckpointDecisionRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode decision: %v", err)
+			}
+			posts = append(posts, fmt.Sprintf("%s:%d", body.Action, body.Gen))
 			posts = append(posts, r.URL.EscapedPath())
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -111,7 +116,7 @@ func TestCmdRunsApproveRejectOwnerGuardAndPlanRoutes(t *testing.T) {
 	if !strings.Contains(got, "Rejected") {
 		t.Fatalf("reject reply = %q", got)
 	}
-	if strings.Join(posts, ",") != "/api/plan/epic-7/approve,/api/plan/epic-7/reject" {
+	if strings.Join(posts, ",") != "approve:2,/api/runs/acme%2Fwidgets%237/checkpoint,reject:2,/api/runs/acme%2Fwidgets%237/checkpoint" {
 		t.Fatalf("posts = %#v", posts)
 	}
 }
@@ -236,11 +241,17 @@ func TestCmdRunsFailureAndUsageBranches(t *testing.T) {
 			_, _ = w.Write([]byte(`[]`))
 		case "/api/runs/no-plan":
 			_ = json.NewEncoder(w).Encode(map[string]any{"key": "no-plan"})
+		case "/api/runs/no-plan/checkpoint":
+			http.Error(w, "not held", http.StatusConflict)
 		case "/api/runs/bad-json":
 			_, _ = w.Write([]byte(`{"gen":"bad"}`))
 		case "/api/runs/post-fails":
 			_ = json.NewEncoder(w).Encode(map[string]any{"key": "post-fails", "plan_epic_id": "epic-9"})
-		case "/api/plan/epic-9/approve", "/api/plan/epic-9/reject":
+		case "/api/runs/post-fails/checkpoint":
+			if r.Method == http.MethodGet {
+				writeRunCheckpointPayload(w, "post-fails", "post-fails", 9)
+				return
+			}
 			http.Error(w, "nope", http.StatusTeapot)
 		default:
 			t.Fatalf("unexpected path %q", r.URL.EscapedPath())
@@ -255,11 +266,11 @@ func TestCmdRunsFailureAndUsageBranches(t *testing.T) {
 	if got, err := s.cmdRunsShow(context.Background(), "bad-json"); err != nil || !strings.Contains(got, "Failed to load run") {
 		t.Fatalf("bad show = %q, %v", got, err)
 	}
-	if got, err := s.cmdRunsApprove(ownerCtx, "no-plan"); err != nil || !strings.Contains(got, "no plan_epic_id") {
-		t.Fatalf("approve no plan = %q, %v", got, err)
+	if got, err := s.cmdRunsApprove(ownerCtx, "no-plan"); err != nil || !strings.Contains(got, "Failed to load checkpoint") {
+		t.Fatalf("approve no checkpoint = %q, %v", got, err)
 	}
-	if got, err := s.cmdRunsReject(ownerCtx, "no-plan", "needs work"); err != nil || !strings.Contains(got, "no plan_epic_id") {
-		t.Fatalf("reject no plan = %q, %v", got, err)
+	if got, err := s.cmdRunsReject(ownerCtx, "no-plan", "needs work"); err != nil || !strings.Contains(got, "Failed to load checkpoint") {
+		t.Fatalf("reject no checkpoint = %q, %v", got, err)
 	}
 	if got, err := s.cmdRunsApprove(ownerCtx, "post-fails"); err != nil || !strings.Contains(got, "Failed to approve") {
 		t.Fatalf("approve post failure = %q, %v", got, err)
@@ -292,9 +303,11 @@ func TestPendingCheckpointReplyRejectAndIgnoreBranches(t *testing.T) {
 	var posts []string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.EscapedPath() {
-		case "/api/runs/repo%2Fa%231":
-			_ = json.NewEncoder(w).Encode(map[string]any{"key": "repo/a#1", "plan_epic_id": "epic-1"})
-		case "/api/plan/epic-1/reject":
+		case "/api/runs/repo%2Fa%231/checkpoint":
+			if r.Method == http.MethodGet {
+				writeRunCheckpointPayload(w, "repo/a#1", "Needs work", 4)
+				return
+			}
 			posts = append(posts, r.URL.EscapedPath())
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -324,6 +337,10 @@ func TestPendingCheckpointReplyRejectAndIgnoreBranches(t *testing.T) {
 func TestSyncRunsFromSSEFetchesAndDiffsFallback(t *testing.T) {
 	var calls int
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() == "/api/runs/repo%2Fa%231/checkpoint" {
+			writeRunCheckpointPayload(w, "repo/a#1", "Needs plan", 2)
+			return
+		}
 		if r.URL.EscapedPath() != "/api/runs" {
 			t.Fatalf("unexpected path %q", r.URL.EscapedPath())
 		}
@@ -364,7 +381,15 @@ func TestSyncRunsFromSSEFetchesAndDiffsFallback(t *testing.T) {
 }
 
 func TestOnSSEEventRunsBranches(t *testing.T) {
-	s := NewService(&recordingBackend{}, Config{AllowedUsers: []string{"uid:owner"}}, discardLogger())
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() != "/api/runs/repo%2Fa%231/checkpoint" {
+			t.Fatalf("unexpected path %q", r.URL.EscapedPath())
+		}
+		writeRunCheckpointPayload(w, "repo/a#1", "Plan gate", 2)
+	}))
+	defer ts.Close()
+	s := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL, AllowedUsers: []string{"uid:owner"}}, discardLogger())
+	s.client = ts.Client()
 	s.onSSEEvent(&statusSnapshot{Runs: runSnapshotList{{Key: "repo/a#1", Stage: "spec", WaitingOn: "agent"}}})
 	s.onSSEEvent(&statusSnapshot{Runs: runSnapshotList{{Key: "repo/a#1", Title: "Plan gate", Stage: "plan", Gen: 2, WaitingOn: "human"}}})
 	var sent []string

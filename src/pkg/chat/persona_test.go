@@ -101,14 +101,23 @@ func TestRunsRenderingUsesAuthorPersonaAndMoreExpands(t *testing.T) {
 }
 
 func TestCheckpointRenderingUsesTwoPersonas(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() != "/api/runs/acme%2Fwidgets%237/checkpoint" {
+			t.Fatalf("unexpected path %q", r.URL.EscapedPath())
+		}
+		writeRunCheckpointPayload(w, "acme/widgets#7", "Ship widgets", 2)
+	}))
+	defer ts.Close()
 	store := &testPersonaStore{records: map[string]persona.Record{
 		"owner-a": {Depth: persona.DepthOutcomes, SummaryLength: persona.SummaryShort},
 		"owner-b": {Depth: persona.DepthTechnical, SummaryLength: persona.SummaryDetailed},
 	}}
 	s := NewService(&recordingBackend{}, Config{
+		DashboardURL: ts.URL,
 		AllowedUsers: []string{"owner-a:owner", "owner-b:owner"},
 		PersonaStore: store,
 	}, discardLogger())
+	s.client = ts.Client()
 	var sent []string
 
 	s.enqueueRunCheckpoint(runSnapshot{
@@ -129,7 +138,7 @@ func TestCheckpointRenderingUsesTwoPersonas(t *testing.T) {
 	if !strings.Contains(sent[0], "For owner-a:") || strings.Contains(sent[0], "Plan: epic-7") {
 		t.Fatalf("owner-a checkpoint = %q", sent[0])
 	}
-	if !strings.Contains(sent[1], "For owner-b:") || !strings.Contains(sent[1], "Plan: epic-7") {
+	if !strings.Contains(sent[1], "For owner-b:") || !strings.Contains(sent[1], "fence=lease_gen/2") {
 		t.Fatalf("owner-b checkpoint = %q", sent[1])
 	}
 }

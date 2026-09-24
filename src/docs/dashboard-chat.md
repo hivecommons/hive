@@ -19,14 +19,17 @@ external chat backends:
 
 - `!runs` lists active staged runs with key, stage, wait target, and age.
 - `!runs <key>` shows one run, including reported receipt/artifact links.
-- `!runs approve <key>` approves the run's plan gate.
-- `!runs reject <key> <reason>` rejects the plan gate and records the operator's
-  reason in the chat transcript.
+- `!runs approve <key>` approves the held run checkpoint using the compact
+  `/api/runs/{key}/checkpoint` payload and its lease-generation fence.
+- `!runs reject <key> <reason>` rejects the held run checkpoint using the same
+  fenced payload and records the operator's reason in the chat transcript.
 
 When a run reaches `waiting_on=human`, the spine posts a one-line checkpoint
-prompt: `Run <key> stage <stage> needs a decision: <summary>. Reply approve or
-reject <reason>.` An allowlisted owner with exactly one pending run checkpoint
-may reply with plain `approve` or `reject <reason>`. If more than one run is
-pending for that author, the bot lists the run keys and requires the explicit
-`!runs approve <key>` or `!runs reject <key> <reason>` form. No other plain
-language is interpreted as a run decision.
+prompt from `GET /api/runs/{key}/checkpoint`: `Run <key> stage <stage> gen
+<gen> needs a decision: <bounded summary>. Reply approve or reject <reason>.
+Full artifact: <dashboard link>.` An allowlisted owner with exactly one pending
+run checkpoint may reply with plain `approve` or `reject <reason>`. If more
+than one run is pending for that author, the bot lists the run keys and requires
+the explicit `!runs approve <key>` or `!runs reject <key> <reason>` form. No
+other plain language is interpreted as a run decision, and stale generations are
+refused by the dashboard endpoint.

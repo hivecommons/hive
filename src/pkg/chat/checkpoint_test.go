@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -13,13 +14,33 @@ func TestRunCheckpointPromptAndSinglePendingApproveReply(t *testing.T) {
 	var posts int
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.EscapedPath() {
+		case "/api/runs/acme%2Fwidgets%237/checkpoint":
+			if r.Method == http.MethodGet {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"run_key": "acme/widgets#7", "title": "Ship widgets", "stage": "plan", "gen": 2, "repo": "acme/widgets",
+					"summary": "bounded phone summary", "summary_max_bytes": 2048, "dashboard_url": "/?view=runs&run=acme%2Fwidgets%237#checkpoint",
+					"decisions": []map[string]string{
+						{"action": "approve", "label": "Approve checkpoint", "method": "POST", "url": "/api/runs/acme%2Fwidgets%237/checkpoint"},
+						{"action": "reject", "label": "Reject checkpoint", "method": "POST", "url": "/api/runs/acme%2Fwidgets%237/checkpoint"},
+					},
+					"staleness": map[string]any{"fence": "lease_gen", "gen": 2},
+					"approvers": map[string]any{"role": "owner", "verified_owner_required": true},
+				})
+				return
+			}
+			var body runCheckpointDecisionRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode checkpoint decision: %v", err)
+			}
+			if body.Action != "approve" || body.Gen != 2 {
+				t.Fatalf("checkpoint decision body = %+v, want approve gen 2", body)
+			}
+			posts++
+			w.WriteHeader(http.StatusOK)
 		case "/api/runs/acme%2Fwidgets%237":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"key": "acme/widgets#7", "title": "Ship widgets", "stage": "plan", "waiting_on": "human", "plan_epic_id": "epic-7",
 			})
-		case "/api/plan/epic-7/approve":
-			posts++
-			w.WriteHeader(http.StatusOK)
 		default:
 			t.Fatalf("unexpected path %q", r.URL.EscapedPath())
 		}
@@ -34,7 +55,7 @@ func TestRunCheckpointPromptAndSinglePendingApproveReply(t *testing.T) {
 	s.diffRuns(cur, cur)
 	var sent []string
 	drainQueue(s, &sent)
-	if len(sent) != 1 || !strings.Contains(sent[0], "needs a decision") || !strings.Contains(sent[0], "Ship widgets") {
+	if len(sent) != 1 || !strings.Contains(sent[0], "needs a decision") || !strings.Contains(sent[0], "bounded phone summary") || !strings.Contains(sent[0], "Full artifact") {
 		t.Fatalf("checkpoint prompts = %#v", sent)
 	}
 	if len(s.pendingCheckpoints) != 1 {
@@ -52,6 +73,29 @@ func TestRunCheckpointPromptAndSinglePendingApproveReply(t *testing.T) {
 	if !strings.Contains(sent[len(sent)-1], "Approved") {
 		t.Fatalf("approve reply = %#v", sent)
 	}
+}
+
+func writeRunCheckpointPayload(w http.ResponseWriter, key, title string, gen uint64) {
+	if title == "" {
+		title = key
+	}
+	checkpointPath := "/api/runs/" + url.PathEscape(key) + "/checkpoint"
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"run_key":           key,
+		"title":             title,
+		"stage":             "plan",
+		"gen":               gen,
+		"repo":              strings.Split(key, "#")[0],
+		"summary":           title,
+		"summary_max_bytes": 2048,
+		"dashboard_url":     "/?view=runs&run=" + url.QueryEscape(key) + "#checkpoint",
+		"decisions": []map[string]string{
+			{"action": "approve", "label": "Approve checkpoint", "method": "POST", "url": checkpointPath},
+			{"action": "reject", "label": "Reject checkpoint", "method": "POST", "url": checkpointPath},
+		},
+		"staleness": map[string]any{"fence": "lease_gen", "gen": gen},
+		"approvers": map[string]any{"role": "owner", "verified_owner_required": true},
+	})
 }
 
 func TestRunCheckpointMultiplePendingRequiresExplicitForm(t *testing.T) {
@@ -106,13 +150,7 @@ func TestRunCheckpointReadOnlyApproveWithoutPendingNotConsumed(t *testing.T) {
 
 func TestRunCheckpointClearsWhenRunCompletes(t *testing.T) {
 	s := NewService(&recordingBackend{}, Config{AllowedUsers: []string{"uid:owner"}}, discardLogger())
-	s.diffRuns(
-		[]runSnapshot{{Key: "repo/a#1", Stage: "plan", WaitingOn: "agent"}},
-		[]runSnapshot{{Key: "repo/a#1", Stage: "plan", WaitingOn: "human"}},
-	)
-	if len(s.pendingCheckpoints) != 1 {
-		t.Fatalf("pending checkpoints = %#v, want 1", s.pendingCheckpoints)
-	}
+	s.pendingCheckpoints[s.pendingCheckpointKey("repo/a#1")] = &pendingCheckpoint{RunKey: "repo/a#1", Authors: map[string]struct{}{"uid": {}}}
 	s.diffRuns(
 		[]runSnapshot{{Key: "repo/a#1", Stage: "plan", WaitingOn: "human"}},
 		[]runSnapshot{{Key: "repo/a#1", Stage: "implement", WaitingOn: "agent"}},
@@ -120,10 +158,7 @@ func TestRunCheckpointClearsWhenRunCompletes(t *testing.T) {
 	if len(s.pendingCheckpoints) != 0 {
 		t.Fatalf("agent transition should clear pending checkpoint: %#v", s.pendingCheckpoints)
 	}
-	s.diffRuns(
-		[]runSnapshot{{Key: "repo/a#2", Stage: "plan", WaitingOn: "agent"}},
-		[]runSnapshot{{Key: "repo/a#2", Stage: "plan", WaitingOn: "human"}},
-	)
+	s.pendingCheckpoints[s.pendingCheckpointKey("repo/a#2")] = &pendingCheckpoint{RunKey: "repo/a#2", Authors: map[string]struct{}{"uid": {}}}
 	s.diffRuns(
 		[]runSnapshot{{Key: "repo/a#2", Stage: "plan", WaitingOn: "human"}},
 		nil,

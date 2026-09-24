@@ -1,0 +1,1 @@
+- Route chat run checkpoint prompts and decisions through the shared compact checkpoint payload.
