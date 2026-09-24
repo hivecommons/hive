@@ -2963,6 +2963,15 @@
     .campaign-row-meta { display: flex; gap: var(--sp-3); flex-wrap: wrap; color: var(--muted); font-size: var(--fs-sm); margin-top: var(--sp-2); }
     .campaign-pill { border: 1px solid var(--border); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); color: var(--muted); }
     .campaign-empty { color: var(--muted); text-align: center; padding: var(--sp-7); border: 1px dashed var(--border); border-radius: var(--r); }
+    .campaign-jam { margin-top: var(--sp-5); display: grid; gap: var(--sp-4); }
+    .campaign-jam-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-4); }
+    .campaign-jam-box { border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-4); background: color-mix(in srgb, var(--border) 6%, transparent); }
+    .campaign-jam-box h4 { margin: 0 0 var(--sp-3); font-size: var(--fs-sm); }
+    .campaign-jam-list { display: grid; gap: var(--sp-2); color: var(--muted); font-size: var(--fs-sm); }
+    .campaign-jam-form { display: grid; gap: var(--sp-2); margin-top: var(--sp-3); }
+    .campaign-jam-form textarea { min-height: 72px; resize: vertical; }
+    .campaign-jam-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+    @media (max-width: 1100px) { .campaign-jam-grid { grid-template-columns: 1fr; } }
     @media (max-width: 900px) { .campaigns-filters { grid-template-columns: 1fr 1fr; } .campaign-row { grid-template-columns: 1fr; } }
   </style>
   <link rel="stylesheet" href="/api/theme.css" id="hive-theme-css">
@@ -15618,6 +15627,7 @@ function burnAreaChart() {
             <button class="hv-btn btn-secondary btn-sm" data-action="loadCampaigns">Apply</button>
           </div>
           <div id="campaigns-list" class="campaigns-list"><div class="campaign-empty">Loading campaigns…</div></div>
+          <div id="campaign-jam-panel" class="campaign-jam"></div>
         </div>`;
     }
 
@@ -15644,12 +15654,107 @@ function burnAreaChart() {
             </div>
           </div>
           <div class="campaign-row-actions">
+            <button class="hv-btn btn-secondary btn-sm" data-action="openCampaignJam" data-arg0="${escapeHtml(c.id)}">Jam</button>
             <button class="hv-btn btn-primary btn-sm" data-action="resumeCampaign" data-arg0="${escapeHtml(c.id)}">Continue</button>
             <button class="hv-btn btn-secondary btn-sm" data-action="releaseCampaign" data-arg0="${escapeHtml(c.id)}">Release</button>
             <button class="hv-btn btn-secondary btn-sm" data-action="reviseCampaign" data-arg0="${escapeHtml(c.id)}">Revise</button>
           </div>
         </div>`;
       }).join('');
+    }
+
+    async function openCampaignJam(id) {
+      if (!id) return;
+      const panel = document.getElementById('campaign-jam-panel');
+      if (panel) panel.innerHTML = '<div class="campaign-empty">Loading Jam…</div>';
+      try {
+        const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/jam', {headers: _inceptionAuthHeaders()});
+        const data = await r.json();
+        if (!data.ok) { throw new Error(data.error || 'Failed to load Jam'); }
+        renderCampaignJam(id, data.jam || {});
+      } catch (e) {
+        if (panel) panel.innerHTML = '<div class="campaign-empty">Jam failed: ' + escapeHtml(e.message) + '</div>';
+      }
+    }
+
+    function renderCampaignJam(id, jam) {
+      const panel = document.getElementById('campaign-jam-panel');
+      if (!panel) return;
+      const threads = jam.threads || [];
+      const suggestions = jam.suggestions || [];
+      const polls = jam.polls || [];
+      const revisions = jam.revisions || [];
+      panel.innerHTML = `
+        <div class="campaigns-head">
+          <div><div class="campaigns-title">Jam: ${escapeHtml(id)}</div><div class="campaigns-subtitle">Async section threads, suggestions, polls, decisions and attributed spec revisions.</div></div>
+          <button class="hv-btn btn-secondary btn-sm" data-action="openCampaignJam" data-arg0="${escapeHtml(id)}">Refresh Jam</button>
+        </div>
+        <div class="campaign-jam-grid">
+          <div class="campaign-jam-box">
+            <h4>Threads</h4>
+            <div class="campaign-jam-list">${threads.length ? threads.map(t => `<div><strong>${escapeHtml(t.section || 'section')}</strong>: ${escapeHtml((t.comments && t.comments[0] && t.comments[0].body) || t.title || '')}</div>`).join('') : 'No threads yet.'}</div>
+            <div class="campaign-jam-form">
+              <input id="jam-thread-section" class="campaigns-input" placeholder="Spec section" />
+              <textarea id="jam-thread-body" class="campaigns-input" placeholder="Comment"></textarea>
+              <button class="hv-btn btn-primary btn-sm" data-action="createCampaignJamThread" data-arg0="${escapeHtml(id)}">Add thread</button>
+            </div>
+          </div>
+          <div class="campaign-jam-box">
+            <h4>Suggestions</h4>
+            <div class="campaign-jam-list">${suggestions.length ? suggestions.map(s => `<div><strong>${escapeHtml(s.section || 'section')}</strong> · ${escapeHtml(s.status || 'open')}<br>${escapeHtml(s.proposed_text || '')}<div class="campaign-jam-actions">${s.status === 'open' ? `<button class="hv-btn btn-secondary btn-sm" data-action="resolveCampaignJamSuggestion" data-arg0="${escapeHtml(id)}" data-arg1="${escapeHtml(s.id)}" data-arg2="accept">Accept</button><button class="hv-btn btn-secondary btn-sm" data-action="resolveCampaignJamSuggestion" data-arg0="${escapeHtml(id)}" data-arg1="${escapeHtml(s.id)}" data-arg2="reject">Reject</button>` : ''}</div></div>`).join('') : 'No suggestions yet.'}</div>
+            <div class="campaign-jam-form">
+              <input id="jam-suggestion-section" class="campaigns-input" placeholder="Spec section" />
+              <textarea id="jam-suggestion-text" class="campaigns-input" placeholder="Suggested text"></textarea>
+              <button class="hv-btn btn-primary btn-sm" data-action="createCampaignJamSuggestion" data-arg0="${escapeHtml(id)}">Suggest text</button>
+            </div>
+          </div>
+          <div class="campaign-jam-box">
+            <h4>Polls & decisions</h4>
+            <div class="campaign-jam-list">${polls.length ? polls.map(p => `<div><strong>${escapeHtml(p.question || '')}</strong><br>${(p.options || []).map(o => `${escapeHtml(o.label)}: ${o.count || 0}`).join(' · ')}${p.decision ? `<br>Decision: ${escapeHtml(p.decision.outcome)} — ${escapeHtml(p.decision.rationale)}` : ''}</div>`).join('') : 'No polls yet.'}</div>
+            <div class="campaign-jam-form">
+              <input id="jam-poll-section" class="campaigns-input" placeholder="Spec section" />
+              <input id="jam-poll-question" class="campaigns-input" placeholder="Question" />
+              <input id="jam-poll-options" class="campaigns-input" placeholder="Options separated by commas" />
+              <button class="hv-btn btn-primary btn-sm" data-action="createCampaignJamPoll" data-arg0="${escapeHtml(id)}">Create poll</button>
+            </div>
+          </div>
+        </div>
+        <div class="campaign-jam-box">
+          <h4>Revision history</h4>
+          <div class="campaign-jam-list">${revisions.length ? revisions.map(r => `<div><strong>${escapeHtml(r.id)}</strong> by ${escapeHtml((r.author && r.author.name) || 'unknown')}${r.model ? ' · ' + escapeHtml(r.model) : ''}<br>${escapeHtml(r.reason || 'revision')}</div>`).join('') : 'No spec revisions yet.'}</div>
+        </div>`;
+    }
+
+    async function createCampaignJamThread(id) {
+      const section = document.getElementById('jam-thread-section')?.value || '';
+      const body = document.getElementById('jam-thread-body')?.value || '';
+      await postCampaignJam(id, 'threads', { section, body });
+    }
+
+    async function createCampaignJamSuggestion(id) {
+      const section = document.getElementById('jam-suggestion-section')?.value || '';
+      const proposed_text = document.getElementById('jam-suggestion-text')?.value || '';
+      await postCampaignJam(id, 'suggestions', { section, proposed_text });
+    }
+
+    async function resolveCampaignJamSuggestion(id, suggestion_id, action) {
+      await postCampaignJam(id, 'suggestions', { action, suggestion_id });
+    }
+
+    async function createCampaignJamPoll(id) {
+      const section = document.getElementById('jam-poll-section')?.value || '';
+      const question = document.getElementById('jam-poll-question')?.value || '';
+      const options = (document.getElementById('jam-poll-options')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+      await postCampaignJam(id, 'polls', { section, question, options });
+    }
+
+    async function postCampaignJam(id, lane, body) {
+      try {
+        const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/jam/' + lane, { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify(body) });
+        const data = await r.json();
+        if (!data.ok) { alert(data.error || 'Jam update failed'); return; }
+        renderCampaignJam(id, data.jam || {});
+      } catch (e) { alert('Jam error: ' + e.message); }
     }
 
     async function resumeCampaign(id) {

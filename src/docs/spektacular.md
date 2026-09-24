@@ -19,6 +19,17 @@ Spek campaign does not copy spek contents into Hive; `POST
 command, while Spek reloads the current state from its working files and
 spek backend.
 
+## Jam Sessions
+
+Each campaign also has a Jam workspace for team interaction around the spec.
+The dashboard Campaigns list exposes a **Jam** action, backed by
+`/api/campaigns/{id}/jam` and the `/threads`, `/suggestions`, and `/polls`
+subroutes. Phase 1 is async: participants with read-write access can anchor
+threads and suggestions to spec sections, vote in advisory polls, and resume
+the workspace after a restart. Maintainers record poll decisions with a
+rationale; accepted suggestions and decisions create attributed spec revisions
+with human or agent/model attribution and diffs.
+
 ## Enabling it
 
 ```yaml
