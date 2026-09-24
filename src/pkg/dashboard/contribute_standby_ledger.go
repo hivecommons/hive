@@ -158,7 +158,7 @@ func (h *ContributeWSHub) reconcileOpenStandbyOutcomes() {
 		if !detail.Verified {
 			continue
 		}
-		kind := standbypkg.OutcomeUnknown
+		var kind standbypkg.OutcomeKind
 		switch {
 		case detail.Merged:
 			kind = standbypkg.OutcomeMerged
