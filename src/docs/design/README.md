@@ -216,7 +216,7 @@ a design document a reader mistakes for current behaviour is not, which is what
 the status is for.
 
 Pages in this directory are reached through this index rather than through
-[`src/docs/README.md`](../README.md) directly, the same delegation
+[`src/docs/documentation-map.md`](../documentation-map.md) directly, the same delegation
 [`adr/`](../adr/README.md) uses. That is also why the docs-index reminder
 workflow does not flag them: it is scoped to the top level of `src/docs/` on
 purpose, so a directory with its own README never trips it.

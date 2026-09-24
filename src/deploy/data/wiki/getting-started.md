@@ -158,7 +158,7 @@ docs-only fixes need no toolchain at all.
   -- runtime knobs, image provenance, and tags.
 - [hivectl](https://github.com/hivecommons/hive/blob/v5/src/docs/hivectl.md)
   -- the non-interactive CLI client (`hivectl system health`, `system status`).
-- [Documentation index](https://github.com/hivecommons/hive/blob/v5/src/docs/README.md)
+- [Documentation map](https://github.com/hivecommons/hive/blob/v5/src/docs/documentation-map.md)
   -- everything else: operations, snapshots, contributor relay, design notes.
 
 ## Editing This Wiki

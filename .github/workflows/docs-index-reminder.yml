@@ -2,9 +2,9 @@ name: Docs Index Reminder
 
 # Why this exists
 #
-# src/docs/README.md is the index readers actually navigate from, and a page
+# src/docs/documentation-map.md is the map readers use for the full docs catalog, and a page
 # that is not linked from it is, in practice, a page nobody finds. That gap
-# recurs the same way every time: a PR adds a doc, the index is not updated,
+# recurs the same way every time: a PR adds a doc, the documentation map is not updated,
 # and nothing notices until an agent sweeps the directory by hand. #4617 was
 # one such sweep — it found six unlinked pages, and a re-sweep found eight.
 #
@@ -52,7 +52,7 @@ jobs:
         run: |
           set -uo pipefail
 
-          index='src/docs/README.md'
+          index='src/docs/documentation-map.md'
           if [ ! -f "$index" ]; then
             echo "no $index in this tree — nothing to check"
             echo "missing=" >> "$GITHUB_OUTPUT"
@@ -68,7 +68,9 @@ jobs:
           missing=''
           for path in $added; do
             base="$(basename "$path")"
-            [ "$base" = 'README.md' ] && continue
+            case "$base" in
+              README.md|documentation-map.md) continue ;;
+            esac
             # Substring match on the filename is what a reader's link must
             # contain, whether the entry is a relative link or a full URL.
             grep -qF "$base" "$index" || missing="$missing $base"
@@ -104,11 +106,11 @@ jobs:
           body_file="$(mktemp)"
           cat > "$body_file" <<EOF
           $marker
-          **Docs index:** this PR adds page(s) under \`src/docs/\` that
-          \`src/docs/README.md\` does not link:
+          **Docs map:** this PR adds page(s) under \`src/docs/\` that
+          \`src/docs/documentation-map.md\` does not link:
 
           $list
-          A page missing from the index is one readers do not find. Please add a
+          A page missing from the map is one readers do not find. Please add a
           line in the section a reader would actually look in, matching the
           format of its neighbours.
 
@@ -125,7 +127,7 @@ jobs:
             printf '### Docs index reminder\n\n'
             grep -v "^${marker}$" "$body_file"
           } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
-          echo "::notice title=Docs index reminder::New src/docs pages not linked from src/docs/README.md:${MISSING}. Not a gate."
+          echo "::notice title=Docs index reminder::New src/docs pages not linked from src/docs/documentation-map.md:${MISSING}. Not a gate."
 
           if [ "${IS_FORK:-false}" = "true" ]; then
             echo "fork PR — reminder delivered as a job summary and annotation instead of a comment"

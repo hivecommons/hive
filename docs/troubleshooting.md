@@ -10,7 +10,7 @@
 > logs, config validation, agent sessions, dashboard auth, and GitHub
 > credential checks.
 >
-> See the [`src/docs/README.md`](../src/docs/README.md) index for the full
+> See the [`src/docs/documentation-map.md`](../src/docs/documentation-map.md) for the full
 > documentation set.
 
 The v1 content that used to live here was removed because it was full-text

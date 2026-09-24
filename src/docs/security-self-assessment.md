@@ -603,7 +603,7 @@ project-level compliance signals:
   the deterministic pre-kick pipeline (45 scripts, indexed in
   `bin/README.md`).
 - **Branch model**: `v4` is the sole actively maintained line;
-  `v2` was retired in August 2026 (`src/docs/README.md` header, `migration-v2-v4.md`).
+  `v2` was retired in August 2026 (`src/docs/documentation-map.md`, `migration-v2-v4.md`).
 - **CI gating**: PR-triggered test execution runs from
   `.github/workflows/v2-tests.yml` (name is a historical artifact of the
   branch-rename; it is the workflow that gates `v4` PRs) as a sharded

@@ -81,6 +81,6 @@ contribution:
 
 - [`CONTRIBUTING.md`](../CONTRIBUTING.md) — branches, DCO sign-off, PR format.
 - [`docs/development.md`](development.md) — build, test, lint, and `just` recipes.
-- [`src/docs/README.md`](../src/docs/README.md) — the full documentation index.
+- [`src/docs/documentation-map.md`](../src/docs/documentation-map.md) — the full documentation map.
 - [ClankeR contributor relay](../src/docs/contributor-relay.md) — contribute
   compute to a running hive from your own machine.
