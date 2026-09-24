@@ -1,0 +1,1 @@
+- Fresh installs no longer enable `caveman_mode: full` on Scanner from the shipped example config ([#8668](https://github.com/hivecommons/hive/issues/8668)); existing operators who want uncompressed output should remove or downgrade that line in their own `hive.yaml`.

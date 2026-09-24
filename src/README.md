@@ -149,7 +149,7 @@ agents:
     enabled: true
     backend: claude        # claude | copilot | gemini | goose | vllm | llm-d | litellm
     model: claude-sonnet-4-6
-    caveman_mode: full     # lite | full | ultra | wenyan — compresses output ~65%
+    # caveman_mode: lite   # optional, experimental: lite | full | ultra | wenyan; omit to disable
     beads_dir: /data/beads/scanner
     clear_on_kick: true
 ```
