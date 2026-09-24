@@ -74,6 +74,38 @@ hooks:
 	}
 }
 
+func TestWireHubHooksHubOnlyConfigArmsDispatcher(t *testing.T) {
+	resetHookDispatcher(t)
+	t.Cleanup(func() { resetHookDispatcher(t) })
+
+	path := filepath.Join(t.TempDir(), "hive.yaml")
+	cfgYAML := `hive_id: hub-only
+project:
+  org: test-org
+github:
+  token: test-token-not-real
+hub:
+  enabled: true
+hooks:
+  - name: boot-hook
+    on: review_rejected
+    action: notify
+`
+	if err := os.WriteFile(path, []byte(cfgYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	logger, logs := capturingLogger()
+	wireHubHooks(logger, path)
+
+	if strings.Contains(logs(), "at least one agent") || strings.Contains(logs(), "hub hooks disabled") {
+		t.Fatalf("hub-only config must load without dummy agents:\n%s", logs())
+	}
+	if d := hookDispatcher(); d == nil || d.Len() != 1 {
+		t.Fatalf("dispatcher = %#v, want one armed hook", d)
+	}
+}
+
 // TestBuildHookDispatcherNilConfigIsNoOp pins the nil guard: a nil config must
 // leave the dispatcher untouched rather than panic or disarm a working set.
 func TestBuildHookDispatcherNilConfigIsNoOp(t *testing.T) {

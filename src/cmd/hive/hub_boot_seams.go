@@ -65,7 +65,7 @@ func hubPortFromEnv(getenv func(string) string) int {
 // silently dropping notifications from a config that exists but is broken is
 // how a fleet stops reporting without anyone noticing.
 func wireHubHooks(logger *slog.Logger, configPath string) {
-	cfg, err := config.LoadWithDashboardOverlay(configPath)
+	cfg, err := config.LoadWithDashboardOverlayForHub(configPath)
 	if err == nil {
 		notifier := notify.New(cfg.Notifications, logger)
 		notifier.SetHiveID(cfg.HiveID)
