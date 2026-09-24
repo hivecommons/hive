@@ -121,6 +121,7 @@ type DispatchState struct {
 	Pending     []PendingReview   `json:"pending_reviews,omitempty"`
 	Recent      []RecentReview    `json:"recent_reviews,omitempty"`
 	Fixes       []PendingFix      `json:"pending_fixes,omitempty"`
+	FixAttempts []FixAttempt      `json:"fix_attempts,omitempty"`
 	Human       []HumanReviewHold `json:"requires_human,omitempty"`
 	// Withheld records the PR heads whose fix kick was refused because the PR
 	// is not hive-authored and FixHumanPRs is off. Keyed by head SHA like
@@ -168,6 +169,15 @@ type RecentReview struct {
 }
 
 type PendingFix struct {
+	Repo       string    `json:"repo"`
+	Number     int       `json:"number"`
+	HeadSHA    string    `json:"head_sha,omitempty"`
+	Agent      string    `json:"agent"`
+	Attempts   int       `json:"attempts"`
+	Dispatched time.Time `json:"dispatched_at"`
+}
+
+type FixAttempt struct {
 	Repo       string    `json:"repo"`
 	Number     int       `json:"number"`
 	HeadSHA    string    `json:"head_sha,omitempty"`
@@ -482,6 +492,9 @@ func (p *DispatchPlan) dispatchFix(pr PullRequest, agg Aggregate, opts DispatchO
 		return
 	}
 	attempts := maxFixAttemptsForPR(p.State.Fixes, pr.Repo, pr.Number)
+	if historical := maxHistoricalFixAttemptsForPR(p.State.FixAttempts, pr.Repo, pr.Number); historical > attempts {
+		attempts = historical
+	}
 	if attempts >= escalation.MaxReEngagements {
 		p.State.Human = upsertHuman(p.State.Human, HumanReviewHold{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Reason: fmt.Sprintf("review fix cap reached (%d/%d)", attempts, escalation.MaxReEngagements), UpdatedAt: now})
 		return
@@ -560,6 +573,9 @@ func ConfirmDelivered(state DispatchState, planned, delivered []DispatchKick) Di
 	var fixes []PendingFix
 	for _, f := range state.Fixes {
 		k := DispatchKick{Kind: "fix", Agent: f.Agent, Repo: f.Repo, Number: f.Number, HeadSHA: f.HeadSHA}
+		if deliveredSet[dispatchKickKey(k)] && !hasFixAttempt(state.FixAttempts, f) {
+			state.FixAttempts = append(state.FixAttempts, FixAttempt{Repo: f.Repo, Number: f.Number, HeadSHA: f.HeadSHA, Agent: f.Agent, Attempts: f.Attempts, Dispatched: f.Dispatched})
+		}
 		if !undelivered[dispatchKickKey(k)] {
 			fixes = append(fixes, f)
 		}
@@ -625,6 +641,7 @@ func BuildFixPrompt(pr PullRequest, agg Aggregate, attempt, maxAttempts int) str
 		fmt.Fprintf(&b, "Head SHA: %s\n", pr.HeadSHA)
 	}
 	fmt.Fprintf(&b, "Auto-fix attempt %d of %d. Stay narrowly scoped to the review findings below; push a new commit to the PR branch.\n\n", attempt, maxAttempts)
+	fmt.Fprintf(&b, "When committing the fix, include this exact git trailer so rework metrics can count the attempt: Hive-Fix-Attempt: %d/%d\n\n", attempt, maxAttempts)
 	b.WriteString("Aggregated review findings:\n")
 	if len(agg.Findings) == 0 && len(agg.Reasons) == 0 {
 		b.WriteString("- Review requested changes but did not include structured findings; inspect the PR conversation and latest diff.\n")
@@ -827,6 +844,25 @@ func maxFixAttemptsForPR(fixes []PendingFix, repo string, number int) int {
 		}
 	}
 	return max
+}
+
+func maxHistoricalFixAttemptsForPR(fixes []FixAttempt, repo string, number int) int {
+	max := 0
+	for _, f := range fixes {
+		if f.Repo == repo && f.Number == number && f.Attempts > max {
+			max = f.Attempts
+		}
+	}
+	return max
+}
+
+func hasFixAttempt(items []FixAttempt, pending PendingFix) bool {
+	for _, item := range items {
+		if item.Repo == pending.Repo && item.Number == pending.Number && item.HeadSHA == pending.HeadSHA && item.Agent == pending.Agent && item.Attempts == pending.Attempts {
+			return true
+		}
+	}
+	return false
 }
 
 func upsertHuman(items []HumanReviewHold, item HumanReviewHold) []HumanReviewHold {

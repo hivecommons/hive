@@ -1,0 +1,1 @@
+- Fixed Operations rework metrics to count hive COMMENTED verdicts, durable auto-fix dispatch attempts, and comment-driven follow-up commits for first-pass model ranking. Fixes #8772.

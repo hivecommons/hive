@@ -130,7 +130,7 @@ func TestBuildFixPromptAndCapExhaustion(t *testing.T) {
 	pr := dispatchPR("sha1")
 	pr.Repo = "acme/hive"
 	prompt := BuildFixPrompt(pr, agg, 1, escalation.MaxReEngagements)
-	if !strings.Contains(prompt, "nil panic") || !strings.Contains(prompt, "attempt 1") || !strings.Contains(prompt, "acme/hive#7") {
+	if !strings.Contains(prompt, "nil panic") || !strings.Contains(prompt, "attempt 1") || !strings.Contains(prompt, "Hive-Fix-Attempt: 1/") || !strings.Contains(prompt, "acme/hive#7") {
 		t.Fatalf("fix prompt missing expected context:\n%s", prompt)
 	}
 	state := DispatchState{}
@@ -140,6 +140,27 @@ func TestBuildFixPromptAndCapExhaustion(t *testing.T) {
 	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{agg}}, state, DispatchOptions{RequireApproval: true, FanOut: true, ProjectOrg: "acme", Agents: []AgentCapability{reviewer("r1")}})
 	if len(plan.FixKicks) != 0 || len(plan.State.Human) != 1 || !strings.Contains(plan.State.Human[0].Reason, "cap reached") {
 		t.Fatalf("cap exhaustion did not require human: kicks=%d human=%+v", len(plan.FixKicks), plan.State.Human)
+	}
+}
+
+func TestConfirmDeliveredRecordsFixAttemptOnlyAfterDelivery(t *testing.T) {
+	pending := PendingFix{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Agent: DefaultFixerAgent, Attempts: 1}
+	kick := DispatchKick{Kind: "fix", Repo: pending.Repo, Number: pending.Number, HeadSHA: pending.HeadSHA, Agent: pending.Agent}
+	planned := []DispatchKick{kick}
+	state := DispatchState{Fixes: []PendingFix{pending}}
+
+	undelivered := ConfirmDelivered(state, planned, nil)
+	if len(undelivered.FixAttempts) != 0 {
+		t.Fatalf("undelivered fix recorded attempts: %+v", undelivered.FixAttempts)
+	}
+
+	delivered := ConfirmDelivered(state, planned, planned)
+	if len(delivered.FixAttempts) != 1 || delivered.FixAttempts[0].Attempts != 1 {
+		t.Fatalf("delivered fix attempts = %+v, want one attempt", delivered.FixAttempts)
+	}
+	again := ConfirmDelivered(delivered, planned, planned)
+	if len(again.FixAttempts) != 1 {
+		t.Fatalf("delivered fix attempt duplicated: %+v", again.FixAttempts)
 	}
 }
 
