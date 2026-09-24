@@ -1,0 +1,1 @@
+- The dashboard dark/light toggle now switches dark-only themes to the shared light palette while preserving the selected theme accent, without writing hive-wide theme config or making theme previews look like hive-light ([#8655](https://github.com/hivecommons/hive/issues/8655)).

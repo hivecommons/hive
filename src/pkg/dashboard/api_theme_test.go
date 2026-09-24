@@ -107,6 +107,50 @@ func TestThemesListAndExplicitThemeCSS(t *testing.T) {
 	}
 }
 
+func TestThemeCSSDarkThemeLightModeUsesSharedRemapButPreviewKeepsPalette(t *testing.T) {
+	s := govServer(t)
+	s.deps.Config.Dashboard.Theme = "solarized-dark"
+
+	served := doGet(s, "/api/theme.css")
+	if served.Code != http.StatusOK {
+		t.Fatalf("served theme css = %d: %s", served.Code, served.Body.String())
+	}
+	servedLight := cssBlockInBody(t, served.Body.String(), "body.light-mode")
+	for _, darkToken := range []string{"--surface-0: #002b36;", "--surface-2: #073642;", "--text: #93a1a1;"} {
+		if strings.Contains(servedLight, darkToken) {
+			t.Fatalf("served light-mode block re-emits dark token %q:\n%s", darkToken, servedLight)
+		}
+	}
+	if !strings.Contains(servedLight, "--accent: #2aa198;") {
+		t.Fatalf("served light-mode block should keep Solarized accent:\n%s", servedLight)
+	}
+
+	preview := doGet(s, "/api/theme.css?theme=solarized-dark")
+	if preview.Code != http.StatusOK {
+		t.Fatalf("preview theme css = %d: %s", preview.Code, preview.Body.String())
+	}
+	previewLight := cssBlockInBody(t, preview.Body.String(), "body.light-mode")
+	for _, darkToken := range []string{"--surface-0: #002b36;", "--surface-2: #073642;", "--text: #93a1a1;"} {
+		if !strings.Contains(previewLight, darkToken) {
+			t.Fatalf("preview light-mode block should keep dark token %q:\n%s", darkToken, previewLight)
+		}
+	}
+}
+
+func cssBlockInBody(t *testing.T, css, selector string) string {
+	t.Helper()
+	start := strings.Index(css, selector+"{")
+	if start < 0 {
+		t.Fatalf("CSS missing selector %s", selector)
+	}
+	start += len(selector) + 1
+	end := strings.Index(css[start:], "}")
+	if end < 0 {
+		t.Fatalf("CSS selector %s has no closing brace", selector)
+	}
+	return css[start : start+end]
+}
+
 func TestDashboardThemeAPIRoundTripAndOwnerGate(t *testing.T) {
 	s := govServer(t)
 	if rec := doGet(s, "/api/config/dashboard/theme"); rec.Code != http.StatusForbidden {

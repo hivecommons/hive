@@ -26,6 +26,9 @@ func TestAppearanceThemeUITabWired(t *testing.T) {
 		"setThemeStylesheet(id)",
 		"startsWith('contributor-')",
 		"_themeBaseHref = '/api/theme.css?v=' + Date.now()",
+		"function toggleLayout()",
+		"document.body.classList.toggle('light-mode', mode === 'light')",
+		"/api/theme.css?theme=",
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("Appearance UI missing %q", want)
@@ -38,6 +41,28 @@ func TestAppearanceThemeUITabWired(t *testing.T) {
 	} {
 		if strings.Contains(html, gone) {
 			t.Fatalf("Appearance UI still contains %q", gone)
+		}
+	}
+}
+
+func TestLayoutToggleDoesNotPersistHiveWideTheme(t *testing.T) {
+	b, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read index: %v", err)
+	}
+	html := string(b)
+	start := strings.Index(html, "function toggleLayout()")
+	if start < 0 {
+		t.Fatal("missing toggleLayout")
+	}
+	next := strings.Index(html[start+len("function toggleLayout()"):], "function ")
+	if next < 0 {
+		t.Fatal("toggleLayout is not followed by another function")
+	}
+	toggle := html[start : start+len("function toggleLayout()")+next]
+	for _, forbidden := range []string{"putTheme", "/api/config/dashboard/theme", "fetch("} {
+		if strings.Contains(toggle, forbidden) {
+			t.Fatalf("toggleLayout must stay local-only; found %q in:\n%s", forbidden, toggle)
 		}
 	}
 }

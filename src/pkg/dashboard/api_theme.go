@@ -36,12 +36,23 @@ func (s *Server) handleThemeCSS(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	css, err := config.DashboardThemeCSS(th)
+	preview := strings.TrimSpace(r.URL.Query().Get("theme")) != ""
+	var css string
+	if preview {
+		css, err = config.DashboardThemePreviewCSS(th)
+	} else {
+		css, err = config.DashboardThemeCSS(th)
+	}
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	etag, err := config.DashboardThemeETag(th)
+	var etag string
+	if preview {
+		etag, err = config.DashboardThemePreviewETag(th)
+	} else {
+		etag, err = config.DashboardThemeETag(th)
+	}
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return

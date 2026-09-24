@@ -156,7 +156,7 @@ func TestCSSCanonicalTokenWinsOverLegacyToken(t *testing.T) {
 	}
 }
 
-func TestDarkThemesKeepOwnPaletteInLightMode(t *testing.T) {
+func TestDarkThemesUseSharedLightRemapInServedLightMode(t *testing.T) {
 	for _, th := range Catalog() {
 		if !th.Dark || len(th.LightTokens) > 0 {
 			continue
@@ -166,13 +166,39 @@ func TestDarkThemesKeepOwnPaletteInLightMode(t *testing.T) {
 			t.Fatalf("CSS(%s): %v", th.ID, err)
 		}
 		lightBlock := cssBlock(t, css, "body.light-mode")
+		tokens := compileTokens(th.Tokens)
+		for _, token := range []string{"--surface-0", "--surface-2", "--text"} {
+			want := tokens[token]
+			if want == "" {
+				t.Fatalf("%s missing token %s", th.ID, token)
+			}
+			if strings.Contains(lightBlock, token+": "+want+";") {
+				t.Fatalf("%s served light-mode block re-emits dark %s=%s:\n%s", th.ID, token, want, lightBlock)
+			}
+		}
+		if accent := tokens["--accent"]; accent != "" && !strings.Contains(lightBlock, "--accent: "+accent+";") {
+			t.Fatalf("%s served light-mode block should keep accent %s:\n%s", th.ID, accent, lightBlock)
+		}
+	}
+}
+
+func TestPreviewCSSKeepsDarkThemesOwnPaletteInLightMode(t *testing.T) {
+	for _, th := range Catalog() {
+		if !th.Dark || len(th.LightTokens) > 0 {
+			continue
+		}
+		css, err := PreviewCSS(th)
+		if err != nil {
+			t.Fatalf("PreviewCSS(%s): %v", th.ID, err)
+		}
+		lightBlock := cssBlock(t, css, "body.light-mode")
 		for _, token := range []string{"--surface-0", "--surface-2", "--text"} {
 			want := compileTokens(th.Tokens)[token]
 			if want == "" {
 				t.Fatalf("%s missing token %s", th.ID, token)
 			}
 			if !strings.Contains(lightBlock, token+": "+want+";") {
-				t.Fatalf("%s light-mode block did not keep %s=%s:\n%s", th.ID, token, want, lightBlock)
+				t.Fatalf("%s preview light-mode block did not keep %s=%s:\n%s", th.ID, token, want, lightBlock)
 			}
 		}
 	}

@@ -283,6 +283,14 @@ func validateTokenValue(context, label, token, value string) error {
 }
 
 func CSS(th Theme) (string, error) {
+	return css(th, false)
+}
+
+func PreviewCSS(th Theme) (string, error) {
+	return css(th, true)
+}
+
+func css(th Theme, keepDarkLightMode bool) (string, error) {
 	if err := ValidateTheme(th); err != nil {
 		return "", err
 	}
@@ -293,14 +301,20 @@ func CSS(th Theme) (string, error) {
 	b.WriteString(" */\n:root{\n")
 	writeTokenBlock(&b, rootTokens)
 	writeContributorAliases(&b)
-	b.WriteString("}\nbody.light-mode{\n")
-	if len(th.LightTokens) > 0 {
-		writeTokenBlock(&b, compileTokens(th.LightTokens))
-	} else {
-		writeTokenBlock(&b, rootTokens)
-	}
-	writeContributorAliases(&b)
 	b.WriteString("}\n")
+	if len(th.LightTokens) > 0 {
+		b.WriteString("body.light-mode{\n")
+		writeTokenBlock(&b, compileTokens(th.LightTokens))
+		writeContributorAliases(&b)
+		b.WriteString("}\n")
+	} else if !th.Dark || keepDarkLightMode {
+		b.WriteString("body.light-mode{\n")
+		writeTokenBlock(&b, rootTokens)
+		writeContributorAliases(&b)
+		b.WriteString("}\n")
+	} else {
+		writeLightModeAccentFallback(&b, rootTokens)
+	}
 	if th.Background != nil && strings.TrimSpace(th.Background.Image) != "" {
 		opacity := th.Background.Opacity
 		if opacity <= 0 || opacity > 1 {
@@ -372,8 +386,20 @@ func ETag(th Theme) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return cssETag(css), nil
+}
+
+func PreviewETag(th Theme) (string, error) {
+	css, err := PreviewCSS(th)
+	if err != nil {
+		return "", err
+	}
+	return cssETag(css), nil
+}
+
+func cssETag(css string) string {
 	sum := sha256.Sum256([]byte(css))
-	return `"` + hex.EncodeToString(sum[:]) + `"`, nil
+	return `"` + hex.EncodeToString(sum[:]) + `"`
 }
 
 var cssURLRe = regexp.MustCompile(`(?is)(@import\s+)(?:url\()?['"]?([^'"\)\s;]+)|url\(\s*['"]?([^'"\)]+)['"]?\s*\)`)
@@ -444,6 +470,22 @@ func cloneMap(in map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+func writeLightModeAccentFallback(b *strings.Builder, tokens map[string]string) {
+	accentTokens := map[string]string{}
+	for _, token := range []string{"--accent", "--brand"} {
+		if value := strings.TrimSpace(tokens[token]); value != "" {
+			accentTokens[token] = value
+		}
+	}
+	if len(accentTokens) == 0 {
+		return
+	}
+	b.WriteString("body.light-mode{\n")
+	writeTokenBlock(b, accentTokens)
+	writeContributorAliases(b)
+	b.WriteString("}\n")
 }
 
 func writeContributorAliases(b *strings.Builder) {
