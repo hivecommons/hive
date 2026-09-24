@@ -1042,7 +1042,7 @@ if [ "$(id -u)" = "0" ]; then
   # Shared CLI auth/cache lives in /data/home (persistent volume).
   # Make it group-writable so all agent UIDs (node group) can use it.
   # The manager sets HOME=/data/home for agent tmux sessions.
-  mkdir -p /data/home/.config /data/home/.copilot /data/home/.claude/session-env /data/home/.codex /data/home/.gemini/antigravity-cli /data/home/.bob/settings /data/config/github-copilot /home/dev/.config
+  mkdir -p /data/home/.config /data/home/.copilot /data/home/.claude/session-env /data/home/.codex /data/home/.gemini/antigravity-cli /data/home/.gemini/antigravity-cli/cache /data/home/.bob/settings /data/config/github-copilot /home/dev/.config
   # $HOME itself must be group-writable, not just its children. bob calls
   # mkdirSync('$HOME/.bob') on first run, which needs write on /data/home — a
   # 0755 root-owned $HOME makes that EACCES even though every child dir below
@@ -1088,7 +1088,7 @@ if [ "$(id -u)" = "0" ]; then
   # inotify-tools version's handling of directories created under a recursive
   # watch. Creating it here removes that dependency entirely: the directory is
   # on disk, with the right mode, before any watch is set up.
-  chmod 2770 /data/home/.gemini /data/home/.gemini/antigravity-cli 2>/dev/null || true
+  chmod 2770 /data/home/.gemini /data/home/.gemini/antigravity-cli /data/home/.gemini/antigravity-cli/cache 2>/dev/null || true
   chown -R dev:node /data/home/.gemini 2>/dev/null || true
   # bob writes installation_id, settings.json, trustedFolders.json and tmp/ under
   # $HOME/.bob, plus custom modes under $HOME/.bob/settings. Pre-create both
@@ -1253,11 +1253,10 @@ if [ "$(id -u)" = "0" ]; then
 
   hive_fix_codex_instant() { hive_fix_tree /data/home/.codex; }
 
-  # agy writes antigravity-oauth-token 0600 owned by the agent that signed in,
-  # which locks every other agent UID out of a credential the shared CLI home
-  # exists to share — the same shape as copilot's config.json and claude's
-  # .credentials.json. Re-opening it to the node group is what makes ONE agy
-  # login serve the fleet instead of one login per agent.
+  # agy writes antigravity-oauth-token and cache/onboarding.json 0600 owned by
+  # the agent that refreshed them, which locks every other agent UID out of
+  # shared CLI state. Re-opening them to the node group is what makes ONE agy
+  # login and onboarding state serve the fleet instead of one copy per agent.
   #
   # Credential first and NO tree walk, for the same reason the .claude instant
   # path has none. The guard watches antigravity-cli itself, non-recursively,
@@ -1265,17 +1264,20 @@ if [ "$(id -u)" = "0" ]; then
   # directories (#8712). The recursive sweep stays on the 5-minute cycle.
   hive_fix_gemini_instant() {
     hive_fix_shared_credential /data/home/.gemini/antigravity-cli/antigravity-oauth-token
-    chmod g+rwx /data/home/.gemini /data/home/.gemini/antigravity-cli 2>/dev/null || true
+    hive_fix_shared_credential /data/home/.gemini/antigravity-cli/cache/onboarding.json
+    chmod g+rwx /data/home/.gemini /data/home/.gemini/antigravity-cli /data/home/.gemini/antigravity-cli/cache 2>/dev/null || true
     return 0
   }
 
-  # hive_fix_credentials_fast — the 5s polling path. Bounded and cheap: the two
-  # files a CLI rewrites owner-only on a token refresh, and no tree walk at all.
-  # This is the backstop that would have repaired #5730 within five seconds.
+  # hive_fix_credentials_fast — the 5s polling path. Bounded and cheap: the
+  # files a CLI rewrites owner-only on token/session refresh, and no tree walk
+  # at all. This is the backstop that would have repaired #5730 and #8713
+  # within five seconds.
   hive_fix_credentials_fast() {
     hive_fix_copilot_config
     hive_fix_shared_credential /data/home/.claude/.credentials.json
     hive_fix_shared_credential /data/home/.gemini/antigravity-cli/antigravity-oauth-token
+    hive_fix_shared_credential /data/home/.gemini/antigravity-cli/cache/onboarding.json
     return 0
   }
 

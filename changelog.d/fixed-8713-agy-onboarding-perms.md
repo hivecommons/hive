@@ -1,0 +1,1 @@
+- Fix #8713 by repairing agy's shared onboarding cache permissions on the fast paths.
