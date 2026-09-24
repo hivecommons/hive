@@ -1,1 +1,0 @@
-- `src/deploy/k8s/node-prep/hive-netfilter-modules.yaml`: a no-reboot node-prep DaemonSet that loads `xt_REDIRECT` and `xt_owner` on every worker, as an alternative to a MachineConfig when a node's kernel lacks the forced-egress gate's netfilter modules (exit 77). The entrypoint FATAL message and `net-admin-requirement.md` now point to it.

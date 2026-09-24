@@ -1,1 +1,0 @@
-- Fixed codex browser sign-in screens being missed as needs-login prompts (#8696).

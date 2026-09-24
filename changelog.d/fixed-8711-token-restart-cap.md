@@ -1,1 +1,0 @@
-- Fix v5 token-triggered login restart caps so boot panes cannot re-arm endless restart storms (#8711).

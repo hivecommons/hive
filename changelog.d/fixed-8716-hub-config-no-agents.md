@@ -1,1 +1,0 @@
-- Allow hub-mode config loading without dummy agents so hooks and GitHub activity stay enabled on hub-only configs (#8716).

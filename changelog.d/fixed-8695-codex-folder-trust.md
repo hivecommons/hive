@@ -1,1 +1,0 @@
-- Fixed codex 0.156.1 folder trust dialogs blocking agent startup (#8695).

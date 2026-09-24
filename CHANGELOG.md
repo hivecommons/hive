@@ -11,6 +11,35 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-24 (v5.42.0)
+
+### Added
+
+- Added reviewer accuracy calibration for false approve/false block rates and confidence buckets on the Governor dashboard (#8663).
+- Added resumable Inception/Spektacular campaigns for #8665, including archive-on-reset, campaign APIs, and dashboard resume controls.
+- Added campaign lease, release, and revision flows for #8665 so resumable Inception/Spektacular campaigns can be safely handed off and revisited.
+- Added a collapsible Operations-tab Most effective models panel with persisted browser state. Fixes #8689.
+- Added slimmer `/api/status` reads with field selection, `/api/status/summary`, gzip encoding, and mutation `minStatusSeq` floors. Fixes #8723.
+- Added verified Hive activity credit for `acmm:github-actions-ai` when managed repos have recent Hive agent output. Fixes #8732.
+- The public hub landing page now exposes crawler-friendly integration metadata, robots.txt, sitemap.xml and llms.txt for supported agent and infrastructure thanks.
+- `src/deploy/k8s/node-prep/hive-netfilter-modules.yaml`: a no-reboot node-prep DaemonSet that loads `xt_REDIRECT` and `xt_owner` on every worker, as an alternative to a MachineConfig when a node's kernel lacks the forced-egress gate's netfilter modules (exit 77). The entrypoint FATAL message and `net-admin-requirement.md` now point to it.
+
+### Fixed
+
+- Fixed codex 0.156.1 folder trust dialogs blocking agent startup (#8695).
+- Fixed codex browser sign-in screens being missed as needs-login prompts (#8696).
+- Fix v5 token-triggered login restart caps so boot panes cannot re-arm endless restart storms (#8711).
+- Fix #8712 by bounding agy's .gemini permission guard to antigravity-cli and surfacing inotifywait failures.
+- Stamp release Docker images with the release tag and drop meaningless dirty suffixes from image-built versions (#8715).
+- Allow hub-mode config loading without dummy agents so hooks and GitHub activity stay enabled on hub-only configs (#8716).
+- Disable IBM Bob Shell self-updates for hive-launched bob agents so non-root UIDs no longer hit npm global EACCES errors. Fixes #8738.
+- Hosted spokes now let signed-out visitors load the shared design-system stylesheets and theme CSS for public contributor, leaderboard, and snapshot pages, fixing unstyled contributor portals behind the SaaS auth gate.
+- Headless agy agents ([#8669](https://github.com/hivecommons/hive/pull/8669)) now keep one conversation across kicks, as the TUI they replaced did. Each kick used to run a fresh `agy -p`, so the agent lost all context between kicks. Kicks now run through `hive agy-turn`, which resumes the agent's own conversation by id (`--conversation`). It does not use `-c`: every agent shares one agy conversation store, so "most recent" can belong to another agent. A restart, or `clear_on_kick`, starts a new conversation. The prompt now reaches agy on stdin (`--input-format stream-json`), not argv, so large kicks no longer fail with `Argument list too long` past 128 KiB. The pane shows readable assistant text and one line per tool call instead of raw output. A relaunch into an existing tmux session also exports the refreshed per-agent environment (`HIVE_AGENT_MODE`, `HIVE_MODEL`, proxy variables) for later kicks; before, bash dropped those assignments ahead of `export`. Measured on agy 1.2.9, while a turn only waits on a tool: interactive TUI 19.5–22.7% of a core and ~900 context switches/s; headless runner 0.3% and ~225/s ([#8656](https://github.com/hivecommons/hive/issues/8656), google-antigravity/antigravity-cli#945).
+
+### Security
+
+- Safely JSON-encode token-access audit events and reject duplicate-key forgeries from hostile gh/git arguments (#8717).
+
 ## 2026-09-24 (v5.41.0)
 
 ### Added

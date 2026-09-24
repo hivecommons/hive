@@ -1,1 +1,0 @@
-- Hosted spokes now let signed-out visitors load the shared design-system stylesheets and theme CSS for public contributor, leaderboard, and snapshot pages, fixing unstyled contributor portals behind the SaaS auth gate.
