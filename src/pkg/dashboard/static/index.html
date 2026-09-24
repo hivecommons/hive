@@ -2109,6 +2109,17 @@
       vertical-align: middle; flex-shrink: 0;
     }
     .config-info:hover { background: var(--blue); border-color: var(--blue); color: var(--bg); }
+
+    .theme-gallery { display:grid; grid-template-columns:repeat(auto-fit,minmax(168px,1fr)); gap:12px; margin:12px 0 18px; }
+    .theme-card { border:1px solid var(--border); border-radius:10px; padding:12px; background:var(--surface); cursor:pointer; transition:border-color .15s, transform .15s, box-shadow .15s; }
+    .theme-card:hover, .theme-card.preview { transform:translateY(-1px); border-color:var(--accent); box-shadow:0 6px 18px color-mix(in srgb, var(--accent) 18%, transparent); }
+    .theme-card.active { border-color:var(--amber); box-shadow:0 0 0 2px color-mix(in srgb, var(--amber) 22%, transparent); }
+    .theme-swatches { display:flex; height:30px; border-radius:7px; overflow:hidden; border:1px solid rgba(255,255,255,.12); margin-bottom:8px; }
+    .theme-swatch { flex:1; }
+    .theme-title { font-weight:700; font-size:.84rem; color:var(--text); }
+    .theme-desc { color:var(--muted); font-size:.72rem; line-height:1.35; margin-top:3px; min-height:2.1em; }
+    .theme-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:10px 0; }
+    .theme-byte-count { font-family:var(--font-mono); font-size:.72rem; color:var(--muted); text-align:right; margin-top:4px; }
     .config-info .config-tooltip {
       display: none; position: fixed; background: var(--bg); border: 1px solid var(--border);
       border-radius: 6px; padding: 6px 10px;
@@ -4232,6 +4243,7 @@
       const next = LAYOUT_MODES[(idx + 1) % LAYOUT_MODES.length];
       setLayout(next);
       applyLayout(next);
+      switchThemeVariantForLayout(next);
     }
     // Body scroll-lock while ANY modal overlay is open — otherwise wheel
     // scrolling leaks through the backdrop to the dashboard behind it. A
@@ -18969,7 +18981,7 @@ function burnAreaChart() {
     // which is read-only hub-synced user/role data. It sits next to Model
     // Gateways because both are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Project Observability', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Project Observability', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -19586,6 +19598,7 @@ function burnAreaChart() {
         // The Features tab's Linear Agent panel loads install/session state
         // from its own endpoint (owner-only; the render is a static shell).
         if (tabId === 'Features') loadLinearAgentStatus();
+        if (tabId === 'Appearance') loadThemeConfig();
       }
       // Keep the Save button's enabled state in lockstep with the repos/default
       // invariant on every render (requirement #4). Cheap and idempotent — a
@@ -19718,6 +19731,7 @@ function burnAreaChart() {
       const d = _configState.data;
       switch (tab) {
         case 'General': return renderGovGeneral();
+        case 'Appearance': return renderGovAppearance();
         case 'Agents': return renderGovAgents(d.agents || []);
         case 'Thresholds': return renderGovThresholds(d);
         case 'Labels': return renderGovLabels(d.labels || [], d.holdLabels || [], d.requireLabels || []);
@@ -19740,6 +19754,84 @@ function burnAreaChart() {
         case 'Variables': return renderGovVariables();
         default: return '';
       }
+    }
+
+    var _themeState = { loaded:false, theme:'openclaw', theme_overrides:{}, catalog:[], effective:null };
+    const HONEYCOMB_WATERMARK = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='97' viewBox='0 0 56 97'%3E%3Cpath d='M28 1l27 15.5v31L28 63 1 47.5v-31zM28 34l27 15.5v31L28 96 1 80.5v-31z' fill='none' stroke='%23e0a33a' stroke-opacity='.09'/%3E%3C/svg%3E";
+
+    function renderGovAppearance() {
+      if (!_themeState.loaded) return '<div id="theme-config-root"><div style="text-align:center;padding:28px;color:var(--muted)">Loading appearance…</div></div>';
+      const current = _themeState.theme || 'openclaw';
+      const overrides = _themeState.theme_overrides || {};
+      const bg = overrides.background || {};
+      const customCSS = overrides.custom_css || '';
+      const honeyOn = bg.image === HONEYCOMB_WATERMARK;
+      const cards = (_themeState.catalog || []).map(t => {
+        const tok = t.tokens || {};
+        const colors = [tok['--bg'] || '#111', tok['--panel'] || '#222', tok['--accent'] || tok['--blue'] || '#80bfff', tok['--text'] || '#fff'];
+        return '<div class="theme-card' + (t.id === current ? ' active' : '') + '" data-action="themePreview" data-theme-id="' + esc(t.id) + '" data-mouseover-action="themePreview" data-mouseout-action="themePreviewClear">'
+          + '<div class="theme-swatches">' + colors.map(c => '<span class="theme-swatch" style="background:' + esc(c) + '"></span>').join('') + '</div>'
+          + '<div class="theme-title">' + esc(t.name || t.id) + (t.dark ? ' 🌙' : ' ☀') + '</div>'
+          + '<div class="theme-desc">' + esc(t.description || '') + '</div>'
+          + '<button class="btn" data-action="applyThemePreset" data-theme-id="' + esc(t.id) + '" data-stop="1" style="margin-top:8px;width:100%">Apply</button></div>';
+      }).join('');
+      return '<div id="theme-config-root">'
+        + '<p style="font-size:.8rem;color:var(--muted);margin-bottom:12px">Choose a hive-wide dashboard theme. Owners can layer safe CSS tokens, a background image, and capped custom CSS on top of any preset.</p>'
+        + '<div class="theme-actions"><button class="btn" data-action="resetThemeToPreset">Reset to preset</button><button class="btn" data-action="saveThemeOverrides">Apply background/CSS</button><span style="color:var(--muted);font-size:.76rem">Current: <code>' + esc(current) + '</code></span></div>'
+        + '<div class="theme-gallery">' + cards + '</div>'
+        + '<div class="config-field-row"><div class="config-field"><label>Background image URL</label><input id="theme-bg-url" type="text" value="' + esc(bg.image || '') + '" placeholder="https://example.org/background.svg"></div>'
+        + '<div class="config-field"><label>Background opacity: <span id="theme-bg-opacity-value">' + esc(String(bg.opacity || 0.08)) + '</span></label><input id="theme-bg-opacity" type="range" min="0" max="1" step="0.01" value="' + esc(String(bg.opacity || 0.08)) + '" data-input-action="updateThemeOpacityLabel"></div></div>'
+        + '<label class="config-toggle" style="margin:4px 0 14px"><span class="config-toggle-switch' + (honeyOn ? ' on' : '') + '" data-action="toggleHoneycombWatermark"></span><span class="config-toggle-label">Use honeycomb watermark</span></label>'
+        + '<div class="config-field"><label>Custom CSS</label><textarea id="theme-custom-css" rows="10" data-input-action="updateThemeByteCount" placeholder=".panel { border-radius: 2px; }">' + esc(customCSS) + '</textarea><div class="theme-byte-count"><span id="theme-css-bytes">' + utf8Bytes(customCSS) + '</span> / 32768 bytes</div></div>'
+        + '<div id="theme-save-status" style="font-size:.76rem;color:var(--muted)"></div></div>';
+    }
+
+    async function loadThemeConfig() {
+      const root = document.getElementById('theme-config-root');
+      try {
+        const res = await fetch('/api/config/dashboard/theme');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'failed to load theme config');
+        _themeState = Object.assign({loaded:true}, data);
+        if (_configState.tab === 'Appearance') document.getElementById('config-body').innerHTML = renderGovAppearance();
+      } catch (err) {
+        if (root) root.innerHTML = '<div style="color:var(--red);padding:20px">Failed to load appearance: ' + esc(err.message) + '</div>';
+      }
+    }
+    function utf8Bytes(s) { return new TextEncoder().encode(String(s || '')).length; }
+    function updateThemeByteCount() { const el=document.getElementById('theme-custom-css'); const out=document.getElementById('theme-css-bytes'); if(out) out.textContent = utf8Bytes(el ? el.value : '0'); }
+    function updateThemeOpacityLabel() { const el=document.getElementById('theme-bg-opacity'); const out=document.getElementById('theme-bg-opacity-value'); if(out&&el) out.textContent = el.value; }
+    function selectedThemeOverrides() {
+      const bgURL = (document.getElementById('theme-bg-url') || {}).value || '';
+      const opacity = parseFloat((document.getElementById('theme-bg-opacity') || {}).value || '0.08');
+      const css = (document.getElementById('theme-custom-css') || {}).value || '';
+      const overrides = { custom_css: css };
+      if (bgURL.trim()) overrides.background = { image: bgURL.trim(), opacity: Number.isFinite(opacity) ? opacity : 0.08, attachment: 'fixed' };
+      return overrides;
+    }
+    async function putTheme(theme, overrides) {
+      const res = await fetch('/api/config/dashboard/theme', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ theme, theme_overrides: overrides || {} }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'theme update failed');
+      _themeState = Object.assign({loaded:true, catalog:_themeState.catalog || []}, data);
+      const link = document.getElementById('hive-theme-css');
+      if (link) link.href = '/api/theme.css?v=' + Date.now();
+      if (_configState.tab === 'Appearance') document.getElementById('config-body').innerHTML = renderGovAppearance();
+      return data;
+    }
+    async function applyThemePreset(event) { const id=(this && this.dataset && this.dataset.themeId) || (event && event.currentTarget && event.currentTarget.dataset.themeId); try { await putTheme(id, _themeState.theme_overrides || {}); showToast('Theme applied', 'success'); } catch(e) { showToast(e.message, 'error'); } }
+    async function saveThemeOverrides() { try { await putTheme(_themeState.theme || 'openclaw', selectedThemeOverrides()); showToast('Appearance saved', 'success'); } catch(e) { showToast(e.message, 'error'); } }
+    async function resetThemeToPreset() { try { await putTheme(_themeState.theme || 'openclaw', {}); showToast('Theme overrides reset', 'success'); } catch(e) { showToast(e.message, 'error'); } }
+    function toggleHoneycombWatermark() { const input=document.getElementById('theme-bg-url'); if(!input) return; input.value = input.value === HONEYCOMB_WATERMARK ? '' : HONEYCOMB_WATERMARK; const bg = input.value ? { image: input.value, opacity: parseFloat((document.getElementById('theme-bg-opacity') || {}).value || '0.08'), attachment:'fixed' } : null; _themeState.theme_overrides = Object.assign({}, _themeState.theme_overrides || {}, bg ? {background:bg} : {background:null}); document.getElementById('config-body').innerHTML = renderGovAppearance(); }
+    function themePreview() { const id=this && this.dataset && this.dataset.themeId; document.querySelectorAll('.theme-card').forEach(c => c.classList.toggle('preview', c.dataset.themeId === id)); }
+    function themePreviewClear() { document.querySelectorAll('.theme-card.preview').forEach(c => c.classList.remove('preview')); }
+    async function switchThemeVariantForLayout(mode) {
+      if (!_themeState.loaded) { try { const r=await fetch('/api/config/dashboard/theme'); if(r.ok) _themeState=Object.assign({loaded:true}, await r.json()); } catch {} }
+      const current = _themeState.theme || '';
+      let next = '';
+      if (mode === 'light') next = current === 'openclaw' ? 'openclaw-light' : (!current || current === 'openclaw-light' ? '' : 'github-light');
+      if (mode === 'dark') next = current === 'openclaw-light' ? 'openclaw' : (!current || current === 'openclaw' ? '' : 'openclaw');
+      if (next) { try { await putTheme(next, _themeState.theme_overrides || {}); } catch {} }
     }
 
     // looksLikeApiKeyValue mirrors the server-side guardrail: env var

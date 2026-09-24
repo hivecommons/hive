@@ -44,3 +44,17 @@ fast. Custom CSS is capped at 32 KiB, strips HTML/style-breakout characters, and
 only permits `https:` or bounded `data:` URLs; inlined backgrounds are capped at
 256 KiB. `/api/theme.css` serves the effective theme with an ETag and is linked
 from the document head so the themed stylesheet is available before first paint.
+
+### Settings → Appearance
+
+The **Appearance** tab in Settings renders the built-in preset gallery with
+swatches for background, panel, accent, and text colors. Hovering a card previews
+it, **Apply** persists the preset, **Reset to preset** removes overrides, and
+**Apply background/CSS** saves the background URL, opacity, honeycomb watermark,
+and custom CSS textarea (with byte counter). The existing dark/light button asks
+the theme API for the closest light or dark built-in variant and refreshes
+`/api/theme.css` without reloading the dashboard.
+
+Preset screenshots are committed in `src/docs/images/themes/` for:
+`openclaw`, `openclaw-light`, `honeycomb`, `graphite`, `nord`, `dracula`,
+`solarized-dark`, `github-light`, and `high-contrast`.
