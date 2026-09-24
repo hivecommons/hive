@@ -1968,12 +1968,13 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 	stats := &effects.Recorder{}
 	stats.SetMode(mode)
 	b.mutationStats = stats
-	ledger, err := mutation.OpenLedger(filepath.Join(mutationStateDir, "claims.json"), mutation.DefaultMaxWritersPerRepo)
+	stateDir := mutationStateDir()
+	ledger, err := mutation.OpenLedger(filepath.Join(stateDir, "claims.json"), mutation.DefaultMaxWritersPerRepo)
 	if err != nil {
 		b.logger.Error("mutation convergence ledger unavailable; external mutation fencing disabled", "mode", mode, "error", err)
 		return false
 	}
-	journal, err := mutation.OpenJournal(filepath.Join(mutationStateDir, "journal.json"))
+	journal, err := mutation.OpenJournal(filepath.Join(stateDir, "journal.json"))
 	if err != nil {
 		b.logger.Error("mutation convergence journal unavailable; external mutation fencing disabled", "mode", mode, "error", err)
 		return false
@@ -1989,7 +1990,7 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 	if b.ghClient != nil {
 		b.ghClient.SetMutationBoundary(boundary)
 	}
-	b.logger.Info("mutation convergence boundary wired", "mode", mode, "state_dir", mutationStateDir)
+	b.logger.Info("mutation convergence boundary wired", "mode", mode, "state_dir", stateDir)
 
 	// Find or create the pinned advisory issue. Any level can have advisory
 	// agents whose findings should be posted to this issue.
