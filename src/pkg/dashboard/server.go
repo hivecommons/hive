@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -1138,20 +1139,21 @@ func (s *Server) Start() error {
 	if err != nil {
 		return fmt.Errorf("loading embedded static files: %w", err)
 	}
-	// The SPA document gets a dedicated handler with startup-precomputed gzip
-	// and a strong ETag (see pkg/dashboard/webstatic): http.FileServer would serve the
+	// The SPA document gets a dedicated handler with a strong ETag and one-time
+	// gzip cache (see pkg/dashboard/webstatic): http.FileServer would serve the
 	// ~1.3 MB inline document uncompressed with no cache validators (embed.FS
 	// has a zero ModTime, so not even Last-Modified), forcing a full re-download
 	// on every visit. "/{$}" matches the root path exactly; every other static
 	// path falls through to the plain file server below.
+	var idx *webstatic.IndexDocument
 	if rawIndex, err := fs.ReadFile(staticContent, "index.html"); err == nil {
 		// Strings are baked in ONCE here, unlike custom.css which is read per
-		// request: the document carries a precomputed gzip body and a strong
-		// ETag, so its content cannot vary per request without discarding both.
+		// request: the document carries a strong ETag and one immutable gzip
+		// body, so its content cannot vary per request without discarding both.
 		// Editing branding.json therefore needs a restart; editing the
 		// stylesheet does not. That asymmetry is documented in branding.md.
 		branded := webstatic.InjectBranding(applyBranding(rawIndex, s.loadBranding()))
-		idx := webstatic.NewIndexDocument(branded)
+		idx = webstatic.NewIndexDocument(branded)
 		// Hand the FINAL served bytes to the CSP layer explicitly, rather than
 		// having the document constructor reach out and set global state:
 		// constructing a document should not silently change the process-wide
@@ -1170,7 +1172,7 @@ func (s *Server) Start() error {
 	//
 	// Read per request (not cached at startup) so dropping a file in takes
 	// effect on reload. It is a single small stylesheet on local disk; the
-	// index document itself remains startup-precompressed.
+	// index document itself remains immutable and one-time precompressed.
 	s.mux.HandleFunc("GET /branding/custom.css", s.handleBrandingCSS)
 
 	s.mux.Handle("GET /", http.FileServer(http.FS(staticContent)))
@@ -1189,7 +1191,16 @@ func (s *Server) Start() error {
 		ReadTimeout: dashboardReadTimeout,
 		IdleTimeout: dashboardIdleTimeout,
 	}
-	return srv.ListenAndServe()
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	if idx != nil {
+		// Bind before BestCompression work so readiness/liveness probes can
+		// answer even when a saturated node is slow to build the static cache.
+		go idx.Precompress()
+	}
+	return srv.Serve(ln)
 }
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {

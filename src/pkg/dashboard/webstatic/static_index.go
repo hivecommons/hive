@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // IndexDocument serves the embedded SPA document (static/index.html) with
@@ -27,25 +28,29 @@ import (
 // transfer to ~330 KB (≈4x), and the strong ETag turns repeat visits into a
 // 304 with no body at all.
 //
-// The document is embedded in the binary, so both the gzipped form and the
-// ETag are computed exactly once at startup and are immutable for the life of
-// the process. A new image ⇒ new bytes ⇒ new ETag, which is precisely the
-// invalidation we want; Cache-Control: no-cache forces revalidation on every
-// load, so a rolled spoke can never serve a stale UI from browser cache.
+// The document is embedded in the binary, so the ETag and gzipped form are
+// computed exactly once and are immutable for the life of the process. The
+// ETag is cheap and is ready when the handler is constructed; the gzipped body
+// can be precomputed after the listener is bound (or lazily by the first gzip
+// client) so health/readiness probes are not held behind BestCompression work
+// on a saturated runner. A new image ⇒ new bytes ⇒ new ETag, which is precisely
+// the invalidation we want; Cache-Control: no-cache forces revalidation on
+// every load, so a rolled spoke can never serve a stale UI from browser cache.
 type IndexDocument struct {
-	raw     []byte
-	gzipped []byte // nil when gzip compression failed; raw is then always served
-	etag    string
+	raw      []byte
+	gzipOnce sync.Once
+	gzipped  []byte // nil when gzip compression failed; raw is then always served
+	etag     string
 }
 
 // BrandingLinkTag is injected into the served index document so an operator
 // can restyle the dashboard without forking the embedded SPA.
 //
 // It is injected UNCONDITIONALLY, not "only when the file exists": the index
-// document is built once at startup with a precomputed gzip body and a strong
-// ETag, so making its content depend on a file that can appear later would
-// mean either rebuilding it per request or serving a stale page forever. An
-// absent override simply 404s, and a 404'd stylesheet is inert.
+// document is built once with a strong ETag and immutable gzip cache, so making
+// its content depend on a file that can appear later would mean either
+// rebuilding it per request or serving a stale page forever. An absent override
+// simply 404s, and a 404'd stylesheet is inert.
 const BrandingLinkTag = `<link rel="stylesheet" href="/branding/custom.css">`
 
 // InjectBranding places the override link immediately before </head> so it
@@ -69,22 +74,40 @@ func NewIndexDocument(raw []byte) *IndexDocument {
 	sum := sha256.Sum256(raw)
 	// 16 hex bytes of the digest is plenty for cache validation and keeps the
 	// header short; the quotes are part of the ETag grammar (RFC 9110 §8.8.3).
-	d := &IndexDocument{
+	return &IndexDocument{
 		raw:  raw,
 		etag: `"` + hex.EncodeToString(sum[:])[:16] + `"`,
 	}
+}
+
+// Precompress computes the gzip representation ahead of traffic. It is safe to
+// call from a goroutine after the dashboard listener is already bound; ServeHTTP
+// will share the same sync.Once and wait only if a gzip-capable client arrives
+// before this finishes.
+func (d *IndexDocument) Precompress() {
+	d.compressedBody()
+}
+
+func (d *IndexDocument) compressedBody() []byte {
+	d.gzipOnce.Do(func() {
+		d.gzipped = gzipBytes(d.raw)
+	})
+	return d.gzipped
+}
+
+func gzipBytes(raw []byte) []byte {
 	var buf bytes.Buffer
 	// BestCompression: this runs once per process for a highly compressible
-	// document — spend the extra CPU at startup, not per request.
+	// document — spend the extra CPU outside the readiness path, not per request.
 	zw, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
 	if err == nil {
 		if _, err = zw.Write(raw); err == nil {
 			if err = zw.Close(); err == nil {
-				d.gzipped = buf.Bytes()
+				return buf.Bytes()
 			}
 		}
 	}
-	return d
+	return nil
 }
 
 // acceptsGzip reports whether the request's Accept-Encoding allows gzip.
@@ -149,9 +172,12 @@ func (d *IndexDocument) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	body := d.raw
-	if d.gzipped != nil && acceptsGzip(r.Header.Get("Accept-Encoding")) {
-		h.Set("Content-Encoding", "gzip")
-		body = d.gzipped
+	if acceptsGzip(r.Header.Get("Accept-Encoding")) {
+		gzipped := d.compressedBody()
+		if gzipped != nil {
+			h.Set("Content-Encoding", "gzip")
+			body = gzipped
+		}
 	}
 	h.Set("Content-Length", strconv.Itoa(len(body)))
 	w.WriteHeader(http.StatusOK)
