@@ -2957,6 +2957,7 @@
     .campaigns-input { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3) var(--sp-4); font: inherit; font-size: var(--fs-sm); min-width: 0; }
     .campaigns-list { display: grid; gap: var(--sp-3); }
     .campaign-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-4); align-items: center; border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-4); background: color-mix(in srgb, var(--border) 8%, transparent); }
+    .campaign-row-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; justify-content: flex-end; }
     .campaign-row-title { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .campaign-row-meta { display: flex; gap: var(--sp-3); flex-wrap: wrap; color: var(--muted); font-size: var(--fs-sm); margin-top: var(--sp-2); }
     .campaign-pill { border: 1px solid var(--border); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); color: var(--muted); }
@@ -15601,7 +15602,11 @@ function burnAreaChart() {
               <span>${escapeHtml(activity)}</span>
             </div>
           </div>
-          <button class="hv-btn btn-primary btn-sm" data-action="resumeCampaign" data-arg0="${escapeHtml(c.id)}">Resume</button>
+          <div class="campaign-row-actions">
+            <button class="hv-btn btn-primary btn-sm" data-action="resumeCampaign" data-arg0="${escapeHtml(c.id)}">Continue</button>
+            <button class="hv-btn btn-secondary btn-sm" data-action="releaseCampaign" data-arg0="${escapeHtml(c.id)}">Release</button>
+            <button class="hv-btn btn-secondary btn-sm" data-action="reviseCampaign" data-arg0="${escapeHtml(c.id)}">Revise</button>
+          </div>
         </div>`;
       }).join('');
     }
@@ -15614,6 +15619,26 @@ function burnAreaChart() {
         if (!data.ok) { alert(data.error || 'Failed to resume campaign'); return; }
         if (data.state) { _inceptionState = data.state; renderInception(); }
         if (data.resume_command) { alert('Resume command:\n' + data.resume_command); }
+        await loadCampaigns();
+      } catch (e) { alert('Error: ' + e.message); }
+    }
+
+    async function releaseCampaign(id) {
+      if (!id) return;
+      try {
+        const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/release', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({}) });
+        const data = await r.json();
+        if (!data.ok) { alert(data.error || 'Failed to release campaign'); return; }
+        await loadCampaigns();
+      } catch (e) { alert('Error: ' + e.message); }
+    }
+
+    async function reviseCampaign(id) {
+      if (!id) return;
+      try {
+        const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/revise', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({}) });
+        const data = await r.json();
+        if (!data.ok) { alert(data.error || 'Failed to revise campaign'); return; }
         await loadCampaigns();
       } catch (e) { alert('Error: ' + e.message); }
     }

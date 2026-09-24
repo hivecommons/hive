@@ -1,0 +1,1 @@
+- Added campaign lease, release, and revision flows for #8665 so resumable Inception/Spektacular campaigns can be safely handed off and revisited.

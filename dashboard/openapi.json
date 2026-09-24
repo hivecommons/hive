@@ -22411,6 +22411,66 @@
           },
           "404": {
             "description": "Campaign not found"
+          },
+          "409": {
+            "description": "Campaign lease held by another user"
+          }
+        }
+      }
+    },
+    "/api/campaigns/{id}/release": {
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Release a campaign lease",
+        "description": "Clears the caller's active campaign lease and records a release audit event.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Campaign lease released"
+          },
+          "404": {
+            "description": "Campaign not found"
+          },
+          "409": {
+            "description": "Campaign is leased by another user or has no active lease"
+          }
+        }
+      }
+    },
+    "/api/campaigns/{id}/revise": {
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Branch a new campaign revision",
+        "description": "Creates a linked revision campaign so shipped or parked work can be revisited without losing the previous campaign trail.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Campaign revision created"
+          },
+          "404": {
+            "description": "Campaign not found"
           }
         }
       }

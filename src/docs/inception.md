@@ -175,9 +175,10 @@ The Inception panel now starts with a Campaigns list. Each row is a resumable
 unit of work keyed by its stable session/spec id:
 
 - Archived L1 sessions have type `inception` and engine `Spec Kit`. Pressing
-  **Resume** calls `POST /api/campaigns/{id}/resume`, restores the saved
-  inception state and wiki working files, and opens the existing wizard at the
-  archived phase.
+  **Continue** calls `POST /api/campaigns/{id}/resume`, takes a durable
+  campaign lease, restores the saved inception state and wiki working files,
+  and opens the existing wizard at the archived phase. A second operator gets
+  a 409 until the holder presses **Release** or the lease expires.
 - Spektacular-backed runs have type `spektacular`, engine `Spektacular`, and a
   `/api/runs/{key}` link. Resume returns the retained run detail and a CLI
   status command; Spektacular itself reloads state from its working files and
@@ -185,6 +186,9 @@ unit of work keyed by its stable session/spec id:
 - The list supports `search`/`q`, `repo`, `stage`, `status`, and `owner`
   filters and keeps shipped/completed work visible instead of replacing it
   with a blank New Inception screen.
+- **Revise** calls `POST /api/campaigns/{id}/revise` and creates a new
+  campaign linked with `revision_of`/`revision`, so changed requirements branch
+  from the shipped campaign instead of erasing its trail.
 
 ## Configuring the brainstorm agent
 

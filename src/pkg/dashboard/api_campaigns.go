@@ -1,10 +1,12 @@
 package dashboard
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/knowledge"
 )
@@ -28,6 +30,8 @@ type Campaign struct {
 	RunKey       string             `json:"run_key,omitempty"`
 	RunURL       string             `json:"run_url,omitempty"`
 	LeaseOwner   string             `json:"lease_owner,omitempty"`
+	RevisionOf   string             `json:"revision_of,omitempty"`
+	Revision     int                `json:"revision,omitempty"`
 }
 
 type CampaignArtifact struct {
@@ -47,6 +51,18 @@ type campaignResumeResponse struct {
 	State         interface{} `json:"state,omitempty"`
 	ResumeCommand string      `json:"resume_command,omitempty"`
 	Message       string      `json:"message,omitempty"`
+}
+
+type campaignReleaseResponse struct {
+	OK       bool     `json:"ok"`
+	Campaign Campaign `json:"campaign"`
+	Message  string   `json:"message,omitempty"`
+}
+
+type campaignReviseResponse struct {
+	OK       bool     `json:"ok"`
+	Campaign Campaign `json:"campaign"`
+	Message  string   `json:"message,omitempty"`
 }
 
 func (s *Server) handleCampaignsList(w http.ResponseWriter, r *http.Request) {
@@ -108,18 +124,123 @@ func (s *Server) handleCampaignResume(w http.ResponseWriter, r *http.Request) {
 				jsonError(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+			leased, err := s.deps.Inception.LeaseCampaignArchive(campaign.ID, requestUser(r), req.Surface, time.Now())
+			if err != nil {
+				jsonError(w, err.Error(), campaignArchiveErrorStatus(err))
+				return
+			}
 			state, err := s.deps.Inception.RestoreCampaignArchive(campaign.ID)
 			if err != nil {
 				jsonError(w, err.Error(), http.StatusNotFound)
 				return
 			}
+			campaign = campaignFromInceptionArchive(*leased)
 			s.auditFromRequest(r, "campaign_resume", auditDetail("campaign", campaign.ID, "type", campaign.Type, "surface", strings.TrimSpace(req.Surface)), "")
 			jsonResponse(w, campaignResumeResponse{OK: true, Campaign: campaign, State: state, Message: "Inception campaign restored"})
+			return
+		}
+		if campaign.LeaseOwner != "" && campaign.LeaseOwner != requestUser(r) {
+			jsonError(w, "campaign lease held by "+campaign.LeaseOwner, http.StatusConflict)
 			return
 		}
 		run, _ := s.runByCampaignKey(campaign.RunKey)
 		s.auditFromRequest(r, "campaign_resume", auditDetail("campaign", campaign.ID, "type", campaign.Type, "surface", strings.TrimSpace(req.Surface)), "")
 		jsonResponse(w, campaignResumeResponse{OK: true, Campaign: campaign, Run: run, ResumeCommand: spektacularResumeCommand(campaign), Message: "Spektacular state is loaded from its artifact files; continue with the command or run link."})
+		return
+	}
+	jsonError(w, "campaign not found", http.StatusNotFound)
+}
+
+func (s *Server) handleCampaignRelease(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	id := campaignIDFromRequest(r)
+	if id == "" {
+		jsonError(w, "campaign id required", http.StatusBadRequest)
+		return
+	}
+	if s.deps == nil || s.deps.Inception == nil {
+		jsonError(w, "campaign store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	campaigns, err := s.campaignsForRequest(r)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	for _, campaign := range campaigns {
+		if campaign.ID != id && campaign.RunKey != id {
+			continue
+		}
+		if campaign.RunKey != "" && campaign.Type == "spektacular" {
+			if s.contributeHub == nil {
+				jsonError(w, "run lease registry unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			held, ok := s.contributeHub.runLeaseHolder(campaign.RunKey, time.Now())
+			if !ok {
+				jsonError(w, "campaign lease not found", http.StatusNotFound)
+				return
+			}
+			if held.identity != requestUser(r) {
+				jsonError(w, "campaign lease held by "+held.identity, http.StatusConflict)
+				return
+			}
+			s.contributeHub.revokeLease(held.identity, held.taskID)
+			campaign.LeaseOwner = ""
+			s.auditFromRequest(r, "campaign_release", auditDetail("campaign", campaign.ID, "type", campaign.Type), "")
+			jsonResponse(w, campaignReleaseResponse{OK: true, Campaign: campaign, Message: "Campaign lease released"})
+			return
+		}
+		archive, err := s.deps.Inception.ReleaseCampaignArchive(campaign.ID, requestUser(r), time.Now())
+		if err != nil {
+			jsonError(w, err.Error(), campaignArchiveErrorStatus(err))
+			return
+		}
+		released := campaignFromInceptionArchive(*archive)
+		s.auditFromRequest(r, "campaign_release", auditDetail("campaign", released.ID, "type", released.Type), "")
+		jsonResponse(w, campaignReleaseResponse{OK: true, Campaign: released, Message: "Campaign lease released"})
+		return
+	}
+	jsonError(w, "campaign not found", http.StatusNotFound)
+}
+
+func (s *Server) handleCampaignRevise(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	id := campaignIDFromRequest(r)
+	if id == "" {
+		jsonError(w, "campaign id required", http.StatusBadRequest)
+		return
+	}
+	if s.deps == nil || s.deps.Inception == nil {
+		jsonError(w, "campaign store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	campaigns, err := s.campaignsForRequest(r)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	for _, campaign := range campaigns {
+		if campaign.ID != id && campaign.RunKey != id {
+			continue
+		}
+		var archive *knowledge.InceptionCampaignArchive
+		if campaign.Type == "inception" {
+			archive, err = s.deps.Inception.ReviseCampaignArchive(campaign.ID, requestUser(r), time.Now())
+		} else {
+			archive, err = s.deps.Inception.ReviseExternalCampaign(campaign.ID, campaign.Title, campaign.Source, campaign.Engine, campaign.Type, requestUser(r), campaign.Repos, time.Now())
+		}
+		if err != nil {
+			jsonError(w, err.Error(), campaignArchiveErrorStatus(err))
+			return
+		}
+		revision := campaignFromInceptionArchive(*archive)
+		s.auditFromRequest(r, "campaign_revise", auditDetail("campaign", campaign.ID, "revision", revision.ID, "type", campaign.Type), "")
+		jsonResponse(w, campaignReviseResponse{OK: true, Campaign: revision, Message: "Campaign revision created"})
 		return
 	}
 	jsonError(w, "campaign not found", http.StatusNotFound)
@@ -209,13 +330,17 @@ func (s *Server) allCampaigns(r *http.Request) ([]Campaign, error) {
 
 func campaignFromInceptionArchive(archive knowledge.InceptionCampaignArchive) Campaign {
 	state := archive.State
-	title := archive.ID
+	title := firstRunNonEmpty(archive.Title, archive.ID)
 	stage := "inception"
 	step := "archived"
 	status := "parked"
 	last := archive.ArchivedAt
-	repos := []string{}
+	repos := append([]string{}, archive.Repos...)
 	linkedIssues := []string{}
+	leaseOwner := ""
+	runKey := ""
+	runURL := ""
+	contributors := []string{"brainstorm"}
 	if state != nil {
 		if strings.TrimSpace(state.IdeaText) != "" {
 			title = strings.TrimSpace(state.IdeaText)
@@ -231,15 +356,27 @@ func campaignFromInceptionArchive(archive knowledge.InceptionCampaignArchive) Ca
 		if strings.TrimSpace(state.RepoURL) != "" {
 			repos = append(repos, strings.TrimSpace(state.RepoURL))
 		}
+	} else if firstRunNonEmpty(archive.Type, "inception") == "spektacular" {
+		stage = StagePlan
+		step = "revision"
+		runKey = strings.TrimSpace(archive.Source)
+		if runKey != "" {
+			runURL = "/api/runs/" + url.PathEscape(runKey)
+		}
+		contributors = nil
+	}
+	if archive.Lease != nil && archive.Lease.Owner != "" && time.Now().Before(archive.Lease.ExpiresAt) {
+		leaseOwner = archive.Lease.Owner
 	}
 	artifacts := []CampaignArtifact{{Kind: "state", Label: "Inception state"}}
 	for _, file := range archive.WikiFiles {
 		artifacts = append(artifacts, CampaignArtifact{Kind: "fact", Label: file})
 	}
 	return Campaign{
-		ID: archive.ID, Title: title, Source: "inception", Repos: repos, CurrentStage: stage, CurrentStep: step,
-		Artifacts: artifacts, LinkedIssues: linkedIssues, Contributors: []string{"brainstorm"}, LastActivity: formatRunTime(last),
+		ID: archive.ID, Title: title, Source: firstRunNonEmpty(archive.Source, "inception"), Repos: repos, CurrentStage: stage, CurrentStep: step,
+		Artifacts: artifacts, LinkedIssues: linkedIssues, Contributors: contributors, LastActivity: formatRunTime(last),
 		Status: status, Engine: firstRunNonEmpty(archive.Engine, "Spec Kit"), Type: firstRunNonEmpty(archive.Type, "inception"),
+		RunKey: runKey, RunURL: runURL, LeaseOwner: leaseOwner, RevisionOf: archive.RevisionOf, Revision: archive.Revision,
 	}
 }
 
@@ -270,6 +407,19 @@ func campaignFromRun(run Run) Campaign {
 		Contributors: nonEmptyStrings(firstRunNonEmpty(run.Assignee, run.ClaimedBy)), LastActivity: firstRunNonEmpty(run.CompletedAt, run.StageStartedAt),
 		Status: runCampaignStatus(run), Engine: "Spektacular", Type: "spektacular", RunKey: run.Key,
 		RunURL: "/api/runs/" + url.PathEscape(run.Key), LeaseOwner: run.Assignee,
+	}
+}
+
+func campaignArchiveErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, knowledge.ErrCampaignLeaseHeld):
+		return http.StatusConflict
+	case errors.Is(err, knowledge.ErrCampaignNoLease):
+		return http.StatusConflict
+	case strings.Contains(err.Error(), "not found"):
+		return http.StatusNotFound
+	default:
+		return http.StatusInternalServerError
 	}
 }
 

@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -756,17 +757,38 @@ func (e *InceptionEngine) GetState() *InceptionState {
 // reset so New Inception never discards the session that just finished.
 type InceptionCampaignArchive struct {
 	ID         string          `json:"id"`
+	Title      string          `json:"title,omitempty"`
+	Source     string          `json:"source,omitempty"`
+	Repos      []string        `json:"repos,omitempty"`
 	Engine     string          `json:"engine"`
 	Type       string          `json:"type"`
+	RevisionOf string          `json:"revision_of,omitempty"`
+	Revision   int             `json:"revision,omitempty"`
+	Lease      *CampaignLease  `json:"lease,omitempty"`
 	ArchivedAt time.Time       `json:"archived_at"`
 	State      *InceptionState `json:"state"`
 	WikiFiles  []string        `json:"wiki_files,omitempty"`
+}
+
+// CampaignLease is the dashboard-level lock that prevents two operators from
+// resuming the same durable campaign at once.
+type CampaignLease struct {
+	Owner      string    `json:"owner"`
+	Surface    string    `json:"surface,omitempty"`
+	AcquiredAt time.Time `json:"acquired_at"`
+	ExpiresAt  time.Time `json:"expires_at"`
 }
 
 const (
 	inceptionCampaignsDir = "inception/campaigns"
 	inceptionArchiveState = "state.json"
 	inceptionArchiveWiki  = "wiki"
+	campaignLeaseTTL      = 24 * time.Hour
+)
+
+var (
+	ErrCampaignLeaseHeld = errors.New("campaign lease held by another user")
+	ErrCampaignNoLease   = errors.New("campaign has no active lease")
 )
 
 // ArchiveCurrentCampaign snapshots the current inception state and wiki files
@@ -825,6 +847,149 @@ func (e *InceptionEngine) LoadCampaignArchive(id string) (*InceptionCampaignArch
 	return &archive, nil
 }
 
+// LeaseCampaignArchive records a resumable campaign lease for owner. The same
+// owner may refresh their lease; another owner must wait until release/expiry.
+func (e *InceptionEngine) LeaseCampaignArchive(id, owner, surface string, now time.Time) (*InceptionCampaignArchive, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	archive, err := e.readArchiveLocked(id)
+	if err != nil {
+		return nil, err
+	}
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		owner = "local"
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if archive.Lease != nil && archive.Lease.Owner != "" && archive.Lease.Owner != owner && now.Before(archive.Lease.ExpiresAt) {
+		return nil, fmt.Errorf("%w: %s", ErrCampaignLeaseHeld, archive.Lease.Owner)
+	}
+	archive.Lease = &CampaignLease{Owner: owner, Surface: strings.TrimSpace(surface), AcquiredAt: now, ExpiresAt: now.Add(campaignLeaseTTL)}
+	if err := e.writeArchiveStateLocked(&archive); err != nil {
+		return nil, err
+	}
+	return &archive, nil
+}
+
+// ReleaseCampaignArchive clears owner’s active campaign lease.
+func (e *InceptionEngine) ReleaseCampaignArchive(id, owner string, now time.Time) (*InceptionCampaignArchive, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	archive, err := e.readArchiveLocked(id)
+	if err != nil {
+		return nil, err
+	}
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		owner = "local"
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if archive.Lease == nil || archive.Lease.Owner == "" || now.After(archive.Lease.ExpiresAt) {
+		archive.Lease = nil
+		if err := e.writeArchiveStateLocked(&archive); err != nil {
+			return nil, err
+		}
+		return nil, ErrCampaignNoLease
+	}
+	if archive.Lease.Owner != owner {
+		return nil, fmt.Errorf("%w: %s", ErrCampaignLeaseHeld, archive.Lease.Owner)
+	}
+	archive.Lease = nil
+	if err := e.writeArchiveStateLocked(&archive); err != nil {
+		return nil, err
+	}
+	return &archive, nil
+}
+
+// ReviseCampaignArchive branches a shipped/parked campaign into a new revision
+// linked to the previous campaign instead of starting from a blank session.
+func (e *InceptionEngine) ReviseCampaignArchive(id, owner string, now time.Time) (*InceptionCampaignArchive, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	base, err := e.readArchiveLocked(id)
+	if err != nil {
+		return nil, err
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	rootID := strings.TrimSpace(base.RevisionOf)
+	if rootID == "" {
+		rootID = base.ID
+	}
+	next := base.Revision + 1
+	if next <= 1 {
+		next = 2
+	}
+	var revisionID string
+	for {
+		revisionID = slugify(fmt.Sprintf("%s-rev-%d", rootID, next))
+		if _, err := e.readArchiveLocked(revisionID); err != nil {
+			break
+		}
+		next++
+	}
+	revision := base
+	revision.ID = revisionID
+	revision.RevisionOf = base.ID
+	revision.Revision = next
+	revision.ArchivedAt = now
+	revision.Lease = &CampaignLease{Owner: campaignOwner(owner), Surface: "revise", AcquiredAt: now, ExpiresAt: now.Add(campaignLeaseTTL)}
+	if revision.State != nil {
+		revision.State = copyInceptionState(revision.State)
+		revision.State.IdeaSlug = revisionID
+		revision.State.Phase = PhaseCapture
+		revision.State.PhaseChangedAt = &now
+	}
+	if err := e.copyArchiveWikiLocked(base.ID, revision.ID); err != nil {
+		return nil, err
+	}
+	if err := e.writeArchiveStateLocked(&revision); err != nil {
+		return nil, err
+	}
+	return &revision, nil
+}
+
+// ReviseExternalCampaign records a new durable revision for a non-Inception
+// campaign whose artifacts live in an external Spektacular backend.
+func (e *InceptionEngine) ReviseExternalCampaign(id, title, source, engine, campaignType, owner string, repos []string, now time.Time) (*InceptionCampaignArchive, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	id = slugify(strings.TrimSpace(id))
+	if id == "" {
+		return nil, fmt.Errorf("campaign id required")
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	next := 2
+	for {
+		revisionID := slugify(fmt.Sprintf("%s-rev-%d", id, next))
+		if _, err := e.readArchiveLocked(revisionID); err != nil {
+			archive := &InceptionCampaignArchive{
+				ID: revisionID, Title: strings.TrimSpace(title), Source: strings.TrimSpace(source), Repos: repos,
+				Engine: strings.TrimSpace(engine), Type: strings.TrimSpace(campaignType), RevisionOf: id, Revision: next,
+				ArchivedAt: now, Lease: &CampaignLease{Owner: campaignOwner(owner), Surface: "revise", AcquiredAt: now, ExpiresAt: now.Add(campaignLeaseTTL)},
+			}
+			if archive.Engine == "" {
+				archive.Engine = "Spektacular"
+			}
+			if archive.Type == "" {
+				archive.Type = "spektacular"
+			}
+			if err := e.writeArchiveStateLocked(archive); err != nil {
+				return nil, err
+			}
+			return archive, nil
+		}
+		next++
+	}
+}
+
 // RestoreCampaignArchive makes an archived inception campaign the active L1
 // session again and restores its working wiki files.
 func (e *InceptionEngine) RestoreCampaignArchive(id string) (*InceptionState, error) {
@@ -877,6 +1042,35 @@ func (e *InceptionEngine) writeArchiveLocked(archive *InceptionCampaignArchive) 
 		return err
 	}
 	archive.WikiFiles = wikiFiles
+	if existing, err := e.readArchiveLocked(archive.ID); err == nil {
+		archive.Lease = existing.Lease
+		if archive.RevisionOf == "" {
+			archive.RevisionOf = existing.RevisionOf
+		}
+		if archive.Revision == 0 {
+			archive.Revision = existing.Revision
+		}
+		if archive.Title == "" {
+			archive.Title = existing.Title
+		}
+		if archive.Source == "" {
+			archive.Source = existing.Source
+		}
+		if len(archive.Repos) == 0 {
+			archive.Repos = existing.Repos
+		}
+	}
+	return e.writeArchiveStateLocked(archive)
+}
+
+func (e *InceptionEngine) writeArchiveStateLocked(archive *InceptionCampaignArchive) error {
+	if archive == nil {
+		return nil
+	}
+	root := filepath.Join(e.dataDir, inceptionCampaignsDir, slugify(archive.ID))
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return fmt.Errorf("creating campaign archive: %w", err)
+	}
 	data, err := json.MarshalIndent(archive, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling campaign archive: %w", err)
@@ -886,6 +1080,50 @@ func (e *InceptionEngine) writeArchiveLocked(archive *InceptionCampaignArchive) 
 		return fmt.Errorf("writing campaign archive: %w", err)
 	}
 	return os.Rename(tmp, filepath.Join(root, inceptionArchiveState))
+}
+
+func (e *InceptionEngine) copyArchiveWikiLocked(fromID, toID string) error {
+	from := filepath.Join(e.dataDir, inceptionCampaignsDir, slugify(fromID), inceptionArchiveWiki)
+	toRoot := filepath.Join(e.dataDir, inceptionCampaignsDir, slugify(toID))
+	to := filepath.Join(toRoot, inceptionArchiveWiki)
+	if err := os.MkdirAll(toRoot, 0o755); err != nil {
+		return fmt.Errorf("creating campaign archive: %w", err)
+	}
+	entries, err := os.ReadDir(from)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("reading campaign wiki archive: %w", err)
+	}
+	if err := os.RemoveAll(to); err != nil {
+		return fmt.Errorf("clearing campaign revision wiki: %w", err)
+	}
+	if err := os.MkdirAll(to, 0o755); err != nil {
+		return fmt.Errorf("creating campaign revision wiki: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		name := filepath.Base(entry.Name())
+		data, err := os.ReadFile(filepath.Join(from, name))
+		if err != nil {
+			return fmt.Errorf("reading campaign wiki file %s: %w", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(to, name), data, 0o644); err != nil {
+			return fmt.Errorf("writing campaign revision wiki file %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func campaignOwner(owner string) string {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return "local"
+	}
+	return owner
 }
 
 func (e *InceptionEngine) copyWikiToArchiveLocked(root string) ([]string, error) {

@@ -1,15 +1,29 @@
 package dashboard
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/knowledge"
 )
+
+func doOwnerPostAsUser(s *Server, path, user string, body interface{}) *httptest.ResponseRecorder {
+	var b bytes.Buffer
+	json.NewEncoder(&b).Encode(body)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, path, &b)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hive-User", user)
+	markOwnerRequest(req)
+	s.mux.ServeHTTP(rec, req)
+	return rec
+}
 
 func decodeCampaignList(t *testing.T, body []byte) []Campaign {
 	t.Helper()
@@ -136,12 +150,107 @@ func TestCampaignsIncludeSpektacularRunsAndFilters(t *testing.T) {
 		t.Fatalf("run campaign = %+v", got)
 	}
 
-	resume := doOwnerPost(s, "/api/campaigns/stable-spec-8665/resume", map[string]string{"surface": "cli"})
+	resume := doOwnerPostAsUser(s, "/api/campaigns/stable-spec-8665/resume", "alice", map[string]string{"surface": "cli"})
 	if resume.Code != http.StatusOK {
 		t.Fatalf("resume = %d body=%s", resume.Code, resume.Body.String())
 	}
 	if !strings.Contains(resume.Body.String(), "spektacular plan status stable-spec-8665") {
 		t.Fatalf("resume body missing CLI command: %s", resume.Body.String())
+	}
+}
+
+func TestCampaignLeaseReleaseAndReviseFlows(t *testing.T) {
+	s := newMinimalServer(t)
+	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
+	state, err := s.deps.Inception.Start("Lease protected campaign")
+	if err != nil {
+		t.Fatalf("start inception: %v", err)
+	}
+	if reset := doOwnerPost(s, "/api/inception/reset", map[string]interface{}{}); reset.Code != http.StatusOK {
+		t.Fatalf("reset = %d body=%s", reset.Code, reset.Body.String())
+	}
+
+	resume := doOwnerPostAsUser(s, "/api/campaigns/"+state.IdeaSlug+"/resume", "alice", map[string]string{"surface": "chat"})
+	if resume.Code != http.StatusOK {
+		t.Fatalf("alice resume = %d body=%s", resume.Code, resume.Body.String())
+	}
+	blocked := doOwnerPostAsUser(s, "/api/campaigns/"+state.IdeaSlug+"/resume", "bob", map[string]string{"surface": "chat"})
+	if blocked.Code != http.StatusConflict {
+		t.Fatalf("bob resume = %d body=%s, want conflict", blocked.Code, blocked.Body.String())
+	}
+	releaseBlocked := doOwnerPostAsUser(s, "/api/campaigns/"+state.IdeaSlug+"/release", "bob", map[string]string{})
+	if releaseBlocked.Code != http.StatusConflict {
+		t.Fatalf("bob release = %d body=%s, want conflict", releaseBlocked.Code, releaseBlocked.Body.String())
+	}
+	released := doOwnerPostAsUser(s, "/api/campaigns/"+state.IdeaSlug+"/release", "alice", map[string]string{})
+	if released.Code != http.StatusOK {
+		t.Fatalf("alice release = %d body=%s", released.Code, released.Body.String())
+	}
+	resume = doOwnerPostAsUser(s, "/api/campaigns/"+state.IdeaSlug+"/resume", "bob", map[string]string{"surface": "chat"})
+	if resume.Code != http.StatusOK {
+		t.Fatalf("bob resume after release = %d body=%s", resume.Code, resume.Body.String())
+	}
+
+	revise := doOwnerPostAsUser(s, "/api/campaigns/"+state.IdeaSlug+"/revise", "bob", map[string]string{})
+	if revise.Code != http.StatusOK {
+		t.Fatalf("revise = %d body=%s", revise.Code, revise.Body.String())
+	}
+	var resp struct {
+		OK       bool     `json:"ok"`
+		Campaign Campaign `json:"campaign"`
+	}
+	if err := json.Unmarshal(revise.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode revise: %v", err)
+	}
+	if !resp.OK || resp.Campaign.RevisionOf != state.IdeaSlug || resp.Campaign.Revision == 0 || resp.Campaign.LeaseOwner != "bob" {
+		t.Fatalf("revision campaign = %+v", resp.Campaign)
+	}
+}
+
+func TestCampaignReviseSpektacularRunCreatesLinkedRevision(t *testing.T) {
+	s, _ := runsTestServer(t)
+	now := time.Now()
+	if err := s.contributeHub.recordLeaseForKeyStage("alice", "task-8665", "myorg/repo1", 8665, "myorg/repo1!stable-spec-8665:implement", "contributor", StageImplement, 3, now); err != nil {
+		t.Fatalf("record lease: %v", err)
+	}
+	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
+
+	revise := doOwnerPostAsUser(s, "/api/campaigns/stable-spec-8665/revise", "bob", map[string]string{})
+	if revise.Code != http.StatusOK {
+		t.Fatalf("revise = %d body=%s", revise.Code, revise.Body.String())
+	}
+	var resp struct {
+		OK       bool     `json:"ok"`
+		Campaign Campaign `json:"campaign"`
+	}
+	if err := json.Unmarshal(revise.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode revise: %v", err)
+	}
+	if !resp.OK || resp.Campaign.RevisionOf != "stable-spec-8665" || resp.Campaign.Engine != "Spektacular" || resp.Campaign.Type != "spektacular" {
+		t.Fatalf("spektacular revision = %+v", resp.Campaign)
+	}
+	if resp.Campaign.CurrentStage != StagePlan || !strings.Contains(spektacularResumeCommand(resp.Campaign), "spektacular plan status ") {
+		t.Fatalf("spektacular revision resume shape = %+v command=%q", resp.Campaign, spektacularResumeCommand(resp.Campaign))
+	}
+}
+
+func TestCampaignReleaseSpektacularRunLease(t *testing.T) {
+	s, _ := runsTestServer(t)
+	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
+	if err := s.contributeHub.recordLeaseForKeyStage("alice", "task-8665", "myorg/repo1", 8665, "myorg/repo1!stable-spec-8665:plan", "contributor", StagePlan, 3, time.Now()); err != nil {
+		t.Fatalf("record lease: %v", err)
+	}
+
+	blocked := doOwnerPostAsUser(s, "/api/campaigns/stable-spec-8665/release", "bob", map[string]string{})
+	if blocked.Code != http.StatusConflict {
+		t.Fatalf("bob release = %d body=%s, want conflict", blocked.Code, blocked.Body.String())
+	}
+	released := doOwnerPostAsUser(s, "/api/campaigns/stable-spec-8665/release", "alice", map[string]string{})
+	if released.Code != http.StatusOK {
+		t.Fatalf("alice release = %d body=%s", released.Code, released.Body.String())
+	}
+	if _, ok := s.contributeHub.runLeaseHolder("myorg/repo1!stable-spec-8665:plan", time.Now()); ok {
+		t.Fatalf("spektacular run lease still held after release")
 	}
 }
 
