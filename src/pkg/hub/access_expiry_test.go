@@ -281,7 +281,7 @@ func TestAccessExpiryIsCheckboxGated(t *testing.T) {
 	if !strings.Contains(dashboardHTML, `id="access-expiry" type="date" title="Access is revoked automatically after this date (UTC)."`) {
 		t.Error("the Add User date input lost its title, or its markup moved")
 	}
-	if !strings.Contains(dashboardHTML, `style="display:none;padding:8px 12px`) {
+	if !strings.Contains(dashboardHTML, `style="display:none;padding:var(--sp-4) var(--sp-5)`) {
 		t.Error("the Add User date input must start hidden — visible-but-empty is the placeholder bug this fixes")
 	}
 	if !strings.Contains(dashboardHTML, "function toggleAddExpiryVisible()") {
@@ -293,7 +293,7 @@ func TestAccessExpiryIsCheckboxGated(t *testing.T) {
 	if !strings.Contains(dashboardHTML, "function toggleAccessExpiry(") {
 		t.Error("toggleAccessExpiry is missing — row checkboxes could not flip a grant to permanent")
 	}
-	if !strings.Contains(dashboardHTML, `<span style="font-size:0.6rem;color:var(--text)">Never</span>`) {
+	if !strings.Contains(dashboardHTML, `<span style="font-size:var(--fs-xs);color:var(--text)">Never</span>`) {
 		t.Error(`a row with no expiry must render the word "Never" instead of a date input`)
 	}
 

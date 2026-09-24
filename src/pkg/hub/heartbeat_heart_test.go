@@ -54,7 +54,7 @@ func TestDashboardHeartbeatHeartFlashesOnReceipt(t *testing.T) {
 	}
 	// CSS: invisible by default, and a FINITE 3-iteration animation whose
 	// forwards fill-mode leaves the heart invisible after the third pulse.
-	if !strings.Contains(dashboardHTML, ".heartbeat-heart { color: #e5534b; vertical-align: middle; margin-left: 4px; opacity: 0; }") {
+	if !strings.Contains(dashboardHTML, ".heartbeat-heart { color: #e5534b; vertical-align: middle; margin-left: var(--sp-2); opacity: 0; }") {
 		t.Error("heartbeat-heart base rule must keep the heart invisible (opacity: 0) by default — no persistent heart between heartbeats")
 	}
 	if !strings.Contains(dashboardHTML, ".heartbeat-heart-flash { animation: heartbeatPulse 0.6s ease-in-out 3 forwards; }") {

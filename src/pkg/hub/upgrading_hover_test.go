@@ -16,7 +16,7 @@ func TestUpgradingStatusDotUsesHealthHover(t *testing.T) {
 		`var isUpgrading = h.upgrading || _upgradingHives[h.id];`,
 		`var dot = h.upgrading`,
 		`? healthBadge(h)`,
-		`? '<span class="online-dot upgrading" style="margin-right:0"></span>'`,
+		`? '<span class="online-dot upgrading" style="margin-right:var(--sp-0)"></span>'`,
 		`isUpgrading ? 'Upgrading — rollout in progress'`,
 	} {
 		if !strings.Contains(dashboardHTML, snippet) {
