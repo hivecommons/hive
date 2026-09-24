@@ -336,7 +336,7 @@ func (m *Manager) InvocationMetadata(agentName string) (backend, model, effort s
 //
 // The rules mirror the launch path exactly:
 //   - agy REQUIRES --effort whenever --model is given, so with a model it runs
-//     at agyLaunchEffort(configured) and with no model at no effort at all.
+//     at agyLaunchEffort(model, configured) and with no model at no effort at all.
 //   - codex is launched with `-c model_reasoning_effort` only when an effort
 //     is configured; unset means codex's own default, which the hive does not
 //     resolve, so the honest answer is the configured value verbatim.
@@ -352,7 +352,7 @@ func ResolveReasoningEffort(backend, model, configured string) string {
 	switch backend {
 	case "agy":
 		if model != "" {
-			return agyLaunchEffort(configured)
+			return agyLaunchEffort(model, configured)
 		}
 		return ""
 	case codexBackend, "omp":

@@ -5,9 +5,11 @@ package agent
 //
 //   - --dangerously-skip-permissions is ALWAYS passed — without it agy blocks
 //     on a per-tool approval prompt no one is attached to answer;
-//   - a configured model is passed as --model <m> --effort <agyDefaultEffort>,
-//     because agy silently IGNORES --model without --effort — dropping the
-//     effort flag would make the configured model a no-op while looking fine.
+//   - a configured model is passed as --model <m> --effort <effort>, deriving
+//     the effort from agy's -low/-medium/-high model suffix when the agent has
+//     no explicit reasoning_effort, because agy silently IGNORES --model
+//     without --effort — dropping or mismatching the effort flag would make the
+//     configured model a no-op while looking fine.
 //
 // This test used to launch a real tmux pane with an agy stub and poll
 // CaptureFullLog for ~35s waiting for the typed command to echo back. That is
@@ -95,7 +97,35 @@ func TestAgyLaunchCommandLine_ConfiguredEffort(t *testing.T) {
 		t.Errorf("configured effort 'high' must reach agy's --effort; cmd: %q", cmd)
 	}
 	if cmd := agyInteractiveLaunchCmdForTest(t, "gemini-pro", "xhigh"); !strings.Contains(cmd, "--model gemini-pro --effort "+agyDefaultEffort) {
-		t.Errorf("effort agy rejects must fall back to --effort %s; cmd: %q", agyDefaultEffort, cmd)
+		t.Errorf("effort agy rejects must fall back to --effort %s when the model has no effort suffix; cmd: %q", agyDefaultEffort, cmd)
+	}
+}
+
+func TestAgyLaunchCommandLine_DerivesEffortFromModelSuffix(t *testing.T) {
+	for _, c := range []struct {
+		model string
+		want  string
+	}{
+		{"gemini-3.8-flash-high", "high"},
+		{"gemini-3.8-flash-medium", "medium"},
+		{"gemini-3.8-flash-low", "low"},
+		{"gemini-pro-high", "high"},
+	} {
+		cmd := agyInteractiveLaunchCmdForTest(t, c.model, "")
+		want := "--model " + c.model + " --effort " + c.want
+		if !strings.Contains(cmd, want) {
+			t.Errorf("agy model suffix must set effort; missing %q in cmd: %q", want, cmd)
+		}
+	}
+
+	cmd := agyInteractiveLaunchCmdForTest(t, "gemini-3.8-flash-high", "medium")
+	if !strings.Contains(cmd, "--model gemini-3.8-flash-high --effort medium") {
+		t.Errorf("explicit effort must override model suffix; cmd: %q", cmd)
+	}
+
+	cmd = agyInteractiveLaunchCmdForTest(t, "gemini-3.8-flash-high", "xhigh")
+	if !strings.Contains(cmd, "--model gemini-3.8-flash-high --effort high") {
+		t.Errorf("invalid effort must fall back to model suffix rather than downgrading; cmd: %q", cmd)
 	}
 }
 

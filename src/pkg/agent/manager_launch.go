@@ -993,7 +993,7 @@ func agyInteractiveLaunchCmd(binary, model, effort string) string {
 	// agyDefaultEffort — "low", the effort agy itself falls back to.
 	launchCmd := fmt.Sprintf("%s --dangerously-skip-permissions", binary)
 	if model != "" {
-		launchCmd = fmt.Sprintf("%s --model %s --effort %s", launchCmd, model, agyLaunchEffort(effort))
+		launchCmd = fmt.Sprintf("%s --model %s --effort %s", launchCmd, model, agyLaunchEffort(model, effort))
 	}
 	return launchCmd
 }
@@ -1050,7 +1050,7 @@ var agyTurnRunnerBinary = func() string {
 func agyHeadlessTurnShellCommand(hiveBinary, agyBinary, model, effort, promptFile string, newConversation bool) string {
 	args := []string{shellQuote(hiveBinary), agyTurnSubcommand, "--agy", shellQuote(agyBinary)}
 	if model != "" {
-		args = append(args, "--model", shellQuote(model), "--effort", shellQuote(agyLaunchEffort(effort)))
+		args = append(args, "--model", shellQuote(model), "--effort", shellQuote(agyLaunchEffort(model, effort)))
 	}
 	args = append(args, "--prompt-file", shellQuote(promptFile),
 		"--conversation-file", fmt.Sprintf(`"${%s:-}"`, agyConversationFileVar))
@@ -1107,15 +1107,24 @@ func claudeEffortFlag(effort string) string {
 }
 
 // agyLaunchEffort returns the --effort agy is launched with: the configured
-// reasoning effort when it is one agy accepts (low/medium/high), else
-// agyDefaultEffort. The rejection mirrors the contributor relay's rule — agy
-// refuses efforts from codex's wider vocabulary (e.g. xhigh), and launching
-// with one would make agy ignore the model outright, the exact failure
-// --effort exists to prevent.
-func agyLaunchEffort(effort string) string {
+// reasoning effort when it is one agy accepts (low/medium/high), else the
+// effort encoded in agy's model id suffix, else agyDefaultEffort. The rejection
+// mirrors the contributor relay's rule — agy refuses efforts from codex's wider
+// vocabulary (e.g. xhigh), and launching with one would make agy ignore the
+// model outright, the exact failure --effort exists to prevent.
+func agyLaunchEffort(model, effort string) string {
 	for _, v := range config.ReasoningEffortsByBackend["agy"] {
 		if v == effort {
 			return effort
+		}
+	}
+	return agyEffortFromModel(model)
+}
+
+func agyEffortFromModel(model string) string {
+	for _, v := range config.ReasoningEffortsByBackend["agy"] {
+		if strings.HasSuffix(model, "-"+v) {
+			return v
 		}
 	}
 	return agyDefaultEffort
