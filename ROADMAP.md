@@ -318,7 +318,14 @@ discipline):
   exercised live on 2026-09-23 with evidence recorded on the acceptance
   tracker [#8466](https://github.com/hivecommons/hive/issues/8466), which
   is the remaining work that proves Flue, Crustify/Wavefront and
-  Spektacular together. Remaining constituents
+  Spektacular together. A cross-repo audit index landed on 2026-09-24
+  ([#8617](https://github.com/hivecommons/hive/issues/8617), shipped via
+  [#8621](https://github.com/hivecommons/hive/pull/8621)): an owner-gated,
+  read-only `GET /api/runs/audit` join over the existing audit log,
+  timeline, lease-receipt and plan-epic artifacts, with the retention and
+  `expired`/`Unknown` marker contract documented rather than a new store —
+  giving operators one query surface across the report-only campaigns
+  above. Remaining constituents
   (#8301–#8319, #8345–#8364) are ticked off on #8290 as they merge; no
   store, CRD, DSL or GitHub credentials are added to the pilot and every
   surface goes through the existing guard invariant.
