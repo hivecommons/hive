@@ -12,6 +12,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/worksource"
@@ -52,6 +53,16 @@ const (
 	runAdmissionTaskPrefix = "run-admit-"
 	runFanoutIdentity      = "hive-run-fanout"
 	runFanoutTaskPrefix    = "run-fanout-"
+)
+
+// Audit and timeline keys for checkpoint decisions. `auto` is the actor
+// recorded when a disabled checkpoint approves a plan without a human.
+const (
+	runCheckpointAutoActor       = "auto"
+	runCheckpointConfigSourceKey = "config_source"
+	runCheckpointReasonKey       = "checkpoint_reason"
+	runCheckpointActorKey        = "approval_actor"
+	runCheckpointDisabledReason  = "checkpoint_disabled"
 )
 
 // runReceiptsDir is where AdvanceStageLease persists one stage receipt per
@@ -292,10 +303,6 @@ func (s *Server) AdvanceStageLease(identity, taskID, to string, now time.Time, r
 	if err != nil {
 		return err
 	}
-	advanced, err := h.advanceLeaseStage(identity, taskID, to, now)
-	if err != nil {
-		return err
-	}
 	eventAttrs := make(map[string]string, len(attrs)+5)
 	for k, v := range attrs {
 		eventAttrs[k] = v
@@ -309,13 +316,37 @@ func (s *Server) AdvanceStageLease(identity, taskID, to string, now time.Time, r
 	eventAttrs[stageAttrStage] = stage
 	eventAttrs[stageAttrGen] = strconv.FormatUint(gen, 10)
 	eventAttrs[stageAttrPath] = path
-	s.LifecycleTimeline().Record(timeline.Event{
-		IssueRef: key,
-		Kind:     timeline.KindStageReceipt,
-		Agent:    advanced.identity,
-		At:       now.UnixMilli(),
-		Attrs:    eventAttrs,
-	})
+	recordReceipt := func(agent string) {
+		s.LifecycleTimeline().Record(timeline.Event{
+			IssueRef: key,
+			Kind:     timeline.KindStageReceipt,
+			Agent:    agent,
+			At:       now.UnixMilli(),
+			Attrs:    eventAttrs,
+		})
+	}
+	// The plan checkpoint (hivecommons/hive#8550): a run may not reach
+	// implement while its plan is still a draft. Holding is not an error - the
+	// stage did its work and the receipt stands - so the lease is extended and
+	// the runner is told nothing went wrong.
+	if stage == StagePlan && to == StageImplement && s.planCheckpointHolds(runKey) {
+		if err := s.extendHeldPlanLease(identity, taskID, now); err != nil {
+			return err
+		}
+		recordReceipt(l.identity)
+		s.logger.Info("[runs] holding plan stage until approval", "run", runKey, "task", taskID)
+		return nil
+	}
+	advanced, err := h.advanceLeaseStage(identity, taskID, to, now)
+	if err != nil {
+		return err
+	}
+	recordReceipt(advanced.identity)
+	if stage == StageSpec {
+		if decision := s.runCheckpointPolicy(StageSpec); !decision.blocks {
+			s.recordRunCheckpointAutoApproval(runKey, "", StageSpec, decision)
+		}
+	}
 	return nil
 }
 
@@ -465,6 +496,16 @@ func (s *Server) ImportRunPlan(runKey, repo, taskList string) error {
 	if err != nil {
 		return fmt.Errorf("importing spektacular plan: %w", err)
 	}
+	if updated, err := store.Get(epic.ID); err == nil {
+		epic = updated
+	}
+	// A disabled plan checkpoint approves the freshly imported plan here, with
+	// `auto` recorded as the approving actor (hivecommons/hive#8550).
+	if decision := s.runCheckpointPolicy(StagePlan); !decision.blocks {
+		if err := s.autoApproveRunCheckpoint(store, epic, runKey, StagePlan, decision); err != nil {
+			return err
+		}
+	}
 	if err := s.fanOutImportedRunPlan(context.Background(), store, epic.ID, runKey, result.Children); err != nil {
 		return err
 	}
@@ -543,6 +584,168 @@ func (s *Server) runPlanApproved(runKey string) bool {
 	return epic != nil && epic.Meta(planning.MetaPlanStatus) == planning.PlanStatusApproved
 }
 
+// planCheckpointHolds reports whether the plan->implement advance must wait.
+func (s *Server) planCheckpointHolds(runKey string) bool {
+	decision := s.runCheckpointPolicy(StagePlan)
+	return decision.blocks && !s.runPlanApproved(runKey)
+}
+
+// extendHeldPlanLease pushes a held plan lease's expiry out to the checkpoint
+// wait budget so the hold survives until an owner can act on it. A lease that
+// has already left the plan stage is left alone.
+func (s *Server) extendHeldPlanLease(identity, taskID string, now time.Time) error {
+	if s == nil || s.contributeHub == nil {
+		return errors.New("run lease registry unavailable")
+	}
+	h := s.contributeHub
+	h.leaseMu.Lock()
+	l := h.leaseForLocked(identity, taskID)
+	if l == nil {
+		h.leaseMu.Unlock()
+		return fmt.Errorf("%w for %s", errLeaseNotFound, taskID)
+	}
+	if l.stage != StagePlan {
+		h.leaseMu.Unlock()
+		return nil
+	}
+	prev := l.expiresAt
+	until := now.Add(s.runCheckpointHoldDuration())
+	if l.expiresAt.Before(until) {
+		l.expiresAt = until
+	}
+	if err := h.saveLeasesLocked(); err != nil {
+		l.expiresAt = prev
+		h.leaseMu.Unlock()
+		return fmt.Errorf("persisting held plan lease for %s: %w", taskID, err)
+	}
+	h.leaseMu.Unlock()
+	return nil
+}
+
+// runCheckpointHoldDuration is the checkpoint wait budget, floored at leaseTTL
+// so a short configured timeout can never shorten a lease below its normal
+// life.
+func (s *Server) runCheckpointHoldDuration() time.Duration {
+	seconds := config.DefaultRunsWaitTimeoutSeconds
+	if s != nil && s.deps != nil && s.deps.Config != nil {
+		seconds = s.deps.Config.Runs.EffectiveWaitTimeoutSeconds()
+	}
+	d := time.Duration(seconds) * time.Second
+	if d < leaseTTL {
+		return leaseTTL
+	}
+	return d
+}
+
+// ensureRunPlanApproved reports whether implement may be offered: either the
+// plan is already approved, or the implement checkpoint is disabled and the
+// plan is auto-approved here with `auto` recorded as the actor.
+func (s *Server) ensureRunPlanApproved(runKey string) bool {
+	store, epic := s.findRunEpic(runKey)
+	if epic == nil {
+		return false
+	}
+	if epic.Meta(planning.MetaPlanStatus) == planning.PlanStatusApproved {
+		return true
+	}
+	decision := s.runCheckpointPolicy(StageImplement)
+	if decision.blocks {
+		return false
+	}
+	if err := s.autoApproveRunCheckpoint(store, epic, runKey, StageImplement, decision); err != nil {
+		s.logger.Warn("[runs] auto-approve checkpoint failed", "run", runKey, "stage", StageImplement, "error", err)
+		return false
+	}
+	return true
+}
+
+func (s *Server) autoApproveRunCheckpoint(store *beads.Store, epic *beads.Bead, runKey, stage string, decision runCheckpointPolicy) error {
+	if store == nil || epic == nil {
+		return errors.New("run plan unavailable for checkpoint auto-approval")
+	}
+	if epic.Meta(planning.MetaPlanStatus) == planning.PlanStatusApproved {
+		return nil
+	}
+	if err := planning.ApprovePlan(store, epic.ID); err != nil {
+		return fmt.Errorf("auto-approving %s checkpoint for %s: %w", stage, runKey, err)
+	}
+	s.recordRunCheckpointAutoApproval(runKey, epic.ID, stage, decision)
+	return nil
+}
+
+// recordRunCheckpointAutoApproval leaves the paper trail for an approval no
+// human made: who (auto), which config said the checkpoint was off, and why.
+func (s *Server) recordRunCheckpointAutoApproval(runKey, epicID, stage string, decision runCheckpointPolicy) {
+	if s == nil {
+		return
+	}
+	if decision.source == "" {
+		decision.source = "runtime config"
+	}
+	detail := auditDetail("epic", epicID, "run", runKey, "surface", "plan", "stage", stage, runCheckpointConfigSourceKey, decision.source, runCheckpointReasonKey, decision.reason)
+	s.audit.Log(runCheckpointAutoActor, "plan_approve", detail, planning.ArchitectAgentName)
+	s.LifecycleTimeline().Record(timeline.Event{
+		IssueRef: runKey,
+		Kind:     timeline.KindStageCompleted,
+		Agent:    runCheckpointAutoActor,
+		At:       time.Now().UnixMilli(),
+		Attrs: map[string]string{
+			stageAttrStage:               stage,
+			runCheckpointActorKey:        runCheckpointAutoActor,
+			runCheckpointConfigSourceKey: decision.source,
+			runCheckpointReasonKey:       decision.reason,
+		},
+	})
+}
+
+// runKeyForEpic resolves the canonical run key an epic belongs to, preferring
+// an explicit MetaRunKey over the issue repo/number pair.
+func (s *Server) runKeyForEpic(repo, number, runKey string) string {
+	if ref, ok := worksource.ParseKey(runKey); ok && ref.Number > 0 {
+		return worksource.Ref{Repo: s.qualifyRunRepo(ref.Repo), Number: ref.Number}.Key()
+	}
+	if repo != "" && number != "" {
+		return s.canonicalRunKey(repo, atoiOrZero(number), "", "")
+	}
+	return strings.TrimSpace(runKey)
+}
+
+// advanceApprovedPlanLease releases the lease AdvanceStageLease parked at the
+// plan checkpoint, once the plan has actually been approved. A run with no
+// live held plan lease is a no-op, not an error.
+func (s *Server) advanceApprovedPlanLease(runKey string, now time.Time) error {
+	if s == nil || s.contributeHub == nil || runKey == "" {
+		return nil
+	}
+	var identity, taskID string
+	found := false
+	err := s.VisitActiveStageLeases(func(rk, _, stage, id, task, repo string, _ uint64, expiresAt time.Time) {
+		if found || !s.sameRunKey(runKey, rk, repo) || stage != StagePlan || now.After(expiresAt) {
+			return
+		}
+		identity, taskID, found = id, task, true
+	})
+	if err != nil || !found {
+		return err
+	}
+	_, err = s.contributeHub.advanceLeaseStage(identity, taskID, StageImplement, now)
+	return err
+}
+
+// sameRunKey compares two run keys through their canonical form, so an
+// unqualified `repo#7` matches the stored `org/repo#7`.
+func (s *Server) sameRunKey(target, candidate, repo string) bool {
+	target = strings.TrimSpace(target)
+	candidate = strings.TrimSpace(candidate)
+	if target == "" || candidate == "" {
+		return false
+	}
+	if target == candidate {
+		return true
+	}
+	return s.canonicalRunKey(repo, 0, target, "") == s.canonicalRunKey(repo, 0, candidate, "")
+}
+
 func (s *Server) runPlanHasWaves(runKey string) bool {
 	_, epic := s.findRunEpic(runKey)
 	return epic != nil && strings.TrimSpace(epic.Meta(planning.MetaRunWaveIDs)) != ""
@@ -567,7 +770,7 @@ func (a *runStageAccessor) PendingRunStages(_ context.Context) ([]worksource.Run
 		if time.Now().After(expiresAt) {
 			return
 		}
-		if stage == StageImplement && !s.runPlanApproved(runKey) {
+		if stage == StageImplement && !s.ensureRunPlanApproved(runKey) {
 			return
 		}
 		if stage == StageImplement && identity != runFanoutIdentity && s.runPlanHasWaves(runKey) {

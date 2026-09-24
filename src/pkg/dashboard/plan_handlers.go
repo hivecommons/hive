@@ -459,12 +459,16 @@ func (s *Server) handlePlanApprove(w http.ResponseWriter, r *http.Request) {
 	runKey := ""
 	if epic, err := store.Get(epicID); err == nil {
 		repo, number := epic.Meta(planning.MetaIssueRepo), epic.Meta(planning.MetaIssueNumber)
-		if repo != "" && number != "" {
-			runKey = repo + "#" + number
-		}
+		runKey = s.runKeyForEpic(repo, number, epic.Meta(planning.MetaRunKey))
 	}
 	if err := planning.ApprovePlan(store, epicID); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Release the lease the plan checkpoint parked, now that the plan is
+	// approved (hivecommons/hive#8550).
+	if err := s.advanceApprovedPlanLease(runKey, time.Now()); err != nil {
+		jsonError(w, err.Error(), http.StatusConflict)
 		return
 	}
 	s.auditFromRequest(r, "plan_approve", auditDetail("epic", epicID, "run", runKey, "surface", "plan"), agentName)

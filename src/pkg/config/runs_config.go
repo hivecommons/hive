@@ -23,6 +23,20 @@ const (
 	// DefaultSpektacularPollS is how often, in seconds, the runner calls the
 	// status verb for each active stage lease.
 	DefaultSpektacularPollS = 30
+
+	// DefaultRunsWaitTimeoutSeconds is how long a run checkpoint may wait for
+	// owner approval before escalation. It also floors how far a held plan
+	// lease is extended so the hold does not expire out from under the owner.
+	DefaultRunsWaitTimeoutSeconds = 3600
+	// DefaultRunsWaitSeverity is the escalation severity for a checkpoint that
+	// waited past DefaultRunsWaitTimeoutSeconds.
+	DefaultRunsWaitSeverity = "decision"
+	// RunImplementCheckpointMinACMM is the ACMM level a hive must reach before
+	// runs.checkpoints.implement: false is honoured. Below it the implement
+	// checkpoint keeps blocking regardless of config, so a young hive cannot
+	// disable the last gate in front of code changes.
+	RunImplementCheckpointMinACMM = 5
+
 	// DefaultTriageMinBodyChars is the minimum useful issue body size before
 	// the run triage pass asks the reporter for more detail.
 	DefaultTriageMinBodyChars = 80
@@ -32,6 +46,14 @@ const (
 // The zero value keeps every existing behaviour: leases still advance only
 // through the API, and nothing shells out to Spektacular.
 type RunsConfig struct {
+	// Checkpoints controls which run boundaries wait for owner approval.
+	Checkpoints RunCheckpointConfig `yaml:"checkpoints,omitempty" json:"checkpoints,omitempty"`
+	// WaitTimeoutSeconds is how long a checkpoint may wait before escalation.
+	// Zero or negative means DefaultRunsWaitTimeoutSeconds.
+	WaitTimeoutSeconds int `yaml:"wait_timeout_seconds,omitempty" json:"wait_timeout_seconds,omitempty"`
+	// WaitSeverity is the escalation severity for timed-out checkpoints.
+	// Empty means DefaultRunsWaitSeverity.
+	WaitSeverity string `yaml:"wait_severity,omitempty" json:"wait_severity,omitempty"`
 	// MaxStageRetries bounds the generations one stage may burn before the
 	// runner escalates. Zero or negative means DefaultMaxStageRetries.
 	MaxStageRetries int `yaml:"max_stage_retries,omitempty" json:"max_stage_retries,omitempty"`
@@ -47,6 +69,53 @@ type RunsConfig struct {
 	// External holds the external-execution engine bindings: the report-only
 	// Flue binding pilot and the OMP workbench host (#8361). Default off.
 	External ExternalRunsConfig `yaml:"external,omitempty" json:"external,omitempty"`
+}
+
+// RunCheckpointConfig preserves the rollout invariant: an absent key keeps the
+// historical hold-gated behavior, while explicit false lets a runner advance.
+type RunCheckpointConfig struct {
+	Spec      *bool `yaml:"spec,omitempty" json:"spec,omitempty"`
+	Plan      *bool `yaml:"plan,omitempty" json:"plan,omitempty"`
+	Implement *bool `yaml:"implement,omitempty" json:"implement,omitempty"`
+}
+
+// CheckpointBlocks reports whether the named stage boundary waits for owner
+// approval. An unknown stage blocks: the safe answer for a name this build
+// does not recognise is to keep the gate.
+func (r RunsConfig) CheckpointBlocks(stage string) bool {
+	switch strings.TrimSpace(strings.ToLower(stage)) {
+	case "spec":
+		return runCheckpointBoolDefaultTrue(r.Checkpoints.Spec)
+	case "plan":
+		return runCheckpointBoolDefaultTrue(r.Checkpoints.Plan)
+	case "implement":
+		return runCheckpointBoolDefaultTrue(r.Checkpoints.Implement)
+	default:
+		return true
+	}
+}
+
+// runCheckpointBoolDefaultTrue treats an unset checkpoint key as enabled.
+func runCheckpointBoolDefaultTrue(v *bool) bool {
+	return v == nil || *v
+}
+
+// EffectiveWaitTimeoutSeconds returns the configured checkpoint wait budget or
+// the default.
+func (r RunsConfig) EffectiveWaitTimeoutSeconds() int {
+	if r.WaitTimeoutSeconds > 0 {
+		return r.WaitTimeoutSeconds
+	}
+	return DefaultRunsWaitTimeoutSeconds
+}
+
+// EffectiveWaitSeverity returns the configured escalation severity or the
+// default.
+func (r RunsConfig) EffectiveWaitSeverity() string {
+	if s := strings.TrimSpace(strings.ToLower(r.WaitSeverity)); s != "" {
+		return s
+	}
+	return DefaultRunsWaitSeverity
 }
 
 // TriageConfig controls the optional incoming-issue run triage pass.

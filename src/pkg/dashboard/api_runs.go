@@ -3,6 +3,7 @@ package dashboard
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -191,6 +192,16 @@ type runHumanReviewHold struct {
 	Repo      string    `json:"repo"`
 	Number    int       `json:"number"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// runCheckpointPolicy is the resolved answer to "does this stage boundary
+// wait for a human?", carried with the provenance an audit entry needs: which
+// config said so, and why.
+type runCheckpointPolicy struct {
+	stage  string
+	blocks bool
+	reason string
+	source string
 }
 
 var runReviewDispatchStatePath = "/data/review-dispatch-state.json"
@@ -545,7 +556,7 @@ func (s *Server) activeRuns(includeTimeline bool) ([]Run, error) {
 		active[lease.key] = true
 		active[lease.leaseKey] = true
 		plan := firstRunPlanSnapshot(plans[lease.key], plans[lease.leaseKey])
-		run := runFromLease(lease, plan, firstRunHold(holds[lease.key], holds[lease.leaseKey]))
+		run := runFromLease(lease, plan, firstRunHold(holds[lease.key], holds[lease.leaseKey]), s.runsConfigSnapshot())
 		if run.PlanEpicID != "" {
 			run.ReviewWaves = s.planReviewWaves(run.PlanEpicID)
 		}
@@ -678,7 +689,11 @@ func (h *ContributeWSHub) currentTaskInfos() map[string]currentTaskRunInfo {
 	return out
 }
 
-func runFromLease(lease runLeaseSnapshot, plan runPlanSnapshot, hold runHumanReviewHold) Run {
+func runFromLease(lease runLeaseSnapshot, plan runPlanSnapshot, hold runHumanReviewHold, cfgs ...*config.Config) Run {
+	var cfg *config.Config
+	if len(cfgs) > 0 {
+		cfg = cfgs[0]
+	}
 	started := formatRunTime(lease.stageStarted)
 	run := Run{
 		Key: lease.key, LeaseKey: lease.leaseKey, Title: redactTokens(lease.title), Repo: lease.repo,
@@ -692,20 +707,72 @@ func runFromLease(lease runLeaseSnapshot, plan runPlanSnapshot, hold runHumanRev
 	}
 	if plan.epicID != "" && (plan.state == planning.PlanStateReview ||
 		plan.state == planning.PlanStateStuck || plan.state == planning.PlanStateDesignReview || plan.state == planning.PlanStateDesignStuck) {
-		run.WaitingOn = RunWaitingOnHuman
-		run.WaitingReason = plan.reason
-		run.WaitingSince = formatRunTime(plan.waitingSince)
+		if decision := runCheckpointPolicyForConfig(cfg, lease.stage); decision.blocks {
+			run.WaitingOn = RunWaitingOnHuman
+			run.WaitingReason = firstRunNonEmpty(plan.reason, decision.reason)
+			run.WaitingSince = formatRunTime(plan.waitingSince)
+		}
 	}
 	if plan.reason == planning.WaitingReasonStalePlan {
 		run.WaitingOn = RunWaitingOnHuman
 		run.WaitingReason = plan.reason
 		run.WaitingSince = formatRunTime(plan.waitingSince)
 	}
-	if !hold.UpdatedAt.IsZero() {
+	if !hold.UpdatedAt.IsZero() && runCheckpointBlocks(cfg, lease.stage) {
 		run.WaitingOn = RunWaitingOnHuman
 		run.WaitingSince = formatRunTime(hold.UpdatedAt)
 	}
 	return run
+}
+
+// runsConfigSnapshot is the nil-safe accessor for the running config the run
+// projection consults.
+func (s *Server) runsConfigSnapshot() *config.Config {
+	if s == nil || s.deps == nil {
+		return nil
+	}
+	return s.deps.Config
+}
+
+// runCheckpointPolicy resolves the checkpoint decision for one stage against
+// this server's running config.
+func (s *Server) runCheckpointPolicy(stage string) runCheckpointPolicy {
+	var cfg *config.Config
+	if s != nil && s.deps != nil {
+		cfg = s.deps.Config
+	}
+	return runCheckpointPolicyForConfig(cfg, stage)
+}
+
+// runCheckpointBlocks is the boolean shorthand over runCheckpointPolicyForConfig.
+func runCheckpointBlocks(cfg *config.Config, stage string) bool {
+	return runCheckpointPolicyForConfig(cfg, stage).blocks
+}
+
+// runCheckpointPolicyForConfig fails closed: with no config, an unrecognised
+// stage, or an ACMM level below RunImplementCheckpointMinACMM for the
+// implement boundary, the checkpoint blocks. Only an explicit `false` on a
+// recognised stage at a permitted ACMM level opens the gate.
+func runCheckpointPolicyForConfig(cfg *config.Config, stage string) runCheckpointPolicy {
+	normalized := strings.TrimSpace(strings.ToLower(stage))
+	policy := runCheckpointPolicy{stage: normalized, blocks: true, reason: "checkpoint_enabled", source: "runtime config"}
+	if cfg == nil {
+		policy.reason = "config_unavailable"
+		return policy
+	}
+	if strings.TrimSpace(cfg.SourcePath) != "" {
+		policy.source = cfg.SourcePath
+	}
+	if normalized == StageImplement && cfg.ACMMLevelOrZero() < config.RunImplementCheckpointMinACMM {
+		policy.reason = fmt.Sprintf("implement checkpoint relaxation requires ACMM L%d; current ACMM L%d", config.RunImplementCheckpointMinACMM, cfg.ACMMLevelOrZero())
+		return policy
+	}
+	if cfg.Runs.CheckpointBlocks(normalized) {
+		return policy
+	}
+	policy.blocks = false
+	policy.reason = runCheckpointDisabledReason
+	return policy
 }
 
 func completedRunFromJourney(j timeline.Journey, includeTimeline bool, plan runPlanSnapshot) (Run, bool) {
