@@ -1,6 +1,6 @@
 # ADR-0018: Shared dashboard design tokens and component layer
 
-Status: Proposed
+Status: Accepted — initial tokens layer landed; migration ratchets remain.
 
 ## Context
 

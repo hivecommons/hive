@@ -4,6 +4,10 @@ This is the working reference for dashboard contributors and agents. ADR-0018
 sets the architecture: add one shared token/component layer with zero visual
 change, then migrate section-by-section under ratchet tests.
 
+Status: the shared `tokens.css` layer has landed with compatibility aliases in
+place for exact-value matches across the operator SPA, contribute portal, and
+hub pages. Next work is the ratcheted component-by-component migration.
+
 ## Token catalogue
 
 Initial values alias today's rendered operator dashboard values unless noted.

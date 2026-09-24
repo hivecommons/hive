@@ -17,6 +17,7 @@ func TestCovH2_IsPublicPath(t *testing.T) {
 		"/snapshot",
 		"/snapshot/foo",
 		"/api/snapshot/x",
+		"/tokens.css",
 		"/contribute",
 		"/contribute/join",
 		"/api/contribute/ws",

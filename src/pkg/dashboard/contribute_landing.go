@@ -238,6 +238,7 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
      sha256 for every inline script in the finished document (pkg/dashboard/webstatic);
      it is inline on*= ATTRIBUTES that are forbidden (ADR-0016), which is why the
      button dispatches through data-action instead of onclick. -->
+<link rel="stylesheet" href="/tokens.css">
 <script>
 (function(){try{var t=localStorage.getItem('hive.contribute.theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
 </script>

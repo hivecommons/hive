@@ -1,0 +1,136 @@
+/*
+ * Hive dashboard design tokens (ADR-0018).
+ * Source of truth: pkg/dashboard/static/tokens.css. The hub copy in
+ * pkg/hub/static/tokens.css is generated from this file and must stay
+ * byte-identical.
+ *
+ * Rule for new styling: no raw colors, font sizes, spacing, radii, or shadow
+ * values outside this token layer and documented compatibility aliases. Add a
+ * named token here first, then consume the token from page/component CSS.
+ *
+ * Compatibility aliases below deliberately keep legacy variable names alive so
+ * landing this layer causes zero visual change. Only aliases whose old literal
+ * value exactly matched the new token value are defined here; known mismatches
+ * remain in their page-local styles until a visual migration handles them.
+ */
+:root {
+  color-scheme: dark;
+
+  /* Type */
+  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  --fs-xs: .68rem;
+  --fs-sm: .75rem;
+  --fs-base: .82rem;
+  --fs-md: .92rem;
+  --fs-lg: 1.05rem;
+  --fs-xl: 1.25rem;
+
+  /* Spacing */
+  --sp-0: 0;
+  --sp-1: 2px;
+  --sp-2: 4px;
+  --sp-3: 6px;
+  --sp-4: 8px;
+  --sp-5: 12px;
+  --sp-6: 16px;
+  --sp-7: 20px;
+  --sp-8: 24px;
+  --sp-9: 32px;
+
+  /* Radius and shadows */
+  --r-sm: 4px;
+  --r: 6px;
+  --r-lg: 12px;
+  --r-pill: 999px;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.18);
+  --shadow-raised: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.5);
+
+  /* Surfaces, lines, and text */
+  --surface-0: #080b0f;
+  --surface-1: #0d1218;
+  --surface-2: #121922;
+  --surface-3: #17212d;
+  --surface-terminal: #05070a;
+  --line-subtle: color-mix(in srgb, #263545 65%, transparent);
+  --line-strong: #263545;
+  --text: #f6f8fb;
+  --text-muted: #a8b3c2;
+  --text-faint: color-mix(in srgb, #a8b3c2 70%, transparent);
+
+  /* Semantic, ACMM, vendor, and overlay colors */
+  --brand: #f4c75f;
+  --status-ok: #74df9a;
+  --status-warn: #d29922;
+  --status-attention: #e38b2c;
+  --status-error: #ff7e7e;
+  --status-info: #80bfff;
+  --status-neutral: #a8b3c2;
+  --overlay-scrim: rgba(0, 0, 0, 0.55);
+  --acmm-level-1: #74df9a;
+  --acmm-level-2: #7bd8cd;
+  --acmm-level-3: #80bfff;
+  --acmm-level-4: #818cf8;
+  --acmm-level-5: #c0a6f0;
+  --acmm-level-6: #e38b2c;
+  --vendor-openai: #10a37f;
+  --vendor-anthropic: #d97706;
+  --vendor-google: #4285f4;
+
+  /* Legacy aliases with exact-value matches in today's dark UI. */
+  --bg: var(--surface-0);
+  --bg-soft: var(--surface-1);
+  --panel: var(--surface-2);
+  --panel-strong: var(--surface-3);
+  --muted: var(--text-muted);
+  --line: var(--line-strong);
+  --amber: var(--brand);
+  --green: var(--status-ok);
+  --yellow: var(--status-warn);
+  --orange: var(--status-attention);
+  --red: var(--status-error);
+  --blue: var(--status-info);
+  --indigo: var(--acmm-level-4);
+  --cyan: var(--acmm-level-2);
+  --purple: var(--acmm-level-5);
+  --radius-sm: var(--r-sm);
+  --radius: var(--r);
+  --radius-lg: var(--r-lg);
+  --terminal-bg: var(--surface-terminal);
+  --terminal-cyan: var(--acmm-level-2);
+  --surface: var(--panel);
+  --border: var(--line);
+  --fg: var(--text);
+  --card-bg: var(--panel);
+  --accent: var(--blue);
+  --oc-accent: var(--red);
+  --cc-amber: var(--status-warn);
+}
+
+[data-theme="light"],
+body.light-mode {
+  color-scheme: light;
+  --surface-0: #f7f8fa;
+  --surface-1: #eef1f5;
+  --surface-2: #ffffff;
+  --surface-3: #f8fafc;
+  --line-subtle: #e5e7eb;
+  --line-strong: #cbd5e1;
+  --text: #111827;
+  --text-muted: #6b7280;
+  --text-faint: #9ca3af;
+  --overlay-scrim: rgba(17, 24, 39, 0.36);
+
+  /* Exact-value light-mode aliases only; mismatches stay page-local. */
+  --bg: var(--surface-0);
+  --bg-soft: var(--surface-2);
+  --panel: var(--surface-2);
+  --panel-strong: var(--surface-1);
+  --muted: var(--text-muted);
+  --line: var(--line-subtle);
+  --surface: var(--panel);
+  --border: var(--line);
+  --fg: var(--text);
+  --card-bg: var(--panel);
+}
