@@ -301,8 +301,24 @@ discipline):
   crash-window recovery by pinned incarnation. The pilot stays report-only
   with no publication credentials, defaults off behind
   `runs.external.flue`, and the adapter links into the binary only under
-  the `extwork_flue` build tag; the first
-  proving workload is a report-only audit campaign. Remaining constituents
+  the `extwork_flue` build tag. **Two proving workloads have landed**: the
+  report-only audit campaign
+  ([#8300](https://github.com/hivecommons/hive/issues/8300)), and the
+  Crustify/Wavefront migration-graph work source
+  ([#8362](https://github.com/hivecommons/hive/issues/8362), closed) — a
+  `pkg/worksource` oracle that reads a Wavefront dependency graph, admits
+  ready nodes as run stages
+  ([#8392](https://github.com/hivecommons/hive/pull/8392)), records
+  completed items back into the graph
+  ([#8525](https://github.com/hivecommons/hive/pull/8525)) and exposes
+  per-run burndown through `GET /api/runs`
+  ([#8552](https://github.com/hivecommons/hive/pull/8552)), with a
+  scheduled smoke canary against a real graph
+  ([#8521](https://github.com/hivecommons/hive/pull/8521)). Both were
+  exercised live on 2026-09-23 with evidence recorded on the acceptance
+  tracker [#8466](https://github.com/hivecommons/hive/issues/8466), which
+  is the remaining work that proves Flue, Crustify/Wavefront and
+  Spektacular together. Remaining constituents
   (#8301–#8319, #8345–#8364) are ticked off on #8290 as they merge; no
   store, CRD, DSL or GitHub credentials are added to the pilot and every
   surface goes through the existing guard invariant.
