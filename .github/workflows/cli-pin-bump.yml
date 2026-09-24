@@ -80,6 +80,7 @@ jobs:
           set -euo pipefail
           bash -n src/scripts/cli-pin-bump.sh
           bash -n src/scripts/test-cli-pin-bump.sh
+          bash -n .github/scripts/check-bob-launch-flags.sh
           bash src/scripts/test-cli-pin-bump.sh
 
   bump:
@@ -192,6 +193,18 @@ jobs:
               timeout --signal=TERM --kill-after=10s 120s \
                 docker run --rm --name "$name" --network none -e HOME=/tmp \
                   --entrypoint claude hive-pin-smoke:"$CLI" --help | head -40
+            fi
+            if [ "$CLI" = "bob" ]; then
+              # This runs hive's bob launch argv without --help, because
+              # bobshell 2.x ignores unknown options when help is requested.
+              # The TUI may then fail for lack of a tty or time out; either is
+              # fine. Any "unknown option" is not.
+              echo "\$ .github/scripts/check-bob-launch-flags.sh"
+              timeout --signal=TERM --kill-after=10s 120s \
+                docker run --rm --name "$name" --network none \
+                  -e HIVE_BOB_FLAG_GUARD_HOME=/home/node/.bob-flag-guard-home \
+                  -v "$PWD/.github/scripts/check-bob-launch-flags.sh:/check-bob-launch-flags.sh:ro" \
+                  --entrypoint bash hive-pin-smoke:"$CLI" /check-bob-launch-flags.sh
             fi
           } | tee "$RUNNER_TEMP/smoke.txt"
 

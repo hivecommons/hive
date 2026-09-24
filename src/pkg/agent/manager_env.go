@@ -327,18 +327,21 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	if m.claudeAuthToken != "" && backend == "claude" && !claudeCredentialReachable(agent, backend) {
 		vars = append(vars, agentEnvPair{"CLAUDE_CODE_OAUTH_TOKEN", m.claudeAuthToken, true})
 	}
-	// bob reads its key from BOBSHELL_API_KEY. Secret: true keeps the value off
-	// the shell command line (out of `ps`, bash history, and pane scrollback);
-	// it reaches the CLI via tmux set-environment only. Gated on the backend so
-	// no other CLI's environment carries an IBM credential it has no use for.
+	// bob reads its key from BOBSHELL_API_KEY in 1.x and BOB_API_KEY in 2.x.
+	// Secret: true keeps the value off the shell command line (out of `ps`,
+	// bash history, and pane scrollback); it reaches the CLI via tmux
+	// set-environment only. Gated on the backend so no other CLI's environment
+	// carries an IBM credential it has no use for.
 	if backend == bobBackend {
 		if key := m.bobAPIKey(); key != "" {
 			vars = append(vars, agentEnvPair{config.BobAPIKeyEnvVar, key, true})
+			vars = append(vars, agentEnvPair{config.BobV2APIKeyEnvVar, key, true})
 		}
-		// BOBSHELL_DEFAULT_AUTH_TYPE is what actually selects API-key auth;
+		// BOBSHELL_DEFAULT_AUTH_TYPE selects API-key auth for bobshell 1.x;
 		// without it bob defaults to W3ID SSO and parks at the interactive key
-		// prompt forever. Deliberately NOT Secret: the value is the literal
-		// non-credential string "api-key", and secret pairs only reach a
+		// prompt forever. bobshell 2.x no longer reads it, but keeping it is
+		// harmless for lagging images. Deliberately NOT Secret: the value is
+		// the literal non-credential string "api-key", and secret pairs only reach a
 		// freshly-created pane shell via tmux set-environment, whereas
 		// non-secret pairs are re-applied on EVERY launch through
 		// buildEnvPrefix. That asymmetry is exactly what caused the sibling

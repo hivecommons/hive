@@ -1,0 +1,1 @@
+- Fix bob-backed agents with bobshell 2.x by launching through `bob chat --auto-approve`, writing the v2 harness provider setting, and keeping the 1.x `--auth-method api-key` path for older images (#8640).

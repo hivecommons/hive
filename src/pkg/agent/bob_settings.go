@@ -93,6 +93,11 @@ func bobSettingsPath(home string) string {
 	return filepath.Join(home, config.BobSettingsRelPath)
 }
 
+// bobV2SettingsPath returns bobshell 2.x's shared global settings file.
+func bobV2SettingsPath(home string) string {
+	return filepath.Join(home, config.BobV2SettingsRelPath)
+}
+
 // nearestExistingDir walks up from dir and returns the first ancestor that
 // exists, or "" if none does. Used to locate the directory whose permissions
 // actually govern a recursive mkdir of a not-yet-existing path.
@@ -147,6 +152,7 @@ func (m *Manager) verifyBobStateDirsWritable(agentName, home, workDir string, ui
 	//                           what "Failed to initialize logger:" refers to
 	probeDirs := []string{
 		filepath.Dir(bobSettingsPath(home)),
+		filepath.Dir(bobV2SettingsPath(home)),
 		filepath.Join(workDir, config.BobStateDirName),
 	}
 
@@ -202,8 +208,7 @@ func (m *Manager) verifyBobStateDirsWritable(agentName, home, workDir string, ui
 	return unwritable
 }
 
-// ensureBobAuthSettings makes hive the owner of the `security.auth` block in
-// bob's persisted settings file.
+// ensureBobAuthSettings makes hive the owner of bob's auth-selection settings.
 //
 // Why this is needed at all: BOBSHELL_DEFAULT_AUTH_TYPE is only a fallback
 // DEFAULT. Per bundle/bob.js, a persisted security.auth.selectedType is
@@ -227,10 +232,20 @@ func (m *Manager) verifyBobStateDirsWritable(agentName, home, workDir string, ui
 // clobbering licenseConsent alone would make bob hard-error on startup. Unknown
 // keys are decoded into a generic map and re-encoded untouched.
 //
+// bobshell 2.x removed the auth picker and defaults to the "harness" provider
+// (BOB_API_KEY), but the persisted provider still outranks the default. Hive
+// writes that v2 setting as well so its api-key choice stays authoritative over
+// a shared HOME that a previous interactive bob run may have mutated.
+//
 // Errors are logged and swallowed: a settings file we cannot write is not a
 // reason to abort a launch that may still succeed via the env var.
-// The API key is never read or written here — only the auth TYPE.
+// The API key is never read or written here — only the auth TYPE/provider.
 func (m *Manager) ensureBobAuthSettings(agentName, home string) {
+	m.ensureBobV1AuthSettings(agentName, home)
+	m.ensureBobV2AuthSettings(agentName, home)
+}
+
+func (m *Manager) ensureBobV1AuthSettings(agentName, home string) {
 	path := bobSettingsPath(home)
 
 	if err := os.MkdirAll(filepath.Dir(path), config.BobSettingsDirMode); err != nil {
@@ -285,6 +300,53 @@ func (m *Manager) ensureBobAuthSettings(agentName, home string) {
 		"agent", agentName, "path", path,
 		"selected_type", config.BobAuthTypeAPIKey,
 		"enforced_type", config.BobAuthTypeAPIKey)
+}
+
+func (m *Manager) ensureBobV2AuthSettings(agentName, home string) {
+	path := bobV2SettingsPath(home)
+
+	if err := os.MkdirAll(filepath.Dir(path), config.BobSettingsDirMode); err != nil {
+		m.logger.Warn("bob v2 settings: mkdir failed",
+			"agent", agentName, "path", filepath.Dir(path), "error", err)
+		return
+	}
+
+	settings := map[string]any{}
+	data, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		if uerr := json.Unmarshal(data, &settings); uerr != nil {
+			m.logger.Warn("bob v2 settings: unparseable, rewriting provider from empty",
+				"agent", agentName, "path", path, "error", uerr)
+			settings = map[string]any{}
+		}
+	case !os.IsNotExist(err):
+		m.logger.Warn("bob v2 settings: read failed",
+			"agent", agentName, "path", path, "error", err)
+		return
+	}
+
+	if cur, _ := settings[config.BobV2ProviderKey].(string); cur == config.BobV2ProviderHarness {
+		return
+	}
+	settings[config.BobV2ProviderKey] = config.BobV2ProviderHarness
+
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		m.logger.Warn("bob v2 settings: marshal failed", "agent", agentName, "error", err)
+		return
+	}
+	if err := os.WriteFile(path, out, config.BobSettingsFileMode); err != nil {
+		m.logger.Warn("bob v2 settings: write failed",
+			"agent", agentName, "path", path, "error", err)
+		return
+	}
+	if err := os.Chmod(path, config.BobSettingsFileMode); err != nil {
+		m.logger.Warn("bob v2 settings: chmod failed",
+			"agent", agentName, "path", path, "error", err)
+	}
+	m.logger.Info("bob v2 settings: asserted harness provider",
+		"agent", agentName, "path", path, "provider", config.BobV2ProviderHarness)
 }
 
 // setBobAuthBlock merges the hive-owned auth values into settings in place,

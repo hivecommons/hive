@@ -23,6 +23,19 @@ func readBobSettings(t *testing.T, home string) map[string]any {
 	return got
 }
 
+func readBobV2Settings(t *testing.T, home string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(bobV2SettingsPath(home))
+	if err != nil {
+		t.Fatalf("read v2 settings: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal v2 settings: %v", err)
+	}
+	return got
+}
+
 // authBlock digs out security.auth, failing if the shape is wrong.
 func authBlock(t *testing.T, settings map[string]any) map[string]any {
 	t.Helper()
@@ -71,6 +84,9 @@ func TestEnsureBobAuthSettingsCreatesFile(t *testing.T) {
 	m.ensureBobAuthSettings("tester", home)
 
 	assertAPIKeyAuth(t, authBlock(t, readBobSettings(t, home)))
+	if got := readBobV2Settings(t, home)[config.BobV2ProviderKey]; got != config.BobV2ProviderHarness {
+		t.Errorf("v2 provider = %#v, want %q", got, config.BobV2ProviderHarness)
+	}
 }
 
 // TestEnsureBobAuthSettingsOverwritesSSO is the core regression guard: this is
@@ -109,6 +125,28 @@ func TestEnsureBobAuthSettingsOverwritesSSO(t *testing.T) {
 	}
 	if _, ok := got["ibm_secrets"]; !ok {
 		t.Error("ibm_secrets key was dropped; unrelated keys must be preserved")
+	}
+}
+
+func TestEnsureBobAuthSettingsOverwritesV2Provider(t *testing.T) {
+	home := t.TempDir()
+	path := bobV2SettingsPath(home)
+	if err := os.MkdirAll(filepath.Dir(path), config.BobSettingsDirMode); err != nil {
+		t.Fatalf("mkdir v2 settings: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"provider":"openrouter","session":{"maxTurns":7}}`), config.BobSettingsFileMode); err != nil {
+		t.Fatalf("seed v2 settings: %v", err)
+	}
+
+	m := &Manager{logger: discardLogger()}
+	m.ensureBobAuthSettings("tester", home)
+
+	got := readBobV2Settings(t, home)
+	if got[config.BobV2ProviderKey] != config.BobV2ProviderHarness {
+		t.Errorf("v2 provider = %#v, want %q", got[config.BobV2ProviderKey], config.BobV2ProviderHarness)
+	}
+	if session, _ := got["session"].(map[string]any); session["maxTurns"] != float64(7) {
+		t.Errorf("v2 session settings were not preserved: %#v", got["session"])
 	}
 }
 
@@ -239,6 +277,9 @@ func TestEnsureBobAuthSettingsGroupWritable(t *testing.T) {
 func TestBobSettingsPathMatchesBundle(t *testing.T) {
 	if got, want := bobSettingsPath("/data/home"), "/data/home/.bob/settings.json"; got != want {
 		t.Errorf("bobSettingsPath() = %q, want %q", got, want)
+	}
+	if got, want := bobV2SettingsPath("/data/home"), "/data/home/.bob/settings/settings.json"; got != want {
+		t.Errorf("bobV2SettingsPath() = %q, want %q", got, want)
 	}
 	// The shared HOME must match what agentEnvPairs exports, or hive would
 	// write the auth block to a file bob never reads.
@@ -486,8 +527,9 @@ func TestVerifyBobStateDirsWritableFlagsMissingDirWithUnwritableParent(t *testin
 	m := &Manager{logger: discardLogger()}
 	got := m.verifyBobStateDirsWritable("tester", home, workDir, 2004)
 	wantDir := filepath.Dir(bobSettingsPath(home))
-	if len(got) != 1 || got[0] != wantDir {
-		t.Errorf("verifyBobStateDirsWritable() = %v, want [%s]", got, wantDir)
+	wantV2Dir := filepath.Dir(bobV2SettingsPath(home))
+	if len(got) != 2 || got[0] != wantDir || got[1] != wantV2Dir {
+		t.Errorf("verifyBobStateDirsWritable() = %v, want [%s %s]", got, wantDir, wantV2Dir)
 	}
 }
 

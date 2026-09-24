@@ -624,7 +624,10 @@ func TestToolRulesToLaunchCmd_BobNeverGetsModel(t *testing.T) {
 			t.Errorf("bob launch cmd with model %q must not contain --model: %q", model, cmd)
 		}
 		// Catches a model leaking in under any spelling, not just as --model.
-		if model != "" && strings.Contains(cmd, model) {
+		// The placeholder "auto" is exempt because bob 2.x's required
+		// --auto-approve flag legitimately contains that substring; the --model
+		// assertion above is the guard for that display-only value.
+		if model != "" && model != "auto" && strings.Contains(cmd, model) {
 			t.Errorf("bob launch cmd with model %q leaked the model id: %q", model, cmd)
 		}
 		if cmd != want {

@@ -132,10 +132,15 @@ func TestBobConstants(t *testing.T) {
 		want string
 	}{
 		{"bob's own env var name", BobAPIKeyEnvVar, "BOBSHELL_API_KEY"},
+		{"bob v2 env var name", BobV2APIKeyEnvVar, "BOB_API_KEY"},
 		{"bob's auth-type env var name", BobAuthTypeEnvVar, "BOBSHELL_DEFAULT_AUTH_TYPE"},
 		{"bob's api-key auth type value", BobAuthTypeAPIKey, "api-key"},
 		{"bob's hidden auth-method flag", BobAuthMethodFlag, "--auth-method"},
+		{"bob v2 auto-approve flag", BobAutoApproveFlag, "--auto-approve"},
 		{"bob's persisted settings path", BobSettingsRelPath, ".bob/settings.json"},
+		{"bob v2 persisted settings path", BobV2SettingsRelPath, ".bob/settings/settings.json"},
+		{"bob v2 provider key", BobV2ProviderKey, "provider"},
+		{"bob v2 harness provider value", BobV2ProviderHarness, "harness"},
 		{"settings security key", BobSettingsSecurityKey, "security"},
 		{"settings auth key", BobSettingsAuthKey, "auth"},
 		{"settings selectedType key", BobSettingsSelectedTypeKey, "selectedType"},

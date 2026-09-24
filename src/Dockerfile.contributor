@@ -250,9 +250,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # /contribute gets a container that can never take work.
 #
 # Version is pinned to match the hub image exactly: hub and relay agents must
-# speak the same bobshell CLI surface (the hidden --auth-method flag and the
-# --approval-mode choices are version-dependent). Do not bump one without the
-# other.
+# speak the same bobshell CLI surface (1.x uses hidden --auth-method /
+# --approval-mode; 2.x uses `bob chat --auto-approve`). Do not bump one without
+# the other, and keep the pin-bump smoke's bob launch-flag guard green.
 #
 # Tolerant of download failure now, matching src/Dockerfile's Layer 9 (issue
 # #5203): IBM COS has gone unreachable for multi-minute windows repeatedly,

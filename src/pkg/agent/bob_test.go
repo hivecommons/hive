@@ -161,7 +161,7 @@ func TestBobAPIKeyResolver(t *testing.T) {
 }
 
 // TestBobEnvPairInjection verifies the key is plumbed into the agent env under
-// the name bob actually reads, marked Secret so it never reaches the command
+// the names bob 1.x and 2.x read, marked Secret so it never reaches the command
 // line, and is confined to the bob backend.
 func TestBobEnvPairInjection(t *testing.T) {
 	tests := []struct {
@@ -188,26 +188,28 @@ func TestBobEnvPairInjection(t *testing.T) {
 				Config: config.AgentConfig{Backend: tc.backend},
 			}
 
-			var found *agentEnvPair
+			found := map[string]agentEnvPair{}
 			for _, p := range m.agentEnvPairs(agent) {
-				if p.Key == config.BobAPIKeyEnvVar {
-					pair := p
-					found = &pair
+				if p.Key == config.BobAPIKeyEnvVar || p.Key == config.BobV2APIKeyEnvVar {
+					found[p.Key] = p
 				}
 			}
 
-			if tc.wantPair != (found != nil) {
-				t.Fatalf("%s pair present = %v, want %v", config.BobAPIKeyEnvVar, found != nil, tc.wantPair)
-			}
-			if found == nil {
-				return
-			}
-			if found.Value != tc.key {
-				t.Errorf("pair value = %q, want %q", found.Value, tc.key)
-			}
-			if found.Secret != tc.wantSecret {
-				t.Errorf("pair Secret = %v, want %v (a key must never reach the command line)",
-					found.Secret, tc.wantSecret)
+			for _, envName := range []string{config.BobAPIKeyEnvVar, config.BobV2APIKeyEnvVar} {
+				p, ok := found[envName]
+				if tc.wantPair != ok {
+					t.Fatalf("%s pair present = %v, want %v", envName, ok, tc.wantPair)
+				}
+				if !ok {
+					continue
+				}
+				if p.Value != tc.key {
+					t.Errorf("%s pair value = %q, want %q", envName, p.Value, tc.key)
+				}
+				if p.Secret != tc.wantSecret {
+					t.Errorf("%s pair Secret = %v, want %v (a key must never reach the command line)",
+						envName, p.Secret, tc.wantSecret)
+				}
 			}
 		})
 	}
@@ -294,29 +296,30 @@ func TestBobKeyNotInEnvPrefix(t *testing.T) {
 	if strings.Contains(prefix, config.BobAPIKeyEnvVar) {
 		t.Errorf("env prefix must not mention %s at all; got %q", config.BobAPIKeyEnvVar, prefix)
 	}
+	if strings.Contains(prefix, config.BobV2APIKeyEnvVar) {
+		t.Errorf("env prefix must not mention %s at all; got %q", config.BobV2APIKeyEnvVar, prefix)
+	}
 }
 
 // TestBobLaunchCmd pins the flags that make headless auth work, keep the
 // session interactive, and let an unattended agent actually run tool calls.
 func TestBobLaunchCmd(t *testing.T) {
-	got := bobLaunchCmd("bob")
-
 	wantContain := []string{
-		"bob",
+		"case \"$(bob --version",
 		// Clears the license gate that would otherwise hard-error with no
 		// human to answer it.
 		"--accept-license",
 		// The strongest auth control: a real (but --help-hidden) flag in
-		// bobshell 1.0.6, and the only input that outranks the persisted,
-		// fleet-shared settings file.
+		// bobshell 1.0.6. It must stay in the 1.x branch only.
 		"--auth-method api-key",
 		// Without this bob reports `Auto-approve: Off` and blocks forever on
-		// the first tool call. Verified live: with it, bob executed a shell
-		// tool unattended.
+		// the first tool call. bobshell 2.x spells the control differently.
 		"--approval-mode yolo",
+		"bob chat --accept-license --auto-approve --trust",
 		// Clears "This folder is not trusted. Some features may be disabled."
 		"--trust",
 	}
+	got := bobLaunchCmd("bob")
 	for _, want := range wantContain {
 		if !strings.Contains(got, want) {
 			t.Errorf("bobLaunchCmd() = %q, want it to contain %q", got, want)
@@ -337,6 +340,23 @@ func TestBobLaunchCmd(t *testing.T) {
 		if strings.Contains(got, absent) {
 			t.Errorf("bobLaunchCmd() = %q, want it NOT to contain %q", got, absent)
 		}
+	}
+}
+
+func TestBobLaunchCmdVersionBranches(t *testing.T) {
+	if got, want := bobLaunchCmdV1("bob"),
+		"bob --accept-license --auth-method api-key --approval-mode yolo --trust"; got != want {
+		t.Fatalf("bobLaunchCmdV1() = %q, want %q", got, want)
+	}
+	if got, want := bobLaunchCmdV2("bob"),
+		"bob chat --accept-license --auto-approve --trust"; got != want {
+		t.Fatalf("bobLaunchCmdV2() = %q, want %q", got, want)
+	}
+	if strings.Contains(bobLaunchCmdV2("bob"), "--auth-method") {
+		t.Fatalf("bobLaunchCmdV2() must not pass removed --auth-method: %q", bobLaunchCmdV2("bob"))
+	}
+	if strings.Contains(bobLaunchCmdV2("bob"), "--approval-mode") {
+		t.Fatalf("bobLaunchCmdV2() must not pass removed --approval-mode: %q", bobLaunchCmdV2("bob"))
 	}
 }
 

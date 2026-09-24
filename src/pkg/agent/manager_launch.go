@@ -662,9 +662,10 @@ func hostStateBypassRequested(value string) bool {
 // The launch stays INTERACTIVE — no -p/--prompt — so the agent drives bob in a
 // tmux pane exactly like every other CLI backend and a human can attach to it.
 //
-// Two flags are passed:
+// The command is selected at process start from `bob --version`:
 //
-//   - --auth-method api-key: this flag DOES exist in bobshell 1.0.6. It was
+//   - bobshell 1.x gets `--auth-method api-key`: this flag DOES exist in
+//     bobshell 1.0.6. It was
 //     previously removed after `bob --help | grep auth-method` returned
 //     nothing, but that test is misleading: the bundle registers the option and
 //     then explicitly HIDES it from help output —
@@ -692,6 +693,15 @@ func hostStateBypassRequested(value string) bool {
 //     the cheapest guarantee that a stale settings file cannot re-break bob.
 //     Note IBM's public docs also document `--auth-method api-key`.
 //
+//     bobshell 2.0.4 REMOVES the option. The 2.0.4 bundle has no
+//     authMethod, selectedType or BOBSHELL_DEFAULT_AUTH_TYPE strings; the only
+//     auth-method hit is ai-gateway-auth-method. Authentication is selected by
+//     config provider instead: the default user config includes
+//     `provider:"harness"`, `BOB_API_KEY` is the env read for that provider,
+//     and global settings are stored under ~/.bob/settings/settings.json. Hive
+//     asserts that provider in ensureBobAuthSettings so its choice remains
+//     authoritative over stale persisted settings.
+//
 //   - --accept-license: bob hard-errors ("A license agreement is required.
 //     Please accept the license terms before proceeding.") before doing any
 //     work unless licenseConsent is already persisted in its settings. That
@@ -703,7 +713,8 @@ func hostStateBypassRequested(value string) bool {
 //     key for unattended use is the act of acceptance; the text stays
 //     reviewable via `bob --show-license`.
 //
-//   - --approval-mode yolo (config.BobApprovalModeFlag/BobApprovalModeYolo):
+//   - bobshell 1.x gets --approval-mode yolo
+//     (config.BobApprovalModeFlag/BobApprovalModeYolo):
 //     without it bob runs in its "default" approval mode, the TUI reports
 //     `Auto-approve: Off`, and the agent blocks forever on its FIRST tool call
 //     waiting for a human who is not attached. Verified live on a spoke: with
@@ -722,6 +733,9 @@ func hostStateBypassRequested(value string) bool {
 //     actually contained. Giving bob a per-mode approval policy would make it
 //     the only backend that stalls at low ACMM levels — less capable than its
 //     peers, and stalled rather than safely limited.
+//
+//     bobshell 2.x renamed this to --auto-approve on the `chat` subcommand;
+//     --approval-mode no longer appears in the 2.0.4 bundle or help.
 //
 //   - --trust (config.BobTrustFlag): bob otherwise treats the agent workdir as
 //     untrusted ("This folder is not trusted. Some features may be disabled.")
@@ -745,10 +759,24 @@ func hostStateBypassRequested(value string) bool {
 // The model parameter is intentionally absent from the signature so no future
 // caller can reintroduce the crash by passing one.
 func bobLaunchCmd(binary string) string {
+	return fmt.Sprintf(`case "$(%s --version 2>/dev/null | sed -n '1p')" in 1.*) %s ;; *) %s ;; esac`,
+		binary,
+		bobLaunchCmdV1(binary),
+		bobLaunchCmdV2(binary))
+}
+
+func bobLaunchCmdV1(binary string) string {
 	return fmt.Sprintf("%s --accept-license %s %s %s %s %s",
 		binary,
 		config.BobAuthMethodFlag, config.BobAuthTypeAPIKey,
 		config.BobApprovalModeFlag, config.BobApprovalModeYolo,
+		config.BobTrustFlag)
+}
+
+func bobLaunchCmdV2(binary string) string {
+	return fmt.Sprintf("%s chat --accept-license %s %s",
+		binary,
+		config.BobAutoApproveFlag,
 		config.BobTrustFlag)
 }
 
