@@ -205,17 +205,23 @@ because a warning color looks visually urgent.
 
 ## Ratchet plan
 
-Add a `style_ratchet_test.go` near the dashboard static tests, modeled on
-`src/internal/testutil/sleep_ratchet_test.go`. Planned counters and starting
-baselines:
+`pkg/dashboard/webstatic/style_ratchet_test.go`, modeled on
+`src/internal/testutil/sleep_ratchet_test.go`, keeps the debt from growing. Run
+`go test ./pkg/dashboard/... -run StyleRatchet -v` to print the CI-visible
+counts. Baselines measured on 2026-09-23 in PR #8584 for
+#8536, after #8579:
 
-| Counter | Initial baseline |
-| --- | ---: |
-| `style=` attributes in `static/index.html` | 2,093 |
-| Distinct stylesheet color-like literals after stripping comments | 223 |
-| Raw `font-size` occurrences outside token declarations/allowlist | Baseline from first test run. |
-| Raw `padding` occurrences outside token declarations/allowlist | Baseline from first test run. |
-| Raw `border-radius` occurrences outside token declarations/allowlist | Baseline from first test run. |
+| Surface | `style=` attributes | Raw colors | Raw `font-size` | Raw `padding` | Raw `border-radius` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `pkg/dashboard/static/index.html` | 2,101 | 195 | 1,088 | 710 | 473 |
+| `pkg/dashboard/contribute_landing.go` | 111 | 202 | 279 | 206 | 143 |
+| `pkg/hub/static/*.html` + `pkg/hub/assets/*.html` | 1,189 | 584 | 652 | 391 | 309 |
+
+The test counts `style=` even inside script/template strings because those
+snippets become DOM. Raw value counters scan inline `<style>` blocks and
+`style=` values, strip CSS comments, ignore fragment anchors such as `url(#id)`,
+and skip custom-property declaration lines while legacy tokens are being
+migrated.
 
 To lower a baseline in a PR, remove the raw styling, run the ratchet test, and
 commit the reduced expected value with the migration. Do not raise a baseline

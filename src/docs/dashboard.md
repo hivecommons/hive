@@ -19,7 +19,7 @@ via YAML tags.
 
 ## Design system
 
-Dashboard UI changes should follow the shared [dashboard design system](dashboard-design-system.md) and [ADR-0018](adr/0018-dashboard-design-tokens.md). The token layer is the theme contract for future user theme/background work and the migration path away from static inline styles.
+Dashboard UI changes should follow the shared [dashboard design system](dashboard-design-system.md) and [ADR-0018](adr/0018-dashboard-design-tokens.md). The token layer is the theme contract for future user theme/background work and the migration path away from static inline styles; `go test ./pkg/dashboard/... -run StyleRatchet -v` ratchets inline styles and raw CSS values so the debt only goes down.
 
 ## Governor card
 
