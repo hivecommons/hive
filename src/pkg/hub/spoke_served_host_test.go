@@ -12,18 +12,18 @@ import (
 //
 // The spoke's dashboard_url fallback synthesised "<hiveID>.<hub host>". That is
 // only correct when the spoke is fronted by the hub's OWN wildcard domain
-// (hive-oke, where *.hive.kubestellar.io IS the router). On the OpenShift pool
+// (hive-oke, where *.hive.hivecommons.dev IS the router). On the OpenShift pool
 // the spoke's real Route serves
 // hosted-available-vllmd-260806-5q6l.apps.fmaas-vllm-d.fmaas.res.ibm.com, but
-// the hub linked hosted-available-vllmd-260806-5q6l.hive.kubestellar.io — a
+// the hub linked hosted-available-vllmd-260806-5q6l.hive.hivecommons.dev — a
 // name the shared wildcard resolves to the HUB's router, which has no backend
 // for it and answers 503.
 //
 // Measured live 2026-08-14 and the reason the fix reads the live object:
-//   - dig random-nonexistent-xyz.hive.kubestellar.io -> 157.151.252.29 (the hub
+//   - dig random-nonexistent-xyz.hive.hivecommons.dev -> 157.151.252.29 (the hub
 //     router). The wildcard answers for ANY name, so DNS resolving proves
 //     nothing about reachability.
-//   - curl https://hosted-available-vllmd-260806-5q6l.hive.kubestellar.io/ -> 000
+//   - curl https://hosted-available-vllmd-260806-5q6l.hive.hivecommons.dev/ -> 000
 //   - curl https://hosted-available-vllmd-260806-5q6l.apps.fmaas-vllm-d...   -> 401
 //
 // Both directions are asserted here. A spoke whose Ingress genuinely carries a
@@ -35,13 +35,13 @@ import (
 const (
 	// servedHostOKEDomain is the hub's own wildcard domain — the ONLY domain
 	// for which the old synthesised host was ever correct.
-	servedHostOKEDomain = "hive.kubestellar.io"
+	servedHostOKEDomain = "hive.hivecommons.dev"
 	// servedHostOpenShiftDomain is the OpenShift pool's wildcard apps domain.
 	servedHostOpenShiftDomain = "apps.fmaas-vllm-d.fmaas.res.ibm.com"
 )
 
 // placeholderHostURL must derive the domain from the hive's OWN cluster. The
-// hardcoded hive.kubestellar.io it replaced is the hub's wildcard, so using it
+// hardcoded hive.hivecommons.dev it replaced is the hub's wildcard, so using it
 // for a spoke elsewhere mints a host that resolves to the hub and 503s.
 func TestPlaceholderHostURL_UsesTheHivesOwnClusterDomain(t *testing.T) {
 	dir := t.TempDir()

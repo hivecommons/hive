@@ -43,7 +43,7 @@ func TestWildcardCoversHost(t *testing.T) {
 		// serves.
 		{"a name above the wildcard scope is not covered", "dibs.hivecommons.dev", false},
 
-		{"a different domain is not covered", "hosted-x.hive.kubestellar.io", false},
+		{"a different domain is not covered", "hosted-x.legacy.example.com", false},
 		{"a suffix that is not a label boundary is not covered", "evilhive.hivecommons.dev", false},
 		{"empty host", "", false},
 	}
@@ -112,14 +112,14 @@ func TestServesHostFromWildcardSkipsOpenShiftRoutes(t *testing.T) {
 
 // Coverage is decided per HOST, not per cluster: a host outside the wildcard's
 // single-label scope keeps its own certificate even on an opted-in cluster.
-// This is what keeps hive.kubestellar.io and dibs working while every spoke
+// This is what keeps hive.hivecommons.dev and dibs working while every spoke
 // stops minting.
 func TestServesHostFromWildcardIsPerHost(t *testing.T) {
 	c := wildcardCluster()
 	for _, host := range []string{
 		"hive.hivecommons.dev",     // the apex
 		"a.b.hive.hivecommons.dev", // deeper than one label
-		"hive.kubestellar.io",      // another domain entirely
+		"hive.hivecommons.dev",     // another domain entirely
 		"dibs.hivecommons.dev",     // above the wildcard scope (#5925)
 	} {
 		if c.servesHostFromWildcard(host) {

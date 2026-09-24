@@ -268,8 +268,8 @@ func TestURLReachabilityDecisionMatrix(t *testing.T) {
 }
 
 func TestHubProbeDomainSuffixGating(t *testing.T) {
-	s := newURLHealthTestHub(t, "hive.kubestellar.io")
-	if !s.hubFrontedDashboardURL("https://spoke.hive.kubestellar.io") {
+	s := newURLHealthTestHub(t, "hive.hivecommons.dev")
+	if !s.hubFrontedDashboardURL("https://spoke.hive.hivecommons.dev") {
 		t.Fatal("hub-fronted subdomain should be probed")
 	}
 	if s.hubFrontedDashboardURL("https://spoke.apps.fmaas-vllm-d.fmaas.res.ibm.com") {

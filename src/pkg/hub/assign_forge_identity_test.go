@@ -18,7 +18,7 @@ import (
 func TestAssignTimeAppIdentityUnregisteredGHECluster(t *testing.T) {
 	srv := newHubServerForTest(t)
 	srv.clusters = map[string]ClusterConfig{
-		"hive-oke": {ID: "hive-oke", InCluster: true, Domain: "hive.kubestellar.io"},
+		"hive-oke": {ID: "hive-oke", InCluster: true, Domain: "hive.hivecommons.dev"},
 	}
 
 	h := &SaaSHive{
@@ -153,7 +153,7 @@ func TestAssignTimeAppIdentityRegisteredClusterWins(t *testing.T) {
 func TestAppIdentityForHiveUnregisteredClusterRepairs(t *testing.T) {
 	srv := newHubServerForTest(t)
 	srv.clusters = map[string]ClusterConfig{
-		"hive-oke": {ID: "hive-oke", InCluster: true, Domain: "hive.kubestellar.io"},
+		"hive-oke": {ID: "hive-oke", InCluster: true, Domain: "hive.hivecommons.dev"},
 	}
 
 	h := &SaaSHive{

@@ -118,7 +118,7 @@ func TestNoVanityPushWhenUnserved(t *testing.T) {
 		t.Fatal(err)
 	}
 	pc := projectConfigForHiveID(h.ID, "acme", []string{"acme/widget"}, "acme/widget", 2,
-		"https://hosted-claimed-no-vanity.hive.kubestellar.io", "")
+		"https://hosted-claimed-no-vanity.hive.hivecommons.dev", "")
 	if pc != nil {
 		t.Errorf("must not invent/push a vanity URL for a hive with none, got %+v", pc)
 	}

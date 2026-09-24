@@ -48,7 +48,7 @@ func adminPut(srv *HubServer, target, body, asUser string) *httptest.ResponseRec
 	// AUDIT F4: mutations fail closed without Origin/Referer. Same-origin here so
 	// the request reaches the handler and the test asserts about country, not
 	// about CSRF (which csrf_f4_fail_closed_test.go owns).
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	if asUser != "" {
 		req.AddCookie(testAuthCookie(asUser))
 	}

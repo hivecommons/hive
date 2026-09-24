@@ -581,7 +581,7 @@ type SaaSHive struct {
 	CreatedAt   string                    `json:"created_at"`
 	Subdomain   string                    `json:"subdomain"`
 	// VanityURL is the friendly dashboard URL derived from the claimed project
-	// (e.g. hosted-<org>-<repo>-*.hive.kubestellar.io), set at ASSIGN time. Its
+	// (e.g. hosted-<org>-<repo>-*.hive.hivecommons.dev), set at ASSIGN time. Its
 	// presence is the explicit marker that a placeholder has been claimed —
 	// callers prefer it over the raw placeholder Subdomain and must NOT infer
 	// "claimed" by pattern-matching the placeholder name. Empty = unclaimed
@@ -3737,7 +3737,7 @@ metadata:
     # credential-holding pod, so it MUST enforce the SAME per-hive authorization
     # the main ingress does — not merely "is the caller a signed-in hub user".
     # Without this auth-url, any GitHub account that completes hub OAuth (the
-    # shared .hive.kubestellar.io cookie) reaches ANY tenant's /terminal. The
+    # shared .hive.hivecommons.dev cookie) reaches ANY tenant's /terminal. The
     # auth-check endpoint verifies the caller against THIS hive's authorized
     # users (user.Hives[{{.ID}}]) and 403s a user with no access to this hive.
     nginx.ingress.kubernetes.io/auth-url: "{{.HubPublicURL}}/api/saas/auth-check?hive={{.ID}}&uri=$request_uri"

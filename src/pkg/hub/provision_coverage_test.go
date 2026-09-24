@@ -25,7 +25,7 @@ func dynamicCluster() *ClusterConfig {
 		IngressType:  "nginx",
 		IngressClass: "nginx",
 		CertIssuer:   "letsencrypt-prod",
-		Domain:       "hive.kubestellar.io",
+		Domain:       "hive.hivecommons.dev",
 	}
 }
 

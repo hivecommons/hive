@@ -26,7 +26,7 @@ func contactPutRequest(username, body, asUser string) *http.Request {
 	// admin contact-field authorization and caps; the same-origin header keeps
 	// them past the CSRF gate so they still exercise that. CSRF itself is
 	// asserted in csrf_f4_fail_closed_test.go.
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	if asUser != "" {
 		req.AddCookie(testAuthCookie(asUser))
 	}

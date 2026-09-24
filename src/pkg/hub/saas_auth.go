@@ -350,10 +350,10 @@ func isNonBrowserAPIRequest(r *http.Request) bool {
 }
 
 const (
-	defaultHubPublicURL          = "https://hive.kubestellar.io"
-	defaultHubCanonicalHost      = "hive.kubestellar.io"
-	defaultHubSpokeDomain        = "hive.kubestellar.io"
-	defaultLegacyHubCookieDomain = ".hive.kubestellar.io"
+	defaultHubPublicURL          = "https://hive.hivecommons.dev"
+	defaultHubCanonicalHost      = "hive.hivecommons.dev"
+	defaultHubSpokeDomain        = "hive.hivecommons.dev"
+	defaultLegacyHubCookieDomain = ".kubestellar.io"
 )
 
 // hubPublicURL is the canonical public origin used to build absolute URLs.
@@ -384,7 +384,7 @@ func hubCanonicalHost() string {
 }
 
 // hubSpokeDomain is the shared parent domain the hosted tenants live under
-// (<id>.hive.kubestellar.io by default). It is a REDIRECT-trust boundary only
+// (<id>.hive.hivecommons.dev by default). It is a REDIRECT-trust boundary only
 // — see isTrustedRedirectTarget — and deliberately NOT a CSRF or CORS boundary.
 func hubSpokeDomain() string {
 	if v := strings.TrimSpace(os.Getenv("HIVE_HUB_SPOKE_DOMAIN")); v != "" {
@@ -424,7 +424,7 @@ func legacySessionCookieDomains(liveDomain string) []string {
 //
 // That derivation is also the sibling bridge's precondition: the hub and the
 // sibling must share a REGISTRABLE DOMAIN, whichever one it is. Moving the hub
-// across registrable domains — hive.kubestellar.io to hive.hivecommons.dev —
+// across registrable domains — from the previous hub host to hive.hivecommons.dev —
 // therefore signs users out of every sibling left behind on the old one, and no
 // configuration rescues those siblings, because a browser ignores a Set-Cookie
 // whose Domain does not cover the sending host (RFC 6265 5.3). The old sibling
@@ -451,7 +451,7 @@ func sessionCookieParentDomain() string {
 // consumers of the cookie receive it:
 //   - every hosted spoke's Node proxy on <id>.hive.<domain>, which independently
 //     verifies it for the tenant dashboard and terminal (the original reason the
-//     cookie carried Domain=.hive.kubestellar.io); and
+//     cookie carried a hub-domain scope); and
 //   - sibling first-party products such as dibs, which read it and call back to
 //     /api/saas/whoami (#4171) — but ONLY while the sibling lives under the same
 //     registrable domain (#5925; see sessionCookieParentDomain).
@@ -476,7 +476,7 @@ func sessionCookieDomain(host string) string {
 // hubSessionCookieValues returns every hive_hub_user value on the request, in
 // jar order. During the .kubestellar.io domain-widening rollout (#4171) a
 // browser may briefly hold TWO copies of the cookie — the legacy
-// .hive.kubestellar.io-scoped one and the new parent-scoped one — and it sends
+// old hub-domain-scoped one and the new parent-scoped one — and it sends
 // both under the same name. Callers must try each candidate rather than
 // trusting whichever copy the jar happens to order first, or a stale legacy
 // cookie would shadow a fresh session (and vice versa) until re-login.
@@ -495,10 +495,10 @@ func hubSessionCookieValues(r *http.Request) []string {
 // credentialed CORS response.
 //
 // SECURITY (audit F4): this used to be isTrustedOrigin, which accepted EVERY
-// suffix match of .hive.kubestellar.io. Because the hub session cookie is
-// scoped Domain=.hive.kubestellar.io, the browser attaches it to requests
+// suffix match of .hive.hivecommons.dev. Because the hub session cookie is
+// scoped Domain=.hive.hivecommons.dev, the browser attaches it to requests
 // issued from any sibling tenant — so a hostile hive operator, serving script
-// from their own <id>.hive.kubestellar.io dashboard, could POST at the hub with
+// from their own <id>.hive.hivecommons.dev dashboard, could POST at the hub with
 // the victim admin's ambient cookie and have the CSRF gate wave it through. The
 // audit demonstrated exactly this by flipping another tenant's visibility from
 // a sibling Origin. Suffix-matching a domain whose subdomains are handed out to
@@ -523,7 +523,7 @@ func isSameOriginAsHub(raw string) bool {
 //	auth-signin: https://hive.hivecommons.dev/login?redirect=$scheme://$http_host$request_uri
 //
 // (see saas_provision.go), so the ordinary "open my hive" flow arrives at the
-// hub with redirect=https://<id>.hive.kubestellar.io/... and must be allowed to
+// hub with redirect=https://<id>.hive.hivecommons.dev/... and must be allowed to
 // return there. Narrowing this to the exact hub origin would break sign-in for
 // all hosted tenants.
 //

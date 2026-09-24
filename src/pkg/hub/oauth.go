@@ -777,11 +777,11 @@ func (s *HubServer) mintSessionCookies(w http.ResponseWriter, r *http.Request, c
 
 // setSessionCookies issues the Set-Cookie pair for an already-minted session
 // value: the live hive_hub_user cookie scoped to sessionCookieDomain(r.Host),
-// preceded by an expiry of the legacy .hive.kubestellar.io-scoped copy.
+// preceded by an expiry of the legacy .hive.hivecommons.dev-scoped copy.
 //
 // Factored out of mintSessionCookies (#4193) so the SAME cookies can be
 // re-issued outside the login callback: a session minted BEFORE the #4171
-// domain widening still rides a host-only or .hive.kubestellar.io-scoped
+// domain widening still rides a host-only or .hive.hivecommons.dev-scoped
 // cookie the browser never sends to dibs.kubestellar.io, and only a fresh
 // Set-Cookie can rescope it. handleAuthUser re-issues the verified value on
 // every authenticated dashboard load for exactly that reason — no new crypto,
@@ -794,7 +794,7 @@ func setSessionCookies(w http.ResponseWriter, r *http.Request, cookieValue strin
 	// load-bearing across a trust boundary: it is minted by the hub (Go) and
 	// verified INDEPENDENTLY by every spoke's Node proxy on the WebSocket
 	// terminal path (src/proxy/server.js). The proxy can only verify a cookie
-	// the browser actually sends it, and the browser only sends this one to <id>.hive.kubestellar.io
+	// the browser actually sends it, and the browser only sends this one to <id>.hive.hivecommons.dev
 	// BECAUSE of the Domain attribute below. Dropping Domain (which __Host-
 	// additionally forbids outright) would stop the cookie reaching any spoke
 	// and log every hosted tenant out of their own dashboard and terminal —
@@ -818,7 +818,7 @@ func setSessionCookies(w http.ResponseWriter, r *http.Request, cookieValue strin
 	// HttpOnly + Secure), which is why the spoke-scoped-session redesign is
 	// tracked as follow-up rather than closed.
 	//
-	// #4171 WIDENS the Domain one level, from .hive.kubestellar.io to the hub's
+	// #4171 WIDENS the Domain one level, from .hive.hivecommons.dev to the hub's
 	// registrable domain (derived, not hard-coded — sessionCookieDomain in
 	// saas.go), so first-party sibling products (dibs) receive the cookie and can
 	// SSO against /api/saas/whoami. This does not change the F4 analysis above:
@@ -839,7 +839,7 @@ func setSessionCookies(w http.ResponseWriter, r *http.Request, cookieValue strin
 	// sibling host redirects rather than dual-serves (#5925).
 	domain := sessionCookieDomain(r.Host)
 	// Rollout hygiene (#4171): a pre-widening session cookie scoped
-	// Domain=.hive.kubestellar.io is a SEPARATE jar entry from the one minted
+	// Domain=.hive.hivecommons.dev is a SEPARATE jar entry from the one minted
 	// below, and the browser would send both under the same name. Expire the
 	// legacy-scoped copy in the same response so a fresh login converges to
 	// exactly one session cookie. (Requests that still carry both in the
@@ -965,7 +965,7 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 	}
 	// #4193: re-scope the session cookie on every authenticated dashboard load.
 	// A session minted BEFORE the #4171 domain widening still rides a cookie
-	// scoped host-only or to .hive.kubestellar.io, which the browser never
+	// scoped host-only or to .hive.hivecommons.dev, which the browser never
 	// sends to dibs.kubestellar.io — SSO silently fails for exactly the users
 	// who were already signed in when the widening shipped, until they happen
 	// to log out and back in. Re-issuing the SAME verified value with
@@ -1065,7 +1065,7 @@ func (s *HubServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// The browser's copy is cleared unconditionally regardless, below: a client
 	// with a corrupt or expired cookie must still be able to clear it.
 	// #4171: revoke EVERY verifiable copy — the domain-widening rollout can
-	// leave two hive_hub_user cookies (legacy .hive.kubestellar.io scope and
+	// leave two hive_hub_user cookies (legacy .hive.hivecommons.dev scope and
 	// the new parent scope) carrying different session IDs, and logging out
 	// must kill both sessions, not just whichever the jar sent first.
 	for _, value := range hubSessionCookieValues(r) {
@@ -1081,7 +1081,7 @@ func (s *HubServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	// Clear the browser's copy under the SAME Domain minting used — a deletion
 	// only removes the jar entry whose domain matches. Also clear the legacy
-	// .hive.kubestellar.io-scoped entry (#4171 rollout: a pre-widening session
+	// .hive.hivecommons.dev-scoped entry (#4171 rollout: a pre-widening session
 	// is a separate jar entry that a parent-scoped deletion cannot remove).
 	liveDomain := sessionCookieDomain(r.Host)
 	clearDomains := append([]string{liveDomain}, legacySessionCookieDomains(liveDomain)...)

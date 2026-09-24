@@ -58,7 +58,7 @@ func pointClustersConfigAt(t *testing.T, contents string) string {
 // topology rather than a toy one. Field values are structural only — no
 // credentials, no kubeconfig contents.
 const liveShapedRegistry = `[
-  {"id":"hive-oke","name":"OKE","in_cluster":true,"domain":"hive.kubestellar.io","arch":"arm64","image_tag":"v4-latest"},
+  {"id":"hive-oke","name":"OKE","in_cluster":true,"domain":"hive.hivecommons.dev","arch":"arm64","image_tag":"v4-latest"},
   {"id":"vllm-d","name":"vLLM-D","in_cluster":false,"pull_only":true,"kubeconfig_path":"/etc/hive/kubeconfigs/vllm-d.yaml","domain":"vllmd.example.com","arch":"amd64","image_tag":"v4-latest"},
   {"id":"a-ks-wec2","name":"WEC2","in_cluster":false,"pull_only":true,"kubeconfig_path":"/etc/hive/kubeconfigs/a-ks-wec2.yaml","domain":"wec2.example.com","arch":"amd64","image_tag":"v4-latest"}
 ]`

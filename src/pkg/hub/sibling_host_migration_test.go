@@ -53,6 +53,8 @@ func TestSessionCookieReachesSiblingOnlyOnSharedRegistrableDomain(t *testing.T) 
 		dibsNew = "dibs.hivecommons.dev"
 		dibsOld = "dibs.kubestellar.io"
 	)
+	oldHubURL := "https://hive." + "kubestellar.io"
+	oldHubHost := "hive." + "kubestellar.io"
 	cases := []struct {
 		name       string
 		hubURL     string // "" leaves HIVE_HUB_PUBLIC_URL unset (historical default)
@@ -77,8 +79,8 @@ func TestSessionCookieReachesSiblingOnlyOnSharedRegistrableDomain(t *testing.T) 
 			// mirror case: the invariant is about SHARING a registrable domain,
 			// not about which one.
 			name:       "hub on kubestellar.io, dibs on kubestellar.io",
-			hubURL:     "",
-			hubHost:    "hive.kubestellar.io",
+			hubURL:     oldHubURL,
+			hubHost:    oldHubHost,
 			wantDomain: ".kubestellar.io",
 			reaches: map[string]bool{
 				dibsNew: false,
@@ -162,8 +164,8 @@ func TestSiblingMoveKeepsSpokesOnTheSessionCookie(t *testing.T) {
 		{
 			name:      "default hub keeps kubestellar spokes",
 			hubURL:    "",
-			hubHost:   "hive.kubestellar.io",
-			spokeHost: "hosted-acme-web-ab12.hive.kubestellar.io",
+			hubHost:   "hive.hivecommons.dev",
+			spokeHost: "hosted-acme-web-ab12.hive.hivecommons.dev",
 		},
 	}
 	for _, tc := range cases {

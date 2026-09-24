@@ -107,7 +107,7 @@ func TestHandleHeartbeatDeliversPending(t *testing.T) {
 		"org":"testorg",
 		"primary_repo":"repo",
 		"repos":["repo"],
-		"dashboard_url":"https://kellyaa.hive.kubestellar.io",
+		"dashboard_url":"https://kellyaa.hive.hivecommons.dev",
 		"git_hash":"deadbeef1234",
 		"is_public":true,
 		"tokens_24h":42
@@ -135,7 +135,7 @@ func TestHandleHeartbeatDeliversPending(t *testing.T) {
 		"org":"testorg",
 		"primary_repo":"repo",
 		"repos":["repo"],
-		"dashboard_url":"https://kellyaa.hive.kubestellar.io",
+		"dashboard_url":"https://kellyaa.hive.hivecommons.dev",
 		"git_hash":"deadbeef1234",
 		"is_public":true,
 		"tokens_24h":42,
@@ -160,9 +160,9 @@ func TestHandleHeartbeatPublicURLSelfCheckRoundTripAndOldSpokeCompatibility(t *t
 		"org":"testorg",
 		"primary_repo":"repo",
 		"repos":["repo"],
-		"dashboard_url":"https://selfcheck.hive.kubestellar.io",
+		"dashboard_url":"https://selfcheck.hive.hivecommons.dev",
 		"public_url_self_check":{"status":"ok","checked_at":"2026-08-08T10:15:00Z","http_status":401},
-		"route_exists":{"status":"found","checked_at":"2026-08-08T10:15:00Z","host":"selfcheck.hive.kubestellar.io","kind":"Ingress"}
+		"route_exists":{"status":"found","checked_at":"2026-08-08T10:15:00Z","host":"selfcheck.hive.hivecommons.dev","kind":"Ingress"}
 	}`
 	rec := postHeartbeat(t, s, body)
 	if rec.Code != http.StatusOK {
@@ -185,7 +185,7 @@ func TestHandleHeartbeatPublicURLSelfCheckRoundTripAndOldSpokeCompatibility(t *t
 		"org":"testorg",
 		"primary_repo":"repo",
 		"repos":["repo"],
-		"dashboard_url":"https://oldspoke.hive.kubestellar.io"
+		"dashboard_url":"https://oldspoke.hive.hivecommons.dev"
 	}`
 	rec = postHeartbeat(t, s, oldBody)
 	if rec.Code != http.StatusOK {

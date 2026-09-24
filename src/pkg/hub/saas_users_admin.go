@@ -247,7 +247,7 @@ func (s *HubServer) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 		// executes with the admin's identity. requireAuth has always checked this
 		// (see :499); requireAdmin never did, leaving every admin mutation
 		// reachable from ANY origin — strictly worse than the sibling-tenant lane,
-		// which at least requires a *.hive.kubestellar.io foothold. Checked first,
+		// which at least requires a *.hive.hivecommons.dev foothold. Checked first,
 		// before any identity resolution, so a forged request never reaches the
 		// impersonation logic below.
 		if !isCSRFSafe(r) {
@@ -339,7 +339,7 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 // would stop honoring it.
 //
 // SECURITY (audit F4): this cookie is HOST-ONLY. It previously carried
-// Domain=.hive.kubestellar.io, copied from the session cookie, which meant the
+// Domain=.hive.hivecommons.dev, copied from the session cookie, which meant the
 // admin's live impersonation grant was transmitted to every hosted tenant's
 // dashboard — i.e. handed to ~62 untrusted third parties on every request they
 // received. Unlike hive_hub_user, NOTHING outside the hub ever reads it:
@@ -351,7 +351,7 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 // Omitting Domain (rather than setting it) is what makes a cookie host-only per
 // RFC 6265 §4.1.2.3 — there is no "Domain=host" spelling that achieves this.
 //
-// No flag day: the mint and the read both happen on hive.kubestellar.io, so a
+// No flag day: the mint and the read both happen on hive.hivecommons.dev, so a
 // browser holding the OLD domain-scoped cookie still presents it to the hub and
 // still verifies. The next impersonate/exit re-mints it host-only. Worst case
 // for an in-flight grant is that it expires on its own 30-minute TTL.
@@ -397,7 +397,7 @@ func setImpersonateCookie(w http.ResponseWriter, value string) {
 // legacyImpersonateCookieDomain is the sibling-wide scope the impersonation
 // cookie used to carry before audit F4 made it host-only. Retained ONLY so the
 // exit path can expire cookies minted by the previous build.
-const legacyImpersonateCookieDomain = ".hive.kubestellar.io"
+const legacyImpersonateCookieDomain = ".kubestellar.io"
 
 // handleImpersonateStart begins an admin read-only "View as user" session.
 // Registered behind requireAdmin, so only the real hub admin reaches it (and

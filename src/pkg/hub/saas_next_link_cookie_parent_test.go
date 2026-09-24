@@ -66,9 +66,9 @@ func TestSessionCookieParentDomain(t *testing.T) {
 		want   string
 	}{
 		{
-			name:   "historical default hub host",
+			name:   "default hub host",
 			hubURL: "",
-			want:   "kubestellar.io",
+			want:   "hivecommons.dev",
 		},
 		{
 			name:   "configured hub host uses its registrable parent",

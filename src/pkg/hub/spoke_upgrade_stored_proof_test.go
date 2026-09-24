@@ -39,7 +39,7 @@ func seedUpgradeTarget(t *testing.T, branch, sha string) {
 
 func spokeUpgradeRequest(hiveID, user, proof string) *http.Request {
 	req := setPathValue(httptest.NewRequest(http.MethodPost, "/api/saas/hives/"+hiveID+"/upgrade", nil), "id", hiveID)
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	if user != "" {
 		req.Header.Set("X-Hive-User", user)
 	}

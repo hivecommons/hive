@@ -234,7 +234,7 @@ func TestLiteEnrollRouteRequiresAuth(t *testing.T) {
 	// which is what the test is named for. Supplying a legitimate same-origin
 	// header keeps the request past the CSRF gate so the 401 assertion still
 	// tests the thing it was written to test.
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d body=%s, want 401", rec.Code, rec.Body.String())

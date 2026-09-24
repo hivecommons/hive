@@ -10,7 +10,7 @@ import (
 
 // vanityRepairTestDomain is the cluster domain the repair derives vanity hosts
 // from in these tests, mirroring the live hive-oke cluster.
-const vanityRepairTestDomain = "hive.kubestellar.io"
+const vanityRepairTestDomain = "hive.hivecommons.dev"
 
 // newVanityRepairTestHub builds a hub with one nginx cluster that has a domain
 // (so a vanity host can be derived) and a servability seam that succeeds,
@@ -201,7 +201,7 @@ func TestVanityRepairNeverClobbersExistingVanityURL(t *testing.T) {
 	s := newVanityRepairTestHub()
 
 	const id = "hosted-has-vanity"
-	const existing = "https://hosted-acme-app-abcd.hive.kubestellar.io"
+	const existing = "https://hosted-acme-app-abcd.hive.hivecommons.dev"
 	if err := saveSaaSHive(&SaaSHive{
 		ID: id, Status: "running", Org: "acme", Repos: []string{"app"}, PrimaryRepo: "app",
 		ClusterID: defaultClusterID, VanityURL: existing,
@@ -226,7 +226,7 @@ func TestRepairedVanityURLReachesSpokeViaHeartbeat(t *testing.T) {
 	s := newVanityRepairTestHub()
 
 	const id = "hosted-available-oke-03-placeholder-y99x"
-	const placeholderURL = "https://hosted-available-oke-03-placeholder-y99x.hive.kubestellar.io"
+	const placeholderURL = "https://hosted-available-oke-03-placeholder-y99x.hive.hivecommons.dev"
 	if err := saveSaaSHive(&SaaSHive{
 		ID: id, Status: "running", Org: "IBM", Repos: []string{"s1netops"},
 		PrimaryRepo: "s1netops", ACMMLevel: 3, ClusterID: defaultClusterID,

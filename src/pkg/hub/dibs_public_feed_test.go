@@ -87,7 +87,7 @@ func newFakeGitHubAPI(t *testing.T, repos map[string]string) *fakeGitHubAPI {
 // dibsFeed performs one handler call and returns the decoded entries.
 func dibsFeed(t *testing.T, s *HubServer) []dibsRepoEntry {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/api/saas/dibs/repos", nil)
+	req := httptest.NewRequest(http.MethodGet, "https://hive.hivecommons.dev/api/saas/dibs/repos", nil)
 	rec := httptest.NewRecorder()
 	s.handleDibsRepos(rec, req)
 	if rec.Code != http.StatusOK {

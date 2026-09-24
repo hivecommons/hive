@@ -36,7 +36,7 @@ func stuckPlaceholder(id string) *SaaSHive {
 		RequestedACMMLevel: 3,
 		Status:             statusAssigned,
 		ClaimDelivered:     false,
-		VanityURL:          "https://hosted-acme-repo-a-xxxx.hive.kubestellar.io",
+		VanityURL:          "https://hosted-acme-repo-a-xxxx.hive.hivecommons.dev",
 		ClusterID:          "hive-oke",
 		AssignedAt:         time.Now().UTC().Format(time.RFC3339),
 	}

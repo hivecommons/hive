@@ -290,7 +290,7 @@ func TestF10_MintingHasFlippedToV3(t *testing.T) {
 	mkUser(t, "alice")
 
 	rec := httptest.NewRecorder()
-	if !s.mintSessionCookies(rec, httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/login", nil), "github:alice") {
+	if !s.mintSessionCookies(rec, httptest.NewRequest(http.MethodGet, "https://hive.hivecommons.dev/login", nil), "github:alice") {
 		t.Fatal("mintSessionCookies failed")
 	}
 	var value string

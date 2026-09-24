@@ -1954,7 +1954,7 @@ func ingressHostExists(ctx context.Context, client *http.Client, cfg *inClusterC
 // This exists because the DashboardURL fallback used to synthesise
 // "<hiveID>.<hub's host>", which silently assumes every spoke is fronted by the
 // hub's own wildcard domain. That holds only for spokes co-located with the hub
-// (the hub-reachable cluster, where *.hive.kubestellar.io IS the router). On any other cluster —
+// (the hub-reachable cluster, where *.hive.hivecommons.dev IS the router). On any other cluster —
 // an OpenShift pool on *.apps.<cluster>, an IKS pool — the synthesised host
 // resolves, via the hub's wildcard, to the HUB's router, which has no backend
 // for that name and answers 503. The hub then linked users at a hostname that

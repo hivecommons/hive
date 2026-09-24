@@ -1685,7 +1685,7 @@ func TestHandleToggleVisibilityCORSPreflight(t *testing.T) {
 	mux.HandleFunc("OPTIONS /visibility-test/{id}", srv.handleToggleVisibility)
 
 	req := httptest.NewRequest("OPTIONS", "/visibility-test/test-hive", nil)
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -1721,7 +1721,7 @@ func TestHandleToggleAutoUpgradeCORSPreflight(t *testing.T) {
 	mux.HandleFunc("OPTIONS /auto-upgrade-test/{id}", srv.handleToggleAutoUpgrade)
 
 	req := httptest.NewRequest("OPTIONS", "/auto-upgrade-test/test-hive", nil)
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 

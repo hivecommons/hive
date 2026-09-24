@@ -49,7 +49,7 @@ type hostedNamespaceCandidate struct {
 	Name              string
 	Phase             string
 	CreationTimestamp time.Time
-	// HiveID is the value of the hive.kubestellar.io/hive-id label stamped by
+	// HiveID is the value of the hive.hivecommons.dev/hive-id label stamped by
 	// stampHostedNamespaceIdentity, or "" when the namespace carries no such
 	// label. It is REPORTED but never consulted by the predicate, because the
 	// two readings differ for whoever has to act: a stamped namespace whose
@@ -195,7 +195,7 @@ type LeakedNamespace struct {
 	// an entry actionable: "seven hours" and "five weeks" call for very
 	// different responses from whoever reads this.
 	Age string `json:"age"`
-	// HiveID is the hive.kubestellar.io/hive-id label, omitted when the
+	// HiveID is the hive.hivecommons.dev/hive-id label, omitted when the
 	// namespace was never stamped. See hostedNamespaceCandidate.HiveID for why
 	// the ABSENCE of the stamp is itself diagnostic.
 	HiveID string `json:"hive_id,omitempty"`

@@ -255,7 +255,7 @@ func TestDeliverSlackMessagesSerializesConcurrentBroadcasts(t *testing.T) {
 func TestSlackPreflightDoesNotReflectUntrustedOrigin(t *testing.T) {
 	for _, origin := range []string{
 		"https://evil.example.com",
-		"https://hive.kubestellar.io.evil.com",
+		"https://hive.hivecommons.dev.evil.com",
 		"://not a url",
 	} {
 		rec := httptest.NewRecorder()
@@ -275,7 +275,7 @@ func TestSlackPreflightDoesNotReflectUntrustedOrigin(t *testing.T) {
 
 func TestSlackPreflightAllowsTrustedOrigins(t *testing.T) {
 	for _, origin := range []string{
-		"https://hive.kubestellar.io",
+		"https://hive.hivecommons.dev",
 		"http://localhost:5174",
 	} {
 		rec := httptest.NewRecorder()
@@ -293,8 +293,8 @@ func TestSlackPreflightAllowsTrustedOrigins(t *testing.T) {
 	// echoed here with Allow-Credentials, which let a hostile hive operator
 	// script credentialed cross-tenant reads against the hub.
 	for _, origin := range []string{
-		"https://my-hive.hive.kubestellar.io",
-		"https://attacker-hive.hive.kubestellar.io",
+		"https://my-hive.hive.hivecommons.dev",
+		"https://attacker-hive.hive.hivecommons.dev",
 	} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/x", nil)
@@ -313,7 +313,7 @@ func TestSlackPreflightAllowsTrustedOrigins(t *testing.T) {
 func TestSlackPreflightShortCircuitsOPTIONS(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodOptions, "/x", nil)
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 
 	if handled := slackPreflight(rec, req); !handled {
 		t.Fatal("OPTIONS must be handled by the preflight")

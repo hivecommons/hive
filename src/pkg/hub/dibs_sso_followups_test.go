@@ -11,7 +11,7 @@ import (
 // #4193 — follow-ups to the dibs SSO work in #4171/#4174.
 //
 //  1. Sessions minted BEFORE the cookie-domain widening never received the
-//     Domain=.kubestellar.io cookie: it was only issued at the OAuth callback,
+//     parent-domain cookie: it was only issued at the OAuth callback,
 //     so already-signed-in users' browsers kept the old scope and
 //     dibs.kubestellar.io never saw the session. handleAuthUser (the one call
 //     the dashboard makes on every load) now re-issues the SAME verified
@@ -22,7 +22,7 @@ import (
 
 // TestAuthUserRemintsWideCookie pins the re-mint: an authenticated
 // /api/auth/user response must carry the live hive_hub_user cookie, with the
-// SAME value the request presented, scoped Domain=.kubestellar.io, plus the
+// SAME value the request presented, scoped to the hub's registrable domain, plus the
 // legacy-scope expiry — exactly what the login callback emits.
 func TestAuthUserRemintsWideCookie(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
@@ -31,7 +31,7 @@ func TestAuthUserRemintsWideCookie(t *testing.T) {
 	mkUser(t, "octocat")
 
 	presented := testAuthCookie("octocat")
-	req := httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/api/auth/user", nil)
+	req := httptest.NewRequest(http.MethodGet, "https://hive.hivecommons.dev/api/auth/user", nil)
 	req.AddCookie(presented)
 	rec := httptest.NewRecorder()
 	s.handleAuthUser(rec, req)
@@ -56,17 +56,17 @@ func TestAuthUserRemintsWideCookie(t *testing.T) {
 	if live.Value != presented.Value {
 		t.Errorf("re-mint changed the session value — it must re-issue the SAME verified value, not mint a new session")
 	}
-	if live.Domain != "kubestellar.io" {
-		t.Errorf("re-minted cookie Domain = %q, want .kubestellar.io", live.Domain)
+	if live.Domain != "hivecommons.dev" {
+		t.Errorf("re-minted cookie Domain = %q, want .hivecommons.dev", live.Domain)
 	}
 	if !live.Secure || !live.HttpOnly || live.SameSite != http.SameSiteLaxMode {
 		t.Errorf("re-minted cookie lost hardening: Secure=%v HttpOnly=%v SameSite=%v", live.Secure, live.HttpOnly, live.SameSite)
 	}
 	if legacyClear == nil {
-		t.Fatal("re-mint did not expire the legacy .hive.kubestellar.io-scoped copy")
+		t.Fatal("re-mint did not expire the legacy kubestellar.io-scoped copy")
 	}
-	if legacyClear.Domain != "hive.kubestellar.io" || legacyClear.MaxAge >= 0 {
-		t.Errorf("legacy clear cookie Domain=%q MaxAge=%d, want .hive.kubestellar.io with MaxAge<0", legacyClear.Domain, legacyClear.MaxAge)
+	if legacyClear.Domain != "kubestellar.io" || legacyClear.MaxAge >= 0 {
+		t.Errorf("legacy clear cookie Domain=%q MaxAge=%d, want .kubestellar.io with MaxAge<0", legacyClear.Domain, legacyClear.MaxAge)
 	}
 }
 
@@ -100,7 +100,7 @@ func TestAuthUserNoCookieForAnonymous(t *testing.T) {
 	s := newHandlerHub()
 
 	for _, c := range []*http.Cookie{nil, {Name: "hive_hub_user", Value: "forged"}} {
-		req := httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/api/auth/user", nil)
+		req := httptest.NewRequest(http.MethodGet, "https://hive.hivecommons.dev/api/auth/user", nil)
 		if c != nil {
 			req.AddCookie(c)
 		}
@@ -175,7 +175,7 @@ func TestDibsReposShapeAndFiltering(t *testing.T) {
 		IsPublic: true, Status: statusAvailable,
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/api/saas/dibs/repos", nil)
+	req := httptest.NewRequest(http.MethodGet, "https://hive.hivecommons.dev/api/saas/dibs/repos", nil)
 	rec := httptest.NewRecorder()
 	// The non-is_public hive (hosted-private) reaches the public-repo verdict
 	// path; point it at a fake GitHub API that 404s everything so the test
@@ -240,7 +240,7 @@ func TestDibsReposPublicNoSession(t *testing.T) {
 	defer cleanup()
 	s := newHandlerHub()
 
-	req := httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/api/saas/dibs/repos", nil)
+	req := httptest.NewRequest(http.MethodGet, "https://hive.hivecommons.dev/api/saas/dibs/repos", nil)
 	rec := httptest.NewRecorder()
 	s.handleDibsRepos(rec, req)
 

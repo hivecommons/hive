@@ -195,7 +195,7 @@ func TestCertCoversWildcard(t *testing.T) {
 		}, false},
 		{"the apex alone is not coverage", []string{"hive.hivecommons.dev"}, false},
 		{"a wildcard one level up is not coverage", []string{"*.hivecommons.dev"}, false},
-		{"a wildcard for another domain", []string{"*.hive.kubestellar.io"}, false},
+		{"a wildcard for another domain", []string{"*.legacy.example.com"}, false},
 		{"no SANs at all", nil, false},
 	}
 	for _, tc := range cases {
@@ -296,7 +296,7 @@ func TestSummarizeWildcardTLSStatuses(t *testing.T) {
 			// tls: blocks from the domain in clusters.json, and the certificate
 			// does not actually carry that wildcard.
 			name:     "a certificate that does not cover the domain",
-			dnsNames: []string{"*.hive.kubestellar.io"},
+			dnsNames: []string{"*.legacy.example.com"},
 			notAfter: now.Add(80 * 24 * time.Hour),
 			want:     wildcardStatusDomainMismatch,
 			wantDays: 80,
@@ -343,7 +343,7 @@ func TestSummarizeWildcardTLSStatuses(t *testing.T) {
 // an operator to renew a certificate that would still be wrong.
 func TestSummarizeWildcardTLSCoverageOutranksExpiry(t *testing.T) {
 	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
-	cert, _ := testCert(t, "R3", []string{"*.hive.kubestellar.io"},
+	cert, _ := testCert(t, "R3", []string{"*.legacy.example.com"},
 		now.Add(-90*24*time.Hour), now.Add(2*24*time.Hour))
 
 	rep := summarizeWildcardTLS(cert, "hive-hub/hive-wildcard-tls",

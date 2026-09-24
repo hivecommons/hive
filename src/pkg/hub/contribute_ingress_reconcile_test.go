@@ -165,7 +165,7 @@ func TestContributeIngressPatchIsEmptyWhenConverged(t *testing.T) {
 func TestContributeIngressPatchReplacesOnlyTheStaleValue(t *testing.T) {
 	want := contributeIngressAuthAnnotations("https://hive.hivecommons.dev", "hosted-hive-x")
 	live := map[string]string{
-		ingressAuthURLAnnotation:             "https://hive.kubestellar.io/api/saas/auth-check?hive=hosted-hive-x&uri=$request_uri",
+		ingressAuthURLAnnotation:             "https://previous-hub.example.com/api/saas/auth-check?hive=hosted-hive-x&uri=$request_uri",
 		ingressAuthResponseHeadersAnnotation: ingressAuthResponseHeaders,
 	}
 	patch, err := contributeIngressAnnotationPatch(liveIngressJSON(t, live), want)

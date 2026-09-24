@@ -212,7 +212,7 @@ func TestHandleToggleAutoUpgradeSuccess(t *testing.T) {
 	// OPTIONS preflight.
 	rec = httptest.NewRecorder()
 	opt := reqWithUser(http.MethodOptions, "/au", "", "alice")
-	opt.Header.Set("Origin", "https://hive.kubestellar.io")
+	opt.Header.Set("Origin", "https://hive.hivecommons.dev")
 	s.handleToggleAutoUpgrade(rec, opt)
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("OPTIONS status = %d, want 204", rec.Code)

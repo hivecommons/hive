@@ -258,14 +258,14 @@ func TestHandleUpgradeHiveCORSPreflight(t *testing.T) {
 	srv.mux.HandleFunc("OPTIONS /upgrade-test/{id}", srv.handleUpgradeHive)
 
 	req := httptest.NewRequest("OPTIONS", "/upgrade-test/test-hive", nil)
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
 	if w.Code != http.StatusNoContent {
 		t.Errorf("CORS preflight: expected 204, got %d", w.Code)
 	}
-	if w.Header().Get("Access-Control-Allow-Origin") != "https://hive.kubestellar.io" {
+	if w.Header().Get("Access-Control-Allow-Origin") != "https://hive.hivecommons.dev" {
 		t.Error("CORS headers missing")
 	}
 }
@@ -277,7 +277,7 @@ func TestHandleUpgradeHiveNotFound(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/saas/hives/{id}/upgrade", srv.handleUpgradeHive)
 	req := httptest.NewRequest("POST", "/api/saas/hives/nonexistent-xyz/upgrade", nil)
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -400,7 +400,7 @@ func TestHandleCreateHiveNoAuth(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/api/saas/hives", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
@@ -929,15 +929,15 @@ func TestGetAuthUserBearer(t *testing.T) {
 }
 
 // TestSubdomainTrustIsRedirectOnly records the F4 split explicitly: a
-// *.hive.kubestellar.io subdomain is trusted as a post-login REDIRECT target
+// *.hive.hivecommons.dev subdomain is trusted as a post-login REDIRECT target
 // (hosted sign-in depends on it) but is NOT trusted to author a request.
 //
 // This test previously asserted, via isTrustedOrigin, that a subdomain was
 // trusted for BOTH — which is the vulnerability F4 reported.
 func TestSubdomainTrustIsRedirectOnly(t *testing.T) {
 	for _, sub := range []string{
-		"https://dashboard.hive.kubestellar.io",
-		"https://my-hive.hive.kubestellar.io",
+		"https://dashboard.hive.hivecommons.dev",
+		"https://my-hive.hive.hivecommons.dev",
 	} {
 		if !isTrustedRedirectTarget(sub) {
 			t.Errorf("%s should remain a trusted redirect target (hosted sign-in depends on it)", sub)
@@ -1099,7 +1099,7 @@ func TestMarkStaleHivesWithOldHeartbeat(t *testing.T) {
 
 func TestIsCSRFSafePostWithOrigin(t *testing.T) {
 	req := httptest.NewRequest("POST", "/test", nil)
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	if !isCSRFSafe(req) {
 		t.Error("POST with trusted origin should pass CSRF")
 	}

@@ -296,7 +296,7 @@ func TestBulkHandlerPreflightOnlyTrustsKnownOrigins(t *testing.T) {
 	s := bulkTestHub(t)
 
 	trusted := []string{
-		"https://hive.kubestellar.io",
+		"https://hive.hivecommons.dev",
 		"http://localhost:5174",
 		"http://127.0.0.1:8080",
 	}
@@ -321,15 +321,15 @@ func TestBulkHandlerPreflightOnlyTrustsKnownOrigins(t *testing.T) {
 
 	untrusted := []string{
 		"https://evil.example.com",
-		"https://hive.kubestellar.io.evil.com",
+		"https://hive.hivecommons.dev.evil.com",
 		"https://notlocalhost",
 		"::not a url::",
 		// Audit F4: sibling tenants are untrusted for credentialed CORS. The
 		// browser hands them the parent-domain session cookie, so reflecting
 		// Allow-Origin + Allow-Credentials back to one gives a hostile hive
 		// operator a scripted cross-tenant read of the hub API.
-		"https://console.hive.kubestellar.io",
-		"https://attacker-hive.hive.kubestellar.io",
+		"https://console.hive.hivecommons.dev",
+		"https://attacker-hive.hive.hivecommons.dev",
 	}
 	for _, origin := range untrusted {
 		t.Run("untrusted "+origin, func(t *testing.T) {
@@ -356,8 +356,8 @@ func TestHandleLoginRejectsLookalikeRedirectHosts(t *testing.T) {
 	hostile := []string{
 		"https://evil.example.com/steal",
 		"//evil.example.com",
-		"//hive.kubestellar.io.evil.com",
-		"https://hive.kubestellar.io.evil.com/x",
+		"//hive.hivecommons.dev.evil.com",
+		"https://hive.hivecommons.dev.evil.com/x",
 	}
 	for _, rd := range hostile {
 		t.Run(rd, func(t *testing.T) {

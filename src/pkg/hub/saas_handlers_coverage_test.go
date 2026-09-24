@@ -94,10 +94,10 @@ func newHandlerHub() *HubServer {
 		// Domain is load-bearing, not decoration: the placeholder URL a hive
 		// with no reported dashboard URL falls back to is now derived from ITS
 		// OWN cluster's domain (placeholderHostURL) instead of a hardcoded
-		// hive.kubestellar.io. A cluster with no domain therefore yields no
+		// hive.hivecommons.dev. A cluster with no domain therefore yields no
 		// URL at all — which is the correct fail-closed answer, and is why this
 		// fixture must name the domain it is standing in for.
-		clusters: map[string]ClusterConfig{"hive-oke": {ID: "hive-oke", Domain: "hive.kubestellar.io"}},
+		clusters: map[string]ClusterConfig{"hive-oke": {ID: "hive-oke", Domain: "hive.hivecommons.dev"}},
 	}
 }
 
@@ -186,7 +186,7 @@ func TestHandleOpenHive(t *testing.T) {
 	// redirect happened, which passed just as happily when the host was
 	// unreachable — the 503 bug. Assert the HOST too: it must be the one this
 	// hive's own cluster serves.
-	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "https://hosted-abc.hive.kubestellar.io/sso?token=") {
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "https://hosted-abc.hive.hivecommons.dev/sso?token=") {
 		t.Errorf("admin open must hand off to the host the hive's cluster serves, got %q", loc)
 	}
 
@@ -219,7 +219,7 @@ func TestHandleToggleVisibility(t *testing.T) {
 	// OPTIONS preflight.
 	rec := httptest.NewRecorder()
 	req := reqWithUser(http.MethodOptions, "/vis", "", "alice")
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	s.handleToggleVisibility(rec, req)
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("OPTIONS status = %d, want 204", rec.Code)

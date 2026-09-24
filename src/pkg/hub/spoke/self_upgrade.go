@@ -43,7 +43,7 @@ func RolloutRestartSelf(logger *slog.Logger) error {
 	}
 
 	restartAnnotation := fmt.Sprintf(
-		`{"spec":{"template":{"metadata":{"annotations":{"hive.kubestellar.io/restart-at":"%s"}}}}}`,
+		`{"spec":{"template":{"metadata":{"annotations":{"hive.hivecommons.dev/restart-at":"%s"}}}}}`,
 		time.Now().UTC().Format(time.RFC3339),
 	)
 
@@ -124,7 +124,7 @@ func SwitchImageSelf(logger *slog.Logger, image string) error {
 		ics = append(ics, fmt.Sprintf(`{"name":%q,"image":%q}`, n, image))
 	}
 	patch := fmt.Sprintf(
-		`{"spec":{"template":{"spec":{"containers":[%s],"initContainers":[%s]},"metadata":{"annotations":{"hive.kubestellar.io/restart-at":%q}}}}}`,
+		`{"spec":{"template":{"spec":{"containers":[%s],"initContainers":[%s]},"metadata":{"annotations":{"hive.hivecommons.dev/restart-at":%q}}}}}`,
 		strings.Join(cs, ","), strings.Join(ics, ","), time.Now().UTC().Format(time.RFC3339),
 	)
 	if err := k8sAPIPatch(path, []byte(patch)); err != nil {
@@ -254,7 +254,7 @@ func UpgradeSelfToSHA(logger *slog.Logger, targetSHA string) (needsRestart bool,
 // no-op, Kubernetes sees no change to the template, and no rollout happens at
 // all. Carrying the target (rather than a timestamp) also makes the intent
 // readable with `kubectl get deploy -o yaml` when diagnosing a stuck upgrade.
-const selfUpgradeTargetAnnotation = "hive.kubestellar.io/upgrade-target-sha"
+const selfUpgradeTargetAnnotation = "hive.hivecommons.dev/upgrade-target-sha"
 
 // upgradeSelfMutableToSHA advances a deployment that tracks a MUTABLE tag
 // (v2-latest and friends) onto targetSHA.
@@ -316,7 +316,7 @@ func upgradeSelfMutableToSHA(logger *slog.Logger, current, targetSHA string) (ne
 	// upgrades to the SAME target still produce distinct templates; without it
 	// a retry of an identical target would itself be a no-op.
 	patch := fmt.Sprintf(
-		`{"spec":{"template":{"metadata":{"annotations":{%q:%q,"hive.kubestellar.io/restart-at":%q}}}}}`,
+		`{"spec":{"template":{"metadata":{"annotations":{%q:%q,"hive.hivecommons.dev/restart-at":%q}}}}}`,
 		selfUpgradeTargetAnnotation, targetSHA,
 		time.Now().UTC().Format(time.RFC3339),
 	)

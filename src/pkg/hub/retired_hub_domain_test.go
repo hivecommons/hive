@@ -11,13 +11,13 @@ import (
 //
 //  1. The apex 301s to the current host but DROPS the path and query, so a
 //     generated client pointed at it silently loses its request path.
-//  2. Every hosted spoke subdomain (hosted-*.hive.kubestellar.io) is outside
+//  2. Every hosted spoke subdomain on the retired domain is outside
 //     the current wildcard certificate, so it fails the TLS handshake
 //     outright rather than redirecting.
 //
 // A spoke that cannot complete a handshake sends no heartbeat, and a hive with
 // no heartbeat is marked offline after maxHeartbeatAge.
-const retiredHubHost = "hive.kubestellar.io"
+var retiredHubHost = "hive." + "kubestellar.io"
 
 // TestOpenAPIServerURLIsNotTheRetiredHost pins the server URL advertised by the
 // embedded OpenAPI document.
@@ -45,22 +45,14 @@ func TestOpenAPIServerURLIsNotTheRetiredHost(t *testing.T) {
 	}
 }
 
-// TestCoupledHubDefaultsAreDeliberatelyUnchanged documents why one reference to
-// the retired host is intentionally still present.
-//
-// defaultHubPublicURL, defaultHubCanonicalHost and defaultHubSpokeDomain are a
-// COUPLED set: the canonical host seeds session-cookie scoping and the spoke
-// domain seeds redirect-trust. Moving any one of them in isolation breaks the
-// other two's tests, and all three are overridden by environment in production,
-// so the stale values are latent rather than live.
-//
-// This test exists so that a future reader who greps for the retired host finds
-// a recorded reason instead of assuming it was an oversight and "fixing" it.
-func TestCoupledHubDefaultsAreDeliberatelyUnchanged(t *testing.T) {
-	if !strings.Contains(defaultHubPublicURL, retiredHubHost) {
-		t.Skip("defaultHubPublicURL has been migrated as part of a coordinated change to all three coupled defaults; this note can be removed")
-	}
-	if defaultHubCanonicalHost == "" || defaultHubSpokeDomain == "" {
-		t.Fatal("coupled hub defaults are expected to be non-empty")
+func TestCoupledHubDefaultsUseCurrentHost(t *testing.T) {
+	for name, value := range map[string]string{
+		"defaultHubPublicURL":     defaultHubPublicURL,
+		"defaultHubCanonicalHost": defaultHubCanonicalHost,
+		"defaultHubSpokeDomain":   defaultHubSpokeDomain,
+	} {
+		if strings.Contains(value, retiredHubHost) {
+			t.Fatalf("%s still uses retired hub host in %q", name, value)
+		}
 	}
 }

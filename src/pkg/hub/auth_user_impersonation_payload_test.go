@@ -18,7 +18,7 @@ import (
 // signed impersonation grant for target, returning the decoded payload.
 func impersonatedAuthUser(t *testing.T, s *HubServer, target string) map[string]any {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/api/auth/user", nil)
+	req := httptest.NewRequest(http.MethodGet, "https://hive.hivecommons.dev/api/auth/user", nil)
 	req.AddCookie(testAuthCookie(hubAdminUsername))
 	req.AddCookie(&http.Cookie{
 		Name:  impersonateCookieName,
@@ -113,7 +113,7 @@ func TestAuthUserOwnCountryShipped(t *testing.T) {
 		{"carol", "FR", true},
 		{"dave", "", false},
 	} {
-		req := httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/api/auth/user", nil)
+		req := httptest.NewRequest(http.MethodGet, "https://hive.hivecommons.dev/api/auth/user", nil)
 		req.AddCookie(testAuthCookie(tc.user))
 		rec := httptest.NewRecorder()
 		s.handleAuthUser(rec, req)

@@ -409,7 +409,7 @@ func TestVanityHostDomainFromExistingRoute(t *testing.T) {
 		want string
 	}{
 		{"hosted-acme-repo-abcd.apps.example.com", "apps.example.com"},
-		{"hosted-x.hive.kubestellar.io", "hive.kubestellar.io"},
+		{"hosted-x.hive.hivecommons.dev", "hive.hivecommons.dev"},
 		{"no-dot-here", ""},
 		{"", ""},
 		{"trailing-dot.", ""},

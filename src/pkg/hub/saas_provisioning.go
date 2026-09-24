@@ -1129,7 +1129,7 @@ func claimedVanityURL(h *SaaSHive) string {
 // the hive actually lives on.
 //
 // The domain MUST come from the hive's own cluster rather than the hub's
-// hardcoded hive.kubestellar.io. That constant is the wildcard fronting the
+// hardcoded hive.hivecommons.dev. That constant is the wildcard fronting the
 // HUB's router, so using it for a spoke on any other cluster produces a name
 // that resolves to the hub and 503s — the exact defect this path exhibited on
 // the OpenShift pool. Deriving it per-cluster is also what keeps this correct

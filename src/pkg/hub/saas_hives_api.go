@@ -1508,7 +1508,7 @@ const maxHiveDisplayNameLen = 100
 //
 // Derived-surface handling on rename:
 //   - Namespace identity is RE-STAMPED here (idempotent, best-effort) so the
-//     hive.kubestellar.io/display-name annotation tracks the new name.
+//     hive.hivecommons.dev/display-name annotation tracks the new name.
 //   - The vanity host is NOT recomputed. It is set-once at claim time (the
 //     assign path only mints one when VanityURL is empty) and doubles as the
 //     "placeholder is claimed" marker; minting a fresh random host on every

@@ -21,7 +21,7 @@ func TestHandleRenameHive(t *testing.T) {
 	// OPTIONS preflight -> 204, no auth needed.
 	rec := httptest.NewRecorder()
 	req := reqWithUser(http.MethodOptions, "/name", "", "alice")
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	s.handleRenameHive(rec, req)
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("OPTIONS status = %d, want 204", rec.Code)

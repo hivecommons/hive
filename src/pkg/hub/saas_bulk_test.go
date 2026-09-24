@@ -55,7 +55,7 @@ func bulkPost(t *testing.T, srv *HubServer, user string, body any) (*httptest.Re
 	// action semantics (caps, dedup, per-hive ownership), not about CSRF — the
 	// CSRF behaviour is asserted directly in csrf_f4_fail_closed_test.go. Without
 	// this every case here would stop at 403 and silently test nothing.
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	if user != "" {
 		req.AddCookie(testAuthCookie(user))
 	}

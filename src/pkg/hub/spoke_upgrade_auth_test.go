@@ -64,7 +64,7 @@ func TestSpokeUpgradeProofAllowsOwnerWithoutHubCookie(t *testing.T) {
 	}()
 
 	req := setPathValue(httptest.NewRequest(http.MethodPost, "/api/saas/hives/"+hiveID+"/upgrade", nil), "id", hiveID)
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	req.Header.Set("X-Hive-User", user)
 	req.Header.Set("X-Hive-Role", "owner")
 	req.Header.Set(proxyAuthHeader, token)
@@ -103,7 +103,7 @@ func TestSpokeUpgradeProofRejectsNonOwner(t *testing.T) {
 	}
 
 	req := setPathValue(httptest.NewRequest(http.MethodPost, "/api/saas/hives/"+hiveID+"/upgrade", nil), "id", hiveID)
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	req.Header.Set("X-Hive-User", user)
 	req.Header.Set("X-Hive-Role", "owner")
 	req.Header.Set(proxyAuthHeader, token)
@@ -152,7 +152,7 @@ func TestSpokeUpgradeMiddlewareStillAcceptsHubSession(t *testing.T) {
 	}()
 
 	req := setPathValue(reqWithUser(http.MethodPost, "/api/saas/hives/"+hiveID+"/upgrade", "", user), "id", hiveID)
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	rec := httptest.NewRecorder()
 	s.requireAuthOrSpokeUpgrade(s.handleUpgradeHive)(rec, req)
 
@@ -182,7 +182,7 @@ func TestSpokeUpgradeMiddlewareRejectsMissingAndInvalidProof(t *testing.T) {
 
 	for _, proof := range []string{"", "wrong"} {
 		req := setPathValue(httptest.NewRequest(http.MethodPost, "/api/saas/hives/"+hiveID+"/upgrade", nil), "id", hiveID)
-		req.Header.Set("Origin", "https://hive.kubestellar.io")
+		req.Header.Set("Origin", "https://hive.hivecommons.dev")
 		req.Header.Set("X-Hive-User", user)
 		req.Header.Set("X-Hive-Role", "owner")
 		req.Header.Set(proxyAuthHeader, proof)
@@ -216,7 +216,7 @@ func TestSpokeUpgradeMiddlewareRejectsBlockedSpokeUser(t *testing.T) {
 	}
 
 	req := setPathValue(httptest.NewRequest(http.MethodPost, "/api/saas/hives/"+hiveID+"/upgrade", nil), "id", hiveID)
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	req.Header.Set("X-Hive-User", user)
 	req.Header.Set("X-Hive-Role", "owner")
 	req.Header.Set(proxyAuthHeader, token)
@@ -293,7 +293,7 @@ func TestSpokeUpgradeProofWithoutUserIdentityAttributesToOwner(t *testing.T) {
 
 	// Exactly what the spoke relays on the gateway topology: role + proof, NO user.
 	req := setPathValue(httptest.NewRequest(http.MethodPost, "/api/saas/hives/"+hiveID+"/upgrade", nil), "id", hiveID)
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	req.Header.Set("X-Hive-Role", "owner")
 	req.Header.Set(proxyAuthHeader, token)
 
@@ -367,7 +367,7 @@ func TestSpokeUpgradeHonestErrors(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := setPathValue(httptest.NewRequest(http.MethodPost, "/api/saas/hives/"+hiveID+"/upgrade", nil), "id", hiveID)
-			req.Header.Set("Origin", "https://hive.kubestellar.io")
+			req.Header.Set("Origin", "https://hive.hivecommons.dev")
 			for k, v := range tc.headers {
 				req.Header.Set(k, v)
 			}
@@ -385,7 +385,7 @@ func TestSpokeUpgradeHonestErrors(t *testing.T) {
 	// Proof unverifiable: the hive is not in the registry and nothing is cached,
 	// so the hub cannot resolve its dashboard-token secret at all.
 	req := setPathValue(httptest.NewRequest(http.MethodPost, "/api/saas/hives/unknown-hive/upgrade", nil), "id", "unknown-hive")
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	req.Header.Set("X-Hive-User", owner)
 	req.Header.Set("X-Hive-Role", "owner")
 	req.Header.Set(proxyAuthHeader, token)

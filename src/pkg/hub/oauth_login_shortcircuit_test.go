@@ -21,7 +21,7 @@ func TestHandleLoginSignedInWithRedirectShortCircuits(t *testing.T) {
 	s := newHandlerHub()
 	mkUser(t, "octocat")
 
-	req := httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/login?redirect=%2Fdashboard", nil)
+	req := httptest.NewRequest(http.MethodGet, "https://hive.hivecommons.dev/login?redirect=%2Fdashboard", nil)
 	req.AddCookie(testAuthCookie("octocat"))
 	rec := httptest.NewRecorder()
 	s.handleLogin(rec, req)
@@ -43,7 +43,7 @@ func TestHandleLoginSignedInWithoutRedirectKeepsLoginFlow(t *testing.T) {
 	s := newHandlerHub()
 	mkUser(t, "octocat")
 
-	req := httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/login", nil)
+	req := httptest.NewRequest(http.MethodGet, "https://hive.hivecommons.dev/login", nil)
 	req.AddCookie(testAuthCookie("octocat"))
 	rec := httptest.NewRecorder()
 	s.handleLogin(rec, req)
@@ -62,7 +62,7 @@ func TestHandleLoginAnonymousWithRedirectKeepsLoginFlow(t *testing.T) {
 	s := newHandlerHub()
 
 	for _, c := range []*http.Cookie{nil, {Name: "hive_hub_user", Value: "forged"}} {
-		req := httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/login?redirect=%2Fdashboard", nil)
+		req := httptest.NewRequest(http.MethodGet, "https://hive.hivecommons.dev/login?redirect=%2Fdashboard", nil)
 		if c != nil {
 			req.AddCookie(c)
 		}

@@ -2306,7 +2306,7 @@
       // forever, because Kubernetes has no atomic namespace rename. Surfacing
       // it here is what lets an operator map "some namespace on the cluster"
       // back to "this hive" without cross-referencing the registry by hand —
-      // exactly the gap the hive.kubestellar.io/* namespace labels close from
+      // exactly the gap the hive.hivecommons.dev/* namespace labels close from
       // the cluster side. Computed client-side (not a separate stored field)
       // so it can never drift from the one place the namespace name is
       // decided; omitted for a non-hosted row, which has no such namespace.
@@ -6124,7 +6124,7 @@
           // does NOT require access — so Contribute is the PRIMARY action for
           // EVERYONE on a public hive, regardless of access status. Use the
           // hive's heartbeat-reported dashboard URL (resolvedBase), NOT a
-          // hardcoded <id>.hive.kubestellar.io host. Firewalled spokes (e.g.
+          // hardcoded <id>.hive.hivecommons.dev host. Firewalled spokes (e.g.
           // the heartbeat-only cluster on its OpenShift-route domain) live on a different
           // domain, so the hardcoded host 503'd/failed to resolve.
           var cBase = resolvedBase(h);
@@ -10830,7 +10830,7 @@
             var hiveName = regEntry ? (regEntry.name || hid) : hid;
             // Prefer the hive's heartbeat-reported dashboard URL so firewalled
             // spokes (the heartbeat-only cluster etc.) link to their real route, not a dead
-            // <id>.hive.kubestellar.io host. Fall back to the hub-reachable-cluster pattern.
+            // <id>.hive.hivecommons.dev host. Fall back to the hub-reachable-cluster pattern.
             var linkBase = (regEntry && regEntry.dashboardUrl && !regEntry.dashboardUrl.includes('localhost'))
               ? regEntry.dashboardUrl : ((isHosted && _hubSpokeDomain) ? 'https://' + esc(hid) + '.' + esc(_hubSpokeDomain) : '');
             var linkLabel = linkBase.replace(/^https?:\/\//, '');

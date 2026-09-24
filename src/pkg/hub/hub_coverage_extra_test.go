@@ -281,11 +281,11 @@ func TestHandleToggleVisibilityCORSHeaders(t *testing.T) {
 
 	req := httptest.NewRequest("PUT", "/visibility/test-hive", strings.NewReader(`{"is_public":true}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
-	if w.Header().Get("Access-Control-Allow-Origin") != "https://hive.kubestellar.io" {
+	if w.Header().Get("Access-Control-Allow-Origin") != "https://hive.hivecommons.dev" {
 		t.Error("should set CORS headers for trusted origin")
 	}
 }
@@ -318,11 +318,11 @@ func TestHandleUpgradeHiveCORSHeaders(t *testing.T) {
 	mux.HandleFunc("POST /upgrade/{id}", srv.handleUpgradeHive)
 
 	req := httptest.NewRequest("POST", "/upgrade/test-hive", nil)
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
-	if w.Header().Get("Access-Control-Allow-Origin") != "https://hive.kubestellar.io" {
+	if w.Header().Get("Access-Control-Allow-Origin") != "https://hive.hivecommons.dev" {
 		t.Error("should set CORS headers")
 	}
 }
@@ -339,11 +339,11 @@ func TestHandleToggleAutoUpgradeCORSHeaders(t *testing.T) {
 
 	req := httptest.NewRequest("PUT", "/auto-upgrade/test-hive", strings.NewReader(`{"auto_upgrade":true}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
-	if w.Header().Get("Access-Control-Allow-Origin") != "https://hive.kubestellar.io" {
+	if w.Header().Get("Access-Control-Allow-Origin") != "https://hive.hivecommons.dev" {
 		t.Error("should set CORS headers")
 	}
 }

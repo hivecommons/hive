@@ -14,7 +14,7 @@ const (
 	// elsewhere in this package (see self_upgrade.go's restart-at/
 	// upgrade-target-sha annotations) — reused here rather than inventing a
 	// second convention.
-	hiveLabelPrefix = "hive.kubestellar.io/"
+	hiveLabelPrefix = "hive.hivecommons.dev/"
 
 	// hiveNameLabel/hiveOrgLabel/hiveIDLabel are RFC-1123-safe label VALUES
 	// (see sanitizeLabelValue) recording the hive's identity on its namespace.
@@ -221,7 +221,7 @@ const stampNamespaceIdentityTimeout = 15 * time.Second
 // Unicode and punctuation are dropped outright, matching sanitizeLabelValue's
 // stance: a confident wrong transliteration is worse than an honestly
 // shortened value, and the exact name is recoverable from the
-// hive.kubestellar.io/display-name annotation stamped on the namespace.
+// hive.hivecommons.dev/display-name annotation stamped on the namespace.
 func hiveNameHostLabel(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	var b strings.Builder

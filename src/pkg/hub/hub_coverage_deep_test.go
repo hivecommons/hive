@@ -123,7 +123,7 @@ func TestHandleUpgradeHiveForbidden(t *testing.T) {
 	mux.HandleFunc("POST /api/saas/hives/{id}/upgrade", srv.handleUpgradeHive)
 
 	req := httptest.NewRequest("POST", "/api/saas/hives/nonexist/upgrade", nil)
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	req.Header.Set("Authorization", "Bearer ghp_upgrade_notown")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -149,7 +149,7 @@ func TestHandleToggleVisibilityForbidden(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/saas/hives/nonexist/visibility",
 		strings.NewReader(`{"is_public":true}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	req.Header.Set("Authorization", "Bearer ghp_vis_notown")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)

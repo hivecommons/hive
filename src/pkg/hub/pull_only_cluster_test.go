@@ -20,7 +20,7 @@ func TestPullOnlyClusterRegisters(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "clusters.json")
 	body := `[
-	  {"id":"hive-oke","name":"OKE","in_cluster":true,"domain":"hive.kubestellar.io"},
+	  {"id":"hive-oke","name":"OKE","in_cluster":true,"domain":"hive.hivecommons.dev"},
 	  {"id":"a-ks-wec2","name":"IKS wec2","pull_only":true,"domain":"wec2.example.cloud",
 	   "github_app_id":5686,"github_app_slug":"kubestellar-hive-ghe",
 	   "github_base_url":"https://github.ibm.com","github_api_url":"https://github.ibm.com/api/v3"}
@@ -132,7 +132,7 @@ func TestPullOnlyClusterCountsAsUnreachableWithoutDialing(t *testing.T) {
 	srv := newHubServerForTest(t)
 	srv.clusters = map[string]ClusterConfig{
 		"a-ks-wec2": {ID: "a-ks-wec2", PullOnly: true, Domain: "wec2.example.cloud"},
-		"hive-oke":  {ID: "hive-oke", InCluster: true, Domain: "hive.kubestellar.io"},
+		"hive-oke":  {ID: "hive-oke", InCluster: true, Domain: "hive.hivecommons.dev"},
 	}
 
 	if !srv.clusterRecentlyUnreachable("a-ks-wec2") {

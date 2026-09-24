@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,57 @@ import (
 
 //go:embed static/*
 var staticFS embed.FS
+
+type hubErrorPageMessage struct {
+	Title       string
+	Message     string
+	Icon        string
+	ShowLogin   bool
+	ShowHome    bool
+	ShowSpinner bool
+	AutoRefresh bool
+}
+
+const (
+	hubErrorPagePath = "/error/"
+	hubLoginPath     = "/login"
+)
+
+var hubErrorPageMessages = map[int]hubErrorPageMessage{
+	http.StatusForbidden: {
+		Title:     "Access Denied",
+		Message:   "You don't have permission to view this page. Try logging in first.",
+		Icon:      "🔒",
+		ShowLogin: true,
+	},
+	http.StatusNotFound: {
+		Title:    "Page Not Found",
+		Message:  "The page you're looking for doesn't exist or has moved.",
+		Icon:     "🔍",
+		ShowHome: true,
+	},
+	http.StatusBadGateway: {
+		Title:       "Hive Upgrading",
+		Message:     "This hive is being upgraded to a new version. It'll be back in a moment.",
+		Icon:        "🐝",
+		ShowSpinner: true,
+		AutoRefresh: true,
+	},
+	http.StatusServiceUnavailable: {
+		Title:       "Hive Restarting",
+		Message:     "This hive is restarting. It'll be back in a few seconds.",
+		Icon:        "🐝",
+		ShowSpinner: true,
+		AutoRefresh: true,
+	},
+	http.StatusGatewayTimeout: {
+		Title:       "Gateway Timeout",
+		Message:     "The hive took too long to respond. It may be under heavy load.",
+		Icon:        "⏱",
+		ShowSpinner: true,
+		AutoRefresh: true,
+	},
+}
 
 // registryPath is the DEFAULT on-disk hub registry file. A var (not a const)
 // so tests can redirect it at a temp file before constructing a server;
@@ -1590,6 +1642,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("GET /components.css", s.serveStatic("static/components.css"))
 	s.mux.HandleFunc("GET /api/reading-list", s.handleReadingList)
 	s.mux.HandleFunc("GET /reading", s.serveStatic("static/reading.html"))
+	s.mux.HandleFunc("GET "+hubErrorPagePath+"{code}", s.handleHubErrorPage)
 	// Unlinked page (not in nav, noindex) — direct-URL only. The CNCF End User
 	// reference-architecture draft, shareable without artifact permissions.
 	s.mux.HandleFunc("GET /cncf-reference-architecture", s.serveStatic("static/cncf-reference-architecture.html"))
@@ -1617,7 +1670,8 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	// unconfigured, which would leave the image 404ing and every unfurled Hive
 	// link showing a blank card.
 	s.mux.HandleFunc("GET /og-card.png", s.handleOGCard)
-	s.mux.Handle("GET /", http.FileServerFS(staticFS))
+	s.mux.Handle("GET /static/", http.FileServerFS(staticFS))
+	s.mux.HandleFunc("GET /", s.handleHubNotFound)
 
 	s.registerOAuth()
 	s.registerSaaSRoutes()
@@ -4147,7 +4201,7 @@ func (s *HubServer) serveStatic(path string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		data, err := staticFS.ReadFile(path)
 		if err != nil {
-			http.NotFound(w, r)
+			s.writeHubErrorPage(w, http.StatusNotFound)
 			return
 		}
 		if ct := mime.TypeByExtension(filepath.Ext(path)); ct != "" {
@@ -4157,6 +4211,98 @@ func (s *HubServer) serveStatic(path string) http.HandlerFunc {
 		}
 		_, _ = w.Write(data)
 	}
+}
+
+func (s *HubServer) handleHubNotFound(w http.ResponseWriter, _ *http.Request) {
+	s.writeHubErrorPage(w, http.StatusNotFound)
+}
+
+func (s *HubServer) handleHubErrorPage(w http.ResponseWriter, r *http.Request) {
+	code, err := strconv.Atoi(r.PathValue("code"))
+	if err != nil {
+		code = http.StatusServiceUnavailable
+	}
+	if _, ok := hubErrorPageMessages[code]; !ok {
+		code = http.StatusServiceUnavailable
+	}
+	s.writeHubErrorPage(w, code)
+}
+
+func (s *HubServer) writeHubErrorPage(w http.ResponseWriter, code int) {
+	msg, ok := hubErrorPageMessages[code]
+	if !ok {
+		code = http.StatusServiceUnavailable
+		msg = hubErrorPageMessages[code]
+	}
+	loginStyle := ` style="display:none"`
+	if msg.ShowLogin {
+		loginStyle = ""
+	}
+	homeStyle := ` style="display:none"`
+	if msg.ShowHome {
+		homeStyle = ""
+	}
+	spinnerStyle := ` style="display:none"`
+	if msg.ShowSpinner {
+		spinnerStyle = ""
+	}
+	refreshScript := ""
+	if msg.AutoRefresh {
+		refreshScript = "<script>setTimeout(function(){location.reload()}, 5000);</script>"
+	}
+	homeURL := hubPublicURL()
+	loginURL := homeURL + hubLoginPath
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(code)
+	_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hive — %[2]s</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0d1117;color:#e6edf3;display:flex;align-items:center;justify-content:center;min-height:100vh}
+    .container{text-align:center;max-width:520px;padding:40px 24px}
+    .bee{font-size:64px;margin-bottom:24px}
+    h1{font-size:1.5rem;font-weight:600;margin-bottom:12px}
+    p{font-size:.95rem;color:#8b949e;line-height:1.6;margin-bottom:24px}
+    .code{font-size:3rem;font-weight:700;color:#f0b429;margin-bottom:8px}
+    .spinner{width:32px;height:32px;border:3px solid #30363d;border-top-color:#f0b429;border-radius:50%%;animation:spin 1s linear infinite;margin:0 auto 16px}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    a{color:#58a6ff;text-decoration:none}
+    a:hover{text-decoration:underline}
+    .btn{display:inline-block;padding:10px 24px;background:#f0b429;color:#0d1117;border-radius:8px;font-weight:600;text-decoration:none;margin-top:8px}
+    .btn:hover{background:#d4a017;text-decoration:none}
+  </style>
+  %[11]s
+</head>
+<body>
+  <div class="container" data-status-code="%[1]d">
+    <div class="bee" id="icon">%[4]s</div>
+    <div class="code" id="code">%[1]d</div>
+    <h1 id="title">%[2]s</h1>
+    <div id="spinner" class="spinner"%[8]s></div>
+    <p id="msg">%[3]s</p>
+    <a id="login-btn" href="%[6]s" class="btn"%[9]s>Login with GitHub</a>
+    <a id="home-btn" href="%[5]s" class="btn"%[10]s>Go to Hive Hub</a>
+  </div>
+</body>
+</html>
+`,
+		code,
+		html.EscapeString(msg.Title),
+		html.EscapeString(msg.Message),
+		html.EscapeString(msg.Icon),
+		html.EscapeString(homeURL),
+		html.EscapeString(loginURL),
+		"", // kept so explicit indexes below stay stable if the template grows.
+		spinnerStyle,
+		loginStyle,
+		homeStyle,
+		refreshScript,
+	)
 }
 
 func (s *HubServer) loadRegistry() {

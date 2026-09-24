@@ -13,7 +13,7 @@ import (
 // Two halves, both pinned here:
 //   1. GET /api/saas/whoami — the identity bridge dibs calls server-to-server
 //      with the browser's forwarded hive_hub_user cookie.
-//   2. The session cookie's Domain widening from .hive.kubestellar.io to the
+//   2. The session cookie's Domain widening from .hive.hivecommons.dev to the
 //      parent .kubestellar.io (so siblings receive it), including the
 //      host-only fallback for local/dev hosts and logout clearing both scopes.
 // ============================================================
@@ -24,7 +24,7 @@ func TestWhoamiGitHubUser(t *testing.T) {
 	s := newHandlerHub()
 	mkUser(t, "octocat")
 
-	req := httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/api/saas/whoami", nil)
+	req := httptest.NewRequest(http.MethodGet, "https://hive.hivecommons.dev/api/saas/whoami", nil)
 	req.AddCookie(testAuthCookie("octocat"))
 	rec := httptest.NewRecorder()
 	s.handleSaaSWhoami(rec, req)
@@ -70,7 +70,7 @@ func TestWhoamiOIDCUserUsesCanonicalKey(t *testing.T) {
 		t.Fatalf("saveSaaSUser: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/api/saas/whoami", nil)
+	req := httptest.NewRequest(http.MethodGet, "https://hive.hivecommons.dev/api/saas/whoami", nil)
 	req.AddCookie(testAuthCookie("google:1078"))
 	rec := httptest.NewRecorder()
 	s.handleSaaSWhoami(rec, req)
@@ -113,7 +113,7 @@ func TestWhoamiUnauthenticated(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/api/saas/whoami", nil)
+			req := httptest.NewRequest(http.MethodGet, "https://hive.hivecommons.dev/api/saas/whoami", nil)
 			if tc.cookie != nil {
 				req.AddCookie(tc.cookie)
 			}
@@ -139,7 +139,7 @@ func TestWhoamiIsGETOnly(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	s := newHubServerForTest(t, withHubIdentity("", ""))
-	req := httptest.NewRequest(http.MethodPost, "https://hive.kubestellar.io/api/saas/whoami", nil)
+	req := httptest.NewRequest(http.MethodPost, "https://hive.hivecommons.dev/api/saas/whoami", nil)
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
@@ -148,10 +148,10 @@ func TestWhoamiIsGETOnly(t *testing.T) {
 }
 
 // TestSessionCookieDomainWidenedToParent pins the #4171 scope: minted on the
-// production hub host, the session cookie must carry Domain=.kubestellar.io so
-// BOTH the hosted spokes (*.hive.kubestellar.io — deeper subdomains, still
-// covered) and sibling products (dibs.kubestellar.io) receive it. The mint
-// must also expire the legacy .hive.kubestellar.io-scoped copy so a fresh
+// production hub host, the session cookie must carry Domain=.hivecommons.dev so
+// BOTH the hosted spokes (*.hive.hivecommons.dev — deeper subdomains, still
+// covered) and sibling products on hivecommons.dev receive it. The mint
+// must also expire the legacy kubestellar.io-scoped copy so a fresh
 // login converges to one session cookie.
 func TestSessionCookieDomainWidenedToParent(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
@@ -159,7 +159,7 @@ func TestSessionCookieDomainWidenedToParent(t *testing.T) {
 	s := newHandlerHub()
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/api/auth/callback", nil)
+	req := httptest.NewRequest(http.MethodGet, "https://hive.hivecommons.dev/api/auth/callback", nil)
 	if !s.mintSessionCookies(rec, req, "github:alice") {
 		t.Fatal("mintSessionCookies failed")
 	}
@@ -178,17 +178,17 @@ func TestSessionCookieDomainWidenedToParent(t *testing.T) {
 	if live == nil {
 		t.Fatal("mint emitted no live hive_hub_user cookie")
 	}
-	if live.Domain != "kubestellar.io" {
-		t.Fatalf("session cookie Domain = %q, want .kubestellar.io — dibs.kubestellar.io never receives it otherwise", live.Domain)
+	if live.Domain != "hivecommons.dev" {
+		t.Fatalf("session cookie Domain = %q, want .hivecommons.dev", live.Domain)
 	}
 	if !live.Secure || !live.HttpOnly || live.SameSite != http.SameSiteLaxMode {
 		t.Errorf("session cookie lost hardening: Secure=%v HttpOnly=%v SameSite=%v", live.Secure, live.HttpOnly, live.SameSite)
 	}
 	if legacyClear == nil {
-		t.Fatal("mint did not expire the legacy .hive.kubestellar.io-scoped copy — the jar would hold two sessions")
+		t.Fatal("mint did not expire the legacy kubestellar.io-scoped copy — the jar would hold two sessions")
 	}
-	if legacyClear.Domain != "hive.kubestellar.io" || legacyClear.MaxAge >= 0 {
-		t.Errorf("legacy clear cookie Domain=%q MaxAge=%d, want .hive.kubestellar.io with MaxAge<0", legacyClear.Domain, legacyClear.MaxAge)
+	if legacyClear.Domain != "kubestellar.io" || legacyClear.MaxAge >= 0 {
+		t.Errorf("legacy clear cookie Domain=%q MaxAge=%d, want .kubestellar.io with MaxAge<0", legacyClear.Domain, legacyClear.MaxAge)
 	}
 }
 
@@ -236,7 +236,7 @@ func TestSessionCookieHostOnlyForLocalDev(t *testing.T) {
 }
 
 // TestSessionAcceptsEitherCookieCopy pins the rollout behaviour: while a
-// browser holds both the legacy .hive.kubestellar.io-scoped cookie and the new
+// browser holds both the legacy .hive.hivecommons.dev-scoped cookie and the new
 // parent-scoped one, it sends BOTH under the same name, in jar order the hub
 // does not control. The hub must find the valid session regardless of which
 // copy comes first.
@@ -250,7 +250,7 @@ func TestSessionAcceptsEitherCookieCopy(t *testing.T) {
 	stale := &http.Cookie{Name: "hive_hub_user", Value: "stale-or-forged"}
 
 	for _, order := range [][]*http.Cookie{{stale, valid}, {valid, stale}} {
-		req := httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/api/saas/whoami", nil)
+		req := httptest.NewRequest(http.MethodGet, "https://hive.hivecommons.dev/api/saas/whoami", nil)
 		for _, c := range order {
 			req.AddCookie(c)
 		}
@@ -267,11 +267,11 @@ func TestSessionCookieDomainDerivation(t *testing.T) {
 		host string
 		want string
 	}{
-		{"hive.kubestellar.io", ".kubestellar.io"},
-		{"hive.kubestellar.io:443", ".kubestellar.io"},
-		{"kubestellar.io", ".kubestellar.io"},
-		{"dibs.kubestellar.io", ".kubestellar.io"},
-		{"myspoke.hive.kubestellar.io", ".kubestellar.io"},
+		{"hive.hivecommons.dev", ".hivecommons.dev"},
+		{"hive.hivecommons.dev:443", ".hivecommons.dev"},
+		{"hivecommons.dev", ".hivecommons.dev"},
+		{"dibs.hivecommons.dev", ".hivecommons.dev"},
+		{"myspoke.hive.hivecommons.dev", ".hivecommons.dev"},
 		{"localhost", ""},
 		{"localhost:8080", ""},
 		{"127.0.0.1:9090", ""},

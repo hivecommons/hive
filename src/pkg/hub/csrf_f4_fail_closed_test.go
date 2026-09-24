@@ -26,7 +26,7 @@ import (
 // true}`. That was the vulnerability written down as an expectation, so it was
 // INVERTED to `false` rather than deleted or relaxed.
 
-const f4TrustedOrigin = "https://hive.kubestellar.io"
+const f4TrustedOrigin = "https://hive.hivecommons.dev"
 
 // TestF4HeaderlessJSONMutationIsRefused is the core regression.
 func TestF4HeaderlessJSONMutationIsRefused(t *testing.T) {
@@ -105,11 +105,11 @@ func TestF4SameOriginMutationStillSucceeds(t *testing.T) {
 func TestF4HostileOriginStillRefused(t *testing.T) {
 	for _, origin := range []string{
 		"https://evil.com",
-		"https://hive.kubestellar.io.evil.com",
-		"https://attacker-hive.hive.kubestellar.io", // sibling tenant
-		"https://evil-hive.kubestellar.io",
+		"https://hive.hivecommons.dev.evil.com",
+		"https://attacker-hive.hive.hivecommons.dev", // sibling tenant
+		"https://evil-hive.hivecommons.dev",
 		"://invalid",
-		// NOT asserted here: "http://hive.kubestellar.io". isSameOriginAsHub
+		// NOT asserted here: "http://hive.hivecommons.dev". isSameOriginAsHub
 		// matches on HOST only and deliberately accepts localhost/127.0.0.1 for
 		// local development, so it is scheme-agnostic by design. A scheme
 		// downgrade on the real hub host is unreachable in practice (HSTS + the

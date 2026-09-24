@@ -12,7 +12,7 @@ import (
 // admin mutation (~21 routes: hub upgrade, cluster App key writes, user
 // delete, banners, provisioning approval) was reachable by a cross-site form
 // POST carrying the admin's ambient session cookie — from ANY origin, not just
-// a sibling *.hive.kubestellar.io tenant.
+// a sibling *.hive.hivecommons.dev tenant.
 //
 // These tests present a GENUINELY VALID admin cookie, so a 403 can only come
 // from the CSRF gate. That distinction matters: the pre-existing
@@ -77,7 +77,7 @@ func TestRequireAdminCSRFSiblingTenantOriginDenied(t *testing.T) {
 	handler := adminCSRFHandler(s, &reached)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/saas/admin/hub-banner", nil)
-	req.Header.Set("Origin", "https://attacker-hive.hive.kubestellar.io")
+	req.Header.Set("Origin", "https://attacker-hive.hive.hivecommons.dev")
 	req.AddCookie(testAuthCookie(hubAdminUsername))
 	rec := httptest.NewRecorder()
 	handler(rec, req)
@@ -123,7 +123,7 @@ func TestRequireAdminSameOriginPostAllowed(t *testing.T) {
 	handler := adminCSRFHandler(s, &reached)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/saas/admin/hub-banner", nil)
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	req.AddCookie(testAuthCookie(hubAdminUsername))
 	rec := httptest.NewRecorder()
 	handler(rec, req)

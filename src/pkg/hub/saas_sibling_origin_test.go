@@ -9,10 +9,10 @@ import (
 
 // Audit F4 (CWE-352/CWE-346): hosted sibling-domain CSRF boundary.
 //
-// The hub session cookie is minted with Domain=.hive.kubestellar.io so that each
+// The hub session cookie is minted with Domain=.hive.hivecommons.dev so that each
 // tenant spoke's proxy can verify it. The consequence is that the browser
 // attaches the victim's hub session to requests issued by ANY
-// <id>.hive.kubestellar.io document — including one served by a hostile tenant,
+// <id>.hive.hivecommons.dev document — including one served by a hostile tenant,
 // whose operator fully controls the script running there.
 //
 // isTrustedOrigin used to accept every suffix match of that shared domain, so
@@ -31,12 +31,12 @@ import (
 // a handler that rejects everything.
 
 // siblingOrigin is a hostile hosted tenant: a real, suffix-matching
-// *.hive.kubestellar.io host whose operator is not the victim.
-const siblingOrigin = "https://attacker-hive.hive.kubestellar.io"
+// *.hive.hivecommons.dev host whose operator is not the victim.
+const siblingOrigin = "https://attacker-hive.hive.hivecommons.dev"
 
 // hubOrigin is the hub's own dashboard origin — the only legitimate author of a
 // state-changing request.
-const hubOrigin = "https://hive.kubestellar.io"
+const hubOrigin = "https://hive.hivecommons.dev"
 
 // visibilityReq builds the audit's PoC request: the exact mutation the report
 // reproduced, carrying a genuinely VALID victim session cookie. Because the
@@ -163,7 +163,7 @@ func TestSiblingOriginGetsNoCredentialedCORS(t *testing.T) {
 
 // TestHostedLoginRedirectToSiblingStillWorks is the guard on what this fix
 // deliberately did NOT narrow. Every hosted hive's ingress carries
-// auth-signin: https://hive.kubestellar.io/login?redirect=$scheme://$http_host$request_uri
+// auth-signin: https://hive.hivecommons.dev/login?redirect=$scheme://$http_host$request_uri
 // so the ordinary "open my hive" sign-in arrives at the hub asking to be sent
 // back to a sibling host. If the exact-origin tightening were applied to the
 // redirect allowlist too, sign-in would break for all ~62 hosted tenants — a
@@ -172,12 +172,12 @@ func TestSiblingOriginGetsNoCredentialedCORS(t *testing.T) {
 // Sending a browser TO a tenant is not the same capability as accepting a
 // mutation FROM one: the tenant already controls that host.
 func TestHostedLoginRedirectToSiblingStillWorks(t *testing.T) {
-	if !isTrustedRedirectTarget("https://hosted-acme-web-xyz.hive.kubestellar.io/dashboard") {
+	if !isTrustedRedirectTarget("https://hosted-acme-web-xyz.hive.hivecommons.dev/dashboard") {
 		t.Fatal("hosted tenant login redirect rejected — this breaks the ingress auth-signin flow " +
 			"for every hosted hive; the exact-origin fix must apply to CSRF/CORS only")
 	}
 	// Positive control: the redirect allowlist is still an allowlist.
-	if isTrustedRedirectTarget("https://hive.kubestellar.io.evil.com/") {
+	if isTrustedRedirectTarget("https://hive.hivecommons.dev.evil.com/") {
 		t.Fatal("redirect allowlist accepts a lookalike host — open redirect")
 	}
 }
@@ -215,14 +215,14 @@ func TestImpersonateCookieIsHostOnly(t *testing.T) {
 // change deliberately does not fix, so the decision is explicit in the suite
 // rather than an unexplained omission.
 //
-// hive_hub_user MUST keep a Domain that covers <id>.hive.kubestellar.io: each
+// hive_hub_user MUST keep a Domain that covers <id>.hive.hivecommons.dev: each
 // spoke's Node proxy (src/proxy/server.js) independently verifies this cookie
 // to authenticate the tenant dashboard and terminal, and it can only verify a
 // cookie the browser sends it — which happens solely because of that Domain
 // attribute. Making it host-only or __Host- would log every hosted tenant out
 // fleet-wide.
 //
-// #4171 widened the scope from .hive.kubestellar.io to the parent
+// #4171 widened the scope from .hive.hivecommons.dev to the parent
 // .kubestellar.io so sibling first-party products (dibs.kubestellar.io)
 // receive it too — every spoke host is a deeper subdomain of that scope and
 // still receives the cookie. Logout must clear BOTH scopes: a pre-widening
@@ -238,7 +238,7 @@ func TestImpersonateCookieIsHostOnly(t *testing.T) {
 func TestSessionCookieStillDomainScopedForSpokes(t *testing.T) {
 	s := newHandlerHub()
 	rec := httptest.NewRecorder()
-	s.handleLogout(rec, httptest.NewRequest(http.MethodPost, "https://hive.kubestellar.io/api/auth/logout", nil))
+	s.handleLogout(rec, httptest.NewRequest(http.MethodPost, "https://hive.hivecommons.dev/api/auth/logout", nil))
 
 	domains := map[string]bool{}
 	for _, c := range rec.Result().Cookies() {
@@ -263,11 +263,11 @@ func TestSessionCookieStillDomainScopedForSpokes(t *testing.T) {
 	if len(domains) == 0 {
 		t.Fatal("handleLogout emitted no hive_hub_user cookie")
 	}
-	if !domains["kubestellar.io"] {
+	if !domains["hivecommons.dev"] {
 		t.Errorf("logout does not clear the parent-scoped (#4171) session cookie, got domains %v", domains)
 	}
-	if !domains["hive.kubestellar.io"] {
-		t.Errorf("logout does not clear the legacy .hive.kubestellar.io-scoped session cookie "+
+	if !domains["kubestellar.io"] {
+		t.Errorf("logout does not clear the legacy kubestellar.io-scoped session cookie "+
 			"(a pre-widening session is a separate jar entry), got domains %v", domains)
 	}
 }
@@ -289,8 +289,8 @@ func TestImpersonateExitClearsLegacyDomainCookie(t *testing.T) {
 		if c.Domain == "" {
 			clearedHostOnly = true
 		}
-		// http.SetCookie serializes Domain=".hive.kubestellar.io" as
-		// "Domain=hive.kubestellar.io" — RFC 6265 §5.2.3 says a leading dot is
+		// http.SetCookie serializes Domain=".hive.hivecommons.dev" as
+		// "Domain=hive.hivecommons.dev" — RFC 6265 §5.2.3 says a leading dot is
 		// ignored, and the cookie is domain-scoped (i.e. covers subdomains)
 		// either way, so this still matches and deletes the legacy cookie in a
 		// real browser. Compare against the normalized form.

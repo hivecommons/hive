@@ -42,7 +42,7 @@ func installKubectlScript(t *testing.T, body string) {
 func nginxIngressCluster() *ClusterConfig {
 	return &ClusterConfig{
 		ID: "hive-oke", InCluster: true, IngressType: "nginx",
-		IngressClass: "nginx", Domain: "hive.kubestellar.io",
+		IngressClass: "nginx", Domain: "hive.hivecommons.dev",
 	}
 }
 
@@ -81,7 +81,7 @@ esac
 exit 0
 `)
 	s := &HubServer{logger: provTestLogger()}
-	if err := s.addVanityHostToIngress("h1", "vanity.hive.kubestellar.io", cluster); err != nil {
+	if err := s.addVanityHostToIngress("h1", "vanity.hive.hivecommons.dev", cluster); err != nil {
 		t.Fatalf("nginx vanity patch: %v", err)
 	}
 }
@@ -92,7 +92,7 @@ exit 0
 func TestAddVanityHostToIngressNginxNoIngress(t *testing.T) {
 	installKubectlScript(t, "#!/bin/sh\nexit 1\n")
 	s := &HubServer{logger: provTestLogger()}
-	if err := s.addVanityHostToIngress("h1", "vanity.hive.kubestellar.io", nginxIngressCluster()); err == nil {
+	if err := s.addVanityHostToIngress("h1", "vanity.hive.hivecommons.dev", nginxIngressCluster()); err == nil {
 		t.Error("no reachable ingress should error")
 	}
 }
@@ -115,7 +115,7 @@ esac
 exit 0
 `)
 	s := &HubServer{logger: provTestLogger()}
-	if err := s.addVanityHostToIngress("h1", "vanity.hive.kubestellar.io", cluster); err == nil {
+	if err := s.addVanityHostToIngress("h1", "vanity.hive.hivecommons.dev", cluster); err == nil {
 		t.Error("failed patch should surface an error")
 	}
 }

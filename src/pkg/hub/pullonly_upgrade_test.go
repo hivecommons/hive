@@ -39,7 +39,7 @@ func pullOnlyTestServer(t *testing.T) *HubServer {
 		timeline:         newTimelineStore(),
 		heartbeatUpgrade: make(map[string]string),
 		clusters: map[string]ClusterConfig{
-			"hive-oke": {ID: "hive-oke", InCluster: true, Domain: "hive.kubestellar.io"},
+			"hive-oke": {ID: "hive-oke", InCluster: true, Domain: "hive.hivecommons.dev"},
 			// The hub cannot WRITE here (audit-8 F21) — but its spokes pull
 			// their upgrades over their own outbound heartbeat, so this must
 			// NOT affect whether an upgrade is armed.

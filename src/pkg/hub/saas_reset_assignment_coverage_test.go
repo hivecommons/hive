@@ -140,7 +140,7 @@ func TestResetHiveToAvailablePlaceholderFieldTransitions(t *testing.T) {
 		ACMMDelivered:       true,
 		ForgeDelivered:      true,
 		RequestedGitHubHost: "github.example.com",
-		VanityURL:           "https://test.hive.kubestellar.io",
+		VanityURL:           "https://test.hive.hivecommons.dev",
 		Error:               "some error",
 		AssignedAt:          time.Now().UTC().Format(time.RFC3339),
 		IsPublic:            true,

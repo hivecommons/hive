@@ -177,7 +177,7 @@ func TestPerHiveEnvDriftMissingAll(t *testing.T) {
 		"DASHBOARD_AUTH_TOKEN", "dash",
 		"HIVE_ID", "hive-alpha",
 		"HIVE_LEVEL", "3",
-		"HIVE_HUB_URL", "https://hive.kubestellar.io",
+		"HIVE_HUB_URL", "https://hive.hivecommons.dev",
 		envHubSecretMaster, perHiveEnvTestMaster,
 	)
 

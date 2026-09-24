@@ -19,8 +19,8 @@ import (
 // existing test, and only fails in a browser.
 func TestDashboardJSBuildsTenantURLsFromServerSpokeDomain(t *testing.T) {
 	for _, literal := range []string{
-		"'.hive.kubestellar.io'",
-		".hive.kubestellar.io'",
+		"'.hive.hivecommons.dev'",
+		".hive.hivecommons.dev'",
 		"'https://' + esc(h.id) + '.hive.",
 	} {
 		if strings.Contains(dashboardHTML, literal) {
@@ -78,8 +78,8 @@ func TestLandingPageBuildsTenantURLsFromItsOwnHost(t *testing.T) {
 		t.Fatalf("reading embedded static/index.html: %v", err)
 	}
 	page := string(b)
-	if strings.Contains(page, "'.hive.kubestellar.io'") ||
-		strings.Contains(page, "+ '.hive.kubestellar.io'") {
+	if strings.Contains(page, "'.hive.hivecommons.dev'") ||
+		strings.Contains(page, "+ '.hive.hivecommons.dev'") {
 		t.Error("landing page still builds tenant URLs from a hardcoded hostname; " +
 			"derive the parent domain from location.hostname so the links survive a domain move")
 	}

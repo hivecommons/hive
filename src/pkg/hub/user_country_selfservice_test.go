@@ -35,7 +35,7 @@ func putCountry(s *HubServer, username, body string) *httptest.ResponseRecorder 
 	req := reqWithUser(http.MethodPut, "/api/saas/me/country", body, username)
 	// Same-origin, so requireAuth's fail-closed CSRF gate is satisfied when the
 	// request goes through the mux (see TestMyCountryRequiresAuth).
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	s.handleMyCountry(rec, req)
 	return rec
 }
@@ -303,7 +303,7 @@ func TestMyCountryRequiresAuth(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/saas/me/country", strings.NewReader(`{"country":"GB"}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("no session: status = %d body=%s, want 401", rec.Code, rec.Body.String())
@@ -344,7 +344,7 @@ func TestMyCountryRouteRegisteredNonAdmin(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := reqWithUser(http.MethodPut, "/api/saas/me/country", `{"country":"GB"}`, "plain")
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("non-admin PUT: status = %d body=%s, want 200 — the route must be requireAuth, not requireAdmin", rec.Code, rec.Body.String())

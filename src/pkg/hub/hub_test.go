@@ -18,19 +18,19 @@ func TestIsSameOriginAsHub(t *testing.T) {
 	}{
 		// Positive controls: the legitimate hub origin and local dev must stay
 		// trusted, so a handler that rejects everything cannot pass this test.
-		{"https://hive.kubestellar.io", true},
-		{"https://hive.kubestellar.io/dashboard", true},
+		{"https://hive.hivecommons.dev", true},
+		{"https://hive.hivecommons.dev/dashboard", true},
 		{"http://localhost", true},
 		{"http://localhost:3001", true},
 		{"http://127.0.0.1", true},
 		// F4: sibling tenants are no longer request-authoring origins.
-		{"https://hosted-test.hive.kubestellar.io", false},
-		{"https://my.hosted.hive.kubestellar.io", false},
-		{"https://attacker-hive.hive.kubestellar.io", false},
+		{"https://hosted-test.hive.hivecommons.dev", false},
+		{"https://my.hosted.hive.hivecommons.dev", false},
+		{"https://attacker-hive.hive.hivecommons.dev", false},
 		// Unrelated / lookalike hosts stay rejected.
 		{"https://evil.com", false},
-		{"https://hive.kubestellar.io.evil.com", false},
-		{"https://evil-hive.kubestellar.io", false},
+		{"https://hive.hivecommons.dev.evil.com", false},
+		{"https://evil-hive.hivecommons.dev", false},
 		{"", false},
 		{"not-a-url", false},
 		{"https://localhost.evil.com", false},
@@ -52,14 +52,14 @@ func TestIsTrustedRedirectTarget(t *testing.T) {
 		target string
 		want   bool
 	}{
-		{"https://hive.kubestellar.io", true},
-		{"https://hosted-test.hive.kubestellar.io/dashboard", true},
-		{"https://my.hosted.hive.kubestellar.io", true},
+		{"https://hive.hivecommons.dev", true},
+		{"https://hosted-test.hive.hivecommons.dev/dashboard", true},
+		{"https://my.hosted.hive.hivecommons.dev", true},
 		{"http://localhost:3001", true},
 		{"http://127.0.0.1", true},
 		{"https://evil.com", false},
-		{"https://hive.kubestellar.io.evil.com", false},
-		{"https://evil-hive.kubestellar.io", false},
+		{"https://hive.hivecommons.dev.evil.com", false},
+		{"https://evil-hive.hivecommons.dev", false},
 		{"", false},
 		{"https://localhost.evil.com", false},
 	}
@@ -82,12 +82,12 @@ func TestIsCSRFSafe(t *testing.T) {
 		{"GET is safe", "GET", "", "", true},
 		{"HEAD is safe", "HEAD", "", "", true},
 		{"OPTIONS is safe", "OPTIONS", "", "", true},
-		{"POST with trusted origin", "POST", "https://hive.kubestellar.io", "", true},
+		{"POST with trusted origin", "POST", "https://hive.hivecommons.dev", "", true},
 		{"POST with evil origin", "POST", "https://evil.com", "", false},
 		// F4: a sibling tenant is a hostile origin for CSRF purposes even
 		// though the browser hands it the parent-domain session cookie.
-		{"POST from sibling tenant origin", "POST", "https://attacker-hive.hive.kubestellar.io", "", false},
-		{"POST from sibling tenant origin with JSON ct", "POST", "https://attacker-hive.hive.kubestellar.io", "application/json", false},
+		{"POST from sibling tenant origin", "POST", "https://attacker-hive.hive.hivecommons.dev", "", false},
+		{"POST from sibling tenant origin with JSON ct", "POST", "https://attacker-hive.hive.hivecommons.dev", "application/json", false},
 		// AUDIT F4 — THIS CASE IS INVERTED, NOT RELAXED. It previously asserted
 		// `true`: a POST with no Origin, no Referer and Content-Type
 		// application/json was treated as CSRF-safe. That WAS the vulnerability,
@@ -98,7 +98,7 @@ func TestIsCSRFSafe(t *testing.T) {
 		// whole fix, so the expectation flips to `false`.
 		{"POST with JSON content-type and no origin is NOT safe", "POST", "", "application/json", false},
 		{"POST with no origin or ct", "POST", "", "", false},
-		{"POST with evil origin suffix", "POST", "https://hive.kubestellar.io.evil.com", "", false},
+		{"POST with evil origin suffix", "POST", "https://hive.hivecommons.dev.evil.com", "", false},
 		{"DELETE with trusted referer", "DELETE", "", "", false},
 	}
 	for _, tt := range tests {
@@ -120,7 +120,7 @@ func TestIsCSRFSafe(t *testing.T) {
 
 func TestIsCSRFSafeReferer(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/test", nil)
-	req.Header.Set("Referer", "https://hive.kubestellar.io/dashboard")
+	req.Header.Set("Referer", "https://hive.hivecommons.dev/dashboard")
 	if !isCSRFSafe(req) {
 		t.Error("POST with trusted Referer should be safe")
 	}
@@ -154,7 +154,7 @@ func TestIsPrivateURL(t *testing.T) {
 	// by the literal-prefix checks that run before resolution, and an
 	// unregistered host still fails closed (see
 	// TestStubPrivateURLResolverIsFailClosed). The guard itself is unchanged.
-	stubPrivateURLResolver(t, "github.com", "api.github.com", "hive.kubestellar.io")
+	stubPrivateURLResolver(t, "github.com", "api.github.com", "hive.hivecommons.dev")
 
 	tests := []struct {
 		url  string
@@ -171,7 +171,7 @@ func TestIsPrivateURL(t *testing.T) {
 		{"http://0.0.0.0", true},
 		{"https://github.com", false},
 		{"https://api.github.com/repos", false},
-		{"https://hive.kubestellar.io", false},
+		{"https://hive.hivecommons.dev", false},
 	}
 	for _, tt := range tests {
 		got := isPrivateURL(context.Background(), tt.url)

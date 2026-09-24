@@ -11,20 +11,20 @@ func TestHubPublicHostDefaultsPreserveCanonicalValues(t *testing.T) {
 	t.Setenv("HIVE_HUB_SPOKE_DOMAIN", "")
 	t.Setenv("HIVE_HUB_LEGACY_COOKIE_DOMAIN", "")
 
-	if got := hubPublicURL(); got != "https://hive.kubestellar.io" {
-		t.Fatalf("hubPublicURL() = %q, want historical default", got)
+	if got := hubPublicURL(); got != "https://hive.hivecommons.dev" {
+		t.Fatalf("hubPublicURL() = %q, want current default", got)
 	}
-	if got := oauthRedirectURI(); got != "https://hive.kubestellar.io/api/auth/callback" {
-		t.Fatalf("oauthRedirectURI() = %q, want historical default", got)
+	if got := oauthRedirectURI(); got != "https://hive.hivecommons.dev/api/auth/callback" {
+		t.Fatalf("oauthRedirectURI() = %q, want current default", got)
 	}
-	if got := hubCanonicalHost(); got != "hive.kubestellar.io" {
-		t.Fatalf("hubCanonicalHost() = %q, want historical default", got)
+	if got := hubCanonicalHost(); got != "hive.hivecommons.dev" {
+		t.Fatalf("hubCanonicalHost() = %q, want current default", got)
 	}
-	if got := sessionCookieDomain("hive.kubestellar.io"); got != ".kubestellar.io" {
-		t.Fatalf("sessionCookieDomain(default hub) = %q, want .kubestellar.io", got)
+	if got := sessionCookieDomain("hive.hivecommons.dev"); got != ".hivecommons.dev" {
+		t.Fatalf("sessionCookieDomain(default hub) = %q, want .hivecommons.dev", got)
 	}
-	if got := defaultClusterRegistry()[defaultClusterID].Domain; got != "hive.kubestellar.io" {
-		t.Fatalf("default cluster domain = %q, want historical default", got)
+	if got := defaultClusterRegistry()[defaultClusterID].Domain; got != "hive.hivecommons.dev" {
+		t.Fatalf("default cluster domain = %q, want current default", got)
 	}
 }
 
@@ -44,8 +44,8 @@ func TestHubPublicURLConfiguresCallbackCookieDomainAndOrigin(t *testing.T) {
 	if !isSameOriginAsHub("https://hive.hivecommons.dev/dashboard") {
 		t.Fatal("configured hub origin was not trusted")
 	}
-	if isSameOriginAsHub("https://hive.kubestellar.io/dashboard") {
-		t.Fatal("old hub origin stayed trusted after HIVE_HUB_PUBLIC_URL override")
+	if isSameOriginAsHub("https://old-hub.example.com/dashboard") {
+		t.Fatal("unconfigured hub origin was trusted after HIVE_HUB_PUBLIC_URL override")
 	}
 }
 

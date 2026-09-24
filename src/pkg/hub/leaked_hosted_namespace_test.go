@@ -176,7 +176,7 @@ func TestSummarizeLeakedHostedNamespacesTruncatesOldestFirst(t *testing.T) {
 func TestParseHostedNamespaceCandidates(t *testing.T) {
 	raw := []byte(`{"items":[
 	  {"metadata":{"name":"hive-hosted-abc","creationTimestamp":"2026-08-01T10:00:00Z",
-	    "labels":{"hive.kubestellar.io/hive-id":"abc","kubernetes.io/metadata.name":"hive-hosted-abc"}},
+	    "labels":{"hive.hivecommons.dev/hive-id":"abc","kubernetes.io/metadata.name":"hive-hosted-abc"}},
 	   "status":{"phase":"Active"}},
 	  {"metadata":{"name":"hive-hosted-nolabels","creationTimestamp":"2026-08-02T10:00:00Z"},
 	   "status":{"phase":"Active"}},

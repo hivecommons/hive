@@ -19,9 +19,9 @@ func renderManifestForTest(t *testing.T, nginx bool) string {
 	}
 	data := map[string]interface{}{
 		"ID":               "hosted-hive-x",
-		"HubPublicURL":     "https://hive.kubestellar.io",
+		"HubPublicURL":     "https://hive.hivecommons.dev",
 		"Namespace":        "hive-hosted-hosted-hive-x",
-		"DashboardHost":    "hosted-hive-x.hive.kubestellar.io",
+		"DashboardHost":    "hosted-hive-x.hive.hivecommons.dev",
 		"DashboardPort":    8080,
 		"TerminalPort":     7681,
 		"CertIssuer":       "letsencrypt",
@@ -64,7 +64,7 @@ func TestTerminalIngressHasPerHiveAuthCheck(t *testing.T) {
 	manifest := renderManifestForTest(t, true /* nginx */)
 	block := terminalIngressBlock(t, manifest)
 
-	wantAuthURL := `nginx.ingress.kubernetes.io/auth-url: "https://hive.kubestellar.io/api/saas/auth-check?hive=hosted-hive-x&uri=$request_uri"`
+	wantAuthURL := `nginx.ingress.kubernetes.io/auth-url: "https://hive.hivecommons.dev/api/saas/auth-check?hive=hosted-hive-x&uri=$request_uri"`
 	if !strings.Contains(block, wantAuthURL) {
 		t.Errorf("hive-terminal ingress missing per-hive auth-url annotation.\nwant substring:\n  %s\ngot block:\n%s", wantAuthURL, block)
 	}
@@ -74,7 +74,7 @@ func TestTerminalIngressHasPerHiveAuthCheck(t *testing.T) {
 	// spoke receives the resolved user/role/proxy-auth on success — matching the
 	// main ingress.
 	for _, want := range []string{
-		`nginx.ingress.kubernetes.io/auth-signin: "https://hive.kubestellar.io/login?redirect=$scheme://$http_host$request_uri"`,
+		`nginx.ingress.kubernetes.io/auth-signin: "https://hive.hivecommons.dev/login?redirect=$scheme://$http_host$request_uri"`,
 		`nginx.ingress.kubernetes.io/auth-response-headers: "X-Hive-User,X-Hive-Role,X-Hive-Proxy-Auth"`,
 	} {
 		if !strings.Contains(block, want) {
@@ -89,7 +89,7 @@ func TestTerminalIngressHasPerHiveAuthCheck(t *testing.T) {
 func TestMainAndTerminalIngressAuthURLMatch(t *testing.T) {
 	manifest := renderManifestForTest(t, true /* nginx */)
 
-	authURL := `nginx.ingress.kubernetes.io/auth-url: "https://hive.kubestellar.io/api/saas/auth-check?hive=hosted-hive-x&uri=$request_uri"`
+	authURL := `nginx.ingress.kubernetes.io/auth-url: "https://hive.hivecommons.dev/api/saas/auth-check?hive=hosted-hive-x&uri=$request_uri"`
 	// It must appear at least twice: once on the main "hive" ingress, once on
 	// "hive-terminal".
 	if got := strings.Count(manifest, authURL); got < 2 {
