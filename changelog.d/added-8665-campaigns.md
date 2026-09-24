@@ -1,0 +1,1 @@
+- Added resumable Inception/Spektacular campaigns for #8665, including archive-on-reset, campaign APIs, and dashboard resume controls.

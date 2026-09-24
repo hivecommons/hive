@@ -43,6 +43,10 @@ func (s *Server) handleInceptionStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Force {
+		if _, err := s.deps.Inception.ArchiveCurrentCampaign(); err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		_ = s.deps.Inception.Reset()
 		// Don't kill the session — kickBrainstorm will SendKick to the
 		// running agent, which is faster than kill+restart. Killing a
@@ -53,6 +57,11 @@ func (s *Server) handleInceptionStart(w http.ResponseWriter, r *http.Request) {
 		}
 		if store, ok := s.deps.BeadStores["brainstorm"]; ok {
 			s.clearInceptionBeads(store)
+		}
+	} else if state := s.deps.Inception.GetState(); state != nil && state.Phase == knowledge.PhaseComplete {
+		if _, err := s.deps.Inception.ArchiveCurrentCampaign(); err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 	}
 
@@ -91,12 +100,21 @@ func (s *Server) handleInceptionScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Force {
+		if _, err := s.deps.Inception.ArchiveCurrentCampaign(); err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		_ = s.deps.Inception.Reset()
 		if s.deps.AgentMgr != nil {
 			_ = s.deps.AgentMgr.Pause("brainstorm", "inception-force-reset", "forced reset before brownfield scan")
 		}
 		if store, ok := s.deps.BeadStores["brainstorm"]; ok {
 			s.clearInceptionBeads(store)
+		}
+	} else if state := s.deps.Inception.GetState(); state != nil && state.Phase == knowledge.PhaseComplete {
+		if _, err := s.deps.Inception.ArchiveCurrentCampaign(); err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 	}
 
@@ -406,6 +424,10 @@ func (s *Server) handleInceptionReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, err := s.deps.Inception.ArchiveCurrentCampaign(); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	if err := s.deps.Inception.Reset(); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return

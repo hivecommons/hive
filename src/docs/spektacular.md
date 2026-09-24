@@ -10,6 +10,15 @@ The runner is OFF by default. With `runs.spektacular.enabled` unset or `false`
 Hive never starts a Spektacular process and every existing lease behaviour is
 unchanged.
 
+Every retained Spektacular run is also projected as a dashboard campaign under
+`GET /api/campaigns`. The campaign id is the stable run/spec key (the same bare
+artifact name the status verbs use), the engine is `Spektacular`, and the row
+links back to `/api/runs/{key}` when run detail is available. Picking up a
+Spektacular campaign does not copy artifact contents into Hive; `POST
+/api/campaigns/{id}/resume` returns the retained run projection and a CLI status
+command, while Spektacular reloads the current state from its working files and
+artifact backend.
+
 ## Enabling it
 
 ```yaml

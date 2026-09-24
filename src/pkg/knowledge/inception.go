@@ -8,21 +8,22 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	inceptionStateFile  = "inception/state.json"
-	ideaDefaultConf     = 0.3
-	visionDefaultConf   = 0.6
-	constDefaultConf    = 0.9
-	reqDefaultConf      = 0.6
-	constraintDefaultConf = 0.7
+	inceptionStateFile     = "inception/state.json"
+	ideaDefaultConf        = 0.3
+	visionDefaultConf      = 0.6
+	constDefaultConf       = 0.9
+	reqDefaultConf         = 0.6
+	constraintDefaultConf  = 0.7
 	stakeholderDefaultConf = 0.7
 	acceptanceDefaultConf  = 0.6
-	brownfieldConfBoost = 0.15
+	brownfieldConfBoost    = 0.15
 
 	maxSlugLen = 30
 )
@@ -746,6 +747,253 @@ func (e *InceptionEngine) GetState() *InceptionState {
 	}
 	if e.state.PhaseChangedAt != nil {
 		t := *e.state.PhaseChangedAt
+		cp.PhaseChangedAt = &t
+	}
+	return &cp
+}
+
+// InceptionCampaignArchive is the durable snapshot created before an inception
+// reset so New Inception never discards the session that just finished.
+type InceptionCampaignArchive struct {
+	ID         string          `json:"id"`
+	Engine     string          `json:"engine"`
+	Type       string          `json:"type"`
+	ArchivedAt time.Time       `json:"archived_at"`
+	State      *InceptionState `json:"state"`
+	WikiFiles  []string        `json:"wiki_files,omitempty"`
+}
+
+const (
+	inceptionCampaignsDir = "inception/campaigns"
+	inceptionArchiveState = "state.json"
+	inceptionArchiveWiki  = "wiki"
+)
+
+// ArchiveCurrentCampaign snapshots the current inception state and wiki files
+// under a stable campaign id (the inception idea/spec slug). A nil current
+// state is a no-op.
+func (e *InceptionEngine) ArchiveCurrentCampaign() (*InceptionCampaignArchive, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.state == nil {
+		return nil, nil
+	}
+	archive := e.archiveFromStateLocked(time.Now())
+	if err := e.writeArchiveLocked(archive); err != nil {
+		return nil, err
+	}
+	e.logger.Info("inception campaign archived", "campaign", archive.ID, "phase", archive.State.Phase)
+	return archive, nil
+}
+
+// ListCampaignArchives returns all archived inception campaign snapshots.
+func (e *InceptionEngine) ListCampaignArchives() ([]InceptionCampaignArchive, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	root := filepath.Join(e.dataDir, inceptionCampaignsDir)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []InceptionCampaignArchive{}, nil
+		}
+		return nil, err
+	}
+	archives := make([]InceptionCampaignArchive, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		archive, err := e.readArchiveLocked(entry.Name())
+		if err != nil {
+			e.logger.Warn("skipping corrupt inception campaign archive", "campaign", entry.Name(), "error", err)
+			continue
+		}
+		archives = append(archives, archive)
+	}
+	sort.Slice(archives, func(i, j int) bool { return archives[i].ArchivedAt.After(archives[j].ArchivedAt) })
+	return archives, nil
+}
+
+// LoadCampaignArchive returns one archived inception campaign snapshot.
+func (e *InceptionEngine) LoadCampaignArchive(id string) (*InceptionCampaignArchive, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	archive, err := e.readArchiveLocked(id)
+	if err != nil {
+		return nil, err
+	}
+	return &archive, nil
+}
+
+// RestoreCampaignArchive makes an archived inception campaign the active L1
+// session again and restores its working wiki files.
+func (e *InceptionEngine) RestoreCampaignArchive(id string) (*InceptionState, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	archive, err := e.readArchiveLocked(id)
+	if err != nil {
+		return nil, err
+	}
+	if archive.State == nil {
+		return nil, fmt.Errorf("campaign %q has no inception state", id)
+	}
+	e.state = copyInceptionState(archive.State)
+	if err := e.saveState(); err != nil {
+		return nil, err
+	}
+	if err := e.restoreArchiveWikiLocked(archive.ID); err != nil {
+		return nil, err
+	}
+	if e.api != nil {
+		e.connectExistingVault()
+	}
+	cp := copyInceptionState(e.state)
+	e.logger.Info("inception campaign restored", "campaign", archive.ID, "phase", cp.Phase)
+	return cp, nil
+}
+
+func (e *InceptionEngine) archiveFromStateLocked(now time.Time) *InceptionCampaignArchive {
+	state := copyInceptionState(e.state)
+	id := strings.TrimSpace(state.IdeaSlug)
+	if id == "" {
+		id = slugify("inception-" + truncateSlug(state.IdeaText))
+	}
+	if id == "" {
+		id = fmt.Sprintf("inception-%d", now.Unix())
+	}
+	return &InceptionCampaignArchive{ID: id, Engine: "Spec Kit", Type: "inception", ArchivedAt: now, State: state}
+}
+
+func (e *InceptionEngine) writeArchiveLocked(archive *InceptionCampaignArchive) error {
+	if archive == nil || archive.State == nil {
+		return nil
+	}
+	root := filepath.Join(e.dataDir, inceptionCampaignsDir, slugify(archive.ID))
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return fmt.Errorf("creating campaign archive: %w", err)
+	}
+	wikiFiles, err := e.copyWikiToArchiveLocked(root)
+	if err != nil {
+		return err
+	}
+	archive.WikiFiles = wikiFiles
+	data, err := json.MarshalIndent(archive, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling campaign archive: %w", err)
+	}
+	tmp := filepath.Join(root, inceptionArchiveState+".tmp")
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return fmt.Errorf("writing campaign archive: %w", err)
+	}
+	return os.Rename(tmp, filepath.Join(root, inceptionArchiveState))
+}
+
+func (e *InceptionEngine) copyWikiToArchiveLocked(root string) ([]string, error) {
+	wikiDir := filepath.Join(e.dataDir, inceptionWikiDir)
+	entries, err := os.ReadDir(wikiDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading inception wiki: %w", err)
+	}
+	archiveWiki := filepath.Join(root, inceptionArchiveWiki)
+	if err := os.RemoveAll(archiveWiki); err != nil {
+		return nil, fmt.Errorf("clearing campaign wiki archive: %w", err)
+	}
+	if err := os.MkdirAll(archiveWiki, 0o755); err != nil {
+		return nil, fmt.Errorf("creating campaign wiki archive: %w", err)
+	}
+	files := []string{}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		name := filepath.Base(entry.Name())
+		data, err := os.ReadFile(filepath.Join(wikiDir, name))
+		if err != nil {
+			return nil, fmt.Errorf("reading inception wiki file %s: %w", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(archiveWiki, name), data, 0o644); err != nil {
+			return nil, fmt.Errorf("writing campaign wiki file %s: %w", name, err)
+		}
+		files = append(files, name)
+	}
+	sort.Strings(files)
+	return files, nil
+}
+
+func (e *InceptionEngine) readArchiveLocked(id string) (InceptionCampaignArchive, error) {
+	id = slugify(strings.TrimSpace(id))
+	if id == "" {
+		return InceptionCampaignArchive{}, fmt.Errorf("campaign id required")
+	}
+	data, err := os.ReadFile(filepath.Join(e.dataDir, inceptionCampaignsDir, id, inceptionArchiveState))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return InceptionCampaignArchive{}, fmt.Errorf("campaign %q not found", id)
+		}
+		return InceptionCampaignArchive{}, err
+	}
+	var archive InceptionCampaignArchive
+	if err := json.Unmarshal(data, &archive); err != nil {
+		return InceptionCampaignArchive{}, err
+	}
+	if archive.ID == "" {
+		archive.ID = id
+	}
+	return archive, nil
+}
+
+func (e *InceptionEngine) restoreArchiveWikiLocked(id string) error {
+	archiveWiki := filepath.Join(e.dataDir, inceptionCampaignsDir, slugify(id), inceptionArchiveWiki)
+	entries, err := os.ReadDir(archiveWiki)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("reading campaign wiki archive: %w", err)
+	}
+	wikiDir := filepath.Join(e.dataDir, inceptionWikiDir)
+	if err := os.MkdirAll(wikiDir, 0o755); err != nil {
+		return fmt.Errorf("creating inception wiki dir: %w", err)
+	}
+	if current, err := os.ReadDir(wikiDir); err == nil {
+		for _, entry := range current {
+			if strings.HasSuffix(entry.Name(), ".md") {
+				_ = os.Remove(filepath.Join(wikiDir, entry.Name()))
+			}
+		}
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		name := filepath.Base(entry.Name())
+		data, err := os.ReadFile(filepath.Join(archiveWiki, name))
+		if err != nil {
+			return fmt.Errorf("reading campaign wiki file %s: %w", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(wikiDir, name), data, 0o644); err != nil {
+			return fmt.Errorf("restoring campaign wiki file %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func copyInceptionState(state *InceptionState) *InceptionState {
+	if state == nil {
+		return nil
+	}
+	cp := *state
+	cp.Questions = append([]Question(nil), state.Questions...)
+	cp.FactSlugs = append([]string(nil), state.FactSlugs...)
+	cp.Answers = make(map[string]string, len(state.Answers))
+	for k, v := range state.Answers {
+		cp.Answers[k] = v
+	}
+	if state.PhaseChangedAt != nil {
+		t := *state.PhaseChangedAt
 		cp.PhaseChangedAt = &t
 	}
 	return &cp

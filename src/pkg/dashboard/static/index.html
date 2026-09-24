@@ -2948,6 +2948,20 @@
       .acmm-loading-stage .wb-flyer{ transform:translateX(calc(50% - 35px)); }
       .wb-hive{ transform:translateY(-50%); }
     }
+
+    .campaigns-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-6); margin-bottom: var(--sp-6); }
+    .campaigns-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-5); flex-wrap: wrap; }
+    .campaigns-title { font-size: var(--fs-md); font-weight: 700; }
+    .campaigns-subtitle { color: var(--muted); font-size: var(--fs-sm); margin-top: var(--sp-1); }
+    .campaigns-filters { display: grid; grid-template-columns: minmax(180px, 2fr) repeat(4, minmax(110px, 1fr)) auto; gap: var(--sp-3); margin-bottom: var(--sp-5); }
+    .campaigns-input { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3) var(--sp-4); font: inherit; font-size: var(--fs-sm); min-width: 0; }
+    .campaigns-list { display: grid; gap: var(--sp-3); }
+    .campaign-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-4); align-items: center; border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-4); background: color-mix(in srgb, var(--border) 8%, transparent); }
+    .campaign-row-title { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .campaign-row-meta { display: flex; gap: var(--sp-3); flex-wrap: wrap; color: var(--muted); font-size: var(--fs-sm); margin-top: var(--sp-2); }
+    .campaign-pill { border: 1px solid var(--border); border-radius: var(--r-pill); padding: 1px var(--sp-3); color: var(--muted); }
+    .campaign-empty { color: var(--muted); text-align: center; padding: var(--sp-7); border: 1px dashed var(--border); border-radius: var(--r); }
+    @media (max-width: 900px) { .campaigns-filters { grid-template-columns: 1fr 1fr; } .campaign-row { grid-template-columns: 1fr; } }
   </style>
   <link rel="stylesheet" href="/api/theme.css" id="hive-theme-css">
 </head>
@@ -15476,6 +15490,8 @@ function burnAreaChart() {
 
     // ── Inception section ──
     let _inceptionState = null;
+    let _campaigns = [];
+
 
     async function loadInceptionState() {
       try {
@@ -15483,44 +15499,123 @@ function burnAreaChart() {
         const data = await r.json();
         _inceptionState = data.active ? data.state : null;
         renderInception();
+        loadCampaigns();
       } catch (e) { console.error('inception state load failed', e); }
+    }
+
+    async function loadCampaigns() {
+      try {
+        const params = new URLSearchParams();
+        ['search', 'repo', 'stage', 'status', 'owner'].forEach(function(name) {
+          const el = document.getElementById('campaign-filter-' + name);
+          if (el && el.value.trim()) params.set(name, el.value.trim());
+        });
+        const qs = params.toString();
+        const r = await fetch('/api/campaigns' + (qs ? '?' + qs : ''), {headers: _inceptionAuthHeaders()});
+        const data = await r.json();
+        if (data.ok) {
+          _campaigns = data.campaigns || [];
+          renderCampaignsList();
+        }
+      } catch (e) { console.error('campaign load failed', e); }
     }
 
     function renderInception() {
       const panel = document.getElementById('inception-panel');
       if (!panel) return;
 
+      let wizard = '';
       if (!_inceptionState || !_inceptionState.phase) {
-        panel.innerHTML = renderInceptionModeSelect();
+        wizard = renderInceptionModeSelect();
       } else {
         switch (_inceptionState.phase) {
           case 'capture':
             if (_inceptionState.idea_text) {
-              panel.innerHTML = renderInceptionProgress('idea') + renderInceptionWorking();
+              wizard = renderInceptionProgress('idea') + renderInceptionWorking();
             } else {
-              panel.innerHTML = _inceptionState.mode === 'greenfield'
+              wizard = _inceptionState.mode === 'greenfield'
                 ? renderInceptionCapture()
                 : renderInceptionScanProgress();
             }
             break;
           case 'clarify':
-            panel.innerHTML = renderInceptionProgress('clarify') + renderInceptionClarify();
+            wizard = renderInceptionProgress('clarify') + renderInceptionClarify();
             break;
           case 'structure':
-            panel.innerHTML = renderInceptionProgress('structure') + renderInceptionStructure();
+            wizard = renderInceptionProgress('structure') + renderInceptionStructure();
             break;
           case 'scaffold':
-            panel.innerHTML = renderInceptionProgress('scaffold') + renderInceptionScaffold();
+            wizard = renderInceptionProgress('scaffold') + renderInceptionScaffold();
             break;
           case 'complete':
-            panel.innerHTML = renderInceptionProgress('complete') + renderInceptionComplete();
+            wizard = renderInceptionProgress('complete') + renderInceptionComplete();
             setTimeout(loadInceptionCompleteFiles, 100);
             break;
           default:
-            panel.innerHTML = renderInceptionModeSelect();
+            wizard = renderInceptionModeSelect();
         }
       }
+      panel.innerHTML = renderCampaignsPanel() + '<div class="campaigns-card">' + wizard + '</div>';
+      renderCampaignsList();
       if (!_inceptionPollTimer) startInceptionPoll();
+    }
+
+    function renderCampaignsPanel() {
+      return `
+        <div class="campaigns-card">
+          <div class="campaigns-head">
+            <div><div class="campaigns-title">Campaigns</div><div class="campaigns-subtitle">Resumable Inception and Spektacular sessions keyed by stable spec ID.</div></div>
+            <button class="hv-btn btn-secondary btn-sm" data-action="loadCampaigns">Refresh</button>
+          </div>
+          <div class="campaigns-filters">
+            <input id="campaign-filter-search" class="campaigns-input" placeholder="Search campaigns" />
+            <input id="campaign-filter-repo" class="campaigns-input" placeholder="Repo" />
+            <input id="campaign-filter-stage" class="campaigns-input" placeholder="Stage" />
+            <input id="campaign-filter-status" class="campaigns-input" placeholder="Status" />
+            <input id="campaign-filter-owner" class="campaigns-input" placeholder="Owner" />
+            <button class="hv-btn btn-secondary btn-sm" data-action="loadCampaigns">Apply</button>
+          </div>
+          <div id="campaigns-list" class="campaigns-list"><div class="campaign-empty">Loading campaigns…</div></div>
+        </div>`;
+    }
+
+    function renderCampaignsList() {
+      const list = document.getElementById('campaigns-list');
+      if (!list) return;
+      if (!_campaigns || _campaigns.length === 0) {
+        list.innerHTML = '<div class="campaign-empty">No campaigns yet. New Inception archives completed sessions here.</div>';
+        return;
+      }
+      list.innerHTML = _campaigns.map(function(c) {
+        const repo = (c.repos || []).join(', ') || 'no repo';
+        const activity = c.last_activity || 'no activity';
+        const engine = c.engine || 'unknown engine';
+        return `<div class="campaign-row">
+          <div>
+            <div class="campaign-row-title">${escapeHtml(c.title || c.id)}</div>
+            <div class="campaign-row-meta">
+              <span class="campaign-pill">${escapeHtml(c.status || 'parked')}</span>
+              <span>${escapeHtml(c.current_stage || '')}${c.current_step ? ' / ' + escapeHtml(c.current_step) : ''}</span>
+              <span>${escapeHtml(repo)}</span>
+              <span>${escapeHtml(engine)}</span>
+              <span>${escapeHtml(activity)}</span>
+            </div>
+          </div>
+          <button class="hv-btn btn-primary btn-sm" data-action="resumeCampaign" data-arg0="${escapeHtml(c.id)}">Resume</button>
+        </div>`;
+      }).join('');
+    }
+
+    async function resumeCampaign(id) {
+      if (!id) return;
+      try {
+        const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/resume', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({ surface: 'dashboard' }) });
+        const data = await r.json();
+        if (!data.ok) { alert(data.error || 'Failed to resume campaign'); return; }
+        if (data.state) { _inceptionState = data.state; renderInception(); }
+        if (data.resume_command) { alert('Resume command:\n' + data.resume_command); }
+        await loadCampaigns();
+      } catch (e) { alert('Error: ' + e.message); }
     }
 
     function renderInceptionProgress(phase) {
@@ -15934,7 +16029,7 @@ function burnAreaChart() {
           <div style="display:flex;gap:var(--sp-4);justify-content:center">
             <button class="hv-btn btn-danger" data-action="resetInception">New Inception</button>
             <button class="hv-btn btn-primary" data-action="downloadInceptionZip">Download Project</button>
-            <button class="hv-btn btn-icon btn-sm" data-action="loadInceptionCompleteFiles">Refresh Files</button>
+            <button class="hv-btn btn-secondary btn-sm" data-action="loadInceptionCompleteFiles">Refresh Files</button>
           </div>
         </div>`;
     }
@@ -16031,7 +16126,7 @@ function burnAreaChart() {
           body: JSON.stringify({ repo_url: url })
         });
         const data = await r.json();
-        if (data.ok) { _inceptionState = data.state; renderInception(); }
+        if (data.ok) { _inceptionState = data.state; renderInception(); loadCampaigns(); }
         else alert(data.error || 'Failed to start scan');
       } catch (e) { alert('Error: ' + e.message); }
     }
@@ -16047,7 +16142,7 @@ function burnAreaChart() {
           body: JSON.stringify({ idea })
         });
         const data = await r.json();
-        if (data.ok) { _inceptionState = data.state; renderInception(); }
+        if (data.ok) { _inceptionState = data.state; renderInception(); loadCampaigns(); }
         else alert(data.error || 'Failed to start inception');
       } catch (e) { alert('Error: ' + e.message); }
     }
@@ -16130,6 +16225,7 @@ function burnAreaChart() {
         await fetch('/api/inception/reset', { method: 'POST', headers: _inceptionAuthHeaders() });
         _inceptionState = null;
         renderInception();
+        loadCampaigns();
       } catch (e) { alert('Error: ' + e.message); }
     }
 
