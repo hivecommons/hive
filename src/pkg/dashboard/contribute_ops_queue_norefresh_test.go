@@ -53,7 +53,7 @@ func TestQueueNoBlinkGuards(t *testing.T) {
 	}
 	// The enter animation must NOT be baked unconditionally onto every .cc-q-item any
 	// more (that was the blink). The base rule must not carry the cc-popin animation.
-	base := "\n.cc-q-item{display:flex;align-items:flex-start;gap:10px;padding:11px 20px;border-bottom:1px solid var(--cc-border-2);position:relative}"
+	base := "\n.cc-q-item{display:flex;align-items:flex-start;gap:10px;padding:11px 20px;border-bottom:1px solid var(--line-subtle);position:relative}"
 	if !strings.Contains(body, base) {
 		t.Errorf("base .cc-q-item rule must not carry the unconditional cc-popin animation (found no animation-free base rule)")
 	}

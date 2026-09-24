@@ -11,14 +11,9 @@
 <link rel="stylesheet" href="/tokens.css">
   <link rel="stylesheet" href="/components.css">
   <style>
-  :root {
-    --bg: #0d1420; --panel: #131c2b; --line: #22304a; --ink: #d7e2f2;
-    --muted: #8ba0bd; --green: #3fb968; --amber: #e0a800; --red: #e5484d;
-    --gray: #5a6b84; --accent: #4a9eff; --chip: #17212d; --text: #d7e2f2;
-  }
   * { box-sizing: border-box; }
   body {
-    margin: var(--sp-0); background: var(--bg); color: var(--ink);
+    margin: var(--sp-0); background: var(--surface-1); color: var(--text);
     font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
   a { color: inherit; text-decoration: none; }
@@ -32,7 +27,7 @@
     grid-template-columns: 1fr auto 1fr;
     align-items: center;
     gap: var(--sp-8);
-    padding: 1rem clamp(1rem, 4vw, 4.5rem);
+    padding: var(--sp-6) clamp(1rem, 4vw, 4.5rem);
     position: sticky;
     top: 0;
   }
@@ -40,69 +35,69 @@
   .brand { letter-spacing: 0; gap: var(--sp-5); font-weight: 800; }
   .brand-mark {
     width: 2.5rem; height: 2.5rem;
-    color: var(--amber);
+    color: var(--brand);
     background: linear-gradient(145deg, rgba(224, 168, 0, .18), rgba(74, 158, 255, .10));
     border: 1px solid rgba(224, 168, 0, .42);
-    border-radius: .65rem;
+    border-radius: var(--r-lg);
     place-items: center;
     font-size: 1.2rem;
     display: grid;
   }
-  nav { color: var(--muted); gap: 1.35rem; font-size: .94rem; }
+  nav { color: var(--text-muted); gap: 1.35rem; font-size: var(--fs-md); }
   nav a:hover, .header-link:hover { color: var(--text); }
-  nav a.active { color: var(--amber); }
+  nav a.active { color: var(--brand); }
   .header-link {
-    border: 1px solid var(--line);
+    border: 1px solid var(--line-strong);
     width: fit-content;
     color: var(--text);
-    border-radius: .55rem;
+    border-radius: var(--r);
     justify-self: end;
     padding: .72rem 1rem;
     font-weight: 700;
   }
   .header-right { display: flex; align-items: center; gap: .8rem; justify-self: end; }
   .fleet-header {
-    padding: 16px 22px; border-bottom: 1px solid var(--line);
+    padding: var(--sp-6) var(--sp-8); border-bottom: 1px solid var(--line-strong);
     display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
   }
   .fleet-header h1 { font-size: 18px; margin: var(--sp-0); font-weight: 600; }
-  .fleet-header .sub { color: var(--muted); font-size: var(--fs-sm); }
+  .fleet-header .sub { color: var(--text-muted); font-size: var(--fs-sm); }
   .wrap {
     padding: 16px clamp(16px, 2vw, 32px);
     max-width: none;
     width: 100%;
     overflow-x: auto;
   }
-  .legend { display: flex; gap: var(--sp-6); flex-wrap: wrap; color: var(--muted); font-size: var(--fs-sm); margin-bottom: 14px; }
-  .legend b { color: var(--ink); font-weight: 600; }
+  .legend { display: flex; gap: var(--sp-6); flex-wrap: wrap; color: var(--text-muted); font-size: var(--fs-sm); margin-bottom: 14px; }
+  .legend b { color: var(--text); font-weight: 600; }
   table { width: 100%; min-width: 1180px; border-collapse: collapse; }
   thead th {
     text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
-    color: var(--muted); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line);
+    color: var(--text-muted); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line-strong);
   }
-  tbody td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  tbody td { padding: 9px 10px; border-bottom: 1px solid var(--line-strong); vertical-align: middle; }
   th:nth-child(2), td:nth-child(2) { min-width: 360px; }
   th:nth-child(7), td:nth-child(7) { min-width: 310px; }
   tr.spoke { cursor: pointer; }
   tr.spoke:hover { background: #16202f; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; }
-  .dot.on { background: var(--green); }
-  .dot.off { background: var(--gray); }
+  .dot.on { background: var(--status-ok); }
+  .dot.off { background: var(--status-neutral); }
   .name { font-weight: 600; }
   a.name { color: inherit; text-decoration: none; }
   a.name:hover { text-decoration: underline; }
-  .chev { display: inline-block; width: 12px; color: var(--muted); transition: transform .1s; }
+  .chev { display: inline-block; width: 12px; color: var(--text-muted); transition: transform .1s; }
   tr.spoke.open .chev { transform: rotate(90deg); }
   .badge {
     display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px;
-    background: var(--chip); border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
+    background: var(--surface-3); border: 1px solid var(--line-strong); color: var(--text-muted); white-space: nowrap;
   }
   .rollup { font-variant-numeric: tabular-nums; }
-  .rollup .n { font-weight: 700; color: var(--ink); }
-  .rollup .warn { color: var(--amber); }
-  .rollup .bad { color: var(--red); }
-  .rollup .sep { color: var(--muted); margin: var(--sp-0) var(--sp-2); }
-  .output { color: var(--muted); font-size: var(--fs-sm); }
+  .rollup .n { font-weight: 700; color: var(--text); }
+  .rollup .warn { color: var(--brand); }
+  .rollup .bad { color: var(--status-error); }
+  .rollup .sep { color: var(--text-muted); margin: var(--sp-0) var(--sp-2); }
+  .output { color: var(--text-muted); font-size: var(--fs-sm); }
   td:nth-child(7) .output,
   td:nth-child(7) .advisory-activity,
   td:nth-child(7) .budget-health,
@@ -116,77 +111,77 @@
      into an oval. */
   .rs { display: inline-flex; align-items: flex-start; gap: var(--sp-3); }
   .rs .swatch { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-top: 5px; }
-  .rs.working .swatch { background: var(--green); }
-  .rs.idle-at-prompt .swatch { background: var(--amber); }
-  .rs.stuck-at-login .swatch { background: var(--red); }
-  .rs.session-gone .swatch { background: var(--red); }
-  .rs.dead .swatch { background: var(--gray); }
-  .rs.quiet-by-design .swatch { background: transparent; border: 1px solid var(--green); }
-  .rs.unknown .swatch { background: var(--gray); }
+  .rs.working .swatch { background: var(--status-ok); }
+  .rs.idle-at-prompt .swatch { background: var(--brand); }
+  .rs.stuck-at-login .swatch { background: var(--status-error); }
+  .rs.session-gone .swatch { background: var(--status-error); }
+  .rs.dead .swatch { background: var(--status-neutral); }
+  .rs.quiet-by-design .swatch { background: transparent; border: 1px solid var(--status-ok); }
+  .rs.unknown .swatch { background: var(--status-neutral); }
   .cap { display: inline-flex; align-items: center; gap: var(--sp-3); }
   .cap .light { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 9px; }
-  .cap.green .light { background: var(--green); }
-  .cap.amber .light { background: var(--amber); }
-  .cap.red .light { background: var(--red); }
-  .cap.gray .light { background: var(--gray); }
-  .ticks { font-size: 11px; color: var(--muted); }
-  .tick.yes { color: var(--green); }
-  .tick.no { color: var(--red); }
+  .cap.green .light { background: var(--status-ok); }
+  .cap.amber .light { background: var(--brand); }
+  .cap.red .light { background: var(--status-error); }
+  .cap.gray .light { background: var(--status-neutral); }
+  .ticks { font-size: 11px; color: var(--text-muted); }
+  .tick.yes { color: var(--status-ok); }
+  .tick.no { color: var(--status-error); }
   .delta { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; }
-  .delta.problem { background: rgba(229,72,77,.16); color: var(--red); border: 1px solid rgba(229,72,77,.45); }
-  .delta.quiet { color: var(--muted); }
-  .rel { color: var(--muted); font-size: 11px; }
+  .delta.problem { background: rgba(229,72,77,.16); color: var(--status-error); border: 1px solid rgba(229,72,77,.45); }
+  .delta.quiet { color: var(--text-muted); }
+  .rel { color: var(--text-muted); font-size: 11px; }
   /* flex:0 0 8px + flex-start: same anti-squish treatment as .rs/.cap dots —
      without it a wrapped label squeezes the fixed-size dot into an oval. */
   .advisory-activity { display: inline-flex; align-items: flex-start; gap: 5px; margin-top: 3px; }
   .advisory-activity .light { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-top: 3px; }
-  .advisory-activity.fresh .light { background: var(--green); }
-  .advisory-activity.aging .light { background: var(--amber); }
-  .advisory-activity.stale .light { background: var(--red); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
-  .advisory-activity.unknown .light { background: var(--gray); }
+  .advisory-activity.fresh .light { background: var(--status-ok); }
+  .advisory-activity.aging .light { background: var(--brand); }
+  .advisory-activity.stale .light { background: var(--status-error); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
+  .advisory-activity.unknown .light { background: var(--status-neutral); }
   .budget-health { display: inline-flex; align-items: flex-start; gap: 5px; margin-top: 3px; }
   .budget-health .light { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-top: 3px; }
-  .budget-health.ok .light { background: var(--green); }
-  .budget-health.warning .light { background: var(--amber); }
-  .budget-health.critical .light, .budget-health.exhausted .light { background: var(--red); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
-  .budget-health.unknown .light { background: var(--gray); }
+  .budget-health.ok .light { background: var(--status-ok); }
+  .budget-health.warning .light { background: var(--brand); }
+  .budget-health.critical .light, .budget-health.exhausted .light { background: var(--status-error); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
+  .budget-health.unknown .light { background: var(--status-neutral); }
   .github-app-health { display: inline-flex; align-items: flex-start; gap: 5px; margin-top: 3px; }
   .github-app-health .light { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-top: 3px; }
-  .github-app-health.ok .light { background: var(--green); }
-  .github-app-health.degraded .light { background: var(--amber); }
-  .github-app-health.broken .light { background: var(--red); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
-  .github-app-health.unknown .light { background: var(--gray); }
-  .status-msg { padding: 40px 0; text-align: center; color: var(--muted); }
-  a.reload { color: var(--accent); text-decoration: none; }
+  .github-app-health.ok .light { background: var(--status-ok); }
+  .github-app-health.degraded .light { background: var(--brand); }
+  .github-app-health.broken .light { background: var(--status-error); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
+  .github-app-health.unknown .light { background: var(--status-neutral); }
+  .status-msg { padding: 40px 0; text-align: center; color: var(--text-muted); }
+  a.reload { color: var(--status-info); text-decoration: none; }
   [title] { cursor: help; }
   /* Health dot (left of hive name) — reflects PROBLEMS, not online/offline. */
   .hdot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: var(--sp-4); vertical-align: middle; }
-  .hdot.problem { background: var(--red); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
-  .hdot.warning { background: var(--amber); box-shadow: 0 0 0 3px rgba(224,168,0,.14); }
-  .hdot.ok { background: var(--green); }
-  .hdot.unknown { background: var(--gray); }
-  .hdot.offline { background: transparent; border: 1px solid var(--gray); }
-  .hdot.parked { background: transparent; border: 1px dashed var(--gray); }
-  .parked-chip { display: inline-block; margin-left: var(--sp-3); padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: var(--gray); border: 1px dashed var(--gray); vertical-align: 1px; }
+  .hdot.problem { background: var(--status-error); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
+  .hdot.warning { background: var(--brand); box-shadow: 0 0 0 3px rgba(224,168,0,.14); }
+  .hdot.ok { background: var(--status-ok); }
+  .hdot.unknown { background: var(--status-neutral); }
+  .hdot.offline { background: transparent; border: 1px solid var(--status-neutral); }
+  .hdot.parked { background: transparent; border: 1px dashed var(--status-neutral); }
+  .parked-chip { display: inline-block; margin-left: var(--sp-3); padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: var(--status-neutral); border: 1px dashed var(--status-neutral); vertical-align: 1px; }
   /* WHY chip: the hive-health verdict's reason, next to the name. Muted for a
      healthy/idle hive, red-tinted when the verdict is red so the cause of a
      broken hive reads at a glance. */
-  .why-chip { display: inline-block; margin-left: var(--sp-3); padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: var(--gray); border: 1px solid var(--border, rgba(128,128,128,.3)); vertical-align: 1px; }
-  .why-chip.bad { color: var(--red); border-color: rgba(229,72,77,.45); background: rgba(229,72,77,.06); }
-  .why-chip.warn { color: var(--amber); border-color: rgba(224,168,0,.55); background: rgba(224,168,0,.08); }
-  .why-chip.unknown { color: var(--gray); border-style: dashed; }
+  .why-chip { display: inline-block; margin-left: var(--sp-3); padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: var(--status-neutral); border: 1px solid var(--line-subtle); vertical-align: 1px; }
+  .why-chip.bad { color: var(--status-error); border-color: rgba(229,72,77,.45); background: rgba(229,72,77,.06); }
+  .why-chip.warn { color: var(--brand); border-color: rgba(224,168,0,.55); background: rgba(224,168,0,.08); }
+  .why-chip.unknown { color: var(--status-neutral); border-style: dashed; }
   /* Remediation hint (#5577): the one-line "do this" rendered under the WHY
      chip on non-green rows. Muted like the chip's green form — the chip
      already carries the severity tint; this line is the instruction, not a
      second alarm. */
-  .rem-hint { font-size: 10.5px; color: var(--gray); margin: 2px 0 0 22px; }
+  .rem-hint { font-size: 10.5px; color: var(--status-neutral); margin: 2px 0 0 22px; }
   .rem-hint .rem-link { color: inherit; text-decoration: underline; }
   .hive-access-faces a:hover img { filter: brightness(1.12); }
   /* Attach chip: one-click copy of the kubectl+tmux attach command for the
      hive's spoke pod, so an operator can jump from a problematic /fleet row
      straight into the pod for root-causing. Shows cluster · namespace on
      hover; click copies, never expands the row. */
-  .attach-chip { display: inline-block; margin-left: var(--sp-3); padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: var(--gray); border: 1px solid var(--border, rgba(128,128,128,.3)); vertical-align: 1px; cursor: pointer; user-select: none; }
+  .attach-chip { display: inline-block; margin-left: var(--sp-3); padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: var(--status-neutral); border: 1px solid var(--line-subtle); vertical-align: 1px; cursor: pointer; user-select: none; }
   .attach-chip:hover { color: var(--fg); border-color: var(--fg); }
   .attach-chip.copied { color: var(--green, #30a46c); border-color: var(--green, #30a46c); }
   /* Per-repo output drill-down in the expanded sub-row. */
@@ -196,9 +191,9 @@
   /* Diagnosis block in the expanded sub-row: every raw fact an operator (or
      an agent watching this page) needs to root-cause the hive without first
      attaching — full error texts, App state + fix detail, budget numbers. */
-  .diag { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; border-left: 3px solid var(--border, rgba(128,128,128,.3)); padding-left: var(--sp-4); }
-  .diag .k { color: var(--muted); font-weight: 600; margin-right: var(--sp-3); white-space: nowrap; }
-  .diag .bad { color: var(--red); }
+  .diag { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; border-left: 3px solid var(--line-subtle); padding-left: var(--sp-4); }
+  .diag .k { color: var(--text-muted); font-weight: 600; margin-right: var(--sp-3); white-space: nowrap; }
+  .diag .bad { color: var(--status-error); }
   .diag .row { display: flex; align-items: baseline; }
   .diag .row > span:last-child { word-break: break-word; }
   .diag a { color: inherit; text-decoration: underline; }
@@ -207,20 +202,20 @@
      grows leftward and stays on screen. Shown on hover AND kept open by
      click (touch/keyboard operable), never hover-only. */
   #nav-avatar { width: 28px; height: 28px; border-radius: 50%; cursor: pointer; border: 2px solid var(--green, #46a758); vertical-align: middle; }
-  #nav-user-menu { display: none; position: absolute; right: 0; top: 34px; background: var(--panel, #16181d); border: 1px solid var(--line, #2a2e37); border-radius: 8px; padding: var(--sp-2) var(--sp-0); min-width: 170px; max-width: min(280px, calc(100vw - 24px)); z-index: 9999; box-shadow: 0 8px 24px rgba(0,0,0,.4); text-align: left; }
+  #nav-user-menu { display: none; position: absolute; right: 0; top: 34px; background: var(--panel, #16181d); border: 1px solid var(--line-strong); border-radius: 8px; padding: var(--sp-2) var(--sp-0); min-width: 170px; max-width: min(280px, calc(100vw - 24px)); z-index: 9999; box-shadow: 0 8px 24px rgba(0,0,0,.4); text-align: left; }
   #nav-avatar-wrap.open #nav-user-menu, #nav-avatar-wrap:hover #nav-user-menu { display: block; }
-  #nav-user-menu > div#nav-menu-user { padding: var(--sp-4) var(--sp-6); border-bottom: 1px solid var(--line, #2a2e37); font-weight: 600; font-size: .85rem; }
-  #nav-user-menu > div#nav-menu-role { padding: var(--sp-1) var(--sp-6) var(--sp-3); border-bottom: 1px solid var(--line, #2a2e37); font-size: .72rem; color: var(--gray); }
+  #nav-user-menu > div#nav-menu-user { padding: var(--sp-4) var(--sp-6); border-bottom: 1px solid var(--line-strong); font-weight: 600; font-size: var(--fs-base); }
+  #nav-user-menu > div#nav-menu-role { padding: var(--sp-1) var(--sp-6) var(--sp-3); border-bottom: 1px solid var(--line-strong); font-size: var(--fs-xs); color: var(--status-neutral); }
   #nav-user-menu > a, #nav-user-menu > button { display: block; width: 100%; box-sizing: border-box; text-align: left; padding: var(--sp-4) var(--sp-6); background: none; border: none; color: inherit; text-decoration: none; font-size: var(--fs-base); cursor: pointer; }
   #nav-user-menu > a:hover, #nav-user-menu > button:hover { background: rgba(255,255,255,.06); }
   /* Problem hives get a red left border so the eye lands on them. */
-  tr.spoke.health-problem td:first-child { border-left: 3px solid var(--red); }
+  tr.spoke.health-problem td:first-child { border-left: 3px solid var(--status-error); }
   tr.spoke.health-problem { background: rgba(229,72,77,.05); }
   tr.agent.is-problem td { background: rgba(229,72,77,.07); }
   /* Header summary + controls. */
   .summary { font-size: 13px; }
-  .allclear { color: var(--green); font-weight: 600; }
-  .controls { margin-left: auto; display: flex; gap: 14px; font-size: var(--fs-sm); color: var(--muted); }
+  .allclear { color: var(--status-ok); font-weight: 600; }
+  .controls { margin-left: auto; display: flex; gap: 14px; font-size: var(--fs-sm); color: var(--text-muted); }
   .controls label { cursor: pointer; user-select: none; }
   @media (max-width: 900px) {
     .site-header { grid-template-columns: 1fr; position: static; }
@@ -308,7 +303,7 @@
     <span><b>budget:</b> <span class="budget-health ok"><span class="light"></span>ok</span> · <span class="budget-health warning"><span class="light"></span>warning</span> · <span class="budget-health critical"><span class="light"></span>critical</span> · <span class="budget-health exhausted"><span class="light"></span>exhausted</span> · <span class="budget-health unknown"><span class="light"></span>n/a</span></span>
     <span><b>gh app:</b> <span class="github-app-health ok"><span class="light"></span>ok</span> · <span class="github-app-health degraded"><span class="light"></span>stale</span> · <span class="github-app-health broken"><span class="light"></span>broken</span> · <span class="github-app-health unknown"><span class="light"></span>n/a</span></span>
     <span><span class="delta problem">PROBLEM</span> agents cannot work, output is stale, budget is depleted, or GitHub App auth is broken · <span class="delta quiet">quiet</span> paused / off by schedule</span>
-    <span><b>capability:</b> <span class="text-success">green</span> able · <span class="text-brand">amber</span> partial · <span class="text-danger">red</span> blocked · <span style="color:var(--gray)">gray</span> unknown</span>
+    <span><b>capability:</b> <span class="text-success">green</span> able · <span class="text-brand">amber</span> partial · <span class="text-danger">red</span> blocked · <span style="color:var(--status-neutral)">gray</span> unknown</span>
   </div>
   <table>
     <thead>
@@ -411,7 +406,7 @@ function avatarImg(username, px, extraStyle) {
   if (isUserLive(username)) {
     var RING_GAP = 2, RING_W = 3, box = px + 2 * (RING_GAP + RING_W);
     return '<span style="display:inline-block;box-sizing:border-box;width:' + box + 'px;height:' + box + 'px;' +
-      'padding:' + RING_GAP + 'px;border:' + RING_W + 'px dashed var(--green);border-radius:50%;' +
+      'padding:' + RING_GAP + 'px;border:' + RING_W + 'px dashed var(--status-ok);border-radius:50%;' +
       'vertical-align:middle;line-height:0">' + img + "</span>";
   }
   return img;
@@ -445,7 +440,7 @@ function inlineAccessAvatar(a) {
   var uname = String((a || {}).username || "");
   var role = String((a || {}).role || "");
   return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a),
-    "border:1px solid " + accessRoleColor(role) + ";background:var(--panel);flex:0 0 auto");
+    "border:1px solid " + accessRoleColor(role) + ";background:var(--surface-2);flex:0 0 auto");
 }
 function hiveAccessAvatars(h) {
   var members = (h && h.access) || [];
@@ -458,7 +453,7 @@ function hiveAccessAvatars(h) {
     var hiddenNames = [];
     for (var j = shown.length; j < members.length; j++) hiddenNames.push(String(members[j].username || ""));
     faces += '<span title="' + escAttr(hiddenNames.join(", ")) + '" ' +
-      'style="font-size:var(--fs-2xs);color:var(--muted);font-weight:600;white-space:nowrap;cursor:help">+' + overflow + "</span>";
+      'style="font-size:var(--fs-2xs);color:var(--text-muted);font-weight:600;white-space:nowrap;cursor:help">+' + overflow + "</span>";
   }
   var label = members.length === 1 ? "1 user with access" : members.length + " users with access";
   return '<span class="hive-access-faces" aria-label="' + escAttr(label) + '" ' +
@@ -672,7 +667,7 @@ function versionHTML(h) {
   } else if (behind == null) {
     badge = ' <span class="badge" title="Could not compare this commit with stable v4 tip">? behind</span>';
   }
-  return '<span style="font-family:monospace;color:var(--muted)">' + esc(sha) + '</span>' + badge;
+  return '<span style="font-family:monospace;color:var(--text-muted)">' + esc(sha) + '</span>' + badge;
 }
 function toggleHTML(a) {
   // A legacy/unknown spoke did not report enabled/paused meaningfully — render

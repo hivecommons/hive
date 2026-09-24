@@ -318,7 +318,7 @@ func TestContributeLandingHasOpsTab(t *testing.T) {
 		`How it works`,
 		// #4549 tokenized the neutral inline literals so the light ramp reaches
 		// them; this assertion guards the SENTENCE, not the hex it was written in.
-		`Powered by <strong style="color:var(--cc-text)">ClankeR</strong>`,
+		`Powered by <strong style="color:var(--text)">ClankeR</strong>`,
 		`Trust tiers`,
 	} {
 		if !strings.Contains(body, want) {

@@ -1,0 +1,1 @@
+- Align the contributor portal and hub pages with the shared dashboard design tokens, reducing local palette aliases and tightening the style ratchet baselines.

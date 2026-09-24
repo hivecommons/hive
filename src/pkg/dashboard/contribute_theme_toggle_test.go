@@ -137,18 +137,29 @@ func TestContributeThemeToggleUsesNoInlineHandler(t *testing.T) {
 	}
 }
 
-// Both light hooks must exist and must set color-scheme, or a forced-light page
-// still paints native chrome (select popups, scrollbars) dark.
-func TestContributeLightRampCarriesColorScheme(t *testing.T) {
+// The contributor page must consume the shared token/component stylesheets and
+// avoid carrying its own neutral light ramp. tokens.css owns the [data-theme]
+// light block and color-scheme declarations for every dashboard surface.
+func TestContributeLightRampComesFromSharedTokens(t *testing.T) {
 	body := contributeBody(t)
 
 	for _, want := range []string{
-		"@media(prefers-color-scheme:light){:root:not([data-theme=\"dark\"]){\n  color-scheme:light;",
-		":root[data-theme=\"light\"]{\n  color-scheme:light;",
+		`<link rel="stylesheet" href="/tokens.css">`,
+		`<link rel="stylesheet" href="/components.css">`,
 		":root{\n  color-scheme:dark;",
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("palette block missing color-scheme declaration: %q", want)
+			t.Errorf("shared theme contract missing %q", want)
+		}
+	}
+	for _, localRamp := range []string{
+		"--cc-bg:",
+		"--cc-surface:",
+		"--cc-text:",
+		"--cc-muted:",
+	} {
+		if strings.Contains(body, localRamp) {
+			t.Errorf("contribute page still carries local neutral ramp fragment %q", localRamp)
 		}
 	}
 }

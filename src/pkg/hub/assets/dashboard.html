@@ -14,26 +14,9 @@
   <link rel="stylesheet" href="/components.css">
   <style>
     :root {
-      color-scheme: dark;
-      --bg: #080b0f;
-      --bg-soft: #0d1218;
-      --panel: #121922;
-      --panel-strong: #17212d;
-      --text: #f6f8fb;
-      --fg: #f6f8fb;
-      --muted: #a8b3c2;
-      --line: #263545;
-      --amber: #f4c75f;
-      --green: #74df9a;
-      --blue: #80bfff;
-      --red: #ff7e7e;
-      --purple: #b482ff;
-      --shadow: 0 24px 80px #0006;
-      /* Legacy token aliases used by dashboard markup and scripts */
-      --surface: var(--panel);
-      --border: var(--line);
-      --accent: var(--amber);
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --hub-dashboard-accent: var(--brand);
+      --facet-rail-w: 34px;
+      --facet-tray-w: 240px;
     }
     * { margin: var(--sp-0); padding: var(--sp-0); box-sizing: border-box; }
     body {
@@ -45,7 +28,7 @@
       min-height: 100vh;
       color: var(--text);
     }
-    a { color: var(--accent); text-decoration: none; }
+    a { color: var(--hub-dashboard-accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
     input, textarea, select, button { font-family: inherit; }
 
@@ -60,7 +43,7 @@
       grid-template-columns: 1fr auto 1fr;
       align-items: center;
       gap: var(--sp-8);
-      padding: 1rem clamp(1rem, 4vw, 4.5rem);
+      padding: var(--sp-6) clamp(1rem, 4vw, 4.5rem);
       position: sticky;
       top: 0;
     }
@@ -72,19 +55,19 @@
       color: var(--amber);
       background: linear-gradient(145deg, #f4c75f2e, #80bfff1a);
       border: 1px solid #f4c75f6b;
-      border-radius: .65rem;
+      border-radius: var(--r-lg);
       place-items: center;
       font-size: 1.2rem;
       display: grid;
     }
-    .site-header nav { color: var(--muted); gap: 1.35rem; font-size: .94rem; flex-wrap: nowrap; }
+    .site-header nav { color: var(--muted); gap: 1.35rem; font-size: var(--fs-md); flex-wrap: nowrap; }
     .site-header nav a { color: var(--muted); white-space: nowrap; }
     .site-header nav a:hover, .header-link:hover { color: var(--text); text-decoration: none; }
     .header-link {
       border: 1px solid var(--line);
       width: fit-content;
       color: var(--text);
-      border-radius: .55rem;
+      border-radius: var(--r);
       justify-self: end;
       padding: .72rem 1rem;
       font-weight: 700;
@@ -180,11 +163,11 @@
     .alert-row-wrap .alert-ack-btn { flex: 0 0 auto; }
     button.alert-row { flex: 1 1 auto; min-width: 0; width: 100%; text-align: left; font-family: inherit; color: inherit; border: 1px solid transparent; cursor: pointer; }
     button.alert-row:hover { background: rgba(255,255,255,0.07); border-color: var(--border); }
-    button.alert-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    button.alert-row:focus-visible { outline: 2px solid var(--hub-dashboard-accent); outline-offset: 2px; }
     /* Target highlight: a brief ring on the hive row the operator was sent to,
        so it is obvious WHICH row answered the click after the scroll settles. */
     .hive-row-targeted > td { background: rgba(88,166,255,0.16) !important; }
-    .hive-row-targeted > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+    .hive-row-targeted > td:first-child { box-shadow: inset 3px 0 0 var(--hub-dashboard-accent); }
     .alert-row-hive { font-weight: 700; color: var(--text); }
     .alert-row-reason { color: var(--muted); }
     .alert-row-age { color: var(--muted); font-size: var(--fs-xs); margin-left: auto; white-space: nowrap; }
@@ -213,7 +196,7 @@
        row's panel always draws above the tray rather than behind it. */
     #hive-search-row { display: flex; align-items: center; gap: 10px; margin-bottom: var(--sp-5); }
     #hive-search { flex: 1; min-width: 0; padding: 8px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); color: var(--text); font-size: 0.85rem; font-family: inherit; }
-    #hive-search:focus { outline: none; border-color: var(--accent); }
+    #hive-search:focus { outline: none; border-color: var(--hub-dashboard-accent); }
     #hive-search-clear { flex: none; }
     /* Collapsed rail width and expanded tray width. The layout grid reserves
        only the rail; the tray overhangs it. */
@@ -227,9 +210,9 @@
        with the tray shut. */
     .facet-rail-tab { display: flex; flex-direction: column; align-items: center; gap: var(--sp-3); width: var(--facet-rail-w); padding: var(--sp-4) var(--sp-0); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font: inherit; font-size: 0.8rem; cursor: pointer; }
     .facet-rail-tab:hover, .facet-rail-tab:focus-visible { color: var(--text); border-color: var(--muted); }
-    .facet-rail-tab.has-active { border-color: var(--accent); color: var(--accent); }
+    .facet-rail-tab.has-active { border-color: var(--hub-dashboard-accent); color: var(--hub-dashboard-accent); }
     .facet-rail-word { writing-mode: vertical-rl; letter-spacing: 0.08em; font-size: var(--fs-2xs); text-transform: uppercase; }
-    .facet-active-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: var(--sp-0) var(--sp-2); border-radius: var(--r-pill); background: var(--accent); color: #000; font-size: var(--fs-2xs); font-weight: 800; font-variant-numeric: tabular-nums; }
+    .facet-active-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: var(--sp-0) var(--sp-2); border-radius: var(--r-pill); background: var(--hub-dashboard-accent); color: #000; font-size: var(--fs-2xs); font-weight: 800; font-variant-numeric: tabular-nums; }
     /* Closed by default; .facet-open (driven entirely by JS from the persisted
        flag) is the only thing that reveals it. display:none while closed keeps
        every control inside it out of the tab order. */
@@ -244,7 +227,7 @@
     .facet-values { padding: var(--sp-1) var(--sp-3) var(--sp-4); }
     .facet-value { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); width: 100%; padding: var(--sp-2) var(--sp-3); background: none; border: none; border-radius: var(--r-sm); color: var(--muted); font: inherit; font-size: 0.74rem; cursor: pointer; text-align: left; }
     .facet-value:hover { background: rgba(255,255,255,0.05); color: var(--text); }
-    .facet-value.on { color: var(--accent); font-weight: 700; background: rgba(244,199,95,0.08); }
+    .facet-value.on { color: var(--hub-dashboard-accent); font-weight: 700; background: color-mix(in srgb,var(--hub-dashboard-accent) 8%,transparent); }
     .facet-value-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .facet-value-count { flex: none; font-size: 0.65rem; opacity: 0.75; font-variant-numeric: tabular-nums; }
     /* Section headers double as expand/collapse buttons for the admin
@@ -268,7 +251,7 @@
     .hive-group-caret { display: inline-block; width: 12px; font-size: 0.7rem; }
     .table-wrap { overflow: visible; margin: 0 auto; position: relative; }
     .hive-menu-cell:hover .hive-menu-dropdown { display: block !important; }
-    .hive-menu-dropdown a:hover, .hive-menu-dropdown div[onclick]:hover { background: rgba(244,199,95,0.08); border-radius: var(--r-sm); }
+    .hive-menu-dropdown a:hover, .hive-menu-dropdown div[onclick]:hover { background: color-mix(in srgb,var(--hub-dashboard-accent) 8%,transparent); border-radius: var(--r-sm); }
     .table-wrap::-webkit-scrollbar { height: 10px; display: block; }
     .table-wrap::-webkit-scrollbar-track { background: var(--bg-soft); border-radius: var(--r-sm); }
     .table-wrap::-webkit-scrollbar-thumb { background: var(--line); border-radius: var(--r-sm); min-width: 40px; }
@@ -393,7 +376,7 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     @keyframes toast-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
     .hive-confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 150; display: flex; align-items: center; justify-content: center; }
-    .hive-confirm { box-shadow: var(--shadow); background: linear-gradient(#17212df5, #0c1219f5); border: 1px solid #ffffff1a; border-radius: .85rem; padding: var(--sp-8); max-width: 400px; width: 90%; }
+    .hive-confirm { box-shadow: var(--shadow-raised); background: linear-gradient(#17212df5, #0c1219f5); border: 1px solid #ffffff1a; border-radius: var(--r-lg); padding: var(--sp-8); max-width: 400px; width: 90%; }
     .hive-confirm p { color: var(--text); margin-bottom: var(--sp-6); font-size: 0.9rem; }
     .hive-confirm-btns { display: flex; gap: var(--sp-4); justify-content: flex-end; }
     .empty-state { text-align: center; padding: 48px; color: var(--muted); }
@@ -502,7 +485,7 @@
         <p class="section-label">Dashboard</p>
         <h1>My Hives</h1>
         <p class="subtitle">Hive instances you own or have access to</p>
-        <p style="margin-top:var(--sp-4);padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:rgba(244,199,95,0.08);font-size:0.85rem">👋 New to Hive? Read the <a href="https://docs.kubestellar.io/docs/hive/getting-started" target="_blank" rel="noopener" style="color:var(--amber);font-weight:700">Getting Started Guide</a> before diving in.</p>
+        <p style="margin-top:var(--sp-4);padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:color-mix(in srgb,var(--hub-dashboard-accent) 8%,transparent);font-size:0.85rem">👋 New to Hive? Read the <a href="https://docs.kubestellar.io/docs/hive/getting-started" target="_blank" rel="noopener" style="color:var(--amber);font-weight:700">Getting Started Guide</a> before diving in.</p>
         <p id="latest-image-sha" style="font-size:0.7rem;color:var(--muted);margin-top:var(--sp-2)"></p>
         <!-- Image-pulls bar chart: per-release container-image PULLS of the
              public spoke image (ghcr.io/hivecommons/hive), bucketed by the
@@ -544,11 +527,11 @@
 
     <div id="provision-request-banner" style="display:none"></div>
     <div id="admin-provision-requests" style="display:none;margin-bottom:var(--sp-8)">
-      <h3 style="font-size:1rem;color:var(--accent);margin-bottom:var(--sp-5)">Pending Provision Requests</h3>
+      <h3 style="font-size:var(--fs-lg);color:var(--hub-dashboard-accent);margin-bottom:var(--sp-5)">Pending Provision Requests</h3>
       <div id="admin-provision-list"></div>
       <h3 id="past-requests-header" role="button" tabindex="0" aria-expanded="false" aria-controls="past-requests-body"
           onclick="togglePastRequests()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();togglePastRequests();}"
-          style="font-size:1rem;color:var(--accent);margin:20px 0 10px;cursor:pointer;user-select:none;display:flex;align-items:center;gap:var(--sp-3)">
+          style="font-size:var(--fs-lg);color:var(--hub-dashboard-accent);margin:20px 0 10px;cursor:pointer;user-select:none;display:flex;align-items:center;gap:var(--sp-3)">
         <span id="past-requests-toggle" aria-hidden="true">&#9656;</span><span>Past Requests</span>
         <span id="past-requests-count" style="font-size:0.7rem;color:var(--muted);font-weight:400"></span>
       </h3>
@@ -593,7 +576,7 @@
     </div>
 
     <div id="public-hives-section" style="display:none;margin-top:48px">
-      <h2 style="font-size:1.3rem;color:var(--accent);margin-bottom:var(--sp-6)">Public Hives</h2>
+      <h2 style="font-size:1.3rem;color:var(--hub-dashboard-accent);margin-bottom:var(--sp-6)">Public Hives</h2>
       <div id="public-hives-container"></div>
     </div>
 
@@ -601,7 +584,7 @@
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--sp-6)">
         <h2 id="admin-users-header" role="button" tabindex="0" aria-expanded="false" aria-controls="admin-users-body"
             onclick="toggleAdminUsers()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAdminUsers();}"
-            style="font-size:1.3rem;color:var(--accent);margin:var(--sp-0);cursor:pointer;user-select:none;display:flex;align-items:center;gap:var(--sp-4)">
+            style="font-size:1.3rem;color:var(--hub-dashboard-accent);margin:var(--sp-0);cursor:pointer;user-select:none;display:flex;align-items:center;gap:var(--sp-4)">
           <span id="admin-users-toggle" aria-hidden="true" style="font-size:0.7rem">&#9656;</span><span>Hub Admin &mdash; Users</span>
           <span id="admin-users-count" style="font-size:var(--fs-sm);color:var(--muted);font-weight:400"></span>
         </h2>
@@ -623,7 +606,7 @@
 
     <div id="hub-banner-section" style="display:none;margin-top:48px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--sp-6)">
-        <h2 style="font-size:1.3rem;color:var(--accent)">Hub Banner</h2>
+        <h2 style="font-size:1.3rem;color:var(--hub-dashboard-accent)">Hub Banner</h2>
         <button class="hv-btn btn-primary btn-primary btn-danger" id="btn-clear-banner" style="display:none" onclick="clearHubBanner()">Clear All Banners</button>
       </div>
       <div id="active-banner-display" style="display:none;padding:var(--sp-6);border-radius:8px;border:1px solid var(--border);background:var(--surface);margin-bottom:var(--sp-6)">
@@ -636,7 +619,7 @@
     <div id="cluster-health-section" style="display:none;margin-top:48px">
       <div onclick="toggleClusterHealth()" style="display:flex;align-items:center;gap:var(--sp-4);cursor:pointer;user-select:none;margin-bottom:var(--sp-6)">
         <span id="cluster-health-toggle" style="font-size:0.7rem;color:var(--muted);transition:transform 0.2s">&#9654;</span>
-        <h2 style="font-size:1.3rem;color:var(--accent);margin:var(--sp-0)">Cluster Health</h2>
+        <h2 style="font-size:1.3rem;color:var(--hub-dashboard-accent);margin:var(--sp-0)">Cluster Health</h2>
         <span id="cluster-health-summary-bar" style="font-size:0.8rem;color:var(--muted);margin-left:var(--sp-4)"></span>
       </div>
       <div id="cluster-health-body" style="display:none">
@@ -654,7 +637,7 @@
     <div id="scale-controls-section" style="display:none;margin-top:48px">
       <div onclick="toggleScaleControls()" style="display:flex;align-items:center;gap:var(--sp-4);cursor:pointer;user-select:none;margin-bottom:var(--sp-6)">
         <span id="scale-controls-toggle" style="font-size:0.7rem;color:var(--muted);transition:transform 0.2s">&#9654;</span>
-        <h2 style="font-size:1.3rem;color:var(--accent);margin:var(--sp-0)">Scale Controls</h2>
+        <h2 style="font-size:1.3rem;color:var(--hub-dashboard-accent);margin:var(--sp-0)">Scale Controls</h2>
         <span id="scale-controls-summary" style="font-size:0.8rem;color:var(--muted);margin-left:var(--sp-4)"></span>
       </div>
       <div id="scale-controls-body" style="display:none">
@@ -678,7 +661,7 @@
     <div id="reach-section" style="display:none;margin-top:48px">
       <div onclick="toggleReach()" style="display:flex;align-items:center;gap:var(--sp-4);cursor:pointer;user-select:none;margin-bottom:var(--sp-6)">
         <span id="reach-toggle" style="font-size:0.7rem;color:var(--muted);transition:transform 0.2s">&#9654;</span>
-        <h2 style="font-size:1.3rem;color:var(--accent);margin:var(--sp-0)">PR Reach</h2>
+        <h2 style="font-size:1.3rem;color:var(--hub-dashboard-accent);margin:var(--sp-0)">PR Reach</h2>
         <span id="reach-summary-bar" style="font-size:0.8rem;color:var(--muted);margin-left:var(--sp-4)"></span>
       </div>
       <div id="reach-body" style="display:none">
@@ -813,12 +796,12 @@
           '" fill="var(--muted)" fill-opacity="0.10" stroke="var(--muted)" stroke-width="0.75" stroke-dasharray="2,2" opacity="0.6"/>';
       }
       s += '<polygon points="' + quadrantPolygonPoints(q, cx, cy, radius) +
-        '" fill="var(--accent)" fill-opacity="0.22" stroke="var(--accent)" stroke-width="1.5" stroke-linejoin="round"/>';
+        '" fill="var(--hub-dashboard-accent)" fill-opacity="0.22" stroke="var(--hub-dashboard-accent)" stroke-width="1.5" stroke-linejoin="round"/>';
       for (var i = 0; i < 4; i++) {
         var a = quadrantAxis(q, QUADRANT_AXES[i]);
         if (!a.scored) continue;
         var p = quadrantPoint(i, a.score, true, cx, cy, radius);
-        s += '<circle cx="' + p[0].toFixed(2) + '" cy="' + p[1].toFixed(2) + '" r="' + (labelled ? 2.5 : 1.5) + '" fill="var(--accent)"/>';
+        s += '<circle cx="' + p[0].toFixed(2) + '" cy="' + p[1].toFixed(2) + '" r="' + (labelled ? 2.5 : 1.5) + '" fill="var(--hub-dashboard-accent)"/>';
       }
       if (labelled) {
         for (var i = 0; i < 4; i++) {
@@ -874,7 +857,7 @@
         .filter(function(a) { return a.nudge; })
         .map(function(a) {
           return '<div style="display:flex;gap:var(--sp-3);align-items:flex-start;margin-top:var(--sp-2)">' +
-            '<span style="color:var(--accent);flex:0 0 auto">→</span><span>' + esc(a.nudge) + '</span></div>';
+            '<span style="color:var(--hub-dashboard-accent);flex:0 0 auto">→</span><span>' + esc(a.nudge) + '</span></div>';
         }).join('');
       /* Reasons explain a collapsed spoke, so a gap reads as "not measured yet"
          rather than as something the viewer has to interpret. */
@@ -1206,7 +1189,7 @@
       var fld = 'width:100%;padding:var(--sp-4);background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--r);box-sizing:border-box;font-size:0.85rem;text-transform:uppercase';
       overlay.innerHTML =
         '<div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--r-lg);padding:22px;max-width:400px;width:90%">' +
-        '<h3 style="margin:0 0 10px 0;font-size:1rem">Your country</h3>' +
+        '<h3 style="margin:0 0 10px 0;font-size:var(--fs-lg)">Your country</h3>' +
         '<p style="margin:var(--sp-0) var(--sp-0) var(--sp-5) var(--sp-0);color:var(--muted);font-size:var(--fs-base);line-height:1.5">' +
         'Shows a small flag beside your avatar. Two-letter country code (ISO 3166-1 alpha-2), ' +
         'for example GB or JP. Leave it blank for no flag &mdash; we will not guess one for you.</p>' +
@@ -1216,7 +1199,7 @@
         '<div id="_country-err" style="display:none;margin-top:var(--sp-4);font-size:0.8rem;color:#f85149"></div>' +
         '<div style="display:flex;gap:var(--sp-4);justify-content:flex-end;margin-top:18px">' +
         '<button class="hv-btn btn-secondary" data-act="no" style="' + btn + ';background:transparent;color:var(--text)">Cancel</button>' +
-        '<button class="hv-btn btn-secondary" data-act="yes" style="' + btn + ';background:var(--accent,#3fb950);color:#fff;border-color:transparent;font-weight:600">Save</button>' +
+        '<button class="hv-btn btn-secondary" data-act="yes" style="' + btn + ';background:var(--hub-dashboard-accent);color:#fff;border-color:transparent;font-weight:600">Save</button>' +
         '</div></div>';
 
       function close() {
@@ -5541,14 +5524,14 @@
           /* Inline share bar — cheap visual ranking without a chart library. */
           '<td style="padding:var(--sp-1) var(--sp-0) var(--sp-1) var(--sp-3);width:64px">' +
             '<div style="position:relative;height:9px;background:var(--surface);border-radius:2px;overflow:hidden" title="' + pct.toFixed(1) + '% of total">' +
-            '<div style="position:absolute;left:0;top:0;bottom:0;width:' + Math.max(0, Math.min(100, pct)).toFixed(1) + '%;background:var(--accent);opacity:0.65"></div>' +
+            '<div style="position:absolute;left:0;top:0;bottom:0;width:' + Math.max(0, Math.min(100, pct)).toFixed(1) + '%;background:var(--hub-dashboard-accent);opacity:0.65"></div>' +
             '</div></td>' +
           '<td style="padding:var(--sp-1) var(--sp-0) var(--sp-1) var(--sp-3);text-align:right;color:var(--muted);font-size:var(--fs-xs);white-space:nowrap">' + pct.toFixed(1) + '%</td>' +
         '</tr>';
       }
       var more = '';
       if (rows.length > USAGE_TOP_N) {
-        more = '<div class="mt-2"><a href="#" onclick="toggleUsageSection(\'' + esc(key) + '\');return false" style="font-size:0.7rem;color:var(--accent);text-decoration:none">' +
+        more = '<div class="mt-2"><a href="#" onclick="toggleUsageSection(\'' + esc(key) + '\');return false" style="font-size:0.7rem;color:var(--hub-dashboard-accent);text-decoration:none">' +
           (expanded ? 'Show top ' + USAGE_TOP_N : 'Show all ' + rows.length) + '</a></div>';
       }
       return '<div style="flex:1;min-width:200px">' +
@@ -5599,7 +5582,7 @@
         }
         var zMore = '';
         if (zero.length > USAGE_ZERO_TOP_N) {
-          zMore = ' <a href="#" onclick="toggleUsageSection(\'zero\');return false" style="font-size:0.7rem;color:var(--accent);text-decoration:none">' +
+          zMore = ' <a href="#" onclick="toggleUsageSection(\'zero\');return false" style="font-size:0.7rem;color:var(--hub-dashboard-accent);text-decoration:none">' +
             (zExpanded ? 'show fewer' : 'show all ' + zero.length) + '</a>';
         }
         zeroHtml = '<div style="margin-top:var(--sp-5);padding-top:10px;border-top:1px solid var(--border)">' +
@@ -5610,7 +5593,7 @@
       el.innerHTML =
         '<div style="background:var(--card,var(--surface));border:1px solid var(--border);border-radius:8px;padding:14px 16px">' +
           '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:var(--sp-5)">' +
-            '<h3 style="font-size:0.95rem;color:var(--accent);margin:var(--sp-0)">Usage</h3>' +
+            '<h3 style="font-size:0.95rem;color:var(--hub-dashboard-accent);margin:var(--sp-0)">Usage</h3>' +
             '<span style="font-size:0.7rem;color:var(--muted);border:1px solid var(--border);border-radius:10px;padding:1px 7px">' + esc(scopeLabel) + '</span>' +
             '<span style="flex:1"></span>' +
             trend +
@@ -5703,7 +5686,7 @@
                 var _timerHTML = _bStart
                   ? '<span class="build-timer" data-build-start="' + _bStart + '" style="font-size:0.65rem;color:var(--muted);opacity:0.7;white-space:nowrap;font-variant-numeric:tabular-nums">' + fmtBuildElapsed(_bStart) + '</span>'
                   : '';
-                brStatusHTML = '<span style="display:inline-block;flex:none;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite" title="Container image for this commit is still building"></span><span style="font-size:0.65rem;color:var(--muted);opacity:0.7;white-space:nowrap">building image…</span>' + _timerHTML;
+                brStatusHTML = '<span style="display:inline-block;flex:none;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--hub-dashboard-accent);border-radius:50%;animation:spin 1s linear infinite" title="Container image for this commit is still building"></span><span style="font-size:0.65rem;color:var(--muted);opacity:0.7;white-space:nowrap">building image…</span>' + _timerHTML;
               } else if (brStatus === 'failed') {
                 var _bURL = _latestBuildURLs[br] || '';
                 var _failText = '<span style="color:var(--red);font-size:0.65rem;white-space:nowrap">build failed</span>';
@@ -5822,7 +5805,7 @@
              its own above it, so neither reads as a subheading of the other. */
           if (lines) lines = '<div style="font-size:0.7rem;color:var(--muted);margin-bottom:var(--sp-1)">Latest available images:</div>' + lines;
           lines = chLines + lines;
-          shaEl.innerHTML = lines ? lines :'<div style="display:flex;align-items:center;gap:var(--sp-3);font-size:0.7rem;color:var(--muted)"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite"></span>Resolving latest available images…</div>';
+          shaEl.innerHTML = lines ? lines :'<div style="display:flex;align-items:center;gap:var(--sp-3);font-size:0.7rem;color:var(--muted)"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--hub-dashboard-accent);border-radius:50%;animation:spin 1s linear infinite"></span>Resolving latest available images…</div>';
         }
         var hubHash = data.hub_git_hash || '';
         var hubBranch = data.hub_git_branch || STABLE_BRANCH_LABEL;
@@ -5888,7 +5871,7 @@
                 '</span>';
             }
             var hubStatusIcon = hubLatestUnknown
-              ? ' <span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-left:3px" title="Resolving latest version…"></span>'
+              ? ' <span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--hub-dashboard-accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-left:3px" title="Resolving latest version…"></span>'
               : isCurrent ? '<span style="color:var(--green);margin-left:3px" title="hub is on latest">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="hub is behind latest ' + esc(hubBranchLatest) + '">↑</span>';
             var hubBranchPill = '<span style="display:inline-block;padding:1px 6px;border-radius:var(--r-pill);font-size:var(--fs-2xs);background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);margin-right:var(--sp-2)">' + esc(hubBranch) + '</span>';
             var hubMsg = _latestSHAMessages[hubBranch] || '';
@@ -6703,9 +6686,9 @@
         var modeCell = h.provStatus === 'error'
           ? '<span style="color:var(--red);cursor:help;white-space:nowrap" title="' + esc(h.provError || '') + '">⚠ ERROR</span>'
           : h.assigning
-          ? '<span style="color:var(--accent);white-space:nowrap" title="Waiting for the spoke to report the new project via heartbeat"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:var(--sp-2)"></span>Assigning to ' + esc(h.assigningTo || '?') + '</span>'
+          ? '<span style="color:var(--hub-dashboard-accent);white-space:nowrap" title="Waiting for the spoke to report the new project via heartbeat"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:var(--sp-2)"></span>Assigning to ' + esc(h.assigningTo || '?') + '</span>'
           : h.provStatus === 'provisioning'
-          ? '<span style="color:var(--accent);white-space:nowrap">⏳ Provisioning</span>'
+          ? '<span style="color:var(--hub-dashboard-accent);white-space:nowrap">⏳ Provisioning</span>'
           : modeBadge(h.governorMode);
         /* A placeholder wedged at assigned && !claim_delivered gets a subtle
            live-ticking "claim pending · Nm" pill so a stuck assignment is
@@ -6885,7 +6868,7 @@
           var imageBuilding = (_latestImageStatus[branchName] || '') === 'building';
           var buildingHint = imageBuilding ? ' (image still building — upgrading now pulls the previous image)' : '';
           var status = latestUnknown
-            ? ' <span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-left:3px" title="Resolving latest version…"></span>'
+            ? ' <span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--hub-dashboard-accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-left:3px" title="Resolving latest version…"></span>'
             : isCurrent ? '<span style="color:var(--green);margin-left:3px" title="latest">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="behind latest ' + esc(branchLatest) + '">↑</span>';
           var upgradeIcon = '';
           if (isUpgrading) {
@@ -7144,7 +7127,7 @@
               : '';
             var note = (pr.note || '').trim();
             var noteHtml = note
-              ? '<div style="margin-top:var(--sp-2);font-size:var(--fs-sm);color:var(--text);white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,0.15);border-left:2px solid var(--accent);padding:var(--sp-2) var(--sp-4);border-radius:2px">' + esc(note) + '</div>'
+              ? '<div style="margin-top:var(--sp-2);font-size:var(--fs-sm);color:var(--text);white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,0.15);border-left:2px solid var(--hub-dashboard-accent);padding:var(--sp-2) var(--sp-4);border-radius:2px">' + esc(note) + '</div>'
               : '<div style="margin-top:var(--sp-2);font-size:0.72rem;color:var(--muted);font-style:italic">(no note)</div>';
             return '<div style="padding:var(--sp-3) var(--sp-0);border-bottom:1px solid var(--border)">' +
               '<div style="display:flex;align-items:center;justify-content:space-between">' +
@@ -8663,7 +8646,7 @@
       overlay.id = 'approve-overlay';
       overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2000;display:flex;align-items:center;justify-content:center';
       overlay.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--r-lg);padding:var(--sp-8);max-width:440px;width:90%;max-height:88vh;overflow-y:auto">' +
-        '<h3 style="margin:var(--sp-0) var(--sp-0) var(--sp-5) var(--sp-0);font-size:1rem">Approve &amp; assign placeholder</h3>' + content + '</div>';
+        '<h3 style="margin:var(--sp-0) var(--sp-0) var(--sp-5) var(--sp-0);font-size:var(--fs-lg)">Approve &amp; assign placeholder</h3>' + content + '</div>';
       overlay.addEventListener('click', function(e) { if (e.target === overlay) closeApproveModal(); });
       document.body.appendChild(overlay);
       /* No cluster is known yet (auto-pick is the default selection), so the
@@ -8888,7 +8871,7 @@
 
     function healthBarColor(pct, warnThreshold, dangerThreshold) {
       if (pct >= dangerThreshold) return 'var(--red)';
-      if (pct >= warnThreshold) return 'var(--accent)';
+      if (pct >= warnThreshold) return 'var(--hub-dashboard-accent)';
       return 'var(--green)';
     }
 
@@ -9406,7 +9389,7 @@
         var ghe = target !== PUBLIC_GITHUB_HOST;
         note.textContent = 'This hive will target ' + target + '.' +
           (ghe ? ' The GitHub App must be installed on the org on ' + target + ' — a public github.com App will not authenticate there.' : '');
-        note.style.color = ghe ? 'var(--accent, #58a6ff)' : 'var(--muted)';
+        note.style.color = ghe ? 'var(--hub-dashboard-accent)' : 'var(--muted)';
       }
       /* Idempotent: this is re-invoked when the assign modal's placeholder
          picker changes the cluster, and binding a second listener each time
@@ -9753,7 +9736,7 @@
       return '<div style="display:flex;align-items:center;gap:var(--sp-4);margin-bottom:var(--sp-2)">' +
         '<div style="flex:none;width:72px;font-size:0.72rem;color:var(--text)">' + label + '</div>' +
         '<div style="flex:1;height:8px;background:var(--border);border-radius:var(--r-sm);overflow:hidden">' +
-          '<div style="width:' + pct + '%;height:100%;background:var(--accent)"></div>' +
+          '<div style="width:' + pct + '%;height:100%;background:var(--hub-dashboard-accent)"></div>' +
         '</div>' +
         '<div style="flex:none;width:84px;text-align:right;font-size:0.7rem;color:var(--muted)">' +
           count + ' &middot; ' + share + '%</div>' +
@@ -9799,7 +9782,7 @@
       rows += countryRollupRow(unknownLabel, unknown, max, total);
 
       el.innerHTML =
-        '<div style="font-size:0.85rem;color:var(--accent);font-weight:600;margin-bottom:var(--sp-4)">' +
+        '<div style="font-size:0.85rem;color:var(--hub-dashboard-accent);font-weight:600;margin-bottom:var(--sp-4)">' +
           'Where users are &mdash; ' + countries.length + ' countr' + (countries.length === 1 ? 'y' : 'ies') +
           ', ' + unknown + ' unknown of ' + total +
         '</div>' + rows;
@@ -10197,7 +10180,7 @@
     /* Style is derived from state in one place so the initial markup and the
        live in-place update below can never drift apart. */
     function contactToggleStyle(open) {
-      var color = open ? 'var(--accent)' : 'var(--muted)';
+      var color = open ? 'var(--hub-dashboard-accent)' : 'var(--muted)';
       return 'margin-top:var(--sp-1);padding:1px 7px;background:none;border:1px solid ' + color +
         ';border-radius:var(--r-sm);color:' + color + ';cursor:pointer;font-size:0.65rem' +
         (open ? ';font-weight:600' : '');
@@ -10296,7 +10279,7 @@
            is visible without reading to the end of a wide row. */
         '<button type="button" data-contact-close="' + user + '" aria-label="Close editor for ' + user + '"' +
           ' style="position:absolute;top:6px;right:10px;background:none;border:none;color:var(--muted);' +
-          'cursor:pointer;font-size:1rem;line-height:1;padding:var(--sp-1) var(--sp-3)">&#10005;</button>' +
+          'cursor:pointer;font-size:var(--fs-lg);line-height:1;padding:var(--sp-1) var(--sp-3)">&#10005;</button>' +
         '</td></tr>';
     }
 
@@ -10728,7 +10711,7 @@
           tip: 'Active, spending real time in their hive, and tasks are landing while a hive rests at its ACMM level. Good candidate to raise autonomy / quota.'};
       }
       if (anyEarlyStage || act.done === 0) {
-        return {key: 'needs-help', label: 'Needs help — nudge the journey', color: 'var(--accent)',
+        return {key: 'needs-help', label: 'Needs help — nudge the journey', color: 'var(--hub-dashboard-accent)',
           tip: 'Signed in but stuck early on the adoption path or barely any activity. A journey nudge (not auto-sent) is the lever.'};
       }
       return {key: 'on-track', label: 'On track', color: 'var(--muted)',
@@ -10785,7 +10768,7 @@
       // Assign flow relocated here as an explicit button — the click that used to
       // live on the (now inert) name. Approve-vs-assign copy mirrors the old title.
       var assignBtn = '<button onclick="openAssignForUser(\'' + escAttr(u.github_username) + '\');return false" ' +
-        'style="margin-top:var(--sp-3);width:100%;padding:5px 8px;border:1px solid var(--accent);background:transparent;color:var(--accent);border-radius:var(--r);cursor:pointer;font-size:0.72rem;font-weight:600">' +
+        'style="margin-top:var(--sp-3);width:100%;padding:5px 8px;border:1px solid var(--hub-dashboard-accent);background:transparent;color:var(--hub-dashboard-accent);border-radius:var(--r);cursor:pointer;font-size:0.72rem;font-weight:600">' +
         (hasPendingReq ? 'Approve request &amp; assign a hive' : 'Assign an available hive') + '</button>';
 
       return '<span class="hive-access-pop" style="display:none;position:absolute;left:0;top:calc(100% + 6px);z-index:60;' +
@@ -10871,11 +10854,11 @@
           '<span class="hive-access-wrap" style="position:relative;display:inline-flex;align-items:center;gap:var(--sp-2);cursor:help">' +
             '<span style="color:var(--text);font-weight:600">' + esc(userDisplayLabel(u)) + '</span>' +
             providerBadge(u) +
-            (hasPendingReq ? ' <span style="color:var(--accent);font-size:0.65rem">&#9679; request</span>' : '') +
+            (hasPendingReq ? ' <span style="color:var(--hub-dashboard-accent);font-size:0.65rem">&#9679; request</span>' : '') +
             renderUserStatsCard(u, hasPendingReq) +
           '</span>';
         return '<tr>' +
-          '<td>' + nameCell + (isAdmin ? ' <span style="color:var(--accent);font-size:0.7rem">admin</span>' : '') + '</td>' +
+          '<td>' + nameCell + (isAdmin ? ' <span style="color:var(--hub-dashboard-accent);font-size:0.7rem">admin</span>' : '') + '</td>' +
           '<td class="fs-sm text-muted">' + esc(fmtUserTS(u.created_at)) + '</td>' +
           '<td class="fs-sm text-muted">' + esc(fmtUserTS(u.last_login)) + '</td>' +
           '<td style="text-align:left">' + renderContactCell(u) + '</td>' +
@@ -11073,10 +11056,10 @@
           return line ? '<p style="margin:var(--sp-0) var(--sp-0) var(--sp-4) var(--sp-0);color:var(--muted);font-size:0.85rem;line-height:1.5">' + esc(line) + '</p>' : '';
         }).join('');
         overlay.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--r-lg);padding:22px;max-width:460px;width:90%">' +
-          '<h3 style="margin:0 0 10px 0;font-size:1rem">' + esc(opts.title || '') + '</h3>' + body +
+          '<h3 style="margin:0 0 10px 0;font-size:var(--fs-lg)">' + esc(opts.title || '') + '</h3>' + body +
           '<div style="display:flex;gap:var(--sp-4);justify-content:flex-end;margin-top:18px">' +
           (opts.cancel ? '<button class="hv-btn btn-secondary" data-act="no" style="' + btn + ';background:transparent;color:var(--fg)">' + esc(opts.cancel) + '</button>' : '') +
-          '<button class="hv-btn btn-secondary" data-act="yes" style="' + btn + ';background:' + (opts.danger ? '#da3633' : 'var(--accent,#3fb950)') + ';color:#fff;border-color:transparent;font-weight:600">' + esc(opts.ok || 'OK') + '</button>' +
+          '<button class="hv-btn btn-secondary" data-act="yes" style="' + btn + ';background:' + (opts.danger ? 'var(--status-error)' : 'var(--hub-dashboard-accent)') + ';color:#fff;border-color:transparent;font-weight:600">' + esc(opts.ok || 'OK') + '</button>' +
           '</div></div>';
         function done(v) {
           document.removeEventListener('keydown', onKey);
@@ -11112,11 +11095,11 @@
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:3000;display:flex;align-items:center;justify-content:center';
         var btn = 'padding:7px 14px;border-radius:var(--r);border:1px solid var(--border);cursor:pointer;font-size:0.8rem';
         overlay.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--r-lg);padding:22px;max-width:420px;width:90%">' +
-          '<h3 style="margin:var(--sp-0) var(--sp-0) var(--sp-5) var(--sp-0);font-size:1rem">' + esc(title || '') + '</h3>' +
+          '<h3 style="margin:var(--sp-0) var(--sp-0) var(--sp-5) var(--sp-0);font-size:var(--fs-lg)">' + esc(title || '') + '</h3>' +
           '<input id="_hive-prompt-input" type="text" value="' + esc(defaultValue || '') + '" style="width:100%;padding:var(--sp-4);background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--r);box-sizing:border-box;font-size:0.85rem">' +
           '<div style="display:flex;gap:var(--sp-4);justify-content:flex-end;margin-top:var(--sp-6)">' +
           '<button class="hv-btn btn-secondary" data-act="no" style="' + btn + ';background:transparent;color:var(--fg)">Cancel</button>' +
-          '<button class="hv-btn btn-secondary" data-act="yes" style="' + btn + ';background:var(--accent,#3fb950);color:#fff;border-color:transparent;font-weight:600">' + esc(opts.ok || 'Save') + '</button>' +
+          '<button class="hv-btn btn-secondary" data-act="yes" style="' + btn + ';background:var(--hub-dashboard-accent);color:#fff;border-color:transparent;font-weight:600">' + esc(opts.ok || 'Save') + '</button>' +
           '</div></div>';
         function done(v) {
           document.removeEventListener('keydown', onKey);
@@ -11194,7 +11177,7 @@
         '<label style="' + lbl + '">ACMM level</label>' +
         '<select id="assign-acmm" style="' + fld + '">' + acmmOpts + '</select>' +
         '<label style="display:flex;align-items:center;gap:var(--sp-4);margin:var(--sp-5) var(--sp-0) var(--sp-2);font-size:0.8rem;cursor:pointer"><input type="checkbox" id="assign-public"> Public (visible to everyone)</label>' +
-        '<div onclick="toggleAssignAdvanced()" id="assign-adv-toggle" style="margin-top:var(--sp-5);font-size:0.78rem;color:var(--accent);cursor:pointer;user-select:none">▸ GitHub App credentials (optional)</div>' +
+        '<div onclick="toggleAssignAdvanced()" id="assign-adv-toggle" style="margin-top:var(--sp-5);font-size:0.78rem;color:var(--hub-dashboard-accent);cursor:pointer;user-select:none">▸ GitHub App credentials (optional)</div>' +
         '<div id="assign-adv" style="display:none;margin-top:var(--sp-4)">' +
         '<div style="font-size:0.72rem;color:var(--muted);margin-bottom:var(--sp-4)">Optional — the owner can install the App from their dashboard after assignment.</div>' +
         '<label style="' + lbl + '">App ID</label>' +
@@ -11212,7 +11195,7 @@
       overlay.id = 'assign-overlay';
       overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2000;display:flex;align-items:center;justify-content:center';
       overlay.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--r-lg);padding:var(--sp-8);max-width:440px;width:90%;max-height:88vh;overflow-y:auto">' +
-        '<h3 style="margin:var(--sp-0) var(--sp-0) var(--sp-5) var(--sp-0);font-size:1rem">Assign placeholder hive</h3>' + content + '</div>';
+        '<h3 style="margin:var(--sp-0) var(--sp-0) var(--sp-5) var(--sp-0);font-size:var(--fs-lg)">Assign placeholder hive</h3>' + content + '</div>';
       overlay.addEventListener('click', function(e) { if (e.target === overlay) closeAssignModal(); });
       document.body.appendChild(overlay);
       wireGitHubHostChoice('assign', assignClusterHost);
@@ -11316,7 +11299,7 @@
       overlay.id = 'orf-overlay';
       overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2000;display:flex;align-items:center;justify-content:center';
       overlay.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--r-lg);padding:var(--sp-8);max-width:460px;width:90%;max-height:88vh;overflow-y:auto">' +
-        '<h3 style="margin:var(--sp-0) var(--sp-0) var(--sp-5) var(--sp-0);font-size:1rem">⚡ Fund with OpenRouter</h3>' + content + '</div>';
+        '<h3 style="margin:var(--sp-0) var(--sp-0) var(--sp-5) var(--sp-0);font-size:var(--fs-lg)">⚡ Fund with OpenRouter</h3>' + content + '</div>';
       overlay.addEventListener('click', function(e) { if (e.target === overlay) closeOrFundModal(); });
       document.body.appendChild(overlay);
     }
@@ -11349,7 +11332,7 @@
           '<div style="display:flex;gap:var(--sp-6);align-items:center;flex-wrap:wrap">' +
           '<img src="' + esc(qrSrc) + '" alt="OpenRouter QR" width="180" height="180" style="border:6px solid #fff;border-radius:8px;background:#fff">' +
           '<div style="font-size:0.78rem"><div class="mb-3">Scan with your phone, or on this device:</div>' +
-          '<a href="' + esc(authURL) + '" target="_blank" rel="noopener" style="color:var(--accent,#58a6ff);font-weight:600">Open OpenRouter authorization ↗</a></div></div>';
+          '<a href="' + esc(authURL) + '" target="_blank" rel="noopener" style="color:var(--hub-dashboard-accent);font-weight:600">Open OpenRouter authorization ↗</a></div></div>';
         if (status) status.innerHTML = '<span class="text-muted">Waiting for authorization…</span>';
         orfStartPolling(hiveId);
       } catch (e) {
@@ -11526,7 +11509,7 @@
 
   <div id="banner-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center">
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);max-width:540px;width:90%;max-height:90vh;display:flex;flex-direction:column">
-      <h2 style="font-size:1.3rem;padding:var(--sp-9) var(--sp-9) var(--sp-6);margin:var(--sp-0);color:var(--accent);flex-shrink:0">Send Hub Banner</h2>
+      <h2 style="font-size:1.3rem;padding:var(--sp-9) var(--sp-9) var(--sp-6);margin:var(--sp-0);color:var(--hub-dashboard-accent);flex-shrink:0">Send Hub Banner</h2>
       <div style="flex:1;overflow-y:auto;padding:var(--sp-0) var(--sp-9)">
         <div class="mb-5">
           <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:var(--sp-2)">Message *</label>
@@ -11576,14 +11559,14 @@
 
   <div id="create-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center">
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);max-width:640px;width:90%;max-height:90vh;display:flex;flex-direction:column">
-      <h2 style="font-size:1.3rem;padding:var(--sp-9) var(--sp-9) var(--sp-6);margin:var(--sp-0);color:var(--accent);flex-shrink:0">Create Hosted Hive</h2>
+      <h2 style="font-size:1.3rem;padding:var(--sp-9) var(--sp-9) var(--sp-6);margin:var(--sp-0);color:var(--hub-dashboard-accent);flex-shrink:0">Create Hosted Hive</h2>
       <div style="flex:1;overflow-y:auto;padding:var(--sp-0) var(--sp-9)">
       <div id="yaml-drop" style="margin-bottom:var(--sp-6);border:2px dashed var(--border);border-radius:8px;padding:var(--sp-6);text-align:center;cursor:pointer;transition:border-color 0.2s"
-        ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+        ondragover="event.preventDefault();this.style.borderColor='var(--hub-dashboard-accent)'"
         ondragleave="this.style.borderColor='var(--border)'"
         ondrop="event.preventDefault();this.style.borderColor='var(--border)';var f=event.dataTransfer.files[0];if(f)readYamlFile(f)"
         onclick="document.getElementById('yaml-upload').click()">
-        <div class="fs-base text-muted">Drop a <code>hive.yaml</code> here or <span style="color:var(--accent);text-decoration:underline">browse</span></div>
+        <div class="fs-base text-muted">Drop a <code>hive.yaml</code> here or <span style="color:var(--hub-dashboard-accent);text-decoration:underline">browse</span></div>
         <div style="font-size:0.7rem;color:var(--muted);margin-top:var(--sp-2)">Auto-fills all fields including GitHub App credentials</div>
         <div id="yaml-download-link" style="display:none;font-size:0.7rem;margin-top:var(--sp-3)"><a class="text-accent" id="yaml-download-href" href="#" target="_blank" onclick="event.stopPropagation()">⬇ Download hive.yaml from your local hive</a></div>
         <input type="file" id="yaml-upload" accept=".yaml,.yml" style="display:none" onchange="if(this.files[0])readYamlFile(this.files[0])">
@@ -11641,7 +11624,7 @@
         </div>
         <div id="auth-info-later" style="display:none;font-size:0.7rem;color:var(--muted);margin-top:var(--sp-4);line-height:1.5;padding:8px 10px;background:rgba(255,255,255,0.03);border-radius:var(--r);border:1px solid var(--border)">
           The hive will be provisioned with the <strong>kubestellar-hive</strong> GitHub App pre-configured (App ID: 3568013). Agents will be unable to access GitHub until the app is installed on the target org and the installation ID is supplied via the hive config.<br><br>
-          <a id="auth-info-later-link" href="" target="_blank" rel="noopener" style="color:var(--accent);font-weight:600">→ Install app now</a>
+          <a id="auth-info-later-link" href="" target="_blank" rel="noopener" style="color:var(--hub-dashboard-accent);font-weight:600">→ Install app now</a>
         </div>
       </div>
       <div id="auth-pat">
@@ -11665,7 +11648,7 @@
         </div>
         <div class="mb-5">
           <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:var(--sp-2)">Private Key (PEM) *</label>
-          <textarea id="f-app-key" rows="6" placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;Paste or drag a .pem file here...&#10;-----END RSA PRIVATE KEY-----" style="width:100%;padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:0.8rem;font-family:monospace;resize:vertical" ondragover="event.preventDefault();this.style.borderColor='var(--accent)'" ondragleave="this.style.borderColor='var(--border)'" ondrop="event.preventDefault();this.style.borderColor='var(--border)';var f=event.dataTransfer.files[0];if(f){var r=new FileReader();r.onload=function(){document.getElementById('f-app-key').value=r.result};r.readAsText(f)}"></textarea>
+          <textarea id="f-app-key" rows="6" placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;Paste or drag a .pem file here...&#10;-----END RSA PRIVATE KEY-----" style="width:100%;padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:0.8rem;font-family:monospace;resize:vertical" ondragover="event.preventDefault();this.style.borderColor='var(--hub-dashboard-accent)'" ondragleave="this.style.borderColor='var(--border)'" ondrop="event.preventDefault();this.style.borderColor='var(--border)';var f=event.dataTransfer.files[0];if(f){var r=new FileReader();r.onload=function(){document.getElementById('f-app-key').value=r.result};r.readAsText(f)}"></textarea>
           <div style="font-size:0.7rem;color:var(--muted);margin-top:var(--sp-2)">Download from your <a href="https://github.com/settings/apps" target="_blank">GitHub App settings</a> → Private keys.</div>
         </div>
       </div>
@@ -11674,7 +11657,7 @@
           <div style="font-size:0.85rem;font-weight:600;color:var(--text);margin-bottom:var(--sp-4)">Hive App: kubestellar-hive</div>
           <div style="font-size:var(--fs-sm);color:var(--muted);line-height:1.5">App ID: <code>3568013</code> (pre-configured)<br>The hive will start without GitHub access. Install the app on the target org, then supply the Installation ID and Private Key via the hive config.</div>
           <div id="auth-later-ghe-note" style="display:none;font-size:var(--fs-sm);color:var(--muted);line-height:1.5;margin-top:var(--sp-4)"></div>
-          <a id="auth-later-install-link" href="" target="_blank" rel="noopener" style="display:inline-block;margin-top:var(--sp-4);padding:6px 14px;background:var(--accent);color:#fff;border-radius:var(--r);font-size:0.8rem;font-weight:600;text-decoration:none">Install app on your org</a>
+          <a id="auth-later-install-link" href="" target="_blank" rel="noopener" style="display:inline-block;margin-top:var(--sp-4);padding:6px 14px;background:var(--hub-dashboard-accent);color:#fff;border-radius:var(--r);font-size:0.8rem;font-weight:600;text-decoration:none">Install app on your org</a>
         </div>
       </div>
       </div>
@@ -11687,7 +11670,7 @@
 
   <div id="access-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center">
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);max-width:860px;width:min(96vw,860px);max-height:88vh;display:flex;flex-direction:column">
-      <h2 style="font-size:1.3rem;padding:var(--sp-9) var(--sp-9) var(--sp-6);margin:var(--sp-0);color:var(--accent);flex-shrink:0">Manage Access</h2>
+      <h2 style="font-size:1.3rem;padding:var(--sp-9) var(--sp-9) var(--sp-6);margin:var(--sp-0);color:var(--hub-dashboard-accent);flex-shrink:0">Manage Access</h2>
       <div style="flex:1;overflow-y:auto;padding:var(--sp-0) var(--sp-9) var(--sp-9)">
       <p style="font-size:0.8rem;color:var(--muted);margin-bottom:var(--sp-6)" id="access-hive-label"></p>
       <div id="access-list"><div class="loading">Loading...</div></div>
@@ -11703,11 +11686,11 @@
         <button class="hv-btn btn-danger btn-sm" onclick="bulkRemoveAccess()">Remove</button>
       </div>
       <div style="margin-top:var(--sp-5);border-top:1px solid var(--border);padding-top:var(--sp-5)">
-        <h3 style="font-size:0.9rem;margin-bottom:var(--sp-4);color:var(--accent)">Pending Requests</h3>
+        <h3 style="font-size:0.9rem;margin-bottom:var(--sp-4);color:var(--hub-dashboard-accent)">Pending Requests</h3>
         <div id="pending-requests"><span style="color:var(--muted);font-size:0.8rem">Loading...</span></div>
       </div>
       <div style="margin-top:var(--sp-5);border-top:1px solid var(--border);padding-top:var(--sp-5)">
-        <h3 style="font-size:0.9rem;margin-bottom:var(--sp-2);color:var(--accent)">Audit Log</h3>
+        <h3 style="font-size:0.9rem;margin-bottom:var(--sp-2);color:var(--hub-dashboard-accent)">Audit Log</h3>
         <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-4)">Every grant, role change and removal — who did it and when. Append-only.</p>
         <div id="access-audit-log" style="max-height:180px;overflow-y:auto"><span style="color:var(--muted);font-size:0.8rem">Loading...</span></div>
       </div>
@@ -11755,7 +11738,7 @@
 
   <div id="timeline-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center">
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);max-width:640px;width:92%;max-height:82vh;display:flex;flex-direction:column">
-      <h2 style="font-size:1.3rem;padding:var(--sp-9) var(--sp-9) var(--sp-4);margin:var(--sp-0);color:var(--accent);flex-shrink:0">Activity Timeline</h2>
+      <h2 style="font-size:1.3rem;padding:var(--sp-9) var(--sp-9) var(--sp-4);margin:var(--sp-0);color:var(--hub-dashboard-accent);flex-shrink:0">Activity Timeline</h2>
       <p style="font-size:0.8rem;color:var(--muted);margin:var(--sp-0);padding:var(--sp-0) var(--sp-9) var(--sp-6);flex-shrink:0" id="timeline-hive-label"></p>
       <div style="flex:1;overflow-y:auto;padding:var(--sp-0) var(--sp-9) var(--sp-8)">
         <div id="timeline-list"><div class="loading">Loading...</div></div>
@@ -11768,7 +11751,7 @@
 
   <div id="request-access-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center">
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);max-width:480px;width:90%;display:flex;flex-direction:column">
-      <h2 style="font-size:1.3rem;padding:var(--sp-9) var(--sp-9) var(--sp-4);margin:var(--sp-0);color:var(--accent)">Request Access</h2>
+      <h2 style="font-size:1.3rem;padding:var(--sp-9) var(--sp-9) var(--sp-4);margin:var(--sp-0);color:var(--hub-dashboard-accent)">Request Access</h2>
       <div style="padding:var(--sp-0) var(--sp-9) var(--sp-8)">
         <p style="font-size:0.85rem;color:var(--muted);margin-bottom:var(--sp-5)">Requesting access to <strong class="text-default" id="request-access-hive-label"></strong>. The owner will review your request.</p>
         <label for="request-access-note" style="display:block;font-size:0.8rem;color:var(--text);margin-bottom:var(--sp-3)">Why do you need access? <span class="text-danger">*</span></label>
@@ -11955,7 +11938,7 @@
             : '';
           var note = (r.note || '').trim();
           var noteHtml = note
-            ? '<div style="margin-top:var(--sp-2);font-size:var(--fs-sm);color:var(--text);white-space:pre-wrap;word-break:break-word;background:var(--bg);border-left:2px solid var(--accent);padding:var(--sp-2) var(--sp-4);border-radius:2px">' + esc(note) + '</div>'
+            ? '<div style="margin-top:var(--sp-2);font-size:var(--fs-sm);color:var(--text);white-space:pre-wrap;word-break:break-word;background:var(--bg);border-left:2px solid var(--hub-dashboard-accent);padding:var(--sp-2) var(--sp-4);border-radius:2px">' + esc(note) + '</div>'
             : '<div style="margin-top:var(--sp-2);font-size:0.72rem;color:var(--muted);font-style:italic">(no note)</div>';
           return '<div style="padding:var(--sp-3) var(--sp-0);border-bottom:1px solid var(--border)">' +
             '<div style="display:flex;align-items:center;justify-content:space-between">' +
@@ -12686,7 +12669,7 @@
         var div = document.createElement('div');
         div.style.cssText = 'display:flex;align-items:center;gap:var(--sp-4);padding:6px 10px;border-bottom:1px solid var(--border)';
         div.innerHTML = '<label style="display:flex;align-items:center;gap:var(--sp-4);cursor:pointer;flex:1;font-size:var(--fs-base);color:var(--text)">' +
-          '<input type="checkbox" class="banner-hive-cb" value="' + esc(h.id) + '" checked style="accent-color:var(--accent)"> ' + esc(label) +
+          '<input type="checkbox" class="banner-hive-cb" value="' + esc(h.id) + '" checked style="accent-color:var(--hub-dashboard-accent)"> ' + esc(label) +
           '</label>';
         container.appendChild(div);
       });

@@ -21,6 +21,17 @@ static preview at `/design-system.html`.
 | Cards/surfaces | In progress | A5 is migrating surface recipes. |
 | Chips/status | Migrated in A7 | Operator chip families now map to entity/status/action/count recipes, status dots/badges use the canonical `STATUS` map, ACMM levels use `--acmm-level-*`, vendor markers use `--vendor-*`, and amber remains brand/CTA chrome only. |
 | Type/spacing/radius | Migrated in A6 | Operator, contributor, and hub pages collapse raw type, spacing, and radius values onto tokens with visual-first rules: exact matches plus explicitly documented type evidence. Repeated token-only inline styles use shared utilities. |
+| Contributor portal | Migrated in A9 | `/contribute` now links `tokens.css` and `components.css`, uses shared `[data-theme]` light tokens for neutral surfaces/text/lines, and keeps only five contributor accent/status aliases. |
+| Hub pages | Migrated in A9 | Static hub pages and the hub dashboard consume the shared token/component stylesheets; duplicate page `:root` palette variables were removed or reduced to documented hub-only aliases. |
+
+## Surfaces consuming the tokens
+
+| Surface | Shared stylesheets | Local aliases kept | Deliberate divergence |
+| --- | --- | --- | --- |
+| Operator SPA | `tokens.css`, `components.css` | Legacy aliases in `tokens.css` (`--bg`, `--panel`, `--amber`, etc.) | None beyond compatibility aliases while markup migrates. |
+| Contributor portal | `tokens.css`, `components.css` | `--cc-accent`, `--cc-accent-fg`, `--cc-green`, `--cc-amber`, `--cc-red` | The portal keeps the GitHub Primer action/status palette as a deliberate identity divergence with explicit light values; all other former `--cc-*` variables map to shared surface, line, text, spacing, type, radius, and ACMM tokens. |
+| Hub marketing/docs pages | `tokens.css`, `components.css` | `--hub-marketing-shadow`, CNCF article aliases (`--hub-article-*`) | Marketing cards keep their larger hero shadow to avoid visual drift. Article callout fills and measure are page-specific prose layout affordances, defined from shared status/brand/surface tokens. |
+| Hub dashboard asset | `tokens.css`, `components.css` | `--hub-dashboard-accent`, facet rail/tray widths | The hub dashboard keeps brand amber as its dashboard accent instead of the generic info-link accent; facet widths are layout constants, not color/type tokens. |
 
 ## Token catalogue
 
@@ -301,8 +312,8 @@ counts. Baselines measured on 2026-09-23 in PR #8584 for
 | Surface | `style=` attributes | Raw colors | Raw `font-size` | Raw `padding` | Raw `border-radius` |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `pkg/dashboard/static/index.html` | 1,950 | 153 | 976 | 578 | 379 |
-| `pkg/dashboard/contribute_landing.go` | 107 | 131 | 260 | 181 | 117 |
-| `pkg/hub/static/*.html` + `pkg/hub/assets/*.html` | 1,140 | 474 | 612 | 331 | 254 |
+| `pkg/dashboard/contribute_landing.go` | 95 | 106 | 201 | 105 | 53 |
+| `pkg/hub/static/*.html` + `pkg/hub/assets/*.html` | 1,010 | 458 | 428 | 169 | 104 |
 
 The test counts `style=` even inside script/template strings because those
 snippets become DOM. Raw value counters scan inline `<style>` blocks and
