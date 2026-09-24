@@ -1,0 +1,1 @@
+- Hub pages (dashboard, API docs, Get Started, Learn, Reading) use the shared UI font again instead of the browser default serif (#8759).
