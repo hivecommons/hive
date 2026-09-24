@@ -1,0 +1,1 @@
+- Improved the contributor Management tab layout so admin controls read as grouped settings sections on desktop and mobile.

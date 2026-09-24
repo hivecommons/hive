@@ -826,31 +826,52 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .ops-admin{display:none}
 .ops-admin.enabled{display:block}
 .admin-badge{font-size:.68rem;font-weight:600;padding:2px 8px;border-radius:999px;background:rgba(210,153,34,.12);color:var(--cc-amber);border:1px solid rgba(210,153,34,.3);margin-left:auto}
-.admin-body{padding:16px 20px}
-.admin-toggle{display:flex;align-items:center;gap:10px;padding:8px 0}
-.admin-switch{width:38px;height:20px;border-radius:999px;background:var(--cc-border);position:relative;cursor:pointer;flex-shrink:0;transition:background .15s}
+.admin-badge:empty{display:none}
+.admin-body{padding:18px 20px 22px;display:grid;gap:16px}
+.admin-section{border:1px solid var(--cc-border-2);border-radius:12px;background:rgba(139,148,158,.04);padding:16px;display:grid;gap:14px}
+.admin-section-head{display:grid;gap:3px;max-width:760px}
+.admin-section-head h3{font-size:.92rem;color:var(--cc-text);margin:0}
+.admin-section-head p{font-size:.76rem;color:var(--cc-muted);line-height:1.5;margin:0}
+.admin-form-stack{display:grid;gap:10px;max-width:720px;width:100%%}
+.admin-form-stack label,.admin-field>label{display:block;font-size:.78rem;font-weight:600;color:var(--cc-text);margin-bottom:6px}
+.admin-field{margin:0;max-width:760px}
+.admin-control-note,.admin-toggle-sub{font-size:.74rem;color:var(--cc-muted);line-height:1.45}
+.admin-control-note code,.admin-toggle-sub code{word-break:break-word}
+.admin-input,.admin-field input[type="text"],.admin-field input[type="number"],.admin-addrow input{background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:8px;color:var(--cc-text);font-size:.8rem;padding:7px 9px;font-family:inherit;min-width:0}
+.admin-input:focus,.admin-field input:focus,.admin-field textarea:focus,.admin-addrow input:focus{outline:none;border-color:var(--cc-accent)}
+.admin-textarea{width:100%%;box-sizing:border-box;max-width:720px;resize:vertical;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:10px;color:var(--cc-text);font-family:inherit;font-size:.82rem;line-height:1.5;padding:10px 12px;min-width:0}
+.admin-textarea--announcement{min-height:96px}
+.admin-textarea--links{min-height:140px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem}
+.admin-action-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;max-width:720px}
+.admin-action-row select,.admin-action-row input{background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:8px;color:var(--cc-text);padding:7px 9px;font-family:inherit;font-size:.8rem;min-height:34px}
+.admin-toggle{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:10px;padding:8px 0}
+.admin-switch{width:38px;height:20px;border-radius:999px;background:var(--cc-border);position:relative;cursor:pointer;flex-shrink:0;transition:background .15s;margin-top:1px}
 .admin-switch::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%%;background:var(--cc-text);transition:left .15s}
 .admin-switch.on{background:#1f6feb}
 .admin-switch.on.danger{background:var(--cc-red)}
 .admin-switch.on::after{left:20px}
-.admin-toggle-label{font-size:.85rem;color:var(--cc-text)}
-.admin-toggle-sub{font-size:.74rem;color:var(--cc-muted)}
-.admin-field{margin:14px 0}
-.admin-field>label{display:block;font-size:.78rem;color:var(--cc-muted);margin-bottom:6px}
-.admin-modeseg{display:inline-flex;border:1px solid var(--cc-border);border-radius:6px;overflow:hidden;margin-bottom:6px}
-.admin-modeseg button{background:var(--cc-bg);border:none;color:var(--cc-muted);font-size:.72rem;padding:3px 10px;cursor:pointer;font-family:inherit}
+.admin-toggle-label{font-size:.85rem;font-weight:600;color:var(--cc-text);margin-bottom:2px}
+.admin-toggle-grid{display:grid;gap:2px;max-width:760px}
+.admin-nested-field{margin-left:48px;max-width:420px}
+.admin-inline-input{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.admin-inline-input input[type="number"]{width:88px;text-align:right}
+.admin-unit{font-size:.78rem;color:var(--cc-muted)}
+.admin-modeseg{display:inline-flex;border:1px solid var(--cc-border);border-radius:8px;overflow:hidden;margin-bottom:8px}
+.admin-modeseg button{background:var(--cc-bg);border:none;color:var(--cc-muted);font-size:.72rem;padding:5px 12px;cursor:pointer;font-family:inherit}
 .admin-modeseg button.on{background:#1f6feb;color:#fff}
-.admin-chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px}
-.admin-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:.72rem;background:rgba(139,148,158,.12);color:var(--cc-text-2);border:1px solid var(--cc-border)}
+.admin-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;min-height:4px}
+.admin-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;font-size:.72rem;background:rgba(139,148,158,.12);color:var(--cc-text-2);border:1px solid var(--cc-border)}
 .admin-chip .x{cursor:pointer;opacity:.7}
 .admin-chip .x:hover{opacity:1;color:var(--cc-red)}
-.admin-addrow{display:flex;gap:4px}
-.admin-addrow input{flex:1;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);font-size:.78rem;padding:5px 8px;font-family:inherit}
-.admin-addrow button,.admin-save{background:#238636;border:1px solid #2ea043;color:#fff;font-size:.75rem;padding:5px 12px;border-radius:6px;cursor:pointer;font-family:inherit}
+.admin-addrow{display:flex;gap:6px;max-width:520px}
+.admin-addrow input{flex:1}
+.admin-addrow button,.admin-save{background:#238636;border:1px solid #2ea043;color:#fff;font-size:.75rem;padding:7px 12px;border-radius:8px;cursor:pointer;font-family:inherit;min-height:34px}
 .admin-addrow button{background:var(--cc-border-2);border-color:var(--cc-border);color:var(--cc-text-2)}
-.admin-save{margin-top:8px}
+.admin-save{margin-top:0}
 .admin-save:disabled{opacity:.5;cursor:default}
-.admin-hr{border:none;border-top:1px solid var(--cc-border-2);margin:16px 0}
+.admin-hr{border:none;border-top:1px solid var(--cc-border-2);margin:2px 0}
+.admin-filter-grid{display:grid;gap:12px;max-width:760px}
+@media(max-width:720px){.admin-body{padding:14px}.admin-section{padding:14px}.admin-action-row,.admin-addrow{align-items:stretch}.admin-action-row>*,.admin-addrow input,.admin-addrow button,.admin-save{width:100%%}.admin-nested-field{margin-left:0}.admin-inline-input input[type="number"]{width:100%%}}
 /* Repos-for-Contribute enable toggles + Tier rate-limit rows (Management mirror of
    the Governor Hub sections). Subtle, matching the rest of the admin controls. */
 .admin-repos{display:flex;flex-wrap:wrap;gap:8px}
@@ -1307,15 +1328,11 @@ select.admin-act{min-width:0;max-width:100%%}
 .announcement-banner button{position:absolute;right:10px;top:8px;background:transparent;border:0;color:var(--cc-muted);font-size:1.2rem;cursor:pointer}
 .announcement-reverse{display:none;margin:12px 0 10px;padding:10px 12px;background:var(--cc-text);color:var(--cc-bg);border-radius:6px;font-weight:700;line-height:1.4}
 .announcement-reverse.warning{background:var(--cc-amber);color:#0d1117}
-.announcement-admin textarea{min-height:72px}
-.announcement-admin .ann-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px}
-.announcement-admin select,.announcement-admin input{background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);padding:7px 9px;font-family:inherit}
 .help-links{display:none;margin:12px 0 16px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:10px;padding:12px 14px;color:var(--cc-text-2);font-size:.84rem;line-height:1.45}
 .help-links h4{margin:0 0 8px;color:var(--cc-text);font-size:.86rem}
 .help-links .links{display:flex;flex-wrap:wrap;gap:8px}
 .help-links a{display:inline-flex;align-items:center;gap:5px;color:var(--cc-accent);text-decoration:none;border:1px solid var(--cc-border);border-radius:999px;padding:4px 10px;background:var(--cc-bg)}
 .help-links a:hover{border-color:var(--cc-accent);text-decoration:none}
-.help-links-admin textarea{min-height:84px}
 .pb-copy{position:absolute;top:10px;right:12px;background:#238636;color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:.72rem;font-family:inherit}
 @media(prefers-reduced-motion:reduce){
   .client-tile{transition:none!important}
@@ -2018,22 +2035,29 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="admin-body">
 <p class="ops-note" style="margin-top:0">Mirrored from the Governor Hub configuration. Changes here write the same <code>Config.Hub.*</code> fields the Governor config dialog edits. Owner &amp; read-write only.</p>
 
-<div class="admin-field announcement-admin">
-<label>Contributor announcement <span style="color:var(--cc-muted-2)">&mdash; shown on Operations, Onboarding, profile, and relays. Empty text clears.</span></label>
-<textarea id="admin-announcement-text" maxlength="500" placeholder="e.g. Hive upgrade at 18:00 UTC; relays may reconnect automatically."></textarea>
-<div class="ann-row"><select id="admin-announcement-level"><option value="info">Info</option><option value="warning">Warning</option></select><input type="datetime-local" id="admin-announcement-expires"><button type="button" class="admin-save" id="admin-announcement-save">Save announcement</button></div>
-<div class="admin-toggle-sub">Stored as <code>hub.contribute_announcement</code>. The server rotates the announcement id when the text changes.</div>
+<section class="admin-section" aria-labelledby="admin-section-announcement">
+<div class="admin-section-head"><h3 id="admin-section-announcement">Announcement</h3><p>Broadcast a short contributor announcement on Operations, Onboarding, profile, and relays. Empty text clears it.</p></div>
+<div class="admin-form-stack announcement-admin">
+<label for="admin-announcement-text">Contributor announcement</label>
+<textarea class="admin-textarea admin-textarea--announcement" id="admin-announcement-text" maxlength="500" placeholder="e.g. Hive upgrade at 18:00 UTC; relays may reconnect automatically."></textarea>
+<div class="admin-control-note">Stored as <code>hub.contribute_announcement</code>. The server rotates the announcement id when the text changes.</div>
+<div class="admin-action-row"><select id="admin-announcement-level"><option value="info">Info</option><option value="warning">Warning</option></select><input type="datetime-local" id="admin-announcement-expires"><button type="button" class="admin-save" id="admin-announcement-save">Save announcement</button></div>
 </div>
-<hr class="admin-hr">
+</section>
 
-<div class="admin-field help-links-admin">
-<label>Help &amp; community links <span style="color:var(--cc-muted-2)">&mdash; one per line as <code>Label | https://example</code>.</span></label>
-<textarea id="admin-help-links-text" maxlength="1200" placeholder="Chat with other contributors | https://discord.gg/your-hive&#10;Contributor docs | https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md"></textarea>
-<button type="button" class="admin-save" id="admin-help-links-save" style="margin-top:8px">Save help links</button>
-<div class="admin-toggle-sub">Stored as <code>contribute.help_links</code>. Use <code>https://discord.gg/...</code> invites for Discord; <code>https://discord.com/channels/server/channel</code> only opens for people already in that server.</div>
+<section class="admin-section" aria-labelledby="admin-section-help-links">
+<div class="admin-section-head"><h3 id="admin-section-help-links">Help &amp; community links</h3><p>Publish quick links for contributors, one per line as <code>Label | https://example</code>.</p></div>
+<div class="admin-form-stack help-links-admin">
+<label for="admin-help-links-text">Help &amp; community links</label>
+<textarea class="admin-textarea admin-textarea--links" id="admin-help-links-text" maxlength="1200" placeholder="Chat with other contributors | https://discord.gg/your-hive&#10;Contributor docs | https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md"></textarea>
+<div class="admin-control-note">Stored as <code>contribute.help_links</code>. Use <code>https://discord.gg/...</code> invites for Discord; <code>https://discord.com/channels/server/channel</code> only opens for people already in that server.</div>
+<div class="admin-action-row"><button type="button" class="admin-save" id="admin-help-links-save">Save help links</button></div>
 </div>
-<hr class="admin-hr">
+</section>
 
+<section class="admin-section" aria-labelledby="admin-section-fleet">
+<div class="admin-section-head"><h3 id="admin-section-fleet">Fleet controls</h3><p>Immediate operational switches for contribution assignment, wall visibility, assignment policy, and cooldown gating.</p></div>
+<div class="admin-toggle-grid">
 <div class="admin-toggle">
 <div class="admin-switch" id="admin-suspend-switch" data-key="contribute_suspended"></div>
 <div><div class="admin-toggle-label">Suspend contributions</div><div class="admin-toggle-sub">Stop assigning tasks. Connected clankers stay online but idle.</div></div>
@@ -2050,24 +2074,25 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="admin-switch" id="admin-cooldown-switch" data-key="contribute_cooldown_enabled"></div>
 <div><div class="admin-toggle-label">Task cooldown</div><div class="admin-toggle-sub">After a task completes with a verified PR, keep that issue out of the queue for the period below. Off = no cooldown gating. Failure quarantine is separate and always on.</div></div>
 </div>
-<div class="admin-field" id="admin-cooldown-hours-wrap" style="margin-left:50px">
-<label>Cooldown period (hours) <span style="color:var(--cc-muted-2)">— 168 = one week (default). Range 1&ndash;8760.</span></label>
-<input type="number" id="admin-cooldown-hours" min="1" max="8760" style="max-width:120px">
+<div class="admin-field admin-nested-field" id="admin-cooldown-hours-wrap">
+<label for="admin-cooldown-hours">Cooldown period (hours) <span style="color:var(--cc-muted-2)">— 168 = one week (default). Range 1&ndash;8760.</span></label>
+<div class="admin-inline-input"><input type="number" id="admin-cooldown-hours" min="1" max="8760"><span class="admin-unit">hours</span></div>
 <!-- Live tally of issues currently within their cooldown window (#2649 companion),
      hydrated by ccRenderCooldownCount from the fleet payload. Hidden when 0. -->
 <div id="admin-cooldown-count" class="admin-toggle-sub" style="margin-top:4px;display:none"></div>
 </div>
+</div>
+</section>
 
-<hr class="admin-hr">
-<h3 style="font-size:.9rem;color:var(--cc-text);margin:0 0 4px">Admission filters</h3>
-<p class="ops-note" style="margin-top:0">The queue-shaping levers. Deny (default) skips matches; Allow serves only matches.</p>
-
+<section class="admin-section" aria-labelledby="admin-section-admission">
+<div class="admin-section-head"><h3 id="admin-section-admission">Admission filters</h3><p>The queue-shaping levers. Deny (default) skips matches; Allow serves only matches.</p></div>
+<div class="admin-filter-grid">
 <div class="admin-field" id="admin-filter-titles"></div>
 <div class="admin-field" id="admin-filter-authors"></div>
 <div class="admin-field" id="admin-filter-labels"></div>
 <div class="admin-field">
-<label>Maintainer-decision label <span style="color:var(--cc-muted-2)">&mdash; applied when a relay reports <code>no_work_needed — decision:</code>. Empty disables relay labelling.</span></label>
-<input type="text" id="admin-needs-decision-label" placeholder="needs-decision" style="max-width:240px">
+<label for="admin-needs-decision-label">Maintainer-decision label <span style="color:var(--cc-muted-2)">&mdash; applied when a relay reports <code>no_work_needed — decision:</code>. Empty disables relay labelling.</span></label>
+<input type="text" id="admin-needs-decision-label" placeholder="needs-decision">
 <div class="admin-toggle-sub">Stored as <code>hub.contribute_needs_decision_label</code>; matching labels are skipped by the contribute queue until a human removes them.</div>
 </div>
 
@@ -2077,6 +2102,8 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="admin-addrow"><input type="text" id="admin-allow-model-input" placeholder="e.g. claude-opus*, /gemini-\d/"><button type="button" id="admin-add-model">Add</button></div>
 <div class="admin-toggle" style="padding-top:8px"><div class="admin-switch" id="admin-reject-switch" data-key="contribute_reject_unknown_models"></div><div class="admin-toggle-sub">Reject unknown models at connect time (only when the allowlist is non-empty).</div></div>
 </div>
+</div>
+</section>
 
 <hr class="admin-hr">
 <h3 style="font-size:.9rem;color:var(--cc-text);margin:0 0 4px">Repos for Contribute</h3>
