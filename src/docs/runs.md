@@ -91,6 +91,14 @@ lease generation, approving actor, plan epic id, and timestamp; `GET
 /api/runs/{key}` includes it in the observed `stages` timeline between the held
 plan receipt and the implement-stage transition.
 
+When Spektacular strict mode invalidates an approved plan, `plan status <name>`
+reports `document_status: stale`. Hive maps that status to a human hold instead
+of retrying or advancing: the run remains on the plan lease, `waiting_on` becomes
+`human` with `waiting_reason: stale_plan`, and the timeline records a blocked
+event until a fresh plan is reviewed and approved. Spektacular status
+`artifact_id` is the join key Hive records in receipts and stage attributes;
+older CLIs that lack the field fall back to the historical `name` alias.
+
 When `governor.work_source.wavefront.enabled` is true, a final Spektacular plan
 that declares repositories with `[repo:<owner/name>]` annotations fans out the
 implement stage into one Wavefront implementation wave per repo. The run detail

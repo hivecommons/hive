@@ -40,6 +40,8 @@ const (
 	stageAttrStage           = "stage"
 	stageAttrGen             = "gen"
 	stageAttrReceipt         = "receipt"
+	stageAttrArtifact        = "artifact"
+	stageAttrDocumentStatus  = "document_status"
 	stageAttrReason          = "reason"
 	stageAttrSeverity        = "severity"
 	stageAttrAttempts        = "attempts"
@@ -373,6 +375,24 @@ func (s *Server) RefuseStageLease(taskID string, attrs map[string]string) {
 		fields = append(fields, k, v)
 	}
 	s.AgentAuditSink().Record("system", agent.AuditLeaseStageRefused, taskID, agent.Fields(fields...))
+	if attrs[stageAttrReason] == planning.WaitingReasonStalePlan {
+		eventAttrs := make(map[string]string, len(attrs)+1)
+		for k, v := range attrs {
+			eventAttrs[k] = v
+		}
+		eventAttrs[planning.MetaRunWaitingOn] = worksource.RunWaitingOnHuman
+		runKey := attrs[stageAttrRunKey]
+		if store, epic := s.findRunEpic(runKey); store != nil && epic != nil {
+			_ = store.SetMetadata(epic.ID, planning.MetaRunWaitingOn, worksource.RunWaitingOnHuman)
+			_ = store.SetMetadata(epic.ID, planning.MetaRunWaitingReason, planning.WaitingReasonStalePlan)
+		}
+		s.LifecycleTimeline().Record(timeline.Event{
+			IssueRef: runKey,
+			Kind:     timeline.KindBlocked,
+			At:       time.Now().UnixMilli(),
+			Attrs:    eventAttrs,
+		})
+	}
 	s.logger.Warn("[spektacular] refusing to advance stage", "task", taskID,
 		"run", attrs[stageAttrRunKey], "stage", attrs[stageAttrStage], "gen", attrs[stageAttrGen], "reason", attrs[stageAttrReason])
 }

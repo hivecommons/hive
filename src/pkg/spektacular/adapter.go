@@ -109,7 +109,7 @@ func (a *leaseAdapter) Advance(_ context.Context, st Stage, status ArtifactStatu
 		AttrStage:          st.Stage,
 		AttrGen:            strconv.FormatUint(st.Gen, 10),
 		AttrReceipt:        receipt.OutputDigest,
-		AttrArtifact:       status.Name,
+		AttrArtifact:       status.JoinKey(),
 		AttrDocumentStatus: string(status.DocumentStatus),
 	})
 }
@@ -118,13 +118,18 @@ func (a *leaseAdapter) Retry(_ context.Context, st Stage, now time.Time) error {
 	return a.reg.RetryStageLease(st.Identity, st.TaskID, now)
 }
 
-func (a *leaseAdapter) Refuse(st Stage, reason string) {
-	a.reg.RefuseStageLease(st.TaskID, map[string]string{
+func (a *leaseAdapter) Refuse(st Stage, reason string, status *ArtifactStatus) {
+	attrs := map[string]string{
 		AttrRunKey: st.RunKey,
 		AttrStage:  st.Stage,
 		AttrGen:    strconv.FormatUint(st.Gen, 10),
 		AttrReason: reason,
-	})
+	}
+	if status != nil {
+		attrs[AttrArtifact] = status.JoinKey()
+		attrs[AttrDocumentStatus] = string(status.DocumentStatus)
+	}
+	a.reg.RefuseStageLease(st.TaskID, attrs)
 }
 
 // EscalationSink returns the Escalate callback that records decision events

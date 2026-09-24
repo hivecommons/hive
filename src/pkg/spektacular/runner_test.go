@@ -106,7 +106,7 @@ func statusJSON(kind, name string, status DocumentStatus) string {
 	if kind == KindPlan {
 		plan = name
 	}
-	return fmt.Sprintf(`{"error":false,"kind":%q,"name":%q,"document_status":%q,"current_step":"authoring","completed_steps":["interview"],"created_at":"2026-09-21T00:00:00Z","updated_at":"2026-09-22T13:30:00Z","closed_at":%s,"spec":"","plan":%q}`, kind, name, status, closed, plan)
+	return fmt.Sprintf(`{"error":false,"kind":%q,"name":%q,"artifact_id":%q,"document_status":%q,"current_step":"authoring","completed_steps":["interview"],"created_at":"2026-09-21T00:00:00Z","updated_at":"2026-09-22T13:30:00Z","closed_at":%s,"spec":"","plan":%q}`, kind, name, name, status, closed, plan)
 }
 
 // notFoundJSON is the #45 error envelope for a missing artifact.
@@ -179,7 +179,7 @@ func (f *fakeRegistry) Retry(_ context.Context, st Stage, now time.Time) error {
 	return nil
 }
 
-func (f *fakeRegistry) Refuse(_ Stage, reason string) {
+func (f *fakeRegistry) Refuse(_ Stage, reason string, _ *ArtifactStatus) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.refusals = append(f.refusals, reason)
@@ -230,7 +230,7 @@ func TestStatus_ParsesContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	if st.Kind != KindPlan || st.Name != testRunKey || !st.Final() || st.CurrentStep != "authoring" ||
+	if st.Kind != KindPlan || st.Name != testRunKey || st.ArtifactID != testRunKey || st.JoinKey() != testRunKey || !st.Final() || st.CurrentStep != "authoring" ||
 		len(st.CompletedSteps) != 1 || st.CreatedAt.IsZero() || st.UpdatedAt.IsZero() || st.ClosedAt.IsZero() ||
 		st.Spec != "" || st.Plan != testRunKey {
 		t.Fatalf("parsed status = %+v", st)
@@ -242,6 +242,25 @@ func TestStatus_ParsesContract(t *testing.T) {
 	}
 	if st.CreatedAt.Hour() != 0 || st.CreatedAt.Location() != time.UTC {
 		t.Fatalf("created_at should be the midnight-UTC frontmatter date, got %s", st.CreatedAt)
+	}
+}
+
+func TestStatus_ArtifactIDIsJoinKeyWithNameFallback(t *testing.T) {
+	withID := `{"error":false,"kind":"plan","name":"000057_old","artifact_id":"20260922132517-a1b2c3d4-new","document_status":"final","current_step":"finished","completed_steps":[],"created_at":"","closed_at":"","spec":"","plan":""}`
+	st, err := (&Runner{Exec: (&scriptedExec{statuses: []string{withID}}).exec}).Status(context.Background(), KindPlan, "000057_old")
+	if err != nil {
+		t.Fatalf("Status with artifact_id: %v", err)
+	}
+	if st.JoinKey() != "20260922132517-a1b2c3d4-new" {
+		t.Fatalf("JoinKey = %q", st.JoinKey())
+	}
+	legacy := `{"error":false,"kind":"plan","name":"000057_old","document_status":"final","current_step":"finished","completed_steps":[],"created_at":"","closed_at":"","spec":"","plan":""}`
+	st, err = (&Runner{Exec: (&scriptedExec{statuses: []string{legacy}}).exec}).Status(context.Background(), KindPlan, "000057_old")
+	if err != nil {
+		t.Fatalf("legacy status: %v", err)
+	}
+	if st.JoinKey() != "000057_old" {
+		t.Fatalf("legacy JoinKey = %q", st.JoinKey())
 	}
 }
 
@@ -709,6 +728,22 @@ func TestTick_PlanFinalWithFailedExportDoesNotAdvance(t *testing.T) {
 	}
 }
 
+func TestTick_StalePlanStatusRefusesImplementAdvance(t *testing.T) {
+	reg := newFakeRegistry(StagePlan)
+	ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, DocumentStale)}, exportJSON: exportJSON}
+	r := newRunner(reg, ex, &escalations{})
+
+	if res := r.Tick(context.Background(), t0); res.Refused != 1 || res.Advanced != 0 || res.Errors != 0 {
+		t.Fatalf("stale tick = %+v", res)
+	}
+	if len(reg.refusals) != 1 || reg.refusals[0] != RefuseStalePlan {
+		t.Fatalf("refusals = %+v", reg.refusals)
+	}
+	if len(reg.advances) != 0 || len(reg.plans) != 0 {
+		t.Fatalf("stale plan advanced/imported: advances=%d plans=%d", len(reg.advances), len(reg.plans))
+	}
+}
+
 func TestTick_FinalThenDraftRefusesStalePlan(t *testing.T) {
 	reg := newFakeRegistry(StagePlan)
 	reg.advanceErr = errors.New("persist failed")
@@ -890,6 +925,10 @@ func TestBuildReceipt_FallsBackWhenStatusLacksTimes(t *testing.T) {
 	b := BuildReceipt(st, ArtifactStatus{Kind: KindSpec, Name: testRunKey, DocumentStatus: DocumentFinal, CreatedAt: t0, ClosedAt: t0.Add(time.Hour)}, now)
 	if a.InputRevision != b.InputRevision {
 		t.Fatalf("InputRevision moved with updated_at: %s vs %s", a.InputRevision, b.InputRevision)
+	}
+	withID := BuildReceipt(st, ArtifactStatus{Kind: KindSpec, Name: "000057_old", ArtifactID: "20260922132517-a1b2c3d4-new", DocumentStatus: DocumentFinal, CreatedAt: t0, ClosedAt: t0.Add(time.Hour)}, now)
+	if withID.Artifacts[0].Path != "spec/20260922132517-a1b2c3d4-new" || withID.InputRevision == a.InputRevision {
+		t.Fatalf("artifact_id was not used as receipt join key: %+v", withID)
 	}
 	if !strings.Contains(a.Provenance.Query, "spektacular spec status "+testRunKey) || strings.Contains(a.Provenance.Query, "--json") {
 		t.Fatalf("provenance query = %q", a.Provenance.Query)

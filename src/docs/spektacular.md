@@ -98,6 +98,15 @@ error. Then:
   `advanceLeaseStage` path the API uses. That fires the `stage_completed` hook
   and CEL trigger and records the `lease_stage_advanced` audit entry exactly
   as a manual advance would.
+- `document_status: stale` means Spektacular strict mode invalidated the plan
+  after the spec changed. Hive refuses the plan-to-implement advance, parks the
+  run with `waiting_on=human` and `waiting_reason=stale_plan`, and records a
+  `blocked` timeline event. The lease is not retried; recovery is a fresh
+  plan/re-approval.
+- The status payload's `artifact_id`, when present, is the durable
+  Spektacular artifact join key Hive stores in receipts and stage attributes.
+  The bare `name` remains the CLI address and backward-compatible display
+  alias; older CLIs that lack `artifact_id` fall back to `name`.
 - Progress is decided by `document_status`, `current_step` and
   `completed_steps` only. The status document's `updated_at` is never read
   for a progress or staleness decision: it is workflow activity only while

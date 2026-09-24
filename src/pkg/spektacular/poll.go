@@ -59,13 +59,13 @@ type Registry interface {
 	Retry(ctx context.Context, st Stage, now time.Time) error
 	// Refuse records that the runner will not advance st for reason (stale
 	// plan, replaced document) so an operator can see why the run is parked.
-	Refuse(st Stage, reason string)
+	Refuse(st Stage, reason string, status *ArtifactStatus)
 }
 
 // Refusal reasons recorded through Registry.Refuse.
 const (
-	// RefuseStalePlan: document_status went from final back to draft under the
-	// same name, so a previously final artifact is being revised.
+	// RefuseStalePlan: document_status is stale, or went from final back to
+	// draft under the same name, so a previously final artifact is invalid.
 	RefuseStalePlan = "stale_plan"
 	// RefuseReplacedDocument: the artifact the lease is bound to no longer
 	// exists after having been observed, so a new document with a new name has
@@ -245,7 +245,7 @@ func (r *Runner) tickStage(ctx context.Context, st Stage, state *stageState, now
 				// rebind the lease to whatever appeared; park it for a reset.
 				state.refused = true
 				res.Refused++
-				r.Registry.Refuse(st, RefuseReplacedDocument)
+				r.Registry.Refuse(st, RefuseReplacedDocument, nil)
 				r.logger().Warn("[spektacular] artifact vanished after being observed; lease needs reset",
 					"run", st.RunKey, "stage", st.Stage, "artifact", st.Artifact, "error", err)
 				return
@@ -263,11 +263,19 @@ func (r *Runner) tickStage(ctx context.Context, st Stage, state *stageState, now
 func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, status ArtifactStatus, now time.Time, res *TickResult) {
 	prev := state.lastStatus
 	state.lastStatus = status.DocumentStatus
+	if status.DocumentStatus == DocumentStale {
+		state.refused = true
+		res.Refused++
+		r.Registry.Refuse(st, RefuseStalePlan, &status)
+		r.logger().Warn("[spektacular] plan reported stale; refusing to advance",
+			"run", st.RunKey, "stage", st.Stage, "artifact", st.Artifact)
+		return
+	}
 	if !status.Final() {
 		if state.seenFinal || prev == DocumentFinal {
 			state.refused = true
 			res.Refused++
-			r.Registry.Refuse(st, RefuseStalePlan)
+			r.Registry.Refuse(st, RefuseStalePlan, &status)
 			r.logger().Warn("[spektacular] document went final -> draft; refusing to advance",
 				"run", st.RunKey, "stage", st.Stage, "artifact", st.Artifact)
 		}

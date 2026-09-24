@@ -55,8 +55,8 @@ func (e *spekExec) push(kind string, statuses ...spektacular.DocumentStatus) {
 			closed, updated = `"2026-09-22T00:00:00Z"`, ``
 		}
 		e.queues[kind] = append(e.queues[kind], fmt.Sprintf(
-			`{"error":false,"kind":%q,"name":%q,"document_status":%q,"current_step":"authoring","completed_steps":["interview"],"created_at":"2026-09-21T00:00:00Z"%s,"closed_at":%s,"spec":"","plan":""}`,
-			kind, spekRunKey, st, updated, closed))
+			`{"error":false,"kind":%q,"name":%q,"artifact_id":%q,"document_status":%q,"current_step":"authoring","completed_steps":["interview"],"created_at":"2026-09-21T00:00:00Z"%s,"closed_at":%s,"spec":"","plan":""}`,
+			kind, spekRunKey, spekRunKey, st, updated, closed))
 	}
 }
 
@@ -487,6 +487,42 @@ func TestSpektacularRunner_StaleAndReplacedDocumentsAreRefused(t *testing.T) {
 	}
 }
 
+func TestSpektacularRunner_StalePlanStatusHoldsRunForHuman(t *testing.T) {
+	hub, s, store, _ := spekHub(t)
+	now := time.Now()
+	spekLease(t, hub, StagePlan, now)
+	epic, err := store.Create(spekRunKey, beads.TypeEpic, beads.PriorityMedium, planning.ArchitectAgentName, spekRunKey)
+	if err != nil {
+		t.Fatalf("create epic: %v", err)
+	}
+	if err := store.SetMetadata(epic.ID, planning.MetaRunKey, spekRunKey); err != nil {
+		t.Fatalf("tag epic: %v", err)
+	}
+	ex := newSpekExec()
+	ex.push(spektacular.KindPlan, spektacular.DocumentStale)
+	r := spekRunner(hub, ex)
+
+	if res := r.Tick(context.Background(), now); res.Refused != 1 || res.Advanced != 0 {
+		t.Fatalf("stale status tick = %+v", res)
+	}
+	if stage, _ := spekLeaseState(hub); stage != StagePlan {
+		t.Fatalf("stale plan advanced to %s", stage)
+	}
+	updated, _ := store.Get(epic.ID)
+	if updated.Meta(planning.MetaRunWaitingOn) != worksource.RunWaitingOnHuman || updated.Meta(planning.MetaRunWaitingReason) != planning.WaitingReasonStalePlan {
+		t.Fatalf("epic wait metadata = %+v", updated.Metadata)
+	}
+	var blocked bool
+	for _, ev := range s.LifecycleTimeline().ByIssue(spekRunKey) {
+		if ev.Kind == timeline.KindBlocked && ev.Attrs["reason"] == planning.WaitingReasonStalePlan && ev.Attrs["waiting_on"] == worksource.RunWaitingOnHuman {
+			blocked = true
+		}
+	}
+	if !blocked {
+		t.Fatalf("stale plan did not record blocked timeline: %+v", s.LifecycleTimeline().ByIssue(spekRunKey))
+	}
+}
+
 // countingRunner is a StageRunner that records how often the hub ticked it.
 type countingRunner struct {
 	ticks int
@@ -526,13 +562,15 @@ func TestStageRunner_InstallAndTick(t *testing.T) {
 // pkg/spektacular) so the two lists have to agree.
 func TestStageAttrKeysMatchSpektacular(t *testing.T) {
 	pairs := map[string]string{
-		stageAttrRunKey:   spektacular.AttrRunKey,
-		stageAttrStage:    spektacular.AttrStage,
-		stageAttrGen:      spektacular.AttrGen,
-		stageAttrReceipt:  spektacular.AttrReceipt,
-		stageAttrReason:   spektacular.AttrReason,
-		stageAttrSeverity: spektacular.AttrSeverity,
-		stageAttrAttempts: spektacular.AttrAttempts,
+		stageAttrRunKey:         spektacular.AttrRunKey,
+		stageAttrStage:          spektacular.AttrStage,
+		stageAttrGen:            spektacular.AttrGen,
+		stageAttrReceipt:        spektacular.AttrReceipt,
+		stageAttrArtifact:       spektacular.AttrArtifact,
+		stageAttrDocumentStatus: spektacular.AttrDocumentStatus,
+		stageAttrReason:         spektacular.AttrReason,
+		stageAttrSeverity:       spektacular.AttrSeverity,
+		stageAttrAttempts:       spektacular.AttrAttempts,
 	}
 	for dash, spek := range pairs {
 		if dash != spek {

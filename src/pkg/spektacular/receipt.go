@@ -47,9 +47,10 @@ func BuildReceipt(st Stage, status ArtifactStatus, now time.Time) outputschema.S
 		repo = st.RunKey
 	}
 	steps := append([]string(nil), status.CompletedSteps...)
+	artifactKey := status.JoinKey()
 	artifacts := []outputschema.Artifact{{
 		Repo:        repo,
-		Path:        status.Kind + "/" + status.Name,
+		Path:        status.Kind + "/" + artifactKey,
 		Description: "Spektacular " + status.Kind + " reached document_status final",
 	}}
 	// OutputDigest must equal the validator's artifact digest (outputschema
@@ -65,7 +66,7 @@ func BuildReceipt(st Stage, status ArtifactStatus, now time.Time) outputschema.S
 	// checkout or reformat moves it without anything having happened, and
 	// two observations of the same final document must hash the same.
 	inputHash := effects.StableDigest(
-		status.Kind, status.Name, string(status.DocumentStatus), status.CurrentStep,
+		status.Kind, artifactKey, string(status.DocumentStatus), status.CurrentStep,
 		strings.Join(steps, "\x00"), status.ClosedAt.UTC().Format(time.RFC3339Nano),
 	)
 	return outputschema.StageReceipt{

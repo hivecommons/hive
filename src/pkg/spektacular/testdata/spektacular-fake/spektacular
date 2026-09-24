@@ -10,7 +10,7 @@
 # Contract encoded here (see src/docs/spektacular.md):
 #   spektacular <spec|plan> status <name>           (bare name, no extension;
 #                                                    the CLI has no --json flag)
-#     -> {"error":false,"kind","name","document_status":"draft"|"final",
+#     -> {"error":false,"kind","name","artifact_id","document_status":"draft"|"final"|"stale",
 #         "current_step","completed_steps":[],"created_at","updated_at",
 #         "closed_at","spec","plan"}
 #        created_at / closed_at are frontmatter dates emitted as RFC3339
@@ -29,7 +29,7 @@
 #
 # Environment:
 #   SPEK_FAKE_SCENARIO  draft-final | never-final | final-then-draft |
-#                       final-no-updated-at | missing
+#                       final-no-updated-at | stale-plan | missing
 #   SPEK_FAKE_STATE     path of the per-scenario call counter file
 set -eu
 
@@ -102,6 +102,9 @@ case "$scenario" in
     status=final
     with_updated=0
     ;;
+  stale-plan)
+    status=stale
+    ;;
   draft-final|*)
     if [ "$count" -le 2 ]; then status=draft; else status=final; fi
     ;;
@@ -116,6 +119,8 @@ if [ "$status" = "final" ]; then
   closed='"2026-09-22T00:00:00Z"'
   steps='["interview","authoring","review"]'
   step='finished'
+elif [ "$status" = "stale" ]; then
+  step='stale'
 fi
 # The plan cross-reference is populated for a spec only in the rare case the
 # author filled it in; the fake mirrors the common case (empty) for specs and
@@ -124,9 +129,9 @@ plan=''
 if [ "$kind" = "plan" ]; then plan="$name"; fi
 
 if [ "$with_updated" -eq 1 ]; then
-  printf '{"error":false,"kind":"%s","name":"%s","document_status":"%s","current_step":"%s","completed_steps":%s,"created_at":"2026-09-21T00:00:00Z","updated_at":"2026-09-22T13:3%s:00Z","closed_at":%s,"spec":"","plan":"%s"}\n' \
-    "$kind" "$name" "$status" "$step" "$steps" "$count" "$closed" "$plan"
+  printf '{"error":false,"kind":"%s","name":"%s","artifact_id":"%s","document_status":"%s","current_step":"%s","completed_steps":%s,"created_at":"2026-09-21T00:00:00Z","updated_at":"2026-09-22T13:3%s:00Z","closed_at":%s,"spec":"","plan":"%s"}\n' \
+    "$kind" "$name" "$name" "$status" "$step" "$steps" "$count" "$closed" "$plan"
 else
-  printf '{"error":false,"kind":"%s","name":"%s","document_status":"%s","current_step":"%s","completed_steps":%s,"created_at":"2026-09-21T00:00:00Z","closed_at":%s,"spec":"","plan":"%s"}\n' \
-    "$kind" "$name" "$status" "$step" "$steps" "$closed" "$plan"
+  printf '{"error":false,"kind":"%s","name":"%s","artifact_id":"%s","document_status":"%s","current_step":"%s","completed_steps":%s,"created_at":"2026-09-21T00:00:00Z","closed_at":%s,"spec":"","plan":"%s"}\n' \
+    "$kind" "$name" "$name" "$status" "$step" "$steps" "$closed" "$plan"
 fi

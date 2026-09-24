@@ -29,6 +29,9 @@ const (
 	DocumentDraft DocumentStatus = "draft"
 	// DocumentFinal: the artifact is complete and the stage may advance.
 	DocumentFinal DocumentStatus = "final"
+	// DocumentStale: the artifact was invalidated by a later upstream change
+	// and must not advance until it is replanned or re-approved.
+	DocumentStale DocumentStatus = "stale"
 )
 
 // Artifact kinds accepted by the status verb.
@@ -64,8 +67,10 @@ const (
 // Artifact name normalisation. Spektacular addresses a spec as
 // `<name>.md` and a plan as `<name>/plan.md` on the `file` verbs, while the
 // status verbs (and the workflow's `data.name`) use the bare name. The bare
-// name is the only stable join key across spec, plan and implement
-// (spektacular#45, #46), so every name that reaches the CLI is reduced to it.
+// name was the historical join key across spec, plan and implement
+// (spektacular#45, #46). Newer status payloads also expose artifact_id; Hive
+// consumes that field as the durable join key and keeps the bare name as the
+// CLI address/display alias.
 const (
 	artifactPathSeparator   = "/"
 	artifactExtMarkdown     = ".md"
@@ -107,7 +112,7 @@ func hasMarkdownExt(name string) bool { return markdownExt(name) != "" }
 // ArtifactStatus is the parsed per-artifact status document
 // (spektacular#45):
 //
-//	{"error":false,"kind","name","document_status","current_step",
+//	{"error":false,"kind","name","artifact_id","document_status","current_step",
 //	 "completed_steps":[],"created_at","updated_at","closed_at","spec","plan"}
 //
 // Progress is decided by DocumentStatus, CurrentStep and CompletedSteps
@@ -122,6 +127,7 @@ func hasMarkdownExt(name string) bool { return markdownExt(name) != "" }
 type ArtifactStatus struct {
 	Kind           string
 	Name           string
+	ArtifactID     string
 	DocumentStatus DocumentStatus
 	CurrentStep    string
 	CompletedSteps []string
@@ -140,6 +146,7 @@ type artifactStatusWire struct {
 	Error          json.RawMessage `json:"error"`
 	Kind           string          `json:"kind"`
 	Name           string          `json:"name"`
+	ArtifactID     string          `json:"artifact_id"`
 	DocumentStatus DocumentStatus  `json:"document_status"`
 	CurrentStep    string          `json:"current_step"`
 	CompletedSteps []string        `json:"completed_steps"`
@@ -186,6 +193,7 @@ func (s *ArtifactStatus) UnmarshalJSON(data []byte) error {
 	*s = ArtifactStatus{
 		Kind:           w.Kind,
 		Name:           w.Name,
+		ArtifactID:     strings.TrimSpace(w.ArtifactID),
 		DocumentStatus: w.DocumentStatus,
 		CurrentStep:    w.CurrentStep,
 		CompletedSteps: w.CompletedSteps,
@@ -200,6 +208,16 @@ func (s *ArtifactStatus) UnmarshalJSON(data []byte) error {
 
 // Final reports whether the artifact has reached document_status final.
 func (s ArtifactStatus) Final() bool { return s.DocumentStatus == DocumentFinal }
+
+// JoinKey returns the globally durable Spektacular artifact key. Older
+// Spektacular versions do not emit artifact_id, so Hive falls back to the
+// historical name only for backward compatibility.
+func (s ArtifactStatus) JoinKey() string {
+	if strings.TrimSpace(s.ArtifactID) != "" {
+		return strings.TrimSpace(s.ArtifactID)
+	}
+	return s.Name
+}
 
 // PlanTask is one task of a final plan as exported by Spektacular. Ref is the
 // plan-local id (T1, T2, ...), DependsOn references other refs, Execution is
@@ -371,7 +389,7 @@ func (r *Runner) Status(ctx context.Context, kind, name string) (ArtifactStatus,
 	}
 	st.Name = name
 	switch st.DocumentStatus {
-	case DocumentDraft, DocumentFinal:
+	case DocumentDraft, DocumentFinal, DocumentStale:
 	default:
 		return ArtifactStatus{}, &ContractError{Kind: kind, Name: name, Reason: fmt.Sprintf("unknown document_status %q", st.DocumentStatus)}
 	}
