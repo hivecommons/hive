@@ -12,6 +12,15 @@ type dashboardThemeRequest struct {
 	ThemeOverrides config.DashboardThemeOverrides `json:"theme_overrides"`
 }
 
+type dashboardThemeListItem struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Author      string   `json:"author,omitempty"`
+	Dark        bool     `json:"dark"`
+	Swatches    []string `json:"swatches"`
+}
+
 func (s *Server) currentDashboardTheme() (config.DashboardTheme, error) {
 	if s.deps == nil || s.deps.Config == nil {
 		return config.DashboardThemeEffective(config.DashboardConfig{})
@@ -21,9 +30,9 @@ func (s *Server) currentDashboardTheme() (config.DashboardTheme, error) {
 }
 
 func (s *Server) handleThemeCSS(w http.ResponseWriter, r *http.Request) {
-	th, err := s.currentDashboardTheme()
+	th, err := s.themeForCSSRequest(r)
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		jsonError(w, err.Error(), http.StatusNotFound)
 		return
 	}
 	css, err := config.DashboardThemeCSS(th)
@@ -44,6 +53,45 @@ func (s *Server) handleThemeCSS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = w.Write([]byte(css))
+}
+
+func (s *Server) themeForCSSRequest(r *http.Request) (config.DashboardTheme, error) {
+	id := strings.TrimSpace(r.URL.Query().Get("theme"))
+	if id == "" {
+		return s.currentDashboardTheme()
+	}
+	th, ok := config.DashboardThemeBuiltin(id)
+	if !ok {
+		return config.DashboardTheme{}, errUnknownDashboardTheme(id)
+	}
+	return th, nil
+}
+
+func errUnknownDashboardTheme(id string) error {
+	return &unknownDashboardThemeError{id: id}
+}
+
+type unknownDashboardThemeError struct {
+	id string
+}
+
+func (e *unknownDashboardThemeError) Error() string {
+	return "unknown dashboard theme " + e.id
+}
+
+func (s *Server) handleThemesList(w http.ResponseWriter, r *http.Request) {
+	items := make([]dashboardThemeListItem, 0, len(config.DashboardThemeCatalog()))
+	for _, th := range config.DashboardThemeCatalog() {
+		items = append(items, dashboardThemeListItem{
+			ID:          th.ID,
+			Name:        th.Name,
+			Description: th.Description,
+			Author:      th.Author,
+			Dark:        th.Dark,
+			Swatches:    themeSwatches(th),
+		})
+	}
+	jsonResponse(w, map[string]any{"themes": items})
 }
 
 func (s *Server) handleDashboardThemeGet(w http.ResponseWriter, r *http.Request) {
@@ -111,5 +159,16 @@ func defaultDashboardThemeID(id string) string {
 	if id == "" {
 		return config.DefaultDashboardThemeID()
 	}
-	return id
+	return config.CanonicalDashboardThemeID(id)
+}
+
+func themeSwatches(th config.DashboardTheme) []string {
+	keys := []string{"--bg", "--panel", "--accent", "--text"}
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if v := strings.TrimSpace(th.Tokens[key]); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }

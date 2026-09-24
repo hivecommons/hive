@@ -1,0 +1,28 @@
+id: solarized-dark
+name: Solarized Dark
+description: Precision colors for machines and people.
+author: Hive contributors
+dark: true
+tokens:
+  "--bg": "#002b36"
+  "--bg-soft": "#073642"
+  "--panel": "#073642"
+  "--panel-strong": "#0b3f4b"
+  "--text": "#93a1a1"
+  "--muted": "#839496"
+  "--line": "#164e5a"
+  "--line-strong": "#586e75"
+  "--amber": "#b58900"
+  "--accent": "#2aa198"
+  "--blue": "#268bd2"
+  "--red": "#dc322f"
+  "--green": "#859900"
+  "--yellow": "#b58900"
+  "--orange": "#cb4b16"
+  "--cyan": "#2aa198"
+  "--purple": "#6c71c4"
+  "--font-ui": "'Source Sans Pro', -apple-system, sans-serif"
+  "--font-mono": "'Source Code Pro', monospace"
+fonts:
+  ui: "'Source Sans Pro', -apple-system, sans-serif"
+  mono: "'Source Code Pro', monospace"

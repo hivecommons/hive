@@ -42,7 +42,7 @@ config surface is:
 
 ```yaml
 dashboard:
-  theme: honeycomb      # built-in id, or custom
+  theme: hive           # built-in id from /api/themes, or custom
   theme_overrides:
     tokens:
       "--accent": "#e0a33a"
@@ -54,8 +54,7 @@ dashboard:
       .panel { border-radius: 2px; }
 ```
 
-Built-ins include `openclaw`, `openclaw-light`, `honeycomb`, `graphite`, `nord`,
-`dracula`, `solarized-dark`, `github-light`, and `high-contrast`. Tokens are
+Built-ins are loaded from one YAML file per theme under `src/pkg/dashboard/theme/themes/`. Initial themes include `hive`, `hive-dark`, `hive-light`, `star-wars`, `dungeons-and-dragons`, `star-trek`, `cyberpunk`, `terminal`, `solarized-dark`, and `nord`. Tokens are
 validated against the dashboard's `:root` CSS custom properties so typos fail
 fast. Custom CSS is capped at 32 KiB, strips HTML/style-breakout characters, and
 only permits `https:` or bounded `data:` URLs; inlined backgrounds are capped at
@@ -72,6 +71,18 @@ and custom CSS textarea (with byte counter). The existing dark/light button asks
 the theme API for the closest light or dark built-in variant and refreshes
 `/api/theme.css` without reloading the dashboard.
 
-Preset screenshots are committed in `src/docs/images/themes/` for:
-`openclaw`, `openclaw-light`, `honeycomb`, `graphite`, `nord`, `dracula`,
-`solarized-dark`, `github-light`, and `high-contrast`.
+Preset screenshots are committed in `src/docs/images/themes/` for the shipped catalog.
+
+
+### How to add a dashboard theme
+
+Create one YAML file in `src/pkg/dashboard/theme/themes/` and give it a unique
+`id`, display `name`, original `description`, `author`, `dark` flag, `tokens`,
+optional `background`, optional `custom_css`, and `fonts` stacks. The directory
+README documents the full schema and guardrails. The theme loader embeds every
+`*.yaml` file with `embed.FS`; adding a file automatically makes it appear in
+`GET /api/themes`, `GET /api/theme.css?theme=<id>`, and Settings → Appearance.
+CI runs `pkg/dashboard/theme` tests that parse every file, enforce unique IDs,
+and reject unsupported dashboard CSS variables, so theme-only changes are a good
+first issue when the palette is original and avoids logos, copyrighted imagery,
+quotes, or bundled proprietary fonts.

@@ -22,6 +22,7 @@ Thank you for helping improve KubeStellar Hive. This guide is for contributing c
   - `src/policies/` — policy prompts and rule files used by the deterministic/agent pipeline. Treat policy changes like code: review the behavior they enable, test where possible, and explain risk in the PR.
   - `src/deploy/` and `src/examples/` — deployment manifests and example configuration.
   - `src/docs/` — architecture and operator/developer reference material.
+- `src/pkg/dashboard/theme/themes/` — one YAML file per dashboard theme; palette-only additions are good first issues when they use original colors/text and pass the theme parser tests.
   - `src/test/` — integration and regression tests.
 - `bin/` — deterministic pipeline, supervision, enforcement, deployment, and maintainer helper scripts. See [`bin/README.md`](bin/README.md) for the script-by-script index.
 - `config/hive-project.yaml.example` — project metadata for the top-level

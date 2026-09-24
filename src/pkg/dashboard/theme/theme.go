@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	DefaultDarkID      = "openclaw"
-	DefaultLightID     = "openclaw-light"
+	DefaultDarkID      = "hive"
+	DefaultLightID     = "hive-light"
 	CustomID           = "custom"
 	MaxCustomCSSBytes  = 32 * 1024
 	MaxBackgroundBytes = 256 * 1024
@@ -23,6 +23,7 @@ type Theme struct {
 	ID          string            `yaml:"id" json:"id"`
 	Name        string            `yaml:"name" json:"name"`
 	Description string            `yaml:"description" json:"description"`
+	Author      string            `yaml:"author,omitempty" json:"author,omitempty"`
 	Dark        bool              `yaml:"dark" json:"dark"`
 	Tokens      map[string]string `yaml:"tokens" json:"tokens"`
 	Fonts       ThemeFonts        `yaml:"fonts" json:"fonts"`
@@ -63,6 +64,7 @@ func TokenAllowList() map[string]struct{} {
 }
 
 func Builtin(id string) (Theme, bool) {
+	id = canonicalThemeID(id)
 	for _, th := range Catalog() {
 		if th.ID == id {
 			return th, true
@@ -76,6 +78,7 @@ func ValidateSelection(id string, overrides Overrides) error {
 	if id == "" {
 		id = DefaultDarkID
 	}
+	id = canonicalThemeID(id)
 	if id != CustomID {
 		if _, ok := Builtin(id); !ok {
 			return fmt.Errorf("dashboard.theme %q is not a built-in theme id or %q", id, CustomID)
@@ -112,6 +115,7 @@ func Effective(id string, overrides Overrides) (Theme, error) {
 	if id == "" {
 		id = DefaultDarkID
 	}
+	id = canonicalThemeID(id)
 	var th Theme
 	if id == CustomID {
 		th = Theme{ID: CustomID, Name: "Custom", Description: "Operator-defined dashboard theme", Dark: true, Tokens: map[string]string{}}
@@ -179,6 +183,9 @@ func ValidateTheme(th Theme) error {
 }
 
 func ValidateCatalog() error {
+	if err := CatalogError(); err != nil {
+		return err
+	}
 	seen := map[string]bool{}
 	for _, th := range Catalog() {
 		if seen[th.ID] {

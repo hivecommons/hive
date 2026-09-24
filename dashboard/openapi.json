@@ -21054,13 +21054,76 @@
         }
       }
     },
+    "/api/themes": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Dashboard theme catalog",
+        "description": "Lists embedded dashboard themes with id, display metadata, dark/light flag, and preview swatches for Settings → Appearance.",
+        "responses": {
+          "200": {
+            "description": "Theme catalog",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "themes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "author": {
+                            "type": "string"
+                          },
+                          "dark": {
+                            "type": "boolean"
+                          },
+                          "swatches": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/theme.css": {
       "get": {
         "tags": [
           "System"
         ],
         "summary": "Dashboard theme stylesheet",
-        "description": "Returns the effective dashboard theme CSS with ETag and Cache-Control headers. Requires dashboard auth/session.",
+        "description": "Returns the effective dashboard theme CSS with ETag and Cache-Control headers. Requires dashboard auth/session. Pass ?theme=<id> to render an embedded preset without persisting it.",
+        "parameters": [
+          {
+            "name": "theme",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Optional embedded theme id to preview."
+          }
+        ],
         "responses": {
           "200": {
             "description": "Theme CSS",

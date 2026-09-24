@@ -1,0 +1,32 @@
+id: star-trek
+name: Star Trek
+description: LCARS-inspired black interface with rounded orange, peach, lavender, and blue blocks.
+author: Hive contributors
+dark: true
+tokens:
+  "--bg": "#030305"
+  "--bg-soft": "#08080d"
+  "--panel": "#11121a"
+  "--panel-strong": "#1b1d2a"
+  "--text": "#fff7ef"
+  "--muted": "#c5bdd8"
+  "--line": "#3a3650"
+  "--line-strong": "#ff9f45"
+  "--amber": "#ff9f45"
+  "--accent": "#ff9f45"
+  "--blue": "#6bb6ff"
+  "--red": "#ff6b7a"
+  "--green": "#90e0a8"
+  "--yellow": "#ffd166"
+  "--orange": "#ff9f45"
+  "--cyan": "#7bdff2"
+  "--purple": "#b9a7ff"
+  "--radius": "18px"
+  "--radius-lg": "28px"
+  "--font-ui": "'Arial Narrow', 'Roboto Condensed', Arial, sans-serif"
+  "--font-mono": "'SF Mono', 'Cascadia Code', monospace"
+fonts:
+  ui: "'Arial Narrow', 'Roboto Condensed', Arial, sans-serif"
+  mono: "'SF Mono', 'Cascadia Code', monospace"
+custom_css: |
+  .section-label, .oc-nav-label { text-transform: uppercase; letter-spacing: .18em; }

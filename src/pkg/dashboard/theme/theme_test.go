@@ -8,6 +8,27 @@ import (
 	"testing"
 )
 
+func TestLegacyThemeAliasesRemainValid(t *testing.T) {
+	want := map[string]string{
+		"openclaw":       "hive-dark",
+		"openclaw-light": "hive-light",
+		"honeycomb":      "hive",
+		"graphite":       "hive-dark",
+		"dracula":        "cyberpunk",
+		"github-light":   "hive-light",
+		"high-contrast":  "terminal",
+	}
+	for oldID, newID := range want {
+		th, ok := Builtin(oldID)
+		if !ok || th.ID != newID {
+			t.Fatalf("Builtin(%q) = %q, %v; want %q, true", oldID, th.ID, ok, newID)
+		}
+		if err := ValidateSelection(oldID, Overrides{}); err != nil {
+			t.Fatalf("legacy theme %q did not validate: %v", oldID, err)
+		}
+	}
+}
+
 func TestCatalogValidAndLargeEnough(t *testing.T) {
 	if len(Catalog()) < 8 {
 		t.Fatalf("catalog has %d themes, want at least 8", len(Catalog()))
@@ -15,10 +36,38 @@ func TestCatalogValidAndLargeEnough(t *testing.T) {
 	if err := ValidateCatalog(); err != nil {
 		t.Fatalf("catalog validation failed: %v", err)
 	}
-	for _, id := range []string{"openclaw", "openclaw-light", "honeycomb", "nord", "dracula", "solarized-dark", "github-light", "high-contrast"} {
+	for _, id := range []string{"hive", "hive-dark", "hive-light", "star-wars", "dungeons-and-dragons", "star-trek", "cyberpunk", "terminal", "solarized-dark", "nord"} {
 		if _, ok := Builtin(id); !ok {
 			t.Fatalf("missing built-in theme %q", id)
 		}
+	}
+
+}
+
+func TestEveryThemeFileParsesWithUniqueID(t *testing.T) {
+	entries, err := os.ReadDir("themes")
+	if err != nil {
+		t.Fatalf("read themes dir: %v", err)
+	}
+	files := 0
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".yaml") {
+			files++
+		}
+	}
+	catalog, err := LoadCatalog()
+	if err != nil {
+		t.Fatalf("load embedded theme catalog: %v", err)
+	}
+	if len(catalog) != files {
+		t.Fatalf("catalog loaded %d themes, want %d yaml files", len(catalog), files)
+	}
+	seen := map[string]bool{}
+	for _, th := range catalog {
+		if seen[th.ID] {
+			t.Fatalf("duplicate theme id %q", th.ID)
+		}
+		seen[th.ID] = true
 	}
 }
 
@@ -62,9 +111,9 @@ func TestSanitizeCSSGuardrails(t *testing.T) {
 }
 
 func TestEffectiveCSSIncludesBackgroundAndETag(t *testing.T) {
-	th, err := Effective("honeycomb", Overrides{Tokens: map[string]string{"--accent": "#e0a33a"}})
+	th, err := Effective("hive", Overrides{Tokens: map[string]string{"--accent": "#e0a33a"}})
 	if err != nil {
-		t.Fatalf("effective honeycomb: %v", err)
+		t.Fatalf("effective hive: %v", err)
 	}
 	css, err := CSS(th)
 	if err != nil {
@@ -143,15 +192,15 @@ func TestEffectiveBranches(t *testing.T) {
 			t.Fatalf("custom css missing %q: %s", want, css)
 		}
 	}
-	light, err := Effective("github-light", Overrides{})
+	light, err := Effective("hive-light", Overrides{})
 	if err != nil {
-		t.Fatalf("github-light effective: %v", err)
+		t.Fatalf("hive-light effective: %v", err)
 	}
 	css, err = CSS(light)
 	if err != nil {
 		t.Fatalf("light css: %v", err)
 	}
-	if !strings.Contains(css, "body.light-mode") || !strings.Contains(css, "--bg: #ffffff") {
+	if !strings.Contains(css, "body.light-mode") || !strings.Contains(css, "--bg: #f7f8fa") {
 		t.Fatalf("light css missing body remap: %s", css)
 	}
 }

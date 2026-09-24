@@ -53,6 +53,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 
 	s.mux.HandleFunc("GET /api/version", s.handleVersion)
 	s.mux.HandleFunc("GET /api/style", s.handleStyle)
+	s.mux.HandleFunc("GET /api/themes", s.handleThemesList)
 	s.mux.HandleFunc("GET /api/theme.css", s.handleThemeCSS)
 	s.mux.HandleFunc("GET /api/config", s.handleConfig)
 	s.mux.HandleFunc("GET /api/config/download", s.handleConfigDownload)

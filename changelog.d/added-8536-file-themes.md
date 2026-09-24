@@ -1,0 +1,1 @@
+- Add file-based dashboard theme presets, `/api/themes`, and theme preview CSS for Settings → Appearance (#8536).

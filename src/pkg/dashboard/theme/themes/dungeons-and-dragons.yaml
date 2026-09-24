@@ -1,0 +1,30 @@
+id: dungeons-and-dragons
+name: Dungeons & Dragons
+description: Parchment, leather, crimson, and gold for fantasy campaign control rooms.
+author: Hive contributors
+dark: false
+tokens:
+  "--bg": "#efe1bd"
+  "--bg-soft": "#f7edcf"
+  "--panel": "#fff3d1"
+  "--panel-strong": "#e4c886"
+  "--text": "#2d1a0b"
+  "--muted": "#6f5132"
+  "--line": "#b38b4d"
+  "--line-strong": "#7b4f25"
+  "--amber": "#b8860b"
+  "--accent": "#8f1d2c"
+  "--blue": "#315f7d"
+  "--red": "#8f1d2c"
+  "--green": "#4f7a37"
+  "--yellow": "#b8860b"
+  "--orange": "#a65f1a"
+  "--cyan": "#3d7780"
+  "--purple": "#6d4c82"
+  "--font-ui": "Georgia, 'Times New Roman', serif"
+  "--font-mono": "'SF Mono', 'Cascadia Code', monospace"
+fonts:
+  ui: "Georgia, 'Times New Roman', serif"
+  mono: "'SF Mono', 'Cascadia Code', monospace"
+custom_css: |
+  .section-label, .oc-nav-label { font-family: Georgia, 'Times New Roman', serif; }

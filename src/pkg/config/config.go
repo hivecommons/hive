@@ -4708,7 +4708,7 @@ type DashboardConfig struct {
 	// "redirect_uri is invalid". Validated at load time by
 	// ValidateDashboardPublicURL.
 	PublicURL string `yaml:"public_url,omitempty" json:"public_url,omitempty"`
-	// Theme names the built-in dashboard theme id ("openclaw" by default) or
+	// Theme names the built-in dashboard theme id ("hive" by default) or
 	// "custom" when theme_overrides supplies the complete operator palette.
 	Theme string `yaml:"theme,omitempty" json:"theme,omitempty"`
 	// ThemeOverrides are layered on the selected built-in theme and are mutable

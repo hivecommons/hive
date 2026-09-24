@@ -1,0 +1,27 @@
+id: nord
+name: Nord
+description: Arctic north-bluish clean theme.
+author: Hive contributors
+dark: true
+tokens:
+  "--bg": "#2e3440"
+  "--bg-soft": "#343b49"
+  "--panel": "#3b4252"
+  "--panel-strong": "#434c5e"
+  "--text": "#eceff4"
+  "--muted": "#a8b3c2"
+  "--line": "#4c566a"
+  "--line-strong": "#5e81ac"
+  "--amber": "#ebcb8b"
+  "--accent": "#88c0d0"
+  "--blue": "#5e81ac"
+  "--red": "#bf616a"
+  "--green": "#a3be8c"
+  "--yellow": "#ebcb8b"
+  "--cyan": "#8fbcbb"
+  "--purple": "#b48ead"
+  "--font-ui": "'IBM Plex Sans', -apple-system, sans-serif"
+  "--font-mono": "'IBM Plex Mono', monospace"
+fonts:
+  ui: "'IBM Plex Sans', -apple-system, sans-serif"
+  mono: "'IBM Plex Mono', monospace"
