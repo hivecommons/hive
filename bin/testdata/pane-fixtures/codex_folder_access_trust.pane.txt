@@ -1,0 +1,6 @@
+  Folder access
+  /data/agents/ci-maintainer
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings can run code automatically, even w…
+› 1. Trust and continue
+  2. Quit
+  enter continue · esc quit

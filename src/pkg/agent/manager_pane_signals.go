@@ -227,9 +227,14 @@ var blockingPrompts = []blockingPrompt{
 	},
 	{
 		backend: "codex",
-		// codex: "Do you trust the contents of this directory?" → 1. Yes, continue.
+		// codex: older CLIs rendered "Do you trust the contents of this
+		// directory?"; 0.156.1 renders "Folder access" with an
+		// explicit "Trust this folder?" question and "Trust and continue"
+		// option. Both choose option 1 to continue.
 		match: func(p string) bool {
-			return strings.Contains(p, "Do you trust the contents of this directory")
+			return strings.Contains(p, "Do you trust the contents of this directory") ||
+				(strings.Contains(p, "Trust this folder? Codex can read, edit, and run files here, subject to your permission settings") &&
+					strings.Contains(p, "Trust and continue"))
 		},
 		key:   "1",
 		label: "codex directory trust",
