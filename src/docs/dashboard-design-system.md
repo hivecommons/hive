@@ -20,6 +20,7 @@ static preview at `/design-system.html`.
 | Buttons | In progress | A4 is migrating button families to shared recipes. |
 | Cards/surfaces | In progress | A5 is migrating surface recipes. |
 | Chips/status | Migrated in A7 | Operator chip families now map to entity/status/action/count recipes, status dots/badges use the canonical `STATUS` map, ACMM levels use `--acmm-level-*`, vendor markers use `--vendor-*`, and amber remains brand/CTA chrome only. |
+| Type/spacing/radius | Migrated in A6 | Operator, contributor, and hub pages collapse raw type, spacing, and radius values onto tokens with visual-first rules: exact matches plus explicitly documented type evidence. Repeated token-only inline styles use shared utilities. |
 
 ## Token catalogue
 
@@ -33,12 +34,17 @@ padding values, and 6 shadows; this catalogue is the target collapse.
 | --- | --- | --- |
 | `--font-ui` | `Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif` | Default interface face. |
 | `--font-mono` | `'SF Mono', 'Cascadia Code', 'Fira Code', monospace` | Code, logs, model IDs, token IDs, dense audit rows. |
+| `--fs-2xs` | `.6rem` | Tiny helper text and dense chrome found during A6. Collapses .55rem, .58rem, .6rem, .62rem and equivalent small em uses. |
 | `--fs-xs` | `.68rem` | Badges, micro labels. Collapses 9.6px, 9.92px, 10.4px. |
 | `--fs-sm` | `.75rem` | Compact controls and dense body. Collapses 10.88px, 11.2px, 11.52px, 12px. |
 | `--fs-base` | `.82rem` | Normal dashboard body. Collapses 12.48px, 12.8px, 13.12px. |
 | `--fs-md` | `.92rem` | Card titles and emphasized row labels. Collapses 13.6px, 14.4px, 15.2px. |
 | `--fs-lg` | `1.05rem` | Section titles and modal subheads. Collapses 16px, 16.8px. |
 | `--fs-xl` | `1.25rem` | Page titles. Collapses 20px, 20.8px, 25.6px. |
+| `--fs-2xl` | `1.5rem` | Large marketing/card numerals found during A6. Collapses 1.4rem, 1.5rem, 1.6rem. |
+| `--fs-3xl` | `2rem` | Hero/landing subheads found during A6. Collapses 1.8rem and 2rem. |
+
+A6 added `--fs-2xs`, `--fs-2xl`, and `--fs-3xl` from visual evidence where the original ramp forced visible changes. Values such as `.5rem`, `1.3rem`, `1.35rem`, and `1.7rem` stay raw unless a future token is added.
 
 Type roles:
 
@@ -69,10 +75,7 @@ positive values were off by one.
 | `--sp-8` | `24px` | Large card/modal padding. |
 | `--sp-9` | `32px` | Section block gap. |
 
-Common padding collapses: `4px 8px`, `2px 7px`, `3px 8px`, and `1px 8px` map
-to chip recipes; `3px 9px` maps to compact buttons; `7px 16px` maps to normal
-buttons; `12px`, `16px`, `16px 20px`, and `24px 20px 20px` map to card/modal
-recipes.
+Common padding collapses: exact scale values map to `--sp-*`. A6 measured the ±1px candidates (`3px`, `7px`, `9px`) but kept them raw where full-page screenshots showed layout drift; raw `1px`, `5px`, `10px`, `14px`, and `18px` also remain unless a future token is added.
 
 ### Radius and shadows
 
@@ -86,8 +89,7 @@ recipes.
 | `--shadow-raised` | `0 4px 16px rgba(0, 0, 0, 0.45)` | Toasts and floating chrome. |
 | `--shadow-modal` | `0 20px 60px rgba(0, 0, 0, 0.5)` | Modal shells. |
 
-Radius collapses: 4px, 5px, 6px, 7px, 8px, 9px, and 10px should become
-`--r-sm`, `--r`, or `--r-lg`; `50%` remains for circular avatars/dots.
+Radius collapses: exact token values map to `--r-*`. A6 keeps `5px`, `7px`, `8px`, `9px`, and `10px` raw where changing them would produce visible drift; `50%` remains for circular avatars/dots.
 
 ### Surfaces, lines, and text
 
@@ -236,6 +238,18 @@ tooltips should derive from this table instead of per-site color literals:
 | Repository/PR/issue/model chips | `.chip-entity`; vendor color through `--vendor-*`. |
 | Action-like pills | `.chip-action` with button semantics. |
 | Count pills | `.badge-count`. |
+
+
+### Utilities
+
+`components.css` also exposes small utilities for repeated token-only markup:
+
+- Type: `.fs-2xs`, `.fs-xs`, `.fs-sm`, `.fs-base`, `.fs-md`, `.fs-lg`, `.fs-xl`, `.fs-2xl`, `.fs-3xl`.
+- Text color: `.text-default`, `.text-muted`, `.text-faint`, `.text-success`, `.text-warn`, `.text-danger`, `.text-info`, `.text-brand`, `.text-accent`.
+- Spacing: `.m-0`, `.mt-1` through `.mt-7`, `.mb-1` through `.mb-8`, `.py-1-px-4`, `.py-2-px-4`.
+- Display: `.d-block`.
+
+Use these only for recurring token-only one-liners; component recipes remain preferred for structured UI.
 
 ## Migration rules for new code
 
