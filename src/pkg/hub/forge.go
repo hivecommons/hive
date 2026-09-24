@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // ForgeKind names a family of code-hosting system. The zero value is invalid:
@@ -426,7 +428,7 @@ func (s *HubServer) handleSwitchForge(w http.ResponseWriter, r *http.Request) {
 	// else did — it kept the github.com app_id, an empty app_slug, and a
 	// installation_id belonging to the old forge. The owner then clicked
 	// "Install GitHub App" and got a GitHub 404, because an empty app_slug falls
-	// back to config.DefaultGitHubAppSlug ("kubestellar-hive"), which is the
+	// back to config.DefaultGitHubAppSlug, which is the
 	// github.com App's slug and names nothing on GHE. A wrong install link is
 	// worse than no link: it tells the user the product is broken.
 	//
@@ -622,7 +624,7 @@ const forgeIdentityRemedy = "populate the target cluster's entry in /data/saas/c
 //   - app_id: falling back to the cluster's other App authenticates as an App
 //     that does not exist on this forge.
 //   - app_slug: falling back to DefaultGitHubAppSlug builds an install link at
-//     <ghe-host>/github-apps/kubestellar-hive/... — the exact live 404.
+//     the public App slug on the GHE host — the exact live 404.
 //
 // So this returns the missing field NAMES and the caller refuses the switch.
 // Nothing is hardcoded: both values come from ClusterConfig, the same
@@ -720,7 +722,7 @@ func (s *HubServer) forgeIdentityForTarget(cluster *ClusterConfig, target ForgeT
 // defaultPublicAppSlug mirrors config.DefaultGitHubAppSlug. It appears here
 // only inside an operator-facing error message explaining what an empty slug
 // would fall back to — it is never used as a value.
-const defaultPublicAppSlug = "kubestellar-hive"
+const defaultPublicAppSlug = config.DefaultGitHubAppSlug
 
 // pendingForgeAPIURL returns the github_api_url the hub must still push to
 // deliver an outstanding forge switch, or "" when there is nothing to deliver.

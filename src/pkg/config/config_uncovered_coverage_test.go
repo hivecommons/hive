@@ -324,6 +324,10 @@ func TestGitHubConfig_ResolvedAppSlug(t *testing.T) {
 	if got := g.ResolvedAppSlug(); got != "custom-slug" {
 		t.Errorf("got %q, want custom-slug", got)
 	}
+	g.AppSlug = LegacyGitHubAppSlug
+	if got := g.ResolvedAppSlug(); got != DefaultGitHubAppSlug {
+		t.Errorf("legacy public slug resolved as %q, want %q", got, DefaultGitHubAppSlug)
+	}
 }
 
 func TestGitHubConfig_AppInstallURL(t *testing.T) {
@@ -342,6 +346,16 @@ func TestGitHubConfig_AppInstallURL(t *testing.T) {
 			t.Errorf("got %q, want %q", got, want)
 		}
 	})
+}
+
+func TestGitHubLegacyPublicSlugAcceptedForKnownApp(t *testing.T) {
+	gh := GitHubConfig{AppID: PublicGitHubAppID, AppSlug: LegacyGitHubAppSlug}
+	if issues := IdentitySetIssues(gh); len(issues) != 0 {
+		t.Fatalf("IdentitySetIssues(%+v) = %v, want none", gh, issues)
+	}
+	if issues := gh.ForgeIdentityMismatches(); len(issues) != 0 {
+		t.Fatalf("ForgeIdentityMismatches(%+v) = %v, want none", gh, issues)
+	}
 }
 
 // TestGitHubConfig_AppInstallURL_Table locks the exact install URL for every
@@ -369,6 +383,11 @@ func TestGitHubConfig_AppInstallURL_Table(t *testing.T) {
 			name:    "public github.com with a custom slug",
 			appSlug: "acme-hive",
 			want:    "https://github.com/apps/acme-hive/installations/new",
+		},
+		{
+			name:    "public github.com legacy slug normalizes to renamed app",
+			appSlug: LegacyGitHubAppSlug,
+			want:    "https://github.com/apps/" + DefaultGitHubAppSlug + "/installations/new",
 		},
 		{
 			// A KNOWN forge derives its slug from the forge-identity table, so

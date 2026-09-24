@@ -1752,7 +1752,7 @@ func (b *boot) bootGitHubWith(deps bootGitHubDeps) {
 func (b *boot) bootGovernor() {
 	// The user write-token client (userGHClient) was removed: every GitHub write
 	// — issues, PRs, comments, merges, and the advisory digest — now goes through
-	// the hive's App installation token (ghClient / kubestellar-hive[bot]). The
+	// the hive's App installation token (ghClient / hivecommons-hive[bot]). The
 	// user token only ever served as an advisory-digest fallback writer, which is
 	// no longer wanted (and forced the excessive "repo" login scope, issue #1927).
 	// Dashboard login now requests no scope and no user write-token is persisted.
@@ -6109,11 +6109,18 @@ func isGitHubRateLimitText(err error) bool {
 // paths -- vars that tests repoint at a temp dir -- are read HERE, at call
 // time, rather than captured once at init.
 func classifyGitHubAppFailure(ctx context.Context, appAuth *github.AppAuth, expectedOwner string, logger *slog.Logger) (bool, string, github.AppAuthState) {
-	return apphealth.ClassifyFailure(ctx, appAuth, expectedOwner, appKeyPaths(), logger)
+	return apphealth.ClassifyFailure(ctx, appAuth, expectedOwner, appKeyPaths(appAuthID(appAuth)), logger)
 }
 
 func classifyGitHubAppWriteForbidden(ctx context.Context, appAuth *github.AppAuth, expectedOwner, repo string) (string, github.AppAuthState) {
-	return apphealth.ClassifyWriteForbidden(ctx, appAuth, expectedOwner, repo, appKeyPaths())
+	return apphealth.ClassifyWriteForbidden(ctx, appAuth, expectedOwner, repo, appKeyPaths(appAuthID(appAuth)))
+}
+
+func appAuthID(appAuth *github.AppAuth) int64 {
+	if appAuth == nil {
+		return 0
+	}
+	return appAuth.AppID()
 }
 
 func classifyGitHubAppRepoCoverage(ctx context.Context, appAuth *github.AppAuth, org string, repos []string, logger *slog.Logger) (bool, string, github.AppAuthState) {
@@ -6358,7 +6365,7 @@ func runEvalCycle(
 	shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
 		PrimaryRepo:     cfg.Project.PrimaryRepo,
 		AIAuthor:        cfg.Project.AIAuthor,
-		InternalAuthors: []string{"kubestellar-hive[bot]", "github-actions[bot]", "dependabot[bot]", "copilot-swe-agent[bot]"},
+		InternalAuthors: []string{"hivecommons-hive[bot]", "kubestellar-hive[bot]", "github-actions[bot]", "dependabot[bot]", "copilot-swe-agent[bot]"},
 	})
 	if shaErr != nil {
 		logger.Warn("SHA hold enforcement failed", "error", shaErr)

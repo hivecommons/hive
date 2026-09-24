@@ -9,7 +9,7 @@ import "testing"
 //	"fleet stats collector disabled: author or org is empty" author=""
 //
 // even though the hub registry showed a populated aiAuthorEffective of
-// "kubestellar-hive[bot]". The collector was reading the RAW Project.AIAuthor
+// "hivecommons-hive[bot]". The collector was reading the RAW Project.AIAuthor
 // field, which App-authored hives deliberately leave empty (they derive the
 // bot login from the installed App so App-bot mode survives restarts). With
 // author empty, Start() returned before making a single GitHub call — so this
@@ -35,7 +35,7 @@ func TestEffectiveAIAuthor_AppBotHiveWithEmptyAIAuthor(t *testing.T) {
 		t.Fatal("EffectiveAIAuthor() = \"\" for an App-authored hive; the fleet-stats " +
 			"collector would be disabled and this hive would never contribute")
 	}
-	if want := "kubestellar-hive[bot]"; got != want {
+	if want := "hivecommons-hive[bot]"; got != want {
 		t.Errorf("EffectiveAIAuthor() = %q, want %q", got, want)
 	}
 	// The raw field is what the buggy code read — assert it really is empty, so

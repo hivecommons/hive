@@ -202,6 +202,15 @@ func (i *clusterAppIdentity) HasKey() bool {
 	return i != nil && i.PrivateKey != "" && i.Fingerprint != ""
 }
 
+func (i *clusterAppIdentity) normalizePublicSlug() {
+	if i == nil || i.AppSlug == "" {
+		return
+	}
+	if i.AppID == config.PublicGitHubAppID || isPublicForgeHost(i.Forge) {
+		i.AppSlug = config.NormalizePublicGitHubAppSlug(i.AppSlug)
+	}
+}
+
 // appIdentityForCluster resolves the App identity the hub should enforce on a
 // cluster. It returns nil when the cluster is unknown or has no configured
 // app_id — both of which mean "this hub has nothing authoritative to say about
@@ -290,6 +299,7 @@ func (s *HubServer) appIdentityForHive(h *SaaSHive, clusterID string) *clusterAp
 		BaseURL: resolved.BaseURL,
 		Forge:   resolved.Forge,
 	}
+	identity.normalizePublicSlug()
 	// The KEY must follow the APP, not the cluster. A hive that elected a forge
 	// its cluster does not default to needs that App's key; the cluster's key
 	// belongs to a different App and would fail auth even with a correct app_id.
@@ -301,6 +311,7 @@ func (s *HubServer) appIdentityForHive(h *SaaSHive, clusterID string) *clusterAp
 				identity.AppSlug = k.AppSlug
 			}
 		}
+		identity.normalizePublicSlug()
 		return identity
 	}
 	pem := loadClusterAppKey(clusterID)
@@ -315,6 +326,7 @@ func (s *HubServer) appIdentityForHive(h *SaaSHive, clusterID string) *clusterAp
 	}
 	identity.PrivateKey = pem
 	identity.Fingerprint = fp
+	identity.normalizePublicSlug()
 	return identity
 }
 
@@ -399,6 +411,7 @@ func (s *HubServer) builtinIdentityForForge(forge string) *clusterAppIdentity {
 			identity.AppSlug = k.AppSlug
 		}
 	}
+	identity.normalizePublicSlug()
 	return identity
 }
 
@@ -412,6 +425,13 @@ type fleetAppKey struct {
 	AppSlug     string
 	PrivateKey  string
 	Fingerprint string
+}
+
+func normalizeFleetAppSlug(appID int64, slug string) string {
+	if appID == config.PublicGitHubAppID {
+		return config.NormalizePublicGitHubAppSlug(slug)
+	}
+	return strings.TrimSpace(slug)
 }
 
 // appKeysByAppID returns the fleet's App keys de-duplicated by app_id.
@@ -459,7 +479,7 @@ func (s *HubServer) appKeysByAppID() map[int64]fleetAppKey {
 		}
 		out[c.GitHubAppID] = fleetAppKey{
 			AppID:       c.GitHubAppID,
-			AppSlug:     c.GitHubAppSlug,
+			AppSlug:     normalizeFleetAppSlug(c.GitHubAppID, c.GitHubAppSlug),
 			PrivateKey:  pem,
 			Fingerprint: fp,
 		}

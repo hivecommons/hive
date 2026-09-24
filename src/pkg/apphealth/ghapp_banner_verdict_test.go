@@ -38,6 +38,12 @@ func verdictTestLogger() *slog.Logger {
 // same code path production does.
 func verdictTestAuthKeys(t *testing.T, apiURL string) (*github.AppAuth, string) {
 	t.Helper()
+	keyPath := filepath.Join(t.TempDir(), "app.pem")
+	return verdictTestAuthAtPath(t, apiURL, keyPath)
+}
+
+func verdictTestAuthAtPath(t *testing.T, apiURL, keyPath string) (*github.AppAuth, string) {
+	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, verdictTestKeyBits)
 	if err != nil {
 		t.Fatalf("generating test key: %v", err)
@@ -46,7 +52,6 @@ func verdictTestAuthKeys(t *testing.T, apiURL string) (*github.AppAuth, string) 
 		Type:  "RSA PRIVATE KEY",
 		Bytes: x509.MarshalPKCS1PrivateKey(key),
 	})
-	keyPath := filepath.Join(t.TempDir(), "app.pem")
 	if err := os.WriteFile(keyPath, pemBytes, 0o600); err != nil {
 		t.Fatalf("writing test key: %v", err)
 	}
@@ -246,6 +251,38 @@ func TestClassifyGitHubAppWriteForbidden_HealthyInstallSurfacesWriteFailure(t *t
 	}
 	if strings.Contains(msg, "lacks Issues") {
 		t.Errorf("message must not fabricate a permission gap; got %q", msg)
+	}
+}
+
+func TestClassifyGitHubAppWriteForbidden_PerAppIDKeyOnlyIsNotKeyMissing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":          verdictTestInstallationID,
+			"account":     map[string]any{"login": "open-horizon-services"},
+			"permissions": map[string]any{"issues": "write"},
+		})
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	perAppKey := filepath.Join(dir, "gh-app-key-5686.pem")
+	auth, _ := verdictTestAuthAtPath(t, srv.URL, perAppKey)
+	msg, state := ClassifyWriteForbidden(
+		context.Background(),
+		auth,
+		"open-horizon-services",
+		"Getting-Started",
+		KeyPaths{
+			Spoke:       filepath.Join(dir, "gh-app-key.pem"),
+			Provisioned: filepath.Join(dir, "secrets", "gh-app-key.pem"),
+			Extra:       []string{perAppKey},
+		},
+	)
+	if state == github.AppStateKeyMissing {
+		t.Fatalf("state = key-missing with a per-app-id key present; msg=%q", msg)
+	}
+	if state != github.AppStateWriteForbidden {
+		t.Errorf("state = %s, want write-forbidden", state)
 	}
 }
 

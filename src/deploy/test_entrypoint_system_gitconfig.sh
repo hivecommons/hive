@@ -216,7 +216,10 @@ if command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' 2>/dev/null; t
     "onboard-ai-hive-bot[bot]" "onboard-ai-hive-bot@hive.kubestellar.io"
   identity_case "usable App without a slug is the public App bot" \
     $'github:\n  app_id: 4744647\n  installation_id: 157135368' \
-    "kubestellar-hive[bot]" "kubestellar-hive@hive.kubestellar.io"
+    "hivecommons-hive[bot]" "hivecommons-hive@hive.kubestellar.io"
+  identity_case "legacy public App slug normalizes to the renamed bot" \
+    $'github:\n  app_slug: kubestellar-hive\n  app_id: 3568013\n  installation_id: 157135368' \
+    "hivecommons-hive[bot]" "hivecommons-hive@hive.kubestellar.io"
   identity_case "App configured but not installed keeps the legacy pair" \
     $'github:\n  app_slug: onboard-ai-hive-bot\n  app_id: 4744647' \
     "kubestellar-hive" "hive-bot@kubestellar.io"

@@ -3646,8 +3646,12 @@ const (
 	DefaultGitHubAPIURL = "https://api.github.com"
 	// DefaultGitHubBaseURL is the default GitHub web URL (public github.com).
 	DefaultGitHubBaseURL = "https://github.com"
-	// DefaultGitHubAppSlug is the public Hive GitHub App slug.
-	DefaultGitHubAppSlug = "kubestellar-hive"
+	// LegacyGitHubAppSlug is the previous public Hive GitHub App slug. Hosted
+	// hives may still have it in runtime YAML; public github.com resolutions
+	// normalize it to DefaultGitHubAppSlug.
+	LegacyGitHubAppSlug = "kubestellar-hive"
+	// DefaultGitHubAppSlug is the current public Hive GitHub App slug.
+	DefaultGitHubAppSlug = "hivecommons-hive"
 	// DefaultOAuthClientID is the PUBLIC github.com Hive App client ID used for
 	// device-flow login. Login is always github.com (see OAuthBaseURL), so this
 	// is the correct client for every hive — including GHE hives, whose users
@@ -3908,10 +3912,10 @@ func (g GitHubConfig) ForgeIdentityMismatches() []string {
 			"app_id %d does not belong to forge %s (expected %d) — an App ID from another forge returns 404 Integration not found on token creation",
 			g.AppID, forge, want.AppID))
 	}
-	if s := strings.TrimSpace(g.AppSlug); s != "" && !strings.EqualFold(s, want.AppSlug) {
+	if s := g.NormalizedAppSlug(); s != "" && !strings.EqualFold(s, want.AppSlug) {
 		out = append(out, fmt.Sprintf(
 			"app_slug %q does not belong to forge %s (expected %q) — the App install link would 404",
-			s, forge, want.AppSlug))
+			strings.TrimSpace(g.AppSlug), forge, want.AppSlug))
 	}
 	if u := strings.TrimSpace(g.APIURL); u != "" && normalizeForgeHost(u) != forge {
 		out = append(out, fmt.Sprintf(
@@ -4075,12 +4079,36 @@ func (g GitHubConfig) OAuthClientIDResolved() string {
 // make unrepresentable, so the derivation belongs here rather than at call sites.
 func (g GitHubConfig) ResolvedAppSlug() string {
 	if g.AppSlug != "" {
-		return g.AppSlug
+		return g.NormalizedAppSlug()
 	}
 	if id, ok := forgeIdentities[g.Forge()]; ok && id.AppSlug != "" {
 		return id.AppSlug
 	}
 	return DefaultGitHubAppSlug
+}
+
+// NormalizedAppSlug returns AppSlug after applying public-github.com slug
+// migrations. GitHub Enterprise and third-party forges keep their explicit
+// slugs untouched.
+func (g GitHubConfig) NormalizedAppSlug() string {
+	slug := strings.TrimSpace(g.AppSlug)
+	if slug == "" {
+		return ""
+	}
+	if !g.IsGHE() {
+		return NormalizePublicGitHubAppSlug(slug)
+	}
+	return slug
+}
+
+// NormalizePublicGitHubAppSlug maps the legacy public github.com Hive App slug
+// to the current slug while preserving any non-legacy slug.
+func NormalizePublicGitHubAppSlug(slug string) string {
+	slug = strings.TrimSpace(slug)
+	if strings.EqualFold(slug, LegacyGitHubAppSlug) {
+		return DefaultGitHubAppSlug
+	}
+	return slug
 }
 
 // BotLogin returns the GitHub App bot login ("<app-slug>[bot]") when a GitHub
@@ -4140,7 +4168,7 @@ func (g GitHubConfig) AppAuthoredPRsEnabled() bool {
 //
 // # WHY EMPTY RATHER THAN A BEST-EFFORT URL
 //
-// DefaultGitHubAppSlug ("kubestellar-hive") names the App registered on PUBLIC
+// DefaultGitHubAppSlug names the App registered on PUBLIC
 // github.com. GitHub Enterprise hosts a SEPARATE App registry, and an enterprise
 // registration is rarely given the same slug — so falling back to the default on
 // a GHE host emits a link to an App that provably does not exist there, and the
@@ -5504,6 +5532,7 @@ func (c *Config) applyDefaults() {
 	if len(c.Hub.DisabledRepos) > 0 {
 		c.Hub.DisabledRepos, _ = NormalizeDisabledReposForRepos(c.Project.Org, c.Project.Repos, c.Hub.DisabledRepos)
 	}
+	c.GitHub.AppSlug = c.GitHub.NormalizedAppSlug()
 	if c.Dashboard.Port == 0 {
 		c.Dashboard.Port = defaultDashboardPort
 	}

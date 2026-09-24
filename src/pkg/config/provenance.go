@@ -406,9 +406,10 @@ func IsVizHiveAppID(appID int64) bool {
 // display.
 func IdentitySetIssues(gh GitHubConfig) []string {
 	var issues []string
+	normalizedSlug := gh.NormalizedAppSlug()
 	apiIsGHE := containsFold(gh.APIURL, gheAPIURLMarker)
 	baseIsGHE := gh.BaseURL != "" && !containsFold(gh.BaseURL, "github.com")
-	slugIsGHE := containsFold(gh.AppSlug, "ghe")
+	slugIsGHE := containsFold(normalizedSlug, "ghe")
 
 	// RULE 0 — the app_id rule. Keyed on the ONE identity field that is always
 	// populated on the real fleet, so unlike the three string-marker rules below
@@ -449,8 +450,8 @@ func IdentitySetIssues(gh GitHubConfig) []string {
 	// An EMPTY slug is not a mismatch: it resolves to DefaultGitHubAppSlug via
 	// ResolvedAppSlug(), and most of the fleet leaves it unset. Only a slug
 	// that is present AND wrong is refused.
-	if wantSlug := slugOfAppID(gh.AppID); wantSlug != "" && gh.AppSlug != "" &&
-		!strings.EqualFold(gh.AppSlug, wantSlug) {
+	if wantSlug := slugOfAppID(gh.AppID); wantSlug != "" && normalizedSlug != "" &&
+		!strings.EqualFold(normalizedSlug, wantSlug) {
 		issues = append(issues, "app_slug ("+gh.AppSlug+") is not the slug of app_id "+
 			strconv.FormatInt(gh.AppID, 10)+" (expected "+wantSlug+
 			") — a GitHub App has exactly one slug, so this identity set names two different Apps")

@@ -30,8 +30,8 @@ func TestForgeDerivationIsByteExactWithTodaysDefaults(t *testing.T) {
 	if got := migrated.ResolvedBaseURL(); got != "https://github.com" {
 		t.Errorf("base_url = %q, want https://github.com", got)
 	}
-	if got := migrated.ResolvedAppSlug(); got != "kubestellar-hive" {
-		t.Errorf("app_slug = %q, want kubestellar-hive", got)
+	if got := migrated.ResolvedAppSlug(); got != "hivecommons-hive" {
+		t.Errorf("app_slug = %q, want hivecommons-hive", got)
 	}
 	if migrated.IsGHE() {
 		t.Error("a github.com hive must not report IsGHE")

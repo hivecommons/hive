@@ -28,6 +28,13 @@ func hiveOKECluster() *ClusterConfig {
 	return &ClusterConfig{ID: "hive-oke", GitHubAppID: testPublicAppID, GitHubAppSlug: identPublicSlug}
 }
 
+func TestResolveHiveIdentityNormalizesLegacyPublicSlug(t *testing.T) {
+	got := ResolveHiveIdentity(nil, hiveOKECluster())
+	if got.AppSlug != config.DefaultGitHubAppSlug {
+		t.Fatalf("AppSlug = %q, want renamed public slug %q", got.AppSlug, config.DefaultGitHubAppSlug)
+	}
+}
+
 // vllmDCluster is the live vllm-d entry: GHE default, one identity slot.
 func vllmDCluster() *ClusterConfig {
 	return &ClusterConfig{
