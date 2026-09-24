@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -17,6 +18,52 @@ const (
 	MaxCustomCSSBytes  = 32 * 1024
 	MaxBackgroundBytes = 256 * 1024
 	HoneycombDataURI   = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='97' viewBox='0 0 56 97'%3E%3Cpath d='M28 1l27 15.5v31L28 63 1 47.5v-31zM28 34l27 15.5v31L28 96 1 80.5v-31z' fill='none' stroke='%23e0a33a' stroke-opacity='.09'/%3E%3C/svg%3E"
+)
+
+const (
+	derivedFallbackAccent = "#80bfff"
+
+	derivedLightSurface0Base   = "#f8fafc"
+	derivedLightSurface1Base   = "#eef2f7"
+	derivedLightSurface2Base   = "#ffffff"
+	derivedLightSurface3Base   = "#e5ebf2"
+	derivedLightTerminal       = "#1d2430"
+	derivedLightLineSubtleBase = "#d9e0e8"
+	derivedLightLineStrongBase = "#aeb9c7"
+	derivedLightText           = "#111827"
+	derivedLightTextMuted      = "#4b5563"
+	derivedLightTextFaint      = "#64748b"
+	derivedLightOverlayScrim   = "rgba(17, 24, 39, 0.36)"
+	derivedLightShadowCard     = "0 1px 2px rgba(15, 23, 42, 0.08)"
+	derivedLightShadowRaised   = "0 4px 16px rgba(15, 23, 42, 0.12)"
+	derivedLightShadowModal    = "0 20px 60px rgba(15, 23, 42, 0.15)"
+
+	derivedDarkSurface0Base = "#080b0f"
+	derivedDarkSurface1Base = "#0d1218"
+	derivedDarkSurface2Base = "#121922"
+	derivedDarkSurface3Base = "#17212d"
+	derivedDarkTerminal     = "#05070a"
+	derivedDarkLineBase     = "#263545"
+	derivedDarkText         = "#f6f8fb"
+	derivedDarkTextMuted    = "#a8b3c2"
+	derivedDarkTextFaint    = "color-mix(in srgb, #a8b3c2 70%, transparent)"
+	derivedDarkOverlayScrim = "rgba(0, 0, 0, 0.55)"
+	derivedDarkShadowCard   = "0 1px 2px rgba(0, 0, 0, 0.18)"
+	derivedDarkShadowRaised = "0 4px 16px rgba(0, 0, 0, 0.45)"
+	derivedDarkShadowModal  = "0 20px 60px rgba(0, 0, 0, 0.5)"
+
+	derivedLightSurface0AccentRatio   = 0.06
+	derivedLightSurface1AccentRatio   = 0.07
+	derivedLightSurface2AccentRatio   = 0.03
+	derivedLightSurface3AccentRatio   = 0.10
+	derivedLightLineSubtleAccentRatio = 0.10
+	derivedLightLineStrongAccentRatio = 0.12
+	derivedDarkSurface0AccentRatio    = 0.10
+	derivedDarkSurface1AccentRatio    = 0.10
+	derivedDarkSurface2AccentRatio    = 0.11
+	derivedDarkSurface3AccentRatio    = 0.12
+	derivedDarkLineSubtleAccentRatio  = 0.10
+	derivedDarkLineStrongAccentRatio  = 0.14
 )
 
 type Theme struct {
@@ -54,7 +101,7 @@ type Overrides struct {
 }
 
 var publicTokenAllowList = map[string]struct{}{
-	"--accent": {}, "--acmm-level-1": {}, "--acmm-level-2": {}, "--acmm-level-3": {}, "--acmm-level-4": {}, "--acmm-level-5": {}, "--acmm-level-6": {}, "--amber": {}, "--badge-count-min-w": {}, "--badge-min-h": {}, "--badge-pad-x": {}, "--badge-pad-y": {}, "--bg": {}, "--bg-soft": {}, "--blue": {}, "--border": {}, "--brand": {}, "--btn-pad-x": {}, "--btn-pad-y": {}, "--btn-sm-pad-x": {}, "--btn-sm-pad-y": {}, "--card-bg": {}, "--cc-amber": {}, "--component-border": {}, "--component-border-emphasis": {}, "--component-fill-hover": {}, "--component-status": {}, "--component-tint": {}, "--component-tint-soft": {}, "--component-tint-strong": {}, "--control-compact-min-h": {}, "--control-min-h": {}, "--cyan": {}, "--duration-fast": {}, "--duration-status-pulse": {}, "--empty-state-pad-y": {}, "--fg": {}, "--focus-ring-width": {}, "--font-mono": {}, "--font-ui": {}, "--fs-2xl": {}, "--fs-2xs": {}, "--fs-3xl": {}, "--fs-base": {}, "--fs-lg": {}, "--fs-md": {}, "--fs-sm": {}, "--fs-xl": {}, "--fs-xs": {}, "--full-size": {}, "--fw-bold": {}, "--fw-medium": {}, "--fw-semibold": {}, "--green": {}, "--indigo": {}, "--lh-control": {}, "--lh-tight": {}, "--line": {}, "--line-strong": {}, "--line-subtle": {}, "--line-width": {}, "--metric-tile-min": {}, "--muted": {}, "--oc-accent": {}, "--opacity-disabled": {}, "--orange": {}, "--overlay-scrim": {}, "--panel": {}, "--panel-strong": {}, "--preview-column-min": {}, "--purple": {}, "--r": {}, "--r-lg": {}, "--r-pill": {}, "--r-sm": {}, "--radius": {}, "--radius-lg": {}, "--radius-sm": {}, "--red": {}, "--shadow-card": {}, "--shadow-modal": {}, "--shadow-raised": {}, "--shadow-status-pulse-active": {}, "--shadow-status-pulse-rest": {}, "--sp-0": {}, "--sp-1": {}, "--sp-2": {}, "--sp-3": {}, "--sp-4": {}, "--sp-5": {}, "--sp-6": {}, "--sp-7": {}, "--sp-8": {}, "--sp-9": {}, "--status-attention": {}, "--status-dot-size": {}, "--status-error": {}, "--status-info": {}, "--status-neutral": {}, "--status-ok": {}, "--status-warn": {}, "--surface": {}, "--surface-0": {}, "--surface-1": {}, "--surface-2": {}, "--surface-3": {}, "--surface-terminal": {}, "--table-cell-pad-x": {}, "--table-cell-pad-y": {}, "--terminal-bg": {}, "--terminal-cyan": {}, "--text": {}, "--text-faint": {}, "--text-muted": {}, "--tracking-eyebrow": {}, "--vendor-anthropic": {}, "--vendor-google": {}, "--vendor-openai": {}, "--yellow": {}, "--z-sticky": {},
+	"--accent": {}, "--acmm-level-1": {}, "--acmm-level-2": {}, "--acmm-level-3": {}, "--acmm-level-4": {}, "--acmm-level-5": {}, "--acmm-level-6": {}, "--amber": {}, "--badge-count-min-w": {}, "--badge-min-h": {}, "--badge-pad-x": {}, "--badge-pad-y": {}, "--bg": {}, "--bg-soft": {}, "--blue": {}, "--border": {}, "--brand": {}, "--btn-pad-x": {}, "--btn-pad-y": {}, "--btn-sm-pad-x": {}, "--btn-sm-pad-y": {}, "--card-bg": {}, "--cc-amber": {}, "--component-border": {}, "--component-border-emphasis": {}, "--component-fill-hover": {}, "--component-status": {}, "--component-tint": {}, "--component-tint-soft": {}, "--component-tint-strong": {}, "--control-compact-min-h": {}, "--control-min-h": {}, "--cyan": {}, "--duration-fast": {}, "--duration-status-pulse": {}, "--empty-state-pad-y": {}, "--fg": {}, "--focus-ring-width": {}, "--font-mono": {}, "--font-ui": {}, "--fs-2xl": {}, "--fs-2xs": {}, "--fs-3xl": {}, "--fs-base": {}, "--fs-lg": {}, "--fs-md": {}, "--fs-sm": {}, "--fs-xl": {}, "--fs-xs": {}, "--full-size": {}, "--fw-bold": {}, "--infra-copy-max": {}, "--infra-logo-chip-bg": {}, "--infra-logo-chip-border": {}, "--infra-logo-chip-fg": {}, "--infra-logo-chip-note-fg": {}, "--infra-logo-max-w": {}, "--infra-logo-card-max-w": {}, "--fw-medium": {}, "--fw-semibold": {}, "--green": {}, "--indigo": {}, "--lh-control": {}, "--lh-tight": {}, "--line": {}, "--line-strong": {}, "--line-subtle": {}, "--line-width": {}, "--metric-tile-min": {}, "--muted": {}, "--oc-accent": {}, "--opacity-disabled": {}, "--orange": {}, "--overlay-scrim": {}, "--panel": {}, "--panel-strong": {}, "--preview-column-min": {}, "--purple": {}, "--r": {}, "--r-lg": {}, "--r-pill": {}, "--r-sm": {}, "--radius": {}, "--radius-lg": {}, "--radius-sm": {}, "--red": {}, "--shadow-card": {}, "--shadow-modal": {}, "--shadow-raised": {}, "--shadow-status-pulse-active": {}, "--shadow-status-pulse-rest": {}, "--sp-0": {}, "--sp-1": {}, "--sp-2": {}, "--sp-3": {}, "--sp-4": {}, "--sp-5": {}, "--sp-6": {}, "--sp-7": {}, "--sp-8": {}, "--sp-9": {}, "--status-attention": {}, "--status-dot-size": {}, "--status-error": {}, "--status-info": {}, "--status-neutral": {}, "--status-ok": {}, "--status-warn": {}, "--surface": {}, "--surface-0": {}, "--surface-1": {}, "--surface-2": {}, "--surface-3": {}, "--surface-terminal": {}, "--table-cell-pad-x": {}, "--table-cell-pad-y": {}, "--terminal-bg": {}, "--terminal-cyan": {}, "--text": {}, "--text-faint": {}, "--text-muted": {}, "--tracking-eyebrow": {}, "--vendor-anthropic": {}, "--vendor-google": {}, "--vendor-openai": {}, "--yellow": {}, "--z-sticky": {},
 }
 
 var legacyTokenAllowList = map[string]struct{}{
@@ -283,38 +330,28 @@ func validateTokenValue(context, label, token, value string) error {
 }
 
 func CSS(th Theme) (string, error) {
-	return css(th, false)
+	return css(th)
 }
 
 func PreviewCSS(th Theme) (string, error) {
-	return css(th, true)
+	return css(th)
 }
 
-func css(th Theme, keepDarkLightMode bool) (string, error) {
+func css(th Theme) (string, error) {
 	if err := ValidateTheme(th); err != nil {
 		return "", err
 	}
-	rootTokens := compileTokens(th.Tokens)
+	rootTokens := darkModeTokens(th)
 	var b strings.Builder
 	b.WriteString("/* hive dashboard theme: ")
 	b.WriteString(th.ID)
 	b.WriteString(" */\n:root{\n")
 	writeTokenBlock(&b, rootTokens)
 	writeContributorAliases(&b)
+	b.WriteString("}\nbody.light-mode{\n")
+	writeTokenBlock(&b, lightModeTokens(th))
+	writeContributorAliases(&b)
 	b.WriteString("}\n")
-	if len(th.LightTokens) > 0 {
-		b.WriteString("body.light-mode{\n")
-		writeTokenBlock(&b, compileTokens(th.LightTokens))
-		writeContributorAliases(&b)
-		b.WriteString("}\n")
-	} else if !th.Dark || keepDarkLightMode {
-		b.WriteString("body.light-mode{\n")
-		writeTokenBlock(&b, rootTokens)
-		writeContributorAliases(&b)
-		b.WriteString("}\n")
-	} else {
-		writeLightModeAccentFallback(&b, rootTokens)
-	}
 	if th.Background != nil && strings.TrimSpace(th.Background.Image) != "" {
 		opacity := th.Background.Opacity
 		if opacity <= 0 || opacity > 1 {
@@ -342,6 +379,115 @@ func css(th Theme, keepDarkLightMode bool) (string, error) {
 		}
 	}
 	return b.String(), nil
+}
+
+func darkModeTokens(th Theme) map[string]string {
+	tokens := compileTokens(th.Tokens)
+	if th.Dark {
+		return tokens
+	}
+	return deriveModeTokens(tokens, false)
+}
+
+func lightModeTokens(th Theme) map[string]string {
+	if len(th.LightTokens) > 0 {
+		return compileTokens(th.LightTokens)
+	}
+	tokens := compileTokens(th.Tokens)
+	if !th.Dark {
+		return tokens
+	}
+	return deriveModeTokens(tokens, true)
+}
+
+func deriveModeTokens(tokens map[string]string, light bool) map[string]string {
+	out := cloneMap(tokens)
+	accent := firstColor(tokens["--accent"], tokens["--brand"], tokens["--status-info"])
+	if accent == "" {
+		accent = derivedFallbackAccent
+	}
+	if light {
+		out["--surface-0"] = mixHex(derivedLightSurface0Base, accent, derivedLightSurface0AccentRatio)
+		out["--surface-1"] = mixHex(derivedLightSurface1Base, accent, derivedLightSurface1AccentRatio)
+		out["--surface-2"] = mixHex(derivedLightSurface2Base, accent, derivedLightSurface2AccentRatio)
+		out["--surface-3"] = mixHex(derivedLightSurface3Base, accent, derivedLightSurface3AccentRatio)
+		out["--surface-terminal"] = derivedLightTerminal
+		out["--line-subtle"] = mixHex(derivedLightLineSubtleBase, accent, derivedLightLineSubtleAccentRatio)
+		out["--line-strong"] = mixHex(derivedLightLineStrongBase, accent, derivedLightLineStrongAccentRatio)
+		out["--text"] = derivedLightText
+		out["--text-muted"] = derivedLightTextMuted
+		out["--text-faint"] = derivedLightTextFaint
+		out["--overlay-scrim"] = derivedLightOverlayScrim
+		out["--shadow-card"] = derivedLightShadowCard
+		out["--shadow-raised"] = derivedLightShadowRaised
+		out["--shadow-modal"] = derivedLightShadowModal
+		return out
+	}
+	out["--surface-0"] = mixHex(derivedDarkSurface0Base, accent, derivedDarkSurface0AccentRatio)
+	out["--surface-1"] = mixHex(derivedDarkSurface1Base, accent, derivedDarkSurface1AccentRatio)
+	out["--surface-2"] = mixHex(derivedDarkSurface2Base, accent, derivedDarkSurface2AccentRatio)
+	out["--surface-3"] = mixHex(derivedDarkSurface3Base, accent, derivedDarkSurface3AccentRatio)
+	out["--surface-terminal"] = derivedDarkTerminal
+	out["--line-subtle"] = mixHex(derivedDarkLineBase, accent, derivedDarkLineSubtleAccentRatio)
+	out["--line-strong"] = mixHex(derivedDarkLineBase, accent, derivedDarkLineStrongAccentRatio)
+	out["--text"] = derivedDarkText
+	out["--text-muted"] = derivedDarkTextMuted
+	out["--text-faint"] = derivedDarkTextFaint
+	out["--overlay-scrim"] = derivedDarkOverlayScrim
+	out["--shadow-card"] = derivedDarkShadowCard
+	out["--shadow-raised"] = derivedDarkShadowRaised
+	out["--shadow-modal"] = derivedDarkShadowModal
+	return out
+}
+
+func firstColor(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if _, ok := parseHexColor(value); ok {
+			return value
+		}
+	}
+	return ""
+}
+
+func mixHex(base, accent string, accentRatio float64) string {
+	br, bg, bb, ok := hexRGB(base)
+	if !ok {
+		return base
+	}
+	ar, ag, ab, ok := hexRGB(accent)
+	if !ok {
+		return base
+	}
+	if accentRatio < 0 {
+		accentRatio = 0
+	}
+	if accentRatio > 1 {
+		accentRatio = 1
+	}
+	baseRatio := 1 - accentRatio
+	return fmt.Sprintf("#%02x%02x%02x", int(float64(br)*baseRatio+float64(ar)*accentRatio+0.5), int(float64(bg)*baseRatio+float64(ag)*accentRatio+0.5), int(float64(bb)*baseRatio+float64(ab)*accentRatio+0.5))
+}
+
+func hexRGB(value string) (int, int, int, bool) {
+	rgb, ok := parseHexColor(value)
+	return rgb[0], rgb[1], rgb[2], ok
+}
+
+func parseHexColor(value string) ([3]int, bool) {
+	var rgb [3]int
+	value = strings.TrimSpace(value)
+	if len(value) != 7 || value[0] != '#' {
+		return rgb, false
+	}
+	for i := 0; i < 3; i++ {
+		component, err := strconv.ParseUint(value[1+i*2:3+i*2], 16, 8)
+		if err != nil {
+			return rgb, false
+		}
+		rgb[i] = int(component)
+	}
+	return rgb, true
 }
 
 func compileTokens(tokens map[string]string) map[string]string {
@@ -470,22 +616,6 @@ func cloneMap(in map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
-}
-
-func writeLightModeAccentFallback(b *strings.Builder, tokens map[string]string) {
-	accentTokens := map[string]string{}
-	for _, token := range []string{"--accent", "--brand"} {
-		if value := strings.TrimSpace(tokens[token]); value != "" {
-			accentTokens[token] = value
-		}
-	}
-	if len(accentTokens) == 0 {
-		return
-	}
-	b.WriteString("body.light-mode{\n")
-	writeTokenBlock(b, accentTokens)
-	writeContributorAliases(b)
-	b.WriteString("}\n")
 }
 
 func writeContributorAliases(b *strings.Builder) {

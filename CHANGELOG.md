@@ -11,6 +11,50 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-24 (v5.40.2)
+
+### Changed
+
+- The public Hive landing page now expands its infrastructure thanks to include Cloudflare, GitHub Copilot, and Bluehost alongside Akamai (Linode), Oracle Cloud OKE, and the CNCF.
+
+### Fixed
+
+- Hosted spokes now load the dashboard token from the mounted `hive-secrets/dashboard-token` file when token env vars are absent, restoring release-channel switching and self-upgrade proof for affected hosted hives ([#8690](https://github.com/hivecommons/hive/issues/8690)).
+- bob agents launch again: the bob version switch is now wrapped in `sh -c`, so the tmux launch line's `KEY='value'` env prefix no longer produces a bash syntax error (`unexpected token ')'`) that stopped bob from ever starting.
+
+## 2026-09-24 (v5.40.1)
+
+### Fixed
+
+- Fix #8674: normalize the renamed github.ibm.com Hive App slug while preserving legacy GHE App compatibility.
+- Fixed #8677 by giving every dashboard theme accessible light and dark palettes and keeping Appearance hover previews from resizing the settings modal.
+- Fixed the contributor Operations dashboard light/dark/auto theme control so it reuses the shared dashboard layout mode, persists choices, and follows system color-scheme changes in auto mode (#8677).
+
+## 2026-09-24 (v5.40.0)
+
+### Added
+
+- Teach review verdicts to classify findings by linked-issue scope and file cited out-of-scope findings as capped from-review backlog issues (#8662).
+- The public Hive landing page now thanks Akamai (Linode), Oracle Cloud Infrastructure OKE, and the CNCF for donated infrastructure, with local partner logos in the footer area.
+
+### Changed
+
+- notify: Discord alerts and the factory activity feed now send `SUPPRESS_EMBEDS` (and wrap factory URLs in `<>`), so links post without preview cards.
+
+## 2026-09-24 (v5.39.3)
+
+### Fixed
+
+- Fix #8674: recognize per-App-ID GitHub App keys and update the hosted public App slug to hivecommons-hive while preserving legacy slug compatibility.
+
+## 2026-09-24 (v5.39.2)
+
+### Fixed
+
+- Fixed #8666 by proxying contributor deep-link pages through Go so their stylesheet links resolve with CSS content types.
+- Fresh installs no longer enable `caveman_mode: full` on Scanner from the shipped example config ([#8668](https://github.com/hivecommons/hive/issues/8668)); existing operators who want uncompressed output should remove or downgrade that line in their own `hive.yaml`.
+- Default server-managed agy agents to a headless `agy -p` launch shim, with `HIVE_AGY_LAUNCH_MODE=interactive` as the opt-in TUI escape hatch, so affected Antigravity CLI versions avoid the upstream interactive CPU wake loop ([#8656](https://github.com/hivecommons/hive/issues/8656)).
+
 ## 2026-09-24 (v5.39.1)
 
 ### Fixed

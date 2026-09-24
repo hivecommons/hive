@@ -3196,7 +3196,7 @@ volumes:
     hive_project_yaml: yamlContent,
     docker_compose_yaml: dockerCompose,
     next_steps: [
-      '1. Install the Hive GitHub App on your org: https://github.com/apps/kubestellar-hive-bot',
+      '1. Install the Hive GitHub App on your org: https://github.com/apps/hivecommons-hive',
       '2. Note the App ID and Installation ID from the app settings',
       '3. Save the private key as /etc/hive/gh-app-key.pem on your server',
       '4. Save the hive-project.yaml as /etc/hive/hive-project.yaml',

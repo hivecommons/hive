@@ -232,7 +232,7 @@ const (
 	PublicGitHubAppSlug = DefaultGitHubAppSlug
 
 	// EnterpriseGitHubAppID is the numeric App ID of the github.ibm.com
-	// kubestellar-hive-ghe GitHub App. This is the value that was pushed onto
+	// hivecommons-hive-ghe GitHub App. This is the value that was pushed onto
 	// seven public-GitHub hives on 2026-07-31.
 	EnterpriseGitHubAppID int64 = 5686
 
@@ -283,11 +283,13 @@ const (
 	// a second slug ("ibm-hive") and declined to assert the mapping. That was
 	// wrong: "ibm-hive" existed only in _test.go fixtures — it appears in no
 	// production config, in no cluster entry, and on none of the 51 fleet
-	// spokes (live clusters.json carries github_app_slug
-	// "kubestellar-hive-ghe" for the heartbeat-only cluster). Relaxing the rule for an invented
-	// fixture left a GHE App under a non-"ghe" slug passing validation, which
-	// is precisely the shape this package exists to reject.
-	EnterpriseGitHubAppSlug = "kubestellar-hive-ghe"
+	// spokes (live clusters.json used to carry github_app_slug
+	// "kubestellar-hive-ghe" for the heartbeat-only cluster before the App was
+	// renamed). Relaxing the rule for an invented fixture left a GHE App under
+	// a non-"ghe" slug passing validation, which is precisely the shape this
+	// package exists to reject.
+	LegacyEnterpriseGitHubAppSlug = "kubestellar-hive-ghe"
+	EnterpriseGitHubAppSlug       = "hivecommons-hive-ghe"
 	// EnterpriseGitHubAPIURL and EnterpriseGitHubBaseURL are the forge URLs the
 	// enterprise App lives on.
 	EnterpriseGitHubAPIURL  = "https://github.ibm.com/api/v3"
@@ -406,9 +408,10 @@ func IsVizHiveAppID(appID int64) bool {
 // display.
 func IdentitySetIssues(gh GitHubConfig) []string {
 	var issues []string
+	normalizedSlug := gh.NormalizedAppSlug()
 	apiIsGHE := containsFold(gh.APIURL, gheAPIURLMarker)
 	baseIsGHE := gh.BaseURL != "" && !containsFold(gh.BaseURL, "github.com")
-	slugIsGHE := containsFold(gh.AppSlug, "ghe")
+	slugIsGHE := containsFold(normalizedSlug, "ghe")
 
 	// RULE 0 — the app_id rule. Keyed on the ONE identity field that is always
 	// populated on the real fleet, so unlike the three string-marker rules below
@@ -449,8 +452,8 @@ func IdentitySetIssues(gh GitHubConfig) []string {
 	// An EMPTY slug is not a mismatch: it resolves to DefaultGitHubAppSlug via
 	// ResolvedAppSlug(), and most of the fleet leaves it unset. Only a slug
 	// that is present AND wrong is refused.
-	if wantSlug := slugOfAppID(gh.AppID); wantSlug != "" && gh.AppSlug != "" &&
-		!strings.EqualFold(gh.AppSlug, wantSlug) {
+	if wantSlug := slugOfAppID(gh.AppID); wantSlug != "" && normalizedSlug != "" &&
+		!strings.EqualFold(normalizedSlug, wantSlug) {
 		issues = append(issues, "app_slug ("+gh.AppSlug+") is not the slug of app_id "+
 			strconv.FormatInt(gh.AppID, 10)+" (expected "+wantSlug+
 			") — a GitHub App has exactly one slug, so this identity set names two different Apps")

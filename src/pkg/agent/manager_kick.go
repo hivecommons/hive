@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -284,6 +285,10 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	// Ctrl+C at that prompt, leaving the subsequent task to be executed by
 	// bash. Clear its input with Ctrl+U alone. Goose skips clearing entirely.
 	backend := effectiveBackend(agent)
+	if backend == "agy" && agyHeadlessEnabled() && strings.TrimSpace(agent.Config.LaunchCmd) == "" {
+		m.deliverAgyHeadlessKickLocked(agent, message, trigger)
+		return
+	}
 	if backend != "goose" {
 		if backend != codexBackend {
 			m.tmuxSendKeysForAgent(agent, "C-c")
@@ -352,6 +357,34 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	time.Sleep(textToEnterDelay)
 	m.tmuxSendEntersForAgent(agent)
 
+	m.recordDeliveredKickLocked(agent, message, trigger)
+}
+
+func (m *Manager) deliverAgyHeadlessKickLocked(agent *AgentProcess, message, trigger string) {
+	m.tmuxSendKeysForAgent(agent, "C-u")
+	time.Sleep(staleCheckDelay)
+
+	message = kickMessageWithSuffixes(message, false, resolveExplainMode(agent.Config, m.explainModeDefault()))
+	promptFile := filepath.Join(agentStateDir, fmt.Sprintf(".hive-agy-prompt-%s.txt", agent.Name))
+	if err := writeAgentStateFile(promptFile, []byte(message)); err != nil {
+		m.logger.Warn("failed to write agy headless prompt", "name", agent.Name, "error", err)
+		return
+	}
+
+	model := agent.Config.Model
+	if agent.ModelOverride != "" {
+		model = agent.ModelOverride
+	}
+	model = normalizeModelNameForBackend(model, "agy", false)
+	cmd := agyHeadlessTurnShellCommand("agy", model, agent.Config.ReasoningEffort, promptFile)
+	m.tmuxSendLiteralForAgent(agent, cmd)
+	time.Sleep(textToEnterDelay)
+	m.tmuxSendEntersForAgent(agent)
+
+	m.recordDeliveredKickLocked(agent, message, trigger)
+}
+
+func (m *Manager) recordDeliveredKickLocked(agent *AgentProcess, message, trigger string) {
 	now := time.Now()
 	agent.LastKick = &now
 	agent.LastKickMessage = message

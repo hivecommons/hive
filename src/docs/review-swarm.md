@@ -56,7 +56,7 @@ The toggle is separate from `review.perspectives` so enabling it never requires 
 
 Each reviewer returns a JSON object that extends the `pkg/outputschema.AgentReport` contract — or, for a combined review, a JSON array of one such object per perspective, all for the same PR and head SHA. Required AgentReport fields remain `lane`, `kind`, `findings`, `prs_opened`, `beads_filed`, and `summary`; review reports add `perspective`, `verdict`, `repo`, `number`, and optional `head_sha`. `kind` must be `review`.
 
-Allowed verdicts are `approve`, `changes_requested`, `requires_human`, and `reject`. Finding severities reuse `outputschema.Severity`: `info`, `low`, `medium`, `high`, and `critical`.
+Allowed verdicts are `approve`, `changes_requested`, `requires_human`, and `reject`. Finding severities reuse `outputschema.Severity`: `info`, `low`, `medium`, `high`, and `critical`. Each finding also carries `review_scope`: `in-scope` when it affects whether the PR satisfies its linked issue or lease task, `out-of-scope` when it is a real adjacent/pre-existing concern that should not block this PR. Older reports without the field are treated as in-scope.
 
 ## Verdict flow
 
@@ -77,13 +77,21 @@ A verdict that is never handed over is not a neutral outcome: aggregation report
 Aggregation rules are deterministic:
 
 1. Any `reject` recommends closing the PR.
-2. Any finding at or above the human threshold defaults to `requires_human`.
+2. Any in-scope finding at or above the human threshold defaults to `requires_human`.
 3. Any explicit `requires_human` yields `requires_human`.
 4. Any `changes_requested` enters a fix cycle while below the fix cap.
 5. Every perspective in the hive's configured set approving (or, under `max_perspectives_per_pr`, every perspective the PR was eligible to receive) yields a merge-eligible aggregate.
 6. Missing perspectives or any other non-unanimous result requires human review.
 
+Out-of-scope findings alone are normalized to an approving perspective for aggregation and confidence. They remain in the structured record, but they never lower the verdict or the 0–5 confidence score for the PR.
+
 The default human threshold is `high`. Review-triggered fix cycles use the same cap value as the escalation re-engagement circuit breaker (`escalation.MaxReEngagements`) so bot loops remain bounded.
+
+### Out-of-scope backlog filing
+
+When the relay accepts a review verdict, cited out-of-scope findings (`review_scope: "out-of-scope"` with `file` and positive `line`) are filed as follow-up issues labeled `from-review`. Each issue body links back to the reviewed PR and records the perspective, severity, evidence location, and finding summary. The relay deduplicates against open issues through the normal issue-create path and also persists a finding key in `/data/review-backlog-issues.json`, so re-reviewing a new commit does not file the same backlog issue or summary comment again.
+
+The PR receives one summary comment listing the backlog issues filed from that review. Filing is enabled by default and bounded by `review.max_out_of_scope_backlog_issues` (default `3`) per PR; set `review.out_of_scope_backlog_disabled: true` to opt out.
 
 ### Confidence score
 

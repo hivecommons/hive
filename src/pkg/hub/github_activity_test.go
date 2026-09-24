@@ -20,12 +20,12 @@ func TestGitHubActivityPollerDiffsFormatsAndDedupes(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("discord method = %s, want POST", r.Method)
 		}
-		var payload map[string]string
+		var payload map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode discord payload: %v", err)
 		}
 		mu.Lock()
-		posted = append(posted, payload["content"])
+		posted = append(posted, payload["content"].(string))
 		mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -102,10 +102,10 @@ func TestGitHubActivityPollerDiffsFormatsAndDedupes(t *testing.T) {
 	mu.Lock()
 	got := append([]string(nil), posted...)
 	mu.Unlock()
-	assertContainsLine(t, got, "🐝 [hive] Issue #2 opened — factory floor · @someone https://github.test/hive/2")
-	assertContainsLine(t, got, "🐝 [docs] PR #7 merged into v6 — doc fix · @docwriter https://github.test/docs/7")
-	assertContainsLine(t, got, "🐝 [docs] PR #8 merged into v5 — fast fix · @fastdev https://github.test/docs/8")
-	assertContainsLine(t, got, "🐝 [infra] PR #3 merged into v6 — 🌱 Forward-merge v5 into v6 · @forward-bot[bot] https://github.test/infra/3")
+	assertContainsLine(t, got, "🐝 [hive] Issue #2 opened — factory floor · @someone <https://github.test/hive/2>")
+	assertContainsLine(t, got, "🐝 [docs] PR #7 merged into v6 — doc fix · @docwriter <https://github.test/docs/7>")
+	assertContainsLine(t, got, "🐝 [docs] PR #8 merged into v5 — fast fix · @fastdev <https://github.test/docs/8>")
+	assertContainsLine(t, got, "🐝 [infra] PR #3 merged into v6 — 🌱 Forward-merge v5 into v6 · @forward-bot[bot] <https://github.test/infra/3>")
 	for _, line := range got {
 		if strings.Contains(line, "dependabot") {
 			t.Fatalf("dependabot noise was not filtered: %q", line)
@@ -150,7 +150,7 @@ func TestGitHubActivityPersistsSuccessfulSendBeforeLaterFailure(t *testing.T) {
 	posted := []string{}
 
 	discord := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var payload map[string]string
+		var payload map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode discord payload: %v", err)
 		}
@@ -161,7 +161,7 @@ func TestGitHubActivityPersistsSuccessfulSendBeforeLaterFailure(t *testing.T) {
 			http.Error(w, "rate limited", http.StatusTooManyRequests)
 			return
 		}
-		posted = append(posted, payload["content"])
+		posted = append(posted, payload["content"].(string))
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer discord.Close()
@@ -233,12 +233,12 @@ func TestGitHubActivityReloadAppliesEventFilterWithoutReplay(t *testing.T) {
 	posted := []string{}
 
 	discord := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var payload map[string]string
+		var payload map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode discord payload: %v", err)
 		}
 		mu.Lock()
-		posted = append(posted, payload["content"])
+		posted = append(posted, payload["content"].(string))
 		mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	}))

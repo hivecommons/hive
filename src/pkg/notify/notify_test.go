@@ -269,7 +269,7 @@ func TestSend_SlackOnly_CorrectJSONPayload(t *testing.T) {
 		t.Errorf("method = %q; want POST", r.method)
 	}
 
-	var payload map[string]string
+	var payload map[string]any
 	if err := json.Unmarshal(r.body, &payload); err != nil {
 		t.Fatalf("failed to parse slack JSON: %v (body: %q)", err, string(r.body))
 	}
@@ -296,13 +296,13 @@ func TestSend_SlackBoldTitleFormat(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	var payload map[string]string
+	var payload map[string]any
 	if err := json.Unmarshal((*reqs)[0].body, &payload); err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
 
 	// Title must be wrapped in *...*
-	if len(payload["text"]) < 2 || payload["text"][0] != '*' {
+	if text, _ := payload["text"].(string); len(text) < 2 || text[0] != '*' {
 		t.Errorf("slack text does not start with '*': %q", payload["text"])
 	}
 }
@@ -333,13 +333,13 @@ func TestSend_DiscordOnly_CorrectJSONPayload(t *testing.T) {
 		t.Errorf("method = %q; want POST", r.method)
 	}
 
-	var payload map[string]string
+	var payload map[string]any
 	if err := json.Unmarshal(r.body, &payload); err != nil {
 		t.Fatalf("failed to parse discord JSON: %v (body: %q)", err, string(r.body))
 	}
 
 	wantContent := "**Incident**\nCluster is down"
-	if got := payload["content"]; got != wantContent {
+	if got, _ := payload["content"].(string); got != wantContent {
 		t.Errorf("discord content = %q; want %q", got, wantContent)
 	}
 }
@@ -360,13 +360,13 @@ func TestSend_DiscordBoldTitleFormat(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	var payload map[string]string
+	var payload map[string]any
 	if err := json.Unmarshal((*reqs)[0].body, &payload); err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
 
 	// Title must be wrapped in **...**
-	if len(payload["content"]) < 4 || payload["content"][:2] != "**" {
+	if c, _ := payload["content"].(string); len(c) < 4 || c[:2] != "**" {
 		t.Errorf("discord content does not start with '**': %q", payload["content"])
 	}
 }
@@ -742,4 +742,3 @@ func TestSend_SlackOnly_NoNtfyNoDiscord(t *testing.T) {
 		t.Errorf("slack got %d requests; want 1", len(*slackReqs))
 	}
 }
-

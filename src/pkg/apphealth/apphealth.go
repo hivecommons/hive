@@ -33,6 +33,14 @@ type KeyPaths struct {
 	// Provisioned is the read-only Kubernetes Secret mount written at
 	// provisioning time.
 	Provisioned string
+	// Extra are additional candidate paths, such as per-App-ID key files.
+	Extra []string
+}
+
+func (k KeyPaths) paths() []string {
+	paths := []string{k.Spoke, k.Provisioned}
+	paths = append(paths, k.Extra...)
+	return paths
 }
 
 // Heal self-heals a hive whose github.installation_id
@@ -109,7 +117,7 @@ func DiagnoseFull(ctx context.Context, appAuth *github.AppAuth, expectedOwner st
 	if appAuth == nil {
 		return github.AppAuthDiagnosis{State: github.AppStateOK, ExpectedAccount: expectedOwner}
 	}
-	return appAuth.DiagnoseAppAuth(ctx, expectedOwner, keys.Spoke, keys.Provisioned)
+	return appAuth.DiagnoseAppAuth(ctx, expectedOwner, keys.paths()...)
 }
 
 // bannerAttempts is how many times ClassifyFailure probes

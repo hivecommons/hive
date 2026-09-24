@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/apphealth"
@@ -60,9 +61,18 @@ func describeKeySource(v string) string {
 	return v
 }
 
-// appKeyPaths snapshots the two App key path locations for a pkg/apphealth
+// appKeyPaths snapshots App key path locations for a pkg/apphealth
 // call. Read at call time on purpose: tests repoint these, and capturing them
 // once would silently ignore that.
-func appKeyPaths() apphealth.KeyPaths {
-	return apphealth.KeyPaths{Spoke: appKeys.DataKeyPath, Provisioned: appKeys.ProvisionedKeyPath}
+func appKeyPaths(appID int64) apphealth.KeyPaths {
+	paths := apphealth.KeyPaths{Spoke: appKeys.DataKeyPath, Provisioned: appKeys.ProvisionedKeyPath}
+	if appID > 0 {
+		if p := appKeys.PerAppIDKeyPath(appID); p != "" {
+			paths.Extra = append(paths.Extra, p)
+		}
+		if appKeys.ProvisionedDir != "" {
+			paths.Extra = append(paths.Extra, filepath.Join(appKeys.ProvisionedDir, fmt.Sprintf("gh-app-key-%d.pem", appID)))
+		}
+	}
+	return paths
 }

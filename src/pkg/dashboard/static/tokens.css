@@ -100,6 +100,13 @@
   --empty-state-pad-y: 24px;
   --preview-column-min: 320px;
   --metric-tile-min: 140px;
+  --infra-copy-max: 48rem;
+  --infra-logo-max-w: 9rem;
+  --infra-logo-card-max-w: 24rem;
+  --infra-logo-chip-bg: #ffffff;
+  --infra-logo-chip-fg: #111827;
+  --infra-logo-chip-note-fg: #4b5563;
+  --infra-logo-chip-border: #d9e0e8;
   --full-size: 100%;
   --z-sticky: 1;
   --fw-medium: 500;
@@ -152,6 +159,7 @@
 }
 
 [data-theme="light"],
+html.light-mode,
 body.light-mode {
   color-scheme: light;
   --surface-0: #f7f8fa;

@@ -219,7 +219,7 @@ func TestSpokeIdentityFromPayloadCarriesTheWholeSet(t *testing.T) {
 		GitHubAPIURL:         "",
 		GitHubBaseURL:        "",
 	})
-	if got.AppID != 5686 || got.AppSlug != "kubestellar-hive-ghe" || got.InstallationID != 146551814 {
+	if got.AppID != 5686 || got.AppSlug != "hivecommons-hive-ghe" || got.InstallationID != 146551814 {
 		t.Fatalf("identity not carried through: %+v", got)
 	}
 	// And that reconstructed set must be recognised as broken — this is the

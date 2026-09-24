@@ -15,8 +15,8 @@ import (
 // testGHEAppID / testGitHubComAppID are defined in both_app_keys_test.go.
 const (
 	testPublicAppID = testGitHubComAppID
-	identPublicSlug = "kubestellar-hive"
-	identGHESlug    = "kubestellar-hive-ghe"
+	identPublicSlug = "hivecommons-hive"
+	identGHESlug    = "hivecommons-hive-ghe"
 	identGHEHost    = "github.ibm.com"
 	identGHEBaseURL = "https://github.ibm.com"
 	identGHEAPIURL  = "https://github.ibm.com/api/v3"
@@ -26,6 +26,13 @@ const (
 // implicit-empty shape ~41 of 50 spokes run on).
 func hiveOKECluster() *ClusterConfig {
 	return &ClusterConfig{ID: "hive-oke", GitHubAppID: testPublicAppID, GitHubAppSlug: identPublicSlug}
+}
+
+func TestResolveHiveIdentityNormalizesLegacyPublicSlug(t *testing.T) {
+	got := ResolveHiveIdentity(nil, hiveOKECluster())
+	if got.AppSlug != config.DefaultGitHubAppSlug {
+		t.Fatalf("AppSlug = %q, want renamed public slug %q", got.AppSlug, config.DefaultGitHubAppSlug)
+	}
 }
 
 // vllmDCluster is the live vllm-d entry: GHE default, one identity slot.

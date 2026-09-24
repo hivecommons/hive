@@ -631,7 +631,7 @@ func (f *GitHubActivityFeed) issueEvent(sent map[string]bool, repo string, issue
 	repoName := path.Base(repo)
 	content := fmt.Sprintf("🐝 [%s] %s #%d %s — %s · @%s", repoName, kind, issue.Number, action, issue.Title, issue.Author)
 	if issue.URL != "" {
-		content += " " + issue.URL
+		content += " <" + issue.URL + ">"
 	}
 	return []GitHubActivityEvent{{Key: key, Content: content}}
 }
@@ -644,7 +644,7 @@ func (f *GitHubActivityFeed) prEvent(sent map[string]bool, repo string, pr githu
 	repoName := path.Base(repo)
 	content := fmt.Sprintf("🐝 [%s] PR #%d %s — %s · @%s", repoName, pr.Number, action, pr.Title, pr.Author)
 	if pr.URL != "" {
-		content += " " + pr.URL
+		content += " <" + pr.URL + ">"
 	}
 	return []GitHubActivityEvent{{Key: key, Content: content}}
 }
@@ -669,8 +669,14 @@ func (f *GitHubActivityFeed) authorSuppressed(author string, forwardMerge bool, 
 	return f.opts.FilterBots && strings.HasSuffix(login, "[bot]")
 }
 
+// discordSuppressEmbeds is Discord's SUPPRESS_EMBEDS message flag (1<<2):
+// factory lines already carry the title, so the link preview card is noise.
+// URLs are additionally wrapped in <> so clients that ignore flags still
+// render them bare. Mirrors notify.DiscordSuppressEmbeds.
+const discordSuppressEmbeds = 1 << 2
+
 func (f *GitHubActivityFeed) postDiscord(ctx context.Context, content string) error {
-	payload, err := json.Marshal(map[string]string{"content": content})
+	payload, err := json.Marshal(map[string]any{"content": content, "flags": discordSuppressEmbeds})
 	if err != nil {
 		return err
 	}

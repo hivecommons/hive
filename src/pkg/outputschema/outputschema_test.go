@@ -65,6 +65,11 @@ func TestValidate(t *testing.T) {
 			wantErr: []string{"findings[0].line", "prs_opened[0].number"},
 		},
 		{
+			name:    "invalid review scope",
+			raw:     `{"lane":"review-swarm","kind":"review","findings":[{"title":"x","severity":"low","summary":"y","review_scope":"later"}],"prs_opened":[],"beads_filed":[],"summary":"bad scope"}`,
+			wantErr: []string{"findings[0].review_scope", "must be in-scope or out-of-scope"},
+		},
+		{
 			name:    "unknown field rejected",
 			raw:     `{"lane":"scanner","kind":"summary","findings":[],"prs_opened":[],"beads_filed":[],"summary":"ok","extra":true}`,
 			wantErr: []string{"unknown field"},

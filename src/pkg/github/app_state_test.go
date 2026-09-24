@@ -161,14 +161,19 @@ func TestDiagnoseAppAuth_Classification(t *testing.T) {
 	}
 }
 
-// TestDiagnoseAppAuth_MissingKeyFileSkipsAPI proves the cheap pre-flight: when
-// no candidate key path holds content we conclude AppStateKeyMissing without
-// ever touching the API.
-func TestDiagnoseAppAuth_MissingKeyFileSkipsAPI(t *testing.T) {
+// TestDiagnoseAppAuth_LoadedKeyIgnoresStaleKeyPaths proves that a loaded
+// AppAuth is enough evidence that a private key exists. Older callers may pass
+// only generic key paths while the actual key was loaded from a per-App-ID
+// file, so stale path probes must not override a healthy API diagnosis.
+func TestDiagnoseAppAuth_LoadedKeyIgnoresStaleKeyPaths(t *testing.T) {
 	called := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
-		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":          42980,
+			"account":     map[string]any{"login": "katamari"},
+			"permissions": map[string]any{"issues": "write"},
+		})
 	}))
 	defer srv.Close()
 
@@ -182,23 +187,11 @@ func TestDiagnoseAppAuth_MissingKeyFileSkipsAPI(t *testing.T) {
 	auth := testAuth(t, srv.URL)
 	got := auth.DiagnoseAppAuth(context.Background(), "katamari", missing, empty)
 
-	if got.State != AppStateKeyMissing {
-		t.Fatalf("State = %s, want key-missing", got.State)
+	if !called {
+		t.Error("did not call the API despite a loaded key")
 	}
-	if called {
-		t.Error("made an API call despite no readable key file — the pre-flight must short-circuit")
-	}
-	if !got.State.OperatorActionable() {
-		t.Error("key-missing must be operator-actionable")
-	}
-	msg := got.Message()
-	for _, lack := range []string{"Install", "installation_id"} {
-		if strings.Contains(msg, lack) {
-			t.Errorf("Message() = %q, must not tell the user to %q", msg, lack)
-		}
-	}
-	if !strings.Contains(msg, "hub administrator") {
-		t.Errorf("Message() = %q, want it to point at the hub administrator", msg)
+	if got.State != AppStateOK {
+		t.Fatalf("State = %s, want ok", got.State)
 	}
 }
 

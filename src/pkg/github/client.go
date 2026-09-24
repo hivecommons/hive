@@ -101,6 +101,8 @@ type Client struct {
 	perspectives review.PerspectiveSet
 	// confidenceScore gates the Confidence line on review comments.
 	confidenceScore func() bool
+	// reviewBacklog controls review out-of-scope finding filing.
+	reviewBacklog func() (enabled bool, cap int)
 	// issueClaims reports whether issue claims are recognised at enumeration
 	// time and the TTL an assignee-inferred claim runs for (#8380). Nil or
 	// false → no comment is fetched, no Issue carries claim fields. Read live
@@ -337,6 +339,27 @@ func (c *Client) confidenceScoreOn() bool {
 	return c != nil && c.confidenceScore != nil && c.confidenceScore()
 }
 
+// SetReviewBacklog configures filing cited out-of-scope review findings as
+// follow-up issues. Read through a func so live config edits apply without
+// rebuilding the client.
+func (c *Client) SetReviewBacklog(cfg func() (enabled bool, cap int)) {
+	if c == nil {
+		return
+	}
+	c.reviewBacklog = cfg
+}
+
+func (c *Client) reviewBacklogConfig() (bool, int) {
+	if c == nil || c.reviewBacklog == nil {
+		return true, DefaultReviewBacklogIssueCap
+	}
+	enabled, cap := c.reviewBacklog()
+	if cap <= 0 {
+		cap = DefaultReviewBacklogIssueCap
+	}
+	return enabled, cap
+}
+
 type Issue struct {
 	Repo              string    `json:"repo"`
 	Number            int       `json:"number"`
@@ -454,9 +477,13 @@ type PullRequest struct {
 	// payload as the attribution trailer so the plan_match review perspective
 	// (#8317) can name the run and plan a PR implements without keeping the
 	// body. Empty when the PR carries no run trailer.
-	HiveRun  string        `json:"hive_run,omitempty"`
-	HivePlan string        `json:"hive_plan,omitempty"`
-	Rework   PRReworkStats `json:"rework,omitempty"`
+	HiveRun  string `json:"hive_run,omitempty"`
+	HivePlan string `json:"hive_plan,omitempty"`
+	// ScopeContract is the linked issue or lease task the review swarm should
+	// judge this PR against, derived from closing keywords before the body is
+	// discarded from the actionable snapshot.
+	ScopeContract string        `json:"scope_contract,omitempty"`
+	Rework        PRReworkStats `json:"rework,omitempty"`
 	// Mergeable is a tri-state: MergeableYes, MergeableNo, or MergeableUnknown.
 	// It is intentionally NOT a bool: a bool zero-values to false, which is
 	// indistinguishable from "GitHub says this PR cannot be merged" and would
@@ -1049,6 +1076,24 @@ func prBaseRef(pr *gh.PullRequest) string {
 	return pr.GetBase().GetRef()
 }
 
+func reviewScopeContract(title, body, defaultRepo, runKey, planRef string) string {
+	refs := ParseClaimedIssues(title+"\n"+body, defaultRepo)
+	if len(refs) > 0 {
+		ref := refs[0]
+		if strings.EqualFold(ref.Repo, defaultRepo) {
+			return fmt.Sprintf("linked issue %s#%d from the PR closing keyword", ref.Repo, ref.Issue)
+		}
+		return fmt.Sprintf("linked issue %s#%d from the PR closing keyword", ref.Repo, ref.Issue)
+	}
+	if strings.TrimSpace(runKey) != "" {
+		if strings.TrimSpace(planRef) != "" {
+			return fmt.Sprintf("lease task Hive-Run %s / Hive-Plan %s", strings.TrimSpace(runKey), strings.TrimSpace(planRef))
+		}
+		return fmt.Sprintf("lease task Hive-Run %s", strings.TrimSpace(runKey))
+	}
+	return ""
+}
+
 func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRequest, held []HoldItem, heldPRs []PullRequest, staleDrafts []PullRequest, attributed []PullRequest, totalPRs int, breakdown RepoPRBreakdown, err error) {
 	now := time.Now()
 	owner, repoName := c.splitRepo(repo)
@@ -1075,6 +1120,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 		labels := extractPRLabels(pr.Labels)
 		attrMeta, hasAttr := ParseAttributionTrailer(pr.GetBody())
 		runKey, planRef := ParseRunTrailers(pr.GetBody())
+		scopeContract := reviewScopeContract(pr.GetTitle(), pr.GetBody(), owner+"/"+repoName, runKey, planRef)
 
 		if c.isHeld(labels) {
 			breakdown.Hold++
@@ -1115,6 +1161,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 					HiveModel:      attrMeta.Model,
 					HiveRun:        runKey,
 					HivePlan:       planRef,
+					ScopeContract:  scopeContract,
 					HeadSHA:        prHeadSHA(pr),
 					HeadRef:        headRef,
 					HeadRepo:       headRepo,
@@ -1179,6 +1226,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 			HiveModel:      attrMeta.Model,
 			HiveRun:        runKey,
 			HivePlan:       planRef,
+			ScopeContract:  scopeContract,
 			// Mergeable is deliberately NOT set here. The PullRequests.List
 			// endpoint never populates "mergeable" — GitHub computes it
 			// per-PR and returns it only from the single-PR GET. Reading it

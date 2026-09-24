@@ -269,11 +269,11 @@ func TestForgeIdentityIsAtomic(t *testing.T) {
 
 	// Fully configured clusters resolve a COMPLETE identity — id AND slug.
 	got, missing := s.forgeIdentityForTarget(publicCluster, public)
-	if len(missing) != 0 || got.AppID != publicClusterApp || got.AppSlug != "kubestellar-hive" {
+	if len(missing) != 0 || got.AppID != publicClusterApp || got.AppSlug != "hivecommons-hive" {
 		t.Errorf("github.com cluster: identity = %+v missing = %v, want the configured app id and slug", got, missing)
 	}
 	got, missing = s.forgeIdentityForTarget(gheCluster, ghe)
-	if len(missing) != 0 || got.AppID != gheClusterApp || got.AppSlug != "kubestellar-hive-ghe" {
+	if len(missing) != 0 || got.AppID != gheClusterApp || got.AppSlug != "hivecommons-hive-ghe" {
 		t.Errorf("GHE cluster: identity = %+v missing = %v, want the configured GHE app id and slug", got, missing)
 	}
 
@@ -459,7 +459,7 @@ func TestSwitchForgeSwapsTheWholeIdentity(t *testing.T) {
 	if got.AppID != gheAppID {
 		t.Errorf("queued app_id = %d, want the cluster's GHE app %d", got.AppID, gheAppID)
 	}
-	if got.AppSlug != "kubestellar-hive-ghe" {
+	if got.AppSlug != "hivecommons-hive-ghe" {
 		t.Errorf("queued app_slug = %q, want the GHE slug — an empty slug is what 404s the install link", got.AppSlug)
 	}
 	if got.InstallationID != 0 {

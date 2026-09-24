@@ -137,11 +137,12 @@ type StageReceiptEngine struct {
 }
 
 type Finding struct {
-	Title    string   `json:"title"`
-	Severity Severity `json:"severity"`
-	Summary  string   `json:"summary"`
-	File     string   `json:"file,omitempty"`
-	Line     int      `json:"line,omitempty"`
+	Title       string   `json:"title"`
+	Severity    Severity `json:"severity"`
+	Summary     string   `json:"summary"`
+	File        string   `json:"file,omitempty"`
+	Line        int      `json:"line,omitempty"`
+	ReviewScope string   `json:"review_scope,omitempty"`
 }
 
 type PROpened struct {
@@ -234,6 +235,10 @@ func validateReport(report AgentReport) []Violation {
 			violations = append(violations, Violation{Field: prefix + ".severity", Message: "must be one of info, low, medium, high, critical"})
 		}
 		violations = append(violations, requireBounded(prefix+".summary", finding.Summary, MaxFindingBodyLength)...)
+		violations = append(violations, optionalBounded(prefix+".review_scope", finding.ReviewScope, MaxKindLength)...)
+		if finding.ReviewScope != "" && finding.ReviewScope != "in-scope" && finding.ReviewScope != "out-of-scope" {
+			violations = append(violations, Violation{Field: prefix + ".review_scope", Message: "must be in-scope or out-of-scope"})
+		}
 		if finding.Line < 0 {
 			violations = append(violations, Violation{Field: prefix + ".line", Message: "must be zero or positive"})
 		}
