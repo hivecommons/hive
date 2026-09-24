@@ -758,11 +758,19 @@ func hostStateBypassRequested(value string) bool {
 //
 // The model parameter is intentionally absent from the signature so no future
 // caller can reintroduce the crash by passing one.
+//
+// The version switch is wrapped in `sh -c` because the tmux launch line is
+// prefixed with KEY='value' environment assignments, and POSIX shells only
+// accept assignments before a SIMPLE command: `A=1 case ... esac` is a syntax
+// error ("unexpected token `)'"), so bob never started on any hive. `sh -c`
+// is a simple command, so the assignments apply to it and are inherited by
+// the exec'd bob.
 func bobLaunchCmd(binary string) string {
-	return fmt.Sprintf(`case "$(%s --version 2>/dev/null | sed -n '1p')" in 1.*) %s ;; *) %s ;; esac`,
+	script := fmt.Sprintf(`case "$(%s --version 2>/dev/null | sed -n 1p)" in 1.*) exec %s ;; *) exec %s ;; esac`,
 		binary,
 		bobLaunchCmdV1(binary),
 		bobLaunchCmdV2(binary))
+	return "sh -c " + shellQuote(script)
 }
 
 func bobLaunchCmdV1(binary string) string {

@@ -1,0 +1,1 @@
+- bob agents launch again: the bob version switch is now wrapped in `sh -c`, so the tmux launch line's `KEY='value'` env prefix no longer produces a bash syntax error (`unexpected token ')'`) that stopped bob from ever starting.
