@@ -3714,6 +3714,22 @@ test('a successful headless run reports task_complete then ready, and status=don
   } finally { teardown(relay); }
 });
 
+test('standby headless completion does not request ordinary work', () => {
+  const relay = loadRelay({
+    backend: 'copilot',
+    mode: 'headless',
+    env: { HIVE_STANDBY: '1' },
+    execFileResult: { stdout: 'opened https://github.com/foo/bar/pull/9\n' },
+  });
+  try {
+    const beforeReady = relay.__sent.filter(m => m.type === 'ready').length;
+    assignHeadlessTask(relay);
+    assert.ok(relay.__sent.some(m => m.type === 'task_complete'), 'standby task still reports completion');
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'ready').length, beforeReady,
+      'standby mode must return to passive standby, not ordinary ready');
+  } finally { teardown(relay); }
+});
+
 test('headless output capture is configurable and truncates without failing the task', () => {
   const maxBytes = 64;
   const noisyOutput = `${'x'.repeat(maxBytes * 2)}\nHIVE_VERDICT: no_work_needed\n`;
@@ -3749,6 +3765,23 @@ test('a failing headless run reports task_failed rather than hanging', () => {
 
     const status = relay.__readHeadlessStatus();
     assert.strictEqual(status.state, relay.HEADLESS_STATE_FAILED, 'status must record the failure for a probe');
+  } finally { teardown(relay); }
+});
+
+test('standby headless failure does not request ordinary work', () => {
+  const err = new Error('boom'); err.code = 2;
+  const relay = loadRelay({
+    backend: 'copilot',
+    mode: 'headless',
+    env: { HIVE_STANDBY: '1' },
+    execFileResult: { err, stderr: 'fatal: something\n' },
+  });
+  try {
+    const beforeReady = relay.__sent.filter(m => m.type === 'ready').length;
+    assignHeadlessTask(relay);
+    assert.ok(relay.__sent.some(m => m.type === 'task_failed'), 'standby task still reports failure');
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'ready').length, beforeReady,
+      'standby failure must not request ordinary work');
   } finally { teardown(relay); }
 });
 

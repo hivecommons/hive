@@ -3345,7 +3345,11 @@ function runHeadlessTask(task) {
       taskAssignedAt = 0;
       tasksCompletedCount++;
       writeHeadlessStatus(HEADLESS_STATE_WAITING);
-      send({ type: 'ready', seq: nextSeq() });
+      if (STANDBY_MODE) {
+        console.log('Standby mode: headless task complete; remaining connected without requesting ordinary work');
+      } else {
+        send({ type: 'ready', seq: nextSeq() });
+      }
     });
   });
 }
@@ -6116,7 +6120,9 @@ function failCurrentTask(reason, opts) {
   // (the CLI never reached its prompt), so it hands the task back WITHOUT
   // claiming to be free. Advertising 'ready' here would just pull in another
   // task the CLI still cannot run. The caller re-advertises on recovery.
-  if (!(opts && opts.skipReady)) {
+  if (STANDBY_MODE) {
+    console.log('Standby mode: task failed; remaining connected without requesting ordinary work');
+  } else if (!(opts && opts.skipReady)) {
     send({ type: 'ready', seq: nextSeq() });
   }
 }
@@ -6370,6 +6376,8 @@ function finishCurrentTask({ completionSignal, summary, tmuxLines, prURL, noWork
     taskAssignedAt = Date.now();
     tmuxSendKeys(reviewPrompt);
     startProgressReporting();
+  } else if (STANDBY_MODE) {
+    console.log('Standby mode: task complete; remaining connected without requesting ordinary work');
   } else {
     if (tasksCompletedCount % PR_REVIEW_EVERY_N === 0) {
       // Say why the cycle did not run. Silence here reads as "the review
