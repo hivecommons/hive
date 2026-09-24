@@ -467,6 +467,71 @@
   grid-template-columns: repeat(auto-fit, minmax(var(--metric-tile-min), var(--full-size)));
 }
 
+
+.hv-infra-thanks {
+  background: var(--surface-1);
+  border-block-start: var(--line-width) solid var(--line-subtle);
+  color: var(--text);
+  display: grid;
+  gap: var(--sp-5);
+  justify-items: center;
+  padding: var(--sp-8) var(--sp-6);
+  text-align: center;
+}
+
+.hv-infra-thanks p {
+  color: var(--text-muted);
+  margin: var(--sp-0);
+  max-inline-size: var(--infra-copy-max);
+}
+
+.hv-infra-thanks a {
+  color: var(--text);
+}
+
+.hv-infra-thanks a:hover {
+  color: var(--brand);
+}
+
+.hv-infra-logo-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  justify-content: center;
+}
+
+.hv-infra-logo-chip {
+  align-items: center;
+  background: var(--infra-logo-chip-bg);
+  border: var(--line-width) solid var(--infra-logo-chip-border);
+  border-radius: var(--r-lg);
+  color: var(--infra-logo-chip-fg);
+  display: inline-flex;
+  gap: var(--sp-4);
+  min-block-size: var(--sp-9);
+  padding: var(--sp-3) var(--sp-6);
+  text-decoration: none;
+}
+
+.hv-infra-logo-chip:hover {
+  border-color: var(--brand);
+  color: var(--infra-logo-chip-fg);
+}
+
+.hv-infra-logo-chip img {
+  block-size: var(--sp-9);
+  display: block;
+  inline-size: auto;
+  max-inline-size: var(--infra-logo-max-w);
+}
+
+.hv-infra-logo-label {
+  color: var(--infra-logo-chip-fg);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+  white-space: nowrap;
+}
+
 @keyframes hv-status-pulse {
   from,
   to {
