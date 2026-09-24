@@ -1,0 +1,1 @@
+- Fixed #8677 by giving every dashboard theme accessible light and dark palettes and keeping Appearance hover previews from resizing the settings modal.

@@ -107,7 +107,7 @@ func TestThemesListAndExplicitThemeCSS(t *testing.T) {
 	}
 }
 
-func TestThemeCSSDarkThemeLightModeUsesSharedRemapButPreviewKeepsPalette(t *testing.T) {
+func TestThemeCSSAndPreviewExposeCurrentModePalettes(t *testing.T) {
 	s := govServer(t)
 	s.deps.Config.Dashboard.Theme = "solarized-dark"
 
@@ -115,10 +115,16 @@ func TestThemeCSSDarkThemeLightModeUsesSharedRemapButPreviewKeepsPalette(t *test
 	if served.Code != http.StatusOK {
 		t.Fatalf("served theme css = %d: %s", served.Code, served.Body.String())
 	}
+	servedRoot := cssBlockInBody(t, served.Body.String(), ":root")
 	servedLight := cssBlockInBody(t, served.Body.String(), "body.light-mode")
-	for _, darkToken := range []string{"--surface-0: #002b36;", "--surface-2: #073642;", "--text: #93a1a1;"} {
-		if strings.Contains(servedLight, darkToken) {
-			t.Fatalf("served light-mode block re-emits dark token %q:\n%s", darkToken, servedLight)
+	for _, want := range []string{"--surface-0: #002b36;", "--accent: #2aa198;"} {
+		if !strings.Contains(servedRoot, want) {
+			t.Fatalf("served dark/root mode missing %q:\n%s", want, servedRoot)
+		}
+	}
+	for _, forbidden := range []string{"--surface-0: #002b36;", "--text: #93a1a1;"} {
+		if strings.Contains(servedLight, forbidden) {
+			t.Fatalf("served light-mode block re-emits dark token %q:\n%s", forbidden, servedLight)
 		}
 	}
 	if !strings.Contains(servedLight, "--accent: #2aa198;") {
@@ -129,11 +135,10 @@ func TestThemeCSSDarkThemeLightModeUsesSharedRemapButPreviewKeepsPalette(t *test
 	if preview.Code != http.StatusOK {
 		t.Fatalf("preview theme css = %d: %s", preview.Code, preview.Body.String())
 	}
+	previewRoot := cssBlockInBody(t, preview.Body.String(), ":root")
 	previewLight := cssBlockInBody(t, preview.Body.String(), "body.light-mode")
-	for _, darkToken := range []string{"--surface-0: #002b36;", "--surface-2: #073642;", "--text: #93a1a1;"} {
-		if !strings.Contains(previewLight, darkToken) {
-			t.Fatalf("preview light-mode block should keep dark token %q:\n%s", darkToken, previewLight)
-		}
+	if previewRoot != servedRoot || previewLight != servedLight {
+		t.Fatalf("hover preview must expose the same mode palettes as served CSS\nserved root:%s\npreview root:%s\nserved light:%s\npreview light:%s", servedRoot, previewRoot, servedLight, previewLight)
 	}
 }
 

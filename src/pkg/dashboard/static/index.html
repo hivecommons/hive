@@ -1922,6 +1922,16 @@
     .config-modal {
       width: 1200px; max-width: 96vw;
       height: 85vh; display: flex; flex-direction: column;
+      font-family: var(--font-ui); font-size: var(--fs-base);
+      contain: layout;
+      --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+      --fs-2xs: .6rem; --fs-xs: .68rem; --fs-sm: .75rem; --fs-base: .82rem;
+      --fs-md: .92rem; --fs-lg: 1.05rem; --fs-xl: 1.25rem; --fs-2xl: 1.5rem; --fs-3xl: 2rem;
+      --sp-0: 0; --sp-1: 2px; --sp-2: 4px; --sp-3: 6px; --sp-4: 8px;
+      --sp-5: 12px; --sp-6: 16px; --sp-7: 20px; --sp-8: 24px; --sp-9: 32px;
+      --r-sm: 4px; --r: 6px; --r-lg: 12px; --r-pill: 999px;
+      --radius-sm: var(--r-sm); --radius: var(--r); --radius-lg: var(--r-lg);
     } /* modal panel recipe */
     .config-header {
       display: flex; align-items: center; justify-content: space-between;

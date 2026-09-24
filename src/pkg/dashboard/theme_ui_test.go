@@ -66,3 +66,46 @@ func TestLayoutToggleDoesNotPersistHiveWideTheme(t *testing.T) {
 		}
 	}
 }
+
+func TestAppearanceThemeHoverCannotResizeSettingsModal(t *testing.T) {
+	b, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read index: %v", err)
+	}
+	html := string(b)
+	start := strings.Index(html, ".config-modal {\n")
+	if start < 0 {
+		t.Fatal("missing .config-modal CSS block")
+	}
+	end := strings.Index(html[start:], "\n    } /* modal panel recipe */")
+	if end < 0 {
+		t.Fatal(".config-modal CSS block terminator changed")
+	}
+	block := html[start : start+end]
+	for _, want := range []string{
+		"width: 1200px; max-width: 96vw;",
+		"height: 85vh;",
+		"font-family: var(--font-ui); font-size: var(--fs-base);",
+		"contain: layout;",
+		"--font-ui: Inter, ui-sans-serif",
+		"--font-mono: 'SF Mono'",
+		"--fs-base: .82rem;",
+		"--sp-7: 20px;",
+		"--r: 6px;",
+		"--radius: var(--r);",
+	} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("settings modal layout is not pinned; missing %q in:\n%s", want, block)
+		}
+	}
+	for _, want := range []string{
+		"data-mouseover-action=\"themePreview\"",
+		"data-mouseout-action=\"themePreviewClear\"",
+		"function themePreview()",
+		"setThemeStylesheet(id)",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("theme hover preview wiring missing %q", want)
+		}
+	}
+}
