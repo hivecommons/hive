@@ -1251,6 +1251,7 @@ const contributeProxy = createProxyMiddleware({
 });
 app.get('/contribute', contributeProxy);
 app.get('/contribute/', contributeProxy);
+app.get('/contribute/{*splat}', contributeProxy);
 
 const leaderboardProxy = createProxyMiddleware({
   target: GO_API_URL,

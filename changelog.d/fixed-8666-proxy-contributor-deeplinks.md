@@ -1,0 +1,1 @@
+- Fixed #8666 by proxying contributor deep-link pages through Go so their stylesheet links resolve with CSS content types.
