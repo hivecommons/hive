@@ -484,7 +484,7 @@
       <a href="/learn">Learn</a>
       <a href="/reading">Reading</a>
       <a href="/get-started">Get Started</a>
-      <a href="/dashboard" style="color:var(--amber)">My Hives</a>
+      <a class="text-brand" href="/dashboard">My Hives</a>
       <a href="/fleet" id="nav-fleet" style="display:none" title="Fleet health — agents the governor expects on but that can't work">Fleet</a>
       <a href="/api/docs" target="_blank">API</a>
       <a href="https://kubestellar.io/docs/hive/overview/introduction" target="_blank" rel="noopener">Docs</a>
@@ -503,7 +503,7 @@
         <h1>My Hives</h1>
         <p class="subtitle">Hive instances you own or have access to</p>
         <p style="margin-top:var(--sp-4);padding:var(--sp-4) var(--sp-6);border:1px solid var(--line);border-radius:var(--r);background:rgba(244,199,95,0.08);font-size:var(--fs-base)">👋 New to Hive? Read the <a href="https://docs.kubestellar.io/docs/hive/getting-started" target="_blank" rel="noopener" style="color:var(--amber);font-weight:700">Getting Started Guide</a> before diving in.</p>
-        <p id="latest-image-sha" style="font-size:var(--fs-xs);color:var(--muted);margin-top:var(--sp-2)"></p>
+        <p class="fs-xs text-muted mt-2" id="latest-image-sha"></p>
         <!-- Image-pulls bar chart: per-release container-image PULLS of the
              public spoke image (ghcr.io/hivecommons/hive), bucketed by the
              ACTIVE release line's release boundaries (the line the "stable"
@@ -544,7 +544,7 @@
 
     <div id="provision-request-banner" style="display:none"></div>
     <div id="admin-provision-requests" style="display:none;margin-bottom:var(--sp-8)">
-      <h3 style="font-size:var(--fs-lg);color:var(--accent);margin-bottom:var(--sp-5)">Pending Provision Requests</h3>
+      <h3 class="fs-lg text-accent mb-5">Pending Provision Requests</h3>
       <div id="admin-provision-list"></div>
       <h3 id="past-requests-header" role="button" tabindex="0" aria-expanded="false" aria-controls="past-requests-body"
           onclick="togglePastRequests()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();togglePastRequests();}"
@@ -593,7 +593,7 @@
     </div>
 
     <div id="public-hives-section" style="display:none;margin-top:48px">
-      <h2 style="font-size:var(--fs-xl);color:var(--accent);margin-bottom:var(--sp-6)">Public Hives</h2>
+      <h2 class="fs-xl text-accent mb-6">Public Hives</h2>
       <div id="public-hives-container"></div>
     </div>
 
@@ -602,7 +602,7 @@
         <h2 id="admin-users-header" role="button" tabindex="0" aria-expanded="false" aria-controls="admin-users-body"
             onclick="toggleAdminUsers()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAdminUsers();}"
             style="font-size:var(--fs-xl);color:var(--accent);margin:var(--sp-0);cursor:pointer;user-select:none;display:flex;align-items:center;gap:var(--sp-4)">
-          <span id="admin-users-toggle" aria-hidden="true" style="font-size:var(--fs-xs)">&#9656;</span><span>Hub Admin &mdash; Users</span>
+          <span class="fs-xs" id="admin-users-toggle" aria-hidden="true">&#9656;</span><span>Hub Admin &mdash; Users</span>
           <span id="admin-users-count" style="font-size:var(--fs-sm);color:var(--muted);font-weight:400"></span>
         </h2>
         <input type="text" id="user-search" placeholder="Search users..." oninput="filterUsers()" style="padding:var(--sp-4) var(--sp-6);background:var(--surface);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-base);width:250px">
@@ -617,26 +617,26 @@
              passes, and the endpoint it reads is behind requireAdmin.
              Rendered as a plain ranked bar list; no map, no charting library,
              no external asset (the hub forbids external CDNs/images). -->
-        <div id="user-countries-container" style="margin-top:var(--sp-7)"></div>
+        <div class="mt-7" id="user-countries-container"></div>
       </div>
     </div>
 
     <div id="hub-banner-section" style="display:none;margin-top:48px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--sp-6)">
-        <h2 style="font-size:var(--fs-xl);color:var(--accent)">Hub Banner</h2>
+        <h2 class="fs-xl text-accent">Hub Banner</h2>
         <button class="hv-btn btn-primary btn-primary btn-danger" id="btn-clear-banner" style="display:none" onclick="clearHubBanner()">Clear All Banners</button>
       </div>
       <div id="active-banner-display" style="display:none;padding:var(--sp-6);border-radius:var(--r);border:1px solid var(--border);background:var(--surface);margin-bottom:var(--sp-6)">
-        <div style="font-size:var(--fs-base);color:var(--muted);margin-bottom:var(--sp-4)">Active Banner</div>
+        <div class="fs-base text-muted mb-4">Active Banner</div>
         <div id="active-banner-preview" style="padding:var(--sp-5) var(--sp-6);border-radius:var(--r);font-size:var(--fs-base);margin-bottom:var(--sp-4)"></div>
-        <div id="active-banner-targets" style="font-size:var(--fs-sm);color:var(--muted)"></div>
+        <div class="fs-sm text-muted" id="active-banner-targets"></div>
       </div>
     </div>
 
     <div id="cluster-health-section" style="display:none;margin-top:48px">
       <div onclick="toggleClusterHealth()" style="display:flex;align-items:center;gap:var(--sp-4);cursor:pointer;user-select:none;margin-bottom:var(--sp-6)">
         <span id="cluster-health-toggle" style="font-size:var(--fs-xs);color:var(--muted);transition:transform 0.2s">&#9654;</span>
-        <h2 style="font-size:var(--fs-xl);color:var(--accent);margin:var(--sp-0)">Cluster Health</h2>
+        <h2 class="fs-xl text-accent m-0">Cluster Health</h2>
         <span id="cluster-health-summary-bar" style="font-size:var(--fs-base);color:var(--muted);margin-left:var(--sp-4)"></span>
       </div>
       <div id="cluster-health-body" style="display:none">
@@ -654,11 +654,11 @@
     <div id="scale-controls-section" style="display:none;margin-top:48px">
       <div onclick="toggleScaleControls()" style="display:flex;align-items:center;gap:var(--sp-4);cursor:pointer;user-select:none;margin-bottom:var(--sp-6)">
         <span id="scale-controls-toggle" style="font-size:var(--fs-xs);color:var(--muted);transition:transform 0.2s">&#9654;</span>
-        <h2 style="font-size:var(--fs-xl);color:var(--accent);margin:var(--sp-0)">Scale Controls</h2>
+        <h2 class="fs-xl text-accent m-0">Scale Controls</h2>
         <span id="scale-controls-summary" style="font-size:var(--fs-base);color:var(--muted);margin-left:var(--sp-4)"></span>
       </div>
       <div id="scale-controls-body" style="display:none">
-        <div style="font-size:var(--fs-base);color:var(--muted);margin-bottom:var(--sp-5)">
+        <div class="fs-base text-muted mb-5">
           Fleet throughput knobs. Blank/0 = use the default shown. Changes apply live
           (worker-count reductions apply on the next hub restart).
         </div>
@@ -670,7 +670,7 @@
         </tr></thead><tbody id="scale-clusters-body"></tbody></table></div>
         <div style="display:flex;align-items:center;gap:var(--sp-5);margin-top:var(--sp-6)">
           <button class="hv-btn btn-primary btn-primary" onclick="saveScaleSettings()">Save Scale Settings</button>
-          <span id="scale-save-status" style="font-size:var(--fs-base);color:var(--muted)"></span>
+          <span class="fs-base text-muted" id="scale-save-status"></span>
         </div>
       </div>
     </div>
@@ -678,7 +678,7 @@
     <div id="reach-section" style="display:none;margin-top:48px">
       <div onclick="toggleReach()" style="display:flex;align-items:center;gap:var(--sp-4);cursor:pointer;user-select:none;margin-bottom:var(--sp-6)">
         <span id="reach-toggle" style="font-size:var(--fs-xs);color:var(--muted);transition:transform 0.2s">&#9654;</span>
-        <h2 style="font-size:var(--fs-xl);color:var(--accent);margin:var(--sp-0)">PR Reach</h2>
+        <h2 class="fs-xl text-accent m-0">PR Reach</h2>
         <span id="reach-summary-bar" style="font-size:var(--fs-base);color:var(--muted);margin-left:var(--sp-4)"></span>
       </div>
       <div id="reach-body" style="display:none">
@@ -881,16 +881,16 @@
       var reasons = QUADRANT_AXES.map(function(name) { return quadrantAxis(q, name); })
         .filter(function(a) { return !a.scored && a.reason; })
         .map(function(a) {
-          return '<div style="color:var(--muted);margin-top:var(--sp-1)">' +
+          return '<div class="text-muted mt-1">' +
             esc(QUADRANT_AXIS_LABELS[a.axis]) + ': ' + esc(a.reason) + '</div>';
         }).join('');
       return '<div style="display:flex;flex-direction:column;align-items:center;gap:var(--sp-3)">' +
           quadrantSVG(q, _fleetQuadrant, 170, true) +
-          '<div style="font-size:var(--fs-xs);color:var(--muted)">Composite <span style="color:var(--text);font-weight:600">' +
+          '<div class="fs-xs text-muted">Composite <span style="color:var(--text);font-weight:600">' +
             (q.scored_axes ? q.composite : '—') + '</span> · ' + (q.scored_axes || 0) + ' of 4 axes scored</div>' +
         '</div>' +
         (nudges ? '<div style="font-size:var(--fs-xs);margin-top:var(--sp-3);border-top:1px solid var(--line);padding-top:var(--sp-3)">' + nudges + '</div>' : '') +
-        (reasons ? '<div style="font-size:var(--fs-xs);margin-top:var(--sp-2)">' + reasons + '</div>' : '');
+        (reasons ? '<div class="fs-xs mt-2">' + reasons + '</div>' : '');
     }
 
     /* fleetQuadrantHeaderHTML is the aggregate above the table: the same kite,
@@ -926,7 +926,7 @@
           'background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--r);width:fit-content">' +
           quadrantSVG(q, null, 78, false) +
           '<div>' +
-            '<div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--sp-2)">' +
+            '<div class="fs-sm text-muted mb-2">' +
               'Fleet quadrant · ' + (_allDashHives || []).length + ' hives in view</div>' +
             '<div style="display:flex;gap:var(--sp-6)">' + axes + '</div>' +
           '</div>' +
@@ -1505,7 +1505,7 @@
       return (j.stageNum || 0) * SEVERITY_SPAN + sev;
     }
     function journeyBadge(j) {
-      if (!j) return '<span style="color:var(--muted)">—</span>';
+      if (!j) return '<span class="text-muted">—</span>';
       var stage = j.stage || 'none';
       var label = JOURNEY_STAGE_LABELS[stage] || stage;
       var tip = JOURNEY_STAGE_TIPS[stage] || '';
@@ -1731,7 +1731,7 @@
     }
     function fmtTokens(n) {
       n = Number(n) || 0;
-      if (n <= 0) return '<span style="color:var(--muted)">—</span>';
+      if (n <= 0) return '<span class="text-muted">—</span>';
       if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, '') + 'B';
       if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
       if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K';
@@ -1848,9 +1848,9 @@
       var SHOW_SECONDS_BELOW = 90;     // finer granularity while very fresh
       var HOUR_SECS = 3600, DAY_SECS = 86400;
       var startedMs = hiveStartedTime(h);
-      if (startedMs === null) return '<span style="color:var(--muted)">—</span>';
+      if (startedMs === null) return '<span class="text-muted">—</span>';
       var secs = (Date.now() - startedMs) / 1000;
-      if (!isFinite(secs) || secs < 0) return '<span style="color:var(--muted)">—</span>';
+      if (!isFinite(secs) || secs < 0) return '<span class="text-muted">—</span>';
       var label;
       if (secs < SHOW_SECONDS_BELOW) label = Math.round(secs) + 's';
       else if (secs < HOUR_SECS) label = Math.round(secs / 60) + 'm';
@@ -2541,7 +2541,7 @@
             var label = fd.toDateString() === new Date().toDateString()
               ? timeStr
               : fd.toLocaleDateString([], {month: 'short', day: 'numeric'}) + ', ' + timeStr;
-            since = '<div style="color:var(--muted);font-size:var(--fs-xs);margin-top:var(--sp-1)" title="' +
+            since = '<div class="text-muted fs-xs mt-1" title="' +
               esc(fd.toLocaleString()) + '">since ' + esc(label) + '</div>';
           }
         }
@@ -2589,7 +2589,7 @@
       }
       if (h.dashboardUrl && !h.dashboardUrl.includes('localhost'))
         return '<a href="' + esc(h.dashboardUrl) + '" target="_blank" class="dash-link">' + esc(h.dashboardUrl.replace(/^https?:\/\//,'').substring(0,30)) + '...</a>';
-      return '<span style="color:var(--muted);font-size:var(--fs-sm)">—</span>';
+      return '<span class="text-muted fs-sm">—</span>';
     }
     function snapshotLink(h) {
       if (h.snapshotUrl) return '<a href="' + esc(h.snapshotUrl) + '" target="_blank" class="dash-link">↗</a>';
@@ -2744,7 +2744,7 @@
                else's flag but would hide the control from precisely the users
                who have no country and need to set one. */
             '<span id="nav-country">' + countryNavHTML(data.country) + '</span>' +
-            '<span style="font-size:var(--fs-base)">' + esc(data.login) + '</span>' +
+            '<span class="fs-base">' + esc(data.login) + '</span>' +
             '<span style="font-size:var(--fs-xs);color:var(--muted);margin-left:var(--sp-3)">' + roleText + '</span>';
         }
       } catch(e) {}
@@ -4984,9 +4984,9 @@
       el.innerHTML =
         '<div style="display:flex;align-items:center;gap:var(--sp-4);flex-wrap:wrap">' +
         '<span style="color:' + headColor + ';font-weight:600;font-size:var(--fs-base)">⚠ ' + esc(headline) + '</span>' +
-        '<span style="color:var(--muted);font-size:var(--fs-xs)">configuration drift detected from the fleet norm</span>' +
+        '<span class="text-muted fs-xs">configuration drift detected from the fleet norm</span>' +
         '</div>' +
-        '<div class="filter-chips" style="margin-top:var(--sp-4)">' + chips + clearBtn + '</div>';
+        '<div class="filter-chips mt-4">' + chips + clearBtn + '</div>';
     }
 
     /* renderStatusFilterBar draws the "Showing X of Y" summary and the Clear
@@ -5548,7 +5548,7 @@
       }
       var more = '';
       if (rows.length > USAGE_TOP_N) {
-        more = '<div style="margin-top:var(--sp-2)"><a href="#" onclick="toggleUsageSection(\'' + esc(key) + '\');return false" style="font-size:var(--fs-xs);color:var(--accent);text-decoration:none">' +
+        more = '<div class="mt-2"><a href="#" onclick="toggleUsageSection(\'' + esc(key) + '\');return false" style="font-size:var(--fs-xs);color:var(--accent);text-decoration:none">' +
           (expanded ? 'Show top ' + USAGE_TOP_N : 'Show all ' + rows.length) + '</a></div>';
       }
       return '<div style="flex:1;min-width:200px">' +
@@ -5581,7 +5581,7 @@
         }
         trend = '<span title="Fleet total, sampled every 15 min (cumulative)">' + sparkline(pts, '#3fb950', 90, 16) + '</span>';
       } else if (isFleet) {
-        trend = '<span style="font-size:var(--fs-xs);color:var(--muted)" title="Snapshots are sampled every 15 minutes; a trend line needs at least two.">trend building…</span>';
+        trend = '<span class="fs-xs text-muted" title="Snapshots are sampled every 15 minutes; a trend line needs at least two.">trend building…</span>';
       }
 
       var zero = d.zeroConsumption || [];
@@ -5594,7 +5594,7 @@
           var h = zero[z] || {};
           var dot = h.online
             ? '<span style="color:#3fb950" title="Online but consuming nothing — idle or stuck">●</span>'
-            : '<span style="color:var(--muted)" title="Offline">○</span>';
+            : '<span class="text-muted" title="Offline">○</span>';
           chips += '<span onclick="jumpToHiveRow(decodeURIComponent(\'' + esc(encodeURIComponent(String(h.id || ''))) + '\'),decodeURIComponent(\'' + esc(encodeURIComponent(String(h.name || h.id || ''))) + '\'))" style="display:inline-block;padding:var(--sp-1) var(--sp-4);margin:var(--sp-1) var(--sp-2) var(--sp-1) var(--sp-0);background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);font-size:var(--fs-xs);cursor:pointer" title="' + esc((h.org || '') + ((h.ownerName || h.owner) ? ' · ' + (h.ownerName || h.owner) : '')) + ' — show this hive in the table">' + dot + ' ' + esc(h.name || h.id) + '</span>';
         }
         var zMore = '';
@@ -5610,12 +5610,12 @@
       el.innerHTML =
         '<div style="background:var(--card,var(--surface));border:1px solid var(--border);border-radius:var(--r);padding:var(--sp-6) var(--sp-6)">' +
           '<div style="display:flex;align-items:center;gap:var(--sp-5);flex-wrap:wrap;margin-bottom:var(--sp-5)">' +
-            '<h3 style="font-size:var(--fs-md);color:var(--accent);margin:var(--sp-0)">Usage</h3>' +
+            '<h3 class="fs-md text-accent m-0">Usage</h3>' +
             '<span style="font-size:var(--fs-xs);color:var(--muted);border:1px solid var(--border);border-radius:var(--r-lg);padding:var(--sp-1) var(--sp-4)">' + esc(scopeLabel) + '</span>' +
             '<span style="flex:1"></span>' +
             trend +
-            '<span style="font-size:var(--fs-base);color:var(--text)"><strong>' + fmtTokens(d.totalTokens) + '</strong> tokens' +
-            ' <span style="color:var(--muted);font-size:var(--fs-sm)">across ' + (Number(d.hiveCount) || 0) + ' hive' + ((Number(d.hiveCount) || 0) === 1 ? '' : 's') + '</span></span>' +
+            '<span class="fs-base text-default"><strong>' + fmtTokens(d.totalTokens) + '</strong> tokens' +
+            ' <span class="text-muted fs-sm">across ' + (Number(d.hiveCount) || 0) + ' hive' + ((Number(d.hiveCount) || 0) === 1 ? '' : 's') + '</span></span>' +
           '</div>' +
           '<div style="display:flex;gap:var(--sp-7);flex-wrap:wrap">' +
             /* byOrg buckets on org/repo (usageOrgRepoKey in usage.go), so the
@@ -5815,12 +5815,12 @@
             chLines += '<div style="display:flex;align-items:center;gap:var(--sp-3);margin-bottom:var(--sp-1)"><span style="display:inline-block;min-width:' + CHANNEL_NAME_MIN_W_PX + 'px;padding:var(--sp-1) var(--sp-3);border-radius:var(--r-pill);font-size:var(--fs-xs);background:rgba(34,197,94,0.15);color:#4ade80;border:1px solid rgba(34,197,94,0.3);text-align:center" title="Release channel — a moving tag that follows whichever build is currently promoted to this track">' + esc(ct.channel) + '</span><span style="color:var(--muted);opacity:0.6;font-size:var(--fs-xs)">-&gt;</span>' + ctTarget + ctDist + '</div>';
           }
           if (chLines) {
-            chLines = '<div style="font-size:var(--fs-xs);color:var(--muted);margin-bottom:var(--sp-1)">Release channels:</div>' + chLines +
+            chLines = '<div class="fs-xs text-muted mb-1">Release channels:</div>' + chLines +
               '<div style="height:6px"></div>';
           }
           /* The branch rows keep their original header; the channel block gets
              its own above it, so neither reads as a subheading of the other. */
-          if (lines) lines = '<div style="font-size:var(--fs-xs);color:var(--muted);margin-bottom:var(--sp-1)">Latest available images:</div>' + lines;
+          if (lines) lines = '<div class="fs-xs text-muted mb-1">Latest available images:</div>' + lines;
           lines = chLines + lines;
           shaEl.innerHTML = lines ? lines :'<div style="display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-xs);color:var(--muted)"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite"></span>Resolving latest available images…</div>';
         }
@@ -6044,7 +6044,7 @@
 
       /* Cold start: needs at least two release snapshots to close one window. */
       if ((data && data.collecting) || points.length < 1) {
-        host.innerHTML = '<div style="font-size:var(--fs-xs);color:var(--muted)">Image ' + lineLabel.toLowerCase() + ': <span style="opacity:0.7">collecting… (a bar appears once a second release is published)</span></div>';
+        host.innerHTML = '<div class="fs-xs text-muted">Image ' + lineLabel.toLowerCase() + ': <span style="opacity:0.7">collecting… (a bar appears once a second release is published)</span></div>';
         return;
       }
 
@@ -6153,7 +6153,7 @@
           // preserved (no re-request while one is outstanding).
           var accessSecondary;
           if (access && access.status === 'accepted') {
-            accessSecondary = '<span style="font-size:var(--fs-xs);color:var(--green)" title="you have access to this hive">✓ access</span>';
+            accessSecondary = '<span class="fs-xs text-success" title="you have access to this hive">✓ access</span>';
           } else if (access && access.status === 'pending') {
             accessSecondary = '<span style="font-size:var(--fs-xs);color:#fbbf24" title="access request pending">Pending</span>';
           } else {
@@ -6391,7 +6391,7 @@
         '<div style="display:flex;align-items:center;gap:var(--sp-5);flex-wrap:wrap;margin-bottom:var(--sp-6);padding:var(--sp-5) var(--sp-6);' +
         'background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.3);border-radius:var(--r)">' +
         '<strong style="font-size:var(--fs-base);color:#60a5fa">' + ids.length + (ids.length === 1 ? ' hive' : ' hives') + ' selected</strong>' +
-        (over ? '<span style="font-size:var(--fs-sm);color:var(--red)">Over the ' + BULK_MAX_HIVES + '-hive limit — deselect some.</span>' : '') +
+        (over ? '<span class="fs-sm text-danger">Over the ' + BULK_MAX_HIVES + '-hive limit — deselect some.</span>' : '') +
         '<span style="flex:1"></span>' +
         '<button class="hv-btn btn-primary" type="button" onclick="runBulkAction(\'restart\')" style="' + btn + '">Restart</button>' +
         '<button class="hv-btn btn-primary" type="button" onclick="runBulkAction(\'upgrade\')" style="' + btn + '">Upgrade to latest</button>' +
@@ -6476,7 +6476,7 @@
         if (r.ok) { if (r.via === 'heartbeat') heartbeatCount++; continue; }
         failedRows += '<div style="display:flex;gap:var(--sp-4);padding:var(--sp-2) var(--sp-0);font-size:var(--fs-sm)">' +
           '<span style="font-family:monospace;color:var(--red);flex:none">' + esc(r.hive_id || '?') + '</span>' +
-          '<span style="color:var(--muted)">' + esc(r.error || 'failed') + '</span></div>';
+          '<span class="text-muted">' + esc(r.error || 'failed') + '</span></div>';
       }
       if (!failed) {
         var extra = heartbeatCount
@@ -6486,9 +6486,9 @@
         return;
       }
       hiveConfirm('<strong>' + esc(label) + '</strong><br><br>' +
-        '<span style="color:var(--green)">' + ok + ' succeeded</span>' +
-        (heartbeatCount ? ' <span style="color:var(--muted);font-size:var(--fs-sm)">(' + heartbeatCount + ' via heartbeat)</span>' : '') +
-        ' &nbsp; <span style="color:var(--red)">' + failed + ' failed</span>' +
+        '<span class="text-success">' + ok + ' succeeded</span>' +
+        (heartbeatCount ? ' <span class="text-muted fs-sm">(' + heartbeatCount + ' via heartbeat)</span>' : '') +
+        ' &nbsp; <span class="text-danger">' + failed + ' failed</span>' +
         '<div style="margin-top:var(--sp-5);text-align:left;max-height:220px;overflow:auto">' + failedRows + '</div>', true);
     }
 
@@ -6632,8 +6632,8 @@
         if (driftEl0) driftEl0.style.display = 'none';
         document.getElementById('hives-container').innerHTML =
           '<div class="empty-state">' +
-          '<p style="font-size:var(--fs-xl);margin-bottom:var(--sp-4)">No hives yet</p>' +
-          '<p style="margin-bottom:var(--sp-6)">Get started in one of two ways:</p>' +
+          '<p class="fs-xl mb-4">No hives yet</p>' +
+          '<p class="mb-6">Get started in one of two ways:</p>' +
           '<div style="display:flex;gap:var(--sp-5);justify-content:center;flex-wrap:wrap;margin-bottom:var(--sp-5)">' +
           /* Request-a-hive → the EXISTING Request-a-Hive wizard at /get-started
              (POST /api/saas/request-provision). We host it for you. */
@@ -6644,7 +6644,7 @@
              the note on the other copy of this CTA above). */
           '<a class="hv-btn btn-primary btn-primary" href="/get-started#self-host" style="background:var(--surface);color:var(--text);border:1px solid var(--border);text-decoration:none" title="You self-host the hive and attach it to this hub">Register your own hive</a>' +
           '</div>' +
-          '<p style="color:var(--muted);font-size:var(--fs-base)">…or contribute to a public hive below.</p>' +
+          '<p class="text-muted fs-base">…or contribute to a public hive below.</p>' +
           '</div>';
         return;
       }
@@ -6653,13 +6653,13 @@
            way back rather than looking like the list failed to load. */
         document.getElementById('hives-container').innerHTML =
           '<div class="empty-state">' +
-          '<p style="font-size:var(--fs-xl);margin-bottom:var(--sp-4)">No hives match these filters</p>' +
+          '<p class="fs-xl mb-4">No hives match these filters</p>' +
           '<p>' + allHives.length + (allHives.length === 1 ? ' hive is' : ' hives are') + ' hidden by the search, facets or status filters.</p>' +
           /* clearAllHiveFilters, not clearStatusFilters: a search term, a facet
              or an alert drill-down can empty the list too, and a button that
              only clears the chips would leave the operator stuck looking at an
              empty table. */
-          '<p style="margin-top:var(--sp-5)"><button type="button" class="filter-chip filter-chip-clear" onclick="clearAllHiveFilters()">Clear filters</button></p>' +
+          '<p class="mt-5"><button type="button" class="filter-chip filter-chip-clear" onclick="clearAllHiveFilters()">Clear filters</button></p>' +
           '</div>';
         return;
       }
@@ -6717,7 +6717,7 @@
         if (canConvert) {
           actions = '<button class="hv-btn btn-primary btn-sm" onclick="openConvert(this)" data-hive-id="' + esc(h.id) + '" data-dash-url="' + esc(h.dashboardUrl||'') + '" data-org="' + esc(h.org) + '" data-repos="' + esc((h.repos||[]).join(', ')) + '" data-primary="' + esc(h.primaryRepo) + '" data-level="' + (h.acmmLevel||1) + '" data-name="' + esc(h.name||'') + '">Convert to Hosted</button>';
           if (h.role === 'owner') {
-            actions += '<br style="margin-bottom:var(--sp-2)"><button class="hv-btn btn-danger btn-sm" onclick="removeLocalHive(\'' + esc(h.id) + '\')" title="Remove from registry (does not delete the hive)">Remove</button>';
+            actions += '<br class="mb-2"><button class="hv-btn btn-danger btn-sm" onclick="removeLocalHive(\'' + esc(h.id) + '\')" title="Remove from registry (does not delete the hive)">Remove</button>';
           }
         } else if (isHosted && (roleAtLeast(h.role, 'read-write'))) {
           actions = '<button class="hv-btn btn-primary btn-sm" onclick="openAccessModal(\'' + esc(h.id) + '\',\'' + esc(h.dashboardUrl || '') + '\')">Permissions</button>';
@@ -7050,7 +7050,7 @@
         /* No version reported, but drift can still exist (e.g. heartbeat-stale on a
            spoke too old to report a SHA) — surface the dot beside the dash so
            folding Drift into Version never hides a signal. */
-        } else { versionCell = '<span style="color:var(--muted)">—</span>' + (driftDot ? ' ' + driftDot : ''); }
+        } else { versionCell = '<span class="text-muted">—</span>' + (driftDot ? ' ' + driftDot : ''); }
         var pendingBadge = (h.pendingRequestCount > 0 && (roleAtLeast(h.role, 'read-write')))
           ? '<span style="position:absolute;top:-2px;right:-2px;background:var(--blue);color:#fff;border-radius:50%;width:16px;height:16px;font-size:var(--fs-xs);display:flex;align-items:center;justify-content:center;font-weight:700">' + h.pendingRequestCount + '</span>'
           : '';
@@ -7102,13 +7102,13 @@
              not a control. Falls back to a plain badge with no dashboard URL. */
           if (isLocal) {
             var dh = h.dashboardUrl && !h.dashboardUrl.includes('localhost') ? h.dashboardUrl : '';
-            var badge = pub ? '<span style="color:var(--green)">Public</span>' : '<span style="color:var(--muted)">Private</span>';
+            var badge = pub ? '<span class="text-success">Public</span>' : '<span class="text-muted">Private</span>';
             return dh
-              ? '<a href="' + escAttr(dh) + '#config/governor/Hub" target="_blank" title="Change in Settings → Hub tab" style="text-decoration:none;cursor:pointer">' + badge + ' <span style="font-size:var(--fs-xs);color:var(--muted)">↗</span></a>'
+              ? '<a href="' + escAttr(dh) + '#config/governor/Hub" target="_blank" title="Change in Settings → Hub tab" style="text-decoration:none;cursor:pointer">' + badge + ' <span class="fs-xs text-muted">↗</span></a>'
               : badge;
           }
           /* Branch 3 — everyone else: read-only state, no affordance implied. */
-          return pub ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--muted)">—</span>';
+          return pub ? '<span class="text-success">✓</span>' : '<span class="text-muted">—</span>';
         })();
         var locationBadge = isLocal ? '<span style="display:inline-block;padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);font-size:var(--fs-xs);font-weight:600;background:rgba(107,114,128,0.15);color:#9ca3af;border:1px solid rgba(107,114,128,0.3)">local</span>' : clusterBadge(h.clusterId, h.clusterName);
         /* Location on top, visibility beneath, GitHub host last — three stacked
@@ -7148,7 +7148,7 @@
               : '<div style="margin-top:var(--sp-2);font-size:var(--fs-sm);color:var(--muted);font-style:italic">(no note)</div>';
             return '<div style="padding:var(--sp-3) var(--sp-0);border-bottom:1px solid var(--border)">' +
               '<div style="display:flex;align-items:center;justify-content:space-between">' +
-              '<div>' + avatar + '<span style="font-size:var(--fs-base)">' + esc(userLabel || rawUser) + '</span>' + authKey + '</div>' +
+              '<div>' + avatar + '<span class="fs-base">' + esc(userLabel || rawUser) + '</span>' + authKey + '</div>' +
               '<div style="display:flex;gap:var(--sp-2)">' +
               '<button class="hv-btn btn-primary btn-sm" onclick="inlineApproveAccess(\'' + esc(h.id) + '\',\'' + esc(pr.username) + '\',this)">Approve</button>' +
               '<button class="hv-btn btn-danger btn-sm" onclick="inlineDenyAccess(\'' + esc(h.id) + '\',\'' + esc(pr.username) + '\',this)">Deny</button>' +
@@ -7170,7 +7170,7 @@
              carry their own nowrap, so the SHA still never breaks mid-hash,
              but the COLUMN is no longer forced to the width of every part laid
              end to end. That nowrap was the main reason this column was wide. */
-          '<td style="font-size:var(--fs-xs)">' + versionCell + '</td>' +
+          '<td class="fs-xs">' + versionCell + '</td>' +
           /* Repo count over the GitHub-instance pill: the host qualifies WHICH
              GitHub these repos live on, so the two belong together. Stacked
              rather than inline to keep the numeric column narrow. */
@@ -7210,7 +7210,7 @@
              carries a native title so a folded value is never ambiguous. All
              three sorts stay reachable from the ACTIVITY header's three ⇅
              controls (actionableIssues, actionablePRs, activeContributors). */
-          '<td style="font-size:var(--fs-sm)">' +
+          '<td class="fs-sm">' +
             '<div style="' + STACKED_CELL_STYLE + ';align-items:flex-start">' +
               '<div style="' + STACKED_LINE_STYLE + '" title="Actionable issues"><span style="color:var(--muted);min-width:24px;display:inline-block">Iss</span>' + sparkline(h.issueHistory, '#f59e0b', 40, 12) + (h.actionableIssues || 0) + wsBadge(h.workSource) + '</div>' +
               '<div style="' + STACKED_LINE_STYLE + '" title="Actionable PRs"><span style="color:var(--muted);min-width:24px;display:inline-block">PRs</span>' + sparkline(h.prHistory, '#3b82f6', 40, 12) + (h.actionablePRs || 0) + '</div>' +
@@ -7595,8 +7595,8 @@
       if (!container || !container.parentNode) return;
       var line = function(sw, label, detail) {
         return '<div style="display:flex;align-items:center;gap:var(--sp-5)">' +
-          '<span style="font-size:var(--fs-lg)">&#x23F8;&#xFE0F;</span>' +
-          '<span style="font-size:var(--fs-base);color:var(--text)"><strong>' + label + '</strong> ' + detail +
+          '<span class="fs-lg">&#x23F8;&#xFE0F;</span>' +
+          '<span class="fs-base text-default"><strong>' + label + '</strong> ' + detail +
           ' — paused by <strong>' + esc(sw.by || 'an admin') + '</strong>' +
           (sw.at ? ' since <span style="font-family:monospace;font-size:var(--fs-base)">' + esc(sw.at) + '</span>' : '') +
           '</span></div>';
@@ -8172,7 +8172,7 @@
       var banner = document.createElement('div');
       banner.id = 'pending-banner';
       banner.style.cssText = 'background:rgba(59,130,246,0.12);border:1px solid rgba(59,130,246,0.3);border-radius:var(--r);padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-6);display:flex;align-items:center;gap:10px';
-      banner.innerHTML = '<span style="font-size:var(--fs-lg)">📬</span><span style="font-size:var(--fs-base);color:var(--text)">' + total + ' pending access request' + (total > 1 ? 's' : '') + ' across ' + pending.length + ' hive' + (pending.length > 1 ? 's' : '') + '. Open <strong>Permissions</strong> on each hive to approve or deny.</span>';
+      banner.innerHTML = '<span class="fs-lg">📬</span><span class="fs-base text-default">' + total + ' pending access request' + (total > 1 ? 's' : '') + ' across ' + pending.length + ' hive' + (pending.length > 1 ? 's' : '') + '. Open <strong>Permissions</strong> on each hive to approve or deny.</span>';
       var container = document.getElementById('hives-container');
       container.parentNode.insertBefore(banner, container);
     }
@@ -8202,7 +8202,7 @@
           var pKey = 'pending:' + pendingIds.sort().join(',');
           if (!dismissed[pKey]) {
             html += '<div style="background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.3);border-radius:var(--r);padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-4);display:flex;align-items:center;gap:var(--sp-5)">' +
-              '<span style="font-size:var(--fs-lg)">&#x1F514;</span><span style="flex:1;font-size:var(--fs-base);color:var(--text)">Access pending: <strong>' + pendingIds.map(esc).join(', ') + '</strong></span>' +
+              '<span class="fs-lg">&#x1F514;</span><span style="flex:1;font-size:var(--fs-base);color:var(--text)">Access pending: <strong>' + pendingIds.map(esc).join(', ') + '</strong></span>' +
               '<button class="hv-btn btn-icon btn-sm" onclick="dismissBanner(\'' + pKey.replace(/'/g,'') + '\',this)" title="Dismiss">&times;</button></div>';
           }
         }
@@ -8210,7 +8210,7 @@
           var aKey = 'accepted:' + acceptedIds.sort().join(',');
           if (!dismissed[aKey]) {
             html += '<div style="background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.3);border-radius:var(--r);padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-4);display:flex;align-items:center;gap:var(--sp-5)">' +
-              '<span style="font-size:var(--fs-lg)">&#x2705;</span><span style="flex:1;font-size:var(--fs-base);color:var(--text)">Access granted: <strong>' + acceptedIds.map(esc).join(', ') + '</strong> — Start contributing!</span>' +
+              '<span class="fs-lg">&#x2705;</span><span style="flex:1;font-size:var(--fs-base);color:var(--text)">Access granted: <strong>' + acceptedIds.map(esc).join(', ') + '</strong> — Start contributing!</span>' +
               '<button class="hv-btn btn-icon btn-sm" onclick="dismissBanner(\'' + aKey.replace(/'/g,'') + '\',this)" title="Dismiss">&times;</button></div>';
           }
         }
@@ -8264,7 +8264,7 @@
       } catch (e) { dismissedReqs = {}; } /* corrupted value — show the banner */
       if (dismissedReqs[dismissKey]) { el.style.display = 'none'; return; }
       el.innerHTML = '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:var(--r);padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-6);display:flex;align-items:center;gap:var(--sp-5)">' +
-        '<span style="font-size:var(--fs-lg)">' + icon + '</span>' +
+        '<span class="fs-lg">' + icon + '</span>' +
         '<span style="flex:1;font-size:var(--fs-base);color:var(--text)">' + msg + '</span>' +
         '<button class="hv-btn btn-icon btn-sm" onclick="dismissBanner(\'' + esc(dismissKey) + '\',this)" title="Dismiss">&times;</button>' +
         '</div>';
@@ -8337,7 +8337,7 @@
     // (admin-only) so this never costs an API call per row.
     function otherHivesCell(otherHives) {
       var list = (otherHives || []).filter(function(e) { return e && e.hive_id; });
-      if (!list.length) return '<span style="color:var(--muted);font-size:var(--fs-xs)">—</span>';
+      if (!list.length) return '<span class="text-muted fs-xs">—</span>';
       // Plain text for the tooltip — a title attribute is not HTML, and esc()
       // does not escape quotes, so nothing user-controlled may be interpolated
       // into the attribute string. Set it via the DOM instead.
@@ -8482,7 +8482,7 @@
           provisionRequesterAvatar(pr, PANEL_ACCESS_AVATAR_PX, 'margin-right:6px') +
           (primary
             ? '<span>' + esc(primary) + '</span>' + provisionRequesterLabel(pr)
-            : '<span style="color:var(--muted)">—</span>');
+            : '<span class="text-muted">—</span>');
         // Repo link, built by the shared provisionRepoLabel(): github_host is
         // empty for public github.com and otherwise a GitHub Enterprise host
         // (github.ibm.com, …), so the origin comes from the record rather than
@@ -8494,7 +8494,7 @@
         var repo = pr.primary_repo || pr.repos || '';
         var repoCell = (org || repo)
           ? provisionRepoLabel(pr)
-          : '<span style="color:var(--muted)">—</span>';
+          : '<span class="text-muted">—</span>';
         // For an approval the outcome is the hive they received — linked to the
         // existing SSO handoff endpoint, the same affordance My Hives uses —
         // plus their role on it. For a denial it is the reason, if one was
@@ -8502,15 +8502,15 @@
         var outcome;
         if (approved && pr.assigned_hive) {
           var roleSuffix = pr.assigned_role
-            ? ' <span style="color:var(--muted);font-size:var(--fs-xs)">&middot; ' + esc(pr.assigned_role) + '</span>'
+            ? ' <span class="text-muted fs-xs">&middot; ' + esc(pr.assigned_role) + '</span>'
             : '';
           outcome =
             '<a href="/api/saas/hives/' + encodeURIComponent(pr.assigned_hive) + '/open" target="_blank" rel="noopener noreferrer" style="font-family:ui-monospace,monospace;font-size:var(--fs-xs);color:inherit" title="Open dashboard">' +
             esc(pr.assigned_hive) + '</a>' + roleSuffix;
         } else if (!approved && pr.deny_reason) {
-          outcome = '<span style="color:var(--muted)">' + esc(pr.deny_reason) + '</span>';
+          outcome = '<span class="text-muted">' + esc(pr.deny_reason) + '</span>';
         } else {
-          outcome = '<span style="color:var(--muted)">—</span>';
+          outcome = '<span class="text-muted">—</span>';
         }
         return '<tr>' +
           '<td style="white-space:nowrap">' + userCell + '</td>' +
@@ -8585,7 +8585,7 @@
           // Requests table uses, so pending and decided rows read alike.
           ' ' + githubHostPill(pr.github_host) +
           ' ' + acmmBadge(pr.acmm_level) +
-          '<div style="font-size:var(--fs-xs);color:var(--muted)">' + esc((pr.requested_at || '').substring(0, 10)) + '</div>' +
+          '<div class="fs-xs text-muted">' + esc((pr.requested_at || '').substring(0, 10)) + '</div>' +
           '</div></div>' +
           '<div style="display:flex;gap:var(--sp-3)">' +
           '<button class="hv-btn btn-primary btn-sm" onclick="openApproveModal(\'' + esc(pr.username) + '\')">Approve</button>' +
@@ -8636,12 +8636,12 @@
       var reposText = pr.primary_repo || pr.repos || '';
       var summary =
         '<div style="padding:var(--sp-5) var(--sp-5);background:var(--surface);border:1px solid var(--border);border-radius:var(--r);font-size:var(--fs-base);margin-bottom:var(--sp-2)">' +
-        '<div><span style="color:var(--muted)">User:</span> <strong>' + esc(provisionRequesterDisplay(username)) + '</strong></div>' +
-        '<div><span style="color:var(--muted)">Org:</span> ' + esc(pr.org || '') + '</div>' +
-        '<div><span style="color:var(--muted)">Repos:</span> ' + esc(pr.repos || '') + '</div>' +
-        '<div><span style="color:var(--muted)">Primary:</span> ' + esc(pr.primary_repo || '') + '</div>' +
-        '<div><span style="color:var(--muted)">ACMM:</span> ' + (pr.acmm_level != null ? pr.acmm_level : '—') + '</div>' +
-        '<div><span style="color:var(--muted)">GitHub:</span> ' + esc(pr.github_host || PUBLIC_GITHUB_HOST) + '</div>' +
+        '<div><span class="text-muted">User:</span> <strong>' + esc(provisionRequesterDisplay(username)) + '</strong></div>' +
+        '<div><span class="text-muted">Org:</span> ' + esc(pr.org || '') + '</div>' +
+        '<div><span class="text-muted">Repos:</span> ' + esc(pr.repos || '') + '</div>' +
+        '<div><span class="text-muted">Primary:</span> ' + esc(pr.primary_repo || '') + '</div>' +
+        '<div><span class="text-muted">ACMM:</span> ' + (pr.acmm_level != null ? pr.acmm_level : '—') + '</div>' +
+        '<div><span class="text-muted">GitHub:</span> ' + esc(pr.github_host || PUBLIC_GITHUB_HOST) + '</div>' +
         '</div>';
       /* The requester's own github_host pre-fills the picker — they already
          told us which GitHub their org lives on. It is only the cluster
@@ -8653,7 +8653,7 @@
         summary +
         '<label style="' + lbl + '">Placeholder to assign</label>' +
         '<select id="approve-hive" style="' + fld + '"><option value="">Loading placeholders…</option></select>' +
-        '<div style="font-size:var(--fs-sm);color:var(--muted);margin-top:var(--sp-3)">Auto-pick chooses an available placeholder from the request&#39;s pool.</div>' +
+        '<div class="fs-sm text-muted mt-3">Auto-pick chooses an available placeholder from the request&#39;s pool.</div>' +
         githubHostChoiceMarkup('approve', '', approveRequestHost, fld, lbl) +
         '<div style="display:flex;gap:var(--sp-4);justify-content:flex-end;margin-top:var(--sp-6)">' +
         '<button class="hv-btn btn-primary" onclick="closeApproveModal()">Cancel</button>' +
@@ -8816,10 +8816,10 @@
         document.getElementById('scale-globals').innerHTML = SCALE_GLOBAL_KNOBS.map(function(k) {
           return '<div style="padding:var(--sp-5);border:1px solid var(--border);border-radius:var(--r);background:var(--surface)">' +
             '<div style="font-size:var(--fs-base);font-weight:600;margin-bottom:var(--sp-1)">' + k.label + '</div>' +
-            '<div style="font-size:var(--fs-xs);color:var(--muted);margin-bottom:var(--sp-4)">' + k.hint + '</div>' +
+            '<div class="fs-xs text-muted mb-4">' + k.hint + '</div>' +
             '<div style="display:flex;align-items:center;gap:var(--sp-4)">' +
             scaleNumInput('scale-' + k.key, saved[k.key], 'default ' + defaults[k.key]) +
-            '<span style="font-size:var(--fs-sm);color:var(--muted)">in force: ' + (eff[k.key] != null ? eff[k.key] : '?') + '</span>' +
+            '<span class="fs-sm text-muted">in force: ' + (eff[k.key] != null ? eff[k.key] : '?') + '</span>' +
             '</div></div>';
         }).join('');
         var overrides = saved.clusters || {};
@@ -8922,7 +8922,7 @@
       pushSparkPoint(nodeKey, metric, pct);
       var spark = renderUnicodeSparkline(nodeKey, metric, color);
       return '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--sp-2)">' +
-        '<span style="font-size:var(--fs-xs);color:var(--muted)">' + label + '</span>' +
+        '<span class="fs-xs text-muted">' + label + '</span>' +
         '<span style="display:flex;align-items:center;gap:var(--sp-3)">' +
         spark +
         '<span style="font-family:monospace;font-size:var(--fs-sm);color:' + color + '">' + used + ' / ' + total + ' ' + unit + '</span>' +
@@ -8934,7 +8934,7 @@
     // dashed rather than 0%, so an unreachable node never reads as healthy.
     function renderHealthMetricUnknown(label, reason) {
       return '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--sp-2)" title="' + esc(reason || 'No data') + '">' +
-        '<span style="font-size:var(--fs-xs);color:var(--muted)">' + label + '</span>' +
+        '<span class="fs-xs text-muted">' + label + '</span>' +
         '<span style="display:flex;align-items:center;gap:var(--sp-3)">' +
         '<span style="font-family:monospace;font-size:var(--fs-sm);color:var(--muted)">— / — GiB</span>' +
         '<span style="font-size:var(--fs-xs);min-width:28px;text-align:right;color:var(--muted)">—</span>' +
@@ -9009,7 +9009,7 @@
             diskSegment = renderUnicodeSparkline('_cluster', 'disk', diskColor) +
               ' <span style="color:' + diskColor + '">' + s.total_disk_percent + '% disk</span> · ';
           } else {
-            diskSegment = '<span style="color:var(--muted)" title="No node reported live disk usage">— disk</span> · ';
+            diskSegment = '<span class="text-muted" title="No node reported live disk usage">— disk</span> · ';
           }
           summaryBar.innerHTML = clusterCount + ' cluster' + (clusterCount !== 1 ? 's' : '') + ' · ' +
             (s.total_nodes || 0) + ' nodes · ' + (s.total_cpu_cores || 0) + ' vCPU · ' +
@@ -9045,11 +9045,11 @@
               var cDiskColor = healthBarColor(cs.total_disk_percent, CLUSTER_DISK_WARN_PCT, CLUSTER_DISK_DANGER_PCT);
               cDiskSegment = '<span style="color:' + cDiskColor + '">' + cs.total_disk_percent + '% disk</span> · ';
             } else {
-              cDiskSegment = '<span style="color:var(--muted)" title="No node in this cluster reported live disk usage">— disk</span> · ';
+              cDiskSegment = '<span class="text-muted" title="No node in this cluster reported live disk usage">— disk</span> · ';
             }
             var gpuLine = '';
             if (c.gpu_summary) {
-              gpuLine = ' · <span style="color:var(--green)">' + c.gpu_summary.allocatable_gpus + '/' + c.gpu_summary.total_gpus + ' GPUs</span>';
+              gpuLine = ' · <span class="text-success">' + c.gpu_summary.allocatable_gpus + '/' + c.gpu_summary.total_gpus + ' GPUs</span>';
             }
             // Remaining hive capacity: omitted entirely when the collector had
             // no pod request data (field absent); 0 means the cluster is full.
@@ -9072,7 +9072,7 @@
               if (sp.truncated) { nsList += ', …'; }
               var stuckTitle = 'Hive pods stuck Terminating past the reaper threshold: deletionTimestamp set, no finalizers, not Running. ' +
                 'Signature of a node removed without draining. Affected namespaces: ' + nsList;
-              stuckLine = ' · <span style="color:var(--red)" title="' + esc(stuckTitle) + '">' +
+              stuckLine = ' · <span class="text-danger" title="' + esc(stuckTitle) + '">' +
                 sp.total + ' stuck pod' + (sp.total === 1 ? '' : 's') +
                 ' in ' + sp.namespaces_affected + ' ns</span>';
             }
@@ -9111,14 +9111,14 @@
                 (wt.issuer ? ' Issuer: ' + wt.issuer + '.' : '') +
                 ((wt.dns_names || []).length ? ' SANs: ' + (wt.dns_names || []).join(', ') + '.' : '') +
                 ' Every wildcard-covered spoke on this cluster is served by this one certificate.';
-              wildcardLine = ' · <span style="color:var(--red)" title="' + esc(wtTitle) + '">' +
+              wildcardLine = ' · <span class="text-danger" title="' + esc(wtTitle) + '">' +
                 esc(wtLabel) + '</span>';
             }
             var errorLine = c.error ? '<div style="margin:var(--sp-4) var(--sp-0);padding:var(--sp-3) var(--sp-5);background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:var(--r);font-size:var(--fs-sm);color:var(--red)">' + esc(c.error) + '</div>' : '';
             var headerHtml = '<div style="display:flex;align-items:center;gap:var(--sp-4);margin:var(--sp-6) var(--sp-0) var(--sp-4)">' +
               clusterBadge(c.id, c.name) +
               '<span style="font-size:var(--fs-base);color:var(--text);font-weight:600">' + esc(cLabel) + '</span>' +
-              '<span style="font-size:var(--fs-sm);color:var(--muted)">' +
+              '<span class="fs-sm text-muted">' +
               (cs.total_nodes || 0) + ' nodes · ' + (cs.total_cpu_cores || 0) + ' vCPU · ' +
               '<span style="color:' + cCpuColor + '">' + (cs.total_cpu_percent || 0) + '% cpu</span> · ' +
               '<span style="color:' + cMemColor + '">' + (cs.total_mem_percent || 0) + '% mem</span> · ' +
@@ -9167,7 +9167,7 @@
     /* Renders merge→first-execution latency compactly; null means nothing
        qualifying has executed yet and must read as absent, never as 0. */
     function reachLatency(seconds) {
-      if (seconds == null || !isFinite(seconds) || seconds < 0) return '<span style="color:var(--muted)">—</span>';
+      if (seconds == null || !isFinite(seconds) || seconds < 0) return '<span class="text-muted">—</span>';
       var SEC_PER_MIN = 60, SEC_PER_HOUR = 3600, SEC_PER_DAY = 86400;
       if (seconds < SEC_PER_HOUR) return Math.round(seconds / SEC_PER_MIN) + 'm';
       if (seconds < SEC_PER_DAY) return (seconds / SEC_PER_HOUR).toFixed(1) + 'h';
@@ -9192,7 +9192,7 @@
           '% -> ' + (d.error_rate_after * PCT).toFixed(2) + '%)';
       }).filter(Boolean).join('\n');
       if (!measured.length) {
-        return '<span style="color:var(--muted)" title="' + esc(tip || 'No deploy window observed yet, or not enough before/after history') + '">unmeasured</span>';
+        return '<span class="text-muted" title="' + esc(tip || 'No deploy window observed yet, or not enough before/after history') + '">unmeasured</span>';
       }
       var worst = measured[0];
       measured.forEach(function(d) { if (Math.abs(d.delta) > Math.abs(worst.delta)) worst = d; });
@@ -9207,23 +9207,23 @@
       var coveragePct = Math.round(((r.attribution && r.attribution.coverage) || 0) * 100);
       var compCell = comps.length
         ? '<span title="Attribution coverage ' + coveragePct + '% of changed files">' + esc(comps.join(', ')) + '</span>'
-        : '<span style="color:var(--muted)" title="No changed file maps to an instrumented component (docs/workflows/deploy)">unattributable</span>';
+        : '<span class="text-muted" title="No changed file maps to an instrumented component (docs/workflows/deploy)">unattributable</span>';
       var hives = r.reach_hives || [];
       var reachCell = r.reach_count
         ? '<span title="' + esc(hives.join(', ')) + '">' + r.reach_count + '</span>'
-        : '<span style="color:var(--muted)">0</span>';
+        : '<span class="text-muted">0</span>';
       var flags = [];
       if (r.never_ran) flags.push('<span style="padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);font-size:var(--fs-xs);font-weight:600;background:rgba(239,68,68,0.15);color:var(--red);border:1px solid rgba(239,68,68,0.3)" title="Merged and deployed, but no touched component has executed anywhere in ' + (r.never_ran_threshold_days || 0) + ' days — the category acceptance-rate cannot see">never ran</span>');
       else if (!r.deployed) flags.push('<span style="padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);font-size:var(--fs-xs);font-weight:600;background:rgba(107,114,128,0.15);color:#9ca3af;border:1px solid rgba(107,114,128,0.3)" title="No hive reports running a commit containing this PR yet (merged is not deployed)">not deployed</span>');
       if ((r.shared_with || []).length) flags.push('<span style="padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);font-size:var(--fs-xs);font-weight:600;background:rgba(128,191,255,0.15);color:#80bfff;border:1px solid rgba(128,191,255,0.3)" title="Co-deployed with PR ' + esc((r.shared_with || []).map(function(n) { return '#' + n; }).join(', ')) + ' — reach and deltas are shared by construction (D4)">shared</span>');
       return '<tr>' +
         '<td style="white-space:nowrap"><a href="https://github.com/hivecommons/hive/pull/' + r.pr + '" target="_blank">#' + r.pr + '</a>' +
-        (r.title ? ' <span style="color:var(--muted);font-size:var(--fs-sm)" title="' + esc(r.title) + '">' + esc(r.title.length > 48 ? r.title.slice(0, 48) + '…' : r.title) + '</span>' : '') + '</td>' +
+        (r.title ? ' <span class="text-muted fs-sm" title="' + esc(r.title) + '">' + esc(r.title.length > 48 ? r.title.slice(0, 48) + '…' : r.title) + '</span>' : '') + '</td>' +
         '<td>' + compCell + '</td>' +
         '<td>' + reachCell + '</td>' +
         '<td>' + reachLatency(r.first_execution_latency_seconds) + '</td>' +
         '<td>' + reachDeltaCell(r.error_deltas) + '</td>' +
-        '<td style="white-space:nowrap">' + (flags.join(' ') || '<span style="color:var(--muted)">—</span>') + '</td>' +
+        '<td style="white-space:nowrap">' + (flags.join(' ') || '<span class="text-muted">—</span>') + '</td>' +
         '</tr>';
     }
 
@@ -9261,7 +9261,7 @@
         var container = document.getElementById('reach-table-container');
         if (!container) return;
         if (!reports.length) {
-          container.innerHTML = '<div style="color:var(--muted);font-size:var(--fs-base)">No recently merged PRs to report on</div>';
+          container.innerHTML = '<div class="text-muted fs-base">No recently merged PRs to report on</div>';
           return;
         }
         container.innerHTML =
@@ -9373,7 +9373,7 @@
         '<select id="' + esc(idPrefix) + '-ghhost" style="' + fld + '">' + opts + '</select>' +
         '<input id="' + esc(idPrefix) + '-ghhost-custom" style="' + fld + ';margin-top:var(--sp-3);display:' + (preselectCustom ? 'block' : 'none') + '" ' +
           'placeholder="github.example.com" value="' + esc(preselectCustom ? requestHost : '') + '">' +
-        '<div id="' + esc(idPrefix) + '-ghhost-note" style="font-size:var(--fs-sm);color:var(--muted);margin-top:var(--sp-3)"></div>';
+        '<div class="fs-sm text-muted mt-3" id="' + esc(idPrefix) + '-ghhost-note"></div>';
     }
 
     /* wireGitHubHostChoice attaches the behaviour for a picker rendered by
@@ -9770,7 +9770,7 @@
          population is NOT this case: it still renders, as a single 100% Unknown
          bar, which is exactly the state the operator needs to see on day one. */
       if (total <= 0) {
-        el.innerHTML = '<div style="font-size:var(--fs-sm);color:var(--muted)">No users yet.</div>';
+        el.innerHTML = '<div class="fs-sm text-muted">No users yet.</div>';
         return;
       }
       /* Scale against the biggest bucket, unknown included, so no bar can ever
@@ -9795,7 +9795,7 @@
       /* Unknown is last (it is not a country and should not head a ranked list
          of them) but always present, and labelled in --muted so it reads as an
          absence rather than as a place. */
-      var unknownLabel = '<span style="color:var(--muted)">Unknown</span>';
+      var unknownLabel = '<span class="text-muted">Unknown</span>';
       rows += countryRollupRow(unknownLabel, unknown, max, total);
 
       el.innerHTML =
@@ -10156,9 +10156,9 @@
     // renderContactCell is the collapsed summary shown in the main user row.
     function renderContactCell(u) {
       var bits = [];
-      if (u.full_name) bits.push('<span style="font-size:var(--fs-sm)">' + esc(u.full_name) + '</span>');
-      if (u.company) bits.push('<span style="font-size:var(--fs-xs);color:var(--muted)">' + esc(u.company) + '</span>');
-      if (u.slack_id) bits.push('<span style="font-size:var(--fs-xs);color:var(--muted)">slack: ' + esc(u.slack_id) + '</span>');
+      if (u.full_name) bits.push('<span class="fs-sm">' + esc(u.full_name) + '</span>');
+      if (u.company) bits.push('<span class="fs-xs text-muted">' + esc(u.company) + '</span>');
+      if (u.slack_id) bits.push('<span class="fs-xs text-muted">slack: ' + esc(u.slack_id) + '</span>');
       if (u.notes) {
         var preview = u.notes.length > CONTACT_NOTES_PREVIEW_CHARS
           ? u.notes.substring(0, CONTACT_NOTES_PREVIEW_CHARS) + '…' : u.notes;
@@ -10171,7 +10171,7 @@
       // line a different width, which is hard to scan down a column.
       var summary = bits.length
         ? '<div style="display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:var(--sp-1);max-width:220px;overflow:hidden">' + bits.join('') + '</div>'
-        : '<span style="color:var(--muted);font-size:var(--fs-sm)">—</span>';
+        : '<span class="text-muted fs-sm">—</span>';
       var open = !!(_contactExpandedUsers && _contactExpandedUsers[u.github_username]);
       var btn = '<button type="button" data-contact-toggle="' + escAttr(u.github_username) + '"' +
         ' id="' + contactToggleId(u.github_username) + '"' +
@@ -10285,7 +10285,7 @@
               ' maxlength="' + CONTACT_MAX_NOTES + '" style="' + fld + ';resize:vertical;font-family:inherit">' + esc(u.notes || '') + '</textarea>' +
           '</div>' +
           '<div style="align-self:flex-end;display:flex;align-items:center;gap:var(--sp-5);padding-bottom:var(--sp-2)">' +
-            '<span style="font-size:var(--fs-xs);color:var(--muted)">Save closes &middot; Esc cancels</span>' +
+            '<span class="fs-xs text-muted">Save closes &middot; Esc cancels</span>' +
             '<button type="button" data-contact-close="' + user + '"' +
               ' style="padding:var(--sp-2) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);' +
               'color:var(--muted);cursor:pointer;font-size:var(--fs-xs)">Cancel</button>' +
@@ -10748,7 +10748,7 @@
       var verdict = userVerdict(u, act, hives);
       var row = function(k, v) {
         return '<div style="display:flex;justify-content:space-between;gap:var(--sp-5);padding:var(--sp-1) var(--sp-0)">' +
-          '<span style="color:var(--muted)">' + esc(k) + '</span>' +
+          '<span class="text-muted">' + esc(k) + '</span>' +
           '<span style="color:var(--text);text-align:right">' + v + '</span></div>';
       };
       var liveDot = act.activeNow
@@ -10763,7 +10763,7 @@
       var presenceNow = (_liveEngagedUsers && _liveEngagedUsers.has(unameLower)) ? 'engaged now'
         : ((_liveHiveUsers && _liveHiveUsers.has(unameLower)) ? 'tab open (idle)' : '—');
       var stats =
-        row('Hub logins', esc(String(u.login_count || 0)) + (u.last_login ? ' <span style="color:var(--muted)">(last ' + esc(fmtUserTS(u.last_login)) + ')</span>' : '')) +
+        row('Hub logins', esc(String(u.login_count || 0)) + (u.last_login ? ' <span class="text-muted">(last ' + esc(fmtUserTS(u.last_login)) + ')</span>' : '')) +
         row('Time in hive', esc(fmtHours(u.session_seconds))) +
         row('Engaged time', esc(fmtHours(u.engaged_seconds))) +
         row('Last real action', esc(u.last_action_at ? fmtUserTS(u.last_action_at) : '—')) +
@@ -10775,10 +10775,10 @@
         ? hives.map(function(h) {
             return '<div style="display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-1) var(--sp-0)">' +
               '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(h.name) + '</span>' +
-              '<span style="color:var(--muted);font-size:var(--fs-xs)">' + esc(h.role) + '</span>' +
+              '<span class="text-muted fs-xs">' + esc(h.role) + '</span>' +
               journeyBadge(h.journey) + '</div>';
           }).join('')
-        : '<div style="color:var(--muted)">No hives assigned</div>';
+        : '<div class="text-muted">No hives assigned</div>';
 
       var verdictBlock = '<div style="margin:var(--sp-3) var(--sp-0) var(--sp-1);padding:var(--sp-2) var(--sp-3);border-radius:var(--r);border:1px solid ' + verdict.color + ';color:' + verdict.color + ';font-weight:700" title="' + escAttr(verdict.tip) + '">' + esc(verdict.label) + '</div>';
 
@@ -10839,7 +10839,7 @@
         var hiveRows = '';
         if (hiveCount > 0) {
           hiveRows = '<tr id="' + expandId + '" style="display:' + (isExpanded ? '' : 'none') + '"><td colspan="' + USERS_TABLE_COLSPAN + '"><div style="padding:8px 12px 8px 40px;font-size:var(--fs-sm)">';
-          hiveRows += '<table style="width:100%;border-collapse:collapse"><thead><tr style="color:var(--muted);font-size:var(--fs-xs)"><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">Hive</th><th>Role</th><th>Type</th><th>Link</th></tr></thead><tbody>';
+          hiveRows += '<table style="width:100%;border-collapse:collapse"><thead><tr class="text-muted fs-xs"><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">Hive</th><th>Role</th><th>Type</th><th>Link</th></tr></thead><tbody>';
           hiveIds.forEach(function(hid) {
             var role = hivesObj[hid];
             var isHosted = hid.startsWith('hosted-') || hid.startsWith('saas-');
@@ -10851,9 +10851,9 @@
             var linkBase = (regEntry && regEntry.dashboardUrl && !regEntry.dashboardUrl.includes('localhost'))
               ? regEntry.dashboardUrl : ((isHosted && _hubSpokeDomain) ? 'https://' + esc(hid) + '.' + esc(_hubSpokeDomain) : '');
             var linkLabel = linkBase.replace(/^https?:\/\//, '');
-            var link = linkBase ? '<a href="' + esc(linkBase) + '" target="_blank" class="dash-link">' + esc(linkLabel) + '</a>' : '<span style="color:var(--muted)">local</span>';
+            var link = linkBase ? '<a href="' + esc(linkBase) + '" target="_blank" class="dash-link">' + esc(linkLabel) + '</a>' : '<span class="text-muted">local</span>';
             var typeBadge = isHosted ? '<span style="color:#60a5fa">hosted</span>' : '<span style="color:#9ca3af">local</span>';
-            hiveRows += '<tr><td style="padding:var(--sp-2) var(--sp-4)">' + esc(hiveName) + '</td><td style="text-align:center">' + esc(role) + '</td><td style="text-align:center">' + typeBadge + '</td><td>' + link + '</td></tr>';
+            hiveRows += '<tr><td class="py-2-px-4">' + esc(hiveName) + '</td><td style="text-align:center">' + esc(role) + '</td><td style="text-align:center">' + typeBadge + '</td><td>' + link + '</td></tr>';
           });
           hiveRows += '</tbody></table></div></td></tr>';
         }
@@ -10871,18 +10871,18 @@
           '<span class="hive-access-wrap" style="position:relative;display:inline-flex;align-items:center;gap:var(--sp-2);cursor:help">' +
             '<span style="color:var(--text);font-weight:600">' + esc(userDisplayLabel(u)) + '</span>' +
             providerBadge(u) +
-            (hasPendingReq ? ' <span style="color:var(--accent);font-size:var(--fs-xs)">&#9679; request</span>' : '') +
+            (hasPendingReq ? ' <span class="text-accent fs-xs">&#9679; request</span>' : '') +
             renderUserStatsCard(u, hasPendingReq) +
           '</span>';
         return '<tr>' +
-          '<td>' + nameCell + (isAdmin ? ' <span style="color:var(--accent);font-size:var(--fs-xs)">admin</span>' : '') + '</td>' +
-          '<td style="font-size:var(--fs-sm);color:var(--muted)">' + esc(fmtUserTS(u.created_at)) + '</td>' +
-          '<td style="font-size:var(--fs-sm);color:var(--muted)">' + esc(fmtUserTS(u.last_login)) + '</td>' +
+          '<td>' + nameCell + (isAdmin ? ' <span class="text-accent fs-xs">admin</span>' : '') + '</td>' +
+          '<td class="fs-sm text-muted">' + esc(fmtUserTS(u.created_at)) + '</td>' +
+          '<td class="fs-sm text-muted">' + esc(fmtUserTS(u.last_login)) + '</td>' +
           '<td style="text-align:left">' + renderContactCell(u) + '</td>' +
           '<td>' + countryCell(u) + '</td>' +
           '<td>' + statusCell + '</td>' +
           '<td><input type="number" min="0" max="10" value="' + (u.saas_quota || 0) + '" style="width:50px;padding:var(--sp-2);background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);text-align:center" onchange="updateUser(\'' + esc(u.github_username) + '\',{saas_quota:parseInt(this.value)||0})"></td>' +
-          '<td>' + (hiveCount > 0 ? '<a href="#" onclick="toggleAdminExpand(\'' + esc(u.github_username) + '\');return false" style="color:var(--blue);font-size:var(--fs-base)">' + hiveCount + ' hive' + (hiveCount > 1 ? 's' : '') + '</a>' : '<span style="color:var(--muted)">0</span>') + '</td>' +
+          '<td>' + (hiveCount > 0 ? '<a class="text-info fs-base" href="#" onclick="toggleAdminExpand(\'' + esc(u.github_username) + '\');return false">' + hiveCount + ' hive' + (hiveCount > 1 ? 's' : '') + '</a>' : '<span class="text-muted">0</span>') + '</td>' +
           '<td>' + (isAdmin ? '' : '<button class="hv-btn btn-primary btn-sm" onclick="startImpersonation(\'' + esc(u.github_username) + '\')" title="See the hub exactly as this user does — read-only">View as</button> <button class="hv-btn btn-danger btn-sm" onclick="updateUser(\'' + esc(u.github_username) + '\',{blocked:' + (!u.blocked) + '})" style="padding:var(--sp-2) var(--sp-5);background:' + (u.blocked ? 'var(--green)' : 'var(--amber)') + ';color:' + (u.blocked ? '#fff' : '#1a1a1a') + ';border:none;border-radius:var(--r-sm);cursor:pointer;font-size:var(--fs-xs)">' + (u.blocked ? 'Unblock' : 'Block') + '</button> <button class="hv-btn btn-danger btn-sm" onclick="deleteUser(\'' + esc(u.github_username) + '\',' + hiveCount + ')">Delete</button>') + '</td>' +
           '</tr>' + renderContactPanelRow(u) + hiveRows;
       }).join('');
@@ -11162,11 +11162,11 @@
             esc(p.id) + '  (' + esc(p.cluster_id || 'default') + ')</option>';
         }).join('');
         hiveField =
-          '<div style="margin-bottom:var(--sp-2);font-size:var(--fs-base);color:var(--muted)">Claim an available placeholder for a real project.</div>' +
+          '<div class="mb-2 fs-base text-muted">Claim an available placeholder for a real project.</div>' +
           '<label style="' + lbl + '">Placeholder to assign *</label>' +
           '<select id="assign-hive-pick" style="' + fld + '">' + phOpts + '</select>';
       } else {
-        hiveField = '<div style="margin-bottom:var(--sp-2);font-size:var(--fs-base);color:var(--muted)">Claim placeholder <strong style="color:var(--fg)">' + esc(hiveId) + '</strong> for a real project.</div>';
+        hiveField = '<div class="mb-2 fs-base text-muted">Claim placeholder <strong class="text-default">' + esc(hiveId) + '</strong> for a real project.</div>';
       }
       /* The GitHub instance defaults to the SELECTED placeholder's cluster.
          With a picker the selection can change, so resolve the cluster of the
@@ -11196,7 +11196,7 @@
         '<label style="display:flex;align-items:center;gap:var(--sp-4);margin:var(--sp-5) var(--sp-0) var(--sp-2);font-size:var(--fs-base);cursor:pointer"><input type="checkbox" id="assign-public"> Public (visible to everyone)</label>' +
         '<div onclick="toggleAssignAdvanced()" id="assign-adv-toggle" style="margin-top:var(--sp-5);font-size:var(--fs-sm);color:var(--accent);cursor:pointer;user-select:none">▸ GitHub App credentials (optional)</div>' +
         '<div id="assign-adv" style="display:none;margin-top:var(--sp-4)">' +
-        '<div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--sp-4)">Optional — the owner can install the App from their dashboard after assignment.</div>' +
+        '<div class="fs-sm text-muted mb-4">Optional — the owner can install the App from their dashboard after assignment.</div>' +
         '<label style="' + lbl + '">App ID</label>' +
         '<input id="assign-app-id" style="' + fld + '" placeholder="123456">' +
         '<label style="' + lbl + '">Installation ID</label>' +
@@ -11302,16 +11302,16 @@
       }).join('') + '<option value="__manual__">Enter a model id manually…</option>';
       var fld = 'width:100%;padding:var(--sp-4);background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--r);box-sizing:border-box';
       var content =
-        '<div style="font-size:var(--fs-base);color:var(--muted);margin-bottom:var(--sp-5)">Fund <strong style="color:var(--fg)">' + esc(hiveName) + '</strong> with an OpenRouter key. Scan the QR (or open the link) to authorize on OpenRouter — the scoped key is delivered to the hive as its <code>openrouter</code> gateway.</div>' +
-        '<label style="display:block;font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--sp-2)">Default model</label>' +
+        '<div class="fs-base text-muted mb-5">Fund <strong class="text-default">' + esc(hiveName) + '</strong> with an OpenRouter key. Scan the QR (or open the link) to authorize on OpenRouter — the scoped key is delivered to the hive as its <code>openrouter</code> gateway.</div>' +
+        '<label class="d-block fs-sm text-muted mb-2">Default model</label>' +
         '<select id="orf-model" onchange="orfModelChange()" style="' + fld + ';margin-bottom:var(--sp-4)">' + opts + '</select>' +
         '<input id="orf-model-manual" placeholder="e.g. anthropic/claude-opus-4.8" style="display:none;' + fld + ';margin-bottom:var(--sp-4)">' +
         '<div style="display:flex;gap:var(--sp-4);margin-top:var(--sp-2)">' +
         '<button class="hv-btn btn-primary" onclick="orfStart(\'' + esc(hiveId) + '\')">Generate QR</button>' +
         '<button class="hv-btn btn-primary" onclick="closeOrFundModal()">Close</button>' +
         '</div>' +
-        '<div id="orf-qr" style="margin-top:var(--sp-5)"></div>' +
-        '<div id="orf-status" style="margin-top:var(--sp-4);font-size:var(--fs-sm)"></div>';
+        '<div class="mt-5" id="orf-qr"></div>' +
+        '<div class="mt-4 fs-sm" id="orf-status"></div>';
       var overlay = document.createElement('div');
       overlay.id = 'orf-overlay';
       overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2000;display:flex;align-items:center;justify-content:center';
@@ -11338,7 +11338,7 @@
       var model = orfChosenModel();
       var qr = document.getElementById('orf-qr');
       var status = document.getElementById('orf-status');
-      if (qr) qr.innerHTML = '<span style="color:var(--muted);font-size:var(--fs-sm)">Preparing…</span>';
+      if (qr) qr.innerHTML = '<span class="text-muted fs-sm">Preparing…</span>';
       try {
         var res = await fetch('/api/openrouter/connect/start?hive_id=' + encodeURIComponent(hiveId) + '&model=' + encodeURIComponent(model));
         if (!res.ok) { var e = await res.json().catch(function(){return{};}); throw new Error(e.error || ('HTTP ' + res.status)); }
@@ -11348,9 +11348,9 @@
         if (qr) qr.innerHTML =
           '<div style="display:flex;gap:var(--sp-6);align-items:center;flex-wrap:wrap">' +
           '<img src="' + esc(qrSrc) + '" alt="OpenRouter QR" width="180" height="180" style="border:6px solid #fff;border-radius:var(--r);background:#fff">' +
-          '<div style="font-size:var(--fs-sm)"><div style="margin-bottom:var(--sp-3)">Scan with your phone, or on this device:</div>' +
+          '<div class="fs-sm"><div class="mb-3">Scan with your phone, or on this device:</div>' +
           '<a href="' + esc(authURL) + '" target="_blank" rel="noopener" style="color:var(--accent,#58a6ff);font-weight:600">Open OpenRouter authorization ↗</a></div></div>';
-        if (status) status.innerHTML = '<span style="color:var(--muted)">Waiting for authorization…</span>';
+        if (status) status.innerHTML = '<span class="text-muted">Waiting for authorization…</span>';
         orfStartPolling(hiveId);
       } catch (e) {
         if (qr) qr.innerHTML = '<span style="color:#f85149;font-size:var(--fs-sm)">Failed: ' + esc(e.message) + '</span>';
@@ -11510,7 +11510,7 @@
         document.getElementById('f-token').value = cfg.token;
       }
       var drop = document.getElementById('yaml-drop');
-      drop.innerHTML = '<div style="font-size:var(--fs-base);color:var(--green)">✓ Config loaded</div>';
+      drop.innerHTML = '<div class="fs-base text-success">✓ Config loaded</div>';
     }
 
     function readYamlFile(file) {
@@ -11528,8 +11528,8 @@
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);max-width:540px;width:90%;max-height:90vh;display:flex;flex-direction:column">
       <h2 style="font-size:var(--fs-xl);padding:var(--sp-9) var(--sp-9) var(--sp-6);margin:var(--sp-0);color:var(--accent);flex-shrink:0">Send Hub Banner</h2>
       <div style="flex:1;overflow-y:auto;padding:var(--sp-0) var(--sp-9)">
-        <div style="margin-bottom:var(--sp-5)">
-          <label style="display:block;font-size:var(--fs-base);color:var(--muted);margin-bottom:var(--sp-2)">Message *</label>
+        <div class="mb-5">
+          <label class="d-block fs-base text-muted mb-2">Message *</label>
           <div style="display:flex;gap:var(--sp-3);margin-bottom:var(--sp-3)">
             <button class="hv-btn btn-primary btn-sm" type="button" onclick="bannerFmtBold()" title="Bold (**text**)">B</button>
             <button class="hv-btn btn-primary btn-sm" type="button" onclick="bannerFmtLink()" title="Insert link ([text](url))">🔗 Link</button>
@@ -11539,8 +11539,8 @@
           <div style="font-size:var(--fs-xs);color:var(--muted);margin:var(--sp-4) var(--sp-0) var(--sp-2)">Preview</div>
           <div id="banner-preview" style="padding:var(--sp-5) var(--sp-6);border:1px dashed var(--border);border-radius:var(--r);font-size:var(--fs-base);min-height:1.4em;color:var(--text)"></div>
         </div>
-        <div style="margin-bottom:var(--sp-6)">
-          <label style="display:block;font-size:var(--fs-base);color:var(--muted);margin-bottom:var(--sp-4)">Color</label>
+        <div class="mb-6">
+          <label class="d-block fs-base text-muted mb-4">Color</label>
           <div id="banner-color-picker" style="display:flex;gap:var(--sp-4);flex-wrap:wrap">
             <label style="display:flex;align-items:center;gap:var(--sp-3);cursor:pointer;padding:var(--sp-3) var(--sp-5);border-radius:var(--r);border:1px solid var(--border);background:rgba(22,163,74,0.12)">
               <input type="radio" name="banner-color" value="green" checked style="accent-color:#4ade80"> <span style="color:#4ade80;font-size:var(--fs-base)">Green</span>
@@ -11556,9 +11556,9 @@
             </label>
           </div>
         </div>
-        <div style="margin-bottom:var(--sp-6)">
+        <div class="mb-6">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--sp-4)">
-            <label style="font-size:var(--fs-base);color:var(--muted)">Target Hives *</label>
+            <label class="fs-base text-muted">Target Hives *</label>
             <div style="display:flex;gap:var(--sp-4)">
               <button class="hv-btn btn-icon btn-sm" onclick="toggleAllBannerHives(true)">Select All</button>
               <button class="hv-btn btn-icon btn-sm" onclick="toggleAllBannerHives(false)">Deselect All</button>
@@ -11583,30 +11583,30 @@
         ondragleave="this.style.borderColor='var(--border)'"
         ondrop="event.preventDefault();this.style.borderColor='var(--border)';var f=event.dataTransfer.files[0];if(f)readYamlFile(f)"
         onclick="document.getElementById('yaml-upload').click()">
-        <div style="font-size:var(--fs-base);color:var(--muted)">Drop a <code>hive.yaml</code> here or <span style="color:var(--accent);text-decoration:underline">browse</span></div>
-        <div style="font-size:var(--fs-xs);color:var(--muted);margin-top:var(--sp-2)">Auto-fills all fields including GitHub App credentials</div>
-        <div id="yaml-download-link" style="display:none;font-size:var(--fs-xs);margin-top:var(--sp-3)"><a id="yaml-download-href" href="#" target="_blank" style="color:var(--accent)" onclick="event.stopPropagation()">⬇ Download hive.yaml from your local hive</a></div>
+        <div class="fs-base text-muted">Drop a <code>hive.yaml</code> here or <span style="color:var(--accent);text-decoration:underline">browse</span></div>
+        <div class="fs-xs text-muted mt-2">Auto-fills all fields including GitHub App credentials</div>
+        <div id="yaml-download-link" style="display:none;font-size:var(--fs-xs);margin-top:var(--sp-3)"><a class="text-accent" id="yaml-download-href" href="#" target="_blank" onclick="event.stopPropagation()">⬇ Download hive.yaml from your local hive</a></div>
         <input type="file" id="yaml-upload" accept=".yaml,.yml" style="display:none" onchange="if(this.files[0])readYamlFile(this.files[0])">
       </div>
-      <div style="margin-bottom:var(--sp-5)">
-        <label style="display:block;font-size:var(--fs-base);color:var(--muted);margin-bottom:var(--sp-2)">GitHub Organization *</label>
+      <div class="mb-5">
+        <label class="d-block fs-base text-muted mb-2">GitHub Organization *</label>
         <input id="f-org" type="text" placeholder="my-org" style="width:100%;padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-base)">
       </div>
-      <div style="margin-bottom:var(--sp-5)">
-        <label style="display:block;font-size:var(--fs-base);color:var(--muted);margin-bottom:var(--sp-2)">Repositories * <span style="font-size:var(--fs-xs)">(comma-separated)</span></label>
+      <div class="mb-5">
+        <label class="d-block fs-base text-muted mb-2">Repositories * <span class="fs-xs">(comma-separated)</span></label>
         <input id="f-repos" type="text" placeholder="repo1, repo2" style="width:100%;padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-base)">
       </div>
-      <div style="margin-bottom:var(--sp-5)">
-        <label style="display:block;font-size:var(--fs-base);color:var(--muted);margin-bottom:var(--sp-2)">Primary Repository</label>
+      <div class="mb-5">
+        <label class="d-block fs-base text-muted mb-2">Primary Repository</label>
         <input id="f-primary" type="text" placeholder="defaults to first repo" style="width:100%;padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-base)">
       </div>
-      <div style="margin-bottom:var(--sp-5)">
-        <label style="display:block;font-size:var(--fs-base);color:var(--muted);margin-bottom:var(--sp-2)">Project Name</label>
+      <div class="mb-5">
+        <label class="d-block fs-base text-muted mb-2">Project Name</label>
         <input id="f-name" type="text" placeholder="defaults to org/repo" style="width:100%;padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-base)">
       </div>
       <div style="display:flex;gap:var(--sp-5);margin-bottom:var(--sp-5)">
         <div style="flex:1">
-          <label style="display:block;font-size:var(--fs-base);color:var(--muted);margin-bottom:var(--sp-2)">ACMM Level</label>
+          <label class="d-block fs-base text-muted mb-2">ACMM Level</label>
           <select id="f-level" style="width:100%;padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-base)">
             <option value="1">L1 — Inception (Assisted)</option>
             <option value="2">L2 — Advisory (Instructed)</option>
@@ -11617,17 +11617,17 @@
           </select>
         </div>
         <div style="flex:1">
-          <label style="display:block;font-size:var(--fs-base);color:var(--muted);margin-bottom:var(--sp-2)">Target Cluster</label>
+          <label class="d-block fs-base text-muted mb-2">Target Cluster</label>
           <select id="f-cluster" style="width:100%;padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-base)">
             <option value="">Loading clusters...</option>
           </select>
         </div>
       </div>
-      <div style="margin-bottom:var(--sp-5)">
-        <label style="display:flex;align-items:center;gap:var(--sp-4);cursor:pointer;font-size:var(--fs-base);color:var(--muted)"><input type="checkbox" id="f-public" checked> Publicly visible in the hive registry <span style="font-size:var(--fs-xs)">(owners can toggle later from My Hives)</span></label>
+      <div class="mb-5">
+        <label style="display:flex;align-items:center;gap:var(--sp-4);cursor:pointer;font-size:var(--fs-base);color:var(--muted)"><input type="checkbox" id="f-public" checked> Publicly visible in the hive registry <span class="fs-xs">(owners can toggle later from My Hives)</span></label>
       </div>
-      <div style="margin-bottom:var(--sp-5)">
-        <label style="display:block;font-size:var(--fs-base);color:var(--muted);margin-bottom:var(--sp-2)">Authentication Method</label>
+      <div class="mb-5">
+        <label class="d-block fs-base text-muted mb-2">Authentication Method</label>
         <div style="display:flex;gap:var(--sp-5);margin-top:var(--sp-2);flex-wrap:wrap">
           <label style="display:flex;align-items:center;gap:var(--sp-3);cursor:pointer;font-size:var(--fs-base)"><input type="radio" name="auth-method" value="pat" checked onchange="document.getElementById('auth-pat').style.display='';document.getElementById('auth-app').style.display='none';document.getElementById('auth-later').style.display='none';document.getElementById('auth-info-pat').style.display='';document.getElementById('auth-info-app').style.display='none';document.getElementById('auth-info-later').style.display='none'"> Personal Access Token</label>
           <label style="display:flex;align-items:center;gap:var(--sp-3);cursor:pointer;font-size:var(--fs-base)"><input type="radio" name="auth-method" value="app" onchange="document.getElementById('auth-pat').style.display='none';document.getElementById('auth-app').style.display='';document.getElementById('auth-later').style.display='none';document.getElementById('auth-info-pat').style.display='none';document.getElementById('auth-info-app').style.display='';document.getElementById('auth-info-later').style.display='none'"> GitHub App <span style="font-size:var(--fs-xs);color:#3fb950;font-weight:600">Recommended</span></label>
@@ -11637,7 +11637,7 @@
           The hive uses this token for all GitHub API calls — creating issues, posting advisory comments, reading repos, pushing code, and merging PRs. All actions appear as the token owner. Permissions cannot be scoped per agent trust tier.
         </div>
         <div id="auth-info-app" style="display:none;font-size:var(--fs-xs);color:var(--muted);margin-top:var(--sp-4);line-height:1.5;padding:var(--sp-4) var(--sp-5);background:rgba(255,255,255,0.03);border-radius:var(--r);border:1px solid var(--border)">
-          The hive generates short-lived installation tokens scoped to each agent's trust tier — newcomers get issues-only access, contributors get code + PR access, and trusted agents can merge. Actions appear as the app, not a personal account. Requires a <a id="auth-info-app-link" href="" target="_blank" rel="noopener" style="color:var(--accent)">GitHub App</a> installed on the target org/repo.
+          The hive generates short-lived installation tokens scoped to each agent's trust tier — newcomers get issues-only access, contributors get code + PR access, and trusted agents can merge. Actions appear as the app, not a personal account. Requires a <a class="text-accent" id="auth-info-app-link" href="" target="_blank" rel="noopener">GitHub App</a> installed on the target org/repo.
         </div>
         <div id="auth-info-later" style="display:none;font-size:var(--fs-xs);color:var(--muted);margin-top:var(--sp-4);line-height:1.5;padding:var(--sp-4) var(--sp-5);background:rgba(255,255,255,0.03);border-radius:var(--r);border:1px solid var(--border)">
           The hive will be provisioned with the <strong>kubestellar-hive</strong> GitHub App pre-configured (App ID: 3568013). Agents will be unable to access GitHub until the app is installed on the target org and the installation ID is supplied via the hive config.<br><br>
@@ -11645,8 +11645,8 @@
         </div>
       </div>
       <div id="auth-pat">
-        <div style="margin-bottom:var(--sp-5)">
-          <label style="display:block;font-size:var(--fs-base);color:var(--muted);margin-bottom:var(--sp-2)">GitHub Token *</label>
+        <div class="mb-5">
+          <label class="d-block fs-base text-muted mb-2">GitHub Token *</label>
           <input id="f-token" type="password" placeholder="ghp_xxxxxxxxxxxx" style="width:100%;padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-base)">
           <div style="font-size:var(--fs-xs);color:var(--muted);margin-top:var(--sp-3);line-height:1.5">
             Create a <a href="https://github.com/settings/tokens?type=beta" target="_blank">Fine-grained PAT</a>: Contents, Issues, Pull requests (read/write), Metadata (read).<br>
@@ -11655,18 +11655,18 @@
         </div>
       </div>
       <div id="auth-app" style="display:none">
-        <div style="margin-bottom:var(--sp-5)">
-          <label style="display:block;font-size:var(--fs-base);color:var(--muted);margin-bottom:var(--sp-2)">App ID *</label>
+        <div class="mb-5">
+          <label class="d-block fs-base text-muted mb-2">App ID *</label>
           <input id="f-app-id" type="text" placeholder="123456" style="width:100%;padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-base)">
         </div>
-        <div style="margin-bottom:var(--sp-5)">
-          <label style="display:block;font-size:var(--fs-base);color:var(--muted);margin-bottom:var(--sp-2)">Installation ID *</label>
+        <div class="mb-5">
+          <label class="d-block fs-base text-muted mb-2">Installation ID *</label>
           <input id="f-install-id" type="text" placeholder="78901234" style="width:100%;padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-base)">
         </div>
-        <div style="margin-bottom:var(--sp-5)">
-          <label style="display:block;font-size:var(--fs-base);color:var(--muted);margin-bottom:var(--sp-2)">Private Key (PEM) *</label>
+        <div class="mb-5">
+          <label class="d-block fs-base text-muted mb-2">Private Key (PEM) *</label>
           <textarea id="f-app-key" rows="6" placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;Paste or drag a .pem file here...&#10;-----END RSA PRIVATE KEY-----" style="width:100%;padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-base);font-family:monospace;resize:vertical" ondragover="event.preventDefault();this.style.borderColor='var(--accent)'" ondragleave="this.style.borderColor='var(--border)'" ondrop="event.preventDefault();this.style.borderColor='var(--border)';var f=event.dataTransfer.files[0];if(f){var r=new FileReader();r.onload=function(){document.getElementById('f-app-key').value=r.result};r.readAsText(f)}"></textarea>
-          <div style="font-size:var(--fs-xs);color:var(--muted);margin-top:var(--sp-2)">Download from your <a href="https://github.com/settings/apps" target="_blank">GitHub App settings</a> → Private keys.</div>
+          <div class="fs-xs text-muted mt-2">Download from your <a href="https://github.com/settings/apps" target="_blank">GitHub App settings</a> → Private keys.</div>
         </div>
       </div>
       <div id="auth-later" style="display:none">
@@ -11689,7 +11689,7 @@
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);max-width:860px;width:min(96vw,860px);max-height:88vh;display:flex;flex-direction:column">
       <h2 style="font-size:var(--fs-xl);padding:var(--sp-9) var(--sp-9) var(--sp-6);margin:var(--sp-0);color:var(--accent);flex-shrink:0">Manage Access</h2>
       <div style="flex:1;overflow-y:auto;padding:var(--sp-0) var(--sp-9) var(--sp-9)">
-      <p style="font-size:var(--fs-base);color:var(--muted);margin-bottom:var(--sp-6)" id="access-hive-label"></p>
+      <p class="fs-base text-muted mb-6" id="access-hive-label"></p>
       <div id="access-list"><div class="loading">Loading...</div></div>
       <div id="access-bulk-bar" style="display:none;align-items:center;gap:var(--sp-4);margin-top:var(--sp-4);padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r)">
         <span id="access-bulk-count" style="font-size:var(--fs-sm);color:var(--muted);flex:1"></span>
@@ -11703,16 +11703,16 @@
         <button class="hv-btn btn-danger btn-sm" onclick="bulkRemoveAccess()">Remove</button>
       </div>
       <div style="margin-top:var(--sp-5);border-top:1px solid var(--border);padding-top:var(--sp-5)">
-        <h3 style="font-size:var(--fs-md);margin-bottom:var(--sp-4);color:var(--accent)">Pending Requests</h3>
-        <div id="pending-requests"><span style="color:var(--muted);font-size:var(--fs-base)">Loading...</span></div>
+        <h3 class="fs-md mb-4 text-accent">Pending Requests</h3>
+        <div id="pending-requests"><span class="text-muted fs-base">Loading...</span></div>
       </div>
       <div style="margin-top:var(--sp-5);border-top:1px solid var(--border);padding-top:var(--sp-5)">
-        <h3 style="font-size:var(--fs-md);margin-bottom:var(--sp-2);color:var(--accent)">Audit Log</h3>
+        <h3 class="fs-md mb-2 text-accent">Audit Log</h3>
         <p style="font-size:var(--fs-sm);color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-4)">Every grant, role change and removal — who did it and when. Append-only.</p>
-        <div id="access-audit-log" style="max-height:180px;overflow-y:auto"><span style="color:var(--muted);font-size:var(--fs-base)">Loading...</span></div>
+        <div id="access-audit-log" style="max-height:180px;overflow-y:auto"><span class="text-muted fs-base">Loading...</span></div>
       </div>
       <div style="margin-top:var(--sp-6);border-top:1px solid var(--border);padding-top:var(--sp-6)">
-        <h3 style="font-size:var(--fs-md);margin-bottom:var(--sp-4);color:var(--text)">Add User</h3>
+        <h3 class="fs-md mb-4 text-default">Add User</h3>
         <input id="access-user-search" type="text" placeholder="Search users..." autocomplete="off"
           oninput="filterAccessUserDropdown()"
           style="width:100%;box-sizing:border-box;margin-bottom:var(--sp-4);padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-base)">
@@ -11739,7 +11739,7 @@
             <label for="access-expiry-enabled" style="font-size:var(--fs-xs);color:var(--muted);cursor:pointer;white-space:nowrap">Expires</label>
             <input id="access-expiry" type="date" title="Access is revoked automatically after this date (UTC)."
               style="display:none;padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-base)">
-            <span id="access-expiry-never" style="font-size:var(--fs-xs);color:var(--text)">Never</span>
+            <span class="fs-xs text-default" id="access-expiry-never">Never</span>
           </span>
           <button onclick="addAccess()" class="hv-btn btn-primary btn-primary">Add</button>
         </div>
@@ -11770,8 +11770,8 @@
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);max-width:480px;width:90%;display:flex;flex-direction:column">
       <h2 style="font-size:var(--fs-xl);padding:var(--sp-9) var(--sp-9) var(--sp-4);margin:var(--sp-0);color:var(--accent)">Request Access</h2>
       <div style="padding:var(--sp-0) var(--sp-9) var(--sp-8)">
-        <p style="font-size:var(--fs-base);color:var(--muted);margin-bottom:var(--sp-5)">Requesting access to <strong id="request-access-hive-label" style="color:var(--text)"></strong>. The owner will review your request.</p>
-        <label for="request-access-note" style="display:block;font-size:var(--fs-base);color:var(--text);margin-bottom:var(--sp-3)">Why do you need access? <span style="color:var(--red)">*</span></label>
+        <p class="fs-base text-muted mb-5">Requesting access to <strong class="text-default" id="request-access-hive-label"></strong>. The owner will review your request.</p>
+        <label class="d-block fs-base text-default mb-3" for="request-access-note">Why do you need access? <span class="text-danger">*</span></label>
         <textarea id="request-access-note" rows="4" placeholder="Explain why you should be granted access to this hive..." style="width:100%;padding:var(--sp-5) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-base);resize:vertical;box-sizing:border-box"></textarea>
       </div>
       <div style="display:flex;justify-content:flex-end;gap:var(--sp-4);padding:var(--sp-6) var(--sp-9);border-top:1px solid var(--border)">
@@ -11839,13 +11839,13 @@
       try {
         var resp = await fetch('/api/saas/hives/' + encodeURIComponent(_timelineHiveId) + '/timeline');
         if (!resp.ok) {
-          el.innerHTML = '<div style="color:var(--red);font-size:var(--fs-base)">Could not load this hive\'s timeline.</div>';
+          el.innerHTML = '<div class="text-danger fs-base">Could not load this hive\'s timeline.</div>';
           return;
         }
         var data = await resp.json();
         var events = (data && data.events) || [];
         if (events.length === 0) {
-          el.innerHTML = '<div style="color:var(--muted);font-size:var(--fs-base)">No recorded activity yet. Events appear here when something actually changes — a version lands, health flips, the hive restarts or goes offline.</div>';
+          el.innerHTML = '<div class="text-muted fs-base">No recorded activity yet. Events appear here when something actually changes — a version lands, health flips, the hive restarts or goes offline.</div>';
           return;
         }
         /* Server returns newest first; render in that order. */
@@ -11859,11 +11859,11 @@
             '<div style="flex-shrink:0;width:84px"><span style="display:inline-block;padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);font-size:var(--fs-xs);font-weight:600;white-space:nowrap;background:' + kind.color + '22;color:' + kind.color + ';border:1px solid ' + kind.color + '55">' + esc(kind.label) + '</span></div>' +
             '<div style="flex:1;min-width:0">' +
               '<div style="font-size:var(--fs-base);color:var(--text);word-break:break-word">' + esc(ev.detail || '') + actor + '</div>' +
-              '<div style="font-size:var(--fs-xs);color:var(--muted);margin-top:var(--sp-1)" title="' + esc(ev.ts || '') + '">' + esc(timelineAgo(ev.ts)) + '</div>' +
+              '<div class="fs-xs text-muted mt-1" title="' + esc(ev.ts || '') + '">' + esc(timelineAgo(ev.ts)) + '</div>' +
             '</div></div>';
         }).join('');
       } catch(e) {
-        el.innerHTML = '<div style="color:var(--red);font-size:var(--fs-base)">Failed to load timeline: ' + esc(e.message) + '</div>';
+        el.innerHTML = '<div class="text-danger fs-base">Failed to load timeline: ' + esc(e.message) + '</div>';
       }
     }
 
@@ -11909,13 +11909,13 @@
       try {
         var resp = await fetch('/api/saas/hives/' + encodeURIComponent(_accessHiveId) + '/access-log');
         if (!resp.ok) {
-          el.innerHTML = '<span style="color:var(--muted);font-size:var(--fs-base)">Audit log unavailable</span>';
+          el.innerHTML = '<span class="text-muted fs-base">Audit log unavailable</span>';
           return;
         }
         var data = await resp.json();
         var events = (data && data.events) || [];
         if (!events.length) {
-          el.innerHTML = '<span style="color:var(--muted);font-size:var(--fs-base)">No permission changes recorded yet</span>';
+          el.innerHTML = '<span class="text-muted fs-base">No permission changes recorded yet</span>';
           return;
         }
         /* Server returns newest first; render in that order. */
@@ -11926,11 +11926,11 @@
             : '';
           return '<div style="padding:var(--sp-3) var(--sp-0);border-bottom:1px solid var(--border)">' +
             '<div style="font-size:var(--fs-sm);color:var(--text);word-break:break-word">' + esc(ev.detail || '') + actor + '</div>' +
-            '<div style="font-size:var(--fs-xs);color:var(--muted);margin-top:var(--sp-1)" title="' + esc(ev.ts || '') + '">' + esc(timelineAgo(ev.ts)) + '</div>' +
+            '<div class="fs-xs text-muted mt-1" title="' + esc(ev.ts || '') + '">' + esc(timelineAgo(ev.ts)) + '</div>' +
             '</div>';
         }).join('');
       } catch(e) {
-        el.innerHTML = '<span style="color:var(--muted);font-size:var(--fs-base)">Audit log unavailable</span>';
+        el.innerHTML = '<span class="text-muted fs-base">Audit log unavailable</span>';
       }
     }
 
@@ -11942,7 +11942,7 @@
         var reqs = data.requests || [];
         var el = document.getElementById('pending-requests');
         if (!el) return;
-        if (!reqs.length) { el.innerHTML = '<span style="color:var(--muted);font-size:var(--fs-base)">No pending requests</span>'; return; }
+        if (!reqs.length) { el.innerHTML = '<span class="text-muted fs-base">No pending requests</span>'; return; }
         el.innerHTML = reqs.map(function(r) {
           var rawUser = String(r.username || '');
           var userLabel = String(r.display_label || rawUser);
@@ -11959,7 +11959,7 @@
             : '<div style="margin-top:var(--sp-2);font-size:var(--fs-sm);color:var(--muted);font-style:italic">(no note)</div>';
           return '<div style="padding:var(--sp-3) var(--sp-0);border-bottom:1px solid var(--border)">' +
             '<div style="display:flex;align-items:center;justify-content:space-between">' +
-            '<div>' + avatar + '<span style="font-size:var(--fs-base)">' + esc(userLabel || rawUser) + '</span> <span style="font-size:var(--fs-xs);color:var(--muted)">' + esc(r.requested_at.substring(0,10)) + '</span>' + authKey + '</div>' +
+            '<div>' + avatar + '<span class="fs-base">' + esc(userLabel || rawUser) + '</span> <span class="fs-xs text-muted">' + esc(r.requested_at.substring(0,10)) + '</span>' + authKey + '</div>' +
             '<div style="display:flex;gap:var(--sp-2)">' +
             '<select id="req-role-' + esc(r.username) + '" title="Role to grant on approval" style="padding:var(--sp-1) var(--sp-3);background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-size:var(--fs-xs)"><option value="read" title="' + escAttr(roleDescription('read')) + '">Read</option><option value="read-write" title="' + escAttr(roleDescription('read-write')) + '">Read-Write</option><option value="merger" title="' + escAttr(roleDescription('merger')) + '">Merger</option></select>' +
             '<button class="hv-btn btn-primary btn-sm" onclick="approveRequest(\'' + esc(r.username) + '\')">Approve</button>' +
@@ -12220,7 +12220,7 @@
           if (!users.some(function(u) { return u.username === name; })) delete _bulkAccessSel[name];
         });
         if (!users.length) {
-          document.getElementById('access-list').innerHTML = '<div style="color:var(--muted);font-size:var(--fs-base)">No users have access yet</div>';
+          document.getElementById('access-list').innerHTML = '<div class="text-muted fs-base">No users have access yet</div>';
           updateBulkAccessBar();
           return;
         }
@@ -12252,13 +12252,13 @@
               ' onchange="toggleBulkAccess(this, \'' + esc(u.username) + '\')" title="Select for bulk actions">';
           var removeBtn = canRemove ?
             '<button class="hv-btn btn-danger btn-sm" onclick="removeAccess(\'' + esc(u.username) + '\')">Remove</button>' :
-            '<span style="font-size:var(--fs-xs);color:var(--muted)">last owner</span>';
+            '<span class="fs-xs text-muted">last owner</span>';
           // The role pill is an editable dropdown: changing it POSTs the new role
           // (the add endpoint upserts). The last owner's role is locked (shown as
           // a static pill) so the hive can't be left without an owner.
           var ROLES = ['read', 'read-write', 'merger', 'owner'];
           var roleControl = isLastOwner ?
-            '<span class="role-badge role-' + u.role.replace(' ','-') + '" style="font-size:var(--fs-xs)" title="The last owner\'s role cannot be changed">' + esc(u.role) + '</span>' :
+            '<span class="role-badge role-' + u.role.replace(' ','-') + ' fs-xs" title="The last owner\'s role cannot be changed">' + esc(u.role) + '</span>' :
             '<select class="role-select role-' + u.role.replace(' ','-') + '" style="font-size:var(--fs-xs);padding:var(--sp-1) var(--sp-3);border-radius:var(--r-pill);cursor:pointer" title="Change this user\'s permission" onchange="changeAccessRole(\'' + esc(u.username) + '\', this.value, \'' + esc(u.role) + '\')">' +
               ROLES.map(function(r) { return '<option value="' + r + '" title="' + escAttr(roleDescription(r)) + '"' + (r === u.role ? ' selected' : '') + '>' + r + '</option>'; }).join('') +
             '</select>';
@@ -12266,8 +12266,8 @@
              owner's question is "is this account dormant?", not "when exactly".
              The absolute time rides in the title. "—" means never active. */
           var lastActive = u.last_active ?
-            '<span style="font-size:var(--fs-xs);color:var(--muted)" title="Last active ' + esc(fmtUserTS(u.last_active)) + '">' + esc(timelineAgo(u.last_active) || fmtUserTS(u.last_active)) + '</span>' :
-            '<span style="font-size:var(--fs-xs);color:var(--muted)" title="Never active on this hub">—</span>';
+            '<span class="fs-xs text-muted" title="Last active ' + esc(fmtUserTS(u.last_active)) + '">' + esc(timelineAgo(u.last_active) || fmtUserTS(u.last_active)) + '</span>' :
+            '<span class="fs-xs text-muted" title="Never active on this hub">—</span>';
           // The expiry editor doubles as the display: it shows the grant's
           // last valid day when set, and empty means permanent. Changing it
           // extends (or clears) the expiry; the last owner cannot be expired
@@ -12299,7 +12299,7 @@
               ' onchange="changeAccessExpiry(\'' + esc(u.username) + '\', \'' + esc(u.role) + '\', this.value)"' +
               ' title="Access is revoked automatically after this date (UTC)."' +
               ' style="font-size:var(--fs-xs);padding:var(--sp-1) var(--sp-2);background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--amber)">'
-              : '<span style="font-size:var(--fs-xs);color:var(--text)">Never</span>') +
+              : '<span class="fs-xs text-default">Never</span>') +
             '</span>';
           // Primary label: the resolved friendly name when the hub found one,
           // else the raw key exactly as before. The raw key is NEVER hidden —
@@ -12333,7 +12333,7 @@
         enrichGhDisplayNames(document.getElementById('access-list'));
         updateBulkAccessBar();
       } catch(e) {
-        document.getElementById('access-list').innerHTML = '<div style="color:var(--red)">Failed to load</div>';
+        document.getElementById('access-list').innerHTML = '<div class="text-danger">Failed to load</div>';
       }
     }
 
@@ -12711,7 +12711,7 @@
       updateBannerPreview();
       var container = document.getElementById('banner-hive-list');
       container.innerHTML = '<div style="display:flex;align-items:center;gap:var(--sp-4);padding:var(--sp-5);color:var(--text);font-size:var(--fs-base)">' +
-        '<span style="color:var(--muted)">Sending to:</span> <strong>' + esc(hiveName) + '</strong>' +
+        '<span class="text-muted">Sending to:</span> <strong>' + esc(hiveName) + '</strong>' +
         '<input type="checkbox" class="banner-hive-cb" value="' + esc(hiveId) + '" checked style="display:none">' +
         '</div>';
     }

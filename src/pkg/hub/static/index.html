@@ -794,7 +794,7 @@
       <div class="section-heading">
         <p class="section-label">How Hive compares</p>
         <h2>The ADLC platform you own outright</h2>
-        <p>A new category is forming around the <strong style="color:var(--text)">autonomous development lifecycle (ADLC)</strong> &mdash; agents that triage, code, review, fix, and ship across your repos, continuously. Contenders are everywhere now, from GitHub&rsquo;s own coding agent to Devin to Microsoft Planner to open-source peers like Fullsend. Where Hive stands apart: it makes autonomy something a repo <em>earns</em> as its test coverage grows (the six-level ACMM ladder), enforces what agents can do at the network layer rather than on the honor system, and gives you a live dashboard over the whole fleet &mdash; not just activity buried in GitHub.</p>
+        <p>A new category is forming around the <strong class="text-default">autonomous development lifecycle (ADLC)</strong> &mdash; agents that triage, code, review, fix, and ship across your repos, continuously. Contenders are everywhere now, from GitHub&rsquo;s own coding agent to Devin to Microsoft Planner to open-source peers like Fullsend. Where Hive stands apart: it makes autonomy something a repo <em>earns</em> as its test coverage grows (the six-level ACMM ladder), enforces what agents can do at the network layer rather than on the honor system, and gives you a live dashboard over the whole fleet &mdash; not just activity buried in GitHub.</p>
       </div>
       <div class="compare-wrap">
         <table class="compare-table">
@@ -961,20 +961,20 @@
           <div class="tag">Hosted</div>
           <h3>Get a hive for your project</h3>
           <p>Hosted on our infrastructure &mdash; no Kubernetes, no setup. Request one and invite contributors to run the agents.</p>
-          <div style="margin-top:var(--sp-6)"><a class="hv-btn btn-primary button primary" href="/get-started">Request a Hive</a></div>
-          <p style="font-size:var(--fs-base);margin-top:.8rem"><a href="/get-started#self-host" style="color:var(--blue)">Prefer to self-host? →</a></p>
+          <div class="mt-6"><a class="hv-btn btn-primary button primary" href="/get-started">Request a Hive</a></div>
+          <p style="font-size:var(--fs-base);margin-top:.8rem"><a class="text-info" href="/get-started#self-host">Prefer to self-host? →</a></p>
         </div>
         <div class="proof-card" id="contribute-compute">
           <div class="tag">Community</div>
           <h3>Contribute compute to a hive</h3>
           <p>Lend your AI CLI to run agents for a public project via ClankeR, the contributor relay. Pick a public hive from the table below, run the contribute command, and ClankeR hands your CLI tasks to work &mdash; your GitHub username shows up as a live contributor on that hive with the PRs you land, not as a new hive. Earn trust tiers as you complete tasks and climb the leaderboard.</p>
-          <div style="margin-top:var(--sp-6)"><a class="hv-btn btn-secondary button secondary" href="/get-started#contribute">Start contributing</a></div>
+          <div class="mt-6"><a class="hv-btn btn-secondary button secondary" href="/get-started#contribute">Start contributing</a></div>
         </div>
         <div class="proof-card">
           <div class="tag">Deterministic</div>
           <h3>A pipeline, not a prompt</h3>
           <p>Filtering, classification, and merge-gating are shell scripts that run <em>before</em> any LLM sees the work. Agents only get the judgment calls &mdash; and a coverage threshold decides what actually lands.</p>
-          <div style="margin-top:var(--sp-6)"><a class="hv-btn btn-ghost button tertiary" href="/learn">Learn the architecture</a></div>
+          <div class="mt-6"><a class="hv-btn btn-ghost button tertiary" href="/learn">Learn the architecture</a></div>
         </div>
       </div>
     </section>
@@ -994,23 +994,23 @@
         <div class="install-list">
           <div class="install-step">
             <span>1</span>
-            <div><h3>Login with GitHub</h3><p style="font-size:var(--fs-md)">Authenticate so we can provision your hive and install the GitHub App on your repos.</p></div>
+            <div><h3>Login with GitHub</h3><p class="fs-md">Authenticate so we can provision your hive and install the GitHub App on your repos.</p></div>
           </div>
           <div class="install-step">
             <span>2</span>
-            <div><h3>Install the Hive App</h3><p style="font-size:var(--fs-md)">Grant the Hive GitHub App access to the repositories you want maintained.</p></div>
+            <div><h3>Install the Hive App</h3><p class="fs-md">Grant the Hive GitHub App access to the repositories you want maintained.</p></div>
           </div>
           <div class="install-step">
             <span>3</span>
-            <div><h3>Choose your autonomy level</h3><p style="font-size:var(--fs-md)">Pick an ACMM level from L1 Inception to L6 Fully Autonomous. Start conservative, upgrade anytime.</p></div>
+            <div><h3>Choose your autonomy level</h3><p class="fs-md">Pick an ACMM level from L1 Inception to L6 Fully Autonomous. Start conservative, upgrade anytime.</p></div>
           </div>
           <div class="install-step">
             <span>4</span>
-            <div><h3>Connect your AI provider</h3><p style="font-size:var(--fs-md)">On each agent card, pick the CLI (Claude Code, Copilot, &hellip;) and model, then authenticate &mdash; open the agent's terminal and run the CLI's login command, or use the card's Login button. Prefer local? Point agents at your own models via vLLM or llm-d &mdash; no provider account needed.</p></div>
+            <div><h3>Connect your AI provider</h3><p class="fs-md">On each agent card, pick the CLI (Claude Code, Copilot, &hellip;) and model, then authenticate &mdash; open the agent's terminal and run the CLI's login command, or use the card's Login button. Prefer local? Point agents at your own models via vLLM or llm-d &mdash; no provider account needed.</p></div>
           </div>
           <div class="install-step">
             <span>5</span>
-            <div><h3>Agents start working</h3><p style="font-size:var(--fs-md)">Within minutes, agents begin triaging issues, writing fixes, and opening PRs. Watch from your dashboard.</p></div>
+            <div><h3>Agents start working</h3><p class="fs-md">Within minutes, agents begin triaging issues, writing fixes, and opening PRs. Watch from your dashboard.</p></div>
           </div>
         </div>
       </div>
@@ -1069,7 +1069,7 @@
       </div>
       <!-- Contribute blurb: the Contributors tile and the "Contribute compute"
            card both point here, so name the action next to the list it refers to. -->
-      <p style="color:var(--muted);font-size:var(--fs-base);margin:-4px 0 14px;max-width:60ch">Want to help? Pick a public hive below and click its <strong style="color:var(--text)">Contribute</strong> button to run its agents through ClankeR and contribute fixes to a hive of your choice. Your work shows up as tasks completed under your GitHub username, on that hive and on the <a href="#leaderboard" style="color:var(--blue)">leaderboard</a>.</p>
+      <p style="color:var(--muted);font-size:var(--fs-base);margin:-4px 0 14px;max-width:60ch">Want to help? Pick a public hive below and click its <strong class="text-default">Contribute</strong> button to run its agents through ClankeR and contribute fixes to a hive of your choice. Your work shows up as tasks completed under your GitHub username, on that hive and on the <a class="text-info" href="#leaderboard">leaderboard</a>.</p>
       <div id="hive-table-container"><div class="loading">Loading hives...</div></div>
     </section>
 
@@ -1387,10 +1387,10 @@
       var rows = entries.map(function(e, i) {
         var halo = e.active ? 'box-shadow:0 0 0 3px var(--green);' : '';
         var avatar = e.avatar_url ? '<img src="' + esc(e.avatar_url) + '" width="24" height="24" style="border-radius:50%;vertical-align:middle;margin-right:var(--sp-3);' + halo + '">' : '';
-        var taskText = e.current_task ? '<span style="color:var(--green);font-size:var(--fs-sm)">' + esc(e.current_task) + '</span>' : '<span style="color:var(--muted);font-size:var(--fs-sm)">—</span>';
+        var taskText = e.current_task ? '<span class="text-success fs-sm">' + esc(e.current_task) + '</span>' : '<span class="text-muted fs-sm">—</span>';
         return '<tr>' +
           '<td style="white-space:nowrap">' + avatar + '<a href="https://github.com/' + esc(e.github_username) + '" target="_blank">' + esc(e.github_username) + '</a></td>' +
-          '<td style="font-size:var(--fs-base);color:var(--muted)">' + esc(e.hive_name || '') + '</td>' +
+          '<td class="fs-base text-muted">' + esc(e.hive_name || '') + '</td>' +
           '<td style="text-align:center">' + (e.tasks_completed || 0) + '</td>' +
           '<td style="text-align:center"><span class="acmm-badge acmm-2">' + esc(e.trust_tier || 'newcomer') + '</span></td>' +
           '<td>' + taskText + '</td>' +
@@ -1617,7 +1617,7 @@
         document.getElementById('nav-logout').style.display='';
         var u=document.getElementById('nav-user');
         u.style.display='';
-        u.innerHTML='<img src="'+esc(d.avatar_url)+'" style="width:24px;height:24px;border-radius:50%;vertical-align:middle">'+' <span style="font-size:var(--fs-base)">'+esc(d.login)+'</span>';
+        u.innerHTML='<img src="'+esc(d.avatar_url)+'" style="width:24px;height:24px;border-radius:50%;vertical-align:middle">'+' <span class="fs-base">'+esc(d.login)+'</span>';
         return fetch('/api/saas/access-status').then(function(r2){return r2.json()}).then(function(as){
           _userAccessStatus = as.hives || {};
           if(d.authenticated) document.getElementById('nav-dashboard').style.display='';
@@ -1654,7 +1654,7 @@
 
       if (!_isLoggedIn) {
         var loginRedirect = '/login?redirect=' + encodeURIComponent('/?request_hive=' + encodeURIComponent(id));
-        area.innerHTML = '<p style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--sp-4)">Login with GitHub to request access to <strong>' + esc(name) + '</strong>.</p>' +
+        area.innerHTML = '<p class="fs-sm text-muted mb-4">Login with GitHub to request access to <strong>' + esc(name) + '</strong>.</p>' +
           '<a href="' + loginRedirect + '" style="padding:var(--sp-4) var(--sp-6);background:var(--amber);color:#17110a;border-radius:var(--r);font-size:var(--fs-base);font-weight:600;text-decoration:none;display:inline-block">Login with GitHub</a>';
         return;
       }
@@ -1662,7 +1662,7 @@
       var access = _userAccessStatus[id];
       if (access && access.status === 'accepted') {
         var cBase2 = contributeBase(id);
-        var roleLine = '<p style="font-size:var(--fs-sm);color:var(--green);margin-bottom:var(--sp-4)">You have <strong>' + esc(access.role) + '</strong> access to this hive.</p>';
+        var roleLine = '<p class="fs-sm text-success mb-4">You have <strong>' + esc(access.role) + '</strong> access to this hive.</p>';
         if (!cBase2) { area.innerHTML = roleLine; return; }
         var cUrl = cBase2 + '/contribute';
         area.innerHTML = roleLine +
@@ -1670,11 +1670,11 @@
         return;
       }
       if (access && access.status === 'pending') {
-        area.innerHTML = '<p style="font-size:var(--fs-sm);color:var(--amber);margin-bottom:var(--sp-4)">Your access request is pending approval.</p>';
+        area.innerHTML = '<p class="fs-sm text-brand mb-4">Your access request is pending approval.</p>';
         return;
       }
 
-      area.innerHTML = '<p style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--sp-4)">Request access to view the hive dashboard, agents, and config.</p>' +
+      area.innerHTML = '<p class="fs-sm text-muted mb-4">Request access to view the hive dashboard, agents, and config.</p>' +
         '<button class="hv-btn btn-secondary" onclick="requestAccessFromModal()" id="contrib-req-btn">Request Access</button>';
     }
 
@@ -1765,8 +1765,8 @@
 
   <div id="contrib-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center;overscroll-behavior:contain;overscroll-behavior-y:contain" onclick="if(event.target===this)closeContribModal()">
     <div style="background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);padding:var(--sp-9);max-width:540px;width:90%;max-height:80vh;overflow-y:auto;overscroll-behavior:contain;overscroll-behavior-y:contain">
-      <h2 style="font-size:var(--fs-xl);margin-bottom:var(--sp-2);color:var(--amber)">Contribute to <span id="contrib-hive-name"></span></h2>
-      <p style="font-size:var(--fs-base);color:var(--muted);margin-bottom:var(--sp-6)">Hive ID: <code id="contrib-hive-id" style="font-size:var(--fs-sm);background:#080b0f85;border:1px solid var(--line);padding:var(--sp-1) var(--sp-3);border-radius:var(--r-sm)"></code></p>
+      <h2 class="fs-xl mb-2 text-brand">Contribute to <span id="contrib-hive-name"></span></h2>
+      <p class="fs-base text-muted mb-6">Hive ID: <code id="contrib-hive-id" style="font-size:var(--fs-sm);background:#080b0f85;border:1px solid var(--line);padding:var(--sp-1) var(--sp-3);border-radius:var(--r-sm)"></code></p>
       <p style="color:var(--muted);font-size:var(--fs-md);line-height:1.6;margin-bottom:var(--sp-7)">Help this project by contributing to open issues and PRs. Login with GitHub to request access &mdash; the hive owner will be notified and can approve your request.</p>
       <div id="contrib-access-area"></div>
       <div style="display:flex;justify-content:flex-end;margin-top:var(--sp-5)">

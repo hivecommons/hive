@@ -222,12 +222,12 @@
       <div class="surface-grid" style="margin-top:var(--sp-9)">
         <div class="surface-card hub">
           <div class="tag">Hub API</div>
-          <strong style="color:var(--text)"><code>hive.hivecommons.dev</code></strong>
+          <strong class="text-default"><code>hive.hivecommons.dev</code></strong>
           <p>Manages hive registry, users, access control, hosted hive provisioning, leaderboard. Documented below.</p>
         </div>
         <div class="surface-card spoke">
           <div class="tag">Spoke API</div>
-          <strong style="color:var(--text)">each hive instance</strong>
+          <strong class="text-default">each hive instance</strong>
           <p>The actual hive dashboard &mdash; agents, governor, config, contributors, beads, tokens. Available at each hive's URL (e.g. <code>192.168.4.85:3001</code> or <code>hosted-*.hive.hivecommons.dev</code>).</p>
         </div>
       </div>
@@ -242,7 +242,7 @@
         <pre><code>https://hive.hivecommons.dev</code></pre>
 
         <h2>Authentication</h2>
-        <p style="font-size:var(--fs-md)">The Hub uses GitHub OAuth with a session cookie. Public endpoints (registry, leaderboard, stats) require no auth. Dashboard and management endpoints require login.</p>
+        <p class="fs-md">The Hub uses GitHub OAuth with a session cookie. Public endpoints (registry, leaderboard, stats) require no auth. Dashboard and management endpoints require login.</p>
 
         <div class="card">
           <strong>Step 1: Login via browser</strong>
@@ -296,7 +296,7 @@ curl -b "hive_hub_user=YOUR_USERNAME" \
         </div>
 
         <h2>Spoke Integration</h2>
-        <p style="font-size:var(--fs-md)">Hive spoke instances push status to the hub via heartbeats. Configure your hive to register:</p>
+        <p class="fs-md">Hive spoke instances push status to the hub via heartbeats. Configure your hive to register:</p>
         <div class="card">
           <strong>hive.yaml</strong>
           <pre><code>hub:
@@ -310,7 +310,7 @@ curl -b "hive_hub_user=YOUR_USERNAME" \
         </div>
 
         <h2>Rate Limits</h2>
-        <p style="font-size:var(--fs-md)">The hub does not enforce API rate limits. GitHub API rate limits apply to spoke heartbeats (GitHub App: 5000/hr per installation, PAT: 5000/hr per user). Spokes push heartbeats every 5 minutes and task updates every 30 seconds.</p>
+        <p class="fs-md">The hub does not enforce API rate limits. GitHub API rate limits apply to spoke heartbeats (GitHub App: 5000/hr per installation, PAT: 5000/hr per user). Spokes push heartbeats every 5 minutes and task updates every 30 seconds.</p>
       </div>
 
       <div id="tab-reference" class="tab-content">
@@ -359,7 +359,7 @@ curl -b "hive_hub_user=YOUR_USERNAME" \
         document.getElementById('nav-logout').style.display='';
         document.getElementById('nav-dashboard').style.display='';
         var u=document.getElementById('nav-user');u.style.display='';
-        u.innerHTML='<img src="'+esc(d.avatar_url)+'" style="width:24px;height:24px;border-radius:50%;vertical-align:middle"> <span style="font-size:var(--fs-base)">'+esc(d.login)+'</span>';
+        u.innerHTML='<img src="'+esc(d.avatar_url)+'" style="width:24px;height:24px;border-radius:50%;vertical-align:middle"> <span class="fs-base">'+esc(d.login)+'</span>';
       }
     }).catch(function(){});
   </script>

@@ -372,7 +372,7 @@
              are not new keys. -->
         <div style="margin-top:1.4rem">
           <label for="req-full-name" style="display:block;font-size:0.86rem;color:var(--muted);margin-bottom:var(--sp-3)">
-            Your name <span style="color:var(--red)">*</span>
+            Your name <span class="text-danger">*</span>
           </label>
           <input type="text" id="req-full-name" placeholder="Ada Lovelace" maxlength="128"
             oninput="clearContactError();updateSummary()"
@@ -383,7 +383,7 @@
           </p>
         </div>
 
-        <div style="margin-top:var(--sp-6)">
+        <div class="mt-6">
           <label for="req-slack-id" style="display:block;font-size:0.86rem;color:var(--muted);margin-bottom:var(--sp-3)">
             Slack ID <span style="color:var(--muted);font-weight:400">(optional)</span>
           </label>
@@ -402,7 +402,7 @@
              explicit pick here replaces that guess; leaving it blank shows no
              flag at all rather than a wrong one. Options are filled by
              populateCountrySelect() so the code carries one list, not two. -->
-        <div style="margin-top:var(--sp-6)">
+        <div class="mt-6">
           <label for="req-country" style="display:block;font-size:0.86rem;color:var(--muted);margin-bottom:var(--sp-3)">
             Country <span style="color:var(--muted);font-weight:400">(optional)</span>
           </label>
@@ -418,20 +418,20 @@
         <div id="contact-err" style="display:none;margin-top:var(--sp-4);font-size:var(--fs-base);color:var(--red)"></div>
 
         <div id="request-summary" style="margin:var(--sp-7) var(--sp-0);padding:var(--sp-6);background:#080b0f85;border:1px solid var(--line);border-radius:.7rem;font-size:var(--fs-base)">
-          <div style="margin-bottom:var(--sp-4)"><strong>Summary</strong></div>
-          <div style="color:var(--muted)">Repo: <span id="summary-repos" style="color:var(--text)">none added</span></div>
-          <div style="color:var(--muted)">GitHub: <span id="summary-forge" style="color:var(--text)">github.com</span></div>
-          <div style="color:var(--muted)">ACMM Level: <span id="summary-acmm" style="color:var(--text)"></span></div>
-          <div style="color:var(--muted)">Name: <span id="summary-name" style="color:var(--text)">&mdash;</span></div>
-          <div style="color:var(--muted)">Slack ID: <span id="summary-slack" style="color:var(--text)">&mdash;</span></div>
-          <div style="color:var(--muted)">Country: <span id="summary-country" style="color:var(--text)">&mdash;</span></div>
+          <div class="mb-4"><strong>Summary</strong></div>
+          <div class="text-muted">Repo: <span class="text-default" id="summary-repos">none added</span></div>
+          <div class="text-muted">GitHub: <span class="text-default" id="summary-forge">github.com</span></div>
+          <div class="text-muted">ACMM Level: <span class="text-default" id="summary-acmm"></span></div>
+          <div class="text-muted">Name: <span class="text-default" id="summary-name">&mdash;</span></div>
+          <div class="text-muted">Slack ID: <span class="text-default" id="summary-slack">&mdash;</span></div>
+          <div class="text-muted">Country: <span class="text-default" id="summary-country">&mdash;</span></div>
         </div>
         <!-- The wizard no longer asks anyone to install the GitHub App. This
              note is the handoff to where that now happens: after provisioning,
              the hive's own dashboard knows its forge and renders a correct
              per-instance install link (githubAppInstallURL, from
              config.GitHubConfig.AppInstallURL). -->
-        <p style="font-size:var(--fs-base);margin-top:var(--sp-2)">
+        <p class="fs-base mt-2">
           <strong>What happens next:</strong> an admin reviews your request. Once your hive is provisioned,
           its dashboard will prompt you to install the Hive GitHub App &mdash; with a link pointing at the
           right GitHub instance for your repos. Nothing to install before then.
@@ -464,7 +464,7 @@ docker compose -f src/docker-compose.yaml up -d
 # Open the dashboard
 open http://localhost:3001</code></pre>
       <p>A self-hosted hive is fully functional on its own &mdash; it does not need to be attached to hive.hivecommons.dev.</p>
-      <p style="margin-bottom:var(--sp-0)">Listing a hive you host yourself in the <a href="/#hives" style="color:var(--blue)">Active Hives</a> table is a separate, operator-mediated step. Setting <code>HIVE_HUB_URL</code> on its own is <strong>not</strong> sufficient: the hub authenticates every heartbeat against <code>HIVE_HUB_SECRET</code>, which is issued by the hub operator &mdash; unauthenticated registration was deliberately removed to prevent registry pollution. To get a self-hosted hive listed, <a href="https://github.com/hivecommons/hive/issues/new" style="color:var(--blue)">open an issue</a>. If you would rather not run the infrastructure at all, use the hosted-hive wizard at the top of this page and the hub will provision and list one for you.</p>
+      <p style="margin-bottom:var(--sp-0)">Listing a hive you host yourself in the <a class="text-info" href="/#hives">Active Hives</a> table is a separate, operator-mediated step. Setting <code>HIVE_HUB_URL</code> on its own is <strong>not</strong> sufficient: the hub authenticates every heartbeat against <code>HIVE_HUB_SECRET</code>, which is issued by the hub operator &mdash; unauthenticated registration was deliberately removed to prevent registry pollution. To get a self-hosted hive listed, <a class="text-info" href="https://github.com/hivecommons/hive/issues/new">open an issue</a>. If you would rather not run the infrastructure at all, use the hosted-hive wizard at the top of this page and the hub will provision and list one for you.</p>
     </div>
   </section>
 
@@ -473,7 +473,7 @@ open http://localhost:3001</code></pre>
     <div class="section-heading">
       <p class="section-label">Contribute</p>
       <h2>Contribute compute <span class="badge badge-ready">Ready</span></h2>
-      <p>Lend your AI CLI to run agents for any public hive. Earn trust tiers and climb the <a href="/#leaderboard" style="color:var(--blue)">leaderboard</a>.</p>
+      <p>Lend your AI CLI to run agents for any public hive. Earn trust tiers and climb the <a class="text-info" href="/#leaderboard">leaderboard</a>.</p>
     </div>
     <div class="alt-card">
       <pre><code>git clone https://github.com/hivecommons/hive.git
@@ -1033,7 +1033,7 @@ just contribute-hive              # start taking tasks</code></pre>
         document.getElementById('nav-dashboard').style.display = '';
         var u = document.getElementById('nav-user');
         u.style.display = '';
-        u.innerHTML = '<img src="' + esc(d.avatar_url) + '" style="width:24px;height:24px;border-radius:50%;vertical-align:middle"> <span style="font-size:var(--fs-base)">' + esc(d.login) + '</span>';
+        u.innerHTML = '<img src="' + esc(d.avatar_url) + '" style="width:24px;height:24px;border-radius:50%;vertical-align:middle"> <span class="fs-base">' + esc(d.login) + '</span>';
 
         document.getElementById('login-area').style.display = 'none';
         document.getElementById('logged-in-area').style.display = 'block';

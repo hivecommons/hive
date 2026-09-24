@@ -20,6 +20,7 @@ static preview at `/design-system.html`.
 | Buttons | In progress | A4 is migrating button families to shared recipes. |
 | Cards/surfaces | In progress | A5 is migrating surface recipes. |
 | Chips/status | Migrated in A7 | Operator chip families now map to entity/status/action/count recipes, status dots/badges use the canonical `STATUS` map, ACMM levels use `--acmm-level-*`, vendor markers use `--vendor-*`, and amber remains brand/CTA chrome only. |
+| Type/spacing/radius | Migrated in A6 | Operator, contributor, and hub pages collapse raw type, spacing, and radius values onto tokens; repeated token-only inline styles use shared utilities. |
 
 ## Token catalogue
 
@@ -236,6 +237,18 @@ tooltips should derive from this table instead of per-site color literals:
 | Repository/PR/issue/model chips | `.chip-entity`; vendor color through `--vendor-*`. |
 | Action-like pills | `.chip-action` with button semantics. |
 | Count pills | `.badge-count`. |
+
+
+### Utilities
+
+`components.css` also exposes small utilities for repeated token-only markup:
+
+- Type: `.fs-xs`, `.fs-sm`, `.fs-base`, `.fs-md`, `.fs-lg`, `.fs-xl`.
+- Text color: `.text-default`, `.text-muted`, `.text-faint`, `.text-success`, `.text-warn`, `.text-danger`, `.text-info`, `.text-brand`, `.text-accent`.
+- Spacing: `.m-0`, `.mt-1` through `.mt-7`, `.mb-1` through `.mb-8`, `.py-1-px-4`, `.py-2-px-4`.
+- Display: `.d-block`.
+
+Use these only for recurring token-only one-liners; component recipes remain preferred for structured UI.
 
 ## Migration rules for new code
 

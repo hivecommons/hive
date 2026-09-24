@@ -469,3 +469,39 @@
     box-shadow: var(--shadow-status-pulse-active);
   }
 }
+
+/* ===== utilities ===== */
+.fs-xs { font-size: var(--fs-xs); }
+.fs-sm { font-size: var(--fs-sm); }
+.fs-base { font-size: var(--fs-base); }
+.fs-md { font-size: var(--fs-md); }
+.fs-lg { font-size: var(--fs-lg); }
+.fs-xl { font-size: var(--fs-xl); }
+.text-default { color: var(--text); }
+.text-muted { color: var(--text-muted); }
+.text-faint { color: var(--text-faint); }
+.text-success { color: var(--status-ok); }
+.text-warn { color: var(--status-warn); }
+.text-danger { color: var(--status-error); }
+.text-info { color: var(--status-info); }
+.text-brand { color: var(--brand); }
+.text-accent { color: var(--accent); }
+.m-0 { margin: var(--sp-0); }
+.mt-1 { margin-top: var(--sp-1); }
+.mt-2 { margin-top: var(--sp-2); }
+.mt-3 { margin-top: var(--sp-3); }
+.mt-4 { margin-top: var(--sp-4); }
+.mt-5 { margin-top: var(--sp-5); }
+.mt-6 { margin-top: var(--sp-6); }
+.mt-7 { margin-top: var(--sp-7); }
+.mb-1 { margin-bottom: var(--sp-1); }
+.mb-2 { margin-bottom: var(--sp-2); }
+.mb-3 { margin-bottom: var(--sp-3); }
+.mb-4 { margin-bottom: var(--sp-4); }
+.mb-5 { margin-bottom: var(--sp-5); }
+.mb-6 { margin-bottom: var(--sp-6); }
+.mb-7 { margin-bottom: var(--sp-7); }
+.mb-8 { margin-bottom: var(--sp-8); }
+.py-1-px-4 { padding: var(--sp-1) var(--sp-4); }
+.py-2-px-4 { padding: var(--sp-2) var(--sp-4); }
+.d-block { display: block; }

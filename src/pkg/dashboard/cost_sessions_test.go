@@ -189,7 +189,7 @@ func TestCostSessionTimeColumnWiring(t *testing.T) {
 		`cost-session-active">active</span>`,
 		"sn.started ? fmtSessTs(sn.started) : '—'",
 		"(Date.now() - sn.last_active) < COST_SESSION_ACTIVE_MS",
-		`<td colspan="7"`,
+		`<td class="text-muted" colspan="7"`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("index.html is missing cost session time snippet %q", snippet)

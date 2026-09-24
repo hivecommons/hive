@@ -23,7 +23,7 @@ func TestPromptTemplateSaveButtonRemoved(t *testing.T) {
 			`the footer Save must be the only save in the agent config dialog`)
 	}
 	// The tab should instead tell the operator where the save lives.
-	if !strings.Contains(html, `Edits are saved by the <strong style="color:var(--text)">Save</strong> button below.`) {
+	if !strings.Contains(html, `Edits are saved by the <strong class="text-default">Save</strong> button below.`) {
 		t.Error("index.html is missing the Prompt Template hint pointing at the footer Save button")
 	}
 }
