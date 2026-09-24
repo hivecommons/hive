@@ -17,6 +17,11 @@ sync with the Go config schema. `pkg/dashboard` has a guard test that extracts
 those keys from the FAQ panel and asserts each path exists in `config.Config`
 via YAML tags.
 
+
+## Design system
+
+Dashboard UI changes should follow the shared [dashboard design system](dashboard-design-system.md) and [ADR-0018](adr/0018-dashboard-design-tokens.md). The token layer is the theme contract for future user theme/background work and the migration path away from static inline styles.
+
 ## Appearance themes
 
 Owners can choose a hive-wide dashboard theme in **Settings → Appearance** or by

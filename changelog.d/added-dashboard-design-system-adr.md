@@ -1,0 +1,1 @@
+- Added ADR-0018 and the dashboard design-system reference so the spoke, contributor portal, and hub can converge on shared tokens and theme overrides for #8536.

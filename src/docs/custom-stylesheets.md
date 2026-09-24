@@ -10,6 +10,11 @@ Hive can apply a shareable CSS theme from a public GitHub repository. The featur
 
 The `@ref` suffix is optional and defaults to `HEAD`. Use the `owner/repo/path.css` triplet form, not a raw URL.
 
+
+## Token-based themes
+
+For dashboard theme work, prefer token overrides from the [dashboard design system](dashboard-design-system.md) over selector-level restyling. The planned #8536 contract treats a theme as a small CSS file that sets only documented `:root` tokens, with an optional light-mode block; arbitrary selectors remain for the existing custom stylesheet feature but are not the stable design-system API.
+
 ## Fetching and scoping
 
 Hive fetches public GitHub raw content server-side without credentials, limits the response to 128 KiB, sanitizes it, then serves the sanitized stylesheet from same-origin endpoints. Dashboard and snapshot CSS is scoped to `#hive-dashboard-root`; leaderboard CSS is scoped to `#tab-leaderboard`. Login and setup overlays remain outside the dashboard theme surface.
