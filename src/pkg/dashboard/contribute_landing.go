@@ -1994,7 +1994,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="tab-panel" id="tab-manage" role="tabpanel" aria-labelledby="ptab-manage">
 <div class="ops">
 <h1>Management</h1>
-<p class="subtitle" style="font-size:var(--fs-md)">Operator admin controls for the contributor (&ldquo;clanker&rdquo;) fleet, mirrored from the Governor Hub configuration. Owner &amp; read-write only &mdash; a read viewer sees no controls here. Live monitoring of the fleet lives under the <strong style="color:var(--cc-text)">Operations</strong> tab.</p>
+<p class="subtitle fs-md">Operator admin controls for the contributor (&ldquo;clanker&rdquo;) fleet, mirrored from the Governor Hub configuration. Owner &amp; read-write only &mdash; a read viewer sees no controls here. Live monitoring of the fleet lives under the <strong style="color:var(--cc-text)">Operations</strong> tab.</p>
 
 <!-- #2534 Operator admin controls. Hidden by default; shown only after /api/role
      reports owner or read-write. These mirror the Governor Hub config section
@@ -2105,7 +2105,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="ops">
 <h1>Operations</h1>
 <div id="operator-message-banner-ops"></div>
-<p class="subtitle" style="font-size:var(--fs-md)">A live view over the contributor (&ldquo;clanker&rdquo;) fleet and its in-flight work. The panels below surface what this hive already knows; the per-clanker trust / revoke / remove controls are owner &amp; read-write only. Admin controls (suspend, admission filters) live under the <strong style="color:var(--cc-text)">Management</strong> tab.</p>
+<p class="subtitle fs-md">A live view over the contributor (&ldquo;clanker&rdquo;) fleet and its in-flight work. The panels below surface what this hive already knows; the per-clanker trust / revoke / remove controls are owner &amp; read-write only. Admin controls (suspend, admission filters) live under the <strong style="color:var(--cc-text)">Management</strong> tab.</p>
 <div id="ops-announcement" class="announcement-banner" role="status"><span class="ann-level"></span><span class="ann-text"></span><button class="hv-btn btn-secondary" type="button" data-action="dismiss-announcement" aria-label="Dismiss announcement">&times;</button></div>
 <div id="ops-help-links" class="help-links" aria-label="Help and community links"><h4>Help &amp; community</h4><div class="links"></div></div>
 
@@ -2130,7 +2130,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 </div>
 <div id="clanker-list"><div class="ops-empty">Loading fleet&hellip;</div></div>
 </div>
-<div class="ops-card" style="margin-top:var(--sp-7)">
+<div class="ops-card mt-7">
 <div class="ops-card-head"><h3>Pipeline &amp; policy</h3><!-- Tasks-completed/hour throughput trend (#persistent-history) --><span class="spark spark-inline" id="spark-throughput" title="Tasks completed per hour, last 7 days"></span></div>
 <div style="padding:var(--sp-6) var(--sp-7)">
 <div class="pipeline">
@@ -2207,7 +2207,7 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
      only model/CLI aggregates — no contributor names or tokens — and splits
      small samples into "Not enough data yet" so a one-lucky-PR model does not
      lead the ranked list. -->
-<div class="ops-card" id="effective-models-card" style="margin-bottom:var(--sp-7)">
+<div class="ops-card mb-7" id="effective-models-card">
 <div class="ops-card-head"><span class="feed-dot"></span><h3>Most effective models</h3><span class="ops-card-count" id="effective-models-count"></span></div>
 <div class="effective-controls" role="group" aria-label="Effective model filters">
   <button type="button" class="hv-btn btn-secondary btn-sm effective-chip active" data-eff-window="7d">7d</button>
@@ -2255,7 +2255,7 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
      the run log is the only thing left that says why. The "history" link on a
      fleet row just fills this box. Reasons are public; pane output is served
      only to owner/read-write viewers (the server strips it, this only says so). -->
-<div class="ops-card" id="runs-card" style="margin-top:var(--sp-7)">
+<div class="ops-card mt-7" id="runs-card">
 <div class="ops-card-head"><h3>Contributor run history</h3><span class="ops-card-count" id="runs-count"></span></div>
 <form class="runs-lookup" id="runs-lookup" autocomplete="off">
 <input type="text" id="runs-user" name="username" placeholder="GitHub login, e.g. from the log rail" aria-label="Contributor GitHub login" spellcheck="false">
@@ -2274,11 +2274,11 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
      and configured rate limits); a 403 renders as a gate notice, not an error.
      In-memory only: an empty list means "nothing since the hub started", which
      the card says out loud so a post-restart blank is not read as innocence. -->
-<div class="ops-card" id="decisions-card" style="margin-top:var(--sp-7)">
+<div class="ops-card mt-7" id="decisions-card">
 <div class="ops-card-head"><h3>Hub decisions</h3><span class="ops-card-count" id="decisions-count"></span></div>
 <div class="dec-list" id="decisions-list"><div class="ops-empty">Look up a contributor above to see what the hub decided about them: reports it fenced as stale, tasks it took back, and times it declined to hand out work.</div></div>
 </div>
-<div class="ops-card card-accent" style="margin-top:var(--sp-7)">
+<div class="ops-card card-accent mt-7">
 <div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span><!-- Resume-all (#queue-hold): bulk-clears the operator hold set. Hidden by default;
      ccRenderResumeAll() reveals it only for an owner/read-write viewer when at least
      one issue is on hold. Themed confirm (adminConfirm), never native confirm. --><button type="button" class="hv-btn btn-secondary btn-sm queue-resume-all-btn" id="queue-resume-all-btn" style="display:none" title="Resume every held issue">&#x25B6; Resume all</button><!-- Cooldown explainer (#2649 companion): a circled-i affordance whose popover
@@ -2360,7 +2360,7 @@ It clears automatically when the period elapses. An operator can shorten or disa
      issues NOT already at the top of the queue, ranked by a light recency heat
      proxy. Read-only for everyone; the per-item "add to queue" pins it into the
      operator order (owner/read-write only, rendered only when adminEnabled). -->
-<div class="ops-card" id="opp-card" style="margin-top:var(--sp-7)">
+<div class="ops-card mt-7" id="opp-card">
 <div class="ops-card-head"><h3>Opportunistic work</h3><span class="ops-card-count" id="opp-count"></span></div>
 <div class="opp-list" id="opp-list"><div class="ops-empty">Looking for fresh work&hellip;</div></div>
 <p class="ops-note" style="padding:var(--sp-5) var(--sp-7) var(--sp-6);margin:var(--sp-0)">A light, calm read of fresh, actionable issues beyond what&rsquo;s already lined up &mdash; surfaced by recency, not a heavy recommender. Owner/read-write operators can add one to the queue; it becomes offer-priority only and still obeys every admission filter.</p>
@@ -2374,7 +2374,7 @@ It clears automatically when the period elapses. An operator can shorten or disa
      (a future enhancement, out of scope). A SECTION within Operations — NOT a new
      page/tab. Fetched from /api/contribute/triage after load so a slow GitHub
      PR-link lookup never delays the page. Full-width card below the ops grid. -->
-<div class="ops-card cc-triage-card" id="cc-triage-card" style="margin-top:var(--sp-7)">
+<div class="ops-card cc-triage-card mt-7" id="cc-triage-card">
 <div class="ops-card-head"><span class="feed-dot"></span><h3>Issue triage</h3><span class="ops-card-count count-strong" id="cc-triage-total"></span></div>
 <!-- Compact ladder summary: one chip per level with its live count. -->
 <div class="cc-triage-ladder" id="cc-triage-ladder"><div class="ops-empty">Loading triage&hellip;</div></div>
@@ -2419,7 +2419,7 @@ It clears automatically when the period elapses. An operator can shorten or disa
 <div class="tab-panel" id="tab-leaderboard" role="tabpanel" aria-labelledby="ptab-leaderboard">
 <div class="ops">
 <h1>Leaderboard</h1>
-<p class="subtitle" style="font-size:var(--fs-md)">Ranked by tasks completed. Human contributors and donated-compute contributors appear here; the hive&rsquo;s own internal agents and revoked contributors are excluded.</p>
+<p class="subtitle fs-md">Ranked by tasks completed. Human contributors and donated-compute contributors appear here; the hive&rsquo;s own internal agents and revoked contributors are excluded.</p>
 %s
 <!-- Standing strip. The full dossier now lives on its OWN tab (/contribute/profile)
      so the standings are the primary content here again; all that remains is a
@@ -3501,7 +3501,7 @@ function renderMeCard(mount,p){
     +meProfileRows(p)+meTestimonySection(p)+meDossierForm(p)+'</section>'
   +'</div>'
   // Full-width — The Golden Path.
-  +'<section class="dz-zcard" style="margin-bottom:var(--sp-6)" aria-label="The Golden Path">'
+  +'<section class="dz-zcard mb-6" aria-label="The Golden Path">'
   +'<div class="dz-path-head"><div class="dz-zone-head">The Golden Path</div>'
     +(nextRung?('<div class="dz-path-next">'+(nextIsConferred?'<b>'+nextRung+'</b> is conferred, not counted toward':'next designation <b>'+nextRung+'</b>')+'</div>'):'')+'</div>'
   +mePathProgress(p)+meLadder(p)
@@ -3511,7 +3511,7 @@ function renderMeCard(mount,p){
   +'<section class="dz-zcard" aria-label="Triumphs"><div class="dz-zone-head">Triumphs</div>'
     +meSeals(p)
     +'<div class="dz-heraldry-head"><span>Heraldry · verified via Credly</span></div>'
-    +'<div id="me-heraldry-slot"><div class="ops-note" style="margin:var(--sp-0)">Loading heraldry&hellip;</div></div></section>'
+    +'<div id="me-heraldry-slot"><div class="ops-note m-0">Loading heraldry&hellip;</div></div></section>'
   +'<section class="dz-zcard" aria-label="Collaborators"><div class="dz-zone-head">Collaborators</div>'
     +meCollaborators(p)+'</section>'
   +'</div>'
@@ -3528,8 +3528,8 @@ function renderMeCard(mount,p){
   // A visitor reading someone else's record gets none of them: they are personal
   // affordances, not part of the record itself.
   +(ME_IS_OWNER?(
-     '<section class="dz-zcard" style="margin-top:var(--sp-6)" aria-label="Daily quota"><div class="dz-zone-head">Daily quota</div>'
-    +'<div class="me-quota-wrap" id="me-quota-slot"><div class="ops-note" style="margin:var(--sp-0)">Loading your quota&hellip;</div></div>'
+     '<section class="dz-zcard mt-6" aria-label="Daily quota"><div class="dz-zone-head">Daily quota</div>'
+    +'<div class="me-quota-wrap" id="me-quota-slot"><div class="ops-note m-0">Loading your quota&hellip;</div></div>'
     +'<div class="me-actions">'
       +'<a class="me-share" href="'+esc(meLinkedInURL(p))+'" target="_blank" rel="noopener noreferrer">\u{1F4E3} Share achievement on LinkedIn</a>'
       +'<span class="me-stylepick">Profile style <select id="me-style-select" aria-label="Profile style">'+styleOpts+'</select></span>'
@@ -3757,7 +3757,7 @@ function loadMeHeraldry(username){
       out+='</div>';
       if(total>cap){
         var prof='https://www.credly.com/users/'+encodeURIComponent(h.credly_name||'');
-        out+='<div class="me-heraldry-note" style="margin-top:var(--sp-5)">+'+(total-cap)+' more on <a href="'+esc(prof)+'" target="_blank" rel="noopener noreferrer">Credly</a></div>';
+        out+='<div class="me-heraldry-note mt-5">+'+(total-cap)+' more on <a href="'+esc(prof)+'" target="_blank" rel="noopener noreferrer">Credly</a></div>';
       }
       slot.innerHTML=out;
     }).catch(function(){slot.innerHTML=unlinked;wireLink();});
@@ -6928,7 +6928,7 @@ function ccRenderQueueEnd(show){
 function ccRenderMeQuota(){
   var slot=document.getElementById('me-quota-slot');if(!slot)return;
   var html=ccQuotaHTML('me-quota');
-  slot.innerHTML=html||'<div class="ops-note" style="margin:var(--sp-0)">Ship a task to start tracking your daily quota.</div>';
+  slot.innerHTML=html||'<div class="ops-note m-0">Ship a task to start tracking your daily quota.</div>';
 }
 
 // ── Global menu-dismiss: click outside or Escape closes any open row menu ───────
