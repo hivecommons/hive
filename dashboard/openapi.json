@@ -20072,6 +20072,168 @@
             "description": "Audit dependencies or bead store unavailable."
           }
         }
+      },
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Query retained run audit artifacts",
+        "description": "Owner-only, read-only cross-repo audit query over existing retained artifacts: dashboard audit log entries, lifecycle timeline events, lease stage receipts, and plan epics. No new store is written. If requested history may have aged out, the response includes an explicit expired marker with Unknown state.",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter to owner/repo."
+          },
+          {
+            "name": "run",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Canonical run key owner/repo#number."
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Inclusive lower timestamp bound."
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Inclusive upper timestamp bound."
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by item kind or source, e.g. stage_approval, lease_stage_advanced, plan_epic, expired."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "page_token",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Offset token returned by the previous page."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Retained audit rows and retention contract.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "string",
+                            "enum": [
+                              "audit_log",
+                              "timeline",
+                              "lease_receipt",
+                              "plan_epic",
+                              "retention"
+                            ]
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "description": "expired for retention markers"
+                          },
+                          "run": {
+                            "type": "string"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "actor": {
+                            "type": "string"
+                          },
+                          "artifact_id": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "attrs": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "next_page_token": {
+                      "type": "string"
+                    },
+                    "retention": {
+                      "type": "object",
+                      "properties": {
+                        "contract": {
+                          "type": "string"
+                        },
+                        "audit_log": {
+                          "type": "string"
+                        },
+                        "timeline": {
+                          "type": "string"
+                        },
+                        "expired_marker_kind": {
+                          "type": "string",
+                          "enum": [
+                            "expired"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query parameter."
+          },
+          "403": {
+            "description": "Owner access required."
+          }
+        }
       }
     },
     "/api/runs/{key}/trace": {
@@ -21060,7 +21222,7 @@
           "System"
         ],
         "summary": "Dashboard theme catalog",
-        "description": "Lists embedded dashboard and contributor themes with id, display metadata, scopes, dark/light flag, and preview swatches for Settings → Appearance.",
+        "description": "Lists embedded dashboard and contributor themes with id, display metadata, scopes, dark/light flag, and preview swatches for Settings \u2192 Appearance.",
         "parameters": [
           {
             "name": "scope",
