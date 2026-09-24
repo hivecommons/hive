@@ -395,7 +395,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    status filters and nothing else — the two are deliberately separate classes so
    the status click handler cannot deactivate a scope chip, and vice versa. */
 .ops-filter,.ops-scope{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-muted);font-size:.78rem;padding:4px 12px;border-radius:999px;cursor:pointer;font-family:inherit}
-.ops-filter.active,.ops-scope.active{background:#1f6feb;border-color:var(--cc-accent-fg);color:#fff}
+.ops-filter.active,.ops-scope.active{background:var(--cc-accent-fg);border-color:var(--cc-accent-fg);color:var(--surface-2)}
 /* A hairline between the status chips and the scope chips: they are two
    independent axes, and side by side with no divider they read as one row of
    mutually exclusive choices. */
@@ -419,12 +419,12 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-issue-link:hover .cc-issue-link-ic{opacity:1}
 .work-title{font-size:.9rem;color:var(--cc-text);margin:2px 0 6px}
 .work-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.75rem;color:var(--cc-muted)}
-.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:.7rem;font-weight:600;border:1px solid transparent}
-.pill-progress{background:rgba(88,166,255,.12);color:var(--cc-accent);border-color:rgba(88,166,255,.3)}
-.pill-review{background:rgba(210,153,34,.12);color:var(--cc-amber);border-color:rgba(210,153,34,.3)}
-.pill-passed{background:rgba(63,185,80,.12);color:var(--cc-green);border-color:rgba(63,185,80,.3)}
-.pill-blocked{background:rgba(248,81,73,.12);color:var(--cc-red);border-color:rgba(248,81,73,.3)}
-.pill-idle{background:rgba(139,148,158,.12);color:var(--cc-muted);border-color:rgba(139,148,158,.3)}
+.pill{--component-status:var(--status-neutral);display:inline-block;padding:var(--badge-pad-y) var(--badge-pad-x);border-radius:var(--r-pill);font-size:var(--fs-xs);font-weight:600;border:var(--line-width) solid color-mix(in srgb,var(--component-status) var(--component-border),transparent);background:color-mix(in srgb,var(--component-status) var(--component-tint),transparent);color:var(--component-status)}
+.pill-progress{--component-status:var(--status-info)}
+.pill-review{--component-status:var(--status-attention)}
+.pill-passed{--component-status:var(--status-ok)}
+.pill-blocked{--component-status:var(--status-error)}
+.pill-idle{--component-status:var(--status-neutral)}
 /* #2574 (follow-up): the Connected-clankers card is a NARROW column. The old
    layout put the multi-line identity text (.clanker-main) and the inline
    controls (.admin-actions: tier dropdown + Revoke + Remove) in the SAME
@@ -480,7 +480,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .run-outcome{font-size:.68rem;font-weight:600;padding:1px 7px;border-radius:999px;border:1px solid var(--cc-border);color:var(--cc-muted);text-transform:uppercase;letter-spacing:.03em}
 .run-outcome.completed{color:var(--cc-green);border-color:var(--cc-green)}
 .run-outcome.failed{color:var(--cc-red);border-color:var(--cc-red)}
-.run-outcome.abandoned{color:var(--cc-amber);border-color:var(--cc-amber)}
+.run-outcome.abandoned{color:var(--status-warn);border-color:var(--status-warn)}
 .run-task{color:var(--cc-text);font-weight:600;overflow-wrap:anywhere}
 .run-task a{color:inherit;text-decoration:none}
 .run-task a:hover{text-decoration:underline}
@@ -497,7 +497,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .dec-head{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;font-size:.8rem}
 .dec-event{font-size:.68rem;font-weight:600;padding:1px 7px;border-radius:999px;border:1px solid var(--cc-border);color:var(--cc-muted);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
 .dec-event.stale_gen_rejected,.dec-event.unassigned_ignored{color:var(--cc-red);border-color:var(--cc-red)}
-.dec-event.abandoned,.dec-event.lease_expired,.dec-event.resume_rejected{color:var(--cc-amber);border-color:var(--cc-amber)}
+.dec-event.abandoned,.dec-event.lease_expired,.dec-event.resume_rejected{color:var(--status-warn);border-color:var(--status-warn)}
 .dec-task{color:var(--cc-text);font-weight:600;overflow-wrap:anywhere}
 .dec-task a{color:inherit;text-decoration:none}
 .dec-task a:hover{text-decoration:underline}
@@ -809,7 +809,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    Management & Operations tab. Owner/read-write only; a read viewer never sees them. */
 .ops-admin{display:none}
 .ops-admin.enabled{display:block}
-.admin-badge{font-size:.68rem;font-weight:600;padding:2px 8px;border-radius:999px;background:rgba(210,153,34,.12);color:var(--cc-amber);border:1px solid rgba(210,153,34,.3);margin-left:auto}
+.admin-badge{font-size:var(--fs-xs);font-weight:600;padding:var(--badge-pad-y) var(--badge-pad-x);border-radius:var(--r-pill);background:color-mix(in srgb,var(--status-attention) var(--component-tint),transparent);color:var(--status-attention);border:var(--line-width) solid color-mix(in srgb,var(--status-attention) var(--component-border),transparent);margin-left:auto}
 .admin-badge:empty{display:none}
 .admin-body{padding:18px 20px 22px;display:grid;gap:16px}
 .admin-section{border:1px solid var(--cc-border-2);border-radius:12px;background:rgba(139,148,158,.04);padding:16px;display:grid;gap:14px}
@@ -899,7 +899,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 /* The tier and acting-as controls ARE the <select> (class on the element), which
    is why the .admin-act select descendant rule above never matched them. */
 select.admin-act{min-width:0;max-width:100%%}
-.agent-role-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:999px;border:1px solid rgba(88,166,255,.28);background:rgba(88,166,255,.08);color:var(--cc-accent-2)}
+.agent-role-chip{display:inline-flex;align-items:center;gap:var(--sp-2);padding:var(--badge-pad-y) var(--badge-pad-x);border-radius:var(--r-pill);border:var(--line-width) solid color-mix(in srgb,var(--status-info) var(--component-border),transparent);background:color-mix(in srgb,var(--status-info) var(--component-tint-soft),transparent);color:var(--status-info)}
 .agent-role-chip button{border:none;background:transparent;color:inherit;cursor:pointer;padding:0;line-height:1;opacity:.75;font:inherit}
 .agent-role-chip button:hover{opacity:1;color:var(--cc-red)}
 .agent-role-add{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-text-2);font-size:.7rem;border-radius:6px;padding:2px 4px;font-family:inherit}
@@ -915,12 +915,12 @@ select.admin-act{min-width:0;max-width:100%%}
 /* ── Operations command center — live SSE-driven queue / travel / dev-log /
    achievements / army framing. Subtle-professional motion only; degrades to the
    existing poll when SSE is unavailable. Additive, read-only. ─────────────── */
-.cc-live{display:inline-flex;align-items:center;gap:6px;font-size:.68rem;font-weight:600;padding:2px 8px;border-radius:999px;margin-left:auto;border:1px solid rgba(63,185,80,.3);background:rgba(63,185,80,.1);color:var(--cc-green)}
-.cc-live .cc-live-dot{width:7px;height:7px;border-radius:50%%;background:var(--cc-green);animation:pulse 2s infinite}
-.cc-live.stale{border-color:rgba(210,153,34,.3);background:rgba(210,153,34,.1);color:var(--cc-amber)}
+.cc-live{display:inline-flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-xs);font-weight:600;padding:var(--badge-pad-y) var(--badge-pad-x);border-radius:var(--r-pill);margin-left:auto;border:var(--line-width) solid color-mix(in srgb,var(--status-ok) var(--component-border),transparent);background:color-mix(in srgb,var(--status-ok) var(--component-tint-soft),transparent);color:var(--status-ok)}
+.cc-live .cc-live-dot{width:7px;height:7px;border-radius:50%%;background:var(--status-ok);animation:pulse 2s infinite}
+.cc-live.stale{border-color:color-mix(in srgb,var(--status-warn) var(--component-border),transparent);background:color-mix(in srgb,var(--status-warn) var(--component-tint-soft),transparent);color:var(--status-warn)}
 /* Polling (stale) dot: a very slow, gentle breathe rather than the brisk live
    pulse — signals "still watching, just on the calmer poll cadence". */
-.cc-live.stale .cc-live-dot{background:var(--cc-amber);animation:cc-slowpulse 2.8s ease-in-out infinite}
+.cc-live.stale .cc-live-dot{background:var(--status-warn);animation:cc-slowpulse 2.8s ease-in-out infinite}
 @keyframes cc-slowpulse{0%%,100%%{opacity:1}50%%{opacity:.45}}
 @media(prefers-reduced-motion:reduce){.cc-live .cc-live-dot,.cc-live.stale .cc-live-dot{animation:none!important}}
 /* Ready-work queue play/pause — the SAME contribute_suspended control as the
@@ -954,8 +954,8 @@ select.admin-act{min-width:0;max-width:100%%}
 @keyframes cc-landing{0%%{box-shadow:0 0 0 0 rgba(88,166,255,.5)}100%%{box-shadow:0 0 0 6px rgba(88,166,255,0)}}
 .clanker-row.cc-landing{animation:cc-landing .8s ease}
 .clanker-status{font-size:.68rem;font-weight:600;padding:1px 7px;border-radius:999px;margin-left:6px;border:1px solid transparent}
-.clanker-status.working{background:rgba(88,166,255,.12);color:var(--cc-accent);border-color:rgba(88,166,255,.3)}
-.clanker-status.reviewing{background:rgba(210,153,34,.12);color:var(--cc-amber);border-color:rgba(210,153,34,.3)}
+.clanker-status.working{background:color-mix(in srgb,var(--status-info) var(--component-tint),transparent);color:var(--status-info);border-color:color-mix(in srgb,var(--status-info) var(--component-border),transparent)}
+.clanker-status.reviewing{background:color-mix(in srgb,var(--status-attention) var(--component-tint),transparent);color:var(--status-attention);border-color:color-mix(in srgb,var(--status-attention) var(--component-border),transparent)}
 .clanker-status.idle{background:rgba(139,148,158,.12);color:var(--cc-muted);border-color:rgba(139,148,158,.3)}
 /* Ready-work QUEUE — the stack of issues waiting to be picked off. A generous
    max-height keeps a long backlog (up to ~150 items) scrolling inside the card
@@ -1028,7 +1028,7 @@ select.admin-act{min-width:0;max-width:100%%}
 .cc-mine-tile.is-pr .cc-mine-val{color:var(--cc-green)}
 .cc-mine-lbl{font-size:.68rem;letter-spacing:.03em;text-transform:uppercase;color:var(--cc-muted);margin-top:3px}
 .cc-mine-sub{font-size:.68rem;color:var(--cc-muted-2);margin-top:2px}
-.cc-mine-eligible{grid-column:1/-1;font-size:.78rem;color:var(--cc-amber);background:rgba(210,153,34,.10);border:1px solid rgba(210,153,34,.28);border-radius:8px;padding:8px 10px}
+.cc-mine-eligible{grid-column:1/-1;font-size:.78rem;color:var(--status-attention);background:color-mix(in srgb,var(--status-attention) var(--component-tint-soft),transparent);border:var(--line-width) solid color-mix(in srgb,var(--status-attention) var(--component-border),transparent);border-radius:8px;padding:8px 10px}
 /* When the body carries a message instead of tiles (signed out, no profile yet,
    or a load fault — #6937) the tile grid would squeeze that one sentence into a
    94px column, so the grid steps aside for a plain block. The message itself is
@@ -1066,7 +1066,7 @@ select.admin-act{min-width:0;max-width:100%%}
    an error state, and must not read as "this clanker is broken/blocked". */
 .clanker-proto{margin-top:3px;font-size:.68rem;color:var(--cc-amber)}
 .clanker-proto.incompatible{color:var(--cc-red)}
-.clanker-knowledge{display:inline-flex;padding:1px 7px;border-radius:999px;font-size:.68rem;background:rgba(218,54,51,.10);color:var(--cc-amber);border:1px solid rgba(210,153,34,.35)}
+.clanker-knowledge{display:inline-flex;padding:var(--badge-pad-y) var(--badge-pad-x);border-radius:var(--r-pill);font-size:var(--fs-xs);background:color-mix(in srgb,var(--status-attention) var(--component-tint-soft),transparent);color:var(--status-attention);border:var(--line-width) solid color-mix(in srgb,var(--status-attention) var(--component-border),transparent)}
 .clanker-knowledge.neutral{background:rgba(139,148,158,.10);color:var(--cc-muted);border-color:rgba(139,148,158,.35)}
 /* #2637 owner roster: an OWNER-facing aggregate of which labels connected
    contributors subscribe to, and who — so the owner can label matching issues to
@@ -1124,7 +1124,7 @@ select.admin-act{min-width:0;max-width:100%%}
    Never hidden, so the operator can always see and Resume it. */
 .cc-q-item.cc-q-held{opacity:.55}
 .cc-q-item.cc-q-held:hover{opacity:.8}
-.cc-q-held-tag{margin-left:7px;font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--cc-amber);background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.3);border-radius:999px;padding:0 6px;vertical-align:middle}
+.cc-q-held-tag{margin-left:7px;font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--status-attention);background:color-mix(in srgb,var(--status-attention) var(--component-tint),transparent);border:var(--line-width) solid color-mix(in srgb,var(--status-attention) var(--component-border),transparent);border-radius:var(--r-pill);padding:0 6px;vertical-align:middle}
 /* Resume-all (#queue-hold): a small amber header button. Hidden until there is at
    least one held issue and the viewer is owner/read-write (JS-toggled display). */
 .queue-resume-all-btn{margin-left:var(--sp-4);vertical-align:middle}
@@ -1134,8 +1134,8 @@ select.admin-act{min-width:0;max-width:100%%}
 .opp-list{padding:2px 0}
 .opp-item{display:flex;align-items:flex-start;gap:10px;padding:11px 20px;border-bottom:1px solid var(--cc-border-2)}
 .opp-item:last-child{border-bottom:none}
-.opp-heat{flex-shrink:0;width:8px;height:8px;border-radius:50%%;margin-top:5px;background:var(--cc-green);box-shadow:0 0 0 3px rgba(63,185,80,.14)}
-.opp-heat.warm{background:var(--cc-amber);box-shadow:0 0 0 3px rgba(210,153,34,.14)}
+.opp-heat{flex-shrink:0;width:8px;height:8px;border-radius:50%%;margin-top:5px;background:var(--status-ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--status-ok) 14%%,transparent)}
+.opp-heat.warm{background:var(--status-warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--status-warn) 14%%,transparent)}
 .opp-heat.cool{background:var(--cc-muted-2);box-shadow:none}
 .opp-body{flex:1;min-width:0}
 .opp-repo{font-size:.72rem;color:var(--cc-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
@@ -1361,8 +1361,8 @@ select.admin-act{min-width:0;max-width:100%%}
    whether a fixing PR is open or merged. Reuses the status-pill palette so its
    meaning matches the rest of the page (open = review-amber, merged = done-green). */
 .cc-pr-badge{flex-shrink:0;display:inline-flex;align-items:center;gap:4px;align-self:center;font-size:.68rem;font-weight:600;padding:2px 8px;border-radius:999px;text-decoration:none;border:1px solid transparent;white-space:nowrap}
-.cc-pr-badge.pr-open{background:rgba(210,153,34,.12);color:var(--cc-amber);border-color:rgba(210,153,34,.3)}
-.cc-pr-badge.pr-merged{background:rgba(63,185,80,.12);color:var(--cc-green);border-color:rgba(63,185,80,.3)}
+.cc-pr-badge.pr-open{background:color-mix(in srgb,var(--status-warn) var(--component-tint),transparent);color:var(--status-warn);border-color:color-mix(in srgb,var(--status-warn) var(--component-border),transparent)}
+.cc-pr-badge.pr-merged{background:color-mix(in srgb,var(--status-ok) var(--component-tint),transparent);color:var(--status-ok);border-color:color-mix(in srgb,var(--status-ok) var(--component-border),transparent)}
 .cc-pr-badge:hover{filter:brightness(1.1);text-decoration:underline}
 /* Inline PR badge riding on a ready-queue row (smaller, sits after the title). */
 .cc-q-body .cc-pr-badge{margin-top:4px}
@@ -1404,9 +1404,9 @@ select.admin-act{min-width:0;max-width:100%%}
 .stat{padding:16px 10px}
 .ops-grid{gap:24px}
 .ops-card-head{padding:18px 20px}
-.lb-custom-style-note{margin:0 0 16px;padding:10px 12px;border:1px solid rgba(88,166,255,.35);border-radius:8px;background:rgba(88,166,255,.10);color:var(--cc-text);font-size:.86rem}
+.lb-custom-style-note{margin:0 0 16px;padding:10px 12px;border:var(--line-width) solid color-mix(in srgb,var(--status-info) var(--component-border),transparent);border-radius:8px;background:color-mix(in srgb,var(--status-info) var(--component-tint-soft),transparent);color:var(--cc-text);font-size:.86rem}
 .lb-custom-style-note code{color:var(--cc-accent)}
-.lb-custom-style-note--warn{border-color:rgba(210,153,34,.45);background:rgba(210,153,34,.12)}
+.lb-custom-style-note--warn{border-color:color-mix(in srgb,var(--status-warn) var(--component-border),transparent);background:color-mix(in srgb,var(--status-warn) var(--component-tint),transparent)}
 .lb-custom-style-note button{margin-left:8px;background:transparent;border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);padding:2px 8px;cursor:pointer}
 /* ── #4549 Theme control ─────────────────────────────────────────────────────
    The light ramp above has existed since #2612 but was reachable only if the
@@ -1806,11 +1806,11 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 // labeled onboarding-not-contribution in the UI.
 var EMB={
 claude:'<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#d97757" d="M12 2 3.5 20h3.2l1.6-3.7h7.4L17.3 20h3.2L12 2Zm-2.4 11.2L12 7.6l2.4 5.6H9.6Z"/></svg>',
-codex:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l6.93 4v8L12 20l-6.93-4V8z" fill="none" stroke="#10a37f" stroke-width="1.5" stroke-linejoin="round"/><path d="M10 10.5l2 1.5-2 1.5M13.5 15h3" stroke="#10a37f" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+codex:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l6.93 4v8L12 20l-6.93-4V8z" fill="none" stroke="var(--vendor-openai)" stroke-width="1.5" stroke-linejoin="round"/><path d="M10 10.5l2 1.5-2 1.5M13.5 15h3" stroke="var(--vendor-openai)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
 copilot:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12.5" r="8" fill="none" stroke="#e6edf3" stroke-width="1.6"/><circle cx="9" cy="12" r="1.3" fill="#e6edf3"/><circle cx="15" cy="12" r="1.3" fill="#e6edf3"/><path d="M12 4.5V2M8 5l-1-2M16 5l1-2" stroke="#e6edf3" stroke-width="1.4" stroke-linecap="round"/></svg>',
 pi:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16" stroke="#7c93ff" stroke-width="2" stroke-linecap="round"/><path d="M9 8v10M15.5 8v7.5a2 2 0 0 0 2 2" stroke="#7c93ff" stroke-width="2" stroke-linecap="round"/></svg>',
 goose:'<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#3fb0ac" d="M6 14a6 6 0 0 1 6-6c1 0 1.6.9 1 1.7 2.5.4 4 2.4 4 5.1 0 .6-.5 1.2-1.2 1.2H8.5A2.5 2.5 0 0 1 6 13.5V14Z"/><circle cx="10.5" cy="10.8" r=".8" fill="#0d1117"/><path d="M13 9.7l2.4-1" stroke="#f0b429" stroke-width="1.4" stroke-linecap="round"/></svg>',
-litellm:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="2" fill="none" stroke="#58a6ff" stroke-width="1.5"/><path d="M8 10l2 2-2 2M12.5 14h3.5" stroke="#58a6ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+litellm:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="2" fill="none" stroke="var(--status-info)" stroke-width="1.5"/><path d="M8 10l2 2-2 2M12.5 14h3.5" stroke="var(--status-info)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
 openrouter:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l3-4 3 8 3-4h3" fill="none" stroke="#8b5cf6" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
 vllm:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l4 14 3-9 3 9 4-14" fill="none" stroke="#f0b429" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
 'llm-d':'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2" fill="none" stroke="#4d9375" stroke-width="1.5"/><path d="M8 9h4a3 3 0 0 1 0 6H8V9Z" fill="none" stroke="#4d9375" stroke-width="1.5" stroke-linejoin="round"/></svg>',
@@ -3012,7 +3012,7 @@ var ME_CONTRIBUTOR_THEMES=ME_LEGACY_THEME_IDS.map(function(id,i){return {id:id,n
 // picking any other skin overrides --me-accent and beats the metal.
 var ME_RANK_META={
   newcomer:['RECRUIT','#9aa3ae','rgba(154,163,174,.12)'],
-  contributor:['OPERATOR','#58a6ff','rgba(88,166,255,.14)'],
+  contributor:['OPERATOR','var(--status-info)','color-mix(in srgb,var(--status-info) var(--component-tint),transparent)'],
   trusted:['SPECIALIST','#4db8a0','rgba(77,184,160,.14)'],
   merger:['SPECIALIST','#4db8a0','rgba(77,184,160,.14)'],
   advisor:['WARDEN','#8a97f7','rgba(138,151,247,.14)']
@@ -3867,9 +3867,9 @@ function ccMetricsPoll(){
     // (a) Ready-work queue header → queue-depth trend.
     setSpark('spark-queue',ccMetrics.queue_depth,SPARK_W,SPARK_H,'#388bfd');
     // (b) Tasks-completed / hour throughput.
-    setSpark('spark-throughput',ccMetrics.tasks_done,SPARK_W,SPARK_H,'#3fb950');
+    setSpark('spark-throughput',ccMetrics.tasks_done,SPARK_W,SPARK_H,getComputedStyle(document.documentElement).getPropertyValue('--status-ok').trim()||'currentColor');
     // (c) Connected-clanker fleet-size trend.
-    setSpark('spark-fleet',ccMetrics.fleet_size,SPARK_W,SPARK_H,'#d29922');
+    setSpark('spark-fleet',ccMetrics.fleet_size,SPARK_W,SPARK_H,getComputedStyle(document.documentElement).getPropertyValue('--status-warn').trim()||'currentColor');
     // (d) Your own per-hour completions — the daily-quota trend and the matching
     // trend on the "Your contribution" card. Both read the SAME series, which is
     // now zero-filled onto the shared 168-bucket timeline (#6543), so it lines up
@@ -3886,7 +3886,7 @@ function ccMetricsPoll(){
 function ccRenderLeaderboardSparklines(){
   if(!ccMetrics)return;
   var trend=document.getElementById('spark-lb-trend');
-  if(trend)trend.innerHTML=sparkline(ccMetrics.tasks_done,120,20,'#3fb950');
+  if(trend)trend.innerHTML=sparkline(ccMetrics.tasks_done,120,20,getComputedStyle(document.documentElement).getPropertyValue('--status-ok').trim()||'currentColor');
   var pud=ccMetrics.per_user_done||{};
   var rows=document.querySelectorAll('.lb-spark[data-user]');
   for(var i=0;i<rows.length;i++){
@@ -6898,8 +6898,9 @@ function ccUserSeries(){
 function ccRenderMineSpark(){
   var mine=ccUserSeries();
   if(!mine)return;
-  setSpark('spark-mine',mine,SPARK_W,SPARK_H,'#3fb950');
-  setSpark('spark-quota',mine,SPARK_W,SPARK_H,'#388bfd');
+  var cs=getComputedStyle(document.documentElement);
+  setSpark('spark-mine',mine,SPARK_W,SPARK_H,cs.getPropertyValue('--status-ok').trim()||'currentColor');
+  setSpark('spark-quota',mine,SPARK_W,SPARK_H,cs.getPropertyValue('--status-info').trim()||'currentColor');
 }
 // ccRenderQueueEnd paints the end-of-queue block (#2595). show=false (a filter is
 // active) hides it — a partial view isn't "the end". Loads limits lazily on first
@@ -6975,7 +6976,7 @@ const verb=verbs[e.action]||e.action;
 const taskInfo=e.task?' <span class="feed-cli">'+feedEsc(e.task)+'</span>':'';
 const role=e.role?' as <span class="feed-role">'+feedEsc(e.role)+'</span>':'';
 const cliModel=feedLoadout(e,'feed-cli');
-return '<div class="feed-entry"'+(i===0&&isNew?' style="background:rgba(63,185,80,.08)"':'')+'>'+
+return '<div class="feed-entry"'+(i===0&&isNew?' style="background:color-mix(in srgb,var(--status-ok) 8%%,transparent)"':'')+'>'+
 '<div class="feed-text">'+icon+' <b>'+feedEsc(e.username)+'</b> '+verb+taskInfo+role+cliModel+'</div>'+
 '<span class="feed-time">'+t+' '+tz+'</span></div>'
 }).join('');

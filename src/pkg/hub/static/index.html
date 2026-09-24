@@ -530,21 +530,21 @@
     .hive-table tr:hover td { background: rgba(244,199,95,0.04); }
     .hive-name { font-weight: 600; color: var(--text); }
     .hive-org { color: var(--muted); font-size: 0.75rem; }
-    .acmm-badge { display: inline-block; padding: 2px 10px; border-radius: 9999px; font-size: 0.7rem; font-weight: 700; white-space: nowrap; cursor: help; }
-    .acmm-1 { background: rgba(128,191,255,0.15); color: #80bfff; border: 1px solid rgba(128,191,255,0.3); }
-    .acmm-2 { background: rgba(116,223,154,0.15); color: #74df9a; border: 1px solid rgba(116,223,154,0.3); }
-    .acmm-3 { background: rgba(116,223,154,0.15); color: #74df9a; border: 1px solid rgba(116,223,154,0.3); }
-    .acmm-4 { background: rgba(244,199,95,0.15); color: #f4c75f; border: 1px solid rgba(244,199,95,0.3); }
-    .acmm-5 { background: rgba(255,126,126,0.15); color: #ff7e7e; border: 1px solid rgba(255,126,126,0.3); }
-    .acmm-6 { background: rgba(180,130,255,0.15); color: #b482ff; border: 1px solid rgba(180,130,255,0.3); }
-    .mode-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; }
-    .mode-idle { background: rgba(116,223,154,0.12); color: #74df9a; }
-    .mode-quiet { background: rgba(128,191,255,0.12); color: #80bfff; }
-    .mode-busy { background: rgba(244,199,95,0.12); color: #f4c75f; }
-    .mode-surge { background: rgba(255,126,126,0.12); color: #ff7e7e; }
+    .acmm-badge { --component-status: var(--status-neutral); display: inline-block; padding: var(--badge-pad-y) var(--badge-pad-x); border-radius: var(--r-pill); font-size: var(--fs-xs); font-weight: 700; white-space: nowrap; cursor: help; background: color-mix(in srgb, var(--component-status) var(--component-tint), transparent); color: var(--component-status); border: var(--line-width) solid color-mix(in srgb, var(--component-status) var(--component-border), transparent); }
+    .acmm-1 { --component-status: var(--acmm-level-1); }
+    .acmm-2 { --component-status: var(--acmm-level-2); }
+    .acmm-3 { --component-status: var(--acmm-level-3); }
+    .acmm-4 { --component-status: var(--acmm-level-4); }
+    .acmm-5 { --component-status: var(--acmm-level-5); }
+    .acmm-6 { --component-status: var(--acmm-level-6); }
+    .mode-badge { --component-status: var(--status-neutral); display: inline-block; padding: var(--badge-pad-y) var(--badge-pad-x); border-radius: var(--r-pill); font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; background: color-mix(in srgb, var(--component-status) var(--component-tint), transparent); color: var(--component-status); }
+    .mode-idle { --component-status: var(--status-neutral); }
+    .mode-quiet { --component-status: var(--status-info); }
+    .mode-busy { --component-status: var(--status-warn); }
+    .mode-surge { --component-status: var(--status-error); }
     .online-dot { width: 8px; height: 8px; min-width: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; flex-shrink: 0; }
-    .online-dot.on { background: var(--green); box-shadow: 0 0 6px rgba(116,223,154,0.5); }
-    .online-dot.off { background: #6b7280; }
+    .online-dot.on { background: var(--status-ok); box-shadow: 0 0 6px color-mix(in srgb, var(--status-ok) 50%, transparent); }
+    .online-dot.off { background: var(--status-neutral); }
     .repo-link { font-size: 0.75rem; color: var(--blue); }
 
     /* ── Link grid (references) ── */
@@ -1139,7 +1139,7 @@
 
   <script>
     function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-    function hiveToast(msg, type) { var t = document.createElement('div'); t.style.cssText = 'position:fixed;top:70px;right:24px;z-index:200;padding:12px 20px;border-radius:8px;font-size:0.85rem;max-width:400px;color:#fff;background:' + (type === 'error' ? 'rgba(255,126,126,0.9)' : type === 'success' ? 'rgba(116,223,154,0.9)' : 'rgba(128,191,255,0.9)'); t.textContent = msg; document.body.appendChild(t); setTimeout(function() { t.remove(); }, 4000); }
+    function hiveToast(msg, type) { var t = document.createElement('div'); t.style.cssText = 'position:fixed;top:70px;right:24px;z-index:200;padding:12px 20px;border-radius:8px;font-size:0.85rem;max-width:400px;color:#fff;background:' + (type === 'error' ? 'color-mix(in srgb, var(--status-error) 90%, transparent)' : type === 'success' ? 'color-mix(in srgb, var(--status-ok) 90%, transparent)' : 'color-mix(in srgb, var(--status-info) 90%, transparent)'); t.textContent = msg; document.body.appendChild(t); setTimeout(function() { t.remove(); }, 4000); }
 
     function sparkline(points, color, w, h) {
       if (!points || points.length < 2) return '';
@@ -1172,16 +1172,18 @@
     function modeBadge(mode) {
       var m = (mode || 'idle').toUpperCase();
       var levels = {IDLE:0, QUIET:1, BUSY:2, SURGE:3};
-      var colors = {IDLE:'#6b7280', QUIET:'#80bfff', BUSY:'#f4c75f', SURGE:'#ff7e7e'};
+      var statuses = {IDLE:'neutral', QUIET:'info', BUSY:'warn', SURGE:'error'};
+      var colors = {IDLE:'var(--status-neutral)', QUIET:'var(--status-info)', BUSY:'var(--status-warn)', SURGE:'var(--status-error)'};
       var fill = levels[m] !== undefined ? levels[m] : 0;
-      var c = colors[m] || '#6b7280';
+      var c = colors[m] || 'var(--status-neutral)';
+      var st = statuses[m] || 'neutral';
       var bars = '';
       for (var i = 0; i < 4; i++) {
         var h = 6 + i * 4;
-        var bc = i <= fill ? c : '#263545';
+        var bc = i <= fill ? c : 'var(--line-strong)';
         bars += '<rect x="' + (i * 6) + '" y="' + (20 - h) + '" width="4" height="' + h + '" rx="1" fill="' + bc + '"/>';
       }
-      return '<span title="' + m + '" style="display:inline-flex;align-items:center;gap:4px"><svg width="24" height="20" viewBox="0 0 24 20">' + bars + '</svg><span style="font-size:0.7rem;color:' + c + ';font-weight:600">' + m + '</span></span>';
+      return '<span class="badge-status" data-status="' + st + '" title="' + m + '" style="display:inline-flex;align-items:center;gap:4px"><svg width="24" height="20" viewBox="0 0 24 20">' + bars + '</svg><span>' + m + '</span></span>';
     }
 
     function sparkSvg(values, color) {
@@ -1321,10 +1323,10 @@
           var cBase = contributeBase(h);
           if (!cBase) return '';
           var cUrl = cBase + '/contribute';
-          return '<a href="' + cUrl + '" target="_blank" style="padding:2px 8px;background:rgba(116,223,154,0.15);color:#74df9a;border:1px solid rgba(116,223,154,0.3);border-radius:4px;font-size:0.65rem;text-decoration:none">Contribute Now</a>';
+          return '<a href="' + cUrl + '" target="_blank" class="badge-status" data-status="ok" style="text-decoration:none">Contribute Now</a>';
         }
         if (access.status === 'pending') {
-          return '<span style="padding:2px 8px;background:rgba(244,199,95,0.15);color:#f4c75f;border:1px solid rgba(244,199,95,0.3);border-radius:4px;font-size:0.65rem">Pending</span>';
+          return '<span class="badge-status" data-status="attention">Pending</span>';
         }
       }
       if (_isLoggedIn) {
@@ -1341,7 +1343,7 @@
         var data = await resp.json();
         if (!resp.ok) { hiveToast(data.error || 'Request failed', 'error'); btn.textContent = 'Request Access'; btn.disabled = false; return; }
         _userAccessStatus[hiveId] = {status: 'pending'};
-        btn.outerHTML = '<span style="padding:2px 8px;background:rgba(244,199,95,0.15);color:#f4c75f;border:1px solid rgba(244,199,95,0.3);border-radius:4px;font-size:0.65rem">Pending</span>';
+        btn.outerHTML = '<span class="badge-status" data-status="attention">Pending</span>';
         hiveToast('Access request sent!', 'success');
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); btn.textContent = 'Request Access'; btn.disabled = false; }
     }
@@ -1356,8 +1358,8 @@
         var repoLink = repoPath ? '<a href="https://github.com/' + esc(repoPath) + '" target="_blank" class="repo-link">' + esc(h.primaryRepo) + '</a>' : '';
         var repoCount = (h.repos || []).length;
         var htype = (h.hiveType || 'local') === 'hosted'
-          ? '<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(128,191,255,0.15);color:#80bfff;border:1px solid rgba(128,191,255,0.3)" title="Hosted on hive.hivecommons.dev">hosted</span>'
-          : '<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(107,114,128,0.15);color:#9ca3af;border:1px solid rgba(107,114,128,0.3)" title="Self-hosted by the owner">local</span>';
+          ? '<span class="chip-entity" style="display:inline-block" title="Hosted on hive.hivecommons.dev">hosted</span>'
+          : '<span class="chip-entity" style="display:inline-block" title="Self-hosted by the owner">local</span>';
         return '<tr>' +
           '<td style="white-space:nowrap">' + contributeButton(h) + '</td>' +
           '<td style="display:flex;align-items:center;gap:10px"><img src="https://github.com/' + esc(h.org) + '.png" style="width:36px;height:36px;border-radius:6px;flex-shrink:0" onerror="this.style.display=\'none\'">' + dot + '<div><span class="hive-name">' + esc(h.name || h.id) + '</span></div></td>' +

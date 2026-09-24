@@ -202,8 +202,8 @@ func TestSpokeHealthTruthUIWiring(t *testing.T) {
 			why:     "the pane-poller login signal must remain authoritative — an agent wedged at a login prompt always shows needs-login",
 		},
 		{
-			snippet: ".oc-agent-dot.needs-login { background: transparent; border: 2px solid var(--amber); box-sizing: border-box; }",
-			why:     "the sidebar needs-login dot must render amber (warning), not green or red",
+			snippet: ".oc-agent-dot.needs-login { background: transparent; border: 2px solid var(--status-attention); box-sizing: border-box; }",
+			why:     "the sidebar needs-login dot must render the attention status token, not green or red",
 		},
 		{
 			snippet: "needs login — CLI unauthenticated",

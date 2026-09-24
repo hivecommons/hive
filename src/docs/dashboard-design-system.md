@@ -12,6 +12,15 @@ the operator SPA, contribute portal, and hub landing onto the shared surface
 levels while preserving legacy selectors used by JS/tests. Review the unlinked
 static preview at `/design-system.html`.
 
+## Migration status
+
+| Area | Status | Notes |
+| --- | --- | --- |
+| Tokens | Landed | Shared `tokens.css` across operator, contribute, and hub. |
+| Buttons | In progress | A4 is migrating button families to shared recipes. |
+| Cards/surfaces | In progress | A5 is migrating surface recipes. |
+| Chips/status | Migrated in A7 | Operator chip families now map to entity/status/action/count recipes, status dots/badges use the canonical `STATUS` map, ACMM levels use `--acmm-level-*`, vendor markers use `--vendor-*`, and amber remains brand/CTA chrome only. |
+
 ## Token catalogue
 
 Initial values alias today's rendered operator dashboard values unless noted.
@@ -194,6 +203,20 @@ states are part of `components.css`; the preview page renders static examples
 with `.is-hover` and `.is-focus-visible` helper classes so screenshots can show
 the states without script.
 
+Canonical operator status metadata lives in the SPA `STATUS` object. All labels,
+badge `data-status` values, sidebar dots, card dots, detail dots, and status
+tooltips should derive from this table instead of per-site color literals:
+
+| State key | Label | `data-status` |
+| --- | --- | --- |
+| `running`, `working`, `ready`, `passed` | running/working/ready/passed | `ok` |
+| `idle`, `off`, `off_healthy`, `disabled`, `unknown` | idle/off/no cadence/disabled/unknown | `neutral` |
+| `paused`, `pause`, `degraded`, `needs_context` | paused/degraded/needs context | `warn` |
+| `needs_attention`, `needs_login` | needs attention/needs login | `attention` |
+| `stopped`, `down`, `error`, `failed`, `blocked` | stopped/down/error/failed/blocked | `error` |
+| `on_demand`, `active`, `initializing`, `info` | on demand/active/initializing/info | `info` |
+
+
 ### Current-to-new mapping
 
 | Current family | New variant |
@@ -239,9 +262,9 @@ counts. Baselines measured on 2026-09-23 in PR #8584 for
 
 | Surface | `style=` attributes | Raw colors | Raw `font-size` | Raw `padding` | Raw `border-radius` |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `pkg/dashboard/static/index.html` | 2,101 | 195 | 1,088 | 710 | 473 |
-| `pkg/dashboard/contribute_landing.go` | 111 | 202 | 279 | 206 | 143 |
-| `pkg/hub/static/*.html` + `pkg/hub/assets/*.html` | 1,189 | 584 | 652 | 391 | 309 |
+| `pkg/dashboard/static/index.html` | 1,950 | 153 | 976 | 578 | 379 |
+| `pkg/dashboard/contribute_landing.go` | 107 | 131 | 260 | 181 | 117 |
+| `pkg/hub/static/*.html` + `pkg/hub/assets/*.html` | 1,140 | 474 | 612 | 331 | 254 |
 
 The test counts `style=` even inside script/template strings because those
 snippets become DOM. Raw value counters scan inline `<style>` blocks and

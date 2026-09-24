@@ -93,9 +93,9 @@
     .timestamp { color: var(--muted); font-size: 0.8rem; margin-left: 12px; }
     .status-stale {
       display: inline-flex; align-items: center; gap: 4px;
-      margin-left: 8px; padding: 2px 7px; border: 1px solid rgba(210,153,34,0.45);
-      border-radius: 999px; background: rgba(210,153,34,0.12);
-      color: var(--yellow); font-size: 0.68rem; font-weight: 700; white-space: nowrap;
+      margin-left: 8px; padding: 2px 7px; border: 1px solid color-mix(in srgb, var(--status-warn) 45%, transparent);
+      border-radius: 999px; background: color-mix(in srgb, var(--status-warn) 12%, transparent);
+      color: var(--status-warn); font-size: 0.68rem; font-weight: 700; white-space: nowrap;
     }
     .status-stale[hidden] { display: none; }
     .git-version { font-size: 0.65rem; color: var(--muted); margin-left: 10px; font-weight: 400; font-family: var(--font-mono); }
@@ -337,10 +337,10 @@
     }
     .oc-topbar-center .oc-tb-link:hover { background: var(--bg); color: var(--text); border-color: var(--border); }
     .dashboard-custom-style-note { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; padding: 3px 8px; border: 1px solid rgba(128,191,255,0.35); border-radius: 999px; background: rgba(128,191,255,0.10); color: var(--text); font-size: 0.68rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .dashboard-custom-style-note.warn { border-color: rgba(210,153,34,0.45); background: rgba(210,153,34,0.12); }
+    .dashboard-custom-style-note.warn { border-color: color-mix(in srgb, var(--status-warn) 45%, transparent); background: color-mix(in srgb, var(--status-warn) 12%, transparent); }
     .dashboard-custom-style-note button { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 0.75rem; line-height: 1; padding: 0; }
     .oc-topbar-right { display: flex; align-items: center; justify-content: flex-end; gap: 14px; min-width: 0; flex: 0 0 auto; flex-wrap: nowrap; }
-    .oc-health-badge { --pill-c: var(--green); font-weight: 600; } /* pill recipe at end of style block */
+    .oc-health-badge { --component-status: var(--status-ok); font-weight: 600; } /* pill recipe at end of style block */
     #oc-hive-id {
       flex: 0 1 auto; min-width: 0; max-width: 22rem;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -382,13 +382,13 @@
     }
     #fleet-breaker-btn2 svg { display: block; width: 12px; height: 12px; fill: currentColor; }
     #fleet-breaker-btn2:hover { background: rgba(139,148,158,.12); color: var(--text); }
-    #fleet-breaker-btn2.paused { border-color: rgba(248,81,73,.35); color: #f85149; background: rgba(248,81,73,.08); }
-    #fleet-breaker-btn2.paused:hover { background: rgba(248,81,73,.16); }
+    #fleet-breaker-btn2.paused { border-color: color-mix(in srgb, var(--status-error) 35%, transparent); color: var(--status-error); background: color-mix(in srgb, var(--status-error) 8%, transparent); }
+    #fleet-breaker-btn2.paused:hover { background: color-mix(in srgb, var(--status-error) 16%, transparent); }
     #fleet-breaker-btn2:disabled { opacity: .5; cursor: not-allowed; }
     /* Status pill — same shape/weight as the contribute surface's .pill. */
-    #fleet-breaker-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: .7rem; font-weight: 600; border: 1px solid transparent; }
-    #fleet-breaker-pill.pill-passed { background: rgba(63,185,80,.12); color: #3fb950; border-color: rgba(63,185,80,.3); }
-    #fleet-breaker-pill.pill-blocked { background: rgba(248,81,73,.12); color: #f85149; border-color: rgba(248,81,73,.3); }
+    #fleet-breaker-pill { display: inline-flex; padding: 2px 8px; border-radius: 999px; font-size: .7rem; font-weight: 600; border: 1px solid transparent; }
+    #fleet-breaker-pill.pill-passed, #fleet-breaker-pill[data-status="ok"] { --component-status: var(--status-ok); }
+    #fleet-breaker-pill.pill-blocked, #fleet-breaker-pill[data-status="error"] { --component-status: var(--status-error); }
 
     @media (max-width: 1280px) {
       body { padding-top: 88px; }
@@ -441,13 +441,13 @@
       box-shadow: 0 1px 3px rgba(0,0,0,0.06);
     }
     .oc-agent-detail.active { display: block; }
-    .oc-agent-detail.state-running { border-color: var(--green); }
-    .oc-agent-detail.state-idle { border-color: var(--green); }
-    .oc-agent-detail.state-paused { border-color: var(--yellow); }
-    .oc-agent-detail.state-on-demand { border-color: var(--indigo); }
-    .oc-agent-detail.state-stopped { border-color: var(--red); }
-    .oc-agent-detail.state-needs-login { border-color: var(--amber); }
-    .oc-agent-detail.state-off { border-color: var(--line); }
+    .oc-agent-detail.state-running, .oc-agent-detail[data-status="ok"] { border-color: var(--status-ok); }
+    .oc-agent-detail.state-idle { border-color: var(--status-ok); }
+    .oc-agent-detail.state-paused, .oc-agent-detail[data-status="warn"] { border-color: var(--status-warn); }
+    .oc-agent-detail.state-on-demand, .oc-agent-detail[data-status="info"] { border-color: var(--status-info); }
+    .oc-agent-detail.state-stopped, .oc-agent-detail[data-status="error"] { border-color: var(--status-error); }
+    .oc-agent-detail.state-needs-login, .oc-agent-detail[data-status="attention"] { border-color: var(--status-attention); }
+    .oc-agent-detail.state-off, .oc-agent-detail[data-status="neutral"] { border-color: var(--line); }
     .oc-agent-detail-header {
       display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
       padding-bottom: 12px; border-bottom: 1px solid var(--border);
@@ -459,24 +459,24 @@
     .oc-agent-detail-header .status-dot {
       width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
     }
-    .oc-agent-detail-header .status-dot.running { background: var(--green); animation: oc-pulse 1.5s ease-in-out infinite; }
-    .oc-agent-detail-header .status-dot.idle { background: var(--green); }
-    .oc-agent-detail-header .status-dot.paused { background: var(--yellow); }
-    .oc-agent-detail-header .status-dot.on-demand { background: var(--indigo); }
-    .oc-agent-detail-header .status-dot.stopped { background: var(--red); }
-    /* needs-login is a HOLLOW amber ring — paused is a solid yellow dot.
+    .oc-agent-detail-header .status-dot.running { background: var(--status-ok); animation: oc-pulse 1.5s ease-in-out infinite; }
+    .oc-agent-detail-header .status-dot.idle { background: var(--status-ok); }
+    .oc-agent-detail-header .status-dot.paused { background: var(--status-warn); }
+    .oc-agent-detail-header .status-dot.on-demand { background: var(--status-info); }
+    .oc-agent-detail-header .status-dot.stopped { background: var(--status-error); }
+    /* needs-login is a HOLLOW attention ring — paused is a solid warning dot.
        The two states were both rendered as near-identical solid amber/yellow
        and operators could not tell "resting by choice" from "blocked on a
        human logging in". Hollow reads as "waiting to be filled in". */
-    .oc-agent-detail-header .status-dot.needs-login { background: transparent; border: 2px solid var(--amber); box-sizing: border-box; }
+    .oc-agent-detail-header .status-dot.needs-login { background: transparent; border: 2px solid var(--status-attention); box-sizing: border-box; }
     /* off-healthy is a HOLLOW GREEN ring (same technique as needs-login, green
        instead of amber). The agent process is healthy, but its governor cadence
        for the CURRENT mode is pause/off — so the governor will never kick it.
        A solid green dot read as "running/idle" and hid that the agent was
        actually off (e.g. a hive stuck in SURGE where every cadence is pause).
        Hollow green = alive but not being kicked. No pulse: it is not working. */
-    .oc-agent-detail-header .status-dot.off-healthy { background: transparent; border: 2px solid var(--green); box-sizing: border-box; }
-    .oc-agent-detail-header .status-dot.off { background: var(--muted); }
+    .oc-agent-detail-header .status-dot.off-healthy { background: transparent; border: 2px solid var(--status-ok); box-sizing: border-box; }
+    .oc-agent-detail-header .status-dot.off { background: var(--status-neutral); }
     .oc-detail-fields {
       display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px 24px; margin-bottom: 16px;
     }
@@ -538,17 +538,17 @@
     .oc-nav-item .oc-agent-dot {
       width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
     }
-    .oc-agent-dot.running { background: var(--green); animation: oc-pulse 1.5s ease-in-out infinite; }
-    .oc-agent-dot.idle { background: var(--green); }
-    .oc-agent-dot.paused { background: var(--yellow); }
-    .oc-agent-dot.on-demand { background: var(--indigo); }
-    .oc-agent-dot.stopped { background: var(--red); }
-    .oc-agent-dot.needs-login { background: transparent; border: 2px solid var(--amber); box-sizing: border-box; }
+    .oc-agent-dot.running { background: var(--status-ok); animation: oc-pulse 1.5s ease-in-out infinite; }
+    .oc-agent-dot.idle { background: var(--status-ok); }
+    .oc-agent-dot.paused { background: var(--status-warn); }
+    .oc-agent-dot.on-demand { background: var(--status-info); }
+    .oc-agent-dot.stopped { background: var(--status-error); }
+    .oc-agent-dot.needs-login { background: transparent; border: 2px solid var(--status-attention); box-sizing: border-box; }
     /* off-healthy: hollow GREEN ring — healthy agent whose governor cadence for
        the current mode is pause/off, so it will not be kicked. Mirrors the
        needs-login hollow technique (see detail-header rule above). No pulse. */
-    .oc-agent-dot.off-healthy { background: transparent; border: 2px solid var(--green); box-sizing: border-box; }
-    .oc-agent-dot.off { background: var(--muted); }
+    .oc-agent-dot.off-healthy { background: transparent; border: 2px solid var(--status-ok); box-sizing: border-box; }
+    .oc-agent-dot.off { background: var(--status-neutral); }
     @keyframes oc-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
     /* Sidebar drag-and-drop */
@@ -1087,11 +1087,12 @@
     .pwr-switch.on .pwr-mark:first-child { color: var(--green); }
     /* .status-badge — pill recipe; variants pick the color via --pill-c */
     .status-badge { font-weight: 700; margin-left: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
-    .status-badge.blocked { --pill-c: var(--red); }
-    .status-badge.needs-context { --pill-c: var(--yellow); }
-    .status-badge.done-concerns { --pill-c: var(--orange); }
-    .status-badge.done { --pill-c: var(--green); }
+    .status-badge.blocked { --component-status: var(--status-error); }
+    .status-badge.needs-context { --component-status: var(--status-warn); }
+    .status-badge.done-concerns { --component-status: var(--status-attention); }
+    .status-badge.done { --component-status: var(--status-ok); }
     .status-badge.disabled { --pill-c: var(--muted); }
+    .status-badge.disabled { --component-status: var(--status-neutral); }
     .agent-card.status-blocked { border-left-color: var(--red) !important; }
     .agent-card.status-needs-context { border-left-color: var(--yellow) !important; }
     @keyframes pulse-amber {
@@ -1116,16 +1117,16 @@
       display: inline-block; width: 8px; height: 8px;
       border-radius: 50%; margin-right: 6px;
     }
-    .dot.running { background: var(--green); }
-    .dot.idle { background: var(--green); }
-    .dot.paused { background: var(--yellow); }
-    .dot.on-demand { background: var(--indigo); }
-    .dot.off { background: var(--muted); }
+    .dot.running { background: var(--status-ok); }
+    .dot.idle { background: var(--status-ok); }
+    .dot.paused { background: var(--status-warn); }
+    .dot.on-demand { background: var(--status-info); }
+    .dot.off { background: var(--status-neutral); }
     /* off-healthy: hollow GREEN — healthy agent, governor cadence paused/off for
        the current mode, so it will not be kicked (mirrors needs-login, green). */
-    .dot.off-healthy { background: transparent; border: 2px solid var(--green); box-sizing: border-box; }
-    .dot.stopped { background: var(--red); }
-    .dot.needs-login { background: transparent; border: 2px solid var(--amber); box-sizing: border-box; }
+    .dot.off-healthy { background: transparent; border: 2px solid var(--status-ok); box-sizing: border-box; }
+    .dot.stopped { background: var(--status-error); }
+    .dot.needs-login { background: transparent; border: 2px solid var(--status-attention); box-sizing: border-box; }
     .agent-field { display: flex; justify-content: space-between; font-size: 0.8rem; padding: 2px 0; }
     .agent-field .label { color: var(--muted); }
     .agent-field .value { text-align: right; }
@@ -1142,8 +1143,8 @@
     .value.pi { color: var(--green); }
     .doing { font-family: var(--font-mono); font-size: 0.65rem; color: var(--cyan); margin-top: 6px; word-break: break-word; white-space: pre-wrap; line-height: 1.3; min-height: 5.6em; max-height: 30em; overflow-y: auto; width: 100%; }
     .summary-age { font-style: normal; margin-right: 5px; vertical-align: middle; white-space: nowrap; } /* pill recipe */
-    .summary-age.age-recent { --pill-c: var(--yellow); }
-    .summary-age.age-stale  { --pill-c: var(--red); }
+    .summary-age.age-recent { --component-status: var(--status-warn); }
+    .summary-age.age-stale  { --component-status: var(--status-error); }
     /* Agent metric gauges — removed, replaced by health panel */
     .agent-actions { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
     /* .kick-prompt — shared input recipe (end of style block) */
@@ -1155,12 +1156,12 @@
     .agent-card.on-demand .agent-state { color: var(--indigo); }
     .agent-card.off { border-left-color: color-mix(in srgb, var(--muted) 60%, var(--bg)); opacity: 0.6; }
     .agent-card.off .agent-state { color: color-mix(in srgb, var(--muted) 60%, var(--bg)); }
-    .pause-badge { --pill-c: var(--red); margin-left: 4px; vertical-align: middle; } /* pill recipe */
+    .pause-badge { --component-status: var(--status-error); margin-left: 4px; vertical-align: middle; } /* pill recipe */
     .pause-info { cursor: help; font-size: 0.7rem; margin-left: 4px; opacity: 0.8; position: relative; display: inline-block; }
     .pause-info:hover .pause-tooltip { display: block; }
     .pause-tooltip { display: none; position: absolute; bottom: 120%; left: 50%; transform: translateX(-50%); background: var(--panel-strong); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 0.7rem; white-space: nowrap; z-index: 100; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
     .off-badge { margin-left: 4px; vertical-align: middle; } /* pill recipe (default muted) */
-    .on-demand-badge { --pill-c: var(--indigo); margin-left: 4px; vertical-align: middle; } /* pill recipe */
+    .on-demand-badge { --component-status: var(--status-info); margin-left: 4px; vertical-align: middle; } /* pill recipe */
 
     /* Health status panel */
     .health { margin-bottom: 24px; }
@@ -1399,9 +1400,10 @@
        failure. The ⏸ chip beside it names the state and the tooltip says
        which label holds it. */
     .repo-issue-pill.held, .repo-pr-pill.held { --pill-c: var(--muted); border-style: dashed; }
+    .repo-issue-pill.held, .repo-pr-pill.held { --component-status: var(--status-neutral); }
     .pill-held-badge { flex: 0 0 auto; font-weight: 600; white-space: nowrap; }
     /* .repo-issue-pill / .repo-pr-pill — pill recipe; link hovers deepen the tint */
-    .repo-issue-pill { --pill-c: var(--blue); text-decoration: none; max-width: 100%; transition: background 0.15s; }
+    .repo-issue-pill { --component-status: var(--status-info); --pill-c: var(--status-info); text-decoration: none; max-width: 100%; transition: background 0.15s; }
     .repo-issue-pill:hover { background: color-mix(in srgb, var(--pill-c) 24%, transparent); text-decoration: none; }
     .repo-issue-pill .pill-num { font-weight: 700; white-space: nowrap; }
     .repo-issue-pill .pill-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1425,7 +1427,7 @@
     .repo-issue-pill-wrap:hover .repo-issue-plan { opacity: 1; }
     .repo-issue-plan:hover { background: color-mix(in srgb, var(--pill-c) 26%, transparent); }
     .repo-issue-plan:disabled { opacity: 0.5; cursor: default; }
-    .repo-pr-pill { --pill-c: var(--purple); text-decoration: none; max-width: 100%; transition: background 0.15s; }
+    .repo-pr-pill { --component-status: var(--acmm-level-5); --pill-c: var(--acmm-level-5); text-decoration: none; max-width: 100%; transition: background 0.15s; }
     .repo-pr-pill-wrap { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; flex: 1 1 100%; }
     .repo-pr-pill-wrap .repo-pr-pill:not(.pill-icon) { min-width: 0; flex: 1 1 auto; overflow: hidden; }
     .repo-pr-pill:hover { background: color-mix(in srgb, var(--pill-c) 24%, transparent); text-decoration: none; }
@@ -1434,8 +1436,9 @@
        mergeable but the sweep still wants something (a red check with no
        required-check set, a hold, a review, an intent verdict) — the honest
        colour for GitHub's "unstable". No tint for dirty/blocked/unknown. */
-    .repo-pr-pill.mergeable { --pill-c: var(--green); }
+    .repo-pr-pill.mergeable { --component-status: var(--status-ok); --pill-c: var(--status-ok); }
     .repo-pr-pill.merge-outstanding { --pill-c: var(--yellow); }
+    .repo-pr-pill.merge-outstanding { --component-status: var(--status-warn); }
     .repo-pr-pill .pill-num { font-weight: 700; white-space: nowrap; }
     .repo-pr-pill .pill-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .repo-pr-pill .pill-merge-icon { font-size: 0.6rem; margin-left: 1px; }
@@ -1450,13 +1453,13 @@
        compact companion badge names the state, so parked PRs stand out
        instead of blending into the purple PR list — nine escalated PRs were
        invisible to the operator for a week without this. */
-    .repo-pr-pill.needs-human { --pill-c: var(--orange); }
+    .repo-pr-pill.needs-human { --component-status: var(--status-attention); --pill-c: var(--status-attention); }
     .pill-needs-human-badge { flex: 0 0 auto; font-weight: 600; white-space: nowrap; }
     /* The hive's own review on a PR. Deliberately muted and NOT one of the
        merge-state tints: it reports that the hive looked, which is evidence
        of coverage rather than a signal about mergeability, and a green-ish
        "reviewed" chip beside a blocked PR would read as approval. */
-    .repo-pr-pill.pill-reviewed { --pill-c: var(--muted); flex: 0 0 auto; font-weight: 600; white-space: nowrap; opacity: 0.85; }
+    .repo-pr-pill.pill-reviewed { --component-status: var(--status-neutral); --pill-c: var(--status-neutral); flex: 0 0 auto; font-weight: 600; white-space: nowrap; opacity: 0.85; }
     .repo-pr-pill.pill-reviewed:hover { opacity: 1; }
     /* Section-header counter: "· N need human review" next to the host badge. */
     .repos-needs-human-count { display: none; font-size: 0.62em; font-weight: 600; vertical-align: middle; margin-left: 6px; color: var(--orange); }
@@ -1629,7 +1632,7 @@
     .ind-empty { color: var(--muted); font-style: italic; font-size: 0.7rem; }
     .ind-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
     /* .ind-tag family — pill recipe; variants pick --pill-c, hover deepens tint */
-    .ind-tag { --pill-c: var(--blue); text-decoration: none; }
+    .ind-tag { --component-status: var(--status-info); --pill-c: var(--status-info); text-decoration: none; }
     .ind-tag:hover { background: color-mix(in srgb, var(--pill-c) 26%, transparent); }
     .ind-pair { display: flex; align-items: center; gap: 4px; margin-top: 3px; }
     .ind-issue { --pill-c: var(--green); }
@@ -1668,7 +1671,7 @@
     .token-stat .tlabel { font-size: var(--fs-xs); color: var(--muted); }
     .token-models { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
     /* .token-model-chip — pill recipe (purple, mono; size step in the recipe block) */
-    .token-model-chip { --pill-c: var(--purple); font-family: var(--font-mono); }
+    .token-model-chip { --component-status: var(--acmm-level-5); --pill-c: var(--acmm-level-5); font-family: var(--font-mono); }
     .token-model-chip .mname { color: var(--purple); font-weight: 600; }
     .token-model-chip .mcount { color: var(--muted); margin-left: 6px; }
     .token-sessions { font-size: 0.7rem; color: var(--muted); }
@@ -1815,16 +1818,16 @@
     .pin-toggle:hover { opacity: 1; }
     /* .model-chip — pill recipe; tiers pick --pill-c (mono for model ids) */
     .model-chip { font-family: var(--font-mono); }
-    .model-chip.free { --pill-c: var(--green); }
-    .model-chip.paid { --pill-c: var(--yellow); }
-    .model-chip.haiku { --pill-c: var(--blue); }
-    .model-chip.sonnet { --pill-c: var(--yellow); }
-    .model-chip.opus { --pill-c: var(--red); }
+    .model-chip.free { --component-status: var(--status-ok); --pill-c: var(--status-ok); }
+    .model-chip.paid { --component-status: var(--status-warn); --pill-c: var(--status-warn); }
+    .model-chip.haiku { --component-status: var(--status-info); --pill-c: var(--status-info); }
+    .model-chip.sonnet { --component-status: var(--status-warn); --pill-c: var(--status-warn); }
+    .model-chip.opus { --component-status: var(--status-error); --pill-c: var(--status-error); }
     /* Non-Claude model tiers (brand colors stay literal) */
-    .model-chip.gpt { --pill-c: #10a37f; }
-    .model-chip.gemini { --pill-c: #4285f4; }
-    .model-chip.deepseek { --pill-c: var(--green); }
-    .model-chip.unknown { --pill-c: var(--muted); }
+    .model-chip.gpt { --component-status: var(--vendor-openai); --pill-c: var(--vendor-openai); }
+    .model-chip.gemini { --component-status: var(--vendor-google); --pill-c: var(--vendor-google); }
+    .model-chip.deepseek { --component-status: var(--status-ok); --pill-c: var(--status-ok); }
+    .model-chip.unknown { --component-status: var(--status-neutral); --pill-c: var(--status-neutral); }
 
     /* Health dots (reused inside ci-maintainer indicators) */
     .health-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
@@ -2589,25 +2592,43 @@
       transition: opacity 0.15s, background 0.15s;
     }
 
-    /* ══ Pill/badge system (Phase 2) ══
-       One recipe: 999px radius, --fs-xs, faint tint bg + colored border.
-       Each pill declares its color once via --pill-c (default: muted);
-       status pills keep readable colored labels on the faint tint (the
-       neutral-text rule applies to banners/toasts, not chips). Selectors
-       are grouped — no class renames. */
-    .status-badge, .model-chip, .token-model-chip, .repo-issue-pill, .repo-pr-pill,
-    .ind-tag, .pause-badge, .off-badge, .on-demand-badge, .oc-health-badge,
-    .nous-config-pill, .kb-type-badge, .kb-layer-badge, .kb-src-type, .summary-age, .oc-nav-count {
-      display: inline-flex; align-items: center; gap: 4px;
-      font-size: var(--fs-xs); line-height: 1.5;
-      padding: 1px 8px; border-radius: 999px;
-      background: color-mix(in srgb, var(--pill-c, var(--muted)) 12%, transparent);
-      border: 1px solid color-mix(in srgb, var(--pill-c, var(--muted)) 40%, transparent);
-      color: var(--pill-c, var(--muted));
+    /* ══ Chip/badge taxonomy (ADR-0018 A7) ══
+       Existing classes remain as thin aliases for test/JS hooks, but visuals
+       route through the four recipes: entity chips, status badges, action chips,
+       and count badges. Status color comes from --component-status/data-status. */
+    .status-badge, .pause-badge, .off-badge, .on-demand-badge, .oc-health-badge,
+    .summary-age, #fleet-breaker-pill,
+    .model-chip, .token-model-chip, .repo-issue-pill, .repo-pr-pill,
+    .ind-tag, .kb-type-badge, .kb-layer-badge, .kb-src-type,
+    .nous-config-pill, .oc-nav-count {
+      align-items: center; border: 1px solid transparent; border-radius: 999px;
+      display: inline-flex; font-size: var(--fs-xs); font-weight: 600; gap: 4px;
+      line-height: 1.5; padding: 1px 8px; text-decoration: none; white-space: nowrap;
     }
+    .model-chip, .token-model-chip, .repo-issue-pill, .repo-pr-pill,
+    .ind-tag, .kb-type-badge, .kb-layer-badge, .kb-src-type {
+      --component-status: var(--pill-c, var(--status-neutral));
+      background: color-mix(in srgb, var(--component-status) 12%, transparent);
+      border-color: color-mix(in srgb, var(--component-status) 40%, transparent);
+      color: var(--component-status);
+    }
+    .status-badge, .pause-badge, .off-badge, .on-demand-badge, .oc-health-badge,
+    .summary-age, #fleet-breaker-pill {
+      --component-status: var(--pill-c, var(--status-neutral));
+      background: color-mix(in srgb, var(--component-status) 12%, transparent);
+      border-color: color-mix(in srgb, var(--component-status) 40%, transparent);
+      color: var(--component-status);
+    }
+    .status-badge[data-status="ok"], .pause-badge[data-status="ok"], .off-badge[data-status="ok"], .on-demand-badge[data-status="ok"], .summary-age[data-status="ok"], #fleet-breaker-pill[data-status="ok"] { --component-status: var(--status-ok); }
+    .status-badge[data-status="warn"], .pause-badge[data-status="warn"], .off-badge[data-status="warn"], .on-demand-badge[data-status="warn"], .summary-age[data-status="warn"], #fleet-breaker-pill[data-status="warn"] { --component-status: var(--status-warn); }
+    .status-badge[data-status="attention"], .pause-badge[data-status="attention"], .off-badge[data-status="attention"], .on-demand-badge[data-status="attention"], .summary-age[data-status="attention"], #fleet-breaker-pill[data-status="attention"] { --component-status: var(--status-attention); }
+    .status-badge[data-status="error"], .pause-badge[data-status="error"], .off-badge[data-status="error"], .on-demand-badge[data-status="error"], .summary-age[data-status="error"], #fleet-breaker-pill[data-status="error"] { --component-status: var(--status-error); }
+    .status-badge[data-status="info"], .pause-badge[data-status="info"], .off-badge[data-status="info"], .on-demand-badge[data-status="info"], .summary-age[data-status="info"], #fleet-breaker-pill[data-status="info"] { --component-status: var(--status-info); }
+    .status-badge[data-status="neutral"], .pause-badge[data-status="neutral"], .off-badge[data-status="neutral"], .on-demand-badge[data-status="neutral"], .summary-age[data-status="neutral"], #fleet-breaker-pill[data-status="neutral"] { --component-status: var(--status-neutral); }
+    .nous-config-pill { background: color-mix(in srgb, var(--brand) 8%, transparent); border-color: color-mix(in srgb, var(--brand) 35%, transparent); color: var(--brand); cursor: pointer; }
     /* sidebar resource count pills (Repos/Beads/Knowledge/Contributors) —
        one look, JS toggles display + textContent by id */
-    .oc-nav-count { --pill-c: var(--blue); margin-left: auto; flex-shrink: 0; font-weight: 700; }
+    .oc-nav-count { background: var(--surface-3); border-color: var(--line-subtle); color: var(--text-muted); margin-left: auto; flex-shrink: 0; font-weight: 700; justify-content: center; min-width: var(--badge-count-min-w); }
     /* pill size steps */
     .token-model-chip { padding: 4px 10px; font-size: var(--fs-sm); }
     .nous-config-pill { padding: 3px 10px; font-size: var(--fs-sm); }
@@ -3968,6 +3989,48 @@
     const SECTION_TRANSITION_MS = 200;
     const ALL_AGENTS_COMPACT_KEY = 'hive-all-agents-compact';
 
+    const STATUS = Object.freeze({
+      running: { label: 'running', status: 'ok' },
+      working: { label: 'working', status: 'ok' },
+      ready: { label: 'ready', status: 'ok' },
+      passed: { label: 'passed', status: 'ok' },
+      idle: { label: 'idle', status: 'neutral' },
+      paused: { label: 'paused', status: 'warn' },
+      pause: { label: 'paused', status: 'warn' },
+      stopped: { label: 'stopped', status: 'error' },
+      down: { label: 'down', status: 'error' },
+      error: { label: 'error', status: 'error' },
+      failed: { label: 'failed', status: 'error' },
+      blocked: { label: 'blocked', status: 'error' },
+      degraded: { label: 'degraded', status: 'warn' },
+      needs_attention: { label: 'needs attention', status: 'attention' },
+      needs_context: { label: 'needs context', status: 'warn' },
+      needs_login: { label: 'needs login', status: 'attention' },
+      on_demand: { label: 'on demand', status: 'info' },
+      active: { label: 'active', status: 'info' },
+      initializing: { label: 'initializing', status: 'info' },
+      info: { label: 'info', status: 'info' },
+      off: { label: 'off', status: 'neutral' },
+      off_healthy: { label: 'no cadence', status: 'neutral' },
+      disabled: { label: 'disabled', status: 'neutral' },
+      unknown: { label: 'unknown', status: 'neutral' },
+    });
+    function statusKey(state) {
+      return String(state || 'unknown').trim().toLowerCase().replace(/[-\s]+/g, '_');
+    }
+    function statusMeta(state) {
+      return STATUS[statusKey(state)] || STATUS.unknown;
+    }
+    function statusAttr(state) {
+      return statusMeta(state).status;
+    }
+    function statusBadgeHTML(state, label, title, extraClass) {
+      const meta = statusMeta(state);
+      const cls = extraClass ? ' ' + extraClass : '';
+      const tip = title ? ` title="${esc(title)}"` : '';
+      return `<span class="badge-status status-badge${cls}" data-status="${meta.status}"${tip}>${esc(label || meta.label)}</span>`;
+    }
+
     /** Check whether a dashboard section is collapsed in localStorage */
     function isSectionCollapsed(sectionId) {
       return localStorage.getItem(SECTION_LS_PREFIX + sectionId) === '1';
@@ -4061,8 +4124,10 @@
       const count = (agents || []).length;
       const pill = document.getElementById('fleet-breaker-pill');
       if (pill) {
-        pill.className = _fleetBreakerEngaged ? 'pill-blocked' : 'pill-passed';
-        pill.textContent = _fleetBreakerEngaged ? 'PAUSED' : 'running';
+        const fleetStatus = statusMeta(_fleetBreakerEngaged ? 'paused' : 'running');
+        pill.className = 'badge-status ' + (_fleetBreakerEngaged ? 'pill-blocked' : 'pill-passed');
+        pill.dataset.status = fleetStatus.status;
+        pill.textContent = _fleetBreakerEngaged ? 'PAUSED' : fleetStatus.label;
       }
       const btn = document.getElementById('fleet-breaker-btn2');
       if (btn) {
@@ -4088,7 +4153,7 @@
       }
       // When engaged, make it obvious the whole fleet is held.
       const section = document.getElementById('agents-section');
-      if (section) section.style.outline = _fleetBreakerEngaged ? '2px solid var(--red, #ef4444)' : '';
+      if (section) section.style.outline = _fleetBreakerEngaged ? '2px solid var(--status-error)' : '';
     }
     async function refreshFleetBreakerState() {
       try {
@@ -4604,6 +4669,7 @@
       const dotTitle = isOff ? agentOffTitle(a) : '';
 
       detail.className = 'oc-agent-detail active state-' + dotCls;
+      detail.dataset.status = statusAttr(dotCls);
       /* 'disabled' outranks 'down': both reach here with state!=='running',
          but a switched-off agent is not a fault, and labelling it "down" sent
          operators looking for a crash that never happened. */
@@ -4637,7 +4703,7 @@
           existingSummary.scrollTop = existingSummary.scrollHeight;
         }
         const dot = detail.querySelector('.status-dot');
-        if (dot) { dot.className = 'status-dot ' + dotState; dot.title = dotTitle; }
+        if (dot) { dot.className = 'status-dot ' + dotState; dot.dataset.status = statusAttr(dotState); dot.title = dotTitle; }
         const stateSpan = detail.querySelector('.oc-agent-detail-header > span:last-child');
         if (stateSpan) { stateSpan.innerHTML = stateLabel + pauseInfoIcon(a); }
         // The pause/resume toggle must track state here too — the fast path
@@ -4677,6 +4743,7 @@
         const indEl = detail.querySelector('.oc-detail-indicators');
         if (indEl) indEl.innerHTML = agentIndicators(a.name);
         detail.className = 'oc-agent-detail active state-' + dotCls;
+        detail.dataset.status = statusAttr(dotCls);
         return;
       }
       detail.dataset.agent = a.name;
@@ -4772,8 +4839,8 @@
 
       detail.innerHTML = `
         <div class="oc-agent-detail-header">
-          <span class="status-dot ${dotState}"${dotTitle ? ` title="${esc(dotTitle)}"` : ''}></span>
-          <span class="agent-name-big">${esc(a.displayName || a.name)}</span>${a.sandboxed ? ' <span class="status-badge done" title="Sandboxed runner active">sandboxed</span>' : ''}${needsLoginDown ? '<span title="CLI needs login" style="margin-left:6px">\uD83D\uDD11</span>' : ''}
+          <span class="status-dot ${dotState}" data-status="${statusAttr(dotState)}"${dotTitle ? ` title="${esc(dotTitle)}"` : ''}></span>
+          <span class="agent-name-big">${esc(a.displayName || a.name)}</span>${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${needsLoginDown ? '<span title="CLI needs login" style="margin-left:6px">\uD83D\uDD11</span>' : ''}
           <span style="font-size:0.78rem;color:var(--muted);margin-left:auto">${stateLabel}${pauseInfoIcon(a)}</span>
         </div>
         <div class="oc-detail-actions">
@@ -4988,7 +5055,7 @@
       const label = a.displayName || a.name;
       const emojiHtml = a.emoji ? `<span class="oc-nav-emoji">${a.emoji}</span>` : '';
       const modeHtml = (a.modeEmoji || a.mode) ? `<span class="oc-nav-mode" title="${esc(a.mode || '')}">${a.modeEmoji || modeEmoji(a.mode)}</span>` : '';
-      return `<a class="oc-nav-item${isActive}" data-agent-nav="${esc(a.name)}" draggable="true" data-action="ocSelectAgent" data-agent="${esc(a.name)}" title="${esc(agentDesc)}"><span class="oc-agent-dot ${dotState}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${emojiHtml}<span class="oc-nav-text">${esc(label)}</span>${needsLoginDown ? '<span class="oc-nav-key" title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? '<span class="status-badge done" title="Sandboxed">S</span>' : ''}${modeHtml}<span class="oc-nav-actions"><button class="hv-btn btn-secondary" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Configure">⚙</button><button class="oc-nav-delete" data-action="deleteAgentFromConfig" data-agent="${esc(a.name)}" title="Delete">✕</button></span></a>`;
+      return `<a class="oc-nav-item${isActive}" data-agent-nav="${esc(a.name)}" draggable="true" data-action="ocSelectAgent" data-agent="${esc(a.name)}" title="${esc(agentDesc)}"><span class="oc-agent-dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${emojiHtml}<span class="oc-nav-text">${esc(label)}</span>${needsLoginDown ? '<span class="oc-nav-key" title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? statusBadgeHTML('ready', 'S', 'Sandboxed', 'done') : ''}${modeHtml}<span class="oc-nav-actions"><button class="hv-btn btn-secondary" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Configure">⚙</button><button class="oc-nav-delete" data-action="deleteAgentFromConfig" data-agent="${esc(a.name)}" title="Delete">✕</button></span></a>`;
     }
 
     function _sidebarBuildGroups(agents) {
@@ -6998,7 +7065,7 @@
         else if (isStale) statusCls = 'status-stale';
         const isOnDemandIdle = isOnDemand && a.busy !== 'working';
         const cls = needsLogin ? 'needs-login' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isStopped ? 'stopped' : `${a.busy} ${statusCls}`.trim();
-        // Down + unauthenticated CLI = amber needs-login (same formula as the
+        // Down + unauthenticated CLI = attention-token needs-login (same formula as the
         // card's Login button above), not plain down-red (#2465).
         const dotCls = (isStopped && needsLogin) ? 'needs-login' : isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
         // Healthy-but-governor-paused → hollow green dot (see detail-header renderer).
@@ -7050,17 +7117,17 @@
         /* Says why the card is grey. Without it the only visible difference
            between "switched off" and "crashed" is the absence of a session,
            which is exactly what the reader cannot see from here. */
-        const disabledBadge = agentIsDisabled(a) ? ` <span class="status-badge disabled" title="Disabled in config — the governor never starts this agent. Configure it with the gear to enable.">disabled</span>` : '';
+        const disabledBadge = agentIsDisabled(a) ? ' <span class="status-badge disabled" data-status="neutral" title="Disabled in config — the governor never starts this agent. Configure it with the gear to enable.">disabled</span>' : '';
         return `<div class="agent-card ${cls}${compactCls}" data-agent="${esc(a.name)}">
           <span class="working-indicator"></span>
-          <div class="agent-name"><span class="dot ${dotState}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' <span class="status-badge done" title="Sandboxed runner active">sandboxed</span>' : ''}${disabledBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Full log of the latest run as selectable, searchable text">📄 full log</a>`)} <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Archived logs of previous kicks — survives restarts and upgrades">🕘 past kicks</a> <button class="hv-btn btn-danger btn-sm restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
+          <div class="agent-name"><span class="dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${disabledBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Full log of the latest run as selectable, searchable text">📄 full log</a>`)} <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Archived logs of previous kicks — survives restarts and upgrades">🕘 past kicks</a> <button class="hv-btn btn-danger btn-sm restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
           ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name)}
           <div class="agent-state ${isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : a.busy}${pauseInfoIcon(a)}${(() => {
-            if (a.structuredStatus === 'BLOCKED') return '<span class="status-badge blocked" title="' + esc(a.statusEvidence) + '">blocked</span>';
-            if (a.structuredStatus === 'NEEDS_CONTEXT') return '<span class="status-badge needs-context" title="' + esc(a.statusEvidence) + '">needs context</span>';
-            if (a.structuredStatus === 'DONE_WITH_CONCERNS') return '<span class="status-badge done-concerns" title="' + esc(a.statusEvidence) + '">concerns</span>';
-            if (a.structuredStatus === 'DONE') return '<span class="status-badge done">done</span>';
-            if (isStale) return '<span class="status-badge needs-context">stale</span>';
+            if (a.structuredStatus === 'BLOCKED') return statusBadgeHTML('blocked', 'blocked', a.statusEvidence, 'blocked');
+            if (a.structuredStatus === 'NEEDS_CONTEXT') return statusBadgeHTML('needs_context', 'needs context', a.statusEvidence, 'needs-context');
+            if (a.structuredStatus === 'DONE_WITH_CONCERNS') return statusBadgeHTML('needs_attention', 'concerns', a.statusEvidence, 'done-concerns');
+            if (a.structuredStatus === 'DONE') return statusBadgeHTML('ready', 'done', '', 'done');
+            if (isStale) return statusBadgeHTML('degraded', 'stale', '', 'needs-context');
             return '';
           })()}${kickOutcomeBadgeHtml(a)}${agentSpendChip(a.name)}</div>
           ${agentBlockerLineHtml(a)}
@@ -7081,7 +7148,7 @@
           <div class="agent-card-details">
           <div class="agent-field"><span class="label" title="${isInferenceBackendName(a.cli) ? 'Inference backend (self-hosted model server)' : 'The CLI backend running this agent (e.g. claude, copilot). Pin to prevent governor from switching it.'}">${isInferenceBackendName(a.cli) ? 'method' : 'cli'}</span><span class="value">${cliChip(a.cli, a.pinnedBoth || a.pinnedCli, a.name)}${(a.pinnedBoth || a.pinnedCli) ? '' : ` <button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="false" title="Pin CLI — lock current backend">📌</button>`}</span></div>
           <div class="agent-field"><span class="label" title="The LLM model powering this agent. Governor may change it based on budget or mode. Pin to lock.">model</span><span class="value">${modelChip(a.model, a.govReason, a.pinnedBoth || a.pinnedModel, a.name)}${(a.pinnedBoth || a.pinnedModel) ? '' : ` <button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" title="Pin model — lock current model">📌</button>`}</span></div>
-          <div class="agent-field"><span class="label" title="Agent operating mode — controls what GitHub actions this agent can take (advisory, issues, PRs, merge).">mode</span><span class="value">${modeLabel(a)}${a.needsRestart ? ' <span class="status-badge needs-context" title="CLI flags are stale — restart agent to apply new mode">⚠ restart needed</span>' : ''}</span></div>
+          <div class="agent-field"><span class="label" title="Agent operating mode — controls what GitHub actions this agent can take (advisory, issues, PRs, merge).">mode</span><span class="value">${modeLabel(a)}${a.needsRestart ? ' ' + statusBadgeHTML('needs_context', '⚠ restart needed', 'CLI flags are stale — restart agent to apply new mode', 'needs-context') : ''}</span></div>
           <div class="agent-field"><span class="label" title="Number of HTTP requests blocked by the ACMM proxy for this agent. Non-zero means the agent attempted actions above its mode.">proxy</span><span class="value">${a.proxyViolations > 0 ? '<span style="color:var(--danger)">⛔ ' + a.proxyViolations + ' blocked</span>' : '✓ clean'}</span></div>
           <div class="agent-field"><span class="label" title="Time between governor kicks for this agent in the current mode. Configured per governor mode (idle/quiet/busy/surge).">interval</span><span class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : a.cadence}</span></div>
           <div class="agent-field"><span class="label" title="When the governor last kicked (sent a work prompt to) this agent. A kicked work pass often keeps running long after this time — terminal activity between kicks is normally the previous pass still working, not an off-schedule run.">last kick</span><span class="value">${a.lastKick || '—'}</span></div>
@@ -8073,11 +8140,11 @@
           const colCls = isActive ? `col-active mode-${m}` : '';
           const stateCls = showOnDemand ? ' on-demand' : showOff ? ' off' : showPaused ? ' paused' : '';
           const dot = (isActive && isWorking && !agentPaused && !showOff && !showOnDemand) ? '<span class="active-dot"></span>' : '';
-          const badge = showOnDemand ? '<span class="on-demand-badge">on demand</span>' : showOff ? '<span class="off-badge" title="No cadence configured for this mode — the governor never kicks this agent while the hive is in it. The agent is still enabled; this is a per-mode schedule gap, not the 0/1 switch.">no cadence</span>' : showPaused ? '<span class="pause-badge">paused</span>' : val;
+          const badge = showOnDemand ? '<span class="on-demand-badge" data-status="info">on demand</span>' : showOff ? '<span class="off-badge" data-status="neutral" title="No cadence configured for this mode — the governor never kicks this agent while the hive is in it. The agent is still enabled; this is a per-mode schedule gap, not the 0/1 switch.">no cadence</span>' : showPaused ? '<span class="pause-badge" data-status="warn">paused</span>' : val;
           return `<td class="${colCls}${stateCls}" title="${esc(tip)}">${dot}${badge}</td>`;
         }).join('');
         const nameDot = isWorking ? '<span class="agent-dot"></span>' : '';
-        const pauseBadge = agentOnDemand ? '<span class="on-demand-badge">on demand</span>' : agentPaused ? '<span class="pause-badge">paused</span>' : agentOff ? `<span class="off-badge">${esc(agentCadenceOffLabel())}</span>` : '';
+        const pauseBadge = agentOnDemand ? '<span class="on-demand-badge" data-status="info">on demand</span>' : agentPaused ? '<span class="pause-badge" data-status="warn">paused</span>' : agentOff ? `<span class="off-badge" data-status="neutral">${esc(agentCadenceOffLabel())}</span>` : '';
         const cliPinned = agentData && (agentData.pinnedBoth || agentData.pinnedCli);
         const modelPinned = agentData && (agentData.pinnedBoth || agentData.pinnedModel);
         const cChip = agentData && agentData.cli ? cliChip(agentData.cli, cliPinned, aname) : '?';
@@ -13134,7 +13201,8 @@ function burnAreaChart() {
       const synthRunning = _beadSynthStatus && _beadSynthStatus.running;
       let html = '<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:8px">';
       if (synthEnabled) {
-        html += `<span style="font-size:0.72rem;color:var(--green);display:flex;align-items:center;gap:4px" title="Bead synthesizer is ${synthRunning ? 'running' : 'enabled but not running'}. Schedule: ${escapeHtml((_beadSynthStatus||{}).schedule||'hourly')}"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${synthRunning ? 'var(--green)' : 'var(--yellow)'}"></span> Synth ${synthRunning ? 'active' : 'idle'}</span>`;
+        const synthStatus = statusMeta(synthRunning ? 'active' : 'idle');
+        html += `<span class="badge-status" data-status="${synthStatus.status}" title="Bead synthesizer is ${synthRunning ? 'running' : 'enabled but not running'}. Schedule: ${escapeHtml((_beadSynthStatus||{}).schedule||'hourly')}"><span class="status-dot" data-status="${synthStatus.status}" style="width:6px;height:6px;min-width:6px"></span> Synth ${synthStatus.label}</span>`;
         html += '<button class="hv-btn btn-danger btn-sm" data-action="toggleBeadSynth" data-arg0="false" data-arg-types="j" title="Disable the bead synthesizer. Completed beads will no longer be automatically converted to wiki facts.">Pause Synth</button>';
       } else {
         html += '<button class="hv-btn btn-primary btn-sm" data-action="toggleBeadSynth" data-arg0="true" data-arg-types="j" title="Enable the bead synthesizer. Completed beads will be automatically scanned and converted to wiki facts on an hourly schedule.">Enable Synth</button>';
@@ -13184,11 +13252,11 @@ function burnAreaChart() {
         const label = KB_LAYER_LABELS[l.type] || l.type;
         const active = _kbSelectedLayer === l.type ? ' active' : '';
         const count = l.total_pages || 0;
-        const dotColor = l.healthy ? 'var(--green)' : 'var(--red)';
+        const layerStatus = statusMeta(l.healthy ? 'ready' : 'error');
         const healthTip = `${escapeHtml(label)}: ${l.healthy ? 'healthy' : 'unreachable'}`;
         const repoUrl = isGitSource && l.url ? (l.subpath ? l.url + '/tree/' + 'main/' + l.subpath : l.url) : '';
         html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${active}" data-action="kbSelectLayer" data-arg0="${escapeHtml(l.type)}" title="${healthTip}">`;
-        html += `<span class="kb-layer-label"><span class="kb-health-dot" style="background:${dotColor}" title="${healthTip}"></span>${icon} ${escapeHtml(label)}</span>`;
+        html += `<span class="kb-layer-label"><span class="kb-health-dot status-dot" data-status="${layerStatus.status}" title="${healthTip}"></span>${icon} ${escapeHtml(label)}</span>`;
         if (isGitSource && repoUrl) {
           html += `<a href="${escapeHtml(repoUrl)}" target="_blank" rel="noopener" data-action="gh3" style="color:var(--accent);text-decoration:none;font-size:0.82rem;flex-shrink:0" title="Open source repo in new tab">↗</a>`;
         }
@@ -13202,7 +13270,7 @@ function burnAreaChart() {
       for (const v of connectedVaults.filter(v => !layerTypes.has(v.name))) {
         const vTip = `${escapeHtml(v.name)}: connected — ${escapeHtml(v.root_dir)}`;
         html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${_kbSelectedLayer === 'vault:'+v.name ? ' active' : ''}" data-action="gh14" data-arg0="${escapeHtml(v.name)}" title="${vTip}">`;
-        html += `<span class="kb-layer-label"><span class="kb-health-dot" style="background:var(--green)" title="${vTip}"></span>📂 ${escapeHtml(v.name)}</span>`;
+        html += `<span class="kb-layer-label"><span class="kb-health-dot status-dot" data-status="ok" title="${vTip}"></span>📂 ${escapeHtml(v.name)}</span>`;
         html += `<span class="kb-src-type vault">vault</span>`;
         html += `<span class="kb-layer-count">${v.pages}</span>`;
         html += `</button>`;
@@ -13213,7 +13281,7 @@ function burnAreaChart() {
         const dFacts = d.fact_count || 0;
         const dTip = `${escapeHtml(d.title || d.slug)}: imported — ${escapeHtml(d.source_url || d.source_file || d.slug)}`;
         html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${_kbSelectedLayer === 'doc:'+d.slug ? ' active' : ''}" data-action="kbSelectLayer" data-arg0="doc:${escapeHtml(d.slug)}" title="${dTip}">`;
-        html += `<span class="kb-layer-label"><span class="kb-health-dot" style="background:var(--green)" title="${dTip}"></span>${dIcon} ${escapeHtml(d.title || d.slug)}</span>`;
+        html += `<span class="kb-layer-label"><span class="kb-health-dot status-dot" data-status="ok" title="${dTip}"></span>${dIcon} ${escapeHtml(d.title || d.slug)}</span>`;
         html += `<span class="kb-src-type doc">doc</span>`;
         html += `<span class="kb-layer-count">${dFacts}</span>`;
         html += `</button>`;
@@ -13750,12 +13818,12 @@ function burnAreaChart() {
 
         if (gitSources && gitSources.length > 0) {
           for (const gs of gitSources) {
-            const statusColor = gs.ready ? 'var(--green)' : '#eab308';
-            const statusText = gs.ready ? 'ready' : 'initializing';
+            const gsStatus = statusMeta(gs.ready ? 'ready' : 'initializing');
+            const statusText = gsStatus.label;
             html += '<div class="card-inset row-between" style="margin-bottom:6px">';
             html += '<div style="min-width:0;flex:1">';
             html += `<div style="font-size:0.82rem;font-weight:600;color:var(--fg);display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden">`;
-            html += `<span style="width:7px;height:7px;min-width:7px;border-radius:50%;background:${statusColor};display:inline-block"></span>`;
+            html += `<span class="status-dot" data-status="${gsStatus.status}" style="width:7px;height:7px;min-width:7px"></span>`;
             html += `<span style="overflow:hidden;text-overflow:ellipsis">${escapeHtml(gs.name)}</span></div>`;
             const repoHref = gs.subpath ? gs.url + '/tree/' + (gs.branch || 'main') + '/' + gs.subpath : gs.url;
             html += `<div style="font-size:0.7rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">`;
@@ -19207,8 +19275,8 @@ function burnAreaChart() {
     // Per-level ACMM colors, index = level (0 = unset, 1..6 = L1..L6). Each hue
     // is deliberately far from its neighbors so adjacent levels never read as the
     // same pill color: grey → purple → teal → green → orange → red → crimson.
-    const ACMM_LEVEL_COLORS = ['#95a5a6', '#8e44ad', '#16a085', '#27ae60', '#e67e22', '#e74c3c', '#c0392b'];
-    const acmmLevelColor = level => ACMM_LEVEL_COLORS[level] || '#3498db';
+    const ACMM_LEVEL_COLORS = ['var(--status-neutral)', 'var(--acmm-level-1)', 'var(--acmm-level-2)', 'var(--acmm-level-3)', 'var(--acmm-level-4)', 'var(--acmm-level-5)', 'var(--acmm-level-6)'];
+    const acmmLevelColor = level => ACMM_LEVEL_COLORS[level] || 'var(--status-info)';
 
     function renderACMMPacks() {
       const container = document.getElementById('acmm-packs-list');
@@ -19376,7 +19444,7 @@ function burnAreaChart() {
       const html = escapeHtml(label) + '<span class="acmm-caret">▾</span>';
       // Tint the badge with the level's own color so each level is visually
       // distinct at a glance; fall back to amber when the level is unset (0).
-      const c = level > 0 ? acmmLevelColor(level) : 'var(--amber)';
+      const c = level > 0 ? acmmLevelColor(level) : 'var(--brand)';
       const tint = el => {
         if (!el) return;
         el.style.color = c;
@@ -21967,7 +22035,7 @@ function burnAreaChart() {
         </div>
         <div class="config-toggle">
           <div class="config-toggle-switch ${g.sandboxEnabled ? 'on' : ''}" id="cfg-agent-sandbox" data-action="toggleConfigSwitch" data-section="general" data-key="sandboxEnabled"></div>
-          <span class="config-toggle-label">Run in sandbox <span class="config-info">i<span class="config-tooltip">Opt this agent into the credential-free sandbox runner. Requires the hive-wide sandbox gate in Governor → Security to be enabled.</span></span>${g.sandboxEffective ? ' <span class="status-badge done">sandboxed</span>' : ''}</span>
+          <span class="config-toggle-label">Run in sandbox <span class="config-info">i<span class="config-tooltip">Opt this agent into the credential-free sandbox runner. Requires the hive-wide sandbox gate in Governor → Security to be enabled.</span></span>${g.sandboxEffective ? ' ' + statusBadgeHTML('ready', 'sandboxed', '', 'done') : ''}</span>
         </div>
         <div class="config-toggle">
           <div class="config-toggle-switch ${g.clearOnKick !== false ? 'on' : ''}" id="cfg-clear-on-kick" data-action="toggleConfigSwitch" data-section="general" data-key="clearOnKick"></div>
@@ -21975,7 +22043,7 @@ function burnAreaChart() {
         </div>
         <div class="config-toggle">
           <div class="config-toggle-switch ${g.onDemand === true ? 'on' : ''}" id="cfg-on-demand" data-action="toggleConfigSwitch" data-section="general" data-key="onDemand"></div>
-          <span class="config-toggle-label">On Demand <span class="config-info">i<span class="config-tooltip">When on, this agent is never started at boot and never kicked by the governor or by event (CEL) triggers — it only runs when something summons it explicitly. Turn it OFF to make the agent run on its cadence like a normal agent. Note: an agent also needs a cadence entry in the ACTIVE governor mode before it will actually be kicked. On-demand agents are also excluded from review fan-out, so a reviewer left on-demand cannot be dispatched.</span></span>${g.onDemand === true ? ' <span class="status-badge">on demand</span>' : ''}</span>
+          <span class="config-toggle-label">On Demand <span class="config-info">i<span class="config-tooltip">When on, this agent is never started at boot and never kicked by the governor or by event (CEL) triggers — it only runs when something summons it explicitly. Turn it OFF to make the agent run on its cadence like a normal agent. Note: an agent also needs a cadence entry in the ACTIVE governor mode before it will actually be kicked. On-demand agents are also excluded from review fan-out, so a reviewer left on-demand cannot be dispatched.</span></span>${g.onDemand === true ? ' ' + statusBadgeHTML('on_demand', 'on demand', '', '') : ''}</span>
         </div>
         <div class="config-toggle">
           <div class="config-toggle-switch ${g.includeRepos !== false ? 'on' : ''}" id="cfg-include-repos" data-action="toggleConfigSwitch" data-section="general" data-key="includeRepos"></div>

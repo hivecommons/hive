@@ -358,7 +358,6 @@
 }
 
 .status-dot[data-status] {
-  --component-status: var(--status-neutral);
   background: var(--component-status);
   block-size: var(--status-dot-size);
   border-radius: var(--r-pill);
