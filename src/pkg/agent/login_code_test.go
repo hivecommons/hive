@@ -132,3 +132,18 @@ func TestOMPLoginPromptIsDetected(t *testing.T) {
 		t.Fatal("omp's boxed OAuth hand-off is not recognised as a login prompt")
 	}
 }
+
+// TestCodexLoginPromptIsDetected pins codex 0.156.1's browser sign-in
+// screen: without these patterns the pane poller treats codex as healthy until
+// the CLI times out to a shell and crash-loops instead of showing needs-login.
+func TestCodexLoginPromptIsDetected(t *testing.T) {
+	pane := strings.Split(`  Welcome to Codex, OpenAI's command-line coding agent
+  Finish signing in via your browser
+  If the link doesn't open automatically, open the following link to authenticate:
+  https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_example&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback
+  On a remote or headless machine? Press esc and choose Sign in with Device Code.
+  Press esc to cancel`, "\n")
+	if !paneShowsLoginPrompt(pane) {
+		t.Fatal("codex's browser sign-in screen is not recognised as a login prompt")
+	}
+}
