@@ -99,20 +99,30 @@ func TestAgyLaunchCommandLine_ConfiguredEffort(t *testing.T) {
 	}
 }
 
-func TestAgyHeadlessTurnCommandReadsPromptFromFile(t *testing.T) {
-	cmd := agyHeadlessTurnShellCommand("agy", "gemini-pro", "high", "/data/agents/a/.hive-agy-prompt-a.txt")
+func TestAgyHeadlessTurnCommandRunsTurnRunner(t *testing.T) {
+	cmd := agyHeadlessTurnShellCommand("/usr/local/bin/hive", "agy", "gemini-pro", "high", "/data/agents/a/.hive-agy-prompt-a.txt", false)
 
-	if strings.Contains(cmd, "do the task") {
-		t.Fatalf("headless turn command must not embed prompt text in the shell line; cmd: %q", cmd)
+	if strings.Contains(cmd, "do the task") || strings.Contains(cmd, "$(cat") {
+		t.Fatalf("headless turn command must not expand the prompt into argv (E2BIG past 128 KiB); cmd: %q", cmd)
 	}
 	for _, want := range []string{
-		"'agy' --dangerously-skip-permissions --model 'gemini-pro' --effort 'high' -p \"$(cat '/data/agents/a/.hive-agy-prompt-a.txt')\"",
+		"'/usr/local/bin/hive' agy-turn --agy 'agy' --model 'gemini-pro' --effort 'high' --prompt-file '/data/agents/a/.hive-agy-prompt-a.txt'",
+		`--conversation-file "${` + agyConversationFileVar + `:-}"`,
 		agyHeadlessRunningMarker,
 		agyHeadlessReadyMarker,
 	} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("headless turn command missing %q; cmd: %q", want, cmd)
 		}
+	}
+	if strings.Contains(cmd, "--new-conversation") {
+		t.Errorf("a normal kick must continue the agent's conversation; cmd: %q", cmd)
+	}
+	if cmd := agyHeadlessTurnShellCommand("hive", "agy", "", "", "/p", true); !strings.Contains(cmd, "--new-conversation") {
+		t.Errorf("ClearOnKick must start a new conversation; cmd: %q", cmd)
+	}
+	if cmd := agyHeadlessTurnShellCommand("hive", "agy", "", "high", "/p", false); strings.Contains(cmd, "--model") || strings.Contains(cmd, "--effort") {
+		t.Errorf("no model configured must pass neither --model nor --effort; cmd: %q", cmd)
 	}
 }
 
