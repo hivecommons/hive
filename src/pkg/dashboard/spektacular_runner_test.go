@@ -229,13 +229,14 @@ func TestSpektacularRunner_LeaseWorksourceHookIntegration(t *testing.T) {
 		t.Fatalf("same-instant tick = %+v", res)
 	}
 
-	// Plan final: imported as a DRAFT plan, lease at implement, implement unlisted.
+	// Plan final: imported as a DRAFT plan, lease stays parked at plan until
+	// the checkpoint is approved.
 	now = now.Add(spekPoll)
 	if res := r.Tick(context.Background(), now); res.Advanced != 1 || res.Errors != 0 {
 		t.Fatalf("plan final tick = %+v", res)
 	}
-	if stage, _ := spekLeaseState(hub); stage != StageImplement {
-		t.Fatalf("lease after plan final = %s, want implement", stage)
+	if stage, _ := spekLeaseState(hub); stage != StagePlan {
+		t.Fatalf("lease after plan final = %s, want plan", stage)
 	}
 	_, epic := s.findRunEpic(spekRunKey)
 	if epic == nil {
@@ -248,11 +249,21 @@ func TestSpektacularRunner_LeaseWorksourceHookIntegration(t *testing.T) {
 	if err != nil || len(children.Children) != 3 {
 		t.Fatalf("plan tree = %+v err=%v", children, err)
 	}
-	if listed := spekListed(t, s); len(listed) != 0 {
-		t.Fatalf("implement listed before ApprovePlan: %+v", listed)
+	if listed := spekListed(t, s); len(listed) != 1 || listed[0].Stage != StagePlan {
+		t.Fatalf("listed before ApprovePlan = %+v, want held plan", listed)
 	}
+	plans := s.runPlanSnapshots()
+	plan := plans[spekRepo+"!"+spekRunKey]
+	run := runFromLease(runLeaseSnapshot{key: spekRepo + "!" + spekRunKey, leaseKey: spekRepo + "!" + spekRunKey + ":" + StagePlan, repo: spekRepo, stage: StagePlan, gen: gen, identity: spekIdentity}, plan, runHumanReviewHold{}, s.deps.Config)
+	if run.PlanEpicID != epic.ID || run.WaitingOn != RunWaitingOnHuman {
+		t.Fatalf("run projection = %+v, plan snapshot = %+v", run, plan)
+	}
+	approvalAt := now.Add(leaseTTL + time.Second)
 	if err := planning.ApprovePlan(store, epic.ID); err != nil {
 		t.Fatalf("ApprovePlan: %v", err)
+	}
+	if err := s.advanceApprovedPlanLease(spekRunKey, approvalAt); err != nil {
+		t.Fatalf("advance approved plan lease: %v", err)
 	}
 	if listed := spekListed(t, s); len(listed) != 1 || listed[0].Stage != StageImplement {
 		t.Fatalf("listed after ApprovePlan = %+v", listed)
@@ -716,6 +727,24 @@ func TestRunCheckpointAutoApprovalRecordsAutoActor(t *testing.T) {
 	}
 	if !foundEvent {
 		t.Fatalf("auto plan approval event not recorded: %+v", s.LifecycleTimeline().ByIssue(spekRunKey))
+	}
+}
+
+func TestAdvanceApprovedPlanLeaseMatchesCanonicalIssueKey(t *testing.T) {
+	hub, s, _, _ := spekHub(t)
+	s.deps.Config.Project.Org = "clubanderson"
+	now := time.Now()
+	repo := "hive-runs-e2e"
+	runKey := "hive-runs-e2e#7"
+	leaseKey := repo + "!" + runKey + ":" + StagePlan
+	if err := hub.recordLeaseForKeyStage(spekIdentity, spekTaskID, repo, 0, leaseKey, "contributor", StagePlan, spekGen, now); err != nil {
+		t.Fatalf("record stage lease: %v", err)
+	}
+	if err := s.advanceApprovedPlanLease("clubanderson/hive-runs-e2e#7", now.Add(time.Second)); err != nil {
+		t.Fatalf("advance approved plan lease: %v", err)
+	}
+	if stage, _ := spekLeaseState(hub); stage != StageImplement {
+		t.Fatalf("stage after canonical approval = %s, want implement", stage)
 	}
 }
 

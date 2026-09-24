@@ -1,0 +1,1 @@
+- Hold v6 Spektacular plan leases at the plan checkpoint until the imported plan is approved, so `/api/runs` exposes the gated plan before implement.

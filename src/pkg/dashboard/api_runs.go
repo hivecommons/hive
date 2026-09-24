@@ -885,6 +885,12 @@ func (s *Server) runPlanSnapshots() map[string]runPlanSnapshot {
 			}
 			snap := out[key]
 			snap.epicID = firstRunNonEmpty(snap.epicID, b.ID)
+			switch b.Meta(planning.MetaPlanStatus) {
+			case planning.PlanStatusDraft:
+				snap.state = firstRunNonEmpty(snap.state, planning.PlanStateReview)
+			case planning.PlanStatusApproved:
+				snap.state = firstRunNonEmpty(snap.state, planning.PlanStateExecuting)
+			}
 			snap.waveIDs = splitRunWaveIDs(b.Meta(planning.MetaRunWaveIDs))
 			if reason := b.Meta(planning.MetaRunWaitingReason); reason != "" {
 				snap.reason = reason
@@ -901,6 +907,9 @@ func (s *Server) runPlanSnapshots() map[string]runPlanSnapshot {
 				}
 				out[qualifiedRepo+"!"+runKey] = snap
 				out[repo+"!"+runKey] = snap
+				if canonical := s.canonicalRunKey(repo, 0, runKey, ""); canonical != "" {
+					out[canonical] = snap
+				}
 			}
 		}
 	}

@@ -16,6 +16,13 @@ func TestRunsE2EV6Surfaces(t *testing.T) {
 	if _, code, err := client.get("/api/version"); err != nil || code != http.StatusOK {
 		t.Fatalf("hive not reachable at %s: %v (code=%d)", hiveURL, err, code)
 	}
+	features := runsE2EFeatureProbe(t, client)
+	originalPlanCheckpoint, ok := boolField(features, "checkpointPlanEnabled")
+	if !ok {
+		skipUntil(t, "gap 4 of #8460", "governor feature payload does not expose checkpointPlanEnabled")
+	}
+	defer setPlanCheckpoint(t, client, originalPlanCheckpoint)
+	setPlanCheckpoint(t, client, true)
 
 	runKey := runsE2ETargetKey(t)
 	triggerRunsTriage(t, client, runKey)
@@ -34,13 +41,6 @@ func TestRunsE2EV6Surfaces(t *testing.T) {
 	})
 
 	t.Run("checkpoint_gate_policy_projection", func(t *testing.T) {
-		features := runsE2EFeatureProbe(t, client)
-		original, ok := boolField(features, "checkpointPlanEnabled")
-		if !ok {
-			skipUntil(t, "gap 4 of #8460", "governor feature payload does not expose checkpointPlanEnabled")
-		}
-		defer setPlanCheckpoint(t, client, original)
-		setPlanCheckpoint(t, client, true)
 		blocked := getRun(t, client, runKey)
 		if blocked.Stage == "plan" && blocked.WaitingOn != "human" {
 			t.Fatalf("plan checkpoint enabled: waiting_on=%q, want human; run=%+v", blocked.WaitingOn, blocked)
@@ -50,6 +50,7 @@ func TestRunsE2EV6Surfaces(t *testing.T) {
 		if unblocked.Stage == "plan" && unblocked.WaitingOn == "human" {
 			t.Fatalf("plan checkpoint disabled still blocks on human: %+v", unblocked)
 		}
+		setPlanCheckpoint(t, client, true)
 	})
 
 	t.Run("chat_approval_advances_same_lease", func(t *testing.T) {

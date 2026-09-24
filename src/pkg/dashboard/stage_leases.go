@@ -12,6 +12,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/worksource"
@@ -300,10 +301,6 @@ func (s *Server) AdvanceStageLease(identity, taskID, to string, now time.Time, r
 	if err != nil {
 		return err
 	}
-	advanced, err := h.advanceLeaseStage(identity, taskID, to, now)
-	if err != nil {
-		return err
-	}
 	eventAttrs := make(map[string]string, len(attrs)+5)
 	for k, v := range attrs {
 		eventAttrs[k] = v
@@ -317,13 +314,28 @@ func (s *Server) AdvanceStageLease(identity, taskID, to string, now time.Time, r
 	eventAttrs[stageAttrStage] = stage
 	eventAttrs[stageAttrGen] = strconv.FormatUint(gen, 10)
 	eventAttrs[stageAttrPath] = path
-	s.LifecycleTimeline().Record(timeline.Event{
-		IssueRef: key,
-		Kind:     timeline.KindStageReceipt,
-		Agent:    advanced.identity,
-		At:       now.UnixMilli(),
-		Attrs:    eventAttrs,
-	})
+	recordReceipt := func(agent string) {
+		s.LifecycleTimeline().Record(timeline.Event{
+			IssueRef: key,
+			Kind:     timeline.KindStageReceipt,
+			Agent:    agent,
+			At:       now.UnixMilli(),
+			Attrs:    eventAttrs,
+		})
+	}
+	if stage == StagePlan && to == StageImplement && s.planCheckpointHolds(runKey) {
+		if err := s.extendHeldPlanLease(identity, taskID, now); err != nil {
+			return err
+		}
+		recordReceipt(l.identity)
+		s.logger.Info("[runs] holding plan stage until approval", "run", runKey, "task", taskID)
+		return nil
+	}
+	advanced, err := h.advanceLeaseStage(identity, taskID, to, now)
+	if err != nil {
+		return err
+	}
+	recordReceipt(advanced.identity)
 	if stage == StageSpec {
 		if decision := s.runCheckpointPolicy(StageSpec); !decision.blocks {
 			s.recordRunCheckpointAutoApproval(runKey, "", StageSpec, decision)
@@ -562,6 +574,93 @@ func (s *Server) CreateImplementationLease(_ context.Context, lease worksource.R
 func (s *Server) runPlanApproved(runKey string) bool {
 	_, epic := s.findRunEpic(runKey)
 	return epic != nil && epic.Meta(planning.MetaPlanStatus) == planning.PlanStatusApproved
+}
+
+func (s *Server) planCheckpointHolds(runKey string) bool {
+	decision := s.runCheckpointPolicy(StagePlan)
+	return decision.blocks && !s.runPlanApproved(runKey)
+}
+
+func (s *Server) extendHeldPlanLease(identity, taskID string, now time.Time) error {
+	if s == nil || s.contributeHub == nil {
+		return errors.New("run lease registry unavailable")
+	}
+	h := s.contributeHub
+	h.leaseMu.Lock()
+	l := h.leaseForLocked(identity, taskID)
+	if l == nil {
+		h.leaseMu.Unlock()
+		return fmt.Errorf("%w for %s", errLeaseNotFound, taskID)
+	}
+	if l.stage != StagePlan {
+		h.leaseMu.Unlock()
+		return nil
+	}
+	prev := l.expiresAt
+	until := now.Add(s.runCheckpointHoldDuration())
+	if l.expiresAt.Before(until) {
+		l.expiresAt = until
+	}
+	if err := h.saveLeasesLocked(); err != nil {
+		l.expiresAt = prev
+		h.leaseMu.Unlock()
+		return fmt.Errorf("persisting held plan lease for %s: %w", taskID, err)
+	}
+	h.leaseMu.Unlock()
+	return nil
+}
+
+func (s *Server) runCheckpointHoldDuration() time.Duration {
+	seconds := config.DefaultRunsWaitTimeoutSeconds
+	if s != nil && s.deps != nil && s.deps.Config != nil {
+		seconds = s.deps.Config.Runs.EffectiveWaitTimeoutSeconds()
+	}
+	d := time.Duration(seconds) * time.Second
+	if d < leaseTTL {
+		return leaseTTL
+	}
+	return d
+}
+
+func (s *Server) runKeyForEpic(repo, number, runKey string) string {
+	if ref, ok := worksource.ParseKey(runKey); ok && ref.Number > 0 {
+		return worksource.Ref{Repo: s.qualifyRunRepo(ref.Repo), Number: ref.Number}.Key()
+	}
+	if repo != "" && number != "" {
+		return s.canonicalRunKey(repo, atoiOrZero(number), "", "")
+	}
+	return strings.TrimSpace(runKey)
+}
+
+func (s *Server) advanceApprovedPlanLease(runKey string, now time.Time) error {
+	if s == nil || s.contributeHub == nil || runKey == "" {
+		return nil
+	}
+	var identity, taskID string
+	found := false
+	err := s.VisitActiveStageLeases(func(rk, _, stage, id, task, repo string, _ uint64, expiresAt time.Time) {
+		if found || !s.sameRunKey(runKey, rk, repo) || stage != StagePlan || now.After(expiresAt) {
+			return
+		}
+		identity, taskID, found = id, task, true
+	})
+	if err != nil || !found {
+		return err
+	}
+	_, err = s.contributeHub.advanceLeaseStage(identity, taskID, StageImplement, now)
+	return err
+}
+
+func (s *Server) sameRunKey(target, candidate, repo string) bool {
+	target = strings.TrimSpace(target)
+	candidate = strings.TrimSpace(candidate)
+	if target == "" || candidate == "" {
+		return false
+	}
+	if target == candidate {
+		return true
+	}
+	return s.canonicalRunKey(repo, 0, target, "") == s.canonicalRunKey(repo, 0, candidate, "")
 }
 
 func (s *Server) ensureRunPlanApproved(runKey string) bool {
