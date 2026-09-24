@@ -284,9 +284,9 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @anthropic-ai/claude-co
 # Installs from the OFFICIAL block/goose repo, pinned to a fixed release and
 # SHA-256-verified before extraction. Download failures are tolerated because
 # Goose is an optional backend; checksum mismatches must hard-fail the build.
-ARG GOOSE_VERSION=1.51.0
-ARG GOOSE_SHA256_AMD64=fc53761f5b907499d5fe21ef940c2bc57b2d93b4c8b858be24261cc136c6108e
-ARG GOOSE_SHA256_ARM64=e47da01a5378383b050bd736be3989d94ba8160d0a7e7df8280ddb2aec6fd306
+ARG GOOSE_VERSION=1.52.0
+ARG GOOSE_SHA256_AMD64=4aee1f770b405c44194c0e9407df1fb06bda4c50eee935f0d8fd10731821cc5e
+ARG GOOSE_SHA256_ARM64=ae602c4f6e9a785bf087da52c89908d4dc6aa605dcc17bf83293873f626d9c85
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64) GOOSE_ARCH=x86_64; GOOSE_SHA256="$GOOSE_SHA256_AMD64" ;; \
