@@ -48,9 +48,10 @@ type Dependencies struct {
 	Nous             *NousState
 	Scheduler        SchedulerControl
 	MetricsCollector *MetricsCollector
-	// RotationMgr is the provider-rotation manager (RFC #3958). Nil when
-	// rotation is disabled; the headroom endpoint then reports enabled=false.
-	RotationMgr *rotation.Manager
+	// RotationMgr is the provider-rotation headroom reporter (RFC #3958). Nil
+	// when rotation is disabled; the headroom endpoint then reports
+	// enabled=false.
+	RotationMgr rotation.HeadroomReporter
 	// FleetStats is the spoke's fleet-stat contribution collector (PRs
 	// merged/rejected over the trailing 90-day window, cached, refreshed on a
 	// 30-minute timer). The ACMM advisor derives its baseline merge-success

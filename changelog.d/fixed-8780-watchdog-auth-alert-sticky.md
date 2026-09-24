@@ -1,0 +1,1 @@
+- The "Agent needs re-authentication (PaneShowsLogin)" banner now clears once the agent's pane stops showing login chrome. Copilot/codex agents have no positive credential signal, so their verdict recovers to Unknown rather than True, and the banner previously stayed up forever over a working agent.

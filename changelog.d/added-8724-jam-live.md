@@ -1,0 +1,1 @@
+- Add live Spektacular Jam presence and conflict-aware co-editing over WebSocket (#8724).
