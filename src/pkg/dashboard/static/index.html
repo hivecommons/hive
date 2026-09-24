@@ -15690,6 +15690,7 @@ function burnAreaChart() {
       const suggestions = jam.suggestions || [];
       const polls = jam.polls || [];
       const revisions = jam.revisions || [];
+      const projectSync = jam.project_sync || {};
       _campaignJamLiveRevision = jam.spec_revision_id || '';
       panel.innerHTML = `
         <div class="campaigns-head">
@@ -15741,6 +15742,22 @@ function burnAreaChart() {
         <div class="campaign-jam-box">
           <h4>Revision history</h4>
           <div class="campaign-jam-list">${revisions.length ? revisions.map(r => `<div><strong>${escapeHtml(r.id)}</strong> by ${escapeHtml((r.author && r.author.name) || 'unknown')}${r.model ? ' · ' + escapeHtml(r.model) : ''}<br>${escapeHtml(r.reason || 'revision')}</div>`).join('') : 'No spec revisions yet.'}</div>
+        </div>
+        <div class="campaign-jam-box">
+          <h4>GitHub Projects sync</h4>
+          <div class="campaign-jam-list">
+            <div>Status: ${escapeHtml(projectSync.last_status || (projectSync.enabled ? 'enabled' : 'disabled'))}</div>
+            ${projectSync.project_url ? `<div>Project: ${escapeHtml(projectSync.project_url)}</div>` : ''}
+            ${projectSync.last_error ? `<div>Last error: ${escapeHtml(projectSync.last_error)}<br>${escapeHtml(projectSync.retry_advice || 'Retry after checking the project link and token.')}</div>` : ''}
+          </div>
+          <div class="campaign-jam-form">
+            <input id="jam-project-url" class="campaigns-input" placeholder="GitHub Projects URL or ID" value="${escapeHtml(projectSync.project_url || projectSync.project_id || '')}" />
+            <div class="campaign-jam-actions">
+              <button class="hv-btn btn-secondary btn-sm" data-action="enableCampaignJamProjectSync" data-arg0="${escapeHtml(id)}">Enable sync</button>
+              <button class="hv-btn btn-primary btn-sm" data-action="syncCampaignJamProject" data-arg0="${escapeHtml(id)}">Sync now</button>
+              <button class="hv-btn btn-secondary btn-sm" data-action="disableCampaignJamProjectSync" data-arg0="${escapeHtml(id)}">Disable</button>
+            </div>
+          </div>
         </div>`;
     }
 
@@ -15808,6 +15825,20 @@ function burnAreaChart() {
       const question = document.getElementById('jam-poll-question')?.value || '';
       const options = (document.getElementById('jam-poll-options')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
       await postCampaignJam(id, 'polls', { section, question, options });
+    }
+
+    async function enableCampaignJamProjectSync(id) {
+      const value = document.getElementById('jam-project-url')?.value || '';
+      const body = value.indexOf('http') === 0 ? { action: 'enable', project_url: value } : { action: 'enable', project_id: value };
+      await postCampaignJam(id, 'project-sync', body);
+    }
+
+    async function syncCampaignJamProject(id) {
+      await postCampaignJam(id, 'project-sync', { action: 'sync' });
+    }
+
+    async function disableCampaignJamProjectSync(id) {
+      await postCampaignJam(id, 'project-sync', { action: 'disable' });
     }
 
     async function postCampaignJam(id, lane, body) {

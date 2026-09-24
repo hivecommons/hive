@@ -103,6 +103,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/campaigns/{id}/jam/suggestions", s.handleCampaignJamSuggestionsPost)
 	s.mux.HandleFunc("GET /api/campaigns/{id}/jam/polls", s.handleCampaignJamPollsGet)
 	s.mux.HandleFunc("POST /api/campaigns/{id}/jam/polls", s.handleCampaignJamPollsPost)
+	s.mux.HandleFunc("GET /api/campaigns/{id}/jam/project-sync", s.handleCampaignJamProjectSyncGet)
+	s.mux.HandleFunc("POST /api/campaigns/{id}/jam/project-sync", s.handleCampaignJamProjectSyncPost)
 	s.mux.HandleFunc("GET /api/campaigns/{id}/jam/ws", s.handleCampaignJamWebSocket)
 	s.mux.HandleFunc("GET /api/widget", s.handleWidget)
 	s.mux.HandleFunc("GET /api/pane/{agent}", s.handlePane)

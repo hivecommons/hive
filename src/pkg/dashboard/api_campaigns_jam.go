@@ -32,7 +32,28 @@ type CampaignJamState struct {
 	Suggestions    []CampaignSuggestion `json:"suggestions,omitempty"`
 	Polls          []CampaignPoll       `json:"polls,omitempty"`
 	Revisions      []CampaignRevision   `json:"revisions,omitempty"`
+	ProjectSync    *CampaignProjectSync `json:"project_sync,omitempty"`
 	UpdatedAt      string               `json:"updated_at,omitempty"`
+}
+
+type CampaignProjectSync struct {
+	Enabled        bool                  `json:"enabled"`
+	ProjectURL     string                `json:"project_url,omitempty"`
+	ProjectID      string                `json:"project_id,omitempty"`
+	LastStatus     string                `json:"last_status,omitempty"`
+	LastSyncAt     string                `json:"last_sync_at,omitempty"`
+	LastError      string                `json:"last_error,omitempty"`
+	RetryAdvice    string                `json:"retry_advice,omitempty"`
+	PublishedItems []CampaignProjectItem `json:"published_items,omitempty"`
+}
+
+type CampaignProjectItem struct {
+	Type       string `json:"type"`
+	Title      string `json:"title"`
+	Body       string `json:"body,omitempty"`
+	Status     string `json:"status,omitempty"`
+	ExternalID string `json:"external_id,omitempty"`
+	UpdatedAt  string `json:"updated_at"`
 }
 
 type CampaignThread struct {

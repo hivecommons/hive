@@ -22782,6 +22782,57 @@
         }
       }
     },
+    "/api/campaigns/{id}/jam/project-sync": {
+      "get": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Get Jam GitHub Projects sync status",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Project sync status"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Configure or run Jam GitHub Projects sync",
+        "description": "Maintainer-only endpoint for enabling/disabling sync, publishing campaign specs/decisions/derived issues, and recording inbound project status updates.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated project sync state"
+          },
+          "403": {
+            "description": "Maintainer access required"
+          }
+        }
+      }
+    },
     "/api/campaigns/{id}/jam/ws": {
       "get": {
         "tags": [

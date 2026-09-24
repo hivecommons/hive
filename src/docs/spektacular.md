@@ -36,6 +36,12 @@ Live spec edits carry the sender's last seen spec revision; stale edits are
 rejected with a conflict message instead of overwriting newer work, so
 reconnecting clients can refresh and merge intentionally.
 
+Maintainers can opt a campaign into GitHub Projects sync from the Jam tab. The
+sync publishes the current spec, recorded decisions, and derived suggestion
+items to the linked project; inbound project status updates are recorded on the
+campaign without rewriting local Jam decisions. Sync failures are kept with
+retry guidance so the dashboard shows what to fix before trying again.
+
 ## Enabling it
 
 ```yaml
