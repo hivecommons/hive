@@ -8,12 +8,20 @@ import (
 	dashboardtheme "github.com/hivecommons/hive/pkg/dashboard/theme"
 )
 
+type ValidateOptions struct {
+	RequireAgents bool
+}
+
 func (c *Config) Validate() error {
+	return c.ValidateWithOptions(ValidateOptions{RequireAgents: true})
+}
+
+func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if c.Project.Org == "" {
 		return fmt.Errorf("project.org is required")
 	}
 	// Repos can be empty — L1 inception starts with just an idea, no repo.
-	if len(c.Agents) == 0 {
+	if opts.RequireAgents && len(c.Agents) == 0 {
 		return fmt.Errorf("at least one agent must be configured")
 	}
 	// Deliberately a bare zero-test, NOT HasApp(): PlaceholderAppID exists

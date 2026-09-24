@@ -296,6 +296,9 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 
 	envCmd := m.buildEnvPrefix(agent)
 	fullCmd := envCmd + launchCmd
+	if agentUsesAgyHeadless(backend, agent) {
+		fullCmd = agyHeadlessFullLaunchCmd(envCmd, launchCmd)
+	}
 
 	// A previously spilled kick can leave bash in PS2 quote-continuation
 	// (an unbalanced quote): anything typed next is appended to the open
@@ -995,20 +998,67 @@ func agyInteractiveLaunchCmd(binary, model, effort string) string {
 	return launchCmd
 }
 
+// agyConversationFileVar names the pane-shell variable holding the file that
+// records the agy conversation id between kicks (see agy_turn.go). The launch
+// shim creates the file with mktemp, so every (re)launch — a fresh pane shell
+// — starts a fresh conversation, matching the TUI it replaces, and no other
+// agent can predict or pre-create the path.
+const agyConversationFileVar = "HIVE_AGY_CONVERSATION_FILE"
+
 func agyHeadlessLaunchCmd() string {
-	return fmt.Sprintf("export PS1=%s; echo %s", shellQuote(agyHeadlessReadyMarker+"> "), shellQuote(agyHeadlessReadyMarker))
+	// A relaunch into a surviving pane shell re-runs this line: drop the
+	// previous launch's file first so it neither leaks nor gets resumed.
+	return fmt.Sprintf(`[ -n "${%[1]s:-}" ] && rm -f "$%[1]s"; export %[1]s="$(mktemp "${TMPDIR:-/tmp}/hive-agy-conversation.XXXXXX")"; trap 'rm -f "$%[1]s"' EXIT; export PS1=%[2]s; echo %[3]s`,
+		agyConversationFileVar,
+		shellQuote(agyHeadlessReadyMarker+"> "), shellQuote(agyHeadlessReadyMarker))
 }
 
-func agyHeadlessTurnShellCommand(binary, model, effort, promptFile string) string {
-	args := []string{shellQuote(binary), "--dangerously-skip-permissions"}
+// agyHeadlessFullLaunchCmd joins the per-agent env prefix onto the headless
+// launch shim. Every other backend's launch line is `KEY='v'... <cli>`, which
+// hands the CLI a refreshed environment on each (re)launch. The headless shim
+// runs no CLI at launch — agy starts later, once per kick, from the pane
+// shell — and bash discards assignments that prefix a builtin like `export`,
+// so the prefix has to be exported into the shell for the kicks to see it.
+func agyHeadlessFullLaunchCmd(envPrefix, launchCmd string) string {
+	envPrefix = strings.TrimSpace(envPrefix)
+	if envPrefix == "" {
+		return launchCmd
+	}
+	return "export " + envPrefix + "; " + launchCmd
+}
+
+// agentUsesAgyHeadless reports whether an agent on the given effective backend
+// runs through the headless shim. An operator LaunchCmd replaces the shim, so
+// such an agent keeps the ordinary type-into-the-TUI kick path.
+func agentUsesAgyHeadless(backend string, agent *AgentProcess) bool {
+	return backend == "agy" && agyHeadlessEnabled() && strings.TrimSpace(agent.Config.LaunchCmd) == ""
+}
+
+// agyTurnRunnerBinary resolves the hive binary the pane runs `hive agy-turn`
+// from: this process's own executable, so the runner always matches the
+// server that typed the command. A var as a test seam.
+var agyTurnRunnerBinary = func() string {
+	if exe, err := os.Executable(); err == nil && exe != "" {
+		return exe
+	}
+	return "hive"
+}
+
+// agyHeadlessTurnShellCommand is the line a kick types into a headless agy
+// pane: one `hive agy-turn` run, then the ready marker. The prompt stays in a
+// file and reaches agy on stdin (see agy_turn.go for why not argv).
+func agyHeadlessTurnShellCommand(hiveBinary, agyBinary, model, effort, promptFile string, newConversation bool) string {
+	args := []string{shellQuote(hiveBinary), agyTurnSubcommand, "--agy", shellQuote(agyBinary)}
 	if model != "" {
 		args = append(args, "--model", shellQuote(model), "--effort", shellQuote(agyLaunchEffort(effort)))
 	}
-	args = append(args, "-p", "\"$(cat "+shellQuote(promptFile)+")\"")
-
-	run := strings.Join(args, " ")
-	return fmt.Sprintf("printf '\\n%s\\n'; %s & hive_agy_pid=$!; (while kill -0 \"$hive_agy_pid\" 2>/dev/null; do printf '\\r%s'; sleep 10; done) & hive_agy_marker_pid=$!; wait \"$hive_agy_pid\"; hive_agy_rc=$?; kill \"$hive_agy_marker_pid\" 2>/dev/null; wait \"$hive_agy_marker_pid\" 2>/dev/null; printf '\\nHIVE agy headless turn exited rc=%%s\\n' \"$hive_agy_rc\"; echo %s",
-		agyHeadlessRunningMarker, run, agyHeadlessRunningMarker, agyHeadlessReadyMarker)
+	args = append(args, "--prompt-file", shellQuote(promptFile),
+		"--conversation-file", fmt.Sprintf(`"${%s:-}"`, agyConversationFileVar))
+	if newConversation {
+		args = append(args, "--new-conversation")
+	}
+	return fmt.Sprintf("printf '\\n%s\\n'; %s; echo %s",
+		agyHeadlessRunningMarker, strings.Join(args, " "), agyHeadlessReadyMarker)
 }
 
 const ompDefaultApprovalMode = "yolo"

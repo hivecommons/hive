@@ -8962,6 +8962,10 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		return true, 0
 	case "validate", "--config-check":
 		return true, runConfigCheck(args[1:], stdout, stderr)
+	case "agy-turn":
+		// Run from inside a headless agy agent's pane, one per kick; see
+		// pkg/agent/agy_turn.go.
+		return true, agent.RunAgyTurn(args[1:], stdout, stderr)
 	default:
 		return false, 0
 	}

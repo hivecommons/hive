@@ -234,6 +234,7 @@ Read it from:
 
 - **Dashboard** — Features → Review gate → *Effectiveness* → "Load 30-day outcomes": reviewed vs control on PRs, merged %, closed, still open, median first-seen→merge hours and merged-within-72h, plus the queue trend from the snapshots.
 - **`GET /api/review/outcomes?days=N`** (1–90, default 30) — the full `OutcomeSummary`: `reviewed`, `unreviewed`, `by_verdict`, `agent_authored`, `human_authored`, `snapshots`.
+- **`GET /api/reviewer/accuracy?days=N`** (1–90, default 30 or `HIVE_REVIEWER_ACCURACY_WINDOW_DAYS`) — reviewer verdict calibration: false-approve/false-block rates with sample counts plus confidence buckets per perspective and reviewer model.
 - **`/metrics`** — `hive_review_outcome_prs{reviewed,outcome}` and `hive_review_outcome_median_hours_to_merge{reviewed}` over the 30-day window.
 
 Read the numbers with care: the cohorts are not randomised. The reviewer reaches PRs in queue order, so early on the reviewed cohort skews towards whatever it got to first. The comparison becomes meaningful once both cohorts have dozens of resolved PRs; until then treat it as directional.

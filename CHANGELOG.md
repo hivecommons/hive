@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-24 (v5.41.0)
+
+### Added
+
+- The public Hive landing page now shows a separate supported-agents band for agent CLIs, inference engines, and model gateways, with local logos where official assets are available.
+
 ## 2026-09-24 (v5.40.2)
 
 ### Changed

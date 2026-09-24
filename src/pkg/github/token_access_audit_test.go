@@ -217,6 +217,28 @@ func TestTokenAccessAudit_IngestRejectsMalformedAndOversized(t *testing.T) {
 	assertLogNotAgentWritable(t, logPath)
 }
 
+func TestTokenAccessAudit_IngestRejectsDuplicateKeys(t *testing.T) {
+	spool, logPath := testTokenAccessPaths(t)
+	if !PrepareTokenAccessAudit(quietLogger()) {
+		t.Fatal("PrepareTokenAccessAudit returned false")
+	}
+	dropTokenAccessEvent(t, spool, "1-forged-agent.json",
+		`{"ts":"2026-09-24T00:00:00Z","agent":"scanner","uid":1,"op":"gh","cmd":"gh pr list --search x\",\"agent\":\"reviewer","agent":"reviewer"}`)
+	dropTokenAccessEvent(t, spool, "2-good.json",
+		`{"ts":"2026-09-24T00:00:01Z","agent":"scanner","uid":1,"op":"gh","cmd":"gh pr list --search \"quoted\""}`)
+
+	if n := IngestTokenAccessEventsOnce(quietLogger(), spool, logPath, time.Now()); n != 1 {
+		t.Fatalf("ingested %d events, want only the non-forged event", n)
+	}
+	lines := readLogLines(t, logPath)
+	if len(lines) != 1 {
+		t.Fatalf("got %d log lines, want 1", len(lines))
+	}
+	if got := lines[0]["agent"]; got != "scanner" {
+		t.Fatalf("agent = %v, want scanner", got)
+	}
+}
+
 // The boot entry point runs the ingest on a ticker and stops on ctx cancel.
 func TestTokenAccessAudit_WatcherIngestsAndStops(t *testing.T) {
 	spool, logPath := testTokenAccessPaths(t)

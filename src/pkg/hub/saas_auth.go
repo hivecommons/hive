@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -746,7 +747,57 @@ func (s *HubServer) handleUserToken(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"token": token})
 }
 
-var publicPaths = []string{"/snapshot", "/leaderboard", "/contribute", "/api/leaderboard", "/api/contribute", ssoHandoffPath, knowledgeExportPath}
+var publicExactPaths = map[string]struct{}{
+	knowledgeExportPath: {},
+	"/api/style":        {},
+	"/api/theme.css":    {},
+	"/api/themes":       {},
+	"/components.css":   {},
+	ssoHandoffPath:      {},
+	"/tokens.css":       {},
+}
+
+var publicTreePaths = []string{"/api/contribute", "/api/leaderboard", "/contribute", "/leaderboard", "/snapshot"}
+
+var publicStaticAssetPrefixes = []string{"/static/infra/", "/static/integrations/"}
+
+var publicStaticAssetExtensions = map[string]struct{}{
+	".ico":  {},
+	".jpeg": {},
+	".jpg":  {},
+	".png":  {},
+	".svg":  {},
+	".webp": {},
+}
+
+func isSaaSPublicPath(originalURI string) bool {
+	path := originalURI
+	if u, err := url.Parse(originalURI); err == nil && u.Path != "" {
+		path = u.Path
+	} else if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false
+	}
+	if _, ok := publicExactPaths[path]; ok {
+		return true
+	}
+	for _, p := range publicTreePaths {
+		if path == p || strings.HasPrefix(path, p+"/") {
+			return true
+		}
+	}
+	for _, p := range publicStaticAssetPrefixes {
+		if strings.HasPrefix(path, p) {
+			if _, ok := publicStaticAssetExtensions[strings.ToLower(filepath.Ext(path))]; ok {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // knowledgeExportPath is the spoke endpoint a containerised contributor
 // fetches its agent.md from (bin/contributor-agent.sh). It MUST bypass the
@@ -947,18 +998,16 @@ func (s *HubServer) handleSaaSAuthCheck(w http.ResponseWriter, r *http.Request) 
 	if originalURI == "" {
 		originalURI = r.URL.Query().Get("uri")
 	}
-	for _, p := range publicPaths {
-		if strings.HasPrefix(originalURI, p) {
-			// A public path ALWAYS answers 200 — anonymous access to the
-			// leaderboard and the contributor relay must keep working — but a
-			// caller who does carry a hub session is identified all the same
-			// (#7453). Answering a bare 200 here meant X-Hive-User never reached
-			// /api/contribute/me on a hosted spoke, so the Operations tab told
-			// the signed-in owner they were not signed in.
-			s.setPublicPathIdentity(w, r, hiveID)
-			w.WriteHeader(http.StatusOK)
-			return
-		}
+	if isSaaSPublicPath(originalURI) {
+		// A public path ALWAYS answers 200 — anonymous access to the
+		// leaderboard and the contributor relay must keep working — but a
+		// caller who does carry a hub session is identified all the same
+		// (#7453). Answering a bare 200 here meant X-Hive-User never reached
+		// /api/contribute/me on a hosted spoke, so the Operations tab told
+		// the signed-in owner they were not signed in.
+		s.setPublicPathIdentity(w, r, hiveID)
+		w.WriteHeader(http.StatusOK)
+		return
 	}
 
 	if isUnfurlBot(r.Header.Get("User-Agent")) {

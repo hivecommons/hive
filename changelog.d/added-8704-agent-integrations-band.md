@@ -1,1 +1,0 @@
-- The public Hive landing page now shows a separate supported-agents band for agent CLIs, inference engines, and model gateways, with local logos where official assets are available.
