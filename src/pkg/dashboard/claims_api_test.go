@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/claims"
+	"github.com/hivecommons/hive/pkg/hooks"
 )
 
 // Issue claims (hivecommons/hive#8380): the dashboard seam between the
@@ -123,6 +125,10 @@ func TestClaims_TakeoverPreemptsOnlyTheDisplacedSession(t *testing.T) {
 
 func TestClaims_APIRoutes(t *testing.T) {
 	_, s, l := claimsHub(t)
+	var fired []hooks.Payload
+	s.deps.HookFire = func(_ context.Context, p hooks.Payload) {
+		fired = append(fired, p)
+	}
 	do := func(method, path, body string, hdr map[string]string) (int, map[string]any) {
 		t.Helper()
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -172,6 +178,15 @@ func TestClaims_APIRoutes(t *testing.T) {
 	}
 	if _, ok := l.Lookup("o/r", 5); ok {
 		t.Fatal("claim survived owner release")
+	}
+	if len(fired) != 3 {
+		t.Fatalf("claim hook events = %d, want 3", len(fired))
+	}
+	if fired[0].Transition != hooks.TransitionIssueClaimed || fired[1].Transition != hooks.TransitionIssueClaimed || fired[2].Transition != hooks.TransitionIssueReleased {
+		t.Fatalf("claim hook transitions = %#v", fired)
+	}
+	if fired[0].Attrs["issue"] != "5" || fired[2].Repo != "o/r" {
+		t.Fatalf("claim hook payloads = %#v", fired)
 	}
 	code, out = do(http.MethodGet, "/api/claims", "", nil)
 	if code != http.StatusOK || out["enabled"] != true {

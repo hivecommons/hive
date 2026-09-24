@@ -183,6 +183,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/governor/labels", s.handleGovernorLabels)
 	s.mux.HandleFunc("PUT /api/config/governor/budget", s.handleGovernorBudget)
 	s.mux.HandleFunc("POST /api/config/governor/budget/reset", s.handleGovernorBudgetReset)
+	s.mux.HandleFunc("GET /api/governor/notifications", s.handleGovernorNotificationsGet)
+	s.mux.HandleFunc("PUT /api/governor/notifications", s.handleGovernorNotifications)
 	s.mux.HandleFunc("PUT /api/config/governor/notifications", s.handleGovernorNotifications)
 	s.mux.HandleFunc("PUT /api/config/governor/health", s.handleGovernorHealth)
 	s.mux.HandleFunc("PUT /api/config/governor/watchdog", s.handleGovernorWatchdog)

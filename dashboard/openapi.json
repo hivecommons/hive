@@ -6015,7 +6015,7 @@
           "Governor"
         ],
         "summary": "Update notification settings",
-        "description": "Updates ntfy server/topic and the Discord webhook. A value beginning with the masked-secret bullet character is treated as \"unchanged\" (the UI echoes masked values back), not a real update. Requires owner role.",
+        "description": "Updates ntfy, Discord, Slack and selected notify-hook events. Masked secret values are treated as unchanged. Requires owner role.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -6030,6 +6030,15 @@
                   },
                   "discordWebhook": {
                     "type": "string"
+                  },
+                  "slackWebhook": {
+                    "type": "string"
+                  },
+                  "events": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
                   }
                 }
               }
@@ -6053,7 +6062,7 @@
             }
           },
           "400": {
-            "description": "Invalid ntfyServer or discordWebhook URL"
+            "description": "Invalid notification URL"
           },
           "403": {
             "description": "Requires owner role"
@@ -21801,6 +21810,150 @@
           },
           "403": {
             "description": "Owner access required"
+          }
+        }
+      }
+    },
+    "/api/governor/notifications": {
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Get notification settings",
+        "description": "Returns masked notification channel settings and the selected hive notification event set. Requires owner role.",
+        "responses": {
+          "200": {
+            "description": "Notification settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ntfyServer": {
+                      "type": "string"
+                    },
+                    "ntfyTopic": {
+                      "type": "string"
+                    },
+                    "discordWebhook": {
+                      "type": "string"
+                    },
+                    "slackWebhook": {
+                      "type": "string"
+                    },
+                    "hasNtfy": {
+                      "type": "boolean"
+                    },
+                    "hasDiscord": {
+                      "type": "boolean"
+                    },
+                    "hasSlack": {
+                      "type": "boolean"
+                    },
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires owner role"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Update notification settings",
+        "description": "Updates ntfy, Discord, Slack and selected notify-hook events. Masked secret values are treated as unchanged. Requires owner role.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ntfyServer": {
+                    "type": "string"
+                  },
+                  "ntfyTopic": {
+                    "type": "string"
+                  },
+                  "discordWebhook": {
+                    "type": "string"
+                  },
+                  "slackWebhook": {
+                    "type": "string"
+                  },
+                  "events": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "notifications": {
+                      "type": "object",
+                      "properties": {
+                        "ntfyServer": {
+                          "type": "string"
+                        },
+                        "ntfyTopic": {
+                          "type": "string"
+                        },
+                        "discordWebhook": {
+                          "type": "string"
+                        },
+                        "slackWebhook": {
+                          "type": "string"
+                        },
+                        "hasNtfy": {
+                          "type": "boolean"
+                        },
+                        "hasDiscord": {
+                          "type": "boolean"
+                        },
+                        "hasSlack": {
+                          "type": "boolean"
+                        },
+                        "events": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid notification URL"
+          },
+          "403": {
+            "description": "Requires owner role"
           }
         }
       }

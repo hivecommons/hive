@@ -18,6 +18,7 @@ import (
 	"github.com/hivecommons/hive/pkg/classify"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/hooks"
 )
 
 func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request) {
@@ -72,23 +73,8 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		repoSelfAuthorizationHold[full] = entry
 	}
 
-	// Build notifications — mask sensitive values like the old hive does
-	notifications := map[string]interface{}{
-		"ntfyServer":     "",
-		"ntfyTopic":      "",
-		"discordWebhook": "",
-		"hasNtfy":        false,
-		"hasDiscord":     false,
-	}
-	if cfg.Notifications.Ntfy != nil {
-		notifications["ntfyServer"] = cfg.Notifications.Ntfy.Server
-		notifications["ntfyTopic"] = cfg.Notifications.Ntfy.Topic
-		notifications["hasNtfy"] = cfg.Notifications.Ntfy.Server != ""
-	}
-	if cfg.Notifications.Discord != nil {
-		notifications["discordWebhook"] = maskSecret(cfg.Notifications.Discord.Webhook)
-		notifications["hasDiscord"] = cfg.Notifications.Discord.Webhook != ""
-	}
+	// Build notifications — mask sensitive values like the old hive does.
+	notifications := s.governorNotificationsPayload()
 
 	primaryRepo := cfg.Project.PrimaryRepo
 	if primaryRepo != "" && org != "" && !strings.Contains(primaryRepo, "/") {
@@ -696,15 +682,54 @@ func (s *Server) handleGovernorBudgetReset(w http.ResponseWriter, r *http.Reques
 	jsonResponse(w, map[string]any{"ok": true, "status": "reset", "minStatusSeq": floor})
 }
 
+var hiveNotificationEvents = []string{"sweep_completed", "escalation_red", "stage_completed", "issue_claimed", "issue_released"}
+
+func (s *Server) handleGovernorNotificationsGet(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	jsonResponse(w, s.governorNotificationsPayload())
+}
+
+func (s *Server) governorNotificationsPayload() map[string]any {
+	cfg := s.deps.Config
+	out := map[string]any{
+		"ntfyServer":     "",
+		"ntfyTopic":      "",
+		"discordWebhook": "",
+		"slackWebhook":   "",
+		"hasNtfy":        false,
+		"hasDiscord":     false,
+		"hasSlack":       false,
+		"events":         selectedHiveNotificationEvents(cfg),
+	}
+	if cfg.Notifications.Ntfy != nil {
+		out["ntfyServer"] = cfg.Notifications.Ntfy.Server
+		out["ntfyTopic"] = cfg.Notifications.Ntfy.Topic
+		out["hasNtfy"] = cfg.Notifications.Ntfy.Server != ""
+	}
+	if cfg.Notifications.Discord != nil {
+		out["discordWebhook"] = maskSecret(cfg.Notifications.Discord.Webhook)
+		out["hasDiscord"] = cfg.Notifications.Discord.Webhook != ""
+	}
+	if cfg.Notifications.Slack != nil {
+		out["slackWebhook"] = maskSecret(cfg.Notifications.Slack.Webhook)
+		out["hasSlack"] = cfg.Notifications.Slack.Webhook != ""
+	}
+	return out
+}
+
 func (s *Server) handleGovernorNotifications(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
 	}
 
 	var body struct {
-		NtfyServer     string `json:"ntfyServer"`
-		NtfyTopic      string `json:"ntfyTopic"`
-		DiscordWebhook string `json:"discordWebhook"`
+		NtfyServer     string   `json:"ntfyServer"`
+		NtfyTopic      string   `json:"ntfyTopic"`
+		DiscordWebhook string   `json:"discordWebhook"`
+		SlackWebhook   string   `json:"slackWebhook"`
+		Events         []string `json:"events"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -715,6 +740,10 @@ func (s *Server) handleGovernorNotifications(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := validateNotificationURL(body.DiscordWebhook, "discordWebhook"); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := validateNotificationURL(body.SlackWebhook, "slackWebhook"); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -737,12 +766,76 @@ func (s *Server) handleGovernorNotifications(w http.ResponseWriter, r *http.Requ
 		}
 		s.deps.Config.Notifications.Discord.Webhook = body.DiscordWebhook
 	}
+	if body.SlackWebhook != "" && !isMasked(body.SlackWebhook) {
+		if s.deps.Config.Notifications.Slack == nil {
+			s.deps.Config.Notifications.Slack = &config.SlackConfig{}
+		}
+		s.deps.Config.Notifications.Slack.Webhook = body.SlackWebhook
+	}
+	if body.Events != nil {
+		s.deps.Config.Notifications.Events = sanitizeGovernorNotificationEvents(body.Events)
+		syncNotificationHooks(s.deps.Config, s.deps.Config.Notifications.Events)
+	}
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after notification update", "error", err)
 	}
 	s.auditFromRequest(r, "config_governor_notifications", auditDetail("section", "notifications"), "")
 	s.refreshAndPersist()
-	okResponse(w, map[string]string{"status": "updated"})
+	jsonResponse(w, map[string]any{"status": "updated", "notifications": s.governorNotificationsPayload()})
+}
+
+func sanitizeGovernorNotificationEvents(in []string) []string {
+	allowed := map[string]bool{}
+	for _, ev := range hiveNotificationEvents {
+		allowed[ev] = true
+	}
+	seen := map[string]bool{}
+	out := []string{}
+	for _, ev := range in {
+		ev = strings.TrimSpace(ev)
+		if allowed[ev] && !seen[ev] {
+			seen[ev] = true
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+func selectedHiveNotificationEvents(cfg *config.Config) []string {
+	if len(cfg.Notifications.Events) > 0 {
+		return append([]string(nil), cfg.Notifications.Events...)
+	}
+	seen := map[string]bool{}
+	for _, h := range cfg.Hooks {
+		if h.Action == string(hooks.ActionNotify) {
+			seen[h.On] = true
+		}
+	}
+	out := []string{}
+	for _, ev := range hiveNotificationEvents {
+		if seen[ev] {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+func syncNotificationHooks(cfg *config.Config, events []string) {
+	managedPrefix := "dashboard-notify-"
+	kept := cfg.Hooks[:0]
+	for _, h := range cfg.Hooks {
+		if !strings.HasPrefix(h.Name, managedPrefix) {
+			kept = append(kept, h)
+		}
+	}
+	for _, ev := range events {
+		kept = append(kept, config.HookRule{
+			Name:   managedPrefix + ev,
+			On:     ev,
+			Action: string(hooks.ActionNotify),
+		})
+	}
+	cfg.Hooks = kept
 }
 
 func (s *Server) handleGovernorHealth(w http.ResponseWriter, r *http.Request) {

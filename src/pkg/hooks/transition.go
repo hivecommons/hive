@@ -101,6 +101,12 @@ const (
 	// kick the owner of the next stage, but authority still comes from the
 	// kicked agent's normal mode/capability gates.
 	TransitionStageCompleted Transition = "stage_completed"
+
+	// TransitionIssueClaimed fires when an issue claim is created or taken over.
+	TransitionIssueClaimed Transition = "issue_claimed"
+
+	// TransitionIssueReleased fires when an issue claim is released or expires.
+	TransitionIssueReleased Transition = "issue_released"
 )
 
 // catalogEntry documents one transition for validation, docs generation, and
@@ -164,6 +170,16 @@ var catalog = map[Transition]catalogEntry{
 		Name:   TransitionStageCompleted,
 		Doc:    "A run lease stage advanced or retried after the lease registry persisted.",
 		Fields: []string{"run", "stage_from", "stage_to", "gen", "repo"},
+	},
+	TransitionIssueClaimed: {
+		Name:   TransitionIssueClaimed,
+		Doc:    "An issue claim was created or taken over.",
+		Fields: []string{"repo", "actor", "attrs.issue"},
+	},
+	TransitionIssueReleased: {
+		Name:   TransitionIssueReleased,
+		Doc:    "An issue claim was released or expired.",
+		Fields: []string{"repo", "actor", "attrs.issue"},
 	},
 }
 

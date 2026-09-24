@@ -23919,9 +23919,31 @@ function burnAreaChart() {
       }
     }
 
+    const HIVE_NOTIFICATION_EVENTS = [
+      ['sweep_completed', 'Sweep completed'],
+      ['escalation_red', 'Escalation red'],
+      ['stage_completed', 'Run stage completed'],
+      ['issue_claimed', 'Issue claimed'],
+      ['issue_released', 'Issue released']
+    ];
+
+    function selectedNotificationEvents() {
+      return Array.from(document.querySelectorAll('.notification-event-checkbox:checked')).map(el => el.value);
+    }
+
+    function markNotificationEventsDirty() {
+      markDirty('notifications', 'events', selectedNotificationEvents());
+    }
+
     function renderGovNotifications(n) {
       const ntfyHint = n.hasNtfy ? '(configured — enter new value to change)' : '';
       const discordHint = n.hasDiscord ? '(configured — enter new value to change)' : '';
+      const slackHint = n.hasSlack ? '(configured — enter new value to change)' : '';
+      const selected = new Set(n.events || []);
+      const eventBoxes = HIVE_NOTIFICATION_EVENTS.map(([value, label]) => `
+        <label class="config-toggle-label">
+          <input type="checkbox" class="notification-event-checkbox" value="${esc(value)}" ${selected.has(value) ? 'checked' : ''} data-change-action="gh96"> ${esc(label)}
+        </label>`).join('');
       return `
         <div class="config-field">
           <label>Ntfy Server ${ntfyHint} <span class="config-info">i<span class="config-tooltip">URL of the ntfy.sh server for push notifications. The governor sends alerts for mode changes, budget warnings, agent crashes, and rate limits. Leave empty to disable ntfy notifications. Default: https://ntfy.sh</span></span></label>
@@ -23932,8 +23954,16 @@ function burnAreaChart() {
           <input type="text" value="${esc(n.ntfyTopic || '')}" data-change-action="markDirty" data-arg0="notifications" data-arg1="ntfyTopic" data-arg-types="s,s,v" placeholder="my-topic">
         </div>
         <div class="config-field">
-          <label>Discord Webhook ${discordHint} <span class="config-info">i<span class="config-tooltip">Discord webhook URL for posting governor notifications to a channel. Create a webhook in your Discord server settings under Integrations. Leave empty to disable Discord notifications.</span></span></label>
+          <label>Discord Webhook ${discordHint} <span class="config-info">i<span class="config-tooltip">Discord webhook URL for posting selected hive notifications to a channel. Create a webhook in your Discord server settings under Integrations.</span></span></label>
           <input type="text" value="${n.hasDiscord ? '••••••••' : ''}" data-change-action="markDirty" data-arg0="notifications" data-arg1="discordWebhook" data-arg-types="s,s,v" placeholder="https://discord.com/api/webhooks/...">
+        </div>
+        <div class="config-field">
+          <label>Slack Webhook ${slackHint} <span class="config-info">i<span class="config-tooltip">Slack incoming webhook URL. It uses the same notify hook fanout as Discord and ntfy.</span></span></label>
+          <input type="text" value="${n.hasSlack ? '••••••••' : ''}" data-change-action="markDirty" data-arg0="notifications" data-arg1="slackWebhook" data-arg-types="s,s,v" placeholder="https://hooks.slack.com/services/...">
+        </div>
+        <div class="config-field">
+          <label>Hive notification events <span class="config-info">i<span class="config-tooltip">Select which hive transitions are fanned out through the notify hooks to Discord, Slack, and ntfy.</span></span></label>
+          <div class="config-grid notification-event-checkboxes">${eventBoxes}</div>
         </div>`;
     }
 
@@ -28529,6 +28559,7 @@ function burnAreaChart() {
       gh92: function (event, A) { markDirtyPerspectives(); },
       gh93: function (event, A) { const row = document.querySelector(`.rv-perspective[data-perspective="${CSS.escape(A[0])}"]`); if (row) row.remove(); markDirtyPerspectives(); },
       gh94: function (event, A) { const row = document.querySelector(`.rv-perspective[data-perspective="${CSS.escape(A[0])}"]`); const ta = row && row.querySelector('.rv-perspective-focus'); if (ta) { ta.value = ''; } markDirtyPerspectives(); },
+      gh96: function (event, A) { markNotificationEventsDirty(); },
       gh95: function (event, A) {
         const input = document.getElementById('rv-new-perspective');
         const name = (input.value || '').trim().toLowerCase();

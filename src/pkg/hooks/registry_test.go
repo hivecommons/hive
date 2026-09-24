@@ -195,8 +195,9 @@ func TestCompileEmptyListIsValidAndNeverFires(t *testing.T) {
 func TestCatalogAndActionsAreClosedSets(t *testing.T) {
 	wantTransitions := []Transition{
 		TransitionACMMLevelChange, TransitionAgentPaused, TransitionAgentResumed,
-		TransitionEscalationRed, TransitionGovernorModeChange, TransitionReviewRejected,
-		TransitionStageCompleted, TransitionSweepCompleted, TransitionUpgradePause,
+		TransitionEscalationRed, TransitionGovernorModeChange, TransitionIssueClaimed,
+		TransitionIssueReleased, TransitionReviewRejected, TransitionStageCompleted,
+		TransitionSweepCompleted, TransitionUpgradePause,
 	}
 	got := KnownTransitions()
 	if len(got) != len(wantTransitions) {

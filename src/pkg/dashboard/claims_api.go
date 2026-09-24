@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/claims"
+	"github.com/hivecommons/hive/pkg/hooks"
 )
 
 // Issue claims (hivecommons/hive#8380).
@@ -277,6 +278,7 @@ func (s *Server) handleClaimCreate(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusConflict
 	} else {
 		s.AuditLog(holder, "claim_"+string(res.Outcome), res.Claim.Key(), "")
+		s.fireClaimHook(r, hooks.TransitionIssueClaimed, res.Claim, holder)
 	}
 	writeClaimsJSON(w, status, claimResultJSON(res))
 }
@@ -317,8 +319,21 @@ func (s *Server) handleClaimRelease(w http.ResponseWriter, r *http.Request) {
 		writeClaimsJSON(w, http.StatusOK, map[string]any{"released": false})
 	default:
 		s.AuditLog(holder, "claim_release", c.Key()+" from "+c.Holder, "")
+		s.fireClaimHook(r, hooks.TransitionIssueReleased, c, holder)
 		writeClaimsJSON(w, http.StatusOK, map[string]any{"released": true, "claim": c})
 	}
+}
+
+func (s *Server) fireClaimHook(r *http.Request, transition hooks.Transition, c claims.Claim, actor string) {
+	if s.deps == nil || s.deps.HookFire == nil {
+		return
+	}
+	s.deps.HookFire(r.Context(), hooks.Payload{
+		Transition: transition,
+		Repo:       c.Repo,
+		Actor:      actor,
+		Attrs:      map[string]string{"issue": strconv.Itoa(c.Issue), "holder": c.Holder, "kind": string(c.Kind)},
+	})
 }
 
 // writeClaimsJSON is the JSON responder for the /api/claims routes.

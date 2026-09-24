@@ -4165,6 +4165,7 @@ type NotificationsConfig struct {
 	Slack          *SlackConfig          `yaml:"slack,omitempty"`
 	Discord        *DiscordConfig        `yaml:"discord,omitempty"`
 	GitHubActivity *GitHubActivityConfig `yaml:"github_activity,omitempty"`
+	Events         []string              `yaml:"events,omitempty" json:"events,omitempty"`
 }
 
 type NtfyConfig struct {
@@ -4198,6 +4199,8 @@ type GitHubActivityConfig struct {
 	Org              string   `yaml:"org,omitempty" json:"org,omitempty"`
 	APIURL           string   `yaml:"api_url,omitempty" json:"api_url,omitempty"`
 	PollIntervalS    int      `yaml:"poll_interval_s,omitempty" json:"poll_interval_s,omitempty"`
+	Repos            []string `yaml:"repos,omitempty" json:"repos,omitempty"`
+	Events           []string `yaml:"events,omitempty" json:"events,omitempty"`
 	AllowAuthors     []string `yaml:"allow_authors,omitempty" json:"allow_authors,omitempty"`
 	DenyAuthors      []string `yaml:"deny_authors,omitempty" json:"deny_authors,omitempty"`
 	FilterBots       *bool    `yaml:"filter_bots,omitempty" json:"filter_bots,omitempty"`

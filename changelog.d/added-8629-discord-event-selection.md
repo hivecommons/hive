@@ -1,0 +1,1 @@
+- ✨ Add hub and hive notification settings for Discord factory feed event/repo selection, Slack visibility, and hot-reloaded GitHub activity filters (#8629).

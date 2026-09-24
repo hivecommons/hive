@@ -616,6 +616,31 @@
       </div>
     </div>
 
+
+    <div id="notifications-section" hidden>
+      <h2>Hub Admin &mdash; Notifications</h2>
+      <span id="notifications-save-status"></span>
+      <div class="card">
+        <label>Factory Discord webhook
+          <input id="notify-factory-webhook" type="text" placeholder="https://discord.com/api/webhooks/...">
+        </label>
+        <label><input id="notify-enabled" type="checkbox"> Enable GitHub → Discord factory feed</label>
+        <label><input id="notify-filter-bots" type="checkbox"> Filter bot/dependabot authors</label>
+        <label>Repo scope
+          <select id="notify-repo-scope">
+            <option value="all">All organization repositories</option>
+            <option value="selected">Selected repositories</option>
+          </select>
+        </label>
+        <label id="notify-repos-wrap" hidden>Repos (one name per line)
+          <textarea id="notify-repos" rows="4" placeholder="hive&#10;docs"></textarea>
+        </label>
+        <div>Factory feed events</div>
+        <div id="notify-events"></div>
+        <button class="hv-btn btn-primary" id="notify-save-btn">Save Notifications</button>
+      </div>
+    </div>
+
     <div id="cluster-health-section" style="display:none;margin-top:48px">
       <div onclick="toggleClusterHealth()" style="display:flex;align-items:center;gap:var(--sp-4);cursor:pointer;user-select:none;margin-bottom:var(--sp-6)">
         <span id="cluster-health-toggle" style="font-size:0.7rem;color:var(--muted);transition:transform 0.2s">&#9654;</span>
@@ -9684,6 +9709,7 @@
         document.getElementById('hub-banner-section').style.display = '';
         document.getElementById('btn-send-banner-top').style.display = '';
         loadActiveBanner();
+        loadHubNotifications();
         var data = await resp.json();
         _allUsers = data.users || [];
         try { applySortUsers(); } catch(re) { console.error('renderUsers error:', re); }
@@ -9697,6 +9723,64 @@
         _adminLoading = false;
       }
     }
+
+
+    var HUB_NOTIFICATION_EVENTS = [
+      ['issue_opened','Issue opened'], ['issue_closed','Issue closed'], ['issue_reopened','Issue reopened'], ['issue_claimed','Issue claimed'], ['issue_released','Issue released'],
+      ['pr_opened','PR opened'], ['pr_ready_for_review','PR ready'], ['pr_review','PR review'], ['pr_ci_status','CI red↔green'], ['pr_merged','PR merged'], ['pr_closed','PR closed'], ['hourly_digest','Hourly digest']
+    ];
+    function setHubNotificationsRepoVisibility() {
+      var wrap = document.getElementById('notify-repos-wrap');
+      var scope = document.getElementById('notify-repo-scope');
+      if (wrap && scope) wrap.hidden = scope.value !== 'selected';
+    }
+    async function loadHubNotifications() {
+      if (!_isAdmin) return;
+      var section = document.getElementById('notifications-section');
+      try {
+        var resp = await fetch('/api/saas/admin/notifications');
+        if (!resp.ok) { if (section) section.hidden = true; return; }
+        var n = await resp.json();
+        if (section) section.hidden = false;
+        var webhook = document.getElementById('notify-factory-webhook');
+        if (webhook) webhook.value = n.hasFactoryWebhook ? '••••••••' : (n.factoryWebhook || '');
+        document.getElementById('notify-enabled').checked = !!n.enabled;
+        document.getElementById('notify-filter-bots').checked = n.filterBots !== false;
+        document.getElementById('notify-repo-scope').value = n.repoScope || 'all';
+        document.getElementById('notify-repos').value = (n.repos || []).join('\n');
+        setHubNotificationsRepoVisibility();
+        var selected = new Set(n.events || []);
+        document.getElementById('notify-events').innerHTML = HUB_NOTIFICATION_EVENTS.map(function(ev) {
+          return '<label><input type="checkbox" class="hub-notify-event" value="' + esc(ev[0]) + '" ' + (selected.has(ev[0]) ? 'checked' : '') + '> ' + esc(ev[1]) + '</label>';
+        }).join('');
+      } catch(e) { if (section) section.hidden = true; }
+    }
+    async function saveHubNotifications() {
+      var status = document.getElementById('notifications-save-status');
+      if (status) status.textContent = 'Saving…';
+      var repos = document.getElementById('notify-repos').value.split(/\n|,/).map(function(x){ return x.trim(); }).filter(Boolean);
+      var events = Array.from(document.querySelectorAll('.hub-notify-event:checked')).map(function(el){ return el.value; });
+      var body = {
+        factoryWebhook: document.getElementById('notify-factory-webhook').value.trim(),
+        enabled: document.getElementById('notify-enabled').checked,
+        filterBots: document.getElementById('notify-filter-bots').checked,
+        repoScope: document.getElementById('notify-repo-scope').value,
+        repos: repos,
+        events: events
+      };
+      try {
+        var resp = await fetch('/api/saas/admin/notifications', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        if (!resp.ok) throw new Error(await resp.text());
+        if (status) status.textContent = 'Saved';
+        loadHubNotifications();
+      } catch(e) { if (status) status.textContent = 'Save failed: ' + e.message; }
+    }
+    document.addEventListener('DOMContentLoaded', function() {
+      var btn = document.getElementById('notify-save-btn');
+      if (btn) btn.addEventListener('click', saveHubNotifications);
+      var scope = document.getElementById('notify-repo-scope');
+      if (scope) scope.addEventListener('change', setHubNotificationsRepoVisibility);
+    });
 
     function filterUsers() {
       applySortUsers();
@@ -12724,6 +12808,7 @@
         document.querySelector('input[name="banner-color"][value="green"]').checked = true;
         updateBannerPreview();
         loadActiveBanner();
+        loadHubNotifications();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
       finally { btn.disabled = false; btn.textContent = 'Send Banner'; }
     }
@@ -12763,6 +12848,7 @@
         if (!resp.ok) { hiveToast('Failed to clear', 'error'); return; }
         hiveToast('All banners cleared', 'success');
         loadActiveBanner();
+        loadHubNotifications();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
     }
   </script>

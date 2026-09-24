@@ -470,6 +470,8 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /api/saas/admin/user-countries", s.requireAdmin(s.handleAdminUserCountries))
 	// #3234: fleet readiness for removing the N1/N2 legacy compatibility lanes.
 	s.mux.HandleFunc("GET /api/saas/admin/auth-rollout", s.requireAdmin(s.handleAuthRollout))
+	s.mux.HandleFunc("GET /api/saas/admin/notifications", s.requireAdmin(s.handleGetAdminNotifications))
+	s.mux.HandleFunc("PUT /api/saas/admin/notifications", s.requireAdmin(s.handlePutAdminNotifications))
 	// Master-secret rotation (src/docs/design/master-key-rotation.md). Both are
 	// requireAdmin, which enforces isCSRFSafe BEFORE resolving identity — an
 	// ambient hub session cookie would otherwise make a cross-site POST able to

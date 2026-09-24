@@ -28,6 +28,22 @@ notifications:
     org: hivecommons
     # optional: defaults to 5 minutes
     poll_interval_s: 300
+    # empty repos means all org repos; otherwise list repo names in this org.
+    repos: []
+    # empty events means the default full event set.
+    events:
+      - issue_opened
+      - issue_closed
+      - issue_reopened
+      - issue_claimed
+      - issue_released
+      - pr_opened
+      - pr_ready_for_review
+      - pr_review
+      - pr_ci_status
+      - pr_merged
+      - pr_closed
+      - hourly_digest
     # default true; bot/dependabot noise is suppressed unless allow-listed.
     filter_bots: true
     filter_dependabot: true
@@ -81,10 +97,14 @@ instead of replaying previously observed activity.
 | `notifications.github_activity.org` | no | `project.org` | GitHub organization to enumerate with `orgs/<org>/repos`. |
 | `notifications.github_activity.api_url` | no | configured GitHub API URL / `https://api.github.com` | Override for GitHub Enterprise or tests. |
 | `notifications.github_activity.poll_interval_s` | no | `300` | Hub poll cadence. |
+| `notifications.github_activity.repos` | no | empty | Empty enumerates every org repository; non-empty limits polling to those repo names. |
+| `notifications.github_activity.events` | no | empty/full set | Selected factory-feed events: `issue_opened`, `issue_closed`, `issue_reopened`, `issue_claimed`, `issue_released`, `pr_opened`, `pr_ready_for_review`, `pr_review`, `pr_ci_status`, `pr_merged`, `pr_closed`, `hourly_digest`. |
 | `notifications.github_activity.filter_bots` | no | `true` | Suppresses `*[bot]` authors unless allow-listed. Forward-merge PRs are still allowed to emit their single merged line. |
 | `notifications.github_activity.filter_dependabot` | no | `true` | Suppresses Dependabot authors unless allow-listed. |
 | `notifications.github_activity.allow_authors` | no | empty | Case-insensitive author logins that bypass the default bot filters. |
 | `notifications.github_activity.deny_authors` | no | empty | Case-insensitive author logins that are always suppressed. |
+
+Hub admins can edit the factory webhook, enablement, repo scope, event set, and bot filter in `/dashboard` under **Hub Admin — Notifications**. Saves persist to `hive.yaml` and hot-reload the poller by cancelling the old run and starting a new one against the same state file, so already-sent dedupe keys are not replayed.
 
 Event keys are deduped as `(repo, number, event, sha-or-version)`. Forward-merge
 PR chatter is collapsed so only the final merged message is posted:
@@ -128,6 +148,8 @@ The Hive Go process sends notifications for these events:
 | The planning stall-replan lane re-kicks the architect on a stalled plan (`Plan replan`) or hits the replan cap (`Plan replan-cap`). | high | `src/pkg/planning/replan.go` via `src/pkg/dashboard/replan_sink.go` |
 | The convergence rollout mode changes at runtime (settings PUT, YAML reload, or env override); sent once per transition, not per cycle (`Convergence mode changed`). | default | `applyConvergenceKickAdmission` in `src/cmd/hive/convergence_kick.go` |
 
+The dashboard **Settings → Notifications** tab can set ntfy, Discord, and Slack webhooks and choose which hook transitions should notify. The selected event set is persisted as `notifications.events`; the dashboard also manages matching `notify` hooks for `sweep_completed`, `escalation_red`, `stage_completed`, `issue_claimed`, and `issue_released` so those transitions use the same fanout.
+
 Operator-defined [hooks](hooks.md) with the `notify` action send through the same fanout: title, message, and priority come from the hook definition (`ActionNotify` in `src/pkg/hooks/action.go`, bridged by `notifierAdapter` in `src/cmd/hive/hookwire.go`). An unknown priority falls back to `default`, so any transition a hook can observe can also page these channels.
 
 The legacy shell scripts in `bin/` also use `bin/notify.sh` for events such as stale agents, rate limits, backend switches, and kick status when those scripts are deployed. Those scripts read environment variables (`NTFY_TOPIC`, `NTFY_SERVER`, `SLACK_WEBHOOK`, `DISCORD_WEBHOOK`) rather than the `notifications:` YAML block.
@@ -153,7 +175,7 @@ curl -s -X POST -H 'Content-type: application/json' \
   "$DISCORD_WEBHOOK_URL"
 ```
 
-After editing `hive.yaml`, restart or reload Hive through your normal deployment path. The dashboard notification settings endpoint currently persists ntfy and Discord webhook fields; configure Slack in YAML.
+After editing `hive.yaml`, restart or reload Hive through your normal deployment path. Dashboard saves for hive notifications persist ntfy, Discord, Slack, and event selections; hub factory-feed saves hot-reload without a hub restart.
 
 ## Discord webhook vs Discord bot
 

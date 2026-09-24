@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -31,11 +32,15 @@ type GitHubActivityOptions struct {
 	WebhookURL       string
 	DataDir          string
 	PollInterval     time.Duration
+	Repos            []string
+	Events           []string
 	AllowAuthors     []string
 	DenyAuthors      []string
 	FilterBots       bool
 	FilterDependabot bool
 }
+
+var githubActivityPollMu sync.Mutex
 
 type GitHubActivityFeed struct {
 	opts      GitHubActivityOptions
@@ -48,7 +53,18 @@ func (s *HubServer) SetGitHubActivityFeed(feed *GitHubActivityFeed) {
 	if s == nil {
 		return
 	}
+	s.githubActivityMu.Lock()
+	defer s.githubActivityMu.Unlock()
+	if s.githubActivityCancel != nil {
+		s.githubActivityCancel()
+		s.githubActivityCancel = nil
+	}
 	s.githubActivityFeed = feed
+	if feed != nil && s.githubActivityCtx != nil {
+		ctx, cancel := context.WithCancel(s.githubActivityCtx)
+		s.githubActivityCancel = cancel
+		go feed.Run(ctx)
+	}
 }
 
 func NewGitHubActivityFeed(opts GitHubActivityOptions, logger *slog.Logger) *GitHubActivityFeed {
@@ -95,6 +111,8 @@ func (f *GitHubActivityFeed) PollOnce(ctx context.Context) ([]GitHubActivityEven
 	if f == nil {
 		return nil, nil
 	}
+	githubActivityPollMu.Lock()
+	defer githubActivityPollMu.Unlock()
 	state, err := f.loadState()
 	if err != nil {
 		return nil, err
@@ -236,6 +254,11 @@ type apiRepo struct {
 }
 
 func (f *GitHubActivityFeed) listRepos(ctx context.Context) ([]string, error) {
+	if len(f.opts.Repos) > 0 {
+		out := append([]string(nil), f.opts.Repos...)
+		sort.Strings(out)
+		return out, nil
+	}
 	var out []string
 	for page := 1; ; page++ {
 		var repos []apiRepo
@@ -458,9 +481,9 @@ func (f *GitHubActivityFeed) diffIssues(sent map[string]bool, repo string, repoS
 		prev, seen := previous[number]
 		if !seen {
 			if repoSeen && !f.authorSuppressed(issue.Author, false, "issue_opened") {
-				if issue.State == "open" {
+				if issue.State == "open" && f.eventAllowed("issue_opened") {
 					events = append(events, f.issueEvent(sent, repo, issue, "issue_opened", issue.UpdatedAt, "Issue", "opened")...)
-				} else if issue.State == "closed" {
+				} else if issue.State == "closed" && f.eventAllowed("issue_closed") {
 					reason := issueClosedReason(issue.StateReason)
 					events = append(events, f.issueEvent(sent, repo, issue, "issue_closed", issue.UpdatedAt, "Issue", reason)...)
 				}
@@ -473,25 +496,35 @@ func (f *GitHubActivityFeed) diffIssues(sent map[string]bool, repo string, repoS
 		if prev.State != issue.State {
 			switch issue.State {
 			case "open":
-				events = append(events, f.issueEvent(sent, repo, issue, "issue_reopened", issue.UpdatedAt, "Issue", "reopened")...)
+				if f.eventAllowed("issue_reopened") {
+					events = append(events, f.issueEvent(sent, repo, issue, "issue_reopened", issue.UpdatedAt, "Issue", "reopened")...)
+				}
 			case "closed":
-				events = append(events, f.issueEvent(sent, repo, issue, "issue_closed", issue.UpdatedAt, "Issue", issueClosedReason(issue.StateReason))...)
+				if f.eventAllowed("issue_closed") {
+					events = append(events, f.issueEvent(sent, repo, issue, "issue_closed", issue.UpdatedAt, "Issue", issueClosedReason(issue.StateReason))...)
+				}
 			}
 		}
 		for _, label := range addedStrings(prev.Labels, issue.Labels) {
-			if isHiveActivityLabel(label) {
+			if isHiveActivityLabel(label) && f.eventAllowed("issue_claimed") {
 				events = append(events, f.issueEvent(sent, repo, issue, "issue_labeled_"+label, issue.UpdatedAt, "Issue", "labeled "+label)...)
 			}
 		}
 		for _, assignee := range addedStrings(prev.Assignees, issue.Assignees) {
-			events = append(events, f.issueEvent(sent, repo, issue, "issue_assigned_"+assignee, issue.UpdatedAt, "Issue", "claimed by @"+assignee)...)
+			if f.eventAllowed("issue_claimed") {
+				events = append(events, f.issueEvent(sent, repo, issue, "issue_assigned_"+assignee, issue.UpdatedAt, "Issue", "claimed by @"+assignee)...)
+			}
 		}
 		if prev.ClaimMarker != issue.ClaimMarker {
 			action := "claim marker released"
+			eventName := "issue_released"
 			if issue.ClaimMarker {
 				action = "claim marker taken"
+				eventName = "issue_claimed"
 			}
-			events = append(events, f.issueEvent(sent, repo, issue, "issue_claim_marker", issue.UpdatedAt, "Issue", action)...)
+			if f.eventAllowed(eventName) {
+				events = append(events, f.issueEvent(sent, repo, issue, "issue_claim_marker", issue.UpdatedAt, "Issue", action)...)
+			}
 		}
 	}
 	return events
@@ -504,11 +537,11 @@ func (f *GitHubActivityFeed) diffPRs(sent map[string]bool, repo string, repoSeen
 		if !seen {
 			if repoSeen {
 				forward := isForwardMergePR(pr.Title)
-				if !f.authorSuppressed(pr.Author, forward, "pr_merged") && pr.Merged {
+				if !f.authorSuppressed(pr.Author, forward, "pr_merged") && f.eventAllowed("pr_merged") && pr.Merged {
 					events = append(events, f.prEvent(sent, repo, pr, "pr_merged", mergeEventSHA(pr), "merged into "+pr.BaseRef)...)
-				} else if !f.authorSuppressed(pr.Author, forward, "pr_closed_unmerged") && pr.State == "closed" {
+				} else if !f.authorSuppressed(pr.Author, forward, "pr_closed_unmerged") && f.eventAllowed("pr_closed_unmerged") && pr.State == "closed" {
 					events = append(events, f.prEvent(sent, repo, pr, "pr_closed_unmerged", pr.HeadSHA, "closed unmerged")...)
-				} else if !f.authorSuppressed(pr.Author, forward, "pr_opened") && pr.State == "open" && !pr.Draft {
+				} else if !f.authorSuppressed(pr.Author, forward, "pr_opened") && f.eventAllowed("pr_opened") && pr.State == "open" && !pr.Draft {
 					events = append(events, f.prEvent(sent, repo, pr, "pr_opened", pr.HeadSHA, "opened")...)
 				}
 			}
@@ -521,33 +554,70 @@ func (f *GitHubActivityFeed) diffPRs(sent map[string]bool, repo string, repoSeen
 		if forward && !(pr.Merged && !prev.Merged) {
 			continue
 		}
-		if !prev.Merged && pr.Merged {
+		if !prev.Merged && pr.Merged && f.eventAllowed("pr_merged") {
 			events = append(events, f.prEvent(sent, repo, pr, "pr_merged", mergeEventSHA(pr), "merged into "+pr.BaseRef)...)
 			continue
 		}
-		if prev.State == "open" && pr.State == "closed" && !pr.Merged {
+		if prev.State == "open" && pr.State == "closed" && !pr.Merged && f.eventAllowed("pr_closed_unmerged") {
 			events = append(events, f.prEvent(sent, repo, pr, "pr_closed_unmerged", pr.HeadSHA, "closed unmerged")...)
 		}
-		if prev.Draft && !pr.Draft && pr.State == "open" {
+		if prev.Draft && !pr.Draft && pr.State == "open" && f.eventAllowed("pr_ready_for_review") {
 			events = append(events, f.prEvent(sent, repo, pr, "pr_ready_for_review", pr.HeadSHA, "ready for review")...)
 		}
 		for _, reviewer := range addedStrings(prev.RequestedReviewers, pr.RequestedReviewers) {
-			events = append(events, f.prEvent(sent, repo, pr, "pr_review_requested_"+reviewer, pr.HeadSHA, "review requested from @"+reviewer)...)
+			if f.eventAllowed("pr_review") {
+				events = append(events, f.prEvent(sent, repo, pr, "pr_review_requested_"+reviewer, pr.HeadSHA, "review requested from @"+reviewer)...)
+			}
 		}
 		if prev.ReviewDecision != pr.ReviewDecision {
 			switch pr.ReviewDecision {
 			case "approved":
-				events = append(events, f.prEvent(sent, repo, pr, "pr_approved", pr.HeadSHA, "approved")...)
+				if f.eventAllowed("pr_review") {
+					events = append(events, f.prEvent(sent, repo, pr, "pr_approved", pr.HeadSHA, "approved")...)
+				}
 			case "changes_requested":
-				events = append(events, f.prEvent(sent, repo, pr, "pr_changes_requested", pr.HeadSHA, "changes requested")...)
+				if f.eventAllowed("pr_review") {
+					events = append(events, f.prEvent(sent, repo, pr, "pr_changes_requested", pr.HeadSHA, "changes requested")...)
+				}
 			}
 		}
-		if prev.CheckState != pr.CheckState && isTerminalCheckState(prev.CheckState) && isTerminalCheckState(pr.CheckState) {
+		if prev.CheckState != pr.CheckState && isTerminalCheckState(prev.CheckState) && isTerminalCheckState(pr.CheckState) && f.eventAllowed("pr_ci_status") {
 			action := "CI went " + pr.CheckState
 			events = append(events, f.prEvent(sent, repo, pr, "pr_ci_"+pr.CheckState, pr.HeadSHA, action)...)
 		}
 	}
 	return events
+}
+
+func (f *GitHubActivityFeed) eventAllowed(event string) bool {
+	if len(f.opts.Events) == 0 {
+		return true
+	}
+	for _, allowed := range f.opts.Events {
+		allowed = strings.TrimSpace(allowed)
+		if allowed == event {
+			return true
+		}
+		switch allowed {
+		case "issue_claimed":
+			if strings.HasPrefix(event, "issue_labeled_") || strings.HasPrefix(event, "issue_assigned_") {
+				return true
+			}
+		case "pr_review":
+			if strings.HasPrefix(event, "pr_review_requested_") || event == "pr_approved" || event == "pr_changes_requested" {
+				return true
+			}
+		case "pr_ci_status":
+			if strings.HasPrefix(event, "pr_ci_") {
+				return true
+			}
+		case "pr_closed":
+			if event == "pr_closed_unmerged" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (f *GitHubActivityFeed) issueEvent(sent map[string]bool, repo string, issue githubIssueSnapshot, event, sha, kind, action string) []GitHubActivityEvent {

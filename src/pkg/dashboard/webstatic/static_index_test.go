@@ -265,3 +265,25 @@ func TestStaticPlanReviewWiring(t *testing.T) {
 		t.Fatal("the ⧉ Plan flow no longer calls openPlanReview(data.epic_id)")
 	}
 }
+
+func TestNotificationsTabRendersEventCheckboxesAndSlack(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		"HIVE_NOTIFICATION_EVENTS",
+		"notification-event-checkbox",
+		"markNotificationEventsDirty()",
+		"slackWebhook",
+		"Slack Webhook",
+		"sweep_completed",
+		"stage_completed",
+		"issue_claimed",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("notifications UI missing %q", want)
+		}
+	}
+}

@@ -1487,3 +1487,53 @@ func TestSanitizeString(t *testing.T) {
 		})
 	}
 }
+
+func TestGovernorNotificationsRoundTripEventsAndSlack(t *testing.T) {
+	s, _ := apiServer(t)
+	rec := doPut(s, "/api/governor/notifications", map[string]any{
+		"discordWebhook": "https://discord.com/api/webhooks/one/two",
+		"slackWebhook":   "https://hooks.slack.com/services/T/B/C",
+		"events":         []string{"sweep_completed", "stage_completed"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	got := doOwnerGet(s, "/api/governor/notifications")
+	if got.Code != http.StatusOK {
+		t.Fatalf("GET status = %d body=%s", got.Code, got.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(got.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["hasDiscord"] != true || payload["hasSlack"] != true {
+		t.Fatalf("webhook flags not round-tripped: %#v", payload)
+	}
+	events := payload["events"].([]any)
+	if len(events) != 2 || events[0] != "sweep_completed" || events[1] != "stage_completed" {
+		t.Fatalf("events = %#v", events)
+	}
+	if len(s.deps.Config.Hooks) != 2 {
+		t.Fatalf("managed notify hooks = %d, want 2", len(s.deps.Config.Hooks))
+	}
+}
+
+func TestGovernorNotificationsRejectsBadURL(t *testing.T) {
+	s, _ := apiServer(t)
+	rec := doPut(s, "/api/governor/notifications", map[string]any{"discordWebhook": "http://discord.invalid/hook"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s, want 400", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGovernorNotificationsRejectsNonOwner(t *testing.T) {
+	s, _ := apiServer(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/governor/notifications", strings.NewReader(`{"events":["sweep_completed"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hive-Role", "read-write")
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}
