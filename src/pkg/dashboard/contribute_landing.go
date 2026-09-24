@@ -268,15 +268,15 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
    still drops a black dropdown over a white form. */
 :root{
   color-scheme:dark;
-  --cc-bg:#0d1117;
-  --cc-bg-deep:#010409;
-  --cc-surface:#161b22;
-  --cc-border:#30363d;
-  --cc-border-2:#21262d;
-  --cc-text:#e6edf3;
-  --cc-text-2:#c9d1d9;
-  --cc-muted:#8b949e;
-  --cc-muted-2:#6e7681;
+  --cc-bg:var(--surface-0);
+  --cc-bg-deep:var(--surface-terminal);
+  --cc-surface:var(--surface-2);
+  --cc-border:var(--line-strong);
+  --cc-border-2:var(--line-subtle);
+  --cc-text:var(--text);
+  --cc-text-2:var(--text);
+  --cc-muted:var(--text-muted);
+  --cc-muted-2:var(--text-faint);
   --cc-code-bg:#0d1117;
   --cc-accent:#58a6ff;
   --cc-accent-2:#79c0ff;
@@ -289,15 +289,15 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 }
 @media(prefers-color-scheme:light){:root:not([data-theme="dark"]){
   color-scheme:light;
-  --cc-bg:#ffffff;
-  --cc-bg-deep:#f6f8fa;
-  --cc-surface:#f6f8fa;
-  --cc-border:#d0d7de;
-  --cc-border-2:#eaeef2;
-  --cc-text:#1f2328;
-  --cc-text-2:#32383f;
-  --cc-muted:#636c76;
-  --cc-muted-2:#7d858e;
+  --cc-bg:var(--surface-0);
+  --cc-bg-deep:var(--surface-1);
+  --cc-surface:var(--surface-2);
+  --cc-border:var(--line-strong);
+  --cc-border-2:var(--line-subtle);
+  --cc-text:var(--text);
+  --cc-text-2:var(--text);
+  --cc-muted:var(--text-muted);
+  --cc-muted-2:var(--text-faint);
   --cc-code-bg:#eff1f3;
   --cc-accent:#0969da;
   --cc-accent-2:#0550ae;
@@ -310,15 +310,15 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 }}
 :root[data-theme="light"]{
   color-scheme:light;
-  --cc-bg:#ffffff;
-  --cc-bg-deep:#f6f8fa;
-  --cc-surface:#f6f8fa;
-  --cc-border:#d0d7de;
-  --cc-border-2:#eaeef2;
-  --cc-text:#1f2328;
-  --cc-text-2:#32383f;
-  --cc-muted:#636c76;
-  --cc-muted-2:#7d858e;
+  --cc-bg:var(--surface-0);
+  --cc-bg-deep:var(--surface-1);
+  --cc-surface:var(--surface-2);
+  --cc-border:var(--line-strong);
+  --cc-border-2:var(--line-subtle);
+  --cc-text:var(--text);
+  --cc-text-2:var(--text);
+  --cc-muted:var(--text-muted);
+  --cc-muted-2:var(--text-faint);
   --cc-code-bg:#eff1f3;
   --cc-accent:#0969da;
   --cc-accent-2:#0550ae;
@@ -337,10 +337,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 h1{font-size:2rem;margin-bottom:8px}
 .subtitle{color:var(--cc-muted);font-size:1.1rem;margin-bottom:32px}
 .stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:10px;margin-bottom:24px}
-.stat{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:10px;padding:14px 8px;text-align:center}
+.stat{background:var(--surface-2);border:var(--line-width) solid var(--line-subtle);border-radius:var(--r-lg);padding:var(--sp-5) var(--sp-4);text-align:center;box-shadow:var(--shadow-card)}
 .stat-num{font-size:1.5rem;font-weight:700;color:var(--cc-accent)}
 .stat-label{font-size:.7rem;color:var(--cc-muted);margin-top:4px}
-.steps{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:12px;padding:24px;margin-top:24px}
+.steps{background:var(--surface-1);border:var(--line-width) solid var(--line-subtle);border-radius:var(--r-lg);padding:var(--sp-8);margin-top:var(--sp-8);box-shadow:var(--shadow-card)}
 .steps h3{margin-top:0;color:var(--cc-accent)}
 .steps ol{padding-left:20px;line-height:2}
 code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
@@ -386,7 +386,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    already declare. */
 .ops-grid{display:grid;grid-template-columns:340px minmax(0,1fr);gap:20px;margin-top:24px}
 @media(max-width:900px){.ops-grid{grid-template-columns:minmax(0,1fr)}}
-.ops-card{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:12px;padding:0;overflow:hidden}
+.ops-card{background:var(--surface-1);border:var(--line-width) solid var(--line-subtle);border-radius:var(--r-lg);padding:var(--sp-0);overflow:hidden;box-shadow:var(--shadow-card)}
 .ops-card-head{padding:16px 20px;border-bottom:1px solid var(--cc-border);display:flex;align-items:center;gap:10px}
 .ops-card-head h3{font-size:.95rem;color:var(--cc-text);margin:0}
 .ops-card-count{font-size:.75rem;color:var(--cc-muted);margin-left:auto}
@@ -619,7 +619,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .dz-epigraph{font-size:.82rem;color:var(--cc-muted);margin:0 0 20px}
 .dz-epigraph em{font-style:italic;color:var(--cc-text-2)}
 /* Zone-card primitives (mockup .card/.zone/.zone-head with the metal dot). */
-.dz-zcard{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:12px;padding:20px 22px 22px}
+.dz-zcard{background:var(--surface-2);border:var(--line-width) solid var(--line-subtle);border-radius:var(--r-lg);padding:var(--sp-7) var(--sp-7) var(--sp-7);box-shadow:var(--shadow-card)}
 .dz-zone-head{display:flex;align-items:center;gap:8px;font-size:.78rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--cc-muted);padding-bottom:10px;margin-bottom:14px;border-bottom:1px solid var(--cc-border-2)}
 .dz-zone-head::before{content:"";width:8px;height:8px;border-radius:50%%;background:var(--me-accent)}
 /* The sheet grid: 5fr/7fr two-column rhythm, stacking on small screens. */
@@ -655,7 +655,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 /* ZONE B — Deeds of Record: 2-col grid of stat blocks. The numeral keeps the
    canonical bold .lb-stat.lb-primary treatment, tinted only for standing. */
 .dz-deeds{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.dz-deed{background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:10px;padding:12px 10px;text-align:center}
+.dz-deed{background:var(--surface-3);border:var(--line-width) solid var(--line-subtle);border-radius:var(--r-lg);padding:var(--sp-5) var(--sp-5);text-align:center}
 .dz-deed .num{font-size:1.4rem;font-weight:700;color:var(--cc-text);font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace}
 .dz-deed .num small{font-size:.85rem;color:var(--cc-muted);font-weight:400}
 .dz-deed .cap{font-size:.66rem;color:var(--cc-muted);margin-top:4px}
@@ -668,7 +668,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 /* ZONE D — Triumphs: milestone SEALS (mockup .seal blocks; attained ones are
    solid, the next one to chase renders with a dashed border, never a nag). */
 .dz-seals{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
-.dz-seal{background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:10px;padding:12px 14px}
+.dz-seal{background:var(--surface-3);border:var(--line-width) solid var(--line-subtle);border-radius:var(--r-lg);padding:var(--sp-5) var(--sp-5)}
 .dz-seal .glyph{width:8px;height:8px;border-radius:50%%;background:var(--me-accent);margin-bottom:8px}
 .dz-seal .t-name{font-size:.78rem;font-weight:700;letter-spacing:.04em;color:var(--cc-text)}
 .dz-seal .t-sub{font-size:.7rem;color:var(--cc-muted);margin-top:5px;line-height:1.5}
@@ -702,7 +702,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .dz-footer .quote{color:var(--cc-muted);text-transform:none}
 /* Theaters of Operation: hives render as rows — name + relationship pill. */
 .me-hives{display:grid;gap:8px}
-.me-hive{display:flex;align-items:center;gap:10px;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:10px;padding:10px 14px;font-size:.82rem;color:var(--cc-text-2)}
+.me-hive{display:flex;align-items:center;gap:var(--sp-5);background:var(--surface-3);border:var(--line-width) solid var(--line-subtle);border-radius:var(--r-lg);padding:var(--sp-5) var(--sp-5);font-size:var(--fs-base);color:var(--cc-text-2)}
 .me-hive__name{font-size:.82rem;font-weight:700;letter-spacing:.03em;color:var(--cc-text);flex:1;text-transform:uppercase}
 .me-hive__rel{font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:2px 7px;border-radius:6px;background:var(--me-accent-soft);color:var(--me-accent)}
 .me-hive__rel--owner{background:rgba(210,153,34,.16);color:var(--cc-amber)}
@@ -712,7 +712,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .me-share--ghost{background:transparent;color:var(--me-accent)}
 .me-stylepick{margin-left:auto;display:flex;align-items:center;gap:7px;font-size:.72rem;color:var(--cc-muted)}
 .me-stylepick select{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-text-2);border-radius:8px;padding:5px 8px;font-size:.78rem;font-family:inherit;cursor:pointer}
-.me-signin{background:var(--cc-surface);border:1px dashed var(--cc-border);border-radius:14px;padding:22px;text-align:center;color:var(--cc-muted);font-size:.9rem;margin-bottom:20px}
+.me-signin{background:var(--surface-2);border:var(--line-width) dashed var(--line-subtle);border-radius:var(--r-lg);padding:var(--sp-7);text-align:center;color:var(--cc-muted);font-size:var(--fs-md);margin-bottom:var(--sp-7)}
 .me-signin b{color:var(--cc-text)}
 /* The signed-out call to action. It was <b> text, which told a visitor to sign
    in while giving them nothing to click (#7195). Styled as an explicit control
@@ -724,9 +724,9 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-signin-cta:focus-visible{outline:2px solid var(--cc-accent,#2ea043);outline-offset:2px}
 /* Leaderboard standing strip — the one-line remnant of the dossier on the
    standings tab. Deliberately unobtrusive: the Rankings are the content here. */
-.me-standing{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;
-  background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:12px;
-  padding:10px 16px;margin-bottom:16px;font-size:.86rem;color:var(--cc-muted)}
+.me-standing{display:flex;justify-content:space-between;align-items:center;gap:var(--sp-5);flex-wrap:wrap;
+  background:var(--surface-1);border:var(--line-width) solid var(--line-subtle);border-radius:var(--r-lg);
+  padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-6);font-size:var(--fs-base);color:var(--cc-muted);box-shadow:var(--shadow-card)}
 .me-standing b{color:var(--cc-text)}
 .me-standing__link{color:var(--cc-accent);text-decoration:none;font-weight:600;white-space:nowrap}
 .me-standing__link:hover{text-decoration:underline}

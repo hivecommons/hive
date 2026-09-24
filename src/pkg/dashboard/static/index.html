@@ -486,9 +486,9 @@
     /* (oc-detail-summary defined below with monospace) */
     .oc-detail-indicators { margin-bottom: 16px; }
     .oc-gov-strip {
-      display: none; gap: 20px; align-items: center; padding: 8px 14px;
-      background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
-      margin-bottom: 12px; font-size: 0.72rem; flex-wrap: wrap;
+      display: none; gap: var(--sp-7); align-items: center; padding: var(--sp-4) var(--sp-5);
+      background: var(--surface-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg);
+      margin-bottom: var(--sp-5); font-size: var(--fs-sm); flex-wrap: wrap;
     }
     /* Compact governor strip no longer needed: the full Governor section
        remains visible while an agent is focused (see focus-mode rules). */
@@ -671,10 +671,10 @@
     /* Light card overrides — surface/border/state come from the token
        remap; only the light-specific shadow lives here. */
     body.light-mode .agent-card {
-      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-      transition: box-shadow 0.2s, border-color 0.3s;
+      box-shadow: var(--shadow-card);
+      transition: box-shadow var(--duration-fast), border-color var(--duration-fast);
     }
-    body.light-mode .agent-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+    body.light-mode .agent-card:hover { box-shadow: var(--shadow-raised); }
 
     /* Light agents grid — rows for Governor/Overview, columns when agent is focused */
     body.light-mode .agents {
@@ -686,11 +686,9 @@
 
     /* Light surface panels — bg/border via token remap; radius/shadow only */
     body.light-mode .governor,
-    body.light-mode .token-panel {
-      border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-    }
+    body.light-mode .token-panel,
     body.light-mode .repo-card {
-      border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+      border-radius: var(--r-lg); box-shadow: var(--shadow-card);
     }
 
     /* Light typography now shares --font-ui with dark mode; .doing stays mono in both. */
@@ -785,13 +783,12 @@
        existing status pills. JS toggles .working/.stopped/.paused/.off/
        .status-blocked — class names must not change. */
     .agent-card {
-      background: linear-gradient(
-        color-mix(in srgb, var(--panel-strong) 92%, transparent),
-        color-mix(in srgb, var(--bg-soft) 92%, transparent));
-      border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
-      border-left: 3px solid var(--line);
-      border-radius: var(--radius-lg); padding: 16px;
-      transition: border-color 0.3s;
+      background: var(--surface-2);
+      border: var(--line-width) solid var(--line-subtle);
+      border-left: var(--focus-ring-width) solid var(--line-strong);
+      border-radius: var(--r-lg); padding: var(--sp-6);
+      box-shadow: var(--shadow-card);
+      transition: border-color var(--duration-fast);
       position: relative;
     }
     .agent-card.working { border-left-color: var(--green); }
@@ -1201,14 +1198,13 @@
     /* Governor — glass panel (hub recipe via tokens); .dead/.starting/
        .active keep recoloring the perimeter border below. */
     .governor {
-      background: linear-gradient(
-        color-mix(in srgb, var(--panel-strong) 92%, transparent),
-        color-mix(in srgb, var(--bg-soft) 92%, transparent));
-      border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
-      border-radius: var(--radius-lg); padding: 16px; margin-bottom: 24px;
+      background: var(--surface-1);
+      border: var(--line-width) solid var(--line-subtle);
+      border-radius: var(--r-lg); padding: var(--sp-6); margin-bottom: var(--sp-8);
+      box-shadow: var(--shadow-card);
     }
     @media (max-width: 480px) {
-      .governor { padding: 10px; }
+      .governor { padding: var(--sp-5); }
     }
     .governor.dead { border-color: var(--red); }
     .governor.starting { border-color: var(--yellow); }
@@ -1228,7 +1224,7 @@
     /* planning-alert: plans awaiting human review — amber, to draw the eye like
        the "N Issues" / on-hold indicators. */
     .gov-stat .val.planning-alert { color: var(--yellow); }
-    .gov-pr-models { margin-top: 14px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: color-mix(in srgb, var(--panel) 82%, transparent); }
+    .gov-pr-models { margin-top: var(--sp-5); padding: var(--sp-5); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); background: var(--surface-3); }
     .gov-pr-models-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
     .gov-pr-models-title { font-size: var(--fs-xs); font-weight:800; letter-spacing:0.12em; text-transform:uppercase; color:var(--amber); }
     .gov-pr-models-toggle { display:flex; gap:4px; }
@@ -1346,8 +1342,9 @@
     @media (max-width: 1000px) { .repo-grid { --repo-cols: 2; } }
     @media (max-width: 640px) { .repo-grid { --repo-cols: 1; } }
     .repo-card {
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: 6px; padding: 12px; overflow: hidden;
+      background: var(--surface-2); border: var(--line-width) solid var(--line-subtle);
+      border-radius: var(--r-lg); padding: var(--sp-5); overflow: hidden;
+      box-shadow: var(--shadow-card);
       position: relative; min-width: 0;
       flex: 1 1 calc((100% - (var(--repo-cols) - 1) * var(--repo-gap)) / var(--repo-cols));
     }
@@ -1666,18 +1663,17 @@
 
     /* Token usage panel — glass panel (hub recipe via tokens) */
     .token-panel {
-      background: linear-gradient(
-        color-mix(in srgb, var(--panel-strong) 92%, transparent),
-        color-mix(in srgb, var(--bg-soft) 92%, transparent));
-      border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
-      border-radius: var(--radius-lg); padding: 16px;
+      background: var(--surface-1);
+      border: var(--line-width) solid var(--line-subtle);
+      border-radius: var(--r-lg); padding: var(--sp-6);
+      box-shadow: var(--shadow-card);
     }
     .token-title { font-size: var(--fs-lg); font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
     .token-title .lookback { font-size: 0.7rem; color: var(--muted); font-weight: 400; }
-    .token-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 12px; }
-    .token-stat { text-align: left; }
-    .token-stat .tval { font-size: 1.3rem; font-weight: 700; }
-    .token-stat .tlabel { font-size: 0.65rem; color: var(--muted); }
+    .token-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--metric-tile-min), 1fr)); gap: var(--sp-4); margin-bottom: var(--sp-5); }
+    .token-stat { background: var(--surface-2); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); display: grid; gap: var(--sp-3); padding: var(--sp-5); text-align: left; }
+    .token-stat .tval { font-size: var(--fs-xl); font-weight: var(--fw-bold); }
+    .token-stat .tlabel { font-size: var(--fs-xs); color: var(--muted); }
     .token-models { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
     /* .token-model-chip — pill recipe (purple, mono; size step in the recipe block) */
     .token-model-chip { --pill-c: var(--purple); font-family: var(--font-mono); }
@@ -1696,7 +1692,7 @@
     .token-session-row .sproj { color: var(--muted); font-size: 0.65rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* Cost panel — mirrors token-panel styling */
-    .cost-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+    .cost-panel { background: var(--surface-1); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); padding: var(--sp-6); box-shadow: var(--shadow-card); }
     .cost-title { font-size: var(--fs-lg); font-weight: 700; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
     /* Collapsible cost panel — reuses the .section-chevron / max-height idiom (#1533). */
     .cost-title.cost-toggle { cursor: pointer; user-select: none; width: 100%; }
@@ -1723,10 +1719,10 @@
     }
     .cost-sub-body.collapsed { max-height: 0 !important; opacity: 0; pointer-events: none; }
     .cost-subtitle { font-size: 0.7rem; color: var(--muted); margin-bottom: 12px; }
-    .cost-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
-    .cost-stat { text-align: left; }
-    .cost-stat .cval { font-size: 1.3rem; font-weight: 700; }
-    .cost-stat .clabel { font-size: 0.65rem; color: var(--muted); }
+    .cost-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--metric-tile-min), 1fr)); gap: var(--sp-4); margin-bottom: var(--sp-5); }
+    .cost-stat { background: var(--surface-2); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); display: grid; gap: var(--sp-3); padding: var(--sp-5); text-align: left; }
+    .cost-stat .cval { font-size: var(--fs-xl); font-weight: var(--fw-bold); }
+    .cost-stat .clabel { font-size: var(--fs-xs); color: var(--muted); }
     .cost-badge { font-size: 0.55rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 6px; margin-left: 6px; vertical-align: middle; }
     .cost-badge.est { background: rgba(255, 196, 0, 0.15); color: var(--yellow); border: 1px solid rgba(255, 196, 0, 0.4); }
     .cost-badge.actual { background: rgba(0, 200, 120, 0.15); color: var(--green); border: 1px solid rgba(0, 200, 120, 0.4); }
@@ -1738,12 +1734,12 @@
     .cost-gateway .cgerr { color: var(--muted); font-size: 0.68rem; font-style: italic; }
     .cost-gateway .cgmeter { height: 5px; border-radius: 3px; background: rgba(128,128,128,0.2); overflow: hidden; margin-top: 5px; }
     .cost-gateway .cgmeter > span { display: block; height: 100%; background: var(--green); }
-    .cost-table { width: 100%; border-collapse: collapse; font-size: 0.72rem; }
-    .cost-table th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+    .cost-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+    .cost-table th { text-align: left; color: var(--muted); font-weight: 600; padding: var(--table-cell-pad-y) var(--table-cell-pad-x); border-bottom: var(--line-width) solid var(--line-subtle); }
     .cost-table th.cost-sortable { cursor: pointer; user-select: none; }
     .cost-table th.cost-sortable:hover { color: var(--text); }
     .cost-sort-ind { display: inline-block; margin-left: 4px; font-size: 0.62rem; color: var(--accent); }
-    .cost-table td { padding: 4px 8px; border-bottom: 1px solid rgba(128,128,128,0.08); }
+    .cost-table td { padding: var(--table-cell-pad-y) var(--table-cell-pad-x); border-bottom: var(--line-width) solid var(--line-subtle); }
     .cost-table td.cnum { text-align: right; font-family: var(--font-mono); }
     .cost-table td.cmodel { color: var(--purple); font-family: var(--font-mono); }
     .cost-table td.csession { color: var(--muted); font-family: var(--font-mono); }
@@ -1928,7 +1924,7 @@
       .token-session-row .smsgs { min-width: auto; }
       .token-session-row .sproj { min-width: 0; }
       .token-sessions { overflow-x: auto; max-width: 100%; }
-      .agent-card { padding: 10px; }
+      .agent-card { padding: var(--sp-5); }
       .agent-name { flex-wrap: wrap; gap: 4px; font-size: 0.85rem; }
       .agent-actions { flex-wrap: wrap; }
       .kick-prompt { min-width: 0; width: 100%; }
@@ -2817,14 +2813,14 @@
        Surface props were stripped from the #logs-output / #audit-panel /
        #inception-activity inline styles so these rules can apply. */
     #logs-output, #audit-panel, #inception-activity, .oc-detail-summary, .doing {
-      background: var(--terminal-bg);
+      background: var(--surface-terminal);
       color: var(--terminal-fg);
-      border: 1px solid var(--terminal-line);
-      border-radius: var(--radius);
+      border: var(--line-width) solid var(--terminal-line);
+      border-radius: var(--r);
       font-family: var(--font-mono);
-      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+      box-shadow: var(--shadow-card);
     }
-    .doing { color: var(--terminal-cyan); padding: 8px 10px; }
+    .doing { color: var(--terminal-cyan); padding: var(--sp-4) var(--sp-5); }
     .oc-detail-summary, #inception-activity { color: var(--terminal-cyan); }
     /* Children of the always-dark pane capture can't use mode-remapped
        colors — pin them to the terminal companions. */
@@ -2854,7 +2850,7 @@
     .title-sm { font-size: 0.92rem; font-weight: 600; color: var(--fg); }
     .modal-h { font-size: 0.92rem; margin: 0 0 8px 0; color: var(--accent); }
     .summary-label { cursor: pointer; font-size: 0.78rem; font-weight: 600; color: var(--fg); }
-    .card-inset { padding: 8px; border: 1px solid var(--border); border-radius: 6px; }
+    .card-inset { background: var(--surface-3); padding: var(--sp-5); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); }
     .empty-dashed { text-align: center; padding: 12px; color: var(--muted); font-size: 0.75rem; border: 1px dashed var(--border); border-radius: 6px; }
     .field-input { padding: 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font-size: 0.78rem; }
     .field-input-block { width: 100%; margin-top: 4px; }
@@ -2870,8 +2866,8 @@
     .text-base { font-size: var(--fs-base); }
     .stat-num { font-size: 1.2rem; font-weight: 700; }
     .dialog-btn { padding: 6px 14px; background: var(--bg); border: 1px solid var(--line-strong); border-radius: 6px; cursor: pointer; color: var(--muted); font-size: 0.78rem; }
-    .card-tile { flex: 1; padding: 12px; background: var(--bg); border: 1px solid var(--line-strong); border-radius: 6px; text-align: center; cursor: pointer; }
-    .row-card { cursor: pointer; padding: 8px; margin-bottom: 4px; background: var(--bg); border: 1px solid var(--line-strong); border-radius: 6px; transition: border-color .15s; }
+    .card-tile { flex: 1; padding: var(--sp-5); background: var(--surface-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); text-align: center; cursor: pointer; }
+    .row-card { cursor: pointer; padding: var(--sp-5); margin-bottom: var(--sp-2); background: var(--surface-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); transition: border-color var(--duration-fast); }
     .error-note { color: var(--red); font-size: 0.82rem; }
     .repo-chip-btn { padding: 2px 8px; border-radius: 4px; border: 1px solid var(--line-strong); background: var(--bg); cursor: pointer; font-size: 0.72rem; color: var(--text); }
     /* ACMM level badges — interactive controls that open the level selector,
@@ -9043,9 +9039,9 @@
     // Contributors-style empty-state card, reused by sections that would
     // otherwise show bare/blank content on a new hive.
     function emptyStateCard(icon, title, bodyHtml) {
-      return '<div style="color:var(--text);padding:24px;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius-lg);max-width:760px">' +
-        `<div style="font-weight:600;font-size:var(--fs-md);margin-bottom:8px">${icon} ${title}</div>` +
-        `<div style="color:var(--muted);font-size:var(--fs-base);line-height:1.6">${bodyHtml}</div>` +
+      return '<div class="empty-state">' +
+        `<h3><span class="empty-state-icon">${icon}</span> ${title}</h3>` +
+        `<p>${bodyHtml}</p>` +
       '</div>';
     }
 
@@ -10868,7 +10864,7 @@ function burnAreaChart() {
       const sandboxTable = `<div class="cost-subsection" data-cost-sub="sandbox">
         <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="true" aria-controls="cost-sub-sandbox-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="sandbox" data-keys="*" title="Estimated cost grouped by sandbox — one agent per sandbox (token × list price). Click to collapse / expand."><span class="cost-chevron" aria-hidden="true">▼</span>usage by sandbox</div>
         <div class="cost-sub-body" id="cost-sub-sandbox-body">
-        <table class="cost-table">
+        <table class="cost-table table-compact">
           <thead><tr>${costSortTh('sandbox', 'name', 'sandbox (agent)')}${costSortTh('sandbox', 'input', 'input', { align: 'right' })}${costSortTh('sandbox', 'output', 'output', { align: 'right' })}${costSortTh('sandbox', 'usd', 'est. $', { align: 'right' })}</tr></thead>
           <tbody>${sandboxRows || '<tr><td colspan="4" style="color:var(--muted)">no usage yet</td></tr>'}</tbody>
         </table>
@@ -10916,7 +10912,7 @@ function burnAreaChart() {
       const sessionTable = `<div class="cost-subsection" data-cost-sub="session">
         <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="cost-sub-session-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="session" data-keys="*" title="Estimated cost for each individual agent session (sandbox run), sorted by session start newest first by default (token × list price). Click to collapse / expand."><span class="cost-chevron" aria-hidden="true">▼</span>cost per session</div>
         <div class="cost-sub-body" id="cost-sub-session-body">
-        <table class="cost-table">
+        <table class="cost-table table-compact">
           <thead><tr>${costSortTh('session', 'session_id', 'session')}${costSortTh('session', 'agent', 'sandbox')}${costSortTh('session', 'model', 'model')}${costSortTh('session', 'started', 'started → ended', { title: "Session start → end, local time (earliest / latest usage event). Hover a row for full timestamps; 'active' means the session had events in the last few minutes." })}${costSortTh('session', 'input', 'input', { align: 'right' })}${costSortTh('session', 'output', 'output', { align: 'right' })}${costSortTh('session', 'usd', 'est. $', { align: 'right' })}</tr></thead>
           <tbody>${sessionRows || '<tr><td colspan="7" style="color:var(--muted)">no sessions yet</td></tr>'}</tbody>
         </table>
@@ -10949,7 +10945,7 @@ function burnAreaChart() {
           </div>
           ${costTrendHtml()}
           ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}
-          <table class="cost-table">
+          <table class="cost-table table-compact">
             <thead><tr>${costSortTh('model', 'name', 'model')}${costSortTh('model', 'running', 'running agents', { align: 'center', title: 'Running agents on this model right now — hover the count for names' })}${costSortTh('model', 'input', 'input', { align: 'right' })}${costSortTh('model', 'output', 'output', { align: 'right' })}${costSortTh('model', 'usd', 'est. $', { align: 'right' })}</tr></thead>
             <tbody>${modelRows || '<tr><td colspan="5" style="color:var(--muted)">no usage yet</td></tr>'}</tbody>
           </table>
@@ -11022,7 +11018,7 @@ function burnAreaChart() {
         <div class="cost-sub-body" id="cost-sub-repo-body">
         <div class="cost-subtitle">Claude sessions only. Cost is attributed by TIMING: tokens spent between two audited repo events are billed to the repo named by the later event. ${rate === null ? '' : `<strong>${rate}%</strong> of tokens attributable`} · ${windowTxt}${oldest}.</div>
         <div class="cost-disclaimer" style="margin:4px 0 8px">Known bias — an agent that investigates repo A, finds nothing to file, then files on repo B bills <em>all</em> of A's investigation to B. That is this method's failure mode, not a rounding error: treat a repo's figure as an upper bound when a neighbouring repo shows activity but little cost. A row showing "—" means unobserved, not free. Not a bill.</div>
-        <table class="cost-table">
+        <table class="cost-table table-compact">
           <thead><tr><th>repo</th><th style="text-align:center">sandboxes</th><th style="text-align:right">tokens</th><th style="text-align:right">est. $</th></tr></thead>
           <tbody>${rows || '<tr><td colspan="4" style="color:var(--muted)">no attributable repo cost yet</td></tr>'}${unattr}${unsup}</tbody>
         </table>

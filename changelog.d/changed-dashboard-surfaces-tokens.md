@@ -1,0 +1,1 @@
+- Collapse dashboard, contributor, and hub card/panel surfaces onto shared design-token surface levels.

@@ -7,9 +7,10 @@ change, then migrate section-by-section under ratchet tests.
 Status: the shared `tokens.css` layer has landed with compatibility aliases in
 place for exact-value matches across the operator SPA, contribute portal, and
 hub pages. The shared `components.css` recipe layer now defines the component
-classes below for future migrations, but existing markup is not intentionally
-rewired until A4-A7. Review the unlinked static preview at
-`/design-system.html`.
+classes below. A5 has migrated the obvious card/panel/surface equivalents in
+the operator SPA, contribute portal, and hub landing onto the shared surface
+levels while preserving legacy selectors used by JS/tests. Review the unlinked
+static preview at `/design-system.html`.
 
 ## Token catalogue
 
@@ -196,10 +197,10 @@ the states without script.
 | `.btn-toggle` | Toggle component using neutral surface plus status text, not a status color alone. |
 | `.gh-app-btn` | `.btn-secondary` or `.btn-primary` when it starts setup. |
 | Inline/bare buttons | One of `.btn-*`, `.btn-icon`, or `.chip-action`; no static inline styling. |
-| `.agent-card` | `.card` with optional agent status rail/dot. |
-| `.repo-card` | `.card` with repository entity header. |
-| `.cost-panel` | `.card-panel` plus `.table-compact` or `.metric-tile`. |
-| `.card-inset`, `.card-tile`, `.row-card` | `.card-inset` for nested surfaces; `.card` for standalone tiles/rows. |
+| `.agent-card` | `.card`/`--surface-2` with status rail kept as a state border. |
+| `.repo-card` | `.card`/`--surface-2` with repository entity header and resize hook preserved. |
+| `.cost-panel`, `.token-panel`, `.governor` | `.card-panel`/`--surface-1` with `.metric-tile` summary blocks and `.table-compact` for simple cost tables. |
+| `.card-inset`, `.card-tile`, `.row-card`, `.gov-pr-models`, `.oc-gov-strip` | `.card-inset`/`--surface-3` for nested surfaces; terminal/log panes use `--surface-terminal`. |
 | Status pills | `.badge-status`. |
 | Repository/PR/issue/model chips | `.chip-entity`; vendor color through `--vendor-*`. |
 | Action-like pills | `.chip-action` with button semantics. |
@@ -308,3 +309,18 @@ Terms:
 
 Avoid `clanker` in operator-facing copy; keep it only in historical/internal
 references until maintainers choose a replacement path.
+
+
+### A5 surface migration notes
+
+| Legacy family | Shared surface level | Notes |
+| --- | --- | --- |
+| `.agent-card`, `.repo-card`, hub hero/proof cards | `--surface-2` (`.card`) | Legacy class names remain for JS/tests; bespoke gradients/radii/shadows were removed. |
+| `.governor`, `.token-panel`, `.cost-panel`, contribute `.ops-card`, `.steps`, hub comparison wrapper | `--surface-1` (`.card-panel`) | Section panels now share `--r-lg`, `--line-subtle`, and `--shadow-card`. |
+| `.card-inset`, `.card-tile`, `.row-card`, `.gov-pr-models`, contribute dossier stat/seal rows | `--surface-3` (`.card-inset`) | Nested cards keep local layout/click behavior but use the common inset surface. |
+| `#logs-output`, `#audit-panel`, `#inception-activity`, `.oc-detail-summary`, `.doing` | `--surface-terminal` | Terminal/log panes stay dark in both themes. |
+| `.token-stat`, `.cost-stat`, hub stats | `.metric-tile` equivalent | Numeric tiles use tokenized spacing, radius, border, and type scale. |
+
+Skipped table follow-ups: governor matrix and model-performance tables remain
+custom because they have responsive, state-colored matrix behavior; cost tables
+were the simple dense tables migrated to `.table-compact`.
