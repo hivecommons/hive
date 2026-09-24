@@ -203,10 +203,20 @@ func (h Headroom) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// Prober probes a single provider's headroom.
-type Prober interface {
+// HeadroomSource probes a single provider's headroom. This is the narrow
+// boundary between Hive rotation/dashboard consumers and whichever provider
+// prober implementation supplies readings.
+type HeadroomSource interface {
 	Provider() string
 	Probe(ctx context.Context) Headroom
+}
+
+// Prober is kept as a compatibility alias for existing tests and callers.
+type Prober = HeadroomSource
+
+// HeadroomReporter serves the last known headroom snapshot to API consumers.
+type HeadroomReporter interface {
+	HeadroomResponse() HeadroomResponse
 }
 
 // runCLI executes a CLI probe command with a bounded timeout and returns the
@@ -1066,7 +1076,7 @@ func (p DeepSeekProber) Probe(ctx context.Context) Headroom {
 // "should this agent rotate, and where to?".
 type Manager struct {
 	cfg     config.RotationConfig
-	probers []Prober
+	probers []HeadroomSource
 
 	mu       sync.RWMutex
 	headroom map[string]Headroom
@@ -1115,9 +1125,15 @@ func NewManager(cfg config.RotationConfig) *Manager {
 	return m
 }
 
+// SetHeadroomSources replaces the headroom source set (tests, custom
+// deployments, or a future ccleft adapter).
+func (m *Manager) SetHeadroomSources(probers []HeadroomSource) {
+	m.probers = probers
+}
+
 // SetProbers replaces the prober set (tests, custom deployments).
 func (m *Manager) SetProbers(probers []Prober) {
-	m.probers = probers
+	m.SetHeadroomSources(probers)
 }
 
 // Start begins the headroom polling loop. It probes once immediately and
