@@ -134,7 +134,13 @@ tokens even when they currently render close to amber.
 ### Light-mode overrides
 
 Light mode must override the same public tokens rather than rely on translated
-dark alpha tints. Initial values should preserve today's light rendering:
+dark alpha tints. The checked-in light ramp preserves the existing light
+layout/identity while using dedicated opaque surfaces, stronger dividers, and
+light-safe semantic accents. `contrast_test.go` enforces `--text` at 7:1 on
+all four surfaces, `--text-muted` at 4.5:1 on surfaces 0–2, `--text-faint` at
+3:1 on surfaces 0–2, and every `--status-*`, `--acmm-level-*`, and `--brand`
+accent at 3:1 on `--surface-2` in both modes. Primary button foreground on
+fill and terminal cyan on terminal panes are enforced at 4.5:1.
 
 ```css
 [data-theme="light"], body.light-mode {
@@ -142,12 +148,30 @@ dark alpha tints. Initial values should preserve today's light rendering:
   --surface-1: #eef1f5;
   --surface-2: #ffffff;
   --surface-3: #f8fafc;
-  --line-subtle: #e5e7eb;
-  --line-strong: #cbd5e1;
+  --surface-terminal: #1d2430;
+  --line-subtle: #d9e0e8;
+  --line-strong: #aeb9c7;
   --text: #111827;
-  --text-muted: #6b7280;
-  --text-faint: #9ca3af;
+  --text-muted: #4b5563;
+  --text-faint: #64748b;
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.08);
+  --shadow-raised: 0 4px 16px rgba(15, 23, 42, 0.12);
+  --shadow-modal: 0 20px 60px rgba(15, 23, 42, 0.15);
   --overlay-scrim: rgba(17, 24, 39, 0.36);
+  --brand: #9a5f0b;
+  --status-ok: #16a34a;
+  --status-warn: #a16207;
+  --status-attention: #c2570f;
+  --status-error: #dc2626;
+  --status-info: #2563eb;
+  --status-neutral: #4b5563;
+  --acmm-level-1: #15803d;
+  --acmm-level-2: #0f766e;
+  --acmm-level-3: #2563eb;
+  --acmm-level-4: #4f46e5;
+  --acmm-level-5: #7c3aed;
+  --acmm-level-6: #c2570f;
+  --terminal-cyan: #7bd8cd;
 }
 ```
 

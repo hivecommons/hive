@@ -158,22 +158,53 @@ body.light-mode {
   --surface-1: #eef1f5;
   --surface-2: #ffffff;
   --surface-3: #f8fafc;
-  --line-subtle: #e5e7eb;
-  --line-strong: #cbd5e1;
+  --surface-terminal: #1d2430;
+  --line-subtle: #d9e0e8;
+  --line-strong: #aeb9c7;
   --text: #111827;
-  --text-muted: #6b7280;
-  --text-faint: #9ca3af;
+  --text-muted: #4b5563;
+  --text-faint: #64748b;
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.08);
+  --shadow-raised: 0 4px 16px rgba(15, 23, 42, 0.12);
+  --shadow-modal: 0 20px 60px rgba(15, 23, 42, 0.15);
   --overlay-scrim: rgba(17, 24, 39, 0.36);
+  --brand: #9a5f0b;
+  --status-ok: #16a34a;
+  --status-warn: #a16207;
+  --status-attention: #c2570f;
+  --status-error: #dc2626;
+  --status-info: #2563eb;
+  --status-neutral: #4b5563;
+  --acmm-level-1: #15803d;
+  --acmm-level-2: #0f766e;
+  --acmm-level-3: #2563eb;
+  --acmm-level-4: #4f46e5;
+  --acmm-level-5: #7c3aed;
+  --acmm-level-6: #c2570f;
 
-  /* Exact-value light-mode aliases only; mismatches stay page-local. */
+  /* Light-mode aliases keep legacy selectors on the dedicated light palette. */
   --bg: var(--surface-0);
   --bg-soft: var(--surface-2);
   --panel: var(--surface-2);
   --panel-strong: var(--surface-1);
   --muted: var(--text-muted);
   --line: var(--line-subtle);
+  --amber: var(--brand);
+  --green: var(--status-ok);
+  --yellow: var(--status-warn);
+  --orange: var(--status-attention);
+  --red: var(--status-error);
+  --blue: var(--status-info);
+  --indigo: var(--acmm-level-4);
+  --cyan: var(--acmm-level-2);
+  --purple: var(--acmm-level-5);
+  --terminal-bg: var(--surface-terminal);
+  --terminal-cyan: #7bd8cd;
   --surface: var(--panel);
   --border: var(--line);
   --fg: var(--text);
   --card-bg: var(--panel);
+  --accent: var(--red);
+  --oc-accent: var(--red);
+  --cc-amber: var(--status-warn);
 }

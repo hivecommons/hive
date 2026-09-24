@@ -1,0 +1,1 @@
+- Dedicated dashboard light-mode surface, text, shadow, brand, status, and ACMM tokens now replace inverted dark alpha tints and are covered by WCAG contrast tests.

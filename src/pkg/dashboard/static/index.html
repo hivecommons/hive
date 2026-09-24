@@ -115,35 +115,10 @@
 
     /* ── Light mode ── */
     body.light-mode {
-      /* Light mode = token remap. */
-      --bg: var(--surface-0); --bg-soft: var(--surface-2);
-      --panel: var(--surface-2); --panel-strong: var(--surface-1);
-      --text: #111827; --muted: var(--text-muted); --line: var(--line-subtle);
-      --line-strong: #c6cdd6; /* visible ghost outlines on white */
-      --amber: #b45309; /* brand amber darkened for readability on white */
-      --green: #16a34a; --blue: #2563eb; --red: #dc2626;
-      --yellow: #a16207;
-      --orange: #c2570f; /* status alert darkened for readability on white */
-      --indigo: #4f46e5;
-      --cyan: #0891b2; --purple: #7c3aed;
-      --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.15);
-      --shadow-raised: 0 4px 16px rgba(0, 0, 0, 0.12);
-      --accent: var(--red); /* light mode accent keeps the hive identity warm */
+      /* Light mode = shared token remap in tokens.css. */
       --oc-accent-light: rgba(220,38,38,0.08);
       --green-bg: #f0fdf4; --green-border: #bbf7d0;
       --red-bg: #fef2f2; --red-border: #fecaca;
-      --terminal-bg: #1d2430; /* deep neutral — terminals never go white */
-      /* Legacy aliases MUST be re-declared here: a var() inside a custom
-         property resolves on the element that DECLARES it, so the :root
-         alias copies freeze to the dark values and descendants inherit
-         that resolved result. Without these lines everything styled via
-         --surface/--border/--fg/--card-bg/--oc-accent (sidebar, topbar,
-         cards, info sidebar) stays dark in light mode. */
-      --surface: var(--panel);
-      --border: var(--line);
-      --fg: var(--text);
-      --card-bg: var(--panel);
-      --oc-accent: var(--red);
       background: var(--bg); color: var(--text);
     }
     body.light-mode .connection { display: none; }
@@ -2669,7 +2644,7 @@
     html.modal-open, body.modal-open { overflow: hidden; }
     .gh-auth-overlay, .cred-dialog-overlay, .config-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay {
       position: fixed; inset: 0;
-      background: rgba(0, 0, 0, 0.55);
+      background: var(--overlay-scrim);
       -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
       display: flex; align-items: center; justify-content: center;
       animation: config-fade-in 0.15s ease-out;
