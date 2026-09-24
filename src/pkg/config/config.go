@@ -3137,6 +3137,16 @@ const (
 	BobV2SettingsRelPath = ".bob/settings/settings.json"
 	BobV2ProviderKey     = "provider"
 	BobV2ProviderHarness = "harness"
+	BobV2ShellKey        = "bobShell"
+	BobV2AutoUpdateKey   = "autoUpdate"
+
+	// BobLegacyGeneralKey and the disable keys cover bob/gemini-lineage 1.x
+	// settings shapes. They are harmless for versions that ignore them, and
+	// keep auto-update disabled on lagging images while v2 uses
+	// bobShell.autoUpdate=false in BobV2SettingsRelPath.
+	BobLegacyGeneralKey           = "general"
+	BobLegacyDisableAutoUpdateKey = "disableAutoUpdate"
+	BobLegacyDisableUpdateNagKey  = "disableUpdateNag"
 
 	// BobSettingsAuthKey / BobSettingsSelectedTypeKey / BobSettingsEnforcedTypeKey
 	// are the nested JSON keys hive owns inside that file. Shape per bundle:
