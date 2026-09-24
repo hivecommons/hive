@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -60,6 +62,73 @@ func TestReleaseChannelSwitchRelaysIntentAndReportsPending(t *testing.T) {
 	}
 	if out.ReleaseStatus.Channel.Channel != "stable" || out.ReleaseStatus.Channel.PendingChannel != "candidate" {
 		t.Fatalf("release status channel=%q pending=%q, want stable pending candidate", out.ReleaseStatus.Channel.Channel, out.ReleaseStatus.Channel.PendingChannel)
+	}
+}
+
+func TestReleaseChannelSwitchUsesFileSourcedConfigTokenForHubProof(t *testing.T) {
+	const token = "file-sourced-dashboard-token"
+	var sawProof string
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawProof = r.Header.Get(proxyAuthHeader)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"switching","branch":"candidate","via":"heartbeat"}`))
+	}))
+	defer hub.Close()
+
+	dir := t.TempDir()
+	tokenPath := filepath.Join(dir, "dashboard-token")
+	if err := os.WriteFile(tokenPath, []byte(" "+token+"\n"), 0o600); err != nil {
+		t.Fatalf("writing token file: %v", err)
+	}
+	t.Setenv("DASHBOARD_AUTH_TOKEN", "")
+	t.Setenv("HIVE_DASHBOARD_TOKEN", "")
+	t.Setenv("DASHBOARD_AUTH_TOKEN_FILE", tokenPath)
+
+	configPath := filepath.Join(dir, "hive.yaml")
+	configYAML := `
+project:
+  org: acme
+  repos: [repo-a]
+github:
+  token: ghp_test
+agents:
+  worker:
+    backend: claude
+    enabled: true
+hive_id: hosted-file-token
+hub:
+  url: ` + hub.URL + `
+`
+	if err := os.WriteFile(configPath, []byte(configYAML), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Dashboard.AuthToken != token {
+		t.Fatalf("Dashboard.AuthToken = %q, want file token", cfg.Dashboard.AuthToken)
+	}
+
+	oldImage := selfDeploymentImageForDashboard
+	selfDeploymentImageForDashboard = func() string { return "ghcr.io/hivecommons/hive:stable" }
+	setPendingReleaseChannel("")
+	t.Cleanup(func() { selfDeploymentImageForDashboard = oldImage; setPendingReleaseChannel("") })
+
+	srv := NewServerWithAuth(0, "", slog.Default())
+	srv.deps = &Dependencies{Config: cfg, Logger: slog.Default()}
+	req := httptest.NewRequest(http.MethodPost, "/api/release-channel", strings.NewReader(`{"channel":"candidate"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hive-Role", config.RoleOwner)
+	req.Header.Set(ownerRoleVerifiedHeader, "true")
+	w := httptest.NewRecorder()
+	srv.handleReleaseChannelSwitch(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if sawProof != token {
+		t.Fatalf("hub proof = %q, want file-sourced token", sawProof)
 	}
 }
 

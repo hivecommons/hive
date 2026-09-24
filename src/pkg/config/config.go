@@ -35,6 +35,10 @@ import (
 // only the last 1-2 on the PVC. Serializing every Save() closes the race.
 var saveMu sync.Mutex
 
+// dashboardAuthTokenFile is the mounted Secret key used by hosted spokes when
+// the token is not injected as an env var. Tests redirect it to a hermetic path.
+var dashboardAuthTokenFile = "/secrets/dashboard-token"
+
 type Config struct {
 	Project       ProjectConfig          `yaml:"project"`
 	Policies      PoliciesConfig         `yaml:"policies"`
@@ -5304,6 +5308,9 @@ func (c *Config) applyConfigEnv(path string) error {
 			c.Dashboard.AuthToken = v
 		}
 	}
+	if c.Dashboard.AuthToken == "" {
+		c.Dashboard.AuthToken = readDashboardAuthTokenFile()
+	}
 
 	return nil
 }
@@ -5336,6 +5343,9 @@ func (c *Config) applyBootstrapEnv() {
 			c.Dashboard.AuthToken = v
 		}
 	}
+	if c.Dashboard.AuthToken == "" {
+		c.Dashboard.AuthToken = readDashboardAuthTokenFile()
+	}
 	// K8s-provisioned spokes receive their per-hive authorized GitHub users as a
 	// comma-separated env var (owner first). This is what lets a direct-route
 	// spoke reject unauthorized device-flow logins without the hub proxy.
@@ -5353,6 +5363,18 @@ func (c *Config) applyBootstrapEnv() {
 	if v := strings.TrimSpace(os.Getenv(ContributeSkipLabelsEnvVar)); v != "" {
 		c.Hub.ContributeSkipLabels = parseContributeSkipLabels(v)
 	}
+}
+
+func readDashboardAuthTokenFile() string {
+	path := strings.TrimSpace(os.Getenv("DASHBOARD_AUTH_TOKEN_FILE"))
+	if path == "" {
+		path = dashboardAuthTokenFile
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // parseAuthorizedUsers splits a comma-separated authorized-users list, trimming
@@ -6705,6 +6727,11 @@ func (c *Config) dashboardOverlayBytes() ([]byte, error) {
 		if v := os.Getenv(env); v != "" && cp.Dashboard.AuthToken == v {
 			cp.Dashboard.AuthToken = ""
 			break
+		}
+	}
+	if cp.Dashboard.AuthToken != "" {
+		if v := readDashboardAuthTokenFile(); v != "" && cp.Dashboard.AuthToken == v {
+			cp.Dashboard.AuthToken = ""
 		}
 	}
 	cp = *cp.redactedForPersist()

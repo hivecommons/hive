@@ -1,0 +1,1 @@
+- Hosted spokes now load the dashboard token from the mounted `hive-secrets/dashboard-token` file when token env vars are absent, restoring release-channel switching and self-upgrade proof for affected hosted hives ([#8690](https://github.com/hivecommons/hive/issues/8690)).
