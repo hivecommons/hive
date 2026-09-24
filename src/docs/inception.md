@@ -179,10 +179,10 @@ unit of work keyed by its stable session/spec id:
   campaign lease, restores the saved inception state and wiki working files,
   and opens the existing wizard at the archived phase. A second operator gets
   a 409 until the holder presses **Release** or the lease expires.
-- Spektacular-backed runs have type `spektacular`, engine `Spektacular`, and a
+- Spektacular (Spek)-backed runs have type `spektacular`, engine `Spektacular`, and a
   `/api/runs/{key}` link. Resume returns the retained run detail and a CLI
-  status command; Spektacular itself reloads state from its working files and
-  artifacts.
+  status command; Spek itself reloads state from its working files and
+  speks.
 - The list supports `search`/`q`, `repo`, `stage`, `status`, and `owner`
   filters and keeps shipped/completed work visible instead of replacing it
   with a blank New Inception screen.

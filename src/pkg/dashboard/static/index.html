@@ -2963,6 +2963,15 @@
     .campaign-row-meta { display: flex; gap: var(--sp-3); flex-wrap: wrap; color: var(--muted); font-size: var(--fs-sm); margin-top: var(--sp-2); }
     .campaign-pill { border: 1px solid var(--border); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); color: var(--muted); }
     .campaign-empty { color: var(--muted); text-align: center; padding: var(--sp-7); border: 1px dashed var(--border); border-radius: var(--r); }
+    .campaign-jam { margin-top: var(--sp-5); display: grid; gap: var(--sp-4); }
+    .campaign-jam-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-4); }
+    .campaign-jam-box { border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-4); background: color-mix(in srgb, var(--border) 6%, transparent); }
+    .campaign-jam-box h4 { margin: 0 0 var(--sp-3); font-size: var(--fs-sm); }
+    .campaign-jam-list { display: grid; gap: var(--sp-2); color: var(--muted); font-size: var(--fs-sm); }
+    .campaign-jam-form { display: grid; gap: var(--sp-2); margin-top: var(--sp-3); }
+    .campaign-jam-form textarea { min-height: 72px; resize: vertical; }
+    .campaign-jam-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+    @media (max-width: 1100px) { .campaign-jam-grid { grid-template-columns: 1fr; } }
     @media (max-width: 900px) { .campaigns-filters { grid-template-columns: 1fr 1fr; } .campaign-row { grid-template-columns: 1fr; } }
   </style>
   <link rel="stylesheet" href="/api/theme.css" id="hive-theme-css">
@@ -3734,11 +3743,11 @@
         <h3 style="font-size:1rem;margin:18px 0 8px">Runs and inception</h3>
 
         <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">What is a run?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)">A run is staged work on one lease: <strong>spec → plan → implement</strong>. The Runs section and <code>/api/runs</code> show stage, generation, triage verdicts, receipts, checkpoints, and whether a person must intervene. Run-stage work is only offered to relays that declare the <code>run-stage</code> capability. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/spektacular.md" target="_blank" rel="noopener noreferrer">Spektacular stage runner</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/work-sources.md" target="_blank" rel="noopener noreferrer">work sources</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md#run-stage-assignments-add-one-more-negotiated-token-run-stage" target="_blank" rel="noopener noreferrer">relay capabilities</a>.</p>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">Long-running pieces are default-off. Spektacular does nothing unless <code>runs.spektacular.enabled</code> is true. Incoming issue triage does nothing unless <code>runs.triage.enabled</code> is true. The live worktree cap is <code>runs.max_worktrees</code>; stage retry budget is <code>runs.max_stage_retries</code>.</p>
+        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)">A run is staged work on one lease: <strong>spec → plan → implement</strong>. The Runs section and <code>/api/runs</code> show stage, generation, triage verdicts, receipts, checkpoints, and whether a person must intervene. Run-stage work is only offered to relays that declare the <code>run-stage</code> capability. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/spektacular.md" target="_blank" rel="noopener noreferrer">Spektacular (Spek) stage runner</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/work-sources.md" target="_blank" rel="noopener noreferrer">work sources</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md#run-stage-assignments-add-one-more-negotiated-token-run-stage" target="_blank" rel="noopener noreferrer">relay capabilities</a>.</p>
+        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">Long-running pieces are default-off. Spek does nothing unless <code>runs.spektacular.enabled</code> is true. Incoming issue triage does nothing unless <code>runs.triage.enabled</code> is true. The live worktree cap is <code>runs.max_worktrees</code>; stage retry budget is <code>runs.max_stage_retries</code>.</p>
 
-        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">How does Spektacular fit with L1?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">Inception is the L1 human-and-brainstorm workflow for turning an idea into facts and a scaffold. Spektacular is the optional runner for staged spec/plan artifacts once you are using long-running runs. Both keep authority in Hive: Spektacular status can advance a lease, but implement still lands through the existing PR flow. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/spektacular.md" target="_blank" rel="noopener noreferrer">Spektacular</a>.</p>
+        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">How does Spek fit with L1?</h4>
+        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">Inception is the L1 human-and-brainstorm workflow for turning an idea into facts and a scaffold. Spek is the optional runner for staged speks and plans once you are using long-running runs. Both keep authority in Hive: Spek status can advance a lease, but implement still lands through the existing PR flow. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/spektacular.md" target="_blank" rel="noopener noreferrer">Spek</a>.</p>
 
         <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">What are external engines like Flue and OMP allowed to do?</h4>
         <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">External engines are report-only admission surfaces, not extra credentials. They receive bounded context and return receipts that Hive verifies; they do not receive target-repo write credentials or dashboard tokens. Flue and OMP are independent, default-off bindings: <code>runs.external.flue.enabled</code> and <code>runs.external.omp.enabled</code>. Dispatch additionally requires the relay to advertise <code>ext-exec/flue</code> or <code>ext-exec/omp</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/design/external-workflow-admission.md" target="_blank" rel="noopener noreferrer">external workflow admission</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md#run-stage-assignments-add-one-more-negotiated-token-run-stage" target="_blank" rel="noopener noreferrer">contributor relay capability tokens</a>.</p>
@@ -15606,7 +15615,7 @@ function burnAreaChart() {
       return `
         <div class="campaigns-card">
           <div class="campaigns-head">
-            <div><div class="campaigns-title">Campaigns</div><div class="campaigns-subtitle">Resumable Inception and Spektacular sessions keyed by stable spec ID.</div></div>
+            <div><div class="campaigns-title">Campaigns</div><div class="campaigns-subtitle">Resumable Inception and Spek sessions keyed by stable spec ID.</div></div>
             <button class="hv-btn btn-secondary btn-sm" data-action="loadCampaigns">Refresh</button>
           </div>
           <div class="campaigns-filters">
@@ -15618,6 +15627,7 @@ function burnAreaChart() {
             <button class="hv-btn btn-secondary btn-sm" data-action="loadCampaigns">Apply</button>
           </div>
           <div id="campaigns-list" class="campaigns-list"><div class="campaign-empty">Loading campaigns…</div></div>
+          <div id="campaign-jam-panel" class="campaign-jam"></div>
         </div>`;
     }
 
@@ -15644,12 +15654,107 @@ function burnAreaChart() {
             </div>
           </div>
           <div class="campaign-row-actions">
+            <button class="hv-btn btn-secondary btn-sm" data-action="openCampaignJam" data-arg0="${escapeHtml(c.id)}">Jam</button>
             <button class="hv-btn btn-primary btn-sm" data-action="resumeCampaign" data-arg0="${escapeHtml(c.id)}">Continue</button>
             <button class="hv-btn btn-secondary btn-sm" data-action="releaseCampaign" data-arg0="${escapeHtml(c.id)}">Release</button>
             <button class="hv-btn btn-secondary btn-sm" data-action="reviseCampaign" data-arg0="${escapeHtml(c.id)}">Revise</button>
           </div>
         </div>`;
       }).join('');
+    }
+
+    async function openCampaignJam(id) {
+      if (!id) return;
+      const panel = document.getElementById('campaign-jam-panel');
+      if (panel) panel.innerHTML = '<div class="campaign-empty">Loading Jam…</div>';
+      try {
+        const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/jam', {headers: _inceptionAuthHeaders()});
+        const data = await r.json();
+        if (!data.ok) { throw new Error(data.error || 'Failed to load Jam'); }
+        renderCampaignJam(id, data.jam || {});
+      } catch (e) {
+        if (panel) panel.innerHTML = '<div class="campaign-empty">Jam failed: ' + escapeHtml(e.message) + '</div>';
+      }
+    }
+
+    function renderCampaignJam(id, jam) {
+      const panel = document.getElementById('campaign-jam-panel');
+      if (!panel) return;
+      const threads = jam.threads || [];
+      const suggestions = jam.suggestions || [];
+      const polls = jam.polls || [];
+      const revisions = jam.revisions || [];
+      panel.innerHTML = `
+        <div class="campaigns-head">
+          <div><div class="campaigns-title">Jam: ${escapeHtml(id)}</div><div class="campaigns-subtitle">Async section threads, suggestions, polls, decisions and attributed spec revisions.</div></div>
+          <button class="hv-btn btn-secondary btn-sm" data-action="openCampaignJam" data-arg0="${escapeHtml(id)}">Refresh Jam</button>
+        </div>
+        <div class="campaign-jam-grid">
+          <div class="campaign-jam-box">
+            <h4>Threads</h4>
+            <div class="campaign-jam-list">${threads.length ? threads.map(t => `<div><strong>${escapeHtml(t.section || 'section')}</strong>: ${escapeHtml((t.comments && t.comments[0] && t.comments[0].body) || t.title || '')}</div>`).join('') : 'No threads yet.'}</div>
+            <div class="campaign-jam-form">
+              <input id="jam-thread-section" class="campaigns-input" placeholder="Spec section" />
+              <textarea id="jam-thread-body" class="campaigns-input" placeholder="Comment"></textarea>
+              <button class="hv-btn btn-primary btn-sm" data-action="createCampaignJamThread" data-arg0="${escapeHtml(id)}">Add thread</button>
+            </div>
+          </div>
+          <div class="campaign-jam-box">
+            <h4>Suggestions</h4>
+            <div class="campaign-jam-list">${suggestions.length ? suggestions.map(s => `<div><strong>${escapeHtml(s.section || 'section')}</strong> · ${escapeHtml(s.status || 'open')}<br>${escapeHtml(s.proposed_text || '')}<div class="campaign-jam-actions">${s.status === 'open' ? `<button class="hv-btn btn-secondary btn-sm" data-action="resolveCampaignJamSuggestion" data-arg0="${escapeHtml(id)}" data-arg1="${escapeHtml(s.id)}" data-arg2="accept">Accept</button><button class="hv-btn btn-secondary btn-sm" data-action="resolveCampaignJamSuggestion" data-arg0="${escapeHtml(id)}" data-arg1="${escapeHtml(s.id)}" data-arg2="reject">Reject</button>` : ''}</div></div>`).join('') : 'No suggestions yet.'}</div>
+            <div class="campaign-jam-form">
+              <input id="jam-suggestion-section" class="campaigns-input" placeholder="Spec section" />
+              <textarea id="jam-suggestion-text" class="campaigns-input" placeholder="Suggested text"></textarea>
+              <button class="hv-btn btn-primary btn-sm" data-action="createCampaignJamSuggestion" data-arg0="${escapeHtml(id)}">Suggest text</button>
+            </div>
+          </div>
+          <div class="campaign-jam-box">
+            <h4>Polls & decisions</h4>
+            <div class="campaign-jam-list">${polls.length ? polls.map(p => `<div><strong>${escapeHtml(p.question || '')}</strong><br>${(p.options || []).map(o => `${escapeHtml(o.label)}: ${o.count || 0}`).join(' · ')}${p.decision ? `<br>Decision: ${escapeHtml(p.decision.outcome)} — ${escapeHtml(p.decision.rationale)}` : ''}</div>`).join('') : 'No polls yet.'}</div>
+            <div class="campaign-jam-form">
+              <input id="jam-poll-section" class="campaigns-input" placeholder="Spec section" />
+              <input id="jam-poll-question" class="campaigns-input" placeholder="Question" />
+              <input id="jam-poll-options" class="campaigns-input" placeholder="Options separated by commas" />
+              <button class="hv-btn btn-primary btn-sm" data-action="createCampaignJamPoll" data-arg0="${escapeHtml(id)}">Create poll</button>
+            </div>
+          </div>
+        </div>
+        <div class="campaign-jam-box">
+          <h4>Revision history</h4>
+          <div class="campaign-jam-list">${revisions.length ? revisions.map(r => `<div><strong>${escapeHtml(r.id)}</strong> by ${escapeHtml((r.author && r.author.name) || 'unknown')}${r.model ? ' · ' + escapeHtml(r.model) : ''}<br>${escapeHtml(r.reason || 'revision')}</div>`).join('') : 'No spec revisions yet.'}</div>
+        </div>`;
+    }
+
+    async function createCampaignJamThread(id) {
+      const section = document.getElementById('jam-thread-section')?.value || '';
+      const body = document.getElementById('jam-thread-body')?.value || '';
+      await postCampaignJam(id, 'threads', { section, body });
+    }
+
+    async function createCampaignJamSuggestion(id) {
+      const section = document.getElementById('jam-suggestion-section')?.value || '';
+      const proposed_text = document.getElementById('jam-suggestion-text')?.value || '';
+      await postCampaignJam(id, 'suggestions', { section, proposed_text });
+    }
+
+    async function resolveCampaignJamSuggestion(id, suggestion_id, action) {
+      await postCampaignJam(id, 'suggestions', { action, suggestion_id });
+    }
+
+    async function createCampaignJamPoll(id) {
+      const section = document.getElementById('jam-poll-section')?.value || '';
+      const question = document.getElementById('jam-poll-question')?.value || '';
+      const options = (document.getElementById('jam-poll-options')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+      await postCampaignJam(id, 'polls', { section, question, options });
+    }
+
+    async function postCampaignJam(id, lane, body) {
+      try {
+        const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/jam/' + lane, { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify(body) });
+        const data = await r.json();
+        if (!data.ok) { alert(data.error || 'Jam update failed'); return; }
+        renderCampaignJam(id, data.jam || {});
+      } catch (e) { alert('Jam error: ' + e.message); }
     }
 
     async function resumeCampaign(id) {
@@ -25421,10 +25526,10 @@ function burnAreaChart() {
         </div>
 
         <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Long-running runs <span class="config-info">i<span class="config-tooltip">Spec, plan, and implement stages on one lease. Off by default; an absent runs block is zero behaviour change.</span></span></div>
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Long-running runs <span class="config-info">i<span class="config-tooltip">The spec, plan, and implement stages on one lease. Off by default; an absent runs block is zero behaviour change.</span></span></div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${f.spektacularEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="spektacularEnabled"></div>
-            <span class="config-toggle-label">Spektacular stage runner <span class="config-info">i<span class="config-tooltip">Polls the spektacular status verb for every active stage lease and advances the lease when the artifact reaches document_status final. A lease that expires without final is retried up to runs.max_stage_retries (${esc(String(f.maxStageRetries || ''))}) and then escalated for a decision. Hive never opens a Spektacular file; see src/docs/spektacular.md.</span></span></span>
+            <span class="config-toggle-label">Spek stage runner <span class="config-info">i<span class="config-tooltip">Polls the spektacular status verb for every active stage lease and advances the lease when the artifact reaches document_status final. A lease that expires without final is retried up to runs.max_stage_retries (${esc(String(f.maxStageRetries || ''))}) and then escalated for a decision. Hive never opens a Spek file; see src/docs/spektacular.md.</span></span></span>
           </div>
           <div class="config-field" style="margin-top:10px">
             <label>Spektacular binary <span class="config-info">i<span class="config-tooltip">Path of the spektacular executable the runner shells out to. Empty resolves spektacular through PATH.</span></span></label>

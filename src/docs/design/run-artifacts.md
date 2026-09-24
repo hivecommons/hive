@@ -11,7 +11,7 @@ Hive stores those annotations as child metadata and adds a wave barrier: childre
 in the next wave depend on all children in the previous wave, so the next wave is
 not offerable until the prior wave has finalized or been explicitly skipped.
 
-The stage runner reads the Spektacular status verb, refuses fan-out when the hub
+The stage runner reads the Spektacular (Spek) status verb, refuses fan-out when the hub
 constellation overlap index reports two spokes claiming one repository, and then
 creates one implementation lease per participating repository for the wave. Each
 lease is keyed by the run key and wave number and remains subject to the existing
@@ -46,12 +46,12 @@ participates in the identity path.
 ## Provenance guard
 
 Stage receipts carry `input_revision` and `contract_revision`. Hive consumes
-Spektacular's status `artifact_id` as the durable join key for Spektacular
-artifacts whenever the field is present, and falls back to the historical bare
+Spek's status `artifact_id` as the durable join key for Spek
+speks whenever the field is present, and falls back to the historical bare
 `name` only for older CLIs. Counter-shaped names remain readable display
 aliases, not globally unique identities.
 
-When Spektacular strict mode reports a plan with `document_status: stale`, Hive
+When Spek strict mode reports a plan with `document_status: stale`, Hive
 treats the plan as invalidated rather than as an expired lease. The stage runner
 refuses the plan-to-implement advance, records `waiting_on=human` with reason
 `stale_plan`, and writes a blocked timeline event. The recovery path is the
@@ -59,10 +59,10 @@ existing plan gate: re-run or re-approve a fresh plan so the implement stage is
 released from a current plan. This is intentionally metadata-only and adds no
 store, CRD, DSL, or credential path.
 
-For older Spektacular versions that do not emit `stale`, Hive keeps the receipt
+For older Spek versions that do not emit `stale`, Hive keeps the receipt
 chain as a provenance backstop: when a plan stage finalizes, the plan's metadata
-records the spec `input_revision` as `spec_revision`; before implementation,
-Hive can compare that recorded revision with the current spec artifact revision
+records the spek `input_revision` as `spec_revision`; before implementation,
+Hive can compare that recorded revision with the current spek artifact revision
 and hold the run with the same `stale_plan` reason on mismatch.
 
 ## Cross-repo audit query and retention
@@ -107,14 +107,14 @@ Hive-Spec: <spec name>#<clause id>
 - `Hive-Run` is the canonical run key, such as `hivecommons/hive#8311`.
 - `Hive-Plan` names the approved plan section or plan identifier used for the
   implementation stage.
-- `Hive-Spec` names the Spektacular spec and clause identifier that supplied the
+- `Hive-Spec` names the Spek-created spek and clause identifier that supplied the
   requirement.
 
 The implementation stage writes all three trailers on each commit it creates.
 The grammar is parsed by the shared `pkg/runtrailer` package so the dashboard
 trace reader and the PR attribution reader accept the same trailer spelling and
 whitespace rules. The dashboard trace reader resolves them through the retained
-timeline and audit entries so reviewers can find the plan section, spec clause,
+timeline and audit entries so reviewers can find the plan section, spek clause,
 approval record, and agent rationale without reading chat history.
 
 These trailers are evidence, not authority. A missing trailer is recorded as an

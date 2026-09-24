@@ -11,6 +11,19 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-24 (v5.43.0)
+
+### Added
+
+- Added Spektacular Jam Sessions phase 1 for campaign threads, suggestions, polls, decisions, and attributed spec revisions. Refs #8687.
+
+## 2026-09-24 (v5.42.1)
+
+### Changed
+
+- Provider headroom probing now has a narrow library boundary so Hive can adopt the proposed ccleft implementation without changing rotation or `/api/providers/headroom` consumers ([#8753](https://github.com/hivecommons/hive/issues/8753)).
+- Call Spektacular "Spek" in user-facing UI and docs, and call the outputs it creates "speks".
+
 ## 2026-09-24 (v5.42.0)
 
 ### Added

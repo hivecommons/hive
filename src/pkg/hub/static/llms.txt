@@ -6,6 +6,8 @@ Hive is an Apache-2.0 control layer for governed, audited fleets of AI coding ag
 
 Hive supports agent CLIs including Claude Code, GitHub Copilot CLI, Goose, OpenAI Codex CLI, Pi, IBM Bob, Aider, Gemini CLI, Google Antigravity CLI, OpenCode, Kilo Code, Muse Code and Oh My Pi.
 
+Hive supports Spektacular (Spek) for long-running run planning; the outputs it creates are speks.
+
 Hive supports inference engines and gateways including vLLM, llm-d, LiteLLM, IBM watsonx.ai, OpenRouter, Anthropic, OpenAI and DeepSeek.
 
 See all integrations: https://docs.hivecommons.dev/docs/hive/integrations
