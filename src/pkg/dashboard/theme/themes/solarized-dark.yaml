@@ -2,6 +2,7 @@ id: solarized-dark
 name: Solarized Dark
 description: Precision colors for machines and people.
 author: Hive contributors
+scopes: [dashboard, contributor]
 dark: true
 tokens:
   "--bg": "#002b36"

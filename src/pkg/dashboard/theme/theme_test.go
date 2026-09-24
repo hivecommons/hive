@@ -30,18 +30,21 @@ func TestLegacyThemeAliasesRemainValid(t *testing.T) {
 }
 
 func TestCatalogValidAndLargeEnough(t *testing.T) {
-	if len(Catalog()) < 8 {
-		t.Fatalf("catalog has %d themes, want at least 8", len(Catalog()))
+	if len(Catalog()) < 17 {
+		t.Fatalf("catalog has %d themes, want at least 17", len(Catalog()))
 	}
 	if err := ValidateCatalog(); err != nil {
 		t.Fatalf("catalog validation failed: %v", err)
 	}
-	for _, id := range []string{"hive", "hive-dark", "hive-light", "star-wars", "dungeons-and-dragons", "star-trek", "cyberpunk", "terminal", "solarized-dark", "nord"} {
-		if _, ok := Builtin(id); !ok {
+	for _, id := range []string{"hive", "hive-dark", "hive-light", "star-wars", "dungeons-and-dragons", "star-trek", "cyberpunk", "terminal", "solarized-dark", "nord", "contributor-rank-metal", "contributor-verdant", "contributor-amber-rank", "contributor-violet-advisor", "contributor-minimal", "contributor-rose", "contributor-roomy-ranked"} {
+		th, ok := Builtin(id)
+		if !ok {
 			t.Fatalf("missing built-in theme %q", id)
 		}
+		if len(th.Scopes) == 0 {
+			t.Fatalf("theme %q has no scopes", id)
+		}
 	}
-
 }
 
 func TestEveryThemeFileParsesWithUniqueID(t *testing.T) {

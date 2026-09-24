@@ -2,6 +2,7 @@ id: star-trek
 name: Star Trek
 description: LCARS-inspired black interface with rounded orange, peach, lavender, and blue blocks.
 author: Hive contributors
+scopes: [dashboard, contributor]
 dark: true
 tokens:
   "--bg": "#030305"

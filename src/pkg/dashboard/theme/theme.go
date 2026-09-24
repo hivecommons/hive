@@ -24,6 +24,7 @@ type Theme struct {
 	Name        string            `yaml:"name" json:"name"`
 	Description string            `yaml:"description" json:"description"`
 	Author      string            `yaml:"author,omitempty" json:"author,omitempty"`
+	Scopes      []string          `yaml:"scopes,omitempty" json:"scopes,omitempty"`
 	Dark        bool              `yaml:"dark" json:"dark"`
 	Tokens      map[string]string `yaml:"tokens" json:"tokens"`
 	Fonts       ThemeFonts        `yaml:"fonts" json:"fonts"`
@@ -146,7 +147,17 @@ func Effective(id string, overrides Overrides) (Theme, error) {
 	if err != nil {
 		return Theme{}, err
 	}
-	th.CustomCSS = css
+	baseCSS, err := SanitizeCSS(th.CustomCSS)
+	if err != nil {
+		return Theme{}, err
+	}
+	if strings.TrimSpace(css) != "" && strings.TrimSpace(baseCSS) != "" {
+		th.CustomCSS = baseCSS + "\n" + css
+	} else if strings.TrimSpace(css) != "" {
+		th.CustomCSS = css
+	} else {
+		th.CustomCSS = baseCSS
+	}
 	if err := ValidateTheme(th); err != nil {
 		return Theme{}, err
 	}
@@ -166,6 +177,19 @@ func ValidateTheme(th Theme) error {
 		}
 		if strings.ContainsAny(value, "<>") || strings.Contains(strings.ToLower(value), "</style") {
 			return fmt.Errorf("theme %s token %q contains unsafe CSS characters", th.ID, token)
+		}
+	}
+	if len(th.Scopes) > 0 {
+		seenScopes := map[string]bool{}
+		for _, scope := range th.Scopes {
+			scope = strings.TrimSpace(scope)
+			if scope != "dashboard" && scope != "contributor" {
+				return fmt.Errorf("theme %s has unsupported scope %q", th.ID, scope)
+			}
+			if seenScopes[scope] {
+				return fmt.Errorf("theme %s repeats scope %q", th.ID, scope)
+			}
+			seenScopes[scope] = true
 		}
 	}
 	if len([]byte(th.CustomCSS)) > MaxCustomCSSBytes {
@@ -219,6 +243,7 @@ func CSS(th Theme) (string, error) {
 		b.WriteString(th.Tokens[k])
 		b.WriteString(";\n")
 	}
+	writeContributorAliases(&b)
 	b.WriteString("}\nbody.light-mode{\n")
 	if th.Dark {
 		if light, ok := Builtin(DefaultLightID); ok {
@@ -239,6 +264,7 @@ func CSS(th Theme) (string, error) {
 			b.WriteString(";\n")
 		}
 	}
+	writeContributorAliases(&b)
 	b.WriteString("}\n")
 	if th.Background != nil && strings.TrimSpace(th.Background.Image) != "" {
 		opacity := th.Background.Opacity
@@ -346,6 +372,27 @@ func cloneMap(in map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+func writeContributorAliases(b *strings.Builder) {
+	b.WriteString("  --cc-bg: var(--bg);\n")
+	b.WriteString("  --cc-bg-deep: var(--bg-soft);\n")
+	b.WriteString("  --cc-surface: var(--panel);\n")
+	b.WriteString("  --cc-border: var(--line);\n")
+	b.WriteString("  --cc-border-2: var(--line-strong);\n")
+	b.WriteString("  --cc-text: var(--text);\n")
+	b.WriteString("  --cc-text-2: var(--text);\n")
+	b.WriteString("  --cc-muted: var(--muted);\n")
+	b.WriteString("  --cc-muted-2: var(--muted);\n")
+	b.WriteString("  --cc-code-bg: var(--bg-soft);\n")
+	b.WriteString("  --cc-accent: var(--accent);\n")
+	b.WriteString("  --cc-accent-2: var(--blue);\n")
+	b.WriteString("  --cc-accent-fg: var(--accent);\n")
+	b.WriteString("  --cc-green: var(--green);\n")
+	b.WriteString("  --cc-amber: var(--amber);\n")
+	b.WriteString("  --cc-red: var(--red);\n")
+	b.WriteString("  --cc-pink: var(--purple);\n")
+	b.WriteString("  --cc-purple: var(--purple);\n")
 }
 
 func keysFor(m map[string]string) []string {

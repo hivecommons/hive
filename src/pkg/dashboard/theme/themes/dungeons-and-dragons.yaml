@@ -2,6 +2,7 @@ id: dungeons-and-dragons
 name: Dungeons & Dragons
 description: Parchment, leather, crimson, and gold for fantasy campaign control rooms.
 author: Hive contributors
+scopes: [dashboard, contributor]
 dark: false
 tokens:
   "--bg": "#efe1bd"

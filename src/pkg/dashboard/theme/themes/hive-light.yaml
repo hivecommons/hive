@@ -2,6 +2,7 @@ id: hive-light
 name: Hive Light
 description: Bright Hive dashboard palette with crisp red accents.
 author: Hive contributors
+scopes: [dashboard, contributor]
 dark: false
 tokens:
   "--bg": "#f7f8fa"

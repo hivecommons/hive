@@ -2,6 +2,7 @@ id: star-wars
 name: Star Wars
 description: A galaxy far, far away — dark space palette with saber accents.
 author: Hive contributors
+scopes: [dashboard, contributor]
 dark: true
 tokens:
   "--bg": "#05060a"

@@ -1659,6 +1659,11 @@ func isPublicPath(path string) bool {
 	case path == "/api/style":
 		// Sanitized, same-origin CSS for public snapshot/read-only preview links.
 		return true
+	case path == "/api/themes" || path == "/api/theme.css":
+		// Shared dashboard/contributor theme catalog and stylesheet. /contribute is
+		// public, so its same-origin theme CSS and contributor-scoped picker data
+		// must be public too. The owner-only config API remains private.
+		return true
 	case path == "/tokens.css":
 		// Shared ADR-0018 design-token sheet. /contribute is public when a
 		// spoke uses dashboard auth, so its same-origin stylesheet must be public

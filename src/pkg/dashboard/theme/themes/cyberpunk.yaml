@@ -2,6 +2,7 @@ id: cyberpunk
 name: Cyberpunk
 description: Neon magenta and cyan on near-black city-night surfaces.
 author: Hive contributors
+scopes: [dashboard, contributor]
 dark: true
 tokens:
   "--bg": "#07010f"

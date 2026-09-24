@@ -19,6 +19,7 @@ type dashboardThemeListItem struct {
 	Author      string   `json:"author,omitempty"`
 	Dark        bool     `json:"dark"`
 	Swatches    []string `json:"swatches"`
+	Scopes      []string `json:"scopes,omitempty"`
 }
 
 func (s *Server) currentDashboardTheme() (config.DashboardTheme, error) {
@@ -60,10 +61,18 @@ func (s *Server) themeForCSSRequest(r *http.Request) (config.DashboardTheme, err
 	if id == "" {
 		return s.currentDashboardTheme()
 	}
-	th, ok := config.DashboardThemeBuiltin(id)
-	if !ok {
+	if _, ok := config.DashboardThemeBuiltin(id); !ok {
 		return config.DashboardTheme{}, errUnknownDashboardTheme(id)
 	}
+	if strings.TrimSpace(r.URL.Query().Get("scope")) == "contributor" && s.deps != nil && s.deps.Config != nil {
+		return config.DashboardThemeEffective(config.DashboardConfig{
+			Theme: id,
+			ThemeOverrides: config.DashboardThemeOverrides{
+				CustomCSS: s.deps.Config.Dashboard.ThemeOverrides.CustomCSS,
+			},
+		})
+	}
+	th, _ := config.DashboardThemeBuiltin(id)
 	return th, nil
 }
 
@@ -80,8 +89,12 @@ func (e *unknownDashboardThemeError) Error() string {
 }
 
 func (s *Server) handleThemesList(w http.ResponseWriter, r *http.Request) {
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
 	items := make([]dashboardThemeListItem, 0, len(config.DashboardThemeCatalog()))
 	for _, th := range config.DashboardThemeCatalog() {
+		if scope != "" && !themeHasScope(th, scope) {
+			continue
+		}
 		items = append(items, dashboardThemeListItem{
 			ID:          th.ID,
 			Name:        th.Name,
@@ -89,6 +102,7 @@ func (s *Server) handleThemesList(w http.ResponseWriter, r *http.Request) {
 			Author:      th.Author,
 			Dark:        th.Dark,
 			Swatches:    themeSwatches(th),
+			Scopes:      th.Scopes,
 		})
 	}
 	jsonResponse(w, map[string]any{"themes": items})
@@ -160,6 +174,21 @@ func defaultDashboardThemeID(id string) string {
 		return config.DefaultDashboardThemeID()
 	}
 	return config.CanonicalDashboardThemeID(id)
+}
+
+func themeHasScope(th config.DashboardTheme, scope string) bool {
+	if scope == "" {
+		return true
+	}
+	if len(th.Scopes) == 0 {
+		return scope == "dashboard"
+	}
+	for _, candidate := range th.Scopes {
+		if candidate == scope {
+			return true
+		}
+	}
+	return false
 }
 
 func themeSwatches(th config.DashboardTheme) []string {

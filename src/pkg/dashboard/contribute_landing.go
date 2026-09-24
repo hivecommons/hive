@@ -167,6 +167,7 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 		contributorAutoPromoteAt, contributorTrustedAt,
 	)
 
+	themeHeadHTML := `<link id="contributor-theme-css" rel="stylesheet" href="/api/theme.css?scope=contributor">`
 	customStyleHeadHTML := ""
 	customStyleNoticeHTML := ""
 	if rawStyle := strings.TrimSpace(r.URL.Query().Get("style")); rawStyle != "" {
@@ -728,27 +729,9 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .me-standing b{color:var(--cc-text)}
 .me-standing__link{color:var(--cc-accent);text-decoration:none;font-weight:600;white-space:nowrap}
 .me-standing__link:hover{text-decoration:underline}
-/* ── The 7 profile-style skins (palette / framing / density variations) ────────
-   Each is a tasteful, readable, professional variant of the SAME card. They only
-   change accent palette, header treatment, medallion framing, and density —
-   never the data or the affordances. Default (style1) needs no override. */
-/* style1 "Rank metal" is the DEFAULT: it takes its accent from the viewer's
-   ceremony rank metal (--me-metal/--me-metal-soft, set inline by the client
-   from the trust tier). Styles 2..7 override --me-accent directly, so picking
-   any other skin beats the rank metal — exactly like the old Signal blue. */
-.me-card--style1{--me-accent:var(--me-metal,#58a6ff);--me-accent-soft:var(--me-metal-soft,rgba(88,166,255,.14))}
-.me-card--style2{--me-accent:#3fb950;--me-accent-soft:rgba(63,185,80,.14)}
-.me-card--style3{--me-accent:#d29922;--me-accent-soft:rgba(210,153,34,.15)}
-.me-card--style4{--me-accent:#a371f7;--me-accent-soft:rgba(163,113,247,.15)}
-.me-card--style5{--me-accent:var(--cc-muted);--me-accent-soft:rgba(139,148,158,.12)}     /* minimal / restrained */
-.me-card--style5 .dz-identity{min-height:0}
-.me-card--style5 .me-emblem{display:none}
-.me-card--style5 .dz-medallion{background:var(--cc-bg)}
-.me-card--style6{--me-accent:#f778ba;--me-accent-soft:rgba(247,120,186,.14)}
-.me-card--style6 .me-emblem{opacity:.75}
-.me-card--style7{--me-accent:#58a6ff;--me-accent-soft:rgba(88,166,255,.18)}     /* roomy "ranked" */
-.me-card--style7 .dz-identity{min-height:340px}
-.me-card--style7 .dz-identity-inner{padding:34px 30px 26px}
+/* Contributor profile skins now live in pkg/dashboard/theme/themes/*.yaml and
+   are loaded through the same /api/themes catalog as dashboard Appearance. The
+   legacy localStorage key is still honored, but numeric skin ids map to theme ids. */
 /* ── Contributor dossier additions (me-card v2) ───────────────────────────────
    Identity band gains an equipped-title callsign + designation line; the body
    gains the operator-profile rows (archetype / specializations / loadout /
@@ -1525,7 +1508,7 @@ select.admin-act{min-width:0;max-width:100%%}
   .lb-spark{justify-content:flex-start}
   .lb-trend{padding-left:14px;padding-right:14px}
 }
-</style>%s</head><body>
+</style>%s%s</head><body>
 <div class="page-chrome">
 <div class="page-tabs" role="tablist">
 <button class="page-tab active" role="tab" id="ptab-onboarding" aria-selected="true" data-panel="tab-onboarding">Onboarding</button>
@@ -2812,6 +2795,7 @@ function tabFromLocation(){
   // pushing so we never add a spurious history entry for the initial page.
   if(target)activateTab(target,false);
   // Surface the trusted-invite banner if we arrived via ?invite=<token> (#2598).
+  try{loadContributorThemes();}catch(e){console.error('loadContributorThemes failed',e);}
   try{initInviteBanner();}catch(e){console.error('initInviteBanner failed',e);}
   // Build the tab-aware "file an issue" link on load even when we DON'T activate
   // (bare /contribute = onboarding, no activateTab call). Guarded.
@@ -3030,9 +3014,11 @@ function renderLeaderboard(contribs){
 // and render a pride-forward personal card pinned above the standings. Anonymous
 // or unknown viewers get a subtle sign-in prompt — never an error. All data is
 // real (tier / stats / milestones / hives / rank come straight from the hub).
-var ME_STYLE_KEY='hive.me.cardStyle';   // localStorage key for the chosen skin
-var ME_STYLE_COUNT=7;                    // number of profile-style skins offered
+var ME_STYLE_KEY='hive.me.cardStyle';   // legacy localStorage key; values may be old 1..7 skin ids or new theme ids
+var ME_STYLE_COUNT=7;                    // number of legacy profile-style skins offered
 var ME_STYLE_NAMES=['Rank metal','Verdant','Amber rank','Violet advisor','Minimal','Rose','Roomy ranked'];
+var ME_LEGACY_THEME_IDS=['contributor-rank-metal','contributor-verdant','contributor-amber-rank','contributor-violet-advisor','contributor-minimal','contributor-rose','contributor-roomy-ranked'];
+var ME_CONTRIBUTOR_THEMES=ME_LEGACY_THEME_IDS.map(function(id,i){return {id:id,name:ME_STYLE_NAMES[i]||id,description:'Contributor profile style',dark:true,scopes:['dashboard','contributor']};});
 // Ceremony rank metals: trust tier → [designation, metal accent, soft wash].
 // The metal drives style1 ("Rank metal", the default skin) via --me-metal;
 // picking any other skin overrides --me-accent and beats the metal.
@@ -3080,10 +3066,31 @@ function meEmblemProps(seed){
   };
 }
 
-function meStyleClass(){
-  var n=parseInt(localStorage.getItem(ME_STYLE_KEY)||'1',10);
-  if(!(n>=1&&n<=ME_STYLE_COUNT))n=1;
-  return n;
+function meThemeID(){
+  var raw='';
+  try{raw=localStorage.getItem(ME_STYLE_KEY)||'';}catch(e){raw='';}
+  var n=parseInt(raw||'1',10);
+  if(String(n)===String(raw||'1')&&n>=1&&n<=ME_LEGACY_THEME_IDS.length)return ME_LEGACY_THEME_IDS[n-1];
+  return raw||ME_LEGACY_THEME_IDS[0];
+}
+function applyContributorTheme(id){
+  id=id||ME_LEGACY_THEME_IDS[0];
+  var link=document.getElementById('contributor-theme-css');
+  if(link)link.href='/api/theme.css?scope=contributor&theme='+encodeURIComponent(id)+'&v='+Date.now();
+  var card=document.getElementById('me-card');
+  if(card)card.setAttribute('data-theme-id',id);
+}
+function loadContributorThemes(){
+  return fetch('/api/themes?scope=contributor').then(function(r){return r.ok?r.json():null;}).then(function(d){
+    if(d&&Array.isArray(d.themes)&&d.themes.length)ME_CONTRIBUTOR_THEMES=d.themes;
+    applyContributorTheme(meThemeID());
+    var sel=document.getElementById('me-style-select');
+    if(sel)renderContributorThemeOptions(sel);
+  }).catch(function(){applyContributorTheme(meThemeID());});
+}
+function renderContributorThemeOptions(sel){
+  var current=meThemeID();
+  sel.innerHTML=ME_CONTRIBUTOR_THEMES.map(function(t){return '<option value="'+esc(t.id)+'"'+(t.id===current?' selected':'')+'>'+esc(t.name||t.id)+'</option>';}).join('');
 }
 function leaderboardCustomStyleLabel(src){
   var base=String(src||'').split('@')[0].split('/');
@@ -3431,15 +3438,15 @@ function meLoadFieldLog(username){
 function renderMeCard(mount,p){
   var tier=p.trust_tier||'newcomer';
   var avatar=p.avatar_url||('https://github.com/'+encodeURIComponent(p.github_username)+'.png');
-  var styleN=meStyleClass();
+  var themeID=meThemeID();
   var rankMeta=ME_RANK_META[tier]||ME_RANK_META.newcomer;
   var em=meEmblemProps(p.emblem_seed||p.github_username||'');
 
   var styleOpts='';
   var customStyleSrc=window.HIVE_LEADERBOARD_CUSTOM_STYLE_SRC||'';
-  for(var i=1;i<=ME_STYLE_COUNT;i++){
-    styleOpts+='<option value="'+i+'"'+(!customStyleSrc&&i===styleN?' selected':'')+'>'+esc(ME_STYLE_NAMES[i-1]||('Style '+i))+'</option>';
-  }
+  ME_CONTRIBUTOR_THEMES.forEach(function(t){
+    styleOpts+='<option value="'+esc(t.id)+'"'+(!customStyleSrc&&t.id===themeID?' selected':'')+'>'+esc(t.name||t.id)+'</option>';
+  });
   if(customStyleSrc){
     var dropped=parseInt(window.HIVE_LEADERBOARD_CUSTOM_STYLE_DROPPED||'0',10)||0;
     var customLabel=dropped>0?('Custom ('+dropped+' rules removed by sanitizer)'):('Custom ('+leaderboardCustomStyleLabel(customStyleSrc)+')');
@@ -3485,7 +3492,7 @@ function renderMeCard(mount,p){
   var footId=(p.hives&&p.hives[0]&&p.hives[0].id)?p.hives[0].id:ccProjectName;
 
   var html=''
-  +'<div class="me-card me-card--style'+styleN+'" id="me-card" style="--me-metal:'+rankMeta[1]+';--me-metal-soft:'+rankMeta[2]+'">'
+  +'<div class="me-card" id="me-card" data-theme-id="'+esc(themeID)+'" style="--me-metal:'+rankMeta[1]+';--me-metal-soft:'+rankMeta[2]+'">'
   // Masthead + epigraph (per-hive flavor; defaults ship on generic hives).
   +'<header class="dz-masthead"><span class="brand">'+ccProjectName+' · contributor record</span>'
     +'<span class="id">DOSSIER '+esc(p.github_username)+'</span></header>'
@@ -3561,16 +3568,16 @@ function renderMeCard(mount,p){
     else if(typeof ccLoadLimits==='function'){try{ccLoadLimits();}catch(e){}}
   }
 
+  applyContributorTheme(themeID);
   var sel=document.getElementById('me-style-select');
   if(sel)sel.addEventListener('change',function(){
     if(sel.value==='custom')return;
-    var v=parseInt(sel.value,10);if(!(v>=1&&v<=ME_STYLE_COUNT))v=1;
-    localStorage.setItem(ME_STYLE_KEY,String(v));
+    var v=sel.value||ME_LEGACY_THEME_IDS[0];
+    localStorage.setItem(ME_STYLE_KEY,v);
     clearLeaderboardCustomStyleParam();
     var customOpt=sel.querySelector('option[value="custom"]');
     if(customOpt)customOpt.remove();
-    var card=document.getElementById('me-card');
-    if(card){for(var k=1;k<=ME_STYLE_COUNT;k++)card.classList.remove('me-card--style'+k);card.classList.add('me-card--style'+v);}
+    applyContributorTheme(v);
   });
 }
 
@@ -7010,7 +7017,7 @@ fetch('/api/version').then(function(r){return r.json()}).then(function(d){
   el.innerHTML=dot+' Hive v'+d.version+' ('+d.short+')' + (d.behind?' · <span style="color:var(--cc-amber)">update available</span>':' · up to date');
 }).catch(function(){});
 </script>
-</body></html>`, "{{HIVE_BRANCH}}", upstreamBranch()), "{{HIVE_HUB_PROXIED}}", hubProxiedJS), "{{KNOWLEDGE_STATE_PROTOCOL_VERSION}}", knowledgeStateProtocolVersionJS), projectName, webstatic.MichromaFontFaceCSS, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURLJS, projectNameJS, tierTableRows, customStyleNoticeHTML)
+</body></html>`, "{{HIVE_BRANCH}}", upstreamBranch()), "{{HIVE_HUB_PROXIED}}", hubProxiedJS), "{{KNOWLEDGE_STATE_PROTOCOL_VERSION}}", knowledgeStateProtocolVersionJS), projectName, webstatic.MichromaFontFaceCSS, themeHeadHTML, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURLJS, projectNameJS, tierTableRows, customStyleNoticeHTML)
 	webstatic.ApplyDocumentScriptSrcElem(w, page.Bytes())
 	_, _ = w.Write(page.Bytes())
 }

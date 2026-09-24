@@ -11,6 +11,7 @@ Fields:
 - `description`: short original description. Do not include copyrighted quotes,
   logos, franchise art, or bundled fonts you do not have a license to ship.
 - `author`: credit for this theme definition.
+- `scopes`: optional list of surfaces where the theme is offered. Use `dashboard`, `contributor`, or both. Empty means dashboard-only for old files.
 - `dark`: whether the base palette is dark.
 - `tokens`: CSS custom properties from `pkg/dashboard/static/index.html` `:root`
   (for example `--bg`, `--bg-soft`, `--panel`, `--panel-strong`, `--text`,
@@ -31,6 +32,7 @@ id: example
 name: Example
 description: Original one-line description.
 author: Your Name
+scopes: [dashboard, contributor]
 dark: true
 tokens:
   "--bg": "#101214"

@@ -2,6 +2,7 @@ id: nord
 name: Nord
 description: Arctic north-bluish clean theme.
 author: Hive contributors
+scopes: [dashboard, contributor]
 dark: true
 tokens:
   "--bg": "#2e3440"

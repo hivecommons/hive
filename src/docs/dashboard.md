@@ -54,7 +54,7 @@ dashboard:
       .panel { border-radius: 2px; }
 ```
 
-Built-ins are loaded from one YAML file per theme under `src/pkg/dashboard/theme/themes/`. Initial themes include `hive`, `hive-dark`, `hive-light`, `star-wars`, `dungeons-and-dragons`, `star-trek`, `cyberpunk`, `terminal`, `solarized-dark`, and `nord`. Tokens are
+Built-ins are loaded from one YAML file per theme under `src/pkg/dashboard/theme/themes/`. Initial themes include `hive`, `hive-dark`, `hive-light`, `star-wars`, `dungeons-and-dragons`, `star-trek`, `cyberpunk`, `terminal`, `solarized-dark`, `nord`, and migrated contributor profile skins such as `contributor-violet-advisor`. Theme files can set `scopes: [dashboard, contributor]` so the same catalog drives dashboard Appearance and contributor profile styling. Tokens are
 validated against the dashboard's `:root` CSS custom properties so typos fail
 fast. Custom CSS is capped at 32 KiB, strips HTML/style-breakout characters, and
 only permits `https:` or bounded `data:` URLs; inlined backgrounds are capped at
@@ -72,6 +72,12 @@ the theme API for the closest light or dark built-in variant and refreshes
 `/api/theme.css` without reloading the dashboard.
 
 Preset screenshots are committed in `src/docs/images/themes/` for the shipped catalog.
+
+The contributor profile page uses the same theme catalog. Its former local profile
+style numbers map to `contributor-*` theme ids, so existing browser-local choices
+continue to work while new themes appear in the profile picker. Contributor CSS is
+layered after shared theme variables and hive-wide custom CSS: theme vars → admin
+Appearance custom CSS → contributor `?style=owner/repo/path.css@ref` stylesheet.
 
 
 ### How to add a dashboard theme

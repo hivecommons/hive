@@ -21060,7 +21060,22 @@
           "System"
         ],
         "summary": "Dashboard theme catalog",
-        "description": "Lists embedded dashboard themes with id, display metadata, dark/light flag, and preview swatches for Settings → Appearance.",
+        "description": "Lists embedded dashboard and contributor themes with id, display metadata, scopes, dark/light flag, and preview swatches for Settings → Appearance.",
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "dashboard",
+                "contributor"
+              ]
+            },
+            "description": "Optional surface scope to filter the embedded catalog."
+          }
+        ],
         "responses": {
           "200": {
             "description": "Theme catalog",
@@ -21094,6 +21109,12 @@
                             "items": {
                               "type": "string"
                             }
+                          },
+                          "scopes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
                           }
                         }
                       }
@@ -21112,7 +21133,7 @@
           "System"
         ],
         "summary": "Dashboard theme stylesheet",
-        "description": "Returns the effective dashboard theme CSS with ETag and Cache-Control headers. Requires dashboard auth/session. Pass ?theme=<id> to render an embedded preset without persisting it.",
+        "description": "Returns the effective dashboard theme CSS with ETag and Cache-Control headers. Requires dashboard auth/session. Pass ?theme=<id> to render an embedded preset without persisting it. Pass ?scope=contributor to include contributor token aliases and hive-wide custom CSS layering for contributor pages.",
         "parameters": [
           {
             "name": "theme",
@@ -21122,6 +21143,19 @@
               "type": "string"
             },
             "description": "Optional embedded theme id to preview."
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "dashboard",
+                "contributor"
+              ]
+            },
+            "description": "Optional surface scope for CSS variable aliases and layering."
           }
         ],
         "responses": {

@@ -2,6 +2,7 @@ id: hive
 name: Hive
 description: Honey-on-wax palette for the default Hive dashboard.
 author: Hive contributors
+scopes: [dashboard, contributor]
 dark: true
 tokens:
   "--bg": "#14110b"

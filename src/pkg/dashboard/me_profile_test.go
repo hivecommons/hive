@@ -175,7 +175,7 @@ func TestMeProfile_LandingHTMLWiring(t *testing.T) {
 		"hive.me.cardStyle",
 		"linkedin.com/sharing/share-offsite",
 		"Credly",
-		"me-card--style7", // proves all 7 skins are present in the CSS
+		"contributor-roomy-ranked", // proves legacy skins are mapped to shared theme ids
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("landing HTML missing %q", want)

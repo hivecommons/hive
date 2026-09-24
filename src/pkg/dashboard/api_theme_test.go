@@ -49,6 +49,7 @@ func TestThemesListAndExplicitThemeCSS(t *testing.T) {
 			ID       string   `json:"id"`
 			Name     string   `json:"name"`
 			Swatches []string `json:"swatches"`
+			Scopes   []string `json:"scopes"`
 		} `json:"themes"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
@@ -66,9 +67,28 @@ func TestThemesListAndExplicitThemeCSS(t *testing.T) {
 	if !found {
 		t.Fatalf("/api/themes missing star-wars with swatches: %+v", payload.Themes)
 	}
+	contrib := doGet(s, "/api/themes?scope=contributor")
+	if contrib.Code != http.StatusOK {
+		t.Fatalf("GET /api/themes?scope=contributor = %d: %s", contrib.Code, contrib.Body.String())
+	}
+	var scoped struct {
+		Themes []struct {
+			ID string `json:"id"`
+		} `json:"themes"`
+	}
+	if err := json.Unmarshal(contrib.Body.Bytes(), &scoped); err != nil {
+		t.Fatalf("decode scoped themes: %v", err)
+	}
+	if len(scoped.Themes) <= len(payload.Themes)-7 {
+		t.Fatalf("contributor scope did not include migrated profile skins: got %d of %d", len(scoped.Themes), len(payload.Themes))
+	}
 	css := doGet(s, "/api/theme.css?theme=terminal")
 	if css.Code != http.StatusOK || !strings.Contains(css.Body.String(), "green-on-black") && !strings.Contains(css.Body.String(), "terminal") {
 		t.Fatalf("explicit terminal css = %d: %s", css.Code, css.Body.String())
+	}
+	contribCSS := doGet(s, "/api/theme.css?scope=contributor&theme=contributor-violet-advisor")
+	if contribCSS.Code != http.StatusOK || !strings.Contains(contribCSS.Body.String(), "--cc-bg") || !strings.Contains(contribCSS.Body.String(), "--me-accent") {
+		t.Fatalf("contributor theme css = %d: %s", contribCSS.Code, contribCSS.Body.String())
 	}
 	if bad := doGet(s, "/api/theme.css?theme=missing"); bad.Code != http.StatusNotFound {
 		t.Fatalf("missing theme css = %d, want 404", bad.Code)

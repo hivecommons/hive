@@ -2,6 +2,7 @@ id: hive-dark
 name: Hive Dark
 description: Hub-aligned dark dashboard palette with cool blue accents.
 author: Hive contributors
+scopes: [dashboard, contributor]
 dark: true
 tokens:
   "--bg": "#080b0f"

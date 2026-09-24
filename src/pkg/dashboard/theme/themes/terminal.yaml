@@ -2,6 +2,7 @@ id: terminal
 name: Terminal
 description: Green-on-black mono theme for operators who live in shells.
 author: Hive contributors
+scopes: [dashboard, contributor]
 dark: true
 tokens:
   "--bg": "#000000"
