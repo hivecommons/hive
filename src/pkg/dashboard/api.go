@@ -90,6 +90,9 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/runs/{key}/checkpoint", s.handleRunCheckpointDecision)
 	s.mux.HandleFunc("GET /api/runs/{key}", s.handleRunGet)
 	s.mux.HandleFunc("POST /api/runs/{key}/reset", s.handleRunReset)
+	s.mux.HandleFunc("GET /api/campaigns", s.handleCampaignsList)
+	s.mux.HandleFunc("GET /api/campaigns/{id}", s.handleCampaignGet)
+	s.mux.HandleFunc("POST /api/campaigns/{id}/resume", s.handleCampaignResume)
 	s.mux.HandleFunc("GET /api/widget", s.handleWidget)
 	s.mux.HandleFunc("GET /api/pane/{agent}", s.handlePane)
 	// Full retained scrollback of an agent's latest run, as plain text (#3693).
