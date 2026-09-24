@@ -30,6 +30,12 @@ the workspace after a restart. Maintainers record poll decisions with a
 rationale; accepted suggestions and decisions create attributed spec revisions
 with human or agent/model attribution and diffs.
 
+Live Jam mode upgrades `/api/campaigns/{id}/jam/ws` to a WebSocket so signed-in
+participants can see who is present and which section each person is editing.
+Live spec edits carry the sender's last seen spec revision; stale edits are
+rejected with a conflict message instead of overwriting newer work, so
+reconnecting clients can refresh and merge intentionally.
+
 ## Enabling it
 
 ```yaml

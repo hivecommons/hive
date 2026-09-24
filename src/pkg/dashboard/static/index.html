@@ -2971,6 +2971,8 @@
     .campaign-jam-form { display: grid; gap: var(--sp-2); margin-top: var(--sp-3); }
     .campaign-jam-form textarea { min-height: 72px; resize: vertical; }
     .campaign-jam-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+    .campaign-jam-live { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+    .campaign-jam-live-pill { border: 1px solid var(--border); border-radius: var(--r-full); padding: var(--sp-1) var(--sp-2); background: var(--bg); color: var(--fg); }
     @media (max-width: 1100px) { .campaign-jam-grid { grid-template-columns: 1fr; } }
     @media (max-width: 900px) { .campaigns-filters { grid-template-columns: 1fr 1fr; } .campaign-row { grid-template-columns: 1fr; } }
   </style>
@@ -15663,6 +15665,9 @@ function burnAreaChart() {
       }).join('');
     }
 
+    let _campaignJamSocket = null;
+    let _campaignJamLiveRevision = '';
+
     async function openCampaignJam(id) {
       if (!id) return;
       const panel = document.getElementById('campaign-jam-panel');
@@ -15672,6 +15677,7 @@ function burnAreaChart() {
         const data = await r.json();
         if (!data.ok) { throw new Error(data.error || 'Failed to load Jam'); }
         renderCampaignJam(id, data.jam || {});
+        connectCampaignJamLive(id);
       } catch (e) {
         if (panel) panel.innerHTML = '<div class="campaign-empty">Jam failed: ' + escapeHtml(e.message) + '</div>';
       }
@@ -15684,10 +15690,23 @@ function burnAreaChart() {
       const suggestions = jam.suggestions || [];
       const polls = jam.polls || [];
       const revisions = jam.revisions || [];
+      _campaignJamLiveRevision = jam.spec_revision_id || '';
       panel.innerHTML = `
         <div class="campaigns-head">
           <div><div class="campaigns-title">Jam: ${escapeHtml(id)}</div><div class="campaigns-subtitle">Async section threads, suggestions, polls, decisions and attributed spec revisions.</div></div>
           <button class="hv-btn btn-secondary btn-sm" data-action="openCampaignJam" data-arg0="${escapeHtml(id)}">Refresh Jam</button>
+        </div>
+        <div class="campaign-jam-box">
+          <h4>Live session</h4>
+          <div id="campaign-jam-live-status" class="campaign-jam-live">Connecting…</div>
+          <div class="campaign-jam-form">
+            <input id="jam-live-section" class="campaigns-input" placeholder="Section you are editing" />
+            <textarea id="jam-live-content" class="campaigns-input" placeholder="Draft spec content for conflict-aware live edit">${escapeHtml(jam.spec_content || '')}</textarea>
+            <div class="campaign-jam-actions">
+              <button class="hv-btn btn-secondary btn-sm" data-action="focusCampaignJamLive" data-arg0="${escapeHtml(id)}">Share focus</button>
+              <button class="hv-btn btn-primary btn-sm" data-action="submitCampaignJamLiveEdit" data-arg0="${escapeHtml(id)}">Submit live edit</button>
+            </div>
+          </div>
         </div>
         <div class="campaign-jam-grid">
           <div class="campaign-jam-box">
@@ -15723,6 +15742,49 @@ function burnAreaChart() {
           <h4>Revision history</h4>
           <div class="campaign-jam-list">${revisions.length ? revisions.map(r => `<div><strong>${escapeHtml(r.id)}</strong> by ${escapeHtml((r.author && r.author.name) || 'unknown')}${r.model ? ' · ' + escapeHtml(r.model) : ''}<br>${escapeHtml(r.reason || 'revision')}</div>`).join('') : 'No spec revisions yet.'}</div>
         </div>`;
+    }
+
+    function connectCampaignJamLive(id) {
+      if (_campaignJamSocket) { _campaignJamSocket.close(); _campaignJamSocket = null; }
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const url = protocol + '//' + window.location.host + '/api/campaigns/' + encodeURIComponent(id) + '/jam/ws';
+      try {
+        const ws = new WebSocket(url);
+        _campaignJamSocket = ws;
+        ws.onmessage = function(event) {
+          const msg = JSON.parse(event.data || '{}');
+          if (msg.jam && msg.jam.spec_revision_id) { _campaignJamLiveRevision = msg.jam.spec_revision_id; }
+          if (msg.type === 'snapshot' || msg.type === 'presence') { renderCampaignJamPresence(msg.presence || []); }
+          if (msg.type === 'edit_applied' && msg.jam) { renderCampaignJam(id, msg.jam); connectCampaignJamLive(id); }
+          if (msg.type === 'conflict') { alert('Jam edit conflict: refresh or merge against revision ' + (msg.expected_revision_id || 'current')); }
+          if (msg.type === 'error') { alert('Jam live error: ' + (msg.error || 'unknown error')); }
+        };
+        ws.onclose = function() { renderCampaignJamPresence([], 'Disconnected; refresh Jam to reconnect.'); };
+      } catch (e) {
+        renderCampaignJamPresence([], 'Live unavailable: ' + e.message);
+      }
+    }
+
+    function renderCampaignJamPresence(presence, message) {
+      const el = document.getElementById('campaign-jam-live-status');
+      if (!el) return;
+      if (message) { el.textContent = message; return; }
+      el.innerHTML = presence.length ? presence.map(function(p) {
+        const name = (p.actor && p.actor.name) || 'participant';
+        return '<span class="campaign-jam-live-pill">' + escapeHtml(name) + (p.section ? ' · ' + escapeHtml(p.section) : '') + '</span>';
+      }).join('') : 'No live participants yet.';
+    }
+
+    function focusCampaignJamLive() {
+      if (!_campaignJamSocket || _campaignJamSocket.readyState !== WebSocket.OPEN) return;
+      const section = document.getElementById('jam-live-section')?.value || '';
+      _campaignJamSocket.send(JSON.stringify({ type: 'focus', section }));
+    }
+
+    function submitCampaignJamLiveEdit() {
+      if (!_campaignJamSocket || _campaignJamSocket.readyState !== WebSocket.OPEN) { alert('Jam live socket is not connected'); return; }
+      const content = document.getElementById('jam-live-content')?.value || '';
+      _campaignJamSocket.send(JSON.stringify({ type: 'edit', base_revision_id: _campaignJamLiveRevision, content, reason: 'live co-edit' }));
     }
 
     async function createCampaignJamThread(id) {

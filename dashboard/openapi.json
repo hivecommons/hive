@@ -22781,6 +22781,33 @@
           }
         }
       }
+    },
+    "/api/campaigns/{id}/jam/ws": {
+      "get": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Join Jam live presence and co-editing",
+        "description": "Upgrades to a WebSocket. Clients receive presence snapshots, section focus updates, accepted live edits and conflict messages. Live edits include base_revision_id and are rejected when stale.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "WebSocket upgrade accepted"
+          },
+          "403": {
+            "description": "Read access required"
+          }
+        }
+      }
     }
   },
   "components": {
