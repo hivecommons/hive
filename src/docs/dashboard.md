@@ -17,10 +17,22 @@ sync with the Go config schema. `pkg/dashboard` has a guard test that extracts
 those keys from the FAQ panel and asserts each path exists in `config.Config`
 via YAML tags.
 
-
 ## Design system
 
 Dashboard UI changes should follow the shared [dashboard design system](dashboard-design-system.md) and [ADR-0018](adr/0018-dashboard-design-tokens.md). The token layer is the theme contract for future user theme/background work and the migration path away from static inline styles.
+
+## Governor card
+
+The dashboard **Governor** card summarizes queue depth, operating mode, budget
+posture, and cadence controls for the hive. Its **PRs by model** section reads
+`GET /api/governor/pr-models` with the selected `7d`, `30d`, or `all` window.
+Rows keep the merged/open/closed PR-volume bar, then add compact effectiveness
+columns from the same aggregation used by the contributor Operations **Most
+effective models** panel: merged PRs, first-pass merge rate, verified-PR run
+rate, failure rate, and completed-without-PR ("nothing to ship") rate. Models
+that meet `HIVE_CONTRIBUTE_EFFECTIVE_MODELS_MIN_PRS` (default `5`) merged PRs
+get rank badges. The default row order is effectiveness rank; operators can
+toggle back to raw PR count without changing the selected window.
 
 ## Appearance themes
 
