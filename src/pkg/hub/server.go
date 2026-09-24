@@ -1647,6 +1647,9 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("GET /components.css", s.serveStatic("static/components.css"))
 	s.mux.HandleFunc("GET /api/reading-list", s.handleReadingList)
 	s.mux.HandleFunc("GET /reading", s.serveStatic("static/reading.html"))
+	s.mux.HandleFunc("GET /robots.txt", s.serveStatic("static/robots.txt"))
+	s.mux.HandleFunc("GET /sitemap.xml", s.serveStatic("static/sitemap.xml"))
+	s.mux.HandleFunc("GET /llms.txt", s.serveStatic("static/llms.txt"))
 	s.mux.HandleFunc("GET "+hubErrorPagePath+"{code}", s.handleHubErrorPage)
 	// Unlinked page (not in nav, noindex) — direct-URL only. The CNCF End User
 	// reference-architecture draft, shareable without artifact permissions.

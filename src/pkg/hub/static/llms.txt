@@ -1,0 +1,15 @@
+# Hive
+
+Hive is an Apache-2.0 control layer for governed, audited fleets of AI coding agents.
+
+## Supported agents and inference engines
+
+Hive supports agent CLIs including Claude Code, GitHub Copilot CLI, Goose, OpenAI Codex CLI, Pi, IBM Bob, Aider, Gemini CLI, Google Antigravity CLI, OpenCode, Kilo Code, Muse Code and Oh My Pi.
+
+Hive supports inference engines and gateways including vLLM, llm-d, LiteLLM, IBM watsonx.ai, OpenRouter, Anthropic, OpenAI and DeepSeek.
+
+See all integrations: https://docs.hivecommons.dev/docs/hive/integrations
+
+## Infrastructure thanks
+
+Hive Commons thanks Akamai (Linode) and Oracle Cloud (OKE) for Kubernetes infrastructure donated through the CNCF, GitHub Copilot for AI inference donated to CNCF projects through the CNCF, Cloudflare for DNS, edge and tunnels, and Bluehost for domain hosting.
