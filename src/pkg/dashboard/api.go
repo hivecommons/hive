@@ -2025,6 +2025,12 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 	if msg == "" && s.deps.Scheduler != nil {
 		msg = s.deps.Scheduler.BuildAgentMessageFromLastActionable(name)
 	}
+	if sanitized, ok := s.enforceKickPrompt(r, name, msg); !ok {
+		jsonError(w, "ioscan rejected critical injection in kick prompt", http.StatusUnprocessableEntity)
+		return
+	} else {
+		msg = sanitized
+	}
 
 	// Queue the kick and answer immediately (#5325).
 	//
@@ -2066,6 +2072,22 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 	jsonStatusResponse(w, http.StatusAccepted, map[string]interface{}{
 		"ok": true, "status": kickStatusQueued, "agent": name,
 	})
+}
+
+func (s *Server) enforceKickPrompt(r *http.Request, agentName, text string) (string, bool) {
+	if s.deps == nil || s.deps.Config == nil || !s.deps.Config.Ioscan.IsEnabled() {
+		return text, true
+	}
+	sanitized, v := ioscan.EnforceInput(text)
+	if v.Blocked {
+		s.auditFromRequest(r, "ioscan_block", auditDetail("context", "kick_prompt", "findings", strconv.Itoa(len(v.Findings))), agentName)
+	}
+	level := detectACMMLevel(s.deps.Config)
+	if s.deps.Config.Ioscan.FailClosedAtLevel(level) && v.HasCriticalInjection() {
+		s.auditFromRequest(r, "ioscan_fail_closed", auditDetail("context", "kick_prompt", "findings", strconv.Itoa(len(v.Findings))), agentName)
+		return sanitized, false
+	}
+	return sanitized, true
 }
 
 // Kick dispatch statuses on the wire. "queued"/"in-flight" are the POST's

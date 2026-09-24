@@ -1,0 +1,1 @@
+- Enforce ioscan input scanning on dashboard kick prompts, redacting or refusing unsafe prompts before they reach agents (#8698).
