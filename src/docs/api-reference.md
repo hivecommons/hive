@@ -182,6 +182,7 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `POST` | `/api/restart/{agent}` | Owner only | Restart | `pkg/dashboard/api.go:132` |
 | `GET` | `/api/model-advisor` | Dashboard auth/session | Model Advisor | `pkg/dashboard/api.go:145` |
 | `GET` | `/api/governor/pr-models` | Dashboard auth/session | Agent-authored PR distribution by normalized attribution model/backend for `window=7d`, `30d`, or `all`, including per-model rework stats and the top 10 most-reworked PRs | `pkg/dashboard/api.go:146` |
+| `GET` | `/api/reviewer/accuracy` | Dashboard auth/session | Reviewer verdict calibration for the configured window: false-approve/false-block rates and confidence buckets per perspective and reviewer model | `pkg/dashboard/api.go:202` |
 | `GET` | `/api/agents` | Dashboard auth/session | Agents List | `pkg/dashboard/api.go:268` |
 | `POST` | `/api/agents` | Owner only | Agent Create | `pkg/dashboard/api.go:269` |
 | `POST` | `/api/agents/import` | Owner only | Agent Import | `pkg/dashboard/api.go:270` |
