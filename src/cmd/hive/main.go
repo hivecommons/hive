@@ -8102,6 +8102,9 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	client.SetReviseRepos(cfg.Review.ReviseRepos)
 	client.SetPerspectives(reviewPerspectiveSet(cfg, logger))
 	client.SetConfidenceScore(func() bool { return cfg.Review.ConfidenceScore })
+	client.SetReviewBacklog(func() (bool, int) {
+		return !cfg.Review.OutOfScopeBacklogDisabled, cfg.Review.MaxOutOfScopeBacklogIssues
+	})
 	// #8380: issue claims are read at enumeration time only while
 	// governor.claims.enabled is on; the setting is read live so the Features
 	// toggle applies without a client rebuild.
@@ -8376,9 +8379,10 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			// Run trailers (#8310) and the plan they name, for plan_match
 			// (#8317). Identifiers and planner output only: the PR body
 			// itself still never reaches the prompt.
-			RunKey:   pr.HiveRun,
-			PlanRef:  pr.HivePlan,
-			PlanWave: planWaveFor(cfg, beadStores, pr.HivePlan, pr.HiveRun),
+			RunKey:        pr.HiveRun,
+			PlanRef:       pr.HivePlan,
+			PlanWave:      planWaveFor(cfg, beadStores, pr.HivePlan, pr.HiveRun),
+			ScopeContract: pr.ScopeContract,
 		})
 	}
 	agents := make([]review.AgentCapability, 0, len(cfg.Agents))

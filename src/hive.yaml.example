@@ -611,6 +611,8 @@ governor:
 #   max_parallel_reviews: 5
 #   reviewer_agents: [] # optional explicit list; otherwise agents with review role/keywords are used
 #   fixer_agent: ""     # optional override; defaults to the PR lane, then scanner
+#   out_of_scope_backlog_disabled: false # true opts out of review-filed backlog issues
+#   max_out_of_scope_backlog_issues: 3   # cap per PR; 0 uses the default
 
 # External review-bot threads on hive-authored PRs (#7360) — optional. When a
 # bot named here leaves inline review threads on a PR the hive opened, the

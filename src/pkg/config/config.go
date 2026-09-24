@@ -7060,6 +7060,13 @@ type ReviewConfig struct {
 	// by default: a review surface a repo did not ask for is noise, and the
 	// verdict marker already routes the decision.
 	ConfidenceScore bool `yaml:"confidence_score,omitempty" json:"confidence_score,omitempty"`
+	// OutOfScopeBacklogDisabled opts out of filing cited out-of-scope review
+	// findings as follow-up issues. Default is enabled: the review can stay
+	// narrow without losing real adjacent defects.
+	OutOfScopeBacklogDisabled bool `yaml:"out_of_scope_backlog_disabled,omitempty" json:"out_of_scope_backlog_disabled,omitempty"`
+	// MaxOutOfScopeBacklogIssues caps how many backlog issues one PR review may
+	// file. Zero uses github.DefaultReviewBacklogIssueCap.
+	MaxOutOfScopeBacklogIssues int `yaml:"max_out_of_scope_backlog_issues,omitempty" json:"max_out_of_scope_backlog_issues,omitempty"`
 	// Recommendations maintains a single, continuously-updated issue per
 	// repository that answers "what should I merge next?" for a human working
 	// the queue by hand.
