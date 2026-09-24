@@ -95,7 +95,7 @@ not a unit test:
 | Teams / Matrix / Telegram | One command round-trip and one notification delivery each. | ⬜ |
 | Dashboard chat | Conformance passes; one live round trip of `!status` from the panel is linked. | ⬜ Pending live exercise; code landed in [#8326](https://github.com/hivecommons/hive/pull/8326) and conformance is tracked by the row above. |
 | Inception via chat | One live greenfield run reaches `complete` entirely through the chat spine. | ⬜ Pending live exercise; code landed in [#8333](https://github.com/hivecommons/hive/pull/8333) / [#8393](https://github.com/hivecommons/hive/pull/8393). Exercise with `just runs-e2e` against a live hive once #8466 lands. |
-| Runs via chat | One live run reaches a human gate and is approved from the chat spine; the next runs snapshot shows it advancing. | ⬜ Pending live exercise; code landed in [#8351](https://github.com/hivecommons/hive/pull/8351) / [#8365](https://github.com/hivecommons/hive/pull/8365). Exercise with `just runs-e2e` against a live hive once #8466 lands. |
+| Runs via chat | One live run reaches a human gate and is approved from the chat spine; the next runs snapshot shows it advancing. | ✅ Live exercise passed with `just runs-e2e-v6` against `clubanderson/hive-runs-e2e#11`; evidence on [#8466](https://github.com/hivecommons/hive/issues/8466#issuecomment-5805851875) and tracker row checked on [#7683](https://github.com/hivecommons/hive/issues/7683#issuecomment-5805853195). |
 | Email | One HUMAN DECISION NEEDED escalation delivered; one allowlisted inbound reply acted on (or reply-to-act explicitly deferred here). | ⬜ |
 | Push / on-call | One `requires_human` verdict pages a real device via at least one provider. | ⬜ |
 
