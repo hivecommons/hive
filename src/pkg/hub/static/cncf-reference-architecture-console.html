@@ -27,6 +27,7 @@
     --hub-article-ok-soft: color-mix(in srgb, var(--status-ok) var(--component-tint), transparent);
     --hub-article-error-soft: color-mix(in srgb, var(--status-error) var(--component-tint), transparent);
     --hub-article-measure: 68ch;
+    --hub-article-edit-gap: .9rem;
     --hub-article-body-fs: 17px;
     --hub-article-wrap-max: 1040px;
     --hub-article-wrap-pad-x: clamp(1.1rem, 4vw, 3rem);
@@ -190,6 +191,10 @@
   .siblings { font-size: var(--fs-md); color: var(--text-faint); margin: 1.4rem 0 0; }
   .siblings a { font-weight: 600; }
 
+  /* -- edit-this-page source link -- */
+  .edit-page { font-size: var(--fs-base); color: var(--text-faint); margin: var(--hub-article-edit-gap) 0 0; }
+  .edit-page code { font-family: var(--font-mono); }
+
   .disclaimer { font-size: var(--fs-base); color: var(--text-faint); font-style: italic; }
 </style>
 
@@ -199,6 +204,7 @@
     <h1>KubeStellar Console: a multi-cluster Kubernetes dashboard maintained by a governed agent fleet</h1>
     <p class="subtitle">A Go backend, a React frontend, and a local agent that bridges a browser to the clusters in an operator's kubeconfig - with roughly a third of its ten thousand merged pull requests authored by a governed fleet of AI coding agents passing the same quality gates as human contributions.</p>
     <p class="siblings">Adopter reference architectures: <a href="/cncf-reference-architecture">Hive</a> · <a href="/cncf-reference-architecture/bluefin">Project Bluefin</a></p>
+    <p class="edit-page">Spotted something wrong? <a href="https://github.com/hivecommons/hive/edit/v5/src/pkg/hub/static/cncf-reference-architecture-console.html">Edit this page</a> - <code>cncf-reference-architecture-console.html</code></p>
 
     <dl class="meta-grid">
       <div><dt>Organisation</dt><dd>KubeStellar Console</dd></div>

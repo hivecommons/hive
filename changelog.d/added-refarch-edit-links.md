@@ -1,0 +1,1 @@
+- The three CNCF reference architecture pages now carry an "Edit this page" source link under the masthead, pointing at the page's HTML file in the GitHub web editor, so a reader who spots an error can propose a correction without hunting for the source file.
