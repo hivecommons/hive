@@ -208,6 +208,12 @@ Part 2 of [RFC #4492](https://github.com/hivecommons/hive/issues/4492): the hive
 
 Inside an **agent** session (set by the hive, never by the operator): ISSUES_ONLY+ agents receive `LINEAR_ACCESS_TOKEN` (the connected app's OAuth token, `Authorization: Bearer`) or, when no workspace is connected, `LINEAR_API_KEY` (the work-source key, bare `Authorization`). Advisory agents receive neither and have both stripped. See [linear-agent.md](linear-agent.md#github-issue-parity-agents-writing-to-linear).
 
+## Backend launch controls
+
+| Variable | Required | Default | Purpose |
+|---|---:|---|---|
+| `HIVE_AGY_LAUNCH_MODE` | No | `headless` | Controls server-managed `agy` agents. The default headless shim leaves the tmux pane at a shell prompt and runs each kick as `agy -p`, avoiding the upstream interactive TUI CPU wake loop tracked in google-antigravity/antigravity-cli#945. Set to `interactive` (or `tui`) to opt back into the old attachable TUI launch. |
+
 ## Inside an agent session
 
 Everything in this section is **set by the hive, never by the operator** - the

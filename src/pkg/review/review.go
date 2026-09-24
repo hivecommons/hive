@@ -239,13 +239,14 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	if maxFix <= 0 {
 		maxFix = DefaultFixCycleCap
 	}
+	effectiveReports := ScopeEffectiveReports(reports)
 	agg := Aggregate{
 		Threshold:      threshold,
 		FixAttempts:    opts.FixAttempts,
 		MaxFixAttempts: maxFix,
 		Perspectives:   map[Perspective]Verdict{},
 	}
-	agg.Confidence = ScoreConfidence(reports, opts.Perspectives.Len())
+	agg.Confidence = ScoreConfidence(effectiveReports, opts.Perspectives.Len())
 	if len(reports) == 0 {
 		agg.Verdict = VerdictRequiresHuman
 		agg.RequiresHuman = true
@@ -253,7 +254,8 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		return agg
 	}
 	seenVerdicts := map[Verdict]bool{}
-	for _, r := range reports {
+	for i, r := range reports {
+		effective := effectiveReports[i]
 		if agg.Repo == "" {
 			agg.Repo, agg.Number, agg.HeadSHA = r.Repo, r.Number, r.HeadSHA
 			agg.AuthorModel, agg.ReviewModel = r.AuthorModel, r.ReviewModel
@@ -272,11 +274,11 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 			seenVerdicts[VerdictApprove] = true
 			continue
 		}
-		agg.Perspectives[r.Perspective] = r.Verdict
-		seenVerdicts[r.Verdict] = true
+		agg.Perspectives[r.Perspective] = effective.Verdict
+		seenVerdicts[effective.Verdict] = true
 		for _, f := range r.Findings {
 			agg.Findings = append(agg.Findings, PerspectiveFinding{Perspective: r.Perspective, Finding: f})
-			if severityAtLeast(f.Severity, threshold) {
+			if InScopeFinding(f) && severityAtLeast(f.Severity, threshold) {
 				agg.Reasons = append(agg.Reasons, fmt.Sprintf("%s finding %q is %s (threshold %s)", r.Perspective, f.Title, f.Severity, threshold))
 			}
 		}
@@ -288,6 +290,7 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		agg.CloseRecommended = true
 		return agg
 	}
+
 	if len(agg.Reasons) > 0 || seenVerdicts[VerdictRequiresHuman] {
 		agg.Verdict = VerdictRequiresHuman
 		agg.RequiresHuman = true
@@ -313,6 +316,41 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	agg.RequiresHuman = true
 	agg.Reasons = []string{"review perspectives did not unanimously approve"}
 	return agg
+}
+
+// ScopeEffectiveReports returns copies of reports with out-of-scope findings
+// removed from verdict/confidence inputs. If a report only contains
+// out-of-scope findings, its effective verdict is approve: the findings still
+// travel in the original report for backlog filing, but do not block the PR.
+func ScopeEffectiveReports(reports []PerspectiveReport) []PerspectiveReport {
+	out := make([]PerspectiveReport, len(reports))
+	for i, r := range reports {
+		out[i] = r
+		if r.NotApplicable {
+			continue
+		}
+		inScope := make([]outputschema.Finding, 0, len(r.Findings))
+		outOfScope := 0
+		for _, f := range r.Findings {
+			if InScopeFinding(f) {
+				inScope = append(inScope, f)
+			} else {
+				outOfScope++
+			}
+		}
+		out[i].Findings = append([]outputschema.Finding(nil), inScope...)
+		if outOfScope > 0 && len(inScope) == 0 {
+			out[i].Verdict = VerdictApprove
+		}
+	}
+	return out
+}
+
+// InScopeFinding reports whether a review finding counts against the PR under
+// the linked issue's scope contract. Reports written before review_scope
+// existed are treated as in-scope to preserve their original routing semantics.
+func InScopeFinding(f outputschema.Finding) bool {
+	return strings.TrimSpace(f.ReviewScope) != "out-of-scope"
 }
 
 func Collect(dir string, opts AggregateOptions) (Artifact, error) {

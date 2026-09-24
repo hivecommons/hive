@@ -326,6 +326,11 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	if !recordOnly && !req.Revise && apiEvent != "APPROVE" {
 		if reason := c.perHeadReviewRefusal(ctx, req); reason != "" {
 			c.recordReviewVerdict(req, "")
+			if err := c.fileOutOfScopeReviewBacklog(ctx, req, nowFn().UTC()); err != nil {
+				c.logger.Warn("review-request watcher: could not file out-of-scope backlog",
+					slog.String("repo", req.Repo), slog.Int("number", req.Number),
+					slog.String("error", err.Error()))
+			}
 			c.writeReviewResult(path, ReviewResponse{OK: true, Number: req.Number, State: ReviewEventRecordVerdict, Note: "comment suppressed: " + reason, At: nowFn().UTC().Format(time.RFC3339)})
 			_ = os.Remove(path)
 			c.reviewRetries.clear(path)
@@ -340,6 +345,11 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	// without touching the GitHub API.
 	if recordOnly {
 		c.recordReviewVerdict(req, "")
+		if err := c.fileOutOfScopeReviewBacklog(ctx, req, nowFn().UTC()); err != nil {
+			c.logger.Warn("review-request watcher: could not file out-of-scope backlog",
+				slog.String("repo", req.Repo), slog.Int("number", req.Number),
+				slog.String("error", err.Error()))
+		}
 		c.writeReviewResult(path, ReviewResponse{OK: true, Number: req.Number, State: ReviewEventRecordVerdict, At: nowFn().UTC().Format(time.RFC3339)})
 		_ = os.Remove(path)
 		c.reviewRetries.clear(path)
@@ -447,6 +457,11 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	// artifacts are recorded together so a verdict can never be attributed to a
 	// review that never actually landed.
 	c.recordReviewVerdict(req, "")
+	if err := c.fileOutOfScopeReviewBacklog(ctx, req, nowFn().UTC()); err != nil {
+		c.logger.Warn("review-request watcher: could not file out-of-scope backlog",
+			slog.String("repo", req.Repo), slog.Int("number", req.Number),
+			slog.String("error", err.Error()))
+	}
 
 	c.recordCreationAudit(AuditActionPRReviewed, meta,
 		"repo", req.Repo,
@@ -636,7 +651,7 @@ func appendConfidenceLine(body, rawReport string, set review.PerspectiveSet) str
 	if err != nil || len(reports) == 0 {
 		return body
 	}
-	line := review.ScoreConfidence(reports, set.Len()).Render()
+	line := review.ScoreConfidence(review.ScopeEffectiveReports(reports), set.Len()).Render()
 	body = strings.TrimRight(body, "\n")
 	if body == "" {
 		return line

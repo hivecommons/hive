@@ -96,6 +96,23 @@ func TestLoad_InvalidYAML(t *testing.T) {
 	}
 }
 
+func TestLoadExampleConfigDoesNotEnableCavemanMode(t *testing.T) {
+	t.Setenv("HIVE_GITHUB_TOKEN", "ghp_test")
+	t.Setenv("HIVE_DASHBOARD_TOKEN", "dashboard-token")
+
+	path := filepath.Join("..", "..", "hive.yaml.example")
+	cfg, err := LoadWithOverrides(path, "-")
+	if err != nil {
+		t.Fatalf("LoadWithOverrides(%q) error = %v", path, err)
+	}
+
+	for name, agent := range cfg.Agents {
+		if agent.CavemanMode != "" {
+			t.Errorf("Agents[%s].CavemanMode = %q, want empty", name, agent.CavemanMode)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // expandEnvVars
 // ---------------------------------------------------------------------------

@@ -310,7 +310,7 @@ Rounding out the schema — fields you will rarely touch:
 |---|---|---|
 | `id` | Stable identifier | agent name |
 | `acmm_levels` | ACMM levels this agent participates in | all |
-| `caveman_mode` | Prompt-compression experiment: `lite`, `full`, `ultra`, `wenyan`; see below | off |
+| `caveman_mode` | Prompt-compression experiment: `lite`, `full`, `ultra`, `wenyan`; see below | empty (disabled) |
 | `explain_mode` | Ask the agent to report why it made each tool call: `off`, `brief`, `full`; see below | inherit the hive default |
 | `metrics_collector` | Named metrics source for the stats panel | none |
 | `stats_display` | Custom sidebar metrics (key, label, source, field, style). The `health` source (the primary repo's CI/coverage/release checks) is offered only to agents that can own CI — never to an `ADVISORY` or `on_demand` agent — and a `pct`/`pct-bar` stat with no measurement renders `—`, not `0%`. | none (an agent starts with no stats unless it is a built-in with defaults) |
@@ -394,7 +394,7 @@ Leave it off outside of debugging: the explanation is extra output tokens on eve
 | Mode | Dashboard description | When to use |
 | --- | --- | --- |
 | `lite` | Removes filler while preserving normal language. | Lowest-risk token reduction for routine agents. |
-| `full` | Converts output toward terse "caveman-speak". | Default example mode when cost matters and operators accept rougher prose. |
+| `full` | Converts output toward terse "caveman-speak". | Use when cost matters and operators accept rougher prose. |
 | `ultra` | Telegraphic compression. | High-volume lanes where compact summaries are more important than nuance. |
 | `wenyan` | Classical Chinese-style compression. | Specialized/experimental mode; use only when readers and downstream tools can tolerate it. |
 

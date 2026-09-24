@@ -124,7 +124,7 @@ checks_dir = sys.argv[1]
 eligible = []
 not_ready = []
 
-AI_AUTHORS = {os.environ.get('PROJECT_AI_AUTHOR', ''), 'copilot-swe-agent[bot]', 'github-actions[bot]', 'dependabot[bot]', 'app/kubestellar-hive', 'kubestellar-hive[bot]'} - {''}
+AI_AUTHORS = {os.environ.get('PROJECT_AI_AUTHOR', ''), 'copilot-swe-agent[bot]', 'github-actions[bot]', 'dependabot[bot]', 'app/hivecommons-hive', 'app/kubestellar-hive', 'app/hivecommons-hive-ghe', 'app/kubestellar-hive-ghe', 'hivecommons-hive[bot]', 'kubestellar-hive[bot]', 'hivecommons-hive-ghe[bot]', 'kubestellar-hive-ghe[bot]'} - {''}
 
 for f in sorted(glob.glob(os.path.join(checks_dir, '*.json'))):
     try:

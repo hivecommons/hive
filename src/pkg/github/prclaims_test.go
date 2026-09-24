@@ -116,6 +116,62 @@ func TestParseClaimedIssues(t *testing.T) {
 	}
 }
 
+func TestReviewScopeContract(t *testing.T) {
+	tests := []struct {
+		name        string
+		title       string
+		body        string
+		defaultRepo string
+		runKey      string
+		planRef     string
+		want        string
+	}{
+		{
+			name:        "closing keyword wins",
+			title:       "fix review scope",
+			body:        "Fixes #8662",
+			defaultRepo: "hivecommons/hive",
+			runKey:      "run-1",
+			planRef:     "plan-1",
+			want:        "linked issue hivecommons/hive#8662 from the PR closing keyword",
+		},
+		{
+			name:        "cross repo closing keyword",
+			title:       "fix review scope",
+			body:        "Closes other/repo#7",
+			defaultRepo: "hivecommons/hive",
+			want:        "linked issue other/repo#7 from the PR closing keyword",
+		},
+		{
+			name:        "lease task with plan",
+			defaultRepo: "hivecommons/hive",
+			runKey:      "run-2",
+			planRef:     "plan-2",
+			want:        "lease task Hive-Run run-2 / Hive-Plan plan-2",
+		},
+		{
+			name:        "lease task without plan",
+			defaultRepo: "hivecommons/hive",
+			runKey:      "run-3",
+			want:        "lease task Hive-Run run-3",
+		},
+		{
+			name:        "no contract",
+			defaultRepo: "hivecommons/hive",
+			want:        "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := reviewScopeContract(tt.title, tt.body, tt.defaultRepo, tt.runKey, tt.planRef)
+			if got != tt.want {
+				t.Fatalf("reviewScopeContract() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIssueFromBranchName(t *testing.T) {
 	tests := []struct {
 		name   string

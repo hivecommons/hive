@@ -60,7 +60,7 @@ These defaults match the loader in `src/pkg/config`: an omitted `enabled` defaul
 | `launch_cmd` | string | — | Override the auto-generated launch command |
 | `agent_spec` | string | — | BYO-agent spec file or directory; applies its backend, model, mode, launch command, prompt, tools, and skills at launch |
 | `cli_pinned` | bool | false | Pin the CLI binary version |
-| `caveman_mode` | string | — | Output compression: `lite`, `full`, `ultra`, `wenyan` |
+| `caveman_mode` | string | empty (disabled) | Optional output compression: `lite`, `full`, `ultra`, `wenyan`; omit to disable |
 | `beads_dir` | string | — | Directory for bead storage |
 | `bead_role` | string | `"worker"` | `"supervisor"` or `"worker"` |
 
@@ -341,7 +341,7 @@ agents:
     clear_on_kick: true
     beads_dir: /data/beads/scanner
     bead_role: worker
-    caveman_mode: full
+    # caveman_mode: lite                  # optional, experimental: lite | full | ultra | wenyan; omit to disable
     lane_keywords: ["bug", "triage", "fix"]
     detect_keywords: ["scanner", "triage"]
     kick_template: scanner-CLAUDE.md

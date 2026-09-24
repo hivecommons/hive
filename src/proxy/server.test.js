@@ -17,6 +17,13 @@ const GO_PUBLIC_ASSET_BODIES = Object.fromEntries(
   GO_PUBLIC_ASSET_PATHS.map((assetPath) => [assetPath, `/* proxied ${assetPath} */\n`]),
 );
 const THEME_CSS_BODY = 'body{--theme-accent:#f0b429}\n';
+const CONTRIBUTOR_HTML = `<!doctype html><html><head>
+  <title>Contribute</title>
+  <link rel="stylesheet" href="/tokens.css">
+  <link href="/components.css" rel="stylesheet">
+  <link id="contributor-theme-css" rel="stylesheet" href="/api/theme.css?scope=contributor">
+  <script>(function(){try{var k='hive-layout-mode',t=localStorage.getItem(k)||'auto';var light=t==='light'||(t==='auto'&&window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches);document.documentElement.classList.toggle('light-mode',!!light);}catch(e){}})();</script>
+</head><body><button type="button" id="cc-theme-toggle" data-action="cycle-theme" data-theme-mode="auto">Auto</button><main id="tab-ops">contributor operations</main><script>var CC_THEME_KEY='hive-layout-mode';function ccApplyTheme(mode){var light=mode==='light';document.body.classList.toggle('light-mode',!!light);}window.matchMedia('(prefers-color-scheme: light)').addEventListener('change',function(){});</script></body></html>`;
 
 let goServer, ttydServer, proxyProcess;
 let mockSnapshotFrameAncestors = [];
@@ -57,14 +64,20 @@ function setupMockGoBackend() {
       res.end(JSON.stringify({ origins: mockSnapshotFrameAncestors }));
       return;
     }
-    if (req.url === '/api/theme.css') {
+    const u = new URL(req.url, 'http://go.test');
+    if (u.pathname === '/api/theme.css') {
       res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8' });
       res.end(THEME_CSS_BODY);
       return;
     }
-    if (Object.prototype.hasOwnProperty.call(GO_PUBLIC_ASSET_BODIES, req.url)) {
+    if (Object.prototype.hasOwnProperty.call(GO_PUBLIC_ASSET_BODIES, u.pathname)) {
       res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8' });
-      res.end(GO_PUBLIC_ASSET_BODIES[req.url]);
+      res.end(GO_PUBLIC_ASSET_BODIES[u.pathname]);
+      return;
+    }
+    if (u.pathname === '/contribute' || u.pathname === '/contribute/operations') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(CONTRIBUTOR_HTML);
       return;
     }
     if (req.url === '/snapshot') {
@@ -197,11 +210,11 @@ async function testDashboardAssetsProxyToGo() {
 }
 
 async function testThemeCSSStillProxiesThroughAPI() {
-  const resp = await fetch(`http://localhost:${PROXY_PORT}/api/theme.css`);
+  const resp = await fetch(`http://localhost:${PROXY_PORT}/api/theme.css?scope=contributor`);
   assert.equal(resp.status, 200);
   assert.match(resp.headers.get('content-type') || '', /^text\/css\b/);
   assert.equal(await resp.text(), THEME_CSS_BODY);
-  console.log('  ✓ /api/theme.css still proxies to Go with text/css');
+  console.log('  ✓ /api/theme.css?scope=contributor still proxies to Go with text/css');
 }
 
 async function testUnknownAssetDoesNotFallBackToIndex() {
@@ -210,6 +223,56 @@ async function testUnknownAssetDoesNotFallBackToIndex() {
   assert.match(resp.headers.get('content-type') || '', /^text\/plain\b/);
   assert.notEqual(await resp.text(), '<!doctype html><title>proxy test index</title>\n');
   console.log('  ✓ unknown asset-looking paths return 404 instead of index.html');
+}
+
+function stylesheetHrefs(html) {
+  const hrefs = [];
+  const linkRe = /<link\b[^>]*>/gi;
+  for (const match of html.matchAll(linkRe)) {
+    const tag = match[0];
+    if (!/\brel\s*=\s*["'][^"']*\bstylesheet\b/i.test(tag)) continue;
+    const href = /\bhref\s*=\s*["']([^"']+)["']/i.exec(tag);
+    if (href) hrefs.push(href[1]);
+  }
+  return hrefs;
+}
+
+async function assertStylesheetsResolve(pagePath) {
+  const pageURL = `http://localhost:${PROXY_PORT}${pagePath}`;
+  const pageResp = await fetch(pageURL);
+  assert.equal(pageResp.status, 200, `${pagePath} status`);
+  assert.match(pageResp.headers.get('content-type') || '', /^text\/html\b/, `${pagePath} content type`);
+  const html = await pageResp.text();
+  const hrefs = stylesheetHrefs(html);
+  assert.ok(hrefs.length > 0, `${pagePath} should reference at least one stylesheet`);
+  for (const href of hrefs) {
+    const assetURL = new URL(href, pageURL);
+    if (assetURL.origin !== `http://localhost:${PROXY_PORT}`) continue;
+    const resp = await fetch(assetURL);
+    assert.equal(resp.status, 200, `${pagePath} stylesheet ${href} status`);
+    assert.match(resp.headers.get('content-type') || '', /^text\/css\b/, `${pagePath} stylesheet ${href} content type`);
+  }
+  return html;
+}
+
+async function testServedHTMLStylesheetsResolve() {
+  await assertStylesheetsResolve('/');
+  const contributor = await assertStylesheetsResolve('/contribute/operations');
+  assert.match(contributor, /contributor operations/, 'deep contributor route should proxy to Go HTML');
+  console.log('  ✓ dashboard and contributor stylesheet links resolve through proxy as text/css');
+}
+
+async function testContributorOperationsThemeContract() {
+  const html = await assertStylesheetsResolve('/contribute/operations');
+  for (const needle of [
+    'id="cc-theme-toggle"',
+    "var CC_THEME_KEY='hive-layout-mode'",
+    "document.body.classList.toggle('light-mode'",
+    "matchMedia('(prefers-color-scheme: light)')",
+  ]) {
+    assert.ok(html.includes(needle), `contributor operations theme contract missing ${needle}`);
+  }
+  console.log('  ✓ contributor operations exposes shared light/dark/auto theme contract through proxy');
 }
 
 async function testDefaultFrameDeny() {
@@ -1014,6 +1077,8 @@ try {
   await testHTTPContributeStatus();
   await testDashboardAssetsProxyToGo();
   await testThemeCSSStillProxiesThroughAPI();
+  await testServedHTMLStylesheetsResolve();
+  await testContributorOperationsThemeContract();
   await testUnknownAssetDoesNotFallBackToIndex();
   await testDefaultFrameDeny();
 

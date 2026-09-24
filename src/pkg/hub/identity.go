@@ -3,6 +3,8 @@ package hub
 import (
 	"net/http"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // gheAPIPathMarker identifies a GitHub Enterprise API URL. GHE APIs live under
@@ -231,7 +233,7 @@ func identityDelivered(want *PendingAppIdentity, p *HeartbeatPayload) bool {
 	if want.AppID != 0 && p.GitHubAppID != want.AppID {
 		return false
 	}
-	if want.AppSlug != "" && !strings.EqualFold(p.GitHubAppSlug, want.AppSlug) {
+	if want.AppSlug != "" && !strings.EqualFold(normalizeReportedAppSlug(p.GitHubAppID, p.GitHubAppSlug), normalizeReportedAppSlug(want.AppID, want.AppSlug)) {
 		return false
 	}
 	if want.InstallationID != 0 && p.GitHubInstallationID != want.InstallationID {
@@ -252,10 +254,21 @@ func SpokeIdentityFromPayload(p *HeartbeatPayload) IdentitySet {
 	}
 	return IdentitySet{
 		AppID:          p.GitHubAppID,
-		AppSlug:        p.GitHubAppSlug,
+		AppSlug:        normalizeReportedAppSlug(p.GitHubAppID, p.GitHubAppSlug),
 		InstallationID: p.GitHubInstallationID,
 		APIURL:         p.GitHubAPIURL,
 		BaseURL:        p.GitHubBaseURL,
+	}
+}
+
+func normalizeReportedAppSlug(appID int64, slug string) string {
+	switch appID {
+	case config.PublicGitHubAppID:
+		return config.NormalizePublicGitHubAppSlug(slug)
+	case config.EnterpriseGitHubAppID:
+		return config.NormalizeEnterpriseGitHubAppSlug(slug)
+	default:
+		return strings.TrimSpace(slug)
 	}
 }
 

@@ -50,9 +50,9 @@ func TestPublicElectionOnGHEDefaultClusterResolves(t *testing.T) {
 	if got.AppID != 3568013 {
 		t.Errorf("app id = %d, want the PUBLIC app 3568013 (not the GHE 5686)", got.AppID)
 	}
-	if got.AppSlug != "kubestellar-hive" {
-		t.Errorf("app slug = %q, want kubestellar-hive — %q is what authored as ghe[bot] on public repos",
-			got.AppSlug, "kubestellar-hive-ghe")
+	if got.AppSlug != "hivecommons-hive" {
+		t.Errorf("app slug = %q, want hivecommons-hive — %q is what authored as ghe[bot] on public repos",
+			got.AppSlug, "hivecommons-hive-ghe")
 	}
 }
 
@@ -71,8 +71,8 @@ func TestMixedForgeClusterElectionResolvesBothWays(t *testing.T) {
 		otherID   int64
 		otherSlug string
 	}{
-		{"github.com", 3568013, "kubestellar-hive", 5686, "kubestellar-hive-ghe"},
-		{"github.ibm.com", 5686, "kubestellar-hive-ghe", 3568013, "kubestellar-hive"},
+		{"github.com", 3568013, "hivecommons-hive", 5686, "hivecommons-hive-ghe"},
+		{"github.ibm.com", 5686, "hivecommons-hive-ghe", 3568013, "hivecommons-hive"},
 	} {
 		t.Run(tc.host, func(t *testing.T) {
 			target, err := parseForgeTarget(tc.host)

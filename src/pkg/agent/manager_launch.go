@@ -40,7 +40,7 @@ import (
 // then never read, leaving the CLI idle at its prompt after every launch.
 func backendDefersStartupKick(backend string) bool {
 	switch backend {
-	case "claude", "copilot", "gemini", "pi", bobBackend:
+	case "claude", "copilot", "gemini", "pi", bobBackend, "agy":
 		return true
 	default:
 		return false
@@ -764,11 +764,19 @@ func hostStateBypassRequested(value string) bool {
 //
 // The model parameter is intentionally absent from the signature so no future
 // caller can reintroduce the crash by passing one.
+//
+// The version switch is wrapped in `sh -c` because the tmux launch line is
+// prefixed with KEY='value' environment assignments, and POSIX shells only
+// accept assignments before a SIMPLE command: `A=1 case ... esac` is a syntax
+// error ("unexpected token `)'"), so bob never started on any hive. `sh -c`
+// is a simple command, so the assignments apply to it and are inherited by
+// the exec'd bob.
 func bobLaunchCmd(binary string) string {
-	return fmt.Sprintf(`case "$(%s --version 2>/dev/null | sed -n '1p')" in 1.*) %s ;; *) %s ;; esac`,
+	script := fmt.Sprintf(`case "$(%s --version 2>/dev/null | sed -n 1p)" in 1.*) exec %s ;; *) exec %s ;; esac`,
 		binary,
 		bobLaunchCmdV1(binary),
 		bobLaunchCmdV2(binary))
+	return "sh -c " + shellQuote(script)
 }
 
 func bobLaunchCmdV1(binary string) string {
@@ -840,6 +848,12 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 			cmd = fmt.Sprintf("%s --model %s", binary, model)
 		}
 		return cmd + codexEffortFlag(effort)
+	case "agy":
+		// agy has no deny-tool flag, so ToolsConfig cannot be expressed here.
+		// Keep launch-mode selection centralized with the default path rather
+		// than falling through to the bare-binary default, which would drop
+		// agy's unattended approval and model/effort contract.
+		return agyLaunchCmd(binary, model, effort)
 	case "omp":
 		return ompLaunchCmd(binary, model, effort)
 	default:
@@ -899,28 +913,7 @@ func backendLaunchCmd(binary, model, backend string, isInference bool, effort st
 	case "gemini":
 		launchCmd = fmt.Sprintf("%s --model %s", binary, model)
 	case "agy":
-		// Antigravity CLI (Google's Gemini CLI replacement). Needs
-		// --dangerously-skip-permissions or it blocks on a per-tool
-		// approval prompt that no one is attached to answer — the same
-		// contract as claude's bypass flag, and the value already used for
-		// agy in config/backends.conf.
-		//
-		// An unrecognised --model is NOT fatal here: agy warns
-		// ("model X is not recognized ... Using \"Gemini 3.6 Flash\"
-		// instead") and continues on its default, so a stale model carried
-		// over from another provider degrades to a warning rather than a
-		// dead agent.
-		//
-		// --effort is REQUIRED whenever --model is given. Without it agy
-		// warns "--model <m> requires --effort (available: low, medium,
-		// high)" and silently ignores the model, so the configured model
-		// would never actually take effect. The configured reasoning effort
-		// is used when agy accepts it, else agyDefaultEffort — "low", the
-		// effort agy itself falls back to (see agyLaunchEffort).
-		launchCmd = fmt.Sprintf("%s --dangerously-skip-permissions", binary)
-		if model != "" {
-			launchCmd = fmt.Sprintf("%s --model %s --effort %s", launchCmd, model, agyLaunchEffort(effort))
-		}
+		launchCmd = agyLaunchCmd(binary, model, effort)
 	case "pi":
 		// pi takes the model as a CLI flag, not a subcommand. Without
 		// this case the launch command never receives the configured
@@ -953,6 +946,75 @@ func backendLaunchCmd(binary, model, backend string, isInference bool, effort st
 		launchCmd = binary
 	}
 	return launchCmd
+}
+
+const (
+	agyLaunchModeEnv         = "HIVE_AGY_LAUNCH_MODE"
+	agyLaunchModeHeadless    = "headless"
+	agyLaunchModeInteractive = "interactive"
+	agyHeadlessReadyMarker   = "HIVE_AGY_HEADLESS_READY"
+	agyHeadlessRunningMarker = "HIVE_AGY_HEADLESS_RUNNING"
+)
+
+func agyInteractiveLaunchRequested(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case agyLaunchModeInteractive, "tui":
+		return true
+	default:
+		return false
+	}
+}
+
+func agyHeadlessEnabled() bool {
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv(agyLaunchModeEnv)))
+	if mode == "" {
+		mode = agyLaunchModeHeadless
+	}
+	return !agyInteractiveLaunchRequested(mode)
+}
+
+func agyLaunchCmd(binary, model, effort string) string {
+	if agyHeadlessEnabled() {
+		return agyHeadlessLaunchCmd()
+	}
+	return agyInteractiveLaunchCmd(binary, model, effort)
+}
+
+func agyInteractiveLaunchCmd(binary, model, effort string) string {
+	// Antigravity CLI (Google's Gemini CLI replacement). Needs
+	// --dangerously-skip-permissions or it blocks on a per-tool approval prompt
+	// that no one is attached to answer — the same contract as claude's bypass
+	// flag, and the value already used for agy in config/backends.conf.
+	//
+	// An unrecognised --model is NOT fatal here: agy warns and continues on its
+	// default, so a stale model carried over from another provider degrades to a
+	// warning rather than a dead agent.
+	//
+	// --effort is REQUIRED whenever --model is given. Without it agy silently
+	// ignores the model, so the configured model would never actually take
+	// effect. The configured reasoning effort is used when agy accepts it, else
+	// agyDefaultEffort — "low", the effort agy itself falls back to.
+	launchCmd := fmt.Sprintf("%s --dangerously-skip-permissions", binary)
+	if model != "" {
+		launchCmd = fmt.Sprintf("%s --model %s --effort %s", launchCmd, model, agyLaunchEffort(effort))
+	}
+	return launchCmd
+}
+
+func agyHeadlessLaunchCmd() string {
+	return fmt.Sprintf("export PS1=%s; echo %s", shellQuote(agyHeadlessReadyMarker+"> "), shellQuote(agyHeadlessReadyMarker))
+}
+
+func agyHeadlessTurnShellCommand(binary, model, effort, promptFile string) string {
+	args := []string{shellQuote(binary), "--dangerously-skip-permissions"}
+	if model != "" {
+		args = append(args, "--model", shellQuote(model), "--effort", shellQuote(agyLaunchEffort(effort)))
+	}
+	args = append(args, "-p", "\"$(cat "+shellQuote(promptFile)+")\"")
+
+	run := strings.Join(args, " ")
+	return fmt.Sprintf("printf '\\n%s\\n'; %s & hive_agy_pid=$!; (while kill -0 \"$hive_agy_pid\" 2>/dev/null; do printf '\\r%s'; sleep 10; done) & hive_agy_marker_pid=$!; wait \"$hive_agy_pid\"; hive_agy_rc=$?; kill \"$hive_agy_marker_pid\" 2>/dev/null; wait \"$hive_agy_marker_pid\" 2>/dev/null; printf '\\nHIVE agy headless turn exited rc=%%s\\n' \"$hive_agy_rc\"; echo %s",
+		agyHeadlessRunningMarker, run, agyHeadlessRunningMarker, agyHeadlessReadyMarker)
 }
 
 const ompDefaultApprovalMode = "yolo"

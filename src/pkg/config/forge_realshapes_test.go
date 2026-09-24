@@ -164,9 +164,9 @@ func TestRealDamagedSpokeShapeIsCaught(t *testing.T) {
 
 	// The user-visible half of the incident: BotLogin drives EffectiveAIAuthor,
 	// which becomes PROJECT_AI_AUTHOR and made agents author as
-	// kubestellar-hive-ghe[bot] on PUBLIC repos. Pin that this shape is exactly
+	// hivecommons-hive-ghe[bot] on PUBLIC repos. Pin that this shape is exactly
 	// what produces the wrong bot, so the connection is not lost.
-	if got := cfg.GitHub.BotLogin(); got != "kubestellar-hive-ghe[bot]" {
+	if got := cfg.GitHub.BotLogin(); got != "hivecommons-hive-ghe[bot]" {
 		t.Errorf("BotLogin() = %q; the damaged shape is expected to still yield the GHE bot "+
 			"(that is the symptom) — if this changed, re-check EffectiveAIAuthor", got)
 	}

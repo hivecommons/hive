@@ -35,6 +35,10 @@ import (
 // only the last 1-2 on the PVC. Serializing every Save() closes the race.
 var saveMu sync.Mutex
 
+// dashboardAuthTokenFile is the mounted Secret key used by hosted spokes when
+// the token is not injected as an env var. Tests redirect it to a hermetic path.
+var dashboardAuthTokenFile = "/secrets/dashboard-token"
+
 type Config struct {
 	Project       ProjectConfig          `yaml:"project"`
 	Policies      PoliciesConfig         `yaml:"policies"`
@@ -3822,7 +3826,7 @@ type GitHubConfig struct {
 	// inheritance. The implicit empty is what disguised the 2026-07-31 damage.
 	Forge_ string `yaml:"forge,omitempty"`
 	// AppSlug is the GitHub App URL slug for the install link.
-	// For public GitHub: "kubestellar-hive". For GHE: your app's slug.
+	// For public GitHub: "hivecommons-hive". For GHE: your app's slug.
 	AppSlug string `yaml:"app_slug"`
 	// APIURL is the GitHub API base URL. Defaults to DefaultGitHubAPIURL.
 	// For GitHub Enterprise, set to e.g. "https://github.ibm.com/api/v3".
@@ -3901,8 +3905,12 @@ const (
 	DefaultGitHubAPIURL = "https://api.github.com"
 	// DefaultGitHubBaseURL is the default GitHub web URL (public github.com).
 	DefaultGitHubBaseURL = "https://github.com"
-	// DefaultGitHubAppSlug is the public Hive GitHub App slug.
-	DefaultGitHubAppSlug = "kubestellar-hive"
+	// LegacyGitHubAppSlug is the previous public Hive GitHub App slug. Hosted
+	// hives may still have it in runtime YAML; public github.com resolutions
+	// normalize it to DefaultGitHubAppSlug.
+	LegacyGitHubAppSlug = "kubestellar-hive"
+	// DefaultGitHubAppSlug is the current public Hive GitHub App slug.
+	DefaultGitHubAppSlug = "hivecommons-hive"
 	// DefaultOAuthClientID is the PUBLIC github.com Hive App client ID used for
 	// device-flow login. Login is always github.com (see OAuthBaseURL), so this
 	// is the correct client for every hive — including GHE hives, whose users
@@ -4163,10 +4171,10 @@ func (g GitHubConfig) ForgeIdentityMismatches() []string {
 			"app_id %d does not belong to forge %s (expected %d) — an App ID from another forge returns 404 Integration not found on token creation",
 			g.AppID, forge, want.AppID))
 	}
-	if s := strings.TrimSpace(g.AppSlug); s != "" && !strings.EqualFold(s, want.AppSlug) {
+	if s := g.NormalizedAppSlug(); s != "" && !strings.EqualFold(s, want.AppSlug) {
 		out = append(out, fmt.Sprintf(
 			"app_slug %q does not belong to forge %s (expected %q) — the App install link would 404",
-			s, forge, want.AppSlug))
+			strings.TrimSpace(g.AppSlug), forge, want.AppSlug))
 	}
 	if u := strings.TrimSpace(g.APIURL); u != "" && normalizeForgeHost(u) != forge {
 		out = append(out, fmt.Sprintf(
@@ -4330,12 +4338,49 @@ func (g GitHubConfig) OAuthClientIDResolved() string {
 // make unrepresentable, so the derivation belongs here rather than at call sites.
 func (g GitHubConfig) ResolvedAppSlug() string {
 	if g.AppSlug != "" {
-		return g.AppSlug
+		return g.NormalizedAppSlug()
 	}
 	if id, ok := forgeIdentities[g.Forge()]; ok && id.AppSlug != "" {
 		return id.AppSlug
 	}
 	return DefaultGitHubAppSlug
+}
+
+// NormalizedAppSlug returns AppSlug after applying public-github.com slug
+// migrations. GitHub Enterprise and third-party forges keep their explicit
+// slugs untouched.
+func (g GitHubConfig) NormalizedAppSlug() string {
+	slug := strings.TrimSpace(g.AppSlug)
+	if slug == "" {
+		return ""
+	}
+	if g.AppID == EnterpriseGitHubAppID || g.IsGHE() {
+		return NormalizeEnterpriseGitHubAppSlug(slug)
+	}
+	if g.AppID == PublicGitHubAppID || !g.IsGHE() {
+		return NormalizePublicGitHubAppSlug(slug)
+	}
+	return slug
+}
+
+// NormalizePublicGitHubAppSlug maps the legacy public github.com Hive App slug
+// to the current slug while preserving any non-legacy slug.
+func NormalizePublicGitHubAppSlug(slug string) string {
+	slug = strings.TrimSpace(slug)
+	if strings.EqualFold(slug, LegacyGitHubAppSlug) {
+		return DefaultGitHubAppSlug
+	}
+	return slug
+}
+
+// NormalizeEnterpriseGitHubAppSlug maps the legacy github.ibm.com Hive App slug
+// to the current slug while preserving any non-legacy slug.
+func NormalizeEnterpriseGitHubAppSlug(slug string) string {
+	slug = strings.TrimSpace(slug)
+	if strings.EqualFold(slug, LegacyEnterpriseGitHubAppSlug) {
+		return EnterpriseGitHubAppSlug
+	}
+	return slug
 }
 
 // BotLogin returns the GitHub App bot login ("<app-slug>[bot]") when a GitHub
@@ -4395,7 +4440,7 @@ func (g GitHubConfig) AppAuthoredPRsEnabled() bool {
 //
 // # WHY EMPTY RATHER THAN A BEST-EFFORT URL
 //
-// DefaultGitHubAppSlug ("kubestellar-hive") names the App registered on PUBLIC
+// DefaultGitHubAppSlug names the App registered on PUBLIC
 // github.com. GitHub Enterprise hosts a SEPARATE App registry, and an enterprise
 // registration is rarely given the same slug — so falling back to the default on
 // a GHE host emits a link to an App that provably does not exist there, and the
@@ -4420,6 +4465,7 @@ func (g GitHubConfig) AppInstallURL() string {
 		// An explicit slug wins; otherwise only the forge-identity table may
 		// supply one — never DefaultGitHubAppSlug, which names no App here.
 		slug := strings.TrimSpace(g.AppSlug)
+		slug = NormalizeEnterpriseGitHubAppSlug(slug)
 		if slug == "" {
 			if id, ok := forgeIdentities[g.Forge()]; ok {
 				slug = id.AppSlug
@@ -5665,6 +5711,9 @@ func (c *Config) applyConfigEnv(path string) error {
 			c.Dashboard.AuthToken = v
 		}
 	}
+	if c.Dashboard.AuthToken == "" {
+		c.Dashboard.AuthToken = readDashboardAuthTokenFile()
+	}
 
 	return nil
 }
@@ -5697,6 +5746,9 @@ func (c *Config) applyBootstrapEnv() {
 			c.Dashboard.AuthToken = v
 		}
 	}
+	if c.Dashboard.AuthToken == "" {
+		c.Dashboard.AuthToken = readDashboardAuthTokenFile()
+	}
 	// K8s-provisioned spokes receive their per-hive authorized GitHub users as a
 	// comma-separated env var (owner first). This is what lets a direct-route
 	// spoke reject unauthorized device-flow logins without the hub proxy.
@@ -5714,6 +5766,18 @@ func (c *Config) applyBootstrapEnv() {
 	if v := strings.TrimSpace(os.Getenv(ContributeSkipLabelsEnvVar)); v != "" {
 		c.Hub.ContributeSkipLabels = parseContributeSkipLabels(v)
 	}
+}
+
+func readDashboardAuthTokenFile() string {
+	path := strings.TrimSpace(os.Getenv("DASHBOARD_AUTH_TOKEN_FILE"))
+	if path == "" {
+		path = dashboardAuthTokenFile
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // parseAuthorizedUsers splits a comma-separated authorized-users list, trimming
@@ -5893,6 +5957,7 @@ func (c *Config) applyDefaults() {
 	if len(c.Hub.DisabledRepos) > 0 {
 		c.Hub.DisabledRepos, _ = NormalizeDisabledReposForRepos(c.Project.Org, c.Project.Repos, c.Hub.DisabledRepos)
 	}
+	c.GitHub.AppSlug = c.GitHub.NormalizedAppSlug()
 	if c.Dashboard.Port == 0 {
 		c.Dashboard.Port = defaultDashboardPort
 	}
@@ -7079,6 +7144,11 @@ func (c *Config) dashboardOverlayBytes() ([]byte, error) {
 			break
 		}
 	}
+	if cp.Dashboard.AuthToken != "" {
+		if v := readDashboardAuthTokenFile(); v != "" && cp.Dashboard.AuthToken == v {
+			cp.Dashboard.AuthToken = ""
+		}
+	}
 	cp = *cp.redactedForPersist()
 	return yaml.Marshal(&cp)
 }
@@ -7507,6 +7577,13 @@ type ReviewConfig struct {
 	// by default: a review surface a repo did not ask for is noise, and the
 	// verdict marker already routes the decision.
 	ConfidenceScore bool `yaml:"confidence_score,omitempty" json:"confidence_score,omitempty"`
+	// OutOfScopeBacklogDisabled opts out of filing cited out-of-scope review
+	// findings as follow-up issues. Default is enabled: the review can stay
+	// narrow without losing real adjacent defects.
+	OutOfScopeBacklogDisabled bool `yaml:"out_of_scope_backlog_disabled,omitempty" json:"out_of_scope_backlog_disabled,omitempty"`
+	// MaxOutOfScopeBacklogIssues caps how many backlog issues one PR review may
+	// file. Zero uses github.DefaultReviewBacklogIssueCap.
+	MaxOutOfScopeBacklogIssues int `yaml:"max_out_of_scope_backlog_issues,omitempty" json:"max_out_of_scope_backlog_issues,omitempty"`
 	// Recommendations maintains a single, continuously-updated issue per
 	// repository that answers "what should I merge next?" for a human working
 	// the queue by hand.

@@ -1776,7 +1776,7 @@ func (b *boot) bootGitHubWith(deps bootGitHubDeps) {
 func (b *boot) bootGovernor() {
 	// The user write-token client (userGHClient) was removed: every GitHub write
 	// — issues, PRs, comments, merges, and the advisory digest — now goes through
-	// the hive's App installation token (ghClient / kubestellar-hive[bot]). The
+	// the hive's App installation token (ghClient / hivecommons-hive[bot]). The
 	// user token only ever served as an advisory-digest fallback writer, which is
 	// no longer wanted (and forced the excessive "repo" login scope, issue #1927).
 	// Dashboard login now requests no scope and no user write-token is persisted.
@@ -6400,11 +6400,18 @@ func isGitHubRateLimitText(err error) bool {
 // paths -- vars that tests repoint at a temp dir -- are read HERE, at call
 // time, rather than captured once at init.
 func classifyGitHubAppFailure(ctx context.Context, appAuth *github.AppAuth, expectedOwner string, logger *slog.Logger) (bool, string, github.AppAuthState) {
-	return apphealth.ClassifyFailure(ctx, appAuth, expectedOwner, appKeyPaths(), logger)
+	return apphealth.ClassifyFailure(ctx, appAuth, expectedOwner, appKeyPaths(appAuthID(appAuth)), logger)
 }
 
 func classifyGitHubAppWriteForbidden(ctx context.Context, appAuth *github.AppAuth, expectedOwner, repo string) (string, github.AppAuthState) {
-	return apphealth.ClassifyWriteForbidden(ctx, appAuth, expectedOwner, repo, appKeyPaths())
+	return apphealth.ClassifyWriteForbidden(ctx, appAuth, expectedOwner, repo, appKeyPaths(appAuthID(appAuth)))
+}
+
+func appAuthID(appAuth *github.AppAuth) int64 {
+	if appAuth == nil {
+		return 0
+	}
+	return appAuth.AppID()
 }
 
 func classifyGitHubAppRepoCoverage(ctx context.Context, appAuth *github.AppAuth, org string, repos []string, logger *slog.Logger) (bool, string, github.AppAuthState) {
@@ -6650,7 +6657,7 @@ func runEvalCycle(
 	shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
 		PrimaryRepo:     cfg.Project.PrimaryRepo,
 		AIAuthor:        cfg.Project.AIAuthor,
-		InternalAuthors: []string{"kubestellar-hive[bot]", "github-actions[bot]", "dependabot[bot]", "copilot-swe-agent[bot]"},
+		InternalAuthors: []string{"hivecommons-hive[bot]", "kubestellar-hive[bot]", "hivecommons-hive-ghe[bot]", "kubestellar-hive-ghe[bot]", "github-actions[bot]", "dependabot[bot]", "copilot-swe-agent[bot]"},
 	})
 	if shaErr != nil {
 		logger.Warn("SHA hold enforcement failed", "error", shaErr)
@@ -8441,6 +8448,9 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	client.SetReviseRepos(cfg.Review.ReviseRepos)
 	client.SetPerspectives(reviewPerspectiveSet(cfg, logger))
 	client.SetConfidenceScore(func() bool { return cfg.Review.ConfidenceScore })
+	client.SetReviewBacklog(func() (bool, int) {
+		return !cfg.Review.OutOfScopeBacklogDisabled, cfg.Review.MaxOutOfScopeBacklogIssues
+	})
 	// #8380: issue claims are read at enumeration time only while
 	// governor.claims.enabled is on; the setting is read live so the Features
 	// toggle applies without a client rebuild.
@@ -8715,9 +8725,10 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			// Run trailers (#8310) and the plan they name, for plan_match
 			// (#8317). Identifiers and planner output only: the PR body
 			// itself still never reaches the prompt.
-			RunKey:   pr.HiveRun,
-			PlanRef:  pr.HivePlan,
-			PlanWave: planWaveFor(cfg, beadStores, pr.HivePlan, pr.HiveRun),
+			RunKey:        pr.HiveRun,
+			PlanRef:       pr.HivePlan,
+			PlanWave:      planWaveFor(cfg, beadStores, pr.HivePlan, pr.HiveRun),
+			ScopeContract: pr.ScopeContract,
 		})
 	}
 	agents := make([]review.AgentCapability, 0, len(cfg.Agents))

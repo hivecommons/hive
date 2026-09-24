@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/convergence/mutation"
+	"github.com/hivecommons/hive/pkg/review"
 )
 
 func newReviewMockServer(t *testing.T, reviewed *int, lastEvent *string) *httptest.Server {
@@ -364,6 +365,133 @@ func TestReviewRequestWatcher_ConfidenceLine(t *testing.T) {
 	if got := post(""); strings.Contains(got, "Confidence:") {
 		t.Fatalf("no verdict must mean no score, got %q", got)
 	}
+	outOfScope := strings.Replace(reviewBacklogFixtureReport(t), `"verdict":"approve"`, `"verdict":"changes_requested"`, 1)
+	got = post(outOfScope)
+	if strings.Contains(got, "high finding") || strings.Contains(got, "requested changes") {
+		t.Fatalf("out-of-scope findings/verdict should not lower confidence line: %q", got)
+	}
+}
+
+func TestReviewRequestWatcherFilesOutOfScopeBacklogOnce(t *testing.T) {
+	dir := withReviewDir(t)
+	stateDir := t.TempDir()
+	oldBacklog, oldLinks, oldReportDir := ReviewBacklogPath, ReviewLinksPath, review.DefaultReportDir
+	ReviewBacklogPath = filepath.Join(stateDir, reviewBacklogFile)
+	ReviewLinksPath = filepath.Join(stateDir, ReviewLinksFile)
+	review.DefaultReportDir = filepath.Join(stateDir, "reports")
+	t.Cleanup(func() {
+		ReviewBacklogPath, ReviewLinksPath, review.DefaultReportDir = oldBacklog, oldLinks, oldReportDir
+	})
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{
+		{Repo: "o/r", Number: 5, HeadSHA: "abc", Perspective: review.PerspectiveCorrectness, Agent: "reviewer"},
+	}})
+
+	var createdIssues, prSummaryComments, reviews int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/repos/o/r/pulls/5/reviews":
+			reviews++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":1,"state":"COMMENTED","html_url":"https://github.test/o/r/pull/5#pullrequestreview-1","commit_id":"abc"}`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"message":"not found"}`)
+		case r.Method == "POST" && r.URL.Path == "/repos/o/r/labels":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"name":"from-review"}`)
+		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues":
+			createdIssues++
+			var payload struct {
+				Title  string   `json:"title"`
+				Body   string   `json:"body"`
+				Labels []string `json:"labels"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			if !containsString(payload.Labels, reviewBacklogLabel) {
+				t.Errorf("created issue labels = %v, want %s", payload.Labels, reviewBacklogLabel)
+			}
+			if !strings.Contains(payload.Body, "PR: #5") || !strings.Contains(payload.Body, "Evidence: `pkg/old.go:") {
+				t.Errorf("created issue body did not link PR/evidence: %q", payload.Body)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"number":%d,"html_url":"https://github.test/o/r/issues/%d","title":%q}`, 100+createdIssues, 100+createdIssues, payload.Title)
+		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/5/comments":
+			prSummaryComments++
+			var payload struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			if !strings.Contains(payload.Body, reviewBacklogSummaryMarker) || !strings.Contains(payload.Body, "#101") || !strings.Contains(payload.Body, "#102") {
+				t.Errorf("summary comment missing filed issues: %q", payload.Body)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":9}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := reviewTestClient(t, srv.URL)
+	c.SetReviewBacklog(func() (bool, int) { return true, 2 })
+
+	report := reviewBacklogFixtureReport(t)
+	for i := 0; i < 2; i++ {
+		if _, err := WriteReviewRequest(dir, ReviewRequest{Repo: "o/r", Number: 5, Event: "comment", Body: "out-of-scope only", Agent: "reviewer", Report: report}); err != nil {
+			t.Fatal(err)
+		}
+		c.ProcessReviewRequestsOnce(context.Background())
+	}
+
+	if reviews != 2 {
+		t.Fatalf("reviews = %d, want 2 re-reviews", reviews)
+	}
+	if createdIssues != 2 {
+		t.Fatalf("created backlog issues = %d, want 2 with no duplicates on re-review", createdIssues)
+	}
+	if prSummaryComments != 1 {
+		t.Fatalf("PR summary comments = %d, want one", prSummaryComments)
+	}
+}
+
+func reviewBacklogFixtureReport(t *testing.T) string {
+	t.Helper()
+	report := map[string]any{
+		"lane":        "review-swarm",
+		"kind":        "review",
+		"perspective": "correctness",
+		"verdict":     "approve",
+		"repo":        "o/r",
+		"number":      5,
+		"head_sha":    "abc",
+		"summary":     "in-scope pass; adjacent defects filed separately",
+		"findings": []map[string]any{
+			{"title": "first adjacent defect", "severity": "medium", "summary": "first should become backlog", "file": "pkg/old.go", "line": 10, "review_scope": "out-of-scope"},
+			{"title": "second adjacent defect", "severity": "high", "summary": "second should become backlog", "file": "pkg/old.go", "line": 20, "review_scope": "out-of-scope"},
+		},
+		"prs_opened":  []any{},
+		"beads_filed": []any{},
+	}
+	raw, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("marshal report: %v", err)
+	}
+	if _, err := review.ValidateReport(raw); err != nil {
+		t.Fatalf("fixture report invalid: %v", err)
+	}
+	return string(raw)
+}
+
+func containsString(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
 }
 
 // A verdict that fails validation must refuse the WHOLE request before the
@@ -430,8 +558,8 @@ func TestReviewRequestWatcher_MalformedVerdictRefusesWholeRequest(t *testing.T) 
 // further top-level review from an agent is denied without touching the API,
 // whatever the agent's prompt said. A new head lifts the denial.
 func TestReviewRequestWatcher_PerHeadBackstop(t *testing.T) {
-	head := "aaaaaaa000000000000000000000000000000000"
-	posts := 0
+	head := "abc"
+	posts, createdIssues, prSummaryComments := 0, 0, 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -440,6 +568,19 @@ func TestReviewRequestWatcher_PerHeadBackstop(t *testing.T) {
 			fmt.Fprintf(w, `{"id":%d,"state":"COMMENTED","commit_id":%q,"html_url":"https://x/pr/5#r%d"}`, posts, head, posts)
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/pulls/5"):
 			fmt.Fprintf(w, `{"number":5,"head":{"sha":%q}}`, head)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues":
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"message":"not found"}`)
+		case r.Method == "POST" && r.URL.Path == "/repos/o/r/labels":
+			_, _ = io.WriteString(w, `{"name":"from-review"}`)
+		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues":
+			createdIssues++
+			fmt.Fprintf(w, `{"number":%d,"html_url":"https://x/issues/%d","title":"filed"}`, 100+createdIssues, 100+createdIssues)
+		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/5/comments":
+			prSummaryComments++
+			_, _ = io.WriteString(w, `{"id":9}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -450,10 +591,20 @@ func TestReviewRequestWatcher_PerHeadBackstop(t *testing.T) {
 	oldLinks := ReviewLinksPath
 	ReviewLinksPath = filepath.Join(t.TempDir(), "review-links.json")
 	t.Cleanup(func() { ReviewLinksPath = oldLinks })
+	oldBacklog := ReviewBacklogPath
+	ReviewBacklogPath = filepath.Join(t.TempDir(), reviewBacklogFile)
+	t.Cleanup(func() { ReviewBacklogPath = oldBacklog })
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{
+		{Repo: "o/r", Number: 5, HeadSHA: head, Perspective: review.PerspectiveCorrectness, Agent: "reviewer"},
+	}})
 	c.SetReviewCadenceLimits(func() bool { return true }, func() int { return 0 })
+	c.SetReviewBacklog(func() (bool, int) { return true, 2 })
 
-	submit := func(body string) (string, ReviewResponse) {
-		path, err := WriteReviewRequest(dir, ReviewRequest{Repo: "o/r", Number: 5, Event: "comment", Agent: "reviewer", Body: body, Report: validVerdictJSON(t, "o/r", 5, "correctness", "approve")})
+	submit := func(body, report string) (string, ReviewResponse) {
+		if report == "" {
+			report = validVerdictJSON(t, "o/r", 5, "correctness", "approve")
+		}
+		path, err := WriteReviewRequest(dir, ReviewRequest{Repo: "o/r", Number: 5, Event: "comment", Agent: "reviewer", Body: body, Report: report})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -467,7 +618,7 @@ func TestReviewRequestWatcher_PerHeadBackstop(t *testing.T) {
 		return path, resp
 	}
 
-	if _, resp := submit("looks correct to me"); !resp.OK || posts != 1 {
+	if _, resp := submit("looks correct to me", ""); !resp.OK || posts != 1 {
 		t.Fatalf("first review must post: %+v posts=%d", resp, posts)
 	}
 	links, _ := LoadReviewLinks("")
@@ -475,9 +626,12 @@ func TestReviewRequestWatcher_PerHeadBackstop(t *testing.T) {
 		t.Fatalf("ledger must carry the created review's head: %+v", l)
 	}
 
-	path, resp := submit("looks correct to me, again")
+	path, resp := submit("looks correct to me, again", reviewBacklogFixtureReport(t))
 	if !resp.OK || resp.State != ReviewEventRecordVerdict || posts != 1 {
 		t.Fatalf("second review on the same head must record the verdict but post nothing: %+v posts=%d", resp, posts)
+	}
+	if createdIssues != 2 || prSummaryComments != 1 {
+		t.Fatalf("suppressed verdict should file capped backlog once: issues=%d summary=%d", createdIssues, prSummaryComments)
 	}
 	if !strings.Contains(resp.Note, "already carries 1 hive review") || !strings.Contains(resp.Note, "--revise") {
 		t.Fatalf("note must explain the cap and the way out: %q", resp.Note)
@@ -487,7 +641,7 @@ func TestReviewRequestWatcher_PerHeadBackstop(t *testing.T) {
 	}
 
 	head = "bbbbbbb000000000000000000000000000000000"
-	if _, resp := submit("re-read at the new head"); !resp.OK || posts != 2 {
+	if _, resp := submit("re-read at the new head", ""); !resp.OK || posts != 2 {
 		t.Fatalf("a new head must be reviewable again: %+v posts=%d", resp, posts)
 	}
 	links, _ = LoadReviewLinks("")
@@ -497,12 +651,12 @@ func TestReviewRequestWatcher_PerHeadBackstop(t *testing.T) {
 
 	// Non-combined mode allows one review per perspective.
 	c.SetReviewCadenceLimits(func() bool { return false }, func() int { return 0 })
-	if _, resp := submit("security perspective"); !resp.OK || posts != 3 {
+	if _, resp := submit("security perspective", ""); !resp.OK || posts != 3 {
 		t.Fatalf("non-combined must allow up to one per perspective: %+v posts=%d", resp, posts)
 	}
 	// Negative disables the backstop entirely.
 	c.SetReviewCadenceLimits(func() bool { return true }, func() int { return -1 })
-	if _, resp := submit("backstop off"); !resp.OK || posts != 4 {
+	if _, resp := submit("backstop off", ""); !resp.OK || posts != 4 {
 		t.Fatalf("negative cap must disable the backstop: %+v posts=%d", resp, posts)
 	}
 }
