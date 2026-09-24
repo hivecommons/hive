@@ -735,14 +735,19 @@ func spekDraftEpic(t *testing.T, store *beads.Store) *beads.Bead {
 }
 
 // spekReceipts counts the stage receipts recorded for the run's plan stage.
+// The timeline folds repeats of one IssueRef+Kind into a single stage and
+// carries the cardinality in Count, so the number of recordings is that
+// Count - ByIssue would synthesize one event no matter how many were written.
 func spekReceipts(s *Server) int {
-	n := 0
-	for _, ev := range s.LifecycleTimeline().ByIssue(spekRepo + "!" + spekRunKey + ":" + StagePlan) {
-		if ev.Kind == timeline.KindStageReceipt {
-			n++
-		}
+	j, ok := s.LifecycleTimeline().Journey(spekRepo + "!" + spekRunKey + ":" + StagePlan)
+	if !ok {
+		return 0
 	}
-	return n
+	st, ok := j.Stages[timeline.KindStageReceipt]
+	if !ok || st == nil {
+		return 0
+	}
+	return st.Count
 }
 
 // TestPlanCheckpointHoldsUnapprovedPlan is the core of hivecommons/hive#8550
