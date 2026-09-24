@@ -99,6 +99,15 @@ event until a fresh plan is reviewed and approved. Spektacular status
 `artifact_id` is the join key Hive records in receipts and stage attributes;
 older CLIs that lack the field fall back to the historical `name` alias.
 
+Mobile and chat checkpoint surfaces use `GET /api/runs/{key}/checkpoint` as the
+single compact review payload. It returns the run key, stage, lease generation,
+repo, title, a bounded plain-text summary capped by
+`RunCheckpointSummaryMaxBytes`, approve/reject decision options, a dashboard
+deep link, the `lease_gen` staleness fence, and the verified-owner approver
+rule. Compact approvals and rejections post the chosen action plus the lease
+generation back to `/api/runs/{key}/checkpoint`; Hive refuses stale generations
+with `409 Conflict` and refuses non-owner decisions with `403 Forbidden`.
+
 When `governor.work_source.wavefront.enabled` is true, a final Spektacular plan
 that declares repositories with `[repo:<owner/name>]` annotations fans out the
 implement stage into one Wavefront implementation wave per repo. The run detail

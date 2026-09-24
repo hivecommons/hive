@@ -20524,6 +20524,261 @@
         }
       }
     },
+    "/api/runs/{key}/checkpoint": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Get compact run checkpoint payload",
+        "description": "Returns the bounded mobile/chat review payload for a held run checkpoint. The payload includes the lease generation as the staleness fence and the verified-owner approver rule.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "URL-escaped canonical work-item key.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Compact checkpoint review payload.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "run_key",
+                    "stage",
+                    "gen",
+                    "repo",
+                    "title",
+                    "summary",
+                    "summary_max_bytes",
+                    "decisions",
+                    "dashboard_url",
+                    "staleness",
+                    "approvers"
+                  ],
+                  "properties": {
+                    "run_key": {
+                      "type": "string"
+                    },
+                    "stage": {
+                      "type": "string",
+                      "enum": [
+                        "spec",
+                        "plan",
+                        "implement"
+                      ]
+                    },
+                    "gen": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "plan_epic_id": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "string",
+                      "description": "Plain-text summary capped by summary_max_bytes."
+                    },
+                    "summary_max_bytes": {
+                      "type": "integer"
+                    },
+                    "decisions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "action",
+                          "label",
+                          "method",
+                          "url"
+                        ],
+                        "properties": {
+                          "action": {
+                            "type": "string",
+                            "enum": [
+                              "approve",
+                              "reject"
+                            ]
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "method": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "dashboard_url": {
+                      "type": "string"
+                    },
+                    "staleness": {
+                      "type": "object",
+                      "required": [
+                        "fence",
+                        "gen"
+                      ],
+                      "properties": {
+                        "fence": {
+                          "type": "string",
+                          "enum": [
+                            "lease_gen"
+                          ]
+                        },
+                        "gen": {
+                          "type": "integer",
+                          "format": "int64"
+                        }
+                      }
+                    },
+                    "approvers": {
+                      "type": "object",
+                      "required": [
+                        "role",
+                        "verified_owner_required"
+                      ],
+                      "properties": {
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "owner"
+                          ]
+                        },
+                        "verified_owner_required": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Run not found."
+          },
+          "409": {
+            "description": "Run exists but is not currently held for checkpoint review."
+          },
+          "503": {
+            "description": "Run lease registry unavailable or unreadable."
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Resolve a compact run checkpoint decision",
+        "description": "Owner-only. Applies an approve/reject decision from a mobile/chat checkpoint payload only if the submitted generation still matches the live held lease generation.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "URL-escaped canonical work-item key.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "action",
+                  "gen"
+                ],
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "approve",
+                      "reject"
+                    ]
+                  },
+                  "gen": {
+                    "type": "integer",
+                    "format": "int64",
+                    "description": "Lease generation from the checkpoint payload."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Decision accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "status",
+                    "run_key",
+                    "gen"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "approve",
+                        "reject"
+                      ]
+                    },
+                    "run_key": {
+                      "type": "string"
+                    },
+                    "gen": {
+                      "type": "integer",
+                      "format": "int64"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON, unsupported action, or planning state refused the decision."
+          },
+          "403": {
+            "description": "Caller is not a verified owner."
+          },
+          "404": {
+            "description": "Run or checkpoint plan not found."
+          },
+          "409": {
+            "description": "Stale generation, unheld checkpoint, or lease could not advance."
+          },
+          "503": {
+            "description": "Run lease registry unavailable or unreadable."
+          }
+        }
+      }
+    },
     "/api/runs/{key}": {
       "get": {
         "tags": [
