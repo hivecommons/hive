@@ -10,7 +10,7 @@ func TestClusterGitHubConfigPure(t *testing.T) {
 	}
 	c := &ClusterConfig{GitHubBaseURL: "", GitHubAPIURL: "https://github.ibm.com/api/v3", GitHubAppSlug: "kubestellar-hive-ghe"}
 	gh := clusterGitHubConfig(c)
-	if gh.APIURL != "https://github.ibm.com/api/v3" || gh.AppSlug != "kubestellar-hive-ghe" || gh.BaseURL != "" {
+	if gh.APIURL != "https://github.ibm.com/api/v3" || gh.AppSlug != "hivecommons-hive-ghe" || gh.BaseURL != "" {
 		t.Errorf("mapping = %+v, want api_url + slug carried, base empty", gh)
 	}
 	// A GHE cluster recorded with only an api_url must still read as GHE.

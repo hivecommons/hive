@@ -3567,7 +3567,7 @@ type GitHubConfig struct {
 	// inheritance. The implicit empty is what disguised the 2026-07-31 damage.
 	Forge_ string `yaml:"forge,omitempty"`
 	// AppSlug is the GitHub App URL slug for the install link.
-	// For public GitHub: "kubestellar-hive". For GHE: your app's slug.
+	// For public GitHub: "hivecommons-hive". For GHE: your app's slug.
 	AppSlug string `yaml:"app_slug"`
 	// APIURL is the GitHub API base URL. Defaults to DefaultGitHubAPIURL.
 	// For GitHub Enterprise, set to e.g. "https://github.ibm.com/api/v3".
@@ -4095,7 +4095,10 @@ func (g GitHubConfig) NormalizedAppSlug() string {
 	if slug == "" {
 		return ""
 	}
-	if !g.IsGHE() {
+	if g.AppID == EnterpriseGitHubAppID || g.IsGHE() {
+		return NormalizeEnterpriseGitHubAppSlug(slug)
+	}
+	if g.AppID == PublicGitHubAppID || !g.IsGHE() {
 		return NormalizePublicGitHubAppSlug(slug)
 	}
 	return slug
@@ -4107,6 +4110,16 @@ func NormalizePublicGitHubAppSlug(slug string) string {
 	slug = strings.TrimSpace(slug)
 	if strings.EqualFold(slug, LegacyGitHubAppSlug) {
 		return DefaultGitHubAppSlug
+	}
+	return slug
+}
+
+// NormalizeEnterpriseGitHubAppSlug maps the legacy github.ibm.com Hive App slug
+// to the current slug while preserving any non-legacy slug.
+func NormalizeEnterpriseGitHubAppSlug(slug string) string {
+	slug = strings.TrimSpace(slug)
+	if strings.EqualFold(slug, LegacyEnterpriseGitHubAppSlug) {
+		return EnterpriseGitHubAppSlug
 	}
 	return slug
 }
@@ -4193,6 +4206,7 @@ func (g GitHubConfig) AppInstallURL() string {
 		// An explicit slug wins; otherwise only the forge-identity table may
 		// supply one — never DefaultGitHubAppSlug, which names no App here.
 		slug := strings.TrimSpace(g.AppSlug)
+		slug = NormalizeEnterpriseGitHubAppSlug(slug)
 		if slug == "" {
 			if id, ok := forgeIdentities[g.Forge()]; ok {
 				slug = id.AppSlug

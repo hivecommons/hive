@@ -209,6 +209,9 @@ func (i *clusterAppIdentity) normalizePublicSlug() {
 	if i.AppID == config.PublicGitHubAppID || isPublicForgeHost(i.Forge) {
 		i.AppSlug = config.NormalizePublicGitHubAppSlug(i.AppSlug)
 	}
+	if i.AppID == config.EnterpriseGitHubAppID || sameGitHubHost(i.Forge, forgeHostLabel(config.EnterpriseGitHubBaseURL)) {
+		i.AppSlug = config.NormalizeEnterpriseGitHubAppSlug(i.AppSlug)
+	}
 }
 
 // appIdentityForCluster resolves the App identity the hub should enforce on a
@@ -430,6 +433,9 @@ type fleetAppKey struct {
 func normalizeFleetAppSlug(appID int64, slug string) string {
 	if appID == config.PublicGitHubAppID {
 		return config.NormalizePublicGitHubAppSlug(slug)
+	}
+	if appID == config.EnterpriseGitHubAppID {
+		return config.NormalizeEnterpriseGitHubAppSlug(slug)
 	}
 	return strings.TrimSpace(slug)
 }

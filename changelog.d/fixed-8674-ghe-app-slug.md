@@ -1,0 +1,1 @@
+- Fix #8674: normalize the renamed github.ibm.com Hive App slug while preserving legacy GHE App compatibility.

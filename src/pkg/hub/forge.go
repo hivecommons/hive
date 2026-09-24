@@ -713,9 +713,16 @@ func (s *HubServer) forgeIdentityForTarget(cluster *ClusterConfig, target ForgeT
 	if len(missing) > 0 {
 		return forgeIdentity{}, missing
 	}
+	appSlug := strings.TrimSpace(identity.AppSlug)
+	if identity.AppID == config.PublicGitHubAppID || isPublicForgeHost(targetHost) {
+		appSlug = config.NormalizePublicGitHubAppSlug(appSlug)
+	}
+	if identity.AppID == config.EnterpriseGitHubAppID || sameGitHubHost(targetHost, forgeHostLabel(config.EnterpriseGitHubBaseURL)) {
+		appSlug = config.NormalizeEnterpriseGitHubAppSlug(appSlug)
+	}
 	return forgeIdentity{
 		AppID:   identity.AppID,
-		AppSlug: strings.TrimSpace(identity.AppSlug),
+		AppSlug: appSlug,
 	}, nil
 }
 

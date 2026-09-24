@@ -114,7 +114,7 @@ func TestClusterGitHubConfig_BaseOrAPI(t *testing.T) {
 	if !gh.IsGHE() {
 		t.Error("api-only GHE cluster must be recognised as GHE")
 	}
-	if url := gh.AppInstallURL(); url != "https://github.ibm.com/github-apps/kubestellar-hive-ghe/installations/new" {
+	if url := gh.AppInstallURL(); url != "https://github.ibm.com/github-apps/hivecommons-hive-ghe/installations/new" {
 		t.Errorf("api-only GHE install URL = %q, want the GHE /github-apps/ path", url)
 	}
 

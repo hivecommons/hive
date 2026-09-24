@@ -474,6 +474,8 @@ if not login and gh.get('app_authored_prs') is not False:
         slug = (gh.get('app_slug') or '').strip() or 'hivecommons-hive'
         if slug.lower() == 'kubestellar-hive':
             slug = 'hivecommons-hive'
+        if slug.lower() == 'kubestellar-hive-ghe':
+            slug = 'hivecommons-hive-ghe'
         login = slug + '[bot]'
 if re.fullmatch(r'[A-Za-z0-9._-]+(\\[bot\\])?', login):
     print(login)

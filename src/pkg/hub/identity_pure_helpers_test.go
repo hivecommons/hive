@@ -19,7 +19,7 @@ func TestSpokeIdentityFromPayload(t *testing.T) {
 		GitHubBaseURL:        "https://github.ibm.com",
 	}
 	got := SpokeIdentityFromPayload(p)
-	if got.AppID != 5686 || got.AppSlug != "kubestellar-hive-ghe" || got.InstallationID != 43015 ||
+	if got.AppID != 5686 || got.AppSlug != "hivecommons-hive-ghe" || got.InstallationID != 43015 ||
 		got.APIURL != "https://github.ibm.com/api/v3" || got.BaseURL != "https://github.ibm.com" {
 		t.Errorf("mapped identity = %+v, want the payload's GitHub fields verbatim", got)
 	}

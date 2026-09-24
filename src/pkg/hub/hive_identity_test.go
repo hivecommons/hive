@@ -15,8 +15,8 @@ import (
 // testGHEAppID / testGitHubComAppID are defined in both_app_keys_test.go.
 const (
 	testPublicAppID = testGitHubComAppID
-	identPublicSlug = "kubestellar-hive"
-	identGHESlug    = "kubestellar-hive-ghe"
+	identPublicSlug = "hivecommons-hive"
+	identGHESlug    = "hivecommons-hive-ghe"
 	identGHEHost    = "github.ibm.com"
 	identGHEBaseURL = "https://github.ibm.com"
 	identGHEAPIURL  = "https://github.ibm.com/api/v3"

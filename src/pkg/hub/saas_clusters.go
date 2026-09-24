@@ -86,7 +86,9 @@ func clusterGitHubConfig(c *ClusterConfig) config.GitHubConfig {
 	// derived config's HostLabel()/IsGHE()/AppInstallURL() resolve the forge
 	// base-or-api: a GHE cluster that records only an api_url (blank base_url —
 	// the common state) is still recognised as GHE, not mislabelled github.com.
-	return config.GitHubConfig{BaseURL: base, APIURL: c.GitHubAPIURL, AppSlug: c.GitHubAppSlug}
+	gh := config.GitHubConfig{BaseURL: base, APIURL: c.GitHubAPIURL, AppSlug: c.GitHubAppSlug}
+	gh.AppSlug = gh.NormalizedAppSlug()
+	return gh
 }
 
 // githubHostLabel renders a GitHub base URL as a bare hostname for display.

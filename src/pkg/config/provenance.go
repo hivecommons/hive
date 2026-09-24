@@ -232,7 +232,7 @@ const (
 	PublicGitHubAppSlug = DefaultGitHubAppSlug
 
 	// EnterpriseGitHubAppID is the numeric App ID of the github.ibm.com
-	// kubestellar-hive-ghe GitHub App. This is the value that was pushed onto
+	// hivecommons-hive-ghe GitHub App. This is the value that was pushed onto
 	// seven public-GitHub hives on 2026-07-31.
 	EnterpriseGitHubAppID int64 = 5686
 
@@ -283,11 +283,13 @@ const (
 	// a second slug ("ibm-hive") and declined to assert the mapping. That was
 	// wrong: "ibm-hive" existed only in _test.go fixtures — it appears in no
 	// production config, in no cluster entry, and on none of the 51 fleet
-	// spokes (live clusters.json carries github_app_slug
-	// "kubestellar-hive-ghe" for the heartbeat-only cluster). Relaxing the rule for an invented
-	// fixture left a GHE App under a non-"ghe" slug passing validation, which
-	// is precisely the shape this package exists to reject.
-	EnterpriseGitHubAppSlug = "kubestellar-hive-ghe"
+	// spokes (live clusters.json used to carry github_app_slug
+	// "kubestellar-hive-ghe" for the heartbeat-only cluster before the App was
+	// renamed). Relaxing the rule for an invented fixture left a GHE App under
+	// a non-"ghe" slug passing validation, which is precisely the shape this
+	// package exists to reject.
+	LegacyEnterpriseGitHubAppSlug = "kubestellar-hive-ghe"
+	EnterpriseGitHubAppSlug       = "hivecommons-hive-ghe"
 	// EnterpriseGitHubAPIURL and EnterpriseGitHubBaseURL are the forge URLs the
 	// enterprise App lives on.
 	EnterpriseGitHubAPIURL  = "https://github.ibm.com/api/v3"

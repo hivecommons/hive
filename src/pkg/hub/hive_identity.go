@@ -49,6 +49,9 @@ func normalizeHiveIdentity(id HiveIdentity) HiveIdentity {
 	if id.AppSlug != "" && (id.AppID == config.PublicGitHubAppID || isPublicForgeHost(id.Forge)) {
 		id.AppSlug = config.NormalizePublicGitHubAppSlug(id.AppSlug)
 	}
+	if id.AppSlug != "" && (id.AppID == config.EnterpriseGitHubAppID || sameGitHubHost(id.Forge, forgeHostLabel(config.EnterpriseGitHubBaseURL))) {
+		id.AppSlug = config.NormalizeEnterpriseGitHubAppSlug(id.AppSlug)
+	}
 	return id
 }
 
@@ -506,10 +509,14 @@ func clusterAppForForge(c *ClusterConfig, forge string) (clusterAppIdentity, boo
 			// Returning it would hand the caller a half-identity.
 			return clusterAppIdentity{}, false
 		}
-		return clusterAppIdentity{
-			AppID:   id.AppID,
-			AppSlug: strings.TrimSpace(id.AppSlug),
-		}, true
+		appSlug := strings.TrimSpace(id.AppSlug)
+		if id.AppID == config.PublicGitHubAppID || isPublicForgeHost(forge) {
+			appSlug = config.NormalizePublicGitHubAppSlug(appSlug)
+		}
+		if id.AppID == config.EnterpriseGitHubAppID || sameGitHubHost(forge, forgeHostLabel(config.EnterpriseGitHubBaseURL)) {
+			appSlug = config.NormalizeEnterpriseGitHubAppSlug(appSlug)
+		}
+		return clusterAppIdentity{AppID: id.AppID, AppSlug: appSlug}, true
 	}
 	return clusterAppIdentity{}, false
 }

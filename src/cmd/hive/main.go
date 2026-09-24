@@ -6365,7 +6365,7 @@ func runEvalCycle(
 	shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
 		PrimaryRepo:     cfg.Project.PrimaryRepo,
 		AIAuthor:        cfg.Project.AIAuthor,
-		InternalAuthors: []string{"hivecommons-hive[bot]", "kubestellar-hive[bot]", "github-actions[bot]", "dependabot[bot]", "copilot-swe-agent[bot]"},
+		InternalAuthors: []string{"hivecommons-hive[bot]", "kubestellar-hive[bot]", "hivecommons-hive-ghe[bot]", "kubestellar-hive-ghe[bot]", "github-actions[bot]", "dependabot[bot]", "copilot-swe-agent[bot]"},
 	})
 	if shaErr != nil {
 		logger.Warn("SHA hold enforcement failed", "error", shaErr)

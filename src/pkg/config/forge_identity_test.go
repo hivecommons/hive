@@ -215,7 +215,7 @@ func TestForgeURLFieldsMustMatchDeclaredForge(t *testing.T) {
 // seven hives. The hub pushed the GHE app_id and app_slug onto hives whose
 // elected forge was github.com, leaving api_url/base_url empty — so token
 // creation went to api.github.com with a GHE App ID and returned
-// "404 Integration not found", and agents authored as kubestellar-hive-ghe[bot]
+// "404 Integration not found", and agents authored as hivecommons-hive-ghe[bot]
 // on public repos.
 func TestIncidentRegression2026_07_31(t *testing.T) {
 	damaged := GitHubConfig{

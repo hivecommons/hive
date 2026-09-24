@@ -505,7 +505,7 @@ func TestAppIdentityForCluster(t *testing.T) {
 		wantNoKey bool
 		reason    string
 	}{
-		{name: "app id and key present", clusterID: "vllm-d", wantAppID: 5686, wantSlug: "kubestellar-hive-ghe"},
+		{name: "app id and key present", clusterID: "vllm-d", wantAppID: 5686, wantSlug: "hivecommons-hive-ghe"},
 		{name: "key but no app id", clusterID: "keyonly", wantNil: true, reason: "an app_id-less cluster has no identity to enforce"},
 		// A configured app_id with no stored key IS an identity. Returning nil
 		// here is the bug that made #2333's sentinel repair unreachable in
@@ -594,14 +594,14 @@ func TestAppKeySyncForHeartbeat(t *testing.T) {
 			name:     "spoke with no key gets the cluster key",
 			payload:  &HeartbeatPayload{HiveID: "vllmd-06", ClusterID: "vllm-d"},
 			wantCfg:  true,
-			wantSlug: "kubestellar-hive-ghe",
+			wantSlug: "hivecommons-hive-ghe",
 			reason:   "the four keyless hives",
 		},
 		{
 			name:     "spoke with the wrong key gets corrected",
 			payload:  &HeartbeatPayload{HiveID: "vllmd-01", ClusterID: "vllm-d", GitHubAppKeyFingerprint: "sha256:deadbeefdeadbeefdeadbeefdeadbeef"},
 			wantCfg:  true,
-			wantSlug: "kubestellar-hive-ghe",
+			wantSlug: "hivecommons-hive-ghe",
 			reason:   "the three hives carrying the public github.com key",
 		},
 		{

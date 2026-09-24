@@ -246,7 +246,7 @@ mixture exists.
 
 | Forge | `app_id` | `app_slug` | `api_url` |
 |---|---|---|---|
-| GHE | `5686` | `kubestellar-hive-ghe` | `https://<your-ghe-host>/api/v3` |
+| GHE | `5686` | `hivecommons-hive-ghe` | `https://<your-ghe-host>/api/v3` |
 | Public | `3568013` | `hivecommons-hive` | empty (defaults to `api.github.com`) |
 
 Delivering a GHE `app_id` **without** `api_url` leaves `api_url` empty, which
