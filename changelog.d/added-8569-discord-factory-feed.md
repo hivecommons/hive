@@ -1,0 +1,1 @@
+- Added the opt-in Discord factory feed for org-wide GitHub issue/PR activity (#8569).

@@ -4161,9 +4161,10 @@ func (g GitHubConfig) AppInstallURL() string {
 }
 
 type NotificationsConfig struct {
-	Ntfy    *NtfyConfig    `yaml:"ntfy,omitempty"`
-	Slack   *SlackConfig   `yaml:"slack,omitempty"`
-	Discord *DiscordConfig `yaml:"discord,omitempty"`
+	Ntfy           *NtfyConfig           `yaml:"ntfy,omitempty"`
+	Slack          *SlackConfig          `yaml:"slack,omitempty"`
+	Discord        *DiscordConfig        `yaml:"discord,omitempty"`
+	GitHubActivity *GitHubActivityConfig `yaml:"github_activity,omitempty"`
 }
 
 type NtfyConfig struct {
@@ -4176,9 +4177,10 @@ type SlackConfig struct {
 }
 
 type DiscordConfig struct {
-	Webhook   string `yaml:"webhook"`
-	BotToken  string `yaml:"bot_token"`
-	ChannelID string `yaml:"channel_id"`
+	Webhook        string `yaml:"webhook"`
+	FactoryWebhook string `yaml:"factory_webhook,omitempty"`
+	BotToken       string `yaml:"bot_token"`
+	ChannelID      string `yaml:"channel_id"`
 	// AllowedUsers is an allowlist of Discord user IDs permitted to issue bot
 	// COMMANDS (!kick, !pause, agent actions — anything that drives an agent).
 	// SECURITY: without it, any member of the guild who can post in the channel
@@ -4186,6 +4188,35 @@ type DiscordConfig struct {
 	// DISABLED (fail closed) — the bot still posts status but accepts no
 	// commands — so an operator must opt in by listing the trusted user IDs.
 	AllowedUsers []string `yaml:"allowed_users,omitempty"`
+}
+
+// GitHubActivityConfig gates the hub's org-wide GitHub issue/PR activity feed.
+// The feed is default-off. When enabled, the hub polls org repos, diffs issue
+// and PR state, and posts concise lines to notifications.discord.factory_webhook.
+type GitHubActivityConfig struct {
+	Enabled          bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Org              string   `yaml:"org,omitempty" json:"org,omitempty"`
+	APIURL           string   `yaml:"api_url,omitempty" json:"api_url,omitempty"`
+	PollIntervalS    int      `yaml:"poll_interval_s,omitempty" json:"poll_interval_s,omitempty"`
+	AllowAuthors     []string `yaml:"allow_authors,omitempty" json:"allow_authors,omitempty"`
+	DenyAuthors      []string `yaml:"deny_authors,omitempty" json:"deny_authors,omitempty"`
+	FilterBots       *bool    `yaml:"filter_bots,omitempty" json:"filter_bots,omitempty"`
+	FilterDependabot *bool    `yaml:"filter_dependabot,omitempty" json:"filter_dependabot,omitempty"`
+}
+
+func (g GitHubActivityConfig) EffectiveOrg(projectOrg string) string {
+	if strings.TrimSpace(g.Org) != "" {
+		return strings.TrimSpace(g.Org)
+	}
+	return strings.TrimSpace(projectOrg)
+}
+
+func (g GitHubActivityConfig) BotsFiltered() bool {
+	return g.FilterBots == nil || *g.FilterBots
+}
+
+func (g GitHubActivityConfig) DependabotFiltered() bool {
+	return g.FilterDependabot == nil || *g.FilterDependabot
 }
 
 // ContributeAnnouncement is the operator-set message surfaced to contributors on

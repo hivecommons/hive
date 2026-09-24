@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -99,7 +100,53 @@ func wireHubReach(srv *hub.HubServer, logger *slog.Logger, ghToken string) {
 	} else {
 		logger.Warn("reach PR source disabled: HIVE_GITHUB_TOKEN not set, /api/reach will report 503")
 	}
+
 	srv.SetReachReporter(srv.RegistryReachReporter())
+}
+
+func wireHubGitHubActivity(srv *hub.HubServer, logger *slog.Logger, configPath, envToken string) {
+	cfg, err := config.LoadWithDashboardOverlay(configPath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			logger.Warn("github activity feed disabled: failed to load config", "path", configPath, "error", err)
+		}
+		return
+	}
+	activity := cfg.Notifications.GitHubActivity
+	if activity == nil || !activity.Enabled {
+		return
+	}
+	if cfg.Notifications.Discord == nil || cfg.Notifications.Discord.FactoryWebhook == "" {
+		logger.Warn("github activity feed disabled: notifications.discord.factory_webhook is not configured")
+		return
+	}
+	token := cfg.GitHub.Token
+	if token == "" {
+		token = envToken
+	}
+	if token == "" {
+		logger.Warn("github activity feed disabled: no GitHub token configured")
+		return
+	}
+	apiURL := activity.APIURL
+	if apiURL == "" {
+		apiURL = cfg.GitHub.ResolvedAPIURL()
+	}
+	dataDir := filepath.Dir(cfg.Data.AgentsDir)
+	pollInterval := time.Duration(activity.PollIntervalS) * time.Second
+	srv.SetGitHubActivityFeed(hub.NewGitHubActivityFeed(hub.GitHubActivityOptions{
+		Org:              activity.EffectiveOrg(cfg.Project.Org),
+		APIURL:           apiURL,
+		Token:            token,
+		WebhookURL:       cfg.Notifications.Discord.FactoryWebhook,
+		DataDir:          dataDir,
+		PollInterval:     pollInterval,
+		AllowAuthors:     activity.AllowAuthors,
+		DenyAuthors:      activity.DenyAuthors,
+		FilterBots:       activity.BotsFiltered(),
+		FilterDependabot: activity.DependabotFiltered(),
+	}, logger))
+	logger.Info("github activity feed wired", "org", activity.EffectiveOrg(cfg.Project.Org), "data_dir", dataDir)
 }
 
 // hubShutdownTimeout bounds graceful shutdown after a termination signal.
@@ -132,6 +179,7 @@ func runHubWithDeps(ctx context.Context, logger *slog.Logger, configPath string,
 	wireHubHooks(logger, configPath)
 	installUpgradePauseEmitter(hubSrv)
 	wireHubReach(hubSrv, logger, os.Getenv("HIVE_GITHUB_TOKEN"))
+	wireHubGitHubActivity(hubSrv, logger, configPath, os.Getenv("HIVE_GITHUB_TOKEN"))
 
 	// Long-lived SaaS pollers are started here — at the composition root — not
 	// inside route registration, so constructing a HubServer stays free of

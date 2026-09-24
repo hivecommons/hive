@@ -37,6 +37,7 @@ Reverse proxies, Routes, and Ingresses must preserve HTTP upgrade headers and lo
 | Hub URL (`hub.url`) | Spokes | Heartbeats and callback polling. Must be reachable from firewalled spokes even when the hub cannot initiate inbound connections. |
 | Model backends and CLI auth endpoints | Agents | Claude/Copilot/Gemini CLIs and OpenAI-compatible gateways (`vllm`, `llm-d`, `litellm`, OpenRouter, custom). |
 | Notification endpoints | Optional | `ntfy`, Slack webhooks, and Discord webhooks/bot API only when configured. |
+| `discord.com` / Discord webhook hosts | Optional | Required when `notifications.discord.webhook`, `notifications.discord.factory_webhook`, or the Discord bot integration is configured. |
 | Container/image registries | Deployment/auto-update | Pull hive images, watchtower updates, and any inference backend images. |
 | npm/GitHub for caveman mode | Optional | `npx github:JuliusBrussee/caveman#...` runs when `caveman_mode` is enabled for supported backends. |
 | Kubernetes API | In-cluster spokes/hub | Used for health/provisioning/route discovery when those features are configured. |

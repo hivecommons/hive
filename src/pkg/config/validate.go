@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	dashboardtheme "github.com/hivecommons/hive/pkg/dashboard/theme"
@@ -39,11 +40,15 @@ func (c *Config) Validate() error {
 	if err := c.Publication.Validate(); err != nil {
 		return err
 	}
+	if err := c.validateGitHubActivityNotifications(); err != nil {
+		return err
+	}
 	if normalized, err := ValidateSnapshotFrameAncestors(c.Dashboard.SnapshotFrameAncestors); err != nil {
 		return err
 	} else {
 		c.Dashboard.SnapshotFrameAncestors = normalized
 	}
+
 	if normalized, err := ValidateDashboardPublicURL(c.Dashboard.PublicURL); err != nil {
 		return err
 	} else {
@@ -143,6 +148,60 @@ func (c *Config) Validate() error {
 func validateAgentSpecRef(agentName, ref string) error {
 	if strings.ContainsRune(ref, '\x00') {
 		return fmt.Errorf("agent %s: agent_spec contains a NUL byte", agentName)
+	}
+	return nil
+}
+
+func (c *Config) validateGitHubActivityNotifications() error {
+	if c.Notifications.Discord != nil && strings.TrimSpace(c.Notifications.Discord.FactoryWebhook) != "" {
+		if err := validateWebhookURL(c.Notifications.Discord.FactoryWebhook); err != nil {
+			return fmt.Errorf("notifications.discord.factory_webhook: %w", err)
+		}
+	}
+	if c.Notifications.GitHubActivity == nil || !c.Notifications.GitHubActivity.Enabled {
+		return nil
+	}
+	if c.Notifications.Discord == nil || strings.TrimSpace(c.Notifications.Discord.FactoryWebhook) == "" {
+		return fmt.Errorf("notifications.github_activity requires notifications.discord.factory_webhook")
+	}
+	if c.Notifications.GitHubActivity.EffectiveOrg(c.Project.Org) == "" {
+		return fmt.Errorf("notifications.github_activity.org or project.org is required")
+	}
+	if c.Notifications.GitHubActivity.PollIntervalS < 0 {
+		return fmt.Errorf("notifications.github_activity.poll_interval_s must be non-negative")
+	}
+	if strings.TrimSpace(c.Notifications.GitHubActivity.APIURL) != "" {
+		if err := validateAPIURL(c.Notifications.GitHubActivity.APIURL); err != nil {
+			return fmt.Errorf("notifications.github_activity.api_url: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateWebhookURL(raw string) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return err
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return fmt.Errorf("must use http or https")
+	}
+	if u.Host == "" {
+		return fmt.Errorf("must include a host")
+	}
+	return nil
+}
+
+func validateAPIURL(raw string) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return err
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return fmt.Errorf("must use http or https")
+	}
+	if u.Host == "" {
+		return fmt.Errorf("must include a host")
 	}
 	return nil
 }

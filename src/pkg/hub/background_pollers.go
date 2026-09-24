@@ -40,6 +40,9 @@ func (s *HubServer) StartBackgroundPollers(ctx context.Context) <-chan struct{} 
 	// cycle saying how many hives are stale and how many are stale but
 	// UNREPORTED. Read-only measurement — no alert, no registry write.
 	start(s.StartAdvisoryDiagnostics)
+	if s.githubActivityFeed != nil {
+		start(s.githubActivityFeed.Run)
+	}
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()

@@ -21,6 +21,18 @@ notifications:
     webhook: ${SLACK_WEBHOOK_URL}
   discord:
     webhook: ${DISCORD_WEBHOOK_URL}
+    factory_webhook: ${DISCORD_FACTORY_WEBHOOK_URL}
+  github_activity:
+    enabled: true
+    # org defaults to project.org; keep explicit for hub/factory feeds.
+    org: hivecommons
+    # optional: defaults to 5 minutes
+    poll_interval_s: 300
+    # default true; bot/dependabot noise is suppressed unless allow-listed.
+    filter_bots: true
+    filter_dependabot: true
+    allow_authors: []
+    deny_authors: []
 ```
 
 All three channels are optional. Configure one channel or several. Webhook URLs are secrets; keep them in environment variables or Kubernetes Secrets rather than committing literal URLs.
@@ -49,8 +61,55 @@ The notifier accepts `http://` and `https://` URLs in the Go sender, but product
 | Field | Required | Notes |
 |---|---:|---|
 | `notifications.discord.webhook` | yes for webhook notifications | Discord webhook URL. The sender posts `{"content":"**title**\nmessage"}`. |
+| `notifications.discord.factory_webhook` | yes for `notifications.github_activity.enabled` | Dedicated Discord webhook URL for org-wide GitHub issue/PR activity. The sender posts one-line `{"content":"🐝 [repo] ..."}` messages. |
 
 Use a Discord **webhook URL**, not a bot token, for notification delivery.
+
+### GitHub activity feed
+
+`notifications.github_activity` enables the hub's org-wide issue/PR activity
+poller. It is **off by default**. When enabled, hub mode enumerates repositories
+from `orgs/<org>/repos`, diffs issue/PR state across poll cycles, and sends
+concise activity lines to the dedicated
+`notifications.discord.factory_webhook`. The state and sent-event dedupe keys
+are persisted under the hive data directory so a hub restart seeds from disk
+instead of replaying previously observed activity.
+
+| Field | Required | Default | Notes |
+|---|---:|---|---|
+| `notifications.github_activity.enabled` | no | `false` | Turns the feed on. |
+| `notifications.github_activity.org` | no | `project.org` | GitHub organization to enumerate with `orgs/<org>/repos`. |
+| `notifications.github_activity.api_url` | no | configured GitHub API URL / `https://api.github.com` | Override for GitHub Enterprise or tests. |
+| `notifications.github_activity.poll_interval_s` | no | `300` | Hub poll cadence. |
+| `notifications.github_activity.filter_bots` | no | `true` | Suppresses `*[bot]` authors unless allow-listed. Forward-merge PRs are still allowed to emit their single merged line. |
+| `notifications.github_activity.filter_dependabot` | no | `true` | Suppresses Dependabot authors unless allow-listed. |
+| `notifications.github_activity.allow_authors` | no | empty | Case-insensitive author logins that bypass the default bot filters. |
+| `notifications.github_activity.deny_authors` | no | empty | Case-insensitive author logins that are always suppressed. |
+
+Event keys are deduped as `(repo, number, event, sha-or-version)`. Forward-merge
+PR chatter is collapsed so only the final merged message is posted:
+
+```text
+🐝 [hive] PR #8562 merged into v6 — 🌱 Forward-merge v5 into v6 (4 commits, hand-resolved) · @clubanderson
+```
+
+Current v1 event coverage:
+
+| Area | Event | Notes |
+|---|---|---|
+| Issue | opened | New open issues observed after the initial seed. |
+| Issue | closed completed / not planned | Uses GitHub `state_reason` when present. |
+| Issue | reopened | Closed → open transition. |
+| Issue | hive label added | `claimed`, `hive/*`, and `priority/*`. |
+| Issue | assigned/claimed | Newly added assignee. |
+| Issue | claim marker taken/released | Diffs `<!-- hive-claim -->` in issue body when present in API responses. |
+| PR | opened | New non-draft open PRs observed after the initial seed. |
+| PR | ready for review | Draft → ready transition. |
+| PR | review requested | Newly requested reviewers from the PR list response. |
+| PR | approved / changes requested | Latest submitted PR review decision. |
+| PR | CI red/green transition | Terminal combined-status changes (`success`, `failure`, `error`) on the head SHA. |
+| PR | merged | Includes the target branch (`merged into v6`) and merge/head SHA dedupe. |
+| PR | closed unmerged | Open → closed without merge. |
 
 ## What triggers notifications
 

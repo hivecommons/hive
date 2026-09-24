@@ -898,11 +898,12 @@ type HeartbeatHealthEntry struct {
 }
 
 type HubServer struct {
-	mux      *http.ServeMux
-	registry Registry
-	mu       sync.RWMutex
-	logger   *slog.Logger
-	saveCh   chan struct{}
+	mux                *http.ServeMux
+	registry           Registry
+	mu                 sync.RWMutex
+	logger             *slog.Logger
+	saveCh             chan struct{}
+	githubActivityFeed *GitHubActivityFeed
 	// saveLoopStop / saveLoopDone make the debounced saveLoop goroutine
 	// joinable (#4774). A hub built by NewHubServer used to leak its saveLoop
 	// forever: in tests, the loop could wake up to registrySaveDelay after the
