@@ -414,3 +414,40 @@ func TestBuiltinAndCSSFailureBranches(t *testing.T) {
 		t.Fatal("ETag accepted invalid theme")
 	}
 }
+
+func TestPreviewHelpersAndDerivedModeBranches(t *testing.T) {
+	if got := CanonicalID(" openclaw "); got != "hive-dark" {
+		t.Fatalf("CanonicalID(openclaw) = %q, want hive-dark", got)
+	}
+	th := Theme{ID: "preview", Dark: true, Tokens: map[string]string{"--surface-0": "#000000", "--text": "#ffffff"}}
+	css, err := PreviewCSS(th)
+	if err != nil {
+		t.Fatalf("PreviewCSS: %v", err)
+	}
+	if !strings.Contains(css, "body.light-mode") || !strings.Contains(css, "--surface-0: #f1f6fc;") {
+		t.Fatalf("PreviewCSS did not derive a light palette with fallback accent:\n%s", css)
+	}
+	etag, err := PreviewETag(th)
+	if err != nil {
+		t.Fatalf("PreviewETag: %v", err)
+	}
+	if etag == "" || !strings.HasPrefix(etag, "\"") || !strings.HasSuffix(etag, "\"") {
+		t.Fatalf("PreviewETag = %q", etag)
+	}
+	dark := deriveModeTokens(map[string]string{"--accent": "not-a-color"}, false)
+	if dark["--accent"] != "not-a-color" || dark["--surface-0"] == "" {
+		t.Fatalf("dark derived palette lost invalid-but-allowed accent context: %#v", dark)
+	}
+	if got := mixHex("#000000", "#ffffff", -1); got != "#000000" {
+		t.Fatalf("mixHex negative ratio = %s, want base", got)
+	}
+	if got := mixHex("#000000", "#ffffff", 2); got != "#ffffff" {
+		t.Fatalf("mixHex high ratio = %s, want accent", got)
+	}
+	if got := mixHex("bad", "#ffffff", 0.5); got != "bad" {
+		t.Fatalf("mixHex invalid base = %s, want original base", got)
+	}
+	if _, ok := parseHexColor("#gggggg"); ok {
+		t.Fatal("parseHexColor accepted invalid hex")
+	}
+}
