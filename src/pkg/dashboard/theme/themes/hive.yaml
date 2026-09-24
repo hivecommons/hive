@@ -2,33 +2,35 @@ id: hive
 name: Hive
 description: Honey-on-wax palette for the default Hive dashboard.
 author: Hive contributors
-scopes: [dashboard, contributor]
+scopes:
+- dashboard
+- contributor
 dark: true
 tokens:
-  "--bg": "#14110b"
-  "--bg-soft": "#19140c"
-  "--panel": "#21190e"
-  "--panel-strong": "#2a2113"
-  "--text": "#fff6df"
-  "--muted": "#c7a96b"
-  "--line": "#3f321d"
-  "--line-strong": "#5a441f"
-  "--amber": "#e0a33a"
-  "--accent": "#e0a33a"
-  "--blue": "#d7972f"
-  "--red": "#f26d5b"
-  "--green": "#9fd27a"
-  "--yellow": "#e0a33a"
-  "--orange": "#d47a2a"
-  "--cyan": "#7bd8cd"
-  "--purple": "#c0a6f0"
-  "--font-ui": "'IBM Plex Sans', Inter, ui-sans-serif, system-ui"
-  "--font-mono": "'IBM Plex Mono', 'SF Mono', monospace"
+  --font-ui: '''IBM Plex Sans'', Inter, ui-sans-serif, system-ui'
+  --font-mono: '''IBM Plex Mono'', ''SF Mono'', monospace'
+  --surface-0: '#14110b'
+  --surface-1: '#19140c'
+  --surface-2: '#21190e'
+  --surface-3: '#2a2113'
+  --line-subtle: '#3f321d'
+  --line-strong: '#5a441f'
+  --text: '#fff6df'
+  --text-muted: '#c7a96b'
+  --brand: '#e0a33a'
+  --accent: '#e0a33a'
+  --status-ok: '#9fd27a'
+  --status-warn: '#e0a33a'
+  --status-attention: '#d47a2a'
+  --status-error: '#f26d5b'
+  --status-info: '#d7972f'
+  --acmm-level-2: '#7bd8cd'
+  --acmm-level-5: '#c0a6f0'
 fonts:
-  ui: "'IBM Plex Sans', Inter, ui-sans-serif, system-ui"
-  mono: "'IBM Plex Mono', 'SF Mono', monospace"
+  ui: '''IBM Plex Sans'', Inter, ui-sans-serif, system-ui'
+  mono: '''IBM Plex Mono'', ''SF Mono'', monospace'
 background:
-  image: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='97' viewBox='0 0 56 97'%3E%3Cpath d='M28 1l27 15.5v31L28 63 1 47.5v-31zM28 34l27 15.5v31L28 96 1 80.5v-31z' fill='none' stroke='%23e0a33a' stroke-opacity='.09'/%3E%3C/svg%3E"
+  image: data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='97' viewBox='0 0 56 97'%3E%3Cpath d='M28 1l27 15.5v31L28 63 1 47.5v-31zM28 34l27 15.5v31L28 96 1 80.5v-31z' fill='none' stroke='%23e0a33a' stroke-opacity='.09'/%3E%3C/svg%3E
   position: top right
   size: 56px 97px
   opacity: 0.22

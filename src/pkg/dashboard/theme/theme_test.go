@@ -75,13 +75,13 @@ func TestEveryThemeFileParsesWithUniqueID(t *testing.T) {
 }
 
 func TestTokenAllowListMatchesDashboardRoot(t *testing.T) {
-	b, err := os.ReadFile("../static/index.html")
+	b, err := os.ReadFile("../static/tokens.css")
 	if err != nil {
-		t.Fatalf("read dashboard index: %v", err)
+		t.Fatalf("read dashboard tokens: %v", err)
 	}
-	root := regexp.MustCompile(`(?s):root\s*\{(.*?)\n\s*\}`).FindSubmatch(b)
+	root := regexp.MustCompile(`(?s):root\s*\{(.*?)\n\}`).FindSubmatch(b)
 	if root == nil {
-		t.Fatal("dashboard index has no :root token block")
+		t.Fatal("dashboard tokens.css has no :root token block")
 	}
 	re := regexp.MustCompile(`--[a-zA-Z0-9-]+\s*:`)
 	got := map[string]struct{}{}
@@ -89,8 +89,70 @@ func TestTokenAllowListMatchesDashboardRoot(t *testing.T) {
 		got[strings.TrimSuffix(strings.TrimSpace(m), ":")] = struct{}{}
 	}
 	want := TokenAllowList()
-	if diff := tokenDiff(got, want); diff != "" {
-		t.Fatalf("theme token allow-list drifted from static/index.html :root:\n%s", diff)
+	var missing []string
+	for token := range got {
+		if _, ok := want[token]; !ok {
+			missing = append(missing, token)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Fatalf("theme token allow-list missing tokens.css :root tokens:\n%s", strings.Join(missing, "\n"))
+	}
+}
+
+func TestCSSCompilesLegacyTokensToCanonicalAliases(t *testing.T) {
+	th := Theme{ID: "legacy", Tokens: map[string]string{
+		"--bg":     "#010203",
+		"--panel":  "#111213",
+		"--line":   "#212223",
+		"--amber":  "#313233",
+		"--blue":   "#414243",
+		"--accent": "#515253",
+	}}
+	css, err := CSS(th)
+	if err != nil {
+		t.Fatalf("CSS legacy: %v", err)
+	}
+	for _, want := range []string{
+		"--surface-0: #010203;",
+		"--surface-2: #111213;",
+		"--line-subtle: #212223;",
+		"--brand: #313233;",
+		"--status-info: #414243;",
+		"--bg: var(--surface-0);",
+		"--panel: var(--surface-2);",
+		"--line: var(--line-subtle);",
+		"--amber: var(--brand);",
+		"--blue: var(--status-info);",
+		"--accent: #515253;",
+	} {
+		if !strings.Contains(css, want) {
+			t.Fatalf("legacy CSS missing %q:\n%s", want, css)
+		}
+	}
+}
+
+func TestCSSCanonicalTokenWinsOverLegacyToken(t *testing.T) {
+	th := Theme{ID: "mixed", Tokens: map[string]string{
+		"--bg":        "#010203",
+		"--surface-0": "#aabbcc",
+	}, LightTokens: map[string]string{
+		"--bg":        "#111111",
+		"--surface-0": "#eeeeee",
+	}}
+	css, err := CSS(th)
+	if err != nil {
+		t.Fatalf("CSS mixed: %v", err)
+	}
+	if !strings.Contains(css, "--surface-0: #aabbcc;") || strings.Contains(css, "--surface-0: #010203;") {
+		t.Fatalf("root canonical token did not win:\n%s", css)
+	}
+	if !strings.Contains(css, "body.light-mode{\n  --surface-0: #eeeeee;") || strings.Contains(css, "--surface-0: #111111;") {
+		t.Fatalf("light canonical token did not win:\n%s", css)
+	}
+	if got := strings.Count(css, "--bg: var(--surface-0);"); got != 2 {
+		t.Fatalf("legacy alias count = %d, want 2:\n%s", got, css)
 	}
 }
 
@@ -129,22 +191,6 @@ func TestEffectiveCSSIncludesBackgroundAndETag(t *testing.T) {
 	if err != nil || !strings.HasPrefix(etag, "\"") || !strings.HasSuffix(etag, "\"") {
 		t.Fatalf("etag = %q, %v", etag, err)
 	}
-}
-
-func tokenDiff(got, want map[string]struct{}) string {
-	var lines []string
-	for k := range got {
-		if _, ok := want[k]; !ok {
-			lines = append(lines, "+ "+k)
-		}
-	}
-	for k := range want {
-		if _, ok := got[k]; !ok {
-			lines = append(lines, "- "+k)
-		}
-	}
-	sort.Strings(lines)
-	return strings.Join(lines, "\n")
 }
 
 func TestValidationErrorBranches(t *testing.T) {
@@ -203,7 +249,7 @@ func TestEffectiveBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("light css: %v", err)
 	}
-	if !strings.Contains(css, "body.light-mode") || !strings.Contains(css, "--bg: #f7f8fa") {
+	if !strings.Contains(css, "body.light-mode") || !strings.Contains(css, "--surface-0: #f7f8fa") || !strings.Contains(css, "--bg: var(--surface-0)") {
 		t.Fatalf("light css missing body remap: %s", css)
 	}
 }

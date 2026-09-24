@@ -333,11 +333,45 @@ contributors should target. A shareable design-system theme looks like this:
 }
 ```
 
-Allowed tokens are the public tokens in this document: `--font-*`, `--fs-*`,
-`--sp-*`, `--r-*`, `--shadow-*`, `--surface-*`, `--line-*`, `--text*`,
-`--brand`, `--status-*`, `--overlay-scrim`, `--acmm-level-*`, and `--vendor-*`.
-Compatibility aliases may be accepted while migration is in progress but should
-not be advertised to new themes.
+The canonical token list is the `:root` block in
+`pkg/dashboard/static/tokens.css`: `--font-*`, `--fs-*`, `--sp-*`, `--r*`,
+`--shadow-*`, `--surface-*`, `--line-*`, `--text*`, `--brand`,
+`--status-*`, `--overlay-scrim`, `--acmm-level-*`, `--vendor-*`, and the
+documented component metrics (`--control-*`, `--btn-*`, `--badge-*`,
+`--status-dot-size`, `--table-cell-*`, `--empty-state-*`, `--preview-*`,
+`--metric-*`, `--component-*`, `--duration-*`, `--opacity-disabled`, `--fw-*`,
+`--lh-*`, `--tracking-*`, `--line-width`, `--focus-ring-width`, `--full-size`,
+and `--z-sticky`).
+
+Legacy dashboard names are deprecated but still accepted by the theme engine so
+existing presets and user themes keep working. When `GET /api/theme.css`
+compiles a theme, a legacy declaration also emits the canonical token if it was
+not set. If both are set, the canonical token wins and the legacy variable is
+emitted as `var(--canonical)`. The compatibility table is:
+
+| Deprecated | Canonical |
+| --- | --- |
+| `--bg` | `--surface-0` |
+| `--bg-soft` | `--surface-1` |
+| `--panel`, `--surface`, `--card-bg` | `--surface-2` |
+| `--panel-strong` | `--surface-3` |
+| `--terminal-bg` | `--surface-terminal` |
+| `--muted` | `--text-muted` |
+| `--fg` | `--text` |
+| `--line` | `--line-subtle` |
+| `--border` | `--line-subtle` |
+| `--amber` | `--brand` |
+| `--green` | `--status-ok` |
+| `--yellow` | `--status-warn` |
+| `--orange` | `--status-attention` |
+| `--red`, `--oc-accent` | `--status-error` |
+| `--blue` | `--status-info` |
+| `--cyan`, `--terminal-cyan` | `--acmm-level-2` |
+| `--indigo` | `--acmm-level-4` |
+| `--purple` | `--acmm-level-5` |
+| `--radius-sm` | `--r-sm` |
+| `--radius` | `--r` |
+| `--radius-lg` | `--r-lg` |
 
 Forbidden in token-theme files: selectors other than `:root` and optional
 `[data-theme="light"]`, `body.light-mode`, or future documented theme-root
@@ -345,7 +379,9 @@ blocks; layout declarations targeting dashboard classes; `@import`; external
 URLs except sanitizer-approved background/image values; script/style breakouts;
 and any declaration not setting an allowed custom property. Keep the theme token
 override block at or below 32 KiB, matching the existing dashboard custom CSS
-ceiling.
+ceiling. Hive returns validation errors for unsupported token names, empty token
+values, unsafe CSS characters (`<`, `>`, or `</style`), non-HTTPS external
+`url()` references in custom CSS, and over-limit custom CSS/background payloads.
 
 ## Verification recipe
 

@@ -19807,7 +19807,7 @@ function burnAreaChart() {
       const honeyOn = bg.image === HONEYCOMB_WATERMARK;
       const cards = (_themeState.catalog || []).map(t => {
         const tok = t.tokens || {};
-        const colors = t.swatches || [tok['--bg'] || '#111', tok['--panel'] || '#222', tok['--accent'] || tok['--blue'] || '#80bfff', tok['--text'] || '#fff'];
+        const colors = t.swatches || [tok['--surface-0'] || '#111', tok['--surface-2'] || '#222', tok['--brand'] || tok['--status-info'] || '#80bfff', tok['--text'] || '#fff'];
         return '<div class="theme-card' + (t.id === current ? ' active' : '') + '" data-action="themePreview" data-theme-id="' + esc(t.id) + '" data-mouseover-action="themePreview" data-mouseout-action="themePreviewClear">'
           + '<div class="theme-swatches">' + colors.map(c => '<span class="theme-swatch" style="background:' + esc(c) + '"></span>').join('') + '</div>'
           + '<div class="theme-title">' + esc(t.name || t.id) + (t.dark ? ' 🌙' : ' ☀') + '</div>'

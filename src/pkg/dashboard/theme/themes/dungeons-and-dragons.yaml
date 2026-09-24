@@ -2,30 +2,33 @@ id: dungeons-and-dragons
 name: Dungeons & Dragons
 description: Parchment, leather, crimson, and gold for fantasy campaign control rooms.
 author: Hive contributors
-scopes: [dashboard, contributor]
+scopes:
+- dashboard
+- contributor
 dark: false
 tokens:
-  "--bg": "#efe1bd"
-  "--bg-soft": "#f7edcf"
-  "--panel": "#fff3d1"
-  "--panel-strong": "#e4c886"
-  "--text": "#2d1a0b"
-  "--muted": "#6f5132"
-  "--line": "#b38b4d"
-  "--line-strong": "#7b4f25"
-  "--amber": "#b8860b"
-  "--accent": "#8f1d2c"
-  "--blue": "#315f7d"
-  "--red": "#8f1d2c"
-  "--green": "#4f7a37"
-  "--yellow": "#b8860b"
-  "--orange": "#a65f1a"
-  "--cyan": "#3d7780"
-  "--purple": "#6d4c82"
-  "--font-ui": "Georgia, 'Times New Roman', serif"
-  "--font-mono": "'SF Mono', 'Cascadia Code', monospace"
+  --font-ui: Georgia, 'Times New Roman', serif
+  --font-mono: '''SF Mono'', ''Cascadia Code'', monospace'
+  --surface-0: '#efe1bd'
+  --surface-1: '#f7edcf'
+  --surface-2: '#fff3d1'
+  --surface-3: '#e4c886'
+  --line-subtle: '#b38b4d'
+  --line-strong: '#7b4f25'
+  --text: '#2d1a0b'
+  --text-muted: '#6f5132'
+  --brand: '#b8860b'
+  --accent: '#8f1d2c'
+  --status-ok: '#4f7a37'
+  --status-warn: '#b8860b'
+  --status-attention: '#a65f1a'
+  --status-error: '#8f1d2c'
+  --status-info: '#315f7d'
+  --acmm-level-2: '#3d7780'
+  --acmm-level-5: '#6d4c82'
 fonts:
-  ui: "Georgia, 'Times New Roman', serif"
-  mono: "'SF Mono', 'Cascadia Code', monospace"
-custom_css: |
-  .section-label, .oc-nav-label { font-family: Georgia, 'Times New Roman', serif; }
+  ui: Georgia, 'Times New Roman', serif
+  mono: '''SF Mono'', ''Cascadia Code'', monospace'
+custom_css: '.section-label, .oc-nav-label { font-family: Georgia, ''Times New Roman'', serif; }
+
+  '

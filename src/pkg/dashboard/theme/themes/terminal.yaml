@@ -2,32 +2,34 @@ id: terminal
 name: Terminal
 description: Green-on-black mono theme for operators who live in shells.
 author: Hive contributors
-scopes: [dashboard, contributor]
+scopes:
+- dashboard
+- contributor
 dark: true
 tokens:
-  "--bg": "#000000"
-  "--bg-soft": "#020602"
-  "--panel": "#031003"
-  "--panel-strong": "#062006"
-  "--text": "#c8ffc8"
-  "--muted": "#7bd87b"
-  "--line": "#145214"
-  "--line-strong": "#25d825"
-  "--amber": "#afff5a"
-  "--accent": "#00ff66"
-  "--blue": "#66ffcc"
-  "--red": "#ff6666"
-  "--green": "#00ff66"
-  "--yellow": "#afff5a"
-  "--orange": "#d0ff66"
-  "--cyan": "#66ffcc"
-  "--purple": "#99ff99"
-  "--terminal-bg": "#000000"
-  "--terminal-fg": "#00ff66"
-  "--terminal-muted": "#7bd87b"
-  "--terminal-line": "#145214"
-  "--font-ui": "'SF Mono', 'Cascadia Code', monospace"
-  "--font-mono": "'SF Mono', 'Cascadia Code', monospace"
+  --font-ui: '''SF Mono'', ''Cascadia Code'', monospace'
+  --font-mono: '''SF Mono'', ''Cascadia Code'', monospace'
+  --surface-0: '#000000'
+  --surface-1: '#020602'
+  --surface-2: '#031003'
+  --surface-3: '#062006'
+  --surface-terminal: '#000000'
+  --line-subtle: '#145214'
+  --line-strong: '#25d825'
+  --text: '#c8ffc8'
+  --text-muted: '#7bd87b'
+  --brand: '#afff5a'
+  --accent: '#00ff66'
+  --status-ok: '#00ff66'
+  --status-warn: '#afff5a'
+  --status-attention: '#d0ff66'
+  --status-error: '#ff6666'
+  --status-info: '#66ffcc'
+  --acmm-level-2: '#66ffcc'
+  --acmm-level-5: '#99ff99'
+  --terminal-fg: '#00ff66'
+  --terminal-line: '#145214'
+  --terminal-muted: '#7bd87b'
 fonts:
-  ui: "'SF Mono', 'Cascadia Code', monospace"
-  mono: "'SF Mono', 'Cascadia Code', monospace"
+  ui: '''SF Mono'', ''Cascadia Code'', monospace'
+  mono: '''SF Mono'', ''Cascadia Code'', monospace'

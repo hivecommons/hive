@@ -2,29 +2,31 @@ id: hive-light
 name: Hive Light
 description: Bright Hive dashboard palette with crisp red accents.
 author: Hive contributors
-scopes: [dashboard, contributor]
+scopes:
+- dashboard
+- contributor
 dark: false
 tokens:
-  "--bg": "#f7f8fa"
-  "--bg-soft": "#ffffff"
-  "--panel": "#ffffff"
-  "--panel-strong": "#eef1f5"
-  "--text": "#111827"
-  "--muted": "#6b7280"
-  "--line": "#e5e7eb"
-  "--line-strong": "#c6cdd6"
-  "--amber": "#b45309"
-  "--accent": "#dc2626"
-  "--blue": "#2563eb"
-  "--red": "#dc2626"
-  "--green": "#16a34a"
-  "--yellow": "#a16207"
-  "--orange": "#c2570f"
-  "--cyan": "#0891b2"
-  "--purple": "#7c3aed"
-  "--terminal-bg": "#1d2430"
-  "--font-ui": "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-  "--font-mono": "'SF Mono', 'Cascadia Code', 'Fira Code', monospace"
+  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif
+  --font-mono: '''SF Mono'', ''Cascadia Code'', ''Fira Code'', monospace'
+  --surface-0: '#f7f8fa'
+  --surface-1: '#ffffff'
+  --surface-2: '#ffffff'
+  --surface-3: '#eef1f5'
+  --surface-terminal: '#1d2430'
+  --line-subtle: '#e5e7eb'
+  --line-strong: '#c6cdd6'
+  --text: '#111827'
+  --text-muted: '#6b7280'
+  --brand: '#b45309'
+  --accent: '#dc2626'
+  --status-ok: '#16a34a'
+  --status-warn: '#a16207'
+  --status-attention: '#c2570f'
+  --status-error: '#dc2626'
+  --status-info: '#2563eb'
+  --acmm-level-2: '#0891b2'
+  --acmm-level-5: '#7c3aed'
 fonts:
-  ui: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-  mono: "'SF Mono', 'Cascadia Code', 'Fira Code', monospace"
+  ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif
+  mono: '''SF Mono'', ''Cascadia Code'', ''Fira Code'', monospace'

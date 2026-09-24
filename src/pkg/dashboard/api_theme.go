@@ -192,7 +192,7 @@ func themeHasScope(th config.DashboardTheme, scope string) bool {
 }
 
 func themeSwatches(th config.DashboardTheme) []string {
-	keys := []string{"--bg", "--panel", "--accent", "--text"}
+	keys := []string{"--surface-0", "--surface-2", "--brand", "--text"}
 	out := make([]string, 0, len(keys))
 	for _, key := range keys {
 		if v := strings.TrimSpace(th.Tokens[key]); v != "" {

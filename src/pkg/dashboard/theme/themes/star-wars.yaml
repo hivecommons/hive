@@ -1,31 +1,34 @@
 id: star-wars
 name: Star Wars
-description: A galaxy far, far away — dark space palette with saber accents.
+description: "A galaxy far, far away \u2014 dark space palette with saber accents."
 author: Hive contributors
-scopes: [dashboard, contributor]
+scopes:
+- dashboard
+- contributor
 dark: true
 tokens:
-  "--bg": "#05060a"
-  "--bg-soft": "#0b0d14"
-  "--panel": "#171923"
-  "--panel-strong": "#252935"
-  "--text": "#f3f4e8"
-  "--muted": "#9ea4b8"
-  "--line": "#343849"
-  "--line-strong": "#5b6278"
-  "--amber": "#ffe066"
-  "--accent": "#4cc9f0"
-  "--blue": "#4cc9f0"
-  "--red": "#ff4057"
-  "--green": "#61ff7e"
-  "--yellow": "#ffe066"
-  "--orange": "#ff9f1c"
-  "--cyan": "#48e5ff"
-  "--purple": "#b99cff"
-  "--font-ui": "'Arial Narrow', 'Roboto Condensed', Arial, sans-serif"
-  "--font-mono": "'SF Mono', 'Cascadia Code', monospace"
+  --font-ui: '''Arial Narrow'', ''Roboto Condensed'', Arial, sans-serif'
+  --font-mono: '''SF Mono'', ''Cascadia Code'', monospace'
+  --surface-0: '#05060a'
+  --surface-1: '#0b0d14'
+  --surface-2: '#171923'
+  --surface-3: '#252935'
+  --line-subtle: '#343849'
+  --line-strong: '#5b6278'
+  --text: '#f3f4e8'
+  --text-muted: '#9ea4b8'
+  --brand: '#ffe066'
+  --accent: '#4cc9f0'
+  --status-ok: '#61ff7e'
+  --status-warn: '#ffe066'
+  --status-attention: '#ff9f1c'
+  --status-error: '#ff4057'
+  --status-info: '#4cc9f0'
+  --acmm-level-2: '#48e5ff'
+  --acmm-level-5: '#b99cff'
 fonts:
-  ui: "'Arial Narrow', 'Roboto Condensed', Arial, sans-serif"
-  mono: "'SF Mono', 'Cascadia Code', monospace"
-custom_css: |
-  .section-label, .oc-nav-label { color: var(--yellow); letter-spacing: .16em; }
+  ui: '''Arial Narrow'', ''Roboto Condensed'', Arial, sans-serif'
+  mono: '''SF Mono'', ''Cascadia Code'', monospace'
+custom_css: '.section-label, .oc-nav-label { color: var(--yellow); letter-spacing: .16em; }
+
+  '

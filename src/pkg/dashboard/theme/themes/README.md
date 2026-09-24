@@ -13,9 +13,16 @@ Fields:
 - `author`: credit for this theme definition.
 - `scopes`: optional list of surfaces where the theme is offered. Use `dashboard`, `contributor`, or both. Empty means dashboard-only for old files.
 - `dark`: whether the base palette is dark.
-- `tokens`: CSS custom properties from `pkg/dashboard/static/index.html` `:root`
-  (for example `--bg`, `--bg-soft`, `--panel`, `--panel-strong`, `--text`,
-  `--muted`, `--line`, `--accent`, `--amber`, status colors, and font stacks).
+- `tokens`: ADR-0018 CSS custom properties from
+  `pkg/dashboard/static/tokens.css` `:root`. New themes should set canonical
+  tokens: `--surface-*`, `--text*`, `--line-*`, `--brand`, `--status-*`,
+  `--acmm-level-*`, `--vendor-*`, `--font-*`, `--fs-*`, `--sp-*`, `--r*`,
+  `--shadow-*`, and documented component metrics such as `--control-min-h`,
+  `--btn-*`, `--badge-*`, `--table-cell-*`, `--component-*`, and
+  `--duration-*`.
+- `light_tokens` (optional): token overrides emitted in the same light-mode
+  selector used by the dashboard (`body.light-mode`). For light presets
+  (`dark: false`), the base `tokens` map is emitted there automatically.
 - `fonts.ui` / `fonts.mono`: CSS font stacks. Use system fonts or openly hosted
   fonts; do not bundle proprietary font files here.
 - `background` (optional): `image` (`https:` or bounded `data:` URI), `position`,
@@ -35,11 +42,47 @@ author: Your Name
 scopes: [dashboard, contributor]
 dark: true
 tokens:
-  "--bg": "#101214"
-  "--panel": "#171a1f"
+  "--surface-0": "#101214"
+  "--surface-1": "#14171c"
+  "--surface-2": "#171a1f"
   "--text": "#f8fafc"
-  "--accent": "#7dd3fc"
+  "--text-muted": "#94a3b8"
+  "--brand": "#f4c75f"
+  "--status-info": "#7dd3fc"
 fonts:
   ui: "Inter, ui-sans-serif, system-ui"
   mono: "'SF Mono', monospace"
 ```
+
+Legacy dashboard variables remain accepted for existing user themes but are
+deprecated for new presets. During CSS compilation, a deprecated token also sets
+its canonical token when the canonical token is absent; when both are present,
+the canonical value wins and the legacy variable is emitted as `var(--canonical)`.
+
+| Deprecated | Canonical |
+| --- | --- |
+| `--bg` | `--surface-0` |
+| `--bg-soft` | `--surface-1` |
+| `--panel`, `--surface`, `--card-bg` | `--surface-2` |
+| `--panel-strong` | `--surface-3` |
+| `--terminal-bg` | `--surface-terminal` |
+| `--muted` | `--text-muted` |
+| `--fg` | `--text` |
+| `--line` | `--line-subtle` |
+| `--border` | `--line-subtle` |
+| `--amber` | `--brand` |
+| `--green` | `--status-ok` |
+| `--yellow` | `--status-warn` |
+| `--orange` | `--status-attention` |
+| `--red`, `--oc-accent` | `--status-error` |
+| `--blue` | `--status-info` |
+| `--cyan`, `--terminal-cyan` | `--acmm-level-2` |
+| `--indigo` | `--acmm-level-4` |
+| `--purple` | `--acmm-level-5` |
+| `--radius-sm` | `--r-sm` |
+| `--radius` | `--r` |
+| `--radius-lg` | `--r-lg` |
+
+Validation rejects unsupported token names, empty token values, style breakouts
+such as `<` / `>` or `</style`, non-HTTPS external URLs in `custom_css`, and
+theme CSS beyond 32 KiB.

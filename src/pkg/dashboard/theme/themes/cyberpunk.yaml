@@ -2,30 +2,33 @@ id: cyberpunk
 name: Cyberpunk
 description: Neon magenta and cyan on near-black city-night surfaces.
 author: Hive contributors
-scopes: [dashboard, contributor]
+scopes:
+- dashboard
+- contributor
 dark: true
 tokens:
-  "--bg": "#07010f"
-  "--bg-soft": "#0e0820"
-  "--panel": "#17102a"
-  "--panel-strong": "#21143f"
-  "--text": "#f7eaff"
-  "--muted": "#a99ac2"
-  "--line": "#3b2865"
-  "--line-strong": "#ff2bd6"
-  "--amber": "#ffe66d"
-  "--accent": "#ff2bd6"
-  "--blue": "#00e5ff"
-  "--red": "#ff3864"
-  "--green": "#39ff88"
-  "--yellow": "#ffe66d"
-  "--orange": "#ff9f1c"
-  "--cyan": "#00e5ff"
-  "--purple": "#bd66ff"
-  "--font-ui": "Inter, ui-sans-serif, system-ui"
-  "--font-mono": "'Fira Code', 'SF Mono', monospace"
+  --font-ui: Inter, ui-sans-serif, system-ui
+  --font-mono: '''Fira Code'', ''SF Mono'', monospace'
+  --surface-0: '#07010f'
+  --surface-1: '#0e0820'
+  --surface-2: '#17102a'
+  --surface-3: '#21143f'
+  --line-subtle: '#3b2865'
+  --line-strong: '#ff2bd6'
+  --text: '#f7eaff'
+  --text-muted: '#a99ac2'
+  --brand: '#ffe66d'
+  --accent: '#ff2bd6'
+  --status-ok: '#39ff88'
+  --status-warn: '#ffe66d'
+  --status-attention: '#ff9f1c'
+  --status-error: '#ff3864'
+  --status-info: '#00e5ff'
+  --acmm-level-2: '#00e5ff'
+  --acmm-level-5: '#bd66ff'
 fonts:
-  ui: "Inter, ui-sans-serif, system-ui"
-  mono: "'Fira Code', 'SF Mono', monospace"
-custom_css: |
-  .theme-card:hover, .agent-card:hover { box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 35%, transparent); }
+  ui: Inter, ui-sans-serif, system-ui
+  mono: '''Fira Code'', ''SF Mono'', monospace'
+custom_css: '.theme-card:hover, .agent-card:hover { box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 35%, transparent); }
+
+  '

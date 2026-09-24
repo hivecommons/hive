@@ -13,7 +13,7 @@ The `@ref` suffix is optional and defaults to `HEAD`. Use the `owner/repo/path.c
 
 ## Token-based themes
 
-For dashboard theme work, prefer token overrides from the [dashboard design system](dashboard-design-system.md) over selector-level restyling. The planned #8536 contract treats a theme as a small CSS file that sets only documented `:root` tokens, with an optional light-mode block; arbitrary selectors remain for the existing custom stylesheet feature but are not the stable design-system API.
+For dashboard theme work, prefer token overrides from the [dashboard design system](dashboard-design-system.md) over selector-level restyling. The #8536 contract is live: a portable dashboard theme is a small CSS file or preset token map that sets only documented canonical `:root` tokens, with an optional light-mode block. Deprecated legacy variables are still accepted and aliased for existing themes, but arbitrary selectors remain part of the custom stylesheet escape hatch rather than the stable design-system API.
 
 ## Fetching and scoping
 
@@ -48,4 +48,3 @@ Share it as:
 ```text
 /snapshot?style=your-org/your-theme/hive.css@main
 ```
-
