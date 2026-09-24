@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- GA4 --><script async src="https://www.googletagmanager.com/gtag/js?id=G-4707R797K3"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date());gtag("config","G-4707R797K3");</script>
+  <meta charset="UTF-8">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍯</text></svg>">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta property="og:title" content="Project Bluefin — CNCF End User Reference Architecture">
+  <meta property="og:description" content="A CNCF End User reference architecture for Project Bluefin - a bootc image-based desktop OS built, signed and maintained by a governed fleet of AI coding agents.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://hive.hivecommons.dev/cncf-reference-architecture/bluefin">
+  <link rel="canonical" href="https://hive.hivecommons.dev/cncf-reference-architecture/bluefin">
+  <meta name="description" content="A CNCF End User reference architecture for Project Bluefin - a bootc image-based desktop OS built, signed and maintained by a governed fleet of AI coding agents.">
+  <meta name="robots" content="noindex">
+  <title>Project Bluefin — CNCF End User Reference Architecture</title>
+</head>
+<body>
+<link rel="stylesheet" href="/tokens.css">
+  <link rel="stylesheet" href="/components.css">
+  <style>
+  :root {
+    --hub-article-surface: var(--surface-2);
+    --hub-article-inset: var(--surface-1);
+    --hub-article-link-strong: var(--status-info);
+    --hub-article-info-soft: color-mix(in srgb, var(--status-info) var(--component-tint), transparent);
+    --hub-article-brand-soft: color-mix(in srgb, var(--brand) var(--component-tint), transparent);
+    --hub-article-ok-soft: color-mix(in srgb, var(--status-ok) var(--component-tint), transparent);
+    --hub-article-error-soft: color-mix(in srgb, var(--status-error) var(--component-tint), transparent);
+    --hub-article-measure: 68ch;
+  }
+
+  body {
+    margin: var(--sp-0); background: var(--surface-0); color: var(--text);
+    font-family: var(--font-ui); line-height: 1.65;
+    font-size: 17px; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 clamp(1.1rem, 4vw, 3rem); }
+
+  /* ── Masthead ── */
+  header.masthead {
+    border-bottom: 1px solid var(--line-subtle);
+    background:
+      radial-gradient(1200px 240px at 12% -40%, color-mix(in srgb, var(--status-info) 12%, transparent), transparent),
+      radial-gradient(900px 200px at 90% -60%, color-mix(in srgb, var(--brand) 14%, transparent), transparent);
+  }
+  .masthead .wrap { padding-top: 2.6rem; padding-bottom: 2.2rem; }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: var(--sp-4);
+    font-size: var(--fs-sm); letter-spacing: .14em; text-transform: uppercase;
+    font-weight: 700; color: var(--hub-article-link-strong);
+    background: var(--hub-article-info-soft); border: 1px solid color-mix(in srgb, var(--status-info) 30%, transparent);
+    padding: .3rem .7rem; border-radius: var(--r-pill);
+  }
+  h1 {
+    font-size: clamp(1.9rem, 4.6vw, 3rem); line-height: 1.08;
+    letter-spacing: -0.02em; margin: 1.1rem 0 .4rem; text-wrap: balance; font-weight: 800;
+  }
+  .subtitle { color: var(--text-muted); font-size: 1.12rem; max-width: 60ch; margin: var(--sp-0); }
+
+  .meta-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: .1rem 1.6rem; margin-top: 1.9rem;
+    border-top: 1px solid var(--line-subtle); padding-top: 1.3rem;
+  }
+  .meta-grid dt { font-size: var(--fs-xs); letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint); font-weight: 700; }
+  .meta-grid dd { margin: .15rem 0 .9rem; font-size: var(--fs-md); color: var(--text); }
+  .tags { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .2rem; }
+  .tag { font-size: var(--fs-sm); font-family: var(--font-mono); color: var(--text-muted); background: var(--hub-article-inset); border: 1px solid var(--line-subtle); padding: .12rem .5rem; border-radius: var(--r); }
+
+  /* ── Layout with TOC ── */
+  .shell { display: grid; grid-template-columns: 1fr; gap: var(--sp-0); }
+  @media (min-width: 960px) {
+    .shell { grid-template-columns: 210px minmax(0, 1fr); gap: 3rem; align-items: start; }
+    nav.toc { position: sticky; top: 1.4rem; }
+  }
+  nav.toc { padding: var(--sp-9) var(--sp-0); }
+  nav.toc p { font-size: var(--fs-xs); letter-spacing: .12em; text-transform: uppercase; color: var(--text-faint); font-weight: 700; margin: 0 0 .7rem; }
+  nav.toc a { display: block; color: var(--text-muted); text-decoration: none; font-size: .86rem; padding: .28rem 0; border-left: 2px solid transparent; padding-left: .7rem; transition: color .15s, border-color .15s; }
+  nav.toc a:hover { color: var(--status-info); border-color: var(--status-info); }
+
+  main { padding: 2rem 0 4rem; min-width: 0; }
+  section { margin-bottom: 3rem; scroll-margin-top: 1.4rem; }
+  section > p, section > ul, section > ol { max-width: var(--hub-article-measure); }
+  h2 {
+    font-size: clamp(1.3rem, 2.6vw, 1.7rem); letter-spacing: -0.01em; font-weight: 750;
+    margin: var(--sp-0) var(--sp-0) var(--sp-6); padding-bottom: var(--sp-4); border-bottom: 2px solid var(--line-subtle);
+    display: flex; align-items: baseline; gap: .6rem;
+  }
+  h2 .num { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--status-info); font-weight: 700; letter-spacing: 0; }
+  h3 { font-size: 1.06rem; font-weight: 700; margin: 1.7rem 0 .5rem; color: var(--text); }
+  p { margin: var(--sp-0) var(--sp-0) var(--sp-6); }
+  a { color: var(--status-info); text-decoration-color: color-mix(in srgb, var(--status-info) 40%, transparent); text-underline-offset: 2px; }
+  strong { color: var(--text); font-weight: 680; }
+  code { font-family: var(--font-mono); font-size: .86em; background: var(--hub-article-inset); border: 1px solid var(--line-subtle); border-radius: 5px; padding: .08em .38em; }
+  ul, ol { padding-left: 1.3rem; }
+  li { margin: .35rem 0; }
+
+  /* ── CNCF project cards ── */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--sp-6); max-width: none; }
+  .card {
+    background: var(--hub-article-surface); border: 1px solid var(--line-subtle); border-radius: var(--r-lg);
+    padding: 1.1rem 1.2rem; display: flex; flex-direction: column; gap: .35rem;
+  }
+  .card .ch { display: flex; align-items: center; gap: .55rem; font-weight: 700; font-size: var(--fs-lg); }
+  .card .dot { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font-size: var(--fs-md); background: var(--hub-article-info-soft); flex: 0 0 auto; }
+  .card .ver { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text-faint); }
+  .card p { font-size: .89rem; color: var(--text-muted); margin: .3rem 0 0; }
+
+  /* ── diagrams ── */
+  figure { margin: var(--sp-8) var(--sp-0); }
+  .diagram {
+    background: var(--hub-article-surface); border: 1px solid var(--line-subtle); border-radius: var(--r-lg);
+    padding: 1.4rem 1rem; overflow-x: auto;
+  }
+  .diagram .mermaid { display: flex; justify-content: center; min-width: 0; }
+  .diagram .mermaid svg { max-width: 100%; height: auto; }
+  figcaption { font-size: var(--fs-sm); color: var(--text-faint); text-align: center; margin-top: .6rem; letter-spacing: .02em; }
+
+  /* ── worked / didn't panels ── */
+  .split { display: grid; grid-template-columns: 1fr; gap: var(--sp-6); max-width: none; }
+  @media (min-width: 720px) { .split { grid-template-columns: 1fr 1fr; } }
+  .panel { border-radius: var(--r-lg); padding: 1.2rem 1.3rem; border: 1px solid var(--line-subtle); }
+  .panel.good { background: var(--hub-article-ok-soft); border-color: color-mix(in srgb, var(--status-ok) 35%, transparent); }
+  .panel.bad { background: var(--hub-article-error-soft); border-color: color-mix(in srgb, var(--status-error) 35%, transparent); }
+  .panel h3 { margin-top: var(--sp-0); display: flex; align-items: center; gap: var(--sp-4); }
+  .panel.good h3 { color: var(--status-ok); }
+  .panel.bad h3 { color: var(--status-error); }
+  .panel ul { padding-left: 1.15rem; margin: var(--sp-0); }
+  .panel li { font-size: .93rem; }
+  .panel li strong { color: inherit; }
+
+  /* ── ACMM ladder ── */
+  .ladder { display: grid; gap: var(--sp-4); max-width: none; margin-top: var(--sp-4); }
+  .rung { display: grid; grid-template-columns: 3rem 1fr; gap: .9rem; align-items: center; background: var(--hub-article-surface); border: 1px solid var(--line-subtle); border-radius: 10px; padding: .7rem .9rem; border-left: 4px solid var(--rung); }
+  .rung .lvl { font-family: var(--font-mono); font-weight: 700; color: var(--rung); font-size: .95rem; }
+  .rung .rd { font-size: var(--fs-md); color: var(--text-muted); }
+  .rung .rd b { color: var(--text); }
+
+  blockquote { margin: 1.2rem 0; padding: .9rem 1.2rem; border-left: 3px solid var(--brand); background: var(--hub-article-brand-soft); border-radius: 0 8px 8px 0; color: var(--text-muted); font-size: .95rem; max-width: var(--hub-article-measure); }
+
+  footer { border-top: 1px solid var(--line-subtle); }
+  footer .wrap { padding: 2rem 0 3rem; color: var(--text-faint); font-size: var(--fs-base); }
+  footer a { font-weight: 600; }
+
+
+  /* -- tables -- */
+  .tablewrap { overflow-x: auto; margin: var(--sp-6) var(--sp-0); max-width: none; }
+  table { border-collapse: collapse; width: 100%; font-size: .93rem; }
+  th, td { text-align: left; padding: .55rem .8rem; border-bottom: 1px solid var(--line-subtle); vertical-align: top; }
+  thead th { font-size: var(--fs-sm); letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); font-weight: 700; border-bottom: 2px solid var(--line-subtle); }
+  tbody tr:last-child td { border-bottom: none; }
+
+  /* -- sibling-page nav -- */
+  .siblings { font-size: var(--fs-md); color: var(--text-faint); margin: 1.4rem 0 0; }
+  .siblings a { font-weight: 600; }
+
+  .disclaimer { font-size: var(--fs-base); color: var(--text-faint); font-style: italic; }
+</style>
+
+<header class="masthead">
+  <div class="wrap">
+    <span class="eyebrow">🍯 CNCF End User Reference Architecture · Adopter · Draft</span>
+    <h1>Project Bluefin: a bootc desktop OS built and maintained by a governed agent fleet</h1>
+    <p class="subtitle">A cloud-native desktop operating system delivered as bootable OCI container images - assembled by a container build pipeline, signed with Sigstore, verified on the client by a default-deny policy, updated in place with bootc, and produced by repositories maintained under an explicit autonomy model.</p>
+    <p class="siblings">Adopter reference architectures: <a href="/cncf-reference-architecture">Hive</a> · <a href="/cncf-reference-architecture/console">KubeStellar Console</a></p>
+
+    <dl class="meta-grid">
+      <div><dt>Organisation</dt><dd>Project Bluefin</dd></div>
+      <div><dt>Team</dt><dd>Project Bluefin / Universal Blue maintainers</dd></div>
+      <div style="grid-column: 1 / -1;"><dt>Contact</dt><dd>Andy Anderson (Hive maintainer), with Project Bluefin maintainers</dd></div>
+      <div><dt>Date</dt><dd>2026-09-24</dd></div>
+      <div><dt>Organisation size</dt><dd>Open-source community project</dd></div>
+      <div style="grid-column: 1 / -1;"><dt>User size</dt><dd>~4.1k active installations (Fedora countme estimate)</dd></div>
+      <div><dt>Industries</dt><dd>Open Source · Operating Systems</dd></div>
+      <div><dt>Reference architectures</dt><dd>CI/CD · Security · Platform Engineering</dd></div>
+      <div><dt>Website</dt><dd><a href="https://projectbluefin.io/">projectbluefin.io</a></dd></div>
+      <div style="grid-column: 1 / -1;"><dt>Tags</dt><dd><span class="tags"><span class="tag">bootc</span><span class="tag">image-based-linux</span><span class="tag">supply-chain-security</span><span class="tag">sigstore</span><span class="tag">autonomous-maintenance</span><span class="tag">platform-engineering</span></span></dd></div>
+    </dl>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="shell">
+    <nav class="toc" aria-label="Contents">
+      <p>Contents</p>
+      <a href="#projects">CNCF projects</a>
+      <a href="#org">Organisation</a>
+      <a href="#overview">Architecture overview</a>
+      <a href="#delivery">Delivery architecture</a>
+      <a href="#maintenance">Maintenance architecture</a>
+      <a href="#principles">Guiding principles</a>
+      <a href="#worked">What worked / didn't</a>
+      <a href="#glue">The glue</a>
+      <a href="#evolution">Evolution</a>
+      <a href="#next">What is next</a>
+      <a href="#verification">Verification notes</a>
+    </nav>
+
+    <main>
+      <!-- -- Scope -- -->
+      <blockquote><strong>Scope.</strong> This document describes Project Bluefin as a deployed architecture: how the operating system is built, signed, delivered and updated, and how the repositories that produce it are maintained. It is a companion to the CNCF End User Case Study submission naming Project Bluefin as the end user.</blockquote>
+
+      <!-- -- CNCF projects -- -->
+      <section id="projects">
+        <h2><span class="num">01</span> Relevant CNCF projects</h2>
+        <p>The list below is deliberately short. It names only projects that run in the shipped image, the build pipeline, or the supporting infrastructure. Project Bluefin additionally <em>curates and offers</em> 89 CNCF-project formulas to its users through <code>ujust cncf</code>, which is described later as a distribution concern rather than a runtime dependency.</p>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Project</th><th>Where it runs</th><th>Evidence</th></tr></thead>
+            <tbody>
+              <tr><td>containerd</td><td>Shipped in the base image; <code>containerd.io</code> additionally in the <code>-dx</code> developer variant</td><td><code>build_files/base/04-packages.sh</code></td></tr>
+              <tr><td>Sigstore (cosign, Fulcio, Rekor)</td><td>Image signing in CI; <strong>signature verification on every client</strong></td><td><code>reusable-build.yml</code>; <code>/usr/lib/pki/containers/{fulcio_v1.crt.pem,rekor.pub}</code> shipped in the image</td></tr>
+              <tr><td>OpenTelemetry</td><td>Shipped Collector configuration behind <code>ujust report</code>, with in-pipeline privacy scrubbing</td><td><code>system_files/bluefin/usr/share/ublue-os/otel/ujust-report-config.yaml</code></td></tr>
+              <tr><td>Argo Workflows</td><td>QA pipeline infrastructure</td><td><code>projectbluefin/testsuite</code>, <code>projectbluefin/lab</code></td></tr>
+              <tr><td>KubeVirt</td><td>VM-based desktop testing in that pipeline</td><td>same</td></tr>
+              <tr><td>KubeStellar (Sandbox)</td><td>The agent orchestration layer maintaining the repositories</td><td>docs.projectbluefin.io/factory</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Two precise notes, because reference architectures are read by people checking claims. The <strong>Open Container Initiative</strong> image spec is central to this architecture and is a Linux Foundation project, a sibling of CNCF rather than a CNCF project. <strong>Podman</strong> is the build and runtime engine and is a Red Hat led project in the <code>containers</code> organization, not a CNCF project. <strong>SLSA</strong> provenance is generated in the newer build line and is an OpenSSF project.</p>
+      </section>
+
+      <!-- -- Organisation -- -->
+      <section id="org">
+        <h2><span class="num">02</span> Describe your organisation</h2>
+        <p>Project Bluefin is a community-run desktop operating system in the Universal Blue family, distributed as bootable container images rather than as a package set. It is maintained by volunteers across 54 repositories in the <code>projectbluefin</code> organization and a wider ecosystem of 140 repositories in <code>ublue-os</code>. Images ship weekly on a Tuesday cadence; 222 releases have been published to date, and Fedora countme telemetry estimates roughly 4,100 active installations.</p>
+        <p>The project has no commercial entity behind it. Its scarcest resource is maintainer attention, and that constraint is what shapes both halves of this architecture: the build side minimizes the surface a human must inspect, and the maintenance side delegates mechanical work to agents under enforced limits.</p>
+      </section>
+
+      <!-- -- Overview -- -->
+      <section id="overview">
+        <h2><span class="num">03</span> Brief overview of the architecture</h2>
+        <p>There are two coupled systems.</p>
+        <p><strong>The delivery architecture</strong> turns a declarative image definition into a signed OCI artifact that a user's machine boots and updates atomically. The unit of delivery is a container image; there is no package-by-package upgrade path on the client, and layering packages onto a running system is actively discouraged by the update tooling.</p>
+        <p><strong>The maintenance architecture</strong> keeps the repositories that produce that image healthy. A fleet of AI coding agents triages issues, writes fixes, reviews pull requests and keeps CI green, under an autonomy model that determines what each agent is permitted to do and enforces it below the level of the prompt.</p>
+        <p>The connecting principle is that both halves answer the same question: when something lands in a public artifact that other people boot, who is accountable for it and how is that checkable afterwards.</p>
+      </section>
+
+      <!-- -- Delivery -- -->
+      <section id="delivery">
+        <h2><span class="num">04</span> The delivery architecture</h2>
+
+        <h3>Build</h3>
+        <p>An image is assembled by a single Containerfile with a strict composition order. Three inputs are pulled by digest: a shared <code>common</code> layer, a Homebrew layer, and a digest-pinned Fedora Silverblue base. A <code>scratch</code> stage overlays build scripts and system files in defined precedence, so that image-specific files deliberately land last and win. All mutation happens in one <code>RUN</code> with cache mounts and a build secret, invoking an ordered pipeline: package installation, kernel modules, desktop extensions, cleanup, initramfs regeneration, repository validation and tests. The final instruction is <code>bootc container lint</code>.</p>
+        <p>One supply-chain control inside that pipeline is worth naming, because it is a pattern other projects can copy directly. Packages are split into Fedora packages and COPR packages. Fedora packages install first in bulk; COPR packages install individually with isolated repository enablement, explicitly to prevent a malicious third-party repository from shadowing a distribution package with a forged version. Third-party repositories for Docker, VS Code and Tailscale are added and then immediately disabled, enabled only for the single transaction that needs them, and a validation step refuses to commit an image with a repository left enabled.</p>
+
+        <h3>Rechunk</h3>
+        <p>Before publication the image is passed through a pinned rechunker, which reorganizes layers so that incremental updates transfer less data. This is where OCI and bootc labels are applied. It is a distinct pipeline stage and a deliberate cost: build time is spent so that every user's update is smaller.</p>
+
+        <h3>Sign, attest, publish</h3>
+        <p>Images are pushed to GHCR and signed by digest with cosign. A software bill of materials is generated with Syft, attached to the image as an OCI referrer using ORAS, and then itself signed. Build provenance is attested and pushed to the registry. Signing the attestation as well as the artifact is not common practice and is worth highlighting.</p>
+        <p>Two build lines exist and differ here, which matters to anyone copying this pattern:</p>
+        <ul>
+          <li><code>ublue-os/bluefin</code>, the mature line, signs with a <strong>key</strong>, holding a private key in CI and shipping the public key in the repository. Keyless signing is explicitly disabled.</li>
+          <li><code>projectbluefin/bluefin</code>, the newer line, signs <strong>keyless</strong> through OIDC, holds no signing secret, and resolves its base image only after a cosign verification. It also adds Trivy CVE scanning and SLSA Build L2 provenance.</li>
+        </ul>
+        <p>The newer line is the direction of travel. Both are documented rather than one being presented as the whole story.</p>
+
+        <h3>Verify on the client</h3>
+        <p>This is the strongest property of the architecture and the one most often missing elsewhere. Verification is not advisory and does not depend on the user running a tool. The image ships a container policy whose default is <code>reject</code>, with the project's registry namespace requiring Sigstore-signed images matched to the repository, validated against public keys shipped at a known path in the image. Fulcio and Rekor roots are physically present in the image, so verification does not require reaching a network service at boot. Signature verification is performed by the container stack's policy engine; the cosign binary itself is deliberately removed from the shipped image.</p>
+        <p>Secure Boot is handled with a project-enrolled key, verified in CI on every build by extracting the kernel from the built image and checking it against the project's certificates before publication.</p>
+        <p>An honest limitation to state: the policy's default-deny governs the enumerated registries, while a catch-all entry accepts other registries on the <code>docker</code> transport. The guarantee is strong for the project's own images and should not be described as universal.</p>
+
+        <h3>Update</h3>
+        <p>A user updates with one command that spans four distinct software sources: the OS image through bootc, system Flatpaks, user Flatpaks and Homebrew. The update path refuses to proceed if it detects packages layered onto the running system, telling the user to reset first, with the explicit reasoning that layering forfeits the project's maintenance guarantee. This is the architectural boundary that makes an image-based OS tractable: the base is immutable and identical across installations, and everything variable lives in layers above it.</p>
+
+        <h3>Layers above the base</h3>
+        <p>Four mechanisms, each with a defined role, keep the base immutable while giving users a complete system. Flatpak delivers graphical applications through a curated app store with a blocklist, replacing the distribution's default software centre. Homebrew, delivered as an OCI layer composed into the image, delivers command-line tooling through curated bundles, so users never need to layer RPMs. Distrobox, inherited from the upstream base, provides mutable traditional userspaces for development. A <code>ujust</code> verb layer composes all of it into discoverable commands, and a Go desktop application provides a graphical front end over updates, rollback, channel switching and developer mode.</p>
+        <p>Within that Homebrew layer sits a curated CNCF bundle of 89 formulas spanning graduated, incubating and sandbox projects. It is a distribution decision rather than a runtime dependency: Bluefin makes the cloud native toolchain one command away for a developer workstation, without installing any of it into the OS.</p>
+      </section>
+
+      <!-- -- Maintenance -- -->
+      <section id="maintenance">
+        <h2><span class="num">05</span> The maintenance architecture</h2>
+
+        <h3>The problem</h3>
+        <p>Fifty-four repositories, volunteer maintainers, and a workload dominated by mechanical tasks: triage, reproduction, dependency and base-image currency, CI repair, routine review. Pointing coding agents at those repositories solves the throughput problem and creates an accountability one. In a project whose artifact is an operating system other people boot, an unaccountable automated commit is a supply-chain question.</p>
+
+        <h3>The solution</h3>
+        <p>Project Bluefin runs a self-managed Hive, an Apache-licensed control layer for fleets of coding agents developed in the KubeStellar organization, a CNCF Sandbox project. Bluefin documents the deployment publicly as its factory.</p>
+        <p>Three properties make it compatible with the supply-chain posture described above.</p>
+        <p><strong>Determinism before judgement.</strong> Filtering, classification, duplicate detection, merge gating and policy enforcement are handled by inspectable code before any model is invoked. Models are used only where judgement is required.</p>
+        <p><strong>An autonomy model enforced in code.</strong> A six-level maturity model determines both which agent roles exist and what they are physically able to do, from advisory operation with no writes at all, through filing issues, through opening pull requests that carry a hold label a human must remove, up to merging on green CI. Raising the level is an explicit operator decision.</p>
+        <p><strong>Enforcement below the prompt.</strong> Limits are applied through tool denial, scoped short-lived credentials, and a network proxy between every agent and the forge. A write an agent's level does not permit is refused at the wire rather than discouraged in an instruction. If the enforcement path cannot be established at startup, the system refuses to start rather than run unenforced.</p>
+
+        <h3>The contributor boundary</h3>
+        <p>The most transferable piece is how an agent is isolated. Bluefin packages the contributor runtime as a distroless image run in a KVM microVM where available, falling back to a plain container, with no host home directory mounted and an unprivileged user. Inside that boundary the forge CLI is a wrapper: an assigned task cannot authenticate, cannot issue a mutating API call, and cannot reach any subcommand outside an allowlist. Contributor mode is a root-owned marker the agent cannot forge. Output is labelled with the contributor identity, so every change is attributable.</p>
+        <p>The authority split is stated explicitly by the project: the orchestrator owns task selection, assignment, prompts, leases and output capture; the agent harness owns execution, model choice and tool boundaries; the appliance owns the isolation boundary and the credentials that cross it.</p>
+
+        <h3>Scope doctrine</h3>
+        <p>The project constrains what agents may attempt, and this is an architectural decision rather than a policy footnote. In its own words it is a toil-reduction factory, not a feature factory: agents repair what is broken and finish what the project already decided to do, and do not add features, dependencies, configuration surfaces or architecture. Changes are sized to be reviewable rather than complete, on the reasoning that reviewer attention is the scarce resource. Where a task can only be finished by out-of-scope work, the deliverable is a written finding rather than a larger change.</p>
+      </section>
+
+      <!-- -- Principles -- -->
+      <section id="principles">
+        <h2><span class="num">06</span> Guiding principles</h2>
+        <ol>
+          <li>The unit of delivery is a signed image, not a package transaction.</li>
+          <li>Verification is enforced on the client by default-deny policy, not requested of the user.</li>
+          <li>The base is immutable; everything variable lives in layers above it.</li>
+          <li>Automation is granted capability in explicit, revocable steps.</li>
+          <li>Limits are enforced by infrastructure, not by instructions to a model.</li>
+          <li>Every change, human or automated, has a named accountable identity.</li>
+          <li>Reviewer attention is the constraint that sizes the work.</li>
+        </ol>
+      </section>
+
+      <!-- -- Worked / didn't -- -->
+      <section id="worked">
+        <h2><span class="num">07</span> What has worked well - and what has not</h2>
+        <div class="split">
+          <div class="panel good">
+            <h3>✓ What has worked well</h3>
+            <ul>
+              <li>Digest-pinned inputs and a single mutation step make builds reproducible and make a diff of what changed between two images tractable. Client-side default-deny verification means a compromised registry path does not become a compromised fleet. Rechunking pays build time once to reduce every user's update. Splitting distribution packages from third-party repositories, and enabling those repositories only transactionally, closes a shadowing attack that is easy to miss.</li>
+              <li>On the maintenance side, the autonomy model has allowed agents to carry substantial throughput while leaving the project's review and CI guarantees intact. Several hundred agent-authored pull requests have merged across the organization, all publicly attributable to a single named identity, none bypassing the gates a human contribution passes.</li>
+            </ul>
+          </div>
+          <div class="panel bad">
+            <h3>✗ What has not worked well</h3>
+            <ul>
+              <li>Memory limits on hosted runners forced the SBOM step to export a container root filesystem and scan a directory rather than scanning the image directly, which is slower and less elegant than intended. Registry digest behaviour required pushing twice so that signing by digest is correct. Two build lines with different signing models coexist, which is a transitional cost. rpm-ostree remains in the pipeline as the rechunking mechanism even though the delivery model has moved to bootc, and an OCI-native replacement is being developed to remove it.</li>
+              <li>On the maintenance side, the terminology between the orchestration layer and the contributor appliance has diverged, with two different role vocabularies in current documentation. Public outcome metrics for the factory are not yet durably published; the live queue widget is not a substitute.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- -- Glue -- -->
+      <section id="glue">
+        <h2><span class="num">08</span> What glue has been required</h2>
+        <p>A <code>just</code> recipe layer functions as the build DSL and is reused by both CI and contributors. A wrapper over it provides the user-facing verb layer with shell completions. The Homebrew layer is packaged as an OCI image so it can be composed into the build rather than installed at runtime. The contributor appliance is entirely glue by nature: it exists to hold an isolation boundary and a credential contract between an upstream orchestrator and an agent harness that neither side owns.</p>
+      </section>
+
+      <!-- -- Evolution -- -->
+      <section id="evolution">
+        <h2><span class="num">09</span> How the architecture has evolved</h2>
+        <p>The delivery model moved from package-based updates to image-based delivery, then from ostree-native tooling to bootc as the lifecycle interface, with rpm-ostree surviving only as chunking machinery. Signing moved from key-based to keyless in the newer line, removing a CI secret entirely. Supply-chain posture accreted in stages: signing, then SBOM, then attaching and signing the SBOM, then provenance attestation, then CVE scanning.</p>
+        <p>The maintenance architecture is the newest layer. It began as agents with credentials and evolved into agents with none, where capability is granted by a maturity level and enforced at the network boundary, and where the interesting engineering is the isolation contract rather than the prompts.</p>
+      </section>
+
+      <!-- -- Next -- -->
+      <section id="next">
+        <h2><span class="num">10</span> What is next</h2>
+        <p>Completing the migration to OCI-native rechunking and retiring rpm-ostree from the pipeline. Converging the two build lines on keyless signing. Extending CVE scanning and SLSA provenance across both. Publishing durable factory metrics. Reconciling the role vocabularies between orchestrator and appliance.</p>
+      </section>
+
+      <!-- -- Verification -- -->
+      <section id="verification">
+        <h2><span class="num">11</span> Verification notes</h2>
+        <p>Every architectural claim above is drawn from public sources: the Containerfiles, build scripts and workflows in <code>ublue-os/bluefin</code> and <code>projectbluefin/*</code>, the shipped policy and OpenTelemetry configuration in <code>projectbluefin/common</code>, and docs.projectbluefin.io. Agent throughput is independently checkable on GitHub by querying merged pull requests authored by the orchestrator's app identity.</p>
+        <p>Three things are deliberately not claimed. The factory's exact repository coverage is described by the project as the whole formation but is not enumerated here. A frequently cited 81 percent pull-request acceptance figure belongs to KubeStellar, not to Project Bluefin, and is not presented as a Bluefin outcome. Image pull counts are not published by the registry and no figure is given.</p>
+      </section>
+    </main>
+  </div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <p class="disclaimer">Draft prepared for submission to the CNCF End User Technical Advisory Board reference-architecture collection (<a href="https://architecture.cncf.io/">architecture.cncf.io</a>). Companion documents: <a href="/cncf-reference-architecture">Hive, the orchestration platform</a>, and <a href="/cncf-reference-architecture/console">KubeStellar Console</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>

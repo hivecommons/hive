@@ -1,0 +1,1 @@
+- Publish two adopter reference-architecture pages on the hub, at `/cncf-reference-architecture/console` for KubeStellar Console and `/cncf-reference-architecture/bluefin` for Project Bluefin, alongside the existing Hive platform page, so operators evaluating Hive can read how each adopter's surrounding architecture actually works.

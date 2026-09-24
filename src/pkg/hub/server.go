@@ -1593,6 +1593,8 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	// Unlinked page (not in nav, noindex) — direct-URL only. The CNCF End User
 	// reference-architecture draft, shareable without artifact permissions.
 	s.mux.HandleFunc("GET /cncf-reference-architecture", s.serveStatic("static/cncf-reference-architecture.html"))
+	s.mux.HandleFunc("GET /cncf-reference-architecture/console", s.serveStatic("static/cncf-reference-architecture-console.html"))
+	s.mux.HandleFunc("GET /cncf-reference-architecture/bluefin", s.serveStatic("static/cncf-reference-architecture-bluefin.html"))
 	// Fleet-divergence view. The HTML shell is inert (no data) and served
 	// unauthenticated like every other static page; all sensitive data comes
 	// from GET /api/saas/my-hives, which is requireAuth-gated. On a 401 the page

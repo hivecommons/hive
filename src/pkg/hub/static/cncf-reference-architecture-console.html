@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- GA4 --><script async src="https://www.googletagmanager.com/gtag/js?id=G-4707R797K3"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date());gtag("config","G-4707R797K3");</script>
+  <meta charset="UTF-8">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍯</text></svg>">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta property="og:title" content="KubeStellar Console — CNCF End User Reference Architecture">
+  <meta property="og:description" content="A CNCF End User reference architecture for KubeStellar Console - a multi-cluster Kubernetes dashboard maintained by a governed fleet of AI coding agents.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://hive.hivecommons.dev/cncf-reference-architecture/console">
+  <link rel="canonical" href="https://hive.hivecommons.dev/cncf-reference-architecture/console">
+  <meta name="description" content="A CNCF End User reference architecture for KubeStellar Console - a multi-cluster Kubernetes dashboard maintained by a governed fleet of AI coding agents.">
+  <meta name="robots" content="noindex">
+  <title>KubeStellar Console — CNCF End User Reference Architecture</title>
+</head>
+<body>
+<link rel="stylesheet" href="/tokens.css">
+  <link rel="stylesheet" href="/components.css">
+  <style>
+  :root {
+    --hub-article-surface: var(--surface-2);
+    --hub-article-inset: var(--surface-1);
+    --hub-article-link-strong: var(--status-info);
+    --hub-article-info-soft: color-mix(in srgb, var(--status-info) var(--component-tint), transparent);
+    --hub-article-brand-soft: color-mix(in srgb, var(--brand) var(--component-tint), transparent);
+    --hub-article-ok-soft: color-mix(in srgb, var(--status-ok) var(--component-tint), transparent);
+    --hub-article-error-soft: color-mix(in srgb, var(--status-error) var(--component-tint), transparent);
+    --hub-article-measure: 68ch;
+  }
+
+  body {
+    margin: var(--sp-0); background: var(--surface-0); color: var(--text);
+    font-family: var(--font-ui); line-height: 1.65;
+    font-size: 17px; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 clamp(1.1rem, 4vw, 3rem); }
+
+  /* ── Masthead ── */
+  header.masthead {
+    border-bottom: 1px solid var(--line-subtle);
+    background:
+      radial-gradient(1200px 240px at 12% -40%, color-mix(in srgb, var(--status-info) 12%, transparent), transparent),
+      radial-gradient(900px 200px at 90% -60%, color-mix(in srgb, var(--brand) 14%, transparent), transparent);
+  }
+  .masthead .wrap { padding-top: 2.6rem; padding-bottom: 2.2rem; }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: var(--sp-4);
+    font-size: var(--fs-sm); letter-spacing: .14em; text-transform: uppercase;
+    font-weight: 700; color: var(--hub-article-link-strong);
+    background: var(--hub-article-info-soft); border: 1px solid color-mix(in srgb, var(--status-info) 30%, transparent);
+    padding: .3rem .7rem; border-radius: var(--r-pill);
+  }
+  h1 {
+    font-size: clamp(1.9rem, 4.6vw, 3rem); line-height: 1.08;
+    letter-spacing: -0.02em; margin: 1.1rem 0 .4rem; text-wrap: balance; font-weight: 800;
+  }
+  .subtitle { color: var(--text-muted); font-size: 1.12rem; max-width: 60ch; margin: var(--sp-0); }
+
+  .meta-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: .1rem 1.6rem; margin-top: 1.9rem;
+    border-top: 1px solid var(--line-subtle); padding-top: 1.3rem;
+  }
+  .meta-grid dt { font-size: var(--fs-xs); letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint); font-weight: 700; }
+  .meta-grid dd { margin: .15rem 0 .9rem; font-size: var(--fs-md); color: var(--text); }
+  .tags { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .2rem; }
+  .tag { font-size: var(--fs-sm); font-family: var(--font-mono); color: var(--text-muted); background: var(--hub-article-inset); border: 1px solid var(--line-subtle); padding: .12rem .5rem; border-radius: var(--r); }
+
+  /* ── Layout with TOC ── */
+  .shell { display: grid; grid-template-columns: 1fr; gap: var(--sp-0); }
+  @media (min-width: 960px) {
+    .shell { grid-template-columns: 210px minmax(0, 1fr); gap: 3rem; align-items: start; }
+    nav.toc { position: sticky; top: 1.4rem; }
+  }
+  nav.toc { padding: var(--sp-9) var(--sp-0); }
+  nav.toc p { font-size: var(--fs-xs); letter-spacing: .12em; text-transform: uppercase; color: var(--text-faint); font-weight: 700; margin: 0 0 .7rem; }
+  nav.toc a { display: block; color: var(--text-muted); text-decoration: none; font-size: .86rem; padding: .28rem 0; border-left: 2px solid transparent; padding-left: .7rem; transition: color .15s, border-color .15s; }
+  nav.toc a:hover { color: var(--status-info); border-color: var(--status-info); }
+
+  main { padding: 2rem 0 4rem; min-width: 0; }
+  section { margin-bottom: 3rem; scroll-margin-top: 1.4rem; }
+  section > p, section > ul, section > ol { max-width: var(--hub-article-measure); }
+  h2 {
+    font-size: clamp(1.3rem, 2.6vw, 1.7rem); letter-spacing: -0.01em; font-weight: 750;
+    margin: var(--sp-0) var(--sp-0) var(--sp-6); padding-bottom: var(--sp-4); border-bottom: 2px solid var(--line-subtle);
+    display: flex; align-items: baseline; gap: .6rem;
+  }
+  h2 .num { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--status-info); font-weight: 700; letter-spacing: 0; }
+  h3 { font-size: 1.06rem; font-weight: 700; margin: 1.7rem 0 .5rem; color: var(--text); }
+  p { margin: var(--sp-0) var(--sp-0) var(--sp-6); }
+  a { color: var(--status-info); text-decoration-color: color-mix(in srgb, var(--status-info) 40%, transparent); text-underline-offset: 2px; }
+  strong { color: var(--text); font-weight: 680; }
+  code { font-family: var(--font-mono); font-size: .86em; background: var(--hub-article-inset); border: 1px solid var(--line-subtle); border-radius: 5px; padding: .08em .38em; }
+  ul, ol { padding-left: 1.3rem; }
+  li { margin: .35rem 0; }
+
+  /* ── CNCF project cards ── */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--sp-6); max-width: none; }
+  .card {
+    background: var(--hub-article-surface); border: 1px solid var(--line-subtle); border-radius: var(--r-lg);
+    padding: 1.1rem 1.2rem; display: flex; flex-direction: column; gap: .35rem;
+  }
+  .card .ch { display: flex; align-items: center; gap: .55rem; font-weight: 700; font-size: var(--fs-lg); }
+  .card .dot { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font-size: var(--fs-md); background: var(--hub-article-info-soft); flex: 0 0 auto; }
+  .card .ver { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text-faint); }
+  .card p { font-size: .89rem; color: var(--text-muted); margin: .3rem 0 0; }
+
+  /* ── diagrams ── */
+  figure { margin: var(--sp-8) var(--sp-0); }
+  .diagram {
+    background: var(--hub-article-surface); border: 1px solid var(--line-subtle); border-radius: var(--r-lg);
+    padding: 1.4rem 1rem; overflow-x: auto;
+  }
+  .diagram .mermaid { display: flex; justify-content: center; min-width: 0; }
+  .diagram .mermaid svg { max-width: 100%; height: auto; }
+  figcaption { font-size: var(--fs-sm); color: var(--text-faint); text-align: center; margin-top: .6rem; letter-spacing: .02em; }
+
+  /* ── worked / didn't panels ── */
+  .split { display: grid; grid-template-columns: 1fr; gap: var(--sp-6); max-width: none; }
+  @media (min-width: 720px) { .split { grid-template-columns: 1fr 1fr; } }
+  .panel { border-radius: var(--r-lg); padding: 1.2rem 1.3rem; border: 1px solid var(--line-subtle); }
+  .panel.good { background: var(--hub-article-ok-soft); border-color: color-mix(in srgb, var(--status-ok) 35%, transparent); }
+  .panel.bad { background: var(--hub-article-error-soft); border-color: color-mix(in srgb, var(--status-error) 35%, transparent); }
+  .panel h3 { margin-top: var(--sp-0); display: flex; align-items: center; gap: var(--sp-4); }
+  .panel.good h3 { color: var(--status-ok); }
+  .panel.bad h3 { color: var(--status-error); }
+  .panel ul { padding-left: 1.15rem; margin: var(--sp-0); }
+  .panel li { font-size: .93rem; }
+  .panel li strong { color: inherit; }
+
+  /* ── ACMM ladder ── */
+  .ladder { display: grid; gap: var(--sp-4); max-width: none; margin-top: var(--sp-4); }
+  .rung { display: grid; grid-template-columns: 3rem 1fr; gap: .9rem; align-items: center; background: var(--hub-article-surface); border: 1px solid var(--line-subtle); border-radius: 10px; padding: .7rem .9rem; border-left: 4px solid var(--rung); }
+  .rung .lvl { font-family: var(--font-mono); font-weight: 700; color: var(--rung); font-size: .95rem; }
+  .rung .rd { font-size: var(--fs-md); color: var(--text-muted); }
+  .rung .rd b { color: var(--text); }
+
+  blockquote { margin: 1.2rem 0; padding: .9rem 1.2rem; border-left: 3px solid var(--brand); background: var(--hub-article-brand-soft); border-radius: 0 8px 8px 0; color: var(--text-muted); font-size: .95rem; max-width: var(--hub-article-measure); }
+
+  footer { border-top: 1px solid var(--line-subtle); }
+  footer .wrap { padding: 2rem 0 3rem; color: var(--text-faint); font-size: var(--fs-base); }
+  footer a { font-weight: 600; }
+
+
+  /* -- tables -- */
+  .tablewrap { overflow-x: auto; margin: var(--sp-6) var(--sp-0); max-width: none; }
+  table { border-collapse: collapse; width: 100%; font-size: .93rem; }
+  th, td { text-align: left; padding: .55rem .8rem; border-bottom: 1px solid var(--line-subtle); vertical-align: top; }
+  thead th { font-size: var(--fs-sm); letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); font-weight: 700; border-bottom: 2px solid var(--line-subtle); }
+  tbody tr:last-child td { border-bottom: none; }
+
+  /* -- sibling-page nav -- */
+  .siblings { font-size: var(--fs-md); color: var(--text-faint); margin: 1.4rem 0 0; }
+  .siblings a { font-weight: 600; }
+
+  .disclaimer { font-size: var(--fs-base); color: var(--text-faint); font-style: italic; }
+</style>
+
+<header class="masthead">
+  <div class="wrap">
+    <span class="eyebrow">🍯 CNCF End User Reference Architecture · Adopter · Draft</span>
+    <h1>KubeStellar Console: a multi-cluster Kubernetes dashboard maintained by a governed agent fleet</h1>
+    <p class="subtitle">A Go backend, a React frontend, and a local agent that bridges a browser to the clusters in an operator's kubeconfig - with roughly a third of its ten thousand merged pull requests authored by a governed fleet of AI coding agents passing the same quality gates as human contributions.</p>
+    <p class="siblings">Adopter reference architectures: <a href="/cncf-reference-architecture">Hive</a> · <a href="/cncf-reference-architecture/bluefin">Project Bluefin</a></p>
+
+    <dl class="meta-grid">
+      <div><dt>Organisation</dt><dd>KubeStellar Console</dd></div>
+      <div><dt>Team</dt><dd>KubeStellar Console maintainers</dd></div>
+      <div style="grid-column: 1 / -1;"><dt>Contact</dt><dd>Andy Anderson</dd></div>
+      <div><dt>Date</dt><dd>2026-09-24</dd></div>
+      <div><dt>Organisation size</dt><dd>Open-source community project</dd></div>
+      <div style="grid-column: 1 / -1;"><dt>User size</dt><dd>84 contributors; adoption through guided install missions with CNCF projects</dd></div>
+      <div><dt>Industries</dt><dd>Open Source · Developer Tools</dd></div>
+      <div><dt>Reference architectures</dt><dd>CI/CD · Platform Engineering · AI/ML</dd></div>
+      <div><dt>Website</dt><dd><a href="https://console.kubestellar.io/">console.kubestellar.io</a></dd></div>
+      <div style="grid-column: 1 / -1;"><dt>Tags</dt><dd><span class="tags"><span class="tag">kubernetes</span><span class="tag">multi-cluster</span><span class="tag">autonomous-maintenance</span><span class="tag">platform-engineering</span><span class="tag">quality-gates</span></span></dd></div>
+    </dl>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="shell">
+    <nav class="toc" aria-label="Contents">
+      <p>Contents</p>
+      <a href="#projects">CNCF projects</a>
+      <a href="#org">Organisation</a>
+      <a href="#overview">Architecture overview</a>
+      <a href="#topology">Deployment topology</a>
+      <a href="#maintenance">Maintenance architecture</a>
+      <a href="#principles">Guiding principles</a>
+      <a href="#worked">What worked / didn't</a>
+      <a href="#glue">The glue</a>
+      <a href="#evolution">Evolution</a>
+      <a href="#next">What is next</a>
+      <a href="#verification">Verification notes</a>
+    </nav>
+
+    <main>
+      <!-- -- Scope -- -->
+      <blockquote><strong>Scope.</strong> This document describes KubeStellar Console as a deployed system and, more unusually, as a codebase maintained largely by machines under human authorization. A companion document covers <a href="/cncf-reference-architecture/bluefin">Project Bluefin</a>, which runs the same orchestration layer over a very different architecture.</blockquote>
+
+      <!-- -- CNCF projects -- -->
+      <section id="projects">
+        <h2><span class="num">01</span> Relevant CNCF projects</h2>
+        <p>The table separates three things that reference architectures often blur: what Console itself runs on, what it manages in a user's cluster, and what it merely teaches users to install.</p>
+
+        <h3>In Console's own runtime and pipeline</h3>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Project</th><th>How it is used</th></tr></thead>
+            <tbody>
+              <tr><td>Kubernetes (Graduated)</td><td><code>client-go</code> typed and dynamic clients, its own CustomResourceDefinitions under <code>console.kubestellar.io</code>, and RBAC for an in-cluster ServiceAccount</td></tr>
+              <tr><td>Prometheus (Graduated)</td><td>Three distinct ways: Console exposes <code>/metrics</code>, queries an in-cluster Prometheus over PromQL, and ships opt-in Prometheus Operator <code>ServiceMonitor</code> and <code>PrometheusRule</code> templates in its Helm chart</td></tr>
+              <tr><td>Helm (Graduated)</td><td>The packaging and release path; the chart is published to an OCI registry. Helm is not linked as a Go library</td></tr>
+              <tr><td>KubeStellar (Sandbox)</td><td>The organization Console belongs to, and the source of its CNCF standing. Console is a sibling repository, not a component of the KubeStellar controller</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>OpenTelemetry is a declared direct dependency in <code>go.mod</code>, but no instrumentation call sites are present in the tree, so it is stated here as a dependency rather than as a runtime capability. That distinction is deliberate.</p>
+
+        <h3>Managed as targets in a user's clusters</h3>
+        <p>Console reads and acts on these; it does not deploy or depend on them. Argo CD is the deepest integration, with dedicated resource types, sync handlers and drill-down views. Cilium has real workload probes. GitOps drift detection and sync are implemented generically rather than against Flux-specific resources.</p>
+
+        <h3>Taught, not run</h3>
+        <p>Console's guided install missions cover a large catalogue of CNCF projects, shipped as preset definitions. This is a distribution and onboarding concern and is not part of the architecture. It would be wrong to read the catalogue as a dependency list, and this document does not.</p>
+        <p>Two precision notes. The <strong>Open Container Initiative</strong> image format is central to distribution and is a Linux Foundation project, a sibling of CNCF. <strong>Sigstore</strong>, used for release signing, is an OpenSSF project.</p>
+      </section>
+
+      <!-- -- Organisation -- -->
+      <section id="org">
+        <h2><span class="num">02</span> Describe your organisation</h2>
+        <p>KubeStellar Console is an open-source, Apache-licensed dashboard for operating many Kubernetes clusters at once, created in January 2026. In roughly eight months it has published 234 releases on a nightly-plus-weekly cadence, accumulated 84 contributors, and closed over eleven thousand issues.</p>
+        <p>It is a repository inside the KubeStellar organization, which CNCF accepted as a Sandbox project in December 2023. Console is not separately listed in the CNCF landscape and inherits standing through that organization; the project reports to CLOMonitor under KubeStellar.</p>
+        <p>An honest statement of adoption: the project's adopters file lists thirteen entries, and they are overwhelmingly CNCF projects that accepted a guided install mission rather than organizations running Console in production. The production adopter tier is empty. The interesting claim in this document is therefore not about deployment scale. It is about how the software is made.</p>
+      </section>
+
+      <!-- -- Overview -- -->
+      <section id="overview">
+        <h2><span class="num">03</span> Brief overview of the architecture</h2>
+        <p>Console has three runtime pieces and an unusual fourth: the system that maintains it.</p>
+        <p>A <strong>Go backend</strong> built on Fiber serves an API, holds state in an embedded CGO-free SQLite database, authenticates through GitHub OAuth, and talks to clusters with <code>client-go</code>. A <strong>React and TypeScript frontend</strong> built with Vite provides the dashboard. A <strong>local agent</strong> runs on the operator's own machine, discovers kubeconfig contexts, and forwards requests to each cluster's API server, authenticated with a shared bearer token.</p>
+        <p>The multi-cluster model is flat and is Console's own. It fans out across the contexts in an operator's kubeconfig, talks to each cluster's API server directly, and labels what it deploys with its own management label. It defines its own custom resources for cluster groups, managed workloads and workload deployments.</p>
+        <p>To be explicit, because the shared organization name invites the assumption: Console is not a user interface for the KubeStellar controller and does not depend on KubeStellar's placement model. It is a dashboard for operating Kubernetes clusters, whichever way those clusters are managed. The two are sibling projects in one organization, not two halves of one system.</p>
+      </section>
+
+      <!-- -- Topology -- -->
+      <section id="topology">
+        <h2><span class="num">04</span> Deployment topology</h2>
+        <p>Six supported modes, which is itself an architectural position: meet the operator where they are rather than requiring a cluster to evaluate a cluster tool.</p>
+        <p>The hosted demo runs on Netlify, where supported API routes are served by Netlify Functions rather than the Go backend. This is worth stating plainly because it surprises people: the public Console and the self-hosted Console share a frontend and diverge behind it, and the functions directory is maintained as a production mirror of the corresponding Go handlers.</p>
+        <p>Self-hosted modes run the real backend: prebuilt binaries with the local agent, an OAuth variant, a container image, <code>kubectl apply</code>, and a Helm chart. The chart is hardened in ways worth copying: network policy, pod disruption budget, a database backup CronJob, a pre-upgrade volume migration hook running as a numeric non-root user, a values schema, restricted pod security context, and OpenShift route support.</p>
+        <p>The two postures differ in where trust sits. Run outside the cluster, Console holds the operator's kubeconfig and the local agent is the boundary. Run inside, it holds a ServiceAccount whose default is read-only cluster access with namespace creation off by default.</p>
+      </section>
+
+      <!-- -- Maintenance architecture -- -->
+      <section id="maintenance">
+        <h2><span class="num">05</span> The maintenance architecture</h2>
+        <p>This is the part of the system that makes it a reference architecture rather than a dashboard.</p>
+
+        <h3>Scale of machine authorship</h3>
+        <p>Of 10,276 merged pull requests, 3,229 were authored by the Hive app identity, about 31 percent overall. The bot is the second-highest contributor by commit count in the repository's history. In the most recent 200 merged pull requests, 139 were Hive, 53 were dependency automation, seven were CI, and one was directly human-authored.</p>
+        <p>That last number is the one to sit with. At current cadence, nearly all code entering this repository is written by machines, and the architecture exists to make that safe rather than to make it fast.</p>
+
+        <h3>Authorization is a gate, not a setting</h3>
+        <p>Agent automation is reachable by mention, and every mention passes through a reusable trust gate workflow that evaluates the actor against repository and organization membership and returns a trust decision with a reason. Untrusted actors cannot trigger automation. The bot announces this behaviour on every human-opened issue, so the boundary is discoverable rather than hidden.</p>
+        <p>Work is queued by label, and the label vocabulary is the state machine: requested, processing, complete, queued, stalled, draft, ready, active, retry counts, and the one that matters most, a label meaning a human decision is required rather than more automation.</p>
+
+        <h3>Advisory mode</h3>
+        <p>Agents do not begin with write access. At lower levels of the maturity model they run in advisory mode: they analyze the codebase and pipeline continuously and post findings, tagged by severity, to a living advisory issue, without opening pull requests or filing issues. The repository keeps these advisory reports as documents. Capability is earned in explicit steps rather than granted at once.</p>
+
+        <h3>Every change passes the same gates</h3>
+        <p>The project states the rule directly: all pull requests, regardless of origin, pass the same quality gates. Those gates are unusually dense, and several exist specifically because the authors are machines. Alongside the expected build, typecheck, unit, end-to-end, accessibility, visual regression, CodeQL and DCO checks, there are ratcheted detectors for AI antipatterns, each with a recorded baseline that may only decrease: raw hex colours, non-localized strings, inline style colours, raw font sizes. Coverage is ratcheted per package. Lint carries a frozen baseline. There is a nil-safety gate and an API contract check.</p>
+        <p>A ratchet is the right primitive here. It does not demand that a large codebase be clean today; it makes it impossible for automation to make things worse while allowing any change that improves them.</p>
+
+        <h3>Attribution and scrutiny tiers</h3>
+        <p>A workflow labels pull requests as AI-generated based on author type and commit trailers, explicitly to satisfy an audit-trail criterion of the maturity model, so that human and machine authorship can be told apart later. Every pull request also receives exactly one scrutiny tier on open, with the lowest tier reserved for lockfiles, checksums, documentation and generated snapshots.</p>
+
+        <h3>Tool neutrality</h3>
+        <p>The repository carries instruction files for many agent tools and designates one canonical guide, stating that where a tool-specific file conflicts, the canonical one wins. The orchestration layer is likewise backend-neutral. This matters for longevity: the governance survives a change of model vendor.</p>
+      </section>
+
+      <!-- -- Principles -- -->
+      <section id="principles">
+        <h2><span class="num">06</span> Guiding principles</h2>
+        <ol>
+          <li>Machine authorship is normal; unreviewed machine authorship is not.</li>
+          <li>Authorization to trigger automation is evaluated, not assumed.</li>
+          <li>Capability is granted in steps, beginning with advice and no write access.</li>
+          <li>One quality bar, applied identically to human and machine contributions.</li>
+          <li>Ratchets, not absolutes, so automation can never regress a metric.</li>
+          <li>Authorship is labelled at merge time so the audit trail survives.</li>
+          <li>The canonical instruction file wins, so tool sprawl cannot fork the rules.</li>
+        </ol>
+      </section>
+
+      <!-- -- Worked / didn't -- -->
+      <section id="worked">
+        <h2><span class="num">07</span> What has worked well - and what has not</h2>
+        <div class="split">
+          <div class="panel good">
+            <h3>✓ What has worked well</h3>
+            <ul>
+              <li>The ratcheted gates have let a small human team accept a very high volume of machine-authored change without the codebase degrading, because the failure mode of automation at scale is not a dramatic bad commit but slow erosion, and a ratchet is precisely the instrument against erosion.</li>
+              <li>The trust gate has made automation safe to expose publicly. The bot can be mentioned by anyone, and the gate rather than obscurity is what prevents misuse.</li>
+              <li>Advisory mode has proven valuable beyond its role as a training wheel: continuous analysis posted to a living document is useful even where write access is never granted.</li>
+            </ul>
+          </div>
+          <div class="panel bad">
+            <h3>✗ What has not worked well</h3>
+            <ul>
+              <li>Two agent instruction sets in the repository currently contradict each other on whether to build and lint locally, one forbidding it and the other calling it the most important rule. When instructions are the interface to your contributors, contradictions are defects.</li>
+              <li>Published counts of the install-mission catalogue disagree across the readme, the chart annotation and the upstream project readme. The bot is referred to by two different names in different places. The architecture document in the repository names a frontend version the code has moved past.</li>
+              <li>Some declared resource types in the tree imply a coupling to KubeStellar placement that Console does not actually have, which invites exactly the misreading this document corrects. Removing them would make the boundary obvious from the code rather than from prose.</li>
+              <li>Software bills of materials are not generated for releases, although signing and provenance attestation are. That is a gap relative to the companion <a href="/cncf-reference-architecture/bluefin">Bluefin architecture</a>, which does generate, attach and sign them.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- -- Glue -- -->
+      <section id="glue">
+        <h2><span class="num">08</span> What glue has been required</h2>
+        <p>The local agent is the central piece of glue: a small daemon that exists because a browser cannot hold a kubeconfig or reach an API server directly, bridging browser-based and command-line tooling. The Netlify function mirror is glue of a less comfortable kind, a second implementation of a subset of the backend maintained in parallel for the hosted path. The ratchet baseline files are glue between a large existing codebase and a standard it does not yet meet.</p>
+      </section>
+
+      <!-- -- Evolution -- -->
+      <section id="evolution">
+        <h2><span class="num">09</span> How the architecture has evolved</h2>
+        <p>The maintenance architecture arrived after the system and reshaped it. Gates that began as ordinary continuous integration grew a second purpose as the boundary of machine autonomy. Labels grew from triage aids into a state machine driving automation. Attribution grew from a courtesy into an audit requirement. Agent capability moved from advisory analysis to authorized pull requests under a maturity model rather than being granted at once.</p>
+      </section>
+
+      <!-- -- Next -- -->
+      <section id="next">
+        <h2><span class="num">10</span> What is next</h2>
+        <p>Reconciling the contradictory agent instruction sets and the inconsistent counts and bot naming. Removing the unused resource declarations that imply a coupling Console does not have. Adding SBOM generation to releases. Reducing the ratchet baselines rather than merely holding them. Recording a production adopter, which would turn a strong engineering story into a strong adoption one.</p>
+      </section>
+
+      <!-- -- Verification -- -->
+      <section id="verification">
+        <h2><span class="num">11</span> Verification notes</h2>
+        <p>Every claim above is checkable in public sources: the repository's manifests, workflows, chart and documentation, and the GitHub API. Agent throughput can be reproduced by querying merged pull requests authored by the orchestrator's app identity against total merged pull requests.</p>
+        <p>Three things are deliberately not claimed. Console is not the user interface of the KubeStellar controller and is not presented as one; it is a sibling project with its own multi-cluster model. No production adopter is claimed, because the adopters file lists none. OpenTelemetry is named as a dependency rather than a capability, because no instrumentation was found.</p>
+      </section>
+    </main>
+  </div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <p class="disclaimer">Draft prepared for submission to the CNCF End User Technical Advisory Board reference-architecture collection (<a href="https://architecture.cncf.io/">architecture.cncf.io</a>). Companion documents: <a href="/cncf-reference-architecture">Hive, the orchestration platform</a>, and <a href="/cncf-reference-architecture/bluefin">Project Bluefin</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>
