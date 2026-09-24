@@ -20,7 +20,7 @@ HELPER="${REPO_ROOT}/bin/git-credential-hive.sh"
 PASS=0
 FAIL=0
 
-WORK="$(mktemp -d)"
+WORK="$(mktemp -d "${REPO_ROOT}/.git-credential-hive.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
 TOKEN_CACHE="${WORK}/token"
@@ -225,6 +225,27 @@ else
     FAIL=$((FAIL + 1))
     echo "FAIL: spool event content is wrong: $(cat "${EVENTS[0]:-/dev/null}" 2>/dev/null)"
   fi
+  rm -f "${SPOOL}"/*.json "${SPOOL}"/*.tmp 2>/dev/null || true
+  HOSTILE_STDIN=$'protocol=https\nhost=github.com","agent":"reviewer\\path\n\n'
+  HOSTILE_OUT="$(
+    printf '%b' "$HOSTILE_STDIN" | \
+    HIVE_AGENT="$TEST_AGENT" HIVE_AGENT_MODE=ADVISORY HIVE_ACMM_LEVEL=2 \
+    HIVE_AGENT_TOKEN_CACHE="$TOKEN_CACHE" \
+    bash "$HELPER_COPY" get 2>&1
+  )"
+  HOSTILE_EVENTS=("$SPOOL"/*.json)
+  if [ -f "${HOSTILE_EVENTS[0]:-}" ] \
+    && python3 -m json.tool "${HOSTILE_EVENTS[0]}" >/dev/null \
+    && grep -Fq "\"agent\":\"${TEST_AGENT}\"" "${HOSTILE_EVENTS[0]}" \
+    && grep -Fq 'reviewer' "${HOSTILE_EVENTS[0]}"
+  then
+    PASS=$((PASS + 1))
+    echo "PASS: hostile credential host is JSON-encoded without forging the agent"
+  else
+    FAIL=$((FAIL + 1))
+    echo "FAIL: hostile credential host did not produce safe JSON: $(cat "${HOSTILE_EVENTS[0]:-/dev/null}" 2>/dev/null)"
+  fi
+  EVENTS=("$SPOOL"/*.json)
   if ! compgen -G "${SPOOL}/*.tmp" >/dev/null; then
     PASS=$((PASS + 1))
     echo "PASS: no half-written .tmp event left behind"

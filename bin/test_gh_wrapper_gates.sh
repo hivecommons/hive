@@ -19,7 +19,7 @@ WRAPPER_SRC="${REPO_ROOT}/bin/gh-wrapper.sh"
 PASS=0
 FAIL=0
 
-WORK="$(mktemp -d)"
+WORK="$(mktemp -d "${REPO_ROOT}/.gh-wrapper-gates.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
 # ── Run against a marker-redirected COPY, not the wrapper in place ───────────
@@ -42,10 +42,22 @@ trap 'rm -rf "$WORK"' EXIT
 # fail-fast guard, that bin/gh-wrapper.test.sh already uses. Production keeps no
 # environment override for this boundary.
 WRAPPER="${WORK}/gh-wrapper-under-test.sh"
-sed "s|CONTRIBUTOR_MODE_MARKER=\"/etc/hive/contributor-mode\"|CONTRIBUTOR_MODE_MARKER=\"${WORK}/contributor-marker\"|" \
+SPOOL="${WORK}/token-access-events"
+mkdir -p "$SPOOL"
+sed -e "s|CONTRIBUTOR_MODE_MARKER=\"/etc/hive/contributor-mode\"|CONTRIBUTOR_MODE_MARKER=\"${WORK}/contributor-marker\"|" \
+  -e "s|TOKEN_ACCESS_SPOOL=\"/var/run/hive-metrics/token-access-events\"|TOKEN_ACCESS_SPOOL=\"${SPOOL}\"|" \
+  -e "s|LABEL_CACHE_BASE=\"/tmp/.hive-labels-ensured\"|LABEL_CACHE_BASE=\"${WORK}/.hive-labels-ensured\"|" \
   "$WRAPPER_SRC" >"$WRAPPER"
 if ! grep -q "CONTRIBUTOR_MODE_MARKER=\"${WORK}/contributor-marker\"" "$WRAPPER"; then
   echo "FATAL: failed to redirect CONTRIBUTOR_MODE_MARKER in the test copy — wrapper constant changed?" >&2
+  exit 1
+fi
+if ! grep -q "TOKEN_ACCESS_SPOOL=\"${SPOOL}\"" "$WRAPPER"; then
+  echo "FATAL: failed to redirect TOKEN_ACCESS_SPOOL in the test copy — wrapper constant changed?" >&2
+  exit 1
+fi
+if ! grep -q "LABEL_CACHE_BASE=\"${WORK}/.hive-labels-ensured\"" "$WRAPPER"; then
+  echo "FATAL: failed to redirect LABEL_CACHE_BASE in the test copy — wrapper constant changed?" >&2
   exit 1
 fi
 # Absent unless a case creates it: these tests are all non-contributor.
@@ -145,6 +157,31 @@ assert_reached() {
     FAIL=$((FAIL + 1))
   fi
 }
+
+rm -f "${SPOOL}"/*.json "${SPOOL}"/*.tmp 2>/dev/null || true
+hostile_result="$(run_wrapper ADVISORY 2 -- version 'x","agent":"reviewer' 'path\with\slashes')"
+assert_reached "token-access audit allows command with hostile args" "$hostile_result"
+EVENTS=("${SPOOL}"/*.json)
+if [ -f "${EVENTS[0]:-}" ] && [ "${#EVENTS[@]}" -eq 1 ] && python3 - "${EVENTS[0]}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    event = json.load(f)
+assert event["agent"] == "testagent", event
+assert event["op"] == "gh", event
+assert event["cmd"].startswith("gh version "), event
+assert "reviewer" in event["cmd"], event
+assert "\\with\\slashes" in event["cmd"], event
+PY
+then
+  echo "  PASS: hostile args are JSON-encoded without forging the agent"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: hostile args did not produce a safe JSON event"
+  [ -f "${EVENTS[0]:-}" ] && cat "${EVENTS[0]}"
+  FAIL=$((FAIL + 1))
+fi
 
 echo "=== gh-wrapper gate tests ==="
 
@@ -340,11 +377,12 @@ chmod +x "$LABEL_STUB"
 
 # run_label_wrapper <args...> — like run_wrapper but with the label-failing
 # stub, and it reports the LAST stub invocation so the assertions can prove the
-# retry dropped the injected labels. Per-repo ensure caches live in /tmp; clear
+# retry dropped the injected labels. Per-repo ensure caches are redirected into
+# WORK above; clear
 # ours so the label-create calls are deterministic.
 run_label_wrapper() {
   : >"$STUB_LOG"
-  rm -f /tmp/.hive-labels-ensured-owner_repo
+  rm -f "${WORK}/.hive-labels-ensured-owner_repo"
   local out rc last
   out="$(
     HIVE_GH_WRAPPER_REAL_GH="$LABEL_STUB" \
@@ -358,7 +396,7 @@ run_label_wrapper() {
     bash "$WRAPPER" "$@" 2>&1
   )"
   rc=$?
-  rm -f /tmp/.hive-labels-ensured-owner_repo
+  rm -f "${WORK}/.hive-labels-ensured-owner_repo"
   last="$(tail -n 1 "$STUB_LOG" 2>/dev/null)"
   echo "exit=${rc} last=${last}"
 }
