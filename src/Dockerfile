@@ -29,8 +29,8 @@ ARG GIT_BRANCH=unknown
 # registration), wired the same way as GIT_HASH/GIT_BRANCH: an -X ldflag that
 # takes over from the Go linker default (cmd/hive/main.go, "0.0.0-dev") only
 # when a value is resolved. If a caller passes VERSION explicitly it wins;
-# otherwise the RUN below derives it from `git describe --tags --always
-# --dirty` against the /repo/.git copied in above, so an ordinary docker.yml
+# otherwise the RUN below derives it from `git describe --tags --always`
+# against the /repo/.git copied in above, so an ordinary docker.yml
 # build self-stamps a real value ("4.34.0" on a release tag, "4.34.0-7-gSHA" a
 # few commits ahead). This is what closes the gap where every image reported
 # "0.0.0-dev": .github/workflows/tagged-release.yml deliberately does NOT
@@ -53,7 +53,7 @@ RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
     if [ "$GIT_BRANCH" = "unknown" ] || [ -z "$GIT_BRANCH" ]; then GIT_BRANCH=$(git -C /repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"); fi && \
     VERSION_LDFLAG="" && \
     RESOLVED_VERSION="$VERSION" && \
-    if [ -z "$RESOLVED_VERSION" ]; then RESOLVED_VERSION=$(git -C /repo describe --tags --always --dirty 2>/dev/null || echo ""); fi && \
+    if [ -z "$RESOLVED_VERSION" ]; then RESOLVED_VERSION=$(git -C /repo describe --tags --always 2>/dev/null || echo ""); fi && \
     if [ -n "$RESOLVED_VERSION" ]; then VERSION_LDFLAG="-X main.version=${RESOLVED_VERSION}"; fi && \
     GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH} ${VERSION_LDFLAG}" -o /hive ./cmd/hive && \
     GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -o /bd ./cmd/bd && \
