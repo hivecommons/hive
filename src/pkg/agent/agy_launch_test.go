@@ -29,7 +29,27 @@ import (
 // with no ToolsConfig: normalize the configured model for the backend, then
 // hand it to backendLaunchCmd. Keeping the normalization step means the test
 // still covers the model plumbing, not just the fmt.Sprintf.
-func agyLaunchCmd(t *testing.T, model, effort string) string {
+func agyInteractiveLaunchCmdForTest(t *testing.T, model, effort string) string {
+	t.Helper()
+	t.Setenv(agyLaunchModeEnv, agyLaunchModeInteractive)
+	const backend = "agy"
+	isInference := IsInferenceBackend(backend)
+	return backendLaunchCmd("agy", normalizeModelNameForBackend(model, backend, isInference), backend, isInference, effort)
+}
+
+func TestAgyLaunchCommandLine_DefaultsToHeadlessShim(t *testing.T) {
+	t.Setenv(agyLaunchModeEnv, "")
+	cmd := agyLaunchCmdForTest(t, "gemini-pro", "")
+
+	if strings.Contains(cmd, "agy --dangerously-skip-permissions") {
+		t.Fatalf("default agy launch must not start the CPU-hungry interactive TUI; cmd: %q", cmd)
+	}
+	if !strings.Contains(cmd, agyHeadlessReadyMarker) {
+		t.Fatalf("default agy launch must install the headless ready marker; cmd: %q", cmd)
+	}
+}
+
+func agyLaunchCmdForTest(t *testing.T, model, effort string) string {
 	t.Helper()
 	const backend = "agy"
 	isInference := IsInferenceBackend(backend)
@@ -41,7 +61,7 @@ func agyLaunchCmd(t *testing.T, model, effort string) string {
 func TestStart_AgyLaunchCommandLine(t *testing.T) {
 	// "gemini-pro" survives normalizeModelName unchanged (no trailing digit
 	// segment), so the assertion below sees the configured model verbatim.
-	cmd := agyLaunchCmd(t, "gemini-pro", "")
+	cmd := agyInteractiveLaunchCmdForTest(t, "gemini-pro", "")
 
 	if !strings.Contains(cmd, "--dangerously-skip-permissions") {
 		t.Errorf("agy launched without --dangerously-skip-permissions — it will block on a per-tool approval prompt no one answers; cmd: %q", cmd)
@@ -56,7 +76,7 @@ func TestStart_AgyLaunchCommandLine(t *testing.T) {
 // model configured, agy still gets the bypass flag, and it must NOT be given a
 // bare --model/--effort pair built from an empty model.
 func TestAgyLaunchCommandLine_NoModel(t *testing.T) {
-	cmd := agyLaunchCmd(t, "", "")
+	cmd := agyInteractiveLaunchCmdForTest(t, "", "")
 
 	if !strings.Contains(cmd, "--dangerously-skip-permissions") {
 		t.Errorf("agy must get --dangerously-skip-permissions even with no model configured; cmd: %q", cmd)
@@ -71,10 +91,42 @@ func TestAgyLaunchCommandLine_NoModel(t *testing.T) {
 // and one agy rejects (codex's wider vocabulary) falls back to the default
 // rather than making agy ignore the model outright.
 func TestAgyLaunchCommandLine_ConfiguredEffort(t *testing.T) {
-	if cmd := agyLaunchCmd(t, "gemini-pro", "high"); !strings.Contains(cmd, "--model gemini-pro --effort high") {
+	if cmd := agyInteractiveLaunchCmdForTest(t, "gemini-pro", "high"); !strings.Contains(cmd, "--model gemini-pro --effort high") {
 		t.Errorf("configured effort 'high' must reach agy's --effort; cmd: %q", cmd)
 	}
-	if cmd := agyLaunchCmd(t, "gemini-pro", "xhigh"); !strings.Contains(cmd, "--model gemini-pro --effort "+agyDefaultEffort) {
+	if cmd := agyInteractiveLaunchCmdForTest(t, "gemini-pro", "xhigh"); !strings.Contains(cmd, "--model gemini-pro --effort "+agyDefaultEffort) {
 		t.Errorf("effort agy rejects must fall back to --effort %s; cmd: %q", agyDefaultEffort, cmd)
+	}
+}
+
+func TestAgyHeadlessTurnCommandReadsPromptFromFile(t *testing.T) {
+	cmd := agyHeadlessTurnShellCommand("agy", "gemini-pro", "high", "/data/agents/a/.hive-agy-prompt-a.txt")
+
+	if strings.Contains(cmd, "do the task") {
+		t.Fatalf("headless turn command must not embed prompt text in the shell line; cmd: %q", cmd)
+	}
+	for _, want := range []string{
+		"'agy' --dangerously-skip-permissions --model 'gemini-pro' --effort 'high' -p \"$(cat '/data/agents/a/.hive-agy-prompt-a.txt')\"",
+		agyHeadlessRunningMarker,
+		agyHeadlessReadyMarker,
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("headless turn command missing %q; cmd: %q", want, cmd)
+		}
+	}
+}
+
+func TestAgyHeadlessMarkersDrivePaneReadiness(t *testing.T) {
+	if !paneHasCLIMarker("prefix " + agyHeadlessReadyMarker + " suffix") {
+		t.Fatal("agy headless ready marker must count as a live backend")
+	}
+	if !paneShowsInputPrompt(agyHeadlessReadyMarker + "> ") {
+		t.Fatal("agy headless ready marker must count as an input prompt")
+	}
+	if !paneShowsAgentWorking(agyHeadlessRunningMarker) {
+		t.Fatal("agy headless running marker must keep kick delivery from interrupting an active turn")
+	}
+	if paneShowsAgentWorking(agyHeadlessRunningMarker + "\n" + agyHeadlessReadyMarker + "> ") {
+		t.Fatal("agy headless ready marker must clear an older running marker in the visible pane")
 	}
 }

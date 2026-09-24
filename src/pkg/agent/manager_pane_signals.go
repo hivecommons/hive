@@ -46,6 +46,11 @@ var cliPaneMarkers = []string{
 	// kick is dropped after cliReadyTimeout even though codex is healthy.
 	codexInputPromptMarker,
 	codexProductMarker,
+	// agy defaults to Hive's headless shim rather than the upstream TUI. The
+	// shim prints a stable ready marker at the shell prompt so the normal
+	// launch, reuse, crash-detection and startup-kick gates keep working
+	// without treating a bare shell as a live backend.
+	agyHeadlessReadyMarker,
 }
 
 const (
@@ -127,6 +132,12 @@ var agentWorkingMarkers = []string{
 func paneShowsAgentWorking(pane string) bool {
 	if pane == "" {
 		return false
+	}
+	if lastRunning := strings.LastIndex(pane, agyHeadlessRunningMarker); lastRunning >= 0 {
+		lastReady := strings.LastIndex(pane, agyHeadlessReadyMarker)
+		if lastReady < lastRunning {
+			return true
+		}
 	}
 	for _, marker := range agentWorkingMarkers {
 		if strings.Contains(pane, marker) {
@@ -351,6 +362,7 @@ func paneShowsInputPrompt(output string) bool {
 		strings.Contains(output, bobInputPlaceholderDefault) ||
 		strings.Contains(output, codexInputPromptMarker) ||
 		strings.Contains(output, piContextMarker) ||
+		strings.Contains(output, agyHeadlessReadyMarker) ||
 		strings.Contains(output, "π >") ||
 		strings.Contains(output, "╰─")
 }

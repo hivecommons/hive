@@ -1,0 +1,1 @@
+- Default server-managed agy agents to a headless `agy -p` launch shim, with `HIVE_AGY_LAUNCH_MODE=interactive` as the opt-in TUI escape hatch, so affected Antigravity CLI versions avoid the upstream interactive CPU wake loop ([#8656](https://github.com/hivecommons/hive/issues/8656)).
