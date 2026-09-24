@@ -1202,6 +1202,7 @@
     .gov-pr-model-row { display:grid; grid-template-columns:minmax(120px, 1.2fr) minmax(140px, 2fr) minmax(240px, 2fr) auto; gap:10px; align-items:center; margin:7px 0; font-size:0.78rem; }
     .gov-pr-model-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); font-weight:600; }
     .gov-pr-model-sub { color:var(--muted); font-size:var(--fs-xs); font-weight:400; }
+    .gov-pr-model-sub-spaced { margin-top:var(--sp-2); }
     .gov-pr-model-rank { display:inline-flex; align-items:center; justify-content:center; min-width:22px; margin-right:5px; padding:1px 6px; border-radius:var(--r-pill); color:var(--bg); background:var(--amber); font-size:var(--fs-2xs); font-weight:800; }
     .gov-pr-model-bar { height:12px; display:flex; overflow:hidden; border-radius:var(--r-pill); background:var(--bg); border:1px solid var(--border); }
     .gov-pr-model-seg.merged { background:var(--green); }
@@ -7933,7 +7934,7 @@
       return `<div class="gov-pr-models">
         <div class="gov-pr-models-head"><div><div class="gov-pr-models-title">Reviewer accuracy</div><div class="gov-pr-model-sub">${data.samples || 0} verdict sample${(data.samples || 0) === 1 ? '' : 's'} · last ${data.window_days || 30}d</div></div></div>
         ${table}
-        ${modelLine ? `<div class="gov-pr-model-sub" style="margin-top:var(--sp-2)">${modelLine}</div>` : ''}
+        ${modelLine ? `<div class="gov-pr-model-sub gov-pr-model-sub-spaced">${modelLine}</div>` : ''}
         ${confLine}
       </div>`;
     }
