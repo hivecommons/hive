@@ -6886,67 +6886,6 @@ func runEvalCycle(
 		notifier.Send("Provider spending limit reached", providerBudgetCause, notify.PriorityHigh)
 	}
 
-	// Kick dispatch lives behind a seam (#7232): the skip rules and the
-	// single-probe rule are the decisions worth testing, and they were
-	// previously unreachable without a tmux session and a live governor.
-	var deliveredReviewKicks []review.DispatchKick
-	if len(messages) > 0 {
-		dispatchAgentKicks(messages, releaseProviderBudgetProbe, kickDispatchDeps{
-			backoffRemaining: agentMgr.ProviderErrorBackoffRemaining,
-			sendKick:         agentMgr.SendKick,
-			startKickSpan: func(agentName string) func(error) {
-				agentCfg := cfg.Agents[agentName]
-				_, kickSpan := tracing.StartSpan(ctx, "agent.kick", tracing.AgentKickAttributes(
-					agentName,
-					agentCfg.Backend,
-					agentCfg.Model,
-					agentCfg.Role,
-					string(govState.Mode),
-					inferACMMLevel(cfg),
-				)...)
-				return func(err error) {
-					if err != nil {
-						kickSpan.RecordError(err)
-					}
-					kickSpan.End()
-				}
-			},
-			onReviewDelivered: func(msg scheduler.KickMessage) {
-				if k, ok := reviewKickByMessage[msg.Agent+"\x00"+msg.Message]; ok {
-					deliveredReviewKicks = append(deliveredReviewKicks, k)
-					persistReviewDispatchState(reviewPlan, deliveredReviewKicks, logger)
-				}
-			},
-			onDelivered: func(msg scheduler.KickMessage) {
-				gov.RecordKickForRepo(msg.Agent, msg.Repo)
-				dashSrv.AuditLog("governor", "kick", "trigger=governor-eval", msg.Agent)
-
-				// Record issue-scoped kicks into the lifecycle timeline. Cheap,
-				// guarded, and nil-safe (Record no-ops on a nil dashboard/store).
-				recordKick(ctx, dashSrv, msg.Agent, msg.IssueRefs...)
-				// #8380: the kicked agent now holds these issues; record the
-				// claims so contributors and other hives back off.
-				recordAgentKickClaims(dashSrv, cfg.Project.Org, msg.Agent, msg.IssueRefs, logger)
-
-				// Log token state at time of kick for cost attribution
-				if tokenCollector != nil {
-					if summary := tokenCollector.Summary(); summary != nil {
-						agentTokens := summary.ByAgent[msg.Agent]
-						logger.Info("kick token snapshot",
-							"agent", msg.Agent,
-							"agent_tokens", agentTokens,
-							"total_tokens", summary.TotalTokens,
-							"total_sessions", summary.SessionCount,
-						)
-					}
-				}
-			},
-			markProbeReleased: providerBudgetProbe.MarkReleased,
-			now:               time.Now,
-		}, logger)
-	}
-	persistReviewDispatchState(reviewPlan, deliveredReviewKicks, logger)
-
 	if actionable.Issues.SLAViolations > 0 {
 		toNotify, capped := selectSLABreachNotifications(actionable.Issues.Items)
 		for _, issue := range toNotify {
@@ -7275,6 +7214,70 @@ func runEvalCycle(
 	if !statusPublished {
 		dashSrv.UpdateStatusIfFresh(statusPayload, buildEpoch)
 	}
+
+	// Kick dispatch lives after the first dashboard publish. SendKick can block on
+	// a degraded or login-walled CLI; /api/status and S8 auto-dispatch must still
+	// observe the completed governor enumeration before that wait starts (#8659).
+	// Kick dispatch lives behind a seam (#7232): the skip rules and the
+	// single-probe rule are the decisions worth testing, and they were
+	// previously unreachable without a tmux session and a live governor.
+	var deliveredReviewKicks []review.DispatchKick
+	if len(messages) > 0 {
+		dispatchAgentKicks(messages, releaseProviderBudgetProbe, kickDispatchDeps{
+			backoffRemaining: agentMgr.ProviderErrorBackoffRemaining,
+			sendKick:         agentMgr.SendKick,
+			startKickSpan: func(agentName string) func(error) {
+				agentCfg := cfg.Agents[agentName]
+				_, kickSpan := tracing.StartSpan(ctx, "agent.kick", tracing.AgentKickAttributes(
+					agentName,
+					agentCfg.Backend,
+					agentCfg.Model,
+					agentCfg.Role,
+					string(govState.Mode),
+					inferACMMLevel(cfg),
+				)...)
+				return func(err error) {
+					if err != nil {
+						kickSpan.RecordError(err)
+					}
+					kickSpan.End()
+				}
+			},
+			onReviewDelivered: func(msg scheduler.KickMessage) {
+				if k, ok := reviewKickByMessage[msg.Agent+"\x00"+msg.Message]; ok {
+					deliveredReviewKicks = append(deliveredReviewKicks, k)
+					persistReviewDispatchState(reviewPlan, deliveredReviewKicks, logger)
+				}
+			},
+			onDelivered: func(msg scheduler.KickMessage) {
+				gov.RecordKickForRepo(msg.Agent, msg.Repo)
+				dashSrv.AuditLog("governor", "kick", "trigger=governor-eval", msg.Agent)
+
+				// Record issue-scoped kicks into the lifecycle timeline. Cheap,
+				// guarded, and nil-safe (Record no-ops on a nil dashboard/store).
+				recordKick(ctx, dashSrv, msg.Agent, msg.IssueRefs...)
+				// #8380: the kicked agent now holds these issues; record the
+				// claims so contributors and other hives back off.
+				recordAgentKickClaims(dashSrv, cfg.Project.Org, msg.Agent, msg.IssueRefs, logger)
+
+				// Log token state at time of kick for cost attribution
+				if tokenCollector != nil {
+					if summary := tokenCollector.Summary(); summary != nil {
+						agentTokens := summary.ByAgent[msg.Agent]
+						logger.Info("kick token snapshot",
+							"agent", msg.Agent,
+							"agent_tokens", agentTokens,
+							"total_tokens", summary.TotalTokens,
+							"total_sessions", summary.SessionCount,
+						)
+					}
+				}
+			},
+			markProbeReleased: providerBudgetProbe.MarkReleased,
+			now:               time.Now,
+		}, logger)
+	}
+	persistReviewDispatchState(reviewPlan, deliveredReviewKicks, logger)
 
 	publishFleetReports(ctx, logger, ghClient, dashSrv, statusPayload.FleetReport, cfg.Governor.FleetReport.DryRun())
 

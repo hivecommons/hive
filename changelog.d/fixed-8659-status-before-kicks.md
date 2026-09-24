@@ -1,0 +1,1 @@
+- Publish the dashboard status snapshot before potentially blocking agent kick delivery so S8 auto dispatch can run on suppressed lanes.
