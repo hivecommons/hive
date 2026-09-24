@@ -1,1 +1,0 @@
-- Fix #8712 by bounding agy's .gemini permission guard to antigravity-cli and surfacing inotifywait failures.

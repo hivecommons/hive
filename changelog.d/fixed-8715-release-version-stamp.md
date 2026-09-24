@@ -1,1 +1,0 @@
-- Stamp release Docker images with the release tag and drop meaningless dirty suffixes from image-built versions (#8715).

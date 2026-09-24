@@ -1,1 +1,0 @@
-- Disable IBM Bob Shell self-updates for hive-launched bob agents so non-root UIDs no longer hit npm global EACCES errors. Fixes #8738.

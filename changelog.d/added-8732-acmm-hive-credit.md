@@ -1,1 +1,0 @@
-- Added verified Hive activity credit for `acmm:github-actions-ai` when managed repos have recent Hive agent output. Fixes #8732.

@@ -1,1 +1,0 @@
-- The public hub landing page now exposes crawler-friendly integration metadata, robots.txt, sitemap.xml and llms.txt for supported agent and infrastructure thanks.
