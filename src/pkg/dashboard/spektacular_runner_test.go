@@ -83,6 +83,12 @@ func (e *spekExec) exec(_ context.Context, args []string) ([]byte, error) {
 
 func spekHub(t *testing.T) (*ContributeWSHub, *Server, *beads.Store, *hookCapture) {
 	t.Helper()
+	// The lifecycle timeline is a process-wide singleton and every test here
+	// drives the SAME lease key (spekRepo!spekRunKey:<stage>), so its
+	// per-(ref,kind) Stage.Count accumulates across tests and receipt
+	// assertions read other tests' receipts under -shuffle. Reset it per test,
+	// the package idiom from api_lifecycle_timeline_test.go.
+	resetLifecycleStore()
 	hub, s := covK2Hub(t)
 	s.contributeHub = hub
 	old := runReceiptsDir
