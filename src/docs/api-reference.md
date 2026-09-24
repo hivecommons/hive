@@ -589,8 +589,8 @@ always resolved server-side from the validated token.
 | `GET` | `/api/hub/clusters` | Hub auth | List Clusters | `pkg/hub/saas.go:509` |
 | `GET` | `/api/hub/image-pulls` | Hub auth | Per-Release Image Pull Series | `pkg/hub/saas.go:369` |
 | `GET` | `/api/reach` | Hub admin | PR Reach Report (?pr=NNN or ?recent=K) | `pkg/hub/saas.go:500` |
-| `GET` | `/fleet` | Hub handler-specific | My-Hives Fleet Page (static; data via `/api/saas/my-hives`) | `pkg/hub/server.go:1604` |
-| `GET` | `/my-hives` | Hub handler-specific | 301 redirect to `/fleet` (query preserved) | `pkg/hub/server.go:1605` |
+| `GET` | `/fleet` | Hub handler-specific | My-Hives Fleet Page (static; data via `/api/saas/my-hives`) | `pkg/hub/server.go:1606` |
+| `GET` | `/my-hives` | Hub handler-specific | 301 redirect to `/fleet` (query preserved) | `pkg/hub/server.go:1607` |
 | `POST` | `/api/heartbeat` | Hub handler-specific | Heartbeat | `pkg/hub/server.go:1564` |
 | `POST` | `/api/task-status` | Hub handler-specific | Task Status | `pkg/hub/server.go:1565` |
 | `GET` | `/api/registry` | Hub handler-specific | Registry | `pkg/hub/server.go:1566` |
@@ -610,6 +610,8 @@ always resolved server-side from the validated token.
 | `GET` | `/api/reading-list` | Hub handler-specific | Reading List | `pkg/hub/server.go:1591` |
 | `GET` | `/reading` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1592` |
 | `GET` | `/cncf-reference-architecture` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1595` |
-| `GET` | `/{$}` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1612` |
-| `GET` | `/og-card.png` | Hub handler-specific | OGCard | `pkg/hub/server.go:1617` |
-| `GET` | `/` | Public | Static asset fallback (`http.FileServerFS` over the embedded `static/` tree) for any path no other route claims | `pkg/hub/server.go:1618` |
+| `GET` | `/cncf-reference-architecture/console` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1596` |
+| `GET` | `/cncf-reference-architecture/bluefin` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1597` |
+| `GET` | `/{$}` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1614` |
+| `GET` | `/og-card.png` | Hub handler-specific | OGCard | `pkg/hub/server.go:1619` |
+| `GET` | `/` | Public | Static asset fallback (`http.FileServerFS` over the embedded `static/` tree) for any path no other route claims | `pkg/hub/server.go:1620` |
