@@ -1719,6 +1719,8 @@
     .cost-table td.cmodel { color: var(--purple); font-family: var(--font-mono); }
     .cost-table td.csession { color: var(--muted); font-family: var(--font-mono); }
     .cost-table td.ctime { color: var(--muted); font-family: var(--font-mono); white-space: nowrap; }
+    .cost-table-scroll { width: 100%; max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+    .cost-window-tag { color: var(--muted); font-weight: 500; text-transform: none; letter-spacing: normal; }
     .cost-session-active { color: var(--green); font-weight: 600; }
     .cost-subtable-title { font-size: 0.72rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: var(--sp-6) var(--sp-0) var(--sp-2); }
     .cost-disclaimer { font-size: 0.65rem; color: var(--muted); margin-top: 10px; line-height: 1.4; }
@@ -5554,8 +5556,12 @@
       } catch { /* non-critical */ }
     }
     function costSparkSvg() {
+      const hist = costHist();
+      const title = hist.length
+        ? `Estimated cost over time — ${costRangeTitle(hist[0].timestamp, hist[hist.length - 1].timestamp, 0)}; recorded history samples`
+        : 'Estimated cost over time (last 30d) — vertical axis: cumulative USD, horizontal axis: date';
       return axisSparkSvg(_costHistory, e => e.usd, e => e.t ?? e.timestamp, v => '$' + fmtSparkVal(v), 'var(--green)',
-        'Estimated cost over time (last 30d) — vertical axis: cumulative USD, horizontal axis: date');
+        title);
     }
     // fetchCostHistory() is invoked alongside fetchCost() (see below).
 
@@ -5664,6 +5670,29 @@
       return { start: now - cfg.windowMs, end: now, bucketMs: cfg.bucketMs, count: cfg.buckets };
     }
 
+    function fmtCostDateTime(ms) {
+      return new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    }
+    function fmtCostDuration(ms) {
+      const min = Math.round(ms / 60000);
+      if (min < 60) return `${Math.max(1, min)} min`;
+      const hr = ms / 3600e3;
+      if (hr < 48) return `${Number.isInteger(hr) ? hr : hr.toFixed(1)} hr`;
+      const day = ms / 86400e3;
+      return `${Number.isInteger(day) ? day : day.toFixed(1)} day`;
+    }
+    function costRangeTitle(start, end, bucketMs) {
+      if (!start || !end) return 'time range unavailable';
+      const bucket = bucketMs ? `; bucket/step ${fmtCostDuration(bucketMs)}` : '';
+      return `${fmtCostDateTime(start)} → ${fmtCostDateTime(end)}${bucket}`;
+    }
+    function estimatedUsageWindowLabel(est) {
+      if (est && est.window_start && est.window_end) {
+        return costRangeTitle(est.window_start, est.window_end, 0);
+      }
+      return 'current token summary; session timestamps unavailable';
+    }
+
     // Normalized history [{usd, timestamp, agents}]. The server serializes the
     // timestamp as `t` (CostHistoryEntry json:"t"); accept `timestamp` too so a
     // future rename can't zero the card again. `agents` (name → cumulative $)
@@ -5676,14 +5705,16 @@
 
     // Tiny inline sparkline for cost-table cells. Same min/max scaling as the
     // big sparkline, sized to sit beside a number.
-    function miniSparkSvg(values, color) {
+    function miniSparkSvg(values, color, label) {
       if (!values || values.length < 2) return '';
       const W = 56, H = 14;
       const max = Math.max(...values), min = Math.min(...values);
       const range = (max - min) || max || 1;
       const pts = values.map((v, i) =>
         `${(i / (values.length - 1) * W).toFixed(1)},${(H - ((v - min) / range) * (H - 2) - 1).toFixed(1)}`);
-      return `<svg class="cell-spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><title>range ${fmtSparkVal(min)}–${fmtSparkVal(max)} · latest ${fmtSparkVal(values[values.length - 1])} · oldest → newest</title><polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      const win = costWindow();
+      const title = `${label || 'sparkline'} · ${costRangeTitle(win.start, win.end, win.bucketMs)} · values ${fmtSparkVal(min)}–${fmtSparkVal(max)} · latest ${fmtSparkVal(values[values.length - 1])}`;
+      return `<svg class="cell-spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><title>${esc(title)}</title><polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
     }
 
     // Cumulative series for one model's field ('i' input, 'o' output, 'usd')
@@ -10893,6 +10924,8 @@ function burnAreaChart() {
 
       const est = cost.estimated || { total_usd: 0, by_model: [], by_agent: [], unpriced_models: [] };
       const gateways = cost.gateways || [];
+      const isTierEstimated = (row) => row && (row.source === 'unpriced' || row.source === 'estimated_tier');
+      const usageWindow = estimatedUsageWindowLabel(est);
 
       // Native gateway cards (OpenRouter / LiteLLM real spend).
       const gwCards = gateways.map(g => {
@@ -10963,9 +10996,9 @@ function burnAreaChart() {
         return { ...m, running: users.length, _users: users };
       }), 'model', (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true }));
       const modelRows = models.map(m => {
-        const approx = m.source === 'unpriced';
+        const approx = isTierEstimated(m);
         const usdCell = approx
-          ? `<span title="tier estimate — no exact list price for this model">~${fmtUSD(m.usd)}</span>`
+          ? `<span title="unknown exact price — tier estimate, not billed spend">~${fmtUSD(m.usd)}</span>`
           : fmtUSD(m.usd);
         const users = m._users || [];
         const agentsCell = users.length
@@ -10974,9 +11007,9 @@ function burnAreaChart() {
         return `<tr>
           <td class="cmodel">${esc(m.name || 'unknown')}</td>
           <td class="cnum" style="text-align:center">${agentsCell}</td>
-          <td class="cnum">${fmtTokens(m.input)}${miniSparkSvg(modelSeries(m.name, 'i'), 'var(--blue)')}</td>
-          <td class="cnum">${fmtTokens(m.output)}${miniSparkSvg(modelSeries(m.name, 'o'), 'var(--purple)')}</td>
-          <td class="cnum">${usdCell}${miniSparkSvg(modelSeries(m.name, 'usd'), 'var(--green)')}</td>
+          <td class="cnum">${fmtTokens(m.input)}${miniSparkSvg(modelSeries(m.name, 'i'), 'var(--blue)', `${m.name || 'model'} input tokens`)}</td>
+          <td class="cnum">${fmtTokens(m.output)}${miniSparkSvg(modelSeries(m.name, 'o'), 'var(--purple)', `${m.name || 'model'} output tokens`)}</td>
+          <td class="cnum">${usdCell}${miniSparkSvg(modelSeries(m.name, 'usd'), 'var(--green)', `${m.name || 'model'} estimated dollars`)}</td>
         </tr>`;
       }).join('');
 
@@ -10989,9 +11022,9 @@ function burnAreaChart() {
       // per-agent breakdown. Default sort remains most-expensive first.
       const bySandbox = sortCostRows(est.by_agent || [], 'sandbox', (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true }));
       const sandboxRows = bySandbox.map(a => {
-        const approx = a.source === 'unpriced';
+        const approx = isTierEstimated(a);
         const usdCell = approx
-          ? `<span title="tier estimate — no exact list price for this sandbox's model">~${fmtUSD(a.usd)}</span>`
+          ? `<span title="unknown exact price — tier estimate for this sandbox's model">~${fmtUSD(a.usd)}</span>`
           : fmtUSD(a.usd);
         return `<tr>
           <td class="cmodel">${esc(a.name || 'unknown')}</td>
@@ -11001,12 +11034,12 @@ function burnAreaChart() {
         </tr>`;
       }).join('');
       const sandboxTable = `<div class="cost-subsection" data-cost-sub="sandbox">
-        <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="true" aria-controls="cost-sub-sandbox-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="sandbox" data-keys="*" title="Estimated cost grouped by sandbox — one agent per sandbox (token × list price). Click to collapse / expand."><span class="cost-chevron" aria-hidden="true">▼</span>usage by sandbox</div>
+        <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="true" aria-controls="cost-sub-sandbox-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="sandbox" data-keys="*" title="Estimated cost grouped by sandbox — one agent per sandbox (token × list price). Window: ${esc(usageWindow)}. Click to collapse / expand."><span class="cost-chevron" aria-hidden="true">▼</span>usage by sandbox <span class="cost-window-tag">(${esc(usageWindow)})</span></div>
         <div class="cost-sub-body" id="cost-sub-sandbox-body">
-        <table class="cost-table table-compact">
+        <div class="cost-table-scroll"><table class="cost-table table-compact">
           <thead><tr>${costSortTh('sandbox', 'name', 'sandbox (agent)')}${costSortTh('sandbox', 'input', 'input', { align: 'right' })}${costSortTh('sandbox', 'output', 'output', { align: 'right' })}${costSortTh('sandbox', 'usd', 'est. $', { align: 'right' })}</tr></thead>
           <tbody>${sandboxRows || '<tr><td class="text-muted" colspan="4">no usage yet</td></tr>'}</tbody>
-        </table>
+        </table></div>
         </div>
       </div>`;
 
@@ -11022,9 +11055,9 @@ function burnAreaChart() {
         return s.length > COST_SESSION_ID_CHARS ? s.slice(0, COST_SESSION_ID_CHARS) + '…' : (s || '—');
       };
       const sessionRows = bySession.map(sn => {
-        const approx = sn.source === 'unpriced';
+        const approx = isTierEstimated(sn);
         const usdCell = approx
-          ? `<span title="tier estimate — no exact list price for this model">~${fmtUSD(sn.usd)}</span>`
+          ? `<span title="unknown exact price — tier estimate for this model">~${fmtUSD(sn.usd)}</span>`
           : fmtUSD(sn.usd);
         // "started → ended" in local time; a still-active session (latest event
         // within COST_SESSION_ACTIVE_MS) shows "active" instead of a fake end.
@@ -11051,10 +11084,10 @@ function burnAreaChart() {
       const sessionTable = `<div class="cost-subsection" data-cost-sub="session">
         <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="cost-sub-session-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="session" data-keys="*" title="Estimated cost for each individual agent session (sandbox run), sorted by session start newest first by default (token × list price). Click to collapse / expand."><span class="cost-chevron" aria-hidden="true">▼</span>cost per session</div>
         <div class="cost-sub-body" id="cost-sub-session-body">
-        <table class="cost-table table-compact">
+        <div class="cost-table-scroll"><table class="cost-table table-compact">
           <thead><tr>${costSortTh('session', 'session_id', 'session')}${costSortTh('session', 'agent', 'sandbox')}${costSortTh('session', 'model', 'model')}${costSortTh('session', 'started', 'started → ended', { title: "Session start → end, local time (earliest / latest usage event). Hover a row for full timestamps; 'active' means the session had events in the last few minutes." })}${costSortTh('session', 'input', 'input', { align: 'right' })}${costSortTh('session', 'output', 'output', { align: 'right' })}${costSortTh('session', 'usd', 'est. $', { align: 'right' })}</tr></thead>
           <tbody>${sessionRows || '<tr><td class="text-muted" colspan="7">no sessions yet</td></tr>'}</tbody>
-        </table>
+        </table></div>
         </div>
       </div>`;
 
@@ -11084,10 +11117,10 @@ function burnAreaChart() {
           </div>
           ${costTrendHtml()}
           ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}
-          <table class="cost-table table-compact">
+          <div class="cost-table-scroll"><table class="cost-table table-compact">
             <thead><tr>${costSortTh('model', 'name', 'model')}${costSortTh('model', 'running', 'running agents', { align: 'center', title: 'Running agents on this model right now — hover the count for names' })}${costSortTh('model', 'input', 'input', { align: 'right' })}${costSortTh('model', 'output', 'output', { align: 'right' })}${costSortTh('model', 'usd', 'est. $', { align: 'right' })}</tr></thead>
             <tbody>${modelRows || '<tr><td class="text-muted" colspan="5">no usage yet</td></tr>'}</tbody>
-          </table>
+          </table></div>
           ${sandboxTable}
           ${repoTable}
           ${sessionTable}

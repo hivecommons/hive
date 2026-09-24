@@ -1,6 +1,7 @@
 package tokens
 
 import (
+	"regexp"
 	"strings"
 )
 
@@ -39,6 +40,8 @@ func PriceTableDate() string { return priceTableDate }
 // modelPrices are USD per 1,000,000 tokens; dividing token counts by this
 // constant converts to millions before multiplying by the rate.
 const tokensPerMillion = 1_000_000.0
+
+var modelVersionSuffixRE = regexp.MustCompile(`-\d{8}(-v\d+)?$`)
 
 // ModelPrice is the USD-per-1,000,000-tokens list price for one model, split by
 // token kind. A zero value for a field means "priced the same as input" is NOT
@@ -160,6 +163,26 @@ func normalizeModelID(model string) string {
 	for strings.Contains(id, "--") {
 		id = strings.ReplaceAll(id, "--", "-")
 	}
+	id = strings.Trim(id, "-")
+
+	// LiteLLM/Bedrock/Vertex routed models often arrive with provider and region
+	// qualifiers embedded into the final segment, for example:
+	//   bedrock/us.anthropic.claude-sonnet-4-6-20250514-v1:0
+	// If we keep "us-anthropic-" (or the dated Bedrock suffix), the exact lookup
+	// misses and falls through to a coarse tier price. Slice to the first real
+	// model family marker before consulting the table.
+	for _, marker := range []string{"claude-", "gpt-", "deepseek-", "llama-", "llama3-", "gemini-"} {
+		if idx := strings.Index(id, marker); idx > 0 {
+			id = id[idx:]
+			break
+		}
+	}
+	if strings.HasPrefix(id, "llama3-") {
+		id = "llama-3-" + strings.TrimPrefix(id, "llama3-")
+	}
+	if strings.HasPrefix(id, "claude-") {
+		id = modelVersionSuffixRE.ReplaceAllString(id, "")
+	}
 	return strings.Trim(id, "-")
 }
 
@@ -222,8 +245,8 @@ func EstimateCostUSD(model string, inputTok, outputTok, cacheReadTok, cacheWrite
 }
 
 // ModelCost is the estimated dollar cost for one model or agent, plus whether
-// the model was priced. Unpriced entries carry Priced=false and USD=0 so the UI
-// can distinguish "unknown model" from "genuinely $0".
+// it came from an exact table entry. Priced=false means the USD is a coarse
+// tier estimate and must be labelled approximate.
 type ModelCost struct {
 	USD    float64 `json:"usd"`
 	Priced bool    `json:"priced"`
@@ -235,10 +258,10 @@ type ModelCost struct {
 }
 
 // EstimatedCost is the full estimated-cost breakdown derived from an
-// AggregateSummary: a grand total plus per-model and per-agent detail. Only
-// priced models contribute to TotalUSD; UnpricedModels lists model ids that
-// were seen with token usage but have no price-table entry, so operators know
-// the total is a lower bound.
+// AggregateSummary: a grand total plus per-model and per-agent detail. Every
+// active model contributes to TotalUSD: exact table price when known, otherwise
+// a coarse tier estimate. UnpricedModels lists model ids that had no exact
+// price-table entry so operators know which rows are approximate.
 type EstimatedCost struct {
 	TotalUSD       float64              `json:"total_usd"`
 	ByModel        map[string]ModelCost `json:"by_model"`

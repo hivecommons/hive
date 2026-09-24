@@ -90,6 +90,11 @@ type costEstimated struct {
 	ByModel        []costModelEntry `json:"by_model"`
 	ByAgent        []costModelEntry `json:"by_agent"`
 	UnpricedModels []string         `json:"unpriced_models"`
+	// WindowStart / WindowEnd bracket the token sessions represented by the
+	// aggregate rows. They let the UI label "usage by sandbox" with the actual
+	// observed span instead of leaving readers to guess.
+	WindowStart int64 `json:"window_start,omitempty"`
+	WindowEnd   int64 `json:"window_end,omitempty"`
 	// BySession is the estimated cost for each individual agent session
 	// (sandbox run), letting the UI show "usage by sandbox and cost per
 	// session" rather than only per-model/per-agent aggregates. Each entry is
@@ -176,6 +181,7 @@ func (s *Server) estimatedCost() costEstimated {
 		if summary := s.deps.Tokens.Summary(); summary != nil {
 			est = flattenEstimated(tokens.EstimateFromSummary(summary))
 			est.BySession = estimatedSessions(summary)
+			est.WindowStart, est.WindowEnd = estimatedWindow(summary)
 		}
 	}
 	if est.ByModel == nil {
@@ -191,6 +197,28 @@ func (s *Server) estimatedCost() costEstimated {
 		est.BySession = []costSessionEntry{}
 	}
 	return est
+}
+
+func estimatedWindow(summary *tokens.AggregateSummary) (start, end int64) {
+	if summary == nil {
+		return 0, 0
+	}
+	for _, sess := range summary.Sessions {
+		if sess.FirstActive > 0 && (start == 0 || sess.FirstActive < start) {
+			start = sess.FirstActive
+		}
+		sessionEnd := sess.LastActive
+		if sessionEnd == 0 {
+			sessionEnd = sess.FirstActive
+		}
+		if sessionEnd > end {
+			end = sessionEnd
+		}
+	}
+	if end < start {
+		end = start
+	}
+	return start, end
 }
 
 // estimatedSessions prices every scanned session individually so the UI can
