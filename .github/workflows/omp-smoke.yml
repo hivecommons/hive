@@ -53,7 +53,10 @@ jobs:
         if: matrix.lane == 'pinned'
         run: |
           podman pull ghcr.io/hivecommons/hive-contributor:latest
-          podman run --rm --entrypoint /bin/bash -v "$GITHUB_WORKSPACE:/opt/hive-src:ro,Z" ghcr.io/hivecommons/hive-contributor:latest -lc 'cd /opt/hive-src/src && go build -tags extwork_omp ./cmd/hive && go test -tags "integration extwork_omp" ./test/extwork -run TestOMPSmoke -count=1'
+          podman run --rm --entrypoint /bin/bash \
+            -v "$GITHUB_WORKSPACE:/opt/hive-src:ro,Z" \
+            ghcr.io/hivecommons/hive-contributor:latest \
+            -lc 'git config --global --add safe.directory /opt/hive-src && cd /opt/hive-src/src && go build -tags extwork_omp -o /dev/null ./cmd/hive && go test -tags "integration extwork_omp" ./test/extwork -run TestOMPSmoke -count=1'
 
   create-issue-on-failure:
     if: failure() && github.event_name == 'schedule'
