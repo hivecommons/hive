@@ -14,7 +14,7 @@ func TestHubLandingCrawlerMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := string(b)
-	for _, want := range []string{"Claude Code", "GitHub Copilot CLI", "IBM Bob", "Goose", "vLLM", "llm-d", "Akamai (Linode)", "Oracle Cloud (OKE)", "Cloudflare", "Bluehost"} {
+	for _, want := range []string{"Claude Code", "GitHub Copilot CLI", "Spektacular", "Spek", "speks", "IBM Bob", "Goose", "vLLM", "llm-d", "Akamai (Linode)", "Oracle Cloud (OKE)", "Cloudflare", "Bluehost"} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("landing HTML missing crawler-visible text %q", want)
 		}
@@ -44,7 +44,7 @@ func TestHubCrawlerTextEndpoints(t *testing.T) {
 			t.Fatalf("robots.txt missing sitemap pointer: %q", text)
 		}
 		if name == "static/llms.txt" {
-			for _, want := range []string{"Claude Code", "vLLM", "Akamai (Linode)", "Bluehost"} {
+			for _, want := range []string{"Claude Code", "Spektacular (Spek)", "speks", "vLLM", "Akamai (Linode)", "Bluehost"} {
 				if !strings.Contains(text, want) {
 					t.Fatalf("llms.txt missing %q", want)
 				}

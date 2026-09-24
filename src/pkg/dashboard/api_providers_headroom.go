@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"net/http"
+	"reflect"
 )
 
 // handleProvidersHeadroom serves GET /api/providers/headroom: the last known
@@ -13,9 +14,22 @@ func (s *Server) handleProvidersHeadroom(w http.ResponseWriter, r *http.Request)
 	if !requireOwnerRole(w, r) {
 		return
 	}
-	if s.deps == nil || s.deps.RotationMgr == nil {
+	if s.deps == nil || headroomReporterDisabled(s.deps.RotationMgr) {
 		jsonResponse(w, map[string]interface{}{"providers": []interface{}{}, "enabled": false})
 		return
 	}
 	jsonResponse(w, s.deps.RotationMgr.HeadroomResponse())
+}
+
+func headroomReporterDisabled(reporter interface{}) bool {
+	if reporter == nil {
+		return true
+	}
+	v := reflect.ValueOf(reporter)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
 }

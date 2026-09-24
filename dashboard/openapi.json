@@ -22581,6 +22581,206 @@
           }
         }
       }
+    },
+    "/api/campaigns/{id}/jam": {
+      "get": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Get campaign Jam state",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Jam state"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Record a Jam spec revision",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated Jam state"
+          },
+          "403": {
+            "description": "Read-write access required"
+          }
+        }
+      }
+    },
+    "/api/campaigns/{id}/jam/threads": {
+      "get": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "List Jam threads",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Thread list"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Create a Jam thread or comment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated Jam state"
+          },
+          "403": {
+            "description": "Read-write access required"
+          }
+        }
+      }
+    },
+    "/api/campaigns/{id}/jam/suggestions": {
+      "get": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "List Jam suggestions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Suggestion list"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Create or resolve a Jam suggestion",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated Jam state"
+          },
+          "403": {
+            "description": "Read-write or maintainer access required"
+          }
+        }
+      }
+    },
+    "/api/campaigns/{id}/jam/polls": {
+      "get": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "List Jam polls",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Poll list"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Create, vote, or decide a Jam poll",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated Jam state"
+          },
+          "403": {
+            "description": "Read-write or maintainer access required"
+          }
+        }
+      }
     }
   },
   "components": {
