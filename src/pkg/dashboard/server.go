@@ -37,6 +37,14 @@ func secureCompare(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
+func dashboardTimeZoneName() string {
+	name := time.Now().Location().String()
+	if name == "Local" {
+		return ""
+	}
+	return name
+}
+
 const agentSkipAfterFullBroadcastS = 5 * time.Second
 
 const maxSSEClients = 100
@@ -371,6 +379,7 @@ type Server struct {
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.
 type StatusPayload struct {
 	Timestamp string `json:"timestamp"`
+	TimeZone  string `json:"timeZone,omitempty"`
 	// StatusSeq is a monotonic publish sequence (#4348): the frontend drops
 	// any status payload whose seq is older than the last one it rendered,
 	// so a stale in-flight poll/SSE response can never repaint over a newer
@@ -2005,6 +2014,9 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	status.StatusSeq = s.statusSeq
 	status.StatusInstance = strconv.FormatInt(s.startedAt.UnixNano(), 10)
 	status.Timestamp = time.Now().UTC().Format(time.RFC3339)
+	if status.TimeZone == "" {
+		status.TimeZone = dashboardTimeZoneName()
+	}
 	s.status = status
 	s.lastFullBroadcast = time.Now()
 	s.statusMu.Unlock()

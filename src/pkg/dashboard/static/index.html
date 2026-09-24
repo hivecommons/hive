@@ -89,6 +89,13 @@
     h1 { font-size: var(--fs-xl); margin-bottom: 20px; display: flex; align-items: center; }
     h1 span.bee { font-size: 1.6rem; margin-right: 8px; }
     .timestamp { color: var(--muted); font-size: 0.8rem; margin-left: 12px; }
+    .status-stale {
+      display: inline-flex; align-items: center; gap: 4px;
+      margin-left: 8px; padding: 2px 7px; border: 1px solid rgba(210,153,34,0.45);
+      border-radius: 999px; background: rgba(210,153,34,0.12);
+      color: var(--yellow); font-size: 0.68rem; font-weight: 700; white-space: nowrap;
+    }
+    .status-stale[hidden] { display: none; }
     .git-version { font-size: 0.65rem; color: var(--muted); margin-left: 10px; font-weight: 400; font-family: var(--font-mono); }
     .git-version .git-behind { color: var(--yellow); font-weight: 600; }
     /* Release channel + last upgrade attempt panel (#7092). */
@@ -3381,7 +3388,7 @@
     <div class="oc-topbar-right">
       <span class="oc-health-badge" id="oc-health">● Health OK</span>
       <span id="oc-hive-id" class="git-version" title="Hive Instance ID" style="cursor:pointer;border:1px solid var(--border);padding:2px 8px;border-radius:4px" data-action="openConfigDialog" data-arg0="governor"></span>
-      <span class="oc-topbar-ts" id="oc-ts"></span>
+      <span class="oc-topbar-ts" id="oc-ts"></span><span class="status-stale" id="oc-status-stale" hidden></span>
       <button class="btn" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide">🧭 Guide</button>
       <a href="/api/widget" class="widget-dl" title="Download Übersicht widget">⬇ Widget</a>
       <div id="oc-gh-avatar-wrap" style="display:none;position:relative">
@@ -3418,7 +3425,7 @@
     <span class="dot-live">●</span> live
   </div>
 
-  <h1><span class="bee">🐝</span> KubeStellar Hive Dashboard&nbsp;<span id="project-name">for KubeStellar/Console</span> <span class="timestamp" id="ts"></span>
+  <h1><span class="bee">🐝</span> KubeStellar Hive Dashboard&nbsp;<span id="project-name">for KubeStellar/Console</span> <span class="timestamp" id="ts"></span><span class="status-stale" id="status-stale" hidden></span>
     <span class="git-version" id="git-version"></span>
     <span class="git-version" id="hive-id-badge" title="Hive Instance ID" style="cursor:pointer;border:1px solid var(--border);padding:2px 8px;border-radius:4px" data-action="openConfigDialog" data-arg0="governor"></span>
     <span class="git-version" id="acmm-badge" title="Click to change maturity level" style="cursor:pointer;border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);padding:2px 8px;border-radius:999px;background:color-mix(in srgb, var(--amber) 14%, transparent);color:var(--amber);font-weight:600" data-action="openACMMDialog"></span>
@@ -15062,6 +15069,87 @@ function burnAreaChart() {
       }
     }
 
+    const NAVBAR_CLOCK_TICK_MS = 1000;
+    const STATUS_EXPECTED_REFRESH_MS = 30000;
+    const STATUS_STALE_AFTER_POLLS = 3;
+    const STATUS_STALE_AFTER_MS = STATUS_EXPECTED_REFRESH_MS * STATUS_STALE_AFTER_POLLS;
+    let _navbarClockTimeZone = '';
+    let _lastStatusPayloadAtMs = 0;
+
+    function validDashboardTimeZone(tz) {
+      if (!tz || typeof tz !== 'string') return '';
+      try {
+        new Intl.DateTimeFormat([], { timeZone: tz }).format(new Date());
+        return tz;
+      } catch (e) {
+        return '';
+      }
+    }
+
+    function browserDashboardTimeZone() {
+      try {
+        return (Intl && Intl.DateTimeFormat && Intl.DateTimeFormat().resolvedOptions().timeZone) || '';
+      } catch (e) {
+        return '';
+      }
+    }
+
+    function updateNavbarClockTimeZone(data) {
+      _navbarClockTimeZone = validDashboardTimeZone(data && (data.timeZone || data.timezone || data.tz)) || browserDashboardTimeZone();
+    }
+
+    function noteStatusPayloadTimestamp(data) {
+      const payloadAt = new Date(data && data.timestamp).getTime();
+      _lastStatusPayloadAtMs = Number.isFinite(payloadAt) ? payloadAt : Date.now();
+    }
+
+    function formatNavbarClock(now, timeZone) {
+      const opts = { month:'numeric', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true, timeZoneName:'short' };
+      if (timeZone) opts.timeZone = timeZone;
+      const fmt = new Intl.DateTimeFormat([], opts);
+      if (typeof fmt.formatToParts === 'function') {
+        const parts = {};
+        for (const p of fmt.formatToParts(now)) parts[p.type] = p.value;
+        const dayPeriod = parts.dayPeriod ? ' ' + parts.dayPeriod : '';
+        return `${parts.month}/${parts.day} ${parts.hour}:${parts.minute}${dayPeriod} ${parts.timeZoneName || ''}`.trim();
+      }
+      return fmt.format(now);
+    }
+
+    function formatStatusPayloadAge(ms) {
+      const minutes = Math.max(1, Math.floor(ms / 60000));
+      if (minutes < 60) return `${minutes}m`;
+      const hours = Math.floor(minutes / 60);
+      const rem = minutes % 60;
+      return rem ? `${hours}h ${rem}m` : `${hours}h`;
+    }
+
+    function setNavbarClockText(text) {
+      const ts = document.getElementById('ts');
+      if (ts) ts.textContent = text;
+      const ocTs = document.getElementById('oc-ts');
+      if (ocTs) ocTs.textContent = text;
+    }
+
+    function updateStatusStaleness(nowMs) {
+      const staleEls = [document.getElementById('status-stale'), document.getElementById('oc-status-stale')].filter(Boolean);
+      if (!staleEls.length) return;
+      const ageMs = _lastStatusPayloadAtMs ? Math.max(0, nowMs - _lastStatusPayloadAtMs) : 0;
+      const stale = ageMs > STATUS_STALE_AFTER_MS;
+      const label = stale ? `status ${formatStatusPayloadAge(ageMs)} old` : '';
+      for (const el of staleEls) {
+        el.hidden = !stale;
+        el.textContent = label;
+        el.title = stale ? 'The last /api/status payload is stale; live status-dependent values may be behind.' : '';
+      }
+    }
+
+    function tickNavbarClock(now = new Date()) {
+      if (!_navbarClockTimeZone) _navbarClockTimeZone = browserDashboardTimeZone();
+      setNavbarClockText(formatNavbarClock(now, _navbarClockTimeZone));
+      updateStatusStaleness(now.getTime());
+    }
+
     function render(data) {
       if (!data || data.error || data.status === 'initializing') return;
       // ── Stale-snapshot guard (#4348) ──────────────────────────────────
@@ -15087,12 +15175,9 @@ function burnAreaChart() {
       }
       if (document.body.style.opacity === '0') document.body.style.opacity = '1';
       const scrollY = window.scrollY;
-      const tsDt = new Date(data.timestamp);
-      const tsStr = tsDt.toLocaleDateString([], {month:'numeric',day:'numeric'}) + ' ' + tsDt.toLocaleTimeString([], {hour:'numeric',minute:'2-digit',hour12:true});
-      const tzAbbr = tsDt.toLocaleTimeString([], {timeZoneName:'short'}).split(' ').pop();
-      document.getElementById('ts').textContent = tsStr + ' ' + tzAbbr;
-      const ocTs = document.getElementById('oc-ts');
-      if (ocTs) ocTs.textContent = tsStr + ' ' + tzAbbr;
+      updateNavbarClockTimeZone(data);
+      noteStatusPayloadTimestamp(data);
+      tickNavbarClock();
       currentAgentMetrics = data.agentMetrics || {};
       window._healthData = data.health || {};
       window._tokensByAgent = (data.tokens || {}).byAgent || {};
@@ -18928,6 +19013,8 @@ function burnAreaChart() {
     }).catch(() => {});
 
     // Initial fetch then SSE — these two are critical for first paint
+    tickNavbarClock();
+    setInterval(tickNavbarClock, NAVBAR_CLOCK_TICK_MS);
     fetch('/api/status').then(r => r.json()).then(render).catch(console.error);
     // Fetch persistent trends for sparklines (day/week)
     window._trendData = [];

@@ -287,6 +287,7 @@ func BuildFrontendStatus(
 
 	payload := &StatusPayload{
 		Timestamp:           time.Now().UTC().Format(time.RFC3339),
+		TimeZone:            dashboardTimeZoneName(),
 		HiveID:              cfg.HiveID,
 		HiveIDEditable:      !hiveIDLocked,
 		HiveIDLockReason:    hiveIDLockReason,
