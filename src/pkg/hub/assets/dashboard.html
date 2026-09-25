@@ -284,6 +284,24 @@
        panel cell, which owns the form, rather than with !important per field. */
     .contact-panel-cell { text-align: left; }
     .contact-panel-cell input, .contact-panel-cell textarea { text-align: left; }
+    .access-typeahead { position: relative; flex: 1 1 340px; min-width: 260px; }
+    .access-typeahead-input { width: 100%; box-sizing: border-box; padding: var(--sp-4) var(--sp-5); background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); color: var(--text); font-size: 0.85rem; }
+    .access-typeahead-input[aria-expanded="true"] { border-color: var(--hub-dashboard-accent); }
+    .access-typeahead-list { display: none; position: absolute; z-index: 130; left: 0; right: 0; top: calc(100% + 4px); max-height: 260px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); box-shadow: var(--shadow-raised); }
+    .access-typeahead-list.open { display: block; }
+    .access-typeahead-option { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); cursor: pointer; border-bottom: 1px solid var(--border); }
+    .access-typeahead-option:last-child { border-bottom: 0; }
+    .access-typeahead-option[aria-selected="true"] { background: color-mix(in srgb, var(--hub-dashboard-accent) 15%, transparent); }
+    .access-typeahead-option.is-disabled { cursor: default; opacity: 0.72; }
+    .access-typeahead-main { min-width: 0; flex: 1; }
+    .access-typeahead-login { color: var(--text); font-weight: 600; word-break: break-word; }
+    .access-typeahead-name { color: var(--muted); font-size: var(--fs-xs); word-break: break-word; }
+    .access-typeahead-match { background: color-mix(in srgb, var(--amber) 28%, transparent); color: var(--text); border-radius: var(--r-sm); }
+    .access-typeahead-status { padding: var(--sp-3) var(--sp-4); color: var(--muted); font-size: var(--fs-sm); }
+    .access-typeahead-chip { display: none; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); padding: var(--sp-2) var(--sp-3); width: fit-content; background: color-mix(in srgb, var(--hub-dashboard-accent) 12%, transparent); border: 1px solid var(--border); border-radius: var(--r-pill); color: var(--text); font-size: var(--fs-sm); }
+    .access-typeahead-chip.show { display: inline-flex; }
+    .access-typeahead-chip button { border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: var(--fs-base); line-height: 1; }
+    .access-add-hint { flex-basis: 100%; font-size: var(--fs-xs); color: var(--muted); }
     .hub-admins-panel { margin-bottom: var(--sp-6); padding: var(--sp-6); border: 1px solid var(--border); background: var(--surface); border-radius: var(--r); }
     .hub-admins-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-4); }
     .hub-admins-title { font-weight: 700; color: var(--text); }
@@ -11872,11 +11890,16 @@
       </div>
       <div style="margin-top:var(--sp-6);border-top:1px solid var(--border);padding-top:var(--sp-6)">
         <h3 style="font-size:0.9rem;margin-bottom:var(--sp-4);color:var(--text)">Add User</h3>
-        <input id="access-user-search" type="text" placeholder="Search users..." autocomplete="off"
-          oninput="filterAccessUserDropdown()"
-          style="width:100%;box-sizing:border-box;margin-bottom:var(--sp-4);padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:0.85rem">
         <div style="display:flex;flex-wrap:wrap;gap:var(--sp-4)">
-          <select id="access-username" style="flex:1 1 280px;min-width:220px;padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:0.85rem"><option value="">Select user...</option></select>
+          <div class="access-typeahead">
+            <input id="access-user-search" class="access-typeahead-input" type="text" placeholder="Search users..." autocomplete="off"
+              role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="access-user-results"
+              aria-activedescendant="" oninput="filterAccessUserDropdown()" onkeydown="accessUserSearchKeydown(event)"
+              onfocus="openAccessUserResults()">
+            <input id="access-username" type="hidden" value="">
+            <div id="access-selected-user-chip" class="access-typeahead-chip"></div>
+            <div id="access-user-results" class="access-typeahead-list" role="listbox" aria-label="Matching hub users"></div>
+          </div>
           <select id="access-role" onchange="updateAccessRoleHint()" title="Permission level to grant" style="flex:0 0 auto;padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:0.85rem">
             <option value="read" title="View-only: dashboard, agents and config. Cannot change anything.">Read</option>
             <option value="read-write" title="Everything Read grants, plus contribute: queue work, manage the queue and open a terminal.">Read-Write</option>
@@ -11900,7 +11923,8 @@
               style="display:none;padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:0.85rem">
             <span id="access-expiry-never" style="font-size:0.7rem;color:var(--text)">Never</span>
           </span>
-          <button onclick="addAccess()" class="hv-btn btn-primary btn-primary">Add</button>
+          <button id="access-add-btn" onclick="addAccess()" class="hv-btn btn-primary btn-primary" disabled title="Search and select a user first">Add</button>
+          <div id="access-add-hint" class="access-add-hint">Search and select a hub user to grant access.</div>
         </div>
         <div id="access-role-hint" style="margin-top:var(--sp-3);font-size:0.72rem;color:var(--muted);line-height:1.4"></div>
       </div>
@@ -12229,17 +12253,21 @@
       });
     }
 
-    /* The roster fetched from grantable-users, kept so the search box can
+    /* The roster fetched from grantable-users, kept so the typeahead can
        re-filter without another network round trip. Each entry carries the
        stable identity key (id — what the grant POST sends) and the normalized
        human label (label — what the owner reads). */
     var _grantableUsers = [];
+    var _accessUsersLoaded = false;
+    var _accessUserSearchTimer = null;
+    var _accessUserResults = [];
+    var _accessUserActive = -1;
+    var _selectedAccessUser = null;
+    var ACCESS_USER_DEBOUNCE_MS = 200;
 
     /* enrichGrantableUserLabels upgrades GitHub rows whose label is still the
-       bare login with the profile display name, then re-renders the dropdown
-       ONCE after the batch settles — preserving the active filter and any
-       selection (renderAccessUserOptions already restores both). Rows the hub
-       already labeled (OIDC display_name) are left alone. */
+       bare login with the profile display name, then re-renders the typeahead
+       ONCE after the batch settles — preserving any active query/selection. */
     function enrichGrantableUserLabels() {
       var updated = false, waiting = 0;
       _grantableUsers.forEach(function(e) {
@@ -12250,7 +12278,7 @@
         fetchGitHubDisplayName(e.id).then(function(name) {
           waiting--;
           if (name && name !== e.label) { e.label = name; updated = true; }
-          if (waiting === 0 && updated) filterAccessUserDropdown();
+          if (waiting === 0 && updated) renderAccessUserOptions(accessUserQuery());
         });
       });
     }
@@ -12280,26 +12308,19 @@
       ibmid: '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><g fill="#0f62fe"><rect x="1" y="3" width="14" height="2"/><rect x="1" y="7" width="14" height="2"/><rect x="1" y="11" width="14" height="2"/></g></svg>'
     };
 
-    /* PROVIDER_EMOJI: plain-text stand-ins for native <select> options, which
-       cannot render SVG. Anything unmapped shows the generic person glyph. */
+    /* PROVIDER_EMOJI remains for older tests/documentation that pinned the
+       select-based picker; the typeahead renders SVG badges via providerIconHTML. */
     var PROVIDER_EMOJI = { google: '🔵', ibmid: '🔷', microsoft: '🟦', github: '🐙' };
 
-    /* providerIconHTML returns a small inline icon (SVG when we have one,
-       emoji otherwise) vertically aligned with the label text beside it. */
     function providerIconHTML(provider) {
       var body = PROVIDER_ICON_SVG[provider] || '👤';
       return '<span title="' + esc(provider || 'unknown provider') + '" style="display:inline-flex;align-items:center;vertical-align:middle;margin-right:5px;width:14px;height:14px;line-height:1;font-size:var(--fs-sm)">' + body + '</span>';
     }
 
-    /* providerOptionEmoji is the <option>-safe variant of providerIconHTML. */
     function providerOptionEmoji(provider) {
       return (PROVIDER_EMOJI[provider] || '👤') + ' ';
     }
 
-    /* accessOptionText renders one dropdown row: a provider mark, the friendly
-       label, plus a short parenthesised hint of the underlying ID when the two
-       differ so an owner can tell two "Jane Doe"s apart without seeing a full
-       raw token. */
     function accessOptionText(e) {
       var icon = providerOptionEmoji(e.provider || identityProviderFromKey(e.id));
       if (!e.id || e.id === e.label) return icon + e.label;
@@ -12307,64 +12328,246 @@
       return icon + e.label + ' (' + hint + ')';
     }
 
-    /* renderAccessUserOptions rebuilds the select from _grantableUsers,
-       keeping only entries whose label OR raw id matches the filter
-       (case-insensitive). The current selection is preserved when it
-       survives the filter so typing never silently discards a choice. */
+    function accessUserQuery() {
+      var box = document.getElementById('access-user-search');
+      return box ? box.value.trim() : '';
+    }
+
+    function accessUserKey(id) {
+      var s = String(id || '').trim();
+      if (!s) return '';
+      if (s.indexOf(':') === -1) s = 'github:' + s;
+      var parts = s.split(':');
+      if (parts[0].toLowerCase() === 'github') parts[1] = (parts[1] || '').toLowerCase();
+      return parts[0].toLowerCase() + ':' + (parts.slice(1).join(':'));
+    }
+
+    function accessRoleForUser(id) {
+      var key = accessUserKey(id);
+      for (var i = 0; i < (_accessUsers || []).length; i++) {
+        if (accessUserKey(_accessUsers[i].username) === key) return _accessUsers[i].role || 'access';
+      }
+      return '';
+    }
+
+    function accessGrantableMatches(e, q) {
+      if (!q) return true;
+      q = q.toLowerCase();
+      return String(e.label || '').toLowerCase().indexOf(q) !== -1 ||
+        String(e.id || '').toLowerCase().indexOf(q) !== -1 ||
+        String(e.provider || '').toLowerCase().indexOf(q) !== -1;
+    }
+
+    function accessHighlight(text, q) {
+      text = String(text || '');
+      if (!q) return esc(text);
+      var lower = text.toLowerCase(), needle = q.toLowerCase(), pos = lower.indexOf(needle);
+      if (pos < 0) return esc(text);
+      return esc(text.slice(0, pos)) + '<mark class="access-typeahead-match">' + esc(text.slice(pos, pos + q.length)) + '</mark>' + esc(text.slice(pos + q.length));
+    }
+
+    function isValidBareGitHubLogin(login) {
+      return /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(String(login || ''));
+    }
+
+    function accessUserAvatarHTML(e) {
+      var provider = e.provider || identityProviderFromKey(e.id);
+      if (e.avatar_url || provider !== 'github') {
+        return userAvatar({display_name: e.label || e.id, avatar_url: e.avatar_url, github_username: e.id}, LIST_AVATAR_PX, 'margin-right:2px');
+      }
+      return avatarImg(e.id, LIST_AVATAR_PX, 'margin-right:2px');
+    }
+
+    function setAccessTypeaheadOpen(open) {
+      var box = document.getElementById('access-user-search');
+      var list = document.getElementById('access-user-results');
+      if (box) box.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (list) list.classList.toggle('open', !!open);
+      if (!open) {
+        _accessUserActive = -1;
+        if (box) box.setAttribute('aria-activedescendant', '');
+      }
+    }
+
+    function openAccessUserResults() {
+      renderAccessUserOptions(accessUserQuery());
+    }
+
+    function renderAccessStatus(msg, isError) {
+      var list = document.getElementById('access-user-results');
+      if (!list) return;
+      _accessUserResults = [];
+      _accessUserActive = -1;
+      list.innerHTML = '<div class="access-typeahead-status' + (isError ? ' text-danger' : '') + '">' + esc(msg) + '</div>';
+      setAccessTypeaheadOpen(true);
+    }
+
+    function accessResultRow(entry, i, q) {
+      var provider = entry.provider || identityProviderFromKey(entry.id);
+      var already = entry.already_role || '';
+      var disabled = !!already;
+      var subtitle = entry.create_pending
+        ? 'Not signed in yet — the hub will create a GitHub login grant.'
+        : (entry.label && entry.label !== entry.id ? entry.id : '');
+      if (already) subtitle = 'Already has ' + already;
+      return '<div id="access-user-result-' + i + '" class="access-typeahead-option' + (disabled ? ' is-disabled' : '') + '" role="option" aria-selected="' + (i === _accessUserActive ? 'true' : 'false') + '"' +
+        (disabled ? '' : ' onmousedown="selectAccessUserResult(' + i + ');event.preventDefault()"') + '>' +
+        accessUserAvatarHTML(entry) + providerIconHTML(provider) +
+        '<div class="access-typeahead-main"><div class="access-typeahead-login">' + accessHighlight(entry.id, q) + '</div>' +
+        (entry.label && entry.label !== entry.id ? '<div class="access-typeahead-name">' + accessHighlight(entry.label, q) + '</div>' : '') +
+        (subtitle ? '<div class="access-typeahead-name">' + esc(subtitle) + '</div>' : '') + '</div>' +
+        '<span class="badge">' + esc(provider) + '</span></div>';
+    }
+
+    /* renderAccessUserOptions rebuilds the typeahead result list from
+       _grantableUsers, matching case-insensitively against friendly label,
+       raw identity key, or provider. Users who already have access are shown
+       as disabled rows with their current role, while eligible rows are
+       keyboard/mouse selectable. */
     function renderAccessUserOptions(filter) {
-      var sel = document.getElementById('access-username');
-      if (!sel) return;
-      var prev = sel.value;
-      var q = (filter || '').toLowerCase();
+      var box = document.getElementById('access-user-search');
+      var list = document.getElementById('access-user-results');
+      if (!box || !list) return;
+      var q = String(filter || '').trim();
+      if (!_accessUsersLoaded) { renderAccessStatus('Searching…'); return; }
+      if (!_grantableUsers.length) { renderAccessStatus('No hub users yet — they must sign in to the hub first.'); return; }
+      var seen = {};
       var matches = _grantableUsers.filter(function(e) {
-        if (!q) return true;
-        return e.label.toLowerCase().indexOf(q) !== -1 || e.id.toLowerCase().indexOf(q) !== -1;
-      });
-      if (!_grantableUsers.length) {
-        sel.innerHTML = '<option value="">No users yet — they must sign in to the hub once</option>';
-        return;
+        if (!e || !e.id || !accessGrantableMatches(e, q)) return false;
+        if (seen[accessUserKey(e.id)]) return false;
+        seen[accessUserKey(e.id)] = true;
+        e.already_role = accessRoleForUser(e.id);
+        return true;
+      }).slice(0, 20);
+      var exactExisting = _grantableUsers.some(function(e) { return accessUserKey(e.id) === accessUserKey(q); });
+      var exactGranted = !!accessRoleForUser(q);
+      if (q && isValidBareGitHubLogin(q) && !exactExisting && !exactGranted) {
+        matches.push({id: q, label: q, provider: 'github', create_pending: true});
       }
       if (!matches.length) {
-        sel.innerHTML = '<option value="">No users match "' + esc(filter) + '"</option>';
+        renderAccessStatus('No users match "' + q + '". They must sign in to the hub first.');
         return;
       }
-      sel.innerHTML = '<option value="">Select user...</option>' + matches.map(function(e) {
-        return '<option value="' + esc(e.id) + '">' + esc(accessOptionText(e)) + '</option>';
-      }).join('');
-      if (prev && matches.some(function(e) { return e.id === prev; })) sel.value = prev;
+      _accessUserResults = matches;
+      if (_accessUserActive < 0 || _accessUserActive >= matches.length) _accessUserActive = matches.findIndex(function(e) { return !e.already_role; });
+      var selectableCount = matches.filter(function(e) { return !e.already_role; }).length;
+      var status = q ? (matches.length + ' match' + (matches.length === 1 ? '' : 'es') + ' for "' + esc(q) + '"') : (matches.length + ' grantable user' + (matches.length === 1 ? '' : 's'));
+      if (selectableCount !== matches.length) status += ' (' + (matches.length - selectableCount) + ' already granted)';
+      list.innerHTML = '<div class="access-typeahead-status">' + status + '</div>' + matches.map(function(e, i) { return accessResultRow(e, i, q); }).join('');
+      setAccessTypeaheadOpen(true);
+      updateAccessActiveDescendant();
+    }
+
+    function updateAccessActiveDescendant() {
+      var box = document.getElementById('access-user-search');
+      if (!box) return;
+      box.setAttribute('aria-activedescendant', _accessUserActive >= 0 ? 'access-user-result-' + _accessUserActive : '');
+      var list = document.getElementById('access-user-results');
+      if (!list) return;
+      Array.prototype.forEach.call(list.querySelectorAll('[role="option"]'), function(el, i) {
+        el.setAttribute('aria-selected', i === _accessUserActive ? 'true' : 'false');
+      });
+    }
+
+    function moveAccessActive(delta) {
+      if (!_accessUserResults.length) return;
+      var idx = _accessUserActive;
+      for (var step = 0; step < _accessUserResults.length; step++) {
+        idx = (idx + delta + _accessUserResults.length) % _accessUserResults.length;
+        if (!_accessUserResults[idx].already_role) { _accessUserActive = idx; break; }
+      }
+      updateAccessActiveDescendant();
+    }
+
+    function accessUserSearchKeydown(ev) {
+      if (ev.key === 'ArrowDown') { ev.preventDefault(); openAccessUserResults(); moveAccessActive(1); return; }
+      if (ev.key === 'ArrowUp') { ev.preventDefault(); openAccessUserResults(); moveAccessActive(-1); return; }
+      if (ev.key === 'Enter') {
+        if (_accessUserActive >= 0 && _accessUserResults[_accessUserActive] && !_accessUserResults[_accessUserActive].already_role) {
+          ev.preventDefault(); selectAccessUserResult(_accessUserActive);
+        }
+        return;
+      }
+      if (ev.key === 'Escape') { setAccessTypeaheadOpen(false); }
     }
 
     function filterAccessUserDropdown() {
+      clearSelectedAccessUser();
+      renderAccessStatus('Searching…');
+      clearTimeout(_accessUserSearchTimer);
+      _accessUserSearchTimer = setTimeout(function() { renderAccessUserOptions(accessUserQuery()); }, ACCESS_USER_DEBOUNCE_MS);
+    }
+
+    function selectAccessUserResult(index) {
+      var entry = _accessUserResults[index];
+      if (!entry || entry.already_role) return;
+      _selectedAccessUser = entry;
+      var hidden = document.getElementById('access-username');
       var box = document.getElementById('access-user-search');
-      renderAccessUserOptions(box ? box.value : '');
+      if (hidden) hidden.value = entry.id;
+      if (box) box.value = '';
+      renderSelectedAccessUserChip();
+      setAccessTypeaheadOpen(false);
+      updateAccessAddButton();
+    }
+
+    function renderSelectedAccessUserChip() {
+      var chip = document.getElementById('access-selected-user-chip');
+      if (!chip) return;
+      if (!_selectedAccessUser) { chip.classList.remove('show'); chip.innerHTML = ''; return; }
+      chip.innerHTML = providerIconHTML(_selectedAccessUser.provider || identityProviderFromKey(_selectedAccessUser.id)) +
+        '<span>' + esc(_selectedAccessUser.label || _selectedAccessUser.id) + '</span>' +
+        (_selectedAccessUser.label && _selectedAccessUser.label !== _selectedAccessUser.id ? '<span class="text-muted">' + esc(_selectedAccessUser.id) + '</span>' : '') +
+        '<button type="button" aria-label="Clear selected user" onclick="clearSelectedAccessUser()">×</button>';
+      chip.classList.add('show');
+    }
+
+    function clearSelectedAccessUser() {
+      _selectedAccessUser = null;
+      var hidden = document.getElementById('access-username');
+      if (hidden) hidden.value = '';
+      renderSelectedAccessUserChip();
+      updateAccessAddButton();
+    }
+
+    function updateAccessAddButton(message) {
+      var btn = document.getElementById('access-add-btn');
+      var hint = document.getElementById('access-add-hint');
+      var selected = !!(document.getElementById('access-username') || {}).value;
+      if (btn) {
+        btn.disabled = !selected;
+        btn.title = selected ? 'Grant access to the selected user' : 'Search and select a user first';
+      }
+      if (hint) hint.textContent = message || (selected ? 'Ready to add the selected user.' : 'Search and select a hub user to grant access.');
     }
 
     async function loadAccessUserDropdown() {
-      var sel = document.getElementById('access-username');
-      if (!sel) return;
       var box = document.getElementById('access-user-search');
-      if (box) box.value = '';
+      if (!box) return;
+      box.value = '';
+      clearSelectedAccessUser();
+      _accessUsersLoaded = false;
+      renderAccessStatus('Searching…');
       try {
         // grantable-users, NOT admin/users: the latter is admin-only, so every
         // non-admin owner got a 403 and an empty dropdown with no explanation.
         var resp = await fetch('/api/saas/grantable-users');
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         var data = await resp.json();
-        // Prefer the enriched entries (stable id + normalized label); fall back
-        // to the bare username list from an older hub, where id doubles as label.
         _grantableUsers = (data.entries || (data.users || []).map(function(u) {
           return { id: u, label: u };
-        })).filter(function(e) { return e && e.id; });
+        })).filter(function(e) { return e && e.id; }).map(function(e) {
+          return { id: e.id, label: e.label || e.id, provider: e.provider || identityProviderFromKey(e.id), avatar_url: e.avatar_url || '' };
+        });
+        _accessUsersLoaded = true;
         renderAccessUserOptions('');
-        // Usernames are on screen already; profile names swap in when they
-        // arrive (#4145) — never block the dropdown on the GitHub API.
+        setAccessTypeaheadOpen(false);
         enrichGrantableUserLabels();
       } catch(e) {
-        // Never leave the control looking merely empty — an empty dropdown is
-        // indistinguishable from "no such users", which is what made this
-        // confusing in the first place.
         _grantableUsers = [];
-        sel.innerHTML = '<option value="">Could not load users</option>';
+        _accessUsersLoaded = true;
+        renderAccessStatus('Could not load users — ' + e.message, true);
+        updateAccessAddButton('User search failed. Try closing and reopening Manage Access.');
       }
     }
 
@@ -12491,6 +12694,8 @@
         document.getElementById('access-list').innerHTML = rows;
         enrichGhDisplayNames(document.getElementById('access-list'));
         updateBulkAccessBar();
+        var searchBox = document.getElementById('access-user-search');
+        if (_accessUsersLoaded && searchBox && searchBox.getAttribute('aria-expanded') === 'true') renderAccessUserOptions(accessUserQuery());
       } catch(e) {
         document.getElementById('access-list').innerHTML = '<div class="text-danger">Failed to load</div>';
       }
@@ -12561,14 +12766,18 @@
           body: JSON.stringify({username: username, role: role, expires_at: expiry || ''})
         });
         if (!resp.ok) { var d = await resp.json(); hiveToast(d.error || 'Failed', 'error'); return; }
-        document.getElementById('access-username').value = '';
+        var added = username;
+        clearSelectedAccessUser();
         // Reset the checkbox too, not just the date: clearing one without the
         // other leaves the form claiming an expiry is set while submitting ''
         // (permanent), which is the desync this control exists to prevent.
         document.getElementById('access-expiry-enabled').checked = false;
         toggleAddExpiryVisible();
-        loadAccessList();
-        loadAccessAuditLog();
+        hiveToast('Access granted to ' + added, 'success');
+        updateAccessAddButton('Access granted to ' + added + '.');
+        await loadAccessList();
+        await loadAccessAuditLog();
+        await loadAccessUserDropdown();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
     }
 
