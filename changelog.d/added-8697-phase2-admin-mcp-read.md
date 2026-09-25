@@ -1,0 +1,1 @@
+- Expand the v6 admin MCP read surface across fleet, plans, audit, settings, spend, contributors, knowledge, and hive advisor data.

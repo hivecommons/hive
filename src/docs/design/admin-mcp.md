@@ -1,6 +1,6 @@
 # The operator-facing admin MCP
 
-**Status: phase 1 skeleton implemented.** The admin MCP package, dashboard endpoint, stdio binary, read tools, and refusal contract are present; writes in phase 1 remain switched off and later phases add write previews and confirmations. Admin MCP phase 1 is read-only; write tools arrive only after the preview and confirmation contract is implemented in a later phase. It belongs to the v6
+**Status: phase 2 read surface implemented.** The admin MCP package, dashboard endpoint, stdio binary, refusal contract, and read tools for fleet, agents, leases/claims, plans, audit, settings, readiness, spend, contributors, knowledge, and hive advice are present. Admin MCP phases 1 and 2 are read-only; write tools arrive only after the preview and confirmation contract is implemented in phase 3. It belongs to the v6
 dashboard-optional line ([#7563](https://github.com/hivecommons/hive/issues/7563)) and, per
 that line's policy, lands on the `v6` branch only. Tracked by
 [#8697](https://github.com/hivecommons/hive/issues/8697).
@@ -410,6 +410,11 @@ explicitly not to.
   banner dismissal. They have no meaning in a conversation.
 - **Any tool taking a path, URL, or method as an argument.** The allowlist is the design: Hive
   redacts per handler, so an unvetted endpoint is an unvetted redaction story.
+
+**Switched off until the write contract exists**
+
+- **Writes before phase 3.** Admin MCP phases 1 and 2 are read-only; write tools arrive only
+  after the preview and confirmation contract is implemented in phase 3.
 
 ## Known gap: attribution
 

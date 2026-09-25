@@ -203,22 +203,7 @@ func diagnoseSelectionError(err error) error {
 }
 
 func readPath(tool string, limit int) (string, bool) {
-	suffix := ""
-	if limit > 0 {
-		suffix = fmt.Sprintf("?limit=%d", limit)
-	}
-	switch tool {
-	case adminmcp.ToolHiveStatus:
-		return "/api/status/summary", true
-	case adminmcp.ToolAgentsList:
-		return "/api/agents" + suffix, true
-	case adminmcp.ToolRunsList:
-		return "/api/runs" + suffix, true
-	case adminmcp.ToolClaimsList:
-		return "/api/claims" + suffix, true
-	default:
-		return "", false
-	}
+	return adminmcp.ReadPath(tool, limit)
 }
 
 func textResult(v any, isError bool) (*mcp.CallToolResult, error) {

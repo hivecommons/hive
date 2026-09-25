@@ -7,15 +7,22 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 
 	"github.com/hivecommons/hive/pkg/adminmcp"
 )
 
-type dashboardAdminMCPProvider struct{ server *Server }
+type dashboardAdminMCPProvider struct {
+	server *Server
+	user   string
+	role   string
+}
 
 func (s *Server) handleAdminMCP(w http.ResponseWriter, r *http.Request) {
-	adminmcp.NewHandler(dashboardAdminMCPProvider{server: s}).ServeHTTP(w, r)
+	adminmcp.NewHandler(dashboardAdminMCPProvider{
+		server: s,
+		user:   r.Header.Get("X-Hive-User"),
+		role:   r.Header.Get("X-Hive-Role"),
+	}).ServeHTTP(w, r)
 }
 
 func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map[string]any) (any, error) {
@@ -28,6 +35,12 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
+	if p.user != "" {
+		req.Header.Set("X-Hive-User", p.user)
+	}
+	if p.role != "" {
+		req.Header.Set("X-Hive-Role", p.role)
+	}
 	p.server.mux.ServeHTTP(rec, req)
 	if rec.Code < http.StatusOK || rec.Code >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("admin MCP read %s returned HTTP %d", tool, rec.Code)
@@ -40,26 +53,7 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 }
 
 func adminMCPReadPath(tool string, limit int) (string, bool) {
-	values := url.Values{}
-	if limit > 0 {
-		values.Set("limit", fmt.Sprint(limit))
-	}
-	suffix := ""
-	if encoded := values.Encode(); encoded != "" {
-		suffix = "?" + encoded
-	}
-	switch tool {
-	case adminmcp.ToolHiveStatus:
-		return "/api/status/summary", true
-	case adminmcp.ToolAgentsList:
-		return "/api/agents" + suffix, true
-	case adminmcp.ToolRunsList:
-		return "/api/runs" + suffix, true
-	case adminmcp.ToolClaimsList:
-		return "/api/claims" + suffix, true
-	default:
-		return "", false
-	}
+	return adminmcp.ReadPath(tool, limit)
 }
 
 func decodeAdminMCPJSON(data []byte) (any, error) {
