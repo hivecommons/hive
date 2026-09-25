@@ -1,0 +1,1 @@
+- Add a richer terminal-style Hive Chat with slash-command help, history, cheat sheet hints, presence, resizing, persistence, and safer rich rendering.

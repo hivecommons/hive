@@ -2255,7 +2255,7 @@
     }
     .hive-chat-panel {
       position: fixed; bottom: 80px; right: 24px; z-index: 9001;
-      width: 420px; height: 500px; min-height: 250px; max-height: 85vh;
+      width: 560px; height: 560px; min-width: 360px; min-height: 280px; max-width: calc(100vw - 32px); max-height: 92vh;
       border-radius: var(--r-lg);
       background: var(--bg); border: 1px solid var(--border);
       box-shadow: 0 8px 32px rgba(0,0,0,0.5);
@@ -2266,22 +2266,66 @@
       overscroll-behavior: contain;
       overscroll-behavior-y: contain;
     }
+    .hive-chat-panel.maximized {
+      inset: 16px; width: auto !important; height: auto !important; max-width: none; max-height: none;
+    }
+    .hive-chat-panel.docked {
+      top: 0; right: 0; bottom: 0; height: 100vh !important; border-radius: 0; max-height: none;
+    }
     .hive-chat-resize {
       height: 6px; cursor: ns-resize; background: transparent;
       position: absolute; top: 0; left: 0; right: 0; z-index: 2;
     }
-    .hive-chat-resize:hover { background: rgba(99,102,241,0.3); }
+    .hive-chat-resize-width {
+      width: 6px; cursor: ew-resize; background: transparent;
+      position: absolute; top: 0; bottom: 0; left: 0; z-index: 2;
+    }
+    .hive-chat-resize-width:hover { background: var(--purple); }
+    .hive-chat-resize:hover { background: var(--purple); }
     .hive-chat-panel.open { display: flex; }
     .hive-chat-header {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 10px 14px; border-bottom: 1px solid var(--border);
+      padding: var(--sp-3) var(--sp-5); border-bottom: 1px solid var(--border);
       background: var(--surface); font-size: 0.8rem; font-weight: 600;
     }
     .hive-chat-header .chat-title { display: flex; align-items: center; gap: var(--sp-3); }
-    .hive-chat-close { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 1rem; padding: var(--sp-2); }
-    .hive-chat-close:hover { color: var(--text); }
+    .hive-chat-actions { display: flex; align-items: center; gap: var(--sp-2); }
+    .hive-chat-tool, .hive-chat-close { background: none; border: 1px solid transparent; border-radius: var(--r-sm); color: var(--muted); cursor: pointer; font-size: 0.8rem; padding: var(--sp-2); }
+    .hive-chat-tool:hover, .hive-chat-close:hover { color: var(--text); border-color: var(--border); background: var(--panel-strong); }
+    .hive-chat-layout { flex: 1; min-height: 0; display: flex; background: var(--bg); }
+    .hive-chat-cheatsheet {
+      width: 210px; min-width: 170px; max-width: 260px; overflow-y: auto;
+      border-right: 1px solid var(--border); padding: var(--sp-3); background: var(--surface);
+    }
+    .hive-chat-cheatsheet.collapsed { display: none; }
+    .hive-chat-cheat-head { display:flex; align-items:center; justify-content:space-between; gap:var(--sp-2); margin-bottom: var(--sp-3); }
+    .hive-chat-cheat-title { font-size: var(--fs-xs); color: var(--text); font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+    .hive-chat-cheat-group { margin-bottom: var(--sp-5); }
+    .hive-chat-cheat-group h4 { margin: var(--sp-0) var(--sp-0) var(--sp-2); font-size: var(--fs-2xs); color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+    .hive-chat-example {
+      display: block; width: 100%; text-align: left; color: var(--text); background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-2) var(--sp-3); margin-bottom: var(--sp-2);
+      cursor: pointer; font-size: var(--fs-2xs); line-height: 1.35;
+    }
+    .hive-chat-example:hover { border-color: var(--purple); background: var(--panel-strong); }
+    .hive-chat-main { flex: 1; min-width: 0; display:flex; flex-direction:column; position:relative; }
+    .hive-chat-presence { display:flex; gap: var(--sp-2); align-items:center; font-size: var(--fs-2xs); color: var(--muted); }
+    .hive-presence-dot { width: 7px; height: 7px; border-radius: var(--r-pill); background: var(--muted); display:inline-block; }
+    .hive-presence-dot.active { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .hive-chat-autocomplete {
+      display:none; position:absolute; left:14px; right:14px; bottom:58px; z-index:4;
+      border:1px solid var(--border); border-radius:var(--r); background: var(--surface); box-shadow: var(--shadow-lg); overflow:hidden;
+    }
+    .hive-chat-autocomplete.open { display:block; }
+    .hive-chat-completion { display:flex; justify-content:space-between; gap:var(--sp-4); padding:var(--sp-2) var(--sp-3); cursor:pointer; font-size:var(--fs-xs); }
+    .hive-chat-completion.active, .hive-chat-completion:hover { background: var(--panel-strong); }
+    .hive-chat-kbd { color: var(--muted); font-size: var(--fs-2xs); }
+    .hive-chat-search { width:100%; box-sizing:border-box; margin:var(--sp-0) var(--sp-0) var(--sp-3); padding:var(--sp-2) var(--sp-3); border:1px solid var(--border); border-radius:var(--r-sm); background:var(--bg); color:var(--text); font-size:var(--fs-2xs); }
+    .hive-chat-suggestions { display:flex; flex-wrap:wrap; gap:var(--sp-2); padding:var(--sp-3) var(--sp-4) var(--sp-0); }
+    .hive-chat-suggestion { border:1px solid var(--border); border-radius:var(--r-pill); background:var(--surface); color:var(--text); cursor:pointer; padding:var(--sp-1) var(--sp-3); font-size:var(--fs-2xs); }
+    .hive-chat-suggestion:hover { border-color:var(--purple); background:var(--panel-strong); }
     .hive-chat-messages {
-      flex: 1; overflow-y: auto; padding: 12px 14px;
+      flex: 1; overflow-y: auto; padding: var(--sp-5);
       display: flex; flex-direction: column; gap: 10px;
       min-height: 100px;
       /* The chat panel is a floating (non-modal) surface: the body scroll-lock
@@ -2292,33 +2336,58 @@
       overscroll-behavior-y: contain;
     }
     .chat-msg {
-      max-width: 88%; padding: var(--sp-4) var(--sp-5); border-radius: 10px;
-      font-size: var(--fs-sm); line-height: 1.5; word-break: break-word; white-space: pre-wrap;
+      max-width: 88%; padding: var(--sp-4) var(--sp-5); border-radius: var(--r);
+      font-size: var(--fs-sm); line-height: 1.5; word-break: break-word; white-space: normal;
     }
+    .chat-msg .chat-time { display:block; margin-top: var(--sp-2); color: var(--muted); font-size: var(--fs-2xs); opacity:.75; }
+    .chat-msg.long.collapsed { max-height: 320px; overflow: hidden; position: relative; }
+    .chat-msg.long.collapsed::after { content:''; position:absolute; left:0; right:0; bottom:0; height:52px; background:linear-gradient(transparent, var(--surface)); }
+    .chat-more-btn, .chat-copy-btn { border:1px solid var(--border); border-radius:var(--r-sm); background:var(--surface); color:var(--text); cursor:pointer; font-size:var(--fs-2xs); padding:var(--sp-1) var(--sp-2); }
+    .chat-more-btn { align-self:flex-start; margin-top:-4px; }
+    .chat-code-wrap { position: relative; }
+    .chat-copy-btn { position:absolute; top:6px; right:6px; opacity:.82; }
+    .chat-msg pre { white-space: pre-wrap; overflow:auto; background: var(--bg); border:1px solid var(--border); border-radius:var(--r); padding:var(--sp-3); padding-top:var(--sp-6); }
+    .chat-msg code { background: var(--panel-strong); padding:var(--sp-0) var(--sp-1); border-radius:var(--r-xs); font-size:0.85em; }
+    .chat-msg pre code { background: transparent; padding:0; border-radius:0; }
+    .chat-mention, .chat-ref { color:var(--cyan); border-bottom:1px dotted currentColor; text-decoration:none; }
+    .chat-msg h4 { margin: var(--sp-0) var(--sp-0) var(--sp-2); color: var(--amber); }
+    .chat-command-table { width:100%; border-collapse: collapse; font-size: var(--fs-xs); }
+    .chat-command-table td { border-top: 1px solid var(--border); padding: 5px 4px; vertical-align: top; }
+    .chat-command-table code { white-space: nowrap; }
     .chat-msg.user { align-self: flex-end; background: var(--purple); color: var(--bg); border-bottom-right-radius: 2px; }
     .chat-msg.system { align-self: flex-start; background: var(--surface); color: var(--text); border-bottom-left-radius: 2px; border: 1px solid var(--border); }
     .chat-msg.system a { color: var(--cyan); }
     .chat-msg.thinking { align-self: flex-start; background: var(--surface); color: var(--muted); font-style: italic; border: 1px dashed var(--border); }
     .hive-chat-input-row {
-      display: flex; gap: var(--sp-4); padding: 10px 14px;
+      display: flex; gap: var(--sp-4); padding: var(--sp-3) var(--sp-5);
       border-top: 1px solid var(--border); background: var(--surface);
     }
     /* .hive-chat-input — shared input recipe (end of style block) */
     .hive-chat-input { flex: 1; resize: none; min-height: 36px; max-height: 80px; overscroll-behavior: contain; overscroll-behavior-y: contain; }
     .hive-chat-send {
-      background: var(--purple); color: var(--bg); border: none; border-radius: 8px;
-      padding: 0 14px; cursor: pointer; font-size: 0.8rem; font-weight: 600;
+      background: var(--purple); color: var(--bg); border: none; border-radius: var(--r);
+      padding: var(--sp-0) var(--sp-5); cursor: pointer; font-size: 0.8rem; font-weight: 600;
       transition: background 0.15s;
     }
     .hive-chat-send:hover { background: color-mix(in srgb, var(--purple) 85%, #000); }
     .hive-chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
     .chat-sources { font-size: var(--fs-2xs); color: var(--muted); margin-top: var(--sp-2); }
-    .chat-sources span { background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 3px; margin-right: 3px; }
+    .chat-sources span { background: var(--panel-strong); padding: var(--sp-0) var(--sp-2); border-radius: var(--r-xs); margin-right: var(--sp-1); }
     .chat-raw-details { margin-top: var(--sp-3); font-size: 0.7rem; }
     .chat-raw-details summary { cursor: pointer; color: var(--muted); font-size: 0.65rem; }
     .chat-raw-details pre { white-space: pre-wrap; word-break: break-all; font-size: 0.65rem; color: var(--muted); margin-top: var(--sp-2); max-height: 200px; overflow-y: auto; overscroll-behavior: contain; overscroll-behavior-y: contain; }
+    .hive-chat-shortcuts {
+      display:none; position:fixed; z-index:20001; inset:0; background:var(--overlay-scrim);
+      align-items:center; justify-content:center;
+    }
+    .hive-chat-shortcuts.open { display:flex; }
+    .hive-chat-shortcut-card { width:min(460px, calc(100vw - 32px)); background:var(--surface); border:1px solid var(--border); border-radius:var(--r-lg); padding:var(--sp-6); box-shadow:var(--shadow-lg); }
+    .hive-chat-shortcut-card h3 { margin:var(--sp-0) var(--sp-0) var(--sp-3); }
+    .hive-chat-shortcut-card dl { display:grid; grid-template-columns:max-content 1fr; gap:var(--sp-3) var(--sp-5); margin:var(--sp-0); font-size:var(--fs-sm); }
+    .hive-chat-shortcut-card dt { color:var(--amber); font-family:var(--font-mono); }
     @media (max-width: 500px) {
       .hive-chat-panel { width: calc(100vw - 32px); right: 16px; bottom: 72px; }
+      .hive-chat-cheatsheet { display: none; }
       /* Phone: the fixed FAB used to sit on top of in-flow controls at the
          bottom of the page (audit-log Save button, right edge of the last
          section). Shrink it into the corner and give the body matching
@@ -3184,14 +3253,43 @@
 <button type="button" class="hive-chat-fab" id="hiveChatFab" title="Ask Hive" aria-label="Ask Hive chat assistant">💬</button>
 <div class="hive-chat-panel" id="hiveChatPanel">
   <div class="hive-chat-resize" id="hiveChatResize"></div>
+  <div class="hive-chat-resize-width" id="hiveChatResizeWidth"></div>
   <div class="hive-chat-header">
     <span class="chat-title">🐝 Hive Chat</span>
-    <button class="hive-chat-close" id="hiveChatClose">✕</button>
+    <span class="hive-chat-presence" id="hiveChatPresence"><span class="hive-presence-dot"></span><span>local</span></span>
+    <div class="hive-chat-actions">
+      <button class="hive-chat-tool" id="hiveChatCheatToggle" title="Toggle cheat sheet">Hints</button>
+      <button class="hive-chat-tool" id="hiveChatDock" title="Dock to the right edge">Dock</button>
+      <button class="hive-chat-tool" id="hiveChatMax" title="Maximize chat">⛶</button>
+      <button class="hive-chat-close" id="hiveChatClose" title="Close">✕</button>
+    </div>
   </div>
-  <div class="hive-chat-messages" id="hiveChatMessages"></div>
-  <div class="hive-chat-input-row">
-    <textarea class="hive-chat-input" id="hiveChatInput" placeholder="Ask about agents, beads, PRs..." rows="1"></textarea>
-    <button class="hive-chat-send" id="hiveChatSend">Send</button>
+  <div class="hive-chat-layout">
+    <aside class="hive-chat-cheatsheet" id="hiveChatCheatsheet" aria-label="Hive Chat examples"></aside>
+    <div class="hive-chat-main">
+      <div class="hive-chat-suggestions" id="hiveChatSuggestions" aria-label="Suggested Hive Chat prompts"></div>
+      <div class="hive-chat-messages" id="hiveChatMessages"></div>
+      <div class="hive-chat-autocomplete" id="hiveChatAutocomplete"></div>
+      <div class="hive-chat-input-row">
+        <textarea class="hive-chat-input" id="hiveChatInput" placeholder="Ask about agents, beads, PRs…" rows="1"></textarea>
+        <button class="hive-chat-send" id="hiveChatSend">Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="hive-chat-shortcuts" id="hiveChatShortcuts" role="dialog" aria-modal="true" aria-label="Hive Chat shortcuts">
+  <div class="hive-chat-shortcut-card">
+    <h3>Hive Chat shortcuts</h3>
+    <dl>
+      <dt>⌘/Ctrl+K</dt><dd>Open and focus Hive Chat</dd>
+      <dt>?</dt><dd>Open this shortcut overlay</dd>
+      <dt>Esc</dt><dd>Close overlay or chat</dd>
+      <dt>Tab</dt><dd>Complete slash commands</dd>
+      <dt>↑ / ↓</dt><dd>Cycle command history while preserving your draft</dd>
+      <dt>/search text</dt><dd>Search the transcript</dd>
+      <dt>/history text</dt><dd>Search command history</dd>
+      <dt>/retry / /edit</dt><dd>Retry or edit the last prompt</dd>
+    </dl>
   </div>
 </div>
 <div id="config-overlay" class="config-overlay hidden">
@@ -27343,144 +27441,514 @@ function burnAreaChart() {
     }
 
     // --- Chat rich formatting ---
+    function sanitizeChatText(raw) {
+      return String(raw || '')
+        .replace(/^\s*← open sidebar · \/ commands · \? help · tab next tab\s*$/gmi, '')
+        .replace(/(?:^|\n)(?:Status heartbeat\b[\s\S]*?)(?=\n\n|$)/gi, function(block) {
+          return block.split('\n').slice(0, 4).join('\n') + (block.split('\n').length > 4 ? '\n… heartbeat details folded' : '');
+        })
+        .trim();
+    }
+
     function formatChatHtml(raw) {
-      const lines = (raw || '').split('\n');
+      const cleaned = sanitizeChatText(raw);
+      const lines = cleaned.split('\n');
       const out = [];
-      const TOOL_RE = /^[✕×X✗]\s+(.+?)\s*\((shell|Read|Edit|Write|Bash|WebSearch|WebFetch|Agent)\)\s*$/;
       const URL_RE = /(https?:\/\/[^\s<>"')\]]+)/g;
       const BOLD_RE = /\*\*(.+?)\*\*/g;
       const CODE_RE = /`([^`]+)`/g;
+      const MENTION_RE = /(^|[\s(])@([A-Za-z0-9][A-Za-z0-9_-]{0,38})\b/g;
+      const OWNER_REPO_REF_RE = /\b([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d+)\b/g;
+      const ISSUE_REF_RE = /(^|[\s(])#(\d+)\b/g;
       const BULLET_RE = /^[-•–]\s+(.*)$/;
-      const PIPE_LINE_RE = /^[│|]\s+(.*)$/;
-      const TREE_LINE_RE = /^[└├╰╭─\s]*[└├╰]\s*(.*)$/;
+      const TOOL_RE = /^[✕×X✗]\s+(.+?)\s*\((shell|Read|Edit|Write|Bash|WebSearch|WebFetch|Agent)\)\s*$/;
+      let inFence = false;
+      let fenceLang = '';
+      let fence = [];
 
       function inlineFmt(text) {
-        let s = esc(text);
+        let s = escapeHtml(text || '');
+        const links = [];
+        s = s.replace(URL_RE, (url) => {
+          const idx = links.length;
+          links.push('<a href="' + url + '" target="_blank" rel="noopener noreferrer" style="color:var(--cyan)">' + url + '</a>');
+          return '\u0000LINK' + idx + '\u0000';
+        });
         s = s.replace(BOLD_RE, '<strong>$1</strong>');
-        s = s.replace(CODE_RE, '<code style="background:rgba(99,102,241,0.1);padding:1px 4px;border-radius:3px;font-size:0.85em">$1</code>');
-        s = s.replace(URL_RE, '<a href="$1" target="_blank" style="color:var(--cyan)">$1</a>');
+        s = s.replace(CODE_RE, '<code>$1</code>');
+        s = s.replace(OWNER_REPO_REF_RE, '<a class="chat-ref" href="https://github.com/$1/issues/$2" target="_blank" rel="noopener noreferrer" title="Open $1#$2">$1#$2</a>');
+        s = s.replace(ISSUE_REF_RE, '$1<a class="chat-ref" href="https://github.com/hivecommons/hive/issues/$2" target="_blank" rel="noopener noreferrer" title="Preview issue/PR #$2">#$2</a>');
+        s = s.replace(MENTION_RE, '$1<a class="chat-mention" href="https://github.com/$2" target="_blank" rel="noopener noreferrer" title="Mention @$2">@$2</a>');
+        s = s.replace(/\u0000LINK(\d+)\u0000/g, (_, i) => links[Number(i)] || '');
         return s;
       }
-
+      function flushFence() {
+        const code = escapeHtml(sanitizeChatText(fence.join('\n')));
+        const lang = fenceLang ? '<div class="hive-chat-kbd">' + escapeHtml(fenceLang) + '</div>' : '';
+        out.push('<div class="chat-code-wrap"><button type="button" class="chat-copy-btn">copy</button><pre>' + lang + '<code>' + code + '</code></pre></div>');
+        fence = [];
+        fenceLang = '';
+      }
       for (const line of lines) {
+        const fenceMatch = line.match(/^```\s*([^`]*)$/);
+        if (fenceMatch) {
+          if (inFence) flushFence();
+          inFence = !inFence;
+          fenceLang = (fenceMatch[1] || '').trim();
+          continue;
+        }
+        if (inFence) { fence.push(line); continue; }
         const trimmed = line.trim();
         if (!trimmed) { out.push('<div style="height:6px"></div>'); continue; }
-
         const toolMatch = trimmed.match(TOOL_RE);
         if (toolMatch) {
-          out.push('<div class="sum-tool"><span class="sum-tool-type">' + esc(toolMatch[2]) + '</span>' + esc(toolMatch[1]) + '</div>');
+          out.push('<div class="sum-tool"><span class="sum-tool-type">' + escapeHtml(toolMatch[2]) + '</span>' + escapeHtml(toolMatch[1]) + '</div>');
           continue;
         }
-
-        const pipeMatch = trimmed.match(PIPE_LINE_RE);
-        if (pipeMatch) {
-          out.push('<div class="sum-cmd">' + inlineFmt(pipeMatch[1]) + '</div>');
-          continue;
-        }
-
-        const treeMatch = trimmed.match(TREE_LINE_RE);
-        if (treeMatch) {
-          out.push('<div class="sum-tree">↳ ' + inlineFmt(treeMatch[1]) + '</div>');
-          continue;
-        }
-
         const bulletMatch = trimmed.match(BULLET_RE);
         if (bulletMatch) {
           out.push('<div style="padding-left:var(--sp-5);text-indent:-10px">• ' + inlineFmt(bulletMatch[1]) + '</div>');
           continue;
         }
-
         out.push('<div>' + inlineFmt(trimmed) + '</div>');
       }
-      return out.join('');
+      if (inFence) flushFence();
+      return out.join('') || '<em>No output.</em>';
     }
 
     // --- Hive Chat ---
-    const CHAT_MAX_HISTORY = 50;
+    const CHAT_MAX_DOM = 80;
+    const CHAT_MAX_TRANSCRIPT = 60;
+    const CHAT_MAX_COMMAND_HISTORY = 100;
+    const CHAT_CONTEXT_LIMIT = 6;
+    const CHAT_TRANSCRIPT_KEY = 'hive-chat-transcript-v2';
+    const CHAT_LEGACY_STORAGE_KEY = 'hive-chat-history';
+    const CHAT_COMMAND_HISTORY_KEY = 'hive-chat-command-history-v1';
+    const CHAT_SETTINGS_KEY = 'hive-chat-settings-v2';
+    const CHAT_DRAFT_KEY = 'hive-chat-draft-v1';
+    const CHAT_WELCOME = 'Welcome to **Hive Chat**. Type `/help` for commands, press `Tab` to complete slash commands, `↑/↓` for command history, and `⌘/Ctrl+K` to focus this terminal-grade prompt.';
+
     const chatFab = document.getElementById('hiveChatFab');
     const chatPanel = document.getElementById('hiveChatPanel');
     const chatClose = document.getElementById('hiveChatClose');
     const chatMessages = document.getElementById('hiveChatMessages');
     const chatInput = document.getElementById('hiveChatInput');
     const chatSend = document.getElementById('hiveChatSend');
+    const chatAutocomplete = document.getElementById('hiveChatAutocomplete');
+    const chatCheatsheet = document.getElementById('hiveChatCheatsheet');
+    const chatSuggestions = document.getElementById('hiveChatSuggestions');
+    const chatShortcuts = document.getElementById('hiveChatShortcuts');
+    const chatCheatToggle = document.getElementById('hiveChatCheatToggle');
+    const chatMax = document.getElementById('hiveChatMax');
+    const chatDock = document.getElementById('hiveChatDock');
+    const chatPresence = document.getElementById('hiveChatPresence');
     let chatBusy = false;
     const CHAT_RESPONSE_TIMEOUT_MS = 30000;
-    const CHAT_CONTEXT_LIMIT = 6;
-    const CHAT_STORAGE_KEY = 'hive-chat-history';
     let chatContext = [];
+    let chatTranscript = [];
+    let chatCommandHistory = [];
+    let chatHistoryIndex = -1;
+    let chatDraft = '';
+    let chatCompletions = [];
+    let chatCompletionIndex = 0;
+    let chatSpekEnabled = false;
+    let chatLastHeartbeatSig = '';
+    let chatLastUserQuery = '';
 
-    function saveChatHistory() {
-      const msgs = [];
-      chatMessages.querySelectorAll('.chat-msg').forEach(el => {
-        if (el.classList.contains('thinking')) return;
-        msgs.push({ cls: el.classList.contains('user') ? 'user' : 'system', text: el.textContent });
-      });
-      const MAX_PERSIST = 30;
-      localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(msgs.slice(-MAX_PERSIST)));
+    async function chatFetchJson(url, options) {
+      const resp = await fetch(url, options || {});
+      return await resp.json();
     }
 
-    const CHAT_WELCOME = 'Ask me about agents, beads, PRs, issues, status, or anything in the hive. I search across all agent data to answer.';
-    function restoreChatHistory() {
-      try {
-        const saved = JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) || '[]');
-        if (saved.length === 0) {
-          chatAddMsg(CHAT_WELCOME, 'system');
-          return;
-        }
-        saved.forEach(m => {
-          const el = document.createElement('div');
-          el.className = 'chat-msg ' + m.cls;
-          if (m.text != null) {
-            el.textContent = m.text;
-          } else if (m.html != null) {
-            el.textContent = m.html.replace(/<[^>]*>/g, '');
-          }
-          chatMessages.appendChild(el);
+    const CHAT_COMMANDS = [
+      { name:'help', aliases:['?'], usage:'/help [command]', description:'List commands or show command details.', example:'/help who', details:'`/help` renders the command registry. `/help <command>` shows one command with example and notes.', run: chatCommandHelp },
+      { name:'clear', aliases:['cls'], usage:'/clear', description:'Clear the visible transcript.', example:'/clear', details:'Clears persisted chat transcript but keeps command history unless you choose clear history.', run: chatCommandClear },
+      { name:'search', aliases:['find'], usage:'/search <text>', description:'Search the persisted transcript.', example:'/search relay', details:'Searches the locally persisted transcript and returns matching turns with timestamps.', run: chatCommandSearch },
+      { name:'history', aliases:['hist'], usage:'/history [clear|text]', description:'Show, search, or clear command history.', example:'/history relay', details:'Use Up/Down to cycle history. `/history clear` deletes persisted command history; `/history text` searches it.', run: chatCommandHistoryCmd },
+      { name:'retry', aliases:['again'], usage:'/retry', description:'Retry the last sent prompt.', example:'/retry', details:'Resends the last user prompt without you retyping it.', run: chatCommandRetry },
+      { name:'edit', aliases:['revise'], usage:'/edit', description:'Put the last prompt back in the input for editing.', example:'/edit', details:'Restores the last sent prompt as a persistent draft.', run: chatCommandEdit },
+      { name:'who', aliases:['presence'], usage:'/who', description:'Show who is online/idle in this hive.', example:'/who', details:'Uses `/api/presence`; unauthenticated local dashboards only show `local`.', run: chatCommandWho },
+      { name:'agents', aliases:['agent'], usage:'/agents <question>', description:'Ask about agent status, runs and blockers.', example:'/agents stuck', details:'Forwards a focused agent question to Hive Chat search.', run: chatForwardCommand('agents') },
+      { name:'beads', aliases:['issues','issue'], usage:'/beads <query>', description:'Ask about beads/issues and queue state.', example:'/beads high priority', details:'Forwards a focused bead/issue question to Hive Chat search.', run: chatForwardCommand('beads') },
+      { name:'prs', aliases:['pr'], usage:'/prs <query>', description:'Ask about pull requests, merges and reviews.', example:'/prs waiting on review', details:'Forwards a focused PR question to Hive Chat search.', run: chatForwardCommand('prs') },
+      { name:'governor', aliases:['gov'], usage:'/governor <query>', description:'Ask about governor cadence, kicks and policy.', example:'/governor next kick', details:'Forwards a focused governor question to Hive Chat search.', run: chatForwardCommand('governor') },
+      { name:'knowledge', aliases:['kb'], usage:'/knowledge <query>', description:'Ask the knowledge base and imported docs.', example:'/knowledge relay setup', details:'Forwards a focused knowledge-base question to Hive Chat search.', run: chatForwardCommand('knowledge') },
+      { name:'jam', aliases:['swarm'], usage:'/jam <query>', description:'Ask about jam sessions, contributors and live collaboration.', example:'/jam who is free?', details:'Forwards a focused jam/contributor question to Hive Chat search.', run: chatForwardCommand('jam') },
+      { name:'spek', aliases:['spectacular','spec'], usage:'/spek <query>', description:'Ask about Spektacular/inception campaigns and spec runs (v6/edge when unavailable).', example:'/spek active campaigns', details:'Uses v6/edge Spektacular concepts: inception campaigns, spec runs, relay and campaign state.', run: chatForwardCommand('spek') },
+    ];
+    const CHAT_COMMAND_BY_NAME = new Map();
+    CHAT_COMMANDS.forEach(c => [c.name].concat(c.aliases || []).forEach(n => CHAT_COMMAND_BY_NAME.set(n, c)));
+
+    const CHAT_CHEATS = [
+      { group:'Agents', items:['/agents stuck', '/agents scanner status', 'Which agent completed last?'] },
+      { group:'Beads / Issues / PRs', items:['/beads high priority', '/prs waiting on review', 'Summarize open release blockers'] },
+      { group:'Governor', items:['/governor next kick', 'Why is the governor paused?', 'Show recent kick failures'] },
+      { group:'Knowledge', items:['/knowledge work sources', 'Search docs for relay setup', 'What changed in v5?'] },
+      { group:'Jam', items:['/who', '/jam who is online?', 'Show contributor activity'] },
+      { group:'Spek / Spektacular', spek:true, items:['/spek active campaigns', '/spek spec runs', 'Explain inception relay state'] },
+    ];
+
+    function loadChatSettings() { return safeJsonParse(localStorage.getItem(CHAT_SETTINGS_KEY) || '{}', {}); }
+    function saveChatSettings(patch) {
+      const next = Object.assign(loadChatSettings(), patch || {});
+      localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify(next));
+      return next;
+    }
+    function chatNow() { return new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }); }
+    function chatPersistTranscript() { localStorage.setItem(CHAT_TRANSCRIPT_KEY, JSON.stringify(chatTranscript.slice(-CHAT_MAX_TRANSCRIPT))); }
+    function chatPersistCommandHistory() { localStorage.setItem(CHAT_COMMAND_HISTORY_KEY, JSON.stringify(chatCommandHistory.slice(-CHAT_MAX_COMMAND_HISTORY))); }
+    function chatPersistDraft() { localStorage.setItem(CHAT_DRAFT_KEY, chatInput.value.slice(0, 4000)); }
+    function chatSetDraft(text) {
+      chatInput.value = String(text || '').slice(0, 4000);
+      chatPersistDraft();
+      chatInput.focus();
+      chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
+      updateChatAutocomplete();
+    }
+
+    function enhanceChatMessage(el, text) {
+      el.querySelectorAll('.chat-copy-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const code = btn.parentElement && btn.parentElement.querySelector('code');
+          navigator.clipboard?.writeText(code ? code.textContent : '').then(() => { btn.textContent = 'copied'; setTimeout(() => { btn.textContent = 'copy'; }, 1200); }).catch(() => {});
         });
-        chatMessages.scrollTop = chatMessages.scrollHeight;
-      } catch (_) { chatAddMsg(CHAT_WELCOME, 'system'); }
+      });
+      if ((text || '').length > 1800 || el.scrollHeight > 360) {
+        el.classList.add('long', 'collapsed');
+        const more = document.createElement('button');
+        more.type = 'button';
+        more.className = 'chat-more-btn';
+        more.textContent = 'Show more';
+        more.addEventListener('click', () => {
+          const collapsed = el.classList.toggle('collapsed');
+          more.textContent = collapsed ? 'Show more' : 'Show less';
+        });
+        el.insertAdjacentElement('afterend', more);
+      }
     }
-    restoreChatHistory();
 
-    const CHAT_HEIGHT_KEY = 'hive-chat-height';
-    const CHAT_MIN_HEIGHT = 250;
-    const savedChatH = localStorage.getItem(CHAT_HEIGHT_KEY);
-    if (savedChatH) chatPanel.style.height = savedChatH + 'px';
+    function chatAddMsg(content, cls, opts) {
+      opts = opts || {};
+      let text = opts.rawText != null ? String(opts.rawText) : String(content || '');
+      if (cls === 'system') text = sanitizeChatText(text);
+      if (cls === 'system' && /^Status heartbeat\b/i.test(text)) {
+        const sig = text.replace(/\d{1,2}:\d{2}:\d{2}|\d{4}-\d{2}-\d{2}T[^\s]+/g, '').slice(0, 400);
+        if (sig && sig === chatLastHeartbeatSig) {
+          const last = chatMessages.querySelector('.chat-msg.system:last-of-type');
+          if (last) last.dataset.folded = String((parseInt(last.dataset.folded || '1', 10) || 1) + 1);
+          saveChatHistoryCompat();
+          return last;
+        }
+        chatLastHeartbeatSig = sig;
+      }
+      const el = document.createElement('div');
+      el.className = 'chat-msg ' + cls;
+      el.innerHTML = opts.html ? String(content || '') : (cls === 'user' ? escapeHtml(text) : formatChatHtml(text));
+      if (cls !== 'thinking') el.innerHTML += '<span class="chat-time">' + chatNow() + '</span>';
+      chatMessages.appendChild(el);
+      enhanceChatMessage(el, text);
+      while (chatMessages.children.length > CHAT_MAX_DOM) chatMessages.removeChild(chatMessages.firstChild);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+      if (cls !== 'thinking') {
+        chatTranscript.push({ cls: cls === 'user' ? 'user' : 'system', text: text, ts: Date.now() });
+        chatTranscript = chatTranscript.slice(-CHAT_MAX_TRANSCRIPT);
+        chatPersistTranscript();
+      }
+      return el;
+    }
+    function saveChatHistoryCompat() { chatPersistTranscript(); }
+
+    function restoreChatHistory() {
+      const saved = safeJsonParse(localStorage.getItem(CHAT_TRANSCRIPT_KEY) || '[]', []);
+      const legacy = safeJsonParse(localStorage.getItem(CHAT_LEGACY_STORAGE_KEY) || '[]', []);
+      chatTranscript = Array.isArray(saved) && saved.length ? saved.slice(-CHAT_MAX_TRANSCRIPT) : (Array.isArray(legacy) ? legacy.map(m => ({ cls:m.cls, text:m.text || m.html || '', ts:Date.now() })).slice(-CHAT_MAX_TRANSCRIPT) : []);
+      if (!chatTranscript.length) { chatAddMsg(CHAT_WELCOME, 'system'); return; }
+      const keep = chatTranscript.slice();
+      chatTranscript = [];
+      keep.forEach(m => chatAddMsg(m.text || '', m.cls === 'user' ? 'user' : 'system'));
+    }
+
+    function restoreCommandHistory() {
+      const saved = safeJsonParse(localStorage.getItem(CHAT_COMMAND_HISTORY_KEY) || '[]', []);
+      chatCommandHistory = Array.isArray(saved) ? saved.filter(x => typeof x === 'string').slice(-CHAT_MAX_COMMAND_HISTORY) : [];
+    }
+
+    function pushCommandHistory(q) {
+      if (!q || !q.trim()) return;
+      if (chatCommandHistory[chatCommandHistory.length - 1] !== q) chatCommandHistory.push(q);
+      chatCommandHistory = chatCommandHistory.slice(-CHAT_MAX_COMMAND_HISTORY);
+      chatPersistCommandHistory();
+      chatHistoryIndex = -1;
+      chatDraft = '';
+    }
+
+    function renderChatCheatsheet() {
+      const groups = CHAT_CHEATS.map(g => {
+        const edge = g.spek && !chatSpekEnabled ? ' <span class="hive-chat-kbd">v6/edge</span>' : '';
+        const items = g.items.map(item => '<button type="button" class="hive-chat-example" data-chat-example="' + escapeHtml(item) + '">' + escapeHtml(item) + '</button>').join('');
+        return '<div class="hive-chat-cheat-group"><h4>' + escapeHtml(g.group) + edge + '</h4>' + items + '</div>';
+      }).join('');
+      chatCheatsheet.innerHTML = '<div class="hive-chat-cheat-head"><span class="hive-chat-cheat-title">Command hints</span><button type="button" class="hive-chat-tool" data-chat-clear-history>clear history</button></div><input class="hive-chat-search" id="hiveChatTranscriptSearch" placeholder="Search transcript…">' + groups;
+      chatCheatsheet.querySelectorAll('[data-chat-example]').forEach(btn => btn.addEventListener('click', () => insertChatExample(btn.getAttribute('data-chat-example') || '')));
+      const transcriptSearch = chatCheatsheet.querySelector('#hiveChatTranscriptSearch');
+      if (transcriptSearch) transcriptSearch.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); chatAddMsg(chatSearchTranscript(transcriptSearch.value), 'system'); }
+      });
+      const clear = chatCheatsheet.querySelector('[data-chat-clear-history]');
+      if (clear) clear.addEventListener('click', () => { chatCommandHistory = []; chatPersistCommandHistory(); chatAddMsg('Command history cleared.', 'system'); });
+    }
+
+    function renderChatSuggestions() {
+      const suggestions = ['/help', '/who', '/agents stuck', '/beads high priority', '/prs waiting on review', chatSpekEnabled ? '/spek spec runs' : '/spek spec runs (v6/edge)'];
+      chatSuggestions.innerHTML = suggestions.map(s => '<button type="button" class="hive-chat-suggestion" data-chat-suggestion="' + escapeHtml(s.replace(' (v6/edge)', '')) + '">' + escapeHtml(s) + '</button>').join('');
+      chatSuggestions.querySelectorAll('[data-chat-suggestion]').forEach(btn => btn.addEventListener('click', () => insertChatExample(btn.getAttribute('data-chat-suggestion') || '')));
+    }
+
+    function applyChatSettings() {
+      const st = loadChatSettings();
+      if (st.width) chatPanel.style.width = st.width + 'px';
+      if (st.height) chatPanel.style.height = st.height + 'px';
+      chatCheatsheet.classList.toggle('collapsed', !!st.cheatsCollapsed);
+      chatPanel.classList.toggle('maximized', st.mode === 'maximized');
+      chatPanel.classList.toggle('docked', st.mode === 'docked');
+    }
+
+    function insertChatExample(text) {
+      chatInput.value = text;
+      chatInput.focus();
+      chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
+      updateChatAutocomplete();
+    }
+
+    function chatCommandHelp(args) {
+      const name = (args || '').trim().replace(/^\//, '').toLowerCase();
+      if (name) {
+        const cmd = CHAT_COMMAND_BY_NAME.get(name);
+        if (!cmd) return 'No command named `' + name + '`. Try `/help`.';
+        return '#### /' + cmd.name + '\n' + cmd.description + '\n\nUsage: `' + (cmd.usage || ('/' + cmd.name)) + '`\n\nExample: `' + cmd.example + '`\n\n' + (cmd.details || '');
+      }
+      return '#### Hive Chat commands\n' + CHAT_COMMANDS.map(c => '- `' + (c.usage || ('/' + c.name)) + '` — ' + c.description + ' Example: `' + c.example + '`').join('\n');
+    }
+    function chatCommandClear() {
+      chatTranscript = [];
+      chatMessages.innerHTML = '';
+      chatPersistTranscript();
+      chatAddMsg('Transcript cleared. Command history is kept; use `/history clear` or the sidebar control to clear it.', 'system');
+      return null;
+    }
+    function chatCommandHistoryCmd(args) {
+      const term = (args || '').trim();
+      if (term === 'clear') {
+        chatCommandHistory = [];
+        chatPersistCommandHistory();
+        return 'Command history cleared.';
+      }
+      if (!chatCommandHistory.length) return 'No command history yet.';
+      const rows = term ? chatCommandHistory.filter(h => h.toLowerCase().includes(term.toLowerCase())) : chatCommandHistory;
+      if (!rows.length) return 'No command history entries match `' + term + '`.';
+      return rows.slice(-20).map((h, i) => (i + 1) + '. `' + h + '`').join('\n');
+    }
+    function chatSearchTranscript(term) {
+      const q = (term || '').trim().toLowerCase();
+      if (!q) return 'Usage: `/search <text>`.';
+      const rows = chatTranscript.filter(m => String(m.text || '').toLowerCase().includes(q)).slice(-12);
+      if (!rows.length) return 'No transcript entries match `' + term + '`.';
+      return rows.map(m => '- `' + new Date(m.ts || Date.now()).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }) + '` **' + (m.cls === 'user' ? 'you' : 'hive') + '**: ' + String(m.text || '').replace(/\s+/g, ' ').slice(0, 220)).join('\n');
+    }
+    function chatCommandSearch(args) { return chatSearchTranscript(args); }
+    async function chatCommandRetry() {
+      if (!chatLastUserQuery) return 'No prompt to retry yet.';
+      return await chatAskBackend(chatLastUserQuery, false);
+    }
+    function chatCommandEdit() {
+      if (!chatLastUserQuery) return 'No prompt to edit yet.';
+      chatSetDraft(chatLastUserQuery);
+      return 'Last prompt restored to the input draft.';
+    }
+    async function chatCommandWho() {
+      const data = await chatFetchJson('/api/presence', { headers: _inceptionAuthHeaders() });
+      const users = (data && Array.isArray(data.users)) ? data.users : [];
+      if (!users.length) return 'No authenticated users are visible. Local dashboards report only `local`.';
+      return users.map(u => (u.active ? '🟢 ' : '⚪ ') + '**' + (u.display_name || u.username || 'local') + '**' + (u.you ? ' (you)' : '') + ' — ' + (u.active ? 'active' : 'idle') + (u.last_action ? ', last action ' + u.last_action : '')).join('\n');
+    }
+    function chatForwardCommand(scope) {
+      return async function(args) {
+        const q = (args || '').trim() || 'status';
+        return await chatAskBackend(scope + ': ' + q, true);
+      };
+    }
+
+    async function chatRunCommand(q) {
+      const body = q.replace(/^\//, '').trim();
+      const space = body.search(/\s/);
+      const name = (space === -1 ? body : body.slice(0, space)).toLowerCase();
+      const args = space === -1 ? '' : body.slice(space + 1).trim();
+      const cmd = CHAT_COMMAND_BY_NAME.get(name);
+      if (!cmd) return 'Unknown command `/' + name + '`. Try `/help`.';
+      return await cmd.run(args);
+    }
+
+    async function chatAskBackend(q, suppressUserEcho) {
+      if (!suppressUserEcho) chatAddMsg(q, 'user');
+      chatContext.push({ role: 'user', text: q });
+      if (chatContext.length > CHAT_CONTEXT_LIMIT) chatContext = chatContext.slice(-CHAT_CONTEXT_LIMIT);
+      const thinking = chatAddMsg('Thinking…', 'thinking');
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), CHAT_RESPONSE_TIMEOUT_MS);
+      try {
+        const resp = await fetch('/api/chat', { method:'POST', headers:_inceptionAuthHeaders(), signal:controller.signal, body:JSON.stringify({ query:q, history:chatContext.slice(0, -1) }) });
+        let data = {};
+        try {
+          data = await resp.json();
+        } catch (_) {
+          data = { error: resp.ok ? 'Chat returned an unreadable response.' : 'Chat request failed with HTTP ' + resp.status + '.' };
+        }
+        thinking.remove();
+        if (!resp.ok || data.error) return 'Error: ' + (data.error || ('Chat request failed with HTTP ' + resp.status + '.'));
+        const answer = data.answer || 'No results found.';
+        chatContext.push({ role:'assistant', text: answer });
+        if (chatContext.length > CHAT_CONTEXT_LIMIT) chatContext = chatContext.slice(-CHAT_CONTEXT_LIMIT);
+        let html = formatChatHtml(answer);
+        if (data.raw) html += '<details class="chat-raw-details"><summary>Search data</summary><pre>' + escapeHtml(data.raw) + '</pre></details>';
+        if (data.sources && data.sources.length) html += '<div class="chat-sources">Sources: ' + data.sources.map(s => '<span>' + escapeHtml(String(s)) + '</span>').join('') + '</div>';
+        chatAddMsg(html, 'system', { html:true, rawText: answer });
+        return null;
+      } catch (err) {
+        thinking.remove();
+        if (err && err.name === 'AbortError') return 'Chat request timed out. Please try again.';
+        return 'Network error: ' + ((err && err.message) || 'request failed');
+      } finally {
+        clearTimeout(timeout);
+        if (thinking.isConnected) thinking.remove();
+      }
+    }
+
+    async function chatSendQuery() {
+      const q = chatInput.value.trim();
+      if (!q || chatBusy) return;
+      chatBusy = true;
+      chatSend.disabled = true;
+      chatInput.value = '';
+      localStorage.removeItem(CHAT_DRAFT_KEY);
+      closeChatAutocomplete();
+      pushCommandHistory(q);
+      if (q !== '/retry' && q !== '/edit') chatLastUserQuery = q;
+      chatAddMsg(q, 'user');
+      try {
+        let response = null;
+        if (q === 'help' || q.startsWith('/')) response = await chatRunCommand(q === 'help' ? '/help' : q);
+        else response = await chatAskBackend(q, true);
+        if (response) chatAddMsg(response, 'system');
+      } finally {
+        chatBusy = false;
+        chatSend.disabled = false;
+        chatInput.focus();
+      }
+    }
+
+    function updateChatAutocomplete() {
+      const val = chatInput.value;
+      const hint = val.match(/^\/(\S+)\s/);
+      if (hint) {
+        const cmd = CHAT_COMMAND_BY_NAME.get(hint[1].toLowerCase());
+        if (!cmd) { closeChatAutocomplete(); return; }
+        chatCompletions = [];
+        chatAutocomplete.innerHTML = '<div class="hive-chat-completion active"><span>' + escapeHtml(cmd.usage || ('/' + cmd.name)) + '</span><span class="hive-chat-kbd">' + escapeHtml(cmd.example || '') + '</span></div>';
+        chatAutocomplete.classList.add('open');
+        return;
+      }
+      const m = val.match(/^\/(\S*)$/);
+      if (!m) { closeChatAutocomplete(); return; }
+      const prefix = m[1].toLowerCase();
+      chatCompletions = CHAT_COMMANDS.filter(c => c.name.startsWith(prefix) || (c.aliases || []).some(a => a.startsWith(prefix))).slice(0, 8);
+      chatCompletionIndex = Math.min(chatCompletionIndex, Math.max(0, chatCompletions.length - 1));
+      if (!chatCompletions.length) { closeChatAutocomplete(); return; }
+      chatAutocomplete.innerHTML = chatCompletions.map((c, i) => '<div class="hive-chat-completion ' + (i === chatCompletionIndex ? 'active' : '') + '" data-command="' + escapeHtml(c.name) + '"><span>' + escapeHtml(c.usage || ('/' + c.name)) + '</span><span class="hive-chat-kbd">' + escapeHtml(c.description) + '</span></div>').join('');
+      chatAutocomplete.classList.add('open');
+      chatAutocomplete.querySelectorAll('[data-command]').forEach(el => el.addEventListener('mousedown', e => { e.preventDefault(); completeChatCommand(el.getAttribute('data-command')); }));
+    }
+    function closeChatAutocomplete() { chatAutocomplete.classList.remove('open'); chatAutocomplete.innerHTML = ''; chatCompletions = []; chatCompletionIndex = 0; }
+    function completeChatCommand(name) { chatInput.value = '/' + name + ' '; chatInput.focus(); closeChatAutocomplete(); }
+
+    function cycleChatHistory(dir) {
+      if (!chatCommandHistory.length) return;
+      if (chatHistoryIndex === -1) { chatDraft = chatInput.value; chatHistoryIndex = chatCommandHistory.length; }
+      chatHistoryIndex = Math.max(0, Math.min(chatCommandHistory.length, chatHistoryIndex + dir));
+      chatInput.value = chatHistoryIndex === chatCommandHistory.length ? chatDraft : chatCommandHistory[chatHistoryIndex];
+      setTimeout(() => chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length));
+    }
+
+    async function refreshChatPresence() {
+      try {
+        const data = await chatFetchJson('/api/presence', { headers: _inceptionAuthHeaders() });
+        const users = (data && data.users) || [];
+        const active = users.filter(u => u.active).length;
+        const label = users.length ? (active + '/' + users.length + ' active') : 'local';
+        chatPresence.innerHTML = '<span class="hive-presence-dot ' + (active ? 'active' : '') + '"></span><span>' + escapeHtml(label) + '</span>';
+      } catch (_) {}
+    }
+
+    async function detectChatCapabilities() {
+      try {
+        const v = await chatFetchJson('/api/version');
+        const branch = String((v && (v.branch || v.channel || v.imageRef || '')) || '').toLowerCase();
+        chatSpekEnabled = branch.includes('v6') || branch.includes('edge');
+      } catch (_) { chatSpekEnabled = false; }
+      renderChatCheatsheet();
+      renderChatSuggestions();
+    }
+
+    restoreCommandHistory();
+    applyChatSettings();
+    restoreChatHistory();
+    chatInput.value = localStorage.getItem(CHAT_DRAFT_KEY) || '';
+    renderChatCheatsheet();
+    renderChatSuggestions();
+    detectChatCapabilities();
+    refreshChatPresence();
+    setInterval(refreshChatPresence, 30000);
 
     chatFab.onclick = () => {
       const isOpen = chatPanel.classList.toggle('open');
       chatFab.classList.toggle('open', isOpen);
-      if (isOpen) {
-        chatInput.focus();
-        chatMessages.scrollTop = chatMessages.scrollHeight;
-      }
+      if (isOpen) { chatInput.focus(); chatMessages.scrollTop = chatMessages.scrollHeight; refreshChatPresence(); }
     };
-    chatClose.onclick = () => {
-      chatPanel.classList.remove('open');
-      chatFab.classList.remove('open');
-    };
+    chatClose.onclick = () => { chatPanel.classList.remove('open'); chatFab.classList.remove('open'); };
+    chatCheatToggle.onclick = () => { const collapsed = !chatCheatsheet.classList.contains('collapsed'); chatCheatsheet.classList.toggle('collapsed', collapsed); saveChatSettings({ cheatsCollapsed: collapsed }); };
+    chatMax.onclick = () => { const on = !chatPanel.classList.contains('maximized'); chatPanel.classList.toggle('maximized', on); chatPanel.classList.remove('docked'); saveChatSettings({ mode: on ? 'maximized' : '' }); };
+    chatDock.onclick = () => { const on = !chatPanel.classList.contains('docked'); chatPanel.classList.toggle('docked', on); chatPanel.classList.remove('maximized'); saveChatSettings({ mode: on ? 'docked' : '' }); };
+    if (chatShortcuts) chatShortcuts.addEventListener('click', (e) => { if (e.target === chatShortcuts) chatShortcuts.classList.remove('open'); });
 
-    // Resize handle — drag top edge to resize chat panel
     (function initChatResize() {
       const handle = document.getElementById('hiveChatResize');
-      let startY = 0, startH = 0;
-      handle.addEventListener('pointerdown', (e) => {
-        startY = e.clientY;
-        startH = chatPanel.offsetHeight;
-        handle.setPointerCapture(e.pointerId);
-        e.preventDefault();
-      });
-      handle.addEventListener('pointermove', (e) => {
-        if (!startH) return;
-        const delta = startY - e.clientY;
-        const newH = Math.max(CHAT_MIN_HEIGHT, Math.min(window.innerHeight * 0.85, startH + delta));
-        chatPanel.style.height = newH + 'px';
-      });
-      handle.addEventListener('pointerup', () => {
-        if (startH) localStorage.setItem(CHAT_HEIGHT_KEY, chatPanel.offsetHeight);
-        startH = 0;
-      });
+      const widthHandle = document.getElementById('hiveChatResizeWidth');
+      let startY = 0, startH = 0, startX = 0, startW = 0;
+      handle.addEventListener('pointerdown', (e) => { startY = e.clientY; startH = chatPanel.offsetHeight; handle.setPointerCapture(e.pointerId); e.preventDefault(); });
+      handle.addEventListener('pointermove', (e) => { if (!startH) return; const newH = Math.max(280, Math.min(window.innerHeight * 0.92, startH + (startY - e.clientY))); chatPanel.style.height = newH + 'px'; });
+      handle.addEventListener('pointerup', () => { if (startH) saveChatSettings({ height: chatPanel.offsetHeight }); startH = 0; });
+      widthHandle.addEventListener('pointerdown', (e) => { startX = e.clientX; startW = chatPanel.offsetWidth; widthHandle.setPointerCapture(e.pointerId); e.preventDefault(); });
+      widthHandle.addEventListener('pointermove', (e) => { if (!startW) return; const newW = Math.max(360, Math.min(window.innerWidth - 32, startW + (startX - e.clientX))); chatPanel.style.width = newW + 'px'; });
+      widthHandle.addEventListener('pointerup', () => { if (startW) saveChatSettings({ width: chatPanel.offsetWidth }); startW = 0; });
     })();
+
+    chatSend.onclick = chatSendQuery;
+    chatInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); chatSendQuery(); return; }
+      if (e.key === 'Tab' && chatCompletions.length) { e.preventDefault(); completeChatCommand(chatCompletions[chatCompletionIndex].name); return; }
+      if (e.key === 'ArrowDown' && chatCompletions.length) { e.preventDefault(); chatCompletionIndex = (chatCompletionIndex + 1) % chatCompletions.length; updateChatAutocomplete(); return; }
+      if (e.key === 'ArrowUp' && chatCompletions.length) { e.preventDefault(); chatCompletionIndex = (chatCompletionIndex + chatCompletions.length - 1) % chatCompletions.length; updateChatAutocomplete(); return; }
+      if (e.key === 'ArrowUp' && !e.shiftKey && chatInput.selectionStart === 0) { e.preventDefault(); cycleChatHistory(-1); return; }
+      if (e.key === 'ArrowDown' && !e.shiftKey) { e.preventDefault(); cycleChatHistory(1); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r') { e.preventDefault(); chatAddMsg(chatCommandHistory.length ? chatCommandHistory.slice(-10).map(h => '`' + h + '`').join('\n') : 'No command history yet.', 'system'); }
+    });
+    chatInput.addEventListener('input', () => { chatInput.style.height = 'auto'; chatInput.style.height = Math.min(chatInput.scrollHeight, 80) + 'px'; updateChatAutocomplete(); chatHistoryIndex = -1; chatPersistDraft(); });
+    document.addEventListener('keydown', (e) => {
+      const inEditable = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable);
+      if (e.key === '?' && !inEditable) { e.preventDefault(); if (chatShortcuts) chatShortcuts.classList.add('open'); return; }
+      if (e.key === 'Escape' && chatShortcuts && chatShortcuts.classList.contains('open')) { chatShortcuts.classList.remove('open'); return; }
+      if (e.key === 'Escape' && chatPanel.classList.contains('open')) { chatPanel.classList.remove('open'); chatFab.classList.remove('open'); }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); chatPanel.classList.add('open'); chatFab.classList.add('open'); chatInput.focus(); }
+    });
 
     // Sidebar resize handle — drag right edge to resize sidebar width
     // Mobile drawer. Under 768px the sidebar is translated offscreen; .open
@@ -27567,83 +28035,6 @@ function burnAreaChart() {
         handle.classList.remove('dragging');
       });
     })();
-
-    function chatAddMsg(text, cls) {
-      const el = document.createElement('div');
-      el.className = 'chat-msg ' + cls;
-      el.innerHTML = text;
-      chatMessages.appendChild(el);
-      if (chatMessages.children.length > CHAT_MAX_HISTORY) chatMessages.removeChild(chatMessages.firstChild);
-      chatMessages.scrollTop = chatMessages.scrollHeight;
-      if (cls !== 'thinking') saveChatHistory();
-      return el;
-    }
-
-    async function chatSendQuery() {
-      const q = chatInput.value.trim();
-      if (!q || chatBusy) return;
-      chatBusy = true;
-      chatSend.disabled = true;
-      chatInput.value = '';
-      chatAddMsg(esc(q), 'user');
-      chatContext.push({ role: 'user', text: q });
-      if (chatContext.length > CHAT_CONTEXT_LIMIT) chatContext = chatContext.slice(-CHAT_CONTEXT_LIMIT);
-      const thinking = chatAddMsg('Thinking…', 'thinking');
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), CHAT_RESPONSE_TIMEOUT_MS);
-      try {
-        const resp = await fetch('/api/chat', {
-          method: 'POST',
-          headers: _inceptionAuthHeaders(),
-          signal: controller.signal,
-          body: JSON.stringify({ query: q, history: chatContext.slice(0, -1) }),
-        });
-        let data = {};
-        try {
-          data = await resp.json();
-        } catch (parseErr) {
-          data = { error: resp.ok ? 'Chat returned an unreadable response.' : 'Chat request failed with HTTP ' + resp.status + '.' };
-        }
-        thinking.remove();
-        if (!resp.ok || data.error) {
-          chatAddMsg('Error: ' + esc(data.error || ('Chat request failed with HTTP ' + resp.status + '.')), 'system');
-        } else {
-          const answer = data.answer || 'No results found.';
-          chatContext.push({ role: 'assistant', text: answer });
-          if (chatContext.length > CHAT_CONTEXT_LIMIT) chatContext = chatContext.slice(-CHAT_CONTEXT_LIMIT);
-          let html = formatChatHtml(answer);
-          if (data.raw) {
-            const rawId = 'chat-raw-' + Date.now();
-            html += `<details class="chat-raw-details"><summary>Search data</summary><pre id="${rawId}">${esc(data.raw)}</pre></details>`;
-          }
-          if (data.sources && data.sources.length) {
-            html += '<div class="chat-sources">Sources: ' + data.sources.map(s => '<span>' + esc(s) + '</span>').join('') + '</div>';
-          }
-          chatAddMsg(html, 'system');
-        }
-      } catch (err) {
-        thinking.remove();
-        const msg = err && err.name === 'AbortError'
-          ? 'Chat request timed out. Please try again.'
-          : 'Network error: ' + ((err && err.message) || 'request failed');
-        chatAddMsg(esc(msg), 'system');
-      } finally {
-        clearTimeout(timeout);
-        if (thinking.isConnected) thinking.remove();
-        chatBusy = false;
-        chatSend.disabled = false;
-        chatInput.focus();
-      }
-    }
-
-    chatSend.onclick = chatSendQuery;
-    chatInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); chatSendQuery(); }
-    });
-    chatInput.addEventListener('input', () => {
-      chatInput.style.height = 'auto';
-      chatInput.style.height = Math.min(chatInput.scrollHeight, 80) + 'px';
-    });
 
     // GitHub Device Flow Auth
     let ghPollTimer = null;

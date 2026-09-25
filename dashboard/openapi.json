@@ -20139,6 +20139,59 @@
       }
     },
     "/api/presence": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "List Hive Chat presence",
+        "description": "Returns the display-safe presence roster for Hive Chat and /who. Authenticated callers see active/idle users derived from dashboard sessions and focus-aware presence heartbeats. Unauthenticated local dashboards do not reveal the session roster and return a single local row.",
+        "responses": {
+          "200": {
+            "description": "Presence roster",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string"
+                    },
+                    "users": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "username": {
+                            "type": "string"
+                          },
+                          "display_name": {
+                            "type": "string"
+                          },
+                          "avatar_url": {
+                            "type": "string"
+                          },
+                          "active": {
+                            "type": "boolean"
+                          },
+                          "idle": {
+                            "type": "boolean"
+                          },
+                          "last_action": {
+                            "type": "string"
+                          },
+                          "you": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "System"

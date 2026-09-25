@@ -1,9 +1,12 @@
 package dashboard
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -54,6 +57,144 @@ func (s *Server) handlePresence(w http.ResponseWriter, r *http.Request) {
 		s.markUserEngaged(user, time.Now())
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type presenceUser struct {
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name,omitempty"`
+	AvatarURL   string `json:"avatar_url,omitempty"`
+	Active      bool   `json:"active"`
+	Idle        bool   `json:"idle"`
+	LastAction  string `json:"last_action,omitempty"`
+	You         bool   `json:"you,omitempty"`
+}
+
+// handlePresenceSnapshot returns the dashboard-visible presence roster for
+// Hive Chat's /who command. It deliberately exposes only display-safe identity:
+// usernames, configured display names, GitHub avatar URLs for plain GitHub
+// usernames, and coarse active/idle state. If the request has no authenticated
+// identity header/session, it does not reveal the live session roster; local
+// unauthenticated dashboards see a single "local" row instead.
+func (s *Server) handlePresenceSnapshot(w http.ResponseWriter, r *http.Request) {
+	viewer := strings.TrimSpace(r.Header.Get("X-Hive-User"))
+	if sess := s.sessionFromRequest(r); sess != nil {
+		viewer = strings.TrimSpace(sess.Username)
+	}
+	if viewer == "" {
+		jsonResponse(w, map[string]interface{}{
+			"mode":  "local",
+			"users": []presenceUser{{Username: "local", DisplayName: "local", Active: true, You: true}},
+		})
+		return
+	}
+
+	engaged := stringSet(s.EngagedSessionUsernames())
+	active := stringSet(s.ActiveSessionUsernames())
+	if len(active) == 0 {
+		active[viewer] = struct{}{}
+	}
+	if _, ok := active[viewer]; !ok {
+		active[viewer] = struct{}{}
+	}
+	lastActions := s.UserLastActions()
+
+	names := make([]string, 0, len(active))
+	for user := range active {
+		names = append(names, user)
+	}
+	sort.Strings(names)
+
+	users := make([]presenceUser, 0, len(names))
+	for _, user := range names {
+		_, isEngaged := engaged[user]
+		publicName := presencePublicUsername(user)
+		displayName := safePresenceDisplayName(s.authorizedDisplayName(user))
+		u := presenceUser{
+			Username:    publicName,
+			DisplayName: displayName,
+			Active:      isEngaged,
+			Idle:        !isEngaged,
+			LastAction:  lastActions[user],
+			You:         user == viewer,
+		}
+		if u.DisplayName == "" {
+			u.DisplayName = publicName
+		}
+		if isPlainGitHubUsername(user) {
+			u.AvatarURL = "https://github.com/" + user + ".png"
+		}
+		users = append(users, u)
+	}
+
+	jsonResponse(w, map[string]interface{}{
+		"mode":  "authenticated",
+		"users": users,
+	})
+}
+
+func stringSet(in []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(in))
+	for _, v := range in {
+		if v = strings.TrimSpace(v); v != "" {
+			out[v] = struct{}{}
+		}
+	}
+	return out
+}
+
+func presencePublicUsername(user string) string {
+	if isPlainGitHubUsername(user) {
+		return user
+	}
+	sum := sha256.Sum256([]byte(user))
+	return "user-" + hex.EncodeToString(sum[:])[:8]
+}
+
+func safePresenceDisplayName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.Contains(name, "@") || strings.Contains(name, "\n") || strings.Contains(name, "\r") {
+		return ""
+	}
+	lower := strings.ToLower(name)
+	if strings.Contains(lower, "token") || isTokenLikeIdentity(lower) || isLongHexIdentity(lower) {
+		return ""
+	}
+	return name
+}
+
+func isPlainGitHubUsername(user string) bool {
+	if user == "" || len(user) > 39 || strings.HasPrefix(user, "-") || strings.HasSuffix(user, "-") || strings.Contains(user, "--") || strings.Contains(user, ":") || strings.Contains(user, "@") || isLongHexIdentity(user) || isTokenLikeIdentity(strings.ToLower(user)) {
+		return false
+	}
+	for _, r := range user {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func isTokenLikeIdentity(s string) bool {
+	for _, prefix := range []string{"ghp_", "gho_", "ghs_", "ghu_", "ghr_", "github_pat_", "sk-"} {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func isLongHexIdentity(s string) bool {
+	if len(s) < 32 {
+		return false
+	}
+	for _, r := range s {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // markUserEngaged stamps user as engaged as of now. Lazily initializes the map
