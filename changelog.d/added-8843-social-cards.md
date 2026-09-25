@@ -1,0 +1,1 @@
+- Add public SVG social cards and share landing pages for contributor dossiers, Achievement System 2.0 unlocks, and public leaderboard summaries.
