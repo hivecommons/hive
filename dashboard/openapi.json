@@ -1436,6 +1436,57 @@
         }
       }
     },
+    "/api/classifier/stats": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Classifier backend agreement statistics",
+        "description": "Returns Jev classifier shadow/enforce agreement, fallback, estimated input token, and estimated spend counters.",
+        "responses": {
+          "200": {
+            "description": "Classifier stats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "decisions": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "agree": {
+                            "type": "integer",
+                            "format": "int64"
+                          },
+                          "disagree": {
+                            "type": "integer",
+                            "format": "int64"
+                          },
+                          "fallback": {
+                            "type": "integer",
+                            "format": "int64"
+                          }
+                        }
+                      }
+                    },
+                    "estimated_input_tokens": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "estimated_spend_usd": {
+                      "type": "number",
+                      "format": "double"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/events": {
       "get": {
         "tags": [
