@@ -68,7 +68,7 @@ Delivery agents open GitHub issues — bugs, docs gaps, CI problems, security vu
 
 ### L5 — Semi-Autonomous (Semi-Automated) (12 agents)
 
-Agents open issues AND pull requests. All PRs get a hold label — humans batch-review and approve. Architect produces RFCs, strategist coordinates across agents, and reviewer works the hold-gated PR queue every 30 minutes. The system proposes; it does not merge autonomously.
+Agents open issues AND pull requests. All PRs get the hive-specific `hive-pause/<hive-id>` hold label — humans batch-review and approve. The `hive/<hive-id>` label is provenance only. Architect produces RFCs, strategist coordinates across agents, and reviewer works the hold-gated PR queue every 30 minutes. The system proposes; it does not merge autonomously.
 
 | Agent | Mode | Template |
 |-------|------|----------|

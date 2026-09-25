@@ -18,6 +18,8 @@ integration (webhooks, session acknowledgement, writing back to Linear);
 this page covers only the read side (`work_source.linear`) for parity with
 the other three.
 
+Hosted and dashboard-managed hives can configure the same block from **Settings → Work source**; self-hosted operators can also edit `governor.work_source` in `hive.yaml`. Custom CA bundles and TLS trust overrides for Jira Data Center are not documented here because they are still in progress and are not part of v5.
+
 ## Run stages (`run_stages: true`)
 
 Run stages let the governor offer a pending run stage such as `spec`, `plan`,
@@ -229,8 +231,7 @@ that include the instance context path, such as
 ([Atlassian Jira Data Center REST API reference](https://docs.atlassian.com/software/jira/docs/api/REST/9.14.0/)).
 Atlassian's server examples use `/rest/api/2/...` endpoints for issues and
 searches ([Jira REST API examples](https://developer.atlassian.com/server/jira/platform/jira-rest-api-examples/)).
-Data Center PATs are available in Jira Core/Software 8.14+ and are sent as
-bearer tokens ([Using Personal Access Tokens](https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html)).
+Data Center PATs are available in Jira Core/Software 8.14+ and are sent with Jira Data Center's bearer-token HTTP authentication ([Using Personal Access Tokens](https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html)).
 Jira Cloud rich text comments/descriptions use ADF JSON
 ([Atlassian Document Format](https://developer.atlassian.com/cloud/jira/platform/apis/document/structure/));
 Data Center accepts plain text / wiki-markup string bodies.
@@ -258,7 +259,7 @@ governor:
     jira:
       deployment: datacenter
       base_url: https://jira.example.com/jira      # context paths are preserved
-      api_token: ${JIRA_DATACENTER_PAT}            # preferred: Authorization: Bearer
+      api_token: ${JIRA_DATACENTER_PAT}            # preferred PAT bearer auth
       # Or, for older instances without PATs:
       # username: hive-bot
       # password: ${JIRA_DATACENTER_PASSWORD}
@@ -288,7 +289,7 @@ Jira will reject — set one or the other.
 
 **Credentials.** Jira Cloud REST v3 uses HTTP Basic auth with the account
 email as username and the **API token** (not the account password) as
-password. Jira Data Center uses `Authorization: Bearer <PAT>` when
+password. Jira Data Center sends the PAT as bearer-token HTTP auth when
 `api_token` is set; otherwise it falls back to HTTP Basic with
 `username`/`password` (or `email` as the username when `username` is empty).
 Supply secrets via `${JIRA_API_TOKEN}` / `${JIRA_DATACENTER_PAT}` /
