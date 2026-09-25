@@ -4399,7 +4399,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 	})
 
 	if b.cfg.Notifications.Discord != nil && b.cfg.Notifications.Discord.BotToken != "" && b.cfg.Notifications.Discord.ChannelID != "" {
-		err := deps.startDiscordBot(b.ctx, discord.Config{
+		sendDiscord, err := deps.startDiscordBot(b.ctx, discord.Config{
 			Token:           b.cfg.Notifications.Discord.BotToken,
 			ChannelID:       b.cfg.Notifications.Discord.ChannelID,
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
@@ -4411,6 +4411,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 		if err != nil {
 			b.logger.Warn("discord bot failed to start", "error", err)
 		} else {
+			b.dashSrv.SetSwarmAnnouncer(sendDiscord)
 			b.logger.Info("discord bot started", "channel", b.cfg.Notifications.Discord.ChannelID)
 		}
 	}

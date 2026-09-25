@@ -305,6 +305,28 @@ func TestApplyHivesActionReceipts(t *testing.T) {
 		}
 	})
 
+	t.Run("move rank", func(t *testing.T) {
+		set := seededHives()
+		note, err := applyHivesAction(h.model.hivesEnv, set, panes.HivesAction{Kind: panes.HivesActionMoveDown, Name: "acme"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(note, "moved \"acme\" down") || set.Profiles[1].Name != "acme" || set.Active != "other" {
+			t.Fatalf("move receipt/set = %q / %+v", note, set)
+		}
+	})
+
+	t.Run("strategy", func(t *testing.T) {
+		set := seededHives()
+		note, err := applyHivesAction(h.model.hivesEnv, set, panes.HivesAction{Kind: panes.HivesActionStrategy, Strategy: hivectl.CommonsStrategySpread})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(note, "strategy is now spread") || set.CommonsStrategy != hivectl.CommonsStrategySpread {
+			t.Fatalf("strategy receipt/set = %q / %+v", note, set)
+		}
+	})
+
 	t.Run("unsupported", func(t *testing.T) {
 		const unsupportedAction = panes.HivesActionRename + 1
 		if _, err := applyHivesAction(h.model.hivesEnv, seededHives(), panes.HivesAction{Kind: unsupportedAction}); err == nil {
@@ -350,6 +372,40 @@ func TestRunHivesActionRefusalsAndEmptyAdd(t *testing.T) {
 		msg := m.runHivesAction(1, panes.HivesAction{Kind: panes.HivesActionUse, Name: "other"})().(hivesActionMsg)
 		if !errors.Is(msg.err, sentinel) {
 			t.Fatalf("runHivesAction() error = %v, want signal error", msg.err)
+		}
+	})
+
+	t.Run("move signals relay", func(t *testing.T) {
+		var signals atomic.Int64
+		m := newModel()
+		m.hivesEnv.store = &stubHivesStore{set: seededHives()}
+		m.hivesEnv.signalRelay = func(context.Context) (hivectl.RelaySwitchResult, error) {
+			signals.Add(1)
+			return hivectl.RelaySwitchResult{Running: true, Target: "pid 123"}, nil
+		}
+		msg := m.runHivesAction(1, panes.HivesAction{Kind: panes.HivesActionMoveDown, Name: "acme"})().(hivesActionMsg)
+		if msg.err != nil {
+			t.Fatalf("runHivesAction() error = %v", msg.err)
+		}
+		if signals.Load() != 1 || !strings.Contains(msg.note, "running relay signaled") {
+			t.Fatalf("signals=%d note=%q", signals.Load(), msg.note)
+		}
+	})
+
+	t.Run("strategy signals relay", func(t *testing.T) {
+		var signals atomic.Int64
+		m := newModel()
+		m.hivesEnv.store = &stubHivesStore{set: seededHives()}
+		m.hivesEnv.signalRelay = func(context.Context) (hivectl.RelaySwitchResult, error) {
+			signals.Add(1)
+			return hivectl.RelaySwitchResult{}, nil
+		}
+		msg := m.runHivesAction(1, panes.HivesAction{Kind: panes.HivesActionStrategy, Strategy: hivectl.CommonsStrategyNeediest})().(hivesActionMsg)
+		if msg.err != nil {
+			t.Fatalf("runHivesAction() error = %v", msg.err)
+		}
+		if signals.Load() != 1 || !strings.Contains(msg.note, "next relay start will use this strategy") {
+			t.Fatalf("signals=%d note=%q", signals.Load(), msg.note)
 		}
 	})
 

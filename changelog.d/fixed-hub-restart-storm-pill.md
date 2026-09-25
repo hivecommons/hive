@@ -1,1 +1,0 @@
-- Hub: the "restart storms" pill's reset action is now an inline text link inside the pill instead of a full-size button that inflated the pill to twice the height of its neighbours.

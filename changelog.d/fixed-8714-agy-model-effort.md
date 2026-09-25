@@ -1,1 +1,0 @@
-- Fix #8714 by deriving agy launch effort from -low/-medium/-high model suffixes when unset.

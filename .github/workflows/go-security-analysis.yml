@@ -93,14 +93,17 @@ jobs:
 
   gosec:
     name: gosec (insecure patterns)
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # cache: false — the hive runners mount a persistent GOCACHE/GOMODCACHE;
+      # setup-go's post-step would otherwise tar that multi-GB shared cache
+      # into the Actions cache on every run (#8762).
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          cache: false
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
 
       # Version floor is load-bearing: gosec v2.21.4 pins golang.org/x/tools
       # v0.25.0, which does not COMPILE under Go 1.25 ("invalid array length").
@@ -133,19 +136,22 @@ jobs:
 
   golangci-lint:
     name: golangci-lint
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          cache: false
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
 
+      # skip-cache: the action's own cache save/restore is the same multi-GB
+      # tar problem as setup-go's; the runners already keep GOCACHE warm.
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.13.1
           working-directory: src
+          skip-cache: true
 
   action-pins:
     name: action pins resolve

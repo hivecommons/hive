@@ -46,6 +46,33 @@ func readJamLiveUntil(t *testing.T, conn *websocket.Conn, want string, match fun
 	return jamLiveMessage{}
 }
 
+func TestCampaignJamLiveRejectsCrossOriginHandshake(t *testing.T) {
+	s := jamTestServer(t)
+	httpSrv := httptest.NewServer(s.mux)
+	t.Cleanup(httpSrv.Close)
+
+	wsURL := "ws" + strings.TrimPrefix(httpSrv.URL, "http") + "/api/campaigns/spec-live/jam/ws"
+
+	header := http.Header{}
+	header.Set("X-Hive-Role", "read-write")
+	header.Set("Origin", "https://evil.example")
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err == nil {
+		conn.Close()
+		t.Fatal("cross-origin jam websocket handshake succeeded, want rejection")
+	}
+	if resp == nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin handshake response = %+v, want 403", resp)
+	}
+
+	header.Set("Origin", httpSrv.URL)
+	conn, _, err = websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatalf("same-origin jam websocket handshake failed: %v", err)
+	}
+	conn.Close()
+}
+
 func TestCampaignJamLivePresenceFocusAndReconnect(t *testing.T) {
 	s := jamTestServer(t)
 	httpSrv := httptest.NewServer(s.mux)

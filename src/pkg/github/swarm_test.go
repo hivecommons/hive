@@ -41,12 +41,23 @@ func TestScoreSwarmCountsClosedIssuesMergedPRsAndParticipants(t *testing.T) {
 		queries = append(queries, q)
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(q, "is:issue") {
-			_ = json.NewEncoder(w).Encode(map[string]any{"total_count": 4, "items": []any{}})
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"total_count": 4,
+				"items": []map[string]any{
+					{"closed_by": map[string]any{"login": "alice"}},
+					{"closed_by": map[string]any{"login": "alice"}},
+					{"closed_by": map[string]any{"login": "carol"}},
+				},
+			})
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"total_count": 2,
-			"items":       []map[string]any{{"user": map[string]any{"login": "bob"}}, {"user": map[string]any{"login": "alice"}}, {"user": map[string]any{"login": "bob"}}},
+			"items": []map[string]any{
+				{"user": map[string]any{"login": "bob"}, "title": "complete spek plan implement", "body": "done\n\n— hive: agent=builder backend=bob model=auto"},
+				{"user": map[string]any{"login": "alice"}, "title": "mentions backend=bob outside attribution", "body": "routine"},
+				{"user": map[string]any{"login": "bob"}, "body": "spec plan implement\n\n— hive: agent=builder backend=ollama model=llama3"},
+			},
 		})
 	}))
 	defer srv.Close()
@@ -58,6 +69,12 @@ func TestScoreSwarmCountsClosedIssuesMergedPRsAndParticipants(t *testing.T) {
 	}
 	if score.IssuesClosed != 4 || score.PRsMerged != 2 || len(score.Participants) != 2 || score.Participants[0] != "alice" || score.Participants[1] != "bob" {
 		t.Fatalf("score = %+v", score)
+	}
+	if score.PRsByAuthor["bob"] != 2 || score.PRsByAuthor["alice"] != 1 || score.IssuesClosedBy["alice"] != 2 || score.IssuesClosedBy["carol"] != 1 {
+		t.Fatalf("attribution = prs %#v issues %#v", score.PRsByAuthor, score.IssuesClosedBy)
+	}
+	if score.SpeksCompleted != 2 || score.LocalModelPRs != 2 || score.SpeksCompletedBy["bob"] != 2 || score.LocalModelPRsBy["bob"] != 2 {
+		t.Fatalf("spek/local score = %+v", score)
 	}
 	if len(queries) != 2 || !strings.Contains(queries[0], "closed:") || !strings.Contains(queries[1], "merged:") {
 		t.Fatalf("queries = %v", queries)

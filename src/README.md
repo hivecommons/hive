@@ -203,9 +203,11 @@ operators grant it with the tier dropdown on the contributor card under
 people's** PRs for Hive's auto-merge-on-green sweep, never its own.
 
 Relays can subscribe to multiple hubs by setting comma-separated `HIVE_HUB` and
-matching `HIVE_REGISTRATION_TOKEN` lists. Operators can also allow contributors
-to act as selected spoke roles with `HIVE_AGENT_ROLE` / **Acting as**,
-profile-level grant chips, and `hub.contribute_delegatable_roles`.
+matching `HIVE_REGISTRATION_TOKEN` lists. `hivectl hives` / the TUI Hives
+overlay write those lists as **The Commons**, with a rank order and `ranked`,
+`spread` or `neediest` routing between tasks. Operators can also allow
+contributors to act as selected spoke roles with `HIVE_AGENT_ROLE` /
+**Acting as**, profile-level grant chips, and `hub.contribute_delegatable_roles`.
 
 See [docs/contributor-relay.md](docs/contributor-relay.md) and
 [docs/contributor-trust-and-roles.md](docs/contributor-trust-and-roles.md).

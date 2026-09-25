@@ -42,6 +42,12 @@ items to the linked project; inbound project status updates are recorded on the
 campaign without rewriting local Jam decisions. Sync failures are kept with
 retry guidance so the dashboard shows what to fix before trying again.
 
+Sync posts to `https://api.github.com/graphql` with the hive's `GITHUB_TOKEN`.
+`HIVE_JAM_PROJECT_SYNC_URL` overrides the endpoint; an override must use
+`https` (plain `http` is accepted only for loopback hosts) and never receives
+`GITHUB_TOKEN`. Set `HIVE_JAM_PROJECT_SYNC_TOKEN` to give a custom endpoint its
+own bearer token.
+
 Maintainers can invite Spektacular or another configured hive agent into a Jam
 thread. Agent participation is deliberately review-gated: the attributed agent
 reply is posted in-thread and any proposed spec text is created as an open

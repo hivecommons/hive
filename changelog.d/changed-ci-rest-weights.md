@@ -1,1 +1,0 @@
-- CI: rest-bucket package weights re-measured on the self-hosted fleet (pkg/hub/spoke was unweighted at 3 and landed beside pkg/github+config; cmd/hive was 138 vs 30 measured), so the five buckets now spread the heavy packages apart.

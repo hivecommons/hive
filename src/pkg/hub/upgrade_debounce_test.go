@@ -506,3 +506,39 @@ func TestDebounceIntervalIsConfigurable(t *testing.T) {
 		t.Errorf("negative override must disable debounce (0), got %v", got)
 	}
 }
+
+// A floating-tag spoke restarted by hand can run a commit NEWER than the hub's
+// verified latest (2026-09-25: CNCF Prow at 7dafd22 while latest was 6d2195d).
+// The sweep must not arm that older "latest" — it would sit in "Upgrading",
+// debounce, then roll the pod for nothing.
+func TestTriggerAutoUpgradesSkipsSpokeAheadOfLatest(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	resetCommitOrderState(t)
+	seedCommitOrder("7dafd22", "6d2195d", true)
+	t.Setenv("HIVE_UPGRADE_DEBOUNCE_SECONDS", "300")
+	resetScaleSettingsForTest()
+	setLatestSHAForBranchForTest(t, "v5", "6d2195d")
+
+	const id = "ahead-of-latest"
+	saveSaaSHive(&SaaSHive{ID: id, Owner: "alice", AutoUpgrade: true, Status: "running", ClusterID: "dc1"})
+	s := &HubServer{
+		logger:           slog.Default(),
+		hubSecret:        testHubSecret,
+		heartbeatUpgrade: make(map[string]string),
+		clusters:         map[string]ClusterConfig{"dc1": {ID: "dc1", InCluster: true}},
+	}
+	beat := time.Now().UTC().Format(time.RFC3339)
+	s.registry.Hives = []RegistryEntry{{ID: id, GitBranch: "v5", GitHash: "7dafd22", LastHeartbeat: beat}}
+
+	s.triggerAutoUpgrades()
+
+	if stored := loadSaaSHive(id); stored == nil || stored.AutoUpgradePendingTarget != "" {
+		t.Fatalf("armed a debounce toward an OLDER commit for a spoke already ahead: %+v", stored)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.heartbeatUpgrade) != 0 {
+		t.Errorf("heartbeat upgrade armed for a spoke ahead of latest: %v", s.heartbeatUpgrade)
+	}
+}

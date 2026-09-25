@@ -41,7 +41,8 @@ type HivesOverlay struct {
 	loaded bool
 	// rows is the last successful read, in projection order (active first),
 	// which is the order the relay walks.
-	rows []HiveRow
+	rows     []HiveRow
+	strategy string
 	// listErr describes a failed read the operator has to be told about — no
 	// profiles configured yet, a corrupt file, a legacy file too misaligned to
 	// migrate.
@@ -133,6 +134,9 @@ const (
 	HivesActionRemove
 	// HivesActionRename renames a profile.
 	HivesActionRename
+	HivesActionMoveUp
+	HivesActionMoveDown
+	HivesActionStrategy
 )
 
 // HivesAction is the mutation Submit accepted, addressed by NAME rather than by
@@ -140,10 +144,11 @@ const (
 // shared with the CLI and may have moved under us), and an index into a stale
 // snapshot would then name a different hive.
 type HivesAction struct {
-	Kind    HivesActionKind
-	Name    string
-	Hub     string
-	NewName string
+	Kind     HivesActionKind
+	Name     string
+	Hub      string
+	NewName  string
+	Strategy string
 }
 
 // NewHivesOverlay returns the overlay in its loading state.
@@ -201,7 +206,7 @@ func (o HivesOverlay) Selected() (HiveRow, bool) {
 // first), so an index-preserving reload would leave the cursor on whichever
 // hive happened to slide into that position — usually not the one the operator
 // was looking at.
-func (o HivesOverlay) SetHives(rows []HiveRow, path, envPath string) HivesOverlay {
+func (o HivesOverlay) SetHives(rows []HiveRow, path, envPath, strategy string) HivesOverlay {
 	var under string
 	if current, ok := o.Selected(); ok {
 		under = current.Name
@@ -210,6 +215,7 @@ func (o HivesOverlay) SetHives(rows []HiveRow, path, envPath string) HivesOverla
 	o.loaded = true
 	o.listErr = ""
 	o.rows = append([]HiveRow(nil), rows...)
+	o.strategy = strategy
 	o.path = path
 	o.envPath = envPath
 	o.selected = 0
@@ -220,6 +226,36 @@ func (o HivesOverlay) SetHives(rows []HiveRow, path, envPath string) HivesOverla
 		}
 	}
 	return o
+}
+
+// MoveSelectedRank starts a rank-order move for the selected hive.
+func (o HivesOverlay) MoveSelectedRank(delta int) (HivesOverlay, HivesAction, bool) {
+	if o.pending || o.mode != hivesModeList {
+		return o, HivesAction{}, false
+	}
+	row, ok := o.Selected()
+	if !ok {
+		return o, HivesAction{}, false
+	}
+	if delta < 0 {
+		return o.start("Moving " + row.Name + " up"), HivesAction{Kind: HivesActionMoveUp, Name: row.Name}, true
+	}
+	return o.start("Moving " + row.Name + " down"), HivesAction{Kind: HivesActionMoveDown, Name: row.Name}, true
+}
+
+// CycleStrategy advances The Commons routing preset.
+func (o HivesOverlay) CycleStrategy() (HivesOverlay, HivesAction, bool) {
+	if o.pending || o.mode != hivesModeList {
+		return o, HivesAction{}, false
+	}
+	next := "ranked"
+	switch strings.ToLower(strings.TrimSpace(o.strategy)) {
+	case "", "ranked":
+		next = "spread"
+	case "spread":
+		next = "neediest"
+	}
+	return o.start("Setting The Commons strategy to " + next), HivesAction{Kind: HivesActionStrategy, Strategy: next}, true
 }
 
 // SetListError records a failed profile read.
@@ -572,12 +608,16 @@ func (o HivesOverlay) subtitle() string {
 	if !o.loaded {
 		return "contributor profiles"
 	}
+	strategy := strings.TrimSpace(o.strategy)
+	if strategy == "" {
+		strategy = "ranked"
+	}
 	for _, row := range o.rows {
 		if row.Active {
-			return "active: " + row.Name
+			return "The Commons: " + strategy + " · active: " + row.Name
 		}
 	}
-	return "no active hive"
+	return "The Commons: " + strategy + " · no active hive"
 }
 
 func (o HivesOverlay) bodyText(contentWidth int) string {
@@ -898,7 +938,7 @@ func (o HivesOverlay) footer() string {
 	case o.loading:
 		keys = closeHint
 	case o.loaded && len(o.rows) > 0:
-		keys = "j/k move  enter use  a add  d remove  r rename  " + closeHint
+		keys = "j/k cursor  [/ ] rank  s strategy  enter use  a add  d remove  r rename  " + closeHint
 	default:
 		keys = "a add  " + closeHint
 	}

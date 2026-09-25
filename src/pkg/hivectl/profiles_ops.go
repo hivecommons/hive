@@ -113,6 +113,46 @@ func (set *ProfileSet) Remove(name string) (removed Profile, wasActive bool, err
 	return removed, wasActive, nil
 }
 
+// Move shifts a profile by delta in The Commons rank order.
+func (set *ProfileSet) Move(name string, delta int) (Profile, bool, error) {
+	target, index := set.Find(name)
+	if target == nil {
+		return Profile{}, false, fmt.Errorf("%w: %q", ErrProfileNotFound, name)
+	}
+	next := index + delta
+	if next < 0 {
+		next = 0
+	}
+	if next >= len(set.Profiles) {
+		next = len(set.Profiles) - 1
+	}
+	if next == index {
+		return *target, false, nil
+	}
+	profile := set.Profiles[index]
+	set.Profiles = append(set.Profiles[:index], set.Profiles[index+1:]...)
+	set.Profiles = append(set.Profiles, Profile{})
+	copy(set.Profiles[next+1:], set.Profiles[next:])
+	set.Profiles[next] = profile
+	if len(set.Profiles) > 0 {
+		set.Active = set.Profiles[0].Name
+	}
+	return profile, true, nil
+}
+
+// SetCommonsStrategy records how the relay chooses the next subscribed hive.
+func (set *ProfileSet) SetCommonsStrategy(strategy string) error {
+	strategy = strings.ToLower(strings.TrimSpace(strategy))
+	if err := ValidateCommonsStrategy(strategy); err != nil {
+		return err
+	}
+	if strategy == "" {
+		strategy = CommonsStrategyRanked
+	}
+	set.CommonsStrategy = strategy
+	return nil
+}
+
 // Commit persists a mutated set: profiles.yml first, then the contributor.env
 // projection regenerated from it.
 //

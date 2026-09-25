@@ -2386,6 +2386,11 @@ It clears automatically when the period elapses. An operator can shorten or disa
      same one-line footprint, not a card. -->
 <div id="me-standing-mount"></div>
 <div class="ops-card card-accent">
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Team leagues</h3><span class="ops-card-count count-strong" id="teams-count"></span></div>
+<div id="team-leagues"><div class="ops-empty">Loading team leagues&hellip;</div></div>
+<p class="ops-note">Team metadata is contributor opt-in and privacy-bounded: distro/OS family, kernel release, and agent backend only.</p>
+</div>
+<div class="ops-card card-accent">
 <div class="ops-card-head"><span class="feed-dot"></span><h3>Rankings</h3><span class="ops-card-count count-strong" id="leaderboard-count"></span></div>
 <div id="leaderboard-list"><div class="ops-empty">Loading leaderboard&hellip;</div></div>
 </div>
@@ -2779,6 +2784,7 @@ function loadLeaderboard(){
     // human + donated-compute contributors are not buried under the bots.
     var contribs=(d&&d.leaderboard)||[];
     renderLeaderboard(contribs);
+    loadTeamLeagues();
     // Ensure the per-row + hive-wide sparklines have data even when the Ops tab
     // was never opened (opsPoll never ran). Reuses this hive's metrics endpoint;
     // Ops-only spark slots simply no-op when absent. See #persistent-history.
@@ -2787,6 +2793,28 @@ function loadLeaderboard(){
     var el=document.getElementById('leaderboard-list');
     if(el)el.innerHTML='<div class="ops-empty">Could not load leaderboard.</div>';
   });
+}
+function loadTeamLeagues(){
+  var el=document.getElementById('team-leagues');if(!el)return;
+  fetch('/api/leaderboard/teams').then(function(r){return r.json();}).then(function(d){renderTeamLeagues(d||{});}).catch(function(){
+    el.innerHTML='<div class="ops-empty">Could not load team leagues.</div>';
+  });
+}
+function teamRows(rows){
+  rows=(rows||[]).slice(0,5);
+  if(!rows.length)return '<div class="ops-empty">No opt-in team members yet.</div>';
+  return '<div class="team-league-rows">'+rows.map(function(x){
+    var top=(x.top_contributors||[]).slice(0,3).map(esc).join(', ');
+    return '<div class="lb-row"><div class="lb-rank">#'+Number(x.rank||0)+'</div><div class="lb-name">'+esc(x.team||'Wildcard')+(top?'<div class="effective-sub">'+top+'</div>':'')+'</div><div class="lb-stat lb-primary">'+Number(x.tasks_completed||0)+'</div><div class="lb-stat">'+Number(x.members||0)+' members</div></div>';
+  }).join('')+'</div>';
+}
+function renderTeamLeagues(data){
+  var el=document.getElementById('team-leagues'),cnt=document.getElementById('teams-count');if(!el)return;
+  var total=(data.by_distro||[]).length+(data.by_os_family||[]).length+(data.by_agent||[]).length;
+  if(cnt)cnt.textContent=total+' leagues';
+  var rare=data.rarest_setup;
+  var rareHTML=rare?'<div class="ops-empty"><b>Rarest setup:</b> '+esc(rare.team||'Wildcard')+(rare.member?' · '+esc(rare.member):'')+(rare.kernel?' · kernel '+esc(rare.kernel):'')+'</div>':'';
+  el.innerHTML=rareHTML+'<div class="effective-section-title">Distros</div>'+teamRows(data.by_distro)+'<div class="effective-section-title">OS families</div>'+teamRows(data.by_os_family)+'<div class="effective-section-title">Agents</div>'+teamRows(data.by_agent);
 }
 var effectiveModelsWindow='7d';
 var effectiveModelsFilter='all';
@@ -2917,11 +2945,18 @@ function lbRow(e,rank){
   // Self-chosen dossier title (equipped_title) — a small quoted accent after the
   // name. Optional; absent for contributors who set none (never a placeholder).
   var title=(!e.is_agent&&e.equipped_title)?(' <span class="lb-title">“'+esc(e.equipped_title)+'”</span>'):'';
+  var a2=e.achievement_2||{};
+  var a2line='';
+  if(a2.top_tier||a2.local||a2.mastery){
+    a2line='<div class="effective-sub">achievements 2.0 · '+esc(a2.top_tier||'solo')
+      +' · local '+Number(a2.local||0)+' · mastery '+Number(a2.mastery||0)+'</div>';
+  }
   // Human contributors link to their public dossier — the standings become a way
   // INTO the records. Agents have no dossier, so they stay plain text.
   var nameCell=(!e.is_agent&&uname)
     ?('<a class="lb-name__link" href="/contribute/dossier/'+encodeURIComponent(uname)+'">'+name+'</a>')
     :name;
+  nameCell+=a2line;
   // "Done" (tasks_completed) is the hero numeral — real count, just emphasised.
   return '<div class="lb-row'+(isMe?' lb-row--me':'')+'">'
     +'<div class="lb-rank">#'+rank+'</div>'
@@ -3205,6 +3240,19 @@ function meSeals(p){
   return '<div class="dz-seals">'+out.join('')+'</div>';
 }
 
+function meAchievements2(p){
+  var ach=(p.achievements_2||[]).filter(function(a){return a&&a.attained;});
+  var notes=((p.achievement_2&&p.achievement_2.annotations)||[]).map(function(n){
+    return '<div class="ops-note m-0">'+esc(n.detail||n.kind||'achievement guardrail note')+'</div>';
+  }).join('');
+  if(!ach.length)return '<p class="dz-collab-empty">Teamwork tiers unlock from normal GitHub, Spek, and Hive collaboration.</p>'+notes;
+  return '<div class="dz-seals">'+ach.map(function(a){
+    var sub=(a.tier||'solo')+' · '+(a.track||'teamwork');
+    return '<div class="dz-seal"><div class="glyph"></div><div class="t-name">'+esc(a.label||a.id||'Achievement')+'</div>'
+      +'<div class="t-sub">'+esc(sub)+' — '+esc(a.detail||'')+'</div></div>';
+  }).join('')+'</div>'+notes;
+}
+
 // meDeedsGrid renders the DEEDS OF RECORD stat blocks: tasks shipped, PRs
 // landed, standing (#rank / total), plus — when the server's cached public
 // GitHub fetch succeeded — service years and renown (followers). The GitHub
@@ -3480,6 +3528,8 @@ function renderMeCard(mount,p){
   +'<div class="dz-grid">'
   +'<section class="dz-zcard" aria-label="Triumphs"><div class="dz-zone-head">Triumphs</div>'
     +meSeals(p)
+    +'<div class="dz-heraldry-head"><span>Achievement System 2.0 · teamwork tiers</span></div>'
+    +meAchievements2(p)
     +'<div class="dz-heraldry-head"><span>Heraldry · verified via Credly</span></div>'
     +'<div id="me-heraldry-slot"><div class="ops-note m-0">Loading heraldry&hellip;</div></div></section>'
   +'<section class="dz-zcard" aria-label="Collaborators"><div class="dz-zone-head">Collaborators</div>'

@@ -1277,6 +1277,13 @@ func (s *HubServer) triggerAutoUpgrades() {
 		if latestSHA == "" || sameCommit(currentSHA, latestSHA) {
 			continue
 		}
+		// A floating-tag spoke (restarted by hand, or a re-pull that landed
+		// past the target) can run a commit NEWER than the hub's verified
+		// latest. Arming "latest" then only debounces and rolls the pod for
+		// nothing — and shows it "Upgrading" to an older commit.
+		if commitAtOrAheadOfTarget(currentSHA, latestSHA, s.logger) {
+			continue
+		}
 		// Merge-driven debounce (#5391). Reached ONLY on the automatic
 		// chase-latest path: everything that starts an upgrade for an operator
 		// — a manual "Upgrade now" (upgradeHiveHandler), a bulk upgrade

@@ -386,6 +386,7 @@ type Server struct {
 	forgeAppInventoryFn func() ForgeAppInventory
 	swarmMu             sync.Mutex
 	swarm               *swarmStore
+	swarmAnnouncer      SwarmAnnouncer
 }
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.

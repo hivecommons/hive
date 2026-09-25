@@ -38,6 +38,9 @@ func kickIoscanSandboxServer(t *testing.T) *Server {
 	if err := mgr.Start(context.Background(), "scanner"); err != nil {
 		t.Fatalf("start sandbox agent: %v", err)
 	}
+	// Stop the sandbox agent before t.TempDir cleanup runs; its goroutine
+	// otherwise keeps writing under HIVE_WORK_DIR and RemoveAll races it.
+	t.Cleanup(func() { _ = mgr.Stop("scanner") })
 	deps.AgentMgr = mgr
 	return srv
 }

@@ -69,7 +69,7 @@ func hivesGoldenRows() []panes.HiveRow {
 
 func hivesGoldenOverlay() panes.HivesOverlay {
 	return panes.NewHivesOverlay().SetHives(hivesGoldenRows(),
-		"/home/op/.config/hive/profiles.yml", "/home/op/.config/hive/contributor.env")
+		"/home/op/.config/hive/profiles.yml", "/home/op/.config/hive/contributor.env", "ranked")
 }
 
 // TestHivesListGolden pins the populated list: every hive with its hub,
