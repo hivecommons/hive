@@ -212,6 +212,7 @@ jobs:
             [cmd/hive]=42     # 44.8% on 2026-09-17; bulk is main()/run-loop wiring; was 17
             [cmd/apiproxy]=92 # 95.6% on 2026-09-17; was 13
             [cmd/hive-backup]=85 # 90.4% on 2026-09-17; was 68
+            [cmd/hive-admin-mcp]=44 # 44.5% on PR #8807; stdio SDK/run wiring remains transport-bound while roster/refusal paths are tested
             # cmd/hivectl gained tests in a3f9842c and holds 100.0%, so it is no
             # longer exempt below — floored here instead of falling back to the
             # 90 default (#7407).

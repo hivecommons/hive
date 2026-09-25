@@ -1124,6 +1124,7 @@ jobs:
             [cmd/hive]=42     # 44.8% on 2026-09-17; bulk is main()/run-loop wiring; was 35
             [cmd/apiproxy]=92 # 95.6% on 2026-09-17; was 13
             [cmd/hive-backup]=85 # 90.4% on 2026-09-17; was 78
+            [cmd/hive-admin-mcp]=44 # 44.5% on PR #8807; stdio SDK/run wiring remains transport-bound while roster/refusal paths are tested
             [cmd/hivectl]=97  # 100.0% on 2026-09-17; was exempt as an untested main
             [cmd/flue-fixture]=75 # 80.0% on 2026-09-22 (#8361): main() is the single uncovered statement; run() and signalContext() are tested in-process and the binary is smoke-tested as a child process, which yields no profile
           )
