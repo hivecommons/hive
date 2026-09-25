@@ -27,9 +27,48 @@ func TestCapResultBoundsKnownListFields(t *testing.T) {
 	if !ok || len(agents) != 2 || capped["agents_truncated"] != true {
 		t.Fatalf("agents cap = %#v", capped)
 	}
+	meta, ok := capped["_admin_mcp"].(map[string]any)
+	if !ok || meta["truncated"] != true {
+		t.Fatalf("missing truncation disclosure: %#v", capped)
+	}
 	other, ok := capped["other"].([]any)
 	if !ok || len(other) != 3 {
 		t.Fatalf("unexpected non-list cap = %#v", capped)
+	}
+}
+
+func TestCapResultDisclosesTopLevelArrayTruncation(t *testing.T) {
+	capped, ok := CapResult([]any{"a", "b", "c"}, 2).(map[string]any)
+	if !ok {
+		t.Fatalf("capped = %#v", capped)
+	}
+	items, ok := capped["items"].([]any)
+	if !ok || len(items) != 2 || capped["truncated"] != true || capped["limit"] != 2 {
+		t.Fatalf("top-level array cap = %#v", capped)
+	}
+}
+
+func TestReadPathCoversPhaseTwoReadSurface(t *testing.T) {
+	for _, tool := range []string{
+		ToolFleetStatus,
+		ToolAgentsList,
+		ToolLeasesList,
+		ToolClaimsList,
+		ToolPlansList,
+		ToolAuditLog,
+		ToolSettingsRead,
+		ToolAutonomyReadiness,
+		ToolSpendRead,
+		ToolContributorsList,
+		ToolKnowledgeRead,
+		ToolHiveAdvisor,
+	} {
+		if !AllowedTool(tool) {
+			t.Fatalf("%s is not allowed", tool)
+		}
+		if path, ok := ReadPath(tool, 2); !ok || path == "" {
+			t.Fatalf("%s path = %q, %v", tool, path, ok)
+		}
 	}
 }
 

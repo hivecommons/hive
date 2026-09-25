@@ -20,7 +20,7 @@ that status is the thing to check before treating a page as current behaviour:
 
 ## Records
 
-- [The operator-facing admin MCP](admin-mcp.md) — **partly shipped (v6 phase 1).** The complement to
+- [The operator-facing admin MCP](admin-mcp.md) — **partly shipped (v6 phase 2).** The complement to
   [task-mcp.md](task-mcp.md): hive administration exposed as Model Context Protocol tools for an
   operator's assistant — phase 1 ships the read-only MCP endpoint on the dashboard mux, a stdio `cmd/` binary beside
   it, one transport-agnostic tool package, and the runtime refusal contract; later phases add writes. Authenticated by the dashboard

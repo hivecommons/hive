@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,9 +23,19 @@ const (
 	ServerVersion   = "0.1.0"
 
 	ToolHiveStatus         = "hive_status"
+	ToolFleetStatus        = "fleet_status"
 	ToolAgentsList         = "agents_list"
 	ToolRunsList           = "runs_list"
+	ToolLeasesList         = "leases_list"
 	ToolClaimsList         = "claims_list"
+	ToolPlansList          = "plans_list"
+	ToolAuditLog           = "audit_log"
+	ToolSettingsRead       = "settings_read"
+	ToolAutonomyReadiness  = "autonomy_readiness"
+	ToolSpendRead          = "spend_read"
+	ToolContributorsList   = "contributors_list"
+	ToolKnowledgeRead      = "knowledge_read"
+	ToolHiveAdvisor        = "hive_advisor"
 	ToolExclusionCatalogue = "exclusion_catalogue"
 	ToolRefuseOperation    = "refuse_operation"
 
@@ -99,7 +110,7 @@ var exclusions = []Exclusion{
 	{Operation: "Anything that issues, rotates, reads back or exchanges a credential", Kind: RefusalKindCategorical, Reason: "The surface exists to hand Hive state to a language model, and credential material is the one class of content that must never reach one. There is no version of this design in which these belong.", Tracker: judgementTracker},
 	{Operation: "purely presentational endpoints", Kind: RefusalKindCategorical, Reason: "They have no meaning in a conversation.", Tracker: judgementTracker},
 	{Operation: "Any tool taking a path, URL, or method as an argument", Kind: RefusalKindCategorical, Reason: "The allowlist is the design: Hive redacts per handler, so an unvetted endpoint is an unvetted redaction story.", Tracker: judgementTracker},
-	{Operation: "writes in phase 1", Kind: RefusalKindSwitchedOff, Reason: "Admin MCP phase 1 is read-only; write tools arrive only after the preview and confirmation contract is implemented in a later phase.", Tracker: "https://github.com/hivecommons/hive/issues/8699"},
+	{Operation: "writes before phase 3", Kind: RefusalKindSwitchedOff, Reason: "Admin MCP phases 1 and 2 are read-only; write tools arrive only after the preview and confirmation contract is implemented in phase 3.", Tracker: "https://github.com/hivecommons/hive/issues/8697"},
 }
 
 func Exclusions() []Exclusion {
@@ -119,7 +130,7 @@ func RefusalFor(operation string) (RefusalData, bool) {
 			return refusalData(ex), true
 		}
 	}
-	return refusalData(Exclusion{Operation: operation, Kind: RefusalKindSwitchedOff, Reason: "This operation is not an admin MCP phase 1 read tool; phase 1 is read-only and does not approximate excluded writes.", Tracker: "https://github.com/hivecommons/hive/issues/8699"}), false
+	return refusalData(Exclusion{Operation: operation, Kind: RefusalKindSwitchedOff, Reason: "This operation is not an admin MCP phase 2 read tool; phases 1 and 2 are read-only and do not approximate excluded writes.", Tracker: "https://github.com/hivecommons/hive/issues/8697"}), false
 }
 
 func refusalData(ex Exclusion) RefusalData {
@@ -230,9 +241,19 @@ func (h *Handler) callTool(ctx context.Context, raw json.RawMessage) (any, *rpcE
 func Tools() []map[string]any {
 	defs := []struct{ name, desc string }{
 		{ToolHiveStatus, "Read this hive's dashboard status summary."},
+		{ToolFleetStatus, "Read this hive's fleet status, including repo and agent health rollups."},
 		{ToolAgentsList, "Read the capped list of agents known to this hive."},
 		{ToolRunsList, "Read the capped list of runs known to this hive."},
+		{ToolLeasesList, "Read active run leases through the existing runs surface."},
 		{ToolClaimsList, "Read the capped list of issue claims known to this hive."},
+		{ToolPlansList, "Read the capped list of saved plans."},
+		{ToolAuditLog, "Read the capped audit log for this hive."},
+		{ToolSettingsRead, "Read governor settings through the existing dashboard settings endpoint."},
+		{ToolAutonomyReadiness, "Read autonomy/readiness status through the existing Nous status endpoint."},
+		{ToolSpendRead, "Read spend and budget status through the existing cost endpoint."},
+		{ToolContributorsList, "Read the capped list of contributors known to this hive."},
+		{ToolKnowledgeRead, "Read knowledge-system health and statistics."},
+		{ToolHiveAdvisor, "Read hive advisor recommendations."},
 		{ToolExclusionCatalogue, "Return the askable catalogue of operations deliberately excluded from admin MCP."},
 		{ToolRefuseOperation, "Return the recorded refusal for an excluded or unavailable operation."},
 	}
@@ -245,14 +266,16 @@ func Tools() []map[string]any {
 
 func AllowedTool(name string) bool {
 	switch name {
-	case ToolHiveStatus, ToolAgentsList, ToolRunsList, ToolClaimsList, ToolExclusionCatalogue, ToolRefuseOperation:
+	case ToolHiveStatus, ToolFleetStatus, ToolAgentsList, ToolRunsList, ToolLeasesList, ToolClaimsList,
+		ToolPlansList, ToolAuditLog, ToolSettingsRead, ToolAutonomyReadiness, ToolSpendRead,
+		ToolContributorsList, ToolKnowledgeRead, ToolHiveAdvisor, ToolExclusionCatalogue, ToolRefuseOperation:
 		return true
 	}
 	return false
 }
 
 func phaseOneMetadata() ToolMetadata {
-	return ToolMetadata{Preview: PreviewContract{Mode: "read_only_phase_1", Enabled: false, Note: "Write previews are scaffolded but no write tools ship in phase 1."}, Confirm: ConfirmContract{Required: false, Note: "Confirmation is reserved for later write phases; reads require no confirmation."}, Writes: false}
+	return ToolMetadata{Preview: PreviewContract{Mode: "read_only_phase_2", Enabled: false, Note: "Write previews are scaffolded but no write tools ship before phase 3."}, Confirm: ConfirmContract{Required: false, Note: "Confirmation is reserved for write phases; reads require no confirmation."}, Writes: false}
 }
 
 func inputSchema(name string) map[string]any {
@@ -280,23 +303,79 @@ func LimitFromArgs(args map[string]any) int {
 	return normalizeLimit(limit)
 }
 
+func ReadPath(tool string, limit int) (string, bool) {
+	values := url.Values{}
+	if limit > 0 {
+		values.Set("limit", fmt.Sprint(normalizeLimit(limit)))
+	}
+	suffix := ""
+	if encoded := values.Encode(); encoded != "" {
+		suffix = "?" + encoded
+	}
+	switch tool {
+	case ToolHiveStatus:
+		return "/api/status/summary", true
+	case ToolFleetStatus:
+		return "/api/status", true
+	case ToolAgentsList:
+		return "/api/agents" + suffix, true
+	case ToolRunsList, ToolLeasesList:
+		return "/api/runs" + suffix, true
+	case ToolClaimsList:
+		return "/api/claims" + suffix, true
+	case ToolPlansList:
+		return "/api/plans" + suffix, true
+	case ToolAuditLog:
+		return "/api/audit", true
+	case ToolSettingsRead:
+		return "/api/config/governor", true
+	case ToolAutonomyReadiness:
+		return "/api/nous/status", true
+	case ToolSpendRead:
+		return "/api/cost", true
+	case ToolContributorsList:
+		return "/api/contributors" + suffix, true
+	case ToolKnowledgeRead:
+		return "/api/knowledge/stats", true
+	case ToolHiveAdvisor:
+		return "/api/hive-advice", true
+	default:
+		return "", false
+	}
+}
+
 func CapResult(v any, limit int) any {
 	limit = normalizeLimit(limit)
 	switch x := v.(type) {
 	case []any:
 		if len(x) > limit {
-			return x[:limit]
+			return map[string]any{
+				"items":     x[:limit],
+				"truncated": true,
+				"limit":     limit,
+				"total":     len(x),
+			}
 		}
 		return x
 	case map[string]any:
+		var truncatedFields []string
 		out := make(map[string]any, len(x)+1)
 		for k, value := range x {
 			if items, ok := value.([]any); ok && cappedField(k) && len(items) > limit {
 				out[k] = items[:limit]
 				out[k+"_truncated"] = true
+				truncatedFields = append(truncatedFields, k)
 				continue
 			}
 			out[k] = value
+		}
+		if len(truncatedFields) > 0 {
+			sort.Strings(truncatedFields)
+			out["_admin_mcp"] = map[string]any{
+				"truncated":        true,
+				"limit":            limit,
+				"truncated_fields": truncatedFields,
+			}
 		}
 		return out
 	default:
@@ -306,7 +385,7 @@ func CapResult(v any, limit int) any {
 
 func cappedField(key string) bool {
 	switch strings.ToLower(key) {
-	case "agents", "runs", "claims", "items", "data":
+	case "agents", "runs", "leases", "claims", "plans", "entries", "contributors", "items", "data":
 		return true
 	default:
 		return false
