@@ -131,7 +131,7 @@ The "respect hold labels" text in policy templates is therefore a prompt-level b
 
 ## Repo-card legend vocabulary
 
-The repository-card legend is a UI vocabulary, not a second scheduler. Ready, in-progress, agent-filed, waiting-on-human, and likely-done bands are computed client-side from labels/assignees and `dashboard.issue_bands`; non-winning states stay as badges. State glyphs such as `⛔`, `❓`, `👤`, `✓`, role badges, stale `🕒`, PR `✓`/`◐`/`⚠`, held, reviewed `💬`, auto-merge `🔀`, and review-class badges explain the same data the table above names. Changing a band label changes the repo card description only; it does not make an item held, exempt, or actionable (`src/docs/dashboard.md:98-140`).
+The repository-card legend is a UI vocabulary, not a second scheduler. Ready, in-progress, agent-filed, waiting-on-human, and likely-done issue bands are computed client-side from labels/assignees and `dashboard.issue_bands`; PR bands are computed client-side from held/needs-human labels, merge verdicts, CI, review links, draft state, and the same waiting/stale display config. Non-winning states stay as badges. State glyphs such as `⛔`, `❓`, `👤`, `✓`, role badges, stale `🕒`, PR `✓`/`◐`/`⚠`, held `⏸`, failing CI `✗ CI`, conflicts `⑂`, reviewed `💬`, auto-merge `🔀`, and review-class badges explain the same data the table above names. Changing a band label changes the repo card description only; it does not make an item held, exempt, mergeable, or actionable (`src/docs/dashboard.md:98-165`).
 
 ## Documented inconsistencies and follow-ups
 

@@ -1,0 +1,1 @@
+- Band and sort repository-card pull requests by human gate, merge eligibility, blocked, review, open, and draft states, with updated_at in the PR payload.

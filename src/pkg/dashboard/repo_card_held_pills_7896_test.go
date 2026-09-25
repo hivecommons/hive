@@ -172,16 +172,16 @@ func TestRepoCardHeldPillStructure(t *testing.T) {
 		".repo-pills { display: grid; grid-template-columns: 1fr 1fr;",
 		`<div class="repo-pills"><div class="repo-pill-col repo-pill-col-issues">${issueCol}</div><div class="repo-pill-col repo-pill-col-prs">${prCol}</div></div>`,
 		"const issueCol = issuePills + heldIssuePills;",
-		"const prCol = prPills + heldPrPills;",
+		"const prCol = prPills;",
 		// Held tint, distinct from every merge-state and from needs-human.
 		".repo-issue-pill.held, .repo-pr-pill.held { --pill-c: var(--muted); border-style: dashed; }",
-		"const heldPrPills = (r.heldPrs || []).map(p => {",
+		"const prPills = groupedRepoPRs(r.openPrs || [], r.heldPrs || []).map(g => {",
 		"const heldIssuePills = (r.heldIssues || []).map(i => {",
-		`<a class="repo-pr-pill held${needsHuman ? ' needs-human' : ''}"`,
+		`<a class="repo-pr-pill${heldClass}${needsHuman ? ' needs-human' : mergeClass}${staleClass}"`,
 		`<a class="repo-issue-pill held"`,
 		// The state chip: ⚠ for the escalation kind of hold, ⏸ otherwise.
 		`<span class="repo-pr-pill needs-human pill-needs-human-badge pill-icon" title="${esc(heldTip)}"`,
-		"holdToggleChip(cardRepo, p, 'pr', true, canToggleHold, heldTip)",
+		"holdToggleChip(cardRepo, p, 'pr', held, canToggleHold, heldTip)",
 		"const text = held ? '▶ Release' : '⏸ Hold';",
 		"Release hold — removes hold label(s)",
 		"body: JSON.stringify({ held: wantHeld, type: type })",
@@ -202,13 +202,16 @@ func TestRepoCardHeldPillStructure(t *testing.T) {
 	}
 	// A held PR pill must never offer Queue auto-merge: a held PR is out of
 	// the automated lane by definition. Pin it on the held block's own text.
-	start := strings.Index(html, "const heldPrPills = (r.heldPrs || []).map(p => {")
-	end := strings.Index(html, "const issueCol = issuePills + heldIssuePills;")
+	start := strings.Index(html, "const queueBtn = held")
+	end := strings.Index(html, "const heldTip = held ? heldReason(p) : '';")
 	if start < 0 || end < start {
 		t.Fatal("cannot locate the held PR pill block")
 	}
 	heldBlock := html[start:end]
-	for _, forbidden := range []string{"queuePRAutoMerge", "canQueue", "Queue for Hive auto-merge", "planIssue"} {
+	if !strings.Contains(heldBlock, "const queueBtn = held\n            ? ''") {
+		t.Error("held PR branch must render no queue action")
+	}
+	for _, forbidden := range []string{"planIssue"} {
 		if strings.Contains(heldBlock, forbidden) {
 			t.Errorf("held pill block offers %q — a held item is out of the automated lane", forbidden)
 		}
