@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -292,4 +293,104 @@ func setSwarmAgents(s *Server, agents []FrontendAgent) {
 		s.status = &StatusPayload{}
 	}
 	s.status.Agents = append([]FrontendAgent(nil), agents...)
+}
+
+func TestSwarmPlayersAchievementsPersistenceAndEndpoint(t *testing.T) {
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	scorer := &fakeSwarmScorer{score: ghpkg.SwarmScore{
+		IssuesClosed:   3,
+		PRsMerged:      4,
+		Participants:   []string{"alice", "bob"},
+		PRsByAuthor:    map[string]int{"alice": 2, "bob": 2},
+		IssuesClosedBy: map[string]int{"alice": 3},
+	}}
+	path := filepath.Join(t.TempDir(), SwarmStateFileName)
+	store := newSwarmStore(path, scorer)
+	store.now = func() time.Time { return now }
+	store.duration = time.Hour
+	if _, err := store.start("acme/api", nil); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	store.now = func() time.Time { return now.Add(time.Hour) }
+	if _, err := store.end(context.Background(), "ended"); err != nil {
+		t.Fatalf("end: %v", err)
+	}
+	reloaded := newSwarmStore(path, nil)
+	players, err := reloaded.players(context.Background())
+	if err != nil {
+		t.Fatalf("players: %v", err)
+	}
+	if len(players) != 2 || players[0].Login != "alice" || players[0].PRsMerged != 2 || players[0].IssuesClosed != 3 {
+		t.Fatalf("players = %+v", players)
+	}
+	if !hasSwarmAchievement(players[0], SwarmAchievementFirstFlight) || !hasSwarmAchievement(players[0], SwarmAchievementTopScorer) || !hasSwarmAchievement(players[0], SwarmAchievementCloser) {
+		t.Fatalf("alice achievements = %+v", players[0].Achievements)
+	}
+
+	s, _ := apiServer(t)
+	s.SetContributorsDir(t.TempDir())
+	s.swarm = reloaded
+	rec := doOwnerGet(s, "/api/swarm/players")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("players endpoint status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body swarmPlayersResponse
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode players: %v", err)
+	}
+	if len(body.Players) != 2 || len(body.AchievementsCatalog) == 0 {
+		t.Fatalf("players response = %+v", body)
+	}
+	history, err := reloaded.history(context.Background())
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(history.TopPlayers) != 2 {
+		t.Fatalf("top players = %+v", history.TopPlayers)
+	}
+}
+
+func TestSwarmPlayersOldStateFileWithoutPlayers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), SwarmStateFileName)
+	if err := os.WriteFile(path, []byte(`{"history":[{"repo":"acme/api","start":"2026-09-24T12:00:00Z","end":"2026-09-24T13:00:00Z"}]}`), 0o644); err != nil {
+		t.Fatalf("write old state: %v", err)
+	}
+	store := newSwarmStore(path, nil)
+	players, err := store.players(context.Background())
+	if err != nil {
+		t.Fatalf("players: %v", err)
+	}
+	if len(players) != 0 {
+		t.Fatalf("players = %+v, want empty", players)
+	}
+}
+
+func TestAwardSwarmAchievementsRules(t *testing.T) {
+	rec := SwarmRecord{Repo: "acme/api", Start: time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)}
+	p := &SwarmPlayer{Login: "alice", Swarms: 3, currentSwarmPRs: 2, currentSwarmIssues: 3}
+	got := awardSwarmAchievements(p, rec, 1)
+	for _, a := range got {
+		p.Achievements = append(p.Achievements, a)
+	}
+	for _, id := range []string{SwarmAchievementFirstFlight, SwarmAchievementVeteran3, SwarmAchievementIronSwarm, SwarmAchievementTopScorer, SwarmAchievementCloser} {
+		if !hasSwarmAchievement(*p, id) {
+			t.Fatalf("missing %s in %+v", id, p.Achievements)
+		}
+	}
+	if dup := awardSwarmAchievements(p, rec, 1); len(dup) != 0 {
+		t.Fatalf("duplicate awards = %+v", dup)
+	}
+	p.Swarms = 10
+	if got := awardSwarmAchievements(p, rec, 0); len(got) != 1 || got[0].ID != SwarmAchievementVeteran10 {
+		t.Fatalf("veteran-10 award = %+v", got)
+	}
+}
+
+func hasSwarmAchievement(p SwarmPlayer, id string) bool {
+	for _, a := range p.Achievements {
+		if a.ID == id {
+			return true
+		}
+	}
+	return false
 }

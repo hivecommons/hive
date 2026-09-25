@@ -41,7 +41,14 @@ func TestScoreSwarmCountsClosedIssuesMergedPRsAndParticipants(t *testing.T) {
 		queries = append(queries, q)
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(q, "is:issue") {
-			_ = json.NewEncoder(w).Encode(map[string]any{"total_count": 4, "items": []any{}})
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"total_count": 4,
+				"items": []map[string]any{
+					{"closed_by": map[string]any{"login": "alice"}},
+					{"closed_by": map[string]any{"login": "alice"}},
+					{"closed_by": map[string]any{"login": "carol"}},
+				},
+			})
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -58,6 +65,9 @@ func TestScoreSwarmCountsClosedIssuesMergedPRsAndParticipants(t *testing.T) {
 	}
 	if score.IssuesClosed != 4 || score.PRsMerged != 2 || len(score.Participants) != 2 || score.Participants[0] != "alice" || score.Participants[1] != "bob" {
 		t.Fatalf("score = %+v", score)
+	}
+	if score.PRsByAuthor["bob"] != 2 || score.PRsByAuthor["alice"] != 1 || score.IssuesClosedBy["alice"] != 2 || score.IssuesClosedBy["carol"] != 1 {
+		t.Fatalf("attribution = prs %#v issues %#v", score.PRsByAuthor, score.IssuesClosedBy)
 	}
 	if len(queries) != 2 || !strings.Contains(queries[0], "closed:") || !strings.Contains(queries[1], "merged:") {
 		t.Fatalf("queries = %v", queries)

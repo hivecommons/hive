@@ -8570,16 +8570,23 @@
       const active = swarm && swarm.active;
       const title = (swarm && swarm.name) || (_swarmHistory && _swarmHistory.name) || 'Swarm';
       const leaders = (_swarmHistory && _swarmHistory.leaderboard) || [];
+      const players = (_swarmHistory && _swarmHistory.top_players) || [];
       const leaderHtml = leaders.length
         ? leaders.slice(0, 5).map(l => `<div class="swarm-leader-row"><span>#${l.rank} ${esc(l.repo)}</span><strong>${l.score || 0}</strong></div>`).join('')
         : '<div class="swarm-meta">No completed swarms yet.</div>';
+      const playerHtml = players.length
+        ? `<div class="swarm-leaderboard-title mt-3">Players</div>` + players.slice(0, 5).map(p => {
+            const trophies = (p.achievements || []).map(a => `<span title="${esc(a.title || a.id)}">🏆</span>`).join('');
+            return `<div class="swarm-leader-row"><span>${esc(p.login)} ${trophies}</span><strong>${Number(p.swarms || 0)} swarms · ${Number(p.prs_merged || 0)} PRs</strong></div>`;
+          }).join('')
+        : '';
       const main = active
         ? `<div class="swarm-title">🐝 ${esc(active.display_name || title)} active on ${esc(active.repo)}</div>
            <div class="swarm-meta">Prioritizing this repo until ${esc(swarmTime(active.end || ''))}${swarm.expires_in ? ' · ' + esc(swarm.expires_in) + ' left' : ''}.</div>
            ${active.prep ? `<div class="swarm-meta">prep: ${Number(active.prep.actionable_issues || 0)} actionable · ${Number(active.prep.unlabeled_issues || 0)} unlabeled · ${Number(active.prep.duplicate_candidates || 0)} possible dups</div>` : ''}
            <div class="mt-3"><button class="hv-btn btn-secondary btn-sm" data-action="endSwarm" data-arg-types="t" data-stop="1">End swarm</button></div>`
         : `<div class="swarm-title">🐝 ${esc(title)}</div><div class="swarm-meta">Start a 24h repo swarm from any repository card. Only one swarm can run at a time.</div>`;
-      setIfChanged(panel, `<div>${main}</div><div class="swarm-leaderboard"><div class="swarm-leaderboard-title">Swarm leaderboard</div>${leaderHtml}</div>`);
+      setIfChanged(panel, `<div>${main}</div><div class="swarm-leaderboard"><div class="swarm-leaderboard-title">Swarm leaderboard</div>${leaderHtml}${playerHtml}</div>`);
       if (!_swarmHistory) refreshSwarmHistory();
     }
 

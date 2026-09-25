@@ -80,6 +80,7 @@ type SwarmHistoryResponse struct {
 	Name        string        `json:"name"`
 	History     []SwarmRecord `json:"history"`
 	Leaderboard []SwarmLeader `json:"leaderboard"`
+	TopPlayers  []SwarmPlayer `json:"top_players,omitempty"`
 }
 
 type SwarmLeader struct {
@@ -90,8 +91,9 @@ type SwarmLeader struct {
 }
 
 type swarmState struct {
-	Active  *SwarmRecord  `json:"active,omitempty"`
-	History []SwarmRecord `json:"history,omitempty"`
+	Active  *SwarmRecord            `json:"active,omitempty"`
+	History []SwarmRecord           `json:"history,omitempty"`
+	Players map[string]*SwarmPlayer `json:"players,omitempty"`
 }
 
 type swarmScorer interface {
@@ -156,6 +158,7 @@ func (s *Server) registerSwarmRoutes() {
 	s.mux.HandleFunc("POST /api/swarm", s.handleSwarmPost)
 	s.mux.HandleFunc("DELETE /api/swarm", s.handleSwarmDelete)
 	s.mux.HandleFunc("GET /api/swarm/history", s.handleSwarmHistory)
+	s.mux.HandleFunc("GET /api/swarm/players", s.handleSwarmPlayers)
 }
 
 func (s *Server) swarmStore() *swarmStore {
@@ -250,7 +253,23 @@ func (st *swarmStore) history(ctx context.Context) (SwarmHistoryResponse, error)
 	_ = st.expireLocked(ctx)
 	history := append([]SwarmRecord(nil), st.state.History...)
 	sort.Slice(history, func(i, j int) bool { return history[i].Start.After(history[j].Start) })
-	return SwarmHistoryResponse{Name: st.name, History: history, Leaderboard: swarmLeaderboard(history)}, nil
+	players := sortedSwarmPlayers(st.state.Players)
+	if len(players) > 10 {
+		players = players[:10]
+	}
+	return SwarmHistoryResponse{Name: st.name, History: history, Leaderboard: swarmLeaderboard(history), TopPlayers: players}, nil
+}
+
+func (st *swarmStore) players(ctx context.Context) ([]SwarmPlayer, error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if err := st.loadLocked(); err != nil {
+		return nil, err
+	}
+	if err := st.expireLocked(ctx); err != nil {
+		return nil, err
+	}
+	return sortedSwarmPlayers(st.state.Players), nil
 }
 
 func swarmLeaderboard(history []SwarmRecord) []SwarmLeader {
@@ -356,11 +375,62 @@ func (st *swarmStore) finishActiveLocked(ctx context.Context, reason string) (Sw
 		} else {
 			rec.Score = SwarmScore{IssuesClosed: score.IssuesClosed, PRsMerged: score.PRsMerged, Participants: score.Participants}
 			rec.Participants = append([]string(nil), score.Participants...)
+			st.updatePlayersLocked(rec, score)
 		}
 	}
 	st.state.History = append(st.state.History, rec)
 	st.state.Active = nil
 	return rec, st.saveLocked()
+}
+
+func (st *swarmStore) updatePlayersLocked(rec SwarmRecord, score ghpkg.SwarmScore) {
+	if st.state.Players == nil {
+		st.state.Players = map[string]*SwarmPlayer{}
+	}
+	maxPRs := 0
+	for _, n := range score.PRsByAuthor {
+		if n > maxPRs {
+			maxPRs = n
+		}
+	}
+	seen := map[string]bool{}
+	for _, login := range score.Participants {
+		login = strings.TrimSpace(login)
+		if login != "" {
+			seen[login] = true
+		}
+	}
+	for login := range score.PRsByAuthor {
+		if strings.TrimSpace(login) != "" {
+			seen[login] = true
+		}
+	}
+	for login := range score.IssuesClosedBy {
+		if strings.TrimSpace(login) != "" {
+			seen[login] = true
+		}
+	}
+	for login := range seen {
+		p := st.state.Players[login]
+		if p == nil {
+			p = &SwarmPlayer{Login: login, FirstSwarm: rec.Start}
+			st.state.Players[login] = p
+		}
+		if p.FirstSwarm.IsZero() || rec.Start.Before(p.FirstSwarm) {
+			p.FirstSwarm = rec.Start
+		}
+		p.LastSwarm = rec.Start
+		p.Swarms++
+		p.currentSwarmPRs = score.PRsByAuthor[login]
+		p.currentSwarmIssues = score.IssuesClosedBy[login]
+		p.PRsMerged += p.currentSwarmPRs
+		p.IssuesClosed += p.currentSwarmIssues
+		rank := 0
+		if maxPRs > 0 && p.currentSwarmPRs == maxPRs {
+			rank = 1
+		}
+		p.Achievements = append(p.Achievements, awardSwarmAchievements(p, rec, rank)...)
+	}
 }
 
 var errSwarmActive = errors.New("another swarm is already active")
@@ -413,6 +483,15 @@ func (s *Server) handleSwarmHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, history)
+}
+
+func (s *Server) handleSwarmPlayers(w http.ResponseWriter, r *http.Request) {
+	players, err := s.swarmStore().players(r.Context())
+	if err != nil {
+		jsonError(w, "swarm players unavailable: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, swarmPlayersResponse{Players: players, AchievementsCatalog: swarmAchievementCatalog})
 }
 
 func (s *Server) handleSwarmPost(w http.ResponseWriter, r *http.Request) {

@@ -23047,6 +23047,27 @@
           }
         }
       }
+    },
+    "/api/swarm/players": {
+      "get": {
+        "tags": [
+          "Swarm"
+        ],
+        "summary": "Swarm player records",
+        "description": "Returns per-player swarm records sorted by swarms, PRs merged, and login, plus the achievement catalog.",
+        "responses": {
+          "200": {
+            "description": "JSON response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
