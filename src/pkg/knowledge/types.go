@@ -240,18 +240,22 @@ func (ft FactType) IsIdeation() bool {
 
 // Fact is a single knowledge entry returned by the wiki.
 type Fact struct {
-	Slug       string    `json:"slug"`
-	Title      string    `json:"title"`
-	Type       FactType  `json:"type"`
-	Body       string    `json:"body"`
-	Confidence float64   `json:"confidence"`
-	Status     string    `json:"status"`
-	Tags       []string  `json:"tags"`
-	Layer      LayerType `json:"layer"`
-	Sources    []Source  `json:"sources,omitempty"`
-	Related    []string  `json:"related,omitempty"`
-	UsageCount int       `json:"usage_count"`
-	LastUsed   time.Time `json:"last_used,omitempty"`
+	Slug       string   `json:"slug"`
+	Title      string   `json:"title"`
+	Type       FactType `json:"type"`
+	Body       string   `json:"body"`
+	Confidence float64  `json:"confidence"`
+	// ConfidenceScored is false when confidence is only a legacy/default value
+	// and should be shown as unscored rather than as a precise percentage.
+	ConfidenceScored bool      `json:"confidence_scored"`
+	ConfidenceReason string    `json:"confidence_reason,omitempty"`
+	Status           string    `json:"status"`
+	Tags             []string  `json:"tags"`
+	Layer            LayerType `json:"layer"`
+	Sources          []Source  `json:"sources,omitempty"`
+	Related          []string  `json:"related,omitempty"`
+	UsageCount       int       `json:"usage_count"`
+	LastUsed         time.Time `json:"last_used,omitempty"`
 
 	// Supersedes links to the fact this one replaced during L1→L2 evolution
 	// (e.g., acceptance → test_scaffold).
@@ -302,7 +306,7 @@ func (pk *PrimedKnowledge) FormatForPrompt() string {
 		b = append(b, "## "+typ+"\n\n"...)
 		for _, f := range facts {
 			b = append(b, "- **"+f.Title+"**"...)
-			if f.Confidence < 1.0 {
+			if f.ConfidenceScored && f.Confidence < 1.0 {
 				b = append(b, " (confidence: "...)
 				b = append(b, formatConfidence(f.Confidence)...)
 				b = append(b, ")"...)

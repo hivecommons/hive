@@ -2437,6 +2437,7 @@
     .kb-fact-item.selected { border-color: var(--accent); background: rgba(88,166,255,0.08); }
     .kb-fact-meta { flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); width: 50px; }
     .kb-fact-conf { font-size: 0.7rem; font-weight: 600; }
+    .kb-conf-unscored { color: var(--muted); font-weight: 600; }
     .kb-fact-conf-bar { width: 40px; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
     .kb-fact-conf-fill { height: 100%; border-radius: 2px; }
     .kb-fact-body { flex: 1; min-width: 0; }
@@ -13653,6 +13654,17 @@ function burnAreaChart() {
       return titleJunk && bodyJunk;
     }
 
+    function kbConfidenceBadge(f) {
+      if (!f || f.confidence_scored === false) {
+        const reason = (f && f.confidence_reason) || 'No confidence, validation, provenance, usage, or corroboration signal is available yet.';
+        return `<span class="kb-fact-conf" title="${escapeHtml(reason)}">unscored</span>`;
+      }
+      const conf = typeof f.confidence === 'number' ? f.confidence : 0;
+      const confPct = Math.round(conf * 100);
+      const reason = f.confidence_reason || ('Confidence score: ' + confPct + '%');
+      return `<span class="kb-fact-conf" style="color:${confColor(conf)}" title="${escapeHtml(reason)}">${confPct}%</span>`;
+    }
+
     function renderKnowledgeFacts() {
       const el = document.getElementById('kb-fact-list');
       if (!el) return;
@@ -13672,8 +13684,8 @@ function burnAreaChart() {
         const selected = _kbSelectedFact && _kbSelectedFact.slug === f.slug ? ' selected' : '';
         html += `<div class="kb-fact-item${selected}" data-action="gh17" data-arg0="${escapeHtml(f.slug || '')}">`;
         html += '<div class="kb-fact-meta">';
-        html += `<span class="kb-fact-conf" style="color:${confColor(conf)}">${confPct}%</span>`;
-        html += `<div class="kb-fact-conf-bar"><div class="kb-fact-conf-fill" style="width:${confPct}%;background:${confColor(conf)}"></div></div>`;
+        html += kbConfidenceBadge(f);
+        if (f.confidence_scored !== false) html += `<div class="kb-fact-conf-bar" title="${escapeHtml(f.confidence_reason || '')}"><div class="kb-fact-conf-fill" style="width:${confPct}%;background:${confColor(conf)}"></div></div>`;
         html += '</div>';
         html += '<div class="kb-fact-body">';
         html += `<div class="kb-fact-title">${escapeHtml(kbCleanFactTitle(f.title) || f.slug || 'Untitled')}</div>`;
@@ -13705,7 +13717,11 @@ function burnAreaChart() {
       html += '</div>';
       html += `<div class="kb-detail-body">${escapeHtml(f.body || 'No content')}</div>`;
       html += '<div class="kb-detail-meta">';
-      html += `<div><span class="kb-detail-label">Confidence:</span> <span style="color:${confColor(conf)};font-weight:600">${confPct}%</span></div>`;
+      if (f.confidence_scored === false) {
+        html += `<div><span class="kb-detail-label">Confidence:</span> <span title="${escapeHtml(f.confidence_reason || '')}" class="kb-conf-unscored">unscored</span></div>`;
+      } else {
+        html += `<div><span class="kb-detail-label">Confidence:</span> <span title="${escapeHtml(f.confidence_reason || '')}" style="color:${confColor(conf)};font-weight:600">${confPct}%</span></div>`;
+      }
       html += `<div><span class="kb-detail-label">Slug:</span> ${escapeHtml(f.slug || '')}</div>`;
       if (f.tags && f.tags.length) html += `<div><span class="kb-detail-label">Tags:</span> ${f.tags.map(t => escapeHtml(t)).join(', ')}</div>`;
       html += '</div>';

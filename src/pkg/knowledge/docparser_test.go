@@ -133,7 +133,7 @@ func TestChunksToFacts(t *testing.T) {
 		{Title: "Results", Body: "Results were positive."},
 	}
 
-	sourceDate := time.Date(2025, 1, 15, 0, 0, 0, 0, time.UTC)
+	sourceDate := time.Now().UTC()
 	facts := chunksToFacts(chunks, "test-paper", "https://example.com/paper.pdf", sourceDate)
 
 	// 1 summary + 3 section facts = 4
@@ -166,8 +166,8 @@ func TestChunksToFacts(t *testing.T) {
 		if f.SourcePR != "doc:test-paper" {
 			t.Errorf("fact %d: expected SourcePR 'doc:test-paper', got %q", i, f.SourcePR)
 		}
-		if f.Confidence != defaultDocConfidence {
-			t.Errorf("fact %d: expected confidence %f, got %f", i, defaultDocConfidence, f.Confidence)
+		if f.Confidence <= legacyFlatConfidence {
+			t.Errorf("fact %d: expected scored document confidence above legacy %.2f, got %f", i, legacyFlatConfidence, f.Confidence)
 		}
 
 		hasImportTag := false

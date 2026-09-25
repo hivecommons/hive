@@ -44,10 +44,16 @@ type FileStore struct {
 type filePage struct {
 	Slug       string
 	Title      string
+	Type       FactType
 	Body       string
 	Tags       []string
 	Related    []string
 	Confidence float64
+	Layer      LayerType
+	Status     string
+	Source     string
+	SourceURL  string
+	SourceDate time.Time
 	Path       string
 	ModTime    time.Time
 	Embedding  []float64
@@ -173,18 +179,24 @@ func (s *FileStore) reindex() {
 		slug := strings.TrimSuffix(rel, ext)
 		slug = strings.ReplaceAll(slug, string(filepath.Separator), "/")
 
-		title, body, tags, confidence, related := parseObsidianFile(string(data), filepath.Base(slug))
+		parsed := parseObsidianFileDetailed(string(data), filepath.Base(slug))
 
-		embeddingText := title + " " + strings.Join(tags, " ") + " " + body
+		embeddingText := parsed.title + " " + strings.Join(parsed.tags, " ") + " " + parsed.body
 		embedding := s.embedCache.Embed(embeddingText)
 
 		pages[slug] = filePage{
 			Slug:       slug,
-			Title:      title,
-			Body:       body,
-			Tags:       tags,
-			Related:    related,
-			Confidence: confidence,
+			Title:      parsed.title,
+			Type:       parsed.factType,
+			Body:       parsed.body,
+			Tags:       parsed.tags,
+			Related:    parsed.related,
+			Confidence: parsed.confidence,
+			Layer:      parsed.layer,
+			Status:     parsed.status,
+			Source:     parsed.source,
+			SourceURL:  parsed.sourceURL,
+			SourceDate: parsed.sourceDate,
 			Path:       path,
 			ModTime:    info.ModTime(),
 			Embedding:  embedding,
@@ -290,16 +302,17 @@ func (s *FileStore) Search(query string, limit int) []Fact {
 		if runes := []rune(snippet); len(runes) > maxSnippetRunes {
 			snippet = string(runes[:maxSnippetRunes]) + "…"
 		}
-		facts[i] = Fact{
+		facts[i] = applyConfidence(Fact{
 			Slug:       m.page.Slug,
 			Title:      m.page.Title,
-			Type:       FactPattern,
+			Type:       m.page.Type,
 			Body:       snippet,
-			Confidence: m.score,
+			Confidence: effectiveConfidence(m.page.Confidence),
+			Status:     m.page.Status,
 			Tags:       m.page.Tags,
 			Related:    m.page.Related,
-			Layer:      LayerPersonal,
-		}
+			Layer:      m.page.effectiveLayer(),
+		}, m.page.confidenceInput(s.accessCounts[m.page.Slug]))
 	}
 	return facts
 }
@@ -359,16 +372,18 @@ func (s *FileStore) ReadPage(slug string) (*Fact, error) {
 	if !ok {
 		return nil, fmt.Errorf("page not found: %s", slug)
 	}
-	return &Fact{
+	f := applyConfidence(Fact{
 		Slug:       p.Slug,
 		Title:      p.Title,
-		Type:       FactPattern,
+		Type:       p.Type,
 		Body:       p.Body,
 		Confidence: effectiveConfidence(p.Confidence),
+		Status:     p.Status,
 		Tags:       p.Tags,
 		Related:    p.Related,
-		Layer:      LayerPersonal,
-	}, nil
+		Layer:      p.effectiveLayer(),
+	}, p.confidenceInput(s.accessCounts[p.Slug]))
+	return &f, nil
 }
 
 // ListPages returns all pages, optionally filtered by a tag.
@@ -396,16 +411,17 @@ func (s *FileStore) ListPages(tagFilter string) []Fact {
 		if runes := []rune(snippet); len(runes) > maxSnippetRunes {
 			snippet = string(runes[:maxSnippetRunes]) + "…"
 		}
-		facts = append(facts, Fact{
+		facts = append(facts, applyConfidence(Fact{
 			Slug:       p.Slug,
 			Title:      p.Title,
-			Type:       FactPattern,
+			Type:       p.Type,
 			Body:       snippet,
 			Confidence: effectiveConfidence(p.Confidence),
+			Status:     p.Status,
 			Tags:       p.Tags,
 			Related:    p.Related,
-			Layer:      LayerPersonal,
-		})
+			Layer:      p.effectiveLayer(),
+		}, p.confidenceInput(s.accessCounts[p.Slug])))
 	}
 
 	sort.Slice(facts, func(i, j int) bool {
@@ -451,6 +467,20 @@ func (s *FileStore) Reindex() {
 
 const defaultFactConfidence = 0.8
 
+type parsedObsidianFile struct {
+	title      string
+	body       string
+	tags       []string
+	confidence float64
+	related    []string
+	factType   FactType
+	layer      LayerType
+	status     string
+	source     string
+	sourceURL  string
+	sourceDate time.Time
+}
+
 var wikilinkRe = regexp.MustCompile(`\[\[([^\]|]+)(?:\|[^\]]+)?\]\]`)
 
 func effectiveConfidence(parsed float64) float64 {
@@ -464,27 +494,52 @@ func effectiveConfidence(parsed float64) float64 {
 // from an Obsidian-style markdown file. Supports YAML frontmatter and inline
 // #tags and [[wikilinks]].
 func parseObsidianFile(content string, fallbackTitle string) (title string, body string, tags []string, confidence float64, related []string) {
-	title = fallbackTitle
-	body = content
+	parsed := parseObsidianFileDetailed(content, fallbackTitle)
+	return parsed.title, parsed.body, parsed.tags, parsed.confidence, parsed.related
+}
+
+func parseObsidianFileDetailed(content string, fallbackTitle string) parsedObsidianFile {
+	parsed := parsedObsidianFile{title: fallbackTitle, body: content, factType: FactPattern, layer: LayerPersonal}
 	const noConfidenceSentinel = -1.0
-	confidence = noConfidenceSentinel
+	parsed.confidence = noConfidenceSentinel
 
 	if strings.HasPrefix(content, "---\n") {
 		endIdx := strings.Index(content[4:], "\n---")
 		if endIdx > 0 {
 			frontmatter := content[4 : 4+endIdx]
-			body = strings.TrimSpace(content[4+endIdx+4:])
+			parsed.body = strings.TrimSpace(content[4+endIdx+4:])
 
 			for _, line := range strings.Split(frontmatter, "\n") {
 				line = strings.TrimSpace(line)
 				if strings.HasPrefix(line, "title:") {
-					title = strings.TrimSpace(strings.TrimPrefix(line, "title:"))
-					title = strings.Trim(title, "\"'")
+					parsed.title = strings.TrimSpace(strings.TrimPrefix(line, "title:"))
+					parsed.title = strings.Trim(parsed.title, "\"'")
+				}
+				if strings.HasPrefix(line, "type:") {
+					parsed.factType = FactType(strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "type:")), "\"'"))
+				}
+				if strings.HasPrefix(line, "layer:") {
+					parsed.layer = LayerType(strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "layer:")), "\"'"))
+				}
+				if strings.HasPrefix(line, "status:") {
+					parsed.status = strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "status:")), "\"'")
+				}
+				if strings.HasPrefix(line, "source:") {
+					parsed.source = strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "source:")), "\"'")
+				}
+				if strings.HasPrefix(line, "source_url:") {
+					parsed.sourceURL = strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "source_url:")), "\"'")
+				}
+				if strings.HasPrefix(line, "synthesized:") || strings.HasPrefix(line, "imported:") || strings.HasPrefix(line, "synced:") {
+					_, value, _ := strings.Cut(line, ":")
+					if ts, err := time.Parse(time.RFC3339, strings.Trim(strings.TrimSpace(value), "\"'")); err == nil {
+						parsed.sourceDate = ts
+					}
 				}
 				if strings.HasPrefix(line, "confidence:") {
 					confStr := strings.TrimSpace(strings.TrimPrefix(line, "confidence:"))
 					if v, err := strconv.ParseFloat(confStr, 64); err == nil {
-						confidence = v
+						parsed.confidence = v
 					}
 				}
 				if strings.HasPrefix(line, "related:") {
@@ -495,7 +550,7 @@ func parseObsidianFile(content string, fallbackTitle string) (title string, body
 							r = strings.TrimSpace(r)
 							r = strings.Trim(r, "\"'")
 							if r != "" {
-								related = append(related, r)
+								parsed.related = append(parsed.related, r)
 							}
 						}
 					}
@@ -508,49 +563,73 @@ func parseObsidianFile(content string, fallbackTitle string) (title string, body
 							t = strings.TrimSpace(t)
 							t = strings.Trim(t, "\"'")
 							if t != "" {
-								tags = append(tags, t)
+								parsed.tags = append(parsed.tags, t)
 							}
 						}
 					}
 				}
-				if strings.HasPrefix(line, "- ") && len(tags) > 0 {
+				if strings.HasPrefix(line, "- ") && len(parsed.tags) > 0 {
 					t := strings.TrimSpace(strings.TrimPrefix(line, "- "))
 					t = strings.Trim(t, "\"'")
 					if t != "" {
-						tags = append(tags, t)
+						parsed.tags = append(parsed.tags, t)
 					}
 				}
 			}
 		}
 	}
 
-	if strings.HasPrefix(body, "# ") {
-		nlIdx := strings.Index(body, "\n")
+	if strings.HasPrefix(parsed.body, "# ") {
+		nlIdx := strings.Index(parsed.body, "\n")
 		if nlIdx > 0 {
-			title = strings.TrimSpace(body[2:nlIdx])
-			body = strings.TrimSpace(body[nlIdx+1:])
+			parsed.title = strings.TrimSpace(parsed.body[2:nlIdx])
+			parsed.body = strings.TrimSpace(parsed.body[nlIdx+1:])
 		}
 	}
 
 	// Extract inline Obsidian #tags
-	for _, word := range strings.Fields(body) {
+	for _, word := range strings.Fields(parsed.body) {
 		if strings.HasPrefix(word, "#") && len(word) > 1 && !strings.HasPrefix(word, "##") {
 			tag := strings.Trim(word, "#.,;:!?")
-			if tag != "" && !containsTag(tags, tag) {
-				tags = append(tags, tag)
+			if tag != "" && !containsTag(parsed.tags, tag) {
+				parsed.tags = append(parsed.tags, tag)
 			}
 		}
 	}
 
 	// Extract [[wikilinks]] from body as related slugs
-	for _, match := range wikilinkRe.FindAllStringSubmatch(body, -1) {
+	for _, match := range wikilinkRe.FindAllStringSubmatch(parsed.body, -1) {
 		slug := strings.TrimSpace(match[1])
-		if slug != "" && !containsTag(related, slug) {
-			related = append(related, slug)
+		if slug != "" && !containsTag(parsed.related, slug) {
+			parsed.related = append(parsed.related, slug)
 		}
 	}
 
-	return title, body, tags, confidence, related
+	return parsed
+}
+
+func (p filePage) effectiveLayer() LayerType {
+	if p.Layer != "" {
+		return p.Layer
+	}
+	return LayerPersonal
+}
+
+func (p filePage) confidenceInput(accesses int) confidenceInput {
+	return confidenceInput{
+		Raw:        p.Confidence,
+		HasRaw:     p.Confidence >= 0,
+		Type:       p.Type,
+		Layer:      p.effectiveLayer(),
+		Status:     p.Status,
+		Tags:       p.Tags,
+		Related:    p.Related,
+		Source:     p.Source,
+		SourceURL:  p.SourceURL,
+		SourceDate: p.SourceDate,
+		ModTime:    p.ModTime,
+		Accesses:   accesses,
+	}
 }
 
 func containsTag(tags []string, tag string) bool {
