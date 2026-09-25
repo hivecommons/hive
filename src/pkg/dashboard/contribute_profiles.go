@@ -150,7 +150,12 @@ type ContributorProfile struct {
 	// reviewed this contributor's work (hivecommons/hive#7760). Display only.
 	AdvisorModel  string `json:"advisor_model,omitempty"`
 	AdvisorEffort string `json:"advisor_effort,omitempty"`
-	AvatarURL     string `json:"avatar_url,omitempty"`
+	// Team is opt-in contributor runtime metadata used only for public,
+	// aggregate distro/OS/agent leaderboards. Relays send it only when the
+	// operator enables team metadata locally; it intentionally contains no
+	// hostname, username, IP address, or hardware serial.
+	Team      *ContributorTeamMetadata `json:"team,omitempty"`
+	AvatarURL string                   `json:"avatar_url,omitempty"`
 	// InvitedBy records the GitHub username of the TRUSTED/advisor contributor
 	// who invited this person via a trusted invite link (issue #2598). It is
 	// pure attribution: it never affects TrustTier (an invitee always joins as

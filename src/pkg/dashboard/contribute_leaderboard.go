@@ -11,14 +11,15 @@ import (
 
 // LeaderboardEntry is the JSON shape returned by the leaderboard API.
 type LeaderboardEntry struct {
-	Rank           int    `json:"rank"`
-	GitHubUsername string `json:"github_username"`
-	AvatarURL      string `json:"avatar_url"`
-	TrustTier      string `json:"trust_tier"`
-	TasksCompleted int    `json:"tasks_completed"`
-	TasksFailed    int    `json:"tasks_failed"`
-	Findings       int    `json:"findings,omitempty"`
-	RegisteredAt   string `json:"registered_at"`
+	Rank           int                      `json:"rank"`
+	GitHubUsername string                   `json:"github_username"`
+	AvatarURL      string                   `json:"avatar_url"`
+	TrustTier      string                   `json:"trust_tier"`
+	TasksCompleted int                      `json:"tasks_completed"`
+	TasksFailed    int                      `json:"tasks_failed"`
+	Findings       int                      `json:"findings,omitempty"`
+	RegisteredAt   string                   `json:"registered_at"`
+	Team           *ContributorTeamMetadata `json:"team,omitempty"`
 	// EquippedTitle is the contributor's self-chosen dossier title (e.g.
 	// "WOLFHERDER"); rendered as a small accent after the name. Optional.
 	EquippedTitle string                        `json:"equipped_title,omitempty"`
@@ -46,6 +47,11 @@ func buildLeaderboardWithActivity(activity []ActivityEntry) []LeaderboardEntry {
 		}
 		rank++
 		_, achievementSummary := buildAchievements2(&p, activity)
+		var team *ContributorTeamMetadata
+		if p.Team != nil && teamMetadataDeclared(*p.Team) {
+			hydrated := hydrateContributorTeam(*p.Team, p.Team.AgentBackend)
+			team = &hydrated
+		}
 		entries = append(entries, LeaderboardEntry{
 			Rank:           rank,
 			GitHubUsername: p.GitHubUsername,
@@ -54,6 +60,7 @@ func buildLeaderboardWithActivity(activity []ActivityEntry) []LeaderboardEntry {
 			TasksCompleted: p.TasksCompleted,
 			TasksFailed:    p.TasksFailed,
 			RegisteredAt:   p.RegisteredAt,
+			Team:           team,
 			EquippedTitle:  p.EquippedTitle,
 			Achievement2:   achievementSummary,
 		})
@@ -158,6 +165,7 @@ func (s *Server) buildAgentLeaderboardEntries() []LeaderboardEntry {
 			TasksFailed:    proc.RestartCount,
 			Findings:       totalFindings,
 			RegisteredAt:   "",
+			Team:           ptrContributorTeam(hydrateContributorTeam(ContributorTeamMetadata{AgentBackend: name}, name)),
 			IsAgent:        true,
 			Emoji:          emoji,
 		})

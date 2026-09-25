@@ -386,6 +386,46 @@ test('relaunch command includes --model for a model-taking backend', () => {
   } finally { teardown(relay); }
 });
 
+test('team metadata is absent unless explicitly opted in', () => {
+  const relay = loadRelay({ backend: 'copilot' });
+  try {
+    assert.strictEqual(relay.optInTeamMetadata(), undefined);
+  } finally { teardown(relay); }
+});
+
+test('team metadata reports bounded opt-in overrides without identity fields', () => {
+  const teamEnv = {
+    HIVE_CONTRIBUTOR_TEAM_METADATA: '1',
+    HIVE_TEAM_OS_FAMILY: 'linux',
+    HIVE_TEAM_OS_ID: 'bluefin',
+    HIVE_TEAM_OS_NAME: 'Bluefin',
+    HIVE_TEAM_OS_VERSION_ID: '40',
+    HIVE_TEAM_OS_ID_LIKE: 'fedora rpm-ostree',
+    HIVE_TEAM_KERNEL_RELEASE: '6.9.1',
+  };
+  const relay = loadRelay({
+    backend: 'pi',
+    env: teamEnv,
+  });
+  const savedEnv = { ...process.env };
+  try {
+    Object.assign(process.env, teamEnv);
+    assert.deepStrictEqual(relay.optInTeamMetadata(), {
+      os_family: 'linux',
+      os_release_id: 'bluefin',
+      os_name: 'Bluefin',
+      os_version_id: '40',
+      os_id_like: ['fedora', 'rpm-ostree'],
+      kernel_release: '6.9.1',
+      agent_backend: 'pi',
+    });
+  } finally {
+    process.env = savedEnv;
+    process.env.HIVE_RELAY_TEST_MODE = '1';
+    teardown(relay);
+  }
+});
+
 test('relaunchCLI() sends the model flag to tmux, not just the bare binary', () => {
   const relay = loadRelay({ backend: 'copilot', model: 'gpt-5.6-luna' });
   try {

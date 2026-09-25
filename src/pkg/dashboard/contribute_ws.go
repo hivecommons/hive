@@ -501,7 +501,11 @@ type WSMessage struct {
 	// omits both and an older hub ignores them. Display metadata only.
 	AdvisorModel           string `json:"advisor_model,omitempty"`
 	AdvisorReasoningEffort string `json:"advisor_reasoning_effort,omitempty"`
-	TaskID                 string `json:"task_id,omitempty"`
+	// Team is optional contributor-supplied team metadata. It is only accepted
+	// from opt-in relays and is stored as display/leaderboard data, never as
+	// admission or routing authority.
+	Team   *ContributorTeamMetadata `json:"team,omitempty"`
+	TaskID string                   `json:"task_id,omitempty"`
 	// TaskGen is the assignment GENERATION / lease token for this task (kubestellar/
 	// hive#2568, the Gate). The hub stamps it on task_assign; the relay echoes it back
 	// on task_progress / task_complete / task_failed. The hub rejects any completion or
@@ -2610,6 +2614,12 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 	if advisorModel != "" {
 		profile.AdvisorModel = advisorModel
 		profile.AdvisorEffort = advisorEffort
+	}
+	if msg.Team != nil && teamMetadataDeclared(*msg.Team) {
+		team := sanitizeContributorTeam(*msg.Team, profile.CLIBackend)
+		profile.Team = &team
+	} else {
+		profile.Team = nil
 	}
 	if profile.AvatarURL == "" {
 		profile.AvatarURL = fmt.Sprintf("https://github.com/%s.png", profile.GitHubUsername)

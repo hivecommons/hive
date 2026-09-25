@@ -25,6 +25,12 @@
 //   HIVE_AGENT_ROLE        — optional spoke agent role to claim (scanner,
 //                           quality, outreach, etc.; hub-enforced)
 //   HIVE_AGENT_SESSION     — tmux session name for the agent (default: contributor)
+//   HIVE_CONTRIBUTOR_TEAM_METADATA — opt in to sending privacy-bounded OS/distro/
+//                           kernel/agent team metadata for sub-leaderboards.
+//                           Overrides: HIVE_TEAM_OS_FAMILY, HIVE_TEAM_OS_ID,
+//                           HIVE_TEAM_OS_NAME, HIVE_TEAM_OS_VERSION_ID,
+//                           HIVE_TEAM_OS_ID_LIKE, HIVE_TEAM_KERNEL_RELEASE,
+//                           HIVE_TEAM_AGENT_BACKEND.
 
 'use strict';
 
@@ -98,6 +104,7 @@ const PI_ENV = BACKEND === 'pi' ? { ...process.env } : {};
 let piInvocationState = 'untested';
 const REASONING_EFFORT = process.env.AGENT_REASONING_EFFORT || '';
 const AGENT_ROLE = (process.env.HIVE_AGENT_ROLE || '').trim();
+const TEAM_METADATA_ENABLED = /^(1|true|yes|on)$/i.test((process.env.HIVE_CONTRIBUTOR_TEAM_METADATA || process.env.HIVE_TEAM_METADATA || '').trim());
 // HIVE_SESSION — optional session label (multi-session-per-account). One GitHub
 // account has one contributor identity per hub, and the hub keys task
 // leases/cooldowns/ownership on that identity, so two relays under the same
@@ -2041,6 +2048,55 @@ function detectCapabilities() {
   if (BACKEND === 'pi') Object.assign(caps, piReadiness(PI_SELECTION, !!cliVersion, piInvocationState, PI_ENV));
   cachedCapabilities = caps;
   return caps;
+}
+
+function relayOSFamily() {
+  if (process.env.HIVE_TEAM_OS_FAMILY) return process.env.HIVE_TEAM_OS_FAMILY.trim();
+  if (process.platform === 'darwin') return 'macos';
+  if (process.platform === 'win32') return 'windows';
+  return process.platform;
+}
+
+function parseOSRelease(contents) {
+  const out = {};
+  for (const line of String(contents || '').split(/\r?\n/)) {
+    const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
+    if (!m) continue;
+    let val = m[2].trim();
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    out[m[1]] = val.replace(/\\"/g, '"');
+  }
+  return out;
+}
+
+function optInTeamMetadata() {
+  if (!TEAM_METADATA_ENABLED) return undefined;
+  let osr = {};
+  try {
+    if (process.platform === 'linux' && fs.existsSync('/etc/os-release')) {
+      osr = parseOSRelease(fs.readFileSync('/etc/os-release', 'utf8'));
+    }
+  } catch (_) { osr = {}; }
+  let kernel = (process.env.HIVE_TEAM_KERNEL_RELEASE || '').trim();
+  if (!kernel) {
+    try { kernel = execFileSync('uname', ['-r'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch (_) { kernel = ''; }
+  }
+  const idLikeRaw = (process.env.HIVE_TEAM_OS_ID_LIKE || osr.ID_LIKE || '').trim();
+  const team = {
+    os_family: relayOSFamily(),
+    os_release_id: (process.env.HIVE_TEAM_OS_ID || osr.ID || '').trim(),
+    os_name: (process.env.HIVE_TEAM_OS_NAME || osr.NAME || '').trim(),
+    os_version_id: (process.env.HIVE_TEAM_OS_VERSION_ID || osr.VERSION_ID || '').trim(),
+    os_id_like: idLikeRaw ? idLikeRaw.split(/\s+/).filter(Boolean) : undefined,
+    kernel_release: kernel,
+    agent_backend: (process.env.HIVE_TEAM_AGENT_BACKEND || BACKEND || '').trim(),
+  };
+  Object.keys(team).forEach(k => {
+    if (team[k] === '' || (Array.isArray(team[k]) && team[k].length === 0)) delete team[k];
+  });
+  return team;
 }
 
 // CLI_VERSION_PROBE_TIMEOUT_MS bounds the `<cli> --version` probe. Generous
@@ -7432,6 +7488,7 @@ function handleMessage(data, hub) {
         // posture and protocol version. An older hub ignores these unknown fields.
         protocol_version: RELAY_PROTOCOL_VERSION,
         capabilities: detectCapabilities(),
+        team: optInTeamMetadata(),
       });
       break;
 
@@ -8037,6 +8094,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
   module.exports = {
     buildLaunchCommand,
     detectCapabilities,
+    optInTeamMetadata,
     detectAgentCLIVersion,
     sanitizeDeclaredValue,
     handleMessage,

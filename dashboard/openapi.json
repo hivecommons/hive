@@ -12992,6 +12992,53 @@
         }
       }
     },
+    "/api/leaderboard/teams": {
+      "get": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Public team leaderboards",
+        "description": "Returns read-only opt-in contributor sub-leaderboards grouped by distro, OS family, and agent backend, plus a rarest setup callout. Public, GET only.",
+        "responses": {
+          "200": {
+            "description": "Team leaderboards",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "by_distro": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TeamLeaderboardEntry"
+                      }
+                    },
+                    "by_os_family": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TeamLeaderboardEntry"
+                      }
+                    },
+                    "by_agent": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TeamLeaderboardEntry"
+                      }
+                    },
+                    "rarest_setup": {
+                      "type": "object"
+                    },
+                    "generated_from": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/leaderboard/contributor/{username}": {
       "get": {
         "tags": [
@@ -23050,42 +23097,120 @@
     },
     "/api/swarm/players": {
       "get": {
-        "tags": ["Swarm"],
+        "tags": [
+          "Swarm"
+        ],
         "summary": "Swarm player records",
         "description": "Returns per-player swarm records sorted by swarms, PRs merged, and login, plus the achievement catalog.",
-        "responses": {"200": {"description": "JSON response", "content": {"application/json": {"schema": {"type": "object"}}}}}
+        "responses": {
+          "200": {
+            "description": "JSON response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/swarm/themes": {
       "get": {
-        "tags": ["Swarm"],
+        "tags": [
+          "Swarm"
+        ],
         "summary": "Swarm themes",
         "description": "Returns the default swarm theme and per-repo theme overrides.",
-        "responses": {"200": {"description": "JSON response", "content": {"application/json": {"schema": {"type": "object"}}}}}
+        "responses": {
+          "200": {
+            "description": "JSON response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
       },
       "put": {
-        "tags": ["Swarm"],
+        "tags": [
+          "Swarm"
+        ],
         "summary": "Set a repo swarm theme",
         "description": "Owner-only. Stores a per-repo event name, call-to-arms, and leaderboard title for future swarms.",
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object"}}}},
-        "responses": {"200": {"description": "JSON response"}, "403": {"description": "Owner access required"}}
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON response"
+          },
+          "403": {
+            "description": "Owner access required"
+          }
+        }
       }
     },
     "/api/swarm/objectives": {
       "patch": {
-        "tags": ["Swarm"],
+        "tags": [
+          "Swarm"
+        ],
         "summary": "Update swarm objectives",
         "description": "Owner-only. Updates the active swarm SDLC objective checklist completion state.",
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object"}}}},
-        "responses": {"200": {"description": "JSON response"}, "403": {"description": "Owner access required"}, "404": {"description": "No active swarm"}}
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON response"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "No active swarm"
+          }
+        }
       }
     },
     "/api/leaderboard/swarm": {
       "get": {
-        "tags": ["Swarm"],
+        "tags": [
+          "Swarm"
+        ],
         "summary": "Public swarm leaderboard",
         "description": "Stable public JSON record of completed swarm history, repo leaderboard, top players, and achievements.",
-        "responses": {"200": {"description": "JSON response", "content": {"application/json": {"schema": {"type": "object"}}}}}
+        "responses": {
+          "200": {
+            "description": "JSON response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
       }
     }
   },
@@ -23283,6 +23408,38 @@
           },
           "taken_from_kind": {
             "type": "string"
+          }
+        }
+      },
+      "TeamLeaderboardEntry": {
+        "type": "object",
+        "properties": {
+          "team": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "rank": {
+            "type": "integer"
+          },
+          "members": {
+            "type": "integer"
+          },
+          "tasks_completed": {
+            "type": "integer"
+          },
+          "tasks_failed": {
+            "type": "integer"
+          },
+          "findings": {
+            "type": "integer"
+          },
+          "top_contributors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       }

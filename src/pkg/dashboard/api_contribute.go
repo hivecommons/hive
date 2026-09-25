@@ -238,6 +238,7 @@ func (s *Server) registerContributeRoutes() {
 
 	s.mux.HandleFunc("GET /leaderboard", s.handleLeaderboardPage)
 	s.mux.HandleFunc("GET /api/leaderboard", s.handleLeaderboardAPI)
+	s.mux.HandleFunc("GET /api/leaderboard/teams", s.handleTeamLeaderboardAPI)
 	s.mux.HandleFunc("GET /api/leaderboard/style", s.handleLeaderboardStyle)
 	// Central per-user "Me" profile — a HUB endpoint returning one contributor's
 	// cross-hive profile (identity/tier/stats/milestones/hives/rank), aggregated
