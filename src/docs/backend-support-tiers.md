@@ -74,8 +74,10 @@ the floor, T2 adds confinement, T1 adds the unattended-credential story.
    binary accepts and ignores is not a control. The unattended flag is the
    vendor's approval-off flag, not its disable-everything flag; the latter
    belongs behind the tier's escape-hatch env var (compare
-   `--dangerously-skip-permissions` for claude and
-   `--dangerously-bypass-approvals-and-sandbox` for codex).
+   `--dangerously-skip-permissions` for claude and the hub-path
+   `--dangerously-bypass-approvals-and-sandbox` for codex; contributor-local
+   codex keeps its explicit approval/sandbox posture from
+   `config/backends.conf`).
 4. **Honest credential detection.** Add a `<name>` case to `detect_cli` in
    `bin/contributor-agent.sh`. `--version` is acceptable only when it proves
    the CLI can authenticate; if the binary exits 0 with no credential at all,

@@ -241,7 +241,7 @@ var blockingPrompts = []blockingPrompt{
 	},
 	{
 		backend: "codex",
-		// codex: "✨ Update available! x -> y" → 3. Skip until next version.
+		// codex: "✨ Update available[!] x -> y" → 3. Skip until next version.
 		//
 		// Deliberately NOT "1. Update now", which is the PRE-SELECTED option:
 		// it runs `npm install -g @openai/codex` as the unprivileged agent UID,
@@ -253,10 +253,23 @@ var blockingPrompts = []blockingPrompt{
 		// "Skip until next version" is chosen over a plain "Skip" because it
 		// persists: a plain Skip re-prompts on the very next launch.
 		match: func(p string) bool {
-			return strings.Contains(p, "Update available!") && strings.Contains(p, "Skip until next version")
+			return strings.Contains(p, "Update available") && strings.Contains(p, "Skip until next version")
 		},
 		key:   "3",
 		label: codexUpdatePromptLabel,
+	},
+	{
+		backend: "codex",
+		// codex command approval prompt. The hub path now launches with
+		// --dangerously-bypass-approvals-and-sandbox, but this keeps already
+		// wedged panes visible and lets the watcher make the same unattended
+		// choice the launch posture declares.
+		match: func(p string) bool {
+			return strings.Contains(p, "Would you like to run the following command?") &&
+				strings.Contains(p, "Yes, proceed")
+		},
+		key:   "1",
+		label: "codex command approval",
 	},
 }
 
