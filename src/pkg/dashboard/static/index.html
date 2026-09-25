@@ -2047,6 +2047,49 @@
     .config-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-5); }
     .config-field-row4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: var(--sp-5); }
 
+    .extensions-tab { display: grid; gap: var(--sp-6); }
+    .extensions-intro { margin: var(--sp-0); color: var(--muted); line-height: 1.5; }
+    .extension-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--sp-4); }
+    .extension-summary-item { display: flex; justify-content: space-between; gap: var(--sp-4); align-items: center; padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); color: var(--text); text-decoration: none; }
+    .extension-summary-item:hover { border-color: color-mix(in srgb, var(--amber) 45%, var(--border)); }
+    .extension-summary-item span { display: grid; gap: var(--sp-1); }
+    .extension-summary-item small { color: var(--muted); font-size: var(--fs-xs); }
+    .extension-card { border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); padding: var(--sp-6); }
+    .extension-card.is-disabled .extension-details-body { opacity: 0.72; }
+    .extension-card-header { display: flex; justify-content: space-between; gap: var(--sp-6); align-items: flex-start; margin-bottom: var(--sp-4); }
+    .extension-card-copy { min-width: 0; }
+    .extension-title-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+    .extension-title-row h3 { margin: var(--sp-0); font-size: 1rem; color: var(--text); }
+    .extension-card-copy p { margin: var(--sp-2) var(--sp-0) var(--sp-0); color: var(--muted); line-height: 1.45; }
+    .extension-card-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-4); flex-wrap: wrap; }
+    .extension-toggle { margin-bottom: var(--sp-0); white-space: nowrap; }
+    .extension-details { border-top: 1px solid var(--border); padding-top: var(--sp-4); }
+    .extension-details > summary, .extension-advanced > summary { cursor: pointer; color: var(--muted); font-size: var(--fs-sm); font-weight: 700; }
+    .extension-details-body { display: grid; gap: var(--sp-6); padding-top: var(--sp-5); }
+    .extension-section { display: grid; gap: var(--sp-4); }
+    .extension-section h4 { margin: var(--sp-0); color: var(--muted); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.08em; }
+    .extensions-tab .config-field { margin-bottom: var(--sp-0); }
+    .extensions-tab .config-field input[type="text"], .extensions-tab .config-field input[type="number"], .extensions-tab .config-field select { min-height: 38px; box-sizing: border-box; }
+    .extension-chip-row { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
+    .extension-chip { display: inline-flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-pill); background: var(--bg-soft); color: var(--text); font-size: var(--fs-sm); cursor: pointer; }
+    .extension-chip input { margin: var(--sp-0); }
+    .extension-callout { padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg-soft); color: var(--muted); line-height: 1.45; }
+    .extension-callout.success { border-color: color-mix(in srgb, var(--green) 35%, var(--border)); background: color-mix(in srgb, var(--green) 10%, var(--surface)); color: var(--text); }
+    .extension-callout.warning { border-color: color-mix(in srgb, var(--amber) 55%, var(--border)); background: color-mix(in srgb, var(--amber) 12%, var(--surface)); color: var(--text); }
+    .extension-advanced { border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-4); background: var(--bg-soft); }
+    .extension-advanced .extension-relay-block { margin-top: var(--sp-4); }
+    .extension-relay-block { display: grid; gap: var(--sp-4); }
+    .extension-relay-actions { display: flex; gap: var(--sp-4); align-items: center; flex-wrap: wrap; color: var(--muted); font-size: var(--fs-sm); }
+    .extension-peer-list { color: var(--muted); font-size: var(--fs-sm); }
+    .extension-peer-list > div { margin-top: var(--sp-2); }
+    .extension-toggle-field { display: grid; align-content: start; gap: var(--sp-2); }
+    .extension-footnote { margin: var(--sp-0); color: var(--muted); }
+    @media (max-width: 760px) {
+      .extensions-tab .config-field-row { grid-template-columns: 1fr; }
+      .extension-card-header { flex-direction: column; }
+      .extension-card-actions { justify-content: flex-start; }
+    }
+
     .config-toggle {
       display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
     }
@@ -25952,19 +25995,56 @@ function burnAreaChart() {
       return proto + '//' + location.host + '/contribute';
     }
 
-    function extensionCard(title, subtitle, body) {
-      return `<div>
-        <div><div><h3>${title}</h3><div>${subtitle}</div></div></div>${body}</div>`;
+    function extensionToggleHTML(enabled, key, label) {
+      return `<div class="config-toggle extension-toggle">
+        <div class="config-toggle-switch ${enabled ? 'on' : ''}" role="switch" aria-checked="${enabled ? 'true' : 'false'}" tabindex="0" aria-label="${esc(label)}" data-action="toggleConfigSwitch" data-section="features" data-key="${esc(key)}" data-keydown-action="toggleConfigSwitch" data-arg-types="t,s,s" data-arg1="features" data-arg2="${esc(key)}" data-keys="Enter, " data-prevent="1"></div>
+        <span class="config-toggle-label">${esc(label)}</span>
+      </div>`;
+    }
+
+    function extensionStatusBadge(enabled) {
+      return enabled ? '<span class="status-badge done">Enabled</span>' : '<span class="status-badge disabled">Disabled</span>';
+    }
+
+    function extensionCard(id, title, subtitle, opts, body) {
+      opts = opts || {};
+      const enabled = !!opts.enabled;
+      const badges = (opts.badges || []).join('');
+      const docs = opts.docs ? `<a class="hv-btn btn-secondary btn-sm" href="${esc(opts.docs)}" target="_blank" rel="noopener">Docs ↗</a>` : '';
+      const toggle = opts.toggleKey ? extensionToggleHTML(enabled, opts.toggleKey, opts.toggleLabel || `${title} enabled`) : '';
+      const detailsOpen = opts.forceOpen || enabled ? ' open' : '';
+      const detailsLabel = enabled ? `Configure ${title}` : `${title} details`;
+      const notice = opts.notice || '';
+      return `<section class="extension-card${enabled ? '' : ' is-disabled'}" id="${esc(id)}">
+        <div class="extension-card-header">
+          <div class="extension-card-copy">
+            <div class="extension-title-row"><h3>${esc(title)}</h3>${extensionStatusBadge(enabled)}${badges}</div>
+            <p>${esc(subtitle)}</p>
+          </div>
+          <div class="extension-card-actions">${docs}${toggle}</div>
+        </div>
+        ${notice}
+        <details class="extension-details"${detailsOpen}>
+          <summary>${esc(detailsLabel)}</summary>
+          <div class="extension-details-body">${body}</div>
+        </details>
+      </section>`;
+    }
+
+    function extensionSubsection(title, body, extraClass) {
+      return `<div class="extension-section ${extraClass || ''}"><h4>${esc(title)}</h4>${body}</div>`;
     }
 
     function renderRelayConnectionBlock(capability) {
       const relayURL = extensionRelayURL();
-      return `<div>
-        <div>Connection</div>
-        <div class="config-field"><label>Relay URL</label><input type="text" readonly value="${esc(relayURL)}"></div>
-        <div class="config-field"><label>Required capability</label><input type="text" readonly value="${esc(capability)}"></div>
-        <div><a class="hv-btn btn-secondary btn-sm" href="/contribute" target="_blank" rel="noopener">Mint / rotate registration token</a><span>Uses the existing /contribute registration-token flow; paste the token into the external relay.</span></div>
-        <div><b>Connected peers declaring <code>${esc(capability)}</code></b><div id="ext-peers-${esc(capability).replace(/[^a-zA-Z0-9_-]/g,'-')}">Loading…</div></div>
+      const peerId = `ext-peers-${esc(capability).replace(/[^a-zA-Z0-9_-]/g,'-')}`;
+      return `<div class="extension-relay-block">
+        <div class="config-field-row">
+          <div class="config-field"><label for="relay-url-${peerId}">Relay URL</label><input id="relay-url-${peerId}" type="text" readonly value="${esc(relayURL)}"></div>
+          <div class="config-field"><label for="relay-cap-${peerId}">Required capability</label><input id="relay-cap-${peerId}" type="text" readonly value="${esc(capability)}"></div>
+        </div>
+        <div class="extension-relay-actions"><a class="hv-btn btn-secondary btn-sm" href="/contribute" target="_blank" rel="noopener">Mint / rotate registration token</a><span>Uses the existing /contribute registration-token flow; paste the token into the external relay.</span></div>
+        <div class="extension-peer-list"><b>Connected peers declaring <code>${esc(capability)}</code></b><div id="${peerId}">Loading…</div></div>
       </div>`;
     }
 
@@ -25974,31 +26054,110 @@ function burnAreaChart() {
       const spekVersion = spek.version || spek.binary_version || 'unknown';
       const runStagesAuto = !!f.spektacularEnabled;
       const flueBuilt = !!f.extFlueLinked;
-      return `<div>
-        <p>Configure built-in and relay-backed extensions from the dashboard. Runner-process settings take effect on next boot where the existing runner reads config; relay lists update live when peers connect.</p>
-        ${extensionCard('Spektacular', 'Built-in long-running spec → plan → implement runner', `
-          <div class="config-toggle"><div class="config-toggle-switch ${f.spektacularEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="spektacularEnabled"></div><span class="config-toggle-label">Enabled</span></div>
-          <div class="config-field-row"><div class="config-field"><label>Binary</label><input type="text" value="${esc(f.spektacularBinary || '')}" placeholder="spektacular" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularBinary" data-arg-types="s,s,w"></div><div class="config-field"><label>Detected version</label><input type="text" readonly value="${esc(spekVersion)}"></div></div>
-          <div class="config-field-row"><div class="config-field"><label>Poll interval seconds</label><input type="number" min="1" step="1" value="${esc(String(f.spektacularPollS || 30))}" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularPollS" data-arg-types="s,s,N"></div><div class="config-field"><label>Max stage retries</label><input type="number" min="0" step="1" value="${esc(String(f.maxStageRetries || 2))}" data-change-action="markDirty" data-arg0="features" data-arg1="maxStageRetries" data-arg-types="s,s,N"></div></div>
-          <div><b>Checkpoints</b><div>${['Spec','Plan','Implement'].map(n => `<label><input type="checkbox" ${f['checkpoint'+n+'Enabled'] ? 'checked' : ''} data-change-action="markDirty" data-arg0="features" data-arg1="checkpoint${n}Enabled" data-arg-types="s,s,c"> ${n}</label>`).join('')}</div></div>
-          <div><b>Triage</b><div class="config-toggle"><div class="config-toggle-switch ${f.triageEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="triageEnabled"></div><span class="config-toggle-label">Enabled</span></div>
-            <div class="config-field-row"><div class="config-field"><label>Spec labels</label><input type="text" value="${esc((f.triageSpecLabels || []).join(', '))}" data-change-action="markCSVDirty" data-arg0="features" data-arg1="triageSpecLabels" data-arg-types="s,s,w"></div><div class="config-field"><label>Fix labels</label><input type="text" value="${esc((f.triageFixLabels || []).join(', '))}" data-change-action="markCSVDirty" data-arg0="features" data-arg1="triageFixLabels" data-arg-types="s,s,w"></div></div>
-            <div class="config-field-row"><div class="config-field"><label>Min body chars</label><input type="number" min="0" step="1" value="${esc(String(f.triageMinBodyChars || 80))}" data-change-action="markDirty" data-arg0="features" data-arg1="triageMinBodyChars" data-arg-types="s,s,N"></div><div class="config-field"><label>Clarify comment</label><select data-change-action="markBoolDirty" data-arg0="features" data-arg1="triageClarifyComment" data-arg-types="s,s,v"><option value="true" ${f.triageClarifyComment !== false ? 'selected' : ''}>true</option><option value="false" ${f.triageClarifyComment === false ? 'selected' : ''}>false</option></select></div></div>
-          </div>
-          <div><b>Run stages:</b> ${runStagesAuto ? '<span class="status-badge">auto on</span>' : '<span class="status-badge">manual/off</span>'} ${runStagesAuto ? 'Spektacular requires Governor work_source.run_stages, so Hive sets it automatically when enabled.' : 'Enable Spektacular to turn run-stage work on automatically.'}</div>
-          <p><a href="https://docs.hivecommons.dev/docs/hive/spektacular-runs" target="_blank" rel="noopener">Spektacular docs ↗</a></p>`)}
-        ${extensionCard('Flue', flueBuilt ? 'External workflow admission binding' : 'External workflow admission binding (not built into this binary)', `
-          ${flueBuilt ? '' : '<div>This binary was built without the extwork_flue tag; settings can be staged but no Flue peer will dispatch until a tagged build is deployed.</div>'}
-          <div class="config-toggle"><div class="config-toggle-switch ${f.extFlueEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="extFlueEnabled"></div><span class="config-toggle-label">Enabled</span></div>
-          <div class="config-field-row"><div class="config-field"><label>Mode</label><select data-change-action="markDirty" data-arg0="features" data-arg1="extFlueMode" data-arg-types="s,s,v">${(f.extFlueModes || ['shadow','report-only']).map(m => `<option value="${esc(m)}" ${(f.extFlueMode || 'shadow') === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div><div class="config-field"><label>Workflow version</label><input type="text" value="${esc(f.extFlueWorkflowVersion || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="extFlueWorkflowVersion" data-arg-types="s,s,w"></div></div>
-          <div class="config-field"><label>Endpoint</label><input type="text" value="${esc(f.extFlueEndpoint || '')}" placeholder="https://flue.example" data-change-action="markDirty" data-arg0="features" data-arg1="extFlueEndpoint" data-arg-types="s,s,w"></div>
-          ${renderRelayConnectionBlock('ext-exec/flue')}<p><a href="https://github.com/hivecommons/hive/blob/v6/src/docs/design/external-workflow-admission.md" target="_blank" rel="noopener">Flue admission docs ↗</a></p>`)}
-        ${extensionCard('Crustify / Wavefront', 'External migration graph work source over run-stage relays', `
-          <div class="config-toggle"><div class="config-toggle-switch ${f.wavefrontEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="wavefrontEnabled"></div><span class="config-toggle-label">Enabled</span></div>
-          <div class="config-field-row"><div class="config-field"><label>Graph path</label><input type="text" value="${esc(f.wavefrontPath || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="wavefrontPath" data-arg-types="s,s,w"></div><div class="config-field"><label>Graph URL</label><input type="text" value="${esc(f.wavefrontUrl || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="wavefrontUrl" data-arg-types="s,s,w"></div></div>
-          <div class="config-field-row"><div class="config-field"><label>Repo</label><input type="text" value="${esc(f.wavefrontRepo || '')}" placeholder="owner/repo" data-change-action="markDirty" data-arg0="features" data-arg1="wavefrontRepo" data-arg-types="s,s,w"></div><div class="config-field"><label>Receipts dir</label><input type="text" value="${esc(f.wavefrontReceiptsDir || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="wavefrontReceiptsDir" data-arg-types="s,s,w"></div></div>
-          ${renderRelayConnectionBlock('run-stage')}<p><a href="https://github.com/hivecommons/hive/blob/v6/src/docs/work-sources.md#wavefront" target="_blank" rel="noopener">Wavefront docs ↗</a></p>`)}
-        ${extensionCard('Relays', 'Generic contributor relay connection details', `${renderRelayConnectionBlock('*')}<p>Full fleet controls remain in <a href="#config/governor/Hub">Settings → Hub</a> and <a href="/contribute" target="_blank" rel="noopener">/contribute</a>. See <a href="https://github.com/hivecommons/hive/blob/v6/src/docs/contributor-relay.md#pointing-external-extensions-at-hive" target="_blank" rel="noopener">relay setup docs ↗</a>.</p>`)}
+      const wavefrontEnabled = !!f.wavefrontEnabled;
+      const extensions = [
+        { id: 'ext-spektacular', name: 'Spektacular', enabled: !!f.spektacularEnabled, meta: spekVersion !== 'unknown' ? `v${spekVersion}` : 'version unknown' },
+        { id: 'ext-flue', name: 'Flue', enabled: !!f.extFlueEnabled, meta: flueBuilt ? (f.extFlueMode || 'shadow') : 'not built in' },
+        { id: 'ext-omp', name: 'OMP', enabled: !!f.extOmpEnabled, meta: f.extOmpMode || 'off' },
+        { id: 'ext-wavefront', name: 'Crustify / Wavefront', enabled: wavefrontEnabled, meta: 'run-stage relay' },
+        { id: 'ext-relays', name: 'Relays', enabled: true, meta: 'connection details' },
+      ];
+      const summary = extensions.map(ext => `<a class="extension-summary-item" href="#${esc(ext.id)}">
+        <span><strong>${esc(ext.name)}</strong><small>${esc(ext.meta)}</small></span>${extensionStatusBadge(ext.enabled)}
+      </a>`).join('');
+      return `<div class="extensions-tab">
+        <p class="extensions-intro">Configure built-in and relay-backed extensions from the dashboard. Runner-process settings take effect on next boot where the existing runner reads config; relay lists update live when peers connect.</p>
+        <nav class="extension-summary" aria-label="Extension summary">${summary}</nav>
+        ${extensionCard('ext-spektacular', 'Spektacular', 'Built-in long-running spec → plan → implement runner', {
+          enabled: !!f.spektacularEnabled,
+          toggleKey: 'spektacularEnabled',
+          toggleLabel: 'Spektacular enabled',
+          docs: 'https://docs.hivecommons.dev/docs/hive/spektacular-runs',
+          badges: [`<span class="status-badge">${esc(spekVersion)}</span>`],
+        }, `
+          ${extensionSubsection('Runner', `
+            <div class="config-field-row">
+              <div class="config-field"><label for="ext-spektacular-binary">Binary</label><input id="ext-spektacular-binary" type="text" value="${esc(f.spektacularBinary || '')}" placeholder="spektacular" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularBinary" data-arg-types="s,s,w"></div>
+              <div class="config-field"><label for="ext-spektacular-version">Detected version</label><input id="ext-spektacular-version" type="text" readonly value="${esc(spekVersion)}"></div>
+            </div>
+            <div class="config-field-row">
+              <div class="config-field"><label for="ext-spektacular-poll">Poll interval seconds</label><input id="ext-spektacular-poll" type="number" min="1" step="1" value="${esc(String(f.spektacularPollS || 30))}" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularPollS" data-arg-types="s,s,N"></div>
+              <div class="config-field"><label for="ext-spektacular-retries">Max stage retries</label><input id="ext-spektacular-retries" type="number" min="0" step="1" value="${esc(String(f.maxStageRetries || 2))}" data-change-action="markDirty" data-arg0="features" data-arg1="maxStageRetries" data-arg-types="s,s,N"></div>
+            </div>
+            <div class="extension-callout ${runStagesAuto ? 'success' : 'muted'}"><b>Run stages:</b> ${runStagesAuto ? '<span class="status-badge done">AUTO ON</span> Spektacular requires Governor work_source.run_stages, so Hive sets it automatically when enabled.' : '<span class="status-badge disabled">manual/off</span> Enable Spektacular to turn run-stage work on automatically.'}</div>
+          `)}
+          ${extensionSubsection('Checkpoints', `<div class="extension-chip-row">${['Spec','Plan','Implement'].map(n => `<label class="extension-chip" for="ext-checkpoint-${n.toLowerCase()}"><input id="ext-checkpoint-${n.toLowerCase()}" type="checkbox" ${f['checkpoint'+n+'Enabled'] ? 'checked' : ''} data-change-action="markDirty" data-arg0="features" data-arg1="checkpoint${n}Enabled" data-arg-types="s,s,c"> ${n}</label>`).join('')}</div>`)}
+          ${extensionSubsection('Triage', `
+            ${extensionToggleHTML(!!f.triageEnabled, 'triageEnabled', 'Triage enabled')}
+            <div class="config-field-row">
+              <div class="config-field"><label for="ext-triage-spec-labels">Spec labels</label><input id="ext-triage-spec-labels" type="text" value="${esc((f.triageSpecLabels || []).join(', '))}" data-change-action="markCSVDirty" data-arg0="features" data-arg1="triageSpecLabels" data-arg-types="s,s,w"></div>
+              <div class="config-field"><label for="ext-triage-fix-labels">Fix labels</label><input id="ext-triage-fix-labels" type="text" value="${esc((f.triageFixLabels || []).join(', '))}" data-change-action="markCSVDirty" data-arg0="features" data-arg1="triageFixLabels" data-arg-types="s,s,w"></div>
+            </div>
+            <div class="config-field-row">
+              <div class="config-field"><label for="ext-triage-min-body">Min body chars</label><input id="ext-triage-min-body" type="number" min="0" step="1" value="${esc(String(f.triageMinBodyChars || 80))}" data-change-action="markDirty" data-arg0="features" data-arg1="triageMinBodyChars" data-arg-types="s,s,N"></div>
+              <div class="config-field extension-toggle-field"><label id="ext-triage-clarify-label">Clarify comment</label>${extensionToggleHTML(f.triageClarifyComment !== false, 'triageClarifyComment', 'Post clarify comment')}</div>
+            </div>
+          `)}
+        `)}
+        ${extensionCard('ext-flue', 'Flue', 'External workflow admission binding', {
+          enabled: !!f.extFlueEnabled,
+          toggleKey: 'extFlueEnabled',
+          toggleLabel: 'Flue binding enabled',
+          docs: 'https://github.com/hivecommons/hive/blob/v6/src/docs/design/external-workflow-admission.md',
+          badges: flueBuilt ? [`<span class="status-badge">${esc(f.extFlueMode || 'shadow')}</span>`] : ['<span class="status-badge needs-context">not built into this binary</span>'],
+          notice: flueBuilt ? '' : '<div class="extension-callout warning"><b>Build tag required.</b> This binary was built without the <code>extwork_flue</code> tag; settings can be staged but no Flue peer will dispatch until a tagged build is deployed.</div>',
+        }, `
+          ${extensionSubsection('Admission', `
+            <div class="config-field-row">
+              <div class="config-field"><label for="ext-flue-mode">Mode</label><select id="ext-flue-mode" data-change-action="markDirty" data-arg0="features" data-arg1="extFlueMode" data-arg-types="s,s,v">${(f.extFlueModes || ['shadow','report-only']).map(m => `<option value="${esc(m)}" ${(f.extFlueMode || 'shadow') === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
+              <div class="config-field"><label for="ext-flue-version">Workflow version</label><input id="ext-flue-version" type="text" value="${esc(f.extFlueWorkflowVersion || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="extFlueWorkflowVersion" data-arg-types="s,s,w"></div>
+            </div>
+            <div class="config-field"><label for="ext-flue-endpoint">Endpoint</label><input id="ext-flue-endpoint" type="text" value="${esc(f.extFlueEndpoint || '')}" placeholder="https://flue.example" data-change-action="markDirty" data-arg0="features" data-arg1="extFlueEndpoint" data-arg-types="s,s,w"></div>
+          `)}
+          <details class="extension-advanced"><summary>Advanced relay connection</summary>${renderRelayConnectionBlock('ext-exec/flue')}</details>
+        `)}
+        ${extensionCard('ext-omp', 'OMP', 'Workbench host for externally admitted run-stage work', {
+          enabled: !!f.extOmpEnabled,
+          toggleKey: 'extOmpEnabled',
+          toggleLabel: 'OMP workbench host enabled',
+          docs: 'https://github.com/hivecommons/hive/blob/v6/src/docs/design/external-workflow-admission.md',
+          badges: [`<span class="status-badge">${esc(f.extOmpMode || 'off')}</span>`, `<span class="status-badge">${f.extOmpVersionSet ? 'workflow pinned' : 'version auto'}</span>`],
+          notice: f.extOmpLinked ? '' : '<div class="extension-callout warning"><b>Build tag required.</b> This binary was built without the <code>extwork_omp</code> tag; settings can be staged but no OMP workbench host will dispatch until a tagged build is deployed.</div>',
+        }, `
+          ${extensionSubsection('Admission', `
+            <div class="config-field-row">
+              <div class="config-field"><label for="ext-omp-mode">Mode</label><select id="ext-omp-mode" data-change-action="markDirty" data-arg0="features" data-arg1="extOmpMode" data-arg-types="s,s,v">${(f.extOmpModes || ['shadow','report-only']).map(m => `<option value="${esc(m)}" ${(f.extOmpMode || 'shadow') === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
+              <div class="config-field"><label for="ext-omp-version-status">Workflow version</label><input id="ext-omp-version-status" type="text" readonly value="${f.extOmpVersionSet ? 'Pinned in config' : 'Not pinned'}"></div>
+            </div>
+            <div class="extension-callout"><b>Report-only host:</b> OMP uses an already-connected relay peer declaring <code>ext-exec/omp</code>; it receives bounded context and returns receipts without repository credentials.</div>
+          `)}
+          <details class="extension-advanced"><summary>Advanced relay connection</summary>${renderRelayConnectionBlock('ext-exec/omp')}</details>
+        `)}
+        ${extensionCard('ext-wavefront', 'Crustify / Wavefront', 'External migration graph work source over run-stage relays', {
+          enabled: wavefrontEnabled,
+          toggleKey: 'wavefrontEnabled',
+          toggleLabel: 'Wavefront enabled',
+          docs: 'https://github.com/hivecommons/hive/blob/v6/src/docs/work-sources.md#wavefront',
+          badges: ['<span class="status-badge">run-stage</span>'],
+        }, `
+          ${extensionSubsection('Graph source', `
+            <div class="config-field-row">
+              <div class="config-field"><label for="ext-wavefront-path">Graph path</label><input id="ext-wavefront-path" type="text" value="${esc(f.wavefrontPath || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="wavefrontPath" data-arg-types="s,s,w"></div>
+              <div class="config-field"><label for="ext-wavefront-url">Graph URL</label><input id="ext-wavefront-url" type="text" value="${esc(f.wavefrontUrl || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="wavefrontUrl" data-arg-types="s,s,w"></div>
+            </div>
+            <div class="config-field-row">
+              <div class="config-field"><label for="ext-wavefront-repo">Repo</label><input id="ext-wavefront-repo" type="text" value="${esc(f.wavefrontRepo || '')}" placeholder="owner/repo" data-change-action="markDirty" data-arg0="features" data-arg1="wavefrontRepo" data-arg-types="s,s,w"></div>
+              <div class="config-field"><label for="ext-wavefront-receipts">Receipts dir</label><input id="ext-wavefront-receipts" type="text" value="${esc(f.wavefrontReceiptsDir || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="wavefrontReceiptsDir" data-arg-types="s,s,w"></div>
+            </div>
+          `)}
+          <details class="extension-advanced"><summary>Advanced relay connection</summary>${renderRelayConnectionBlock('run-stage')}</details>
+        `)}
+        ${extensionCard('ext-relays', 'Relays', 'Generic contributor relay connection details', {
+          enabled: true,
+          forceOpen: true,
+          docs: 'https://github.com/hivecommons/hive/blob/v6/src/docs/contributor-relay.md#pointing-external-extensions-at-hive',
+          badges: ['<span class="status-badge">shared</span>'],
+        }, `${renderRelayConnectionBlock('*')}<p class="extension-footnote">Full fleet controls remain in <a href="#config/governor/Hub">Settings → Hub</a> and <a href="/contribute" target="_blank" rel="noopener">/contribute</a>.</p>`)}
       </div>`;
     }
 
@@ -26007,7 +26166,7 @@ function burnAreaChart() {
         const res = await fetch('/api/contribute/fleet');
         const data = await res.json();
         const peers = Array.isArray(data.clankers) ? data.clankers : [];
-        ['ext-exec/flue','run-stage','*'].forEach(cap => {
+        ['ext-exec/flue','ext-exec/omp','run-stage','*'].forEach(cap => {
           const id = 'ext-peers-' + cap.replace(/[^a-zA-Z0-9_-]/g,'-');
           const el = document.getElementById(id);
           if (!el) return;
@@ -26823,6 +26982,7 @@ function burnAreaChart() {
     function toggleConfigSwitch(el, section, key) {
       if (!el || el.classList.contains('disabled') || el.dataset.disabled === 'true') return;
       const isOn = el.classList.toggle('on');
+      if (el.hasAttribute('aria-checked')) el.setAttribute('aria-checked', isOn ? 'true' : 'false');
       markDirty(section, key, isOn);
     }
 
