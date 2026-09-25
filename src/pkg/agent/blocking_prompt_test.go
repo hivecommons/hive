@@ -18,6 +18,13 @@ const codexTrustPane = `> You are in /data/agents/architect
   2. No, quit
   Press enter to continue`
 
+const codexFolderAccessPane = `  Folder access
+  /data/agents/ci-maintainer
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings can run code automatically, even w…
+› 1. Trust and continue
+  2. Quit
+  enter continue · esc quit`
+
 const copilotTrustPane = `Confirm folder trust
   1. Yes
   2. Yes, and remember for future sessions
@@ -69,6 +76,7 @@ func TestBlockingPromptKey_KnownPrompts(t *testing.T) {
 		want    string
 	}{
 		{"codex directory trust", "codex", codexTrustPane, "1"},
+		{"codex folder access trust", "codex", codexFolderAccessPane, "1"},
 		{"claude workspace trust", "claude", claudeWorkspaceTrustPane, "Down"},
 		// "1" (session-only), NOT "2" (remember): remembering makes the CLI
 		// rewrite the shared config.json from its stale in-memory snapshot,

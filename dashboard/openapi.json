@@ -69,6 +69,10 @@
       "description": "Greenfield project scaffolding and ideation workflow"
     },
     {
+      "name": "Campaigns",
+      "description": "Resumable Inception and Spektacular campaigns"
+    },
+    {
       "name": "Knowledge",
       "description": "Knowledge base facts, vaults, git sources, documents, and channels"
     },
@@ -1341,6 +1345,51 @@
           },
           "400": {
             "description": "Unknown agent"
+          }
+        }
+      }
+    },
+    "/api/status/summary": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Compact hive status summary",
+        "description": "Returns the compact agent/governor/budget summary used by pollers that do not need the full repos[] payload. Honors Accept-Encoding: gzip like /api/status.",
+        "responses": {
+          "200": {
+            "description": "Compact status summary, or {\"status\": \"initializing\"} before the first status build.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "timestamp": {"type": "string"},
+                    "statusSeq": {"type": "integer", "format": "int64"},
+                    "statusInstance": {"type": "string"},
+                    "hiveId": {"type": "string"},
+                    "agents": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {"type": "string"},
+                          "state": {"type": "string"},
+                          "paused": {"type": "boolean"},
+                          "backend": {"type": "string"},
+                          "model": {"type": "string"},
+                          "effort": {"type": "string"},
+                          "restarts": {"type": "integer"},
+                          "needsLogin": {"type": "boolean"}
+                        }
+                      }
+                    },
+                    "governor": {"type": "object", "properties": {"mode": {"type": "string"}}},
+                    "budget": {"type": "object"}
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -18554,6 +18603,68 @@
         }
       }
     },
+    "/api/reviewer/accuracy": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Reviewer verdict accuracy",
+        "description": "Calibrates recorded reviewer verdicts against PR outcomes and cached GitHub rework history. Returns false-approve and false-block rates with sample counts, plus confidence buckets, per perspective and reviewer model.",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 90,
+              "default": 30
+            },
+            "description": "Window in days, keyed on when the verdict was recorded. Defaults to HIVE_REVIEWER_ACCURACY_WINDOW_DAYS or 30."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Reviewer accuracy summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "window_days": {
+                      "type": "integer"
+                    },
+                    "samples": {
+                      "type": "integer"
+                    },
+                    "perspectives": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ReviewerAccuracyGroup"
+                      }
+                    },
+                    "reviewer_models": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ReviewerAccuracyGroup"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "days out of range"
+          }
+        }
+      }
+    },
     "/api/config/variables": {
       "get": {
         "tags": [
@@ -22476,10 +22587,856 @@
           }
         }
       }
+    },
+    "/api/campaigns": {
+      "get": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "List resumable campaigns",
+        "description": "Lists archived Inception sessions and retained Spektacular runs. Supports search/q, repo, stage, status, and owner query filters.",
+        "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "stage",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "owner",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Campaign list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "campaigns": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "title",
+                          "current_stage",
+                          "status",
+                          "engine",
+                          "type"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "repos": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "current_stage": {
+                            "type": "string"
+                          },
+                          "current_step": {
+                            "type": "string"
+                          },
+                          "artifacts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string"
+                                },
+                                "label": {
+                                  "type": "string"
+                                },
+                                "url": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          },
+                          "linked_prs": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "linked_issues": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "contributors": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "last_activity": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "engine": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "run_key": {
+                            "type": "string"
+                          },
+                          "run_url": {
+                            "type": "string"
+                          },
+                          "lease_owner": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/campaigns/{id}": {
+      "get": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Get a campaign",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Campaign detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "campaign": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "title",
+                        "current_stage",
+                        "status",
+                        "engine",
+                        "type"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "type": "string"
+                        },
+                        "repos": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "current_stage": {
+                          "type": "string"
+                        },
+                        "current_step": {
+                          "type": "string"
+                        },
+                        "artifacts": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "url": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "linked_prs": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "linked_issues": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "contributors": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "last_activity": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "engine": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string"
+                        },
+                        "run_key": {
+                          "type": "string"
+                        },
+                        "run_url": {
+                          "type": "string"
+                        },
+                        "lease_owner": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Campaign not found"
+          }
+        }
+      }
+    },
+    "/api/campaigns/{id}/resume": {
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Resume or pick up a campaign",
+        "description": "Restores archived Inception state and wiki files, or returns the retained Spektacular run plus a CLI status command.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "surface": {
+                    "type": "string",
+                    "enum": [
+                      "chat",
+                      "contributor",
+                      "cli",
+                      "dashboard"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Resume response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "campaign": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "title",
+                        "current_stage",
+                        "status",
+                        "engine",
+                        "type"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "type": "string"
+                        },
+                        "repos": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "current_stage": {
+                          "type": "string"
+                        },
+                        "current_step": {
+                          "type": "string"
+                        },
+                        "artifacts": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "url": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "linked_prs": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "linked_issues": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "contributors": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "last_activity": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "engine": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string"
+                        },
+                        "run_key": {
+                          "type": "string"
+                        },
+                        "run_url": {
+                          "type": "string"
+                        },
+                        "lease_owner": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "state": {
+                      "type": "object"
+                    },
+                    "run": {
+                      "type": "object"
+                    },
+                    "resume_command": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Campaign not found"
+          },
+          "409": {
+            "description": "Campaign lease held by another user"
+          }
+        }
+      }
+    },
+    "/api/campaigns/{id}/release": {
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Release a campaign lease",
+        "description": "Clears the caller's active campaign lease and records a release audit event.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Campaign lease released"
+          },
+          "404": {
+            "description": "Campaign not found"
+          },
+          "409": {
+            "description": "Campaign is leased by another user or has no active lease"
+          }
+        }
+      }
+    },
+    "/api/campaigns/{id}/revise": {
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Branch a new campaign revision",
+        "description": "Creates a linked revision campaign so shipped or parked work can be revisited without losing the previous campaign trail.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Campaign revision created"
+          },
+          "404": {
+            "description": "Campaign not found"
+          }
+        }
+      }
+    },
+    "/api/campaigns/{id}/jam": {
+      "get": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Get campaign Jam state",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Jam state"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Record a Jam spec revision",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated Jam state"
+          },
+          "403": {
+            "description": "Read-write access required"
+          }
+        }
+      }
+    },
+    "/api/campaigns/{id}/jam/threads": {
+      "get": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "List Jam threads",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Thread list"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Create a Jam thread or comment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated Jam state"
+          },
+          "403": {
+            "description": "Read-write access required"
+          }
+        }
+      }
+    },
+    "/api/campaigns/{id}/jam/suggestions": {
+      "get": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "List Jam suggestions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Suggestion list"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Create or resolve a Jam suggestion",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated Jam state"
+          },
+          "403": {
+            "description": "Read-write or maintainer access required"
+          }
+        }
+      }
+    },
+    "/api/campaigns/{id}/jam/polls": {
+      "get": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "List Jam polls",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Poll list"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Create, vote, or decide a Jam poll",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated Jam state"
+          },
+          "403": {
+            "description": "Read-write or maintainer access required"
+          }
+        }
+      }
+    },
+    "/api/campaigns/{id}/jam/project-sync": {
+      "get": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Get Jam GitHub Projects sync status",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Project sync status"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Configure or run Jam GitHub Projects sync",
+        "description": "Maintainer-only endpoint for enabling/disabling sync, publishing campaign specs/decisions/derived issues, and recording inbound project status updates.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated project sync state"
+          },
+          "403": {
+            "description": "Maintainer access required"
+          }
+        }
+      }
+    },
+    "/api/campaigns/{id}/jam/ws": {
+      "get": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Join Jam live presence and co-editing",
+        "description": "Upgrades to a WebSocket. Clients receive presence snapshots, section focus updates, accepted live edits and conflict messages. Live edits include base_revision_id and are rejected when stale.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "WebSocket upgrade accepted"
+          },
+          "403": {
+            "description": "Read access required"
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "ReviewerAccuracyGroup": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "samples": {
+            "type": "integer"
+          },
+          "approvals": {
+            "type": "integer"
+          },
+          "blocks": {
+            "type": "integer"
+          },
+          "false_approvals": {
+            "type": "integer"
+          },
+          "false_blocks": {
+            "type": "integer"
+          },
+          "false_approve_rate": {
+            "type": "number"
+          },
+          "false_block_rate": {
+            "type": "number"
+          },
+          "confidence_buckets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "bucket": {
+                  "type": "string"
+                },
+                "samples": {
+                  "type": "integer"
+                },
+                "merged": {
+                  "type": "integer"
+                },
+                "bad_outcomes": {
+                  "type": "integer"
+                },
+                "merge_rate": {
+                  "type": "number"
+                },
+                "bad_outcome_rate": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        }
+      },
       "HiveAdviceSignal": {
         "type": "object",
         "properties": {

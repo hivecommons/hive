@@ -116,7 +116,7 @@ The window is *sliding and half-open*: the guarantee is "at most `limit` firings
 | `review_rejected` | an owner denies a queued agent action on the approval desk (`POST /api/approvals/resolve` or `/bulk` with `approved: false`), sending that agent's output back | `agent`, `repo`, `actor`, `reason`, `model`, `backend`, `pin`, `acmm_level`, `attrs.pr`, `attrs.model_knob_url` |
 | `stage_completed` | a run lease stage advances, retries, or is reset by an owner to an earlier stage after the lease registry persists; a reset carries `reason` and `attrs.reset = "true"` so `when: t.attrs.reset == "true"` can single it out | `run`, `stage_from`, `stage_to`, `gen`, `repo` |
 
-The `stage_completed` transition is also what the [Spektacular stage runner](spektacular.md) fires when an artifact reaches `document_status: final`, since it advances the lease through the same registry path.
+The `stage_completed` transition is also what the [Spektacular (Spek) stage runner](spektacular.md) fires when an artifact reaches `document_status: final`, since it advances the lease through the same registry path.
 
 For `agent_paused`/`agent_resumed`, `trigger` carries the `paused_trigger` provenance, so you can tell an operator pause from a governor pause from the login-detector's.
 

@@ -113,6 +113,48 @@ func TestAuthHealablePaneDoesNotClaimAuthenticated(t *testing.T) {
 	}
 }
 
+// TestAuthAlertClearsWhenLoginChromeLeavesWithoutPositiveProof covers the
+// copilot shape: no credential signal can ever prove it True, so recovery is
+// False -> Unknown. The banner must still lift once the pane stops showing
+// login chrome, or one transient sighting pins it over a working agent.
+func TestAuthAlertClearsWhenLoginChromeLeavesWithoutPositiveProof(t *testing.T) {
+	clock := newFakeClock()
+	fleet := newFakeFleet("a1")
+	alerter := newFakeAlerter()
+	r := newTestReconciler(t, fastSettings(), fleet, alerter, clock)
+
+	fleet.setObs("a1", Observation{
+		Backend: "copilot", SessionExists: true,
+		Pane: loginPane, ShowsLoginPrompt: true,
+	})
+	r.Tick(context.Background())
+	if !alerter.has(authAlertID("a1")) {
+		t.Fatal("precondition: a login screen must raise the alert")
+	}
+
+	fleet.setObs("a1", Observation{
+		Backend: "copilot", SessionExists: true,
+		Pane: "● reviewing PR #12", HasCLIMarker: true,
+	})
+	r.Tick(context.Background())
+	auth, _ := FindCondition(r.Conditions("a1"), ConditionAuthenticated)
+	if auth.Status == ConditionFalse {
+		t.Fatalf("Authenticated = %+v, want non-False once the login chrome is gone", auth)
+	}
+	if alerter.has(authAlertID("a1")) {
+		t.Fatal("alert is sticky: it must clear when the verdict leaves False, even if nothing can prove it True")
+	}
+
+	fleet.setObs("a1", Observation{
+		Backend: "copilot", SessionExists: true,
+		Pane: loginPane, ShowsLoginPrompt: true,
+	})
+	r.Tick(context.Background())
+	if !alerter.has(authAlertID("a1")) {
+		t.Fatal("a genuine relapse into login must re-raise the alert")
+	}
+}
+
 // TestAuthHealableClearsAStandingAlert is the recovery half. An operator who
 // re-authenticates leaves login chrome on the pane, so the verdict moves
 // False -> Unknown, never False -> True. Clearing only on True would leave the

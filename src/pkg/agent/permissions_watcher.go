@@ -91,6 +91,8 @@ const modeFileReadBits os.FileMode = 0o444
 // config.BobStateDirName without importing config here to avoid a cycle.
 const bobStateDirBase = ".bob"
 
+const agyOnboardingStateBase = "onboarding.json"
+
 // sharedCredentialBases are the shared-login credential FILES that a CLI
 // rewrites owner-only (0600) whenever it refreshes its token, under a
 // directory the whole fleet reaches through the `node` group.
@@ -120,6 +122,21 @@ var sharedCredentialBases = map[string]bool{
 	".credentials.json": true,
 	// Antigravity (`agy`) persists its OAuth session here.
 	"antigravity-oauth-token": true,
+}
+
+func isSharedGroupReadableFile(path string) bool {
+	if sharedCredentialBases[filepath.Base(path)] {
+		return true
+	}
+	if filepath.Base(path) != agyOnboardingStateBase {
+		return false
+	}
+	cacheDir := filepath.Dir(path)
+	agyDir := filepath.Dir(cacheDir)
+	geminiDir := filepath.Dir(agyDir)
+	return filepath.Base(cacheDir) == "cache" &&
+		filepath.Base(agyDir) == "antigravity-cli" &&
+		filepath.Base(geminiDir) == ".gemini"
 }
 
 // WatchedHomeDirs are the subdirectories under the shared home and data
@@ -617,7 +634,7 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 	// file exists to be shared, and the general owner guard below would skip
 	// exactly the case that breaks the fleet (#5730). Group READ only, ORed in,
 	// so an already-correct file is left byte-identical.
-	if !fi.IsDir() && sharedCredentialBases[filepath.Base(path)] {
+	if !fi.IsDir() && isSharedGroupReadableFile(path) {
 		fixSharedCredentialGroupRead(path, fi.Mode(), stat.Uid, logger)
 		return
 	}

@@ -79,8 +79,8 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          cache: false
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
 
       # Installed by version rather than via a marketplace action so the tool
       # itself is pinned and the supply chain is one hop shorter.
@@ -206,8 +206,8 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          cache: false
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
 
       - name: Regenerate NOTICE from the current module graph
         run: src/scripts/generate-notice.sh /tmp/NOTICE.generated

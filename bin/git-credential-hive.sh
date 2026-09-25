@@ -151,6 +151,36 @@ fi
 # attributes each to the uid that owns the file. No environment override on
 # purpose; must match TokenAccessSpoolDir in pkg/github/token_access_audit.go.
 TOKEN_ACCESS_SPOOL="/var/run/hive-metrics/token-access-events"
+emit_token_access_event() {
+  local _evt op agent uid
+  op="$1"
+  agent="$2"
+  uid="$3"
+  shift 3
+  _evt="${TOKEN_ACCESS_SPOOL}/$(date -u +%s%N)-$$-${RANDOM}.json"
+  (
+    umask 027
+    python3 - "$_evt.tmp" "$op" "$agent" "$uid" "$@" <<'PY'
+import datetime
+import json
+import sys
+
+path, op, agent, uid_s, *args = sys.argv[1:]
+event = {
+    "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "agent": agent or "unknown",
+    "uid": int(uid_s),
+    "op": op,
+}
+if op == "git-credential":
+    event["host"] = args[0] if args and args[0] else "unknown"
+else:
+    raise SystemExit(f"unsupported token-access op: {op}")
+with open(path, "w", encoding="utf-8") as f:
+    f.write(json.dumps(event, separators=(",", ":")) + "\n")
+PY
+  ) && mv -f "${_evt}.tmp" "$_evt"
+}
 
 case "${1:-}" in
   get)
@@ -162,10 +192,7 @@ case "${1:-}" in
     # Write-then-rename under a pinned umask (0640 into the setgid spool so
     # the hive can read it and nobody else can); see gh-wrapper.sh.
     {
-      _evt="${TOKEN_ACCESS_SPOOL}/$(date -u +%s%N)-$$-${RANDOM}.json"
-      ( umask 027 && printf '{"ts":"%s","agent":"%s","uid":%d,"op":"git-credential","host":"%s"}\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${AGENT:-unknown}" "$(id -u)" "${REQUESTED_HOST:-unknown}" \
-        > "${_evt}.tmp" ) && mv -f "${_evt}.tmp" "$_evt"
+      emit_token_access_event "git-credential" "${AGENT:-unknown}" "$(id -u)" "${REQUESTED_HOST:-unknown}"
     } 2>/dev/null || true
     # Echo back the SAME host git asked about (github.com, github.ibm.com, or
     # any other configured GitHub Enterprise host) rather than a hardcoded

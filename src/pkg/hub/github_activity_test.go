@@ -6,10 +6,48 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 )
+
+func TestReloadGitHubActivityAcceptsHubOnlyConfig(t *testing.T) {
+	t.Setenv("HIVE_HUB_SECRET", "test-secret-not-a-real-credential")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hive.yaml")
+	cfgYAML := `hive_id: hub-only
+project:
+  org: test-org
+github:
+  token: test-token-not-real
+hub:
+  enabled: true
+data:
+  agents_dir: ` + filepath.Join(dir, "agents") + `
+notifications:
+  discord:
+    factory_webhook: https://discord.invalid/webhook
+  github_activity:
+    enabled: true
+    poll_interval_s: 60
+`
+	if err := os.WriteFile(path, []byte(cfgYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := NewHubServer(0, slog.Default(), "abc1234", "v5")
+	srv.SetHubConfigPath(path, "")
+	if err := srv.ReloadGitHubActivityFromConfig(slog.Default()); err != nil {
+		t.Fatalf("ReloadGitHubActivityFromConfig: %v", err)
+	}
+	srv.githubActivityMu.Lock()
+	defer srv.githubActivityMu.Unlock()
+	if srv.githubActivityFeed == nil {
+		t.Fatal("hub-only config with github_activity enabled did not install a feed")
+	}
+}
 
 func TestGitHubActivityPollerDiffsFormatsAndDedupes(t *testing.T) {
 	var mu sync.Mutex

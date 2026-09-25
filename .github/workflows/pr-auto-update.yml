@@ -1,0 +1,22 @@
+name: Post-merge PR Auto-update
+
+on:
+  push:
+    branches: [v5, v6]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-open-prs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Update stale open PR branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+        run: .github/scripts/pr-auto-update.sh

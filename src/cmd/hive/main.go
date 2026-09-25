@@ -1425,17 +1425,18 @@ func (b *boot) wireBootClosures() {
 				}
 				return dashboardChatDrain(b.dashChat, since)
 			},
-			Governor:         b.gov,
-			GHClient:         b.ghClient,
-			GHAppAuth:        b.appAuth,
-			GHTokenScopes:    b.ghAuth.TokenScopes,
-			Tokens:           b.tokenCollector,
-			Knowledge:        b.knowledgeAPI,
-			Inception:        b.inceptionEngine,
-			Nous:             b.nousState,
-			Scheduler:        b.sched,
-			MetricsCollector: b.metricsCollector,
-			RotationMgr:      b.rotationMgr,
+			Governor:          b.gov,
+			GHClient:          b.ghClient,
+			GHAppAuth:         b.appAuth,
+			GHTokenScopes:     b.ghAuth.TokenScopes,
+			Tokens:            b.tokenCollector,
+			Knowledge:         b.knowledgeAPI,
+			Inception:         b.inceptionEngine,
+			Nous:              b.nousState,
+			Scheduler:         b.sched,
+			MetricsCollector:  b.metricsCollector,
+			RotationMgr:       b.rotationMgr,
+			HeadroomPublisher: b.quotaReadingPublisher,
 			// #3972: hand the ACMM advisor the SAME cached fleet-stats collector
 			// the heartbeat reads, so its merge-success signal reuses the existing
 			// 30-minute collect loop instead of issuing a second GitHub fetch.
@@ -9309,6 +9310,10 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		return true, 0
 	case "validate", "--config-check":
 		return true, runConfigCheck(args[1:], stdout, stderr)
+	case "agy-turn":
+		// Run from inside a headless agy agent's pane, one per kick; see
+		// pkg/agent/agy_turn.go.
+		return true, agent.RunAgyTurn(args[1:], stdout, stderr)
 	default:
 		return false, 0
 	}

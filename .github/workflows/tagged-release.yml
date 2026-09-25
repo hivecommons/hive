@@ -934,7 +934,8 @@ jobs:
               # SHA because the v5 ref can advance before the build starts.
               echo "Dispatching docker.yml for merged release commit ${release_sha} on v5 (#6380)..."
               GH_TOKEN="$ACTIONS_TOKEN" gh workflow run docker.yml --ref v5 \
-                -f "release_sha=${release_sha}"
+                -f "release_sha=${release_sha}" \
+                -f "release_version=v${VERSION}"
               break
             fi
             echo "$out"

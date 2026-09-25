@@ -20,7 +20,29 @@ that status is the thing to check before treating a page as current behaviour:
 
 ## Records
 
-- [External workflow admission](external-workflow-admission.md) - **Gate 0 decided; Gate 1 pilot shipped (v5, default off).** Records the #8201 Gate 0 selection for #8302 (option 2, one bounded report-only Flue generation workflow through the existing contributor protocol, the source-to-guarantee matrix, native Flue receipt probe, conformance split) and the #8361 Gate 1 pilot: the engine-neutral `pkg/extwork` binding, the Flue adapter and deterministic fixture, the side-effect inventory, operational status and recovery, and the local-versus-binding comparison, and the OMP workbench as the second host behind the same adapter (#8361 step 9, answering #6899: relay-channel frames, accept before context, progress events, receipt binding, confinement note). Publication remains deferred.
+- [The operator-facing admin MCP](admin-mcp.md) — **design only (v6).** The complement to
+  [task-mcp.md](task-mcp.md): hive administration exposed as Model Context Protocol tools for an
+  operator's assistant — an MCP endpoint on the dashboard mux, plus a stdio `cmd/` binary beside
+  it, both thin shells over one transport-agnostic tool package. Authenticated by the dashboard
+  token through the existing `authenticate` path, so unlike the task-scoped surface it needs no
+  lease minting, per-lease scoping or revocation record of its own. Read it for what a token-bearing admin client inherits from Hive's gates and
+  what it does not: owner role comes free with the bearer token (#4134), the mode ladder is not a
+  check on an operator write but is the *subject* of the surface's most consequential one, and
+  per-handler redaction means no response may be treated as pre-sanitised. Its most useful
+  section for anyone touching these handlers is the reminder that **the gate is not uniform** —
+  plan proposal is deliberately ungated (F16, `TestF16PlanFromIssueStaysUngated`) behind an
+  ioscan and an L5 floor instead, and repo pause/holds run through `canToggleRepoHold` rather
+  than the owner gate. It also records the one gap in the v6 guard invariant and closes it:
+  `handleKick` scans nothing today, for **any** caller including the dashboard's own Kick button,
+  so this work adds `ioscan` there rather than declaring a deviation. Carries the full
+  endpoint-to-tool mapping, the lease-versus-claim distinction, the endpoint behaviours a client
+  must not get wrong (202-plus-poll kicks per #5325, pause/resume `state` per the stale-belief
+  incident, symmetric owner gating on plan approve/reject per Audit F16, the pointer-field
+  features PUT that can disable ioscan itself, and the ACMM level change whose effects do not
+  unwind when reversed), a rationale for **every** excluded endpoint — three of them mechanically
+  impossible rather than merely unwise, including why `POST /api/contribute/invite` cannot work
+  from a role-derived credential at all — and the one real gap it does not close: writes audit as
+  `local`, so an assistant-mediated action is indistinguishable from a dashboard one.
 
 - [Run artifacts](run-artifacts.md) — **shipped (v5).** How long-running runs
   keep review state in the existing plan and lease artifacts with no new store,

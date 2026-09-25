@@ -23,6 +23,10 @@ func TestGovernorPRModelsUIRendersReworkStats(t *testing.T) {
 		"PR runs",
 		"No ship",
 		"b.effectiveness",
+		"Reviewer accuracy",
+		"/api/reviewer/accuracy",
+		"false approve",
+		"Confidence calibration by model",
 	} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("static/index.html missing %q", want)

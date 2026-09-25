@@ -1,0 +1,8 @@
+{
+  "backend": "codex",
+  "tailLines": 25,
+  "expect": {
+    "paneShowsLoginPrompt": true
+  },
+  "note": "Codex 0.156.1 browser sign-in screen must put the agent in needs-login instead of crash-looping."
+}

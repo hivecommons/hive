@@ -89,3 +89,41 @@ func TestContributeOperationsRendersEffectiveModelsPanel(t *testing.T) {
 		}
 	}
 }
+
+func TestContributeOperationsEffectiveModelsPanelCollapsiblePersists(t *testing.T) {
+	raw, err := os.ReadFile("contribute_landing.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(raw)
+	for _, want := range []string{
+		`id="effective-models-toggle" aria-expanded="true" aria-controls="effective-models-body"`,
+		`data-ops-section="effective-models-card"`,
+		`<span class="section-chevron" aria-hidden="true">▼</span>`,
+		`<div class="section-body" id="effective-models-body">`,
+		`.section-body{overflow:visible;transition:opacity 200ms ease;max-height:none;opacity:1}`,
+		`.section-body.collapsed{max-height:0!important;overflow:hidden;opacity:0;pointer-events:none}`,
+		`hive-section-collapsed-`,
+		`function initOpsCollapsiblePanels`,
+		`localStorage.getItem(OPS_SECTION_LS_PREFIX+sectionId)`,
+		`localStorage.setItem(OPS_SECTION_LS_PREFIX+sectionId,'1')`,
+		`localStorage.removeItem(OPS_SECTION_LS_PREFIX+sectionId)`,
+		`ccApplySectionCollapse(sectionId);`,
+		`try{initOpsCollapsiblePanels();}catch`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("effective models collapsible panel missing %q", want)
+		}
+	}
+
+	bodyStart := strings.Index(page, `id="effective-models-body"`)
+	controls := strings.Index(page, `class="effective-controls"`)
+	tables := strings.Index(page, `id="effective-models-ranked"`)
+	nextCard := strings.Index(page, `<!-- Fleet work`)
+	if bodyStart < 0 || controls < bodyStart || tables < controls || nextCard < tables {
+		t.Fatalf("effective model controls/tables are not nested under the collapsible body (body=%d controls=%d tables=%d next=%d)", bodyStart, controls, tables, nextCard)
+	}
+	if strings.Contains(page, `.section-body{overflow:hidden`) || strings.Contains(page, `max-height:5000px`) {
+		t.Fatal("expanded effective models body must not clip long ranked/insufficient tables")
+	}
+}

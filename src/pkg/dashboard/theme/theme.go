@@ -21,6 +21,15 @@ const (
 )
 
 const (
+	defaultBackgroundOpacity    = 0.08
+	defaultBackgroundPosition   = "center"
+	defaultBackgroundSize       = "cover"
+	defaultBackgroundAttachment = "fixed"
+	backgroundLayerZIndex       = "0"
+	pageContentZIndex           = "1"
+)
+
+const (
 	derivedFallbackAccent = "#80bfff"
 
 	derivedLightSurface0Base   = "#f8fafc"
@@ -355,12 +364,14 @@ func css(th Theme) (string, error) {
 	if th.Background != nil && strings.TrimSpace(th.Background.Image) != "" {
 		opacity := th.Background.Opacity
 		if opacity <= 0 || opacity > 1 {
-			opacity = 0.08
+			opacity = defaultBackgroundOpacity
 		}
-		pos := defaultString(th.Background.Position, "center")
-		size := defaultString(th.Background.Size, "cover")
-		attach := defaultString(th.Background.Attachment, "fixed")
-		b.WriteString("body::before{content:\"\";position:fixed;inset:0;pointer-events:none;z-index:-1;background-image:url(\"")
+		pos := defaultString(th.Background.Position, defaultBackgroundPosition)
+		size := defaultString(th.Background.Size, defaultBackgroundSize)
+		attach := defaultString(th.Background.Attachment, defaultBackgroundAttachment)
+		b.WriteString("body{position:relative;}body::before{content:\"\";position:fixed;inset:0;pointer-events:none;z-index:")
+		b.WriteString(backgroundLayerZIndex)
+		b.WriteString(";background-image:url(\"")
 		b.WriteString(th.Background.Image)
 		b.WriteString("\");background-position:")
 		b.WriteString(pos)
@@ -370,6 +381,9 @@ func css(th Theme) (string, error) {
 		b.WriteString(attach)
 		b.WriteString(";opacity:")
 		b.WriteString(fmt.Sprintf("%.3g", opacity))
+		b.WriteString(";}\n")
+		b.WriteString("body>*{position:relative;z-index:")
+		b.WriteString(pageContentZIndex)
 		b.WriteString(";}\n")
 	}
 	if th.CustomCSS != "" {
