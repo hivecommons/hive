@@ -65,7 +65,7 @@ on:
 # per-tag workflow generation to advance moving tags without either starving
 # during a merge burst or regressing when queued runs execute out of order.
 concurrency:
-  group: docker-build-${{ github.ref_name }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -125,6 +125,7 @@ jobs:
       push: ${{ steps.decide.outputs.push }}
       sha: ${{ steps.decide.outputs.sha }}
       release_version: ${{ steps.decide.outputs.release_version }}
+      ref_name: ${{ steps.decide.outputs.ref_name }}
       cross_org: ${{ steps.registries.outputs.cross_org }}
       cross_secret: ${{ steps.registries.outputs.cross_secret }}
     steps:
@@ -139,12 +140,13 @@ jobs:
           # edge, v4 is maintenance and publishes no channel — see the
           # RELEASE_BRANCH/CHANNELS args on each publish step below.
           LONG_LIVED: "v4 v5 mk dd v6"
-          REF_NAME: ${{ github.ref_name }}
           EVENT: ${{ github.event_name }}
           TARGET_SHA: ${{ inputs.release_sha || github.sha }}
           RELEASE_VERSION: ${{ inputs.release_version || '' }}
         run: |
           set -euo pipefail
+          : "${GITHUB_REF_NAME:?GITHUB_REF_NAME is required}"
+          REF_NAME=$GITHUB_REF_NAME
           if ! [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::release_sha must be a full 40-character lowercase commit SHA, got '${TARGET_SHA}'" >&2
             exit 1
@@ -172,9 +174,12 @@ jobs:
               fi
               ;;
           esac
-          echo "push=$push" >> "$GITHUB_OUTPUT"
-          echo "sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
-          echo "release_version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+          {
+            echo "push=$push"
+            echo "sha=$TARGET_SHA"
+            echo "release_version=$RELEASE_VERSION"
+            echo "ref_name=$REF_NAME"
+          } >> "$GITHUB_OUTPUT"
           echo "Push to GHCR: $push (branch=$REF_NAME sha=$TARGET_SHA event=$EVENT release_version=${RELEASE_VERSION:-<git describe>})"
 
       # #6419: well-formed 40-hex is NOT "reachable from this branch". Without
@@ -262,7 +267,7 @@ jobs:
     # asserts it (#5339) and it makes the intent readable.
     if: >-
       needs.gate.outputs.push == 'true' &&
-      !startsWith(github.ref_name, 'release-gate/')
+      !startsWith(github.ref, 'refs/heads/release-gate/')
     strategy:
       matrix:
         include:
@@ -342,7 +347,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             GIT_HASH=${{ needs.gate.outputs.sha }}
-            GIT_BRANCH=${{ github.ref_name }}
+            GIT_BRANCH=${{ needs.gate.outputs.ref_name }}
             VERSION=${{ needs.gate.outputs.release_version }}
           # Monotonic moving-tag guard metadata (#4804). This config label is
           # inherited by each platform manifest without changing its media type.
@@ -405,7 +410,7 @@ jobs:
       - name: Assert embedded commit matches build (freshness guard)
         env:
           EXPECTED_SHA: ${{ needs.gate.outputs.sha }}
-          REF_NAME: ${{ github.ref_name }}
+          REF_NAME: ${{ needs.gate.outputs.ref_name }}
         run: |
           set -euo pipefail
           if [ "${{ needs.gate.outputs.push }}" = "true" ]; then
@@ -505,7 +510,7 @@ jobs:
 
       - name: Create manifest list and push
         env:
-          REF_NAME: ${{ github.ref_name }}
+          REF_NAME: ${{ needs.gate.outputs.ref_name }}
           GATE_SHA: ${{ needs.gate.outputs.sha }}
           RUN_NUMBER: ${{ github.run_number }}
         run: |
@@ -570,7 +575,7 @@ jobs:
         env:
           NATIVE_IMAGE: ghcr.io/${{ github.repository_owner }}/hive
           CROSS_IMAGE: ghcr.io/${{ needs.gate.outputs.cross_org }}/hive
-          BRANCH: ${{ github.ref_name }}
+          BRANCH: ${{ needs.gate.outputs.ref_name }}
           GIT_SHA: ${{ needs.gate.outputs.sha }}
           # These three mirror publish-image-tags.sh's positional args in the
           # publish step above — keep them in lockstep with that call.
@@ -623,7 +628,7 @@ jobs:
     # asserts it (#5339) and it makes the intent readable.
     if: >-
       needs.gate.outputs.push == 'true' &&
-      !startsWith(github.ref_name, 'release-gate/')
+      !startsWith(github.ref, 'refs/heads/release-gate/')
     strategy:
       matrix:
         include:
@@ -718,7 +723,7 @@ jobs:
 
       - name: Create contributor manifest list and push
         env:
-          REF_NAME: ${{ github.ref_name }}
+          REF_NAME: ${{ needs.gate.outputs.ref_name }}
           GATE_SHA: ${{ needs.gate.outputs.sha }}
           RUN_NUMBER: ${{ github.run_number }}
         run: |
@@ -763,7 +768,7 @@ jobs:
         env:
           NATIVE_IMAGE: ghcr.io/${{ github.repository_owner }}/hive-contributor
           CROSS_IMAGE: ghcr.io/${{ needs.gate.outputs.cross_org }}/hive-contributor
-          BRANCH: ${{ github.ref_name }}
+          BRANCH: ${{ needs.gate.outputs.ref_name }}
           GIT_SHA: ${{ needs.gate.outputs.sha }}
           # Lockstep with the publish-image-tags.sh args above.
           INCLUDE_LATEST: "true"
@@ -808,7 +813,7 @@ jobs:
     # asserts it (#5339) and it makes the intent readable.
     if: >-
       needs.gate.outputs.push == 'true' &&
-      !startsWith(github.ref_name, 'release-gate/')
+      !startsWith(github.ref, 'refs/heads/release-gate/')
     strategy:
       matrix:
         include:
@@ -853,7 +858,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             GIT_HASH=${{ needs.gate.outputs.sha }}
-            GIT_BRANCH=${{ github.ref_name }}
+            GIT_BRANCH=${{ needs.gate.outputs.ref_name }}
             VERSION=${{ needs.gate.outputs.release_version }}
           labels: |
             io.kubestellar.hive.github-actions-run-number=${{ github.run_number }}
@@ -918,7 +923,7 @@ jobs:
 
       - name: Create hub manifest list and push
         env:
-          REF_NAME: ${{ github.ref_name }}
+          REF_NAME: ${{ needs.gate.outputs.ref_name }}
           GATE_SHA: ${{ needs.gate.outputs.sha }}
           RUN_NUMBER: ${{ github.run_number }}
         run: |
@@ -963,7 +968,7 @@ jobs:
         env:
           NATIVE_IMAGE: ghcr.io/${{ github.repository_owner }}/hive-hub
           CROSS_IMAGE: ghcr.io/${{ needs.gate.outputs.cross_org }}/hive-hub
-          BRANCH: ${{ github.ref_name }}
+          BRANCH: ${{ needs.gate.outputs.ref_name }}
           GIT_SHA: ${{ needs.gate.outputs.sha }}
           # Lockstep with the publish-image-tags.sh args above.
           INCLUDE_LATEST: "true"

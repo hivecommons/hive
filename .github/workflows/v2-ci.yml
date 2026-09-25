@@ -1154,6 +1154,13 @@ jobs:
       # tmux-builder (~51s) at its third layer while its own apt layer takes
       # ~20s, so a hit removes ~30s from a ~3.5 min build; a whole-image
       # cache-to would instead ADD the 130-225s export docker.yml measured.
+      - name: Resolve runner ref name
+        id: ref_name
+        run: |
+          set -euo pipefail
+          : "${GITHUB_REF_NAME:?GITHUB_REF_NAME is required}"
+          echo "value=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+
       - name: Build image via buildx (OCI archive, no attestations)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -1166,7 +1173,7 @@ jobs:
           cache-from: type=gha,scope=tmux-linux-amd64
           build-args: |
             GIT_HASH=${{ github.sha }}
-            GIT_BRANCH=${{ github.ref_name }}
+            GIT_BRANCH=${{ steps.ref_name.outputs.value }}
 
       - name: Run under containerd/overlayfs and assert in-place exec
         shell: bash

@@ -69,16 +69,26 @@ jobs:
     # re-attributes every src/ change and every release-time CHANGELOG.md
     # compilation edit to the sync PR, so it can never satisfy the guard —
     # each carried change already passed it on its own PR (#7783).
-    if: ${{ !startsWith(github.head_ref, 'sync/') }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     steps:
+      - name: Detect forward-merge sync branch
+        id: sync_branch
+        run: |
+          HEAD_REF=${GITHUB_HEAD_REF:-}
+          case "$HEAD_REF" in
+            sync/*) echo "skip=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "skip=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ steps.sync_branch.outputs.skip != 'true' }}
         with:
           # Full history so the merge base with the target branch exists
           # locally and the three-dot diff below is computable.
           fetch-depth: 0
 
       - name: Code changes must carry a changelog.d fragment (or no-changelog)
+        if: ${{ steps.sync_branch.outputs.skip != 'true' }}
         env:
           BASE_REF: ${{ github.base_ref }}
           # Read from the event payload, not the API: needs no token scope and

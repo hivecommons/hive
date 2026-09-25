@@ -1,0 +1,1 @@
+- Stop interpolating pull-request-controlled ref names directly in workflows.
