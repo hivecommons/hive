@@ -127,6 +127,22 @@ contribute hub's cleanup tick. The dashboard never imports `pkg/spektacular`
 (its internal-import ratchet); `pkg/spektacular.NewHubRunner` takes the
 server through the `LeaseRegistry` interface.
 
+## Design mode
+
+On v6, design mode is admitted through the same run machinery as `!runs spec`.
+`hive-design`, the dashboard 📐 button, and `!runs design <owner/repo#n>` create
+or find the issue's Spektacular `spec` lease and link it to the Hive epic bead.
+The Spec checkpoint is the design-approval gate; once approved, the run advances
+to Plan. A final Plan import materializes child beads under the epic using the
+existing planning decompose path, so `plan_status=draft` at L5 and
+`plan_status=approved` at L6 continue to drive Gate 2 and pool admission.
+
+The design document remains one artifact with two views: the Spek/Jam artifact
+and a source-native comment posted back through the work-source adapter. GitHub
+uses labels/comments; Jira and Linear use labels or configured workflow states
+plus comments; Gitea/GitLab label/comment support degrades gracefully where a
+status transition is unavailable.
+
 ## Triage
 
 The runs triage pass is separate from the Spek runner and is also OFF by

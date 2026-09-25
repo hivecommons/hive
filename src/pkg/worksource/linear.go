@@ -128,6 +128,24 @@ const linearIssuesQuery = `query($teamKey: String!, $states: [String!], $cursor:
   }
 }`
 
+const linearDesignIssueLabelsQuery = `query($identifier: String!) {
+  issue(id: $identifier) {
+    id
+    labels { nodes { id name } }
+  }
+  issueLabels(first: 250) {
+    nodes { id name }
+  }
+}`
+
+const linearDesignIssueUpdateLabels = `mutation($id: String!, $labelIds: [String!]) {
+  issueUpdate(id: $id, input: { labelIds: $labelIds }) { success }
+}`
+
+const linearDesignCommentCreate = `mutation($issueId: String!, $body: String!) {
+  commentCreate(input: { issueId: $issueId, body: $body }) { success }
+}`
+
 // linearAssignedIssuesQuery is linearIssuesQuery narrowed to issues whose
 // assignee OR delegate is the given user id. A separate document rather than
 // a dynamically-built filter so both shapes stay readable.
@@ -335,6 +353,153 @@ func (s *LinearSource) ListIssues(ctx context.Context) ([]Issue, error) {
 		}
 	}
 	return out, nil
+}
+
+func (s *LinearSource) AddLabel(ctx context.Context, ref Ref, label string) error {
+	return s.updateDesignLabels(ctx, ref, strings.TrimSpace(label), true)
+}
+
+func (s *LinearSource) RemoveLabel(ctx context.Context, ref Ref, label string) error {
+	return s.updateDesignLabels(ctx, ref, strings.TrimSpace(label), false)
+}
+
+func (s *LinearSource) AddComment(ctx context.Context, ref Ref, body string) error {
+	issueID, _, err := s.designIssueLabels(ctx, ref)
+	if err != nil {
+		return err
+	}
+	raw, err := linearGraphQL(ctx, s.client, s.cfg.BaseURL, s.cfg.APIKey, linearDesignCommentCreate, map[string]interface{}{"issueId": issueID, "body": body})
+	if err != nil {
+		return fmt.Errorf("worksource/linear: add comment: %w", err)
+	}
+	var resp struct {
+		Data struct {
+			CommentCreate struct {
+				Success bool `json:"success"`
+			} `json:"commentCreate"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return fmt.Errorf("worksource/linear: decode comment mutation: %w", err)
+	}
+	if !resp.Data.CommentCreate.Success {
+		return fmt.Errorf("worksource/linear: comment mutation reported failure")
+	}
+	return nil
+}
+
+func (s *LinearSource) TransitionStatus(context.Context, Ref, string) error {
+	return ErrStatusTransitionUnsupported
+}
+
+func (s *LinearSource) updateDesignLabels(ctx context.Context, ref Ref, label string, add bool) error {
+	if label == "" {
+		return nil
+	}
+	issueID, labels, err := s.designIssueLabels(ctx, ref)
+	if err != nil {
+		return err
+	}
+	labelIDs := make([]string, 0, len(labels.current)+1)
+	have := false
+	for _, l := range labels.current {
+		if strings.EqualFold(l.name, label) {
+			have = true
+			if add {
+				labelIDs = append(labelIDs, l.id)
+			}
+			continue
+		}
+		labelIDs = append(labelIDs, l.id)
+	}
+	if add && !have {
+		id := ""
+		for _, l := range labels.all {
+			if strings.EqualFold(l.name, label) {
+				id = l.id
+				break
+			}
+		}
+		if id == "" {
+			return fmt.Errorf("worksource/linear: label %q does not exist", label)
+		}
+		labelIDs = append(labelIDs, id)
+	}
+	raw, err := linearGraphQL(ctx, s.client, s.cfg.BaseURL, s.cfg.APIKey, linearDesignIssueUpdateLabels, map[string]interface{}{"id": issueID, "labelIds": labelIDs})
+	if err != nil {
+		return fmt.Errorf("worksource/linear: update labels: %w", err)
+	}
+	var resp struct {
+		Data struct {
+			IssueUpdate struct {
+				Success bool `json:"success"`
+			} `json:"issueUpdate"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return fmt.Errorf("worksource/linear: decode label mutation: %w", err)
+	}
+	if !resp.Data.IssueUpdate.Success {
+		return fmt.Errorf("worksource/linear: label mutation reported failure")
+	}
+	return nil
+}
+
+type linearDesignLabel struct {
+	id   string
+	name string
+}
+
+type linearDesignLabels struct {
+	current []linearDesignLabel
+	all     []linearDesignLabel
+}
+
+func (s *LinearSource) designIssueLabels(ctx context.Context, ref Ref) (string, linearDesignLabels, error) {
+	if s == nil {
+		return "", linearDesignLabels{}, fmt.Errorf("worksource/linear: source unavailable")
+	}
+	identifier := strings.TrimSpace(ref.ExternalID)
+	if identifier == "" {
+		return "", linearDesignLabels{}, fmt.Errorf("worksource/linear: external id is required")
+	}
+	raw, err := linearGraphQL(ctx, s.client, s.cfg.BaseURL, s.cfg.APIKey, linearDesignIssueLabelsQuery, map[string]interface{}{"identifier": identifier})
+	if err != nil {
+		return "", linearDesignLabels{}, fmt.Errorf("worksource/linear: lookup issue labels: %w", err)
+	}
+	var resp struct {
+		Data struct {
+			Issue *struct {
+				ID     string `json:"id"`
+				Labels struct {
+					Nodes []struct {
+						ID   string `json:"id"`
+						Name string `json:"name"`
+					} `json:"nodes"`
+				} `json:"labels"`
+			} `json:"issue"`
+			IssueLabels struct {
+				Nodes []struct {
+					ID   string `json:"id"`
+					Name string `json:"name"`
+				} `json:"nodes"`
+			} `json:"issueLabels"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return "", linearDesignLabels{}, fmt.Errorf("worksource/linear: decode labels: %w", err)
+	}
+	if resp.Data.Issue == nil || resp.Data.Issue.ID == "" {
+		return "", linearDesignLabels{}, fmt.Errorf("worksource/linear: issue %q not found", identifier)
+	}
+	labels := linearDesignLabels{}
+	for _, n := range resp.Data.Issue.Labels.Nodes {
+		labels.current = append(labels.current, linearDesignLabel{id: n.ID, name: n.Name})
+	}
+	for _, n := range resp.Data.IssueLabels.Nodes {
+		labels.all = append(labels.all, linearDesignLabel{id: n.ID, name: n.Name})
+	}
+	return resp.Data.Issue.ID, labels, nil
 }
 
 func (s *LinearSource) linearDependencies(fallback LinearTeamConfig, n linearIssueNode) []Dependency {

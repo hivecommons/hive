@@ -18,6 +18,22 @@ integration (webhooks, session acknowledgement, writing back to Linear);
 this page covers only the read side (`work_source.linear`) for parity with
 the other three.
 
+## Design signals
+
+The v6 Spektacular design bridge treats design request, design approval, and the
+design artifact as work-source operations instead of GitHub-only calls. The
+minimal write-back surface is: add label, remove label, add comment, and an
+optional status transition. Unsupported status transitions return an explicit
+unsupported error and the dashboard shows the degraded path.
+
+| Source | Design requested | Design approved | Artifact/comment | Status transition |
+|---|---|---|---|---|
+| GitHub / GitHub Projects | `hive-design` label | `design-approved` label | issue comment | n/a |
+| Jira Cloud/Data Center | Jira label (or configured transition) | label or transition | Jira comment | optional / unsupported by default |
+| Linear | Linear label (or configured workflow state) | label or state | Linear comment | optional / unsupported by default |
+| Gitea | label | label | issue comment | unsupported |
+| GitLab | label | label | issue comment | unsupported |
+
 ## Run stages (`run_stages: true`)
 
 Run stages let the governor offer a pending run stage such as `spec`, `plan`,

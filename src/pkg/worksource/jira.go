@@ -1,6 +1,7 @@
 package worksource
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -221,6 +222,7 @@ func (s *jiraSource) toIssue(it jiraIssue) Issue {
 		UpdatedAt:  it.Fields.Updated.Time,
 		URL:        strings.TrimSuffix(s.cfg.BaseURL, "/") + "/browse/" + it.Key,
 	}
+
 	if it.Fields.Status != nil {
 		iss.State = it.Fields.Status.Name
 	}
@@ -234,4 +236,77 @@ func (s *jiraSource) toIssue(it jiraIssue) Issue {
 		iss.Assignees = []string{it.Fields.Assignee.DisplayName}
 	}
 	return iss
+}
+
+func (s *jiraSource) AddLabel(ctx context.Context, ref Ref, label string) error {
+	return s.updateLabels(ctx, ref, map[string][]map[string]string{"labels": []map[string]string{{"add": strings.TrimSpace(label)}}})
+}
+
+func (s *jiraSource) RemoveLabel(ctx context.Context, ref Ref, label string) error {
+	return s.updateLabels(ctx, ref, map[string][]map[string]string{"labels": []map[string]string{{"remove": strings.TrimSpace(label)}}})
+}
+
+func (s *jiraSource) AddComment(ctx context.Context, ref Ref, body string) error {
+	if s == nil {
+		return fmt.Errorf("worksource/jira: source unavailable")
+	}
+	key := strings.TrimSpace(ref.ExternalID)
+	if key == "" {
+		key = strings.TrimPrefix(strings.TrimSpace(ref.Display()), "#")
+	}
+	if key == "" {
+		return fmt.Errorf("worksource/jira: external id is required")
+	}
+	payload := map[string]any{"body": map[string]any{
+		"type":    "doc",
+		"version": 1,
+		"content": []map[string]any{{
+			"type": "paragraph",
+			"content": []map[string]any{{
+				"type": "text",
+				"text": strings.TrimSpace(body),
+			}},
+		}},
+	}}
+	return s.doJSON(ctx, http.MethodPost, "/rest/api/3/issue/"+url.PathEscape(key)+"/comment", payload, http.StatusCreated)
+}
+
+func (s *jiraSource) TransitionStatus(context.Context, Ref, string) error {
+	return ErrStatusTransitionUnsupported
+}
+
+func (s *jiraSource) updateLabels(ctx context.Context, ref Ref, update map[string][]map[string]string) error {
+	if s == nil {
+		return fmt.Errorf("worksource/jira: source unavailable")
+	}
+	key := strings.TrimSpace(ref.ExternalID)
+	if key == "" {
+		return fmt.Errorf("worksource/jira: external id is required")
+	}
+	return s.doJSON(ctx, http.MethodPut, "/rest/api/3/issue/"+url.PathEscape(key), map[string]any{"update": update}, http.StatusNoContent)
+}
+
+func (s *jiraSource) doJSON(ctx context.Context, method, path string, payload any, want int) error {
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(payload); err != nil {
+		return fmt.Errorf("worksource/jira: encode request: %w", err)
+	}
+	reqURL := strings.TrimSuffix(s.cfg.BaseURL, "/") + path
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, &buf)
+	if err != nil {
+		return fmt.Errorf("worksource/jira: build request: %w", err)
+	}
+	req.SetBasicAuth(s.cfg.Email, s.cfg.APIToken)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("worksource/jira: mutation: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != want {
+		return fmt.Errorf("worksource/jira: mutation returned %d: %s", resp.StatusCode, string(raw))
+	}
+	return nil
 }

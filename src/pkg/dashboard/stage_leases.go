@@ -852,6 +852,10 @@ func (s *Server) runKeyForEpic(repo, number, runKey string) string {
 // plan checkpoint, once the plan has actually been approved. A run with no
 // live held plan lease is a no-op, not an error.
 func (s *Server) advanceApprovedPlanLease(runKey, epicID, actor string, now time.Time) error {
+	return s.advanceApprovedStageLease(runKey, epicID, StagePlan, StageImplement, actor, now)
+}
+
+func (s *Server) advanceApprovedStageLease(runKey, epicID, fromStage, toStage, actor string, now time.Time) error {
 	if s == nil || s.contributeHub == nil || runKey == "" {
 		return nil
 	}
@@ -859,7 +863,7 @@ func (s *Server) advanceApprovedPlanLease(runKey, epicID, actor string, now time
 	var gen uint64
 	found := false
 	err := s.VisitActiveStageLeases(func(rk, _, stage, id, task, repo string, g uint64, expiresAt time.Time) {
-		if found || !s.sameRunKey(runKey, rk, repo) || stage != StagePlan || now.After(expiresAt) {
+		if found || !s.sameRunKey(runKey, rk, repo) || stage != fromStage || now.After(expiresAt) {
 			return
 		}
 		identity, taskID, gen, found = id, task, g, true
@@ -867,11 +871,24 @@ func (s *Server) advanceApprovedPlanLease(runKey, epicID, actor string, now time
 	if err != nil || !found {
 		return err
 	}
-	_, err = s.contributeHub.advanceLeaseStageAt(identity, taskID, StageImplement, now, now.Add(time.Millisecond))
+	_, err = s.contributeHub.advanceLeaseStageAt(identity, taskID, toStage, now, now.Add(time.Millisecond))
 	if err == nil {
-		s.recordRunCheckpointApproval(runKey, epicID, StagePlan, actor, gen, now, nil)
+		s.recordRunCheckpointApproval(runKey, epicID, fromStage, actor, gen, now, nil)
 	}
 	return err
+}
+
+func (s *Server) activeRunStage(runKey string) string {
+	if s == nil || s.contributeHub == nil || runKey == "" {
+		return ""
+	}
+	stage := ""
+	_ = s.VisitActiveStageLeases(func(rk, _, st, _, _, repo string, _ uint64, expiresAt time.Time) {
+		if stage == "" && s.sameRunKey(runKey, rk, repo) && time.Now().Before(expiresAt) {
+			stage = st
+		}
+	})
+	return stage
 }
 
 // sameRunKey compares two run keys through their canonical form, so an

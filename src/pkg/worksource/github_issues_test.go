@@ -105,3 +105,59 @@ func TestGitHubIssuesSource_ListIssues_Error(t *testing.T) {
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
+
+func TestGitHubIssuesSourceDesignMutations(t *testing.T) {
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/org/repo/issues/7/labels":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/repos/org/repo/issues/7/labels/hive-design":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/org/repo/issues/7/comments":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"html_url":"https://github.com/org/repo/issues/7#issuecomment-1"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	client := github.NewClientForTest(srv.URL, "org", []string{"repo"}, testLogger())
+	src := worksource.NewGitHubIssuesSource(client)
+	ref := worksource.Ref{Repo: "org/repo", Number: 7}
+	if err := src.(worksource.LabelMutator).AddLabel(context.Background(), ref, "hive-design"); err != nil {
+		t.Fatalf("AddLabel: %v", err)
+	}
+	if err := src.(worksource.LabelMutator).RemoveLabel(context.Background(), ref, "hive-design"); err != nil {
+		t.Fatalf("RemoveLabel: %v", err)
+	}
+	if err := src.(worksource.Commenter).AddComment(context.Background(), ref, "## Design"); err != nil {
+		t.Fatalf("AddComment: %v", err)
+	}
+	want := []string{"POST /repos/org/repo/issues/7/labels", "DELETE /repos/org/repo/issues/7/labels/hive-design", "POST /repos/org/repo/issues/7/comments"}
+	if fmt.Sprint(seen) != fmt.Sprint(want) {
+		t.Fatalf("seen = %v, want %v", seen, want)
+	}
+}
+
+func TestGitHubIssuesSourceDesignMutationErrors(t *testing.T) {
+	src := worksource.NewGitHubIssuesSource(nil)
+	ref := worksource.Ref{Repo: "org/repo", Number: 7}
+	if err := src.(worksource.LabelMutator).AddLabel(context.Background(), ref, "x"); err == nil {
+		t.Fatal("AddLabel with nil client returned nil")
+	}
+	client := github.NewClientForTest("http://127.0.0.1:1", "org", []string{"repo"}, testLogger())
+	src = worksource.NewGitHubIssuesSource(client)
+	bad := worksource.Ref{Repo: "org/repo", ExternalID: "ENG-1"}
+	if err := src.(worksource.LabelMutator).AddLabel(context.Background(), bad, "x"); err == nil || !strings.Contains(err.Error(), "GitHub issue ref") {
+		t.Fatalf("bad add err = %v", err)
+	}
+	if err := src.(worksource.LabelMutator).RemoveLabel(context.Background(), bad, "x"); err == nil || !strings.Contains(err.Error(), "GitHub issue ref") {
+		t.Fatalf("bad remove err = %v", err)
+	}
+	if err := src.(worksource.Commenter).AddComment(context.Background(), bad, "body"); err == nil || !strings.Contains(err.Error(), "GitHub issue ref") {
+		t.Fatalf("bad comment err = %v", err)
+	}
+}

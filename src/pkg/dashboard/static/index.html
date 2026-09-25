@@ -9407,8 +9407,8 @@
       let glyph, cls, tip;
       switch (l.state) {
         case 'design_stuck': glyph = '✎⚠';              cls = 'plan-stuck';   tip = 'Design revisions exhausted — needs a human'; break;
-        case 'design_review': glyph = '✎';              cls = 'plan-review';  tip = 'Design posted — approve or request changes'; break;
-        case 'design':    glyph = '✎';                 cls = 'plan-queued';  tip = 'Design queued for the architect'; break;
+        case 'design_review': glyph = '✎';              cls = 'plan-review';  tip = l.designVia === 'spektacular' ? 'Design via Spektacular — Spec checkpoint awaiting approval' : 'Design posted — approve or request changes'; break;
+        case 'design':    glyph = '✎';                 cls = 'plan-queued';  tip = l.designVia === 'spektacular' ? 'Design via Spektacular queued for a spec run' : 'Design queued for the architect'; break;
         case 'stuck':     glyph = '⚠';                cls = 'plan-stuck';   tip = 'Plan stuck — the architect produced nothing; open to retry'; break;
         case 'review':    glyph = '● ' + total;       cls = 'plan-review';  tip = total + ' task' + (total === 1 ? '' : 's') + ' drafted — awaiting your review'; break;
         case 'executing': glyph = '▶ ' + done + '/' + total; cls = 'plan-active'; tip = done + ' of ' + total + ' tasks done — plan approved and in progress'; break;
@@ -18242,8 +18242,8 @@ function burnAreaChart() {
       // Stuck beats queued: the architect was kicked its full attempt budget
       // and produced nothing, so "queued" would read as progress (hivecommons/hive#8010).
       if (p.designStatus === 'needs_human') return '<span class="text-danger">✎ design stuck — revisions exhausted</span>';
-      if (p.designStatus === 'requested') return '<span class="text-warn">✎ design posted — awaiting approval</span>';
-      if (p.designStatus === 'queued') return '<span class="text-info">✎ design queued</span>';
+      if (p.designStatus === 'requested') return '<span class="text-warn">✎ ' + (p.designVia === 'spektacular' ? 'design via Spektacular — Spec checkpoint' : 'design posted') + ' — awaiting approval</span>';
+      if (p.designStatus === 'queued') return '<span class="text-info">✎ ' + (p.designVia === 'spektacular' ? 'design via Spektacular queued' : 'design queued') + '</span>';
       if (p.decomposeFailed) return '<span class="text-danger">⚠ stuck — architect produced no plan; click Plan on the issue to retry</span>';
       if (p.pendingDecompose) return '<span class="text-info">⧗ queued for architect' + (p.decomposeAttempts > 1 ? ' (attempt ' + p.decomposeAttempts + ')' : '') + '</span>';
       if (p.planStatus === 'draft') return '<span class="text-warn">● awaiting your review</span>';
@@ -18319,7 +18319,7 @@ function burnAreaChart() {
             ? `<button class="hv-btn btn-secondary btn btn-primary" data-action="planApprove" data-arg0="${escapeHtml(plan.epicId)}" title="Release the plan's tasks to the agent fleet">✓ Approve plan</button>`
             : `<button class="hv-btn btn-secondary btn" data-action="planReject" data-arg0="${escapeHtml(plan.epicId)}" title="Return the plan to draft, re-gating its tasks">↩ Return to draft</button>`);
         const designLine = plan.designStatus
-          ? `<div class="muted-note" style="margin-bottom:10px">Design: <strong>${escapeHtml(plan.designStatus)}</strong>${plan.designRevision ? ' · revision ' + escapeHtml(String(plan.designRevision)) : ''}</div>`
+          ? `<div class="muted-note" style="margin-bottom:10px">Design: <strong>${escapeHtml(plan.designStatus)}</strong>${plan.designVia === 'spektacular' ? ' · via Spektacular' : ''}${plan.runKey ? ' · <a href="/runs?run=' + encodeURIComponent(plan.runKey) + '" data-stop="1">run ' + escapeHtml(plan.runKey) + '</a>' : ''}${plan.designRevision ? ' · revision ' + escapeHtml(String(plan.designRevision)) : ''}</div>`
           : '';
         const canApproveDesign = (plan.designStatus === 'requested' || plan.designStatus === 'needs_human') && dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
         const designGate = canApproveDesign
