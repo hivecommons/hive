@@ -1,0 +1,1 @@
+- Add a collapsible Repositories pill legend and band actionable repo-card issues into ready, in-progress, agent-filed, waiting-on-human, and likely-done groups with state badges and stale counters.
