@@ -14,6 +14,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/celtrigger"
+	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/mention"
@@ -1049,8 +1050,15 @@ func (h *ContributeWSHub) loadLeases() {
 		if rec.Identity == "" || rec.TaskID == "" || rec.Gen == 0 {
 			continue
 		}
-		if rec.ExpiresAt.IsZero() || now.After(rec.ExpiresAt) {
-			continue
+		expiresAt := rec.ExpiresAt
+		if expiresAt.IsZero() || now.After(expiresAt) {
+			// A pending stage lease outlived by a long outage is the run's only
+			// record; re-arm it rather than lose the run (see
+			// keepPendingStageLeasesAlive). Relay leases still drop.
+			if rec.Stage == "" || !h.isPendingStageIdentity(rec.Identity) {
+				continue
+			}
+			expiresAt = now.Add(leaseTTL)
 		}
 		key := rec.Key
 		if key == "" {
@@ -1072,7 +1080,7 @@ func (h *ContributeWSHub) loadLeases() {
 			triageVerdict:   rec.TriageVerdict,
 			triageRationale: rec.TriageRationale,
 			restored:        true,
-			expiresAt:       rec.ExpiresAt,
+			expiresAt:       expiresAt,
 			mcpTokenID:      rec.MCPTokenID,
 			mcpTokenHash:    rec.MCPTokenHash,
 			mcpTokenStage:   rec.MCPTokenStage,
@@ -1107,6 +1115,68 @@ func (h *ContributeWSHub) loadLeases() {
 		h.logger.Info("[contribute-ws] restored task leases across restart",
 			"count", restored, "max_gen", maxGen)
 	}
+}
+
+// pendingStageLeaseRenewBefore is how much of a pending stage lease's window
+// may remain before keepPendingStageLeasesAlive extends it. Extending only
+// when the window is half spent keeps the ledger file from being rewritten on
+// every cleanup tick while still leaving ample margin over the tick cadence.
+const pendingStageLeaseRenewBefore = leaseTTL / 2
+
+// isPendingStageIdentity reports whether identity is one of the server-side
+// holders of a run stage that is waiting for an executor or relay to pick it
+// up: the admission (triage) identity, the wave fan-out identity, and the
+// hub executor. A relay's own lease never qualifies — those must age out so
+// the stage returns to the offer pool when the relay vanishes.
+func (h *ContributeWSHub) isPendingStageIdentity(identity string) bool {
+	if identity == "" {
+		return false
+	}
+	if identity == runAdmissionIdentity || identity == runFanoutIdentity {
+		return true
+	}
+	if h != nil && h.server != nil && h.server.deps != nil && h.server.deps.Config != nil {
+		return identity == h.server.deps.Config.Runs.Spektacular.HubExecutor.IdentityOrDefault()
+	}
+	return identity == config.DefaultSpektacularHubExecutorIdentity
+}
+
+// keepPendingStageLeasesAlive extends every run-stage lease held by a pending
+// (server-side) identity so it never ages out of the registry. A stage lease
+// is the run's only record of where it stands: the admission lease minted
+// when a spec run is started, or the lease the hub executor advances to
+// `implement` after plan approval. leaseTTL is sized for a relay working a
+// task, not for a stage waiting on a taker — before this, a run whose
+// implement stage found no ready contributor within 30 minutes was pruned
+// with its lease, silently vanishing from /api/runs and the offer pool while
+// its approved plan epic lived on. Returns how many leases were extended.
+func (h *ContributeWSHub) keepPendingStageLeasesAlive(now time.Time) int {
+	if h == nil {
+		return 0
+	}
+	extended := 0
+	h.leaseMu.Lock()
+	defer h.leaseMu.Unlock()
+	for _, l := range h.leases {
+		if l == nil || l.stage == "" || l.expiresAt.IsZero() || now.After(l.expiresAt) {
+			continue
+		}
+		if !h.isPendingStageIdentity(l.identity) {
+			continue
+		}
+		if l.expiresAt.Sub(now) > pendingStageLeaseRenewBefore {
+			continue
+		}
+		l.expiresAt = now.Add(leaseTTL)
+		extended++
+	}
+	if extended > 0 {
+		if err := h.saveLeasesLocked(); err != nil {
+			h.logger.Warn("[contribute-ws] pending stage leases extended in memory but not persisted",
+				"extended", extended, "error", err)
+		}
+	}
+	return extended
 }
 
 // pruneExpiredLeases drops leases that have aged out of their re-adoption window and

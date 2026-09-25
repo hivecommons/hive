@@ -1,0 +1,11 @@
+{
+  "backend": "copilot",
+  "tailLines": 15,
+  "expect": {
+    "getCLIState": "starting",
+    "classifyTmuxPane": "PANE_STATE_WORKING",
+    "paneShowsInputPrompt": true,
+    "paneShowsActiveWork": true
+  },
+  "note": "GitHub Copilot CLI 1.0.88 mid-turn: the footer collapses to \"◉ Working - autopilot esc interrupt\" (older builds drew \"esc cancel\")."
+}

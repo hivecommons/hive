@@ -1959,14 +1959,29 @@ function hubSupportsQuotaPreflight(hub) {
   return !!(hub && Array.isArray(hub.serverCapabilities) && hub.serverCapabilities.includes('quota_preflight_v1'));
 }
 
+// advanceActiveHub rotates the poll slot to the next hub that can actually
+// answer a `ready`. A configured hub that is down (never connected, or mid
+// reconnect backoff) is skipped: handing it the slot sent `ready` into a
+// closed socket and nothing ever rotated again, so a relay with one dead hub
+// in HIVE_HUB sat idle while its live hubs had work. If no hub has an open
+// socket the pre-existing behaviour (next non-auth-failed hub, whose auth_ok
+// handler sends `ready` when it comes up) is kept.
 function advanceActiveHub(fromHub) {
   const fromIndex = hubs.indexOf(fromHub);
   const start = fromIndex >= 0 ? fromIndex : activeHubIndex;
-  for (let offset = 1; offset <= hubs.length; offset++) {
-    const idx = (start + offset) % hubs.length;
-    if (!hubs[idx].authFailed) {
-      activeHubIndex = idx;
-      return hubs[idx];
+  const eligible = (hub) => hub && !hub.authFailed;
+  const socketOpen = (hub) => !!(hub.ws && hub.ws.readyState === 1);
+  const passes = [
+    (hub) => eligible(hub) && socketOpen(hub),
+    eligible,
+  ];
+  for (const ok of passes) {
+    for (let offset = 1; offset <= hubs.length; offset++) {
+      const idx = (start + offset) % hubs.length;
+      if (ok(hubs[idx])) {
+        activeHubIndex = idx;
+        return hubs[idx];
+      }
     }
   }
   return null;
