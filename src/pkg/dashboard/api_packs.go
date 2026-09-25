@@ -250,6 +250,17 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			if changed {
 				s.deps.Config.Agents[pa.Name] = existing
 				_ = s.deps.AgentMgr.UpdateConfig(pa.Name, existing)
+				if agentsDir != "" {
+					alertID := "pack-agent-overlay-save-failed-" + pa.Name
+					if err := config.SaveAgentFile(agentsDir, pa.Name, existing); err != nil {
+						s.logger.Error("failed to persist reconciled pack fields to agent overlay", "agent", pa.Name, "error", err)
+						s.AddSystemAlert(alertID, "error",
+							"Could not save the reconciled ACMM pack fields for "+pa.Name+" to its agent overlay — it will revert on the next config load: "+err.Error())
+						createErrs = append(createErrs, fmt.Sprintf("%s: %v", pa.Name, err))
+					} else {
+						s.ClearSystemAlert(alertID)
+					}
+				}
 				updated = append(updated, pa.Name)
 				// A flag flip is a statement about whether a process should
 				// EXIST (#7446): leaving on-demand starts the agent — nothing
@@ -509,7 +520,6 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			"agents", strings.Join(tombstoned, ", "),
 			"hint", "re-add the agent from the Governor grid to undo the deletion")
 	}
-
 	result := &ApplyPackResult{
 		Name:       pack.Name,
 		Created:    created,
