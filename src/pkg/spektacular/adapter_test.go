@@ -18,6 +18,7 @@ import (
 // the same generation and expiry rules the dashboard applies.
 type fakeLeaseRegistry struct {
 	workDir    string
+	runKey     string
 	stage      string
 	gen        uint64
 	expiresAt  time.Time
@@ -29,6 +30,7 @@ type fakeLeaseRegistry struct {
 	retries    int
 	refusals   []map[string]string
 	escalates  []map[string]string
+	progress   []map[string]string
 	plans      []string
 }
 
@@ -37,7 +39,11 @@ func (f *fakeLeaseRegistry) VisitActiveStageLeases(visit func(runKey, key, stage
 		return f.visitErr
 	}
 	if f.present {
-		visit(testRunKey, testRepo+"!"+testRunKey+":"+f.stage, f.stage, testIdentity, testTaskID, testRepo, f.gen, f.expiresAt)
+		runKey := f.runKey
+		if runKey == "" {
+			runKey = testRunKey
+		}
+		visit(runKey, testRepo+"!"+runKey+":"+f.stage, f.stage, testIdentity, testTaskID, testRepo, f.gen, f.expiresAt)
 	}
 	return nil
 }
@@ -75,6 +81,10 @@ func (f *fakeLeaseRegistry) RefuseStageLease(_ string, attrs map[string]string) 
 	f.refusals = append(f.refusals, attrs)
 }
 
+func (f *fakeLeaseRegistry) RecordStageProgress(_ string, _ string, attrs map[string]string, _ time.Time) {
+	f.progress = append(f.progress, attrs)
+}
+
 func (f *fakeLeaseRegistry) EscalateStageLease(_ string, _ time.Time, attrs map[string]string) {
 	f.escalates = append(f.escalates, attrs)
 }
@@ -82,6 +92,17 @@ func (f *fakeLeaseRegistry) EscalateStageLease(_ string, _ time.Time, attrs map[
 func (f *fakeLeaseRegistry) ImportRunPlan(_, _, taskList string) error {
 	f.plans = append(f.plans, taskList)
 	return nil
+}
+
+func TestLeaseAdapter_ActiveStagesUsesRunArtifactNameForIssueRunKey(t *testing.T) {
+	reg := &fakeLeaseRegistry{runKey: "KubeStellar/Console#23735", stage: StageSpec, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true}
+	stages, err := NewLeaseRegistryAdapter(reg).ActiveStages(t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stages) != 1 || stages[0].Artifact != "kubestellar-console-23735" {
+		t.Fatalf("artifact = %#v, want kubestellar-console-23735", stages)
+	}
 }
 
 func TestLeaseAdapter_AdvanceRetryRefuseThroughPrimitives(t *testing.T) {

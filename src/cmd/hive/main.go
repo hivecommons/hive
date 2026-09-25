@@ -3529,7 +3529,11 @@ func (b *boot) bootDashboardAPI() { b.bootDashboardAPIWith(defaultBootDashboardA
 // injected; see bootDashboardAPIDeps.
 func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	deps.registerAPI(b.dashSrv, b.dashboardDependencies())
-	wireSpektacularRunner(b.cfg, b.dashSrv, b.logger)
+	var spekCloneAuth dashboard.SpekHubCloneAuth
+	if b.appAuth != nil {
+		spekCloneAuth = spektacularCloneAuth(pushbroker.GitHubAppMinter{Auth: b.appAuth})
+	}
+	wireSpektacularRunnerWithCloneAuth(b.cfg, b.dashSrv, b.logger, spekCloneAuth)
 	// #8380: chain GitHub comments/labels behind the relay yank on takeover.
 	b.dashSrv.InstallClaimHooks(githubClaimHooks(b.ctx, b.cfg, func() *github.Client { return b.ghClient }, b.logger))
 	// Forge App tab inventory: the resolved active key path and the per-app-id
@@ -6171,6 +6175,23 @@ func planFromLabeledIssues(
 				issues = append(issues, issue)
 			}
 		}
+	}
+	if cfg != nil && cfg.Runs.Spektacular.Enabled && dashSrv != nil {
+		filtered := issues[:0]
+		for _, issue := range issues {
+			if planning.HasDesignLabel(issue, designCfg) {
+				if epic, runKey, err := dashSrv.StartDesignSpektacularFromIssue(context.Background(), store, issue); err != nil {
+					logger.Warn("design-mode-spektacular: admit failed", "issue", planning.IssueRef(issue), "error", err)
+					filtered = append(filtered, issue)
+				} else {
+					dashSrv.AuditLog("planning", "design_requested_spektacular", "epic="+epic.ID+" ref="+epic.ExternalRef+" run="+runKey, planning.ArchitectAgentName)
+					logger.Info("audit: design requested via Spektacular", "epic", epic.ID, "ref", epic.ExternalRef, "run", runKey)
+				}
+				continue
+			}
+			filtered = append(filtered, issue)
+		}
+		issues = filtered
 	}
 	sink := labelPlanSink{gov: gov, dashSrv: dashSrv, logger: logger}
 	planning.PlanIssuesFromLabelsWithConfig(store, agentMgr, issues, designCfg, sink,

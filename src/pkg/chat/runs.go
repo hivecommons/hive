@@ -129,6 +129,11 @@ func (s *Service) cmdRuns(ctx context.Context, args string) (string, error) {
 			return "❌ Usage: `!runs spec <owner/repo#n>`", nil
 		}
 		return s.cmdRunsSpec(ctx, fields[1])
+	case "design":
+		if len(fields) != 2 {
+			return "❌ Usage: `!runs design <owner/repo#n>`", nil
+		}
+		return s.cmdRunsDesign(ctx, fields[1])
 	case "approve":
 		if len(fields) != 2 {
 			return "❌ Usage: `!runs approve <key>`", nil
@@ -149,7 +154,7 @@ func (s *Service) cmdRuns(ctx context.Context, args string) (string, error) {
 			return s.cmdRunsShowDetailed(ctx, fields[0])
 		}
 		if len(fields) != 1 {
-			return "❌ Usage: `!runs list` | `!runs status <key>` | `!runs <key> more` | `!runs spec <owner/repo#n>` | `!runs approve <key>` | `!runs reject <key> <reason>`", nil
+			return "❌ Usage: `!runs list` | `!runs status <key>` | `!runs <key> more` | `!runs spec <owner/repo#n>` | `!runs design <owner/repo#n>` | `!runs approve <key>` | `!runs reject <key> <reason>`", nil
 		}
 		return s.cmdRunsShow(ctx, fields[0])
 	}
@@ -245,6 +250,20 @@ func (s *Service) cmdRunsSpec(ctx context.Context, target string) (string, error
 		return fmt.Sprintf("❌ Failed to start spec run `%s`: %s", target, err), nil
 	}
 	return fmt.Sprintf("✅ Started spec run `%s`.", target), nil
+}
+
+func (s *Service) cmdRunsDesign(ctx context.Context, target string) (string, error) {
+	if err := requireCommandOwner(ctx); err != nil {
+		return err.Error(), nil
+	}
+	body, err := json.Marshal(map[string]string{"target": strings.TrimSpace(target), "mode": "design"})
+	if err != nil {
+		return "❌ Failed to start design run", nil
+	}
+	if err := s.dashboardPost(ctx, "/api/runs/spec", body); err != nil {
+		return fmt.Sprintf("❌ Failed to start design run `%s`: %s", target, err), nil
+	}
+	return fmt.Sprintf("✅ Started design run `%s` via Spektacular.", target), nil
 }
 
 func (s *Service) cmdRunsApprove(ctx context.Context, key string) (string, error) {

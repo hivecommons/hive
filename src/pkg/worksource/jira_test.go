@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -775,5 +776,76 @@ func TestJiraRequestFailure(t *testing.T) {
 	src := NewJiraSource(JiraConfig{BaseURL: "http://127.0.0.1:1", ProjectKeys: []string{"ENG"}})
 	if _, err := src.ListIssues(context.Background()); err == nil {
 		t.Fatal("expected connection error, got nil")
+	}
+}
+
+func TestJiraDesignSignalMutations(t *testing.T) {
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.URL.Path)
+		switch r.Method + " " + r.URL.Path {
+		case "PUT /rest/api/3/issue/ENG-7":
+			w.WriteHeader(http.StatusNoContent)
+		case "POST /rest/api/3/issue/ENG-7/comment":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	src := NewJiraSource(JiraConfig{BaseURL: srv.URL, Repo: "acme/app"})
+	lm := src.(LabelMutator)
+	cm := src.(Commenter)
+	ref := Ref{SourceType: "jira", Repo: "acme/app", ExternalID: "ENG-7"}
+	if err := lm.AddLabel(context.Background(), ref, "hive-design"); err != nil {
+		t.Fatalf("AddLabel: %v", err)
+	}
+	if err := lm.RemoveLabel(context.Background(), ref, "hive-design"); err != nil {
+		t.Fatalf("RemoveLabel: %v", err)
+	}
+	if err := cm.AddComment(context.Background(), ref, "## Design"); err != nil {
+		t.Fatalf("AddComment: %v", err)
+	}
+	want := []string{"PUT /rest/api/3/issue/ENG-7", "PUT /rest/api/3/issue/ENG-7", "POST /rest/api/3/issue/ENG-7/comment"}
+	if !reflect.DeepEqual(seen, want) {
+		t.Fatalf("seen = %v, want %v", seen, want)
+	}
+}
+
+func TestJiraTransitionStatus(t *testing.T) {
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.URL.Path)
+		switch r.Method + " " + r.URL.Path {
+		case "GET /rest/api/3/issue/ENG-7/transitions":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"transitions":[{"id":"31","name":"Design Approved"}]}`))
+		case "POST /rest/api/3/issue/ENG-7/transitions":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	src := NewJiraSource(JiraConfig{BaseURL: srv.URL, Repo: "acme/app", Transitions: map[string]string{"approved": "Design Approved"}})
+	if err := src.(StatusTransitioner).TransitionStatus(context.Background(), Ref{SourceType: "jira", Repo: "acme/app", ExternalID: "ENG-7"}, "approved"); err != nil {
+		t.Fatalf("TransitionStatus: %v", err)
+	}
+	want := []string{"GET /rest/api/3/issue/ENG-7/transitions", "POST /rest/api/3/issue/ENG-7/transitions"}
+	if !reflect.DeepEqual(seen, want) {
+		t.Fatalf("seen = %v, want %v", seen, want)
+	}
+}
+
+func TestJiraDesignSignalErrors(t *testing.T) {
+	src := NewJiraSource(JiraConfig{BaseURL: "http://127.0.0.1:1"})
+	if err := src.(StatusTransitioner).TransitionStatus(context.Background(), Ref{ExternalID: "ENG-1"}, "Done"); err != ErrStatusTransitionUnsupported {
+		t.Fatalf("TransitionStatus err = %v", err)
+	}
+	if err := src.(LabelMutator).AddLabel(context.Background(), Ref{}, "x"); err == nil || !strings.Contains(err.Error(), "external id") {
+		t.Fatalf("missing ref err = %v", err)
 	}
 }

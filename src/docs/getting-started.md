@@ -16,7 +16,7 @@ The biggest mistake new users make: seeing agent output and either (a) panicking
 
 ## What this guide doesn't cover (and why)
 
-> Hive is deeply configurable. There are agent policy templates, knowledge layers, custom agents, issue label filters, multi-repo setups, and a lot more. This guide doesn't cover any of that — and that's intentional. You don't need any of it to start. The goal of your first few months is to get comfortable with one or two agents at a low level, not to explore every feature. Features will still be there when you're ready for them.
+> Hive is deeply configurable. There are agent policy templates, knowledge layers, custom agents, issue label filters, multi-repo setups, and a lot more. This guide doesn't cover any of that — and that's intentional. You don't need any of it to start. The goal of your first few months is to get comfortable with one or two agents at a low level, not to explore every feature. Features will still be there when you're ready for them. When you are ready for label behavior details, use [Hive Labels and Control Signals](labels-and-control-signals.md).
 
 ## What to expect (and what not to)
 
@@ -25,7 +25,7 @@ The biggest mistake new users make: seeing agent output and either (a) panicking
 - A slow start — days or weeks before anything meaningful happens
 - Findings you already knew about — agents often surface obvious things first
 - Some findings you disagree with — that's normal, decline them and move on
-- PRs with the hive-specific `hive-pause/<hive-id>` hold label — you control every merge below L6
+- PRs with a literal `hold` level-gate label — you control every merge below L6; dashboard manual holds use `hive-pause/<hive-id>`
 - Gradual improvement in finding quality as agents learn your codebase
 
 ❌ **Don't expect:**
@@ -144,12 +144,12 @@ New users often expect PRs at L2 (they don't happen) or are surprised when they 
 | Level | GitHub activity |
 |-------|-----------------|
 | **L1, L2** | No issues, no PRs. Dashboard beads only. If you see no repo activity, that's correct. |
-| **L3** | **Quality only** can open PRs. Every PR has the hive-specific `hive-pause/<hive-id>` hold label — it will NOT merge until you remove the hold. No other agent opens PRs at L3. |
-| **L4** | Quality **and** sec-check can open PRs (both with `hive-pause/<hive-id>` hold labels). Scanner and guide file issues — not PRs. |
-| **L5** | All agents can open PRs, all with `hive-pause/<hive-id>` hold labels. Nothing auto-merges. You batch-review. |
-| **L6** | PRs auto-merge when CI goes green. No hold labels. Full automation. |
+| **L3** | **Quality only** can open PRs. Every PR has a literal `hold` level-gate label — it will NOT merge until you remove the hold. No other agent opens PRs at L3. |
+| **L4** | Quality, ci-maintainer, **and** sec-check can open PRs (all with literal `hold` level-gate labels). Scanner and guide file issues — not PRs. |
+| **L5** | All agents can open PRs, all with literal `hold` level-gate labels. Nothing auto-merges. You batch-review. |
+| **L6** | PRs auto-merge when CI goes green. Non-outreach PRs have no level hold; outreach PRs are still held for human review. Full automation. |
 
-> **The hold label is your safety net.** Hive now uses `hive-pause/<hive-id>` as the merge-blocking label; `hive/<hive-id>` is provenance only.  At every level below L6, every PR an agent opens is blocked from merging until you remove that hive's `hive-pause/<hive-id>` hold label. You are always in control. Nothing ships without your approval until you reach L6 — and you'll only reach L6 after months of trusting the system.
+> **The hold label is your safety net.** Hive uses literal `hold` as the level-gate merge-blocking PR label; `hive-pause/<hive-id>` is the dashboard's manual hold label and `hive/<hive-id>` is provenance only. At every level below L6, every PR an agent opens is blocked from merging until you remove `hold`. You are always in control. Nothing ships without your approval until you reach L6 — and you'll only reach L6 after months of trusting the system.
 >
 > One exception, so it doesn't surprise you: when you **raise the level**, the hive releases the level holds *it* placed on its own open PRs that the new level no longer requires. It never removes a hold you applied yourself, and never one you re-applied after the hive removed it — those stay put until you lift them.
 
@@ -260,15 +260,15 @@ See [sandbox-isolation.md](sandbox-isolation.md) for the full threat model, the 
 
 > 💡 **Tip: scanner finds, quality fixes.** Scanner flags bugs. Quality fixes test gaps. They're a team. At L4, watch for scanner filing an issue and quality filing a PR that addresses it — that's the closed-loop feedback working.
 
-**Shoring up security:** Sec-check's first run will probably find things. Don't panic. Read each finding, fix the critical ones yourself, and let sec-check open PRs for the medium ones — they'll have `hive-pause/<hive-id>` hold labels, so you approve before anything merges.
+**Shoring up security:** Sec-check's first run will probably find things. Don't panic. Read each finding, fix the critical ones yourself, and let sec-check open PRs for the medium ones — they'll have literal `hold` labels, so you approve before anything merges.
 
-**Be patient:** The first sec-check run can take a full cadence cycle to appear. And yes — you'll get more issues and PRs at this level. Still review them one by one. The `hive-pause/<hive-id>` hold label exists precisely so nothing merges without you.
+**Be patient:** The first sec-check run can take a full cadence cycle to appear. And yes — you'll get more issues and PRs at this level. Still review them one by one. The literal `hold` label exists precisely so nothing merges without you.
 
 **When to move up:** **4–5 weeks.** Let sec-check find and fix security issues. Watch the pattern of what agents propose. Trust is earned slowly — move up when you're approving most agent PRs without changes.
 
 ## L5 — Propose and Review
 
-**The level:** You're trusting *every* agent to open issues and PRs — the system proposes, you decide. Every PR still has the hive-specific `hive-pause/<hive-id>` hold label.
+**The level:** You're trusting *every* agent to open issues and PRs — the system proposes, you decide. Every agent PR still has a literal `hold` level-gate label.
 
 **What you get:** The full hive works for you. Architect produces RFCs for bigger design changes. You shift from doing the work to batch-reviewing it.
 
@@ -291,7 +291,7 @@ See [sandbox-isolation.md](sandbox-isolation.md) for the full threat model, the 
 
 ## L6 — Full Automation
 
-**The level:** Full trust. Agents open PRs and merge them automatically when CI goes green. No hold label.
+**The level:** Full trust. Agents open PRs and merge them automatically when CI goes green. Non-outreach PRs have no level hold; outreach PRs remain held for human review.
 
 **What you get:** A repo that improves itself while you sleep. The tests quality built at L3 are now the guardrails that keep agents honest.
 
@@ -326,7 +326,7 @@ Telemetry and operations don't auto-enable just because you reached L6 — they 
 
 ## And after that?
 
-**Weeks 2–3** — Stay at L2. When the agents' findings match what you'd find yourself, open the **Governor config** and set the level to **3**. Now quality can open PRs (with `hive-pause/<hive-id>` hold labels). Review and merge the ones you like.
+**Weeks 2–3** — Stay at L2. When the agents' findings match what you'd find yourself, open the **Governor config** and set the level to **3**. Now quality can open PRs (with literal `hold` labels). Review and merge the ones you like.
 
 **Weeks 4–7** — Live at L3 while quality builds your test suite. Then L4 for a month or so while sec-check hardens things. L5 and L6 come when trust is genuinely earned — *if* you ever want them at all. L4 or L5 forever is a perfectly good place to live.
 

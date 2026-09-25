@@ -308,8 +308,10 @@ type Server struct {
 	contributeHub *ContributeWSHub
 	// stageRunner is the Spektacular stage runner installed at boot
 	// (hivecommons/hive#8303); nil when runs.spektacular.enabled is off.
-	stageRunner   StageRunner
-	stageRunnerMu sync.Mutex
+	stageRunner     StageRunner
+	stageRunnerMu   sync.Mutex
+	stageExecutor   StageExecutor
+	stageExecutorMu sync.Mutex
 
 	spektacularMu     sync.RWMutex
 	spektacularStatus *FrontendSpektacular
@@ -493,9 +495,10 @@ type StatusPayload struct {
 
 // FrontendSpektacular reports the configured stage-runner CLI detected at boot.
 type FrontendSpektacular struct {
-	Present bool   `json:"present"`
-	Version string `json:"version,omitempty"`
-	Binary  string `json:"binary"`
+	Present     bool                            `json:"present"`
+	Version     string                          `json:"version,omitempty"`
+	Binary      string                          `json:"binary"`
+	HubExecutor *FrontendSpektacularHubExecutor `json:"hub_executor,omitempty"`
 }
 
 type FrontendInception struct {
@@ -579,6 +582,9 @@ type InferenceBackend struct {
 	Name      string   `json:"name"`
 	Inference bool     `json:"inference"`
 	Models    []string `json:"models"`
+	// KeySHA256 is the SHA-256 of the effective gateway key used for discovery/agent routing.
+	// It is empty when no key is configured; the raw key is never serialized.
+	KeySHA256 string `json:"keySHA256,omitempty"`
 	// ModelsFallback is true when Models is NOT an authoritative census of
 	// what the backend offers: the static alias list substituted because
 	// live /v1/models discovery failed (endpoint down, 403, etc), a PARTIAL
@@ -627,6 +633,7 @@ type FrontendAgent struct {
 	PinnedBoth       bool   `json:"pinnedBoth"`
 	Pinned           bool   `json:"pinned"`
 	LastKick         string `json:"lastKick,omitempty"`
+	LastKickAt       string `json:"lastKickAt,omitempty"`
 	NextKick         string `json:"nextKick,omitempty"`
 	NextKickIn       string `json:"nextKickIn,omitempty"`
 	Restarts         int    `json:"restarts"`
@@ -1113,6 +1120,11 @@ func (s *Server) getInferenceEndpoints(backend string) ([]string, bool) {
 	return endpoints, ok
 }
 
+func (s *Server) inferenceBackendKeySHA256(backend string) string {
+	key := s.inferenceAPIKey(backend)
+	return config.APIKeySHA256(key)
+}
+
 func (s *Server) buildInferenceBackends() []InferenceBackend {
 	var backends []InferenceBackend
 	for _, b := range []struct{ id, name string }{
@@ -1122,6 +1134,7 @@ func (s *Server) buildInferenceBackends() []InferenceBackend {
 		models, fallback := s.queryInferenceModelsDetailed(b.id)
 		backends = append(backends, InferenceBackend{
 			ID: b.id, Name: b.name, Inference: true, Models: models, ModelsFallback: fallback,
+			KeySHA256: s.inferenceBackendKeySHA256(b.id),
 		})
 	}
 	// litellm has no in-cluster default — include it only when an endpoint
@@ -1131,6 +1144,7 @@ func (s *Server) buildInferenceBackends() []InferenceBackend {
 		backends = append(backends, InferenceBackend{
 			ID: "litellm", Name: "LiteLLM (proxy)", Inference: true,
 			Models: models, ModelsFallback: fallback,
+			KeySHA256: s.inferenceBackendKeySHA256("litellm"),
 		})
 	}
 	return backends

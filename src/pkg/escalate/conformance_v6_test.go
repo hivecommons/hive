@@ -27,7 +27,7 @@ package escalate
 //
 // Deleting a scrub call, or growing an ntfy action handler / a PagerDuty
 // webhook / a Pushover receipt callback that skips the guards, fails this
-// file. Issue: hivecommons/hive#8048. Tracker: hivecommons/hive#7683.
+// file. Issue: hivecommons/hive#8048. Tracker: hivecommons/hive#7563.
 
 import (
 	"context"

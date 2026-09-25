@@ -771,6 +771,22 @@ func (h *ContributeWSHub) markAlreadyDoneUnverified(repo string, number int, rep
 	h.saveNoWorkVerdicts()
 }
 
+func (h *ContributeWSHub) clearNoWorkVerdict(repo string, number int) {
+	if h == nil || repo == "" || number <= 0 {
+		return
+	}
+	key := worksource.Ref{Repo: repo, Number: number}.Key()
+	h.completedMu.Lock()
+	_, had := h.noWorkVerdicts[key]
+	if had {
+		delete(h.noWorkVerdicts, key)
+	}
+	h.completedMu.Unlock()
+	if had {
+		h.saveNoWorkVerdicts()
+	}
+}
+
 // markTaskCompletedVerdictKey books completion against the canonical identity
 // (kubestellar/hive#4245), so a Linear or Jira task's cooldown and verdict land
 // on that item rather than on a shared "repo#0" record that would suppress

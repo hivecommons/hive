@@ -20457,6 +20457,59 @@
       }
     },
     "/api/presence": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "List Hive Chat presence",
+        "description": "Returns the display-safe presence roster for Hive Chat and /who. Authenticated callers see active/idle users derived from dashboard sessions and focus-aware presence heartbeats. Unauthenticated local dashboards do not reveal the session roster and return a single local row.",
+        "responses": {
+          "200": {
+            "description": "Presence roster",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string"
+                    },
+                    "users": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "username": {
+                            "type": "string"
+                          },
+                          "display_name": {
+                            "type": "string"
+                          },
+                          "avatar_url": {
+                            "type": "string"
+                          },
+                          "active": {
+                            "type": "boolean"
+                          },
+                          "idle": {
+                            "type": "boolean"
+                          },
+                          "last_action": {
+                            "type": "string"
+                          },
+                          "you": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "System"
@@ -21120,6 +21173,83 @@
           },
           "403": {
             "description": "Owner access required."
+          }
+        }
+      }
+    },
+    "/api/runs/{key}/log": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Tail a Spektacular run CLI log",
+        "description": "Returns the tail of the captured Spektacular hub executor CLI stdout/stderr log for a run stage generation. The server only serves .hive/spek-stage-<stage>-<gen>.log files under the run worktree.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "URL-escaped canonical work-item key.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "stage",
+            "in": "query",
+            "required": false,
+            "description": "Run stage log to read; defaults to spec.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "spec",
+                "plan",
+                "implement"
+              ]
+            }
+          },
+          {
+            "name": "gen",
+            "in": "query",
+            "required": false,
+            "description": "Lease generation. If omitted, the active run generation is used.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "required": false,
+            "description": "Number of trailing lines to return; defaults to 200 and is capped at 1000.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Plain-text log tail.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid key, stage, generation, tail, or log path."
+          },
+          "403": {
+            "description": "Read access required."
+          },
+          "404": {
+            "description": "Run log not found."
           }
         }
       }

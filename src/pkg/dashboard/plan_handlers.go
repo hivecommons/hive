@@ -270,7 +270,14 @@ func (s *Server) handlePlanDesignApprove(w http.ResponseWriter, r *http.Request)
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.auditFromRequest(r, "design_approved", auditDetail("epic", epicID, "label", label, "run", repo+"#"+strconv.Itoa(number), "surface", "design"), agentName)
+	runKey := s.runKeyForEpic(repo, strconv.Itoa(number), epic.Meta(planning.MetaRunKey))
+	if epic.Meta(planning.MetaDesignVia) == planning.DesignViaSpektacular {
+		if s.activeRunStage(runKey) == StageSpec {
+			jsonError(w, "Spektacular spec artifact is not ready for design approval yet", http.StatusConflict)
+			return
+		}
+	}
+	s.auditFromRequest(r, "design_approved", auditDetail("epic", epicID, "label", label, "run", runKey, "surface", "design"), agentName)
 	s.refreshAndPersist()
 	tree, _ := planning.GetPlanTree(store, epicID)
 	jsonResponse(w, map[string]interface{}{"ok": true, "status": "approved", "plan": tree})
@@ -335,6 +342,21 @@ func (s *Server) handleDesignFromIssue(w http.ResponseWriter, r *http.Request) {
 	store, agentName := s.planEpicStore()
 	if store == nil {
 		jsonError(w, "bead stores not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	if s.spektacularDesignEnabled() {
+		epic, runKey, err := s.startDesignSpektacular(r.Context(), store, issue, sanitizeString(body.Body), true)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		s.auditFromRequest(r, "design_requested_spektacular", auditDetail("epic", epic.ID, "ref", epic.ExternalRef, "run", runKey), agentName)
+		s.refreshAndPersist()
+		jsonResponse(w, map[string]interface{}{
+			"ok": true, "epic_id": epic.ID, "epic": epic, "state": planning.DesignStatusRequested,
+			"run_key": runKey, "via": planning.DesignViaSpektacular,
+			"message": "Design requested via Spektacular — the Spec checkpoint is waiting for approval.", "poll_url": "/api/plan/" + epic.ID,
+		})
 		return
 	}
 	if existing := store.FindByExternalRef(planning.IssueRef(issue)); existing != nil && !planning.DecomposePending(existing) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashchat"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -735,8 +737,150 @@ func TestHandleChat(t *testing.T) {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
 	result := decodeJSON(t, rec)
+	if result["status"] != "queued" {
+		t.Errorf("status = %v, want queued", result["status"])
+	}
+	if answer, _ := result["answer"].(string); !strings.Contains(answer, "I sent that to the dashboard chat bot") {
+		t.Errorf("answer = %q, want visible assistant acknowledgement", answer)
+	}
+}
+
+func TestHandleChat_LocalIntentsIgnorePunctuation(t *testing.T) {
+	s := newFullServer(t)
+	if _, err := s.deps.BeadStores["scanner"].Create("fix chat", beads.TypeTask, beads.PriorityMedium, "scanner", ""); err != nil {
+		t.Fatalf("create bead: %v", err)
+	}
+
+	rec := doPost(s, "/api/chat", map[string]interface{}{"query": "beads?"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	result := decodeJSON(t, rec)
+	if result["status"] != "ok" {
+		t.Fatalf("status = %v, want ok", result["status"])
+	}
+	answer, _ := result["answer"].(string)
+	if !strings.Contains(answer, "scanner: 1 bead") {
+		t.Fatalf("answer = %q, want scanner bead count", answer)
+	}
+}
+
+func TestHandleChat_LocalStatusAgentsAndPRs(t *testing.T) {
+	s := newFullServer(t)
+	s.statusMu.Lock()
+	s.status = &StatusPayload{
+		Agents: []FrontendAgent{
+			{Name: "guide", State: "running", Doing: "answering questions"},
+			{Name: "brainstorm", State: "idle", Paused: true},
+		},
+		Beads:      FrontendBeads{Workers: 2, Supervisor: 1},
+		Repos:      []FrontendRepo{{Name: "repo", Full: "myorg/repo", OpenPrs: []any{map[string]any{"number": 7}}}},
+		DeepHealth: map[string]any{"status": "ready"},
+	}
+	s.statusMu.Unlock()
+
+	for _, tc := range []struct {
+		query string
+		want  string
+	}{
+		{query: "AGENTS!!!", want: "brainstorm: idle (paused)"},
+		{query: "prs?", want: "myorg/repo: 1 open PR"},
+		{query: "status", want: "Hive status: ready"},
+		{query: "Show recent kick failures", want: "Governor/kick status: hive health is ready."},
+		{query: "spek: spec runs", want: "Spektacular/spec-run data is not available yet"},
+		{query: "help", want: "Try `beads`"},
+	} {
+		rec := doPost(s, "/api/chat", map[string]interface{}{"query": tc.query})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200", tc.query, rec.Code)
+		}
+		result := decodeJSON(t, rec)
+		answer, _ := result["answer"].(string)
+		if !strings.Contains(answer, tc.want) {
+			t.Fatalf("%s: answer = %q, want to contain %q", tc.query, answer, tc.want)
+		}
+	}
+}
+
+func TestHandleChat_BangCommandsStillUseDashboardBot(t *testing.T) {
+	s, bot := chatTestServer(t)
+	rec := doPost(s, "/api/chat", map[string]interface{}{"query": "!help"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	result := decodeJSON(t, rec)
 	if result["accepted"] != true {
-		t.Errorf("accepted = %v, want true", result["accepted"])
+		t.Fatalf("accepted = %v, want true", result["accepted"])
+	}
+	if got := bot.Drain(0); len(got) != 1 || got[0].Text != "!help" || got[0].Role != "user" {
+		t.Fatalf("outbox = %+v, want queued !help user message", got)
+	}
+}
+
+func TestHandleChat_SpekRequiresPresentProbe(t *testing.T) {
+	s := newFullServer(t)
+	s.SetSpektacularStatus(FrontendSpektacular{Present: false, Binary: "spektacular"})
+	rec := doPost(s, "/api/chat", map[string]interface{}{"query": "spek: spec runs"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	result := decodeJSON(t, rec)
+	if answer, _ := result["answer"].(string); !strings.Contains(answer, "not available yet") {
+		t.Fatalf("answer = %q, want unavailable when probe is absent", answer)
+	}
+
+	s.SetSpektacularStatus(FrontendSpektacular{Present: true, Binary: "spektacular"})
+	rec = doPost(s, "/api/chat", map[string]interface{}{"query": "spek: spec runs"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("present status = %d, want 200", rec.Code)
+	}
+	result = decodeJSON(t, rec)
+	if answer, _ := result["answer"].(string); !strings.Contains(answer, "Spektacular status is available") {
+		t.Fatalf("answer = %q, want available when probe is present", answer)
+	}
+}
+
+func TestHandleChat_RoutesFreeTextToConfiguredResponder(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.ChatResponder = func(ctx context.Context, query string, history []any) (string, error) {
+		if query != "what changed?" {
+			t.Fatalf("query = %q, want what changed?", query)
+		}
+		if len(history) != 1 {
+			t.Fatalf("history len = %d, want 1", len(history))
+		}
+		return "Responder answer", nil
+	}
+
+	rec := doPost(s, "/api/chat", map[string]interface{}{
+		"query":   "what changed?",
+		"history": []map[string]string{{"role": "user", "text": "hello"}},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	result := decodeJSON(t, rec)
+	if result["status"] != "ok" || result["answer"] != "Responder answer" {
+		t.Fatalf("result = %#v, want responder answer", result)
+	}
+}
+
+func TestHandleChat_ConfiguredResponderErrorIsVisible(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.ChatResponder = func(ctx context.Context, query string, history []any) (string, error) {
+		return "", errors.New("paused")
+	}
+
+	rec := doPost(s, "/api/chat", map[string]interface{}{"query": "what changed?"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	result := decodeJSON(t, rec)
+	if result["status"] != "responder_unavailable" {
+		t.Fatalf("status = %v, want responder_unavailable", result["status"])
+	}
+	if errText, _ := result["error"].(string); !strings.Contains(errText, "paused") {
+		t.Fatalf("error = %q, want paused to be visible", errText)
 	}
 }
 

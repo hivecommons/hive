@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -34,6 +36,7 @@ func (s *Server) handleRunSpecStart(w http.ResponseWriter, r *http.Request) {
 		Repo   string `json:"repo"`
 		Number int    `json:"number"`
 		Title  string `json:"title"`
+		Mode   string `json:"mode"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
@@ -51,6 +54,25 @@ func (s *Server) handleRunSpecStart(w http.ResponseWriter, r *http.Request) {
 	}
 	if repo == "" || number <= 0 {
 		jsonError(w, "repo and issue number are required", http.StatusBadRequest)
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(req.Mode), "design") {
+		store, _ := s.planEpicStore()
+		if store == nil {
+			jsonError(w, "bead stores not initialized", http.StatusServiceUnavailable)
+			return
+		}
+		title := strings.TrimSpace(req.Title)
+		if title == "" {
+			title = repo + "#" + strconv.Itoa(number)
+		}
+		epic, key, err := s.startDesignSpektacular(r.Context(), store, github.Issue{Repo: repo, Number: number, Title: title}, "", true)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		s.auditFromRequest(r, "run_design_start", auditDetail("run", key, "epic", epic.ID), "")
+		jsonResponse(w, map[string]any{"ok": true, "key": key, "stage": StageSpec, "epic_id": epic.ID, "via": planning.DesignViaSpektacular})
 		return
 	}
 	if err := s.AdmitRun(repo, number, strings.TrimSpace(req.Title), time.Now()); err != nil {

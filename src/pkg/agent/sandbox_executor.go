@@ -436,6 +436,12 @@ func sandboxCommand(cfg configSnapshot, promptRel string) ([]string, error) {
 	return []string{"sh", "-lc", cmd + " < " + shellQuote(promptRel)}, nil
 }
 
+// HeadlessPromptCommand returns the same backend-specific unattended launch
+// command the sandbox executor uses, reading its prompt from promptRel.
+func HeadlessPromptCommand(backend, model, promptRel string) ([]string, error) {
+	return sandboxCommand(configSnapshot{Backend: backend, Model: model}, promptRel)
+}
+
 func sandboxBackendBinary(backend string) string {
 	switch backend {
 	case "copilot":

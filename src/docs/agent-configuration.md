@@ -4,6 +4,8 @@ A hive **agent** is a long-running AI worker — a CLI session the hive keeps al
 
 Start with only a name, a method, and a model. Add the rest when the agent needs it.
 
+For labels that route or gate agent work, see [Hive Labels and Control Signals](labels-and-control-signals.md).
+
 ## The smallest agent that works
 
 ```yaml
@@ -69,7 +71,7 @@ Every field below exists in the config schema today. Grouped by what it does:
 agents:
   scanner:
     display_name: scanner        # dashboard label (defaults to the YAML key)
-    description: "Triages issues and opens PRs gated by `hive-pause/<hive-id>`."
+    description: "Triages issues and opens PRs gated by `hold`."
     emoji: "🔍"                  # dashboard badge
     color: "#3498db"             # dashboard accent color
     role: scanner                # behavioral role; defaults to the agent name
@@ -428,7 +430,7 @@ Two rules of thumb:
 
   Only `POST /v1/messages` is translated into an OpenAI `/v1/chat/completions` call. The Claude CLI also talks to its Anthropic host for housekeeping — telemetry batches (`/api/event_logging/...`), error reports, `POST /v1/messages/count_tokens` — and none of that has a meaning to an OpenAI-compatible gateway; forwarding it used to cost a gateway `400 Missing required parameter: 'messages'` per call, charged against the provider's request rate limit (roughly two failures per real completion in practice). The translator and the MITM reroute now answer those locally: `count_tokens` returns a chars-based estimate, anything under `/api/` returns `{}`, and any other path is a 404 in Anthropic error shape with a `WARN` log line naming the method and path, so a new CLI endpoint shows up in the hive log rather than as gateway noise. Inference-routed `claude` sessions are additionally launched with `DISABLE_TELEMETRY=1`, `DISABLE_ERROR_REPORTING=1`, and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`; subscription sessions are not.
 
-Every Model Gateway (and the bob backend) also accepts an optional `key_name` — a human-chosen LABEL for the configured key, e.g. `key_name: openrouter-prod-key`. It is safe-to-show metadata, not a secret: the dashboard's gateway row displays it as "Using key: `<name>`", or "(unnamed)" when no label is set, so operators can tell keys apart without ever seeing the value. See [`inference-backends.md`](../../docs/inference-backends.md) for a full YAML example.
+Every Model Gateway (and the bob backend) also accepts an optional `key_name` — a human-chosen LABEL for the configured key, e.g. `key_name: openrouter-prod-key`. It is safe-to-show metadata, not a secret: the dashboard's gateway row displays it as "Using key: `<name>`", or "(unnamed)" when no label is set, so operators can tell keys apart without ever seeing the value. For gateway keys, the row and settings/status APIs also expose `keySHA256`, the lowercase SHA-256 of the exact effective key string Hive will inject through the inference proxy; this lets operators compare Hive with LiteLLM/OpenRouter key-hash displays without revealing the secret. Saving a replacement key refreshes live inference proxy routes for running agents, so the next kick uses the new key without an agent restart. See [`inference-backends.md`](../../docs/inference-backends.md) for a full YAML example.
 
 Kubernetes manifests for deploying inference backends (vllm Deployment, EPP RBAC, kustomization) are in [`deploy/inference/`](../deploy/inference/).
 
@@ -561,10 +563,10 @@ You don't have to design a roster. Hive ships six **ACMM packs** (`level-1.yaml`
 |---|---|---|
 | L1 | Inception (Assisted) | inception: brainstorm + guide, everything conversational |
 | L2 | Advisory (Instructed) | advisory beads only; agents observe, humans act |
-| L3 | Quality-Gated (Measured) | quality opens issues and test PRs gated by `hive-pause/<hive-id>`; the rest stay advisory |
-| L4 | Security-Aware (Adaptive) | all agents open issues — no PRs yet |
-| L5 | Semi-Autonomous (Semi-Automated) | issues **and** PRs gated by `hive-pause/<hive-id>`; humans batch-approve |
-| L6 | Fully Autonomous | auto-merge on green CI, no hold label |
+| L3 | Quality-Gated (Measured) | quality opens issues and test PRs gated by literal `hold`; the rest stay advisory |
+| L4 | Security-Aware (Adaptive) | scanner/guide file issues; quality, ci-maintainer, and sec-check can open PRs gated by literal `hold` |
+| L5 | Semi-Autonomous (Semi-Automated) | issues **and** PRs; PRs are gated by literal `hold`; humans batch-approve |
+| L6 | Fully Autonomous | auto-merge on green CI; non-outreach PRs have no level hold, outreach PRs remain held |
 
 Applying a level **reconciles the whole roster**, not just the diff: missing agents are created (as overlay files in `/data/agent-configs/`), existing agents are merged — pack values fill blanks, but your explicit `backend:`, `model:`, and `enabled: false` always win — and the level's `kick_template`, `mode` and `on_demand` are updated so the agent's *policy* matches the level (an `on_demand` you toggled yourself in the agent's settings dialog is operator-owned and left alone; leaving on-demand starts the agent, entering it stops it). A failed agent doesn't abort the rest; the level is only recorded as cleanly applied when every agent reconciled.
 

@@ -10,7 +10,7 @@ The transport keeps the v6 guard invariant from [#7563](https://github.com/hivec
 - outbound bot text is scrubbed before it reaches the in-memory outbox;
 - the browser polls `GET /api/chat/messages?since=<seq>` every two seconds, leaving `/api/events` unchanged for status SSE.
 
-The v6 readiness tracker is [#7683](https://github.com/hivecommons/hive/issues/7683). Its dashboard-chat evidence row is satisfied only after conformance passes and one live `!status` round trip from the panel is linked.
+The v6 readiness tracker is [#7563](https://github.com/hivecommons/hive/issues/7563). Its dashboard-chat evidence row is satisfied only after conformance passes and one live `!status` round trip from the panel is linked.
 
 ## Run decisions
 

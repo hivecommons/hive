@@ -176,6 +176,85 @@ func TestVerdictSettle7890_OnlySelfAuthoredOpenPRRecordsNothing(t *testing.T) {
 	}
 }
 
+func TestVerdictSettle8876_OpenPRClaimGetsCoveredLabel(t *testing.T) {
+	hub, s := covK2Hub(t)
+	fx := &settleFixture{}
+	s.deps.RecordIssueClaim = fx.record
+	hub.settleVerifier = fx.verifier(map[string]ghpkg.SettleVerification{
+		"o/actions#42": {Settled: true, Claim: ghpkg.IssueClaim{
+			PRNumber: 42, PRRepo: "o/actions", PRURL: "https://github.com/o/actions/pull/42",
+			PRAuthor: "bob", Reference: true, ExternalAuthor: true,
+		}},
+	}, nil)
+	var labeled ghpkg.IssueClaim
+	hub.issuePRClaimMarker = func(_ context.Context, repo string, number int, claim ghpkg.IssueClaim) error {
+		if repo != "o/actions" || number != 7 {
+			t.Fatalf("label target = %s#%d", repo, number)
+		}
+		labeled = claim
+		return nil
+	}
+
+	hub.settleIssueFromVerdict("o/actions", 7, "covered by open PR #42", time.Now(), "alice-dev")
+
+	if len(fx.recorded) != 1 || fx.recorded[0].PRNumber != 42 {
+		t.Fatalf("claim not recorded: %+v", fx.recorded)
+	}
+	if labeled.PRNumber != 42 || labeled.MergedPR {
+		t.Fatalf("covered-by-pr label not requested for open PR claim: %+v", labeled)
+	}
+}
+
+func TestVerdictSettle8876_VerifiedPendingClaimClearsNoWorkSuppression(t *testing.T) {
+	hub, s := covK2Hub(t)
+	fx := &settleFixture{}
+	s.deps.RecordIssueClaim = fx.record
+	hub.settleVerifier = fx.verifier(map[string]ghpkg.SettleVerification{
+		"o/actions#42": {Settled: true, Claim: ghpkg.IssueClaim{
+			PRNumber: 42, PRRepo: "o/actions", PRURL: "https://github.com/o/actions/pull/42",
+			PRAuthor: "bob", Reference: true, ExternalAuthor: true,
+		}},
+	}, nil)
+	hub.issuePRClaimMarker = func(context.Context, string, int, ghpkg.IssueClaim) error { return nil }
+	hub.completedMu.Lock()
+	hub.noWorkVerdicts["o/actions#7"] = noWorkVerdictRecord{RecordedAt: time.Now(), SuppressHours: 168, Reason: "covered by open PR #42"}
+	hub.completedMu.Unlock()
+
+	hub.settleIssueFromVerdict("o/actions", 7, "covered by open PR #42", time.Now(), "alice-dev")
+
+	hub.completedMu.Lock()
+	_, stillSuppressed := hub.noWorkVerdicts["o/actions#7"]
+	hub.completedMu.Unlock()
+	if stillSuppressed {
+		t.Fatal("verified pending PR claim must clear the generic no_work_needed suppression")
+	}
+}
+
+func TestVerdictSettle8876_CommitOnlySettlementKeepsNoWorkSuppression(t *testing.T) {
+	hub, s := covK2Hub(t)
+	fx := &settleFixture{}
+	s.deps.RecordIssueClaim = fx.record
+	hub.settleVerifier = fx.verifier(map[string]ghpkg.SettleVerification{
+		"o/actions@deadbee": {Settled: true, Claim: ghpkg.IssueClaim{
+			PRNumber: 0, PRRepo: "o/actions", PRURL: "https://github.com/o/actions/commit/deadbee",
+			MergedPR: true, MergedAt: time.Now().Add(-time.Hour),
+		}},
+	}, nil)
+	hub.issuePRClaimMarker = func(context.Context, string, int, ghpkg.IssueClaim) error { return nil }
+	hub.completedMu.Lock()
+	hub.noWorkVerdicts["o/actions#7"] = noWorkVerdictRecord{RecordedAt: time.Now(), SuppressHours: 168, Reason: "fixed by deadbee"}
+	hub.completedMu.Unlock()
+
+	hub.settleIssueFromVerdict("o/actions", 7, "already fixed by deadbee", time.Now(), "alice-dev")
+
+	hub.completedMu.Lock()
+	_, stillSuppressed := hub.noWorkVerdicts["o/actions#7"]
+	hub.completedMu.Unlock()
+	if !stillSuppressed {
+		t.Fatal("commit-only verified settlements must keep no-work suppression because there is no linked PR to confirm")
+	}
+}
+
 func TestAlreadyDoneVerdict8477_ParseStructuredAndRegex(t *testing.T) {
 	refs, ok := alreadyDoneVerdictRefs("o/r", 7, "", verdictReasonKindAlreadyDone, &VerdictEvidence{PR: 41})
 	if !ok || len(refs) != 1 || refs[0].Number != 41 {
@@ -205,6 +284,9 @@ func TestAlreadyDoneVerdict8477_VerifiedClosePath(t *testing.T) {
 			PRAuthor: "dev", MergedPR: true, MergedAt: mergedAt,
 		}},
 	}, nil)
+	hub.prClosingVerifier = func(_ context.Context, repo string, prNumber, issueNumber int) (bool, error) {
+		return repo == "o/r" && prNumber == 41 && issueNumber == 7, nil
+	}
 	var closedRepo, closedReporter string
 	var closedNumber int
 	hub.alreadyDoneMarker = func(_ context.Context, repo string, number int, claim ghpkg.IssueClaim, reporter string, closeIssue bool) error {
@@ -267,22 +349,23 @@ func TestAlreadyDoneVerdict8477_ACMMGatePreventsCloseButRecords(t *testing.T) {
 	hub.settleVerifier = fx.verifier(map[string]ghpkg.SettleVerification{
 		"o/r#41": {Settled: true, Claim: ghpkg.IssueClaim{PRNumber: 41, PRRepo: "o/r", MergedPR: true}},
 	}, nil)
-	var labeled bool
-	hub.alreadyDoneMarker = func(_ context.Context, _ string, _ int, _ ghpkg.IssueClaim, _ string, closeIssue bool) error {
-		if closeIssue {
-			t.Fatal("ACMM below close floor must not close")
-		}
-		labeled = true
+	var pendingLabel bool
+	hub.issuePRClaimMarker = func(_ context.Context, _ string, _ int, claim ghpkg.IssueClaim) error {
+		pendingLabel = claim.MergedPR
+		return nil
+	}
+	hub.alreadyDoneMarker = func(context.Context, string, int, ghpkg.IssueClaim, string, bool) error {
+		t.Fatal("merged PR without a closing relationship must not be marked already-done")
 		return nil
 	}
 
 	got := hub.settleIssueFromVerdictWithEvidence("o/r", 7, "merged PR #41 already resolves this", "", nil, time.Now(), "ct")
 
-	if got != verdictDispositionAlreadyDoneLabeled {
-		t.Fatalf("disposition = %q, want labeled", got)
+	if got != verdictDispositionAlreadyDoneVerified {
+		t.Fatalf("disposition = %q, want verified pending", got)
 	}
-	if !labeled {
-		t.Fatal("verified already-done must still label/comment when close is not allowed")
+	if !pendingLabel {
+		t.Fatal("verified merged claim must get the pending likely-done label")
 	}
 	if len(fx.recorded) != 1 {
 		t.Fatalf("verified claim should still be recorded: %+v", fx.recorded)
@@ -298,18 +381,19 @@ func TestAlreadyDoneVerdict8477_DefaultDoesNotClose(t *testing.T) {
 	hub.settleVerifier = fx.verifier(map[string]ghpkg.SettleVerification{
 		"o/r#41": {Settled: true, Claim: ghpkg.IssueClaim{PRNumber: 41, PRRepo: "o/r", MergedPR: true}},
 	}, nil)
-	var labeled bool
-	hub.alreadyDoneMarker = func(_ context.Context, _ string, _ int, _ ghpkg.IssueClaim, _ string, closeIssue bool) error {
-		if closeIssue {
-			t.Fatal("default already-done action should label/comment, not close")
-		}
-		labeled = true
+	var pendingLabel bool
+	hub.issuePRClaimMarker = func(_ context.Context, _ string, _ int, claim ghpkg.IssueClaim) error {
+		pendingLabel = claim.MergedPR
+		return nil
+	}
+	hub.alreadyDoneMarker = func(context.Context, string, int, ghpkg.IssueClaim, string, bool) error {
+		t.Fatal("default path must not mark already-done without GitHub closing relationship")
 		return nil
 	}
 
 	got := hub.settleIssueFromVerdictWithEvidence("o/r", 7, "merged PR #41 already resolves this", "", nil, time.Now(), "ct")
 
-	if got != verdictDispositionAlreadyDoneLabeled || !labeled {
-		t.Fatalf("disposition=%q labeled=%v, want labeled default path", got, labeled)
+	if got != verdictDispositionAlreadyDoneVerified || !pendingLabel {
+		t.Fatalf("disposition=%q pendingLabel=%v, want verified pending default path", got, pendingLabel)
 	}
 }

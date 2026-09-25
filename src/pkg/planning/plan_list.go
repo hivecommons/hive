@@ -38,6 +38,8 @@ type PlanSummary struct {
 	// DesignStatus/DesignRevision expose Gate 1 state for dashboard review.
 	DesignStatus   string `json:"designStatus,omitempty"`
 	DesignRevision int    `json:"designRevision,omitempty"`
+	DesignVia      string `json:"designVia,omitempty"`
+	RunKey         string `json:"runKey,omitempty"`
 	// IssueRepo / IssueNumber / IssueURL trace an issue-sourced epic back to its
 	// GitHub issue; zero values for bd-created epics.
 	IssueRepo   string `json:"issueRepo,omitempty"`
@@ -165,6 +167,8 @@ func ListPlans(stores map[string]*beads.Store) []PlanSummary {
 				DecomposeAttempts: DecomposeAttempts(b),
 				DesignStatus:      DesignStatus(b),
 				DesignRevision:    DesignRevision(b),
+				DesignVia:         b.Meta(MetaDesignVia),
+				RunKey:            b.Meta(MetaRunKey),
 				IssueRepo:         b.Meta(MetaIssueRepo),
 				IssueNumber:       b.Meta(MetaIssueNumber),
 				IssueURL:          b.Meta(MetaIssueURL),

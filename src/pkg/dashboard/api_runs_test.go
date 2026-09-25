@@ -65,6 +65,117 @@ func TestRunsListNoRunLeasesAndStatusZeros(t *testing.T) {
 	}
 }
 
+func TestRunLogEndpointAuthTraversalAndTail(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	key := "myorg/repo1#57"
+	worktree := spekHubRunWorktreePath(config.DefaultSpektacularHubExecutorIdentity, key)
+	logDir := filepath.Join(worktree, ".hive")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "spek-stage-spec-2.log"), []byte("one\ntwo\nthree\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+url.PathEscape(key)+"/log?stage=spec&gen=2&tail=2", nil)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("unauthorized log request = %d body=%s, want 403", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+url.PathEscape(key)+"/log?stage=../spec&gen=2&tail=2", nil)
+	req.Header.Set("X-Hive-Role", config.RoleRead)
+	rec = httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("traversal log request = %d body=%s, want 400", rec.Code, rec.Body.String())
+	}
+
+	if err := os.Remove(filepath.Join(logDir, "spek-stage-spec-2.log")); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.log")
+	if err := os.WriteFile(outside, []byte("secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(logDir, "spek-stage-spec-2.log")); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+url.PathEscape(key)+"/log?stage=spec&gen=2&tail=2", nil)
+	req.Header.Set("X-Hive-Role", config.RoleRead)
+	rec = httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("symlink log request = %d body=%s, want 400", rec.Code, rec.Body.String())
+	}
+	if err := os.Remove(filepath.Join(logDir, "spek-stage-spec-2.log")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "spek-stage-spec-2.log"), []byte("one\ntwo\nthree\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+url.PathEscape(key)+"/log?stage=spec&gen=2&tail=2", nil)
+	req.Header.Set("X-Hive-Role", config.RoleRead)
+	rec = httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("log request = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	if got, want := rec.Body.String(), "two\nthree\n"; got != want {
+		t.Fatalf("tail = %q, want %q", got, want)
+	}
+}
+
+func TestRunsIncludeSpektacularActivityFields(t *testing.T) {
+	hub, s, _, _ := spekHub(t)
+	key := "myorg/repo1#57"
+	now := time.Now()
+	hub.leaseMu.Lock()
+	hub.leases[leaseKey(config.DefaultSpektacularHubExecutorIdentity, "spek-"+sanitizeReceiptSegment(key))] = &taskLease{
+		identity:  config.DefaultSpektacularHubExecutorIdentity,
+		taskID:    "spek-" + sanitizeReceiptSegment(key),
+		repo:      spekRepo,
+		number:    57,
+		key:       spekRepo + "!" + key + ":" + StageSpec,
+		title:     "Observe it",
+		stage:     StageSpec,
+		gen:       3,
+		expiresAt: now.Add(leaseTTL),
+	}
+	if err := hub.saveLeasesLocked(); err != nil {
+		t.Fatal(err)
+	}
+	hub.leaseMu.Unlock()
+	s.RecordStageProgress(key, "spek-"+sanitizeReceiptSegment(key), map[string]string{
+		stageAttrRunKey:         key,
+		stageAttrStage:          StageSpec,
+		stageAttrGen:            "3",
+		stageAttrArtifact:       "20260925163042-myorg-repo1-57",
+		stageAttrDocumentStatus: "drafting",
+		stageAttrCurrentStep:    "3/7",
+		stageAttrReason:         "cli_launched",
+		"backend":               "copilot",
+	}, now)
+
+	rec := runsGet(s, "/api/runs", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/runs = %d body=%s", rec.Code, rec.Body.String())
+	}
+	runs := decodeRuns(t, rec)
+	if len(runs) != 1 {
+		t.Fatalf("runs len = %d, want 1: %+v", len(runs), runs)
+	}
+	run := runs[0]
+	if run.ArtifactID != "20260925163042-myorg-repo1-57" || run.DocumentStatus != "drafting" || run.CurrentStep != "3/7" {
+		t.Fatalf("artifact status fields = %+v", run)
+	}
+	if !strings.Contains(run.ActivitySummary, "copilot cli_launched") || !strings.Contains(run.ActivitySummary, "status: drafting") {
+		t.Fatalf("activity summary = %q", run.ActivitySummary)
+	}
+}
+
 func TestHeartbeatRunsSummaryUsesRunProjectionFields(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	runs := []Run{

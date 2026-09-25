@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
+
+	agentpkg "github.com/hivecommons/hive/pkg/agent"
 )
 
 const (
@@ -30,6 +33,7 @@ type agentSnapshot struct {
 	Cadence     string `json:"cadence"`
 	Doing       string `json:"doing"`
 	LiveSummary string `json:"liveSummary"`
+	LastKickAt  string `json:"lastKickAt"`
 	Paused      bool   `json:"paused"`
 }
 
@@ -199,22 +203,9 @@ func (s *Service) diffAgents(prev, cur *statusSnapshot) {
 
 			switch {
 			case agent.Busy == "idle" && old.Busy == "working":
-				summary := ""
-				if agent.LiveSummary != "" {
-					lines := strings.SplitN(agent.LiveSummary, "\n", 4)
-					if len(lines) > 3 {
-						lines = lines[:3]
-					}
-					s := strings.Join(lines, "\n")
-					const maxSnippetRunes = 300
-					if len([]rune(s)) > maxSnippetRunes {
-						s = string([]rune(s)[:maxSnippetRunes])
-					}
-					summary = "\n```\n" + s + "\n```"
-				}
-				s.enqueue(fmt.Sprintf("%s Completed%s%s", prefix, doing, summary))
+				s.enqueue(fmt.Sprintf("%s %s", prefix, s.agentCompletionText(agent, *old)))
 			case agent.Busy == "working" && old.Busy == "idle":
-				s.enqueue(fmt.Sprintf("%s Working%s", prefix, doing))
+				s.enqueue(fmt.Sprintf("%s Working%s%s", prefix, doing, s.agentDetailsSuffix(agent.Name)))
 			}
 		}
 
@@ -228,6 +219,105 @@ func (s *Service) diffAgents(prev, cur *statusSnapshot) {
 			s.enqueue(fmt.Sprintf("%s Off (cadence rule)", prefix))
 		}
 	}
+}
+
+func (s *Service) agentCompletionText(agent, old agentSnapshot) string {
+	summary := agentpkg.SanitizePaneText(agent.LiveSummary, 3)
+	work := strings.TrimSpace(agent.Doing)
+	if work == "" {
+		work = strings.TrimSpace(old.Doing)
+	}
+	work = strings.TrimPrefix(strings.TrimPrefix(work, "done "), "Done ")
+	work = truncateRunes(work, 100)
+	duration := agentDurationSuffix(agent.LastKickAt)
+	details := s.agentDetailsSuffix(agent.Name)
+
+	if outcome := completionOutcome(summary); outcome != "" {
+		if work != "" && outcome != "no new work" {
+			return fmt.Sprintf("Completed — %s: %s%s%s", work, outcome, duration, details)
+		}
+		return fmt.Sprintf("Completed — %s%s%s", outcome, duration, details)
+	}
+	if work != "" {
+		return fmt.Sprintf("Completed — finished a pass on %s%s%s", work, duration, details)
+	}
+	return fmt.Sprintf("Completed — finished a pass — no new work%s%s", duration, details)
+}
+
+func truncateRunes(s string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return string(runes[:limit])
+}
+
+func completionOutcome(summary string) string {
+	lower := strings.ToLower(summary)
+	switch {
+	case summary == "":
+		return ""
+	case strings.Contains(lower, "nothing to do") || strings.Contains(lower, "no new work") ||
+		strings.Contains(lower, "no actionable") || strings.Contains(lower, "no changes"):
+		return "no new work"
+	case strings.Contains(lower, "/pull/") || strings.Contains(lower, " pr #") || strings.Contains(lower, "pull request"):
+		return firstNonEmptyLine(summary)
+	case strings.Contains(lower, "/issues/") || strings.Contains(lower, "issue #") || strings.Contains(lower, "commented"):
+		return firstNonEmptyLine(summary)
+	default:
+		return ""
+	}
+}
+
+func firstNonEmptyLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			const maxRunes = 180
+			return truncateRunes(trimmed, maxRunes)
+		}
+	}
+	return ""
+}
+
+func agentDurationSuffix(lastKickAt string) string {
+	if strings.TrimSpace(lastKickAt) == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, lastKickAt)
+	if err != nil {
+		return ""
+	}
+	d := time.Since(t)
+	if d < 0 {
+		return ""
+	}
+	return " (" + compactDuration(d) + ")"
+}
+
+func compactDuration(d time.Duration) string {
+	if d < time.Minute {
+		return "<1m"
+	}
+	d = d.Round(time.Minute)
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d/time.Minute))
+	}
+	h := int(d / time.Hour)
+	m := int((d % time.Hour) / time.Minute)
+	if m == 0 {
+		return fmt.Sprintf("%dh", h)
+	}
+	return fmt.Sprintf("%dh %dm", h, m)
+}
+
+func (s *Service) agentDetailsSuffix(name string) string {
+	if strings.TrimSpace(s.dashboardURL) == "" || strings.TrimSpace(name) == "" {
+		return ""
+	}
+	return " — details: " + strings.TrimRight(s.dashboardURL, "/") + "/#" + url.PathEscape(name)
 }
 
 func (s *Service) diffGovernor(prev, cur *statusSnapshot) {

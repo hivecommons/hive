@@ -63,6 +63,11 @@ type JiraConfig struct {
 	HoldLabels []string
 	// Logger receives a warning whenever a Data Center client is built with TLS verification disabled.
 	Logger *slog.Logger
+
+	// Transitions maps Hive design status names to Jira transition names or ids.
+	// When a status is not present, the status string itself is used as the
+	// desired transition name/id.
+	Transitions map[string]string
 }
 
 // jiraMaxResults is the page size requested from the Jira search API.
@@ -467,6 +472,7 @@ func (s *jiraSource) toIssue(it jiraIssue) Issue {
 		UpdatedAt:  it.Fields.Updated.Time,
 		URL:        s.browseURL(it.Key),
 	}
+
 	if it.Fields.Status != nil {
 		iss.State = it.Fields.Status.Name
 	}
@@ -480,4 +486,83 @@ func (s *jiraSource) toIssue(it jiraIssue) Issue {
 		iss.Assignees = []string{assignee}
 	}
 	return iss
+}
+
+func (s *jiraSource) AddLabel(ctx context.Context, ref Ref, label string) error {
+	return s.updateLabels(ctx, ref, map[string][]map[string]string{"labels": []map[string]string{{"add": strings.TrimSpace(label)}}})
+}
+
+func (s *jiraSource) RemoveLabel(ctx context.Context, ref Ref, label string) error {
+	return s.updateLabels(ctx, ref, map[string][]map[string]string{"labels": []map[string]string{{"remove": strings.TrimSpace(label)}}})
+}
+
+func (s *jiraSource) AddComment(ctx context.Context, ref Ref, body string) error {
+	if s == nil {
+		return fmt.Errorf("worksource/jira: source unavailable")
+	}
+	key := strings.TrimSpace(ref.ExternalID)
+	if key == "" {
+		key = strings.TrimPrefix(strings.TrimSpace(ref.Display()), "#")
+	}
+	if key == "" {
+		return fmt.Errorf("worksource/jira: external id is required")
+	}
+	return s.addComment(ctx, key, strings.TrimSpace(body))
+}
+
+func (s *jiraSource) TransitionStatus(ctx context.Context, ref Ref, status string) error {
+	if s == nil {
+		return fmt.Errorf("worksource/jira: source unavailable")
+	}
+	key := strings.TrimSpace(ref.ExternalID)
+	if key == "" {
+		return fmt.Errorf("worksource/jira: external id is required")
+	}
+	if len(s.cfg.Transitions) == 0 {
+		return ErrStatusTransitionUnsupported
+	}
+	target := strings.TrimSpace(status)
+	if mapped := strings.TrimSpace(s.cfg.Transitions[target]); mapped != "" {
+		target = mapped
+	}
+	if target == "" {
+		return ErrStatusTransitionUnsupported
+	}
+	id, err := s.findTransition(ctx, key, target)
+	if err != nil {
+		return err
+	}
+	return s.transitionIssue(ctx, key, id)
+}
+
+func (s *jiraSource) updateLabels(ctx context.Context, ref Ref, update map[string][]map[string]string) error {
+	if s == nil {
+		return fmt.Errorf("worksource/jira: source unavailable")
+	}
+	key := strings.TrimSpace(ref.ExternalID)
+	if key == "" {
+		return fmt.Errorf("worksource/jira: external id is required")
+	}
+	if err := s.doJSON(ctx, http.MethodPut, s.restURL("issue/"+url.PathEscape(key)), map[string]any{"update": update}, http.StatusNoContent, nil); err != nil {
+		return fmt.Errorf("worksource/jira: update labels on %s: %w", key, err)
+	}
+	return nil
+}
+
+func (s *jiraSource) findTransition(ctx context.Context, key, target string) (string, error) {
+	var body struct {
+		Transitions []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"transitions"`
+	}
+	if err := s.doJSON(ctx, http.MethodGet, s.restURL("issue/"+url.PathEscape(key)+"/transitions"), nil, http.StatusOK, &body); err != nil {
+		return "", fmt.Errorf("worksource/jira: list transitions: %w", err)
+	}
+	for _, tr := range body.Transitions {
+		if tr.ID == target || strings.EqualFold(tr.Name, target) {
+			return tr.ID, nil
+		}
+	}
+	return "", fmt.Errorf("worksource/jira: transition %q not available for %s", target, key)
 }

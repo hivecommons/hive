@@ -737,8 +737,10 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 		}
 
 		lastKick := ""
+		lastKickAt := ""
 		if proc.LastKick != nil {
 			lastKick = formatHumanTime(*proc.LastKick)
+			lastKickAt = proc.LastKick.UTC().Format(time.RFC3339)
 		}
 
 		cadenceValue := lookupCadenceValueForMode(name, currentMode, cfg)
@@ -800,21 +802,14 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 		const summaryLines = 20
 		var liveSummary string
 		if pane := proc.PaneLines(summaryLines); len(pane) > 0 {
-			liveSummary = redactTokens(strings.Join(pane, "\n"))
+			liveSummary = redactTokens(agent.SanitizePaneText(strings.Join(pane, "\n"), summaryLines))
 		}
 		var detailSummary string
 		const maxDetailLines = 50
 		if buf := proc.OutputBuffer; buf != nil && buf.Count() > 0 {
-			lines := agent.DeduplicateBlocks(buf.Last(buf.Count()))
-			if len(lines) > maxDetailLines {
-				lines = lines[len(lines)-maxDetailLines:]
-			}
-			detailSummary = redactTokens(strings.Join(lines, "\n"))
+			detailSummary = redactTokens(agent.SanitizePaneText(strings.Join(buf.Last(buf.Count()), "\n"), maxDetailLines))
 		} else if pane := proc.FilteredPaneLines(0); len(pane) > 0 {
-			if len(pane) > maxDetailLines {
-				pane = pane[len(pane)-maxDetailLines:]
-			}
-			detailSummary = redactTokens(strings.Join(pane, "\n"))
+			detailSummary = redactTokens(agent.SanitizePaneText(strings.Join(pane, "\n"), maxDetailLines))
 		}
 
 		agentID := proc.ID
@@ -859,6 +854,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			PinnedBoth:      pinnedCli && pinnedModel,
 			Pinned:          pinnedCli || pinnedModel,
 			LastKick:        lastKick,
+			LastKickAt:      lastKickAt,
 			NextKick:        nextKick,
 			NextKickIn:      nextKickIn,
 			Restarts:        proc.RestartCount,

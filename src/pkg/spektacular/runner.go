@@ -15,10 +15,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // DocumentStatus is the #8301 `document_status` value.
@@ -96,6 +102,40 @@ func ArtifactKey(name string) string {
 	return strings.TrimSpace(key)
 }
 
+// RunArtifactName turns a worksource run key (owner/repo#N or
+// owner/repo!EXTERNAL) into a Spektacular-safe slug. Legacy file-address keys
+// should continue through ArtifactKey instead.
+func RunArtifactName(runKey string) string {
+	ref, ok := worksource.ParseKey(runKey)
+	if !ok || ref.Repo == "" {
+		return ArtifactKey(runKey)
+	}
+	id := ref.ExternalID
+	if ref.Number > 0 {
+		id = strconv.Itoa(ref.Number)
+	}
+	raw := strings.ToLower(ref.Repo + "-" + id)
+	var b strings.Builder
+	lastDash := false
+	for _, r := range raw {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if ok {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "run"
+	}
+	return out
+}
+
 // markdownExt returns the markdown extension name carries, or "".
 func markdownExt(name string) string {
 	lower := strings.ToLower(name)
@@ -136,6 +176,9 @@ type ArtifactStatus struct {
 	ClosedAt       time.Time
 	Spec           string
 	Plan           string
+	// Body is populated by the runner for a final Spec artifact via the
+	// Spektacular file-read verb. It is not part of the status JSON contract.
+	Body string
 }
 
 // artifactStatusWire is the on-the-wire shape. Timestamps are RFC3339
@@ -427,6 +470,142 @@ func (r *Runner) statusInDir(ctx context.Context, dir, kind, name string) (Artif
 	return st, nil
 }
 
+// ResolveArtifact returns the concrete Spektacular artifact id for a run slug.
+// Spektacular v0.22 timestamps file-backed artifact ids
+// (`20260925163042-<slug>`), while Hive admissions start from the stable slug.
+// The runner accepts either an exact match or the newest id ending in "-<slug>".
+func (r *Runner) ResolveArtifact(ctx context.Context, dir, kind, slug string) (string, error) {
+	if err := validateKind(kind); err != nil {
+		return "", err
+	}
+	slug = ArtifactKey(slug)
+	if slug == "" {
+		return "", &ContractError{Kind: kind, Reason: "empty artifact name"}
+	}
+	candidates := map[string]time.Time{}
+	for id, mt := range r.artifactsFromFileList(ctx, dir, kind) {
+		if artifactMatchesSlug(id, slug) {
+			candidates[id] = mt
+		}
+	}
+	for id, mt := range artifactsFromProjectFiles(dir, kind) {
+		if artifactMatchesSlug(id, slug) {
+			if prev, ok := candidates[id]; !ok || mt.After(prev) {
+				candidates[id] = mt
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		return "", &NotFoundError{Kind: kind, Name: slug, Message: "no matching artifact id found"}
+	}
+	type candidate struct {
+		id string
+		mt time.Time
+	}
+	list := make([]candidate, 0, len(candidates))
+	for id, mt := range candidates {
+		list = append(list, candidate{id: id, mt: mt})
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if !list[i].mt.Equal(list[j].mt) {
+			return list[i].mt.After(list[j].mt)
+		}
+		return list[i].id > list[j].id
+	})
+	return list[0].id, nil
+}
+
+func artifactMatchesSlug(id, slug string) bool {
+	id = ArtifactKey(id)
+	slug = ArtifactKey(slug)
+	return id == slug || strings.HasSuffix(id, "-"+slug)
+}
+
+func (r *Runner) artifactsFromFileList(ctx context.Context, dir, kind string) map[string]time.Time {
+	out, err := r.execInDir(ctx, dir, []string{kind, verbFile, "list"})
+	if err != nil {
+		return nil
+	}
+	var raw any
+	if json.Unmarshal(bytes.TrimSpace(out), &raw) != nil {
+		return nil
+	}
+	ids := map[string]time.Time{}
+	collectArtifactStrings(raw, ids)
+	return ids
+}
+
+func collectArtifactStrings(v any, ids map[string]time.Time) {
+	switch x := v.(type) {
+	case string:
+		if id := artifactIDFromPath(x); id != "" {
+			ids[id] = time.Time{}
+		}
+	case []any:
+		for _, elem := range x {
+			collectArtifactStrings(elem, ids)
+		}
+	case map[string]any:
+		for _, key := range []string{"artifact_id", "id", "name", "path", "file"} {
+			if s, ok := x[key].(string); ok {
+				if id := artifactIDFromPath(s); id != "" {
+					ids[id] = time.Time{}
+				}
+			}
+		}
+		for _, elem := range x {
+			collectArtifactStrings(elem, ids)
+		}
+	}
+}
+
+func artifactsFromProjectFiles(dir, kind string) map[string]time.Time {
+	if strings.TrimSpace(dir) == "" {
+		return nil
+	}
+	roots := []string{}
+	switch kind {
+	case KindSpec:
+		roots = []string{filepath.Join(dir, ".spektacular", "specs"), filepath.Join(dir, ".spektacular", "spec")}
+	case KindPlan:
+		roots = []string{filepath.Join(dir, ".spektacular", "plans"), filepath.Join(dir, ".spektacular", "plan")}
+	}
+	out := map[string]time.Time{}
+	for _, root := range roots {
+		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d == nil || d.IsDir() {
+				return nil
+			}
+			id := artifactIDFromPath(strings.TrimPrefix(path, root+string(filepath.Separator)))
+			if id == "" {
+				return nil
+			}
+			if info, statErr := d.Info(); statErr == nil {
+				out[id] = info.ModTime()
+			} else {
+				out[id] = time.Time{}
+			}
+			return nil
+		})
+	}
+	return out
+}
+
+func artifactIDFromPath(path string) string {
+	path = filepath.ToSlash(strings.TrimSpace(path))
+	if path == "" {
+		return ""
+	}
+	if strings.HasSuffix(path, "/plan.md") || strings.HasSuffix(path, "/plan.markdown") {
+		return ArtifactKey(path)
+	}
+	base := path
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[i+1:]
+	}
+	return ArtifactKey(base)
+}
+
 // ExportPlan invokes `spektacular plan export <name> --format json` and returns the
 // structured task list of a final plan. It is the one verb beyond #8301 the
 // runner needs and is still an open ask on the Spektacular side; the fixture
@@ -485,6 +664,22 @@ func (r *Runner) ExportPlanFallback(ctx context.Context, name string) (Plan, err
 	return r.exportPlanFallbackInDir(ctx, "", name)
 }
 
+func (r *Runner) ReadSpec(ctx context.Context, name string) (string, error) {
+	return r.readSpecInDir(ctx, "", name)
+}
+
+func (r *Runner) readSpecInDir(ctx context.Context, dir, name string) (string, error) {
+	name = ArtifactKey(name)
+	if name == "" {
+		return "", &ContractError{Kind: KindSpec, Reason: "empty artifact name"}
+	}
+	out, err := r.readSpecFileInDir(ctx, dir, name, name+".md")
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
 func (r *Runner) exportPlanFallbackInDir(ctx context.Context, dir, name string) (Plan, error) {
 	name = ArtifactKey(name)
 	if name == "" {
@@ -514,6 +709,18 @@ func (r *Runner) readPlanFileInDir(ctx context.Context, dir, name, path string) 
 	trimmed := bytes.TrimSpace(out)
 	if env, message, isErr := parseErrorEnvelope(trimmed); isErr {
 		return nil, classifyEnvelope(KindPlan, name, env, message)
+	}
+	return out, nil
+}
+
+func (r *Runner) readSpecFileInDir(ctx context.Context, dir, name, path string) ([]byte, error) {
+	out, execErr := r.execInDir(ctx, dir, []string{KindSpec, verbFile, verbRead, path})
+	if execErr != nil {
+		return nil, classifyExecError(KindSpec, name, out, execErr)
+	}
+	trimmed := bytes.TrimSpace(out)
+	if env, message, isErr := parseErrorEnvelope(trimmed); isErr {
+		return nil, classifyEnvelope(KindSpec, name, env, message)
 	}
 	return out, nil
 }

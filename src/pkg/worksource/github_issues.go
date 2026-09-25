@@ -50,3 +50,33 @@ func (s *githubIssuesSource) ListIssues(ctx context.Context) ([]Issue, error) {
 	}
 	return out, nil
 }
+
+func (s *githubIssuesSource) AddLabel(ctx context.Context, ref Ref, label string) error {
+	if s == nil || s.client == nil {
+		return fmt.Errorf("worksource/github: client unavailable")
+	}
+	if !ref.IsGitHubIssue() {
+		return fmt.Errorf("worksource/github: labels require a GitHub issue ref")
+	}
+	return s.client.AddLabels(ctx, ref.Repo, ref.Number, []string{label})
+}
+
+func (s *githubIssuesSource) RemoveLabel(ctx context.Context, ref Ref, label string) error {
+	if s == nil || s.client == nil {
+		return fmt.Errorf("worksource/github: client unavailable")
+	}
+	if !ref.IsGitHubIssue() {
+		return fmt.Errorf("worksource/github: labels require a GitHub issue ref")
+	}
+	return s.client.RemoveLabel(ctx, ref.Repo, ref.Number, label)
+}
+
+func (s *githubIssuesSource) AddComment(ctx context.Context, ref Ref, body string) error {
+	if s == nil || s.client == nil {
+		return fmt.Errorf("worksource/github: client unavailable")
+	}
+	if !ref.IsGitHubIssue() {
+		return fmt.Errorf("worksource/github: comments require a GitHub issue ref")
+	}
+	return s.client.CreateIssueComment(ctx, ref.Repo, ref.Number, body)
+}

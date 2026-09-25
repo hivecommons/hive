@@ -19,6 +19,9 @@ func TestRunsConfigDefaults(t *testing.T) {
 	if got := r.Spektacular.PollInterval(); got != time.Duration(DefaultSpektacularPollS)*time.Second {
 		t.Fatalf("PollInterval() = %s, want %ds", got, DefaultSpektacularPollS)
 	}
+	if r.Spektacular.HubExecutorEnabled() {
+		t.Fatal("hub executor must be off when Spektacular is off")
+	}
 }
 
 func TestRunsConfigOverrides(t *testing.T) {
@@ -31,6 +34,12 @@ func TestRunsConfigOverrides(t *testing.T) {
 	}
 	if got := r.Spektacular.PollInterval(); got != 7*time.Second {
 		t.Fatalf("PollInterval() = %s, want 7s", got)
+	}
+	if !r.Spektacular.HubExecutorEnabled() {
+		t.Fatal("hub executor defaults on when Spektacular is enabled")
+	}
+	if got := r.Spektacular.HubExecutor.MaxConcurrentOrDefault(); got != DefaultSpektacularHubExecutorMaxConcurrent {
+		t.Fatalf("MaxConcurrentOrDefault() = %d", got)
 	}
 	neg := RunsConfig{MaxStageRetries: -1, Spektacular: SpektacularConfig{PollIntervalS: -3}}
 	if neg.MaxStageRetriesOrDefault() != DefaultMaxStageRetries || neg.Spektacular.PollInterval() != time.Duration(DefaultSpektacularPollS)*time.Second {
@@ -56,5 +65,59 @@ func TestTriageConfigDefaultsAndOverrides(t *testing.T) {
 	cfg = TriageConfig{SpecLabels: []string{"design"}, FixLabels: []string{"bug"}, MinBodyChars: 12, ClarifyComment: &noComment}
 	if cfg.EffectiveMinBodyChars() != 12 || cfg.ShouldClarifyComment() || cfg.EffectiveSpecLabels()[0] != "design" || cfg.EffectiveFixLabels()[0] != "bug" {
 		t.Fatalf("overrides not honored: %+v", cfg)
+	}
+}
+
+func TestSpektacularHubExecutorDefaults(t *testing.T) {
+	var s SpektacularConfig
+	if s.HubExecutorEnabled() {
+		t.Fatal("hub executor must be off when Spektacular is disabled")
+	}
+	s.Enabled = true
+	if !s.HubExecutorEnabled() {
+		t.Fatal("hub executor should default on when Spektacular is enabled")
+	}
+	off := false
+	s.HubExecutor.Enabled = &off
+	if s.HubExecutorEnabled() {
+		t.Fatal("explicit enabled=false must disable the hub executor")
+	}
+
+	var h SpektacularHubExecutorConfig
+	if got := h.BackendOrDefault(""); got != DefaultSpektacularHubExecutorBackend {
+		t.Errorf("BackendOrDefault(\"\") = %q, want %q", got, DefaultSpektacularHubExecutorBackend)
+	}
+	if got := h.BackendOrDefault(" claude "); got != "claude" {
+		t.Errorf("BackendOrDefault(fallback) = %q, want claude", got)
+	}
+	if got := h.IdentityOrDefault(); got != DefaultSpektacularHubExecutorIdentity {
+		t.Errorf("IdentityOrDefault() = %q, want %q", got, DefaultSpektacularHubExecutorIdentity)
+	}
+	if got, want := h.Timeout(), time.Duration(DefaultSpektacularHubExecutorTimeoutSeconds)*time.Second; got != want {
+		t.Errorf("Timeout() = %v, want %v", got, want)
+	}
+	if got := h.MaxConcurrentOrDefault(); got != DefaultSpektacularHubExecutorMaxConcurrent {
+		t.Errorf("MaxConcurrentOrDefault() = %d, want %d", got, DefaultSpektacularHubExecutorMaxConcurrent)
+	}
+}
+
+func TestSpektacularHubExecutorOverrides(t *testing.T) {
+	h := SpektacularHubExecutorConfig{
+		Backend:        " codex ",
+		Identity:       " spek-bot ",
+		TimeoutSeconds: 90,
+		MaxConcurrent:  3,
+	}
+	if got := h.BackendOrDefault("claude"); got != "codex" {
+		t.Errorf("BackendOrDefault = %q, want codex", got)
+	}
+	if got := h.IdentityOrDefault(); got != "spek-bot" {
+		t.Errorf("IdentityOrDefault = %q, want spek-bot", got)
+	}
+	if got := h.Timeout(); got != 90*time.Second {
+		t.Errorf("Timeout = %v, want 90s", got)
+	}
+	if got := h.MaxConcurrentOrDefault(); got != 3 {
+		t.Errorf("MaxConcurrentOrDefault = %d, want 3", got)
 	}
 }

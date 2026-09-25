@@ -41,6 +41,7 @@ type scriptedExec struct {
 	statuses   []string
 	exportJSON string
 	exportErr  error
+	listJSON   string
 	files      map[string]string
 	calls      [][]string
 	dirs       []string
@@ -60,6 +61,12 @@ func (s *scriptedExec) exec(_ context.Context, dir string, args []string) ([]byt
 			return nil, s.exportErr
 		}
 		return []byte(s.exportJSON), nil
+	}
+	if len(args) >= 3 && args[1] == verbFile && args[2] == "list" {
+		if s.listJSON != "" {
+			return []byte(s.listJSON), nil
+		}
+		return []byte(`{"error":true,"code":"not_found","message":"no artifacts"}`), errors.New("exit status 1")
 	}
 	if len(args) >= 4 && args[0] == KindPlan && args[1] == verbFile && args[2] == verbRead {
 		if s.files != nil {
@@ -132,6 +139,7 @@ type fakeRegistry struct {
 	plans      []*Plan
 	retries    []Stage
 	refusals   []string
+	progress   []map[string]string
 }
 
 func newFakeRegistry(stage string) *fakeRegistry {
@@ -186,6 +194,16 @@ func (f *fakeRegistry) Refuse(_ Stage, reason string, _ *ArtifactStatus) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.refusals = append(f.refusals, reason)
+}
+
+func (f *fakeRegistry) RecordProgress(_ Stage, attrs map[string]string, _ time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cp := make(map[string]string, len(attrs))
+	for k, v := range attrs {
+		cp[k] = v
+	}
+	f.progress = append(f.progress, cp)
 }
 
 type escalations struct {
@@ -325,6 +343,59 @@ func TestArtifactKey(t *testing.T) {
 	}
 	if got := ArtifactKey("  "); got != "" {
 		t.Fatalf("ArtifactKey(blank) = %q", got)
+	}
+}
+
+func TestRunArtifactName(t *testing.T) {
+	cases := map[string]string{
+		"KubeStellar/Console#23735": "kubestellar-console-23735",
+		"owner/repo#1":              "owner-repo-1",
+		"owner/repo!ENG-7":          "owner-repo-eng-7",
+		"000057_git-commit.md":      "000057_git-commit",
+	}
+	for in, want := range cases {
+		if got := RunArtifactName(in); got != want {
+			t.Fatalf("RunArtifactName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestResolveArtifactAcceptsTimestampedIDs(t *testing.T) {
+	ex := &scriptedExec{listJSON: `["20260925160000-kubestellar-console-23725.md","20260925163042-kubestellar-console-23725.md","other.md"]`}
+	r := &Runner{Exec: ex.exec}
+	got, err := r.ResolveArtifact(context.Background(), ".", KindSpec, "kubestellar-console-23725")
+	if err != nil {
+		t.Fatalf("ResolveArtifact: %v", err)
+	}
+	if got != "20260925163042-kubestellar-console-23725" {
+		t.Fatalf("resolved = %q", got)
+	}
+}
+
+func TestTickResolvesTimestampedArtifactAfterNotFound(t *testing.T) {
+	reg := newFakeRegistry(StageSpec)
+	reg.stage.RunKey = "kubestellar/console#23725"
+	reg.stage.Artifact = "kubestellar-console-23725"
+	var calls [][]string
+	exec := func(_ context.Context, _ string, args []string) ([]byte, error) {
+		calls = append(calls, append([]string(nil), args...))
+		if len(args) >= 3 && args[1] == verbFile && args[2] == "list" {
+			return []byte(`["20260925163042-kubestellar-console-23725.md"]`), nil
+		}
+		if len(args) >= 3 && args[1] == verbStatus && args[2] == "kubestellar-console-23725" {
+			return []byte(`{"error":true,"code":"artifact_not_found","message":"missing","resource":"kubestellar-console-23725"}`), errors.New("exit status 1")
+		}
+		if len(args) >= 3 && args[1] == verbStatus && args[2] == "20260925163042-kubestellar-console-23725" {
+			return []byte(statusJSON(KindSpec, "20260925163042-kubestellar-console-23725", DocumentFinal)), nil
+		}
+		return nil, fmt.Errorf("unexpected args: %v", args)
+	}
+	r := &Runner{Exec: exec, Poll: testPoll, Registry: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
+		t.Fatalf("tick = %+v", res)
+	}
+	if len(calls) < 3 || calls[2][2] != "20260925163042-kubestellar-console-23725" {
+		t.Fatalf("calls = %+v", calls)
 	}
 }
 
@@ -554,6 +625,9 @@ func TestTick_DraftThenFinalAdvancesOnceAndWritesOneReceipt(t *testing.T) {
 	if len(esc.events) != 0 || len(reg.retries) != 0 || len(reg.refusals) != 0 {
 		t.Fatalf("unexpected side effects: esc=%d retries=%d refusals=%v", len(esc.events), len(reg.retries), reg.refusals)
 	}
+	if len(reg.progress) == 0 || reg.progress[0][AttrDocumentStatus] != string(DocumentDraft) || reg.progress[0][AttrCurrentStep] != "authoring" {
+		t.Fatalf("status progress not recorded: %+v", reg.progress)
+	}
 
 	// The next tick polls the NEW stage (plan) under the new generation, and the
 	// old spec stage is never advanced twice.
@@ -585,6 +659,9 @@ func TestTick_NeverFinalRetriesOnceThenEscalatesWithNoThirdGeneration(t *testing
 	}
 	if reg.stage.Gen != 2 || len(reg.retries) != 1 {
 		t.Fatalf("after first expiry gen=%d retries=%d", reg.stage.Gen, len(reg.retries))
+	}
+	if len(reg.progress) == 0 || reg.progress[len(reg.progress)-1][AttrReason] != "retry_generation_minted" {
+		t.Fatalf("retry progress not recorded: %+v", reg.progress)
 	}
 	// Second expiry: budget (2) exhausted, escalation raised, no third generation.
 	now = now.Add(testLeaseTTL + time.Second)
@@ -1072,17 +1149,18 @@ func TestBinaryExec_ReturnsStdoutOnFailure(t *testing.T) {
 	}
 }
 
-// --- Invariant: Hive never opens a Spektacular file -----------------------
+// --- Invariant: Hive never reads Spektacular document bodies ---------------
 
-// TestNoDirectFileAccess scans this package's non-test sources: every fact
-// about an artifact must arrive through Exec. The fixture directory is the
-// only place a Spektacular-shaped file exists, and nothing here reads it.
+// TestNoDirectSpekDocumentReads scans this package's non-test sources: status
+// facts still arrive through Exec. The v0.22 timestamped-id fallback may walk
+// project directories to discover artifact names, but must not read document
+// bodies or test fixtures.
 func TestNoDirectFileAccess(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
-	forbidden := []string{"os.Open", "os.ReadFile", "os.ReadDir", "os.OpenFile", "filepath.Walk", "ioutil.Read", "testdata"}
+	forbidden := []string{"os.Open", "os.ReadFile", "os.ReadDir", "os.OpenFile", "ioutil.Read", "testdata"}
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -1094,8 +1172,75 @@ func TestNoDirectFileAccess(t *testing.T) {
 		}
 		for _, f := range forbidden {
 			if strings.Contains(string(src), f) {
-				t.Fatalf("%s reaches for %q; Hive must only learn about Spektacular artifacts through Exec", name, f)
+				t.Fatalf("%s reaches for %q; Hive must not read Spektacular document bodies directly", name, f)
 			}
 		}
+	}
+}
+
+// --- Unclaimed admission leases -------------------------------------------
+
+// An admission lease (owned by hive-triage, no relay yet) has no checkout by
+// construction. The runner must wait for a claim, not park it with
+// missing_workdir; once a relay claims the same generation and a checkout
+// exists, the stage is polled like any other.
+func TestTick_UnclaimedAdmissionWaitsForClaim(t *testing.T) {
+	reg := newFakeRegistry(StageSpec)
+	reg.stage.Identity = "hive-triage"
+	reg.stage.WorkDir = ""
+	reg.stage.Unclaimed = true
+	ex := &scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentFinal)}}
+	esc := &escalations{}
+	r := newRunner(reg, ex, esc)
+
+	res := r.Tick(context.Background(), t0)
+	if res.Unclaimed != 1 || res.Refused != 0 || res.Polled != 0 {
+		t.Fatalf("unclaimed tick = %+v, want Unclaimed=1 Refused=0 Polled=0", res)
+	}
+	if len(reg.refusals) != 0 {
+		t.Fatalf("unclaimed admission was refused: %v", reg.refusals)
+	}
+
+	// A relay claims the lease: same run key, stage and generation, new owner
+	// and a real checkout.
+	reg.mu.Lock()
+	reg.stage.Identity = testIdentity
+	reg.stage.WorkDir = testWorkDir
+	reg.stage.Unclaimed = false
+	reg.mu.Unlock()
+
+	res = r.Tick(context.Background(), t0.Add(testPoll))
+	if res.Polled != 1 || res.Unclaimed != 0 || res.Refused != 0 {
+		t.Fatalf("claimed tick = %+v, want Polled=1", res)
+	}
+}
+
+// A refusal recorded against one owner's checkout must not stick to the
+// stage when the same generation changes hands to a relay that has one.
+func TestTick_OwnerChangeReArmsRefusedStage(t *testing.T) {
+	reg := newFakeRegistry(StageSpec)
+	reg.stage.WorkDir = ""
+	ex := &scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentDraft)}}
+	esc := &escalations{}
+	r := newRunner(reg, ex, esc)
+
+	res := r.Tick(context.Background(), t0)
+	if res.Refused != 1 || len(reg.refusals) != 1 || reg.refusals[0] != RefuseMissingWorkDir {
+		t.Fatalf("first tick = %+v refusals=%v", res, reg.refusals)
+	}
+	// Same owner, still no checkout: refusal is terminal, not repeated.
+	res = r.Tick(context.Background(), t0.Add(testPoll))
+	if res.Refused != 0 || res.Polled != 0 {
+		t.Fatalf("second tick = %+v, want nothing", res)
+	}
+
+	reg.mu.Lock()
+	reg.stage.Identity = "other-relay"
+	reg.stage.WorkDir = testWorkDir
+	reg.mu.Unlock()
+
+	res = r.Tick(context.Background(), t0.Add(2*testPoll))
+	if res.Polled != 1 || res.Refused != 0 {
+		t.Fatalf("re-armed tick = %+v, want Polled=1", res)
 	}
 }

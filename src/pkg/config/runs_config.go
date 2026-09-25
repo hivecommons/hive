@@ -23,6 +23,16 @@ const (
 	// DefaultSpektacularPollS is how often, in seconds, the runner calls the
 	// status verb for each active stage lease.
 	DefaultSpektacularPollS = 30
+	// DefaultSpektacularHubExecutorBackend is the fallback agent CLI used when no
+	// hub default backend can be inferred.
+	DefaultSpektacularHubExecutorBackend = "copilot"
+	// DefaultSpektacularHubExecutorIdentity owns stages claimed by the hub.
+	DefaultSpektacularHubExecutorIdentity = "hive-spek"
+	// DefaultSpektacularHubExecutorTimeoutSeconds bounds one agent turn.
+	DefaultSpektacularHubExecutorTimeoutSeconds = 1800
+	// DefaultSpektacularHubExecutorMaxConcurrent bounds simultaneous hub-authored
+	// Spektacular stages.
+	DefaultSpektacularHubExecutorMaxConcurrent = 1
 
 	// DefaultRunsWaitTimeoutSeconds is how long a run checkpoint may wait for
 	// owner approval before escalation. It also floors how far a held plan
@@ -144,6 +154,19 @@ type SpektacularConfig struct {
 	// PollIntervalS is the seconds between status calls per active stage.
 	// Zero or negative means DefaultSpektacularPollS.
 	PollIntervalS int `yaml:"poll_interval_s,omitempty" json:"poll_interval_s,omitempty"`
+	// HubExecutor optionally lets the hub claim and execute unclaimed spec/plan
+	// stages itself. The zero value is enabled when Spektacular is enabled.
+	HubExecutor SpektacularHubExecutorConfig `yaml:"hub_executor,omitempty" json:"hub_executor,omitempty"`
+}
+
+// SpektacularHubExecutorConfig configures the hub-resident Spektacular executor.
+type SpektacularHubExecutorConfig struct {
+	Enabled        *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Backend        string `yaml:"backend,omitempty" json:"backend,omitempty"`
+	Model          string `yaml:"model,omitempty" json:"model,omitempty"`
+	TimeoutSeconds int    `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
+	Identity       string `yaml:"identity,omitempty" json:"identity,omitempty"`
+	MaxConcurrent  int    `yaml:"max_concurrent,omitempty" json:"max_concurrent,omitempty"`
 }
 
 // MaxStageRetriesOrDefault returns the configured retry budget or the default.
@@ -200,4 +223,42 @@ func (s SpektacularConfig) PollInterval() time.Duration {
 		return time.Duration(DefaultSpektacularPollS) * time.Second
 	}
 	return time.Duration(s.PollIntervalS) * time.Second
+}
+
+func (s SpektacularConfig) HubExecutorEnabled() bool {
+	if !s.Enabled {
+		return false
+	}
+	return s.HubExecutor.Enabled == nil || *s.HubExecutor.Enabled
+}
+
+func (h SpektacularHubExecutorConfig) BackendOrDefault(fallback string) string {
+	if b := strings.TrimSpace(h.Backend); b != "" {
+		return b
+	}
+	if b := strings.TrimSpace(fallback); b != "" {
+		return b
+	}
+	return DefaultSpektacularHubExecutorBackend
+}
+
+func (h SpektacularHubExecutorConfig) IdentityOrDefault() string {
+	if id := strings.TrimSpace(h.Identity); id != "" {
+		return id
+	}
+	return DefaultSpektacularHubExecutorIdentity
+}
+
+func (h SpektacularHubExecutorConfig) Timeout() time.Duration {
+	if h.TimeoutSeconds > 0 {
+		return time.Duration(h.TimeoutSeconds) * time.Second
+	}
+	return time.Duration(DefaultSpektacularHubExecutorTimeoutSeconds) * time.Second
+}
+
+func (h SpektacularHubExecutorConfig) MaxConcurrentOrDefault() int {
+	if h.MaxConcurrent > 0 {
+		return h.MaxConcurrent
+	}
+	return DefaultSpektacularHubExecutorMaxConcurrent
 }

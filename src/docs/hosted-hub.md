@@ -72,7 +72,14 @@ GitHub App access and, when needed, offers **Install/authorize the App for
 ### Configure model gateways and keys
 
 Open **Settings → Model Gateways** when an agent uses OpenRouter, LiteLLM, vLLM,
-llm-d, watsonx, or another OpenAI-compatible endpoint.
+llm-d, watsonx, or another OpenAI-compatible endpoint. When you save a new
+gateway key, Hive rewrites the persisted key file and immediately refreshes the
+in-pod proxy routes for already-running agents, so the next kick uses the new
+key without a manual agent restart. The gateway row shows the SHA-256 of the
+effective key (first 12 hex characters, full value on hover) and the settings
+API returns the same hash as `keySHA256`; compare it with LiteLLM's key hash to
+verify which key agents will present. Hive logs this hash as `api_key_sha256`
+when an inference route is set, never the key itself.
 
 - Click **+ Add gateway** for a manual gateway. The form has **Preset**,
   **Name**, **Endpoint URL**, **API Key**, optional **Key name**, and **Default

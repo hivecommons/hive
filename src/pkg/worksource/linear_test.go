@@ -508,3 +508,159 @@ func TestLinearRequestFailure(t *testing.T) {
 		t.Fatal("expected connection error, got nil")
 	}
 }
+
+func TestLinearDesignSignalMutations(t *testing.T) {
+	var ops []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Query     string                 `json:"query"`
+			Variables map[string]interface{} `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		switch {
+		case strings.Contains(req.Query, "issueLabels"):
+			ops = append(ops, "lookup")
+			_, _ = w.Write([]byte(`{"data":{"issue":{"id":"issue-1","labels":{"nodes":[{"id":"old","name":"bug"}]}},"issueLabels":{"nodes":[{"id":"old","name":"bug"},{"id":"design","name":"hive-design"}]}}}`))
+		case strings.Contains(req.Query, "issueUpdate"):
+			ops = append(ops, "labels")
+			_, _ = w.Write([]byte(`{"data":{"issueUpdate":{"success":true}}}`))
+		case strings.Contains(req.Query, "commentCreate"):
+			ops = append(ops, "comment")
+			_, _ = w.Write([]byte(`{"data":{"commentCreate":{"success":true}}}`))
+		default:
+			t.Fatalf("unexpected query: %s", req.Query)
+		}
+	}))
+	defer srv.Close()
+	src := worksource.NewLinearSource(worksource.LinearConfig{APIKey: "key", BaseURL: srv.URL}, nil)
+	ref := worksource.Ref{SourceType: "linear", Repo: "acme/app", ExternalID: "ENG-7"}
+	if err := src.AddLabel(context.Background(), ref, "hive-design"); err != nil {
+		t.Fatalf("AddLabel: %v", err)
+	}
+	if err := src.RemoveLabel(context.Background(), ref, "bug"); err != nil {
+		t.Fatalf("RemoveLabel: %v", err)
+	}
+	if err := src.AddComment(context.Background(), ref, "## Design"); err != nil {
+		t.Fatalf("AddComment: %v", err)
+	}
+	want := []string{"lookup", "labels", "lookup", "labels", "lookup", "comment"}
+	if !reflect.DeepEqual(ops, want) {
+		t.Fatalf("ops = %v, want %v", ops, want)
+	}
+}
+
+func TestLinearDesignSignalErrors(t *testing.T) {
+	t.Run("missing label", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"data":{"issue":{"id":"issue-1","labels":{"nodes":[]}},"issueLabels":{"nodes":[]}}}`))
+		}))
+		defer srv.Close()
+		src := worksource.NewLinearSource(worksource.LinearConfig{APIKey: "key", BaseURL: srv.URL}, nil)
+		err := src.AddLabel(context.Background(), worksource.Ref{ExternalID: "ENG-7"}, "hive-design")
+		if err == nil || !strings.Contains(err.Error(), "does not exist") {
+			t.Fatalf("missing label err = %v", err)
+		}
+	})
+	t.Run("issue not found", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"data":{"issue":null,"issueLabels":{"nodes":[]}}}`))
+		}))
+		defer srv.Close()
+		src := worksource.NewLinearSource(worksource.LinearConfig{APIKey: "key", BaseURL: srv.URL}, nil)
+		if err := src.AddComment(context.Background(), worksource.Ref{ExternalID: "ENG-7"}, "body"); err == nil || !strings.Contains(err.Error(), "not found") {
+			t.Fatalf("not found err = %v", err)
+		}
+	})
+	t.Run("mutation false and empty label", func(t *testing.T) {
+		var update bool
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Query string `json:"query"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if strings.Contains(req.Query, "issueUpdate") {
+				update = true
+				_, _ = w.Write([]byte(`{"data":{"issueUpdate":{"success":false}}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":{"issue":{"id":"issue-1","labels":{"nodes":[]}},"issueLabels":{"nodes":[{"id":"design","name":"hive-design"}]}}}`))
+		}))
+		defer srv.Close()
+		src := worksource.NewLinearSource(worksource.LinearConfig{APIKey: "key", BaseURL: srv.URL}, nil)
+		if err := src.AddLabel(context.Background(), worksource.Ref{ExternalID: "ENG-7"}, ""); err != nil {
+			t.Fatalf("empty label err = %v", err)
+		}
+		err := src.AddLabel(context.Background(), worksource.Ref{ExternalID: "ENG-7"}, "hive-design")
+		if err == nil || !strings.Contains(err.Error(), "reported failure") || !update {
+			t.Fatalf("mutation err = %v update=%v", err, update)
+		}
+	})
+	if err := srcTransitionLinear(); err != worksource.ErrStatusTransitionUnsupported {
+		t.Fatalf("TransitionStatus err = %v", err)
+	}
+}
+
+func TestLinearTransitionStatus(t *testing.T) {
+	var ops []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Query string `json:"query"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		switch {
+		case strings.Contains(req.Query, "states"):
+			ops = append(ops, "states")
+			_, _ = w.Write([]byte(`{"data":{"issue":{"id":"issue-1","team":{"states":{"nodes":[{"id":"state-approved","name":"Design Approved"}]}}}}}`))
+		case strings.Contains(req.Query, "issueUpdate"):
+			ops = append(ops, "update")
+			_, _ = w.Write([]byte(`{"data":{"issueUpdate":{"success":true}}}`))
+		default:
+			t.Fatalf("unexpected query: %s", req.Query)
+		}
+	}))
+	defer srv.Close()
+
+	src := worksource.NewLinearSource(worksource.LinearConfig{
+		APIKey:      "key",
+		BaseURL:     srv.URL,
+		Transitions: map[string]string{"approved": "Design Approved"},
+	}, nil)
+	if err := src.TransitionStatus(context.Background(), worksource.Ref{SourceType: "linear", Repo: "acme/app", ExternalID: "ENG-7"}, "approved"); err != nil {
+		t.Fatalf("TransitionStatus: %v", err)
+	}
+	if want := []string{"states", "update"}; !reflect.DeepEqual(ops, want) {
+		t.Fatalf("ops = %v, want %v", ops, want)
+	}
+}
+
+func srcTransitionLinear() error {
+	src := worksource.NewLinearSource(worksource.LinearConfig{}, nil)
+	return src.TransitionStatus(context.Background(), worksource.Ref{ExternalID: "ENG-1"}, "Done")
+}
+
+func TestLinearDesignSignalMoreErrors(t *testing.T) {
+	src := worksource.NewLinearSource(worksource.LinearConfig{}, nil)
+	if err := src.AddComment(context.Background(), worksource.Ref{}, "body"); err == nil || !strings.Contains(err.Error(), "external id") {
+		t.Fatalf("empty ref err = %v", err)
+	}
+	t.Run("comment false", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Query string `json:"query"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if strings.Contains(req.Query, "commentCreate") {
+				_, _ = w.Write([]byte(`{"data":{"commentCreate":{"success":false}}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":{"issue":{"id":"issue-1","labels":{"nodes":[]}},"issueLabels":{"nodes":[]}}}`))
+		}))
+		defer srv.Close()
+		src := worksource.NewLinearSource(worksource.LinearConfig{APIKey: "key", BaseURL: srv.URL}, nil)
+		if err := src.AddComment(context.Background(), worksource.Ref{ExternalID: "ENG-7"}, "body"); err == nil || !strings.Contains(err.Error(), "reported failure") {
+			t.Fatalf("comment false err = %v", err)
+		}
+	})
+}

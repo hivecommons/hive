@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +45,10 @@ type Stage struct {
 	// Spektacular project for this lease. The runner refuses to poll when it is
 	// empty so the hub process cwd can never influence status.
 	WorkDir string
+	// Unclaimed marks the admission lease no relay has taken yet. There is
+	// no checkout to poll by construction, so the runner leaves it alone
+	// (neither polled nor refused) until a contributor claims the stage.
+	Unclaimed bool
 	// Gen is the lease generation; a change means a retry or advance happened.
 	Gen uint64
 	// ExpiresAt is when the lease lapses without renewal. It is Hive's own
@@ -65,6 +70,10 @@ type Registry interface {
 	// Refuse records that the runner will not advance st for reason (stale
 	// plan, replaced document) so an operator can see why the run is parked.
 	Refuse(st Stage, reason string, status *ArtifactStatus)
+}
+
+type progressRegistry interface {
+	RecordProgress(st Stage, attrs map[string]string, now time.Time)
 }
 
 // Refusal reasons recorded through Registry.Refuse.
@@ -105,8 +114,10 @@ type Runner struct {
 // stageState is the runner's memory of one run stage across ticks.
 type stageState struct {
 	gen        uint64
+	identity   string
 	lastPolled time.Time
 	lastStatus DocumentStatus
+	artifact   string
 	seenFinal  bool
 	advanced   bool
 	expiries   int
@@ -126,6 +137,9 @@ type TickResult struct {
 	Retried   int
 	Escalated int
 	Refused   int
+	// Unclaimed counts admission leases still waiting for a relay to take
+	// them; they are listed but neither polled nor refused.
+	Unclaimed int
 	Errors    int
 }
 
@@ -198,7 +212,7 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) TickResult {
 		live[key] = true
 		state := r.stages[key]
 		if state == nil {
-			state = &stageState{gen: st.Gen}
+			state = &stageState{gen: st.Gen, identity: st.Identity}
 			r.stages[key] = state
 		}
 		if state.gen != st.Gen || state.seeded {
@@ -214,6 +228,14 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) TickResult {
 			state.lastStatus = ""
 			state.seenFinal = false
 			state.advanced = false
+			state.refused = false
+		}
+		if state.identity != st.Identity {
+			// The same generation changed hands (a relay claimed the admission
+			// lease, or a reclaim moved it to another relay). Whatever was
+			// refused about the previous owner's checkout says nothing about
+			// the new owner's, so the stage is eligible to be polled again.
+			state.identity = st.Identity
 			state.refused = false
 		}
 		r.tickStage(ctx, st, state, now, &res)
@@ -236,6 +258,14 @@ func (r *Runner) tickStage(ctx context.Context, st Stage, state *stageState, now
 	if !ok {
 		return
 	}
+	if st.Unclaimed {
+		// Admission created the stage but no relay has claimed it, so no
+		// checkout exists yet. That is the expected shape of a freshly started
+		// run, not a misconfiguration: wait for the claim rather than parking
+		// the lease with missing_workdir before anyone could act on it.
+		res.Unclaimed++
+		return
+	}
 	// The poll interval only paces the status call. Expiry is checked on
 	// every tick so a lapsed lease is retried before the registry prunes it,
 	// whatever the poll cadence is.
@@ -252,12 +282,34 @@ func (r *Runner) tickStage(ctx context.Context, st Stage, state *stageState, now
 		}
 		state.lastPolled = now
 		res.Polled++
-		status, err := r.statusInDir(ctx, dir, kind, st.Artifact)
+		artifact := strings.TrimSpace(state.artifact)
+		if artifact == "" {
+			artifact = st.Artifact
+		}
+		status, err := r.statusInDir(ctx, dir, kind, artifact)
 		switch {
 		case err == nil:
+			state.artifact = status.JoinKey()
 			r.observe(ctx, st, state, status, now, res)
 		default:
 			var nf *NotFoundError
+			if errors.As(err, &nf) && state.lastStatus == "" {
+				resolved, resolveErr := r.ResolveArtifact(ctx, dir, kind, st.Artifact)
+				if resolveErr == nil && resolved != "" && resolved != artifact {
+					status, err = r.statusInDir(ctx, dir, kind, resolved)
+					if err == nil {
+						state.artifact = status.JoinKey()
+						r.logger().Info("[spektacular] resolved run artifact id",
+							"run", st.RunKey, "stage", st.Stage, "requested", st.Artifact, "resolved", state.artifact)
+						r.recordProgress(st, map[string]string{
+							AttrArtifact: status.JoinKey(),
+							AttrReason:   "artifact_resolved",
+						}, now)
+						r.observe(ctx, st, state, status, now, res)
+						break
+					}
+				}
+			}
 			if errors.As(err, &nf) && state.lastStatus != "" {
 				// Seen before, gone now: a new document has replaced it. Never
 				// rebind the lease to whatever appeared; park it for a reset.
@@ -281,6 +333,14 @@ func (r *Runner) tickStage(ctx context.Context, st Stage, state *stageState, now
 func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, status ArtifactStatus, now time.Time, res *TickResult) {
 	prev := state.lastStatus
 	state.lastStatus = status.DocumentStatus
+	if prev != status.DocumentStatus || status.CurrentStep != "" {
+		r.recordProgress(st, map[string]string{
+			AttrArtifact:       status.JoinKey(),
+			AttrDocumentStatus: string(status.DocumentStatus),
+			AttrCurrentStep:    status.CurrentStep,
+			"completed_steps":  strconv.Itoa(len(status.CompletedSteps)),
+		}, now)
+	}
 	if status.DocumentStatus == DocumentStale {
 		state.refused = true
 		res.Refused++
@@ -289,6 +349,7 @@ func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, statu
 			"run", st.RunKey, "stage", st.Stage, "artifact", st.Artifact)
 		return
 	}
+
 	if !status.Final() {
 		if state.seenFinal || prev == DocumentFinal {
 			state.refused = true
@@ -311,6 +372,15 @@ func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, statu
 		}
 		plan = &exported
 	}
+	if st.Stage == StageSpec {
+		body, err := r.readSpecInDir(ctx, st.WorkDir, st.Artifact)
+		if err != nil {
+			r.logger().Warn("[spektacular] spec is final but artifact read failed; advancing without postback body",
+				"run", st.RunKey, "artifact", st.Artifact, "error", err)
+		} else {
+			status.Body = body
+		}
+	}
 	receipt := BuildReceipt(st, status, now)
 	if err := r.Registry.Advance(ctx, st, status, receipt, plan, now); err != nil {
 		res.Errors++
@@ -328,6 +398,14 @@ func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, statu
 		"run", st.RunKey, "stage", st.Stage, "next", nextStage(st.Stage), "gen", st.Gen)
 }
 
+func (r *Runner) recordProgress(st Stage, attrs map[string]string, now time.Time) {
+	rec, ok := r.Registry.(progressRegistry)
+	if !ok || rec == nil {
+		return
+	}
+	rec.RecordProgress(st, attrs, now)
+}
+
 // expire applies the retry budget when the lease has lapsed without final:
 // each expiry but the last mints a retry generation; the last raises a
 // decision escalation and the runner stops touching the stage.
@@ -343,6 +421,11 @@ func (r *Runner) expire(ctx context.Context, st Stage, state *stageState, now ti
 			return
 		}
 		res.Retried++
+		r.recordProgress(st, map[string]string{
+			AttrReason: "retry_generation_minted",
+			"attempt":  strconv.Itoa(state.expiries + 1),
+			"budget":   strconv.Itoa(r.maxRetries()),
+		}, now)
 		r.logger().Info("[spektacular] lease expired without final; retry generation minted",
 			"run", st.RunKey, "stage", st.Stage, "attempt", state.expiries+1, "budget", r.maxRetries())
 		return

@@ -1,7 +1,7 @@
 # Spoke dashboard
 
 The spoke dashboard is the operator UI served from
-`src/pkg/dashboard/static/index.html`. Its FAQ panel (`#faq-section` /
+`src/pkg/dashboard/static/index.html`. For the behavior behind the labels the repository cards show or mutate, see [Hive Labels and Control Signals](labels-and-control-signals.md). Its FAQ panel (`#faq-section` /
 `#faq-panel`) is intentionally static HTML: it is not ACMM-gated, does not
 fetch data, and is visible to confused L1/L2 users before they understand the
 rest of the UI.
@@ -34,12 +34,51 @@ that meet `HIVE_CONTRIBUTE_EFFECTIVE_MODELS_MIN_PRS` (default `5`) merged PRs
 get rank badges. The default row order is effectiveness rank; operators can
 toggle back to raw PR count without changing the selected window.
 
+## Hive Chat
+
+The floating **🐝 Hive Chat** panel is a command-first dashboard assistant. Type
+`/help` (or `help`) to render the command registry; the same registry drives
+one-line help, `/help <command>` details, examples, and slash-command
+autocomplete and argument hints. Current commands are `/help`, `/clear`,
+`/search`, `/history`, `/retry`, `/edit`, `/who`, `/agents`, `/beads`,
+`/prs`, `/governor`, `/knowledge`, `/jam`, and `/spek`.
+
+The prompt behaves like a small terminal: `Enter` sends, `Shift+Enter` inserts a
+newline, `Tab` completes slash commands, Up/Down cycle prior commands while
+preserving the draft, `?` opens the shortcut overlay, `Esc` closes the overlay
+or panel, and Cmd/Ctrl+K opens and focuses it. A collapsible left cheat sheet
+groups clickable examples for agents, beads/issues/PRs, governor, knowledge,
+jam, and Spektacular. Spek/Spektacular examples are enabled when `/api/version`
+reports v6/edge; otherwise they are marked `v6/edge`.
+
+Chat UI state is browser-local: transcript, command history, panel size,
+maximized/docked mode, cheat-sheet collapsed state, command draft, preferences,
+and shortcuts live in localStorage with bounded history sizes. `/clear` clears
+the transcript; `/history clear` or the cheat-sheet control clears command
+history. `/history <text>` searches command history and `/search <text>`
+searches the transcript. `/retry` resends the last prompt, `/edit` restores it
+to the draft, suggestion chips seed common prompts, and long/code-heavy output
+is collapsible with copy buttons on fenced code blocks. There is no server-side
+per-user chat persistence yet because dashboard user settings are not a
+general-purpose cross-browser preferences API.
+
+Markdown is rendered from escaped input only: bold, inline code, code fences,
+links, GitHub-style `@mentions`, and `#issue` / `owner/repo#N` references are
+decorated after escaping. Repeated or long `Status heartbeat` output is folded
+to avoid burying the conversation.
+
+`/who` reads `GET /api/presence`. Authenticated users see display-safe
+usernames/display names, GitHub avatars for plain GitHub handles, and active vs.
+idle state derived from the existing focus-aware presence heartbeat. A local
+dashboard with no authenticated identity does not reveal other sessions and
+shows only `local`.
+
 ## Repository card holds
 
 Repository cards show held issues and PRs beside the actionable pills. A user
 who owns the hive, owns the repository, or has GitHub `write`, `maintain`, or
-`admin` permission on that repository can click the `⏸` chip to add or remove a
-hold. The server always re-checks that permission before mutating labels. Adding
+`admin` permission on that repository can click the `⏸ Hold` chip to add a hold
+or the `▶ Release` chip to remove one. The server always re-checks that permission before mutating labels. Adding
 a hold applies the hive's canonical `hive-pause/<hive-id>` label. The name
 deliberately avoids the substring `hold` so it is matched exactly and cannot
 collide with the agent provenance label `hive/<hive-id>`. Removing a hold only
@@ -52,6 +91,53 @@ copied to the new label, agent-provenance-only items become actionable, and
 ambiguous legacy labels stay held under `hive-pause/<hive-id>` for operator
 review. The card-level `⏸ pause` / `▶ resume` control uses the same permission
 rule.
+
+## Repository card legend and issue bands
+
+The **Repositories** section includes a compact, collapsible pill legend. It is
+stored per browser in `localStorage` and uses the same pill classes as the cards,
+so theme changes update the legend automatically. The legend explains issue
+actionable/held pills, plan chips, hold/release controls, issue state glyphs
+(`⛔`, `❓`, `👤`, `✓`, role badges, stale `🕒`) and PR states (`✓`, `◐`,
+`⚠`, held, reviewed `💬`, auto-merge `🔀`, and review-class badges such as
+`FIX`).
+
+Actionable issue pills are grouped client-side for display only; enumeration,
+holds, filters, and agent kick behaviour are unchanged. Each issue appears in
+exactly one band, while non-winning states remain as badges on the pill:
+
+1. **Ready** — no display taxonomy state matched.
+2. **In progress** — assignee set, `claimed`, or `hive/claimed-by-*`.
+3. **Agent-filed** — an `agent/<role>` label; roles render as compact badges.
+4. **Waiting on human** — labels such as `blocked`, `needs-decision`,
+   `2-discussing`, `Epic`, `needs-human`, or `needs-triage`.
+5. **Likely done** — labels such as `hive/already-done`, `hive/covered-by-pr`, and `hive/likely-done`.
+
+Precedence is likely done → waiting on human → in progress → agent-filed → ready,
+so a human gate beats an assignment and done beats all other display states.
+Within each band, issues sort by `updated_at` oldest first. The issue breakdown
+also shows `N no activity > 14d` for actionable issues older than the stale
+threshold.
+
+Operators can tune only the display taxonomy under `dashboard.issue_bands`:
+
+```yaml
+dashboard:
+  issue_bands:
+    waiting_labels: [blocked, needs-decision, 2-discussing, Epic, needs-human, needs-triage]
+    done_labels: [hive/already-done, hive/covered-by-pr, hive/likely-done]
+    stale_days: 14
+```
+
+These settings deliberately do not reuse `governor.labels.exempt`,
+`contribute_skip_labels`, or `project.issue_filter`; those decide work
+eligibility, while issue bands decide how the dashboard describes already
+enumerated work. Linked-PR badges render from the `linked_prs` payload and are not inferred by the card.
+
+## Linked PR issue signals
+
+Repository issue pills can show a `🔗 #N` badge when Hive has verified a pull request related to that issue. Open PRs apply `hive/covered-by-pr`; merged PRs on still-open issues apply `hive/likely-done` and render as `🔗 #N merged`. These are pending signals, not resolution: the issue remains in the actionable list until GitHub closes it, GitHub reports the PR in `closingIssuesReferences`, or an operator confirms coverage. The status payload exposes the same evidence as `linked_prs: [{number, state, merged, url, closing}]` on each `github.Issue`.
+
 
 ## Appearance themes
 

@@ -4,7 +4,7 @@ Use this page to finish the maintainer half of the v6 readiness issues after
 the conformance suites have already proved the shared guard invariant. Each
 exercise needs one live hive on the `v6` branch, a real operator account, and
 links or screenshots that can be pasted into the surface issue and the live row
-in [#7683](https://github.com/hivecommons/hive/issues/7683). Do not close a row
+in [#7563](https://github.com/hivecommons/hive/issues/7563). Do not close a row
 from unit tests alone.
 
 Common setup for chat surfaces:
@@ -29,7 +29,7 @@ Common setup for chat surfaces:
 ## Evidence template
 
 Paste one filled block into the surface issue and link the same comment from
-[#7683](https://github.com/hivecommons/hive/issues/7683):
+[#7563](https://github.com/hivecommons/hive/issues/7563):
 
 ```markdown
 ### v6 live exercise evidence — <surface>
@@ -42,7 +42,7 @@ Paste one filled block into the surface issue and link the same comment from
 - [ ] Notification/escalation evidence: `<message link, screenshot, email Message-ID, provider event URL>`
 - [ ] Hive evidence: `<redacted log line, audit event, API endpoint evidence, timestamp>`
 - [ ] Guard evidence: `<allowlist/role used; ioscan/capability path unchanged; any relevant audit>`
-- [ ] #7683 row updated: `<link to tracker comment or checklist edit>`
+- [ ] #7563 **v6 readiness bar** row updated: `<link to tracker comment or checklist edit>`
 
 Notes / redactions: `<what was redacted and why>`
 ```
@@ -89,7 +89,7 @@ Evidence checklist:
 - [ ] Audit/log line containing `agent_mention_kicked` with repo, number,
       comment ID, author, and agent.
 - [ ] Kick/run evidence showing `source=mention`.
-- [ ] Paste the template, tick the GitHub @-mention live row in #7683, then
+- [ ] Paste the template, tick the GitHub @-mention live row in #7563's **v6 readiness bar** section, then
       close #8041.
 
 ## Slack Socket Mode (#8042)
@@ -130,7 +130,7 @@ Evidence checklist:
 - [ ] `!status` command link/screenshot and bot reply.
 - [ ] One notification delivery link/screenshot.
 - [ ] Hive log line for `slack bot starting` or Socket Mode activity.
-- [ ] Paste the template, tick the Slack live row in #7683, then close #8042.
+- [ ] Paste the template, tick the Slack live row in #7563's **v6 readiness bar** section, then close #8042.
 
 ## Discord (#8043)
 
@@ -165,7 +165,7 @@ Evidence checklist:
 - [ ] Notification parity screenshot/link after recovery.
 - [ ] `discord SSE disconnected` or `discord poll failed` log line plus
       timestamp of subsequent recovery.
-- [ ] Paste the template, tick the Discord live row in #7683, then close #8043.
+- [ ] Paste the template, tick the Discord live row in #7563's **v6 readiness bar** section, then close #8043.
 
 ## Microsoft Teams (#8044)
 
@@ -196,7 +196,7 @@ Evidence checklist:
 - [ ] Teams `!status` screenshot/link and reply.
 - [ ] Teams notification screenshot/link.
 - [ ] Hive log line with `msteams bot starting` or relevant poll evidence.
-- [ ] Paste the template, tick the Teams portion of the shared row in #7683,
+- [ ] Paste the template, tick the Teams portion of the shared row in #7563's **v6 readiness bar** section,
       then close #8044.
 
 ## Matrix (#8045)
@@ -227,7 +227,7 @@ Evidence checklist:
 - [ ] Matrix `!status` event link/screenshot and reply.
 - [ ] Matrix notification event link/screenshot.
 - [ ] Hive log line with `matrix bot starting` or sync evidence.
-- [ ] Paste the template, tick the Matrix portion of the shared row in #7683,
+- [ ] Paste the template, tick the Matrix portion of the shared row in #7563's **v6 readiness bar** section,
       then close #8045.
 
 ## Telegram (#8046)
@@ -258,7 +258,7 @@ Evidence checklist:
 - [ ] Telegram `!status` screenshot/link and reply.
 - [ ] Telegram notification screenshot/link.
 - [ ] Hive log line with `telegram bot starting` or poll evidence.
-- [ ] Paste the template, tick the Telegram portion of the shared row in #7683,
+- [ ] Paste the template, tick the Telegram portion of the shared row in #7563's **v6 readiness bar** section,
       then close #8046.
 
 ## Email escalation (#8047)
@@ -299,7 +299,7 @@ Evidence checklist:
 - [ ] Hive log/audit around the escalation producer and email sink.
 - [ ] Explicit inbound reply-to-act deferral (current v6) or allowlisted reply
       action evidence (future v6).
-- [ ] Paste the template, tick/link the Email row in #7683, then close #8047.
+- [ ] Paste the template, tick/link the Email row in #7563's **v6 readiness bar** section, then close #8047.
 
 ## Push / on-call (#8048)
 
@@ -332,14 +332,14 @@ Evidence checklist:
 - [ ] Redacted provider/device evidence for the page.
 - [ ] Hive log/audit line showing severity `decision`/`page` and provider name.
 - [ ] If no page arrived, include any `escalation_delivery_failed` line and do
-      not tick #7683 until a retry succeeds.
-- [ ] Paste the template, tick/link the Push / on-call row in #7683, then close
+      not tick #7563's **v6 readiness bar** section until a retry succeeds.
+- [ ] Paste the template, tick/link the Push / on-call row in #7563's **v6 readiness bar** section, then close
       #8048.
 
 ## How to close
 
 For each issue, paste the filled evidence block, update the corresponding live
-exercise row in [#7683](https://github.com/hivecommons/hive/issues/7683) with a
+exercise row in [#7563](https://github.com/hivecommons/hive/issues/7563) with a
 link to that evidence, and then close only that surface issue. The shared
 Teams / Matrix / Telegram row should not be fully checked until all three
 surface blocks are present.

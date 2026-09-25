@@ -100,6 +100,11 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		SpektacularEnabled        *bool     `json:"spektacularEnabled"`
 		SpektacularBinary         *string   `json:"spektacularBinary"`
 		SpektacularPollS          *int      `json:"spektacularPollS"`
+		SpektacularHubExecutor    *bool     `json:"spektacularHubExecutor"`
+		SpektacularHubBackend     *string   `json:"spektacularHubExecutorBackend"`
+		SpektacularHubModel       *string   `json:"spektacularHubExecutorModel"`
+		SpektacularHubTimeoutS    *int      `json:"spektacularHubExecutorTimeoutS"`
+		SpektacularHubMaxConc     *int      `json:"spektacularHubExecutorMaxConcurrent"`
 		MaxStageRetries           *int      `json:"maxStageRetries"`
 		RunStages                 *bool     `json:"runStages"`
 		TriageEnabled             *bool     `json:"triageEnabled"`
@@ -176,6 +181,14 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	}
 	if body.SpektacularPollS != nil && *body.SpektacularPollS <= 0 {
 		jsonError(w, "spektacular poll interval must be positive", http.StatusBadRequest)
+		return
+	}
+	if body.SpektacularHubTimeoutS != nil && *body.SpektacularHubTimeoutS <= 0 {
+		jsonError(w, "spektacular hub executor timeout must be positive", http.StatusBadRequest)
+		return
+	}
+	if body.SpektacularHubMaxConc != nil && *body.SpektacularHubMaxConc <= 0 {
+		jsonError(w, "spektacular hub executor max concurrent must be positive", http.StatusBadRequest)
 		return
 	}
 	if body.MaxStageRetries != nil && *body.MaxStageRetries < 0 {
@@ -372,6 +385,22 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.SpektacularPollS != nil {
 		cfg.Runs.Spektacular.PollIntervalS = *body.SpektacularPollS
 	}
+	if body.SpektacularHubExecutor != nil {
+		v := *body.SpektacularHubExecutor
+		cfg.Runs.Spektacular.HubExecutor.Enabled = &v
+	}
+	if body.SpektacularHubBackend != nil {
+		cfg.Runs.Spektacular.HubExecutor.Backend = strings.TrimSpace(*body.SpektacularHubBackend)
+	}
+	if body.SpektacularHubModel != nil {
+		cfg.Runs.Spektacular.HubExecutor.Model = strings.TrimSpace(*body.SpektacularHubModel)
+	}
+	if body.SpektacularHubTimeoutS != nil {
+		cfg.Runs.Spektacular.HubExecutor.TimeoutSeconds = *body.SpektacularHubTimeoutS
+	}
+	if body.SpektacularHubMaxConc != nil {
+		cfg.Runs.Spektacular.HubExecutor.MaxConcurrent = *body.SpektacularHubMaxConc
+	}
 	if body.MaxStageRetries != nil {
 		cfg.Runs.MaxStageRetries = *body.MaxStageRetries
 	}
@@ -514,77 +543,82 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 	acmmLevel := cfg.ACMMLevelOrZero()
 	rotationCfg := cfg.Governor.Rotation
 	return map[string]interface{}{
-		"ioscanEnabled":                   cfg.Ioscan.IsEnabled(),
-		"tracingEnabled":                  otelCfg.Enabled,
-		"tracingEndpoint":                 otelCfg.Endpoint,
-		"tracingSampleRatio":              otelCfg.SampleRatio,
-		"otelEnabled":                     otelCfg.Enabled,
-		"otelEndpoint":                    otelCfg.Endpoint,
-		"otelServiceName":                 otelCfg.ServiceName,
-		"otelInsecure":                    otelCfg.Insecure,
-		"otelSampleRatio":                 otelCfg.SampleRatio,
-		"otelHasHeaders":                  len(otelCfg.Headers) > 0,
-		"retroEnabled":                    cfg.Retro.Enabled,
-		"retroAnalysisModel":              cfg.Retro.AnalysisModel,
-		"mintEnabled":                     cfg.Mint.Enabled,
-		"mintIssuer":                      cfg.Mint.Issuer,
-		"planFromLabel":                   planFromLabel,
-		"formalEnabled":                   cfg.Quality.Formal,
-		"planMatchEnabled":                cfg.Review.PlanMatch.Enabled,
-		"extFlueEnabled":                  cfg.Runs.External.Flue.Enabled,
-		"extFlueMode":                     cfg.FlueBindingMode(),
-		"extFlueModes":                    config.FlueBindingModes(),
-		"extFlueEndpoint":                 cfg.Runs.External.Flue.Endpoint,
-		"extFlueEndpointSet":              strings.TrimSpace(cfg.Runs.External.Flue.Endpoint) != "",
-		"extFlueWorkflowVersion":          cfg.Runs.External.Flue.WorkflowVersion,
-		"extOmpEnabled":                   cfg.Runs.External.OMP.Enabled,
-		"extOmpMode":                      cfg.OMPBindingMode(),
-		"extOmpModes":                     config.ExternalBindingModes(),
-		"extOmpVersionSet":                strings.TrimSpace(cfg.Runs.External.OMP.WorkflowVersion) != "",
-		"formalAvailable":                 acmmLevel >= config.FormalQualityMinACMMLevel,
-		"formalMinACMMLevel":              config.FormalQualityMinACMMLevel,
-		"personaLearningEnabled":          cfg.Persona.Learning.Enabled,
-		"checkpointSpecEnabled":           cfg.Runs.CheckpointBlocks("spec"),
-		"checkpointPlanEnabled":           cfg.Runs.CheckpointBlocks("plan"),
-		"checkpointImplementEnabled":      cfg.Runs.CheckpointBlocks("implement"),
-		"checkpointImplementAvailable":    acmmLevel >= config.RunImplementCheckpointMinACMM,
-		"checkpointImplementMinACMMLevel": config.RunImplementCheckpointMinACMM,
-		"runWaitTimeoutSeconds":           cfg.Runs.EffectiveWaitTimeoutSeconds(),
-		"runWaitSeverity":                 cfg.Runs.EffectiveWaitSeverity(),
-		"claimsEnabled":                   cfg.Governor.Claims.Enabled,
-		"claimsTtlS":                      int(cfg.Governor.Claims.EffectiveTTL().Seconds()),
-		"publicationEnabled":              cfg.Publication.Enabled,
-		"publicationPrivateChannel":       cfg.Publication.PrivateChannel,
-		"publicationOwner":                cfg.Publication.Owner,
-		"publicationAvailable":            acmmLevel >= config.PublicationMinACMMLevel,
-		"publicationMinACMMLevel":         config.PublicationMinACMMLevel,
-		"acmmLevel":                       acmmLevel,
-		"spektacularEnabled":              cfg.Runs.Spektacular.Enabled,
-		"spektacularBinary":               cfg.Runs.Spektacular.Binary,
-		"spektacularPollS":                int(cfg.Runs.Spektacular.PollInterval().Seconds()),
-		"maxStageRetries":                 cfg.Runs.MaxStageRetriesOrDefault(),
-		"runStages":                       cfg.Governor.WorkSource.RunStages,
-		"triageEnabled":                   cfg.Runs.Triage.Enabled,
-		"triageSpecLabels":                cfg.Runs.Triage.EffectiveSpecLabels(),
-		"triageFixLabels":                 cfg.Runs.Triage.EffectiveFixLabels(),
-		"triageMinBodyChars":              cfg.Runs.Triage.EffectiveMinBodyChars(),
-		"triageClarifyComment":            cfg.Runs.Triage.ShouldClarifyComment(),
-		"wavefrontEnabled":                cfg.Governor.WorkSource.Wavefront.Enabled,
-		"wavefrontPath":                   cfg.Governor.WorkSource.Wavefront.Path,
-		"wavefrontUrl":                    cfg.Governor.WorkSource.Wavefront.URL,
-		"wavefrontRepo":                   cfg.Governor.WorkSource.Wavefront.Repo,
-		"wavefrontReceiptsDir":            cfg.Governor.WorkSource.Wavefront.ReceiptsDir,
-		"autonomyAutoPromote":             cfg.Autonomy.AutoPromote,
-		"autonomyAutoDemote":              cfg.Autonomy.AutoDemote,
-		"autonomyPromoteAfter":            cfg.Autonomy.EffectivePromoteAfter(),
-		"autonomyDemoteOn":                cfg.Autonomy.EffectiveDemoteOn(),
-		"autonomyMaxLevel":                cfg.Autonomy.EffectiveMaxLevel(config.MaxACMMLevel),
-		"autonomyCooldownDays":            cfg.Autonomy.EffectiveCooldownDays(),
-		"rotationEnabled":                 rotationCfg.Enabled,
-		"rotationThresholdPct":            rotationCfg.EffectiveThreshold(),
-		"rotationHighVolumeCadenceS":      rotationCfg.EffectiveHighVolumeCadenceS(),
-		"rotationProviders":               rotationCfg.Providers,
-		"rotationAgents":                  rotationCfg.AgentTiers,
+		"ioscanEnabled":                       cfg.Ioscan.IsEnabled(),
+		"tracingEnabled":                      otelCfg.Enabled,
+		"tracingEndpoint":                     otelCfg.Endpoint,
+		"tracingSampleRatio":                  otelCfg.SampleRatio,
+		"otelEnabled":                         otelCfg.Enabled,
+		"otelEndpoint":                        otelCfg.Endpoint,
+		"otelServiceName":                     otelCfg.ServiceName,
+		"otelInsecure":                        otelCfg.Insecure,
+		"otelSampleRatio":                     otelCfg.SampleRatio,
+		"otelHasHeaders":                      len(otelCfg.Headers) > 0,
+		"retroEnabled":                        cfg.Retro.Enabled,
+		"retroAnalysisModel":                  cfg.Retro.AnalysisModel,
+		"mintEnabled":                         cfg.Mint.Enabled,
+		"mintIssuer":                          cfg.Mint.Issuer,
+		"planFromLabel":                       planFromLabel,
+		"formalEnabled":                       cfg.Quality.Formal,
+		"planMatchEnabled":                    cfg.Review.PlanMatch.Enabled,
+		"extFlueEnabled":                      cfg.Runs.External.Flue.Enabled,
+		"extFlueMode":                         cfg.FlueBindingMode(),
+		"extFlueModes":                        config.FlueBindingModes(),
+		"extFlueEndpoint":                     cfg.Runs.External.Flue.Endpoint,
+		"extFlueEndpointSet":                  strings.TrimSpace(cfg.Runs.External.Flue.Endpoint) != "",
+		"extFlueWorkflowVersion":              cfg.Runs.External.Flue.WorkflowVersion,
+		"extOmpEnabled":                       cfg.Runs.External.OMP.Enabled,
+		"extOmpMode":                          cfg.OMPBindingMode(),
+		"extOmpModes":                         config.ExternalBindingModes(),
+		"extOmpVersionSet":                    strings.TrimSpace(cfg.Runs.External.OMP.WorkflowVersion) != "",
+		"formalAvailable":                     acmmLevel >= config.FormalQualityMinACMMLevel,
+		"formalMinACMMLevel":                  config.FormalQualityMinACMMLevel,
+		"personaLearningEnabled":              cfg.Persona.Learning.Enabled,
+		"checkpointSpecEnabled":               cfg.Runs.CheckpointBlocks("spec"),
+		"checkpointPlanEnabled":               cfg.Runs.CheckpointBlocks("plan"),
+		"checkpointImplementEnabled":          cfg.Runs.CheckpointBlocks("implement"),
+		"checkpointImplementAvailable":        acmmLevel >= config.RunImplementCheckpointMinACMM,
+		"checkpointImplementMinACMMLevel":     config.RunImplementCheckpointMinACMM,
+		"runWaitTimeoutSeconds":               cfg.Runs.EffectiveWaitTimeoutSeconds(),
+		"runWaitSeverity":                     cfg.Runs.EffectiveWaitSeverity(),
+		"claimsEnabled":                       cfg.Governor.Claims.Enabled,
+		"claimsTtlS":                          int(cfg.Governor.Claims.EffectiveTTL().Seconds()),
+		"publicationEnabled":                  cfg.Publication.Enabled,
+		"publicationPrivateChannel":           cfg.Publication.PrivateChannel,
+		"publicationOwner":                    cfg.Publication.Owner,
+		"publicationAvailable":                acmmLevel >= config.PublicationMinACMMLevel,
+		"publicationMinACMMLevel":             config.PublicationMinACMMLevel,
+		"acmmLevel":                           acmmLevel,
+		"spektacularEnabled":                  cfg.Runs.Spektacular.Enabled,
+		"spektacularBinary":                   cfg.Runs.Spektacular.Binary,
+		"spektacularPollS":                    int(cfg.Runs.Spektacular.PollInterval().Seconds()),
+		"spektacularHubExecutor":              cfg.Runs.Spektacular.HubExecutorEnabled(),
+		"spektacularHubExecutorBackend":       cfg.Runs.Spektacular.HubExecutor.BackendOrDefault(""),
+		"spektacularHubExecutorModel":         cfg.Runs.Spektacular.HubExecutor.Model,
+		"spektacularHubExecutorTimeoutS":      int(cfg.Runs.Spektacular.HubExecutor.Timeout().Seconds()),
+		"spektacularHubExecutorMaxConcurrent": cfg.Runs.Spektacular.HubExecutor.MaxConcurrentOrDefault(),
+		"maxStageRetries":                     cfg.Runs.MaxStageRetriesOrDefault(),
+		"runStages":                           cfg.Governor.WorkSource.RunStages,
+		"triageEnabled":                       cfg.Runs.Triage.Enabled,
+		"triageSpecLabels":                    cfg.Runs.Triage.EffectiveSpecLabels(),
+		"triageFixLabels":                     cfg.Runs.Triage.EffectiveFixLabels(),
+		"triageMinBodyChars":                  cfg.Runs.Triage.EffectiveMinBodyChars(),
+		"triageClarifyComment":                cfg.Runs.Triage.ShouldClarifyComment(),
+		"wavefrontEnabled":                    cfg.Governor.WorkSource.Wavefront.Enabled,
+		"wavefrontPath":                       cfg.Governor.WorkSource.Wavefront.Path,
+		"wavefrontUrl":                        cfg.Governor.WorkSource.Wavefront.URL,
+		"wavefrontRepo":                       cfg.Governor.WorkSource.Wavefront.Repo,
+		"wavefrontReceiptsDir":                cfg.Governor.WorkSource.Wavefront.ReceiptsDir,
+		"autonomyAutoPromote":                 cfg.Autonomy.AutoPromote,
+		"autonomyAutoDemote":                  cfg.Autonomy.AutoDemote,
+		"autonomyPromoteAfter":                cfg.Autonomy.EffectivePromoteAfter(),
+		"autonomyDemoteOn":                    cfg.Autonomy.EffectiveDemoteOn(),
+		"autonomyMaxLevel":                    cfg.Autonomy.EffectiveMaxLevel(config.MaxACMMLevel),
+		"autonomyCooldownDays":                cfg.Autonomy.EffectiveCooldownDays(),
+		"rotationEnabled":                     rotationCfg.Enabled,
+		"rotationThresholdPct":                rotationCfg.EffectiveThreshold(),
+		"rotationHighVolumeCadenceS":          rotationCfg.EffectiveHighVolumeCadenceS(),
+		"rotationProviders":                   rotationCfg.Providers,
+		"rotationAgents":                      rotationCfg.AgentTiers,
 	}
 }
 

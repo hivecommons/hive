@@ -3,6 +3,8 @@ package config
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"log/slog"
@@ -462,6 +464,14 @@ type PlanningConfig struct {
 	// design. Default DefaultDesignApprovedLabel. Applying a label needs triage
 	// on the repo, which is the trust boundary the RFC settled on.
 	DesignApprovedLabel string `yaml:"design_approved_label,omitempty" json:"design_approved_label,omitempty"`
+	// DesignRequestedStatus is an optional source-native status/state to apply
+	// alongside DesignLabels on work sources that support workflow transitions
+	// (for example Jira or Linear). Empty means label-only.
+	DesignRequestedStatus string `yaml:"design_requested_status,omitempty" json:"design_requested_status,omitempty"`
+	// DesignApprovedStatus is an optional source-native status/state to apply
+	// alongside DesignApprovedLabel on work sources that support workflow
+	// transitions. Empty means label-only.
+	DesignApprovedStatus string `yaml:"design_approved_status,omitempty" json:"design_approved_status,omitempty"`
 	// MaxDesignRevisions caps how many times the architect is asked to revise
 	// a design (a human re-applies the design label to request a revision);
 	// past it the epic waits on a human. 0 = DefaultMaxDesignRevisions.
@@ -2382,6 +2392,9 @@ type LinearSourceConfig struct {
 	// configured, that agent is used; otherwise session events are
 	// acknowledged with an error activity naming the missing config.
 	SessionAgent string `yaml:"session_agent,omitempty" json:"session_agent,omitempty"`
+	// Transitions maps Hive design status names to Linear workflow state names
+	// or ids. When a status is not present, the status string itself is used.
+	Transitions map[string]string `yaml:"transitions,omitempty" json:"transitions,omitempty"`
 }
 
 // LinearTeamSourceConfig maps one Linear team to the GitHub repo agents work in.
@@ -2400,20 +2413,21 @@ type LinearProjectSourceConfig struct {
 
 // JiraSourceConfig configures the Jira Cloud or Jira Data Center work source.
 type JiraSourceConfig struct {
-	Deployment         string   `yaml:"deployment,omitempty" json:"deployment,omitempty"`
-	BaseURL            string   `yaml:"base_url" json:"base_url"`
-	Email              string   `yaml:"email" json:"email"`
-	Username           string   `yaml:"username,omitempty" json:"username,omitempty"`
-	APIToken           string   `yaml:"api_token,omitempty" json:"api_token,omitempty"`
-	Password           string   `yaml:"password,omitempty" json:"password,omitempty"`
-	CABundle           string   `yaml:"ca_bundle,omitempty" json:"ca_bundle,omitempty"`
-	InsecureSkipVerify bool     `yaml:"insecure_skip_verify,omitempty" json:"insecure_skip_verify,omitempty"`
-	ClientCert         string   `yaml:"client_cert,omitempty" json:"client_cert,omitempty"`
-	ClientKey          string   `yaml:"client_key,omitempty" json:"client_key,omitempty"`
-	ProjectKeys        []string `yaml:"project_keys,omitempty" json:"project_keys,omitempty"`
-	JQL                string   `yaml:"jql,omitempty" json:"jql,omitempty"`
-	Repo               string   `yaml:"repo,omitempty" json:"repo,omitempty"`
-	HoldLabels         []string `yaml:"hold_labels,omitempty" json:"hold_labels,omitempty"`
+	Deployment         string            `yaml:"deployment,omitempty" json:"deployment,omitempty"`
+	BaseURL            string            `yaml:"base_url" json:"base_url"`
+	Email              string            `yaml:"email" json:"email"`
+	Username           string            `yaml:"username,omitempty" json:"username,omitempty"`
+	APIToken           string            `yaml:"api_token,omitempty" json:"api_token,omitempty"`
+	Password           string            `yaml:"password,omitempty" json:"password,omitempty"`
+	CABundle           string            `yaml:"ca_bundle,omitempty" json:"ca_bundle,omitempty"`
+	InsecureSkipVerify bool              `yaml:"insecure_skip_verify,omitempty" json:"insecure_skip_verify,omitempty"`
+	ClientCert         string            `yaml:"client_cert,omitempty" json:"client_cert,omitempty"`
+	ClientKey          string            `yaml:"client_key,omitempty" json:"client_key,omitempty"`
+	ProjectKeys        []string          `yaml:"project_keys,omitempty" json:"project_keys,omitempty"`
+	JQL                string            `yaml:"jql,omitempty" json:"jql,omitempty"`
+	Repo               string            `yaml:"repo,omitempty" json:"repo,omitempty"`
+	HoldLabels         []string          `yaml:"hold_labels,omitempty" json:"hold_labels,omitempty"`
+	Transitions        map[string]string `yaml:"transitions,omitempty" json:"transitions,omitempty"`
 }
 
 // ProjectObservabilityBackendRef names references an agent may place in managed
@@ -3048,6 +3062,17 @@ func SecretFilePathAllowed(p string) bool {
 		}
 	}
 	return false
+}
+
+// APIKeySHA256 returns the lowercase SHA-256 hex digest of the exact key
+// string Hive will present to an inference gateway. It returns empty for an
+// empty key so callers can expose presence/hash without leaking the secret.
+func APIKeySHA256(key string) string {
+	if key == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:])
 }
 
 func (gw GatewayConfig) ResolveAPIKey() string {
@@ -5206,6 +5231,17 @@ type DashboardConfig struct {
 	// ThemeOverrides are layered on the selected built-in theme and are mutable
 	// through the owner-only dashboard appearance API.
 	ThemeOverrides dashboardtheme.Overrides `yaml:"theme_overrides,omitempty" json:"theme_overrides,omitempty"`
+	// IssueBands configures the Repositories card's display-only issue taxonomy.
+	// It is intentionally separate from governor/project eligibility labels:
+	// queue policy decides what agents may work; these labels only decide which
+	// visual band and badges an operator sees on the dashboard.
+	IssueBands DashboardIssueBandsConfig `yaml:"issue_bands,omitempty" json:"issue_bands,omitempty"`
+}
+
+type DashboardIssueBandsConfig struct {
+	WaitingLabels []string `yaml:"waiting_labels,omitempty" json:"waiting_labels,omitempty"`
+	DoneLabels    []string `yaml:"done_labels,omitempty" json:"done_labels,omitempty"`
+	StaleDays     int      `yaml:"stale_days,omitempty" json:"stale_days,omitempty"`
 }
 
 // ValidateDashboardPublicURL validates and normalizes dashboard.public_url:
