@@ -2160,6 +2160,11 @@
     .smart-classifier-stat span { color: var(--muted); font-size: var(--fs-sm); }
     .smart-classifier-decisions { display: flex; gap: var(--sp-5); flex-wrap: wrap; }
     .smart-classifier-decisions label { display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--text); }
+    .smart-classifier-list { display: grid; gap: var(--sp-3); margin-top: var(--sp-4); }
+    .smart-classifier-list-item { border: var(--line-width) solid var(--border); border-radius: var(--r); background: var(--bg-soft); padding: var(--sp-4); display: flex; gap: var(--sp-4); align-items: center; justify-content: space-between; }
+    .smart-classifier-list-main { min-width: 0; }
+    .smart-classifier-list-main strong { color: var(--text); }
+    .smart-classifier-list-main span { display: block; color: var(--muted); font-size: var(--fs-sm); margin-top: var(--sp-1); }
 
     /* A heading INSIDE a settings section, for a feature with several distinct
        concerns. It groups by whitespace and a quiet label rather than a rule:
@@ -22078,7 +22083,6 @@ function burnAreaChart() {
     function renderGovSmartClassifier(c) {
       const jev = c.jev || {};
       const backend = (c.backend || 'keywords').toLowerCase();
-      const mode = (c.mode || 'shadow').toLowerCase();
       const decisions = Array.isArray(jev.decisions) && jev.decisions.length ? jev.decisions : ['lane', 'tier', 'triage'];
       const hasKey = _smartClassifierStatus && _smartClassifierStatus.key_source && _smartClassifierStatus.key_source !== 'none';
       const disabledJev = hasKey ? '' : ' disabled';
@@ -22088,7 +22092,7 @@ function burnAreaChart() {
         <div id="smart-classifier-section" class="smart-classifier-section">
           <div class="smart-classifier-card">
             <h3>Smart classifier (Jev)</h3>
-            <p class="smart-classifier-copy">Use TypeSafe AI's Jev typed-decision model to advise issue lane routing, pick the tier/model family (haiku, sonnet, opus), and triage urgency. Estimated cost is about $0.00002 per issue, billed on input tokens only.</p>
+            <p class="smart-classifier-copy">Jev never changes routing. It watches, measures how often the keyword rules disagree, and suggests rule updates you can approve. It compares lane routing, the tier/model family (haiku, sonnet, opus), and triage urgency. Estimated cost is about $0.00002 per issue, billed on input tokens only.</p>
             <div class="smart-classifier-checklist">
               <div class="smart-classifier-check">
                 <span>OpenRouter connected with an API key</span>
@@ -22118,13 +22122,6 @@ function burnAreaChart() {
                 <div id="smart-classifier-backend-hint" class="smart-classifier-hint">${esc(hint)}</div>
               </div>
               <div class="config-field">
-                <label for="smart-classifier-mode">Mode</label>
-                <select id="smart-classifier-mode" data-change-action="markDirty" data-arg0="classifier" data-arg1="mode" data-arg-types="s,s,v">
-                  <option value="shadow"${mode === 'shadow' ? ' selected' : ''}>Shadow — log only</option>
-                  <option value="enforce"${mode === 'enforce' ? ' selected' : ''}>Enforce</option>
-                </select>
-              </div>
-              <div class="config-field">
                 <label for="smart-classifier-min-confidence">Min confidence</label>
                 <input id="smart-classifier-min-confidence" type="number" min="0" max="1" step="0.01" value="${Number(jev.minConfidence || 0.8)}" data-change-action="markDirty" data-arg0="classifier" data-arg1="minConfidence" data-arg-types="s,s,N">
               </div>
@@ -22140,11 +22137,13 @@ function burnAreaChart() {
           </div>
 
           <div class="smart-classifier-card">
-            <h3>Shadow-mode stats</h3>
-            <p class="smart-classifier-copy">Agreement counters compare Jev with deterministic keywords while shadow mode is enabled; fallback counts low-confidence, missing-key, timeout, and error fallbacks.</p>
+            <h3>Advisory stats</h3>
+            <p class="smart-classifier-copy">Agreement counters compare Jev with deterministic keywords; fallback counts low-confidence, missing-key, timeout, and error fallbacks.</p>
             <div id="smart-classifier-stats" class="smart-classifier-stats">
               <div class="smart-classifier-stat"><strong>Loading…</strong><span>classifier stats</span></div>
             </div>
+            <div id="smart-classifier-disagreements" class="smart-classifier-list"></div>
+            <div id="smart-classifier-suggestions" class="smart-classifier-list"></div>
           </div>
         </div>`;
     }
@@ -22179,6 +22178,7 @@ function burnAreaChart() {
         _smartClassifierStatus = await res.json();
         updateSmartClassifierReadiness(_smartClassifierStatus);
         updateSmartClassifierStats(_smartClassifierStatus);
+        updateSmartClassifierSuggestions(_smartClassifierStatus);
       } catch (e) {
         const stats = document.getElementById('smart-classifier-stats');
         if (stats) stats.innerHTML = '<div class="smart-classifier-stat"><strong>Unavailable</strong><span>' + esc(e.message) + '</span></div>';
@@ -22223,6 +22223,40 @@ function burnAreaChart() {
       rows.push('<div class="smart-classifier-stat"><strong>' + Number((status && status.estimated_input_tokens) || 0).toLocaleString() + '</strong><span>estimated input tokens</span></div>');
       rows.push('<div class="smart-classifier-stat"><strong>$' + Number((status && status.estimated_spend_usd) || 0).toFixed(6) + '</strong><span>estimated spend</span></div>');
       host.innerHTML = rows.join('');
+    }
+
+    function updateSmartClassifierSuggestions(status) {
+      const disagreementHost = document.getElementById('smart-classifier-disagreements');
+      const suggestionHost = document.getElementById('smart-classifier-suggestions');
+      if (!disagreementHost || !suggestionHost) return;
+      const disagreements = (status && status.disagreements) || {};
+      const examples = [];
+      ['lane', 'tier', 'triage'].forEach(decision => {
+        ((disagreements[decision] || []).slice(-3)).forEach(d => examples.push({ decision, item: d }));
+      });
+      disagreementHost.innerHTML = '<h4>Recent disagreements</h4>' + (examples.length
+        ? examples.map(({ decision, item }) => '<div class="smart-classifier-list-item"><div class="smart-classifier-list-main"><strong>' + esc(decision) + ': ' + esc(item.keyword_answer || '') + ' → ' + esc(item.jev_answer || '') + '</strong><span>' + esc((item.repo || '') + '#' + Number(item.number || 0)) + ' · ' + esc(item.title || '') + ' · confidence ' + Number(item.confidence || 0).toFixed(2) + '</span></div></div>').join('')
+        : '<div class="smart-classifier-list-item"><div class="smart-classifier-list-main"><strong>No disagreements recorded yet</strong><span>Enable Jev to collect advisory measurements during sweeps.</span></div></div>');
+      const suggestions = (status && status.rule_suggestions) || [];
+      suggestionHost.innerHTML = '<h4>Suggested deterministic rule updates</h4>' + (suggestions.length
+        ? suggestions.map(s => '<div class="smart-classifier-list-item"><div class="smart-classifier-list-main"><strong>Add <code>' + esc(s.keyword || '') + '</code> to ' + esc(s.target || '') + '</strong><span>' + esc(s.support || 0) + ' disagreements where Jev answered ' + esc(s.answer || '') + '</span></div><button class="hv-btn btn-primary btn-sm" data-action="applySmartClassifierSuggestion" data-arg0="' + esc(s.decision || '') + '" data-arg1="' + esc(s.answer || '') + '" data-arg2="' + esc(s.keyword || '') + '">Apply</button></div>').join('')
+        : '<div class="smart-classifier-list-item"><div class="smart-classifier-list-main"><strong>No suggestions yet</strong><span>Suggestions appear after repeated title-token patterns in disagreements.</span></div></div>');
+    }
+
+    async function applySmartClassifierSuggestion(decision, answer, keyword) {
+      try {
+        const res = await fetch('/api/config/governor/classifier', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ suggestion: { decision, answer, keyword } })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        showToast('Classifier rule suggestion applied.', 'success');
+        await loadConfigData(true);
+        await loadSmartClassifierStats();
+      } catch (e) {
+        showToast('Failed to apply suggestion: ' + e.message, 'error');
+      }
     }
 
     function renderGovGateways() {

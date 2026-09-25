@@ -24,12 +24,15 @@ func TestSmartClassifierSettingsUIElements(t *testing.T) {
 		"id=\"smart-classifier-openrouter-status\"",
 		"id=\"smart-classifier-connect-openrouter\"",
 		"id=\"smart-classifier-backend\"",
-		"id=\"smart-classifier-mode\"",
 		"id=\"smart-classifier-min-confidence\"",
 		"id=\"smart-classifier-decision-lane\"",
 		"id=\"smart-classifier-decision-tier\"",
 		"id=\"smart-classifier-decision-triage\"",
 		"id=\"smart-classifier-stats\"",
+		"id=\"smart-classifier-disagreements\"",
+		"id=\"smart-classifier-suggestions\"",
+		"Jev never changes routing. It watches, measures how often the keyword rules disagree, and suggests rule updates you can approve.",
+		"applySmartClassifierSuggestion",
 		"data-action=\"openOpenRouterFund\"",
 		"loadSmartClassifierStats()",
 	} {
@@ -39,6 +42,9 @@ func TestSmartClassifierSettingsUIElements(t *testing.T) {
 	}
 	if strings.Contains(html, "id=\"smart-classifier-section\" style=") {
 		t.Fatal("smart classifier section must not add inline styles")
+	}
+	if strings.Contains(html, "id=\"smart-classifier-mode\"") || strings.Contains(html, ">Enforce<") {
+		t.Fatal("smart classifier UI must not expose mode/enforce controls")
 	}
 }
 
@@ -107,14 +113,13 @@ func TestGovernorClassifierSave(t *testing.T) {
 
 	rec := doPut(s, "/api/config/governor/classifier", map[string]any{
 		"backend":       "jev",
-		"mode":          "enforce",
 		"minConfidence": 0.91,
 		"decisions":     []string{"lane", "tier"},
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if deps.Config.Classifier.Backend != "jev" || deps.Config.Classifier.Mode != "enforce" {
+	if deps.Config.Classifier.Backend != "jev" || deps.Config.Classifier.Mode != "" {
 		t.Fatalf("classifier backend/mode = %q/%q", deps.Config.Classifier.Backend, deps.Config.Classifier.Mode)
 	}
 	if deps.Config.Classifier.Jev.APIKeyEnv != defaultJevDashboardAPIKeyEnv {
@@ -134,4 +139,42 @@ func TestGovernorClassifierSave(t *testing.T) {
 	if body["backend"] != "jev" {
 		t.Fatalf("response backend = %v", body["backend"])
 	}
+}
+
+func TestGovernorClassifierApplySuggestion(t *testing.T) {
+	t.Cleanup(classify.ResetForTest)
+	s, deps := apiServer(t)
+	deps.Config.Agents["architect"] = config.AgentConfig{LaneKeywords: []string{"rfc"}}
+
+	rec := doPut(s, "/api/config/governor/classifier", map[string]any{
+		"suggestion": map[string]any{"decision": "tier", "answer": "Simple", "keyword": "rename"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("tier status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !containsClassifierTestString(deps.Config.Classifier.SimpleKeywords, "rename") {
+		t.Fatalf("simple keywords = %v, want rename", deps.Config.Classifier.SimpleKeywords)
+	}
+	if !containsClassifierTestString(deps.Config.Classifier.SimpleKeywords, "typo") {
+		t.Fatalf("simple keywords = %v, want built-in defaults preserved", deps.Config.Classifier.SimpleKeywords)
+	}
+
+	rec = doPut(s, "/api/config/governor/classifier", map[string]any{
+		"suggestion": map[string]any{"decision": "lane", "answer": "architect", "keyword": "schema"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("lane status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !containsClassifierTestString(deps.Config.Agents["architect"].LaneKeywords, "schema") {
+		t.Fatalf("architect lane keywords = %v, want schema", deps.Config.Agents["architect"].LaneKeywords)
+	}
+}
+
+func containsClassifierTestString(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }

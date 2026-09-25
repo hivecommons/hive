@@ -1442,7 +1442,7 @@
           "Status"
         ],
         "summary": "Classifier backend agreement statistics",
-        "description": "Returns Jev classifier shadow/enforce agreement, fallback, estimated input token, estimated spend counters, and readiness without exposing key values.",
+        "description": "Returns Jev classifier advisory agreement, disagreement examples, deterministic rule suggestions, fallback, estimated input token, estimated spend counters, and readiness without exposing key values.",
         "responses": {
           "200": {
             "description": "Classifier stats",
@@ -1474,6 +1474,38 @@
                     "estimated_input_tokens": {
                       "type": "integer",
                       "format": "int64"
+                    },
+                    "disagreements": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "repo": { "type": "string" },
+                            "number": { "type": "integer" },
+                            "title": { "type": "string" },
+                            "keyword_answer": { "type": "string" },
+                            "jev_answer": { "type": "string" },
+                            "confidence": { "type": "number", "format": "double" }
+                          }
+                        }
+                      }
+                    },
+                    "rule_suggestions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "decision": { "type": "string" },
+                          "answer": { "type": "string" },
+                          "keyword": { "type": "string" },
+                          "target": { "type": "string" },
+                          "support": { "type": "integer" },
+                          "examples": { "type": "array", "items": { "type": "string" } }
+                        }
+                      }
                     },
                     "estimated_spend_usd": {
                       "type": "number",
@@ -8282,8 +8314,8 @@
         "tags": [
           "Governor"
         ],
-        "summary": "Update smart classifier rollout settings",
-        "description": "Updates the top-level classifier block used by the optional Jev typed-decision backend. Key values are never accepted or returned; Jev uses JEV_API_KEY when present or the connected OpenRouter gateway key. Requires owner role.",
+        "summary": "Update smart classifier advisory settings",
+        "description": "Updates the top-level classifier block used by the optional Jev typed-decision advisory backend, or applies one human-approved deterministic rule suggestion. Key values are never accepted or returned; Jev uses JEV_API_KEY when present or the connected OpenRouter gateway key. Requires owner role.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -8295,13 +8327,6 @@
                     "enum": [
                       "keywords",
                       "jev"
-                    ]
-                  },
-                  "mode": {
-                    "type": "string",
-                    "enum": [
-                      "shadow",
-                      "enforce"
                     ]
                   },
                   "minConfidence": {
@@ -8319,6 +8344,14 @@
                         "tier",
                         "triage"
                       ]
+                    }
+                  },
+                  "suggestion": {
+                    "type": "object",
+                    "properties": {
+                      "decision": { "type": "string", "enum": ["lane", "tier"] },
+                      "answer": { "type": "string" },
+                      "keyword": { "type": "string" }
                     }
                   }
                 }

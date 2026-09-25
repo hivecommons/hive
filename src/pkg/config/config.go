@@ -639,8 +639,8 @@ func (p PlanningConfig) PlanFromLabelEnabled(acmmLevel int) bool {
 type ClassifierConfig struct {
 	// Backend selects the decision backend: "keywords" (default) or "jev".
 	Backend string `yaml:"backend,omitempty" json:"backend,omitempty"`
-	// Mode controls Jev rollout. Shadow records agreement while keywords decide;
-	// enforce lets confident Jev answers override keywords.
+	// Mode is retained only to tolerate legacy "shadow" YAML. Jev is advisory
+	// only; deterministic keyword/label rules always decide.
 	Mode string              `yaml:"mode,omitempty" json:"mode,omitempty"`
 	Jev  JevClassifierConfig `yaml:"jev,omitempty" json:"jev,omitempty"`
 	// SimpleKeywords are title substrings that classify an issue as Tier
@@ -659,7 +659,6 @@ type JevClassifierConfig struct {
 	MinConfidence float64       `yaml:"min_confidence,omitempty" json:"min_confidence,omitempty"`
 	Timeout       time.Duration `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 	Decisions     []string      `yaml:"decisions,omitempty" json:"decisions,omitempty"`
-	Mode          string        `yaml:"-" json:"-"`
 }
 
 func (c ClassifierConfig) EffectiveBackend() string {
@@ -669,16 +668,8 @@ func (c ClassifierConfig) EffectiveBackend() string {
 	return strings.ToLower(strings.TrimSpace(c.Backend))
 }
 
-func (c ClassifierConfig) EffectiveMode() string {
-	if strings.TrimSpace(c.Mode) == "" {
-		return "shadow"
-	}
-	return strings.ToLower(strings.TrimSpace(c.Mode))
-}
-
 func (c ClassifierConfig) EffectiveJev() JevClassifierConfig {
 	j := c.Jev
-	j.Mode = c.EffectiveMode()
 	if strings.TrimSpace(j.Provider) == "" {
 		j.Provider = "openrouter"
 	}
@@ -742,12 +733,6 @@ func (j JevClassifierConfig) EffectiveTimeout() time.Duration {
 	}
 	return j.Timeout
 }
-func (j JevClassifierConfig) EffectiveMode() string {
-	if strings.TrimSpace(j.Mode) == "" {
-		return "shadow"
-	}
-	return strings.ToLower(strings.TrimSpace(j.Mode))
-}
 func (j JevClassifierConfig) EffectiveDecisions() []string {
 	if len(j.Decisions) == 0 {
 		return []string{"lane", "tier", "triage"}
@@ -767,10 +752,8 @@ func (c ClassifierConfig) Validate() error {
 	default:
 		return fmt.Errorf("classifier.backend must be keywords or jev, got %q", c.Backend)
 	}
-	switch c.EffectiveMode() {
-	case "shadow", "enforce":
-	default:
-		return fmt.Errorf("classifier.mode must be shadow or enforce, got %q", c.Mode)
+	if mode := strings.ToLower(strings.TrimSpace(c.Mode)); mode != "" && mode != "shadow" {
+		return fmt.Errorf("classifier.mode only supports shadow/advisory measurement; remove %q because Jev cannot enforce deterministic classifier decisions", c.Mode)
 	}
 	j := c.EffectiveJev()
 	switch j.Provider {
