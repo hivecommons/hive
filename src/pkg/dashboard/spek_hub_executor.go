@@ -85,13 +85,15 @@ func (e *SpekHubExecutor) Tick(ctx context.Context, now time.Time) {
 	if e == nil || e.Server == nil || !e.Config.Spektacular.Enabled || !e.Config.Spektacular.HubExecutorEnabled() {
 		return
 	}
+	// Sweep first: it runs git and can take a while, and the lease snapshot
+	// below must be as fresh as possible before it is compared with inFlight.
+	if err := e.sweepStaleWorktrees(ctx); err != nil {
+		e.log().Warn("[spektacular] hub executor worktree sweep failed", "error", err)
+	}
 	stages, err := e.unclaimedStages()
 	if err != nil {
 		e.setLastError(err.Error())
 		return
-	}
-	if err := e.sweepStaleWorktrees(ctx); err != nil {
-		e.log().Warn("[spektacular] hub executor worktree sweep failed", "error", err)
 	}
 	for _, st := range stages {
 		if st.stage != StageSpec && st.stage != StagePlan {
@@ -127,14 +129,19 @@ func (e *SpekHubExecutor) Status() FrontendSpektacularHubExecutor {
 func (e *SpekHubExecutor) sweepStaleWorktrees(ctx context.Context) error {
 	live := map[string]bool{}
 	if err := e.Server.VisitActiveStageLeases(func(runKey, key, stage, identity, taskID, repo string, gen uint64, expiresAt time.Time) {
+		// A run's single worktree carries its spec/plan artifacts across
+		// generations, so it stays live while ANY lease on the run is
+		// active — including a freshly minted, not-yet-claimed retry
+		// generation or an admission lease. Only stage-scoped worktrees are
+		// tied to this executor's own leases.
+		if path := spekHubRunWorktreePath(e.Identity, runKey); path != "" {
+			live[path] = true
+		}
+		for _, path := range existingRunWorktreeDirs(e.Identity, runKey) {
+			live[path] = true
+		}
 		if identity == e.Identity {
-			if path := spekHubRunWorktreePath(identity, runKey); path != "" {
-				live[path] = true
-			}
 			if path := runStageWorktreePath(identity, runKey, stage, gen); path != "" {
-				live[path] = true
-			}
-			for _, path := range existingRunWorktreeDirs(identity, runKey) {
 				live[path] = true
 			}
 		}
@@ -204,7 +211,7 @@ func (e *SpekHubExecutor) sharedRepoDirs() []string {
 func (e *SpekHubExecutor) removeWorktree(ctx context.Context, repos []string, path string) error {
 	var last error
 	for _, repo := range repos {
-		if _, err := e.runner()(ctx, repo, os.Environ(), "git", "worktree", "remove", "--force", path); err == nil {
+		if _, err := e.runner()(ctx, repo, spekGitEnv(os.Environ()), "git", "worktree", "remove", "--force", path); err == nil {
 			return nil
 		} else {
 			last = err
@@ -256,6 +263,12 @@ func (e *SpekHubExecutor) runStage(parent context.Context, st spekHubStage, key 
 	}()
 	ctx, cancel := context.WithTimeout(parent, e.Config.Spektacular.HubExecutor.Timeout())
 	defer cancel()
+	// The snapshot in Tick may predate a stage advance made by a run that
+	// finished in the meantime; never relaunch a stage the lease has left.
+	if !e.stageStillActive(st) {
+		e.log().Info("[spektacular] hub executor skipping stale stage snapshot", "run", st.runKey, "stage", st.stage, "gen", st.gen)
+		return
+	}
 	if err := e.executeStage(ctx, st); err != nil {
 		e.recordFailure(st, key, err)
 	}
@@ -285,15 +298,24 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 	worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
 	e.recordStageProgress(st, "worktree_prepared", map[string]string{"worktree": worktree, "backend": e.backend()})
 	artifact := e.artifact(st.runKey)
+	env, err := e.executorEnv(appToken)
+	if err != nil {
+		return err
+	}
+	if status, final := e.finalArtifact(ctx, worktree, env, st.stage, artifact); final {
+		// The document is already final (e.g. the plan is held for human
+		// approval); launching the agent again would only burn a slot.
+		e.log().Info("[spektacular] hub executor stage document already final; not relaunching", "run", st.runKey, "stage", st.stage, "gen", st.gen, "artifact", status.JoinKey())
+		e.recordStageProgress(st, "document_already_final", map[string]string{stageAttrArtifact: status.JoinKey(), stageAttrDocumentStatus: status.DocumentStatus})
+		e.holdGeneration(st)
+		e.Server.tickStageRunner(time.Now().UTC())
+		return nil
+	}
 	prompt := SpekHubStagePrompt(st.stage, st.repo, st.number, st.runKey, st.title, artifact)
 	if err := writeSpekHubPrompt(worktree, prompt); err != nil {
 		return err
 	}
 	cmd, err := agent.HeadlessPromptCommand(e.backend(), e.Model, spekHubPromptRelPath)
-	if err != nil {
-		return err
-	}
-	env, err := e.executorEnv(appToken)
 	if err != nil {
 		return err
 	}
@@ -316,6 +338,10 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 	return nil
 }
 
+// spekHubWaitDelay bounds how long exec.Cmd.Wait may block on inherited
+// pipes after the stage process itself has exited or been killed.
+const spekHubWaitDelay = 10 * time.Second
+
 func (e *SpekHubExecutor) runStageCommand(ctx context.Context, worktree string, env []string, st spekHubStage, cmd []string) ([]byte, int, error) {
 	logPath := filepath.Join(worktree, ".hive", fmt.Sprintf("spek-stage-%s-%d.log", sanitizeRunPromptPath(st.stage), st.gen))
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
@@ -331,6 +357,11 @@ func (e *SpekHubExecutor) runStageCommand(ctx context.Context, worktree string, 
 		c := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
 		c.Dir = worktree
 		c.Env = env
+		// The agent CLI is `sh -c …` that forks node grandchildren. Kill the
+		// whole group on timeout/cancel and bound Wait so an orphan holding
+		// the inherited output pipe cannot pin the executor slot forever.
+		spekHubConfigureProcessGroup(c)
+		c.WaitDelay = spekHubWaitDelay
 		w := io.MultiWriter(&buf, f)
 		c.Stdout = w
 		c.Stderr = w
@@ -422,6 +453,34 @@ func (e *SpekHubExecutor) spekStatus(ctx context.Context, worktree string, env [
 		return spekHubArtifactStatus{}, err
 	}
 	return st, nil
+}
+
+// finalArtifact reports whether the stage's artifact already exists in the
+// worktree with document_status final.
+func (e *SpekHubExecutor) finalArtifact(ctx context.Context, worktree string, env []string, kind, artifact string) (spekHubArtifactStatus, bool) {
+	if kind != StageSpec && kind != StagePlan {
+		return spekHubArtifactStatus{}, false
+	}
+	resolved := resolveSpekArtifactFromFiles(worktree, kind, artifact)
+	if resolved == "" {
+		return spekHubArtifactStatus{}, false
+	}
+	status, err := e.spekStatus(ctx, worktree, env, kind, resolved)
+	if err != nil {
+		return spekHubArtifactStatus{}, false
+	}
+	return status, strings.EqualFold(status.DocumentStatus, "final")
+}
+
+// holdGeneration stops Tick from relaunching this stage generation; the
+// key changes as soon as the lease advances or a new generation is minted.
+func (e *SpekHubExecutor) holdGeneration(st spekHubStage) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.failures == nil {
+		e.failures = map[string]int{}
+	}
+	e.failures[e.executionKey(st)] = e.maxAttempts()
 }
 
 func (e *SpekHubExecutor) recordNonFinal(st spekHubStage, taskID string, status spekHubArtifactStatus) {
@@ -530,7 +589,7 @@ func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage)
 	runGit := func(dir string, args ...string) error {
 		full := append([]string{}, authArgs...)
 		full = append(full, args...)
-		out, err := e.runner()(ctx, dir, os.Environ(), "git", full...)
+		out, err := e.runner()(ctx, dir, spekGitEnv(os.Environ()), "git", full...)
 		if err != nil {
 			return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, tailString(string(out), spekHubOutputTailBytes))
 		}
@@ -549,6 +608,11 @@ func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage)
 		if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
 			return "", err
 		}
+		// A swept directory can leave git with a "missing but already
+		// registered" worktree entry that makes `worktree add` refuse.
+		if err := runGit(repoDir, "worktree", "prune"); err != nil {
+			e.log().Warn("[spektacular] git worktree prune failed", "repo", repoDir, "error", err)
+		}
 		if err := runGit(repoDir, "worktree", "add", "--detach", worktree, "FETCH_HEAD"); err != nil {
 			return "", err
 		}
@@ -559,7 +623,7 @@ func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage)
 		} else if copied {
 			return appToken, nil
 		}
-		if _, err := e.runner()(ctx, worktree, os.Environ(), "spektacular", "init", spekInitAgent(e.backend()), "--name", filepath.Base(st.repo)); err != nil {
+		if _, err := e.runner()(ctx, worktree, spekGitEnv(os.Environ()), "spektacular", "init", spekInitAgent(e.backend()), "--name", filepath.Base(st.repo)); err != nil {
 			return "", err
 		}
 	}
@@ -632,6 +696,7 @@ func (e *SpekHubExecutor) executorEnv(appToken string) ([]string, error) {
 		return nil, err
 	}
 	env := filteredSpekEnv(os.Environ(), "HOME", "npm_config_cache", "GH_TOKEN", "GITHUB_TOKEN")
+	env = spekGitEnv(env)
 	env = append(env, "HOME="+home, "npm_config_cache="+filepath.Join(home, ".npm-cache"))
 	creds, err := agent.HeadlessCredentialEnv(e.backend())
 	if err != nil {
@@ -643,6 +708,15 @@ func (e *SpekHubExecutor) executorEnv(appToken string) ([]string, error) {
 		env = append(env, "GH_TOKEN="+tok, "GITHUB_TOKEN="+tok)
 	}
 	return env, nil
+}
+
+// spekGitEnv marks the executor's own workspace root as a safe git directory.
+// The hub process may run as a different uid than the one that originally
+// created the shared clone (e.g. after an image change), and git otherwise
+// refuses every command there with "detected dubious ownership".
+func spekGitEnv(env []string) []string {
+	env = filteredSpekEnv(env, "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0")
+	return append(env, "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=safe.directory", "GIT_CONFIG_VALUE_0=*")
 }
 
 func filteredSpekEnv(env []string, keys ...string) []string {
@@ -698,6 +772,20 @@ func (e *SpekHubExecutor) unclaimedStages() ([]spekHubStage, error) {
 		out[i].title = e.Server.stageLeaseTitle(out[i].identity, out[i].taskID)
 	}
 	return out, err
+}
+
+// stageStillActive reports whether some active lease on st's run key is
+// still at st.stage / st.gen.
+func (e *SpekHubExecutor) stageStillActive(st spekHubStage) bool {
+	active := false
+	if err := e.Server.VisitActiveStageLeases(func(runKey, _, stage, _, _, _ string, gen uint64, _ time.Time) {
+		if runKey == st.runKey && stage == st.stage && gen == st.gen {
+			active = true
+		}
+	}); err != nil {
+		return false
+	}
+	return active
 }
 
 func (s *Server) stageLeaseTitle(identity, taskID string) string {
