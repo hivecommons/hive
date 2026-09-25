@@ -147,6 +147,17 @@ CLI is executed with that directory as `cmd.Dir`, so Spektacular finds the
 cwd. If neither checkout exists, Hive records a `missing_workdir` refusal and
 parks the lease for operator action rather than polling in an unrelated cwd.
 
+The first `spec` lease that admission creates (`run/spec` label, triage,
+`POST /api/runs/spec`, `!runs spec`) is owned by `hive-triage` and has no
+checkout yet by construction: it is waiting for a run-stage-capable
+contributor relay to claim it and clone the repo. The runner counts such
+leases as *unclaimed* and neither polls nor refuses them. A run that stays
+in this state means no connected relay declares the `run-stage` capability
+(see [contributor-relay.md](contributor-relay.md)); `/api/status` shows
+`contributors: 0` in that case. Once a relay claims the stage the runner
+polls it as usual, and a refusal recorded against a previous owner's
+checkout is cleared when the same generation changes hands.
+
 It then runs
 
 ```

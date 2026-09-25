@@ -44,6 +44,10 @@ type Stage struct {
 	// Spektacular project for this lease. The runner refuses to poll when it is
 	// empty so the hub process cwd can never influence status.
 	WorkDir string
+	// Unclaimed marks the admission lease no relay has taken yet. There is
+	// no checkout to poll by construction, so the runner leaves it alone
+	// (neither polled nor refused) until a contributor claims the stage.
+	Unclaimed bool
 	// Gen is the lease generation; a change means a retry or advance happened.
 	Gen uint64
 	// ExpiresAt is when the lease lapses without renewal. It is Hive's own
@@ -105,6 +109,7 @@ type Runner struct {
 // stageState is the runner's memory of one run stage across ticks.
 type stageState struct {
 	gen        uint64
+	identity   string
 	lastPolled time.Time
 	lastStatus DocumentStatus
 	seenFinal  bool
@@ -126,6 +131,9 @@ type TickResult struct {
 	Retried   int
 	Escalated int
 	Refused   int
+	// Unclaimed counts admission leases still waiting for a relay to take
+	// them; they are listed but neither polled nor refused.
+	Unclaimed int
 	Errors    int
 }
 
@@ -198,7 +206,7 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) TickResult {
 		live[key] = true
 		state := r.stages[key]
 		if state == nil {
-			state = &stageState{gen: st.Gen}
+			state = &stageState{gen: st.Gen, identity: st.Identity}
 			r.stages[key] = state
 		}
 		if state.gen != st.Gen || state.seeded {
@@ -214,6 +222,14 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) TickResult {
 			state.lastStatus = ""
 			state.seenFinal = false
 			state.advanced = false
+			state.refused = false
+		}
+		if state.identity != st.Identity {
+			// The same generation changed hands (a relay claimed the admission
+			// lease, or a reclaim moved it to another relay). Whatever was
+			// refused about the previous owner's checkout says nothing about
+			// the new owner's, so the stage is eligible to be polled again.
+			state.identity = st.Identity
 			state.refused = false
 		}
 		r.tickStage(ctx, st, state, now, &res)
@@ -234,6 +250,14 @@ func (r *Runner) tickStage(ctx context.Context, st Stage, state *stageState, now
 	}
 	kind, ok := kindForStage(st.Stage)
 	if !ok {
+		return
+	}
+	if st.Unclaimed {
+		// Admission created the stage but no relay has claimed it, so no
+		// checkout exists yet. That is the expected shape of a freshly started
+		// run, not a misconfiguration: wait for the claim rather than parking
+		// the lease with missing_workdir before anyone could act on it.
+		res.Unclaimed++
 		return
 	}
 	// The poll interval only paces the status call. Expiry is checked on

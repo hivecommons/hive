@@ -1099,3 +1099,70 @@ func TestNoDirectFileAccess(t *testing.T) {
 		}
 	}
 }
+
+// --- Unclaimed admission leases -------------------------------------------
+
+// An admission lease (owned by hive-triage, no relay yet) has no checkout by
+// construction. The runner must wait for a claim, not park it with
+// missing_workdir; once a relay claims the same generation and a checkout
+// exists, the stage is polled like any other.
+func TestTick_UnclaimedAdmissionWaitsForClaim(t *testing.T) {
+	reg := newFakeRegistry(StageSpec)
+	reg.stage.Identity = "hive-triage"
+	reg.stage.WorkDir = ""
+	reg.stage.Unclaimed = true
+	ex := &scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentFinal)}}
+	esc := &escalations{}
+	r := newRunner(reg, ex, esc)
+
+	res := r.Tick(context.Background(), t0)
+	if res.Unclaimed != 1 || res.Refused != 0 || res.Polled != 0 {
+		t.Fatalf("unclaimed tick = %+v, want Unclaimed=1 Refused=0 Polled=0", res)
+	}
+	if len(reg.refusals) != 0 {
+		t.Fatalf("unclaimed admission was refused: %v", reg.refusals)
+	}
+
+	// A relay claims the lease: same run key, stage and generation, new owner
+	// and a real checkout.
+	reg.mu.Lock()
+	reg.stage.Identity = testIdentity
+	reg.stage.WorkDir = testWorkDir
+	reg.stage.Unclaimed = false
+	reg.mu.Unlock()
+
+	res = r.Tick(context.Background(), t0.Add(testPoll))
+	if res.Polled != 1 || res.Unclaimed != 0 || res.Refused != 0 {
+		t.Fatalf("claimed tick = %+v, want Polled=1", res)
+	}
+}
+
+// A refusal recorded against one owner's checkout must not stick to the
+// stage when the same generation changes hands to a relay that has one.
+func TestTick_OwnerChangeReArmsRefusedStage(t *testing.T) {
+	reg := newFakeRegistry(StageSpec)
+	reg.stage.WorkDir = ""
+	ex := &scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentDraft)}}
+	esc := &escalations{}
+	r := newRunner(reg, ex, esc)
+
+	res := r.Tick(context.Background(), t0)
+	if res.Refused != 1 || len(reg.refusals) != 1 || reg.refusals[0] != RefuseMissingWorkDir {
+		t.Fatalf("first tick = %+v refusals=%v", res, reg.refusals)
+	}
+	// Same owner, still no checkout: refusal is terminal, not repeated.
+	res = r.Tick(context.Background(), t0.Add(testPoll))
+	if res.Refused != 0 || res.Polled != 0 {
+		t.Fatalf("second tick = %+v, want nothing", res)
+	}
+
+	reg.mu.Lock()
+	reg.stage.Identity = "other-relay"
+	reg.stage.WorkDir = testWorkDir
+	reg.mu.Unlock()
+
+	res = r.Tick(context.Background(), t0.Add(2*testPoll))
+	if res.Polled != 1 || res.Refused != 0 {
+		t.Fatalf("re-armed tick = %+v, want Polled=1", res)
+	}
+}

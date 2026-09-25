@@ -14,6 +14,13 @@ const (
 	RunStageSpec      = "spec"
 	RunStagePlan      = "plan"
 	RunStageImplement = "implement"
+
+	// RunAdmissionIdentity owns the first, unclaimed stage lease that run
+	// admission (triage, `run/spec`, `POST /api/runs/spec`) creates. No
+	// relay has taken the work yet, so nothing can have produced a repo
+	// checkout for it: the stage runner waits for a claim instead of
+	// treating the missing workdir as a refusal.
+	RunAdmissionIdentity = "hive-triage"
 )
 
 // RunStage describes one pending run stage as exposed by the lease registry
