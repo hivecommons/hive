@@ -425,3 +425,53 @@ func TestSpekHubExecutorRunStageSkipsSnapshotWhoseLeaseAdvanced(t *testing.T) {
 		t.Fatal("current stage reported inactive")
 	}
 }
+
+func TestSpekHubExecutorDoesNotRelaunchWhenDocumentAlreadyFinal(t *testing.T) {
+	hub, s, _, _ := spekHub(t)
+	now := time.Now()
+	runKey := "myorg/repo1#57"
+	taskID := spekHubExecutorTaskPrefix + sanitizeReceiptSegment(runKey) + "-spec-1"
+	hub.leaseMu.Lock()
+	hub.leases[leaseKey(config.DefaultSpektacularHubExecutorIdentity, taskID)] = &taskLease{identity: config.DefaultSpektacularHubExecutorIdentity, taskID: taskID, repo: spekRepo, number: 57, key: spekRepo + "!" + runKey + ":" + StageSpec, stage: StagePlan, gen: 5, expiresAt: now.Add(leaseTTL)}
+	hub.leaseMu.Unlock()
+	e := NewSpekHubExecutor(s, config.RunsConfig{MaxStageRetries: 2, Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	worktree := spekHubRunWorktreePath(e.Identity, runKey)
+	planDir := filepath.Join(worktree, ".spektacular", "plans", "20260925212730-"+sanitizeRunPromptPath(runKey))
+	if err := os.MkdirAll(planDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(planDir, "plan.md"), []byte("# plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(agentWorkspaceRoot, e.Identity, filepath.FromSlash(spekRepo), ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agentLaunched := false
+	e.Exec = func(_ context.Context, _ string, _ []string, name string, args ...string) ([]byte, error) {
+		switch name {
+		case "git":
+			return []byte("ok"), nil
+		case "spektacular":
+			if len(args) >= 3 && args[1] == "status" {
+				return []byte(`{"error":false,"kind":"plan","name":"myorg-repo1-57","artifact_id":"` + args[2] + `","document_status":"final"}`), nil
+			}
+			return []byte("ok"), nil
+		}
+		agentLaunched = true
+		return []byte("agent done"), nil
+	}
+	stages, err := e.unclaimedStages()
+	if err != nil || len(stages) != 1 {
+		t.Fatalf("unclaimed stages = %d, %v", len(stages), err)
+	}
+	if err := e.executeStage(context.Background(), stages[0]); err != nil {
+		t.Fatalf("executeStage: %v", err)
+	}
+	if agentLaunched {
+		t.Fatal("agent CLI relaunched although the plan document is already final")
+	}
+	e.Tick(context.Background(), now)
+	if e.Status().Running != 0 {
+		t.Fatal("Tick relaunched a held generation")
+	}
+}

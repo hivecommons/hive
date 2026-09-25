@@ -298,15 +298,24 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 	worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
 	e.recordStageProgress(st, "worktree_prepared", map[string]string{"worktree": worktree, "backend": e.backend()})
 	artifact := e.artifact(st.runKey)
+	env, err := e.executorEnv(appToken)
+	if err != nil {
+		return err
+	}
+	if status, final := e.finalArtifact(ctx, worktree, env, st.stage, artifact); final {
+		// The document is already final (e.g. the plan is held for human
+		// approval); launching the agent again would only burn a slot.
+		e.log().Info("[spektacular] hub executor stage document already final; not relaunching", "run", st.runKey, "stage", st.stage, "gen", st.gen, "artifact", status.JoinKey())
+		e.recordStageProgress(st, "document_already_final", map[string]string{stageAttrArtifact: status.JoinKey(), stageAttrDocumentStatus: status.DocumentStatus})
+		e.holdGeneration(st)
+		e.Server.tickStageRunner(time.Now().UTC())
+		return nil
+	}
 	prompt := SpekHubStagePrompt(st.stage, st.repo, st.number, st.runKey, st.title, artifact)
 	if err := writeSpekHubPrompt(worktree, prompt); err != nil {
 		return err
 	}
 	cmd, err := agent.HeadlessPromptCommand(e.backend(), e.Model, spekHubPromptRelPath)
-	if err != nil {
-		return err
-	}
-	env, err := e.executorEnv(appToken)
 	if err != nil {
 		return err
 	}
@@ -444,6 +453,34 @@ func (e *SpekHubExecutor) spekStatus(ctx context.Context, worktree string, env [
 		return spekHubArtifactStatus{}, err
 	}
 	return st, nil
+}
+
+// finalArtifact reports whether the stage's artifact already exists in the
+// worktree with document_status final.
+func (e *SpekHubExecutor) finalArtifact(ctx context.Context, worktree string, env []string, kind, artifact string) (spekHubArtifactStatus, bool) {
+	if kind != StageSpec && kind != StagePlan {
+		return spekHubArtifactStatus{}, false
+	}
+	resolved := resolveSpekArtifactFromFiles(worktree, kind, artifact)
+	if resolved == "" {
+		return spekHubArtifactStatus{}, false
+	}
+	status, err := e.spekStatus(ctx, worktree, env, kind, resolved)
+	if err != nil {
+		return spekHubArtifactStatus{}, false
+	}
+	return status, strings.EqualFold(status.DocumentStatus, "final")
+}
+
+// holdGeneration stops Tick from relaunching this stage generation; the
+// key changes as soon as the lease advances or a new generation is minted.
+func (e *SpekHubExecutor) holdGeneration(st spekHubStage) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.failures == nil {
+		e.failures = map[string]int{}
+	}
+	e.failures[e.executionKey(st)] = e.maxAttempts()
 }
 
 func (e *SpekHubExecutor) recordNonFinal(st spekHubStage, taskID string, status spekHubArtifactStatus) {
