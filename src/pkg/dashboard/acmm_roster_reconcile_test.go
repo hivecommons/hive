@@ -268,6 +268,52 @@ func TestApplyPackReconcilesStalePackFields(t *testing.T) {
 	}
 }
 
+func TestApplyPackPersistsOverlay(t *testing.T) {
+	srv := newFullServer(t)
+
+	scanner := srv.deps.Config.Agents["scanner"]
+	scanner.KickTemplate = "scanner-issues.md"
+	scanner.Mode = "ISSUES_ONLY"
+	scanner.Model = "operator-model"
+	scanner.ModelOwner = config.FieldOwnerOperator
+	scanner.Backend = config.ClaudeBackend
+	scanner.BackendOwner = config.FieldOwnerOperator
+	scanner.PauseOwner = config.FieldOwnerOperator
+	scanner.ReasoningEffort = config.ClaudeEffortHigh
+	srv.deps.Config.Agents["scanner"] = scanner
+	if err := config.SaveAgentFile(srv.deps.Config.Data.AgentsDir, "scanner", scanner); err != nil {
+		t.Fatalf("seed stale scanner overlay: %v", err)
+	}
+
+	if _, err := srv.ApplyPack(5); err != nil {
+		t.Fatalf("ApplyPack(5): %v", err)
+	}
+
+	reloaded, err := config.Load(srv.deps.Config.SourcePath)
+	if err != nil {
+		t.Fatalf("Load after ApplyPack: %v", err)
+	}
+	got := reloaded.Agents["scanner"]
+	if got.KickTemplate != "scanner-holdgated.md" {
+		t.Errorf("kick_template reverted after reload: got %q want scanner-holdgated.md", got.KickTemplate)
+	}
+	if got.Mode != "ISSUES_AND_PRS" {
+		t.Errorf("mode reverted after reload: got %q want ISSUES_AND_PRS", got.Mode)
+	}
+	if got.Model != "operator-model" || got.ModelOwner != config.FieldOwnerOperator {
+		t.Errorf("operator model ownership not preserved: model=%q owner=%q", got.Model, got.ModelOwner)
+	}
+	if got.Backend != config.ClaudeBackend || got.BackendOwner != config.FieldOwnerOperator {
+		t.Errorf("operator backend ownership not preserved: backend=%q owner=%q", got.Backend, got.BackendOwner)
+	}
+	if got.PauseOwner != config.FieldOwnerOperator {
+		t.Errorf("pause owner not preserved: got %q want %q", got.PauseOwner, config.FieldOwnerOperator)
+	}
+	if got.ReasoningEffort != config.ClaudeEffortHigh {
+		t.Errorf("reasoning effort not preserved: got %q want %q", got.ReasoningEffort, config.ClaudeEffortHigh)
+	}
+}
+
 // TestApplyPackPreservesOperatorThreshold guards the fix for the governor
 // threshold revert (Joe Runde / spyre): a pure re-apply of the SAME level (a
 // merge, not an expansion) must NOT overwrite an operator-set threshold — even
