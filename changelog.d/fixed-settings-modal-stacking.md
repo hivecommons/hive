@@ -1,0 +1,1 @@
+- Dashboard: the Settings modal (and other modal dialogs) no longer renders see-through and behind agent cards when an Appearance background/watermark is set. The theme no longer puts a stacking context on every top-level page element (regressed in #8734); the watermark now sits behind content via an isolated body instead.

@@ -25,8 +25,12 @@ const (
 	defaultBackgroundPosition   = "center"
 	defaultBackgroundSize       = "cover"
 	defaultBackgroundAttachment = "fixed"
-	backgroundLayerZIndex       = "0"
-	pageContentZIndex           = "1"
+	// The watermark sits at z-index -1 inside body's own stacking context
+	// (body is isolated), so it paints above body's background and below all
+	// page content without giving body's children a stacking context. A
+	// `body>*{z-index}` rule trapped modal overlays inside their wrappers and
+	// let later siblings (agent cards) paint over the Settings modal.
+	backgroundLayerZIndex = "-1"
 )
 
 const (
@@ -369,7 +373,7 @@ func css(th Theme) (string, error) {
 		pos := defaultString(th.Background.Position, defaultBackgroundPosition)
 		size := defaultString(th.Background.Size, defaultBackgroundSize)
 		attach := defaultString(th.Background.Attachment, defaultBackgroundAttachment)
-		b.WriteString("body{position:relative;}body::before{content:\"\";position:fixed;inset:0;pointer-events:none;z-index:")
+		b.WriteString("body{isolation:isolate;}body::before{content:\"\";position:fixed;inset:0;pointer-events:none;z-index:")
 		b.WriteString(backgroundLayerZIndex)
 		b.WriteString(";background-image:url(\"")
 		b.WriteString(th.Background.Image)
@@ -381,9 +385,6 @@ func css(th Theme) (string, error) {
 		b.WriteString(attach)
 		b.WriteString(";opacity:")
 		b.WriteString(fmt.Sprintf("%.3g", opacity))
-		b.WriteString(";}\n")
-		b.WriteString("body>*{position:relative;z-index:")
-		b.WriteString(pageContentZIndex)
 		b.WriteString(";}\n")
 	}
 	if th.CustomCSS != "" {

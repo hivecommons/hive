@@ -309,12 +309,18 @@ func TestEffectiveCSSIncludesBackgroundAndETag(t *testing.T) {
 		t.Fatalf("css missing override/background: %s", css)
 	}
 	for _, want := range []string{
-		"body{position:relative;}",
-		"body::before{content:\"\";position:fixed;inset:0;pointer-events:none;z-index:0;",
-		"body>*{position:relative;z-index:1;}",
+		"body{isolation:isolate;}",
+		"body::before{content:\"\";position:fixed;inset:0;pointer-events:none;z-index:-1;",
 	} {
 		if !strings.Contains(css, want) {
 			t.Fatalf("background layer CSS missing %q: %s", want, css)
+		}
+	}
+	// A stacking context on body's children traps modal overlays (Settings,
+	// ACMM, dialogs) inside their wrappers so later siblings paint over them.
+	for _, forbidden := range []string{"body>*", "body > *", "body>div", "body > div"} {
+		if strings.Contains(css, forbidden) {
+			t.Fatalf("theme CSS must not style body's children (%q traps modal overlays): %s", forbidden, css)
 		}
 	}
 	etag, err := ETag(th)
