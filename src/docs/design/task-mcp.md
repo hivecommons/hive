@@ -8,6 +8,12 @@ Scope resolution accepts `task_id`, `repo`, and `number` from the `X-Hive-Task-I
 
 Hub-launched kick prompts include one short pointer when the task MCP URL is configured: call `context_bundle` on `hive-task` first instead of re-reading the issue/PR and CI from scratch. Hives without a task MCP URL keep the old prompt text.
 
+This is the **agent-facing** MCP surface. An operator-facing admin MCP — hive-wide,
+read/write, authenticated with the dashboard token, served both as its own endpoint and as a
+stdio `cmd/` binary — is designed separately in [admin-mcp.md](admin-mcp.md). Do not extend this
+endpoint to serve operators: the two have opposite scope, direction, credential and consumer,
+and the operator surface deliberately adds no authenticated write path to the hub.
+
 The tools are:
 
 - `task_context()` for the scoped assignment, labels, lease age, hold and level gates, standby tier/lane policy, and PR-template policy slots.

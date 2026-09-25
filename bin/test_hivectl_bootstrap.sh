@@ -232,10 +232,21 @@ assert_file_contains "${fixture}/bin/.hivectl.source" "digest=sha256:fresh" "sta
 CASE="no-podman-no-binary"
 : >"$CALL_LOG"; : >"$RUN_LOG"
 fixture="$(make_fixture)"
+# A PATH of plain /usr/bin:/bin still finds the host's podman wherever one is
+# installed (GitHub-hosted ubuntu-24.04 ships /usr/bin/podman), and the case
+# then fails on a real pull instead of exercising the missing-podman refusal.
+# Mirror the system bin dirs minus podman so the case holds on any host.
+NO_PODMAN_BIN="${TEST_TMP}/no-podman-bin"
+mkdir -p "$NO_PODMAN_BIN"
+for tool in /usr/bin/* /bin/*; do
+  name="${tool##*/}"
+  [[ "$name" == podman || -e "${NO_PODMAN_BIN}/${name}" ]] && continue
+  ln -s "$tool" "${NO_PODMAN_BIN}/${name}"
+done
 (
   cd "$fixture" || exit 1
   HOME="${fixture}/home" \
-  PATH="/usr/bin:/bin" \
+  PATH="$NO_PODMAN_BIN" \
   HIVECTL_BOOTSTRAP_IMAGE="test-image" \
   "$fixture/bin/hivectl-bootstrap.sh" hives list
 ) >"${fixture}/stdout" 2>"${fixture}/stderr"
