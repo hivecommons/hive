@@ -176,8 +176,8 @@ sequence before starting.
 
 Mirror this checklist into one issue titled **"v4 freeze execution"** when
 the freeze is declared, and keep it in sync with this doc — the same
-tracker convention the v5 GA bar (#6016) and v6 readiness bar
-([#7683](https://github.com/hivecommons/hive/issues/7683)) use.
+tracker convention the v5 GA bar (#6016) and the v6 epic's readiness bar
+([#7563](https://github.com/hivecommons/hive/issues/7563) §v6 readiness bar) use.
 
 ---
 

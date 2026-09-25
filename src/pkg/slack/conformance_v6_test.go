@@ -6,7 +6,7 @@ package slack
 // Slack can bypass: ioscan on inbound message text, Converse for replies,
 // canary/secret scrubbing on outbound text, the dashboard role floor, and the
 // proxy mode/capability ladder before Slack drives agent work. Issue:
-// hivecommons/hive#8042. Tracker: hivecommons/hive#7683.
+// hivecommons/hive#8042. Tracker: hivecommons/hive#7563.
 
 import (
 	"context"

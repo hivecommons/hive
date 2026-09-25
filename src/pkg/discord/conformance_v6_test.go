@@ -8,7 +8,7 @@ package discord
 // inbound message text, Converse for replies, canary/secret scrubbing on
 // outbound text, the dashboard role floor, and the proxy mode/capability ladder
 // before Discord drives agent work. Issue: hivecommons/hive#8043. Tracker:
-// hivecommons/hive#7683.
+// hivecommons/hive#7563.
 
 import (
 	"context"

@@ -40,7 +40,7 @@ package escalate
 // email.go included.
 //
 // Deleting a scrub call, or growing an IMAP poller that skips the guards,
-// fails this file. Issue: hivecommons/hive#8047. Tracker: hivecommons/hive#7683.
+// fails this file. Issue: hivecommons/hive#8047. Tracker: hivecommons/hive#7563.
 
 import (
 	"bufio"
