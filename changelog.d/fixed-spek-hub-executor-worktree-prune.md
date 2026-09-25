@@ -1,0 +1,1 @@
+- Spektacular hub executor: prune stale git worktree registrations before `worktree add`, keep a run's worktree alive while any lease on the run (including unclaimed retry generations) is active, and mark the executor workspace as a safe git directory so `dubious ownership` no longer blocks git after a uid change.

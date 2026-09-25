@@ -301,6 +301,65 @@ func TestSpekHubExecutorSweepRemovesStaleWorktree(t *testing.T) {
 	}
 }
 
+func TestSpekHubExecutorSweepKeepsRunWorktreeWhileUnclaimedLeaseExists(t *testing.T) {
+	hub, s, _, _ := spekHub(t)
+	now := time.Now()
+	runKey := "myorg/repo1#57"
+	key := spekRepo + "!" + runKey + ":" + StagePlan
+	// A retry generation minted after expiry: active, but nobody owns it yet.
+	hub.leaseMu.Lock()
+	hub.leases[leaseKey(runAdmissionIdentity, "run-admit-x")] = &taskLease{identity: runAdmissionIdentity, taskID: "run-admit-x", repo: spekRepo, number: 57, key: key, stage: StagePlan, gen: 3, expiresAt: now.Add(leaseTTL)}
+	hub.leaseMu.Unlock()
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	work := spekHubRunWorktreePath(e.Identity, runKey)
+	artifact := filepath.Join(work, ".spektacular", "plans", "p", "plan.md")
+	if err := os.MkdirAll(filepath.Dir(artifact), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifact, []byte("plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.sweepStaleWorktrees(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(artifact); err != nil {
+		t.Fatalf("run worktree with artifacts was swept while its lease was active but unclaimed: %v", err)
+	}
+}
+
+func TestSpekHubExecutorPrepareWorkspaceRecoversSweptButRegisteredWorktree(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	remote := makeBareRepo(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	e.CloneURL = func(string) string { return remote }
+	e.Exec = func(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+		if name == "git" {
+			cmd := exec.CommandContext(ctx, name, args...)
+			cmd.Dir = dir
+			cmd.Env = env
+			return cmd.CombinedOutput()
+		}
+		if name == "spektacular" {
+			return nil, os.MkdirAll(filepath.Join(dir, ".spektacular"), 0o755)
+		}
+		return []byte("ok"), nil
+	}
+	st := spekHubStage{runKey: "myorg/repo1#57", stage: StagePlan, repo: spekRepo, gen: 3}
+	if _, err := e.prepareWorkspace(context.Background(), st); err != nil {
+		t.Fatalf("first prepareWorkspace: %v", err)
+	}
+	// Simulate the sweep deleting the directory without telling git.
+	if err := os.RemoveAll(spekHubRunWorktreePath(e.Identity, st.runKey)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.prepareWorkspace(context.Background(), st); err != nil {
+		t.Fatalf("prepareWorkspace after sweep: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(spekHubRunWorktreePath(e.Identity, st.runKey), ".git")); err != nil {
+		t.Fatalf("worktree not recreated: %v", err)
+	}
+}
+
 func makeBareRepo(t *testing.T) string {
 	t.Helper()
 	work := t.TempDir()
@@ -323,4 +382,17 @@ func makeBareRepo(t *testing.T) string {
 	bare := filepath.Join(t.TempDir(), "remote.git")
 	run(work, "clone", "--bare", work, bare)
 	return bare
+}
+
+func TestSpekGitEnvMarksWorkspaceSafeAndReplacesExistingOverride(t *testing.T) {
+	env := spekGitEnv([]string{"PATH=/bin", "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=core.foo", "GIT_CONFIG_VALUE_0=bar"})
+	joined := strings.Join(env, "\n")
+	for _, want := range []string{"PATH=/bin", "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=safe.directory", "GIT_CONFIG_VALUE_0=*"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("env missing %q:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "core.foo") || strings.Count(joined, "GIT_CONFIG_COUNT=") != 1 {
+		t.Fatalf("stale GIT_CONFIG override retained:\n%s", joined)
+	}
 }

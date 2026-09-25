@@ -127,14 +127,19 @@ func (e *SpekHubExecutor) Status() FrontendSpektacularHubExecutor {
 func (e *SpekHubExecutor) sweepStaleWorktrees(ctx context.Context) error {
 	live := map[string]bool{}
 	if err := e.Server.VisitActiveStageLeases(func(runKey, key, stage, identity, taskID, repo string, gen uint64, expiresAt time.Time) {
+		// A run's single worktree carries its spec/plan artifacts across
+		// generations, so it stays live while ANY lease on the run is
+		// active — including a freshly minted, not-yet-claimed retry
+		// generation or an admission lease. Only stage-scoped worktrees are
+		// tied to this executor's own leases.
+		if path := spekHubRunWorktreePath(e.Identity, runKey); path != "" {
+			live[path] = true
+		}
+		for _, path := range existingRunWorktreeDirs(e.Identity, runKey) {
+			live[path] = true
+		}
 		if identity == e.Identity {
-			if path := spekHubRunWorktreePath(identity, runKey); path != "" {
-				live[path] = true
-			}
 			if path := runStageWorktreePath(identity, runKey, stage, gen); path != "" {
-				live[path] = true
-			}
-			for _, path := range existingRunWorktreeDirs(identity, runKey) {
 				live[path] = true
 			}
 		}
@@ -204,7 +209,7 @@ func (e *SpekHubExecutor) sharedRepoDirs() []string {
 func (e *SpekHubExecutor) removeWorktree(ctx context.Context, repos []string, path string) error {
 	var last error
 	for _, repo := range repos {
-		if _, err := e.runner()(ctx, repo, os.Environ(), "git", "worktree", "remove", "--force", path); err == nil {
+		if _, err := e.runner()(ctx, repo, spekGitEnv(os.Environ()), "git", "worktree", "remove", "--force", path); err == nil {
 			return nil
 		} else {
 			last = err
@@ -530,7 +535,7 @@ func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage)
 	runGit := func(dir string, args ...string) error {
 		full := append([]string{}, authArgs...)
 		full = append(full, args...)
-		out, err := e.runner()(ctx, dir, os.Environ(), "git", full...)
+		out, err := e.runner()(ctx, dir, spekGitEnv(os.Environ()), "git", full...)
 		if err != nil {
 			return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, tailString(string(out), spekHubOutputTailBytes))
 		}
@@ -549,6 +554,11 @@ func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage)
 		if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
 			return "", err
 		}
+		// A swept directory can leave git with a "missing but already
+		// registered" worktree entry that makes `worktree add` refuse.
+		if err := runGit(repoDir, "worktree", "prune"); err != nil {
+			e.log().Warn("[spektacular] git worktree prune failed", "repo", repoDir, "error", err)
+		}
 		if err := runGit(repoDir, "worktree", "add", "--detach", worktree, "FETCH_HEAD"); err != nil {
 			return "", err
 		}
@@ -559,7 +569,7 @@ func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage)
 		} else if copied {
 			return appToken, nil
 		}
-		if _, err := e.runner()(ctx, worktree, os.Environ(), "spektacular", "init", spekInitAgent(e.backend()), "--name", filepath.Base(st.repo)); err != nil {
+		if _, err := e.runner()(ctx, worktree, spekGitEnv(os.Environ()), "spektacular", "init", spekInitAgent(e.backend()), "--name", filepath.Base(st.repo)); err != nil {
 			return "", err
 		}
 	}
@@ -632,6 +642,7 @@ func (e *SpekHubExecutor) executorEnv(appToken string) ([]string, error) {
 		return nil, err
 	}
 	env := filteredSpekEnv(os.Environ(), "HOME", "npm_config_cache", "GH_TOKEN", "GITHUB_TOKEN")
+	env = spekGitEnv(env)
 	env = append(env, "HOME="+home, "npm_config_cache="+filepath.Join(home, ".npm-cache"))
 	creds, err := agent.HeadlessCredentialEnv(e.backend())
 	if err != nil {
@@ -643,6 +654,15 @@ func (e *SpekHubExecutor) executorEnv(appToken string) ([]string, error) {
 		env = append(env, "GH_TOKEN="+tok, "GITHUB_TOKEN="+tok)
 	}
 	return env, nil
+}
+
+// spekGitEnv marks the executor's own workspace root as a safe git directory.
+// The hub process may run as a different uid than the one that originally
+// created the shared clone (e.g. after an image change), and git otherwise
+// refuses every command there with "detected dubious ownership".
+func spekGitEnv(env []string) []string {
+	env = filteredSpekEnv(env, "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0")
+	return append(env, "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=safe.directory", "GIT_CONFIG_VALUE_0=*")
 }
 
 func filteredSpekEnv(env []string, keys ...string) []string {
