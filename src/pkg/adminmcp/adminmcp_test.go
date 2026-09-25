@@ -421,3 +421,98 @@ func TestFeatureSettingsPreviewDisclosesProtectionChanges(t *testing.T) {
 		t.Fatal("unknown field accepted")
 	}
 }
+
+func TestAgentPhaseFourWriteOpsBuildRequests(t *testing.T) {
+	cases := []struct {
+		name   string
+		op     WriteOp
+		args   map[string]any
+		method string
+		path   string
+	}{
+		{name: "nudge", op: agentNudgeOp{}, args: map[string]any{"agent": "team/scanner", "prompt": "ship it"}, method: http.MethodPost, path: "/api/kick/team%2Fscanner"},
+		{name: "restart", op: agentRestartOp{}, args: map[string]any{"agent": "team/scanner"}, method: http.MethodPost, path: "/api/restart/team%2Fscanner"},
+		{name: "add", op: agentAddOp{}, args: map[string]any{"name": "new-worker", "config": map[string]any{"backend": "copilot"}}, method: http.MethodPost, path: "/api/agents"},
+		{name: "remove", op: agentRemoveOp{}, args: map[string]any{"agent": "team/scanner"}, method: http.MethodDelete, path: "/api/agents/team%2Fscanner"},
+		{name: "model", op: agentModelOp{}, args: map[string]any{"agent": "team/scanner", "model": "gpt-5"}, method: http.MethodPost, path: "/api/model/team%2Fscanner/gpt-5"},
+		{name: "backend", op: agentBackendOp{}, args: map[string]any{"agent": "team/scanner", "backend": "copilot"}, method: http.MethodPost, path: "/api/switch/team%2Fscanner/copilot"},
+		{name: "effort", op: agentEffortOp{}, args: map[string]any{"agent": "team/scanner", "effort": "high"}, method: http.MethodPost, path: "/api/effort/team%2Fscanner/high"},
+		{name: "interaction", op: agentInteractionTierOp{}, args: map[string]any{"agent": "team/scanner", "tier": "ISSUES_AND_PRS"}, method: http.MethodPut, path: "/api/config/agent/team%2Fscanner/general"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			preview, err := tc.op.Preview(context.Background(), tc.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if preview.Request.Method != tc.method || preview.Request.Path != tc.path {
+				t.Fatalf("request = %s %s", preview.Request.Method, preview.Request.Path)
+			}
+			if preview.ConfirmationMessage == "" || preview.WideningDisclosure == "" || len(preview.Effects) == 0 {
+				t.Fatalf("incomplete preview = %#v", preview)
+			}
+		})
+	}
+}
+
+func TestAgentNudgePreviewRequiresVerbatimPrompt(t *testing.T) {
+	preview, err := (agentNudgeOp{}).Preview(context.Background(), map[string]any{"agent": "scanner", "prompt": "\nplease check the flaky test\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, ok := preview.Request.Body.(map[string]any)
+	if !ok || body["prompt"] != "\nplease check the flaky test\n" {
+		t.Fatalf("body = %#v", preview.Request.Body)
+	}
+	if !strings.Contains(preview.ConfirmationMessage, "\nplease check the flaky test\n") || !strings.Contains(preview.Details["outcome_lookup"].(string), ToolAgentNudgeStatus) {
+		t.Fatalf("preview = %#v", preview)
+	}
+	if _, err := (agentNudgeOp{}).Preview(context.Background(), map[string]any{"agent": "scanner"}); err == nil {
+		t.Fatal("expected missing prompt error")
+	}
+}
+
+func TestAgentInteractionTierDefaultClearsMode(t *testing.T) {
+	preview, err := (agentInteractionTierOp{}).Preview(context.Background(), map[string]any{"agent": "scanner", "tier": "default"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, ok := preview.Request.Body.(map[string]any)
+	if !ok || body["mode"] != "" {
+		t.Fatalf("body = %#v", preview.Request.Body)
+	}
+	if !strings.Contains(preview.WideningDisclosure, "Potential widening") {
+		t.Fatalf("disclosure = %q", preview.WideningDisclosure)
+	}
+}
+
+func TestDefaultWriteRegistryIncludesPhaseFourAgentOps(t *testing.T) {
+	registry := DefaultWriteRegistry()
+	for _, name := range []string{WriteOpAgentNudge, WriteOpAgentRestart, WriteOpAgentAdd, WriteOpAgentRemove, WriteOpAgentModel, WriteOpAgentBackend, WriteOpAgentEffort, WriteOpAgentInteractionTier} {
+		if _, ok := registry.Get(name); !ok {
+			t.Fatalf("missing write op %s", name)
+		}
+	}
+}
+
+func TestAgentNudgeStatusToolIsListedAsReadOnly(t *testing.T) {
+	var found bool
+	for _, tool := range ToolsWithWritesEnabled(true) {
+		if tool["name"] != ToolAgentNudgeStatus {
+			continue
+		}
+		found = true
+		annotations, _ := tool["annotations"].(map[string]any)
+		if annotations["readOnlyHint"] != true {
+			t.Fatalf("annotations = %#v", annotations)
+		}
+		schema, _ := tool["inputSchema"].(map[string]any)
+		required, _ := schema["required"].([]string)
+		if len(required) != 1 || required[0] != "agent" {
+			t.Fatalf("schema = %#v", schema)
+		}
+	}
+	if !found {
+		t.Fatal("agent nudge status tool not listed")
+	}
+}

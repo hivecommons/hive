@@ -1,6 +1,6 @@
 # The operator-facing admin MCP
 
-**Status: phase 6 repository, spend, contributor and ops operations implemented.** The admin MCP package, dashboard endpoint, stdio binary, refusal contract, read tools for fleet, agents, leases/claims, plans, audit, settings, readiness, spend, contributors, knowledge, and hive advice, the generic write-operation registry, durable preview-and-confirm flow, and registered write operations through phase 6 — including phase 5 fleet-level operations — are present. Writes remain disabled unless explicitly enabled, and later phases add more registered write operations on top of the same contract. It belongs to the v6
+**Status: phase 6 repository, spend, contributor and ops operations implemented, with phase 4 agent operations present.** The admin MCP package, dashboard endpoint, stdio binary, refusal contract, read tools for fleet, agents, leases/claims, plans, audit, settings, readiness, spend, contributors, knowledge, and hive advice, the generic write-operation registry, durable preview-and-confirm flow, and registered write operations through phase 6 — including phase 4 agent operations and phase 5 fleet-level operations — are present. Writes remain disabled unless explicitly enabled, and later phases add more registered write operations on top of the same contract. It belongs to the v6
 dashboard-optional line ([#7563](https://github.com/hivecommons/hive/issues/7563)) and, per
 that line's policy, lands on the `v6` branch only. Tracked by
 [#8697](https://github.com/hivecommons/hive/issues/8697).
@@ -102,7 +102,7 @@ type WriteOp interface {
 }
 ```
 
-The preview returns a `WritePreview` containing the operator-facing summary, widening disclosure, and the REST `WriteRequest` to execute on confirmation. Keep new operations in their own files (for example `tools_agent_ops.go`, `tools_fleet_ops.go`, `tools_repo_ops.go`) so later phases can add operations without editing unrelated operation groups. Phase 3 registers only `agent.pause` and `agent.resume`, each targeting exactly one named agent and disclosing that there is no widening.
+The preview returns a `WritePreview` containing the operator-facing summary, widening disclosure, and the REST `WriteRequest` to execute on confirmation. Keep new operations in their own files (for example `tools_agent_ops.go`, `tools_fleet_ops.go`, `tools_repo_ops.go`) so later phases can add operations without editing unrelated operation groups. Phase 3 registered `agent.pause` and `agent.resume`. Phase 4 extends the same `tools_agent_ops.go` group with `agent.nudge`, `agent.restart`, `agent.add`, `agent.remove`, `agent.model`, `agent.backend`, `agent.effort`, and `agent.interaction_tier`; it also adds the read-only `agent_nudge_status` lookup for `GET /api/kick/{agent}/status`. Nudge previews include the prompt verbatim in the confirmation message, because that text is typed into an agent CLI session. Interaction-tier previews carry explicit widening disclosure because `ISSUES_ONLY`, `ISSUES_AND_PRS`, and `ISSUES_PRS_MERGE` grant progressively broader GitHub authority.
 
 Phase 6 adds `tools_repo_ops.go`, registering repository, spend, contributor and operations writes:
 
@@ -298,7 +298,7 @@ falls back to the queued-run snapshot, so an operator can paste either identifie
 
 | Tool area | Endpoint(s) | Hive-side gate |
 |---|---|---|
-| nudge | `POST /api/kick/{agent}` → `GET /api/kick/{agent}/status` | `requireOwnerRole` |
+| nudge | `POST /api/kick/{agent}` → `GET /api/kick/{agent}/status` (`agent_nudge_status`) | `requireOwnerRole` |
 | pause / resume / restart | `POST /api/pause/{agent}`, `/api/resume/{agent}`, `/api/restart/{agent}`, `/api/reset-restarts/{agent}` | `requireOwnerRole` |
 | add / remove agent | `POST /api/agents`, `DELETE /api/agents/{name}` | `requireOwnerRole` |
 | model / backend / effort | `POST /api/model/{agent}/{model}`, `/api/switch/{agent}/{backend}`, `/api/effort/{agent}/{effort}` | `requireOwnerRole` |
@@ -339,8 +339,8 @@ synchronous `SendKick` waited up to `inputPromptTimeout` (120 s) for the CLI's i
 which exceeds a typical 60 s ingress idle timeout, so the proxy answered 504 while the wait
 was still running — the prompt *was* typed, the session *did* run, and the operator had been
 told it failed, so the natural retry delivered the work twice. A tool must report acceptance
-as acceptance, poll `GET /api/kick/{agent}/status` for the outcome, and surface the
-`in-flight` answer as "already being delivered", never as a new delivery.
+as acceptance, poll `GET /api/kick/{agent}/status` for the outcome through `agent_nudge_status`, and surface the
+`in-flight` answer as "already being delivered", never as a new delivery. The nudge write preview shows the prompt verbatim in its confirmation message and sends it as the existing JSON `prompt` body; it does not use the endpoint's empty-prompt auto-generation path, because there would be no verbatim text for the operator to confirm.
 
 **Pause and resume must be rendered from the response's `state`, never from intent.**
 `pauseToggleResponse` carries `changed` specifically to distinguish a real transition from a

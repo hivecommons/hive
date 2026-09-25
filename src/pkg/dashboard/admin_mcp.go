@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 
@@ -35,7 +36,7 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 	if p.server == nil {
 		return nil, fmt.Errorf("%w: dashboard server unavailable", adminmcp.ErrForbidden)
 	}
-	path, ok := adminMCPReadPath(tool, adminmcp.LimitFromArgs(args))
+	path, ok := adminMCPReadPath(tool, args)
 	if !ok {
 		return nil, fmt.Errorf("%w: unsupported admin MCP read tool", adminmcp.ErrForbidden)
 	}
@@ -58,8 +59,15 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 	return adminmcp.CapResult(data, adminmcp.LimitFromArgs(args)), nil
 }
 
-func adminMCPReadPath(tool string, limit int) (string, bool) {
-	return adminmcp.ReadPath(tool, limit)
+func adminMCPReadPath(tool string, args map[string]any) (string, bool) {
+	if tool == adminmcp.ToolAgentNudgeStatus {
+		agent := strings.TrimSpace(adminMCPStringArg(args, "agent"))
+		if agent == "" {
+			return "", false
+		}
+		return "/api/kick/" + url.PathEscape(agent) + "/status", true
+	}
+	return adminmcp.ReadPath(tool, adminmcp.LimitFromArgs(args))
 }
 
 func decodeAdminMCPJSON(data []byte) (any, error) {
@@ -191,4 +199,9 @@ func adminMCPPendingPath() string {
 		return path
 	}
 	return "/data/admin-mcp-pending-confirmations.json"
+}
+
+func adminMCPStringArg(args map[string]any, key string) string {
+	value, _ := args[key].(string)
+	return strings.TrimSpace(value)
 }
