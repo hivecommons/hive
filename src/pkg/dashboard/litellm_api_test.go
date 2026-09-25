@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // --- handleGovernorLiteLLM ---
@@ -365,7 +367,7 @@ func TestHandleGovernorConfigGet_MasksKeyLikeEnvName(t *testing.T) {
 	}
 }
 
-func TestHandleGovernorConfigGet_KeyHintMaskedTail(t *testing.T) {
+func TestHandleGovernorConfigGet_KeyHashNoSecretHint(t *testing.T) {
 	srv := newFullServer(t)
 	t.Setenv("HIVE_LITELLM_API_KEY", "sk-resolvedsecretkeyvalue")
 	srv.deps.Config.Governor.LiteLLM.Endpoint = "https://litellm.example.com"
@@ -385,8 +387,11 @@ func TestHandleGovernorConfigGet_KeyHintMaskedTail(t *testing.T) {
 	if section["hasKey"] != true {
 		t.Fatalf("hasKey = %v", section["hasKey"])
 	}
-	if hint, _ := section["keyHint"].(string); hint != "••••alue" {
-		t.Errorf("keyHint = %q, want masked last-4 tail", hint)
+	if _, ok := section["keyHint"]; ok {
+		t.Fatalf("keyHint should not be returned; SHA256 is the non-secret correlation handle")
+	}
+	if hash, _ := section["keySHA256"].(string); hash != config.APIKeySHA256("sk-resolvedsecretkeyvalue") {
+		t.Fatalf("keySHA256 = %q, want SHA256 of effective key", hash)
 	}
 }
 

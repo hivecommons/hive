@@ -55,9 +55,9 @@ var validGatewayKinds = map[string]bool{
 // tail hint resolved from those references.
 func gatewaySectionResponse(gw config.GatewayConfig) map[string]interface{} {
 	key := gw.ResolveAPIKey()
-	keyHint := ""
+	keySHA256 := ""
 	if key != "" {
-		keyHint = maskSecretHint(key)
+		keySHA256 = config.APIKeySHA256(key)
 	}
 	return map[string]interface{}{
 		"name":          gw.Name,
@@ -73,7 +73,7 @@ func gatewaySectionResponse(gw config.GatewayConfig) map[string]interface{} {
 		"project_id": gw.ProjectID,
 		"region":     gw.Region,
 		"hasKey":     key != "",
-		"keyHint":    keyHint,
+		"keySHA256":  keySHA256,
 		// keyName is the operator-chosen LABEL for this gateway's key, not the
 		// key value — safe to serialize. Empty on gateways that never recorded
 		// a name (the dashboard renders that as "(unnamed)"), so no
@@ -342,8 +342,17 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 	}
 	s.auditFromRequest(r, "config_governor_gateway_upsert", auditDetail("gateway", name, "kind", kind), "")
 
-	// Register the endpoint for model discovery so routing/dropdowns pick it up.
+	// Register the endpoint for model discovery and re-apply routes for live
+	// agents already running on this gateway. SetInferenceRoute snapshots the
+	// upstream key into the proxy route, so this refresh is what makes a rotated
+	// key take effect on the next kick without requiring an agent restart.
 	s.registerGatewayEndpoints()
+	if s.deps != nil && s.deps.AgentMgr != nil {
+		s.deps.AgentMgr.RefreshInferenceRoutes(name)
+		if kind != name {
+			s.deps.AgentMgr.RefreshInferenceRoutes(kind)
+		}
+	}
 	s.refreshAndPersist()
 
 	// Live save-time probe so a bad endpoint/key fails visibly now, not as

@@ -2196,7 +2196,12 @@ func newBufferedReader(c net.Conn) *bufio.Reader {
 // (no cap) until the async probe fills it in.
 func (p *GitHubProxy) SetInferenceRoute(agentName string, route *InferenceRoute) {
 	p.inference.Set(agentName, route)
-	p.logger.Info("inference route set", "agent", agentName, "backend", route.Backend, "endpoint", route.Endpoint, "model", route.Model, "maxContextLen", route.MaxContextLen)
+	keySHA256 := config.APIKeySHA256(route.APIKey)
+	if keySHA256 != "" {
+		p.logger.Info("inference route set", "agent", agentName, "backend", route.Backend, "endpoint", route.Endpoint, "model", route.Model, "maxContextLen", route.MaxContextLen, "api_key_sha256", keySHA256)
+	} else {
+		p.logger.Info("inference route set", "agent", agentName, "backend", route.Backend, "endpoint", route.Endpoint, "model", route.Model, "maxContextLen", route.MaxContextLen, "api_key_sha256", "")
+	}
 
 	if route.MaxContextLen == 0 {
 		endpoint, model, apiKey, caBundle := route.Endpoint, route.Model, route.APIKey, route.CABundle
