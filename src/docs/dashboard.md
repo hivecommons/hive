@@ -112,7 +112,7 @@ exactly one band, while non-winning states remain as badges on the pill:
 3. **Agent-filed** — an `agent/<role>` label; roles render as compact badges.
 4. **Waiting on human** — labels such as `blocked`, `needs-decision`,
    `2-discussing`, `Epic`, `needs-human`, or `needs-triage`.
-5. **Likely done** — labels such as `hive/already-done`.
+5. **Likely done** — labels such as `hive/already-done`, `hive/covered-by-pr`, and `hive/likely-done`.
 
 Precedence is likely done → waiting on human → in progress → agent-filed → ready,
 so a human gate beats an assignment and done beats all other display states.
@@ -126,15 +126,19 @@ Operators can tune only the display taxonomy under `dashboard.issue_bands`:
 dashboard:
   issue_bands:
     waiting_labels: [blocked, needs-decision, 2-discussing, Epic, needs-human, needs-triage]
-    done_labels: [hive/already-done]
+    done_labels: [hive/already-done, hive/covered-by-pr, hive/likely-done]
     stale_days: 14
 ```
 
 These settings deliberately do not reuse `governor.labels.exempt`,
 `contribute_skip_labels`, or `project.issue_filter`; those decide work
 eligibility, while issue bands decide how the dashboard describes already
-enumerated work. Linked-PR badges are an explicit extension point for the
-companion linked-PR payload work and are not inferred by the card.
+enumerated work. Linked-PR badges render from the `linked_prs` payload and are not inferred by the card.
+
+## Linked PR issue signals
+
+Repository issue pills can show a `🔗 #N` badge when Hive has verified a pull request related to that issue. Open PRs apply `hive/covered-by-pr`; merged PRs on still-open issues apply `hive/likely-done` and render as `🔗 #N merged`. These are pending signals, not resolution: the issue remains in the actionable list until GitHub closes it, GitHub reports the PR in `closingIssuesReferences`, or an operator confirms coverage. The status payload exposes the same evidence as `linked_prs: [{number, state, merged, url, closing}]` on each `github.Issue`.
+
 
 ## Appearance themes
 

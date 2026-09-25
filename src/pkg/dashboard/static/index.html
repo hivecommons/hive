@@ -8724,7 +8724,7 @@
 
     const REPO_ISSUE_BAND_DEFAULTS = {
       waitingLabels: ['blocked', 'needs-decision', '2-discussing', 'Epic', 'needs-human', 'needs-triage'],
-      doneLabels: ['hive/already-done'],
+      doneLabels: ['hive/already-done', 'hive/covered-by-pr', 'hive/likely-done'],
       staleDays: 14
     };
     const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -8790,6 +8790,7 @@
             <span class="repo-issue-pill agent-filed" title="Filed by an agent; badge names the agent role"><span class="pill-role">STRATEGIST</span> agent-filed</span>
             <span class="repo-issue-pill done" title="Likely done: labels ${esc(done)}"><span class="pill-state">✓</span> likely done</span>
             <span class="repo-issue-pill stale" title="No activity for more than ${cfg.staleDays} days"><span class="pill-state">🕒</span> stale</span>
+            <span class="repo-issue-plan pill-icon" title="Verified linked pull request">🔗 #42</span>
             <span class="repo-issue-plan pill-icon" title="Plan this issue">📋</span>
             <span class="repo-issue-plan pill-icon plan-review" title="Plan awaiting human review">●</span>
             <span class="repo-issue-pill pill-icon" title="Hold actionable item">⏸ Hold</span>
@@ -9326,9 +9327,13 @@
             ? planIssueChip(linked)
             : (showPlan ? `<button class="repo-issue-plan pill-icon" data-action="planIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Plan this issue" aria-label="Plan this issue">📋</button>${showDesign ? `<button class="repo-issue-plan pill-icon" data-action="designIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Design before planning" aria-label="Design before planning">📐</button>` : ''}` : '');
           const holdBtn = holdToggleChip(cardRepo, i, 'issue', false, canToggleHold, '');
+          const linkedPRs = Array.isArray(i.linked_prs) ? i.linked_prs : [];
+          const primaryPR = linkedPRs.find(pr => pr.closing) || linkedPRs.find(pr => pr.state === 'open') || linkedPRs.find(pr => pr.merged) || linkedPRs[0];
+          const prTip = linkedPRs.map(pr => `#${pr.number}${pr.merged ? ' merged' : (pr.state ? ' ' + pr.state : '')}`).join(', ');
+          const prBadge = primaryPR ? `<a class="repo-issue-plan pill-icon" href="${esc(primaryPR.url || '')}" target="_blank" rel="noopener" title="Linked PR${prTip ? ': ' + esc(prTip) : ''}" aria-label="Linked pull request #${primaryPR.number}">🔗 #${primaryPR.number}${primaryPR.merged ? ' merged' : ''}</a>` : '';
           const bandClass = info.band === 'ready' ? '' : ' ' + info.band;
           const staleClass = issueIsStale(i) ? ' stale' : '';
-          return `<span class="repo-issue-pill-wrap"><a class="repo-issue-pill${bandClass}${staleClass}" href="${esc(i.url)}" target="_blank" rel="noopener" title="${esc(issueTip(i, info))}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span>${issueSignalHTML(info)}</a>${planBtn}${holdBtn}</span>`;
+          return `<span class="repo-issue-pill-wrap"><a class="repo-issue-pill${bandClass}${staleClass}" href="${esc(i.url)}" target="_blank" rel="noopener" title="${esc(issueTip(i, info))}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span>${issueSignalHTML(info)}</a>${prBadge}${planBtn}${holdBtn}</span>`;
         };
         const issuePills = groupedRepoIssues(r.actionableIssues || []).map(g => {
           const items = g.issues.map(entry => renderIssuePill(entry.issue, entry.info)).join('');
