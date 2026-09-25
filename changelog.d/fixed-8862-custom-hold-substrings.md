@@ -1,0 +1,1 @@
+- Preserved substring matching for operator-configured hold labels while keeping the new `hive-pause/<hive-id>` dashboard hold exact-match only.
