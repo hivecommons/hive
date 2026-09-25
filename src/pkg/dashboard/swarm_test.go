@@ -524,3 +524,37 @@ func TestSwarmThemeObjectivesAndPublicLeaderboard(t *testing.T) {
 		t.Fatalf("history = %+v", history.History)
 	}
 }
+
+func TestSwarmObjectivesScoreWhenGitHubScoringFails(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.Project.Org = "acme"
+	deps.Config.Project.Repos = []string{"api"}
+	s.SetContributorsDir(t.TempDir())
+	s.swarm = newSwarmStore(filepath.Join(s.contributorsDirOrDefault(), SwarmStateFileName), &fakeSwarmScorer{err: errors.New("rate limited")})
+
+	start := doOwnerPost(s, "/api/swarm", map[string]string{"repo": "api"})
+	if start.Code != http.StatusOK {
+		t.Fatalf("start status = %d body=%s", start.Code, start.Body.String())
+	}
+	var rec SwarmRecord
+	if err := json.NewDecoder(start.Body).Decode(&rec); err != nil {
+		t.Fatalf("decode start: %v", err)
+	}
+	for i := range rec.Objectives {
+		rec.Objectives[i].Completed = true
+	}
+	patch := doMethodJSON(s, http.MethodPatch, "/api/swarm/objectives", map[string]any{"objectives": rec.Objectives})
+	if patch.Code != http.StatusOK {
+		t.Fatalf("objectives patch status = %d body=%s", patch.Code, patch.Body.String())
+	}
+	end := doDeleteOwner(s, "/api/swarm", nil)
+	if end.Code != http.StatusOK {
+		t.Fatalf("end status = %d body=%s", end.Code, end.Body.String())
+	}
+	if err := json.NewDecoder(end.Body).Decode(&rec); err != nil {
+		t.Fatalf("decode end: %v", err)
+	}
+	if rec.ScoringError == "" || rec.Score.ObjectivesCompleted != len(defaultSwarmObjectives()) {
+		t.Fatalf("ended record = %+v", rec)
+	}
+}

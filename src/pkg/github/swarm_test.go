@@ -55,7 +55,7 @@ func TestScoreSwarmCountsClosedIssuesMergedPRsAndParticipants(t *testing.T) {
 			"total_count": 2,
 			"items": []map[string]any{
 				{"user": map[string]any{"login": "bob"}, "title": "complete spek plan implement", "body": "done\n\n— hive: agent=builder backend=bob model=auto"},
-				{"user": map[string]any{"login": "alice"}, "body": "routine"},
+				{"user": map[string]any{"login": "alice"}, "title": "mentions backend=bob outside attribution", "body": "routine"},
 				{"user": map[string]any{"login": "bob"}, "body": "spec plan implement\n\n— hive: agent=builder backend=ollama model=llama3"},
 			},
 		})

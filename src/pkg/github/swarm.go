@@ -137,7 +137,7 @@ func (c *Client) searchMergedPRs(ctx context.Context, repo string, start, end ti
 				speksByAuthor[login]++
 			}
 		}
-		if swarmPRUsesLocalModel(body, text) {
+		if swarmPRUsesLocalModel(body) {
 			localModelPRs++
 			if login != "" {
 				localByAuthor[login]++
@@ -156,11 +156,9 @@ func swarmPRCompletesSpek(text string) bool {
 	return strings.Contains(text, "spek") || (strings.Contains(text, "spec") && strings.Contains(text, "plan") && strings.Contains(text, "implement"))
 }
 
-func swarmPRUsesLocalModel(body, lowerText string) bool {
-	if meta, ok := ParseAttributionTrailer(body); ok && swarmAttributionIsLocal(meta) {
-		return true
-	}
-	return strings.Contains(lowerText, "backend=bob") || strings.Contains(lowerText, "backend=ollama") || strings.Contains(lowerText, "backend=local") || strings.Contains(lowerText, "model=local")
+func swarmPRUsesLocalModel(body string) bool {
+	meta, ok := ParseAttributionTrailer(body)
+	return ok && swarmAttributionIsLocal(meta)
 }
 
 func swarmAttributionIsLocal(meta InvocationMeta) bool {

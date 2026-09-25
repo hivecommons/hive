@@ -552,12 +552,13 @@ func (st *swarmStore) finishActiveLocked(ctx context.Context, reason string) (Sw
 	}
 	rec.EndedAt = &ended
 	rec.EndReason = reason
+	rec.Score.ObjectivesCompleted = completedSwarmObjectives(rec.Objectives)
 	if st.scorer != nil {
 		score, err := st.scorer.ScoreSwarm(ctx, rec.Repo, rec.Start, ended)
 		if err != nil {
 			rec.ScoringError = err.Error()
 		} else {
-			rec.Score = SwarmScore{IssuesClosed: score.IssuesClosed, PRsMerged: score.PRsMerged, SpeksCompleted: score.SpeksCompleted, LocalModelPRs: score.LocalModelPRs, ObjectivesCompleted: completedSwarmObjectives(rec.Objectives), Participants: score.Participants}
+			rec.Score = SwarmScore{IssuesClosed: score.IssuesClosed, PRsMerged: score.PRsMerged, SpeksCompleted: score.SpeksCompleted, LocalModelPRs: score.LocalModelPRs, ObjectivesCompleted: rec.Score.ObjectivesCompleted, Participants: score.Participants}
 			rec.Participants = append([]string(nil), score.Participants...)
 			st.updatePlayersLocked(rec, score)
 		}
