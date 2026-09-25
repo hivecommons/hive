@@ -1,0 +1,1 @@
+- Add Jira Data Center TLS settings for custom CA bundles, unsafe skip-verify testing, and optional mTLS client certificates in the work-source config and dashboard.

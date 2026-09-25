@@ -18,6 +18,8 @@ integration (webhooks, session acknowledgement, writing back to Linear);
 this page covers only the read side (`work_source.linear`) for parity with
 the other three.
 
+Hosted and dashboard-managed hives can configure the same block from **Settings → Work source**; self-hosted operators can also edit `governor.work_source` in `hive.yaml`. Custom CA bundles and TLS trust overrides for Jira Data Center are not documented here because they are still in progress and are not part of v5.
+
 ## Run stages (`run_stages: true`)
 
 Run stages let the governor offer a pending run stage such as `spec`, `plan`,
@@ -219,11 +221,20 @@ file on GitHub by default even on a Linear-sourced hive. Set
 mapped to the criterion's repo instead (`teams[].repo` match, else the first
 team) — see [ACMM policy matrix → Where gap issues are filed](acmm-policy-matrix.md#where-acmm-gap-issues-are-filed).
 
-## `type: jira` — Jira Cloud
+## `type: jira` — Jira Cloud or Jira Data Center
 
-Reads issues from Jira Cloud via the REST API v3
-(`pkg/worksource/jira.go`). Read-only ("Phase 1" per the code comment —
-there is no write-back to Jira the way there is for Linear).
+Reads issues from Jira Cloud via REST API v3, or from Jira Data Center / Server
+via REST API v2 when `deployment: datacenter` is set (`pkg/worksource/jira.go`).
+The Jira Data Center REST reference documents API version `2` and URI layouts
+that include the instance context path, such as
+`http://host:port/context/rest/api-name/api-version/resource-name`
+([Atlassian Jira Data Center REST API reference](https://docs.atlassian.com/software/jira/docs/api/REST/9.14.0/)).
+Atlassian's server examples use `/rest/api/2/...` endpoints for issues and
+searches ([Jira REST API examples](https://developer.atlassian.com/server/jira/platform/jira-rest-api-examples/)).
+Data Center PATs are available in Jira Core/Software 8.14+ and are sent with Jira Data Center's bearer-token HTTP authentication ([Using Personal Access Tokens](https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html)).
+Jira Cloud rich text comments/descriptions use ADF JSON
+([Atlassian Document Format](https://developer.atlassian.com/cloud/jira/platform/apis/document/structure/));
+Data Center accepts plain text / wiki-markup string bodies.
 
 ```yaml
 governor:
@@ -239,17 +250,46 @@ governor:
       hold_labels: [hold, blocked]                # optional — Jira labels that gate an issue
 ```
 
-Config fields (`JiraSourceConfig`, `pkg/config/config.go:1738-1746`):
+Jira Data Center / Server example:
+
+```yaml
+governor:
+  work_source:
+    type: jira
+    jira:
+      deployment: datacenter
+      base_url: https://jira.example.com/jira      # context paths are preserved
+      api_token: ${JIRA_DATACENTER_PAT}            # preferred PAT bearer auth
+      # Or, for older instances without PATs:
+      # username: hive-bot
+      # password: ${JIRA_DATACENTER_PASSWORD}
+      # ca_bundle: ${JIRA_DATACENTER_CA_BUNDLE}    # optional PEM, appended to system roots
+      # insecure_skip_verify: false                # optional, unsafe; testing only
+      # client_cert: ${JIRA_DATACENTER_CLIENT_CERT} # optional mTLS PEM
+      # client_key: ${JIRA_DATACENTER_CLIENT_KEY}   # optional mTLS PEM key
+      project_keys: [ENG, OPS]
+      repo: your-org/default-repo
+      hold_labels: [hold, blocked]
+```
+
+Config fields (`JiraSourceConfig`, `pkg/config/config.go`):
 
 | YAML key | Go field | Required | Notes |
 |---|---|---|---|
-| `base_url` | `BaseURL` | Yes | Jira Cloud instance root, e.g. `https://myorg.atlassian.net` (`jira.go:17`). |
-| `email` | `Email` | Yes | Atlassian account email; used for HTTP Basic auth alongside the API token (`jira.go:189`). |
-| `api_token` | `APIToken` | Yes | Jira API token (Atlassian account → **Security → API tokens**). |
+| `deployment` | `Deployment` | No | Empty/`cloud` keeps Jira Cloud REST API v3. `datacenter` or `server` uses REST API v2 and Data Center auth/body shapes. |
+| `base_url` | `BaseURL` | Yes | Jira instance root, e.g. Cloud `https://myorg.atlassian.net` or Data Center `https://jira.example.com/jira`; context paths are preserved. |
+| `email` | `Email` | Cloud yes | Atlassian account email; used for Cloud HTTP Basic auth alongside the API token. |
+| `username` | `Username` | DC basic auth only | Jira Data Center username when using basic auth. |
+| `api_token` | `APIToken` | Cloud yes; DC preferred | Cloud API token (Basic password) or Data Center Personal Access Token (Bearer). |
+| `password` | `Password` | DC basic auth only | Jira Data Center password, used only when `api_token` is empty. Prefer PATs where supported. |
+| `ca_bundle` | `CABundle` | No | Data Center only. PEM CA certificate bundle appended to system trust roots. May be a `${ENV}` reference or pasted PEM; dashboard responses expose only `ca_bundle_set`. |
+| `insecure_skip_verify` | `InsecureSkipVerify` | No | Data Center only. Disables server certificate and hostname verification. Default `false`; use only for testing. The dashboard warns loudly and the adapter logs a warning whenever this client is built. |
+| `client_cert` | `ClientCert` | No | Data Center only. Optional PEM client certificate for mTLS; set with `client_key`. Dashboard responses expose only `client_cert_set`. |
+| `client_key` | `ClientKey` | No | Data Center only. Optional PEM private key for mTLS; set with `client_cert`. Dashboard responses expose only `client_key_set`. |
 | `project_keys` | `ProjectKeys` | No¹ | Project keys to enumerate, e.g. `["ENG","OPS"]`. Used to build the default JQL when `jql` is empty. |
-| `jql` | `JQL` | No | Full JQL override. When empty, the adapter builds `project in (<keys>) AND statusCategory != Done AND issuetype != Epic` (`jira.go:59-67`). |
-| `repo` | `Repo` | Yes in practice | GitHub `owner/name` repo agents clone to work these issues; every returned `Issue.Repo` is set to this single value (`jira.go:214`) — Jira source config maps to exactly one repo, unlike Linear's per-team repo map. |
-| `hold_labels` | `HoldLabels` | No | Jira label values that gate an issue out of the work list, the Jira analogue of GitHub's `hold` label (`jira.go:33,143-153`). |
+| `jql` | `JQL` | No | Full JQL override. When empty, the adapter builds `project in (<keys>) AND statusCategory != Done AND issuetype != Epic`. |
+| `repo` | `Repo` | Yes in practice | GitHub `owner/name` repo agents clone to work these issues; every returned `Issue.Repo` is set to this single value — Jira source config maps to exactly one repo, unlike Linear's per-team repo map. |
+| `hold_labels` | `HoldLabels` | No | Jira label values that gate an issue out of the work list, the Jira analogue of GitHub's `hold` label. |
 
 ¹ `project_keys` is not enforced as required by the constructor, but if both
 it and `jql` are empty the built JQL becomes `project in () AND ...`, which
@@ -257,10 +297,28 @@ Jira will reject — set one or the other.
 
 **Credentials.** Jira Cloud REST v3 uses HTTP Basic auth with the account
 email as username and the **API token** (not the account password) as
-password (`req.SetBasicAuth(s.cfg.Email, s.cfg.APIToken)`, `jira.go:189`).
-Generate the token from the Atlassian account's **Security → API tokens**
-page. Supply it via `${JIRA_API_TOKEN}` environment-variable substitution in
-`hive.yaml` — never inline the literal token in the committed config.
+password. Jira Data Center sends the PAT as bearer-token HTTP auth when
+`api_token` is set; otherwise it falls back to HTTP Basic with
+`username`/`password` (or `email` as the username when `username` is empty).
+Supply secrets via `${JIRA_API_TOKEN}` / `${JIRA_DATACENTER_PAT}` /
+`${JIRA_DATACENTER_PASSWORD}` environment-variable substitution in `hive.yaml`
+— never inline literal credentials in committed config.
+
+**TLS for Data Center.** If Jira is signed by an internal CA, set
+`ca_bundle` to a PEM bundle (or `${JIRA_DATACENTER_CA_BUNDLE}`) and Hive
+appends those roots to the system trust store. mTLS is optional: provide both
+`client_cert` and `client_key` as PEM values or environment references. The
+dashboard's Work Source tab shows these Data Center-only fields as write-only
+set/unset indicators. `insecure_skip_verify` remains off by default; when
+enabled it bypasses TLS verification, should be limited to testing, and emits a
+warning every time the Jira client is built.
+
+**Data model differences.** Cloud users expose `accountId` and rich-text
+description/comment bodies as ADF JSON. Data Center commonly exposes users by
+`name` / `key`; the adapter prefers those identities when `deployment:
+datacenter` is set. Data Center comments sent by Hive are plain strings so Jira
+can render them as wiki markup/plain text; Cloud comments use a minimal ADF
+document.
 
 **Priority mapping.** Jira priority names are normalized case-insensitively
 (`normalizeJiraPriority`, `jira.go:126-141`):
@@ -279,9 +337,12 @@ the governor — the same shape as GitHub's `hold` label, but Jira has no
 built-in "hold" concept so this is opt-in and additive
 (`jira.go:143-175`).
 
-**Pagination.** The adapter pages the Jira search API 100 issues
-(`jiraMaxResults`, `jira.go:38`) at a time until it has walked the full
-result set.
+**Pagination and endpoints.** Cloud uses `/rest/api/3/search`; Data Center
+uses `/rest/api/2/search`. Both are paged with `startAt`/`maxResults`, and the
+adapter requests 100 issues at a time until it has walked the full result set.
+Issue fetch, comment, and transition helper paths use the same API-version
+switch (`/issue/{key}`, `/issue/{key}/comment`, and
+`/issue/{key}/transitions`).
 
 **Failure mode.** A bad `base_url`, invalid credentials, or non-2xx Jira
 response returns `worksource/jira: search returned <status>: <body>` on

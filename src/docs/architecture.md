@@ -279,7 +279,7 @@ flowchart LR
     L2["L2 Advisory<br/>observe + report"]
     L3["L3 Quality-Gated<br/>quality opens PRs"]
     L4["L4 Security-Aware<br/>more agents file/PR"]
-    L5["L5 Semi-Autonomous<br/>all PRs, hold-gated"]
+    L5["L5 Semi-Autonomous<br/>all PRs, hive-pause gated"]
     L6["L6 Fully Autonomous<br/>auto-merge on green"]
     L1 --> L2 --> L3 --> L4 --> L5 --> L6
 ```
@@ -288,9 +288,9 @@ flowchart LR
 |-------|------|------------------|
 | L1 | Inception (Assisted) | Advisory beads + project inception only |
 | L2 | Advisory (Instructed) | Observe and report findings as beads; no GitHub writes |
-| L3 | Quality-Gated (Measured) | `quality` opens hold-gated PRs about testing gaps, coverage, and CI health; others advisory. This measurement foundation is what earns automation at higher levels |
+| L3 | Quality-Gated (Measured) | `quality` opens PRs gated by the hive-specific `hive-pause/<hive-id>` hold label about testing gaps, coverage, and CI health; others advisory. This measurement foundation is what earns automation at higher levels |
 | L4 | Security-Aware (Adaptive) | All agents file issues (bugs, docs, workflows, vulns); still no PRs |
-| L5 | Semi-Autonomous (Semi-Automated) | All agents open PRs — every PR carries a `hold` label for human review |
+| L5 | Semi-Autonomous (Semi-Automated) | All agents open PRs — every PR carries the hive-specific `hive-pause/<hive-id>` hold label for human review |
 | L6 | Fully Autonomous | Agents open PRs and **auto-merge on green CI**; no hold required |
 
 `supervisor` is always advisory. The full matrix is in

@@ -542,3 +542,44 @@ func TestTriggerAutoUpgradesSkipsSpokeAheadOfLatest(t *testing.T) {
 		t.Errorf("heartbeat upgrade armed for a spoke ahead of latest: %v", s.heartbeatUpgrade)
 	}
 }
+
+// A :stable spoke already on its channel commit must not be chased toward the
+// v5 tip. It would re-pull :stable, land on the same commit, be drained by the
+// heartbeat, and be re-armed next sweep — rolling every ~8 minutes while
+// latched "Upgrading" on the SHA it already runs (2026-09-25, 17 spokes).
+func TestTriggerAutoUpgradesChasesChannelCommitNotBranchTip(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	resetCommitOrderState(t)
+	disableUpgradeDebounceForTest(t)
+	setLatestSHAForBranchForTest(t, "v5", "21f3400")
+	stubChannelRevisions(t, map[string]string{ReleaseChannelStable: "d5a638e"})
+
+	const atChannel, behindChannel = "stable-at-channel", "stable-behind-channel"
+	for _, id := range []string{atChannel, behindChannel} {
+		saveSaaSHive(&SaaSHive{ID: id, Owner: "alice", AutoUpgrade: true, Status: "running", ClusterID: "dc1"})
+	}
+	s := &HubServer{
+		logger:           slog.Default(),
+		hubSecret:        testHubSecret,
+		heartbeatUpgrade: make(map[string]string),
+		clusters:         map[string]ClusterConfig{"dc1": {ID: "dc1", InCluster: true}},
+	}
+	beat := time.Now().UTC().Format(time.RFC3339)
+	img := "ghcr.io/hivecommons/hive:stable"
+	s.registry.Hives = []RegistryEntry{
+		{ID: atChannel, GitBranch: "v5", GitHash: "d5a638e", ImageRef: img, LastHeartbeat: beat},
+		{ID: behindChannel, GitBranch: "v5", GitHash: "5c4d4cd", ImageRef: img, LastHeartbeat: beat},
+	}
+
+	s.triggerAutoUpgrades()
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if target, ok := s.heartbeatUpgrade[atChannel]; ok {
+		t.Errorf("stable spoke at its channel commit was armed toward %q", target)
+	}
+	if got := s.heartbeatUpgrade[behindChannel]; got != "d5a638e" {
+		t.Errorf("stable spoke behind its channel armed toward %q, want the channel commit d5a638e", got)
+	}
+}

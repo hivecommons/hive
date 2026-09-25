@@ -1273,7 +1273,17 @@ func (s *HubServer) triggerAutoUpgrades() {
 		if currentSHA == "" {
 			continue
 		}
-		latestSHA := getLatestSHAForBranch(branch)
+		// Chase what the spoke can actually REACH: a release-channel spoke
+		// (:stable/:candidate/:edge) can only land on its channel tag's
+		// commit, not the branch tip. Chasing the tip rolled every :stable
+		// spoke every ~8 minutes (re-pull → same commit → heartbeat drains →
+		// re-arm), leaving them latched "Upgrading" on the SHA they already
+		// run (2026-09-25).
+		reach := s.reachableUpgradeTarget(branch, imageRef, h.TrackedChannel)
+		if !reach.Resolved {
+			continue
+		}
+		latestSHA := reach.SHA
 		if latestSHA == "" || sameCommit(currentSHA, latestSHA) {
 			continue
 		}

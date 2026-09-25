@@ -2437,6 +2437,7 @@
     .kb-fact-item.selected { border-color: var(--accent); background: rgba(88,166,255,0.08); }
     .kb-fact-meta { flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); width: 50px; }
     .kb-fact-conf { font-size: 0.7rem; font-weight: 600; }
+    .kb-conf-unscored { color: var(--muted); font-weight: 600; }
     .kb-fact-conf-bar { width: 40px; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
     .kb-fact-conf-fill { height: 100%; border-radius: 2px; }
     .kb-fact-body { flex: 1; min-width: 0; }
@@ -8880,14 +8881,13 @@
       return `<div class="repo-breakdown">${parts.join(' · ')}</div>`;
     }
 
-    // Which of an item's labels put it on hold (hivecommons/hive#7896). Same
-    // rule as github.HasHoldLabel on the server: any label CONTAINING one of
-    // the hold spellings holds the item. The matching labels are returned by
-    // name so the tooltip can say which label an operator has to remove.
+    // Which of an item's labels put it on hold (hivecommons/hive#7896/#8851).
+    // Generic hold spellings are substring matches; the canonical hive hold is
+    // exact so hive/<id> can remain a provenance label instead of a hold.
     const HOLD_LABEL_SPELLINGS = ['hold', 'on-hold', 'hold/review'];
     function canonicalHiveHoldLabel() {
       const hiveId = String(((window._lastStatus || {}).hiveId) || '').trim();
-      return hiveId ? ('hive/' + hiveId) : 'hold';
+      return hiveId ? ('hive-pause/' + hiveId) : 'hold';
     }
     function holdLabels(labels) {
       const canonical = canonicalHiveHoldLabel().toLowerCase();
@@ -8914,7 +8914,7 @@
       const needsHuman = labels.includes('needs-human');
       const parts = [];
       parts.push('On hold' + (held.length ? ' — label ' + held.map(l => '`' + l + '`').join(', ') : '') + ': agents will not act on this until the hold label is removed');
-      if (item && item.hive_attributed) parts.push('opened by a hive agent — a `hold` here is usually the ACMM level gate, which the hive releases itself once policy allows; a human may remove the label sooner');
+      if (item && item.hive_attributed) parts.push('opened by a hive agent — a generic `hold` here is usually the ACMM level gate; the dashboard hive-pause hold is only removed by an operator');
       if (needsHuman) parts.push('needs-human: automated fix attempts exhausted, a human must review this');
       return parts.join('; ');
     }
@@ -8943,14 +8943,17 @@
     }
     function holdToggleChip(repoFull, item, type, held, interactive, tip) {
       const number = Number(item && item.number);
-      const label = held ? 'Remove hold' : 'Add hold';
-      const title = held ? tip : ('Add hold — applies label `' + canonicalHiveHoldLabel() + '` so agents will not act on this until the hold label is removed');
+      const text = held ? '▶ Release' : '⏸ Hold';
+      const label = held ? 'Release hold' : 'Hold';
+      const title = held
+        ? ((tip ? tip + '. ' : '') + 'Release hold — removes hold label(s) so agents may act on this item again')
+        : ('Hold — applies label `' + canonicalHiveHoldLabel() + '` so agents will not act on this until the hold label is removed');
       const cls = (type === 'pr' ? 'repo-pr-pill' : 'repo-issue-pill') + (held ? ' held' : '') + ' pill-held-badge pill-icon';
       if (!interactive || !number) {
         if (!held) return '';
-        return `<span class="${cls} repo-hold-static" title="${esc(title)}" aria-label="${esc(title)}">⏸</span>`;
+        return `<span class="${cls} repo-hold-static" title="${esc(title)}" aria-label="${esc(title)}">On hold</span>`;
       }
-      return `<button class="${cls} repo-hold-toggle" data-action="toggleRepoItemHold" data-arg0="${esc(repoFull)}" data-arg1="${number}" data-arg2="${type}" data-arg3="${held ? 'false' : 'true'}" data-arg-types="s,j,s,j,t" data-stop="1" data-prevent="1" aria-pressed="${held ? 'true' : 'false'}" title="${esc(title)}" aria-label="${esc(label + ' for #' + number)}">⏸</button>`;
+      return `<button class="${cls} repo-hold-toggle" data-action="toggleRepoItemHold" data-arg0="${esc(repoFull)}" data-arg1="${number}" data-arg2="${type}" data-arg3="${held ? 'false' : 'true'}" data-arg-types="s,j,s,j,t" data-stop="1" data-prevent="1" aria-pressed="${held ? 'true' : 'false'}" title="${esc(title)}" aria-label="${esc(label + ' #' + number)}">${text}</button>`;
     }
     function updateRepoBreakdownForHold(repo, type, toHeld) {
       const wb = repo && repo.workBreakdown && repo.workBreakdown[type === 'pr' ? 'prs' : 'issues'];
@@ -8994,16 +8997,17 @@
         const resp = await fetch('/api/repos/' + encodeURIComponent(p.owner) + '/' + encodeURIComponent(p.repo) + '/items/' + number + '/hold', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ held: wantHeld })
+          body: JSON.stringify({ held: wantHeld, type: type })
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
-        showToast((wantHeld ? 'Added hold to ' : 'Removed hold from ') + repoFull + '#' + number, 'success');
+        if (data.minStatusSeq != null) _statusSeqFloor = Math.max(_statusSeqFloor || 0, Number(data.minStatusSeq) || 0);
+        showToast((wantHeld ? 'Held ' : 'Released ') + repoFull + '#' + number, 'success');
         fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
       } catch (e) {
         if (moved) moveRepoItemHold(repoFull, number, type, !wantHeld, canonicalHiveHoldLabel());
         showToast('Hold toggle failed: ' + (e && e.message ? e.message : 'network error'), 'error');
-        if (btn) { btn.dataset.busy = ''; btn.textContent = prevText || '⏸'; }
+        if (btn) { btn.dataset.busy = ''; btn.textContent = prevText || (wantHeld ? '⏸ Hold' : '▶ Release'); }
       }
     }
 
@@ -13913,6 +13917,17 @@ function burnAreaChart() {
       return titleJunk && bodyJunk;
     }
 
+    function kbConfidenceBadge(f) {
+      if (!f || f.confidence_scored === false) {
+        const reason = (f && f.confidence_reason) || 'No confidence, validation, provenance, usage, or corroboration signal is available yet.';
+        return `<span class="kb-fact-conf" title="${escapeHtml(reason)}">unscored</span>`;
+      }
+      const conf = typeof f.confidence === 'number' ? f.confidence : 0;
+      const confPct = Math.round(conf * 100);
+      const reason = f.confidence_reason || ('Confidence score: ' + confPct + '%');
+      return `<span class="kb-fact-conf" style="color:${confColor(conf)}" title="${escapeHtml(reason)}">${confPct}%</span>`;
+    }
+
     function renderKnowledgeFacts() {
       const el = document.getElementById('kb-fact-list');
       if (!el) return;
@@ -13932,8 +13947,8 @@ function burnAreaChart() {
         const selected = _kbSelectedFact && _kbSelectedFact.slug === f.slug ? ' selected' : '';
         html += `<div class="kb-fact-item${selected}" data-action="gh17" data-arg0="${escapeHtml(f.slug || '')}">`;
         html += '<div class="kb-fact-meta">';
-        html += `<span class="kb-fact-conf" style="color:${confColor(conf)}">${confPct}%</span>`;
-        html += `<div class="kb-fact-conf-bar"><div class="kb-fact-conf-fill" style="width:${confPct}%;background:${confColor(conf)}"></div></div>`;
+        html += kbConfidenceBadge(f);
+        if (f.confidence_scored !== false) html += `<div class="kb-fact-conf-bar" title="${escapeHtml(f.confidence_reason || '')}"><div class="kb-fact-conf-fill" style="width:${confPct}%;background:${confColor(conf)}"></div></div>`;
         html += '</div>';
         html += '<div class="kb-fact-body">';
         html += `<div class="kb-fact-title">${escapeHtml(kbCleanFactTitle(f.title) || f.slug || 'Untitled')}</div>`;
@@ -13965,7 +13980,11 @@ function burnAreaChart() {
       html += '</div>';
       html += `<div class="kb-detail-body">${escapeHtml(f.body || 'No content')}</div>`;
       html += '<div class="kb-detail-meta">';
-      html += `<div><span class="kb-detail-label">Confidence:</span> <span style="color:${confColor(conf)};font-weight:600">${confPct}%</span></div>`;
+      if (f.confidence_scored === false) {
+        html += `<div><span class="kb-detail-label">Confidence:</span> <span title="${escapeHtml(f.confidence_reason || '')}" class="kb-conf-unscored">unscored</span></div>`;
+      } else {
+        html += `<div><span class="kb-detail-label">Confidence:</span> <span title="${escapeHtml(f.confidence_reason || '')}" style="color:${confColor(conf)};font-weight:600">${confPct}%</span></div>`;
+      }
       html += `<div><span class="kb-detail-label">Slug:</span> ${escapeHtml(f.slug || '')}</div>`;
       if (f.tags && f.tags.length) html += `<div><span class="kb-detail-label">Tags:</span> ${f.tags.map(t => escapeHtml(t)).join(', ')}</div>`;
       html += '</div>';
@@ -26641,7 +26660,7 @@ function burnAreaChart() {
         ['', 'GitHub Issues (default)'],
         ['github_projects', 'GitHub Projects v2'],
         ['linear', 'Linear'],
-        ['jira', 'Jira Cloud'],
+        ['jira', 'Jira'],
       ].map(([v, l]) => `<option value="${v}" ${type === v ? 'selected' : ''}>${l}</option>`).join('');
 
       return `
@@ -26738,19 +26757,56 @@ function burnAreaChart() {
 
         ${type === 'jira' ? `
         <div style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Jira Cloud</div>
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Jira</div>
           <div class="config-field">
-            <label>Base URL</label>
-            <input type="text" placeholder="https://myorg.atlassian.net" value="${esc(jira.base_url||'')}" data-change-action="markWorkSourceDirty" data-arg0="jira.base_url" data-arg-types="s,w">
+            <label>Deployment</label>
+            <select data-change-action="gh77">
+              <option value="" ${!jira.deployment || jira.deployment === 'cloud' ? 'selected' : ''}>Cloud (REST API v3)</option>
+              <option value="datacenter" ${jira.deployment === 'datacenter' ? 'selected' : ''}>Data Center / Server (REST API v2)</option>
+            </select>
           </div>
           <div class="config-field">
-            <label>Email</label>
+            <label>Base URL</label>
+            <input type="text" placeholder="${jira.deployment === 'datacenter' ? 'https://jira.example.com/jira' : 'https://myorg.atlassian.net'}" value="${esc(jira.base_url||'')}" data-change-action="markWorkSourceDirty" data-arg0="jira.base_url" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Email <span class="config-info">i<span class="config-tooltip">Required for Jira Cloud Basic auth. For Data Center basic auth, use Username + Password below instead.</span></span></label>
             <input type="email" placeholder="bot@myorg.com" value="${esc(jira.email||'')}" data-change-action="markWorkSourceDirty" data-arg0="jira.email" data-arg-types="s,w">
           </div>
           <div class="config-field">
-            <label>API token <span class="config-info">i<span class="config-tooltip">Atlassian API token from id.atlassian.com → Security → API tokens. Use \${JIRA_API_TOKEN} to reference an environment variable.</span></span></label>
-            <input type="text" placeholder="\${JIRA_API_TOKEN}" value="${esc(jira.api_token||'')}" data-change-action="markWorkSourceDirty" data-arg0="jira.api_token" data-arg-types="s,w">
+            <label>API token / Data Center PAT <span class="config-info">i<span class="config-tooltip">Cloud: Atlassian API token from id.atlassian.com. Data Center 8.14+: Personal Access Token sent as Authorization: Bearer. Use \${JIRA_API_TOKEN} to reference an environment variable.</span></span></label>
+            <input type="text" placeholder="${jira.api_token_set ? '(set — leave blank to keep)' : '\${JIRA_API_TOKEN}'}" value="" data-change-action="markWorkSourceDirty" data-arg0="jira.api_token" data-arg-types="s,w">
           </div>
+          <div class="config-field">
+            <label>Data Center username</label>
+            <input type="text" placeholder="jira-bot" value="${esc(jira.username||'')}" data-change-action="markWorkSourceDirty" data-arg0="jira.username" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Data Center password <span class="config-info">i<span class="config-tooltip">Only used for Data Center Basic auth when no PAT is configured. Use \${JIRA_PASSWORD}; do not store a raw password.</span></span></label>
+            <input type="text" placeholder="${jira.password_set ? '(set — leave blank to keep)' : '\${JIRA_PASSWORD}'}" value="" data-change-action="markWorkSourceDirty" data-arg0="jira.password" data-arg-types="s,w">
+          </div>
+          ${jira.deployment === 'datacenter' ? `
+          <div class="config-field">
+            <strong>Data Center TLS</strong>
+          </div>
+          <div>
+            <div class="config-field">
+              <label>Custom CA bundle <span class="config-info">i<span class="config-tooltip">PEM CA certificates appended to system trust roots. Use \${JIRA_DATACENTER_CA_BUNDLE} or paste PEM. Stored write-only; current value is never shown.</span></span></label>
+              <textarea rows="4" placeholder="${jira.ca_bundle_set ? '(set — leave blank to keep)' : '-----BEGIN CERTIFICATE-----\\n...'}" data-change-action="markWorkSourceDirty" data-arg0="jira.ca_bundle" data-arg-types="s,w"></textarea>
+            </div>
+            <div class="config-toggle">
+              <div class="config-toggle-switch ${jira.insecure_skip_verify ? 'on' : ''}" data-action="gh78" data-arg-types="t"></div>
+              <span class="config-toggle-label">Skip TLS verification — unsafe; testing only. Logs a warning whenever the Jira client is built.</span>
+            </div>
+            <div class="config-field">
+              <label>mTLS client certificate <span class="config-info">i<span class="config-tooltip">Optional PEM client certificate. Must be set with client key. Use an environment reference when possible.</span></span></label>
+              <textarea rows="3" placeholder="${jira.client_cert_set ? '(set — leave blank to keep)' : '\${JIRA_DATACENTER_CLIENT_CERT}'}" data-change-action="markWorkSourceDirty" data-arg0="jira.client_cert" data-arg-types="s,w"></textarea>
+            </div>
+            <div class="config-field">
+              <label>mTLS client key <span class="config-info">i<span class="config-tooltip">Optional PEM private key for the client certificate. Stored write-only; never shown after save.</span></span></label>
+              <textarea rows="3" placeholder="${jira.client_key_set ? '(set — leave blank to keep)' : '\${JIRA_DATACENTER_CLIENT_KEY}'}" data-change-action="markWorkSourceDirty" data-arg0="jira.client_key" data-arg-types="s,w"></textarea>
+            </div>
+          </div>` : ''}
           <div class="config-field">
             <label>Project keys <span class="config-info">i<span class="config-tooltip">Comma-separated Jira project keys, e.g. "ENG, OPS". Used to build the default JQL query.</span></span></label>
             <input type="text" placeholder="ENG, OPS" value="${esc((jira.project_keys||[]).join(', '))}" data-change-action="gh65">
@@ -29615,6 +29671,8 @@ function burnAreaChart() {
       gh64: function (event, A) { markWorkSourceDirty('linear.hold_labels',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh65: function (event, A) { markWorkSourceDirty('jira.project_keys',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh66: function (event, A) { markWorkSourceDirty('jira.hold_labels',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
+      gh77: function (event, A) { markWorkSourceDirty('jira.deployment',this.value);renderConfigTab('Work Source'); },
+      gh78: function (event, A) { const v=!((_configState.data.work_source||{}).jira||{}).insecure_skip_verify; markWorkSourceDirty('jira.insecure_skip_verify',v);renderConfigTab('Work Source'); },
     };
 
   </script>

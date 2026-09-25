@@ -1737,6 +1737,10 @@ func isPublicPath(path string) bool {
 		return true
 	case strings.HasPrefix(path, "/api/leaderboard"):
 		return true
+	case strings.HasPrefix(path, "/api/cards/"):
+		return true
+	case strings.HasPrefix(path, "/cards/") || strings.HasPrefix(path, "/share/"):
+		return true
 	case strings.HasPrefix(path, "/api/gh-user-auth/"):
 		return path != "/api/gh-user-auth/logout"
 	case path == openRouterCallbackPath:

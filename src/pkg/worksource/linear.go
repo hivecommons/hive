@@ -31,6 +31,10 @@ const defaultLinearBaseURL = "https://api.linear.app/graphql"
 // defaultLinearStates is used when a team's States list is empty.
 var defaultLinearStates = []string{"Todo", "In Progress", "Backlog"}
 
+// defaultLinearHoldLabels mirrors the GitHub hold-label defaults without
+// reading the mutable github.HoldLabels slice during Linear tests.
+var defaultLinearHoldLabels = []string{"hold", "on-hold", "hold/review"}
+
 // LinearTeamConfig maps one Linear team to the GitHub repo its agents clone.
 type LinearTeamConfig struct {
 	Key      string                // e.g. "ENG"
@@ -301,7 +305,7 @@ func (s *LinearSource) ListIssues(ctx context.Context) ([]Issue, error) {
 			}
 			labels := make([]string, 0, len(n.Labels.Nodes))
 			for _, l := range n.Labels.Nodes {
-				if github.HasHoldLabelWith([]string{l.Name}, s.cfg.HoldLabels) {
+				if linearHasHoldLabel(l.Name, s.cfg.HoldLabels) {
 					continue node
 				}
 				labels = append(labels, l.Name)
@@ -335,6 +339,17 @@ func (s *LinearSource) ListIssues(ctx context.Context) ([]Issue, error) {
 		}
 	}
 	return out, nil
+}
+
+func linearHasHoldLabel(label string, extraHoldLabels []string) bool {
+	lower := strings.ToLower(label)
+	for _, sub := range append(append([]string{}, defaultLinearHoldLabels...), extraHoldLabels...) {
+		sub = strings.ToLower(strings.TrimSpace(sub))
+		if sub != "" && strings.Contains(lower, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *LinearSource) linearDependencies(fallback LinearTeamConfig, n linearIssueNode) []Dependency {

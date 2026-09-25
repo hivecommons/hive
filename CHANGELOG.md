@@ -11,6 +11,35 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-25 (v5.52.0)
+
+### Added
+
+- Add public SVG social cards and share landing pages for contributor dossiers, Achievement System 2.0 unlocks, and public leaderboard summaries.
+
+## 2026-09-25 (v5.51.0)
+
+### Added
+
+- Add a public leaderboard Battle Log plus Hive of the Week gource source export, weekly render workflow, and README embed documentation.
+
+## 2026-09-25 (v5.50.0)
+
+### Added
+
+- Add Jira Data Center / Server support to the Jira work source via `deployment: datacenter`, including REST API v2 endpoints, PAT bearer auth, basic auth fallback, context-path base URLs, and Data Center user identity handling.
+
+### Fixed
+
+- Fixed the `hive/<hive-id>` label collision by keeping it as agent provenance and moving dashboard holds to exact-match `hive-pause/<hive-id>` labels; on upgrade Hive writes `/data/hive-hold-migration-<hive-id>.json`, copies audit-backed dashboard holds to the new label, leaves co-added `agent/*` provenance-only items actionable, and keeps ambiguous legacy labels held for operator review.
+- Preserved substring matching for operator-configured hold labels while keeping the new `hive-pause/<hive-id>` dashboard hold exact-match only.
+
+## 2026-09-25 (v5.49.1)
+
+### Fixed
+
+- Hub: auto-upgrade now chases each spoke's release-channel commit (:stable/:candidate/:edge) instead of the branch tip, ending the ~8-minute restart loop that left :stable spokes latched "Upgrading" on the SHA they already run.
+
 ## 2026-09-25 (v5.49.0)
 
 ### Added
