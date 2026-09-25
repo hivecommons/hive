@@ -252,6 +252,10 @@ func (s *Server) registerContributeRoutes() {
 	// /api/leaderboard prefix so isPublicPath makes it public like the profile
 	// endpoint above. See dossier.go.
 	s.mux.HandleFunc("GET /api/leaderboard/contributor/{username}/heraldry", s.handleContributorHeraldry)
+	// Public social-card SVGs and share landing pages (#8843). The handlers
+	// expose only the same contributor, achievement, and leaderboard facts already
+	// visible through the public leaderboard/dossier surfaces.
+	s.registerSocialCardRoutes()
 
 	s.mux.HandleFunc("GET /api/hives", s.handleHivesList)
 	s.mux.HandleFunc("POST /api/hives/register", s.handleHivesRegister)
