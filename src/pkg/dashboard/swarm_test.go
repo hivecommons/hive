@@ -186,3 +186,110 @@ func TestSwarmStartPersistsPrepAfterActiveRecord(t *testing.T) {
 		t.Fatalf("reloaded active prep = %+v", status.Active)
 	}
 }
+func TestSwarmIdleGateBlocksAndUnlocksAtThreshold(t *testing.T) {
+	t.Setenv(swarmEnvUnlockIdlePct, "75")
+	s, deps := apiServer(t)
+	deps.Config.Project.Org = "acme"
+	deps.Config.Project.Repos = []string{"api"}
+	deps.Config.Agents["architect"] = deps.Config.Agents["scanner"]
+	s.SetContributorsDir(t.TempDir())
+	s.swarm = seededSwarmStore(t, s, []SwarmRecord{{Repo: "acme/web", Start: time.Now().Add(-2 * time.Hour), End: time.Now().Add(-time.Hour)}})
+	setSwarmAgents(s, []FrontendAgent{
+		{Name: "scanner", Busy: "working", State: "running"},
+		{Name: "architect", Busy: "idle", State: "running"},
+	})
+
+	locked := doOwnerPost(s, "/api/swarm", map[string]string{"repo": "api"})
+	if locked.Code != http.StatusLocked {
+		t.Fatalf("locked status = %d body=%s", locked.Code, locked.Body.String())
+	}
+	var lockBody struct {
+		Error         string `json:"error"`
+		IdlePct       int    `json:"idle_pct"`
+		UnlockIdlePct int    `json:"unlock_idle_pct"`
+	}
+	if err := json.NewDecoder(locked.Body).Decode(&lockBody); err != nil {
+		t.Fatalf("decode lock body: %v", err)
+	}
+	if lockBody.IdlePct != 50 || lockBody.UnlockIdlePct != 75 || lockBody.Error == "" {
+		t.Fatalf("lock body = %+v", lockBody)
+	}
+
+	setSwarmAgents(s, []FrontendAgent{
+		{Name: "scanner", Busy: "idle", State: "running"},
+		{Name: "architect", Busy: "idle", State: "running"},
+	})
+	unlocked := doOwnerPost(s, "/api/swarm", map[string]string{"repo": "api"})
+	if unlocked.Code != http.StatusOK {
+		t.Fatalf("unlocked status = %d body=%s", unlocked.Code, unlocked.Body.String())
+	}
+}
+
+func TestSwarmIdleGateDisabledForceAndFirstSwarm(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.Project.Org = "acme"
+	deps.Config.Project.Repos = []string{"api", "web", "first"}
+	s.SetContributorsDir(t.TempDir())
+	setSwarmAgents(s, []FrontendAgent{{Name: "scanner", Busy: "working", State: "running"}})
+
+	t.Setenv(swarmEnvUnlockIdlePct, "100")
+	s.swarm = seededSwarmStore(t, s, nil)
+	first := doOwnerPost(s, "/api/swarm", map[string]string{"repo": "first"})
+	if first.Code != http.StatusOK {
+		t.Fatalf("first swarm status = %d body=%s", first.Code, first.Body.String())
+	}
+
+	_, _ = s.swarmStore().end(context.Background(), "ended")
+	forced := doOwnerPost(s, "/api/swarm", map[string]any{"repo": "api", "force": true})
+	if forced.Code != http.StatusOK {
+		t.Fatalf("force status = %d body=%s", forced.Code, forced.Body.String())
+	}
+
+	_, _ = s.swarmStore().end(context.Background(), "ended")
+	t.Setenv(swarmEnvUnlockIdlePct, "0")
+	disabled := doOwnerPost(s, "/api/swarm", map[string]string{"repo": "web"})
+	if disabled.Code != http.StatusOK {
+		t.Fatalf("disabled gate status = %d body=%s", disabled.Code, disabled.Body.String())
+	}
+}
+
+func TestSwarmStatusIncludesIdleUnlockFields(t *testing.T) {
+	t.Setenv(swarmEnvUnlockIdlePct, "75")
+	s, deps := apiServer(t)
+	deps.Config.Agents["architect"] = deps.Config.Agents["scanner"]
+	s.SetContributorsDir(t.TempDir())
+	s.swarm = seededSwarmStore(t, s, []SwarmRecord{{Repo: "myorg/repo1", Start: time.Now().Add(-2 * time.Hour), End: time.Now().Add(-time.Hour)}})
+	setSwarmAgents(s, []FrontendAgent{
+		{Name: "scanner", Busy: "working", State: "running"},
+		{Name: "architect", Busy: "idle", State: "running"},
+	})
+
+	rec := doOwnerGet(s, "/api/swarm")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var status SwarmStatus
+	if err := json.NewDecoder(rec.Body).Decode(&status); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if status.IdlePct != 50 || status.UnlockIdlePct != 75 || status.Unlocked {
+		t.Fatalf("status = %+v", status)
+	}
+}
+
+func seededSwarmStore(t *testing.T, s *Server, history []SwarmRecord) *swarmStore {
+	t.Helper()
+	store := newSwarmStore(filepath.Join(s.contributorsDirOrDefault(), SwarmStateFileName), nil)
+	store.loaded = true
+	store.state.History = append([]SwarmRecord(nil), history...)
+	return store
+}
+
+func setSwarmAgents(s *Server, agents []FrontendAgent) {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	if s.status == nil {
+		s.status = &StatusPayload{}
+	}
+	s.status.Agents = append([]FrontendAgent(nil), agents...)
+}

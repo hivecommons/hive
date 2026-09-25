@@ -8518,14 +8518,14 @@
       }
     }
 
-    async function startSwarm(repo, btn) {
+    async function startSwarm(repo, btn, force) {
       if (btn && btn.dataset.busy === '1') return;
       if (btn) { btn.dataset.busy = '1'; btn.textContent = 'Calling…'; }
       try {
         const resp = await fetch('/api/swarm', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ repo: repo })
+          body: JSON.stringify({ repo: repo, force: !!force })
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
@@ -8534,7 +8534,7 @@
         fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
       } catch (e) {
         showToast('Swarm failed: ' + (e && e.message ? e.message : 'network error'), 'error');
-        if (btn) { btn.dataset.busy = ''; btn.textContent = '🐝 swarm'; }
+        if (btn) { btn.dataset.busy = ''; btn.textContent = force ? 'force swarm' : '🐝 swarm'; }
       }
     }
 
@@ -8877,7 +8877,8 @@
       const showDesign = showPlan && dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
       const planLinks = planIssueLinks();
       const layoutW = repoCardLayoutWidth(el);
-      const activeSwarmRepo = (((window._lastStatus || {}).swarm || {}).active || {}).repo || '';
+      const status = window._lastStatus || {};
+      const activeSwarmRepo = ((status.swarm || {}).active || {}).repo || '';
       // Definitive single-host badge in the section header: every repo in this
       // hive is on ONE GitHub host (github.com or a GHE instance). Green =
       // github.com, blue = GitHub Enterprise — matches the hub spokes-table pill.
@@ -9097,8 +9098,14 @@
         const pauseBtn = canPauseRepo
           ? `<button class="repo-pause-btn" data-action="toggleRepoPause" data-arg0="${esc(cardRepo)}" data-arg1="${r.paused ? 'true' : 'false'}" data-arg-types="s,j,t" data-stop="1" data-prevent="1" title="${r.paused ? 'Resume agent activity on this repo' : 'Quiet this repo — agents stop writing to it and stop being handed work on it — without stopping the rest of the hive'}">${r.paused ? '▶ resume' : '⏸ pause'}</button>`
           : '';
+        const swarmLocked = status.swarm && status.swarm.unlocked === false;
+        const swarmLockTip = swarmLocked
+          ? `locked — ${Number(status.swarm.idle_pct || 0)}% idle / ${Number(status.swarm.unlock_idle_pct || 0)}% needed`
+          : 'Start a 24h swarm prioritizing this repository';
         const swarmBtn = canPauseRepo && !activeSwarmRepo
-          ? `<button class="repo-swarm-btn" data-action="startSwarm" data-arg0="${esc(cardRepo)}" data-arg-types="s,t" data-stop="1" data-prevent="1" title="Start a 24h swarm prioritizing this repository">🐝 swarm</button>`
+          ? (swarmLocked
+              ? `<button class="repo-swarm-btn" disabled aria-disabled="true" title="${esc(swarmLockTip)}">🐝 swarm</button><button class="repo-swarm-btn" data-action="startSwarm" data-arg0="${esc(cardRepo)}" data-arg2="true" data-arg-types="s,t,j" data-stop="1" data-prevent="1" title="${esc('Owner force start: ' + swarmLockTip)}">force swarm</button>`
+              : `<button class="repo-swarm-btn" data-action="startSwarm" data-arg0="${esc(cardRepo)}" data-arg-types="s,t" data-stop="1" data-prevent="1" title="${esc(swarmLockTip)}">🐝 swarm</button>`)
           : '';
         // role="separator" + aria-orientation="vertical" is the window-splitter
         // pattern: a focusable handle that reports the width it controls, so

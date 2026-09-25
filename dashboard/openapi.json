@@ -22934,7 +22934,7 @@
           "Swarm"
         ],
         "summary": "Current swarm status",
-        "description": "Returns the configured swarm display name, duration, and the active repo swarm when one is running, including persisted prep metrics when available.",
+        "description": "Returns the configured swarm display name, duration, idle percentage, unlock threshold, lock state, and the active repo swarm when one is running, including persisted prep metrics when available.",
         "responses": {
           "200": {
             "description": "JSON response",
@@ -22953,7 +22953,7 @@
           "Swarm"
         ],
         "summary": "Start a repo swarm",
-        "description": "Owner-only. Starts a 24h swarm for one configured repo, saves the active record before repo prep, then persists prep metrics. Only one swarm may be active, so a second start returns 409. Body: {\"repo\":\"owner/name\"}.",
+        "description": "Owner-only. Starts a 24h swarm for one configured repo, saves the active record before repo prep, then persists prep metrics. Only one swarm may be active, so a second start returns 409. After the first completed swarm, starts return 423 until enough configured agents are idle unless force is true. Body: {\"repo\":\"owner/name\",\"force\":false}.",
         "requestBody": {
           "required": true,
           "content": {
@@ -22963,6 +22963,10 @@
                 "properties": {
                   "repo": {
                     "type": "string"
+                  },
+                  "force": {
+                    "type": "boolean",
+                    "description": "Owner bypass for the idle-unlock gate."
                   }
                 },
                 "required": [
@@ -22991,6 +22995,9 @@
           },
           "409": {
             "description": "Another swarm is already active"
+          },
+          "423": {
+            "description": "Swarm is locked until enough agents are idle"
           }
         }
       },

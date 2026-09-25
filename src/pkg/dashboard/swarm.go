@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,16 +19,18 @@ import (
 )
 
 const (
-	DefaultSwarmName        = "Swarm"
-	DefaultSwarmDuration    = 24 * time.Hour
-	DefaultSwarmPrepTimeout = 2 * time.Minute
-	SwarmStateFileName      = "swarm-state.json"
+	DefaultSwarmName          = "Swarm"
+	DefaultSwarmDuration      = 24 * time.Hour
+	DefaultSwarmPrepTimeout   = 2 * time.Minute
+	DefaultSwarmUnlockIdlePct = 50
+	SwarmStateFileName        = "swarm-state.json"
 )
 
 const (
-	swarmEnvName        = "HIVE_SWARM_NAME"
-	swarmEnvDuration    = "HIVE_SWARM_DURATION"
-	swarmEnvPrepTimeout = "HIVE_SWARM_PREP_TIMEOUT"
+	swarmEnvName          = "HIVE_SWARM_NAME"
+	swarmEnvDuration      = "HIVE_SWARM_DURATION"
+	swarmEnvPrepTimeout   = "HIVE_SWARM_PREP_TIMEOUT"
+	swarmEnvUnlockIdlePct = "HIVE_SWARM_UNLOCK_IDLE_PCT"
 )
 
 type SwarmScore struct {
@@ -64,10 +67,13 @@ type SwarmPrep struct {
 }
 
 type SwarmStatus struct {
-	Name      string       `json:"name"`
-	Duration  string       `json:"duration"`
-	Active    *SwarmRecord `json:"active,omitempty"`
-	ExpiresIn string       `json:"expires_in,omitempty"`
+	Name          string       `json:"name"`
+	Duration      string       `json:"duration"`
+	Active        *SwarmRecord `json:"active,omitempty"`
+	ExpiresIn     string       `json:"expires_in,omitempty"`
+	IdlePct       int          `json:"idle_pct"`
+	UnlockIdlePct int          `json:"unlock_idle_pct"`
+	Unlocked      bool         `json:"unlocked"`
 }
 
 type SwarmHistoryResponse struct {
@@ -132,6 +138,19 @@ func configuredSwarmPrepTimeout() time.Duration {
 	return DefaultSwarmPrepTimeout
 }
 
+func configuredSwarmUnlockIdlePct() int {
+	if v := strings.TrimSpace(os.Getenv(swarmEnvUnlockIdlePct)); v != "" {
+		pct, err := strconv.Atoi(v)
+		if err == nil && pct >= 0 {
+			if pct > 100 {
+				return 100
+			}
+			return pct
+		}
+	}
+	return DefaultSwarmUnlockIdlePct
+}
+
 func (s *Server) registerSwarmRoutes() {
 	s.mux.HandleFunc("GET /api/swarm", s.handleSwarmGet)
 	s.mux.HandleFunc("POST /api/swarm", s.handleSwarmPost)
@@ -171,10 +190,12 @@ func (s *Server) dataRootOrDefault() string {
 func (s *Server) SwarmSnapshot() SwarmStatus {
 	store := s.swarmStore()
 	if store == nil {
-		return SwarmStatus{Name: DefaultSwarmName, Duration: DefaultSwarmDuration.String()}
+		status := SwarmStatus{Name: DefaultSwarmName, Duration: DefaultSwarmDuration.String()}
+		return s.withSwarmUnlockStatus(status, false)
 	}
 	status, _ := store.status(context.Background())
-	return status
+	hasHistory, _ := store.hasHistory(context.Background())
+	return s.withSwarmUnlockStatus(status, hasHistory)
 }
 
 func (s *Server) ActiveSwarmRepo() string {
@@ -206,6 +227,18 @@ func (st *swarmStore) status(ctx context.Context) (SwarmStatus, error) {
 		}
 	}
 	return SwarmStatus{Name: st.name, Duration: st.duration.String(), Active: active, ExpiresIn: expiresIn}, nil
+}
+
+func (st *swarmStore) hasHistory(ctx context.Context) (bool, error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if err := st.loadLocked(); err != nil {
+		return false, err
+	}
+	if err := st.expireLocked(ctx); err != nil {
+		return false, err
+	}
+	return len(st.state.History) > 0, nil
 }
 
 func (st *swarmStore) history(ctx context.Context) (SwarmHistoryResponse, error) {
@@ -359,12 +392,18 @@ func (st *swarmStore) saveLocked() error {
 }
 
 func (s *Server) handleSwarmGet(w http.ResponseWriter, r *http.Request) {
-	status, err := s.swarmStore().status(r.Context())
+	store := s.swarmStore()
+	status, err := store.status(r.Context())
 	if err != nil {
 		jsonError(w, "swarm state unavailable: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	jsonResponse(w, status)
+	hasHistory, err := store.hasHistory(r.Context())
+	if err != nil {
+		jsonError(w, "swarm state unavailable: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, s.withSwarmUnlockStatus(status, hasHistory))
 }
 
 func (s *Server) handleSwarmHistory(w http.ResponseWriter, r *http.Request) {
@@ -381,7 +420,8 @@ func (s *Server) handleSwarmPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Repo string `json:"repo"`
+		Repo  string `json:"repo"`
+		Force bool   `json:"force"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
@@ -393,6 +433,19 @@ func (s *Server) handleSwarmPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	store := s.swarmStore()
+	if hasHistory, err := store.hasHistory(r.Context()); err != nil {
+		jsonError(w, "swarm state unavailable: "+err.Error(), http.StatusInternalServerError)
+		return
+	} else if locked, pct, threshold := s.swarmStartLocked(hasHistory); locked && !body.Force {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusLocked)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error":           fmt.Sprintf("swarm locked: hive is %d%% idle, needs %d%%", pct, threshold),
+			"idle_pct":        pct,
+			"unlock_idle_pct": threshold,
+		})
+		return
+	}
 	rec, err := store.start(repo, nil)
 	if errors.Is(err, errSwarmActive) {
 		jsonError(w, "another swarm is already active", http.StatusConflict)
@@ -408,8 +461,74 @@ func (s *Server) handleSwarmPost(w http.ResponseWriter, r *http.Request) {
 	} else if s.logger != nil {
 		s.logger.Warn("persisting swarm prep failed", "repo", repo, "error", err)
 	}
-	s.auditFromRequest(r, "swarm_start", auditDetail("repo", rec.Repo, "ends_at", rec.End.Format(time.RFC3339)), "")
+	action := "swarm_start"
+	if body.Force {
+		action = "swarm_start_forced"
+	}
+	s.auditFromRequest(r, action, auditDetail("repo", rec.Repo, "ends_at", rec.End.Format(time.RFC3339)), "")
 	jsonResponse(w, rec)
+}
+
+func (s *Server) withSwarmUnlockStatus(status SwarmStatus, hasHistory bool) SwarmStatus {
+	pct, _, _ := s.swarmIdlePercent()
+	threshold := configuredSwarmUnlockIdlePct()
+	status.IdlePct = pct
+	status.UnlockIdlePct = threshold
+	status.Unlocked = threshold == 0 || !hasHistory || pct >= threshold
+	return status
+}
+
+func (s *Server) swarmStartLocked(hasHistory bool) (bool, int, int) {
+	pct, _, _ := s.swarmIdlePercent()
+	threshold := configuredSwarmUnlockIdlePct()
+	return threshold > 0 && hasHistory && pct < threshold, pct, threshold
+}
+
+func (s *Server) swarmIdlePercent() (pct int, idle int, total int) {
+	if s == nil {
+		return 100, 0, 0
+	}
+	var agents []FrontendAgent
+	s.statusMu.RLock()
+	if s.status != nil {
+		agents = append(agents, s.status.Agents...)
+	}
+	s.statusMu.RUnlock()
+
+	configured := map[string]bool{}
+	if s.deps != nil && s.deps.Config != nil {
+		for name := range s.deps.Config.Agents {
+			configured[name] = true
+		}
+	}
+	if len(configured) == 0 {
+		total = len(agents)
+		for _, a := range agents {
+			if !swarmAgentWorking(a) {
+				idle++
+			}
+		}
+	} else {
+		total = len(configured)
+		byName := map[string]FrontendAgent{}
+		for _, a := range agents {
+			byName[a.Name] = a
+		}
+		for name := range configured {
+			a, ok := byName[name]
+			if !ok || !swarmAgentWorking(a) {
+				idle++
+			}
+		}
+	}
+	if total == 0 {
+		return 100, 0, 0
+	}
+	return idle * 100 / total, idle, total
+}
+
+func swarmAgentWorking(a FrontendAgent) bool {
+	return strings.EqualFold(strings.TrimSpace(a.Busy), "working") || strings.EqualFold(strings.TrimSpace(a.State), "working")
 }
 
 func (s *Server) handleSwarmDelete(w http.ResponseWriter, r *http.Request) {
