@@ -97,6 +97,12 @@ const (
 	// the pod restarts that caused the incident this guard exists to prevent.
 	ClaimLedgerPath = "/data/pr-claims.json"
 
+	// CoveredByPRLabel marks an open issue with an API-verified open PR relation.
+	CoveredByPRLabel = "hive/covered-by-pr"
+	// LikelyDoneLabel marks an open issue with an API-verified merged PR relation
+	// that is not yet a resolved/closed issue.
+	LikelyDoneLabel = "hive/likely-done"
+
 	// claimLedgerFileMode is the permission mode for the ledger file. It holds
 	// no secrets (issue and PR numbers only), so it is world-readable like the
 	// other operational state files under /data.
@@ -146,6 +152,9 @@ type IssueClaim struct {
 	// ever recorded hive-authored claims — unmarshal as hive-authored (false),
 	// keeping their agent-side suppression intact across the upgrade.
 	ExternalAuthor bool `json:"external_author,omitempty"`
+	// Closing marks a claim recovered from explicit closing evidence rather than
+	// a non-closing reference or branch-name heuristic.
+	Closing bool `json:"closing,omitempty"`
 	// Reference marks a WEAK claim, recovered from a non-closing reference
 	// ("Refs #N", "Part of #N") rather than a closing keyword
 	// (kubestellar/hive#3980). Such a PR is demonstrably working the issue but
@@ -569,6 +578,7 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 	// lives in the body, but many agents put it in the title.
 	text := pr.GetTitle() + "\n" + pr.GetBody()
 	refs := ParseClaimedIssues(text, repo)
+	refsAreClosing := len(refs) > 0
 
 	// Secondary heuristic for PRs that reference no issue at all
 	// (in the real incident, PR #443's body was literally "test").
@@ -579,6 +589,7 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 	if len(refs) == 0 {
 		if n, ok := issueFromBranchName(headRef(pr)); ok {
 			refs = []ClaimedRef{{Repo: repo, Issue: n}}
+			refsAreClosing = false
 		}
 	}
 
@@ -612,7 +623,7 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 	}
 
 	claims := make([]IssueClaim, 0, len(refs)+len(referenced))
-	add := func(ref ClaimedRef, reference bool) {
+	add := func(ref ClaimedRef, reference bool, closing bool) {
 		claims = append(claims, IssueClaim{
 			Repo:            ref.Repo,
 			Issue:           ref.Issue,
@@ -623,14 +634,15 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 			ObservedAt:      now,
 			FirstObservedAt: now,
 			ExternalAuthor:  external,
+			Closing:         closing,
 			Reference:       reference,
 		})
 	}
 	for _, ref := range refs {
-		add(ref, false)
+		add(ref, false, refsAreClosing)
 	}
 	for _, ref := range referenced {
-		add(ref, true)
+		add(ref, true, false)
 	}
 	return claims
 }
@@ -1188,6 +1200,7 @@ func claimContext(c IssueClaim, decision string) *IssueClaimContext {
 		PRURL:          c.PRURL,
 		PRAuthor:       c.PRAuthor,
 		ExternalAuthor: c.ExternalAuthor,
+		Closing:        c.Closing,
 		Reference:      c.Reference,
 		MergedPR:       c.MergedPR,
 		MergedAt:       c.MergedAt,
@@ -1195,19 +1208,77 @@ func claimContext(c IssueClaim, decision string) *IssueClaimContext {
 	}
 }
 
-// FilterClaimedIssues removes from result every issue an open PR already claims,
-// logging each suppression with the claiming PR's URL.
+func linkedPRFromClaim(c IssueClaim) IssueLinkedPR {
+	state := "open"
+	if c.MergedPR {
+		state = "merged"
+	}
+	return IssueLinkedPR{Number: c.PRNumber, Repo: c.PRRepo, State: state, Merged: c.MergedPR, URL: c.PRURL, Closing: c.Closing}
+}
+
+func issueHasLabel(labels []string, label string) bool {
+	for _, l := range labels {
+		if strings.EqualFold(strings.TrimSpace(l), label) {
+			return true
+		}
+	}
+	return false
+}
+
+func addIssueLabel(labels []string, label string) []string {
+	label = strings.TrimSpace(label)
+	if label == "" || issueHasLabel(labels, label) {
+		return labels
+	}
+	return append(labels, label)
+}
+
+func removeIssueLabel(labels []string, label string) []string {
+	out := labels[:0]
+	for _, l := range labels {
+		if strings.EqualFold(strings.TrimSpace(l), label) {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+func annotateIssueWithClaim(issue *Issue, claim IssueClaim) {
+	if issue == nil || claim.PRNumber <= 0 {
+		return
+	}
+	link := linkedPRFromClaim(claim)
+	seen := false
+	for _, existing := range issue.LinkedPRs {
+		if existing.Number == link.Number && strings.EqualFold(existing.Repo, link.Repo) {
+			seen = true
+			break
+		}
+	}
+	if !seen {
+		issue.LinkedPRs = append(issue.LinkedPRs, link)
+	}
+	if claim.MergedPR {
+		issue.Labels = addIssueLabel(removeIssueLabel(issue.Labels, CoveredByPRLabel), LikelyDoneLabel)
+		issue.ClaimContext = claimContext(claim, "merged_pr_needs_verification")
+		return
+	}
+	issue.Labels = addIssueLabel(issue.Labels, CoveredByPRLabel)
+	issue.ClaimContext = claimContext(claim, "covered_by_open_pr")
+}
+
+// FilterClaimedIssues applies the duplicate-PR guard to actionable issues.
 //
-// A claim that asserts it CLOSES the issue, from a PR this hive authored,
-// suppresses for as long as it stands. A WEAK claim — external authorship
-// (#3768) or a non-closing "Refs #N" reference (#3980) — suppresses only for
-// weakClaimDeferWindow from when it was first observed, then releases even
-// while the PR stays open (#4929). Weak claims used to be ignored here
-// entirely; see the branch below for why that stopped being safe.
+// A strong open claim from this hive still suppresses duplicate agent work while
+// the PR is live. Pending evidence that is not safe to treat as resolved — a
+// weak external/reference claim, or any merged PR claim that left the issue open
+// — is kept actionable and annotated with linked PR context/labels (#8876).
+// That lets repo cards and agents see the verified PR without auto-hiding an
+// issue on text evidence alone.
 //
-// redStale (may be nil) is Fix #3's release valve: when it reports the claiming
-// PR is red+stale, the issue is NOT suppressed — it is kept actionable so a
-// fresh fix can happen instead of the issue being frozen behind a dead PR.
+// redStale (may be nil) remains the release valve for strong open claims whose
+// PR is red+stale.
 //
 // It mutates result in place (Issues.Items, Issues.Count, Issues.SLAViolations)
 // and returns the number of issues suppressed. A nil result or nil ledger is a
@@ -1225,79 +1296,27 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 			kept = append(kept, issue)
 			continue
 		}
-		// A WEAK claim is one that does not assert it closes the issue: an
-		// EXTERNAL PR the hive did not author (#3768), or a non-closing
-		// "Refs #N" reference (#3980). Both used to be waved straight through
-		// here, on two rules that still hold — a stranger's junk PR must never
-		// freeze the hive's own pipeline, and a PR that never claimed to finish
-		// an issue must not strand the remainder behind it.
-		//
-		// What they missed is the agent that cannot look (#4929). The scanner's
-		// hold-gated policy forbids `gh pr list`/`gh issue list`, so an issue
-		// re-offered under a weak claim is not re-examined against the open PR,
-		// it is re-implemented from scratch — twice on one issue, two days
-		// apart, in the report that prompted this. Waving the issue through
-		// only avoids stranding when someone downstream can SEE the claim.
-		//
-		// So weak claims now DEFER rather than either freeze or vanish: they
-		// suppress for weakClaimDeferWindow measured from when the PR was first
-		// seen claiming the issue, then release even while it stays open. Both
-		// original rules survive in bounded form.
-		if claim.ExternalAuthor || claim.Reference {
-			// A merged weak claim is final evidence, not live work-in-progress:
-			// the PR can no longer gain a closing keyword or new commits, so a
-			// timer cannot turn the weak reference into a resolved/not-resolved
-			// decision. Be conservative: do NOT auto-close the issue from a bare
-			// reference or external-author heuristic. Instead, release it with
-			// the merged PR attached so the next agent/human verifies whether the
-			// merged diff resolved the issue before implementing anything.
-			if claim.MergedPR {
-				issue.ClaimContext = claimContext(claim, "merged_weak_claim_needs_verification")
-				annotated = true
-				kept = append(kept, issue)
-				if logger != nil {
-					logger.Info("releasing issue: merged weak claim needs verification",
-						"repo", issue.Repo,
-						"issue", issue.Number,
-						"claimed_by_pr", claim.PRNumber,
-						"pr_repo", claim.PRRepo,
-						"pr_url", claim.PRURL,
-						"external", claim.ExternalAuthor,
-						"reference", claim.Reference,
-						"merged", claim.MergedPR,
-						"merged_at", claim.MergedAt,
-					)
-				}
-				continue
-			}
-			// The red+stale valve applies BEFORE the window: a dead PR defers
-			// nothing, which keeps an abandoned weak claim from costing the
-			// issue three days. A MERGED claim (#6867) never takes the valve —
-			// its work already landed, so check state is meaningless for it.
-			if redStale != nil && redStale(claim.PRRepo, claim.PRNumber) {
-				kept = append(kept, issue)
-				continue
-			}
-			if ledger.weakDeferExpired(claim) {
-				kept = append(kept, issue)
-				if logger != nil {
-					logger.Info("releasing issue: weak claim past its deferral window",
-						"repo", issue.Repo,
-						"issue", issue.Number,
-						"claimed_by_pr", claim.PRNumber,
-						"pr_repo", claim.PRRepo,
-						"pr_url", claim.PRURL,
-						"external", claim.ExternalAuthor,
-						"reference", claim.Reference,
-						"merged", claim.MergedPR,
-						"first_observed", claim.FirstObservedAt,
-					)
-				}
-				continue
-			}
-			suppressed++
+		annotateIssueWithClaim(&issue, claim)
+		if claim.MergedPR {
+			annotated = true
+			kept = append(kept, issue)
 			if logger != nil {
-				logger.Info("deferring issue: PR weakly claims it",
+				logger.Info("releasing issue: merged PR claim needs verification",
+					"repo", issue.Repo, "issue", issue.Number, "claimed_by_pr", claim.PRNumber,
+					"pr_repo", claim.PRRepo, "pr_url", claim.PRURL, "merged_at", claim.MergedAt)
+			}
+			continue
+		}
+		// A WEAK claim is one that does not assert a trusted closing relationship:
+		// an EXTERNAL PR the hive did not author (#3768), or a non-closing
+		// "Refs #N" reference (#3980). #8876 makes that evidence visible instead
+		// of hiding the issue: the issue stays actionable with linked PR context and
+		// a pending label for a human/agent to verify.
+		if claim.ExternalAuthor || claim.Reference {
+			annotated = true
+			kept = append(kept, issue)
+			if logger != nil {
+				logger.Info("keeping issue actionable: open PR weakly claims it",
 					"repo", issue.Repo,
 					"issue", issue.Number,
 					"issue_title", issue.Title,
@@ -1307,8 +1326,6 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 					"pr_author", claim.PRAuthor,
 					"external", claim.ExternalAuthor,
 					"reference", claim.Reference,
-					"merged", claim.MergedPR,
-					"first_observed", claim.FirstObservedAt,
 				)
 			}
 			continue
@@ -1363,6 +1380,52 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 	return suppressed
 }
 
+// SyncIssuePRClaimLabels mirrors verified PR-claim state onto GitHub labels and
+// the in-memory issue payload. It is best-effort: label failures must not hide
+// actionable issues or fail the enumeration tick.
+func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *ActionableResult, ledger *ClaimLedger, logger *slog.Logger) {
+	if result == nil || ledger == nil {
+		return
+	}
+	for i := range result.Issues.Items {
+		issue := &result.Issues.Items[i]
+		originalLabels := append([]string(nil), issue.Labels...)
+		claim, ok := ledger.Lookup(issue.Repo, issue.Number)
+		if ok && claim.PRNumber > 0 {
+			annotateIssueWithClaim(issue, claim)
+		}
+		if client == nil || client.client == nil {
+			continue
+		}
+		coveredWanted := ok && claim.PRNumber > 0 && !claim.MergedPR
+		likelyWanted := ok && claim.PRNumber > 0 && claim.MergedPR
+		if coveredWanted {
+			if err := client.EnsureIssueLabel(ctx, issue.Repo, CoveredByPRLabel, "1d76db", "Hive verified that an open PR references or claims this issue; still actionable until confirmed"); err != nil && logger != nil {
+				logger.Warn("ensuring covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			} else if err := client.AddLabels(ctx, issue.Repo, issue.Number, []string{CoveredByPRLabel}); err != nil && logger != nil {
+				logger.Warn("adding covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			}
+		} else if issueHasLabel(originalLabels, CoveredByPRLabel) {
+			if err := client.RemoveLabel(ctx, issue.Repo, issue.Number, CoveredByPRLabel); err != nil && logger != nil {
+				logger.Warn("removing covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			}
+			issue.Labels = removeIssueLabel(issue.Labels, CoveredByPRLabel)
+		}
+		if likelyWanted {
+			if err := client.EnsureIssueLabel(ctx, issue.Repo, LikelyDoneLabel, "0e8a16", "Hive verified that a merged PR references or claims this issue; pending confirmation"); err != nil && logger != nil {
+				logger.Warn("ensuring likely-done label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			} else if err := client.AddLabels(ctx, issue.Repo, issue.Number, []string{LikelyDoneLabel}); err != nil && logger != nil {
+				logger.Warn("adding likely-done label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			}
+		} else if issueHasLabel(originalLabels, LikelyDoneLabel) {
+			if err := client.RemoveLabel(ctx, issue.Repo, issue.Number, LikelyDoneLabel); err != nil && logger != nil {
+				logger.Warn("removing likely-done label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			}
+			issue.Labels = removeIssueLabel(issue.Labels, LikelyDoneLabel)
+		}
+	}
+}
+
 // ApplyDuplicatePRGuard is the single entry point wired into the enumeration
 // cycle. It fetches live claims, reconciles them into the persisted ledger,
 // saves the ledger, and filters the actionable set.
@@ -1401,6 +1464,7 @@ func ApplyDuplicatePRGuard(
 		logger.Warn("duplicate-PR guard: failed to persist claim ledger", "error", saveErr)
 	}
 
+	SyncIssuePRClaimLabels(ctx, client, result, ledger, logger)
 	suppressed := FilterClaimedIssues(result, ledger, redStale, logger)
 	if logger != nil {
 		logger.Info("duplicate-PR guard applied",

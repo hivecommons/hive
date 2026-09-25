@@ -299,15 +299,14 @@ func TestFilterClaimedIssuesDefersReferenceClaims(t *testing.T) {
 		return result, l
 	}
 
-	// Inside the window: both the closing claim and the reference claim
-	// suppress. This is the #4929 fix — the reference-claimed issue is not
-	// handed back to a scanner that cannot see the PR covering it.
+	// Inside the window: only the strong closing claim suppresses. A reference-only
+	// claim is surfaced as pending context/label and remains actionable (#8876).
 	result, l := build()
-	if suppressed := FilterClaimedIssues(result, l, nil, testLogger()); suppressed != 2 {
-		t.Fatalf("inside the window: suppressed = %d, want 2 (closing + reference)", suppressed)
+	if suppressed := FilterClaimedIssues(result, l, nil, testLogger()); suppressed != 1 {
+		t.Fatalf("inside the window: suppressed = %d, want 1 (closing only)", suppressed)
 	}
-	if len(result.Issues.Items) != 0 {
-		t.Fatalf("inside the window both issues must be withheld, got %+v", result.Issues.Items)
+	if len(result.Issues.Items) != 1 || result.Issues.Items[0].Number != 3498 {
+		t.Fatalf("inside the window only the reference issue should remain, got %+v", result.Issues.Items)
 	}
 
 	// Past the window: the reference claim releases its issue even though the

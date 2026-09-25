@@ -333,11 +333,9 @@ func TestFilterClaimedIssues(t *testing.T) {
 			wantRemaining:  []int{100},
 		},
 		{
-			// #4929: an EXTERNAL claim (a contributor's PR) now DEFERS agent
-			// work for the bounded window instead of being ignored outright,
-			// so an agent that cannot check for existing PRs is not handed
-			// work a live PR already covers.
-			name:  "external claim defers agent work inside the window",
+			// #8876: an EXTERNAL claim (a contributor's PR) is now surfaced
+			// as a pending label/link, not hidden from the actionable set.
+			name:  "external claim stays actionable with context inside the window",
 			items: []Issue{{Repo: "spyre-inference", Number: 100, AgeMinutes: 5}},
 			claims: []IssueClaim{{
 				Repo: "spyre-inference", Issue: 100,
@@ -348,8 +346,8 @@ func TestFilterClaimedIssues(t *testing.T) {
 				FirstObservedAt: time.Now(),
 				ExternalAuthor:  true,
 			}},
-			wantSuppressed: 1,
-			wantRemaining:  nil,
+			wantSuppressed: 0,
+			wantRemaining:  []int{100},
 		},
 		{
 			// #3768's invariant, now expressed as a BOUND rather than an

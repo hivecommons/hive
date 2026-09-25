@@ -360,6 +360,15 @@ func (c *Client) reviewBacklogConfig() (bool, int) {
 	return enabled, cap
 }
 
+type IssueLinkedPR struct {
+	Number  int    `json:"number"`
+	Repo    string `json:"repo,omitempty"`
+	State   string `json:"state"`
+	Merged  bool   `json:"merged"`
+	URL     string `json:"url,omitempty"`
+	Closing bool   `json:"closing,omitempty"`
+}
+
 type Issue struct {
 	Repo              string    `json:"repo"`
 	Number            int       `json:"number"`
@@ -414,6 +423,9 @@ type Issue struct {
 	// issue should be worked or triaged despite a related PR claim, but the
 	// downstream agent must know about that PR before deciding what remains.
 	ClaimContext *IssueClaimContext `json:"claim_context,omitempty"`
+	// LinkedPRs carries API-verified PR relationships that are signals for operators
+	// but do not by themselves remove the issue from the actionable set.
+	LinkedPRs []IssueLinkedPR `json:"linked_prs,omitempty"`
 	// ClaimedBy / ClaimExpiresAt / ClaimSource carry a LIVE issue claim
 	// (hivecommons/hive#8380) read at enumeration time: a `hive-claim` marker
 	// comment, or an assignee. All three are set together and only while
@@ -441,6 +453,7 @@ type IssueClaimContext struct {
 	PRURL          string    `json:"pr_url,omitempty"`
 	PRAuthor       string    `json:"pr_author,omitempty"`
 	ExternalAuthor bool      `json:"external_author,omitempty"`
+	Closing        bool      `json:"closing,omitempty"`
 	Reference      bool      `json:"reference,omitempty"`
 	MergedPR       bool      `json:"merged_pr,omitempty"`
 	MergedAt       time.Time `json:"merged_at,omitempty"`

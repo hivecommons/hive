@@ -1,0 +1,1 @@
+- Surface verified covered-by-PR and likely-done issue claims as labels and linked PR badges without hiding issues on comment evidence alone.

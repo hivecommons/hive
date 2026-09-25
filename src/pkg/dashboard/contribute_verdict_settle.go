@@ -141,17 +141,33 @@ func (h *ContributeWSHub) settleIssueFromVerdictWithEvidence(repo string, number
 			"pr_url", claim.PRURL, "pr_author", claim.PRAuthor,
 			"merged", claim.MergedPR, "merged_at", claim.MergedAt,
 			"weak", claim.Reference || claim.ExternalAuthor, "reporter", reporter)
+		if err := h.markIssuePRClaim(ctx, repo, number, claim); err != nil && err != ghpkg.ErrNoGitHubClient {
+			h.logger.Warn("[contribute-ws] verified PR-claim label failed",
+				"repo", repo, "number", number, "ref", ref.String(), "error", err.Error())
+		}
+		// Pending PR evidence must not inherit the generic no_work_needed offer
+		// suppression booked before async verification completed (#8876).
+		// Commit-only settlements have no linked PR to verify/confirm from the card,
+		// so keep their existing no-work hold behavior.
+		if claim.PRNumber > 0 {
+			h.clearNoWorkVerdict(repo, number)
+		}
 		if alreadyDone {
-			shouldClose := claim.MergedPR && h.closeAlreadyDoneAllowed(repo)
-			if err := h.markAlreadyDoneIssue(ctx, repo, number, claim, reporter, shouldClose); err != nil {
-				h.logger.Warn("[contribute-ws] already-done verdict mark failed",
-					"repo", repo, "number", number, "ref", ref.String(), "close", shouldClose, "error", err.Error())
-				return verdictDispositionAlreadyDoneVerified
+			// #8876: a verified merged PR is still pending evidence, not resolved,
+			// unless GitHub itself would close the issue or an operator confirms it.
+			shouldClose := false
+			if claim.MergedPR && h.closeAlreadyDoneAllowed(repo) && h.prClosesIssue(ctx, repo, claim.PRNumber, number) {
+				shouldClose = true
 			}
 			if shouldClose {
+				if err := h.markAlreadyDoneIssue(ctx, repo, number, claim, reporter, true); err != nil {
+					h.logger.Warn("[contribute-ws] already-done verdict mark failed",
+						"repo", repo, "number", number, "ref", ref.String(), "close", shouldClose, "error", err.Error())
+					return verdictDispositionAlreadyDoneVerified
+				}
 				return verdictDispositionAlreadyDoneClosed
 			}
-			return verdictDispositionAlreadyDoneLabeled
+			return verdictDispositionAlreadyDoneVerified
 		}
 		return ""
 	}
@@ -193,6 +209,54 @@ func (h *ContributeWSHub) closeAlreadyDoneAllowed(repo string) bool {
 		return false
 	}
 	return cfg.EffectiveACMMLevelForRepo(repo) >= config.SelfMergeMinACMMLevel
+}
+
+func (h *ContributeWSHub) markIssuePRClaim(ctx context.Context, repo string, number int, claim ghpkg.IssueClaim) error {
+	if h != nil && h.issuePRClaimMarker != nil {
+		return h.issuePRClaimMarker(ctx, repo, number, claim)
+	}
+	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
+		return ghpkg.ErrNoGitHubClient
+	}
+	label := ghpkg.CoveredByPRLabel
+	color := "1d76db"
+	desc := "Hive verified that an open PR references or claims this issue; still actionable until confirmed"
+	if claim.MergedPR {
+		label = ghpkg.LikelyDoneLabel
+		color = "0e8a16"
+		desc = "Hive verified that a merged PR references or claims this issue; pending confirmation"
+	}
+	if err := h.server.deps.GHClient.EnsureIssueLabel(ctx, repo, label, color, desc); err != nil {
+		return err
+	}
+	return h.server.deps.GHClient.AddLabels(ctx, repo, number, []string{label})
+}
+
+func (h *ContributeWSHub) prClosesIssue(ctx context.Context, repo string, prNumber, issueNumber int) bool {
+	if prNumber <= 0 || issueNumber <= 0 || h == nil {
+		return false
+	}
+	if h.prClosingVerifier != nil {
+		ok, err := h.prClosingVerifier(ctx, repo, prNumber, issueNumber)
+		if err != nil {
+			if h.logger != nil {
+				h.logger.Warn("[contribute-ws] closing relationship check failed", "repo", repo, "pr", prNumber, "issue", issueNumber, "error", err.Error())
+			}
+			return false
+		}
+		return ok
+	}
+	if h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
+		return false
+	}
+	ok, err := h.server.deps.GHClient.PRClosesIssue(ctx, repo, prNumber, issueNumber)
+	if err != nil {
+		if h.logger != nil {
+			h.logger.Warn("[contribute-ws] closing relationship check failed", "repo", repo, "pr", prNumber, "issue", issueNumber, "error", err.Error())
+		}
+		return false
+	}
+	return ok
 }
 
 func (h *ContributeWSHub) markAlreadyDoneIssue(ctx context.Context, repo string, number int, claim ghpkg.IssueClaim, reporter string, closeIssue bool) error {

@@ -79,12 +79,11 @@ func TestScannerNotReofferedIssueUnderOpenRefsPR(t *testing.T) {
 
 	result := scannerActionable("dakota")
 	suppressed := FilterClaimedIssues(result, ledger, nil, testLogger())
-	if suppressed != 1 {
-		t.Fatalf("suppressed = %d, want 1 — issue #362 must not be re-offered while "+
-			"an open PR references it (the scanner cannot see that PR)", suppressed)
+	if suppressed != 0 {
+		t.Fatalf("suppressed = %d, want 0 — open PR references are surfaced, not hidden", suppressed)
 	}
-	if len(result.Issues.Items) != 0 {
-		t.Fatalf("issue #362 still actionable: %+v", result.Issues.Items)
+	if len(result.Issues.Items) != 1 || !issueHasLabel(result.Issues.Items[0].Labels, CoveredByPRLabel) {
+		t.Fatalf("issue #362 not actionable with covered label: %+v", result.Issues.Items)
 	}
 }
 
@@ -176,8 +175,12 @@ func TestWeakClaimWindowRestartsForADifferentPR(t *testing.T) {
 		t.Fatalf("a different PR must start a new window, got anchor %v (old was %v)",
 			got.FirstObservedAt, old)
 	}
-	if suppressed := FilterClaimedIssues(scannerActionable("projectbluefin/dakota"), ledger, nil, testLogger()); suppressed != 1 {
-		t.Fatalf("suppressed = %d, want 1 — the new PR's window has not elapsed", suppressed)
+	result := scannerActionable("projectbluefin/dakota")
+	if suppressed := FilterClaimedIssues(result, ledger, nil, testLogger()); suppressed != 0 {
+		t.Fatalf("suppressed = %d, want 0 — new open PR stays actionable with context", suppressed)
+	}
+	if !issueHasLabel(result.Issues.Items[0].Labels, CoveredByPRLabel) {
+		t.Fatalf("new open PR claim did not add covered label: %+v", result.Issues.Items[0])
 	}
 }
 
@@ -193,9 +196,10 @@ func TestWeakClaimRedStaleReleasesBeforeWindow(t *testing.T) {
 		ObservedAt: now, FirstObservedAt: now,
 	}}, true)
 
-	// Control: healthy PR, well inside the window, so the issue is deferred.
-	if suppressed := FilterClaimedIssues(scannerActionable("projectbluefin/dakota"), ledger, nil, testLogger()); suppressed != 1 {
-		t.Fatalf("healthy weak claim suppressed %d, want 1", suppressed)
+	// Control: healthy PR, well inside the window, so the issue is annotated and kept.
+	control := scannerActionable("projectbluefin/dakota")
+	if suppressed := FilterClaimedIssues(control, ledger, nil, testLogger()); suppressed != 0 {
+		t.Fatalf("healthy weak claim suppressed %d, want 0", suppressed)
 	}
 
 	redStale := func(prRepo string, prNumber int) bool {
@@ -251,9 +255,10 @@ func TestLoadClaimLedgerAnchorsPreUpgradeClaims(t *testing.T) {
 	if !got.FirstObservedAt.Equal(got.ObservedAt) {
 		t.Fatalf("anchor = %v, want it normalized to ObservedAt %v", got.FirstObservedAt, got.ObservedAt)
 	}
-	// And it behaves: an hour old is well inside the window, so it defers.
-	if suppressed := FilterClaimedIssues(scannerActionable("projectbluefin/dakota"), ledger, nil, testLogger()); suppressed != 1 {
-		t.Fatalf("suppressed = %d, want 1 — a freshly-normalized claim defers", suppressed)
+	// And it behaves: an hour old is well inside the old window, but #8876 keeps it visible.
+	result := scannerActionable("projectbluefin/dakota")
+	if suppressed := FilterClaimedIssues(result, ledger, nil, testLogger()); suppressed != 0 {
+		t.Fatalf("suppressed = %d, want 0 — a freshly-normalized claim is pending, not hidden", suppressed)
 	}
 }
 
@@ -293,8 +298,12 @@ func TestOpenReferenceOnlyClaimStillUsesWeakTimer(t *testing.T) {
 		claim := base
 		claim.FirstObservedAt = now.Add(-time.Hour)
 		ledger.Reconcile([]IssueClaim{claim}, true)
-		if suppressed := FilterClaimedIssues(scannerActionable("projectbluefin/dakota"), ledger, nil, testLogger()); suppressed != 1 {
-			t.Fatalf("suppressed = %d, want 1 for open reference-only claim inside window", suppressed)
+		result := scannerActionable("projectbluefin/dakota")
+		if suppressed := FilterClaimedIssues(result, ledger, nil, testLogger()); suppressed != 0 {
+			t.Fatalf("suppressed = %d, want 0 for open reference-only claim inside window", suppressed)
+		}
+		if result.Issues.Items[0].ClaimContext == nil {
+			t.Fatal("open reference-only claim missing context")
 		}
 	})
 
@@ -307,8 +316,8 @@ func TestOpenReferenceOnlyClaimStillUsesWeakTimer(t *testing.T) {
 		if suppressed := FilterClaimedIssues(result, ledger, nil, testLogger()); suppressed != 0 {
 			t.Fatalf("suppressed = %d, want 0 for open reference-only claim past window", suppressed)
 		}
-		if result.Issues.Items[0].ClaimContext != nil {
-			t.Fatalf("open weak claim should release unchanged, got context %+v", result.Issues.Items[0].ClaimContext)
+		if result.Issues.Items[0].ClaimContext == nil {
+			t.Fatal("open weak claim should carry linked PR context")
 		}
 	})
 }
