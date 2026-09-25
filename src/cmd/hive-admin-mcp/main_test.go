@@ -156,3 +156,46 @@ func TestDiagnoseSelectionErrorUnreachable(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestLoadRosterFromEnvSelectsConfiguredActiveHive(t *testing.T) {
+	t.Setenv(envHives, `[{"name":"east","address":"http://east.example","token":"east-token"},{"name":"west","address":"http://west.example","token":"west-token"}]`)
+	t.Setenv(envActiveHive, "west")
+
+	r, err := loadRosterFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.active != 1 || len(r.hives) != 2 {
+		t.Fatalf("roster active=%d hives=%#v", r.active, r.hives)
+	}
+	if r.timeout != defaultTimeout {
+		t.Fatalf("timeout = %v", r.timeout)
+	}
+}
+
+func TestLoadRosterFromEnvRejectsInvalidRosters(t *testing.T) {
+	tests := []struct {
+		name       string
+		hives      string
+		activeHive string
+		want       string
+	}{
+		{name: "missing", want: envHives + " must contain"},
+		{name: "bad json", hives: `{`, want: "parse " + envHives},
+		{name: "empty", hives: `[]`, want: envHives + " must contain at least one hive"},
+		{name: "blank field", hives: `[{"name":"east","address":"http://east.example","token":""}]`, want: "require name, address, and token"},
+		{name: "duplicate", hives: `[{"name":"east","address":"http://east.example","token":"one"},{"name":"east","address":"http://other.example","token":"two"}]`, want: `duplicate hive name "east"`},
+		{name: "unknown active", hives: `[{"name":"east","address":"http://east.example","token":"one"}]`, activeHive: "west", want: `active hive "west" is not in the roster`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(envHives, tt.hives)
+			t.Setenv(envActiveHive, tt.activeHive)
+			_, err := loadRosterFromEnv()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
