@@ -297,6 +297,59 @@ func TestHivesUseSignalsRunningRelay(t *testing.T) {
 	}
 }
 
+func TestHivesMoveRanksTheCommonsProjection(t *testing.T) {
+	h := newHivesHarness(t)
+	h.seed(t, twoHives())
+
+	if err := h.run(t, "", "hives", "move", "other", "up"); err != nil {
+		t.Fatalf("hives move: %v", err)
+	}
+	set := h.profiles(t)
+	if set.Profiles[0].Name != "other" || set.Profiles[1].Name != "acme" {
+		t.Fatalf("rank order = %+v, want other first", set.Profiles)
+	}
+	if set.Active != "other" {
+		t.Fatalf("active = %q, want top-ranked other", set.Active)
+	}
+	env := h.env(t)
+	if !strings.Contains(env, "HIVE_HUB=wss://other.example/contribute,wss://acme.example/contribute") {
+		t.Fatalf("projection did not follow rank order:\n%s", env)
+	}
+	if !strings.Contains(h.out.String(), "Moved \"other\" up in The Commons rank") {
+		t.Fatalf("output = %s", h.out.String())
+	}
+	if h.signalCalls != 1 {
+		t.Fatalf("signal relay calls = %d, want 1", h.signalCalls)
+	}
+}
+
+func TestHivesStrategyShowsAndSetsTheCommonsStrategy(t *testing.T) {
+	h := newHivesHarness(t)
+	h.seed(t, twoHives())
+
+	if err := h.run(t, "", "hives", "strategy"); err != nil {
+		t.Fatalf("hives strategy show: %v", err)
+	}
+	if !strings.Contains(h.out.String(), "The Commons strategy: ranked") {
+		t.Fatalf("default strategy output = %s", h.out.String())
+	}
+	if err := h.run(t, "", "hives", "strategy", "neediest"); err != nil {
+		t.Fatalf("hives strategy set: %v", err)
+	}
+	if got := h.profiles(t).CommonsStrategy; got != hivectl.CommonsStrategyNeediest {
+		t.Fatalf("strategy = %q, want neediest", got)
+	}
+	if !strings.Contains(h.env(t), "HIVE_COMMONS_STRATEGY=neediest") {
+		t.Fatalf("projection missing strategy:\n%s", h.env(t))
+	}
+	if h.signalCalls != 1 {
+		t.Fatalf("signal relay calls = %d, want 1", h.signalCalls)
+	}
+	if err := h.run(t, "", "hives", "strategy", "random"); err == nil {
+		t.Fatal("invalid strategy was accepted")
+	}
+}
+
 func TestHivesUseUnknownName(t *testing.T) {
 	h := newHivesHarness(t)
 	h.seed(t, twoHives())

@@ -1,0 +1,1 @@
+- The Commons lets contributors subscribe to multiple hives, rank them in `hivectl hives` and the TUI Hives overlay, and have the contributor relay choose the next hive between tasks with `ranked`, `spread`, or `neediest` routing while preserving in-flight leases.

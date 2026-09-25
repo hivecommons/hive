@@ -78,6 +78,8 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
 	cmd.AddCommand(newHivesExportCommand(env))
 	cmd.AddCommand(newHivesImportCommand(env))
 	cmd.AddCommand(newHivesSessionCommand(env))
+	cmd.AddCommand(newHivesMoveCommand(env))
+	cmd.AddCommand(newHivesStrategyCommand(env))
 	cmd.AddCommand(newHivesRenameCommand(env))
 	cmd.AddCommand(newHivesRemoveCommand(env))
 	return cmd
@@ -214,6 +216,7 @@ func (e *commandEnv) runHivesList(cmd *cobra.Command, check bool) error {
 		return e.print(cmd, rows)
 	}
 	printHivesTable(cmd.OutOrStdout(), rows, check)
+	printCommonsStrategy(cmd.OutOrStdout(), set)
 	return nil
 }
 
@@ -247,6 +250,13 @@ func printHivesTable(out io.Writer, rows []hivesListRow, check bool) {
 	// is laid out here and handed over as preformatted text.
 	_ = printer{format: "table", out: out}.print(strings.TrimRight(buf.String(), "\n"))
 	_, _ = fmt.Fprintln(out, "\n* = active: the hub the relay solicits from first.")
+}
+
+func printCommonsStrategy(out io.Writer, set *hivectl.ProfileSet) {
+	if set == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(out, "The Commons strategy: %s\n", set.EffectiveCommonsStrategy())
 }
 
 func dashIfEmpty(value string) string {
@@ -486,12 +496,9 @@ func (e *commandEnv) runHivesUse(cmd *cobra.Command, name string) error {
 	if err := commit(deps, set); err != nil {
 		return err
 	}
-	switchResult := hivectl.RelaySwitchResult{}
-	if deps.signalRelay != nil {
-		switchResult, err = deps.signalRelay(cmd.Context(), deps.store)
-		if err != nil {
-			return err
-		}
+	switchResult, err := signalHivesRelay(cmd, deps)
+	if err != nil {
+		return err
 	}
 	out := cmd.OutOrStdout()
 	if already {
@@ -506,6 +513,13 @@ func (e *commandEnv) runHivesUse(cmd *cobra.Command, name string) error {
 		_, _ = fmt.Fprintln(out, "  no running relay found; the next relay start will solicit from this hive first")
 	}
 	return nil
+}
+
+func signalHivesRelay(cmd *cobra.Command, deps *hivesDeps) (hivectl.RelaySwitchResult, error) {
+	if deps.signalRelay == nil {
+		return hivectl.RelaySwitchResult{}, nil
+	}
+	return deps.signalRelay(cmd.Context(), deps.store)
 }
 
 // ── export/import/session ──────────────────────────────────────────────────
@@ -694,6 +708,111 @@ func (e *commandEnv) runHivesSession(cmd *cobra.Command, sourceName string, opts
 		return err
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ Created hive session %q for %s with label %q\n", copy.Name, copy.Hub, copy.Session)
+	return nil
+}
+
+// ── rank/strategy ──────────────────────────────────────────────────────────
+
+func newHivesMoveCommand(env *commandEnv) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "move <name> up|down",
+		Short: "Move a hive up or down in The Commons contribution rank",
+		Long:  "Changes the rank order written to profiles.yml and contributor.env. The relay only applies the new order between tasks; in-flight work stays on the hive that assigned it.",
+		Args:  argsExact(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return env.runHivesMove(cmd, args[0], args[1])
+		},
+	}
+	return cmd
+}
+
+func (e *commandEnv) runHivesMove(cmd *cobra.Command, name, direction string) error {
+	delta := 0
+	switch strings.ToLower(strings.TrimSpace(direction)) {
+	case "up":
+		delta = -1
+	case "down":
+		delta = 1
+	default:
+		return &usageError{message: "direction must be up or down"}
+	}
+	deps, err := e.hivesDeps()
+	if err != nil {
+		return err
+	}
+	set, err := loadProfiles(cmd, deps, false)
+	if err != nil {
+		return err
+	}
+	profile, moved, err := set.Move(name, delta)
+	if err != nil {
+		return unknownHiveError(name, set)
+	}
+	if err := commit(deps, set); err != nil {
+		return err
+	}
+	switchResult, err := signalHivesRelay(cmd, deps)
+	if err != nil {
+		return err
+	}
+	if !moved {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ %q is already at that edge of The Commons rank (%s)\n", profile.Name, profile.Hub)
+		return nil
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ Moved %q %s in The Commons rank (%s)\n", profile.Name, direction, profile.Hub)
+	if switchResult.Running {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  running relay signaled (%s); in-flight work finishes on its original hive\n", switchResult.Target)
+	} else {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  no running relay found; the next relay start will use this rank order")
+	}
+	return nil
+}
+
+func newHivesStrategyCommand(env *commandEnv) *cobra.Command {
+	return &cobra.Command{
+		Use:   "strategy [ranked|spread|neediest]",
+		Short: "Show or set The Commons routing strategy",
+		Long:  "Controls how the long-running contributor relay chooses the next hive between tasks: ranked (strict rank with fall-through), spread (weighted rotation), or neediest (prefer the hive reporting the most offerable work).",
+		Args:  argsMax(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			strategy := ""
+			if len(args) > 0 {
+				strategy = args[0]
+			}
+			return env.runHivesStrategy(cmd, strategy)
+		},
+	}
+}
+
+func (e *commandEnv) runHivesStrategy(cmd *cobra.Command, strategy string) error {
+	deps, err := e.hivesDeps()
+	if err != nil {
+		return err
+	}
+	set, err := loadProfiles(cmd, deps, false)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(strategy) == "" {
+		printCommonsStrategy(cmd.OutOrStdout(), set)
+		return nil
+	}
+	if err := set.SetCommonsStrategy(strategy); err != nil {
+		return &usageError{message: err.Error()}
+	}
+	if err := commit(deps, set); err != nil {
+		return err
+	}
+	switchResult, err := signalHivesRelay(cmd, deps)
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ The Commons strategy is now %s\n", set.EffectiveCommonsStrategy())
+	if switchResult.Running {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  running relay signaled (%s); in-flight work finishes on its original hive\n", switchResult.Target)
+	} else {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  no running relay found; the next relay start will use this strategy")
+	}
 	return nil
 }
 

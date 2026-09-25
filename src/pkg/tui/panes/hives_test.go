@@ -21,7 +21,7 @@ func hiveFixture() []panes.HiveRow {
 }
 
 func loadedHives() panes.HivesOverlay {
-	return panes.NewHivesOverlay().SetHives(hiveFixture(), "/cfg/profiles.yml", "/cfg/contributor.env")
+	return panes.NewHivesOverlay().SetHives(hiveFixture(), "/cfg/profiles.yml", "/cfg/contributor.env", "ranked")
 }
 
 func TestHivesOverlayStartsLoading(t *testing.T) {
@@ -62,7 +62,7 @@ func TestHivesOverlayKeepsTheCursorOnTheSameHiveAcrossAReload(t *testing.T) {
 		{Name: "acme", Hub: "wss://acme.example/contribute"},
 		{Name: "other", Hub: "wss://other.example/contribute"},
 	}
-	o = o.SetHives(reordered, "/cfg/profiles.yml", "/cfg/contributor.env")
+	o = o.SetHives(reordered, "/cfg/profiles.yml", "/cfg/contributor.env", "ranked")
 	if row, _ := o.Selected(); row.Name != "third" {
 		t.Errorf("cursor landed on %q after a reorder, want third", row.Name)
 	}
@@ -72,7 +72,7 @@ func TestHivesOverlayKeepsTheCursorOnTheSameHiveAcrossAReload(t *testing.T) {
 // the cursor pointing past the end.
 func TestHivesOverlayResetsTheCursorWhenTheSelectedHiveDisappears(t *testing.T) {
 	o := loadedHives().Move(2)
-	o = o.SetHives(hiveFixture()[:1], "/cfg/profiles.yml", "/cfg/contributor.env")
+	o = o.SetHives(hiveFixture()[:1], "/cfg/profiles.yml", "/cfg/contributor.env", "ranked")
 	row, ok := o.Selected()
 	if !ok || row.Name != "acme" {
 		t.Errorf("selection = %+v (ok=%v), want the first surviving row", row, ok)
@@ -165,10 +165,29 @@ func TestHivesRenameRefusesAnEmptyOrUnchangedName(t *testing.T) {
 	}
 }
 
+func TestHivesRankAndStrategyActions(t *testing.T) {
+	o := loadedHives()
+	next, action, ok := o.MoveSelectedRank(-1)
+	if !ok || action.Kind != panes.HivesActionMoveUp || action.Name != "acme" {
+		t.Fatalf("rank action = %+v (ok=%v)", action, ok)
+	}
+	if !strings.Contains(next.View(100), "Moving acme up") {
+		t.Fatalf("pending view did not describe rank move:\n%s", next.View(100))
+	}
+
+	next, action, ok = o.CycleStrategy()
+	if !ok || action.Kind != panes.HivesActionStrategy || action.Strategy != "spread" {
+		t.Fatalf("strategy action = %+v (ok=%v)", action, ok)
+	}
+	if !strings.Contains(next.View(100), "Setting The Commons strategy to spread") {
+		t.Fatalf("pending view did not describe strategy change:\n%s", next.View(100))
+	}
+}
+
 // Adding is the one action that is meaningful with nothing selected: an empty
 // machine is exactly where the first hive comes from.
 func TestHivesAddOpensOnAnEmptyList(t *testing.T) {
-	o := panes.NewHivesOverlay().SetHives(nil, "/cfg/profiles.yml", "/cfg/contributor.env")
+	o := panes.NewHivesOverlay().SetHives(nil, "/cfg/profiles.yml", "/cfg/contributor.env", "ranked")
 	next, ok := o.BeginAdd()
 	if !ok {
 		t.Fatal("a refused to open the add form on an empty list")
@@ -292,7 +311,7 @@ func TestHivesListWindowsLongLists(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		many = append(many, panes.HiveRow{Name: string(rune('a'+i)) + "-hive", Hub: "wss://h.example/contribute"})
 	}
-	o := panes.NewHivesOverlay().SetHives(many, "/cfg/profiles.yml", "/cfg/contributor.env")
+	o := panes.NewHivesOverlay().SetHives(many, "/cfg/profiles.yml", "/cfg/contributor.env", "ranked")
 	lines := strings.Count(o.View(100), "\n")
 	o = o.Move(19)
 	if got := strings.Count(o.View(100), "\n"); got != lines {

@@ -1,6 +1,6 @@
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ Hives                                                                                          ┃
-┃ active: acme                                                                                   ┃
+┃ The Commons: ranked · active: acme                                                             ┃
 ┃                                                                                                ┃
 ┃    NAME        HUB                                        CONTRIB ID   SESSION REACHABLE       ┃
 ┃ ────────────────────────────────────────────────────────────────────────────────────────────── ┃
@@ -10,5 +10,5 @@
 ┃                                                                                                ┃
 ┃                                                                                                ┃
 ┃ 1 of 3   * = active: the hub the relay solicits from first.                                    ┃
-┃ j/k move  enter use  a add  d remove  r rename  esc close                                      ┃
+┃ j/k cursor  [/ ] rank  s strategy  enter use  a add  d remove  r rename  esc close             ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛

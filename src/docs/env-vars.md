@@ -372,6 +372,9 @@ With two or more providers configured, `/login` renders a provider picker; with 
 |---|---:|---|---|
 | `HIVE_HUB` | Required after registration for contributor relay; `just` can discover/set it | `wss://hive.hivecommons.dev/contribute` (the `Justfile` default; the legacy `wss://hive.kubestellar.io/contribute` value is treated as unset and triggers the hive lookup) | Contributor WebSocket hub URL. Comma-separated values are supported with matching `HIVE_REGISTRATION_TOKEN` entries. |
 | `HIVE_REGISTRATION_TOKEN` | Yes for contributor relay | none | Contributor registration token. Comma-separated values match `HIVE_HUB` by position. |
+| `HIVE_COMMONS_STRATEGY` | No | `ranked` | Multi-hive routing strategy for The Commons. `ranked` keeps strict rank order and falls through only when a hive has no work; `spread` does rank-weighted rotation with periodic mixing; `neediest` prefers the subscribed hub reporting the most `actionable_items` on `/api/contribute/status`. Read between tasks only. |
+| `HIVE_COMMONS_SPREAD_MIX_EVERY` | No | `7` | In `spread`, choose randomly from the weighted rank cycle every N completed/failed tasks. `0` disables random mixing. |
+| `HIVE_COMMONS_NEEDIEST_REFRESH_MS` | No | `60000` | In `neediest`, milliseconds between `/api/contribute/status` refreshes per subscribed hub. `0` disables the interval. |
 | `AGENT_BACKEND` | No | `claude` | Contributor/agent CLI backend selector. |
 | `AGENT_MODEL` | No | backend default, or `GOOSE_MODEL` for Goose fallback | Contributor/agent model override. |
 | `CONTRIBUTOR_MODE` | No | `interactive` | Contributor relay mode: `interactive` uses tmux; `headless` uses one-shot CLI execution for supported backends. |

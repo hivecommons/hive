@@ -3502,6 +3502,80 @@ test('an idle non-active hub cannot assign work until the poll slot reaches it',
   } finally { teardown(relay); }
 });
 
+test('ranked Commons routing returns to the highest-ranked subscribed hive between tasks', () => {
+  const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_COMMONS_STRATEGY: 'ranked' } });
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+
+    relay.sendReadyForNextTask('task_complete');
+
+    assert.strictEqual(sentA.filter(m => m.type === 'ready').length, 1,
+      'ranked routing must solicit the top-ranked hive after the task ends');
+    assert.strictEqual(sentB.filter(m => m.type === 'ready').length, 0);
+  } finally { teardown(relay); }
+});
+
+test('ranked Commons routing skips auth-failed hives between tasks', () => {
+  const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_COMMONS_STRATEGY: 'ranked' } });
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+    hubs[0].authFailed = true;
+
+    relay.sendReadyForNextTask('task_complete');
+
+    assert.strictEqual(sentA.filter(m => m.type === 'ready').length, 0,
+      'auth-failed top-ranked hive must not be solicited');
+    assert.strictEqual(sentB.filter(m => m.type === 'ready').length, 1,
+      'ranked routing should fall through to the next authenticated hive');
+  } finally { teardown(relay); }
+});
+
+test('spread Commons routing rotates through subscribed hives with rank weights', () => {
+  const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_COMMONS_STRATEGY: 'spread', HIVE_COMMONS_SPREAD_MIX_EVERY: '0' } });
+  try {
+    const { sentA, sentB } = attachHubSinks(relay);
+    for (let i = 0; i < 3; i++) relay.sendReadyForNextTask('task_complete');
+
+    assert.strictEqual(sentA.filter(m => m.type === 'ready').length, 2,
+      'top-ranked hive should receive its weighted share');
+    assert.strictEqual(sentB.filter(m => m.type === 'ready').length, 1,
+      'lower-ranked hive should still receive rotated work');
+  } finally { teardown(relay); }
+});
+
+test('neediest Commons routing prefers the subscribed hive with the most actionable work', () => {
+  const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_COMMONS_STRATEGY: 'neediest', HIVE_COMMONS_NEEDIEST_REFRESH_MS: '0' } });
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+    hubs[0].lastActionableItems = 1;
+    hubs[1].lastActionableItems = 9;
+
+    relay.sendReadyForNextTask('task_complete');
+
+    assert.strictEqual(sentA.filter(m => m.type === 'ready').length, 0);
+    assert.strictEqual(sentB.filter(m => m.type === 'ready').length, 1,
+      'neediest routing should solicit the hive advertising the most actionable work');
+  } finally { teardown(relay); }
+});
+
+test('neediest Commons routing falls through after task_unavailable', () => {
+  const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_COMMONS_STRATEGY: 'neediest', HIVE_COMMONS_NEEDIEST_REFRESH_MS: '0' } });
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+    hubs[0].lastActionableItems = 9;
+    hubs[1].lastActionableItems = 1;
+
+    withImmediateTimers(() => {
+      relay.handleMessage(JSON.stringify({ type: 'task_unavailable', reason: 'no_work' }), hubs[0]);
+    });
+
+    assert.strictEqual(sentA.filter(m => m.type === 'ready').length, 0,
+      'the unavailable hive should not be immediately re-solicited from stale neediest status');
+    assert.strictEqual(sentB.filter(m => m.type === 'ready').length, 1,
+      'neediest should fall through to another subscribed hive after unavailable');
+  } finally { teardown(relay); }
+});
+
 test('hub notice messages are logged for operators', () => {
   const relay = loadRelay();
   const lines = [];
