@@ -1,9 +1,11 @@
 package classify
 
 import (
+	"context"
 	"strings"
 	"sync"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -48,6 +50,8 @@ type Classification struct {
 	Model      ModelRecommendation `json:"model_recommendation"`
 	Lane       Lane                `json:"lane"`
 	ClusterKey string              `json:"cluster_key,omitempty"`
+	Source     string              `json:"source,omitempty"`
+	Confidence float64             `json:"confidence,omitempty"`
 }
 
 // defaultSimpleKeywords are the built-in title keywords that mark an issue as
@@ -142,10 +146,15 @@ func activeLanes() []LaneConfig {
 }
 
 func Classify(issue github.Issue) Classification {
+	return currentDecider().Decide(context.Background(), issue, config.TriageConfig{}).Classification
+}
+
+func keywordClassification(issue github.Issue) Classification {
 	c := Classification{
-		Tier:  TierMedium,
-		Model: ModelSonnet,
-		Lane:  Lane(DefaultLane),
+		Tier:   TierMedium,
+		Model:  ModelSonnet,
+		Lane:   Lane(DefaultLane),
+		Source: SourceKeywords,
 	}
 
 	titleLower := strings.ToLower(issue.Title)

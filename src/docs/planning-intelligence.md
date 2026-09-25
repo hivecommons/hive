@@ -228,6 +228,16 @@ planning:
 # and shown in the dashboard governor-config view. Empty/absent keeps the
 # built-in defaults, so behavior is unchanged when unset.
 classifier:
+  backend: keywords # keywords (default) | jev
+  mode: shadow      # shadow records Jev agreement; enforce lets confident Jev decide
+  jev:
+    provider: openrouter
+    model: typesafe/jev-1.13
+    endpoint: ""          # optional; defaults to OpenRouter /systemone
+    api_key_env: JEV_API_KEY # falls back to the configured openrouter gateway key
+    min_confidence: 0.8
+    timeout: 2s
+    decisions: [lane, tier, triage]
   simple_keywords: [typo, i18n, rename, const, label, badge, tooltip, placeholder, aria, "alt text"]
   complex_signals: ["race condition", deadlock, "memory leak", performance, "api change"]
 
@@ -239,6 +249,18 @@ governor:
     stall_threshold_s: 21600 # no child progress for 6h → stalled
     max_replans: 5          # cap before escalating to a human
 ```
+
+### Optional Jev typed-decision backend
+
+Set `classifier.backend: jev` to ask TypeSafe AI's Jev model one batched
+typed-decision question per issue for lane, tier, and run triage. The default
+`mode: shadow` keeps keyword routing authoritative and only records
+agree/disagree/fallback counters at `GET /api/classifier/stats`; `mode: enforce`
+uses Jev only when the individual answer is at or above `min_confidence`.
+Errors, missing keys, timeouts, disabled decisions, and low-confidence answers
+fall back to the keyword classifier. With `provider: openrouter`, Hive uses the
+configured `api_key_env` first and otherwise falls back to the connected
+`openrouter` model-gateway key.
 
 ## Safety properties
 
