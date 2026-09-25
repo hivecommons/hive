@@ -13,18 +13,22 @@ import (
 	"github.com/hivecommons/hive/pkg/github"
 )
 
-func TestJevEnforceHighConfidenceUsesJev(t *testing.T) {
+func TestJevHighConfidenceStaysAdvisory(t *testing.T) {
 	ResetForTest()
 	defer ResetForTest()
 	server := jevTestServer(t, jevTestAnswers(0.95))
 	defer server.Close()
-	d := newJevDecider(config.JevClassifierConfig{Mode: "enforce", Endpoint: server.URL, MinConfidence: 0.8, Timeout: time.Second}, func() string { return "key" }, server.Client())
+	d := newJevDecider(config.JevClassifierConfig{Endpoint: server.URL, MinConfidence: 0.8, Timeout: time.Second}, func() string { return "key" }, server.Client())
 	got := d.Decide(context.Background(), github.Issue{Repo: "o/r", Number: 1, Title: "ordinary", Body: longTriageBody(), UpdatedAt: time.Unix(1, 0)}, config.TriageConfig{})
-	if got.Classification.Lane != LaneArchitect || got.Classification.Tier != TierComplex || got.Classification.Model != ModelOpus || got.Classification.Source != SourceJev {
-		t.Fatalf("classification = %+v, want Jev architect/Complex/opus", got.Classification)
+	if got.Classification.Lane != LaneScanner || got.Classification.Tier != TierMedium || got.Classification.Model != ModelSonnet || got.Classification.Source != SourceKeywords {
+		t.Fatalf("classification = %+v, want keyword result despite high-confidence Jev", got.Classification)
 	}
-	if got.Triage == nil || got.Triage.Verdict != TriageSpec {
-		t.Fatalf("triage = %+v, want spec", got.Triage)
+	if got.Triage == nil || got.Triage.Verdict != TriageFix {
+		t.Fatalf("triage = %+v, want keyword triage", got.Triage)
+	}
+	stats := CurrentStats()
+	if stats.Decisions[DecisionLane].Disagree != 1 || stats.Decisions[DecisionTier].Disagree != 1 || stats.Decisions[DecisionTriage].Disagree != 1 {
+		t.Fatalf("stats = %+v, want advisory disagreements", stats)
 	}
 }
 
@@ -33,7 +37,7 @@ func TestJevLowConfidenceFallsBack(t *testing.T) {
 	defer ResetForTest()
 	server := jevTestServer(t, jevTestAnswers(0.3))
 	defer server.Close()
-	d := newJevDecider(config.JevClassifierConfig{Mode: "enforce", Endpoint: server.URL, MinConfidence: 0.8, Timeout: time.Second}, func() string { return "key" }, server.Client())
+	d := newJevDecider(config.JevClassifierConfig{Endpoint: server.URL, MinConfidence: 0.8, Timeout: time.Second}, func() string { return "key" }, server.Client())
 	got := d.Decide(context.Background(), github.Issue{Repo: "o/r", Number: 2, Title: "Fix typo", Body: longTriageBody(), UpdatedAt: time.Unix(2, 0)}, config.TriageConfig{})
 	if got.Classification.Source != SourceKeywords || got.Classification.Tier != TierSimple || got.Classification.Lane != LaneScanner {
 		t.Fatalf("classification = %+v, want keyword fallback", got.Classification)
@@ -44,7 +48,7 @@ func TestJevLowConfidenceFallsBack(t *testing.T) {
 	}
 }
 
-func TestJevTierEnforceRecomputesFallbackTriage(t *testing.T) {
+func TestJevTierAdvisoryDoesNotRecomputeTriageFromJev(t *testing.T) {
 	ResetForTest()
 	defer ResetForTest()
 	server := jevTestServer(t, map[string]any{
@@ -55,13 +59,13 @@ func TestJevTierEnforceRecomputesFallbackTriage(t *testing.T) {
 		"usage": map[string]int{"input_tokens": 200, "output_tokens": 10},
 	})
 	defer server.Close()
-	d := newJevDecider(config.JevClassifierConfig{Mode: "enforce", Endpoint: server.URL, MinConfidence: 0.8, Timeout: time.Second, Decisions: []string{DecisionTier}}, func() string { return "key" }, server.Client())
+	d := newJevDecider(config.JevClassifierConfig{Endpoint: server.URL, MinConfidence: 0.8, Timeout: time.Second, Decisions: []string{DecisionTier}}, func() string { return "key" }, server.Client())
 	got := d.Decide(context.Background(), github.Issue{Repo: "o/r", Number: 20, Title: "ordinary", Body: longTriageBody(), UpdatedAt: time.Unix(20, 0)}, config.TriageConfig{})
-	if got.Classification.Tier != TierComplex {
-		t.Fatalf("tier = %s, want Complex", got.Classification.Tier)
+	if got.Classification.Tier != TierMedium {
+		t.Fatalf("tier = %s, want keyword Medium", got.Classification.Tier)
 	}
-	if got.Triage == nil || got.Triage.Verdict != TriageSpec || got.Triage.Signals[0] != "tier:Complex" {
-		t.Fatalf("triage = %+v, want fallback recomputed from enforced Complex tier", got.Triage)
+	if got.Triage == nil || got.Triage.Verdict != TriageFix {
+		t.Fatalf("triage = %+v, want keyword triage from Medium tier", got.Triage)
 	}
 }
 
@@ -72,7 +76,7 @@ func TestJevTimeoutFallsBack(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	defer server.Close()
-	d := newJevDecider(config.JevClassifierConfig{Mode: "enforce", Endpoint: server.URL, MinConfidence: 0.8, Timeout: time.Nanosecond}, func() string { return "key" }, server.Client())
+	d := newJevDecider(config.JevClassifierConfig{Endpoint: server.URL, MinConfidence: 0.8, Timeout: time.Nanosecond}, func() string { return "key" }, server.Client())
 	got := d.Decide(context.Background(), github.Issue{Repo: "o/r", Number: 3, Title: "Fix typo", UpdatedAt: time.Unix(3, 0)}, config.TriageConfig{})
 	if got.Classification.Source != SourceKeywords || got.Classification.Tier != TierSimple {
 		t.Fatalf("classification = %+v, want keyword fallback", got.Classification)
@@ -84,7 +88,7 @@ func TestJevShadowNeverChangesResultButCounts(t *testing.T) {
 	defer ResetForTest()
 	server := jevTestServer(t, jevTestAnswers(0.95))
 	defer server.Close()
-	d := newJevDecider(config.JevClassifierConfig{Mode: "shadow", Endpoint: server.URL, MinConfidence: 0.8, Timeout: time.Second}, func() string { return "key" }, server.Client())
+	d := newJevDecider(config.JevClassifierConfig{Endpoint: server.URL, MinConfidence: 0.8, Timeout: time.Second}, func() string { return "key" }, server.Client())
 	got := d.Decide(context.Background(), github.Issue{Repo: "o/r", Number: 4, Title: "Fix typo", Body: longTriageBody(), UpdatedAt: time.Unix(4, 0)}, config.TriageConfig{})
 	if got.Classification.Source != SourceKeywords || got.Classification.Tier != TierSimple || got.Classification.Lane != LaneScanner {
 		t.Fatalf("classification = %+v, want keyword decision in shadow", got.Classification)
@@ -92,6 +96,30 @@ func TestJevShadowNeverChangesResultButCounts(t *testing.T) {
 	stats := CurrentStats()
 	if stats.Decisions[DecisionLane].Disagree == 0 || stats.Decisions[DecisionTier].Disagree == 0 || stats.EstimatedInputTokens == 0 || stats.EstimatedSpendUSD == 0 {
 		t.Fatalf("stats = %+v, want disagreement and spend counters", stats)
+	}
+}
+
+func TestJevDisagreementsProduceRuleSuggestions(t *testing.T) {
+	ResetForTest()
+	defer ResetForTest()
+	server := jevTestServer(t, jevTestAnswers(0.95))
+	defer server.Close()
+	d := newJevDecider(config.JevClassifierConfig{Endpoint: server.URL, MinConfidence: 0.8, Timeout: time.Second}, func() string { return "key" }, server.Client())
+	for i := 1; i <= 3; i++ {
+		got := d.Decide(context.Background(), github.Issue{Repo: "o/r", Number: 40 + i, Title: "Schema cleanup request", Body: longTriageBody(), UpdatedAt: time.Unix(int64(40+i), 0)}, config.TriageConfig{})
+		if got.Classification.Lane != LaneScanner || got.Classification.Tier != TierMedium {
+			t.Fatalf("classification = %+v, want keyword scanner/Medium", got.Classification)
+		}
+	}
+	stats := CurrentStats()
+	if got := len(stats.Disagreements[DecisionLane]); got != 3 {
+		t.Fatalf("lane disagreements = %d, want 3", got)
+	}
+	if !hasSuggestion(stats.RuleSuggestions, DecisionLane, string(LaneArchitect), "schema", "agents.architect.lane_keywords") {
+		t.Fatalf("suggestions = %+v, want architect lane keyword suggestion for schema", stats.RuleSuggestions)
+	}
+	if !hasSuggestion(stats.RuleSuggestions, DecisionTier, string(TierComplex), "schema", "classifier.complex_signals") {
+		t.Fatalf("suggestions = %+v, want complex tier keyword suggestion for schema", stats.RuleSuggestions)
 	}
 }
 
@@ -104,16 +132,26 @@ func TestJevCachePreventsSecondCall(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(jevTestAnswers(0.95))
 	})
 	defer server.Close()
-	d := newJevDecider(config.JevClassifierConfig{Mode: "enforce", Endpoint: server.URL, MinConfidence: 0.8, Timeout: time.Second}, func() string { return "key" }, server.Client())
+	d := newJevDecider(config.JevClassifierConfig{Endpoint: server.URL, MinConfidence: 0.8, Timeout: time.Second}, func() string { return "key" }, server.Client())
 	issue := github.Issue{Repo: "o/r", Number: 5, Title: "ordinary", Body: longTriageBody(), UpdatedAt: time.Unix(5, 0)}
 	_ = d.Decide(context.Background(), issue, config.TriageConfig{})
 	_ = d.Decide(context.Background(), issue, config.TriageConfig{})
 	if atomic.LoadInt32(&calls) != 1 {
 		t.Fatalf("calls = %d, want 1", calls)
 	}
+
 	if got := CurrentStats().EstimatedInputTokens; got != 500 {
 		t.Fatalf("estimated input tokens = %d, want one request worth", got)
 	}
+}
+
+func hasSuggestion(suggestions []RuleSuggestion, decision, answer, keyword, target string) bool {
+	for _, s := range suggestions {
+		if s.Decision == decision && s.Answer == answer && s.Keyword == keyword && s.Target == target && s.Support >= suggestionMinSupport {
+			return true
+		}
+	}
+	return false
 }
 
 func TestConfigureDeciderKeywordsDoesNoHTTP(t *testing.T) {
@@ -140,7 +178,6 @@ func TestConfigureDeciderJevUsesEnvKey(t *testing.T) {
 	t.Setenv("JEV_TEST_KEY", "key")
 	cfg := &config.Config{Classifier: config.ClassifierConfig{
 		Backend: "jev",
-		Mode:    "enforce",
 		Jev: config.JevClassifierConfig{
 			Endpoint:  server.URL,
 			APIKeyEnv: "JEV_TEST_KEY",
@@ -151,8 +188,8 @@ func TestConfigureDeciderJevUsesEnvKey(t *testing.T) {
 		t.Fatalf("ConfigureDecider: %v", err)
 	}
 	got := Classify(github.Issue{Repo: "o/r", Number: 7, Title: "ordinary", UpdatedAt: time.Unix(7, 0)})
-	if got.Source != SourceJev || got.Tier != TierComplex {
-		t.Fatalf("classification = %+v, want Jev complex", got)
+	if got.Source != SourceKeywords || got.Tier != TierMedium {
+		t.Fatalf("classification = %+v, want keywords with Jev advisory", got)
 	}
 }
 
@@ -160,11 +197,11 @@ func TestJevFallbacksForMissingKeyDisabledAndHTTPError(t *testing.T) {
 	ResetForTest()
 	defer ResetForTest()
 	issue := github.Issue{Repo: "o/r", Number: 8, Title: "Fix typo", UpdatedAt: time.Unix(8, 0)}
-	noKey := newJevDecider(config.JevClassifierConfig{Mode: "enforce", Timeout: time.Second}, func() string { return "" }, nil)
+	noKey := newJevDecider(config.JevClassifierConfig{Timeout: time.Second}, func() string { return "" }, nil)
 	if got := noKey.Decide(context.Background(), issue, config.TriageConfig{}); got.Classification.Source != SourceKeywords || got.Classification.Tier != TierSimple {
 		t.Fatalf("missing-key classification = %+v, want keywords", got.Classification)
 	}
-	disabled := newJevDecider(config.JevClassifierConfig{Mode: "enforce", Decisions: []string{"unknown"}, Timeout: time.Second}, func() string { return "key" }, nil)
+	disabled := newJevDecider(config.JevClassifierConfig{Decisions: []string{"unknown"}, Timeout: time.Second}, func() string { return "key" }, nil)
 	if got := disabled.Decide(context.Background(), issue, config.TriageConfig{}); got.Classification.Source != SourceKeywords {
 		t.Fatalf("disabled decisions classification = %+v, want keywords", got.Classification)
 	}
@@ -172,7 +209,7 @@ func TestJevFallbacksForMissingKeyDisabledAndHTTPError(t *testing.T) {
 		http.Error(w, "nope", http.StatusBadGateway)
 	})
 	defer server.Close()
-	httpErr := newJevDecider(config.JevClassifierConfig{Mode: "enforce", Endpoint: server.URL, Timeout: time.Second}, func() string { return "key" }, server.Client())
+	httpErr := newJevDecider(config.JevClassifierConfig{Endpoint: server.URL, Timeout: time.Second}, func() string { return "key" }, server.Client())
 	if got := httpErr.Decide(context.Background(), issue, config.TriageConfig{}); got.Classification.Source != SourceKeywords {
 		t.Fatalf("http-error classification = %+v, want keywords", got.Classification)
 	}
@@ -191,13 +228,13 @@ func TestJevAnswerProbabilityFallbackAndInvalidChoices(t *testing.T) {
 		"usage": map[string]int{"input_tokens": 100},
 	})
 	defer server.Close()
-	d := newJevDecider(config.JevClassifierConfig{Mode: "enforce", Endpoint: server.URL, MinConfidence: 0.8, Timeout: time.Second}, func() string { return "key" }, server.Client())
+	d := newJevDecider(config.JevClassifierConfig{Endpoint: server.URL, MinConfidence: 0.8, Timeout: time.Second}, func() string { return "key" }, server.Client())
 	got := d.Decide(context.Background(), github.Issue{Repo: "o/r", Number: 9, Title: "ordinary", Body: longTriageBody(), UpdatedAt: time.Unix(9, 0)}, config.TriageConfig{})
-	if got.Classification.Tier != TierComplex || got.Classification.Lane != LaneScanner {
-		t.Fatalf("classification = %+v, want tier from probability confidence and invalid lane fallback", got.Classification)
+	if got.Classification.Tier != TierMedium || got.Classification.Lane != LaneScanner {
+		t.Fatalf("classification = %+v, want keyword result even when Jev probability confidence is valid", got.Classification)
 	}
-	if got.Triage == nil || got.Triage.Verdict != TriageSpec {
-		t.Fatalf("triage = %+v, want fallback from enforced complex tier", got.Triage)
+	if got.Triage == nil || got.Triage.Verdict != TriageFix {
+		t.Fatalf("triage = %+v, want keyword triage", got.Triage)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -26,12 +27,12 @@ const (
 
 	classifierBackendKeywords = "keywords"
 	classifierBackendJev      = "jev"
-	classifierModeShadow      = "shadow"
-	classifierModeEnforce     = "enforce"
 
 	jevInputCostPerToken = 0.042 / 1000000.0
 	jevCacheCap          = 1024
 	maxJevErrBody        = 4 << 10
+	disagreementRingCap  = 50
+	suggestionMinSupport = 3
 )
 
 // Decider classifies one issue. Implementations may use deterministic keyword
@@ -166,66 +167,33 @@ func (d *jevDecider) decisionEnabled(name string) bool {
 
 func (d *jevDecider) apply(issue github.Issue, triageCfg config.TriageConfig, kw DecisionResult, out jevOutcome) DecisionResult {
 	res := kw
-	mode := d.cfg.EffectiveMode()
 	minConfidence := d.cfg.EffectiveMinConfidence()
-	classSource := SourceKeywords
-	classConfidence := 0.0
-	triageOverridden := false
 	if d.decisionEnabled(DecisionLane) {
 		if out.Lane.Confidence >= minConfidence && out.Lane.Value != "" {
-			if mode == classifierModeEnforce {
-				res.Classification.Lane = Lane(out.Lane.Value)
-				classSource = SourceJev
-				classConfidence = maxFloat(classConfidence, out.Lane.Confidence)
-			}
-			recordAgreement(DecisionLane, string(kw.Classification.Lane) == out.Lane.Value)
+			recordAgreement(DecisionLane, string(kw.Classification.Lane) == out.Lane.Value, disagreementRecordForIssue(issue, DecisionLane, string(kw.Classification.Lane), out.Lane.Value, out.Lane.Confidence))
 		} else {
 			recordFallback(DecisionLane)
 		}
 	}
 	if d.decisionEnabled(DecisionTier) {
 		if out.Tier.Confidence >= minConfidence && out.Tier.Value != "" {
-			if mode == classifierModeEnforce {
-				res.Classification.Tier = Tier(out.Tier.Value)
-				res.Classification.Model = tierToModel(res.Classification.Tier)
-				classSource = SourceJev
-				classConfidence = maxFloat(classConfidence, out.Tier.Confidence)
-			}
-			recordAgreement(DecisionTier, string(kw.Classification.Tier) == out.Tier.Value)
+			recordAgreement(DecisionTier, string(kw.Classification.Tier) == out.Tier.Value, disagreementRecordForIssue(issue, DecisionTier, string(kw.Classification.Tier), out.Tier.Value, out.Tier.Confidence))
 		} else {
 			recordFallback(DecisionTier)
 		}
 	}
-	if classSource == SourceJev {
-		res.Classification.Source = SourceJev
-		res.Classification.Confidence = classConfidence
-	}
 	if d.decisionEnabled(DecisionTriage) {
 		if out.Triage.Confidence >= minConfidence && out.Triage.Value != "" {
-			if mode == classifierModeEnforce {
-				decision := triageDecision(TriageVerdict(out.Triage.Value), "Jev typed-decision backend", "jev:confidence")
-				res.Triage = &decision
-				triageOverridden = true
-			}
 			if kw.Triage != nil {
-				recordAgreement(DecisionTriage, string(kw.Triage.Verdict) == out.Triage.Value)
+				recordAgreement(DecisionTriage, string(kw.Triage.Verdict) == out.Triage.Value, disagreementRecordForIssue(issue, DecisionTriage, string(kw.Triage.Verdict), out.Triage.Value, out.Triage.Confidence))
 			}
 		} else {
 			recordFallback(DecisionTriage)
 		}
 	}
-	if !triageOverridden {
-		decision := keywordTriage(issue, res.Classification, triageCfg)
-		res.Triage = &decision
-	}
+	decision := keywordTriage(issue, res.Classification, triageCfg)
+	res.Triage = &decision
 	return res
-}
-
-func maxFloat(a, b float64) float64 {
-	if b > a {
-		return b
-	}
-	return a
 }
 
 type jevRequest struct {
@@ -387,34 +355,57 @@ func (c *jevCache) add(key string, value jevOutcome) {
 }
 
 type Stats struct {
-	Decisions            map[string]DecisionStats `json:"decisions"`
-	EstimatedInputTokens int64                    `json:"estimated_input_tokens"`
-	EstimatedSpendUSD    float64                  `json:"estimated_spend_usd"`
+	Decisions            map[string]DecisionStats  `json:"decisions"`
+	Disagreements        map[string][]Disagreement `json:"disagreements,omitempty"`
+	RuleSuggestions      []RuleSuggestion          `json:"rule_suggestions,omitempty"`
+	EstimatedInputTokens int64                     `json:"estimated_input_tokens"`
+	EstimatedSpendUSD    float64                   `json:"estimated_spend_usd"`
 }
 type DecisionStats struct {
 	Agree    int64 `json:"agree"`
 	Disagree int64 `json:"disagree"`
 	Fallback int64 `json:"fallback"`
 }
+type Disagreement struct {
+	Repo          string  `json:"repo"`
+	Number        int     `json:"number"`
+	Title         string  `json:"title"`
+	KeywordAnswer string  `json:"keyword_answer"`
+	JevAnswer     string  `json:"jev_answer"`
+	Confidence    float64 `json:"confidence"`
+}
+type RuleSuggestion struct {
+	ID       string   `json:"id"`
+	Decision string   `json:"decision"`
+	Answer   string   `json:"answer"`
+	Keyword  string   `json:"keyword"`
+	Target   string   `json:"target"`
+	Support  int      `json:"support"`
+	Examples []string `json:"examples,omitempty"`
+}
 
 var statsMu sync.Mutex
-var stats = Stats{Decisions: map[string]DecisionStats{}}
+var stats = Stats{Decisions: map[string]DecisionStats{}, Disagreements: map[string][]Disagreement{}}
 
 func ResetStats() {
 	statsMu.Lock()
 	defer statsMu.Unlock()
-	stats = Stats{Decisions: map[string]DecisionStats{}}
+	stats = Stats{Decisions: map[string]DecisionStats{}, Disagreements: map[string][]Disagreement{}}
 }
 func CurrentStats() Stats {
 	statsMu.Lock()
 	defer statsMu.Unlock()
-	out := Stats{Decisions: map[string]DecisionStats{}, EstimatedInputTokens: stats.EstimatedInputTokens, EstimatedSpendUSD: stats.EstimatedSpendUSD}
+	out := Stats{Decisions: map[string]DecisionStats{}, Disagreements: map[string][]Disagreement{}, EstimatedInputTokens: stats.EstimatedInputTokens, EstimatedSpendUSD: stats.EstimatedSpendUSD}
 	for k, v := range stats.Decisions {
 		out.Decisions[k] = v
 	}
+	for k, v := range stats.Disagreements {
+		out.Disagreements[k] = append([]Disagreement(nil), v...)
+	}
+	out.RuleSuggestions = buildRuleSuggestions(out.Disagreements)
 	return out
 }
-func recordAgreement(decision string, agree bool) {
+func recordAgreement(decision string, agree bool, disagreement Disagreement) {
 	statsMu.Lock()
 	defer statsMu.Unlock()
 	ds := stats.Decisions[decision]
@@ -422,6 +413,7 @@ func recordAgreement(decision string, agree bool) {
 		ds.Agree++
 	} else {
 		ds.Disagree++
+		recordDisagreementLocked(decision, disagreement)
 	}
 	stats.Decisions[decision] = ds
 }
@@ -445,4 +437,162 @@ func recordUsage(tokens int) {
 	defer statsMu.Unlock()
 	stats.EstimatedInputTokens += int64(tokens)
 	stats.EstimatedSpendUSD += float64(tokens) * jevInputCostPerToken
+}
+
+func disagreementRecordForIssue(issue github.Issue, decision, keywordAnswer, jevAnswer string, confidence float64) Disagreement {
+	return Disagreement{Repo: issue.Repo, Number: issue.Number, Title: issue.Title, KeywordAnswer: keywordAnswer, JevAnswer: jevAnswer, Confidence: confidence}
+}
+
+func recordDisagreementLocked(decision string, disagreement Disagreement) {
+	if disagreement.JevAnswer == "" {
+		return
+	}
+	ring := stats.Disagreements[decision]
+	for i := range ring {
+		if ring[i].Repo == disagreement.Repo && ring[i].Number == disagreement.Number {
+			ring[i] = disagreement
+			stats.Disagreements[decision] = ring
+			return
+		}
+	}
+	if len(ring) >= disagreementRingCap {
+		ring = ring[1:]
+	}
+	ring = append(ring, disagreement)
+	stats.Disagreements[decision] = ring
+}
+
+func buildRuleSuggestions(disagreements map[string][]Disagreement) []RuleSuggestion {
+	var suggestions []RuleSuggestion
+	suggestions = append(suggestions, buildLaneSuggestions(disagreements[DecisionLane])...)
+	suggestions = append(suggestions, buildTierSuggestions(disagreements[DecisionTier])...)
+	return suggestions
+}
+
+func buildLaneSuggestions(disagreements []Disagreement) []RuleSuggestion {
+	existingByLane := map[string]map[string]bool{}
+	for _, lane := range activeLanes() {
+		existingByLane[lane.Name] = keywordSet(lane.Keywords)
+	}
+	return buildSuggestionsForTarget(DecisionLane, disagreements, func(answer string) (string, map[string]bool, bool) {
+		if answer == string(LaneScanner) {
+			return "", nil, false
+		}
+		existing, ok := existingByLane[answer]
+		if !ok {
+			return "", nil, false
+		}
+		return "agents." + answer + ".lane_keywords", existing, true
+	})
+}
+
+func buildTierSuggestions(disagreements []Disagreement) []RuleSuggestion {
+	simple, complex := TierKeywords()
+	return buildSuggestionsForTarget(DecisionTier, disagreements, func(answer string) (string, map[string]bool, bool) {
+		switch answer {
+		case string(TierSimple):
+			return "classifier.simple_keywords", keywordSet(simple), true
+		case string(TierComplex):
+			return "classifier.complex_signals", keywordSet(complex), true
+		default:
+			return "", nil, false
+		}
+	})
+}
+
+func buildSuggestionsForTarget(decision string, disagreements []Disagreement, target func(string) (string, map[string]bool, bool)) []RuleSuggestion {
+	type bucket struct {
+		counts   map[string]int
+		examples map[string][]string
+		target   string
+		existing map[string]bool
+	}
+	buckets := map[string]*bucket{}
+	for _, d := range disagreements {
+		targetName, existing, ok := target(d.JevAnswer)
+		if !ok {
+			continue
+		}
+		key := d.JevAnswer
+		b := buckets[key]
+		if b == nil {
+			b = &bucket{counts: map[string]int{}, examples: map[string][]string{}, target: targetName, existing: existing}
+			buckets[key] = b
+		}
+		for _, token := range titleTokens(d.Title) {
+			if b.existing[token] {
+				continue
+			}
+			b.counts[token]++
+			if len(b.examples[token]) < 3 {
+				b.examples[token] = append(b.examples[token], fmt.Sprintf("%s#%d %s", d.Repo, d.Number, d.Title))
+			}
+		}
+	}
+	var suggestions []RuleSuggestion
+	for answer, b := range buckets {
+		for token, support := range b.counts {
+			if support < suggestionMinSupport {
+				continue
+			}
+			suggestions = append(suggestions, RuleSuggestion{ID: suggestionID(decision, answer, token), Decision: decision, Answer: answer, Keyword: token, Target: b.target, Support: support, Examples: append([]string(nil), b.examples[token]...)})
+		}
+	}
+	sortRuleSuggestions(suggestions)
+	return suggestions
+}
+
+func keywordSet(in []string) map[string]bool {
+	out := map[string]bool{}
+	for _, v := range in {
+		if s := strings.ToLower(strings.TrimSpace(v)); s != "" {
+			out[s] = true
+		}
+	}
+	return out
+}
+
+func suggestionID(decision, answer, keyword string) string {
+	return decision + ":" + answer + ":" + keyword
+}
+
+func sortRuleSuggestions(suggestions []RuleSuggestion) {
+	sort.Slice(suggestions, func(i, j int) bool {
+		if suggestions[i].Support != suggestions[j].Support {
+			return suggestions[i].Support > suggestions[j].Support
+		}
+		if suggestions[i].Decision != suggestions[j].Decision {
+			return suggestions[i].Decision < suggestions[j].Decision
+		}
+		if suggestions[i].Answer != suggestions[j].Answer {
+			return suggestions[i].Answer < suggestions[j].Answer
+		}
+		return suggestions[i].Keyword < suggestions[j].Keyword
+	})
+}
+
+func titleTokens(title string) []string {
+	fields := strings.FieldsFunc(strings.ToLower(title), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
+	})
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range fields {
+		f = strings.TrimSpace(f)
+		if len(f) < 3 || titleStopwords[f] || seen[f] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
+	}
+	return out
+}
+
+var titleStopwords = map[string]bool{
+	"the": true, "and": true, "for": true, "with": true, "from": true, "into": true,
+	"this": true, "that": true, "these": true, "those": true, "when": true, "where": true,
+	"what": true, "why": true, "how": true, "should": true, "could": true, "would": true,
+	"must": true, "can": true, "not": true, "fix": true, "add": true, "update": true,
+	"remove": true, "make": true, "use": true, "new": true, "old": true, "issue": true,
+	"bug": true, "task": true, "hive": true, "dashboard": true,
 }

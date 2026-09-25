@@ -108,7 +108,6 @@ agents:
 
 classifier:
   backend: keywords
-  mode: shadow
   jev:
     provider: openrouter
     model: typesafe/jev-1.13

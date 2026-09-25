@@ -229,7 +229,6 @@ planning:
 # built-in defaults, so behavior is unchanged when unset.
 classifier:
   backend: keywords # keywords (default) | jev
-  mode: shadow      # shadow records Jev agreement; enforce lets confident Jev decide
   jev:
     provider: openrouter
     model: typesafe/jev-1.13
@@ -253,13 +252,13 @@ governor:
 ### Optional Jev typed-decision backend
 
 Set `classifier.backend: jev` to ask TypeSafe AI's Jev model one batched
-typed-decision question per issue for lane, tier, and run triage. The default
-`mode: shadow` keeps keyword routing authoritative and only records
-agree/disagree/fallback counters at `GET /api/classifier/stats`; `mode: enforce`
-uses Jev only when the individual answer is at or above `min_confidence`.
-Errors, missing keys, timeouts, disabled decisions, and low-confidence answers
-fall back to the keyword classifier. With `provider: openrouter`, Hive uses the
-configured `api_key_env` first and otherwise falls back to the connected
+typed-decision question per issue for lane, tier, and run triage. Jev never
+changes routing: keyword/label rules remain authoritative while Jev records
+agree/disagree/fallback counters at `GET /api/classifier/stats`, keeps a bounded
+set of recent disagreement examples, and proposes deterministic keyword edits
+that operators can approve. Errors, missing keys, timeouts, disabled decisions,
+and low-confidence answers count as fallback. With `provider: openrouter`, Hive
+uses the configured `api_key_env` first and otherwise falls back to the connected
 `openrouter` model-gateway key.
 
 The same rollout controls are discoverable in the spoke dashboard under
@@ -267,9 +266,10 @@ The same rollout controls are discoverable in the spoke dashboard under
 decisions and expected Jev cost (about `$0.00002` per issue, input tokens only),
 checks whether OpenRouter is connected or `JEV_API_KEY` is present without ever
 displaying a key, links to the existing OpenRouter connect flow, and saves
-`classifier.backend`, `classifier.mode`, `classifier.jev.min_confidence`, and
+`classifier.backend`, `classifier.jev.min_confidence`, and
 `classifier.jev.decisions` through the owner-gated config-save path. It also
-shows the live shadow-mode agree/disagree/fallback counters and estimated spend
+shows live agree/disagree/fallback counters, recent disagreement examples,
+suggested deterministic rule updates with **Apply** buttons, and estimated spend
 from `GET /api/classifier/stats`.
 
 For the full operator guide — concept, prerequisites, every config key/default,

@@ -16,7 +16,7 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `GET` | `/metrics` | Registered only when `HIVE_METRICS_ENABLED`; requires `Authorization: ****** (403 if the token is unset) | Prometheus metrics | `pkg/dashboard/server.go:1171` |
 | `GET` | `/api/status` | Dashboard auth/session | Dashboard aggregate status; accepts `?fields=a,b` for top-level selection and `?omit=repos` to drop heavy sections, and honors `Accept-Encoding: gzip` | `pkg/dashboard/server.go:1176` |
 | `GET` | `/api/status/summary` | Dashboard auth/session | Compact agent/governor/budget status summary for pollers; honors `Accept-Encoding: gzip` | `pkg/dashboard/server.go:1177` |
-| `GET` | `/api/classifier/stats` | Dashboard auth/session | Jev classifier agreement, fallback, estimated input token/spend counters, and readiness (`openrouter_connected`, `key_source`) without key values | `pkg/dashboard/server.go:1178` |
+| `GET` | `/api/classifier/stats` | Dashboard auth/session | Jev classifier advisory agreement, disagreement examples, rule suggestions, fallback, estimated input token/spend counters, and readiness (`openrouter_connected`, `key_source`) without key values | `pkg/dashboard/server.go:1178` |
 | `GET` | `/api/events` | Dashboard auth/session | Server-sent event stream | `pkg/dashboard/server.go:1180` |
 | `GET` | `/api/swarm` | Dashboard auth/session | Current swarm status: display name, duration, active repo, expiry, persisted prep metrics when available, and idle-unlock fields. | `pkg/dashboard/swarm.go:310` |
 | `POST` | `/api/swarm` | Owner only | Start a 24h repo swarm for a configured repo, returning 409 when another swarm is active and 423 when a previous swarm keeps the next swarm locked until enough agents are idle unless body `{"repo":"owner/name","force":true}` is used; saves the active record before repo prep, persists prep metrics, and announces the start to Discord when configured. | `pkg/dashboard/swarm.go:311` |
@@ -132,7 +132,7 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `PUT` | `/api/config/governor/attribution` | Owner only | Governor Attribution | `pkg/dashboard/api.go:224` |
 | `PUT` | `/api/config/governor/hub` | Owner only | Governor Hub | `pkg/dashboard/api.go:225` |
 | `PUT` | `/api/config/governor/litellm` | Owner only | Governor Lite LLM | `pkg/dashboard/api.go:226` |
-| `PUT` | `/api/config/governor/classifier` | Owner only | Smart classifier rollout settings (`classifier.backend`, `mode`, `jev.min_confidence`, `jev.decisions`) without key values | `pkg/dashboard/api.go:227` |
+| `PUT` | `/api/config/governor/classifier` | Owner only | Smart classifier advisory settings (`classifier.backend`, `jev.min_confidence`, `jev.decisions`) or one approved rule suggestion without key values | `pkg/dashboard/api.go:227` |
 | `PUT` | `/api/config/governor/trajectory` | Owner only | Governor Trajectory | `pkg/dashboard/api.go:228` |
 | `GET` | `/api/config/governor/backup` | Owner only | Backup Key Status (presence + safe source label; never the key value) | `pkg/dashboard/backup_key.go` |
 | `PUT` | `/api/config/governor/backup` | Owner only | Backup Key Set (64-hex AES-256 key; stored 0600, path-only in `hive.yaml`) | `pkg/dashboard/backup_key.go` |

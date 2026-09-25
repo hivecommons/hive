@@ -45,7 +45,7 @@ func TestClassifierConfig_YAML(t *testing.T) {
 	src := `
 classifier:
   backend: jev
-  mode: enforce
+  mode: shadow
   jev:
     provider: openrouter
     model: typesafe/jev-1.13
@@ -69,8 +69,8 @@ planning:
 	if !reflect.DeepEqual(cfg.Classifier.ComplexSignals, []string{"distributed-consensus"}) {
 		t.Errorf("complex_signals = %v", cfg.Classifier.ComplexSignals)
 	}
-	if cfg.Classifier.EffectiveBackend() != "jev" || cfg.Classifier.EffectiveMode() != "enforce" {
-		t.Errorf("classifier backend/mode = %q/%q", cfg.Classifier.EffectiveBackend(), cfg.Classifier.EffectiveMode())
+	if cfg.Classifier.EffectiveBackend() != "jev" || cfg.Classifier.Mode != "shadow" {
+		t.Errorf("classifier backend/mode = %q/%q", cfg.Classifier.EffectiveBackend(), cfg.Classifier.Mode)
 	}
 	if got := cfg.Classifier.EffectiveJev(); got.Provider != "openrouter" || got.Model != "typesafe/jev-1.13" || got.Endpoint != "https://example.test/v1/systemone" || got.APIKeyEnv != "JEV_API_KEY" || got.MinConfidence != 0.9 || got.Timeout.String() != "3s" || !reflect.DeepEqual(got.Decisions, []string{"lane", "tier"}) {
 		t.Errorf("jev config = %+v", got)
@@ -108,6 +108,7 @@ func TestClassifierConfigValidation(t *testing.T) {
 	}
 	cases := []ClassifierConfig{
 		{Backend: "magic"},
+		{Mode: "enforce"},
 		{Mode: "replace"},
 		{Backend: "jev", Jev: JevClassifierConfig{Provider: "other"}},
 		{Backend: "jev", Jev: JevClassifierConfig{MinConfidence: 1.2}},
@@ -127,17 +128,17 @@ func TestJevClassifierEffectiveDefaults(t *testing.T) {
 	if j.EffectiveProvider() != "" {
 		t.Fatalf("raw provider effective = %q, want empty before ClassifierConfig defaults", j.EffectiveProvider())
 	}
-	cfg := ClassifierConfig{Mode: "enforce"}
+	cfg := ClassifierConfig{}
 	got := cfg.EffectiveJev()
-	if got.Provider != "openrouter" || got.Model != "typesafe/jev-1.13" || got.Endpoint != "https://openrouter.ai/api/v1/systemone" || got.MinConfidence != 0.8 || got.Timeout.String() != "2s" || got.EffectiveMode() != "enforce" || !reflect.DeepEqual(got.EffectiveDecisions(), []string{"lane", "tier", "triage"}) {
+	if got.Provider != "openrouter" || got.Model != "typesafe/jev-1.13" || got.Endpoint != "https://openrouter.ai/api/v1/systemone" || got.MinConfidence != 0.8 || got.Timeout.String() != "2s" || !reflect.DeepEqual(got.EffectiveDecisions(), []string{"lane", "tier", "triage"}) {
 		t.Fatalf("openrouter defaults = %+v", got)
 	}
 	typed := ClassifierConfig{Jev: JevClassifierConfig{Provider: "typesafe"}}
 	if got := typed.EffectiveJev(); got.Model != "jev-latest" || got.Endpoint != "https://api.typesafe.ai/v1/systemone" || got.EffectiveProvider() != "typesafe" {
 		t.Fatalf("typesafe defaults = %+v", got)
 	}
-	custom := JevClassifierConfig{Model: "m", Endpoint: "https://jev.example", MinConfidence: 0.7, Timeout: 5, Mode: "shadow", Decisions: []string{" lane ", "", "tier"}}
-	if custom.EffectiveModel() != "m" || custom.EffectiveEndpoint() != "https://jev.example" || custom.EffectiveMinConfidence() != 0.7 || custom.EffectiveTimeout() != 5 || custom.EffectiveMode() != "shadow" || !reflect.DeepEqual(custom.EffectiveDecisions(), []string{"lane", "tier"}) {
+	custom := JevClassifierConfig{Model: "m", Endpoint: "https://jev.example", MinConfidence: 0.7, Timeout: 5, Decisions: []string{" lane ", "", "tier"}}
+	if custom.EffectiveModel() != "m" || custom.EffectiveEndpoint() != "https://jev.example" || custom.EffectiveMinConfidence() != 0.7 || custom.EffectiveTimeout() != 5 || !reflect.DeepEqual(custom.EffectiveDecisions(), []string{"lane", "tier"}) {
 		t.Fatalf("custom effective methods returned unexpected values: %+v", custom)
 	}
 }
