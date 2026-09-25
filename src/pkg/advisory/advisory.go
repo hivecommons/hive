@@ -358,12 +358,8 @@ var closeReasonBasis = map[string]CloseBasis{
 // close rests on: a check the hive re-ran itself, one of the hive's
 // heuristics (a merged PR's title matched, or every GitHub reference the
 // finding cites closed), or only the closer's say-so.
-func resolvedAtForBead(store *beads.Store, b *beads.Bead, opts DigestOptions) (time.Time, CloseBasis) {
-	return resolvedAtForBeadSince(store, b, opts, time.Time{})
-}
-
-// resolvedAtForBeadSince is resolvedAtForBead for a caller that only cares
-// whether the bead resolved AFTER cutoff. A persisted resolved_at at or before
+// resolvedAtForBeadSince resolves when a closed bead was settled, for a caller
+// that only cares whether it resolved AFTER cutoff (zero cutoff = always look). A persisted resolved_at at or before
 // the cutoff is final without a lookup: the linked-reference pass can only
 // move the timestamp EARLIER (it replaces the persisted value solely when the
 // cited work closed before it), so the answer stays outside the window
