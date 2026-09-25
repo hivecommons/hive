@@ -84,3 +84,32 @@ func TestBuildDigest_MemoizesLinkedRefLookups(t *testing.T) {
 		t.Fatalf("recently resolved = %d, want 4", len(d.RecentlyResolved))
 	}
 }
+
+// The two lookup passes share a memo cache but NOT a budget: a store with
+// more distinct closed-bead refs than one pass may look up must not leave
+// partitionSettledStale with an exhausted resolver, or settled stale findings
+// would stay open purely because of pass order.
+func TestBuildDigest_StalePassKeepsOwnBudget(t *testing.T) {
+	store := staleFindingStore(t, staleDetail)
+	for i := 1; i <= staleRefLookupBudget+5; i++ {
+		b, err := store.Create(fmt.Sprintf("closed finding %d cites #%d", i, 1000+i), beads.TypeAdvisory, beads.PriorityMedium, "quality", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Close(b.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	closedAt := time.Now().Add(-24 * time.Hour)
+	resolve := func(owner, repo string, number int) (RefState, bool) {
+		return RefState{Closed: true, ClosedAt: closedAt}, true
+	}
+	d := BuildDigestFromBeads(map[string]*beads.Store{"quality": store}, "advisory", DigestOptions{
+		MaxFindings: 10,
+		ResolveRef:  resolve,
+		Snapshot:    &Snapshot{Owner: "Danathar", Repo: "atomic-image-builder", SHA: analyzedAt},
+	})
+	if got := len(digestFindings(d)); got != 0 {
+		t.Fatalf("%d findings still open; the stale finding names closed work and must be retired even after the closed-bead pass spent its budget", got)
+	}
+}
