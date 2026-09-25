@@ -79,6 +79,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          cache: false
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
@@ -99,6 +100,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          cache: false
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
@@ -139,6 +141,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          cache: false
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
@@ -206,6 +209,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          cache: false
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
