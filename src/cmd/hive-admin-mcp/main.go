@@ -146,6 +146,25 @@ func (p readProvider) ExecuteWrite(ctx context.Context, req adminmcp.WriteReques
 	if err != nil {
 		return nil, err
 	}
+	if req.Path == "/api/backup" {
+		meta, err := client.DoDiscard(ctx, req.Method, req.Path, nil, req.Body)
+		if err != nil {
+			var api *hivectl.APIError
+			if errors.As(err, &api) {
+				return nil, &adminmcp.HiveRefusalError{StatusCode: api.StatusCode, Message: api.Message, Body: api.Body}
+			}
+			return nil, err
+		}
+		return map[string]any{
+			"ok":          true,
+			"contentType": meta.ContentType,
+			"bytes":       meta.ContentLength,
+			"encrypted":   meta.Headers.Get("X-Hive-Backup-Encrypted"),
+			"files":       meta.Headers.Get("X-Hive-Backup-Files"),
+			"bead_dirs":   meta.Headers.Get("X-Hive-Backup-Bead-Dirs"),
+			"archive":     "[not exposed through admin MCP]",
+		}, nil
+	}
 	data, err := client.Do(ctx, req.Method, req.Path, nil, req.Body)
 	if err != nil {
 		var api *hivectl.APIError

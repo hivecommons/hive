@@ -1,6 +1,6 @@
 # The operator-facing admin MCP
 
-**Status: phase 3 write contract implemented.** The admin MCP package, dashboard endpoint, stdio binary, refusal contract, read tools for fleet, agents, leases/claims, plans, audit, settings, readiness, spend, contributors, knowledge, and hive advice, the generic write-operation registry, durable preview-and-confirm flow, and the first pause/resume write operations are present. Writes remain disabled unless explicitly enabled, and later phases add more registered write operations on top of the same contract. It belongs to the v6
+**Status: phase 6 repository, spend, contributor and ops operations implemented.** The admin MCP package, dashboard endpoint, stdio binary, refusal contract, read tools for fleet, agents, leases/claims, plans, audit, settings, readiness, spend, contributors, knowledge, and hive advice, the generic write-operation registry, durable preview-and-confirm flow, and registered write operations through phase 6 are present. Writes remain disabled unless explicitly enabled, and later phases add more registered write operations on top of the same contract. It belongs to the v6
 dashboard-optional line ([#7563](https://github.com/hivecommons/hive/issues/7563)) and, per
 that line's policy, lands on the `v6` branch only. Tracked by
 [#8697](https://github.com/hivecommons/hive/issues/8697).
@@ -103,6 +103,14 @@ type WriteOp interface {
 ```
 
 The preview returns a `WritePreview` containing the operator-facing summary, widening disclosure, and the REST `WriteRequest` to execute on confirmation. Keep new operations in their own files (for example `tools_agent_ops.go`, `tools_fleet_ops.go`, `tools_repo_ops.go`) so later phases can add operations without editing unrelated operation groups. Phase 3 registers only `agent.pause` and `agent.resume`, each targeting exactly one named agent and disclosing that there is no widening.
+
+Phase 6 adds `tools_repo_ops.go`, registering repository, spend, contributor and operations writes:
+
+- `repository.pause`, `repository.resume`, and `repository.item_hold` use the existing repository pause and hold endpoints and disclose that the target is exactly one repository or repository item.
+- `budget.update`, `budget.reset`, and `budget.ignore` use the existing budget settings, reset, and budget-bypass endpoints. Budget reset and budget bypass previews explicitly disclose that they can widen agent activity by reopening or bypassing the budget gate.
+- `contributor.trust`, `contributor.agent_role`, `contributor.agent_role_grants`, `contributor.revoke`, `contributor.requeue`, and `contributor.delete` use the existing contributor administration endpoints and disclose whether they widen, narrow, or move contributor authority/work.
+- `backup.create` uses `POST /api/backup`, but the admin MCP result reports only metadata (content type, byte count and backup summary headers where available) and never exposes the encrypted archive bytes to the model.
+- `circuit_breaker.engage` and `circuit_breaker.release` use the existing fleet breaker endpoints; release discloses that it can resume multiple agents.
 
 ## What it inherits for free, and what it does not
 
@@ -301,8 +309,8 @@ falls back to the queued-run snapshot, so an operator can paste either identifie
 | feature settings | `PUT /api/config/governor/features` | `requireOwnerRole`; pointer fields, nil means unchanged |
 | repository pause / resume | `POST /api/repos/pause`, `/api/repos/resume` | `requireRepoPausePermission` → `canToggleRepoHold` |
 | item hold | `POST /api/repos/{owner}/{repo}/items/{number}/hold` | `canToggleRepoHold` |
-| spend | `PUT /api/config/governor/budget`, `POST /api/config/governor/budget/reset` | `requireOwnerRole` |
-| contributors | `PUT /api/contributors/{id}/trust`, `POST /api/contributors/{id}/revoke`, `/requeue`, `PUT /api/contributors/{id}/agent-role-grants`, `DELETE /api/contributors/{id}` | `requireOwnerRole` |
+| spend | `PUT /api/config/governor/budget`, `POST /api/config/governor/budget/reset`, `POST /api/budget-ignore` | `requireOwnerRole` |
+| contributors | `PUT /api/contributors/{id}/trust`, `PUT /api/contributors/{id}/agent-role`, `PUT /api/contributors/{id}/agent-role-grants`, `POST /api/contributors/{id}/revoke`, `/requeue`, `DELETE /api/contributors/{id}` | `requireOwnerRole` except `/requeue`, which remains `requireContributorWrite` |
 | backup | `POST /api/backup` | `requireOwnerRole` |
 | breaker | `POST /api/breaker/engage`, `/api/breaker/release` | `requireOwnerRole` |
 
