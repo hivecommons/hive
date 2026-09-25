@@ -1397,26 +1397,41 @@ func NewManager(cfg config.RotationConfig) *Manager {
 		lastProbeErrLog:  make(map[string]string),
 	}
 	threshold := cfg.EffectiveThreshold()
+	useCCLeft := cfg.EffectiveHeadroomSource() == config.RotationHeadroomSourceCCLeft
 	for name, pc := range cfg.Providers {
-		switch name {
-		case "anthropic":
-			m.probers = append(m.probers, ClaudeProber{ThresholdPct: threshold})
-		case "openai":
-			m.probers = append(m.probers, CodexProber{ThresholdPct: threshold})
-		case "google":
-			m.probers = append(m.probers, AgyProber{ThresholdPct: threshold})
-		case "deepseek":
-			m.probers = append(m.probers, DeepSeekProber{})
-		case "github":
-			// Copilot premium requests (#6980). Without a stated
-			// monthly_allowance the probe reports an explicit unknown — see
-			// CopilotProber.
-			m.probers = append(m.probers, CopilotProber{ThresholdPct: threshold, MonthlyAllowance: pc.MonthlyAllowance})
-		case "aws-kiro":
-			m.probers = append(m.probers, KiroProber{ThresholdPct: threshold})
+		if useCCLeft {
+			if source, ok := newCCLeftHeadroomSource(name, threshold); ok {
+				m.probers = append(m.probers, source)
+				continue
+			}
+		}
+		if source := builtinHeadroomSource(name, pc, threshold); source != nil {
+			m.probers = append(m.probers, source)
 		}
 	}
 	return m
+}
+
+func builtinHeadroomSource(name string, pc config.ProviderRotationConfig, threshold int) HeadroomSource {
+	switch name {
+	case "anthropic":
+		return ClaudeProber{ThresholdPct: threshold}
+	case "openai":
+		return CodexProber{ThresholdPct: threshold}
+	case "google":
+		return AgyProber{ThresholdPct: threshold}
+	case "deepseek":
+		return DeepSeekProber{}
+	case "github":
+		// Copilot premium requests (#6980). Without a stated
+		// monthly_allowance the probe reports an explicit unknown — see
+		// CopilotProber.
+		return CopilotProber{ThresholdPct: threshold, MonthlyAllowance: pc.MonthlyAllowance}
+	case "aws-kiro":
+		return KiroProber{ThresholdPct: threshold}
+	default:
+		return nil
+	}
 }
 
 // SetHeadroomSources replaces the headroom source set (tests, custom

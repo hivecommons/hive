@@ -92,7 +92,7 @@ func TestFormatDigestMarkdownWithResolved(t *testing.T) {
 		ByAgent:     map[string][]Finding{"scanner": {{Agent: "scanner", Severity: "high", Title: "fixed bug", Type: "bug"}}},
 		TotalCount:  1,
 		RecentlyResolved: []ResolvedFinding{
-			{Agent: "scanner", Title: "old bug", ClosedAt: time.Now(), File: "old.go"},
+			{Agent: "scanner", Title: "old bug", ClosedAt: time.Now(), File: "old.go", Basis: CloseBasisHiveVerified},
 		},
 	}
 	md := FormatDigestMarkdown(d, DigestOptions{Org: "", PrimaryRepo: ""})

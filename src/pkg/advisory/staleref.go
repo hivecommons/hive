@@ -363,6 +363,7 @@ func partitionSettledStale(byAgent map[string][]Finding, opts DigestOptions, now
 				Title:    f.Title,
 				ClosedAt: closedAt,
 				File:     f.File,
+				Basis:    CloseBasisCitedRefsClosed,
 			})
 		}
 		if len(kept) == 0 {

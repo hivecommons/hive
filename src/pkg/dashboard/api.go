@@ -51,6 +51,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// report "not enabled" when deps.ApprovalInbox is nil, so a disabled desk is
 	// an honest 200 the panel can render rather than a 404 that looks broken.
 	s.registerApprovalRoutes()
+	s.registerSwarmRoutes()
 
 	s.mux.HandleFunc("GET /api/version", s.handleVersion)
 	s.mux.HandleFunc("GET /api/style", s.handleStyle)
@@ -101,6 +102,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/campaigns/{id}/jam", s.handleCampaignJamPost)
 	s.mux.HandleFunc("GET /api/campaigns/{id}/jam/threads", s.handleCampaignJamThreadsGet)
 	s.mux.HandleFunc("POST /api/campaigns/{id}/jam/threads", s.handleCampaignJamThreadsPost)
+	s.mux.HandleFunc("POST /api/campaigns/{id}/jam/agents", s.handleCampaignJamAgentsPost)
 	s.mux.HandleFunc("GET /api/campaigns/{id}/jam/suggestions", s.handleCampaignJamSuggestionsGet)
 	s.mux.HandleFunc("POST /api/campaigns/{id}/jam/suggestions", s.handleCampaignJamSuggestionsPost)
 	s.mux.HandleFunc("GET /api/campaigns/{id}/jam/polls", s.handleCampaignJamPollsGet)
