@@ -1,0 +1,1 @@
+- Spektacular stage runner no longer parks a freshly admitted run with `missing_workdir` before any relay has claimed it. Admission leases owned by `hive-triage` are reported as unclaimed and wait for a run-stage-capable contributor; a refusal recorded against one owner's checkout is cleared when the same generation changes hands.

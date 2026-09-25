@@ -51,7 +51,7 @@ const (
 )
 
 const (
-	runAdmissionIdentity   = "hive-triage"
+	runAdmissionIdentity   = worksource.RunAdmissionIdentity
 	runAdmissionTaskPrefix = "run-admit-"
 	runFanoutIdentity      = "hive-run-fanout"
 	runFanoutTaskPrefix    = "run-fanout-"

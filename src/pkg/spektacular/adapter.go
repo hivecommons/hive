@@ -12,6 +12,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/escalate"
 	"github.com/hivecommons/hive/pkg/outputschema"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // Attribute keys the adapter passes to the lease registry. pkg/dashboard
@@ -79,6 +80,7 @@ func (a *leaseAdapter) ActiveStages(time.Time) ([]Stage, error) {
 		out = append(out, Stage{
 			RunKey: runKey, Artifact: ArtifactKey(runKey), Stage: stage, Key: key,
 			Identity: identity, TaskID: taskID, Repo: repo, WorkDir: workDir, Gen: gen, ExpiresAt: expiresAt,
+			Unclaimed: identity == worksource.RunAdmissionIdentity,
 		})
 	})
 	if err != nil {
