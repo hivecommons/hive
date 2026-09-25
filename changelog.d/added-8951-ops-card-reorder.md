@@ -1,0 +1,1 @@
+- Let each viewer drag or keyboard-reorder the `/contribute` Operations cards across columns, with their layout remembered in browser localStorage and a reset control for restoring the default order.
