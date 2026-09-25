@@ -1,0 +1,1 @@
+- Bump the bundled LiteLLM proxy from 1.96.2 to 1.102.1 so hives with `governor.litellm.local_proxy: true` no longer crash-loop on `ImportError: get_flat_dependant` after FastAPI 0.141 removed that symbol ([#8936](https://github.com/hivecommons/hive/pull/8936), thanks @sideeffffect).
