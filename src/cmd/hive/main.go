@@ -4378,7 +4378,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 	if deps.startDashChat != nil {
 		bot, err := deps.startDashChat(b.ctx, dashchat.Config{
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
-			DashboardToken:  os.Getenv("HIVE_DASHBOARD_TOKEN"),
+			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    dashboardChatAllowedUsers(b.cfg),
 			PersonaLearning: b.personaLearningConfig,
 			AuditSink:       b.dashSrv.AgentAuditSink(),
@@ -4402,7 +4402,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			Token:           b.cfg.Notifications.Discord.BotToken,
 			ChannelID:       b.cfg.Notifications.Discord.ChannelID,
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
-			DashboardToken:  os.Getenv("HIVE_DASHBOARD_TOKEN"),
+			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.Discord.AllowedUsers,
 			PersonaLearning: b.personaLearningConfig,
 			AuditSink:       b.dashSrv.AgentAuditSink(),
@@ -4420,7 +4420,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			BotToken:        b.cfg.Notifications.Slack.BotToken,
 			ChannelID:       b.cfg.Notifications.Slack.ChannelID,
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
-			DashboardToken:  os.Getenv("HIVE_DASHBOARD_TOKEN"),
+			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.Slack.AllowedUsers,
 			PersonaLearning: b.personaLearningConfig,
 			AuditSink:       b.dashSrv.AgentAuditSink(),
@@ -4438,7 +4438,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			BotToken:        b.cfg.Notifications.Telegram.BotToken,
 			ChatID:          b.cfg.Notifications.Telegram.ChatID,
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
-			DashboardToken:  os.Getenv("HIVE_DASHBOARD_TOKEN"),
+			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.Telegram.AllowedUsers,
 			PersonaLearning: b.personaLearningConfig,
 			AuditSink:       b.dashSrv.AgentAuditSink(),
@@ -4457,7 +4457,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			AccessToken:     b.cfg.Notifications.Matrix.AccessToken,
 			RoomID:          b.cfg.Notifications.Matrix.RoomID,
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
-			DashboardToken:  os.Getenv("HIVE_DASHBOARD_TOKEN"),
+			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.Matrix.AllowedUsers,
 			PersonaLearning: b.personaLearningConfig,
 			AuditSink:       b.dashSrv.AgentAuditSink(),
@@ -4479,7 +4479,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			ChannelID:       b.cfg.Notifications.MSTeams.ChannelID,
 			WebhookURL:      b.cfg.Notifications.MSTeams.WebhookURL,
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
-			DashboardToken:  os.Getenv("HIVE_DASHBOARD_TOKEN"),
+			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.MSTeams.AllowedUsers,
 			PersonaLearning: b.personaLearningConfig,
 			AuditSink:       b.dashSrv.AgentAuditSink(),
@@ -9312,4 +9312,17 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 	default:
 		return false, 0
 	}
+}
+
+// chatDashboardToken is the bearer token the chat services use to call the
+// local dashboard API. It must be the same token the dashboard middleware
+// accepts (config.Dashboard.AuthToken, resolved from DASHBOARD_AUTH_TOKEN,
+// HIVE_DASHBOARD_TOKEN or the token file). Reading only HIVE_DASHBOARD_TOKEN
+// left hosted spokes — which mount a token file — sending no Authorization
+// at all, so every `!runs`, heartbeat and spec-start call answered 401.
+func (b *boot) chatDashboardToken() string {
+	if b != nil && b.cfg != nil && b.cfg.Dashboard.AuthToken != "" {
+		return b.cfg.Dashboard.AuthToken
+	}
+	return os.Getenv("HIVE_DASHBOARD_TOKEN")
 }
