@@ -1,0 +1,1 @@
+- Let the Manage Access Add User combobox browse the full grantable-user list before typing, with a chevron opener and large-list narrowing hint.

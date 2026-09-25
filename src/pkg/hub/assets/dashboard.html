@@ -285,9 +285,11 @@
     .contact-panel-cell { text-align: left; }
     .contact-panel-cell input, .contact-panel-cell textarea { text-align: left; }
     .access-typeahead { position: relative; flex: 1 1 340px; min-width: 260px; }
-    .access-typeahead-input { width: 100%; box-sizing: border-box; padding: var(--sp-4) var(--sp-5); background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); color: var(--text); font-size: 0.85rem; }
+    .access-typeahead-input { width: 100%; box-sizing: border-box; padding: var(--sp-4) calc(var(--sp-9) + var(--sp-2)) var(--sp-4) var(--sp-5); background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); color: var(--text); font-size: 0.85rem; }
     .access-typeahead-input[aria-expanded="true"] { border-color: var(--hub-dashboard-accent); }
-    .access-typeahead-list { display: none; position: absolute; z-index: 130; left: 0; right: 0; top: calc(100% + 4px); max-height: 260px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); box-shadow: var(--shadow-raised); }
+    .access-typeahead-toggle { position: absolute; top: 1px; right: 1px; width: 36px; height: 36px; border: 0; border-left: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; }
+    .access-typeahead-toggle:hover { color: var(--text); background: color-mix(in srgb, var(--hub-dashboard-accent) 8%, transparent); }
+    .access-typeahead-list { display: none; position: absolute; z-index: 130; left: 0; right: 0; top: calc(100% + 4px); max-height: 300px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); box-shadow: var(--shadow-raised); }
     .access-typeahead-list.open { display: block; }
     .access-typeahead-option { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); cursor: pointer; border-bottom: 1px solid var(--border); }
     .access-typeahead-option:last-child { border-bottom: 0; }
@@ -11896,6 +11898,7 @@
               role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="access-user-results"
               aria-activedescendant="" oninput="filterAccessUserDropdown()" onkeydown="accessUserSearchKeydown(event)"
               onfocus="openAccessUserResults()">
+            <button id="access-user-toggle" class="access-typeahead-toggle" type="button" aria-label="Show grantable users" onclick="toggleAccessUserResults()">▾</button>
             <input id="access-username" type="hidden" value="">
             <div id="access-selected-user-chip" class="access-typeahead-chip"></div>
             <div id="access-user-results" class="access-typeahead-list" role="listbox" aria-label="Matching hub users"></div>
@@ -12264,6 +12267,7 @@
     var _accessUserActive = -1;
     var _selectedAccessUser = null;
     var ACCESS_USER_DEBOUNCE_MS = 200;
+    var ACCESS_USER_RESULT_LIMIT = 200;
 
     /* enrichGrantableUserLabels upgrades GitHub rows whose label is still the
        bare login with the profile display name, then re-renders the typeahead
@@ -12393,6 +12397,17 @@
       renderAccessUserOptions(accessUserQuery());
     }
 
+    function toggleAccessUserResults() {
+      var list = document.getElementById('access-user-results');
+      if (list && list.classList.contains('open')) {
+        setAccessTypeaheadOpen(false);
+        return;
+      }
+      var box = document.getElementById('access-user-search');
+      if (box) box.focus();
+      renderAccessUserOptions(accessUserQuery());
+    }
+
     function renderAccessStatus(msg, isError) {
       var list = document.getElementById('access-user-results');
       if (!list) return;
@@ -12432,13 +12447,19 @@
       if (!_accessUsersLoaded) { renderAccessStatus('Searching…'); return; }
       if (!_grantableUsers.length) { renderAccessStatus('No hub users yet — they must sign in to the hub first.'); return; }
       var seen = {};
-      var matches = _grantableUsers.filter(function(e) {
+      var allMatches = _grantableUsers.filter(function(e) {
         if (!e || !e.id || !accessGrantableMatches(e, q)) return false;
         if (seen[accessUserKey(e.id)]) return false;
         seen[accessUserKey(e.id)] = true;
         e.already_role = accessRoleForUser(e.id);
         return true;
-      }).slice(0, 20);
+      }).sort(function(a, b) {
+        var la = String(a.label || a.id || '').toLowerCase();
+        var lb = String(b.label || b.id || '').toLowerCase();
+        if (la !== lb) return la.localeCompare(lb);
+        return String(a.id || '').localeCompare(String(b.id || ''));
+      });
+      var matches = allMatches.slice(0, ACCESS_USER_RESULT_LIMIT);
       var exactExisting = _grantableUsers.some(function(e) { return accessUserKey(e.id) === accessUserKey(q); });
       var exactGranted = !!accessRoleForUser(q);
       if (q && isValidBareGitHubLogin(q) && !exactExisting && !exactGranted) {
@@ -12451,8 +12472,12 @@
       _accessUserResults = matches;
       if (_accessUserActive < 0 || _accessUserActive >= matches.length) _accessUserActive = matches.findIndex(function(e) { return !e.already_role; });
       var selectableCount = matches.filter(function(e) { return !e.already_role; }).length;
-      var status = q ? (matches.length + ' match' + (matches.length === 1 ? '' : 'es') + ' for "' + esc(q) + '"') : (matches.length + ' grantable user' + (matches.length === 1 ? '' : 's'));
+      var hiddenCount = Math.max(0, allMatches.length - ACCESS_USER_RESULT_LIMIT);
+      var status = q
+        ? (allMatches.length + ' match' + (allMatches.length === 1 ? '' : 'es') + ' for "' + esc(q) + '"')
+        : (allMatches.length + ' user' + (allMatches.length === 1 ? '' : 's') + ' — type to filter');
       if (selectableCount !== matches.length) status += ' (' + (matches.length - selectableCount) + ' already granted)';
+      if (hiddenCount > 0) status += ' — showing first ' + ACCESS_USER_RESULT_LIMIT + ', type to narrow ' + hiddenCount + ' more';
       list.innerHTML = '<div class="access-typeahead-status">' + status + '</div>' + matches.map(function(e, i) { return accessResultRow(e, i, q); }).join('');
       setAccessTypeaheadOpen(true);
       updateAccessActiveDescendant();
