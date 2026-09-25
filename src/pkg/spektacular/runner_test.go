@@ -796,6 +796,94 @@ func TestTick_PlanFinalFallsBackToPlanMarkdown(t *testing.T) {
 	}
 }
 
+// spekNativePlanMD mirrors the plan.md Spektacular 0.22 wrote for
+// kubestellar/console#23725 on the hosted hive: phases are headings, every
+// other bullet is prose or acceptance criteria.
+const spekNativePlanMD = `---
+created_date: "2026-09-25"
+document_status: final
+---
+
+# Plan: kubestellar-console-23725
+
+## Component Breakdown
+
+- **` + "`dashboards.Registrar`" + `** (new) — implements the contract.
+- **Five ` + "`_aliases.go`" + ` shim files** — deleted.
+
+## Milestones & Phases
+
+### Milestone 1: Dashboard wiring no longer depends on shims
+
+#### - [ ] Phase 1.1: Port the dashboards domain to ` + "`handlers.Registrar`" + `
+
+**Repo:** console
+
+**Acceptance criteria**:
+- [ ] Every dashboard endpoint responds as before.
+- [ ] The shim file no longer exists.
+
+#### - [ ] Phase 1.2: Port the persistence domain
+
+**Repo:** kubestellar/console
+
+- [ ] The persistence test suite passes unmodified.
+
+### Milestone 2: Route assembly is uniform
+
+#### - [x] Phase 2.1: Collapse route assembly to a uniform registrar list
+`
+
+func TestParsePlanMarkdown_SpektacularNativePhases(t *testing.T) {
+	plan, err := ParsePlanMarkdown(testRunKey, []byte(spekNativePlanMD))
+	if err != nil {
+		t.Fatalf("ParsePlanMarkdown: %v", err)
+	}
+	if len(plan.Tasks) != 3 {
+		t.Fatalf("phases parsed = %d, want 3 (acceptance/component bullets must not become tasks): %+v", len(plan.Tasks), plan.Tasks)
+	}
+	p1 := plan.Tasks[0]
+	if p1.Ref != "P1.1" || p1.Title != "Port the dashboards domain to `handlers.Registrar`" || p1.Repo != "" || len(p1.DependsOn) != 0 || p1.Execution != "agent_suitable" {
+		t.Fatalf("P1.1 = %+v (bare project name must not override the run repo)", p1)
+	}
+	p2 := plan.Tasks[1]
+	if p2.Ref != "P1.2" || p2.Repo != "kubestellar/console" || len(p2.DependsOn) != 1 || p2.DependsOn[0] != "P1.1" {
+		t.Fatalf("P1.2 = %+v", p2)
+	}
+	if p3 := plan.Tasks[2]; p3.Ref != "P2.1" || p3.DependsOn[0] != "P1.2" {
+		t.Fatalf("P2.1 = %+v", p3)
+	}
+	rendered := RenderTaskList(plan)
+	if !strings.Contains(rendered, "1. [P1.1] Port the dashboards domain") || !strings.Contains(rendered, "[P1.2] Port the persistence domain [repo:kubestellar/console] (depends: P1.1)") {
+		t.Fatalf("rendered = %q", rendered)
+	}
+}
+
+// Spektacular 0.22 has no `plan export`; cobra swallows "export" as a
+// positional and rejects the flag with an internal_error envelope. That must
+// route to the on-disk fallback rather than blocking the run.
+func TestTick_PlanFinalFallsBackWhenExportFlagIsRejected(t *testing.T) {
+	reg := newFakeRegistry(StagePlan)
+	ex := &scriptedExec{
+		statuses:   []string{statusJSON(KindPlan, testRunKey, DocumentFinal)},
+		exportJSON: `{"error":true,"code":"internal_error","message":"unknown flag: --format","next_action":""}`,
+		exportErr:  errors.New("exit status 1"),
+		files: map[string]string{
+			testRunKey + "/plan.md": spekNativePlanMD,
+		},
+	}
+	r := newRunner(reg, ex, &escalations{})
+	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
+		t.Fatalf("plan final fallback tick = %+v", res)
+	}
+	if reg.stage.Stage != StageImplement {
+		t.Fatalf("stage after fallback = %q, want implement", reg.stage.Stage)
+	}
+	if len(reg.plans) != 1 || len(reg.plans[0].Tasks) != 3 || reg.plans[0].Tasks[0].Ref != "P1.1" {
+		t.Fatalf("fallback plan = %+v", reg.plans)
+	}
+}
+
 func TestTick_PlanFinalWithFailedExportDoesNotAdvance(t *testing.T) {
 	reg := newFakeRegistry(StagePlan)
 	ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, DocumentFinal)}, exportErr: errors.New("exit status 2")}
