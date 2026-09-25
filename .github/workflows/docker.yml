@@ -257,7 +257,12 @@ jobs:
     # tip whose images this workflow already built, published and freshness-
     # checked minutes earlier. The `gate` job itself still runs on the scratch
     # branch; that is the whole reason the branch exists.
-    if: needs.gate.outputs.push == 'true'
+    # push=true already implies not release-gate/* (gate forces push=false
+    # there); the explicit clause is kept because test-release-push-retry.sh
+    # asserts it (#5339) and it makes the intent readable.
+    if: >-
+      needs.gate.outputs.push == 'true' &&
+      !startsWith(github.ref_name, 'release-gate/')
     strategy:
       matrix:
         include:
@@ -613,7 +618,12 @@ jobs:
     # not treated as satisfied even though its check-run is already `success`.
     # The release job's merge waits 120s and a multi-arch build takes ~10min,
     # so the merge could never win that race (#5339, 8th recurrence).
-    if: needs.gate.outputs.push == 'true'
+    # push=true already implies not release-gate/* (gate forces push=false
+    # there); the explicit clause is kept because test-release-push-retry.sh
+    # asserts it (#5339) and it makes the intent readable.
+    if: >-
+      needs.gate.outputs.push == 'true' &&
+      !startsWith(github.ref_name, 'release-gate/')
     strategy:
       matrix:
         include:
@@ -793,7 +803,12 @@ jobs:
     # not treated as satisfied even though its check-run is already `success`.
     # The release job's merge waits 120s and a multi-arch build takes ~10min,
     # so the merge could never win that race (#5339, 8th recurrence).
-    if: needs.gate.outputs.push == 'true'
+    # push=true already implies not release-gate/* (gate forces push=false
+    # there); the explicit clause is kept because test-release-push-retry.sh
+    # asserts it (#5339) and it makes the intent readable.
+    if: >-
+      needs.gate.outputs.push == 'true' &&
+      !startsWith(github.ref_name, 'release-gate/')
     strategy:
       matrix:
         include:
