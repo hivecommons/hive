@@ -8051,9 +8051,19 @@
     let reviewerAccuracyLoading = false;
     let reviewerAccuracyData = null;
 
+    function normalizeGovernorPRModelsWindowName(windowName) {
+      return ['7d', '30d', 'all'].includes(windowName) ? windowName : '7d';
+    }
+
+    function renderGovernorFromLastStatus() {
+      const lastStatus = window._lastStatus;
+      if (!lastStatus) return;
+      renderGovernor(lastStatus.governor || {}, lastStatus.cadenceMatrix || [], lastStatus);
+    }
+
     function setGovernorPRModelsWindow(windowName) {
-      govPRModelsWindow = ['7d', '30d', 'all'].includes(windowName) ? windowName : '7d';
-      loadGovernorPRModels(true);
+      govPRModelsWindow = normalizeGovernorPRModelsWindowName(windowName);
+      return loadGovernorPRModels(true, govPRModelsWindow);
     }
     window.setGovernorPRModelsWindow = setGovernorPRModelsWindow;
     function setGovernorPRModelsSort(sortName) {
@@ -8077,18 +8087,23 @@
       });
     }
 
-    async function loadGovernorPRModels(force) {
+    async function loadGovernorPRModels(force, windowName = govPRModelsWindow) {
+      const requestedWindow = normalizeGovernorPRModelsWindowName(windowName);
       if (govPRModelsLoading) return;
-      if (!force && govPRModelsData && govPRModelsData.window === govPRModelsWindow) return;
+      if (!force && govPRModelsData && govPRModelsData.window === requestedWindow) return;
+      govPRModelsWindow = requestedWindow;
       govPRModelsLoading = true;
       try {
-        const res = await fetch(`/api/governor/pr-models?window=${encodeURIComponent(govPRModelsWindow)}`);
-        if (res.ok) govPRModelsData = await res.json();
+        const res = await fetch(`/api/governor/pr-models?window=${encodeURIComponent(requestedWindow)}`);
+        if (res.ok) {
+          const data = await res.json();
+          govPRModelsData = { ...data, window: data?.window || requestedWindow };
+        }
       } catch (_) {
-        govPRModelsData = { window: govPRModelsWindow, total: 0, buckets: [] };
+        govPRModelsData = { window: requestedWindow, total: 0, buckets: [] };
       } finally {
         govPRModelsLoading = false;
-        if (window._lastStatus?.governor) renderGovernor(window._lastStatus.governor, window._lastStatus.cadenceMatrix || [], window._lastStatus);
+        renderGovernorFromLastStatus();
       }
     }
 
@@ -8253,7 +8268,7 @@
       // > tests) then age (#6183); the class tag makes that order legible.
       const holdTooltip = holdItems.length > 0 ? escapeHtml(holdExplain + holdItems.map(h => `${h.type === 'pr' ? 'PR' : 'Issue'} ${h.repo}#${h.number}${h.review_class ? ' [' + h.review_class + ']' : ''}: ${h.title}`).join('\n')) : escapeHtml(holdExplain + 'Nothing is currently on hold.');
       const holdSpark = sparkline('govHold');
-      loadGovernorPRModels(false);
+      loadGovernorPRModels(false, govPRModelsWindow);
       loadReviewerAccuracy(false);
 
       el.innerHTML = `

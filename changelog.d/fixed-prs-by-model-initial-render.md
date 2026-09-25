@@ -1,0 +1,1 @@
+- Fixed the dashboard PRs by model panel so it renders on initial load instead of waiting for a day-filter change.
