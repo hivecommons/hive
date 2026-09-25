@@ -1,6 +1,6 @@
 # The operator-facing admin MCP
 
-**Status: phase 2 read surface implemented.** The admin MCP package, dashboard endpoint, stdio binary, refusal contract, and read tools for fleet, agents, leases/claims, plans, audit, settings, readiness, spend, contributors, knowledge, and hive advice are present. Admin MCP phases 1 and 2 are read-only; write tools arrive only after the preview and confirmation contract is implemented in phase 3. It belongs to the v6
+**Status: phase 3 write contract implemented.** The admin MCP package, dashboard endpoint, stdio binary, refusal contract, read tools for fleet, agents, leases/claims, plans, audit, settings, readiness, spend, contributors, knowledge, and hive advice, the generic write-operation registry, durable preview-and-confirm flow, and the first pause/resume write operations are present. Writes remain disabled unless explicitly enabled, and later phases add more registered write operations on top of the same contract. It belongs to the v6
 dashboard-optional line ([#7563](https://github.com/hivecommons/hive/issues/7563)) and, per
 that line's policy, lands on the `v6` branch only. Tracked by
 [#8697](https://github.com/hivecommons/hive/issues/8697).
@@ -64,8 +64,7 @@ reachability, and the two shapes are not exclusive. The honest accounting:
 - The endpoint **is** a new authenticated write surface on the hub, which `pkg/taskmcp` is not —
   that one is read-only. It exposes no authority the dashboard REST API does not already give
   the same credential, but it is new request-handling code on the hub and should be read as
-  such. Every write on both transports is gated by the preview-and-confirm contract, and the
-  surface is read-only until that contract exists.
+  such. Every write on both transports is gated by the preview-and-confirm contract. The contract now exists, but writes still fail closed unless the operator explicitly enables them (`HIVE_ADMIN_MCP_ENABLE_WRITES=1`).
 - Because it is served by the hub, the endpoint needs no authentication of its own: the existing
   `authenticate` path already resolves a dashboard token to owner. Unlike `pkg/taskmcp` it needs
   no lease minting, no per-lease scoping and no revocation record, because the credential is the
@@ -79,6 +78,31 @@ carrying one's own copy is what "no surface grows its own authz" forbids.
 Its scope is hive administration **broadly** — not a fixed short list of operations — with a
 named set of exclusions, each recorded below with the reason it was excluded rather than as a
 bare statement of scope.
+
+
+## Write contract (phase 3)
+
+Phase 3 adds the reusable contract that phases 4–6 extend. The MCP exposes two generic write tools:
+
+- `write_preview` takes an `operation` name and operation-specific `args`. It calls the registered `WriteOp`'s `Preview`, returns the exact REST method/path/body that would be used, the expected effects, and a widening disclosure. It also persists a one-use pending confirmation with an id and expiry.
+- `write_confirm` takes that `confirmation_id`, reloads it from the durable store, verifies that it has not expired, belongs to the same hive, and still describes the same registered operation, then executes the saved REST request.
+
+Writes are disabled by default on both transports. Set `HIVE_ADMIN_MCP_ENABLE_WRITES=1` to enable them. Pending confirmations are durable: the dashboard endpoint stores them in `/data/admin-mcp-pending-confirmations.json` by default, and the stdio binary stores them under the user's config directory; both support `HIVE_ADMIN_MCP_PENDING_FILE` as an explicit path. The confirmation is not a capability for any other action: it is action-bound, hive-bound, one-use, and time-limited.
+
+The write contract deliberately goes through existing dashboard REST endpoints and sends only the dashboard token. It never sends `X-Hive-User`, `X-Hive-Role`, or `X-Hive-Owner-Role-Verified`. A hive refusal from the underlying endpoint is returned as a `hive-refusal` result with the status and original response body preserved rather than rewritten as a client-side authorization decision. Audit attribution therefore remains `local`, as recorded below.
+
+A write operation is registered by implementing `adminmcp.WriteOp` and adding it to the registry (the default registry is `adminmcp.DefaultWriteRegistry()`):
+
+```go
+type WriteOp interface {
+    Name() string
+    Description() string
+    InputSchema() map[string]any
+    Preview(ctx context.Context, args map[string]any) (WritePreview, error)
+}
+```
+
+The preview returns a `WritePreview` containing the operator-facing summary, widening disclosure, and the REST `WriteRequest` to execute on confirmation. Keep new operations in their own files (for example `tools_agent_ops.go`, `tools_fleet_ops.go`, `tools_repo_ops.go`) so later phases can add operations without editing unrelated operation groups. Phase 3 registers only `agent.pause` and `agent.resume`, each targeting exactly one named agent and disclosing that there is no widening.
 
 ## What it inherits for free, and what it does not
 
@@ -410,6 +434,8 @@ explicitly not to.
   banner dismissal. They have no meaning in a conversation.
 - **Any tool taking a path, URL, or method as an argument.** The allowlist is the design: Hive
   redacts per handler, so an unvetted endpoint is an unvetted redaction story.
+- **Unregistered write operations.** Admin MCP writes are limited to registered WriteOp
+  implementations; do not approximate an unavailable write by combining other operations.
 
 **Switched off until the write contract exists**
 

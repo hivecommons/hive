@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -110,7 +111,7 @@ var exclusions = []Exclusion{
 	{Operation: "Anything that issues, rotates, reads back or exchanges a credential", Kind: RefusalKindCategorical, Reason: "The surface exists to hand Hive state to a language model, and credential material is the one class of content that must never reach one. There is no version of this design in which these belong.", Tracker: judgementTracker},
 	{Operation: "purely presentational endpoints", Kind: RefusalKindCategorical, Reason: "They have no meaning in a conversation.", Tracker: judgementTracker},
 	{Operation: "Any tool taking a path, URL, or method as an argument", Kind: RefusalKindCategorical, Reason: "The allowlist is the design: Hive redacts per handler, so an unvetted endpoint is an unvetted redaction story.", Tracker: judgementTracker},
-	{Operation: "writes before phase 3", Kind: RefusalKindSwitchedOff, Reason: "Admin MCP phases 1 and 2 are read-only; write tools arrive only after the preview and confirmation contract is implemented in phase 3.", Tracker: "https://github.com/hivecommons/hive/issues/8697"},
+	{Operation: "unregistered write operations", Kind: RefusalKindSwitchedOff, Reason: "Admin MCP writes are limited to registered WriteOp implementations; do not approximate an unavailable write by combining other operations.", Tracker: "https://github.com/hivecommons/hive/issues/8697"},
 }
 
 func Exclusions() []Exclusion {
@@ -130,16 +131,70 @@ func RefusalFor(operation string) (RefusalData, bool) {
 			return refusalData(ex), true
 		}
 	}
-	return refusalData(Exclusion{Operation: operation, Kind: RefusalKindSwitchedOff, Reason: "This operation is not an admin MCP phase 2 read tool; phases 1 and 2 are read-only and do not approximate excluded writes.", Tracker: "https://github.com/hivecommons/hive/issues/8697"}), false
+	return refusalData(Exclusion{Operation: operation, Kind: RefusalKindSwitchedOff, Reason: "This operation is not a registered admin MCP tool or write operation; the surface does not approximate unavailable writes.", Tracker: "https://github.com/hivecommons/hive/issues/8697"}), false
 }
 
 func refusalData(ex Exclusion) RefusalData {
 	return RefusalData{Type: "refusal", Operation: ex.Operation, Kind: ex.Kind, Reason: ex.Reason, DoNotApproximate: ex.DoNotApproximate, Tracker: ex.Tracker, WhatWouldNeedToChange: ex.WhatWouldNeedToChange}
 }
 
-type Handler struct{ Provider Provider }
+type Handler struct {
+	Provider        Provider
+	WritesEnabled   bool
+	WriteClient     WriteClient
+	PendingStore    PendingStore
+	WriteRegistry   *WriteRegistry
+	ConfirmationTTL time.Duration
+	HiveID          string
+	Now             func() time.Time
+}
 
-func NewHandler(provider Provider) *Handler { return &Handler{Provider: provider} }
+type HandlerOption func(*Handler)
+
+func WithWritesEnabled(enabled bool) HandlerOption {
+	return func(h *Handler) { h.WritesEnabled = enabled }
+}
+func WithWriteClient(client WriteClient) HandlerOption {
+	return func(h *Handler) { h.WriteClient = client }
+}
+func WithPendingStore(store PendingStore) HandlerOption {
+	return func(h *Handler) { h.PendingStore = store }
+}
+func WithWriteRegistry(registry *WriteRegistry) HandlerOption {
+	return func(h *Handler) { h.WriteRegistry = registry }
+}
+func WithHiveID(hive string) HandlerOption {
+	return func(h *Handler) { h.HiveID = strings.TrimSpace(hive) }
+}
+func WithConfirmationTTL(ttl time.Duration) HandlerOption {
+	return func(h *Handler) { h.ConfirmationTTL = ttl }
+}
+func WithClock(now func() time.Time) HandlerOption { return func(h *Handler) { h.Now = now } }
+
+func NewHandler(provider Provider, opts ...HandlerOption) *Handler {
+	h := &Handler{Provider: provider, WriteRegistry: DefaultWriteRegistry(), ConfirmationTTL: DefaultConfirmationTTL, HiveID: "local"}
+	if writer, ok := provider.(WriteClient); ok {
+		h.WriteClient = writer
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(h)
+		}
+	}
+	if h.PendingStore == nil {
+		h.PendingStore = NewMemoryPendingStore()
+	}
+	if h.WriteRegistry == nil {
+		h.WriteRegistry = DefaultWriteRegistry()
+	}
+	if h.ConfirmationTTL <= 0 {
+		h.ConfirmationTTL = DefaultConfirmationTTL
+	}
+	if h.HiveID == "" {
+		h.HiveID = "local"
+	}
+	return h
+}
 
 type rpcRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -187,7 +242,7 @@ func (h *Handler) dispatch(r *http.Request, req rpcRequest) (any, *rpcError) {
 	case "notifications/initialized":
 		return map[string]any{}, nil
 	case "tools/list":
-		return map[string]any{"tools": Tools()}, nil
+		return map[string]any{"tools": ToolsWithWritesEnabled(h.WritesEnabled)}, nil
 	case "tools/call":
 		return h.callTool(r.Context(), req.Params)
 	default:
@@ -215,9 +270,25 @@ func (h *Handler) callTool(ctx context.Context, raw json.RawMessage) (any, *rpcE
 	var data any
 	switch p.Name {
 	case ToolExclusionCatalogue:
-		data = map[string]any{"exclusions": Exclusions(), "writes_enabled": false, "preview": phaseOneMetadata().Preview, "confirm": phaseOneMetadata().Confirm}
+		data = Catalogue(h.WritesEnabled, h.WriteRegistry)
 	case ToolRefuseOperation:
 		data, _ = RefusalFor(stringArg(p.Arguments, "operation"))
+	case ToolWritePreview:
+		result, err := h.PreviewWrite(ctx, p.Arguments)
+		if err != nil {
+			return nil, toolErr(err)
+		}
+		data = result
+	case ToolWriteConfirm:
+		result, err := h.ConfirmWrite(ctx, p.Arguments)
+		if refusal, ok := HiveRefusalFromError(err); ok {
+			data = refusal
+			break
+		}
+		if err != nil {
+			return nil, toolErr(err)
+		}
+		data = result
 	default:
 		if h.Provider == nil {
 			return nil, &rpcError{Code: -32000, Message: "provider unavailable"}
@@ -238,7 +309,9 @@ func (h *Handler) callTool(ctx context.Context, raw json.RawMessage) (any, *rpcE
 	return map[string]any{"content": []map[string]string{{"type": "text", "text": string(b)}}}, nil
 }
 
-func Tools() []map[string]any {
+func Tools() []map[string]any { return ToolsWithWritesEnabled(false) }
+
+func ToolsWithWritesEnabled(writesEnabled bool) []map[string]any {
 	defs := []struct{ name, desc string }{
 		{ToolHiveStatus, "Read this hive's dashboard status summary."},
 		{ToolFleetStatus, "Read this hive's fleet status, including repo and agent health rollups."},
@@ -254,12 +327,20 @@ func Tools() []map[string]any {
 		{ToolContributorsList, "Read the capped list of contributors known to this hive."},
 		{ToolKnowledgeRead, "Read knowledge-system health and statistics."},
 		{ToolHiveAdvisor, "Read hive advisor recommendations."},
+		{ToolWritePreview, "Preview a registered write operation and create a durable pending confirmation."},
+		{ToolWriteConfirm, "Confirm and execute a previously previewed write operation."},
 		{ToolExclusionCatalogue, "Return the askable catalogue of operations deliberately excluded from admin MCP."},
 		{ToolRefuseOperation, "Return the recorded refusal for an excluded or unavailable operation."},
 	}
 	out := make([]map[string]any, 0, len(defs))
 	for _, d := range defs {
-		out = append(out, map[string]any{"name": d.name, "description": d.desc, "inputSchema": inputSchema(d.name), "annotations": map[string]any{"readOnlyHint": true}, "metadata": phaseOneMetadata()})
+		metadata := phaseOneMetadata()
+		readOnly := true
+		if d.name == ToolWritePreview || d.name == ToolWriteConfirm {
+			metadata = writeMetadata(writesEnabled)
+			readOnly = false
+		}
+		out = append(out, map[string]any{"name": d.name, "description": d.desc, "inputSchema": inputSchema(d.name), "annotations": map[string]any{"readOnlyHint": readOnly}, "metadata": metadata})
 	}
 	return out
 }
@@ -268,24 +349,115 @@ func AllowedTool(name string) bool {
 	switch name {
 	case ToolHiveStatus, ToolFleetStatus, ToolAgentsList, ToolRunsList, ToolLeasesList, ToolClaimsList,
 		ToolPlansList, ToolAuditLog, ToolSettingsRead, ToolAutonomyReadiness, ToolSpendRead,
-		ToolContributorsList, ToolKnowledgeRead, ToolHiveAdvisor, ToolExclusionCatalogue, ToolRefuseOperation:
+		ToolContributorsList, ToolKnowledgeRead, ToolHiveAdvisor, ToolWritePreview, ToolWriteConfirm,
+		ToolExclusionCatalogue, ToolRefuseOperation:
 		return true
 	}
 	return false
 }
 
 func phaseOneMetadata() ToolMetadata {
-	return ToolMetadata{Preview: PreviewContract{Mode: "read_only_phase_2", Enabled: false, Note: "Write previews are scaffolded but no write tools ship before phase 3."}, Confirm: ConfirmContract{Required: false, Note: "Confirmation is reserved for write phases; reads require no confirmation."}, Writes: false}
+	return ToolMetadata{Preview: PreviewContract{Mode: "phase_3_write_contract", Enabled: false, Note: "Read tools require no confirmation; write tools use the phase 3 preview-and-confirm contract when explicitly enabled."}, Confirm: ConfirmContract{Required: false, Note: "Reads require no confirmation; write confirmations are handled by write_confirm."}, Writes: false}
+}
+
+func writeMetadata(enabled bool) ToolMetadata {
+	note := "Writes are registered but disabled until the operator explicitly enables admin MCP writes."
+	if enabled {
+		note = "Writes require preview followed by durable confirmation."
+	}
+	return ToolMetadata{Preview: PreviewContract{Mode: "preview_confirm", Enabled: enabled, Note: note}, Confirm: ConfirmContract{Required: true, Note: "Confirmations are one-use, hive-bound, action-bound, and expire."}, Writes: true}
 }
 
 func inputSchema(name string) map[string]any {
 	props := map[string]any{"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": MaxResultLimit}}
 	required := []string{}
-	if name == ToolRefuseOperation {
+	switch name {
+	case ToolRefuseOperation:
 		props = map[string]any{"operation": map[string]any{"type": "string"}}
 		required = []string{"operation"}
+	case ToolWritePreview:
+		props = map[string]any{"operation": map[string]any{"type": "string"}, "args": map[string]any{"type": "object"}}
+		required = []string{"operation", "args"}
+	case ToolWriteConfirm:
+		props = map[string]any{"confirmation_id": map[string]any{"type": "string"}}
+		required = []string{"confirmation_id"}
 	}
 	return map[string]any{"type": "object", "properties": props, "required": required, "additionalProperties": false}
+}
+
+func (h *Handler) PreviewWrite(ctx context.Context, args map[string]any) (any, error) {
+	if !h.WritesEnabled {
+		return nil, ErrWritesDisabled
+	}
+	opName := cleanOperationName(stringArg(args, "operation"))
+	op, ok := h.WriteRegistry.Get(opName)
+	if !ok {
+		return nil, fmt.Errorf("unknown write operation %q", opName)
+	}
+	opArgs, _ := args["args"].(map[string]any)
+	if opArgs == nil {
+		opArgs = map[string]any{}
+	}
+	preview, err := op.Preview(ctx, opArgs)
+	if err != nil {
+		return nil, err
+	}
+	now := h.now()
+	id, err := newConfirmationID()
+	if err != nil {
+		return nil, err
+	}
+	pending := PendingConfirmation{ID: id, Operation: op.Name(), Args: opArgs, Preview: preview, Hive: h.HiveID, CreatedAt: now, ExpiresAt: now.Add(h.ConfirmationTTL)}
+	if err := h.PendingStore.Put(ctx, pending); err != nil {
+		return nil, err
+	}
+	return map[string]any{"type": "write_preview", "confirmation_id": id, "expires_at": pending.ExpiresAt, "hive": pending.Hive, "preview": preview, "widening_disclosure": preview.WideningDisclosure}, nil
+}
+
+func (h *Handler) ConfirmWrite(ctx context.Context, args map[string]any) (any, error) {
+	if !h.WritesEnabled {
+		return nil, ErrWritesDisabled
+	}
+	if h.WriteClient == nil {
+		return nil, fmt.Errorf("write client unavailable")
+	}
+	id := stringArg(args, "confirmation_id")
+	if id == "" {
+		return nil, fmt.Errorf("confirmation_id is required")
+	}
+	pending, err := h.PendingStore.Take(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if pending.Hive != h.HiveID {
+		return nil, fmt.Errorf("confirmation belongs to hive %q, not %q", pending.Hive, h.HiveID)
+	}
+	if !h.now().Before(pending.ExpiresAt) {
+		return nil, ErrConfirmationExpired
+	}
+	op, ok := h.WriteRegistry.Get(pending.Operation)
+	if !ok {
+		return nil, fmt.Errorf("registered write operation %q is no longer available", pending.Operation)
+	}
+	preview, err := op.Preview(ctx, pending.Args)
+	if err != nil {
+		return nil, err
+	}
+	if preview.Request.Method != pending.Preview.Request.Method || preview.Request.Path != pending.Preview.Request.Path {
+		return nil, fmt.Errorf("write preview changed since confirmation was issued")
+	}
+	result, err := h.WriteClient.ExecuteWrite(ctx, pending.Preview.Request)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"type": "write_result", "confirmation_id": id, "operation": pending.Operation, "hive": pending.Hive, "result": result}, nil
+}
+
+func (h *Handler) now() time.Time {
+	if h.Now != nil {
+		return h.Now()
+	}
+	return time.Now().UTC()
 }
 
 func LimitFromArgs(args map[string]any) int {
@@ -489,3 +661,19 @@ func SortKeys(m map[string]any) []string {
 	return keys
 }
 func Errorf(format string, args ...any) error { return fmt.Errorf(format, args...) }
+
+func Catalogue(writesEnabled bool, registry *WriteRegistry) map[string]any {
+	return map[string]any{"exclusions": Exclusions(), "writes_enabled": writesEnabled, "write_operations": WriteOperationDescriptions(registry), "preview": writeMetadata(writesEnabled).Preview, "confirm": writeMetadata(writesEnabled).Confirm}
+}
+
+func WriteOperationDescriptions(registry *WriteRegistry) []map[string]any {
+	if registry == nil {
+		registry = DefaultWriteRegistry()
+	}
+	ops := registry.Ops()
+	out := make([]map[string]any, 0, len(ops))
+	for _, op := range ops {
+		out = append(out, map[string]any{"name": op.Name(), "description": op.Description(), "input_schema": op.InputSchema()})
+	}
+	return out
+}

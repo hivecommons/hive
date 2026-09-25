@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -18,9 +19,11 @@ import (
 )
 
 const (
-	defaultTimeout = 15 * time.Second
-	envHives       = "HIVE_ADMIN_MCP_HIVES"
-	envActiveHive  = "HIVE_ADMIN_MCP_ACTIVE"
+	defaultTimeout  = 15 * time.Second
+	envHives        = "HIVE_ADMIN_MCP_HIVES"
+	envActiveHive   = "HIVE_ADMIN_MCP_ACTIVE"
+	envEnableWrites = "HIVE_ADMIN_MCP_ENABLE_WRITES"
+	envPendingFile  = "HIVE_ADMIN_MCP_PENDING_FILE"
 )
 
 type hiveConfig struct {
@@ -36,7 +39,11 @@ type roster struct {
 	timeout time.Duration
 }
 
-type readProvider struct{ roster *roster }
+type readProvider struct {
+	roster        *roster
+	writesEnabled bool
+	pendingStore  adminmcp.PendingStore
+}
 
 func main() {
 	r, err := loadRosterFromEnv()
@@ -45,8 +52,8 @@ func main() {
 		os.Exit(2)
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: adminmcp.ServerName, Version: adminmcp.ServerVersion}, nil)
-	provider := readProvider{roster: r}
-	for _, def := range adminmcp.Tools() {
+	provider := readProvider{roster: r, writesEnabled: adminMCPWritesEnabled(), pendingStore: adminmcp.NewFilePendingStore(adminMCPPendingPath())}
+	for _, def := range adminmcp.ToolsWithWritesEnabled(provider.writesEnabled) {
 		name, _ := def["name"].(string)
 		desc, _ := def["description"].(string)
 		tool := &mcp.Tool{Name: name, Description: desc, InputSchema: def["inputSchema"]}
@@ -100,6 +107,16 @@ func (p readProvider) handler(name string) mcp.ToolHandler {
 				return nil, err
 			}
 		}
+		if name == adminmcp.ToolWritePreview || name == adminmcp.ToolWriteConfirm {
+			data, err := p.callWrite(ctx, name, args)
+			if refusal, ok := adminmcp.HiveRefusalFromError(err); ok {
+				return textResult(adminmcp.DataEnvelope{Data: adminmcp.Scrub(refusal)}, true)
+			}
+			if err != nil {
+				return textResult(map[string]any{"error": err.Error()}, true)
+			}
+			return textResult(adminmcp.DataEnvelope{Data: adminmcp.Scrub(data)}, false)
+		}
 		data, err := p.Read(ctx, name, args)
 		if err != nil {
 			return textResult(map[string]any{"error": err.Error()}, true)
@@ -108,9 +125,41 @@ func (p readProvider) handler(name string) mcp.ToolHandler {
 	}
 }
 
+func (p readProvider) callWrite(ctx context.Context, tool string, args map[string]any) (any, error) {
+	_, hive, err := p.roster.activeClient()
+	if err != nil {
+		return nil, err
+	}
+	store := p.pendingStore
+	if store == nil {
+		store = adminmcp.NewMemoryPendingStore()
+	}
+	h := adminmcp.NewHandler(p, adminmcp.WithWritesEnabled(p.writesEnabled), adminmcp.WithPendingStore(store), adminmcp.WithHiveID(hive.Name))
+	if tool == adminmcp.ToolWritePreview {
+		return h.PreviewWrite(ctx, args)
+	}
+	return h.ConfirmWrite(ctx, args)
+}
+
+func (p readProvider) ExecuteWrite(ctx context.Context, req adminmcp.WriteRequest) (any, error) {
+	client, _, err := p.roster.activeClient()
+	if err != nil {
+		return nil, err
+	}
+	data, err := client.Do(ctx, req.Method, req.Path, nil, req.Body)
+	if err != nil {
+		var api *hivectl.APIError
+		if errors.As(err, &api) {
+			return nil, &adminmcp.HiveRefusalError{StatusCode: api.StatusCode, Message: api.Message, Body: api.Body}
+		}
+		return nil, err
+	}
+	return data, nil
+}
+
 func (p readProvider) Read(ctx context.Context, tool string, args map[string]any) (any, error) {
 	if tool == adminmcp.ToolExclusionCatalogue {
-		return map[string]any{"exclusions": adminmcp.Exclusions(), "writes_enabled": false}, nil
+		return adminmcp.Catalogue(p.writesEnabled, adminmcp.DefaultWriteRegistry()), nil
 	}
 	if tool == adminmcp.ToolRefuseOperation {
 		operation, _ := args["operation"].(string)
@@ -212,4 +261,23 @@ func textResult(v any, isError bool) (*mcp.CallToolResult, error) {
 		return nil, err
 	}
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}, IsError: isError}, nil
+}
+
+func adminMCPWritesEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(envEnableWrites))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func adminMCPPendingPath() string {
+	if path := strings.TrimSpace(os.Getenv(envPendingFile)); path != "" {
+		return path
+	}
+	if dir, err := os.UserConfigDir(); err == nil && strings.TrimSpace(dir) != "" {
+		return filepath.Join(dir, "hive", "admin-mcp-pending-confirmations.json")
+	}
+	return filepath.Join(".", ".hive-admin-mcp-pending-confirmations.json")
 }

@@ -1,0 +1,1 @@
+- Add the v6 admin MCP write contract with durable preview/confirm records and pause/resume agent operations behind an explicit enable switch.

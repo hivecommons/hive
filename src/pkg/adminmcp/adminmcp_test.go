@@ -149,3 +149,105 @@ func resultText(t *testing.T, body []byte) string {
 }
 
 func normalizeWhitespace(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+type writeProvider struct {
+	staticProvider
+	requests []WriteRequest
+	err      error
+}
+
+func (p *writeProvider) ExecuteWrite(_ context.Context, req WriteRequest) (any, error) {
+	p.requests = append(p.requests, req)
+	if p.err != nil {
+		return nil, p.err
+	}
+	return map[string]any{"ok": true}, nil
+}
+
+func TestWritePreviewDisabledByDefault(t *testing.T) {
+	h := NewHandler(&writeProvider{})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, EndpointPath, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"write_preview","arguments":{"operation":"agent.pause","args":{"agent":"scanner"}}}}`))
+	h.ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), ErrWritesDisabled.Error()) {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestWriteConfirmationPersistsAndExecutesAfterRestart(t *testing.T) {
+	path := t.TempDir() + "/pending.json"
+	store := NewFilePendingStore(path)
+	provider := &writeProvider{}
+	preview := NewHandler(provider, WithWritesEnabled(true), WithPendingStore(store), WithHiveID("hive-a"))
+	rec := httptest.NewRecorder()
+	preview.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, EndpointPath, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"write_preview","arguments":{"operation":"agent.pause","args":{"agent":"scanner"}}}}`)))
+	text := resultText(t, rec.Body.Bytes())
+	var env struct {
+		Data struct {
+			ConfirmationID string `json:"confirmation_id"`
+			Preview        struct {
+				WideningDisclosure string `json:"widening_disclosure"`
+			} `json:"preview"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(text), &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Data.ConfirmationID == "" || !strings.Contains(env.Data.Preview.WideningDisclosure, "No widening") {
+		t.Fatalf("preview envelope = %s", text)
+	}
+
+	restartedProvider := &writeProvider{}
+	restarted := NewHandler(restartedProvider, WithWritesEnabled(true), WithPendingStore(NewFilePendingStore(path)), WithHiveID("hive-a"))
+	rec = httptest.NewRecorder()
+	restarted.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, EndpointPath, strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"write_confirm","arguments":{"confirmation_id":"`+env.Data.ConfirmationID+`"}}}`)))
+	_ = resultText(t, rec.Body.Bytes())
+	if len(restartedProvider.requests) != 1 || restartedProvider.requests[0].Path != "/api/pause/scanner" || restartedProvider.requests[0].Method != http.MethodPost {
+		t.Fatalf("requests = %#v", restartedProvider.requests)
+	}
+
+	reuse := httptest.NewRecorder()
+	restarted.ServeHTTP(reuse, httptest.NewRequest(http.MethodPost, EndpointPath, strings.NewReader(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"write_confirm","arguments":{"confirmation_id":"`+env.Data.ConfirmationID+`"}}}`)))
+	if !strings.Contains(reuse.Body.String(), ErrConfirmationMissing.Error()) {
+		t.Fatalf("reuse body = %s", reuse.Body.String())
+	}
+}
+
+func TestWriteConfirmPassesHiveRefusalBodyThrough(t *testing.T) {
+	provider := &writeProvider{err: &HiveRefusalError{StatusCode: http.StatusForbidden, Message: "owner access required", Body: []byte(`{"error":"owner access required"}`)}}
+	h := NewHandler(provider, WithWritesEnabled(true), WithPendingStore(NewMemoryPendingStore()), WithHiveID("hive-a"))
+	preview := httptest.NewRecorder()
+	h.ServeHTTP(preview, httptest.NewRequest(http.MethodPost, EndpointPath, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"write_preview","arguments":{"operation":"agent.resume","args":{"agent":"scanner"}}}}`)))
+	text := resultText(t, preview.Body.Bytes())
+	var env struct {
+		Data struct {
+			ConfirmationID string `json:"confirmation_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(text), &env); err != nil {
+		t.Fatal(err)
+	}
+	confirm := httptest.NewRecorder()
+	h.ServeHTTP(confirm, httptest.NewRequest(http.MethodPost, EndpointPath, strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"write_confirm","arguments":{"confirmation_id":"`+env.Data.ConfirmationID+`"}}}`)))
+	text = resultText(t, confirm.Body.Bytes())
+	if !strings.Contains(text, `"type":"hive-refusal"`) || !strings.Contains(text, `"error":"owner access required"`) {
+		t.Fatalf("refusal text = %s", text)
+	}
+}
+
+func TestAgentWriteOpsEscapeAgentPathSegment(t *testing.T) {
+	preview, err := agentPauseOp{}.Preview(context.Background(), map[string]any{"agent": "team/scanner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Request.Path != "/api/pause/team%2Fscanner" {
+		t.Fatalf("pause path = %q", preview.Request.Path)
+	}
+	preview, err = agentResumeOp{}.Preview(context.Background(), map[string]any{"agent": "team/scanner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Request.Path != "/api/resume/team%2Fscanner" {
+		t.Fatalf("resume path = %q", preview.Request.Path)
+	}
+}

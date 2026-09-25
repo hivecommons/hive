@@ -199,3 +199,68 @@ func TestLoadRosterFromEnvRejectsInvalidRosters(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteProviderPreviewConfirmUsesDashboardTokenOnly(t *testing.T) {
+	var paused bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/pause/scanner" || r.Method != http.MethodPost {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer token" {
+			t.Fatalf("auth = %q", got)
+		}
+		for _, forbidden := range []string{"X-Hive-User", "X-Hive-Role", "X-Hive-Owner-Role-Verified"} {
+			if r.Header.Get(forbidden) != "" {
+				t.Fatalf("sent forbidden header %s", forbidden)
+			}
+		}
+		paused = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"changed":true}`))
+	}))
+	defer server.Close()
+	r := &roster{hives: []hiveConfig{{Name: "active", Address: server.URL, Token: "token"}}, active: 0, timeout: time.Second}
+	provider := readProvider{roster: r, writesEnabled: true, pendingStore: adminmcp.NewMemoryPendingStore()}
+	preview, err := provider.callWrite(context.Background(), adminmcp.ToolWritePreview, map[string]any{"operation": adminmcp.WriteOpAgentPause, "args": map[string]any{"agent": "scanner"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	previewMap, ok := preview.(map[string]any)
+	if !ok {
+		t.Fatalf("preview = %#v", preview)
+	}
+	id, _ := previewMap["confirmation_id"].(string)
+	if id == "" {
+		t.Fatalf("preview = %#v", preview)
+	}
+	if _, err := provider.callWrite(context.Background(), adminmcp.ToolWriteConfirm, map[string]any{"confirmation_id": id}); err != nil {
+		t.Fatal(err)
+	}
+	if !paused {
+		t.Fatal("pause endpoint was not called")
+	}
+}
+
+func TestAdminMCPWriteEnvHelpers(t *testing.T) {
+	t.Setenv(envEnableWrites, "")
+	if adminMCPWritesEnabled() {
+		t.Fatal("writes enabled by default")
+	}
+	t.Setenv(envEnableWrites, "true")
+	if !adminMCPWritesEnabled() {
+		t.Fatal("writes not enabled by env")
+	}
+	t.Setenv(envPendingFile, "state/pending.json")
+	if got := adminMCPPendingPath(); got != "state/pending.json" {
+		t.Fatalf("pending path = %q", got)
+	}
+}
+
+func TestWritePreviewDisabledInStdioProvider(t *testing.T) {
+	r := &roster{hives: []hiveConfig{{Name: "active", Address: "http://127.0.0.1", Token: "token"}}, active: 0, timeout: time.Second}
+	provider := readProvider{roster: r, pendingStore: adminmcp.NewMemoryPendingStore()}
+	_, err := provider.callWrite(context.Background(), adminmcp.ToolWritePreview, map[string]any{"operation": adminmcp.WriteOpAgentPause, "args": map[string]any{"agent": "scanner"}})
+	if !errors.Is(err, adminmcp.ErrWritesDisabled) {
+		t.Fatalf("err = %v", err)
+	}
+}
