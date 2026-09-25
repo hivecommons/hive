@@ -6,25 +6,34 @@ import (
 )
 
 const (
-	SwarmAchievementFirstFlight = "first-flight"
-	SwarmAchievementVeteran3    = "veteran-3"
-	SwarmAchievementVeteran10   = "veteran-10"
-	SwarmAchievementTopScorer   = "top-scorer"
-	SwarmAchievementCloser      = "closer"
-	SwarmAchievementIronSwarm   = "iron-swarm"
+	SwarmAchievementFirstFlight  = "first-flight"
+	SwarmAchievementVeteran3     = "veteran-3"
+	SwarmAchievementVeteran10    = "veteran-10"
+	SwarmAchievementTopScorer    = "top-scorer"
+	SwarmAchievementCloser       = "closer"
+	SwarmAchievementIronSwarm    = "iron-swarm"
+	SwarmAchievementSpekChampion = "spek-champion"
+	SwarmAchievementLocalHero    = "local-hero"
+	SwarmAchievementSDLCSteward  = "sdlc-steward"
 )
 
 type SwarmPlayer struct {
-	Login        string             `json:"login"`
-	Swarms       int                `json:"swarms"`
-	PRsMerged    int                `json:"prs_merged"`
-	IssuesClosed int                `json:"issues_closed"`
-	FirstSwarm   time.Time          `json:"first_swarm,omitempty"`
-	LastSwarm    time.Time          `json:"last_swarm,omitempty"`
-	Achievements []SwarmAchievement `json:"achievements,omitempty"`
+	Login               string             `json:"login"`
+	Swarms              int                `json:"swarms"`
+	PRsMerged           int                `json:"prs_merged"`
+	IssuesClosed        int                `json:"issues_closed"`
+	SpeksCompleted      int                `json:"speks_completed,omitempty"`
+	LocalModelPRs       int                `json:"local_model_prs,omitempty"`
+	ObjectivesCompleted int                `json:"objectives_completed,omitempty"`
+	FirstSwarm          time.Time          `json:"first_swarm,omitempty"`
+	LastSwarm           time.Time          `json:"last_swarm,omitempty"`
+	Achievements        []SwarmAchievement `json:"achievements,omitempty"`
 
-	currentSwarmPRs    int `json:"-"`
-	currentSwarmIssues int `json:"-"`
+	currentSwarmPRs        int `json:"-"`
+	currentSwarmIssues     int `json:"-"`
+	currentSwarmSpeks      int `json:"-"`
+	currentSwarmLocalPRs   int `json:"-"`
+	currentSwarmObjectives int `json:"-"`
 }
 
 type SwarmAchievement struct {
@@ -53,6 +62,9 @@ var swarmAchievementCatalog = []SwarmAchievementCatalogEntry{
 	{ID: SwarmAchievementTopScorer, Title: "Top scorer", Description: "Merged the most PRs in a swarm, ties allowed."},
 	{ID: SwarmAchievementCloser, Title: "Closer", Description: "Closed at least 3 issues in one swarm."},
 	{ID: SwarmAchievementIronSwarm, Title: "Iron swarm", Description: "Participated in 3 consecutive swarms."},
+	{ID: SwarmAchievementSpekChampion, Title: "Spek champion", Description: "Completed spec/plan/implement work during a swarm."},
+	{ID: SwarmAchievementLocalHero, Title: "Local hero", Description: "Landed swarm work attributed to a local model backend."},
+	{ID: SwarmAchievementSDLCSteward, Title: "SDLC steward", Description: "Completed all swarm SDLC objectives."},
 }
 
 func awardSwarmAchievements(p *SwarmPlayer, rec SwarmRecord, rank int) []SwarmAchievement {
@@ -96,6 +108,15 @@ func awardSwarmAchievements(p *SwarmPlayer, rec SwarmRecord, rank int) []SwarmAc
 	if p.currentSwarmIssues >= 3 {
 		add(SwarmAchievementCloser)
 	}
+	if p.currentSwarmSpeks > 0 {
+		add(SwarmAchievementSpekChampion)
+	}
+	if p.currentSwarmLocalPRs > 0 {
+		add(SwarmAchievementLocalHero)
+	}
+	if p.currentSwarmObjectives >= len(defaultSwarmObjectives()) {
+		add(SwarmAchievementSDLCSteward)
+	}
 	return out
 }
 
@@ -108,6 +129,9 @@ func sortedSwarmPlayers(players map[string]*SwarmPlayer) []SwarmPlayer {
 		cp := *p
 		cp.currentSwarmPRs = 0
 		cp.currentSwarmIssues = 0
+		cp.currentSwarmSpeks = 0
+		cp.currentSwarmLocalPRs = 0
+		cp.currentSwarmObjectives = 0
 		out = append(out, cp)
 	}
 	sort.Slice(out, func(i, j int) bool {

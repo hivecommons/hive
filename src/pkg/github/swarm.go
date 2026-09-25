@@ -15,6 +15,8 @@ const swarmSearchPerPage = 100
 type SwarmScore struct {
 	IssuesClosed   int
 	PRsMerged      int
+	SpeksCompleted int
+	LocalModelPRs  int
 	Participants   []string
 	PRsByAuthor    map[string]int
 	IssuesClosedBy map[string]int
@@ -59,11 +61,11 @@ func (c *Client) ScoreSwarm(ctx context.Context, repo string, start, end time.Ti
 	if err != nil {
 		return SwarmScore{}, fmt.Errorf("counting closed issues: %w", err)
 	}
-	merged, participants, prsByAuthor, err := c.searchMergedPRs(ctx, repo, start, end)
+	merged, participants, prsByAuthor, speksCompleted, localModelPRs, err := c.searchMergedPRs(ctx, repo, start, end)
 	if err != nil {
 		return SwarmScore{}, fmt.Errorf("counting merged PRs: %w", err)
 	}
-	return SwarmScore{IssuesClosed: closed, PRsMerged: merged, Participants: participants, PRsByAuthor: prsByAuthor, IssuesClosedBy: issuesByCloser}, nil
+	return SwarmScore{IssuesClosed: closed, PRsMerged: merged, SpeksCompleted: speksCompleted, LocalModelPRs: localModelPRs, Participants: participants, PRsByAuthor: prsByAuthor, IssuesClosedBy: issuesByCloser}, nil
 }
 
 func (c *Client) CountUnlabeledOpenIssues(ctx context.Context, repo string) (int, error) {
@@ -104,14 +106,16 @@ func (c *Client) searchClosedSwarmIssues(ctx context.Context, repo string, start
 	return result.GetTotal(), byCloser, nil
 }
 
-func (c *Client) searchMergedPRs(ctx context.Context, repo string, start, end time.Time) (int, []string, map[string]int, error) {
+func (c *Client) searchMergedPRs(ctx context.Context, repo string, start, end time.Time) (int, []string, map[string]int, int, int, error) {
 	query := fmt.Sprintf("repo:%s is:pr is:merged merged:%s..%s", repo, swarmSearchTime(start), swarmSearchTime(end))
 	result, _, err := c.client.Search.Issues(ctx, query, &gh.SearchOptions{ListOptions: gh.ListOptions{PerPage: swarmSearchPerPage}})
 	if err != nil {
-		return 0, nil, nil, err
+		return 0, nil, nil, 0, 0, err
 	}
 	seen := map[string]bool{}
 	byAuthor := map[string]int{}
+	speksCompleted := 0
+	localModelPRs := 0
 	for _, item := range result.Issues {
 		if item == nil || item.User == nil {
 			continue
@@ -121,13 +125,20 @@ func (c *Client) searchMergedPRs(ctx context.Context, repo string, start, end ti
 			seen[login] = true
 			byAuthor[login]++
 		}
+		text := strings.ToLower(item.GetTitle() + "\n" + item.GetBody())
+		if strings.Contains(text, "spek") || (strings.Contains(text, "spec") && strings.Contains(text, "plan") && strings.Contains(text, "implement")) {
+			speksCompleted++
+		}
+		if strings.Contains(text, "backend=bob") || strings.Contains(text, "backend=ollama") || strings.Contains(text, "backend=local") || strings.Contains(text, "model=local") {
+			localModelPRs++
+		}
 	}
 	participants := make([]string, 0, len(seen))
 	for login := range seen {
 		participants = append(participants, login)
 	}
 	sort.Strings(participants)
-	return result.GetTotal(), participants, byAuthor, nil
+	return result.GetTotal(), participants, byAuthor, speksCompleted, localModelPRs, nil
 }
 
 func swarmSearchTime(t time.Time) string {

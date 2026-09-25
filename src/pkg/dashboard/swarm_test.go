@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,19 @@ import (
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
+
+func doMethodJSON(s *Server, method, path string, body interface{}) *httptest.ResponseRecorder {
+	var b strings.Builder
+	if body != nil {
+		_ = json.NewEncoder(&b).Encode(body)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(method, path, strings.NewReader(b.String()))
+	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
+	s.mux.ServeHTTP(rec, req)
+	return rec
+}
 
 type fakeSwarmScorer struct {
 	score ghpkg.SwarmScore
@@ -448,5 +462,51 @@ func nextSwarmMessage(t *testing.T, msgs <-chan string) string {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for swarm announcement")
 		return ""
+	}
+}
+
+func TestSwarmThemeObjectivesAndPublicLeaderboard(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.Project.Org = "acme"
+	deps.Config.Project.Repos = []string{"api"}
+	s.SetContributorsDir(t.TempDir())
+	s.swarm = newSwarmStore(filepath.Join(s.contributorsDirOrDefault(), SwarmStateFileName), &fakeSwarmScorer{score: ghpkg.SwarmScore{PRsMerged: 1, SpeksCompleted: 1, LocalModelPRs: 1, Participants: []string{"alice"}, PRsByAuthor: map[string]int{"alice": 1}}})
+
+	put := doPut(s, "/api/swarm/themes", map[string]any{"repo": "api", "theme": map[string]string{"event_name": "Gondor Calls", "call_to_arms": "for aid!", "leaderboard_title": "Record of triumph"}})
+	if put.Code != http.StatusOK {
+		t.Fatalf("theme put status = %d body=%s", put.Code, put.Body.String())
+	}
+	start := doOwnerPost(s, "/api/swarm", map[string]string{"repo": "api"})
+	if start.Code != http.StatusOK {
+		t.Fatalf("start status = %d body=%s", start.Code, start.Body.String())
+	}
+	var rec SwarmRecord
+	if err := json.NewDecoder(start.Body).Decode(&rec); err != nil {
+		t.Fatalf("decode start: %v", err)
+	}
+	if rec.DisplayName != "Gondor Calls" || rec.Theme.CallToArms != "for aid!" || len(rec.Objectives) != 4 {
+		t.Fatalf("themed record = %+v", rec)
+	}
+	for i := range rec.Objectives {
+		rec.Objectives[i].Completed = true
+	}
+	patch := doMethodJSON(s, http.MethodPatch, "/api/swarm/objectives", map[string]any{"objectives": rec.Objectives})
+	if patch.Code != http.StatusOK {
+		t.Fatalf("objectives patch status = %d body=%s", patch.Code, patch.Body.String())
+	}
+	end := doDeleteOwner(s, "/api/swarm", nil)
+	if end.Code != http.StatusOK {
+		t.Fatalf("end status = %d body=%s", end.Code, end.Body.String())
+	}
+	public := doGet(s, "/api/leaderboard/swarm")
+	if public.Code != http.StatusOK {
+		t.Fatalf("public leaderboard status = %d body=%s", public.Code, public.Body.String())
+	}
+	var history SwarmHistoryResponse
+	if err := json.NewDecoder(public.Body).Decode(&history); err != nil {
+		t.Fatalf("decode public leaderboard: %v", err)
+	}
+	if len(history.History) != 1 || history.History[0].Score.SpeksCompleted != 1 || history.History[0].Score.LocalModelPRs != 1 || history.History[0].Score.ObjectivesCompleted != 4 || history.History[0].Score.Total() < 14 {
+		t.Fatalf("history = %+v", history.History)
 	}
 }

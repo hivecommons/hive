@@ -23033,7 +23033,7 @@
           "Swarm"
         ],
         "summary": "Swarm history and leaderboard",
-        "description": "Returns completed swarms and an aggregate repo leaderboard based on issue closures and merged PRs during swarm windows.",
+        "description": "Returns completed swarms, aggregate repo leaderboard, stable themes, and top player records based on swarm scoring.",
         "responses": {
           "200": {
             "description": "JSON response",
@@ -23050,23 +23050,42 @@
     },
     "/api/swarm/players": {
       "get": {
-        "tags": [
-          "Swarm"
-        ],
+        "tags": ["Swarm"],
         "summary": "Swarm player records",
         "description": "Returns per-player swarm records sorted by swarms, PRs merged, and login, plus the achievement catalog.",
-        "responses": {
-          "200": {
-            "description": "JSON response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
-        }
+        "responses": {"200": {"description": "JSON response", "content": {"application/json": {"schema": {"type": "object"}}}}}
+      }
+    },
+    "/api/swarm/themes": {
+      "get": {
+        "tags": ["Swarm"],
+        "summary": "Swarm themes",
+        "description": "Returns the default swarm theme and per-repo theme overrides.",
+        "responses": {"200": {"description": "JSON response", "content": {"application/json": {"schema": {"type": "object"}}}}}
+      },
+      "put": {
+        "tags": ["Swarm"],
+        "summary": "Set a repo swarm theme",
+        "description": "Owner-only. Stores a per-repo event name, call-to-arms, and leaderboard title for future swarms.",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object"}}}},
+        "responses": {"200": {"description": "JSON response"}, "403": {"description": "Owner access required"}}
+      }
+    },
+    "/api/swarm/objectives": {
+      "patch": {
+        "tags": ["Swarm"],
+        "summary": "Update swarm objectives",
+        "description": "Owner-only. Updates the active swarm SDLC objective checklist completion state.",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object"}}}},
+        "responses": {"200": {"description": "JSON response"}, "403": {"description": "Owner access required"}, "404": {"description": "No active swarm"}}
+      }
+    },
+    "/api/leaderboard/swarm": {
+      "get": {
+        "tags": ["Swarm"],
+        "summary": "Public swarm leaderboard",
+        "description": "Stable public JSON record of completed swarm history, repo leaderboard, top players, and achievements.",
+        "responses": {"200": {"description": "JSON response", "content": {"application/json": {"schema": {"type": "object"}}}}}
       }
     }
   },
