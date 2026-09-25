@@ -162,6 +162,29 @@ func TestBuildGovernor_DefaultThresholds(t *testing.T) {
 	}
 }
 
+func TestBuildGovernorNextRunAnchorsToLastEval(t *testing.T) {
+	lastEval := time.Date(2026, 9, 25, 16, 10, 0, 0, time.UTC)
+	cfg := &config.Config{
+		Governor: config.GovernorConfig{
+			EvalIntervalS: 60,
+			Modes:         map[string]config.ModeConfig{},
+		},
+	}
+	state := governor.State{Mode: governor.ModeIdle, LastEval: lastEval}
+	result := buildGovernor(state, cfg)
+
+	wantAt := "2026-09-25T16:11:00Z"
+	if result.NextKickAt != wantAt {
+		t.Fatalf("nextKickAt = %q, want %q", result.NextKickAt, wantAt)
+	}
+	if result.NextKick == "" {
+		t.Fatal("nextKick should remain populated for clients that render the absolute timestamp")
+	}
+	if result.NextKickIn == "" {
+		t.Fatal("nextKickIn should be populated so clients can render due/ETA honestly")
+	}
+}
+
 func TestBuildTokens_NilCollector(t *testing.T) {
 	ft := buildTokens(nil)
 	if ft.LookbackHours != defaultLookbackHours {

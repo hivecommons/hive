@@ -8298,7 +8298,7 @@
             const valTxt = awaiting > 0 ? `${awaiting} to review` : String(active);
             return `<div class="gov-stat" style="cursor:pointer" data-action="openPlanList" title="${escapeHtml(tip)}"><div class="label">planning</div><div class="val${alertCls}">${escapeHtml(valTxt)}${pending > 0 ? ` <span style="opacity:.6;font-size:.7em">+${pending}</span>` : ''}</div></div>`;
           })()}
-          <div class="gov-stat" title="NEXT RUN — when the governor next wakes up.&#10;&#10;WHAT: The next scheduled moment the governor will re-evaluate mode and kick any agents that are due.&#10;&#10;HOW: Computed from the current mode's cadence schedule — the governor adds the mode's interval to the last run time. Faster modes (busy/surge) produce a nearer next run than idle/quiet."><div class="label">next run</div><div class="val">${escapeHtml(gov.nextKick || '—')}</div></div>
+          <div class="gov-stat" title="NEXT RUN — when the governor next wakes up.&#10;&#10;WHAT: The next scheduled moment the governor will re-evaluate mode and kick any agents that are due.&#10;&#10;HOW: Computed from the last governor evaluation plus the configured evaluation interval. If that moment has already passed, this tile says due now / overdue instead of showing a stale past timestamp."><div class="label">next run</div><div class="val">${escapeHtml(formatGovernorNextRun(gov))}</div></div>
           <div class="gov-stat" title="PR AUTHOR — the GitHub identity this hive's agents open PRs and push commits as.&#10;&#10;WHAT: Either the configured project.ai_author, or the GitHub App bot ('<slug>[bot]') when the hive runs in App-authored mode.&#10;&#10;HOW: Reported by the spoke as ai_author_effective. A '[bot]' value means PRs are authored by the App installation, not a personal account."><div class="label">PR author</div><div class="val">${escapeHtml(window._aiAuthor || '—')}</div></div>
         </div>
         <div class="temp-gauge" style="cursor:pointer" data-action="gh5" title="Click to adjust governor thresholds">
@@ -15813,6 +15813,16 @@ function burnAreaChart() {
       const hours = Math.floor(minutes / 60);
       const rem = minutes % 60;
       return rem ? `${hours}h ${rem}m` : `${hours}h`;
+    }
+
+    function formatGovernorNextRun(gov, nowMs = Date.now()) {
+      if (!gov || !gov.nextKick) return '—';
+      const nextMs = new Date(gov.nextKickAt || '').getTime();
+      if (Number.isFinite(nextMs) && nextMs <= nowMs) {
+        const overdueMs = nowMs - nextMs;
+        return overdueMs < 60000 ? 'due now' : `overdue ${formatStatusPayloadAge(overdueMs)}`;
+      }
+      return gov.nextKick;
     }
 
     function setNavbarClockText(text) {

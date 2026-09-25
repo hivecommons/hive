@@ -709,6 +709,8 @@ type FrontendGovernor struct {
 	PRs        int                `json:"prs"`
 	Thresholds FrontendThresholds `json:"thresholds"`
 	NextKick   string             `json:"nextKick,omitempty"`
+	NextKickAt string             `json:"nextKickAt,omitempty"`
+	NextKickIn string             `json:"nextKickIn,omitempty"`
 }
 
 type FrontendThresholds struct {
