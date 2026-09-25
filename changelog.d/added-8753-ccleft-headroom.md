@@ -1,0 +1,1 @@
+- Add #8753: an opt-in ccleft-backed headroom source for provider rotation while keeping builtin probers as the default.

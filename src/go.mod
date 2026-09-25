@@ -18,6 +18,7 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/spf13/cobra v1.10.2
+	github.com/tuna-os/ccleft v0.0.0-20260924201033-b243120bfda2
 	go.etcd.io/bbolt v1.5.0
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.46.0

@@ -1960,6 +1960,10 @@ type RotationConfig struct {
 	ThresholdPct int `yaml:"threshold_pct,omitempty" json:"threshold_pct,omitempty"`
 	// Providers maps provider name → its class config.
 	Providers map[string]ProviderRotationConfig `yaml:"providers,omitempty" json:"providers,omitempty"`
+	// HeadroomSource selects the provider headroom implementation.
+	// "builtin" (default) keeps the in-tree probers; "ccleft" opts in to
+	// github.com/tuna-os/ccleft-backed probers where available.
+	HeadroomSource string `yaml:"headroom_source,omitempty" json:"headroom_source,omitempty"`
 	// HighVolumeCadenceS: agents with a cadence at or below this value (seconds)
 	// are high-volume and must NEVER rotate onto subscription providers.
 	// Default 1800 (30 min). Protects weekly subscription budgets.
@@ -1985,6 +1989,12 @@ type ProviderRotationConfig struct {
 	MonthlyAllowance int `yaml:"monthly_allowance,omitempty" json:"monthly_allowance,omitempty"`
 }
 
+// Rotation headroom source names.
+const (
+	RotationHeadroomSourceBuiltin = "builtin"
+	RotationHeadroomSourceCCLeft  = "ccleft"
+)
+
 // defaultRotationThresholdPct is the exhaustion threshold when unset.
 const defaultRotationThresholdPct = 85
 
@@ -1997,6 +2007,14 @@ func (r RotationConfig) EffectiveThreshold() int {
 		return r.ThresholdPct
 	}
 	return defaultRotationThresholdPct
+}
+
+// EffectiveHeadroomSource returns the configured headroom source, defaulting to builtin.
+func (r RotationConfig) EffectiveHeadroomSource() string {
+	if r.HeadroomSource == RotationHeadroomSourceCCLeft {
+		return RotationHeadroomSourceCCLeft
+	}
+	return RotationHeadroomSourceBuiltin
 }
 
 // EffectiveHighVolumeCadenceS returns the high-volume cadence cutoff in

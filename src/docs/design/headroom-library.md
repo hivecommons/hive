@@ -1,6 +1,6 @@
 # Headroom library boundary
 
-Issue [#8753](https://github.com/hivecommons/hive/issues/8753) proposes moving the provider headroom probers from `src/pkg/rotation` into a standalone Go library and CLI, `ccleft`, while keeping Hive adoption drop-in. This document records the seam Hive now exposes without taking an external dependency yet.
+Issue [#8753](https://github.com/hivecommons/hive/issues/8753) proposes moving the provider headroom probers from `src/pkg/rotation` into a standalone Go library and CLI, `ccleft`, while keeping Hive adoption drop-in. Hive now has an opt-in adapter for `github.com/tuna-os/ccleft`; the in-tree probers remain the default while operators compare readings.
 
 ## Interface contract
 
@@ -23,11 +23,18 @@ A source must be read-only: it must not spend credits, mutate billing state, ref
 
 The dashboard boundary is `rotation.HeadroomReporter`, which exposes only `HeadroomResponse()`. `/api/providers/headroom` depends on that reporter instead of concrete prober implementations, so the API surface can stay stable while the implementation moves.
 
-The in-tree Claude, Codex, Agy, DeepSeek, and Copilot probers continue to implement `HeadroomSource`, and `rotation.Manager` consumes only that interface.
+The in-tree Claude, Codex, Agy, DeepSeek, Copilot, and Kiro probers continue to implement `HeadroomSource`, and `rotation.Manager` consumes only that interface. Operators select the implementation with:
+
+```yaml
+rotation:
+  headroom_source: builtin # default; set to ccleft to opt in
+```
+
+`builtin` preserves existing behavior. `ccleft` uses the external library for providers it covers and falls back to the in-tree prober for any configured Hive provider without a ccleft mapping.
 
 ## ccleft mapping
 
-`ccleft` keeps the same conceptual shape, so a future adapter can translate at the boundary instead of changing rotation or dashboard consumers.
+`ccleft` keeps the same conceptual shape, so the adapter translates at the boundary instead of changing rotation or dashboard consumers.
 
 | Hive `pkg/rotation` | ccleft concept | Notes |
 | --- | --- | --- |
@@ -37,24 +44,33 @@ The in-tree Claude, Codex, Agy, DeepSeek, and Copilot probers continue to implem
 | `LimitWindow` | `Window` | Map ccleft kind/unit/remaining into Hive kind, duration, percentages, reset, and scope. |
 | `ProbeErrorCause` | ccleft state/message | `auth_required`, `unsupported`, `rate_limited`, and generic errors remain fail-open in Hive unless positively exhausted. |
 
-The first adoption step should add a small adapter that satisfies `HeadroomSource` and translates ccleft readings into the existing Hive types. Rotation decisions, contributor publishing, and `/api/providers/headroom` should not import ccleft directly.
+The adapter maps Hive provider names to ccleft provider names:
+
+| Hive provider | ccleft provider | Notes |
+| --- | --- | --- |
+| `anthropic` | `claude` | Reads Claude Code OAuth usage from the agent home. |
+| `openai` | `codex` | Reads ChatGPT/Codex usage directly from ccleft's read-only endpoint path. |
+| `google` | `agy` | Runs `agy --print /usage --output-format json` with `HOME` set to the shared CLI home. |
+| `github` | `copilot` | Uses ccleft's Copilot quota reader; Hive's `monthly_allowance` is only used by the builtin prober. |
+| `deepseek` | `deepseek` | Uses `DEEPSEEK_API_KEY` from the environment map. |
+| `aws-kiro` | `kiro` | Uses `KIRO_API_KEY` from the environment map. |
+
+`ccleft.StateOK` becomes a successful Hive `Headroom`; Hive still applies `rotation.threshold_pct` to the binding ccleft windows. `limited` and `exhausted` are positive no-headroom readings. `rate_limited`, `auth_required`, `unsupported`, and `error` become fail-open Hive probe errors with a mapped `ProbeErrorCause`; stale ccleft last-good readings keep their windows and carry the stale probe error so rotation does not act on a failed fresh measurement.
 
 ## License and NOTICE
 
-Hive is Apache-2.0. The proposed `ccleft` repository is also Apache-2.0 and its `NOTICE` credits Hive's in-tree probers as the origin. Before importing it, maintainers should verify that:
+Hive is Apache-2.0. The imported `ccleft` repository is also Apache-2.0 and its `NOTICE` credits Hive's in-tree probers as the origin. Before updating the dependency, maintainers should verify that:
 
 1. the ccleft repository keeps Apache-2.0 licensing and NOTICE attribution,
 2. any copied Hive prober code carries compatible headers/notice treatment, and
-3. Hive's dependency metadata and release notes mention the new library once it becomes an external dependency.
-
-No external dependency is added by this PR.
+3. Hive's dependency metadata and release notes continue to mention the library.
 
 ## Migration steps
 
 1. Keep the current in-tree probers behind `HeadroomSource` and keep dashboard consumers behind `HeadroomReporter`.
 2. Land the in-tree prober bug fixes from #8718-#8722 and #8726 without changing the interface contract.
-3. Add a ccleft adapter in `pkg/rotation` that implements `HeadroomSource` and translates ccleft readings to Hive `Headroom`.
-4. Wire providers to the adapter behind existing rotation configuration, preserving the current response shape and fail-open semantics.
+3. Add a ccleft adapter in `pkg/rotation` that implements `HeadroomSource` and translates ccleft readings to Hive `Headroom` (**done behind `rotation.headroom_source: ccleft`**).
+4. Wire providers to the adapter behind existing rotation configuration, preserving the current response shape and fail-open semantics (**done; default remains `builtin`**).
 5. Compare readings on reference hives for at least one release. Keep in-tree probers available as a fallback during the comparison window.
 6. Remove the in-tree provider-specific probing code only after maintainers agree the external readings match and operational rollback is covered.
 

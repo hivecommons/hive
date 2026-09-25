@@ -11,6 +11,7 @@ func TestRotationConfig_YAMLRoundTrip(t *testing.T) {
 	in := RotationConfig{
 		Enabled:            true,
 		ThresholdPct:       90,
+		HeadroomSource:     RotationHeadroomSourceCCLeft,
 		HighVolumeCadenceS: 900,
 		Providers: map[string]ProviderRotationConfig{
 			"anthropic": {Class: "subscription", Backends: []string{"claude", "pi"}},
@@ -42,6 +43,17 @@ func TestRotationConfig_Defaults(t *testing.T) {
 	if got := r.EffectiveHighVolumeCadenceS(); got != 1800 {
 		t.Errorf("EffectiveHighVolumeCadenceS = %d, want 1800", got)
 	}
+	if got := r.EffectiveHeadroomSource(); got != RotationHeadroomSourceBuiltin {
+		t.Errorf("EffectiveHeadroomSource = %q, want builtin", got)
+	}
+	r.HeadroomSource = RotationHeadroomSourceCCLeft
+	if got := r.EffectiveHeadroomSource(); got != RotationHeadroomSourceCCLeft {
+		t.Errorf("EffectiveHeadroomSource = %q, want ccleft", got)
+	}
+	r.HeadroomSource = "unknown"
+	if got := r.EffectiveHeadroomSource(); got != RotationHeadroomSourceBuiltin {
+		t.Errorf("EffectiveHeadroomSource invalid = %q, want builtin", got)
+	}
 	r.ThresholdPct = 70
 	r.HighVolumeCadenceS = 600
 	if got := r.EffectiveThreshold(); got != 70 {
@@ -56,6 +68,7 @@ func TestRotationConfig_YAMLParse(t *testing.T) {
 	src := `
 enabled: true
 threshold_pct: 85
+headroom_source: ccleft
 high_volume_cadence_s: 1800
 providers:
   anthropic:
@@ -71,7 +84,7 @@ agents:
 	if err := yaml.Unmarshal([]byte(src), &r); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if !r.Enabled || r.ThresholdPct != 85 || r.HighVolumeCadenceS != 1800 {
+	if !r.Enabled || r.ThresholdPct != 85 || r.HeadroomSource != RotationHeadroomSourceCCLeft || r.HighVolumeCadenceS != 1800 {
 		t.Errorf("parsed = %+v", r)
 	}
 	if got := r.Providers["anthropic"].Class; got != "subscription" {
