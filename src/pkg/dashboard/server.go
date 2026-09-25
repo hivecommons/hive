@@ -377,6 +377,8 @@ type Server struct {
 	// only). Set once at startup via SetForgeAppInventoryFn; nil in tests and
 	// early boot, which the handler tolerates.
 	forgeAppInventoryFn func() ForgeAppInventory
+	swarmMu             sync.Mutex
+	swarm               *swarmStore
 }
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.
@@ -413,6 +415,7 @@ type StatusPayload struct {
 	Governor         FrontendGovernor          `json:"governor"`
 	Tokens           FrontendTokens            `json:"tokens"`
 	Repos            []FrontendRepo            `json:"repos"`
+	Swarm            SwarmStatus               `json:"swarm"`
 	Beads            FrontendBeads             `json:"beads"`
 	Planning         FrontendPlanning          `json:"planning"`
 	Runs             RunsSummary               `json:"runs"`
@@ -1938,6 +1941,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 		}
 	}
 	status.ContributorPool = s.BuildContributorPoolStatus()
+	status.Swarm = s.SwarmSnapshot()
 
 	s.githubAppMu.RLock()
 	status.GitHubAppRequired = s.githubAppRequired

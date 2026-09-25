@@ -6283,6 +6283,10 @@ func runEvalCycle(
 	if workSourceOverlayEnabled(cfg.Governor.WorkSource) {
 		actionable.Issues = workSourceIssuesForConfiguredCycle(ctx, cfg, ghClient, actionable.Issues, logger)
 	}
+	if swarmRepo := dashSrv.ActiveSwarmRepo(); swarmRepo != "" {
+		github.BoostActionableRepoPriority(actionable.Issues.Items, swarmRepo)
+		logger.Info("swarm priority boost applied", "repo", swarmRepo)
+	}
 
 	ghClient.EnrichCIStatus(ctx, actionable.PRs.Items)
 	// Held PRs need CI status too, or a red held PR can never be repaired:

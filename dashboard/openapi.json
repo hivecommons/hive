@@ -79,6 +79,10 @@
     {
       "name": "Plan",
       "description": "Issue-to-epic planning and plan review"
+    },
+    {
+      "name": "Swarm",
+      "description": "Repo swarm mode status, lifecycle, and history"
     }
   ],
   "paths": {
@@ -1364,28 +1368,62 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "timestamp": {"type": "string"},
-                    "statusSeq": {"type": "integer", "format": "int64"},
-                    "statusInstance": {"type": "string"},
-                    "hiveId": {"type": "string"},
+                    "timestamp": {
+                      "type": "string"
+                    },
+                    "statusSeq": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "statusInstance": {
+                      "type": "string"
+                    },
+                    "hiveId": {
+                      "type": "string"
+                    },
                     "agents": {
                       "type": "array",
                       "items": {
                         "type": "object",
                         "properties": {
-                          "name": {"type": "string"},
-                          "state": {"type": "string"},
-                          "paused": {"type": "boolean"},
-                          "backend": {"type": "string"},
-                          "model": {"type": "string"},
-                          "effort": {"type": "string"},
-                          "restarts": {"type": "integer"},
-                          "needsLogin": {"type": "boolean"}
+                          "name": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string"
+                          },
+                          "paused": {
+                            "type": "boolean"
+                          },
+                          "backend": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "effort": {
+                            "type": "string"
+                          },
+                          "restarts": {
+                            "type": "integer"
+                          },
+                          "needsLogin": {
+                            "type": "boolean"
+                          }
                         }
                       }
                     },
-                    "governor": {"type": "object", "properties": {"mode": {"type": "string"}}},
-                    "budget": {"type": "object"}
+                    "governor": {
+                      "type": "object",
+                      "properties": {
+                        "mode": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "budget": {
+                      "type": "object"
+                    }
                   }
                 }
               }
@@ -22886,6 +22924,119 @@
           },
           "403": {
             "description": "Read access required"
+          }
+        }
+      }
+    },
+    "/api/swarm": {
+      "get": {
+        "tags": [
+          "Swarm"
+        ],
+        "summary": "Current swarm status",
+        "description": "Returns the configured swarm display name, duration, and the active repo swarm when one is running.",
+        "responses": {
+          "200": {
+            "description": "JSON response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Swarm"
+        ],
+        "summary": "Start a repo swarm",
+        "description": "Owner-only. Starts a 24h swarm for one configured repo; only one swarm may be active, so a second start returns 409. Body: {\"repo\":\"owner/name\"}.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "repo": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "repo"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid repo"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "409": {
+            "description": "Another swarm is already active"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Swarm"
+        ],
+        "summary": "End the active swarm",
+        "description": "Owner-only. Ends the active swarm, scores closed issues and merged PRs for its window, and appends it to swarm history.",
+        "responses": {
+          "200": {
+            "description": "JSON response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "No active swarm"
+          }
+        }
+      }
+    },
+    "/api/swarm/history": {
+      "get": {
+        "tags": [
+          "Swarm"
+        ],
+        "summary": "Swarm history and leaderboard",
+        "description": "Returns completed swarms and an aggregate repo leaderboard based on issue closures and merged PRs during swarm windows.",
+        "responses": {
+          "200": {
+            "description": "JSON response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
           }
         }
       }
