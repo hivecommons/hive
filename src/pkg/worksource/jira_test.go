@@ -477,6 +477,92 @@ func TestJiraDataCenterBadCABundleRejected(t *testing.T) {
 	}
 }
 
+func TestJiraDataCenterBadTLSConfigFailsBeforeNetwork(t *testing.T) {
+	src := NewJiraSource(JiraConfig{
+		Deployment:  jiraDeploymentDataCenter,
+		BaseURL:     "https://jira.invalid",
+		CABundle:    "not pem",
+		ProjectKeys: []string{"ENG"},
+	})
+	if _, err := src.ListIssues(context.Background()); err == nil || !strings.Contains(err.Error(), "ca_bundle") {
+		t.Fatalf("ListIssues with bad TLS config = %v, want local CA bundle error", err)
+	}
+
+	js := src.(*jiraSource)
+	if err := js.addComment(context.Background(), "ENG-1", "blocked"); err == nil || !strings.Contains(err.Error(), "ca_bundle") {
+		t.Fatalf("addComment with bad TLS config = %v, want local CA bundle error", err)
+	}
+}
+
+func TestJiraDataCenterTLSClientCertificatePairRequired(t *testing.T) {
+	caPEM, _, clientCertPEM, _ := jiraTestTLSMaterials(t)
+	cases := []struct {
+		name string
+		cfg  JiraConfig
+	}{
+		{
+			name: "missing client key",
+			cfg: JiraConfig{
+				Deployment: jiraDeploymentDataCenter,
+				CABundle:   caPEM,
+				ClientCert: clientCertPEM,
+			},
+		},
+		{
+			name: "missing client cert",
+			cfg: JiraConfig{
+				Deployment: jiraDeploymentDataCenter,
+				CABundle:   caPEM,
+				ClientKey:  "-----BEGIN PRIVATE KEY-----\n-----END PRIVATE KEY-----",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ValidateJiraTLSConfig(tc.cfg); err == nil || !strings.Contains(err.Error(), "client_cert and client_key must be set together") {
+				t.Fatalf("ValidateJiraTLSConfig = %v, want pair-required error", err)
+			}
+		})
+	}
+}
+
+func TestJiraDataCenterTLSClientCertificateKeyMustMatch(t *testing.T) {
+	caPEM, _, clientCertPEM, clientKeyPEM := jiraTestTLSMaterials(t)
+	_, _, _, otherClientKeyPEM := jiraTestTLSMaterials(t)
+
+	err := ValidateJiraTLSConfig(JiraConfig{
+		Deployment: jiraDeploymentDataCenter,
+		CABundle:   caPEM,
+		ClientCert: clientCertPEM,
+		ClientKey:  strings.Replace(clientKeyPEM, "RSA PRIVATE KEY", "PRIVATE KEY", 1),
+	})
+	if err == nil || !strings.Contains(err.Error(), "client_cert/client_key") {
+		t.Fatalf("ValidateJiraTLSConfig malformed key = %v, want client key pair error", err)
+	}
+
+	err = ValidateJiraTLSConfig(JiraConfig{
+		Deployment: jiraDeploymentDataCenter,
+		CABundle:   caPEM,
+		ClientCert: clientCertPEM,
+		ClientKey:  otherClientKeyPEM,
+	})
+	if err == nil || !strings.Contains(err.Error(), "client_cert/client_key") {
+		t.Fatalf("ValidateJiraTLSConfig mismatched key = %v, want client key pair error", err)
+	}
+}
+
+func TestJiraCloudTLSSettingsIgnoredEvenIfMalformed(t *testing.T) {
+	err := ValidateJiraTLSConfig(JiraConfig{
+		Deployment: "cloud",
+		CABundle:   "not a PEM bundle",
+		ClientCert: "not a cert",
+		ClientKey:  "not a key",
+	})
+	if err != nil {
+		t.Fatalf("cloud TLS validation = %v, want nil because Data Center-only fields are ignored", err)
+	}
+}
+
 func TestJiraDataCenterMTLSClientCertificate(t *testing.T) {
 	caPEM, serverCert, clientCertPEM, clientKeyPEM := jiraTestTLSMaterials(t)
 	caPool := x509.NewCertPool()
