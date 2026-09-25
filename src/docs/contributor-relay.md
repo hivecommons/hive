@@ -1253,28 +1253,47 @@ external tools connect to the same contributor relay WebSocket and authenticate
 with a contributor registration token minted from the existing `/contribute`
 flow:
 
-- **Relay URL:** `wss://<your-hive-host>/api/contribute/ws` (or the value shown
-  in the Extensions tab).
-- **Registration token:** open `/contribute` from the Extensions card and use
-  the existing register/reissue flow. Save the plaintext token; Hive stores only
+- **Relay URL:** paste `wss://<your-hive-host>/contribute` as the hub URL
+  (`HIVE_HUB`). The `/contribute` landing page generates this value from the
+  request host (`pkg/dashboard/contribute_landing.go`) and the relay resolves it
+  to the WebSocket endpoint it uses internally, `/api/contribute/ws`.
+- **Registration token:** paste the `registration_token` value into the tool as
+  `HIVE_REGISTRATION_TOKEN`. Open `/contribute` from the Extensions card and
+  use the existing register/reissue flow: first-time setup calls
+  `POST /api/contribute/register` and returns the token once; rotation calls
+  `POST /api/contribute/reissue-token` with GitHub authentication and
+  invalidates the previous token. Save the plaintext token; Hive stores only
   its hash.
 - **Capabilities:** put the required token in
-  `capabilities.relay_capabilities` during relay auth.
+  `capabilities.relay_capabilities` during relay auth (or the tool's
+  equivalent capability/env field).
+- **Verify it connected:** the Extensions card and `/contribute` Operations tab
+  both read `GET /api/contribute/fleet`. A connected peer appears with its
+  self-declared `capabilities.relay_capabilities`; the card's "Connected peers
+  declaring …" row filters that live list.
 
 Per extension:
 
 - **Flue:** enable `runs.external.flue` in Settings → Extensions, choose
   `shadow` or `report-only`, set the endpoint/workflow version if your Flue
-  runtime requires them, and have the peer declare `ext-exec/flue`. Builds
+  runtime requires them, paste the relay URL and registration token into the
+  Flue-side relay/connector config, and have the peer declare `ext-exec/flue`.
+  Verify it in Settings → Extensions → Flue: the peer must appear under
+  "Connected peers declaring `ext-exec/flue`". Builds
   without the `extwork_flue` tag show the card as not built in and will not
   dispatch Flue work until redeployed with that tag.
 - **Crustify / Wavefront:** enable `governor.work_source.wavefront`, provide
   exactly one graph `path` or `url`, the target `repo`, and optional receipts
-  directory. The peer must declare `run-stage` so Wavefront nodes can be
-  delivered as staged run work.
+  directory. Paste the same relay URL and registration token into the
+  Crustify/Wavefront peer and declare `run-stage` so Wavefront nodes can be
+  delivered as staged run work. Verify it in the Crustify / Wavefront card under
+  "Connected peers declaring `run-stage`".
 - **Generic relays / ClankeR:** use the same relay URL and registration token;
-  declare only the capabilities the relay actually supports. The Extensions tab
-  lists currently connected peers and their declared capabilities.
+  declare only the capabilities the relay actually supports. Plain issue-fixing
+  relays may declare no extra capability. Relays willing to take staged runs
+  declare `run-stage`; relays that host an external engine declare its exact
+  `ext-exec/...` token. The Extensions tab lists currently connected peers and
+  their declared capabilities.
 
 External-execution items add engine-scoped tokens: `ext-exec/flue` and
 `ext-exec/omp` ([#8361](https://github.com/hivecommons/hive/issues/8361)). A

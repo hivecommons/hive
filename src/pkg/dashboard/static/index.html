@@ -12345,9 +12345,13 @@ function burnAreaChart() {
       // Pending experiment (suggest mode)
       if (s.pending && mode === 'suggest') {
         const p = s.pending;
+        const runLink = p.run || (p.run_key ? { key: p.run_key, stage: p.run_stage || 'spec' } : null);
         html += '<div class="nous-pending-card">';
         html += `<h4>Pending Proposal: ${escapeHtml(p.id || 'experiment')}</h4>`;
         html += `<div style="font-size:0.78rem;margin-bottom:var(--sp-4)">${escapeHtml(p.hypothesis || 'No hypothesis description')}</div>`;
+        if (runLink && runLink.key) {
+          html += `<div class="text-muted">Spektacular run: <button class="btn" data-action="openRunDetail" data-arg0="${escapeHtml(runLink.key)}">${escapeHtml(runLink.key)}</button> <span class="status-badge">${escapeHtml(runLink.stage || 'spec')}</span></div>`;
+        }
         if (p.params) {
           html += '<table class="nous-pending-params"><tbody>';
           for (const [k, v] of Object.entries(p.params)) {
@@ -12453,7 +12457,7 @@ function burnAreaChart() {
       try {
         const r = await fetch('/api/nous/approve', { method: 'POST' });
         const j = await r.json();
-        if (j.ok) { showToast('Experiment approved and started', 'success'); fetchNousStatus(); }
+        if (j.ok) { showToast(j.run && j.run.key ? 'Spektacular run admitted: ' + j.run.key : 'Experiment approved and started', 'success'); fetchNousStatus(); }
         else showToast(j.error || 'Approve failed', 'error');
       } catch (e) { showToast('Approve failed: ' + e.message, 'error'); }
     }
@@ -12570,6 +12574,7 @@ function burnAreaChart() {
         { id: 'state-only', label: 'State Only', desc: 'Write to files, read in dashboard' },
         { id: 'issue', label: 'Issue', desc: 'Open GitHub issue with proposal' },
         { id: 'issue+pr', label: 'Issue + PR', desc: 'Open issue and PR pair' },
+        { id: 'spektacular-run', label: 'Spektacular Run', desc: 'Approve a repo campaign by creating the spec stage run lease' },
       ];
       for (const om of outModes) {
         const active = (output.mode || 'state-only') === om.id ? ' active' : '';
@@ -25767,7 +25772,7 @@ function burnAreaChart() {
 
     function extensionRelayURL() {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      return proto + '//' + location.host + '/api/contribute/ws';
+      return proto + '//' + location.host + '/contribute';
     }
 
     function extensionCard(title, subtitle, body) {
@@ -25816,7 +25821,7 @@ function burnAreaChart() {
           <div class="config-field-row"><div class="config-field"><label>Graph path</label><input type="text" value="${esc(f.wavefrontPath || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="wavefrontPath" data-arg-types="s,s,w"></div><div class="config-field"><label>Graph URL</label><input type="text" value="${esc(f.wavefrontUrl || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="wavefrontUrl" data-arg-types="s,s,w"></div></div>
           <div class="config-field-row"><div class="config-field"><label>Repo</label><input type="text" value="${esc(f.wavefrontRepo || '')}" placeholder="owner/repo" data-change-action="markDirty" data-arg0="features" data-arg1="wavefrontRepo" data-arg-types="s,s,w"></div><div class="config-field"><label>Receipts dir</label><input type="text" value="${esc(f.wavefrontReceiptsDir || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="wavefrontReceiptsDir" data-arg-types="s,s,w"></div></div>
           ${renderRelayConnectionBlock('run-stage')}<p><a href="https://github.com/hivecommons/hive/blob/v6/src/docs/work-sources.md#wavefront" target="_blank" rel="noopener">Wavefront docs ↗</a></p>`)}
-        ${extensionCard('Relays', 'Generic contributor relay connection details', `${renderRelayConnectionBlock('*')}<p>Full fleet controls remain in <a href="#config/governor/Hub">Settings → Hub</a> and <a href="/contribute" target="_blank" rel="noopener">/contribute</a>.</p>`)}
+        ${extensionCard('Relays', 'Generic contributor relay connection details', `${renderRelayConnectionBlock('*')}<p>Full fleet controls remain in <a href="#config/governor/Hub">Settings → Hub</a> and <a href="/contribute" target="_blank" rel="noopener">/contribute</a>. See <a href="https://github.com/hivecommons/hive/blob/v6/src/docs/contributor-relay.md#pointing-external-extensions-at-hive" target="_blank" rel="noopener">relay setup docs ↗</a>.</p>`)}
       </div>`;
     }
 
