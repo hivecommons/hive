@@ -2917,11 +2917,18 @@ function lbRow(e,rank){
   // Self-chosen dossier title (equipped_title) — a small quoted accent after the
   // name. Optional; absent for contributors who set none (never a placeholder).
   var title=(!e.is_agent&&e.equipped_title)?(' <span class="lb-title">“'+esc(e.equipped_title)+'”</span>'):'';
+  var a2=e.achievement_2||{};
+  var a2line='';
+  if(a2.top_tier||a2.local||a2.mastery){
+    a2line='<div class="effective-sub">achievements 2.0 · '+esc(a2.top_tier||'solo')
+      +' · local '+Number(a2.local||0)+' · mastery '+Number(a2.mastery||0)+'</div>';
+  }
   // Human contributors link to their public dossier — the standings become a way
   // INTO the records. Agents have no dossier, so they stay plain text.
   var nameCell=(!e.is_agent&&uname)
     ?('<a class="lb-name__link" href="/contribute/dossier/'+encodeURIComponent(uname)+'">'+name+'</a>')
     :name;
+  nameCell+=a2line;
   // "Done" (tasks_completed) is the hero numeral — real count, just emphasised.
   return '<div class="lb-row'+(isMe?' lb-row--me':'')+'">'
     +'<div class="lb-rank">#'+rank+'</div>'
@@ -3205,6 +3212,16 @@ function meSeals(p){
   return '<div class="dz-seals">'+out.join('')+'</div>';
 }
 
+function meAchievements2(p){
+  var ach=(p.achievements_2||[]).filter(function(a){return a&&a.attained;});
+  if(!ach.length)return '<p class="dz-collab-empty">Teamwork tiers unlock from normal GitHub, Spek, and Hive collaboration.</p>';
+  return '<div class="dz-seals">'+ach.map(function(a){
+    var sub=(a.tier||'solo')+' · '+(a.track||'teamwork');
+    return '<div class="dz-seal"><div class="glyph"></div><div class="t-name">'+esc(a.label||a.id||'Achievement')+'</div>'
+      +'<div class="t-sub">'+esc(sub)+' — '+esc(a.detail||'')+'</div></div>';
+  }).join('')+'</div>';
+}
+
 // meDeedsGrid renders the DEEDS OF RECORD stat blocks: tasks shipped, PRs
 // landed, standing (#rank / total), plus — when the server's cached public
 // GitHub fetch succeeded — service years and renown (followers). The GitHub
@@ -3479,6 +3496,8 @@ function renderMeCard(mount,p){
   +'<div class="dz-grid">'
   +'<section class="dz-zcard" aria-label="Triumphs"><div class="dz-zone-head">Triumphs</div>'
     +meSeals(p)
+    +'<div class="dz-heraldry-head"><span>Achievement System 2.0 · teamwork tiers</span></div>'
+    +meAchievements2(p)
     +'<div class="dz-heraldry-head"><span>Heraldry · verified via Credly</span></div>'
     +'<div id="me-heraldry-slot"><div class="ops-note m-0">Loading heraldry&hellip;</div></div></section>'
   +'<section class="dz-zcard" aria-label="Collaborators"><div class="dz-zone-head">Collaborators</div>'

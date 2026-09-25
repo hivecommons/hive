@@ -21,16 +21,17 @@ type LeaderboardEntry struct {
 	RegisteredAt   string `json:"registered_at"`
 	// EquippedTitle is the contributor's self-chosen dossier title (e.g.
 	// "WOLFHERDER"); rendered as a small accent after the name. Optional.
-	EquippedTitle string `json:"equipped_title,omitempty"`
-	Active        bool   `json:"active,omitempty"`
-	CurrentTask   string `json:"current_task,omitempty"`
-	IsAgent       bool   `json:"is_agent,omitempty"`
-	Emoji         string `json:"emoji,omitempty"`
+	EquippedTitle string                        `json:"equipped_title,omitempty"`
+	Active        bool                          `json:"active,omitempty"`
+	CurrentTask   string                        `json:"current_task,omitempty"`
+	IsAgent       bool                          `json:"is_agent,omitempty"`
+	Emoji         string                        `json:"emoji,omitempty"`
+	Achievement2  ContributorAchievementSummary `json:"achievement_2"`
 }
 
 // buildLeaderboard loads all contributor profiles, sorts by tasks completed
 // descending, and returns ranked entries with secrets stripped.
-func buildLeaderboard() []LeaderboardEntry {
+func buildLeaderboardWithActivity(activity []ActivityEntry) []LeaderboardEntry {
 	profiles := listContributorProfiles()
 	sort.Slice(profiles, func(i, j int) bool {
 		return profiles[i].TasksCompleted > profiles[j].TasksCompleted
@@ -44,6 +45,7 @@ func buildLeaderboard() []LeaderboardEntry {
 			continue
 		}
 		rank++
+		_, achievementSummary := buildAchievements2(&p, activity)
 		entries = append(entries, LeaderboardEntry{
 			Rank:           rank,
 			GitHubUsername: p.GitHubUsername,
@@ -53,13 +55,18 @@ func buildLeaderboard() []LeaderboardEntry {
 			TasksFailed:    p.TasksFailed,
 			RegisteredAt:   p.RegisteredAt,
 			EquippedTitle:  p.EquippedTitle,
+			Achievement2:   achievementSummary,
 		})
 	}
 	return entries
 }
 
+func buildLeaderboard() []LeaderboardEntry {
+	return buildLeaderboardWithActivity(nil)
+}
+
 func (s *Server) handleLeaderboardAPI(w http.ResponseWriter, _ *http.Request) {
-	contributors := buildLeaderboard()
+	contributors := buildLeaderboardWithActivity(s.recentContributionActivity())
 	agents := s.buildAgentLeaderboardEntries()
 	jsonResponse(w, map[string]any{
 		"leaderboard": contributors,
@@ -81,7 +88,7 @@ func (s *Server) ContributorSummary() (registered, active int) {
 }
 
 func (s *Server) LeaderboardForHub() []LeaderboardEntry {
-	entries := buildLeaderboard()
+	entries := buildLeaderboardWithActivity(s.recentContributionActivity())
 	if s.contributeHub != nil {
 		liveStates := s.contributeHub.LiveStates()
 		profiles := listContributorProfiles()
@@ -106,6 +113,13 @@ func (s *Server) LeaderboardForHub() []LeaderboardEntry {
 		entries[i].Rank = i + 1
 	}
 	return entries
+}
+
+func (s *Server) recentContributionActivity() []ActivityEntry {
+	if s == nil || s.contributeHub == nil {
+		return nil
+	}
+	return s.contributeHub.RecentActivity()
 }
 
 const (
