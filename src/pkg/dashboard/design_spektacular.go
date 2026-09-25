@@ -76,10 +76,6 @@ func (s *Server) StartDesignSpektacularFromIssue(ctx context.Context, store *bea
 	return s.startDesignSpektacular(ctx, store, issue, "", false)
 }
 
-func (s *Server) applyDesignLabel(ctx context.Context, issue github.Issue, label string) error {
-	return s.applyDesignSignal(ctx, issue, label, "")
-}
-
 func (s *Server) applyDesignSignal(ctx context.Context, issue github.Issue, label, status string) error {
 	label = strings.TrimSpace(label)
 	status = strings.TrimSpace(status)
