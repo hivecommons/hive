@@ -517,6 +517,10 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	if isRootHubAdmin(username) && !isRootHubAdmin(s.getRealAuthUser(r)) {
+		writeJSONError(w, http.StatusForbidden, "root hub admins can only be changed by root hub admins")
+		return
+	}
 	// Whether the country branch below actually APPLIED, which is not the same
 	// as the key being present: a stronger user-chosen value declines the edit.
 	// Tracked so the audit line records what changed rather than what was asked.
@@ -608,7 +612,7 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 }
 
-// handleAdminDeleteUser removes a hub user record. It refuses to delete the
+// handleAdminDeleteUser removes a hub user record. It refuses to delete any
 // hub admin, and refuses to delete a user who still owns hosted hives — those
 // must be deleted (or reassigned) first so no namespace is orphaned. Deleting
 // a user does not touch GitHub; it only removes the hub's local account

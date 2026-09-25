@@ -300,8 +300,8 @@ section requires for lookups.
 | `OCI_AVAILABILITY_DOMAIN` | Required for OCI FSS provisioning | none | OCI availability domain. |
 | `OCI_MOUNT_TARGET_ID` | Required for OCI FSS provisioning | none | OCI mount target OCID. |
 | `OCI_EXPORT_SET_ID` | Required for OCI FSS provisioning | none | OCI export set OCID. |
-| `HIVE_HUB_ADMIN_USERNAME` | No | none | Single hub admin username. Consulted alongside `HIVE_HUB_ADMINS`. |
-| `HIVE_HUB_ADMINS` | No | none | Comma-separated hub admin usernames. |
+| `HIVE_HUB_ADMIN_USERNAME` | No | `clubanderson` | Single root hub admin GitHub username when `HIVE_HUB_ADMINS` is unset. Root admins are configuration-managed and cannot be revoked from the UI. |
+| `HIVE_HUB_ADMINS` | No | none | Comma-separated root hub admin identities (bare GitHub logins are treated as `github:<login>`). When set, this replaces `HIVE_HUB_ADMIN_USERNAME`. Root admins may grant or revoke additional hub admins from the dashboard; those UI grants are persisted in `/data/hub-admins.json` and do not become root admins. |
 | `HIVE_HUB_GITHUB_TOKEN` | No | none | Hub-side GitHub token attached to every hub-originated `api.github.com` read: branch-tip polling, commit compares (channel distances, reach checks), commit messages/dates, workflow runs, and the dibs public-repo check. Unset = anonymous (60 req/h per IP, exhausted by the branch poller alone; distances and timestamps then vanish from the My Hives channel rows). Set it for 5000 req/h. |
 | `HIVE_REACH_REPO_DIR` | No | none (GitHub compare API) | Local clone the reach ancestry check resolves against via `git merge-base --is-ancestor`. The hub image ships no clone, so the compare-API adapter is the default. |
 | `HIVE_REACH_NEVER_RAN_DAYS` | No | `3` | Never-ran grace period in days (integer, > 0). Absent or invalid values fall back to the default. |

@@ -1003,6 +1003,7 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 		"login":         displayLogin,
 		"avatar_url":    avatar,
 		"hub_admin":     isAdmin,
+		"root_admin":    isRootHubAdmin(username),
 	}
 	// Only ship the key when there is a country to ship. An absent key and an
 	// empty string both render no flag, but omitting it keeps the payload for
@@ -1015,6 +1016,7 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 		payload["login"] = targetLogin
 		payload["avatar_url"] = targetAvatar
 		payload["hub_admin"] = false
+		payload["root_admin"] = false
 		// Every per-user view renders AS the target, so the flag must follow the
 		// target too — otherwise the admin's own flag would sit beside the
 		// impersonated user's face. Delete rather than blank it when the target

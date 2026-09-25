@@ -53,16 +53,9 @@ const hubAdminsEnv = "HIVE_HUB_ADMINS"
 // is what stops a Google/IBMid user whose subject happens to be the admin's
 // login from matching the GitHub admin.
 func hubAdminSet() map[string]bool {
-	raw := strings.TrimSpace(os.Getenv(hubAdminsEnv))
-	entries := []string{hubAdminUsername}
-	if raw != "" {
-		entries = splitCSV(raw)
-	}
-	set := make(map[string]bool, len(entries))
-	for _, e := range entries {
-		if c := canonicalizeLegacy(e); c != "" {
-			set[strings.ToLower(c)] = true
-		}
+	set := rootHubAdminSet()
+	for key := range loadGrantedHubAdmins() {
+		set[key] = true
 	}
 	return set
 }
@@ -75,7 +68,7 @@ func isHubAdmin(id string) bool {
 	if id == "" {
 		return false
 	}
-	return hubAdminSet()[strings.ToLower(canonicalizeLegacy(id))]
+	return hubAdminSet()[hubAdminKey(id)]
 }
 
 // primaryHubAdmin returns the canonical identity of the primary hub admin — the
@@ -463,6 +456,9 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /api/saas/admin/scale-settings", s.requireAdmin(s.handleGetScaleSettings))
 	s.mux.HandleFunc("POST /api/saas/admin/scale-settings", s.requireAdmin(s.handleSetScaleSettings))
 	s.mux.HandleFunc("GET /api/saas/admin/users", s.requireAdmin(s.handleAdminUsers))
+	s.mux.HandleFunc("GET /api/hub/admins", s.requireAdmin(s.handleHubAdminsList))
+	s.mux.HandleFunc("POST /api/hub/admins", s.requireAdmin(s.handleHubAdminsGrant))
+	s.mux.HandleFunc("DELETE /api/hub/admins/{id}", s.requireAdmin(s.handleHubAdminsRevoke))
 	// Aggregate geographic rollup of the user base (counts only, no usernames).
 	// Admin-gated like the rest of the CRM/Users surface: country is personal
 	// data, so even the aggregate stays behind requireAdmin. Takes no query

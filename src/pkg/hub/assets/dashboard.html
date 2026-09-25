@@ -284,6 +284,13 @@
        panel cell, which owns the form, rather than with !important per field. */
     .contact-panel-cell { text-align: left; }
     .contact-panel-cell input, .contact-panel-cell textarea { text-align: left; }
+    .hub-admins-panel { margin-bottom: var(--sp-6); padding: var(--sp-6); border: 1px solid var(--border); background: var(--surface); border-radius: var(--r); }
+    .hub-admins-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-4); }
+    .hub-admins-title { font-weight: 700; color: var(--text); }
+    .hub-admins-add { display: none; gap: var(--sp-3); align-items: center; }
+    .hub-admins-login { padding: var(--sp-2) var(--sp-4); background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); color: var(--text); }
+    .hub-admins-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-2) 0; border-top: 1px solid var(--border); }
+    .hub-admins-remove { padding: var(--sp-1) var(--sp-2); }
     .online-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: var(--sp-3); }
     .online-dot.on { background: var(--green); box-shadow: 0 0 6px rgba(116,223,154,0.5); }
     .online-dot.off { background: #6b7280; }
@@ -593,6 +600,19 @@
         <input type="text" id="user-search" placeholder="Search users..." oninput="filterUsers()" style="padding:8px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:0.85rem;width:250px">
       </div>
       <div id="admin-users-body" style="display:none">
+        <div id="hub-admins-panel" class="card hub-admins-panel">
+          <div class="hub-admins-head">
+            <div>
+              <div class="hub-admins-title">Hub admins</div>
+              <div class="fs-sm text-muted">Root admins come from hub configuration. Root admins can add or remove UI-granted admins.</div>
+            </div>
+            <form id="hub-admins-add" class="hub-admins-add" onsubmit="grantHubAdmin(event)">
+              <input id="hub-admins-login" class="hub-admins-login" type="text" placeholder="GitHub login" autocomplete="off">
+              <button class="hv-btn btn-primary" type="submit">Add admin</button>
+            </form>
+          </div>
+          <div id="hub-admins-list" class="fs-sm text-muted">Loading hub admins...</div>
+        </div>
         <div id="users-container"><div class="loading">Loading users...</div></div>
         <!-- Fleet-wide geographic rollup of the user base. Lives directly under
              the Users table because it is the same data aggregated: the table
@@ -2723,6 +2743,7 @@
         applyImpersonationBanner(data);
         if (data.authenticated) {
           _isAdmin = !!data.hub_admin;
+          _isRootAdmin = !!data.root_admin;
           /* The signed-in login is the ONE piece of viewer identity the hive
              rows need: the inline access avatars omit the viewer, whose own
              membership is implied by the row being visible at all. Stored
@@ -2762,7 +2783,7 @@
       } catch(e) {}
     }
 
-    var _userQuota = 0, _userUsed = 0, _isAdmin = false;
+    var _userQuota = 0, _userUsed = 0, _isAdmin = false, _isRootAdmin = false;
     /* Lowercased login of the signed-in viewer, set by loadUser(). Empty until
        that resolves, and empty is safe: hiveAccessAvatars() then simply omits
        nobody, which is a cosmetic over-render for one paint rather than a
@@ -9577,6 +9598,63 @@
     var _liveEngagedUsers = new Set();
     var _userSortKey = 'created_at', _userSortAsc = false;
 
+
+    function renderHubAdmins(admins) {
+      var list = document.getElementById('hub-admins-list');
+      var form = document.getElementById('hub-admins-add');
+      if (form) form.style.display = _isRootAdmin ? 'flex' : 'none';
+      if (!list) return;
+      admins = admins || [];
+      if (!admins.length) {
+        list.textContent = 'No hub admins configured.';
+        return;
+      }
+      list.innerHTML = admins.map(function(a) {
+        var meta = a.root ? '<span class="badge">root</span>' : '<span class="badge">granted</span>';
+        if (a.granted_by) meta += ' <span class="text-muted">by ' + esc(a.granted_by) + (a.granted_at ? ' at ' + esc(fmtUserTS(a.granted_at)) : '') + '</span>';
+        var remove = (!a.root && _isRootAdmin)
+          ? '<button class="hv-btn btn-danger hub-admins-remove" type="button" onclick="revokeHubAdmin(' + jsArg(a.id) + ')">Remove</button>'
+          : '';
+        return '<div class="hub-admins-row">' +
+          '<div><code>' + esc(a.id || '') + '</code> ' + meta + '</div>' + remove + '</div>';
+      }).join('');
+    }
+
+    async function loadHubAdmins() {
+      if (!_isAdmin) return;
+      try {
+        var resp = await fetch('/api/hub/admins', {headers:{'Accept':'application/json'}});
+        if (!resp.ok) return;
+        var data = await resp.json();
+        if (typeof data.root_admin === 'boolean') _isRootAdmin = data.root_admin;
+        renderHubAdmins(data.admins || []);
+      } catch(e) {}
+    }
+
+    async function grantHubAdmin(ev) {
+      if (ev) ev.preventDefault();
+      var input = document.getElementById('hub-admins-login');
+      var login = input ? input.value.trim() : '';
+      if (!login) return;
+      try {
+        var resp = await fetch('/api/hub/admins', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({login:login})});
+        if (!resp.ok) { var err = {}; try { err = await resp.json(); } catch(_) {} hiveToast('Cannot add admin: ' + (err.error || resp.status), 'error'); return; }
+        if (input) input.value = '';
+        hiveToast('Hub admin added', 'success');
+        loadHubAdmins();
+      } catch(e) { hiveToast('Cannot add admin', 'error'); }
+    }
+
+    async function revokeHubAdmin(id) {
+      if (!id || !await hiveConfirm('Remove hub admin ' + id + '?')) return;
+      try {
+        var resp = await fetch('/api/hub/admins/' + encodeURIComponent(id), {method:'DELETE'});
+        if (!resp.ok) { var err = {}; try { err = await resp.json(); } catch(_) {} hiveToast('Cannot remove admin: ' + (err.error || resp.status), 'error'); return; }
+        hiveToast('Hub admin removed', 'success');
+        loadHubAdmins();
+      } catch(e) { hiveToast('Cannot remove admin', 'error'); }
+    }
+
     /* --- Collapsible "Hub Admin — Users" section ---
        The roster runs to ~90 records, so an expanded users table pushes the
        Hub Banner and Cluster Health sections far below the fold. An operator
@@ -9714,6 +9792,7 @@
         document.getElementById('btn-send-banner-top').style.display = '';
         loadActiveBanner();
         loadHubNotifications();
+        loadHubAdmins();
         var data = await resp.json();
         _allUsers = data.users || [];
         try { applySortUsers(); } catch(re) { console.error('renderUsers error:', re); }
