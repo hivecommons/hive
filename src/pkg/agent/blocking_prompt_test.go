@@ -11,6 +11,21 @@ const codexUpdatePane = `  ✨ Update available! 0.146.0 -> 0.147.0
   3. Skip until next version
   Press enter to continue`
 
+const codexUpdatePane0156 = `  Update available · 0.156.1 → 0.157.0
+  Release notes: https://github.com/openai/codex/releases/latest
+› 1. Update now (runs ` + "`npm install -g @openai/codex`" + `)
+  2. Skip
+  3. Skip until next version
+  enter continue · esc skip`
+
+const codexCommandApprovalPane = `  Would you like to run the following command?
+  Environment: local
+  Reason: May I read the latest local kick, summary, and health bead files to report current pipeline status?
+  $ cat beads/supervisor-kick-architect.json beads/supervisor-summary-architect.json
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with ` + "`cat beads/`" + `
+  3. No, and tell Codex what to do differently (esc)`
+
 const codexTrustPane = `> You are in /data/agents/architect
   Do you trust the contents of this directory? Working with untrusted contents
   comes with higher risk of prompt injection.
@@ -53,15 +68,30 @@ const claudeWorkspaceTrustPane = ` Accessing workspace:
 // that option. Only "3. Skip until next version" both unblocks startup and
 // persists so the prompt does not return on the next launch.
 func TestBlockingPromptKey_CodexUpdateSkipsInsteadOfInstalling(t *testing.T) {
-	key, label, ok := blockingPromptKey("codex", codexUpdatePane)
+	for _, pane := range []string{codexUpdatePane, codexUpdatePane0156} {
+		key, label, ok := blockingPromptKey("codex", pane)
+		if !ok {
+			t.Fatal("codex update prompt was not recognised; the agent would block on it until timeout")
+		}
+		if key == "1" {
+			t.Fatal("answered \"1. Update now\" — this runs npm install -g as the agent UID and kills the CLI")
+		}
+		if key != "3" {
+			t.Errorf("key = %q, want \"3\" (Skip until next version); %q does not persist across launches", key, key)
+		}
+		if label == "" {
+			t.Error("label is empty; the audit log would not say which prompt was answered")
+		}
+	}
+}
+
+func TestBlockingPromptKey_CodexCommandApprovalProceeds(t *testing.T) {
+	key, label, ok := blockingPromptKey("codex", codexCommandApprovalPane)
 	if !ok {
-		t.Fatal("codex update prompt was not recognised; the agent would block on it until timeout")
+		t.Fatal("codex command approval prompt was not recognised; the agent would look idle while blocked")
 	}
-	if key == "1" {
-		t.Fatal("answered \"1. Update now\" — this runs npm install -g as the agent UID and kills the CLI")
-	}
-	if key != "3" {
-		t.Errorf("key = %q, want \"3\" (Skip until next version); %q does not persist across launches", key, key)
+	if key != "1" {
+		t.Errorf("key = %q, want \"1\" (Yes, proceed)", key)
 	}
 	if label == "" {
 		t.Error("label is empty; the audit log would not say which prompt was answered")
@@ -83,6 +113,8 @@ func TestBlockingPromptKey_KnownPrompts(t *testing.T) {
 		// stomping other agents' state — see blockingPrompts.
 		{"copilot folder trust", "copilot", copilotTrustPane, "1"},
 		{"codex update", "codex", codexUpdatePane, "3"},
+		{"codex update 0.156", "codex", codexUpdatePane0156, "3"},
+		{"codex command approval", "codex", codexCommandApprovalPane, "1"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

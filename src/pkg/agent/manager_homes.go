@@ -86,10 +86,28 @@ func (m *Manager) setupCodexHome(agent *AgentProcess) {
 	if err := exec.Command("su-exec", agentUser, "mkdir", "-p", dir).Run(); err != nil {
 		m.logger.Error("failed to pre-create codex home; codex cannot start without it, and a later run may create it under the wrong identity", "agent", agent.Name, "dir", dir, "error", err)
 	}
-	if salvagedConfig != nil {
-		if err := writeFileAsUser(agentUser, filepath.Join(dir, "config.toml"), salvagedConfig); err != nil {
-			m.logger.Warn("failed to restore salvaged codex config", "agent", agent.Name, "dir", dir, "error", err)
+	configPath := filepath.Join(dir, "config.toml")
+	configBytes := salvagedConfig
+	readFailed := false
+	if configBytes == nil {
+		var err error
+		configBytes, err = readFileAsUser(agentUser, configPath)
+		if err != nil && !isMissingFileReadError(err) {
+			readFailed = true
+			m.logger.Warn("failed to read codex config; leaving existing config untouched to avoid clobbering operator settings", "agent", agent.Name, "path", configPath, "error", err)
 		}
+	}
+	if readFailed {
+		// Preserve unknown existing content rather than overwrite it blindly.
+	} else if configBytes != nil || salvagedConfig != nil {
+		mergedConfig := codexConfigWithUpdateCheckDisabled(configBytes)
+		if string(mergedConfig) != string(configBytes) || salvagedConfig != nil {
+			if err := writeFileAsUser(agentUser, configPath, mergedConfig); err != nil {
+				m.logger.Warn("failed to seed codex config", "agent", agent.Name, "dir", dir, "error", err)
+			}
+		}
+	} else if err := writeFileAsUser(agentUser, configPath, codexConfigWithUpdateCheckDisabled(nil)); err != nil {
+		m.logger.Warn("failed to seed codex config", "agent", agent.Name, "dir", dir, "error", err)
 	}
 	// Bridge auth: symlink the per-agent auth.json to the shared login file so a
 	// single sign-in propagates to all agents. `ln -sfn` is idempotent and
@@ -99,6 +117,78 @@ func (m *Manager) setupCodexHome(agent *AgentProcess) {
 	if err := exec.Command("su-exec", agentUser, "ln", "-sfn", codexSharedAuthFile, authLink).Run(); err != nil {
 		m.logger.Warn("failed to link codex auth", "agent", agent.Name, "link", authLink, "error", err)
 	}
+}
+
+const codexDisableUpdateCheckLine = "check_for_update_on_startup = false"
+
+func codexConfigWithUpdateCheckDisabled(existing []byte) []byte {
+	if len(existing) == 0 {
+		return []byte(codexDisableUpdateCheckLine + "\n")
+	}
+
+	lines := strings.SplitAfter(string(existing), "\n")
+	tableIndex := len(lines)
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") {
+			tableIndex = i
+			break
+		}
+	}
+
+	for i := 0; i < tableIndex; i++ {
+		if !isCodexUpdateCheckSetting(lines[i]) {
+			continue
+		}
+		lines[i] = codexDisableUpdateCheckLine + lineEnding(lines[i])
+		return []byte(strings.Join(lines, ""))
+	}
+
+	if tableIndex < len(lines) {
+		merged := make([]string, 0, len(lines)+1)
+		merged = append(merged, lines[:tableIndex]...)
+		merged = append(merged, codexDisableUpdateCheckLine+"\n")
+		merged = append(merged, lines[tableIndex:]...)
+		return []byte(strings.Join(merged, ""))
+	}
+
+	text := strings.Join(lines, "")
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	return []byte(text + codexDisableUpdateCheckLine + "\n")
+}
+
+func isCodexUpdateCheckSetting(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "#") {
+		return false
+	}
+	key, rest, ok := strings.Cut(trimmed, "=")
+	return ok && strings.TrimSpace(key) == "check_for_update_on_startup" && strings.TrimSpace(rest) != ""
+}
+
+func lineEnding(line string) string {
+	if strings.HasSuffix(line, "\r\n") {
+		return "\r\n"
+	}
+	if strings.HasSuffix(line, "\n") {
+		return "\n"
+	}
+	return ""
+}
+
+func readFileAsUser(userSpec, path string) ([]byte, error) {
+	cmd := exec.Command("su-exec", userSpec, "cat", path)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, outputErr(fmt.Sprintf("reading %s as %s", path, userSpec), err, output)
+	}
+	return output, nil
+}
+
+func isMissingFileReadError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "No such file or directory")
 }
 
 // healCodexHomeOwnership repairs a CODEX_HOME wedged by wrong-owner state.

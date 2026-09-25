@@ -219,13 +219,13 @@ function paneQuotaExhaustion(text) {
 function blockingPromptKey(text, backend) {
   // codex: "Do you trust the contents of this directory?" → 1. Yes, continue
   if (/Do you trust the contents of this directory/.test(text)) return '1';
-  // codex: "✨ Update available! x -> y" → 3. Skip until next version.
+  // codex: "✨ Update available[!] x -> y" → 3. Skip until next version.
   // Deliberately NOT "1. Update now": that shells out to `npm install -g`
   // inside the container — slow, needs network, can fail half-way, and drifts
   // the CLI version out from under the image. "Skip until next version" also
   // persists, so this prompt stops coming back on every restart the way a
   // plain "Skip" would.
-  if (/Update available!/.test(text) && /Skip until next version/.test(text)) return '3';
+  if (/Update available/.test(text) && /Skip until next version/.test(text)) return '3';
   const recent = paneTail(text, 15);
   // agy: "Terms of Service & Data Use" ends on a [Previous] [Done] button row
   // with focus on the CHECKBOX above it, where Enter toggles consent instead of
@@ -326,7 +326,8 @@ function classifyReadiness(text, backend) {
       // first is what stops the relay from typing a task prompt into a
       // "1. Yes, continue / 2. No, quit" list, where it is swallowed.
       if (/Do you trust the contents of this directory/.test(text)) return 'onboarding';
-      if (/Update available!/.test(text) && /Skip until next version/.test(text)) return 'onboarding';
+      if (/Update available/.test(text) && /Skip until next version/.test(text)) return 'onboarding';
+      if (/Would you like to run the following command\?/.test(text) && /Yes, proceed/.test(text)) return 'onboarding';
       // codex renders its input marker as '›' (U+203A), not '>', and its
       // banner reads "OpenAI Codex (vX.Y.Z)" — never the literal "Codex CLI".
       // The three original patterns therefore matched NOTHING a real codex
