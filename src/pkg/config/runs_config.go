@@ -30,6 +30,9 @@ const (
 	DefaultSpektacularHubExecutorIdentity = "hive-spek"
 	// DefaultSpektacularHubExecutorTimeoutSeconds bounds one agent turn.
 	DefaultSpektacularHubExecutorTimeoutSeconds = 1800
+	// DefaultSpektacularHubExecutorMaxConcurrent bounds simultaneous hub-authored
+	// Spektacular stages.
+	DefaultSpektacularHubExecutorMaxConcurrent = 1
 
 	// DefaultRunsWaitTimeoutSeconds is how long a run checkpoint may wait for
 	// owner approval before escalation. It also floors how far a held plan
@@ -163,6 +166,7 @@ type SpektacularHubExecutorConfig struct {
 	Model          string `yaml:"model,omitempty" json:"model,omitempty"`
 	TimeoutSeconds int    `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
 	Identity       string `yaml:"identity,omitempty" json:"identity,omitempty"`
+	MaxConcurrent  int    `yaml:"max_concurrent,omitempty" json:"max_concurrent,omitempty"`
 }
 
 // MaxStageRetriesOrDefault returns the configured retry budget or the default.
@@ -250,4 +254,11 @@ func (h SpektacularHubExecutorConfig) Timeout() time.Duration {
 		return time.Duration(h.TimeoutSeconds) * time.Second
 	}
 	return time.Duration(DefaultSpektacularHubExecutorTimeoutSeconds) * time.Second
+}
+
+func (h SpektacularHubExecutorConfig) MaxConcurrentOrDefault() int {
+	if h.MaxConcurrent > 0 {
+		return h.MaxConcurrent
+	}
+	return DefaultSpektacularHubExecutorMaxConcurrent
 }

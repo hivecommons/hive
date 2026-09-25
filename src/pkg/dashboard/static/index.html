@@ -26460,6 +26460,9 @@ function burnAreaChart() {
               <div class="config-field"><label for="ext-spektacular-hub-backend">Backend</label><input id="ext-spektacular-hub-backend" type="text" value="${esc(f.spektacularHubExecutorBackend || 'copilot')}" placeholder="copilot" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularHubExecutorBackend" data-arg-types="s,s,w"></div>
               <div class="config-field"><label for="ext-spektacular-hub-timeout">Timeout seconds</label><input id="ext-spektacular-hub-timeout" type="number" min="1" step="1" value="${esc(String(f.spektacularHubExecutorTimeoutS || 1800))}" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularHubExecutorTimeoutS" data-arg-types="s,s,N"></div>
             </div>
+            <div class="config-field-row">
+              <div class="config-field"><label for="ext-spektacular-hub-max">Max concurrent stages</label><input id="ext-spektacular-hub-max" type="number" min="1" step="1" value="${esc(String(f.spektacularHubExecutorMaxConcurrent || 1))}" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularHubExecutorMaxConcurrent" data-arg-types="s,s,N"></div>
+            </div>
             <div class="extension-callout muted">When on, the hub claims admitted runs no relay has taken, prepares a worktree, and drives the Spektacular spec/plan stage itself. A ClankeR that claims first still wins.</div>
           `)}
           ${extensionSubsection('Checkpoints', `<div class="extension-chip-row">${['Spec','Plan','Implement'].map(n => `<label class="extension-chip" for="ext-checkpoint-${n.toLowerCase()}"><input id="ext-checkpoint-${n.toLowerCase()}" type="checkbox" ${f['checkpoint'+n+'Enabled'] ? 'checked' : ''} data-change-action="markDirty" data-arg0="features" data-arg1="checkpoint${n}Enabled" data-arg-types="s,s,c"> ${n}</label>`).join('')}</div>`)}

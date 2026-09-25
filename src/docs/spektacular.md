@@ -97,11 +97,13 @@ runs:
       model: ""              # optional
       timeout_seconds: 1800
       identity: hive-spek
+      max_concurrent: 1
 ```
 
 The dashboard exposes `spektacularHubExecutor`,
 `spektacularHubExecutorBackend`, `spektacularHubExecutorModel`, and
-`spektacularHubExecutorTimeoutS` through
+`spektacularHubExecutorTimeoutS`, and
+`spektacularHubExecutorMaxConcurrent` through
 `GET/PUT /api/config/governor/features`.
 
 On hosted hives the same no-file path is used to start work. Operators can:

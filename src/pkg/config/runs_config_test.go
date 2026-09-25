@@ -19,6 +19,9 @@ func TestRunsConfigDefaults(t *testing.T) {
 	if got := r.Spektacular.PollInterval(); got != time.Duration(DefaultSpektacularPollS)*time.Second {
 		t.Fatalf("PollInterval() = %s, want %ds", got, DefaultSpektacularPollS)
 	}
+	if r.Spektacular.HubExecutorEnabled() {
+		t.Fatal("hub executor must be off when Spektacular is off")
+	}
 }
 
 func TestRunsConfigOverrides(t *testing.T) {
@@ -31,6 +34,12 @@ func TestRunsConfigOverrides(t *testing.T) {
 	}
 	if got := r.Spektacular.PollInterval(); got != 7*time.Second {
 		t.Fatalf("PollInterval() = %s, want 7s", got)
+	}
+	if !r.Spektacular.HubExecutorEnabled() {
+		t.Fatal("hub executor defaults on when Spektacular is enabled")
+	}
+	if got := r.Spektacular.HubExecutor.MaxConcurrentOrDefault(); got != DefaultSpektacularHubExecutorMaxConcurrent {
+		t.Fatalf("MaxConcurrentOrDefault() = %d", got)
 	}
 	neg := RunsConfig{MaxStageRetries: -1, Spektacular: SpektacularConfig{PollIntervalS: -3}}
 	if neg.MaxStageRetriesOrDefault() != DefaultMaxStageRetries || neg.Spektacular.PollInterval() != time.Duration(DefaultSpektacularPollS)*time.Second {

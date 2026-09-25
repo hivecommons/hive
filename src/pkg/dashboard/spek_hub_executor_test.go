@@ -44,19 +44,34 @@ func TestSpekHubExecutorClaimPreservesTriageAndSkipsRelayLease(t *testing.T) {
 		t.Fatalf("executeStage: %v", err)
 	}
 	hub.leaseMu.Lock()
-	defer hub.leaseMu.Unlock()
 	if hub.leases[leaseKey(runAdmissionIdentity, admitTask)] != nil {
+		hub.leaseMu.Unlock()
 		t.Fatal("admission lease still present after claim")
 	}
 	claimed := hub.leases[leaseKey(config.DefaultSpektacularHubExecutorIdentity, spekHubExecutorTaskPrefix+sanitizeReceiptSegment(runKey)+"-spec-1")]
 	if claimed == nil {
+		hub.leaseMu.Unlock()
 		t.Fatal("hub executor lease not recorded")
 	}
 	if claimed.triageVerdict != "spec" || claimed.triageRationale != "needs design" {
+		hub.leaseMu.Unlock()
 		t.Fatalf("triage not preserved: %#v", claimed)
 	}
 	if hub.leases[leaseKey("relay", "relay-task")] == nil {
+		hub.leaseMu.Unlock()
 		t.Fatal("relay-held lease was touched")
+	}
+	hub.leaseMu.Unlock()
+	var owners []string
+	if err := s.VisitActiveStageLeases(func(rk, _, stage, identity, _, _ string, _ uint64, _ time.Time) {
+		if rk == runKey && stage == StageSpec {
+			owners = append(owners, identity)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(owners) != 1 || owners[0] != config.DefaultSpektacularHubExecutorIdentity {
+		t.Fatalf("active leases for run = %v, want only executor", owners)
 	}
 }
 
@@ -78,7 +93,7 @@ func TestSpekHubExecutorPrepareWorkspaceCreatesCloneAndWorktree(t *testing.T) {
 		return []byte("ok"), nil
 	}
 	st := spekHubStage{runKey: "myorg/repo1#57", stage: StageSpec, repo: spekRepo, gen: 1}
-	if err := e.prepareWorkspace(context.Background(), st); err != nil {
+	if _, err := e.prepareWorkspace(context.Background(), st); err != nil {
 		t.Fatalf("prepareWorkspace: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(agentWorkspaceRoot, e.Identity, filepath.FromSlash(spekRepo), ".git")); err != nil {
@@ -118,6 +133,43 @@ func TestSpekHubExecutorFailureRecordsAuditTimelineAndBudget(t *testing.T) {
 	}
 	if e.failures[key] != e.maxAttempts() {
 		t.Fatalf("failure budget = %d, want %d", e.failures[key], e.maxAttempts())
+	}
+}
+
+func TestSpekHubExecutorEnvUsesIsolatedHomeAndAppToken(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	t.Setenv("GITHUB_TOKEN", "old")
+	t.Setenv("GH_TOKEN", "old")
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	env, err := e.executorEnv("app-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byKey := map[string]string{}
+	for _, entry := range env {
+		k, v, _ := strings.Cut(entry, "=")
+		byKey[k] = v
+	}
+	if byKey["HOME"] != filepath.Join(agentWorkspaceRoot, e.Identity, "home") {
+		t.Fatalf("HOME = %q", byKey["HOME"])
+	}
+	if byKey["GH_TOKEN"] != "app-token" || byKey["GITHUB_TOKEN"] != "app-token" {
+		t.Fatalf("github tokens not overridden: GH=%q GITHUB=%q", byKey["GH_TOKEN"], byKey["GITHUB_TOKEN"])
+	}
+}
+
+func TestSpekHubExecutorSweepRemovesStaleWorktree(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	stale := runStageWorktreePath(e.Identity, "myorg/repo1#57", StageSpec, 1)
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.sweepStaleWorktrees(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale worktree still exists: %v", err)
 	}
 }
 

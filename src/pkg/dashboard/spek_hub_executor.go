@@ -29,6 +29,8 @@ const (
 	spekHubLeaseRenewInterval = 5 * time.Minute
 )
 
+type SpekHubCloneAuth func(ctx context.Context, repo, dir string) (authArgs []string, token string, cleanup func(), err error)
+
 type StageExecutor interface {
 	Tick(ctx context.Context, now time.Time)
 	Status() FrontendSpektacularHubExecutor
@@ -40,7 +42,7 @@ type SpekHubExecutor struct {
 	Backend   string
 	Model     string
 	Identity  string
-	CloneAuth func(ctx context.Context, repo, dir string) ([]string, func(), error)
+	CloneAuth SpekHubCloneAuth
 	Logger    *slog.Logger
 	Exec      func(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error)
 	CloneURL  func(repo string) string
@@ -63,7 +65,7 @@ type FrontendSpektacularHubExecutor struct {
 	LastError string `json:"last_error,omitempty"`
 }
 
-func NewSpekHubExecutor(s *Server, runs config.RunsConfig, backend, model string, cloneAuth func(context.Context, string, string) ([]string, func(), error), logger *slog.Logger) *SpekHubExecutor {
+func NewSpekHubExecutor(s *Server, runs config.RunsConfig, backend, model string, cloneAuth SpekHubCloneAuth, logger *slog.Logger) *SpekHubExecutor {
 	return &SpekHubExecutor{
 		Server:    s,
 		Config:    runs,
@@ -84,6 +86,9 @@ func (e *SpekHubExecutor) Tick(ctx context.Context, now time.Time) {
 		e.setLastError(err.Error())
 		return
 	}
+	if err := e.sweepStaleWorktrees(ctx); err != nil {
+		e.log().Warn("[spektacular] hub executor worktree sweep failed", "error", err)
+	}
 	for _, st := range stages {
 		if st.stage != StageSpec && st.stage != StagePlan {
 			continue
@@ -96,7 +101,7 @@ func (e *SpekHubExecutor) Tick(ctx context.Context, now time.Time) {
 		if e.failures == nil {
 			e.failures = map[string]int{}
 		}
-		if e.inFlight[key] || e.failures[key] >= e.maxAttempts() || e.runningLocked() >= 1 {
+		if e.inFlight[key] || e.failures[key] >= e.maxAttempts() || e.runningLocked() >= e.maxConcurrent() {
 			e.mu.Unlock()
 			continue
 		}
@@ -113,6 +118,102 @@ func (e *SpekHubExecutor) Status() FrontendSpektacularHubExecutor {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return FrontendSpektacularHubExecutor{Running: e.runningLocked(), LastError: e.lastError}
+}
+
+func (e *SpekHubExecutor) sweepStaleWorktrees(ctx context.Context) error {
+	live := map[string]bool{}
+	if err := e.Server.VisitActiveStageLeases(func(runKey, key, stage, identity, taskID, repo string, gen uint64, expiresAt time.Time) {
+		if identity == e.Identity {
+			if path := runStageWorktreePath(identity, runKey, stage, gen); path != "" {
+				live[path] = true
+			}
+		}
+	}); err != nil {
+		return err
+	}
+	root := filepath.Join(agentWorkspaceRoot, e.Identity, "runs")
+	runDirs, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	repos := e.sharedRepoDirs()
+	for _, runDir := range runDirs {
+		if !runDir.IsDir() {
+			continue
+		}
+		stageDirs, err := os.ReadDir(filepath.Join(root, runDir.Name()))
+		if err != nil {
+			continue
+		}
+		for _, stageDir := range stageDirs {
+			if !stageDir.IsDir() {
+				continue
+			}
+			path := filepath.Join(root, runDir.Name(), stageDir.Name())
+			if live[path] {
+				continue
+			}
+			if err := e.removeWorktree(ctx, repos, path); err != nil {
+				e.log().Warn("[spektacular] removing stale worktree failed", "path", path, "error", err)
+			}
+		}
+	}
+	return nil
+}
+
+func (e *SpekHubExecutor) sharedRepoDirs() []string {
+	root := filepath.Join(agentWorkspaceRoot, e.Identity)
+	owners, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	out := []string{}
+	for _, owner := range owners {
+		if !owner.IsDir() || owner.Name() == "runs" || owner.Name() == "home" {
+			continue
+		}
+		repos, err := os.ReadDir(filepath.Join(root, owner.Name()))
+		if err != nil {
+			continue
+		}
+		for _, repo := range repos {
+			if repo.IsDir() {
+				dir := filepath.Join(root, owner.Name(), repo.Name())
+				if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+					out = append(out, dir)
+				}
+			}
+		}
+	}
+	return out
+}
+
+func (e *SpekHubExecutor) removeWorktree(ctx context.Context, repos []string, path string) error {
+	var last error
+	for _, repo := range repos {
+		if _, err := e.runner()(ctx, repo, os.Environ(), "git", "worktree", "remove", "--force", path); err == nil {
+			return nil
+		} else {
+			last = err
+		}
+	}
+	if err := removeRunStageWorktreeByPath(path); err != nil {
+		if last != nil {
+			return fmt.Errorf("%w; fallback remove: %v", last, err)
+		}
+		return err
+	}
+	return nil
+}
+
+func removeRunStageWorktreeByPath(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	return os.RemoveAll(path)
 }
 
 func (e *SpekHubExecutor) runStage(parent context.Context, st spekHubStage, key string) {
@@ -136,7 +237,8 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 	}
 	stopRenew := e.startRenewing(ctx, taskID)
 	defer stopRenew()
-	if err := e.prepareWorkspace(ctx, st); err != nil {
+	appToken, err := e.prepareWorkspace(ctx, st)
+	if err != nil {
 		return err
 	}
 	if err := e.Server.contributeHub.renewLease(e.Identity, taskID, time.Now().UTC()); err != nil {
@@ -152,7 +254,11 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 	if err != nil {
 		return err
 	}
-	out, err := e.runner()(ctx, worktree, os.Environ(), cmd[0], cmd[1:]...)
+	env, err := e.executorEnv(appToken)
+	if err != nil {
+		return err
+	}
+	out, err := e.runner()(ctx, worktree, env, cmd[0], cmd[1:]...)
 	if err != nil {
 		return fmt.Errorf("agent CLI failed: %w: %s", err, tailString(string(out), spekHubOutputTailBytes))
 	}
@@ -180,14 +286,14 @@ func (e *SpekHubExecutor) startRenewing(ctx context.Context, taskID string) func
 	return func() { close(done) }
 }
 
-func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage) error {
+func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage) (string, error) {
 	repoDir := filepath.Join(agentWorkspaceRoot, e.Identity, filepath.FromSlash(st.repo))
 	if err := os.MkdirAll(filepath.Dir(repoDir), 0o755); err != nil {
-		return err
+		return "", err
 	}
-	authArgs, cleanup, err := e.cloneAuthArgs(ctx, st.repo, filepath.Dir(repoDir))
+	authArgs, appToken, cleanup, err := e.cloneAuthArgs(ctx, st.repo, filepath.Dir(repoDir))
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer cleanup()
 	runGit := func(dir string, args ...string) error {
@@ -201,34 +307,68 @@ func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage)
 	}
 	if _, err := os.Stat(filepath.Join(repoDir, ".git")); err != nil {
 		if err := runGit(filepath.Dir(repoDir), "clone", "--no-checkout", e.cloneURL(st.repo), filepath.Base(repoDir)); err != nil {
-			return err
+			return "", err
 		}
 	}
 	if err := runGit(repoDir, "fetch", "origin", "HEAD"); err != nil {
-		return err
+		return "", err
 	}
 	worktree := runStageWorktreePath(e.Identity, st.runKey, st.stage, st.gen)
 	if _, err := os.Stat(worktree); errors.Is(err, os.ErrNotExist) {
 		if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
-			return err
+			return "", err
 		}
 		if err := runGit(repoDir, "worktree", "add", "--detach", worktree, "FETCH_HEAD"); err != nil {
-			return err
+			return "", err
 		}
 	}
 	if _, err := os.Stat(filepath.Join(worktree, ".spektacular")); errors.Is(err, os.ErrNotExist) {
 		if _, err := e.runner()(ctx, worktree, os.Environ(), "spektacular", "init", spekInitAgent(e.backend()), "--name", filepath.Base(st.repo)); err != nil {
-			return err
+			return "", err
 		}
 	}
-	return nil
+	return appToken, nil
 }
 
-func (e *SpekHubExecutor) cloneAuthArgs(ctx context.Context, repo, dir string) ([]string, func(), error) {
+func (e *SpekHubExecutor) cloneAuthArgs(ctx context.Context, repo, dir string) ([]string, string, func(), error) {
 	if e.CloneAuth == nil {
-		return nil, func() {}, nil
+		return nil, "", func() {}, nil
 	}
 	return e.CloneAuth(ctx, repo, dir)
+}
+
+func (e *SpekHubExecutor) executorEnv(appToken string) ([]string, error) {
+	home := filepath.Join(agentWorkspaceRoot, e.Identity, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		return nil, err
+	}
+	env := filteredSpekEnv(os.Environ(), "HOME", "npm_config_cache", "GH_TOKEN", "GITHUB_TOKEN")
+	env = append(env, "HOME="+home, "npm_config_cache="+filepath.Join(home, ".npm-cache"))
+	creds, err := agent.HeadlessCredentialEnv(e.backend())
+	if err != nil {
+		e.log().Warn("[spektacular] headless credential env unavailable", "backend", e.backend(), "error", err)
+	} else {
+		env = append(env, creds...)
+	}
+	if tok := strings.TrimSpace(appToken); tok != "" {
+		env = append(env, "GH_TOKEN="+tok, "GITHUB_TOKEN="+tok)
+	}
+	return env, nil
+}
+
+func filteredSpekEnv(env []string, keys ...string) []string {
+	block := map[string]bool{}
+	for _, key := range keys {
+		block[key] = true
+	}
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		if !block[key] {
+			out = append(out, entry)
+		}
+	}
+	return out
 }
 
 func (e *SpekHubExecutor) recordFailure(st spekHubStage, key string, err error) {
@@ -288,6 +428,10 @@ func (e *SpekHubExecutor) executionKey(st spekHubStage) string {
 }
 
 func (e *SpekHubExecutor) maxAttempts() int { return e.Config.MaxStageRetriesOrDefault() }
+
+func (e *SpekHubExecutor) maxConcurrent() int {
+	return e.Config.Spektacular.HubExecutor.MaxConcurrentOrDefault()
+}
 
 func (e *SpekHubExecutor) runningLocked() int {
 	n := 0

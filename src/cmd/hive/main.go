@@ -3529,7 +3529,7 @@ func (b *boot) bootDashboardAPI() { b.bootDashboardAPIWith(defaultBootDashboardA
 // injected; see bootDashboardAPIDeps.
 func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	deps.registerAPI(b.dashSrv, b.dashboardDependencies())
-	var spekCloneAuth func(context.Context, string, string) ([]string, func(), error)
+	var spekCloneAuth dashboard.SpekHubCloneAuth
 	if b.appAuth != nil {
 		spekCloneAuth = spektacularCloneAuth(pushbroker.GitHubAppMinter{Auth: b.appAuth})
 	}
