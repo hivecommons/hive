@@ -470,6 +470,7 @@ func TestFetchRunAndRunsPropagateDecodeErrors(t *testing.T) {
 
 func TestCmdRunsListStatusAndSpecAliases(t *testing.T) {
 	var specPosted bool
+	var designPosted bool
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.EscapedPath() {
 		case "/api/runs":
@@ -485,7 +486,12 @@ func TestCmdRunsListStatusAndSpecAliases(t *testing.T) {
 				t.Fatalf("decode spec body: %v", err)
 			}
 			if body["target"] != "acme/widgets#9" {
-				t.Fatalf("spec body = %#v", body)
+				if body["target"] == "acme/widgets#10" && body["mode"] == "design" {
+					designPosted = true
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				t.Fatalf("spec/design body = %#v", body)
 			}
 			specPosted = true
 			w.WriteHeader(http.StatusOK)
@@ -507,7 +513,13 @@ func TestCmdRunsListStatusAndSpecAliases(t *testing.T) {
 	if got, err := s.cmdRuns(ownerCtx, "spec acme/widgets#9"); err != nil || !strings.Contains(got, "Started spec run") {
 		t.Fatalf("spec = %q err=%v", got, err)
 	}
+	if got, err := s.cmdRuns(ownerCtx, "design acme/widgets#10"); err != nil || !strings.Contains(got, "Started design run") {
+		t.Fatalf("design = %q err=%v", got, err)
+	}
 	if !specPosted {
 		t.Fatal("spec endpoint was not called")
+	}
+	if !designPosted {
+		t.Fatal("design endpoint was not called")
 	}
 }

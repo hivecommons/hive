@@ -6157,6 +6157,23 @@ func planFromLabeledIssues(
 			}
 		}
 	}
+	if cfg != nil && cfg.Runs.Spektacular.Enabled && dashSrv != nil {
+		filtered := issues[:0]
+		for _, issue := range issues {
+			if planning.HasDesignLabel(issue, designCfg) {
+				if epic, runKey, err := dashSrv.StartDesignSpektacularFromIssue(context.Background(), store, issue); err != nil {
+					logger.Warn("design-mode-spektacular: admit failed", "issue", planning.IssueRef(issue), "error", err)
+					filtered = append(filtered, issue)
+				} else {
+					dashSrv.AuditLog("planning", "design_requested_spektacular", "epic="+epic.ID+" ref="+epic.ExternalRef+" run="+runKey, planning.ArchitectAgentName)
+					logger.Info("audit: design requested via Spektacular", "epic", epic.ID, "ref", epic.ExternalRef, "run", runKey)
+				}
+				continue
+			}
+			filtered = append(filtered, issue)
+		}
+		issues = filtered
+	}
 	sink := labelPlanSink{gov: gov, dashSrv: dashSrv, logger: logger}
 	planning.PlanIssuesFromLabelsWithConfig(store, agentMgr, issues, designCfg, sink,
 		func(ref string, err error) {

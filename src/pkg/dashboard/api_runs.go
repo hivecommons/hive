@@ -726,8 +726,12 @@ func runFromLease(lease runLeaseSnapshot, plan runPlanSnapshot, hold runHumanRev
 		Stages:        leaseRunStages(lease.stage, lease.gen),
 		TriageVerdict: lease.triageVerdict, TriageRationale: lease.triageRationale,
 	}
-	if plan.epicID != "" && (plan.state == planning.PlanStateReview ||
-		plan.state == planning.PlanStateStuck || plan.state == planning.PlanStateDesignReview || plan.state == planning.PlanStateDesignStuck) {
+	planNeedsHuman := plan.state == planning.PlanStateReview ||
+		plan.state == planning.PlanStateStuck || plan.state == planning.PlanStateDesignReview || plan.state == planning.PlanStateDesignStuck
+	if lease.stage == StageSpec && (plan.state == planning.PlanStateDesignReview || plan.state == planning.PlanStateDesignStuck) {
+		planNeedsHuman = false
+	}
+	if plan.epicID != "" && planNeedsHuman {
 		if decision := runCheckpointPolicyForConfig(cfg, lease.stage); decision.blocks {
 			run.WaitingOn = RunWaitingOnHuman
 			run.WaitingReason = firstRunNonEmpty(plan.reason, decision.reason)

@@ -102,6 +102,18 @@ func (s *Server) handleRunCheckpointDecision(w http.ResponseWriter, r *http.Requ
 	}
 	switch action {
 	case runCheckpointDecisionApprove:
+		if epic, err := store.Get(payload.PlanEpicID); err == nil && epic.Meta(planning.MetaDesignVia) == planning.DesignViaSpektacular && planning.DesignStatus(epic) != planning.DesignStatusApproved {
+			if err := planning.ApproveDesign(store, payload.PlanEpicID); err != nil {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if err := s.applyDesignLabel(r.Context(), issueFromEpic(epic), s.designConfig().ApprovedLabelOrDefault()); err != nil {
+				jsonError(w, err.Error(), http.StatusBadGateway)
+				return
+			}
+			s.auditFromRequest(r, "design_approved", auditDetail("epic", payload.PlanEpicID, "run", payload.RunKey, "surface", "run_checkpoint"), agentName)
+			break
+		}
 		if err := planning.ApprovePlan(store, payload.PlanEpicID); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
@@ -112,6 +124,14 @@ func (s *Server) handleRunCheckpointDecision(w http.ResponseWriter, r *http.Requ
 		}
 		s.auditFromRequest(r, "plan_approve", auditDetail("epic", payload.PlanEpicID, "run", payload.RunKey, "surface", "run_checkpoint"), agentName)
 	case runCheckpointDecisionReject:
+		if epic, err := store.Get(payload.PlanEpicID); err == nil && epic.Meta(planning.MetaDesignVia) == planning.DesignViaSpektacular && planning.DesignStatus(epic) != planning.DesignStatusApproved {
+			if err := store.SetMetadata(payload.PlanEpicID, planning.MetaDesignStatus, planning.DesignStatusQueued); err != nil {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			s.auditFromRequest(r, "design_reject", auditDetail("epic", payload.PlanEpicID, "run", payload.RunKey, "surface", "run_checkpoint"), agentName)
+			break
+		}
 		if err := planning.RejectPlan(store, payload.PlanEpicID); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return

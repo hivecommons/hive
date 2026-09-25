@@ -248,3 +248,18 @@ governor:
 - **Gated**: draft-plan children are unclaimable until a human approves.
 - **No launch-path mutex**: all architect interaction is via `SendKick`/`IsPaused`
   from the governor tick or an HTTP handler — never the agent-launch path.
+
+## v6: design mode via Spektacular
+
+On v6, when `runs.spektacular.enabled: true`, the `hive-design` path is a thin
+adapter over Spektacular instead of a bespoke architect prompt. The label, the
+📐 dashboard button, and `!runs design <owner/repo#n>` all start or resume the
+same Spek `spec` campaign and link the epic bead with `run_key` plus
+`design_via=spektacular` metadata. The plan chip and plan modal show “design via
+Spektacular” and link back to the run.
+
+The Spec checkpoint is Gate 1. Approving design from the dashboard or run
+checkpoint applies the configured approval signal and advances the run to Plan;
+approving inside a Spek/Jam surface mirrors the same `design-approved` signal
+back to the work item. When Spek is disabled, v6 falls back to the legacy flow
+described above; v5 is unchanged.

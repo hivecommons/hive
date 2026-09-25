@@ -45,9 +45,20 @@ const (
 	// missing from a requested epic's issue. A later re-appearance of the label
 	// is the "please revise" signal.
 	MetaDesignLabelAbsent = "design_label_absent"
+	// MetaDesignVia records the engine handling Gate 1. The v6 Spektacular
+	// bridge sets it to DesignViaSpektacular so dashboard/runs surfaces can link
+	// the design gate to the spec campaign instead of the legacy architect kick.
+	MetaDesignVia = "design_via"
 )
 
 // Design statuses.
+const (
+	// DesignViaSpektacular marks a Gate 1 design handled by a Spektacular spec
+	// campaign. The legacy empty value still means pkg/planning/design.go owns
+	// the architect prompt.
+	DesignViaSpektacular = "spektacular"
+)
+
 const (
 	// DesignStatusQueued: the design label is on the issue but the concurrency
 	// cap is full; the epic waits its turn (no kick sent).

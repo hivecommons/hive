@@ -10,8 +10,11 @@ package worksource
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+var ErrStatusTransitionUnsupported = errors.New("worksource: status transition unsupported")
 
 // Issue is a source-neutral work item. Fields absent on a given source are left
 // at their zero value.
@@ -76,4 +79,26 @@ type WorkSource interface {
 	SourceType() string
 	// ListIssues returns the current actionable work items.
 	ListIssues(ctx context.Context) ([]Issue, error)
+}
+
+// LabelMutator is implemented by work sources that can tag a work item. Design
+// mode uses it for source-native "design requested" and "design approved"
+// signals. Adapters that cannot mutate labels simply omit the interface and the
+// caller can degrade to a visible unsupported message.
+type LabelMutator interface {
+	AddLabel(ctx context.Context, ref Ref, label string) error
+	RemoveLabel(ctx context.Context, ref Ref, label string) error
+}
+
+// Commenter is implemented by work sources that can post the design artifact
+// back to the originating item.
+type Commenter interface {
+	AddComment(ctx context.Context, ref Ref, body string) error
+}
+
+// StatusTransitioner is optional. Jira and Linear installations often prefer a
+// workflow transition over an approval label; adapters may return
+// ErrStatusTransitionUnsupported when the source or config cannot do that.
+type StatusTransitioner interface {
+	TransitionStatus(ctx context.Context, ref Ref, status string) error
 }

@@ -71,6 +71,8 @@ type PlanTree struct {
 	// DesignStatus / DesignRevision expose Gate 1 state.
 	DesignStatus   string `json:"designStatus,omitempty"`
 	DesignRevision int    `json:"designRevision,omitempty"`
+	DesignVia      string `json:"designVia,omitempty"`
+	RunKey         string `json:"runKey,omitempty"`
 	// PendingDecompose / DecomposeFailed / DecomposeAttempts mirror the plan
 	// list's queued-vs-stuck state so the review modal can say why a plan has
 	// no children yet (hivecommons/hive#8010).
@@ -125,6 +127,8 @@ func GetPlanTree(store *beads.Store, epicID string) (*PlanTree, error) {
 		Approved:          status == PlanStatusApproved,
 		DesignStatus:      DesignStatus(epic),
 		DesignRevision:    DesignRevision(epic),
+		DesignVia:         epic.Meta(MetaDesignVia),
+		RunKey:            epic.Meta(MetaRunKey),
 		PendingDecompose:  DecomposePending(epic),
 		DecomposeFailed:   DecomposeStuck(epic),
 		DecomposeAttempts: DecomposeAttempts(epic),
