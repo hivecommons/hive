@@ -323,6 +323,30 @@
     .oc-topbar-ts { font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; }
     .oc-topbar .git-version { color: var(--muted); }
     .oc-health-badge, #welcome-topbar-btn, #oc-gh-avatar-wrap { flex: 0 0 auto; }
+    #oc-gh-avatar-wrap { position: relative; }
+    #oc-gh-avatar { width: 28px; height: 28px; border-radius: 50%; cursor: pointer; border: 2px solid var(--green); vertical-align: middle; }
+    .avatar-menu {
+      position: absolute; right: 0; top: 34px; z-index: 9999;
+      min-width: 240px; max-width: min(340px, calc(100vw - 24px));
+      padding: var(--sp-2) var(--sp-0);
+      background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+    .avatar-menu[hidden] { display: none; }
+    .avatar-menu-identity { padding: var(--sp-4) var(--sp-6); color: var(--text); font-size: 0.85rem; font-weight: 600; white-space: nowrap; }
+    .avatar-menu-identity .avatar-menu-role { color: var(--muted); font-weight: 500; }
+    .avatar-menu-divider { height: 1px; margin: var(--sp-2) var(--sp-0); background: var(--line); }
+    .avatar-menu-label { padding: var(--sp-2) var(--sp-6); color: var(--muted); font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
+    .avatar-menu-item {
+      display: block; width: 100%; box-sizing: border-box;
+      padding: var(--sp-4) var(--sp-6);
+      color: var(--text); background: transparent; border: 0; text-align: left;
+      text-decoration: none; font: inherit; font-size: var(--fs-base); cursor: pointer;
+      white-space: nowrap;
+    }
+    .avatar-menu-item:hover { background: var(--surface-2); }
+    .avatar-menu-caption { display: block; margin-top: var(--sp-1); color: var(--muted); font-size: var(--fs-xs); font-weight: 500; white-space: nowrap; }
+    .avatar-menu-signout { color: var(--red); }
     /* Guide button — the Getting Started reopen affordance. Deliberately the
        most prominent control in the topbar (amber accent tint on the shared
        .btn base, ID specificity wins over the ghost recipe) so new operators
@@ -3488,30 +3512,32 @@
       <span class="oc-topbar-ts" id="oc-ts"></span><span class="status-stale" id="oc-status-stale" hidden></span>
       <button class="hv-btn btn-secondary btn btn-primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide">🧭 Guide</button>
       <a href="/api/widget" class="hv-btn btn-secondary btn-sm widget-dl" title="Download Übersicht widget">⬇ Widget</a>
-      <div id="oc-gh-avatar-wrap" style="display:none;position:relative">
-        <img id="oc-gh-avatar" src="" alt="" style="width:28px;height:28px;border-radius:50%;cursor:pointer;border:2px solid var(--green);vertical-align:middle" data-action="toggleGHUserMenu">
-        <!-- max-width keeps the longest entry ("Back up this hive") from
-             widening the menu past the right edge of a narrow viewport; the
-             menu is right-anchored, so extra width grows leftward and stays
-             on screen. Long labels wrap rather than overflow. -->
-        <div id="oc-gh-user-menu" style="display:none;position:absolute;right:0;top:34px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:var(--sp-2) var(--sp-0);min-width:160px;max-width:min(280px,calc(100vw - 24px));z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,0.4)">
-          <div style="padding:var(--sp-4) var(--sp-6);border-bottom:1px solid var(--line);color:var(--text);font-weight:600;font-size:0.85rem" id="oc-gh-menu-user"></div>
-          <div id="oc-gh-menu-role" style="display:none;padding:var(--sp-1) var(--sp-6) var(--sp-3);border-bottom:1px solid var(--line);font-size:0.72rem;color:var(--muted)"></div>
+      <div id="oc-gh-avatar-wrap" hidden>
+        <img id="oc-gh-avatar" src="" alt="" data-action="toggleGHUserMenu">
+        <div id="oc-gh-user-menu" class="avatar-menu" hidden>
+          <div class="avatar-menu-identity"><span id="oc-gh-menu-user"></span><span id="oc-gh-menu-role" class="avatar-menu-role"></span></div>
+          <div class="avatar-menu-divider"></div>
           <!-- This nav avatar is NOT a profile link: its click already opens
                this menu, a different destination, so it keeps that job. The
                profile gets a menu entry instead, populated by showGHAuthState()
                once the signed-in login is known. -->
-          <a href="#" id="oc-gh-menu-profile" target="_blank" rel="noopener noreferrer" style="display:none;padding:var(--sp-4) var(--sp-6);color:var(--text);text-decoration:none;font-size:var(--fs-base)">GitHub profile ↗</a>
-          <a href="/api/config/download" id="oc-gh-menu-download" style="display:none;padding:var(--sp-4) var(--sp-6);color:var(--text);text-decoration:none;font-size:var(--fs-base)">Download hive.yaml</a>
+          <a href="#" id="oc-gh-menu-profile" class="avatar-menu-item" target="_blank" rel="noopener noreferrer" hidden>GitHub profile ↗</a>
+          <a href="/api/docs" target="_blank" class="avatar-menu-item">API Docs ↗</a>
+          <div class="avatar-menu-divider"></div>
+          <div id="oc-gh-menu-export-label" class="avatar-menu-label" hidden>Export</div>
+          <a href="/api/config/download" id="oc-gh-menu-download" class="avatar-menu-item" hidden>Download hive.yaml</a>
+          <a href="/api/config/export" id="oc-gh-menu-config-export" class="avatar-menu-item" hidden>Export effective config (JSON)</a>
+          <div id="oc-gh-menu-backup-divider" class="avatar-menu-divider" hidden></div>
+          <div id="oc-gh-menu-backup-label" class="avatar-menu-label" hidden>Backup</div>
           <!-- Owner-only self-service backup. Shown only for role === 'owner',
                matching the hive.yaml entry above; the server enforces the same
                check, so hiding this is UX, not the security boundary. -->
-          <button class="hv-btn btn-icon btn-sm" type="button" id="oc-gh-menu-backup" data-action="downloadHiveBackup" style="display:none">
-            Back up this hive
-            <span class="d-block fs-xs text-muted">Encrypted · includes beads · needs a backup key (Settings → Security)</span>
+          <button class="avatar-menu-item" type="button" id="oc-gh-menu-backup" data-action="downloadHiveBackup" hidden>
+            <span class="avatar-menu-backup-label">Back up this hive</span>
+            <span class="avatar-menu-caption" title="Encrypted · includes beads · needs a backup key (Settings → Security)">Encrypted · needs backup key</span>
           </button>
-          <a href="/api/docs" target="_blank" style="display:block;padding:var(--sp-4) var(--sp-6);color:var(--text);text-decoration:none;font-size:var(--fs-base)">API Docs ↗</a>
-          <button class="hv-btn btn-danger" data-action="ghLogout">Sign out</button>
+          <div class="avatar-menu-divider"></div>
+          <button class="avatar-menu-item avatar-menu-signout" data-action="ghLogout">Sign out</button>
         </div>
       </div>
       <button class="hv-btn btn-primary gh-auth-btn btn-sm" id="oc-gh-login-btn" data-action="startGHLogin" style="display:none">Sign in</button>
@@ -28417,7 +28443,7 @@ function burnAreaChart() {
         banner.style.display = 'none';
         if (topBtn) topBtn.style.display = 'none';
         if (avatarWrap) {
-          avatarWrap.style.display = '';
+          avatarWrap.hidden = false;
           const img = document.getElementById('oc-gh-avatar');
           if (avatarURL) {
             img.src = avatarURL + (avatarURL.includes('?') ? '&' : '?') + 's=56';
@@ -28436,37 +28462,45 @@ function burnAreaChart() {
           if (profEl) {
             if (username && !isProviderKey) {
               profEl.href = ghProfileURL(username);
-              profEl.style.display = 'block';
+              profEl.hidden = false;
             } else {
-              profEl.style.display = 'none';
+              profEl.hidden = true;
             }
           }
           const roleEl = document.getElementById('oc-gh-menu-role');
-          if (roleEl && role) {
-            roleEl.style.display = '';
-            roleEl.textContent = role;
+          if (roleEl) {
+            roleEl.textContent = role ? ' · ' + role : '';
           }
+          const isOwner = role === 'owner';
           const dlEl = document.getElementById('oc-gh-menu-download');
-          if (dlEl) dlEl.style.display = role === 'owner' ? 'block' : 'none';
+          if (dlEl) dlEl.hidden = !isOwner;
+          const exportEl = document.getElementById('oc-gh-menu-config-export');
+          if (exportEl) exportEl.hidden = !isOwner;
+          const exportLabel = document.getElementById('oc-gh-menu-export-label');
+          if (exportLabel) exportLabel.hidden = !isOwner;
           const bkEl = document.getElementById('oc-gh-menu-backup');
-          if (bkEl) bkEl.style.display = role === 'owner' ? 'block' : 'none';
+          if (bkEl) bkEl.hidden = !isOwner;
+          const bkDivider = document.getElementById('oc-gh-menu-backup-divider');
+          if (bkDivider) bkDivider.hidden = !isOwner;
+          const bkLabel = document.getElementById('oc-gh-menu-backup-label');
+          if (bkLabel) bkLabel.hidden = !isOwner;
         }
       } else {
         banner.style.display = 'flex';
         if (topBtn) topBtn.style.display = '';
-        if (avatarWrap) avatarWrap.style.display = 'none';
+        if (avatarWrap) avatarWrap.hidden = true;
       }
     }
 
     function toggleGHUserMenu() {
       const menu = document.getElementById('oc-gh-user-menu');
-      menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+      menu.hidden = !menu.hidden;
     }
 
     document.addEventListener('click', function(e) {
       const wrap = document.getElementById('oc-gh-avatar-wrap');
       if (wrap && !wrap.contains(e.target)) {
-        document.getElementById('oc-gh-user-menu').style.display = 'none';
+        document.getElementById('oc-gh-user-menu').hidden = true;
       }
     });
 
@@ -28485,9 +28519,10 @@ function burnAreaChart() {
       if (btn) {
         btn.dataset.busy = '1';
         btn.style.opacity = '0.6';
-        btn.firstChild.textContent = ' Backing up… ';
+        const label = btn.querySelector('.avatar-menu-backup-label');
+        if (label) label.textContent = 'Backing up…';
       }
-      document.getElementById('oc-gh-user-menu').style.display = 'none';
+      document.getElementById('oc-gh-user-menu').hidden = true;
       showToast('Building encrypted backup — this can take a moment…', 'info');
       let url = null;
       try {
@@ -28534,13 +28569,14 @@ function burnAreaChart() {
         if (btn) {
           btn.dataset.busy = '';
           btn.style.opacity = '';
-          btn.firstChild.textContent = ' Back up this hive ';
+          const label = btn.querySelector('.avatar-menu-backup-label');
+          if (label) label.textContent = 'Back up this hive';
         }
       }
     }
 
     async function ghLogout() {
-      document.getElementById('oc-gh-user-menu').style.display = 'none';
+      document.getElementById('oc-gh-user-menu').hidden = true;
       try {
         await fetch('/api/gh-user-auth/logout', { method: 'POST' });
       } catch (e) { /* ignore */ }

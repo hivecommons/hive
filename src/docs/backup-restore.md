@@ -4,6 +4,21 @@ Hive has two backup paths with different scopes: nightly encrypted hub disaster-
 
 > **See also:** [Hub disaster recovery](https://github.com/hivecommons/hive/blob/v4/docs/HUB_DISASTER_RECOVERY.md) — the full hub-level runbook (key escrow, spoke fleet recovery, Slack blast, rebuild from zero) that the `hive-backup` archives described here feed into. For moving a live hive to a **different** host or cluster (as opposed to backing it up in place), see [Moving a Hive between hosts, same runtime](move-host.md), [Self-hosted Kubernetes cluster move](move-kubernetes.md) and [Hub-registered hive cutover](move-hub-registered-cutover.md); [Cross-runtime moves](move-cross-runtime.md) covers Podman ↔ Docker cross-host and Compose/Quadlet ↔ Kubernetes, using the same-host Docker → Podman migration below as its reference case.
 
+## Config export is not a backup
+
+The dashboard avatar menu has two separate owner actions:
+
+- **Export effective config (JSON)** calls `GET /api/config/export`. It is a
+  human-readable, deterministic snapshot for review, drift detection, and bug
+  reports. It includes the effective config plus layer and side files, with
+  secret-looking values redacted by default.
+- **Back up this hive** calls `POST /api/backup`. It creates an encrypted
+  disaster-recovery archive that includes operational data such as beads and
+  requires the hive backup key to restore.
+
+Use the JSON export to answer "how is this hive configured right now?" Use the
+encrypted backup to recover data after a failure.
+
 ## Hub disaster recovery: `hive-backup`
 
 `src/cmd/hive-backup` creates encrypted hub disaster-recovery archives — everything needed to rebuild a hub. It captures:

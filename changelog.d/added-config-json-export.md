@@ -1,0 +1,1 @@
+- Add an owner-only redacted effective configuration JSON export and tidy the avatar menu grouping/backup caption, closes #8935.

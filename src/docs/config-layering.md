@@ -15,6 +15,20 @@ Ask the hive instead:
 curl -s localhost:3002/api/config/provenance | jq .
 ```
 
+For a complete, diffable snapshot rather than the compact provenance report,
+owners can download:
+
+```bash
+curl -sOJ localhost:3002/api/config/export
+```
+
+That JSON includes the in-memory effective configuration, the seed,
+dashboard overlay, per-agent overlays, `config.env`, prompt templates,
+restrictions, sidebar layout, and provenance. Secret-looking fields are
+redacted to `{ "redacted": true, "sha256": "<first 12 hex>" }`, so exports
+can be committed or diffed without exposing tokens while still showing
+rotations.
+
 ## Precedence order — highest to lowest
 
 | Rank | Layer | Path | Writable by |

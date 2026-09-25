@@ -17778,6 +17778,107 @@
         }
       }
     },
+    "/api/config/export": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Export the effective hive config as redacted JSON",
+        "description": "Downloads a deterministic owner-only JSON snapshot of the in-memory effective config, config layers, dashboard side files, and provenance. Secret-looking values are redacted by default; plaintext include_secrets is refused.",
+        "responses": {
+          "200": {
+            "description": "Redacted config export",
+            "headers": {
+              "Content-Disposition": {
+                "description": "Attachment filename hive-config-<hiveid>-<yyyymmdd-hhmm>.json",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "integer"
+                    },
+                    "generated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "metadata": {
+                      "type": "object"
+                    },
+                    "effective": {
+                      "type": "object"
+                    },
+                    "layers": {
+                      "type": "object"
+                    },
+                    "side_files": {
+                      "type": "object"
+                    },
+                    "provenance": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "include_secrets is not supported"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Config not loaded"
+          }
+        }
+      }
+    },
+    "/api/config/export.json": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Export the effective hive config as redacted JSON",
+        "description": "Compatibility alias for /api/config/export.",
+        "responses": {
+          "200": {
+            "description": "Redacted config export",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "include_secrets is not supported"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Config not loaded"
+          }
+        }
+      }
+    },
     "/api/config/escalation": {
       "get": {
         "tags": [
