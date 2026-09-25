@@ -173,8 +173,10 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # cache: false as on v5 (#8762): the post-run cache save hangs on the
+          # self-hosted runners and leaves every job in_progress forever.
+          cache: false
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
 
       # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
       # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
@@ -293,8 +295,10 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # cache: false as on v5 (#8762): the post-run cache save hangs on the
+          # self-hosted runners and leaves every job in_progress forever.
+          cache: false
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
 
       # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
       # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
@@ -413,8 +417,10 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # cache: false as on v5 (#8762): the post-run cache save hangs on the
+          # self-hosted runners and leaves every job in_progress forever.
+          cache: false
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
 
       # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
       # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
@@ -538,8 +544,10 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # cache: false as on v5 (#8762): the post-run cache save hangs on the
+          # self-hosted runners and leaves every job in_progress forever.
+          cache: false
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
 
       # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
       # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
@@ -657,8 +665,10 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # cache: false as on v5 (#8762): the post-run cache save hangs on the
+          # self-hosted runners and leaves every job in_progress forever.
+          cache: false
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
 
       # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
       # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
@@ -1172,8 +1182,10 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # cache: false as on v5 (#8762): the post-run cache save hangs on the
+          # self-hosted runners and leaves every job in_progress forever.
+          cache: false
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
 
       - name: Restore warm Go build cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
