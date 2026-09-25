@@ -1,0 +1,1 @@
+- Replace browser-native hub and spoke dialogs with in-app modals/toasts and add ratchet tests to keep them out.
