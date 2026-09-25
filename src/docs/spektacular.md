@@ -131,17 +131,21 @@ server through the `LeaseRegistry` interface.
 
 On v6, design mode is admitted through the same run machinery as `!runs spec`.
 `hive-design`, the dashboard 📐 button, and `!runs design <owner/repo#n>` create
-or find the issue's Spektacular `spec` lease and link it to the Hive epic bead.
-The Spec checkpoint is the design-approval gate; once approved, the run advances
-to Plan. A final Plan import materializes child beads under the epic using the
-existing planning decompose path, so `plan_status=draft` at L5 and
-`plan_status=approved` at L6 continue to drive Gate 2 and pool admission.
+or find the work item's Spektacular `spec` lease and link it to the Hive epic
+bead. GitHub issues use `owner/repo#N`; Jira and Linear items use the
+source-neutral `<repo>!<external-id>` key so non-GitHub work sources enter the
+same campaign path. The Spec checkpoint is the design-approval gate; once
+approved, the run advances to Plan. A final Plan import materializes child beads
+under the epic using the existing planning decompose path, so
+`plan_status=draft` at L5 and `plan_status=approved` at L6 continue to drive
+Gate 2 and pool admission.
 
 The design document remains one artifact with two views: the Spek/Jam artifact
 and a source-native comment posted back through the work-source adapter. GitHub
 uses labels/comments; Jira and Linear use labels or configured workflow states
-plus comments; Gitea/GitLab label/comment support degrades gracefully where a
-status transition is unavailable.
+plus comments. Gitea/GitLab do not currently have `work_source` adapters in
+Hive (they are SCM/forge integrations only), so Spektacular design write-back
+does not target them until those adapters exist.
 
 ## Triage
 

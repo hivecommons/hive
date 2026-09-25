@@ -33,6 +33,10 @@ type JiraConfig struct {
 	PriorityField string
 	// HoldLabels are Jira label values that gate an issue (like GitHub "hold").
 	HoldLabels []string
+	// Transitions maps Hive design status names to Jira transition names or ids.
+	// When a status is not present, the status string itself is used as the
+	// desired transition name/id.
+	Transitions map[string]string
 }
 
 // jiraMaxResults is the page size requested from the Jira search API.
@@ -271,8 +275,31 @@ func (s *jiraSource) AddComment(ctx context.Context, ref Ref, body string) error
 	return s.doJSON(ctx, http.MethodPost, "/rest/api/3/issue/"+url.PathEscape(key)+"/comment", payload, http.StatusCreated)
 }
 
-func (s *jiraSource) TransitionStatus(context.Context, Ref, string) error {
-	return ErrStatusTransitionUnsupported
+func (s *jiraSource) TransitionStatus(ctx context.Context, ref Ref, status string) error {
+	if s == nil {
+		return fmt.Errorf("worksource/jira: source unavailable")
+	}
+	key := strings.TrimSpace(ref.ExternalID)
+	if key == "" {
+		return fmt.Errorf("worksource/jira: external id is required")
+	}
+	if len(s.cfg.Transitions) == 0 {
+		return ErrStatusTransitionUnsupported
+	}
+	target := strings.TrimSpace(status)
+	if mapped := strings.TrimSpace(s.cfg.Transitions[target]); mapped != "" {
+		target = mapped
+	}
+	if target == "" {
+		return ErrStatusTransitionUnsupported
+	}
+	id, err := s.findTransition(ctx, key, target)
+	if err != nil {
+		return err
+	}
+	return s.doJSON(ctx, http.MethodPost, "/rest/api/3/issue/"+url.PathEscape(key)+"/transitions", map[string]any{
+		"transition": map[string]string{"id": id},
+	}, http.StatusNoContent)
 }
 
 func (s *jiraSource) updateLabels(ctx context.Context, ref Ref, update map[string][]map[string]string) error {
@@ -309,4 +336,38 @@ func (s *jiraSource) doJSON(ctx context.Context, method, path string, payload an
 		return fmt.Errorf("worksource/jira: mutation returned %d: %s", resp.StatusCode, string(raw))
 	}
 	return nil
+}
+
+func (s *jiraSource) findTransition(ctx context.Context, key, target string) (string, error) {
+	reqURL := strings.TrimSuffix(s.cfg.BaseURL, "/") + "/rest/api/3/issue/" + url.PathEscape(key) + "/transitions"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("worksource/jira: build transition request: %w", err)
+	}
+	req.SetBasicAuth(s.cfg.Email, s.cfg.APIToken)
+	req.Header.Set("Accept", "application/json")
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("worksource/jira: list transitions: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("worksource/jira: transitions returned %d: %s", resp.StatusCode, string(raw))
+	}
+	var body struct {
+		Transitions []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"transitions"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return "", fmt.Errorf("worksource/jira: decode transitions: %w", err)
+	}
+	for _, tr := range body.Transitions {
+		if tr.ID == target || strings.EqualFold(tr.Name, target) {
+			return tr.ID, nil
+		}
+	}
+	return "", fmt.Errorf("worksource/jira: transition %q not available for %s", target, key)
 }

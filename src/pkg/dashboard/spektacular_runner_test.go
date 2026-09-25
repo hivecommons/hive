@@ -576,6 +576,7 @@ func TestStageAttrKeysMatchSpektacular(t *testing.T) {
 		stageAttrGen:            spektacular.AttrGen,
 		stageAttrReceipt:        spektacular.AttrReceipt,
 		stageAttrArtifact:       spektacular.AttrArtifact,
+		stageAttrArtifactBody:   spektacular.AttrArtifactBody,
 		stageAttrDocumentStatus: spektacular.AttrDocumentStatus,
 		stageAttrReason:         spektacular.AttrReason,
 		stageAttrSeverity:       spektacular.AttrSeverity,

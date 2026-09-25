@@ -332,6 +332,7 @@ func TestRunArtifactName(t *testing.T) {
 	cases := map[string]string{
 		"KubeStellar/Console#23735": "kubestellar-console-23735",
 		"owner/repo#1":              "owner-repo-1",
+		"owner/repo!ENG-7":          "owner-repo-eng-7",
 		"000057_git-commit.md":      "000057_git-commit",
 	}
 	for in, want := range cases {

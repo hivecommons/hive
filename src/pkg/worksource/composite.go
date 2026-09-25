@@ -43,3 +43,35 @@ func (c *Composite) ListIssues(ctx context.Context) ([]Issue, error) {
 	}
 	return out, nil
 }
+
+func (c *Composite) AddLabel(ctx context.Context, ref Ref, label string) error {
+	m, ok := c.primary.(LabelMutator)
+	if !ok {
+		return fmt.Errorf("worksource/%s: labels unsupported", c.SourceType())
+	}
+	return m.AddLabel(ctx, ref, label)
+}
+
+func (c *Composite) RemoveLabel(ctx context.Context, ref Ref, label string) error {
+	m, ok := c.primary.(LabelMutator)
+	if !ok {
+		return fmt.Errorf("worksource/%s: labels unsupported", c.SourceType())
+	}
+	return m.RemoveLabel(ctx, ref, label)
+}
+
+func (c *Composite) AddComment(ctx context.Context, ref Ref, body string) error {
+	m, ok := c.primary.(Commenter)
+	if !ok {
+		return fmt.Errorf("worksource/%s: comments unsupported", c.SourceType())
+	}
+	return m.AddComment(ctx, ref, body)
+}
+
+func (c *Composite) TransitionStatus(ctx context.Context, ref Ref, status string) error {
+	m, ok := c.primary.(StatusTransitioner)
+	if !ok {
+		return ErrStatusTransitionUnsupported
+	}
+	return m.TransitionStatus(ctx, ref, status)
+}

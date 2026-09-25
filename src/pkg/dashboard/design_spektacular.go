@@ -2,7 +2,11 @@ package dashboard
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -37,7 +41,7 @@ func (s *Server) startDesignSpektacular(ctx context.Context, store *beads.Store,
 		return nil, "", fmt.Errorf("design run requires a stable work item ref")
 	}
 	if applySignal {
-		if err := s.applyDesignLabel(ctx, issue, s.designConfig().DesignLabelOrDefault()); err != nil {
+		if err := s.applyDesignSignal(ctx, issue, s.designConfig().DesignLabelOrDefault(), s.designRequestedStatus()); err != nil {
 			return nil, "", err
 		}
 	}
@@ -57,10 +61,7 @@ func (s *Server) startDesignSpektacular(ctx context.Context, store *beads.Store,
 		}
 	}
 	_ = store.SetMetadata(epic.ID, planning.MetaDesignStatus, planning.DesignStatusRequested)
-	if issue.Number <= 0 {
-		return nil, "", fmt.Errorf("spektacular admission currently requires a GitHub issue number")
-	}
-	if err := s.AdmitRun(issue.Repo, issue.Number, strings.TrimSpace(issue.Title), time.Now()); err != nil {
+	if err := s.AdmitRunRef(issueWorkRef(issue), strings.TrimSpace(issue.Title), time.Now()); err != nil {
 		return nil, "", err
 	}
 	epic, _ = store.Get(epic.ID)
@@ -76,25 +77,165 @@ func (s *Server) StartDesignSpektacularFromIssue(ctx context.Context, store *bea
 }
 
 func (s *Server) applyDesignLabel(ctx context.Context, issue github.Issue, label string) error {
+	return s.applyDesignSignal(ctx, issue, label, "")
+}
+
+func (s *Server) applyDesignSignal(ctx context.Context, issue github.Issue, label, status string) error {
 	label = strings.TrimSpace(label)
-	if label == "" {
+	status = strings.TrimSpace(status)
+	ref := issueWorkRef(issue)
+	if label != "" {
+		mut, err := s.designLabelMutator(issue)
+		if err != nil {
+			return err
+		}
+		if err := mut.AddLabel(ctx, ref, label); err != nil {
+			return err
+		}
+	}
+	if status == "" {
 		return nil
 	}
-	if issue.Number <= 0 {
-		return fmt.Errorf("design label requires a source adapter for %s", designRunKey(issue))
+	transitioner, err := s.designStatusTransitioner(issue)
+	if err != nil {
+		return err
 	}
-	if s == nil || s.deps == nil || s.deps.GHClient == nil {
-		return fmt.Errorf("github client not initialized")
+	if err := transitioner.TransitionStatus(ctx, ref, status); err != nil {
+		if errors.Is(err, worksource.ErrStatusTransitionUnsupported) {
+			return fmt.Errorf("design status transition %q unsupported for %s: %w", status, designRunKey(issue), err)
+		}
+		return err
 	}
-	return s.deps.GHClient.AddLabels(ctx, issue.Repo, issue.Number, []string{label})
+	return nil
+}
+
+func (s *Server) postDesignArtifact(ctx context.Context, store *beads.Store, epic *beads.Bead, digest, body string) error {
+	body = strings.TrimSpace(body)
+	digest = strings.TrimSpace(digest)
+	if store == nil || epic == nil || body == "" {
+		return nil
+	}
+	if digest != "" && epic.Meta(planning.MetaDesignArtifactDigest) == digest {
+		return nil
+	}
+	issue := issueFromEpic(epic)
+	commenter, err := s.designCommenter(issue)
+	if err != nil {
+		return err
+	}
+	if err := commenter.AddComment(ctx, issueWorkRef(issue), designArtifactComment(body)); err != nil {
+		return err
+	}
+	if digest != "" {
+		return store.SetMetadata(epic.ID, planning.MetaDesignArtifactDigest, digest)
+	}
+	return nil
+}
+
+func designArtifactComment(body string) string {
+	return strings.TrimSpace("📐 Spektacular design artifact\n\n" + strings.TrimSpace(body))
+}
+
+func designArtifactDigest(body string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(body)))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func (s *Server) designRequestedStatus() string {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.deps.Config.Planning.DesignRequestedStatus)
+}
+
+func (s *Server) designApprovedStatus() string {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.deps.Config.Planning.DesignApprovedStatus)
+}
+
+func issueWorkRef(issue github.Issue) worksource.Ref {
+	externalID := issue.ExternalID
+	if externalID == "" && issue.Number > 0 {
+		externalID = strconv.Itoa(issue.Number)
+	}
+	return worksource.Ref{
+		SourceType: issue.SourceType,
+		Repo:       issue.Repo,
+		ExternalID: externalID,
+		Number:     issue.Number,
+		URL:        issue.URL,
+	}
+}
+
+func (s *Server) designLabelMutator(issue github.Issue) (worksource.LabelMutator, error) {
+	src, err := s.designWorkSource(issue)
+	if err != nil {
+		return nil, err
+	}
+	mut, ok := src.(worksource.LabelMutator)
+	if !ok {
+		return nil, fmt.Errorf("worksource/%s: labels unsupported", src.SourceType())
+	}
+	return mut, nil
+}
+
+func (s *Server) designCommenter(issue github.Issue) (worksource.Commenter, error) {
+	src, err := s.designWorkSource(issue)
+	if err != nil {
+		return nil, err
+	}
+	commenter, ok := src.(worksource.Commenter)
+	if !ok {
+		return nil, fmt.Errorf("worksource/%s: comments unsupported", src.SourceType())
+	}
+	return commenter, nil
+}
+
+func (s *Server) designStatusTransitioner(issue github.Issue) (worksource.StatusTransitioner, error) {
+	src, err := s.designWorkSource(issue)
+	if err != nil {
+		return nil, err
+	}
+	transitioner, ok := src.(worksource.StatusTransitioner)
+	if !ok {
+		return nil, worksource.ErrStatusTransitionUnsupported
+	}
+	return transitioner, nil
+}
+
+func (s *Server) designWorkSource(issue github.Issue) (worksource.WorkSource, error) {
+	if s == nil || s.deps == nil {
+		return nil, fmt.Errorf("dashboard dependencies unavailable")
+	}
+	if issue.Number > 0 || issue.SourceType == "" || issue.SourceType == "github" || issue.SourceType == "github_projects" {
+		if s.deps.GHClient == nil {
+			return nil, fmt.Errorf("github client not initialized")
+		}
+		return worksource.NewGitHubIssuesSource(s.deps.GHClient), nil
+	}
+	if s.deps.Config == nil {
+		return nil, fmt.Errorf("worksource config unavailable for %s", designRunKey(issue))
+	}
+	cfg := s.deps.Config.Governor.WorkSource
+	if cfg.Type != issue.SourceType {
+		return nil, fmt.Errorf("worksource/%s not configured (active work_source=%q)", issue.SourceType, cfg.Type)
+	}
+	logger := slog.Default()
+	if s.logger != nil {
+		logger = s.logger
+	}
+	return worksource.FromConfig(cfg, s.deps.GHClient, "", "", logger)
 }
 
 func issueFromEpic(epic *beads.Bead) github.Issue {
 	n, _ := strconv.Atoi(epic.Meta(planning.MetaIssueNumber))
 	return github.Issue{
+		SourceType: firstRunNonEmpty(epic.Meta(planning.MetaIssueSourceType), "github"),
 		Repo:       epic.Meta(planning.MetaIssueRepo),
 		Number:     n,
-		ExternalID: firstRunNonEmpty(epic.Meta(planning.MetaIssueNumber), epic.ExternalRef),
+		ExternalID: firstRunNonEmpty(epic.Meta(planning.MetaIssueExternalID), epic.Meta(planning.MetaIssueNumber)),
 		URL:        epic.Meta(planning.MetaIssueURL),
 		Title:      epic.Title,
 	}

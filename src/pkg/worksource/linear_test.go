@@ -602,6 +602,39 @@ func TestLinearDesignSignalErrors(t *testing.T) {
 	}
 }
 
+func TestLinearTransitionStatus(t *testing.T) {
+	var ops []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Query string `json:"query"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		switch {
+		case strings.Contains(req.Query, "states"):
+			ops = append(ops, "states")
+			_, _ = w.Write([]byte(`{"data":{"issue":{"id":"issue-1","team":{"states":{"nodes":[{"id":"state-approved","name":"Design Approved"}]}}}}}`))
+		case strings.Contains(req.Query, "issueUpdate"):
+			ops = append(ops, "update")
+			_, _ = w.Write([]byte(`{"data":{"issueUpdate":{"success":true}}}`))
+		default:
+			t.Fatalf("unexpected query: %s", req.Query)
+		}
+	}))
+	defer srv.Close()
+
+	src := worksource.NewLinearSource(worksource.LinearConfig{
+		APIKey:      "key",
+		BaseURL:     srv.URL,
+		Transitions: map[string]string{"approved": "Design Approved"},
+	}, nil)
+	if err := src.TransitionStatus(context.Background(), worksource.Ref{SourceType: "linear", Repo: "acme/app", ExternalID: "ENG-7"}, "approved"); err != nil {
+		t.Fatalf("TransitionStatus: %v", err)
+	}
+	if want := []string{"states", "update"}; !reflect.DeepEqual(ops, want) {
+		t.Fatalf("ops = %v, want %v", ops, want)
+	}
+}
+
 func srcTransitionLinear() error {
 	src := worksource.NewLinearSource(worksource.LinearConfig{}, nil)
 	return src.TransitionStatus(context.Background(), worksource.Ref{ExternalID: "ENG-1"}, "Done")

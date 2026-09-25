@@ -335,6 +335,15 @@ func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, statu
 		}
 		plan = &exported
 	}
+	if st.Stage == StageSpec {
+		body, err := r.readSpecInDir(ctx, st.WorkDir, st.Artifact)
+		if err != nil {
+			r.logger().Warn("[spektacular] spec is final but artifact read failed; advancing without postback body",
+				"run", st.RunKey, "artifact", st.Artifact, "error", err)
+		} else {
+			status.Body = body
+		}
+	}
 	receipt := BuildReceipt(st, status, now)
 	if err := r.Registry.Advance(ctx, st, status, receipt, plan, now); err != nil {
 		res.Errors++
