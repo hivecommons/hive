@@ -884,6 +884,48 @@ func TestTick_PlanFinalFallsBackWhenExportFlagIsRejected(t *testing.T) {
 	}
 }
 
+// The live shape: the lease names the bare slug, Spektacular reports the
+// timestamp-prefixed artifact id, and the on-disk plan.md lives under that
+// id. The fallback must read the resolved id, not the slug.
+func TestTick_PlanFallbackReadsResolvedArtifactID(t *testing.T) {
+	const slug, resolved = "kubestellar-console-23725", "20260925183347-kubestellar-console-23725"
+	reg := newFakeRegistry(StagePlan)
+	reg.stage.RunKey = "kubestellar/console#23725"
+	reg.stage.Artifact = slug
+	var reads []string
+	exec := func(_ context.Context, _ string, args []string) ([]byte, error) {
+		switch {
+		case len(args) >= 3 && args[1] == verbFile && args[2] == "list":
+			return []byte(`["` + resolved + `"]`), nil
+		case len(args) >= 3 && args[1] == verbStatus && args[2] == slug:
+			return []byte(`{"error":true,"code":"artifact_not_found","message":"missing","resource":"` + slug + `"}`), errors.New("exit status 1")
+		case len(args) >= 3 && args[1] == verbStatus && args[2] == resolved:
+			return []byte(statusJSON(KindPlan, resolved, DocumentFinal)), nil
+		case len(args) >= 2 && args[1] == verbExport:
+			return []byte(`{"error":true,"code":"internal_error","message":"unknown flag: --format","next_action":""}`), errors.New("exit status 1")
+		case len(args) >= 4 && args[1] == verbFile && args[2] == verbRead:
+			reads = append(reads, args[3])
+			if args[3] == resolved+"/plan.md" {
+				return []byte(spekNativePlanMD), nil
+			}
+			return []byte(`{"error":true,"code":"not_found","message":"file ` + args[3] + ` not found"}`), errors.New("exit status 1")
+		}
+		return nil, fmt.Errorf("unexpected args: %v", args)
+	}
+	r := &Runner{Exec: exec, Poll: testPoll, Registry: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
+		t.Fatalf("tick = %+v (reads %v)", res, reads)
+	}
+	if len(reg.plans) != 1 || len(reg.plans[0].Tasks) != 3 {
+		t.Fatalf("plan = %+v", reg.plans)
+	}
+	for _, p := range reads {
+		if strings.HasPrefix(p, slug+"/") {
+			t.Fatalf("fallback read the bare slug path %q; want %s/…", p, resolved)
+		}
+	}
+}
+
 func TestTick_PlanFinalWithFailedExportDoesNotAdvance(t *testing.T) {
 	reg := newFakeRegistry(StagePlan)
 	ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, DocumentFinal)}, exportErr: errors.New("exit status 2")}
