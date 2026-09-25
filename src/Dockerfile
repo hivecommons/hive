@@ -415,10 +415,10 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit \
 # package.json declares "bin": {"bob": "dist/bob.js"} — npm therefore creates
 # /usr/local/bin/bob directly, matching the binary name the agent launcher
 # invokes (manager.go maps "bob" -> "bob"). No symlink is required.
-ARG BOBSHELL_VERSION=2.0.4
+ARG BOBSHELL_VERSION=2.0.5
 ARG BOBSHELL_BASE_URL=https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell
-ARG BOBSHELL_SHA256_AMD64=10de047ffdc23a50f3e1ef69fad3b6313ff6dda0010589a22efe26b24685254b
-ARG BOBSHELL_SHA256_ARM64=10de047ffdc23a50f3e1ef69fad3b6313ff6dda0010589a22efe26b24685254b
+ARG BOBSHELL_SHA256_AMD64=eff232eb1b69f34f984ddd295e6960470058ca922b1c751879c5a8d06199f566
+ARG BOBSHELL_SHA256_ARM64=eff232eb1b69f34f984ddd295e6960470058ca922b1c751879c5a8d06199f566
 # Tolerant of download failure now, like the copilot/codex/goose/pi layers
 # above (issue #5203) — IBM COS (s3.us-south.cloud-object-storage.appdomain.cloud)
 # has gone unreachable for multi-minute windows three times in one day
