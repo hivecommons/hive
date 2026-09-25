@@ -1,11 +1,14 @@
 package dashboard
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // TestHandlePresenceEngaged covers the focus-aware presence beacon: an engaged
@@ -25,6 +28,7 @@ func TestHandlePresenceEngaged(t *testing.T) {
 		{"malformed body reads as not engaged", "alice", `{{{`, false},
 		{"empty body reads as not engaged", "alice", ``, false},
 	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newTestServer()
@@ -43,6 +47,136 @@ func TestHandlePresenceEngaged(t *testing.T) {
 				t.Errorf("engaged set = %v, wantEngaged=%v", engaged, tc.wantEngaged)
 			}
 		})
+	}
+}
+
+func TestHandlePresenceSnapshotAuthenticated(t *testing.T) {
+	s := newTestServer()
+	s.markUserEngaged("alice", time.Now())
+	s.createUserSession("alice", "owner")
+	s.createUserSession("bob", "read")
+	s.audit.Log("bob", "config_save", "", "")
+
+	req := httptest.NewRequest("GET", "/api/presence", nil)
+	req.Header.Set("X-Hive-User", "alice")
+	rec := httptest.NewRecorder()
+	s.handlePresenceSnapshot(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("GET /api/presence = %d, want 200", rec.Code)
+	}
+	var body struct {
+		Mode  string `json:"mode"`
+		Users []struct {
+			Username   string `json:"username"`
+			AvatarURL  string `json:"avatar_url"`
+			Active     bool   `json:"active"`
+			Idle       bool   `json:"idle"`
+			LastAction string `json:"last_action"`
+			You        bool   `json:"you"`
+		} `json:"users"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode presence: %v", err)
+	}
+	if body.Mode != "authenticated" || len(body.Users) != 2 {
+		t.Fatalf("presence body = %+v, want authenticated alice+bob", body)
+	}
+	byUser := map[string]struct {
+		AvatarURL  string
+		Active     bool
+		Idle       bool
+		LastAction string
+		You        bool
+	}{}
+	for _, u := range body.Users {
+		byUser[u.Username] = struct {
+			AvatarURL  string
+			Active     bool
+			Idle       bool
+			LastAction string
+			You        bool
+		}{u.AvatarURL, u.Active, u.Idle, u.LastAction, u.You}
+	}
+	if !byUser["alice"].Active || byUser["alice"].Idle || !byUser["alice"].You {
+		t.Errorf("alice presence = %+v, want active/current viewer", byUser["alice"])
+	}
+	if !byUser["bob"].Idle || byUser["bob"].Active || byUser["bob"].LastAction == "" {
+		t.Errorf("bob presence = %+v, want idle with last action", byUser["bob"])
+	}
+	if byUser["alice"].AvatarURL != "https://github.com/alice.png" {
+		t.Errorf("avatar_url = %q, want GitHub avatar URL", byUser["alice"].AvatarURL)
+	}
+}
+
+func TestHandlePresenceSnapshotLocalDoesNotLeakRoster(t *testing.T) {
+	s := newTestServer()
+	s.createUserSession("alice", "owner")
+
+	rec := httptest.NewRecorder()
+	s.handlePresenceSnapshot(rec, httptest.NewRequest("GET", "/api/presence", nil))
+	if rec.Code != 200 {
+		t.Fatalf("GET /api/presence = %d, want 200", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "alice") {
+		t.Fatalf("local unauthenticated presence leaked session roster: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"mode":"local"`) || !strings.Contains(rec.Body.String(), `"username":"local"`) {
+		t.Fatalf("local presence = %s, want local row", rec.Body.String())
+	}
+}
+
+func TestPresenceAvatarSkipsOpaqueOrEmailIdentities(t *testing.T) {
+	for _, user := range []string{"ibmid:5500", "alice@example.com", "bad/user", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "gho_tokenlike", "-alice", "alice-", "alice--corp"} {
+		if isPlainGitHubUsername(user) {
+			t.Fatalf("%q must not be treated as a GitHub username", user)
+		}
+	}
+	if !isPlainGitHubUsername("clubanderson") {
+		t.Fatal("plain GitHub username should be accepted")
+	}
+}
+
+func TestHandlePresenceSnapshotRedactsEmailIdentity(t *testing.T) {
+	s := newTestServer()
+	s.createUserSession("alice@example.com", "owner")
+
+	req := httptest.NewRequest("GET", "/api/presence", nil)
+	req.Header.Set("X-Hive-User", "alice@example.com")
+	rec := httptest.NewRecorder()
+	s.handlePresenceSnapshot(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("GET /api/presence = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "alice@example.com") || strings.Contains(body, "@") {
+		t.Fatalf("presence leaked email identity: %s", body)
+	}
+	if !strings.Contains(body, `"username":"user-`) || strings.Contains(body, `"avatar_url"`) {
+		t.Fatalf("presence body = %s, want redacted pseudonym without avatar", body)
+	}
+}
+
+func TestHandlePresenceSnapshotRedactsEmailDisplayName(t *testing.T) {
+	s := newTestServer()
+	s.deps = &Dependencies{Config: &config.Config{}}
+	s.deps.Config.Dashboard.AuthorizedUserNames = map[string]string{
+		"ibmid:5500": "jane@example.com",
+	}
+	s.createUserSession("ibmid:5500", "owner")
+
+	req := httptest.NewRequest("GET", "/api/presence", nil)
+	req.Header.Set("X-Hive-User", "ibmid:5500")
+	rec := httptest.NewRecorder()
+	s.handlePresenceSnapshot(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("GET /api/presence = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "jane@example.com") || strings.Contains(body, "ibmid:5500") || strings.Contains(body, "@") {
+		t.Fatalf("presence leaked opaque/email display identity: %s", body)
+	}
+	if !strings.Contains(body, `"display_name":"user-`) {
+		t.Fatalf("presence body = %s, want pseudonymous display fallback", body)
 	}
 }
 

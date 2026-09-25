@@ -34,6 +34,45 @@ that meet `HIVE_CONTRIBUTE_EFFECTIVE_MODELS_MIN_PRS` (default `5`) merged PRs
 get rank badges. The default row order is effectiveness rank; operators can
 toggle back to raw PR count without changing the selected window.
 
+## Hive Chat
+
+The floating **🐝 Hive Chat** panel is a command-first dashboard assistant. Type
+`/help` (or `help`) to render the command registry; the same registry drives
+one-line help, `/help <command>` details, examples, and slash-command
+autocomplete and argument hints. Current commands are `/help`, `/clear`,
+`/search`, `/history`, `/retry`, `/edit`, `/who`, `/agents`, `/beads`,
+`/prs`, `/governor`, `/knowledge`, `/jam`, and `/spek`.
+
+The prompt behaves like a small terminal: `Enter` sends, `Shift+Enter` inserts a
+newline, `Tab` completes slash commands, Up/Down cycle prior commands while
+preserving the draft, `?` opens the shortcut overlay, `Esc` closes the overlay
+or panel, and Cmd/Ctrl+K opens and focuses it. A collapsible left cheat sheet
+groups clickable examples for agents, beads/issues/PRs, governor, knowledge,
+jam, and Spektacular. Spek/Spektacular examples are enabled when `/api/version`
+reports v6/edge; otherwise they are marked `v6/edge`.
+
+Chat UI state is browser-local: transcript, command history, panel size,
+maximized/docked mode, cheat-sheet collapsed state, command draft, preferences,
+and shortcuts live in localStorage with bounded history sizes. `/clear` clears
+the transcript; `/history clear` or the cheat-sheet control clears command
+history. `/history <text>` searches command history and `/search <text>`
+searches the transcript. `/retry` resends the last prompt, `/edit` restores it
+to the draft, suggestion chips seed common prompts, and long/code-heavy output
+is collapsible with copy buttons on fenced code blocks. There is no server-side
+per-user chat persistence yet because dashboard user settings are not a
+general-purpose cross-browser preferences API.
+
+Markdown is rendered from escaped input only: bold, inline code, code fences,
+links, GitHub-style `@mentions`, and `#issue` / `owner/repo#N` references are
+decorated after escaping. Repeated or long `Status heartbeat` output is folded
+to avoid burying the conversation.
+
+`/who` reads `GET /api/presence`. Authenticated users see display-safe
+usernames/display names, GitHub avatars for plain GitHub handles, and active vs.
+idle state derived from the existing focus-aware presence heartbeat. A local
+dashboard with no authenticated identity does not reveal other sessions and
+shows only `local`.
+
 ## Repository card holds
 
 Repository cards show held issues and PRs beside the actionable pills. A user
