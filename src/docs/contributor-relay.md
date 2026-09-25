@@ -580,6 +580,8 @@ The **Operations** tab also includes a public-safe, collapsible **Most effective
 
 The dashboard **Governor** card's **PRs by model** section uses that same model-effectiveness aggregation for the same `7d`, `30d`, and `all` windows. It keeps the merged/open/closed bar for PR volume, adds compact columns for merged count, first-pass merge rate, verified-PR run rate, failure rate, and “nothing to ship” rate, and badges ranked models that clear the merged-PR threshold. Operators can toggle the row order between effectiveness rank (default) and raw PR count.
 
+The `/contribute/operations` card layout is also a per-viewer browser preference. Each card header has a grip that can be dragged with pointer/touch input or focused and moved with arrow keys; cards can move between the narrow, main, and full-width regions while the Live Activity rail stays fixed. The layout is stored in `localStorage` under `hive.ops.layout`, tolerates cards being added or removed between releases, and the **Reset layout** control restores the template order.
+
 The **Operations** tab lets an operator reorder and park individual issues in the ready-work queue. Both controls persist on the hub configuration alongside the filters above, but they are edited only through two authenticated endpoints (owner or read-write role; a read-only or anonymous caller gets `403`):
 
 | Endpoint | Config key | Behavior |

@@ -332,11 +332,21 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
    to the viewport and hands the overflow back to the ellipsis/wrapping the cards
    already declare. */
 .ops-grid{display:grid;grid-template-columns:340px minmax(0,1fr);gap:var(--sp-7);margin-top:var(--sp-8)}
-@media(max-width:900px){.ops-grid{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:900px){.ops-grid{grid-template-columns:minmax(0,1fr);gap:var(--sp-7)}}
 .ops-card{background:var(--surface-1);border:var(--line-width) solid var(--line-subtle);border-radius:var(--r-lg);padding:var(--sp-0);overflow:hidden;box-shadow:var(--shadow-card)}
 .ops-card-head{padding:var(--sp-6) var(--sp-7);border-bottom:1px solid var(--line-strong);display:flex;align-items:center;gap:10px}
 .ops-card-head h3{font-size:.95rem;color:var(--text);margin:var(--sp-0)}
 .ops-card-count{font-size:var(--fs-sm);color:var(--text-muted);margin-left:auto}
+.ops-layout-reset{display:none;margin-left:auto;align-self:center}
+.ops-grip{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:1.55rem;height:1.55rem;border:1px solid transparent;border-radius:var(--r-sm);background:transparent;color:var(--text-muted);font:inherit;line-height:1;cursor:grab;touch-action:none;user-select:none}
+.ops-grip:hover,.ops-grip:focus-visible{color:var(--text);border-color:var(--line-strong);background:var(--surface-2);outline:none}
+.ops-grip:active,.ops-grip[aria-pressed="true"]{cursor:grabbing;color:var(--text);background:var(--surface-0)}
+.ops-region{min-width:0}
+.ops-wide{margin-top:var(--sp-7)}
+.ops-drop-indicator{height:var(--line-width);background:var(--cc-accent);border-radius:var(--r-pill);box-shadow:0 0 0 2px color-mix(in srgb,var(--cc-accent) 18%%,transparent);margin:var(--sp-3) var(--sp-0);pointer-events:none}
+.ops-card.ops-drag-source{opacity:.45}
+.ops-card-ghost{position:fixed;z-index:1000;pointer-events:none;box-sizing:border-box;opacity:.92;transform:translate3d(var(--ops-ghost-x,0),var(--ops-ghost-y,0),0);box-shadow:var(--shadow-popover);border-color:var(--cc-accent)}
+.ops-layout-live{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .section-header-toggle{display:inline-flex;align-items:center;cursor:pointer;user-select:none;gap:var(--sp-3);width:100%%}
 .section-header-toggle:hover{opacity:.85}
 .section-chevron{display:inline-block;font-size:var(--fs-xs);transition:transform 200ms ease;color:var(--text-muted);flex-shrink:0}
@@ -1237,7 +1247,7 @@ select.admin-act{min-width:0;max-width:100%%}
 }
 @media(prefers-reduced-motion:reduce){
   .clanker-row.cc-enter,.clanker-row.cc-leave,.clanker-row.cc-landing,.cc-q-item,.cc-q-item.cc-q-enter,.cc-q-item.cc-leaving,.cc-q-item.cc-q-flip,.cc-log-line,.cc-ach,.cc-token{animation:none!important;transition:none!important}
-  .ops-rail,.ops-rail-inner,.ops-rail-chevron{transition:none!important}
+  .ops-rail,.ops-rail-inner,.ops-rail-chevron,.ops-card-ghost{transition:none!important}
 }
 /* #2548 Branded client entry points — a find-by-SIGHT tile grid above the CLI
    selector. Each tile carries an inline SVG/glyph emblem so a contributor spots
@@ -1483,6 +1493,7 @@ select.admin-act{min-width:0;max-width:100%%}
 <button class="page-tab" role="tab" id="ptab-leaderboard" aria-selected="false" data-panel="tab-leaderboard">Leaderboard</button>
 <button class="page-tab" role="tab" id="ptab-profile" aria-selected="false" data-panel="tab-profile">Profile</button>
 </div>
+<button type="button" class="hv-btn btn-secondary btn-sm ops-layout-reset" id="ops-layout-reset" title="Reset Operations card layout">Reset layout</button>
 <button type="button" class="theme-toggle" id="cc-theme-toggle" data-action="cycle-theme" data-theme-mode="auto" title="Theme: Auto &mdash; follows your system appearance" aria-label="Theme: Auto (follows your system appearance). Activate for Light."><span class="theme-toggle__glyph" aria-hidden="true">&#9680;</span><span class="theme-toggle__text">Auto</span></button>
 </div>
 <div class="tab-panel active" id="tab-onboarding" role="tabpanel" aria-labelledby="ptab-onboarding">
@@ -2082,6 +2093,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="tab-panel" id="tab-ops" role="tabpanel" aria-labelledby="ptab-ops">
 <div class="ops">
 <h1>Operations</h1>
+<div class="ops-layout-live" id="ops-layout-live" aria-live="polite" aria-atomic="true"></div>
 <div id="operator-message-banner-ops"></div>
 <p class="subtitle" style="font-size:.95rem">A live view over the Contributor agent (ClankeR) fleet and its in-flight work. The panels below surface what this hive already knows; the per-contributor trust / revoke / remove controls are owner &amp; read-write only. Admin controls (suspend, admission filters) live under the <strong style="color:var(--text)">Management</strong> tab.</p>
 <div id="ops-announcement" class="announcement-banner" role="status"><span class="ann-level"></span><span class="ann-text"></span><button class="hv-btn btn-secondary" type="button" data-action="dismiss-announcement" aria-label="Dismiss announcement">&times;</button></div>
@@ -2095,10 +2107,10 @@ update();  // initial paint: copy block + branded UI in sync from first load
      (see the .ops-shell media query) so the page never scrolls horizontally. -->
 <div class="ops-shell" id="ops-shell">
 <div class="ops-main">
-<div class="ops-grid">
-<div>
-<div class="ops-card card-accent">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Connected contributor agents (ClankeR)</h3><span class="ops-card-count count-strong" id="clanker-count"></span><!-- 7-day fleet-size trend (#persistent-history) --><span class="spark spark-inline" id="spark-fleet" title="Connected contributor agents (ClankeR), last 7 days (hourly)"></span></div>
+<div class="ops-grid" id="ops-grid">
+<div class="ops-region" data-ops-region="left" id="ops-left-column">
+<div class="ops-card card-accent" data-ops-card="clankers">
+<div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Connected contributor agents (ClankeR) card" aria-pressed="false">⠿</button><span class="feed-dot"></span><h3>Connected contributor agents (ClankeR)</h3><span class="ops-card-count count-strong" id="clanker-count"></span><!-- 7-day fleet-size trend (#persistent-history) --><span class="spark spark-inline" id="spark-fleet" title="Connected contributor agents (ClankeR), last 7 days (hourly)"></span></div>
 <!-- Army roster header: live count + at-a-glance status split, fed by the fleet snapshot. -->
 <div class="cc-army" id="cc-army">
   <span style="color:var(--text);font-weight:600">Your army</span>
@@ -2108,8 +2120,8 @@ update();  // initial paint: copy block + branded UI in sync from first load
 </div>
 <div id="clanker-list"><div class="ops-empty">Loading fleet&hellip;</div></div>
 </div>
-<div class="ops-card mt-7">
-<div class="ops-card-head"><h3>Pipeline &amp; policy</h3><!-- Tasks-completed/hour throughput trend (#persistent-history) --><span class="spark spark-inline" id="spark-throughput" title="Tasks completed per hour, last 7 days"></span></div>
+<div class="ops-card mt-7" data-ops-card="pipeline">
+<div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Pipeline and policy card" aria-pressed="false">⠿</button><h3>Pipeline &amp; policy</h3><!-- Tasks-completed/hour throughput trend (#persistent-history) --><span class="spark spark-inline" id="spark-throughput" title="Tasks completed per hour, last 7 days"></span></div>
 <div style="padding:var(--sp-6) var(--sp-7)">
 <div class="pipeline">
 <span class="pipe-node">opened</span><span class="pipe-arrow">&rarr;</span>
@@ -2143,7 +2155,7 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
 </div>
 </div>
 </div>
-<div>
+<div class="ops-region" data-ops-region="main" id="ops-main-column">
 <!-- Command center: FLEET WORK (in-flight items across the hive, filterable down
      to the viewer's own) stacked above the READY-WORK QUEUE (issues waiting to be
      picked off, top = next up), and the live DEV-LOG (a running chat log of the
@@ -2165,14 +2177,14 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
      are no numbers (#6937). It used to stay hidden for an anonymous viewer, which
      made an identity-dependent panel indistinguishable from a page that simply
      had nothing more to say. -->
-<div class="ops-card" id="cc-mine-card" style="display:none;margin-bottom:var(--sp-7)">
-<div class="ops-card-head"><h3>Your contribution</h3><span class="ops-card-count" id="cc-mine-tier"></span><!-- Your own completions/hour, last 7 days. Same series as the quota trend;
+<div class="ops-card" id="cc-mine-card" data-ops-card="mine" style="display:none;margin-bottom:var(--sp-7)">
+<div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Your contribution card" aria-pressed="false">⠿</button><h3>Your contribution</h3><span class="ops-card-count" id="cc-mine-tier"></span><!-- Your own completions/hour, last 7 days. Same series as the quota trend;
      hydrated by ccMetricsPoll once metrics and identity have both loaded. --><span class="spark spark-inline" id="spark-mine" title="Your completions per hour, last 7 days"></span></div>
 <div class="cc-mine" id="cc-mine-body"><div class="ops-empty">Loading your stats&hellip;</div></div>
 <p class="ops-note" id="cc-mine-note" style="padding:0 20px 14px;margin:var(--sp-0)"></p>
 </div>
-<div class="ops-card" id="cc-wall-card" style="display:none;margin-bottom:var(--sp-7)">
-<div class="ops-card-head"><h3>Contributor wall</h3><span class="ops-card-count" id="cc-wall-count"></span></div>
+<div class="ops-card" id="cc-wall-card" data-ops-card="wall" style="display:none;margin-bottom:var(--sp-7)">
+<div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Contributor wall card" aria-pressed="false">⠿</button><h3>Contributor wall</h3><span class="ops-card-count" id="cc-wall-count"></span></div>
 <form class="runs-lookup" id="cc-wall-form" autocomplete="off" style="display:none;padding:var(--sp-5) var(--sp-7);border-bottom:1px solid var(--line-strong)">
 <input type="text" id="cc-wall-text" maxlength="500" placeholder="Share a model/setup note (plain text, 500 chars)" aria-label="Wall post">
 <input type="text" id="cc-wall-model" placeholder="model tag (optional)" aria-label="Model tag" style="max-width:180px">
@@ -2185,8 +2197,8 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
      only model/CLI aggregates — no contributor names or tokens — and splits
      small samples into "Not enough data yet" so a one-lucky-PR model does not
      lead the ranked list. -->
-<div class="ops-card mb-7" id="effective-models-card">
-<div class="ops-card-head"><span class="feed-dot"></span><button type="button" class="ops-card-collapse-toggle section-header-toggle" id="effective-models-toggle" aria-expanded="true" aria-controls="effective-models-body" data-ops-section="effective-models-card" title="Collapse panel"><span class="section-chevron" aria-hidden="true">▼</span><span class="ops-card-title">Most effective models</span></button><span class="ops-card-count" id="effective-models-count"></span></div>
+<div class="ops-card mb-7" id="effective-models-card" data-ops-card="models">
+<div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Most effective models card" aria-pressed="false">⠿</button><span class="feed-dot"></span><button type="button" class="ops-card-collapse-toggle section-header-toggle" id="effective-models-toggle" aria-expanded="true" aria-controls="effective-models-body" data-ops-section="effective-models-card" title="Collapse panel"><span class="section-chevron" aria-hidden="true">▼</span><span class="ops-card-title">Most effective models</span></button><span class="ops-card-count" id="effective-models-count"></span></div>
 <div class="section-body" id="effective-models-body">
 <div class="effective-controls" role="group" aria-label="Effective model filters">
   <button type="button" class="hv-btn btn-secondary btn-sm effective-chip active" data-eff-window="7d">7d</button>
@@ -2210,8 +2222,8 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
      which genuinely IS per-viewer. So the title now names what the panel holds,
      and the scope the old title promised became a real, selectable filter:
      All / Mine, alongside the existing status filters, on the same row. -->
-<div class="ops-card">
-<div class="ops-card-head"><h3>Fleet work</h3><span class="ops-card-count" id="work-count"></span></div>
+<div class="ops-card" data-ops-card="work">
+<div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Fleet work card" aria-pressed="false">⠿</button><h3>Fleet work</h3><span class="ops-card-count" id="work-count"></span></div>
 <div class="ops-filters" role="tablist">
 <button class="hv-btn btn-secondary btn-sm ops-filter active" data-filter="all">All</button>
 <button class="hv-btn btn-secondary btn-sm ops-filter" data-filter="active">Active</button>
@@ -2235,8 +2247,8 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
      the run log is the only thing left that says why. The "history" link on a
      fleet row just fills this box. Reasons are public; pane output is served
      only to owner/read-write viewers (the server strips it, this only says so). -->
-<div class="ops-card mt-7" id="runs-card">
-<div class="ops-card-head"><h3>Contributor run history</h3><span class="ops-card-count" id="runs-count"></span></div>
+<div class="ops-card mt-7" id="runs-card" data-ops-card="runs">
+<div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Contributor run history card" aria-pressed="false">⠿</button><h3>Contributor run history</h3><span class="ops-card-count" id="runs-count"></span></div>
 <form class="runs-lookup" id="runs-lookup" autocomplete="off">
 <input type="text" id="runs-user" name="username" placeholder="GitHub login, e.g. from the log rail" aria-label="Contributor GitHub login" spellcheck="false">
 <button type="submit" class="hv-btn btn-secondary btn-sm admin-act" id="runs-go">Look up</button>
@@ -2254,12 +2266,12 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
      and configured rate limits); a 403 renders as a gate notice, not an error.
      In-memory only: an empty list means "nothing since the hub started", which
      the card says out loud so a post-restart blank is not read as innocence. -->
-<div class="ops-card mt-7" id="decisions-card">
-<div class="ops-card-head"><h3>Hub decisions</h3><span class="ops-card-count" id="decisions-count"></span></div>
+<div class="ops-card mt-7" id="decisions-card" data-ops-card="decisions">
+<div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Hub decisions card" aria-pressed="false">⠿</button><h3>Hub decisions</h3><span class="ops-card-count" id="decisions-count"></span></div>
 <div class="dec-list" id="decisions-list"><div class="ops-empty">Look up a contributor above to see what the hub decided about them: reports it fenced as stale, tasks it took back, and times it declined to hand out work.</div></div>
 </div>
-<div class="ops-card card-accent mt-7">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span><!-- Resume-all (#queue-hold): bulk-clears the operator hold set. Hidden by default;
+<div class="ops-card card-accent mt-7" data-ops-card="queue">
+<div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Ready-work queue card" aria-pressed="false">⠿</button><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span><!-- Resume-all (#queue-hold): bulk-clears the operator hold set. Hidden by default;
      ccRenderResumeAll() reveals it only for an owner/read-write viewer when at least
      one issue is on hold. Themed confirm (adminConfirm), never native confirm. --><button type="button" class="hv-btn btn-secondary btn-sm queue-resume-all-btn" id="queue-resume-all-btn" style="display:none" title="Resume every held issue">&#x25B6; Resume all</button><!-- Cooldown explainer (#2649 companion): a circled-i affordance whose popover
      explains what "in cooldown" in the count means and how an issue lands there.
@@ -2340,8 +2352,8 @@ It clears automatically when the period elapses. An operator can shorten or disa
      issues NOT already at the top of the queue, ranked by a light recency heat
      proxy. Read-only for everyone; the per-item "add to queue" pins it into the
      operator order (owner/read-write only, rendered only when adminEnabled). -->
-<div class="ops-card mt-7" id="opp-card">
-<div class="ops-card-head"><h3>Opportunistic work</h3><span class="ops-card-count" id="opp-count"></span></div>
+<div class="ops-card mt-7" id="opp-card" data-ops-card="opp">
+<div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Opportunistic work card" aria-pressed="false">⠿</button><h3>Opportunistic work</h3><span class="ops-card-count" id="opp-count"></span></div>
 <div class="opp-list" id="opp-list"><div class="ops-empty">Looking for fresh work&hellip;</div></div>
 <p class="ops-note" style="padding:10px 20px 14px;margin:var(--sp-0)">A light, calm read of fresh, actionable issues beyond what&rsquo;s already lined up &mdash; surfaced by recency, not a heavy recommender. Owner/read-write operators can add one to the queue; it becomes offer-priority only and still obeys every admission filter.</p>
 </div>
@@ -2354,13 +2366,15 @@ It clears automatically when the period elapses. An operator can shorten or disa
      (a future enhancement, out of scope). A SECTION within Operations — NOT a new
      page/tab. Fetched from /api/contribute/triage after load so a slow GitHub
      PR-link lookup never delays the page. Full-width card below the ops grid. -->
-<div class="ops-card cc-triage-card mt-7" id="cc-triage-card">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Issue triage</h3><span class="ops-card-count count-strong" id="cc-triage-total"></span></div>
+<div class="ops-wide ops-region" data-ops-region="wide" id="ops-wide-region">
+<div class="ops-card cc-triage-card mt-7" id="cc-triage-card" data-ops-card="triage">
+<div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Issue triage card" aria-pressed="false">⠿</button><span class="feed-dot"></span><h3>Issue triage</h3><span class="ops-card-count count-strong" id="cc-triage-total"></span></div>
 <!-- Compact ladder summary: one chip per level with its live count. -->
 <div class="cc-triage-ladder" id="cc-triage-ladder"><div class="ops-empty">Loading triage&hellip;</div></div>
 <!-- Grouped per-level issue lists (each collapsible-ish section, capped). -->
 <div class="cc-triage-groups" id="cc-triage-groups"></div>
 <p class="ops-note" style="padding:10px 20px 14px;margin:var(--sp-0)">A live lifecycle view of this hive&rsquo;s contribute issues &mdash; raw candidates withheld by admission remain in Triaging, while ready work, the fleet&rsquo;s in-flight work, and fixing PRs advance issues through the ladder. Read-only and recomputed on each load; there is no stored per-issue state.</p>
+</div>
 </div>
 </div>
 <!-- Dedicated full-height LIVE ACTIVITY RAIL. Holds ONLY the live activity feed
@@ -2696,6 +2710,8 @@ function activateTab(t,push){
   panels.forEach(function(p){p.classList.remove('active');});
   t.classList.add('active');t.setAttribute('aria-selected','true');
   var dp=t.getAttribute('data-panel');
+  var layoutReset=document.getElementById('ops-layout-reset');
+  if(layoutReset)layoutReset.style.display=dp==='tab-ops'?'':'none';
   var panel=document.getElementById(dp);
   if(panel)panel.classList.add('active');
   if((dp==='tab-ops'||dp==='tab-manage')&&!adminStarted){adminStarted=true;initAdmin();}
@@ -2705,6 +2721,7 @@ function activateTab(t,push){
   // not leave Connected clankers / Pipeline & policy / Fleet work stuck on "Loading…"
   // (regression #2574). Each is guarded on its own.
   if(dp==='tab-ops'&&!opsStarted){opsStarted=true;
+    try{initOpsCardLayout();}catch(e){console.error('initOpsCardLayout failed',e);}
     try{opsPoll();}catch(e){console.error('opsPoll start failed',e);}
     try{ccStart();}catch(e){console.error('ccStart failed',e);}
     // The dev-log rail collapse/persist wiring is independent too: a throw here must
@@ -6294,6 +6311,43 @@ function ccSetLive(state){ // 'live' | 'poll' | 'connecting'
     lbl.textContent=text;
   });
 }
+
+// ── Operations card layout: drag/keyboard reorder, persisted per viewer ────────
+// Keyed by stable data-ops-card names, never DOM positions. The saved shape is
+// {v:1,left:[...],main:[...],wide:[...]}; unknown ids are dropped, and new cards
+// are appended to their template region so an upgrade cannot hide them.
+var OPS_LAYOUT_KEY='hive.ops.layout';
+var OPS_LAYOUT_VERSION=1;
+var OPS_LAYOUT_REGIONS=['left','main','wide'];
+var OPS_LAYOUT_TEMPLATE={left:['clankers','pipeline'],main:['mine','wall','models','work','runs','decisions','queue','opp'],wide:['triage']};
+var OPS_LAYOUT_GRIP_SELECTOR='[data-ops-grip]';
+var OPS_LAYOUT_CARD_SELECTOR='[data-ops-card]';
+var opsLayoutInit=false;
+var opsDragState=null;
+var opsKeyboardSnapshot=null;
+function opsRegionEl(name){return document.querySelector('[data-ops-region="'+name+'"]');}
+function opsCardEl(id){return document.querySelector('[data-ops-card="'+id+'"]');}
+function opsLayoutAnnounce(msg){var live=document.getElementById('ops-layout-live');if(live)live.textContent=msg;}
+function opsLayoutCardName(card){var h=card&&card.querySelector('.ops-card-head h3,.ops-card-title');return h?h.textContent.trim():(card?card.getAttribute('data-ops-card'):'card');}
+function opsLayoutTemplateRegion(id){for(var i=0;i<OPS_LAYOUT_REGIONS.length;i++){var r=OPS_LAYOUT_REGIONS[i],arr=OPS_LAYOUT_TEMPLATE[r];if(arr.indexOf(id)>=0)return r;}return 'main';}
+function opsLayoutAllIds(){return OPS_LAYOUT_TEMPLATE.left.concat(OPS_LAYOUT_TEMPLATE.main,OPS_LAYOUT_TEMPLATE.wide);}
+function opsLayoutRead(){try{var raw=localStorage.getItem(OPS_LAYOUT_KEY);return raw?JSON.parse(raw):null;}catch(e){return null;}}
+function opsLayoutCurrent(){var out={v:OPS_LAYOUT_VERSION,left:[],main:[],wide:[]};OPS_LAYOUT_REGIONS.forEach(function(r){var el=opsRegionEl(r);if(!el)return;Array.prototype.forEach.call(el.querySelectorAll(':scope > '+OPS_LAYOUT_CARD_SELECTOR),function(card){var id=card.getAttribute('data-ops-card');if(id)out[r].push(id);});});return out;}
+function opsLayoutWrite(){try{localStorage.setItem(OPS_LAYOUT_KEY,JSON.stringify(opsLayoutCurrent()));}catch(e){}}
+function opsLayoutNormalize(saved){var valid=opsLayoutAllIds(),seen={},out={v:OPS_LAYOUT_VERSION,left:[],main:[],wide:[]};OPS_LAYOUT_REGIONS.forEach(function(r){var arr=saved&&Array.isArray(saved[r])?saved[r]:[];arr.forEach(function(id){if(valid.indexOf(id)<0||seen[id])return;seen[id]=true;out[r].push(id);});});OPS_LAYOUT_REGIONS.forEach(function(r){OPS_LAYOUT_TEMPLATE[r].forEach(function(id){if(!seen[id]){seen[id]=true;out[r].push(id);}});});return out;}
+function opsApplyLayout(layout){OPS_LAYOUT_REGIONS.forEach(function(r){var region=opsRegionEl(r);if(!region)return;(layout[r]||[]).forEach(function(id){var card=opsCardEl(id);if(card)region.appendChild(card);});});}
+function opsResetLayout(){try{localStorage.removeItem(OPS_LAYOUT_KEY);}catch(e){}opsApplyLayout(opsLayoutNormalize(null));opsLayoutAnnounce('Operations card layout reset to the default order.');}
+function opsResetCard(card){if(!card)return;var id=card.getAttribute('data-ops-card'),region=opsRegionEl(opsLayoutTemplateRegion(id));if(!region)return;var after=null,template=OPS_LAYOUT_TEMPLATE[opsLayoutTemplateRegion(id)];for(var i=0;i<template.length;i++){if(template[i]===id)break;var prev=opsCardEl(template[i]);if(prev&&prev.parentElement===region)after=prev;}if(after)after.insertAdjacentElement('afterend',card);else region.insertBefore(card,region.firstElementChild);opsLayoutWrite();opsLayoutAnnounce(opsLayoutCardName(card)+' returned to its default slot.');}
+function opsLayoutSlot(region,x,y,skip){var cards=Array.prototype.filter.call(region.querySelectorAll(':scope > '+OPS_LAYOUT_CARD_SELECTOR),function(c){return c!==skip;});if(!cards.length)return {region:region,before:null};var vertical=window.matchMedia&&matchMedia('(max-width:900px)').matches;var best=null,bestDist=Infinity;cards.forEach(function(card){var rect=card.getBoundingClientRect(),before=vertical?y<(rect.top+rect.height/2):y<(rect.top+rect.height/2);var anchor=before?rect.top:rect.bottom,dist=Math.abs(y-anchor)+Math.abs(x-(rect.left+rect.width/2));if(dist<bestDist){bestDist=dist;best={region:region,before:before?card:card.nextElementSibling};}});return best||{region:region,before:null};}
+function opsNearestRegion(x,y){var regions=OPS_LAYOUT_REGIONS.map(opsRegionEl).filter(Boolean),best=null,bestDist=Infinity;regions.forEach(function(r){var rect=r.getBoundingClientRect();var cx=Math.max(rect.left,Math.min(x,rect.right)),cy=Math.max(rect.top,Math.min(y,rect.bottom));var dx=x-cx,dy=y-cy,dist=dx*dx+dy*dy;if(dist<bestDist){bestDist=dist;best=r;}});return best||opsRegionEl('main');}
+function opsMoveIndicator(slot){var indicator=opsDragState&&opsDragState.indicator;if(!indicator||!slot||!slot.region)return;if(slot.before)slot.region.insertBefore(indicator,slot.before);else slot.region.appendChild(indicator);}
+function opsClearIndicator(){if(opsDragState&&opsDragState.indicator&&opsDragState.indicator.parentElement)opsDragState.indicator.parentElement.removeChild(opsDragState.indicator);}
+function opsStartDrag(ev,grip){if(ev.button!==undefined&&ev.button!==0)return;var card=grip.closest(OPS_LAYOUT_CARD_SELECTOR);if(!card)return;ev.preventDefault();var rect=card.getBoundingClientRect();var ghost=card.cloneNode(true);ghost.classList.add('ops-card-ghost');ghost.style.width=rect.width+'px';ghost.style.left='0';ghost.style.top='0';ghost.style.setProperty('--ops-ghost-x',rect.left+'px');ghost.style.setProperty('--ops-ghost-y',rect.top+'px');var indicator=document.createElement('div');indicator.className='ops-drop-indicator';card.classList.add('ops-drag-source');document.body.appendChild(ghost);opsDragState={card:card,grip:grip,ghost:ghost,indicator:indicator,dx:ev.clientX-rect.left,dy:ev.clientY-rect.top,slot:null};try{grip.setPointerCapture(ev.pointerId);}catch(e){}grip.setAttribute('aria-pressed','true');opsLayoutAnnounce('Moving '+opsLayoutCardName(card)+'.');opsDragMove(ev);}
+function opsDragMove(ev){if(!opsDragState)return;var x=ev.clientX-opsDragState.dx,y=ev.clientY-opsDragState.dy;opsDragState.ghost.style.setProperty('--ops-ghost-x',x+'px');opsDragState.ghost.style.setProperty('--ops-ghost-y',y+'px');var region=opsNearestRegion(ev.clientX,ev.clientY),slot=opsLayoutSlot(region,ev.clientX,ev.clientY,opsDragState.card);opsDragState.slot=slot;opsMoveIndicator(slot);}
+function opsEndDrag(save){if(!opsDragState)return;var st=opsDragState;opsClearIndicator();if(st.ghost&&st.ghost.parentElement)st.ghost.parentElement.removeChild(st.ghost);st.card.classList.remove('ops-drag-source');st.grip.setAttribute('aria-pressed','false');if(save&&st.slot&&st.slot.region){if(st.slot.before)st.slot.region.insertBefore(st.card,st.slot.before);else st.slot.region.appendChild(st.card);opsLayoutWrite();opsLayoutAnnounce(opsLayoutCardName(st.card)+' moved.');}else{opsLayoutAnnounce('Move cancelled.');}opsDragState=null;}
+function opsRestoreSnapshot(){if(!opsKeyboardSnapshot)return;opsApplyLayout(opsKeyboardSnapshot);opsLayoutWrite();opsKeyboardSnapshot=opsLayoutCurrent();opsLayoutAnnounce('Keyboard reorder cancelled.');}
+function opsMoveCardByKeyboard(card,key){var current=card.parentElement,regionName=current&&current.getAttribute('data-ops-region'),regions=OPS_LAYOUT_REGIONS,idx=regions.indexOf(regionName);if(key==='ArrowUp'){var prev=card.previousElementSibling;if(prev)current.insertBefore(card,prev);}else if(key==='ArrowDown'){var next=card.nextElementSibling;if(next)current.insertBefore(next,card);}else if(key==='ArrowLeft'||key==='ArrowRight'){var dir=key==='ArrowLeft'?-1:1;var target=opsRegionEl(regions[Math.max(0,Math.min(regions.length-1,idx+dir))]);if(target&&target!==current)target.appendChild(card);}opsLayoutWrite();opsLayoutAnnounce(opsLayoutCardName(card)+' moved to '+(card.parentElement.getAttribute('data-ops-region')||'main')+'.');}
+function initOpsCardLayout(){if(opsLayoutInit)return;var tab=document.getElementById('tab-ops');if(!tab)return;opsLayoutInit=true;opsApplyLayout(opsLayoutNormalize(opsLayoutRead()));var reset=document.getElementById('ops-layout-reset');if(reset)reset.addEventListener('click',opsResetLayout);tab.querySelectorAll(OPS_LAYOUT_GRIP_SELECTOR).forEach(function(grip){grip.addEventListener('pointerdown',function(ev){opsStartDrag(ev,grip);});grip.addEventListener('pointermove',function(ev){if(opsDragState){ev.preventDefault();opsDragMove(ev);}});grip.addEventListener('pointerup',function(ev){if(opsDragState){ev.preventDefault();opsEndDrag(true);}});grip.addEventListener('pointercancel',function(){opsEndDrag(false);});grip.addEventListener('dblclick',function(ev){ev.preventDefault();opsResetCard(grip.closest(OPS_LAYOUT_CARD_SELECTOR));});grip.addEventListener('focus',function(){opsKeyboardSnapshot=opsLayoutCurrent();});grip.addEventListener('blur',function(){opsKeyboardSnapshot=null;grip.setAttribute('aria-pressed','false');});grip.addEventListener('keydown',function(ev){var key=ev.key,card=grip.closest(OPS_LAYOUT_CARD_SELECTOR);if(!card)return;if(key===' '||key==='Enter'){ev.preventDefault();var active=grip.getAttribute('aria-pressed')==='true';if(active){opsKeyboardSnapshot=opsLayoutCurrent();grip.setAttribute('aria-pressed','false');opsLayoutAnnounce('Dropped '+opsLayoutCardName(card)+'.');}else{opsKeyboardSnapshot=opsLayoutCurrent();grip.setAttribute('aria-pressed','true');opsLayoutAnnounce('Picked up '+opsLayoutCardName(card)+'. Use arrow keys to move, Escape to cancel.');}return;}if(key==='Escape'){ev.preventDefault();opsRestoreSnapshot();grip.setAttribute('aria-pressed','false');return;}if(key==='ArrowUp'||key==='ArrowDown'||key==='ArrowLeft'||key==='ArrowRight'){ev.preventDefault();if(!opsKeyboardSnapshot)opsKeyboardSnapshot=opsLayoutCurrent();grip.setAttribute('aria-pressed','true');opsMoveCardByKeyboard(card,key);}});});}
 
 // ── Dev-log RAIL collapse: open by default, persisted in localStorage ──────────
 // Key hive.ops.devlog.collapsed = '1' when the user last collapsed the rail, absent

@@ -124,10 +124,10 @@ func TestOpsAccentStatsAndTierBadges(t *testing.T) {
 		`.ops-card-count.count-strong`,
 		`class="ops-card-count count-strong" id="clanker-count"`,
 		// Gradient header band applied to the fleet + ready-work queue cards.
-		`<div class="ops-card card-accent">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Connected contributor agents (ClankeR)</h3>`,
-		`<div class="ops-card card-accent mt-7">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3>`,
+		`<div class="ops-card card-accent" data-ops-card="clankers">
+<div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Connected contributor agents (ClankeR) card" aria-pressed="false">⠿</button><span class="feed-dot"></span><h3>Connected contributor agents (ClankeR)</h3>`,
+		`<div class="ops-card card-accent mt-7" data-ops-card="queue">
+<div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Ready-work queue card" aria-pressed="false">⠿</button><span class="feed-dot"></span><h3>Ready-work queue</h3>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("operations accent missing/not data-driven: %q", want)
