@@ -424,7 +424,8 @@ var commonsWebTemplate = template.Must(template.New("commons").Parse(`<!doctype 
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>The Commons — Hive</title>
 <style>
-:root{color-scheme:light dark;font-family:system-ui,sans-serif;line-height:1.4}body{max-width:920px;margin:2rem auto;padding:0 1rem}button,input,select{font:inherit}table{width:100%;border-collapse:collapse;margin-top:1rem}th,td{border-bottom:1px solid #8884;padding:.45rem;text-align:left}.muted{color:#777}.row-actions{white-space:nowrap}.error{color:#b00020}.ok{color:#087f23}form{display:flex;gap:.5rem;flex-wrap:wrap;margin:1rem 0}input[type=text]{min-width:16rem;flex:1}.pill{border:1px solid #8886;border-radius:999px;padding:.1rem .45rem;font-size:.85em}</style>
+:root{color-scheme:light dark;font-family:system-ui,sans-serif;line-height:1.4}body{max-width:920px;margin:2rem auto;padding:0 1rem}button,input,select{font:inherit}table{width:100%;border-collapse:collapse;margin-top:1rem}th,td{border-bottom:1px solid #8884;padding:.45rem;text-align:left}.muted{color:#777}.row-actions{white-space:nowrap}.error{color:#b00020}.ok{color:#087f23}form{display:flex;gap:.5rem;flex-wrap:wrap;margin:1rem 0}input[type=text]{min-width:16rem;flex:1}.pill{border:1px solid #8886;border-radius:999px;padding:.1rem .45rem;font-size:.85em}.modal-back{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:50}.modal{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;max-width:420px;width:90%}.modal div{display:flex;gap:8px;justify-content:flex-end}.modal button{border:1px solid var(--border);border-radius:8px;padding:8px 12px;background:#fff;cursor:pointer}.modal [data-act=yes]{background:#b42318;color:#fff;border-color:#b42318}
+</style>
 <h1>The Commons</h1>
 <p class="muted">This loopback-only page edits the same local profile store as <code>hivectl hives</code> and the TUI. Registration tokens are never displayed.</p>
 <section>
@@ -488,6 +489,20 @@ document.getElementById('subscribe').addEventListener('submit', async ev => {
     ev.target.reset(); say('Subscribed.', 'ok'); await load();
   } catch(e) { say(e.message, 'error'); }
 });
+function styledConfirm(message) {
+  return new Promise(resolve => {
+    const back = document.createElement('div');
+    back.className = 'modal-back';
+    back.innerHTML = '<div class="modal" role="dialog" aria-modal="true"><p></p><div><button data-act="no">Cancel</button><button data-act="yes">Confirm</button></div></div>';
+    back.querySelector('p').textContent = message;
+    function done(v) { document.removeEventListener('keydown', key, true); back.remove(); resolve(v); }
+    function key(e) { if (e.key === 'Escape') done(false); if (e.key === 'Enter') done(true); }
+    back.addEventListener('click', e => { if (e.target === back) done(false); const act = e.target.dataset && e.target.dataset.act; if (act) done(act === 'yes'); });
+    document.addEventListener('keydown', key, true);
+    document.body.appendChild(back);
+    back.querySelector('[data-act="yes"]').focus();
+  });
+}
 document.getElementById('save-strategy').addEventListener('click', async () => {
   try { await api('/api/strategy', {method:'POST', body: JSON.stringify({strategy: strategySelect.value})}); say('Strategy saved.', 'ok'); await load(); }
   catch(e) { say(e.message, 'error'); }
@@ -497,7 +512,7 @@ document.getElementById('hives').addEventListener('click', async ev => {
   const tr = ev.target.closest('tr'); const name = tr.dataset.name;
   try {
     if (button.dataset.act === 'delete') {
-      if (!confirm('Unsubscribe from ' + name + '?')) return;
+      if (!await styledConfirm('Unsubscribe from ' + name + '?')) return;
       await api('/api/hives/' + encodeURIComponent(name), {method:'DELETE'});
     } else {
       await api('/api/hives/' + encodeURIComponent(name) + '/move', {method:'POST', body: JSON.stringify({direction: button.dataset.act})});

@@ -868,6 +868,8 @@ select.admin-act{min-width:0;max-width:100%%}
 .admin-modal{background:var(--surface-2);border:1px solid var(--line-strong);border-radius:var(--r-lg);max-width:420px;width:90%%;padding:22px}
 .admin-modal h4{margin:var(--sp-0) var(--sp-0) var(--sp-4);font-size:1rem;color:var(--text)}
 .admin-modal p{font-size:.85rem;color:var(--text-muted);line-height:1.5;margin:0 0 18px}
+.admin-modal label{display:block;font-size:var(--fs-base);color:var(--text-muted);line-height:1.5;margin:0 0 var(--sp-3)}
+.admin-modal input{width:100%%;box-sizing:border-box;padding:var(--sp-4);border-radius:var(--r);border:1px solid var(--line-strong);background:var(--surface-1);color:var(--text);font:inherit;margin:0 0 18px}
 .admin-modal-btns{display:flex;gap:var(--sp-4);justify-content:flex-end}
 .admin-modal-btns button{font-size:.8rem;padding:6px 14px;border-radius:var(--r);cursor:pointer;font-family:inherit;border:1px solid var(--line-strong);background:var(--line-subtle);color:var(--text)}
 .admin-modal-btns button.confirm{background:#da3633;border-color:var(--cc-red);color:var(--surface-0)}
@@ -2261,7 +2263,7 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
 <div class="ops-card card-accent mt-7">
 <div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span><!-- Resume-all (#queue-hold): bulk-clears the operator hold set. Hidden by default;
      ccRenderResumeAll() reveals it only for an owner/read-write viewer when at least
-     one issue is on hold. Themed confirm (adminConfirm), never native confirm. --><button type="button" class="hv-btn btn-secondary btn-sm queue-resume-all-btn" id="queue-resume-all-btn" style="display:none" title="Resume every held issue">&#x25B6; Resume all</button><!-- Cooldown explainer (#2649 companion): a circled-i affordance whose popover
+     one issue is on hold. Themed confirmation via adminConfirm; never browser-native. --><button type="button" class="hv-btn btn-secondary btn-sm queue-resume-all-btn" id="queue-resume-all-btn" style="display:none" title="Resume every held issue">&#x25B6; Resume all</button><!-- Cooldown explainer (#2649 companion): a circled-i affordance whose popover
      explains what "in cooldown" in the count means and how an issue lands there.
      Numbers here are the REAL server constants (168h with-PR, ~4h no-PR, ~6h
      quarantine after 3 consecutive failures) — keep them in sync with
@@ -4082,7 +4084,7 @@ function toast(msg,ok){
   setTimeout(function(){t.style.opacity='0';t.style.transition='opacity .4s';setTimeout(function(){t.remove();},400);},2600);
 }
 
-// Themed confirm — never native window.confirm (dashboard house rule).
+// Themed confirm — dashboard house rule: no browser-native dialogs.
 var _confirmCb=null;
 function adminConfirm(title,msg,okLabel,cb){
   document.getElementById('admin-confirm-title').textContent=title;
@@ -4101,6 +4103,23 @@ function adminConfirm(title,msg,okLabel,cb){
 // (empty Live Activity rail + Done-filter throwing every poll). Wire the buttons
 // once the DOM has fully parsed (so the elements actually exist), and null-guard
 // besides, so this block can never again abort mid-way.
+
+function adminPrompt(title,msg,defaultValue,okLabel,cb){
+  var back=document.getElementById('admin-prompt-back'), input=document.getElementById('admin-prompt-input');
+  document.getElementById('admin-prompt-title').textContent=title;
+  document.getElementById('admin-prompt-msg').textContent=msg;
+  document.getElementById('admin-prompt-ok').textContent=okLabel||'OK';
+  input.value=defaultValue||'';
+  back.classList.add('show');
+  setTimeout(function(){input.focus();input.select();},0);
+  function cleanup(){back.classList.remove('show');document.removeEventListener('keydown',key,true);}
+  function key(e){if(!back.classList.contains('show'))return;if(e.key==='Escape'){e.preventDefault();cleanup();}else if(e.key==='Enter'){e.preventDefault();var v=input.value.trim();cleanup();cb(v);}}
+  document.addEventListener('keydown',key,true);
+  document.getElementById('admin-prompt-cancel').onclick=function(){cleanup();};
+  document.getElementById('admin-prompt-ok').onclick=function(){var v=input.value.trim();cleanup();cb(v);};
+  back.onclick=function(e){if(e.target===back)cleanup();};
+}
+
 function _wireConfirmModal(){
   var cancel=document.getElementById('admin-confirm-cancel');
   if(cancel)cancel.addEventListener('click',function(){var b=document.getElementById('admin-confirm-back');if(b)b.classList.remove('show');_confirmCb=null;});
@@ -4580,7 +4599,7 @@ onEl('ops-admin','click',function(e){
     var matches=adminRepoMatchingDisabledEntries(repo,dr);
     if(matches.length){
       var wild=matches.filter(function(r){return String(r||'').indexOf('*')>=0;});
-      if(wild.length){alert('This repo is disabled by wildcard disabled_repos entry: '+wild.join(', '));renderAdminControls();return;}
+      if(wild.length){toast('This repo is disabled by wildcard disabled_repos entry: '+wild.join(', '),false);renderAdminControls();return;}
       dr=dr.filter(function(r){return !adminRepoDisabledEntryMatches(repo,r);});
     }else{
       dr.push(repo);
@@ -4693,16 +4712,17 @@ onEl('clanker-list','click',function(e){
     adminConfirm('Reassign '+user,'Take '+user+' off their current task and hand them their next-priority item; that task goes back to the ready queue for someone else. The released task won&rsquo;t be re-offered to '+user+' for a short window. If nothing else is available the contributor agent is simply released and idle. This uses the existing POST /api/contributors/{id}/requeue endpoint.','Reassign',function(){
       // Let the operator attach an optional reason. It is recorded in the audit +
       // activity log and pushed to the still-connected worker on task_revoke.
-      var reason=(window.prompt('Reason for reassigning this contributor agent (optional):','wedged: moving to different work')||'').trim();
-      fetch('/api/contributors/'+encodeURIComponent(cid)+'/requeue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:reason})})
-        .then(function(r){return r.json().then(function(d){return{ok:r.ok,d:d};});})
-        .then(function(x){
-          if(x.ok){
-            var msg=(x.d&&x.d.reassigned)?('Reassigned '+user+' &rarr; '+x.d.assigned_repo+'#'+x.d.assigned_number):('Reassigned '+user+' (released; no other work available, now idle)');
-            toast(msg,true);opsPoll();
-          }else{toast((x.d&&x.d.error)||'Reassign failed',false);}
-        })
-        .catch(function(){toast('Reassign failed',false);});
+      adminPrompt('Reason for reassigning '+user,'Optional reason for reassigning this contributor agent','wedged: moving to different work','Continue',function(reason){
+        fetch('/api/contributors/'+encodeURIComponent(cid)+'/requeue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:reason})})
+          .then(function(r){return r.json().then(function(d){return{ok:r.ok,d:d};});})
+          .then(function(x){
+            if(x.ok){
+              var msg=(x.d&&x.d.reassigned)?('Reassigned '+user+' &rarr; '+x.d.assigned_repo+'#'+x.d.assigned_number):('Reassigned '+user+' (released; no other work available, now idle)');
+              toast(msg,true);opsPoll();
+            }else{toast((x.d&&x.d.error)||'Reassign failed',false);}
+          })
+          .catch(function(){toast('Reassign failed',false);});
+      });
     });
     return;
   }
@@ -6266,7 +6286,7 @@ function ccRenderResumeAll(){
   }
 }
 // ccResumeAll bulk-clears the ENTIRE operator hold set via POST
-// /api/contribute/queue/hold/clear, after a themed confirm (never native confirm).
+// /api/contribute/queue/hold/clear, after a themed confirmation; never browser-native.
 // On success it re-fetches the queue so every previously-held row rejoins the
 // offerable list. Owner/read-write only; a read viewer 403s, but the button is never
 // shown to them (adminEnabled gate in ccRenderResumeAll).
@@ -7140,16 +7160,23 @@ if(f.innerHTML!==html){f.innerHTML=html;if(isNew)f.scrollTop=0;}
 }catch(e){}}
 poll();setInterval(poll,3000);
 </script>
-<!-- Themed confirm modal for the destructive admin actions (revoke / remove).
-     The dashboard convention is a themed overlay, never native window.confirm. -->
+<!-- Themed modals for the admin actions. The dashboard convention is a themed overlay, never a browser-native dialog. -->
 <!-- Command-center overlays: achievement pops (top-right) + the travelling-task
      token layer. Fixed, pointer-events:none, purely presentational. -->
 <div class="cc-ach-wrap" id="cc-ach-wrap"></div>
 <div class="admin-modal-back" id="admin-confirm-back">
-<div class="admin-modal">
+<div class="admin-modal" role="dialog" aria-modal="true" aria-labelledby="admin-confirm-title">
 <h4 id="admin-confirm-title">Confirm</h4>
 <p id="admin-confirm-msg"></p>
 <div class="admin-modal-btns"><button class="hv-btn btn-primary" type="button" id="admin-confirm-cancel">Cancel</button><button type="button" class="confirm" id="admin-confirm-ok">Confirm</button></div>
+</div>
+</div>
+<div class="admin-modal-back" id="admin-prompt-back">
+<div class="admin-modal" role="dialog" aria-modal="true" aria-labelledby="admin-prompt-title">
+<h4 id="admin-prompt-title">Input</h4>
+<label id="admin-prompt-msg" for="admin-prompt-input"></label>
+<input id="admin-prompt-input" type="text" autocomplete="off">
+<div class="admin-modal-btns"><button class="hv-btn btn-primary" type="button" id="admin-prompt-cancel">Cancel</button><button type="button" class="confirm" id="admin-prompt-ok">OK</button></div>
 </div>
 </div>
 <div style="margin-top:40px;padding:var(--sp-6) var(--sp-0);border-top:1px solid var(--line-strong);font-size:var(--fs-sm);color:var(--text-muted);display:flex;align-items:center;gap:var(--sp-4)">

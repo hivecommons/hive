@@ -198,3 +198,7 @@ CI runs `pkg/dashboard/theme` tests that parse every file, enforce unique IDs,
 and reject unsupported dashboard CSS variables, so theme-only changes are a good
 first issue when the palette is original and avoids logos, copyrighted imagery,
 quotes, or bundled proprietary fonts.
+
+## UI conventions: no native browser dialogs
+
+Hive hub and spoke UI code must not call browser-native dialog APIs such as `prompt()`, `alert()`, `confirm()`, `showModalDialog()`, or native-styled `<dialog>.showModal()`. Use the themed in-app helpers instead (`hivePrompt`, `hiveConfirm`, `hiveAlert`/toast, or the contribute admin modal) so dialogs match the dashboard, are accessible, and do not block the whole tab. The ratchet tests `TestNoNativeBrowserDialogsRatchet` in `pkg/dashboard` and `pkg/hub` scan shipped UI sources and should be updated only to make the rule stricter.

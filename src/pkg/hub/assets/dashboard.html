@@ -403,8 +403,12 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     @keyframes toast-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
     .hive-confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 150; display: flex; align-items: center; justify-content: center; }
-    .hive-confirm { box-shadow: var(--shadow-raised); background: linear-gradient(#17212df5, #0c1219f5); border: 1px solid #ffffff1a; border-radius: var(--r-lg); padding: var(--sp-8); max-width: 400px; width: 90%; }
-    .hive-confirm p { color: var(--text); margin-bottom: var(--sp-6); font-size: 0.9rem; }
+    .hive-confirm { box-shadow: var(--shadow-raised); background: linear-gradient(#17212df5, #0c1219f5); border: 1px solid #ffffff1a; border-radius: var(--r-lg); padding: var(--sp-8); max-width: 460px; width: 90%; }
+    .hive-confirm p { color: var(--text); margin-bottom: var(--sp-6); font-size: 0.9rem; white-space: pre-wrap; }
+    .hive-confirm h3 { margin: var(--sp-0) var(--sp-0) var(--sp-5); font-size: var(--fs-lg); }
+    .hive-confirm label { display: block; color: var(--muted); font-size: 0.85rem; line-height: 1.5; margin-bottom: var(--sp-3); }
+    .hive-confirm input { width: 100%; box-sizing: border-box; padding: var(--sp-4); background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: var(--r); font: inherit; margin-bottom: var(--sp-6); }
+    .hive-confirm-error { min-height: 1.2em; color: var(--red); font-size: 0.78rem; margin: calc(-1 * var(--sp-4)) var(--sp-0) var(--sp-4); }
     .hive-confirm-btns { display: flex; gap: var(--sp-4); justify-content: flex-end; }
     .empty-state { text-align: center; padding: 48px; color: var(--muted); }
     .dash-link { color: var(--blue); font-size: 0.8rem; }
@@ -1430,21 +1434,49 @@
       } catch (e) { return false; }
     }
 
+    function hiveDialogOptions(first, fallbackRawHTML) {
+      if (first && typeof first === 'object') return Object.assign({}, first);
+      return { message: String(first == null ? '' : first), rawHTML: !!fallbackRawHTML };
+    }
+    function hiveConfirmIsDanger(opts, text) {
+      if (opts.danger === true) return true;
+      if (opts.danger === false) return false;
+      return /(^|\b)(delete|remove|clear|forget|revoke|deny|reset|unsubscribe)\b/i.test(String((opts.title || '') + ' ' + text));
+    }
+    function hiveDialogWire(overlay, resolve, cancelValue, submit) {
+      var done = false;
+      function finish(val) { if (done) return; done = true; overlay.remove(); document.removeEventListener('keydown', onKey, true); resolve(val); }
+      function onKey(e) {
+        if (e.key === 'Escape') { e.preventDefault(); finish(cancelValue); }
+        else if (e.key === 'Enter') { e.preventDefault(); submit(finish); }
+        else if (e.key === 'Tab') {
+          var nodes = Array.prototype.slice.call(overlay.querySelectorAll('button,input,[href],[tabindex]:not([tabindex="-1"])')).filter(function(el) { return !el.disabled && el.offsetParent !== null; });
+          if (!nodes.length) return;
+          var first = nodes[0], last = nodes[nodes.length - 1];
+          if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+          else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
+      }
+      overlay.addEventListener('click', function(e) { if (e.target === overlay) finish(cancelValue); });
+      document.addEventListener('keydown', onKey, true);
+      return finish;
+    }
     function hiveConfirm(msg, rawHTML) {
+      var opts = hiveDialogOptions(msg, rawHTML);
       return new Promise(function(resolve) {
         var overlay = document.createElement('div');
         overlay.className = 'hive-confirm-overlay';
-        overlay.innerHTML = '<div class="hive-confirm"><p>' + (rawHTML ? msg : esc(msg)) + '</p><div class="hive-confirm-btns">' +
-          '<button class="hv-btn btn-primary">Cancel</button>' +
-          '<button class="hv-btn btn-danger" id="hive-confirm-ok">Confirm</button></div></div>';
+        var title = opts.title || 'Confirm';
+        var body = opts.message || opts.body || '';
+        overlay.innerHTML = '<div class="hive-confirm" role="dialog" aria-modal="true" aria-labelledby="hive-confirm-title">' +
+          '<h3 id="hive-confirm-title">' + esc(title) + '</h3><p>' + (opts.rawHTML ? body : esc(body)) + '</p><div class="hive-confirm-btns">' +
+          '<button type="button" class="hv-btn btn-primary" data-act="no">Cancel</button>' +
+          '<button type="button" class="hv-btn ' + (hiveConfirmIsDanger(opts, body) ? 'btn-danger' : 'btn-primary') + '" data-act="yes">' + esc(opts.confirmLabel || opts.ok || 'Confirm') + '</button></div></div>';
         document.body.appendChild(overlay);
-        var done = false;
-        function finish(val) { if (done) return; done = true; overlay.remove(); document.removeEventListener('keydown', onKey); resolve(val); }
-        function onKey(e) { if (e.key === 'Escape') finish(false); if (e.key === 'Enter') finish(true); }
-        document.addEventListener('keydown', onKey);
-        overlay.querySelector('#hive-confirm-ok').onclick = function() { finish(true); };
-        overlay.querySelector('button:first-child').onclick = function() { finish(false); };
-        overlay.querySelector('#hive-confirm-ok').focus();
+        var finish = hiveDialogWire(overlay, resolve, false, function(done) { done(true); });
+        overlay.querySelector('[data-act="yes"]').onclick = function() { finish(true); };
+        overlay.querySelector('[data-act="no"]').onclick = function() { finish(false); };
+        overlay.querySelector('[data-act="yes"]').focus();
       });
     }
 
@@ -11233,93 +11265,40 @@
        placeholders (optional) turns the fixed hive id into a dropdown, so that
        user-first entry point can retarget without backing out to the hive list.
        Both are omitted by the original ⋮ → "Assign / Claim" call site. */
-    /* hiveNotify (below) and hivePrompt replace the native alert and prompt
-       dialogs; the native confirm dialog is replaced by the existing hiveConfirm
-       defined earlier. Native dialogs are jarring in a themed dashboard, cannot
-       be styled, and block the whole tab; they also read as a browser warning
-       rather than as part of the product. These follow the same overlay pattern
-       the assign, access and timeline modals already use.
-
-       Promise-based so they drop into the existing await-style call sites
-       without restructuring them. Escape and a backdrop click both resolve
-       false, matching what a user expects from a dismissable dialog. */
-    function _hiveDialog(opts) {
-      return new Promise(function(resolve) {
-        var overlay = document.createElement('div');
-        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:3000;display:flex;align-items:center;justify-content:center';
-        var btn = 'padding:7px 14px;border-radius:var(--r);border:1px solid var(--border);cursor:pointer;font-size:0.8rem';
-        var body = (opts.body || '').split('\n').map(function(line) {
-          return line ? '<p style="margin:var(--sp-0) var(--sp-0) var(--sp-4) var(--sp-0);color:var(--muted);font-size:0.85rem;line-height:1.5">' + esc(line) + '</p>' : '';
-        }).join('');
-        overlay.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--r-lg);padding:22px;max-width:460px;width:90%">' +
-          '<h3 style="margin:0 0 10px 0;font-size:var(--fs-lg)">' + esc(opts.title || '') + '</h3>' + body +
-          '<div style="display:flex;gap:var(--sp-4);justify-content:flex-end;margin-top:18px">' +
-          (opts.cancel ? '<button class="hv-btn btn-secondary" data-act="no" style="' + btn + ';background:transparent;color:var(--fg)">' + esc(opts.cancel) + '</button>' : '') +
-          '<button class="hv-btn btn-secondary" data-act="yes" style="' + btn + ';background:' + (opts.danger ? 'var(--status-error)' : 'var(--hub-dashboard-accent)') + ';color:#fff;border-color:transparent;font-weight:600">' + esc(opts.ok || 'OK') + '</button>' +
-          '</div></div>';
-        function done(v) {
-          document.removeEventListener('keydown', onKey);
-          overlay.remove();
-          resolve(v);
-        }
-        function onKey(e) { if (e.key === 'Escape') done(false); }
-        overlay.addEventListener('click', function(e) {
-          if (e.target === overlay) { done(false); return; }
-          var act = e.target.getAttribute && e.target.getAttribute('data-act');
-          if (act) done(act === 'yes');
-        });
-        document.addEventListener('keydown', onKey);
-        document.body.appendChild(overlay);
-        var y = overlay.querySelector('[data-act="yes"]');
-        if (y) y.focus();
-      });
-    }
-    /* hiveConfirm already exists above (msg, rawHTML) -> Promise<bool>, added by
-       the themed-overlay work this dashboard already relies on; this feature
-       reuses it rather than redefining it. hiveNotify below is the native-alert
-       replacement, following the same overlay pattern. */
+    /* hiveNotify and hivePrompt replace browser-native alert and input dialogs.
+       hiveConfirm is defined earlier and follows the same themed overlay pattern. */
     function hiveNotify(title, body) {
-      return _hiveDialog({title: title, body: body, ok: 'OK'});
+      return hiveConfirm({title: title || 'Notice', message: body || '', confirmLabel: 'OK'});
     }
-    /* hivePrompt replaces window.prompt(). Resolves to the trimmed string, or
-       null when cancelled — same contract as the native call it replaces, so
-       existing null checks keep working. */
     function hivePrompt(title, defaultValue, opts) {
       opts = opts || {};
+      var cfg = (title && typeof title === 'object') ? Object.assign({}, title) : Object.assign({}, opts, {title: title || 'Input', defaultValue: defaultValue || ''});
       return new Promise(function(resolve) {
         var overlay = document.createElement('div');
-        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:3000;display:flex;align-items:center;justify-content:center';
-        var btn = 'padding:7px 14px;border-radius:var(--r);border:1px solid var(--border);cursor:pointer;font-size:0.8rem';
-        overlay.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--r-lg);padding:22px;max-width:420px;width:90%">' +
-          '<h3 style="margin:var(--sp-0) var(--sp-0) var(--sp-5) var(--sp-0);font-size:var(--fs-lg)">' + esc(title || '') + '</h3>' +
-          '<input id="_hive-prompt-input" type="text" value="' + esc(defaultValue || '') + '" style="width:100%;padding:var(--sp-4);background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--r);box-sizing:border-box;font-size:0.85rem">' +
-          '<div style="display:flex;gap:var(--sp-4);justify-content:flex-end;margin-top:var(--sp-6)">' +
-          '<button class="hv-btn btn-secondary" data-act="no" style="' + btn + ';background:transparent;color:var(--fg)">Cancel</button>' +
-          '<button class="hv-btn btn-secondary" data-act="yes" style="' + btn + ';background:var(--hub-dashboard-accent);color:#fff;border-color:transparent;font-weight:600">' + esc(opts.ok || 'Save') + '</button>' +
-          '</div></div>';
-        function done(v) {
-          document.removeEventListener('keydown', onKey);
-          overlay.remove();
-          resolve(v);
-        }
-        function submit() {
-          var el = document.getElementById('_hive-prompt-input');
-          done(el ? el.value.trim() : null);
-        }
-        function onKey(e) {
-          if (e.key === 'Escape') done(null);
-          if (e.key === 'Enter') submit();
-        }
-        overlay.addEventListener('click', function(e) {
-          if (e.target === overlay) { done(null); return; }
-          var act = e.target.getAttribute && e.target.getAttribute('data-act');
-          if (act === 'yes') submit();
-          else if (act === 'no') done(null);
-        });
-        document.addEventListener('keydown', onKey);
+        overlay.className = 'hive-confirm-overlay';
+        var id = '_hive_prompt_input';
+        overlay.innerHTML = '<div class="hive-confirm" role="dialog" aria-modal="true" aria-labelledby="hive-prompt-title">' +
+          '<h3 id="hive-prompt-title">' + esc(cfg.title || 'Input') + '</h3>' +
+          '<label for="' + id + '">' + esc(cfg.label || cfg.message || cfg.title || '') + '</label>' +
+          '<input id="' + id + '" type="text" value="' + esc(cfg.defaultValue || '') + '" placeholder="' + esc(cfg.placeholder || '') + '" autocomplete="off">' +
+          '<div class="hive-confirm-error" id="_hive_prompt_error" role="alert"></div>' +
+          '<div class="hive-confirm-btns"><button type="button" class="hv-btn btn-primary" data-act="no">Cancel</button>' +
+          '<button type="button" class="hv-btn btn-primary" data-act="yes">' + esc(cfg.confirmLabel || cfg.ok || 'OK') + '</button></div></div>';
         document.body.appendChild(overlay);
-        var inp = document.getElementById('_hive-prompt-input');
-        if (inp) { inp.focus(); inp.select(); }
+        var input = overlay.querySelector('#' + id);
+        var err = overlay.querySelector('#_hive_prompt_error');
+        function submit(done) {
+          var value = input ? input.value.trim() : '';
+          if (typeof cfg.validate === 'function') {
+            var verdict = cfg.validate(value);
+            if (verdict === false || typeof verdict === 'string') { if (err) err.textContent = typeof verdict === 'string' ? verdict : 'Please enter a valid value.'; if (input) input.focus(); return; }
+          }
+          done(value);
+        }
+        var finish = hiveDialogWire(overlay, resolve, null, submit);
+        overlay.querySelector('[data-act="yes"]').onclick = function() { submit(finish); };
+        overlay.querySelector('[data-act="no"]').onclick = function() { finish(null); };
+        input.focus(); input.select();
       });
     }
 
