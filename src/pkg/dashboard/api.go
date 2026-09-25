@@ -1275,13 +1275,14 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		// ai_author_effective is who agents actually author PRs/commits as: the
 		// configured ai_author, or the GitHub App bot login ("<slug>[bot]") when
 		// ai_author is empty and the hive authenticates as an App installation.
-		"ai_author_effective": cfg.EffectiveAIAuthor(),
-		"agents":              len(cfg.EnabledAgents()),
-		"eval_interval_s":     cfg.Governor.EvalIntervalS,
-		"primaryRepo":         primaryRepo,
-		"hub_url":             cfg.Hub.URL,
-		"hive_id":             cfg.HiveID,
-		"github_base_url":     githubBaseURL,
+		"ai_author_effective":   cfg.EffectiveAIAuthor(),
+		"agents":                len(cfg.EnabledAgents()),
+		"eval_interval_s":       cfg.Governor.EvalIntervalS,
+		"primaryRepo":           primaryRepo,
+		"hub_url":               cfg.Hub.URL,
+		"hive_id":               cfg.HiveID,
+		"github_base_url":       githubBaseURL,
+		"dashboard_issue_bands": cfg.Dashboard.IssueBands,
 	}
 	// The active project.issue_filter, read-only: which issues agents may
 	// initiate work on, by label. Omitted entirely when no filter is

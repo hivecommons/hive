@@ -4817,6 +4817,17 @@ type DashboardConfig struct {
 	// ThemeOverrides are layered on the selected built-in theme and are mutable
 	// through the owner-only dashboard appearance API.
 	ThemeOverrides dashboardtheme.Overrides `yaml:"theme_overrides,omitempty" json:"theme_overrides,omitempty"`
+	// IssueBands configures the Repositories card's display-only issue taxonomy.
+	// It is intentionally separate from governor/project eligibility labels:
+	// queue policy decides what agents may work; these labels only decide which
+	// visual band and badges an operator sees on the dashboard.
+	IssueBands DashboardIssueBandsConfig `yaml:"issue_bands,omitempty" json:"issue_bands,omitempty"`
+}
+
+type DashboardIssueBandsConfig struct {
+	WaitingLabels []string `yaml:"waiting_labels,omitempty" json:"waiting_labels,omitempty"`
+	DoneLabels    []string `yaml:"done_labels,omitempty" json:"done_labels,omitempty"`
+	StaleDays     int      `yaml:"stale_days,omitempty" json:"stale_days,omitempty"`
 }
 
 // ValidateDashboardPublicURL validates and normalizes dashboard.public_url:

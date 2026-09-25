@@ -1454,6 +1454,26 @@
     .repo-pr-pill.pill-reviewed:hover { opacity: 1; }
     /* Section-header counter: "· N need human review" next to the host badge. */
     .repos-needs-human-count { display: none; font-size: var(--fs-2xs); font-weight: 600; vertical-align: middle; margin-left: var(--sp-3); color: var(--orange); }
+    .repo-legend { margin: var(--sp-0) var(--sp-0) var(--sp-4); padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2); }
+    .repo-legend-head { display:flex; align-items:center; justify-content:space-between; gap:var(--sp-3); margin-bottom:var(--sp-3); }
+    .repo-legend-title { font-size:var(--fs-xs); font-weight:800; letter-spacing:0.12em; text-transform:uppercase; color:var(--amber); }
+    .repo-legend-toggle { border:1px solid var(--border); border-radius:var(--r-pill); background:var(--bg); color:var(--muted); padding:var(--sp-1) var(--sp-3); font-size:var(--fs-xs); cursor:pointer; }
+    .repo-legend-toggle:hover { color:var(--fg); border-color:var(--amber); }
+    .repo-legend.collapsed .repo-legend-body { display:none; }
+    .repo-legend-body { display:flex; flex-direction:column; gap:var(--sp-3); }
+    .repo-legend-row { display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-2); color:var(--muted); font-size:var(--fs-xs); }
+    .repo-legend-row-label { color:var(--text); font-weight:700; margin-right:var(--sp-1); }
+    .repo-legend .repo-issue-pill, .repo-legend .repo-pr-pill, .repo-legend .repo-issue-plan { display:inline-flex; align-items:center; gap:var(--sp-1); max-width:none; }
+    .repo-issue-band { margin-bottom:var(--sp-2); }
+    .repo-issue-band-title { color:var(--muted); font-size:var(--fs-2xs); font-weight:800; letter-spacing:0.08em; text-transform:uppercase; margin:var(--sp-2) var(--sp-0) var(--sp-1); }
+    .repo-issue-band-items { display:flex; flex-direction:column; gap:var(--sp-2); }
+    .repo-issue-pill.waiting { --component-status: var(--status-attention); --pill-c: var(--status-attention); }
+    .repo-issue-pill.done { --component-status: var(--status-ok); --pill-c: var(--status-ok); }
+    .repo-issue-pill.in-progress { --pill-c: var(--yellow); --component-status: var(--status-warn); }
+    .repo-issue-pill.agent-filed { --pill-c: var(--purple); --component-status: var(--acmm-level-5); }
+    .repo-issue-pill.stale { opacity:0.68; }
+    .repo-issue-pill .pill-state { font-size:var(--fs-2xs); margin-left:2px; opacity:0.9; }
+    .repo-issue-pill .pill-role { font-size:var(--fs-2xs); font-weight:700; letter-spacing:0.02em; text-transform:uppercase; margin-left:3px; opacity:0.85; }
 
     /* Sparklines */
     .sparkline { display: inline-block; vertical-align: middle; margin-left: var(--sp-3); flex-shrink: 0; }
@@ -3526,6 +3546,7 @@
   <div class="repos" id="repos-section">
     <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><span class="section-chevron">▼</span> Repositories <span id="repos-host-badge" title="Every repo in this hive is on this single GitHub host" style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3)"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: automated fix attempts exhausted — operator review required"></span> <button class="hv-btn btn-secondary btn" id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1" title="Scan the monitored repositories for issue/PR changes now instead of waiting for the governor's next eval cycle (read-only — no agents are kicked; server-debounced)">🔄 Rescan</button> <button class="hv-btn btn-secondary btn" id="repos-reset-layout-btn" data-action="resetRepoCardWidths" data-stop="1" title="Reset every repository card to the default width, discarding the widths you dragged (this browser only)" style="display:none">↔️ Reset layout</button> <button class="hv-btn config-gear btn-sm" data-action="gh1" data-stop="1" title="Manage monitored repositories">⚙️</button></h2>
     <div class="section-body">
+      <div id="repos-legend" class="repo-legend"></div>
       <!-- Read-only view of project.issue_filter: which issues agents may
            initiate work on, by label. Hidden unless a filter is configured;
            populated from /api/config at boot. Enforcement lives server-side
@@ -8603,8 +8624,118 @@
       return d.toLocaleString();
     }
 
-    function formatRepoWorkBreakdown(breakdown, total, kind) {
+    const REPO_ISSUE_BAND_DEFAULTS = {
+      waitingLabels: ['blocked', 'needs-decision', '2-discussing', 'Epic', 'needs-human', 'needs-triage'],
+      doneLabels: ['hive/already-done'],
+      staleDays: 14
+    };
+    const MS_PER_DAY = 24 * 60 * 60 * 1000;
+    window._repoIssueBandConfig = Object.assign({}, REPO_ISSUE_BAND_DEFAULTS);
+    const REPO_LEGEND_COLLAPSED_KEY_PREFIX = 'hive-repos-legend-collapsed:';
+
+    function normalizeIssueBandConfig(raw) {
+      const cfg = raw || {};
+      const uniq = (arr, fallback) => {
+        const out = [];
+        (Array.isArray(arr) && arr.length ? arr : fallback).forEach(v => {
+          const s = String(v || '').trim();
+          if (s && !out.some(x => x.toLowerCase() === s.toLowerCase())) out.push(s);
+        });
+        return out;
+      };
+      const staleDays = Number(cfg.stale_days || cfg.staleDays || REPO_ISSUE_BAND_DEFAULTS.staleDays);
+      return {
+        waitingLabels: uniq(cfg.waiting_labels || cfg.waitingLabels, REPO_ISSUE_BAND_DEFAULTS.waitingLabels),
+        doneLabels: uniq(cfg.done_labels || cfg.doneLabels, REPO_ISSUE_BAND_DEFAULTS.doneLabels),
+        staleDays: Number.isFinite(staleDays) && staleDays > 0 ? staleDays : REPO_ISSUE_BAND_DEFAULTS.staleDays
+      };
+    }
+
+    function repoIssueBandConfig() {
+      return normalizeIssueBandConfig(window._repoIssueBandConfig || {});
+    }
+
+    function repoLegendCollapsedKey() {
+      return REPO_LEGEND_COLLAPSED_KEY_PREFIX + (((window._lastStatus || {}).hiveId) || 'default');
+    }
+
+    function isRepoLegendCollapsed() {
+      try { return localStorage.getItem(repoLegendCollapsedKey()) === '1'; } catch { return false; }
+    }
+
+    function toggleRepoLegend() {
+      const next = !isRepoLegendCollapsed();
+      try { localStorage.setItem(repoLegendCollapsedKey(), next ? '1' : '0'); } catch {}
+      renderRepoLegend();
+    }
+
+    function renderRepoLegend() {
+      const el = document.getElementById('repos-legend');
+      if (!el) return;
+      const collapsed = isRepoLegendCollapsed();
+      el.className = 'repo-legend' + (collapsed ? ' collapsed' : '');
+      const cfg = repoIssueBandConfig();
+      const waiting = cfg.waitingLabels.join(', ');
+      const done = cfg.doneLabels.join(', ');
+      setIfChanged(el, `
+        <div class="repo-legend-head">
+          <div class="repo-legend-title">Pill legend</div>
+          <button class="repo-legend-toggle" data-action="toggleRepoLegend" data-stop="1" type="button" aria-expanded="${collapsed ? 'false' : 'true'}" title="${collapsed ? 'Show' : 'Hide'} the repository pill legend (remembered in this browser)">${collapsed ? 'show' : 'hide'}</button>
+        </div>
+        <div class="repo-legend-body">
+          <div class="repo-legend-row"><span class="repo-legend-row-label">Issues</span>
+            <span class="repo-issue-pill" title="Actionable issue: agents may work it unless another badge says otherwise">actionable</span>
+            <span class="repo-issue-pill held" title="Held issue: grey dashed border; agents will not act until the hold label is removed">held</span>
+            <span class="repo-issue-pill waiting" title="Waiting on a human: labels ${esc(waiting)}"><span class="pill-state">⛔</span> blocked</span>
+            <span class="repo-issue-pill waiting" title="Needs a human decision before agents should continue"><span class="pill-state">❓</span> decision</span>
+            <span class="repo-issue-pill in-progress" title="Assigned or claimed by a human or agent"><span class="pill-state">👤</span> assigned/claimed</span>
+            <span class="repo-issue-pill agent-filed" title="Filed by an agent; badge names the agent role"><span class="pill-role">STRATEGIST</span> agent-filed</span>
+            <span class="repo-issue-pill done" title="Likely done: labels ${esc(done)}"><span class="pill-state">✓</span> likely done</span>
+            <span class="repo-issue-pill stale" title="No activity for more than ${cfg.staleDays} days"><span class="pill-state">🕒</span> stale</span>
+            <span class="repo-issue-plan pill-icon" title="Plan this issue">📋</span>
+            <span class="repo-issue-plan pill-icon plan-review" title="Plan awaiting human review">●</span>
+            <span class="repo-issue-pill pill-icon" title="Hold actionable item">⏸ Hold</span>
+            <span class="repo-issue-pill held pill-icon" title="Release held item">▶ Release</span>
+          </div>
+          <div class="repo-legend-row"><span class="repo-legend-row-label">PRs</span>
+            <span class="repo-pr-pill" title="Open PR with no merge verdict">open</span>
+            <span class="repo-pr-pill mergeable" title="Merge-eligible on the sweep verdict"><span class="pill-merge-icon">✓</span> eligible</span>
+            <span class="repo-pr-pill merge-outstanding" title="GitHub says mergeable, but the sweep still wants something"><span class="pill-merge-icon">◐</span> outstanding</span>
+            <span class="repo-pr-pill needs-human pill-icon" title="Automated fix attempts exhausted — human review required">⚠</span>
+            <span class="repo-pr-pill held" title="Held PR: grey dashed border">held</span>
+            <span class="repo-pr-pill pill-reviewed pill-icon" title="Hive review posted; opens the recorded review">💬</span>
+            <span class="repo-pr-pill mergeable pill-icon" title="Queued for Hive auto-merge">🔀</span>
+            <span class="repo-pr-pill pill-icon" title="Queue for auto-merge, or disabled when not mergeable on GitHub">🔀</span>
+            <span class="repo-pr-pill" title="Review class badge: FIX is red; FEAT/TESTS/DOCS/REFACTOR show why the PR is prioritized"><span class="pill-class fix">FIX</span> class</span>
+          </div>
+        </div>`);
+    }
+
+    function repoBreakdownTip(kind, key) {
+      const tips = {
+        issues: {
+          actionable: 'Issues in the automated work lane; held/exempt/filter buckets are excluded from this count',
+          hold: 'Open issues carrying a hold label; agents will not act until the hold is removed',
+          hive_advisory: 'Issues that belong to the Hive advisory/backlog lane, not the ordinary work lane',
+          dependency_dashboard: 'Dependency-dashboard issues grouped separately from ordinary actionable work',
+          filtered: 'Open issues skipped by the configured project.issue_filter label policy',
+          other: 'Open issues that did not land in an actionable, held, advisory, dependency dashboard or filtered bucket'
+        },
+        prs: {
+          actionable: 'Open PRs in the automated review/merge lane',
+          hold: 'Open PRs carrying a hold label; agents will not act until the hold is removed',
+          draft: 'Draft PRs; visible but outside the automated merge lane',
+          filtered: 'Open PRs skipped by repository or governor policy',
+          other: 'Open PRs that did not land in an actionable, held, draft or filtered bucket'
+        }
+      };
+      return ((tips[kind] || {})[key]) || '';
+    }
+
+    function formatRepoWorkBreakdown(breakdown, total, kind, staleCount) {
       if (!breakdown || total <= 0) return '';
+      const escAttr = (s) => String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'":'&#39;'}[c]));
+      const breakdownTip = (k, key) => (typeof repoBreakdownTip === 'function' ? repoBreakdownTip(k, key) : '');
       const categories = kind === 'issues'
         ? [
             ['actionable', 'actionable'],
@@ -8623,7 +8754,11 @@
           ];
       const parts = categories
         .filter(([key]) => key === 'actionable' || Number(breakdown[key] || 0) > 0)
-        .map(([key, label]) => `<span${key === 'actionable' ? ' class="repo-breakdown-actionable"' : ''}>${Number(breakdown[key] || 0)} ${label}</span>`);
+        .map(([key, label]) => `<span${key === 'actionable' ? ' class="repo-breakdown-actionable"' : ''} title="${escAttr(breakdownTip(kind, key))}">${Number(breakdown[key] || 0)} ${label}</span>`);
+      if (kind === 'issues' && Number(staleCount || 0) > 0) {
+        const staleDays = (typeof repoIssueBandConfig === 'function' ? repoIssueBandConfig().staleDays : REPO_ISSUE_BAND_DEFAULTS.staleDays);
+        parts.splice(1, 0, `<span title="${escAttr('Actionable issues with no activity for more than ' + staleDays + ' days')}">${Number(staleCount || 0)} no activity &gt; ${staleDays}d</span>`);
+      }
       return `<div class="repo-breakdown">${parts.join(' · ')}</div>`;
     }
 
@@ -8886,6 +9021,128 @@
       return `<button class="repo-issue-plan pill-icon plan-chip ${cls}" data-action="openPlanReview" data-arg0="${esc(l.epicId)}" title="${esc(tip + ' — click to open the plan')}" aria-label="${esc(tip)}">${esc(glyph)}</button>`;
     }
 
+    function issueLabelSet(issue) {
+      return new Set(((issue && issue.labels) || []).map(l => String(l).toLowerCase()));
+    }
+
+    function issueHasAnyLabel(issue, labels) {
+      const set = issueLabelSet(issue);
+      return (labels || []).some(l => set.has(String(l).toLowerCase()));
+    }
+
+    function issueAgentRole(issue) {
+      for (const label of ((issue && issue.labels) || [])) {
+        const raw = String(label || '');
+        if (raw.toLowerCase().startsWith('agent/')) return raw.slice(raw.indexOf('/') + 1).trim();
+      }
+      return '';
+    }
+
+    function issueClaimed(issue) {
+      const labels = ((issue && issue.labels) || []).map(l => String(l).toLowerCase());
+      return labels.includes('claimed') || labels.some(l => l.startsWith('hive/claimed-by-'));
+    }
+
+    // Extension point for #8876: return { open:true } or { merged:true } once
+    // the snapshot carries linked PRs. Until then repo-card banding intentionally
+    // does not infer or fetch PR relationships.
+    function issueLinkedPRState(issue) {
+      return null;
+    }
+
+    function issueUpdatedAt(issue) {
+      const value = (issue && (issue.updated_at || issue.created_at)) || '';
+      const t = Date.parse(value);
+      return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
+    }
+
+    function issueIsStale(issue) {
+      const t = issueUpdatedAt(issue);
+      if (!Number.isFinite(t)) return false;
+      return (Date.now() - t) > repoIssueBandConfig().staleDays * MS_PER_DAY;
+    }
+
+    function repoStaleIssueCount(issues) {
+      return (issues || []).filter(issueIsStale).length;
+    }
+
+    function issueBandInfo(issue) {
+      const cfg = repoIssueBandConfig();
+      const labels = issueLabelSet(issue);
+      const linked = issueLinkedPRState(issue) || {};
+      const role = issueAgentRole(issue);
+      const matches = {
+        done: issueHasAnyLabel(issue, cfg.doneLabels) || !!linked.merged,
+        waiting: issueHasAnyLabel(issue, cfg.waitingLabels),
+        inProgress: ((issue && issue.assignees) || []).length > 0 || issueClaimed(issue) || !!linked.open,
+        agentFiled: !!role
+      };
+      let band = 'ready';
+      if (matches.done) band = 'done';
+      else if (matches.waiting) band = 'waiting';
+      else if (matches.inProgress) band = 'in-progress';
+      else if (matches.agentFiled) band = 'agent-filed';
+      const signals = [];
+      if (labels.has('blocked')) signals.push({ glyph: '⛔', label: 'blocked' });
+      if (labels.has('needs-decision') || labels.has('2-discussing')) signals.push({ glyph: '❓', label: 'needs decision' });
+      if (labels.has('epic')) signals.push({ glyph: '◆', label: 'epic' });
+      if (matches.inProgress) signals.push({ glyph: '👤', label: 'assigned or claimed' });
+      if (linked.open) signals.push({ glyph: '🔗', label: 'open PR references this issue' });
+      if (matches.done) signals.push({ glyph: '✓', label: linked.merged ? 'merged PR references this issue' : 'already done' });
+      if (role) signals.push({ role: role, label: 'agent-filed by ' + role });
+      if (issueIsStale(issue)) signals.push({ glyph: '🕒', label: 'stale: no activity > ' + cfg.staleDays + 'd' });
+      return { band, role, matches, signals };
+    }
+
+    function issueBandLabel(band, role) {
+      switch (band) {
+        case 'in-progress': return 'In progress';
+        case 'agent-filed': return role ? 'Agent-filed · ' + role : 'Agent-filed';
+        case 'waiting': return 'Waiting on human';
+        case 'done': return 'Likely done';
+        default: return 'Ready';
+      }
+    }
+
+    function issueBandRank(band) {
+      return { ready: 0, 'in-progress': 1, 'agent-filed': 2, waiting: 3, done: 4 }[band] ?? 9;
+    }
+
+    function groupedRepoIssues(issues) {
+      const groups = new Map();
+      (issues || []).forEach(issue => {
+        const info = issueBandInfo(issue);
+        const key = info.band === 'agent-filed' ? ('agent-filed:' + (info.role || 'unknown').toLowerCase()) : info.band;
+        if (!groups.has(key)) groups.set(key, { key, band: info.band, role: info.role || '', label: issueBandLabel(info.band, info.role), issues: [] });
+        groups.get(key).issues.push({ issue, info });
+      });
+      const out = Array.from(groups.values());
+      out.forEach(g => g.issues.sort((a, b) => issueUpdatedAt(a.issue) - issueUpdatedAt(b.issue) || Number(a.issue.number || 0) - Number(b.issue.number || 0)));
+      out.sort((a, b) => issueBandRank(a.band) - issueBandRank(b.band) || a.label.localeCompare(b.label));
+      return out;
+    }
+
+    function issueTip(issue, info) {
+      const labels = ((issue && issue.labels) || []).join(', ');
+      const assignees = ((issue && issue.assignees) || []).join(', ');
+      const parts = [];
+      if (issue && issue.title) parts.push(issue.title);
+      if (issue && issue.author) parts.push('@' + issue.author);
+      parts.push('band: ' + issueBandLabel(info.band, info.role));
+      if (labels) parts.push('labels: ' + labels);
+      if (assignees) parts.push('assignees: ' + assignees);
+      if (issue && issue.created_at) parts.push('created: ' + issue.created_at);
+      if (issue && issue.updated_at) parts.push('last activity: ' + issue.updated_at);
+      if (info.signals.length) parts.push('signals: ' + info.signals.map(s => s.label).join(', '));
+      return parts.join(' — ');
+    }
+
+    function issueSignalHTML(info) {
+      return (info.signals || []).map(s => s.role
+        ? `<span class="pill-role" title="${esc(s.label)}">${esc(s.role)}</span>`
+        : `<span class="pill-state" title="${esc(s.label)}">${esc(s.glyph)}</span>`).join('');
+    }
+
     function renderRepos(repos) {
       if (_repoResizeDrag) return;
       const el = document.getElementById('repos');
@@ -8894,6 +9151,7 @@
       const planLinks = planIssueLinks();
       const layoutW = repoCardLayoutWidth(el);
       const status = window._lastStatus || {};
+      renderRepoLegend();
       const activeSwarmRepo = ((status.swarm || {}).active || {}).repo || '';
       // Definitive single-host badge in the section header: every repo in this
       // hive is on ONE GitHub host (github.com or a GHE instance). Green =
@@ -8942,21 +9200,19 @@
         const iSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.issues ?? 0), 'var(--blue)', getHistoryTimes());
         const pSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.prs ?? 0), 'var(--purple)', getHistoryTimes());
         const repoUrl = (window._githubBaseUrl || 'https://github.com') + '/' + (r.full || r.name);
-        const issueBreakdown = formatRepoWorkBreakdown(r.workBreakdown?.issues, r.issues, 'issues');
-        const prBreakdown = formatRepoWorkBreakdown(r.workBreakdown?.prs, r.prs, 'prs');
         // The card's width comes from the stored map on EVERY repaint, not
         // from a one-time assignment on the element: this HTML replaces the
         // grid's contents on every governor cycle, so a width set once on the
         // node would be thrown away within the minute (#8000).
         const cardRepo = r.full || r.name || '';
+        const issueBreakdown = formatRepoWorkBreakdown(r.workBreakdown?.issues, r.issues, 'issues', repoStaleIssueCount(r.actionableIssues || []));
+        const prBreakdown = formatRepoWorkBreakdown(r.workBreakdown?.prs, r.prs, 'prs');
         ensureRepoHoldPermission(cardRepo);
         const canToggleHold = repoHoldPermissionKnown(cardRepo);
         const cardW = repoCardWidth(cardRepo);
         const MAX_PILL_TITLE_LEN = pillTitleLimit(cardW || layoutW);
-        const issuePills = (r.actionableIssues || []).map(i => {
+        const renderIssuePill = (i, info) => {
           const title = i.title && i.title.length > MAX_PILL_TITLE_LEN ? i.title.slice(0, MAX_PILL_TITLE_LEN) + '…' : (i.title || '');
-          const age = pillAge(i.created_at);
-          const tip = (i.title || '') + (i.author ? ' — @' + i.author : '') + (age ? ' (' + age + ')' : '');
           const repoFull = r.full || r.name || '';
           // Plan action (Phase 4): mint an epic from this issue and request
           // decomposition. data-action wires into the delegated click handler.
@@ -8972,7 +9228,13 @@
             ? planIssueChip(linked)
             : (showPlan ? `<button class="repo-issue-plan pill-icon" data-action="planIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Plan this issue" aria-label="Plan this issue">📋</button>${showDesign ? `<button class="repo-issue-plan pill-icon" data-action="designIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Design before planning" aria-label="Design before planning">📐</button>` : ''}` : '');
           const holdBtn = holdToggleChip(cardRepo, i, 'issue', false, canToggleHold, '');
-          return `<span class="repo-issue-pill-wrap"><a class="repo-issue-pill" href="${esc(i.url)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span></a>${planBtn}${holdBtn}</span>`;
+          const bandClass = info.band === 'ready' ? '' : ' ' + info.band;
+          const staleClass = issueIsStale(i) ? ' stale' : '';
+          return `<span class="repo-issue-pill-wrap"><a class="repo-issue-pill${bandClass}${staleClass}" href="${esc(i.url)}" target="_blank" rel="noopener" title="${esc(issueTip(i, info))}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span>${issueSignalHTML(info)}</a>${planBtn}${holdBtn}</span>`;
+        };
+        const issuePills = groupedRepoIssues(r.actionableIssues || []).map(g => {
+          const items = g.issues.map(entry => renderIssuePill(entry.issue, entry.info)).join('');
+          return `<div class="repo-issue-band repo-issue-band-${esc(g.band)}"><div class="repo-issue-band-title">${esc(g.label)} · ${g.issues.length}</div><div class="repo-issue-band-items">${items}</div></div>`;
         }).join('');
         // Held issues (hivecommons/hive#7896): in the issue column, because
         // the issues number counts them, but tinted held and without the
@@ -19586,6 +19848,9 @@ function burnAreaChart() {
       // Org slug, used by the Installation-ID hint to render this hive's own
       // installed-app settings URL rather than a generic placeholder.
       window._githubOrg = cfg.org || '';
+      window._repoIssueBandConfig = normalizeIssueBandConfig(cfg.dashboard_issue_bands || {});
+      if (window._lastStatus && Array.isArray(window._lastStatus.repos)) repaintReposForWidth();
+      else renderRepoLegend();
       // The banner may have rendered before this fetch resolved, in which case
       // its hint shows the fallback host/org. Refresh it now that both are known.
       if (typeof renderGitHubAppInstallIdHint === 'function') {

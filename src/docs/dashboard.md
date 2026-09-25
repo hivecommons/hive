@@ -38,8 +38,9 @@ toggle back to raw PR count without changing the selected window.
 
 Repository cards show held issues and PRs beside the actionable pills. A user
 who owns the hive, owns the repository, or has GitHub `write`, `maintain`, or
-`admin` permission on that repository can click the `⏸` chip to add or remove a
-hold. The server always re-checks that permission before mutating labels. Adding
+`admin` permission on that repository can click the `⏸ Hold` chip to add a hold
+or the `▶ Release` chip to remove one. The server always re-checks that
+permission before mutating labels. Adding
 a hold applies the hive's canonical `hive-pause/<hive-id>` label. The name
 deliberately avoids the substring `hold` so it is matched exactly and cannot
 collide with the agent provenance label `hive/<hive-id>`. Removing a hold only
@@ -52,6 +53,49 @@ copied to the new label, agent-provenance-only items become actionable, and
 ambiguous legacy labels stay held under `hive-pause/<hive-id>` for operator
 review. The card-level `⏸ pause` / `▶ resume` control uses the same permission
 rule.
+
+## Repository card legend and issue bands
+
+The **Repositories** section includes a compact, collapsible pill legend. It is
+stored per browser in `localStorage` and uses the same pill classes as the cards,
+so theme changes update the legend automatically. The legend explains issue
+actionable/held pills, plan chips, hold/release controls, issue state glyphs
+(`⛔`, `❓`, `👤`, `✓`, role badges, stale `🕒`) and PR states (`✓`, `◐`,
+`⚠`, held, reviewed `💬`, auto-merge `🔀`, and review-class badges such as
+`FIX`).
+
+Actionable issue pills are grouped client-side for display only; enumeration,
+holds, filters, and agent kick behaviour are unchanged. Each issue appears in
+exactly one band, while non-winning states remain as badges on the pill:
+
+1. **Ready** — no display taxonomy state matched.
+2. **In progress** — assignee set, `claimed`, or `hive/claimed-by-*`.
+3. **Agent-filed** — an `agent/<role>` label; roles render as compact badges.
+4. **Waiting on human** — labels such as `blocked`, `needs-decision`,
+   `2-discussing`, `Epic`, `needs-human`, or `needs-triage`.
+5. **Likely done** — labels such as `hive/already-done`.
+
+Precedence is likely done → waiting on human → in progress → agent-filed → ready,
+so a human gate beats an assignment and done beats all other display states.
+Within each band, issues sort by `updated_at` oldest first. The issue breakdown
+also shows `N no activity > 14d` for actionable issues older than the stale
+threshold.
+
+Operators can tune only the display taxonomy under `dashboard.issue_bands`:
+
+```yaml
+dashboard:
+  issue_bands:
+    waiting_labels: [blocked, needs-decision, 2-discussing, Epic, needs-human, needs-triage]
+    done_labels: [hive/already-done]
+    stale_days: 14
+```
+
+These settings deliberately do not reuse `governor.labels.exempt`,
+`contribute_skip_labels`, or `project.issue_filter`; those decide work
+eligibility, while issue bands decide how the dashboard describes already
+enumerated work. Linked-PR badges are an explicit extension point for the
+companion linked-PR payload work and are not inferred by the card.
 
 ## Appearance themes
 
