@@ -147,7 +147,7 @@ func (k *KnowledgeAPI) SearchAll(ctx context.Context, query string, typeFilter s
 			continue
 		}
 		for _, r := range results {
-			all = append(all, Fact{
+			all = append(all, applyConfidence(Fact{
 				Slug:       r.Slug,
 				Title:      r.Title,
 				Type:       FactType(r.Type),
@@ -156,7 +156,7 @@ func (k *KnowledgeAPI) SearchAll(ctx context.Context, query string, typeFilter s
 				Status:     r.Status,
 				Tags:       r.Tags,
 				Layer:      lc.layerType,
-			})
+			}, confidenceInput{Raw: r.Confidence, HasRaw: r.Confidence > 0, Type: FactType(r.Type), Layer: lc.layerType, Status: r.Status, Tags: r.Tags}))
 		}
 	}
 	return all
@@ -175,7 +175,7 @@ func (k *KnowledgeAPI) LayerFacts(ctx context.Context, layer LayerType, typeFilt
 		}
 		facts := make([]Fact, len(results))
 		for i, r := range results {
-			facts[i] = Fact{
+			facts[i] = applyConfidence(Fact{
 				Slug:       r.Slug,
 				Title:      r.Title,
 				Type:       FactType(r.Type),
@@ -184,7 +184,7 @@ func (k *KnowledgeAPI) LayerFacts(ctx context.Context, layer LayerType, typeFilt
 				Status:     r.Status,
 				Tags:       r.Tags,
 				Layer:      layer,
-			}
+			}, confidenceInput{Raw: r.Confidence, HasRaw: r.Confidence > 0, Type: FactType(r.Type), Layer: layer, Status: r.Status, Tags: r.Tags})
 		}
 		return facts
 	}
@@ -198,7 +198,7 @@ func (k *KnowledgeAPI) ReadFact(ctx context.Context, slug string) (*Fact, error)
 		if err != nil {
 			continue
 		}
-		return &Fact{
+		f := applyConfidence(Fact{
 			Slug:       page.Slug,
 			Title:      page.Title,
 			Type:       FactType(page.Type),
@@ -207,7 +207,8 @@ func (k *KnowledgeAPI) ReadFact(ctx context.Context, slug string) (*Fact, error)
 			Status:     page.Status,
 			Tags:       page.Tags,
 			Layer:      lc.layerType,
-		}, nil
+		}, confidenceInput{Raw: page.Confidence, HasRaw: page.Confidence > 0, Type: FactType(page.Type), Layer: lc.layerType, Status: page.Status, Tags: page.Tags})
+		return &f, nil
 	}
 	if f, err := k.VaultFact(slug); err == nil {
 		return f, nil

@@ -23,9 +23,6 @@ const (
 	// maxFactsPerDocument caps how many facts a single document can produce.
 	maxFactsPerDocument = 50
 
-	// defaultDocConfidence is the confidence score for externally-sourced facts.
-	defaultDocConfidence = 0.6
-
 	// docSummaryMaxChars is the max body length for the summary fact.
 	docSummaryMaxChars = 500
 
@@ -564,11 +561,19 @@ func chunksToFacts(chunks []DocChunk, sourceSlug, sourceURL string, sourceDate t
 	if len(summaryBody) > docSummaryMaxChars {
 		summaryBody = summaryBody[:docSummaryMaxChars]
 	}
+	summaryConfidence, _, _ := scoreConfidence(confidenceInput{
+		Type:       FactReference,
+		Layer:      LayerCommunity,
+		Tags:       []string{"doc-import", sourceSlug, "doc-summary"},
+		Source:     sourcePR,
+		SourceURL:  sourceURL,
+		SourceDate: sourceDate,
+	})
 	facts = append(facts, ExtractedFact{
 		Title:      "Summary: " + stripHeadingMarkers(chunks[0].Title),
 		Body:       summaryBody,
 		Type:       FactReference,
-		Confidence: defaultDocConfidence,
+		Confidence: summaryConfidence,
 		Tags:       []string{"doc-import", sourceSlug, "doc-summary"},
 		SourcePR:   sourcePR,
 		SourceDate: sourceDate,
@@ -588,7 +593,7 @@ func chunksToFacts(chunks []DocChunk, sourceSlug, sourceURL string, sourceDate t
 			Title:      stripHeadingMarkers(chunk.Title),
 			Body:       chunk.Body,
 			Type:       FactReference,
-			Confidence: defaultDocConfidence,
+			Confidence: summaryConfidence,
 			Tags:       append([]string{}, tags...),
 			SourcePR:   sourcePR,
 			SourceDate: sourceDate,
