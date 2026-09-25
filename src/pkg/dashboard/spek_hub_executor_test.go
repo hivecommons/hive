@@ -396,3 +396,32 @@ func TestSpekGitEnvMarksWorkspaceSafeAndReplacesExistingOverride(t *testing.T) {
 		t.Fatalf("stale GIT_CONFIG override retained:\n%s", joined)
 	}
 }
+
+func TestSpekHubExecutorRunStageSkipsSnapshotWhoseLeaseAdvanced(t *testing.T) {
+	hub, s, _, _ := spekHub(t)
+	now := time.Now()
+	runKey := "myorg/repo1#57"
+	// Lease has already moved on to plan gen 4 …
+	hub.leaseMu.Lock()
+	hub.leases[leaseKey(runAdmissionIdentity, "run-admit-x")] = &taskLease{identity: runAdmissionIdentity, taskID: "run-admit-x", repo: spekRepo, number: 57, key: spekRepo + "!" + runKey + ":" + StagePlan, stage: StagePlan, gen: 4, expiresAt: now.Add(leaseTTL)}
+	hub.leaseMu.Unlock()
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	launched := false
+	e.Exec = func(context.Context, string, []string, string, ...string) ([]byte, error) {
+		launched = true
+		return []byte("ok"), nil
+	}
+	// … but Tick's snapshot still says spec gen 4.
+	stale := spekHubStage{runKey: runKey, key: spekRepo + "!" + runKey + ":" + StageSpec, stage: StageSpec, identity: runAdmissionIdentity, taskID: "run-admit-x", repo: spekRepo, number: 57, gen: 4}
+	e.runStage(context.Background(), stale, e.executionKey(stale))
+	if launched {
+		t.Fatal("executor relaunched a stage the lease had already advanced past")
+	}
+	if e.Status().LastError != "" {
+		t.Fatalf("unexpected failure recorded: %s", e.Status().LastError)
+	}
+	current := spekHubStage{runKey: runKey, stage: StagePlan, gen: 4}
+	if !e.stageStillActive(current) {
+		t.Fatal("current stage reported inactive")
+	}
+}

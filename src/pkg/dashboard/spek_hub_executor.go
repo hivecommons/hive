@@ -85,13 +85,15 @@ func (e *SpekHubExecutor) Tick(ctx context.Context, now time.Time) {
 	if e == nil || e.Server == nil || !e.Config.Spektacular.Enabled || !e.Config.Spektacular.HubExecutorEnabled() {
 		return
 	}
+	// Sweep first: it runs git and can take a while, and the lease snapshot
+	// below must be as fresh as possible before it is compared with inFlight.
+	if err := e.sweepStaleWorktrees(ctx); err != nil {
+		e.log().Warn("[spektacular] hub executor worktree sweep failed", "error", err)
+	}
 	stages, err := e.unclaimedStages()
 	if err != nil {
 		e.setLastError(err.Error())
 		return
-	}
-	if err := e.sweepStaleWorktrees(ctx); err != nil {
-		e.log().Warn("[spektacular] hub executor worktree sweep failed", "error", err)
 	}
 	for _, st := range stages {
 		if st.stage != StageSpec && st.stage != StagePlan {
@@ -261,6 +263,12 @@ func (e *SpekHubExecutor) runStage(parent context.Context, st spekHubStage, key 
 	}()
 	ctx, cancel := context.WithTimeout(parent, e.Config.Spektacular.HubExecutor.Timeout())
 	defer cancel()
+	// The snapshot in Tick may predate a stage advance made by a run that
+	// finished in the meantime; never relaunch a stage the lease has left.
+	if !e.stageStillActive(st) {
+		e.log().Info("[spektacular] hub executor skipping stale stage snapshot", "run", st.runKey, "stage", st.stage, "gen", st.gen)
+		return
+	}
 	if err := e.executeStage(ctx, st); err != nil {
 		e.recordFailure(st, key, err)
 	}
@@ -718,6 +726,20 @@ func (e *SpekHubExecutor) unclaimedStages() ([]spekHubStage, error) {
 		out[i].title = e.Server.stageLeaseTitle(out[i].identity, out[i].taskID)
 	}
 	return out, err
+}
+
+// stageStillActive reports whether some active lease on st's run key is
+// still at st.stage / st.gen.
+func (e *SpekHubExecutor) stageStillActive(st spekHubStage) bool {
+	active := false
+	if err := e.Server.VisitActiveStageLeases(func(runKey, _, stage, _, _, _ string, gen uint64, _ time.Time) {
+		if runKey == st.runKey && stage == st.stage && gen == st.gen {
+			active = true
+		}
+	}); err != nil {
+		return false
+	}
+	return active
 }
 
 func (s *Server) stageLeaseTitle(identity, taskID string) string {
