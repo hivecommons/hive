@@ -33,6 +33,10 @@ type LeaderboardEntry struct {
 // buildLeaderboard loads all contributor profiles, sorts by tasks completed
 // descending, and returns ranked entries with secrets stripped.
 func buildLeaderboardWithActivity(activity []ActivityEntry) []LeaderboardEntry {
+	return buildLeaderboardWithInputs(achievement2Inputs{Activity: activity})
+}
+
+func buildLeaderboardWithInputs(inputs achievement2Inputs) []LeaderboardEntry {
 	profiles := listContributorProfiles()
 	sort.Slice(profiles, func(i, j int) bool {
 		return profiles[i].TasksCompleted > profiles[j].TasksCompleted
@@ -46,7 +50,9 @@ func buildLeaderboardWithActivity(activity []ActivityEntry) []LeaderboardEntry {
 			continue
 		}
 		rank++
-		_, achievementSummary := buildAchievements2(&p, activity)
+		profileInputs := inputs
+		profileInputs.Hives = buildContributorHives(p.GitHubUsername, inputs.LocalHiveID)
+		_, achievementSummary := buildAchievements2WithInputs(&p, profileInputs)
 		var team *ContributorTeamMetadata
 		if p.Team != nil && teamMetadataDeclared(*p.Team) {
 			hydrated := hydrateContributorTeam(*p.Team, p.Team.AgentBackend)
@@ -73,7 +79,7 @@ func buildLeaderboard() []LeaderboardEntry {
 }
 
 func (s *Server) handleLeaderboardAPI(w http.ResponseWriter, _ *http.Request) {
-	contributors := buildLeaderboardWithActivity(s.recentContributionActivity())
+	contributors := buildLeaderboardWithInputs(s.achievement2BaseInputs())
 	agents := s.buildAgentLeaderboardEntries()
 	jsonResponse(w, map[string]any{
 		"leaderboard": contributors,
@@ -95,7 +101,7 @@ func (s *Server) ContributorSummary() (registered, active int) {
 }
 
 func (s *Server) LeaderboardForHub() []LeaderboardEntry {
-	entries := buildLeaderboardWithActivity(s.recentContributionActivity())
+	entries := buildLeaderboardWithInputs(s.achievement2BaseInputs())
 	if s.contributeHub != nil {
 		liveStates := s.contributeHub.LiveStates()
 		profiles := listContributorProfiles()

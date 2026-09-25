@@ -3242,12 +3242,15 @@ function meSeals(p){
 
 function meAchievements2(p){
   var ach=(p.achievements_2||[]).filter(function(a){return a&&a.attained;});
-  if(!ach.length)return '<p class="dz-collab-empty">Teamwork tiers unlock from normal GitHub, Spek, and Hive collaboration.</p>';
+  var notes=((p.achievement_2&&p.achievement_2.annotations)||[]).map(function(n){
+    return '<div class="ops-note m-0">'+esc(n.detail||n.kind||'achievement guardrail note')+'</div>';
+  }).join('');
+  if(!ach.length)return '<p class="dz-collab-empty">Teamwork tiers unlock from normal GitHub, Spek, and Hive collaboration.</p>'+notes;
   return '<div class="dz-seals">'+ach.map(function(a){
     var sub=(a.tier||'solo')+' · '+(a.track||'teamwork');
     return '<div class="dz-seal"><div class="glyph"></div><div class="t-name">'+esc(a.label||a.id||'Achievement')+'</div>'
       +'<div class="t-sub">'+esc(sub)+' — '+esc(a.detail||'')+'</div></div>';
-  }).join('')+'</div>';
+  }).join('')+'</div>'+notes;
 }
 
 // meDeedsGrid renders the DEEDS OF RECORD stat blocks: tasks shipped, PRs

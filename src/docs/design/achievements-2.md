@@ -9,10 +9,12 @@ the slices that implementation PRs must follow.
 
 ## Status
 
-**Partly shipped target.** Phase 1 is intentionally safe: derive new badges from
-signals Hive already stores and expose them in dossiers and contribution
-leaderboards. Later phases can add Jam/Spektacular run joins, stronger social
-anti-gaming, and operator tuning.
+**Shipped on v5.** The first slice derives badges from existing contribution data.
+The follow-up slice completes the spec with Spektacular/Jam/run role joins,
+cross-hive federation evidence, pair-cap abuse annotations, and swarm/spec
+sequence Raid evidence. Operator-tunable thresholds remain a possible future
+enhancement, but the #8832 achievement model is now implemented without new
+credential paths or addictive mechanics.
 
 ## Problem
 
@@ -273,7 +275,7 @@ Leaderboards should:
 
 ## Data sources
 
-Phase 1 must use existing data only:
+The shipped implementation uses existing data only:
 
 - GitHub PR, review, author, merge, and issue linkage data already collected for
   dashboard contribution views;
@@ -284,8 +286,10 @@ Phase 1 must use existing data only:
 - Spektacular run/campaign data already projected under `/api/runs` and
   `/api/campaigns` when present.
 
-Later phases may add durable Spek role receipts, Jam accepted-suggestion events,
-and cross-hive identity joins, but they are not required for the first slice.
+The implementation joins the available Spektacular run projection, Campaign Jam
+threads/suggestions/polls/revisions, the federation registry's
+`active_contributor_names`, and swarm player records. It deliberately does not
+consume any private chat log or add a new GitHub credential path.
 
 ## Phased rollout
 
@@ -300,11 +304,11 @@ Acceptance criteria:
 - sources for dark-pattern scout pass are cited;
 - implementation can be cut into phase 1 without inventing new stores.
 
-### Phase 1: computed badges from existing data
+### Phase 1: computed badges from existing data (**shipped**)
 
-Implement Solo, Dual, Fireteam/Raid placeholders where evidence exists, the
-local-model track, and mastery badges in the existing dashboard achievement
-system. Surface them in dossiers and the leaderboard UI.
+Implement Solo and Dual badges, the local-model track, and mastery badges in the
+existing dashboard achievement system. Surface them in dossiers and the
+leaderboard UI.
 
 Acceptance criteria:
 
@@ -317,31 +321,44 @@ Acceptance criteria:
 - guardrail review confirms no streaks, timers, random rewards, or pay-to-win
   rewards were added.
 
-### Phase 2: Spek/Jam role evidence
+### Phase 2: Spek/Jam role evidence (**shipped**)
 
-Join final Spektacular receipts and accepted Jam suggestions to Fireteam/Raid
-roles so a spec can prove planning, implementation, and review coverage without
-manual inference.
+Join Spektacular run stages and Campaign Jam revisions, accepted suggestions,
+poll votes, and decisions to Fireteam/Raid roles so a spec can prove planning,
+implementation, and review coverage without manual inference.
 
 Acceptance criteria:
 
-- Fireteam badge requires three distinct roles on one spec/run;
+- Fireteam badge requires spec, plan, implement, and review roles with at least
+  three distinct actors on one spec/run unit;
 - Raid badge can follow a sequence of specs or a swarm;
-- dossiers show the spec/run evidence chain.
+- dossiers and leaderboards show the computed tier/local/mastery summary and
+  per-badge evidence keys.
 
-### Phase 3: cross-hive and abuse review
+### Phase 3: cross-hive and abuse review (**mostly shipped**)
 
 Add cross-hive identity joins, pair caps, abuse annotations, and operator-tunable
-thresholds after real tester feedback.
+thresholds after real tester feedback. Cross-hive joins, pair caps, and computed
+abuse annotations are shipped from available dashboard data. The Commons routing
+work (#8817) is coordinated but not used as badge evidence yet because its
+subscriptions are local operator profile data, not hub-hosted contribution
+receipts. Operator-tunable thresholds remain future work because hard-coding the
+safe defaults keeps this slice predictable for morning testers.
 
 Acceptance criteria:
 
-- maintainers can explain or hide abused badges;
-- cross-hive badges avoid rewarding sock-puppet repos;
+- computed annotations call out pair-concentration before it can become the best
+  strategy;
+- cross-hive badges require named contributor presence from federation heartbeat
+  data and do not infer membership from registry existence alone;
 - no guardrail is weakened.
 
 ## Open questions
 
 - Which local backend names should be canonical beyond existing provider keys?
-- Should cross-hive achievements wait for organization-level identity mapping?
-- Should the Raid tier require maintainer confirmation for the first release?
+- The Commons subscription work (#8817) has shipped for `hivectl`, TUI, and relay
+  routing. It remains local profile data rather than hub-hosted achievement
+  evidence, so cross-hive badges continue to use conservative federation
+  heartbeat contributor names until a safe profile-sync/import surface exists.
+- Operator-tunable thresholds can be added after testers exercise the default
+  values.

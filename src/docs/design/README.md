@@ -20,7 +20,7 @@ that status is the thing to check before treating a page as current behaviour:
 
 ## Records
 
-- [Achievement system 2.0](achievements-2.md) — **design only / proposed.** Spektacular-ready spec for #8832: teamwork-first Solo/Dual/Fireteam/Raid tiers, local-model achievements, the “local always wins” mastery tier, dark-pattern guardrails, anti-gaming rules, data sources, and phased rollout for dossiers and leaderboards.
+- [Achievement system 2.0](achievements-2.md) — **shipped (v5).** Spektacular-ready spec for #8832: teamwork-first Solo/Dual/Fireteam/Raid tiers, local-model achievements, the “local always wins” mastery tier, dark-pattern guardrails, anti-gaming rules, data sources, and shipped dossier/leaderboard rollout.
 
 - [External workflow admission](external-workflow-admission.md) - **Gate 0 decided; Gate 1 pilot shipped (v5, default off).** Records the #8201 Gate 0 selection for #8302 (option 2, one bounded report-only Flue generation workflow through the existing contributor protocol, the source-to-guarantee matrix, native Flue receipt probe, conformance split) and the #8361 Gate 1 pilot: the engine-neutral `pkg/extwork` binding, the Flue adapter and deterministic fixture, the side-effect inventory, operational status and recovery, and the local-versus-binding comparison, and the OMP workbench as the second host behind the same adapter (#8361 step 9, answering #6899: relay-channel frames, accept before context, progress events, receipt binding, confinement note). Publication remains deferred.
 

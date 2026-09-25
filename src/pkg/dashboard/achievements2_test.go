@@ -18,18 +18,43 @@ func TestBuildAchievements2LocalPaidHybridMastery(t *testing.T) {
 			{Username: "frank", Occasions: 1},
 		},
 	}
-	activity := []ActivityEntry{
-		completedActivity("alice", "ollama", "llama3", "2026-09-20T10:00:00Z"),
-		completedActivity("alice", "ollama", "llama3", "2026-09-21T10:00:00Z"),
-		completedActivity("alice", "ollama", "llama3", "2026-09-21T11:00:00Z"),
-		completedActivity("alice", "ollama", "llama3", "2026-09-22T10:00:00Z"),
-		completedActivity("alice", "ollama", "llama3", "2026-09-22T11:00:00Z"),
-		completedActivity("alice", "claude", "claude-sonnet-5", "2026-09-22T12:00:00Z"),
-		completedActivity("alice", "copilot", "gpt-5.3-codex", "2026-09-22T13:00:00Z"),
-		completedActivity("alice", "openai", "gpt-5.6-terra", "2026-09-22T14:00:00Z"),
-		completedActivity("mallory", "ollama", "llama3", "2026-09-22T15:00:00Z"),
+	inputs := achievement2Inputs{
+		Activity: []ActivityEntry{
+			completedActivity("alice", "ollama", "llama3", "2026-09-20T10:00:00Z"),
+			completedActivity("alice", "ollama", "llama3", "2026-09-21T10:00:00Z"),
+			completedActivity("alice", "ollama", "llama3", "2026-09-21T11:00:00Z"),
+			completedActivity("alice", "ollama", "llama3", "2026-09-22T10:00:00Z"),
+			completedActivity("alice", "ollama", "llama3", "2026-09-22T11:00:00Z"),
+			completedActivity("alice", "claude", "claude-sonnet-5", "2026-09-22T12:00:00Z"),
+			completedActivity("alice", "copilot", "gpt-5.3-codex", "2026-09-22T13:00:00Z"),
+			completedActivity("alice", "openai", "gpt-5.6-terra", "2026-09-22T14:00:00Z"),
+			completedActivity("mallory", "ollama", "llama3", "2026-09-22T15:00:00Z"),
+		},
+		JamStates: []CampaignJamState{{
+			CampaignID: "run-1",
+			Revisions:  []CampaignRevision{{Author: CampaignJamActor{Name: "alice"}}},
+			Polls: []CampaignPoll{{
+				CreatedBy: CampaignJamActor{Name: "bob"},
+				Votes:     []CampaignPollVote{{Voter: CampaignJamActor{Name: "alice"}}},
+				Decision:  &CampaignDecision{DecidedBy: CampaignJamActor{Name: "carol"}},
+			}},
+			Suggestions: []CampaignSuggestion{{
+				Status:     jamSuggestionAccepted,
+				Author:     CampaignJamActor{Name: "dave"},
+				ResolvedBy: &CampaignJamActor{Name: "carol"},
+			}},
+		}},
+		Runs: []Run{{
+			Key: "run-1", Stage: StageImplement, Assignee: "dave",
+			Stages: []RunStage{
+				{Name: StageSpec, Actor: "alice"},
+				{Name: StagePlan, Actor: "bob"},
+				{Name: StageImplement, Actor: "dave"},
+			},
+		}},
+		SwarmPlayers: []SwarmPlayer{{Login: "alice", Swarms: 1, SpeksCompleted: 2, ObjectivesCompleted: 3}},
 	}
-	achievements, summary := buildAchievements2(p, activity)
+	achievements, summary := buildAchievements2WithInputs(p, inputs)
 
 	for _, id := range []string{"local-steward", "hybrid-operator", "local-always-wins", "six-person-swarm", "full-sdlc-fireteam"} {
 		if !achievementAttained(achievements, id) {
@@ -61,6 +86,31 @@ func TestBuildAchievements2ExcludesSelfCollaborationAndUnknownRuntime(t *testing
 	}
 	if summary.TopTier != achievementTierSolo {
 		t.Fatalf("summary top tier = %q, want solo", summary.TopTier)
+	}
+}
+
+func TestBuildAchievements2CrossHiveAndPairCapAnnotations(t *testing.T) {
+	p := &ContributorProfile{
+		GitHubUsername: "alice",
+		TasksCompleted: 1,
+		TasksWithPR:    1,
+		Collaborators:  []CollaboratorRecord{{Username: "bob", Occasions: achievementPairOccasionCap + 1}},
+	}
+	achievements, summary := buildAchievements2WithInputs(p, achievement2Inputs{
+		LocalHiveID: "local-hive",
+		Hives: []ContributorHiveRel{
+			{ID: "local-hive", ProjectName: "local-hive"},
+			{ID: "hive-bluefin", ProjectName: "Bluefin", Org: "ublue-os"},
+			{ID: "hive-bazzite", ProjectName: "Bazzite", Org: "ublue-os"},
+		},
+	})
+	for _, id := range []string{"cross-hive-neighbor", "commons-regular"} {
+		if !achievementAttained(achievements, id) {
+			t.Fatalf("expected %s in %+v", id, achievements)
+		}
+	}
+	if len(summary.Annotations) != 1 || summary.Annotations[0].Kind != "pair-cap" {
+		t.Fatalf("summary annotations = %+v", summary.Annotations)
 	}
 }
 

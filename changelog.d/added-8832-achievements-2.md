@@ -1,0 +1,1 @@
+- Dossiers and the contributor leaderboard now surface Achievement System 2.0 teamwork tiers, Spektacular/Jam SDLC role coverage, cross-hive Commons badges, pair-cap guardrail annotations, richer Raid/swarm sequencing, local-model achievements, and the “local always wins” mastery path from existing Hive contribution data ([#8832](https://github.com/hivecommons/hive/issues/8832)).
