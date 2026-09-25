@@ -361,22 +361,28 @@ func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, statu
 		return
 	}
 	state.seenFinal = true
+	// Read the artifact under the id Spektacular actually reports (it prefixes
+	// a timestamp to the requested slug); the slug alone is not_found.
+	artifact := strings.TrimSpace(status.JoinKey())
+	if artifact == "" {
+		artifact = st.Artifact
+	}
 	var plan *Plan
 	if st.Stage == StagePlan {
-		exported, err := r.exportPlanWithFallbackInDir(ctx, st.WorkDir, st.Artifact)
+		exported, err := r.exportPlanWithFallbackInDir(ctx, st.WorkDir, artifact)
 		if err != nil {
 			res.Errors++
 			r.logger().Warn("[spektacular] plan is final but task-list import failed; not advancing",
-				"run", st.RunKey, "artifact", st.Artifact, "error", err)
+				"run", st.RunKey, "artifact", artifact, "error", err)
 			return
 		}
 		plan = &exported
 	}
 	if st.Stage == StageSpec {
-		body, err := r.readSpecInDir(ctx, st.WorkDir, st.Artifact)
+		body, err := r.readSpecInDir(ctx, st.WorkDir, artifact)
 		if err != nil {
 			r.logger().Warn("[spektacular] spec is final but artifact read failed; advancing without postback body",
-				"run", st.RunKey, "artifact", st.Artifact, "error", err)
+				"run", st.RunKey, "artifact", artifact, "error", err)
 		} else {
 			status.Body = body
 		}

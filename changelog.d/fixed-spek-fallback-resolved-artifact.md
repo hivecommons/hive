@@ -1,0 +1,1 @@
+- Spektacular runs no longer stall after a final plan with `fallback failed: file "<slug>/plan.md" not found`: the plan task-list fallback and the spec postback read now use the timestamp-prefixed artifact id Spektacular actually reports instead of the run's bare slug ([#8737](https://github.com/hivecommons/hive/issues/8737)).
