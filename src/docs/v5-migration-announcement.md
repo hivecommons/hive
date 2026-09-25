@@ -65,8 +65,8 @@ line; v4 has stopped feeding the moving channels.
 - **Tracking `edge`** — **your release line changed, not just your
   build.** `edge` is now the **v6** development line (dashboard-optional
   operation, [#7563](https://github.com/hivecommons/hive/issues/7563)),
-  which has no GA bar yet
-  ([#7683](https://github.com/hivecommons/hive/issues/7683)). If you ran
+  whose readiness bar now lives in the #7563 epic
+  ([#7563](https://github.com/hivecommons/hive/issues/7563) §v6 readiness bar). If you ran
   `edge` for early v5 visibility rather than to track the newest line,
   switch to `candidate` (v5) now via the version pill or by retagging your
   deployment — the pre-migration opt-out window described in earlier

@@ -178,7 +178,7 @@ the emergency-exception deviation recorded on that tracker). `v6` now
 publishes the `edge` channel, and v6 work no longer queues behind v5 GA
 evidence. The line's own release bar is
 [`src/docs/v6-readiness.md`](https://github.com/hivecommons/hive/blob/v6/src/docs/v6-readiness.md)
-with live tracker [#7683](https://github.com/hivecommons/hive/issues/7683).
+with live tracker [#7563](https://github.com/hivecommons/hive/issues/7563) §v6 readiness bar.
 (Original sequencing decision: [#7577](https://github.com/hivecommons/hive/issues/7577);
 v4 freeze policy: [#6346](https://github.com/hivecommons/hive/issues/6346).)
 
@@ -239,7 +239,7 @@ builds; operators on `stable`/`candidate` (v5) do not have them:
 
 Beyond the dashboard-optional theme, the line has begun accepting new
 tracks by RFC, each measured against the same readiness bar
-([#7683](https://github.com/hivecommons/hive/issues/7683) §Scope
+([#7563](https://github.com/hivecommons/hive/issues/7563) §Scope
 discipline):
 
 - **Task-scoped MCP** — expose the hive's view of a task (issue, PR,
@@ -341,7 +341,7 @@ the `edge` channel
 above reach operators tracking `edge` — but `edge` is an active-development
 build, not a stable claim. The line's promotion bar is
 [`src/docs/v6-readiness.md`](https://github.com/hivecommons/hive/blob/v6/src/docs/v6-readiness.md)
-(live tracker: [#7683](https://github.com/hivecommons/hive/issues/7683)):
+(live tracker: [#7563](https://github.com/hivecommons/hive/issues/7563) §v6 readiness bar):
 guard-invariant conformance rows are checked for all eight shipped
 surfaces; the per-surface live exercises remain open.
 
