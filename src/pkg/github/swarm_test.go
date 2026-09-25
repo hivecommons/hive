@@ -36,6 +36,7 @@ func TestScoreSwarmCountsClosedIssuesMergedPRsAndParticipants(t *testing.T) {
 		if r.URL.Path != "/search/issues" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
+
 		q := r.URL.Query().Get("q")
 		queries = append(queries, q)
 		w.Header().Set("Content-Type", "application/json")
@@ -60,5 +61,26 @@ func TestScoreSwarmCountsClosedIssuesMergedPRsAndParticipants(t *testing.T) {
 	}
 	if len(queries) != 2 || !strings.Contains(queries[0], "closed:") || !strings.Contains(queries[1], "merged:") {
 		t.Fatalf("queries = %v", queries)
+	}
+}
+
+func TestCountUnlabeledOpenIssues(t *testing.T) {
+	var query string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/search/issues" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		query = r.URL.Query().Get("q")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"total_count": 7, "items": []any{}})
+	}))
+	defer srv.Close()
+	c := newTestClient(t, srv, "acme", []string{"api"})
+	got, err := c.CountUnlabeledOpenIssues(context.Background(), "acme/api")
+	if err != nil {
+		t.Fatalf("CountUnlabeledOpenIssues: %v", err)
+	}
+	if got != 7 || !strings.Contains(query, "repo:acme/api") || !strings.Contains(query, "no:label") {
+		t.Fatalf("got %d query %q", got, query)
 	}
 }
