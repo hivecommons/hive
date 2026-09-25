@@ -113,13 +113,17 @@ func TestResolveReasoningEffort(t *testing.T) {
 		backend, model, configured, want string
 	}{
 		// agy REQUIRES --effort whenever --model is given; with no configured
-		// effort it launches at agyDefaultEffort.
+		// effort it launches at agyDefaultEffort unless the model id carries
+		// an agy effort suffix.
 		{"agy", "gemini-3.7-flash", "", agyDefaultEffort},
+		{"agy", "gemini-3.8-flash-high", "", "high"},
+		{"agy", "gemini-3.8-flash-medium", "", "medium"},
 		// A configured effort agy accepts is the one agy is launched with.
 		{"agy", "gemini-3.7-flash", "high", "high"},
-		// An effort agy rejects (codex vocabulary) falls back to the default —
-		// reporting it would advertise an effort agy never applied.
+		// An effort agy rejects (codex vocabulary) falls back to the model suffix
+		// or default — reporting xhigh would advertise an effort agy never applied.
 		{"agy", "gemini-3.7-flash", "xhigh", agyDefaultEffort},
+		{"agy", "gemini-3.8-flash-high", "xhigh", "high"},
 		// No model means agy is given no --effort at all, so claiming one
 		// would advertise an effort agy never applied.
 		{"agy", "", "", ""},

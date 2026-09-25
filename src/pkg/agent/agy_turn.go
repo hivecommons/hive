@@ -160,7 +160,7 @@ func agyTurnArgs(model, effort, conversationID string) []string {
 	args := []string{"--dangerously-skip-permissions"}
 	if model != "" {
 		// agy silently ignores --model without --effort (see agyInteractiveLaunchCmd).
-		args = append(args, "--model", model, "--effort", agyLaunchEffort(effort))
+		args = append(args, "--model", model, "--effort", agyLaunchEffort(model, effort))
 	}
 	if conversationID != "" {
 		args = append(args, "--conversation", conversationID)

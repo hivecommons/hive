@@ -74,11 +74,42 @@ func TestNormalizeModelID(t *testing.T) {
 		"deepseek/deepseek-chat:free":       "deepseek-chat",
 		"  Claude-Opus-4-8  ":               "claude-opus-4-8",
 		"meta-llama/Llama-3.3-70B-Instruct": "llama-3-3-70b-instruct",
+		"aws/claude-sonnet-4-6":             "claude-sonnet-4-6",
+		"bedrock/us.anthropic.claude-sonnet-4-6-20250514-v1:0": "claude-sonnet-4-6",
+		"hosted_vllm/llama3.3-70B-Instruct":                    "llama-3-3-70b-instruct",
 	}
 	for in, want := range cases {
 		if got := normalizeModelID(in); got != want {
 			t.Errorf("normalizeModelID(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestLiteLLMRoutedModelsUseExactPrice(t *testing.T) {
+	variants := []string{
+		"claude-sonnet-4-6",
+		"aws/claude-sonnet-4-6",
+		"bedrock/us.anthropic.claude-sonnet-4-6-20250514-v1:0",
+	}
+	var want float64
+	for i, v := range variants {
+		usd, priced := EstimateCostUSD(v, 1_000_000, 1_000_000, 0, 0)
+		if !priced {
+			t.Fatalf("LiteLLM-routed variant %q should resolve to an exact list price", v)
+		}
+		if i == 0 {
+			want = usd
+		} else if !approxEqual(usd, want) {
+			t.Fatalf("variant %q priced $%.6f, want $%.6f", v, usd, want)
+		}
+	}
+
+	llamaUSD, priced := EstimateCostUSD("hosted_vllm/llama3.3-70B-Instruct", 1_000_000, 1_000_000, 0, 0)
+	if !priced {
+		t.Fatalf("LiteLLM llama alias should resolve to exact price")
+	}
+	if !approxEqual(llamaUSD, 1.38) {
+		t.Fatalf("llama alias cost = $%.6f, want $1.38", llamaUSD)
 	}
 }
 

@@ -152,6 +152,20 @@ func TestEstimatedSessions_EmptySessions(t *testing.T) {
 	}
 }
 
+func TestEstimatedWindow(t *testing.T) {
+	agg := &tokens.AggregateSummary{
+		Sessions: []tokens.SessionSummary{
+			{SessionID: "later", FirstActive: 3000, LastActive: 5000},
+			{SessionID: "open-ended", FirstActive: 1000},
+			{SessionID: "unknown"},
+		},
+	}
+	start, end := estimatedWindow(agg)
+	if start != 1000 || end != 5000 {
+		t.Fatalf("estimatedWindow = %d/%d, want 1000/5000", start, end)
+	}
+}
+
 func TestEstimatedSessions_PricesAndSortsByStartThenAgent(t *testing.T) {
 	agg := &tokens.AggregateSummary{
 		Sessions: []tokens.SessionSummary{
