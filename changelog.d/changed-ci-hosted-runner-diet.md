@@ -1,0 +1,1 @@
+- CI: feature-branch pushes no longer build the six platform images in docker.yml; v2-ci's `docker` job is now a matrix over all three Dockerfiles, and `gosec`/`golangci-lint` moved to the hive runner fleet, freeing the shared GitHub-hosted queue that was the last check to finish on every PR.
