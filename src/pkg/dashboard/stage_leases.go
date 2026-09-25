@@ -316,7 +316,7 @@ func (s *Server) ResolveRunStageWorkDir(runKey, stage, identity, repo string, ge
 	if s == nil {
 		return "", errors.New("run lease registry unavailable")
 	}
-	candidates := []string{runStageWorktreePath(identity, runKey, stage, gen)}
+	candidates := []string{spekHubRunWorktreePath(identity, runKey), runStageWorktreePath(identity, runKey, stage, gen)}
 	if strings.TrimSpace(identity) != "" && strings.TrimSpace(repo) != "" {
 		candidates = append(candidates, filepath.Join(agentWorkspaceRoot, identity, filepath.FromSlash(strings.TrimSpace(repo))))
 	}

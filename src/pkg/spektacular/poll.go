@@ -112,6 +112,7 @@ type stageState struct {
 	identity   string
 	lastPolled time.Time
 	lastStatus DocumentStatus
+	artifact   string
 	seenFinal  bool
 	advanced   bool
 	expiries   int
@@ -276,12 +277,30 @@ func (r *Runner) tickStage(ctx context.Context, st Stage, state *stageState, now
 		}
 		state.lastPolled = now
 		res.Polled++
-		status, err := r.statusInDir(ctx, dir, kind, st.Artifact)
+		artifact := strings.TrimSpace(state.artifact)
+		if artifact == "" {
+			artifact = st.Artifact
+		}
+		status, err := r.statusInDir(ctx, dir, kind, artifact)
 		switch {
 		case err == nil:
+			state.artifact = status.JoinKey()
 			r.observe(ctx, st, state, status, now, res)
 		default:
 			var nf *NotFoundError
+			if errors.As(err, &nf) && state.lastStatus == "" {
+				resolved, resolveErr := r.ResolveArtifact(ctx, dir, kind, st.Artifact)
+				if resolveErr == nil && resolved != "" && resolved != artifact {
+					status, err = r.statusInDir(ctx, dir, kind, resolved)
+					if err == nil {
+						state.artifact = status.JoinKey()
+						r.logger().Info("[spektacular] resolved run artifact id",
+							"run", st.RunKey, "stage", st.Stage, "requested", st.Artifact, "resolved", state.artifact)
+						r.observe(ctx, st, state, status, now, res)
+						break
+					}
+				}
+			}
 			if errors.As(err, &nf) && state.lastStatus != "" {
 				// Seen before, gone now: a new document has replaced it. Never
 				// rebind the lease to whatever appeared; park it for a reset.

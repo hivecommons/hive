@@ -41,6 +41,7 @@ type scriptedExec struct {
 	statuses   []string
 	exportJSON string
 	exportErr  error
+	listJSON   string
 	files      map[string]string
 	calls      [][]string
 	dirs       []string
@@ -60,6 +61,12 @@ func (s *scriptedExec) exec(_ context.Context, dir string, args []string) ([]byt
 			return nil, s.exportErr
 		}
 		return []byte(s.exportJSON), nil
+	}
+	if len(args) >= 3 && args[1] == verbFile && args[2] == "list" {
+		if s.listJSON != "" {
+			return []byte(s.listJSON), nil
+		}
+		return []byte(`{"error":true,"code":"not_found","message":"no artifacts"}`), errors.New("exit status 1")
 	}
 	if len(args) >= 4 && args[0] == KindPlan && args[1] == verbFile && args[2] == verbRead {
 		if s.files != nil {
@@ -338,6 +345,45 @@ func TestRunArtifactName(t *testing.T) {
 		if got := RunArtifactName(in); got != want {
 			t.Fatalf("RunArtifactName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestResolveArtifactAcceptsTimestampedIDs(t *testing.T) {
+	ex := &scriptedExec{listJSON: `["20260925160000-kubestellar-console-23725.md","20260925163042-kubestellar-console-23725.md","other.md"]`}
+	r := &Runner{Exec: ex.exec}
+	got, err := r.ResolveArtifact(context.Background(), ".", KindSpec, "kubestellar-console-23725")
+	if err != nil {
+		t.Fatalf("ResolveArtifact: %v", err)
+	}
+	if got != "20260925163042-kubestellar-console-23725" {
+		t.Fatalf("resolved = %q", got)
+	}
+}
+
+func TestTickResolvesTimestampedArtifactAfterNotFound(t *testing.T) {
+	reg := newFakeRegistry(StageSpec)
+	reg.stage.RunKey = "kubestellar/console#23725"
+	reg.stage.Artifact = "kubestellar-console-23725"
+	var calls [][]string
+	exec := func(_ context.Context, _ string, args []string) ([]byte, error) {
+		calls = append(calls, append([]string(nil), args...))
+		if len(args) >= 3 && args[1] == verbFile && args[2] == "list" {
+			return []byte(`["20260925163042-kubestellar-console-23725.md"]`), nil
+		}
+		if len(args) >= 3 && args[1] == verbStatus && args[2] == "kubestellar-console-23725" {
+			return []byte(`{"error":true,"code":"artifact_not_found","message":"missing","resource":"kubestellar-console-23725"}`), errors.New("exit status 1")
+		}
+		if len(args) >= 3 && args[1] == verbStatus && args[2] == "20260925163042-kubestellar-console-23725" {
+			return []byte(statusJSON(KindSpec, "20260925163042-kubestellar-console-23725", DocumentFinal)), nil
+		}
+		return nil, fmt.Errorf("unexpected args: %v", args)
+	}
+	r := &Runner{Exec: exec, Poll: testPoll, Registry: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
+		t.Fatalf("tick = %+v", res)
+	}
+	if len(calls) < 3 || calls[2][2] != "20260925163042-kubestellar-console-23725" {
+		t.Fatalf("calls = %+v", calls)
 	}
 }
 
@@ -1085,17 +1131,18 @@ func TestBinaryExec_ReturnsStdoutOnFailure(t *testing.T) {
 	}
 }
 
-// --- Invariant: Hive never opens a Spektacular file -----------------------
+// --- Invariant: Hive never reads Spektacular document bodies ---------------
 
-// TestNoDirectFileAccess scans this package's non-test sources: every fact
-// about an artifact must arrive through Exec. The fixture directory is the
-// only place a Spektacular-shaped file exists, and nothing here reads it.
+// TestNoDirectSpekDocumentReads scans this package's non-test sources: status
+// facts still arrive through Exec. The v0.22 timestamped-id fallback may walk
+// project directories to discover artifact names, but must not read document
+// bodies or test fixtures.
 func TestNoDirectFileAccess(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
-	forbidden := []string{"os.Open", "os.ReadFile", "os.ReadDir", "os.OpenFile", "filepath.Walk", "ioutil.Read", "testdata"}
+	forbidden := []string{"os.Open", "os.ReadFile", "os.ReadDir", "os.OpenFile", "ioutil.Read", "testdata"}
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -1107,7 +1154,7 @@ func TestNoDirectFileAccess(t *testing.T) {
 		}
 		for _, f := range forbidden {
 			if strings.Contains(string(src), f) {
-				t.Fatalf("%s reaches for %q; Hive must only learn about Spektacular artifacts through Exec", name, f)
+				t.Fatalf("%s reaches for %q; Hive must not read Spektacular document bodies directly", name, f)
 			}
 		}
 	}
