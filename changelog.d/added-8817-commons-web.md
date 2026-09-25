@@ -1,0 +1,1 @@
+- The Commons now includes a loopback-only `hivectl hives web` page for contributors to subscribe or unsubscribe hives, reorder their rank by buttons or drag/drop, and choose the routing strategy without exposing registration tokens.

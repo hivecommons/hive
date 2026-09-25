@@ -3598,6 +3598,27 @@ test('neediest Commons routing prefers the subscribed hive with the most actiona
   } finally { teardown(relay); }
 });
 
+test('neediest Commons routing can score idle capacity above raw queued work', () => {
+  const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_COMMONS_STRATEGY: 'neediest', HIVE_COMMONS_NEEDIEST_REFRESH_MS: '0' } });
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+    hubs[0].lastActionableItems = 4;
+    hubs[0].lastActiveContributors = 0;
+    hubs[0].lastTotalRegistered = 4;
+    hubs[0].lastNeediestScore = 8;
+    hubs[1].lastActionableItems = 5;
+    hubs[1].lastActiveContributors = 5;
+    hubs[1].lastTotalRegistered = 5;
+    hubs[1].lastNeediestScore = 5;
+
+    relay.sendReadyForNextTask('task_complete');
+
+    assert.strictEqual(sentA.filter(m => m.type === 'ready').length, 1,
+      'idle capacity should boost a hive with almost as much queued work');
+    assert.strictEqual(sentB.filter(m => m.type === 'ready').length, 0);
+  } finally { teardown(relay); }
+});
+
 test('neediest Commons routing falls through after task_unavailable', () => {
   const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_COMMONS_STRATEGY: 'neediest', HIVE_COMMONS_NEEDIEST_REFRESH_MS: '0' } });
   try {

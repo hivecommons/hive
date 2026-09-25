@@ -1303,6 +1303,9 @@ function makeHub(url, token) {
     // hub released before that advertisement enforces silently.
     maxFrameBytes: WS_FRAME_BYTES,
     lastActionableItems: null,
+    lastActiveContributors: null,
+    lastTotalRegistered: null,
+    lastNeediestScore: null,
     lastStatusAt: 0,
   };
 }
@@ -1855,14 +1858,16 @@ function chooseSpreadHub() {
 
 function chooseNeediestHub() {
   let best = -1;
-  let bestItems = -1;
+  let bestScore = -1;
   for (let i = 0; i < hubs.length; i++) {
     const hub = hubs[i];
     if (!hub || hub.authFailed) continue;
-    const items = Number.isFinite(hub.lastActionableItems) ? hub.lastActionableItems : -1;
-    if (items > bestItems) {
+    const score = Number.isFinite(hub.lastNeediestScore)
+      ? hub.lastNeediestScore
+      : (Number.isFinite(hub.lastActionableItems) ? hub.lastActionableItems : -1);
+    if (score > bestScore) {
       best = i;
-      bestItems = items;
+      bestScore = score;
     }
   }
   if (best >= 0) {
@@ -1926,6 +1931,13 @@ function refreshHubStatus(hub) {
         const actionable = Number(status.actionable_items);
         if (Number.isFinite(actionable)) {
           hub.lastActionableItems = actionable;
+          const active = Number(status.active_contributors);
+          const registered = Number(status.total_registered);
+          hub.lastActiveContributors = Number.isFinite(active) ? active : null;
+          hub.lastTotalRegistered = Number.isFinite(registered) ? registered : null;
+          const idleContributors = Number.isFinite(active) && Number.isFinite(registered) ? Math.max(0, registered - active) : 0;
+          const idleFraction = Number.isFinite(registered) && registered > 0 ? idleContributors / registered : 0;
+          hub.lastNeediestScore = actionable * (1 + idleFraction);
           hub.lastStatusAt = Date.now();
         }
       } catch (_) {}

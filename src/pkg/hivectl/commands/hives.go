@@ -80,6 +80,7 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
 	cmd.AddCommand(newHivesSessionCommand(env))
 	cmd.AddCommand(newHivesMoveCommand(env))
 	cmd.AddCommand(newHivesStrategyCommand(env))
+	cmd.AddCommand(newHivesWebCommand(env))
 	cmd.AddCommand(newHivesRenameCommand(env))
 	cmd.AddCommand(newHivesRemoveCommand(env))
 	return cmd

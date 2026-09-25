@@ -682,6 +682,7 @@ hivectl hives import acme.hive-profile --name acme-laptop
 hivectl hives session acme --label review
 hivectl hives move acme up                                    # rank order
 hivectl hives strategy spread                                 # ranked|spread|neediest
+hivectl hives web                                             # loopback web UI for The Commons
 hivectl hives rename acme acme-prod
 hivectl hives remove acme                                     # confirm, or --yes
 ```
@@ -737,10 +738,19 @@ Notes:
   asks the highest-ranked hive first and falls through only when it reports no
   work; `spread` uses rank-weighted rotation with occasional mixing so lower
   ranked hives still receive some of your daily allotment; `neediest` polls
-  each hub's `/api/contribute/status` and prefers the one advertising the most
-  actionable work. The existing contributor quota guard still runs before an
-  offered task is accepted, so a local daily/subscription cap can hold the relay
-  regardless of which hive The Commons picked.
+  each hub's `/api/contribute/status` and prefers queued actionable work,
+  lightly boosted by idle contributor capacity when the hub reports
+  `active_contributors` and `total_registered`. The existing contributor quota
+  guard still runs before an offered task is accepted, so a local
+  daily/subscription cap can hold the relay regardless of which hive The
+  Commons picked.
+- **The Commons web UI is local-only.** `hivectl hives web` prints a
+  tokenized `http://127.0.0.1:<port>/` URL, serves only on loopback, and backs
+  the page with the same `profiles.yml` / generated `contributor.env` store as
+  the CLI and TUI. The page can subscribe (register) a hive, unsubscribe, drag
+  rows or use ↑/↓ to rank them, and choose `ranked`, `spread` or `neediest`.
+  The API and HTML never return registration tokens; the printed URL carries a
+  short-lived local UI token and should not be shared.
 - **`use`, `move` and `strategy` switch a running relay.** They regenerate the
   projection, then signal the relay advertised in `contributor-relay.pid` (or
   its recorded docker/podman container) to reload `contributor.env`. The task
