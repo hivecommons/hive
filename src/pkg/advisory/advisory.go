@@ -359,6 +359,19 @@ var closeReasonBasis = map[string]CloseBasis{
 // heuristics (a merged PR's title matched, or every GitHub reference the
 // finding cites closed), or only the closer's say-so.
 func resolvedAtForBead(store *beads.Store, b *beads.Bead, opts DigestOptions) (time.Time, CloseBasis) {
+	return resolvedAtForBeadSince(store, b, opts, time.Time{})
+}
+
+// resolvedAtForBeadSince is resolvedAtForBead for a caller that only cares
+// whether the bead resolved AFTER cutoff. A persisted resolved_at at or before
+// the cutoff is final without a lookup: the linked-reference pass can only
+// move the timestamp EARLIER (it replaces the persisted value solely when the
+// cited work closed before it), so the answer stays outside the window
+// whatever GitHub says. Before this every closed advisory bead in the store —
+// months of them — cost one live issue GET per governor cycle, which is what
+// drained a 15000/hr installation quota and, under post-reset slow-start
+// pacing, pinned the governor loop for the whole cycle interval.
+func resolvedAtForBeadSince(store *beads.Store, b *beads.Bead, opts DigestOptions, cutoff time.Time) (time.Time, CloseBasis) {
 	persisted, hasPersisted := parseResolvedAt(b.Meta(resolvedAtMetadataKey))
 	reason := b.Meta(closeReasonMetadataKey)
 	basis, ok := closeReasonBasis[reason]
@@ -366,6 +379,9 @@ func resolvedAtForBead(store *beads.Store, b *beads.Bead, opts DigestOptions) (t
 		basis = CloseBasisUnverified
 	}
 	if hasPersisted && reason == prLinkedCloseReason {
+		return persisted, basis
+	}
+	if hasPersisted && !cutoff.IsZero() && !persisted.After(cutoff) {
 		return persisted, basis
 	}
 	if linkedAt, ok := linkedResolvedAtForBead(b, opts); ok {
@@ -801,6 +817,13 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts Dige
 	var resolved []ResolvedFinding
 	total := 0
 	cutoff := time.Now().Add(-recentlyResolvedWindow)
+	// One memoized, budgeted resolver for the whole build: the closed-bead
+	// pass below and partitionSettledStale share it, so an issue cited by many
+	// beads costs one lookup and a pathological store cannot fan out into an
+	// unbounded number of live GitHub calls on the governor goroutine.
+	if opts.ResolveRef != nil {
+		opts.ResolveRef = newStaleRefResolver(opts.ResolveRef).ResolveRef
+	}
 	for agentName, store := range stores {
 		seen := make(map[string]bool)
 		for _, b := range store.List(beads.ListFilter{}) {
@@ -814,7 +837,7 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts Dige
 			// with either status, and a "done" finding lingering in the digest
 			// as if still open is exactly the staleness #2575 is about.
 			if b.Status == beads.StatusClosed || b.Status == beads.StatusDone {
-				resolvedAt, basis := resolvedAtForBead(store, b, opts)
+				resolvedAt, basis := resolvedAtForBeadSince(store, b, opts, cutoff)
 				if resolvedAt.After(cutoff) {
 					resolved = append(resolved, ResolvedFinding{
 						Agent:    agentName,
