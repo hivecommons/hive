@@ -7,7 +7,7 @@ package mention
 // the surface can bypass: ioscan on inbound text, Converse for replies,
 // canary/secret scrubbing on outbound GitHub text, the dashboard role floor,
 // and the proxy mode/capability ladder before agent work is driven. Issue:
-// hivecommons/hive#8041. Tracker: hivecommons/hive#7683.
+// hivecommons/hive#8041. Tracker: hivecommons/hive#7563.
 
 import (
 	"context"
