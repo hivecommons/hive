@@ -117,3 +117,75 @@ func TestCampaignJamProjectSyncDisabledAndFailureHandling(t *testing.T) {
 		t.Fatalf("failure state not visible: %+v", jam.ProjectSync)
 	}
 }
+
+func TestJamProjectSyncAuthRestrictsGitHubToken(t *testing.T) {
+	const githubToken = "gh-secret"
+	const customToken = "custom-secret"
+	t.Setenv("GITHUB_TOKEN", githubToken)
+	t.Setenv(jamProjectSyncTokenEnv, customToken)
+
+	cases := []struct {
+		name      string
+		endpoint  string
+		wantToken string
+		wantErr   bool
+	}{
+		{name: "default github endpoint", endpoint: jamProjectSyncDefaultURL, wantToken: githubToken},
+		{name: "custom https endpoint gets custom token", endpoint: "https://sync.example.com/graphql", wantToken: customToken},
+		{name: "github host over http is not trusted", endpoint: "http://api.github.com/graphql", wantErr: true},
+		{name: "plain http to remote host rejected", endpoint: "http://sync.example.com/graphql", wantErr: true},
+		{name: "loopback http allowed", endpoint: "http://127.0.0.1:8080/graphql", wantToken: customToken},
+		{name: "localhost http allowed", endpoint: "http://localhost:8080/graphql", wantToken: customToken},
+		{name: "unsupported scheme rejected", endpoint: "ftp://sync.example.com/graphql", wantErr: true},
+		{name: "invalid url rejected", endpoint: "not a url", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, token, err := jamProjectSyncAuth(tc.endpoint)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("jamProjectSyncAuth(%q) err = nil, want error", tc.endpoint)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("jamProjectSyncAuth(%q) err = %v", tc.endpoint, err)
+			}
+			if token != tc.wantToken {
+				t.Fatalf("jamProjectSyncAuth(%q) token = %q, want %q", tc.endpoint, token, tc.wantToken)
+			}
+		})
+	}
+}
+
+func TestJamProjectSyncAuthRequiresGitHubTokenForGitHub(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	if _, _, err := jamProjectSyncAuth(jamProjectSyncDefaultURL); err == nil {
+		t.Fatal("jamProjectSyncAuth without GITHUB_TOKEN err = nil, want error")
+	}
+}
+
+func TestCampaignJamProjectSyncDoesNotForwardGitHubTokenToCustomEndpoint(t *testing.T) {
+	s := jamTestServer(t)
+	authHeader := make(chan string, 1)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader <- r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"data":{"hiveJamProjectSync":{"ok":true}}}`))
+	}))
+	t.Cleanup(api.Close)
+	t.Setenv(jamProjectSyncEndpointEnv, api.URL)
+	t.Setenv("GITHUB_TOKEN", "gh-secret")
+	t.Setenv(jamProjectSyncTokenEnv, "")
+
+	enable := jamPostAs(t, s, "/api/campaigns/spec-project-token/jam/project-sync", "owner", "maintainer", map[string]any{"action": "enable", "project_id": "PVT_token"}, true)
+	if enable.Code != http.StatusOK {
+		t.Fatalf("enable = %d body=%s", enable.Code, enable.Body.String())
+	}
+	sync := jamPostAs(t, s, "/api/campaigns/spec-project-token/jam/project-sync", "owner", "maintainer", map[string]any{"action": "sync"}, true)
+	if sync.Code != http.StatusOK {
+		t.Fatalf("sync = %d body=%s", sync.Code, sync.Body.String())
+	}
+	if got := <-authHeader; got != "" {
+		t.Fatalf("custom endpoint received Authorization %q, want none", got)
+	}
+}

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -13,8 +15,49 @@ import (
 
 const (
 	jamProjectSyncEndpointEnv = "HIVE_JAM_PROJECT_SYNC_URL"
+	jamProjectSyncTokenEnv    = "HIVE_JAM_PROJECT_SYNC_TOKEN"
 	jamProjectSyncDefaultURL  = "https://api.github.com/graphql"
+	jamProjectSyncGitHubHost  = "api.github.com"
+	jamProjectSyncTimeout     = 10 * time.Second
 )
+
+// jamProjectSyncAuth resolves the sync endpoint and the bearer token it may
+// receive. GITHUB_TOKEN is only ever sent to api.github.com over https; a
+// custom endpoint gets HIVE_JAM_PROJECT_SYNC_TOKEN instead, and plain http is
+// allowed only for loopback hosts so no credential crosses the network in
+// cleartext (#8811).
+func jamProjectSyncAuth(endpoint string) (string, string, error) {
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Host == "" {
+		return "", "", fmt.Errorf("%s is not a valid URL", jamProjectSyncEndpointEnv)
+	}
+	host := u.Hostname()
+	switch u.Scheme {
+	case "https":
+	case "http":
+		if !jamProjectSyncLoopback(host) {
+			return "", "", fmt.Errorf("%s must use https (http is allowed only for loopback hosts)", jamProjectSyncEndpointEnv)
+		}
+	default:
+		return "", "", fmt.Errorf("%s must use https", jamProjectSyncEndpointEnv)
+	}
+	if u.Scheme == "https" && strings.EqualFold(host, jamProjectSyncGitHubHost) {
+		token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
+		if token == "" {
+			return "", "", errors.New("GITHUB_TOKEN required for GitHub Projects sync")
+		}
+		return u.String(), token, nil
+	}
+	return u.String(), strings.TrimSpace(os.Getenv(jamProjectSyncTokenEnv)), nil
+}
+
+func jamProjectSyncLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
 
 type campaignProjectSyncRequest struct {
 	Action     string `json:"action"`
@@ -200,9 +243,9 @@ func postCampaignProjectSync(payload campaignProjectSyncPayload) error {
 	if endpoint == "" {
 		endpoint = jamProjectSyncDefaultURL
 	}
-	token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
-	if endpoint == jamProjectSyncDefaultURL && token == "" {
-		return errors.New("GITHUB_TOKEN required for GitHub Projects sync")
+	endpoint, token, err := jamProjectSyncAuth(endpoint)
+	if err != nil {
+		return err
 	}
 	body := map[string]any{
 		"query":     "mutation HiveJamProjectSync($input: JSON!) { hiveJamProjectSync(input: $input) { ok } }",
@@ -220,7 +263,7 @@ func postCampaignProjectSync(payload campaignProjectSyncPayload) error {
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: jamProjectSyncTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
