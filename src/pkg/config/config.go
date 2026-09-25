@@ -3,6 +3,8 @@ package config
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"log/slog"
@@ -2795,6 +2797,17 @@ func SecretFilePathAllowed(p string) bool {
 		}
 	}
 	return false
+}
+
+// APIKeySHA256 returns the lowercase SHA-256 hex digest of the exact key
+// string Hive will present to an inference gateway. It returns empty for an
+// empty key so callers can expose presence/hash without leaking the secret.
+func APIKeySHA256(key string) string {
+	if key == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:])
 }
 
 func (gw GatewayConfig) ResolveAPIKey() string {

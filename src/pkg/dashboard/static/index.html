@@ -21861,8 +21861,9 @@ function burnAreaChart() {
         // the secret). When a key is set we surface it — a recorded name, or
         // "(unnamed)" for gateways that never recorded one — so a manager can
         // tell WHICH key each gateway uses without seeing the value.
+        const keyHash = gw.keySHA256 ? ` · SHA256: <span title="${esc(gw.keySHA256)}">${esc(gw.keySHA256.slice(0, 12))}</span>` : '';
         const keyLine = gw.hasKey
-          ? `key set${gw.keyHint ? ' (' + esc(gw.keyHint) + ')' : ''} · Using key: ${esc(gw.keyName || '(unnamed)')}`
+          ? `key set · Using key: ${esc(gw.keyName || '(unnamed)')}${keyHash}`
           : 'no key';
         const persistedProbe = _gatewayProbeResults[gw.name] || (gw.health ? { ok: false, error: gatewayHealthText(gw.health) } : null);
         const testDisplay = persistedProbe ? 'block' : 'none';
@@ -22283,9 +22284,9 @@ function burnAreaChart() {
       // tail hint ("••••WMg"), and the store it resolved from. The API
       // Key input always starts EMPTY (never pre-filled): typing a value
       // replaces the stored key, leaving it blank keeps it.
-      const keyHint = litellm.keyHint ? ` (${esc(litellm.keyHint)})` : '';
+      const keyHash = litellm.keySHA256 ? ` — SHA256: <span title="${esc(litellm.keySHA256)}">${esc(litellm.keySHA256.slice(0, 12))}</span>` : '';
       const keyLine = litellm.hasKey
-        ? `Key detected: yes${keyHint} — from ${esc(litellmKeySourceLabel(litellm.keySource))}`
+        ? `Key detected: yes${keyHash} — from ${esc(litellmKeySourceLabel(litellm.keySource))}`
         : 'Key detected: no — paste your gateway key above';
       // Pre-guardrail leak remediation: a key VALUE previously pasted into
       // the env-name/file fields comes back MASKED from the server with a
