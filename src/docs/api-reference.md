@@ -10,18 +10,18 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 |---|---|---|---|---|
 | `GET` | `/api/version` | Dashboard auth/session | Build/version metadata; includes `upgradeMarker` (`target`, `current`, `attempts`, `maxAttempts`, `failed`, `requestedAt`, `lastError`) while a self-upgrade is in flight or has failed ([#6765](https://github.com/hivecommons/hive/issues/6765)), and an `autoUpdate` object (`enabled`, `state` — one of `disabled`/`up_to_date`/`behind`/`retrying`/`failed`/`unknown` — `healthy`, `period`, `targetBranch`, `targetCommit`, `currentCommit`, `commitsBehind`, `lastAttemptAt`, `lastError`, `detail`) that never reports a failed or unknown update as healthy ([#6962](https://github.com/hivecommons/hive/issues/6962), [#6963](https://github.com/hivecommons/hive/issues/6963)) | `pkg/dashboard/api.go:55` |
 | `POST` | `/api/release-channel` | Owner only | Hosted spoke self-service release-channel selector; relays `stable`/`candidate`/`edge` to the hub's existing switch-branch endpoint with the spoke dashboard-token proof, and reports the requested channel as pending until the Deployment image lands | `pkg/dashboard/api.go:73` |
-| `GET` | `/api/health` | Public | Basic health probe | `pkg/dashboard/server.go:1116` |
-| `GET` | `/api/health/deep` | Public | Deep health probe | `pkg/dashboard/server.go:1117` |
-| `GET` | `/api/livez` | Public | Kubernetes liveness probe | `pkg/dashboard/server.go:1118` |
-| `GET` | `/metrics` | Registered only when `HIVE_METRICS_ENABLED`; requires `Authorization: Bearer $HIVE_METRICS_TOKEN` (403 if the token is unset) | Prometheus metrics | `pkg/dashboard/server.go:1124` |
-| `GET` | `/api/status` | Dashboard auth/session | Dashboard aggregate status; accepts `?fields=a,b` for top-level selection and `?omit=repos` to drop heavy sections, and honors `Accept-Encoding: gzip` | `pkg/dashboard/server.go:1129` |
-| `GET` | `/api/status/summary` | Dashboard auth/session | Compact agent/governor/budget status summary for pollers; honors `Accept-Encoding: gzip` | `pkg/dashboard/server.go:1130` |
-| `GET` | `/api/events` | Dashboard auth/session | Server-sent event stream | `pkg/dashboard/server.go:1131` |
-| `GET` | `/api/swarm` | Dashboard auth/session | Current swarm status: display name, duration, active repo, expiry, persisted prep metrics when available, and idle-unlock fields. | `pkg/dashboard/swarm.go:157` |
-| `POST` | `/api/swarm` | Owner only | Start a 24h repo swarm for a configured repo, returning 409 when another swarm is active and 423 when a previous swarm keeps the next swarm locked until enough agents are idle unless body `{"repo":"owner/name","force":true}` is used; saves the active record before repo prep, then persists prep metrics. | `pkg/dashboard/swarm.go:158` |
-| `DELETE` | `/api/swarm` | Owner only | End the active swarm, score issues closed and PRs merged in the window, and append it to history. | `pkg/dashboard/swarm.go:159` |
-| `GET` | `/api/swarm/history` | Dashboard auth/session | Completed swarm history, aggregate repo leaderboard, and top player records. | `pkg/dashboard/swarm.go:160` |
-| `GET` | `/api/swarm/players` | Dashboard auth/session | Per-player swarm records and earned achievement catalog. | `pkg/dashboard/swarm.go:161` |
+| `GET` | `/api/health` | Public | Basic health probe | `pkg/dashboard/server.go:1117` |
+| `GET` | `/api/health/deep` | Public | Deep health probe | `pkg/dashboard/server.go:1118` |
+| `GET` | `/api/livez` | Public | Kubernetes liveness probe | `pkg/dashboard/server.go:1119` |
+| `GET` | `/metrics` | Registered only when `HIVE_METRICS_ENABLED`; requires `Authorization: ****** (403 if the token is unset) | Prometheus metrics | `pkg/dashboard/server.go:1125` |
+| `GET` | `/api/status` | Dashboard auth/session | Dashboard aggregate status; accepts `?fields=a,b` for top-level selection and `?omit=repos` to drop heavy sections, and honors `Accept-Encoding: gzip` | `pkg/dashboard/server.go:1130` |
+| `GET` | `/api/status/summary` | Dashboard auth/session | Compact agent/governor/budget status summary for pollers; honors `Accept-Encoding: gzip` | `pkg/dashboard/server.go:1131` |
+| `GET` | `/api/events` | Dashboard auth/session | Server-sent event stream | `pkg/dashboard/server.go:1132` |
+| `GET` | `/api/swarm` | Dashboard auth/session | Current swarm status: display name, duration, active repo, expiry, persisted prep metrics when available, and idle-unlock fields. | `pkg/dashboard/swarm.go:160` |
+| `POST` | `/api/swarm` | Owner only | Start a 24h repo swarm for a configured repo, returning 409 when another swarm is active and 423 when a previous swarm keeps the next swarm locked until enough agents are idle unless body `{"repo":"owner/name","force":true}` is used; saves the active record before repo prep, persists prep metrics, and announces the start to Discord when configured. | `pkg/dashboard/swarm.go:161` |
+| `DELETE` | `/api/swarm` | Owner only | End the active swarm, score issues closed and PRs merged in the window, append it to history, and announce the result to Discord when configured. | `pkg/dashboard/swarm.go:162` |
+| `GET` | `/api/swarm/history` | Dashboard auth/session | Completed swarm history, aggregate repo leaderboard, and top player records. | `pkg/dashboard/swarm.go:163` |
+| `GET` | `/api/swarm/players` | Dashboard auth/session | Per-player swarm records and earned achievement catalog. | `pkg/dashboard/swarm.go:164` |
 | `GET` | `/api/runs` | Dashboard auth/session | Active staged runs projected from task leases, plans, and lifecycle timeline. Returns an array of `Run` objects: canonical `key` (`owner/repo#number`), current-stage `lease_key`, `title`, `repo` (`owner/repo`), `stage`, `gen`, `stage_started_at`, `waiting_on` (`agent`, `remote`, `human`, `ci`, `none`), `waiting_since`, `assignee`, `last_receipt`, `plan_epic_id`, and `stages[]` (`name`, `status`, `gen`, `receipt`). | `pkg/dashboard/api.go:86` |
 | `GET` | `/api/runs/audit` | Owner only | Read-only cross-repo audit query over existing retained artifacts. Query `repo`, canonical `run` (`owner/repo#number`), RFC3339 `since`/`until`, `kind`, `limit` (default 100, max 500), and `page_token`. Returns `{items,next_page_token,retention}`; each item has `source` (`audit_log`, `timeline`, `lease_receipt`, `plan_epic`), `kind`, `run`, `repo`, `at`, `actor`, `artifact_id`, `attrs`, or an explicit `kind=expired,status=expired,state=Unknown` marker when requested history may have aged out. | `pkg/dashboard/api.go:87` |
 | `POST` | `/api/runs/audit` | Owner only | Activate the convergence audit campaign over a scope directory. Body `{"campaign_key":"audit-campaign","scope_dir":"/data/convergence/audit/scope","store":"audit","generation":1,"run_key":"","run_url":""}`; `scope_dir` defaults to `/data/convergence/audit/scope`, `store` defaults to `audit`, `auditor`, `scanner`, `supervisor`, then the first configured bead store. Runs inspection even when `publication.enabled` is false, but then skips the publisher and returns `publication_skipped:true` with reason `publication.disabled`. | `pkg/dashboard/api.go:88` |
@@ -53,7 +53,7 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
 | `GET` | `/api/style` | Public | Sanitized custom dashboard CSS | `pkg/dashboard/api.go:56` |
-| `GET` | `/branding/custom.css` | Dashboard auth/session | Operator branding stylesheet override, read per request (see [branding](branding.md)) | `pkg/dashboard/server.go:1192` |
+| `GET` | `/branding/custom.css` | Dashboard auth/session | Operator branding stylesheet override, read per request (see [branding](branding.md)) | `pkg/dashboard/server.go:1193` |
 | `GET` | `/api/snapshot/frame-ancestors` | Public | Snapshot framing allowlist | `pkg/dashboard/api.go:79` |
 | `GET` | `/api/snapshot` | Public | Snapshot data | `pkg/dashboard/api.go:80` |
 | `GET` | `/snapshot` | Public | Public read-only snapshot page | `pkg/dashboard/api.go:81` |
@@ -81,9 +81,9 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `GET` | `/api/openrouter/models` | Dashboard auth/session | Open Router Models | `pkg/dashboard/openrouter.go:47` |
 | `GET` | `/api/openrouter/credit` | Dashboard auth/session | Open Router Credit | `pkg/dashboard/openrouter.go:48` |
 | `GET` | `/openrouter/callback` | Public | Open Router Callback | `pkg/dashboard/openrouter.go:49` |
-| `POST` | `/api/github-app/recheck` | Dashboard auth/session | GitHub App Recheck | `pkg/dashboard/server.go:1132` |
-| `POST` | `/api/github-app/install-clicked` | Dashboard auth/session | GitHub App Install Clicked | `pkg/dashboard/server.go:1133` |
-| `GET` | `/gh-setup` | Public | GitHub App Setup Callback | `pkg/dashboard/server.go:1134` |
+| `POST` | `/api/github-app/recheck` | Dashboard auth/session | GitHub App Recheck | `pkg/dashboard/server.go:1133` |
+| `POST` | `/api/github-app/install-clicked` | Dashboard auth/session | GitHub App Install Clicked | `pkg/dashboard/server.go:1134` |
+| `GET` | `/gh-setup` | Public | GitHub App Setup Callback | `pkg/dashboard/server.go:1135` |
 
 ## Configuration
 
@@ -507,7 +507,7 @@ always resolved server-side from the validated token.
 | `POST` | `/api/hives/{id}/heartbeat` | Dashboard auth/session | Hives Heartbeat | `pkg/dashboard/api_contribute.go:256` |
 | `DELETE` | `/api/hives/{id}` | Owner only | Hives Delete | `pkg/dashboard/api_contribute.go:257` |
 | `POST` | `/api/hives/onboard` | Dashboard auth/session | Hives Onboard | `pkg/dashboard/api_contribute.go:258` |
-| `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1139` |
+| `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1140` |
 
 ## Hub SaaS
 

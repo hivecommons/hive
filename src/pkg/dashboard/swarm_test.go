@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -393,4 +394,59 @@ func hasSwarmAchievement(p SwarmPlayer, id string) bool {
 		}
 	}
 	return false
+}
+func TestSwarmAnnouncesStartEndAndExpiry(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.Project.Org = "acme"
+	deps.Config.Project.Repos = []string{"api"}
+	s.SetContributorsDir(t.TempDir())
+	s.swarm = newSwarmStore(filepath.Join(s.contributorsDirOrDefault(), SwarmStateFileName), &fakeSwarmScorer{score: ghpkg.SwarmScore{IssuesClosed: 1, PRsMerged: 2, Participants: []string{"alice", "bob"}}})
+	msgs := make(chan string, 4)
+	s.SetSwarmAnnouncer(func(msg string) error {
+		msgs <- msg
+		return nil
+	})
+
+	start := doOwnerPost(s, "/api/swarm", map[string]string{"repo": "api"})
+	if start.Code != http.StatusOK {
+		t.Fatalf("start status = %d body=%s", start.Code, start.Body.String())
+	}
+	if msg := nextSwarmMessage(t, msgs); !strings.Contains(msg, "**Swarm started**") || !strings.Contains(msg, "`acme/api`") {
+		t.Fatalf("start announcement = %q", msg)
+	}
+	end := doDeleteOwner(s, "/api/swarm", nil)
+	if end.Code != http.StatusOK {
+		t.Fatalf("end status = %d body=%s", end.Code, end.Body.String())
+	}
+	if msg := nextSwarmMessage(t, msgs); !strings.Contains(msg, "**Swarm ended**") || !strings.Contains(msg, "1 issues closed, 2 PRs merged") || strings.Contains(msg, "@alice") {
+		t.Fatalf("end announcement = %q", msg)
+	}
+
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	store := newSwarmStore(filepath.Join(t.TempDir(), SwarmStateFileName), &fakeSwarmScorer{score: ghpkg.SwarmScore{Participants: []string{"carol"}}})
+	store.now = func() time.Time { return now }
+	store.duration = time.Hour
+	if _, err := store.start("acme/api", nil); err != nil {
+		t.Fatalf("expiry start: %v", err)
+	}
+	store.now = func() time.Time { return now.Add(2 * time.Hour) }
+	s.swarm = store
+	status := doOwnerGet(s, "/api/swarm")
+	if status.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", status.Code, status.Body.String())
+	}
+	if msg := nextSwarmMessage(t, msgs); !strings.Contains(msg, "(expired)") {
+		t.Fatalf("expiry announcement = %q", msg)
+	}
+}
+
+func nextSwarmMessage(t *testing.T, msgs <-chan string) string {
+	t.Helper()
+	select {
+	case msg := <-msgs:
+		return msg
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for swarm announcement")
+		return ""
+	}
 }

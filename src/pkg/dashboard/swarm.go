@@ -100,15 +100,18 @@ type swarmScorer interface {
 	ScoreSwarm(ctx context.Context, repo string, start, end time.Time) (ghpkg.SwarmScore, error)
 }
 
+type SwarmAnnouncer func(msg string) error
+
 type swarmStore struct {
-	mu       sync.Mutex
-	path     string
-	now      func() time.Time
-	duration time.Duration
-	name     string
-	state    swarmState
-	loaded   bool
-	scorer   swarmScorer
+	mu                   sync.Mutex
+	path                 string
+	now                  func() time.Time
+	duration             time.Duration
+	name                 string
+	state                swarmState
+	loaded               bool
+	scorer               swarmScorer
+	expiredAnnouncements []SwarmRecord
 }
 
 func newSwarmStore(path string, scorer swarmScorer) *swarmStore {
@@ -198,6 +201,7 @@ func (s *Server) SwarmSnapshot() SwarmStatus {
 	}
 	status, _ := store.status(context.Background())
 	hasHistory, _ := store.hasHistory(context.Background())
+	s.announceExpiredSwarms(store.drainExpiredAnnouncements())
 	return s.withSwarmUnlockStatus(status, hasHistory)
 }
 
@@ -207,10 +211,20 @@ func (s *Server) ActiveSwarmRepo() string {
 		return ""
 	}
 	status, _ := store.status(context.Background())
+	s.announceExpiredSwarms(store.drainExpiredAnnouncements())
 	if status.Active == nil {
 		return ""
 	}
 	return status.Active.Repo
+}
+
+func (s *Server) SetSwarmAnnouncer(fn SwarmAnnouncer) {
+	if s == nil {
+		return
+	}
+	s.swarmMu.Lock()
+	defer s.swarmMu.Unlock()
+	s.swarmAnnouncer = fn
 }
 
 func (st *swarmStore) status(ctx context.Context) (SwarmStatus, error) {
@@ -242,6 +256,14 @@ func (st *swarmStore) hasHistory(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	return len(st.state.History) > 0, nil
+}
+
+func (st *swarmStore) drainExpiredAnnouncements() []SwarmRecord {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	out := append([]SwarmRecord(nil), st.expiredAnnouncements...)
+	st.expiredAnnouncements = nil
+	return out
 }
 
 func (st *swarmStore) history(ctx context.Context) (SwarmHistoryResponse, error) {
@@ -355,7 +377,10 @@ func (st *swarmStore) expireLocked(ctx context.Context) error {
 	if st.state.Active == nil || st.now().Before(st.state.Active.End) {
 		return nil
 	}
-	_, err := st.finishActiveLocked(ctx, "expired")
+	rec, err := st.finishActiveLocked(ctx, "expired")
+	if err == nil {
+		st.expiredAnnouncements = append(st.expiredAnnouncements, rec)
+	}
 	return err
 }
 
@@ -473,15 +498,18 @@ func (s *Server) handleSwarmGet(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "swarm state unavailable: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.announceExpiredSwarms(store.drainExpiredAnnouncements())
 	jsonResponse(w, s.withSwarmUnlockStatus(status, hasHistory))
 }
 
 func (s *Server) handleSwarmHistory(w http.ResponseWriter, r *http.Request) {
-	history, err := s.swarmStore().history(r.Context())
+	store := s.swarmStore()
+	history, err := store.history(r.Context())
 	if err != nil {
 		jsonError(w, "swarm history unavailable: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.announceExpiredSwarms(store.drainExpiredAnnouncements())
 	jsonResponse(w, history)
 }
 
@@ -545,6 +573,7 @@ func (s *Server) handleSwarmPost(w http.ResponseWriter, r *http.Request) {
 		action = "swarm_start_forced"
 	}
 	s.auditFromRequest(r, action, auditDetail("repo", rec.Repo, "ends_at", rec.End.Format(time.RFC3339)), "")
+	s.announceSwarmStart(rec)
 	jsonResponse(w, rec)
 }
 
@@ -624,7 +653,51 @@ func (s *Server) handleSwarmDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.auditFromRequest(r, "swarm_end", auditDetail("repo", rec.Repo, "score", fmt.Sprint(rec.Score.Total())), "")
+	s.announceSwarmEnd(rec)
 	jsonResponse(w, rec)
+}
+
+func (s *Server) announceExpiredSwarms(records []SwarmRecord) {
+	for _, rec := range records {
+		s.announceSwarmEnd(rec)
+	}
+}
+
+func (s *Server) announceSwarmStart(rec SwarmRecord) {
+	prep := "none"
+	if len(rec.PrepAgents) > 0 {
+		prep = strings.Join(rec.PrepAgents, ", ")
+	}
+	s.announceSwarm(fmt.Sprintf("🐝 **%s started** for `%s` — ends %s. Prep: %s.", rec.DisplayName, rec.Repo, rec.End.Format(time.RFC1123), prep))
+}
+
+func (s *Server) announceSwarmEnd(rec SwarmRecord) {
+	reason := rec.EndReason
+	if reason == "" {
+		reason = "ended"
+	}
+	participants := "none"
+	if len(rec.Participants) > 0 {
+		participants = strings.Join(rec.Participants, ", ")
+	}
+	s.announceSwarm(fmt.Sprintf("🏁 **%s ended** for `%s` (%s) — %d issues closed, %d PRs merged. Participants: %s", rec.DisplayName, rec.Repo, reason, rec.Score.IssuesClosed, rec.Score.PRsMerged, participants))
+}
+
+func (s *Server) announceSwarm(msg string) {
+	if s == nil {
+		return
+	}
+	s.swarmMu.Lock()
+	fn := s.swarmAnnouncer
+	s.swarmMu.Unlock()
+	if fn == nil {
+		return
+	}
+	go func() {
+		if err := fn(msg); err != nil && s.logger != nil {
+			s.logger.Warn("swarm discord announcement failed", "error", err)
+		}
+	}()
 }
 
 func (s *Server) normalizeSwarmRepo(repo string) (string, error) {
