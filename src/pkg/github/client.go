@@ -1892,7 +1892,13 @@ func HasHoldLabelWith(labels, extraHoldLabels []string) bool {
 			}
 		}
 		for _, exact := range exactHoldLabels {
-			if strings.EqualFold(strings.TrimSpace(label), exact) {
+			if strings.HasPrefix(exact, "hive-pause/") {
+				if strings.EqualFold(strings.TrimSpace(label), exact) {
+					return true
+				}
+				continue
+			}
+			if strings.Contains(lower, exact) {
 				return true
 			}
 		}
