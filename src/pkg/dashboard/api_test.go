@@ -737,8 +737,11 @@ func TestHandleChat(t *testing.T) {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
 	result := decodeJSON(t, rec)
-	if result["accepted"] != true {
-		t.Errorf("accepted = %v, want true", result["accepted"])
+	if result["status"] != "queued" {
+		t.Errorf("status = %v, want queued", result["status"])
+	}
+	if answer, _ := result["answer"].(string); !strings.Contains(answer, "I sent that to the dashboard chat bot") {
+		t.Errorf("answer = %q, want visible assistant acknowledgement", answer)
 	}
 }
 
@@ -783,6 +786,8 @@ func TestHandleChat_LocalStatusAgentsAndPRs(t *testing.T) {
 		{query: "AGENTS!!!", want: "brainstorm: idle (paused)"},
 		{query: "prs?", want: "myorg/repo: 1 open PR"},
 		{query: "status", want: "Hive status: ready"},
+		{query: "Show recent kick failures", want: "Governor/kick status: hive health is ready."},
+		{query: "spek: spec runs", want: "Spektacular/spec-run data is not available yet"},
 		{query: "help", want: "Try `beads`"},
 	} {
 		rec := doPost(s, "/api/chat", map[string]interface{}{"query": tc.query})
@@ -794,6 +799,44 @@ func TestHandleChat_LocalStatusAgentsAndPRs(t *testing.T) {
 		if !strings.Contains(answer, tc.want) {
 			t.Fatalf("%s: answer = %q, want to contain %q", tc.query, answer, tc.want)
 		}
+	}
+}
+
+func TestHandleChat_BangCommandsStillUseDashboardBot(t *testing.T) {
+	s, bot := chatTestServer(t)
+	rec := doPost(s, "/api/chat", map[string]interface{}{"query": "!help"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	result := decodeJSON(t, rec)
+	if result["accepted"] != true {
+		t.Fatalf("accepted = %v, want true", result["accepted"])
+	}
+	if got := bot.Drain(0); len(got) != 1 || got[0].Text != "!help" || got[0].Role != "user" {
+		t.Fatalf("outbox = %+v, want queued !help user message", got)
+	}
+}
+
+func TestHandleChat_SpekRequiresPresentProbe(t *testing.T) {
+	s := newFullServer(t)
+	s.SetSpektacularStatus(FrontendSpektacular{Present: false, Binary: "spektacular"})
+	rec := doPost(s, "/api/chat", map[string]interface{}{"query": "spek: spec runs"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	result := decodeJSON(t, rec)
+	if answer, _ := result["answer"].(string); !strings.Contains(answer, "not available yet") {
+		t.Fatalf("answer = %q, want unavailable when probe is absent", answer)
+	}
+
+	s.SetSpektacularStatus(FrontendSpektacular{Present: true, Binary: "spektacular"})
+	rec = doPost(s, "/api/chat", map[string]interface{}{"query": "spek: spec runs"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("present status = %d, want 200", rec.Code)
+	}
+	result = decodeJSON(t, rec)
+	if answer, _ := result["answer"].(string); !strings.Contains(answer, "Spektacular status is available") {
+		t.Fatalf("answer = %q, want available when probe is present", answer)
 	}
 }
 
