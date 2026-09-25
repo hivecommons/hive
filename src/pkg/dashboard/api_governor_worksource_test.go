@@ -39,9 +39,12 @@ type workSourceAPIResponse struct {
 		} `json:"teams"`
 	} `json:"linear"`
 	Jira struct {
+		Deployment  string   `json:"deployment"`
 		BaseURL     string   `json:"base_url"`
 		Email       string   `json:"email"`
-		APIToken    string   `json:"api_token"`
+		Username    string   `json:"username"`
+		APITokenSet bool     `json:"api_token_set"`
+		PasswordSet bool     `json:"password_set"`
 		ProjectKeys []string `json:"project_keys"`
 		JQL         string   `json:"jql"`
 		Repo        string   `json:"repo"`
@@ -353,8 +356,11 @@ func TestGovWorkSource_JiraRoundTrip(t *testing.T) {
 	rec := doPut(s, "/api/config/governor/work-source", map[string]any{
 		"type": "jira",
 		"jira": map[string]any{
+			"deployment":   "datacenter",
 			"base_url":     "https://myorg.atlassian.net",
 			"email":        "bot@myorg.com",
+			"username":     "jira-bot",
+			"password":     "${JIRA_DATACENTER_PASSWORD}",
 			"project_keys": []string{"ENG", "OPS"},
 		},
 	})
@@ -364,6 +370,9 @@ func TestGovWorkSource_JiraRoundTrip(t *testing.T) {
 	got := getWorkSourceSettings(t, s)
 	if got.Type != "jira" || got.Jira.BaseURL != "https://myorg.atlassian.net" || got.Jira.Email != "bot@myorg.com" {
 		t.Fatalf("jira settings = %+v", got.Jira)
+	}
+	if got.Jira.Deployment != "datacenter" || got.Jira.Username != "jira-bot" || !got.Jira.PasswordSet {
+		t.Fatalf("jira datacenter settings = %+v", got.Jira)
 	}
 	if len(got.Jira.ProjectKeys) != 2 {
 		t.Errorf("Jira.ProjectKeys = %v", got.Jira.ProjectKeys)

@@ -8779,7 +8779,7 @@
           "Governor"
         ],
         "summary": "Work-source configuration",
-        "description": "Returns the configured work source (github, github_projects, linear, or jira) and its per-source settings. Linear's api_key is reported only as api_key_set (never the value). Requires owner role.",
+        "description": "Returns the configured work source (github, github_projects, linear, or jira) and its per-source settings. Jira may be Cloud or Data Center depending on jira.deployment. Linear's api_key is reported only as api_key_set (never the value). Requires owner role.",
         "responses": {
           "200": {
             "description": "Work source config",
@@ -8853,14 +8853,24 @@
                     "jira": {
                       "type": "object",
                       "properties": {
+                        "deployment": {
+                          "type": "string",
+                          "enum": ["", "cloud", "datacenter", "server"]
+                        },
                         "base_url": {
                           "type": "string"
                         },
                         "email": {
                           "type": "string"
                         },
-                        "api_token": {
+                        "username": {
                           "type": "string"
+                        },
+                        "api_token_set": {
+                          "type": "boolean"
+                        },
+                        "password_set": {
+                          "type": "boolean"
                         },
                         "project_keys": {
                           "type": "array",
@@ -8897,7 +8907,7 @@
           "Governor"
         ],
         "summary": "Update work-source configuration",
-        "description": "Updates the work source type and/or its per-source settings (github_projects, linear, jira). List-valued fields (hold_labels, teams, project_keys, states) replace the stored list when present. Validates Linear team/session-agent/assigned-only settings before applying. Requires owner role.",
+        "description": "Updates the work source type and/or its per-source settings (github_projects, linear, jira). Jira supports jira.deployment for Cloud versus Data Center/Server. List-valued fields (hold_labels, teams, project_keys, states) replace the stored list when present. Validates Linear team/session-agent/assigned-only settings before applying. Requires owner role.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -8992,13 +9002,23 @@
                   "jira": {
                     "type": "object",
                     "properties": {
+                      "deployment": {
+                        "type": "string",
+                        "enum": ["", "cloud", "datacenter", "server"]
+                      },
                       "base_url": {
                         "type": "string"
                       },
                       "email": {
                         "type": "string"
                       },
+                      "username": {
+                        "type": "string"
+                      },
                       "api_token": {
+                        "type": "string"
+                      },
+                      "password": {
                         "type": "string"
                       },
                       "project_keys": {

@@ -749,9 +749,12 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 			Teams        []config.LinearTeamSourceConfig `json:"teams"`
 		} `json:"linear"`
 		Jira *struct {
+			Deployment  *string  `json:"deployment"`
 			BaseURL     *string  `json:"base_url"`
 			Email       *string  `json:"email"`
+			Username    *string  `json:"username"`
 			APIToken    *string  `json:"api_token"`
+			Password    *string  `json:"password"`
 			ProjectKeys []string `json:"project_keys"`
 			JQL         *string  `json:"jql"`
 			Repo        *string  `json:"repo"`
@@ -826,14 +829,23 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 	}
 	if body.Jira != nil {
 		j := body.Jira
+		if j.Deployment != nil {
+			ws.Jira.Deployment = strings.TrimSpace(*j.Deployment)
+		}
 		if j.BaseURL != nil {
 			ws.Jira.BaseURL = *j.BaseURL
 		}
 		if j.Email != nil {
 			ws.Jira.Email = *j.Email
 		}
+		if j.Username != nil {
+			ws.Jira.Username = *j.Username
+		}
 		if j.APIToken != nil {
 			ws.Jira.APIToken = *j.APIToken
+		}
+		if j.Password != nil {
+			ws.Jira.Password = *j.Password
 		}
 		if j.ProjectKeys != nil {
 			ws.Jira.ProjectKeys = j.ProjectKeys
@@ -881,13 +893,16 @@ func workSourceSectionResponse(cfg *config.Config) map[string]interface{} {
 			"teams":         linearTeamsResponse(ws.Linear.Teams),
 		},
 		"jira": map[string]interface{}{
-			"base_url":     ws.Jira.BaseURL,
-			"email":        ws.Jira.Email,
-			"api_token":    ws.Jira.APIToken,
-			"project_keys": ws.Jira.ProjectKeys,
-			"jql":          ws.Jira.JQL,
-			"repo":         ws.Jira.Repo,
-			"hold_labels":  ws.Jira.HoldLabels,
+			"deployment":    ws.Jira.Deployment,
+			"base_url":      ws.Jira.BaseURL,
+			"email":         ws.Jira.Email,
+			"username":      ws.Jira.Username,
+			"api_token_set": ws.Jira.APIToken != "",
+			"password_set":  ws.Jira.Password != "",
+			"project_keys":  ws.Jira.ProjectKeys,
+			"jql":           ws.Jira.JQL,
+			"repo":          ws.Jira.Repo,
+			"hold_labels":   ws.Jira.HoldLabels,
 		},
 	}
 }

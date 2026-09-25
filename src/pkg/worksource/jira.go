@@ -1,6 +1,7 @@
 package worksource
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,16 +12,34 @@ import (
 	"time"
 )
 
-// JiraConfig configures the Jira Cloud REST API v3 work source adapter
-// (Phase 1, read-only).
+const (
+	jiraDeploymentCloud      = "cloud"
+	jiraDeploymentDataCenter = "datacenter"
+	jiraDeploymentServer     = "server"
+	jiraCloudAPIVersion      = "3"
+	jiraDataCenterAPIVersion = "2"
+	jiraSearchPageSize       = 100
+	jiraHTTPTimeout          = 30 * time.Second
+)
+
+// JiraConfig configures the Jira work source adapter. Empty Deployment keeps
+// the original Jira Cloud REST API v3 behavior; "datacenter"/"server" switches
+// to Jira Data Center/Server REST API v2 and Data Center auth/body shapes.
 type JiraConfig struct {
-	// BaseURL is the Jira Cloud instance root, e.g. "https://myorg.atlassian.net".
+	// Deployment is "cloud" (default) or "datacenter"/"server".
+	Deployment string
+	// BaseURL is the Jira instance root, e.g. "https://myorg.atlassian.net" or
+	// "https://jira.example.com/jira" when Data Center runs under a context path.
 	BaseURL string
-	// Email is the Atlassian account email for Basic auth.
+	// Email is the Atlassian account email for Jira Cloud Basic auth.
 	Email string
-	// APIToken is the Jira API token (Atlassian account → Security → API tokens).
-	// Stored as a secret reference; the actual value is resolved from env by the caller.
+	// Username is the Jira Data Center username for Basic auth when Password is used.
+	Username string
+	// APIToken is the Jira Cloud API token, or the Data Center Personal Access
+	// Token when Deployment is "datacenter".
 	APIToken string
+	// Password is the Jira Data Center password for Basic auth when APIToken is empty.
+	Password string
 	// ProjectKeys is the list of Jira project keys to enumerate, e.g. ["ENG","OPS"].
 	ProjectKeys []string
 	// JQL is an optional JQL override. When empty, the adapter builds a default
@@ -35,22 +54,22 @@ type JiraConfig struct {
 }
 
 // jiraMaxResults is the page size requested from the Jira search API.
-const jiraMaxResults = 100
+const jiraMaxResults = jiraSearchPageSize
 
-// jiraSource is the Jira Cloud WorkSource adapter.
+// jiraSource is the Jira WorkSource adapter.
 type jiraSource struct {
 	cfg    JiraConfig
 	client *http.Client
 }
 
-// NewJiraSource builds a WorkSource backed by the Jira Cloud REST API v3.
+// NewJiraSource builds a WorkSource backed by the Jira REST API.
 func NewJiraSource(cfg JiraConfig) WorkSource {
 	if cfg.PriorityField == "" {
 		cfg.PriorityField = "priority"
 	}
 	return &jiraSource{
 		cfg:    cfg,
-		client: &http.Client{Timeout: 30 * time.Second},
+		client: &http.Client{Timeout: jiraHTTPTimeout},
 	}
 }
 
@@ -64,6 +83,30 @@ func (s *jiraSource) jql() string {
 	}
 	return fmt.Sprintf("project in (%s) AND statusCategory != Done AND issuetype != Epic",
 		strings.Join(s.cfg.ProjectKeys, ","))
+}
+
+func (s *jiraSource) isDataCenter() bool {
+	switch strings.ToLower(strings.TrimSpace(s.cfg.Deployment)) {
+	case jiraDeploymentDataCenter, jiraDeploymentServer:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *jiraSource) apiVersion() string {
+	if s.isDataCenter() {
+		return jiraDataCenterAPIVersion
+	}
+	return jiraCloudAPIVersion
+}
+
+func (s *jiraSource) restURL(path string) string {
+	return strings.TrimRight(s.cfg.BaseURL, "/") + "/rest/api/" + s.apiVersion() + "/" + strings.TrimLeft(path, "/")
+}
+
+func (s *jiraSource) browseURL(key string) string {
+	return strings.TrimRight(s.cfg.BaseURL, "/") + "/browse/" + key
 }
 
 // Jira search response wire types (only the fields we read).
@@ -80,22 +123,47 @@ type jiraIssue struct {
 }
 
 type jiraFields struct {
-	Summary  string        `json:"summary"`
-	Status   *jiraNamed    `json:"status"`
-	Priority *jiraNamed    `json:"priority"`
-	Assignee *jiraUser     `json:"assignee"`
-	Reporter *jiraUser     `json:"reporter"`
-	Labels   []string      `json:"labels"`
-	Created  jiraTimestamp `json:"created"`
-	Updated  jiraTimestamp `json:"updated"`
+	Summary     string          `json:"summary"`
+	Description json.RawMessage `json:"description"`
+	Status      *jiraNamed      `json:"status"`
+	Priority    *jiraNamed      `json:"priority"`
+	Assignee    *jiraUser       `json:"assignee"`
+	Reporter    *jiraUser       `json:"reporter"`
+	Labels      []string        `json:"labels"`
+	Created     jiraTimestamp   `json:"created"`
+	Updated     jiraTimestamp   `json:"updated"`
 }
 
 type jiraNamed struct {
+	ID   string `json:"id"`
 	Name string `json:"name"`
 }
 
 type jiraUser struct {
+	AccountID   string `json:"accountId"`
+	Name        string `json:"name"`
+	Key         string `json:"key"`
 	DisplayName string `json:"displayName"`
+}
+
+func (u *jiraUser) identity(dataCenter bool) string {
+	if u == nil {
+		return ""
+	}
+	if dataCenter {
+		for _, v := range []string{u.Name, u.Key, u.DisplayName, u.AccountID} {
+			if v != "" {
+				return v
+			}
+		}
+		return ""
+	}
+	for _, v := range []string{u.DisplayName, u.AccountID, u.Name, u.Key} {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // jiraTimestamp parses Jira's "2006-01-02T15:04:05.000-0700" timestamps, and
@@ -180,32 +248,113 @@ func (s *jiraSource) searchPage(ctx context.Context, startAt int) (*jiraSearchRe
 	q.Set("fields", "summary,status,priority,assignee,reporter,labels,created,updated")
 	q.Set("maxResults", fmt.Sprintf("%d", jiraMaxResults))
 	q.Set("startAt", fmt.Sprintf("%d", startAt))
-	reqURL := strings.TrimSuffix(s.cfg.BaseURL, "/") + "/rest/api/3/search?" + q.Encode()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("worksource/jira: build request: %w", err)
+	var page jiraSearchResponse
+	if err := s.doJSON(ctx, http.MethodGet, s.restURL("search")+"?"+q.Encode(), nil, http.StatusOK, &page); err != nil {
+		return nil, fmt.Errorf("worksource/jira: search: %w", err)
 	}
-	req.SetBasicAuth(s.cfg.Email, s.cfg.APIToken)
+	return &page, nil
+}
+
+func (s *jiraSource) fetchIssue(ctx context.Context, key string) (*jiraIssue, error) {
+	q := url.Values{}
+	q.Set("fields", "summary,description,status,priority,assignee,reporter,labels,created,updated")
+	var issue jiraIssue
+	if err := s.doJSON(ctx, http.MethodGet, s.restURL("issue/"+url.PathEscape(key))+"?"+q.Encode(), nil, http.StatusOK, &issue); err != nil {
+		return nil, fmt.Errorf("worksource/jira: fetch issue %s: %w", key, err)
+	}
+	return &issue, nil
+}
+
+func (s *jiraSource) addComment(ctx context.Context, key, body string) error {
+	payload := map[string]any{"body": body}
+	if !s.isDataCenter() {
+		payload["body"] = jiraADFDocument(body)
+	}
+	if err := s.doJSON(ctx, http.MethodPost, s.restURL("issue/"+url.PathEscape(key)+"/comment"), payload, http.StatusCreated, nil); err != nil {
+		return fmt.Errorf("worksource/jira: add comment on %s: %w", key, err)
+	}
+	return nil
+}
+
+func (s *jiraSource) transitionIssue(ctx context.Context, key, transitionID string) error {
+	payload := map[string]any{"transition": map[string]string{"id": transitionID}}
+	if err := s.doJSON(ctx, http.MethodPost, s.restURL("issue/"+url.PathEscape(key)+"/transitions"), payload, http.StatusNoContent, nil); err != nil {
+		return fmt.Errorf("worksource/jira: transition %s: %w", key, err)
+	}
+	return nil
+}
+
+func jiraADFDocument(text string) map[string]any {
+	return map[string]any{
+		"type":    "doc",
+		"version": 1,
+		"content": []map[string]any{{
+			"type": "paragraph",
+			"content": []map[string]string{{
+				"type": "text",
+				"text": text,
+			}},
+		}},
+	}
+}
+
+func (s *jiraSource) doJSON(ctx context.Context, method, reqURL string, payload any, wantStatus int, out any) error {
+	var body io.Reader
+	if payload != nil {
+		var buf bytes.Buffer
+		if err := json.NewEncoder(&buf).Encode(payload); err != nil {
+			return fmt.Errorf("encode request: %w", err)
+		}
+		body = &buf
+	}
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	s.authorize(req)
 	req.Header.Set("Accept", "application/json")
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("worksource/jira: search: %w", err)
+		return fmt.Errorf("request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("worksource/jira: read response: %w", err)
+		return fmt.Errorf("read response: %w", err)
 	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("worksource/jira: search returned %d: %s", resp.StatusCode, string(body))
+	if resp.StatusCode != wantStatus {
+		return fmt.Errorf("returned %d: %s", resp.StatusCode, string(respBody))
 	}
-	var page jiraSearchResponse
-	if err := json.Unmarshal(body, &page); err != nil {
-		return nil, fmt.Errorf("worksource/jira: decode response: %w", err)
+	if out == nil || len(strings.TrimSpace(string(respBody))) == 0 {
+		return nil
 	}
-	return &page, nil
+	if err := json.Unmarshal(respBody, out); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	return nil
+}
+
+func (s *jiraSource) authorize(req *http.Request) {
+	if s.isDataCenter() && s.cfg.APIToken != "" {
+		req.Header.Set("Authorization", "Bearer "+s.cfg.APIToken)
+		return
+	}
+	username := s.cfg.Email
+	password := s.cfg.APIToken
+	if s.isDataCenter() {
+		username = s.cfg.Username
+		if username == "" {
+			username = s.cfg.Email
+		}
+		password = s.cfg.Password
+	}
+	if username != "" || password != "" {
+		req.SetBasicAuth(username, password)
+	}
 }
 
 func (s *jiraSource) toIssue(it jiraIssue) Issue {
@@ -219,7 +368,7 @@ func (s *jiraSource) toIssue(it jiraIssue) Issue {
 		Priority:   "none",
 		CreatedAt:  it.Fields.Created.Time,
 		UpdatedAt:  it.Fields.Updated.Time,
-		URL:        strings.TrimSuffix(s.cfg.BaseURL, "/") + "/browse/" + it.Key,
+		URL:        s.browseURL(it.Key),
 	}
 	if it.Fields.Status != nil {
 		iss.State = it.Fields.Status.Name
@@ -228,10 +377,10 @@ func (s *jiraSource) toIssue(it jiraIssue) Issue {
 		iss.Priority = normalizeJiraPriority(it.Fields.Priority.Name)
 	}
 	if it.Fields.Reporter != nil {
-		iss.Author = it.Fields.Reporter.DisplayName
+		iss.Author = it.Fields.Reporter.identity(s.isDataCenter())
 	}
-	if it.Fields.Assignee != nil {
-		iss.Assignees = []string{it.Fields.Assignee.DisplayName}
+	if assignee := it.Fields.Assignee.identity(s.isDataCenter()); assignee != "" {
+		iss.Assignees = []string{assignee}
 	}
 	return iss
 }

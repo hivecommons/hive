@@ -5,8 +5,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -231,6 +233,173 @@ func TestJiraAuthHeader(t *testing.T) {
 	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("bot@myorg.com:secret-token"))
 	if gotAuth != want {
 		t.Errorf("Authorization = %q, want %q", gotAuth, want)
+	}
+}
+
+func TestJiraDataCenterSearchPaginationAuthAndContextPath(t *testing.T) {
+	const jiraDataCenterTestIssueCount = 101
+	var paths []string
+	var authHeaders []string
+	var users []jiraUser
+	for i := 1; i <= jiraDataCenterTestIssueCount; i++ {
+		users = append(users, jiraUser{Name: fmt.Sprintf("user%d", i), Key: fmt.Sprintf("JIRAUSER%d", i)})
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		authHeaders = append(authHeaders, r.Header.Get("Authorization"))
+		if r.URL.Path != "/jira/rest/api/2/search" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		startAt := 0
+		fmt.Sscanf(r.URL.Query().Get("startAt"), "%d", &startAt)
+		end := startAt + jiraMaxResults
+		if end > len(users) {
+			end = len(users)
+		}
+		issues := make([]map[string]any, 0, end-startAt)
+		for i := startAt; i < end; i++ {
+			issues = append(issues, map[string]any{
+				"key": fmt.Sprintf("ENG-%d", i+1),
+				"fields": map[string]any{
+					"summary":  "dc",
+					"status":   map[string]any{"name": "To Do"},
+					"reporter": users[i],
+					"assignee": users[i],
+					"created":  "2024-01-02T03:04:05.000+0000",
+					"updated":  "2024-01-03T03:04:05.000+0000",
+				},
+			})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"startAt":    startAt,
+			"maxResults": jiraMaxResults,
+			"total":      len(users),
+			"issues":     issues,
+		})
+	}))
+	defer srv.Close()
+
+	src := NewJiraSource(JiraConfig{
+		Deployment:  jiraDeploymentDataCenter,
+		BaseURL:     srv.URL + "/jira",
+		APIToken:    "pat-secret",
+		ProjectKeys: []string{"ENG"},
+		Repo:        "o/r",
+	})
+	got, err := src.ListIssues(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(users) {
+		t.Fatalf("got %d issues, want %d", len(got), len(users))
+	}
+	if len(paths) != 2 || paths[0] != "/jira/rest/api/2/search" || paths[1] != "/jira/rest/api/2/search" {
+		t.Fatalf("paths = %v, want two context-path v2 searches", paths)
+	}
+	for _, h := range authHeaders {
+		if h != "Bearer pat-secret" {
+			t.Fatalf("Authorization = %q, want bearer PAT", h)
+		}
+	}
+	if got[0].Author != "user1" || got[0].Assignees[0] != "user1" {
+		t.Errorf("Data Center identity = author %q assignees %v, want name", got[0].Author, got[0].Assignees)
+	}
+	if got[0].URL != srv.URL+"/jira/browse/ENG-1" {
+		t.Errorf("URL = %q, want context-path browse URL", got[0].URL)
+	}
+}
+
+func TestJiraDataCenterBasicAuthFetchCommentAndTransition(t *testing.T) {
+	type requestRecord struct {
+		Method string
+		Path   string
+		Auth   string
+		Body   string
+	}
+	var records []requestRecord
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		records = append(records, requestRecord{
+			Method: r.Method,
+			Path:   r.URL.Path,
+			Auth:   r.Header.Get("Authorization"),
+			Body:   string(body),
+		})
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/2/issue/ENG-7":
+			_ = json.NewEncoder(w).Encode(jiraIssueJSON(jiraTestIssue{Key: "ENG-7", Summary: "fetched", Status: "To Do"}))
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/2/issue/ENG-7/comment":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"10000"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/2/issue/ENG-7/transitions":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	ws := NewJiraSource(JiraConfig{
+		Deployment: jiraDeploymentDataCenter,
+		BaseURL:    srv.URL,
+		Username:   "bot",
+		Password:   "pw",
+	})
+	src, ok := ws.(*jiraSource)
+	if !ok {
+		t.Fatalf("source type %T", ws)
+	}
+	issue, err := src.fetchIssue(context.Background(), "ENG-7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if issue.Key != "ENG-7" || issue.Fields.Summary != "fetched" {
+		t.Fatalf("issue = %+v", issue)
+	}
+	if err := src.addComment(context.Background(), "ENG-7", "plain wiki-ish *comment*"); err != nil {
+		t.Fatal(err)
+	}
+	const transitionID = "31"
+	if err := src.transitionIssue(context.Background(), "ENG-7", transitionID); err != nil {
+		t.Fatal(err)
+	}
+	wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("bot:pw"))
+	for _, r := range records {
+		if r.Auth != wantAuth {
+			t.Fatalf("%s %s auth = %q, want %q", r.Method, r.Path, r.Auth, wantAuth)
+		}
+	}
+	if !strings.Contains(records[1].Body, `"body":"plain wiki-ish *comment*"`) {
+		t.Errorf("comment body = %s, want plain Data Center string body", records[1].Body)
+	}
+	if !strings.Contains(records[2].Body, `"id":"31"`) {
+		t.Errorf("transition body = %s, want transition id", records[2].Body)
+	}
+}
+
+func TestJiraCloudCommentUsesADF(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		body = string(raw)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	ws := NewJiraSource(JiraConfig{BaseURL: srv.URL, Email: "bot@example.com", APIToken: "tok"})
+	src, ok := ws.(*jiraSource)
+	if !ok {
+		t.Fatalf("source type %T", ws)
+	}
+	if err := src.addComment(context.Background(), "ENG-1", "hello"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"type":"doc"`, `"version":1`, `"text":"hello"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("cloud comment body %s missing %s", body, want)
+		}
 	}
 }
 

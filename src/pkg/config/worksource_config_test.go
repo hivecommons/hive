@@ -39,9 +39,12 @@ func TestWorkSourceConfig_YAMLRoundTrip(t *testing.T) {
 		{"jira", WorkSourceConfig{
 			Type: "jira",
 			Jira: JiraSourceConfig{
+				Deployment:  "datacenter",
 				BaseURL:     "https://myorg.atlassian.net",
 				Email:       "ops@example.com",
+				Username:    "ops",
 				APIToken:    "tok",
+				Password:    "pw",
 				ProjectKeys: []string{"ENG", "OPS"},
 				JQL:         "project = ENG",
 				Repo:        "my-org/my-repo",

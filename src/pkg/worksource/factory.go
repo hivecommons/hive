@@ -86,10 +86,17 @@ func FromConfig(cfg config.WorkSourceConfig, ghClient *github.Client, ghToken, g
 		if err != nil {
 			return nil, err
 		}
+		password, err := resolveSecretRef("work_source.jira.password", c.Password)
+		if err != nil {
+			return nil, err
+		}
 		primary = NewJiraSource(JiraConfig{
+			Deployment:  c.Deployment,
 			BaseURL:     c.BaseURL,
 			Email:       c.Email,
+			Username:    c.Username,
 			APIToken:    apiToken,
+			Password:    password,
 			ProjectKeys: c.ProjectKeys,
 			JQL:         c.JQL,
 			Repo:        c.Repo,

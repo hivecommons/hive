@@ -89,3 +89,25 @@ func TestFromConfig_JiraAPITokenEnvRef(t *testing.T) {
 		t.Errorf("unset ${JIRA_API_TOKEN}: err = %v, want clear error", err)
 	}
 }
+
+func TestFromConfig_JiraDataCenterPasswordEnvRef(t *testing.T) {
+	logger := slog.Default()
+	cfg := config.WorkSourceConfig{Type: "jira"}
+	cfg.Jira.Deployment = "datacenter"
+	cfg.Jira.BaseURL = "https://jira.example.com/jira"
+	cfg.Jira.Username = "bot"
+	cfg.Jira.Password = "${JIRA_PASSWORD}"
+
+	t.Setenv("JIRA_PASSWORD", "dc_pw_resolved")
+	ws, err := FromConfig(cfg, nil, "", "", logger)
+	if err != nil {
+		t.Fatalf("FromConfig: %v", err)
+	}
+	js, ok := ws.(*jiraSource)
+	if !ok {
+		t.Fatalf("source type %T", ws)
+	}
+	if js.cfg.Password != "dc_pw_resolved" {
+		t.Errorf("password resolved to %q, want dc_pw_resolved", js.cfg.Password)
+	}
+}

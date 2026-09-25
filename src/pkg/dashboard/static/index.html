@@ -26230,7 +26230,7 @@ function burnAreaChart() {
         ['', 'GitHub Issues (default)'],
         ['github_projects', 'GitHub Projects v2'],
         ['linear', 'Linear'],
-        ['jira', 'Jira Cloud'],
+        ['jira', 'Jira'],
       ].map(([v, l]) => `<option value="${v}" ${type === v ? 'selected' : ''}>${l}</option>`).join('');
 
       return `
@@ -26327,18 +26327,33 @@ function burnAreaChart() {
 
         ${type === 'jira' ? `
         <div style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Jira Cloud</div>
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Jira</div>
           <div class="config-field">
-            <label>Base URL</label>
-            <input type="text" placeholder="https://myorg.atlassian.net" value="${esc(jira.base_url||'')}" data-change-action="markWorkSourceDirty" data-arg0="jira.base_url" data-arg-types="s,w">
+            <label>Deployment</label>
+            <select data-change-action="markWorkSourceDirty" data-arg0="jira.deployment" data-arg-types="s,w">
+              <option value="" ${!jira.deployment || jira.deployment === 'cloud' ? 'selected' : ''}>Cloud (REST API v3)</option>
+              <option value="datacenter" ${jira.deployment === 'datacenter' ? 'selected' : ''}>Data Center / Server (REST API v2)</option>
+            </select>
           </div>
           <div class="config-field">
-            <label>Email</label>
+            <label>Base URL</label>
+            <input type="text" placeholder="${jira.deployment === 'datacenter' ? 'https://jira.example.com/jira' : 'https://myorg.atlassian.net'}" value="${esc(jira.base_url||'')}" data-change-action="markWorkSourceDirty" data-arg0="jira.base_url" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Email <span class="config-info">i<span class="config-tooltip">Required for Jira Cloud Basic auth. For Data Center basic auth, use Username + Password below instead.</span></span></label>
             <input type="email" placeholder="bot@myorg.com" value="${esc(jira.email||'')}" data-change-action="markWorkSourceDirty" data-arg0="jira.email" data-arg-types="s,w">
           </div>
           <div class="config-field">
-            <label>API token <span class="config-info">i<span class="config-tooltip">Atlassian API token from id.atlassian.com → Security → API tokens. Use \${JIRA_API_TOKEN} to reference an environment variable.</span></span></label>
-            <input type="text" placeholder="\${JIRA_API_TOKEN}" value="${esc(jira.api_token||'')}" data-change-action="markWorkSourceDirty" data-arg0="jira.api_token" data-arg-types="s,w">
+            <label>API token / Data Center PAT <span class="config-info">i<span class="config-tooltip">Cloud: Atlassian API token from id.atlassian.com. Data Center 8.14+: Personal Access Token sent as Authorization: Bearer. Use \${JIRA_API_TOKEN} to reference an environment variable.</span></span></label>
+            <input type="text" placeholder="${jira.api_token_set ? '(set — leave blank to keep)' : '\${JIRA_API_TOKEN}'}" value="" data-change-action="markWorkSourceDirty" data-arg0="jira.api_token" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Data Center username</label>
+            <input type="text" placeholder="jira-bot" value="${esc(jira.username||'')}" data-change-action="markWorkSourceDirty" data-arg0="jira.username" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Data Center password <span class="config-info">i<span class="config-tooltip">Only used for Data Center Basic auth when no PAT is configured. Use \${JIRA_PASSWORD}; do not store a raw password.</span></span></label>
+            <input type="text" placeholder="${jira.password_set ? '(set — leave blank to keep)' : '\${JIRA_PASSWORD}'}" value="" data-change-action="markWorkSourceDirty" data-arg0="jira.password" data-arg-types="s,w">
           </div>
           <div class="config-field">
             <label>Project keys <span class="config-info">i<span class="config-tooltip">Comma-separated Jira project keys, e.g. "ENG, OPS". Used to build the default JQL query.</span></span></label>

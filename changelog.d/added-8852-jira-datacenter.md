@@ -1,0 +1,1 @@
+- Add Jira Data Center / Server support to the Jira work source via `deployment: datacenter`, including REST API v2 endpoints, PAT bearer auth, basic auth fallback, context-path base URLs, and Data Center user identity handling.
