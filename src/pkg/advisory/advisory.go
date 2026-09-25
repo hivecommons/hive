@@ -817,12 +817,17 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts Dige
 	var resolved []ResolvedFinding
 	total := 0
 	cutoff := time.Now().Add(-recentlyResolvedWindow)
-	// One memoized, budgeted resolver for the whole build: the closed-bead
-	// pass below and partitionSettledStale share it, so an issue cited by many
-	// beads costs one lookup and a pathological store cannot fan out into an
-	// unbounded number of live GitHub calls on the governor goroutine.
+	// One memo cache for the whole build, so an issue cited by many beads
+	// costs one lookup, with a separate lookup budget per pass: the closed-bead
+	// pass below is bounded here, and partitionSettledStale gets a fresh
+	// budget over the same cache so it can never be starved by pass order.
+	// Without this a pathological store fanned out into an unbounded number of
+	// live GitHub calls on the governor goroutine every cycle.
+	staleOpts := opts
 	if opts.ResolveRef != nil {
-		opts.ResolveRef = newStaleRefResolver(opts.ResolveRef).ResolveRef
+		closedPass := newStaleRefResolver(opts.ResolveRef)
+		opts.ResolveRef = closedPass.ResolveRef
+		staleOpts.ResolveRef = closedPass.withFreshBudget().ResolveRef
 	}
 	for agentName, store := range stores {
 		seen := make(map[string]bool)
@@ -906,7 +911,7 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts Dige
 	// slot spent on a finding nobody needed to read.
 	var settledStale []ResolvedFinding
 	var retiredStale int
-	byAgent, settledStale, retiredStale = partitionSettledStale(byAgent, opts, time.Now())
+	byAgent, settledStale, retiredStale = partitionSettledStale(byAgent, staleOpts, time.Now())
 	resolved = append(resolved, settledStale...)
 	if retiredStale > 0 {
 		// The header count is recomputed from the survivors for the same reason
