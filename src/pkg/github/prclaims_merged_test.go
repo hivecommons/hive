@@ -195,7 +195,7 @@ func TestFilterClaimedIssuesMergedClaims(t *testing.T) {
 	}
 	alwaysRedStale := func(string, int) bool { return true }
 
-	t.Run("merged strong claim suppresses despite red+stale", func(t *testing.T) {
+	t.Run("merged strong claim stays actionable pending confirmation", func(t *testing.T) {
 		ledger := NewClaimLedger("", testLogger())
 		ledger.Reconcile([]IssueClaim{{
 			Repo: "spyre-inference", Issue: 300, PRNumber: 500,
@@ -203,11 +203,11 @@ func TestFilterClaimedIssuesMergedClaims(t *testing.T) {
 			ObservedAt: time.Now(), FirstObservedAt: time.Now().Add(-time.Hour),
 		}}, true)
 		result := mkResult()
-		if got := FilterClaimedIssues(result, ledger, alwaysRedStale, testLogger()); got != 1 {
-			t.Fatalf("suppressed = %d, want 1", got)
+		if got := FilterClaimedIssues(result, ledger, alwaysRedStale, testLogger()); got != 0 {
+			t.Fatalf("suppressed = %d, want 0", got)
 		}
-		if len(result.Issues.Items) != 0 {
-			t.Errorf("issue not suppressed: %+v", result.Issues.Items)
+		if len(result.Issues.Items) != 1 || !issueHasLabel(result.Issues.Items[0].Labels, LikelyDoneLabel) {
+			t.Errorf("issue not kept with likely-done label: %+v", result.Issues.Items)
 		}
 	})
 
@@ -234,8 +234,8 @@ func TestFilterClaimedIssuesMergedClaims(t *testing.T) {
 		if ctx.PRNumber != 501 || ctx.PRRepo != "spyre-inference" || !ctx.Reference || !ctx.MergedPR {
 			t.Fatalf("claim context = %+v, want merged reference PR #501", ctx)
 		}
-		if ctx.Decision != "merged_weak_claim_needs_verification" {
-			t.Fatalf("decision = %q, want merged_weak_claim_needs_verification", ctx.Decision)
+		if ctx.Decision != "merged_pr_needs_verification" {
+			t.Fatalf("decision = %q, want merged_pr_needs_verification", ctx.Decision)
 		}
 	})
 
