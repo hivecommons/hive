@@ -1,1 +1,0 @@
-- CI: `v2 Tests` re-sharded — pkg/hub 3→4 slices, rest buckets 4→5 — so the PR gate's critical path follows the ~2-minute shards instead of the 3-minute stragglers on the self-hosted fleet.

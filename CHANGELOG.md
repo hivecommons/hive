@@ -11,6 +11,22 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-25 (v5.45.0)
+
+### Added
+
+- Let maintainers invite Spektacular or configured agents into Jam threads with attributed replies and reviewable suggestions (#8725).
+- Add #8753: an opt-in ccleft-backed headroom source for provider rotation while keeping builtin probers as the default.
+- Add MVP repo swarm mode with owner API, dashboard controls, 24h priority boost, persistence, scoring, and history (#8784).
+
+### Changed
+
+- CI: `v2 Tests` re-sharded — pkg/hub 3→4 slices, rest buckets 4→5 — so the PR gate's critical path follows the ~2-minute shards instead of the 3-minute stragglers on the self-hosted fleet.
+
+### Fixed
+
+- **The Advisory Digest no longer reports unverified closes as resolved.** Advisory agents (notably `guide`) re-check their own findings and `bd close` the ones they judge fixed. The digest rendered that judgement as a struck-through "resolved" entry even when nothing had changed, so still-open documentation gaps appeared under **Recently Resolved** ([#6262](https://github.com/hivecommons/hive/issues/6262)). **Recently Resolved** now lists only closes the hive re-checked itself (a healed App or repo-access finding). Every other close appears under a separate **Recently Closed — Fix Not Verified** section, without strikethrough, captioned with its basis: a merged PR's title matched, the issues/PRs it cites closed, or no evidence recorded. Those first two are heuristics that can misfire, so they are no longer presented as resolutions either. The collapsed-overflow line and the zero-findings summary account for unverified closes hidden by the changelog cap, so neither claims "resolved" for them. Digest JSON entries carry the basis as `close_basis`.
+
 ## 2026-09-25 (v5.44.0)
 
 ### Added

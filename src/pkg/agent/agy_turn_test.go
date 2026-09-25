@@ -96,6 +96,18 @@ func runAgyTurnForTest(t *testing.T, args ...string) (int, string, string) {
 	return code, stdout.String(), stderr.String()
 }
 
+func TestAgyTurnArgsDerivesEffortFromModelSuffix(t *testing.T) {
+	args := agyTurnArgs("gemini-3.8-flash-high", "", "")
+	if v, _ := argValue(args, "--effort"); v != "high" {
+		t.Fatalf("agy turn effort = %q, want high; args: %q", v, args)
+	}
+
+	args = agyTurnArgs("gemini-3.8-flash-high", "medium", "")
+	if v, _ := argValue(args, "--effort"); v != "medium" {
+		t.Fatalf("explicit agy turn effort = %q, want medium; args: %q", v, args)
+	}
+}
+
 // TestRunAgyTurn_PromptOnStdinAndConversationContinuity pins the two gaps the
 // runner exists for: the prompt reaches agy on stdin (a >128 KiB argv would
 // fail with E2BIG), and the second kick resumes the conversation the first one

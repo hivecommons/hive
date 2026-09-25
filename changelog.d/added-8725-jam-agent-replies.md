@@ -1,1 +1,0 @@
-- Let maintainers invite Spektacular or configured agents into Jam threads with attributed replies and reviewable suggestions (#8725).
