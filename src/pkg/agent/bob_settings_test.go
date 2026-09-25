@@ -63,6 +63,43 @@ func assertAPIKeyAuth(t *testing.T, auth map[string]any) {
 	}
 }
 
+func assertBobLegacyUpdateDisabled(t *testing.T, settings map[string]any) {
+	t.Helper()
+	for _, key := range []string{
+		config.BobLegacyDisableAutoUpdateKey,
+		config.BobLegacyDisableUpdateNagKey,
+	} {
+		if got, _ := settings[key].(bool); !got {
+			t.Errorf("settings[%q] = %#v, want true", key, settings[key])
+		}
+	}
+	general, ok := settings[config.BobLegacyGeneralKey].(map[string]any)
+	if !ok {
+		t.Fatalf("settings[%q] is not an object: %#v", config.BobLegacyGeneralKey, settings[config.BobLegacyGeneralKey])
+	}
+	for _, key := range []string{
+		config.BobLegacyDisableAutoUpdateKey,
+		config.BobLegacyDisableUpdateNagKey,
+	} {
+		if got, _ := general[key].(bool); !got {
+			t.Errorf("general[%q] = %#v, want true", key, general[key])
+		}
+	}
+}
+
+func assertBobV2AutoUpdateDisabled(t *testing.T, settings map[string]any) {
+	t.Helper()
+	shell, ok := settings[config.BobV2ShellKey].(map[string]any)
+	if !ok {
+		t.Fatalf("v2 settings[%q] is not an object: %#v", config.BobV2ShellKey, settings[config.BobV2ShellKey])
+	}
+	if got, _ := shell[config.BobV2AutoUpdateKey].(bool); got {
+		t.Errorf("bobShell.autoUpdate = true, want false")
+	} else if _, ok := shell[config.BobV2AutoUpdateKey]; !ok {
+		t.Errorf("bobShell.autoUpdate missing, want false")
+	}
+}
+
 // writeBobSettings seeds a settings file with the given raw JSON.
 func writeBobSettings(t *testing.T, home, raw string) {
 	t.Helper()
@@ -83,10 +120,14 @@ func TestEnsureBobAuthSettingsCreatesFile(t *testing.T) {
 
 	m.ensureBobAuthSettings("tester", home)
 
-	assertAPIKeyAuth(t, authBlock(t, readBobSettings(t, home)))
-	if got := readBobV2Settings(t, home)[config.BobV2ProviderKey]; got != config.BobV2ProviderHarness {
+	gotV1 := readBobSettings(t, home)
+	assertAPIKeyAuth(t, authBlock(t, gotV1))
+	assertBobLegacyUpdateDisabled(t, gotV1)
+	gotV2 := readBobV2Settings(t, home)
+	if got := gotV2[config.BobV2ProviderKey]; got != config.BobV2ProviderHarness {
 		t.Errorf("v2 provider = %#v, want %q", got, config.BobV2ProviderHarness)
 	}
+	assertBobV2AutoUpdateDisabled(t, gotV2)
 }
 
 // TestEnsureBobAuthSettingsOverwritesSSO is the core regression guard: this is
@@ -111,6 +152,7 @@ func TestEnsureBobAuthSettingsOverwritesSSO(t *testing.T) {
 
 	got := readBobSettings(t, home)
 	assertAPIKeyAuth(t, authBlock(t, got))
+	assertBobLegacyUpdateDisabled(t, got)
 
 	for key, want := range map[string]any{
 		"instanceId":     "inst-123",
@@ -128,13 +170,13 @@ func TestEnsureBobAuthSettingsOverwritesSSO(t *testing.T) {
 	}
 }
 
-func TestEnsureBobAuthSettingsOverwritesV2Provider(t *testing.T) {
+func TestEnsureBobAuthSettingsOverwritesV2ProviderAndDisablesAutoUpdate(t *testing.T) {
 	home := t.TempDir()
 	path := bobV2SettingsPath(home)
 	if err := os.MkdirAll(filepath.Dir(path), config.BobSettingsDirMode); err != nil {
 		t.Fatalf("mkdir v2 settings: %v", err)
 	}
-	if err := os.WriteFile(path, []byte(`{"provider":"openrouter","session":{"maxTurns":7}}`), config.BobSettingsFileMode); err != nil {
+	if err := os.WriteFile(path, []byte(`{"provider":"openrouter","bobShell":{"autoUpdate":true,"lastRunVersion":"2.0.4"},"session":{"maxTurns":7}}`), config.BobSettingsFileMode); err != nil {
 		t.Fatalf("seed v2 settings: %v", err)
 	}
 
@@ -145,8 +187,31 @@ func TestEnsureBobAuthSettingsOverwritesV2Provider(t *testing.T) {
 	if got[config.BobV2ProviderKey] != config.BobV2ProviderHarness {
 		t.Errorf("v2 provider = %#v, want %q", got[config.BobV2ProviderKey], config.BobV2ProviderHarness)
 	}
+	assertBobV2AutoUpdateDisabled(t, got)
+	if shell, _ := got[config.BobV2ShellKey].(map[string]any); shell["lastRunVersion"] != "2.0.4" {
+		t.Errorf("v2 bobShell sibling settings were not preserved: %#v", got[config.BobV2ShellKey])
+	}
 	if session, _ := got["session"].(map[string]any); session["maxTurns"] != float64(7) {
 		t.Errorf("v2 session settings were not preserved: %#v", got["session"])
+	}
+}
+
+func TestEnsureBobAuthSettingsPreservesLegacyUpdateSiblings(t *testing.T) {
+	home := t.TempDir()
+	writeBobSettings(t, home, `{
+	  "general": {"theme": "dark", "disableAutoUpdate": false},
+	  "disableUpdateNag": false,
+	  "security": {"auth": {"selectedType": "api-key", "enforcedType": "api-key"}}
+	}`)
+
+	m := &Manager{logger: discardLogger()}
+	m.ensureBobAuthSettings("tester", home)
+
+	got := readBobSettings(t, home)
+	assertBobLegacyUpdateDisabled(t, got)
+	general := got[config.BobLegacyGeneralKey].(map[string]any)
+	if general["theme"] != "dark" {
+		t.Errorf("general.theme = %#v, want dark", general["theme"])
 	}
 }
 

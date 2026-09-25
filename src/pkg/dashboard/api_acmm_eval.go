@@ -12,11 +12,18 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 const acmmEvalTTL = time.Hour
+
+const (
+	acmmGitHubActionsAIID        = "acmm:github-actions-ai"
+	acmmHiveAgentLoopProvider    = "Hive agent loop"
+	acmmHiveAgentLoopLookbackDay = 30
+)
 
 // acmmRefreshDebounce is the floor under `?refresh=1` (#5877): an operator-
 // forced re-evaluation still returns the cached result when the cache is
@@ -124,6 +131,10 @@ type CriterionResult struct {
 	// answers that. When several repos waive the same criterion the
 	// aggregate reports the first; the per-repo drill-down has the rest.
 	WaiverRepo string `json:"waiver_repo,omitempty"`
+	// SatisfiedBy records verified off-repo evidence supplied by Hive itself.
+	// Unlike waivers, this is not repository-authored and can advance a level.
+	SatisfiedBy     string `json:"satisfied_by,omitempty"`
+	SatisfiedReason string `json:"satisfied_reason,omitempty"`
 }
 
 // ACMMIssueRequest is the payload for creating an ACMM gap issue.
@@ -521,6 +532,12 @@ func (s *Server) evaluateAllRepos() ACMMEvaluation {
 	// waiver as a detection.
 	aggDetected := make(map[string]bool)
 	aggWaiver := make(map[string]CriterionResult)
+	aggHiveCredit := make(map[string]CriterionResult)
+	activitySnap, activityReady := collect.ActivitySnapshot{}, false
+	if s.deps != nil && s.deps.Activity != nil {
+		activitySnap, activityReady = s.deps.Activity.Snapshot()
+	}
+	now := time.Now()
 
 	for _, repo := range repos {
 		ctx, cancel := context.WithTimeout(context.Background(), acmmPerRepoTimeout)
@@ -550,12 +567,24 @@ func (s *Server) evaluateAllRepos() ACMMEvaluation {
 					res.WaiverReason = w.Reason
 				}
 			}
+			if !res.Passed && c.ID == acmmGitHubActionsAIID {
+				fullRepo := owner + "/" + repo
+				if ok, reason := hiveAgentLoopCredit(activitySnap, activityReady, fullRepo, now); ok {
+					res.Passed = true
+					res.SatisfiedBy = acmmHiveAgentLoopProvider
+					res.SatisfiedReason = reason
+				}
+			}
 			results = append(results, res)
 			if res.Passed {
 				aggPassed[c.ID] = true
 				if res.Waived {
 					if _, seen := aggWaiver[c.ID]; !seen {
 						aggWaiver[c.ID] = res
+					}
+				} else if res.SatisfiedBy != "" {
+					if _, seen := aggHiveCredit[c.ID]; !seen {
+						aggHiveCredit[c.ID] = res
 					}
 				} else {
 					aggDetected[c.ID] = true
@@ -592,7 +621,11 @@ func (s *Server) evaluateAllRepos() ACMMEvaluation {
 		// thing. One repo holding the file makes the fleet-wide claim true
 		// on its own, and a waiver elsewhere should not dilute that.
 		if row.Passed && !aggDetected[c.ID] {
-			if w, ok := aggWaiver[c.ID]; ok {
+			if h, ok := aggHiveCredit[c.ID]; ok {
+				row.SatisfiedBy = h.SatisfiedBy
+				row.SatisfiedReason = h.SatisfiedReason
+				row.Repo = h.Repo
+			} else if w, ok := aggWaiver[c.ID]; ok {
 				row.Waived = true
 				row.WaiverSatisfiedBy = w.WaiverSatisfiedBy
 				row.WaiverReason = w.WaiverReason
@@ -659,6 +692,49 @@ func (s *Server) checkCriterion(ctx context.Context, owner, repo string, c ACMMC
 		}
 	}
 	return false
+}
+
+func hiveAgentLoopCredit(snap collect.ActivitySnapshot, ready bool, fullRepo string, now time.Time) (bool, string) {
+	if !ready || fullRepo == "" {
+		return false, ""
+	}
+	cutoff := now.Add(-time.Duration(acmmHiveAgentLoopLookbackDay) * 24 * time.Hour)
+	for _, repo := range snap.Repos {
+		if repo.Repo != fullRepo {
+			continue
+		}
+		if newestHiveActivity(repo).Before(cutoff) {
+			return false, ""
+		}
+		return true, fmt.Sprintf("managed repo with Hive agent activity in the last %d days", acmmHiveAgentLoopLookbackDay)
+	}
+	return false, ""
+}
+
+func newestHiveActivity(repo collect.RepoActivity) time.Time {
+	var newest time.Time
+	for _, stat := range []collect.ActivityActionStat{
+		repo.Issues,
+		repo.PRs,
+		repo.Comments,
+		repo.Merges,
+		repo.Claims,
+		repo.Reviews,
+		repo.Advisory,
+		repo.Reconciled,
+	} {
+		if stat.Count == 0 || stat.NewestAt == "" {
+			continue
+		}
+		ts, err := time.Parse(time.RFC3339, stat.NewestAt)
+		if err != nil {
+			continue
+		}
+		if ts.After(newest) {
+			newest = ts
+		}
+	}
+	return newest
 }
 
 // patternExists checks if a file or directory path exists, using the

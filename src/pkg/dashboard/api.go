@@ -92,6 +92,22 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/runs/{key}", s.handleRunGet)
 	s.mux.HandleFunc("POST /api/runs/spec", s.handleRunSpecStart)
 	s.mux.HandleFunc("POST /api/runs/{key}/reset", s.handleRunReset)
+	s.mux.HandleFunc("GET /api/campaigns", s.handleCampaignsList)
+	s.mux.HandleFunc("GET /api/campaigns/{id}", s.handleCampaignGet)
+	s.mux.HandleFunc("POST /api/campaigns/{id}/resume", s.handleCampaignResume)
+	s.mux.HandleFunc("POST /api/campaigns/{id}/release", s.handleCampaignRelease)
+	s.mux.HandleFunc("POST /api/campaigns/{id}/revise", s.handleCampaignRevise)
+	s.mux.HandleFunc("GET /api/campaigns/{id}/jam", s.handleCampaignJamGet)
+	s.mux.HandleFunc("POST /api/campaigns/{id}/jam", s.handleCampaignJamPost)
+	s.mux.HandleFunc("GET /api/campaigns/{id}/jam/threads", s.handleCampaignJamThreadsGet)
+	s.mux.HandleFunc("POST /api/campaigns/{id}/jam/threads", s.handleCampaignJamThreadsPost)
+	s.mux.HandleFunc("GET /api/campaigns/{id}/jam/suggestions", s.handleCampaignJamSuggestionsGet)
+	s.mux.HandleFunc("POST /api/campaigns/{id}/jam/suggestions", s.handleCampaignJamSuggestionsPost)
+	s.mux.HandleFunc("GET /api/campaigns/{id}/jam/polls", s.handleCampaignJamPollsGet)
+	s.mux.HandleFunc("POST /api/campaigns/{id}/jam/polls", s.handleCampaignJamPollsPost)
+	s.mux.HandleFunc("GET /api/campaigns/{id}/jam/project-sync", s.handleCampaignJamProjectSyncGet)
+	s.mux.HandleFunc("POST /api/campaigns/{id}/jam/project-sync", s.handleCampaignJamProjectSyncPost)
+	s.mux.HandleFunc("GET /api/campaigns/{id}/jam/ws", s.handleCampaignJamWebSocket)
 	s.mux.HandleFunc("GET /api/widget", s.handleWidget)
 	s.mux.HandleFunc("GET /api/pane/{agent}", s.handlePane)
 	// Full retained scrollback of an agent's latest run, as plain text (#3693).
@@ -198,6 +214,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// but its UI lives on the governor Features tab — see api_config_review.go.
 	s.mux.HandleFunc("GET /api/config/review", s.handleReviewConfigGet)
 	s.mux.HandleFunc("GET /api/review/outcomes", s.handleReviewOutcomes)
+	s.mux.HandleFunc("GET /api/reviewer/accuracy", s.handleReviewerAccuracy)
 	s.mux.HandleFunc("PUT /api/config/review", s.handleReviewConfigPut)
 	s.mux.HandleFunc("PUT /api/config/governor/logging", s.handleGovernorLogging)
 	s.mux.HandleFunc("PUT /api/config/governor/attribution", s.handleGovernorAttribution)
@@ -2305,8 +2322,8 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 		s.deps.Logger.Warn("restart after backend switch failed", "agent", name, "error", err)
 	}
 
-	s.refreshAndPersist()
-	okResponse(w, map[string]string{"status": "switched", "agent": name, "backend": backend})
+	minStatusSeq := s.refreshAndPersistSeq()
+	jsonResponse(w, map[string]any{"ok": true, "status": "switched", "agent": name, "backend": backend, "minStatusSeq": minStatusSeq})
 }
 
 func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
@@ -2344,8 +2361,8 @@ func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
 		s.deps.Logger.Warn("restart after model switch failed", "agent", name, "error", err)
 	}
 
-	s.refreshAndPersist()
-	okResponse(w, map[string]string{"status": "model_set", "agent": name, "model": model})
+	minStatusSeq := s.refreshAndPersistSeq()
+	jsonResponse(w, map[string]any{"ok": true, "status": "model_set", "agent": name, "model": model, "minStatusSeq": minStatusSeq})
 }
 
 // handleEffortSet sets an agent's reasoning effort from the grid dropdown and
@@ -2412,8 +2429,8 @@ func (s *Server) handleEffortSet(w http.ResponseWriter, r *http.Request) {
 		s.deps.Logger.Warn("restart after effort switch failed", "agent", name, "error", err)
 	}
 
-	s.refreshAndPersist()
-	okResponse(w, map[string]string{"status": "effort_set", "agent": name, "reasoning_effort": effort})
+	minStatusSeq := s.refreshAndPersistSeq()
+	jsonResponse(w, map[string]any{"ok": true, "status": "effort_set", "agent": name, "reasoning_effort": effort, "minStatusSeq": minStatusSeq})
 }
 
 // pauseStateLabel names the authoritative pause-dimension state reported by
@@ -2439,13 +2456,14 @@ func pauseStateLabel(paused bool) string {
 // operator was trying to START (audit showed pause-pairs seconds apart while
 // the agent stayed paused indefinitely). `state` is the authoritative
 // post-request pause state the client must render from.
-func pauseToggleResponse(w http.ResponseWriter, status, agent string, changed, paused bool) {
+func pauseToggleResponse(w http.ResponseWriter, status, agent string, changed, paused bool, minStatusSeq uint64) {
 	jsonResponse(w, map[string]interface{}{
-		"ok":      true,
-		"status":  status,
-		"agent":   agent,
-		"changed": changed,
-		"state":   pauseStateLabel(paused),
+		"ok":           true,
+		"status":       status,
+		"agent":        agent,
+		"changed":      changed,
+		"state":        pauseStateLabel(paused),
+		"minStatusSeq": minStatusSeq,
 	})
 }
 
@@ -2492,7 +2510,7 @@ func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
 	// Pause, which returns the same 400 as before.
 	if proc, err := s.deps.AgentMgr.GetStatus(name); err == nil && proc != nil && proc.Paused {
 		s.auditFromRequest(r, "pause", auditDetail("result", "noop-already-paused"), name)
-		pauseToggleResponse(w, "paused", name, false, true)
+		pauseToggleResponse(w, "paused", name, false, true, s.currentStatusSeq())
 		return
 	}
 
@@ -2505,8 +2523,8 @@ func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.auditFromRequest(r, "pause", "", name)
-	s.refreshAndPersist()
-	pauseToggleResponse(w, "paused", name, true, true)
+	minStatusSeq := s.refreshAndPersistSeq()
+	pauseToggleResponse(w, "paused", name, true, true, minStatusSeq)
 }
 
 func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
@@ -2519,7 +2537,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	// paused must report changed:false with the authoritative state.
 	if proc, err := s.deps.AgentMgr.GetStatus(name); err == nil && proc != nil && !proc.Paused {
 		s.auditFromRequest(r, "resume", auditDetail("result", "noop-not-paused"), name)
-		pauseToggleResponse(w, "resumed", name, false, false)
+		pauseToggleResponse(w, "resumed", name, false, false, s.currentStatusSeq())
 		return
 	}
 
@@ -2535,8 +2553,8 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	s.claimAgentPauseOwnership(name)
 
 	s.auditFromRequest(r, "resume", "", name)
-	s.refreshAndPersist()
-	pauseToggleResponse(w, "resumed", name, true, false)
+	minStatusSeq := s.refreshAndPersistSeq()
+	pauseToggleResponse(w, "resumed", name, true, false, minStatusSeq)
 }
 
 // handleAgentState is a lightweight authoritative pause-state probe. The
@@ -4718,7 +4736,7 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 				"model_changed", modelChanged, "backend_changed", backendChanged, "effort_changed", effortChanged, "trigger", "dashboard-api")
 		}
 	}
-	s.refreshAndPersist()
+	resp["minStatusSeq"] = s.refreshAndPersistSeq()
 	jsonResponse(w, resp)
 }
 

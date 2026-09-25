@@ -435,6 +435,12 @@ var geminiPinnedCLIModels = []string{
 // gooseProviderStaticModels maps a configured goose provider to a sensible
 // static model list, used when goose can't be probed for its provider's live
 // model set. "default" (last resort) means goose is unconfigured.
+var piKiroStaticModels = []string{
+	"kiro-api-key/claude-opus-5:high",
+	"kiro-api-key/claude-sonnet-5:high",
+	"kiro-api-key/gpt-5.6-sol:high",
+}
+
 var gooseProviderStaticModels = map[string][]string{
 	"ollama":     {"llama3.3", "qwen2.5", "deepseek-r1", "default"},
 	"openai":     {"gpt-5.4", "gpt-4.1", "gpt-4o", "o3", "o4-mini"},
@@ -833,6 +839,8 @@ func cliStaticFallback(backend string) []string {
 		return ompStaticModels
 	case bobBackendID:
 		return bobStaticModels
+	case "pi":
+		return piKiroStaticModels
 	case "goose":
 		return []string{"default"}
 	default:

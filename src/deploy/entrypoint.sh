@@ -1042,7 +1042,7 @@ if [ "$(id -u)" = "0" ]; then
   # Shared CLI auth/cache lives in /data/home (persistent volume).
   # Make it group-writable so all agent UIDs (node group) can use it.
   # The manager sets HOME=/data/home for agent tmux sessions.
-  mkdir -p /data/home/.config /data/home/.copilot /data/home/.claude/session-env /data/home/.codex /data/home/.gemini/antigravity-cli /data/home/.bob/settings /data/config/github-copilot /home/dev/.config
+  mkdir -p /data/home/.config /data/home/.copilot /data/home/.claude/session-env /data/home/.codex /data/home/.gemini/antigravity-cli /data/home/.gemini/antigravity-cli/cache /data/home/.bob/settings /data/config/github-copilot /home/dev/.config
   # $HOME itself must be group-writable, not just its children. bob calls
   # mkdirSync('$HOME/.bob') on first run, which needs write on /data/home — a
   # 0755 root-owned $HOME makes that EACCES even though every child dir below
@@ -1088,7 +1088,7 @@ if [ "$(id -u)" = "0" ]; then
   # inotify-tools version's handling of directories created under a recursive
   # watch. Creating it here removes that dependency entirely: the directory is
   # on disk, with the right mode, before any watch is set up.
-  chmod 2770 /data/home/.gemini /data/home/.gemini/antigravity-cli 2>/dev/null || true
+  chmod 2770 /data/home/.gemini /data/home/.gemini/antigravity-cli /data/home/.gemini/antigravity-cli/cache 2>/dev/null || true
   chown -R dev:node /data/home/.gemini 2>/dev/null || true
   # bob writes installation_id, settings.json, trustedFolders.json and tmp/ under
   # $HOME/.bob, plus custom modes under $HOME/.bob/settings. Pre-create both
@@ -1253,29 +1253,31 @@ if [ "$(id -u)" = "0" ]; then
 
   hive_fix_codex_instant() { hive_fix_tree /data/home/.codex; }
 
-  # agy writes antigravity-oauth-token 0600 owned by the agent that signed in,
-  # which locks every other agent UID out of a credential the shared CLI home
-  # exists to share — the same shape as copilot's config.json and claude's
-  # .credentials.json. Re-opening it to the node group is what makes ONE agy
-  # login serve the fleet instead of one login per agent.
+  # agy writes antigravity-oauth-token and cache/onboarding.json 0600 owned by
+  # the agent that refreshed them, which locks every other agent UID out of
+  # shared CLI state. Re-opening them to the node group is what makes ONE agy
+  # login and onboarding state serve the fleet instead of one copy per agent.
   #
   # Credential first and NO tree walk, for the same reason the .claude instant
-  # path has none: this body now runs under a RECURSIVE watch (#5734), so it
-  # fires on writes anywhere under .gemini rather than only on the top level.
-  # The recursive sweep stays on the 5-minute cycle.
+  # path has none. The guard watches antigravity-cli itself, non-recursively,
+  # so agy's churny brain/ tree cannot make every event re-walk thousands of
+  # directories (#8712). The recursive sweep stays on the 5-minute cycle.
   hive_fix_gemini_instant() {
     hive_fix_shared_credential /data/home/.gemini/antigravity-cli/antigravity-oauth-token
-    chmod g+rwx /data/home/.gemini /data/home/.gemini/antigravity-cli 2>/dev/null || true
+    hive_fix_shared_credential /data/home/.gemini/antigravity-cli/cache/onboarding.json
+    chmod g+rwx /data/home/.gemini /data/home/.gemini/antigravity-cli /data/home/.gemini/antigravity-cli/cache 2>/dev/null || true
     return 0
   }
 
-  # hive_fix_credentials_fast — the 5s polling path. Bounded and cheap: the two
-  # files a CLI rewrites owner-only on a token refresh, and no tree walk at all.
-  # This is the backstop that would have repaired #5730 within five seconds.
+  # hive_fix_credentials_fast — the 5s polling path. Bounded and cheap: the
+  # files a CLI rewrites owner-only on token/session refresh, and no tree walk
+  # at all. This is the backstop that would have repaired #5730 and #8713
+  # within five seconds.
   hive_fix_credentials_fast() {
     hive_fix_copilot_config
     hive_fix_shared_credential /data/home/.claude/.credentials.json
     hive_fix_shared_credential /data/home/.gemini/antigravity-cli/antigravity-oauth-token
+    hive_fix_shared_credential /data/home/.gemini/antigravity-cli/cache/onboarding.json
     return 0
   }
 
@@ -1302,27 +1304,30 @@ if [ "$(id -u)" = "0" ]; then
 
   # hive_watch_once DIR EVENTS RECURSE — block until DIR changes, then return.
   # RECURSE is "-r" to watch subdirectories too, "" for the directory alone.
+  # HIVE_WATCH_ERROR receives stderr when inotifywait fails.
   #
   # The depth matters, and getting it wrong is invisible (hivecommons/hive
   # #5734). `inotifywait` without -r reports events only for entries DIRECTLY
-  # inside the watched directory, so the .gemini guard — watching
-  # /data/home/.gemini/ while agy keeps its token at
-  # .gemini/antigravity-cli/antigravity-oauth-token — could never fire. It was
-  # not merely untested: it was structurally incapable of firing, and it read
-  # as protection the whole time. Measured on a live hive: sixteen minutes and
-  # one token rewrite after boot, the .claude guard's inotifywait pid had
-  # advanced (its credential sits at depth 1) while .gemini's was still the
-  # boot pid.
+  # inside the watched directory, so a nested credential needs either a bounded
+  # direct watch on its parent or recursion. agy's token parent is
+  # antigravity-cli; watching that directory directly avoids the churny brain/
+  # subtree that made the old recursive .gemini guard crash-loop (#8712).
   #
   # Recursion is per-guard, not the default: .claude is 161 MB and 8413 entries
   # on a working hive, and watching it recursively would cost a watch per
   # subdirectory for a credential that sits at the top level anyway.
   hive_watch_once() {
+    HIVE_WATCH_ERROR=""
     if [ -n "$3" ]; then
-      inotifywait -qq -r -e "$2" "$1" 2>/dev/null
+      if HIVE_WATCH_ERROR="$(inotifywait -qq -r -e "$2" "$1" 2>&1)"; then
+        return 0
+      fi
     else
-      inotifywait -qq -e "$2" "$1" 2>/dev/null
+      if HIVE_WATCH_ERROR="$(inotifywait -qq -e "$2" "$1" 2>&1)"; then
+        return 0
+      fi
     fi
+    return 1
   }
 
   # hive_guard_forever LABEL DIR EVENTS BODY_FN [RECURSE] — run BODY_FN every
@@ -1344,7 +1349,9 @@ if [ "$(id -u)" = "0" ]; then
       # Say so — the silence here is what made #5730 undiagnosable — then repair
       # once and try again, so a hive with no working inotify at all is still
       # served by this loop rather than only by the 5s poller.
-      echo "[entrypoint] WARN: perm guard '$_label' watcher exited on $_dir; repairing and retrying in ${_backoff}s"
+      _why=""
+      [ -z "$HIVE_WATCH_ERROR" ] || _why=": $HIVE_WATCH_ERROR"
+      echo "[entrypoint] WARN: perm guard '$_label' watcher exited on $_dir${_why}; repairing and retrying in ${_backoff}s"
       "$_body" || true
       sleep "$_backoff" || true
       [ "$_backoff" -ge 60 ] || _backoff=$((_backoff * 2))
@@ -1356,8 +1363,7 @@ if [ "$(id -u)" = "0" ]; then
     hive_guard_forever copilot /data/home/.copilot/ close_write,moved_to hive_fix_copilot_config &
     hive_guard_forever claude /data/home/.claude/ close_write,moved_to,create hive_fix_claude_instant &
     hive_guard_forever codex /data/home/.codex/ close_write,moved_to,create hive_fix_codex_instant &
-    # -r: agy's token is one directory deeper than this watch (#5734).
-    hive_guard_forever gemini /data/home/.gemini/ close_write,moved_to,create hive_fix_gemini_instant -r &
+    hive_guard_forever gemini /data/home/.gemini/antigravity-cli/ close_write,moved_to,create hive_fix_gemini_instant &
     echo "[entrypoint] inotify perm guard active (copilot + claude + codex + gemini)"
   fi
   (
@@ -1768,7 +1774,7 @@ print('[entrypoint] UID map written to /var/run/hive/uid-map.json')
         else
         echo "[entrypoint] FATAL: this node's kernel is missing netfilter module(s) required by the forced-egress gate: ${_ipt_missing_modules}." >&2
         echo "[entrypoint] FATAL: without them the HIVE_PROXY chain would redirect nothing, so agents holding raw tokens could reach the network unproxied while the spoke reported healthy. Refusing to start." >&2
-        echo "[entrypoint] FATAL: load the module(s) on this node - the durable fix is a MachineConfig writing an /etc/modules-load.d/ drop-in (for example /etc/modules-load.d/hive-netfilter.conf containing xt_owner and xt_REDIRECT), so they survive a node rebuild. Until then, taint or label the node so hive pods are not scheduled onto it." >&2
+        echo "[entrypoint] FATAL: load the module(s) on this node - the durable fix is a MachineConfig writing an /etc/modules-load.d/ drop-in (for example /etc/modules-load.d/hive-netfilter.conf containing xt_owner and xt_REDIRECT), so they survive a node rebuild; with no node reboot, apply the node-prep DaemonSet src/deploy/k8s/node-prep/hive-netfilter-modules.yaml (see src/docs/net-admin-requirement.md). Until then, taint or label the node so hive pods are not scheduled onto it." >&2
         echo "[entrypoint] FATAL: exiting ${EXIT_NET_ADMIN_REQUIRED} (EX_NOPERM) rather than 1 - see EXIT_NET_ADMIN_REQUIRED near the top of entrypoint.sh." >&2
         exit "$EXIT_NET_ADMIN_REQUIRED"
         fi

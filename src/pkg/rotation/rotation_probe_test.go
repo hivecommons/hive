@@ -49,6 +49,22 @@ func (t *countingUnauthorizedTransport) RoundTrip(*http.Request) (*http.Response
 	return &http.Response{StatusCode: http.StatusUnauthorized, Body: http.NoBody, Header: make(http.Header)}, nil
 }
 
+type sequenceProber struct {
+	provider string
+	results  []Headroom
+	calls    int
+}
+
+func (p *sequenceProber) Provider() string { return p.provider }
+
+func (p *sequenceProber) Probe(context.Context) Headroom {
+	p.calls++
+	if p.calls <= len(p.results) {
+		return p.results[p.calls-1]
+	}
+	return p.results[len(p.results)-1]
+}
+
 // claudeUsageServer serves /api/oauth/usage and verifies the Authorization
 // and anthropic-beta headers the probe must send.
 func claudeUsageServer(t *testing.T, status int, body string) *httptest.Server {
@@ -112,6 +128,108 @@ func TestClaudeProber_Unauthenticated(t *testing.T) {
 	}
 	if !h.Available {
 		t.Error("Available = false, want true (fail-open)")
+	}
+}
+
+func TestClaudeProberRateLimitedCause(t *testing.T) {
+	srv := claudeUsageServer(t, http.StatusTooManyRequests, `{"error":{"type":"rate_limit_error"}}`)
+	h := ClaudeProber{ThresholdPct: 80, BaseURL: srv.URL, CredentialsPath: claudeCredsFile(t, "test-token")}.Probe(context.Background())
+	if h.ProbeErr == nil {
+		t.Fatal("ProbeErr = nil, want rate limit error")
+	}
+	if h.ProbeErrCause != ProbeCauseRateLimited {
+		t.Fatalf("ProbeErrCause = %q, want %q; err=%v", h.ProbeErrCause, ProbeCauseRateLimited, h.ProbeErr)
+	}
+}
+
+func TestManagerRateLimitBackoffUsesLastGoodHeadroom(t *testing.T) {
+	reset := time.Date(2026, 9, 24, 20, 0, 0, 0, time.UTC)
+	prober := &sequenceProber{provider: "anthropic", results: []Headroom{
+		{Provider: "anthropic", Available: true, PctRemaining: 61, Limits: []LimitWindow{{ID: "weekly_all", Kind: "weekly", PctRemaining: 61, ResetAt: reset}}},
+		failOpen("anthropic", withCause(ProbeCauseRateLimited, &rateLimitedError{err: errors.New("claude usage HTTP 429")})),
+	}}
+	m := NewManager(config.RotationConfig{})
+	m.SetProbers([]Prober{prober})
+	m.probeAll(context.Background())
+	m.probeAll(context.Background())
+
+	h := m.HeadroomFor("anthropic")
+	if !h.Stale || h.ProbeErrCause != ProbeCauseRateLimited {
+		t.Fatalf("headroom = %+v, want stale rate-limited last-good", h)
+	}
+	if h.PctRemaining != 61 || len(h.Limits) != 1 || h.Limits[0].ResetAt.IsZero() {
+		t.Fatalf("last-good windows were not retained: %+v", h)
+	}
+	m.probeAll(context.Background())
+	if prober.calls != 2 {
+		t.Fatalf("probe called %d times, want 2 because backoff skipped the third poll", prober.calls)
+	}
+}
+
+func TestProbeErrorHelpers(t *testing.T) {
+	now := time.Date(2026, 9, 24, 20, 0, 0, 0, time.UTC)
+	if got := parseRetryAfter("7", now); got != 7*time.Second {
+		t.Fatalf("numeric Retry-After = %v, want 7s", got)
+	}
+	if got := parseRetryAfter(now.Add(2*time.Minute).Format(http.TimeFormat), now); got != 2*time.Minute {
+		t.Fatalf("date Retry-After = %v, want 2m", got)
+	}
+	for _, value := range []string{"", "0", now.Add(-time.Minute).Format(http.TimeFormat), "nonsense"} {
+		if got := parseRetryAfter(value, now); got != 0 {
+			t.Fatalf("Retry-After %q = %v, want 0", value, got)
+		}
+	}
+	msg := sanitizeProbeError("failed Authorization: secret-token x-api-key: second")
+	if strings.Contains(msg, "secret-token") || strings.Contains(msg, "second") {
+		t.Fatalf("sanitizeProbeError leaked secret: %q", msg)
+	}
+	long := sanitizeProbeError(strings.Repeat("x", maxPublishedProbeErrorLen+10))
+	if !strings.HasSuffix(long, "…") || len(long) <= maxPublishedProbeErrorLen {
+		t.Fatalf("long error was not capped: len=%d", len(long))
+	}
+	baseErr := errors.New("base")
+	if !errors.Is(&rateLimitedError{err: baseErr}, baseErr) {
+		t.Fatal("rateLimitedError must unwrap")
+	}
+	for _, tc := range []struct {
+		window string
+		mins   int
+	}{
+		{"5h", 300},
+		{"session", 60},
+		{"daily", 1440},
+		{"weekly", 10080},
+		{"mystery", 0},
+	} {
+		if got := agyWindowDurationMins(tc.window); got != tc.mins {
+			t.Fatalf("agyWindowDurationMins(%q) = %d, want %d", tc.window, got, tc.mins)
+		}
+	}
+	if got := agyBucketPool("nodash"); got != "" {
+		t.Fatalf("agyBucketPool without dash = %q, want empty", got)
+	}
+	var flex flexibleFloat64
+	if err := json.Unmarshal([]byte(`null`), &flex); err != nil || flex.set {
+		t.Fatalf("null flexible float = set %v err %v, want unset nil", flex.set, err)
+	}
+	if err := json.Unmarshal([]byte(`"bad"`), &flex); err == nil {
+		t.Fatal("invalid flexible float err = nil, want error")
+	}
+}
+
+func TestManagerRateLimitRetryAfterAndGenericFailure(t *testing.T) {
+	m := NewManager(config.RotationConfig{})
+	ok := Headroom{Provider: "anthropic", Available: true, PctRemaining: 80, Limits: []LimitWindow{{ID: "session", Kind: "session", PctRemaining: 80}}}
+	_ = m.applyProbeResult("anthropic", ok, time.Now())
+	limited := failOpen("anthropic", withCause(ProbeCauseRateLimited, &rateLimitedError{err: errors.New("claude usage HTTP 429"), retryAfter: 3 * time.Minute}))
+	stale := m.applyProbeResult("anthropic", limited, time.Now())
+	if !stale.Stale || rateLimitRetryAfter(limited.ProbeErr) != 3*time.Minute {
+		t.Fatalf("rate limit with Retry-After did not produce stale cached reading: %+v", stale)
+	}
+	generic := failOpen("anthropic", errors.New("network down"))
+	got := m.applyProbeResult("anthropic", generic, time.Now())
+	if got.Stale || got.ProbeErrCause == ProbeCauseRateLimited {
+		t.Fatalf("generic failure should not reuse stale cache: %+v", got)
 	}
 }
 
@@ -640,6 +758,46 @@ func TestCodexHeadroomSurfacesPaidCreditsWithoutEnablingThem(t *testing.T) {
 	}
 }
 
+func TestCodexHeadroomDecodes0156RateLimits(t *testing.T) {
+	h, err := codexHeadroom("openai", 80, codexPayload(t, `{
+	  "ordinaryUsageAllowed": false,
+	  "rateLimits": {
+	    "limitId": "codex",
+	    "primary": {"usedPercent": 100, "windowDurationMins": 10080, "resetsAt": 1790410518},
+	    "credits": {"hasCredits": false, "unlimited": false, "balance": "0"},
+	    "planType": "prolite",
+	    "rateLimitReachedType": "rate_limit_reached"
+	  },
+	  "rateLimitsByLimitId": {
+	    "codex": {
+	      "limitId": "codex",
+	      "primary": {"usedPercent": 100, "windowDurationMins": 10080, "resetsAt": 1790410518},
+	      "credits": {"hasCredits": false, "unlimited": false, "balance": "0"}
+	    },
+	    "codex-scoped": {
+	      "limitId": "codex-scoped",
+	      "limitName": "Scoped daily usage",
+	      "primary": {"usedPercent": 25, "windowDurationMins": 1440, "resetsAt": 1790000000}
+	    }
+	  }
+	}`))
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if h.Available {
+		t.Fatal("ordinaryUsageAllowed=false and 100% used must be unavailable")
+	}
+	if h.PlanType != "prolite" {
+		t.Fatalf("PlanType = %q, want prolite", h.PlanType)
+	}
+	if h.PaidCreditsAvailable == nil || *h.PaidCreditsAvailable {
+		t.Fatalf("PaidCreditsAvailable = %v, want false from hasCredits/unlimited", h.PaidCreditsAvailable)
+	}
+	if len(h.Limits) != 2 {
+		t.Fatalf("len(Limits) = %d, want deduped positional + scoped; %+v", len(h.Limits), h.Limits)
+	}
+}
+
 func TestCodexHeadroomOrdinaryUsageAllowedIsNeverRecovery(t *testing.T) {
 	// Explicitly false overrides healthy percentages.
 	h, err := codexHeadroom("openai", 80, codexPayload(t,
@@ -1046,5 +1204,100 @@ func TestAgyProberCauseNotInstalledVsDeadAdapter(t *testing.T) {
 	}
 	if h.ProbeErrCause == ProbeCauseNotInstalled {
 		t.Error("a dead adapter must not be reported as a missing CLI")
+	}
+}
+
+func TestAgyProberUsesSharedCLIHome(t *testing.T) {
+	shared := t.TempDir()
+	oldShared := sharedCLIHomePath
+	sharedCLIHomePath = shared
+	t.Cleanup(func() { sharedCLIHomePath = oldShared })
+
+	dir := t.TempDir()
+	script := `#!/bin/sh
+if [ "$HOME" = "` + shared + `" ]; then
+  cat <<'EOF'
+{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"name":"Gemini Models","buckets":[{"id":"gemini-weekly","window":"weekly","remaining_fraction":0.55,"reset_time":"2026-09-20T00:00:00Z"}]}]}}}
+EOF
+  exit 0
+fi
+echo "wrong HOME=$HOME"
+exit 9
+`
+	if err := os.WriteFile(filepath.Join(dir, "agy"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	h := AgyProber{ThresholdPct: 80}.Probe(context.Background())
+	if h.ProbeErr != nil {
+		t.Fatalf("ProbeErr = %v, want agy to run with shared HOME", h.ProbeErr)
+	}
+}
+
+func TestKiroProberGetUsageLimits(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/" {
+			t.Fatalf("request = %s %s, want POST /", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("X-Amz-Target"); got != "AmazonCodeWhispererService.GetUsageLimits" {
+			t.Fatalf("X-Amz-Target = %q", got)
+		}
+		if got := r.Header.Get("tokentype"); got != "API_KEY" {
+			t.Fatalf("tokentype = %q", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "test-kiro-key" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		_, _ = w.Write([]byte(`{"plan":"pro","usedCredits":"25","limitCredits":100,"nextDateReset":"2026-10-01T00:00:00Z"}`))
+	}))
+	t.Cleanup(srv.Close)
+	h := KiroProber{APIKey: "test-kiro-key", ThresholdPct: 80, BaseURL: srv.URL}.Probe(context.Background())
+	if h.ProbeErr != nil {
+		t.Fatalf("ProbeErr = %v", h.ProbeErr)
+	}
+	if h.Provider != "aws-kiro" || !h.Available || h.PctRemaining != 75 || h.PlanType != "pro" {
+		t.Fatalf("unexpected headroom: %+v", h)
+	}
+	if len(h.Limits) != 1 || h.Limits[0].Kind != "monthly" || h.Limits[0].ResetAt.IsZero() {
+		t.Fatalf("unexpected limits: %+v", h.Limits)
+	}
+}
+
+func TestKiroProberErrorCases(t *testing.T) {
+	t.Setenv("KIRO_API_KEY", "")
+	h := KiroProber{ThresholdPct: 80}.Probe(context.Background())
+	if h.ProbeErrCause != ProbeCauseNoCredentials {
+		t.Fatalf("missing key cause = %q, want %q", h.ProbeErrCause, ProbeCauseNoCredentials)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch strings.Trim(r.URL.Path, "/") {
+		case "status":
+			http.Error(w, "nope", http.StatusTooManyRequests)
+		case "malformed":
+			_, _ = w.Write([]byte(`{"usedCredits":`))
+		case "missing":
+			_, _ = w.Write([]byte(`{"plan":"free"}`))
+		default:
+			_, _ = w.Write([]byte(`{"plan":"free","used":"2","limit":"10"}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	h = KiroProber{APIKey: "key", ThresholdPct: 80, BaseURL: srv.URL + "/status"}.Probe(context.Background())
+	if h.ProbeErr == nil || !strings.Contains(h.ProbeErr.Error(), "HTTP 429") {
+		t.Fatalf("status error not surfaced: %+v", h)
+	}
+	h = KiroProber{APIKey: "key", ThresholdPct: 80, BaseURL: srv.URL + "/malformed"}.Probe(context.Background())
+	if h.ProbeErrCause != ProbeCauseUnrecognizedSchema {
+		t.Fatalf("malformed cause = %q, want unrecognized_schema", h.ProbeErrCause)
+	}
+	h = KiroProber{APIKey: "key", ThresholdPct: 80, BaseURL: srv.URL + "/missing"}.Probe(context.Background())
+	if h.ProbeErrCause != ProbeCauseUnrecognizedSchema {
+		t.Fatalf("missing fields cause = %q, want unrecognized_schema", h.ProbeErrCause)
+	}
+	h = KiroProber{APIKey: "key", ThresholdPct: 80, BaseURL: srv.URL}.Probe(context.Background())
+	if h.ProbeErr != nil || h.PctRemaining != 80 {
+		t.Fatalf("string used/limit not decoded: %+v", h)
 	}
 }

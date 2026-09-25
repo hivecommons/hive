@@ -197,6 +197,35 @@ func TestManager_HeadroomResponse(t *testing.T) {
 	}
 }
 
+type fakeHeadroomSource struct {
+	provider string
+	reading  Headroom
+}
+
+func (s fakeHeadroomSource) Provider() string { return s.provider }
+
+func (s fakeHeadroomSource) Probe(context.Context) Headroom { return s.reading }
+
+func TestManager_ConsumesHeadroomSourceInterface(t *testing.T) {
+	m := NewManager(config.RotationConfig{})
+	m.SetHeadroomSources([]HeadroomSource{
+		fakeHeadroomSource{
+			provider: "openai",
+			reading:  Headroom{Provider: "openai", Available: true, PctRemaining: 61},
+		},
+	})
+
+	m.probeAll(context.Background())
+
+	h := m.HeadroomFor("openai")
+	if h.ProbeErr != nil {
+		t.Fatalf("ProbeErr = %v", h.ProbeErr)
+	}
+	if !h.Available || h.PctRemaining != 61 {
+		t.Fatalf("headroom = %+v, want available with 61%% remaining", h)
+	}
+}
+
 func TestManager_UnknownBackend(t *testing.T) {
 	m := NewManager(rotationTestConfig())
 	if m.ShouldRotate("worker", "unmapped-backend", 0) {

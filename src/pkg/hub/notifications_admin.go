@@ -42,7 +42,7 @@ func (s *HubServer) ReloadGitHubActivityFromConfig(logger *slog.Logger) error {
 	if s == nil || strings.TrimSpace(s.configPath) == "" {
 		return nil
 	}
-	cfg, err := config.LoadWithDashboardOverlay(s.configPath)
+	cfg, err := config.LoadWithDashboardOverlayForHub(s.configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			s.SetGitHubActivityFeed(nil)
@@ -112,7 +112,7 @@ func (s *HubServer) handlePutAdminNotifications(w http.ResponseWriter, r *http.R
 		http.Error(w, "at least one event must be selected when notifications are enabled", http.StatusBadRequest)
 		return
 	}
-	cfg, err := config.LoadWithDashboardOverlay(s.configPath)
+	cfg, err := config.LoadWithDashboardOverlayForHub(s.configPath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -148,7 +148,7 @@ func (s *HubServer) handlePutAdminNotifications(w http.ResponseWriter, r *http.R
 }
 
 func (s *HubServer) loadAdminNotificationsPayload() (hubNotificationsPayload, error) {
-	cfg, err := config.LoadWithDashboardOverlay(s.configPath)
+	cfg, err := config.LoadWithDashboardOverlayForHub(s.configPath)
 	if err != nil {
 		return hubNotificationsPayload{}, err
 	}

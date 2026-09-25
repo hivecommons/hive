@@ -151,6 +151,10 @@ func TestLinkifyRefs(t *testing.T) {
 		{"existing link untouched", "[console#12](https://x)", "[console#12](https://x)"},
 		{"code span untouched", "`console#12`", "`console#12`"},
 		{"no refs", "plain text", "plain text"},
+		{"PR keyword is not a repo (#8768)", "fixed by PR#756 today", "fixed by PR #756 today"},
+		{"issue keyword is not a repo", "see issue#12", "see issue #12"},
+		{"owner-qualified PR repo still links", "see acme/PR#5",
+			"see [acme/PR#5](https://github.com/acme/PR/issues/5)"},
 	}
 	for _, tt := range tests {
 		if got := linkifyRefs(tt.in, org); got != tt.want {
@@ -177,6 +181,8 @@ func TestFormatFindingRef(t *testing.T) {
 		{name: "file with line", ref: "a.go", line: 3, want: " `a.go:3`"},
 		{name: "file without line", ref: "a.go", want: " `a.go`"},
 		{name: "empty", ref: "", want: ""},
+		{name: "PR keyword links to primary repo (#8768)", ref: "PR#756",
+			want: " [PR #756](https://github.com/kubestellar/console/issues/756)"},
 	}
 	for _, tt := range tests {
 		if got := formatFindingRef(tt.ref, tt.line, org, repo, tt.title); got != tt.want {

@@ -554,6 +554,28 @@
   margin-block-start: var(--sp-1);
 }
 
+
+.hv-integration-band {
+  background: var(--surface-0);
+}
+
+.hv-integration-groups {
+  display: grid;
+  gap: var(--sp-7);
+  inline-size: var(--full-size);
+}
+
+.hv-integration-group {
+  display: grid;
+  gap: var(--sp-4);
+}
+
+.hv-integration-group h3 {
+  color: var(--text);
+  font-size: var(--fs-md);
+  margin: var(--sp-0);
+}
+
 @keyframes hv-status-pulse {
   from,
   to {

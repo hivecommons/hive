@@ -56,6 +56,7 @@ var contributorGuardProviders = map[string]bool{
 	"anthropic": true,
 	"openai":    true,
 	"google":    true,
+	"aws-kiro":  true,
 }
 
 // contributorGuardDefaultBackends maps each guard-supported provider to the
@@ -64,7 +65,7 @@ var contributorGuardProviders = map[string]bool{
 // disabled there is no operator-authored Providers map to read Backends from,
 // yet the publisher still needs to know which pool-keyed files to write. The
 // flattened backend set MUST equal QUOTA_GUARD_SUPPORTED_BACKENDS in
-// bin/contributor-relay.js ({claude, pi, codex, agy, gemini}) — a backend
+// bin/contributor-relay.js ({claude, pi, codex, agy, gemini, kiro}) — a backend
 // listed there but absent here gets no reading and stays on the unprovisioned
 // admit; a backend here but not there writes files nothing reads. A parity
 // test pins the set.
@@ -72,6 +73,7 @@ var contributorGuardDefaultBackends = map[string][]string{
 	"anthropic": {"claude", "pi"},
 	"openai":    {"codex"},
 	"google":    {"agy", "gemini"},
+	"aws-kiro":  {"kiro"},
 }
 
 // contributorReadingFileSuffix names the per-pool reading file inside the pool
@@ -167,6 +169,7 @@ type ContributorReading struct {
 	// exactly like "no credentials on this host". Empty for an available
 	// reading; a new optional field, so the relay ignores it until it opts in.
 	Cause  string                   `json:"cause,omitempty"`
+	Error  string                   `json:"error,omitempty"`
 	Limits []ContributorLimitWindow `json:"limits"`
 }
 
@@ -180,6 +183,9 @@ type ContributorReading struct {
 // normalized windows carried through verbatim.
 func HeadroomToContributorReading(h Headroom) ContributorReading {
 	capturedAt := time.Now().UTC().Format(time.RFC3339)
+	if !h.CapturedAt.IsZero() {
+		capturedAt = h.CapturedAt.UTC().Format(time.RFC3339)
+	}
 	if h.ProbeErr != nil {
 		// Carry WHY the measurement failed so a dead adapter stays visible as a
 		// different condition than "no credentials"/"not installed"
@@ -189,10 +195,18 @@ func HeadroomToContributorReading(h Headroom) ContributorReading {
 		if cause == ProbeCauseUnspecified {
 			cause = ProbeCauseProbeFailed
 		}
-		return ContributorReading{State: "unknown", CapturedAt: capturedAt, Cause: string(cause), Limits: []ContributorLimitWindow{}}
+		if h.Stale && len(h.Limits) > 0 {
+			r := ContributorReading{State: "available", CapturedAt: capturedAt, Cause: string(cause), Error: h.ProbeError(), Limits: contributorLimitWindows(h.Limits)}
+			return r
+		}
+		return ContributorReading{State: "unknown", CapturedAt: capturedAt, Cause: string(cause), Error: h.ProbeError(), Limits: []ContributorLimitWindow{}}
 	}
-	limits := make([]ContributorLimitWindow, 0, len(h.Limits))
-	for _, w := range h.Limits {
+	return ContributorReading{State: "available", CapturedAt: capturedAt, Limits: contributorLimitWindows(h.Limits)}
+}
+
+func contributorLimitWindows(windows []LimitWindow) []ContributorLimitWindow {
+	limits := make([]ContributorLimitWindow, 0, len(windows))
+	for _, w := range windows {
 		lw := ContributorLimitWindow{
 			ID:           w.ID,
 			Kind:         w.Kind,
@@ -204,7 +218,7 @@ func HeadroomToContributorReading(h Headroom) ContributorReading {
 		}
 		limits = append(limits, lw)
 	}
-	return ContributorReading{State: "available", CapturedAt: capturedAt, Limits: limits}
+	return limits
 }
 
 // deriveContributorPoolKey turns backend + account identity into the same

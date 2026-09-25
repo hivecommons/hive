@@ -2,6 +2,9 @@ package dashboard
 
 import (
 	"net/http"
+	"reflect"
+
+	"github.com/hivecommons/hive/pkg/rotation"
 )
 
 // handleProvidersHeadroom serves GET /api/providers/headroom: the last known
@@ -13,9 +16,36 @@ func (s *Server) handleProvidersHeadroom(w http.ResponseWriter, r *http.Request)
 	if !requireOwnerRole(w, r) {
 		return
 	}
-	if s.deps == nil || s.deps.RotationMgr == nil {
-		jsonResponse(w, map[string]interface{}{"providers": []interface{}{}, "enabled": false})
+	if s.deps == nil {
+		jsonResponse(w, rotation.HeadroomResponse{Providers: []rotation.Headroom{}, Enabled: false, Readings: false})
 		return
 	}
-	jsonResponse(w, s.deps.RotationMgr.HeadroomResponse())
+	if !headroomReporterDisabled(s.deps.RotationMgr) {
+		resp := s.deps.RotationMgr.HeadroomResponse()
+		resp.Enabled = true
+		resp.Readings = true
+		jsonResponse(w, resp)
+		return
+	}
+	if !headroomReporterDisabled(s.deps.HeadroomPublisher) {
+		resp := s.deps.HeadroomPublisher.HeadroomResponse()
+		resp.Enabled = false
+		resp.Readings = len(resp.Providers) > 0
+		jsonResponse(w, resp)
+		return
+	}
+	jsonResponse(w, rotation.HeadroomResponse{Providers: []rotation.Headroom{}, Enabled: false, Readings: false})
+}
+
+func headroomReporterDisabled(reporter interface{}) bool {
+	if reporter == nil {
+		return true
+	}
+	v := reflect.ValueOf(reporter)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
 }

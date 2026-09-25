@@ -1,8 +1,11 @@
 package dashboard
 
 import (
+	"compress/gzip"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -165,5 +168,111 @@ func TestHandleStatusServesStatusSeq(t *testing.T) {
 	}
 	if body.StatusInstance == "" {
 		t.Error("served snapshot has empty statusInstance")
+	}
+}
+
+func TestHandleStatusFieldsAndOmitSlimPayload(t *testing.T) {
+	s, _ := apiServer(t)
+	payload := minimalPayload()
+	payload.Agents = []FrontendAgent{{Name: "scanner", State: "running"}}
+	payload.Repos = []FrontendRepo{{Name: "repo1", ActionableIssues: []any{map[string]any{"title": "large"}}}}
+	s.UpdateStatus(payload)
+
+	rec := doGet(s, "/api/status?fields=agents,budget")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("fields status = %d", rec.Code)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &fields); err != nil {
+		t.Fatalf("decoding fields response: %v", err)
+	}
+	if _, ok := fields["agents"]; !ok {
+		t.Fatal("fields response missing agents")
+	}
+	if _, ok := fields["budget"]; !ok {
+		t.Fatal("fields response missing budget")
+	}
+	if _, ok := fields["repos"]; ok {
+		t.Fatal("fields response unexpectedly included repos")
+	}
+
+	rec = doGet(s, "/api/status?omit=repos")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("omit status = %d", rec.Code)
+	}
+	var omitted map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &omitted); err != nil {
+		t.Fatalf("decoding omit response: %v", err)
+	}
+	if _, ok := omitted["agents"]; !ok {
+		t.Fatal("omit response missing agents")
+	}
+	if _, ok := omitted["repos"]; ok {
+		t.Fatal("omit response included repos")
+	}
+}
+
+func TestHandleStatusSummaryAndGzip(t *testing.T) {
+	s, _ := apiServer(t)
+	payload := minimalPayload()
+	payload.Agents = []FrontendAgent{{Name: "scanner", State: "running", Paused: true, CLI: "codex", Model: "gpt-5", Restarts: 2, NeedsLogin: true}}
+	payload.Repos = []FrontendRepo{{Name: "repo1", ActionableIssues: []any{map[string]any{"title": "large"}}}}
+	s.UpdateStatus(payload)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/status/summary", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	rec := httptest.NewRecorder()
+	s.handleStatusSummary(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("summary status = %d", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("Content-Encoding = %q, want gzip", got)
+	}
+	zr, err := gzip.NewReader(rec.Body)
+	if err != nil {
+		t.Fatalf("gzip reader: %v", err)
+	}
+	body, err := io.ReadAll(zr)
+	_ = zr.Close()
+	if err != nil {
+		t.Fatalf("read gzip body: %v", err)
+	}
+	var summary struct {
+		Agents []StatusSummaryAgent `json:"agents"`
+		Repos  []FrontendRepo       `json:"repos"`
+	}
+	if err := json.Unmarshal(body, &summary); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if len(summary.Agents) != 1 || summary.Agents[0].Name != "scanner" || !summary.Agents[0].NeedsLogin {
+		t.Fatalf("unexpected summary agents: %+v", summary.Agents)
+	}
+	if summary.Repos != nil {
+		t.Fatalf("summary must not include repos: %+v", summary.Repos)
+	}
+}
+
+func TestAgentMutationResponsesCarryMinStatusSeq(t *testing.T) {
+	s, _ := apiServer(t)
+	s.UpdateStatus(minimalPayload())
+	seqBefore := s.status.StatusSeq
+
+	rec := doPost(s, "/api/pause/scanner", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("pause status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		OK           bool   `json:"ok"`
+		MinStatusSeq uint64 `json:"minStatusSeq"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decoding pause response: %v", err)
+	}
+	if !body.OK {
+		t.Error("response ok = false")
+	}
+	if body.MinStatusSeq <= seqBefore {
+		t.Errorf("minStatusSeq = %d, want > %d", body.MinStatusSeq, seqBefore)
 	}
 }

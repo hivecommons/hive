@@ -964,7 +964,35 @@ func splitInlineRef(ref, org string) (owner, repo string, num int, ok bool) {
 	if owner == "" || repo == "" {
 		return "", "", 0, false
 	}
+	if owner == org && !strings.Contains(ref[:hash], "/") && isRefKeyword(repo) {
+		return "", "", 0, false
+	}
 	return owner, repo, num, true
+}
+
+// isRefKeyword reports whether the "repo" half of a "word#123" token is really
+// a reference kind ("PR#756", "issue#12") rather than a repository name.
+// Treating it as a repo built links like github.com/<org>/PR/issues/756
+// (#8768).
+func isRefKeyword(word string) bool {
+	switch strings.ToLower(word) {
+	case "pr", "prs", "pull", "pulls", "issue", "issues":
+		return true
+	}
+	return false
+}
+
+// keywordRef splits a "PR#756"-style token into its keyword and number.
+func keywordRef(ref string) (keyword string, num int, ok bool) {
+	hash := strings.LastIndex(ref, "#")
+	if hash <= 0 || !isRefKeyword(ref[:hash]) {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(ref[hash+1:])
+	if err != nil {
+		return "", 0, false
+	}
+	return ref[:hash], n, true
 }
 
 // linkifyRefs rewrites "repo#123" / "owner/repo#123" tokens in free text as
@@ -992,6 +1020,13 @@ func linkifyRefs(text, org string) string {
 			}
 		}
 		ref := text[start:end]
+		if kw, num, ok := keywordRef(ref); ok {
+			// A bare "#N" autolinks against the repo the digest is posted to.
+			b.WriteString(text[last:start])
+			fmt.Fprintf(&b, "%s #%d", kw, num)
+			last = end
+			continue
+		}
 		owner, repo, num, ok := splitInlineRef(ref, org)
 		if !ok {
 			continue
@@ -1029,6 +1064,9 @@ func formatFindingRef(ref string, line int, org, primaryRepo, title string) stri
 		// github.com/gh-<owner> that does not exist (#6080). Only the link and
 		// its visible text lose the prefix; the stored reference is untouched.
 		if bare := stripGHSourcePrefix(ref); inlineRefPattern.FindString(bare) == bare {
+			if kw, num, ok := keywordRef(bare); ok && primaryRepo != "" {
+				return fmt.Sprintf(" [%s #%d](%s)", kw, num, issueURL(org, primaryRepo, num))
+			}
 			if owner, repo, num, ok := splitInlineRef(bare, org); ok {
 				return fmt.Sprintf(" [%s](%s)", bare, issueURL(owner, repo, num))
 			}

@@ -19,7 +19,7 @@ COPY src/ .
 # copy is often in a detached HEAD state.
 ARG GIT_BRANCH=unknown
 # VERSION mirrors src/Dockerfile: when no build-arg is passed the RUN below
-# derives it from `git describe --tags --always --dirty` against the copied
+# derives it from `git describe --tags --always` against the copied
 # /repo/.git, so the hub image self-stamps a real semver ("4.34.0",
 # "4.34.0-7-gSHA") instead of the "0.0.0-dev" fallback. tagged-release.yml
 # retags rather than rebuilds, so the value must be embedded at this original
@@ -32,7 +32,7 @@ RUN GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || echo "unknown") && \
     if [ "$GIT_BRANCH" = "unknown" ] || [ -z "$GIT_BRANCH" ]; then GIT_BRANCH=$(git -C /repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"); fi && \
     VERSION_LDFLAG="" && \
     RESOLVED_VERSION="$VERSION" && \
-    if [ -z "$RESOLVED_VERSION" ]; then RESOLVED_VERSION=$(git -C /repo describe --tags --always --dirty 2>/dev/null || echo ""); fi && \
+    if [ -z "$RESOLVED_VERSION" ]; then RESOLVED_VERSION=$(git -C /repo describe --tags --always 2>/dev/null || echo ""); fi && \
     if [ -n "$RESOLVED_VERSION" ]; then VERSION_LDFLAG="-X main.version=${RESOLVED_VERSION}"; fi && \
     CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH} ${VERSION_LDFLAG}" -o /hive ./cmd/hive
 
