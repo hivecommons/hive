@@ -27870,7 +27870,7 @@ function burnAreaChart() {
       { group:'Governor', items:['/governor next kick', 'Why is the governor paused?', 'Show recent kick failures'] },
       { group:'Knowledge', items:['/knowledge work sources', 'Search docs for relay setup', 'What changed in v5?'] },
       { group:'Jam', items:['/who', '/jam who is online?', 'Show contributor activity'] },
-      { group:'Spek / Spektacular', spek:true, items:['/spek active campaigns', '/spek spec runs', 'Explain inception relay state'] },
+      { group:'Spek / Spektacular', spek:true, items:['!runs spec owner/repo#N', '/spek active campaigns', '/spek spec runs', 'Explain inception relay state'] },
     ];
 
     function loadChatSettings() { return safeJsonParse(localStorage.getItem(CHAT_SETTINGS_KEY) || '{}', {}); }
