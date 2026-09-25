@@ -600,6 +600,7 @@ type FrontendAgent struct {
 	PinnedBoth       bool   `json:"pinnedBoth"`
 	Pinned           bool   `json:"pinned"`
 	LastKick         string `json:"lastKick,omitempty"`
+	LastKickAt       string `json:"lastKickAt,omitempty"`
 	NextKick         string `json:"nextKick,omitempty"`
 	NextKickIn       string `json:"nextKickIn,omitempty"`
 	Restarts         int    `json:"restarts"`

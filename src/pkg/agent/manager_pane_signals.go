@@ -468,7 +468,7 @@ func isVisualNoise(s string) bool {
 	if t == "" {
 		return true
 	}
-	if strings.Trim(t, "─━") == "" {
+	if strings.Trim(t, "─━│┃┌┐└┘┏┓┗┛╭╮╰╯├┤┬┴┼╞╡╪═║╔╗╚╝╟╢╤╧╫╠╣╦╩╬╾╼╿╽╸╺╹╻╴╶╵╷ ") == "" {
 		return true
 	}
 	if strings.HasPrefix(t, "/data/agents/") && !strings.Contains(t, " ") {
@@ -482,26 +482,70 @@ func isCLIChrome(s string) bool {
 	if t == "" {
 		return true
 	}
+	lower := strings.ToLower(t)
 	if strings.HasPrefix(t, "/ commands") ||
 		strings.HasPrefix(t, "? help") ||
 		strings.HasPrefix(t, "@ files") ||
 		strings.HasPrefix(t, "# issues") {
 		return true
 	}
-	// Copilot/Claude/Gemini status bar: contains "esc cancel" or model name
-	if strings.Contains(t, "esc cancel") {
+	if strings.Contains(t, "```") {
 		return true
 	}
-	// Model name in status bar (short line with model identifier)
-	if (strings.Contains(t, "Claude ") && !strings.Contains(t, "Claude Code")) ||
-		strings.Contains(t, "Copilot v") ||
-		strings.Contains(t, "Gemini ") {
-		// Only match if it looks like a status bar (has spinner or command hints)
-		for _, prefix := range []string{"◎", "◉", "●", "○", "◐", "◑", "◒", "◓"} {
-			if strings.Contains(t, prefix) {
-				return true
-			}
+	if strings.Contains(lower, "esc cancel") {
+		return true
+	}
+	keyHints := 0
+	for _, hint := range []string{
+		"open sidebar", "/ commands", "? help", "tab next tab", "esc to interrupt",
+		"esc interrupt", "esc cancel", "ctrl+c", "ctrl-c", "ctrl + c", "enter to send",
+		"shift+tab", "shift + tab", "↑/↓ to navigate",
+	} {
+		if strings.Contains(lower, hint) {
+			keyHints++
 		}
+	}
+	if keyHints >= 2 && len([]rune(t)) <= 180 {
+		return true
+	}
+	if keyHints == 1 && len([]rune(t)) <= 180 &&
+		(strings.HasPrefix(t, "← ") || strings.Contains(t, " · ") || strings.Contains(t, " • ")) {
+		return true
+	}
+	if strings.HasPrefix(t, "← ") && (strings.Contains(lower, "open sidebar") || strings.Contains(lower, "? help")) {
+		return true
+	}
+	if strings.HasPrefix(t, "↵") || strings.HasPrefix(t, "⏎") {
+		return true
+	}
+	spinnerGlyphs := []string{"◎", "◉", "●", "○", "◐", "◑", "◒", "◓", "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	hasSpinner := false
+	for _, prefix := range spinnerGlyphs {
+		if strings.Contains(t, prefix) {
+			hasSpinner = true
+		}
+		if strings.HasPrefix(t, prefix) && len([]rune(t)) <= 160 &&
+			(strings.Contains(lower, "working") || strings.Contains(lower, "thinking") ||
+				strings.Contains(lower, "processing") || strings.Contains(lower, "tokens") ||
+				strings.Contains(lower, "esc") || strings.Contains(lower, "ctrl+c")) {
+			return true
+		}
+	}
+	// Model/status bars for Copilot, Claude, Codex, Gemini, bob, goose and
+	// similar TUIs. Keep this bounded to short chrome-shaped lines so ordinary
+	// prose mentioning a tool name survives.
+	if len([]rune(t)) <= 180 &&
+		(strings.Contains(lower, "claude ") || strings.Contains(lower, "copilot") ||
+			strings.Contains(lower, "gemini") || strings.Contains(lower, "openai codex") ||
+			strings.Contains(lower, "codex") || strings.Contains(lower, "bob-shell") ||
+			strings.Contains(lower, "goose")) &&
+		(strings.Contains(lower, "esc") || strings.Contains(lower, "ctrl+c") ||
+			strings.Contains(lower, "/ commands") || strings.Contains(lower, "? help") ||
+			strings.Contains(lower, "tokens") || strings.Contains(lower, "context") ||
+			strings.Contains(lower, "%/") ||
+			(hasSpinner && (strings.Contains(lower, "thinking") || strings.Contains(lower, "working") ||
+				strings.Contains(lower, "loading") || strings.Contains(lower, "processing")))) {
+		return true
 	}
 	return false
 }
@@ -513,6 +557,20 @@ func isBufferNoise(s string) bool {
 	t := strings.TrimSpace(s)
 	if t == "❯" || t == "›" || t == ">" {
 		return true
+	}
+	if t == bobInputPlaceholder || t == bobInputPlaceholderDefault {
+		return true
+	}
+	if strings.HasPrefix(t, "› ") && len([]rune(t)) <= 120 {
+		lower := strings.ToLower(t)
+		for _, placeholder := range []string{
+			"improve documentation", "explain this codebase", "ask anything", "type a message",
+			"type your message", "enter your prompt", "message or @path", "what do you want",
+		} {
+			if strings.Contains(lower, placeholder) {
+				return true
+			}
+		}
 	}
 	for _, banner := range []string{"╭─╮", "╰─╯", "█ ▘▝ █", "▔▔▔▔", "Copilot v", "Check for mistakes"} {
 		if strings.Contains(t, banner) {
@@ -566,7 +624,7 @@ func filterPaneOutput(lines []string, n int) []string {
 	}
 	var cleaned []string
 	for _, l := range lines {
-		if !isVisualNoise(l) {
+		if !isBufferNoise(l) {
 			cleaned = append(cleaned, l)
 		}
 	}
@@ -578,6 +636,21 @@ func filterPaneOutput(lines []string, n int) []string {
 	out := make([]string, len(lines))
 	copy(out, lines)
 	return out
+}
+
+// SanitizePaneText removes terminal/TUI chrome from pane-derived text before it
+// is shown in chat, notifications or activity summaries. The input is expected
+// to be display text, not a shell transcript for replay.
+func SanitizePaneText(text string, maxLines int) string {
+	lines := strings.Split(text, "\n")
+	lines = filterPaneOutput(lines, maxLines)
+	for len(lines) > 0 && strings.TrimSpace(lines[0]) == "" {
+		lines = lines[1:]
+	}
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 // DeduplicateBlocks removes repeated blocks from pane output.

@@ -689,10 +689,10 @@ func TestDiffAgents_WorkingToIdleWithSummary(t *testing.T) {
 	b := NewBot(Config{Token: "t", ChannelID: "c"}, discardLogger())
 
 	prev := &statusSnapshot{
-		Agents: []agentSnapshot{{Name: "scanner", Busy: "working", Cadence: "15m"}},
+		Agents: []agentSnapshot{{Name: "scanner", Busy: "working", Cadence: "15m", Doing: "scan backlog"}},
 	}
 	cur := &statusSnapshot{
-		Agents: []agentSnapshot{{Name: "scanner", Busy: "idle", Cadence: "15m", LiveSummary: "Fixed 3 issues\nClosed 2 PRs\nDone"}},
+		Agents: []agentSnapshot{{Name: "scanner", Busy: "idle", Cadence: "15m", Doing: "scan backlog", LiveSummary: "Fixed 3 issues\nClosed 2 PRs\nDone"}},
 	}
 
 	b.diffAgents(prev, cur)
@@ -702,8 +702,11 @@ func TestDiffAgents_WorkingToIdleWithSummary(t *testing.T) {
 	if len(sent) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(sent))
 	}
-	if !strings.Contains(sent[0], "```") {
-		t.Errorf("expected code block with summary, got: %q", sent[0])
+	if strings.Contains(sent[0], "```") {
+		t.Errorf("completion should not dump pane text in a code block, got: %q", sent[0])
+	}
+	if !strings.Contains(sent[0], "Completed") || !strings.Contains(sent[0], "finished a pass") {
+		t.Errorf("expected actionable completion line, got: %q", sent[0])
 	}
 }
 
@@ -726,8 +729,77 @@ func TestDiffAgents_WorkingToIdleWithLongSummary(t *testing.T) {
 		t.Fatalf("expected 1 message, got %d", len(sent))
 	}
 	// Summary should be truncated to 3 lines
-	if !strings.Contains(sent[0], "line3") {
-		t.Errorf("expected first 3 lines of summary, got: %q", sent[0])
+	if strings.Contains(sent[0], "line3") || strings.Contains(sent[0], "```") {
+		t.Errorf("completion should summarize rather than dump pane lines, got: %q", sent[0])
+	}
+}
+
+func TestDiffAgents_WorkingToIdleSuppressesChromeSummary(t *testing.T) {
+	b := NewBot(Config{Token: "t", ChannelID: "c", DashboardURL: "https://hive.example"}, discardLogger())
+
+	prev := &statusSnapshot{
+		Agents: []agentSnapshot{{Name: "scanner", Busy: "working"}},
+	}
+	cur := &statusSnapshot{
+		Agents: []agentSnapshot{{
+			Name:        "scanner",
+			Busy:        "idle",
+			LiveSummary: "← open sidebar · / commands · ? help · tab next tab",
+		}},
+	}
+
+	b.diffAgents(prev, cur)
+
+	var sent []string
+	drainQueue(b, &sent)
+	if len(sent) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(sent))
+	}
+	if strings.Contains(sent[0], "open sidebar") || strings.Contains(sent[0], "```") {
+		t.Fatalf("chrome summary leaked into completion: %q", sent[0])
+	}
+	if !strings.Contains(sent[0], "no new work") || !strings.Contains(sent[0], "https://hive.example/#scanner") {
+		t.Fatalf("completion should include fallback outcome and details link, got: %q", sent[0])
+	}
+}
+
+func TestDiffAgents_WorkingToIdleUsesOutcomeWorkDurationAndDetails(t *testing.T) {
+	b := NewBot(Config{Token: "t", ChannelID: "c", DashboardURL: "https://hive.example/"}, discardLogger())
+
+	started := time.Now().Add(-90 * time.Minute).UTC().Format(time.RFC3339)
+	prev := &statusSnapshot{
+		Agents: []agentSnapshot{{Name: "reviewer", Busy: "working", Doing: "review issue #8872"}},
+	}
+	cur := &statusSnapshot{
+		Agents: []agentSnapshot{{
+			Name:        "reviewer",
+			Busy:        "idle",
+			Doing:       "review issue #8872",
+			LiveSummary: "Opened pull request https://github.com/hivecommons/hive/pull/9001\n← open sidebar · / commands · ? help",
+			LastKickAt:  started,
+		}},
+	}
+
+	b.diffAgents(prev, cur)
+
+	var sent []string
+	drainQueue(b, &sent)
+	if len(sent) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(sent))
+	}
+	got := sent[0]
+	for _, want := range []string{
+		"review issue #8872",
+		"https://github.com/hivecommons/hive/pull/9001",
+		"(1h 30m)",
+		"https://hive.example/#reviewer",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("completion missing %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "open sidebar") || strings.Contains(got, "```") {
+		t.Fatalf("completion leaked chrome or code fence: %q", got)
 	}
 }
 
