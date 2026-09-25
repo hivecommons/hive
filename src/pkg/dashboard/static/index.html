@@ -28309,7 +28309,13 @@ function burnAreaChart() {
         return s;
       }
       function flushFence() {
-        const code = escapeHtml(sanitizeChatText(fence.join('\n')));
+        const rawCode = sanitizeChatText(fence.join('\n'));
+        if (!rawCode.trim()) {
+          fence = [];
+          fenceLang = '';
+          return;
+        }
+        const code = escapeHtml(rawCode);
         const lang = fenceLang ? '<div class="hive-chat-kbd">' + escapeHtml(fenceLang) + '</div>' : '';
         out.push('<div class="chat-code-wrap"><button type="button" class="chat-copy-btn">copy</button><pre>' + lang + '<code>' + code + '</code></pre></div>');
         fence = [];
@@ -28381,6 +28387,7 @@ function burnAreaChart() {
     let chatSpekEnabled = false;
     let chatLastHeartbeatSig = '';
     let chatLastUserQuery = '';
+    let chatPendingUserEchoes = new Map();
 
     async function chatFetchJson(url, options) {
       const resp = await fetch(url, options || {});
@@ -28617,6 +28624,7 @@ function burnAreaChart() {
 
     async function chatAskBackend(q, suppressUserEcho) {
       if (!suppressUserEcho) chatAddMsg(q, 'user');
+      chatTrackPendingUserEcho(q, 1);
       chatContext.push({ role: 'user', text: q });
       if (chatContext.length > CHAT_CONTEXT_LIMIT) chatContext = chatContext.slice(-CHAT_CONTEXT_LIMIT);
       const thinking = chatAddMsg('Thinking…', 'thinking');
@@ -28631,6 +28639,7 @@ function burnAreaChart() {
           data = { error: resp.ok ? 'Chat returned an unreadable response.' : 'Chat request failed with HTTP ' + resp.status + '.' };
         }
         thinking.remove();
+        if (!data.accepted && !data.seq) chatTrackPendingUserEcho(q, -1);
         if (!resp.ok || data.error) return 'Error: ' + (data.error || ('Chat request failed with HTTP ' + resp.status + '.'));
         if (!data.answer) {
           await chatPollMessages();
@@ -28646,6 +28655,7 @@ function burnAreaChart() {
         return null;
       } catch (err) {
         thinking.remove();
+        chatTrackPendingUserEcho(q, -1);
         if (err && err.name === 'AbortError') return 'Chat request timed out. Please try again.';
         return 'Network error: ' + ((err && err.message) || 'request failed');
       } finally {
@@ -28873,12 +28883,25 @@ function burnAreaChart() {
       });
     })();
 
+    function chatTrackPendingUserEcho(text, delta) {
+      const key = String(text || '');
+      if (!key) return 0;
+      const next = Math.max(0, (chatPendingUserEchoes.get(key) || 0) + delta);
+      if (next) chatPendingUserEchoes.set(key, next);
+      else chatPendingUserEchoes.delete(key);
+      return next;
+    }
+
     function chatRenderOutbound(msg) {
       if (!msg || !msg.text) return;
       const seq = Number(msg.seq || 0);
       if (seq && seq <= chatLastSeq) return;
       if (seq) chatLastSeq = Math.max(chatLastSeq, seq);
       if (msg.role === 'user') {
+        if ((chatPendingUserEchoes.get(msg.text) || 0) > 0) {
+          chatTrackPendingUserEcho(msg.text, -1);
+          return;
+        }
         chatAddMsg(msg.text, 'user');
         chatContext.push({ role: 'user', text: msg.text });
       } else {
