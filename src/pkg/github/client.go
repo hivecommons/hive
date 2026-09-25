@@ -469,6 +469,7 @@ type PullRequest struct {
 	Labels      []string  `json:"labels"`
 	Draft       bool      `json:"draft"`
 	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 	ClosedAt    time.Time `json:"closed_at,omitempty"`
 	MergedAt    time.Time `json:"merged_at,omitempty"`
 	State       string    `json:"state,omitempty"`
@@ -1166,8 +1167,10 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 					Author:         safeGetLogin(pr.GetUser()),
 					Labels:         labels,
 					CreatedAt:      pr.GetCreatedAt().Time,
+					UpdatedAt:      pr.GetUpdatedAt().Time,
 					State:          pr.GetState(),
 					URL:            pr.GetHTMLURL(),
+					ReviewClass:    ClassifyReviewClass(pr.GetTitle(), labels),
 					HiveAttributed: hasAttr,
 					HiveAgent:      attrMeta.Agent,
 					HiveBackend:    attrMeta.Backend,
@@ -1195,14 +1198,16 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 			author := safeGetLogin(pr.GetUser())
 			if strings.EqualFold(author, c.appBotLogin) && now.Sub(pr.GetCreatedAt().Time) > staleDraftAfter {
 				staleDrafts = append(staleDrafts, PullRequest{
-					Repo:      repo,
-					Number:    pr.GetNumber(),
-					Title:     pr.GetTitle(),
-					Author:    author,
-					Labels:    labels,
-					Draft:     true,
-					CreatedAt: pr.GetCreatedAt().Time,
-					URL:       pr.GetHTMLURL(),
+					Repo:        repo,
+					Number:      pr.GetNumber(),
+					Title:       pr.GetTitle(),
+					Author:      author,
+					Labels:      labels,
+					Draft:       true,
+					CreatedAt:   pr.GetCreatedAt().Time,
+					UpdatedAt:   pr.GetUpdatedAt().Time,
+					URL:         pr.GetHTMLURL(),
+					ReviewClass: ClassifyReviewClass(pr.GetTitle(), labels),
 				})
 			}
 			continue
@@ -1229,8 +1234,10 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 			Labels:      labels,
 			Draft:       pr.GetDraft(),
 			CreatedAt:   pr.GetCreatedAt().Time,
+			UpdatedAt:   pr.GetUpdatedAt().Time,
 			State:       pr.GetState(),
 			URL:         pr.GetHTMLURL(),
+			ReviewClass: ClassifyReviewClass(pr.GetTitle(), labels),
 			// The list payload carries the body, so the hive-mediated test
 			// costs no extra call (hivecommons/hive#7638).
 			HiveAttributed: hasAttr,
@@ -1311,6 +1318,7 @@ func pullRequestAttributionRecord(repo string, pr *gh.PullRequest, meta Invocati
 		Labels:         extractPRLabels(pr.Labels),
 		Draft:          pr.GetDraft(),
 		CreatedAt:      pr.GetCreatedAt().Time,
+		UpdatedAt:      pr.GetUpdatedAt().Time,
 		ClosedAt:       pr.GetClosedAt().Time,
 		MergedAt:       pr.GetMergedAt().Time,
 		State:          pr.GetState(),
