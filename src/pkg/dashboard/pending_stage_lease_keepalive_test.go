@@ -17,16 +17,18 @@ import (
 func TestKeepPendingStageLeasesAlive_ExtendsSystemIdentitiesOnly(t *testing.T) {
 	now := time.Now()
 	h := &ContributeWSHub{logger: covBLogger()}
-	record := func(identity, task string, stage string) {
+	record := func(identity, task, key, stage string) {
 		if err := h.recordLeaseForKeyStage(identity, task, "kubestellar/console", 23725,
-			"kubestellar/console#23725", "contributor", stage, 6, now.Add(-leaseTTL+time.Minute)); err != nil {
+			key, "contributor", stage, 6, now.Add(-leaseTTL+time.Minute)); err != nil {
 			t.Fatalf("record %s: %v", identity, err)
 		}
 	}
-	record(runAdmissionIdentity, "admit", StageSpec)
-	record(runFanoutIdentity, "fanout", StageImplement)
-	record(config.DefaultSpektacularHubExecutorIdentity, "exec", StageImplement)
-	record("c-relay", "relay", StageImplement)
+	record(runAdmissionIdentity, "admit", "kubestellar/console#23725", StageSpec)
+	record(runFanoutIdentity, "fanout", "kubestellar/console#23725", StageImplement)
+	record(config.DefaultSpektacularHubExecutorIdentity, "exec", "kubestellar/console#23725", StageImplement)
+	// A relay on a DIFFERENT run: adopting the same key+stage would (rightly)
+	// replace the hub executor's placeholder, which is not what this test is about.
+	record("c-relay", "relay", "kubestellar/console#23726", StageImplement)
 	// A non-stage relay lease must never be touched either.
 	if err := h.recordLeaseForKey("c-plain", "plain", "kubestellar/console", 1, "kubestellar/console#1", "contributor", 2, now.Add(-leaseTTL+time.Minute)); err != nil {
 		t.Fatalf("record plain: %v", err)

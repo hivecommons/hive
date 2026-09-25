@@ -1,0 +1,1 @@
+- Runs: a relay adopting a run stage now replaces the hub executor's placeholder lease (not only the admission lease), so the run no longer appears twice in `/api/runs` with a never-expiring duplicate. When a relay's stage lease ages out, the stage is re-minted as an admission placeholder at the same stage and generation so the run returns to the offer pool instead of vanishing.
