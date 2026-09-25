@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -470,7 +471,20 @@ func TestSwarmThemeObjectivesAndPublicLeaderboard(t *testing.T) {
 	deps.Config.Project.Org = "acme"
 	deps.Config.Project.Repos = []string{"api"}
 	s.SetContributorsDir(t.TempDir())
-	s.swarm = newSwarmStore(filepath.Join(s.contributorsDirOrDefault(), SwarmStateFileName), &fakeSwarmScorer{score: ghpkg.SwarmScore{PRsMerged: 1, SpeksCompleted: 1, LocalModelPRs: 1, Participants: []string{"alice"}, PRsByAuthor: map[string]int{"alice": 1}}})
+	deps.Config.Swarm = config.SwarmConfig{
+		EventName:        "Default rally",
+		CallToArms:       "Default call",
+		LeaderboardTitle: "Default record",
+		Themes: map[string]config.SwarmThemeConfig{
+			"acme/api": {EventName: "Config rally", CallToArms: "Config call", LeaderboardTitle: "Config record"},
+		},
+	}
+	s.swarm = newSwarmStoreWithConfig(filepath.Join(s.contributorsDirOrDefault(), SwarmStateFileName), &fakeSwarmScorer{score: ghpkg.SwarmScore{PRsMerged: 1, SpeksCompleted: 1, LocalModelPRs: 1, Participants: []string{"alice"}, PRsByAuthor: map[string]int{"alice": 1}, SpeksCompletedBy: map[string]int{"alice": 1}, LocalModelPRsBy: map[string]int{"alice": 1}}}, deps.Config)
+
+	themes := doOwnerGet(s, "/api/swarm/themes")
+	if themes.Code != http.StatusOK || !strings.Contains(themes.Body.String(), "Config rally") {
+		t.Fatalf("themes status = %d body=%s", themes.Code, themes.Body.String())
+	}
 
 	put := doPut(s, "/api/swarm/themes", map[string]any{"repo": "api", "theme": map[string]string{"event_name": "Gondor Calls", "call_to_arms": "for aid!", "leaderboard_title": "Record of triumph"}})
 	if put.Code != http.StatusOK {

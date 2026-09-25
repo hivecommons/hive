@@ -53,7 +53,11 @@ func TestScoreSwarmCountsClosedIssuesMergedPRsAndParticipants(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"total_count": 2,
-			"items":       []map[string]any{{"user": map[string]any{"login": "bob"}}, {"user": map[string]any{"login": "alice"}}, {"user": map[string]any{"login": "bob"}}},
+			"items": []map[string]any{
+				{"user": map[string]any{"login": "bob"}, "title": "complete spek plan implement", "body": "done\n\n— hive: agent=builder backend=bob model=auto"},
+				{"user": map[string]any{"login": "alice"}, "body": "routine"},
+				{"user": map[string]any{"login": "bob"}, "body": "spec plan implement\n\n— hive: agent=builder backend=ollama model=llama3"},
+			},
 		})
 	}))
 	defer srv.Close()
@@ -68,6 +72,9 @@ func TestScoreSwarmCountsClosedIssuesMergedPRsAndParticipants(t *testing.T) {
 	}
 	if score.PRsByAuthor["bob"] != 2 || score.PRsByAuthor["alice"] != 1 || score.IssuesClosedBy["alice"] != 2 || score.IssuesClosedBy["carol"] != 1 {
 		t.Fatalf("attribution = prs %#v issues %#v", score.PRsByAuthor, score.IssuesClosedBy)
+	}
+	if score.SpeksCompleted != 2 || score.LocalModelPRs != 2 || score.SpeksCompletedBy["bob"] != 2 || score.LocalModelPRsBy["bob"] != 2 {
+		t.Fatalf("spek/local score = %+v", score)
 	}
 	if len(queries) != 2 || !strings.Contains(queries[0], "closed:") || !strings.Contains(queries[1], "merged:") {
 		t.Fatalf("queries = %v", queries)

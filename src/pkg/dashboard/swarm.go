@@ -134,6 +134,8 @@ type swarmStore struct {
 	now                  func() time.Time
 	duration             time.Duration
 	name                 string
+	defaultTheme         SwarmTheme
+	configuredThemes     map[string]SwarmTheme
 	state                swarmState
 	loaded               bool
 	scorer               swarmScorer
@@ -141,7 +143,19 @@ type swarmStore struct {
 }
 
 func newSwarmStore(path string, scorer swarmScorer) *swarmStore {
-	return &swarmStore{path: path, now: time.Now, duration: configuredSwarmDuration(), name: configuredSwarmName(), scorer: scorer}
+	return newSwarmStoreWithConfig(path, scorer, nil)
+}
+
+func newSwarmStoreWithConfig(path string, scorer swarmScorer, cfg *config.Config) *swarmStore {
+	return &swarmStore{
+		path:             path,
+		now:              time.Now,
+		duration:         configuredSwarmDuration(),
+		name:             configuredSwarmName(),
+		defaultTheme:     defaultSwarmTheme(cfg),
+		configuredThemes: configuredSwarmThemes(cfg),
+		scorer:           scorer,
+	}
 }
 
 func configuredSwarmName() string {
@@ -169,8 +183,15 @@ func configuredSwarmPrepTimeout() time.Duration {
 	return DefaultSwarmPrepTimeout
 }
 
-func defaultSwarmTheme() SwarmTheme {
+func defaultSwarmTheme(cfg *config.Config) SwarmTheme {
 	theme := SwarmTheme{EventName: configuredSwarmName(), CallToArms: "All hands on deck!", LeaderboardTitle: "Swarm leaderboard"}
+	if cfg != nil {
+		mergeSwarmTheme(&theme, SwarmTheme{
+			EventName:        cfg.Swarm.EventName,
+			CallToArms:       cfg.Swarm.CallToArms,
+			LeaderboardTitle: cfg.Swarm.LeaderboardTitle,
+		})
+	}
 	if v := strings.TrimSpace(os.Getenv(swarmEnvEventName)); v != "" {
 		theme.EventName = v
 	}
@@ -178,6 +199,18 @@ func defaultSwarmTheme() SwarmTheme {
 		theme.CallToArms = v
 	}
 	return theme
+}
+
+func mergeSwarmTheme(dst *SwarmTheme, src SwarmTheme) {
+	if strings.TrimSpace(src.EventName) != "" {
+		dst.EventName = src.EventName
+	}
+	if strings.TrimSpace(src.CallToArms) != "" {
+		dst.CallToArms = src.CallToArms
+	}
+	if strings.TrimSpace(src.LeaderboardTitle) != "" {
+		dst.LeaderboardTitle = src.LeaderboardTitle
+	}
 }
 
 func defaultSwarmObjectives() []SwarmObjective {
@@ -200,40 +233,64 @@ func completedSwarmObjectives(objectives []SwarmObjective) int {
 }
 
 func (st *swarmStore) themeForRepoLocked(repo string) SwarmTheme {
-	theme := defaultSwarmTheme()
+	theme := st.defaultTheme
+	if strings.TrimSpace(theme.EventName) == "" {
+		theme = defaultSwarmTheme(nil)
+	}
 	if st.state.Themes == nil {
-		st.state.Themes = configuredSwarmThemes()
+		st.state.Themes = copySwarmThemes(st.configuredThemes)
 	}
 	if custom, ok := st.state.Themes[strings.ToLower(strings.TrimSpace(repo))]; ok {
-		if strings.TrimSpace(custom.EventName) != "" {
-			theme.EventName = custom.EventName
-		}
-		if strings.TrimSpace(custom.CallToArms) != "" {
-			theme.CallToArms = custom.CallToArms
-		}
-		if strings.TrimSpace(custom.LeaderboardTitle) != "" {
-			theme.LeaderboardTitle = custom.LeaderboardTitle
-		}
+		mergeSwarmTheme(&theme, custom)
 	}
 	return theme
 }
 
-func configuredSwarmThemes() map[string]SwarmTheme {
+func configuredSwarmThemes(cfg *config.Config) map[string]SwarmTheme {
+	normalized := map[string]SwarmTheme{}
+	if cfg != nil {
+		for repo, theme := range cfg.Swarm.Themes {
+			if key := strings.ToLower(strings.TrimSpace(repo)); key != "" {
+				normalized[key] = SwarmTheme{
+					EventName:        theme.EventName,
+					CallToArms:       theme.CallToArms,
+					LeaderboardTitle: theme.LeaderboardTitle,
+				}
+			}
+		}
+	}
 	raw := strings.TrimSpace(os.Getenv(swarmEnvThemesJSON))
 	if raw == "" {
-		return nil
+		return normalizedOrNil(normalized)
 	}
 	var themes map[string]SwarmTheme
 	if err := json.Unmarshal([]byte(raw), &themes); err != nil {
-		return nil
+		return normalizedOrNil(normalized)
 	}
-	normalized := map[string]SwarmTheme{}
 	for repo, theme := range themes {
 		if key := strings.ToLower(strings.TrimSpace(repo)); key != "" {
 			normalized[key] = theme
 		}
 	}
-	return normalized
+	return normalizedOrNil(normalized)
+}
+
+func normalizedOrNil(themes map[string]SwarmTheme) map[string]SwarmTheme {
+	if len(themes) == 0 {
+		return nil
+	}
+	return themes
+}
+
+func copySwarmThemes(themes map[string]SwarmTheme) map[string]SwarmTheme {
+	if len(themes) == 0 {
+		return nil
+	}
+	out := make(map[string]SwarmTheme, len(themes))
+	for repo, theme := range themes {
+		out[repo] = theme
+	}
+	return out
 }
 
 func configuredSwarmUnlockIdlePct() int {
@@ -268,7 +325,11 @@ func (s *Server) swarmStore() *swarmStore {
 	s.swarmMu.Lock()
 	defer s.swarmMu.Unlock()
 	if s.swarm == nil {
-		s.swarm = newSwarmStore(filepath.Join(s.dataRootOrDefault(), SwarmStateFileName), s.depsGHClient())
+		var cfg *config.Config
+		if s.deps != nil {
+			cfg = s.deps.Config
+		}
+		s.swarm = newSwarmStoreWithConfig(filepath.Join(s.dataRootOrDefault(), SwarmStateFileName), s.depsGHClient(), cfg)
 	}
 	return s.swarm
 }
@@ -293,7 +354,7 @@ func (s *Server) dataRootOrDefault() string {
 func (s *Server) SwarmSnapshot() SwarmStatus {
 	store := s.swarmStore()
 	if store == nil {
-		status := SwarmStatus{Name: DefaultSwarmName, Theme: defaultSwarmTheme(), Duration: DefaultSwarmDuration.String()}
+		status := SwarmStatus{Name: DefaultSwarmName, Theme: defaultSwarmTheme(nil), Duration: DefaultSwarmDuration.String()}
 		return s.withSwarmUnlockStatus(status, false)
 	}
 	status, _ := store.status(context.Background())
@@ -328,7 +389,7 @@ func (st *swarmStore) status(ctx context.Context) (SwarmStatus, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	if err := st.loadLocked(); err != nil {
-		return SwarmStatus{Name: st.name, Theme: defaultSwarmTheme(), Duration: st.duration.String()}, err
+		return SwarmStatus{Name: st.name, Theme: st.defaultTheme, Duration: st.duration.String()}, err
 	}
 	_ = st.expireLocked(ctx)
 	var active *SwarmRecord
@@ -340,7 +401,7 @@ func (st *swarmStore) status(ctx context.Context) (SwarmStatus, error) {
 			expiresIn = remaining.Round(time.Second).String()
 		}
 	}
-	return SwarmStatus{Name: st.name, Theme: defaultSwarmTheme(), Duration: st.duration.String(), Active: active, ExpiresIn: expiresIn}, nil
+	return SwarmStatus{Name: st.name, Theme: st.defaultTheme, Duration: st.duration.String(), Active: active, ExpiresIn: expiresIn}, nil
 }
 
 func (st *swarmStore) hasHistory(ctx context.Context) (bool, error) {
@@ -367,7 +428,7 @@ func (st *swarmStore) history(ctx context.Context) (SwarmHistoryResponse, error)
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	if err := st.loadLocked(); err != nil {
-		return SwarmHistoryResponse{Name: st.name, Theme: defaultSwarmTheme()}, err
+		return SwarmHistoryResponse{Name: st.name, Theme: st.defaultTheme}, err
 	}
 	_ = st.expireLocked(ctx)
 	history := append([]SwarmRecord(nil), st.state.History...)
@@ -376,7 +437,7 @@ func (st *swarmStore) history(ctx context.Context) (SwarmHistoryResponse, error)
 	if len(players) > 10 {
 		players = players[:10]
 	}
-	return SwarmHistoryResponse{Name: st.name, Theme: defaultSwarmTheme(), History: history, Leaderboard: swarmLeaderboard(history), TopPlayers: players}, nil
+	return SwarmHistoryResponse{Name: st.name, Theme: st.defaultTheme, History: history, Leaderboard: swarmLeaderboard(history), TopPlayers: players}, nil
 }
 
 func (st *swarmStore) players(ctx context.Context) ([]SwarmPlayer, error) {
@@ -546,8 +607,8 @@ func (st *swarmStore) updatePlayersLocked(rec SwarmRecord, score ghpkg.SwarmScor
 		p.Swarms++
 		p.currentSwarmPRs = score.PRsByAuthor[login]
 		p.currentSwarmIssues = score.IssuesClosedBy[login]
-		p.currentSwarmSpeks = score.SpeksCompleted
-		p.currentSwarmLocalPRs = score.LocalModelPRs
+		p.currentSwarmSpeks = score.SpeksCompletedBy[login]
+		p.currentSwarmLocalPRs = score.LocalModelPRsBy[login]
 		p.currentSwarmObjectives = completedSwarmObjectives(rec.Objectives)
 		p.PRsMerged += p.currentSwarmPRs
 		p.IssuesClosed += p.currentSwarmIssues
@@ -635,9 +696,9 @@ func (s *Server) handleSwarmThemesGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if store.state.Themes == nil {
-		store.state.Themes = configuredSwarmThemes()
+		store.state.Themes = copySwarmThemes(store.configuredThemes)
 	}
-	jsonResponse(w, map[string]any{"default": defaultSwarmTheme(), "repos": store.state.Themes})
+	jsonResponse(w, map[string]any{"default": store.defaultTheme, "repos": store.state.Themes})
 }
 
 func (s *Server) handleSwarmThemesPut(w http.ResponseWriter, r *http.Request) {
@@ -665,7 +726,7 @@ func (s *Server) handleSwarmThemesPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if store.state.Themes == nil {
-		store.state.Themes = configuredSwarmThemes()
+		store.state.Themes = copySwarmThemes(store.configuredThemes)
 	}
 	if store.state.Themes == nil {
 		store.state.Themes = map[string]SwarmTheme{}

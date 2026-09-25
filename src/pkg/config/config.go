@@ -90,6 +90,7 @@ type Config struct {
 	// Runs tunes long-running runs and the opt-in Spektacular stage runner
 	// (hivecommons/hive#8303). Zero value: runner off, default retry budget.
 	Runs      RunsConfig      `yaml:"runs,omitempty" json:"runs,omitempty"`
+	Swarm     SwarmConfig     `yaml:"swarm,omitempty" json:"swarm,omitempty"`
 	Autonomy  AutonomyConfig  `yaml:"autonomy,omitempty" json:"autonomy,omitempty"`
 	Review    ReviewConfig    `yaml:"review,omitempty" json:"review,omitempty"`
 	AutoMerge AutoMergeConfig `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`

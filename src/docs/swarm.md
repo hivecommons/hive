@@ -8,7 +8,7 @@ When Discord notifications are configured, Hive announces swarm starts and endin
 
 ## Theming
 
-Operators can customize the default event name and call-to-arms with `HIVE_SWARM_EVENT_NAME` and `HIVE_SWARM_CALL_TO_ARMS`. Per-repo themes can be seeded with `HIVE_SWARM_THEMES_JSON` or updated by owners through `PUT /api/swarm/themes` with `{ "repo": "owner/name", "theme": { "event_name": "Gondor Calls for aid!", "call_to_arms": "All hands on deck!", "leaderboard_title": "Record of triumph" } }`. The selected theme is stored on each swarm history record and used in dashboard and Discord announcements.
+Operators can customize the default event name, call-to-arms, and leaderboard title with the `swarm:` config block or `HIVE_SWARM_EVENT_NAME` / `HIVE_SWARM_CALL_TO_ARMS`. Per-repo themes can be seeded with `swarm.themes`, `HIVE_SWARM_THEMES_JSON`, or updated by owners through `PUT /api/swarm/themes` with `{ "repo": "owner/name", "theme": { "event_name": "Gondor Calls for aid!", "call_to_arms": "All hands on deck!", "leaderboard_title": "Record of triumph" } }`. The selected theme is stored on each swarm history record and used in dashboard and Discord announcements.
 
 ## Leaderboard
 
