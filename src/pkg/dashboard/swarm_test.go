@@ -127,6 +127,7 @@ func TestSwarmAPIConflictAndHistory(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("start status = %d body=%s", rec.Code, rec.Body.String())
 	}
+
 	var started SwarmRecord
 	if err := json.NewDecoder(rec.Body).Decode(&started); err != nil {
 		t.Fatalf("decode start: %v", err)
@@ -152,5 +153,36 @@ func TestSwarmAPIConflictAndHistory(t *testing.T) {
 	}
 	if len(body.History) != 1 || len(body.Leaderboard) != 1 || body.Leaderboard[0].Score != 2 {
 		t.Fatalf("history body = %+v", body)
+	}
+}
+
+func TestSwarmStartPersistsPrepAfterActiveRecord(t *testing.T) {
+	t.Setenv(swarmEnvPrepTimeout, "1s")
+	s, deps := apiServer(t)
+	deps.Config.Project.Org = "acme"
+	deps.Config.Project.Repos = []string{"api"}
+	deps.GHClient = nil
+	s.SetContributorsDir(t.TempDir())
+	s.swarm = newSwarmStore(filepath.Join(s.contributorsDirOrDefault(), SwarmStateFileName), nil)
+
+	rec := doOwnerPost(s, "/api/swarm", map[string]string{"repo": "api"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("start status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var started SwarmRecord
+	if err := json.NewDecoder(rec.Body).Decode(&started); err != nil {
+		t.Fatalf("decode start: %v", err)
+	}
+	if started.Prep == nil || len(started.Prep.Errors) == 0 {
+		t.Fatalf("prep = %+v, want persisted prep with no-gh error", started.Prep)
+	}
+
+	reloaded := newSwarmStore(filepath.Join(s.contributorsDirOrDefault(), SwarmStateFileName), nil)
+	status, err := reloaded.status(context.Background())
+	if err != nil {
+		t.Fatalf("reload status: %v", err)
+	}
+	if status.Active == nil || status.Active.Prep == nil {
+		t.Fatalf("reloaded active prep = %+v", status.Active)
 	}
 }
