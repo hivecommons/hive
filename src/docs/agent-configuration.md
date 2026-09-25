@@ -4,6 +4,8 @@ A hive **agent** is a long-running AI worker — a CLI session the hive keeps al
 
 Start with only a name, a method, and a model. Add the rest when the agent needs it.
 
+For labels that route or gate agent work, see [Hive Labels and Control Signals](labels-and-control-signals.md).
+
 ## The smallest agent that works
 
 ```yaml
@@ -69,7 +71,7 @@ Every field below exists in the config schema today. Grouped by what it does:
 agents:
   scanner:
     display_name: scanner        # dashboard label (defaults to the YAML key)
-    description: "Triages issues and opens PRs gated by `hive-pause/<hive-id>`."
+    description: "Triages issues and opens PRs gated by `hold`."
     emoji: "🔍"                  # dashboard badge
     color: "#3498db"             # dashboard accent color
     role: scanner                # behavioral role; defaults to the agent name
@@ -556,10 +558,10 @@ You don't have to design a roster. Hive ships six **ACMM packs** (`level-1.yaml`
 |---|---|---|
 | L1 | Inception (Assisted) | inception: brainstorm + guide, everything conversational |
 | L2 | Advisory (Instructed) | advisory beads only; agents observe, humans act |
-| L3 | Quality-Gated (Measured) | quality opens issues and test PRs gated by `hive-pause/<hive-id>`; the rest stay advisory |
-| L4 | Security-Aware (Adaptive) | all agents open issues — no PRs yet |
-| L5 | Semi-Autonomous (Semi-Automated) | issues **and** PRs gated by `hive-pause/<hive-id>`; humans batch-approve |
-| L6 | Fully Autonomous | auto-merge on green CI, no hold label |
+| L3 | Quality-Gated (Measured) | quality opens issues and test PRs gated by literal `hold`; the rest stay advisory |
+| L4 | Security-Aware (Adaptive) | scanner/guide file issues; quality, ci-maintainer, and sec-check can open PRs gated by literal `hold` |
+| L5 | Semi-Autonomous (Semi-Automated) | issues **and** PRs; PRs are gated by literal `hold`; humans batch-approve |
+| L6 | Fully Autonomous | auto-merge on green CI; non-outreach PRs have no level hold, outreach PRs remain held |
 
 Applying a level **reconciles the whole roster**, not just the diff: missing agents are created (as overlay files in `/data/agent-configs/`), existing agents are merged — pack values fill blanks, but your explicit `backend:`, `model:`, and `enabled: false` always win — and the level's `kick_template`, `mode` and `on_demand` are updated so the agent's *policy* matches the level (an `on_demand` you toggled yourself in the agent's settings dialog is operator-owned and left alone; leaving on-demand starts the agent, entering it stops it). A failed agent doesn't abort the rest; the level is only recorded as cleanly applied when every agent reconciled.
 

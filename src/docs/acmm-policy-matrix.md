@@ -68,7 +68,7 @@ Delivery agents open GitHub issues — bugs, docs gaps, CI problems, security vu
 
 ### L5 — Semi-Autonomous (Semi-Automated) (12 agents)
 
-Agents open issues AND pull requests. All PRs get the hive-specific `hive-pause/<hive-id>` hold label — humans batch-review and approve. The `hive/<hive-id>` label is provenance only. Architect produces RFCs, strategist coordinates across agents, and reviewer works the hold-gated PR queue every 30 minutes. The system proposes; it does not merge autonomously.
+Agents open issues AND pull requests. Agent PRs get literal `hold` from the level gate — humans batch-review and approve. The dashboard `hive-pause/<hive-id>` label is a separate manual hold, and `hive/<hive-id>` is provenance only. Architect produces RFCs, strategist coordinates across agents, and reviewer works the hold-gated PR queue every 30 minutes. The system proposes; it does not merge autonomously.
 
 | Agent | Mode | Template |
 |-------|------|----------|
@@ -87,7 +87,7 @@ Agents open issues AND pull requests. All PRs get the hive-specific `hive-pause/
 
 ### L6 — Fully Autonomous (13 agents)
 
-Existing autonomous lanes can open issues, create PRs, and auto-merge on green CI. No hold label. Outreach handles community engagement. Reviewer stays advisory even here — its `requires_human` verdict is what pulls a PR out of the auto-merge lane. Telemetry and operations remain paused and use `ISSUES_AND_PRS`, so they never merge their own PRs.
+Existing autonomous lanes can open issues, create PRs, and auto-merge on green CI. Non-outreach L6 PRs do not get the level hold, but outreach PRs are still held for human review. Outreach handles community engagement. Reviewer stays advisory even here — its `requires_human` verdict is what pulls a PR out of the auto-merge lane. Telemetry and operations remain paused and use `ISSUES_AND_PRS`, so they never merge their own PRs.
 
 | Agent | Mode | Template |
 |-------|------|----------|
@@ -111,7 +111,7 @@ Existing autonomous lanes can open issues, create PRs, and auto-merge on green C
 
 ## Key Rules
 
-1. **All PRs are holdgated below L6.** No agent can auto-merge unless running at L6 (Fully Autonomous).
+1. **Level holds use literal `hold`.** Agent PRs below L6 are hold-gated with `hold`, and outreach PRs are held at every level. The dashboard `hive-pause/<hive-id>` label is for manual item holds. See [Hive Labels and Control Signals](labels-and-control-signals.md).
 2. **Advisory agents never get GH auth.** The `${GH_AUTH}` template variable is only injected into measured, holdgated, full, and converse templates. The converse tier is the one place an agent writes to GitHub without sitting on the mode ladder: `reviewer` is `mode: ADVISORY` plus the orthogonal `converse` capability ([#4492](https://github.com/hivecommons/hive/issues/4492)), which grants comments and PR reviews and nothing else — no issue creation, no relabelling, no push, no merge. It needs the auth block because posting a review *is* a GitHub write.
 3. **Supervisor uses no-GitHub advisory mode.** At every level, supervisor uses `supervisor-nogithub.md` in the built-in ACMM packs — it monitors agent health, not code.
 4. **Mode escalation is per-agent.** At L4, some agents are measured (issues only) while others are holdgated (issues + PRs). The level defines the mix.

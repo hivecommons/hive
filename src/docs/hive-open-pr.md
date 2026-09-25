@@ -130,7 +130,7 @@ agent PR, and "ignoring unrecognized flag `--label`" would read to an agent
 mid-run as "your PR will not be held" — the opposite of the truth. The `hold`
 label does land, but not because of the flag: the PR-request watcher applies it
 server-side from authoritative ACMM config after the PR is created
-(`src/pkg/github/pr_request_watcher.go:393`), and treats a failure to apply it
+(`src/pkg/github/pr_request_watcher.go:448-520`), and treats a failure to apply it
 as a failed request, not a cosmetic miss. Every **other** label in the flag's
 value (`--label documentation,hold`, say) is simply lost — the request file has
 no label field. If you want a non-`hold` label on your PR, add it after the PR
@@ -193,6 +193,8 @@ This is body-trailer credit for the *requester*; it is independent of the
 above (`issue-coauthor.sh`), and like it, it is not a DCO sign-off.
 
 ## Policy gates that change or reject your request
+
+For the full operator-side label reference, including `hold`, `approved-direction`, and `hive: reporter-confirmed`, see [Hive Labels and Control Signals](labels-and-control-signals.md).
 
 Beyond the empty-body and `--issues` checks above, the watcher applies three
 policy gates before opening the PR. Two can rewrite what you wrote; one rejects

@@ -1,7 +1,7 @@
 # Spoke dashboard
 
 The spoke dashboard is the operator UI served from
-`src/pkg/dashboard/static/index.html`. Its FAQ panel (`#faq-section` /
+`src/pkg/dashboard/static/index.html`. For the behavior behind the labels the repository cards show or mutate, see [Hive Labels and Control Signals](labels-and-control-signals.md). Its FAQ panel (`#faq-section` /
 `#faq-panel`) is intentionally static HTML: it is not ACMM-gated, does not
 fetch data, and is visible to confused L1/L2 users before they understand the
 rest of the UI.
