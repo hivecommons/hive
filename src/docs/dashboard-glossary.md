@@ -23,7 +23,7 @@ The operator sidebar keeps the existing destinations, IDs, `data-action` handler
 | Overview | Governor |
 | Agents | Dynamic agent tree, `+ agent`, `+ group` |
 | Resources | Repos, Beads, Contributors |
-| Intelligence | Advisory, ACMM Eval, Inception, Knowledge, Strategy Lab |
+| Intelligence | Advisory, ACMM Eval, Inception (spektacular), Knowledge, Strategy Lab |
 | Admin | Tokens, Cost, Audit Log |
 | Help | FAQ, Getting Started, API Spec (Redoc), Getting Started Guide, Report an Issue |
 

@@ -73,7 +73,7 @@ Notes on the state machine, verified from `pkg/knowledge/inception.go`:
 
 ## Operator workflow (dashboard or chat spine)
 
-1. Open the Inception panel on the dashboard. With no active run, it shows a
+1. Open the Inception (spektacular) tab on the dashboard. With no active run, it shows a
    mode selector (idea text box for greenfield, repo URL box for
    brownfield).
 2. Submit an idea (greenfield) or a repo URL (brownfield). This calls
@@ -192,7 +192,7 @@ recorded as advisory beads, unrelated to any specific inception run.
 
 ## Campaigns and resume
 
-The Inception panel now starts with a Campaigns list. Each row is a resumable
+The Inception (spektacular) tab now starts with a Campaigns list. Each row is a resumable
 unit of work keyed by its stable session/spec id:
 
 - Archived L1 sessions have type `inception` and engine `Spec Kit`. Pressing

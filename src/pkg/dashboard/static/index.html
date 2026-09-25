@@ -3292,7 +3292,7 @@
       <div class="oc-nav-label">Intelligence</div>
       <a class="oc-nav-item" data-section="advisory-section" data-action="ocNavigate" data-arg0="advisory-section"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Advisory</span></a>
       <a class="oc-nav-item" data-section="acmm-eval-section" data-action="ocNavigate" data-arg0="acmm-eval-section"><span class="oc-nav-emoji">🎯</span><span class="oc-nav-text">ACMM Eval</span></a>
-      <a class="oc-nav-item" data-section="inception-section" data-action="ocNavigate" data-arg0="inception-section"><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception</span></a>
+      <a class="oc-nav-item" data-section="inception-section" data-action="ocNavigate" data-arg0="inception-section"><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spektacular)</span></a>
       <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item" data-section="nous-section" data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Strategy Lab</span></a>
     </div>
@@ -3653,7 +3653,7 @@
   </div>
 
   <div class="mt-6 mb-8" id="inception-section">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="inception-section"><span class="section-chevron">▼</span> 💡 Project Inception</h2>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="inception-section"><span class="section-chevron">▼</span> 💡 Project Inception · powered by Spektacular</h2>
     <div class="section-body">
       <div id="inception-panel" style="height:min(800px,70vh);overflow-y:auto;overflow-x:hidden;"></div>
     </div>
@@ -3730,7 +3730,7 @@
         <h3 style="font-size:1rem;margin:var(--sp-0) var(--sp-0) var(--sp-4)">Getting started (L1–L2)</h3>
 
         <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">What are L1 and L2 for?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)"><strong>L1 is inception; L2 is calibration.</strong> At L1, the <strong>brainstorm</strong> agent can turn a raw idea or existing repo into structured facts and a scaffold through the Inception panel. It asks clarifying questions, records facts, produces a scaffold, and stops when you approve it. At L2, the hive watches your repo and records what it finds, but it does not open ordinary issues or PRs. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>.</p>
+        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)"><strong>L1 is inception; L2 is calibration.</strong> At L1, the <strong>brainstorm</strong> agent can turn a raw idea or existing repo into structured facts and a scaffold through the Inception (spektacular) tab. It asks clarifying questions, records facts, produces a scaffold, and stops when you approve it. At L2, the hive watches your repo and records what it finds, but it does not open ordinary issues or PRs. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>.</p>
         <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">The job at L2 is not to fix everything in the ledger. It is to decide whether you believe the hive's judgement. Point your own local agent — <code>claude</code>, <code>bob</code>, or <code>copilot</code> — at the 🐝 Hive Advisory Report and ask whether the findings hold up before you give Hive more authority.</p>
 
         <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">What is the Advisory Digest for?</h4>
@@ -16477,6 +16477,7 @@ function burnAreaChart() {
       return `
         <div style="max-width:700px;margin:0 auto 16px">${emptyStateCard('💡', 'Project Inception — bootstrap a project with your hive',
           'Inception takes a project from raw idea to structured knowledge and a scaffolded repo. ' +
+          'It runs with Spektacular\'s spec-driven path: enable it from Settings → Extensions → Spektacular, or read the <a href="https://github.com/hivecommons/hive/blob/v6/src/docs/spektacular.md#configuration" target="_blank" rel="noopener noreferrer">Spektacular docs</a>. ' +
           'In greenfield mode a brainstorm agent captures your one-line idea, asks clarifying questions, structures the answers into vision, requirements, and constraints (stored as Knowledge Base facts), then scaffolds the project. ' +
           'In brownfield mode it scans an existing repo and captures its conventions and principles as KB facts instead. Pick a mode below to begin.')}</div>
         <div style="display:flex;gap:var(--sp-6);max-width:700px;margin:0 auto">
@@ -27900,9 +27901,9 @@ function burnAreaChart() {
 
     (function initSidebarResize() {
       const SIDEBAR_WIDTH_KEY = 'hive-sidebar-width';
-      const SIDEBAR_MIN_W = 180;
+      const SIDEBAR_MIN_W = 280;
       const SIDEBAR_MAX_W = 400;
-      const SIDEBAR_DEFAULT_W = 232;
+      const SIDEBAR_DEFAULT_W = 302;
       const saved = parseInt(localStorage.getItem(SIDEBAR_WIDTH_KEY), 10);
       if (saved >= SIDEBAR_MIN_W && saved <= SIDEBAR_MAX_W) {
         document.documentElement.style.setProperty('--sidebar-w', saved + 'px');
