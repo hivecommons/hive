@@ -1090,6 +1090,12 @@ type HubServer struct {
 	// map simply stays empty for them — optional data, never an error.
 	engagedHiveUsers map[string]time.Time
 
+	// topRepoRefreshInFlight de-duplicates asynchronous provider-profile refreshes
+	// kicked by the login path. The cached fields live on
+	// SaaSUser records; this map is only a per-process rate-limit guard.
+	topRepoRefreshInFlight sync.Map // canonical user id → struct{}
+	topRepoRefreshEnabled  bool
+
 	// usageHistory is the sampled fleet-total token trend, appended on
 	// heartbeat at usageSnapshotInterval and bounded to
 	// usageSnapshotMaxPoints (see usage.go). Guarded by usageMu rather than
@@ -1501,6 +1507,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		pendingGateways:         make(map[string]*HeartbeatGatewayConfig),
 		hubBanners:              make(map[string]*HubBannerEntry),
 		spokeProxyAuthCache:     make(map[string]spokeProxyAuthEntry),
+		topRepoRefreshEnabled:   true,
 		authRolloutSeen:         make(map[string]authRolloutEntry),
 		timeline:                newTimelineStore(),
 		journey:                 newJourneyStore(),

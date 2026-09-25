@@ -308,15 +308,17 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	for _, name := range s.engagedHiveUsernames() {
 		engaged[name] = true
 	}
-	s.mu.RLock()
-	hives := append([]RegistryEntry(nil), s.registry.Hives...)
-	s.mu.RUnlock()
 	now := time.Now()
 	type adminUserView struct {
 		SaaSUser
-		StatusTier string `json:"status_tier"`
-		TopRepo    string `json:"top_repo"`
-		TopRepoURL string `json:"top_repo_url,omitempty"`
+		StatusTier        string `json:"status_tier"`
+		Affiliation       string `json:"affiliation"`
+		AffiliationSource string `json:"affiliation_source,omitempty"`
+		ProfileBio        string `json:"profile_bio,omitempty"`
+		ProfileLocation   string `json:"profile_location,omitempty"`
+		PublicActivity    string `json:"public_activity,omitempty"`
+		TopRepo           string `json:"top_repo"`
+		TopRepoURL        string `json:"top_repo_url,omitempty"`
 		// Provider is always populated (derived via userProvider) so the Users
 		// table's auth-method badge never has to parse — a legacy github-only
 		// record resolves to "github". This shadows SaaSUser.Provider's
@@ -325,15 +327,21 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	views := make([]adminUserView, 0, len(users))
 	for i := range users {
+		s.queueTopRepoRefresh(&users[i], now)
 		users[i].EncryptedToken = ""
 		name := users[i].GitHubUsername
-		topRepo := userTopRepoAssociation(&users[i], hives)
+		topRepo := userTopRepoAssociation(&users[i], nil)
 		views = append(views, adminUserView{
-			SaaSUser:   users[i],
-			StatusTier: userStatusTier(&users[i], live[name], engaged[name], now),
-			TopRepo:    topRepo.Label,
-			TopRepoURL: topRepo.URL,
-			Provider:   userProvider(&users[i]),
+			SaaSUser:          users[i],
+			StatusTier:        userStatusTier(&users[i], live[name], engaged[name], now),
+			Affiliation:       topRepo.Affiliation,
+			AffiliationSource: topRepo.AffiliationSource,
+			ProfileBio:        topRepo.ProfileBio,
+			ProfileLocation:   topRepo.ProfileLocation,
+			PublicActivity:    topRepo.PublicActivity,
+			TopRepo:           topRepo.TopRepo,
+			TopRepoURL:        topRepo.TopRepoURL,
+			Provider:          userProvider(&users[i]),
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")

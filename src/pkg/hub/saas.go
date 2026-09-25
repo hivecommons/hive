@@ -311,6 +311,20 @@ type SaaSUser struct {
 	// login, …), folded hub-ward from the spoke audit logs (heartbeat
 	// UserLastActions) keeping the per-user maximum. Same absence semantics.
 	LastActionAt string `json:"last_action_at,omitempty"`
+
+	// Affiliation caches who this user appears affiliated with, derived from
+	// their GitHub/GHE profile company, public org memberships, or the repo owner
+	// they contribute to most. TopRepo is kept as supporting detail for the
+	// affiliation cell. Refreshed asynchronously by top_repo.go; empty values
+	// render as an em dash until a refresh succeeds or determines no data.
+	Affiliation       string `json:"affiliation,omitempty"`
+	AffiliationSource string `json:"affiliation_source,omitempty"`
+	ProfileBio        string `json:"profile_bio,omitempty"`
+	ProfileLocation   string `json:"profile_location,omitempty"`
+	PublicActivity    string `json:"public_activity,omitempty"`
+	TopRepo           string `json:"top_repo,omitempty"`
+	TopRepoURL        string `json:"top_repo_url,omitempty"`
+	TopRepoUpdatedAt  string `json:"top_repo_updated_at,omitempty"`
 }
 
 // Length caps for the admin-editable contact fields. These are free text

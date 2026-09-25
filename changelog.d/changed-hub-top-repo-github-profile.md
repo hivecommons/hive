@@ -1,0 +1,1 @@
+- Hub Admin — Users now shows an AFFILIATION column that identifies who each signup is likely affiliated with from public GitHub/GHE profile signals (company, orgs, contribution owners, bio/location context, cached daily), with top repo and public activity as supporting detail instead of a Hive-derived association.

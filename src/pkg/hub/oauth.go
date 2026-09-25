@@ -566,6 +566,7 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	if err := saveSaaSUser(saasUser); err != nil {
 		s.logger.Error("oauth callback: save failed", "user", saasUser.GitHubUsername, "error", err)
 	}
+	s.queueTopRepoRefresh(saasUser, time.Now().UTC())
 
 	if redirect == "" {
 		redirect = "/dashboard"

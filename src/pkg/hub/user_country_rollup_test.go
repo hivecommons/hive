@@ -104,7 +104,7 @@ func TestUsersTableCountryColumnSortableAndColspan(t *testing.T) {
 		t.Error("the Country header is not sortable — neighbouring columns are, so it must use the same sortUsers mechanism")
 	}
 	if !strings.Contains(html, "var USERS_TABLE_COLSPAN = 10;") {
-		t.Error("USERS_TABLE_COLSPAN was not bumped to 10 for the Country plus Top Repo columns — panel/expand rows will be one column short")
+		t.Error("USERS_TABLE_COLSPAN was not bumped to 10 for the Country plus Affiliation columns — panel/expand rows will be one column short")
 	}
 }
 
