@@ -1,0 +1,1 @@
+- Dashboard chat now authenticates to the local dashboard with the resolved dashboard auth token (file or DASHBOARD_AUTH_TOKEN), not only HIVE_DASHBOARD_TOKEN; fixes HTTP 401 on `!runs`, heartbeat and `!runs spec` on hosted spokes.
