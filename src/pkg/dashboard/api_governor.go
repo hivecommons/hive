@@ -1358,9 +1358,9 @@ func litellmSectionResponse(lc *config.LiteLLMConfig) map[string]interface{} {
 		apiKeyFile = maskSecretHint(apiKeyFile)
 	}
 	key := lc.ResolveAPIKey()
-	keyHint := ""
+	keySHA256 := ""
 	if key != "" {
-		keyHint = maskSecretHint(key)
+		keySHA256 = config.APIKeySHA256(key)
 	}
 	return map[string]interface{}{
 		"endpoint":               lc.Endpoint,
@@ -1372,7 +1372,7 @@ func litellmSectionResponse(lc *config.LiteLLMConfig) map[string]interface{} {
 		"caBundle":               lc.CABundle,
 		"localProxy":             lc.LocalProxy,
 		"hasKey":                 key != "",
-		"keyHint":                keyHint,
+		"keySHA256":              keySHA256,
 		// redactSecret guards the pathological case of a key-like env var
 		// NAME appearing in the source string.
 		"keySource": redactSecret(lc.ResolveAPIKeySource(), key),
