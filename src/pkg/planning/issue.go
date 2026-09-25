@@ -29,6 +29,12 @@ import (
 const (
 	// MetaIssueRepo records the source issue's "owner/repo".
 	MetaIssueRepo = "issue_repo"
+	// MetaIssueSourceType records the work source that produced the issue
+	// ("github", "jira", "linear", ...). Empty means GitHub for older epics.
+	MetaIssueSourceType = "issue_source_type"
+	// MetaIssueExternalID records the source-native key for non-GitHub work
+	// items (for example Jira ENG-7 or Linear ENG-7).
+	MetaIssueExternalID = "issue_external_id"
 	// MetaIssueNumber records the source issue's number (as a string).
 	MetaIssueNumber = "issue_number"
 	// MetaIssueURL records the source issue's HTML URL.
@@ -92,6 +98,9 @@ func IssueRef(issue github.Issue) string {
 	repo := strings.TrimSpace(issue.Repo)
 	if repo != "" && issue.Number > 0 {
 		return externalRefPrefix + repo + "#" + strconv.Itoa(issue.Number)
+	}
+	if repo != "" && strings.TrimSpace(issue.ExternalID) != "" {
+		return "ws-" + repo + "!" + strings.TrimSpace(issue.ExternalID)
 	}
 	if u := strings.TrimSpace(issue.URL); u != "" {
 		return u
@@ -165,6 +174,8 @@ func EpicFromIssue(store *beads.Store, issue github.Issue, body string) (*beads.
 		MetaPlanStatus:       PlanStatusDraft,
 		MetaDecomposePending: "true",
 		MetaIssueRepo:        strings.TrimSpace(issue.Repo),
+		MetaIssueSourceType:  strings.TrimSpace(issue.SourceType),
+		MetaIssueExternalID:  strings.TrimSpace(issue.ExternalID),
 		MetaIssueURL:         strings.TrimSpace(issue.URL),
 		MetaIssueLabels:      strings.Join(issue.Labels, ","),
 	}

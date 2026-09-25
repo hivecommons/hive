@@ -25,6 +25,7 @@ const (
 	AttrGen            = "gen"
 	AttrReceipt        = "receipt"
 	AttrArtifact       = "artifact"
+	AttrArtifactBody   = "artifact_body"
 	AttrDocumentStatus = "document_status"
 	AttrReason         = "reason"
 	AttrSeverity       = "severity"
@@ -75,7 +76,7 @@ func (a *leaseAdapter) ActiveStages(time.Time) ([]Stage, error) {
 	err := a.reg.VisitActiveStageLeases(func(runKey, key, stage, identity, taskID, repo string, gen uint64, expiresAt time.Time) {
 		workDir, _ := a.reg.ResolveRunStageWorkDir(runKey, stage, identity, repo, gen)
 		artifact := ArtifactKey(runKey)
-		if ref, ok := worksource.ParseKey(runKey); ok && ref.IsGitHubIssue() {
+		if ref, ok := worksource.ParseKey(runKey); ok && ref.Repo != "" {
 			artifact = RunArtifactName(runKey)
 		}
 		out = append(out, Stage{
@@ -117,6 +118,7 @@ func (a *leaseAdapter) Advance(_ context.Context, st Stage, status ArtifactStatu
 		AttrGen:            strconv.FormatUint(st.Gen, 10),
 		AttrReceipt:        receipt.OutputDigest,
 		AttrArtifact:       status.JoinKey(),
+		AttrArtifactBody:   status.Body,
 		AttrDocumentStatus: string(status.DocumentStatus),
 	})
 }

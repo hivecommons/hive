@@ -99,15 +99,19 @@ func ArtifactKey(name string) string {
 	return strings.TrimSpace(key)
 }
 
-// RunArtifactName turns a GitHub issue run key (owner/repo#N) into a
-// Spektacular-safe slug. Legacy file-address keys should continue through
-// ArtifactKey instead.
+// RunArtifactName turns a worksource run key (owner/repo#N or
+// owner/repo!EXTERNAL) into a Spektacular-safe slug. Legacy file-address keys
+// should continue through ArtifactKey instead.
 func RunArtifactName(runKey string) string {
 	ref, ok := worksource.ParseKey(runKey)
-	if !ok || !ref.IsGitHubIssue() {
+	if !ok || ref.Repo == "" {
 		return ArtifactKey(runKey)
 	}
-	raw := strings.ToLower(ref.Repo + "-" + strconv.Itoa(ref.Number))
+	id := ref.ExternalID
+	if ref.Number > 0 {
+		id = strconv.Itoa(ref.Number)
+	}
+	raw := strings.ToLower(ref.Repo + "-" + id)
 	var b strings.Builder
 	lastDash := false
 	for _, r := range raw {
@@ -169,6 +173,9 @@ type ArtifactStatus struct {
 	ClosedAt       time.Time
 	Spec           string
 	Plan           string
+	// Body is populated by the runner for a final Spec artifact via the
+	// Spektacular file-read verb. It is not part of the status JSON contract.
+	Body string
 }
 
 // artifactStatusWire is the on-the-wire shape. Timestamps are RFC3339
@@ -518,6 +525,22 @@ func (r *Runner) ExportPlanFallback(ctx context.Context, name string) (Plan, err
 	return r.exportPlanFallbackInDir(ctx, "", name)
 }
 
+func (r *Runner) ReadSpec(ctx context.Context, name string) (string, error) {
+	return r.readSpecInDir(ctx, "", name)
+}
+
+func (r *Runner) readSpecInDir(ctx context.Context, dir, name string) (string, error) {
+	name = ArtifactKey(name)
+	if name == "" {
+		return "", &ContractError{Kind: KindSpec, Reason: "empty artifact name"}
+	}
+	out, err := r.readSpecFileInDir(ctx, dir, name, name+".md")
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
 func (r *Runner) exportPlanFallbackInDir(ctx context.Context, dir, name string) (Plan, error) {
 	name = ArtifactKey(name)
 	if name == "" {
@@ -547,6 +570,18 @@ func (r *Runner) readPlanFileInDir(ctx context.Context, dir, name, path string) 
 	trimmed := bytes.TrimSpace(out)
 	if env, message, isErr := parseErrorEnvelope(trimmed); isErr {
 		return nil, classifyEnvelope(KindPlan, name, env, message)
+	}
+	return out, nil
+}
+
+func (r *Runner) readSpecFileInDir(ctx context.Context, dir, name, path string) ([]byte, error) {
+	out, execErr := r.execInDir(ctx, dir, []string{KindSpec, verbFile, verbRead, path})
+	if execErr != nil {
+		return nil, classifyExecError(KindSpec, name, out, execErr)
+	}
+	trimmed := bytes.TrimSpace(out)
+	if env, message, isErr := parseErrorEnvelope(trimmed); isErr {
+		return nil, classifyEnvelope(KindSpec, name, env, message)
 	}
 	return out, nil
 }

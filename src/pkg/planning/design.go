@@ -49,6 +49,10 @@ const (
 	// bridge sets it to DesignViaSpektacular so dashboard/runs surfaces can link
 	// the design gate to the spec campaign instead of the legacy architect kick.
 	MetaDesignVia = "design_via"
+	// MetaDesignArtifactDigest records the Spektacular Spec receipt digest that
+	// has already been posted back to the source item. It makes artifact
+	// postback idempotent across runner retries.
+	MetaDesignArtifactDigest = "design_artifact_digest"
 )
 
 // Design statuses.

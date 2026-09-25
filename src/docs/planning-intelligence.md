@@ -261,5 +261,14 @@ Spektacular” and link back to the run.
 The Spec checkpoint is Gate 1. Approving design from the dashboard or run
 checkpoint applies the configured approval signal and advances the run to Plan;
 approving inside a Spek/Jam surface mirrors the same `design-approved` signal
-back to the work item. When Spek is disabled, v6 falls back to the legacy flow
-described above; v5 is unchanged.
+back to the work item. The bridge keys runs by the source-neutral work item ref,
+so Jira and Linear items with string ids are admitted as `<repo>!<external-id>`
+instead of being rejected as non-GitHub issues. Final Spec artifacts are posted
+back through the work-source comment adapter and marked with their receipt digest
+so runner retries do not duplicate comments.
+
+`planning.design_requested_status` and `planning.design_approved_status` may be
+set to source-native workflow states. Jira and Linear adapters only attempt a
+status transition when their work-source `transitions` map is configured; labels
+remain the default signal. When Spek is disabled, v6 falls back to the legacy
+flow described above; v5 is unchanged.

@@ -29,10 +29,18 @@ unsupported error and the dashboard shows the degraded path.
 | Source | Design requested | Design approved | Artifact/comment | Status transition |
 |---|---|---|---|---|
 | GitHub / GitHub Projects | `hive-design` label | `design-approved` label | issue comment | n/a |
-| Jira Cloud/Data Center | Jira label (or configured transition) | label or transition | Jira comment | optional / unsupported by default |
-| Linear | Linear label (or configured workflow state) | label or state | Linear comment | optional / unsupported by default |
-| Gitea | label | label | issue comment | unsupported |
-| GitLab | label | label | issue comment | unsupported |
+| Jira Cloud/Data Center | Jira label plus optional configured transition | label plus optional transition | Jira comment | configured `transitions` map |
+| Linear | Linear label plus optional configured workflow state | label plus optional state | Linear comment | configured `transitions` map |
+| Gitea | n/a | n/a | n/a | no `work_source` adapter today |
+| GitLab | n/a | n/a | n/a | no `work_source` adapter today |
+
+Global planning keys `design_requested_status` and `design_approved_status`
+name the Hive-side statuses to apply for Gate 1. Jira and Linear only call their
+native transition APIs when their adapter `transitions` map resolves those names
+to a source transition/state; otherwise design mode stays label-based. Gitea and
+GitLab appear elsewhere as SCM/forge integrations, but `pkg/worksource` does
+not expose them as issue/work-item sources, so there is no label/comment adapter
+to call yet.
 
 ## Run stages (`run_stages: true`)
 
@@ -216,6 +224,9 @@ governor:
               repo: your-org/platform
       assigned_only: true              # optional; requires a connected Linear agent app
       session_agent: scanner           # which hive agent takes Linear agent sessions
+      transitions:                     # optional design-mode workflow states
+        design_requested: "Design Requested"
+        design_approved: "Design Approved"
 ```
 
 `api_key` and at least one `teams[].key`/`teams[].repo` are required —
@@ -228,6 +239,9 @@ without a connected app it is a startup error, not "enumerate everything"
 See [Linear agent integration](linear-agent.md) for the OAuth app setup,
 webhook wiring, `LINEAR_CLIENT_ID`/`LINEAR_CLIENT_SECRET`/
 `LINEAR_WEBHOOK_SECRET`, and how agents write back to Linear.
+For Spektacular design mode, `linear.transitions` maps Hive design status names
+to Linear workflow state names or ids. Empty means the bridge uses only labels
+and comments.
 
 **ACMM gap issues.** The dashboard's ACMM "Open Issue" / "Open All" buttons
 file on GitHub by default even on a Linear-sourced hive. Set
@@ -253,6 +267,9 @@ governor:
       # jql: "project in (ENG) AND statusCategory != Done"  # optional full override
       repo: your-org/default-repo                 # required for agents to know what to clone
       hold_labels: [hold, blocked]                # optional — Jira labels that gate an issue
+      transitions:                                # optional design-mode status transitions
+        design_requested: "Design Requested"
+        design_approved: "Design Approved"
 ```
 
 Config fields (`JiraSourceConfig`, `pkg/config/config.go:1738-1746`):
@@ -266,6 +283,7 @@ Config fields (`JiraSourceConfig`, `pkg/config/config.go:1738-1746`):
 | `jql` | `JQL` | No | Full JQL override. When empty, the adapter builds `project in (<keys>) AND statusCategory != Done AND issuetype != Epic` (`jira.go:59-67`). |
 | `repo` | `Repo` | Yes in practice | GitHub `owner/name` repo agents clone to work these issues; every returned `Issue.Repo` is set to this single value (`jira.go:214`) — Jira source config maps to exactly one repo, unlike Linear's per-team repo map. |
 | `hold_labels` | `HoldLabels` | No | Jira label values that gate an issue out of the work list, the Jira analogue of GitHub's `hold` label (`jira.go:33,143-153`). |
+| `transitions` | `Transitions` | No | Maps Hive design status names (for example `design_approved`) to Jira transition names or ids for Spektacular design mode. Empty means label-only. |
 
 ¹ `project_keys` is not enforced as required by the constructor, but if both
 it and `jql` are empty the built JQL becomes `project in () AND ...`, which

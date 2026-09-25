@@ -464,6 +464,14 @@ type PlanningConfig struct {
 	// design. Default DefaultDesignApprovedLabel. Applying a label needs triage
 	// on the repo, which is the trust boundary the RFC settled on.
 	DesignApprovedLabel string `yaml:"design_approved_label,omitempty" json:"design_approved_label,omitempty"`
+	// DesignRequestedStatus is an optional source-native status/state to apply
+	// alongside DesignLabels on work sources that support workflow transitions
+	// (for example Jira or Linear). Empty means label-only.
+	DesignRequestedStatus string `yaml:"design_requested_status,omitempty" json:"design_requested_status,omitempty"`
+	// DesignApprovedStatus is an optional source-native status/state to apply
+	// alongside DesignApprovedLabel on work sources that support workflow
+	// transitions. Empty means label-only.
+	DesignApprovedStatus string `yaml:"design_approved_status,omitempty" json:"design_approved_status,omitempty"`
 	// MaxDesignRevisions caps how many times the architect is asked to revise
 	// a design (a human re-applies the design label to request a revision);
 	// past it the epic waits on a human. 0 = DefaultMaxDesignRevisions.
@@ -2384,6 +2392,9 @@ type LinearSourceConfig struct {
 	// configured, that agent is used; otherwise session events are
 	// acknowledged with an error activity naming the missing config.
 	SessionAgent string `yaml:"session_agent,omitempty" json:"session_agent,omitempty"`
+	// Transitions maps Hive design status names to Linear workflow state names
+	// or ids. When a status is not present, the status string itself is used.
+	Transitions map[string]string `yaml:"transitions,omitempty" json:"transitions,omitempty"`
 }
 
 // LinearTeamSourceConfig maps one Linear team to the GitHub repo agents work in.
@@ -2402,13 +2413,14 @@ type LinearProjectSourceConfig struct {
 
 // JiraSourceConfig configures the Jira Cloud REST v3 work source.
 type JiraSourceConfig struct {
-	BaseURL     string   `yaml:"base_url" json:"base_url"`
-	Email       string   `yaml:"email" json:"email"`
-	APIToken    string   `yaml:"api_token,omitempty" json:"api_token,omitempty"`
-	ProjectKeys []string `yaml:"project_keys,omitempty" json:"project_keys,omitempty"`
-	JQL         string   `yaml:"jql,omitempty" json:"jql,omitempty"`
-	Repo        string   `yaml:"repo,omitempty" json:"repo,omitempty"`
-	HoldLabels  []string `yaml:"hold_labels,omitempty" json:"hold_labels,omitempty"`
+	BaseURL     string            `yaml:"base_url" json:"base_url"`
+	Email       string            `yaml:"email" json:"email"`
+	APIToken    string            `yaml:"api_token,omitempty" json:"api_token,omitempty"`
+	ProjectKeys []string          `yaml:"project_keys,omitempty" json:"project_keys,omitempty"`
+	JQL         string            `yaml:"jql,omitempty" json:"jql,omitempty"`
+	Repo        string            `yaml:"repo,omitempty" json:"repo,omitempty"`
+	HoldLabels  []string          `yaml:"hold_labels,omitempty" json:"hold_labels,omitempty"`
+	Transitions map[string]string `yaml:"transitions,omitempty" json:"transitions,omitempty"`
 }
 
 // ProjectObservabilityBackendRef names references an agent may place in managed

@@ -109,6 +109,59 @@ func TestLinearCreateIssueGraphQLError(t *testing.T) {
 	}
 }
 
+func TestLinearCreateIssueValidationAndDecodeErrors(t *testing.T) {
+	src := worksource.NewLinearSource(worksource.LinearConfig{APIKey: "k"}, nil)
+	if _, err := src.CreateIssue(context.Background(), " ", "t", "d"); err == nil || !strings.Contains(err.Error(), "team key") {
+		t.Fatalf("empty team err = %v", err)
+	}
+	t.Run("team response decode", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`not-json`))
+		}))
+		defer srv.Close()
+		src := worksource.NewLinearSource(worksource.LinearConfig{APIKey: "k", BaseURL: srv.URL}, nil)
+		if _, err := src.CreateIssue(context.Background(), "ENG", "t", "d"); err == nil || !strings.Contains(err.Error(), "decode response") {
+			t.Fatalf("decode err = %v", err)
+		}
+	})
+	t.Run("issueCreate false", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Query string `json:"query"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if strings.Contains(req.Query, "teams(") {
+				_, _ = w.Write([]byte(`{"data":{"teams":{"nodes":[{"id":"team-1","key":"ENG"}]}}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":{"issueCreate":{"success":false,"issue":{}}}}`))
+		}))
+		defer srv.Close()
+		src := worksource.NewLinearSource(worksource.LinearConfig{APIKey: "k", BaseURL: srv.URL}, nil)
+		if _, err := src.CreateIssue(context.Background(), "ENG", "t", "d"); err == nil || !strings.Contains(err.Error(), "did not return") {
+			t.Fatalf("issueCreate false err = %v", err)
+		}
+	})
+	t.Run("issueCreate decode", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Query string `json:"query"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if strings.Contains(req.Query, "teams(") {
+				_, _ = w.Write([]byte(`{"data":{"teams":{"nodes":[{"id":"team-1","key":"ENG"}]}}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`not-json`))
+		}))
+		defer srv.Close()
+		src := worksource.NewLinearSource(worksource.LinearConfig{APIKey: "k", BaseURL: srv.URL}, nil)
+		if _, err := src.CreateIssue(context.Background(), "ENG", "t", "d"); err == nil || !strings.Contains(err.Error(), "decode response") {
+			t.Fatalf("issueCreate decode err = %v", err)
+		}
+	})
+}
+
 func TestLinearTeamForRepo(t *testing.T) {
 	src := worksource.NewLinearSource(worksource.LinearConfig{
 		APIKey: "k",

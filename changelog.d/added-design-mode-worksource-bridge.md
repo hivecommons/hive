@@ -1,0 +1,1 @@
+- Complete v6 Spektacular design-mode work-source coverage with non-GitHub run admission, source-native artifact comments, and optional Jira/Linear status transitions.
