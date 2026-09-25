@@ -68,6 +68,11 @@ type JiraConfig struct {
 // jiraMaxResults is the page size requested from the Jira search API.
 const jiraMaxResults = jiraSearchPageSize
 
+// jiraSearchFields lists the issue fields the search response parser reads. The
+// Jira Cloud enhanced search endpoint returns only the fields explicitly
+// requested, so this list must cover everything toIssue consumes.
+var jiraSearchFields = []string{"summary", "status", "priority", "assignee", "reporter", "labels", "created", "updated"}
+
 // jiraSource is the Jira WorkSource adapter.
 type jiraSource struct {
 	cfg    JiraConfig
@@ -206,6 +211,11 @@ type jiraSearchResponse struct {
 	MaxResults int         `json:"maxResults"`
 	Total      int         `json:"total"`
 	Issues     []jiraIssue `json:"issues"`
+	// NextPageToken and IsLast drive token-based pagination for the Jira Cloud
+	// enhanced search endpoint (/rest/api/3/search/jql), which does not return
+	// startAt/total. Data Center still paginates with StartAt/MaxResults/Total.
+	NextPageToken string `json:"nextPageToken"`
+	IsLast        bool   `json:"isLast"`
 }
 
 type jiraIssue struct {
@@ -317,8 +327,9 @@ func (s *jiraSource) ListIssues(ctx context.Context) ([]Issue, error) {
 	}
 	var out []Issue
 	startAt := 0
+	pageToken := ""
 	for {
-		page, err := s.searchPage(ctx, startAt)
+		page, err := s.searchPage(ctx, startAt, pageToken)
 		if err != nil {
 			return nil, err
 		}
@@ -328,22 +339,52 @@ func (s *jiraSource) ListIssues(ctx context.Context) ([]Issue, error) {
 			}
 			out = append(out, s.toIssue(it))
 		}
-		if page.StartAt+page.MaxResults >= page.Total || len(page.Issues) == 0 {
+		if len(page.Issues) == 0 {
 			break
 		}
-		startAt = page.StartAt + page.MaxResults
+		if s.isDataCenter() {
+			if page.StartAt+page.MaxResults >= page.Total {
+				break
+			}
+			startAt = page.StartAt + page.MaxResults
+			continue
+		}
+		// Jira Cloud enhanced search paginates with an opaque nextPageToken and
+		// has no startAt/total; stop once the API signals the last page.
+		if page.IsLast || page.NextPageToken == "" {
+			break
+		}
+		pageToken = page.NextPageToken
 	}
 	return out, nil
 }
 
-func (s *jiraSource) searchPage(ctx context.Context, startAt int) (*jiraSearchResponse, error) {
-	q := url.Values{}
-	q.Set("jql", s.jql())
-	q.Set("fields", "summary,status,priority,assignee,reporter,labels,created,updated")
-	q.Set("maxResults", fmt.Sprintf("%d", jiraMaxResults))
-	q.Set("startAt", fmt.Sprintf("%d", startAt))
+func (s *jiraSource) searchPage(ctx context.Context, startAt int, pageToken string) (*jiraSearchResponse, error) {
 	var page jiraSearchResponse
-	if err := s.doJSON(ctx, http.MethodGet, s.restURL("search")+"?"+q.Encode(), nil, http.StatusOK, &page); err != nil {
+	if s.isDataCenter() {
+		// Jira Data Center/Server still supports the classic /search endpoint.
+		q := url.Values{}
+		q.Set("jql", s.jql())
+		q.Set("fields", strings.Join(jiraSearchFields, ","))
+		q.Set("maxResults", fmt.Sprintf("%d", jiraMaxResults))
+		q.Set("startAt", fmt.Sprintf("%d", startAt))
+		if err := s.doJSON(ctx, http.MethodGet, s.restURL("search")+"?"+q.Encode(), nil, http.StatusOK, &page); err != nil {
+			return nil, fmt.Errorf("worksource/jira: search: %w", err)
+		}
+		return &page, nil
+	}
+	// Jira Cloud removed the classic /search endpoint (HTTP 410, Atlassian
+	// CHANGE-2046). Use the enhanced JQL search endpoint, which needs an explicit
+	// fields list and paginates with a nextPageToken.
+	payload := map[string]any{
+		"jql":        s.jql(),
+		"fields":     jiraSearchFields,
+		"maxResults": jiraMaxResults,
+	}
+	if pageToken != "" {
+		payload["nextPageToken"] = pageToken
+	}
+	if err := s.doJSON(ctx, http.MethodPost, s.restURL("search/jql"), payload, http.StatusOK, &page); err != nil {
 		return nil, fmt.Errorf("worksource/jira: search: %w", err)
 	}
 	return &page, nil

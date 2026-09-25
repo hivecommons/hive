@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -55,21 +56,35 @@ func jiraIssueJSON(it jiraTestIssue) map[string]any {
 	return map[string]any{"key": it.Key, "fields": fields}
 }
 
-// newJiraServer serves a fixed set of issues with Jira-style pagination and
+// newJiraServer serves a fixed set of issues from the Jira Cloud enhanced search
+// endpoint (POST /rest/api/3/search/jql) with nextPageToken pagination and
 // records requests via the callback.
 func newJiraServer(t *testing.T, issues []jiraTestIssue, onReq func(*http.Request)) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/rest/api/3/search" {
-			t.Errorf("unexpected path %s", r.URL.Path)
+		if r.Method != http.MethodPost || r.URL.Path != "/rest/api/3/search/jql" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
 			return
 		}
+		var body struct {
+			JQL           string   `json:"jql"`
+			Fields        []string `json:"fields"`
+			MaxResults    int      `json:"maxResults"`
+			NextPageToken string   `json:"nextPageToken"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode search body: %v", err)
+		}
+		// Re-expose jql on the request so callbacks can inspect it uniformly.
+		r.URL.RawQuery = url.Values{"jql": {body.JQL}}.Encode()
 		if onReq != nil {
 			onReq(r)
 		}
 		startAt := 0
-		fmt.Sscanf(r.URL.Query().Get("startAt"), "%d", &startAt)
+		if body.NextPageToken != "" {
+			fmt.Sscanf(body.NextPageToken, "%d", &startAt)
+		}
 		end := startAt + jiraMaxResults
 		if end > len(issues) {
 			end = len(issues)
@@ -80,11 +95,12 @@ func newJiraServer(t *testing.T, issues []jiraTestIssue, onReq func(*http.Reques
 				page = append(page, jiraIssueJSON(it))
 			}
 		}
-		resp := map[string]any{
-			"startAt":    startAt,
-			"maxResults": jiraMaxResults,
-			"total":      len(issues),
-			"issues":     page,
+		resp := map[string]any{"issues": page}
+		if end < len(issues) {
+			resp["nextPageToken"] = fmt.Sprintf("%d", end)
+			resp["isLast"] = false
+		} else {
+			resp["isLast"] = true
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
