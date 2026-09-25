@@ -1,6 +1,6 @@
 # The operator-facing admin MCP
 
-**Status: phase 6 repository, spend, contributor and ops operations implemented.** The admin MCP package, dashboard endpoint, stdio binary, refusal contract, read tools for fleet, agents, leases/claims, plans, audit, settings, readiness, spend, contributors, knowledge, and hive advice, the generic write-operation registry, durable preview-and-confirm flow, and registered write operations through phase 6 are present. Writes remain disabled unless explicitly enabled, and later phases add more registered write operations on top of the same contract. It belongs to the v6
+**Status: phase 6 repository, spend, contributor and ops operations implemented.** The admin MCP package, dashboard endpoint, stdio binary, refusal contract, read tools for fleet, agents, leases/claims, plans, audit, settings, readiness, spend, contributors, knowledge, and hive advice, the generic write-operation registry, durable preview-and-confirm flow, and registered write operations through phase 6 — including phase 5 fleet-level operations — are present. Writes remain disabled unless explicitly enabled, and later phases add more registered write operations on top of the same contract. It belongs to the v6
 dashboard-optional line ([#7563](https://github.com/hivecommons/hive/issues/7563)) and, per
 that line's policy, lands on the `v6` branch only. Tracked by
 [#8697](https://github.com/hivecommons/hive/issues/8697).
@@ -367,6 +367,18 @@ struct of pointer fields, so a partial update is native and omitted fields are u
 autonomy auto-promote/demote controls. A surface that can disable a protection is reachable by
 the same conversation the protection exists to bound. The mitigation is disclosure: a preview
 of a change that switches off a protection says so explicitly.
+
+Phase 5 registers the fleet-level write operations under that contract:
+
+- `fleet.autonomy_level` previews `PUT /api/packs/level`, names the target pack's agents and
+  each agent's authority in operator terms, and discloses when the target level widens issue,
+  pull request, push, or merge capability.
+- `plan.propose`, `plan.approve`, and `plan.reject` wrap the existing plan proposal and review
+  endpoints. Proposal is disclosed as draft-only; approval discloses that child work may be
+  released; rejection discloses the re-gating and lease reset.
+- `governor.feature_settings` wraps `PUT /api/config/governor/features`, preserves the
+  endpoint's pointer-field partial update contract, and calls out protective toggles such as
+  ioscan, claims, checkpoint gates, and autonomy automation before confirmation.
 
 ## Deliberately absent, and why
 

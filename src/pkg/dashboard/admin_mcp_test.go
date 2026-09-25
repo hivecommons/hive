@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -62,25 +63,33 @@ func TestAdminMCPEndpointDoesNotExposeHiveSelector(t *testing.T) {
 	}
 }
 
-func TestAdminMCPExecuteWriteForwardsJSONBody(t *testing.T) {
+func TestAdminMCPExecuteWriteForwardsJSONBodyAndAuth(t *testing.T) {
 	s := NewServerWithAuth(0, "secret", slog.New(slog.NewTextHandler(io.Discard, nil)))
-	s.mux.HandleFunc("POST /api/admin-mcp-test-body", func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	var gotBody map[string]any
+	var sawAuth bool
+	s.mux.HandleFunc("PUT /api/admin-mcp-test/body", func(w http.ResponseWriter, r *http.Request) {
+		sawAuth = r.Header.Get("X-Hive-Role") == "owner"
+		if ct := r.Header.Get("Content-Type"); !strings.Contains(ct, "application/json") {
+			t.Fatalf("content-type = %q", ct)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Fatal(err)
 		}
-		if body["repo"] != "hivecommons/hive" {
-			t.Fatalf("body = %#v", body)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "repo": body["repo"]})
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	})
-	provider := dashboardAdminMCPProvider{server: s, authorization: "Bearer secret"}
-	result, err := provider.ExecuteWrite(t.Context(), adminmcp.WriteRequest{Method: http.MethodPost, Path: "/api/admin-mcp-test-body", Body: map[string]any{"repo": "hivecommons/hive"}})
+	provider := dashboardAdminMCPProvider{server: s, authorization: "Bearer " + s.authToken}
+	result, err := provider.ExecuteWrite(context.Background(), adminmcp.WriteRequest{Method: http.MethodPut, Path: "/api/admin-mcp-test/body", Body: map[string]any{"level": 5}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, ok := result.(map[string]any)
-	if !ok || got["repo"] != "hivecommons/hive" {
+	if !sawAuth {
+		t.Fatal("write was not authenticated as owner")
+	}
+	if gotBody["level"] != float64(5) {
+		t.Fatalf("body = %#v", gotBody)
+	}
+	out, ok := result.(map[string]any)
+	if !ok || out["ok"] != true {
 		t.Fatalf("result = %#v", result)
 	}
 }

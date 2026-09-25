@@ -277,6 +277,21 @@ func TestPhase6WriteOpsRegistered(t *testing.T) {
 	}
 }
 
+func TestFleetWriteOpsRegistered(t *testing.T) {
+	registry := DefaultWriteRegistry()
+	for _, name := range []string{
+		WriteOpFleetAutonomyLevel,
+		WriteOpPlanPropose,
+		WriteOpPlanApprove,
+		WriteOpPlanReject,
+		WriteOpFeatureSettings,
+	} {
+		if _, ok := registry.Get(name); !ok {
+			t.Fatalf("%s is not registered", name)
+		}
+	}
+}
+
 func TestPhase6WriteOpPreviews(t *testing.T) {
 	tests := []struct {
 		name string
@@ -339,5 +354,70 @@ func TestPhase6WriteOpPreviews(t *testing.T) {
 				t.Fatalf("missing preview safety text: %#v", preview)
 			}
 		})
+	}
+}
+
+func TestFleetAutonomyLevelPreviewIncludesCapabilityDisclosure(t *testing.T) {
+	preview, err := fleetAutonomyLevelOp{}.Preview(context.Background(), map[string]any{"level": float64(6)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Request.Method != http.MethodPut || preview.Request.Path != "/api/packs/level" {
+		t.Fatalf("request = %#v", preview.Request)
+	}
+	body, ok := preview.Request.Body.(map[string]any)
+	if !ok || body["level"] != 6 {
+		t.Fatalf("body = %#v", preview.Request.Body)
+	}
+	if !strings.Contains(preview.WideningDisclosure, "Widening:") || !strings.Contains(preview.WideningDisclosure, "merge") {
+		t.Fatalf("widening disclosure = %q", preview.WideningDisclosure)
+	}
+	if !strings.Contains(preview.ConfirmationMessage, "L6") {
+		t.Fatalf("confirmation = %q", preview.ConfirmationMessage)
+	}
+}
+
+func TestPlanWriteOpsPreviewPathsAndBodies(t *testing.T) {
+	propose, err := planProposeOp{}.Preview(context.Background(), map[string]any{"repo": "org/repo", "number": float64(12), "title": "Plan this", "body": "details"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if propose.Request.Method != http.MethodPost || propose.Request.Path != "/api/plan/from-issue" {
+		t.Fatalf("propose request = %#v", propose.Request)
+	}
+	proposeBody, ok := propose.Request.Body.(map[string]any)
+	if !ok || proposeBody["number"] != 12 || proposeBody["title"] != "Plan this" {
+		t.Fatalf("propose body = %#v", propose.Request.Body)
+	}
+
+	approve, err := planApproveOp{}.Preview(context.Background(), map[string]any{"epic_id": "epic/team"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approve.Request.Path != "/api/plan/epic%2Fteam/approve" || !strings.Contains(approve.WideningDisclosure, "release child work") {
+		t.Fatalf("approve preview = %#v", approve)
+	}
+	reject, err := planRejectOp{}.Preview(context.Background(), map[string]any{"epic_id": "epic/team"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reject.Request.Path != "/api/plan/epic%2Fteam/reject" || strings.Contains(reject.WideningDisclosure, "Widening:") {
+		t.Fatalf("reject preview = %#v", reject)
+	}
+}
+
+func TestFeatureSettingsPreviewDisclosesProtectionChanges(t *testing.T) {
+	preview, err := featureSettingsOp{}.Preview(context.Background(), map[string]any{"ioscanEnabled": false, "autonomyAutoPromote": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Request.Method != http.MethodPut || preview.Request.Path != "/api/config/governor/features" {
+		t.Fatalf("request = %#v", preview.Request)
+	}
+	if !strings.Contains(preview.WideningDisclosure, "ioscanEnabled") || !strings.Contains(preview.WideningDisclosure, "autonomyAutoPromote") {
+		t.Fatalf("disclosure = %q", preview.WideningDisclosure)
+	}
+	if _, err := (featureSettingsOp{}).Preview(context.Background(), map[string]any{"unknown": true}); err == nil {
+		t.Fatal("unknown field accepted")
 	}
 }

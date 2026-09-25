@@ -14,7 +14,8 @@ const (
 )
 
 func DefaultWriteOps() []WriteOp {
-	return append([]WriteOp{agentPauseOp{}, agentResumeOp{}}, repoOpsWriteOps()...)
+	ops := append([]WriteOp{agentPauseOp{}, agentResumeOp{}}, repoOpsWriteOps()...)
+	return append(ops, fleetWriteOps()...)
 }
 
 type agentPauseOp struct{}
