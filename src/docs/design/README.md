@@ -20,10 +20,10 @@ that status is the thing to check before treating a page as current behaviour:
 
 ## Records
 
-- [The operator-facing admin MCP](admin-mcp.md) — **partly shipped (v6 phase 2).** The complement to
+- [The operator-facing admin MCP](admin-mcp.md) — **partly shipped (v6 phase 3).** The complement to
   [task-mcp.md](task-mcp.md): hive administration exposed as Model Context Protocol tools for an
-  operator's assistant — phase 1 ships the read-only MCP endpoint on the dashboard mux, a stdio `cmd/` binary beside
-  it, one transport-agnostic tool package, and the runtime refusal contract; later phases add writes. Authenticated by the dashboard
+  operator's assistant — phase 1 ships the MCP endpoint on the dashboard mux, a stdio `cmd/` binary beside
+  it, one transport-agnostic tool package, and the runtime refusal contract; phase 3 adds the reusable write contract and pause/resume operations, with later phases adding more writes. Authenticated by the dashboard
   token through the existing `authenticate` path, so unlike the task-scoped surface it needs no
   lease minting, per-lease scoping or revocation record of its own. Read it for what a token-bearing admin client inherits from Hive's gates and
   what it does not: owner role comes free with the bearer token (#4134), the mode ladder is not a
