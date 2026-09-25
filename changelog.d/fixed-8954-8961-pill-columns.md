@@ -1,0 +1,1 @@
+- Fixed dashboard repo-card issue and PR pills so columns do not overlap, single-sided cards use the full pill width, and pill titles ellipsize while keeping #N visible.
