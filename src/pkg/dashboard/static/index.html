@@ -8688,14 +8688,17 @@
     }
     function holdToggleChip(repoFull, item, type, held, interactive, tip) {
       const number = Number(item && item.number);
-      const label = held ? 'Remove hold' : 'Add hold';
-      const title = held ? tip : ('Add hold — applies label `' + canonicalHiveHoldLabel() + '` so agents will not act on this until the hold label is removed');
+      const text = held ? '▶ Release' : '⏸ Hold';
+      const label = held ? 'Release hold' : 'Hold';
+      const title = held
+        ? ((tip ? tip + '. ' : '') + 'Release hold — removes hold label(s) so agents may act on this item again')
+        : ('Hold — applies label `' + canonicalHiveHoldLabel() + '` so agents will not act on this until the hold label is removed');
       const cls = (type === 'pr' ? 'repo-pr-pill' : 'repo-issue-pill') + (held ? ' held' : '') + ' pill-held-badge pill-icon';
       if (!interactive || !number) {
         if (!held) return '';
-        return `<span class="${cls} repo-hold-static" title="${esc(title)}" aria-label="${esc(title)}">⏸</span>`;
+        return `<span class="${cls} repo-hold-static" title="${esc(title)}" aria-label="${esc(title)}">On hold</span>`;
       }
-      return `<button class="${cls} repo-hold-toggle" data-action="toggleRepoItemHold" data-arg0="${esc(repoFull)}" data-arg1="${number}" data-arg2="${type}" data-arg3="${held ? 'false' : 'true'}" data-arg-types="s,j,s,j,t" data-stop="1" data-prevent="1" aria-pressed="${held ? 'true' : 'false'}" title="${esc(title)}" aria-label="${esc(label + ' for #' + number)}">⏸</button>`;
+      return `<button class="${cls} repo-hold-toggle" data-action="toggleRepoItemHold" data-arg0="${esc(repoFull)}" data-arg1="${number}" data-arg2="${type}" data-arg3="${held ? 'false' : 'true'}" data-arg-types="s,j,s,j,t" data-stop="1" data-prevent="1" aria-pressed="${held ? 'true' : 'false'}" title="${esc(title)}" aria-label="${esc(label + ' #' + number)}">${text}</button>`;
     }
     function updateRepoBreakdownForHold(repo, type, toHeld) {
       const wb = repo && repo.workBreakdown && repo.workBreakdown[type === 'pr' ? 'prs' : 'issues'];
@@ -8739,16 +8742,17 @@
         const resp = await fetch('/api/repos/' + encodeURIComponent(p.owner) + '/' + encodeURIComponent(p.repo) + '/items/' + number + '/hold', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ held: wantHeld })
+          body: JSON.stringify({ held: wantHeld, type: type })
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
-        showToast((wantHeld ? 'Added hold to ' : 'Removed hold from ') + repoFull + '#' + number, 'success');
+        if (data.minStatusSeq != null) _statusSeqFloor = Math.max(_statusSeqFloor || 0, Number(data.minStatusSeq) || 0);
+        showToast((wantHeld ? 'Held ' : 'Released ') + repoFull + '#' + number, 'success');
         fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
       } catch (e) {
         if (moved) moveRepoItemHold(repoFull, number, type, !wantHeld, canonicalHiveHoldLabel());
         showToast('Hold toggle failed: ' + (e && e.message ? e.message : 'network error'), 'error');
-        if (btn) { btn.dataset.busy = ''; btn.textContent = prevText || '⏸'; }
+        if (btn) { btn.dataset.busy = ''; btn.textContent = prevText || (wantHeld ? '⏸ Hold' : '▶ Release'); }
       }
     }
 

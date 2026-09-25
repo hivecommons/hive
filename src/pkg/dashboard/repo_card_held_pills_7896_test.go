@@ -182,6 +182,10 @@ func TestRepoCardHeldPillStructure(t *testing.T) {
 		// The state chip: ⚠ for the escalation kind of hold, ⏸ otherwise.
 		`<span class="repo-pr-pill needs-human pill-needs-human-badge pill-icon" title="${esc(heldTip)}"`,
 		"holdToggleChip(cardRepo, p, 'pr', true, canToggleHold, heldTip)",
+		"const text = held ? '▶ Release' : '⏸ Hold';",
+		"Release hold — removes hold label(s)",
+		"body: JSON.stringify({ held: wantHeld, type: type })",
+		"data.minStatusSeq",
 		// The tooltip reasons from the labels.
 		"function holdLabels(labels) {",
 		"function heldReason(item) {",
@@ -272,6 +276,40 @@ func TestRepoHoldToggleOptimisticRollback(t *testing.T) {
 	}
 }
 
+func TestRepoHoldToggleSuccessRaisesStatusFloor(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — the hold-toggle success rule was NOT executed by this run")
+	}
+	html := indexHTML(t)
+	start := strings.Index(html, "const HOLD_LABEL_SPELLINGS = [")
+	if start < 0 {
+		t.Fatal("index.html does not define HOLD_LABEL_SPELLINGS")
+	}
+	spellings := html[start : start+strings.Index(html[start:], "\n")]
+	script := "const window = { _lastStatus: { hiveId: 'h1', repos: [{ full: 'o/r', workBreakdown: { issues: { actionable: 1, hold: 0 } }, actionableIssues: [{ number: 7, labels: ['bug'] }], heldIssues: [], openPrs: [], heldPrs: [] }] } };\n" +
+		"let _statusSeqFloor = 0; let postedBody = null; let renders = 0;\n" +
+		"function repaintReposForWidth(){}\n" +
+		"function showToast(){}\n" +
+		"function render(){ renders++; }\n" +
+		"function fetch(url, opts){ if (opts) { postedBody = JSON.parse(opts.body); return Promise.resolve({ ok: true, json: () => Promise.resolve({ minStatusSeq: 9 }) }); } return Promise.resolve({ ok: true, json: () => Promise.resolve({ statusSeq: 8 }) }); }\n" +
+		spellings + "\n" +
+		jsFunc(t, html, "canonicalHiveHoldLabel") + "\n" +
+		jsFunc(t, html, "holdLabels") + "\n" +
+		jsFunc(t, html, "repoParts") + "\n" +
+		jsFunc(t, html, "updateRepoBreakdownForHold") + "\n" +
+		jsFunc(t, html, "moveRepoItemHold") + "\n" +
+		"async " + jsFunc(t, html, "toggleRepoItemHold") + "\n" +
+		holdToggleSuccessAssertions
+	path := filepath.Join(t.TempDir(), "hold-toggle-success.js")
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(node, path).CombinedOutput(); err != nil {
+		t.Fatalf("hold-toggle success check failed:\n%s", strings.TrimSpace(string(out)))
+	}
+}
+
 const holdToggleRollbackAssertions = `
 (async () => {
   await toggleRepoItemHold('o/r', 7, 'issue', true, { dataset: {}, textContent: '⏸' });
@@ -283,6 +321,18 @@ const holdToggleRollbackAssertions = `
     toasts.some(t => t.includes('Hold toggle failed'));
   if (!ok) {
     console.log(JSON.stringify({ repo, toasts, repaints }));
+    process.exit(1);
+  }
+  console.log('ok');
+})().catch(e => { console.log(e && e.stack || e); process.exit(1); });
+`
+
+const holdToggleSuccessAssertions = `
+(async () => {
+  await toggleRepoItemHold('o/r', 7, 'issue', true, { dataset: {}, textContent: '⏸ Hold' });
+  const ok = _statusSeqFloor === 9 && postedBody && postedBody.held === true && postedBody.type === 'issue';
+  if (!ok) {
+    console.log(JSON.stringify({ _statusSeqFloor, postedBody, renders }));
     process.exit(1);
   }
   console.log('ok');

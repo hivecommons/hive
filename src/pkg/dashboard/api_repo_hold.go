@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,7 +15,18 @@ import (
 const repoHoldPermissionCacheTTL = 2 * time.Minute
 
 type repoHoldRequest struct {
-	Held bool `json:"held"`
+	Held bool   `json:"held"`
+	Type string `json:"type"`
+}
+
+type repoHoldResponse struct {
+	OK           bool     `json:"ok"`
+	Repo         string   `json:"repo"`
+	Number       int      `json:"number"`
+	Held         bool     `json:"held"`
+	HoldLabel    string   `json:"hold_label"`
+	Removed      []string `json:"removed"`
+	MinStatusSeq uint64   `json:"minStatusSeq"`
 }
 
 type repoHoldPermissionCacheEntry struct {
@@ -136,6 +148,431 @@ func (s *Server) currentItemLabels(ctx context.Context, owner, repo string, numb
 	return labels, nil
 }
 
+func repoHoldItemNumber(raw any) int {
+	switch v := raw.(type) {
+	case github.Issue:
+		return v.Number
+	case *github.Issue:
+		if v != nil {
+			return v.Number
+		}
+	case github.PullRequest:
+		return v.Number
+	case *github.PullRequest:
+		if v != nil {
+			return v.Number
+		}
+	case FrontendPR:
+		return v.Number
+	case *FrontendPR:
+		if v != nil {
+			return v.Number
+		}
+	case github.HoldItem:
+		return v.Number
+	case *github.HoldItem:
+		if v != nil {
+			return v.Number
+		}
+	case map[string]any:
+		switch n := v["number"].(type) {
+		case int:
+			return n
+		case int64:
+			return int(n)
+		case float64:
+			return int(n)
+		case json.Number:
+			i, _ := n.Int64()
+			return int(i)
+		}
+	}
+	return 0
+}
+
+func repoHoldItemString(raw any, field string) string {
+	switch v := raw.(type) {
+	case github.Issue:
+		switch field {
+		case "repo":
+			return v.Repo
+		case "title":
+			return v.Title
+		case "url":
+			return v.URL
+		}
+	case *github.Issue:
+		if v != nil {
+			return repoHoldItemString(*v, field)
+		}
+	case github.PullRequest:
+		switch field {
+		case "repo":
+			return v.Repo
+		case "title":
+			return v.Title
+		case "url":
+			return v.URL
+		}
+	case *github.PullRequest:
+		if v != nil {
+			return repoHoldItemString(*v, field)
+		}
+	case FrontendPR:
+		return repoHoldItemString(v.PullRequest, field)
+	case *FrontendPR:
+		if v != nil {
+			return repoHoldItemString(*v, field)
+		}
+	case github.HoldItem:
+		switch field {
+		case "repo":
+			return v.Repo
+		case "title":
+			return v.Title
+		case "url":
+			return v.URL
+		}
+	case *github.HoldItem:
+		if v != nil {
+			return repoHoldItemString(*v, field)
+		}
+	case map[string]any:
+		if s, _ := v[field].(string); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func repoHoldItemLabels(raw any) []string {
+	switch v := raw.(type) {
+	case github.Issue:
+		return append([]string(nil), v.Labels...)
+	case *github.Issue:
+		if v != nil {
+			return append([]string(nil), v.Labels...)
+		}
+	case github.PullRequest:
+		return append([]string(nil), v.Labels...)
+	case *github.PullRequest:
+		if v != nil {
+			return append([]string(nil), v.Labels...)
+		}
+	case FrontendPR:
+		return append([]string(nil), v.Labels...)
+	case *FrontendPR:
+		if v != nil {
+			return append([]string(nil), v.Labels...)
+		}
+	case github.HoldItem:
+		return append([]string(nil), v.Labels...)
+	case *github.HoldItem:
+		if v != nil {
+			return append([]string(nil), v.Labels...)
+		}
+	case map[string]any:
+		switch labels := v["labels"].(type) {
+		case []string:
+			return append([]string(nil), labels...)
+		case []any:
+			out := make([]string, 0, len(labels))
+			for _, label := range labels {
+				out = append(out, fmt.Sprint(label))
+			}
+			return out
+		}
+	}
+	return nil
+}
+
+func repoHoldSetItemLabels(raw any, labels []string) any {
+	labels = append([]string(nil), labels...)
+	switch v := raw.(type) {
+	case github.Issue:
+		v.Labels = labels
+		return v
+	case *github.Issue:
+		if v != nil {
+			cp := *v
+			cp.Labels = labels
+			return cp
+		}
+	case github.PullRequest:
+		v.Labels = labels
+		return v
+	case *github.PullRequest:
+		if v != nil {
+			cp := *v
+			cp.Labels = labels
+			return cp
+		}
+	case FrontendPR:
+		v.Labels = labels
+		return v
+	case *FrontendPR:
+		if v != nil {
+			cp := *v
+			cp.Labels = labels
+			return cp
+		}
+	case github.HoldItem:
+		v.Labels = labels
+		return v
+	case *github.HoldItem:
+		if v != nil {
+			cp := *v
+			cp.Labels = labels
+			return cp
+		}
+	case map[string]any:
+		cp := make(map[string]any, len(v)+1)
+		for k, val := range v {
+			cp[k] = val
+		}
+		cp["labels"] = labels
+		return cp
+	}
+	return raw
+}
+
+func repoHoldLabelsAfter(raw any, held bool, label string, removed []string, canonical string) []string {
+	labels := repoHoldItemLabels(raw)
+	if held {
+		for _, existing := range labels {
+			if strings.EqualFold(existing, label) {
+				return labels
+			}
+		}
+		return append(labels, label)
+	}
+	remove := make(map[string]bool)
+	for _, l := range removed {
+		remove[strings.ToLower(strings.TrimSpace(l))] = true
+	}
+	if len(remove) == 0 {
+		for _, l := range holdCausingLabels(labels, canonical) {
+			remove[strings.ToLower(strings.TrimSpace(l))] = true
+		}
+	}
+	out := labels[:0]
+	for _, l := range labels {
+		if !remove[strings.ToLower(strings.TrimSpace(l))] {
+			out = append(out, l)
+		}
+	}
+	return append([]string(nil), out...)
+}
+
+func repoHoldRemoveFirst(items []any, number int) ([]any, any, bool) {
+	for i, item := range items {
+		if repoHoldItemNumber(item) == number {
+			removed := item
+			copy(items[i:], items[i+1:])
+			return items[:len(items)-1], removed, true
+		}
+	}
+	return items, nil, false
+}
+
+func repoHoldSummaryMatches(item any, repoFull string, number int, itemType string) bool {
+	if repoHoldItemNumber(item) != number {
+		return false
+	}
+	if repo := repoHoldItemString(item, "repo"); repo != "" && !repoHoldRepoRefMatches(repo, repoFull) {
+		return false
+	}
+	if hi, ok := item.(github.HoldItem); ok && hi.Type != "" && !strings.EqualFold(hi.Type, itemType) {
+		return false
+	}
+	if hi, ok := item.(*github.HoldItem); ok && hi != nil && hi.Type != "" && !strings.EqualFold(hi.Type, itemType) {
+		return false
+	}
+	if m, ok := item.(map[string]any); ok {
+		if typ, _ := m["type"].(string); typ != "" && !strings.EqualFold(typ, itemType) {
+			return false
+		}
+	}
+	return true
+}
+
+func repoHoldRepoRefMatches(repoRef, repoFull string) bool {
+	repoRef = strings.ToLower(strings.TrimSpace(repoRef))
+	repoFull = strings.ToLower(strings.TrimSpace(repoFull))
+	if repoRef == "" || repoFull == "" {
+		return false
+	}
+	if repoRef == repoFull {
+		return true
+	}
+	if strings.Contains(repoRef, "/") {
+		return false
+	}
+	_, name, ok := strings.Cut(repoFull, "/")
+	return ok && repoRef == name
+}
+
+func repoHoldSummaryHas(items []any, repoFull string, number int, itemType string) bool {
+	for _, item := range items {
+		if repoHoldSummaryMatches(item, repoFull, number, itemType) {
+			return true
+		}
+	}
+	return false
+}
+
+func repoHoldRemoveSummary(items []any, repoFull string, number int, itemType string) ([]any, bool) {
+	for i, item := range items {
+		if repoHoldSummaryMatches(item, repoFull, number, itemType) {
+			copy(items[i:], items[i+1:])
+			return items[:len(items)-1], true
+		}
+	}
+	return items, false
+}
+
+func repoHoldItemForSummary(raw any, repoFull string, number int, itemType, label string) github.HoldItem {
+	item := github.HoldItem{
+		Number: number,
+		Repo:   repoFull,
+		Title:  repoHoldItemString(raw, "title"),
+		Type:   itemType,
+		URL:    repoHoldItemString(raw, "url"),
+		Labels: repoHoldLabelsAfter(raw, true, label, nil, label),
+	}
+	if item.Repo == "" {
+		item.Repo = repoFull
+	}
+	if item.Number == 0 {
+		item.Number = number
+	}
+	return item
+}
+
+func repoHoldAdjustBreakdown(repo *FrontendRepo, itemType string, held bool) {
+	if repo == nil || repo.WorkBreakdown == nil {
+		return
+	}
+	deltaHold, deltaActionable := 1, -1
+	if !held {
+		deltaHold, deltaActionable = -1, 1
+	}
+	if itemType == "pr" {
+		repo.WorkBreakdown.PRs.Hold += deltaHold
+		repo.WorkBreakdown.PRs.Actionable += deltaActionable
+		if repo.WorkBreakdown.PRs.Hold < 0 {
+			repo.WorkBreakdown.PRs.Hold = 0
+		}
+		if repo.WorkBreakdown.PRs.Actionable < 0 {
+			repo.WorkBreakdown.PRs.Actionable = 0
+		}
+		return
+	}
+	repo.WorkBreakdown.Issues.Hold += deltaHold
+	repo.WorkBreakdown.Issues.Actionable += deltaActionable
+	if repo.WorkBreakdown.Issues.Hold < 0 {
+		repo.WorkBreakdown.Issues.Hold = 0
+	}
+	if repo.WorkBreakdown.Issues.Actionable < 0 {
+		repo.WorkBreakdown.Issues.Actionable = 0
+	}
+}
+
+func repoHoldStatusRepoMatches(repo FrontendRepo, full string) bool {
+	full = strings.ToLower(strings.TrimSpace(full))
+	return strings.ToLower(strings.TrimSpace(repo.Full)) == full || strings.ToLower(strings.TrimSpace(repo.Name)) == full
+}
+
+func (s *Server) applyRepoHoldToStatus(repoFull string, number int, itemType string, held bool, label string, removed []string) uint64 {
+	s.statusMu.Lock()
+	s.statusMutationEpoch++
+	minStatusSeq := s.statusSeq + 1
+	status := s.status
+	if status == nil {
+		s.statusMu.Unlock()
+		return minStatusSeq
+	}
+
+	for ri := range status.Repos {
+		repo := &status.Repos[ri]
+		if !repoHoldStatusRepoMatches(*repo, repoFull) {
+			continue
+		}
+		var moved any
+		var didMove bool
+		if held {
+			if itemType == "pr" {
+				repo.OpenPrs, moved, didMove = repoHoldRemoveFirst(repo.OpenPrs, number)
+				if didMove {
+					moved = repoHoldSetItemLabels(moved, repoHoldLabelsAfter(moved, true, label, nil, label))
+					repo.HeldPrs = append(repo.HeldPrs, moved)
+				}
+			} else {
+				repo.ActionableIssues, moved, didMove = repoHoldRemoveFirst(repo.ActionableIssues, number)
+				if didMove {
+					repo.HeldIssues = append(repo.HeldIssues, repoHoldItemForSummary(moved, repoFull, number, itemType, label))
+				}
+			}
+			if didMove && !repoHoldSummaryHas(status.Hold.Items, repoFull, number, itemType) {
+				status.Hold.Items = append(status.Hold.Items, repoHoldItemForSummary(moved, repoFull, number, itemType, label))
+				if itemType == "pr" {
+					status.Hold.PRs++
+				} else {
+					status.Hold.Issues++
+				}
+				status.Hold.Total++
+			}
+		} else {
+			if itemType == "pr" {
+				repo.HeldPrs, moved, didMove = repoHoldRemoveFirst(repo.HeldPrs, number)
+				if didMove {
+					moved = repoHoldSetItemLabels(moved, repoHoldLabelsAfter(moved, false, label, removed, label))
+					repo.OpenPrs = append(repo.OpenPrs, moved)
+				}
+			} else {
+				repo.HeldIssues, moved, didMove = repoHoldRemoveFirst(repo.HeldIssues, number)
+				if didMove {
+					moved = repoHoldSetItemLabels(moved, repoHoldLabelsAfter(moved, false, label, removed, label))
+					repo.ActionableIssues = append(repo.ActionableIssues, moved)
+				}
+			}
+			if didMove {
+				status.Hold.Items, _ = repoHoldRemoveSummary(status.Hold.Items, repoFull, number, itemType)
+				if itemType == "pr" {
+					status.Hold.PRs = max(0, status.Hold.PRs-1)
+				} else {
+					status.Hold.Issues = max(0, status.Hold.Issues-1)
+				}
+				status.Hold.Total = max(0, status.Hold.Total-1)
+			}
+		}
+		if didMove {
+			repoHoldAdjustBreakdown(repo, itemType, held)
+		}
+		break
+	}
+
+	s.statusSeq++
+	status.StatusSeq = s.statusSeq
+	status.StatusInstance = strconv.FormatInt(s.startedAt.UnixNano(), 10)
+	status.Timestamp = time.Now().UTC().Format(time.RFC3339)
+	if status.TimeZone == "" {
+		status.TimeZone = dashboardTimeZoneName()
+	}
+	s.lastFullBroadcast = time.Now()
+	data, err := json.Marshal(status)
+	s.statusMu.Unlock()
+
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("failed to marshal hold-updated status for SSE", "error", err)
+		}
+	} else {
+		s.broadcastFrame(fmt.Sprintf("data: %s\n\n", data))
+	}
+	return minStatusSeq
+}
+
 func (s *Server) handleRepoHoldPermission(w http.ResponseWriter, r *http.Request) {
 	owner := strings.TrimSpace(r.PathValue("owner"))
 	repo := strings.TrimSpace(r.PathValue("repo"))
@@ -202,12 +639,18 @@ func (s *Server) handleRepoItemHold(w http.ResponseWriter, r *http.Request) {
 		}
 		s.auditFromRequest(r, "repo_item_hold_remove", auditDetail("repo", repoFull, "number", strconv.Itoa(number), "labels", strings.Join(removed, ",")), "")
 	}
-	jsonResponse(w, map[string]any{
-		"ok":         true,
-		"repo":       repoFull,
-		"number":     number,
-		"held":       body.Held,
-		"hold_label": canonical,
-		"removed":    removed,
+	itemType := strings.ToLower(strings.TrimSpace(body.Type))
+	if itemType != "pr" {
+		itemType = "issue"
+	}
+	minStatusSeq := s.applyRepoHoldToStatus(repoFull, number, itemType, body.Held, canonical, removed)
+	jsonResponse(w, repoHoldResponse{
+		OK:           true,
+		Repo:         repoFull,
+		Number:       number,
+		Held:         body.Held,
+		HoldLabel:    canonical,
+		Removed:      removed,
+		MinStatusSeq: minStatusSeq,
 	})
 }
