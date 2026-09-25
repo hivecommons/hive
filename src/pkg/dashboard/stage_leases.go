@@ -102,6 +102,13 @@ func (s *Server) SpektacularStatus() *FrontendSpektacular {
 		return nil
 	}
 	copy := *s.spektacularStatus
+	s.stageExecutorMu.Lock()
+	exec := s.stageExecutor
+	s.stageExecutorMu.Unlock()
+	if exec != nil {
+		status := exec.Status()
+		copy.HubExecutor = &status
+	}
 	return &copy
 }
 
@@ -118,6 +125,18 @@ func (s *Server) SetStageRunner(r StageRunner) {
 	s.stageRunner = r
 }
 
+// SetStageExecutor installs the optional hub-resident Spektacular stage
+// executor. It is ticked before the poll runner so newly claimed leases can be
+// observed on a later cleanup tick.
+func (s *Server) SetStageExecutor(e StageExecutor) {
+	if s == nil {
+		return
+	}
+	s.stageExecutorMu.Lock()
+	defer s.stageExecutorMu.Unlock()
+	s.stageExecutor = e
+}
+
 // tickStageRunner runs one tick of the installed runner and reports whether
 // one was installed.
 func (s *Server) tickStageRunner(now time.Time) bool {
@@ -129,6 +148,12 @@ func (s *Server) tickStageRunner(now time.Time) bool {
 	s.stageRunnerMu.Unlock()
 	if r == nil {
 		return false
+	}
+	s.stageExecutorMu.Lock()
+	e := s.stageExecutor
+	s.stageExecutorMu.Unlock()
+	if e != nil {
+		e.Tick(context.Background(), now)
 	}
 	r.Tick(context.Background(), now)
 	return true

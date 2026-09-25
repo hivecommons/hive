@@ -26,3 +26,17 @@ func TestWireSpektacularRunner_DefaultOffAndOptIn(t *testing.T) {
 		t.Fatal("nil logger prevented installation")
 	}
 }
+
+func TestDefaultAgentBackendDeterministic(t *testing.T) {
+	cfg := &config.Config{Agents: map[string]config.AgentConfig{
+		"zeta":  {Enabled: true, Backend: "claude"},
+		"alpha": {Enabled: true, Backend: "copilot"},
+		"off":   {Enabled: false, Backend: "bob"},
+	}}
+	if got := defaultAgentBackend(cfg); got != "copilot" {
+		t.Fatalf("defaultAgentBackend = %q, want alphabetically first enabled backend", got)
+	}
+	if got := defaultAgentBackend(&config.Config{}); got != config.DefaultSpektacularHubExecutorBackend {
+		t.Fatalf("empty backend = %q", got)
+	}
+}

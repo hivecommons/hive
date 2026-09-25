@@ -308,8 +308,10 @@ type Server struct {
 	contributeHub *ContributeWSHub
 	// stageRunner is the Spektacular stage runner installed at boot
 	// (hivecommons/hive#8303); nil when runs.spektacular.enabled is off.
-	stageRunner   StageRunner
-	stageRunnerMu sync.Mutex
+	stageRunner     StageRunner
+	stageRunnerMu   sync.Mutex
+	stageExecutor   StageExecutor
+	stageExecutorMu sync.Mutex
 
 	spektacularMu     sync.RWMutex
 	spektacularStatus *FrontendSpektacular
@@ -493,9 +495,10 @@ type StatusPayload struct {
 
 // FrontendSpektacular reports the configured stage-runner CLI detected at boot.
 type FrontendSpektacular struct {
-	Present bool   `json:"present"`
-	Version string `json:"version,omitempty"`
-	Binary  string `json:"binary"`
+	Present     bool                            `json:"present"`
+	Version     string                          `json:"version,omitempty"`
+	Binary      string                          `json:"binary"`
+	HubExecutor *FrontendSpektacularHubExecutor `json:"hub_executor,omitempty"`
 }
 
 type FrontendInception struct {
