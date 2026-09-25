@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -19,6 +20,8 @@ func TestAppearanceThemeUITabWired(t *testing.T) {
 		"resetThemeToPreset",
 		"saveThemeOverrides",
 		"theme-bg-opacity",
+		"theme-bg-scope",
+		"Watermark on",
 		"theme-custom-css",
 		"HONEYCOMB_WATERMARK",
 		"/api/themes?scope=dashboard",
@@ -41,6 +44,77 @@ func TestAppearanceThemeUITabWired(t *testing.T) {
 	} {
 		if strings.Contains(html, gone) {
 			t.Fatalf("Appearance UI still contains %q", gone)
+		}
+	}
+}
+
+func TestModalOverlaysAreNotInsideWatermarkedCards(t *testing.T) {
+	b, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read index: %v", err)
+	}
+	cardClasses := map[string]bool{
+		"agent-card":     true,
+		"repo-card":      true,
+		"card-inset":     true,
+		"card-tile":      true,
+		"row-card":       true,
+		"campaigns-card": true,
+		"nous-card":      true,
+		"kb-setup-card":  true,
+	}
+	overlayIDs := map[string]bool{
+		"gh-auth-modal-overlay": true,
+		"gh-setup-overlay":      true,
+		"config-overlay":        true,
+		"acmm-overlay":          true,
+		"welcome-overlay":       true,
+		"nous-config-overlay":   true,
+	}
+	attrsRe := regexp.MustCompile(`\s([a-zA-Z0-9_-]+)="([^"]*)"`)
+	tagRe := regexp.MustCompile(`(?s)<(/?)([a-zA-Z0-9_-]+)([^>]*)>`)
+	type node struct {
+		tag     string
+		classes []string
+	}
+	stack := []node{}
+	seenOverlays := map[string]bool{}
+	for _, match := range tagRe.FindAllStringSubmatch(string(b), -1) {
+		tag := strings.ToLower(match[2])
+		if strings.HasPrefix(match[3], "!--") || strings.HasPrefix(match[0], "<!") {
+			continue
+		}
+		if match[1] == "/" {
+			for i := len(stack) - 1; i >= 0; i-- {
+				if stack[i].tag == tag {
+					stack = stack[:i]
+					break
+				}
+			}
+			continue
+		}
+		attrs := map[string]string{}
+		for _, attr := range attrsRe.FindAllStringSubmatch(match[3], -1) {
+			attrs[strings.ToLower(attr[1])] = attr[2]
+		}
+		if overlayIDs[attrs["id"]] {
+			seenOverlays[attrs["id"]] = true
+			for _, ancestor := range stack {
+				for _, class := range ancestor.classes {
+					if cardClasses[class] {
+						t.Fatalf("overlay #%s is nested inside card class .%s", attrs["id"], class)
+					}
+				}
+			}
+		}
+		selfClosing := strings.HasSuffix(strings.TrimSpace(match[3]), "/")
+		if !selfClosing && tag != "input" && tag != "link" && tag != "meta" && tag != "br" {
+			stack = append(stack, node{tag: tag, classes: strings.Fields(attrs["class"])})
+		}
+	}
+	for id := range overlayIDs {
+		if !seenOverlays[id] {
+			t.Fatalf("overlay #%s was not found in index.html", id)
 		}
 	}
 }

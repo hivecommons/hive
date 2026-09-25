@@ -165,7 +165,7 @@ func TestDashboardThemeAPIRoundTripAndOwnerGate(t *testing.T) {
 		"theme": "nord",
 		"theme_overrides": map[string]any{
 			"tokens":     map[string]string{"--accent": "#88c0d0"},
-			"background": map[string]any{"image": dashboardtheme.HoneycombDataURI, "opacity": 0.1, "attachment": "fixed"},
+			"background": map[string]any{"image": dashboardtheme.HoneycombDataURI, "scope": "both", "opacity": 0.1, "attachment": "fixed"},
 			"custom_css": ".panel{border-radius:2px}",
 		},
 	})
@@ -190,7 +190,7 @@ func TestDashboardThemeAPIRoundTripAndOwnerGate(t *testing.T) {
 	if payload.Theme != "nord" || len(payload.Catalog) < 8 || payload.Effective.Tokens["--accent"] != "#88c0d0" {
 		t.Fatalf("unexpected payload: %+v", payload)
 	}
-	if payload.Effective.Background == nil || payload.Effective.Background.Image != dashboardtheme.HoneycombDataURI || payload.Effective.Background.Opacity != 0.1 {
+	if payload.Effective.Background == nil || payload.Effective.Background.Image != dashboardtheme.HoneycombDataURI || payload.Effective.Background.Scope != "both" || payload.Effective.Background.Opacity != 0.1 {
 		t.Fatalf("background override missing from effective payload: %+v", payload.Effective.Background)
 	}
 	if !strings.Contains(payload.Effective.CustomCSS, ".panel{border-radius:2px}") {

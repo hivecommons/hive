@@ -22,15 +22,23 @@ const (
 
 const (
 	defaultBackgroundOpacity    = 0.08
+	defaultBackgroundScope      = "page"
 	defaultBackgroundPosition   = "center"
 	defaultBackgroundSize       = "cover"
 	defaultBackgroundAttachment = "fixed"
+	backgroundCardOpacityRatio  = 0.6
 	// The watermark sits at z-index -1 inside body's own stacking context
 	// (body is isolated), so it paints above body's background and below all
 	// page content without giving body's children a stacking context. A
 	// `body>*{z-index}` rule trapped modal overlays inside their wrappers and
 	// let later siblings (agent cards) paint over the Settings modal.
 	backgroundLayerZIndex = "-1"
+)
+
+const (
+	backgroundCardSelectors       = ".agent-card,.repo-card,.card-inset,.card-tile,.row-card,.campaigns-card,.nous-card,.kb-setup-card"
+	backgroundCardBeforeSelectors = ".agent-card::before,.repo-card::before,.card-inset::before,.card-tile::before,.row-card::before,.campaigns-card::before,.nous-card::before,.kb-setup-card::before"
+	backgroundCardRaisedSelectors = ".agent-card:hover,.agent-card:focus-within,.repo-card:hover,.repo-card:focus-within,.card-inset:hover,.card-inset:focus-within,.card-tile:hover,.card-tile:focus-within,.row-card:hover,.row-card:focus-within,.campaigns-card:hover,.campaigns-card:focus-within,.nous-card:hover,.nous-card:focus-within,.kb-setup-card:hover,.kb-setup-card:focus-within"
 )
 
 const (
@@ -100,6 +108,7 @@ type ThemeFonts struct {
 
 type ThemeBackground struct {
 	Image      string  `yaml:"image,omitempty" json:"image,omitempty"`
+	Scope      string  `yaml:"scope,omitempty" json:"scope,omitempty"`
 	Position   string  `yaml:"position,omitempty" json:"position,omitempty"`
 	Size       string  `yaml:"size,omitempty" json:"size,omitempty"`
 	Opacity    float64 `yaml:"opacity,omitempty" json:"opacity,omitempty"`
@@ -370,22 +379,40 @@ func css(th Theme) (string, error) {
 		if opacity <= 0 || opacity > 1 {
 			opacity = defaultBackgroundOpacity
 		}
+		scope := defaultString(th.Background.Scope, defaultBackgroundScope)
 		pos := defaultString(th.Background.Position, defaultBackgroundPosition)
 		size := defaultString(th.Background.Size, defaultBackgroundSize)
 		attach := defaultString(th.Background.Attachment, defaultBackgroundAttachment)
-		b.WriteString("body{isolation:isolate;}body::before{content:\"\";position:fixed;inset:0;pointer-events:none;z-index:")
-		b.WriteString(backgroundLayerZIndex)
-		b.WriteString(";background-image:url(\"")
-		b.WriteString(th.Background.Image)
-		b.WriteString("\");background-position:")
-		b.WriteString(pos)
-		b.WriteString(";background-size:")
-		b.WriteString(size)
-		b.WriteString(";background-repeat:repeat;background-attachment:")
-		b.WriteString(attach)
-		b.WriteString(";opacity:")
-		b.WriteString(fmt.Sprintf("%.3g", opacity))
-		b.WriteString(";}\n")
+		if scope == "page" || scope == "both" {
+			b.WriteString("body{isolation:isolate;}body::before{content:\"\";position:fixed;inset:0;pointer-events:none;z-index:")
+			b.WriteString(backgroundLayerZIndex)
+			b.WriteString(";background-image:url(\"")
+			b.WriteString(th.Background.Image)
+			b.WriteString("\");background-position:")
+			b.WriteString(pos)
+			b.WriteString(";background-size:")
+			b.WriteString(size)
+			b.WriteString(";background-repeat:repeat;background-attachment:")
+			b.WriteString(attach)
+			b.WriteString(";opacity:")
+			b.WriteString(fmt.Sprintf("%.3g", opacity))
+			b.WriteString(";}\n")
+		}
+		if scope == "cards" || scope == "both" {
+			cardOpacity := opacity * backgroundCardOpacityRatio
+			b.WriteString(backgroundCardSelectors)
+			b.WriteString("{position:relative;isolation:isolate;}")
+			b.WriteString(backgroundCardRaisedSelectors)
+			b.WriteString("{z-index:1;}")
+			b.WriteString(backgroundCardBeforeSelectors)
+			b.WriteString("{content:\"\";position:absolute;inset:0;pointer-events:none;z-index:")
+			b.WriteString(backgroundLayerZIndex)
+			b.WriteString(";border-radius:inherit;background-image:url(\"")
+			b.WriteString(th.Background.Image)
+			b.WriteString("\");background-repeat:repeat;opacity:")
+			b.WriteString(fmt.Sprintf("%.3g", cardOpacity))
+			b.WriteString(";}\n")
+		}
 	}
 	if th.CustomCSS != "" {
 		b.WriteString(th.CustomCSS)
@@ -585,6 +612,9 @@ func SanitizeCSS(css string) (string, error) {
 }
 
 func ValidateBackground(bg ThemeBackground) error {
+	if bg.Scope != "" && bg.Scope != "page" && bg.Scope != "cards" && bg.Scope != "both" {
+		return fmt.Errorf("scope must be page, cards, or both")
+	}
 	if strings.TrimSpace(bg.Image) == "" {
 		return nil
 	}

@@ -329,6 +329,67 @@ func TestEffectiveCSSIncludesBackgroundAndETag(t *testing.T) {
 	}
 }
 
+func TestBackgroundScopeCSS(t *testing.T) {
+	cases := []struct {
+		name          string
+		scope         string
+		wantPageLayer bool
+		wantCardLayer bool
+	}{
+		{name: "default page", wantPageLayer: true},
+		{name: "page", scope: "page", wantPageLayer: true},
+		{name: "cards", scope: "cards", wantCardLayer: true},
+		{name: "both", scope: "both", wantPageLayer: true, wantCardLayer: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			th, err := Effective("hive", Overrides{Background: &ThemeBackground{
+				Image:      HoneycombDataURI,
+				Scope:      tc.scope,
+				Opacity:    0.1,
+				Attachment: "fixed",
+			}})
+			if err != nil {
+				t.Fatalf("effective: %v", err)
+			}
+			css, err := CSS(th)
+			if err != nil {
+				t.Fatalf("css: %v", err)
+			}
+			if got := strings.Contains(css, "body::before"); got != tc.wantPageLayer {
+				t.Fatalf("body::before presence = %v, want %v:\n%s", got, tc.wantPageLayer, css)
+			}
+			if got := strings.Contains(css, ".agent-card::before,.repo-card::before,.card-inset::before,.card-tile::before,.row-card::before,.campaigns-card::before,.nous-card::before,.kb-setup-card::before"); got != tc.wantCardLayer {
+				t.Fatalf("card ::before presence = %v, want %v:\n%s", got, tc.wantCardLayer, css)
+			}
+			if tc.wantCardLayer {
+				for _, want := range []string{
+					".agent-card,.repo-card,.card-inset,.card-tile,.row-card,.campaigns-card,.nous-card,.kb-setup-card{position:relative;isolation:isolate;}",
+					".agent-card:hover,.agent-card:focus-within,.repo-card:hover,.repo-card:focus-within,.card-inset:hover,.card-inset:focus-within,.card-tile:hover,.card-tile:focus-within,.row-card:hover,.row-card:focus-within,.campaigns-card:hover,.campaigns-card:focus-within,.nous-card:hover,.nous-card:focus-within,.kb-setup-card:hover,.kb-setup-card:focus-within{z-index:1;}",
+					".agent-card::before,.repo-card::before,.card-inset::before,.card-tile::before,.row-card::before,.campaigns-card::before,.nous-card::before,.kb-setup-card::before{content:\"\";position:absolute;inset:0;pointer-events:none;z-index:-1;border-radius:inherit;",
+					"background-repeat:repeat;opacity:0.06;",
+				} {
+					if !strings.Contains(css, want) {
+						t.Fatalf("card watermark CSS missing %q:\n%s", want, css)
+					}
+				}
+			}
+			for _, forbidden := range []string{"body>*", "body > *", "body>div", "body > div"} {
+				if strings.Contains(css, forbidden) {
+					t.Fatalf("theme CSS must not style body's children (%q traps modal overlays): %s", forbidden, css)
+				}
+			}
+		})
+	}
+}
+
+func TestBackgroundScopeValidation(t *testing.T) {
+	err := ValidateBackground(ThemeBackground{Image: HoneycombDataURI, Scope: "sidebar"})
+	if err == nil || !strings.Contains(err.Error(), "scope must be page, cards, or both") {
+		t.Fatalf("invalid background scope error = %v", err)
+	}
+}
+
 func TestValidationErrorBranches(t *testing.T) {
 	if err := ValidateSelection("missing", Overrides{}); err == nil {
 		t.Fatal("unknown selection accepted")
