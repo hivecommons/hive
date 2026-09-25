@@ -71,6 +71,11 @@ type Dependencies struct {
 	RepoCost        *collect.RepoCostCollector
 	BeadSynthesizer *knowledge.BeadSynthesizer
 	BeadStores      map[string]*beads.Store
+	// ChatResponder handles dashboard Hive Chat free-text messages that are
+	// not satisfied by local deterministic intents. Nil means no responder is
+	// configured, so /api/chat must return a visible unavailable message rather
+	// than leaving the browser waiting.
+	ChatResponder func(ctx context.Context, query string, history []any) (string, error)
 	// BeadStoreLoadFailures counts configured bead stores that failed to open at
 	// startup and were therefore LEFT OUT of BeadStores entirely. The dependency
 	// admission gate (contribute_admission_deps.go) needs this because it cannot
