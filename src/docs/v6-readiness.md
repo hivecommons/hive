@@ -55,6 +55,7 @@ suite) that fails if that surface bypasses any of the five mechanisms:
 | Matrix | #7617 | ✅ [`src/pkg/matrix/conformance_v6_test.go`](../pkg/matrix/conformance_v6_test.go) ([#8045](https://github.com/hivecommons/hive/issues/8045)) |
 | Telegram | #7616 | ✅ [`src/pkg/telegram/conformance_v6_test.go`](../pkg/telegram/conformance_v6_test.go) ([#8046](https://github.com/hivecommons/hive/issues/8046)) |
 | Dashboard chat | #8304 | ✅ [`src/pkg/dashchat/conformance_v6_test.go`](../pkg/dashchat/conformance_v6_test.go) ([dashboard chat](dashboard-chat.md), [#7683](https://github.com/hivecommons/hive/issues/7683)) |
+| Operator admin MCP (endpoint + stdio) | #8697 phases 1–6 | ✅ [`src/pkg/dashboard/admin_mcp_test.go`](../pkg/dashboard/admin_mcp_test.go), [`src/pkg/adminmcp/adminmcp_test.go`](../pkg/adminmcp/adminmcp_test.go), [`src/cmd/hive-admin-mcp/main_test.go`](../cmd/hive-admin-mcp/main_test.go) ([design](design/admin-mcp.md), [#8697](https://github.com/hivecommons/hive/issues/8697)) |
 | Email escalation (outbound + reply-to-act) | #7613 / #7618 | ✅ [`src/pkg/escalate/conformance_v6_email_test.go`](../pkg/escalate/conformance_v6_email_test.go) ([#8047](https://github.com/hivecommons/hive/issues/8047)) |
 | Push / on-call (ntfy / Pushover / PagerDuty) | #7613 / #7618 | ✅ [`src/pkg/escalate/conformance_v6_test.go`](../pkg/escalate/conformance_v6_test.go) ([#8048](https://github.com/hivecommons/hive/issues/8048)) |
 
@@ -94,10 +95,29 @@ not a unit test:
 | Discord | Reconnect/backoff observed across one induced disconnect; notification parity spot-checked. | ⬜ |
 | Teams / Matrix / Telegram | One command round-trip and one notification delivery each. | ⬜ |
 | Dashboard chat | Conformance passes; one live round trip of `!status` from the panel is linked. | ⬜ Pending live exercise; code landed in [#8326](https://github.com/hivecommons/hive/pull/8326) and conformance is tracked by the row above. |
+| Operator admin MCP | One endpoint client performs `tools/list`, one read, one write preview and one confirmed low-risk write against a live hive; one stdio client selects the same hive from a roster and performs one read; the linked evidence shows the confirmation text, result scrubbing, and dashboard audit/API outcome. | ⬜ Pending live exercise; code landed across [#8807](https://github.com/hivecommons/hive/pull/8807), [#8816](https://github.com/hivecommons/hive/pull/8816), [#8823](https://github.com/hivecommons/hive/pull/8823), [#8829](https://github.com/hivecommons/hive/pull/8829), [#8828](https://github.com/hivecommons/hive/pull/8828), and [#8827](https://github.com/hivecommons/hive/pull/8827). |
 | Inception via chat | One live greenfield run reaches `complete` entirely through the chat spine. | ⬜ Pending live exercise; code landed in [#8333](https://github.com/hivecommons/hive/pull/8333) / [#8393](https://github.com/hivecommons/hive/pull/8393). Exercise with `just runs-e2e` against a live hive once #8466 lands. |
 | Runs via chat | One live run reaches a human gate and is approved from the chat spine; the next runs snapshot shows it advancing. | ✅ Live exercise passed with `just runs-e2e-v6` against `clubanderson/hive-runs-e2e#11`; evidence on [#8466](https://github.com/hivecommons/hive/issues/8466#issuecomment-5805851875) and tracker row checked on [#7683](https://github.com/hivecommons/hive/issues/7683#issuecomment-5805853195). |
 | Email | One HUMAN DECISION NEEDED escalation delivered; one allowlisted inbound reply acted on (or reply-to-act explicitly deferred here). | ⬜ |
 | Push / on-call | One `requires_human` verdict pages a real device via at least one provider. | ⬜ |
+
+## Admin MCP readiness evidence
+
+The operator admin MCP track is measured against the same bar as the other
+v6 surfaces, with two transport-specific limits recorded in the design: the
+endpoint administers only the hive serving it, while the stdio binary may keep
+a roster but has exactly one active hive at a time
+([design](design/admin-mcp.md), [#8697](https://github.com/hivecommons/hive/issues/8697)).
+
+| Bar criterion | Admin MCP evidence |
+| --- | --- |
+| Dashboard role floor | The endpoint is mounted behind the dashboard authentication/role middleware, and `TestAdminMCPEndpointUsesDashboardAuthentication` rejects unauthenticated callers while accepting the dashboard token. `TestAdminMCPExecuteWriteForwardsJSONBodyAndAuth` proves confirmed writes re-enter the dashboard handlers as owner-authenticated requests. The stdio path sends only `Authorization` to the selected hive and never forges `X-Hive-User`, `X-Hive-Role`, or `X-Hive-Owner-Role-Verified` (`TestRosterActiveHiveOnly`, `TestWriteProviderPreviewConfirmUsesDashboardTokenOnly`). |
+| Mode ladder and capability checks stay at the dashboard/API boundary | Admin MCP write tools build ordinary dashboard REST requests rather than duplicating authorization policy. Capability-changing operations carry explicit preview evidence: `TestFleetAutonomyLevelPreviewIncludesCapabilityDisclosure`, `TestAgentInteractionTierDefaultClearsMode`, and `TestFeatureSettingsPreviewDisclosesProtectionChanges`; `TestWriteConfirmPassesHiveRefusalBodyThrough` proves hive-side refusals are returned instead of being approximated by the MCP layer. |
+| `Converse` / reply routing | Admin MCP is not a chat ingress or reply surface: it returns MCP JSON-RPC tool results to the operator's client and does not dispatch assistant replies into Hive conversations. If a future phase adds chat-style replies or notifications, this row must move back to unchecked until that path asserts `Converse` positively. |
+| `ioscan` on inbound text | The track does not introduce a direct shell text path; text-bearing writes are previewed and confirmed, then forwarded to the existing dashboard endpoints. Phase 0 made the risky kick path enforce `ioscan` before this surface could expose it, while `TestAgentNudgePreviewRequiresVerbatimPrompt` keeps the operator confirmation verbatim and `TestFeatureSettingsPreviewDisclosesProtectionChanges` calls out changes to the scanner setting itself. |
+| Outbound secret/canary scrubbing | `TestHandlerReadToolScrubsAndWraps` proves read results are wrapped and scrubbed before becoming MCP text. The stdio and endpoint transports share `pkg/adminmcp` envelopes and tool definitions (`TestSameToolAnswerMatchesHTTPAndStdioWrapper`), so the masking behaviour is common rather than transport-local. |
+| Write safety contract | [#8823](https://github.com/hivecommons/hive/pull/8823) added opt-in writes, durable confirmations and one-shot confirm tokens (`TestWritePreviewDisabledByDefault`, `TestWriteConfirmationPersistsAndExecutesAfterRestart`); [#8829](https://github.com/hivecommons/hive/pull/8829), [#8828](https://github.com/hivecommons/hive/pull/8828), and [#8827](https://github.com/hivecommons/hive/pull/8827) registered the agent, fleet, repository, spend, contributor and ops writes with preview/request tests. |
+| Live exercise | Not complete. The live-exercise table above names the minimum endpoint and stdio smoke that must be linked before the surface counts toward channel binding. |
 
 ## 4. Scope discipline
 
