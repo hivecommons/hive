@@ -353,11 +353,20 @@ Read the result from `GET /api/kick/{agent}/status`, which returns `status` of `
 | `DELETE` | `/api/contributors/{id}` | Owner only | Contributor Delete | `pkg/dashboard/api_contribute.go:233` |
 | `GET` | `/contribute/dossier/{username}` | Public | Contributor Dossier Page (HTML) | `pkg/dashboard/api_contribute.go:131` |
 | `GET` | `/api/contribute/run-stats` | Public | Contribute Run Stats | `pkg/dashboard/api_contribute.go:186` |
-| `GET` | `/api/contribute/runs` | Public | Contribute Per-Run History | `pkg/dashboard/api_contribute.go:270` |
-| `GET` | `/api/contribute/decisions` | Owner/read-write | Contribute Hub Decisions | `pkg/dashboard/api_contribute.go:280` |
+| `GET` | `/api/contribute/runs` | Public | Contribute Per-Run History | `pkg/dashboard/api_contribute.go:274` |
+| `GET` | `/api/contribute/decisions` | Owner/read-write | Contribute Hub Decisions | `pkg/dashboard/api_contribute.go:284` |
 | `GET` | `/api/contribute/dossier` | Public | Contribute Dossier Get | `pkg/dashboard/api_contribute.go:223` |
 | `POST` | `/api/contribute/dossier` | Public | Contribute Dossier Update | `pkg/dashboard/api_contribute.go:224` |
 | `GET` | `/api/leaderboard/contributor/{username}/heraldry` | Public | Contributor Heraldry | `pkg/dashboard/api_contribute.go:254` |
+| `GET` | `/api/cards/player/{asset}` | Public | OpenAPI alias for a cacheable contributor social-card SVG (`asset` is `<github-login>.svg`). | `pkg/dashboard/social_cards.go:112` |
+| `GET` | `/api/cards/achievement/{login}/{asset}` | Public | OpenAPI alias for a cacheable attained-achievement SVG (`asset` is `<achievement-id>.svg`). | `pkg/dashboard/social_cards.go:113` |
+| `GET` | `/api/cards/leaderboard/{asset}` | Public | OpenAPI alias for a cacheable leaderboard-summary SVG (`contributors.svg`, `teams.svg`, or `swarm.svg`). | `pkg/dashboard/social_cards.go:114` |
+| `GET` | `/cards/player/{asset}` | Public | Cacheable 1200×630 SVG social card for one public contributor profile. | `pkg/dashboard/social_cards.go:109` |
+| `GET` | `/cards/achievement/{login}/{asset}` | Public | Cacheable SVG achievement-unlocked card for an attained Achievement System 2.0 badge. | `pkg/dashboard/social_cards.go:110` |
+| `GET` | `/cards/leaderboard/{asset}` | Public | Cacheable SVG summary card for `contributors`, `teams`, or `swarm`. | `pkg/dashboard/social_cards.go:111` |
+| `GET` | `/share/player/{login}` | Public | Share landing page with Open Graph/Twitter metadata for a contributor card and link to the public dossier. | `pkg/dashboard/social_cards.go:115` |
+| `GET` | `/share/achievement/{login}/{achievementID}` | Public | Share landing page with metadata for an unlocked achievement card and link to the public dossier. | `pkg/dashboard/social_cards.go:116` |
+| `GET` | `/share/leaderboard/{board}` | Public | Share landing page with metadata for a public leaderboard card and link to live standings. | `pkg/dashboard/social_cards.go:117` |
 | `PUT` | `/api/contribute/help-links` | Owner/read-write | Contribute Help Links | `pkg/dashboard/api_contribute.go:144` |
 | `GET` | `/api/contribute/operators/message` | Public path; caller identity resolved server-side (401 anonymous, 403 without a profile) | Returns only the signed-in contributor's unacknowledged operator messages; no username/body field can select another recipient ([#8461](https://github.com/hivecommons/hive/issues/8461)). | `pkg/dashboard/api_contribute.go:179` |
 | `POST` | `/api/contribute/operators/message` | Owner/read-write | Sends a sanitized, length-capped one-to-one operator note to a contributor profile, persists it until acknowledgement, and pushes it to matching live relay sockets only ([#8461](https://github.com/hivecommons/hive/issues/8461)). | `pkg/dashboard/api_contribute.go:180` |
@@ -511,11 +520,11 @@ always resolved server-side from the validated token.
 | `GET` | `/api/leaderboard/gource-log` | Public | Gource custom log source for a project/week, derived from public hive event data. | `pkg/dashboard/battle_log.go:65` |
 | `POST` | `/api/leaderboard/hive-of-week/archive` | Owner only | Archive the selected project's weekly gource source log into knowledge; stores source only, never rendered video. | `pkg/dashboard/battle_log.go:66` |
 | `GET` | `/api/leaderboard/contributor/{username}` | Public | Contributor Profile | `pkg/dashboard/api_contribute.go:249` |
-| `GET` | `/api/hives` | Dashboard auth/session | Hives List | `pkg/dashboard/api_contribute.go:256` |
-| `POST` | `/api/hives/register` | Dashboard auth/session | Hives Register | `pkg/dashboard/api_contribute.go:257` |
-| `POST` | `/api/hives/{id}/heartbeat` | Dashboard auth/session | Hives Heartbeat | `pkg/dashboard/api_contribute.go:258` |
-| `DELETE` | `/api/hives/{id}` | Owner only | Hives Delete | `pkg/dashboard/api_contribute.go:259` |
-| `POST` | `/api/hives/onboard` | Dashboard auth/session | Hives Onboard | `pkg/dashboard/api_contribute.go:260` |
+| `GET` | `/api/hives` | Dashboard auth/session | Hives List | `pkg/dashboard/api_contribute.go:260` |
+| `POST` | `/api/hives/register` | Dashboard auth/session | Hives Register | `pkg/dashboard/api_contribute.go:261` |
+| `POST` | `/api/hives/{id}/heartbeat` | Dashboard auth/session | Hives Heartbeat | `pkg/dashboard/api_contribute.go:262` |
+| `DELETE` | `/api/hives/{id}` | Owner only | Hives Delete | `pkg/dashboard/api_contribute.go:263` |
+| `POST` | `/api/hives/onboard` | Dashboard auth/session | Hives Onboard | `pkg/dashboard/api_contribute.go:264` |
 | `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1140` |
 
 ## Hub SaaS

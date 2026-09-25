@@ -498,6 +498,9 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
 .lb-name{color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lb-name__link{color:inherit;text-decoration:none}
 .lb-name__link:hover{color:var(--cc-accent);text-decoration:underline}
+.social-share{display:inline-flex;gap:6px;flex-wrap:wrap;margin-left:var(--sp-3);vertical-align:middle}
+.social-share button{border:1px solid var(--line-strong);background:var(--surface-0);color:var(--text-muted);border-radius:var(--r-pill);padding:var(--sp-1) var(--sp-3);font:inherit;font-size:var(--fs-2xs);cursor:pointer}
+.social-share button:hover{color:var(--cc-accent);border-color:var(--cc-accent)}
 .lb-tier{color:var(--text-muted)}
 .lb-stat{text-align:right;color:var(--text);font-variant-numeric:tabular-nums}
 .lb-head .lb-stat,.lb-head .lb-rank{text-align:right;color:var(--text-muted)}
@@ -3028,6 +3031,7 @@ function lbRow(e,rank){
     ?('<a class="lb-name__link" href="/contribute/dossier/'+encodeURIComponent(uname)+'">'+name+'</a>')
     :name;
   nameCell+=a2line;
+  if(!e.is_agent&&uname)nameCell+=socialShareControls('/share/player/'+encodeURIComponent(uname),'Hive contributor '+uname);
   // "Done" (tasks_completed) is the hero numeral — real count, just emphasised.
   return '<div class="lb-row'+(isMe?' lb-row--me':'')+'">'
     +'<div class="lb-rank">#'+rank+'</div>'
@@ -3061,7 +3065,7 @@ function renderLeaderboard(contribs){
   // Hive-wide total-tasks trend (#persistent-history) pinned above the standings —
   // the sum of tasks_done per hour over the last 7 days. Hydrated by
   // ccRenderLeaderboardSparklines; empty (flat) until metrics load.
-  var trend='<div class="lb-trend"><span>Hive throughput &middot; last 7 days</span><span class="spark" id="spark-lb-trend" title="Total tasks completed per hour, last 7 days"></span></div>';
+  var trend='<div class="lb-trend"><span>Hive throughput &middot; last 7 days</span>'+socialShareControls('/share/leaderboard/contributors','Hive contributor leaderboard')+'<span class="spark" id="spark-lb-trend" title="Total tasks completed per hour, last 7 days"></span></div>';
   var html=trend+'<div class="lb-head lb-row"><div class="lb-rank">#</div><div class="lb-name">Contributor</div><div class="lb-tier">Tier</div><div class="lb-stat lb-primary">Done</div><div class="lb-stat">Failed</div><div class="lb-stat">Findings</div><div class="lb-stat">Trend</div></div>';
   var rank=0,i;
   for(i=0;i<contribs.length;i++){rank++;html+=lbRow(contribs[i],rank);}
@@ -3319,8 +3323,10 @@ function meAchievements2(p){
   if(!ach.length)return '<p class="dz-collab-empty">Teamwork tiers unlock from normal GitHub, Spek, and Hive collaboration.</p>'+notes;
   return '<div class="dz-seals">'+ach.map(function(a){
     var sub=(a.tier||'solo')+' · '+(a.track||'teamwork');
+    var path='/share/achievement/'+encodeURIComponent(p.github_username)+'/'+encodeURIComponent(a.id||'achievement');
     return '<div class="dz-seal"><div class="glyph"></div><div class="t-name">'+esc(a.label||a.id||'Achievement')+'</div>'
-      +'<div class="t-sub">'+esc(sub)+' — '+esc(a.detail||'')+'</div></div>';
+      +'<div class="t-sub">'+esc(sub)+' — '+esc(a.detail||'')+'</div>'
+      +socialShareControls(path,(a.label||a.id||'Hive achievement')+' by '+p.github_username)+'</div>';
   }).join('')+'</div>'+notes;
 }
 
@@ -3622,6 +3628,7 @@ function renderMeCard(mount,p){
     +'<div class="me-quota-wrap" id="me-quota-slot"><div class="ops-note m-0">Loading your quota&hellip;</div></div>'
     +'<div class="me-actions">'
       +'<a class="me-share" href="'+esc(meLinkedInURL(p))+'" target="_blank" rel="noopener noreferrer">\u{1F4E3} Share achievement on LinkedIn</a>'
+      +socialShareControls('/share/player/'+encodeURIComponent(p.github_username),'Hive contributor '+p.github_username)
       +'<span class="me-stylepick">Profile style <select id="me-style-select" aria-label="Profile style">'+styleOpts+'</select></span>'
       +'<span class="info-affordance custom-css-help"><button type="button" class="hv-btn btn-icon btn-sm info-btn" id="custom-css-info-btn" aria-haspopup="true" aria-expanded="false" aria-controls="custom-css-info-pop" aria-label="Custom CSS stylesheet help" title="Custom CSS">Custom CSS</button>'
       +'<div class="info-pop custom-css-pop" id="custom-css-info-pop" role="tooltip" hidden><h4>Custom CSS</h4>'
@@ -3885,6 +3892,36 @@ document.querySelectorAll('.ops-scope').forEach(function(f){f.addEventListener('
 function esc(s){return (s==null?'':String(s))
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
   .replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function socialShareAbsolute(path){return window.location.origin+path;}
+function socialShareControls(path,label){
+  var url=socialShareAbsolute(path);
+  var text=label||'Hive social card';
+  var md='['+text+']('+url+')';
+  var htmlLink='<a href="'+url+'">'+text+'</a>';
+  return '<span class="social-share">'
+    +'<button type="button" data-share-copy="'+esc(url)+'" title="Copy public share link">Copy link</button>'
+    +'<button type="button" data-share-copy="'+esc(md)+'" title="Copy Markdown embed">Markdown</button>'
+    +'<button type="button" data-share-copy="'+esc(htmlLink)+'" title="Copy HTML embed">HTML</button>'
+    +'</span>';
+}
+function copySocialShareText(text){
+  function done(ok){if(typeof toast==='function')toast(ok?'Share snippet copied':'Could not copy share snippet',ok);}
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(function(){done(true);}).catch(function(){done(false);});
+    return;
+  }
+  var ta=document.createElement('textarea');
+  ta.value=text;ta.setAttribute('readonly','');ta.style.position='fixed';ta.style.left='-9999px';
+  document.body.appendChild(ta);ta.select();
+  var ok=false;try{ok=document.execCommand('copy');}catch(e){ok=false;}
+  document.body.removeChild(ta);done(ok);
+}
+document.addEventListener('click',function(e){
+  var btn=e.target&&e.target.closest&&e.target.closest('[data-share-copy]');
+  if(!btn)return;
+  e.preventDefault();
+  copySocialShareText(btn.getAttribute('data-share-copy')||'');
+});
 // ccAdvisorLabel names the SECOND model that reviewed a contributor's work
 // (hivecommons/hive#7760: omp's --advisor), as "advisor <model> (<effort>)",
 // or '' when the record carries none. Every view that shows a contributor's

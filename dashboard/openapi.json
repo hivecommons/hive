@@ -23267,6 +23267,124 @@
           }
         }
       }
+    },
+    "/api/cards/player/{asset}": {
+      "get": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Contributor social card SVG",
+        "description": "Public 1200x630 SVG card for a contributor profile. Canonical non-API URL is /cards/player/{login}.svg.",
+        "parameters": [
+          {
+            "name": "asset",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9-]{1,39}\\.svg$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SVG card",
+            "content": {
+              "image/svg+xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/cards/achievement/{login}/{asset}": {
+      "get": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Achievement social card SVG",
+        "description": "Public 1200x630 SVG card for an attained Achievement System 2.0 badge. Canonical non-API URL is /cards/achievement/{login}/{achievement-id}.svg.",
+        "parameters": [
+          {
+            "name": "login",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9-]{1,39}$"
+            }
+          },
+          {
+            "name": "asset",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9_:-]{1,80}\\.svg$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SVG card",
+            "content": {
+              "image/svg+xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/cards/leaderboard/{asset}": {
+      "get": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Leaderboard social card SVG",
+        "description": "Public 1200x630 SVG card for contributors, teams, or swarm leaderboards. Canonical non-API URL is /cards/leaderboard/{board}.svg.",
+        "parameters": [
+          {
+            "name": "asset",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "contributors.svg",
+                "teams.svg",
+                "swarm.svg"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SVG card",
+            "content": {
+              "image/svg+xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
     }
   },
   "components": {
