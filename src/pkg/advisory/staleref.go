@@ -276,6 +276,17 @@ func newStaleRefResolver(resolve ResolveRef) *staleRefResolver {
 	}
 }
 
+// withFreshBudget returns a resolver over the SAME memo cache with the full
+// lookup budget restored. BuildDigestFromBeads runs two passes -- closed-bead
+// resolution and stale-finding retirement -- and each deserves its own
+// bounded quota: sharing one budget would let a store full of closed beads
+// exhaust it before partitionSettledStale ran, leaving settled stale findings
+// open (the fail-open answer) purely because of pass order. Sharing the cache
+// still means an issue named by both passes is fetched once.
+func (r *staleRefResolver) withFreshBudget() *staleRefResolver {
+	return &staleRefResolver{resolve: r.resolve, cache: r.cache, budget: staleRefLookupBudget}
+}
+
 // ResolveRef has the ResolveRef signature so it can be handed to
 // staleFindingSettled in place of the raw resolver.
 func (r *staleRefResolver) ResolveRef(owner, repo string, number int) (RefState, bool) {
