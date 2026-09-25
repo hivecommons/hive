@@ -22,8 +22,9 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// pkg/outputschema for validated GitHub Actions run receipts (hivecommons/hive#8310), plus
 	// pkg/retro for autonomy signal facts and automatic ACMM decisions (#8364),
 	// plus pkg/claims for the ranked worker-claim ledger the relay honours and
-	// the /api/claims routes expose (hivecommons/hive#8380).
-	const maxDashboardInternalImports = 46
+	// the /api/claims routes expose (hivecommons/hive#8380), plus pkg/adminmcp for
+	// the phase 1 admin MCP endpoint (hivecommons/hive#8699).
+	const maxDashboardInternalImports = 47
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

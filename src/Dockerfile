@@ -58,7 +58,8 @@ RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
     GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH} ${VERSION_LDFLAG}" -o /hive ./cmd/hive && \
     GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -o /bd ./cmd/bd && \
     GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -o /hive-backup ./cmd/hive-backup && \
-    GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -o /hivectl ./cmd/hivectl
+    GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -o /hivectl ./cmd/hivectl && \
+    GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -o /hive-admin-mcp ./cmd/hive-admin-mcp
 
 
 # --- tmux from source (cached until TMUX_VERSION changes) ---
@@ -498,6 +499,7 @@ COPY --from=builder /hive-backup /usr/local/bin/hive-backup
 # src/deploy/test_hivectl_extraction_contract.sh pins this path to the one the
 # installer extracts, so the two cannot drift apart silently.
 COPY --from=builder /hivectl /usr/local/share/hive/hivectl
+COPY --from=builder /hive-admin-mcp /usr/local/share/hive/hive-admin-mcp
 
 # #3760 — defeat the BuildKit/overlayfs metacopy redirect on the cross-stage
 # COPY above. When BuildKit builds these images it can emit a layer where a
@@ -519,7 +521,8 @@ COPY --from=builder /hivectl /usr/local/share/hive/hivectl
 # change (which stops the OCI-index form that enables the metacopy layout in the
 # first place) and this rewrite are independent, belt-and-suspenders defenses.
 RUN for b in /usr/local/bin/hive /usr/local/bin/bd /usr/local/bin/hive-backup \
-             /usr/local/share/hive/hivectl; do \
+             /usr/local/share/hive/hivectl \
+             /usr/local/share/hive/hive-admin-mcp; do \
       cp --remove-destination "$b" "$b.fresh" && \
       mv -f "$b.fresh" "$b" && \
       chmod 0755 "$b"; \

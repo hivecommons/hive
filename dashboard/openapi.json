@@ -83,6 +83,10 @@
     {
       "name": "Swarm",
       "description": "Repo swarm mode status, lifecycle, and history"
+    },
+    {
+      "name": "Admin MCP",
+      "description": "Operator-facing Model Context Protocol tools for administering the serving hive"
     }
   ],
   "paths": {
@@ -23553,6 +23557,70 @@
               "application/json": {
                 "schema": {
                   "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/mcp": {
+      "post": {
+        "tags": [
+          "Admin MCP"
+        ],
+        "summary": "Operator-facing admin MCP endpoint",
+        "description": "Serves the phase 1 read-only streamable-HTTP MCP JSON-RPC endpoint for administering the hive that serves it. Authentication uses the existing dashboard token/session path; no hive selector or new credential type is accepted. Runtime refusal reasons are shared with the stdio admin MCP binary.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {
+                  "jsonrpc": {
+                    "type": "string",
+                    "enum": [
+                      "2.0"
+                    ]
+                  },
+                  "id": {},
+                  "method": {
+                    "type": "string"
+                  },
+                  "params": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                },
+                "required": [
+                  "jsonrpc",
+                  "method"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON-RPC response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "jsonrpc": {
+                      "type": "string"
+                    },
+                    "id": {},
+                    "result": {},
+                    "error": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  }
                 }
               }
             }

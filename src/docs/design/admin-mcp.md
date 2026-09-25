@@ -1,6 +1,6 @@
 # The operator-facing admin MCP
 
-**Status: design only.** Nothing here is implemented yet. It belongs to the v6
+**Status: phase 1 skeleton implemented.** The admin MCP package, dashboard endpoint, stdio binary, read tools, and refusal contract are present; writes in phase 1 remain switched off and later phases add write previews and confirmations. Admin MCP phase 1 is read-only; write tools arrive only after the preview and confirmation contract is implemented in a later phase. It belongs to the v6
 dashboard-optional line ([#7563](https://github.com/hivecommons/hive/issues/7563)) and, per
 that line's policy, lands on the `v6` branch only. Tracked by
 [#8697](https://github.com/hivecommons/hive/issues/8697).
