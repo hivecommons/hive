@@ -886,6 +886,17 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 	prevHead := getBranchHead(branch)
 	headChanged := prevHead.SHA != candidateSHA
 
+	// One commit listing per poll, shared by the hub and spoke walkbacks.
+	var recent []branchSHAInfo
+	recentListed := false
+	recentCommits := func() []branchSHAInfo {
+		if !recentListed {
+			recent = listRecentBranchCommits(client, branch, hubTargetWalkbackDepth, logger)
+			recentListed = true
+		}
+		return recent
+	}
+
 	// The hub image is a SEPARATE build from the spoke image and can land in
 	// either order (or fail independently). Probe it on its own so the hub's
 	// upgrade target is never gated on the spoke build, and vice versa.
@@ -895,7 +906,7 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 			latestHubSHAByBranch[branch] = branchSHAInfo{SHA: candidateSHA, Message: commitMsg}
 			latestSHAMu.Unlock()
 			logger.Info("SHA poll: hub image verified on GHCR", "branch", branch, "sha", candidateSHA)
-		} else if info, ok := newestPublishedHubAncestor(client, branch, candidateSHA, currentHub, logger); ok {
+		} else if info, ok := newestPublishedAncestor(client, ghcrRepoHub, recentCommits(), candidateSHA, currentHub, logger); ok {
 			// The tip has no hub image (image-less release commit, or a build
 			// still in flight). Do not freeze on the last verified tip: target
 			// the newest OLDER commit whose hub image is published, so the hub
@@ -929,6 +940,20 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 		setBranchHead(branch, candidateSHA, commitMsg, imageStatusReady)
 		logger.Info("SHA poll: latest image verified on GHCR", "branch", branch, "sha", candidateSHA)
 		return
+	}
+
+	// The tip has no spoke image yet. Advance the spoke target to the newest
+	// older commit whose image IS published (same walk as the hub image above),
+	// so a branch that merges faster than it builds does not freeze spokes on
+	// a stale commit. The branch head below still reports the tip as building.
+	if info, ok := newestPublishedAncestor(client, ghcrRepoSpoke,
+		recentCommits(), candidateSHA, getLatestSHAForBranch(branch), logger); ok {
+		latestSHAMu.Lock()
+		latestSHAByBranch[branch] = info
+		commitMsgBySHA[info.SHA] = info.Message
+		latestSHAMu.Unlock()
+		logger.Info("SHA poll: spoke image verified on GHCR behind an image-less tip",
+			"branch", branch, "sha", info.SHA, "tip", candidateSHA)
 	}
 
 	// Image not on GHCR yet — ask the docker workflow whether the build for

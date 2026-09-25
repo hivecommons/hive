@@ -55,20 +55,22 @@ func listRecentBranchCommits(client *http.Client, branch string, n int, logger *
 	return out
 }
 
-// newestPublishedHubAncestor finds the newest commit on branch, older than the
-// (image-less) tip and newer than current, whose hive-hub image is published on
-// GHCR. ok is false when there is none — including when current is already the
-// newest published commit, or the listing failed.
-func newestPublishedHubAncestor(client *http.Client, branch, tip, current string, logger *slog.Logger) (info branchSHAInfo, ok bool) {
-	commits := listRecentBranchCommits(client, branch, hubTargetWalkbackDepth, logger)
+// newestPublishedAncestor walks commits (newest first, as returned by
+// listRecentBranchCommits) and returns the first one older than tip and newer
+// than current whose image is published in repo. The spoke image uses the
+// same walk as the hub image: on a busy branch the tip is almost always still
+// building, so probing only the tip would pin the spoke target to whatever
+// commit happened to be the tip when its build last finished before the next
+// merge — spokes then sit "N behind" while every intermediate image exists.
+func newestPublishedAncestor(client *http.Client, repo string, commits []branchSHAInfo, tip, current string, logger *slog.Logger) (info branchSHAInfo, ok bool) {
 	for _, c := range commits {
 		if sameCommit(c.SHA, tip) {
 			continue // the caller already probed the tip and found no image
 		}
-		if sameCommit(c.SHA, current) {
+		if current != "" && sameCommit(c.SHA, current) {
 			return branchSHAInfo{}, false // nothing newer is published; keep the current target
 		}
-		if ghcrTagExists(client, ghcrRepoHub, c.SHA, logger) {
+		if ghcrTagExists(client, repo, c.SHA, logger) {
 			return c, true
 		}
 	}
