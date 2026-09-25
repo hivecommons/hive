@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -77,21 +78,104 @@ func (p dashboardAdminMCPProvider) ExecuteWrite(_ context.Context, req adminmcp.
 	if p.server == nil {
 		return nil, fmt.Errorf("%w: dashboard server unavailable", adminmcp.ErrForbidden)
 	}
-	rec := httptest.NewRecorder()
-	httpReq := httptest.NewRequest(req.Method, req.Path, nil)
+	var rec writeRecorder = responseRecorderAdapter{ResponseRecorder: httptest.NewRecorder()}
+	if req.Path == "/api/backup" {
+		rec = newDiscardingWriteRecorder()
+	}
+	var body io.Reader
+	if req.Body != nil {
+		data, err := json.Marshal(req.Body)
+		if err != nil {
+			return nil, err
+		}
+		body = bytes.NewReader(data)
+	}
+	httpReq := httptest.NewRequest(req.Method, req.Path, body)
+	if req.Body != nil {
+		httpReq.Header.Set("Content-Type", "application/json")
+	}
 	if strings.TrimSpace(p.authorization) != "" {
 		httpReq.Header.Set("Authorization", p.authorization)
 	}
 	p.server.authenticate(p.server.roleEnforcement(p.server.securityHeaders(p.server.mux))).ServeHTTP(rec, httpReq)
-	if rec.Code < http.StatusOK || rec.Code >= http.StatusMultipleChoices {
-		return nil, &adminmcp.HiveRefusalError{StatusCode: rec.Code, Message: strings.TrimSpace(rec.Body.String()), Body: rec.Body.Bytes()}
+	status := rec.statusCode()
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		body := rec.bodyBytes()
+		return nil, &adminmcp.HiveRefusalError{StatusCode: status, Message: strings.TrimSpace(string(body)), Body: body}
 	}
-	data, err := decodeAdminMCPJSON(rec.Body.Bytes())
+	if req.Path == "/api/backup" {
+		return map[string]any{
+			"ok":          true,
+			"contentType": rec.Header().Get("Content-Type"),
+			"bytes":       rec.bytesWritten(),
+			"encrypted":   rec.Header().Get("X-Hive-Backup-Encrypted"),
+			"files":       rec.Header().Get("X-Hive-Backup-Files"),
+			"bead_dirs":   rec.Header().Get("X-Hive-Backup-Bead-Dirs"),
+			"archive":     "[not exposed through admin MCP]",
+		}, nil
+	}
+	data, err := decodeAdminMCPJSON(rec.bodyBytes())
 	if err != nil {
 		return nil, err
 	}
 	return data, nil
 }
+
+type writeRecorder interface {
+	http.ResponseWriter
+	statusCode() int
+	bodyBytes() []byte
+	bytesWritten() int
+}
+
+type responseRecorderAdapter struct {
+	*httptest.ResponseRecorder
+}
+
+func (r responseRecorderAdapter) statusCode() int {
+	if r.Code == 0 {
+		return http.StatusOK
+	}
+	return r.Code
+}
+func (r responseRecorderAdapter) bodyBytes() []byte { return r.Body.Bytes() }
+func (r responseRecorderAdapter) bytesWritten() int { return r.Body.Len() }
+
+type discardingWriteRecorder struct {
+	header http.Header
+	code   int
+	bytes  int
+	body   bytes.Buffer
+}
+
+func newDiscardingWriteRecorder() *discardingWriteRecorder {
+	return &discardingWriteRecorder{header: http.Header{}}
+}
+
+func (r *discardingWriteRecorder) Header() http.Header { return r.header }
+func (r *discardingWriteRecorder) WriteHeader(code int) {
+	if r.code == 0 {
+		r.code = code
+	}
+}
+func (r *discardingWriteRecorder) Write(p []byte) (int, error) {
+	if r.code == 0 {
+		r.code = http.StatusOK
+	}
+	r.bytes += len(p)
+	if r.code < http.StatusOK || r.code >= http.StatusMultipleChoices {
+		_, _ = r.body.Write(p)
+	}
+	return len(p), nil
+}
+func (r *discardingWriteRecorder) statusCode() int {
+	if r.code == 0 {
+		return http.StatusOK
+	}
+	return r.code
+}
+func (r *discardingWriteRecorder) bodyBytes() []byte { return r.body.Bytes() }
+func (r *discardingWriteRecorder) bytesWritten() int { return r.bytes }
 
 func adminMCPWritesEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("HIVE_ADMIN_MCP_ENABLE_WRITES"))) {

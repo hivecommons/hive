@@ -251,3 +251,93 @@ func TestAgentWriteOpsEscapeAgentPathSegment(t *testing.T) {
 		t.Fatalf("resume path = %q", preview.Request.Path)
 	}
 }
+
+func TestPhase6WriteOpsRegistered(t *testing.T) {
+	registry := DefaultWriteRegistry()
+	for _, name := range []string{
+		WriteOpRepoPause,
+		WriteOpRepoResume,
+		WriteOpRepositoryItemHold,
+		WriteOpBudgetUpdate,
+		WriteOpBudgetReset,
+		WriteOpBudgetIgnore,
+		WriteOpContributorTrust,
+		WriteOpContributorAgentRole,
+		WriteOpContributorRoleGrants,
+		WriteOpContributorRevoke,
+		WriteOpContributorRequeue,
+		WriteOpContributorDelete,
+		WriteOpBackupCreate,
+		WriteOpCircuitBreakerEngage,
+		WriteOpCircuitBreakerRelease,
+	} {
+		if _, ok := registry.Get(name); !ok {
+			t.Fatalf("write op %q is not registered", name)
+		}
+	}
+}
+
+func TestPhase6WriteOpPreviews(t *testing.T) {
+	tests := []struct {
+		name string
+		op   WriteOp
+		args map[string]any
+		want WriteRequest
+	}{
+		{
+			name: "repo pause body",
+			op:   repoPauseOp{},
+			args: map[string]any{"repo": "hivecommons/hive", "reason": "maintenance"},
+			want: WriteRequest{Method: http.MethodPost, Path: "/api/repos/pause", Body: map[string]any{"repo": "hivecommons/hive", "reason": "maintenance"}},
+		},
+		{
+			name: "repo item hold escapes path",
+			op:   repositoryItemHoldOp{},
+			args: map[string]any{"owner": "hive commons", "repo": "hive/api", "number": float64(42), "held": true},
+			want: WriteRequest{Method: http.MethodPost, Path: "/api/repos/hive%20commons/hive%2Fapi/items/42/hold", Body: map[string]any{"held": true}},
+		},
+		{
+			name: "budget update",
+			op:   budgetUpdateOp{},
+			args: map[string]any{"totalTokens": float64(1000000), "criticalPct": float64(90)},
+			want: WriteRequest{Method: http.MethodPut, Path: "/api/config/governor/budget", Body: map[string]any{"totalTokens": 1000000, "criticalPct": 90}},
+		},
+		{
+			name: "contributor trust",
+			op:   contributorTrustOp{},
+			args: map[string]any{"contributor_id": "alice", "tier": "trusted"},
+			want: WriteRequest{Method: http.MethodPut, Path: "/api/contributors/alice/trust", Body: map[string]any{"tier": "trusted"}},
+		},
+		{
+			name: "breaker release",
+			op:   circuitBreakerReleaseOp{},
+			args: map[string]any{},
+			want: WriteRequest{Method: http.MethodPost, Path: "/api/breaker/release"},
+		},
+		{
+			name: "backup create",
+			op:   backupCreateOp{},
+			args: map[string]any{},
+			want: WriteRequest{Method: http.MethodPost, Path: "/api/backup"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			preview, err := tt.op.Preview(context.Background(), tt.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if preview.Request.Method != tt.want.Method || preview.Request.Path != tt.want.Path {
+				t.Fatalf("request = %#v, want %#v", preview.Request, tt.want)
+			}
+			gotBody, _ := json.Marshal(preview.Request.Body)
+			wantBody, _ := json.Marshal(tt.want.Body)
+			if string(gotBody) != string(wantBody) {
+				t.Fatalf("body = %s, want %s", gotBody, wantBody)
+			}
+			if preview.WideningDisclosure == "" || preview.ConfirmationMessage == "" {
+				t.Fatalf("missing preview safety text: %#v", preview)
+			}
+		})
+	}
+}

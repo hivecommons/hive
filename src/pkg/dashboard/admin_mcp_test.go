@@ -61,3 +61,26 @@ func TestAdminMCPEndpointDoesNotExposeHiveSelector(t *testing.T) {
 		}
 	}
 }
+
+func TestAdminMCPExecuteWriteForwardsJSONBody(t *testing.T) {
+	s := NewServerWithAuth(0, "secret", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s.mux.HandleFunc("POST /api/admin-mcp-test-body", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["repo"] != "hivecommons/hive" {
+			t.Fatalf("body = %#v", body)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "repo": body["repo"]})
+	})
+	provider := dashboardAdminMCPProvider{server: s, authorization: "Bearer secret"}
+	result, err := provider.ExecuteWrite(t.Context(), adminmcp.WriteRequest{Method: http.MethodPost, Path: "/api/admin-mcp-test-body", Body: map[string]any{"repo": "hivecommons/hive"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := result.(map[string]any)
+	if !ok || got["repo"] != "hivecommons/hive" {
+		t.Fatalf("result = %#v", result)
+	}
+}

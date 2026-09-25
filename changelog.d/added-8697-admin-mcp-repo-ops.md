@@ -1,0 +1,1 @@
+- Add admin MCP phase 6 write operations for repository pauses and holds, budget/spend controls, contributor administration, encrypted backup metadata, and the fleet circuit breaker.

@@ -149,6 +149,32 @@ func (c *Client) DoWithHeaders(ctx context.Context, method, apiPath string, quer
 	return decodeResponse(data, contentType)
 }
 
+type ResponseMetadata struct {
+	ContentType   string
+	ContentLength int64
+	Headers       http.Header
+}
+
+func (c *Client) DoDiscard(ctx context.Context, method, apiPath string, query url.Values, body any) (ResponseMetadata, error) {
+	req, err := c.request(ctx, method, apiPath, query, body, nil)
+	if err != nil {
+		return ResponseMetadata{}, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return ResponseMetadata{}, connectionError(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return ResponseMetadata{}, c.responseError(resp.StatusCode, data)
+	}
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		return ResponseMetadata{}, connectionError(err)
+	}
+	return ResponseMetadata{ContentType: resp.Header.Get("Content-Type"), ContentLength: resp.ContentLength, Headers: resp.Header.Clone()}, nil
+}
+
 func decodeResponse(data []byte, contentType string) (any, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return map[string]any{}, nil
