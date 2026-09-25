@@ -1,0 +1,1 @@
+- Add the explicit Spek `!runs spec owner/repo#N` example to Hive Chat hints.
