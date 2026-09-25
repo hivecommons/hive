@@ -27788,6 +27788,7 @@ function burnAreaChart() {
     const chatInput = document.getElementById('hiveChatInput');
     const chatSend = document.getElementById('hiveChatSend');
     let chatBusy = false;
+    const CHAT_RESPONSE_TIMEOUT_MS = 30000;
     const CHAT_CONTEXT_LIMIT = 6;
     const CHAT_STORAGE_KEY = 'hive-chat-history';
     let chatContext = [];
@@ -27999,24 +28000,47 @@ function burnAreaChart() {
       chatBusy = true;
       chatSend.disabled = true;
       chatInput.value = '';
+      const thinking = chatAddMsg('Thinking…', 'thinking');
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), CHAT_RESPONSE_TIMEOUT_MS);
       try {
         const resp = await fetch('/api/chat', {
           method: 'POST',
           headers: _inceptionAuthHeaders(),
-          body: JSON.stringify({ query: q, history: chatContext.slice(0, -1) }),
+          signal: controller.signal,
+          body: JSON.stringify({ query: q, history: chatContext }),
         });
-        const data = await resp.json();
-        if (data.error) {
-          chatAddMsg('Error: ' + esc(data.error), 'system');
+        let data = {};
+        try {
+          data = await resp.json();
+        } catch (parseErr) {
+          data = { error: resp.ok ? 'Chat returned an unreadable response.' : 'Chat request failed with HTTP ' + resp.status + '.' };
+        }
+        thinking.remove();
+        if (!resp.ok || data.error) {
+          chatAddMsg('Error: ' + esc(data.error || ('Chat request failed with HTTP ' + resp.status + '.')), 'system');
+        } else if (data.answer) {
+          chatAddMsg(esc(q), 'user');
+          chatContext.push({ role: 'user', text: q });
+          chatAddMsg(formatChatHtml(data.answer), 'system');
+          chatContext.push({ role: 'assistant', text: data.answer });
+          if (chatContext.length > CHAT_CONTEXT_LIMIT) chatContext = chatContext.slice(-CHAT_CONTEXT_LIMIT);
         } else {
           await chatPollMessages();
         }
       } catch (err) {
-        chatAddMsg('Network error: ' + esc(err.message), 'system');
+        thinking.remove();
+        const msg = err && err.name === 'AbortError'
+          ? 'Chat request timed out. Please try again.'
+          : 'Network error: ' + ((err && err.message) || 'request failed');
+        chatAddMsg(esc(msg), 'system');
+      } finally {
+        clearTimeout(timeout);
+        if (thinking.isConnected) thinking.remove();
+        chatBusy = false;
+        chatSend.disabled = false;
+        chatInput.focus();
       }
-      chatBusy = false;
-      chatSend.disabled = false;
-      chatInput.focus();
     }
 
     chatSend.onclick = chatSendQuery;
