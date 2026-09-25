@@ -324,6 +324,10 @@ func partitionSettledStale(byAgent map[string][]Finding, opts DigestOptions, now
 		// leave everything as it is.
 		return byAgent, nil, 0
 	}
+	// BuildDigestFromBeads already wraps opts.ResolveRef in a shared build-wide
+	// resolver; wrapping again here keeps the memo/budget for callers that
+	// reach partitionSettledStale directly, and is a cheap pass-through
+	// otherwise (the inner cache answers before the outer budget is spent).
 	resolver := newStaleRefResolver(opts.ResolveRef)
 	var settled []ResolvedFinding
 	retired := 0
