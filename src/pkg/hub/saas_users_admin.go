@@ -308,10 +308,15 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	for _, name := range s.engagedHiveUsernames() {
 		engaged[name] = true
 	}
+	s.mu.RLock()
+	hives := append([]RegistryEntry(nil), s.registry.Hives...)
+	s.mu.RUnlock()
 	now := time.Now()
 	type adminUserView struct {
 		SaaSUser
 		StatusTier string `json:"status_tier"`
+		TopRepo    string `json:"top_repo"`
+		TopRepoURL string `json:"top_repo_url,omitempty"`
 		// Provider is always populated (derived via userProvider) so the Users
 		// table's auth-method badge never has to parse — a legacy github-only
 		// record resolves to "github". This shadows SaaSUser.Provider's
@@ -322,9 +327,12 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	for i := range users {
 		users[i].EncryptedToken = ""
 		name := users[i].GitHubUsername
+		topRepo := userTopRepoAssociation(&users[i], hives)
 		views = append(views, adminUserView{
 			SaaSUser:   users[i],
 			StatusTier: userStatusTier(&users[i], live[name], engaged[name], now),
+			TopRepo:    topRepo.Label,
+			TopRepoURL: topRepo.URL,
 			Provider:   userProvider(&users[i]),
 		})
 	}

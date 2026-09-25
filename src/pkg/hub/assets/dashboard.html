@@ -9898,8 +9898,8 @@
 
     // Number of columns in the admin users table. Panel/expand rows span the
     // full width, so this must track the <th> count in renderUsers.
-    // 9 since the Country column landed.
-    var USERS_TABLE_COLSPAN = 9;
+    // 10 since the Top Repo column landed.
+    var USERS_TABLE_COLSPAN = 10;
     // Rows of the notes textarea. Big enough for a short paragraph without
     // pushing the next user off screen. It is the only free-form prose field,
     // so it gets the height as well as the width; still user-resizable.
@@ -10728,6 +10728,14 @@
         ';font-weight:' + meta.weight + ';cursor:help">' + esc(label) + '</span>';
     }
 
+    function topRepoCell(u) {
+      var label = String((u && u.top_repo) || '').trim();
+      if (!label) return '<span class="text-muted">—</span>';
+      var href = String((u && u.top_repo_url) || '').trim();
+      if (!href) return '<span class="fs-sm">' + esc(label) + '</span>';
+      return '<a href="' + escAttr(href) + '" target="_blank" class="dash-link" title="Most-engaged repo/org">' + esc(label) + '</a>';
+    }
+
     /* userTaskActivity sums this user's per-hive leaderboard entries across every
        hive in _hiveRegistry, matching on github_username. leaderboard is present
        only for an admin (scrubbed otherwise), so a non-admin simply gets zeros. */
@@ -10953,6 +10961,7 @@
           '<td>' + countryCell(u) + '</td>' +
           '<td>' + statusCell + '</td>' +
           '<td><input type="number" min="0" max="10" value="' + (u.saas_quota || 0) + '" style="width:50px;padding:var(--sp-2);background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);text-align:center" onchange="updateUser(\'' + esc(u.github_username) + '\',{saas_quota:parseInt(this.value)||0})"></td>' +
+          '<td>' + topRepoCell(u) + '</td>' +
           '<td>' + (hiveCount > 0 ? '<a href="#" onclick="toggleAdminExpand(\'' + esc(u.github_username) + '\');return false" style="color:var(--blue);font-size:0.8rem">' + hiveCount + ' hive' + (hiveCount > 1 ? 's' : '') + '</a>' : '<span class="text-muted">0</span>') + '</td>' +
           '<td>' + (isAdmin ? '' : '<button class="hv-btn btn-primary btn-sm" onclick="startImpersonation(\'' + esc(u.github_username) + '\')" title="See the hub exactly as this user does — read-only">View as</button> <button class="hv-btn btn-danger btn-sm" onclick="updateUser(\'' + esc(u.github_username) + '\',{blocked:' + (!u.blocked) + '})" style="padding:3px 10px;background:' + (u.blocked ? 'var(--green)' : 'var(--amber)') + ';color:' + (u.blocked ? '#fff' : '#1a1a1a') + ';border:none;border-radius:var(--r-sm);cursor:pointer;font-size:0.7rem">' + (u.blocked ? 'Unblock' : 'Block') + '</button> <button class="hv-btn btn-danger btn-sm" onclick="deleteUser(\'' + esc(u.github_username) + '\',' + hiveCount + ')">Delete</button>') + '</td>' +
           '</tr>' + renderContactPanelRow(u) + hiveRows;
@@ -10963,7 +10972,7 @@
         // as new companies are entered.
         '<datalist id="contact-company-suggestions">' + companyDatalistOptionsHTML() + '</datalist>' +
         '<table class="hive-table"><thead><tr>' +
-        '<th onclick="sortUsers(\'github_username\')" style="cursor:pointer">User ⇅</th><th onclick="sortUsers(\'created_at\')" style="cursor:pointer">Joined ⇅</th><th onclick="sortUsers(\'last_login\')" style="cursor:pointer">Last Login ⇅</th><th onclick="sortUsers(\'full_name\')" style="cursor:pointer">Contact ⇅</th><th onclick="sortUsers(\'country\')" style="cursor:pointer">Country ⇅</th><th onclick="sortUsers(\'status\')" style="cursor:pointer">Status ⇅</th><th onclick="sortUsers(\'saas_quota\')" style="cursor:pointer">Quota ⇅</th><th onclick="sortUsers(\'hiveCount\')" style="cursor:pointer">Hives ⇅</th><th>Actions</th>' +
+        '<th onclick="sortUsers(\'github_username\')" style="cursor:pointer">User ⇅</th><th onclick="sortUsers(\'created_at\')" style="cursor:pointer">Joined ⇅</th><th onclick="sortUsers(\'last_login\')" style="cursor:pointer">Last Login ⇅</th><th onclick="sortUsers(\'full_name\')" style="cursor:pointer">Contact ⇅</th><th onclick="sortUsers(\'country\')" style="cursor:pointer">Country ⇅</th><th onclick="sortUsers(\'status\')" style="cursor:pointer">Status ⇅</th><th onclick="sortUsers(\'saas_quota\')" style="cursor:pointer">Quota ⇅</th><th onclick="sortUsers(\'top_repo\')">Top Repo ⇅</th><th onclick="sortUsers(\'hiveCount\')" style="cursor:pointer">Hives ⇅</th><th>Actions</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>';
       // The contact panels are built as raw HTML above; wire their listeners
       // once the rows are actually in the DOM. Inline on* handlers are avoided
