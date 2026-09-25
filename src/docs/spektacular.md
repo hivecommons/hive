@@ -79,6 +79,18 @@ runner is installed at boot (`cmd/hive`, `wireSpektacularRunner`), so runner
 process changes take effect on the next boot; dashboard-visible config is
 persisted immediately.
 
+On hosted hives the same no-file path is used to start work. Operators can:
+
+- click **Start spec run** on an issue or campaign detail, which calls
+  `POST /api/runs/spec` and creates the same first `spec` stage lease as the
+  `run/spec` label path;
+- use chat (`!runs spec owner/repo#123`, `!runs status`, `!runs approve`,
+  `!runs reject`, `!runs list`) for the same run lane; or
+- set the Strategy Lab campaign output mode to **Spektacular Run**. When a
+  pending repo campaign is approved, Hive reads its `owner/repo#number` target,
+  calls the same `AdmitRun` lease path, and records the resulting run key back
+  onto the campaign/pending proposal so the dashboard detail links to the run.
+
 Package layout: `pkg/spektacular` owns the CLI boundary, the poll loop, and
 the receipt; `pkg/dashboard` exposes its lease registry as a primitives-only
 surface on `*Server` (`VisitActiveStageLeases`, `AdvanceStageLease`,

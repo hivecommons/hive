@@ -6636,7 +6636,17 @@ func (s *Server) handleNousApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	runLink, admitted, err := s.approveNousSpektacularRun()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	s.auditFromRequest(r, "nous_approve", "", "")
+	if admitted {
+		s.auditFromRequest(r, "nous_run_admitted", auditDetail("run", runLink["key"], "stage", runLink["stage"]), "")
+		jsonResponse(w, map[string]interface{}{"ok": true, "status": "approved", "run": runLink})
+		return
+	}
 	okResponse(w, map[string]string{"status": "approved"})
 }
 

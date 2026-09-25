@@ -1,0 +1,1 @@
+- Strategy Lab repo campaigns can now be approved as Spektacular spec→plan→implement runs, and the Extensions docs spell out the exact relay URL, registration token, and capability each external tool needs for hosted hives ([#8737](https://github.com/hivecommons/hive/issues/8737)).

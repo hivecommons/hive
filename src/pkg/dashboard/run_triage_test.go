@@ -56,6 +56,7 @@ func TestRunResetTriageFixRetiresSpecRun(t *testing.T) {
 	if err := s.AdmitTriagedRun("myorg/repo1", 8450, "feature", "spec", "feature label", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+
 	runs, err := s.activeRuns(false)
 	if err != nil || len(runs) != 1 {
 		t.Fatalf("activeRuns = %+v err=%v", runs, err)
