@@ -70,8 +70,8 @@ ship a pinned `spektacular` release binary in `/usr/local/bin`, verified against
 the release `checksums.txt` during the image build. Operators may still override
 `runs.spektacular.binary` to point at another executable. At boot, when
 `runs.spektacular.enabled` is true, Hive probes `<binary> --version`, logs the
-found or missing binary, and exposes `spektacular: {present, version, binary}`
-in `/api/status`.
+found or missing binary, and exposes
+`spektacular: {present, version, binary, hub_executor}` in `/api/status`.
 
 Hosted hives with no config file can set this from **Settings → Extensions →
 Spektacular**. That card exposes the toggle, binary path, poll interval, stage
@@ -84,6 +84,25 @@ the work-source loop. The same backward-compatible keys remain accepted by
 runner is installed at boot (`cmd/hive`, `wireSpektacularRunner`), so runner
 process changes take effect on the next boot; dashboard-visible config is
 persisted immediately.
+
+Spek-enabled hives also enable the hub-resident executor by default:
+
+```yaml
+runs:
+  spektacular:
+    enabled: true
+    hub_executor:
+      enabled: true          # default when Spek is enabled
+      backend: copilot       # or the hub default agent backend when known
+      model: ""              # optional
+      timeout_seconds: 1800
+      identity: hive-spek
+```
+
+The dashboard exposes `spektacularHubExecutor`,
+`spektacularHubExecutorBackend`, `spektacularHubExecutorModel`, and
+`spektacularHubExecutorTimeoutS` through
+`GET/PUT /api/config/governor/features`.
 
 On hosted hives the same no-file path is used to start work. Operators can:
 
@@ -155,14 +174,17 @@ parks the lease for operator action rather than polling in an unrelated cwd.
 
 The first `spec` lease that admission creates (`run/spec` label, triage,
 `POST /api/runs/spec`, `!runs spec`) is owned by `hive-triage` and has no
-checkout yet by construction: it is waiting for a run-stage-capable
-contributor relay to claim it and clone the repo. The runner counts such
-leases as *unclaimed* and neither polls nor refuses them. A run that stays
-in this state means no connected relay declares the `run-stage` capability
-(see [contributor-relay.md](contributor-relay.md)); `/api/status` shows
-`contributors: 0` in that case. Once a relay claims the stage the runner
-polls it as usual, and a refusal recorded against a previous owner's
-checkout is cleared when the same generation changes hands.
+checkout yet by construction. If a run-stage-capable contributor relay claims it
+first, the relay path is unchanged and takes precedence. Otherwise, when
+`runs.spektacular.hub_executor.enabled` is true, the hub claims the unclaimed
+admission lease as `hive-spek`, clones the repository under
+`/data/agents/hive-spek/<owner>/<repo>`, creates a detached per-stage worktree
+under `/data/agents/hive-spek/runs/<run>/<stage>-<generation>`, initializes a
+`.spektacular/` project if needed, and runs the configured agent CLI headlessly
+with instructions to author the spec or plan only. The poll runner then observes
+that same worktree on the next tick and advances the lease when Spek reports
+`document_status: final`. If the hub executor is disabled, an unclaimed run
+stays parked until a relay declares the `run-stage` capability.
 
 It then runs
 
@@ -170,12 +192,14 @@ It then runs
 spektacular <spec|plan> status <name>
 ```
 
-where `<name>` is the bare artifact name (`000057_git-commit`, never
-`000057_git-commit.md` or `000057_git-commit/plan.md`): the lease's canonical
-work-item key `<repo>!<runKey>:<stage>` (see [work-sources.md](work-sources.md))
-with the repository prefix and stage suffix stripped, then reduced to the bare
-name (`spektacular.ArtifactKey`; the dashboard applies the same rule in
-`runKeyOfLease`). The CLI has no `--json` flag (its only global flag is
+where `<name>` is a Spektacular-safe artifact slug. For GitHub issue runs
+(`owner/repo#N`) Hive binds the run to
+`spektacular.RunArtifactName(runKey)`, for example
+`kubestellar/console#23735` becomes `kubestellar-console-23735` (lowercase
+ASCII, `[a-z0-9-]`, collapsed dashes). Legacy file-address keys still use the
+bare-name rule (`000057_git-commit`, never `000057_git-commit.md` or
+`000057_git-commit/plan.md`) via `spektacular.ArtifactKey`. The CLI has no
+`--json` flag (its only global flag is
 `--fields`); every verb already prints JSON, and an unknown flag is a usage
 error. Then:
 

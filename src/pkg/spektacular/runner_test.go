@@ -328,6 +328,19 @@ func TestArtifactKey(t *testing.T) {
 	}
 }
 
+func TestRunArtifactName(t *testing.T) {
+	cases := map[string]string{
+		"KubeStellar/Console#23735": "kubestellar-console-23735",
+		"owner/repo#1":              "owner-repo-1",
+		"000057_git-commit.md":      "000057_git-commit",
+	}
+	for in, want := range cases {
+		if got := RunArtifactName(in); got != want {
+			t.Fatalf("RunArtifactName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestStatus_JoinsByBareNameAcrossSpellings(t *testing.T) {
 	// The lease may still carry a file address; the CLI is always asked for
 	// the bare name, and a status answered under the bare name matches a

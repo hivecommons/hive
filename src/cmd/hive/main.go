@@ -3529,7 +3529,11 @@ func (b *boot) bootDashboardAPI() { b.bootDashboardAPIWith(defaultBootDashboardA
 // injected; see bootDashboardAPIDeps.
 func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	deps.registerAPI(b.dashSrv, b.dashboardDependencies())
-	wireSpektacularRunner(b.cfg, b.dashSrv, b.logger)
+	var spekCloneAuth func(context.Context, string, string) ([]string, func(), error)
+	if b.appAuth != nil {
+		spekCloneAuth = spektacularCloneAuth(pushbroker.GitHubAppMinter{Auth: b.appAuth})
+	}
+	wireSpektacularRunnerWithCloneAuth(b.cfg, b.dashSrv, b.logger, spekCloneAuth)
 	// #8380: chain GitHub comments/labels behind the relay yank on takeover.
 	b.dashSrv.InstallClaimHooks(githubClaimHooks(b.ctx, b.cfg, func() *github.Client { return b.ghClient }, b.logger))
 	// Forge App tab inventory: the resolved active key path and the per-app-id

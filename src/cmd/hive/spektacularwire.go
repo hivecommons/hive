@@ -2,10 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/pushbroker"
 	"github.com/hivecommons/hive/pkg/spektacular"
 )
 
@@ -18,6 +25,10 @@ import (
 // installed; with the feature off (the default) nothing is constructed and
 // no Spektacular process is ever started.
 func wireSpektacularRunner(cfg *config.Config, srv *dashboard.Server, logger *slog.Logger) bool {
+	return wireSpektacularRunnerWithCloneAuth(cfg, srv, logger, nil)
+}
+
+func wireSpektacularRunnerWithCloneAuth(cfg *config.Config, srv *dashboard.Server, logger *slog.Logger, cloneAuth func(context.Context, string, string) ([]string, func(), error)) bool {
 	if cfg == nil || srv == nil || !cfg.Runs.Spektacular.Enabled {
 		return false
 	}
@@ -32,6 +43,9 @@ func wireSpektacularRunner(cfg *config.Config, srv *dashboard.Server, logger *sl
 		}
 	}
 	srv.SetStageRunner(spektacular.NewHubRunner(cfg.Runs, srv, logger))
+	if cfg.Runs.Spektacular.HubExecutorEnabled() {
+		srv.SetStageExecutor(dashboard.NewSpekHubExecutor(srv, cfg.Runs, defaultAgentBackend(cfg), "", cloneAuth, logger))
+	}
 	if logger != nil {
 		logger.Info("[spektacular] stage runner installed",
 			"binary", binary,
@@ -39,4 +53,35 @@ func wireSpektacularRunner(cfg *config.Config, srv *dashboard.Server, logger *sl
 			"max_stage_retries", cfg.Runs.MaxStageRetriesOrDefault())
 	}
 	return true
+}
+
+func spektacularCloneAuth(minter pushbroker.TokenMinter) func(context.Context, string, string) ([]string, func(), error) {
+	if minter == nil {
+		return nil
+	}
+	return func(ctx context.Context, repo, dir string) ([]string, func(), error) {
+		token, err := minter.MintPushToken(ctx, repo)
+		if err != nil {
+			return nil, func() {}, err
+		}
+		if strings.TrimSpace(token) == "" {
+			return nil, func() {}, errors.New("empty clone token")
+		}
+		path := filepath.Join(dir, ".hive-git-credentials-"+strings.NewReplacer("/", "-", "#", "-").Replace(strings.TrimSpace(repo))+"-"+strconv.FormatInt(time.Now().UnixNano(), 10))
+		if err := os.WriteFile(path, []byte("https://x-access-token:"+token+"@github.com\n"), 0o600); err != nil {
+			return nil, func() {}, err
+		}
+		return []string{"-c", "credential.helper=store --file=" + path}, func() { _ = os.Remove(path) }, nil
+	}
+}
+
+func defaultAgentBackend(cfg *config.Config) string {
+	if cfg != nil {
+		for _, a := range cfg.Agents {
+			if a.Enabled && strings.TrimSpace(a.Backend) != "" {
+				return strings.TrimSpace(a.Backend)
+			}
+		}
+	}
+	return config.DefaultSpektacularHubExecutorBackend
 }

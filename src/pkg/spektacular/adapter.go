@@ -74,11 +74,12 @@ func (a *leaseAdapter) ActiveStages(time.Time) ([]Stage, error) {
 	out := []Stage{}
 	err := a.reg.VisitActiveStageLeases(func(runKey, key, stage, identity, taskID, repo string, gen uint64, expiresAt time.Time) {
 		workDir, _ := a.reg.ResolveRunStageWorkDir(runKey, stage, identity, repo, gen)
-		// The registry's run key may still be spelled as a file address
-		// (`<name>.md`, `<name>/plan.md`); the artifact Spektacular is asked
-		// about is always the bare name.
+		artifact := ArtifactKey(runKey)
+		if ref, ok := worksource.ParseKey(runKey); ok && ref.IsGitHubIssue() {
+			artifact = RunArtifactName(runKey)
+		}
 		out = append(out, Stage{
-			RunKey: runKey, Artifact: ArtifactKey(runKey), Stage: stage, Key: key,
+			RunKey: runKey, Artifact: artifact, Stage: stage, Key: key,
 			Identity: identity, TaskID: taskID, Repo: repo, WorkDir: workDir, Gen: gen, ExpiresAt: expiresAt,
 			Unclaimed: identity == worksource.RunAdmissionIdentity,
 		})

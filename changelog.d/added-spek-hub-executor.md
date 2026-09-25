@@ -1,0 +1,1 @@
+- Add a hub-resident Spektacular spec/plan executor that can claim unclaimed run admission leases and author artifacts without an external ClankeR relay.

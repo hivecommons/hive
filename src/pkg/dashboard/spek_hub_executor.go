@@ -1,0 +1,402 @@
+package dashboard
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/timeline"
+	"github.com/hivecommons/hive/pkg/worksource"
+)
+
+const (
+	spekHubExecutorTaskPrefix = "run-hub-"
+	spekHubPromptRelPath      = ".hive/spek-stage-prompt.txt"
+	spekHubOutputTailBytes    = 64 * 1024
+	spekHubExecutorTier       = "trusted"
+	spekHubFailureReason      = "hub_executor_failed"
+	spekHubLeaseRenewInterval = 5 * time.Minute
+)
+
+type StageExecutor interface {
+	Tick(ctx context.Context, now time.Time)
+	Status() FrontendSpektacularHubExecutor
+}
+
+type SpekHubExecutor struct {
+	Server    *Server
+	Config    config.RunsConfig
+	Backend   string
+	Model     string
+	Identity  string
+	CloneAuth func(ctx context.Context, repo, dir string) ([]string, func(), error)
+	Logger    *slog.Logger
+	Exec      func(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error)
+	CloneURL  func(repo string) string
+	Artifact  func(runKey string) string
+
+	mu        sync.Mutex
+	inFlight  map[string]bool
+	failures  map[string]int
+	lastError string
+}
+
+type spekHubStage struct {
+	runKey, key, stage, identity, taskID, repo, title string
+	number                                            int
+	gen                                               uint64
+}
+
+type FrontendSpektacularHubExecutor struct {
+	Running   int    `json:"running"`
+	LastError string `json:"last_error,omitempty"`
+}
+
+func NewSpekHubExecutor(s *Server, runs config.RunsConfig, backend, model string, cloneAuth func(context.Context, string, string) ([]string, func(), error), logger *slog.Logger) *SpekHubExecutor {
+	return &SpekHubExecutor{
+		Server:    s,
+		Config:    runs,
+		Backend:   runs.Spektacular.HubExecutor.BackendOrDefault(backend),
+		Model:     firstSpekNonEmpty(strings.TrimSpace(runs.Spektacular.HubExecutor.Model), strings.TrimSpace(model)),
+		Identity:  runs.Spektacular.HubExecutor.IdentityOrDefault(),
+		CloneAuth: cloneAuth,
+		Logger:    logger,
+	}
+}
+
+func (e *SpekHubExecutor) Tick(ctx context.Context, now time.Time) {
+	if e == nil || e.Server == nil || !e.Config.Spektacular.Enabled || !e.Config.Spektacular.HubExecutorEnabled() {
+		return
+	}
+	stages, err := e.unclaimedStages()
+	if err != nil {
+		e.setLastError(err.Error())
+		return
+	}
+	for _, st := range stages {
+		if st.stage != StageSpec && st.stage != StagePlan {
+			continue
+		}
+		key := e.executionKey(st)
+		e.mu.Lock()
+		if e.inFlight == nil {
+			e.inFlight = map[string]bool{}
+		}
+		if e.failures == nil {
+			e.failures = map[string]int{}
+		}
+		if e.inFlight[key] || e.failures[key] >= e.maxAttempts() || e.runningLocked() >= 1 {
+			e.mu.Unlock()
+			continue
+		}
+		e.inFlight[key] = true
+		e.mu.Unlock()
+		go e.runStage(ctx, st, key)
+	}
+}
+
+func (e *SpekHubExecutor) Status() FrontendSpektacularHubExecutor {
+	if e == nil {
+		return FrontendSpektacularHubExecutor{}
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return FrontendSpektacularHubExecutor{Running: e.runningLocked(), LastError: e.lastError}
+}
+
+func (e *SpekHubExecutor) runStage(parent context.Context, st spekHubStage, key string) {
+	defer func() {
+		e.mu.Lock()
+		delete(e.inFlight, key)
+		e.mu.Unlock()
+	}()
+	ctx, cancel := context.WithTimeout(parent, e.Config.Spektacular.HubExecutor.Timeout())
+	defer cancel()
+	if err := e.executeStage(ctx, st); err != nil {
+		e.recordFailure(st, key, err)
+	}
+}
+
+func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) error {
+	now := time.Now().UTC()
+	taskID := spekHubExecutorTaskPrefix + sanitizeReceiptSegment(st.runKey) + "-" + st.stage + "-" + strconv.FormatUint(st.gen, 10)
+	if err := e.Server.contributeHub.recordLeaseForKeyStage(e.Identity, taskID, st.repo, st.number, st.key, spekHubExecutorTier, st.stage, st.gen, now); err != nil {
+		return err
+	}
+	stopRenew := e.startRenewing(ctx, taskID)
+	defer stopRenew()
+	if err := e.prepareWorkspace(ctx, st); err != nil {
+		return err
+	}
+	if err := e.Server.contributeHub.renewLease(e.Identity, taskID, time.Now().UTC()); err != nil {
+		e.log().Warn("[spektacular] hub executor lease renew failed", "task", taskID, "error", err)
+	}
+	worktree := runStageWorktreePath(e.Identity, st.runKey, st.stage, st.gen)
+	artifact := e.artifact(st.runKey)
+	prompt := SpekHubStagePrompt(st.stage, st.repo, st.number, st.runKey, st.title, artifact)
+	if err := writeSpekHubPrompt(worktree, prompt); err != nil {
+		return err
+	}
+	cmd, err := agent.HeadlessPromptCommand(e.backend(), e.Model, spekHubPromptRelPath)
+	if err != nil {
+		return err
+	}
+	out, err := e.runner()(ctx, worktree, os.Environ(), cmd[0], cmd[1:]...)
+	if err != nil {
+		return fmt.Errorf("agent CLI failed: %w: %s", err, tailString(string(out), spekHubOutputTailBytes))
+	}
+	return nil
+}
+
+func (e *SpekHubExecutor) startRenewing(ctx context.Context, taskID string) func() {
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(spekHubLeaseRenewInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := e.Server.contributeHub.renewLease(e.Identity, taskID, time.Now().UTC()); err != nil {
+					e.log().Warn("[spektacular] hub executor lease renew failed", "task", taskID, "error", err)
+				}
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			}
+		}
+	}()
+	return func() { close(done) }
+}
+
+func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage) error {
+	repoDir := filepath.Join(agentWorkspaceRoot, e.Identity, filepath.FromSlash(st.repo))
+	if err := os.MkdirAll(filepath.Dir(repoDir), 0o755); err != nil {
+		return err
+	}
+	authArgs, cleanup, err := e.cloneAuthArgs(ctx, st.repo, filepath.Dir(repoDir))
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	runGit := func(dir string, args ...string) error {
+		full := append([]string{}, authArgs...)
+		full = append(full, args...)
+		out, err := e.runner()(ctx, dir, os.Environ(), "git", full...)
+		if err != nil {
+			return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, tailString(string(out), spekHubOutputTailBytes))
+		}
+		return nil
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, ".git")); err != nil {
+		if err := runGit(filepath.Dir(repoDir), "clone", "--no-checkout", e.cloneURL(st.repo), filepath.Base(repoDir)); err != nil {
+			return err
+		}
+	}
+	if err := runGit(repoDir, "fetch", "origin", "HEAD"); err != nil {
+		return err
+	}
+	worktree := runStageWorktreePath(e.Identity, st.runKey, st.stage, st.gen)
+	if _, err := os.Stat(worktree); errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
+			return err
+		}
+		if err := runGit(repoDir, "worktree", "add", "--detach", worktree, "FETCH_HEAD"); err != nil {
+			return err
+		}
+	}
+	if _, err := os.Stat(filepath.Join(worktree, ".spektacular")); errors.Is(err, os.ErrNotExist) {
+		if _, err := e.runner()(ctx, worktree, os.Environ(), "spektacular", "init", spekInitAgent(e.backend()), "--name", filepath.Base(st.repo)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *SpekHubExecutor) cloneAuthArgs(ctx context.Context, repo, dir string) ([]string, func(), error) {
+	if e.CloneAuth == nil {
+		return nil, func() {}, nil
+	}
+	return e.CloneAuth(ctx, repo, dir)
+}
+
+func (e *SpekHubExecutor) recordFailure(st spekHubStage, key string, err error) {
+	e.mu.Lock()
+	if e.failures == nil {
+		e.failures = map[string]int{}
+	}
+	e.failures[key]++
+	attempts := e.failures[key]
+	e.lastError = err.Error()
+	e.mu.Unlock()
+	attrs := map[string]string{
+		stageAttrRunKey:   st.runKey,
+		stageAttrStage:    st.stage,
+		stageAttrGen:      strconv.FormatUint(st.gen, 10),
+		stageAttrReason:   spekHubFailureReason,
+		stageAttrAttempts: strconv.Itoa(attempts),
+		"waiting_on":      worksource.RunWaitingOnHuman,
+	}
+	e.Server.AgentAuditSink().Record("system", agent.AuditLeaseStageRefused, st.taskID, agent.Fields("run", st.runKey, "stage", st.stage, "gen", st.gen, "reason", spekHubFailureReason, "error", tailString(err.Error(), spekHubOutputTailBytes), "attempts", attempts))
+	e.Server.LifecycleTimeline().Record(timeline.Event{IssueRef: st.runKey, Kind: timeline.KindBlocked, At: time.Now().UnixMilli(), Attrs: attrs})
+	e.log().Warn("[spektacular] hub executor failed", "run", st.runKey, "stage", st.stage, "attempts", attempts, "error", err)
+}
+
+func (e *SpekHubExecutor) unclaimedStages() ([]spekHubStage, error) {
+	out := []spekHubStage{}
+	err := e.Server.VisitActiveStageLeases(func(runKey, key, stage, identity, taskID, repo string, gen uint64, expiresAt time.Time) {
+		if identity != runAdmissionIdentity && identity != worksource.RunAdmissionIdentity {
+			return
+		}
+		number := 0
+		if ref, ok := worksource.ParseKey(runKey); ok {
+			number = ref.Number
+		}
+		out = append(out, spekHubStage{runKey: runKey, key: key, stage: stage, identity: identity, taskID: taskID, repo: repo, number: number, gen: gen})
+	})
+	for i := range out {
+		out[i].title = e.Server.stageLeaseTitle(out[i].identity, out[i].taskID)
+	}
+	return out, err
+}
+
+func (s *Server) stageLeaseTitle(identity, taskID string) string {
+	if s == nil || s.contributeHub == nil {
+		return ""
+	}
+	s.contributeHub.leaseMu.Lock()
+	defer s.contributeHub.leaseMu.Unlock()
+	if l := s.contributeHub.leaseForLocked(identity, taskID); l != nil {
+		return l.title
+	}
+	return ""
+}
+
+func (e *SpekHubExecutor) executionKey(st spekHubStage) string {
+	return st.runKey + "\x1f" + st.stage + "\x1f" + strconv.FormatUint(st.gen, 10)
+}
+
+func (e *SpekHubExecutor) maxAttempts() int { return e.Config.MaxStageRetriesOrDefault() }
+
+func (e *SpekHubExecutor) runningLocked() int {
+	n := 0
+	for _, running := range e.inFlight {
+		if running {
+			n++
+		}
+	}
+	return n
+}
+
+func (e *SpekHubExecutor) setLastError(msg string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.lastError = msg
+}
+
+func (e *SpekHubExecutor) runner() func(context.Context, string, []string, string, ...string) ([]byte, error) {
+	if e.Exec != nil {
+		return e.Exec
+	}
+	return func(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+		var buf bytes.Buffer
+		cmd := exec.CommandContext(ctx, name, args...)
+		cmd.Dir = dir
+		cmd.Env = env
+		cmd.Stdout = &buf
+		cmd.Stderr = &buf
+		err := cmd.Run()
+		return buf.Bytes(), err
+	}
+}
+
+func (e *SpekHubExecutor) cloneURL(repo string) string {
+	if e.CloneURL != nil {
+		return e.CloneURL(repo)
+	}
+	return "https://github.com/" + strings.TrimSpace(repo) + ".git"
+}
+
+func (e *SpekHubExecutor) artifact(runKey string) string {
+	if e.Artifact != nil {
+		return e.Artifact(runKey)
+	}
+	return sanitizeRunPromptPath(runKey)
+}
+
+func (e *SpekHubExecutor) backend() string {
+	if b := strings.TrimSpace(e.Backend); b != "" {
+		return b
+	}
+	return config.DefaultSpektacularHubExecutorBackend
+}
+
+func (e *SpekHubExecutor) log() *slog.Logger {
+	if e.Logger != nil {
+		return e.Logger
+	}
+	return slog.Default()
+}
+
+func writeSpekHubPrompt(worktree, prompt string) error {
+	path := filepath.Join(worktree, spekHubPromptRelPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(prompt), 0o600)
+}
+
+func SpekHubStagePrompt(stage, repo string, number int, runKey, title, artifact string) string {
+	issue := runKey
+	if repo != "" && number > 0 {
+		issue = repo + "#" + strconv.Itoa(number)
+	}
+	title = strings.TrimSpace(title)
+	var b strings.Builder
+	fmt.Fprintf(&b, "Hive-Run: %s\n\n", runKey)
+	switch stage {
+	case StagePlan:
+		fmt.Fprintf(&b, "You are authoring a Spektacular plan for GitHub issue %s %q in this repository checkout. Read the issue with `gh issue view %d --repo %s` (if `gh` is available; otherwise use the GitHub API) and the relevant code. Use the `spektacular` CLI (already on PATH): run `spektacular plan new --data '{\"name\":\"%s\",\"spec\":\"%s\"}'`, then follow each step it returns (`spektacular plan status %s` shows the current step and its instruction; `spektacular plan file ...` reads/writes the plan document) until the plan's `document_status` is `final`. Do not implement code, do not commit, do not push, do not open PRs. Stop when `spektacular plan status %s` reports `document_status: final`.", issue, title, number, repo, artifact, artifact, artifact, artifact)
+	default:
+		fmt.Fprintf(&b, "You are authoring a Spektacular spec for GitHub issue %s %q in this repository checkout. Read the issue with `gh issue view %d --repo %s` (if `gh` is available; otherwise use the GitHub API) and the relevant code. Use the `spektacular` CLI (already on PATH): run `spektacular spec new --data '{\"name\":\"%s\"}'`, then follow each step it returns (`spektacular spec status %s` shows the current step and its instruction; `spektacular spec file ...` reads/writes the spec document) until the spec's `document_status` is `final`. Do not implement code, do not commit, do not push, do not open PRs. Stop when `spektacular spec status %s` reports `document_status: final`.", issue, title, number, repo, artifact, artifact, artifact)
+	}
+	return b.String()
+}
+
+func spekInitAgent(backend string) string {
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case "bob":
+		return "bob"
+	case "codex":
+		return "codex"
+	default:
+		return "claude"
+	}
+}
+
+func tailString(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[len(s)-max:]
+}
+
+func firstSpekNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}

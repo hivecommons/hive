@@ -97,6 +97,10 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		SpektacularEnabled        *bool     `json:"spektacularEnabled"`
 		SpektacularBinary         *string   `json:"spektacularBinary"`
 		SpektacularPollS          *int      `json:"spektacularPollS"`
+		SpektacularHubExecutor    *bool     `json:"spektacularHubExecutor"`
+		SpektacularHubBackend     *string   `json:"spektacularHubExecutorBackend"`
+		SpektacularHubModel       *string   `json:"spektacularHubExecutorModel"`
+		SpektacularHubTimeoutS    *int      `json:"spektacularHubExecutorTimeoutS"`
 		MaxStageRetries           *int      `json:"maxStageRetries"`
 		RunStages                 *bool     `json:"runStages"`
 		TriageEnabled             *bool     `json:"triageEnabled"`
@@ -173,6 +177,10 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	}
 	if body.SpektacularPollS != nil && *body.SpektacularPollS <= 0 {
 		jsonError(w, "spektacular poll interval must be positive", http.StatusBadRequest)
+		return
+	}
+	if body.SpektacularHubTimeoutS != nil && *body.SpektacularHubTimeoutS <= 0 {
+		jsonError(w, "spektacular hub executor timeout must be positive", http.StatusBadRequest)
 		return
 	}
 	if body.MaxStageRetries != nil && *body.MaxStageRetries < 0 {
@@ -369,6 +377,19 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.SpektacularPollS != nil {
 		cfg.Runs.Spektacular.PollIntervalS = *body.SpektacularPollS
 	}
+	if body.SpektacularHubExecutor != nil {
+		v := *body.SpektacularHubExecutor
+		cfg.Runs.Spektacular.HubExecutor.Enabled = &v
+	}
+	if body.SpektacularHubBackend != nil {
+		cfg.Runs.Spektacular.HubExecutor.Backend = strings.TrimSpace(*body.SpektacularHubBackend)
+	}
+	if body.SpektacularHubModel != nil {
+		cfg.Runs.Spektacular.HubExecutor.Model = strings.TrimSpace(*body.SpektacularHubModel)
+	}
+	if body.SpektacularHubTimeoutS != nil {
+		cfg.Runs.Spektacular.HubExecutor.TimeoutSeconds = *body.SpektacularHubTimeoutS
+	}
 	if body.MaxStageRetries != nil {
 		cfg.Runs.MaxStageRetries = *body.MaxStageRetries
 	}
@@ -559,6 +580,10 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"spektacularEnabled":              cfg.Runs.Spektacular.Enabled,
 		"spektacularBinary":               cfg.Runs.Spektacular.Binary,
 		"spektacularPollS":                int(cfg.Runs.Spektacular.PollInterval().Seconds()),
+		"spektacularHubExecutor":          cfg.Runs.Spektacular.HubExecutorEnabled(),
+		"spektacularHubExecutorBackend":   cfg.Runs.Spektacular.HubExecutor.BackendOrDefault(""),
+		"spektacularHubExecutorModel":     cfg.Runs.Spektacular.HubExecutor.Model,
+		"spektacularHubExecutorTimeoutS":  int(cfg.Runs.Spektacular.HubExecutor.Timeout().Seconds()),
 		"maxStageRetries":                 cfg.Runs.MaxStageRetriesOrDefault(),
 		"runStages":                       cfg.Governor.WorkSource.RunStages,
 		"triageEnabled":                   cfg.Runs.Triage.Enabled,

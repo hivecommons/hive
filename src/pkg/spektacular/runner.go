@@ -17,8 +17,11 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // DocumentStatus is the #8301 `document_status` value.
@@ -94,6 +97,36 @@ func ArtifactKey(name string) string {
 		key = key[:len(key)-len(ext)]
 	}
 	return strings.TrimSpace(key)
+}
+
+// RunArtifactName turns a GitHub issue run key (owner/repo#N) into a
+// Spektacular-safe slug. Legacy file-address keys should continue through
+// ArtifactKey instead.
+func RunArtifactName(runKey string) string {
+	ref, ok := worksource.ParseKey(runKey)
+	if !ok || !ref.IsGitHubIssue() {
+		return ArtifactKey(runKey)
+	}
+	raw := strings.ToLower(ref.Repo + "-" + strconv.Itoa(ref.Number))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range raw {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if ok {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "run"
+	}
+	return out
 }
 
 // markdownExt returns the markdown extension name carries, or "".
