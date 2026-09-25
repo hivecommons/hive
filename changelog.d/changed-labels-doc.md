@@ -1,0 +1,1 @@
+- Added an authoritative operator reference for Hive labels and control signals, replacing the short issue-label page and documenting how holds, approvals, contributor skips, planning labels, and dashboard bands affect work selection.

@@ -608,7 +608,7 @@ On a drop, reconnection backs off starting at 1 second and doubling to a
 30-second cap, and the reconciliation loop's cadence drops back from 60s to 5s
 immediately along with an out-of-cycle fetch, so the fallback's first data
 does not wait out a whole interval. The activity loop (Tokens, Events) is
-unaffected by any of this — see [The four panes](#the-four-panes) above.
+unaffected by any of this — see [The panes](#the-panes) above.
 
 #### Terminal size, help, resize, and quit
 
