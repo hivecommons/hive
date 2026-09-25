@@ -2635,15 +2635,11 @@
     .section-chevron.collapsed { transform: rotate(-90deg); }
     .section-body {
       overflow: hidden; transition: max-height 200ms ease, opacity 200ms ease;
-      max-height: 5000px; opacity: 1;
+      max-height: none; opacity: 1;
     }
     .section-body.collapsed {
       max-height: 0 !important; opacity: 0; pointer-events: none;
     }
-    /* A section that groups other collapsible sections (Hive Advisory). The
-       stock 5000px cap is sized for one panel; five nested panels overflow it
-       and the tail gets clipped by the overflow:hidden above. */
-    .section-body.section-group-body { max-height: 40000px; }
     .section-group-header {
       font-size: var(--fs-sm); border-bottom: 1px solid var(--border);
       padding-bottom: var(--sp-3);
@@ -4145,6 +4141,8 @@
     const SECTION_LS_PREFIX = 'hive-section-collapsed-';
     const AGENT_COMPACT_LS_PREFIX = 'hive-agent-compact-';
     const SECTION_TRANSITION_MS = 200;
+    const SECTION_EXPANDED_MAX_HEIGHT = 'none';
+    const SECTION_MAX_HEIGHT_PROPERTY = 'max-height';
     const ALL_AGENTS_COMPACT_KEY = 'hive-all-agents-compact';
 
     const STATUS = Object.freeze({
@@ -4201,13 +4199,48 @@
         localStorage.removeItem(SECTION_LS_PREFIX + sectionId);
       }
     }
+    /** Remove the expanded max-height cap after the max-height transition finishes. */
+    function releaseSectionMaxHeightAfterTransition(body) {
+      if (!body) return;
+      let done = false;
+      const release = () => {
+        if (done) return;
+        done = true;
+        body.removeEventListener('transitionend', onEnd);
+        if (!body.classList.contains('collapsed')) body.style.maxHeight = SECTION_EXPANDED_MAX_HEIGHT;
+      };
+      const onEnd = (event) => {
+        if (event.target === body && event.propertyName === SECTION_MAX_HEIGHT_PROPERTY) release();
+      };
+      body.addEventListener('transitionend', onEnd);
+      setTimeout(release, SECTION_TRANSITION_MS);
+    }
+    /** Reflect a section's collapsed state onto the body while keeping transitions animated. */
+    function applySectionBodyCollapse(body, collapsed, animate) {
+      if (!body) return;
+      if (collapsed) {
+        if (animate) {
+          body.style.maxHeight = body.scrollHeight + 'px';
+          void body.offsetHeight;
+        }
+        body.classList.add('collapsed');
+      } else {
+        body.classList.remove('collapsed');
+        if (animate) {
+          body.style.maxHeight = body.scrollHeight + 'px';
+          releaseSectionMaxHeightAfterTransition(body);
+        } else {
+          body.style.maxHeight = SECTION_EXPANDED_MAX_HEIGHT;
+        }
+      }
+    }
     /** Toggle a section's collapsed state and animate */
     function toggleSection(sectionId) {
       const collapsed = !isSectionCollapsed(sectionId);
       setSectionCollapsed(sectionId, collapsed);
       const body = document.querySelector(`#${sectionId} .section-body`);
       const chevron = document.querySelector(`#${sectionId} .section-chevron`);
-      if (body) body.classList.toggle('collapsed', collapsed);
+      applySectionBodyCollapse(body, collapsed, true);
       if (chevron) chevron.classList.toggle('collapsed', collapsed);
     }
     /** Apply persisted collapsed state to a section after render */
@@ -4215,7 +4248,7 @@
       const collapsed = isSectionCollapsed(sectionId);
       const body = document.querySelector(`#${sectionId} .section-body`);
       const chevron = document.querySelector(`#${sectionId} .section-chevron`);
-      if (body) body.classList.toggle('collapsed', collapsed);
+      applySectionBodyCollapse(body, collapsed, false);
       if (chevron) chevron.classList.toggle('collapsed', collapsed);
     }
     /** Check whether an agent card should be compact */

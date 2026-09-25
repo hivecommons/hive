@@ -1,0 +1,1 @@
+- Fix dashboard section expansion so tall Repositories, Beads, and Agents content is no longer clipped by a fixed max-height cap.
