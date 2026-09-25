@@ -4565,6 +4565,10 @@ func (h *ContributeWSHub) cleanupLoop() {
 				h.server.tickStageRunner(time.Now())
 			}
 
+			// A run stage waiting on a taker must outlive leaseTTL; extend those
+			// BEFORE the prune below can drop them.
+			h.keepPendingStageLeasesAlive(time.Now())
+
 			// #5681: drop leases that aged out without ever being looked up — a relay
 			// that never came back after a restart leaves one behind, and it would
 			// otherwise keep its issue out of the assignment pool until the process

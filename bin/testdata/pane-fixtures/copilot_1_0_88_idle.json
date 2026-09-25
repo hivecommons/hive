@@ -1,0 +1,11 @@
+{
+  "backend": "copilot",
+  "tailLines": 15,
+  "expect": {
+    "getCLIState": "ready",
+    "classifyTmuxPane": "PANE_STATE_IDLE_COMPLETE",
+    "paneShowsInputPrompt": true,
+    "paneShowsActiveWork": false
+  },
+  "note": "Real tmux capture-pane -p dump of GitHub Copilot CLI 1.0.88 idle after a completed turn. The footer is \"← open sidebar · autopilot · / commands · tab next tab\": the old \"/ commands for help\" wording is gone, which made classifyReadiness report every 1.0.88 relay as never ready."
+}

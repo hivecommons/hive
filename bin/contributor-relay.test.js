@@ -3744,6 +3744,28 @@ test('task_unavailable on the active hub rotates the poll slot to the next hub',
   } finally { teardown(relay); }
 });
 
+test('task_unavailable rotation skips a configured hub whose socket is down instead of parking ready on it', () => {
+  const relay = loadRelay({ env: {
+    HIVE_HUB: 'wss://hub-a.example/contribute,ws://127.0.0.1:1/contribute,wss://hub-c.example/contribute',
+    HIVE_REGISTRATION_TOKEN: 'tok-a,tok-dead,tok-c',
+  } });
+  try {
+    const hubs = relay.getHubs();
+    const sentA = [], sentC = [];
+    hubs[0].ws = { readyState: 1, send: p => sentA.push(JSON.parse(p)) };
+    hubs[1].ws = null; // never connected (ECONNREFUSED, in reconnect backoff)
+    hubs[2].ws = { readyState: 1, send: p => sentC.push(JSON.parse(p)) };
+    relay.setCliReady(true);
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }), hubs[0]);
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c3', trust_tier: 'contributor' }), hubs[2]);
+    assert.deepStrictEqual(sentA.map(m => m.type), ['ready']);
+    withImmediateTimers(() => {
+      relay.handleMessage(JSON.stringify({ type: 'task_unavailable', reason: 'no_matching_work' }), hubs[0]);
+    });
+    assert.deepStrictEqual(sentC.map(m => m.type), ['ready'], 'the dead hub was skipped and the live hub C asked for work');
+  } finally { teardown(relay); }
+});
+
 test('currentTask stays JSON-serializable after task_assign attaches its owning hub', () => {
   const relay = loadRelay({ env: MULTI_HUB_ENV });
   try {
@@ -10425,6 +10447,20 @@ test('pane-classifier: classifyReadiness reads backend-specific ready/login/onbo
     paneClassifier.classifyReadiness('Do you trust the contents of this directory?', 'codex'),
     'onboarding');
   assert.strictEqual(paneClassifier.classifyReadiness('$ ', 'goose'), 'starting');
+});
+
+test('pane-classifier: copilot 1.0.88 footer chrome ("/ commands" without "for help") is ready/idle, "Working … esc interrupt" is busy', () => {
+  const fixture = (name) => fs.readFileSync(path.join(PANE_FIXTURES_DIR, `${name}.pane.txt`), 'utf8');
+  assert.strictEqual(paneClassifier.classifyReadiness(fixture('copilot_1_0_88_idle'), 'copilot'), 'ready');
+  assert.strictEqual(paneClassifier.classifyReadiness(fixture('copilot_1_0_88_busy'), 'copilot'), 'starting');
+  assert.strictEqual(
+    paneClassifier.classifyPane(fixture('copilot_1_0_88_idle'), 'copilot'), paneClassifier.PANE_STATE_IDLE_COMPLETE);
+  assert.strictEqual(
+    paneClassifier.classifyPane(fixture('copilot_1_0_88_busy'), 'copilot'), paneClassifier.PANE_STATE_WORKING);
+  // The pre-1.0.88 footer keeps working.
+  assert.strictEqual(paneClassifier.classifyReadiness('/ commands for help\n', 'copilot'), 'ready');
+  assert.strictEqual(
+    paneClassifier.classifyPane('/ commands for help\nesc cancel\n', 'copilot'), paneClassifier.PANE_STATE_WORKING);
 });
 
 test('pane-classifier: OMP captured chrome distinguishes ready, onboarding, login, busy, idle, and verdict states', () => {

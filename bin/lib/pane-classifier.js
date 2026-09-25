@@ -27,6 +27,15 @@
 
 'use strict';
 
+// Copilot CLI footer chrome. Older builds drew "/ commands for help" at the
+// idle prompt; 1.0.88+ draws "← open sidebar · autopilot · / commands · tab
+// next tab" and, mid-turn, "◉ Working - autopilot esc interrupt" (older
+// builds: "esc cancel"). Match the stable "/ commands" token rather than the
+// trailing help word so a footer re-wording does not make every relay report
+// the CLI as never ready.
+const COPILOT_IDLE_CHROME = /\/ commands/;
+const COPILOT_BUSY_CHROME = /esc cancel|esc interrupt|esc to interrupt|◉ Working/;
+
 // Interactive pane classifier states. Keep this vocabulary small and explicit:
 // "not complete" splits into active work vs. human input needed so the relay
 // never reports success for a turn that is actually sitting at a question.
@@ -300,7 +309,7 @@ function classifyReadiness(text, backend) {
     } else if (backend === 'copilot') {
       if (/copilot login|gh auth login/.test(text)) return 'needs-login';
       if (/Confirm folder trust|trust the files|Do you trust/.test(text)) return 'onboarding';
-      if (/\/ commands.*help/.test(text)) return 'ready';
+      if (COPILOT_IDLE_CHROME.test(text)) return 'ready';
     } else if (backend === 'gemini') {
       if (/not authenticated|login required/i.test(text)) return 'needs-login';
       if (/>\s*$|❯/.test(text)) return 'ready';
@@ -812,9 +821,9 @@ function classifyPane(text, backend, deps = {}) {
     isWorking = claudeBusyMarker ||
       (!hasIdlePrompt && (/─.*Bash\(|Reading|Editing|Writing|Searching/.test(claudeTail) || /ing…/.test(claudeTail)));
   } else if (backend === 'copilot') {
-    hasIdlePrompt = /\/ commands.*help/.test(text);
+    hasIdlePrompt = COPILOT_IDLE_CHROME.test(text);
     hasCompletionMarker = true;
-    isWorking = /esc cancel/.test(text);
+    isWorking = COPILOT_BUSY_CHROME.test(text);
   } else if (backend === 'gemini') {
     hasIdlePrompt = />\s*$|❯\s*$/.test(text);
     hasCompletionMarker = /completed|Done|finished/i.test(text);
