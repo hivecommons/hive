@@ -18,7 +18,7 @@ func TestCovD_QueryCLIModels(t *testing.T) {
 	s := NewServer(0, logger)
 
 	swapAgyModelsProbe(t, func() ([]string, error) { return nil, errors.New("agy binary not installed") })
-	backends := []string{"claude", "codex", "copilot", "gemini", "goose", "agy"}
+	backends := []string{"claude", "codex", "copilot", "gemini", "goose", "pi", "agy"}
 	for _, b := range backends {
 		r := s.queryCLIModels(b)
 		if len(r.models) == 0 {
@@ -42,11 +42,14 @@ func TestCovD_QueryCLIModels(t *testing.T) {
 
 // TestCovD_CLIStaticFallback covers cliStaticFallback for all backends.
 func TestCovD_CLIStaticFallback(t *testing.T) {
-	for _, b := range []string{"copilot", "gemini", "claude", "codex", "goose", "agy", "nope"} {
+	for _, b := range []string{"copilot", "gemini", "claude", "codex", "goose", "pi", "agy", "nope"} {
 		_ = cliStaticFallback(b)
 	}
 	if cliStaticFallback("goose")[0] != "default" {
 		t.Error("goose fallback should be [default]")
+	}
+	if !containsStrCovD(cliStaticFallback("pi"), "kiro-api-key/claude-opus-5:high") {
+		t.Error("pi fallback should include documented Kiro model ids")
 	}
 	if cliStaticFallback("nope") != nil {
 		t.Error("unknown backend fallback should be nil")

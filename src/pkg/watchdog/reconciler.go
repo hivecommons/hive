@@ -764,7 +764,17 @@ func (r *Reconciler) reconcileAuth(ctx context.Context, name string, obs Observa
 	// False -> Unknown rather than False -> True, and the "needs
 	// re-authentication" banner would stand over a credential that no longer
 	// needs anything from them.
-	if r.alerter != nil && prev.Status == ConditionFalse && (status == ConditionTrue || healable) {
+	//
+	// Clear on ANY exit from False, not only to True. A running copilot/codex
+	// agent has no positive credential signal (AgentAuthState answers
+	// unknown, and no provider probe may be configured), so once its pane
+	// stops showing login chrome the verdict settles at Unknown/NoProbe and
+	// can never reach True. Waiting for True left the banner up for good
+	// over an agent that was visibly working, raised by a single sighting
+	// of login text. The alert asserts evidence of a credential failure;
+	// once that evidence is gone it must go too, and a genuine failure
+	// re-raises it on the next False transition.
+	if r.alerter != nil && prev.Status == ConditionFalse && status != ConditionFalse {
 		r.alerter.ClearSystemAlert(authAlertID(name))
 	}
 }

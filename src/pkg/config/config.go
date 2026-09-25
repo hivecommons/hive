@@ -3390,6 +3390,16 @@ const (
 	BobV2SettingsRelPath = ".bob/settings/settings.json"
 	BobV2ProviderKey     = "provider"
 	BobV2ProviderHarness = "harness"
+	BobV2ShellKey        = "bobShell"
+	BobV2AutoUpdateKey   = "autoUpdate"
+
+	// BobLegacyGeneralKey and the disable keys cover bob/gemini-lineage 1.x
+	// settings shapes. They are harmless for versions that ignore them, and
+	// keep auto-update disabled on lagging images while v2 uses
+	// bobShell.autoUpdate=false in BobV2SettingsRelPath.
+	BobLegacyGeneralKey           = "general"
+	BobLegacyDisableAutoUpdateKey = "disableAutoUpdate"
+	BobLegacyDisableUpdateNagKey  = "disableUpdateNag"
 
 	// BobSettingsAuthKey / BobSettingsSelectedTypeKey / BobSettingsEnforcedTypeKey
 	// are the nested JSON keys hive owns inside that file. Shape per bundle:
@@ -5407,10 +5417,18 @@ func Load(path string) (*Config, error) {
 	return LoadWithOverrides(path, "")
 }
 
+func LoadForHub(path string) (*Config, error) {
+	return loadWithOverrides(path, "", ValidateOptions{RequireAgents: false})
+}
+
 // LoadWithOverrides reads hive.yaml and applies a config.env override file.
 // If envPath is empty, it looks for config.env next to hive.yaml, then at
 // /etc/hive/config.env. Pass "-" to skip config.env entirely.
 func LoadWithOverrides(path, envPath string) (*Config, error) {
+	return loadWithOverrides(path, envPath, ValidateOptions{RequireAgents: true})
+}
+
+func loadWithOverrides(path, envPath string, validateOpts ValidateOptions) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading config %s: %w", path, err)
@@ -5460,7 +5478,7 @@ func LoadWithOverrides(path, envPath string) (*Config, error) {
 		return nil, fmt.Errorf("expanding agent replicas: %w", err)
 	}
 
-	if err := cfg.validate(); err != nil {
+	if err := cfg.validateWithOptions(validateOpts); err != nil {
 		return nil, fmt.Errorf("validating config: %w", err)
 	}
 
@@ -5481,7 +5499,15 @@ func LoadWithOverrides(path, envPath string) (*Config, error) {
 // its scanner back to the L2/L3 advisory template at runtime). Applying the
 // overlay here keeps the reload consistent with boot.
 func LoadWithDashboardOverlay(path string) (*Config, error) {
-	cfg, err := Load(path)
+	return loadWithDashboardOverlay(path, ValidateOptions{RequireAgents: true})
+}
+
+func LoadWithDashboardOverlayForHub(path string) (*Config, error) {
+	return loadWithDashboardOverlay(path, ValidateOptions{RequireAgents: false})
+}
+
+func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Config, error) {
+	cfg, err := loadWithOverrides(path, "", validateOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -6576,7 +6602,11 @@ func (g GovernorConfig) isGatewayName(backend string) bool {
 }
 
 func (c *Config) validate() error {
-	return c.Validate()
+	return c.validateWithOptions(ValidateOptions{RequireAgents: true})
+}
+
+func (c *Config) validateWithOptions(opts ValidateOptions) error {
+	return c.ValidateWithOptions(opts)
 }
 
 func validateChannels(agentName string, channels []ChannelConfig) error {

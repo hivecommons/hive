@@ -227,6 +227,13 @@ func (m *Manager) verifyBobStateDirsWritable(agentName, home, workDir string, ui
 // It is called on EVERY bob launch, so an out-of-band write self-heals on the
 // next launch rather than persisting until someone notices.
 //
+// It also disables bob self-update in every known settings shape. Hive images
+// pin bob explicitly, and agents run as non-root UIDs, so a runtime
+// `npm install -g` into root-owned /usr/local fails with EACCES and paints a
+// red error in every pane. bobshell 2.0.4 reads bobShell.autoUpdate from
+// ~/.bob/settings/settings.json; older bob/gemini-lineage builds use
+// disableAutoUpdate / disableUpdateNag keys in ~/.bob/settings.json.
+//
 // The merge is deliberately key-scoped: the file also holds instanceId,
 // teamId, licenseConsent, isNotFirstTime, prev_version and ibm_secrets, and
 // clobbering licenseConsent alone would make bob hard-error on startup. Unknown
@@ -274,6 +281,7 @@ func (m *Manager) ensureBobV1AuthSettings(agentName, home string) {
 	}
 
 	changed := setBobAuthBlock(settings)
+	changed = setBobLegacyUpdateBlock(settings) || changed
 	if !changed {
 		return
 	}
@@ -326,10 +334,15 @@ func (m *Manager) ensureBobV2AuthSettings(agentName, home string) {
 		return
 	}
 
-	if cur, _ := settings[config.BobV2ProviderKey].(string); cur == config.BobV2ProviderHarness {
+	changed := false
+	if cur, _ := settings[config.BobV2ProviderKey].(string); cur != config.BobV2ProviderHarness {
+		settings[config.BobV2ProviderKey] = config.BobV2ProviderHarness
+		changed = true
+	}
+	changed = setBobV2AutoUpdateDisabled(settings) || changed
+	if !changed {
 		return
 	}
-	settings[config.BobV2ProviderKey] = config.BobV2ProviderHarness
 
 	out, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -381,4 +394,48 @@ func setBobAuthBlock(settings map[string]any) bool {
 		}
 	}
 	return changed
+}
+
+func setBobLegacyUpdateBlock(settings map[string]any) bool {
+	changed := false
+	for _, key := range []string{
+		config.BobLegacyDisableAutoUpdateKey,
+		config.BobLegacyDisableUpdateNagKey,
+	} {
+		if cur, _ := settings[key].(bool); !cur {
+			settings[key] = true
+			changed = true
+		}
+	}
+
+	general, ok := settings[config.BobLegacyGeneralKey].(map[string]any)
+	if !ok {
+		general = map[string]any{}
+		settings[config.BobLegacyGeneralKey] = general
+		changed = true
+	}
+	for _, key := range []string{
+		config.BobLegacyDisableAutoUpdateKey,
+		config.BobLegacyDisableUpdateNagKey,
+	} {
+		if cur, _ := general[key].(bool); !cur {
+			general[key] = true
+			changed = true
+		}
+	}
+	return changed
+}
+
+func setBobV2AutoUpdateDisabled(settings map[string]any) bool {
+	shell, ok := settings[config.BobV2ShellKey].(map[string]any)
+	changed := !ok
+	if !ok {
+		shell = map[string]any{}
+		settings[config.BobV2ShellKey] = shell
+	}
+	if cur, exists := shell[config.BobV2AutoUpdateKey].(bool); exists && !cur {
+		return changed
+	}
+	shell[config.BobV2AutoUpdateKey] = false
+	return true
 }

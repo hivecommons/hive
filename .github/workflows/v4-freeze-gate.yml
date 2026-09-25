@@ -32,6 +32,11 @@ on:
     types: [opened, reopened, synchronize, labeled, unlabeled]
     branches: [v4]
 
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

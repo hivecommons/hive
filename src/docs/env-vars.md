@@ -212,7 +212,7 @@ Inside an **agent** session (set by the hive, never by the operator): ISSUES_ONL
 
 | Variable | Required | Default | Purpose |
 |---|---:|---|---|
-| `HIVE_AGY_LAUNCH_MODE` | No | `headless` | Controls server-managed `agy` agents. The default headless shim leaves the tmux pane at a shell prompt and runs each kick as `agy -p`, avoiding the upstream interactive TUI CPU wake loop tracked in google-antigravity/antigravity-cli#945. Set to `interactive` (or `tui`) to opt back into the old attachable TUI launch. |
+| `HIVE_AGY_LAUNCH_MODE` | No | `headless` | Controls server-managed `agy` agents. The default headless shim leaves the tmux pane at a shell prompt and runs each kick as one `hive agy-turn` (agy stream-json on stdin, conversation resumed by id across kicks), avoiding the upstream interactive TUI CPU wake loop tracked in google-antigravity/antigravity-cli#945. Set to `interactive` (or `tui`) to opt back into the old attachable TUI launch. |
 
 ## Inside an agent session
 

@@ -1,8 +1,11 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -302,8 +305,8 @@ func readTokenAccessEvent(logger *slog.Logger, path string) ([]byte, bool) {
 		}
 		return nil, false
 	}
-	var event map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &event); err != nil || event == nil {
+	event, err := decodeTokenAccessObject(raw)
+	if err != nil || event == nil {
 		if logger != nil {
 			logger.Warn("token-access audit: dropping event that is not a JSON object",
 				slog.String("event", filepath.Base(path)))
@@ -322,4 +325,48 @@ func readTokenAccessEvent(logger *slog.Logger, path string) ([]byte, bool) {
 		return nil, false
 	}
 	return line, true
+}
+
+func decodeTokenAccessObject(raw []byte) (map[string]json.RawMessage, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
+		return nil, fmt.Errorf("event is not an object")
+	}
+	event := make(map[string]json.RawMessage)
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		key, ok := tok.(string)
+		if !ok {
+			return nil, fmt.Errorf("object key is not a string")
+		}
+		if _, exists := event[key]; exists {
+			return nil, fmt.Errorf("duplicate key %q", key)
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return nil, err
+		}
+		event[key] = value
+	}
+	tok, err = dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '}' {
+		return nil, fmt.Errorf("event object not closed")
+	}
+	if tok, err = dec.Token(); err != io.EOF {
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("trailing JSON token %v", tok)
+	}
+	return event, nil
 }

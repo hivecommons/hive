@@ -1,0 +1,100 @@
+# Loads the netfilter kernel modules the hive forced-egress gate needs
+# (xt_REDIRECT, xt_owner) on every worker node, WITHOUT a MachineConfig or a
+# node reboot. See src/docs/net-admin-requirement.md ("Missing netfilter
+# modules").
+#
+# Cluster-scoped and privileged on purpose: modprobe runs in the host's root
+# via chroot /host. Apply once per cluster, not per hive:
+#   kubectl apply -f src/deploy/k8s/node-prep/hive-netfilter-modules.yaml
+# It is NOT part of the per-hive kustomization.
+#
+# On OpenShift the RoleBinding grants the privileged SCC. On other
+# distributions the RoleBinding is harmless; make sure the namespace allows
+# privileged pods (Pod Security Admission: privileged).
+#
+# Modules loaded this way are lost on reboot, but the DaemonSet pod restarts
+# with the node and reloads them, and re-checks every RECHECK_SECONDS.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hive-node-prep
+  labels:
+    app.kubernetes.io/part-of: hive
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hive-netfilter-modules
+  namespace: hive-node-prep
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hive-netfilter-modules-privileged
+  namespace: hive-node-prep
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:privileged
+subjects:
+- kind: ServiceAccount
+  name: hive-netfilter-modules
+  namespace: hive-node-prep
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: hive-netfilter-modules
+  namespace: hive-node-prep
+  labels:
+    app: hive-netfilter-modules
+spec:
+  selector:
+    matchLabels:
+      app: hive-netfilter-modules
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: hive-netfilter-modules
+    spec:
+      serviceAccountName: hive-netfilter-modules
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+      tolerations:
+      - operator: Exists
+      priorityClassName: system-node-critical
+      containers:
+      - name: modprobe
+        image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+        securityContext:
+          privileged: true
+        env:
+        - name: MODULES
+          value: "xt_REDIRECT xt_owner"
+        - name: RECHECK_SECONDS
+          value: "300"
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          while true; do
+            for m in $MODULES; do
+              if chroot /host lsmod | grep -qw "$m"; then :; else
+                if chroot /host modprobe "$m"; then echo "$(date -u +%FT%TZ) loaded $m"; else echo "$(date -u +%FT%TZ) FAILED to load $m"; fi
+              fi
+            done
+            sleep "$RECHECK_SECONDS"
+          done
+        resources:
+          requests: {cpu: 1m, memory: 8Mi}
+          limits: {cpu: 50m, memory: 32Mi}
+        volumeMounts:
+        - name: host
+          mountPath: /host
+      volumes:
+      - name: host
+        hostPath:
+          path: /

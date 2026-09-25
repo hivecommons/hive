@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://hive.hivecommons.dev/sitemap.xml

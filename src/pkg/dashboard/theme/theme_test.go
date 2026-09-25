@@ -308,6 +308,15 @@ func TestEffectiveCSSIncludesBackgroundAndETag(t *testing.T) {
 	if !strings.Contains(css, "#e0a33a") || !strings.Contains(css, "body::before") {
 		t.Fatalf("css missing override/background: %s", css)
 	}
+	for _, want := range []string{
+		"body{position:relative;}",
+		"body::before{content:\"\";position:fixed;inset:0;pointer-events:none;z-index:0;",
+		"body>*{position:relative;z-index:1;}",
+	} {
+		if !strings.Contains(css, want) {
+			t.Fatalf("background layer CSS missing %q: %s", want, css)
+		}
+	}
 	etag, err := ETag(th)
 	if err != nil || !strings.HasPrefix(etag, "\"") || !strings.HasSuffix(etag, "\"") {
 		t.Fatalf("etag = %q, %v", etag, err)

@@ -26,6 +26,9 @@ func TestHeadroomToContributorReading_ProbeErrorIsUnknownNotHealthy(t *testing.T
 	if len(r.Limits) != 0 {
 		t.Errorf("probe error carried %d windows, want none", len(r.Limits))
 	}
+	if !strings.Contains(r.Error, "codex app-server unreachable") {
+		t.Errorf("probe error text not published: %+v", r)
+	}
 }
 
 // TestHeadroomToContributorReading_UnknownCarriesCause pins that the published
@@ -104,6 +107,33 @@ func TestHeadroomToContributorReading_HealthyCarriesWindows(t *testing.T) {
 	// A window with no reset time must not fabricate one.
 	if r.Limits[1].ResetEpoch != 0 || r.Limits[1].ResetsAt != "" {
 		t.Errorf("window without reset carried one: %+v", r.Limits[1])
+	}
+}
+
+func TestHeadroomToContributorReading_StaleRateLimitCarriesLastGoodWindows(t *testing.T) {
+	captured := time.Date(2026, 9, 24, 19, 50, 0, 0, time.UTC)
+	reset := time.Date(2026, 9, 24, 23, 0, 0, 0, time.UTC)
+	h := Headroom{
+		Provider:      "anthropic",
+		Available:     true,
+		CapturedAt:    captured,
+		Stale:         true,
+		ProbeErr:      errors.New("claude usage HTTP 429"),
+		ProbeErrCause: ProbeCauseRateLimited,
+		Limits:        []LimitWindow{{ID: "weekly_all", Kind: "weekly", PctRemaining: 61, ResetAt: reset}},
+	}
+	r := HeadroomToContributorReading(h)
+	if r.State != "available" {
+		t.Fatalf("state = %q, want available from stale last-good", r.State)
+	}
+	if r.Cause != "rate_limited" || r.Error == "" {
+		t.Fatalf("rate-limit metadata missing: %+v", r)
+	}
+	if r.CapturedAt != "2026-09-24T19:50:00Z" {
+		t.Fatalf("CapturedAt = %q, want last-good capture time", r.CapturedAt)
+	}
+	if len(r.Limits) != 1 || r.Limits[0].PctRemaining != 61 || r.Limits[0].ResetEpoch != reset.UnixMilli() {
+		t.Fatalf("limits = %+v, want retained last-good window", r.Limits)
 	}
 }
 
@@ -319,7 +349,7 @@ func readJSONFile(t *testing.T, path string, v interface{}) {
 // Guard against an accidental drift in which providers are considered
 // guard-supported.
 func TestContributorGuardProviders(t *testing.T) {
-	for _, p := range []string{"anthropic", "openai", "google"} {
+	for _, p := range []string{"anthropic", "openai", "google", "aws-kiro"} {
 		if !contributorGuardProviders[p] {
 			t.Errorf("%q should be a guard-supported provider", p)
 		}
@@ -331,12 +361,12 @@ func TestContributorGuardProviders(t *testing.T) {
 
 // The publish-only default backend map (kubestellar/hive#6987) must flatten to
 // exactly QUOTA_GUARD_SUPPORTED_BACKENDS in bin/contributor-relay.js
-// ({claude, pi, codex, agy, gemini}): a backend the relay guards but this map
+// ({claude, pi, codex, agy, gemini, kiro}): a backend the relay guards but this map
 // omits gets no reading and silently stays on the unprovisioned admit; a
 // backend here the relay does not guard writes files nothing reads. Every
 // provider in the map must itself be guard-supported.
 func TestContributorGuardDefaultBackends_MatchesRelaySupportedSet(t *testing.T) {
-	want := map[string]bool{"claude": true, "pi": true, "codex": true, "agy": true, "gemini": true}
+	want := map[string]bool{"claude": true, "pi": true, "codex": true, "agy": true, "gemini": true, "kiro": true}
 	got := map[string]bool{}
 	for provider, backends := range contributorGuardDefaultBackends {
 		if !contributorGuardProviders[provider] {

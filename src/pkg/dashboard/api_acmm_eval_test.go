@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -349,6 +350,38 @@ func TestCheckCriterion_NoPatternMatches(t *testing.T) {
 	}
 	if s.checkCriterion(context.TODO(), "o", "r", c, cache) {
 		t.Fatal("expected checkCriterion to fail when no pattern matches")
+	}
+}
+
+func TestHiveAgentLoopCreditRequiresRecentManagedActivity(t *testing.T) {
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	snap := collect.ActivitySnapshot{Repos: []collect.RepoActivity{{
+		Repo: "myorg/repo1",
+		PRs:  collect.ActivityActionStat{Count: 1, NewestAt: now.Add(-2 * time.Hour).Format(time.RFC3339)},
+	}}}
+	ok, reason := hiveAgentLoopCredit(snap, true, "myorg/repo1", now)
+	if !ok {
+		t.Fatalf("expected Hive activity credit, reason %q", reason)
+	}
+	if !strings.Contains(reason, "Hive agent activity") {
+		t.Fatalf("reason does not describe Hive evidence: %q", reason)
+	}
+}
+
+func TestHiveAgentLoopCreditRejectsStaleOrUnreadyActivity(t *testing.T) {
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	snap := collect.ActivitySnapshot{Repos: []collect.RepoActivity{{
+		Repo:   "myorg/repo1",
+		Issues: collect.ActivityActionStat{Count: 1, NewestAt: now.Add(-31 * 24 * time.Hour).Format(time.RFC3339)},
+	}}}
+	if ok, _ := hiveAgentLoopCredit(snap, true, "myorg/repo1", now); ok {
+		t.Fatal("stale Hive activity credited acmm:github-actions-ai")
+	}
+	if ok, _ := hiveAgentLoopCredit(snap, false, "myorg/repo1", now); ok {
+		t.Fatal("unready activity snapshot credited acmm:github-actions-ai")
+	}
+	if ok, _ := hiveAgentLoopCredit(snap, true, "myorg/other", now); ok {
+		t.Fatal("activity from a different repo credited acmm:github-actions-ai")
 	}
 }
 

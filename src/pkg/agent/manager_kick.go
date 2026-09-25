@@ -285,7 +285,7 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	// Ctrl+C at that prompt, leaving the subsequent task to be executed by
 	// bash. Clear its input with Ctrl+U alone. Goose skips clearing entirely.
 	backend := effectiveBackend(agent)
-	if backend == "agy" && agyHeadlessEnabled() && strings.TrimSpace(agent.Config.LaunchCmd) == "" {
+	if agentUsesAgyHeadless(backend, agent) {
 		return m.deliverAgyHeadlessKickLocked(agent, message, trigger)
 	}
 	if backend != "goose" {
@@ -377,7 +377,8 @@ func (m *Manager) deliverAgyHeadlessKickLocked(agent *AgentProcess, message, tri
 		model = agent.ModelOverride
 	}
 	model = normalizeModelNameForBackend(model, "agy", false)
-	cmd := agyHeadlessTurnShellCommand("agy", model, agent.Config.ReasoningEffort, promptFile)
+	// ClearOnKick maps to a new agy conversation: there is no TUI to /clear.
+	cmd := agyHeadlessTurnShellCommand(agyTurnRunnerBinary(), "agy", model, agent.Config.ReasoningEffort, promptFile, agent.Config.ClearOnKick)
 	m.tmuxSendLiteralForAgent(agent, cmd)
 	time.Sleep(textToEnterDelay)
 	m.tmuxSendEntersForAgent(agent)

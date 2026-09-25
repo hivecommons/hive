@@ -103,6 +103,12 @@ pinned:
   # lines and nothing else: it is a pull_request-only path-gated check, and a
   # testutil regression can only reach a release line through a PR targeting
   # one.
+  # Open-PR overlap/conflict report and post-merge branch refresh (#8762).
+  # They react to PRs into, and pushes to, the lines that take feature PRs:
+  # v5 (stable + candidate) and v6 (edge). v4 is feature-frozen and takes no
+  # new PRs, so there is nothing there to order or refresh.
+  pr-overlap.yml: [v6, -v4]
+  pr-auto-update.yml: [v6, -v4]
   testutil-guard.yml: [v5, v6]
   v2-ci.yml: [v5, v6]
   v2-tests.yml: [v5, v6]

@@ -84,6 +84,37 @@ fi
 # agent redirect its own audit events into the void); it must match
 # TokenAccessSpoolDir in pkg/github/token_access_audit.go.
 TOKEN_ACCESS_SPOOL="/var/run/hive-metrics/token-access-events"
+emit_token_access_event() {
+  local _evt op agent uid
+  op="$1"
+  agent="$2"
+  uid="$3"
+  shift 3
+  _evt="${TOKEN_ACCESS_SPOOL}/$(date -u +%s%N)-$$-${RANDOM}.json"
+  (
+    umask 027
+    python3 - "$_evt.tmp" "$op" "$agent" "$uid" "$@" <<'PY'
+import datetime
+import json
+import shlex
+import sys
+
+path, op, agent, uid_s, *args = sys.argv[1:]
+event = {
+    "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "agent": agent or "unknown",
+    "uid": int(uid_s),
+    "op": op,
+}
+if op == "gh":
+    event["cmd"] = "gh " + shlex.join(args)
+else:
+    raise SystemExit(f"unsupported token-access op: {op}")
+with open(path, "w", encoding="utf-8") as f:
+    f.write(json.dumps(event, separators=(",", ":")) + "\n")
+PY
+  ) && mv -f "${_evt}.tmp" "$_evt"
+}
 if ! _contributor_mode; then
   # Per-agent scoped token (Phase 4) — 0640 dev:hive-<agent>, least-privilege,
   # readable ONLY by the owning agent's private group. This is the ONLY token an
@@ -131,10 +162,7 @@ if ! _contributor_mode; then
   # gh call, priming agents to read later denials as permission errors
   # (#4043).
   {
-    _evt="${TOKEN_ACCESS_SPOOL}/$(date -u +%s%N)-$$-${RANDOM}.json"
-    ( umask 027 && printf '{"ts":"%s","agent":"%s","uid":%d,"op":"gh","cmd":"gh %s"}\n' \
-      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${HIVE_AGENT:-unknown}" "$(id -u)" "$*" \
-      > "${_evt}.tmp" ) && mv -f "${_evt}.tmp" "$_evt"
+    emit_token_access_event "gh" "${HIVE_AGENT:-unknown}" "$(id -u)" "$@"
   } 2>/dev/null || true
 fi
 
