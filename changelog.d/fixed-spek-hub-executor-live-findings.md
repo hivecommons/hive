@@ -1,0 +1,1 @@
+- Fixed the Spektacular hub executor to resolve timestamped artifact IDs, preserve run worktrees across retry generations, restart stalled own leases, surface non-final CLI exits, and expose live progress/log tails.

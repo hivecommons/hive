@@ -15,8 +15,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -465,6 +468,142 @@ func (r *Runner) statusInDir(ctx context.Context, dir, kind, name string) (Artif
 		return ArtifactStatus{}, &ContractError{Kind: kind, Name: name, Reason: fmt.Sprintf("unknown document_status %q", st.DocumentStatus)}
 	}
 	return st, nil
+}
+
+// ResolveArtifact returns the concrete Spektacular artifact id for a run slug.
+// Spektacular v0.22 timestamps file-backed artifact ids
+// (`20260925163042-<slug>`), while Hive admissions start from the stable slug.
+// The runner accepts either an exact match or the newest id ending in "-<slug>".
+func (r *Runner) ResolveArtifact(ctx context.Context, dir, kind, slug string) (string, error) {
+	if err := validateKind(kind); err != nil {
+		return "", err
+	}
+	slug = ArtifactKey(slug)
+	if slug == "" {
+		return "", &ContractError{Kind: kind, Reason: "empty artifact name"}
+	}
+	candidates := map[string]time.Time{}
+	for id, mt := range r.artifactsFromFileList(ctx, dir, kind) {
+		if artifactMatchesSlug(id, slug) {
+			candidates[id] = mt
+		}
+	}
+	for id, mt := range artifactsFromProjectFiles(dir, kind) {
+		if artifactMatchesSlug(id, slug) {
+			if prev, ok := candidates[id]; !ok || mt.After(prev) {
+				candidates[id] = mt
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		return "", &NotFoundError{Kind: kind, Name: slug, Message: "no matching artifact id found"}
+	}
+	type candidate struct {
+		id string
+		mt time.Time
+	}
+	list := make([]candidate, 0, len(candidates))
+	for id, mt := range candidates {
+		list = append(list, candidate{id: id, mt: mt})
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if !list[i].mt.Equal(list[j].mt) {
+			return list[i].mt.After(list[j].mt)
+		}
+		return list[i].id > list[j].id
+	})
+	return list[0].id, nil
+}
+
+func artifactMatchesSlug(id, slug string) bool {
+	id = ArtifactKey(id)
+	slug = ArtifactKey(slug)
+	return id == slug || strings.HasSuffix(id, "-"+slug)
+}
+
+func (r *Runner) artifactsFromFileList(ctx context.Context, dir, kind string) map[string]time.Time {
+	out, err := r.execInDir(ctx, dir, []string{kind, verbFile, "list"})
+	if err != nil {
+		return nil
+	}
+	var raw any
+	if json.Unmarshal(bytes.TrimSpace(out), &raw) != nil {
+		return nil
+	}
+	ids := map[string]time.Time{}
+	collectArtifactStrings(raw, ids)
+	return ids
+}
+
+func collectArtifactStrings(v any, ids map[string]time.Time) {
+	switch x := v.(type) {
+	case string:
+		if id := artifactIDFromPath(x); id != "" {
+			ids[id] = time.Time{}
+		}
+	case []any:
+		for _, elem := range x {
+			collectArtifactStrings(elem, ids)
+		}
+	case map[string]any:
+		for _, key := range []string{"artifact_id", "id", "name", "path", "file"} {
+			if s, ok := x[key].(string); ok {
+				if id := artifactIDFromPath(s); id != "" {
+					ids[id] = time.Time{}
+				}
+			}
+		}
+		for _, elem := range x {
+			collectArtifactStrings(elem, ids)
+		}
+	}
+}
+
+func artifactsFromProjectFiles(dir, kind string) map[string]time.Time {
+	if strings.TrimSpace(dir) == "" {
+		return nil
+	}
+	roots := []string{}
+	switch kind {
+	case KindSpec:
+		roots = []string{filepath.Join(dir, ".spektacular", "specs"), filepath.Join(dir, ".spektacular", "spec")}
+	case KindPlan:
+		roots = []string{filepath.Join(dir, ".spektacular", "plans"), filepath.Join(dir, ".spektacular", "plan")}
+	}
+	out := map[string]time.Time{}
+	for _, root := range roots {
+		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d == nil || d.IsDir() {
+				return nil
+			}
+			id := artifactIDFromPath(strings.TrimPrefix(path, root+string(filepath.Separator)))
+			if id == "" {
+				return nil
+			}
+			if info, statErr := d.Info(); statErr == nil {
+				out[id] = info.ModTime()
+			} else {
+				out[id] = time.Time{}
+			}
+			return nil
+		})
+	}
+	return out
+}
+
+func artifactIDFromPath(path string) string {
+	path = filepath.ToSlash(strings.TrimSpace(path))
+	if path == "" {
+		return ""
+	}
+	if strings.HasSuffix(path, "/plan.md") || strings.HasSuffix(path, "/plan.markdown") {
+		return ArtifactKey(path)
+	}
+	base := path
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[i+1:]
+	}
+	return ArtifactKey(base)
 }
 
 // ExportPlan invokes `spektacular plan export <name> --format json` and returns the

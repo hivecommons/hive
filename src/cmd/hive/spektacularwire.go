@@ -45,7 +45,15 @@ func wireSpektacularRunnerWithCloneAuth(cfg *config.Config, srv *dashboard.Serve
 	}
 	srv.SetStageRunner(spektacular.NewHubRunner(cfg.Runs, srv, logger))
 	if cfg.Runs.Spektacular.HubExecutorEnabled() {
-		srv.SetStageExecutor(dashboard.NewSpekHubExecutor(srv, cfg.Runs, defaultAgentBackend(cfg), "", cloneAuth, logger))
+		backend := cfg.Runs.Spektacular.HubExecutor.BackendOrDefault(defaultAgentBackend(cfg))
+		exec := dashboard.NewSpekHubExecutor(srv, cfg.Runs, backend, "", cloneAuth, logger)
+		srv.SetStageExecutor(exec)
+		if logger != nil {
+			logger.Info("[spektacular] hub executor installed",
+				"identity", exec.Identity,
+				"backend", exec.Backend,
+				"max_concurrent", cfg.Runs.Spektacular.HubExecutor.MaxConcurrentOrDefault())
+		}
 	}
 	if logger != nil {
 		logger.Info("[spektacular] stage runner installed",

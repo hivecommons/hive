@@ -3108,6 +3108,10 @@
     .campaign-row-title { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .campaign-row-meta { display: flex; gap: var(--sp-3); flex-wrap: wrap; color: var(--muted); font-size: var(--fs-sm); margin-top: var(--sp-2); }
     .campaign-pill { border: 1px solid var(--border); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); color: var(--muted); }
+    .run-log-panel { grid-column: 1 / -1; margin-top: var(--sp-3); }
+    .run-log-pre { max-height: 260px; overflow: auto; white-space: pre-wrap; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3); color: var(--muted); font-size: var(--fs-xs); }
+    .run-log-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-3); }
+    .run-activity-line { margin-top: var(--sp-2); color: var(--muted); font-size: var(--fs-sm); }
     .campaign-empty { color: var(--muted); text-align: center; padding: var(--sp-7); border: 1px dashed var(--border); border-radius: var(--r); }
     .campaign-jam { margin-top: var(--sp-5); display: grid; gap: var(--sp-4); }
     .campaign-jam-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-4); }
@@ -4196,6 +4200,9 @@
     function escapeHtml(str) {
       if (typeof str !== 'string') return '';
       return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function safeDomId(str) {
+      return String(str || '').replace(/[^a-zA-Z0-9_-]/g, '-');
     }
     // ── Collapsible sections (issue #1533) ──
     const SECTION_LS_PREFIX = 'hive-section-collapsed-';
@@ -8218,6 +8225,8 @@
         const key = run.key || '';
         const waiting = run.waiting_on || 'unknown';
         const waitCls = waiting === 'human' ? 'needs-context' : waiting === 'agent' ? 'done' : '';
+        const runGen = run.gen || 0;
+        const runStage = run.stage || 'spec';
         const actions = canApprove && waiting === 'human' && run.plan_epic_id
           ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px"><button class="btn" style="color:var(--green)" data-action="runPlanAction" data-arg0="${escapeHtml(run.plan_epic_id)}" data-arg1="approve">✓ Approve</button><button class="btn" style="color:var(--red)" data-action="runPlanAction" data-arg0="${escapeHtml(run.plan_epic_id)}" data-arg1="reject">✕ Reject</button></div>`
           : '';
@@ -8227,13 +8236,15 @@
             <button class="btn" data-action="openRunDetail" data-arg0="${escapeHtml(key)}" style="font-size:0.7rem;padding:3px 8px">detail</button>
           </div>
           <div style="margin-top:10px">${runStageRail(run)}</div>
+          ${run.activity_summary ? `<div class="run-activity-line">${escapeHtml(run.activity_summary)}</div>` : ''}
           <div style="margin-top:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
             <span class="status-badge ${waitCls}" title="Waiting on ${escapeHtml(waiting)}">waiting: ${escapeHtml(waiting)}</span>
             <span class="status-badge" title="${escapeHtml(run.waiting_since || run.stage_started_at || '')}">age ${escapeHtml(runCurrentAge(run))}</span>
             ${run.assignee ? `<span class="status-badge" title="Assignee">${escapeHtml(run.assignee)}</span>` : ''}
           </div>
           <div style="margin-top:10px;font-size:0.78rem;color:var(--muted)">${runArtifactLinks(run)}</div>
-          ${(run.artifact_name || run.document_status || run.current_step) ? `<div>${run.artifact_name ? `<span class="status-badge" title="Artifact name">artifact: ${escapeHtml(run.artifact_name)}</span>` : ''}${run.document_status ? `<span class="status-badge" title="Spektacular document_status">document: ${escapeHtml(run.document_status)}</span>` : ''}${run.current_step ? `<span class="status-badge" title="Spektacular current_step">step: ${escapeHtml(run.current_step)}</span>` : ''}</div>` : ''}
+          ${(run.artifact_id || run.artifact_name || run.document_status || run.current_step) ? `<div>${run.artifact_id ? `<span class="status-badge" title="Resolved artifact id">artifact id: ${escapeHtml(run.artifact_id)}</span>` : ''}${run.artifact_name ? `<span class="status-badge" title="Artifact name">artifact: ${escapeHtml(run.artifact_name)}</span>` : ''}${run.document_status ? `<span class="status-badge" title="Spektacular document_status">document: ${escapeHtml(run.document_status)}</span>` : ''}${run.current_step ? `<span class="status-badge" title="Spektacular current_step">step: ${escapeHtml(run.current_step)}</span>` : ''}</div>` : ''}
+          <div class="run-log-actions"><button class="btn" data-action="toggleRunLog" data-arg0="${escapeHtml(key)}" data-arg1="${escapeHtml(runStage)}" data-arg2="${escapeHtml(String(runGen))}" data-arg3="run-log-${escapeHtml(safeDomId(key))}">Log</button></div><div id="run-log-${escapeHtml(safeDomId(key))}" class="run-log-panel"></div>
           <div class="text-muted">Powered by <a href="https://docs.hivecommons.dev/docs/hive/spektacular-runs" target="_blank" rel="noopener">Spektacular</a></div>
           ${actions}
         </div>`;
@@ -8281,10 +8292,13 @@
         } catch (_) {}
         const stages = (Array.isArray(run.stages) ? run.stages : []).map(st => `<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-top:1px solid var(--border)"><span>${escapeHtml(st.name || 'stage')} <span class="status-badge">${escapeHtml(st.status || '')}</span></span><span style="color:var(--muted)">${escapeHtml(st.receipt || (st.gen ? 'gen ' + st.gen : ''))}</span></div>`).join('');
         const approval = auditRows || '<div style="color:var(--muted);font-size:0.8rem">No approval or audit records matched this run yet.</div>';
+        const detailLogID = 'run-detail-log-' + safeDomId(key);
         panel.innerHTML = `<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start"><div><h3 style="margin:0 0 4px">${escapeHtml(run.title || run.key || 'Run detail')}</h3><div style="color:var(--muted);font-size:0.8rem">${escapeHtml(run.key || '')}${run.repo ? ' · ' + escapeHtml(run.repo) : ''}</div></div><button class="btn" data-action="closeRunDetail">Close</button></div>
           <div style="margin-top:12px">${runStageRail(run)}</div>
+          ${run.activity_summary ? `<div class="run-activity-line">${escapeHtml(run.activity_summary)}</div>` : ''}
           <div style="margin-top:12px;font-size:0.82rem">Artifacts: ${runArtifactLinks(run)}</div>
-          ${(run.artifact_name || run.document_status || run.current_step) ? `<div><span class="status-badge">artifact: ${escapeHtml(run.artifact_name || 'unknown')}</span><span class="status-badge">document: ${escapeHtml(run.document_status || 'unknown')}</span><span class="status-badge">step: ${escapeHtml(run.current_step || 'unknown')}</span></div>` : ''}
+          ${(run.artifact_id || run.artifact_name || run.document_status || run.current_step) ? `<div><span class="status-badge">artifact id: ${escapeHtml(run.artifact_id || 'unknown')}</span><span class="status-badge">artifact: ${escapeHtml(run.artifact_name || 'unknown')}</span><span class="status-badge">document: ${escapeHtml(run.document_status || 'unknown')}</span><span class="status-badge">step: ${escapeHtml(run.current_step || 'unknown')}</span></div>` : ''}
+          <div class="run-log-actions"><button class="btn" data-action="toggleRunLog" data-arg0="${escapeHtml(run.key || key)}" data-arg1="${escapeHtml(run.stage || 'spec')}" data-arg2="${escapeHtml(String(run.gen || 0))}" data-arg3="${escapeHtml(detailLogID)}">Log</button></div><div id="${escapeHtml(detailLogID)}" class="run-log-panel"></div>
           <h4 style="margin:14px 0 6px">Artifact chain</h4>${stages || '<div style="color:var(--muted);font-size:0.8rem">No stage artifacts recorded.</div>'}
           <div class="text-muted">Powered by <a href="https://docs.hivecommons.dev/docs/hive/spektacular-runs" target="_blank" rel="noopener">Spektacular</a></div>
           <h4 style="margin:14px 0 6px">Approval and audit records</h4>${approval}`;
@@ -8299,6 +8313,31 @@
       if (panel) panel.style.display = 'none';
     }
     window.closeRunDetail = closeRunDetail;
+
+    async function toggleRunLog(key, stage, gen, targetID) {
+      const panel = document.getElementById(targetID || '');
+      if (!panel || !key) return;
+      if (panel.dataset.open === '1') {
+        panel.dataset.open = '0';
+        panel.innerHTML = '';
+        return;
+      }
+      panel.dataset.open = '1';
+      panel.innerHTML = '<div class="run-log-pre">Loading log…</div>';
+      try {
+        const qs = new URLSearchParams();
+        if (stage) qs.set('stage', stage);
+        if (gen && String(gen) !== '0') qs.set('gen', String(gen));
+        qs.set('tail', '200');
+        const res = await fetch('/api/runs/' + encodeURIComponent(key) + '/log?' + qs.toString(), { headers: _inceptionAuthHeaders() });
+        const text = await res.text();
+        if (!res.ok) throw new Error(text || ('HTTP ' + res.status));
+        panel.innerHTML = '<pre class="run-log-pre">' + escapeHtml(text || '(empty log)') + '</pre>';
+      } catch (e) {
+        panel.innerHTML = '<pre class="run-log-pre">Log unavailable: ' + escapeHtml(e && e.message ? e.message : e) + '</pre>';
+      }
+    }
+    window.toggleRunLog = toggleRunLog;
 
     function stalledRunHealthRows(runs) {
       if (!Array.isArray(runs)) return '';
@@ -16482,8 +16521,10 @@ function burnAreaChart() {
       }
       list.innerHTML = _campaigns.map(function(c) {
         const repo = (c.repos || []).join(', ') || 'no repo';
-        const activity = c.last_activity || 'no activity';
+        const activity = c.activity_line || c.last_activity || 'no activity';
         const engine = c.engine || 'unknown engine';
+        const logID = 'campaign-log-' + safeDomId(c.run_key || c.id);
+        const canLog = !!c.run_key;
         return `<div class="campaign-row">
           <div>
             <div class="campaign-row-title">${escapeHtml(c.title || c.id)}</div>
@@ -16493,14 +16534,18 @@ function burnAreaChart() {
               <span>${escapeHtml(repo)}</span>
               <span>${escapeHtml(engine)}</span>
               <span>${escapeHtml(activity)}</span>
+              ${c.artifact_id ? `<span>${escapeHtml(c.artifact_id)}</span>` : ''}
+              ${c.document_status ? `<span>${escapeHtml(c.document_status)}</span>` : ''}
             </div>
           </div>
           <div class="campaign-row-actions">
             <button class="hv-btn btn-secondary btn-sm" data-action="openCampaignJam" data-arg0="${escapeHtml(c.id)}">Jam</button>
+            ${canLog ? `<button class="hv-btn btn-secondary btn-sm" data-action="toggleRunLog" data-arg0="${escapeHtml(c.run_key)}" data-arg1="${escapeHtml(c.current_stage || 'spec')}" data-arg2="${escapeHtml(String(c.run_gen || 0))}" data-arg3="${escapeHtml(logID)}">Log</button>` : ''}
             <button class="hv-btn btn-primary btn-sm" data-action="resumeCampaign" data-arg0="${escapeHtml(c.id)}">Continue</button>
             <button class="hv-btn btn-secondary btn-sm" data-action="releaseCampaign" data-arg0="${escapeHtml(c.id)}">Release</button>
             <button class="hv-btn btn-secondary btn-sm" data-action="reviseCampaign" data-arg0="${escapeHtml(c.id)}">Revise</button>
           </div>
+          ${canLog ? `<div id="${escapeHtml(logID)}" class="run-log-panel"></div>` : ''}
         </div>`;
       }).join('');
     }

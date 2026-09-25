@@ -99,7 +99,7 @@ func TestSpekHubExecutorPrepareWorkspaceCreatesCloneAndWorktree(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(agentWorkspaceRoot, e.Identity, filepath.FromSlash(spekRepo), ".git")); err != nil {
 		t.Fatalf("shared clone missing: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(runStageWorktreePath(e.Identity, st.runKey, st.stage, st.gen), ".spektacular")); err != nil {
+	if _, err := os.Stat(filepath.Join(spekHubRunWorktreePath(e.Identity, st.runKey), ".spektacular")); err != nil {
 		t.Fatalf("worktree/project missing: %v", err)
 	}
 }
@@ -110,6 +110,134 @@ func TestSpekHubStagePromptSpecContainsRequiredInstructions(t *testing.T) {
 		if !strings.Contains(p, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, p)
 		}
+	}
+}
+
+func TestSpekHubStagePromptOmitsEmptyTitleQuotes(t *testing.T) {
+	p := SpekHubStagePrompt(StageSpec, "kubestellar/console", 23725, "kubestellar/console#23725", "", "kubestellar-console-23725")
+	if strings.Contains(p, `#23725 ""`) {
+		t.Fatalf("prompt retained empty title quotes:\n%s", p)
+	}
+}
+
+func TestSpekHubExecutorTickRestartsOwnStalledLeaseAndReportsRunning(t *testing.T) {
+	hub, s, _, _ := spekHub(t)
+	now := time.Now()
+	runKey := "myorg/repo1#57"
+	taskID := spekHubExecutorTaskPrefix + sanitizeReceiptSegment(runKey) + "-spec-2"
+	key := spekRepo + "!" + runKey + ":" + StageSpec
+	hub.leaseMu.Lock()
+	hub.leases[leaseKey(config.DefaultSpektacularHubExecutorIdentity, taskID)] = &taskLease{identity: config.DefaultSpektacularHubExecutorIdentity, taskID: taskID, repo: spekRepo, number: 57, key: key, title: "Do thing", stage: StageSpec, gen: 2, expiresAt: now.Add(leaseTTL)}
+	if err := hub.saveLeasesLocked(); err != nil {
+		t.Fatal(err)
+	}
+	hub.leaseMu.Unlock()
+	worktree := spekHubRunWorktreePath(config.DefaultSpektacularHubExecutorIdentity, runKey)
+	if err := os.MkdirAll(filepath.Join(worktree, ".spektacular"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(agentWorkspaceRoot, config.DefaultSpektacularHubExecutorIdentity, filepath.FromSlash(spekRepo), ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	launched := make(chan struct{})
+	release := make(chan struct{})
+	e := NewSpekHubExecutor(s, config.RunsConfig{MaxStageRetries: 2, Spektacular: config.SpektacularConfig{Enabled: true, HubExecutor: config.SpektacularHubExecutorConfig{MaxConcurrent: 1}}}, "copilot", "", nil, nil)
+	e.Exec = func(_ context.Context, _ string, _ []string, name string, args ...string) ([]byte, error) {
+		if name == "git" || name == "spektacular" {
+			if name == "spektacular" && len(args) >= 3 && args[1] == "status" {
+				return []byte(`{"error":false,"kind":"spec","name":"kubestellar-console-57","document_status":"final"}`), nil
+			}
+			return []byte("ok"), nil
+		}
+		close(launched)
+		<-release
+		return []byte("agent done"), nil
+	}
+	e.Tick(context.Background(), now)
+	<-launched
+	if got := e.Status().Running; got != 1 {
+		t.Fatalf("running = %d, want 1", got)
+	}
+	close(release)
+}
+
+func TestResolveRunStageWorkDirUsesSingleHubWorktreeAcrossRetryGenerations(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	runKey := "myorg/repo1#57"
+	worktree := spekHubRunWorktreePath(config.DefaultSpektacularHubExecutorIdentity, runKey)
+	if err := os.MkdirAll(filepath.Join(worktree, ".spektacular", "specs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ResolveRunStageWorkDir(runKey, StageSpec, config.DefaultSpektacularHubExecutorIdentity, spekRepo, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != worktree {
+		t.Fatalf("workdir = %q, want %q", got, worktree)
+	}
+}
+
+func TestSpekHubExecutorCopiesPreviousArtifactsIntoSingleWorktree(t *testing.T) {
+	_, _, _, _ = spekHub(t)
+	runKey := "myorg/repo1#57"
+	oldSpec := filepath.Join(runStageWorktreePath(config.DefaultSpektacularHubExecutorIdentity, runKey, StageSpec, 1), ".spektacular", "specs")
+	if err := os.MkdirAll(oldSpec, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldSpec, "20260925163042-myorg-repo1-57.md"), []byte("spec"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	worktree := spekHubRunWorktreePath(config.DefaultSpektacularHubExecutorIdentity, runKey)
+	copied, err := copyPreviousSpektacularProject(config.DefaultSpektacularHubExecutorIdentity, runKey, worktree)
+	if err != nil || !copied {
+		t.Fatalf("copyPreviousSpektacularProject copied=%v err=%v", copied, err)
+	}
+	if _, err := os.Stat(filepath.Join(worktree, ".spektacular", "specs", "20260925163042-myorg-repo1-57.md")); err != nil {
+		t.Fatalf("artifact not copied: %v", err)
+	}
+}
+
+func TestSpekHubExecutorCLIExitNonFinalRecordsBlockedTimeline(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	st := spekHubStage{runKey: "myorg/repo1#57", stage: StageSpec, taskID: "task", gen: 1}
+	e.recordNonFinal(st, st.taskID, spekHubArtifactStatus{Name: "20260925163042-myorg-repo1-57", DocumentStatus: "draft"})
+	found := false
+	for _, ev := range s.LifecycleTimeline().ByIssue(st.runKey) {
+		if ev.Kind == timeline.KindBlocked && ev.Attrs[stageAttrReason] == spekHubNonFinalReason && ev.Attrs[stageAttrDocumentStatus] == "draft" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("non-final exit did not record blocked timeline event")
+	}
+	if got := e.failures[e.executionKey(st)]; got != e.maxAttempts() {
+		t.Fatalf("non-final exit failure budget = %d, want %d", got, e.maxAttempts())
+	}
+}
+
+func TestSpekHubExecutorRecordsProgressTimeline(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	st := spekHubStage{runKey: "myorg/repo1#57", stage: StageSpec, taskID: "task", gen: 2}
+	e.recordStageProgress(st, "cli_launched", map[string]string{
+		"backend": "copilot",
+		"pid":     "1234",
+	})
+	found := false
+	for _, ev := range s.LifecycleTimeline().ByIssue(st.runKey) {
+		if ev.Kind == timeline.KindProgress && ev.Attrs["event"] == "cli_launched" && ev.Attrs["pid"] == "1234" && ev.Attrs[stageAttrGen] == "2" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("executor progress event not recorded")
+	}
+}
+
+func TestSpekInitAgentMapsCopilotToSupportedInitAgent(t *testing.T) {
+	if got := spekInitAgent("copilot"); got != "codex" {
+		t.Fatalf("spekInitAgent(copilot) = %q, want codex", got)
 	}
 }
 

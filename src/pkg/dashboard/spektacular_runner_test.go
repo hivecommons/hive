@@ -578,6 +578,7 @@ func TestStageAttrKeysMatchSpektacular(t *testing.T) {
 		stageAttrArtifact:       spektacular.AttrArtifact,
 		stageAttrArtifactBody:   spektacular.AttrArtifactBody,
 		stageAttrDocumentStatus: spektacular.AttrDocumentStatus,
+		stageAttrCurrentStep:    spektacular.AttrCurrentStep,
 		stageAttrReason:         spektacular.AttrReason,
 		stageAttrSeverity:       spektacular.AttrSeverity,
 		stageAttrAttempts:       spektacular.AttrAttempts,

@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/beads"
@@ -94,6 +97,8 @@ const runResetReasonTriageFix = "triage_fix"
 
 const defaultAuditScopeDir = "/data/convergence/audit/scope"
 
+var errInvalidRunLog = errors.New("invalid log path")
+
 type Run struct {
 	Key            string       `json:"key"`
 	LeaseKey       string       `json:"lease_key,omitempty"`
@@ -123,6 +128,9 @@ type Run struct {
 	Burndown        *RunBurndown    `json:"burndown,omitempty"`
 	TriageVerdict   string          `json:"triage_verdict,omitempty"`
 	TriageRationale string          `json:"triage_rationale,omitempty"`
+	LastActivity    string          `json:"last_activity,omitempty"`
+	ActivitySummary string          `json:"activity_summary,omitempty"`
+	ArtifactID      string          `json:"artifact_id,omitempty"`
 	ArtifactName    string          `json:"artifact_name,omitempty"`
 	DocumentStatus  string          `json:"document_status,omitempty"`
 	CurrentStep     string          `json:"current_step,omitempty"`
@@ -268,6 +276,154 @@ func (s *Server) handleRunGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonError(w, "run not found", http.StatusNotFound)
+}
+
+func (s *Server) handleRunLog(w http.ResponseWriter, r *http.Request) {
+	if !config.RoleAtLeast(r.Header.Get("X-Hive-Role"), config.RoleRead) {
+		jsonError(w, "read access required", http.StatusForbidden)
+		return
+	}
+	key := strings.TrimSpace(r.PathValue("key"))
+	if unescaped, err := url.PathUnescape(key); err == nil {
+		key = strings.TrimSpace(unescaped)
+	}
+	stage := strings.TrimSpace(r.URL.Query().Get("stage"))
+	if stage == "" {
+		stage = StageSpec
+	}
+	if !validStage(stage) || strings.Contains(stage, "/") || strings.Contains(stage, "..") {
+		jsonError(w, "invalid stage", http.StatusBadRequest)
+		return
+	}
+	gen := uint64(0)
+	if raw := strings.TrimSpace(r.URL.Query().Get("gen")); raw != "" {
+		parsed, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil || parsed == 0 {
+			jsonError(w, "invalid generation", http.StatusBadRequest)
+			return
+		}
+		gen = parsed
+	}
+	tailLines := 200
+	if raw := strings.TrimSpace(r.URL.Query().Get("tail")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			jsonError(w, "invalid tail", http.StatusBadRequest)
+			return
+		}
+		if parsed < 1000 {
+			tailLines = parsed
+		} else {
+			tailLines = 1000
+		}
+	}
+	path, err := s.runLogPath(key, stage, gen)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	data, err := readRunLogFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		jsonError(w, "run log not found", http.StatusNotFound)
+		return
+	}
+	if errors.Is(err, errInvalidRunLog) {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte(tailTextLines(string(data), tailLines)))
+}
+
+func (s *Server) runLogPath(key, stage string, gen uint64) (string, error) {
+	if strings.TrimSpace(key) == "" {
+		return "", errors.New("run key required")
+	}
+	identity := config.DefaultSpektacularHubExecutorIdentity
+	if s != nil && s.deps != nil && s.deps.Config != nil {
+		identity = s.deps.Config.Runs.Spektacular.HubExecutor.IdentityOrDefault()
+	}
+	if gen == 0 {
+		if runs, err := s.activeRuns(false); err == nil {
+			for _, run := range runs {
+				if run.Key == key || run.LeaseKey == key {
+					gen = run.Gen
+					if strings.TrimSpace(run.Assignee) != "" {
+						identity = run.Assignee
+					}
+					break
+				}
+			}
+		}
+	}
+	if gen == 0 {
+		return "", errors.New("generation required")
+	}
+	root := filepath.Join(spekHubRunWorktreePath(identity, key), ".hive")
+	name := fmt.Sprintf("spek-stage-%s-%d.log", sanitizeRunPromptPath(stage), gen)
+	path := filepath.Join(root, name)
+	cleanRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	cleanPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(cleanRoot, cleanPath)
+	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return "", errors.New("invalid log path")
+	}
+	return cleanPath, nil
+}
+
+func readRunLogFile(path string) ([]byte, error) {
+	rootInfo, err := os.Lstat(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	if rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
+		return nil, errInvalidRunLog
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, errInvalidRunLog
+	}
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), path)
+	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !openedInfo.Mode().IsRegular() {
+		return nil, errInvalidRunLog
+	}
+	return io.ReadAll(file)
+}
+
+func tailTextLines(text string, lines int) string {
+	if lines <= 0 {
+		return ""
+	}
+	parts := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	if len(parts) > lines {
+		parts = parts[len(parts)-lines:]
+	}
+	if len(parts) == 1 && parts[0] == "" {
+		return ""
+	}
+	return strings.Join(parts, "\n") + "\n"
 }
 
 func (s *Server) populateRunBurndown(r *http.Request, run *Run) error {
@@ -582,6 +738,7 @@ func (s *Server) activeRuns(includeTimeline bool) ([]Run, error) {
 		}
 		events := append(s.LifecycleTimeline().ByIssue(lease.key), s.LifecycleTimeline().ByIssue(lease.leaseKey)...)
 		applyRunArtifactStatus(&run, events)
+		applyRunActivity(&run, events)
 		run.LastReceipt = latestRunReceipt(events)
 		if run.StageStartedAt == "" {
 			run.StageStartedAt = formatRunTime(timelineStageTime(events, lease.stage))
@@ -927,16 +1084,81 @@ func applyRunArtifactStatus(run *Run, events []timeline.Event) {
 		if run.ArtifactName == "" {
 			run.ArtifactName = firstRunNonEmpty(ev.Attrs[stageAttrArtifact], ev.Attrs[stageAttrPath])
 		}
+		if run.ArtifactID == "" {
+			run.ArtifactID = ev.Attrs[stageAttrArtifact]
+		}
 		if run.DocumentStatus == "" {
 			run.DocumentStatus = ev.Attrs[stageAttrDocumentStatus]
 		}
 		if run.CurrentStep == "" {
 			run.CurrentStep = firstRunNonEmpty(ev.Attrs["current_step"], ev.Attrs["step"])
 		}
-		if run.ArtifactName != "" && run.DocumentStatus != "" && run.CurrentStep != "" {
+		if run.ArtifactName != "" && run.ArtifactID != "" && run.DocumentStatus != "" && run.CurrentStep != "" {
 			return
 		}
 	}
+}
+
+func applyRunActivity(run *Run, events []timeline.Event) {
+	if run == nil || len(events) == 0 {
+		return
+	}
+	var latest timeline.Event
+	for _, ev := range events {
+		if ev.At > latest.At {
+			latest = ev
+		}
+	}
+	if latest.At == 0 {
+		return
+	}
+	run.LastActivity = formatRunTime(time.UnixMilli(latest.At))
+	run.ActivitySummary = runActivityLine(*run, latest)
+}
+
+func runActivityLine(run Run, ev timeline.Event) string {
+	attrs := ev.Attrs
+	if attrs == nil {
+		attrs = map[string]string{}
+	}
+	actor := firstRunNonEmpty(attrs["backend"], attrs["identity"], ev.Agent, run.Assignee, "spektacular")
+	stage := firstRunNonEmpty(attrs[stageAttrStage], run.Stage)
+	artifact := firstRunNonEmpty(attrs[stageAttrArtifact], run.ArtifactID, run.ArtifactName)
+	status := firstRunNonEmpty(attrs[stageAttrDocumentStatus], run.DocumentStatus)
+	step := firstRunNonEmpty(attrs[stageAttrCurrentStep], run.CurrentStep)
+	reason := firstRunNonEmpty(attrs[stageAttrReason], attrs["event"])
+	age := runActivityAge(time.UnixMilli(ev.At))
+	parts := []string{actor + " " + firstRunNonEmpty(reason, string(ev.Kind)) + " " + age}
+	if stage != "" || artifact != "" || status != "" || step != "" {
+		detail := strings.TrimSpace(stage + " " + artifact)
+		if status != "" {
+			detail = strings.TrimSpace(detail + " status: " + status)
+		}
+		if step != "" {
+			detail = strings.TrimSpace(detail + ", step " + step)
+		}
+		if detail != "" {
+			parts = append(parts, detail)
+		}
+	}
+	return strings.Join(parts, " · ")
+}
+
+func runActivityAge(at time.Time) string {
+	if at.IsZero() {
+		return "now"
+	}
+	d := time.Since(at)
+	if d < time.Minute {
+		return "now"
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d/time.Minute))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh", int(d/time.Hour))
+	}
+	return fmt.Sprintf("%dd", int(d/(24*time.Hour)))
 }
 
 func latestRunReceipt(events []timeline.Event) string {

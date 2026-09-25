@@ -13,25 +13,29 @@ import (
 
 // Campaign is the dashboard projection for resumable inception/Spektacular work.
 type Campaign struct {
-	ID           string             `json:"id"`
-	Title        string             `json:"title"`
-	Source       string             `json:"source,omitempty"`
-	Repos        []string           `json:"repos,omitempty"`
-	CurrentStage string             `json:"current_stage"`
-	CurrentStep  string             `json:"current_step,omitempty"`
-	Artifacts    []CampaignArtifact `json:"artifacts,omitempty"`
-	LinkedPRs    []string           `json:"linked_prs,omitempty"`
-	LinkedIssues []string           `json:"linked_issues,omitempty"`
-	Contributors []string           `json:"contributors,omitempty"`
-	LastActivity string             `json:"last_activity,omitempty"`
-	Status       string             `json:"status"`
-	Engine       string             `json:"engine"`
-	Type         string             `json:"type"`
-	RunKey       string             `json:"run_key,omitempty"`
-	RunURL       string             `json:"run_url,omitempty"`
-	LeaseOwner   string             `json:"lease_owner,omitempty"`
-	RevisionOf   string             `json:"revision_of,omitempty"`
-	Revision     int                `json:"revision,omitempty"`
+	ID             string             `json:"id"`
+	Title          string             `json:"title"`
+	Source         string             `json:"source,omitempty"`
+	Repos          []string           `json:"repos,omitempty"`
+	CurrentStage   string             `json:"current_stage"`
+	CurrentStep    string             `json:"current_step,omitempty"`
+	Artifacts      []CampaignArtifact `json:"artifacts,omitempty"`
+	LinkedPRs      []string           `json:"linked_prs,omitempty"`
+	LinkedIssues   []string           `json:"linked_issues,omitempty"`
+	Contributors   []string           `json:"contributors,omitempty"`
+	LastActivity   string             `json:"last_activity,omitempty"`
+	ActivityLine   string             `json:"activity_line,omitempty"`
+	Status         string             `json:"status"`
+	Engine         string             `json:"engine"`
+	Type           string             `json:"type"`
+	RunKey         string             `json:"run_key,omitempty"`
+	RunURL         string             `json:"run_url,omitempty"`
+	RunGen         uint64             `json:"run_gen,omitempty"`
+	ArtifactID     string             `json:"artifact_id,omitempty"`
+	DocumentStatus string             `json:"document_status,omitempty"`
+	LeaseOwner     string             `json:"lease_owner,omitempty"`
+	RevisionOf     string             `json:"revision_of,omitempty"`
+	Revision       int                `json:"revision,omitempty"`
 }
 
 type CampaignArtifact struct {
@@ -403,10 +407,10 @@ func campaignFromRun(run Run) Campaign {
 	}
 	return Campaign{
 		ID: id, Title: run.Title, Source: run.Key, Repos: nonEmptyStrings(run.Repo), CurrentStage: run.Stage,
-		CurrentStep: firstRunNonEmpty(run.WaitingReason, run.TriageVerdict), Artifacts: artifacts, LinkedPRs: prs, LinkedIssues: issues,
-		Contributors: nonEmptyStrings(firstRunNonEmpty(run.Assignee, run.ClaimedBy)), LastActivity: firstRunNonEmpty(run.CompletedAt, run.StageStartedAt),
+		CurrentStep: firstRunNonEmpty(run.CurrentStep, run.WaitingReason, run.TriageVerdict), Artifacts: artifacts, LinkedPRs: prs, LinkedIssues: issues,
+		Contributors: nonEmptyStrings(firstRunNonEmpty(run.Assignee, run.ClaimedBy)), LastActivity: firstRunNonEmpty(run.LastActivity, run.CompletedAt, run.StageStartedAt), ActivityLine: run.ActivitySummary,
 		Status: runCampaignStatus(run), Engine: "Spektacular", Type: "spektacular", RunKey: run.Key,
-		RunURL: "/api/runs/" + url.PathEscape(run.Key), LeaseOwner: run.Assignee,
+		RunURL: "/api/runs/" + url.PathEscape(run.Key), RunGen: run.Gen, LeaseOwner: run.Assignee, ArtifactID: run.ArtifactID, DocumentStatus: run.DocumentStatus,
 	}
 }
 

@@ -27,6 +27,7 @@ const (
 	AttrArtifact       = "artifact"
 	AttrArtifactBody   = "artifact_body"
 	AttrDocumentStatus = "document_status"
+	AttrCurrentStep    = "current_step"
 	AttrReason         = "reason"
 	AttrSeverity       = "severity"
 	AttrAttempts       = "attempts"
@@ -50,6 +51,8 @@ type LeaseRegistry interface {
 	RetryStageLease(identity, taskID string, now time.Time) error
 	// RefuseStageLease records that the runner will not advance the lease.
 	RefuseStageLease(taskID string, attrs map[string]string)
+	// RecordStageProgress records non-terminal activity for the run timeline.
+	RecordStageProgress(runKey, taskID string, attrs map[string]string, at time.Time)
 	// ResolveRunStageWorkDir returns the repo checkout or per-stage worktree that
 	// owns the Spektacular project for this stage. An empty result parks the lease.
 	ResolveRunStageWorkDir(runKey, stage, identity, repo string, gen uint64) (string, error)
@@ -139,6 +142,20 @@ func (a *leaseAdapter) Refuse(st Stage, reason string, status *ArtifactStatus) {
 		attrs[AttrDocumentStatus] = string(status.DocumentStatus)
 	}
 	a.reg.RefuseStageLease(st.TaskID, attrs)
+}
+
+func (a *leaseAdapter) RecordProgress(st Stage, attrs map[string]string, now time.Time) {
+	eventAttrs := map[string]string{
+		AttrRunKey: st.RunKey,
+		AttrStage:  st.Stage,
+		AttrGen:    strconv.FormatUint(st.Gen, 10),
+	}
+	for k, v := range attrs {
+		if v != "" {
+			eventAttrs[k] = v
+		}
+	}
+	a.reg.RecordStageProgress(st.RunKey, st.TaskID, eventAttrs, now)
 }
 
 // EscalationSink returns the Escalate callback that records decision events
