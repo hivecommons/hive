@@ -167,10 +167,11 @@ func TestAttachReviewLinks_StampsHeldPRs(t *testing.T) {
 func TestRepoCardHeldPillStructure(t *testing.T) {
 	html := indexHTML(t)
 	for _, snippet := range []string{
-		// The stat row and the pill row share one two-column grid.
+		// The stat row and the pill row share one two-column grid unless only
+		// one side has pills, in which case the non-empty side gets the row.
 		".repo-stats { display: grid; grid-template-columns: 1fr 1fr;",
-		".repo-pills { display: grid; grid-template-columns: 1fr 1fr;",
-		`<div class="repo-pills"><div class="repo-pill-col repo-pill-col-issues">${issueCol}</div><div class="repo-pill-col repo-pill-col-prs">${prCol}</div></div>`,
+		".repo-pills { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);",
+		`<div class="repo-pills${pillColClass}"><div class="repo-pill-col repo-pill-col-issues">${issueCol}</div><div class="repo-pill-col repo-pill-col-prs">${prCol}</div></div>`,
 		"const issueCol = issuePills + heldIssuePills;",
 		"const prCol = prPills;",
 		// Held tint, distinct from every merge-state and from needs-human.
