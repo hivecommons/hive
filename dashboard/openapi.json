@@ -8872,6 +8872,18 @@
                         "password_set": {
                           "type": "boolean"
                         },
+                        "ca_bundle_set": {
+                          "type": "boolean"
+                        },
+                        "insecure_skip_verify": {
+                          "type": "boolean"
+                        },
+                        "client_cert_set": {
+                          "type": "boolean"
+                        },
+                        "client_key_set": {
+                          "type": "boolean"
+                        },
                         "project_keys": {
                           "type": "array",
                           "items": {
@@ -9019,6 +9031,18 @@
                         "type": "string"
                       },
                       "password": {
+                        "type": "string"
+                      },
+                      "ca_bundle": {
+                        "type": "string"
+                      },
+                      "insecure_skip_verify": {
+                        "type": "boolean"
+                      },
+                      "client_cert": {
+                        "type": "string"
+                      },
+                      "client_key": {
                         "type": "string"
                       },
                       "project_keys": {

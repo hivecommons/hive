@@ -90,18 +90,42 @@ func FromConfig(cfg config.WorkSourceConfig, ghClient *github.Client, ghToken, g
 		if err != nil {
 			return nil, err
 		}
-		primary = NewJiraSource(JiraConfig{
-			Deployment:  c.Deployment,
-			BaseURL:     c.BaseURL,
-			Email:       c.Email,
-			Username:    c.Username,
-			APIToken:    apiToken,
-			Password:    password,
-			ProjectKeys: c.ProjectKeys,
-			JQL:         c.JQL,
-			Repo:        c.Repo,
-			HoldLabels:  c.HoldLabels,
-		})
+		var caBundle, clientCert, clientKey string
+		if jiraConfigIsDataCenter(c.Deployment) {
+			caBundle, err = resolveSecretRef("work_source.jira.ca_bundle", c.CABundle)
+			if err != nil {
+				return nil, err
+			}
+			clientCert, err = resolveSecretRef("work_source.jira.client_cert", c.ClientCert)
+			if err != nil {
+				return nil, err
+			}
+			clientKey, err = resolveSecretRef("work_source.jira.client_key", c.ClientKey)
+			if err != nil {
+				return nil, err
+			}
+		}
+		jiraCfg := JiraConfig{
+			Deployment:         c.Deployment,
+			BaseURL:            c.BaseURL,
+			Email:              c.Email,
+			Username:           c.Username,
+			APIToken:           apiToken,
+			Password:           password,
+			CABundle:           caBundle,
+			InsecureSkipVerify: c.InsecureSkipVerify,
+			ClientCert:         clientCert,
+			ClientKey:          clientKey,
+			ProjectKeys:        c.ProjectKeys,
+			JQL:                c.JQL,
+			Repo:               c.Repo,
+			HoldLabels:         c.HoldLabels,
+			Logger:             logger,
+		}
+		if err := ValidateJiraTLSConfig(jiraCfg); err != nil {
+			return nil, err
+		}
+		primary = NewJiraSource(jiraCfg)
 	default:
 		return nil, fmt.Errorf("unknown work_source type %q (want github, github_projects, linear, or jira)", cfg.Type)
 	}

@@ -2147,16 +2147,20 @@ type LinearProjectSourceConfig struct {
 
 // JiraSourceConfig configures the Jira Cloud or Jira Data Center work source.
 type JiraSourceConfig struct {
-	Deployment  string   `yaml:"deployment,omitempty" json:"deployment,omitempty"`
-	BaseURL     string   `yaml:"base_url" json:"base_url"`
-	Email       string   `yaml:"email" json:"email"`
-	Username    string   `yaml:"username,omitempty" json:"username,omitempty"`
-	APIToken    string   `yaml:"api_token,omitempty" json:"api_token,omitempty"`
-	Password    string   `yaml:"password,omitempty" json:"password,omitempty"`
-	ProjectKeys []string `yaml:"project_keys,omitempty" json:"project_keys,omitempty"`
-	JQL         string   `yaml:"jql,omitempty" json:"jql,omitempty"`
-	Repo        string   `yaml:"repo,omitempty" json:"repo,omitempty"`
-	HoldLabels  []string `yaml:"hold_labels,omitempty" json:"hold_labels,omitempty"`
+	Deployment         string   `yaml:"deployment,omitempty" json:"deployment,omitempty"`
+	BaseURL            string   `yaml:"base_url" json:"base_url"`
+	Email              string   `yaml:"email" json:"email"`
+	Username           string   `yaml:"username,omitempty" json:"username,omitempty"`
+	APIToken           string   `yaml:"api_token,omitempty" json:"api_token,omitempty"`
+	Password           string   `yaml:"password,omitempty" json:"password,omitempty"`
+	CABundle           string   `yaml:"ca_bundle,omitempty" json:"ca_bundle,omitempty"`
+	InsecureSkipVerify bool     `yaml:"insecure_skip_verify,omitempty" json:"insecure_skip_verify,omitempty"`
+	ClientCert         string   `yaml:"client_cert,omitempty" json:"client_cert,omitempty"`
+	ClientKey          string   `yaml:"client_key,omitempty" json:"client_key,omitempty"`
+	ProjectKeys        []string `yaml:"project_keys,omitempty" json:"project_keys,omitempty"`
+	JQL                string   `yaml:"jql,omitempty" json:"jql,omitempty"`
+	Repo               string   `yaml:"repo,omitempty" json:"repo,omitempty"`
+	HoldLabels         []string `yaml:"hold_labels,omitempty" json:"hold_labels,omitempty"`
 }
 
 // ProjectObservabilityBackendRef names references an agent may place in managed

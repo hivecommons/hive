@@ -3,9 +3,12 @@ package worksource
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -40,6 +43,13 @@ type JiraConfig struct {
 	APIToken string
 	// Password is the Jira Data Center password for Basic auth when APIToken is empty.
 	Password string
+	// CABundle is an optional PEM CA bundle appended to the system roots for Jira Data Center.
+	CABundle string
+	// InsecureSkipVerify disables server certificate verification for Jira Data Center.
+	InsecureSkipVerify bool
+	// ClientCert and ClientKey are optional PEM materials for Jira Data Center mTLS.
+	ClientCert string
+	ClientKey  string
 	// ProjectKeys is the list of Jira project keys to enumerate, e.g. ["ENG","OPS"].
 	ProjectKeys []string
 	// JQL is an optional JQL override. When empty, the adapter builds a default
@@ -51,6 +61,8 @@ type JiraConfig struct {
 	PriorityField string
 	// HoldLabels are Jira label values that gate an issue (like GitHub "hold").
 	HoldLabels []string
+	// Logger receives a warning whenever a Data Center client is built with TLS verification disabled.
+	Logger *slog.Logger
 }
 
 // jiraMaxResults is the page size requested from the Jira search API.
@@ -60,6 +72,7 @@ const jiraMaxResults = jiraSearchPageSize
 type jiraSource struct {
 	cfg    JiraConfig
 	client *http.Client
+	tlsErr error
 }
 
 // NewJiraSource builds a WorkSource backed by the Jira REST API.
@@ -67,9 +80,11 @@ func NewJiraSource(cfg JiraConfig) WorkSource {
 	if cfg.PriorityField == "" {
 		cfg.PriorityField = "priority"
 	}
+	client, err := jiraHTTPClient(cfg)
 	return &jiraSource{
 		cfg:    cfg,
-		client: &http.Client{Timeout: jiraHTTPTimeout},
+		client: client,
+		tlsErr: err,
 	}
 }
 
@@ -86,12 +101,7 @@ func (s *jiraSource) jql() string {
 }
 
 func (s *jiraSource) isDataCenter() bool {
-	switch strings.ToLower(strings.TrimSpace(s.cfg.Deployment)) {
-	case jiraDeploymentDataCenter, jiraDeploymentServer:
-		return true
-	default:
-		return false
-	}
+	return jiraConfigIsDataCenter(s.cfg.Deployment)
 }
 
 func (s *jiraSource) apiVersion() string {
@@ -107,6 +117,87 @@ func (s *jiraSource) restURL(path string) string {
 
 func (s *jiraSource) browseURL(key string) string {
 	return strings.TrimRight(s.cfg.BaseURL, "/") + "/browse/" + key
+}
+
+// ValidateJiraTLSConfig parses the Data Center TLS materials without building
+// a client. Cloud deployments ignore these fields so existing Cloud configs
+// remain unchanged.
+func ValidateJiraTLSConfig(cfg JiraConfig) error {
+	if !jiraConfigIsDataCenter(cfg.Deployment) {
+		return nil
+	}
+	if _, err := jiraTLSConfig(cfg, false); err != nil {
+		return err
+	}
+	return nil
+}
+
+func jiraHTTPClient(cfg JiraConfig) (*http.Client, error) {
+	tlsConfig, err := jiraTLSConfig(cfg, true)
+	if err != nil {
+		return &http.Client{Timeout: jiraHTTPTimeout}, err
+	}
+	if tlsConfig == nil {
+		return &http.Client{Timeout: jiraHTTPTimeout}, nil
+	}
+	defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return &http.Client{Timeout: jiraHTTPTimeout}, fmt.Errorf("worksource/jira: default transport is %T, want *http.Transport", http.DefaultTransport)
+	}
+	transport := defaultTransport.Clone()
+	transport.TLSClientConfig = tlsConfig
+	return &http.Client{Timeout: jiraHTTPTimeout, Transport: transport}, nil
+}
+
+func jiraTLSConfig(cfg JiraConfig, warnInsecure bool) (*tls.Config, error) {
+	if !jiraConfigIsDataCenter(cfg.Deployment) {
+		return nil, nil
+	}
+	hasTLSConfig := cfg.CABundle != "" || cfg.InsecureSkipVerify || cfg.ClientCert != "" || cfg.ClientKey != ""
+	if !hasTLSConfig {
+		return nil, nil
+	}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	if cfg.CABundle != "" {
+		roots, err := x509.SystemCertPool()
+		if err != nil {
+			roots = x509.NewCertPool()
+		}
+		if ok := roots.AppendCertsFromPEM([]byte(cfg.CABundle)); !ok {
+			return nil, fmt.Errorf("work_source.jira.ca_bundle must contain at least one valid PEM certificate")
+		}
+		tlsConfig.RootCAs = roots
+	}
+	if cfg.ClientCert != "" || cfg.ClientKey != "" {
+		if cfg.ClientCert == "" || cfg.ClientKey == "" {
+			return nil, fmt.Errorf("work_source.jira.client_cert and client_key must be set together")
+		}
+		cert, err := tls.X509KeyPair([]byte(cfg.ClientCert), []byte(cfg.ClientKey))
+		if err != nil {
+			return nil, fmt.Errorf("work_source.jira.client_cert/client_key must contain a valid PEM certificate and key pair: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+	if cfg.InsecureSkipVerify {
+		logger := cfg.Logger
+		if logger == nil {
+			logger = slog.Default()
+		}
+		if warnInsecure {
+			logger.Warn("worksource/jira: TLS certificate verification is disabled for Jira Data Center; use only for testing", "base_url", cfg.BaseURL)
+		}
+		tlsConfig.InsecureSkipVerify = true // #nosec G402 -- explicit operator opt-in, warned in UI/logs.
+	}
+	return tlsConfig, nil
+}
+
+func jiraConfigIsDataCenter(deployment string) bool {
+	switch strings.ToLower(strings.TrimSpace(deployment)) {
+	case jiraDeploymentDataCenter, jiraDeploymentServer:
+		return true
+	default:
+		return false
+	}
 }
 
 // Jira search response wire types (only the fields we read).
@@ -221,6 +312,9 @@ func (s *jiraSource) hasHoldLabel(labels []string) bool {
 }
 
 func (s *jiraSource) ListIssues(ctx context.Context) ([]Issue, error) {
+	if s.tlsErr != nil {
+		return nil, s.tlsErr
+	}
 	var out []Issue
 	startAt := 0
 	for {
@@ -299,6 +393,9 @@ func jiraADFDocument(text string) map[string]any {
 }
 
 func (s *jiraSource) doJSON(ctx context.Context, method, reqURL string, payload any, wantStatus int, out any) error {
+	if s.tlsErr != nil {
+		return s.tlsErr
+	}
 	var body io.Reader
 	if payload != nil {
 		var buf bytes.Buffer

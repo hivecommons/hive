@@ -1,13 +1,20 @@
 package dashboard
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/linearagent"
 )
@@ -39,16 +46,20 @@ type workSourceAPIResponse struct {
 		} `json:"teams"`
 	} `json:"linear"`
 	Jira struct {
-		Deployment  string   `json:"deployment"`
-		BaseURL     string   `json:"base_url"`
-		Email       string   `json:"email"`
-		Username    string   `json:"username"`
-		APITokenSet bool     `json:"api_token_set"`
-		PasswordSet bool     `json:"password_set"`
-		ProjectKeys []string `json:"project_keys"`
-		JQL         string   `json:"jql"`
-		Repo        string   `json:"repo"`
-		HoldLabels  []string `json:"hold_labels"`
+		Deployment         string   `json:"deployment"`
+		BaseURL            string   `json:"base_url"`
+		Email              string   `json:"email"`
+		Username           string   `json:"username"`
+		APITokenSet        bool     `json:"api_token_set"`
+		PasswordSet        bool     `json:"password_set"`
+		CABundleSet        bool     `json:"ca_bundle_set"`
+		InsecureSkipVerify bool     `json:"insecure_skip_verify"`
+		ClientCertSet      bool     `json:"client_cert_set"`
+		ClientKeySet       bool     `json:"client_key_set"`
+		ProjectKeys        []string `json:"project_keys"`
+		JQL                string   `json:"jql"`
+		Repo               string   `json:"repo"`
+		HoldLabels         []string `json:"hold_labels"`
 	} `json:"jira"`
 }
 
@@ -58,11 +69,35 @@ func getWorkSourceSettings(t *testing.T, s *Server) workSourceAPIResponse {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET work-source settings: %d — %s", rec.Code, rec.Body.String())
 	}
+
 	var resp workSourceAPIResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decoding work-source settings: %v", err)
 	}
 	return resp
+}
+
+func dashboardTestCertificatePEM(t *testing.T) string {
+	t.Helper()
+	const rsaKeyBits = 2048
+	key, err := rsa.GenerateKey(rand.Reader, rsaKeyBits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "dashboard-test-ca"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 }
 
 // TestGovWorkSource_RequiresOwner pins the gate: the work source decides which
@@ -356,12 +391,14 @@ func TestGovWorkSource_JiraRoundTrip(t *testing.T) {
 	rec := doPut(s, "/api/config/governor/work-source", map[string]any{
 		"type": "jira",
 		"jira": map[string]any{
-			"deployment":   "datacenter",
-			"base_url":     "https://myorg.atlassian.net",
-			"email":        "bot@myorg.com",
-			"username":     "jira-bot",
-			"password":     "${JIRA_DATACENTER_PASSWORD}",
-			"project_keys": []string{"ENG", "OPS"},
+			"deployment":           "datacenter",
+			"base_url":             "https://myorg.atlassian.net",
+			"email":                "bot@myorg.com",
+			"username":             "jira-bot",
+			"password":             "${JIRA_DATACENTER_PASSWORD}",
+			"ca_bundle":            dashboardTestCertificatePEM(t),
+			"insecure_skip_verify": true,
+			"project_keys":         []string{"ENG", "OPS"},
 		},
 	})
 	if rec.Code != http.StatusOK {
@@ -373,6 +410,9 @@ func TestGovWorkSource_JiraRoundTrip(t *testing.T) {
 	}
 	if got.Jira.Deployment != "datacenter" || got.Jira.Username != "jira-bot" || !got.Jira.PasswordSet {
 		t.Fatalf("jira datacenter settings = %+v", got.Jira)
+	}
+	if !got.Jira.CABundleSet || !got.Jira.InsecureSkipVerify {
+		t.Fatalf("jira TLS settings = %+v", got.Jira)
 	}
 	if len(got.Jira.ProjectKeys) != 2 {
 		t.Errorf("Jira.ProjectKeys = %v", got.Jira.ProjectKeys)
@@ -390,6 +430,39 @@ func TestGovWorkSource_JiraRoundTrip(t *testing.T) {
 	}
 	if got.Jira.BaseURL != "https://myorg.atlassian.net" || got.Jira.Email != "bot@myorg.com" {
 		t.Errorf("partial put changed untouched fields: %+v", got.Jira)
+	}
+}
+
+func TestGovWorkSource_JiraRejectsBadTLSPEM(t *testing.T) {
+	s := govServer(t)
+	rec := doPut(s, "/api/config/governor/work-source", map[string]any{
+		"type": "jira",
+		"jira": map[string]any{
+			"deployment": "datacenter",
+			"ca_bundle":  "not pem",
+		},
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad CA bundle: %d — %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "ca_bundle") || !strings.Contains(rec.Body.String(), "PEM") {
+		t.Fatalf("error should name ca_bundle PEM problem: %s", rec.Body.String())
+	}
+}
+
+func TestGovWorkSource_JiraCloudIgnoresHiddenDataCenterTLSRefs(t *testing.T) {
+	s := govServer(t)
+	rec := doPut(s, "/api/config/governor/work-source", map[string]any{
+		"type": "jira",
+		"jira": map[string]any{
+			"deployment":  "cloud",
+			"ca_bundle":   "${UNSET_JIRA_CA_BUNDLE}",
+			"client_cert": "${UNSET_JIRA_CLIENT_CERT}",
+			"client_key":  "${UNSET_JIRA_CLIENT_KEY}",
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cloud Jira with hidden Data Center TLS refs: %d — %s", rec.Code, rec.Body.String())
 	}
 }
 

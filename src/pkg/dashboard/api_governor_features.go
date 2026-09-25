@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"regexp"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // Sampling-ratio bounds for the tracing head-based sampler. The config treats a
@@ -748,18 +751,7 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 			AssignedOnly *bool                           `json:"assigned_only"`
 			Teams        []config.LinearTeamSourceConfig `json:"teams"`
 		} `json:"linear"`
-		Jira *struct {
-			Deployment  *string  `json:"deployment"`
-			BaseURL     *string  `json:"base_url"`
-			Email       *string  `json:"email"`
-			Username    *string  `json:"username"`
-			APIToken    *string  `json:"api_token"`
-			Password    *string  `json:"password"`
-			ProjectKeys []string `json:"project_keys"`
-			JQL         *string  `json:"jql"`
-			Repo        *string  `json:"repo"`
-			HoldLabels  []string `json:"hold_labels"`
-		} `json:"jira"`
+		Jira *workSourceJiraPatch `json:"jira"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -779,6 +771,14 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 	if body.Linear != nil {
 		if msg := validateLinearWorkSourcePatch(cfg, body.Linear.SessionAgent, body.Linear.AssignedOnly, body.Linear.Teams, s.linearStoredViewerID()); msg != "" {
 			jsonError(w, msg, http.StatusBadRequest)
+			return
+		}
+	}
+	if body.Jira != nil {
+		candidate := cfg.Governor.WorkSource.Jira
+		applyJiraWorkSourcePatch(&candidate, body.Jira)
+		if err := validateJiraWorkSourceTLSPatch(candidate); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
@@ -828,37 +828,7 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	if body.Jira != nil {
-		j := body.Jira
-		if j.Deployment != nil {
-			ws.Jira.Deployment = strings.TrimSpace(*j.Deployment)
-		}
-		if j.BaseURL != nil {
-			ws.Jira.BaseURL = *j.BaseURL
-		}
-		if j.Email != nil {
-			ws.Jira.Email = *j.Email
-		}
-		if j.Username != nil {
-			ws.Jira.Username = *j.Username
-		}
-		if j.APIToken != nil {
-			ws.Jira.APIToken = *j.APIToken
-		}
-		if j.Password != nil {
-			ws.Jira.Password = *j.Password
-		}
-		if j.ProjectKeys != nil {
-			ws.Jira.ProjectKeys = j.ProjectKeys
-		}
-		if j.JQL != nil {
-			ws.Jira.JQL = *j.JQL
-		}
-		if j.Repo != nil {
-			ws.Jira.Repo = *j.Repo
-		}
-		if j.HoldLabels != nil {
-			ws.Jira.HoldLabels = j.HoldLabels
-		}
+		applyJiraWorkSourcePatch(&ws.Jira, body.Jira)
 	}
 
 	if err := s.saveConfig(); err != nil {
@@ -893,18 +863,136 @@ func workSourceSectionResponse(cfg *config.Config) map[string]interface{} {
 			"teams":         linearTeamsResponse(ws.Linear.Teams),
 		},
 		"jira": map[string]interface{}{
-			"deployment":    ws.Jira.Deployment,
-			"base_url":      ws.Jira.BaseURL,
-			"email":         ws.Jira.Email,
-			"username":      ws.Jira.Username,
-			"api_token_set": ws.Jira.APIToken != "",
-			"password_set":  ws.Jira.Password != "",
-			"project_keys":  ws.Jira.ProjectKeys,
-			"jql":           ws.Jira.JQL,
-			"repo":          ws.Jira.Repo,
-			"hold_labels":   ws.Jira.HoldLabels,
+			"deployment":           ws.Jira.Deployment,
+			"base_url":             ws.Jira.BaseURL,
+			"email":                ws.Jira.Email,
+			"username":             ws.Jira.Username,
+			"api_token_set":        ws.Jira.APIToken != "",
+			"password_set":         ws.Jira.Password != "",
+			"ca_bundle_set":        ws.Jira.CABundle != "",
+			"insecure_skip_verify": ws.Jira.InsecureSkipVerify,
+			"client_cert_set":      ws.Jira.ClientCert != "",
+			"client_key_set":       ws.Jira.ClientKey != "",
+			"project_keys":         ws.Jira.ProjectKeys,
+			"jql":                  ws.Jira.JQL,
+			"repo":                 ws.Jira.Repo,
+			"hold_labels":          ws.Jira.HoldLabels,
 		},
 	}
+}
+
+type workSourceJiraPatch struct {
+	Deployment         *string  `json:"deployment"`
+	BaseURL            *string  `json:"base_url"`
+	Email              *string  `json:"email"`
+	Username           *string  `json:"username"`
+	APIToken           *string  `json:"api_token"`
+	Password           *string  `json:"password"`
+	CABundle           *string  `json:"ca_bundle"`
+	InsecureSkipVerify *bool    `json:"insecure_skip_verify"`
+	ClientCert         *string  `json:"client_cert"`
+	ClientKey          *string  `json:"client_key"`
+	ProjectKeys        []string `json:"project_keys"`
+	JQL                *string  `json:"jql"`
+	Repo               *string  `json:"repo"`
+	HoldLabels         []string `json:"hold_labels"`
+}
+
+func applyJiraWorkSourcePatch(j *config.JiraSourceConfig, patch *workSourceJiraPatch) {
+	if patch.Deployment != nil {
+		j.Deployment = strings.TrimSpace(*patch.Deployment)
+	}
+	if patch.BaseURL != nil {
+		j.BaseURL = *patch.BaseURL
+	}
+	if patch.Email != nil {
+		j.Email = *patch.Email
+	}
+	if patch.Username != nil {
+		j.Username = *patch.Username
+	}
+	if patch.APIToken != nil {
+		j.APIToken = *patch.APIToken
+	}
+	if patch.Password != nil {
+		j.Password = *patch.Password
+	}
+	if patch.CABundle != nil {
+		j.CABundle = *patch.CABundle
+	}
+	if patch.InsecureSkipVerify != nil {
+		j.InsecureSkipVerify = *patch.InsecureSkipVerify
+	}
+	if patch.ClientCert != nil {
+		j.ClientCert = *patch.ClientCert
+	}
+	if patch.ClientKey != nil {
+		j.ClientKey = *patch.ClientKey
+	}
+	if patch.ProjectKeys != nil {
+		j.ProjectKeys = patch.ProjectKeys
+	}
+	if patch.JQL != nil {
+		j.JQL = *patch.JQL
+	}
+	if patch.Repo != nil {
+		j.Repo = *patch.Repo
+	}
+	if patch.HoldLabels != nil {
+		j.HoldLabels = patch.HoldLabels
+	}
+}
+
+var dashboardSecretRefPattern = regexp.MustCompile(`^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))$`)
+
+func validateJiraWorkSourceTLSPatch(j config.JiraSourceConfig) error {
+	if !dashboardJiraIsDataCenter(j.Deployment) {
+		return nil
+	}
+	caBundle, err := resolveDashboardSecretRef("work_source.jira.ca_bundle", j.CABundle)
+	if err != nil {
+		return err
+	}
+	clientCert, err := resolveDashboardSecretRef("work_source.jira.client_cert", j.ClientCert)
+	if err != nil {
+		return err
+	}
+	clientKey, err := resolveDashboardSecretRef("work_source.jira.client_key", j.ClientKey)
+	if err != nil {
+		return err
+	}
+	return worksource.ValidateJiraTLSConfig(worksource.JiraConfig{
+		Deployment:         j.Deployment,
+		CABundle:           caBundle,
+		InsecureSkipVerify: j.InsecureSkipVerify,
+		ClientCert:         clientCert,
+		ClientKey:          clientKey,
+	})
+}
+
+func dashboardJiraIsDataCenter(deployment string) bool {
+	switch strings.ToLower(strings.TrimSpace(deployment)) {
+	case "datacenter", "server":
+		return true
+	default:
+		return false
+	}
+}
+
+func resolveDashboardSecretRef(field, raw string) (string, error) {
+	m := dashboardSecretRefPattern.FindStringSubmatch(raw)
+	if m == nil {
+		return raw, nil
+	}
+	name := m[1]
+	if name == "" {
+		name = m[2]
+	}
+	val, ok := os.LookupEnv(name)
+	if !ok || val == "" {
+		return "", fmt.Errorf("%s references environment variable %s, which is not set in the hive's environment", field, name)
+	}
+	return val, nil
 }
 
 // linearTeamsResponse renders the team list as plain maps so the form always

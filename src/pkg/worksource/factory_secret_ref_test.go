@@ -92,22 +92,49 @@ func TestFromConfig_JiraAPITokenEnvRef(t *testing.T) {
 
 func TestFromConfig_JiraDataCenterPasswordEnvRef(t *testing.T) {
 	logger := slog.Default()
+	caPEM, _, clientCertPEM, clientKeyPEM := jiraTestTLSMaterials(t)
 	cfg := config.WorkSourceConfig{Type: "jira"}
 	cfg.Jira.Deployment = "datacenter"
 	cfg.Jira.BaseURL = "https://jira.example.com/jira"
 	cfg.Jira.Username = "bot"
 	cfg.Jira.Password = "${JIRA_PASSWORD}"
+	cfg.Jira.CABundle = "${JIRA_CA_BUNDLE}"
+	cfg.Jira.ClientCert = "${JIRA_CLIENT_CERT}"
+	cfg.Jira.ClientKey = "${JIRA_CLIENT_KEY}"
 
 	t.Setenv("JIRA_PASSWORD", "dc_pw_resolved")
+	t.Setenv("JIRA_CA_BUNDLE", caPEM)
+	t.Setenv("JIRA_CLIENT_CERT", clientCertPEM)
+	t.Setenv("JIRA_CLIENT_KEY", clientKeyPEM)
 	ws, err := FromConfig(cfg, nil, "", "", logger)
 	if err != nil {
 		t.Fatalf("FromConfig: %v", err)
 	}
+
 	js, ok := ws.(*jiraSource)
 	if !ok {
 		t.Fatalf("source type %T", ws)
 	}
 	if js.cfg.Password != "dc_pw_resolved" {
 		t.Errorf("password resolved to %q, want dc_pw_resolved", js.cfg.Password)
+	}
+	if js.cfg.CABundle != caPEM || js.cfg.ClientCert != clientCertPEM || js.cfg.ClientKey != clientKeyPEM {
+		t.Error("TLS secret refs were not resolved")
+	}
+}
+
+func TestFromConfig_JiraCloudIgnoresDataCenterTLSRefs(t *testing.T) {
+	logger := slog.Default()
+	cfg := config.WorkSourceConfig{Type: "jira"}
+	cfg.Jira.Deployment = "cloud"
+	cfg.Jira.BaseURL = "https://acme.atlassian.net"
+	cfg.Jira.Email = "bot@acme.example"
+	cfg.Jira.APIToken = "tok"
+	cfg.Jira.CABundle = "${UNSET_JIRA_CA_BUNDLE}"
+	cfg.Jira.ClientCert = "${UNSET_JIRA_CLIENT_CERT}"
+	cfg.Jira.ClientKey = "${UNSET_JIRA_CLIENT_KEY}"
+
+	if _, err := FromConfig(cfg, nil, "", "", logger); err != nil {
+		t.Fatalf("Cloud Jira should ignore Data Center-only TLS refs: %v", err)
 	}
 }

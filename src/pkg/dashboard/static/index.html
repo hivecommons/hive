@@ -26329,7 +26329,7 @@ function burnAreaChart() {
           <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Jira</div>
           <div class="config-field">
             <label>Deployment</label>
-            <select data-change-action="markWorkSourceDirty" data-arg0="jira.deployment" data-arg-types="s,w">
+            <select data-change-action="gh77">
               <option value="" ${!jira.deployment || jira.deployment === 'cloud' ? 'selected' : ''}>Cloud (REST API v3)</option>
               <option value="datacenter" ${jira.deployment === 'datacenter' ? 'selected' : ''}>Data Center / Server (REST API v2)</option>
             </select>
@@ -26354,6 +26354,28 @@ function burnAreaChart() {
             <label>Data Center password <span class="config-info">i<span class="config-tooltip">Only used for Data Center Basic auth when no PAT is configured. Use \${JIRA_PASSWORD}; do not store a raw password.</span></span></label>
             <input type="text" placeholder="${jira.password_set ? '(set — leave blank to keep)' : '\${JIRA_PASSWORD}'}" value="" data-change-action="markWorkSourceDirty" data-arg0="jira.password" data-arg-types="s,w">
           </div>
+          ${jira.deployment === 'datacenter' ? `
+          <div class="config-field">
+            <strong>Data Center TLS</strong>
+          </div>
+          <div>
+            <div class="config-field">
+              <label>Custom CA bundle <span class="config-info">i<span class="config-tooltip">PEM CA certificates appended to system trust roots. Use \${JIRA_DATACENTER_CA_BUNDLE} or paste PEM. Stored write-only; current value is never shown.</span></span></label>
+              <textarea rows="4" placeholder="${jira.ca_bundle_set ? '(set — leave blank to keep)' : '-----BEGIN CERTIFICATE-----\\n...'}" data-change-action="markWorkSourceDirty" data-arg0="jira.ca_bundle" data-arg-types="s,w"></textarea>
+            </div>
+            <div class="config-toggle">
+              <div class="config-toggle-switch ${jira.insecure_skip_verify ? 'on' : ''}" data-action="gh78" data-arg-types="t"></div>
+              <span class="config-toggle-label">Skip TLS verification — unsafe; testing only. Logs a warning whenever the Jira client is built.</span>
+            </div>
+            <div class="config-field">
+              <label>mTLS client certificate <span class="config-info">i<span class="config-tooltip">Optional PEM client certificate. Must be set with client key. Use an environment reference when possible.</span></span></label>
+              <textarea rows="3" placeholder="${jira.client_cert_set ? '(set — leave blank to keep)' : '\${JIRA_DATACENTER_CLIENT_CERT}'}" data-change-action="markWorkSourceDirty" data-arg0="jira.client_cert" data-arg-types="s,w"></textarea>
+            </div>
+            <div class="config-field">
+              <label>mTLS client key <span class="config-info">i<span class="config-tooltip">Optional PEM private key for the client certificate. Stored write-only; never shown after save.</span></span></label>
+              <textarea rows="3" placeholder="${jira.client_key_set ? '(set — leave blank to keep)' : '\${JIRA_DATACENTER_CLIENT_KEY}'}" data-change-action="markWorkSourceDirty" data-arg0="jira.client_key" data-arg-types="s,w"></textarea>
+            </div>
+          </div>` : ''}
           <div class="config-field">
             <label>Project keys <span class="config-info">i<span class="config-tooltip">Comma-separated Jira project keys, e.g. "ENG, OPS". Used to build the default JQL query.</span></span></label>
             <input type="text" placeholder="ENG, OPS" value="${esc((jira.project_keys||[]).join(', '))}" data-change-action="gh65">
@@ -29195,6 +29217,8 @@ function burnAreaChart() {
       gh64: function (event, A) { markWorkSourceDirty('linear.hold_labels',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh65: function (event, A) { markWorkSourceDirty('jira.project_keys',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh66: function (event, A) { markWorkSourceDirty('jira.hold_labels',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
+      gh77: function (event, A) { markWorkSourceDirty('jira.deployment',this.value);renderConfigTab('Work Source'); },
+      gh78: function (event, A) { const v=!((_configState.data.work_source||{}).jira||{}).insecure_skip_verify; markWorkSourceDirty('jira.insecure_skip_verify',v);renderConfigTab('Work Source'); },
     };
 
   </script>

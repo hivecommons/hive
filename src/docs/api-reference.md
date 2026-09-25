@@ -177,8 +177,8 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `PUT` | `/api/config/governor/advisory` | Owner only | Governor Advisory Set | `pkg/dashboard/api.go:240` |
 | `GET` | `/api/config/governor/replan` | Owner only | Governor Replan Get | `pkg/dashboard/api.go:241` |
 | `PUT` | `/api/config/governor/replan` | Owner only | Governor Replan Set | `pkg/dashboard/api.go:242` |
-| `GET` | `/api/config/governor/work-source` | Owner only | Governor Work Source Get | `pkg/dashboard/api.go:243` |
-| `PUT` | `/api/config/governor/work-source` | Owner only | Governor Work Source Set | `pkg/dashboard/api.go:244` |
+| `GET` | `/api/config/governor/work-source` | Owner only | Governor Work Source Get (Jira secrets/TLS fields reported as set/unset only) | `pkg/dashboard/api.go:243` |
+| `PUT` | `/api/config/governor/work-source` | Owner only | Governor Work Source Set (including Jira Data Center TLS settings) | `pkg/dashboard/api.go:244` |
 | `PUT` | `/api/config/governor/security` | Owner only | Governor Security | `pkg/dashboard/api.go:245` |
 | `GET` | `/api/config/governor/project-observability` | Owner only | Governor Project Observability Get | `pkg/dashboard/api.go:246` |
 | `PUT` | `/api/config/governor/project-observability` | Owner only | Governor Project Observability Set | `pkg/dashboard/api.go:247` |

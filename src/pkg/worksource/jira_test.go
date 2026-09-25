@@ -1,15 +1,26 @@
 package worksource
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"log/slog"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 type jiraTestIssue struct {
@@ -401,6 +412,189 @@ func TestJiraCloudCommentUsesADF(t *testing.T) {
 			t.Errorf("cloud comment body %s missing %s", body, want)
 		}
 	}
+}
+
+func TestJiraDataCenterCustomCABundleForTLSServer(t *testing.T) {
+	caPEM, serverCert, _, _ := jiraTestTLSMaterials(t)
+	srv := newJiraTLSServer(t, serverCert, nil)
+	defer srv.Close()
+
+	src := NewJiraSource(JiraConfig{
+		Deployment:  jiraDeploymentDataCenter,
+		BaseURL:     srv.URL,
+		ProjectKeys: []string{"ENG"},
+		Repo:        "o/r",
+	})
+	if _, err := src.ListIssues(context.Background()); err == nil {
+		t.Fatal("untrusted test CA should fail without ca_bundle")
+	}
+
+	trusted := NewJiraSource(JiraConfig{
+		Deployment:  jiraDeploymentDataCenter,
+		BaseURL:     srv.URL,
+		CABundle:    caPEM,
+		ProjectKeys: []string{"ENG"},
+		Repo:        "o/r",
+	})
+	got, err := trusted.ListIssues(context.Background())
+	if err != nil {
+		t.Fatalf("custom CA bundle should trust TLS server: %v", err)
+	}
+	if len(got) != 1 || got[0].ExternalID != "ENG-1" {
+		t.Fatalf("issues = %+v, want ENG-1", got)
+	}
+}
+
+func TestJiraDataCenterSkipTLSVerifyWarnsAndConnects(t *testing.T) {
+	_, serverCert, _, _ := jiraTestTLSMaterials(t)
+	srv := newJiraTLSServer(t, serverCert, nil)
+	defer srv.Close()
+	var logs bytes.Buffer
+
+	src := NewJiraSource(JiraConfig{
+		Deployment:         jiraDeploymentDataCenter,
+		BaseURL:            srv.URL,
+		InsecureSkipVerify: true,
+		ProjectKeys:        []string{"ENG"},
+		Repo:               "o/r",
+		Logger:             slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+	if _, err := src.ListIssues(context.Background()); err != nil {
+		t.Fatalf("skip TLS verify should connect to test server: %v", err)
+	}
+	if !strings.Contains(logs.String(), "TLS certificate verification is disabled") {
+		t.Fatalf("warning log = %q, want skip-verify warning", logs.String())
+	}
+}
+
+func TestJiraDataCenterBadCABundleRejected(t *testing.T) {
+	err := ValidateJiraTLSConfig(JiraConfig{
+		Deployment: jiraDeploymentDataCenter,
+		CABundle:   "not pem",
+	})
+	if err == nil || !strings.Contains(err.Error(), "ca_bundle") || !strings.Contains(err.Error(), "PEM") {
+		t.Fatalf("ValidateJiraTLSConfig bad CA = %v, want clear PEM error", err)
+	}
+}
+
+func TestJiraDataCenterMTLSClientCertificate(t *testing.T) {
+	caPEM, serverCert, clientCertPEM, clientKeyPEM := jiraTestTLSMaterials(t)
+	caPool := x509.NewCertPool()
+	if ok := caPool.AppendCertsFromPEM([]byte(caPEM)); !ok {
+		t.Fatal("test CA did not parse")
+	}
+	srv := newJiraTLSServer(t, serverCert, caPool)
+	defer srv.Close()
+
+	src := NewJiraSource(JiraConfig{
+		Deployment:  jiraDeploymentDataCenter,
+		BaseURL:     srv.URL,
+		CABundle:    caPEM,
+		ClientCert:  clientCertPEM,
+		ClientKey:   clientKeyPEM,
+		ProjectKeys: []string{"ENG"},
+		Repo:        "o/r",
+	})
+	if _, err := src.ListIssues(context.Background()); err != nil {
+		t.Fatalf("mTLS Jira client should connect: %v", err)
+	}
+}
+
+func newJiraTLSServer(t *testing.T, cert tls.Certificate, clientCAs *x509.CertPool) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rest/api/2/search" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"startAt":    0,
+			"maxResults": jiraMaxResults,
+			"total":      1,
+			"issues": []map[string]any{jiraIssueJSON(jiraTestIssue{
+				Key:     "ENG-1",
+				Summary: "TLS",
+				Status:  "To Do",
+			})},
+		})
+	}))
+	srv.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}
+	if clientCAs != nil {
+		srv.TLS.ClientCAs = clientCAs
+		srv.TLS.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+	srv.StartTLS()
+	return srv
+}
+
+func jiraTestTLSMaterials(t *testing.T) (string, tls.Certificate, string, string) {
+	t.Helper()
+	const rsaKeyBits = 2048
+	caKey, err := rsa.GenerateKey(rand.Reader, rsaKeyBits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	caTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "jira-test-ca"},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}))
+
+	serverKey, err := rsa.GenerateKey(rand.Reader, rsaKeyBits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "127.0.0.1"},
+		NotBefore:    now.Add(-time.Hour),
+		NotAfter:     now.Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+		DNSNames:     []string{"localhost"},
+	}
+	serverDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, caTemplate, &serverKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER})
+	serverKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(serverKey)})
+	serverCert, err := tls.X509KeyPair(serverCertPEM, serverKeyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	clientKey, err := rsa.GenerateKey(rand.Reader, rsaKeyBits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(3),
+		Subject:      pkix.Name{CommonName: "jira-client"},
+		NotBefore:    now.Add(-time.Hour),
+		NotAfter:     now.Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	clientDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, caTemplate, &clientKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientDER})
+	clientKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(clientKey)})
+	return caPEM, serverCert, string(clientCertPEM), string(clientKeyPEM)
 }
 
 func TestJiraTimestampUnmarshal(t *testing.T) {
