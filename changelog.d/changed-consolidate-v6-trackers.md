@@ -1,1 +1,1 @@
-- Consolidate v6 readiness tracker references into the #7563 epic's v6 readiness bar section, preventing docs and agents from reopening the retired #7683 tracker.
+- Consolidate v6 readiness tracker references into the #7563 epic's v6 readiness bar section, preventing docs and agents from reopening the retired standalone tracker.
