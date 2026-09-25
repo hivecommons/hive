@@ -114,6 +114,46 @@ func TestSetupCodexHome_NonRootRunsSuExec(t *testing.T) {
 	m.setupCodexHome(agent) // must not panic even when su-exec is missing
 }
 
+func TestCodexConfigWithUpdateCheckDisabled(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "empty",
+			want: "check_for_update_on_startup = false\n",
+		},
+		{
+			name: "preserves top level keys",
+			in:   "model = \"gpt-5-codex\"\nnotify = [\"python\"]\n",
+			want: "model = \"gpt-5-codex\"\nnotify = [\"python\"]\ncheck_for_update_on_startup = false\n",
+		},
+		{
+			name: "replaces existing top level key",
+			in:   "check_for_update_on_startup = true\nmodel = \"gpt-5-codex\"\n",
+			want: "check_for_update_on_startup = false\nmodel = \"gpt-5-codex\"\n",
+		},
+		{
+			name: "inserts before first table",
+			in:   "model = \"gpt-5-codex\"\n[projects.\"/data/agents/ci\"]\ntrust_level = \"trusted\"\n",
+			want: "model = \"gpt-5-codex\"\ncheck_for_update_on_startup = false\n[projects.\"/data/agents/ci\"]\ntrust_level = \"trusted\"\n",
+		},
+		{
+			name: "table key is not top level",
+			in:   "[projects.\"/data/agents/ci\"]\ncheck_for_update_on_startup = true\n",
+			want: "check_for_update_on_startup = false\n[projects.\"/data/agents/ci\"]\ncheck_for_update_on_startup = true\n",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := string(codexConfigWithUpdateCheckDisabled([]byte(c.in))); got != c.want {
+				t.Errorf("merged config = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 // codexHealTestManager returns a manager and a codex agent with the given UID.
 func codexHealTestManager(t *testing.T, uid int) (*Manager, *AgentProcess) {
 	t.Helper()

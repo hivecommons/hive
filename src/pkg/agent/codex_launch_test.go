@@ -29,6 +29,14 @@ func TestCodexLaunchCommandLine_Model(t *testing.T) {
 	}
 }
 
+func TestCodexLaunchCommandLine_HubPathBypassesApprovalsAndSandbox(t *testing.T) {
+	got := codexLaunchCmd(t, "gpt-6-astra", "xhigh")
+	want := `codex --dangerously-bypass-approvals-and-sandbox --model gpt-6-astra -c model_reasoning_effort="xhigh"`
+	if got != want {
+		t.Errorf("codex hub launch = %q, want %q", got, want)
+	}
+}
+
 // TestCodexLaunchCommandLine_ReasoningEffort pins the reasoning_effort flag
 // contract: the exact `-c model_reasoning_effort="<v>"` spelling the scripted
 // launch paths (bin/agent-launch.sh, contributor relay) already use, present

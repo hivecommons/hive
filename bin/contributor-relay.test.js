@@ -4122,6 +4122,25 @@ const CODEX_UPDATE_PANE = [
   '  Press enter to continue',
 ].join('\n');
 
+const CODEX_UPDATE_PANE_0156 = [
+  '  Update available · 0.156.1 → 0.157.0',
+  '  Release notes: https://github.com/openai/codex/releases/latest',
+  '\u203a 1. Update now (runs `npm install -g @openai/codex`)',
+  '  2. Skip',
+  '  3. Skip until next version',
+  '  enter continue · esc skip',
+].join('\n');
+
+const CODEX_COMMAND_APPROVAL_PANE = [
+  '  Would you like to run the following command?',
+  '  Environment: local',
+  '  Reason: May I read the latest local kick, summary, and health bead files to report current pipeline status?',
+  '  $ cat beads/supervisor-kick-architect.json beads/supervisor-summary-architect.json',
+  '\u203a 1. Yes, proceed (y)',
+  "  2. Yes, and don't ask again for commands that start with `cat beads/`",
+  '  3. No, and tell Codex what to do differently (esc)',
+].join('\n');
+
 const AGY_READY_PANE = [
   'Antigravity CLI',
   '',
@@ -4173,7 +4192,7 @@ test('a ready codex pane is classified ready (regression: > vs \u203a, and "Open
 test('the modal panes still win over the ready marker they also draw', () => {
   // Both modals render '\u203a' too; modal classification runs first, so a
   // blocked pane must NOT be reported ready by the widened pattern.
-  for (const pane of [CODEX_TRUST_PANE, CODEX_UPDATE_PANE]) {
+  for (const pane of [CODEX_TRUST_PANE, CODEX_UPDATE_PANE, CODEX_UPDATE_PANE_0156, CODEX_COMMAND_APPROVAL_PANE]) {
     const relay = loadRelay({ backend: 'codex', cliStates: [pane] });
     try {
       assert.strictEqual(relay.getCLIState(), 'onboarding');
@@ -4186,6 +4205,8 @@ test('codex numbered startup menus get explicit safe selections', () => {
   try {
     assert.strictEqual(relay.blockingPromptKey(CODEX_TRUST_PANE), '1');
     assert.strictEqual(relay.blockingPromptKey(CODEX_UPDATE_PANE), '3');
+    assert.strictEqual(relay.blockingPromptKey(CODEX_UPDATE_PANE_0156), '3');
+    assert.strictEqual(relay.blockingPromptKey(CODEX_COMMAND_APPROVAL_PANE), null);
     assert.strictEqual(relay.blockingPromptKey('Do you trust this folder? (y/n)'), null);
   } finally { teardown(relay); }
 });
@@ -10460,6 +10481,10 @@ test('pane-classifier: blockingPromptKey takes backend as an explicit argument',
     paneClassifier.blockingPromptKey(CODEX_TRUST_PANE, 'codex'), '1');
   assert.strictEqual(
     paneClassifier.blockingPromptKey(CODEX_UPDATE_PANE, 'codex'), '3');
+  assert.strictEqual(
+    paneClassifier.blockingPromptKey(CODEX_UPDATE_PANE_0156, 'codex'), '3');
+  assert.strictEqual(
+    paneClassifier.blockingPromptKey(CODEX_COMMAND_APPROVAL_PANE, 'codex'), null);
   assert.strictEqual(
     paneClassifier.blockingPromptKey('Do you trust this folder? (y/n)', 'codex'), null);
 });

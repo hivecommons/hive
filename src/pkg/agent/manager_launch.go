@@ -839,10 +839,12 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 	case codexBackend:
 		// Codex has no deny-tool flag, so ToolsConfig cannot be expressed
 		// here (same shape as bob above); model and reasoning effort still
-		// apply, matching backendLaunchCmd.
-		cmd := binary
+		// apply, matching backendLaunchCmd. The hub tmux path is unattended
+		// and has the pod/egress proxy as its boundary, so mirror Claude's
+		// bypass posture rather than letting Codex prompt in an unwatched pane.
+		cmd := codexUnattendedLaunchCmd(binary)
 		if model != "" {
-			cmd = fmt.Sprintf("%s --model %s", binary, model)
+			cmd = fmt.Sprintf("%s --model %s", cmd, model)
 		}
 		return cmd + codexEffortFlag(effort)
 	case "agy":
@@ -927,14 +929,18 @@ func backendLaunchCmd(binary, model, backend string, isInference bool, effort st
 		// Codex takes the model as a CLI flag like the others. Without this
 		// case codex fell to the bare-binary default below, so a dashboard
 		// model choice was silently dropped on this launch path (the codex
-		// dropdown existed, the selection never reached the CLI). The
+		// dropdown existed, the selection never reached the CLI). The hub
+		// tmux path is unattended: unlike contributor-local mode, there is no
+		// human watching the pane and workspace-write would also cut off the
+		// proxy-backed gh/git network path, so use Codex's explicit full
+		// bypass posture (the pod and egress proxy are the boundary). The
 		// reasoning effort rides alongside as a config key — codex has no
 		// dedicated flag for it — and is valid with OR without --model
 		// (effort alone runs codex's default model at that effort, the same
 		// contract as AGENT_REASONING_EFFORT on the relay path).
-		launchCmd = binary
+		launchCmd = codexUnattendedLaunchCmd(binary)
 		if model != "" {
-			launchCmd = fmt.Sprintf("%s --model %s", binary, model)
+			launchCmd = fmt.Sprintf("%s --model %s", launchCmd, model)
 		}
 		launchCmd += codexEffortFlag(effort)
 	case "omp":
@@ -943,6 +949,10 @@ func backendLaunchCmd(binary, model, backend string, isInference bool, effort st
 		launchCmd = binary
 	}
 	return launchCmd
+}
+
+func codexUnattendedLaunchCmd(binary string) string {
+	return binary + " --dangerously-bypass-approvals-and-sandbox"
 }
 
 const (

@@ -25,6 +25,13 @@ This is the part that is easy to get wrong, because the two paths have different
 | Host-state denials (#4938) | Yes | Yes (`config/backends.conf`) |
 | Credentials / pushes | Constrained | Constrained |
 
+Hub-launched Codex agents use `--dangerously-bypass-approvals-and-sandbox`,
+mirroring Claude's unattended posture. The hub path already relies on the pod,
+the optional Podman agent sandbox, the egress proxy, and Hive's mode gates as
+the boundary; Codex's `workspace-write` sandbox is not used there because it
+also disables the network path `gh`/`git` need through the proxy and would
+replace one unattended posture with approval prompts in an unwatched pane.
+
 **The #4918 incident happened on the contributor relay's local mode**, so enabling `agent_sandbox` would not have prevented it. Claude-family local launches now use Claude Code's native sandbox with hard-fail startup and unsandboxed retry disabled; codex keeps its `workspace-write` sandbox; copilot local launches now use Copilot CLI's own OS-enforced sandbox. Container mode remains the stronger backend-independent remedy and the `just contribute-hive` default.
 
 Operators running hive on a machine they care about should therefore prefer container mode on the contributor path, use only a locally sandboxed (or, for opencode, at least denylisted) backend when local mode is necessary, and enable the sandbox below on the hub path.
