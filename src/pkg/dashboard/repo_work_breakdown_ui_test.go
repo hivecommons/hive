@@ -16,17 +16,17 @@ func TestRepoWorkBreakdownRendering(t *testing.T) {
 	script := jsFunc(t, indexHTML(t), "formatRepoWorkBreakdown") + `
 const assert = require('node:assert/strict');
 let html = formatRepoWorkBreakdown({ actionable: 0, dependency_dashboard: 1 }, 1, 'issues');
-assert.match(html, /0 actionable<\/span> · <span>1 dependency dashboard/);
+assert.match(html, /0 actionable<\/span> · <span[^>]*>1 dependency dashboard/);
 html = formatRepoWorkBreakdown({ actionable: 0, hive_advisory: 1 }, 1, 'issues');
-assert.match(html, /0 actionable<\/span> · <span>1 advisory/);
+assert.match(html, /0 actionable<\/span> · <span[^>]*>1 advisory/);
 html = formatRepoWorkBreakdown({ actionable: 1 }, 1, 'issues');
 assert.match(html, />1 actionable<\/span>/);
 html = formatRepoWorkBreakdown({ actionable: 0, hold: 1 }, 1, 'prs');
-assert.match(html, /0 actionable<\/span> · <span>1 hold/);
+assert.match(html, /0 actionable<\/span> · <span[^>]*>1 hold/);
 html = formatRepoWorkBreakdown({ actionable: 0, draft: 1 }, 1, 'prs');
-assert.match(html, /0 actionable<\/span> · <span>1 draft/);
+assert.match(html, /0 actionable<\/span> · <span[^>]*>1 draft/);
 html = formatRepoWorkBreakdown({ actionable: 0, filtered: 1, other: 1 }, 2, 'issues');
-assert.match(html, /1 filtered<\/span> · <span>1 other/);
+assert.match(html, /1 filtered<\/span> · <span[^>]*>1 other/);
 assert.equal(formatRepoWorkBreakdown({ actionable: 0 }, 0, 'issues'), '');
 `
 	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
@@ -37,7 +37,7 @@ assert.equal(formatRepoWorkBreakdown({ actionable: 0 }, 0, 'issues'), '');
 func TestRepoCardsUseStructuredWorkBreakdown(t *testing.T) {
 	html := indexHTML(t)
 	for _, snippet := range []string{
-		"formatRepoWorkBreakdown(r.workBreakdown?.issues, r.issues, 'issues')",
+		"formatRepoWorkBreakdown(r.workBreakdown?.issues, r.issues, 'issues', repoStaleIssueCount(r.actionableIssues || []))",
 		"formatRepoWorkBreakdown(r.workBreakdown?.prs, r.prs, 'prs')",
 		"${issueBreakdown}",
 		"${prBreakdown}",
