@@ -2143,6 +2143,23 @@
     }
     .config-toggle-switch.on::before { transform: translateX(16px); }
     .config-toggle-label { font-size: 0.8rem; color: var(--text); }
+    .smart-classifier-section { display: grid; gap: var(--sp-6); }
+    .smart-classifier-card { border: var(--line-width) solid var(--border); border-radius: var(--r); background: var(--surface); padding: var(--sp-6); }
+    .smart-classifier-card h3 { margin: var(--sp-0) var(--sp-0) var(--sp-3); color: var(--text); font-size: var(--fs-lg); }
+    .smart-classifier-copy { margin: var(--sp-0); color: var(--muted); line-height: 1.5; }
+    .smart-classifier-checklist { display: grid; gap: var(--sp-3); margin-top: var(--sp-4); }
+    .smart-classifier-check { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); color: var(--text); }
+    .smart-classifier-status { font-weight: 700; color: var(--muted); }
+    .smart-classifier-status.ok { color: var(--green); }
+    .smart-classifier-status.missing { color: var(--red); }
+    .smart-classifier-actions { display: flex; gap: var(--sp-4); flex-wrap: wrap; align-items: center; margin-top: var(--sp-4); }
+    .smart-classifier-hint { color: var(--muted); font-size: var(--fs-sm); }
+    .smart-classifier-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: var(--sp-4); margin-top: var(--sp-4); }
+    .smart-classifier-stat { border: var(--line-width) solid var(--border); border-radius: var(--r); background: var(--bg-soft); padding: var(--sp-4); }
+    .smart-classifier-stat strong { display: block; color: var(--text); font-size: var(--fs-base); }
+    .smart-classifier-stat span { color: var(--muted); font-size: var(--fs-sm); }
+    .smart-classifier-decisions { display: flex; gap: var(--sp-5); flex-wrap: wrap; }
+    .smart-classifier-decisions label { display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--text); }
 
     /* A heading INSIDE a settings section, for a feature with several distinct
        concerns. It groups by whitespace and a quiet label rather than a rule:
@@ -20438,7 +20455,7 @@ function burnAreaChart() {
     // which is read-only hub-synced user/role data. It sits next to Model
     // Gateways because both are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Extensions', 'Project Observability', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Extensions', 'Project Observability', 'Advisory', 'Smart classifier', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -21054,6 +21071,7 @@ function burnAreaChart() {
         // from its own endpoint (owner-only; the render is a static shell).
         if (tabId === 'Features') loadLinearAgentStatus();
         if (tabId === 'Extensions') loadExtensionRelayStatus();
+        if (tabId === 'Smart classifier') loadSmartClassifierStats();
         if (tabId === 'Appearance') loadThemeConfig();
       }
       // Keep the Save button's enabled state in lockstep with the repos/default
@@ -21203,6 +21221,7 @@ function burnAreaChart() {
         case 'Extensions': return renderGovExtensions(d.features || {});
         case 'Project Observability': return renderGovProjectObservability(d.project_observability || {});
         case 'Advisory': return renderGovAdvisory(d.advisory || {});
+        case 'Smart classifier': return renderGovSmartClassifier(d.classifier || {});
         case 'Work Source': return renderGovWorkSource(d.work_source || {});
         case 'Hub': return renderGovHub(d.hub || {});
         case 'Forge App': return renderGovForgeApp();
@@ -22019,6 +22038,158 @@ function burnAreaChart() {
       } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
       }
+    }
+
+    let _smartClassifierStatus = null;
+
+    function renderGovSmartClassifier(c) {
+      const jev = c.jev || {};
+      const backend = (c.backend || 'keywords').toLowerCase();
+      const mode = (c.mode || 'shadow').toLowerCase();
+      const decisions = Array.isArray(jev.decisions) && jev.decisions.length ? jev.decisions : ['lane', 'tier', 'triage'];
+      const hasKey = _smartClassifierStatus && _smartClassifierStatus.key_source && _smartClassifierStatus.key_source !== 'none';
+      const disabledJev = hasKey ? '' : ' disabled';
+      const hint = hasKey ? 'Ready to save Jev as the backend.' : 'Connect OpenRouter or set JEV_API_KEY before enabling Jev.';
+      const checked = (d) => decisions.includes(d) ? ' checked' : '';
+      return `
+        <div id="smart-classifier-section" class="smart-classifier-section">
+          <div class="smart-classifier-card">
+            <h3>Smart classifier (Jev)</h3>
+            <p class="smart-classifier-copy">Use TypeSafe AI's Jev typed-decision model to advise issue lane routing, pick the tier/model family (haiku, sonnet, opus), and triage urgency. Estimated cost is about $0.00002 per issue, billed on input tokens only.</p>
+            <div class="smart-classifier-checklist">
+              <div class="smart-classifier-check">
+                <span>OpenRouter connected with an API key</span>
+                <span id="smart-classifier-openrouter-status" class="smart-classifier-status">checking…</span>
+              </div>
+              <div class="smart-classifier-check">
+                <span>JEV_API_KEY environment key</span>
+                <span id="smart-classifier-env-status" class="smart-classifier-status">checking…</span>
+              </div>
+            </div>
+            <div class="smart-classifier-actions">
+              <button id="smart-classifier-connect-openrouter" class="hv-btn btn-primary" data-action="openOpenRouterFund">Connect OpenRouter</button>
+              <span id="smart-classifier-readiness-hint" class="smart-classifier-hint">${esc(hint)}</span>
+            </div>
+            <div id="openrouter-fund-host"></div>
+          </div>
+
+          <div class="smart-classifier-card">
+            <h3>Controls</h3>
+            <div class="config-field-row">
+              <div class="config-field">
+                <label for="smart-classifier-backend">Backend</label>
+                <select id="smart-classifier-backend" data-change-action="smartClassifierBackendChanged" data-arg-types="v">
+                  <option value="keywords"${backend === 'keywords' ? ' selected' : ''}>Keywords</option>
+                  <option value="jev"${backend === 'jev' ? ' selected' : ''}${disabledJev}>Jev</option>
+                </select>
+                <div id="smart-classifier-backend-hint" class="smart-classifier-hint">${esc(hint)}</div>
+              </div>
+              <div class="config-field">
+                <label for="smart-classifier-mode">Mode</label>
+                <select id="smart-classifier-mode" data-change-action="markDirty" data-arg0="classifier" data-arg1="mode" data-arg-types="s,s,v">
+                  <option value="shadow"${mode === 'shadow' ? ' selected' : ''}>Shadow — log only</option>
+                  <option value="enforce"${mode === 'enforce' ? ' selected' : ''}>Enforce</option>
+                </select>
+              </div>
+              <div class="config-field">
+                <label for="smart-classifier-min-confidence">Min confidence</label>
+                <input id="smart-classifier-min-confidence" type="number" min="0" max="1" step="0.01" value="${Number(jev.minConfidence || 0.8)}" data-change-action="markDirty" data-arg0="classifier" data-arg1="minConfidence" data-arg-types="s,s,N">
+              </div>
+            </div>
+            <div class="config-field">
+              <label>Decisions</label>
+              <div class="smart-classifier-decisions">
+                <label><input id="smart-classifier-decision-lane" type="checkbox"${checked('lane')} data-change-action="smartClassifierDecisionChanged"> Lane</label>
+                <label><input id="smart-classifier-decision-tier" type="checkbox"${checked('tier')} data-change-action="smartClassifierDecisionChanged"> Tier</label>
+                <label><input id="smart-classifier-decision-triage" type="checkbox"${checked('triage')} data-change-action="smartClassifierDecisionChanged"> Triage</label>
+              </div>
+            </div>
+          </div>
+
+          <div class="smart-classifier-card">
+            <h3>Shadow-mode stats</h3>
+            <p class="smart-classifier-copy">Agreement counters compare Jev with deterministic keywords while shadow mode is enabled; fallback counts low-confidence, missing-key, timeout, and error fallbacks.</p>
+            <div id="smart-classifier-stats" class="smart-classifier-stats">
+              <div class="smart-classifier-stat"><strong>Loading…</strong><span>classifier stats</span></div>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    function smartClassifierBackendChanged(value) {
+      if (value === 'jev' && (!_smartClassifierStatus || _smartClassifierStatus.key_source === 'none')) {
+        showToast('Connect OpenRouter or set JEV_API_KEY before enabling Jev.', 'error');
+        const sel = document.getElementById('smart-classifier-backend');
+        if (sel) sel.value = 'keywords';
+        return;
+      }
+      markDirty('classifier', 'backend', value);
+    }
+
+    function smartClassifierDecisionChanged() {
+      const ids = [
+        ['smart-classifier-decision-lane', 'lane'],
+        ['smart-classifier-decision-tier', 'tier'],
+        ['smart-classifier-decision-triage', 'triage'],
+      ];
+      const selected = ids.filter(([id]) => {
+        const el = document.getElementById(id);
+        return el && el.checked;
+      }).map(([, value]) => value);
+      markDirty('classifier', 'decisions', selected);
+    }
+
+    async function loadSmartClassifierStats() {
+      try {
+        const res = await fetch('/api/classifier/stats');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        _smartClassifierStatus = await res.json();
+        updateSmartClassifierReadiness(_smartClassifierStatus);
+        updateSmartClassifierStats(_smartClassifierStatus);
+      } catch (e) {
+        const stats = document.getElementById('smart-classifier-stats');
+        if (stats) stats.innerHTML = '<div class="smart-classifier-stat"><strong>Unavailable</strong><span>' + esc(e.message) + '</span></div>';
+      }
+    }
+
+    function updateSmartClassifierReadiness(status) {
+      const open = !!(status && status.openrouter_connected);
+      const env = !!(status && status.key_source === 'env');
+      const keySource = (status && status.key_source) || 'none';
+      const openEl = document.getElementById('smart-classifier-openrouter-status');
+      const envEl = document.getElementById('smart-classifier-env-status');
+      const backend = document.getElementById('smart-classifier-backend');
+      const jevOption = backend ? backend.querySelector('option[value="jev"]') : null;
+      const hint = document.getElementById('smart-classifier-backend-hint');
+      const topHint = document.getElementById('smart-classifier-readiness-hint');
+      if (openEl) {
+        openEl.textContent = open ? '✓ connected' : '✗ not connected';
+        openEl.className = 'smart-classifier-status ' + (open ? 'ok' : 'missing');
+      }
+      if (envEl) {
+        envEl.textContent = env ? '✓ set' : '✗ not set';
+        envEl.className = 'smart-classifier-status ' + (env ? 'ok' : 'missing');
+      }
+      const ready = keySource !== 'none';
+      const msg = ready
+        ? (keySource === 'env' ? 'Ready via JEV_API_KEY/env; Save applies this config.' : 'Ready via connected OpenRouter key; Save applies this config.')
+        : 'Connect OpenRouter or set JEV_API_KEY before enabling Jev.';
+      if (jevOption) jevOption.disabled = !ready;
+      if (hint) hint.textContent = msg;
+      if (topHint) topHint.textContent = msg;
+    }
+
+    function updateSmartClassifierStats(status) {
+      const host = document.getElementById('smart-classifier-stats');
+      if (!host) return;
+      const decisions = (status && status.decisions) || {};
+      const rows = ['lane', 'tier', 'triage'].map(name => {
+        const d = decisions[name] || {};
+        return '<div class="smart-classifier-stat"><strong>' + esc(name) + '</strong><span>agree ' + Number(d.agree || 0) + ' · disagree ' + Number(d.disagree || 0) + ' · fallback ' + Number(d.fallback || 0) + '</span></div>';
+      });
+      rows.push('<div class="smart-classifier-stat"><strong>' + Number((status && status.estimated_input_tokens) || 0).toLocaleString() + '</strong><span>estimated input tokens</span></div>');
+      rows.push('<div class="smart-classifier-stat"><strong>$' + Number((status && status.estimated_spend_usd) || 0).toFixed(6) + '</strong><span>estimated spend</span></div>');
+      host.innerHTML = rows.join('');
     }
 
     function renderGovGateways() {

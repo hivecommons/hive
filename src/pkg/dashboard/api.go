@@ -224,6 +224,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/governor/attribution", s.handleGovernorAttribution)
 	s.mux.HandleFunc("PUT /api/config/governor/hub", s.handleGovernorHub)
 	s.mux.HandleFunc("PUT /api/config/governor/litellm", s.handleGovernorLiteLLM)
+	s.mux.HandleFunc("PUT /api/config/governor/classifier", s.handleGovernorClassifier)
 	s.mux.HandleFunc("PUT /api/config/governor/trajectory", s.handleGovernorTrajectory)
 	s.mux.HandleFunc("PUT /api/config/governor/features", s.handleGovernorFeatures)
 	s.mux.HandleFunc("GET /api/config/governor/general-advanced", s.handleGovernorGeneralAdvancedGet)

@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/classify"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hooks"
@@ -133,7 +132,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		},
 		"litellm":               litellmSectionResponse(&cfg.Governor.LiteLLM),
 		"trajectory":            trajectorySectionResponse(&cfg.Governor),
-		"classifier":            classifierSectionResponse(),
+		"classifier":            classifierSectionResponse(cfg),
 		"features":              s.featuresSectionWithLinked(cfg),
 		"review":                reviewSectionResponse(cfg),
 		"auto_merge":            autoMergeSectionResponse(cfg),
@@ -1376,21 +1375,6 @@ func litellmSectionResponse(lc *config.LiteLLMConfig) map[string]interface{} {
 		// redactSecret guards the pathological case of a key-like env var
 		// NAME appearing in the source string.
 		"keySource": redactSecret(lc.ResolveAPIKeySource(), key),
-	}
-}
-
-// classifierSectionResponse surfaces the effective tier-classification keyword
-// lists (Phase 4 Part C) to the dashboard governor-config view. It returns the
-// keywords actually in force — config-driven when a `classifier:` block is set,
-// else the built-in defaults — so operators can see and (via hive.yaml) edit
-// which title keywords map issues to the Simple/Complex tiers. classify.SetLanes
-// already surfaces per-agent lane_keywords per-agent; these are the analogous
-// global tier lists.
-func classifierSectionResponse() map[string]interface{} {
-	simple, complex := classify.TierKeywords()
-	return map[string]interface{}{
-		"simpleKeywords": simple,
-		"complexSignals": complex,
 	}
 }
 
