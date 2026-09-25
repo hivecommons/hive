@@ -18,14 +18,16 @@ import (
 )
 
 const (
-	DefaultSwarmName     = "Swarm"
-	DefaultSwarmDuration = 24 * time.Hour
-	SwarmStateFileName   = "swarm-state.json"
+	DefaultSwarmName        = "Swarm"
+	DefaultSwarmDuration    = 24 * time.Hour
+	DefaultSwarmPrepTimeout = 2 * time.Minute
+	SwarmStateFileName      = "swarm-state.json"
 )
 
 const (
-	swarmEnvName     = "HIVE_SWARM_NAME"
-	swarmEnvDuration = "HIVE_SWARM_DURATION"
+	swarmEnvName        = "HIVE_SWARM_NAME"
+	swarmEnvDuration    = "HIVE_SWARM_DURATION"
+	swarmEnvPrepTimeout = "HIVE_SWARM_PREP_TIMEOUT"
 )
 
 type SwarmScore struct {
@@ -44,10 +46,21 @@ type SwarmRecord struct {
 	EndedAt      *time.Time `json:"ended_at,omitempty"`
 	Score        SwarmScore `json:"score"`
 	Participants []string   `json:"participants,omitempty"`
+	Prep         *SwarmPrep `json:"prep,omitempty"`
 	PrepAgents   []string   `json:"prep_agents,omitempty"`
 	PrepErrors   []string   `json:"prep_errors,omitempty"`
 	EndReason    string     `json:"end_reason,omitempty"`
 	ScoringError string     `json:"scoring_error,omitempty"`
+}
+
+type SwarmPrep struct {
+	Agents              []string  `json:"agents,omitempty"`
+	Errors              []string  `json:"errors,omitempty"`
+	ActionableIssues    int       `json:"actionable_issues"`
+	UnlabeledIssues     int       `json:"unlabeled_issues"`
+	DuplicateCandidates int       `json:"duplicate_candidates"`
+	StartedAt           time.Time `json:"started_at"`
+	FinishedAt          time.Time `json:"finished_at"`
 }
 
 type SwarmStatus struct {
@@ -108,6 +121,15 @@ func configuredSwarmDuration() time.Duration {
 		}
 	}
 	return DefaultSwarmDuration
+}
+
+func configuredSwarmPrepTimeout() time.Duration {
+	if v := strings.TrimSpace(os.Getenv(swarmEnvPrepTimeout)); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return DefaultSwarmPrepTimeout
 }
 
 func (s *Server) registerSwarmRoutes() {
@@ -246,6 +268,22 @@ func (st *swarmStore) start(repo string, prep func(string) ([]string, []string))
 	return rec, st.saveLocked()
 }
 
+func (st *swarmStore) setPrep(start time.Time, prep SwarmPrep) (SwarmRecord, error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if err := st.loadLocked(); err != nil {
+		return SwarmRecord{}, err
+	}
+	if st.state.Active == nil || !st.state.Active.Start.Equal(start) {
+		return SwarmRecord{}, os.ErrNotExist
+	}
+	st.state.Active.Prep = &prep
+	st.state.Active.PrepAgents = append([]string(nil), prep.Agents...)
+	st.state.Active.PrepErrors = append([]string(nil), prep.Errors...)
+	rec := *st.state.Active
+	return rec, st.saveLocked()
+}
+
 func (st *swarmStore) end(ctx context.Context, reason string) (SwarmRecord, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -354,7 +392,8 @@ func (s *Server) handleSwarmPost(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	rec, err := s.swarmStore().start(repo, s.kickSwarmPrep)
+	store := s.swarmStore()
+	rec, err := store.start(repo, nil)
 	if errors.Is(err, errSwarmActive) {
 		jsonError(w, "another swarm is already active", http.StatusConflict)
 		return
@@ -362,6 +401,12 @@ func (s *Server) handleSwarmPost(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonError(w, "starting swarm failed: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+	prep := s.prepareSwarmRepo(r.Context(), repo)
+	if updated, err := store.setPrep(rec.Start, prep); err == nil {
+		rec = updated
+	} else if s.logger != nil {
+		s.logger.Warn("persisting swarm prep failed", "repo", repo, "error", err)
 	}
 	s.auditFromRequest(r, "swarm_start", auditDetail("repo", rec.Repo, "ends_at", rec.End.Format(time.RFC3339)), "")
 	jsonResponse(w, rec)
@@ -436,4 +481,40 @@ func (s *Server) kickSwarmPrep(repo string) ([]string, []string) {
 		kicked = append(kicked, name)
 	}
 	return kicked, errs
+}
+
+func (s *Server) prepareSwarmRepo(parent context.Context, repo string) SwarmPrep {
+	started := time.Now().UTC()
+	ctx, cancel := context.WithTimeout(parent, configuredSwarmPrepTimeout())
+	defer cancel()
+	prep := SwarmPrep{StartedAt: started}
+	gh := s.depsGHClient()
+	if gh == nil {
+		prep.Errors = append(prep.Errors, "github prep skipped: no GitHub client")
+	} else {
+		if actionable, err := gh.EnumerateActionable(ctx); err != nil {
+			prep.Errors = append(prep.Errors, "actionable issues: "+err.Error())
+		} else if actionable != nil {
+			for _, issue := range actionable.Issues.Items {
+				if strings.EqualFold(strings.TrimSpace(issue.Repo), repo) || strings.EqualFold(strings.TrimSpace(issue.Repo), repo[strings.LastIndex(repo, "/")+1:]) {
+					prep.ActionableIssues++
+				}
+			}
+		}
+		if n, err := gh.CountUnlabeledOpenIssues(ctx, repo); err != nil {
+			prep.Errors = append(prep.Errors, "unlabeled issues: "+err.Error())
+		} else {
+			prep.UnlabeledIssues = n
+		}
+		if result, err := gh.SweepDuplicatePRs(ctx, ghpkg.DuplicateSweepOptions{PostComments: false}); err != nil {
+			prep.Errors = append(prep.Errors, "duplicate sweep: "+err.Error())
+		} else if result != nil {
+			prep.DuplicateCandidates = len(result.Clusters)
+		}
+	}
+	agents, errs := s.kickSwarmPrep(repo)
+	prep.Agents = agents
+	prep.Errors = append(prep.Errors, errs...)
+	prep.FinishedAt = time.Now().UTC()
+	return prep
 }

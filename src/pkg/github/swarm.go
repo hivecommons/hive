@@ -64,6 +64,17 @@ func (c *Client) ScoreSwarm(ctx context.Context, repo string, start, end time.Ti
 	return SwarmScore{IssuesClosed: closed, PRsMerged: merged, Participants: participants}, nil
 }
 
+func (c *Client) CountUnlabeledOpenIssues(ctx context.Context, repo string) (int, error) {
+	if c == nil {
+		return 0, ErrNoGitHubClient
+	}
+	repo = strings.TrimSpace(repo)
+	if repo == "" {
+		return 0, fmt.Errorf("repo is required")
+	}
+	return c.searchSwarmTotal(ctx, fmt.Sprintf("repo:%s is:issue is:open no:label", repo))
+}
+
 func (c *Client) searchSwarmTotal(ctx context.Context, query string) (int, error) {
 	result, _, err := c.client.Search.Issues(ctx, query, &gh.SearchOptions{ListOptions: gh.ListOptions{PerPage: 1}})
 	if err != nil {
