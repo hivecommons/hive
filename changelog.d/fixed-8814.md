@@ -1,1 +1,2 @@
 - Hub: spokes no longer freeze "N behind" while v5 merges faster than it builds; the spoke upgrade target now advances to the newest commit whose image is published, as the hub image target already did.
+- Hub: a spoke already running a commit newer than the hub's verified latest is no longer shown "Upgrading" and rolled back onto the same floating tag.
