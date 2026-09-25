@@ -106,7 +106,7 @@ func (p *Primer) Prime(ctx context.Context, filePaths []string, keywords []strin
 		}
 
 		for _, r := range results {
-			allFacts = append(allFacts, Fact{
+			allFacts = append(allFacts, applyConfidence(Fact{
 				Slug:       r.Slug,
 				Title:      r.Title,
 				Type:       FactType(r.Type),
@@ -115,7 +115,7 @@ func (p *Primer) Prime(ctx context.Context, filePaths []string, keywords []strin
 				Status:     r.Status,
 				Tags:       r.Tags,
 				Layer:      lc.layerType,
-			})
+			}, confidenceInput{Raw: r.Confidence, HasRaw: r.Confidence > 0, Type: FactType(r.Type), Layer: lc.layerType, Status: r.Status, Tags: r.Tags}))
 		}
 	}
 
