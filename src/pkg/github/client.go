@@ -1880,7 +1880,11 @@ func HasHoldLabelWith(labels, extraHoldLabels []string) bool {
 	for _, label := range extraHoldLabels {
 		label = strings.ToLower(strings.TrimSpace(label))
 		if label != "" {
-			exactHoldLabels = append(exactHoldLabels, label)
+			if strings.HasPrefix(label, "hive-pause/") {
+				exactHoldLabels = append(exactHoldLabels, label)
+			} else {
+				holdLabels = append(holdLabels, label)
+			}
 		}
 	}
 	for _, label := range labels {
