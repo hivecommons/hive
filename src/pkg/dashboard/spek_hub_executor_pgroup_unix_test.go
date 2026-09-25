@@ -48,13 +48,18 @@ func TestSpekHubRunStageCommandKillsGrandchildrenOnCancel(t *testing.T) {
 	if _, err := fmt.Sscan(string(raw), &gpid); err != nil || gpid <= 0 {
 		t.Fatalf("bad grandchild pid %q: %v", raw, err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	timeout := time.After(3 * time.Second)
+	for {
 		if err := syscall.Kill(gpid, 0); err != nil {
 			return
 		}
-		time.Sleep(50 * time.Millisecond)
+		select {
+		case <-tick.C:
+		case <-timeout:
+			_ = exec.Command("kill", "-9", string(raw)).Run()
+			t.Fatalf("grandchild %d survived stage cancellation", gpid)
+		}
 	}
-	_ = exec.Command("kill", "-9", string(raw)).Run()
-	t.Fatalf("grandchild %d survived stage cancellation", gpid)
 }
