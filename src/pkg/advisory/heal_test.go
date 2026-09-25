@@ -339,7 +339,9 @@ func TestBuildDigestFromBeadsBackfillsResolvedAtFromLinkedPR(t *testing.T) {
 	}
 
 	md := FormatDigestMarkdown(d, opts)
-	wantDay := "resolved " + mergedAt.Format("Jan 2")
+	// Cited refs closing is a heuristic, so the entry is dated but not
+	// claimed resolved (#6262).
+	wantDay := "closed " + mergedAt.Format("Jan 2") + " (the issues/PRs it cites closed)"
 	if !strings.Contains(md, wantDay) {
 		t.Fatalf("rendered digest does not show PR merge day:\n%s", md)
 	}

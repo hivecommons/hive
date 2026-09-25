@@ -94,6 +94,42 @@ the staleness window.
   re-file after a close opens a fresh bead.
 - The close is recorded as
   `close_reason: auto-closed: a merged pull request addresses this finding`.
+  Because a title match is inference, the digest lists these closes as
+  **fix not verified**, not as resolved (see below).
+
+### Only verified closes are resolutions
+
+Advisory agents re-check their own open findings each cycle and `bd close` the
+ones they judge fixed or invalid. That judgement is an LLM's, and it is
+routinely wrong: the digest of 2026-09-24 reported a still-undocumented
+feature as resolved because the `guide` agent closed its finding with no docs
+change behind it ([#6262](https://github.com/hivecommons/hive/issues/6262)).
+The hive's own inference-based auto-closes can be wrong the same way: a PR
+title can share words with a finding it never touched, and a finding can cite
+an issue that closes for reasons unrelated to its remedy.
+
+The digest therefore splits recently closed findings by what backs the close:
+
+- **✅ Recently Resolved** — struck through, "resolved <date>". Only closes
+  where the hive re-ran the failing check itself and saw it pass: a healed App
+  or repo-access finding.
+- **☑️ Recently Closed — Fix Not Verified** — not struck through,
+  "<agent> — closed <date> (<basis>), fix not verified", where `<agent>` is the
+  agent that reported the finding (a bead does not record who closed it) and
+  `<basis>` is one of:
+  - `a merged PR's title matched` — PR-linked auto-close.
+  - `the issues/PRs it cites closed` — every GitHub issue or PR the finding
+    references has closed, including stale findings retired that way.
+  - `no evidence recorded` — every other close, including `bd close` and
+    `bd update --status done|closed`.
+
+  The condition may still hold.
+
+Both sections share the `max_findings` changelog cap described below. The
+zero-findings digest says "all previously reported findings are resolved" only
+when every listed close, and every close hidden by the cap, is verified. The
+digest JSON carries the basis on each entry as `close_basis`
+(`hive-verified`, `pr-title-match`, `cited-refs-closed`, `unverified`).
 
 ### Evidence provenance
 

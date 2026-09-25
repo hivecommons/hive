@@ -123,6 +123,12 @@ concurrency:
 #                      weight into R balanced groups (job outputs → matrix)
 #   test (rest i/R)    one bucket each
 #
+# Shard counts (H=4, N=5, R=5) were re-tuned on 2026-09-25 once the self-hosted
+# runner fleet dropped per-shard setup overhead to ~25s: at H=3/R=4 the gate
+# was bounded by hub 2/3 (185s) and rest 2/4 (180s) against a 4.0-minute run,
+# so one more slice of each shaves ~1 minute off the critical path at the cost
+# of two runner pods. Re-tune when the slowest shard drifts past ~150s.
+#
 # Every shard uses the exact same flags: -short -race -count=1 (untouched),
 # plus -coverprofile for the parse-only coverage gate below, plus:
 #  - -v, with the `=== RUN/PAUSE/CONT` lines stripped before tee, so the log
@@ -163,11 +169,11 @@ jobs:
   # hub floor. Adding a hub test no longer moves the gate's wall clock by its
   # full duration — only by 1/H of it.
   test-hub:
-    name: test (hub ${{ matrix.idx }}/3)
+    name: test (hub ${{ matrix.idx }}/4)
     strategy:
       fail-fast: false
       matrix:
-        idx: [1, 2, 3]
+        idx: [1, 2, 3, 4]
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     defaults:
       run:
@@ -271,7 +277,7 @@ jobs:
       - name: Surface flaky reruns
         id: flaky-reruns
         if: always()
-        run: bash "$GITHUB_WORKSPACE/.github/scripts/ci-gotestsum-flake-summary.sh" "flaky-tests-hub-${{ matrix.idx }}.txt" "hub ${{ matrix.idx }}/3"
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/ci-gotestsum-flake-summary.sh" "flaky-tests-hub-${{ matrix.idx }}.txt" "hub ${{ matrix.idx }}/4"
 
       - name: Upload flaky rerun report
         if: always() && steps.flaky-reruns.outputs.has-flakes == 'true'
@@ -284,7 +290,7 @@ jobs:
 
       - name: Slowest tests in this slice
         if: always()
-        run: bash "$GITHUB_WORKSPACE/.github/scripts/slowest-tests.sh" "hub ${{ matrix.idx }}/3" test-hub-${{ matrix.idx }}.log
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/slowest-tests.sh" "hub ${{ matrix.idx }}/4" test-hub-${{ matrix.idx }}.log
 
       # Uploaded even on failure so the coverage job (and humans) can inspect
       # the raw `go test` output. `warn` not `error`: on a compile failure the
@@ -535,7 +541,7 @@ jobs:
       - name: Partition packages into balanced buckets
         id: partition
         run: |
-          R=4
+          R=5
           # Anchored: drops the monolithic pkg/hub package (the hub job shards
           # that package by test function) and legacy hub subpackages that were
           # not part of the rest-bucket contract. Keep pkg/hub/spoke included so
