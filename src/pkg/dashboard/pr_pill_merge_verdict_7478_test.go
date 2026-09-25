@@ -111,8 +111,8 @@ func TestPRPillMergeVerdictStructure(t *testing.T) {
 		"function prMergeState(p) {",
 		".repo-pr-pill.merge-outstanding { --pill-c: var(--yellow); }",
 		"const mergeState = prMergeState(p);",
-		`mergeState === 'eligible' ? '<span class="pill-merge-icon">✓</span>'`,
-		`mergeState === 'outstanding' ? '<span class="pill-merge-icon">◐</span>'`,
+		`mergeState === 'eligible' ? '<span class="pill-merge-icon" title="Merge-eligible on the sweep verdict">✓</span>'`,
+		`mergeState === 'outstanding' ? '<span class="pill-merge-icon" title="GitHub says mergeable; sweep still wants something">◐</span>'`,
 		"const mergeClass = mergeState === 'eligible' ? ' mergeable' : mergeState === 'outstanding' ? ' merge-outstanding' : '';",
 		"const notMergeable = p.mergeable === 'no';",
 	} {

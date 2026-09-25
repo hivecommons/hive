@@ -1410,6 +1410,15 @@
     .repo-pills-issues-only .repo-pill-col-issues, .repo-pills-prs-only .repo-pill-col-prs { grid-column: 1 / -1; }
     .repo-pill-col { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; overflow: hidden; }
     .repo-pill-col .repo-issue-pill-wrap, .repo-pill-col .repo-pr-pill-wrap { flex: 0 1 auto; max-width: 100%; width: 100%; }
+    .repo-issue-pill-wrap, .repo-pr-pill-wrap { display: grid; grid-template-columns: minmax(3.65rem, max-content) minmax(10.5rem, 1fr) max-content; align-items: center; gap: var(--sp-2); min-width: 0; }
+    .repo-pill-main { display: flex; align-items: center; gap: var(--sp-1); min-width: 0; overflow: hidden; }
+    .repo-pill-status { display: inline-flex; align-items: center; justify-content: center; min-width: 3.65rem; max-width: 5.25rem; padding: 3px 6px; border: 1px solid color-mix(in srgb, var(--pill-c, var(--border)) 45%, transparent); border-radius: var(--r-pill); color: var(--pill-c, var(--muted)); background: color-mix(in srgb, var(--pill-c, var(--muted)) 10%, transparent); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.02em; line-height: 1; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .repo-pill-status.held { --pill-c: var(--muted); border-style: dashed; }
+    .repo-pill-actions { display: grid; grid-template-columns: 1.65rem 1.65rem 1.65rem minmax(4.8rem, max-content); justify-content: end; align-items: center; gap: var(--sp-1); }
+    .repo-pill-action-slot { display: inline-flex; align-items: center; justify-content: center; min-width: 1.65rem; min-height: 1.45rem; overflow: hidden; }
+    .repo-pill-action-slot .pill-icon { max-width: 100%; overflow: hidden; text-overflow: clip; }
+    .repo-pill-action-slot:last-child .pill-icon { max-width: none; }
+    .repo-pill-action-slot.empty { visibility: hidden; pointer-events: none; }
     /* A held pill: the item is in its column (it IS one of the repo's issues
        / PRs, and the count includes it) but parked behind a hold label, so
        it is waiting on a human rather than on an agent. Neutral grey with a
@@ -1425,12 +1434,9 @@
     .repo-issue-pill:hover { background: color-mix(in srgb, var(--pill-c) 24%, transparent); text-decoration: none; }
     .repo-issue-pill .pill-num { flex: 0 0 auto; font-weight: 700; white-space: nowrap; }
     .repo-issue-pill .pill-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    /* Plan action sits beside its issue pill. Always visible (so the feature is
-       discoverable) but visually secondary; brightens to full on row hover. */
-    .repo-issue-pill-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); max-width: 100%; min-width: 0; }
-    /* The pill shrinks (its title ellipsis-truncates) so a long title + the
-       always-visible Plan button never overflow the fixed-width repo card. */
-    .repo-issue-pill-wrap .repo-issue-pill { min-width: 0; flex: 1 1 auto; overflow: hidden; }
+    /* Plan/design/link actions live in the shared fixed action cluster so the
+       Hold/Release slot lines up with PR rows. */
+    .repo-issue-pill-wrap .repo-issue-pill { min-width: 0; overflow: hidden; }
     .repo-issue-plan { --pill-c: var(--purple); flex: 0 0 auto; border: 1px solid color-mix(in srgb, var(--pill-c) 40%, transparent); background: color-mix(in srgb, var(--pill-c) 12%, transparent); color: var(--pill-c); font-size: 0.7rem; font-weight: 600; line-height: 1; padding: 3px 6px; border-radius: var(--r-pill); cursor: pointer; white-space: nowrap; opacity: 0.75; transition: opacity 0.15s, background 0.15s; }
     /* Plan-state chip (hivecommons/hive#8011): replaces the Plan button on an
        issue that already has a plan. Colour = what the plan needs — amber for a
@@ -1446,8 +1452,7 @@
     .repo-issue-plan:hover { background: color-mix(in srgb, var(--pill-c) 26%, transparent); }
     .repo-issue-plan:disabled { opacity: 0.5; cursor: default; }
     .repo-pr-pill { --component-status: var(--acmm-level-5); --pill-c: var(--acmm-level-5); text-decoration: none; max-width: 100%; transition: background 0.15s; }
-    .repo-pr-pill-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); max-width: 100%; min-width: 0; flex: 1 1 100%; }
-    .repo-pr-pill-wrap .repo-pr-pill:not(.pill-icon) { min-width: 0; flex: 1 1 auto; overflow: hidden; }
+    .repo-pr-pill-wrap .repo-pr-pill:not(.pill-icon) { min-width: 0; overflow: hidden; }
     .repo-pr-pill:hover { background: color-mix(in srgb, var(--pill-c) 24%, transparent); text-decoration: none; }
     /* Three pill states (#7478). Green = the governor's merge-eligible
        verdict: the sweep would merge this now. Amber = GitHub says
@@ -8878,7 +8883,8 @@
             <span class="repo-issue-pill done" title="Likely done: labels ${esc(done)}"><span class="pill-state">✓</span> likely done</span>
             <span class="repo-issue-pill stale" title="No activity for more than ${cfg.staleDays} days"><span class="pill-state">🕒</span> stale</span>
             <span class="repo-issue-plan pill-icon" title="Verified linked pull request">🔗 #42</span>
-            <span class="repo-issue-plan pill-icon" title="Plan this issue">📋</span>
+            <span class="repo-issue-plan pill-icon" title="Plan this issue (clipboard icon)">📋</span>
+            <span class="repo-issue-plan pill-icon" title="Design this issue before planning (ruler icon)">📐</span>
             <span class="repo-issue-plan pill-icon plan-review" title="Plan awaiting human review">●</span>
             <span class="repo-issue-pill pill-icon" title="Hold actionable item">⏸ Hold</span>
             <span class="repo-issue-pill held pill-icon" title="Release held item">▶ Release</span>
@@ -8904,6 +8910,7 @@
             <span class="repo-pr-pill mergeable pill-icon" title="Queued for Hive auto-merge">🔀</span>
             <span class="repo-pr-pill pill-icon" title="Queue for auto-merge, or disabled when not mergeable on GitHub">🔀</span>
             <span class="repo-pr-pill" title="Review class badge: FIX is red; FEAT/TESTS/DOCS/REFACTOR show why the PR is prioritized"><span class="pill-class fix">FIX</span> class</span>
+            <span class="repo-pr-pill" title="Row status badge: the left chip is the issue band or PR review class; actions are aligned in fixed slots">aligned row</span>
           </div>
         </div>`);
     }
@@ -9160,6 +9167,23 @@
       const w = clampRepoCardWidth(cardWidth);
       if (!w || w <= REPO_CARD_DEFAULT_W) return PILL_TITLE_BASE_LEN;
       return Math.min(PILL_TITLE_MAX_LEN, Math.round(PILL_TITLE_BASE_LEN * w / REPO_CARD_DEFAULT_W));
+    }
+
+    const PILL_TITLE_MIN_VISIBLE = 18;
+    function pillDisplayTitle(title, limit) {
+      const raw = String(title || '');
+      const n = Math.max(PILL_TITLE_MIN_VISIBLE, Number(limit) || PILL_TITLE_BASE_LEN);
+      return raw.length > n ? raw.slice(0, n) + '…' : raw;
+    }
+
+    function repoPillActionSlot(html) {
+      return html ? `<span class="repo-pill-action-slot">${html}</span>` : '<span class="repo-pill-action-slot empty" aria-hidden="true">•</span>';
+    }
+
+    function repoPillActionCluster(slots) {
+      const filled = Array.isArray(slots) ? slots.slice(0, 4) : [];
+      while (filled.length < 4) filled.push('');
+      return `<span class="repo-pill-actions">${filled.map(repoPillActionSlot).join('')}</span>`;
     }
 
     // repoCardLayoutWidth is the width an UNSIZED card gets from the grid's
@@ -9426,6 +9450,16 @@
       }
     }
 
+    function issueBandShortLabel(band, role) {
+      switch (band) {
+        case 'in-progress': return 'claimed';
+        case 'agent-filed': return role ? role : 'agent';
+        case 'waiting': return 'blocked';
+        case 'done': return 'done';
+        default: return 'ready';
+      }
+    }
+
     function issueBandRank(band) {
       return { ready: 0, 'in-progress': 1, 'agent-filed': 2, waiting: 3, done: 4 }[band] ?? 9;
     }
@@ -9534,7 +9568,7 @@
         const cardW = repoCardWidth(cardRepo);
         const MAX_PILL_TITLE_LEN = pillTitleLimit(cardW || layoutW);
         const renderIssuePill = (i, info) => {
-          const title = i.title && i.title.length > MAX_PILL_TITLE_LEN ? i.title.slice(0, MAX_PILL_TITLE_LEN) + '…' : (i.title || '');
+          const title = pillDisplayTitle(i.title, MAX_PILL_TITLE_LEN);
           const repoFull = r.full || r.name || '';
           // Plan action (Phase 4): mint an epic from this issue and request
           // decomposition. data-action wires into the delegated click handler.
@@ -9548,15 +9582,17 @@
           const linked = planLinks[repoFull + '#' + i.number];
           const planBtn = linked
             ? planIssueChip(linked)
-            : (showPlan ? `<button class="repo-issue-plan pill-icon" data-action="planIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Plan this issue" aria-label="Plan this issue">📋</button>${showDesign ? `<button class="repo-issue-plan pill-icon" data-action="designIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Design before planning" aria-label="Design before planning">📐</button>` : ''}` : '');
+            : (showPlan ? `<button class="repo-issue-plan pill-icon" data-action="planIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Plan this issue" aria-label="Plan this issue">📋</button>` : '');
+          const designBtn = (!linked && showDesign) ? `<button class="repo-issue-plan pill-icon" data-action="designIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Design before planning" aria-label="Design before planning">📐</button>` : '';
           const holdBtn = holdToggleChip(cardRepo, i, 'issue', false, canToggleHold, '');
           const linkedPRs = Array.isArray(i.linked_prs) ? i.linked_prs : [];
           const primaryPR = linkedPRs.find(pr => pr.closing) || linkedPRs.find(pr => pr.state === 'open') || linkedPRs.find(pr => pr.merged) || linkedPRs[0];
           const prTip = linkedPRs.map(pr => `#${pr.number}${pr.merged ? ' merged' : (pr.state ? ' ' + pr.state : '')}`).join(', ');
-          const prBadge = primaryPR ? `<a class="repo-issue-plan pill-icon" href="${esc(primaryPR.url || '')}" target="_blank" rel="noopener" title="Linked PR${prTip ? ': ' + esc(prTip) : ''}" aria-label="Linked pull request #${primaryPR.number}">🔗 #${primaryPR.number}${primaryPR.merged ? ' merged' : ''}</a>` : '';
+          const prBadge = primaryPR ? `<a class="repo-issue-plan pill-icon" href="${esc(primaryPR.url || '')}" target="_blank" rel="noopener" title="Linked PR${prTip ? ': ' + esc(prTip) : ''}" aria-label="Linked pull request #${primaryPR.number}">🔗</a>` : '';
           const bandClass = info.band === 'ready' ? '' : ' ' + info.band;
           const staleClass = issueIsStale(i) ? ' stale' : '';
-          return `<span class="repo-issue-pill-wrap"><a class="repo-issue-pill${bandClass}${staleClass}" href="${esc(i.url)}" target="_blank" rel="noopener" title="${esc(issueTip(i, info))}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span>${issueSignalHTML(info)}</a>${prBadge}${planBtn}${holdBtn}</span>`;
+          const statusTip = issueBandLabel(info.band, info.role) + (info.signals.length ? ' — ' + info.signals.map(s => s.label).join(', ') : '');
+          return `<span class="repo-issue-pill-wrap repo-pill-row"><span class="repo-pill-status repo-issue-pill${bandClass}${staleClass}" title="${esc(statusTip)}">${esc(issueBandShortLabel(info.band, info.role))}</span><a class="repo-issue-pill repo-pill-main${bandClass}${staleClass}" href="${esc(i.url)}" target="_blank" rel="noopener" title="${esc(issueTip(i, info))}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span>${issueSignalHTML(info)}</a>${repoPillActionCluster([prBadge, planBtn, designBtn, holdBtn])}</span>`;
         };
         const issuePills = groupedRepoIssues(r.actionableIssues || []).map(g => {
           const items = g.issues.map(entry => renderIssuePill(entry.issue, entry.info)).join('');
@@ -9569,21 +9605,21 @@
         // HoldItem on the wire (no author); the URL is built from the repo
         // when an older snapshot omits it.
         const heldIssuePills = (r.heldIssues || []).map(i => {
-          const title = i.title && i.title.length > MAX_PILL_TITLE_LEN ? i.title.slice(0, MAX_PILL_TITLE_LEN) + '…' : (i.title || '');
+          const title = pillDisplayTitle(i.title, MAX_PILL_TITLE_LEN);
           const age = pillAge(i.created_at);
           const heldTip = heldReason(i);
           const tip = (i.title || '') + (age ? ' (' + age + ')' : '') + ' (' + heldTip + ')';
           const url = i.url || (repoUrl + '/issues/' + i.number);
           const holdBtn = holdToggleChip(cardRepo, i, 'issue', true, canToggleHold, heldTip);
-          return `<span class="repo-issue-pill-wrap"><a class="repo-issue-pill held" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span></a>${holdBtn}</span>`;
+          return `<span class="repo-issue-pill-wrap repo-pill-row"><span class="repo-pill-status repo-issue-pill held" title="${esc(heldTip)}">held</span><a class="repo-issue-pill held repo-pill-main" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span></a>${repoPillActionCluster(['', '', '', holdBtn])}</span>`;
         }).join('');
         const renderPrPill = (p, held, info) => {
-          const title = p.title && p.title.length > MAX_PILL_TITLE_LEN ? p.title.slice(0, MAX_PILL_TITLE_LEN) + '…' : (p.title || '');
+          const title = pillDisplayTitle(p.title, MAX_PILL_TITLE_LEN);
           // Green ✓ only on the sweep's own verdict; amber ◐ for mergeable
           // on GitHub but not yet eligible; nothing otherwise (#7478).
           const mergeState = prMergeState(p);
-          const mergeIcon = mergeState === 'eligible' ? '<span class="pill-merge-icon">✓</span>'
-            : mergeState === 'outstanding' ? '<span class="pill-merge-icon">◐</span>' : '';
+          const mergeIcon = mergeState === 'eligible' ? '<span class="pill-merge-icon" title="Merge-eligible on the sweep verdict">✓</span>'
+            : mergeState === 'outstanding' ? '<span class="pill-merge-icon" title="GitHub says mergeable; sweep still wants something">◐</span>' : '';
           const mergeClass = mergeState === 'eligible' ? ' mergeable' : mergeState === 'outstanding' ? ' merge-outstanding' : '';
           const prAge = pillAge(p.created_at);
           const activityAge = pillAge(p.updated_at || p.created_at);
@@ -9599,7 +9635,6 @@
           // ordered by (fix > refactor-docs > tests, then age; #6183). It is
           // derived server-side from the title prefix and lane label only.
           const reviewClass = p.review_class ? String(p.review_class) : '';
-          const classBadge = reviewClass ? `<span class="pill-class ${esc(reviewClass)}">${esc(reviewClass === 'refactor-docs' ? 'refactor' : reviewClass)}</span>` : '';
           const bandTip = info ? ' [band: ' + prBandLabel(info.band) + ']' : '';
           const activityTip = p.updated_at ? ' [last activity: ' + p.updated_at + (activityAge ? ' / ' + activityAge : '') + ']' : '';
           const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + bandTip + activityTip + (reviewClass ? ' [review class: ' + reviewClass + ']' : '') + prMergeNote(p) + (queued ? ' (queued for auto-merge)' : '') + (needsHuman ? ' (needs human review)' : '') + (held ? ' (' + heldReason(p) + ')' : '');
@@ -9637,7 +9672,10 @@
           // technically mergeable AND escalated, and the escalation is what
           // the operator must see. Held adds the dashed outline without making
           // the PR a trailing append; it bands with other human gates.
-          return `<span class="repo-pr-pill-wrap"><a class="repo-pr-pill${heldClass}${needsHuman ? ' needs-human' : mergeClass}${staleClass}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(prTip)}">${classBadge}<span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}${prSignalHTML(info || prBandInfo(p, held))}</a>${reviewPill}${queueBtn}${stateBadge}${holdBtn}</span>`;
+          const tintClass = needsHuman ? ' needs-human' : mergeClass;
+          const prStatusText = reviewClass ? (reviewClass === 'refactor-docs' ? 'refactor' : reviewClass) : (held ? 'held' : 'PR');
+          const prStatusTip = reviewClass ? ((held ? 'Held PR — review class: ' : 'Review class: ') + reviewClass) : (held ? heldTip : 'Open pull request');
+          return `<span class="repo-pr-pill-wrap repo-pill-row"><span class="repo-pill-status repo-pr-pill${heldClass}${tintClass}" title="${esc(prStatusTip)}">${esc(prStatusText)}</span><a class="repo-pr-pill repo-pill-main${heldClass}${tintClass}${staleClass}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(prTip)}"><span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}${prSignalHTML(info || prBandInfo(p, held))}</a>${repoPillActionCluster([reviewPill, queueBtn + stateBadge, '', holdBtn])}</span>`;
         };
         const prPills = groupedRepoPRs(r.openPrs || [], r.heldPrs || []).map(g => {
           const items = g.prs.map(entry => renderPrPill(entry.pr, entry.held, entry.info)).join('');
