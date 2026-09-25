@@ -88,6 +88,10 @@ when an inference route is set, never the key itself.
 - Click **⚡ Fund this hive with OpenRouter** to generate an OpenRouter
   authorization QR/link. A scoped OpenRouter key is stored as the `openrouter`
   gateway when authorization completes.
+- The same connected `openrouter` key can enable the optional
+  [Jev smart classifier](jev-smart-classifier.md) from **Settings → Smart
+  classifier**; the classifier status reads key presence only and never exposes
+  the key value.
 - Use **Test** on a saved gateway. Success reads `OK — N models available`.
   Failures are shown as `Connection failed: ...` and classify common causes such
   as an auth rejection (`HTTP 401`), DNS/connectivity, `5xx`, or budget/rate

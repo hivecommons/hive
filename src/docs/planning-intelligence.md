@@ -272,6 +272,10 @@ displaying a key, links to the existing OpenRouter connect flow, and saves
 shows the live shadow-mode agree/disagree/fallback counters and estimated spend
 from `GET /api/classifier/stats`.
 
+For the full operator guide — concept, prerequisites, every config key/default,
+cost, rollout, observability, and troubleshooting — see
+[Jev smart classifier](jev-smart-classifier.md).
+
 ## Safety properties
 
 - **Idempotent**: an issue maps to exactly one epic (keyed by a stable issue
