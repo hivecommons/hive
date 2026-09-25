@@ -580,6 +580,9 @@ func ParsePlanMarkdown(name string, data []byte) (Plan, error) {
 		return Plan{}, &ContractError{Kind: KindPlan, Reason: "empty artifact name"}
 	}
 	body := stripFrontmatter(data)
+	if tasks := parseSpektacularPhases(body); len(tasks) > 0 {
+		return Plan{Kind: KindPlan, Name: name, Tasks: tasks}, nil
+	}
 	var tasks []PlanTask
 	for _, line := range strings.Split(string(body), "\n") {
 		m := markdownTaskLine.FindStringSubmatch(line)
@@ -604,6 +607,50 @@ func ParsePlanMarkdown(name string, data []byte) (Plan, error) {
 		return Plan{}, &ContractError{Kind: KindPlan, Name: name, Reason: "plan.md carries no task-list entries"}
 	}
 	return Plan{Kind: KindPlan, Name: name, Tasks: tasks}, nil
+}
+
+// spekPhaseHeading matches the phase headings Spektacular's own plan template
+// writes under "## Milestones & Phases":
+//
+//	#### - [ ] Phase 1.1: Port the dashboards domain to `handlers.Registrar`
+//
+// The checkbox is optional and the heading depth is not fixed.
+var spekPhaseHeading = regexp.MustCompile(`^\s*#{2,6}\s*(?:[-*]\s*)?(?:\[[ xX]\]\s*)?Phase\s+(\d+(?:\.\d+)*)\s*[:.\-—]\s*(.+?)\s*$`)
+
+var spekPhaseRepo = regexp.MustCompile(`^\s*\**Repo\**\s*:\**\s*(.+?)\s*$`)
+
+// parseSpektacularPhases reads a Spektacular-native plan.md, where the unit
+// of implement work is a Phase heading rather than a task bullet. Every other
+// bullet in that document (component breakdowns, acceptance criteria) is
+// prose and must not become implement work, so when phase headings exist
+// they are the only source of tasks. Phases execute in document order, each
+// depending on its predecessor, mirroring `spektacular implement`.
+func parseSpektacularPhases(body []byte) []PlanTask {
+	var tasks []PlanTask
+	var cur *PlanTask
+	for _, line := range strings.Split(string(body), "\n") {
+		if m := spekPhaseHeading.FindStringSubmatch(line); m != nil {
+			task := PlanTask{Ref: "P" + m[1], ID: "P" + m[1], Title: strings.TrimSpace(m[2]), Execution: "agent_suitable"}
+			if n := len(tasks); n > 0 {
+				task.DependsOn = []string{tasks[n-1].Ref}
+			}
+			tasks = append(tasks, task)
+			cur = &tasks[len(tasks)-1]
+			continue
+		}
+		if cur == nil || cur.Repo != "" {
+			continue
+		}
+		if m := spekPhaseRepo.FindStringSubmatch(line); m != nil {
+			repo := strings.Trim(strings.TrimSpace(m[1]), "`*")
+			// Spek writes the bare project name ("console"); only a
+			// fully-qualified owner/repo can override the run's repo.
+			if strings.Count(repo, "/") == 1 && !strings.ContainsAny(repo, " \t") {
+				cur.Repo = repo
+			}
+		}
+	}
+	return tasks
 }
 
 func stripFrontmatter(data []byte) []byte {
@@ -748,12 +795,22 @@ func planExportUnavailable(err error) bool {
 		code := strings.ToLower(ve.Code)
 		msg := strings.ToLower(ve.Message)
 		return code == "unknown_subcommand" || code == "unknown_command" ||
-			(strings.Contains(msg, "unknown") && strings.Contains(msg, "export"))
+			(strings.Contains(msg, "unknown") && strings.Contains(msg, "export")) ||
+			exportFlagRejected(msg)
 	}
 	var ce *ContractError
 	if errors.As(err, &ce) && ce.Err != nil {
 		msg := strings.ToLower(ce.Err.Error())
-		return strings.Contains(msg, "unknown") && strings.Contains(msg, "export")
+		return (strings.Contains(msg, "unknown") && strings.Contains(msg, "export")) ||
+			exportFlagRejected(msg)
 	}
 	return false
+}
+
+// exportFlagRejected recognises the shape a cobra CLI without an `export`
+// verb actually produces: `export` is swallowed as a positional argument of
+// `plan`, so the first thing rejected is the `--format` flag
+// (Spektacular 0.22: `{"code":"internal_error","message":"unknown flag: --format"}`).
+func exportFlagRejected(msg string) bool {
+	return strings.Contains(msg, "unknown flag") && strings.Contains(msg, "--format")
 }
