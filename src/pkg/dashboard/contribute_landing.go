@@ -1150,17 +1150,17 @@ select.admin-act{min-width:0;max-width:100%%}
    textContent-only DOM construction below. */
 .lb-showcase-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,.8fr);gap:var(--sp-6);margin-bottom:var(--sp-7)}
 .battle-log-list{display:flex;flex-direction:column;gap:8px;padding:var(--sp-6)}
-.battle-log-line{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto;align-items:center;gap:8px;background:var(--surface-0);border:1px solid var(--line-subtle);border-radius:10px;padding:9px 11px;font-size:.84rem}
+.battle-log-line{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto;align-items:center;gap:var(--sp-4);background:var(--surface-0);border:1px solid var(--line-subtle);border-radius:var(--r-lg);padding:var(--sp-4) var(--sp-5);font-size:var(--fs-base)}
 .battle-log-actor{font-weight:700;color:var(--text);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.battle-log-icon{font-size:1rem;filter:drop-shadow(0 0 6px color-mix(in srgb,var(--cc-amber) 35%%,transparent))}
+.battle-log-icon{font-size:var(--fs-lg);filter:drop-shadow(0 0 6px color-mix(in srgb,var(--cc-amber) 35%%,transparent))}
 .battle-log-target{color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.battle-log-time{font-size:.7rem;color:var(--text-faint);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.hotw-video{width:100%%;border-radius:12px;border:1px solid var(--line-strong);background:#010409;display:block}
+.battle-log-time{font-size:var(--fs-xs);color:var(--text-faint);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.hotw-video{width:100%%;border-radius:var(--r-lg);border:1px solid var(--line-strong);background:var(--surface-terminal);display:block}
 .hotw-body{padding:var(--sp-6)}
-.hotw-project{font-size:1.05rem;font-weight:800;color:var(--text);margin-bottom:var(--sp-2)}
-.hotw-meta{font-size:.78rem;color:var(--text-muted);margin-bottom:var(--sp-5)}
+.hotw-project{font-size:var(--fs-lg);font-weight:800;color:var(--text);margin-bottom:var(--sp-2)}
+.hotw-meta{font-size:var(--fs-sm);color:var(--text-muted);margin-bottom:var(--sp-5)}
 .hotw-links{display:flex;flex-wrap:wrap;gap:8px}
-.hotw-links a{font-size:.76rem;color:var(--cc-accent);text-decoration:none;border:1px solid var(--line-strong);border-radius:var(--r-pill);padding:5px 10px}
+.hotw-links a{font-size:var(--fs-sm);color:var(--cc-accent);text-decoration:none;border:1px solid var(--line-strong);border-radius:var(--r-pill);padding:var(--sp-2) var(--sp-5)}
 .hotw-links a:hover{border-color:var(--cc-accent)}
 @media(max-width:900px){.lb-showcase-grid{grid-template-columns:1fr}.battle-log-line{grid-template-columns:auto minmax(0,1fr);}.battle-log-actor{text-align:left}.battle-log-target,.battle-log-time{grid-column:2}}
 /* "File an issue on this page" link (#2594) — a subtle footer affordance present
