@@ -402,6 +402,8 @@
     .hive-name-link { color: #58a6ff; font-weight: 700; text-decoration: none; }
     .hive-name-link:hover { color: #79c0ff; text-decoration: underline; }
     .hive-sub-link { color: #6b7280; font-weight: 400; text-decoration: none; }
+    /* Inline action inside the restart-storms pill: inherits the pill's font/colour so it never inflates the pill. */
+    .reset-agent-restarts { all: unset; cursor: pointer; margin-left: var(--sp-2); padding-left: var(--sp-2); border-left: 1px solid; border-color: inherit; font: inherit; color: inherit; text-decoration: underline; text-underline-offset: 2px; }
     .hive-sub-link:hover { color: #58a6ff; text-decoration: underline; }
     .loading { text-align: center; padding: var(--sp-9); color: var(--muted); }
 
@@ -2137,8 +2139,7 @@
       var reset = roleAtLeast(h.role, 'owner')
         /* Inline text action, not a full hv-btn: a padded button nested inside
            the pill inflates it to twice the height of its sibling pills. */
-        ? '<button type="button" class="reset-agent-restarts" title="Reset restart counters for ' + escAttr(first.name) + '" data-hive-id="' + escAttr(h.id) + '" data-agent-name="' + escAttr(first.name) + '" ' +
-          'style="all:unset;cursor:pointer;margin-left:var(--sp-2);padding-left:var(--sp-2);border-left:1px solid rgba(248,81,73,0.35);font:inherit;color:inherit;text-decoration:underline;text-underline-offset:2px">reset</button>'
+        ? '<button type="button" class="reset-agent-restarts" title="Reset restart counters for ' + escAttr(first.name) + '" data-hive-id="' + escAttr(h.id) + '" data-agent-name="' + escAttr(first.name) + '">reset</button>'
         : '';
       return '<span title="' + esc(title) + '" style="display:inline-block;margin-left:var(--sp-3);padding:var(--sp-0) var(--sp-3);' +
         'border-radius:var(--r-pill);font-size:var(--fs-2xs);font-weight:600;line-height:1.5;cursor:help;white-space:nowrap;' +
