@@ -44,6 +44,10 @@ const (
 	// fields an older binary does not know about.
 	ProfilesVersion = 1
 
+	CommonsStrategyRanked   = "ranked"
+	CommonsStrategySpread   = "spread"
+	CommonsStrategyNeediest = "neediest"
+
 	profilesFileName       = "profiles.yml"
 	contributorEnvFileName = "contributor.env"
 	relayPIDFileName       = "contributor-relay.pid"
@@ -85,9 +89,10 @@ type Profile struct {
 
 // ProfileSet is the whole file: every hive, plus which one is active.
 type ProfileSet struct {
-	Version  int       `yaml:"version"`
-	Active   string    `yaml:"active,omitempty"`
-	Profiles []Profile `yaml:"profiles"`
+	Version         int       `yaml:"version"`
+	Active          string    `yaml:"active,omitempty"`
+	CommonsStrategy string    `yaml:"commons_strategy,omitempty"`
+	Profiles        []Profile `yaml:"profiles"`
 }
 
 // ProfileStore reads and writes profiles.yml and its contributor.env
@@ -257,7 +262,27 @@ func (set *ProfileSet) Validate() error {
 			return fmt.Errorf("active hive %q is not one of the configured profiles", set.Active)
 		}
 	}
+	if err := ValidateCommonsStrategy(set.CommonsStrategy); err != nil {
+		return err
+	}
 	return nil
+}
+
+func ValidateCommonsStrategy(strategy string) error {
+	switch strings.ToLower(strings.TrimSpace(strategy)) {
+	case "", CommonsStrategyRanked, CommonsStrategySpread, CommonsStrategyNeediest:
+		return nil
+	default:
+		return fmt.Errorf("commons strategy %q must be one of %s, %s or %s", strategy, CommonsStrategyRanked, CommonsStrategySpread, CommonsStrategyNeediest)
+	}
+}
+
+func (set *ProfileSet) EffectiveCommonsStrategy() string {
+	strategy := strings.ToLower(strings.TrimSpace(set.CommonsStrategy))
+	if strategy == "" {
+		return CommonsStrategyRanked
+	}
+	return strategy
 }
 
 // ValidateProfileName accepts the names that are safe to type, to match
@@ -565,6 +590,7 @@ func (s *ProfileStore) WriteEnvProjection(set *ProfileSet) error {
 	} else {
 		env.unset("HIVE_SESSION")
 	}
+	env.set("HIVE_COMMONS_STRATEGY", set.EffectiveCommonsStrategy())
 
 	if _, statErr := os.Stat(s.EnvPath()); statErr == nil {
 		if err := s.backupEnv(); err != nil {

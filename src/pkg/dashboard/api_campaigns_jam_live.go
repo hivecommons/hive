@@ -62,7 +62,12 @@ type jamLiveHub struct {
 var (
 	jamLiveHubsMu   sync.Mutex
 	jamLiveHubs     = map[string]*jamLiveHub{}
-	jamLiveUpgrader = websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	// SECURITY: same-origin CheckOrigin (shared with contribute_ws). The jam
+	// socket authenticates via the dashboard session cookie, which browsers
+	// also attach cross-site; allowing every Origin here let any web page a
+	// logged-in operator visited read the full jam state and push live spec
+	// edits with the victim's role (cross-site WebSocket hijacking).
+	jamLiveUpgrader = websocket.Upgrader{CheckOrigin: wsSameOrigin}
 )
 
 func (s *Server) handleCampaignJamWebSocket(w http.ResponseWriter, r *http.Request) {

@@ -91,6 +91,7 @@ type Config struct {
 	// Runs tunes long-running runs, checkpoints, and the opt-in Spektacular stage runner.
 	Runs      RunsConfig      `yaml:"runs,omitempty" json:"runs,omitempty"`
 	Retro     RetroConfig     `yaml:"retro,omitempty" json:"retro,omitempty"`
+	Swarm     SwarmConfig     `yaml:"swarm,omitempty" json:"swarm,omitempty"`
 	Autonomy  AutonomyConfig  `yaml:"autonomy,omitempty" json:"autonomy,omitempty"`
 	Review    ReviewConfig    `yaml:"review,omitempty" json:"review,omitempty"`
 	AutoMerge AutoMergeConfig `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`

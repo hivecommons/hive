@@ -552,7 +552,20 @@ for keybindings, pane cadence, and v1 boundaries, and
 
 Community members can contribute compute to any hive through **ClankeR**, the
 contributor relay — it hands tasks from a hive's backlog to the CLI agent
-running on your own machine:
+running on your own machine. On Linux, install the published Homebrew tap formula:
+
+```bash
+brew install hivecommons/hive/contribute
+hive-contribute
+```
+
+The tap installs the `hive-contribute` wrapper for the stable contributor image
+pinned by digest. Apptainer runs natively only on Linux; see the
+[homebrew-hive README](https://github.com/hivecommons/homebrew-hive#platform-reality)
+for the macOS Lima/VM and Windows WSL2 paths.
+
+The from-source flow remains supported for development or platforms using a local
+checkout:
 
 ```bash
 brew install just gh

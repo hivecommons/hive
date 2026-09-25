@@ -41,10 +41,10 @@ func (h *launchHarness) deps() bootLaunchDeps {
 			h.mu.Unlock()
 			fn()
 		},
-		startDiscordBot: func(_ context.Context, cfg discord.Config, names []string, _ *slog.Logger) error {
+		startDiscordBot: func(_ context.Context, cfg discord.Config, names []string, _ *slog.Logger) (func(string) error, error) {
 			h.discord = &cfg
 			h.discordAg = names
-			return h.discordEr
+			return func(string) error { return nil }, h.discordEr
 		},
 		onDemandFromPack: func() map[string]bool { return h.onDemand },
 		waitStagger: func(ctx context.Context) bool {

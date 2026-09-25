@@ -148,6 +148,44 @@ func TestRemoveLeavesAnUnrelatedActiveAlone(t *testing.T) {
 	}
 }
 
+func TestMoveRanksProfilesAndElectsTheFirst(t *testing.T) {
+	set := opsSet()
+	moved, ok, err := set.Move("other", -1)
+	if err != nil || !ok || moved.Name != "other" {
+		t.Fatalf("Move(other up) = %+v, %v, %v", moved, ok, err)
+	}
+	if got := []string{set.Profiles[0].Name, set.Profiles[1].Name}; got[0] != "other" || got[1] != "acme" {
+		t.Fatalf("rank order = %v, want [other acme]", got)
+	}
+	if set.Active != "other" {
+		t.Errorf("active = %q, want the top-ranked hive", set.Active)
+	}
+
+	_, ok, err = set.Move("other", -1)
+	if err != nil || ok {
+		t.Fatalf("moving the top hive above the edge = moved %v, err %v", ok, err)
+	}
+	if _, _, err := set.Move("ghost", 1); !errors.Is(err, ErrProfileNotFound) {
+		t.Errorf("moving an unknown hive = %v, want ErrProfileNotFound", err)
+	}
+}
+
+func TestSetCommonsStrategyNormalizesAndValidates(t *testing.T) {
+	set := opsSet()
+	if got := set.EffectiveCommonsStrategy(); got != CommonsStrategyRanked {
+		t.Fatalf("default strategy = %q, want ranked", got)
+	}
+	if err := set.SetCommonsStrategy(" Spread "); err != nil {
+		t.Fatalf("SetCommonsStrategy(spread): %v", err)
+	}
+	if set.CommonsStrategy != CommonsStrategySpread || set.EffectiveCommonsStrategy() != CommonsStrategySpread {
+		t.Fatalf("strategy not normalized: %+v", set)
+	}
+	if err := set.SetCommonsStrategy("random"); err == nil {
+		t.Fatal("invalid strategy was accepted")
+	}
+}
+
 func TestCommitWritesProfilesThenTheProjection(t *testing.T) {
 	dir := t.TempDir()
 	store := NewProfileStore(dir)

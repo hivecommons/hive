@@ -25,6 +25,12 @@
 //   HIVE_AGENT_ROLE        — optional spoke agent role to claim (scanner,
 //                           quality, outreach, etc.; hub-enforced)
 //   HIVE_AGENT_SESSION     — tmux session name for the agent (default: contributor)
+//   HIVE_CONTRIBUTOR_TEAM_METADATA — opt in to sending privacy-bounded OS/distro/
+//                           kernel/agent team metadata for sub-leaderboards.
+//                           Overrides: HIVE_TEAM_OS_FAMILY, HIVE_TEAM_OS_ID,
+//                           HIVE_TEAM_OS_NAME, HIVE_TEAM_OS_VERSION_ID,
+//                           HIVE_TEAM_OS_ID_LIKE, HIVE_TEAM_KERNEL_RELEASE,
+//                           HIVE_TEAM_AGENT_BACKEND.
 
 'use strict';
 
@@ -32,6 +38,8 @@ const WebSocket = require('ws');
 const { execSync, execFileSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const http = require('http');
+const https = require('https');
 const DEFAULT_NEEDS_DECISION_LABEL = 'needs-decision';
 const {
   parsePiModelSelection,
@@ -86,6 +94,17 @@ if (rawHubList.length > 1 && rawTokenList.length !== rawHubList.length) {
   process.exit(1);
 }
 const BACKEND = process.env.AGENT_BACKEND || 'claude';
+const COMMONS_STRATEGY_RANKED = 'ranked';
+const COMMONS_STRATEGY_SPREAD = 'spread';
+const COMMONS_STRATEGY_NEEDIEST = 'neediest';
+const COMMONS_STRATEGIES = new Set([COMMONS_STRATEGY_RANKED, COMMONS_STRATEGY_SPREAD, COMMONS_STRATEGY_NEEDIEST]);
+const COMMONS_NEEDIEST_REFRESH_MS = Number.parseInt(process.env.HIVE_COMMONS_NEEDIEST_REFRESH_MS || '60000', 10);
+const COMMONS_SPREAD_MIX_EVERY = Number.parseInt(process.env.HIVE_COMMONS_SPREAD_MIX_EVERY || '7', 10);
+function normalizeCommonsStrategy(value) {
+  const strategy = String(value || '').trim().toLowerCase();
+  return COMMONS_STRATEGIES.has(strategy) ? strategy : COMMONS_STRATEGY_RANKED;
+}
+let commonsStrategy = normalizeCommonsStrategy(process.env.HIVE_COMMONS_STRATEGY || process.env.HIVE_CONTRIBUTOR_STRATEGY);
 // GOOSE_MODEL is a Goose-only compatibility input. Letting it fall back for Pi
 // made a restart silently select a Goose model the initial Pi launcher never
 // requested (#5039).
@@ -105,6 +124,7 @@ const STANDBY_LANES = (process.env.HIVE_STANDBY_LANES || '')
   .filter(Boolean);
 const STANDBY_MAX_CONCURRENT = Math.max(0, Number(process.env.HIVE_STANDBY_MAX_CONCURRENT || 1) || 0);
 const STANDBY_DAILY_CAP = Math.max(0, Number(process.env.HIVE_STANDBY_DAILY_CAP || 0) || 0);
+const TEAM_METADATA_ENABLED = /^(1|true|yes|on)$/i.test((process.env.HIVE_CONTRIBUTOR_TEAM_METADATA || process.env.HIVE_TEAM_METADATA || '').trim());
 // HIVE_SESSION — optional session label (multi-session-per-account). One GitHub
 // account has one contributor identity per hub, and the hub keys task
 // leases/cooldowns/ownership on that identity, so two relays under the same
@@ -1290,6 +1310,11 @@ function makeHub(url, token) {
     // auth_ok by whatever the hub advertises; the default is the 64 KiB every
     // hub released before that advertisement enforces silently.
     maxFrameBytes: WS_FRAME_BYTES,
+    lastActionableItems: null,
+    lastActiveContributors: null,
+    lastTotalRegistered: null,
+    lastNeediestScore: null,
+    lastStatusAt: 0,
   };
 }
 
@@ -1301,6 +1326,8 @@ const hubs = rawHubList.map((url, i) => makeHub(url, rawTokenList[i] || rawToken
 // task_unavailable is the only signal (kubestellar/hive#2436/#2546 — the hub
 // always sends it, never stays silent) that a hub genuinely has no work.
 let activeHubIndex = 0;
+let commonsCompletedTasks = 0;
+let commonsSpreadCursor = 0;
 
 let seq = 0;
 let currentTask = null;
@@ -1797,9 +1824,135 @@ function broadcastKnowledgeStateIfChanged() {
 
 let knowledgeStateTimer = setInterval(broadcastKnowledgeStateIfChanged, KNOWLEDGE_STATE_POLL_MS);
 if (typeof knowledgeStateTimer.unref === 'function') knowledgeStateTimer.unref();
+let commonsStatusTimer = null;
+
+function refreshCommonsStatusTimer() {
+  if (commonsStatusTimer) {
+    clearInterval(commonsStatusTimer);
+    commonsStatusTimer = null;
+  }
+  if (commonsStrategy === COMMONS_STRATEGY_NEEDIEST && COMMONS_NEEDIEST_REFRESH_MS > 0) {
+    commonsStatusTimer = setInterval(() => hubs.forEach(refreshHubStatus), COMMONS_NEEDIEST_REFRESH_MS);
+    if (typeof commonsStatusTimer.unref === 'function') commonsStatusTimer.unref();
+  }
+}
+refreshCommonsStatusTimer();
 
 function currentTaskHub() {
   return (currentTask && currentTask._hub) || hubs[activeHubIndex];
+}
+
+function commonsRankWeight(index) {
+  return Math.max(1, hubs.length - index);
+}
+
+function chooseSpreadHub() {
+  if (hubs.length === 0) return null;
+  const cycle = [];
+  for (let i = 0; i < hubs.length; i++) {
+    if (hubs[i].authFailed) continue;
+    for (let n = 0; n < commonsRankWeight(i); n++) cycle.push(i);
+  }
+  if (cycle.length === 0) return null;
+  commonsCompletedTasks++;
+  if (COMMONS_SPREAD_MIX_EVERY > 0 && commonsCompletedTasks % COMMONS_SPREAD_MIX_EVERY === 0) {
+    activeHubIndex = cycle[Math.floor(Math.random() * cycle.length)];
+    return hubs[activeHubIndex];
+  }
+  activeHubIndex = cycle[commonsSpreadCursor % cycle.length];
+  commonsSpreadCursor++;
+  return hubs[activeHubIndex];
+}
+
+function chooseNeediestHub() {
+  let best = -1;
+  let bestScore = -1;
+  for (let i = 0; i < hubs.length; i++) {
+    const hub = hubs[i];
+    if (!hub || hub.authFailed) continue;
+    const score = Number.isFinite(hub.lastNeediestScore)
+      ? hub.lastNeediestScore
+      : (Number.isFinite(hub.lastActionableItems) ? hub.lastActionableItems : -1);
+    if (score > bestScore) {
+      best = i;
+      bestScore = score;
+    }
+  }
+  if (best >= 0) {
+    activeHubIndex = best;
+    return hubs[best];
+  }
+  return hubs[activeHubIndex] || hubs[0] || null;
+}
+
+function chooseHubForNextTask(reason) {
+  if (hubs.length === 0) return null;
+  switch (commonsStrategy) {
+    case COMMONS_STRATEGY_SPREAD:
+      return reason === 'unavailable' ? advanceActiveHub(hubs[activeHubIndex]) : chooseSpreadHub();
+    case COMMONS_STRATEGY_NEEDIEST:
+      return reason === 'unavailable' ? advanceActiveHub(hubs[activeHubIndex]) : chooseNeediestHub();
+    case COMMONS_STRATEGY_RANKED:
+    default:
+      if (reason === 'unavailable') return advanceActiveHub(hubs[activeHubIndex]);
+      for (let i = 0; i < hubs.length; i++) {
+        if (!hubs[i].authFailed) {
+          activeHubIndex = i;
+          return hubs[i];
+        }
+      }
+      return null;
+  }
+}
+
+function sendReadyForNextTask(reason) {
+  const hub = chooseHubForNextTask(reason);
+  if (hub) sendTo(hub, { type: 'ready', seq: nextSeq() });
+}
+
+function contributeStatusURL(hub) {
+  try {
+    const u = new URL(hub.sourceURL || hub.url);
+    if (u.protocol === 'ws:') u.protocol = 'http:';
+    if (u.protocol === 'wss:') u.protocol = 'https:';
+    u.pathname = '/api/contribute/status';
+    u.search = '';
+    u.hash = '';
+    return u;
+  } catch (_) {
+    return null;
+  }
+}
+
+function refreshHubStatus(hub) {
+  if (!hub || commonsStrategy !== COMMONS_STRATEGY_NEEDIEST) return;
+  const url = contributeStatusURL(hub);
+  if (!url) return;
+  const client = url.protocol === 'http:' ? http : https;
+  const req = client.get(url, { timeout: 5000 }, res => {
+    let body = '';
+    res.setEncoding('utf8');
+    res.on('data', chunk => { if (body.length < 65536) body += chunk; });
+    res.on('end', () => {
+      try {
+        const status = JSON.parse(body);
+        const actionable = Number(status.actionable_items);
+        if (Number.isFinite(actionable)) {
+          hub.lastActionableItems = actionable;
+          const active = Number(status.active_contributors);
+          const registered = Number(status.total_registered);
+          hub.lastActiveContributors = Number.isFinite(active) ? active : null;
+          hub.lastTotalRegistered = Number.isFinite(registered) ? registered : null;
+          const idleContributors = Number.isFinite(active) && Number.isFinite(registered) ? Math.max(0, registered - active) : 0;
+          const idleFraction = Number.isFinite(registered) && registered > 0 ? idleContributors / registered : 0;
+          hub.lastNeediestScore = actionable * (1 + idleFraction);
+          hub.lastStatusAt = Date.now();
+        }
+      } catch (_) {}
+    });
+  });
+  req.on('timeout', () => req.destroy());
+  req.on('error', () => {});
 }
 
 function hubSupportsQuotaPreflight(hub) {
@@ -1874,7 +2027,10 @@ function maybeAskActiveHubForWork() {
 }
 
 function reloadHubsFromProjection() {
-  const entries = hubListFromEnv(parseContributorEnvFile(CONTRIBUTOR_ENV_FILE));
+  const projection = parseContributorEnvFile(CONTRIBUTOR_ENV_FILE);
+  const entries = hubListFromEnv(projection);
+  commonsStrategy = normalizeCommonsStrategy(projection.HIVE_COMMONS_STRATEGY || projection.HIVE_CONTRIBUTOR_STRATEGY || commonsStrategy);
+  refreshCommonsStatusTimer();
   const oldByURL = new Map(hubs.map(h => [h.url, h]));
   const next = entries.map(entry => {
     const url = hubWsURL(entry.url);
@@ -1896,6 +2052,7 @@ function reloadHubsFromProjection() {
   for (const removed of oldByURL.values()) stopHub(removed, 'removed from contributor.env');
   hubs.splice(0, hubs.length, ...next);
   activeHubIndex = 0;
+  hubs.forEach(refreshHubStatus);
   console.log(`Reloaded ${hubs.length} hive profile(s) from ${CONTRIBUTOR_ENV_FILE}; active hive is ${hubs[0] ? hubs[0].sourceURL : '(none)'}`);
   maybeAskActiveHubForWork();
   return hubs.length;
@@ -2082,6 +2239,55 @@ function detectCapabilities() {
   if (BACKEND === 'pi') Object.assign(caps, piReadiness(PI_SELECTION, !!cliVersion, piInvocationState, PI_ENV));
   cachedCapabilities = caps;
   return caps;
+}
+
+function relayOSFamily() {
+  if (process.env.HIVE_TEAM_OS_FAMILY) return process.env.HIVE_TEAM_OS_FAMILY.trim();
+  if (process.platform === 'darwin') return 'macos';
+  if (process.platform === 'win32') return 'windows';
+  return process.platform;
+}
+
+function parseOSRelease(contents) {
+  const out = {};
+  for (const line of String(contents || '').split(/\r?\n/)) {
+    const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
+    if (!m) continue;
+    let val = m[2].trim();
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    out[m[1]] = val.replace(/\\"/g, '"');
+  }
+  return out;
+}
+
+function optInTeamMetadata() {
+  if (!TEAM_METADATA_ENABLED) return undefined;
+  let osr = {};
+  try {
+    if (process.platform === 'linux' && fs.existsSync('/etc/os-release')) {
+      osr = parseOSRelease(fs.readFileSync('/etc/os-release', 'utf8'));
+    }
+  } catch (_) { osr = {}; }
+  let kernel = (process.env.HIVE_TEAM_KERNEL_RELEASE || '').trim();
+  if (!kernel) {
+    try { kernel = execFileSync('uname', ['-r'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch (_) { kernel = ''; }
+  }
+  const idLikeRaw = (process.env.HIVE_TEAM_OS_ID_LIKE || osr.ID_LIKE || '').trim();
+  const team = {
+    os_family: relayOSFamily(),
+    os_release_id: (process.env.HIVE_TEAM_OS_ID || osr.ID || '').trim(),
+    os_name: (process.env.HIVE_TEAM_OS_NAME || osr.NAME || '').trim(),
+    os_version_id: (process.env.HIVE_TEAM_OS_VERSION_ID || osr.VERSION_ID || '').trim(),
+    os_id_like: idLikeRaw ? idLikeRaw.split(/\s+/).filter(Boolean) : undefined,
+    kernel_release: kernel,
+    agent_backend: (process.env.HIVE_TEAM_AGENT_BACKEND || BACKEND || '').trim(),
+  };
+  Object.keys(team).forEach(k => {
+    if (team[k] === '' || (Array.isArray(team[k]) && team[k].length === 0)) delete team[k];
+  });
+  return team;
 }
 
 // CLI_VERSION_PROBE_TIMEOUT_MS bounds the `<cli> --version` probe. Generous
@@ -6123,7 +6329,7 @@ function failCurrentTask(reason, opts) {
   if (STANDBY_MODE) {
     console.log('Standby mode: task failed; remaining connected without requesting ordinary work');
   } else if (!(opts && opts.skipReady)) {
-    send({ type: 'ready', seq: nextSeq() });
+    sendReadyForNextTask('task_failed');
   }
 }
 
@@ -6390,7 +6596,7 @@ function finishCurrentTask({ completionSignal, summary, tmuxLines, prURL, noWork
         : `no PRs shipped since the last review, so there is nothing new to follow up on (#6664)`;
       console.log(`Skipping the PR review cycle at ${tasksCompletedCount} completions — ${reason}`);
     }
-    send({ type: 'ready', seq: nextSeq() });
+    sendReadyForNextTask('task_complete');
   }
 }
 
@@ -7503,6 +7709,7 @@ function handleMessage(data, hub) {
         // posture and protocol version. An older hub ignores these unknown fields.
         protocol_version: RELAY_PROTOCOL_VERSION,
         capabilities: detectCapabilities(),
+        team: optInTeamMetadata(),
       });
       break;
 
@@ -7544,6 +7751,7 @@ function handleMessage(data, hub) {
       hub.connectionId = msg.connection_id || '';
       hub.serverCapabilities = Array.isArray(msg.server_capabilities) ? msg.server_capabilities.slice() : [];
       declareStandby(hub);
+      refreshHubStatus(hub);
       // #7924: the permission set the hub mints task credentials with, per
       // trust tier. Read by markIssueBlocked to decide whether a label call
       // can succeed at all. An older hub sends none → no label attempts.
@@ -7912,9 +8120,7 @@ function handleMessage(data, hub) {
       console.log(`No task assigned on ${hub.url} — reason: ${sanitizeHubText(msg.reason) || 'unspecified'}; retrying in ${TASK_UNAVAILABLE_RETRY_MS / 1000}s`);
       setTimeout(() => {
         if (currentTask) return; // picked up work elsewhere in the meantime
-        if (hubs.length > 1 && hub === hubs[activeHubIndex]) {
-          advanceActiveHub(hub);
-        }
+        if (hubs.length > 1 && hub === hubs[activeHubIndex]) chooseHubForNextTask('unavailable');
         const next = hubs[activeHubIndex];
         // If `next` isn't connected/authenticated yet, its own auth_ok
         // handler sends 'ready' once it comes up and finds itself the active
@@ -8083,6 +8289,7 @@ function cleanup() {
   });
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
   if (knowledgeStateTimer) { clearInterval(knowledgeStateTimer); knowledgeStateTimer = null; }
+  if (commonsStatusTimer) { clearInterval(commonsStatusTimer); commonsStatusTimer = null; }
   stopVerdictWatch();
   // A shutdown with a task in flight must run the same task-exit contract as
   // every other way a task stops being ours (kubestellar/hive#5655, #5353).
@@ -8126,6 +8333,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
   module.exports = {
     buildLaunchCommand,
     detectCapabilities,
+    optInTeamMetadata,
     detectAgentCLIVersion,
     sanitizeDeclaredValue,
     handleMessage,
@@ -8145,6 +8353,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     recreateTmuxSession,
     failCurrentTask,
     finishCurrentTask,
+    sendReadyForNextTask,
     startProgressReporting,
     progressTick,
     // Local-only (synthetic pr-review) task surface — kubestellar/hive#5715.

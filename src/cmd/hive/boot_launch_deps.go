@@ -24,7 +24,7 @@ const agentLaunchStagger = 15 * time.Second
 type bootLaunchDeps struct {
 	spawn            func(name string, fn func())
 	startDashChat    func(ctx context.Context, cfg dashchat.Config, agentNames []string, logger *slog.Logger) (*dashchat.Bot, error)
-	startDiscordBot  func(ctx context.Context, cfg discord.Config, agentNames []string, logger *slog.Logger) error
+	startDiscordBot  func(ctx context.Context, cfg discord.Config, agentNames []string, logger *slog.Logger) (func(string) error, error)
 	onDemandFromPack func() map[string]bool
 	// waitStagger blocks for the launch stagger; it returns false when ctx
 	// ended first so the loop aborts instead of launching into a shutdown.
@@ -41,10 +41,10 @@ func defaultBootLaunchDeps() bootLaunchDeps {
 			bot.SetAgentNames(agentNames)
 			return bot, bot.Start(ctx)
 		},
-		startDiscordBot: func(ctx context.Context, cfg discord.Config, agentNames []string, logger *slog.Logger) error {
+		startDiscordBot: func(ctx context.Context, cfg discord.Config, agentNames []string, logger *slog.Logger) (func(string) error, error) {
 			bot := discord.NewBot(cfg, logger)
 			bot.SetAgentNames(agentNames)
-			return bot.Start(ctx)
+			return bot.SendMessage, bot.Start(ctx)
 		},
 		onDemandFromPack: config.OnDemandAgentsFromPacks,
 		waitStagger: func(ctx context.Context) bool {

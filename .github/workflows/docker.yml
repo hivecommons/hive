@@ -2,10 +2,15 @@ name: Build and Push Docker Image
 
 on:
   push:
-    # Run on every branch so a PR's image still BUILDS as a CI gate (proving it
-    # compiles), but only long-lived branches PUSH to GHCR — see the "Push
-    # policy" step below. Exclude bot branches so dependency PRs don't consume
-    # image CI; they build on the base branch when merged.
+    # Run on every branch so the required `gate` context attaches to every
+    # push, but only long-lived branches BUILD and PUSH to GHCR — see the
+    # "Push policy" step below. Feature branches used to build all six images
+    # here as a compile gate; that duplicated v2-ci.yml's `docker` job (which
+    # builds every Dockerfile on pull_request) and cost ~20 hosted-runner
+    # minutes per push, starving the shared ubuntu-latest queue so the LAST
+    # check on a PR landed 25-30 minutes after the tests finished. Exclude bot
+    # branches so dependency PRs don't consume image CI; they build on the base
+    # branch when merged.
     branches:
       - '**'
       - '!dependabot/**'
@@ -230,13 +235,15 @@ jobs:
 
   build:
     needs: gate
-    # Skipped for `pull_request` (#4965): that trigger exists only so the
-    # required `gate` context attaches to a fork PR's head SHA. The image build
-    # stays push-only — and a PR is not left unbuilt by this, because
-    # v2-ci.yml already runs on pull_request and builds src/Dockerfile with a
-    # real `hive --version` smoke test (`docker`), plus `build-and-test`
-    # (go build + go vet) and `overlayfs-exec-guard`. Building here too would
-    # be a third image build of the same commit.
+    # Runs only when `gate` decided push=true, i.e. a long-lived branch or a
+    # workflow_dispatch release. Skipped for `pull_request` (#4965): that
+    # trigger exists only so the required `gate` context attaches to a fork
+    # PR's head SHA. Also skipped for feature-branch pushes: a PR is not left
+    # unbuilt by this, because v2-ci.yml already runs on pull_request and
+    # builds src/Dockerfile (with a real `hive --version` smoke test),
+    # src/Dockerfile.hub and src/Dockerfile.contributor (`docker` matrix),
+    # plus `build-and-test` (go build + go vet) and `overlayfs-exec-guard`.
+    # Building here too would be a third image build of the same commit.
     # `release-gate/*` is excluded for the same reason `merge*` already skips
     # it (gate forces push=false there): these builds publish NOTHING for the
     # scratch branch. They are not merely wasted — branch protection evaluates
@@ -250,8 +257,11 @@ jobs:
     # tip whose images this workflow already built, published and freshness-
     # checked minutes earlier. The `gate` job itself still runs on the scratch
     # branch; that is the whole reason the branch exists.
+    # push=true already implies not release-gate/* (gate forces push=false
+    # there); the explicit clause is kept because test-release-push-retry.sh
+    # asserts it (#5339) and it makes the intent readable.
     if: >-
-      github.event_name != 'pull_request' &&
+      needs.gate.outputs.push == 'true' &&
       !startsWith(github.ref_name, 'release-gate/')
     strategy:
       matrix:
@@ -600,7 +610,7 @@ jobs:
 
   build-contributor:
     needs: gate
-    # Push-only, same as `build` above (#4965).
+    # Only when gate says push=true, same as `build` above (#4965).
     # `release-gate/*` is excluded for the same reason `merge*` already skips
     # it (gate forces push=false there): these builds publish NOTHING for the
     # scratch branch. They are not merely wasted — branch protection evaluates
@@ -608,8 +618,11 @@ jobs:
     # not treated as satisfied even though its check-run is already `success`.
     # The release job's merge waits 120s and a multi-arch build takes ~10min,
     # so the merge could never win that race (#5339, 8th recurrence).
+    # push=true already implies not release-gate/* (gate forces push=false
+    # there); the explicit clause is kept because test-release-push-retry.sh
+    # asserts it (#5339) and it makes the intent readable.
     if: >-
-      github.event_name != 'pull_request' &&
+      needs.gate.outputs.push == 'true' &&
       !startsWith(github.ref_name, 'release-gate/')
     strategy:
       matrix:
@@ -782,7 +795,7 @@ jobs:
 
   build-hub:
     needs: gate
-    # Push-only, same as `build` above (#4965).
+    # Only when gate says push=true, same as `build` above (#4965).
     # `release-gate/*` is excluded for the same reason `merge*` already skips
     # it (gate forces push=false there): these builds publish NOTHING for the
     # scratch branch. They are not merely wasted — branch protection evaluates
@@ -790,8 +803,11 @@ jobs:
     # not treated as satisfied even though its check-run is already `success`.
     # The release job's merge waits 120s and a multi-arch build takes ~10min,
     # so the merge could never win that race (#5339, 8th recurrence).
+    # push=true already implies not release-gate/* (gate forces push=false
+    # there); the explicit clause is kept because test-release-push-retry.sh
+    # asserts it (#5339) and it makes the intent readable.
     if: >-
-      github.event_name != 'pull_request' &&
+      needs.gate.outputs.push == 'true' &&
       !startsWith(github.ref_name, 'release-gate/')
     strategy:
       matrix:

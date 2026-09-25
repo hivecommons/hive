@@ -11,14 +11,15 @@ import (
 
 // LeaderboardEntry is the JSON shape returned by the leaderboard API.
 type LeaderboardEntry struct {
-	Rank           int    `json:"rank"`
-	GitHubUsername string `json:"github_username"`
-	AvatarURL      string `json:"avatar_url"`
-	TrustTier      string `json:"trust_tier"`
-	TasksCompleted int    `json:"tasks_completed"`
-	TasksFailed    int    `json:"tasks_failed"`
-	Findings       int    `json:"findings,omitempty"`
-	RegisteredAt   string `json:"registered_at"`
+	Rank           int                      `json:"rank"`
+	GitHubUsername string                   `json:"github_username"`
+	AvatarURL      string                   `json:"avatar_url"`
+	TrustTier      string                   `json:"trust_tier"`
+	TasksCompleted int                      `json:"tasks_completed"`
+	TasksFailed    int                      `json:"tasks_failed"`
+	Findings       int                      `json:"findings,omitempty"`
+	RegisteredAt   string                   `json:"registered_at"`
+	Team           *ContributorTeamMetadata `json:"team,omitempty"`
 	// EquippedTitle is the contributor's self-chosen dossier title (e.g.
 	// "WOLFHERDER"); rendered as a small accent after the name. Optional.
 	EquippedTitle string `json:"equipped_title,omitempty"`
@@ -29,12 +30,17 @@ type LeaderboardEntry struct {
 	// StagesCompleted is the number of run stage completions credited to this
 	// identity from the lifecycle timeline (#8349). A pointer so a consumer can
 	// tell "this spoke reported zero" from "this spoke never reported" (nil).
-	StagesCompleted *int `json:"stages_completed,omitempty"`
+	StagesCompleted *int                          `json:"stages_completed,omitempty"`
+	Achievement2    ContributorAchievementSummary `json:"achievement_2"`
 }
 
 // buildLeaderboard loads all contributor profiles, sorts by tasks completed
 // descending, and returns ranked entries with secrets stripped.
-func buildLeaderboard() []LeaderboardEntry {
+func buildLeaderboardWithActivity(activity []ActivityEntry) []LeaderboardEntry {
+	return buildLeaderboardWithInputs(achievement2Inputs{Activity: activity})
+}
+
+func buildLeaderboardWithInputs(inputs achievement2Inputs) []LeaderboardEntry {
 	profiles := listContributorProfiles()
 	sort.Slice(profiles, func(i, j int) bool {
 		return profiles[i].TasksCompleted > profiles[j].TasksCompleted
@@ -48,6 +54,14 @@ func buildLeaderboard() []LeaderboardEntry {
 			continue
 		}
 		rank++
+		profileInputs := inputs
+		profileInputs.Hives = buildContributorHives(p.GitHubUsername, inputs.LocalHiveID)
+		_, achievementSummary := buildAchievements2WithInputs(&p, profileInputs)
+		var team *ContributorTeamMetadata
+		if p.Team != nil && teamMetadataDeclared(*p.Team) {
+			hydrated := hydrateContributorTeam(*p.Team, p.Team.AgentBackend)
+			team = &hydrated
+		}
 		entries = append(entries, LeaderboardEntry{
 			Rank:           rank,
 			GitHubUsername: p.GitHubUsername,
@@ -56,14 +70,20 @@ func buildLeaderboard() []LeaderboardEntry {
 			TasksCompleted: p.TasksCompleted,
 			TasksFailed:    p.TasksFailed,
 			RegisteredAt:   p.RegisteredAt,
+			Team:           team,
 			EquippedTitle:  p.EquippedTitle,
+			Achievement2:   achievementSummary,
 		})
 	}
 	return entries
 }
 
+func buildLeaderboard() []LeaderboardEntry {
+	return buildLeaderboardWithActivity(nil)
+}
+
 func (s *Server) handleLeaderboardAPI(w http.ResponseWriter, _ *http.Request) {
-	contributors := buildLeaderboard()
+	contributors := buildLeaderboardWithInputs(s.achievement2BaseInputs())
 	agents := s.buildAgentLeaderboardEntries()
 	jsonResponse(w, map[string]any{
 		"leaderboard": contributors,
@@ -85,7 +105,7 @@ func (s *Server) ContributorSummary() (registered, active int) {
 }
 
 func (s *Server) LeaderboardForHub() []LeaderboardEntry {
-	entries := buildLeaderboard()
+	entries := buildLeaderboardWithInputs(s.achievement2BaseInputs())
 	if s.contributeHub != nil {
 		liveStates := s.contributeHub.LiveStates()
 		profiles := listContributorProfiles()
@@ -135,6 +155,13 @@ func (s *Server) applyStageCredit(entries []LeaderboardEntry) {
 	}
 }
 
+func (s *Server) recentContributionActivity() []ActivityEntry {
+	if s == nil || s.contributeHub == nil {
+		return nil
+	}
+	return s.contributeHub.RecentActivity()
+}
+
 const (
 	ghPRExternalRefPrefix    = "gh-"
 	agentTierLabel           = "agent"
@@ -171,6 +198,7 @@ func (s *Server) buildAgentLeaderboardEntries() []LeaderboardEntry {
 			TasksFailed:    proc.RestartCount,
 			Findings:       totalFindings,
 			RegisteredAt:   "",
+			Team:           ptrContributorTeam(hydrateContributorTeam(ContributorTeamMetadata{AgentBackend: name}, name)),
 			IsAgent:        true,
 			Emoji:          emoji,
 		})

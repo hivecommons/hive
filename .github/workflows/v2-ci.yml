@@ -13,7 +13,7 @@ on:
     # not run on the one change that can break it — which is how the quick start
     # shipped broken twice over. src/docs/** already triggers this workflow via
     # src/**, so this is the same rule applied to the docs outside src/.
-    paths: ['src/**', 'bin/**', 'README.md', 'docs/**', '.github/scripts/ci-install-tool.sh', '.github/scripts/test-ci-install-tool-apt-cache.sh', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/docker.yml', '.github/workflows/tagged-release.yml']
+    paths: ['src/**', 'bin/**', 'config/**', 'README.md', 'docs/**', '.github/scripts/ci-install-tool.sh', '.github/scripts/test-ci-install-tool-apt-cache.sh', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/docker.yml', '.github/workflows/tagged-release.yml']
   pull_request:
     branches: [v4, v5, v6]
     # bin/** is in scope because the gh wrapper is a SECURITY boundary (it is the
@@ -26,7 +26,7 @@ on:
     # not run on the one change that can break it — which is how the quick start
     # shipped broken twice over. src/docs/** already triggers this workflow via
     # src/**, so this is the same rule applied to the docs outside src/.
-    paths: ['src/**', 'bin/**', 'README.md', 'docs/**', '.github/scripts/ci-install-tool.sh', '.github/scripts/test-ci-install-tool-apt-cache.sh', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/docker.yml', '.github/workflows/tagged-release.yml']
+    paths: ['src/**', 'bin/**', 'config/**', 'README.md', 'docs/**', '.github/scripts/ci-install-tool.sh', '.github/scripts/test-ci-install-tool-apt-cache.sh', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/docker.yml', '.github/workflows/tagged-release.yml']
 
 permissions:
   contents: read
@@ -1055,15 +1055,47 @@ jobs:
   # `go build` within ~1 min, and a test-only failure lets these two run to
   # completion (~8 wasted runner-minutes). nightly-release still requires
   # BOTH build-and-test and docker, so the v2 nightly gate is unchanged.
+  # Builds every Dockerfile in the repo so a PR cannot break an image that is
+  # only discovered on the base branch. docker.yml builds nothing for feature
+  # branches any more (it used to build all six platform images per push,
+  # ~20 hosted-runner minutes, and that queue contention was the long pole on
+  # every PR) — this matrix is the sole pre-merge image compile gate. amd64
+  # only: the arm64 legs exist to publish, not to prove the Dockerfile builds.
+  # The hub/contributor legs run on pull_request only; on a push to a release
+  # line docker.yml builds and publishes them anyway.
   docker:
+    name: docker (${{ matrix.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: hive
+            file: src/Dockerfile
+            smoke: "true"
+          - name: hub
+            file: src/Dockerfile.hub
+            smoke: "false"
+          - name: contributor
+            file: src/Dockerfile.contributor
+            smoke: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Dockerfile.hub does `COPY .git` to stamp the build with a git
+          # describe; a shallow clone makes that describe wrong, not absent.
+          fetch-depth: ${{ matrix.name == 'hub' && 0 || 1 }}
+
+      - name: Skip non-hive images on push
+        if: github.event_name != 'pull_request' && matrix.name != 'hive'
+        run: echo "skip=true" >> "$GITHUB_ENV"
 
       - name: Build Docker image
-        run: docker build -f src/Dockerfile -t hive:test .
+        if: env.skip != 'true'
+        run: docker build -f "${{ matrix.file }}" -t "hive-ci-${{ matrix.name }}:test" .
 
       - name: Smoke test
+        if: env.skip != 'true' && matrix.smoke == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -1078,7 +1110,7 @@ jobs:
           # the entrypoint as an ambient cap; the raw `--version` here needs none.
           # The old `--help || true` form could not fail and asserted nothing.
           timeout --signal=TERM --kill-after=10s 60s \
-            docker run --rm --name "$name" --network none hive:test --version
+            docker run --rm --name "$name" --network none hive-ci-hive:test --version
 
   # #3760 REGRESSION GUARD — overlayfs/containerd in-place exec.
   #

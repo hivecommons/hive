@@ -90,9 +90,9 @@ func TestFetchBranchSHAHubTargetWalkbackStopsAtCurrentTarget(t *testing.T) {
 	if got, want := getLatestHubSHAForBranch("v4"), shortSHA(walkbackRunning); got != want {
 		t.Fatalf("hub target = %q, want unchanged %q", got, want)
 	}
-	// Probes: hub tip, walkback candidate (fix), then spoke tip — never the
-	// current target itself.
-	if got := probes.Load(); got > 3 {
+	// Probes: hub tip, hub walkback candidate (fix), spoke tip, spoke walkback
+	// (fix, running) — never the hub's current target itself.
+	if got := probes.Load(); got > 5 {
 		t.Errorf("%d manifest probes, want the walk to stop at the current target", got)
 	}
 }
@@ -127,5 +127,68 @@ func TestListRecentBranchCommitsFailureIsNil(t *testing.T) {
 	})
 	if got := listRecentBranchCommits(http.DefaultClient, "v4", 5, slog.Default()); got != nil {
 		t.Errorf("commit list on HTTP 403 = %v, want nil so the target is left alone", got)
+	}
+}
+
+// A branch that merges faster than it builds: the tip is still building but an
+// older commit's spoke image is published. The spoke target must advance to it
+// instead of freezing on the last tip that happened to be built (2026-09-25:
+// CNCF Prow and hivecommons/hive sat 9 behind on v5 with every image present).
+func TestFetchBranchSHASpokeTargetWalksBackPastImagelessTip(t *testing.T) {
+	resetSHACaches(t)
+	var probes atomic.Int32
+	walkbackServer(t, map[string]bool{shortSHA(walkbackFix): true, shortSHA(walkbackRunning): true}, &probes)
+	latestSHAMu.Lock()
+	latestSHAByBranch["v4"] = branchSHAInfo{SHA: shortSHA(walkbackRunning)}
+	latestSHAMu.Unlock()
+
+	fetchBranchSHA(slog.Default(), "v4")
+
+	if got, want := getLatestSHAForBranch("v4"), shortSHA(walkbackFix); got != want {
+		t.Fatalf("spoke target = %q, want the newest published ancestor %q", got, want)
+	}
+	if head := getBranchHead("v4"); head.SHA != shortSHA(walkbackTip) || head.ImageStatus == imageStatusReady {
+		t.Errorf("branch head = %+v, want the tip still reported as not ready", head)
+	}
+}
+
+func TestFetchBranchSHASpokeTargetWalkbackStopsAtCurrentTarget(t *testing.T) {
+	resetSHACaches(t)
+	var probes atomic.Int32
+	walkbackServer(t, map[string]bool{shortSHA(walkbackRunning): true}, &probes)
+	latestSHAMu.Lock()
+	latestSHAByBranch["v4"] = branchSHAInfo{SHA: shortSHA(walkbackFix)}
+	latestSHAMu.Unlock()
+
+	fetchBranchSHA(slog.Default(), "v4")
+
+	if got, want := getLatestSHAForBranch("v4"), shortSHA(walkbackFix); got != want {
+		t.Fatalf("spoke target = %q, want unchanged %q (never walk backwards past it)", got, want)
+	}
+}
+
+func TestFetchBranchSHAListsCommitsOnceForBothWalkbacks(t *testing.T) {
+	resetSHACaches(t)
+	var lists atomic.Int32
+	fakeGitHubGHCR(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodHead:
+			w.WriteHeader(http.StatusNotFound)
+		case strings.Contains(r.URL.Path, "/token"):
+			_, _ = w.Write([]byte(`{"token":"anon"}`))
+		case strings.Contains(r.URL.Path, "/branches/"):
+			fmt.Fprintf(w, `{"commit":{"sha":%q,"commit":{"message":"tip"}}}`, walkbackTip)
+		case strings.HasSuffix(r.URL.Path, "/commits"):
+			lists.Add(1)
+			fmt.Fprintf(w, `[{"sha":%q,"commit":{"message":"tip"}},{"sha":%q,"commit":{"message":"fix"}}]`, walkbackTip, walkbackFix)
+		default:
+			_, _ = w.Write([]byte(`{"workflow_runs":[]}`))
+		}
+	})
+
+	fetchBranchSHA(slog.Default(), "v4")
+
+	if got := lists.Load(); got != 1 {
+		t.Errorf("commit list fetched %d times, want 1 shared by hub and spoke walkbacks", got)
 	}
 }

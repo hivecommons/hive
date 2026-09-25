@@ -1,1 +1,0 @@
-- Fix dashboard cost-panel pricing and labels for LiteLLM-routed model aliases, add cost windows, and prevent cost-per-session table clipping (#8766).

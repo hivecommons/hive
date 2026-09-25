@@ -73,7 +73,9 @@ type ContributorProfileResponse struct {
 	Milestones []ContributorMilestone `json:"milestones"`
 	// NextMilestone is the nearest not-yet-attained milestone, for the
 	// "almost there / X to go" progression cue. Nil when everything is attained.
-	NextMilestone *ContributorMilestone `json:"next_milestone,omitempty"`
+	NextMilestone *ContributorMilestone         `json:"next_milestone,omitempty"`
+	Achievements2 []ContributorAchievement      `json:"achievements_2,omitempty"`
+	Achievement2  ContributorAchievementSummary `json:"achievement_2"`
 
 	// ── My hives (contributes-to + owns), from the central registry ──
 	Hives []ContributorHiveRel `json:"hives"`
@@ -414,8 +416,13 @@ func (s *Server) BuildContributorProfile(username string) ContributorProfileResp
 	resp.Total = contribRank
 
 	resp.Milestones, resp.NextMilestone = buildMilestones(p)
-	resp.Hives = buildContributorHives(username, s.localHiveIdentity())
+	localHiveID := s.localHiveIdentity()
+	resp.Hives = buildContributorHives(username, localHiveID)
 	resp.Collaborators = sortedCollaborators(p)
+	achievementInputs := s.achievement2BaseInputs()
+	achievementInputs.Hives = resp.Hives
+	achievementInputs.LocalHiveID = localHiveID
+	resp.Achievements2, resp.Achievement2 = buildAchievements2WithInputs(p, achievementInputs)
 
 	// Founding mark: the contributor's real registration order, shown only for
 	// the founding cohort. Derived from stored timestamps — if the order cannot

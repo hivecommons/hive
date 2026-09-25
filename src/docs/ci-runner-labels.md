@@ -85,6 +85,28 @@ Set nothing and CI runs on GitHub-hosted runners. If your fork *does* have its
 own fleet, set `HIVE_RUNNER_LABELS` to its labels and the same workflows will
 use it.
 
+## What still runs on GitHub-hosted runners, and why
+
+The fleet runs in Kubernetes pods (ARC) with no Docker daemon and no
+privileged mounts, so a few jobs are pinned to `ubuntu-latest` on purpose:
+
+- `v2-ci.yml` `docker (hive|hub|contributor)` — `docker build` of each
+  Dockerfile. This matrix is the only pre-merge image compile gate;
+  `docker.yml` builds nothing for feature branches any more (it used to build
+  all six platform images per push, ~20 hosted-runner minutes, and that queue
+  contention was routinely the last check to finish on a PR).
+- `v2-ci.yml` `overlayfs-exec-guard` — needs containerd + overlayfs on a VM.
+- `docker.yml` `build*`/`merge*` — publish jobs; run only when `gate` decides
+  `push=true` (release-line branches and `workflow_dispatch`).
+
+Everything else Go-shaped (`build-and-test`, `v2 Tests` shards, `govulncheck`,
+`gosec`, `golangci-lint`, `NOTICE matches the module graph`, …) uses the
+fleet expression. When moving a Go job to the fleet, set `cache: false` on
+`actions/setup-go` and `skip-cache: true` on `golangci-lint-action`: the
+runners mount a persistent `GOCACHE`/`GOMODCACHE`, and the actions' post-step
+cache save would otherwise tar that multi-GB shared cache on every run
+(#8762).
+
 ## Clearing runs already wedged
 
 This change stops new wedges; it does not clear existing ones, because a run

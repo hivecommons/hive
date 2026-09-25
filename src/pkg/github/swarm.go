@@ -13,9 +13,15 @@ import (
 const swarmSearchPerPage = 100
 
 type SwarmScore struct {
-	IssuesClosed int
-	PRsMerged    int
-	Participants []string
+	IssuesClosed     int
+	PRsMerged        int
+	SpeksCompleted   int
+	LocalModelPRs    int
+	Participants     []string
+	PRsByAuthor      map[string]int
+	IssuesClosedBy   map[string]int
+	SpeksCompletedBy map[string]int
+	LocalModelPRsBy  map[string]int
 }
 
 func BoostActionableRepoPriority(issues []Issue, repo string) {
@@ -53,15 +59,15 @@ func (c *Client) ScoreSwarm(ctx context.Context, repo string, start, end time.Ti
 	if repo == "" {
 		return SwarmScore{}, fmt.Errorf("repo is required")
 	}
-	closed, err := c.searchSwarmTotal(ctx, fmt.Sprintf("repo:%s is:issue is:closed closed:%s..%s", repo, swarmSearchTime(start), swarmSearchTime(end)))
+	closed, issuesByCloser, err := c.searchClosedSwarmIssues(ctx, repo, start, end)
 	if err != nil {
 		return SwarmScore{}, fmt.Errorf("counting closed issues: %w", err)
 	}
-	merged, participants, err := c.searchMergedPRs(ctx, repo, start, end)
+	merged, participants, prsByAuthor, speksCompleted, localModelPRs, speksByAuthor, localByAuthor, err := c.searchMergedPRs(ctx, repo, start, end)
 	if err != nil {
 		return SwarmScore{}, fmt.Errorf("counting merged PRs: %w", err)
 	}
-	return SwarmScore{IssuesClosed: closed, PRsMerged: merged, Participants: participants}, nil
+	return SwarmScore{IssuesClosed: closed, PRsMerged: merged, SpeksCompleted: speksCompleted, LocalModelPRs: localModelPRs, Participants: participants, PRsByAuthor: prsByAuthor, IssuesClosedBy: issuesByCloser, SpeksCompletedBy: speksByAuthor, LocalModelPRsBy: localByAuthor}, nil
 }
 
 func (c *Client) CountUnlabeledOpenIssues(ctx context.Context, repo string) (int, error) {
@@ -83,13 +89,37 @@ func (c *Client) searchSwarmTotal(ctx context.Context, query string) (int, error
 	return result.GetTotal(), nil
 }
 
-func (c *Client) searchMergedPRs(ctx context.Context, repo string, start, end time.Time) (int, []string, error) {
-	query := fmt.Sprintf("repo:%s is:pr is:merged merged:%s..%s", repo, swarmSearchTime(start), swarmSearchTime(end))
+func (c *Client) searchClosedSwarmIssues(ctx context.Context, repo string, start, end time.Time) (int, map[string]int, error) {
+	query := fmt.Sprintf("repo:%s is:issue is:closed closed:%s..%s", repo, swarmSearchTime(start), swarmSearchTime(end))
 	result, _, err := c.client.Search.Issues(ctx, query, &gh.SearchOptions{ListOptions: gh.ListOptions{PerPage: swarmSearchPerPage}})
 	if err != nil {
 		return 0, nil, err
 	}
+	byCloser := map[string]int{}
+	for _, item := range result.Issues {
+		if item == nil || item.ClosedBy == nil {
+			continue
+		}
+		login := strings.TrimSpace(item.ClosedBy.GetLogin())
+		if login != "" {
+			byCloser[login]++
+		}
+	}
+	return result.GetTotal(), byCloser, nil
+}
+
+func (c *Client) searchMergedPRs(ctx context.Context, repo string, start, end time.Time) (int, []string, map[string]int, int, int, map[string]int, map[string]int, error) {
+	query := fmt.Sprintf("repo:%s is:pr is:merged merged:%s..%s", repo, swarmSearchTime(start), swarmSearchTime(end))
+	result, _, err := c.client.Search.Issues(ctx, query, &gh.SearchOptions{ListOptions: gh.ListOptions{PerPage: swarmSearchPerPage}})
+	if err != nil {
+		return 0, nil, nil, 0, 0, nil, nil, err
+	}
 	seen := map[string]bool{}
+	byAuthor := map[string]int{}
+	speksByAuthor := map[string]int{}
+	localByAuthor := map[string]int{}
+	speksCompleted := 0
+	localModelPRs := 0
 	for _, item := range result.Issues {
 		if item == nil || item.User == nil {
 			continue
@@ -97,6 +127,21 @@ func (c *Client) searchMergedPRs(ctx context.Context, repo string, start, end ti
 		login := strings.TrimSpace(item.User.GetLogin())
 		if login != "" {
 			seen[login] = true
+			byAuthor[login]++
+		}
+		body := item.GetBody()
+		text := strings.ToLower(item.GetTitle() + "\n" + body)
+		if swarmPRCompletesSpek(text) {
+			speksCompleted++
+			if login != "" {
+				speksByAuthor[login]++
+			}
+		}
+		if swarmPRUsesLocalModel(body) {
+			localModelPRs++
+			if login != "" {
+				localByAuthor[login]++
+			}
 		}
 	}
 	participants := make([]string, 0, len(seen))
@@ -104,7 +149,27 @@ func (c *Client) searchMergedPRs(ctx context.Context, repo string, start, end ti
 		participants = append(participants, login)
 	}
 	sort.Strings(participants)
-	return result.GetTotal(), participants, nil
+	return result.GetTotal(), participants, byAuthor, speksCompleted, localModelPRs, speksByAuthor, localByAuthor, nil
+}
+
+func swarmPRCompletesSpek(text string) bool {
+	return strings.Contains(text, "spek") || (strings.Contains(text, "spec") && strings.Contains(text, "plan") && strings.Contains(text, "implement"))
+}
+
+func swarmPRUsesLocalModel(body string) bool {
+	meta, ok := ParseAttributionTrailer(body)
+	return ok && swarmAttributionIsLocal(meta)
+}
+
+func swarmAttributionIsLocal(meta InvocationMeta) bool {
+	backend := strings.ToLower(strings.TrimSpace(meta.Backend))
+	model := strings.ToLower(strings.TrimSpace(meta.Model))
+	switch backend {
+	case "bob", "ollama", "local":
+		return true
+	default:
+		return strings.HasPrefix(backend, "ollama") || strings.HasPrefix(model, "local")
+	}
 }
 
 func swarmSearchTime(t time.Time) string {

@@ -26,7 +26,7 @@ func TestHivesOverlayColumnSizingUsesAvailableWidth(t *testing.T) {
 		Hub:           hub,
 		ContributorID: "contrib_a1b2",
 		Active:        true,
-	}}, "/cfg/profiles.yml", "/cfg/contributor.env")
+	}}, "/cfg/profiles.yml", "/cfg/contributor.env", "ranked")
 
 	cases := []struct {
 		width       int

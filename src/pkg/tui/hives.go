@@ -48,6 +48,13 @@ type hivesStore interface {
 	EnvPath() string
 }
 
+func hiveStrategy(set *hivectl.ProfileSet) string {
+	if set == nil {
+		return hivectl.CommonsStrategyRanked
+	}
+	return set.EffectiveCommonsStrategy()
+}
+
 // hivesEnv is the overlay's whole dependency set: where the profiles live, and
 // the two network calls adding one needs.
 //
@@ -102,6 +109,7 @@ type (
 	hivesLoadedMsg struct {
 		overlayID uint64
 		rows      []panes.HiveRow
+		strategy  string
 		path      string
 		envPath   string
 		err       error
@@ -213,6 +221,27 @@ func (m model) updateHives(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		next, _ := m.hives.BeginRename()
 		m.hives = &next
 		return m, nil
+	case "[":
+		next, action, ok := m.hives.MoveSelectedRank(-1)
+		m.hives = &next
+		if !ok {
+			return m, nil
+		}
+		return m, m.runHivesAction(m.hivesID, action)
+	case "]":
+		next, action, ok := m.hives.MoveSelectedRank(1)
+		m.hives = &next
+		if !ok {
+			return m, nil
+		}
+		return m, m.runHivesAction(m.hivesID, action)
+	case "s":
+		next, action, ok := m.hives.CycleStrategy()
+		m.hives = &next
+		if !ok {
+			return m, nil
+		}
+		return m, m.runHivesAction(m.hivesID, action)
 	default:
 		return m, nil
 	}
@@ -291,6 +320,7 @@ func (m model) loadHives(overlayID uint64) tea.Cmd {
 		return hivesLoadedMsg{
 			overlayID: overlayID,
 			rows:      hiveRows(set),
+			strategy:  hiveStrategy(set),
 			path:      env.store.Path(),
 			envPath:   env.store.EnvPath(),
 		}
@@ -385,20 +415,30 @@ func (m model) runHivesAction(overlayID uint64, action panes.HivesAction) tea.Cm
 		if err := env.store.Commit(set); err != nil {
 			return hivesActionMsg{overlayID: overlayID, err: err}
 		}
-		if action.Kind == panes.HivesActionUse && env.signalRelay != nil {
+		if hivesActionSignalsRelay(action.Kind) && env.signalRelay != nil {
 			result, err := env.signalRelay(context.Background())
 			if err != nil {
 				return hivesActionMsg{overlayID: overlayID, err: err}
 			}
-			note = hivesUseSwitchNote(note, action.Name, result)
+			note = hivesSwitchNote(note, action.Name, action.Kind, result)
 		}
 		return hivesActionMsg{overlayID: overlayID, note: note}
 	}
 }
 
-func hivesUseSwitchNote(note, name string, result hivectl.RelaySwitchResult) string {
+func hivesActionSignalsRelay(kind panes.HivesActionKind) bool {
+	return kind == panes.HivesActionUse || kind == panes.HivesActionMoveUp || kind == panes.HivesActionMoveDown || kind == panes.HivesActionStrategy
+}
+
+func hivesSwitchNote(note, name string, kind panes.HivesActionKind, result hivectl.RelaySwitchResult) string {
 	if result.Running {
 		return fmt.Sprintf("%s; running relay signaled (%s), in-flight work finishes on its original hive", note, result.Target)
+	}
+	if kind == panes.HivesActionStrategy {
+		return fmt.Sprintf("%s; no running relay found, the next relay start will use this strategy", note)
+	}
+	if kind == panes.HivesActionMoveUp || kind == panes.HivesActionMoveDown {
+		return fmt.Sprintf("%s; no running relay found, the next relay start will use this rank order", note)
 	}
 	return fmt.Sprintf("%s; no running relay found, the next relay start will solicit from %q first", note, name)
 }
@@ -456,6 +496,26 @@ func applyHivesAction(env hivesEnv, set *hivectl.ProfileSet, action panes.HivesA
 			return "", err
 		}
 		return fmt.Sprintf("✓ renamed hive %q to %q (%s)", action.Name, profile.Name, profile.Hub), nil
+	case panes.HivesActionMoveUp, panes.HivesActionMoveDown:
+		delta := -1
+		direction := "up"
+		if action.Kind == panes.HivesActionMoveDown {
+			delta = 1
+			direction = "down"
+		}
+		profile, moved, err := set.Move(action.Name, delta)
+		if err != nil {
+			return "", err
+		}
+		if !moved {
+			return fmt.Sprintf("✓ %q is already at that edge of The Commons rank", profile.Name), nil
+		}
+		return fmt.Sprintf("✓ moved %q %s in The Commons rank", profile.Name, direction), nil
+	case panes.HivesActionStrategy:
+		if err := set.SetCommonsStrategy(action.Strategy); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("✓ The Commons strategy is now %s", set.EffectiveCommonsStrategy()), nil
 	}
 	return "", fmt.Errorf("unsupported hives action %d", action.Kind)
 }
@@ -523,7 +583,7 @@ func (m model) handleHivesLoaded(msg hivesLoadedMsg) (tea.Model, tea.Cmd) {
 		m.hives = &next
 		return m, nil
 	}
-	next := m.hives.SetHives(msg.rows, msg.path, msg.envPath)
+	next := m.hives.SetHives(msg.rows, msg.path, msg.envPath, msg.strategy)
 	m.hives = &next
 	// Probing starts only once there is a list to probe, and the list is
 	// already on screen by then. Nothing below waits for it.
