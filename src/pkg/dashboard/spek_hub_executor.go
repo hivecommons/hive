@@ -329,6 +329,10 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 	return nil
 }
 
+// spekHubWaitDelay bounds how long exec.Cmd.Wait may block on inherited
+// pipes after the stage process itself has exited or been killed.
+const spekHubWaitDelay = 10 * time.Second
+
 func (e *SpekHubExecutor) runStageCommand(ctx context.Context, worktree string, env []string, st spekHubStage, cmd []string) ([]byte, int, error) {
 	logPath := filepath.Join(worktree, ".hive", fmt.Sprintf("spek-stage-%s-%d.log", sanitizeRunPromptPath(st.stage), st.gen))
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
@@ -344,6 +348,11 @@ func (e *SpekHubExecutor) runStageCommand(ctx context.Context, worktree string, 
 		c := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
 		c.Dir = worktree
 		c.Env = env
+		// The agent CLI is `sh -c …` that forks node grandchildren. Kill the
+		// whole group on timeout/cancel and bound Wait so an orphan holding
+		// the inherited output pipe cannot pin the executor slot forever.
+		spekHubConfigureProcessGroup(c)
+		c.WaitDelay = spekHubWaitDelay
 		w := io.MultiWriter(&buf, f)
 		c.Stdout = w
 		c.Stderr = w
