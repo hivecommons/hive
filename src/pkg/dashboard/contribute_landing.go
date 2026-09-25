@@ -1145,6 +1145,24 @@ select.admin-act{min-width:0;max-width:100%%}
 /* Hive-wide trend strip pinned above the standings. */
 .lb-trend{display:flex;align-items:center;gap:10px;padding:var(--sp-4) var(--sp-7) var(--sp-5);color:var(--text-muted);font-size:.76rem;border-bottom:1px solid var(--line-subtle)}
 .lb-trend .spark{margin-left:auto}
+/* Battle Log + Hive of the Week (#8844): public, showpiece widgets next to the
+   rankings. Data is hydrated from scrubbed public endpoints; rendering uses
+   textContent-only DOM construction below. */
+.lb-showcase-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,.8fr);gap:var(--sp-6);margin-bottom:var(--sp-7)}
+.battle-log-list{display:flex;flex-direction:column;gap:8px;padding:var(--sp-6)}
+.battle-log-line{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto;align-items:center;gap:8px;background:var(--surface-0);border:1px solid var(--line-subtle);border-radius:10px;padding:9px 11px;font-size:.84rem}
+.battle-log-actor{font-weight:700;color:var(--text);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.battle-log-icon{font-size:1rem;filter:drop-shadow(0 0 6px color-mix(in srgb,var(--cc-amber) 35%%,transparent))}
+.battle-log-target{color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.battle-log-time{font-size:.7rem;color:var(--text-faint);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.hotw-video{width:100%%;border-radius:12px;border:1px solid var(--line-strong);background:#010409;display:block}
+.hotw-body{padding:var(--sp-6)}
+.hotw-project{font-size:1.05rem;font-weight:800;color:var(--text);margin-bottom:var(--sp-2)}
+.hotw-meta{font-size:.78rem;color:var(--text-muted);margin-bottom:var(--sp-5)}
+.hotw-links{display:flex;flex-wrap:wrap;gap:8px}
+.hotw-links a{font-size:.76rem;color:var(--cc-accent);text-decoration:none;border:1px solid var(--line-strong);border-radius:var(--r-pill);padding:5px 10px}
+.hotw-links a:hover{border-color:var(--cc-accent)}
+@media(max-width:900px){.lb-showcase-grid{grid-template-columns:1fr}.battle-log-line{grid-template-columns:auto minmax(0,1fr);}.battle-log-actor{text-align:left}.battle-log-target,.battle-log-time{grid-column:2}}
 /* "File an issue on this page" link (#2594) — a subtle footer affordance present
    on every tab. Quiet grey, matches the sober dashboard chrome; an outbound link. */
 .cc-page-foot{padding:26px 48px 34px;border-top:1px solid var(--line-subtle);margin-top:28px;display:flex;justify-content:center}
@@ -2385,6 +2403,17 @@ It clears automatically when the period elapses. An operator can shorten or disa
      one-line "where you stand" cue that links across. Anonymous viewers get the
      same one-line footprint, not a card. -->
 <div id="me-standing-mount"></div>
+<div class="lb-showcase-grid">
+<div class="ops-card card-accent">
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Battle Log</h3><span class="ops-card-count count-strong" id="battle-log-count"></span></div>
+<div class="battle-log-list" id="battle-log-list"><div class="ops-empty">Loading hive battle log&hellip;</div></div>
+<p class="ops-note">Public, scrubbed contributor activity rendered as a Counter-Strike-style record: actor &rarr; action &rarr; target.</p>
+</div>
+<div class="ops-card card-accent">
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Hive of the Week</h3><span class="ops-card-count count-strong" id="hotw-count"></span></div>
+<div class="hotw-body" id="hotw-card"><div class="ops-empty">Loading weekly swarm render&hellip;</div></div>
+</div>
+</div>
 <div class="ops-card card-accent">
 <div class="ops-card-head"><span class="feed-dot"></span><h3>Team leagues</h3><span class="ops-card-count count-strong" id="teams-count"></span></div>
 <div id="team-leagues"><div class="ops-empty">Loading team leagues&hellip;</div></div>
@@ -2785,6 +2814,8 @@ function loadLeaderboard(){
     var contribs=(d&&d.leaderboard)||[];
     renderLeaderboard(contribs);
     loadTeamLeagues();
+    loadBattleLog();
+    loadHiveOfWeek();
     // Ensure the per-row + hive-wide sparklines have data even when the Ops tab
     // was never opened (opsPoll never ran). Reuses this hive's metrics endpoint;
     // Ops-only spark slots simply no-op when absent. See #persistent-history.
@@ -2799,6 +2830,46 @@ function loadTeamLeagues(){
   fetch('/api/leaderboard/teams').then(function(r){return r.json();}).then(function(d){renderTeamLeagues(d||{});}).catch(function(){
     el.innerHTML='<div class="ops-empty">Could not load team leagues.</div>';
   });
+}
+function loadBattleLog(){
+  var el=document.getElementById('battle-log-list');if(!el)return;
+  fetch('/api/leaderboard/battle-log?limit=12').then(function(r){return r.json();}).then(function(d){renderBattleLog((d&&d.events)||[]);}).catch(function(){
+    el.textContent='';var div=document.createElement('div');div.className='ops-empty';div.textContent='Could not load battle log.';el.appendChild(div);
+  });
+}
+function renderBattleLog(events){
+  var el=document.getElementById('battle-log-list'),cnt=document.getElementById('battle-log-count');if(!el)return;
+  el.textContent='';
+  if(cnt)cnt.textContent=events.length+' events';
+  if(!events.length){var empty=document.createElement('div');empty.className='ops-empty';empty.textContent='No public activity yet.';el.appendChild(empty);return;}
+  events.forEach(function(e){
+    var row=document.createElement('div');row.className='battle-log-line';
+    var actor=document.createElement('span');actor.className='battle-log-actor';actor.textContent=e.actor||'contributor';row.appendChild(actor);
+    var icon=document.createElement('span');icon.className='battle-log-icon';icon.setAttribute('aria-label',e.action||'acted');icon.textContent=e.icon||'⚡';row.appendChild(icon);
+    var target=document.createElement('span');target.className='battle-log-target';target.textContent=(e.action?e.action+' ':'')+(e.target||'the hive');row.appendChild(target);
+    var time=document.createElement('span');time.className='battle-log-time';var d=e.timestamp?new Date(e.timestamp):null;time.textContent=(d&&!isNaN(d.getTime()))?d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'';row.appendChild(time);
+    el.appendChild(row);
+  });
+}
+function loadHiveOfWeek(){
+  var el=document.getElementById('hotw-card');if(!el)return;
+  fetch('/api/leaderboard/hive-of-week').then(function(r){return r.json();}).then(renderHiveOfWeek).catch(function(){
+    el.textContent='';var div=document.createElement('div');div.className='ops-empty';div.textContent='Could not load Hive of the Week.';el.appendChild(div);
+  });
+}
+function renderHiveOfWeek(d){
+  var el=document.getElementById('hotw-card'),cnt=document.getElementById('hotw-count');if(!el)return;
+  el.textContent='';
+  if(cnt)cnt.textContent=(d&&d.week)||'weekly';
+  var project=document.createElement('div');project.className='hotw-project';project.textContent=(d&&d.project)||'hive';el.appendChild(project);
+  var meta=document.createElement('div');meta.className='hotw-meta';meta.textContent=((d&&d.activity_count)||0)+' public events this week';el.appendChild(meta);
+  var video=document.createElement('video');video.className='hotw-video';video.controls=true;video.preload='metadata';if(d&&d.poster_url)video.poster=d.poster_url;
+  var source=document.createElement('source');source.type='video/mp4';source.src=(d&&d.video_url)||'/assets/hive-of-the-week/latest.mp4';video.appendChild(source);el.appendChild(video);
+  var links=document.createElement('div');links.className='hotw-links';
+  [['Source log',d&&d.gource_log_url],['Leaderboard',d&&d.leaderboard_url],['Video',d&&d.video_url]].forEach(function(pair){
+    if(!pair[1])return;var a=document.createElement('a');a.href=pair[1];a.textContent=pair[0];links.appendChild(a);
+  });
+  el.appendChild(links);
 }
 function teamRows(rows){
   rows=(rows||[]).slice(0,5);
