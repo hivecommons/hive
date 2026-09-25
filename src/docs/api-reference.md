@@ -16,7 +16,8 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `GET` | `/metrics` | Registered only when `HIVE_METRICS_ENABLED`; requires `Authorization: Bearer $HIVE_METRICS_TOKEN` (403 if the token is unset) | Prometheus metrics | `pkg/dashboard/server.go:1156` |
 | `GET` | `/api/status` | Dashboard auth/session | Dashboard aggregate status; accepts `?fields=a,b` for top-level selection and `?omit=repos` to drop heavy sections, and honors `Accept-Encoding: gzip` | `pkg/dashboard/server.go:1161` |
 | `GET` | `/api/status/summary` | Dashboard auth/session | Compact agent/governor/budget status summary for pollers; honors `Accept-Encoding: gzip` | `pkg/dashboard/server.go:1162` |
-| `GET` | `/api/events` | Dashboard auth/session | Server-sent event stream | `pkg/dashboard/server.go:1163` |
+| `POST` | `/api/admin/mcp` | Dashboard auth/session (dashboard token accepted by existing authenticate path) | Operator-facing admin MCP streamable HTTP JSON-RPC endpoint. Phase 1 is read-only, administers only the hive serving the endpoint, exposes no hive selector, and shares the `pkg/adminmcp` refusal catalogue/contract with the stdio binary. | `pkg/dashboard/server.go:1163` |
+| `GET` | `/api/events` | Dashboard auth/session | Server-sent event stream | `pkg/dashboard/server.go:1164` |
 | `GET` | `/api/swarm` | Dashboard auth/session | Current swarm status: display name, duration, active repo, expiry, and persisted prep metrics when available. | `pkg/dashboard/swarm.go:136` |
 | `POST` | `/api/swarm` | Owner only | Start a 24h repo swarm for a configured repo, persist repo-prep metrics after the active record is saved, and return 409 when another swarm is already active. Body `{"repo":"owner/name"}`. | `pkg/dashboard/swarm.go:137` |
 | `DELETE` | `/api/swarm` | Owner only | End the active swarm, score issues closed and PRs merged in the window, and append it to history. | `pkg/dashboard/swarm.go:138` |
@@ -52,7 +53,7 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
 | `GET` | `/api/style` | Public | Sanitized custom dashboard CSS | `pkg/dashboard/api.go:57` |
-| `GET` | `/branding/custom.css` | Dashboard auth/session | Operator branding stylesheet override, read per request (see [branding](branding.md)) | `pkg/dashboard/server.go:1224` |
+| `GET` | `/branding/custom.css` | Dashboard auth/session | Operator branding stylesheet override, read per request (see [branding](branding.md)) | `pkg/dashboard/server.go:1225` |
 | `GET` | `/api/snapshot/frame-ancestors` | Public | Snapshot framing allowlist | `pkg/dashboard/api.go:80` |
 | `GET` | `/api/snapshot` | Public | Snapshot data | `pkg/dashboard/api.go:81` |
 | `GET` | `/snapshot` | Public | Public read-only snapshot page | `pkg/dashboard/api.go:82` |
@@ -80,9 +81,9 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `GET` | `/api/openrouter/models` | Dashboard auth/session | Open Router Models | `pkg/dashboard/openrouter.go:47` |
 | `GET` | `/api/openrouter/credit` | Dashboard auth/session | Open Router Credit | `pkg/dashboard/openrouter.go:48` |
 | `GET` | `/openrouter/callback` | Public | Open Router Callback | `pkg/dashboard/openrouter.go:49` |
-| `POST` | `/api/github-app/recheck` | Dashboard auth/session | GitHub App Recheck | `pkg/dashboard/server.go:1164` |
-| `POST` | `/api/github-app/install-clicked` | Dashboard auth/session | GitHub App Install Clicked | `pkg/dashboard/server.go:1165` |
-| `GET` | `/gh-setup` | Public | GitHub App Setup Callback | `pkg/dashboard/server.go:1166` |
+| `POST` | `/api/github-app/recheck` | Dashboard auth/session | GitHub App Recheck | `pkg/dashboard/server.go:1165` |
+| `POST` | `/api/github-app/install-clicked` | Dashboard auth/session | GitHub App Install Clicked | `pkg/dashboard/server.go:1166` |
+| `GET` | `/gh-setup` | Public | GitHub App Setup Callback | `pkg/dashboard/server.go:1167` |
 
 ## Configuration
 
@@ -506,7 +507,7 @@ always resolved server-side from the validated token.
 | `POST` | `/api/hives/{id}/heartbeat` | Dashboard auth/session | Hives Heartbeat | `pkg/dashboard/api_contribute.go:268` |
 | `DELETE` | `/api/hives/{id}` | Owner only | Hives Delete | `pkg/dashboard/api_contribute.go:269` |
 | `POST` | `/api/hives/onboard` | Dashboard auth/session | Hives Onboard | `pkg/dashboard/api_contribute.go:270` |
-| `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1171` |
+| `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1172` |
 
 ## Hub SaaS
 

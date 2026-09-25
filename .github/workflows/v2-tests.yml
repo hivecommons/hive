@@ -1054,6 +1054,7 @@ jobs:
             [dashchat]=64     # initial browser transport seam (#8304); chat.Service command paths are covered in pkg/chat, surface tests pin guards
             [hub]=87         # kubectl-shelling + live-GitHub paths; see #2355. Was 89 against v2's 89.9%; v4 measures 87.6%.
             [agent]=89       # pre-existing shortfall inherited from #2350, NOT a new regression. See #2355.
+            [adminmcp]=53     # 53.3% on PR #8807; phase-1 skeleton covers refusal/cap/scrub/core JSON-RPC paths while provider breadth lands in later phases
 
             # ── Floors recorded when the gate moved from v2 to v4 (#3903) ─────
             # A RATCHET, NOT A TARGET — see coverage-hourly.yml for the full
@@ -1124,6 +1125,7 @@ jobs:
             [cmd/hive]=42     # 44.8% on 2026-09-17; bulk is main()/run-loop wiring; was 35
             [cmd/apiproxy]=92 # 95.6% on 2026-09-17; was 13
             [cmd/hive-backup]=85 # 90.4% on 2026-09-17; was 78
+            [cmd/hive-admin-mcp]=44 # 44.5% on PR #8807; stdio SDK/run wiring remains transport-bound while roster/refusal paths are tested
             [cmd/hivectl]=97  # 100.0% on 2026-09-17; was exempt as an untested main
             [cmd/flue-fixture]=75 # 80.0% on 2026-09-22 (#8361): main() is the single uncovered statement; run() and signalContext() are tested in-process and the binary is smoke-tested as a child process, which yields no profile
           )

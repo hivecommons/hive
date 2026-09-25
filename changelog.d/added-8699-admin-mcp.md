@@ -1,0 +1,1 @@
+- Add the v6 admin MCP phase 1 skeleton: a shared read-only `pkg/adminmcp` tool/refusal layer, authenticated dashboard MCP endpoint, stdio `hive-admin-mcp` binary, and refusal-contract parity tests ([#8699](https://github.com/hivecommons/hive/issues/8699)).
