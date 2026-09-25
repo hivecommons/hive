@@ -1803,6 +1803,10 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 			key := repoRowKey(repoRows, pr.Repo)
 			prsByRepo[key] = append(prsByRepo[key], FrontendPR{PullRequest: pr})
 		}
+		for _, pr := range actionable.PRs.StaleDrafts {
+			key := repoRowKey(repoRows, pr.Repo)
+			prsByRepo[key] = append(prsByRepo[key], FrontendPR{PullRequest: pr})
+		}
 		// Held items ride beside the actionable ones so the card can show
 		// what its own counts include (hivecommons/hive#7896). PRs.Held is
 		// the full PullRequest (labels, author, URL); a held issue exists

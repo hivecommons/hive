@@ -48,6 +48,7 @@ type wirePR struct {
 	Labels    []wireLabel `json:"labels"`
 	Draft     bool        `json:"draft"`
 	CreatedAt string      `json:"created_at"`
+	UpdatedAt string      `json:"updated_at,omitempty"`
 	HTMLURL   string      `json:"html_url"`
 	Mergeable *bool       `json:"mergeable"`
 	// Body is the PR description; the `— hive:` attribution trailer, when

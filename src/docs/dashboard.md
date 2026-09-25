@@ -93,15 +93,16 @@ ambiguous legacy labels stay held under `hive-pause/<hive-id>` for operator
 review. The card-level `⏸ pause` / `▶ resume` control uses the same permission
 rule.
 
-## Repository card legend and issue bands
+## Repository card legend, issue bands, and PR bands
 
 The **Repositories** section includes a compact, collapsible pill legend. It is
 stored per browser in `localStorage` and uses the same pill classes as the cards,
 so theme changes update the legend automatically. The legend explains issue
 actionable/held pills, plan chips, hold/release controls, issue state glyphs
-(`⛔`, `❓`, `👤`, `✓`, role badges, stale `🕒`) and PR states (`✓`, `◐`,
-`⚠`, held, reviewed `💬`, auto-merge `🔀`, and review-class badges such as
-`FIX`).
+(`⛔`, `❓`, `👤`, `✓`, role badges, stale `🕒`) and PR bands/states (`✓`,
+`◐`, `⚠`, held `⏸`, failing CI `✗ CI`, conflicts `⑂`, stale `🕒`,
+reviewed `💬`, auto-merge `🔀`, agent role badges, and review-class badges
+such as `FIX`).
 
 Actionable issue pills are grouped client-side for display only; enumeration,
 holds, filters, and agent kick behaviour are unchanged. Each issue appears in
@@ -134,6 +135,29 @@ These settings deliberately do not reuse `governor.labels.exempt`,
 `contribute_skip_labels`, or `project.issue_filter`; those decide work
 eligibility, while issue bands decide how the dashboard describes already
 enumerated work. Linked-PR badges render from the `linked_prs` payload and are not inferred by the card.
+
+PR pills are also grouped client-side for display only. Open and held PRs appear
+in exactly one band; held PRs are no longer appended after the actionable list.
+First match wins for classification:
+
+1. **Waiting on human** — `needs-human`, held, `needs-decision`,
+   `2-discussing`, or configured `dashboard.issue_bands.waiting_labels`.
+2. **Merge-eligible** — merge verdict `eligible`, or queued for Hive
+   auto-merge.
+3. **Blocked** — merge verdict `blocked`, conflicts (`mergeable: no`), or
+   failing CI with failing check names.
+4. **In review** — merge verdict `outstanding`, or a recorded Hive review link.
+5. **Draft** — draft PRs.
+6. **Open** — everything else.
+
+The display order is waiting on human → merge-eligible → blocked → in review →
+open → draft. Within a band, PRs sort by oldest `updated_at`, then review class
+(`fix`, refactor/docs or unknown, `tests`), oldest `created_at`, and PR number.
+The PR snapshot includes `updated_at` specifically so this order can match issue
+band aging without extra GitHub API calls. The existing
+`dashboard.issue_bands.waiting_labels` and `stale_days` settings are reused for
+PR display; changing them does not alter enumeration, holds, review, or merge
+queueing.
 
 ## Linked PR issue signals
 

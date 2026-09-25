@@ -1,9 +1,11 @@
 package dashboard
 
 import (
+	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -196,6 +198,7 @@ func TestBuildTokens_NilCollector(t *testing.T) {
 }
 
 func TestBuildRepos(t *testing.T) {
+	prUpdatedAt := time.Date(2026, 9, 21, 10, 11, 12, 0, time.UTC)
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1", "repo2"}},
 	}
@@ -207,7 +210,10 @@ func TestBuildRepos(t *testing.T) {
 		},
 		PRs: github.PRResult{
 			Items: []github.PullRequest{
-				{Repo: "repo2", Number: 10, Title: "pr1"},
+				{Repo: "repo2", Number: 10, Title: "pr1", UpdatedAt: prUpdatedAt},
+			},
+			StaleDrafts: []github.PullRequest{
+				{Repo: "repo2", Number: 11, Title: "draft", Draft: true, UpdatedAt: prUpdatedAt.Add(time.Hour)},
 			},
 		},
 		TotalByRepo: map[string]github.RepoCounts{
@@ -241,6 +247,16 @@ func TestBuildRepos(t *testing.T) {
 	}
 	if repos[0].Mode != "surge" {
 		t.Errorf("mode = %q, want surge", repos[0].Mode)
+	}
+	if len(repos[1].OpenPrs) != 2 {
+		t.Fatalf("open PRs = %d, want 2", len(repos[1].OpenPrs))
+	}
+	body, err := json.Marshal(repos[1].OpenPrs[0])
+	if err != nil {
+		t.Fatalf("marshal frontend PR: %v", err)
+	}
+	if !strings.Contains(string(body), `"updated_at":"2026-09-21T10:11:12Z"`) {
+		t.Fatalf("frontend PR payload missing updated_at: %s", body)
 	}
 }
 

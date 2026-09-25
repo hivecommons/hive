@@ -1464,16 +1464,19 @@
     .repo-legend-row { display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-2); color:var(--muted); font-size:var(--fs-xs); }
     .repo-legend-row-label { color:var(--text); font-weight:700; margin-right:var(--sp-1); }
     .repo-legend .repo-issue-pill, .repo-legend .repo-pr-pill, .repo-legend .repo-issue-plan { display:inline-flex; align-items:center; gap:var(--sp-1); max-width:none; }
-    .repo-issue-band { margin-bottom:var(--sp-2); }
-    .repo-issue-band-title { color:var(--muted); font-size:var(--fs-2xs); font-weight:800; letter-spacing:0.08em; text-transform:uppercase; margin:var(--sp-2) var(--sp-0) var(--sp-1); }
-    .repo-issue-band-items { display:flex; flex-direction:column; gap:var(--sp-2); }
+    .repo-issue-band, .repo-pr-band { margin-bottom:var(--sp-2); }
+    .repo-issue-band-title, .repo-pr-band-title { color:var(--muted); font-size:var(--fs-2xs); font-weight:800; letter-spacing:0.08em; text-transform:uppercase; margin:var(--sp-2) var(--sp-0) var(--sp-1); }
+    .repo-issue-band-items, .repo-pr-band-items { display:flex; flex-direction:column; gap:var(--sp-2); }
     .repo-issue-pill.waiting { --component-status: var(--status-attention); --pill-c: var(--status-attention); }
     .repo-issue-pill.done { --component-status: var(--status-ok); --pill-c: var(--status-ok); }
     .repo-issue-pill.in-progress { --pill-c: var(--yellow); --component-status: var(--status-warn); }
     .repo-issue-pill.agent-filed { --pill-c: var(--purple); --component-status: var(--acmm-level-5); }
     .repo-issue-pill.stale { opacity:0.68; }
+    .repo-pr-pill.stale { opacity:0.68; }
     .repo-issue-pill .pill-state { font-size:var(--fs-2xs); margin-left:2px; opacity:0.9; }
     .repo-issue-pill .pill-role { font-size:var(--fs-2xs); font-weight:700; letter-spacing:0.02em; text-transform:uppercase; margin-left:3px; opacity:0.85; }
+    .repo-pr-pill .pill-state { font-size:var(--fs-2xs); margin-left:2px; opacity:0.9; }
+    .repo-pr-pill .pill-role { font-size:var(--fs-2xs); font-weight:700; letter-spacing:0.02em; text-transform:uppercase; margin-left:3px; opacity:0.85; }
 
     /* Sparklines */
     .sparkline { display: inline-block; vertical-align: middle; margin-left: var(--sp-3); flex-shrink: 0; }
@@ -8846,10 +8849,21 @@
           </div>
           <div class="repo-legend-row"><span class="repo-legend-row-label">PRs</span>
             <span class="repo-pr-pill" title="Open PR with no merge verdict">open</span>
+            <span class="repo-pr-band-title" title="Band: needs-human, held, or configured waiting labels">Waiting on human</span>
+            <span class="repo-pr-band-title" title="Band: sweep eligible or queued for auto-merge">Merge-eligible</span>
+            <span class="repo-pr-band-title" title="Band: blocked verdict, conflicts, or failing CI">Blocked</span>
+            <span class="repo-pr-band-title" title="Band: outstanding verdict or hive review posted">In review</span>
+            <span class="repo-pr-band-title" title="Band: ordinary open PRs">Open</span>
+            <span class="repo-pr-band-title" title="Band: draft PRs">Draft</span>
             <span class="repo-pr-pill mergeable" title="Merge-eligible on the sweep verdict"><span class="pill-merge-icon">✓</span> eligible</span>
             <span class="repo-pr-pill merge-outstanding" title="GitHub says mergeable, but the sweep still wants something"><span class="pill-merge-icon">◐</span> outstanding</span>
             <span class="repo-pr-pill needs-human pill-icon" title="Automated fix attempts exhausted — human review required">⚠</span>
             <span class="repo-pr-pill held" title="Held PR: grey dashed border">held</span>
+            <span class="repo-pr-pill pill-icon" title="Held / waiting on a human">⏸</span>
+            <span class="repo-pr-pill pill-icon" title="Failing CI; tooltip lists failing checks">✗ CI</span>
+            <span class="repo-pr-pill pill-icon" title="Conflicts or not mergeable on GitHub">⑂</span>
+            <span class="repo-pr-pill stale" title="No activity for more than ${cfg.staleDays} days"><span class="pill-state">🕒</span> stale</span>
+            <span class="repo-pr-pill" title="Agent-authored PR; badge names the agent role"><span class="pill-role">SCANNER</span> agent</span>
             <span class="repo-pr-pill pill-reviewed pill-icon" title="Hive review posted; opens the recorded review">💬</span>
             <span class="repo-pr-pill mergeable pill-icon" title="Queued for Hive auto-merge">🔀</span>
             <span class="repo-pr-pill pill-icon" title="Queue for auto-merge, or disabled when not mergeable on GitHub">🔀</span>
@@ -9213,6 +9227,131 @@
       return (issues || []).filter(issueIsStale).length;
     }
 
+    const PR_HUMAN_GATE_LABELS = ['needs-human', 'needs-decision', '2-discussing'];
+    const PR_BAND_ORDER = ['waiting', 'eligible', 'blocked', 'in-review', 'open', 'draft'];
+
+    function prLabelSet(pr) {
+      return new Set(((pr && pr.labels) || []).map(l => String(l).toLowerCase()));
+    }
+
+    function prHasAnyLabel(pr, labels) {
+      const set = prLabelSet(pr);
+      return (labels || []).some(l => set.has(String(l).toLowerCase()));
+    }
+
+    function prQueued(pr) {
+      const want = String(window._hiveAutoMergeLabel || 'lgtm').toLowerCase();
+      return prLabelSet(pr).has(want);
+    }
+
+    function prAgentRole(pr) {
+      if (pr && pr.hive_agent) return String(pr.hive_agent).trim();
+      for (const label of ((pr && pr.labels) || [])) {
+        const raw = String(label || '');
+        if (raw.toLowerCase().startsWith('agent/')) return raw.slice(raw.indexOf('/') + 1).trim();
+      }
+      return pr && pr.app_authored ? 'app' : '';
+    }
+
+    function prUpdatedAt(pr) {
+      const value = (pr && (pr.updated_at || pr.created_at)) || '';
+      const t = Date.parse(value);
+      return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
+    }
+
+    function prCreatedAt(pr) {
+      const value = (pr && pr.created_at) || '';
+      const t = Date.parse(value);
+      return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
+    }
+
+    function prReviewClassRank(pr) {
+      switch (String((pr && pr.review_class) || '')) {
+        case 'fix': return 0;
+        case 'tests': return 2;
+        default: return 1;
+      }
+    }
+
+    function prIsStale(pr) {
+      const t = prUpdatedAt(pr);
+      if (!Number.isFinite(t)) return false;
+      return (Date.now() - t) > repoIssueBandConfig().staleDays * MS_PER_DAY;
+    }
+
+    function prCIFailing(pr) {
+      const checks = (pr && pr.failing_checks) || [];
+      return pr && String(pr.ci_status || '').toLowerCase() === 'failing' && Array.isArray(checks) && checks.length > 0;
+    }
+
+    function prBandInfo(pr, held) {
+      const cfg = repoIssueBandConfig();
+      const labels = prLabelSet(pr);
+      const v = pr && pr.merge_verdict ? pr.merge_verdict : {};
+      const role = prAgentRole(pr);
+      const matches = {
+        waiting: !!held || prHasAnyLabel(pr, PR_HUMAN_GATE_LABELS.concat(cfg.waitingLabels || [])) || holdLabels(Array.from(labels)).length > 0,
+        eligible: (v && v.state === 'eligible') || prQueued(pr),
+        blocked: (v && v.state === 'blocked') || (pr && pr.mergeable === 'no') || prCIFailing(pr),
+        inReview: (v && v.state === 'outstanding') || !!(pr && pr.review_url),
+        draft: !!(pr && pr.draft)
+      };
+      let band = 'open';
+      if (matches.waiting) band = 'waiting';
+      else if (matches.eligible) band = 'eligible';
+      else if (matches.blocked) band = 'blocked';
+      else if (matches.inReview) band = 'in-review';
+      else if (matches.draft) band = 'draft';
+      const signals = [];
+      if (role) signals.push({ role: role, label: 'agent-authored by ' + role });
+      if (labels.has('needs-human')) signals.push({ glyph: '⚠', label: 'needs human review' });
+      if (held || holdLabels(Array.from(labels)).length > 0) signals.push({ glyph: '⏸', label: 'held' });
+      if (matches.eligible) signals.push({ glyph: '✓', label: prQueued(pr) ? 'queued or merge-eligible' : 'merge-eligible' });
+      if (matches.inReview) signals.push({ glyph: '◐', label: 'in review or outstanding' });
+      if (prCIFailing(pr)) signals.push({ glyph: '✗ CI', label: 'failing CI: ' + ((pr.failing_checks || []).join(', ') || 'check failure') });
+      if (pr && pr.mergeable === 'no') signals.push({ glyph: '⑂', label: 'not mergeable' + (pr.mergeable_state ? ': ' + pr.mergeable_state : '') });
+      if (prQueued(pr)) signals.push({ glyph: '🔀', label: 'queued for auto-merge' });
+      if (prIsStale(pr)) signals.push({ glyph: '🕒', label: 'stale: no activity > ' + cfg.staleDays + 'd' });
+      return { band, role, held: !!held, matches, signals };
+    }
+
+    function prBandLabel(band) {
+      switch (band) {
+        case 'waiting': return 'Waiting on human';
+        case 'eligible': return 'Merge-eligible';
+        case 'blocked': return 'Blocked';
+        case 'in-review': return 'In review';
+        case 'draft': return 'Draft';
+        default: return 'Open';
+      }
+    }
+
+    function prBandRank(band) {
+      const idx = PR_BAND_ORDER.indexOf(band);
+      return idx >= 0 ? idx : PR_BAND_ORDER.length;
+    }
+
+    function groupedRepoPRs(openPrs, heldPrs) {
+      const groups = new Map();
+      const entries = (openPrs || []).map(pr => ({ pr, held: false })).concat((heldPrs || []).map(pr => ({ pr, held: true })));
+      entries.forEach(entry => {
+        const info = prBandInfo(entry.pr, entry.held);
+        const key = info.band;
+        if (!groups.has(key)) groups.set(key, { key, band: info.band, label: prBandLabel(info.band), prs: [] });
+        groups.get(key).prs.push({ pr: entry.pr, held: entry.held, info });
+      });
+      const out = Array.from(groups.values());
+      out.forEach(g => g.prs.sort((a, b) => prUpdatedAt(a.pr) - prUpdatedAt(b.pr) || prReviewClassRank(a.pr) - prReviewClassRank(b.pr) || prCreatedAt(a.pr) - prCreatedAt(b.pr) || Number(a.pr.number || 0) - Number(b.pr.number || 0)));
+      out.sort((a, b) => prBandRank(a.band) - prBandRank(b.band));
+      return out;
+    }
+
+    function prSignalHTML(info) {
+      return (info.signals || []).map(s => s.role
+        ? `<span class="pill-role" title="${esc(s.label)}">${esc(s.role)}</span>`
+        : `<span class="pill-state" title="${esc(s.label)}">${esc(s.glyph)}</span>`).join('');
+    }
+
     function issueBandInfo(issue) {
       const cfg = repoIssueBandConfig();
       const labels = issueLabelSet(issue);
@@ -9402,7 +9541,7 @@
           const holdBtn = holdToggleChip(cardRepo, i, 'issue', true, canToggleHold, heldTip);
           return `<span class="repo-issue-pill-wrap"><a class="repo-issue-pill held" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span></a>${holdBtn}</span>`;
         }).join('');
-        const prPills = (r.openPrs || []).map(p => {
+        const renderPrPill = (p, held, info) => {
           const title = p.title && p.title.length > MAX_PILL_TITLE_LEN ? p.title.slice(0, MAX_PILL_TITLE_LEN) + '…' : (p.title || '');
           // Green ✓ only on the sweep's own verdict; amber ◐ for mergeable
           // on GitHub but not yet eligible; nothing otherwise (#7478).
@@ -9411,102 +9550,68 @@
             : mergeState === 'outstanding' ? '<span class="pill-merge-icon">◐</span>' : '';
           const mergeClass = mergeState === 'eligible' ? ' mergeable' : mergeState === 'outstanding' ? ' merge-outstanding' : '';
           const prAge = pillAge(p.created_at);
+          const activityAge = pillAge(p.updated_at || p.created_at);
           const labels = (p.labels || []).map(l => String(l));
-          const queued = labels.includes(window._hiveAutoMergeLabel || 'lgtm');
+          const queued = prQueued(p);
           // Escalated out of the automated fix lane: the escalation ledger
           // (pkg/escalation) applies the `needs-human` label once automated
           // fix attempts are exhausted. The label list is the single source
           // of truth — the same signal the ledger writes to GitHub — so this
           // view cannot drift from the ledger.
-          const needsHuman = labels.includes('needs-human');
+          const needsHuman = labels.map(l => l.toLowerCase()).includes('needs-human');
           // review_class is the presentational triage class the snapshot is
           // ordered by (fix > refactor-docs > tests, then age; #6183). It is
           // derived server-side from the title prefix and lane label only.
           const reviewClass = p.review_class ? String(p.review_class) : '';
           const classBadge = reviewClass ? `<span class="pill-class ${esc(reviewClass)}">${esc(reviewClass === 'refactor-docs' ? 'refactor' : reviewClass)}</span>` : '';
-          const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + (reviewClass ? ' [review class: ' + reviewClass + ']' : '') + prMergeNote(p) + (queued ? ' (queued for auto-merge)' : '') + (needsHuman ? ' (needs human review)' : '');
+          const bandTip = info ? ' [band: ' + prBandLabel(info.band) + ']' : '';
+          const activityTip = p.updated_at ? ' [last activity: ' + p.updated_at + (activityAge ? ' / ' + activityAge : '') + ']' : '';
+          const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + bandTip + activityTip + (reviewClass ? ' [review class: ' + reviewClass + ']' : '') + prMergeNote(p) + (queued ? ' (queued for auto-merge)' : '') + (needsHuman ? ' (needs human review)' : '') + (held ? ' (' + heldReason(p) + ')' : '');
           const canQueue = dashboardRoleAtLeast(window._hiveRole || 'read', 'merger') && (window._hiveUser || dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) && !(p.author && window._hiveUser && p.author.toLowerCase() === window._hiveUser.toLowerCase());
           const parts = (r.full || r.name || '').split('/');
           const owner = parts.length > 1 ? parts[0] : '';
           const repoName = parts.length > 1 ? parts.slice(1).join('/') : (r.name || '');
-          // The Queue auto-merge action-chip slot after the PR pill. needs-human takes
-          // precedence over the Queue auto-merge action: an escalated PR is
-          // out of the automated lane by definition, so offering to queue it
-          // for auto-merge would contradict the escalation. Removing the
-          // needs-human label on GitHub returns the PR to the automated lane
-          // and brings the queue action back on the next refresh.
-          //
-          // A PR GitHub reports as not mergeable (conflicts, a required
-          // review or check missing) keeps the button but disabled, with the
-          // state as the reason: a live "Queue auto-merge" beside a DIRTY PR
-          // read as "this is ready to go" (#7471), and the sweep would only
-          // refuse it later as not-mergeable anyway. An unknown verdict still
-          // offers the action — "" means not fetched yet, never "no".
           const notMergeable = p.mergeable === 'no';
           const notMergeableTip = 'Not mergeable on GitHub' + (p.mergeable_state ? ' (' + String(p.mergeable_state) + ')' : '') + ' — resolve that before queueing for auto-merge';
-          // The hive's OWN review on this PR, from the review-links ledger.
-          // It is evidence the hive looked, not a merge signal — so it never
-          // tints the PR pill and never gates anything. Absent means "no
-          // review recorded", which is not the same as "not reviewed": the
-          // ledger only reaches back as far as its retention window.
           const reviewTip = reviewPillTip(p);
           const needsHumanTip = 'Automated fix attempts exhausted — a human must review this PR. Remove the needs-human label after addressing the root cause to return it to the automated fix lane.';
           const reviewPill = p.review_url
             ? `<a class="repo-pr-pill pill-reviewed pill-icon" href="${esc(p.review_url)}" target="_blank" rel="noopener" data-stop="1" title="${esc(reviewTip)}" aria-label="${esc(reviewTip)}">💬${p.review_count > 1 ? '×' + p.review_count : ''}</a>`
             : '';
-          const queueBtn = needsHuman
-            ? `<span class="repo-pr-pill needs-human pill-needs-human-badge pill-icon" title="${esc(needsHumanTip)}" aria-label="${esc(needsHumanTip)}">⚠</span>`
-            : (canQueue
-                ? (queued
-                    ? '<span class="repo-pr-pill mergeable pill-icon" title="Queued for Hive auto-merge" aria-label="Queued for Hive auto-merge">🔀</span>'
-                    : (notMergeable
-                        ? `<button class="repo-pr-pill pill-icon" disabled title="${esc(notMergeableTip)}" aria-label="${esc(notMergeableTip)}">🔀</button>`
-                        : `<button class="hv-btn repo-pr-pill pill-icon btn-primary" data-action="queuePRAutoMerge" data-arg0="${esc(owner)}" data-arg1="${esc(repoName)}" data-arg2="${p.number}" data-arg-types="s,s,j,t" data-stop="1" data-prevent="1" title="Queue for Hive auto-merge on green CI" aria-label="Queue for Hive auto-merge on green CI">🔀</button>`))
-                : '');
-          const holdBtn = holdToggleChip(cardRepo, p, 'pr', false, canToggleHold, '');
+          const queueBtn = held
+            ? ''
+            : (needsHuman
+                ? `<span class="repo-pr-pill needs-human pill-needs-human-badge pill-icon" title="${esc(needsHumanTip)}" aria-label="${esc(needsHumanTip)}">⚠</span>`
+                : (canQueue
+                    ? (queued
+                        ? '<span class="repo-pr-pill mergeable pill-icon" title="Queued for Hive auto-merge" aria-label="Queued for Hive auto-merge">🔀</span>'
+                        : (notMergeable
+                            ? `<button class="repo-pr-pill pill-icon" disabled title="${esc(notMergeableTip)}" aria-label="${esc(notMergeableTip)}">🔀</button>`
+                            : `<button class="hv-btn repo-pr-pill pill-icon btn-primary" data-action="queuePRAutoMerge" data-arg0="${esc(owner)}" data-arg1="${esc(repoName)}" data-arg2="${p.number}" data-arg-types="s,s,j,t" data-stop="1" data-prevent="1" title="Queue auto-merge on green CI" aria-label="Queue auto-merge on green CI">🔀</button>`))
+                    : ''));
+          const heldTip = held ? heldReason(p) : '';
+          const holdBtn = holdToggleChip(cardRepo, p, 'pr', held, canToggleHold, heldTip);
+          const stateBadge = held && needsHuman
+            ? `<span class="repo-pr-pill needs-human pill-needs-human-badge pill-icon" title="${esc(heldTip)}" aria-label="${esc(heldTip)}">⚠</span>`
+            : '';
+          const url = p.url || (repoUrl + '/pull/' + p.number);
+          const heldClass = held ? ' held' : '';
+          const staleClass = prIsStale(p) ? ' stale' : '';
           // needs-human wins the pill tint over mergeable green: a PR can be
           // technically mergeable AND escalated, and the escalation is what
-          // the operator must see.
-          return `<span class="repo-pr-pill-wrap"><a class="repo-pr-pill${needsHuman ? ' needs-human' : mergeClass}" href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(prTip)}">${classBadge}<span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}</a>${reviewPill}${queueBtn}${holdBtn}</span>`;
-        }).join('');
-        // Held PRs (hivecommons/hive#7896): in the PR column, tinted held.
-        // The card's PRs number is the repo's TOTAL open PR count, and a
-        // hold label moves a PR out of the actionable list the pills were
-        // drawn from — so a repo whose every open PR was held (an ACMM level
-        // gate, a Renovate bump escalated needs-human) said "3 PRs" and
-        // listed nothing, hiding exactly the PRs that were waiting on the
-        // operator. No Queue auto-merge here, ever: a held PR is out of the
-        // automated lane by definition. The action-chip slot carries the
-        // state instead — ⚠ when needs-human is also on it (the escalation
-        // kind of hold), ⏸ otherwise (a plain hold, level gate or manual).
-        // The hive's own review pill still shows, since "did the hive look
-        // at this?" is what the human about to review it wants to know.
-        const heldPrPills = (r.heldPrs || []).map(p => {
-          const title = p.title && p.title.length > MAX_PILL_TITLE_LEN ? p.title.slice(0, MAX_PILL_TITLE_LEN) + '…' : (p.title || '');
-          const prAge = pillAge(p.created_at);
-          const labels = (p.labels || []).map(l => String(l));
-          const needsHuman = labels.includes('needs-human');
-          const reviewClass = p.review_class ? String(p.review_class) : '';
-          const classBadge = reviewClass ? `<span class="pill-class ${esc(reviewClass)}">${esc(reviewClass === 'refactor-docs' ? 'refactor' : reviewClass)}</span>` : '';
-          const heldTip = heldReason(p);
-          const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + (reviewClass ? ' [review class: ' + reviewClass + ']' : '') + ' (' + heldTip + ')';
-          const url = p.url || (repoUrl + '/pull/' + p.number);
-          const reviewTip = reviewPillTip(p);
-          const reviewPill = p.review_url
-            ? `<a class="repo-pr-pill pill-reviewed pill-icon" href="${esc(p.review_url)}" target="_blank" rel="noopener" data-stop="1" title="${esc(reviewTip)}" aria-label="${esc(reviewTip)}">💬${p.review_count > 1 ? '×' + p.review_count : ''}</a>`
-            : '';
-          const stateBadge = (needsHuman
-            ? `<span class="repo-pr-pill needs-human pill-needs-human-badge pill-icon" title="${esc(heldTip)}" aria-label="${esc(heldTip)}">⚠</span>`
-            : '') + holdToggleChip(cardRepo, p, 'pr', true, canToggleHold, heldTip);
-          // needs-human wins the tint here as it does on the actionable
-          // pill; the dashed border says "held" in both cases.
-          return `<span class="repo-pr-pill-wrap"><a class="repo-pr-pill held${needsHuman ? ' needs-human' : ''}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(prTip)}">${classBadge}<span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span></a>${reviewPill}${stateBadge}</span>`;
+          // the operator must see. Held adds the dashed outline without making
+          // the PR a trailing append; it bands with other human gates.
+          return `<span class="repo-pr-pill-wrap"><a class="repo-pr-pill${heldClass}${needsHuman ? ' needs-human' : mergeClass}${staleClass}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(prTip)}">${classBadge}<span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}${prSignalHTML(info || prBandInfo(p, held))}</a>${reviewPill}${queueBtn}${stateBadge}${holdBtn}</span>`;
+        };
+        const prPills = groupedRepoPRs(r.openPrs || [], r.heldPrs || []).map(g => {
+          const items = g.prs.map(entry => renderPrPill(entry.pr, entry.held, entry.info)).join('');
+          return `<div class="repo-pr-band repo-pr-band-${esc(g.band)}"><div class="repo-pr-band-title">${esc(g.label)} · ${g.prs.length}</div><div class="repo-pr-band-items">${items}</div></div>`;
         }).join('');
         // Two columns under the two numbers: issue pills (actionable, then
-        // held) under "issues", PR pills (actionable, then held) under
+        // held) under "issues", PR pills grouped into state bands under
         // "PRs". Position says what a pill is; tint says what state it is in.
         const issueCol = issuePills + heldIssuePills;
-        const prCol = prPills + heldPrPills;
+        const prCol = prPills;
         const pillsHtml = (issueCol || prCol)
           ? `<div class="repo-pills"><div class="repo-pill-col repo-pill-col-issues">${issueCol}</div><div class="repo-pill-col repo-pill-col-prs">${prCol}</div></div>`
           : '';
