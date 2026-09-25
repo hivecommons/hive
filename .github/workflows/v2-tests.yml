@@ -559,24 +559,40 @@ jobs:
             exit 1
           fi
 
+          # Weights = measured -short -race package wall seconds on the
+          # hive-runners fleet, v5 push cfb64d5 (run 36079964584, 2026-09-25).
+          # Re-measure with: for each `test (rest i/R)` job log, grep the
+          # `ok  github.com/hivecommons/hive/<pkg>  <N>s` lines. Anything
+          # under ~5s is noise and takes the 1s default. Packages inside a bucket
+          # run concurrently under one go test, so a bucket's wall clock tracks
+          # its heaviest package — the table mainly has to keep the big ones apart. pkg/dashboard is the
+          # floor: one unsplittable package, so the widest bucket can never
+          # be faster than it.
           weight() {
             case "$1" in
-              */cmd/hive)       echo 138 ;;
-              */pkg/dashboard)  echo 104 ;;
+              */pkg/dashboard)  echo 123 ;;
+              */pkg/hub/spoke)  echo 85 ;;
+              */pkg/scheduler)  echo 74 ;;
               */pkg/github)     echo 62 ;;
-              */pkg/proxy)      echo 44 ;;
-              */pkg/scheduler)  echo 39 ;;
-              */pkg/config)     echo 31 ;;
-              */pkg/hubbackup)  echo 30 ;;
-              */pkg/ioscan)     echo 16 ;;
-              */pkg/skillreg)   echo 15 ;;
-              */pkg/tui)        echo 13 ;;
+              */pkg/config)     echo 57 ;;
+              */pkg/proxy)      echo 55 ;;
+              */cmd/hive)       echo 30 ;;
+              */pkg/hubbackup)  echo 29 ;;
+              */pkg/ioscan)     echo 22 ;;
+              */pkg/hivectl)    echo 19 ;;
               */pkg/discord)    echo 13 ;;
-              */pkg/apphealth)  echo 12 ;;
-              */pkg/convergence) echo 10 ;;
-              */pkg/mint)       echo 8 ;;
-              */pkg/rotation)   echo 6 ;;
-              *)                echo 3  ;;
+              */pkg/tui)        echo 13 ;;
+              */pkg/apphealth)  echo 10 ;;
+              */pkg/dashboard/webstatic) echo 9 ;;
+              */pkg/advisory)   echo 9 ;;
+              */internal/testutil) echo 9 ;;
+              */pkg/rotation)   echo 8 ;;
+              */pkg/hivectl/commands) echo 7 ;;
+              */pkg/inference)  echo 6 ;;
+              */pkg/auth)       echo 6 ;;
+              */pkg/appkey)     echo 5 ;;
+              */cmd/hive-backup) echo 5 ;;
+              *)                echo 1  ;;
             esac
           }
 
