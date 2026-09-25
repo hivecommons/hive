@@ -64,20 +64,25 @@ const (
 	repoPermissionTimeout = 5 * time.Second
 )
 
-var wsUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		origin := r.Header.Get("Origin")
-		if origin == "" {
-			return true
-		}
-		// Extract host from origin URL (e.g. "https://example.com" → "example.com")
-		host := origin
-		if idx := strings.Index(host, "://"); idx >= 0 {
-			host = host[idx+3:]
-		}
-		host = strings.TrimRight(host, "/")
-		return host == r.Host
-	},
+var wsUpgrader = websocket.Upgrader{CheckOrigin: wsSameOrigin}
+
+// wsSameOrigin is the shared CheckOrigin policy for every dashboard WebSocket
+// upgrader. Browsers attach the session cookie to cross-site WebSocket
+// handshakes (SOP/CORS do not apply), so accepting a foreign Origin lets any
+// web page hijack a logged-in dashboard session (CSWSH). Non-browser clients
+// send no Origin header and remain accepted.
+func wsSameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	// Extract host from origin URL (e.g. "https://example.com" → "example.com")
+	host := origin
+	if idx := strings.Index(host, "://"); idx >= 0 {
+		host = host[idx+3:]
+	}
+	host = strings.TrimRight(host, "/")
+	return host == r.Host
 }
 
 type ContributorConnection struct {
