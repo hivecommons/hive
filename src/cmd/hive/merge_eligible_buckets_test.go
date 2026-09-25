@@ -141,6 +141,12 @@ func TestWriteMergeEligible_BucketDecisions(t *testing.T) {
 			want: bucketEligible,
 		},
 		{
+			name:     "L6 green agent PR with hive provenance label is eligible",
+			pr:       github.PullRequest{Repo: "hivecommons/hive", Number: 8851, Labels: []string{"agent/scanner", "hive/h1"}, CIStatus: "success", Mergeable: github.MergeableYes},
+			want:     bucketEligible,
+			guarding: "hivecommons/hive#8851: hive/<id> provenance must not be a hold that hides L6 agent PRs from merge-eligible.json",
+		},
+		{
 			name: "draft is never listed anywhere",
 			pr:   github.PullRequest{Repo: "hivecommons/hive", Number: 2, Draft: true, CIStatus: "success", Mergeable: github.MergeableYes},
 			want: bucketNeither,

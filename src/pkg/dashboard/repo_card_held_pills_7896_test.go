@@ -310,7 +310,7 @@ const gated = { labels: ['hold'], hive_attributed: true };
 check('gated says on hold', heldReason(gated).startsWith('On hold'));
 check('gated names the label', heldReason(gated).includes('label ` + "`hold`" + `'));
 check('gated mentions the level gate', heldReason(gated).includes('ACMM level gate'));
-check('gated says who releases it', heldReason(gated).includes('the hive releases itself'));
+check('gated says dashboard hold needs operator', heldReason(gated).includes('dashboard hive-pause hold is only removed by an operator'));
 check('gated is not needs-human', !heldReason(gated).includes('needs-human'));
 
 // The Renovate case: hold + needs-human, not an agent PR.

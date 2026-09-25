@@ -5585,6 +5585,25 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	// interval. A hive with no persisted state (fresh install) has no LastKick
 	// entries, and every cadenced agent is still kicked here, unchanged.
 	b.logger.Info("startup honors persisted cadence state — first eval kicks only agents whose cadence has elapsed")
+	if b.ghClient != nil {
+		if report, err := b.ghClient.MigrateHiveHoldLabel(b.ctx, github.HiveHoldMigrationOptions{
+			HiveID: b.cfg.HiveID,
+			Logger: b.logger,
+		}); err != nil {
+			// Fail closed: if the migration cannot prove/carry ambiguous or
+			// audit-backed holds, keep the old provenance spelling in the hold
+			// set for this process rather than silently releasing work.
+			b.ghClient.SetHoldLabels([]string{
+				github.CanonicalHiveHoldLabel(b.cfg.HiveID),
+				github.HiveProvenanceLabel(b.cfg.HiveID),
+			})
+			reportPath := ""
+			if report != nil {
+				reportPath = report.ReportPath
+			}
+			b.logger.Error("hive hold label migration failed; keeping legacy hive provenance label as a hold until next restart", "error", err, "report", reportPath)
+		}
+	}
 	deps.runEval(b, nil)
 	deps.runRotation(b)
 	if b.wd != nil {

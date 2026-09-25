@@ -100,17 +100,17 @@ func TestRepoItemHoldToggleAuthorizationAndLabels(t *testing.T) {
 	if w := postRepoHold(t, srv, "", true, true); w.Code != http.StatusOK {
 		t.Fatalf("owner add: code=%d body=%s", w.Code, w.Body.String())
 	}
-	if len(mock.added) != 1 || mock.added[0] != "hive/h1" {
+	if len(mock.added) != 1 || mock.added[0] != "hive-pause/h1" {
 		t.Fatalf("owner add labels = %v, want canonical hive label", mock.added)
 	}
-	if len(mock.created) != 1 || mock.created[0] != "hive/h1" {
+	if len(mock.created) != 1 || mock.created[0] != "hive-pause/h1" {
 		t.Fatalf("created labels = %v, want canonical hive label ensured", mock.created)
 	}
 
 	if w := postRepoHold(t, srv, "writer", false, true); w.Code != http.StatusOK {
 		t.Fatalf("writer add: code=%d body=%s", w.Code, w.Body.String())
 	}
-	if len(mock.added) != 2 || mock.added[1] != "hive/h1" {
+	if len(mock.added) != 2 || mock.added[1] != "hive-pause/h1" {
 		t.Fatalf("writer add labels = %v, want second canonical hive label", mock.added)
 	}
 
@@ -127,7 +127,7 @@ func TestRepoItemHoldToggleAuthorizationAndLabels(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("writer remove: code=%d body=%s", w.Code, w.Body.String())
 	}
-	wantRemoved := strings.Join([]string{"hold", "hive/h1"}, ",")
+	wantRemoved := "hold"
 	if got := strings.Join(mock.removed, ","); got != wantRemoved {
 		t.Fatalf("removed labels = %q, want %q", got, wantRemoved)
 	}

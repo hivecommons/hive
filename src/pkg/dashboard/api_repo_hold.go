@@ -178,7 +178,7 @@ func (s *Server) handleRepoItemHold(w http.ResponseWriter, r *http.Request) {
 	repoFull := owner + "/" + repoName
 	var removed []string
 	if body.Held {
-		if err := s.deps.GHClient.EnsureIssueLabel(ctx, repoFull, canonical, "8250df", "Hive hold: agents will not act on this item until the label is removed."); err != nil {
+		if err := s.deps.GHClient.EnsureIssueLabel(ctx, repoFull, canonical, "8250df", "Hive dashboard hold: agents will not act on this item until an operator removes this label."); err != nil {
 			jsonError(w, err.Error(), http.StatusBadGateway)
 			return
 		}

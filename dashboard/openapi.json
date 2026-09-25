@@ -19320,7 +19320,7 @@
           "Status"
         ],
         "summary": "Add or remove the hold for one issue or pull request",
-        "description": "Owners, repository owners, and users with GitHub write, maintain, or admin permission may toggle a dashboard hold chip. Adding applies the hive's canonical hive/<hive-id> label. Removing fetches the issue/PR labels and removes exactly the label(s) causing the hold.",
+        "description": "Owners, repository owners, and users with GitHub write, maintain, or admin permission may toggle a dashboard hold chip. Adding applies the hive's exact-match canonical hive-pause/<hive-id> label. Removing fetches the issue/PR labels and removes exactly the label(s) causing the hold without removing hive/<hive-id> provenance. The #8851 upgrade migration writes /data/hive-hold-migration-<hive-id>.json with audit-backed, provenance-only, and ambiguous legacy classifications.",
         "parameters": [
           {
             "name": "owner",

@@ -8626,14 +8626,13 @@
       return `<div class="repo-breakdown">${parts.join(' · ')}</div>`;
     }
 
-    // Which of an item's labels put it on hold (hivecommons/hive#7896). Same
-    // rule as github.HasHoldLabel on the server: any label CONTAINING one of
-    // the hold spellings holds the item. The matching labels are returned by
-    // name so the tooltip can say which label an operator has to remove.
+    // Which of an item's labels put it on hold (hivecommons/hive#7896/#8851).
+    // Generic hold spellings are substring matches; the canonical hive hold is
+    // exact so hive/<id> can remain a provenance label instead of a hold.
     const HOLD_LABEL_SPELLINGS = ['hold', 'on-hold', 'hold/review'];
     function canonicalHiveHoldLabel() {
       const hiveId = String(((window._lastStatus || {}).hiveId) || '').trim();
-      return hiveId ? ('hive/' + hiveId) : 'hold';
+      return hiveId ? ('hive-pause/' + hiveId) : 'hold';
     }
     function holdLabels(labels) {
       const canonical = canonicalHiveHoldLabel().toLowerCase();
@@ -8660,7 +8659,7 @@
       const needsHuman = labels.includes('needs-human');
       const parts = [];
       parts.push('On hold' + (held.length ? ' — label ' + held.map(l => '`' + l + '`').join(', ') : '') + ': agents will not act on this until the hold label is removed');
-      if (item && item.hive_attributed) parts.push('opened by a hive agent — a `hold` here is usually the ACMM level gate, which the hive releases itself once policy allows; a human may remove the label sooner');
+      if (item && item.hive_attributed) parts.push('opened by a hive agent — a generic `hold` here is usually the ACMM level gate; the dashboard hive-pause hold is only removed by an operator');
       if (needsHuman) parts.push('needs-human: automated fix attempts exhausted, a human must review this');
       return parts.join('; ');
     }
