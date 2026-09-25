@@ -1,0 +1,1 @@
+- The README now leads Linux contributors to the published `hivecommons/hive/contribute` tap formula while keeping the from-source `just contribute-hive` flow and linking platform notes for macOS and Windows.
