@@ -262,6 +262,16 @@ fall back to the keyword classifier. With `provider: openrouter`, Hive uses the
 configured `api_key_env` first and otherwise falls back to the connected
 `openrouter` model-gateway key.
 
+The same rollout controls are discoverable in the spoke dashboard under
+**Settings → Smart classifier**. The panel explains the lane/tier/triage
+decisions and expected Jev cost (about `$0.00002` per issue, input tokens only),
+checks whether OpenRouter is connected or `JEV_API_KEY` is present without ever
+displaying a key, links to the existing OpenRouter connect flow, and saves
+`classifier.backend`, `classifier.mode`, `classifier.jev.min_confidence`, and
+`classifier.jev.decisions` through the owner-gated config-save path. It also
+shows the live shadow-mode agree/disagree/fallback counters and estimated spend
+from `GET /api/classifier/stats`.
+
 ## Safety properties
 
 - **Idempotent**: an issue maps to exactly one epic (keyed by a stable issue

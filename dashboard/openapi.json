@@ -1442,7 +1442,7 @@
           "Status"
         ],
         "summary": "Classifier backend agreement statistics",
-        "description": "Returns Jev classifier shadow/enforce agreement, fallback, estimated input token, and estimated spend counters.",
+        "description": "Returns Jev classifier shadow/enforce agreement, fallback, estimated input token, estimated spend counters, and readiness without exposing key values.",
         "responses": {
           "200": {
             "description": "Classifier stats",
@@ -1478,6 +1478,20 @@
                     "estimated_spend_usd": {
                       "type": "number",
                       "format": "double"
+                    },
+                    "openrouter_connected": {
+                      "type": "boolean"
+                    },
+                    "key_source": {
+                      "type": "string",
+                      "enum": [
+                        "openrouter",
+                        "env",
+                        "none"
+                      ]
+                    },
+                    "jev_api_key_env_present": {
+                      "type": "boolean"
                     }
                   }
                 }
@@ -8256,6 +8270,75 @@
           },
           "400": {
             "description": "Field looks like a key value, api_key_file outside managed secrets dirs, or config validation failure"
+          },
+          "403": {
+            "description": "Requires owner role"
+          }
+        }
+      }
+    },
+    "/api/config/governor/classifier": {
+      "put": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Update smart classifier rollout settings",
+        "description": "Updates the top-level classifier block used by the optional Jev typed-decision backend. Key values are never accepted or returned; Jev uses JEV_API_KEY when present or the connected OpenRouter gateway key. Requires owner role.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "backend": {
+                    "type": "string",
+                    "enum": [
+                      "keywords",
+                      "jev"
+                    ]
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "shadow",
+                      "enforce"
+                    ]
+                  },
+                  "minConfidence": {
+                    "type": "number",
+                    "format": "double",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "decisions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "lane",
+                        "tier",
+                        "triage"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated classifier settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid classifier setting"
           },
           "403": {
             "description": "Requires owner role"
