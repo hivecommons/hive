@@ -216,6 +216,25 @@ func TestSpekHubExecutorCLIExitNonFinalRecordsBlockedTimeline(t *testing.T) {
 	}
 }
 
+func TestSpekHubExecutorRecordsProgressTimeline(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	st := spekHubStage{runKey: "myorg/repo1#57", stage: StageSpec, taskID: "task", gen: 2}
+	e.recordStageProgress(st, "cli_launched", map[string]string{
+		"backend": "copilot",
+		"pid":     "1234",
+	})
+	found := false
+	for _, ev := range s.LifecycleTimeline().ByIssue(st.runKey) {
+		if ev.Kind == timeline.KindProgress && ev.Attrs["event"] == "cli_launched" && ev.Attrs["pid"] == "1234" && ev.Attrs[stageAttrGen] == "2" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("executor progress event not recorded")
+	}
+}
+
 func TestSpekInitAgentMapsCopilotToSupportedInitAgent(t *testing.T) {
 	if got := spekInitAgent("copilot"); got != "codex" {
 		t.Fatalf("spekInitAgent(copilot) = %q, want codex", got)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -69,6 +70,10 @@ type Registry interface {
 	// Refuse records that the runner will not advance st for reason (stale
 	// plan, replaced document) so an operator can see why the run is parked.
 	Refuse(st Stage, reason string, status *ArtifactStatus)
+}
+
+type progressRegistry interface {
+	RecordProgress(st Stage, attrs map[string]string, now time.Time)
 }
 
 // Refusal reasons recorded through Registry.Refuse.
@@ -296,6 +301,10 @@ func (r *Runner) tickStage(ctx context.Context, st Stage, state *stageState, now
 						state.artifact = status.JoinKey()
 						r.logger().Info("[spektacular] resolved run artifact id",
 							"run", st.RunKey, "stage", st.Stage, "requested", st.Artifact, "resolved", state.artifact)
+						r.recordProgress(st, map[string]string{
+							AttrArtifact: status.JoinKey(),
+							AttrReason:   "artifact_resolved",
+						}, now)
 						r.observe(ctx, st, state, status, now, res)
 						break
 					}
@@ -324,6 +333,14 @@ func (r *Runner) tickStage(ctx context.Context, st Stage, state *stageState, now
 func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, status ArtifactStatus, now time.Time, res *TickResult) {
 	prev := state.lastStatus
 	state.lastStatus = status.DocumentStatus
+	if prev != status.DocumentStatus || status.CurrentStep != "" {
+		r.recordProgress(st, map[string]string{
+			AttrArtifact:       status.JoinKey(),
+			AttrDocumentStatus: string(status.DocumentStatus),
+			AttrCurrentStep:    status.CurrentStep,
+			"completed_steps":  strconv.Itoa(len(status.CompletedSteps)),
+		}, now)
+	}
 	if status.DocumentStatus == DocumentStale {
 		state.refused = true
 		res.Refused++
@@ -332,6 +349,7 @@ func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, statu
 			"run", st.RunKey, "stage", st.Stage, "artifact", st.Artifact)
 		return
 	}
+
 	if !status.Final() {
 		if state.seenFinal || prev == DocumentFinal {
 			state.refused = true
@@ -371,6 +389,14 @@ func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, statu
 		"run", st.RunKey, "stage", st.Stage, "next", nextStage(st.Stage), "gen", st.Gen)
 }
 
+func (r *Runner) recordProgress(st Stage, attrs map[string]string, now time.Time) {
+	rec, ok := r.Registry.(progressRegistry)
+	if !ok || rec == nil {
+		return
+	}
+	rec.RecordProgress(st, attrs, now)
+}
+
 // expire applies the retry budget when the lease has lapsed without final:
 // each expiry but the last mints a retry generation; the last raises a
 // decision escalation and the runner stops touching the stage.
@@ -386,6 +412,11 @@ func (r *Runner) expire(ctx context.Context, st Stage, state *stageState, now ti
 			return
 		}
 		res.Retried++
+		r.recordProgress(st, map[string]string{
+			AttrReason: "retry_generation_minted",
+			"attempt":  strconv.Itoa(state.expiries + 1),
+			"budget":   strconv.Itoa(r.maxRetries()),
+		}, now)
 		r.logger().Info("[spektacular] lease expired without final; retry generation minted",
 			"run", st.RunKey, "stage", st.Stage, "attempt", state.expiries+1, "budget", r.maxRetries())
 		return

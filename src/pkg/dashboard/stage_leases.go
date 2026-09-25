@@ -42,6 +42,7 @@ const (
 	stageAttrReceipt         = "receipt"
 	stageAttrArtifact        = "artifact"
 	stageAttrDocumentStatus  = "document_status"
+	stageAttrCurrentStep     = "current_step"
 	stageAttrReason          = "reason"
 	stageAttrSeverity        = "severity"
 	stageAttrAttempts        = "attempts"
@@ -449,17 +450,19 @@ func (s *Server) RefuseStageLease(taskID string, attrs map[string]string) {
 		fields = append(fields, k, v)
 	}
 	s.AgentAuditSink().Record("system", agent.AuditLeaseStageRefused, taskID, agent.Fields(fields...))
+	eventAttrs := make(map[string]string, len(attrs)+1)
+	for k, v := range attrs {
+		eventAttrs[k] = v
+	}
 	if attrs[stageAttrReason] == planning.WaitingReasonStalePlan {
-		eventAttrs := make(map[string]string, len(attrs)+1)
-		for k, v := range attrs {
-			eventAttrs[k] = v
-		}
 		eventAttrs[planning.MetaRunWaitingOn] = worksource.RunWaitingOnHuman
 		runKey := attrs[stageAttrRunKey]
 		if store, epic := s.findRunEpic(runKey); store != nil && epic != nil {
 			_ = store.SetMetadata(epic.ID, planning.MetaRunWaitingOn, worksource.RunWaitingOnHuman)
 			_ = store.SetMetadata(epic.ID, planning.MetaRunWaitingReason, planning.WaitingReasonStalePlan)
 		}
+	}
+	if runKey := attrs[stageAttrRunKey]; runKey != "" {
 		s.LifecycleTimeline().Record(timeline.Event{
 			IssueRef: runKey,
 			Kind:     timeline.KindBlocked,
@@ -469,6 +472,35 @@ func (s *Server) RefuseStageLease(taskID string, attrs map[string]string) {
 	}
 	s.logger.Warn("[spektacular] refusing to advance stage", "task", taskID,
 		"run", attrs[stageAttrRunKey], "stage", attrs[stageAttrStage], "gen", attrs[stageAttrGen], "reason", attrs[stageAttrReason])
+}
+
+func (s *Server) RecordStageProgress(runKey, taskID string, attrs map[string]string, at time.Time) {
+	if s == nil {
+		return
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	eventAttrs := make(map[string]string, len(attrs)+1)
+	for k, v := range attrs {
+		if v != "" {
+			eventAttrs[k] = v
+		}
+	}
+	if eventAttrs[stageAttrRunKey] == "" && strings.TrimSpace(runKey) != "" {
+		eventAttrs[stageAttrRunKey] = strings.TrimSpace(runKey)
+	}
+	s.LifecycleTimeline().Record(timeline.Event{
+		IssueRef: strings.TrimSpace(runKey),
+		Kind:     timeline.KindProgress,
+		Agent:    eventAttrs["identity"],
+		At:       at.UnixMilli(),
+		Attrs:    eventAttrs,
+	})
+	s.logger.Info("[spektacular] stage progress", "run", runKey, "task", taskID,
+		"stage", eventAttrs[stageAttrStage], "gen", eventAttrs[stageAttrGen],
+		"event", eventAttrs["event"], "artifact", eventAttrs[stageAttrArtifact],
+		"document_status", eventAttrs[stageAttrDocumentStatus])
 }
 
 // EscalateStageLease turns the runner's decision event into an audit entry

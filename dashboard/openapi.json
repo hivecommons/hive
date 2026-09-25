@@ -21098,6 +21098,83 @@
         }
       }
     },
+    "/api/runs/{key}/log": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Tail a Spektacular run CLI log",
+        "description": "Returns the tail of the captured Spektacular hub executor CLI stdout/stderr log for a run stage generation. The server only serves .hive/spek-stage-<stage>-<gen>.log files under the run worktree.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "URL-escaped canonical work-item key.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "stage",
+            "in": "query",
+            "required": false,
+            "description": "Run stage log to read; defaults to spec.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "spec",
+                "plan",
+                "implement"
+              ]
+            }
+          },
+          {
+            "name": "gen",
+            "in": "query",
+            "required": false,
+            "description": "Lease generation. If omitted, the active run generation is used.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "required": false,
+            "description": "Number of trailing lines to return; defaults to 200 and is capped at 1000.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Plain-text log tail.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid key, stage, generation, tail, or log path."
+          },
+          "403": {
+            "description": "Read access required."
+          },
+          "404": {
+            "description": "Run log not found."
+          }
+        }
+      }
+    },
     "/api/runs/{key}/trace": {
       "get": {
         "tags": [

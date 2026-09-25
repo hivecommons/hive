@@ -139,6 +139,7 @@ type fakeRegistry struct {
 	plans      []*Plan
 	retries    []Stage
 	refusals   []string
+	progress   []map[string]string
 }
 
 func newFakeRegistry(stage string) *fakeRegistry {
@@ -193,6 +194,16 @@ func (f *fakeRegistry) Refuse(_ Stage, reason string, _ *ArtifactStatus) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.refusals = append(f.refusals, reason)
+}
+
+func (f *fakeRegistry) RecordProgress(_ Stage, attrs map[string]string, _ time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cp := make(map[string]string, len(attrs))
+	for k, v := range attrs {
+		cp[k] = v
+	}
+	f.progress = append(f.progress, cp)
 }
 
 type escalations struct {
@@ -613,6 +624,9 @@ func TestTick_DraftThenFinalAdvancesOnceAndWritesOneReceipt(t *testing.T) {
 	if len(esc.events) != 0 || len(reg.retries) != 0 || len(reg.refusals) != 0 {
 		t.Fatalf("unexpected side effects: esc=%d retries=%d refusals=%v", len(esc.events), len(reg.retries), reg.refusals)
 	}
+	if len(reg.progress) == 0 || reg.progress[0][AttrDocumentStatus] != string(DocumentDraft) || reg.progress[0][AttrCurrentStep] != "authoring" {
+		t.Fatalf("status progress not recorded: %+v", reg.progress)
+	}
 
 	// The next tick polls the NEW stage (plan) under the new generation, and the
 	// old spec stage is never advanced twice.
@@ -644,6 +658,9 @@ func TestTick_NeverFinalRetriesOnceThenEscalatesWithNoThirdGeneration(t *testing
 	}
 	if reg.stage.Gen != 2 || len(reg.retries) != 1 {
 		t.Fatalf("after first expiry gen=%d retries=%d", reg.stage.Gen, len(reg.retries))
+	}
+	if len(reg.progress) == 0 || reg.progress[len(reg.progress)-1][AttrReason] != "retry_generation_minted" {
+		t.Fatalf("retry progress not recorded: %+v", reg.progress)
 	}
 	// Second expiry: budget (2) exhausted, escalation raised, no third generation.
 	now = now.Add(testLeaseTTL + time.Second)

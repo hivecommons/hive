@@ -283,6 +283,7 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 		e.log().Warn("[spektacular] hub executor lease renew failed", "task", taskID, "error", err)
 	}
 	worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
+	e.recordStageProgress(st, "worktree_prepared", map[string]string{"worktree": worktree, "backend": e.backend()})
 	artifact := e.artifact(st.runKey)
 	prompt := SpekHubStagePrompt(st.stage, st.repo, st.number, st.runKey, st.title, artifact)
 	if err := writeSpekHubPrompt(worktree, prompt); err != nil {
@@ -298,12 +299,14 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 	}
 	started := time.Now()
 	e.log().Info("[spektacular] hub executor launching stage", "run", st.runKey, "stage", st.stage, "gen", st.gen, "worktree", worktree, "cmd", cmd[0])
+	e.recordStageProgress(st, "cli_launching", map[string]string{"backend": e.backend(), "worktree": worktree})
 	out, pid, err := e.runStageCommand(ctx, worktree, env, st, cmd)
 	exitCode := 0
 	if err != nil {
 		exitCode = commandExitCode(err)
 	}
 	e.log().Info("[spektacular] hub executor finished stage", "run", st.runKey, "stage", st.stage, "gen", st.gen, "worktree", worktree, "pid", pid, "exit_code", exitCode, "duration", time.Since(started).String())
+	e.recordStageProgress(st, "cli_exited", map[string]string{"backend": e.backend(), "pid": strconv.Itoa(pid), "exit_code": strconv.Itoa(exitCode), "duration": time.Since(started).String(), "worktree": worktree})
 	if err != nil {
 		return fmt.Errorf("agent CLI failed: %w: %s", err, tailString(string(out), spekHubOutputTailBytes))
 	}
@@ -336,6 +339,7 @@ func (e *SpekHubExecutor) runStageCommand(ctx context.Context, worktree string, 
 		}
 		pid := c.Process.Pid
 		e.log().Info("[spektacular] hub executor process started", "run", st.runKey, "stage", st.stage, "gen", st.gen, "worktree", worktree, "pid", pid)
+		e.recordStageProgress(st, "cli_launched", map[string]string{"backend": e.backend(), "pid": strconv.Itoa(pid), "worktree": worktree})
 		err = c.Wait()
 		return buf.Bytes(), pid, err
 	}
@@ -354,6 +358,7 @@ func (e *SpekHubExecutor) afterCLIExit(ctx context.Context, st spekHubStage, tas
 	status, err := e.spekStatus(ctx, worktree, env, kind, artifact)
 	if err != nil {
 		if resolved := resolveSpekArtifactFromFiles(worktree, kind, artifact); resolved != "" && resolved != artifact {
+			e.recordStageProgress(st, "artifact_resolved", map[string]string{stageAttrArtifact: resolved})
 			status, err = e.spekStatus(ctx, worktree, env, kind, resolved)
 		}
 	}
@@ -361,6 +366,7 @@ func (e *SpekHubExecutor) afterCLIExit(ctx context.Context, st spekHubStage, tas
 		return err
 	}
 	if strings.EqualFold(status.DocumentStatus, "final") {
+		e.recordStageProgress(st, "document_status", map[string]string{stageAttrArtifact: status.JoinKey(), stageAttrDocumentStatus: status.DocumentStatus, stageAttrCurrentStep: status.CurrentStep})
 		// Run the poll runner immediately instead of waiting for the next
 		// cleanup cadence; it owns advancement/receipts.
 		e.Server.tickStageRunner(time.Now().UTC())
@@ -373,10 +379,30 @@ func (e *SpekHubExecutor) afterCLIExit(ctx context.Context, st spekHubStage, tas
 	return nil
 }
 
+func (e *SpekHubExecutor) recordStageProgress(st spekHubStage, event string, attrs map[string]string) {
+	if e == nil || e.Server == nil {
+		return
+	}
+	eventAttrs := map[string]string{
+		stageAttrRunKey: st.runKey,
+		stageAttrStage:  st.stage,
+		stageAttrGen:    strconv.FormatUint(st.gen, 10),
+		"event":         event,
+		"identity":      e.Identity,
+	}
+	for k, v := range attrs {
+		if v != "" {
+			eventAttrs[k] = v
+		}
+	}
+	e.Server.RecordStageProgress(st.runKey, st.taskID, eventAttrs, time.Now())
+}
+
 type spekHubArtifactStatus struct {
 	Name           string `json:"name"`
 	ArtifactID     string `json:"artifact_id"`
 	DocumentStatus string `json:"document_status"`
+	CurrentStep    string `json:"current_step"`
 }
 
 func (s spekHubArtifactStatus) JoinKey() string {
@@ -413,6 +439,7 @@ func (e *SpekHubExecutor) recordNonFinal(st spekHubStage, taskID string, status 
 		stageAttrReason:         spekHubNonFinalReason,
 		stageAttrArtifact:       status.JoinKey(),
 		stageAttrDocumentStatus: status.DocumentStatus,
+		stageAttrCurrentStep:    status.CurrentStep,
 		"waiting_on":            worksource.RunWaitingOnHuman,
 	}
 	e.Server.AgentAuditSink().Record("system", agent.AuditLeaseStageRefused, taskID, agent.Fields("run", st.runKey, "stage", st.stage, "gen", st.gen, "reason", spekHubNonFinalReason, "artifact", status.JoinKey(), "document_status", status.DocumentStatus))

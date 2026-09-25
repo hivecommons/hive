@@ -208,6 +208,18 @@ when Spek reports `document_status: final`. Reusing the run worktree preserves
 disabled, an unclaimed run stays parked until a relay declares the `run-stage`
 capability.
 
+Hub executor activity is visible in the normal run timeline/progress surfaces:
+Hive records `progress` events when the worktree is prepared, the CLI launches
+and exits, an artifact id is resolved, Spek status/current-step changes are
+observed, a retry generation is minted, or a blocked reason is recorded. The
+Campaigns card and Runs page summarize the latest event instead of showing "no
+activity", and `/api/runs` includes `artifact_id`, `document_status`, and
+`current_step` for the current Spek document. Operators can fetch the captured
+CLI output through `GET /api/runs/{key}/log?stage=<stage>&gen=<generation>&tail=200`;
+the endpoint is read-authenticated, serves only
+`.hive/spek-stage-<stage>-<generation>.log` under the run worktree, and returns
+the requested tail as plain text.
+
 It then runs
 
 ```
