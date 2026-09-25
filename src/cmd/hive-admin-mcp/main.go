@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -185,7 +186,7 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 		refusal, _ := adminmcp.RefusalFor(operation)
 		return refusal, nil
 	}
-	path, ok := readPath(tool, adminmcp.LimitFromArgs(args))
+	path, ok := readPath(tool, args)
 	if !ok {
 		return nil, fmt.Errorf("unsupported admin MCP read tool %q", tool)
 	}
@@ -270,8 +271,15 @@ func diagnoseSelectionError(err error) error {
 	return err
 }
 
-func readPath(tool string, limit int) (string, bool) {
-	return adminmcp.ReadPath(tool, limit)
+func readPath(tool string, args map[string]any) (string, bool) {
+	if tool == adminmcp.ToolAgentNudgeStatus {
+		agent := strings.TrimSpace(stringArg(args, "agent"))
+		if agent == "" {
+			return "", false
+		}
+		return "/api/kick/" + url.PathEscape(agent) + "/status", true
+	}
+	return adminmcp.ReadPath(tool, adminmcp.LimitFromArgs(args))
 }
 
 func textResult(v any, isError bool) (*mcp.CallToolResult, error) {
@@ -299,4 +307,9 @@ func adminMCPPendingPath() string {
 		return filepath.Join(dir, "hive", "admin-mcp-pending-confirmations.json")
 	}
 	return filepath.Join(".", ".hive-admin-mcp-pending-confirmations.json")
+}
+
+func stringArg(args map[string]any, key string) string {
+	value, _ := args[key].(string)
+	return strings.TrimSpace(value)
 }

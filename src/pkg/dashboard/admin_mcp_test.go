@@ -93,3 +93,13 @@ func TestAdminMCPExecuteWriteForwardsJSONBodyAndAuth(t *testing.T) {
 		t.Fatalf("result = %#v", result)
 	}
 }
+
+func TestAdminMCPAgentNudgeStatusReadPath(t *testing.T) {
+	path, ok := adminMCPReadPath(adminmcp.ToolAgentNudgeStatus, map[string]any{"agent": "team/scanner"})
+	if !ok || path != "/api/kick/team%2Fscanner/status" {
+		t.Fatalf("path = %q ok=%v", path, ok)
+	}
+	if _, ok := adminMCPReadPath(adminmcp.ToolAgentNudgeStatus, map[string]any{}); ok {
+		t.Fatal("expected missing agent to be rejected")
+	}
+}

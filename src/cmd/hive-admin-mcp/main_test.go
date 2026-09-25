@@ -264,3 +264,10 @@ func TestWritePreviewDisabledInStdioProvider(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestReadPathAgentNudgeStatus(t *testing.T) {
+	path, ok := readPath(adminmcp.ToolAgentNudgeStatus, map[string]any{"agent": "team/scanner"})
+	if !ok || path != "/api/kick/team%2Fscanner/status" {
+		t.Fatalf("path = %q ok=%v", path, ok)
+	}
+}

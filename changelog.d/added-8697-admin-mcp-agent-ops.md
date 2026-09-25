@@ -1,0 +1,1 @@
+- Add phase 4 admin MCP agent operations for nudging, restarting, adding/removing agents, and changing model, backend, effort, and interaction tier through the preview/confirmation write contract.

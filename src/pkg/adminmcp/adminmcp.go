@@ -327,6 +327,7 @@ func ToolsWithWritesEnabled(writesEnabled bool) []map[string]any {
 		{ToolContributorsList, "Read the capped list of contributors known to this hive."},
 		{ToolKnowledgeRead, "Read knowledge-system health and statistics."},
 		{ToolHiveAdvisor, "Read hive advisor recommendations."},
+		{ToolAgentNudgeStatus, "Read the asynchronous delivery outcome for the latest nudge sent to one agent."},
 		{ToolWritePreview, "Preview a registered write operation and create a durable pending confirmation."},
 		{ToolWriteConfirm, "Confirm and execute a previously previewed write operation."},
 		{ToolExclusionCatalogue, "Return the askable catalogue of operations deliberately excluded from admin MCP."},
@@ -349,7 +350,7 @@ func AllowedTool(name string) bool {
 	switch name {
 	case ToolHiveStatus, ToolFleetStatus, ToolAgentsList, ToolRunsList, ToolLeasesList, ToolClaimsList,
 		ToolPlansList, ToolAuditLog, ToolSettingsRead, ToolAutonomyReadiness, ToolSpendRead,
-		ToolContributorsList, ToolKnowledgeRead, ToolHiveAdvisor, ToolWritePreview, ToolWriteConfirm,
+		ToolContributorsList, ToolKnowledgeRead, ToolHiveAdvisor, ToolAgentNudgeStatus, ToolWritePreview, ToolWriteConfirm,
 		ToolExclusionCatalogue, ToolRefuseOperation:
 		return true
 	}
@@ -375,6 +376,9 @@ func inputSchema(name string) map[string]any {
 	case ToolRefuseOperation:
 		props = map[string]any{"operation": map[string]any{"type": "string"}}
 		required = []string{"operation"}
+	case ToolAgentNudgeStatus:
+		props = map[string]any{"agent": map[string]any{"type": "string", "minLength": 1}}
+		required = []string{"agent"}
 	case ToolWritePreview:
 		props = map[string]any{"operation": map[string]any{"type": "string"}, "args": map[string]any{"type": "object"}}
 		required = []string{"operation", "args"}
