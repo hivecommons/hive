@@ -3169,6 +3169,16 @@
     .run-log-pre { max-height: 260px; overflow: auto; white-space: pre-wrap; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3); color: var(--muted); font-size: var(--fs-xs); }
     .run-log-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-3); }
     .run-activity-line { margin-top: var(--sp-2); color: var(--muted); font-size: var(--fs-sm); }
+    .run-live-activity { margin-top: var(--sp-3); display: grid; gap: var(--sp-1); font-size: var(--fs-sm); color: var(--muted); }
+    .run-live-head { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; color: var(--text); font-weight: 600; }
+    .run-live-dot { width: 0.58rem; height: 0.58rem; border-radius: var(--r-pill); background: var(--green); box-shadow: 0 0 0 0 color-mix(in srgb, var(--green) 45%, transparent); flex: 0 0 auto; }
+    .run-live-dot.active { animation: run-live-pulse 1.6s ease-out infinite; }
+    .run-live-last.warn { color: var(--amber); }
+    .run-live-last.stall { color: var(--red); }
+    .background-activity { display: inline-flex; align-items: center; gap: var(--sp-2); padding: 3px 8px; border: 1px solid var(--border); border-radius: var(--r-pill); color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; }
+    .background-activity.active { color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, transparent); background: color-mix(in srgb, var(--green) 10%, transparent); }
+    @keyframes run-live-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--green) 45%, transparent); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+    @media (prefers-reduced-motion: reduce) { .run-live-dot.active { animation: none; } }
     .run-detail-panel { grid-column: 1 / -1; margin-top: var(--sp-3); border: 1px solid var(--border); border-radius: var(--r); background: var(--card-bg); padding: var(--sp-4); display: grid; gap: var(--sp-4); }
     .run-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--sp-3); }
     .run-detail-box { border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3); background: color-mix(in srgb, var(--border) 7%, transparent); }
@@ -3583,6 +3593,7 @@
               title="Menu">&#9776;</button>
       <span id="oc-project-name"></span>
       <span id="oc-git-version" class="git-version"></span>
+      <span id="background-activity" class="background-activity" role="status" aria-live="polite" aria-label="No background Spek activity"><span class="run-live-dot" aria-hidden="true"></span><span id="background-activity-text">idle</span></span>
       <!-- Fleet breaker — circular play/pause + status pill (agent queue-suspend
            pattern). Kept in .oc-topbar-left, the shortest group, so it cannot
            wrap the topbar to a third row. State + owner-gating rendered by
@@ -8236,6 +8247,8 @@
     }
 
     const RUN_STALL_THRESHOLD_MS = 60 * 60 * 1000;
+    const RUN_ACTIVITY_WARN_MS = 90 * 1000;
+    const RUN_ACTIVITY_STALL_MS = 5 * 60 * 1000;
 
     function dashboardRunsFromStatus(data) {
       if (!data || !Object.prototype.hasOwnProperty.call(data, 'runs')) return null;
@@ -8265,6 +8278,78 @@
       const hours = Math.floor(mins / 60);
       if (hours < 48) return hours + 'h ' + (mins % 60) + 'm';
       return Math.floor(hours / 24) + 'd ' + (hours % 24) + 'h';
+    }
+
+    function formatRunPreciseDuration(seconds) {
+      seconds = Math.max(0, Math.floor(Number(seconds) || 0));
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = seconds % 60;
+      if (h > 0) return h + 'h ' + m + 'm ' + s + 's';
+      if (m > 0) return m + 'm ' + s + 's';
+      return s + 's';
+    }
+
+    function runActivityLastLabel(lastMs, agentAlive, heartbeatMs) {
+      if (!lastMs) return { text: 'last activity unknown', cls: 'stall' };
+      const ageMs = Math.max(0, Date.now() - lastMs);
+      let cls = '';
+      let hint = '';
+      if (ageMs >= RUN_ACTIVITY_STALL_MS) {
+        cls = 'stall';
+        hint = (agentAlive || heartbeatMs > Date.now() - RUN_ACTIVITY_STALL_MS) ? ' · still held; may be stalled' : ' · may be stalled';
+      } else if (ageMs >= RUN_ACTIVITY_WARN_MS) {
+        cls = 'warn';
+      }
+      if (agentAlive) hint += ' · agent alive';
+      return { text: 'last activity ' + formatRunPreciseDuration(ageMs / 1000) + ' ago' + hint, cls };
+    }
+
+    function renderRunActivity(run) {
+      const a = run && run.activity;
+      if (!a || !a.alive) return run && run.activity_summary ? `<div class="run-activity-line">${escapeHtml(run.activity_summary)}</div>` : '';
+      const startedMs = runDateMs(a.stage_started_at || run.stage_started_at);
+      const elapsedRaw = Number(a.elapsed_seconds);
+      const elapsed = Number.isFinite(elapsedRaw) ? elapsedRaw : (startedMs ? Math.max(0, Math.floor((Date.now() - startedMs) / 1000)) : 0);
+      const lastMs = runDateMs(a.last_activity_at);
+      const heartbeatMs = runDateMs(a.lease_heartbeat_at);
+      const last = runActivityLastLabel(lastMs, !!a.agent_pid_alive, heartbeatMs);
+      const phase = a.phase || run.stage || 'stage';
+      return `<div class="run-live-activity" aria-label="${escapeHtml(phase)} activity">
+        <div class="run-live-head"><span class="run-live-dot active" aria-hidden="true"></span><span>${escapeHtml(phase)} · <span data-run-activity-elapsed data-start-ms="${startedMs}" data-rendered-ms="${Date.now()}" data-elapsed-seconds="${elapsed}">${escapeHtml(formatRunPreciseDuration(elapsed))}</span></span></div>
+        <div class="run-live-last${last.cls ? ' ' + last.cls : ''}" data-run-activity-last data-last-ms="${lastMs}" data-agent-alive="${a.agent_pid_alive ? '1' : '0'}" data-heartbeat-ms="${heartbeatMs}">${escapeHtml(last.text)}</div>
+        ${a.last_event ? `<div>${escapeHtml(a.last_event)}</div>` : ''}
+      </div>`;
+    }
+
+    function updateRunActivityTimers() {
+      document.querySelectorAll('[data-run-activity-elapsed]').forEach(el => {
+        const started = Number(el.getAttribute('data-start-ms')) || 0;
+        const rendered = Number(el.getAttribute('data-rendered-ms')) || Date.now();
+        const base = Number(el.getAttribute('data-elapsed-seconds')) || 0;
+        const elapsed = started ? Math.max(0, Math.floor((Date.now() - started) / 1000)) : base + Math.max(0, Math.floor((Date.now() - rendered) / 1000));
+        el.textContent = formatRunPreciseDuration(elapsed);
+      });
+      document.querySelectorAll('[data-run-activity-last]').forEach(el => {
+        const label = runActivityLastLabel(Number(el.getAttribute('data-last-ms')) || 0, el.getAttribute('data-agent-alive') === '1', Number(el.getAttribute('data-heartbeat-ms')) || 0);
+        el.textContent = label.text;
+        el.classList.toggle('warn', label.cls === 'warn');
+        el.classList.toggle('stall', label.cls === 'stall');
+      });
+    }
+
+    function updateBackgroundActivityIndicator(runs) {
+      const el = document.getElementById('background-activity');
+      const text = document.getElementById('background-activity-text');
+      if (!el || !text) return;
+      runs = Array.isArray(runs) ? runs : [];
+      const active = runs.filter(r => r && r.activity && r.activity.alive).length;
+      el.classList.toggle('active', active > 0);
+      const dot = el.querySelector('.run-live-dot');
+      if (dot) dot.classList.toggle('active', active > 0);
+      text.textContent = active ? active + ' background ' + (active === 1 ? 'stage' : 'stages') : 'idle';
+      el.setAttribute('aria-label', active ? active + ' Spek stages active in the background' : 'No background Spek activity');
+      el.title = active ? 'Spek is working in the background' : 'No in-flight Spek stage activity';
     }
 
     function runCurrentAge(run) {
@@ -8324,6 +8409,7 @@
         setIfChanged(el, '<div class="loading">runs: unknown</div>');
         if (badge) badge.textContent = 'unknown';
         if (sideBadge) sideBadge.style.display = 'none';
+        updateBackgroundActivityIndicator([]);
         return;
       }
       runs = Array.isArray(runs) ? runs : [];
@@ -8331,10 +8417,12 @@
       const activeRuns = runs.filter(run => !isFinishedRun(run));
       const finishedRuns = runs.filter(isFinishedRun);
       const human = activeRuns.filter(r => r && r.waiting_on === 'human').length;
+      updateBackgroundActivityIndicator(activeRuns);
       if (badge) badge.textContent = activeRuns.length + ' active' + (human ? ' · ' + human + ' blocked on human' : '') + (finishedRuns.length ? ' · ' + finishedRuns.length + ' recent' : '');
       if (sideBadge) { sideBadge.style.display = activeRuns.length ? 'inline-flex' : 'none'; sideBadge.textContent = activeRuns.length; }
       if (!runs.length) {
         setIfChanged(el, '<div style="color:var(--muted);font-size:0.85rem">No active runs.</div>');
+        updateBackgroundActivityIndicator([]);
         return;
       }
       const canApprove = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
@@ -8353,7 +8441,7 @@
             <button class="btn" data-action="openRunDetail" data-arg0="${escapeHtml(key)}" style="font-size:0.7rem;padding:3px 8px">detail</button>
           </div>
           <div style="margin-top:10px">${runStageRail(run)}</div>
-          ${run.activity_summary ? `<div class="run-activity-line">${escapeHtml(run.activity_summary)}</div>` : ''}
+          ${renderRunActivity(run)}
           <div style="margin-top:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
             <span class="status-badge ${waitCls}" title="Waiting on ${escapeHtml(waiting)}">waiting: ${escapeHtml(waiting)}</span>
             <span class="status-badge" title="${escapeHtml(run.waiting_since || run.stage_started_at || '')}">age ${escapeHtml(runCurrentAge(run))}</span>
@@ -8412,7 +8500,7 @@
         const detailLogID = 'run-detail-log-' + safeDomId(key);
         panel.innerHTML = `<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start"><div><h3 style="margin:0 0 4px">${escapeHtml(run.title || run.key || 'Run detail')}</h3><div style="color:var(--muted);font-size:0.8rem">${escapeHtml(run.key || '')}${run.repo ? ' · ' + escapeHtml(run.repo) : ''}</div></div><button class="btn" data-action="closeRunDetail">Close</button></div>
           <div style="margin-top:12px">${runStageRail(run)}</div>
-          ${run.activity_summary ? `<div class="run-activity-line">${escapeHtml(run.activity_summary)}</div>` : ''}
+          ${renderRunActivity(run)}
           <div style="margin-top:12px;font-size:0.82rem">Artifacts: ${runArtifactLinks(run)}</div>
           ${(run.artifact_id || run.artifact_name || run.document_status || run.current_step) ? `<div><span class="status-badge">artifact id: ${escapeHtml(run.artifact_id || 'unknown')}</span><span class="status-badge">artifact: ${escapeHtml(run.artifact_name || 'unknown')}</span><span class="status-badge">document: ${escapeHtml(run.document_status || 'unknown')}</span><span class="status-badge">step: ${escapeHtml(run.current_step || 'unknown')}</span></div>` : ''}
           <div class="run-log-actions"><button class="btn" data-action="toggleRunLog" data-arg0="${escapeHtml(run.key || key)}" data-arg1="${escapeHtml(run.stage || 'spec')}" data-arg2="${escapeHtml(String(run.gen || 0))}" data-arg3="${escapeHtml(detailLogID)}">Log</button></div><div id="${escapeHtml(detailLogID)}" class="run-log-panel"></div>
@@ -16854,6 +16942,7 @@ function burnAreaChart() {
         const logID = 'campaign-log-' + safeDomId(c.run_key || c.id);
         const detailID = 'campaign-detail-' + safeDomId(c.run_key || c.id);
         const canLog = !!c.run_key;
+        const liveRun = canLog && Array.isArray(window._lastRuns) ? window._lastRuns.find(r => r && r.key === c.run_key) : null;
         const actionDisabled = _campaignActionsInFlight.has(c.id) ? ' disabled aria-busy="true"' : '';
         return `<div class="campaign-row">
           <div>
@@ -16867,6 +16956,7 @@ function burnAreaChart() {
               ${c.artifact_id ? `<span>${escapeHtml(c.artifact_id)}</span>` : ''}
               ${c.document_status ? `<span>${escapeHtml(c.document_status)}</span>` : ''}
             </div>
+            ${liveRun ? renderRunActivity(liveRun) : ''}
           </div>
           <div class="campaign-row-actions">
             ${canLog ? `<button class="hv-btn btn-secondary btn-sm" data-action="toggleCampaignRunDetail" data-arg0="${escapeHtml(c.run_key)}" data-arg1="${escapeHtml(detailID)}">Details</button>` : ''}
@@ -20933,6 +21023,7 @@ function burnAreaChart() {
     // Initial fetch then SSE — these two are critical for first paint
     tickNavbarClock();
     setInterval(tickNavbarClock, NAVBAR_CLOCK_TICK_MS);
+    setInterval(updateRunActivityTimers, 1000);
     fetch('/api/status').then(r => r.json()).then(render).catch(console.error);
     // Fetch persistent trends for sparklines (day/week)
     window._trendData = [];

@@ -1,0 +1,1 @@
+- Show live Spek stage activity in the runs API and dashboard so in-flight spec/plan work visibly reports elapsed time, last activity, and current executor events.

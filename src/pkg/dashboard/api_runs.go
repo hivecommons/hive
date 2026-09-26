@@ -135,9 +135,21 @@ type Run struct {
 	ArtifactName    string                      `json:"artifact_name,omitempty"`
 	DocumentStatus  string                      `json:"document_status,omitempty"`
 	CurrentStep     string                      `json:"current_step,omitempty"`
+	Activity        *RunActivity                `json:"activity,omitempty"`
 }
 
 type RunSummary = Run
+
+type RunActivity struct {
+	Alive            bool   `json:"alive"`
+	Phase            string `json:"phase,omitempty"`
+	StageStartedAt   string `json:"stage_started_at,omitempty"`
+	LastActivityAt   string `json:"last_activity_at,omitempty"`
+	ElapsedSeconds   int64  `json:"elapsed_seconds"`
+	LastEvent        string `json:"last_event,omitempty"`
+	AgentPIDAlive    bool   `json:"agent_pid_alive"`
+	LeaseHeartbeatAt string `json:"lease_heartbeat_at,omitempty"`
+}
 
 type RunWaitSnapshot struct {
 	Key          string
@@ -197,6 +209,7 @@ type runLeaseSnapshot struct {
 	expiresAt       time.Time
 	title           string
 	stageStarted    time.Time
+	leaseHeartbeat  time.Time
 	claimedBy       string
 	claimExpiresAt  time.Time
 	claimPosted     bool
@@ -722,7 +735,8 @@ func runResetErrorStatus(err error) int {
 }
 
 func (s *Server) activeRuns(includeTimeline bool) ([]Run, error) {
-	leases, err := s.activeRunLeaseSnapshots(time.Now())
+	now := time.Now()
+	leases, err := s.activeRunLeaseSnapshots(now)
 	if err != nil {
 		return nil, err
 	}
@@ -745,6 +759,7 @@ func (s *Server) activeRuns(includeTimeline bool) ([]Run, error) {
 		if run.StageStartedAt == "" {
 			run.StageStartedAt = formatRunTime(timelineStageTime(events, lease.stage))
 		}
+		run.Activity = s.runLiveActivity(run, lease, events, now)
 		if includeTimeline {
 			run.Stages = mergeRunTimelineStages(run.Stages, events)
 		}
@@ -838,7 +853,7 @@ func (s *Server) activeRunLeaseSnapshots(now time.Time) ([]runLeaseSnapshot, err
 		out = append(out, runLeaseSnapshot{
 			identity: l.identity, taskID: l.taskID, repo: repo, number: l.number,
 			key: key, leaseKey: stageLeaseKey, stage: l.stage, gen: l.gen, expiresAt: l.expiresAt,
-			title: title, stageStarted: info.startedAt,
+			title: title, stageStarted: info.startedAt, leaseHeartbeat: l.expiresAt.Add(-leaseTTL),
 			claimedBy: l.claimedBy, claimExpiresAt: l.claimExpiresAt, claimPosted: l.claimPosted,
 			triageVerdict: l.triageVerdict, triageRationale: l.triageRationale,
 			workItem: l.workItem.Normalized(),
