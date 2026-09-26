@@ -31,8 +31,12 @@ columns from the same aggregation used by the contributor Operations **Most
 effective models** panel: merged PRs, first-pass merge rate, verified-PR run
 rate, failure rate, and completed-without-PR ("nothing to ship") rate. Models
 that meet `HIVE_CONTRIBUTE_EFFECTIVE_MODELS_MIN_PRS` (default `5`) merged PRs
-get rank badges. The default row order is effectiveness rank; operators can
-toggle back to raw PR count without changing the selected window.
+get rank badges. On `/contribute`, Operations-style column headers in Most
+effective models, Rankings, and Fleet controls tier limits are keyboard-clickable
+sort controls; the selected column and direction are saved in browser
+`localStorage`, and a third click restores each card's default live order. The
+default row order is effectiveness rank; operators can toggle back to raw PR
+count without changing the selected window.
 
 ## Hive Chat
 
