@@ -27,10 +27,10 @@ var styleRatchetBaselines = map[string]styleRatchetCounts{
 	// v6 carries surfaces v5 does not have (runs section, standby, wavefront
 	// fan-out UI); these baselines are v6's own counts, not v5's.
 	"operator static/index.html": {
-		inlineStyles:   1700,
-		rawColors:      152,
-		rawFontSizes:   694,
-		rawPadding:     252,
+		inlineStyles:   1698,
+		rawColors:      149,
+		rawFontSizes:   693,
+		rawPadding:     249,
 		rawBorderRadii: 189,
 	},
 	"contributor landing": {

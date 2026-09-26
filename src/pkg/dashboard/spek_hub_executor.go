@@ -55,6 +55,7 @@ type SpekHubExecutor struct {
 	mu        sync.Mutex
 	inFlight  map[string]time.Time
 	failures  map[string]int
+	activity  map[string]runActivitySignal
 	lastError string
 }
 
@@ -113,6 +114,7 @@ func (e *SpekHubExecutor) Tick(ctx context.Context, now time.Time) {
 			continue
 		}
 		e.inFlight[key] = now
+		e.recordActivityLocked(st, now, "executor claimed stage slot", 0)
 		e.mu.Unlock()
 		go e.runStage(ctx, st, key)
 	}
@@ -328,7 +330,7 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 	started := time.Now()
 	e.log().Info("[spektacular] hub executor launching stage", "run", st.runKey, "stage", st.stage, "gen", st.gen, "worktree", worktree, "cmd", cmd[0])
 	e.recordStageProgress(st, "cli_launching", map[string]string{"backend": e.backend(), "worktree": worktree})
-	statusHistory, stopStatusPolling := e.startStageStatusCapture(ctx, worktree, env, st.stage, artifact)
+	statusHistory, stopStatusPolling := e.startStageStatusCapture(ctx, st, worktree, env, st.stage, artifact)
 	out, pid, err := e.runStageCommand(ctx, worktree, env, st, cmd)
 	stopStatusPolling()
 	exitCode := 0
@@ -421,7 +423,7 @@ func (e *SpekHubExecutor) afterCLIExit(ctx context.Context, st spekHubStage, tas
 	return nil
 }
 
-func (e *SpekHubExecutor) startStageStatusCapture(ctx context.Context, worktree string, env []string, kind, artifact string) (func() []RunDetailStageStatus, func()) {
+func (e *SpekHubExecutor) startStageStatusCapture(ctx context.Context, st spekHubStage, worktree string, env []string, kind, artifact string) (func() []RunDetailStageStatus, func()) {
 	pollCtx, cancel := context.WithCancel(ctx)
 	var mu sync.Mutex
 	var history []RunDetailStageStatus
@@ -451,6 +453,7 @@ func (e *SpekHubExecutor) startStageStatusCapture(ctx context.Context, worktree 
 		resolved := firstRunNonEmpty(resolveSpekArtifactFromFiles(worktree, kind, artifact), artifact)
 		if status, err := e.spekStatus(pollCtx, worktree, env, kind, resolved); err == nil {
 			remember(status)
+			e.recordStageProgress(st, "status_poll", map[string]string{stageAttrArtifact: status.JoinKey(), stageAttrDocumentStatus: status.DocumentStatus, stageAttrCurrentStep: status.CurrentStep})
 		}
 	}
 	go func() {
@@ -590,6 +593,11 @@ func (e *SpekHubExecutor) recordStageProgress(st spekHubStage, event string, att
 	if e == nil || e.Server == nil {
 		return
 	}
+	pid := 0
+	if raw := strings.TrimSpace(attrs["pid"]); raw != "" {
+		pid, _ = strconv.Atoi(raw)
+	}
+	e.recordActivity(st, event, attrs, pid)
 	eventAttrs := map[string]string{
 		stageAttrRunKey: st.runKey,
 		stageAttrStage:  st.stage,
@@ -603,6 +611,89 @@ func (e *SpekHubExecutor) recordStageProgress(st spekHubStage, event string, att
 		}
 	}
 	e.Server.RecordStageProgress(st.runKey, st.taskID, eventAttrs, time.Now())
+}
+
+func (e *SpekHubExecutor) recordActivity(st spekHubStage, event string, attrs map[string]string, pid int) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.recordActivityLocked(st, time.Now().UTC(), spekActivityEvent(event, attrs), pid)
+}
+
+func (e *SpekHubExecutor) recordActivityLocked(st spekHubStage, at time.Time, event string, pid int) {
+	if e.activity == nil {
+		e.activity = map[string]runActivitySignal{}
+	}
+	key := spekActivityKey(st.runKey, st.stage, st.gen)
+	sig := e.activity[key]
+	if sig.stageStartedAt.IsZero() {
+		if started := e.inFlight[e.executionKey(st)]; !started.IsZero() {
+			sig.stageStartedAt = started.UTC()
+		} else {
+			sig.stageStartedAt = at.UTC()
+		}
+	}
+	sig.lastActivityAt = at.UTC()
+	sig.lastEvent = event
+	if pid > 0 {
+		sig.agentPID = pid
+	}
+	e.activity[key] = sig
+}
+
+func (e *SpekHubExecutor) RunActivitySnapshot(runKey, stage string, gen uint64) (runActivitySignal, bool) {
+	if e == nil {
+		return runActivitySignal{}, false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	sig, ok := e.activity[spekActivityKey(runKey, stage, gen)]
+	if !ok {
+		return runActivitySignal{}, false
+	}
+	return sig, true
+}
+
+func spekActivityKey(runKey, stage string, gen uint64) string {
+	return runKey + "\x1f" + stage + "\x1f" + strconv.FormatUint(gen, 10)
+}
+
+func spekActivityEvent(event string, attrs map[string]string) string {
+	switch event {
+	case "status_poll":
+		status := firstRunNonEmpty(attrs[stageAttrDocumentStatus], "running")
+		step := strings.TrimSpace(attrs[stageAttrCurrentStep])
+		if step != "" {
+			return "agent polled status (" + status + ", step " + step + ")"
+		}
+		return "agent polled status (" + status + ")"
+	case "cli_launched":
+		if pid := strings.TrimSpace(attrs["pid"]); pid != "" {
+			return "agent process started (pid " + pid + ")"
+		}
+		return "agent process started"
+	case "cli_launching":
+		return "agent launching"
+	case "worktree_prepared":
+		return "worktree prepared"
+	case "document_already_final":
+		return "document already final"
+	case "document_status":
+		status := firstRunNonEmpty(attrs[stageAttrDocumentStatus], "updated")
+		return "document status " + status
+	case "cli_exited":
+		return "agent CLI exited (" + firstRunNonEmpty(attrs["exit_code"], "unknown") + ")"
+	case "artifact_resolved":
+		return "artifact resolved"
+	default:
+		event = strings.TrimSpace(strings.ReplaceAll(event, "_", " "))
+		if event == "" {
+			return "spektacular activity observed"
+		}
+		return event
+	}
 }
 
 type spekHubArtifactStatus struct {
