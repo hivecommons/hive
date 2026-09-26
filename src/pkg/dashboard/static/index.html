@@ -9323,10 +9323,11 @@
     }
 
     // #5117 acknowledgment as the snapshot carries it: the server sets
-    // `human_acknowledged` from the approved-direction label or a human
-    // assignee (no comment scan — a human comment only satisfies the PR-time
-    // gate and is not in the payload). Held issues arrive as HoldItems
-    // without that flag, so the label is also read here directly.
+    // `human_acknowledged` on both actionable issues and held issues from
+    // the approved-direction label or a human assignee (no comment scan — a
+    // human comment only satisfies the PR-time gate and is not in the
+    // payload). The label is also read directly so an older snapshot
+    // without the flag still bands a labelled issue correctly.
     function issueAcknowledged(issue) {
       return !!(issue && issue.human_acknowledged) || issueLabelSet(issue).has('approved-direction');
     }

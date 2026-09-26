@@ -134,12 +134,18 @@ assert.equal(issueBandLabel('bogus'), 'Unclaimed');
 assert.equal(prBandLabel('bogus'), 'Open');
 
 // 2. Agent-filed is keyed on acknowledgment: the server flag or the
-// approved-direction label (held issues only carry labels) empties the band.
+// approved-direction label empties the band, for actionable and held issues
+// alike (HoldItem carries assignees + human_acknowledged too).
 const filed = { labels: ['agent/strategist'], updated_at: at };
 assert.equal(issueBandInfo(filed).band, 'agent-filed');
 assert.equal(issueBandInfo(Object.assign({}, filed, { human_acknowledged: true })).band, 'ready');
 assert.equal(issueBandInfo({ labels: ['agent/strategist', 'Approved-Direction'], updated_at: at }).band, 'ready');
 assert.equal(issueBandInfo(Object.assign({}, filed, { human_acknowledged: true, assignees: ['dan'] })).band, 'in-progress');
+// A held agent issue a human is assigned to, exactly as HoldItem serializes it.
+const heldAcked = { number: 7, repo: 'o/r', title: 'held', type: 'issue', labels: ['hold', 'agent/strategist'], assignees: ['dan'], human_acknowledged: true, created_at: at };
+assert.equal(issueBandInfo(heldAcked).band, 'in-progress');
+assert.equal(issueBandInfo(Object.assign({}, heldAcked, { assignees: undefined })).band, 'ready');
+assert.equal(issueBandInfo({ number: 8, type: 'issue', labels: ['hold', 'agent/strategist'], created_at: at }).band, 'agent-filed');
 // Precedence above the triage band is unchanged.
 assert.equal(issueBandInfo({ labels: ['agent/strategist', 'blocked'], updated_at: at }).band, 'waiting');
 assert.equal(issueBandInfo({ labels: ['agent/strategist', 'hive/likely-done'], updated_at: at }).band, 'done');

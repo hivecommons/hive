@@ -770,6 +770,14 @@ type HoldItem struct {
 	// full. Both are omitted when unset so older snapshots round-trip.
 	URL    string   `json:"url,omitempty"`
 	Labels []string `json:"labels,omitempty"`
+	// Assignees and HumanAcknowledged are populated for Type=="issue" holds
+	// so the repo card bands a held issue the same way it bands an
+	// actionable one: assigned ⇒ claimed, and an agent-filed issue a human
+	// has acknowledged (#5117: approved-direction or a human assignee) is
+	// not a triage item (#9019). Both come from the list response — no
+	// extra API call — and are omitted when unset.
+	Assignees         []string `json:"assignees,omitempty"`
+	HumanAcknowledged bool     `json:"human_acknowledged,omitempty"`
 }
 
 type IssueCluster struct {
@@ -1029,13 +1037,15 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 		if c.isHeld(labels) {
 			breakdown.Hold++
 			held = append(held, HoldItem{
-				Number:    issue.GetNumber(),
-				Repo:      repo,
-				Title:     issue.GetTitle(),
-				Type:      "issue",
-				CreatedAt: issue.GetCreatedAt().Time,
-				URL:       issue.GetHTMLURL(),
-				Labels:    labels,
+				Number:            issue.GetNumber(),
+				Repo:              repo,
+				Title:             issue.GetTitle(),
+				Type:              "issue",
+				CreatedAt:         issue.GetCreatedAt().Time,
+				URL:               issue.GetHTMLURL(),
+				Labels:            labels,
+				Assignees:         extractAssignees(issue.Assignees),
+				HumanAcknowledged: c.issueHasCheapHumanAcknowledgement(issue),
 			})
 			continue
 		}
