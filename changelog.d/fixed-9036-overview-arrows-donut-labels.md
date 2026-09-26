@@ -1,0 +1,1 @@
+- dashboard: Overview ◀ ▶ arrows now step through every chart type out of the box (auto-play still rotates only the ticked ones, and the dots show which types are ticked); donut edge labels stay inside the SVG and grow away from the ring instead of crowding the legend or clipping at the card edge (#9036)
