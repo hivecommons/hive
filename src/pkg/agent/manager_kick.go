@@ -789,12 +789,23 @@ func stripExplainLines(pane string) string {
 // call shows "⏺ Running… (esc to cancel)" and plain generation shows a
 // spinner glyph plus "Working…", so an in-flight OMP turn read as idle
 // without these two additions.
+//
+// Copilot CLI 1.0.88 collapses its footer to "◉ Working - autopilot esc
+// interrupt" mid-turn (no "to", no ellipsis), so that shape is matched too.
 func paneShowsActiveWork(pane string) bool {
 	return strings.Contains(pane, cliWorkingMarker) ||
 		strings.Contains(pane, cliActiveCounterMarker) ||
 		strings.Contains(pane, "Working…") ||
-		strings.Contains(pane, "Running…")
+		strings.Contains(pane, "Running…") ||
+		strings.Contains(pane, copilotWorkingMarker) ||
+		strings.Contains(pane, copilotInterruptHint)
 }
+
+// Copilot CLI 1.0.88 mid-turn footer chrome.
+const (
+	copilotWorkingMarker = "◉ Working"
+	copilotInterruptHint = "esc interrupt"
+)
 
 // paneShowsEmptyInputPrompt reports whether the CLI is sitting at an idle,
 // empty input prompt.

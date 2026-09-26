@@ -228,6 +228,15 @@ planning:
 # and shown in the dashboard governor-config view. Empty/absent keeps the
 # built-in defaults, so behavior is unchanged when unset.
 classifier:
+  backend: keywords # keywords (default) | jev
+  jev:
+    provider: openrouter
+    model: typesafe/jev-1.13
+    endpoint: ""          # optional; defaults to OpenRouter /systemone
+    api_key_env: JEV_API_KEY # falls back to the configured openrouter gateway key
+    min_confidence: 0.8
+    timeout: 2s
+    decisions: [lane, tier, triage]
   simple_keywords: [typo, i18n, rename, const, label, badge, tooltip, placeholder, aria, "alt text"]
   complex_signals: ["race condition", deadlock, "memory leak", performance, "api change"]
 
@@ -239,6 +248,33 @@ governor:
     stall_threshold_s: 21600 # no child progress for 6h → stalled
     max_replans: 5          # cap before escalating to a human
 ```
+
+### Optional Jev typed-decision backend
+
+Set `classifier.backend: jev` to ask TypeSafe AI's Jev model one batched
+typed-decision question per issue for lane, tier, and run triage. Jev never
+changes routing: keyword/label rules remain authoritative while Jev records
+agree/disagree/fallback counters at `GET /api/classifier/stats`, keeps a bounded
+set of recent disagreement examples, and proposes deterministic keyword edits
+that operators can approve. Errors, missing keys, timeouts, disabled decisions,
+and low-confidence answers count as fallback. With `provider: openrouter`, Hive
+uses the configured `api_key_env` first and otherwise falls back to the connected
+`openrouter` model-gateway key.
+
+The same rollout controls are discoverable in the spoke dashboard under
+**Settings → Smart classifier**. The panel explains the lane/tier/triage
+decisions and expected Jev cost (about `$0.00002` per issue, input tokens only),
+checks whether OpenRouter is connected or `JEV_API_KEY` is present without ever
+displaying a key, links to the existing OpenRouter connect flow, and saves
+`classifier.backend`, `classifier.jev.min_confidence`, and
+`classifier.jev.decisions` through the owner-gated config-save path. It also
+shows live agree/disagree/fallback counters, recent disagreement examples,
+suggested deterministic rule updates with **Apply** buttons, and estimated spend
+from `GET /api/classifier/stats`.
+
+For the full operator guide — concept, prerequisites, every config key/default,
+cost, rollout, observability, and troubleshooting — see
+[Jev smart classifier](jev-smart-classifier.md).
 
 ## Safety properties
 
@@ -261,5 +297,14 @@ Spektacular” and link back to the run.
 The Spec checkpoint is Gate 1. Approving design from the dashboard or run
 checkpoint applies the configured approval signal and advances the run to Plan;
 approving inside a Spek/Jam surface mirrors the same `design-approved` signal
-back to the work item. When Spek is disabled, v6 falls back to the legacy flow
-described above; v5 is unchanged.
+back to the work item. The bridge keys runs by the source-neutral work item ref,
+so Jira and Linear items with string ids are admitted as `<repo>!<external-id>`
+instead of being rejected as non-GitHub issues. Final Spec artifacts are posted
+back through the work-source comment adapter and marked with their receipt digest
+so runner retries do not duplicate comments.
+
+`planning.design_requested_status` and `planning.design_approved_status` may be
+set to source-native workflow states. Jira and Linear adapters only attempt a
+status transition when their work-source `transitions` map is configured; labels
+remain the default signal. When Spek is disabled, v6 falls back to the legacy
+flow described above; v5 is unchanged.

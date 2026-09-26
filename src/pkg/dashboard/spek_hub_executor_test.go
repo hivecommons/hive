@@ -99,7 +99,7 @@ func TestSpekHubExecutorPrepareWorkspaceCreatesCloneAndWorktree(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(agentWorkspaceRoot, e.Identity, filepath.FromSlash(spekRepo), ".git")); err != nil {
 		t.Fatalf("shared clone missing: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(runStageWorktreePath(e.Identity, st.runKey, st.stage, st.gen), ".spektacular")); err != nil {
+	if _, err := os.Stat(filepath.Join(spekHubRunWorktreePath(e.Identity, st.runKey), ".spektacular")); err != nil {
 		t.Fatalf("worktree/project missing: %v", err)
 	}
 }
@@ -110,6 +110,134 @@ func TestSpekHubStagePromptSpecContainsRequiredInstructions(t *testing.T) {
 		if !strings.Contains(p, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, p)
 		}
+	}
+}
+
+func TestSpekHubStagePromptOmitsEmptyTitleQuotes(t *testing.T) {
+	p := SpekHubStagePrompt(StageSpec, "kubestellar/console", 23725, "kubestellar/console#23725", "", "kubestellar-console-23725")
+	if strings.Contains(p, `#23725 ""`) {
+		t.Fatalf("prompt retained empty title quotes:\n%s", p)
+	}
+}
+
+func TestSpekHubExecutorTickRestartsOwnStalledLeaseAndReportsRunning(t *testing.T) {
+	hub, s, _, _ := spekHub(t)
+	now := time.Now()
+	runKey := "myorg/repo1#57"
+	taskID := spekHubExecutorTaskPrefix + sanitizeReceiptSegment(runKey) + "-spec-2"
+	key := spekRepo + "!" + runKey + ":" + StageSpec
+	hub.leaseMu.Lock()
+	hub.leases[leaseKey(config.DefaultSpektacularHubExecutorIdentity, taskID)] = &taskLease{identity: config.DefaultSpektacularHubExecutorIdentity, taskID: taskID, repo: spekRepo, number: 57, key: key, title: "Do thing", stage: StageSpec, gen: 2, expiresAt: now.Add(leaseTTL)}
+	if err := hub.saveLeasesLocked(); err != nil {
+		t.Fatal(err)
+	}
+	hub.leaseMu.Unlock()
+	worktree := spekHubRunWorktreePath(config.DefaultSpektacularHubExecutorIdentity, runKey)
+	if err := os.MkdirAll(filepath.Join(worktree, ".spektacular"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(agentWorkspaceRoot, config.DefaultSpektacularHubExecutorIdentity, filepath.FromSlash(spekRepo), ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	launched := make(chan struct{})
+	release := make(chan struct{})
+	e := NewSpekHubExecutor(s, config.RunsConfig{MaxStageRetries: 2, Spektacular: config.SpektacularConfig{Enabled: true, HubExecutor: config.SpektacularHubExecutorConfig{MaxConcurrent: 1}}}, "copilot", "", nil, nil)
+	e.Exec = func(_ context.Context, _ string, _ []string, name string, args ...string) ([]byte, error) {
+		if name == "git" || name == "spektacular" {
+			if name == "spektacular" && len(args) >= 3 && args[1] == "status" {
+				return []byte(`{"error":false,"kind":"spec","name":"kubestellar-console-57","document_status":"final"}`), nil
+			}
+			return []byte("ok"), nil
+		}
+		close(launched)
+		<-release
+		return []byte("agent done"), nil
+	}
+	e.Tick(context.Background(), now)
+	<-launched
+	if got := e.Status().Running; got != 1 {
+		t.Fatalf("running = %d, want 1", got)
+	}
+	close(release)
+}
+
+func TestResolveRunStageWorkDirUsesSingleHubWorktreeAcrossRetryGenerations(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	runKey := "myorg/repo1#57"
+	worktree := spekHubRunWorktreePath(config.DefaultSpektacularHubExecutorIdentity, runKey)
+	if err := os.MkdirAll(filepath.Join(worktree, ".spektacular", "specs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ResolveRunStageWorkDir(runKey, StageSpec, config.DefaultSpektacularHubExecutorIdentity, spekRepo, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != worktree {
+		t.Fatalf("workdir = %q, want %q", got, worktree)
+	}
+}
+
+func TestSpekHubExecutorCopiesPreviousArtifactsIntoSingleWorktree(t *testing.T) {
+	_, _, _, _ = spekHub(t)
+	runKey := "myorg/repo1#57"
+	oldSpec := filepath.Join(runStageWorktreePath(config.DefaultSpektacularHubExecutorIdentity, runKey, StageSpec, 1), ".spektacular", "specs")
+	if err := os.MkdirAll(oldSpec, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldSpec, "20260925163042-myorg-repo1-57.md"), []byte("spec"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	worktree := spekHubRunWorktreePath(config.DefaultSpektacularHubExecutorIdentity, runKey)
+	copied, err := copyPreviousSpektacularProject(config.DefaultSpektacularHubExecutorIdentity, runKey, worktree)
+	if err != nil || !copied {
+		t.Fatalf("copyPreviousSpektacularProject copied=%v err=%v", copied, err)
+	}
+	if _, err := os.Stat(filepath.Join(worktree, ".spektacular", "specs", "20260925163042-myorg-repo1-57.md")); err != nil {
+		t.Fatalf("artifact not copied: %v", err)
+	}
+}
+
+func TestSpekHubExecutorCLIExitNonFinalRecordsBlockedTimeline(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	st := spekHubStage{runKey: "myorg/repo1#57", stage: StageSpec, taskID: "task", gen: 1}
+	e.recordNonFinal(st, st.taskID, spekHubArtifactStatus{Name: "20260925163042-myorg-repo1-57", DocumentStatus: "draft"})
+	found := false
+	for _, ev := range s.LifecycleTimeline().ByIssue(st.runKey) {
+		if ev.Kind == timeline.KindBlocked && ev.Attrs[stageAttrReason] == spekHubNonFinalReason && ev.Attrs[stageAttrDocumentStatus] == "draft" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("non-final exit did not record blocked timeline event")
+	}
+	if got := e.failures[e.executionKey(st)]; got != e.maxAttempts() {
+		t.Fatalf("non-final exit failure budget = %d, want %d", got, e.maxAttempts())
+	}
+}
+
+func TestSpekHubExecutorRecordsProgressTimeline(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	st := spekHubStage{runKey: "myorg/repo1#57", stage: StageSpec, taskID: "task", gen: 2}
+	e.recordStageProgress(st, "cli_launched", map[string]string{
+		"backend": "copilot",
+		"pid":     "1234",
+	})
+	found := false
+	for _, ev := range s.LifecycleTimeline().ByIssue(st.runKey) {
+		if ev.Kind == timeline.KindProgress && ev.Attrs["event"] == "cli_launched" && ev.Attrs["pid"] == "1234" && ev.Attrs[stageAttrGen] == "2" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("executor progress event not recorded")
+	}
+}
+
+func TestSpekInitAgentMapsCopilotToSupportedInitAgent(t *testing.T) {
+	if got := spekInitAgent("copilot"); got != "codex" {
+		t.Fatalf("spekInitAgent(copilot) = %q, want codex", got)
 	}
 }
 
@@ -173,6 +301,65 @@ func TestSpekHubExecutorSweepRemovesStaleWorktree(t *testing.T) {
 	}
 }
 
+func TestSpekHubExecutorSweepKeepsRunWorktreeWhileUnclaimedLeaseExists(t *testing.T) {
+	hub, s, _, _ := spekHub(t)
+	now := time.Now()
+	runKey := "myorg/repo1#57"
+	key := spekRepo + "!" + runKey + ":" + StagePlan
+	// A retry generation minted after expiry: active, but nobody owns it yet.
+	hub.leaseMu.Lock()
+	hub.leases[leaseKey(runAdmissionIdentity, "run-admit-x")] = &taskLease{identity: runAdmissionIdentity, taskID: "run-admit-x", repo: spekRepo, number: 57, key: key, stage: StagePlan, gen: 3, expiresAt: now.Add(leaseTTL)}
+	hub.leaseMu.Unlock()
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	work := spekHubRunWorktreePath(e.Identity, runKey)
+	artifact := filepath.Join(work, ".spektacular", "plans", "p", "plan.md")
+	if err := os.MkdirAll(filepath.Dir(artifact), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifact, []byte("plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.sweepStaleWorktrees(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(artifact); err != nil {
+		t.Fatalf("run worktree with artifacts was swept while its lease was active but unclaimed: %v", err)
+	}
+}
+
+func TestSpekHubExecutorPrepareWorkspaceRecoversSweptButRegisteredWorktree(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	remote := makeBareRepo(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	e.CloneURL = func(string) string { return remote }
+	e.Exec = func(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+		if name == "git" {
+			cmd := exec.CommandContext(ctx, name, args...)
+			cmd.Dir = dir
+			cmd.Env = env
+			return cmd.CombinedOutput()
+		}
+		if name == "spektacular" {
+			return nil, os.MkdirAll(filepath.Join(dir, ".spektacular"), 0o755)
+		}
+		return []byte("ok"), nil
+	}
+	st := spekHubStage{runKey: "myorg/repo1#57", stage: StagePlan, repo: spekRepo, gen: 3}
+	if _, err := e.prepareWorkspace(context.Background(), st); err != nil {
+		t.Fatalf("first prepareWorkspace: %v", err)
+	}
+	// Simulate the sweep deleting the directory without telling git.
+	if err := os.RemoveAll(spekHubRunWorktreePath(e.Identity, st.runKey)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.prepareWorkspace(context.Background(), st); err != nil {
+		t.Fatalf("prepareWorkspace after sweep: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(spekHubRunWorktreePath(e.Identity, st.runKey), ".git")); err != nil {
+		t.Fatalf("worktree not recreated: %v", err)
+	}
+}
+
 func makeBareRepo(t *testing.T) string {
 	t.Helper()
 	work := t.TempDir()
@@ -195,4 +382,96 @@ func makeBareRepo(t *testing.T) string {
 	bare := filepath.Join(t.TempDir(), "remote.git")
 	run(work, "clone", "--bare", work, bare)
 	return bare
+}
+
+func TestSpekGitEnvMarksWorkspaceSafeAndReplacesExistingOverride(t *testing.T) {
+	env := spekGitEnv([]string{"PATH=/bin", "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=core.foo", "GIT_CONFIG_VALUE_0=bar"})
+	joined := strings.Join(env, "\n")
+	for _, want := range []string{"PATH=/bin", "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=safe.directory", "GIT_CONFIG_VALUE_0=*"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("env missing %q:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "core.foo") || strings.Count(joined, "GIT_CONFIG_COUNT=") != 1 {
+		t.Fatalf("stale GIT_CONFIG override retained:\n%s", joined)
+	}
+}
+
+func TestSpekHubExecutorRunStageSkipsSnapshotWhoseLeaseAdvanced(t *testing.T) {
+	hub, s, _, _ := spekHub(t)
+	now := time.Now()
+	runKey := "myorg/repo1#57"
+	// Lease has already moved on to plan gen 4 …
+	hub.leaseMu.Lock()
+	hub.leases[leaseKey(runAdmissionIdentity, "run-admit-x")] = &taskLease{identity: runAdmissionIdentity, taskID: "run-admit-x", repo: spekRepo, number: 57, key: spekRepo + "!" + runKey + ":" + StagePlan, stage: StagePlan, gen: 4, expiresAt: now.Add(leaseTTL)}
+	hub.leaseMu.Unlock()
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	launched := false
+	e.Exec = func(context.Context, string, []string, string, ...string) ([]byte, error) {
+		launched = true
+		return []byte("ok"), nil
+	}
+	// … but Tick's snapshot still says spec gen 4.
+	stale := spekHubStage{runKey: runKey, key: spekRepo + "!" + runKey + ":" + StageSpec, stage: StageSpec, identity: runAdmissionIdentity, taskID: "run-admit-x", repo: spekRepo, number: 57, gen: 4}
+	e.runStage(context.Background(), stale, e.executionKey(stale))
+	if launched {
+		t.Fatal("executor relaunched a stage the lease had already advanced past")
+	}
+	if e.Status().LastError != "" {
+		t.Fatalf("unexpected failure recorded: %s", e.Status().LastError)
+	}
+	current := spekHubStage{runKey: runKey, stage: StagePlan, gen: 4}
+	if !e.stageStillActive(current) {
+		t.Fatal("current stage reported inactive")
+	}
+}
+
+func TestSpekHubExecutorDoesNotRelaunchWhenDocumentAlreadyFinal(t *testing.T) {
+	hub, s, _, _ := spekHub(t)
+	now := time.Now()
+	runKey := "myorg/repo1#57"
+	taskID := spekHubExecutorTaskPrefix + sanitizeReceiptSegment(runKey) + "-spec-1"
+	hub.leaseMu.Lock()
+	hub.leases[leaseKey(config.DefaultSpektacularHubExecutorIdentity, taskID)] = &taskLease{identity: config.DefaultSpektacularHubExecutorIdentity, taskID: taskID, repo: spekRepo, number: 57, key: spekRepo + "!" + runKey + ":" + StageSpec, stage: StagePlan, gen: 5, expiresAt: now.Add(leaseTTL)}
+	hub.leaseMu.Unlock()
+	e := NewSpekHubExecutor(s, config.RunsConfig{MaxStageRetries: 2, Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	worktree := spekHubRunWorktreePath(e.Identity, runKey)
+	planDir := filepath.Join(worktree, ".spektacular", "plans", "20260925212730-"+sanitizeRunPromptPath(runKey))
+	if err := os.MkdirAll(planDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(planDir, "plan.md"), []byte("# plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(agentWorkspaceRoot, e.Identity, filepath.FromSlash(spekRepo), ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agentLaunched := false
+	e.Exec = func(_ context.Context, _ string, _ []string, name string, args ...string) ([]byte, error) {
+		switch name {
+		case "git":
+			return []byte("ok"), nil
+		case "spektacular":
+			if len(args) >= 3 && args[1] == "status" {
+				return []byte(`{"error":false,"kind":"plan","name":"myorg-repo1-57","artifact_id":"` + args[2] + `","document_status":"final"}`), nil
+			}
+			return []byte("ok"), nil
+		}
+		agentLaunched = true
+		return []byte("agent done"), nil
+	}
+	stages, err := e.unclaimedStages()
+	if err != nil || len(stages) != 1 {
+		t.Fatalf("unclaimed stages = %d, %v", len(stages), err)
+	}
+	if err := e.executeStage(context.Background(), stages[0]); err != nil {
+		t.Fatalf("executeStage: %v", err)
+	}
+	if agentLaunched {
+		t.Fatal("agent CLI relaunched although the plan document is already final")
+	}
+	e.Tick(context.Background(), now)
+	if e.Status().Running != 0 {
+		t.Fatal("Tick relaunched a held generation")
+	}
 }

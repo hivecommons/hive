@@ -28,7 +28,7 @@ styles are already neutral.
 
 Most Hive code can depend on the work-item model instead of GitHub-specific API
 types, which makes GitLab and Forgejo support additive rather than a fork of the
-scheduler. The canonical `hive-pause/<hive-id>` hold label gives the system one cross-forge merge gate primitive; `hive/<hive-id>` is provenance only.
+scheduler. The canonical `hive-pause/<hive-id>` label gives the dashboard one exact-match manual hold primitive; level-gated GitHub PRs use literal `hold`, and `hive/<hive-id>` is provenance only.
 The trade-off is an intentionally incomplete abstraction: callers that need a
 real merge still use a forge-specific client until Hive has enough semantics to
 standardize that operation honestly.

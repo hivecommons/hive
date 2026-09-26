@@ -41,7 +41,9 @@ const (
 	stageAttrGen             = "gen"
 	stageAttrReceipt         = "receipt"
 	stageAttrArtifact        = "artifact"
+	stageAttrArtifactBody    = "artifact_body"
 	stageAttrDocumentStatus  = "document_status"
+	stageAttrCurrentStep     = "current_step"
 	stageAttrReason          = "reason"
 	stageAttrSeverity        = "severity"
 	stageAttrAttempts        = "attempts"
@@ -238,21 +240,34 @@ func (s *Server) AdmitRun(repo string, number int, title string, now time.Time) 
 
 // AdmitTriagedRun is AdmitRun plus the triage decision recorded on the lease.
 func (s *Server) AdmitTriagedRun(repo string, number int, title, verdict, rationale string, now time.Time) error {
+	return s.AdmitTriagedRunRef(worksource.Ref{Repo: repo, Number: number}, title, verdict, rationale, now)
+}
+
+// AdmitRunRef creates the first spec-stage lease for a source-aware work item.
+func (s *Server) AdmitRunRef(ref worksource.Ref, title string, now time.Time) error {
+	return s.AdmitTriagedRunRef(ref, title, "", "", now)
+}
+
+// AdmitTriagedRunRef is AdmitTriagedRun over a canonical worksource ref. It
+// accepts string-keyed sources such as Jira and Linear in addition to GitHub
+// issue numbers.
+func (s *Server) AdmitTriagedRunRef(ref worksource.Ref, title, verdict, rationale string, now time.Time) error {
 	if s == nil || s.contributeHub == nil {
 		return errors.New("run lease registry unavailable")
 	}
 	if s.deps == nil || s.deps.Config == nil || !s.deps.Config.Runs.Spektacular.Enabled {
 		return errors.New("runs.spektacular.enabled is required to admit run")
 	}
-	repo = strings.TrimSpace(repo)
-	if repo == "" || number <= 0 {
-		return errors.New("repo and issue number are required")
+	ref.Repo = strings.TrimSpace(ref.Repo)
+	ref.ExternalID = strings.TrimSpace(ref.ExternalID)
+	if ref.Repo == "" || (ref.Number <= 0 && ref.ExternalID == "") {
+		return errors.New("repo and issue number or external id are required")
 	}
 	if now.IsZero() {
 		now = time.Now()
 	}
-	runKey := worksource.Ref{Repo: repo, Number: number}.Key()
-	leaseKeyForRun := repo + "!" + runKey + ":" + StageSpec
+	runKey := ref.Key()
+	leaseKeyForRun := ref.Repo + "!" + runKey + ":" + StageSpec
 	taskID := runAdmissionTaskPrefix + sanitizeReceiptSegment(runKey)
 	h := s.contributeHub
 	h.leaseMu.Lock()
@@ -268,8 +283,8 @@ func (s *Server) AdmitTriagedRun(repo string, number int, title, verdict, ration
 	h.leases[leaseKey(runAdmissionIdentity, taskID)] = &taskLease{
 		identity:        runAdmissionIdentity,
 		taskID:          taskID,
-		repo:            repo,
-		number:          number,
+		repo:            ref.Repo,
+		number:          ref.Number,
 		key:             leaseKeyForRun,
 		title:           title,
 		tier:            "triage",
@@ -316,7 +331,7 @@ func (s *Server) ResolveRunStageWorkDir(runKey, stage, identity, repo string, ge
 	if s == nil {
 		return "", errors.New("run lease registry unavailable")
 	}
-	candidates := []string{runStageWorktreePath(identity, runKey, stage, gen)}
+	candidates := []string{spekHubRunWorktreePath(identity, runKey), runStageWorktreePath(identity, runKey, stage, gen)}
 	if strings.TrimSpace(identity) != "" && strings.TrimSpace(repo) != "" {
 		candidates = append(candidates, filepath.Join(agentWorkspaceRoot, identity, filepath.FromSlash(strings.TrimSpace(repo))))
 	}
@@ -382,6 +397,9 @@ func (s *Server) AdvanceStageLease(identity, taskID, to string, now time.Time, r
 	}
 	eventAttrs := make(map[string]string, len(attrs)+5)
 	for k, v := range attrs {
+		if k == stageAttrArtifactBody {
+			continue
+		}
 		eventAttrs[k] = v
 	}
 	if l.triageVerdict != "" {
@@ -389,6 +407,20 @@ func (s *Server) AdvanceStageLease(identity, taskID, to string, now time.Time, r
 	}
 	if l.triageRationale != "" {
 		eventAttrs[stageAttrTriageRationale] = l.triageRationale
+	}
+	if stage == StageSpec {
+		if store, epic := s.findRunEpic(runKey); epic != nil {
+			if epic.Meta(planning.MetaDesignVia) == planning.DesignViaSpektacular {
+				body := attrs[stageAttrArtifactBody]
+				digest := attrs[stageAttrReceipt]
+				if strings.TrimSpace(body) != "" {
+					digest = designArtifactDigest(body)
+				}
+				if err := s.postDesignArtifact(context.Background(), store, epic, digest, body); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	eventAttrs[stageAttrStage] = stage
 	eventAttrs[stageAttrGen] = strconv.FormatUint(gen, 10)
@@ -449,17 +481,19 @@ func (s *Server) RefuseStageLease(taskID string, attrs map[string]string) {
 		fields = append(fields, k, v)
 	}
 	s.AgentAuditSink().Record("system", agent.AuditLeaseStageRefused, taskID, agent.Fields(fields...))
+	eventAttrs := make(map[string]string, len(attrs)+1)
+	for k, v := range attrs {
+		eventAttrs[k] = v
+	}
 	if attrs[stageAttrReason] == planning.WaitingReasonStalePlan {
-		eventAttrs := make(map[string]string, len(attrs)+1)
-		for k, v := range attrs {
-			eventAttrs[k] = v
-		}
 		eventAttrs[planning.MetaRunWaitingOn] = worksource.RunWaitingOnHuman
 		runKey := attrs[stageAttrRunKey]
 		if store, epic := s.findRunEpic(runKey); store != nil && epic != nil {
 			_ = store.SetMetadata(epic.ID, planning.MetaRunWaitingOn, worksource.RunWaitingOnHuman)
 			_ = store.SetMetadata(epic.ID, planning.MetaRunWaitingReason, planning.WaitingReasonStalePlan)
 		}
+	}
+	if runKey := attrs[stageAttrRunKey]; runKey != "" {
 		s.LifecycleTimeline().Record(timeline.Event{
 			IssueRef: runKey,
 			Kind:     timeline.KindBlocked,
@@ -469,6 +503,35 @@ func (s *Server) RefuseStageLease(taskID string, attrs map[string]string) {
 	}
 	s.logger.Warn("[spektacular] refusing to advance stage", "task", taskID,
 		"run", attrs[stageAttrRunKey], "stage", attrs[stageAttrStage], "gen", attrs[stageAttrGen], "reason", attrs[stageAttrReason])
+}
+
+func (s *Server) RecordStageProgress(runKey, taskID string, attrs map[string]string, at time.Time) {
+	if s == nil {
+		return
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	eventAttrs := make(map[string]string, len(attrs)+1)
+	for k, v := range attrs {
+		if v != "" {
+			eventAttrs[k] = v
+		}
+	}
+	if eventAttrs[stageAttrRunKey] == "" && strings.TrimSpace(runKey) != "" {
+		eventAttrs[stageAttrRunKey] = strings.TrimSpace(runKey)
+	}
+	s.LifecycleTimeline().Record(timeline.Event{
+		IssueRef: strings.TrimSpace(runKey),
+		Kind:     timeline.KindProgress,
+		Agent:    eventAttrs["identity"],
+		At:       at.UnixMilli(),
+		Attrs:    eventAttrs,
+	})
+	s.logger.Info("[spektacular] stage progress", "run", runKey, "task", taskID,
+		"stage", eventAttrs[stageAttrStage], "gen", eventAttrs[stageAttrGen],
+		"event", eventAttrs["event"], "artifact", eventAttrs[stageAttrArtifact],
+		"document_status", eventAttrs[stageAttrDocumentStatus])
 }
 
 // EscalateStageLease turns the runner's decision event into an audit entry

@@ -88,6 +88,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/runs", s.handleRunsList)
 	s.mux.HandleFunc("GET /api/runs/audit", s.handleRunAuditIndex)
 	s.mux.HandleFunc("POST /api/runs/audit", s.handleRunAudit)
+	s.mux.HandleFunc("GET /api/runs/{key}/log", s.handleRunLog)
 	s.mux.HandleFunc("GET /api/runs/{key}/trace", s.handleRunTrace)
 	s.mux.HandleFunc("GET /api/runs/{key}/checkpoint", s.handleRunCheckpointGet)
 	s.mux.HandleFunc("POST /api/runs/{key}/checkpoint", s.handleRunCheckpointDecision)
@@ -223,6 +224,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/governor/attribution", s.handleGovernorAttribution)
 	s.mux.HandleFunc("PUT /api/config/governor/hub", s.handleGovernorHub)
 	s.mux.HandleFunc("PUT /api/config/governor/litellm", s.handleGovernorLiteLLM)
+	s.mux.HandleFunc("PUT /api/config/governor/classifier", s.handleGovernorClassifier)
 	s.mux.HandleFunc("PUT /api/config/governor/trajectory", s.handleGovernorTrajectory)
 	s.mux.HandleFunc("PUT /api/config/governor/features", s.handleGovernorFeatures)
 	s.mux.HandleFunc("GET /api/config/governor/general-advanced", s.handleGovernorGeneralAdvancedGet)
@@ -6583,12 +6585,29 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.deps == nil || s.deps.DashboardChatSubmit == nil {
+		if !strings.HasPrefix(strings.TrimSpace(safeQuery), "!") {
+			jsonResponse(w, map[string]interface{}{
+				"answer": chatUnhandledIntentAnswer(safeQuery),
+				"status": "fallback",
+			})
+			return
+		}
 		jsonError(w, "dashboard chat is not configured", http.StatusServiceUnavailable)
 		return
 	}
 	seq, err := s.deps.DashboardChatSubmit(requestUser(r), safeQuery)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	if !strings.HasPrefix(strings.TrimSpace(safeQuery), "!") {
+		answer := "I sent that to the dashboard chat bot. If no follow-up appears, try `/help` or a narrower command such as `/agents`, `/beads`, `/prs`, `/governor`, or `/spek`."
+		jsonResponse(w, map[string]interface{}{
+			"answer": answer,
+			"seq":    seq,
+			"status": "queued",
+		})
+		s.auditFromRequest(r, "chat.dashboard.message", auditDetail("seq", strconv.FormatUint(seq, 10)), "")
 		return
 	}
 
@@ -6666,6 +6685,10 @@ func (s *Server) chatLocalIntentAnswer(query string) (string, bool) {
 	}
 	tokens := chatIntentTokens(query)
 	switch {
+	case tokens["spek"] || tokens["spectacular"] || tokens["spec"]:
+		return s.chatSpekAnswer(), true
+	case tokens["governor"] || tokens["kick"] || tokens["kicks"] || tokens["failure"] || tokens["failures"]:
+		return s.chatGovernorAnswer(), true
 	case tokens["help"]:
 		return "Try `beads` for bead counts, `agents` for agent status, `prs` for open pull requests, or `status` for a hive summary. Commands beginning with `!` or `/` still use their command handlers.", true
 	case tokens["bead"] || tokens["beads"]:
@@ -6679,6 +6702,14 @@ func (s *Server) chatLocalIntentAnswer(query string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func chatUnhandledIntentAnswer(query string) string {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		query = "that request"
+	}
+	return fmt.Sprintf("I don't know how to handle `%s` yet. Try `/help`, `/agents`, `/beads`, `/prs`, `/governor`, `/spek`, or `!help`.", query)
 }
 
 func (s *Server) chatStatusSnapshot() *StatusPayload {
@@ -6795,6 +6826,27 @@ func (s *Server) chatStatusAnswer() string {
 		}
 	}
 	return fmt.Sprintf("Hive status: %s. Agents: %d total, %d paused. Beads: %d worker, %d supervisor. Open PRs: %d.", health, len(status.Agents), paused, status.Beads.Workers, status.Beads.Supervisor, openPRs)
+}
+
+func (s *Server) chatGovernorAnswer() string {
+	status := s.chatStatusSnapshot()
+	if status == nil {
+		return "Governor status is still initializing; no recent kick failure details are available yet."
+	}
+	health := "unknown"
+	if state, ok := status.DeepHealth["status"].(string); ok && strings.TrimSpace(state) != "" {
+		health = strings.TrimSpace(state)
+	} else if ready, ok := status.DeepHealth["ready"].(bool); ok && ready {
+		health = "ready"
+	}
+	return fmt.Sprintf("Governor/kick status: hive health is %s. For detailed kick history, check the Governor and activity panels.", health)
+}
+
+func (s *Server) chatSpekAnswer() string {
+	if status := s.SpektacularStatus(); status != nil && status.Present {
+		return "Spektacular status is available in the Inception/Spektacular dashboard panels. I can answer general Spektacular questions here, but detailed spec-run listings should be read from the run/campaign tables."
+	}
+	return "Spektacular/spec-run data is not available yet on this dashboard. Try the Inception/Spektacular panels or `!runs` if the chat bot is connected."
 }
 
 func (s *Server) handleNousStatus(w http.ResponseWriter, r *http.Request) {

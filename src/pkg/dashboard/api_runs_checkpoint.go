@@ -107,7 +107,7 @@ func (s *Server) handleRunCheckpointDecision(w http.ResponseWriter, r *http.Requ
 				jsonError(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			if err := s.applyDesignLabel(r.Context(), issueFromEpic(epic), s.designConfig().ApprovedLabelOrDefault()); err != nil {
+			if err := s.applyDesignSignal(r.Context(), issueFromEpic(epic), s.designConfig().ApprovedLabelOrDefault(), s.designApprovedStatus()); err != nil {
 				jsonError(w, err.Error(), http.StatusBadGateway)
 				return
 			}

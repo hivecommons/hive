@@ -14,6 +14,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/celtrigger"
+	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/mention"
@@ -239,7 +240,7 @@ func (h *ContributeWSHub) recordLeaseForKeyStage(identity, taskID, repo string, 
 	removedAdmissions := map[string]*taskLease{}
 	if stage != "" {
 		for admissionKey, l := range h.leases {
-			if l != nil && l.identity == runAdmissionIdentity && l.key == key && l.stage == stage {
+			if l != nil && l.identity != identity && l.key == key && l.stage == stage && h.isStagePlaceholderIdentity(l.identity) {
 				triageVerdict, triageRationale = l.triageVerdict, l.triageRationale
 				copyLease := *l
 				removedAdmissions[admissionKey] = &copyLease
@@ -1049,8 +1050,15 @@ func (h *ContributeWSHub) loadLeases() {
 		if rec.Identity == "" || rec.TaskID == "" || rec.Gen == 0 {
 			continue
 		}
-		if rec.ExpiresAt.IsZero() || now.After(rec.ExpiresAt) {
-			continue
+		expiresAt := rec.ExpiresAt
+		if expiresAt.IsZero() || now.After(expiresAt) {
+			// A pending stage lease outlived by a long outage is the run's only
+			// record; re-arm it rather than lose the run (see
+			// keepPendingStageLeasesAlive). Relay leases still drop.
+			if rec.Stage == "" || !h.isPendingStageIdentity(rec.Identity) {
+				continue
+			}
+			expiresAt = now.Add(leaseTTL)
 		}
 		key := rec.Key
 		if key == "" {
@@ -1072,7 +1080,7 @@ func (h *ContributeWSHub) loadLeases() {
 			triageVerdict:   rec.TriageVerdict,
 			triageRationale: rec.TriageRationale,
 			restored:        true,
-			expiresAt:       rec.ExpiresAt,
+			expiresAt:       expiresAt,
 			mcpTokenID:      rec.MCPTokenID,
 			mcpTokenHash:    rec.MCPTokenHash,
 			mcpTokenStage:   rec.MCPTokenStage,
@@ -1109,6 +1117,81 @@ func (h *ContributeWSHub) loadLeases() {
 	}
 }
 
+// pendingStageLeaseRenewBefore is how much of a pending stage lease's window
+// may remain before keepPendingStageLeasesAlive extends it. Extending only
+// when the window is half spent keeps the ledger file from being rewritten on
+// every cleanup tick while still leaving ample margin over the tick cadence.
+const pendingStageLeaseRenewBefore = leaseTTL / 2
+
+// isPendingStageIdentity reports whether identity is one of the server-side
+// holders of a run stage that is waiting for an executor or relay to pick it
+// up: the admission (triage) identity, the wave fan-out identity, and the
+// hub executor. A relay's own lease never qualifies — those must age out so
+// the stage returns to the offer pool when the relay vanishes.
+func (h *ContributeWSHub) isPendingStageIdentity(identity string) bool {
+	if identity == "" {
+		return false
+	}
+	if identity == runAdmissionIdentity || identity == runFanoutIdentity {
+		return true
+	}
+	if h != nil && h.server != nil && h.server.deps != nil && h.server.deps.Config != nil {
+		return identity == h.server.deps.Config.Runs.Spektacular.HubExecutor.IdentityOrDefault()
+	}
+	return identity == config.DefaultSpektacularHubExecutorIdentity
+}
+
+// isStagePlaceholderIdentity reports whether identity holds a run stage only
+// as a PLACEHOLDER awaiting a taker — the admission (triage) identity, or the
+// hub executor once it has advanced a run to a stage it does not itself run
+// (implement). When a relay adopts the stage, the placeholder is what it
+// replaces; leaving it behind showed the run twice in /api/runs and, since
+// keepPendingStageLeasesAlive never lets a placeholder age out, forever. The
+// fan-out identity is deliberately excluded: its leases share key+stage
+// across waves and are distinguished by gen, so one relay adopting one wave
+// must not clear the others.
+func (h *ContributeWSHub) isStagePlaceholderIdentity(identity string) bool {
+	return identity != "" && identity != runFanoutIdentity && h.isPendingStageIdentity(identity)
+}
+
+// keepPendingStageLeasesAlive extends every run-stage lease held by a pending
+// (server-side) identity so it never ages out of the registry. A stage lease
+// is the run's only record of where it stands: the admission lease minted
+// when a spec run is started, or the lease the hub executor advances to
+// `implement` after plan approval. leaseTTL is sized for a relay working a
+// task, not for a stage waiting on a taker — before this, a run whose
+// implement stage found no ready contributor within 30 minutes was pruned
+// with its lease, silently vanishing from /api/runs and the offer pool while
+// its approved plan epic lived on. Returns how many leases were extended.
+func (h *ContributeWSHub) keepPendingStageLeasesAlive(now time.Time) int {
+	if h == nil {
+		return 0
+	}
+	extended := 0
+	h.leaseMu.Lock()
+	defer h.leaseMu.Unlock()
+	for _, l := range h.leases {
+		if l == nil || l.stage == "" || l.expiresAt.IsZero() || now.After(l.expiresAt) {
+			continue
+		}
+		if !h.isPendingStageIdentity(l.identity) {
+			continue
+		}
+		if l.expiresAt.Sub(now) > pendingStageLeaseRenewBefore {
+			continue
+		}
+		l.expiresAt = now.Add(leaseTTL)
+		extended++
+	}
+	if extended > 0 {
+		if err := h.saveLeasesLocked(); err != nil {
+			h.logger.Warn("[contribute-ws] pending stage leases extended in memory but not persisted",
+				"extended", extended, "error", err)
+		}
+	}
+	return extended
+}
+
 // pruneExpiredLeases drops leases that have aged out of their re-adoption window and
 // rewrites the file when anything changed (#5681). lookupLease already drops an
 // expired lease it happens to read, but a lease whose relay never comes back is
@@ -1118,15 +1201,22 @@ func (h *ContributeWSHub) loadLeases() {
 func (h *ContributeWSHub) pruneExpiredLeases(now time.Time) int {
 	dropped := 0
 	var unknown []taskLease
+	var orphaned []taskLease
 	h.leaseMu.Lock()
 	for k, l := range h.leases {
 		if l == nil || l.expiresAt.IsZero() || now.After(l.expiresAt) {
 			if l != nil && l.restored && l.stage == StageImplement {
 				unknown = append(unknown, *l)
 			}
+			if l != nil && l.stage != "" && !h.isPendingStageIdentity(l.identity) {
+				orphaned = append(orphaned, *l)
+			}
 			delete(h.leases, k)
 			dropped++
 		}
+	}
+	for _, l := range orphaned {
+		h.reofferOrphanedStageLocked(l, now)
 	}
 	if dropped > 0 {
 		// Log and continue (#8287): the in-memory drop is what matters, and
@@ -1141,6 +1231,40 @@ func (h *ContributeWSHub) pruneExpiredLeases(now time.Time) int {
 		h.recordWavefrontUnknown(l, now)
 	}
 	return dropped
+}
+
+// reofferOrphanedStageLocked returns a run stage to the offer pool after the
+// relay holding it aged out. Adopting a stage evicts its placeholder lease
+// (recordLeaseForKeyStage), so a relay that then vanishes — laptop closed,
+// process killed — would otherwise take the run's only record with it and the
+// run would silently disappear from /api/runs. Re-minting the admission
+// placeholder, at the same stage and generation and carrying the triage
+// verdict, makes the stage offerable again exactly as it was before the relay
+// took it. Nothing is minted when another lease still covers key+stage (a
+// fan-out wave, or a second relay that already adopted it). Caller holds leaseMu.
+func (h *ContributeWSHub) reofferOrphanedStageLocked(l taskLease, now time.Time) {
+	for _, other := range h.leases {
+		if other != nil && other.key == l.key && other.stage == l.stage && !now.After(other.expiresAt) {
+			return
+		}
+	}
+	taskID := runAdmissionTaskPrefix + sanitizeReceiptSegment(runKeyOfLease(leaseWorkKey(&l), l.repo))
+	h.leases[leaseKey(runAdmissionIdentity, taskID)] = &taskLease{
+		identity:        runAdmissionIdentity,
+		taskID:          taskID,
+		repo:            l.repo,
+		number:          l.number,
+		key:             l.key,
+		title:           l.title,
+		tier:            l.tier,
+		stage:           l.stage,
+		gen:             l.gen,
+		triageVerdict:   l.triageVerdict,
+		triageRationale: l.triageRationale,
+		expiresAt:       now.Add(leaseTTL),
+	}
+	h.logger.Info("[contribute-ws] run stage returned to offer pool after relay lease expired",
+		"key", l.key, "stage", l.stage, "gen", l.gen, "identity", l.identity)
 }
 
 func (h *ContributeWSHub) recordWavefrontUnknown(l taskLease, now time.Time) {

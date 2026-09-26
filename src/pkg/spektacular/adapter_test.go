@@ -30,6 +30,7 @@ type fakeLeaseRegistry struct {
 	retries    int
 	refusals   []map[string]string
 	escalates  []map[string]string
+	progress   []map[string]string
 	plans      []string
 }
 
@@ -78,6 +79,10 @@ func (f *fakeLeaseRegistry) RetryStageLease(_, _ string, now time.Time) error {
 
 func (f *fakeLeaseRegistry) RefuseStageLease(_ string, attrs map[string]string) {
 	f.refusals = append(f.refusals, attrs)
+}
+
+func (f *fakeLeaseRegistry) RecordStageProgress(_ string, _ string, attrs map[string]string, _ time.Time) {
+	f.progress = append(f.progress, attrs)
 }
 
 func (f *fakeLeaseRegistry) EscalateStageLease(_ string, _ time.Time, attrs map[string]string) {

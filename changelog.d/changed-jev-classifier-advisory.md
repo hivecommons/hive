@@ -1,0 +1,1 @@
+- Keep the optional Jev smart classifier advisory-only, with disagreement tracking and human-approved deterministic rule suggestions instead of model-enforced routing.

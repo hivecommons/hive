@@ -1,6 +1,7 @@
 package classify
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -24,6 +25,17 @@ type TriageDecision struct {
 }
 
 func Triage(issue github.Issue, c Classification, cfg config.TriageConfig) TriageDecision {
+	if _, ok := currentDecider().(keywordDecider); ok {
+		return keywordTriage(issue, c, cfg)
+	}
+	res := currentDecider().Decide(context.Background(), issue, cfg)
+	if res.Triage != nil {
+		return *res.Triage
+	}
+	return keywordTriage(issue, c, cfg)
+}
+
+func keywordTriage(issue github.Issue, c Classification, cfg config.TriageConfig) TriageDecision {
 	labels := normalizedLabels(issue.Labels)
 	if hasLabel(labels, "run/spec") {
 		return triageDecision(TriageSpec, "run/spec override label", "label:run/spec")

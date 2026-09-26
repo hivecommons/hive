@@ -13,7 +13,9 @@ This glossary records the operator-facing names used by the dashboard. The ADR-0
 | Fleet | The set of agents or contributor agents under observation in an operational context. | Use for aggregate operational controls and live monitoring. |
 | Issue band | A display-only group in a repository card's issue column: Ready, In progress, Agent-filed, Waiting on human, or Likely done. | Use for Repositories card grouping; do not imply scheduler eligibility changed. |
 | Pill legend | The collapsible Repositories-section key explaining pill colours, borders, glyphs, and badges. | Use for the compact legend above repository cards. |
+| PR band | A display-only group in a repository card's pull-request column: Waiting on human, Merge-eligible, Blocked, In review, Open, or Draft. | Use for Repositories card grouping; do not imply merge queue, hold, or review eligibility changed. |
 | Stale issue | An actionable repository-card issue whose `updated_at` activity is older than the configured `dashboard.issue_bands.stale_days` threshold. | Use for the `N no activity > Nd` counter and `🕒` badge. |
+| Stale PR | A repository-card PR whose `updated_at` activity is older than the configured `dashboard.issue_bands.stale_days` threshold. | Use for the PR `🕒` badge. |
 
 Keep **ClankeR** only when naming the contributor relay product/brand, for example the contributor portal line “Powered by ClankeR.” Avoid casual lowercase `clanker` as an operator-facing noun.
 

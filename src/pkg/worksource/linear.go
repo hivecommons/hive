@@ -67,6 +67,8 @@ type LinearConfig struct {
 	// pointing at the app user means "the hive owns this".
 	ViewerID string
 	Logger   *slog.Logger
+	// Transitions maps Hive design status names to Linear state names or ids.
+	Transitions map[string]string
 }
 
 // LinearSource is a read-only WorkSource backed by Linear's GraphQL API.
@@ -148,6 +150,17 @@ const linearDesignIssueUpdateLabels = `mutation($id: String!, $labelIds: [String
 
 const linearDesignCommentCreate = `mutation($issueId: String!, $body: String!) {
   commentCreate(input: { issueId: $issueId, body: $body }) { success }
+}`
+
+const linearDesignIssueStatesQuery = `query($identifier: String!) {
+  issue(id: $identifier) {
+    id
+    team { states { nodes { id name } } }
+  }
+}`
+
+const linearDesignIssueUpdateState = `mutation($id: String!, $stateId: String!) {
+  issueUpdate(id: $id, input: { stateId: $stateId }) { success }
 }`
 
 // linearAssignedIssuesQuery is linearIssuesQuery narrowed to issues whose
@@ -392,8 +405,42 @@ func (s *LinearSource) AddComment(ctx context.Context, ref Ref, body string) err
 	return nil
 }
 
-func (s *LinearSource) TransitionStatus(context.Context, Ref, string) error {
-	return ErrStatusTransitionUnsupported
+func (s *LinearSource) TransitionStatus(ctx context.Context, ref Ref, status string) error {
+	if s == nil {
+		return fmt.Errorf("worksource/linear: source unavailable")
+	}
+	if len(s.cfg.Transitions) == 0 {
+		return ErrStatusTransitionUnsupported
+	}
+	target := strings.TrimSpace(status)
+	if mapped := strings.TrimSpace(s.cfg.Transitions[target]); mapped != "" {
+		target = mapped
+	}
+	if target == "" {
+		return ErrStatusTransitionUnsupported
+	}
+	issueID, stateID, err := s.designIssueState(ctx, ref, target)
+	if err != nil {
+		return err
+	}
+	raw, err := linearGraphQL(ctx, s.client, s.cfg.BaseURL, s.cfg.APIKey, linearDesignIssueUpdateState, map[string]interface{}{"id": issueID, "stateId": stateID})
+	if err != nil {
+		return fmt.Errorf("worksource/linear: update status: %w", err)
+	}
+	var resp struct {
+		Data struct {
+			IssueUpdate struct {
+				Success bool `json:"success"`
+			} `json:"issueUpdate"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return fmt.Errorf("worksource/linear: decode status mutation: %w", err)
+	}
+	if !resp.Data.IssueUpdate.Success {
+		return fmt.Errorf("worksource/linear: status mutation reported failure")
+	}
+	return nil
 }
 
 func (s *LinearSource) updateDesignLabels(ctx context.Context, ref Ref, label string, add bool) error {
@@ -515,6 +562,47 @@ func linearHasHoldLabel(label string, extraHoldLabels []string) bool {
 		}
 	}
 	return false
+}
+
+func (s *LinearSource) designIssueState(ctx context.Context, ref Ref, target string) (string, string, error) {
+	identifier := strings.TrimSpace(ref.ExternalID)
+	if identifier == "" {
+		return "", "", fmt.Errorf("worksource/linear: external id is required")
+	}
+	raw, err := linearGraphQL(ctx, s.client, s.cfg.BaseURL, s.cfg.APIKey, linearDesignIssueStatesQuery, map[string]interface{}{"identifier": identifier})
+	if err != nil {
+		return "", "", fmt.Errorf("worksource/linear: lookup issue states: %w", err)
+	}
+	var resp struct {
+		Data struct {
+			Issue *struct {
+				ID   string `json:"id"`
+				Team struct {
+					States struct {
+						Nodes []struct {
+							ID   string `json:"id"`
+							Name string `json:"name"`
+						} `json:"nodes"`
+					} `json:"states"`
+				} `json:"team"`
+			} `json:"issue"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return "", "", fmt.Errorf("worksource/linear: decode states: %w", err)
+	}
+	if resp.Data.Issue == nil || resp.Data.Issue.ID == "" {
+		return "", "", fmt.Errorf("worksource/linear: issue %q not found", identifier)
+	}
+	for _, st := range resp.Data.Issue.Team.States.Nodes {
+		if st.ID == target || strings.EqualFold(st.Name, target) {
+			return resp.Data.Issue.ID, st.ID, nil
+		}
+	}
+	if strings.Contains(target, "-") || strings.HasPrefix(target, "lin_") {
+		return resp.Data.Issue.ID, target, nil
+	}
+	return "", "", fmt.Errorf("worksource/linear: state %q not available for %s", target, identifier)
 }
 
 func (s *LinearSource) linearDependencies(fallback LinearTeamConfig, n linearIssueNode) []Dependency {

@@ -106,6 +106,17 @@ agents:
     launch_cmd: "agent-launch.sh --backend copilot --model claude-sonnet-4-6"
     display_name: strategist
 
+classifier:
+  backend: keywords
+  jev:
+    provider: openrouter
+    model: typesafe/jev-1.13
+    endpoint: ""
+    api_key_env: JEV_API_KEY
+    min_confidence: 0.8
+    timeout: 2s
+    decisions: [lane, tier, triage]
+
 governor:
   eval_interval_s: 300
   modes:

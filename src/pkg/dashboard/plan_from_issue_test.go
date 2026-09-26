@@ -562,7 +562,7 @@ func TestArchitectPausedFromStatuses(t *testing.T) {
 }
 
 func TestClassifierSectionResponse(t *testing.T) {
-	section := classifierSectionResponse()
+	section := classifierSectionResponse(&config.Config{})
 	simple, ok := section["simpleKeywords"].([]string)
 	if !ok || len(simple) == 0 {
 		t.Fatalf("simpleKeywords missing/empty: %#v", section["simpleKeywords"])

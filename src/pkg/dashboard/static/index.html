@@ -1380,9 +1380,12 @@
     .repo-breakdown .repo-breakdown-actionable { color: var(--fg); }
     .repo-stat a:hover { text-decoration: underline !important; }
     .repo-stat a:hover .label { color: var(--fg); }
-    .repo-pills { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-2) var(--sp-5); margin-top: var(--sp-4); padding-top: var(--sp-3); border-top: 1px solid var(--border); }
-    .repo-pill-col { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
-    .repo-pill-col .repo-issue-pill-wrap, .repo-pill-col .repo-pr-pill-wrap { flex: 0 0 auto; max-width: 100%; }
+    .repo-pills { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-2) var(--sp-5); margin-top: var(--sp-4); padding-top: var(--sp-3); border-top: 1px solid var(--border); }
+    .repo-pills.repo-pills-issues-only, .repo-pills.repo-pills-prs-only { grid-template-columns: minmax(0, 1fr); }
+    .repo-pills-issues-only .repo-pill-col-prs, .repo-pills-prs-only .repo-pill-col-issues { display: none; }
+    .repo-pills-issues-only .repo-pill-col-issues, .repo-pills-prs-only .repo-pill-col-prs { grid-column: 1 / -1; }
+    .repo-pill-col { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; overflow: hidden; }
+    .repo-pill-col .repo-issue-pill-wrap, .repo-pill-col .repo-pr-pill-wrap { flex: 0 1 auto; max-width: 100%; width: 100%; }
     /* A held pill: the item is in its column (it IS one of the repo's issues
        / PRs, and the count includes it) but parked behind a hold label, so
        it is waiting on a human rather than on an agent. Neutral grey with a
@@ -1396,14 +1399,14 @@
     /* .repo-issue-pill / .repo-pr-pill — pill recipe; link hovers deepen the tint */
     .repo-issue-pill { --component-status: var(--status-info); --pill-c: var(--status-info); text-decoration: none; max-width: 100%; transition: background 0.15s; }
     .repo-issue-pill:hover { background: color-mix(in srgb, var(--pill-c) 24%, transparent); text-decoration: none; }
-    .repo-issue-pill .pill-num { font-weight: 700; white-space: nowrap; }
-    .repo-issue-pill .pill-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .repo-issue-pill .pill-num { flex: 0 0 auto; font-weight: 700; white-space: nowrap; }
+    .repo-issue-pill .pill-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* Plan action sits beside its issue pill. Always visible (so the feature is
        discoverable) but visually secondary; brightens to full on row hover. */
-    .repo-issue-pill-wrap { display: inline-flex; align-items: center; gap: var(--sp-2); max-width: 100%; min-width: 0; }
+    .repo-issue-pill-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); max-width: 100%; min-width: 0; }
     /* The pill shrinks (its title ellipsis-truncates) so a long title + the
        always-visible Plan button never overflow the fixed-width repo card. */
-    .repo-issue-pill-wrap .repo-issue-pill { min-width: 0; flex: 0 1 auto; overflow: hidden; }
+    .repo-issue-pill-wrap .repo-issue-pill { min-width: 0; flex: 1 1 auto; overflow: hidden; }
     .repo-issue-plan { --pill-c: var(--purple); flex: 0 0 auto; border: 1px solid color-mix(in srgb, var(--pill-c) 40%, transparent); background: color-mix(in srgb, var(--pill-c) 12%, transparent); color: var(--pill-c); font-size: 0.7rem; font-weight: 600; line-height: 1; padding: 3px 6px; border-radius: var(--r-pill); cursor: pointer; white-space: nowrap; opacity: 0.75; transition: opacity 0.15s, background 0.15s; }
     /* Plan-state chip (hivecommons/hive#8011): replaces the Plan button on an
        issue that already has a plan. Colour = what the plan needs — amber for a
@@ -1419,7 +1422,7 @@
     .repo-issue-plan:hover { background: color-mix(in srgb, var(--pill-c) 26%, transparent); }
     .repo-issue-plan:disabled { opacity: 0.5; cursor: default; }
     .repo-pr-pill { --component-status: var(--acmm-level-5); --pill-c: var(--acmm-level-5); text-decoration: none; max-width: 100%; transition: background 0.15s; }
-    .repo-pr-pill-wrap { display: inline-flex; align-items: center; gap: var(--sp-2); max-width: 100%; min-width: 0; flex: 1 1 100%; }
+    .repo-pr-pill-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); max-width: 100%; min-width: 0; flex: 1 1 100%; }
     .repo-pr-pill-wrap .repo-pr-pill:not(.pill-icon) { min-width: 0; flex: 1 1 auto; overflow: hidden; }
     .repo-pr-pill:hover { background: color-mix(in srgb, var(--pill-c) 24%, transparent); text-decoration: none; }
     /* Three pill states (#7478). Green = the governor's merge-eligible
@@ -1430,8 +1433,8 @@
     .repo-pr-pill.mergeable { --component-status: var(--status-ok); --pill-c: var(--status-ok); }
     .repo-pr-pill.merge-outstanding { --pill-c: var(--yellow); }
     .repo-pr-pill.merge-outstanding { --component-status: var(--status-warn); }
-    .repo-pr-pill .pill-num { font-weight: 700; white-space: nowrap; }
-    .repo-pr-pill .pill-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .repo-pr-pill .pill-num { flex: 0 0 auto; font-weight: 700; white-space: nowrap; }
+    .repo-pr-pill .pill-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .repo-pr-pill .pill-merge-icon { font-size: var(--fs-2xs); margin-left: 1px; }
     /* Review-priority class badge (#6183): the snapshot orders PRs fixes >
        refactors/docs > tests, then by age; the badge says WHY a PR sits
@@ -1464,16 +1467,19 @@
     .repo-legend-row { display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-2); color:var(--muted); font-size:var(--fs-xs); }
     .repo-legend-row-label { color:var(--text); font-weight:700; margin-right:var(--sp-1); }
     .repo-legend .repo-issue-pill, .repo-legend .repo-pr-pill, .repo-legend .repo-issue-plan { display:inline-flex; align-items:center; gap:var(--sp-1); max-width:none; }
-    .repo-issue-band { margin-bottom:var(--sp-2); }
-    .repo-issue-band-title { color:var(--muted); font-size:var(--fs-2xs); font-weight:800; letter-spacing:0.08em; text-transform:uppercase; margin:var(--sp-2) var(--sp-0) var(--sp-1); }
-    .repo-issue-band-items { display:flex; flex-direction:column; gap:var(--sp-2); }
+    .repo-issue-band, .repo-pr-band { margin-bottom:var(--sp-2); }
+    .repo-issue-band-title, .repo-pr-band-title { color:var(--muted); font-size:var(--fs-2xs); font-weight:800; letter-spacing:0.08em; text-transform:uppercase; margin:var(--sp-2) var(--sp-0) var(--sp-1); }
+    .repo-issue-band-items, .repo-pr-band-items { display:flex; flex-direction:column; gap:var(--sp-2); }
     .repo-issue-pill.waiting { --component-status: var(--status-attention); --pill-c: var(--status-attention); }
     .repo-issue-pill.done { --component-status: var(--status-ok); --pill-c: var(--status-ok); }
     .repo-issue-pill.in-progress { --pill-c: var(--yellow); --component-status: var(--status-warn); }
     .repo-issue-pill.agent-filed { --pill-c: var(--purple); --component-status: var(--acmm-level-5); }
     .repo-issue-pill.stale { opacity:0.68; }
+    .repo-pr-pill.stale { opacity:0.68; }
     .repo-issue-pill .pill-state { font-size:var(--fs-2xs); margin-left:2px; opacity:0.9; }
     .repo-issue-pill .pill-role { font-size:var(--fs-2xs); font-weight:700; letter-spacing:0.02em; text-transform:uppercase; margin-left:3px; opacity:0.85; }
+    .repo-pr-pill .pill-state { font-size:var(--fs-2xs); margin-left:2px; opacity:0.9; }
+    .repo-pr-pill .pill-role { font-size:var(--fs-2xs); font-weight:700; letter-spacing:0.02em; text-transform:uppercase; margin-left:3px; opacity:0.85; }
 
     /* Sparklines */
     .sparkline { display: inline-block; vertical-align: middle; margin-left: var(--sp-3); flex-shrink: 0; }
@@ -1951,6 +1957,10 @@
     .hive-dialog { width: 460px; max-width: 92vw; padding: var(--sp-8); } /* modal panel recipe */
     .hive-dialog-title { font-size: var(--fs-lg); font-weight: 700; color: var(--text); margin-bottom: var(--sp-5); }
     .hive-dialog-body { font-size: 0.9rem; color: var(--muted); line-height: 1.5; white-space: pre-wrap; margin-bottom: var(--sp-7); }
+    .hive-dialog-body.long { max-height: min(55vh, 520px); overflow: auto; }
+    .hive-dialog-label { display: block; font-size: var(--fs-base); color: var(--muted); line-height: 1.45; margin-bottom: var(--sp-3); }
+    .hive-dialog-input { width: 100%; box-sizing: border-box; padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r); background: var(--panel); color: var(--fg); font: inherit; }
+    .hive-dialog-error { min-height: 1.2em; margin-top: var(--sp-3); font-size: var(--fs-sm); color: var(--red); }
     .hive-dialog-buttons { display: flex; gap: 10px; justify-content: flex-end; }
     /* .hive-dialog-btn(.primary/.cancel) — primary/ghost buttons (system recipe) */
     .config-modal {
@@ -2143,6 +2153,28 @@
     }
     .config-toggle-switch.on::before { transform: translateX(16px); }
     .config-toggle-label { font-size: 0.8rem; color: var(--text); }
+    .smart-classifier-section { display: grid; gap: var(--sp-6); }
+    .smart-classifier-card { border: var(--line-width) solid var(--border); border-radius: var(--r); background: var(--surface); padding: var(--sp-6); }
+    .smart-classifier-card h3 { margin: var(--sp-0) var(--sp-0) var(--sp-3); color: var(--text); font-size: var(--fs-lg); }
+    .smart-classifier-copy { margin: var(--sp-0); color: var(--muted); line-height: 1.5; }
+    .smart-classifier-checklist { display: grid; gap: var(--sp-3); margin-top: var(--sp-4); }
+    .smart-classifier-check { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); color: var(--text); }
+    .smart-classifier-status { font-weight: 700; color: var(--muted); }
+    .smart-classifier-status.ok { color: var(--green); }
+    .smart-classifier-status.missing { color: var(--red); }
+    .smart-classifier-actions { display: flex; gap: var(--sp-4); flex-wrap: wrap; align-items: center; margin-top: var(--sp-4); }
+    .smart-classifier-hint { color: var(--muted); font-size: var(--fs-sm); }
+    .smart-classifier-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: var(--sp-4); margin-top: var(--sp-4); }
+    .smart-classifier-stat { border: var(--line-width) solid var(--border); border-radius: var(--r); background: var(--bg-soft); padding: var(--sp-4); }
+    .smart-classifier-stat strong { display: block; color: var(--text); font-size: var(--fs-base); }
+    .smart-classifier-stat span { color: var(--muted); font-size: var(--fs-sm); }
+    .smart-classifier-decisions { display: flex; gap: var(--sp-5); flex-wrap: wrap; }
+    .smart-classifier-decisions label { display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--text); }
+    .smart-classifier-list { display: grid; gap: var(--sp-3); margin-top: var(--sp-4); }
+    .smart-classifier-list-item { border: var(--line-width) solid var(--border); border-radius: var(--r); background: var(--bg-soft); padding: var(--sp-4); display: flex; gap: var(--sp-4); align-items: center; justify-content: space-between; }
+    .smart-classifier-list-main { min-width: 0; }
+    .smart-classifier-list-main strong { color: var(--text); }
+    .smart-classifier-list-main span { display: block; color: var(--muted); font-size: var(--fs-sm); margin-top: var(--sp-1); }
 
     /* A heading INSIDE a settings section, for a feature with several distinct
        concerns. It groups by whitespace and a quiet label rather than a rule:
@@ -2678,15 +2710,11 @@
     .section-chevron.collapsed { transform: rotate(-90deg); }
     .section-body {
       overflow: hidden; transition: max-height 200ms ease, opacity 200ms ease;
-      max-height: 5000px; opacity: 1;
+      max-height: none; opacity: 1;
     }
     .section-body.collapsed {
       max-height: 0 !important; opacity: 0; pointer-events: none;
     }
-    /* A section that groups other collapsible sections (Hive Advisory). The
-       stock 5000px cap is sized for one panel; five nested panels overflow it
-       and the tail gets clipped by the overflow:hidden above. */
-    .section-body.section-group-body { max-height: 40000px; }
     .section-group-header {
       font-size: var(--fs-sm); border-bottom: 1px solid var(--border);
       padding-bottom: var(--sp-3);
@@ -3108,6 +3136,10 @@
     .campaign-row-title { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .campaign-row-meta { display: flex; gap: var(--sp-3); flex-wrap: wrap; color: var(--muted); font-size: var(--fs-sm); margin-top: var(--sp-2); }
     .campaign-pill { border: 1px solid var(--border); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); color: var(--muted); }
+    .run-log-panel { grid-column: 1 / -1; margin-top: var(--sp-3); }
+    .run-log-pre { max-height: 260px; overflow: auto; white-space: pre-wrap; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3); color: var(--muted); font-size: var(--fs-xs); }
+    .run-log-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-3); }
+    .run-activity-line { margin-top: var(--sp-2); color: var(--muted); font-size: var(--fs-sm); }
     .campaign-empty { color: var(--muted); text-align: center; padding: var(--sp-7); border: 1px dashed var(--border); border-radius: var(--r); }
     .campaign-jam { margin-top: var(--sp-5); display: grid; gap: var(--sp-4); }
     .campaign-jam-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-4); }
@@ -4005,7 +4037,7 @@
       // server (that would let any visitor read it). It is stored in
       // localStorage by the operator pasting it once. On a hosted/hub-proxied
       // hive there is no token at all (identity comes from the hub login), so
-      // this path simply never triggers a prompt.
+      // this path simply never triggers a dialog.
       let _authToken = localStorage.getItem('hive-token') || null;
       let _authConfigured = null; // null=unknown, true/false once checked
       // Set only while re-prompting after the server rejected a stored token,
@@ -4015,7 +4047,7 @@
       // since the gateway stopped trusting unauthenticated reads (issue #7695)
       // each of them can 401 at once on a token-secured spoke with no stored
       // token. Without this, every one of those failures would open its own
-      // window.prompt. All concurrent callers now share one prompt.
+      // the in-app dialog. All concurrent callers now share one dialog.
       let _ensureAuthTokenFlight = null;
       function _ensureAuthToken() {
         if (!_ensureAuthTokenFlight) {
@@ -4045,9 +4077,12 @@
           } catch {}
           // Self-hosted hive with a token configured but none stored locally:
           // ask the operator to paste it once. It persists in localStorage.
-          const entered = window.prompt(_authRejected
-            ? 'The stored dashboard token was rejected — it is probably stale (rotated since this browser saved it). Paste the current HIVE_DASHBOARD_TOKEN:'
-            : 'This hive requires its dashboard token to make changes. Paste HIVE_DASHBOARD_TOKEN:');
+          const entered = await hivePrompt({
+            title: 'Dashboard token required',
+            label: _authRejected
+              ? 'The stored dashboard token was rejected — it is probably stale (rotated since this browser saved it). Paste the current HIVE_DASHBOARD_TOKEN:'
+              : 'This hive requires its dashboard token to make changes. Paste HIVE_DASHBOARD_TOKEN:'
+          });
           if (entered && entered.trim()) {
             _authToken = entered.trim();
             try { localStorage.setItem('hive-token', _authToken); } catch {}
@@ -4197,10 +4232,15 @@
       if (typeof str !== 'string') return '';
       return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
+    function safeDomId(str) {
+      return String(str || '').replace(/[^a-zA-Z0-9_-]/g, '-');
+    }
     // ── Collapsible sections (issue #1533) ──
     const SECTION_LS_PREFIX = 'hive-section-collapsed-';
     const AGENT_COMPACT_LS_PREFIX = 'hive-agent-compact-';
     const SECTION_TRANSITION_MS = 200;
+    const SECTION_EXPANDED_MAX_HEIGHT = 'none';
+    const SECTION_MAX_HEIGHT_PROPERTY = 'max-height';
     const ALL_AGENTS_COMPACT_KEY = 'hive-all-agents-compact';
 
     const STATUS = Object.freeze({
@@ -4257,13 +4297,48 @@
         localStorage.removeItem(SECTION_LS_PREFIX + sectionId);
       }
     }
+    /** Remove the expanded max-height cap after the max-height transition finishes. */
+    function releaseSectionMaxHeightAfterTransition(body) {
+      if (!body) return;
+      let done = false;
+      const release = () => {
+        if (done) return;
+        done = true;
+        body.removeEventListener('transitionend', onEnd);
+        if (!body.classList.contains('collapsed')) body.style.maxHeight = SECTION_EXPANDED_MAX_HEIGHT;
+      };
+      const onEnd = (event) => {
+        if (event.target === body && event.propertyName === SECTION_MAX_HEIGHT_PROPERTY) release();
+      };
+      body.addEventListener('transitionend', onEnd);
+      setTimeout(release, SECTION_TRANSITION_MS);
+    }
+    /** Reflect a section's collapsed state onto the body while keeping transitions animated. */
+    function applySectionBodyCollapse(body, collapsed, animate) {
+      if (!body) return;
+      if (collapsed) {
+        if (animate) {
+          body.style.maxHeight = body.scrollHeight + 'px';
+          void body.offsetHeight;
+        }
+        body.classList.add('collapsed');
+      } else {
+        body.classList.remove('collapsed');
+        if (animate) {
+          body.style.maxHeight = body.scrollHeight + 'px';
+          releaseSectionMaxHeightAfterTransition(body);
+        } else {
+          body.style.maxHeight = SECTION_EXPANDED_MAX_HEIGHT;
+        }
+      }
+    }
     /** Toggle a section's collapsed state and animate */
     function toggleSection(sectionId) {
       const collapsed = !isSectionCollapsed(sectionId);
       setSectionCollapsed(sectionId, collapsed);
       const body = document.querySelector(`#${sectionId} .section-body`);
       const chevron = document.querySelector(`#${sectionId} .section-chevron`);
-      if (body) body.classList.toggle('collapsed', collapsed);
+      applySectionBodyCollapse(body, collapsed, true);
       if (chevron) chevron.classList.toggle('collapsed', collapsed);
     }
     /** Apply persisted collapsed state to a section after render */
@@ -4271,7 +4346,7 @@
       const collapsed = isSectionCollapsed(sectionId);
       const body = document.querySelector(`#${sectionId} .section-body`);
       const chevron = document.querySelector(`#${sectionId} .section-chevron`);
-      if (body) body.classList.toggle('collapsed', collapsed);
+      applySectionBodyCollapse(body, collapsed, false);
       if (chevron) chevron.classList.toggle('collapsed', collapsed);
     }
     /** Check whether an agent card should be compact */
@@ -4814,7 +4889,7 @@
           <div class="oc-detail-field"><div class="label" title="The LLM model powering this agent. Governor may change it based on budget.">Model</div><div class="value">${esc(a.model || '—')}${(a.pinnedBoth || a.pinnedModel) ? ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="true" style="cursor:pointer" title="Unpin model">📌</span>` : ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" style="cursor:pointer;opacity:0.3" title="Pin model">📌</span>`}</div></div>
           <div class="oc-detail-field"><div class="label" title="Time between governor kicks in the current mode. Configured per mode (idle/quiet/busy/surge).">Interval</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : esc(a.cadence || '—')}</div></div>
           <div class="oc-detail-field"><div class="label" title="When the governor last kicked (sent a work prompt to) this agent. A kicked work pass often keeps running long after this time — terminal activity between kicks is normally the previous pass still working, not an off-schedule run.">Last Kick</div><div class="value">${esc(a.lastKick || '—')}</div></div>
-          <div class="oc-detail-field"><div class="label" title="When the governor will next kick this agent based on its cadence interval. If the previous pass is still running at that time, the kick waits for the CLI's input prompt.">Next Kick</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : esc(a.nextKick || '—')}</div></div>
+          <div class="oc-detail-field"><div class="label" title="When the governor will next kick this agent based on its cadence interval. If the previous pass is still running at that time, the kick waits for the CLI's input dialog.">Next Kick</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : esc(a.nextKick || '—')}</div></div>
           <div class="oc-detail-field"><div class="label" title="Total tokens consumed by this agent in the last 24 hours across all sessions.">Tokens (24h)</div><div class="value">${_tokTotal > 0 ? fmtTokens(_tokTotal) : (_tok.sessions > 0 ? _tok.sessions + ' sess' : '—')}</div></div>
           <div class="oc-detail-field"><div class="label" title="Number of times this agent has been restarted in the last 24 hours. High counts may indicate instability.">Restarts</div><div class="value${(a.restarts || 0) > 5 ? ' restart-high' : (a.restarts || 0) > 0 ? ' restart-warn' : ''}">${a.restarts ?? 0}<span class="restart-label">24h</span>${(a.restarts || 0) > 0 ? ` <button class="restart-reset" data-action="resetRestarts" data-agent="${esc(a.name)}" title="Reset the restart counter to zero — does not affect the agent">✕</button>` : ''}<span class="restart-spark">${restartSparkSvg(a.name)}</span></div></div>
           <div class="oc-detail-field"><div class="label" title="Average tokens consumed per work pass (kick session). Lower is more efficient.">Avg/Pass</div><div class="value">${_tokAvg > 0 ? fmtTokens(_tokAvg) : '—'}</div></div>
@@ -5505,8 +5580,8 @@
       });
     }
 
-    function ocAddSidebarGroup() {
-      const name = prompt('Group name:');
+    async function ocAddSidebarGroup() {
+      const name = await hivePrompt({title: 'Group name', label: 'Group name:'});
       if (!name || !name.trim()) return;
       const groups = _sidebarReadLayout() || [];
       groups.push({ name: name.trim(), agents: [] });
@@ -5526,8 +5601,8 @@
       ocUpdateSidebarAgents();
     }
 
-    function ocRenameSidebarGroup(oldName) {
-      const newName = prompt('Rename group:', oldName);
+    async function ocRenameSidebarGroup(oldName) {
+      const newName = await hivePrompt({title: 'Rename group', label: 'Rename group:', defaultValue: oldName});
       if (!newName || !newName.trim() || newName.trim() === oldName) return;
       const groups = _sidebarReadLayout() || [];
       const group = groups.find(g => g.name === oldName);
@@ -6978,7 +7053,7 @@
        is surfaced verbatim rather than as a generic failure. */
     async function submitLoginCode(agentName) {
       if (!agentName) return;
-      const code = prompt(`Paste the authorization code for "${agentName}".\n\nIt is sent to the server and typed into the agent's terminal, so the browser terminal cannot corrupt it.`);
+      const code = await hivePrompt({title: 'Submit login code', label: `Paste the authorization code for "${agentName}".\n\nIt is sent to the server and typed into the agent's terminal, so the browser terminal cannot corrupt it.`});
       if (code === null) return;
       if (!code.trim()) { showToast('No code entered', 'error'); return; }
       try {
@@ -7437,7 +7512,7 @@
           <div class="agent-field"><span class="label" title="Number of HTTP requests blocked by the ACMM proxy for this agent. Non-zero means the agent attempted actions above its mode.">proxy</span><span class="value">${a.proxyViolations > 0 ? '<span style="color:var(--danger)">⛔ ' + a.proxyViolations + ' blocked</span>' : '✓ clean'}</span></div>
           <div class="agent-field"><span class="label" title="Time between governor kicks for this agent in the current mode. Configured per governor mode (idle/quiet/busy/surge).">interval</span><span class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : a.cadence}</span></div>
           <div class="agent-field"><span class="label" title="When the governor last kicked (sent a work prompt to) this agent. A kicked work pass often keeps running long after this time — terminal activity between kicks is normally the previous pass still working, not an off-schedule run.">last kick</span><span class="value">${a.lastKick || '—'}</span></div>
-          <div class="agent-field"><span class="label" title="When the governor will next kick this agent based on its cadence interval. If the previous pass is still running at that time, the kick waits for the CLI's input prompt.">next kick</span><span class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : (a.nextKick || '—')}</span></div>
+          <div class="agent-field"><span class="label" title="When the governor will next kick this agent based on its cadence interval. If the previous pass is still running at that time, the kick waits for the CLI's input dialog.">next kick</span><span class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : (a.nextKick || '—')}</span></div>
           ${agentTokenRow(a.name, a.cadence)}
           ${agentSpendRow(a.name)}
           <div class="agent-field"><span class="label" title="Number of times this agent has been restarted in the last 24 hours. High counts may indicate instability or rate limiting.">restarts</span><span class="value${(a.restarts || 0) > 5 ? ' restart-high' : (a.restarts || 0) > 0 ? ' restart-warn' : ''}">${a.restarts || 0}<span class="restart-label">24h</span>${(a.restarts || 0) > 0 ? `<button class="restart-reset" data-action="resetRestarts" data-agent="${esc(a.name)}" title="Reset the restart counter to zero — does not affect the agent">✕</button>` : ''}<span class="restart-spark">${restartSparkSvg(a.name)}</span></span></div>
@@ -7458,7 +7533,7 @@
           })()}</span></div>
           ${summaryEl}${indEl}
           <div class="agent-actions">
-            <input type="text" class="kick-prompt" id="kick-prompt-${esc(a.name)}" placeholder="custom prompt (optional)" data-enter-action="kick" data-agent="${esc(a.name)}" title="Type a custom prompt to send to this agent instead of its default kick prompt. Press Enter to send." />
+            <input type="text" class="kick-prompt" id="kick-prompt-${esc(a.name)}" placeholder="custom instruction (optional)" data-enter-action="kick" data-agent="${esc(a.name)}" title="Type a custom prompt to send to this agent instead of its default kick dialog. Press Enter to send." />
             <button class="hv-btn btn-secondary btn" data-action="kick" data-agent="${esc(a.name)}" title="Send the custom prompt above to this agent immediately, bypassing the governor cadence timer">send</button>
             <button class="hv-btn btn-secondary btn" data-action="kickEmpty" data-agent="${esc(a.name)}" title="Kick this agent now with its default prompt, bypassing the governor cadence timer">kick</button>
             <select class="hv-btn btn-secondary btn backend-select" data-change-action="switchCli" data-agent="${esc(a.name)}" title="Switch this agent to a different method (CLI or inference backend). Free backends (copilot, goose) do not count toward token budget.">
@@ -8218,6 +8293,8 @@
         const key = run.key || '';
         const waiting = run.waiting_on || 'unknown';
         const waitCls = waiting === 'human' ? 'needs-context' : waiting === 'agent' ? 'done' : '';
+        const runGen = run.gen || 0;
+        const runStage = run.stage || 'spec';
         const actions = canApprove && waiting === 'human' && run.plan_epic_id
           ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px"><button class="btn" style="color:var(--green)" data-action="runPlanAction" data-arg0="${escapeHtml(run.plan_epic_id)}" data-arg1="approve">✓ Approve</button><button class="btn" style="color:var(--red)" data-action="runPlanAction" data-arg0="${escapeHtml(run.plan_epic_id)}" data-arg1="reject">✕ Reject</button></div>`
           : '';
@@ -8227,13 +8304,15 @@
             <button class="btn" data-action="openRunDetail" data-arg0="${escapeHtml(key)}" style="font-size:0.7rem;padding:3px 8px">detail</button>
           </div>
           <div style="margin-top:10px">${runStageRail(run)}</div>
+          ${run.activity_summary ? `<div class="run-activity-line">${escapeHtml(run.activity_summary)}</div>` : ''}
           <div style="margin-top:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
             <span class="status-badge ${waitCls}" title="Waiting on ${escapeHtml(waiting)}">waiting: ${escapeHtml(waiting)}</span>
             <span class="status-badge" title="${escapeHtml(run.waiting_since || run.stage_started_at || '')}">age ${escapeHtml(runCurrentAge(run))}</span>
             ${run.assignee ? `<span class="status-badge" title="Assignee">${escapeHtml(run.assignee)}</span>` : ''}
           </div>
           <div style="margin-top:10px;font-size:0.78rem;color:var(--muted)">${runArtifactLinks(run)}</div>
-          ${(run.artifact_name || run.document_status || run.current_step) ? `<div>${run.artifact_name ? `<span class="status-badge" title="Artifact name">artifact: ${escapeHtml(run.artifact_name)}</span>` : ''}${run.document_status ? `<span class="status-badge" title="Spektacular document_status">document: ${escapeHtml(run.document_status)}</span>` : ''}${run.current_step ? `<span class="status-badge" title="Spektacular current_step">step: ${escapeHtml(run.current_step)}</span>` : ''}</div>` : ''}
+          ${(run.artifact_id || run.artifact_name || run.document_status || run.current_step) ? `<div>${run.artifact_id ? `<span class="status-badge" title="Resolved artifact id">artifact id: ${escapeHtml(run.artifact_id)}</span>` : ''}${run.artifact_name ? `<span class="status-badge" title="Artifact name">artifact: ${escapeHtml(run.artifact_name)}</span>` : ''}${run.document_status ? `<span class="status-badge" title="Spektacular document_status">document: ${escapeHtml(run.document_status)}</span>` : ''}${run.current_step ? `<span class="status-badge" title="Spektacular current_step">step: ${escapeHtml(run.current_step)}</span>` : ''}</div>` : ''}
+          <div class="run-log-actions"><button class="btn" data-action="toggleRunLog" data-arg0="${escapeHtml(key)}" data-arg1="${escapeHtml(runStage)}" data-arg2="${escapeHtml(String(runGen))}" data-arg3="run-log-${escapeHtml(safeDomId(key))}">Log</button></div><div id="run-log-${escapeHtml(safeDomId(key))}" class="run-log-panel"></div>
           <div class="text-muted">Powered by <a href="https://docs.hivecommons.dev/docs/hive/spektacular-runs" target="_blank" rel="noopener">Spektacular</a></div>
           ${actions}
         </div>`;
@@ -8281,10 +8360,13 @@
         } catch (_) {}
         const stages = (Array.isArray(run.stages) ? run.stages : []).map(st => `<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-top:1px solid var(--border)"><span>${escapeHtml(st.name || 'stage')} <span class="status-badge">${escapeHtml(st.status || '')}</span></span><span style="color:var(--muted)">${escapeHtml(st.receipt || (st.gen ? 'gen ' + st.gen : ''))}</span></div>`).join('');
         const approval = auditRows || '<div style="color:var(--muted);font-size:0.8rem">No approval or audit records matched this run yet.</div>';
+        const detailLogID = 'run-detail-log-' + safeDomId(key);
         panel.innerHTML = `<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start"><div><h3 style="margin:0 0 4px">${escapeHtml(run.title || run.key || 'Run detail')}</h3><div style="color:var(--muted);font-size:0.8rem">${escapeHtml(run.key || '')}${run.repo ? ' · ' + escapeHtml(run.repo) : ''}</div></div><button class="btn" data-action="closeRunDetail">Close</button></div>
           <div style="margin-top:12px">${runStageRail(run)}</div>
+          ${run.activity_summary ? `<div class="run-activity-line">${escapeHtml(run.activity_summary)}</div>` : ''}
           <div style="margin-top:12px;font-size:0.82rem">Artifacts: ${runArtifactLinks(run)}</div>
-          ${(run.artifact_name || run.document_status || run.current_step) ? `<div><span class="status-badge">artifact: ${escapeHtml(run.artifact_name || 'unknown')}</span><span class="status-badge">document: ${escapeHtml(run.document_status || 'unknown')}</span><span class="status-badge">step: ${escapeHtml(run.current_step || 'unknown')}</span></div>` : ''}
+          ${(run.artifact_id || run.artifact_name || run.document_status || run.current_step) ? `<div><span class="status-badge">artifact id: ${escapeHtml(run.artifact_id || 'unknown')}</span><span class="status-badge">artifact: ${escapeHtml(run.artifact_name || 'unknown')}</span><span class="status-badge">document: ${escapeHtml(run.document_status || 'unknown')}</span><span class="status-badge">step: ${escapeHtml(run.current_step || 'unknown')}</span></div>` : ''}
+          <div class="run-log-actions"><button class="btn" data-action="toggleRunLog" data-arg0="${escapeHtml(run.key || key)}" data-arg1="${escapeHtml(run.stage || 'spec')}" data-arg2="${escapeHtml(String(run.gen || 0))}" data-arg3="${escapeHtml(detailLogID)}">Log</button></div><div id="${escapeHtml(detailLogID)}" class="run-log-panel"></div>
           <h4 style="margin:14px 0 6px">Artifact chain</h4>${stages || '<div style="color:var(--muted);font-size:0.8rem">No stage artifacts recorded.</div>'}
           <div class="text-muted">Powered by <a href="https://docs.hivecommons.dev/docs/hive/spektacular-runs" target="_blank" rel="noopener">Spektacular</a></div>
           <h4 style="margin:14px 0 6px">Approval and audit records</h4>${approval}`;
@@ -8299,6 +8381,31 @@
       if (panel) panel.style.display = 'none';
     }
     window.closeRunDetail = closeRunDetail;
+
+    async function toggleRunLog(key, stage, gen, targetID) {
+      const panel = document.getElementById(targetID || '');
+      if (!panel || !key) return;
+      if (panel.dataset.open === '1') {
+        panel.dataset.open = '0';
+        panel.innerHTML = '';
+        return;
+      }
+      panel.dataset.open = '1';
+      panel.innerHTML = '<div class="run-log-pre">Loading log…</div>';
+      try {
+        const qs = new URLSearchParams();
+        if (stage) qs.set('stage', stage);
+        if (gen && String(gen) !== '0') qs.set('gen', String(gen));
+        qs.set('tail', '200');
+        const res = await fetch('/api/runs/' + encodeURIComponent(key) + '/log?' + qs.toString(), { headers: _inceptionAuthHeaders() });
+        const text = await res.text();
+        if (!res.ok) throw new Error(text || ('HTTP ' + res.status));
+        panel.innerHTML = '<pre class="run-log-pre">' + escapeHtml(text || '(empty log)') + '</pre>';
+      } catch (e) {
+        panel.innerHTML = '<pre class="run-log-pre">Log unavailable: ' + escapeHtml(e && e.message ? e.message : e) + '</pre>';
+      }
+    }
+    window.toggleRunLog = toggleRunLog;
 
     function stalledRunHealthRows(runs) {
       if (!Array.isArray(runs)) return '';
@@ -8925,7 +9032,7 @@
       const resuming = !!paused;
       let reason = '';
       if (!resuming) {
-        reason = prompt('Pause ' + repo + ' — why?\n\nAgents stop writing to this repo and stop being handed work on it. It stays watched, scored and visible here. Recorded with your name and the time.', '');
+        reason = await hivePrompt({title: 'Pause ' + repo, label: 'Why?\n\nAgents stop writing to this repo and stop being handed work on it. It stays watched, scored and visible here. Recorded with your name and the time.'});
         if (reason === null) return;
       }
       const label = btn ? btn.textContent : '';
@@ -9110,10 +9217,21 @@
           </div>
           <div class="repo-legend-row"><span class="repo-legend-row-label">PRs</span>
             <span class="repo-pr-pill" title="Open PR with no merge verdict">open</span>
+            <span class="repo-pr-band-title" title="Band: needs-human, held, or configured waiting labels">Waiting on human</span>
+            <span class="repo-pr-band-title" title="Band: sweep eligible or queued for auto-merge">Merge-eligible</span>
+            <span class="repo-pr-band-title" title="Band: blocked verdict, conflicts, or failing CI">Blocked</span>
+            <span class="repo-pr-band-title" title="Band: outstanding verdict or hive review posted">In review</span>
+            <span class="repo-pr-band-title" title="Band: ordinary open PRs">Open</span>
+            <span class="repo-pr-band-title" title="Band: draft PRs">Draft</span>
             <span class="repo-pr-pill mergeable" title="Merge-eligible on the sweep verdict"><span class="pill-merge-icon">✓</span> eligible</span>
             <span class="repo-pr-pill merge-outstanding" title="GitHub says mergeable, but the sweep still wants something"><span class="pill-merge-icon">◐</span> outstanding</span>
             <span class="repo-pr-pill needs-human pill-icon" title="Automated fix attempts exhausted — human review required">⚠</span>
             <span class="repo-pr-pill held" title="Held PR: grey dashed border">held</span>
+            <span class="repo-pr-pill pill-icon" title="Held / waiting on a human">⏸</span>
+            <span class="repo-pr-pill pill-icon" title="Failing CI; tooltip lists failing checks">✗ CI</span>
+            <span class="repo-pr-pill pill-icon" title="Conflicts or not mergeable on GitHub">⑂</span>
+            <span class="repo-pr-pill stale" title="No activity for more than ${cfg.staleDays} days"><span class="pill-state">🕒</span> stale</span>
+            <span class="repo-pr-pill" title="Agent-authored PR; badge names the agent role"><span class="pill-role">SCANNER</span> agent</span>
             <span class="repo-pr-pill pill-reviewed pill-icon" title="Hive review posted; opens the recorded review">💬</span>
             <span class="repo-pr-pill mergeable pill-icon" title="Queued for Hive auto-merge">🔀</span>
             <span class="repo-pr-pill pill-icon" title="Queue for auto-merge, or disabled when not mergeable on GitHub">🔀</span>
@@ -9477,6 +9595,131 @@
       return (issues || []).filter(issueIsStale).length;
     }
 
+    const PR_HUMAN_GATE_LABELS = ['needs-human', 'needs-decision', '2-discussing'];
+    const PR_BAND_ORDER = ['waiting', 'eligible', 'blocked', 'in-review', 'open', 'draft'];
+
+    function prLabelSet(pr) {
+      return new Set(((pr && pr.labels) || []).map(l => String(l).toLowerCase()));
+    }
+
+    function prHasAnyLabel(pr, labels) {
+      const set = prLabelSet(pr);
+      return (labels || []).some(l => set.has(String(l).toLowerCase()));
+    }
+
+    function prQueued(pr) {
+      const want = String(window._hiveAutoMergeLabel || 'lgtm').toLowerCase();
+      return prLabelSet(pr).has(want);
+    }
+
+    function prAgentRole(pr) {
+      if (pr && pr.hive_agent) return String(pr.hive_agent).trim();
+      for (const label of ((pr && pr.labels) || [])) {
+        const raw = String(label || '');
+        if (raw.toLowerCase().startsWith('agent/')) return raw.slice(raw.indexOf('/') + 1).trim();
+      }
+      return pr && pr.app_authored ? 'app' : '';
+    }
+
+    function prUpdatedAt(pr) {
+      const value = (pr && (pr.updated_at || pr.created_at)) || '';
+      const t = Date.parse(value);
+      return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
+    }
+
+    function prCreatedAt(pr) {
+      const value = (pr && pr.created_at) || '';
+      const t = Date.parse(value);
+      return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
+    }
+
+    function prReviewClassRank(pr) {
+      switch (String((pr && pr.review_class) || '')) {
+        case 'fix': return 0;
+        case 'tests': return 2;
+        default: return 1;
+      }
+    }
+
+    function prIsStale(pr) {
+      const t = prUpdatedAt(pr);
+      if (!Number.isFinite(t)) return false;
+      return (Date.now() - t) > repoIssueBandConfig().staleDays * MS_PER_DAY;
+    }
+
+    function prCIFailing(pr) {
+      const checks = (pr && pr.failing_checks) || [];
+      return pr && String(pr.ci_status || '').toLowerCase() === 'failing' && Array.isArray(checks) && checks.length > 0;
+    }
+
+    function prBandInfo(pr, held) {
+      const cfg = repoIssueBandConfig();
+      const labels = prLabelSet(pr);
+      const v = pr && pr.merge_verdict ? pr.merge_verdict : {};
+      const role = prAgentRole(pr);
+      const matches = {
+        waiting: !!held || prHasAnyLabel(pr, PR_HUMAN_GATE_LABELS.concat(cfg.waitingLabels || [])) || holdLabels(Array.from(labels)).length > 0,
+        eligible: (v && v.state === 'eligible') || prQueued(pr),
+        blocked: (v && v.state === 'blocked') || (pr && pr.mergeable === 'no') || prCIFailing(pr),
+        inReview: (v && v.state === 'outstanding') || !!(pr && pr.review_url),
+        draft: !!(pr && pr.draft)
+      };
+      let band = 'open';
+      if (matches.waiting) band = 'waiting';
+      else if (matches.eligible) band = 'eligible';
+      else if (matches.blocked) band = 'blocked';
+      else if (matches.inReview) band = 'in-review';
+      else if (matches.draft) band = 'draft';
+      const signals = [];
+      if (role) signals.push({ role: role, label: 'agent-authored by ' + role });
+      if (labels.has('needs-human')) signals.push({ glyph: '⚠', label: 'needs human review' });
+      if (held || holdLabels(Array.from(labels)).length > 0) signals.push({ glyph: '⏸', label: 'held' });
+      if (matches.eligible) signals.push({ glyph: '✓', label: prQueued(pr) ? 'queued or merge-eligible' : 'merge-eligible' });
+      if (matches.inReview) signals.push({ glyph: '◐', label: 'in review or outstanding' });
+      if (prCIFailing(pr)) signals.push({ glyph: '✗ CI', label: 'failing CI: ' + ((pr.failing_checks || []).join(', ') || 'check failure') });
+      if (pr && pr.mergeable === 'no') signals.push({ glyph: '⑂', label: 'not mergeable' + (pr.mergeable_state ? ': ' + pr.mergeable_state : '') });
+      if (prQueued(pr)) signals.push({ glyph: '🔀', label: 'queued for auto-merge' });
+      if (prIsStale(pr)) signals.push({ glyph: '🕒', label: 'stale: no activity > ' + cfg.staleDays + 'd' });
+      return { band, role, held: !!held, matches, signals };
+    }
+
+    function prBandLabel(band) {
+      switch (band) {
+        case 'waiting': return 'Waiting on human';
+        case 'eligible': return 'Merge-eligible';
+        case 'blocked': return 'Blocked';
+        case 'in-review': return 'In review';
+        case 'draft': return 'Draft';
+        default: return 'Open';
+      }
+    }
+
+    function prBandRank(band) {
+      const idx = PR_BAND_ORDER.indexOf(band);
+      return idx >= 0 ? idx : PR_BAND_ORDER.length;
+    }
+
+    function groupedRepoPRs(openPrs, heldPrs) {
+      const groups = new Map();
+      const entries = (openPrs || []).map(pr => ({ pr, held: false })).concat((heldPrs || []).map(pr => ({ pr, held: true })));
+      entries.forEach(entry => {
+        const info = prBandInfo(entry.pr, entry.held);
+        const key = info.band;
+        if (!groups.has(key)) groups.set(key, { key, band: info.band, label: prBandLabel(info.band), prs: [] });
+        groups.get(key).prs.push({ pr: entry.pr, held: entry.held, info });
+      });
+      const out = Array.from(groups.values());
+      out.forEach(g => g.prs.sort((a, b) => prUpdatedAt(a.pr) - prUpdatedAt(b.pr) || prReviewClassRank(a.pr) - prReviewClassRank(b.pr) || prCreatedAt(a.pr) - prCreatedAt(b.pr) || Number(a.pr.number || 0) - Number(b.pr.number || 0)));
+      out.sort((a, b) => prBandRank(a.band) - prBandRank(b.band));
+      return out;
+    }
+
+    function prSignalHTML(info) {
+      return (info.signals || []).map(s => s.role
+        ? `<span class="pill-role" title="${esc(s.label)}">${esc(s.role)}</span>`
+        : `<span class="pill-state" title="${esc(s.label)}">${esc(s.glyph)}</span>`).join('');
+    }
+
     function issueBandInfo(issue) {
       const cfg = repoIssueBandConfig();
       const labels = issueLabelSet(issue);
@@ -9666,7 +9909,7 @@
           const holdBtn = holdToggleChip(cardRepo, i, 'issue', true, canToggleHold, heldTip);
           return `<span class="repo-issue-pill-wrap"><a class="repo-issue-pill held" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span></a>${holdBtn}</span>`;
         }).join('');
-        const prPills = (r.openPrs || []).map(p => {
+        const renderPrPill = (p, held, info) => {
           const title = p.title && p.title.length > MAX_PILL_TITLE_LEN ? p.title.slice(0, MAX_PILL_TITLE_LEN) + '…' : (p.title || '');
           // Green ✓ only on the sweep's own verdict; amber ◐ for mergeable
           // on GitHub but not yet eligible; nothing otherwise (#7478).
@@ -9675,104 +9918,71 @@
             : mergeState === 'outstanding' ? '<span class="pill-merge-icon">◐</span>' : '';
           const mergeClass = mergeState === 'eligible' ? ' mergeable' : mergeState === 'outstanding' ? ' merge-outstanding' : '';
           const prAge = pillAge(p.created_at);
+          const activityAge = pillAge(p.updated_at || p.created_at);
           const labels = (p.labels || []).map(l => String(l));
-          const queued = labels.includes(window._hiveAutoMergeLabel || 'lgtm');
+          const queued = prQueued(p);
           // Escalated out of the automated fix lane: the escalation ledger
           // (pkg/escalation) applies the `needs-human` label once automated
           // fix attempts are exhausted. The label list is the single source
           // of truth — the same signal the ledger writes to GitHub — so this
           // view cannot drift from the ledger.
-          const needsHuman = labels.includes('needs-human');
+          const needsHuman = labels.map(l => l.toLowerCase()).includes('needs-human');
           // review_class is the presentational triage class the snapshot is
           // ordered by (fix > refactor-docs > tests, then age; #6183). It is
           // derived server-side from the title prefix and lane label only.
           const reviewClass = p.review_class ? String(p.review_class) : '';
           const classBadge = reviewClass ? `<span class="pill-class ${esc(reviewClass)}">${esc(reviewClass === 'refactor-docs' ? 'refactor' : reviewClass)}</span>` : '';
-          const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + (reviewClass ? ' [review class: ' + reviewClass + ']' : '') + prMergeNote(p) + (queued ? ' (queued for auto-merge)' : '') + (needsHuman ? ' (needs human review)' : '');
+          const bandTip = info ? ' [band: ' + prBandLabel(info.band) + ']' : '';
+          const activityTip = p.updated_at ? ' [last activity: ' + p.updated_at + (activityAge ? ' / ' + activityAge : '') + ']' : '';
+          const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + bandTip + activityTip + (reviewClass ? ' [review class: ' + reviewClass + ']' : '') + prMergeNote(p) + (queued ? ' (queued for auto-merge)' : '') + (needsHuman ? ' (needs human review)' : '') + (held ? ' (' + heldReason(p) + ')' : '');
           const canQueue = dashboardRoleAtLeast(window._hiveRole || 'read', 'merger') && (window._hiveUser || dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) && !(p.author && window._hiveUser && p.author.toLowerCase() === window._hiveUser.toLowerCase());
           const parts = (r.full || r.name || '').split('/');
           const owner = parts.length > 1 ? parts[0] : '';
           const repoName = parts.length > 1 ? parts.slice(1).join('/') : (r.name || '');
-          // The Queue auto-merge action-chip slot after the PR pill. needs-human takes
-          // precedence over the Queue auto-merge action: an escalated PR is
-          // out of the automated lane by definition, so offering to queue it
-          // for auto-merge would contradict the escalation. Removing the
-          // needs-human label on GitHub returns the PR to the automated lane
-          // and brings the queue action back on the next refresh.
-          //
-          // A PR GitHub reports as not mergeable (conflicts, a required
-          // review or check missing) keeps the button but disabled, with the
-          // state as the reason: a live "Queue auto-merge" beside a DIRTY PR
-          // read as "this is ready to go" (#7471), and the sweep would only
-          // refuse it later as not-mergeable anyway. An unknown verdict still
-          // offers the action — "" means not fetched yet, never "no".
           const notMergeable = p.mergeable === 'no';
           const notMergeableTip = 'Not mergeable on GitHub' + (p.mergeable_state ? ' (' + String(p.mergeable_state) + ')' : '') + ' — resolve that before queueing for auto-merge';
-          // The hive's OWN review on this PR, from the review-links ledger.
-          // It is evidence the hive looked, not a merge signal — so it never
-          // tints the PR pill and never gates anything. Absent means "no
-          // review recorded", which is not the same as "not reviewed": the
-          // ledger only reaches back as far as its retention window.
           const reviewTip = reviewPillTip(p);
           const needsHumanTip = 'Automated fix attempts exhausted — a human must review this PR. Remove the needs-human label after addressing the root cause to return it to the automated fix lane.';
           const reviewPill = p.review_url
             ? `<a class="repo-pr-pill pill-reviewed pill-icon" href="${esc(p.review_url)}" target="_blank" rel="noopener" data-stop="1" title="${esc(reviewTip)}" aria-label="${esc(reviewTip)}">💬${p.review_count > 1 ? '×' + p.review_count : ''}</a>`
             : '';
-          const queueBtn = needsHuman
-            ? `<span class="repo-pr-pill needs-human pill-needs-human-badge pill-icon" title="${esc(needsHumanTip)}" aria-label="${esc(needsHumanTip)}">⚠</span>`
-            : (canQueue
-                ? (queued
-                    ? '<span class="repo-pr-pill mergeable pill-icon" title="Queued for Hive auto-merge" aria-label="Queued for Hive auto-merge">🔀</span>'
-                    : (notMergeable
-                        ? `<button class="repo-pr-pill pill-icon" disabled title="${esc(notMergeableTip)}" aria-label="${esc(notMergeableTip)}">🔀</button>`
-                        : `<button class="hv-btn repo-pr-pill pill-icon btn-primary" data-action="queuePRAutoMerge" data-arg0="${esc(owner)}" data-arg1="${esc(repoName)}" data-arg2="${p.number}" data-arg-types="s,s,j,t" data-stop="1" data-prevent="1" title="Queue for Hive auto-merge on green CI" aria-label="Queue for Hive auto-merge on green CI">🔀</button>`))
-                : '');
-          const holdBtn = holdToggleChip(cardRepo, p, 'pr', false, canToggleHold, '');
+          const queueBtn = held
+            ? ''
+            : (needsHuman
+                ? `<span class="repo-pr-pill needs-human pill-needs-human-badge pill-icon" title="${esc(needsHumanTip)}" aria-label="${esc(needsHumanTip)}">⚠</span>`
+                : (canQueue
+                    ? (queued
+                        ? '<span class="repo-pr-pill mergeable pill-icon" title="Queued for Hive auto-merge" aria-label="Queued for Hive auto-merge">🔀</span>'
+                        : (notMergeable
+                            ? `<button class="repo-pr-pill pill-icon" disabled title="${esc(notMergeableTip)}" aria-label="${esc(notMergeableTip)}">🔀</button>`
+                            : `<button class="hv-btn repo-pr-pill pill-icon btn-primary" data-action="queuePRAutoMerge" data-arg0="${esc(owner)}" data-arg1="${esc(repoName)}" data-arg2="${p.number}" data-arg-types="s,s,j,t" data-stop="1" data-prevent="1" title="Queue auto-merge on green CI" aria-label="Queue auto-merge on green CI">🔀</button>`))
+                    : ''));
+          const heldTip = held ? heldReason(p) : '';
+          const holdBtn = holdToggleChip(cardRepo, p, 'pr', held, canToggleHold, heldTip);
+          const stateBadge = held && needsHuman
+            ? `<span class="repo-pr-pill needs-human pill-needs-human-badge pill-icon" title="${esc(heldTip)}" aria-label="${esc(heldTip)}">⚠</span>`
+            : '';
+          const url = p.url || (repoUrl + '/pull/' + p.number);
+          const heldClass = held ? ' held' : '';
+          const staleClass = prIsStale(p) ? ' stale' : '';
           // needs-human wins the pill tint over mergeable green: a PR can be
           // technically mergeable AND escalated, and the escalation is what
-          // the operator must see.
-          return `<span class="repo-pr-pill-wrap"><a class="repo-pr-pill${needsHuman ? ' needs-human' : mergeClass}" href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(prTip)}">${classBadge}<span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}</a>${reviewPill}${queueBtn}${holdBtn}</span>`;
-        }).join('');
-        // Held PRs (hivecommons/hive#7896): in the PR column, tinted held.
-        // The card's PRs number is the repo's TOTAL open PR count, and a
-        // hold label moves a PR out of the actionable list the pills were
-        // drawn from — so a repo whose every open PR was held (an ACMM level
-        // gate, a Renovate bump escalated needs-human) said "3 PRs" and
-        // listed nothing, hiding exactly the PRs that were waiting on the
-        // operator. No Queue auto-merge here, ever: a held PR is out of the
-        // automated lane by definition. The action-chip slot carries the
-        // state instead — ⚠ when needs-human is also on it (the escalation
-        // kind of hold), ⏸ otherwise (a plain hold, level gate or manual).
-        // The hive's own review pill still shows, since "did the hive look
-        // at this?" is what the human about to review it wants to know.
-        const heldPrPills = (r.heldPrs || []).map(p => {
-          const title = p.title && p.title.length > MAX_PILL_TITLE_LEN ? p.title.slice(0, MAX_PILL_TITLE_LEN) + '…' : (p.title || '');
-          const prAge = pillAge(p.created_at);
-          const labels = (p.labels || []).map(l => String(l));
-          const needsHuman = labels.includes('needs-human');
-          const reviewClass = p.review_class ? String(p.review_class) : '';
-          const classBadge = reviewClass ? `<span class="pill-class ${esc(reviewClass)}">${esc(reviewClass === 'refactor-docs' ? 'refactor' : reviewClass)}</span>` : '';
-          const heldTip = heldReason(p);
-          const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + (reviewClass ? ' [review class: ' + reviewClass + ']' : '') + ' (' + heldTip + ')';
-          const url = p.url || (repoUrl + '/pull/' + p.number);
-          const reviewTip = reviewPillTip(p);
-          const reviewPill = p.review_url
-            ? `<a class="repo-pr-pill pill-reviewed pill-icon" href="${esc(p.review_url)}" target="_blank" rel="noopener" data-stop="1" title="${esc(reviewTip)}" aria-label="${esc(reviewTip)}">💬${p.review_count > 1 ? '×' + p.review_count : ''}</a>`
-            : '';
-          const stateBadge = (needsHuman
-            ? `<span class="repo-pr-pill needs-human pill-needs-human-badge pill-icon" title="${esc(heldTip)}" aria-label="${esc(heldTip)}">⚠</span>`
-            : '') + holdToggleChip(cardRepo, p, 'pr', true, canToggleHold, heldTip);
-          // needs-human wins the tint here as it does on the actionable
-          // pill; the dashed border says "held" in both cases.
-          return `<span class="repo-pr-pill-wrap"><a class="repo-pr-pill held${needsHuman ? ' needs-human' : ''}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(prTip)}">${classBadge}<span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span></a>${reviewPill}${stateBadge}</span>`;
+          // the operator must see. Held adds the dashed outline without making
+          // the PR a trailing append; it bands with other human gates.
+          return `<span class="repo-pr-pill-wrap"><a class="repo-pr-pill${heldClass}${needsHuman ? ' needs-human' : mergeClass}${staleClass}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(prTip)}">${classBadge}<span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}${prSignalHTML(info || prBandInfo(p, held))}</a>${reviewPill}${queueBtn}${stateBadge}${holdBtn}</span>`;
+        };
+        const prPills = groupedRepoPRs(r.openPrs || [], r.heldPrs || []).map(g => {
+          const items = g.prs.map(entry => renderPrPill(entry.pr, entry.held, entry.info)).join('');
+          return `<div class="repo-pr-band repo-pr-band-${esc(g.band)}"><div class="repo-pr-band-title">${esc(g.label)} · ${g.prs.length}</div><div class="repo-pr-band-items">${items}</div></div>`;
         }).join('');
         // Two columns under the two numbers: issue pills (actionable, then
-        // held) under "issues", PR pills (actionable, then held) under
+        // held) under "issues", PR pills grouped into state bands under
         // "PRs". Position says what a pill is; tint says what state it is in.
         const issueCol = issuePills + heldIssuePills;
-        const prCol = prPills + heldPrPills;
+        const prCol = prPills;
+        const pillColClass = issueCol && prCol ? '' : (issueCol ? ' repo-pills-issues-only' : ' repo-pills-prs-only');
         const pillsHtml = (issueCol || prCol)
-          ? `<div class="repo-pills"><div class="repo-pill-col repo-pill-col-issues">${issueCol}</div><div class="repo-pill-col repo-pill-col-prs">${prCol}</div></div>`
+          ? `<div class="repo-pills${pillColClass}"><div class="repo-pill-col repo-pill-col-issues">${issueCol}</div><div class="repo-pill-col repo-pill-col-prs">${prCol}</div></div>`
           : '';
         // Per-repo agent pause (#6203). The tooltip carries the provenance the
         // pill has no room for; without it a paused repo raises "who did this
@@ -14614,7 +14824,7 @@ function burnAreaChart() {
     }
 
     async function kbPromote(slug, fromLayer, toLayer) {
-      const reason = prompt('Reason for promoting to ' + toLayer + ':', 'Useful for the broader team');
+      const reason = await hivePrompt({title: 'Promote to ' + toLayer, label: 'Reason for promoting to ' + toLayer + ':', defaultValue: 'Useful for the broader team'});
       if (reason === null) return;
       try {
         const r = await fetch('/api/knowledge/promote', {
@@ -14707,7 +14917,7 @@ function burnAreaChart() {
     }
 
     // kbNewChannel reveals an inline text input to name a new knowledge channel
-    // (rather than a blocking window.prompt, which clashes with the dashboard's
+    // (rather than a blocking the in-app prompt, which clashes with the dashboard's
     // modal conventions). This is the path for adding knowledge on channels other
     // than the reserved automation vault (issue #3581).
     function kbNewChannel() {
@@ -14811,7 +15021,7 @@ function burnAreaChart() {
         // Explainer
         html += '<div style="font-size:var(--fs-sm);color:var(--muted);line-height:1.5;margin-bottom:var(--sp-6);padding:10px;background:var(--surface);border-radius:var(--r);border:1px solid var(--border)">';
         html += '<strong class="text-default">How agents use knowledge sources</strong><br>';
-        html += 'Before each kick, the primer queries all connected sources and injects the most relevant facts into the agent\'s prompt. Agents never talk to sources directly &mdash; knowledge is primed deterministically by file paths and keywords.';
+        html += 'Before each kick, the primer queries all connected sources and injects the most relevant facts into the agent\'s dialog. Agents never talk to sources directly &mdash; knowledge is primed deterministically by file paths and keywords.';
         html += '</div>';
 
         // ── Two-column grid ──
@@ -16506,8 +16716,10 @@ function burnAreaChart() {
       }
       list.innerHTML = _campaigns.map(function(c) {
         const repo = (c.repos || []).join(', ') || 'no repo';
-        const activity = c.last_activity || 'no activity';
+        const activity = c.activity_line || c.last_activity || 'no activity';
         const engine = c.engine || 'unknown engine';
+        const logID = 'campaign-log-' + safeDomId(c.run_key || c.id);
+        const canLog = !!c.run_key;
         return `<div class="campaign-row">
           <div>
             <div class="campaign-row-title">${escapeHtml(c.title || c.id)}</div>
@@ -16517,14 +16729,18 @@ function burnAreaChart() {
               <span>${escapeHtml(repo)}</span>
               <span>${escapeHtml(engine)}</span>
               <span>${escapeHtml(activity)}</span>
+              ${c.artifact_id ? `<span>${escapeHtml(c.artifact_id)}</span>` : ''}
+              ${c.document_status ? `<span>${escapeHtml(c.document_status)}</span>` : ''}
             </div>
           </div>
           <div class="campaign-row-actions">
             <button class="hv-btn btn-secondary btn-sm" data-action="openCampaignJam" data-arg0="${escapeHtml(c.id)}">Jam</button>
+            ${canLog ? `<button class="hv-btn btn-secondary btn-sm" data-action="toggleRunLog" data-arg0="${escapeHtml(c.run_key)}" data-arg1="${escapeHtml(c.current_stage || 'spec')}" data-arg2="${escapeHtml(String(c.run_gen || 0))}" data-arg3="${escapeHtml(logID)}">Log</button>` : ''}
             <button class="hv-btn btn-primary btn-sm" data-action="resumeCampaign" data-arg0="${escapeHtml(c.id)}">Continue</button>
             <button class="hv-btn btn-secondary btn-sm" data-action="releaseCampaign" data-arg0="${escapeHtml(c.id)}">Release</button>
             <button class="hv-btn btn-secondary btn-sm" data-action="reviseCampaign" data-arg0="${escapeHtml(c.id)}">Revise</button>
           </div>
+          ${canLog ? `<div id="${escapeHtml(logID)}" class="run-log-panel"></div>` : ''}
         </div>`;
       }).join('');
     }
@@ -16637,8 +16853,8 @@ function burnAreaChart() {
           if (msg.jam && msg.jam.spec_revision_id) { _campaignJamLiveRevision = msg.jam.spec_revision_id; }
           if (msg.type === 'snapshot' || msg.type === 'presence') { renderCampaignJamPresence(msg.presence || []); }
           if (msg.type === 'edit_applied' && msg.jam) { renderCampaignJam(id, msg.jam); connectCampaignJamLive(id); }
-          if (msg.type === 'conflict') { alert('Jam edit conflict: refresh or merge against revision ' + (msg.expected_revision_id || 'current')); }
-          if (msg.type === 'error') { alert('Jam live error: ' + (msg.error || 'unknown error')); }
+          if (msg.type === 'conflict') { showToast('Jam edit conflict: refresh or merge against revision ' + (msg.expected_revision_id || 'current'), 'error'); }
+          if (msg.type === 'error') { showToast('Jam live error: ' + (msg.error || 'unknown error'), 'error'); }
         };
         ws.onclose = function() { renderCampaignJamPresence([], 'Disconnected; refresh Jam to reconnect.'); };
       } catch (e) {
@@ -16663,7 +16879,7 @@ function burnAreaChart() {
     }
 
     function submitCampaignJamLiveEdit() {
-      if (!_campaignJamSocket || _campaignJamSocket.readyState !== WebSocket.OPEN) { alert('Jam live socket is not connected'); return; }
+      if (!_campaignJamSocket || _campaignJamSocket.readyState !== WebSocket.OPEN) { showToast('Jam live socket is not connected', 'error'); return; }
       const content = document.getElementById('jam-live-content')?.value || '';
       _campaignJamSocket.send(JSON.stringify({ type: 'edit', base_revision_id: _campaignJamLiveRevision, content, reason: 'live co-edit' }));
     }
@@ -16675,13 +16891,13 @@ function burnAreaChart() {
     }
 
     async function inviteCampaignJamAgent(id, thread_id) {
-      const prompt = promptForJamAgent();
+      const prompt = await promptForJamAgent();
       if (prompt === null) return;
       await postCampaignJam(id, 'agents', { thread_id, agent: 'spektacular', prompt });
     }
 
     function promptForJamAgent() {
-      return window.prompt('Prompt for the Jam agent reply and suggestion', 'Suggest spec text for this thread.');
+      return hivePrompt({title: 'Prompt for Jam agent', label: 'Prompt for the Jam agent reply and suggestion', defaultValue: 'Suggest spec text for this thread.'});
     }
 
     async function createCampaignJamSuggestion(id) {
@@ -16719,9 +16935,9 @@ function burnAreaChart() {
       try {
         const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/jam/' + lane, { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify(body) });
         const data = await r.json();
-        if (!data.ok) { alert(data.error || 'Jam update failed'); return; }
+        if (!data.ok) { showToast(data.error || 'Jam update failed', 'error'); return; }
         renderCampaignJam(id, data.jam || {});
-      } catch (e) { alert('Jam error: ' + e.message); }
+      } catch (e) { showToast('Jam error: ' + e.message, 'error'); }
     }
 
     async function resumeCampaign(id) {
@@ -16729,11 +16945,11 @@ function burnAreaChart() {
       try {
         const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/resume', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({ surface: 'dashboard' }) });
         const data = await r.json();
-        if (!data.ok) { alert(data.error || 'Failed to resume campaign'); return; }
+        if (!data.ok) { showToast(data.error || 'Failed to resume campaign', 'error'); return; }
         if (data.state) { _inceptionState = data.state; renderInception(); }
-        if (data.resume_command) { alert('Resume command:\n' + data.resume_command); }
+        if (data.resume_command) { await hiveAlert('Resume command:\n' + data.resume_command, 'Resume command'); }
         await loadCampaigns();
-      } catch (e) { alert('Error: ' + e.message); }
+      } catch (e) { showToast('Error: ' + e.message, 'error'); }
     }
 
     async function releaseCampaign(id) {
@@ -16741,9 +16957,9 @@ function burnAreaChart() {
       try {
         const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/release', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({}) });
         const data = await r.json();
-        if (!data.ok) { alert(data.error || 'Failed to release campaign'); return; }
+        if (!data.ok) { showToast(data.error || 'Failed to release campaign', 'error'); return; }
         await loadCampaigns();
-      } catch (e) { alert('Error: ' + e.message); }
+      } catch (e) { showToast('Error: ' + e.message, 'error'); }
     }
 
     async function reviseCampaign(id) {
@@ -16751,9 +16967,9 @@ function burnAreaChart() {
       try {
         const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/revise', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({}) });
         const data = await r.json();
-        if (!data.ok) { alert(data.error || 'Failed to revise campaign'); return; }
+        if (!data.ok) { showToast(data.error || 'Failed to revise campaign', 'error'); return; }
         await loadCampaigns();
-      } catch (e) { alert('Error: ' + e.message); }
+      } catch (e) { showToast('Error: ' + e.message, 'error'); }
     }
 
     function renderInceptionProgress(phase) {
@@ -17277,7 +17493,7 @@ function burnAreaChart() {
     }
 
     async function startInceptionBrownfield() {
-      const url = prompt('Enter the GitHub repo URL:');
+      const url = await hivePrompt({title: 'Add to existing repo', label: 'Enter the GitHub repo URL:', placeholder: 'https://github.com/owner/repo'});
       if (!url) return;
       try {
         const r = await fetch('/api/inception/scan', {
@@ -17287,14 +17503,14 @@ function burnAreaChart() {
         });
         const data = await r.json();
         if (data.ok) { _inceptionState = data.state; renderInception(); loadCampaigns(); }
-        else alert(data.error || 'Failed to start scan');
-      } catch (e) { alert('Error: ' + e.message); }
+        else showToast(data.error || 'Failed to start scan', 'error');
+      } catch (e) { showToast('Error: ' + e.message, 'error'); }
     }
 
     async function submitInceptionIdea() {
       const el = document.getElementById('inception-idea');
       const idea = el ? el.value.trim() : '';
-      if (!idea) { alert('Please describe your idea'); return; }
+      if (!idea) { showToast('Please describe your idea', 'error'); return; }
       try {
         const r = await fetch('/api/inception/start', {
           method: 'POST',
@@ -17303,8 +17519,8 @@ function burnAreaChart() {
         });
         const data = await r.json();
         if (data.ok) { _inceptionState = data.state; renderInception(); loadCampaigns(); }
-        else alert(data.error || 'Failed to start inception');
-      } catch (e) { alert('Error: ' + e.message); }
+        else showToast(data.error || 'Failed to start inception', 'error');
+      } catch (e) { showToast('Error: ' + e.message, 'error'); }
     }
 
     async function submitInceptionAnswers() {
@@ -17324,8 +17540,8 @@ function burnAreaChart() {
         });
         const data = await r.json();
         if (data.ok) { _inceptionState = data.state; renderInception(); }
-        else { alert(data.error || 'Failed to submit answers'); if (btn) { btn.disabled = false; btn.textContent = 'Submit'; btn.style.opacity = '1'; } }
-      } catch (e) { alert('Error: ' + e.message); if (btn) { btn.disabled = false; btn.textContent = 'Submit'; btn.style.opacity = '1'; } }
+        else { showToast(data.error || 'Failed to submit answers', 'error'); if (btn) { btn.disabled = false; btn.textContent = 'Submit'; btn.style.opacity = '1'; } }
+      } catch (e) { showToast('Error: ' + e.message, 'error'); if (btn) { btn.disabled = false; btn.textContent = 'Submit'; btn.style.opacity = '1'; } }
     }
 
     async function loadInceptionScaffoldPreview() {
@@ -17347,31 +17563,31 @@ function burnAreaChart() {
         if (data.ok && data.facts && data.facts.length > 0) {
           let msg = 'Ideation Facts (' + data.facts.length + '):\n\n';
           data.facts.forEach(f => { msg += '- [' + f.type + '] ' + f.title + '\n'; });
-          alert(msg);
+          await hiveAlert(msg, 'Ideation Facts');
         } else {
-          alert('No ideation facts yet. The brainstorm agent is still working.');
+          showToast('No ideation facts yet. The brainstorm agent is still working.', 'info');
         }
+      } catch (e) { showToast('Error: ' + e.message, 'error'); }
+    }
 
-        async function submitConfirmedInceptionFacts() {
-          const facts = _inceptionState && _inceptionState.proposed_facts ? _inceptionState.proposed_facts : [];
-          const picked = Array.from(document.querySelectorAll('.inception-proposed-fact:checked')).map(el => {
-            const f = Object.assign({}, facts[Number(el.value)]);
-            f.confirmed = true;
-            return f;
-          }).filter(Boolean);
-          if (!picked.length) { alert('Select at least one proposal to confirm.'); return; }
-          try {
-            const r = await fetch('/api/inception/facts', {
-              method: 'POST',
-              headers: _inceptionAuthHeaders(),
-              body: JSON.stringify({ facts: picked })
-            });
-            const data = await r.json();
-            if (data.ok) { _inceptionState.phase = 'scaffold'; _inceptionState.proposed_facts = []; renderInception(); }
-            else alert(data.error || 'Failed to record confirmed facts');
-          } catch (e) { alert('Error: ' + e.message); }
-        }
-      } catch (e) { alert('Error: ' + e.message); }
+    async function submitConfirmedInceptionFacts() {
+      const facts = _inceptionState && _inceptionState.proposed_facts ? _inceptionState.proposed_facts : [];
+      const picked = Array.from(document.querySelectorAll('.inception-proposed-fact:checked')).map(el => {
+        const f = Object.assign({}, facts[Number(el.value)]);
+        f.confirmed = true;
+        return f;
+      }).filter(Boolean);
+      if (!picked.length) { showToast('Select at least one proposal to confirm.', 'error'); return; }
+      try {
+        const r = await fetch('/api/inception/facts', {
+          method: 'POST',
+          headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ facts: picked })
+        });
+        const data = await r.json();
+        if (data.ok) { _inceptionState.phase = 'scaffold'; _inceptionState.proposed_facts = []; renderInception(); }
+        else showToast(data.error || 'Failed to record confirmed facts', 'error');
+      } catch (e) { showToast('Error: ' + e.message, 'error'); }
     }
 
     async function approveInception() {
@@ -17379,8 +17595,8 @@ function burnAreaChart() {
         const r = await fetch('/api/inception/approve', { method: 'POST', headers: _inceptionAuthHeaders() });
         const data = await r.json();
         if (data.ok) { _inceptionState.phase = 'complete'; renderInception(); }
-        else alert(data.error || 'Failed to approve');
-      } catch (e) { alert('Error: ' + e.message); }
+        else showToast(data.error || 'Failed to approve', 'error');
+      } catch (e) { showToast('Error: ' + e.message, 'error'); }
     }
 
     async function stopInception() {
@@ -17397,7 +17613,7 @@ function burnAreaChart() {
         const hasFilesResp = await fetch('/api/inception/has-files', {headers: _inceptionAuthHeaders()});
         const hasFilesData = await hasFilesResp.json();
         if (hasFilesData.has_files) {
-          const choice = confirm('Download existing scaffold before clearing?');
+          const choice = await hiveConfirm({title: 'Download scaffold?', message: 'Download existing scaffold before clearing?', confirmLabel: 'Download'});
           if (choice) {
             await downloadInceptionZip();
           }
@@ -17406,7 +17622,7 @@ function burnAreaChart() {
         _inceptionState = null;
         renderInception();
         loadCampaigns();
-      } catch (e) { alert('Error: ' + e.message); }
+      } catch (e) { showToast('Error: ' + e.message, 'error'); }
     }
 
     async function resetInception() {
@@ -17416,7 +17632,7 @@ function burnAreaChart() {
     async function downloadInceptionZip() {
       try {
         const r = await fetch('/api/inception/download', {headers: _inceptionAuthHeaders()});
-        if (!r.ok) { alert('Download failed'); return; }
+        if (!r.ok) { showToast('Download failed', 'error'); return; }
         const blob = await r.blob();
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -17426,7 +17642,7 @@ function burnAreaChart() {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-      } catch (e) { alert('Download error: ' + e.message); }
+      } catch (e) { showToast('Download error: ' + e.message, 'error'); }
     }
 
     // Load inception state on section navigate
@@ -17861,43 +18077,124 @@ function burnAreaChart() {
     /* Model add/remove notices: informational errors that self-clear — long
        enough to read, never a permanent sticky per model. */
     const TOAST_MODEL_CHANGE_MS = 20000;
-    function hiveConfirm(message, title) {
+    function hiveDialogEscape(value) {
+      return String(value == null ? '' : value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    function hiveNormalizeDialogOptions(first, fallbackTitle) {
+      if (first && typeof first === 'object') return Object.assign({}, first);
+      return { message: String(first == null ? '' : first), title: fallbackTitle || '' };
+    }
+    function hiveConfirmIsDanger(cfg, text) {
+      if (cfg.danger === true) return true;
+      if (cfg.danger === false) return false;
+      return /(^|\b)(delete|remove|clear|forget|revoke|deny|reset|unsubscribe)\b/i.test(String((cfg.title || '') + ' ' + text));
+    }
+    function hiveWireDialog(overlay, resolve, cancelValue, okSelector, cancelSelector, submit) {
+      let done = false;
+      const focusableSelector = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+      const close = (val) => {
+        if (done) return;
+        done = true;
+        document.removeEventListener('keydown', onKey, true);
+        overlay.remove();
+        resolve(val);
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); close(cancelValue); return; }
+        if (e.key === 'Enter') {
+          const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
+          if (tag !== 'textarea') { e.preventDefault(); submit(close); }
+          return;
+        }
+        if (e.key !== 'Tab') return;
+        const nodes = Array.from(overlay.querySelectorAll(focusableSelector)).filter(el => !el.disabled && el.offsetParent !== null);
+        if (!nodes.length) return;
+        const first = nodes[0];
+        const last = nodes[nodes.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      };
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(cancelValue); });
+      const ok = overlay.querySelector(okSelector);
+      const cancel = cancelSelector ? overlay.querySelector(cancelSelector) : null;
+      if (ok) ok.addEventListener('click', () => submit(close));
+      if (cancel) cancel.addEventListener('click', () => close(cancelValue));
+      document.addEventListener('keydown', onKey, true);
+      const initial = overlay.querySelector('[data-initial-focus]') || ok || cancel;
+      if (initial) setTimeout(() => { initial.focus(); if (initial.select) initial.select(); }, 0);
+      return close;
+    }
+    function hiveConfirm(opts, title) {
+      const cfg = hiveNormalizeDialogOptions(opts, title);
       return new Promise(resolve => {
         const overlay = document.createElement('div');
         overlay.className = 'hive-dialog-overlay';
-        const parts = message.split('\n\n');
-        const heading = title || parts.length > 1 ? (title || parts[0]) : 'Confirm';
-        const body = title ? message : (parts.length > 1 ? parts.slice(1).join('\n\n') : message);
-        overlay.innerHTML = `<div class="hive-dialog">
-          <div class="hive-dialog-title">${heading.replace(/</g,'&lt;')}</div>
-          <div class="hive-dialog-body">${body.replace(/</g,'&lt;')}</div>
+        const message = cfg.message || cfg.body || '';
+        const parts = String(message).split('\n\n');
+        const heading = cfg.title || (parts.length > 1 ? parts[0] : 'Confirm');
+        const body = cfg.title ? message : (parts.length > 1 ? parts.slice(1).join('\n\n') : message);
+        const confirmLabel = cfg.confirmLabel || cfg.ok || 'OK';
+        overlay.innerHTML = `<div class="hive-dialog" role="dialog" aria-modal="true" aria-labelledby="hive-dialog-title">
+          <div id="hive-dialog-title" class="hive-dialog-title">${hiveDialogEscape(heading)}</div>
+          <div class="hive-dialog-body">${hiveDialogEscape(body)}</div>
           <div class="hive-dialog-buttons">
-            <button class="hv-btn btn-secondary hive-dialog-btn cancel">Cancel</button>
-            <button class="hv-btn btn-primary hive-dialog-btn primary">OK</button>
+            <button type="button" class="hv-btn btn-secondary hive-dialog-btn cancel">Cancel</button>
+            <button type="button" class="hv-btn ${hiveConfirmIsDanger(cfg, message) ? 'btn-danger' : 'btn-primary'} hive-dialog-btn primary" data-initial-focus>${hiveDialogEscape(confirmLabel)}</button>
           </div></div>`;
         document.body.appendChild(overlay);
-        const close = (val) => { overlay.remove(); resolve(val); };
-        overlay.querySelector('.cancel').onclick = () => close(false);
-        overlay.querySelector('.primary').onclick = () => close(true);
-        overlay.onclick = (e) => { if (e.target === overlay) close(false); };
-        overlay.querySelector('.primary').focus();
+        hiveWireDialog(overlay, resolve, false, '.primary', '.cancel', close => close(true));
+      });
+    }
+    function hivePrompt(opts, defaultValue, legacyOpts) {
+      const cfg = (opts && typeof opts === 'object') ? Object.assign({}, opts) : Object.assign({}, legacyOpts || {}, { title: String(opts || ''), defaultValue: defaultValue });
+      return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'hive-dialog-overlay';
+        const id = 'hive-prompt-' + Math.random().toString(36).slice(2);
+        const errId = id + '-error';
+        overlay.innerHTML = `<div class="hive-dialog" role="dialog" aria-modal="true" aria-labelledby="${id}-title">
+          <div id="${id}-title" class="hive-dialog-title">${hiveDialogEscape(cfg.title || 'Input')}</div>
+          <label for="${id}" class="hive-dialog-label">${hiveDialogEscape(cfg.label || cfg.message || cfg.title || '')}</label>
+          <input id="${id}" class="hive-dialog-input" type="text" value="${hiveDialogEscape(cfg.defaultValue || '')}" placeholder="${hiveDialogEscape(cfg.placeholder || '')}" autocomplete="off" aria-describedby="${errId}" data-initial-focus>
+          <div id="${errId}" class="hive-dialog-error" role="alert"></div>
+          <div class="hive-dialog-buttons">
+            <button type="button" class="hv-btn btn-secondary hive-dialog-btn cancel">Cancel</button>
+            <button type="button" class="hv-btn btn-primary hive-dialog-btn primary">${hiveDialogEscape(cfg.confirmLabel || cfg.ok || 'OK')}</button>
+          </div></div>`;
+        document.body.appendChild(overlay);
+        const input = overlay.querySelector('#' + id);
+        const err = overlay.querySelector('#' + errId);
+        hiveWireDialog(overlay, resolve, null, '.primary', '.cancel', close => {
+          const value = input ? input.value.trim() : '';
+          if (typeof cfg.validate === 'function') {
+            const verdict = cfg.validate(value);
+            if (verdict === false || typeof verdict === 'string') {
+              if (err) err.textContent = typeof verdict === 'string' ? verdict : 'Please enter a valid value.';
+              if (input) input.focus();
+              return;
+            }
+          }
+          close(value);
+        });
       });
     }
     function hiveAlert(message, title) {
+      const text = String(message == null ? '' : message);
+      if (typeof showToast === 'function' && text.length <= 220 && text.indexOf('\n') === -1) {
+        showToast(text, 'info');
+        return Promise.resolve();
+      }
       return new Promise(resolve => {
         const overlay = document.createElement('div');
         overlay.className = 'hive-dialog-overlay';
-        overlay.innerHTML = `<div class="hive-dialog">
-          <div class="hive-dialog-title">${(title || 'Notice').replace(/</g,'&lt;')}</div>
-          <div class="hive-dialog-body">${String(message).replace(/</g,'&lt;')}</div>
+        overlay.innerHTML = `<div class="hive-dialog" role="dialog" aria-modal="true" aria-labelledby="hive-alert-title">
+          <div id="hive-alert-title" class="hive-dialog-title">${hiveDialogEscape(title || 'Notice')}</div>
+          <div class="hive-dialog-body long">${hiveDialogEscape(text)}</div>
           <div class="hive-dialog-buttons">
-            <button class="hv-btn btn-primary hive-dialog-btn primary">OK</button>
+            <button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-initial-focus>OK</button>
           </div></div>`;
         document.body.appendChild(overlay);
-        const close = () => { overlay.remove(); resolve(); };
-        overlay.querySelector('.primary').onclick = close;
-        overlay.onclick = (e) => { if (e.target === overlay) close(); };
-        overlay.querySelector('.primary').focus();
+        hiveWireDialog(overlay, resolve, undefined, '.primary', null, close => close());
       });
     }
     // makeToastSticky turns a toast into one that never auto-dismisses. Used
@@ -18618,7 +18915,7 @@ function burnAreaChart() {
     // agent cannot actually run — an operator once set backend: watsonx with no
     // watsonx gateway and the agent failed to launch for a day with only
     // "unknown backend: watsonx" in the log. litellm keeps its dedicated
-    // endpoint+key prompt (it has a legacy governor.litellm block the others do
+    // endpoint+key input dialog (it has a legacy governor.litellm block the others do
     // not); every other gateway method routes to the Model Gateways tab, which
     // is where its key is entered. Resolves true when the method is (or has just
     // been) configured, false when the user backs out — same contract as
@@ -20417,11 +20714,11 @@ function burnAreaChart() {
     // which is read-only hub-synced user/role data. It sits next to Model
     // Gateways because both are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Extensions', 'Project Observability', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Extensions', 'Project Observability', 'Advisory', 'Smart classifier', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
-      'track-prs': 'Check open PRs for this agent and inject their status (CI results, review comments, merge readiness) into the prompt.',
+      'track-prs': 'Check open PRs for this agent and inject their status (CI results, review comments, merge readiness) into the dialog.',
       'stale-check': 'Detect stale issues and PRs that haven\'t had activity recently, so the agent can prioritize or close them.',
       'repo-scan': 'Scan monitored repos for new issues, PR activity, and CI failures to build the agent\'s work queue.',
       'coverage-gate': 'Check test coverage thresholds before allowing the agent to merge PRs. Blocks merges that drop coverage.',
@@ -21033,6 +21330,7 @@ function burnAreaChart() {
         // from its own endpoint (owner-only; the render is a static shell).
         if (tabId === 'Features') loadLinearAgentStatus();
         if (tabId === 'Extensions') loadExtensionRelayStatus();
+        if (tabId === 'Smart classifier') loadSmartClassifierStats();
         if (tabId === 'Appearance') loadThemeConfig();
       }
       // Keep the Save button's enabled state in lockstep with the repos/default
@@ -21182,6 +21480,7 @@ function burnAreaChart() {
         case 'Extensions': return renderGovExtensions(d.features || {});
         case 'Project Observability': return renderGovProjectObservability(d.project_observability || {});
         case 'Advisory': return renderGovAdvisory(d.advisory || {});
+        case 'Smart classifier': return renderGovSmartClassifier(d.classifier || {});
         case 'Work Source': return renderGovWorkSource(d.work_source || {});
         case 'Hub': return renderGovHub(d.hub || {});
         case 'Forge App': return renderGovForgeApp();
@@ -22000,6 +22299,187 @@ function burnAreaChart() {
       }
     }
 
+    let _smartClassifierStatus = null;
+
+    function renderGovSmartClassifier(c) {
+      const jev = c.jev || {};
+      const backend = (c.backend || 'keywords').toLowerCase();
+      const decisions = Array.isArray(jev.decisions) && jev.decisions.length ? jev.decisions : ['lane', 'tier', 'triage'];
+      const hasKey = _smartClassifierStatus && _smartClassifierStatus.key_source && _smartClassifierStatus.key_source !== 'none';
+      const disabledJev = hasKey ? '' : ' disabled';
+      const hint = hasKey ? 'Ready to save Jev as the backend.' : 'Connect OpenRouter or set JEV_API_KEY before enabling Jev.';
+      const checked = (d) => decisions.includes(d) ? ' checked' : '';
+      return `
+        <div id="smart-classifier-section" class="smart-classifier-section">
+          <div class="smart-classifier-card">
+            <h3>Smart classifier (Jev)</h3>
+            <p class="smart-classifier-copy">Jev never changes routing. It watches, measures how often the keyword rules disagree, and suggests rule updates you can approve. It compares lane routing, the tier/model family (haiku, sonnet, opus), and triage urgency. Estimated cost is about $0.00002 per issue, billed on input tokens only.</p>
+            <div class="smart-classifier-checklist">
+              <div class="smart-classifier-check">
+                <span>OpenRouter connected with an API key</span>
+                <span id="smart-classifier-openrouter-status" class="smart-classifier-status">checking…</span>
+              </div>
+              <div class="smart-classifier-check">
+                <span>JEV_API_KEY environment key</span>
+                <span id="smart-classifier-env-status" class="smart-classifier-status">checking…</span>
+              </div>
+            </div>
+            <div class="smart-classifier-actions">
+              <button id="smart-classifier-connect-openrouter" class="hv-btn btn-primary" data-action="openOpenRouterFund">Connect OpenRouter</button>
+              <span id="smart-classifier-readiness-hint" class="smart-classifier-hint">${esc(hint)}</span>
+            </div>
+            <div id="openrouter-fund-host"></div>
+          </div>
+
+          <div class="smart-classifier-card">
+            <h3>Controls</h3>
+            <div class="config-field-row">
+              <div class="config-field">
+                <label for="smart-classifier-backend">Backend</label>
+                <select id="smart-classifier-backend" data-change-action="smartClassifierBackendChanged" data-arg-types="v">
+                  <option value="keywords"${backend === 'keywords' ? ' selected' : ''}>Keywords</option>
+                  <option value="jev"${backend === 'jev' ? ' selected' : ''}${disabledJev}>Jev</option>
+                </select>
+                <div id="smart-classifier-backend-hint" class="smart-classifier-hint">${esc(hint)}</div>
+              </div>
+              <div class="config-field">
+                <label for="smart-classifier-min-confidence">Min confidence</label>
+                <input id="smart-classifier-min-confidence" type="number" min="0" max="1" step="0.01" value="${Number(jev.minConfidence || 0.8)}" data-change-action="markDirty" data-arg0="classifier" data-arg1="minConfidence" data-arg-types="s,s,N">
+              </div>
+            </div>
+            <div class="config-field">
+              <label>Decisions</label>
+              <div class="smart-classifier-decisions">
+                <label><input id="smart-classifier-decision-lane" type="checkbox"${checked('lane')} data-change-action="smartClassifierDecisionChanged"> Lane</label>
+                <label><input id="smart-classifier-decision-tier" type="checkbox"${checked('tier')} data-change-action="smartClassifierDecisionChanged"> Tier</label>
+                <label><input id="smart-classifier-decision-triage" type="checkbox"${checked('triage')} data-change-action="smartClassifierDecisionChanged"> Triage</label>
+              </div>
+            </div>
+          </div>
+
+          <div class="smart-classifier-card">
+            <h3>Advisory stats</h3>
+            <p class="smart-classifier-copy">Agreement counters compare Jev with deterministic keywords; fallback counts low-confidence, missing-key, timeout, and error fallbacks.</p>
+            <div id="smart-classifier-stats" class="smart-classifier-stats">
+              <div class="smart-classifier-stat"><strong>Loading…</strong><span>classifier stats</span></div>
+            </div>
+            <div id="smart-classifier-disagreements" class="smart-classifier-list"></div>
+            <div id="smart-classifier-suggestions" class="smart-classifier-list"></div>
+          </div>
+        </div>`;
+    }
+
+    function smartClassifierBackendChanged(value) {
+      if (value === 'jev' && (!_smartClassifierStatus || _smartClassifierStatus.key_source === 'none')) {
+        showToast('Connect OpenRouter or set JEV_API_KEY before enabling Jev.', 'error');
+        const sel = document.getElementById('smart-classifier-backend');
+        if (sel) sel.value = 'keywords';
+        return;
+      }
+      markDirty('classifier', 'backend', value);
+    }
+
+    function smartClassifierDecisionChanged() {
+      const ids = [
+        ['smart-classifier-decision-lane', 'lane'],
+        ['smart-classifier-decision-tier', 'tier'],
+        ['smart-classifier-decision-triage', 'triage'],
+      ];
+      const selected = ids.filter(([id]) => {
+        const el = document.getElementById(id);
+        return el && el.checked;
+      }).map(([, value]) => value);
+      markDirty('classifier', 'decisions', selected);
+    }
+
+    async function loadSmartClassifierStats() {
+      try {
+        const res = await fetch('/api/classifier/stats');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        _smartClassifierStatus = await res.json();
+        updateSmartClassifierReadiness(_smartClassifierStatus);
+        updateSmartClassifierStats(_smartClassifierStatus);
+        updateSmartClassifierSuggestions(_smartClassifierStatus);
+      } catch (e) {
+        const stats = document.getElementById('smart-classifier-stats');
+        if (stats) stats.innerHTML = '<div class="smart-classifier-stat"><strong>Unavailable</strong><span>' + esc(e.message) + '</span></div>';
+      }
+    }
+
+    function updateSmartClassifierReadiness(status) {
+      const open = !!(status && status.openrouter_connected);
+      const env = !!(status && status.key_source === 'env');
+      const keySource = (status && status.key_source) || 'none';
+      const openEl = document.getElementById('smart-classifier-openrouter-status');
+      const envEl = document.getElementById('smart-classifier-env-status');
+      const backend = document.getElementById('smart-classifier-backend');
+      const jevOption = backend ? backend.querySelector('option[value="jev"]') : null;
+      const hint = document.getElementById('smart-classifier-backend-hint');
+      const topHint = document.getElementById('smart-classifier-readiness-hint');
+      if (openEl) {
+        openEl.textContent = open ? '✓ connected' : '✗ not connected';
+        openEl.className = 'smart-classifier-status ' + (open ? 'ok' : 'missing');
+      }
+      if (envEl) {
+        envEl.textContent = env ? '✓ set' : '✗ not set';
+        envEl.className = 'smart-classifier-status ' + (env ? 'ok' : 'missing');
+      }
+      const ready = keySource !== 'none';
+      const msg = ready
+        ? (keySource === 'env' ? 'Ready via JEV_API_KEY/env; Save applies this config.' : 'Ready via connected OpenRouter key; Save applies this config.')
+        : 'Connect OpenRouter or set JEV_API_KEY before enabling Jev.';
+      if (jevOption) jevOption.disabled = !ready;
+      if (hint) hint.textContent = msg;
+      if (topHint) topHint.textContent = msg;
+    }
+
+    function updateSmartClassifierStats(status) {
+      const host = document.getElementById('smart-classifier-stats');
+      if (!host) return;
+      const decisions = (status && status.decisions) || {};
+      const rows = ['lane', 'tier', 'triage'].map(name => {
+        const d = decisions[name] || {};
+        return '<div class="smart-classifier-stat"><strong>' + esc(name) + '</strong><span>agree ' + Number(d.agree || 0) + ' · disagree ' + Number(d.disagree || 0) + ' · fallback ' + Number(d.fallback || 0) + '</span></div>';
+      });
+      rows.push('<div class="smart-classifier-stat"><strong>' + Number((status && status.estimated_input_tokens) || 0).toLocaleString() + '</strong><span>estimated input tokens</span></div>');
+      rows.push('<div class="smart-classifier-stat"><strong>$' + Number((status && status.estimated_spend_usd) || 0).toFixed(6) + '</strong><span>estimated spend</span></div>');
+      host.innerHTML = rows.join('');
+    }
+
+    function updateSmartClassifierSuggestions(status) {
+      const disagreementHost = document.getElementById('smart-classifier-disagreements');
+      const suggestionHost = document.getElementById('smart-classifier-suggestions');
+      if (!disagreementHost || !suggestionHost) return;
+      const disagreements = (status && status.disagreements) || {};
+      const examples = [];
+      ['lane', 'tier', 'triage'].forEach(decision => {
+        ((disagreements[decision] || []).slice(-3)).forEach(d => examples.push({ decision, item: d }));
+      });
+      disagreementHost.innerHTML = '<h4>Recent disagreements</h4>' + (examples.length
+        ? examples.map(({ decision, item }) => '<div class="smart-classifier-list-item"><div class="smart-classifier-list-main"><strong>' + esc(decision) + ': ' + esc(item.keyword_answer || '') + ' → ' + esc(item.jev_answer || '') + '</strong><span>' + esc((item.repo || '') + '#' + Number(item.number || 0)) + ' · ' + esc(item.title || '') + ' · confidence ' + Number(item.confidence || 0).toFixed(2) + '</span></div></div>').join('')
+        : '<div class="smart-classifier-list-item"><div class="smart-classifier-list-main"><strong>No disagreements recorded yet</strong><span>Enable Jev to collect advisory measurements during sweeps.</span></div></div>');
+      const suggestions = (status && status.rule_suggestions) || [];
+      suggestionHost.innerHTML = '<h4>Suggested deterministic rule updates</h4>' + (suggestions.length
+        ? suggestions.map(s => '<div class="smart-classifier-list-item"><div class="smart-classifier-list-main"><strong>Add <code>' + esc(s.keyword || '') + '</code> to ' + esc(s.target || '') + '</strong><span>' + esc(s.support || 0) + ' disagreements where Jev answered ' + esc(s.answer || '') + '</span></div><button class="hv-btn btn-primary btn-sm" data-action="applySmartClassifierSuggestion" data-arg0="' + esc(s.decision || '') + '" data-arg1="' + esc(s.answer || '') + '" data-arg2="' + esc(s.keyword || '') + '">Apply</button></div>').join('')
+        : '<div class="smart-classifier-list-item"><div class="smart-classifier-list-main"><strong>No suggestions yet</strong><span>Suggestions appear after repeated title-token patterns in disagreements.</span></div></div>');
+    }
+
+    async function applySmartClassifierSuggestion(decision, answer, keyword) {
+      try {
+        const res = await fetch('/api/config/governor/classifier', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ suggestion: { decision, answer, keyword } })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        showToast('Classifier rule suggestion applied.', 'success');
+        await loadConfigData(true);
+        await loadSmartClassifierStats();
+      } catch (e) {
+        showToast('Failed to apply suggestion: ' + e.message, 'error');
+      }
+    }
+
     function renderGovGateways() {
       // Container the async loadGateways() fills; the initial paint shows a
       // loading line so the tab is never blank while the fetch is in flight.
@@ -22370,7 +22850,7 @@ function burnAreaChart() {
     }
 
     async function deleteGateway(name) {
-      if (!confirm('Delete gateway "' + name + '"? Agents that route through it must be repointed first.')) return;
+      if (!await hiveConfirm({title: 'Delete gateway?', message: 'Delete gateway "' + name + '"? Agents that route through it must be repointed first.', confirmLabel: 'Delete', danger: true})) return;
       try {
         const res = await fetch('/api/config/governor/gateways/' + encodeURIComponent(name), {
           method: 'DELETE', headers: _inceptionAuthHeaders()
@@ -23290,7 +23770,7 @@ function burnAreaChart() {
         var blockers = contribRepoMatchingDisabledEntries(repoFull, disabled);
         var wildcardBlockers = blockers.filter(function(r) { return String(r || '').indexOf('*') >= 0; });
         if (wildcardBlockers.length) {
-          alert('This repo is disabled by wildcard disabled_repos entry: ' + wildcardBlockers.join(', '));
+          showToast('This repo is disabled by wildcard disabled_repos entry: ' + wildcardBlockers.join(', '), 'error');
           renderConfigTab('Hub');
           return;
         }
@@ -23440,7 +23920,7 @@ function burnAreaChart() {
         </div>
         <div class="config-toggle">
           <div class="config-toggle-switch ${g.includeRepos !== false ? 'on' : ''}" id="cfg-include-repos" data-action="toggleConfigSwitch" data-section="general" data-key="includeRepos"></div>
-          <span class="config-toggle-label">Include Repos in Kicks <span class="config-info">i<span class="config-tooltip">Append monitored repo information to the kick prompt. Disable for agents that don't need repo context (e.g. outreach).</span></span></span>
+          <span class="config-toggle-label">Include Repos in Kicks <span class="config-info">i<span class="config-tooltip">Append monitored repo information to the kick dialog. Disable for agents that don't need repo context (e.g. outreach).</span></span></span>
         </div>
         <div class="config-toggle">
           <div class="config-toggle-switch ${g.cliPinned ? 'on' : ''}" id="cfg-cli-pinned" data-action="toggleConfigSwitch" data-section="general" data-key="cliPinned"></div>
@@ -24534,7 +25014,7 @@ function burnAreaChart() {
           // #2766 containment on `.config-overlay pre` turns it into a chain
           // boundary: wheel/touch over the opened prompt latches there and
           // goes nowhere — or, on short viewports, leaks to the dashboard
-          // behind the modal instead of scrolling the prompt (#4801).
+          // behind the modal instead of scrolling the field (#4801).
           '<pre class="prompt-history-body" data-idx="' + i + '" style="display:none;margin:var(--sp-0);padding:10px 12px;background:var(--bg);border-top:1px solid var(--border);font-family:var(--font-mono);font-size:0.72rem;line-height:1.5;white-space:pre-wrap;overflow-x:auto;max-height:60vh;overflow-y:auto;overscroll-behavior:contain;overscroll-behavior-y:contain;color:var(--text)">' +
             escPreserveNewlines((e && e.prompt) || '') +
           '</pre>' +
@@ -25067,7 +25547,7 @@ function burnAreaChart() {
           <div style="font-size:0.8rem;font-weight:600;margin-bottom:var(--sp-2)">Kick prompt list caps</div>
           <p class="fs-sm text-muted mb-5">
             These caps limit how many issues and pull requests are listed in an agent's kick
-            prompt. They exist to keep the prompt a manageable size for the agents that read
+            dialog. They exist to keep the prompt a manageable size for the agents that read
             those lists — <strong>scanner</strong> above all, which receives both in full. The
             lists are pasted into the prompt as-is, so without a cap the prompt grows with your
             backlog: a hive with 302 open PRs produced a 69.5&nbsp;KiB kick against a budget of
@@ -25077,11 +25557,11 @@ function burnAreaChart() {
           </p>
           <div class="config-field-row">
             <div class="config-field">
-              <label>Max issues per kick <span class="config-info">i<span class="config-tooltip">How many issues at most are listed in a kick prompt. Issues are listed oldest first, so the cap keeps the oldest (most overdue) work and drops the newest — the agent is told how many were omitted. Range 1-${KICK_LIST_CAP_MAX}. Default ${KICK_LIST_CAP_ISSUE_DEFAULT}.</span></span></label>
+              <label>Max issues per kick <span class="config-info">i<span class="config-tooltip">How many issues at most are listed in a kick dialog. Issues are listed oldest first, so the cap keeps the oldest (most overdue) work and drops the newest — the agent is told how many were omitted. Range 1-${KICK_LIST_CAP_MAX}. Default ${KICK_LIST_CAP_ISSUE_DEFAULT}.</span></span></label>
               <input type="number" min="1" max="${KICK_LIST_CAP_MAX}" value="${caps.issues}" data-change-action="gh79">
             </div>
             <div class="config-field">
-              <label>Max PRs per kick <span class="config-info">i<span class="config-tooltip">How many pull requests at most are listed in a kick prompt. PRs are listed in review-priority order (fixes before refactors and docs before tests, oldest first within each class), so the cap keeps the highest-priority PRs and drops the rest — the agent is told how many were omitted. Range 1-${KICK_LIST_CAP_MAX}. Default ${KICK_LIST_CAP_PR_DEFAULT}.</span></span></label>
+              <label>Max PRs per kick <span class="config-info">i<span class="config-tooltip">How many pull requests at most are listed in a kick dialog. PRs are listed in review-priority order (fixes before refactors and docs before tests, oldest first within each class), so the cap keeps the highest-priority PRs and drops the rest — the agent is told how many were omitted. Range 1-${KICK_LIST_CAP_MAX}. Default ${KICK_LIST_CAP_PR_DEFAULT}.</span></span></label>
               <input type="number" min="1" max="${KICK_LIST_CAP_MAX}" value="${caps.prs}" data-change-action="gh80">
             </div>
           </div>
@@ -26356,7 +26836,7 @@ function burnAreaChart() {
     /* clearBackupKey removes the stored key. Fail-closed: after this, backups
        are refused again (unless the deployment still supplies HIVE_BACKUP_KEY). */
     async function clearBackupKey() {
-      if (!confirm('Clear the backup encryption key?\n\nBackups will be refused until a new key is set, and archives sealed with the old key still need that old key to restore.')) return;
+      if (!await hiveConfirm({title: 'Clear backup encryption key?', message: 'Backups will be refused until a new key is set, and archives sealed with the old key still need that old key to restore.', confirmLabel: 'Clear key', danger: true})) return;
       const statusEl = document.getElementById('backup-key-inline-status');
       const setStatus = (msg, color) => {
         if (statusEl) { statusEl.textContent = msg; statusEl.style.color = color || 'var(--muted)'; }
@@ -27627,7 +28107,7 @@ function burnAreaChart() {
     // linearAgentDisconnect forgets the stored grant. Revoking the app itself
     // happens in Linear's workspace settings, not here.
     async function linearAgentDisconnect() {
-      if (!confirm('Forget the stored Linear workspace connection? The app must also be revoked from Linear\'s settings to fully remove it.')) return;
+      if (!await hiveConfirm({title: 'Forget Linear workspace connection?', message: 'The app must also be revoked from Linear\'s settings to fully remove it.', confirmLabel: 'Forget', danger: true})) return;
       try {
         const res = await fetch('/api/linear/agent/disconnect', { method: 'POST' });
         const data = await res.json().catch(() => ({}));
@@ -28146,7 +28626,7 @@ function burnAreaChart() {
         return;
       }
       // Pinning an agent to a gateway method requires that gateway to be
-      // configured WITH a key — prompt (and abort the save when the operator
+      // configured WITH a key — ask (and abort the save when the operator
       // backs out or is routed to Model Gateways) before PUTting the section.
       if (dirty.general && dirty.general.cliPinValue !== undefined &&
           !(await ensureGatewayMethodConfigured(dirty.general.cliPinValue))) return;
@@ -28390,7 +28870,13 @@ function burnAreaChart() {
         return s;
       }
       function flushFence() {
-        const code = escapeHtml(sanitizeChatText(fence.join('\n')));
+        const rawCode = sanitizeChatText(fence.join('\n'));
+        if (!rawCode.trim()) {
+          fence = [];
+          fenceLang = '';
+          return;
+        }
+        const code = escapeHtml(rawCode);
         const lang = fenceLang ? '<div class="hive-chat-kbd">' + escapeHtml(fenceLang) + '</div>' : '';
         out.push('<div class="chat-code-wrap"><button type="button" class="chat-copy-btn">copy</button><pre>' + lang + '<code>' + code + '</code></pre></div>');
         fence = [];
@@ -28433,7 +28919,7 @@ function burnAreaChart() {
     const CHAT_COMMAND_HISTORY_KEY = 'hive-chat-command-history-v1';
     const CHAT_SETTINGS_KEY = 'hive-chat-settings-v2';
     const CHAT_DRAFT_KEY = 'hive-chat-draft-v1';
-    const CHAT_WELCOME = 'Welcome to **Hive Chat**. Type `/help` for commands, press `Tab` to complete slash commands, `↑/↓` for command history, and `⌘/Ctrl+K` to focus this terminal-grade prompt.';
+    const CHAT_WELCOME = 'Welcome to **Hive Chat**. Type `/help` for commands, press `Tab` to complete slash commands, `↑/↓` for command history, and `⌘/Ctrl+K` to focus this terminal-grade dialog.';
 
     const chatFab = document.getElementById('hiveChatFab');
     const chatPanel = document.getElementById('hiveChatPanel');
@@ -28462,6 +28948,7 @@ function burnAreaChart() {
     let chatSpekEnabled = false;
     let chatLastHeartbeatSig = '';
     let chatLastUserQuery = '';
+    let chatPendingUserEchoes = new Map();
 
     async function chatFetchJson(url, options) {
       const resp = await fetch(url, options || {});
@@ -28473,7 +28960,7 @@ function burnAreaChart() {
       { name:'clear', aliases:['cls'], usage:'/clear', description:'Clear the visible transcript.', example:'/clear', details:'Clears persisted chat transcript but keeps command history unless you choose clear history.', run: chatCommandClear },
       { name:'search', aliases:['find'], usage:'/search <text>', description:'Search the persisted transcript.', example:'/search relay', details:'Searches the locally persisted transcript and returns matching turns with timestamps.', run: chatCommandSearch },
       { name:'history', aliases:['hist'], usage:'/history [clear|text]', description:'Show, search, or clear command history.', example:'/history relay', details:'Use Up/Down to cycle history. `/history clear` deletes persisted command history; `/history text` searches it.', run: chatCommandHistoryCmd },
-      { name:'retry', aliases:['again'], usage:'/retry', description:'Retry the last sent prompt.', example:'/retry', details:'Resends the last user prompt without you retyping it.', run: chatCommandRetry },
+      { name:'retry', aliases:['again'], usage:'/retry', description:'Retry the last sent dialog.', example:'/retry', details:'Resends the last user prompt without you retyping it.', run: chatCommandRetry },
       { name:'edit', aliases:['revise'], usage:'/edit', description:'Put the last prompt back in the input for editing.', example:'/edit', details:'Restores the last sent prompt as a persistent draft.', run: chatCommandEdit },
       { name:'who', aliases:['presence'], usage:'/who', description:'Show who is online/idle in this hive.', example:'/who', details:'Uses `/api/presence`; unauthenticated local dashboards only show `local`.', run: chatCommandWho },
       { name:'agents', aliases:['agent'], usage:'/agents <question>', description:'Ask about agent status, runs and blockers.', example:'/agents stuck', details:'Forwards a focused agent question to Hive Chat search.', run: chatForwardCommand('agents') },
@@ -28698,6 +29185,7 @@ function burnAreaChart() {
 
     async function chatAskBackend(q, suppressUserEcho) {
       if (!suppressUserEcho) chatAddMsg(q, 'user');
+      chatTrackPendingUserEcho(q, 1);
       chatContext.push({ role: 'user', text: q });
       if (chatContext.length > CHAT_CONTEXT_LIMIT) chatContext = chatContext.slice(-CHAT_CONTEXT_LIMIT);
       const thinking = chatAddMsg('Thinking…', 'thinking');
@@ -28712,6 +29200,7 @@ function burnAreaChart() {
           data = { error: resp.ok ? 'Chat returned an unreadable response.' : 'Chat request failed with HTTP ' + resp.status + '.' };
         }
         thinking.remove();
+        if (!data.accepted && !data.seq) chatTrackPendingUserEcho(q, -1);
         if (!resp.ok || data.error) return 'Error: ' + (data.error || ('Chat request failed with HTTP ' + resp.status + '.'));
         if (!data.answer) {
           await chatPollMessages();
@@ -28727,6 +29216,7 @@ function burnAreaChart() {
         return null;
       } catch (err) {
         thinking.remove();
+        chatTrackPendingUserEcho(q, -1);
         if (err && err.name === 'AbortError') return 'Chat request timed out. Please try again.';
         return 'Network error: ' + ((err && err.message) || 'request failed');
       } finally {
@@ -28954,12 +29444,25 @@ function burnAreaChart() {
       });
     })();
 
+    function chatTrackPendingUserEcho(text, delta) {
+      const key = String(text || '');
+      if (!key) return 0;
+      const next = Math.max(0, (chatPendingUserEchoes.get(key) || 0) + delta);
+      if (next) chatPendingUserEchoes.set(key, next);
+      else chatPendingUserEchoes.delete(key);
+      return next;
+    }
+
     function chatRenderOutbound(msg) {
       if (!msg || !msg.text) return;
       const seq = Number(msg.seq || 0);
       if (seq && seq <= chatLastSeq) return;
       if (seq) chatLastSeq = Math.max(chatLastSeq, seq);
       if (msg.role === 'user') {
+        if ((chatPendingUserEchoes.get(msg.text) || 0) > 0) {
+          chatTrackPendingUserEcho(msg.text, -1);
+          return;
+        }
         chatAddMsg(msg.text, 'user');
         chatContext.push({ role: 'user', text: msg.text });
       } else {
@@ -29237,7 +29740,7 @@ function burnAreaChart() {
         if (ghPollTimer) clearInterval(ghPollTimer);
         ghPollTimer = setInterval(pollGHAuth, ghPollIntervalMs);
       } catch (e) {
-        alert('Login error: ' + e.message);
+        showToast('Login error: ' + e.message, 'error');
       }
     }
 
@@ -29654,7 +30157,7 @@ function burnAreaChart() {
     // supplies a key the response says so, and we report that rather than
     // falsely claiming the key was removed.
     async function clearBobKey() {
-      if (!confirm('Remove the stored bob API key? Agents using bob will stop being able to start.')) return;
+      if (!await hiveConfirm({title: 'Remove bob API key?', message: 'Agents using bob will stop being able to start.', confirmLabel: 'Remove key', danger: true})) return;
       var statusEl = document.getElementById('bob-key-inline-status');
       function setStatus(msg, color) {
         if (statusEl) { statusEl.textContent = msg; statusEl.style.color = color || 'var(--muted)'; }

@@ -74,11 +74,12 @@ func FromConfig(cfg config.WorkSourceConfig, ghClient *github.Client, ghToken, g
 			}
 		}
 		primary = NewLinearSource(LinearConfig{
-			APIKey:     apiKey,
-			Teams:      teams,
-			HoldLabels: c.HoldLabels,
-			ViewerID:   viewerID,
-			Logger:     logger,
+			APIKey:      apiKey,
+			Teams:       teams,
+			HoldLabels:  c.HoldLabels,
+			ViewerID:    viewerID,
+			Logger:      logger,
+			Transitions: c.Transitions,
 		}, nil)
 	case "jira":
 		c := cfg.Jira
@@ -120,6 +121,7 @@ func FromConfig(cfg config.WorkSourceConfig, ghClient *github.Client, ghToken, g
 			JQL:                c.JQL,
 			Repo:               c.Repo,
 			HoldLabels:         c.HoldLabels,
+			Transitions:        c.Transitions,
 			Logger:             logger,
 		}
 		if err := ValidateJiraTLSConfig(jiraCfg); err != nil {

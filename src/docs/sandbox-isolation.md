@@ -179,7 +179,7 @@ Beyond the credential-free sandbox above, Hive's isolation model is defense in d
 2. **Deterministic admission** — Go and shell checks classify work, apply holds, and decide whether an agent is kicked.
 3. **Scoped credentials** — contributor relays and spoke agents use the GitHub identity and token scope appropriate to that actor; a delegated ClankeR role does not grant spoke secrets.
 4. **MITM GitHub proxy** — GitHub API writes are attributed and constrained according to the current mode.
-5. **Merge gates** — the hive-specific `hive-pause/<hive-id>` hold label, green checks, self-merge bans, and auto-merge sweeps are enforced outside the LLM prompt.
+5. **Merge gates** — the literal `hold` level-gate label, dashboard `hive-pause/<hive-id>` manual holds, green checks, self-merge bans, and auto-merge sweeps are enforced outside the LLM prompt.
 
 ### Operator notes
 

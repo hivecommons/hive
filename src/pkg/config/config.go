@@ -464,6 +464,14 @@ type PlanningConfig struct {
 	// design. Default DefaultDesignApprovedLabel. Applying a label needs triage
 	// on the repo, which is the trust boundary the RFC settled on.
 	DesignApprovedLabel string `yaml:"design_approved_label,omitempty" json:"design_approved_label,omitempty"`
+	// DesignRequestedStatus is an optional source-native status/state to apply
+	// alongside DesignLabels on work sources that support workflow transitions
+	// (for example Jira or Linear). Empty means label-only.
+	DesignRequestedStatus string `yaml:"design_requested_status,omitempty" json:"design_requested_status,omitempty"`
+	// DesignApprovedStatus is an optional source-native status/state to apply
+	// alongside DesignApprovedLabel on work sources that support workflow
+	// transitions. Empty means label-only.
+	DesignApprovedStatus string `yaml:"design_approved_status,omitempty" json:"design_approved_status,omitempty"`
 	// MaxDesignRevisions caps how many times the architect is asked to revise
 	// a design (a human re-applies the design label to request a revision);
 	// past it the epic waits on a human. 0 = DefaultMaxDesignRevisions.
@@ -629,12 +637,143 @@ func (p PlanningConfig) PlanFromLabelEnabled(acmmLevel int) bool {
 // `classifier:` block is byte-for-byte the old hardcoded behavior. Wired via
 // classify.SetTierKeywords from cmd/hive.
 type ClassifierConfig struct {
+	// Backend selects the decision backend: "keywords" (default) or "jev".
+	Backend string `yaml:"backend,omitempty" json:"backend,omitempty"`
+	// Mode is retained only to tolerate legacy "shadow" YAML. Jev is advisory
+	// only; deterministic keyword/label rules always decide.
+	Mode string              `yaml:"mode,omitempty" json:"mode,omitempty"`
+	Jev  JevClassifierConfig `yaml:"jev,omitempty" json:"jev,omitempty"`
 	// SimpleKeywords are title substrings that classify an issue as Tier
 	// "Simple" (→ haiku). Empty keeps the built-in default set.
 	SimpleKeywords []string `yaml:"simple_keywords,omitempty" json:"simple_keywords,omitempty"`
 	// ComplexSignals are title substrings that classify an issue as Tier
 	// "Complex" (→ opus). Empty keeps the built-in default set.
 	ComplexSignals []string `yaml:"complex_signals,omitempty" json:"complex_signals,omitempty"`
+}
+
+type JevClassifierConfig struct {
+	Provider      string        `yaml:"provider,omitempty" json:"provider,omitempty"`
+	Model         string        `yaml:"model,omitempty" json:"model,omitempty"`
+	Endpoint      string        `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
+	APIKeyEnv     string        `yaml:"api_key_env,omitempty" json:"api_key_env,omitempty"`
+	MinConfidence float64       `yaml:"min_confidence,omitempty" json:"min_confidence,omitempty"`
+	Timeout       time.Duration `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	Decisions     []string      `yaml:"decisions,omitempty" json:"decisions,omitempty"`
+}
+
+func (c ClassifierConfig) EffectiveBackend() string {
+	if strings.TrimSpace(c.Backend) == "" {
+		return "keywords"
+	}
+	return strings.ToLower(strings.TrimSpace(c.Backend))
+}
+
+func (c ClassifierConfig) EffectiveJev() JevClassifierConfig {
+	j := c.Jev
+	if strings.TrimSpace(j.Provider) == "" {
+		j.Provider = "openrouter"
+	}
+	j.Provider = strings.ToLower(strings.TrimSpace(j.Provider))
+	if strings.TrimSpace(j.Model) == "" {
+		if j.Provider == "typesafe" {
+			j.Model = "jev-latest"
+		} else {
+			j.Model = "typesafe/jev-1.13"
+		}
+	}
+	if j.MinConfidence == 0 {
+		j.MinConfidence = 0.8
+	}
+	if j.Timeout == 0 {
+		j.Timeout = 2 * time.Second
+	}
+	if len(j.Decisions) == 0 {
+		j.Decisions = []string{"lane", "tier", "triage"}
+	}
+	if strings.TrimSpace(j.Endpoint) == "" {
+		if j.Provider == "typesafe" {
+			j.Endpoint = "https://api.typesafe.ai/v1/systemone"
+		} else {
+			j.Endpoint = "https://openrouter.ai/api/v1/systemone"
+		}
+	}
+	return j
+}
+
+func (j JevClassifierConfig) EffectiveProvider() string {
+	return strings.ToLower(strings.TrimSpace(j.Provider))
+}
+func (j JevClassifierConfig) EffectiveModel() string {
+	if strings.TrimSpace(j.Model) != "" {
+		return strings.TrimSpace(j.Model)
+	}
+	if j.EffectiveProvider() == "typesafe" {
+		return "jev-latest"
+	}
+	return "typesafe/jev-1.13"
+}
+func (j JevClassifierConfig) EffectiveEndpoint() string {
+	if strings.TrimSpace(j.Endpoint) != "" {
+		return strings.TrimSpace(j.Endpoint)
+	}
+	if j.EffectiveProvider() == "typesafe" {
+		return "https://api.typesafe.ai/v1/systemone"
+	}
+	return "https://openrouter.ai/api/v1/systemone"
+}
+func (j JevClassifierConfig) EffectiveMinConfidence() float64 {
+	if j.MinConfidence == 0 {
+		return 0.8
+	}
+	return j.MinConfidence
+}
+func (j JevClassifierConfig) EffectiveTimeout() time.Duration {
+	if j.Timeout == 0 {
+		return 2 * time.Second
+	}
+	return j.Timeout
+}
+func (j JevClassifierConfig) EffectiveDecisions() []string {
+	if len(j.Decisions) == 0 {
+		return []string{"lane", "tier", "triage"}
+	}
+	out := make([]string, 0, len(j.Decisions))
+	for _, d := range j.Decisions {
+		if s := strings.ToLower(strings.TrimSpace(d)); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func (c ClassifierConfig) Validate() error {
+	switch c.EffectiveBackend() {
+	case "keywords", "jev":
+	default:
+		return fmt.Errorf("classifier.backend must be keywords or jev, got %q", c.Backend)
+	}
+	if mode := strings.ToLower(strings.TrimSpace(c.Mode)); mode != "" && mode != "shadow" {
+		return fmt.Errorf("classifier.mode only supports shadow/advisory measurement; remove %q because Jev cannot enforce deterministic classifier decisions", c.Mode)
+	}
+	j := c.EffectiveJev()
+	switch j.Provider {
+	case "openrouter", "typesafe":
+	default:
+		return fmt.Errorf("classifier.jev.provider must be openrouter or typesafe, got %q", c.Jev.Provider)
+	}
+	if j.MinConfidence < 0 || j.MinConfidence > 1 {
+		return fmt.Errorf("classifier.jev.min_confidence must be between 0 and 1")
+	}
+	if j.Timeout <= 0 {
+		return fmt.Errorf("classifier.jev.timeout must be positive")
+	}
+	valid := map[string]bool{"lane": true, "tier": true, "triage": true}
+	for _, d := range j.Decisions {
+		if !valid[strings.ToLower(strings.TrimSpace(d))] {
+			return fmt.Errorf("classifier.jev.decisions contains invalid decision %q (must be lane, tier, or triage)", d)
+		}
+	}
+	return nil
 }
 
 // IntentConfig controls intent-verification reporting and merge-gate
@@ -2384,6 +2523,9 @@ type LinearSourceConfig struct {
 	// configured, that agent is used; otherwise session events are
 	// acknowledged with an error activity naming the missing config.
 	SessionAgent string `yaml:"session_agent,omitempty" json:"session_agent,omitempty"`
+	// Transitions maps Hive design status names to Linear workflow state names
+	// or ids. When a status is not present, the status string itself is used.
+	Transitions map[string]string `yaml:"transitions,omitempty" json:"transitions,omitempty"`
 }
 
 // LinearTeamSourceConfig maps one Linear team to the GitHub repo agents work in.
@@ -2402,20 +2544,21 @@ type LinearProjectSourceConfig struct {
 
 // JiraSourceConfig configures the Jira Cloud or Jira Data Center work source.
 type JiraSourceConfig struct {
-	Deployment         string   `yaml:"deployment,omitempty" json:"deployment,omitempty"`
-	BaseURL            string   `yaml:"base_url" json:"base_url"`
-	Email              string   `yaml:"email" json:"email"`
-	Username           string   `yaml:"username,omitempty" json:"username,omitempty"`
-	APIToken           string   `yaml:"api_token,omitempty" json:"api_token,omitempty"`
-	Password           string   `yaml:"password,omitempty" json:"password,omitempty"`
-	CABundle           string   `yaml:"ca_bundle,omitempty" json:"ca_bundle,omitempty"`
-	InsecureSkipVerify bool     `yaml:"insecure_skip_verify,omitempty" json:"insecure_skip_verify,omitempty"`
-	ClientCert         string   `yaml:"client_cert,omitempty" json:"client_cert,omitempty"`
-	ClientKey          string   `yaml:"client_key,omitempty" json:"client_key,omitempty"`
-	ProjectKeys        []string `yaml:"project_keys,omitempty" json:"project_keys,omitempty"`
-	JQL                string   `yaml:"jql,omitempty" json:"jql,omitempty"`
-	Repo               string   `yaml:"repo,omitempty" json:"repo,omitempty"`
-	HoldLabels         []string `yaml:"hold_labels,omitempty" json:"hold_labels,omitempty"`
+	Deployment         string            `yaml:"deployment,omitempty" json:"deployment,omitempty"`
+	BaseURL            string            `yaml:"base_url" json:"base_url"`
+	Email              string            `yaml:"email" json:"email"`
+	Username           string            `yaml:"username,omitempty" json:"username,omitempty"`
+	APIToken           string            `yaml:"api_token,omitempty" json:"api_token,omitempty"`
+	Password           string            `yaml:"password,omitempty" json:"password,omitempty"`
+	CABundle           string            `yaml:"ca_bundle,omitempty" json:"ca_bundle,omitempty"`
+	InsecureSkipVerify bool              `yaml:"insecure_skip_verify,omitempty" json:"insecure_skip_verify,omitempty"`
+	ClientCert         string            `yaml:"client_cert,omitempty" json:"client_cert,omitempty"`
+	ClientKey          string            `yaml:"client_key,omitempty" json:"client_key,omitempty"`
+	ProjectKeys        []string          `yaml:"project_keys,omitempty" json:"project_keys,omitempty"`
+	JQL                string            `yaml:"jql,omitempty" json:"jql,omitempty"`
+	Repo               string            `yaml:"repo,omitempty" json:"repo,omitempty"`
+	HoldLabels         []string          `yaml:"hold_labels,omitempty" json:"hold_labels,omitempty"`
+	Transitions        map[string]string `yaml:"transitions,omitempty" json:"transitions,omitempty"`
 }
 
 // ProjectObservabilityBackendRef names references an agent may place in managed

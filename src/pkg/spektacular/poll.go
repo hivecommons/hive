@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -71,6 +72,10 @@ type Registry interface {
 	Refuse(st Stage, reason string, status *ArtifactStatus)
 }
 
+type progressRegistry interface {
+	RecordProgress(st Stage, attrs map[string]string, now time.Time)
+}
+
 // Refusal reasons recorded through Registry.Refuse.
 const (
 	// RefuseStalePlan: document_status is stale, or went from final back to
@@ -112,6 +117,7 @@ type stageState struct {
 	identity   string
 	lastPolled time.Time
 	lastStatus DocumentStatus
+	artifact   string
 	seenFinal  bool
 	advanced   bool
 	expiries   int
@@ -276,12 +282,34 @@ func (r *Runner) tickStage(ctx context.Context, st Stage, state *stageState, now
 		}
 		state.lastPolled = now
 		res.Polled++
-		status, err := r.statusInDir(ctx, dir, kind, st.Artifact)
+		artifact := strings.TrimSpace(state.artifact)
+		if artifact == "" {
+			artifact = st.Artifact
+		}
+		status, err := r.statusInDir(ctx, dir, kind, artifact)
 		switch {
 		case err == nil:
+			state.artifact = status.JoinKey()
 			r.observe(ctx, st, state, status, now, res)
 		default:
 			var nf *NotFoundError
+			if errors.As(err, &nf) && state.lastStatus == "" {
+				resolved, resolveErr := r.ResolveArtifact(ctx, dir, kind, st.Artifact)
+				if resolveErr == nil && resolved != "" && resolved != artifact {
+					status, err = r.statusInDir(ctx, dir, kind, resolved)
+					if err == nil {
+						state.artifact = status.JoinKey()
+						r.logger().Info("[spektacular] resolved run artifact id",
+							"run", st.RunKey, "stage", st.Stage, "requested", st.Artifact, "resolved", state.artifact)
+						r.recordProgress(st, map[string]string{
+							AttrArtifact: status.JoinKey(),
+							AttrReason:   "artifact_resolved",
+						}, now)
+						r.observe(ctx, st, state, status, now, res)
+						break
+					}
+				}
+			}
 			if errors.As(err, &nf) && state.lastStatus != "" {
 				// Seen before, gone now: a new document has replaced it. Never
 				// rebind the lease to whatever appeared; park it for a reset.
@@ -305,6 +333,14 @@ func (r *Runner) tickStage(ctx context.Context, st Stage, state *stageState, now
 func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, status ArtifactStatus, now time.Time, res *TickResult) {
 	prev := state.lastStatus
 	state.lastStatus = status.DocumentStatus
+	if prev != status.DocumentStatus || status.CurrentStep != "" {
+		r.recordProgress(st, map[string]string{
+			AttrArtifact:       status.JoinKey(),
+			AttrDocumentStatus: string(status.DocumentStatus),
+			AttrCurrentStep:    status.CurrentStep,
+			"completed_steps":  strconv.Itoa(len(status.CompletedSteps)),
+		}, now)
+	}
 	if status.DocumentStatus == DocumentStale {
 		state.refused = true
 		res.Refused++
@@ -313,6 +349,7 @@ func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, statu
 			"run", st.RunKey, "stage", st.Stage, "artifact", st.Artifact)
 		return
 	}
+
 	if !status.Final() {
 		if state.seenFinal || prev == DocumentFinal {
 			state.refused = true
@@ -324,16 +361,31 @@ func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, statu
 		return
 	}
 	state.seenFinal = true
+	// Read the artifact under the id Spektacular actually reports (it prefixes
+	// a timestamp to the requested slug); the slug alone is not_found.
+	artifact := strings.TrimSpace(status.JoinKey())
+	if artifact == "" {
+		artifact = st.Artifact
+	}
 	var plan *Plan
 	if st.Stage == StagePlan {
-		exported, err := r.exportPlanWithFallbackInDir(ctx, st.WorkDir, st.Artifact)
+		exported, err := r.exportPlanWithFallbackInDir(ctx, st.WorkDir, artifact)
 		if err != nil {
 			res.Errors++
 			r.logger().Warn("[spektacular] plan is final but task-list import failed; not advancing",
-				"run", st.RunKey, "artifact", st.Artifact, "error", err)
+				"run", st.RunKey, "artifact", artifact, "error", err)
 			return
 		}
 		plan = &exported
+	}
+	if st.Stage == StageSpec {
+		body, err := r.readSpecInDir(ctx, st.WorkDir, artifact)
+		if err != nil {
+			r.logger().Warn("[spektacular] spec is final but artifact read failed; advancing without postback body",
+				"run", st.RunKey, "artifact", artifact, "error", err)
+		} else {
+			status.Body = body
+		}
 	}
 	receipt := BuildReceipt(st, status, now)
 	if err := r.Registry.Advance(ctx, st, status, receipt, plan, now); err != nil {
@@ -352,6 +404,14 @@ func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, statu
 		"run", st.RunKey, "stage", st.Stage, "next", nextStage(st.Stage), "gen", st.Gen)
 }
 
+func (r *Runner) recordProgress(st Stage, attrs map[string]string, now time.Time) {
+	rec, ok := r.Registry.(progressRegistry)
+	if !ok || rec == nil {
+		return
+	}
+	rec.RecordProgress(st, attrs, now)
+}
+
 // expire applies the retry budget when the lease has lapsed without final:
 // each expiry but the last mints a retry generation; the last raises a
 // decision escalation and the runner stops touching the stage.
@@ -367,6 +427,11 @@ func (r *Runner) expire(ctx context.Context, st Stage, state *stageState, now ti
 			return
 		}
 		res.Retried++
+		r.recordProgress(st, map[string]string{
+			AttrReason: "retry_generation_minted",
+			"attempt":  strconv.Itoa(state.expiries + 1),
+			"budget":   strconv.Itoa(r.maxRetries()),
+		}, now)
 		r.logger().Info("[spektacular] lease expired without final; retry generation minted",
 			"run", st.RunKey, "stage", st.Stage, "attempt", state.expiries+1, "budget", r.maxRetries())
 		return

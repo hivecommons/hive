@@ -358,7 +358,16 @@ var closeReasonBasis = map[string]CloseBasis{
 // close rests on: a check the hive re-ran itself, one of the hive's
 // heuristics (a merged PR's title matched, or every GitHub reference the
 // finding cites closed), or only the closer's say-so.
-func resolvedAtForBead(store *beads.Store, b *beads.Bead, opts DigestOptions) (time.Time, CloseBasis) {
+// resolvedAtForBeadSince resolves when a closed bead was settled, for a caller
+// that only cares whether it resolved AFTER cutoff (zero cutoff = always look). A persisted resolved_at at or before
+// the cutoff is final without a lookup: the linked-reference pass can only
+// move the timestamp EARLIER (it replaces the persisted value solely when the
+// cited work closed before it), so the answer stays outside the window
+// whatever GitHub says. Before this every closed advisory bead in the store —
+// months of them — cost one live issue GET per governor cycle, which is what
+// drained a 15000/hr installation quota and, under post-reset slow-start
+// pacing, pinned the governor loop for the whole cycle interval.
+func resolvedAtForBeadSince(store *beads.Store, b *beads.Bead, opts DigestOptions, cutoff time.Time) (time.Time, CloseBasis) {
 	persisted, hasPersisted := parseResolvedAt(b.Meta(resolvedAtMetadataKey))
 	reason := b.Meta(closeReasonMetadataKey)
 	basis, ok := closeReasonBasis[reason]
@@ -366,6 +375,9 @@ func resolvedAtForBead(store *beads.Store, b *beads.Bead, opts DigestOptions) (t
 		basis = CloseBasisUnverified
 	}
 	if hasPersisted && reason == prLinkedCloseReason {
+		return persisted, basis
+	}
+	if hasPersisted && !cutoff.IsZero() && !persisted.After(cutoff) {
 		return persisted, basis
 	}
 	if linkedAt, ok := linkedResolvedAtForBead(b, opts); ok {
@@ -801,6 +813,18 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts Dige
 	var resolved []ResolvedFinding
 	total := 0
 	cutoff := time.Now().Add(-recentlyResolvedWindow)
+	// One memo cache for the whole build, so an issue cited by many beads
+	// costs one lookup, with a separate lookup budget per pass: the closed-bead
+	// pass below is bounded here, and partitionSettledStale gets a fresh
+	// budget over the same cache so it can never be starved by pass order.
+	// Without this a pathological store fanned out into an unbounded number of
+	// live GitHub calls on the governor goroutine every cycle.
+	staleOpts := opts
+	if opts.ResolveRef != nil {
+		closedPass := newStaleRefResolver(opts.ResolveRef)
+		opts.ResolveRef = closedPass.ResolveRef
+		staleOpts.ResolveRef = closedPass.withFreshBudget().ResolveRef
+	}
 	for agentName, store := range stores {
 		seen := make(map[string]bool)
 		for _, b := range store.List(beads.ListFilter{}) {
@@ -814,7 +838,7 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts Dige
 			// with either status, and a "done" finding lingering in the digest
 			// as if still open is exactly the staleness #2575 is about.
 			if b.Status == beads.StatusClosed || b.Status == beads.StatusDone {
-				resolvedAt, basis := resolvedAtForBead(store, b, opts)
+				resolvedAt, basis := resolvedAtForBeadSince(store, b, opts, cutoff)
 				if resolvedAt.After(cutoff) {
 					resolved = append(resolved, ResolvedFinding{
 						Agent:    agentName,
@@ -883,7 +907,7 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts Dige
 	// slot spent on a finding nobody needed to read.
 	var settledStale []ResolvedFinding
 	var retiredStale int
-	byAgent, settledStale, retiredStale = partitionSettledStale(byAgent, opts, time.Now())
+	byAgent, settledStale, retiredStale = partitionSettledStale(byAgent, staleOpts, time.Now())
 	resolved = append(resolved, settledStale...)
 	if retiredStale > 0 {
 		// The header count is recomputed from the survivors for the same reason

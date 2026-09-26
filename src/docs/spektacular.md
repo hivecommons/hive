@@ -131,17 +131,21 @@ server through the `LeaseRegistry` interface.
 
 On v6, design mode is admitted through the same run machinery as `!runs spec`.
 `hive-design`, the dashboard 📐 button, and `!runs design <owner/repo#n>` create
-or find the issue's Spektacular `spec` lease and link it to the Hive epic bead.
-The Spec checkpoint is the design-approval gate; once approved, the run advances
-to Plan. A final Plan import materializes child beads under the epic using the
-existing planning decompose path, so `plan_status=draft` at L5 and
-`plan_status=approved` at L6 continue to drive Gate 2 and pool admission.
+or find the work item's Spektacular `spec` lease and link it to the Hive epic
+bead. GitHub issues use `owner/repo#N`; Jira and Linear items use the
+source-neutral `<repo>!<external-id>` key so non-GitHub work sources enter the
+same campaign path. The Spec checkpoint is the design-approval gate; once
+approved, the run advances to Plan. A final Plan import materializes child beads
+under the epic using the existing planning decompose path, so
+`plan_status=draft` at L5 and `plan_status=approved` at L6 continue to drive
+Gate 2 and pool admission.
 
 The design document remains one artifact with two views: the Spek/Jam artifact
 and a source-native comment posted back through the work-source adapter. GitHub
 uses labels/comments; Jira and Linear use labels or configured workflow states
-plus comments; Gitea/GitLab label/comment support degrades gracefully where a
-status transition is unavailable.
+plus comments. Gitea/GitLab do not currently have `work_source` adapters in
+Hive (they are SCM/forge integrations only), so Spektacular design write-back
+does not target them until those adapters exist.
 
 ## Triage
 
@@ -182,7 +186,8 @@ runs:
 Every 30 seconds (the contribute hub's cleanup tick) the runner looks at every
 lease that carries a stage. For each `spec` or `plan` stage whose poll interval
 has elapsed it first resolves the lease's repository working directory: the
-per-stage worktree at
+hub executor's single run worktree at `$HIVE_WORKSPACE_DIR/runs/<runKey>/work`
+when present, the relay-style per-stage worktree at
 `$HIVE_WORKSPACE_DIR/runs/<runKey>/<stage>-<generation>` when present, otherwise
 the contributor's shared checkout at `$HIVE_WORKSPACE_DIR/<owner>/<repo>`. The
 CLI is executed with that directory as `cmd.Dir`, so Spektacular finds the
@@ -196,13 +201,28 @@ checkout yet by construction. If a run-stage-capable contributor relay claims it
 first, the relay path is unchanged and takes precedence. Otherwise, when
 `runs.spektacular.hub_executor.enabled` is true, the hub claims the unclaimed
 admission lease as `hive-spek`, clones the repository under
-`/data/agents/hive-spek/<owner>/<repo>`, creates a detached per-stage worktree
-under `/data/agents/hive-spek/runs/<run>/<stage>-<generation>`, initializes a
-`.spektacular/` project if needed, and runs the configured agent CLI headlessly
-with instructions to author the spec or plan only. The poll runner then observes
-that same worktree on the next tick and advances the lease when Spek reports
-`document_status: final`. If the hub executor is disabled, an unclaimed run
-stays parked until a relay declares the `run-stage` capability.
+`/data/agents/hive-spek/<owner>/<repo>`, creates one detached worktree per run
+under `/data/agents/hive-spek/runs/<run>/work`, initializes a `.spektacular/`
+project if needed, and runs the configured agent CLI headlessly with
+instructions to author the spec or plan only. The CLI transcript is captured in
+`.hive/spek-stage-<stage>-<generation>.log` inside that worktree. The poll
+runner then observes that same worktree on the next tick and advances the lease
+when Spek reports `document_status: final`. Reusing the run worktree preserves
+`.spektacular/` artifacts across retry generations. If the hub executor is
+disabled, an unclaimed run stays parked until a relay declares the `run-stage`
+capability.
+
+Hub executor activity is visible in the normal run timeline/progress surfaces:
+Hive records `progress` events when the worktree is prepared, the CLI launches
+and exits, an artifact id is resolved, Spek status/current-step changes are
+observed, a retry generation is minted, or a blocked reason is recorded. The
+Campaigns card and Runs page summarize the latest event instead of showing "no
+activity", and `/api/runs` includes `artifact_id`, `document_status`, and
+`current_step` for the current Spek document. Operators can fetch the captured
+CLI output through `GET /api/runs/{key}/log?stage=<stage>&gen=<generation>&tail=200`;
+the endpoint is read-authenticated, serves only
+`.hive/spek-stage-<stage>-<generation>.log` under the run worktree, and returns
+the requested tail as plain text.
 
 It then runs
 
@@ -220,6 +240,13 @@ bare-name rule (`000057_git-commit`, never `000057_git-commit.md` or
 `--json` flag (its only global flag is
 `--fields`); every verb already prints JSON, and an unknown flag is a usage
 error. Then:
+
+Spektacular v0.22 may persist artifacts with timestamped ids such as
+`20260925163042-kubestellar-console-23725` even though Hive admitted the run as
+`kubestellar-console-23725`. When a direct status call reports
+`artifact_not_found`, Hive lists/inspects the Spektacular project and resolves
+the newest artifact whose id equals the slug or ends in `-<slug>`; that resolved
+id is cached for the stage and used for subsequent status/export calls.
 
 - `document_status: draft` leaves the lease alone.
 - `document_status: final` writes a stage receipt
@@ -257,6 +284,12 @@ error. Then:
   (`lease_stage_escalated` in the audit log, a `blocked` timeline event with
   `severity=decision`). No third generation is ever minted; a person resets
   the stage or abandons the run.
+- The hub executor also treats a live lease already owned by its own identity as
+  restartable work when no in-flight process is tracked for that lease
+  key/generation. If the agent CLI exits and the artifact is still not final,
+  Hive performs an immediate status check, logs the exit/output tail at WARN,
+  and records `hub_executor_cli_exited_nonfinal` on the run timeline instead of
+  leaving operators with only a silent lease expiry.
 - The `implement` stage has no Spek document. The runner never polls
   it; its completion is the existing hold-gated PR flow.
 
@@ -359,10 +392,14 @@ encodes the answers and still handles the alternatives it cannot rule out:
 
 ## What Hive never does
 
-Hive never opens a Spek file. Every fact about an artifact reaches the
-runner through the CLI boundary (`Runner.Exec`), which is also the seam tests
-replace. `TestNoDirectFileAccess` in `pkg/spektacular` scans the package for
-file access to keep it that way.
+Hive never reads a Spek document body to decide progress. Status facts about an
+artifact reach the runner through the CLI boundary (`Runner.Exec`), which is
+also the seam tests replace. The only filesystem fallback is timestamped-id
+discovery: when `status <slug>` says `artifact_not_found`, Hive may inspect
+`.spektacular/specs` or `.spektacular/plans` file names to find an id equal to
+the slug or ending in `-<slug>`, then asks the CLI for that resolved id.
+`TestNoDirectFileAccess` in `pkg/spektacular` keeps direct body reads out of
+the runner.
 
 ## Contract: what is confirmed, what changed, what is still open
 

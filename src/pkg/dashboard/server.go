@@ -1177,6 +1177,7 @@ func (s *Server) registerCoreRoutes() {
 	}
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/status/summary", s.handleStatusSummary)
+	s.mux.HandleFunc("GET /api/classifier/stats", s.handleClassifierStats)
 	s.mux.HandleFunc("POST /api/admin/mcp", s.handleAdminMCP)
 	s.mux.HandleFunc("GET /api/events", s.handleSSE)
 	s.mux.HandleFunc("POST /api/github-app/recheck", s.handleGitHubAppRecheck)

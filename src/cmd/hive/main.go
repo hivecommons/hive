@@ -9223,6 +9223,10 @@ func initAgentConfigDrivenSystems(cfg *config.Config) {
 	// keeps behavior unchanged. Always call so a reload that CLEARS the block
 	// restores defaults.
 	classify.SetTierKeywords(cfg.Classifier.SimpleKeywords, cfg.Classifier.ComplexSignals)
+	if err := classify.ConfigureDecider(cfg); err != nil {
+		slog.Warn("classifier backend disabled", "error", err)
+		classify.SetDecider(nil)
+	}
 	if len(detectKeywords) > 0 {
 		tokens.SetDetectKeywords(detectKeywords)
 	}

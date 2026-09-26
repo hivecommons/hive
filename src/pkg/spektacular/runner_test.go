@@ -41,6 +41,7 @@ type scriptedExec struct {
 	statuses   []string
 	exportJSON string
 	exportErr  error
+	listJSON   string
 	files      map[string]string
 	calls      [][]string
 	dirs       []string
@@ -60,6 +61,12 @@ func (s *scriptedExec) exec(_ context.Context, dir string, args []string) ([]byt
 			return nil, s.exportErr
 		}
 		return []byte(s.exportJSON), nil
+	}
+	if len(args) >= 3 && args[1] == verbFile && args[2] == "list" {
+		if s.listJSON != "" {
+			return []byte(s.listJSON), nil
+		}
+		return []byte(`{"error":true,"code":"not_found","message":"no artifacts"}`), errors.New("exit status 1")
 	}
 	if len(args) >= 4 && args[0] == KindPlan && args[1] == verbFile && args[2] == verbRead {
 		if s.files != nil {
@@ -132,6 +139,7 @@ type fakeRegistry struct {
 	plans      []*Plan
 	retries    []Stage
 	refusals   []string
+	progress   []map[string]string
 }
 
 func newFakeRegistry(stage string) *fakeRegistry {
@@ -186,6 +194,16 @@ func (f *fakeRegistry) Refuse(_ Stage, reason string, _ *ArtifactStatus) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.refusals = append(f.refusals, reason)
+}
+
+func (f *fakeRegistry) RecordProgress(_ Stage, attrs map[string]string, _ time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cp := make(map[string]string, len(attrs))
+	for k, v := range attrs {
+		cp[k] = v
+	}
+	f.progress = append(f.progress, cp)
 }
 
 type escalations struct {
@@ -332,12 +350,52 @@ func TestRunArtifactName(t *testing.T) {
 	cases := map[string]string{
 		"KubeStellar/Console#23735": "kubestellar-console-23735",
 		"owner/repo#1":              "owner-repo-1",
+		"owner/repo!ENG-7":          "owner-repo-eng-7",
 		"000057_git-commit.md":      "000057_git-commit",
 	}
 	for in, want := range cases {
 		if got := RunArtifactName(in); got != want {
 			t.Fatalf("RunArtifactName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestResolveArtifactAcceptsTimestampedIDs(t *testing.T) {
+	ex := &scriptedExec{listJSON: `["20260925160000-kubestellar-console-23725.md","20260925163042-kubestellar-console-23725.md","other.md"]`}
+	r := &Runner{Exec: ex.exec}
+	got, err := r.ResolveArtifact(context.Background(), ".", KindSpec, "kubestellar-console-23725")
+	if err != nil {
+		t.Fatalf("ResolveArtifact: %v", err)
+	}
+	if got != "20260925163042-kubestellar-console-23725" {
+		t.Fatalf("resolved = %q", got)
+	}
+}
+
+func TestTickResolvesTimestampedArtifactAfterNotFound(t *testing.T) {
+	reg := newFakeRegistry(StageSpec)
+	reg.stage.RunKey = "kubestellar/console#23725"
+	reg.stage.Artifact = "kubestellar-console-23725"
+	var calls [][]string
+	exec := func(_ context.Context, _ string, args []string) ([]byte, error) {
+		calls = append(calls, append([]string(nil), args...))
+		if len(args) >= 3 && args[1] == verbFile && args[2] == "list" {
+			return []byte(`["20260925163042-kubestellar-console-23725.md"]`), nil
+		}
+		if len(args) >= 3 && args[1] == verbStatus && args[2] == "kubestellar-console-23725" {
+			return []byte(`{"error":true,"code":"artifact_not_found","message":"missing","resource":"kubestellar-console-23725"}`), errors.New("exit status 1")
+		}
+		if len(args) >= 3 && args[1] == verbStatus && args[2] == "20260925163042-kubestellar-console-23725" {
+			return []byte(statusJSON(KindSpec, "20260925163042-kubestellar-console-23725", DocumentFinal)), nil
+		}
+		return nil, fmt.Errorf("unexpected args: %v", args)
+	}
+	r := &Runner{Exec: exec, Poll: testPoll, Registry: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
+		t.Fatalf("tick = %+v", res)
+	}
+	if len(calls) < 3 || calls[2][2] != "20260925163042-kubestellar-console-23725" {
+		t.Fatalf("calls = %+v", calls)
 	}
 }
 
@@ -567,6 +625,9 @@ func TestTick_DraftThenFinalAdvancesOnceAndWritesOneReceipt(t *testing.T) {
 	if len(esc.events) != 0 || len(reg.retries) != 0 || len(reg.refusals) != 0 {
 		t.Fatalf("unexpected side effects: esc=%d retries=%d refusals=%v", len(esc.events), len(reg.retries), reg.refusals)
 	}
+	if len(reg.progress) == 0 || reg.progress[0][AttrDocumentStatus] != string(DocumentDraft) || reg.progress[0][AttrCurrentStep] != "authoring" {
+		t.Fatalf("status progress not recorded: %+v", reg.progress)
+	}
 
 	// The next tick polls the NEW stage (plan) under the new generation, and the
 	// old spec stage is never advanced twice.
@@ -598,6 +659,9 @@ func TestTick_NeverFinalRetriesOnceThenEscalatesWithNoThirdGeneration(t *testing
 	}
 	if reg.stage.Gen != 2 || len(reg.retries) != 1 {
 		t.Fatalf("after first expiry gen=%d retries=%d", reg.stage.Gen, len(reg.retries))
+	}
+	if len(reg.progress) == 0 || reg.progress[len(reg.progress)-1][AttrReason] != "retry_generation_minted" {
+		t.Fatalf("retry progress not recorded: %+v", reg.progress)
 	}
 	// Second expiry: budget (2) exhausted, escalation raised, no third generation.
 	now = now.Add(testLeaseTTL + time.Second)
@@ -729,6 +793,136 @@ func TestTick_PlanFinalFallsBackToPlanMarkdown(t *testing.T) {
 	}
 	if len(reg.plans) != 1 || len(reg.plans[0].Tasks) != 2 || reg.plans[0].Tasks[1].DependsOn[0] != "T1" {
 		t.Fatalf("markdown fallback plan = %+v", reg.plans)
+	}
+}
+
+// spekNativePlanMD mirrors the plan.md Spektacular 0.22 wrote for
+// kubestellar/console#23725 on the hosted hive: phases are headings, every
+// other bullet is prose or acceptance criteria.
+const spekNativePlanMD = `---
+created_date: "2026-09-25"
+document_status: final
+---
+
+# Plan: kubestellar-console-23725
+
+## Component Breakdown
+
+- **` + "`dashboards.Registrar`" + `** (new) — implements the contract.
+- **Five ` + "`_aliases.go`" + ` shim files** — deleted.
+
+## Milestones & Phases
+
+### Milestone 1: Dashboard wiring no longer depends on shims
+
+#### - [ ] Phase 1.1: Port the dashboards domain to ` + "`handlers.Registrar`" + `
+
+**Repo:** console
+
+**Acceptance criteria**:
+- [ ] Every dashboard endpoint responds as before.
+- [ ] The shim file no longer exists.
+
+#### - [ ] Phase 1.2: Port the persistence domain
+
+**Repo:** kubestellar/console
+
+- [ ] The persistence test suite passes unmodified.
+
+### Milestone 2: Route assembly is uniform
+
+#### - [x] Phase 2.1: Collapse route assembly to a uniform registrar list
+`
+
+func TestParsePlanMarkdown_SpektacularNativePhases(t *testing.T) {
+	plan, err := ParsePlanMarkdown(testRunKey, []byte(spekNativePlanMD))
+	if err != nil {
+		t.Fatalf("ParsePlanMarkdown: %v", err)
+	}
+	if len(plan.Tasks) != 3 {
+		t.Fatalf("phases parsed = %d, want 3 (acceptance/component bullets must not become tasks): %+v", len(plan.Tasks), plan.Tasks)
+	}
+	p1 := plan.Tasks[0]
+	if p1.Ref != "P1.1" || p1.Title != "Port the dashboards domain to `handlers.Registrar`" || p1.Repo != "" || len(p1.DependsOn) != 0 || p1.Execution != "agent_suitable" {
+		t.Fatalf("P1.1 = %+v (bare project name must not override the run repo)", p1)
+	}
+	p2 := plan.Tasks[1]
+	if p2.Ref != "P1.2" || p2.Repo != "kubestellar/console" || len(p2.DependsOn) != 1 || p2.DependsOn[0] != "P1.1" {
+		t.Fatalf("P1.2 = %+v", p2)
+	}
+	if p3 := plan.Tasks[2]; p3.Ref != "P2.1" || p3.DependsOn[0] != "P1.2" {
+		t.Fatalf("P2.1 = %+v", p3)
+	}
+	rendered := RenderTaskList(plan)
+	if !strings.Contains(rendered, "1. [P1.1] Port the dashboards domain") || !strings.Contains(rendered, "[P1.2] Port the persistence domain [repo:kubestellar/console] (depends: P1.1)") {
+		t.Fatalf("rendered = %q", rendered)
+	}
+}
+
+// Spektacular 0.22 has no `plan export`; cobra swallows "export" as a
+// positional and rejects the flag with an internal_error envelope. That must
+// route to the on-disk fallback rather than blocking the run.
+func TestTick_PlanFinalFallsBackWhenExportFlagIsRejected(t *testing.T) {
+	reg := newFakeRegistry(StagePlan)
+	ex := &scriptedExec{
+		statuses:   []string{statusJSON(KindPlan, testRunKey, DocumentFinal)},
+		exportJSON: `{"error":true,"code":"internal_error","message":"unknown flag: --format","next_action":""}`,
+		exportErr:  errors.New("exit status 1"),
+		files: map[string]string{
+			testRunKey + "/plan.md": spekNativePlanMD,
+		},
+	}
+	r := newRunner(reg, ex, &escalations{})
+	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
+		t.Fatalf("plan final fallback tick = %+v", res)
+	}
+	if reg.stage.Stage != StageImplement {
+		t.Fatalf("stage after fallback = %q, want implement", reg.stage.Stage)
+	}
+	if len(reg.plans) != 1 || len(reg.plans[0].Tasks) != 3 || reg.plans[0].Tasks[0].Ref != "P1.1" {
+		t.Fatalf("fallback plan = %+v", reg.plans)
+	}
+}
+
+// The live shape: the lease names the bare slug, Spektacular reports the
+// timestamp-prefixed artifact id, and the on-disk plan.md lives under that
+// id. The fallback must read the resolved id, not the slug.
+func TestTick_PlanFallbackReadsResolvedArtifactID(t *testing.T) {
+	const slug, resolved = "kubestellar-console-23725", "20260925183347-kubestellar-console-23725"
+	reg := newFakeRegistry(StagePlan)
+	reg.stage.RunKey = "kubestellar/console#23725"
+	reg.stage.Artifact = slug
+	var reads []string
+	exec := func(_ context.Context, _ string, args []string) ([]byte, error) {
+		switch {
+		case len(args) >= 3 && args[1] == verbFile && args[2] == "list":
+			return []byte(`["` + resolved + `"]`), nil
+		case len(args) >= 3 && args[1] == verbStatus && args[2] == slug:
+			return []byte(`{"error":true,"code":"artifact_not_found","message":"missing","resource":"` + slug + `"}`), errors.New("exit status 1")
+		case len(args) >= 3 && args[1] == verbStatus && args[2] == resolved:
+			return []byte(statusJSON(KindPlan, resolved, DocumentFinal)), nil
+		case len(args) >= 2 && args[1] == verbExport:
+			return []byte(`{"error":true,"code":"internal_error","message":"unknown flag: --format","next_action":""}`), errors.New("exit status 1")
+		case len(args) >= 4 && args[1] == verbFile && args[2] == verbRead:
+			reads = append(reads, args[3])
+			if args[3] == resolved+"/plan.md" {
+				return []byte(spekNativePlanMD), nil
+			}
+			return []byte(`{"error":true,"code":"not_found","message":"file ` + args[3] + ` not found"}`), errors.New("exit status 1")
+		}
+		return nil, fmt.Errorf("unexpected args: %v", args)
+	}
+	r := &Runner{Exec: exec, Poll: testPoll, Registry: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
+		t.Fatalf("tick = %+v (reads %v)", res, reads)
+	}
+	if len(reg.plans) != 1 || len(reg.plans[0].Tasks) != 3 {
+		t.Fatalf("plan = %+v", reg.plans)
+	}
+	for _, p := range reads {
+		if strings.HasPrefix(p, slug+"/") {
+			t.Fatalf("fallback read the bare slug path %q; want %s/…", p, resolved)
+		}
 	}
 }
 
@@ -1085,17 +1279,18 @@ func TestBinaryExec_ReturnsStdoutOnFailure(t *testing.T) {
 	}
 }
 
-// --- Invariant: Hive never opens a Spektacular file -----------------------
+// --- Invariant: Hive never reads Spektacular document bodies ---------------
 
-// TestNoDirectFileAccess scans this package's non-test sources: every fact
-// about an artifact must arrive through Exec. The fixture directory is the
-// only place a Spektacular-shaped file exists, and nothing here reads it.
+// TestNoDirectSpekDocumentReads scans this package's non-test sources: status
+// facts still arrive through Exec. The v0.22 timestamped-id fallback may walk
+// project directories to discover artifact names, but must not read document
+// bodies or test fixtures.
 func TestNoDirectFileAccess(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
-	forbidden := []string{"os.Open", "os.ReadFile", "os.ReadDir", "os.OpenFile", "filepath.Walk", "ioutil.Read", "testdata"}
+	forbidden := []string{"os.Open", "os.ReadFile", "os.ReadDir", "os.OpenFile", "ioutil.Read", "testdata"}
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -1107,7 +1302,7 @@ func TestNoDirectFileAccess(t *testing.T) {
 		}
 		for _, f := range forbidden {
 			if strings.Contains(string(src), f) {
-				t.Fatalf("%s reaches for %q; Hive must only learn about Spektacular artifacts through Exec", name, f)
+				t.Fatalf("%s reaches for %q; Hive must not read Spektacular document bodies directly", name, f)
 			}
 		}
 	}
