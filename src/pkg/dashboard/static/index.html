@@ -1522,9 +1522,9 @@
     .overview-chart-total { fill: var(--text); font-size: var(--fs-sm); font-weight: 800; text-anchor: middle; dominant-baseline: central; }
     .overview-chart-total-caption { fill: var(--muted); font-size: var(--fs-2xs); text-anchor: middle; dominant-baseline: central; }
     .overview-chart-legend { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
-    .overview-chart-legend-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--sp-2); color: var(--muted); font-size: var(--fs-xs); }
+    .overview-chart-legend-row { display: grid; grid-template-columns: auto minmax(0, max-content) max-content; justify-content: start; align-items: center; gap: var(--sp-2); color: var(--muted); font-size: var(--fs-xs); }
     .overview-chart-swatch { width: 0.75rem; height: 0.75rem; border-radius: var(--r-pill); background: var(--slice-c); box-shadow: 0 0 0 1px color-mix(in srgb, var(--slice-c) 45%, transparent); }
-    .overview-chart-legend-label { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .overview-chart-legend-label { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 18rem; }
     .overview-chart-legend-count { font-variant-numeric: tabular-nums; }
     .overview-empty { color: var(--muted); font-size: var(--fs-sm); padding: var(--sp-5); border: 1px dashed var(--border); border-radius: var(--r); text-align: center; }
     .overview-issue-ready { --slice-c: var(--status-info); }
@@ -3442,6 +3442,7 @@
     </div>
     <div class="oc-nav-group">
       <div class="oc-nav-label">Overview</div>
+      <a class="oc-nav-item" data-section="overview-section" data-action="ocNavigate" data-arg0="overview-section"><span class="oc-nav-emoji">🍩</span><span class="oc-nav-text">Overview</span></a>
       <a class="oc-nav-item active" data-section="governor" data-action="ocNavigate" data-arg0="governor"><span class="oc-nav-emoji">📊</span><span class="oc-nav-text">Governor</span></a>
     </div>
     <div class="oc-nav-group">
@@ -3659,6 +3660,13 @@
   <div id="hub-banner" style="display:none"></div>
   <div id="planning-intro" style="display:none"></div>
   <div id="system-alerts-banner" style="display:none"></div>
+  <div class="repos" id="overview-section">
+    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="overview-section"><span class="section-chevron">▼</span> Overview</h2>
+    <div class="section-body">
+      <div class="overview-card" id="overview-card"></div>
+    </div>
+  </div>
+
   <div class="governor" id="governor"></div>
 
   <div id="advisory-section" style="margin-top: var(--sp-6); margin-bottom: var(--sp-8); display: none;">
@@ -3706,13 +3714,6 @@
   <div class="token-usage mb-8" id="token-panel"></div>
 
   <div class="cost-usage mb-8" id="cost-panel"></div>
-
-  <div class="repos" id="overview-section">
-    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="overview-section"><span class="section-chevron">▼</span> Overview</h2>
-    <div class="section-body">
-      <div class="overview-card" id="overview-card"></div>
-    </div>
-  </div>
 
   <div class="repos" id="repos-section">
     <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><span class="section-chevron">▼</span> Repositories <span id="repos-host-badge" title="Every repo in this hive is on this single GitHub host" style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3)"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: automated fix attempts exhausted — operator review required"></span> <button class="hv-btn btn-secondary btn" id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1" title="Scan the monitored repositories for issue/PR changes now instead of waiting for the governor's next eval cycle (read-only — no agents are kicked; server-debounced)">🔄 Rescan</button> <button class="hv-btn btn-secondary btn" id="repos-reset-layout-btn" data-action="resetRepoCardWidths" data-stop="1" title="Reset every repository card to the default width, discarding the widths you dragged (this browser only)" style="display:none">↔️ Reset layout</button> <button class="hv-btn config-gear btn-sm" data-action="gh1" data-stop="1" title="Manage monitored repositories">⚙️</button></h2>
@@ -21024,8 +21025,8 @@ function burnAreaChart() {
         hide(logsSection);
 
         if (level < ACMM_GOVERNOR_MIN_LEVEL) {
-          sidebarGroups.forEach(g => {
-            if (g.querySelector('.oc-nav-item[data-section="governor"]')) hide(g);
+          sidebarItems.forEach(item => {
+            if (item.getAttribute('data-section') === 'governor') hide(item);
           });
         }
         sidebarItems.forEach(item => {
