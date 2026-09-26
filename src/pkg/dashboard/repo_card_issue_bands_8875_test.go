@@ -41,12 +41,15 @@ func TestRepoCardIssueBandsBehaviour(t *testing.T) {
 		"issueHasAnyLabel",
 		"issueAgentRole",
 		"issueClaimed",
+		"issueAcknowledged",
 		"issueLinkedPRState",
 		"issueUpdatedAt",
 		"issueIsStale",
 		"repoStaleIssueCount",
 		"issueBandInfo",
+		"issueBandSpec",
 		"issueBandLabel",
+		"issueBandTip",
 		"issueBandRank",
 		"groupedRepoIssues",
 	}
@@ -72,6 +75,8 @@ assert.equal(issueBandInfo({ labels: ['done-custom', 'wait-human'], updated_at: 
 assert.equal(issueBandInfo({ labels: ['wait-human', 'agent/strategist'], assignees: ['dan'], updated_at: '2026-09-24T00:00:00Z' }).band, 'waiting');
 assert.equal(issueBandInfo({ labels: ['agent/strategist'], assignees: ['bot'], updated_at: '2026-09-24T00:00:00Z' }).band, 'in-progress');
 assert.equal(issueBandInfo({ labels: ['agent/quality'], updated_at: '2026-09-24T00:00:00Z' }).band, 'agent-filed');
+assert.equal(issueBandInfo({ labels: ['agent/quality'], human_acknowledged: true, updated_at: '2026-09-24T00:00:00Z' }).band, 'ready');
+assert.equal(issueBandInfo({ labels: ['agent/quality', 'approved-direction'], updated_at: '2026-09-24T00:00:00Z' }).band, 'ready');
 assert.equal(issueBandInfo({ labels: [], updated_at: '2026-09-24T00:00:00Z' }).band, 'ready');
 const groups = groupedRepoIssues([
   { number: 5, labels: ['done-custom'], updated_at: '2026-09-20T00:00:00Z' },
