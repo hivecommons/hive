@@ -1897,12 +1897,33 @@ func HasHoldLabel(labels []string) bool {
 
 func HasHoldLabelWith(labels, extraHoldLabels []string) bool {
 	holdLabels := append([]string{}, HoldLabels...)
-	holdLabels = append(holdLabels, extraHoldLabels...)
+	exactHoldLabels := make([]string, 0, len(extraHoldLabels))
+	for _, label := range extraHoldLabels {
+		label = strings.ToLower(strings.TrimSpace(label))
+		if label != "" {
+			if strings.HasPrefix(label, "hive-pause/") {
+				exactHoldLabels = append(exactHoldLabels, label)
+			} else {
+				holdLabels = append(holdLabels, label)
+			}
+		}
+	}
 	for _, label := range labels {
 		lower := strings.ToLower(label)
 		for _, sub := range holdLabels {
 			sub = strings.ToLower(strings.TrimSpace(sub))
 			if sub != "" && strings.Contains(lower, sub) {
+				return true
+			}
+		}
+		for _, exact := range exactHoldLabels {
+			if strings.HasPrefix(exact, "hive-pause/") {
+				if strings.EqualFold(strings.TrimSpace(label), exact) {
+					return true
+				}
+				continue
+			}
+			if strings.Contains(lower, exact) {
 				return true
 			}
 		}
@@ -1916,6 +1937,17 @@ func CanonicalHiveHoldLabel(hiveID string) string {
 	hiveID = strings.TrimSpace(hiveID)
 	if hiveID == "" {
 		return "hold"
+	}
+	// Avoid "hold" in this hive-scoped spelling: generic hold labels are
+	// substring-matched for backwards compatibility, while this label must be
+	// matched exactly so hive/<id> can stay provenance-only.
+	return "hive-pause/" + hiveID
+}
+
+func HiveProvenanceLabel(hiveID string) string {
+	hiveID = strings.TrimSpace(hiveID)
+	if hiveID == "" {
+		return ""
 	}
 	return "hive/" + hiveID
 }

@@ -1643,9 +1643,17 @@ func buildGovernorWithLaneDepths(state governor.State, cfg *config.Config, laneD
 	}
 
 	nextKick := ""
+	nextKickAt := ""
+	nextKickIn := ""
 	if cfg.Governor.EvalIntervalS > 0 {
-		next := time.Now().Add(time.Duration(cfg.Governor.EvalIntervalS) * time.Second)
+		base := time.Now()
+		if !state.LastEval.IsZero() {
+			base = state.LastEval
+		}
+		next := base.Add(time.Duration(cfg.Governor.EvalIntervalS) * time.Second)
 		nextKick = formatHumanTime(next)
+		nextKickAt = next.UTC().Format(time.RFC3339)
+		nextKickIn = formatETA(time.Until(next))
 	}
 
 	return FrontendGovernor{
@@ -1658,6 +1666,8 @@ func buildGovernorWithLaneDepths(state governor.State, cfg *config.Config, laneD
 		SuppressedLanes:  cloneStringSlice(state.SuppressedLanes),
 		LaneQueueDepths:  cloneIntMap(laneDepths),
 		LanePauseReasons: cloneStringStringMap(state.LanePauseReasons),
+		NextKickAt:       nextKickAt,
+		NextKickIn:       nextKickIn,
 	}
 }
 

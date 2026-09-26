@@ -504,6 +504,11 @@ Each level defines per-agent **policy modes**: advisory (observe only), measured
 
 Operational references from the repository root include [hub disaster recovery](docs/HUB_DISASTER_RECOVERY.md), [federation design](docs/federation-design.md), [outreach antispam policy](docs/outreach-antispam.md), [macOS deployment notes](docs/macos.md), and [backend setup](docs/backend-setup.md). Worked examples live under [examples/](examples/README.md), including [KubeStellar skill and campaign configs](examples/kubestellar/README.md), [SQLite state backend notes](examples/sqlite-state.md), and [ACMM runtime fragments](examples/acmm/README.md).
 
+
+### Recent shipped capabilities
+
+The v5 line now includes Jira Data Center / Server work sources (`work_source.type: jira` with `jira.deployment: datacenter`), per-repo swarm mode with `/api/leaderboard/swarm`, The Commons for ranking and routing contributor effort across multiple hives, team leaderboards at `/api/leaderboard/teams`, and Achievements 2.0 tiers for solo/dual/fireteam/raid work including the local-model track. Admin MCP and dashboard Extensions wiring for Spektacular are on the v6 edge line only until that branch is promoted.
+
 ## Architecture
 
 Hive runs as a single container with three long-lived processes:

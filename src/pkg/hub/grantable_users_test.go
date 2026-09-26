@@ -294,7 +294,7 @@ func TestHandleGrantableUsersEntriesCarryNormalizedLabels(t *testing.T) {
 	withTempSaaSDirs(t)
 	putUser(t, "alice")
 	putHiveOwnedBy(t, "hive-1", "alice")
-	if err := saveSaaSUser(&SaaSUser{GitHubUsername: "google:107812345678901234567", DisplayName: "Jane Doe"}); err != nil {
+	if err := saveSaaSUser(&SaaSUser{GitHubUsername: "google:107812345678901234567", DisplayName: "Jane Doe", AvatarURL: "https://example.test/jane.png"}); err != nil {
 		t.Fatalf("saveSaaSUser: %v", err)
 	}
 	if err := saveSaaSUser(&SaaSUser{GitHubUsername: "microsoft:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}); err != nil {
@@ -315,7 +315,7 @@ func TestHandleGrantableUsersEntriesCarryNormalizedLabels(t *testing.T) {
 	}
 	wantEntries := []grantableUserEntry{
 		{ID: "alice", Label: "alice", Provider: "github"},
-		{ID: "google:107812345678901234567", Label: "Jane Doe", Provider: "google"},
+		{ID: "google:107812345678901234567", Label: "Jane Doe", Provider: "google", Avatar: "https://example.test/jane.png"},
 		{ID: "microsoft:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", Label: "microsoft: AAAAAAAAAAAA…", Provider: "microsoft"},
 	}
 	if len(resp.Entries) != len(wantEntries) {
@@ -339,17 +339,35 @@ func TestHandleGrantableUsersEntriesCarryNormalizedLabels(t *testing.T) {
 	}
 }
 
-// TestManageAccessDialogHasUserSearch pins the search affordance in the
-// Manage Access dialog: a search input wired to the client-side filter, and a
-// dropdown renderer that matches case-insensitively against both the friendly
-// label and the raw identity key.
+// TestManageAccessDialogHasUserSearch pins the Add User typeahead in the
+// Manage Access dialog: a combobox input, inline listbox feedback, keyboard
+// controls, selected-user chip, and a matcher that searches friendly label,
+// raw identity key, and provider without hiding failures in a collapsed
+// native <select>.
 func TestManageAccessDialogHasUserSearch(t *testing.T) {
 	for _, want := range []string{
 		`id="access-user-search"`,
+		`role="combobox"`,
+		`aria-controls="access-user-results"`,
+		`id="access-user-results" class="access-typeahead-list" role="listbox"`,
+		`id="access-selected-user-chip"`,
+		`id="access-add-btn"`,
 		`oninput="filterAccessUserDropdown()"`,
+		`onkeydown="accessUserSearchKeydown(event)"`,
 		`function filterAccessUserDropdown()`,
+		`var ACCESS_USER_DEBOUNCE_MS = 200;`,
 		`function renderAccessUserOptions(filter)`,
-		`e.label.toLowerCase().indexOf(q) !== -1 || e.id.toLowerCase().indexOf(q) !== -1`,
+		`String(e.label || '').toLowerCase().indexOf(q) !== -1`,
+		`String(e.id || '').toLowerCase().indexOf(q) !== -1`,
+		`String(e.provider || '').toLowerCase().indexOf(q) !== -1`,
+		`renderAccessStatus('Searching…')`,
+		`No users match`,
+		`Already has ' + already`,
+		`Grant access to the selected user`,
+		`function selectAccessUserResult(index)`,
+		`function clearSelectedAccessUser()`,
+		`isValidBareGitHubLogin(q)`,
+		`create_pending: true`,
 		// Fallback for older hub payloads that only carry bare usernames.
 		`data.entries || (data.users || []).map`,
 	} {

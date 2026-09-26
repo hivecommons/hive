@@ -11,6 +11,75 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-25 (v5.55.0)
+
+### Added
+
+- Added hub-managed admin grants so root hub admins can add or remove additional hub admins from the dashboard without changing deployment environment variables.
+
+### Fixed
+
+- Fixed Model Gateway/LiteLLM key rotation so saved keys immediately refresh live agent proxy routes, surface the effective key SHA-256 in APIs/UI, and log only the hash for operator correlation.
+- Fixed the dashboard PRs by model panel so it renders on initial load instead of waiting for a day-filter change.
+
+## 2026-09-25 (v5.54.0)
+
+### Added
+
+- Surface verified covered-by-PR and likely-done issue claims as labels and linked PR badges without hiding issues on comment evidence alone.
+- Hub Admin — Users now shows each user's most-engaged repo/org as a sortable TOP REPO column.
+- Add the explicit Spek `!runs spec owner/repo#N` example to Hive Chat hints.
+
+## 2026-09-25 (v5.53.0)
+
+### Added
+
+- Add Jira Data Center TLS settings for custom CA bundles, unsafe skip-verify testing, and optional mTLS client certificates in the work-source config and dashboard.
+- Add a collapsible Repositories pill legend and band actionable repo-card issues into ready, in-progress, agent-filed, waiting-on-human, and likely-done groups with state badges and stale counters.
+- Add a richer terminal-style Hive Chat with slash-command help, history, cheat sheet hints, presence, resizing, persistence, and safer rich rendering.
+
+### Changed
+
+- Consolidate v6 readiness tracker references into the #7563 epic's v6 readiness bar section, preventing docs and agents from reopening the retired standalone tracker.
+
+### Fixed
+
+- Fixed Hive Chat and Discord agent lifecycle messages so completed/working notices show useful summaries and links instead of captured CLI TUI footer chrome.
+- Fixed Hive Chat free-text inputs so common questions get local answers and unavailable responders return a visible message instead of appearing silent.
+- Fixed the agent config dialog keeping the old backend's Model list after CLI Pin Value changed; the list now follows the new backend without a save and reopen.
+- Fix hub-launched Codex agents so they run unattended with approvals/sandbox bypassed, classify Codex approval/update prompts, and seed CODEX_HOME to disable startup update checks.
+- Fix dashboard repository hold pills so toggles immediately update the cached status snapshot, return a status-sequence floor, and render distinct Hold/Release controls.
+- Replace flat 60% knowledge confidence defaults with signal-based scores and show unscored facts honestly.
+
+## 2026-09-25 (v5.52.0)
+
+### Added
+
+- Add public SVG social cards and share landing pages for contributor dossiers, Achievement System 2.0 unlocks, and public leaderboard summaries.
+
+## 2026-09-25 (v5.51.0)
+
+### Added
+
+- Add a public leaderboard Battle Log plus Hive of the Week gource source export, weekly render workflow, and README embed documentation.
+
+## 2026-09-25 (v5.50.0)
+
+### Added
+
+- Add Jira Data Center / Server support to the Jira work source via `deployment: datacenter`, including REST API v2 endpoints, PAT bearer auth, basic auth fallback, context-path base URLs, and Data Center user identity handling.
+
+### Fixed
+
+- Fixed the `hive/<hive-id>` label collision by keeping it as agent provenance and moving dashboard holds to exact-match `hive-pause/<hive-id>` labels; on upgrade Hive writes `/data/hive-hold-migration-<hive-id>.json`, copies audit-backed dashboard holds to the new label, leaves co-added `agent/*` provenance-only items actionable, and keeps ambiguous legacy labels held for operator review.
+- Preserved substring matching for operator-configured hold labels while keeping the new `hive-pause/<hive-id>` dashboard hold exact-match only.
+
+## 2026-09-25 (v5.49.1)
+
+### Fixed
+
+- Hub: auto-upgrade now chases each spoke's release-channel commit (:stable/:candidate/:edge) instead of the branch tip, ending the ~8-minute restart loop that left :stable spokes latched "Upgrading" on the SHA they already run.
+
 ## 2026-09-25 (v5.49.0)
 
 ### Added

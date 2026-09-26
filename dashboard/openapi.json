@@ -9035,7 +9035,7 @@
           "Governor"
         ],
         "summary": "Work-source configuration",
-        "description": "Returns the configured work source (github, github_projects, linear, or jira) and its per-source settings. Linear's api_key is reported only as api_key_set (never the value). Requires owner role.",
+        "description": "Returns the configured work source (github, github_projects, linear, or jira) and its per-source settings. Jira may be Cloud or Data Center depending on jira.deployment. Linear's api_key is reported only as api_key_set (never the value). Requires owner role.",
         "responses": {
           "200": {
             "description": "Work source config",
@@ -9109,14 +9109,36 @@
                     "jira": {
                       "type": "object",
                       "properties": {
+                        "deployment": {
+                          "type": "string",
+                          "enum": ["", "cloud", "datacenter", "server"]
+                        },
                         "base_url": {
                           "type": "string"
                         },
                         "email": {
                           "type": "string"
                         },
-                        "api_token": {
+                        "username": {
                           "type": "string"
+                        },
+                        "api_token_set": {
+                          "type": "boolean"
+                        },
+                        "password_set": {
+                          "type": "boolean"
+                        },
+                        "ca_bundle_set": {
+                          "type": "boolean"
+                        },
+                        "insecure_skip_verify": {
+                          "type": "boolean"
+                        },
+                        "client_cert_set": {
+                          "type": "boolean"
+                        },
+                        "client_key_set": {
+                          "type": "boolean"
                         },
                         "project_keys": {
                           "type": "array",
@@ -9153,7 +9175,7 @@
           "Governor"
         ],
         "summary": "Update work-source configuration",
-        "description": "Updates the work source type and/or its per-source settings (github_projects, linear, jira). List-valued fields (hold_labels, teams, project_keys, states) replace the stored list when present. Validates Linear team/session-agent/assigned-only settings before applying. Requires owner role.",
+        "description": "Updates the work source type and/or its per-source settings (github_projects, linear, jira). Jira supports jira.deployment for Cloud versus Data Center/Server. List-valued fields (hold_labels, teams, project_keys, states) replace the stored list when present. Validates Linear team/session-agent/assigned-only settings before applying. Requires owner role.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -9248,13 +9270,35 @@
                   "jira": {
                     "type": "object",
                     "properties": {
+                      "deployment": {
+                        "type": "string",
+                        "enum": ["", "cloud", "datacenter", "server"]
+                      },
                       "base_url": {
                         "type": "string"
                       },
                       "email": {
                         "type": "string"
                       },
+                      "username": {
+                        "type": "string"
+                      },
                       "api_token": {
+                        "type": "string"
+                      },
+                      "password": {
+                        "type": "string"
+                      },
+                      "ca_bundle": {
+                        "type": "string"
+                      },
+                      "insecure_skip_verify": {
+                        "type": "boolean"
+                      },
+                      "client_cert": {
+                        "type": "string"
+                      },
+                      "client_key": {
                         "type": "string"
                       },
                       "project_keys": {
@@ -13388,6 +13432,41 @@
             }
           }
         }
+      }
+    },
+    "/api/leaderboard/battle-log": {
+      "get": {
+        "tags": ["Contribute"],
+        "summary": "Public Battle Log",
+        "description": "Returns scrubbed public hive activity for the leaderboard Battle Log widget. Targets are stripped of emails, URLs, token-like fields, and repository names unless the repo is listed in HIVE_PUBLIC_REPOS.",
+        "parameters": [{"name":"limit","in":"query","required":false,"schema":{"type":"integer","minimum":1,"maximum":100}}],
+        "responses": {"200": {"description": "Battle Log events", "content": {"application/json": {"schema": {"type":"object","properties":{"events":{"type":"array","items":{"type":"object","properties":{"timestamp":{"type":"string"},"actor":{"type":"string"},"action":{"type":"string"},"kind":{"type":"string"},"icon":{"type":"string"},"target":{"type":"string"},"repo":{"type":"string"}}}},"retained":{"type":"integer"}}}}}}}
+      }
+    },
+    "/api/leaderboard/hive-of-week": {
+      "get": {
+        "tags": ["Contribute"],
+        "summary": "Hive of the Week",
+        "description": "Returns the featured weekly project, gource source URL, public render fallback URLs, and embed snippets.",
+        "responses": {"200": {"description": "Hive of the Week", "content": {"application/json": {"schema": {"type":"object","properties":{"project":{"type":"string"},"week":{"type":"string"},"activity_count":{"type":"integer"},"gource_log_url":{"type":"string"},"video_url":{"type":"string"},"poster_url":{"type":"string"},"leaderboard_url":{"type":"string"},"embed_html":{"type":"string"},"readme_markdown":{"type":"string"}}}}}}}
+      }
+    },
+    "/api/leaderboard/gource-log": {
+      "get": {
+        "tags": ["Contribute"],
+        "summary": "Hive Gource source log",
+        "description": "Returns a Gource custom log (timestamp|username|type|path|colour) for a HIVE_PUBLIC_REPOS-allowlisted project and ISO week from public hive event data.",
+        "parameters": [{"name":"project","in":"query","required":false,"schema":{"type":"string"}},{"name":"week","in":"query","required":false,"schema":{"type":"string"}}],
+        "responses": {"200": {"description": "Gource custom log", "content": {"text/plain": {"schema": {"type":"string"}}}}, "400": {"description": "Invalid project"}}
+      }
+    },
+    "/api/leaderboard/hive-of-week/archive": {
+      "post": {
+        "tags": ["Contribute"],
+        "summary": "Archive Hive of the Week source",
+        "description": "Owner-only endpoint that archives the selected weekly gource source log into the configured knowledge file vault. Rendered videos are never stored in knowledge.",
+        "parameters": [{"name":"project","in":"query","required":false,"schema":{"type":"string"}},{"name":"week","in":"query","required":false,"schema":{"type":"string"}}],
+        "responses": {"200": {"description": "Archived"}, "400": {"description": "Invalid project"}, "403": {"description": "Owner role required"}, "503": {"description": "Knowledge store unavailable"}}
       }
     },
     "/api/leaderboard/teams": {
@@ -19805,7 +19884,7 @@
           "Status"
         ],
         "summary": "Add or remove the hold for one issue or pull request",
-        "description": "Owners, repository owners, and users with GitHub write, maintain, or admin permission may toggle a dashboard hold chip. Adding applies the hive's canonical hive/<hive-id> label. Removing fetches the issue/PR labels and removes exactly the label(s) causing the hold.",
+        "description": "Owners, repository owners, and users with GitHub write, maintain, or admin permission may toggle a dashboard hold chip. Adding applies the hive's exact-match canonical hive-pause/<hive-id> label. Removing fetches the issue/PR labels and removes exactly the label(s) causing the hold without removing hive/<hive-id> provenance. The #8851 upgrade migration writes /data/hive-hold-migration-<hive-id>.json with audit-backed, provenance-only, and ambiguous legacy classifications.",
         "parameters": [
           {
             "name": "owner",
@@ -24135,6 +24214,124 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/cards/player/{asset}": {
+      "get": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Contributor social card SVG",
+        "description": "Public 1200x630 SVG card for a contributor profile. Canonical non-API URL is /cards/player/{login}.svg.",
+        "parameters": [
+          {
+            "name": "asset",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9-]{1,39}\\.svg$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SVG card",
+            "content": {
+              "image/svg+xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/cards/achievement/{login}/{asset}": {
+      "get": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Achievement social card SVG",
+        "description": "Public 1200x630 SVG card for an attained Achievement System 2.0 badge. Canonical non-API URL is /cards/achievement/{login}/{achievement-id}.svg.",
+        "parameters": [
+          {
+            "name": "login",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9-]{1,39}$"
+            }
+          },
+          {
+            "name": "asset",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9_:-]{1,80}\\.svg$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SVG card",
+            "content": {
+              "image/svg+xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/cards/leaderboard/{asset}": {
+      "get": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Leaderboard social card SVG",
+        "description": "Public 1200x630 SVG card for contributors, teams, or swarm leaderboards. Canonical non-API URL is /cards/leaderboard/{board}.svg.",
+        "parameters": [
+          {
+            "name": "asset",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "contributors.svg",
+                "teams.svg",
+                "swarm.svg"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SVG card",
+            "content": {
+              "image/svg+xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
           }
         }
       }

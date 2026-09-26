@@ -744,6 +744,8 @@ type FrontendGovernor struct {
 	LanePauseReasons  map[string]string  `json:"lane_pause_reasons,omitempty"`
 	QualifiedStandbys map[string]int     `json:"qualified_standbys,omitempty"`
 	SuspendedStandbys map[string]int     `json:"suspended_standbys,omitempty"`
+	NextKickAt        string             `json:"nextKickAt,omitempty"`
+	NextKickIn        string             `json:"nextKickIn,omitempty"`
 }
 
 type FrontendThresholds struct {
@@ -1751,6 +1753,10 @@ func isPublicPath(path string) bool {
 	case path == "/leaderboard" || strings.HasPrefix(path, "/leaderboard/"):
 		return true
 	case strings.HasPrefix(path, "/api/leaderboard"):
+		return true
+	case strings.HasPrefix(path, "/api/cards/"):
+		return true
+	case strings.HasPrefix(path, "/cards/") || strings.HasPrefix(path, "/share/"):
 		return true
 	case strings.HasPrefix(path, "/api/gh-user-auth/"):
 		return path != "/api/gh-user-auth/logout"

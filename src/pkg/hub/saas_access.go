@@ -304,6 +304,7 @@ func (s *HubServer) handleGrantableUsers(w http.ResponseWriter, r *http.Request)
 			ID:       u.GitHubUsername,
 			Label:    grantableUserLabel(&u),
 			Provider: grantableUserProvider(&u),
+			Avatar:   u.AvatarURL,
 		})
 	}
 	sort.Strings(names)
@@ -330,6 +331,7 @@ type grantableUserEntry struct {
 	ID       string `json:"id"`
 	Label    string `json:"label"`
 	Provider string `json:"provider,omitempty"`
+	Avatar   string `json:"avatar_url,omitempty"`
 }
 
 // identityProviderPrefixRE matches wire-form provider-prefixed identity keys

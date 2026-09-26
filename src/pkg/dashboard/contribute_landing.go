@@ -508,6 +508,9 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
 .lb-name{color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lb-name__link{color:inherit;text-decoration:none}
 .lb-name__link:hover{color:var(--cc-accent);text-decoration:underline}
+.social-share{display:inline-flex;gap:6px;flex-wrap:wrap;margin-left:var(--sp-3);vertical-align:middle}
+.social-share button{border:1px solid var(--line-strong);background:var(--surface-0);color:var(--text-muted);border-radius:var(--r-pill);padding:var(--sp-1) var(--sp-3);font:inherit;font-size:var(--fs-2xs);cursor:pointer}
+.social-share button:hover{color:var(--cc-accent);border-color:var(--cc-accent)}
 .lb-tier{color:var(--text-muted)}
 .lb-stat{text-align:right;color:var(--text);font-variant-numeric:tabular-nums}
 .lb-head .lb-stat,.lb-head .lb-rank{text-align:right;color:var(--text-muted)}
@@ -1157,6 +1160,24 @@ select.admin-act{min-width:0;max-width:100%%}
 /* Hive-wide trend strip pinned above the standings. */
 .lb-trend{display:flex;align-items:center;gap:10px;padding:var(--sp-4) var(--sp-7) var(--sp-5);color:var(--text-muted);font-size:.76rem;border-bottom:1px solid var(--line-subtle)}
 .lb-trend .spark{margin-left:auto}
+/* Battle Log + Hive of the Week (#8844): public, showpiece widgets next to the
+   rankings. Data is hydrated from scrubbed public endpoints; rendering uses
+   textContent-only DOM construction below. */
+.lb-showcase-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,.8fr);gap:var(--sp-6);margin-bottom:var(--sp-7)}
+.battle-log-list{display:flex;flex-direction:column;gap:8px;padding:var(--sp-6)}
+.battle-log-line{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto;align-items:center;gap:var(--sp-4);background:var(--surface-0);border:1px solid var(--line-subtle);border-radius:var(--r-lg);padding:var(--sp-4) var(--sp-5);font-size:var(--fs-base)}
+.battle-log-actor{font-weight:700;color:var(--text);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.battle-log-icon{font-size:var(--fs-lg);filter:drop-shadow(0 0 6px color-mix(in srgb,var(--cc-amber) 35%%,transparent))}
+.battle-log-target{color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.battle-log-time{font-size:var(--fs-xs);color:var(--text-faint);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.hotw-video{width:100%%;border-radius:var(--r-lg);border:1px solid var(--line-strong);background:var(--surface-terminal);display:block}
+.hotw-body{padding:var(--sp-6)}
+.hotw-project{font-size:var(--fs-lg);font-weight:800;color:var(--text);margin-bottom:var(--sp-2)}
+.hotw-meta{font-size:var(--fs-sm);color:var(--text-muted);margin-bottom:var(--sp-5)}
+.hotw-links{display:flex;flex-wrap:wrap;gap:8px}
+.hotw-links a{font-size:var(--fs-sm);color:var(--cc-accent);text-decoration:none;border:1px solid var(--line-strong);border-radius:var(--r-pill);padding:var(--sp-2) var(--sp-5)}
+.hotw-links a:hover{border-color:var(--cc-accent)}
+@media(max-width:900px){.lb-showcase-grid{grid-template-columns:1fr}.battle-log-line{grid-template-columns:auto minmax(0,1fr);}.battle-log-actor{text-align:left}.battle-log-target,.battle-log-time{grid-column:2}}
 /* "File an issue on this page" link (#2594) — a subtle footer affordance present
    on every tab. Quiet grey, matches the sober dashboard chrome; an outbound link. */
 .cc-page-foot{padding:26px 48px 34px;border-top:1px solid var(--line-subtle);margin-top:28px;display:flex;justify-content:center}
@@ -2401,6 +2422,17 @@ It clears automatically when the period elapses. An operator can shorten or disa
      one-line "where you stand" cue that links across. Anonymous viewers get the
      same one-line footprint, not a card. -->
 <div id="me-standing-mount"></div>
+<div class="lb-showcase-grid">
+<div class="ops-card card-accent">
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Battle Log</h3><span class="ops-card-count count-strong" id="battle-log-count"></span></div>
+<div class="battle-log-list" id="battle-log-list"><div class="ops-empty">Loading hive battle log&hellip;</div></div>
+<p class="ops-note">Public, scrubbed contributor activity rendered as a Counter-Strike-style record: actor &rarr; action &rarr; target.</p>
+</div>
+<div class="ops-card card-accent">
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Hive of the Week</h3><span class="ops-card-count count-strong" id="hotw-count"></span></div>
+<div class="hotw-body" id="hotw-card"><div class="ops-empty">Loading weekly swarm render&hellip;</div></div>
+</div>
+</div>
 <div class="ops-card card-accent">
 <div class="ops-card-head"><span class="feed-dot"></span><h3>Team leagues</h3><span class="ops-card-count count-strong" id="teams-count"></span></div>
 <div id="team-leagues"><div class="ops-empty">Loading team leagues&hellip;</div></div>
@@ -2804,6 +2836,8 @@ function loadLeaderboard(){
     var contribs=(d&&d.leaderboard)||[];
     renderLeaderboard(contribs);
     loadTeamLeagues();
+    loadBattleLog();
+    loadHiveOfWeek();
     // Ensure the per-row + hive-wide sparklines have data even when the Ops tab
     // was never opened (opsPoll never ran). Reuses this hive's metrics endpoint;
     // Ops-only spark slots simply no-op when absent. See #persistent-history.
@@ -2818,6 +2852,46 @@ function loadTeamLeagues(){
   fetch('/api/leaderboard/teams').then(function(r){return r.json();}).then(function(d){renderTeamLeagues(d||{});}).catch(function(){
     el.innerHTML='<div class="ops-empty">Could not load team leagues.</div>';
   });
+}
+function loadBattleLog(){
+  var el=document.getElementById('battle-log-list');if(!el)return;
+  fetch('/api/leaderboard/battle-log?limit=12').then(function(r){return r.json();}).then(function(d){renderBattleLog((d&&d.events)||[]);}).catch(function(){
+    el.textContent='';var div=document.createElement('div');div.className='ops-empty';div.textContent='Could not load battle log.';el.appendChild(div);
+  });
+}
+function renderBattleLog(events){
+  var el=document.getElementById('battle-log-list'),cnt=document.getElementById('battle-log-count');if(!el)return;
+  el.textContent='';
+  if(cnt)cnt.textContent=events.length+' events';
+  if(!events.length){var empty=document.createElement('div');empty.className='ops-empty';empty.textContent='No public activity yet.';el.appendChild(empty);return;}
+  events.forEach(function(e){
+    var row=document.createElement('div');row.className='battle-log-line';
+    var actor=document.createElement('span');actor.className='battle-log-actor';actor.textContent=e.actor||'contributor';row.appendChild(actor);
+    var icon=document.createElement('span');icon.className='battle-log-icon';icon.setAttribute('aria-label',e.action||'acted');icon.textContent=e.icon||'⚡';row.appendChild(icon);
+    var target=document.createElement('span');target.className='battle-log-target';target.textContent=(e.action?e.action+' ':'')+(e.target||'the hive');row.appendChild(target);
+    var time=document.createElement('span');time.className='battle-log-time';var d=e.timestamp?new Date(e.timestamp):null;time.textContent=(d&&!isNaN(d.getTime()))?d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'';row.appendChild(time);
+    el.appendChild(row);
+  });
+}
+function loadHiveOfWeek(){
+  var el=document.getElementById('hotw-card');if(!el)return;
+  fetch('/api/leaderboard/hive-of-week').then(function(r){return r.json();}).then(renderHiveOfWeek).catch(function(){
+    el.textContent='';var div=document.createElement('div');div.className='ops-empty';div.textContent='Could not load Hive of the Week.';el.appendChild(div);
+  });
+}
+function renderHiveOfWeek(d){
+  var el=document.getElementById('hotw-card'),cnt=document.getElementById('hotw-count');if(!el)return;
+  el.textContent='';
+  if(cnt)cnt.textContent=(d&&d.week)||'weekly';
+  var project=document.createElement('div');project.className='hotw-project';project.textContent=(d&&d.project)||'hive';el.appendChild(project);
+  var meta=document.createElement('div');meta.className='hotw-meta';meta.textContent=((d&&d.activity_count)||0)+' public events this week';el.appendChild(meta);
+  var video=document.createElement('video');video.className='hotw-video';video.controls=true;video.preload='metadata';if(d&&d.poster_url)video.poster=d.poster_url;
+  var source=document.createElement('source');source.type='video/mp4';source.src=(d&&d.video_url)||'/assets/hive-of-the-week/latest.mp4';video.appendChild(source);el.appendChild(video);
+  var links=document.createElement('div');links.className='hotw-links';
+  [['Source log',d&&d.gource_log_url],['Leaderboard',d&&d.leaderboard_url],['Video',d&&d.video_url]].forEach(function(pair){
+    if(!pair[1])return;var a=document.createElement('a');a.href=pair[1];a.textContent=pair[0];links.appendChild(a);
+  });
+  el.appendChild(links);
 }
 function teamRows(rows){
   rows=(rows||[]).slice(0,5);
@@ -2976,6 +3050,7 @@ function lbRow(e,rank){
     ?('<a class="lb-name__link" href="/contribute/dossier/'+encodeURIComponent(uname)+'">'+name+'</a>')
     :name;
   nameCell+=a2line;
+  if(!e.is_agent&&uname)nameCell+=socialShareControls('/share/player/'+encodeURIComponent(uname),'Hive contributor '+uname);
   // "Done" (tasks_completed) is the hero numeral — real count, just emphasised.
   return '<div class="lb-row'+(isMe?' lb-row--me':'')+'">'
     +'<div class="lb-rank">#'+rank+'</div>'
@@ -3009,7 +3084,7 @@ function renderLeaderboard(contribs){
   // Hive-wide total-tasks trend (#persistent-history) pinned above the standings —
   // the sum of tasks_done per hour over the last 7 days. Hydrated by
   // ccRenderLeaderboardSparklines; empty (flat) until metrics load.
-  var trend='<div class="lb-trend"><span>Hive throughput &middot; last 7 days</span><span class="spark" id="spark-lb-trend" title="Total tasks completed per hour, last 7 days"></span></div>';
+  var trend='<div class="lb-trend"><span>Hive throughput &middot; last 7 days</span>'+socialShareControls('/share/leaderboard/contributors','Hive contributor leaderboard')+'<span class="spark" id="spark-lb-trend" title="Total tasks completed per hour, last 7 days"></span></div>';
   var html=trend+'<div class="lb-head lb-row"><div class="lb-rank">#</div><div class="lb-name">Contributor</div><div class="lb-tier">Tier</div><div class="lb-stat lb-primary">Done</div><div class="lb-stat">Failed</div><div class="lb-stat">Findings</div><div class="lb-stat">Trend</div></div>';
   var rank=0,i;
   for(i=0;i<contribs.length;i++){rank++;html+=lbRow(contribs[i],rank);}
@@ -3267,8 +3342,10 @@ function meAchievements2(p){
   if(!ach.length)return '<p class="dz-collab-empty">Teamwork tiers unlock from normal GitHub, Spek, and Hive collaboration.</p>'+notes;
   return '<div class="dz-seals">'+ach.map(function(a){
     var sub=(a.tier||'solo')+' · '+(a.track||'teamwork');
+    var path='/share/achievement/'+encodeURIComponent(p.github_username)+'/'+encodeURIComponent(a.id||'achievement');
     return '<div class="dz-seal"><div class="glyph"></div><div class="t-name">'+esc(a.label||a.id||'Achievement')+'</div>'
-      +'<div class="t-sub">'+esc(sub)+' — '+esc(a.detail||'')+'</div></div>';
+      +'<div class="t-sub">'+esc(sub)+' — '+esc(a.detail||'')+'</div>'
+      +socialShareControls(path,(a.label||a.id||'Hive achievement')+' by '+p.github_username)+'</div>';
   }).join('')+'</div>'+notes;
 }
 
@@ -3571,6 +3648,7 @@ function renderMeCard(mount,p){
     +'<div class="me-quota-wrap" id="me-quota-slot"><div class="ops-note m-0">Loading your quota&hellip;</div></div>'
     +'<div class="me-actions">'
       +'<a class="me-share" href="'+esc(meLinkedInURL(p))+'" target="_blank" rel="noopener noreferrer">\u{1F4E3} Share achievement on LinkedIn</a>'
+      +socialShareControls('/share/player/'+encodeURIComponent(p.github_username),'Hive contributor '+p.github_username)
       +'<span class="me-stylepick">Profile style <select id="me-style-select" aria-label="Profile style">'+styleOpts+'</select></span>'
       +'<span class="info-affordance custom-css-help"><button type="button" class="hv-btn btn-icon btn-sm info-btn" id="custom-css-info-btn" aria-haspopup="true" aria-expanded="false" aria-controls="custom-css-info-pop" aria-label="Custom CSS stylesheet help" title="Custom CSS">Custom CSS</button>'
       +'<div class="info-pop custom-css-pop" id="custom-css-info-pop" role="tooltip" hidden><h4>Custom CSS</h4>'
@@ -3834,6 +3912,36 @@ document.querySelectorAll('.ops-scope').forEach(function(f){f.addEventListener('
 function esc(s){return (s==null?'':String(s))
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
   .replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function socialShareAbsolute(path){return window.location.origin+path;}
+function socialShareControls(path,label){
+  var url=socialShareAbsolute(path);
+  var text=label||'Hive social card';
+  var md='['+text+']('+url+')';
+  var htmlLink='<a href="'+url+'">'+text+'</a>';
+  return '<span class="social-share">'
+    +'<button type="button" data-share-copy="'+esc(url)+'" title="Copy public share link">Copy link</button>'
+    +'<button type="button" data-share-copy="'+esc(md)+'" title="Copy Markdown embed">Markdown</button>'
+    +'<button type="button" data-share-copy="'+esc(htmlLink)+'" title="Copy HTML embed">HTML</button>'
+    +'</span>';
+}
+function copySocialShareText(text){
+  function done(ok){if(typeof toast==='function')toast(ok?'Share snippet copied':'Could not copy share snippet',ok);}
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(function(){done(true);}).catch(function(){done(false);});
+    return;
+  }
+  var ta=document.createElement('textarea');
+  ta.value=text;ta.setAttribute('readonly','');ta.style.position='fixed';ta.style.left='-9999px';
+  document.body.appendChild(ta);ta.select();
+  var ok=false;try{ok=document.execCommand('copy');}catch(e){ok=false;}
+  document.body.removeChild(ta);done(ok);
+}
+document.addEventListener('click',function(e){
+  var btn=e.target&&e.target.closest&&e.target.closest('[data-share-copy]');
+  if(!btn)return;
+  e.preventDefault();
+  copySocialShareText(btn.getAttribute('data-share-copy')||'');
+});
 // ccAdvisorLabel names the SECOND model that reviewed a contributor's work
 // (hivecommons/hive#7760: omp's --advisor), as "advisor <model> (<effort>)",
 // or '' when the record carries none. Every view that shows a contributor's

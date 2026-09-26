@@ -202,6 +202,11 @@ Part 2 of [RFC #4492](https://github.com/hivecommons/hive/issues/4492): the hive
 | Variable | Required | Default | Purpose |
 |---|---:|---|---|
 | `LINEAR_API_KEY` | Yes for `work_source.type: linear` | none | Read-only Linear API key used by the Linear work-source adapter. Reference it from `hive.yaml` with `api_key: ${LINEAR_API_KEY}` rather than storing the secret directly. The same `${LINEAR_API_KEY}` form works when the work source is set from the dashboard: the reference is resolved from the hive's environment when the work source is built (an unset variable is a startup error), and only the reference is ever persisted. |
+| `JIRA_API_TOKEN` / `JIRA_DATACENTER_PAT` | Yes for Jira Cloud, preferred for Jira Data Center | none | Secret referenced from `governor.work_source.jira.api_token`. Cloud sends it as the Basic-auth password with `email`; Data Center sends it as `Authorization: Bearer <PAT>`. |
+| `JIRA_DATACENTER_PASSWORD` | Only for Jira Data Center basic auth | none | Secret referenced from `governor.work_source.jira.password` when a Data Center/Server instance cannot use PATs. Prefer PAT bearer auth when available. |
+| `JIRA_DATACENTER_CA_BUNDLE` | No | none | Optional PEM CA bundle referenced from `governor.work_source.jira.ca_bundle`. Hive appends these roots to the system trust store for Jira Data Center/Server. |
+| `JIRA_DATACENTER_CLIENT_CERT` | No | none | Optional PEM client certificate referenced from `governor.work_source.jira.client_cert` for Jira Data Center mTLS. Must be set with `JIRA_DATACENTER_CLIENT_KEY`. |
+| `JIRA_DATACENTER_CLIENT_KEY` | No | none | Optional PEM private key referenced from `governor.work_source.jira.client_key` for Jira Data Center mTLS. Must be set with `JIRA_DATACENTER_CLIENT_CERT`. |
 | `LINEAR_CLIENT_ID` | Yes for the Linear agent integration | none | OAuth client id of your Linear application (Linear → Settings → API → Applications). Without it the install endpoint returns 412 and the integration stays off. |
 | `LINEAR_CLIENT_SECRET` | Yes for the Linear agent integration | none | OAuth ****** for the code exchange and token refresh. Secret — deliver via Kubernetes Secret / env, never config files. |
 | `LINEAR_WEBHOOK_SECRET` | Yes for Linear webhooks | none | HMAC-SHA256 signing secret from the Linear app's webhook settings. The receiver **fails closed**: with this unset every delivery to `/api/linear/webhook` is rejected 401. |
@@ -296,8 +301,8 @@ section requires for lookups.
 | `OCI_AVAILABILITY_DOMAIN` | Required for OCI FSS provisioning | none | OCI availability domain. |
 | `OCI_MOUNT_TARGET_ID` | Required for OCI FSS provisioning | none | OCI mount target OCID. |
 | `OCI_EXPORT_SET_ID` | Required for OCI FSS provisioning | none | OCI export set OCID. |
-| `HIVE_HUB_ADMIN_USERNAME` | No | none | Single hub admin username. Consulted alongside `HIVE_HUB_ADMINS`. |
-| `HIVE_HUB_ADMINS` | No | none | Comma-separated hub admin usernames. |
+| `HIVE_HUB_ADMIN_USERNAME` | No | `clubanderson` | Single root hub admin GitHub username when `HIVE_HUB_ADMINS` is unset. Root admins are configuration-managed and cannot be revoked from the UI. |
+| `HIVE_HUB_ADMINS` | No | none | Comma-separated root hub admin identities (bare GitHub logins are treated as `github:<login>`). When set, this replaces `HIVE_HUB_ADMIN_USERNAME`. Root admins may grant or revoke additional hub admins from the dashboard; those UI grants are persisted in `/data/hub-admins.json` and do not become root admins. |
 | `HIVE_HUB_GITHUB_TOKEN` | No | none | Hub-side GitHub token attached to every hub-originated `api.github.com` read: branch-tip polling, commit compares (channel distances, reach checks), commit messages/dates, workflow runs, and the dibs public-repo check. Unset = anonymous (60 req/h per IP, exhausted by the branch poller alone; distances and timestamps then vanish from the My Hives channel rows). Set it for 5000 req/h. |
 | `HIVE_REACH_REPO_DIR` | No | none (GitHub compare API) | Local clone the reach ancestry check resolves against via `git merge-base --is-ancestor`. The hub image ships no clone, so the compare-API adapter is the default. |
 | `HIVE_REACH_NEVER_RAN_DAYS` | No | `3` | Never-ran grace period in days (integer, > 0). Absent or invalid values fall back to the default. |
