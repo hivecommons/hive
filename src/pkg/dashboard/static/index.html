@@ -16905,7 +16905,8 @@ function burnAreaChart() {
 
     function renderRunDetailPanel(d) {
       const issue = d.issue || {}, run = d.run || {};
-      const issueLabel = issue.repo && issue.number ? (issue.repo + '#' + issue.number) : (issue.key || d.key || '');
+      const sourceKind = issue.source_type || (run.work_item && run.work_item.source_type) || 'github';
+      const issueLabel = issue.repo && issue.number ? (issue.repo + '#' + issue.number) : (issue.external_id || (run.work_item && run.work_item.external_id) || issue.key || d.key || '');
       const issueLink = issue.url ? `<a href="${escapeHtml(issue.url)}" target="_blank" rel="noopener">${escapeHtml(issueLabel)}</a>` : escapeHtml(issueLabel);
       const repoLink = d.repo_url ? `<a href="${escapeHtml(d.repo_url)}" target="_blank" rel="noopener">${escapeHtml(run.repo || issue.repo || 'repo')}</a>` : escapeHtml(run.repo || issue.repo || 'repo');
       const plan = d.plan ? `<a href="${escapeHtml(d.plan.url || ('/api/plan/' + encodeURIComponent(d.plan.epic_id || '')))}" target="_blank" rel="noopener">${escapeHtml(d.plan.title || d.plan.epic_id || 'plan')}</a> <span class="campaign-pill">${escapeHtml(d.plan.status || (d.plan.approved ? 'approved' : ''))}</span>` : '<span class="text-muted">No plan epic recorded.</span>';
@@ -16914,7 +16915,7 @@ function burnAreaChart() {
       const stages = (d.stages || []).map(renderRunDetailStage).join('') || '<div class="text-muted">No stage timeline recorded.</div>';
       const notes = (d.notes || []).map(n => `<div class="campaign-empty" style="text-align:left;padding:var(--sp-3)">${escapeHtml(n)}</div>`).join('');
       return `<div class="run-detail-grid">
-          <div class="run-detail-box"><h4>Source issue</h4><div class="run-detail-linklist"><div>${issueLink}</div><div>${escapeHtml(issue.title || run.title || '(untitled)')}</div><div>${repoLink}</div></div></div>
+          <div class="run-detail-box"><h4>Source work item <span class="campaign-pill">${escapeHtml(sourceKind)}</span></h4><div class="run-detail-linklist"><div>${issueLink}</div><div>${escapeHtml(issue.title || run.title || '(untitled)')}</div><div>${repoLink}</div></div></div>
           <div class="run-detail-box"><h4>Pull requests</h4><div class="run-detail-linklist">${prs}</div></div>
           <div class="run-detail-box"><h4>Plan / assignee</h4><div class="run-detail-linklist"><div>${plan}</div><div>${escapeHtml(run.assignee || 'unassigned')}${run.waiting_on ? ' · waiting on ' + escapeHtml(run.waiting_on) : ''}</div></div></div>
           <div class="run-detail-box"><h4>Timestamps</h4><div class="run-detail-linklist">${times}</div></div>

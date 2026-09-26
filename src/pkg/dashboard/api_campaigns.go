@@ -403,6 +403,9 @@ func campaignFromRun(run Run) Campaign {
 		issues = append(issues, run.Key)
 	}
 	artifacts := []CampaignArtifact{{Kind: "run", Label: "Run detail", URL: "/api/runs/" + url.PathEscape(run.Key)}}
+	if run.WorkItem != nil && run.WorkItem.URL != "" {
+		artifacts = append(artifacts, CampaignArtifact{Kind: "work_item", Label: "Source work item (" + firstRunNonEmpty(run.WorkItem.SourceType, "github") + ")", URL: run.WorkItem.URL})
+	}
 	if run.LastReceipt != "" {
 		artifacts = append(artifacts, CampaignArtifact{Kind: "receipt", Label: run.LastReceipt})
 	}

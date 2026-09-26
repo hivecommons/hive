@@ -12,6 +12,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/timeline"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 func TestSpekHubExecutorClaimPreservesTriageAndSkipsRelayLease(t *testing.T) {
@@ -117,6 +118,26 @@ func TestSpekHubStagePromptOmitsEmptyTitleQuotes(t *testing.T) {
 	p := SpekHubStagePrompt(StageSpec, "kubestellar/console", 23725, "kubestellar/console#23725", "", "kubestellar-console-23725")
 	if strings.Contains(p, `#23725 ""`) {
 		t.Fatalf("prompt retained empty title quotes:\n%s", p)
+	}
+
+}
+
+func TestSpekHubStagePromptNonGitHubUsesCapturedWorkItem(t *testing.T) {
+	p := SpekHubStagePromptWithContext(StagePlan, "acme/widgets", 0, "acme/widgets!LIN-7", "Fallback", "acme-widgets-LIN-7", worksource.WorkItemContext{
+		SourceType: "linear",
+		Repo:       "acme/widgets",
+		ExternalID: "LIN-7",
+		Title:      "Linear title",
+		Body:       "Linear description body",
+		URL:        "https://linear.app/acme/issue/LIN-7",
+	})
+	for _, want := range []string{"Source work item: linear LIN-7", "Linear title", "Linear description body", "https://linear.app/acme/issue/LIN-7", "Target repository: acme/widgets", "spektacular plan new"} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, p)
+		}
+	}
+	if strings.Contains(p, "gh issue view") {
+		t.Fatalf("non-GitHub prompt must not ask for gh issue view:\n%s", p)
 	}
 }
 

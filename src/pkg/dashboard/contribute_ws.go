@@ -3907,6 +3907,10 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 		s.contributor.mu.Unlock()
 
 		if hasTask {
+			completedWorkItem := worksource.WorkItemContext{}
+			if completedTask != nil {
+				completedWorkItem = h.server.workItemContextForRun(runKeyOfLease(completedTask.identityKey(), completedTask.Repo))
+			}
 			// #2565: the reported PR URL is client-supplied (tmux-scraped by
 			// the relay), so before it drives the LONG cooldown OR trust credit
 			// we verify it server-side against GitHub — it must exist, have a
@@ -3936,6 +3940,10 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				if completedTask != nil {
 					taskCopy := *completedTask
 					go h.validatePRArtifactTrailers(&taskCopy, msg.PRURL)
+				}
+				if completedTask != nil && strings.TrimSpace(firstRunNonEmpty(verifiedPR, msg.PRURL)) != "" {
+					taskCopy := *completedTask
+					go h.postCompletionPRComment(context.Background(), &taskCopy, completedWorkItem, firstRunNonEmpty(verifiedPR, msg.PRURL))
 				}
 				if completedTask != nil && completedTask.StandbyLane != "" {
 					if err := h.applyDonatedHold(msg.PRURL); err != nil {

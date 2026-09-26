@@ -19,6 +19,24 @@ Spek campaign does not copy spek contents into Hive; `POST
 command, while Spek reloads the current state from its working files and
 spek backend.
 
+## Work sources
+
+Spek runs can start from any configured Hive work source. GitHub Issues and
+GitHub Projects keep the existing `owner/repo#number` behaviour and prompts tell
+agents to read the issue with `gh issue view`. Linear and Jira items use their
+source-native IDs (`owner/repo!ENG-123`, `owner/repo!PROJ-42`); Hive captures
+the title, description, URL, source kind, external ID, and target repository at
+admission and includes that context directly in spec/plan prompts, run detail,
+campaign artifacts, and relay assignments. Gitea and GitLab adapters should work
+through the same `worksource.Ref`/`WorkItemContext` interfaces when configured.
+
+Every non-GitHub work item must resolve to a target repository (`owner/repo`) so
+Hive can clone code and verify PRs. Admission fails instead of starting a broken
+run when the target repo is missing. Implement completion still reports the PR
+URL in the target repo; sources that implement `worksource.Commenter` (GitHub,
+Linear, Jira, and compatible adapters) receive a completion comment on the
+source work item.
+
 ## Jam Sessions
 
 Each campaign also has a Jam workspace for team interaction around the spec.

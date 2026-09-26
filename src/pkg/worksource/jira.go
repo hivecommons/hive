@@ -343,7 +343,7 @@ func (s *jiraSource) ListIssues(ctx context.Context) ([]Issue, error) {
 func (s *jiraSource) searchPage(ctx context.Context, startAt int) (*jiraSearchResponse, error) {
 	q := url.Values{}
 	q.Set("jql", s.jql())
-	q.Set("fields", "summary,status,priority,assignee,reporter,labels,created,updated")
+	q.Set("fields", "summary,description,status,priority,assignee,reporter,labels,created,updated")
 	q.Set("maxResults", fmt.Sprintf("%d", jiraMaxResults))
 	q.Set("startAt", fmt.Sprintf("%d", startAt))
 	var page jiraSearchResponse
@@ -465,6 +465,7 @@ func (s *jiraSource) toIssue(it jiraIssue) Issue {
 		ExternalID: it.Key,
 		Number:     0,
 		Title:      it.Fields.Summary,
+		Body:       jiraDescriptionText(it.Fields.Description),
 		Labels:     it.Fields.Labels,
 		Priority:   "none",
 		CreatedAt:  it.Fields.Created.Time,
@@ -485,6 +486,45 @@ func (s *jiraSource) toIssue(it jiraIssue) Issue {
 		iss.Assignees = []string{assignee}
 	}
 	return iss
+}
+
+func jiraDescriptionText(raw json.RawMessage) string {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return strings.TrimSpace(s)
+	}
+	var walk func(any, *strings.Builder)
+	walk = func(v any, b *strings.Builder) {
+		switch x := v.(type) {
+		case map[string]any:
+			if text, _ := x["text"].(string); text != "" {
+				if b.Len() > 0 {
+					b.WriteByte(' ')
+				}
+				b.WriteString(text)
+			}
+			if content, _ := x["content"].([]any); len(content) > 0 {
+				for _, child := range content {
+					walk(child, b)
+				}
+			}
+		case []any:
+			for _, child := range x {
+				walk(child, b)
+			}
+		}
+	}
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return ""
+	}
+	var b strings.Builder
+	walk(v, &b)
+	return strings.TrimSpace(b.String())
 }
 
 func (s *jiraSource) AddLabel(ctx context.Context, ref Ref, label string) error {

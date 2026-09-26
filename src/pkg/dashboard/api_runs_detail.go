@@ -38,11 +38,13 @@ type RunDetail struct {
 }
 
 type RunDetailIssue struct {
-	Key    string `json:"key"`
-	Repo   string `json:"repo,omitempty"`
-	Number int    `json:"number,omitempty"`
-	Title  string `json:"title,omitempty"`
-	URL    string `json:"url,omitempty"`
+	Key        string `json:"key"`
+	Repo       string `json:"repo,omitempty"`
+	Number     int    `json:"number,omitempty"`
+	SourceType string `json:"source_type,omitempty"`
+	ExternalID string `json:"external_id,omitempty"`
+	Title      string `json:"title,omitempty"`
+	URL        string `json:"url,omitempty"`
 }
 
 type RunDetailPlan struct {
@@ -218,6 +220,19 @@ func (s *Server) runDetailIssue(run Run) RunDetailIssue {
 		repo, number = ref.Repo, ref.Number
 	}
 	out := RunDetailIssue{Key: run.Key, Repo: repo, Number: number, URL: githubIssueURL(repo, number)}
+	if run.WorkItem != nil {
+		item := run.WorkItem.Normalized()
+		out.SourceType = item.SourceType
+		out.ExternalID = item.ExternalID
+		out.Title = item.Title
+		out.URL = firstRunNonEmpty(item.URL, out.URL)
+		if item.Repo != "" {
+			out.Repo = item.Repo
+		}
+		if item.Number > 0 {
+			out.Number = item.Number
+		}
+	}
 	if title, u := s.cachedIssueTitleURL(repo, number); title != "" || u != "" {
 		out.Title = title
 		out.URL = firstRunNonEmpty(u, out.URL)

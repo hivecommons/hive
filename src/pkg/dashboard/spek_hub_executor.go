@@ -62,6 +62,7 @@ type spekHubStage struct {
 	runKey, key, stage, identity, taskID, repo, title string
 	number                                            int
 	gen                                               uint64
+	workItem                                          worksource.WorkItemContext
 }
 
 type FrontendSpektacularHubExecutor struct {
@@ -311,7 +312,7 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 		e.Server.tickStageRunner(time.Now().UTC())
 		return nil
 	}
-	prompt := SpekHubStagePrompt(st.stage, st.repo, st.number, st.runKey, st.title, artifact)
+	prompt := SpekHubStagePromptWithContext(st.stage, st.repo, st.number, st.runKey, st.title, artifact, st.workItem)
 	if err := writeSpekHubPrompt(worktree, prompt); err != nil {
 		return err
 	}
@@ -770,6 +771,7 @@ func (e *SpekHubExecutor) unclaimedStages() ([]spekHubStage, error) {
 	})
 	for i := range out {
 		out[i].title = e.Server.stageLeaseTitle(out[i].identity, out[i].taskID)
+		out[i].workItem = e.Server.workItemContextForRun(out[i].runKey)
 	}
 	return out, err
 }
@@ -881,17 +883,54 @@ func writeSpekHubPrompt(worktree, prompt string) error {
 }
 
 func SpekHubStagePrompt(stage, repo string, number int, runKey, title, artifact string) string {
-	issue := runKey
-	if repo != "" && number > 0 {
-		issue = repo + "#" + strconv.Itoa(number)
+	return SpekHubStagePromptWithContext(stage, repo, number, runKey, title, artifact, worksource.WorkItemContextFromRef(worksource.Ref{Repo: repo, Number: number}, title))
+}
+
+func SpekHubStagePromptWithContext(stage, repo string, number int, runKey, title, artifact string, item worksource.WorkItemContext) string {
+	item = item.Normalized()
+	if item.Repo == "" {
+		item.Repo = repo
 	}
-	title = strings.TrimSpace(title)
+	if item.Number == 0 {
+		item.Number = number
+	}
+	if item.Title == "" {
+		item.Title = title
+	}
+	item = item.Normalized()
+	issue := runKey
+	if item.Repo != "" && item.Number > 0 {
+		issue = item.Repo + "#" + strconv.Itoa(item.Number)
+	}
+	title = strings.TrimSpace(firstSpekNonEmpty(item.Title, title))
 	titleText := ""
 	if title != "" {
 		titleText = " " + strconv.Quote(title)
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Hive-Run: %s\n\n", runKey)
+	sourceType := strings.TrimSpace(item.SourceType)
+	if sourceType == "" {
+		sourceType = "github"
+	}
+	if item.Number <= 0 || (sourceType != "github" && sourceType != "github_projects") {
+		fmt.Fprintf(&b, "Source work item: %s %s%s\nTarget repository: %s\n", sourceType, firstSpekNonEmpty(item.ExternalID, runKey), titleText, item.Repo)
+		if item.URL != "" {
+			fmt.Fprintf(&b, "Source URL: %s\n", item.URL)
+		}
+		if item.Body != "" {
+			fmt.Fprintf(&b, "Source description:\n%s\n\n", item.Body)
+		} else {
+			b.WriteString("\n")
+		}
+		switch stage {
+		case StagePlan:
+			fmt.Fprintf(&b, "You are authoring a Spektacular plan for the source work item above in this repository checkout. Use the target repository %s for code changes and PRs. Use the `spektacular` CLI (already on PATH): run `spektacular plan new --data '{\"name\":\"%s\",\"spec\":\"%s\"}'`, then follow each step it returns (`spektacular plan status %s` shows the current step and its instruction; `spektacular plan file ...` reads/writes the plan document) until the plan's `document_status` is `final`. Do not implement code, do not commit, do not push, do not open PRs. Stop when `spektacular plan status %s` reports `document_status: final`.", item.Repo, artifact, artifact, artifact, artifact)
+		default:
+			fmt.Fprintf(&b, "You are authoring a Spektacular spec for the source work item above in this repository checkout. Use the target repository %s for code changes and PRs. Use the `spektacular` CLI (already on PATH): run `spektacular spec new --data '{\"name\":\"%s\"}'`, then follow each step it returns (`spektacular spec status %s` shows the current step and its instruction; `spektacular spec file ...` reads/writes the spec document) until the spec's `document_status` is `final`. Do not implement code, do not commit, do not push, do not open PRs. Stop when `spektacular spec status %s` reports `document_status: final`.", item.Repo, artifact, artifact, artifact)
+		}
+		return b.String()
+	}
 	switch stage {
 	case StagePlan:
 		fmt.Fprintf(&b, "You are authoring a Spektacular plan for GitHub issue %s%s in this repository checkout. Read the issue with `gh issue view %d --repo %s` (if `gh` is available; otherwise use the GitHub API) and the relevant code. Use the `spektacular` CLI (already on PATH): run `spektacular plan new --data '{\"name\":\"%s\",\"spec\":\"%s\"}'`, then follow each step it returns (`spektacular plan status %s` shows the current step and its instruction; `spektacular plan file ...` reads/writes the plan document) until the plan's `document_status` is `final`. Do not implement code, do not commit, do not push, do not open PRs. Stop when `spektacular plan status %s` reports `document_status: final`.", issue, titleText, number, repo, artifact, artifact, artifact, artifact)

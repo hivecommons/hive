@@ -33,6 +33,8 @@ type Issue struct {
 	Number int `json:"number,omitempty"`
 	// Title is the issue title / summary.
 	Title string `json:"title"`
+	// Body is the source-native description/body captured at enumeration time.
+	Body string `json:"body,omitempty"`
 	// Author is the login/username of who filed the issue.
 	Author string `json:"author"`
 	// Labels are the issue labels / tags.

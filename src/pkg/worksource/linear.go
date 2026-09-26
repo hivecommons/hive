@@ -350,6 +350,7 @@ func (s *LinearSource) ListIssues(ctx context.Context) ([]Issue, error) {
 				Repo:       repo,
 				ExternalID: n.Identifier,
 				Title:      n.Title,
+				Body:       n.Description,
 				Labels:     labels,
 				Assignees:  assignees,
 				IsTracker:  github.IsTrackerIssue(n.Title, labels, n.Description) || len(n.Children.Nodes) > 0,

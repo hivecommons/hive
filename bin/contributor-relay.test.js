@@ -13215,6 +13215,17 @@ test('#7908 resolveTaskPrompt leaves a prompt without the variable untouched and
   } finally { teardown(relay); }
 });
 
+test('run-stage task_assign display uses source-aware key instead of repo#undefined', () => {
+  const relay = loadRelay({});
+  try {
+    const task = { kind: 'issue', repo: 'acme/widgets', number: 0, key: 'acme/widgets!LIN-7:implement', external_id: 'LIN-7', title: 'Implement Linear work', url: 'https://linear.app/acme/issue/LIN-7' };
+    assert.strictEqual(relay.taskDisplay(task), 'acme/widgets!LIN-7:implement');
+    const prompt = relay.resolveTaskPrompt(task);
+    assert.ok(prompt.includes('acme/widgets!LIN-7:implement'), prompt);
+    assert.ok(!prompt.includes('undefined') && !prompt.includes('#0'), prompt);
+  } finally { teardown(relay); }
+});
+
 // ---------------------------------------------------------------------------
 // hivecommons/hive#7907 — the verdict is judged on a settled pane, not the
 // capture that discovered it.

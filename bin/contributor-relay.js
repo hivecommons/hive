@@ -3340,6 +3340,15 @@ function headlessProgressFrame(task) {
   return { type: 'task_progress', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, kind: task.kind, repo: task.repo, number: task.number, title: task.title, status: 'working', ...effectiveSelectionFields() };
 }
 
+function taskDisplay(task) {
+  if (!task) return 'unknown';
+  if (task.key) return task.key;
+  if (task.external_id) return `${task.repo || 'work'}!${task.external_id}`;
+  if (task.repo && Number(task.number) > 0) return `${task.repo}#${task.number}`;
+  if (task.url || task.title) return [task.url, task.title].filter(Boolean).join(' — ');
+  return task.task_id || 'unknown';
+}
+
 // headlessProgressTick is the headless analogue of progressTick(), armed on the
 // same progressInterval handle and on the same PROGRESS_REPORT_INTERVAL_MS
 // cadence so the hub's 30-minute progress lease is renewed for a headless task
@@ -3371,7 +3380,7 @@ function headlessProgressTick(task) {
 // commands work identically with a literal path.
 const WORKSPACE_DIR_VARIABLE = /\$\{?HIVE_WORKSPACE_DIR\}?/g;
 function resolveTaskPrompt(task) {
-  const prompt = task.prompt || `Work on ${task.kind} ${task.repo}#${task.number}: ${task.title}`;
+  const prompt = task.prompt || `Work on ${task.kind} ${taskDisplay(task)}: ${task.title || ''}`;
   return prompt.replace(WORKSPACE_DIR_VARIABLE, TASK_WORKSPACE_DIR);
 }
 
@@ -6269,7 +6278,7 @@ const cliRestartCounts = new Map();
 const givenUpTasks = new Map();
 
 function taskKey(task) {
-  return task && task.repo ? `${task.repo}#${task.number}` : (task && task.task_id) || 'unknown';
+  return taskDisplay(task);
 }
 
 function isGivenUp(key) {
@@ -7863,12 +7872,12 @@ function handleMessage(data, hub) {
       // this relay does with it below.
       hub.readyOutstanding = false;
       if (!currentTask && hub !== hubs[activeHubIndex]) {
-        console.log(`Rejecting task ${msg.repo}#${msg.number} from ${hub.url} — hub is not the active polling slot`);
+        console.log(`Rejecting task ${taskDisplay(msg)} from ${hub.url} — hub is not the active polling slot`);
         sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: 'Hub is not the active polling slot' });
         break;
       }
       if (currentTask) {
-        console.log(`Rejecting task ${msg.repo}#${msg.number} from ${hub.url} — already working on ${currentTask.repo}#${currentTask.number}`);
+        console.log(`Rejecting task ${taskDisplay(msg)} from ${hub.url} — already working on ${taskDisplay(currentTask)}`);
         sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: 'Already has active task' });
         break;
       }
@@ -7954,7 +7963,7 @@ function handleMessage(data, hub) {
       // process, on the very first task after adding multi-hub support.
       Object.defineProperty(currentTask, '_hub', { value: hub, enumerable: false, writable: true, configurable: true });
       activeHubIndex = hubs.indexOf(hub);
-      console.log(`Task assigned: ${sanitizeHubText(msg.kind)} ${sanitizeHubText(msg.repo)}#${msg.number} — ${sanitizeHubText(msg.title)} (from ${hub.url})`);
+      console.log(`Task assigned: ${sanitizeHubText(msg.kind)} ${sanitizeHubText(taskDisplay(msg))} — ${sanitizeHubText(msg.title)} (from ${hub.url})`);
       if (msg.github_token) {
         injectGhToken(msg.github_token);
         tokenExpiresAt = msg.token_expires_at ? new Date(msg.token_expires_at).getTime() : null;
@@ -8505,6 +8514,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     // Run one progress tick with the grace period already elapsed.
     __crashTick: () => { taskAssignedAt = Date.now() - TASK_GRACE_PERIOD_MS - 1; progressTick(); },
     __setVerdictSettleMs: (ms) => { VERDICT_SETTLE_MS = ms; },
+    taskDisplay,
     resolveTaskPrompt,
     TASK_WORKSPACE_DIR,
     paneStalled,

@@ -30,6 +30,10 @@ type RunAdmitter interface {
 	AdmitTriagedRun(repo string, number int, title, verdict, rationale string, now time.Time) error
 }
 
+type RunAdmitterRefContext interface {
+	AdmitTriagedRunRefWithContext(ref worksource.Ref, ctx worksource.WorkItemContext, verdict, rationale string, now time.Time) error
+}
+
 type TriageCommenter interface {
 	IssueCommentsContain(ctx context.Context, repo string, number int, needle string) (bool, error)
 	CreateIssueComment(ctx context.Context, repo string, number int, body string) error
@@ -852,7 +856,19 @@ func (s *Scheduler) applyRunTriage(issues []github.Issue) []github.Issue {
 				out = append(out, issue)
 				continue
 			}
-			if err := admitter.AdmitTriagedRun(issue.Repo, issue.Number, issue.Title, string(decision.Verdict), decision.Rationale, time.Now()); err != nil {
+			var err error
+			if refAdmitter, ok := admitter.(RunAdmitterRefContext); ok {
+				err = refAdmitter.AdmitTriagedRunRefWithContext(worksource.Ref{
+					SourceType: issue.SourceType,
+					Repo:       issue.Repo,
+					ExternalID: issue.ExternalID,
+					Number:     issue.Number,
+					URL:        issue.URL,
+				}, worksource.WorkItemContextFromGitHubIssue(issue), string(decision.Verdict), decision.Rationale, time.Now())
+			} else {
+				err = admitter.AdmitTriagedRun(issue.Repo, issue.Number, issue.Title, string(decision.Verdict), decision.Rationale, time.Now())
+			}
+			if err != nil {
 				if s.logger != nil {
 					s.logger.Warn("runs triage admission failed", "repo", issue.Repo, "number", issue.Number, "error", err)
 				}

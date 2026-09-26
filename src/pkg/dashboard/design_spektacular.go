@@ -17,6 +17,8 @@ import (
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
+var workItemCommenterOverride func(*Server, worksource.WorkItemContext) (worksource.Commenter, error)
+
 func (s *Server) spektacularDesignEnabled() bool {
 	return s != nil && s.deps != nil && s.deps.Config != nil && s.deps.Config.Runs.Spektacular.Enabled
 }
@@ -61,7 +63,7 @@ func (s *Server) startDesignSpektacular(ctx context.Context, store *beads.Store,
 		}
 	}
 	_ = store.SetMetadata(epic.ID, planning.MetaDesignStatus, planning.DesignStatusRequested)
-	if err := s.AdmitRunRef(issueWorkRef(issue), strings.TrimSpace(issue.Title), time.Now()); err != nil {
+	if err := s.AdmitTriagedRunRefWithContext(issueWorkRef(issue), worksource.WorkItemContextFromGitHubIssue(issue), "", "", time.Now()); err != nil {
 		return nil, "", err
 	}
 	epic, _ = store.Get(epic.ID)
@@ -187,6 +189,21 @@ func (s *Server) designCommenter(issue github.Issue) (worksource.Commenter, erro
 		return nil, fmt.Errorf("worksource/%s: comments unsupported", src.SourceType())
 	}
 	return commenter, nil
+}
+
+func (s *Server) workItemCommenter(item worksource.WorkItemContext) (worksource.Commenter, error) {
+	item = item.Normalized()
+	if workItemCommenterOverride != nil {
+		return workItemCommenterOverride(s, item)
+	}
+	return s.designCommenter(github.Issue{
+		SourceType: item.SourceType,
+		Repo:       item.Repo,
+		Number:     item.Number,
+		ExternalID: item.ExternalID,
+		URL:        item.URL,
+		Title:      item.Title,
+	})
 }
 
 func (s *Server) designStatusTransitioner(issue github.Issue) (worksource.StatusTransitioner, error) {
