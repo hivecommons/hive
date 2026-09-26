@@ -68,6 +68,10 @@ type leaseAdapter struct {
 	reg LeaseRegistry
 }
 
+type pendingStageIdentityRegistry interface {
+	IsPendingStageIdentity(identity string) bool
+}
+
 // NewLeaseRegistryAdapter wraps the dashboard-side registry as the Registry
 // the poll loop drives.
 func NewLeaseRegistryAdapter(reg LeaseRegistry) Registry {
@@ -82,10 +86,15 @@ func (a *leaseAdapter) ActiveStages(time.Time) ([]Stage, error) {
 		if ref, ok := worksource.ParseKey(runKey); ok && ref.Repo != "" {
 			artifact = RunArtifactName(runKey)
 		}
+		relayHeld := false
+		if checker, ok := a.reg.(pendingStageIdentityRegistry); ok {
+			relayHeld = !checker.IsPendingStageIdentity(identity)
+		}
 		out = append(out, Stage{
 			RunKey: runKey, Artifact: artifact, Stage: stage, Key: key,
 			Identity: identity, TaskID: taskID, Repo: repo, WorkDir: workDir, Gen: gen, ExpiresAt: expiresAt,
 			Unclaimed: identity == worksource.RunAdmissionIdentity,
+			RelayHeld: relayHeld,
 		})
 	})
 	if err != nil {

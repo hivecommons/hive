@@ -1,0 +1,1 @@
+- Fix Spek hub executor stage ownership so relays are not offered hub-owned spec/plan work, duplicate run rows are collapsed, and placeholder leases hand off by run key.

@@ -49,6 +49,10 @@ type Stage struct {
 	// no checkout to poll by construction, so the runner leaves it alone
 	// (neither polled nor refused) until a contributor claims the stage.
 	Unclaimed bool
+	// RelayHeld marks leases currently owned by a contributor relay. Relay
+	// progress is reported over the contribute websocket; the hub poller must
+	// not try to inspect a hub-side checkout for these leases.
+	RelayHeld bool
 	// Gen is the lease generation; a change means a retry or advance happened.
 	Gen uint64
 	// ExpiresAt is when the lease lapses without renewal. It is Hive's own
@@ -113,16 +117,17 @@ type Runner struct {
 
 // stageState is the runner's memory of one run stage across ticks.
 type stageState struct {
-	gen        uint64
-	identity   string
-	lastPolled time.Time
-	lastStatus DocumentStatus
-	artifact   string
-	seenFinal  bool
-	advanced   bool
-	expiries   int
-	escalated  bool
-	refused    bool
+	gen             uint64
+	identity        string
+	lastPolled      time.Time
+	lastStatus      DocumentStatus
+	artifact        string
+	seenFinal       bool
+	advanced        bool
+	expiries        int
+	escalated       bool
+	refused         bool
+	relaySkipLogged bool
 	// seeded marks a successor entry created by an advance before the
 	// registry has listed that stage. It keeps the poll pacing across the
 	// stage change and is exempt from the end-of-tick prune until the stage
@@ -140,6 +145,7 @@ type TickResult struct {
 	// Unclaimed counts admission leases still waiting for a relay to take
 	// them; they are listed but neither polled nor refused.
 	Unclaimed int
+	RelayHeld int
 	Errors    int
 }
 
@@ -229,6 +235,7 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) TickResult {
 			state.seenFinal = false
 			state.advanced = false
 			state.refused = false
+			state.relaySkipLogged = false
 		}
 		if state.identity != st.Identity {
 			// The same generation changed hands (a relay claimed the admission
@@ -237,6 +244,7 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) TickResult {
 			// the new owner's, so the stage is eligible to be polled again.
 			state.identity = st.Identity
 			state.refused = false
+			state.relaySkipLogged = false
 		}
 		r.tickStage(ctx, st, state, now, &res)
 	}
@@ -264,6 +272,15 @@ func (r *Runner) tickStage(ctx context.Context, st Stage, state *stageState, now
 		// run, not a misconfiguration: wait for the claim rather than parking
 		// the lease with missing_workdir before anyone could act on it.
 		res.Unclaimed++
+		return
+	}
+	if st.RelayHeld {
+		if !state.relaySkipLogged {
+			r.logger().Info("[spektacular] skipping relay-held stage lease",
+				"run", st.RunKey, "stage", st.Stage, "repo", st.Repo, "identity", st.Identity)
+			state.relaySkipLogged = true
+		}
+		res.RelayHeld++
 		return
 	}
 	// The poll interval only paces the status call. Expiry is checked on

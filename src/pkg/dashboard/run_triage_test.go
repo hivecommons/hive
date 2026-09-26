@@ -15,6 +15,7 @@ func TestAdmitRunIdempotentAndRequiresSpektacular(t *testing.T) {
 		t.Fatal("AdmitRun succeeded with spektacular disabled")
 	}
 	deps.Config.Runs.Spektacular.Enabled = true
+	disableSpekHubExecutorForRelayTests(s)
 	if err := s.AdmitTriagedRun("myorg/repo1", 8450, "feature", "spec", "feature label", now); err != nil {
 		t.Fatalf("AdmitRun: %v", err)
 	}
@@ -53,6 +54,7 @@ func TestAdmitRunIdempotentAndRequiresSpektacular(t *testing.T) {
 func TestRunResetTriageFixRetiresSpecRun(t *testing.T) {
 	s, deps := runsTestServer(t)
 	deps.Config.Runs.Spektacular.Enabled = true
+	disableSpekHubExecutorForRelayTests(s)
 	if err := s.AdmitTriagedRun("myorg/repo1", 8450, "feature", "spec", "feature label", time.Now()); err != nil {
 		t.Fatal(err)
 	}

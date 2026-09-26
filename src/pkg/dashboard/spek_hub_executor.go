@@ -40,6 +40,10 @@ type StageExecutor interface {
 	Status() FrontendSpektacularHubExecutor
 }
 
+type StageExecutionTracker interface {
+	IsExecuting(runKey, stage string) bool
+}
+
 type SpekHubExecutor struct {
 	Server    *Server
 	Config    config.RunsConfig
@@ -127,6 +131,21 @@ func (e *SpekHubExecutor) Status() FrontendSpektacularHubExecutor {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return FrontendSpektacularHubExecutor{Running: e.runningLocked(), LastError: e.lastError}
+}
+
+func (e *SpekHubExecutor) IsExecuting(runKey, stage string) bool {
+	if e == nil {
+		return false
+	}
+	prefix := e.executionKeyPrefix(runKey, stage)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for key := range e.inFlight {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *SpekHubExecutor) sweepStaleWorktrees(ctx context.Context) error {
@@ -1092,11 +1111,11 @@ func (s *Server) stageLeaseTitle(identity, taskID string) string {
 }
 
 func (e *SpekHubExecutor) executionKey(st spekHubStage) string {
-	key := strings.TrimSpace(st.key)
-	if key == "" {
-		key = st.runKey + ":" + st.stage
-	}
-	return key + "\x1f" + strconv.FormatUint(st.gen, 10)
+	return e.executionKeyPrefix(st.runKey, st.stage) + strconv.FormatUint(st.gen, 10)
+}
+
+func (e *SpekHubExecutor) executionKeyPrefix(runKey, stage string) string {
+	return strings.TrimSpace(runKey) + "\x1f" + strings.TrimSpace(stage) + "\x1f"
 }
 
 func (e *SpekHubExecutor) maxAttempts() int { return e.Config.MaxStageRetriesOrDefault() }
