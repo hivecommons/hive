@@ -268,11 +268,11 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 #
 # Checksum mismatches are still never tolerated — the || only covers the
 # curl download step, not the verify/install steps.
-ARG BOBSHELL_VERSION=2.0.4
+ARG BOBSHELL_VERSION=2.0.5
 ARG BOBSHELL_BASE_URL=https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell
 ARG TARGETARCH
-ARG BOBSHELL_SHA256_AMD64=10de047ffdc23a50f3e1ef69fad3b6313ff6dda0010589a22efe26b24685254b
-ARG BOBSHELL_SHA256_ARM64=10de047ffdc23a50f3e1ef69fad3b6313ff6dda0010589a22efe26b24685254b
+ARG BOBSHELL_SHA256_AMD64=eff232eb1b69f34f984ddd295e6960470058ca922b1c751879c5a8d06199f566
+ARG BOBSHELL_SHA256_ARM64=eff232eb1b69f34f984ddd295e6960470058ca922b1c751879c5a8d06199f566
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64) BOBSHELL_SHA256="$BOBSHELL_SHA256_AMD64" ;; \
