@@ -1129,6 +1129,11 @@ func TestBuildReceipt_FallsBackWhenStatusLacksTimes(t *testing.T) {
 	if receipt.EndedAt != now.UTC().Format(time.RFC3339Nano) {
 		t.Fatalf("EndedAt = %s, want the advance instant, never updated_at", receipt.EndedAt)
 	}
+	dateOnly := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	receipt = BuildReceipt(st, ArtifactStatus{Kind: KindSpec, Name: testRunKey, DocumentStatus: DocumentFinal, CreatedAt: dateOnly, ClosedAt: dateOnly}, now)
+	if receipt.StartedAt == dateOnly.Format(time.RFC3339Nano) || receipt.EndedAt == dateOnly.Format(time.RFC3339Nano) {
+		t.Fatalf("receipt used Spektacular date-only frontmatter timestamps: %+v", receipt)
+	}
 	// Two observations of the same final document that differ only in
 	// updated_at (a checkout or reformat moved the mtime) are the same input.
 	a := BuildReceipt(st, ArtifactStatus{Kind: KindSpec, Name: testRunKey, DocumentStatus: DocumentFinal, CreatedAt: t0, UpdatedAt: updated, ClosedAt: t0.Add(time.Hour)}, now)
@@ -1223,8 +1228,8 @@ func TestFixture_FinalWithoutUpdatedAtAdvances(t *testing.T) {
 	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
 		t.Fatalf("fixture final-no-updated-at: %+v", res)
 	}
-	if len(reg.receipts) != 1 || reg.receipts[0].EndedAt != "2026-09-22T00:00:00Z" {
-		t.Fatalf("receipt ended at closed_at expected, got %+v", reg.receipts)
+	if len(reg.receipts) != 1 || reg.receipts[0].EndedAt == "2026-09-22T00:00:00Z" || reg.receipts[0].EndedAt != t0.Format(time.RFC3339Nano) {
+		t.Fatalf("receipt should use the advance instant instead of date-only closed_at, got %+v", reg.receipts)
 	}
 }
 

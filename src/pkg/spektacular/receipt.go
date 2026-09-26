@@ -31,7 +31,7 @@ func BuildReceipt(st Stage, status ArtifactStatus, now time.Time) outputschema.S
 		workKey = st.Repo + "!" + st.RunKey
 	}
 	started := status.CreatedAt
-	if started.IsZero() {
+	if started.IsZero() || isSpektacularFrontmatterDate(started) {
 		started = now
 	}
 	// closed_at is the frontmatter close date; when the artifact carries none
@@ -39,13 +39,14 @@ func BuildReceipt(st Stage, status ArtifactStatus, now time.Time) outputschema.S
 	// fallback: it is a file mtime whenever no workflow state matches the
 	// artifact, so it says nothing about when the stage finished.
 	ended := status.ClosedAt
-	if ended.IsZero() {
+	if ended.IsZero() || isSpektacularFrontmatterDate(ended) {
 		ended = now
 	}
 	repo := st.Repo
 	if repo == "" {
 		repo = st.RunKey
 	}
+
 	steps := append([]string(nil), status.CompletedSteps...)
 	artifactKey := status.JoinKey()
 	artifacts := []outputschema.Artifact{{
@@ -86,4 +87,8 @@ func BuildReceipt(st Stage, status ArtifactStatus, now time.Time) outputschema.S
 		Provenance:       &proof.Provenance{Query: "spektacular " + status.Kind + " status " + status.Name},
 		Artifacts:        artifacts,
 	}
+}
+
+func isSpektacularFrontmatterDate(t time.Time) bool {
+	return !t.IsZero() && t.Location() == time.UTC && t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 && t.Nanosecond() == 0
 }

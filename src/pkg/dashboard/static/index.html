@@ -3179,6 +3179,8 @@
     .run-transcript { margin-top: var(--sp-2); display: grid; gap: var(--sp-2); }
     .run-transcript-entry { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-2); }
     .run-transcript-entry pre { margin: var(--sp-2) 0 0; max-height: 260px; overflow: auto; white-space: pre-wrap; font-size: var(--fs-xs); color: var(--muted); }
+    .run-markdown { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3); max-height: 420px; overflow: auto; }
+    .run-markdown pre { white-space: pre-wrap; font-size: var(--fs-xs); color: var(--muted); }
     .run-detail-raw { max-height: 360px; overflow: auto; white-space: pre-wrap; font-size: var(--fs-xs); }
     .campaign-empty { color: var(--muted); text-align: center; padding: var(--sp-7); border: 1px dashed var(--border); border-radius: var(--r); }
     .campaign-jam { margin-top: var(--sp-5); display: grid; gap: var(--sp-4); }
@@ -16928,8 +16930,55 @@ function burnAreaChart() {
     function renderRunDetailStage(st) {
       const meta = [st.status, st.gen ? 'gen ' + st.gen : '', st.actor, st.started_at, st.ended_at, st.duration].filter(Boolean).join(' · ');
       const receipt = st.receipt ? `<div class="text-muted">receipt: ${escapeHtml(st.receipt.digest || st.receipt.file || '')}</div>` : (st.receipt_sha ? `<div class="text-muted">receipt: ${escapeHtml(st.receipt_sha)}</div>` : '');
-      const transcript = (st.transcript || []).length ? `<div class="run-transcript">${(st.transcript || []).map(renderRunTranscriptEntry).join('')}</div>` : '<div class="text-muted">Transcript not recorded for this stage.</div>';
-      return `<details class="run-stage-detail"><summary>${escapeHtml(st.name || 'stage')} <span class="campaign-pill">${escapeHtml(meta || 'observed')}</span></summary>${receipt}${transcript}</details>`;
+      const narrative = (st.narrative || []).length ? `<h4>What happened</h4><ol>${(st.narrative || []).map(n => `<li>${escapeHtml(n)}</li>`).join('')}</ol>` : '';
+      const missing = (st.missing || []).map(n => `<div class="campaign-empty" style="text-align:left;padding:var(--sp-3)">${escapeHtml(n)}</div>`).join('');
+      const interview = renderRunStageInterview(st);
+      const docs = renderRunStageDocuments(st);
+      const prompt = st.prompt && st.prompt.text ? renderRunTextDetails('Prompt sent to agent', st.prompt.text, st.prompt.truncated) : '';
+      const agent = st.agent_transcript && st.agent_transcript.text ? renderRunTextDetails('Agent transcript', st.agent_transcript.text, st.agent_transcript.truncated, true) : '';
+      const transcript = (st.transcript || []).length ? `<h4>Progress and relay events</h4><div class="run-transcript">${(st.transcript || []).map(renderRunTranscriptEntry).join('')}</div>` : '';
+      const raw = st.receipt && st.receipt.raw ? `<details class="run-stage-detail"><summary>Raw receipt JSON</summary><pre class="run-log-pre run-detail-raw">${escapeHtml(JSON.stringify(st.receipt.raw, null, 2))}</pre></details>` : '';
+      return `<details class="run-stage-detail"><summary>${escapeHtml(st.name || 'stage')} <span class="campaign-pill">${escapeHtml(meta || 'observed')}</span></summary>${receipt}${missing}${narrative}${interview}${docs}${prompt}${agent}${transcript}${raw}</details>`;
+    }
+
+    function renderRunStageInterview(st) {
+      const rows = st.interview || [];
+      if (!rows.length) return '<h4>Interview / Q&amp;A</h4><div class="text-muted">Interview Q&amp;A was not captured for this stage.</div>';
+      return `<h4>Interview / Q&amp;A</h4><div class="run-transcript">${rows.map(function(q, i) {
+        const title = q.step || ('Step ' + (i + 1));
+        return `<div class="run-transcript-entry"><div><strong>${escapeHtml(title)}</strong>${q.answered_at ? ' <span class="text-muted">answered ' + escapeHtml(q.answered_at) + '</span>' : ''}</div><div><strong>Question:</strong> ${escapeHtml(q.question || '(not recorded)')}</div><div><strong>Answer:</strong><pre>${escapeHtml(q.answer || '(not recorded)')}</pre></div>${q.source ? '<div class="text-muted">source: ' + escapeHtml(q.source) + '</div>' : ''}</div>`;
+      }).join('')}</div>`;
+    }
+
+    function renderRunStageDocuments(st) {
+      const docs = st.documents || [];
+      if (!docs.length) return '<h4>Final document</h4><div class="text-muted">Final spec/plan markdown was not captured for this stage.</div>';
+      return docs.map(function(doc, i) {
+        const title = (i === 0 ? 'Final document' : 'Additional document') + (doc.path ? ': ' + doc.path : '');
+        return `<details class="run-stage-detail"><summary>${escapeHtml(title)}${doc.truncated ? ' (truncated)' : ''}</summary><div class="run-markdown">${renderSimpleMarkdown(doc.markdown || '')}</div></details>`;
+      }).join('');
+    }
+
+    function renderRunTextDetails(title, text, truncated, copyable) {
+      const encoded = copyable ? escapeHtml(btoa(unescape(encodeURIComponent(text || '')))) : '';
+      return `<details class="run-stage-detail"><summary>${escapeHtml(title)}${truncated ? ' (truncated)' : ''}</summary>${copyable ? `<div class="run-log-actions"><button class="hv-btn btn-secondary btn-sm" data-action="copyRunRawLog" data-arg0="${encoded}">Copy transcript</button></div>` : ''}<pre class="run-log-pre">${escapeHtml(text || '')}</pre></details>`;
+    }
+
+    function renderSimpleMarkdown(text) {
+      const escLines = String(text || '').split('\n').map(escapeHtml);
+      let html = '', inList = false, inCode = false, para = [];
+      function flushPara() { if (para.length) { html += '<p>' + para.join('<br>') + '</p>'; para = []; } }
+      function closeList() { if (inList) { html += '</ul>'; inList = false; } }
+      escLines.forEach(function(line) {
+        if (/^```/.test(line)) { flushPara(); closeList(); inCode = !inCode; html += inCode ? '<pre>' : '</pre>'; return; }
+        if (inCode) { html += line + '\n'; return; }
+        if (/^#{1,6}\s+/.test(line)) { flushPara(); closeList(); const lvl = Math.min((line.match(/^#+/) || [''])[0].length, 4); html += '<h' + lvl + '>' + line.replace(/^#{1,6}\s+/, '') + '</h' + lvl + '>'; return; }
+        if (/^[-*]\s+/.test(line)) { flushPara(); if (!inList) { html += '<ul>'; inList = true; } html += '<li>' + line.replace(/^[-*]\s+/, '') + '</li>'; return; }
+        if (!line.trim()) { flushPara(); closeList(); return; }
+        para.push(line);
+      });
+      flushPara(); closeList(); if (inCode) html += '</pre>';
+      return html || '<pre class="run-log-pre">(empty)</pre>';
     }
 
     function renderRunTranscriptEntry(t) {

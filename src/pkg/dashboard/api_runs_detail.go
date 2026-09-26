@@ -74,16 +74,23 @@ type RunDetailPR struct {
 }
 
 type RunDetailStage struct {
-	Name       string                `json:"name"`
-	Status     string                `json:"status"`
-	Gen        uint64                `json:"gen,omitempty"`
-	Actor      string                `json:"actor,omitempty"`
-	StartedAt  string                `json:"started_at,omitempty"`
-	EndedAt    string                `json:"ended_at,omitempty"`
-	Duration   string                `json:"duration,omitempty"`
-	ReceiptSHA string                `json:"receipt_sha,omitempty"`
-	Receipt    *RunDetailReceipt     `json:"receipt,omitempty"`
-	Transcript []RunDetailTranscript `json:"transcript,omitempty"`
+	Name            string                   `json:"name"`
+	Status          string                   `json:"status"`
+	Gen             uint64                   `json:"gen,omitempty"`
+	Actor           string                   `json:"actor,omitempty"`
+	StartedAt       string                   `json:"started_at,omitempty"`
+	EndedAt         string                   `json:"ended_at,omitempty"`
+	Duration        string                   `json:"duration,omitempty"`
+	ReceiptSHA      string                   `json:"receipt_sha,omitempty"`
+	Receipt         *RunDetailReceipt        `json:"receipt,omitempty"`
+	Narrative       []string                 `json:"narrative,omitempty"`
+	Interview       []RunDetailInterview     `json:"interview,omitempty"`
+	Documents       []RunDetailStageDocument `json:"documents,omitempty"`
+	Prompt          *RunDetailTextBlock      `json:"prompt,omitempty"`
+	AgentTranscript *RunDetailTextBlock      `json:"agent_transcript,omitempty"`
+	StatusHistory   []RunDetailStageStatus   `json:"status_history,omitempty"`
+	Missing         []string                 `json:"missing,omitempty"`
+	Transcript      []RunDetailTranscript    `json:"transcript,omitempty"`
 }
 
 type RunDetailReceipt struct {
@@ -163,6 +170,7 @@ func (s *Server) buildRunDetail(r *http.Request, key string) (RunDetail, error) 
 	sort.Slice(events, func(i, j int) bool { return events[i].At < events[j].At })
 	storageKeys := runDetailStorageKeys(run)
 	receipts := readRunDetailReceipts(storageKeys...)
+	captures := readRunDetailStageCaptures(storageKeys...)
 	persisted := readRunDetailPersistedEvents(storageKeys...)
 	taskRuns := readTaskRunsForIssueForDetail(s.taskRunLogPathForDetail(), run.Repo, runIssueNumber(run.Key))
 	issue := s.runDetailIssue(run)
@@ -183,7 +191,7 @@ func (s *Server) buildRunDetail(r *http.Request, key string) (RunDetail, error) 
 	return RunDetail{
 		OK: true, Key: run.Key, Run: run, Issue: issue, RepoURL: githubRepoURL(run.Repo),
 		Plan: s.runDetailPlan(run.PlanEpicID), PRs: buildRunDetailPRs(events, persisted, taskRuns, run),
-		Stages: buildRunDetailStages(run, events, receipts, persisted, taskRuns), Events: detailEvents,
+		Stages: buildRunDetailStages(run, events, receipts, captures, persisted, taskRuns), Events: detailEvents,
 		RawLog: buildRunDetailRawLog(detailEvents, receipts), Notes: notes, Generated: time.Now().UTC().Format(time.RFC3339),
 	}, nil
 }
@@ -328,7 +336,7 @@ func readRunDetailReceipts(runKeys ...string) []RunDetailReceipt {
 			continue
 		}
 		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") || strings.HasSuffix(entry.Name(), ".transcript.json") {
 				continue
 			}
 			path := filepath.Join(dir, entry.Name())
@@ -407,7 +415,7 @@ func readTaskRunsForIssueForDetail(path, repo string, number int) []TaskRunRecor
 	return out
 }
 
-func buildRunDetailStages(run Run, events []timeline.Event, receipts []RunDetailReceipt, persisted []runDetailPersistedEvent, taskRuns []TaskRunRecord) []RunDetailStage {
+func buildRunDetailStages(run Run, events []timeline.Event, receipts []RunDetailReceipt, captures []RunDetailStageCapture, persisted []runDetailPersistedEvent, taskRuns []TaskRunRecord) []RunDetailStage {
 	byStage, order := map[string]*RunDetailStage{}, append([]string(nil), orderedLeaseStages...)
 	for _, st := range run.Stages {
 		if st.Name != "" {
@@ -442,11 +450,28 @@ func buildRunDetailStages(run Run, events []timeline.Event, receipts []RunDetail
 	for _, rec := range receipts {
 		st := ensureRunDetailStage(byStage, &order, firstRunNonEmpty(rec.Stage, StageSpec))
 		st.Receipt, st.ReceiptSHA = &rec, firstRunNonEmpty(st.ReceiptSHA, rec.Digest)
-		if rec.Generation > 0 {
+		if rec.Generation > 0 && rec.Generation >= st.Gen {
 			st.Gen = rec.Generation
 		}
 		st.StartedAt, st.EndedAt = firstRunNonEmpty(st.StartedAt, rec.StartedAt), firstRunNonEmpty(st.EndedAt, rec.EndedAt)
-		st.Transcript = append(st.Transcript, RunDetailTranscript{Kind: "receipt", Label: rec.File, Text: string(rec.Raw)})
+		st.Narrative = append(st.Narrative, "Receipt written: "+rec.File)
+	}
+	for _, cap := range captures {
+		st := ensureRunDetailStage(byStage, &order, firstRunNonEmpty(cap.Stage, StageSpec))
+		if cap.Generation > 0 && st.Gen > 0 && cap.Generation < st.Gen {
+			continue
+		}
+		if cap.Generation > 0 && cap.Generation >= st.Gen {
+			st.Gen = cap.Generation
+		}
+		st.StartedAt, st.EndedAt = firstRunNonEmpty(cap.StartedAt, st.StartedAt), firstRunNonEmpty(cap.EndedAt, st.EndedAt)
+		st.Prompt = cap.Prompt
+		st.AgentTranscript = cap.AgentTranscript
+		st.StatusHistory = append(st.StatusHistory, cap.StatusHistory...)
+		st.Interview = append(st.Interview, cap.Interview...)
+		st.Documents = append(st.Documents, cap.Documents...)
+		st.Missing = append(st.Missing, cap.Notes...)
+		st.Narrative = append(st.Narrative, runDetailCaptureNarrative(cap)...)
 	}
 	for _, ev := range persisted {
 		st := ensureRunDetailStage(byStage, &order, firstRunNonEmpty(ev.Stage, StageImplement))
@@ -468,8 +493,40 @@ func buildRunDetailStages(run Run, events []timeline.Event, receipts []RunDetail
 				}
 			}
 			sort.SliceStable(st.Transcript, func(i, j int) bool { return st.Transcript[i].At < st.Transcript[j].At })
+			if (st.Name == StageSpec || st.Name == StagePlan) && st.Receipt != nil && len(st.Documents) == 0 && len(st.AgentTranscriptText()) == 0 {
+				st.Missing = append(st.Missing, "Spec/plan document, interview history, and agent transcript were not captured for this older run because the executor worktree was swept before capture was added in this version.")
+			}
 			out = append(out, *st)
 		}
+	}
+	return out
+}
+
+func (s RunDetailStage) AgentTranscriptText() string {
+	if s.AgentTranscript == nil {
+		return ""
+	}
+	return s.AgentTranscript.Text
+}
+
+func runDetailCaptureNarrative(cap RunDetailStageCapture) []string {
+	var out []string
+	out = append(out, "Prepared hub executor worktree and wrote the stage prompt.")
+	if cap.Prompt != nil && cap.Prompt.Text != "" {
+		out = append(out, "Sent the prompt to the "+firstRunNonEmpty(cap.Backend, "agent")+" backend.")
+	}
+	for i, st := range cap.StatusHistory {
+		label := firstRunNonEmpty(st.Step, "status check")
+		if st.DocumentStatus != "" {
+			label += " (" + st.DocumentStatus + ")"
+		}
+		out = append(out, fmt.Sprintf("Step %d: %s observed at %s.", i+1, label, firstRunNonEmpty(st.At, cap.CapturedAt)))
+	}
+	if len(cap.Documents) > 0 {
+		out = append(out, "Captured the final "+firstRunNonEmpty(cap.Stage, "stage")+" document.")
+	}
+	if cap.AgentTranscript != nil && cap.AgentTranscript.Text != "" {
+		out = append(out, "Captured the bounded agent transcript.")
 	}
 	return out
 }

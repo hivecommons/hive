@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -229,9 +230,53 @@ func TestSpekHubExecutorRecordsProgressTimeline(t *testing.T) {
 		if ev.Kind == timeline.KindProgress && ev.Attrs["event"] == "cli_launched" && ev.Attrs["pid"] == "1234" && ev.Attrs[stageAttrGen] == "2" {
 			found = true
 		}
+
 	}
 	if !found {
 		t.Fatal("executor progress event not recorded")
+	}
+}
+
+func TestSpekHubExecutorCapturesStageTranscriptAndDocument(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	oldReceipts := runReceiptsDir
+	runReceiptsDir = filepath.Join(t.TempDir(), "receipts")
+	t.Cleanup(func() { runReceiptsDir = oldReceipts })
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "gpt-test", nil, nil)
+	st := spekHubStage{runKey: "myorg/repo1#57", stage: StageSpec, taskID: "task", gen: 2}
+	worktree := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(worktree, ".hive"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, spekHubPromptRelPath), []byte("author the spec"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	specPath := filepath.Join(worktree, ".spektacular", "specs", "20260925163042-myorg-repo1-57.md")
+	if err := os.MkdirAll(filepath.Dir(specPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spec := "# Spec\n\nQuestion: What should change?\nAnswer: Add readable stage details.\n"
+	if err := os.WriteFile(specPath, []byte(spec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status := spekHubArtifactStatus{Name: "myorg-repo1-57", ArtifactID: "20260925163042-myorg-repo1-57", DocumentStatus: "final", CurrentStep: "finished", CompletedSteps: []string{"clarify"}}
+	started := time.Now().Add(-time.Minute)
+	if err := e.captureCompletedStage(st, worktree, "myorg-repo1-57", status, []byte("agent answered the interview"), started, nil, runReceiptsDir); err != nil {
+		t.Fatalf("captureCompletedStage: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(runReceiptsDir, sanitizeReceiptSegment(st.runKey), spekStageTranscriptFile(StageSpec, 2)))
+	if err != nil {
+		t.Fatalf("transcript sidecar missing: %v", err)
+	}
+	var cap RunDetailStageCapture
+	if err := json.Unmarshal(raw, &cap); err != nil {
+		t.Fatalf("decode capture: %v", err)
+	}
+	if cap.SchemaVersion != spekStageTranscriptSchema || cap.Prompt == nil || cap.AgentTranscript == nil || len(cap.Documents) != 1 || len(cap.Interview) != 1 {
+		t.Fatalf("capture incomplete: %+v", cap)
+	}
+	if _, err := os.Stat(filepath.Join(runReceiptsDir, sanitizeReceiptSegment(st.runKey), spekStageDocumentFile(StageSpec, 2))); err != nil {
+		t.Fatalf("document sidecar missing: %v", err)
 	}
 }
 
