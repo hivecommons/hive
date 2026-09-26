@@ -904,6 +904,24 @@ func (s *Server) autoApproveRunCheckpoint(store *beads.Store, epic *beads.Bead, 
 	return s.autoApproveRunCheckpointWithGen(store, epic, runKey, stage, gen, decision)
 }
 
+// AutoApproveRunPlanCheckpointForACMM approves a Spek run's plan only after the
+// run checkpoint policy has explicitly opened that gate. It is the governor's
+// bridge from the ACMM pack's plan_auto_approve knob to the dashboard timeline:
+// absent runs.checkpoints.plan still holds, while an explicit false records the
+// same `auto` approval provenance as other disabled-checkpoint paths.
+func (s *Server) AutoApproveRunPlanCheckpointForACMM(store *beads.Store, epic *beads.Bead, runKey string, acmmLevel int) error {
+	decision := s.runCheckpointPolicy(StagePlan)
+	if decision.blocks {
+		return fmt.Errorf("run checkpoint %s still blocks", StagePlan)
+	}
+	decision.reason = strings.TrimSpace(decision.reason)
+	if decision.reason == "" {
+		decision.reason = runCheckpointDisabledReason
+	}
+	decision.reason = fmt.Sprintf("%s; ACMM L%d plan_auto_approve", decision.reason, acmmLevel)
+	return s.autoApproveRunCheckpoint(store, epic, runKey, StagePlan, decision)
+}
+
 func (s *Server) autoApproveRunCheckpointWithGen(store *beads.Store, epic *beads.Bead, runKey, stage string, gen uint64, decision runCheckpointPolicy) error {
 	if store == nil || epic == nil {
 		return errors.New("run plan unavailable for checkpoint auto-approval")
@@ -949,16 +967,20 @@ func (s *Server) recordRunCheckpointApproval(runKey, epicID, stage, actor string
 		stageAttrRunKey:       runKey,
 		stageAttrStage:        stage,
 		runCheckpointActorKey: actor,
+		runCheckpointStageAttr(stage, runCheckpointActorKey): actor,
 	}
 	if gen > 0 {
 		attrs[stageAttrGen] = strconv.FormatUint(gen, 10)
+		attrs[runCheckpointStageAttr(stage, stageAttrGen)] = strconv.FormatUint(gen, 10)
 	}
 	if epicID != "" {
 		attrs[runCheckpointEpicKey] = epicID
+		attrs[runCheckpointStageAttr(stage, runCheckpointEpicKey)] = epicID
 	}
 	for k, v := range extra {
 		if strings.TrimSpace(v) != "" {
 			attrs[k] = v
+			attrs[runCheckpointStageAttr(stage, k)] = v
 		}
 	}
 	s.LifecycleTimeline().Record(timeline.Event{
@@ -968,6 +990,15 @@ func (s *Server) recordRunCheckpointApproval(runKey, epicID, stage, actor string
 		At:       at.UnixMilli(),
 		Attrs:    attrs,
 	})
+}
+
+func runCheckpointStageAttr(stage, key string) string {
+	stage = strings.TrimSpace(strings.ToLower(stage))
+	key = strings.TrimSpace(key)
+	if stage == "" || key == "" {
+		return key
+	}
+	return key + "_" + stage
 }
 
 func (s *Server) activeRunStageGen(runKey, stage string, now time.Time) uint64 {

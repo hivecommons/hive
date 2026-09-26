@@ -5,11 +5,13 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/timeline"
 )
 
 // RunCheckpointSummaryMaxBytes is the hard mobile payload budget for the
@@ -39,6 +41,7 @@ type RunCheckpointPayload struct {
 	DashboardURL    string                    `json:"dashboard_url"`
 	Staleness       RunCheckpointStaleness    `json:"staleness"`
 	Approvers       RunCheckpointApproverRule `json:"approvers"`
+	Approval        map[string]string         `json:"approval,omitempty"`
 }
 
 type RunCheckpointDecision struct {
@@ -180,6 +183,7 @@ func (s *Server) RunCheckpointPayload(key string) (RunCheckpointPayload, error) 
 		{Action: runCheckpointDecisionApprove, Label: "Approve checkpoint", Method: http.MethodPost, URL: "/api/runs/" + url.PathEscape(run.Key) + "/checkpoint"},
 		{Action: runCheckpointDecisionReject, Label: "Reject checkpoint", Method: http.MethodPost, URL: "/api/runs/" + url.PathEscape(run.Key) + "/checkpoint"},
 	}
+	payload.Approval = s.runCheckpointApprovalAttrs(run.Key, run.Stage, run.Gen)
 	return payload, nil
 }
 
@@ -188,6 +192,42 @@ func (s *Server) RunCheckpointPayload(key string) (RunCheckpointPayload, error) 
 // identical no matter which surface requested it.
 func (s *Server) RunCheckpointNotificationPayload(key, _ string) (RunCheckpointPayload, error) {
 	return s.RunCheckpointPayload(key)
+}
+
+func (s *Server) runCheckpointApprovalAttrs(runKey, stage string, gen uint64) map[string]string {
+	if s == nil {
+		return nil
+	}
+	for _, ev := range s.LifecycleTimeline().ByIssue(runKey) {
+		if ev.Kind != timeline.KindStageApproval || ev.Attrs == nil {
+			continue
+		}
+		if ev.Attrs[stageAttrStage] == stage && gen > 0 {
+			evGen, _ := strconv.ParseUint(ev.Attrs[stageAttrGen], 10, 64)
+			if evGen != 0 && evGen != gen {
+				continue
+			}
+		}
+		if ev.Attrs[stageAttrStage] != stage && ev.Attrs[runCheckpointStageAttr(stage, runCheckpointActorKey)] == "" {
+			continue
+		}
+		if gen > 0 {
+			stageGen, _ := strconv.ParseUint(ev.Attrs[runCheckpointStageAttr(stage, stageAttrGen)], 10, 64)
+			if stageGen != 0 && stageGen != gen {
+				continue
+			}
+		}
+		out := map[string]string{}
+		for _, key := range []string{runCheckpointActorKey, runCheckpointReasonKey, runCheckpointConfigSourceKey, runCheckpointEpicKey} {
+			if v := strings.TrimSpace(firstRunNonEmpty(ev.Attrs[runCheckpointStageAttr(stage, key)], ev.Attrs[key])); v != "" {
+				out[key] = v
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return nil
 }
 
 func (s *Server) runCheckpointRun(key string) (Run, error) {

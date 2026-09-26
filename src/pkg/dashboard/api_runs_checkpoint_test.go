@@ -14,6 +14,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/timeline"
 )
 
 func checkpointTestServer(t *testing.T, title string, gen uint64) (*Server, *beads.Store, string, string) {
@@ -79,6 +80,7 @@ func TestRunCheckpointPayloadCapsSummary(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET checkpoint = %d body=%s", rec.Code, rec.Body.String())
 	}
+
 	payload := decodeCheckpointPayload(t, rec)
 	if len(payload.Summary) > RunCheckpointSummaryMaxBytes {
 		t.Fatalf("summary len = %d, want <= %d", len(payload.Summary), RunCheckpointSummaryMaxBytes)
@@ -88,6 +90,36 @@ func TestRunCheckpointPayloadCapsSummary(t *testing.T) {
 	}
 	if payload.SummaryMaxBytes != RunCheckpointSummaryMaxBytes {
 		t.Fatalf("summary max = %d, want %d", payload.SummaryMaxBytes, RunCheckpointSummaryMaxBytes)
+	}
+}
+
+func TestRunCheckpointPayloadIncludesApprovalProvenance(t *testing.T) {
+	s, _, epicID, runKey := checkpointTestServer(t, "approved by ACMM", 7)
+	s.LifecycleTimeline().Record(timeline.Event{
+		IssueRef: runKey,
+		Kind:     timeline.KindStageApproval,
+		Agent:    runCheckpointAutoActor,
+		At:       time.Now().UnixMilli(),
+		Attrs: map[string]string{
+			stageAttrStage:               StagePlan,
+			stageAttrGen:                 "7",
+			runCheckpointActorKey:        runCheckpointAutoActor,
+			runCheckpointReasonKey:       "checkpoint_disabled; ACMM L6 plan_auto_approve",
+			runCheckpointConfigSourceKey: "hive.yaml",
+			runCheckpointEpicKey:         epicID,
+		},
+	})
+
+	rec := doOwnerGet(s, "/api/runs/"+url.PathEscape(runKey)+"/checkpoint")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET checkpoint = %d body=%s", rec.Code, rec.Body.String())
+	}
+	payload := decodeCheckpointPayload(t, rec)
+	if payload.Approval[runCheckpointActorKey] != runCheckpointAutoActor ||
+		payload.Approval[runCheckpointConfigSourceKey] != "hive.yaml" ||
+		payload.Approval[runCheckpointEpicKey] != epicID ||
+		!strings.Contains(payload.Approval[runCheckpointReasonKey], "ACMM L6") {
+		t.Fatalf("approval provenance = %+v", payload.Approval)
 	}
 }
 

@@ -1050,6 +1050,13 @@ func runCheckpointBlocks(cfg *config.Config, stage string) bool {
 	return runCheckpointPolicyForConfig(cfg, stage).blocks
 }
 
+// RunCheckpointBlocksForConfig reports whether the run checkpoint policy holds
+// a stage. Governor-side ACMM plan auto-approval consults this exported wrapper
+// so runs.checkpoints.<stage> remains the source of truth for Spek run gates.
+func RunCheckpointBlocksForConfig(cfg *config.Config, stage string) bool {
+	return runCheckpointBlocks(cfg, stage)
+}
+
 // runCheckpointPolicyForConfig fails closed: with no config, an unrecognised
 // stage, or an ACMM level below RunImplementCheckpointMinACMM for the
 // implement boundary, the checkpoint blocks. Only an explicit `false` on a

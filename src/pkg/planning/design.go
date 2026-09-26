@@ -436,6 +436,14 @@ func kickDesign(store *beads.Store, kicker DecomposeKicker, epic *beads.Bead, cf
 // still in the design step or still pending decomposition are untouched.
 // Returns the epic IDs it approved.
 func AutoApproveDrafts(store *beads.Store) []string {
+	return AutoApproveDraftsExcept(store, nil)
+}
+
+// AutoApproveDraftsExcept is AutoApproveDrafts with a policy hook. When skip
+// returns true the epic is left untouched. Spek run epics use this to give
+// runs.checkpoints.<stage> precedence over the ACMM pack: a held run checkpoint
+// must stay interactive unless that checkpoint is explicitly disabled.
+func AutoApproveDraftsExcept(store *beads.Store, skip func(epic *beads.Bead) bool) []string {
 	if store == nil {
 		return nil
 	}
@@ -445,6 +453,9 @@ func AutoApproveDrafts(store *beads.Store) []string {
 			continue
 		}
 		if DecomposePending(b) || DesignGated(b) {
+			continue
+		}
+		if skip != nil && skip(b) {
 			continue
 		}
 		if err := ApprovePlan(store, b.ID); err == nil {

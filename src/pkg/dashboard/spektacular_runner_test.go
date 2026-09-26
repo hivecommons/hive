@@ -1171,6 +1171,51 @@ func TestPlanCheckpointDisabledAutoApprovesAndAdvances(t *testing.T) {
 	}
 }
 
+func TestACMMRunPlanAutoApproveRequiresDisabledCheckpointAndRecordsProvenance(t *testing.T) {
+	hub, s, store, _ := spekHub(t)
+	s.deps.Config.SourcePath = "hive.yaml"
+	now := time.Now()
+	spekLease(t, hub, StagePlan, now)
+	if err := s.ImportRunPlan(spekRunKey, spekRepo, "1. [T1] x [agent_suitable]"); err != nil {
+		t.Fatalf("ImportRunPlan: %v", err)
+	}
+	_, epic := s.findRunEpic(spekRunKey)
+	if epic == nil {
+		t.Fatal("plan import did not create the epic")
+	}
+	if err := s.AutoApproveRunPlanCheckpointForACMM(store, epic, spekRunKey, 6); err == nil {
+		t.Fatal("ACMM run auto-approve succeeded despite held plan checkpoint")
+	}
+	if got, _ := store.Get(epic.ID); got.Meta(planning.MetaPlanStatus) != planning.PlanStatusDraft {
+		t.Fatalf("held checkpoint status = %q, want draft", got.Meta(planning.MetaPlanStatus))
+	}
+
+	off := false
+	s.deps.Config.Runs.Checkpoints.Plan = &off
+	if err := s.AutoApproveRunPlanCheckpointForACMM(store, epic, spekRunKey, 6); err != nil {
+		t.Fatalf("ACMM run auto-approve with checkpoint disabled: %v", err)
+	}
+	if got, _ := store.Get(epic.ID); got.Meta(planning.MetaPlanStatus) != planning.PlanStatusApproved {
+		t.Fatalf("disabled checkpoint status = %q, want approved", got.Meta(planning.MetaPlanStatus))
+	}
+	var approval *timeline.Event
+	for _, ev := range s.LifecycleTimeline().ByIssue(spekRunKey) {
+		if ev.Kind == timeline.KindStageApproval {
+			cp := ev
+			approval = &cp
+		}
+	}
+	if approval == nil {
+		t.Fatalf("stage approval event not recorded: %+v", s.LifecycleTimeline().ByIssue(spekRunKey))
+	}
+	if approval.Agent != runCheckpointAutoActor ||
+		approval.Attrs[runCheckpointActorKey] != runCheckpointAutoActor ||
+		approval.Attrs[runCheckpointConfigSourceKey] != "hive.yaml" ||
+		!strings.Contains(approval.Attrs[runCheckpointReasonKey], "ACMM L6") {
+		t.Fatalf("approval provenance = %+v", approval)
+	}
+}
+
 // TestImplementCheckpointRespectsACMMFloor pins the floor: below
 // RunImplementCheckpointMinACMM an explicit `implement: false` is ignored and
 // the checkpoint keeps blocking.

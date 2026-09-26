@@ -601,6 +601,34 @@ func TestAutoApproveDraftsApprovesDecomposedDraftsOnly(t *testing.T) {
 	}
 }
 
+func TestAutoApproveDraftsExceptSkipsHeldRunEpics(t *testing.T) {
+	store := newStore(t)
+	labelEpic, _ := EpicFromIssue(store, github.Issue{Repo: "a/b", Number: 21, Title: "label plan"}, "")
+	if _, err := DecomposeFromOutput(store, labelEpic, "1. [T1] label [agent_suitable]\n", Options{}); err != nil {
+		t.Fatalf("decompose label: %v", err)
+	}
+	runEpic, _ := EpicFromIssue(store, github.Issue{Repo: "a/b", Number: 22, Title: "run plan"}, "")
+	if _, err := DecomposeFromOutput(store, runEpic, "1. [T1] run [agent_suitable]\n", Options{}); err != nil {
+		t.Fatalf("decompose run: %v", err)
+	}
+	if err := store.SetMetadata(runEpic.ID, MetaRunKey, "a/b#22"); err != nil {
+		t.Fatalf("set run key: %v", err)
+	}
+
+	approved := AutoApproveDraftsExcept(store, func(epic *beads.Bead) bool {
+		return epic.Meta(MetaRunKey) != ""
+	})
+	if len(approved) != 1 || approved[0] != labelEpic.ID {
+		t.Fatalf("approved = %v, want only label epic %s", approved, labelEpic.ID)
+	}
+	if got, _ := store.Get(labelEpic.ID); got.Meta(MetaPlanStatus) != PlanStatusApproved {
+		t.Fatalf("label status = %q, want approved", got.Meta(MetaPlanStatus))
+	}
+	if got, _ := store.Get(runEpic.ID); got.Meta(MetaPlanStatus) != PlanStatusDraft {
+		t.Fatalf("run status = %q, want draft", got.Meta(MetaPlanStatus))
+	}
+}
+
 func TestPlanIssuesFromLabelsWithConfig_QueuedDesignRequiresLabelBeforeKick(t *testing.T) {
 	store := newStore(t)
 	issue := github.Issue{Repo: "a/b", Number: 20, Title: "queued design"}

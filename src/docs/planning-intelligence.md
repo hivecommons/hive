@@ -150,7 +150,7 @@ agent can start the work yet. In the plan-review view you can:
 - **reject** — returning the plan to draft (re-gating the children) so the
   architect can revise it.
 
-High-maturity ACMM packs may enable `plan_auto_approve`, which approves a decomposed draft plan during the eval cycle (Gate 2 off). ACMM L5 deliberately keeps Gate 2 on (`plan_auto_approve: false`); L6 enables auto-approval.
+High-maturity ACMM packs may enable `plan_auto_approve`, which approves a decomposed draft plan during the eval cycle (Gate 2 off). ACMM L5 deliberately keeps Gate 2 on (`plan_auto_approve: false`); L6 enables auto-approval. Spek runs add an outer checkpoint policy: `runs.checkpoints.<stage>` governs run checkpoints, and an absent key still holds for a human. The ACMM pack's `plan_auto_approve` applies to label-planned epics and to run epics only when `runs.checkpoints.plan` is explicitly `false`; that run path records `auto` approval provenance with the ACMM level.
 
 Each child row also shows **who is on it** and **where the work is**: the
 task's `claimed_by` metadata and its PR link (`pr_url` metadata, or the bead's

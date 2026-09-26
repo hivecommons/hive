@@ -332,9 +332,11 @@ Two deliberate choices:
 
 ### Remaining
 
-- Wire any future production caller of the decomposition `plan_auto_approve`
-  gate through the desk. The parity function exists, but the current v5 tree has
-  no long-running hive call site beyond direct `bd decompose --auto-approve`.
+- Keep production callers of the decomposition `plan_auto_approve` gate aligned
+  with run checkpoint policy. `runs.checkpoints.<stage>` governs Spek run
+  checkpoints (absent key = hold); the ACMM pack auto-approves label-planned
+  epics and run epics only when `runs.checkpoints.plan` is explicitly disabled,
+  recording `auto` provenance for that run checkpoint.
 - Route `security-scan` through the sec-check agent surface
   (`buildSecCheckMessage`) rather than the in-process `DefaultSecurityScanner`,
   with the async/post-hoc path for pattern-matched-known-safe requests that

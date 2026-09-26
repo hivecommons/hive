@@ -94,6 +94,7 @@ type RunDetailStage struct {
 	StatusHistory   []RunDetailStageStatus   `json:"status_history,omitempty"`
 	Missing         []string                 `json:"missing,omitempty"`
 	Transcript      []RunDetailTranscript    `json:"transcript,omitempty"`
+	Approval        map[string]string        `json:"approval,omitempty"`
 }
 
 type RunDetailReceipt struct {
@@ -467,6 +468,9 @@ func buildRunDetailStages(run Run, events []timeline.Event, receipts []RunDetail
 		} else if ev.Kind == timeline.KindBlocked {
 			st.Status = "blocked"
 		}
+		if ev.Kind == timeline.KindStageApproval {
+			applyRunDetailApprovalAttrs(byStage, &order, ev)
+		}
 		st.Transcript = append(st.Transcript, transcriptFromTimeline(ev))
 	}
 	for _, rec := range receipts {
@@ -518,6 +522,7 @@ func buildRunDetailStages(run Run, events []timeline.Event, receipts []RunDetail
 				}
 			}
 			sort.SliceStable(st.Transcript, func(i, j int) bool { return st.Transcript[i].At < st.Transcript[j].At })
+			st.Documents = dedupeRunDetailDocuments(st.Documents)
 			if (st.Name == StageSpec || st.Name == StagePlan) && st.Receipt != nil && len(st.Documents) == 0 && len(st.AgentTranscriptText()) == 0 {
 				st.Missing = append(st.Missing, "Spec/plan document, interview history, and agent transcript were not captured for this older run because the executor worktree was swept before capture was added in this version.")
 			}
@@ -601,6 +606,73 @@ func ensureRunDetailStage(byStage map[string]*RunDetailStage, order *[]string, n
 	st := &RunDetailStage{Name: name, Status: "observed"}
 	byStage[name], *order = st, append(*order, name)
 	return st
+}
+
+func dedupeRunDetailDocuments(in []RunDetailStageDocument) []RunDetailStageDocument {
+	if len(in) < 2 {
+		return in
+	}
+	byPath := make(map[string]RunDetailStageDocument, len(in))
+	order := make([]string, 0, len(in))
+	for _, doc := range in {
+		key := strings.TrimSpace(filepath.ToSlash(doc.Path))
+		if key == "" {
+			key = doc.Path
+		}
+		if _, ok := byPath[key]; !ok {
+			order = append(order, key)
+			byPath[key] = doc
+			continue
+		}
+		if runDetailDocumentContentLen(doc) > runDetailDocumentContentLen(byPath[key]) {
+			byPath[key] = doc
+		}
+	}
+	out := make([]RunDetailStageDocument, 0, len(order))
+	for _, key := range order {
+		out = append(out, byPath[key])
+	}
+	return out
+}
+
+func runDetailDocumentContentLen(doc RunDetailStageDocument) int {
+	return len(strings.TrimSpace(firstRunNonEmpty(doc.Content, doc.Markdown)))
+}
+
+func applyRunDetailApprovalAttrs(byStage map[string]*RunDetailStage, order *[]string, ev timeline.Event) {
+	if ev.Kind != timeline.KindStageApproval || ev.Attrs == nil {
+		return
+	}
+	stages := []string{eventStage(ev)}
+	for _, stage := range orderedLeaseStages {
+		if ev.Attrs[runCheckpointStageAttr(stage, runCheckpointActorKey)] != "" && stage != stages[0] {
+			stages = append(stages, stage)
+		}
+	}
+	for _, stage := range stages {
+		if strings.TrimSpace(stage) == "" {
+			continue
+		}
+		if attrs := runDetailApprovalAttrs(ev, stage); len(attrs) > 0 {
+			ensureRunDetailStage(byStage, order, stage).Approval = attrs
+		}
+	}
+}
+
+func runDetailApprovalAttrs(ev timeline.Event, stage string) map[string]string {
+	if ev.Attrs == nil {
+		return nil
+	}
+	out := map[string]string{}
+	for _, key := range []string{runCheckpointActorKey, runCheckpointReasonKey, runCheckpointConfigSourceKey, runCheckpointEpicKey} {
+		if v := strings.TrimSpace(firstRunNonEmpty(ev.Attrs[runCheckpointStageAttr(stage, key)], ev.Attrs[key])); v != "" {
+			out[key] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func transcriptFromTimeline(ev timeline.Event) RunDetailTranscript {

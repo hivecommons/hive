@@ -160,9 +160,12 @@ key), a final Spec parks the lease at `stage=spec`, surfaces
 requires an owner to approve or reject the `/api/runs/{key}/checkpoint` payload
 before Plan can start. Disabling the checkpoint records an `auto` approval and
 advances to Plan without a human. A final Plan import materializes child beads
-under the epic using the existing planning decompose path, so
-`plan_status=draft` at L5 and `plan_status=approved` at L6 continue to drive
-Gate 2 and pool admission.
+under the epic using the existing planning decompose path. For Spek runs,
+`runs.checkpoints.<stage>` governs the interactive checkpoints first: the absent
+key still means hold. The ACMM pack's `plan_auto_approve` applies to
+label-planned epics, and applies to run epics only when `runs.checkpoints.plan`
+is explicitly `false`; that disabled-checkpoint path records `auto` approval
+provenance (including the ACMM level) before Plan advances to Implement.
 
 The design document remains one artifact with two views: the Spek/Jam artifact
 and a source-native comment posted back through the work-source adapter. GitHub

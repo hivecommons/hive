@@ -296,9 +296,32 @@ func collectSpekArtifactFiles(worktree, kind, artifact string) ([]RunDetailStage
 	if len(files) == 0 {
 		notes = append(notes, "Spektacular artifact files were not found in the executor worktree before capture.")
 	}
+	docs = dedupeRunDetailDocuments(docs)
+	files = dedupeRunDetailFiles(files)
 	sort.Slice(docs, func(i, j int) bool { return docs[i].Path < docs[j].Path })
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	return docs, files, interview, notes
+}
+
+func dedupeRunDetailFiles(in []RunDetailStageFile) []RunDetailStageFile {
+	if len(in) < 2 {
+		return in
+	}
+	byPath := make(map[string]RunDetailStageFile, len(in))
+	for _, file := range in {
+		key := strings.TrimSpace(filepath.ToSlash(file.Path))
+		if key == "" {
+			key = file.Path
+		}
+		if prev, ok := byPath[key]; !ok || len(strings.TrimSpace(firstRunNonEmpty(file.Content, file.Text))) > len(strings.TrimSpace(firstRunNonEmpty(prev.Content, prev.Text))) {
+			byPath[key] = file
+		}
+	}
+	out := make([]RunDetailStageFile, 0, len(byPath))
+	for _, file := range byPath {
+		out = append(out, file)
+	}
+	return out
 }
 
 func extractInterviewEntries(source, text string) []RunDetailInterview {

@@ -6199,7 +6199,33 @@ func planFromLabeledIssues(
 			logger.Warn("plan-from-label: minting epic failed", "issue", ref, "error", err)
 		}, acmmLevel)
 	if config.PlanAutoApproveForLevel(acmmLevel) {
-		for _, id := range planning.AutoApproveDrafts(store) {
+		for _, id := range planning.AutoApproveDraftsExcept(store, func(epic *beads.Bead) bool {
+			runKey := strings.TrimSpace(epic.Meta(planning.MetaRunKey))
+			if runKey == "" {
+				return false
+			}
+			// Spek run checkpoint policy wins over the ACMM pack: absent
+			// runs.checkpoints.plan means "hold for a human". Only an explicit
+			// plan:false lets plan_auto_approve open the run gate, and that path
+			// records dashboard approval provenance below.
+			if dashboard.RunCheckpointBlocksForConfig(cfg, dashboard.StagePlan) {
+				logger.Info("audit: plan auto-approve skipped for held run checkpoint", "epic", epic.ID, "run", runKey, "acmm_level", acmmLevel)
+				return true
+			}
+			if dashSrv == nil {
+				logger.Warn("plan auto-approve skipped for run epic without dashboard provenance recorder", "epic", epic.ID, "run", runKey, "acmm_level", acmmLevel)
+				return true
+			}
+			if err := dashSrv.AutoApproveRunPlanCheckpointForACMM(store, epic, runKey, acmmLevel); err != nil {
+				logger.Warn("plan auto-approve failed for run checkpoint", "epic", epic.ID, "run", runKey, "acmm_level", acmmLevel, "error", err)
+				return true
+			}
+			if dashSrv != nil {
+				dashSrv.AuditLog("planning", "plan_auto_approved", "epic="+epic.ID+" run="+runKey, planning.ArchitectAgentName)
+			}
+			logger.Info("audit: run plan auto-approved by ACMM pack", "epic", epic.ID, "run", runKey, "acmm_level", acmmLevel)
+			return true
+		}) {
 			if dashSrv != nil {
 				dashSrv.AuditLog("planning", "plan_auto_approved", "epic="+id, planning.ArchitectAgentName)
 			}

@@ -174,3 +174,52 @@ func TestLatestRunDetailCapturesPrefersHighestGenThenSession(t *testing.T) {
 		t.Fatalf("unexpected selection: %+v", got)
 	}
 }
+
+func TestBuildRunDetailStagesDedupesDocumentsAndShowsApprovalProvenance(t *testing.T) {
+	run := Run{Key: "acme/repo#8", Stages: []RunStage{{Name: StagePlan, Status: "current", Gen: 4}}}
+	events := []timeline.Event{{
+		IssueRef: run.Key,
+		Kind:     timeline.KindStageApproval,
+		Agent:    runCheckpointAutoActor,
+		At:       time.Date(2026, 9, 26, 1, 2, 3, 0, time.UTC).UnixMilli(),
+		Attrs: map[string]string{
+			stageAttrStage:               StagePlan,
+			stageAttrGen:                 "4",
+			runCheckpointActorKey:        runCheckpointAutoActor,
+			runCheckpointReasonKey:       "checkpoint_disabled; ACMM L6 plan_auto_approve",
+			runCheckpointConfigSourceKey: "hive.yaml",
+			runCheckpointEpicKey:         "hive-epic-1",
+		},
+	}}
+	captures := []RunDetailStageCapture{{
+		Stage: StagePlan, Generation: 4, Capture: "session",
+		Documents: []RunDetailStageDocument{
+			{Path: "artifact/plan.md"},
+			{Path: "artifact/plan.md", Content: "# plan with content"},
+			{Path: "artifact/context.md", Content: "# context"},
+		},
+	}}
+	stages := buildRunDetailStages(run, events, nil, captures, nil, nil)
+	var plan *RunDetailStage
+	for i := range stages {
+		if stages[i].Name == StagePlan {
+			plan = &stages[i]
+		}
+	}
+	if plan == nil {
+		t.Fatalf("plan stage missing: %+v", stages)
+	}
+	if len(plan.Documents) != 2 {
+		t.Fatalf("documents = %+v, want two unique paths", plan.Documents)
+	}
+	for _, doc := range plan.Documents {
+		if doc.Path == "artifact/plan.md" && doc.Content != "# plan with content" {
+			t.Fatalf("plan.md did not keep content-rich entry: %+v", doc)
+		}
+	}
+	if plan.Approval[runCheckpointActorKey] != runCheckpointAutoActor ||
+		plan.Approval[runCheckpointConfigSourceKey] != "hive.yaml" ||
+		!strings.Contains(plan.Approval[runCheckpointReasonKey], "ACMM L6") {
+		t.Fatalf("approval provenance = %+v", plan.Approval)
+	}
+}
