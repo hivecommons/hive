@@ -1,0 +1,1 @@
+- Make Spektacular interview and clarification steps human-in-the-loop with dashboard question forms, answer APIs, and resumable hub execution.

@@ -121,3 +121,15 @@ func TestSpektacularHubExecutorOverrides(t *testing.T) {
 		t.Errorf("MaxConcurrentOrDefault = %d, want 3", got)
 	}
 }
+
+func TestSpektacularInterviewModeDefaultsToHuman(t *testing.T) {
+	if got := (SpektacularConfig{}).InterviewMode(); got != "human" {
+		t.Fatalf("empty InterviewMode() = %q, want human", got)
+	}
+	if got := (SpektacularConfig{Interview: " auto "}).InterviewMode(); got != "auto" {
+		t.Fatalf("auto InterviewMode() = %q, want auto", got)
+	}
+	if got := (SpektacularConfig{Interview: "surprise"}).InterviewMode(); got != "human" {
+		t.Fatalf("unknown InterviewMode() = %q, want human", got)
+	}
+}

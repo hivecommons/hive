@@ -11,9 +11,10 @@ import (
 )
 
 const (
-	RunDocumentStatusFinal   = "final"
-	RunDocumentStatusSkipped = "skipped"
-	RunWaitingOnHuman        = "human"
+	RunDocumentStatusFinal             = "final"
+	RunDocumentStatusSkipped           = "skipped"
+	RunWaitingOnHuman                  = "human"
+	RunWaitingReasonInterviewQuestions = "interview_questions"
 )
 
 type RunRepositoryStatus struct {

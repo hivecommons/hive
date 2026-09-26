@@ -105,6 +105,7 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		SpektacularHubModel       *string   `json:"spektacularHubExecutorModel"`
 		SpektacularHubTimeoutS    *int      `json:"spektacularHubExecutorTimeoutS"`
 		SpektacularHubMaxConc     *int      `json:"spektacularHubExecutorMaxConcurrent"`
+		SpektacularInterview      *string   `json:"spektacularInterview"`
 		MaxStageRetries           *int      `json:"maxStageRetries"`
 		RunStages                 *bool     `json:"runStages"`
 		TriageEnabled             *bool     `json:"triageEnabled"`
@@ -401,6 +402,9 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.SpektacularHubMaxConc != nil {
 		cfg.Runs.Spektacular.HubExecutor.MaxConcurrent = *body.SpektacularHubMaxConc
 	}
+	if body.SpektacularInterview != nil {
+		cfg.Runs.Spektacular.Interview = config.SpektacularConfig{Interview: *body.SpektacularInterview}.InterviewMode()
+	}
 	if body.MaxStageRetries != nil {
 		cfg.Runs.MaxStageRetries = *body.MaxStageRetries
 	}
@@ -596,6 +600,7 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"spektacularHubExecutorModel":         cfg.Runs.Spektacular.HubExecutor.Model,
 		"spektacularHubExecutorTimeoutS":      int(cfg.Runs.Spektacular.HubExecutor.Timeout().Seconds()),
 		"spektacularHubExecutorMaxConcurrent": cfg.Runs.Spektacular.HubExecutor.MaxConcurrentOrDefault(),
+		"spektacularInterview":                cfg.Runs.Spektacular.InterviewMode(),
 		"maxStageRetries":                     cfg.Runs.MaxStageRetriesOrDefault(),
 		"runStages":                           cfg.Governor.WorkSource.RunStages,
 		"triageEnabled":                       cfg.Runs.Triage.Enabled,

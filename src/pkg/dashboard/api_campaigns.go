@@ -34,6 +34,7 @@ type Campaign struct {
 	RunGen         uint64             `json:"run_gen,omitempty"`
 	ArtifactID     string             `json:"artifact_id,omitempty"`
 	DocumentStatus string             `json:"document_status,omitempty"`
+	Interview      *RunInterviewState `json:"interview,omitempty"`
 	LeaseOwner     string             `json:"lease_owner,omitempty"`
 	RevisionOf     string             `json:"revision_of,omitempty"`
 	Revision       int                `json:"revision,omitempty"`
@@ -414,7 +415,7 @@ func campaignFromRun(run Run) Campaign {
 		CurrentStep: firstRunNonEmpty(run.CurrentStep, run.WaitingReason, run.TriageVerdict), Artifacts: artifacts, LinkedPRs: prs, LinkedIssues: issues,
 		Contributors: nonEmptyStrings(firstRunNonEmpty(run.Assignee, run.ClaimedBy)), LastActivity: firstRunNonEmpty(run.LastActivity, run.CompletedAt, run.StageStartedAt), ActivityLine: run.ActivitySummary,
 		Status: runCampaignStatus(run), Engine: "Spektacular", Type: "spektacular", RunKey: run.Key,
-		RunURL: "/api/runs/" + url.PathEscape(run.Key), RunGen: run.Gen, LeaseOwner: run.Assignee, ArtifactID: run.ArtifactID, DocumentStatus: run.DocumentStatus,
+		RunURL: "/api/runs/" + url.PathEscape(run.Key), RunGen: run.Gen, LeaseOwner: run.Assignee, ArtifactID: run.ArtifactID, DocumentStatus: run.DocumentStatus, Interview: run.Interview,
 	}
 }
 
