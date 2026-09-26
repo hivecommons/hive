@@ -55,11 +55,40 @@ func TestWorkSourceConfig_YAMLRoundTrip(t *testing.T) {
 				HoldLabels:         []string{"hold"},
 			},
 		}},
+		{"gitea", WorkSourceConfig{
+			Type: "gitea",
+			Gitea: GiteaSourceConfig{
+				BaseURL:    "https://code.example",
+				Token:      "${GITEA_TOKEN}",
+				TokenEnv:   "GITEA_PAT",
+				Org:        "acme",
+				Repos:      []ForgeWorkRepoSourceConfig{{Repo: "acme/repo", WorkRepo: "github/acme-repo"}},
+				States:     []string{"open"},
+				Labels:     []string{"ready"},
+				Assignee:   "hive",
+				HoldLabels: []string{"hold"},
+			},
+		}},
+		{"gitlab", WorkSourceConfig{
+			Type: "gitlab",
+			GitLab: GitLabSourceConfig{
+				BaseURL:    "https://gitlab.example",
+				Token:      "${GITLAB_TOKEN}",
+				TokenEnv:   "GITLAB_PAT",
+				Org:        "acme",
+				Repos:      []ForgeWorkRepoSourceConfig{{Repo: "acme/sub/repo"}},
+				States:     []string{"opened"},
+				Labels:     []string{"ready"},
+				Assignee:   "hive",
+				HoldLabels: []string{"blocked"},
+			},
+		}},
 		{"github with run stages", WorkSourceConfig{
 			Type:      "github",
 			RunStages: true,
 		}},
 	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			data, err := yaml.Marshal(tc.cfg)
@@ -86,6 +115,27 @@ func TestWorkSourceConfig_YAMLRoundTrip(t *testing.T) {
 				t.Errorf("json round trip mismatch:\n got %+v\nwant %+v", jgot, tc.cfg)
 			}
 		})
+	}
+}
+
+func TestWorkSourceConfigValidateForgeSources(t *testing.T) {
+	if err := (WorkSourceConfig{Type: "gitea", Gitea: GiteaSourceConfig{Repos: []ForgeWorkRepoSourceConfig{{Repo: "acme/repo"}}}}).Validate(); err == nil {
+		t.Fatal("gitea without base_url should fail")
+	}
+	if err := (WorkSourceConfig{Type: "gitlab"}).Validate(); err == nil {
+		t.Fatal("gitlab without repos should fail")
+	}
+	if err := (WorkSourceConfig{Type: "gitlab", GitLab: GitLabSourceConfig{Repos: []ForgeWorkRepoSourceConfig{{}}}}).Validate(); err == nil {
+		t.Fatal("gitlab repo entry without repo should fail")
+	}
+	if err := (WorkSourceConfig{Type: "gitea", Gitea: GiteaSourceConfig{BaseURL: "https://gitea.example", Repos: []ForgeWorkRepoSourceConfig{{Repo: "acme/repo"}}}}).Validate(); err != nil {
+		t.Fatalf("valid gitea config failed: %v", err)
+	}
+	if err := (WorkSourceConfig{Type: "gitlab", GitLab: GitLabSourceConfig{Repos: []ForgeWorkRepoSourceConfig{{Repo: "acme/repo"}}}}).Validate(); err != nil {
+		t.Fatalf("valid gitlab config failed: %v", err)
+	}
+	if err := (WorkSourceConfig{Type: "unknown"}).Validate(); err == nil {
+		t.Fatal("unknown work_source type should fail")
 	}
 }
 

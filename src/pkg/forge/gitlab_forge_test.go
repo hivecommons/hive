@@ -831,6 +831,27 @@ func TestGitLabSetHold(t *testing.T) {
 	}
 }
 
+func TestGitLabSetIssueState(t *testing.T) {
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || !strings.Contains(r.RequestURI, "/api/v4/projects/hivecommons%2Fhive/issues/7") {
+			t.Fatalf("request = %s %s", r.Method, r.RequestURI)
+		}
+		data, _ := io.ReadAll(r.Body)
+		gotBody = string(data)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	f := newTestGitLab(t, srv.URL, "hivecommons")
+	if err := f.SetIssueState(context.Background(), "hive", 7, "close"); err != nil {
+		t.Fatalf("SetIssueState: %v", err)
+	}
+	if !strings.Contains(gotBody, `"state_event":"close"`) {
+		t.Fatalf("body = %q", gotBody)
+	}
+}
+
 // TestGitLabWriteErrorStatus verifies non-2xx responses on each write op surface
 // an error mentioning the status.
 func TestGitLabWriteErrorStatus(t *testing.T) {

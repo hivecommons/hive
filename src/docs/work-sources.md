@@ -1,9 +1,9 @@
 # Work sources (`governor.work_source`)
 
 `work_source` selects where a hive reads actionable work items from (Step 01
-of the governor loop — see [Architecture](architecture.md)). It accepts four
-primary `type` values: `github` (default), `github_projects`, `linear`, and
-`jira`. A fifth item kind, `type: run`, is additive rather than a primary
+of the governor loop — see [Architecture](architecture.md)). It accepts six
+primary `type` values: `github` (default), `github_projects`, `linear`,
+`jira`, `gitea`, and `gitlab`. A seventh item kind, `type: run`, is additive rather than a primary
 adapter: enable it with `run_stages: true` to append pending long-running run
 stages as work items without fabricating GitHub issues. A second additive
 kind, `wavefront`, lists the ready nodes of an imported migration graph the
@@ -12,7 +12,7 @@ Absent or `type: ""` behaves exactly like existing hives with no
 `work_source` block — GitHub Issues on the configured `project.repos`
 (`pkg/config/config.go:1336-1348`, `pkg/worksource/factory.go:15-89`).
 
-This page documents all four. Linear has its own deeper guide —
+This page documents all six. Linear has its own deeper guide —
 [Linear agent integration](linear-agent.md) — for the two-way agent-session
 integration (webhooks, session acknowledgement, writing back to Linear);
 this page covers only the read side (`work_source.linear`) for parity with
@@ -31,16 +31,15 @@ unsupported error and the dashboard shows the degraded path.
 | GitHub / GitHub Projects | `hive-design` label | `design-approved` label | issue comment | n/a |
 | Jira Cloud/Data Center | Jira label plus optional configured transition | label plus optional transition | Jira comment | configured `transitions` map |
 | Linear | Linear label plus optional configured workflow state | label plus optional state | Linear comment | configured `transitions` map |
-| Gitea | n/a | n/a | n/a | no `work_source` adapter today |
-| GitLab | n/a | n/a | n/a | no `work_source` adapter today |
+| Gitea/Forgejo | Gitea label | Gitea label | issue comment | close/reopen |
+| GitLab | GitLab label | GitLab label | issue note | close/reopen |
 
 Global planning keys `design_requested_status` and `design_approved_status`
 name the Hive-side statuses to apply for Gate 1. Jira and Linear only call their
 native transition APIs when their adapter `transitions` map resolves those names
 to a source transition/state; otherwise design mode stays label-based. Gitea and
-GitLab appear elsewhere as SCM/forge integrations, but `pkg/worksource` does
-not expose them as issue/work-item sources, so there is no label/comment adapter
-to call yet.
+GitLab support source-native labels, comments/notes, and close/reopen status
+updates through their work-source adapters.
 
 Hosted and dashboard-managed hives can configure the same block from **Settings → Work source**; self-hosted operators can also edit `governor.work_source` in `hive.yaml`. Custom CA bundles and TLS trust overrides for Jira Data Center are not documented here because they are still in progress and are not part of v5.
 
@@ -382,6 +381,64 @@ switch (`/issue/{key}`, `/issue/{key}/comment`, and
 response returns `worksource/jira: search returned <status>: <body>` on
 every governor cycle, logged but not fatal — the hive keeps running with an
 empty work-item list from this source until the misconfiguration is fixed.
+
+## `type: gitea` — Gitea / Forgejo issues
+
+Reads open issues from one or more Gitea/Forgejo repositories through REST API
+v1, filters them locally, and exposes source-native label/comment/close/reopen
+mutation for Spektacular design mode.
+
+```yaml
+governor:
+  work_source:
+    type: gitea
+    gitea:
+      base_url: https://codeberg.org        # required; instance root, no /api/v1
+      token: ${GITEA_TOKEN}                 # optional; defaults to token_env
+      # token_env: GITEA_TOKEN              # default when token is empty
+      repos:
+        - repo: acme/service                # Gitea owner/repo
+          work_repo: github-org/service     # optional repo agents clone; defaults to repo
+      states: [open]                        # optional client-side state filter
+      labels: [ready]                       # optional; all listed labels must be present
+      assignee: hive-bot                    # optional
+      hold_labels: [blocked]                # optional in addition to hold/on-hold/hold/review
+```
+
+Returned work items use `SourceType: "gitea"`, `Number: 0`, and
+`ExternalID: "<source repo>#<issue index>"`, so their durable key is
+`<work_repo>!<source repo>#<issue index>` and never the colliding `repo#0`
+form. Mutations map that external id back to the configured source repo and call Gitea's issue
+label, comment, and `PATCH /repos/{owner}/{repo}/issues/{index}` state APIs.
+
+## `type: gitlab` — GitLab issues
+
+Reads open GitLab issues through REST API v4. Self-managed instances set
+`base_url`; empty uses `https://gitlab.com`. The token is sent as
+`PRIVATE-TOKEN`.
+
+```yaml
+governor:
+  work_source:
+    type: gitlab
+    gitlab:
+      # base_url: https://gitlab.example.com # optional; defaults to gitlab.com
+      token: ${GITLAB_TOKEN}                 # optional; defaults to token_env
+      # token_env: GITLAB_TOKEN              # default when token is empty
+      repos:
+        - repo: acme/subgroup/service        # GitLab project path
+          work_repo: github-org/service      # optional repo agents clone; defaults to repo
+      states: [opened]                       # optional client-side state filter
+      labels: [ready]
+      assignee: hive-bot
+      hold_labels: [blocked]
+```
+
+Returned work items use `SourceType: "gitlab"`, `Number: 0`, and
+`ExternalID: "<source project>#<iid>"`, giving stable keys such as
+`acme/subgroup/service!acme/subgroup/service#42`. Label add/remove use GitLab's `add_labels` and
+`remove_labels` issue update fields, comments use issue notes, and status
+transitions call `state_event=close` or `state_event=reopen`.
 
 ## Open questions
 
