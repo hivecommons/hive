@@ -1521,11 +1521,11 @@
     .overview-chart-label { fill: var(--text); font-size: var(--fs-2xs); font-weight: 800; text-anchor: middle; dominant-baseline: central; paint-order: stroke; stroke: var(--surface-2); stroke-width: 3px; }
     .overview-chart-total { fill: var(--text); font-size: var(--fs-sm); font-weight: 800; text-anchor: middle; dominant-baseline: central; }
     .overview-chart-total-caption { fill: var(--muted); font-size: var(--fs-2xs); text-anchor: middle; dominant-baseline: central; }
-    .overview-chart-legend { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
-    .overview-chart-legend-row { display: grid; grid-template-columns: auto minmax(0, max-content) max-content; justify-content: start; align-items: center; gap: var(--sp-2); color: var(--muted); font-size: var(--fs-xs); }
+    .overview-chart-legend { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; max-width: 22rem; }
+    .overview-chart-legend-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--sp-2); color: var(--muted); font-size: var(--fs-xs); }
     .overview-chart-swatch { width: 0.75rem; height: 0.75rem; border-radius: var(--r-pill); background: var(--slice-c); box-shadow: 0 0 0 1px color-mix(in srgb, var(--slice-c) 45%, transparent); }
-    .overview-chart-legend-label { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 18rem; }
-    .overview-chart-legend-count { font-variant-numeric: tabular-nums; }
+    .overview-chart-legend-label { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .overview-chart-legend-count { font-variant-numeric: tabular-nums; text-align: right; }
     .overview-empty { color: var(--muted); font-size: var(--fs-sm); padding: var(--sp-5); border: 1px dashed var(--border); border-radius: var(--r); text-align: center; }
     .overview-issue-ready { --slice-c: var(--status-info); }
     .overview-issue-in-progress { --slice-c: var(--status-warn); }

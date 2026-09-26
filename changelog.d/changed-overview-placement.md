@@ -1,1 +1,1 @@
-- Dashboard: the Overview band charts now sit above the Governor panel with an Overview entry in the sidebar, and legend counts sit next to their band names instead of the far edge of the card.
+- Dashboard: the Overview band charts now sit above the Governor panel with an Overview entry in the sidebar, and legend counts stay right-aligned but close to their band names instead of at the far edge of the card.
