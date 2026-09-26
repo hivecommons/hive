@@ -1,1 +1,1 @@
-Overview CSV export neutralizes spreadsheet formula prefixes (=, +, -, @, tab) in attacker-controllable cells such as issue/PR titles, labels, and hold reasons (CWE-1236).
+- Overview CSV export neutralizes spreadsheet formula prefixes (`=`, `+`, `-`, `@`, tab) in attacker-controllable cells such as issue/PR titles, labels, and hold reasons (CWE-1236) ([#9068](https://github.com/hivecommons/hive/issues/9068)).
