@@ -308,10 +308,15 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	for _, name := range s.engagedHiveUsernames() {
 		engaged[name] = true
 	}
+	s.mu.RLock()
+	hives := append([]RegistryEntry(nil), s.registry.Hives...)
+	s.mu.RUnlock()
 	now := time.Now()
 	type adminUserView struct {
 		SaaSUser
 		StatusTier string `json:"status_tier"`
+		TopRepo    string `json:"top_repo"`
+		TopRepoURL string `json:"top_repo_url,omitempty"`
 		// Provider is always populated (derived via userProvider) so the Users
 		// table's auth-method badge never has to parse — a legacy github-only
 		// record resolves to "github". This shadows SaaSUser.Provider's
@@ -322,9 +327,12 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	for i := range users {
 		users[i].EncryptedToken = ""
 		name := users[i].GitHubUsername
+		topRepo := userTopRepoAssociation(&users[i], hives)
 		views = append(views, adminUserView{
 			SaaSUser:   users[i],
 			StatusTier: userStatusTier(&users[i], live[name], engaged[name], now),
+			TopRepo:    topRepo.Label,
+			TopRepoURL: topRepo.URL,
 			Provider:   userProvider(&users[i]),
 		})
 	}
@@ -509,6 +517,10 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	if isRootHubAdmin(username) && !isRootHubAdmin(s.getRealAuthUser(r)) {
+		writeJSONError(w, http.StatusForbidden, "root hub admins can only be changed by root hub admins")
+		return
+	}
 	// Whether the country branch below actually APPLIED, which is not the same
 	// as the key being present: a stronger user-chosen value declines the edit.
 	// Tracked so the audit line records what changed rather than what was asked.
@@ -600,7 +612,7 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 }
 
-// handleAdminDeleteUser removes a hub user record. It refuses to delete the
+// handleAdminDeleteUser removes a hub user record. It refuses to delete any
 // hub admin, and refuses to delete a user who still owns hosted hives — those
 // must be deleted (or reassigned) first so no namespace is orphaned. Deleting
 // a user does not touch GitHub; it only removes the hub's local account

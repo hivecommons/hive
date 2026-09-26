@@ -1067,6 +1067,8 @@ ${footer}")
 
 if [[ -n "$AGENT_NAME" ]]; then
   LABELS_CSV="agent/${AGENT_DISPLAY_NAME}"
+  # Provenance only. The dashboard hold label is hive-pause/<id>; keeping this
+  # as hive/<id> preserves hub activity attribution without parking work.
   [[ -n "$HIVE_INSTANCE_ID" ]] && LABELS_CSV="${LABELS_CSV},hive/${HIVE_INSTANCE_ID}"
   # Contributor labels
   if _contributor_mode; then
@@ -1102,7 +1104,7 @@ if [[ -n "$AGENT_NAME" ]]; then
     [[ -n "$repo_flag" ]] && rf="--repo $repo_flag"
     "$REAL_GH" label create "agent/${AGENT_DISPLAY_NAME}" --description "Work by the ${AGENT_DISPLAY_NAME} agent" --color 6f42c1 $rf 2>/dev/null || true
     if [[ -n "$HIVE_INSTANCE_ID" ]]; then
-      "$REAL_GH" label create "hive/${HIVE_INSTANCE_ID}" --description "Hive instance ${HIVE_INSTANCE_ID}" --color 1d76db $rf 2>/dev/null || true
+      "$REAL_GH" label create "hive/${HIVE_INSTANCE_ID}" --description "Hive instance provenance ${HIVE_INSTANCE_ID}" --color 1d76db $rf 2>/dev/null || true
     fi
     touch "$cache"
   }

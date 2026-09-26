@@ -1,0 +1,57 @@
+name: Hive of the Week
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: "Optional owner/repo override"
+        required: false
+      week:
+        description: "Optional ISO week (YYYY-Www)"
+        required: false
+  schedule:
+    - cron: "17 8 * * 1"
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    if: ${{ vars.HIVE_OF_WEEK_RENDER_ENABLED == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    env:
+      HIVE_BASE_URL: ${{ vars.HIVE_PUBLIC_BASE_URL }}
+      HIVE_OF_WEEK_PROJECT: ${{ inputs.project }}
+      HIVE_OF_WEEK_WEEK: ${{ inputs.week }}
+      HIVE_OF_WEEK_OUT_DIR: hive-of-week-renders
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install render tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gource xvfb ffmpeg ca-certificates
+      - name: Render bee-swarm video
+        run: xvfb-run -a bash src/scripts/gource-hive-of-the-week.sh
+      - name: Archive gource source in knowledge
+        if: ${{ secrets.HIVE_PROXY_AUTH_TOKEN != '' }}
+        env:
+          HIVE_PROXY_AUTH_TOKEN: ${{ secrets.HIVE_PROXY_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          week="${HIVE_OF_WEEK_WEEK}"
+          query="week=${week}"
+          if [ -n "${HIVE_OF_WEEK_PROJECT}" ]; then
+            query="project=${HIVE_OF_WEEK_PROJECT}&${query}"
+          fi
+          curl -fsS -X POST \
+            -H "X-Hive-User: hive-of-the-week-bot" \
+            -H "X-Hive-Role: owner" \
+            -H "X-Hive-Proxy-Auth: ${HIVE_PROXY_AUTH_TOKEN}" \
+            "${HIVE_BASE_URL%/}/api/leaderboard/hive-of-week/archive?${query}"
+      - name: Publish render as release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="hive-of-the-week"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "Hive of the Week" --notes "Published Hive of the Week renders. Source logs are archived in Hive knowledge, not in this release."
+          gh release upload "$tag" hive-of-week-renders/latest.mp4 --clobber
+          gh release upload "$tag" hive-of-week-renders/latest.jpg --clobber

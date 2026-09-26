@@ -17,7 +17,7 @@
   <title>Hive — AI agents and Spektacular runs that maintain your repo</title>
   <link rel="stylesheet" href="/tokens.css">
   <link rel="stylesheet" href="/components.css">
-  <script type="application/ld+json">[{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Hive","applicationCategory":"DeveloperApplication","operatingSystem":"Linux, macOS","license":"https://www.apache.org/licenses/LICENSE-2.0","url":"https://hive.hivecommons.dev/","codeRepository":"https://github.com/hivecommons/hive","keywords":"Spektacular, Spek, Claude Code, GitHub Copilot CLI, Goose, OpenAI Codex CLI, Pi, IBM Bob, Aider, Gemini CLI, Google Antigravity CLI, OpenCode, Kilo Code, Muse Code, Oh My Pi, vLLM, llm-d, LiteLLM, IBM watsonx.ai, OpenRouter, Anthropic, OpenAI, DeepSeek","featureList":["Coordinates Spektacular (Spek) long-running runs; Spek-created outputs are called speks.","Drives supported agent CLI backends including Claude Code, GitHub Copilot CLI, Goose, OpenAI Codex CLI, IBM Bob, Gemini CLI and more.","Routes inference through supported engines and gateways including vLLM, llm-d, LiteLLM, IBM watsonx.ai, OpenRouter, Anthropic, OpenAI and DeepSeek.","Serves supported backend names, links and infrastructure thanks in the public landing page HTML for crawlers."]},{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Spektacular","alternateName":"Spek","applicationCategory":"DeveloperApplication","url":"https://github.com/hivecommons/spektacular","description":"Spektacular (Spek) creates speks for Hive long-running runs."},{"@context":"https://schema.org","@type":"Organization","name":"Hive Commons","url":"https://hivecommons.dev/","sponsor":[{"@type":"Organization","name":"Akamai","url":"https://www.linode.com/"},{"@type":"Organization","name":"Oracle Cloud","url":"https://www.oracle.com/cloud/cloud-native/kubernetes-engine/"},{"@type":"Organization","name":"Cloudflare","url":"https://www.cloudflare.com/"},{"@type":"Organization","name":"GitHub Copilot","url":"https://github.com/features/copilot"},{"@type":"Organization","name":"Bluehost","url":"https://www.bluehost.com/"}],"funder":[{"@type":"Organization","name":"Akamai","url":"https://www.linode.com/"},{"@type":"Organization","name":"Oracle Cloud","url":"https://www.oracle.com/cloud/cloud-native/kubernetes-engine/"},{"@type":"Organization","name":"Cloudflare","url":"https://www.cloudflare.com/"},{"@type":"Organization","name":"GitHub Copilot","url":"https://github.com/features/copilot"},{"@type":"Organization","name":"Bluehost","url":"https://www.bluehost.com/"}]}]</script>
+  <script type="application/ld+json">[{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Hive","applicationCategory":"DeveloperApplication","operatingSystem":"Linux, macOS","license":"https://www.apache.org/licenses/LICENSE-2.0","url":"https://hive.hivecommons.dev/","codeRepository":"https://github.com/hivecommons/hive","keywords":"Spektacular, Spek, Claude Code, GitHub Copilot CLI, Goose, OpenAI Codex CLI, Pi, IBM Bob, Aider, Gemini CLI, Google Antigravity CLI, OpenCode, Kilo Code, Muse Code, Oh My Pi, vLLM, llm-d, LiteLLM, IBM watsonx.ai, OpenRouter, Anthropic, OpenAI, DeepSeek","featureList":["Coordinates Spektacular (Spek) long-running runs; Spek-created outputs are called speks.","Reads work from GitHub Issues, GitHub Projects, Linear, Jira Cloud and Jira Data Center / Server work sources.","Drives supported agent CLI backends including Claude Code, GitHub Copilot CLI, Goose, OpenAI Codex CLI, IBM Bob, Gemini CLI and more.","Routes inference through supported engines and gateways including vLLM, llm-d, LiteLLM, IBM watsonx.ai, OpenRouter, Anthropic, OpenAI and DeepSeek.","Routes contributor effort through The Commons, swarms, team leaderboards and achievements.","Serves supported backend names, links and infrastructure thanks in the public landing page HTML for crawlers."]},{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Spektacular","alternateName":"Spek","applicationCategory":"DeveloperApplication","url":"https://github.com/hivecommons/spektacular","description":"Spektacular (Spek) creates speks for Hive long-running runs."},{"@context":"https://schema.org","@type":"Organization","name":"Hive Commons","url":"https://hivecommons.dev/","sponsor":[{"@type":"Organization","name":"Akamai","url":"https://www.linode.com/"},{"@type":"Organization","name":"Oracle Cloud","url":"https://www.oracle.com/cloud/cloud-native/kubernetes-engine/"},{"@type":"Organization","name":"Cloudflare","url":"https://www.cloudflare.com/"},{"@type":"Organization","name":"GitHub Copilot","url":"https://github.com/features/copilot"},{"@type":"Organization","name":"Bluehost","url":"https://www.bluehost.com/"}],"funder":[{"@type":"Organization","name":"Akamai","url":"https://www.linode.com/"},{"@type":"Organization","name":"Oracle Cloud","url":"https://www.oracle.com/cloud/cloud-native/kubernetes-engine/"},{"@type":"Organization","name":"Cloudflare","url":"https://www.cloudflare.com/"},{"@type":"Organization","name":"GitHub Copilot","url":"https://github.com/features/copilot"},{"@type":"Organization","name":"Bluehost","url":"https://www.bluehost.com/"}]}]</script>
   <style>
     :root {
       color-scheme: dark;
@@ -532,6 +532,7 @@
     .hive-table td { padding: var(--sp-5); border-bottom: 1px solid #ffffff0a; vertical-align: middle; text-align: center; }
     .hive-table td:first-child { text-align: left; }
     .hive-table tr:hover td { background: rgba(244,199,95,0.04); }
+    .ai-methods th, .ai-methods td { text-align: left; }
     .hive-name { font-weight: 600; color: var(--text); }
     .hive-org { color: var(--muted); font-size: var(--fs-sm); }
     .acmm-badge { --component-status: var(--status-neutral); display: inline-block; padding: var(--badge-pad-y) var(--badge-pad-x); border-radius: var(--r-pill); font-size: var(--fs-xs); font-weight: 700; white-space: nowrap; cursor: help; background: color-mix(in srgb, var(--component-status) var(--component-tint), transparent); color: var(--component-status); border: var(--line-width) solid color-mix(in srgb, var(--component-status) var(--component-border), transparent); }
@@ -767,18 +768,22 @@
             <span class="stack-badge">GitHub</span>
             <span class="stack-badge">GitHub Enterprise</span>
             <span class="stack-badge">GitLab</span>
-            <span class="stack-badge">Gitea</span>
+            <span class="stack-badge">Gitea / Forgejo</span>
           </div>
-          <p class="stack-note">Agents triage, branch, open PRs, and merge on green against any of them.</p>
+          <p class="stack-note">GitHub and GitHub Enterprise are the production App path; forge-neutral adapters cover GitLab and Gitea / Forgejo issue and change-request flows as they graduate.</p>
         </div>
         <div class="stack-group">
           <p class="stack-group-label">Work sources</p>
           <div class="stack-badges">
+            <span class="stack-badge">GitHub Issues</span>
             <span class="stack-badge">GitHub Projects</span>
-            <span class="stack-badge">Jira</span>
+            <span class="stack-badge">Jira Cloud</span>
+            <span class="stack-badge">Jira Data Center</span>
             <span class="stack-badge">Linear</span>
+            <span class="stack-badge">Spektacular runs</span>
+            <span class="stack-badge">Wavefront graphs</span>
           </div>
-          <p class="stack-note">Backlog items flow straight into the fleet &mdash; keep planning in the tracker you already use.</p>
+          <p class="stack-note">Backlog items, long-running run stages, and migration-graph nodes flow into the same governed work queue.</p>
         </div>
         <div class="stack-group">
           <p class="stack-group-label">Sign-in</p>
@@ -817,103 +822,119 @@
               <td class="cap">Free &amp; open source</td>
               <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Apache&#8209;2.0 &middot; Hive Commons</span></td>
               <td><span class="c-yes">&#10003;</span><span class="c-note">Apache&#8209;2.0</span></td>
-              <td><span class="c-no">&#10007;</span><span class="c-note">Paid subscription</span></td>
+              <td><span class="c-no">&#10007;</span><span class="c-note">Copilot subscription</span></td>
               <td><span class="c-no">&#10007;</span><span class="c-note">Paid / enterprise</span></td>
               <td><span class="c-no">&#10007;</span><span class="c-note">M365 / Atlassian license</span></td>
             </tr>
             <tr>
               <td class="cap">Self-hosted / your infra</td>
-              <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">K8s, LXC, Compose</span></td>
+              <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">K8s, LXC, Compose, Podman</span></td>
               <td><span class="c-yes">&#10003;</span><span class="c-note">Self-host supported</span></td>
-              <td><span class="c-no">&#10007;</span><span class="c-note">GitHub cloud</span></td>
-              <td><span class="c-part">Hybrid</span><span class="c-note">Planning stays in cloud</span></td>
+              <td><span class="c-no">&#10007;</span><span class="c-note">GitHub-hosted agent</span></td>
+              <td><span class="c-part">Hybrid</span><span class="c-note">Cloud or dedicated deployment</span></td>
               <td><span class="c-no">&#10007;</span><span class="c-note">Vendor cloud</span></td>
             </tr>
             <tr>
-              <td class="cap">Bring your own AI &amp; model</td>
-              <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Any OpenAI-compatible; self-host vLLM/llm-d</span></td>
-              <td><span class="c-part">CLI-based</span><span class="c-note">Model per CLI</span></td>
-              <td><span class="c-no">&#10007;</span><span class="c-note">Locked to provider</span></td>
-              <td><span class="c-no">&#10007;</span></td>
+              <td class="cap">Bring your own AI &amp; local models</td>
+              <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">CLI backends + vLLM/llm-d/LiteLLM</span></td>
+              <td><span class="c-part">CLI-based</span><span class="c-note">Model depends on CLI</span></td>
+              <td><span class="c-part">Model picker</span><span class="c-note">Copilot catalog</span></td>
+              <td><span class="c-no">&#10007;</span><span class="c-note">Vendor agent/model</span></td>
               <td><span class="c-part">Vendor models</span></td>
             </tr>
             <tr>
+              <td class="cap">Self-hosted work sources</td>
+              <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">GitHub, Linear, Jira Cloud, Jira Data Center</span></td>
+              <td><span class="c-part">GitHub-native</span></td>
+              <td><span class="c-part">GitHub issues/PRs + MCP</span></td>
+              <td><span class="c-yes">&#10003;</span><span class="c-note">Jira, Linear, GitHub, GitLab, Bitbucket</span></td>
+              <td><span class="c-part">Planner / Jira cloud</span></td>
+            </tr>
+            <tr>
               <td class="cap">Multi-agent, specialized roles</td>
-              <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Scanner, quality, architect, &hellip;</span></td>
-              <td><span class="c-yes">&#10003;</span><span class="c-note">6 agents: triage&rarr;code&rarr;review&rarr;retro</span></td>
-              <td><span class="c-no">&#10007;</span><span class="c-note">Single agent</span></td>
-              <td><span class="c-part">Subagents</span><span class="c-note">Delegation, not peers</span></td>
+              <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Scanner, quality, architect, security, ops</span></td>
+              <td><span class="c-yes">&#10003;</span><span class="c-note">Triage&rarr;code&rarr;review&rarr;retro</span></td>
+              <td><span class="c-part">Single coding agent</span><span class="c-note">Extensible via skills/MCP</span></td>
+              <td><span class="c-yes">&#10003;</span><span class="c-note">MultiDevin / subagents</span></td>
               <td><span class="c-part">Assignable agents</span></td>
+            </tr>
+            <tr>
+              <td class="cap">Cross-hive contribution commons</td>
+              <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Subscribe, rank, spread, or route to neediest hives</span></td>
+              <td><span class="c-no">&#10007;</span></td>
+              <td><span class="c-no">&#10007;</span></td>
+              <td><span class="c-no">&#10007;</span></td>
+              <td><span class="c-no">&#10007;</span></td>
+            </tr>
+            <tr>
+              <td class="cap">Per-repo swarms &amp; leaderboards</td>
+              <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Swarm mode, Discord announcements, themes</span></td>
+              <td><span class="c-no">&#10007;</span></td>
+              <td><span class="c-no">&#10007;</span></td>
+              <td><span class="c-part">Parallel sessions</span></td>
+              <td><span class="c-part">Team dashboards</span></td>
+            </tr>
+            <tr>
+              <td class="cap">Spec-driven long-running runs</td>
+              <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Spektacular spec&rarr;plan&rarr;implement stages</span></td>
+              <td><span class="c-no">&#10007;</span></td>
+              <td><span class="c-part">Plans then codes</span></td>
+              <td><span class="c-yes">&#10003;</span><span class="c-note">Interactive planning</span></td>
+              <td><span class="c-yes">&#10003;</span><span class="c-note">Work breakdown</span></td>
             </tr>
             <tr>
               <td class="cap">Enforced permissions at network layer</td>
               <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">MITM proxy + scoped tokens</span></td>
-              <td><span class="c-part">Guarded paths</span><span class="c-note">Sandbox, not network-layer</span></td>
-              <td><span class="c-part">Branch rules</span></td>
-              <td><span class="c-part">Rule engine</span><span class="c-note">Agent-layer</span></td>
-              <td><span class="c-part">Graph ACL inherit</span></td>
+              <td><span class="c-part">Guarded paths</span><span class="c-note">Sandbox / post-steps</span></td>
+              <td><span class="c-part">Branch rules + repo permissions</span></td>
+              <td><span class="c-part">Rule engine / sandbox</span></td>
+              <td><span class="c-part">Graph / Jira ACLs</span></td>
             </tr>
             <tr>
               <td class="cap">Graduated autonomy levels</td>
               <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">ACMM L1&ndash;L6, advisory&rarr;auto-merge</span></td>
-              <td><span class="c-no">&#10007;</span><span class="c-note">Human-in-loop, no maturity ladder</span></td>
+              <td><span class="c-no">&#10007;</span><span class="c-note">No public maturity ladder</span></td>
               <td><span class="c-no">&#10007;</span></td>
-              <td><span class="c-part">Allow/Ask/Deny</span></td>
-              <td><span class="c-no">&#10007;</span></td>
-            </tr>
-            <tr>
-              <td class="cap">Transparent AI cost &amp; budget controls</td>
-              <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Per-model cost + weekly token budget</span></td>
-              <td><span class="c-no">&#10007;</span></td>
-              <td><span class="c-no">&#10007;</span><span class="c-note">Opaque in license</span></td>
-              <td><span class="c-no">&#10007;</span></td>
+              <td><span class="c-part">Ask / approve controls</span></td>
               <td><span class="c-no">&#10007;</span></td>
             </tr>
             <tr>
-              <td class="cap">Trajectory / goal-drift review</td>
-              <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Intent-vs-transcript, injection-aware</span></td>
-              <td><span class="c-part">Injection defense</span><span class="c-note">No drift review</span></td>
-              <td><span class="c-no">&#10007;</span></td>
-              <td><span class="c-no">&#10007;</span></td>
-              <td><span class="c-no">&#10007;</span></td>
+              <td class="cap">Transparent AI cost, budgets &amp; local incentives</td>
+              <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Per-model cost, weekly budget, local-model achievements</span></td>
+              <td><span class="c-part">Metrics repos</span></td>
+              <td><span class="c-part">Quota / premium requests</span></td>
+              <td><span class="c-part">Usage-based ACUs</span></td>
+              <td><span class="c-part">License / app quotas</span></td>
             </tr>
             <tr>
-              <td class="cap">Durable work ledger (DAG)</td>
-              <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Git-backed beads w/ dependencies</span></td>
-              <td><span class="c-no">&#10007;</span><span class="c-note">GitHub issues/PRs are the state</span></td>
-              <td><span class="c-no">&#10007;</span></td>
-              <td><span class="c-part">In-run</span></td>
-              <td><span class="c-part">Task lists</span></td>
+              <td class="cap">Durable work ledger &amp; reviewed DAG plans</td>
+              <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Git-backed beads + plan review gate</span></td>
+              <td><span class="c-no">&#10007;</span><span class="c-note">GitHub issues/PRs as state</span></td>
+              <td><span class="c-part">Task plan in PR / issue</span></td>
+              <td><span class="c-yes">&#10003;</span><span class="c-note">Planning workspace</span></td>
+              <td><span class="c-yes">&#10003;</span><span class="c-note">Task lists / work breakdown</span></td>
             </tr>
             <tr>
               <td class="cap">Dashboard &amp; fleet observability</td>
-              <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Live dashboard, governor, per-agent metrics, leaderboard</span></td>
-              <td><span class="c-no">&#10007;</span><span class="c-note">GitHub-native only, no UI</span></td>
-              <td><span class="c-part">In GitHub</span></td>
+              <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Live dashboard, governor, teams, swarm and fleet leaderboards</span></td>
+              <td><span class="c-part">Metrics dashboards</span></td>
+              <td><span class="c-part">Agents panel / GitHub UI</span></td>
               <td><span class="c-yes">&#10003;</span><span class="c-note">Vendor UI</span></td>
-              <td><span class="c-yes">&#10003;</span><span class="c-note">Vendor UI</span></td>
+              <td><span class="c-yes">&#10003;</span><span class="c-note">Planner / Jira UI</span></td>
             </tr>
             <tr>
-              <td class="cap">Human-in-the-loop &amp; audit trail</td>
-              <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">PR holds, pause/resume, full audit</span></td>
-              <td><span class="c-yes">&#10003;</span><span class="c-note">Human in the loop, transparent</span></td>
-              <td><span class="c-yes">&#10003;</span><span class="c-note">Draft-PR review</span></td>
-              <td><span class="c-yes">&#10003;</span></td>
-              <td><span class="c-yes">&#10003;</span></td>
-            </tr>
-            <tr>
-              <td class="cap">Auto plan decomposition + plan review</td>
-              <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Live at ACMM L5&ndash;L6 &middot; decompose &rarr; review gate &rarr; stall-replan</span></td>
-              <td><span class="c-part">Prioritize stage</span><span class="c-note">No review-gated DAG</span></td>
-              <td><span class="c-part">Spec/plan</span></td>
-              <td><span class="c-yes">&#10003;</span><span class="c-note">Interactive Planning</span></td>
-              <td><span class="c-yes">&#10003;</span><span class="c-note">Work breakdown</span></td>
+              <td class="cap">Conversational admin MCP</td>
+              <td class="hive-col"><span class="c-part">Edge</span><span class="c-note">v6 only: /api/admin/mcp + hive-admin-mcp</span></td>
+              <td><span class="c-no">&#10007;</span></td>
+              <td><span class="c-yes">&#10003;</span><span class="c-note">MCP for agent tools</span></td>
+              <td><span class="c-part">API / integrations</span></td>
+              <td><span class="c-part">Copilot / Rovo agents</span></td>
             </tr>
           </tbody>
         </table>
       </div>
-      <p class="compare-legend"><span class="c-yes">&#10003;</span> yes &nbsp;&middot;&nbsp; <span class="c-part">partial</span> &nbsp;&middot;&nbsp; <span class="c-no">&#10007;</span> no. Competitor rows reflect each vendor&rsquo;s public documentation as of 2026; comparisons are our own.</p>
-      <p class="compare-foot">Hive now closes what used to be the one gap: general-purpose <strong>plan decomposition with a review-before-execution gate</strong> &mdash; <strong>live today at ACMM levels 5 and 6</strong>. Click <strong>Plan</strong> on any issue (or add the <code>plan</code> label) and Hive breaks an epic into an ordered sub-task DAG, holds it behind a human plan-review gate, and &mdash; when an approved plan stalls &mdash; detects the stall and re-kicks the architect to revise it, bounded by a per-plan replan cap. Devin, Planner, and others plan; Hive plans, reviews, and self-corrects &mdash; and it&rsquo;s the option you own outright.</p>
+      <p class="compare-legend"><span class="c-yes">&#10003;</span> yes &nbsp;&middot;&nbsp; <span class="c-part">partial</span> &nbsp;&middot;&nbsp; <span class="c-no">&#10007;</span> no. Competitor rows reflect each vendor&rsquo;s public documentation checked on 2026-09-25; comparisons are our own.</p>
+      <p class="compare-foot">Hive&rsquo;s plan decomposition is now part of the same governed loop as the rest of the product: click <strong>Plan</strong> on an issue (or add the <code>plan</code> label) and Hive creates an ordered sub-task DAG, holds it for human review, and can re-kick the architect when an approved plan stalls. Recent v5 work also expands where work can originate &mdash; including Jira Data Center / Server &mdash; and how contributors route effort across The Commons.</p>
     </section>
 
     <!-- ── Watch: latest presentation ── -->
@@ -1045,21 +1066,27 @@
         <p>Each agent picks its own method and model. Use a subscription CLI, an API-key provider, or point agents at your own models &mdash; no provider account required for self-hosted inference.</p>
       </div>
       <div style="overflow-x:auto">
-        <table class="hive-table">
+        <table class="hive-table ai-methods">
           <thead>
-            <tr><th style="text-align:left">Method</th><th style="text-align:left">Type</th><th style="text-align:left">Models</th><th style="text-align:left">Authentication</th></tr>
+            <tr><th>Method</th><th>Type</th><th>Models</th><th>Authentication</th></tr>
           </thead>
           <tbody>
-            <tr><td class="hive-name">Claude Code</td><td style="text-align:left">CLI agent</td><td style="text-align:left">Anthropic (Opus, Sonnet, Haiku)</td><td style="text-align:left">Anthropic subscription &mdash; dashboard Login button or <code style="background:#17212d;border:1px solid var(--line);padding:1px 5px;border-radius:var(--r-sm);color:var(--amber)">/login</code> in the agent terminal</td></tr>
-            <tr><td class="hive-name">GitHub Copilot</td><td style="text-align:left">CLI agent</td><td style="text-align:left">Copilot catalog (Claude, GPT, Gemini)</td><td style="text-align:left">GitHub device-flow login</td></tr>
-            <tr><td class="hive-name">Gemini CLI</td><td style="text-align:left">CLI agent</td><td style="text-align:left">Gemini</td><td style="text-align:left">Google account or API key</td></tr>
-            <tr><td class="hive-name">Goose</td><td style="text-align:left">CLI agent</td><td style="text-align:left">Multi-provider</td><td style="text-align:left">Provider API key</td></tr>
-            <tr><td class="hive-name">Codex</td><td style="text-align:left">CLI agent</td><td style="text-align:left">OpenAI</td><td style="text-align:left">OpenAI login or API key</td></tr>
-            <tr><td class="hive-name">Aider</td><td style="text-align:left">CLI agent</td><td style="text-align:left">Multi-provider</td><td style="text-align:left">Provider API key</td></tr>
-            <tr><td class="hive-name">Bob</td><td style="text-align:left">CLI agent</td><td style="text-align:left">IBM</td><td style="text-align:left">CLI login</td></tr>
-            <tr><td class="hive-name">vLLM</td><td style="text-align:left">Self-hosted inference</td><td style="text-align:left">Your own models, your GPUs</td><td style="text-align:left">None &mdash; no provider account</td></tr>
-            <tr><td class="hive-name">llm-d</td><td style="text-align:left">Distributed inference on Kubernetes</td><td style="text-align:left">Your own models, your cluster</td><td style="text-align:left">None &mdash; no provider account</td></tr>
-            <tr><td class="hive-name">LiteLLM <span class="acmm-badge acmm-2" style="margin-left:var(--sp-3)">new</span></td><td style="text-align:left">OpenAI-compatible gateway</td><td style="text-align:left">Anything behind your LiteLLM endpoint</td><td style="text-align:left">Endpoint URL + API key</td></tr>
+            <tr><td class="hive-name">Claude Code</td><td>CLI agent</td><td>Anthropic (Opus, Sonnet, Haiku)</td><td>Anthropic subscription &mdash; dashboard Login button or <code style="background:#17212d;border:1px solid var(--line);padding:1px 5px;border-radius:var(--r-sm);color:var(--amber)">/login</code> in the agent terminal</td></tr>
+            <tr><td class="hive-name">GitHub Copilot</td><td>CLI agent</td><td>Copilot catalog (Claude, GPT, Gemini)</td><td>GitHub device-flow login</td></tr>
+            <tr><td class="hive-name">Gemini CLI</td><td>CLI agent</td><td>Gemini</td><td>Google account or API key</td></tr>
+            <tr><td class="hive-name">Goose</td><td>CLI agent</td><td>Multi-provider</td><td>Provider API key</td></tr>
+            <tr><td class="hive-name">Codex</td><td>CLI agent</td><td>OpenAI</td><td>OpenAI login or API key</td></tr>
+            <tr><td class="hive-name">Aider</td><td>CLI agent</td><td>Multi-provider</td><td>Provider API key</td></tr>
+            <tr><td class="hive-name">Bob</td><td>CLI agent</td><td>IBM</td><td>CLI login</td></tr>
+            <tr><td class="hive-name">Pi</td><td>CLI agent</td><td>Multi-provider</td><td>CLI login / provider credentials</td></tr>
+            <tr><td class="hive-name">Oh My Pi</td><td>CLI agent</td><td>Multi-provider</td><td>Provider credentials</td></tr>
+            <tr><td class="hive-name">Google Antigravity</td><td>CLI agent</td><td>Google</td><td>Google account or API key</td></tr>
+            <tr><td class="hive-name">OpenCode</td><td>CLI agent</td><td>Multi-provider</td><td>Provider credentials</td></tr>
+            <tr><td class="hive-name">Kilo Code</td><td>CLI agent</td><td>Multi-provider</td><td>Provider credentials</td></tr>
+            <tr><td class="hive-name">Muse Code</td><td>CLI agent</td><td>Meta / multi-provider</td><td>CLI login</td></tr>
+            <tr><td class="hive-name">vLLM</td><td>Self-hosted inference</td><td>Your own models, your GPUs</td><td>None &mdash; no provider account</td></tr>
+            <tr><td class="hive-name">llm-d</td><td>Distributed inference on Kubernetes</td><td>Your own models, your cluster</td><td>None &mdash; no provider account</td></tr>
+            <tr><td class="hive-name">LiteLLM</td><td>OpenAI-compatible gateway</td><td>Anything behind your LiteLLM endpoint</td><td>Endpoint URL + API key</td></tr>
           </tbody>
         </table>
       </div>

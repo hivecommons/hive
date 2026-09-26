@@ -6592,6 +6592,34 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if answer, ok := s.chatLocalIntentAnswer(body.Query); ok {
+		jsonResponse(w, map[string]interface{}{
+			"answer": answer,
+			"status": "ok",
+		})
+		return
+	}
+
+	if s.deps != nil && s.deps.ChatResponder != nil {
+		answer, err := s.deps.ChatResponder(r.Context(), body.Query, body.History)
+		if err != nil {
+			msg := "The configured chat responder is unavailable: " + strings.TrimSpace(err.Error())
+			jsonResponse(w, map[string]interface{}{
+				"answer": msg,
+				"error":  msg,
+				"status": "responder_unavailable",
+			})
+			return
+		}
+		if strings.TrimSpace(answer) != "" {
+			jsonResponse(w, map[string]interface{}{
+				"answer": answer,
+				"status": "ok",
+			})
+			return
+		}
+	}
+
 	jsonResponse(w, map[string]interface{}{
 		"accepted": true,
 		"seq":      seq,

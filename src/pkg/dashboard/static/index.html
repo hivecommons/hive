@@ -8347,9 +8347,19 @@
     let reviewerAccuracyLoading = false;
     let reviewerAccuracyData = null;
 
+    function normalizeGovernorPRModelsWindowName(windowName) {
+      return ['7d', '30d', 'all'].includes(windowName) ? windowName : '7d';
+    }
+
+    function renderGovernorFromLastStatus() {
+      const lastStatus = window._lastStatus;
+      if (!lastStatus) return;
+      renderGovernor(lastStatus.governor || {}, lastStatus.cadenceMatrix || [], lastStatus);
+    }
+
     function setGovernorPRModelsWindow(windowName) {
-      govPRModelsWindow = ['7d', '30d', 'all'].includes(windowName) ? windowName : '7d';
-      loadGovernorPRModels(true);
+      govPRModelsWindow = normalizeGovernorPRModelsWindowName(windowName);
+      return loadGovernorPRModels(true, govPRModelsWindow);
     }
     window.setGovernorPRModelsWindow = setGovernorPRModelsWindow;
     function setGovernorPRModelsSort(sortName) {
@@ -8373,18 +8383,23 @@
       });
     }
 
-    async function loadGovernorPRModels(force) {
+    async function loadGovernorPRModels(force, windowName = govPRModelsWindow) {
+      const requestedWindow = normalizeGovernorPRModelsWindowName(windowName);
       if (govPRModelsLoading) return;
-      if (!force && govPRModelsData && govPRModelsData.window === govPRModelsWindow) return;
+      if (!force && govPRModelsData && govPRModelsData.window === requestedWindow) return;
+      govPRModelsWindow = requestedWindow;
       govPRModelsLoading = true;
       try {
-        const res = await fetch(`/api/governor/pr-models?window=${encodeURIComponent(govPRModelsWindow)}`);
-        if (res.ok) govPRModelsData = await res.json();
+        const res = await fetch(`/api/governor/pr-models?window=${encodeURIComponent(requestedWindow)}`);
+        if (res.ok) {
+          const data = await res.json();
+          govPRModelsData = { ...data, window: data?.window || requestedWindow };
+        }
       } catch (_) {
-        govPRModelsData = { window: govPRModelsWindow, total: 0, buckets: [] };
+        govPRModelsData = { window: requestedWindow, total: 0, buckets: [] };
       } finally {
         govPRModelsLoading = false;
-        if (window._lastStatus?.governor) renderGovernor(window._lastStatus.governor, window._lastStatus.cadenceMatrix || [], window._lastStatus);
+        renderGovernorFromLastStatus();
       }
     }
 
@@ -8549,7 +8564,7 @@
       // > tests) then age (#6183); the class tag makes that order legible.
       const holdTooltip = holdItems.length > 0 ? escapeHtml(holdExplain + holdItems.map(h => `${h.type === 'pr' ? 'PR' : 'Issue'} ${h.repo}#${h.number}${h.review_class ? ' [' + h.review_class + ']' : ''}: ${h.title}`).join('\n')) : escapeHtml(holdExplain + 'Nothing is currently on hold.');
       const holdSpark = sparkline('govHold');
-      loadGovernorPRModels(false);
+      loadGovernorPRModels(false, govPRModelsWindow);
       loadReviewerAccuracy(false);
 
       el.innerHTML = `
@@ -8580,7 +8595,7 @@
             const valTxt = awaiting > 0 ? `${awaiting} to review` : String(active);
             return `<div class="gov-stat" style="cursor:pointer" data-action="openPlanList" title="${escapeHtml(tip)}"><div class="label">planning</div><div class="val${alertCls}">${escapeHtml(valTxt)}${pending > 0 ? ` <span style="opacity:.6;font-size:.7em">+${pending}</span>` : ''}</div></div>`;
           })()}
-          <div class="gov-stat" title="NEXT RUN — when the governor next wakes up.&#10;&#10;WHAT: The next scheduled moment the governor will re-evaluate mode and kick any agents that are due.&#10;&#10;HOW: Computed from the current mode's cadence schedule — the governor adds the mode's interval to the last run time. Faster modes (busy/surge) produce a nearer next run than idle/quiet."><div class="label">next run</div><div class="val">${escapeHtml(gov.nextKick || '—')}</div></div>
+          <div class="gov-stat" title="NEXT RUN — when the governor next wakes up.&#10;&#10;WHAT: The next scheduled moment the governor will re-evaluate mode and kick any agents that are due.&#10;&#10;HOW: Computed from the last governor evaluation plus the configured evaluation interval. If that moment has already passed, this tile says due now / overdue instead of showing a stale past timestamp."><div class="label">next run</div><div class="val">${escapeHtml(formatGovernorNextRun(gov))}</div></div>
           <div class="gov-stat" title="PR AUTHOR — the GitHub identity this hive's agents open PRs and push commits as.&#10;&#10;WHAT: Either the configured project.ai_author, or the GitHub App bot ('<slug>[bot]') when the hive runs in App-authored mode.&#10;&#10;HOW: Reported by the spoke as ai_author_effective. A '[bot]' value means PRs are authored by the App installation, not a personal account."><div class="label">PR author</div><div class="val">${escapeHtml(window._aiAuthor || '—')}</div></div>
         </div>
         <div class="temp-gauge" style="cursor:pointer" data-action="gh5" title="Click to adjust governor thresholds">
@@ -9158,14 +9173,13 @@
       return `<div class="repo-breakdown">${parts.join(' · ')}</div>`;
     }
 
-    // Which of an item's labels put it on hold (hivecommons/hive#7896). Same
-    // rule as github.HasHoldLabel on the server: any label CONTAINING one of
-    // the hold spellings holds the item. The matching labels are returned by
-    // name so the tooltip can say which label an operator has to remove.
+    // Which of an item's labels put it on hold (hivecommons/hive#7896/#8851).
+    // Generic hold spellings are substring matches; the canonical hive hold is
+    // exact so hive/<id> can remain a provenance label instead of a hold.
     const HOLD_LABEL_SPELLINGS = ['hold', 'on-hold', 'hold/review'];
     function canonicalHiveHoldLabel() {
       const hiveId = String(((window._lastStatus || {}).hiveId) || '').trim();
-      return hiveId ? ('hive/' + hiveId) : 'hold';
+      return hiveId ? ('hive-pause/' + hiveId) : 'hold';
     }
     function holdLabels(labels) {
       const canonical = canonicalHiveHoldLabel().toLowerCase();
@@ -9192,7 +9206,7 @@
       const needsHuman = labels.includes('needs-human');
       const parts = [];
       parts.push('On hold' + (held.length ? ' — label ' + held.map(l => '`' + l + '`').join(', ') : '') + ': agents will not act on this until the hold label is removed');
-      if (item && item.hive_attributed) parts.push('opened by a hive agent — a `hold` here is usually the ACMM level gate, which the hive releases itself once policy allows; a human may remove the label sooner');
+      if (item && item.hive_attributed) parts.push('opened by a hive agent — a generic `hold` here is usually the ACMM level gate; the dashboard hive-pause hold is only removed by an operator');
       if (needsHuman) parts.push('needs-human: automated fix attempts exhausted, a human must review this');
       return parts.join('; ');
     }
@@ -16109,6 +16123,16 @@ function burnAreaChart() {
       const hours = Math.floor(minutes / 60);
       const rem = minutes % 60;
       return rem ? `${hours}h ${rem}m` : `${hours}h`;
+    }
+
+    function formatGovernorNextRun(gov, nowMs = Date.now()) {
+      if (!gov || !gov.nextKick) return '—';
+      const nextMs = new Date(gov.nextKickAt || '').getTime();
+      if (Number.isFinite(nextMs) && nextMs <= nowMs) {
+        const overdueMs = nowMs - nextMs;
+        return overdueMs < 60000 ? 'due now' : `overdue ${formatStatusPayloadAge(overdueMs)}`;
+      }
+      return gov.nextKick;
     }
 
     function setNavbarClockText(text) {
@@ -27200,7 +27224,7 @@ function burnAreaChart() {
         ['', 'GitHub Issues (default)'],
         ['github_projects', 'GitHub Projects v2'],
         ['linear', 'Linear'],
-        ['jira', 'Jira Cloud'],
+        ['jira', 'Jira'],
       ].map(([v, l]) => `<option value="${v}" ${type === v ? 'selected' : ''}>${l}</option>`).join('');
 
       return `
@@ -27297,19 +27321,56 @@ function burnAreaChart() {
 
         ${type === 'jira' ? `
         <div style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Jira Cloud</div>
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Jira</div>
           <div class="config-field">
-            <label>Base URL</label>
-            <input type="text" placeholder="https://myorg.atlassian.net" value="${esc(jira.base_url||'')}" data-change-action="markWorkSourceDirty" data-arg0="jira.base_url" data-arg-types="s,w">
+            <label>Deployment</label>
+            <select data-change-action="gh77">
+              <option value="" ${!jira.deployment || jira.deployment === 'cloud' ? 'selected' : ''}>Cloud (REST API v3)</option>
+              <option value="datacenter" ${jira.deployment === 'datacenter' ? 'selected' : ''}>Data Center / Server (REST API v2)</option>
+            </select>
           </div>
           <div class="config-field">
-            <label>Email</label>
+            <label>Base URL</label>
+            <input type="text" placeholder="${jira.deployment === 'datacenter' ? 'https://jira.example.com/jira' : 'https://myorg.atlassian.net'}" value="${esc(jira.base_url||'')}" data-change-action="markWorkSourceDirty" data-arg0="jira.base_url" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Email <span class="config-info">i<span class="config-tooltip">Required for Jira Cloud Basic auth. For Data Center basic auth, use Username + Password below instead.</span></span></label>
             <input type="email" placeholder="bot@myorg.com" value="${esc(jira.email||'')}" data-change-action="markWorkSourceDirty" data-arg0="jira.email" data-arg-types="s,w">
           </div>
           <div class="config-field">
-            <label>API token <span class="config-info">i<span class="config-tooltip">Atlassian API token from id.atlassian.com → Security → API tokens. Use \${JIRA_API_TOKEN} to reference an environment variable.</span></span></label>
-            <input type="text" placeholder="\${JIRA_API_TOKEN}" value="${esc(jira.api_token||'')}" data-change-action="markWorkSourceDirty" data-arg0="jira.api_token" data-arg-types="s,w">
+            <label>API token / Data Center PAT <span class="config-info">i<span class="config-tooltip">Cloud: Atlassian API token from id.atlassian.com. Data Center 8.14+: Personal Access Token sent as Authorization: Bearer. Use \${JIRA_API_TOKEN} to reference an environment variable.</span></span></label>
+            <input type="text" placeholder="${jira.api_token_set ? '(set — leave blank to keep)' : '\${JIRA_API_TOKEN}'}" value="" data-change-action="markWorkSourceDirty" data-arg0="jira.api_token" data-arg-types="s,w">
           </div>
+          <div class="config-field">
+            <label>Data Center username</label>
+            <input type="text" placeholder="jira-bot" value="${esc(jira.username||'')}" data-change-action="markWorkSourceDirty" data-arg0="jira.username" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Data Center password <span class="config-info">i<span class="config-tooltip">Only used for Data Center Basic auth when no PAT is configured. Use \${JIRA_PASSWORD}; do not store a raw password.</span></span></label>
+            <input type="text" placeholder="${jira.password_set ? '(set — leave blank to keep)' : '\${JIRA_PASSWORD}'}" value="" data-change-action="markWorkSourceDirty" data-arg0="jira.password" data-arg-types="s,w">
+          </div>
+          ${jira.deployment === 'datacenter' ? `
+          <div class="config-field">
+            <strong>Data Center TLS</strong>
+          </div>
+          <div>
+            <div class="config-field">
+              <label>Custom CA bundle <span class="config-info">i<span class="config-tooltip">PEM CA certificates appended to system trust roots. Use \${JIRA_DATACENTER_CA_BUNDLE} or paste PEM. Stored write-only; current value is never shown.</span></span></label>
+              <textarea rows="4" placeholder="${jira.ca_bundle_set ? '(set — leave blank to keep)' : '-----BEGIN CERTIFICATE-----\\n...'}" data-change-action="markWorkSourceDirty" data-arg0="jira.ca_bundle" data-arg-types="s,w"></textarea>
+            </div>
+            <div class="config-toggle">
+              <div class="config-toggle-switch ${jira.insecure_skip_verify ? 'on' : ''}" data-action="gh78" data-arg-types="t"></div>
+              <span class="config-toggle-label">Skip TLS verification — unsafe; testing only. Logs a warning whenever the Jira client is built.</span>
+            </div>
+            <div class="config-field">
+              <label>mTLS client certificate <span class="config-info">i<span class="config-tooltip">Optional PEM client certificate. Must be set with client key. Use an environment reference when possible.</span></span></label>
+              <textarea rows="3" placeholder="${jira.client_cert_set ? '(set — leave blank to keep)' : '\${JIRA_DATACENTER_CLIENT_CERT}'}" data-change-action="markWorkSourceDirty" data-arg0="jira.client_cert" data-arg-types="s,w"></textarea>
+            </div>
+            <div class="config-field">
+              <label>mTLS client key <span class="config-info">i<span class="config-tooltip">Optional PEM private key for the client certificate. Stored write-only; never shown after save.</span></span></label>
+              <textarea rows="3" placeholder="${jira.client_key_set ? '(set — leave blank to keep)' : '\${JIRA_DATACENTER_CLIENT_KEY}'}" data-change-action="markWorkSourceDirty" data-arg0="jira.client_key" data-arg-types="s,w"></textarea>
+            </div>
+          </div>` : ''}
           <div class="config-field">
             <label>Project keys <span class="config-info">i<span class="config-tooltip">Comma-separated Jira project keys, e.g. "ENG, OPS". Used to build the default JQL query.</span></span></label>
             <input type="text" placeholder="ENG, OPS" value="${esc((jira.project_keys||[]).join(', '))}" data-change-action="gh65">
@@ -27624,6 +27685,26 @@ function burnAreaChart() {
       sel.dataset.prev = sel.value;
       markDirty('general', 'cliPinValue', sel.value);
       updateLaunchCmd(sel.value);
+      refreshModelOptions(sel.value);
+    }
+
+    // refreshModelOptions rebuilds the Model select for a newly picked CLI Pin
+    // Value. renderAgentGeneral fills it once, for the backend the dialog
+    // opened with, so without this an operator switching claude -> codex was
+    // offered Claude models until they saved and reopened the dialog. The
+    // current model stays selected (as "(current)" when the new backend does
+    // not offer it) so the switch never silently changes the model.
+    function refreshModelOptions(backend) {
+      const sel = document.getElementById('cfg-model');
+      if (!sel) return;
+      const current = sel.value;
+      const opts = modelsForBackend(backend) || [];
+      const match = opts.find(m => _modelsEqual(current, m.value));
+      let html = '<option value="">(from launch command)</option>';
+      html += opts.map(m => `<option value="${esc(m.value)}">${esc(m.label)}</option>`).join('');
+      if (current && !match) html += `<option value="${esc(current)}">${esc(current)} (current)</option>`;
+      sel.innerHTML = html;
+      sel.value = match ? match.value : current;
     }
 
     function updateLaunchCmd(cli) {
@@ -30508,6 +30589,8 @@ function burnAreaChart() {
       gh64: function (event, A) { markWorkSourceDirty('linear.hold_labels',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh65: function (event, A) { markWorkSourceDirty('jira.project_keys',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh66: function (event, A) { markWorkSourceDirty('jira.hold_labels',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
+      gh77: function (event, A) { markWorkSourceDirty('jira.deployment',this.value);renderConfigTab('Work Source'); },
+      gh78: function (event, A) { const v=!((_configState.data.work_source||{}).jira||{}).insecure_skip_verify; markWorkSourceDirty('jira.insecure_skip_verify',v);renderConfigTab('Work Source'); },
     };
 
   </script>

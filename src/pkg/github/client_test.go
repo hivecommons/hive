@@ -191,6 +191,30 @@ func TestEnumerateActionable_BasicCounts(t *testing.T) {
 	}
 }
 
+func TestEnumerateActionable_HiveProvenanceIsNotHold(t *testing.T) {
+	org, repo := "testorg", "testrepo"
+	issues := []wireIssue{
+		{Number: 1, Title: "agent filed issue", User: wireUser{"hivecommons-hive[bot]"}, Labels: []wireLabel{{Name: "agent/scanner"}, {Name: "hive/h1"}}, CreatedAt: hoursAgo(1)},
+		{Number: 2, Title: "dashboard held issue", User: wireUser{"alice"}, Labels: []wireLabel{{Name: "hive-pause/h1"}}, CreatedAt: hoursAgo(1)},
+	}
+
+	server := httptest.NewServer(buildMux(t, org, repo, issues, nil))
+	defer server.Close()
+
+	c := newTestClient(t, server, org, []string{repo})
+	c.SetHoldLabels([]string{CanonicalHiveHoldLabel("h1")})
+	result, err := c.EnumerateActionable(context.Background())
+	if err != nil {
+		t.Fatalf("EnumerateActionable: %v", err)
+	}
+	if result.Issues.Count != 1 || result.Issues.Items[0].Number != 1 {
+		t.Fatalf("actionable issues = %+v, want only provenance issue #1", result.Issues.Items)
+	}
+	if result.Hold.Issues != 1 || result.Hold.Items[0].Number != 2 {
+		t.Fatalf("held issues = %+v, want only hive-pause issue #2", result.Hold.Items)
+	}
+}
+
 func TestEnumerateActionable_SortedOldestFirst(t *testing.T) {
 	org, repo := "testorg", "testrepo"
 	issues := []wireIssue{
@@ -618,6 +642,22 @@ func TestIsHeld(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("isHeld(%v) = %v, want %v", tt.labels, got, tt.want)
 		}
+	}
+}
+
+func TestHasHoldLabelWithExactCanonicalHivePause(t *testing.T) {
+	canonical := CanonicalHiveHoldLabel("h1")
+	if canonical != "hive-pause/h1" {
+		t.Fatalf("canonical hive hold = %q, want hive-pause/h1", canonical)
+	}
+	if HasHoldLabelWith([]string{HiveProvenanceLabel("h1")}, []string{canonical}) {
+		t.Fatal("hive/<id> provenance label must not match canonical hive hold")
+	}
+	if !HasHoldLabelWith([]string{"hive-pause/h1"}, []string{canonical}) {
+		t.Fatal("exact canonical hive hold label did not hold item")
+	}
+	if HasHoldLabelWith([]string{"hive-pause/h1-extra"}, []string{canonical}) {
+		t.Fatal("canonical hive hold must be exact, not substring")
 	}
 }
 

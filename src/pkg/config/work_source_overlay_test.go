@@ -113,6 +113,10 @@ func TestRedactedForPersist_WorkSourceCredentials(t *testing.T) {
 	cfg.Governor.WorkSource.Type = "linear"
 	cfg.Governor.WorkSource.Linear.APIKey = "${LINEAR_API_KEY}"
 	cfg.Governor.WorkSource.Jira.APIToken = "${JIRA_API_TOKEN}"
+	cfg.Governor.WorkSource.Jira.Password = "${JIRA_DATACENTER_PASSWORD}"
+	cfg.Governor.WorkSource.Jira.CABundle = "${JIRA_DATACENTER_CA_BUNDLE}"
+	cfg.Governor.WorkSource.Jira.ClientCert = "${JIRA_DATACENTER_CLIENT_CERT}"
+	cfg.Governor.WorkSource.Jira.ClientKey = "${JIRA_DATACENTER_CLIENT_KEY}"
 
 	red := cfg.redactedForPersist()
 	if got := red.Governor.WorkSource.Linear.APIKey; got != "${LINEAR_API_KEY}" {
@@ -120,6 +124,18 @@ func TestRedactedForPersist_WorkSourceCredentials(t *testing.T) {
 	}
 	if got := red.Governor.WorkSource.Jira.APIToken; got != "${JIRA_API_TOKEN}" {
 		t.Errorf("jira.api_token persisted as %q, want ${JIRA_API_TOKEN}", got)
+	}
+	if got := red.Governor.WorkSource.Jira.Password; got != "${JIRA_DATACENTER_PASSWORD}" {
+		t.Errorf("jira.password persisted as %q, want ${JIRA_DATACENTER_PASSWORD}", got)
+	}
+	if got := red.Governor.WorkSource.Jira.CABundle; got != "${JIRA_DATACENTER_CA_BUNDLE}" {
+		t.Errorf("jira.ca_bundle persisted as %q, want ${JIRA_DATACENTER_CA_BUNDLE}", got)
+	}
+	if got := red.Governor.WorkSource.Jira.ClientCert; got != "${JIRA_DATACENTER_CLIENT_CERT}" {
+		t.Errorf("jira.client_cert persisted as %q, want ${JIRA_DATACENTER_CLIENT_CERT}", got)
+	}
+	if got := red.Governor.WorkSource.Jira.ClientKey; got != "${JIRA_DATACENTER_CLIENT_KEY}" {
+		t.Errorf("jira.client_key persisted as %q, want ${JIRA_DATACENTER_CLIENT_KEY}", got)
 	}
 	if !strings.HasPrefix(cfg.Governor.WorkSource.Linear.APIKey, "${") {
 		t.Errorf("redactedForPersist mutated the live config: %q", cfg.Governor.WorkSource.Linear.APIKey)
@@ -140,6 +156,10 @@ func TestRedactedForPersist_WorkSourceRefSurvivesEnvSubstrings(t *testing.T) {
 	cfg.Governor.WorkSource.Type = "linear"
 	cfg.Governor.WorkSource.Linear.APIKey = "${LINEAR_API_KEY}"
 	cfg.Governor.WorkSource.Jira.APIToken = "${JIRA_API_TOKEN}"
+	cfg.Governor.WorkSource.Jira.Password = "${JIRA_DATACENTER_PASSWORD}"
+	cfg.Governor.WorkSource.Jira.CABundle = "${JIRA_DATACENTER_CA_BUNDLE}"
+	cfg.Governor.WorkSource.Jira.ClientCert = "${JIRA_DATACENTER_CLIENT_CERT}"
+	cfg.Governor.WorkSource.Jira.ClientKey = "${JIRA_DATACENTER_CLIENT_KEY}"
 
 	red := cfg.redactedForPersist()
 	if got := red.Governor.WorkSource.Linear.APIKey; got != "${LINEAR_API_KEY}" {
@@ -147,5 +167,17 @@ func TestRedactedForPersist_WorkSourceRefSurvivesEnvSubstrings(t *testing.T) {
 	}
 	if got := red.Governor.WorkSource.Jira.APIToken; got != "${JIRA_API_TOKEN}" {
 		t.Errorf("jira.api_token persisted as %q, want ${JIRA_API_TOKEN} untouched", got)
+	}
+	if got := red.Governor.WorkSource.Jira.Password; got != "${JIRA_DATACENTER_PASSWORD}" {
+		t.Errorf("jira.password persisted as %q, want ${JIRA_DATACENTER_PASSWORD} untouched", got)
+	}
+	if got := red.Governor.WorkSource.Jira.CABundle; got != "${JIRA_DATACENTER_CA_BUNDLE}" {
+		t.Errorf("jira.ca_bundle persisted as %q, want ${JIRA_DATACENTER_CA_BUNDLE} untouched", got)
+	}
+	if got := red.Governor.WorkSource.Jira.ClientCert; got != "${JIRA_DATACENTER_CLIENT_CERT}" {
+		t.Errorf("jira.client_cert persisted as %q, want ${JIRA_DATACENTER_CLIENT_CERT} untouched", got)
+	}
+	if got := red.Governor.WorkSource.Jira.ClientKey; got != "${JIRA_DATACENTER_CLIENT_KEY}" {
+		t.Errorf("jira.client_key persisted as %q, want ${JIRA_DATACENTER_CLIENT_KEY} untouched", got)
 	}
 }
