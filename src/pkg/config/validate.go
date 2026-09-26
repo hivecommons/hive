@@ -24,6 +24,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if opts.RequireAgents && len(c.Agents) == 0 {
 		return fmt.Errorf("at least one agent must be configured")
 	}
+	if err := ValidateWritingGuide(c.Project.WritingGuide); err != nil {
+		return err
+	}
 	// Deliberately a bare zero-test, NOT HasApp(): PlaceholderAppID exists
 	// precisely so a hive awaiting its real App can satisfy this check and boot
 	// into dashboard-only mode. Everywhere else, use HasApp().

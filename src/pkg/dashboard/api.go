@@ -1284,6 +1284,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"hive_id":               cfg.HiveID,
 		"github_base_url":       githubBaseURL,
 		"dashboard_issue_bands": cfg.Dashboard.IssueBands,
+		"writing_guide":         cfg.Project.WritingGuide,
 	}
 	// The active project.issue_filter, read-only: which issues agents may
 	// initiate work on, by label. Omitted entirely when no filter is

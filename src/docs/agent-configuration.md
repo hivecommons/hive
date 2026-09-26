@@ -755,7 +755,9 @@ Portable agents bundle everything — config plus a `promptTemplate` — in a si
 
 ### Writing guide: how issues and PRs should read (`project.writing_guide`)
 
-Every default template that files an issue or PR carries the variable `${WRITING_GUIDE}` immediately before the body template it tells the agent to fill in (`--body "## Finding …"`, `--body "## Test Improvement …"`). It expands to the text of `project.writing_guide`, wrapped in a short header that says who set it and that it governs how the body *reads*, not what the policy requires it to contain. It is **empty by default**, and an empty guide renders nothing — a hive that never sets it gets byte-identical prompts.
+Every default template that files an issue or PR carries the variable `${WRITING_GUIDE}` immediately before the body template it tells the agent to fill in (`--body "## Finding …"`, `--body "## Test Improvement …"`). It expands to the text of `project.writing_guide`, wrapped in a short header that says who set it and that it governs how the body or review comment *reads*, not what the policy requires it to contain. It is **empty by default**, and an empty guide renders nothing — a hive that never sets it gets byte-identical prompts.
+
+Owners can edit the same value from the dashboard at **Settings → Labels → Writing guide**. The editor writes `project.writing_guide` through the same config-save path as the required-labels policy, so the change takes effect on the next kick, survives restart, and appears in the downloaded `hive.yaml`.
 
 ```yaml
 project:
@@ -769,7 +771,7 @@ project:
 
 Why a setting and not `AGENTS.md` ([#7667](https://github.com/hivecommons/hive/issues/7667)): a style rule in a repo's `AGENTS.md` reaches the agent as background knowledge, lower in the prompt than the policy's own body template, and when the two disagree the agent follows the template. The variable puts the owner's rule *next to* the template, which is the only position that changed anything when tried. The alternative — editing each template in the prompt editor — saves a full copy of that policy to `/data/policies/` that then shadows every upstream update to it, per agent, for a style preference.
 
-Where you will see it: the agent's Prompt Template tab renders the guide where the kick will place it, so you can confirm the setting took. Templates whose prompts are built in Go rather than from a policy file do not all carry the variable: the **review swarm** still does not. The **contributor relay's task prompt** does, since [#8124](https://github.com/hivecommons/hive/issues/8124) — it is built in Go, so it takes the rendered guide as a parameter rather than expanding `${WRITING_GUIDE}`, and places it immediately before the instruction that tells the agent to open the PR. The guide travels with the *assigning* hive, so a relay subscribed to two hives gets each hive's guide on that hive's tasks; see [`contributor-relay.md`](contributor-relay.md#the-assigning-hives-writing-guide-travels-with-the-task). Review comments (`reviewer-queue.md`) are deliberately outside it: the guide is about issue and PR bodies.
+Where you will see it: the agent's Prompt Template tab renders the guide where the kick will place it, so you can confirm the setting took. Prompts built in Go take the rendered guide as a parameter rather than expanding `${WRITING_GUIDE}` themselves. That includes the **contributor relay's task prompt**, since [#8124](https://github.com/hivecommons/hive/issues/8124), immediately before the instruction that tells the agent to open the PR. The guide travels with the *assigning* hive, so a relay subscribed to two hives gets each hive's guide on that hive's tasks; see [`contributor-relay.md`](contributor-relay.md#the-assigning-hives-writing-guide-travels-with-the-task). The **review swarm** also carries it in review prompts, so posted review comments use the same editorial voice as issue and PR bodies.
 
 ## Label policy: which issues agents may work
 

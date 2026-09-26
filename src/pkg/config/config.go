@@ -772,36 +772,46 @@ type ProjectConfig struct {
 	// repo name. project.repos remains the watched-repo identity list; this
 	// sidecar list lets existing string-list configs keep round-tripping.
 	RepoPolicies []RepoPolicy `yaml:"repo_policies,omitempty" json:"repo_policies,omitempty"`
-	// WritingGuide is the hive owner's instruction for how the issues and PRs
-	// its agents file should READ — length, structure, register — as free
-	// text (hivecommons/hive#7667). It is rendered into every default policy
-	// template that files an issue or PR, as ${WRITING_GUIDE}, immediately
-	// before the body template the agent is told to fill in. That position is
-	// the point: a style rule in AGENTS.md arrives as background knowledge and
-	// loses to the template that sits in the prompt, so the rule has to sit
-	// next to the template.
+	// WritingGuide is the hive owner's instruction for how the issues, PRs and
+	// reviews its agents write should READ — length, structure, register — as
+	// free text (hivecommons/hive#7667). It is rendered into every default
+	// policy template that files an issue or PR, as ${WRITING_GUIDE},
+	// immediately before the body template the agent is told to fill in. That
+	// position is the point: a style rule in AGENTS.md arrives as background
+	// knowledge and loses to the template that sits in the prompt, so the rule
+	// has to sit next to the template. Review prompts built in Go receive the
+	// same rendered section.
 	//
 	// Empty (the default) renders nothing, so a hive that never sets it gets
 	// byte-identical prompts. See WritingGuideSection.
 	WritingGuide string `yaml:"writing_guide,omitempty"`
 }
 
+const MaxWritingGuideBytes = 64 * 1024
+
+func ValidateWritingGuide(v string) error {
+	if len([]byte(v)) > MaxWritingGuideBytes {
+		return fmt.Errorf("project.writing_guide is %d bytes, over the %d byte limit", len([]byte(v)), MaxWritingGuideBytes)
+	}
+	return nil
+}
+
 // WritingGuideSection renders project.writing_guide as the prompt paragraph
 // ${WRITING_GUIDE} expands to, or "" when no guide is set (hivecommons/hive#7667).
 //
 // The header names the guide's authority (the hive owner), its scope (every
-// issue and PR body the agent writes in this session — the variable appears
-// once per template, ahead of the first body template, and the later ones in
-// the same policy are covered by this sentence) and its limit: it governs how
-// the body reads, never what the policy requires it to contain. The quality
-// policy demands evidence and a guide may ask for evidence under a fold; the
-// limit is what keeps those from reading as a contradiction.
+// issue body, PR body and review comment the agent writes in this session —
+// the variable appears once per template, ahead of the first body template, and
+// the later ones in the same policy are covered by this sentence) and its
+// limit: it governs how the body reads, never what the policy requires it to
+// contain. The quality policy demands evidence and a guide may ask for evidence
+// under a fold; the limit is what keeps those from reading as a contradiction.
 func (p *ProjectConfig) WritingGuideSection() string {
 	guide := strings.TrimSpace(p.WritingGuide)
 	if guide == "" {
 		return ""
 	}
-	return "WRITING GUIDE (set by this hive's owner in project.writing_guide). Every issue body and PR body you write in this session MUST follow it. " +
+	return "WRITING GUIDE (set by this hive's owner in project.writing_guide). Every issue body, PR body and review comment you write in this session MUST follow it. " +
 		"It governs how the body reads — length, structure, wording — not what it contains: keep every section, field and piece of evidence the template below asks for, and apply the guide to how you write them.\n\n" +
 		guide + "\n"
 }

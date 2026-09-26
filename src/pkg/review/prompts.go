@@ -162,6 +162,8 @@ type PromptOptions struct {
 	// name a problem and then leave the author to guess at the fix the
 	// reviewer already had in mind.
 	ProposeFixesOnly bool
+	// WritingGuideSection is config.ProjectConfig.WritingGuideSection().
+	WritingGuideSection string
 }
 
 // BuildPerspectivePromptWith is BuildPerspectivePromptOpts with the full set
@@ -191,6 +193,7 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 	if p == PerspectivePlanMatch {
 		b.WriteString(planMatchSection(pr))
 	}
+	writeReviewWritingGuide(&b, opts)
 	b.WriteString("\nReturn exactly one JSON object: the standard outputschema AgentReport fields plus perspective, verdict, repo, number, and head_sha.\n")
 	b.WriteString("Required AgentReport fields: lane, kind, findings, prs_opened, beads_filed, summary. Set kind to \"review\" and lane to \"review-swarm\". Use [] for empty arrays.\n")
 	b.WriteString(findingSchemaInstruction)
@@ -390,6 +393,7 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	if hasPerspective(perspectives, PerspectivePlanMatch) {
 		b.WriteString(planMatchSection(pr))
 	}
+	writeReviewWritingGuide(&b, opts)
 	b.WriteString("Return exactly one JSON ARRAY containing one object per perspective — all ")
 	fmt.Fprintf(&b, "%d of them, even the ones that found nothing.\n", len(perspectives))
 	b.WriteString("Each object: the standard outputschema AgentReport fields plus perspective, verdict, repo, number, and head_sha.\n")
@@ -403,6 +407,21 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	}
 	b.WriteString(buildProposeOnlyInstruction(pr, opts))
 	return b.String()
+}
+
+func writeReviewWritingGuide(b *strings.Builder, opts PromptOptions) {
+	guide := strings.TrimSpace(opts.WritingGuideSection)
+	if guide == "" {
+		return
+	}
+	b.WriteString(guide)
+	if !strings.HasSuffix(guide, "\n\n") {
+		if strings.HasSuffix(guide, "\n") {
+			b.WriteString("\n")
+		} else {
+			b.WriteString("\n\n")
+		}
+	}
 }
 
 // buildCombinedPublishInstruction is the publish half for a combined review.

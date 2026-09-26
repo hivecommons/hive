@@ -92,6 +92,9 @@ type DispatchOptions struct {
 	// PostComments carries config.ReviewConfig.PostComments into the prompt
 	// builder, so reviewers are told to publish their verdict on the PR.
 	PostComments bool
+	// WritingGuideSection carries project.writing_guide into review-swarm
+	// prompt builders, matching template-based issue/PR filing kicks.
+	WritingGuideSection string
 	// AllAuthors lifts the agent-authored restriction so every open PR is
 	// eligible for review, whoever opened it.
 	AllAuthors bool
@@ -354,6 +357,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				Revise:                revisiting,
 				Perspectives:          opts.Perspectives,
 				ProposeFixesOnly:      !fixPushAllowed(pr, opts),
+				WritingGuideSection:   opts.WritingGuideSection,
 			})
 			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: missing[0], Perspectives: missing, AuthorAgent: pr.AuthorAgent})
 			for _, p := range missing {
@@ -401,6 +405,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				Revise:                revisiting,
 				Perspectives:          opts.Perspectives,
 				ProposeFixesOnly:      !fixPushAllowed(pr, opts),
+				WritingGuideSection:   opts.WritingGuideSection,
 			})
 			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, AuthorAgent: pr.AuthorAgent})
 			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, Agent: agent, AuthorAgent: pr.AuthorAgent, Dispatched: now})
