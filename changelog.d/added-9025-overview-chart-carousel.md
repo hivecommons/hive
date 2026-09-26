@@ -1,0 +1,1 @@
+- Added configurable Overview chart types, timed carousel rotation, transition styles, and browser-local persistence for dashboard band charts. (#9025)
