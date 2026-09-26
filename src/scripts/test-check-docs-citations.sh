@@ -24,6 +24,11 @@ cat > "${FIXTURE_SRC}/pkg/widget/routes.go" <<'EOF'
 package widget
 
 func one() {}
+
+func spacerA() {}
+func spacerB() {}
+func spacerC() {}
+
 func two() {}
 func three() {}
 EOF
@@ -72,6 +77,35 @@ else
   printf '%s\n' "$output" | sed 's/^/      | /'
 fi
 rm -f "${DOCS}/missing.md"
+
+cat > "${DOCS}/bad-anchor.md" <<'EOF'
+# Bad anchor
+
+This helper moved away from `pkg/widget/routes.go:2`, where `two()` should appear.
+EOF
+set +e
+output="$(python3 "$CHECKER" "$DOCS" 2>&1)"
+rc=$?
+set -e
+if [ "$rc" -ne 0 ] && printf '%s\n' "$output" | grep -qF 'lacks anchor(s) near cited range: two()'; then
+  pass "stale symbol anchor is reported"
+else
+  bad "expected stale-anchor failure"
+  printf '%s\n' "$output" | sed 's/^/      | /'
+fi
+rm -f "${DOCS}/bad-anchor.md"
+
+cat > "${DOCS}/good-anchor.md" <<'EOF'
+# Good anchor
+
+This helper is cited at `pkg/widget/routes.go:8`, where `two()` appears.
+EOF
+if python3 "$CHECKER" "$DOCS" >/dev/null 2>&1; then
+  pass "matching symbol anchor passes"
+else
+  bad "matching symbol anchor should pass"
+fi
+rm -f "${DOCS}/good-anchor.md"
 
 cat > "${DOCS}/fenced.md" <<'EOF'
 # Fenced

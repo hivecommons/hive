@@ -29,19 +29,21 @@ ones to:
 
 1. **A truncated list must say it is truncated.** Every kick list that is cut
    ends with an explicit "… and N more" line
-   (`prListOverflowLine`, `src/pkg/scheduler/scheduler.go:921`). A silent slice
+   (`prListOverflowLine`, `src/pkg/scheduler/scheduler.go:850-853`). A silent slice
    reads to the agent as "this is the complete list".
-2. **Truncation must drop the least important tail, not an arbitrary one.**
+2. **Truncation must preserve the prioritization signal, not cut an arbitrary slice.**
    This holds today and is easy to assume backwards:
    - Issues are sorted **oldest first** before any cap is applied
-     (`src/pkg/github/client.go:759-761`, descending `AgeMinutes`).
+     (`src/pkg/github/client.go:2843-2846`, descending `AgeMinutes`).
    - PRs are sorted by **review class then oldest-first within class**
      (`SortPullRequestsForReview`, `src/pkg/github/review_priority.go:181`;
      fixes → refactors/docs → tests).
 
-   So a cap drops the *newest, lowest-priority* tail, and those items return on
-   later kicks as the list drains. Lowering a cap does not hide the most urgent
-   work.
+   Render caps then fair-share membership across repos while preserving that
+   ordering within the selected items (`fairShareByRepo`,
+   `src/pkg/scheduler/scheduler.go:857-882`). Lowering a cap does not hide one
+   repo's work just because another repo sorted first, and omitted items return
+   on later kicks as the list drains.
 
 ## What is bounded and what is not
 
@@ -50,8 +52,8 @@ enumeration-side.**
 
 Enumeration is deliberately complete. `fetchIssues` and `fetchPRs` page through
 every open item in every watched repo with no page ceiling
-(`src/pkg/github/client.go:811-824` and `898-911`, `PerPage: 100` looping until
-`resp.NextPage == 0`). The governor therefore always sees true queue depth —
+(`src/pkg/github/client.go:983-1001` and `src/pkg/github/client.go:1160-1178`,
+`PerPage: 100` looping until `resp.NextPage == 0`). The governor therefore always sees true queue depth —
 which is what makes `governor-thresholds.md` scaling meaningful — and the caps
 below only decide how much of that is *rendered into a kick prompt*.
 
@@ -72,7 +74,7 @@ A kick is **typed into a terminal**, so prompt size converts directly into
 delivery *time*. The measured worst case before the PR cap existed: a spoke with
 302 open PRs produced a **69.5 KiB** kick (~36 KiB of it the PR list), against
 the budget documented in
-`src/pkg/dashboard/prompt_history.go:47-80` (the figure is stated at line 65) — **~25 KiB worst case, ~8 KiB
+`src/pkg/dashboard/prompt_history.go:26-59` (the figure is stated at line 44) — **~25 KiB worst case, ~8 KiB
 typical**. Delivery of that prompt took ~3 minutes, and a long delivery window is
 what made the restart-during-delivery loop of
 [#7363](https://github.com/hivecommons/hive/issues/7363) reachable in practice.
@@ -87,19 +89,19 @@ operator can change it without rebuilding.
 
 | Cap | Where | Default | Tunable | Behaviour when exceeded |
 | --- | --- | --- | --- | --- |
-| Issue list per kick | `governor.kick_limits.max_issues` → `Scheduler.issueCap()`, `src/pkg/scheduler/scheduler.go:901-906` | 100 | **Yes** (`hive.yaml`, or Settings → Repos) | Truncate oldest-first; list is cut silently in `formatIssueListWithPolicy` (`scheduler.go:537`) and with an explicit note in the scanner/work lists |
-| PR list per kick (actionable, stale drafts, merge-eligible, CI-failing, repair queue) | `governor.kick_limits.max_prs` → `Scheduler.prCap()`, `src/pkg/scheduler/scheduler.go:911-916` | 50 | **Yes** (same block/UI) | Truncate in review-priority order + "… and N more open PRs not listed (cap N per kick; they return on later kicks as this list drains)" |
-| Ceiling on either cap | `config.MaxKickListCap`, `src/pkg/config/kick_limits.go:31-32` | 500 | No | A configured value above 500 is **pinned to 500**, not rejected — so a bad `hive.yaml` degrades to a safe cap instead of failing startup (`clampKickListCap`, `kick_limits.go:53-67`). An absent key or a negative value means "use the default"; an explicit `0` is the operator's opt-out of capping (`KickListUnlimited`, `kick_limits.go:41`) — the render path then lists every item (`scheduler.go:946`) |
-| Held-PR snapshot, per repo | `maxHeldPRsPerRepoPerKick`, `src/pkg/scheduler/scheduler.go:1551` | 100 | **No** (hardcoded) | **Fails closed, by design**: the overflowing repo gets "STAND DOWN for `<repo>` this kick". Scoped per repo since [#7391](https://github.com/hivecommons/hive/pull/7391) so one crowded repo no longer blanks the snapshot for the other 15 |
-| Red-PR fix-before-new detail | `redPRFixMaxDetailed`, `src/pkg/scheduler/scheduler.go:1285` | 5 | **No** (hardcoded) | Degrade to summary: "… and N more (full list: `<path>`)" |
-| Review-thread fix-before-new detail | same constant, used at `src/pkg/scheduler/scheduler.go:1508-1510` | 5 | **No** (hardcoded) | Degrade to summary: "… and N more PRs (full list: `<path>`)" |
-| CI-evidence excerpt per PR | `redPRFixExcerptRunes`, `src/pkg/scheduler/scheduler.go:1286` | 400 runes | **No** | Truncate with "…" |
-| Skill text injected per kick | `maxSkillsInjectionBytes`, `src/pkg/scheduler/scheduler.go:2264` | 8192 B | **No** | Shed load: skills are **dropped whole**, never truncated mid-body, and the drop is logged |
-| Issues primed into `AGENTS.md` context | `maxIssuesToPrime`, `src/pkg/scheduler/scheduler.go:2157` | 5 | **No** | Truncate |
-| Auto-merge sweep merges per pass | `DefaultAutoMergeSweepMaxMerges`, `src/pkg/github/automerge_sweep.go:18` | 3 | **Yes** (`auto_merge.max_merges`) | Shed load: remaining merges wait for the next pass |
+| Issue list per kick | `governor.kick_limits.max_issues` → `Scheduler.issueCap()`, `src/pkg/scheduler/scheduler.go:833-839` | 100 | **Yes** (`hive.yaml`, or Settings → Repos) | Fair-share across repos while preserving oldest-first order; list is cut silently in `formatIssueListWithPolicy` (`scheduler.go:443`) and with an explicit note in the scanner/work lists |
+| PR list per kick (actionable, stale drafts, merge-eligible, CI-failing, repair queue) | `governor.kick_limits.max_prs` → `Scheduler.prCap()`, `src/pkg/scheduler/scheduler.go:843-849` | 50 | **Yes** (same block/UI) | Fair-share across repos while preserving review-priority order + "… and N more open PRs not listed (cap N per kick; they return on later kicks as this list drains)" |
+| Ceiling on either cap | `config.MaxKickListCap`, `src/pkg/config/kick_limits.go:18` | 500 | No | A configured value above 500 is **pinned to 500**, not rejected — so a bad `hive.yaml` degrades to a safe cap instead of failing startup (`clampKickListCap`, `kick_limits.go:39-51`). An absent key or a negative value means "use the default"; an explicit `0` is the operator's opt-out of capping (`KickListUnlimited`, `kick_limits.go:27`) — the render path then lists every item (`scheduler.go:874-878`) |
+| Held-PR snapshot, per repo | `maxHeldPRsPerRepoPerKick`, `src/pkg/scheduler/scheduler.go:1501` | 100 | **No** (hardcoded) | **Fails closed, by design**: the overflowing repo gets "STAND DOWN for `<repo>` this kick". Scoped per repo since [#7391](https://github.com/hivecommons/hive/pull/7391) so one crowded repo no longer blanks the snapshot for the other 15 |
+| Red-PR fix-before-new detail | `redPRFixMaxDetailed`, `src/pkg/scheduler/scheduler.go:1235` | 5 | **No** (hardcoded) | Degrade to summary: "… and N more (full list: `<path>`)" |
+| Review-thread fix-before-new detail | same constant, used at `src/pkg/scheduler/scheduler.go:1458-1460` | 5 | **No** (hardcoded) | Degrade to summary: "… and N more PRs (full list: `<path>`)" |
+| CI-evidence excerpt per PR | `redPRFixExcerptRunes`, `src/pkg/scheduler/scheduler.go:1236` | 400 runes | **No** | Truncate with "…" |
+| Skill text injected per kick | `maxSkillsInjectionBytes`, `src/pkg/scheduler/scheduler.go:2106` | 8192 B | **No** | Shed load: skills are **dropped whole**, never truncated mid-body, and the drop is logged |
+| Issues primed into `AGENTS.md` context | `maxIssuesToPrime`, `src/pkg/scheduler/scheduler.go:1999` | 5 | **No** | Truncate |
+| Auto-merge sweep merges per pass | `DefaultAutoMergeSweepMaxMerges`, `src/pkg/github/automerge/automerge_sweep.go:146` | 3 | **Yes** (`auto_merge.max_merges`) | Shed load: remaining merges wait for the next pass |
 | Task-list sweep closures per tick | `DefaultTaskListSweepMaxCloses`, `src/pkg/github/task_list_sweep.go:20` | 5 | Partly (`MaxCloses` option) | Shed load: remaining closures wait for the next tick |
 | Prompt-history on disk | `promptHistoryMaxSizeMB` × backups, `src/pkg/dashboard/prompt_history.go:80` | 96 MiB worst case | **No** | Shed oldest: rotate + gzip, oldest prompts age out first |
-| Issue/PR enumeration | `fetchIssues` / `fetchPRs`, `src/pkg/github/client.go:808`, `:895` | **no cap** | n/a | Pages to completion; cost grows with backlog |
+| Issue/PR enumeration | `fetchIssues` / `fetchPRs`, `src/pkg/github/client.go:983`, `src/pkg/github/client.go:1160` | **no cap** | n/a | Pages to completion; cost grows with backlog |
 
 ### The inconsistency this inventory exposes
 
