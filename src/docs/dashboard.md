@@ -21,6 +21,10 @@ via YAML tags.
 
 Dashboard UI changes should follow the shared [dashboard design system](dashboard-design-system.md), [dashboard glossary and sidebar IA](dashboard-glossary.md), and [ADR-0018](adr/0018-dashboard-design-tokens.md). The token layer is the theme contract for future user theme/background work and the migration path away from static inline styles; `go test ./pkg/dashboard/... -run StyleRatchet -v` ratchets inline styles and raw CSS values so the debt only goes down.
 
+## Reorder sections
+
+The main dashboard section order is browser-local and display-only. Use the `⠿` grip in each top-level section header to drag a section, or focus the grip and press Space, Up/Down, then Space/Enter to drop; Escape cancels the keyboard move. The order is saved in `localStorage` as `hive.dashboard.layout`, hidden sections keep their slots, the sidebar follows the saved order, and **Reset layout** restores the default v5 order without changing collapse state.
+
 ## Governor card
 
 The dashboard **Governor** card summarizes queue depth, operating mode, budget

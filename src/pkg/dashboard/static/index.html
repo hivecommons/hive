@@ -2777,6 +2777,13 @@
       gap: var(--sp-3); width: 100%;
     }
     .section-header-toggle:hover { opacity: 0.85; }
+    .dashboard-layout-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    .dashboard-grip { display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; width:1.55rem; height:1.55rem; border:1px solid transparent; border-radius:var(--r-sm); background:transparent; color:var(--muted); font:inherit; line-height:1; cursor:grab; touch-action:none; user-select:none; vertical-align:middle; margin-right:var(--sp-2); }
+    .dashboard-grip:hover, .dashboard-grip:focus-visible { color:var(--text); border-color:var(--border); background:var(--surface-2); outline:none; }
+    .dashboard-grip:active, .dashboard-grip[aria-pressed="true"] { cursor:grabbing; color:var(--text); background:var(--surface); }
+    .dashboard-section-ghost { position:fixed; z-index:12000; pointer-events:none; opacity:0.85; transform:translate3d(var(--dashboard-ghost-x),var(--dashboard-ghost-y),0); box-shadow:var(--shadow-elevated); max-height:40vh; overflow:hidden; }
+    .dashboard-drag-source { opacity:0.45; }
+    .dashboard-drop-indicator { height:3px; border-radius:var(--r-pill); background:var(--accent); margin:var(--sp-3) 0; box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
     .section-chevron {
       display: inline-block; font-size: 0.7em; transition: transform 200ms ease;
       color: var(--muted); flex-shrink: 0;
@@ -3526,8 +3533,8 @@
     <div style="padding:var(--sp-2) var(--sp-6) var(--sp-4);text-align:center">
       <span id="acmm-sidebar-badge" title="Click to change maturity level" style="cursor:pointer;display:inline-block;padding:3px 12px;border-radius:var(--r-pill);font-size:0.7rem;font-weight:700;background:color-mix(in srgb, var(--amber) 14%, transparent);border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);color:var(--amber);letter-spacing:0.5px" data-action="openACMMDialog"></span>
     </div>
-    <div class="oc-nav-group">
-      <div class="oc-nav-label">Overview</div>
+    <div class="oc-nav-group" id="dashboard-section-nav-group">
+      <div class="oc-nav-label">Dashboard</div>
       <a class="oc-nav-item" data-section="overview-section" data-action="ocNavigate" data-arg0="overview-section"><span class="oc-nav-emoji">🍩</span><span class="oc-nav-text">Overview</span></a>
       <a class="oc-nav-item active" data-section="governor" data-action="ocNavigate" data-arg0="governor"><span class="oc-nav-emoji">📊</span><span class="oc-nav-text">Governor</span></a>
     </div>
@@ -3632,6 +3639,7 @@
       <span class="oc-tb-link" data-action="ocNavigate" data-arg0="debug-section" title="System Diagnostics — health checks and troubleshooting" aria-label="System Diagnostics"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg></span>
       <!-- Agent Logs hidden (redundant with per-agent output) -->
       <button class="hv-btn btn-icon btn-sm layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
+      <button type="button" class="hv-btn btn-secondary btn-sm" id="dashboard-layout-reset" hidden data-action="resetDashboardLayout" title="Reset section order to the default layout">↕️ Reset layout</button>
     </div>
     <div class="oc-topbar-right">
       <span class="oc-health-badge" id="oc-health">● Health OK</span>
@@ -3680,6 +3688,7 @@
     <span class="git-version" id="hive-id-badge" title="Hive Instance ID" style="cursor:pointer;border:1px solid var(--border);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-sm)" data-action="openConfigDialog" data-arg0="governor"></span>
     <span class="git-version" id="acmm-badge" title="Click to change maturity level" style="cursor:pointer;border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);background:color-mix(in srgb, var(--amber) 14%, transparent);color:var(--amber);font-weight:600" data-action="openACMMDialog"></span>
     <button class="hv-btn btn-icon btn-sm layout-toggle" id="layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
+    <button type="button" class="hv-btn btn-secondary btn-sm" id="dashboard-layout-reset-main" hidden data-action="resetDashboardLayout" title="Reset section order to the default layout">↕️ Reset layout</button>
     <a href="/api/widget" class="hv-btn btn-secondary btn-sm widget-dl" title="Download Übersicht widget">⬇ Widget</a>
   </h1>
 
@@ -3694,6 +3703,7 @@
        operator is worse than saying nothing. Populated by
        renderReleaseStatus() from /api/version's releaseStatus object. -->
   <div id="release-status" class="release-status" hidden></div>
+  <div class="dashboard-layout-live" id="dashboard-layout-live" aria-live="polite" aria-atomic="true"></div>
 
   <div id="gh-app-install-banner" class="gh-app-install-banner" hidden>
     <span class="fs-2xl">&#9888;&#65039;</span>
@@ -3746,8 +3756,8 @@
   <div id="hub-banner" style="display:none"></div>
   <div id="planning-intro" style="display:none"></div>
   <div id="system-alerts-banner" style="display:none"></div>
-  <div class="repos" id="overview-section">
-    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="overview-section"><span class="section-chevron">▼</span> <span class="overview-header">Overview <button type="button" class="hv-btn config-gear btn-sm" data-action="toggleOverviewChartSettings" data-stop="1" title="Configure Overview chart types, carousel timing, and transitions" aria-haspopup="true" aria-expanded="false" aria-controls="overview-chart-settings">⚙️</button></span></h2>
+  <div class="repos" id="overview-section" data-dashboard-section="overview-section">
+    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="overview-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Overview section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> <span class="overview-header">Overview <button type="button" class="hv-btn config-gear btn-sm" data-action="toggleOverviewChartSettings" data-stop="1" title="Configure Overview chart types, carousel timing, and transitions" aria-haspopup="true" aria-expanded="false" aria-controls="overview-chart-settings">⚙️</button></span></h2>
     <div class="overview-settings-popover" id="overview-chart-settings" hidden></div>
     <div class="section-body">
       <div class="overview-card" id="overview-card"></div>
@@ -3756,8 +3766,8 @@
 
   <div class="governor" id="governor"></div>
 
-  <div id="advisory-section" style="margin-top: var(--sp-6); margin-bottom: var(--sp-8); display: none;">
-    <h2 class="section-label section-group-header section-header-toggle mb-4" data-action="toggleSection" data-arg0="advisory-section"><span class="section-chevron">▼</span> 🧭 Hive Advisory</h2>
+  <div id="advisory-section" data-dashboard-section="advisory-section" style="margin-top: var(--sp-6); margin-bottom: var(--sp-8); display: none;">
+    <h2 class="section-label section-group-header section-header-toggle mb-4" data-action="toggleSection" data-arg0="advisory-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Hive Advisory section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧭 Hive Advisory</h2>
     <div class="section-body section-group-body">
     <div class="mb-7" id="advisory-digest-section">
       <h2 class="section-label advisory-collapse-header section-header-toggle" style="margin-bottom: var(--sp-4); cursor: pointer; user-select: none;" data-action="toggleAdvisorySection" data-arg0="advisory-digest-main">
@@ -3798,12 +3808,12 @@
     </div>
   </div>
 
-  <div class="token-usage mb-8" id="token-panel"></div>
+  <div class="token-usage mb-8" id="token-panel" data-dashboard-section="token-panel"></div>
 
-  <div class="cost-usage mb-8" id="cost-panel"></div>
+  <div class="cost-usage mb-8" id="cost-panel" data-dashboard-section="cost-panel"></div>
 
-  <div class="repos" id="repos-section">
-    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><span class="section-chevron">▼</span> Repositories <span id="repos-host-badge" title="Every repo in this hive is on this single GitHub host" style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3)"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: automated fix attempts exhausted — operator review required"></span> <button class="hv-btn btn-secondary btn" id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1" title="Scan the monitored repositories for issue/PR changes now instead of waiting for the governor's next eval cycle (read-only — no agents are kicked; server-debounced)">🔄 Rescan</button> <button class="hv-btn btn-secondary btn" id="repos-reset-layout-btn" data-action="resetRepoCardWidths" data-stop="1" title="Reset every repository card to the default width, discarding the widths you dragged (this browser only)" style="display:none">↔️ Reset layout</button> <button class="hv-btn config-gear btn-sm" data-action="gh1" data-stop="1" title="Manage monitored repositories">⚙️</button></h2>
+  <div class="repos" id="repos-section" data-dashboard-section="repos-section">
+    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Repositories section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> Repositories <span id="repos-host-badge" title="Every repo in this hive is on this single GitHub host" style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3)"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: automated fix attempts exhausted — operator review required"></span> <button class="hv-btn btn-secondary btn" id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1" title="Scan the monitored repositories for issue/PR changes now instead of waiting for the governor's next eval cycle (read-only — no agents are kicked; server-debounced)">🔄 Rescan</button> <button class="hv-btn btn-secondary btn" id="repos-reset-layout-btn" data-action="resetRepoCardWidths" data-stop="1" title="Reset every repository card to the default width, discarding the widths you dragged (this browser only)" style="display:none">↔️ Reset layout</button> <button class="hv-btn config-gear btn-sm" data-action="gh1" data-stop="1" title="Manage monitored repositories">⚙️</button></h2>
     <div class="section-body">
       <div id="repos-legend" class="repo-legend"></div>
       <!-- Read-only view of project.issue_filter: which issues agents may
@@ -3816,15 +3826,15 @@
     </div>
   </div>
 
-  <div class="mt-6 mb-8" id="beads-section">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="beads-section"><span class="section-chevron">▼</span> Beads</h2>
+  <div class="mt-6 mb-8" id="beads-section" data-dashboard-section="beads-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="beads-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Beads section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> Beads</h2>
     <div class="section-body">
       <div class="beads" id="beads"></div>
     </div>
   </div>
 
-  <div class="mt-6 mb-8" id="acmm-eval-section">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="acmm-eval-section"><span class="section-chevron">▼</span> 🎯 ACMM Evaluation <button class="hv-btn btn-secondary btn" data-action="openACMMDialog" data-stop="1" title="Click to change maturity level">Change level ▾</button> <button class="hv-btn btn-secondary btn" id="acmm-refresh-btn" data-action="acmmForceRefresh" data-stop="1" title="Re-run the criteria evaluation now instead of waiting out the hourly cache (server-debounced)">🔄 Re-evaluate</button></h2>
+  <div class="mt-6 mb-8" id="acmm-eval-section" data-dashboard-section="acmm-eval-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="acmm-eval-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move ACMM Evaluation section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🎯 ACMM Evaluation <button class="hv-btn btn-secondary btn" data-action="openACMMDialog" data-stop="1" title="Click to change maturity level">Change level ▾</button> <button class="hv-btn btn-secondary btn" id="acmm-refresh-btn" data-action="acmmForceRefresh" data-stop="1" title="Re-run the criteria evaluation now instead of waiting out the hourly cache (server-debounced)">🔄 Re-evaluate</button></h2>
     <div class="section-body">
       <div id="acmm-eval-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:var(--sp-6)">
         <div class="kb-stat-grid" id="acmm-eval-stats">
@@ -3861,8 +3871,8 @@
 
   <!-- Approvals desk (RFC #4000). Hidden until /api/approvals reports the desk
        enabled, so a hive that has not opted in sees no new chrome. -->
-  <div id="approvals-section" style="margin-top: var(--sp-6); margin-bottom: var(--sp-8); display: none;">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="approvals-section"><span class="section-chevron">▼</span> ✋ Approvals <span id="approvals-badge" title="Pending operator approvals" style="display:none;font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3);background:color-mix(in srgb, var(--yellow) 25%, transparent);color:var(--text)">0</span></h2>
+  <div id="approvals-section" data-dashboard-section="approvals-section" style="margin-top: var(--sp-6); margin-bottom: var(--sp-8); display: none;">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="approvals-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Approvals section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> ✋ Approvals <span id="approvals-badge" title="Pending operator approvals" style="display:none;font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3);background:color-mix(in srgb, var(--yellow) 25%, transparent);color:var(--text)">0</span></h2>
     <div class="section-body">
       <div id="approvals-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:var(--sp-6)">
         <!-- Policy-bug banner: an inbox accumulating on a full-autonomy hive is
@@ -3880,8 +3890,8 @@
     </div>
   </div>
 
-  <div id="platform-section" style="margin-top: var(--sp-6); margin-bottom: var(--sp-8); display: none;">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="platform-section"><span class="section-chevron">▼</span> 🧩 Platform</h2>
+  <div id="platform-section" data-dashboard-section="platform-section" style="margin-top: var(--sp-6); margin-bottom: var(--sp-8); display: none;">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="platform-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Platform section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧩 Platform</h2>
     <div class="section-body">
       <div id="platform-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:var(--sp-6)">
         <div class="kb-stat-grid" id="platform-stats"></div>
@@ -3894,8 +3904,8 @@
 
 
 
-  <div class="mt-6 mb-8" id="audit-section">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="audit-section"><span class="section-chevron">▼</span> 📋 Audit Log</h2>
+  <div class="mt-6 mb-8" id="audit-section" data-dashboard-section="audit-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="audit-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Audit Log section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📋 Audit Log</h2>
     <div class="section-body">
       <div class="audit-controls-row" style="margin-bottom:5px;padding:3px;display:flex;align-items:center;gap:var(--sp-4)">
         <div style="flex:1;position:relative">
@@ -3912,30 +3922,31 @@
     </div>
   </div>
 
-  <div id="nous-section" style="display:none; margin-top: var(--sp-6); margin-bottom: var(--sp-8);">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="nous-section"><span class="section-chevron">▼</span> 🧪 Strategy Lab <span id="nous-mode-badge" style="font-size:var(--fs-sm);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span> <button class="hv-btn btn-danger btn-sm" data-action="openNousConfig" data-stop="1" title="Strategy Lab Configuration">⚙️</button></h2>
+  <div id="nous-section" data-dashboard-section="nous-section" style="display:none; margin-top: var(--sp-6); margin-bottom: var(--sp-8);">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="nous-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Strategy Lab section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧪 Strategy Lab <span id="nous-mode-badge" style="font-size:var(--fs-sm);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span> <button class="hv-btn btn-danger btn-sm" data-action="openNousConfig" data-stop="1" title="Strategy Lab Configuration">⚙️</button></h2>
     <div class="section-body">
       <div id="nous-panel"></div>
       <div id="nous-config-overlay" class="nous-config-overlay" style="display:none"></div>
     </div>
   </div>
 
-  <div class="mt-6 mb-8" id="inception-section">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="inception-section"><span class="section-chevron">▼</span> 💡 Project Inception</h2>
+  <div class="mt-6 mb-8" id="inception-section" data-dashboard-section="inception-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="inception-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Project Inception section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 💡 Project Inception</h2>
     <div class="section-body">
       <div id="inception-panel" style="height:min(800px,70vh);overflow-y:auto;overflow-x:hidden;"></div>
     </div>
   </div>
 
-  <div class="mt-6 mb-8" id="knowledge-section">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="knowledge-section"><span class="section-chevron">▼</span> 📚 Knowledge Base <span id="kb-status-badge" style="font-size:0.7rem;padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span></h2>
+  <div class="mt-6 mb-8" id="knowledge-section" data-dashboard-section="knowledge-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="knowledge-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Knowledge Base section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📚 Knowledge Base <span id="kb-status-badge" style="font-size:0.7rem;padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span></h2>
     <div class="section-body">
       <div id="knowledge-panel"></div>
     </div>
   </div>
 
-  <div class="mt-6 mb-8" id="contributors-section">
+  <div class="mt-6 mb-8" id="contributors-section" data-dashboard-section="contributors-section">
     <div style="display:flex;align-items:center;gap:var(--sp-5);margin-bottom:var(--sp-5);flex-wrap:wrap" class="section-header-toggle" data-action="toggleSection" data-arg0="contributors-section">
+      <button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Contributors section" aria-pressed="false">⠿</button>
       <span class="section-chevron">▼</span>
       <h2 class="section-label m-0">👥 Contributors <span id="contributors-status-badge" style="font-size:0.7rem;padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span></h2>
       <a href="/contribute" target="_blank" data-action="gh3" style="font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-5);background:var(--green);color:var(--bg);border-radius:var(--r);text-decoration:none;font-weight:600">Share /contribute link &rarr;</a>
@@ -3949,15 +3960,15 @@
 
   </div>
 
-  <div class="mt-6 mb-8" id="debug-section">
-    <h2 class="section-label section-header-toggle mb-5" data-action="toggleSection" data-arg0="debug-section"><span class="section-chevron">▼</span> 🔍 System Diagnostics</h2>
+  <div class="mt-6 mb-8" id="debug-section" data-dashboard-section="debug-section">
+    <h2 class="section-label section-header-toggle mb-5" data-action="toggleSection" data-arg0="debug-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move System Diagnostics section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🔍 System Diagnostics</h2>
     <div class="section-body">
       <div id="debug-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--sp-5);"></div>
     </div>
   </div>
 
-  <div id="logs-section" style="display: none; margin-top: var(--sp-6); margin-bottom: var(--sp-8);">
-    <h2 class="section-label section-header-toggle mb-5" data-action="toggleSection" data-arg0="logs-section"><span class="section-chevron">▼</span> 📋 Agent Logs</h2>
+  <div id="logs-section" data-dashboard-section="logs-section" style="display: none; margin-top: var(--sp-6); margin-bottom: var(--sp-8);">
+    <h2 class="section-label section-header-toggle mb-5" data-action="toggleSection" data-arg0="logs-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Agent Logs section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📋 Agent Logs</h2>
     <div class="section-body">
       <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
         <select id="logs-agent-select" style="padding: var(--sp-3) var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); font-size: var(--fs-base); background: var(--surface); color: var(--text); cursor: pointer;" title="Filter logs to a specific agent or view all agents combined">
@@ -3973,9 +3984,9 @@
 
   <div id="oc-gov-strip-outer" class="oc-gov-strip"></div>
   <div id="oc-agent-detail" class="oc-agent-detail"></div>
-  <div id="agents-section">
+  <div id="agents-section" data-dashboard-section="agents-section">
     <div style="display:flex;align-items:center;gap:var(--sp-4);margin-bottom:var(--sp-4)">
-      <h2 style="margin:var(--sp-0); cursor:pointer" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="agents-section"><span class="section-chevron">▼</span> Agents</h2>
+      <button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Agents section" aria-pressed="false">⠿</button><h2 style="margin:var(--sp-0); cursor:pointer" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="agents-section"><span class="section-chevron">▼</span> Agents</h2>
       <button class="hv-btn btn-danger btn-sm" id="agents-compact-all-btn" data-action="toggleAllAgentsCompact" data-stop="1" title="Toggle all agent cards between compact and expanded view"></button>
     </div>
     <div class="section-body">
@@ -3986,8 +3997,8 @@
   <!-- FAQ — intentionally NOT ACMM-gated (no entry in applyACMMVisibility's
        sidebarItems list and no display:none default), because the audience for
        it is a confused L1/L2 user. Static content only: no JS, no fetch. -->
-  <div class="mt-6 mb-8" id="faq-section">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="faq-section"><span class="section-chevron">▼</span> ❓ FAQ</h2>
+  <div class="mt-6 mb-8" id="faq-section" data-dashboard-section="faq-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="faq-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move FAQ section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> ❓ FAQ</h2>
     <div class="section-body">
       <div id="faq-panel" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:var(--sp-6);font-size:0.85rem;line-height:1.6;max-width:900px">
 
@@ -4419,6 +4430,46 @@
       applySectionBodyCollapse(body, collapsed, false);
       if (chevron) chevron.classList.toggle('collapsed', collapsed);
     }
+    // ── Dashboard section layout: drag/keyboard reorder, persisted per viewer ──
+    // Keyed by stable top-level section ids. Saved shape: {v:1,main:[...]}; unknown
+    // ids are dropped and newly added sections are appended in template order.
+    var DASHBOARD_LAYOUT_KEY='hive.dashboard.layout';
+    var DASHBOARD_LAYOUT_VERSION=1;
+    var DASHBOARD_LAYOUT_REGIONS=['main'];
+    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','platform-section','audit-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']};
+    var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
+    var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
+    var dashboardDragState=null;
+    var dashboardKeyboardSnapshot=null;
+    function dashboardEnsureSections(){DASHBOARD_LAYOUT_TEMPLATE.main.forEach(function(id){var el=document.getElementById(id);if(el&&!el.getAttribute('data-dashboard-section'))el.setAttribute('data-dashboard-section',id);});}
+    function dashboardRegionEl(name){return document.getElementById('hive-dashboard-root');}
+    function dashboardCardEl(id){return document.querySelector('[data-dashboard-section="'+id+'"]');}
+    function dashboardLayoutAnnounce(msg){var live=document.getElementById('dashboard-layout-live');if(live)live.textContent=msg;}
+    function dashboardLayoutCardName(card){var h=card&&card.querySelector('.gov-title,.token-title,.cost-title,.section-header-toggle h2,.section-header-toggle,.section-label');if(h){var clone=h.cloneNode(true);Array.prototype.forEach.call(clone.querySelectorAll('button'),function(b){b.remove();});var txt=clone.textContent.trim();if(txt)return txt.replace(/^▼\s*/,'');}return card?card.getAttribute('data-dashboard-section'):'section';}
+    function dashboardLayoutAllIds(){return DASHBOARD_LAYOUT_TEMPLATE.main.slice();}
+    function dashboardLayoutRead(){try{var raw=localStorage.getItem(DASHBOARD_LAYOUT_KEY);return raw?JSON.parse(raw):null;}catch(e){return null;}}
+    function dashboardLayoutCurrent(){var out={v:DASHBOARD_LAYOUT_VERSION,main:[]};var region=dashboardRegionEl('main');if(!region)return out;Array.prototype.forEach.call(region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR),function(card){var id=card.getAttribute('data-dashboard-section');if(id)out.main.push(id);});return out;}
+    function dashboardLayoutNormalize(saved){var valid=dashboardLayoutAllIds(),seen={},out={v:DASHBOARD_LAYOUT_VERSION,main:[]};var arr=saved&&Array.isArray(saved.main)?saved.main:[];arr.forEach(function(id){if(valid.indexOf(id)<0||seen[id])return;seen[id]=true;out.main.push(id);});DASHBOARD_LAYOUT_TEMPLATE.main.forEach(function(id){if(!seen[id]){seen[id]=true;out.main.push(id);}});return out;}
+    function dashboardLayoutEquals(a,b){a=dashboardLayoutNormalize(a);b=dashboardLayoutNormalize(b);if(a.main.length!==b.main.length)return false;for(var i=0;i<a.main.length;i++){if(a.main[i]!==b.main[i])return false;}return true;}
+    function dashboardUpdateResetButton(){var show=!dashboardLayoutEquals(dashboardLayoutCurrent(),dashboardLayoutNormalize(null));['dashboard-layout-reset','dashboard-layout-reset-main'].forEach(function(id){var b=document.getElementById(id);if(b)b.hidden=!show;});}
+    function dashboardLayoutWrite(){try{localStorage.setItem(DASHBOARD_LAYOUT_KEY,JSON.stringify(dashboardLayoutCurrent()));}catch(e){}dashboardUpdateResetButton();dashboardSortSidebar();}
+    function dashboardFirstSection(region){return region?region.querySelector(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR):null;}
+    function dashboardInsertSection(region,card,before){if(!region||!card)return;if(before)region.insertBefore(card,before);else{var sections=region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR);var last=sections.length?sections[sections.length-1]:null;if(last&&last!==card)last.insertAdjacentElement('afterend',card);else region.appendChild(card);}}
+    function dashboardApplyLayout(layout){var region=dashboardRegionEl('main');if(!region)return;var ids=(layout&&layout.main)||[];for(var i=ids.length-1;i>=0;i--){var card=dashboardCardEl(ids[i]);if(card)region.insertBefore(card,dashboardFirstSection(region));}dashboardUpdateResetButton();dashboardSortSidebar();}
+    function dashboardSortSidebar(){var order=dashboardLayoutNormalize(dashboardLayoutCurrent()).main,rank={};order.forEach(function(id,i){rank[id]=i;});var items=Array.prototype.slice.call(document.querySelectorAll('.oc-nav-item[data-section]')).filter(function(item){return rank[item.getAttribute('data-section')]!==undefined;});items.sort(function(a,b){return rank[a.getAttribute('data-section')]-rank[b.getAttribute('data-section')];});var home=document.getElementById('dashboard-section-nav-group')||(items.length&&items[0].closest('.oc-nav-group'));if(!home)return;items.forEach(function(item){home.appendChild(item);});Array.prototype.forEach.call(document.querySelectorAll('.oc-nav-group'),function(group){if(group===home){group.hidden=false;return;}group.hidden=group.querySelectorAll('.oc-nav-item').length===0;});}
+    function resetDashboardLayout(){try{localStorage.removeItem(DASHBOARD_LAYOUT_KEY);}catch(e){}dashboardApplyLayout(dashboardLayoutNormalize(null));dashboardLayoutAnnounce('Dashboard section layout reset to the default order.');}
+    function dashboardLayoutSlot(region,x,y,skip){var cards=Array.prototype.filter.call(region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR),function(c){return c!==skip;});if(!cards.length)return {region:region,before:null};var best=null,bestDist=Infinity;cards.forEach(function(card){var rect=card.getBoundingClientRect(),before=y<(rect.top+rect.height/2),anchor=before?rect.top:rect.bottom,dist=Math.abs(y-anchor)+Math.abs(x-(rect.left+rect.width/2));if(dist<bestDist){bestDist=dist;best={region:region,before:before?card:card.nextElementSibling};}});return best||{region:region,before:null};}
+    function dashboardNearestRegion(x,y){return dashboardRegionEl('main');}
+    function dashboardMoveIndicator(slot){var indicator=dashboardDragState&&dashboardDragState.indicator;if(!indicator||!slot||!slot.region)return;dashboardInsertSection(slot.region,indicator,slot.before);}
+    function dashboardClearIndicator(){if(dashboardDragState&&dashboardDragState.indicator&&dashboardDragState.indicator.parentElement)dashboardDragState.indicator.parentElement.removeChild(dashboardDragState.indicator);}
+    function dashboardStartDrag(ev,grip){if(ev.button!==undefined&&ev.button!==0)return;var card=grip.closest(DASHBOARD_LAYOUT_CARD_SELECTOR);if(!card)return;ev.preventDefault();var rect=card.getBoundingClientRect();var ghost=card.cloneNode(true);ghost.classList.add('dashboard-section-ghost');ghost.style.width=rect.width+'px';ghost.style.left='0';ghost.style.top='0';ghost.style.setProperty('--dashboard-ghost-x',rect.left+'px');ghost.style.setProperty('--dashboard-ghost-y',rect.top+'px');var indicator=document.createElement('div');indicator.className='dashboard-drop-indicator';card.classList.add('dashboard-drag-source');document.body.appendChild(ghost);dashboardDragState={card:card,grip:grip,ghost:ghost,indicator:indicator,dx:ev.clientX-rect.left,dy:ev.clientY-rect.top,slot:null};try{grip.setPointerCapture(ev.pointerId);}catch(e){}grip.setAttribute('aria-pressed','true');dashboardLayoutAnnounce('Moving '+dashboardLayoutCardName(card)+'.');dashboardDragMove(ev);}
+    function dashboardDragMove(ev){if(!dashboardDragState)return;var x=ev.clientX-dashboardDragState.dx,y=ev.clientY-dashboardDragState.dy;dashboardDragState.ghost.style.setProperty('--dashboard-ghost-x',x+'px');dashboardDragState.ghost.style.setProperty('--dashboard-ghost-y',y+'px');var region=dashboardNearestRegion(ev.clientX,ev.clientY),slot=dashboardLayoutSlot(region,ev.clientX,ev.clientY,dashboardDragState.card);dashboardDragState.slot=slot;dashboardMoveIndicator(slot);}
+    function dashboardEndDrag(save){if(!dashboardDragState)return;var st=dashboardDragState;dashboardClearIndicator();if(st.ghost&&st.ghost.parentElement)st.ghost.parentElement.removeChild(st.ghost);st.card.classList.remove('dashboard-drag-source');st.grip.setAttribute('aria-pressed','false');if(save&&st.slot&&st.slot.region){dashboardInsertSection(st.slot.region,st.card,st.slot.before);dashboardLayoutWrite();dashboardLayoutAnnounce(dashboardLayoutCardName(st.card)+' moved.');}else{dashboardLayoutAnnounce('Move cancelled.');}dashboardDragState=null;}
+    function dashboardRestoreSnapshot(){if(!dashboardKeyboardSnapshot)return;dashboardApplyLayout(dashboardKeyboardSnapshot);dashboardLayoutWrite();dashboardKeyboardSnapshot=dashboardLayoutCurrent();dashboardLayoutAnnounce('Keyboard reorder cancelled.');}
+    function dashboardMoveCardByKeyboard(card,key){var current=card.parentElement;if(key==='ArrowUp'){var prev=card.previousElementSibling;while(prev&&!prev.matches(DASHBOARD_LAYOUT_CARD_SELECTOR))prev=prev.previousElementSibling;if(prev)current.insertBefore(card,prev);}else if(key==='ArrowDown'){var next=card.nextElementSibling;while(next&&!next.matches(DASHBOARD_LAYOUT_CARD_SELECTOR))next=next.nextElementSibling;if(next)current.insertBefore(next,card);}dashboardLayoutWrite();dashboardLayoutAnnounce(dashboardLayoutCardName(card)+' moved.');}
+    function initDashboardSectionLayout(){dashboardEnsureSections();dashboardApplyLayout(dashboardLayoutNormalize(dashboardLayoutRead()));var root=dashboardRegionEl('main');if(!root)return;root.addEventListener('click',function(ev){var grip=ev.target.closest&&ev.target.closest(DASHBOARD_LAYOUT_GRIP_SELECTOR);if(grip){ev.preventDefault();ev.stopPropagation();}},true);root.addEventListener('pointerdown',function(ev){var grip=ev.target.closest&&ev.target.closest(DASHBOARD_LAYOUT_GRIP_SELECTOR);if(grip)dashboardStartDrag(ev,grip);});root.addEventListener('pointermove',function(ev){if(dashboardDragState){ev.preventDefault();dashboardDragMove(ev);}});root.addEventListener('pointerup',function(ev){if(dashboardDragState){ev.preventDefault();dashboardEndDrag(true);}});root.addEventListener('pointercancel',function(){dashboardEndDrag(false);});root.addEventListener('keydown',function(ev){var grip=ev.target.closest&&ev.target.closest(DASHBOARD_LAYOUT_GRIP_SELECTOR);if(!grip)return;var key=ev.key,card=grip.closest(DASHBOARD_LAYOUT_CARD_SELECTOR);if(!card)return;if(key===' '||key==='Enter'){ev.preventDefault();var active=grip.getAttribute('aria-pressed')==='true';if(active){dashboardKeyboardSnapshot=dashboardLayoutCurrent();grip.setAttribute('aria-pressed','false');dashboardLayoutAnnounce('Dropped '+dashboardLayoutCardName(card)+'.');}else{dashboardKeyboardSnapshot=dashboardLayoutCurrent();grip.setAttribute('aria-pressed','true');dashboardLayoutAnnounce('Picked up '+dashboardLayoutCardName(card)+'. Use arrow keys to move, Escape to cancel.');}return;}if(key==='Escape'){ev.preventDefault();dashboardRestoreSnapshot();grip.setAttribute('aria-pressed','false');return;}if(key==='ArrowUp'||key==='ArrowDown'){ev.preventDefault();if(!dashboardKeyboardSnapshot)dashboardKeyboardSnapshot=dashboardLayoutCurrent();grip.setAttribute('aria-pressed','true');dashboardMoveCardByKeyboard(card,key);}});root.addEventListener('focusin',function(ev){var grip=ev.target.closest&&ev.target.closest(DASHBOARD_LAYOUT_GRIP_SELECTOR);if(grip)dashboardKeyboardSnapshot=dashboardLayoutCurrent();});root.addEventListener('focusout',function(ev){var grip=ev.target.closest&&ev.target.closest(DASHBOARD_LAYOUT_GRIP_SELECTOR);if(grip){dashboardKeyboardSnapshot=null;grip.setAttribute('aria-pressed','false');}});dashboardUpdateResetButton();}
+    document.addEventListener('DOMContentLoaded', initDashboardSectionLayout);
+
     /** Check whether an agent card should be compact */
     function isAgentCompact(agentName) {
       if (localStorage.getItem(ALL_AGENTS_COMPACT_KEY) === '1') return true;
@@ -8473,7 +8524,7 @@
       loadReviewerAccuracy(false);
 
       el.innerHTML = `
-        <div class="gov-title">Governor <button class="config-gear" data-action="openConfigDialog" data-arg0="governor" title="Open Governor configuration — manage agents, thresholds, budget, notifications, health checks, and sensing patterns">⚙️</button></div>
+        <div class="gov-title"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Governor section" aria-pressed="false">⠿</button>Governor <button class="config-gear" data-action="openConfigDialog" data-arg0="governor" title="Open Governor configuration — manage agents, thresholds, budget, notifications, health checks, and sensing patterns">⚙️</button></div>
         <div class="gov-grid">
           <div class="gov-stat" title="TIMER — is the governor's evaluation loop alive?&#10;&#10;WHAT: The governor re-evaluates mode and kicks due agents on a fixed cadence. This shows whether that loop is running.&#10;&#10;HOW: 'active' if the governor reported a heartbeat within its expected interval; 'starting' during boot before the first tick; 'DEAD' if no heartbeat has arrived — agents will NOT be kicked automatically until it recovers."><div class="label">timer</div><div class="val ${cls}">${gov.active ? '● active' : (isStarting ? '⏳ starting' : '⚠ DEAD')}</div></div>
           <div class="gov-stat" title="MODE — the governor's current activity level.&#10;&#10;WHAT: Sets how aggressively agents are scheduled. idle → quiet → busy → surge, each with faster cadences.&#10;&#10;HOW: Derived from queue pressure — actionable issues + open PRs — against the thresholds shown on the gauge below: 0–${CLASSIC_THRESH_QUIET-1}=idle, ${CLASSIC_THRESH_QUIET}–${CLASSIC_THRESH_BUSY-1}=quiet, ${CLASSIC_THRESH_BUSY}–${CLASSIC_THRESH_SURGE-1}=busy, ≥${CLASSIC_THRESH_SURGE}=surge. Thresholds are configurable in Governor settings."><div class="label">mode</div><div class="val" style="color:${modeColor}">${escapeHtml(gov.mode)}</div></div>
@@ -12300,7 +12351,7 @@ function burnAreaChart() {
       }).join('');
 
       el.innerHTML = `<div class="token-panel">
-        <div class="token-title">Token Usage <span class="lookback">${tokens.lookbackHours || 24}h window · ${t.sessions} sessions</span></div>
+        <div class="token-title"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Token Usage section" aria-pressed="false">⠿</button>Token Usage <span class="lookback">${tokens.lookbackHours || 24}h window · ${t.sessions} sessions</span></div>
         <div style="display:flex;gap:var(--sp-6);margin-bottom:var(--sp-8);padding-bottom:var(--sp-6);border-bottom:1px solid var(--border)">
           <div style="flex:1;min-width:0">${intensityGauge()}</div>
           <div style="flex:1;min-width:0">${burnAreaChart()}</div>
@@ -12715,7 +12766,7 @@ function burnAreaChart() {
 
       el.innerHTML = `<div class="cost-panel">
         <div class="cost-title cost-toggle" role="button" tabindex="0" aria-expanded="true" aria-controls="cost-panel-body" data-action="toggleCostPanel" data-keydown-action="costHeaderKey" data-arg-types="e" data-keys="*" title="Collapse / expand the cost panel">
-          <span class="cost-chevron" aria-hidden="true">▼</span>
+          <button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Cost section" aria-pressed="false">⠿</button><span class="cost-chevron" aria-hidden="true">▼</span>
           Cost <span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span>
           <span class="cost-collapsed-total" title="Estimated all-time total">${fmtUSD(est.total_usd)}</span>
         </div>

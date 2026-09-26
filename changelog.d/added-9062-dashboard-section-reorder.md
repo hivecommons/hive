@@ -1,0 +1,1 @@
+- Dashboard viewers can now drag or keyboard-reorder main sections, persist the order locally, reset it, and see the sidebar follow the custom order ([#9062](https://github.com/hivecommons/hive/issues/9062)).
