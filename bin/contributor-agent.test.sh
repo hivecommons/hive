@@ -278,6 +278,58 @@ case "$output" in
     ;;
 esac
 
+rm -f "${HOME_DIR}/agent.md"
+two_hub_output="$(
+  env -i \
+    PATH="${PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_FETCH=1 \
+    HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_DEST="${HOME_DIR}/agent.md" \
+    HIVE_HUB="http://127.0.0.1:${PORT}/truncated/contribute, ws://127.0.0.1:${PORT}/ok/contribute" \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh" 2>&1
+)"
+case "$two_hub_output" in
+  *"knowledge_fetch=installed from http://127.0.0.1:${PORT}/ok/api/knowledge/export"* ) ;;
+  *)
+    echo "expected two-hub knowledge fetch to install from the second hub; got:" >&2
+    echo "$two_hub_output" >&2
+    exit 1
+    ;;
+esac
+expect_failure_reason "truncated" "$two_hub_output" "HTTP 200" "body is not a knowledge export"
+grep -qx "This file is auto-generated from the hive knowledge base\\." "${HOME_DIR}/agent.md" || {
+  echo "expected two-hub installed agent.md to contain export marker" >&2
+  exit 1
+}
+
+rm -f "${HOME_DIR}/agent.md"
+joined_regression_output="$(
+  env -i \
+    PATH="${PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_FETCH=1 \
+    HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_DEST="${HOME_DIR}/agent.md" \
+    HIVE_HUB="http://127.0.0.1:${PORT}/missing/contribute,ws://127.0.0.1:${PORT}/ok/contribute" \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh" 2>&1
+)"
+case "$joined_regression_output" in
+  *"knowledge_fetch=installed from http://127.0.0.1:${PORT}/ok/api/knowledge/export"* ) ;;
+  *)
+    echo "expected comma-adjacent HIVE_HUB to install from the second hub; got:" >&2
+    echo "$joined_regression_output" >&2
+    exit 1
+    ;;
+esac
+case "$joined_regression_output" in
+  *"missing/contribute,ws://"* | *"missing/contribute, ws://"* )
+    echo "expected knowledge fetch logs to avoid the joined HIVE_HUB string; got:" >&2
+    echo "$joined_regression_output" >&2
+    exit 1
+    ;;
+esac
+
 echo "contributor-agent hook override tests passed"
 echo "contributor-agent knowledge fetch tests passed"
 

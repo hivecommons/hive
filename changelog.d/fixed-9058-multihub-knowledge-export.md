@@ -1,0 +1,1 @@
+- The contributor agent now fetches knowledge exports per hub when `HIVE_HUB` lists multiple hubs, so a bad first hub no longer prevents installing `agent.md` ([#9058](https://github.com/hivecommons/hive/issues/9058)).

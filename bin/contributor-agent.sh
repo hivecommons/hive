@@ -51,6 +51,21 @@ knowledge_export_looks_valid() {
   grep -qx "This file is auto-generated from the hive knowledge base\\." "$path"
 }
 
+hub_knowledge_export_urls() {
+  local hubs="${1:-$HIVE_HUB}"
+  local hub
+
+  while IFS= read -r hub; do
+    hub="${hub#"${hub%%[![:space:]]*}"}"
+    hub="${hub%"${hub##*[![:space:]]}"}"
+    [[ -n "$hub" ]] || continue
+    hub="${hub/#wss:\/\//https://}"
+    hub="${hub/#ws:\/\//http://}"
+    hub="${hub%/contribute}"
+    printf '%s/api/knowledge/export\n' "$hub"
+  done < <(printf '%s\n' "$hubs" | tr ',' '\n')
+}
+
 # KNOWLEDGE_FETCH_REASON is set by fetch_knowledge_export whenever it returns
 # non-zero: one line naming the URL, the HTTP status (or the curl exit code
 # when no status came back) and why the body was rejected. Before #8294 the
@@ -489,14 +504,22 @@ fi
 
 if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_FETCH:-}" == "1" ]]; then
   AGENT_MD="${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_DEST:-${HOME}/agent.md}"
-  HUB_HTTP=$(echo "$HIVE_HUB" | sed 's|^wss://|https://|;s|^ws://|http://|;s|/contribute$||')
-  KNOWLEDGE_EXPORT_URL="${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_URL:-${HUB_HTTP}/api/knowledge/export}"
-  if fetch_knowledge_export "$KNOWLEDGE_EXPORT_URL" "$AGENT_MD"; then
-    echo "knowledge_fetch=installed"
-    exit 0
+  if [[ -n "${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_URL:-}" ]]; then
+    KNOWLEDGE_EXPORT_URLS=("$HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_URL")
+  else
+    KNOWLEDGE_EXPORT_URLS=()
+    while IFS= read -r KNOWLEDGE_EXPORT_URL; do
+      KNOWLEDGE_EXPORT_URLS+=("$KNOWLEDGE_EXPORT_URL")
+    done < <(hub_knowledge_export_urls "$HIVE_HUB")
   fi
+  for KNOWLEDGE_EXPORT_URL in "${KNOWLEDGE_EXPORT_URLS[@]}"; do
+    if fetch_knowledge_export "$KNOWLEDGE_EXPORT_URL" "$AGENT_MD"; then
+      echo "knowledge_fetch=installed from ${KNOWLEDGE_EXPORT_URL}"
+      exit 0
+    fi
+    echo "knowledge_fetch=unavailable ${KNOWLEDGE_FETCH_REASON}" >&2
+  done
   rm -f "$AGENT_MD"
-  echo "knowledge_fetch=unavailable ${KNOWLEDGE_FETCH_REASON}"
   exit 1
 fi
 
@@ -844,13 +867,22 @@ fi
 
 # Download agent knowledge base from hub
 AGENT_MD="${HOME}/agent.md"
-HUB_HTTP=$(echo "$HIVE_HUB" | sed 's|^wss://|https://|;s|^ws://|http://|;s|/contribute$||')
-KNOWLEDGE_EXPORT_URL="${HUB_HTTP}/api/knowledge/export"
-if fetch_knowledge_export "$KNOWLEDGE_EXPORT_URL" "$AGENT_MD"; then
-  echo "Agent knowledge downloaded ($(wc -l < "$AGENT_MD") lines)"
-else
+KNOWLEDGE_EXPORT_URLS=()
+while IFS= read -r KNOWLEDGE_EXPORT_URL; do
+  KNOWLEDGE_EXPORT_URLS+=("$KNOWLEDGE_EXPORT_URL")
+done < <(hub_knowledge_export_urls "$HIVE_HUB")
+KNOWLEDGE_EXPORT_URL=""
+for KNOWLEDGE_EXPORT_CANDIDATE_URL in "${KNOWLEDGE_EXPORT_URLS[@]}"; do
+  if fetch_knowledge_export "$KNOWLEDGE_EXPORT_CANDIDATE_URL" "$AGENT_MD"; then
+    KNOWLEDGE_EXPORT_URL="$KNOWLEDGE_EXPORT_CANDIDATE_URL"
+    echo "Agent knowledge downloaded from ${KNOWLEDGE_EXPORT_URL} ($(wc -l < "$AGENT_MD") lines)"
+    break
+  fi
+  echo "Agent knowledge unavailable from ${KNOWLEDGE_EXPORT_CANDIDATE_URL}. ${KNOWLEDGE_FETCH_REASON}"
+done
+if [[ -z "$KNOWLEDGE_EXPORT_URL" ]]; then
   rm -f "$AGENT_MD"
-  echo "Agent knowledge unavailable; ${AGENT_MD} left absent. ${KNOWLEDGE_FETCH_REASON}"
+  echo "Agent knowledge unavailable; ${AGENT_MD} left absent."
 fi
 
 # Refresh agent.md every 10 minutes in the background. Every failed refresh is
@@ -864,16 +896,24 @@ KNOWLEDGE_REFRESH_SECS=600
   [[ -e "$AGENT_MD" ]] || knowledge_refresh_failing=1
   while true; do
     sleep "$KNOWLEDGE_REFRESH_SECS"
-    if fetch_knowledge_export "$KNOWLEDGE_EXPORT_URL" "$AGENT_MD"; then
-      if [[ "$knowledge_refresh_failing" -eq 1 ]]; then
-        echo "Agent knowledge refresh recovered; ${AGENT_MD} installed ($(wc -l < "$AGENT_MD") lines)"
-        knowledge_refresh_failing=0
+    knowledge_refresh_succeeded=0
+    for KNOWLEDGE_EXPORT_CANDIDATE_URL in "${KNOWLEDGE_EXPORT_URLS[@]}"; do
+      if fetch_knowledge_export "$KNOWLEDGE_EXPORT_CANDIDATE_URL" "$AGENT_MD"; then
+        KNOWLEDGE_EXPORT_URL="$KNOWLEDGE_EXPORT_CANDIDATE_URL"
+        knowledge_refresh_succeeded=1
+        if [[ "$knowledge_refresh_failing" -eq 1 ]]; then
+          echo "Agent knowledge refresh recovered from ${KNOWLEDGE_EXPORT_URL}; ${AGENT_MD} installed ($(wc -l < "$AGENT_MD") lines)"
+          knowledge_refresh_failing=0
+        fi
+        break
       fi
-    else
+      echo "Agent knowledge refresh unavailable from ${KNOWLEDGE_EXPORT_CANDIDATE_URL}. ${KNOWLEDGE_FETCH_REASON}" >&2
+    done
+    if [[ "$knowledge_refresh_succeeded" -eq 0 ]]; then
       if [[ -e "$AGENT_MD" ]]; then
-        echo "Agent knowledge refresh failed; keeping the previous ${AGENT_MD}. ${KNOWLEDGE_FETCH_REASON}" >&2
+        echo "Agent knowledge refresh failed; keeping the previous ${AGENT_MD}." >&2
       else
-        echo "Agent knowledge refresh failed; ${AGENT_MD} still absent. ${KNOWLEDGE_FETCH_REASON}" >&2
+        echo "Agent knowledge refresh failed; ${AGENT_MD} still absent." >&2
       fi
       knowledge_refresh_failing=1
     fi
