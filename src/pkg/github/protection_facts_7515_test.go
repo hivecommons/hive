@@ -22,36 +22,63 @@ type protectionServer struct {
 	reviewDecision string
 	reviews        []map[string]any
 	graphQLFails   bool
+	// Triage signals riding the same query (#8968). signalsRejected makes the
+	// forge refuse the extended query and answer only the decision-only one,
+	// as a GHE lacking one of the added fields would. restCalls counts every
+	// non-GraphQL request.
+	comments        int
+	reviewThreads   int
+	closingIssues   []map[string]any
+	signalsRejected bool
+	restCalls       int
 }
 
 func (p *protectionServer) start(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/graphql") {
+			p.mu.Lock()
+			p.restCalls++
+			p.mu.Unlock()
+		}
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/graphql"):
 			p.mu.Lock()
 			p.graphQLCalls++
 			fails := p.graphQLFails
+			rejectSignals := p.signalsRejected
 			p.mu.Unlock()
 			body, _ := io.ReadAll(r.Body)
 			if !strings.Contains(string(body), "reviewDecision") {
 				t.Errorf("graphql query did not ask for reviewDecision: %s", body)
+			}
+			if rejectSignals && strings.Contains(string(body), "closingIssuesReferences") {
+				// GitHub validates the document and answers 200 with errors.
+				_, _ = w.Write([]byte(`{"data":null,"errors":[{"message":"Field 'closingIssuesReferences' doesn't exist on type 'PullRequest'"}]}`))
+				return
 			}
 			if fails {
 				w.WriteHeader(http.StatusForbidden)
 				_, _ = w.Write([]byte(`{"message":"no scope"}`))
 				return
 			}
+			node := map[string]any{
+				"number":                   1,
+				"reviewDecision":           p.reviewDecision,
+				"latestOpinionatedReviews": map[string]any{"nodes": p.reviews},
+			}
+			// Like the real forge, answer only the fields the document asked for.
+			if strings.Contains(string(body), "closingIssuesReferences") {
+				node["comments"] = map[string]any{"totalCount": p.comments}
+				node["reviewThreads"] = map[string]any{"totalCount": p.reviewThreads}
+				node["closingIssuesReferences"] = map[string]any{"nodes": p.closingIssues}
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"data": map[string]any{
 					"repository": map[string]any{
 						"pullRequests": map[string]any{
 							"pageInfo": map[string]any{"hasNextPage": false, "endCursor": ""},
-							"nodes": []map[string]any{{
-								"number":                   1,
-								"reviewDecision":           p.reviewDecision,
-								"latestOpinionatedReviews": map[string]any{"nodes": p.reviews},
-							}},
+							"nodes":    []map[string]any{node},
 						},
 					},
 				},

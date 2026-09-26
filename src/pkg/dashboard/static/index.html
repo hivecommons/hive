@@ -8944,7 +8944,7 @@
             <span class="repo-pr-band-title" title="Band: needs-human, held, or configured waiting labels">Waiting on human</span>
             <span class="repo-pr-band-title" title="Band: sweep eligible or queued for auto-merge">Merge-eligible</span>
             <span class="repo-pr-band-title" title="Band: blocked verdict, conflicts, or failing CI">Blocked</span>
-            <span class="repo-pr-band-title" title="Band: outstanding verdict or hive review posted">In review</span>
+            <span class="repo-pr-band-title" title="Band: outstanding verdict, hive review posted, or a GitHub review decision">In review</span>
             <span class="repo-pr-band-title" title="Band: ordinary open PRs">Open</span>
             <span class="repo-pr-band-title" title="Band: draft PRs">Draft</span>
             <span class="repo-pr-pill mergeable" title="Merge-eligible on the sweep verdict"><span class="pill-merge-icon">✓</span> eligible</span>
@@ -8957,6 +8957,12 @@
             <span class="repo-pr-pill stale" title="No activity for more than ${cfg.staleDays} days"><span class="pill-state">🕒</span> stale</span>
             <span class="repo-pr-pill" title="Agent-authored PR; badge names the agent role"><span class="pill-role">SCANNER</span> agent</span>
             <span class="repo-pr-pill pill-reviewed pill-icon" title="Hive review posted; opens the recorded review">💬</span>
+            <span class="repo-pr-pill pill-icon" title="Approved on GitHub; tooltip counts the approvals">👍</span>
+            <span class="repo-pr-pill pill-icon" title="Changes requested on GitHub; tooltip names the reviewers">👎</span>
+            <span class="repo-pr-pill pill-icon" title="Approving review required by branch protection and not yet given">👀</span>
+            <span class="repo-pr-pill pill-icon" title="Review requested; tooltip lists the reviewers and teams">👥</span>
+            <span class="repo-pr-pill pill-icon" title="Comments and review threads on GitHub">🗨 3</span>
+            <span class="repo-pr-pill pill-icon" title="Issue this PR closes on merge (GitHub closing reference); opens the issue">🔗 #42</span>
             <span class="repo-pr-pill mergeable pill-icon" title="Queued for Hive auto-merge">🔀</span>
             <span class="repo-pr-pill pill-icon" title="Queue for auto-merge, or disabled when not mergeable on GitHub">🔀</span>
             <span class="repo-pr-pill" title="Review class badge: FIX is red; FEAT/TESTS/DOCS/REFACTOR show why the PR is prioritized"><span class="pill-class fix">FIX</span> class</span>
@@ -9394,16 +9400,66 @@
       return pr && String(pr.ci_status || '').toLowerCase() === 'failing' && Array.isArray(checks) && checks.length > 0;
     }
 
+    // GitHub's own review verdict, read from the protection facts the sweep
+    // already carries on the PR (#7515) — nothing is fetched by the card and
+    // nothing is inferred: `decision` is set only from review_decision, and
+    // an absent decision stays unknown. A base branch with no review rule
+    // reports no decision, so the latest opinionated reviews are then shown
+    // for what they are — reviewer opinions, not a verdict (#8968). Returns
+    // null when GitHub said nothing at all.
+    function prGitHubReview(pr) {
+      const p = (pr && pr.protection) || {};
+      const changesBy = Array.isArray(p.changes_requested_by) ? p.changes_requested_by : [];
+      const approvals = Number(p.approvals_given || 0);
+      const who = changesBy.length ? ' by ' + changesBy.map(l => '@' + l).join(', ') : '';
+      const given = approvals ? approvals + ' approval' + (approvals === 1 ? '' : 's') : '';
+      switch (String(p.review_decision || '').toUpperCase()) {
+        case 'APPROVED': return { decision: 'approved', glyph: '👍', label: 'approved on GitHub' + (given ? ' (' + given + ')' : '') };
+        case 'CHANGES_REQUESTED': return { decision: 'changes-requested', glyph: '👎', label: 'changes requested' + who };
+        case 'REVIEW_REQUIRED': return { decision: 'review-required', glyph: '👀', label: 'approving review required by branch protection' + (given ? ' (' + given + ' given)' : '') };
+        default: break;
+      }
+      if (changesBy.length) return { decision: '', glyph: '👎', label: 'changes requested' + who + ' — no review decision from GitHub' };
+      if (approvals) return { decision: '', glyph: '👍', label: given + ' on GitHub — no review decision' };
+      return null;
+    }
+
+    function prRequestedReviews(pr) {
+      const logins = (Array.isArray(pr && pr.requested_reviewers) ? pr.requested_reviewers : []).map(l => '@' + l);
+      const teams = (Array.isArray(pr && pr.requested_teams) ? pr.requested_teams : []).map(t => 'team ' + t);
+      return logins.concat(teams);
+    }
+
+    // Conversation volume as "N comments, M review threads", or null when
+    // GitHub reports neither. Both counts are totals from the snapshot.
+    function prConversation(pr) {
+      const comments = Number((pr && pr.comment_count) || 0);
+      const threads = Number((pr && pr.review_thread_count) || 0);
+      if (!comments && !threads) return null;
+      const parts = [];
+      if (comments) parts.push(comments + ' comment' + (comments === 1 ? '' : 's'));
+      if (threads) parts.push(threads + ' review thread' + (threads === 1 ? '' : 's'));
+      return { total: comments + threads, label: parts.join(', ') };
+    }
+
+    // Issues GitHub reports the PR will close (closingIssuesReferences), as
+    // carried on the snapshot — the PR-side mirror of the issue pill's
+    // linked_prs badge.
+    function prLinkedIssues(pr) {
+      return Array.isArray(pr && pr.linked_issues) ? pr.linked_issues.filter(i => i && i.number) : [];
+    }
+
     function prBandInfo(pr, held) {
       const cfg = repoIssueBandConfig();
       const labels = prLabelSet(pr);
       const v = pr && pr.merge_verdict ? pr.merge_verdict : {};
       const role = prAgentRole(pr);
+      const review = prGitHubReview(pr);
       const matches = {
         waiting: !!held || prHasAnyLabel(pr, PR_HUMAN_GATE_LABELS.concat(cfg.waitingLabels || [])) || holdLabels(Array.from(labels)).length > 0,
         eligible: (v && v.state === 'eligible') || prQueued(pr),
         blocked: (v && v.state === 'blocked') || (pr && pr.mergeable === 'no') || prCIFailing(pr),
-        inReview: (v && v.state === 'outstanding') || !!(pr && pr.review_url),
+        inReview: (v && v.state === 'outstanding') || !!(pr && pr.review_url) || !!review,
         draft: !!(pr && pr.draft)
       };
       let band = 'open';
@@ -9418,11 +9474,16 @@
       if (held || holdLabels(Array.from(labels)).length > 0) signals.push({ glyph: '⏸', label: 'held' });
       if (matches.eligible) signals.push({ glyph: '✓', label: prQueued(pr) ? 'queued or merge-eligible' : 'merge-eligible' });
       if (matches.inReview) signals.push({ glyph: '◐', label: 'in review or outstanding' });
+      if (review) signals.push({ glyph: review.glyph, label: review.label });
+      const requested = prRequestedReviews(pr);
+      if (requested.length) signals.push({ glyph: '👥', label: 'review requested from ' + requested.join(', ') });
+      const convo = prConversation(pr);
+      if (convo) signals.push({ glyph: '🗨 ' + convo.total, label: convo.label });
       if (prCIFailing(pr)) signals.push({ glyph: '✗ CI', label: 'failing CI: ' + ((pr.failing_checks || []).join(', ') || 'check failure') });
       if (pr && pr.mergeable === 'no') signals.push({ glyph: '⑂', label: 'not mergeable' + (pr.mergeable_state ? ': ' + pr.mergeable_state : '') });
       if (prQueued(pr)) signals.push({ glyph: '🔀', label: 'queued for auto-merge' });
       if (prIsStale(pr)) signals.push({ glyph: '🕒', label: 'stale: no activity > ' + cfg.staleDays + 'd' });
-      return { band, role, held: !!held, matches, signals };
+      return { band, role, held: !!held, matches, signals, review };
     }
 
     function prBandLabel(band) {
@@ -9752,9 +9813,21 @@
           // ordered by (fix > refactor-docs > tests, then age; #6183). It is
           // derived server-side from the title prefix and lane label only.
           const reviewClass = p.review_class ? String(p.review_class) : '';
-          const bandTip = info ? ' [band: ' + prBandLabel(info.band) + ']' : '';
+          const bandInfo = info || prBandInfo(p, held);
+          const bandTip = ' [band: ' + prBandLabel(bandInfo.band) + ']';
           const activityTip = p.updated_at ? ' [last activity: ' + p.updated_at + (activityAge ? ' / ' + activityAge : '') + ']' : '';
-          const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + bandTip + activityTip + (reviewClass ? ' [review class: ' + reviewClass + ']' : '') + prMergeNote(p) + (queued ? ' (queued for auto-merge)' : '') + (needsHuman ? ' (needs human review)' : '') + (held ? ' (' + heldReason(p) + ')' : '');
+          // GitHub review signals (#8968): decision, who a review is requested
+          // from, conversation volume, and the issues the PR closes. All read
+          // from the snapshot; the tooltip is where the full lists live.
+          const reviewDecisionTip = bandInfo.review ? ' [review: ' + bandInfo.review.label + ']' : '';
+          const requested = prRequestedReviews(p);
+          const requestedTip = requested.length ? ' [review requested: ' + requested.join(', ') + ']' : '';
+          const convo = prConversation(p);
+          const convoTip = convo ? ' [' + convo.label + ']' : '';
+          const linkedIssues = prLinkedIssues(p);
+          const linkedIssueText = linkedIssues.map(i => (i.repo && i.repo !== cardRepo ? i.repo : '') + '#' + i.number + (i.state ? ' ' + i.state : '')).join(', ');
+          const linkedTip = linkedIssueText ? ' [closes: ' + linkedIssueText + ']' : '';
+          const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + bandTip + activityTip + (reviewClass ? ' [review class: ' + reviewClass + ']' : '') + reviewDecisionTip + requestedTip + convoTip + linkedTip + prMergeNote(p) + (queued ? ' (queued for auto-merge)' : '') + (needsHuman ? ' (needs human review)' : '') + (held ? ' (' + heldReason(p) + ')' : '');
           const canQueue = dashboardRoleAtLeast(window._hiveRole || 'read', 'merger') && (window._hiveUser || dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) && !(p.author && window._hiveUser && p.author.toLowerCase() === window._hiveUser.toLowerCase());
           const parts = (r.full || r.name || '').split('/');
           const owner = parts.length > 1 ? parts[0] : '';
@@ -9782,6 +9855,14 @@
           const stateBadge = held && needsHuman
             ? `<span class="repo-pr-pill needs-human pill-needs-human-badge pill-icon" title="${esc(heldTip)}" aria-label="${esc(heldTip)}">⚠</span>`
             : '';
+          // 🔗 #N badge: the PR-side mirror of the issue pill's linked-PR
+          // badge. The primary target is the first still-open issue, so the
+          // link points at the work the PR is for; the tooltip lists all.
+          const primaryIssue = linkedIssues.find(i => i.state === 'open') || linkedIssues[0];
+          const issueBadgeTip = 'Closes issue' + (linkedIssues.length > 1 ? 's' : '') + ': ' + linkedIssueText;
+          const issueBadge = primaryIssue
+            ? `<a class="repo-pr-pill pill-icon" href="${esc(primaryIssue.url || (repoUrl + '/issues/' + primaryIssue.number))}" target="_blank" rel="noopener" data-stop="1" title="${esc(issueBadgeTip)}" aria-label="${esc('Linked issue #' + primaryIssue.number)}">🔗</a>`
+            : '';
           const url = p.url || (repoUrl + '/pull/' + p.number);
           const heldClass = held ? ' held' : '';
           const staleClass = prIsStale(p) ? ' stale' : '';
@@ -9792,7 +9873,7 @@
           const tintClass = needsHuman ? ' needs-human' : mergeClass;
           const prStatusText = reviewClass ? (reviewClass === 'refactor-docs' ? 'refactor' : reviewClass) : (held ? 'held' : 'PR');
           const prStatusTip = reviewClass ? ((held ? 'Held PR — review class: ' : 'Review class: ') + reviewClass) : (held ? heldTip : 'Open pull request');
-          return `<span class="repo-pr-pill-wrap repo-pill-row"><span class="repo-pill-status repo-pr-pill${heldClass}${tintClass}" title="${esc(prStatusTip)}">${esc(prStatusText)}</span><a class="repo-pr-pill repo-pill-main${heldClass}${tintClass}${staleClass}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(prTip)}"><span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}${prSignalHTML(info || prBandInfo(p, held))}</a>${repoPillActionCluster([reviewPill, queueBtn + stateBadge, '', holdBtn])}</span>`;
+          return `<span class="repo-pr-pill-wrap repo-pill-row"><span class="repo-pill-status repo-pr-pill${heldClass}${tintClass}" title="${esc(prStatusTip)}">${esc(prStatusText)}</span><a class="repo-pr-pill repo-pill-main${heldClass}${tintClass}${staleClass}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(prTip)}"><span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}${prSignalHTML(bandInfo)}</a>${repoPillActionCluster([reviewPill, queueBtn + stateBadge, issueBadge, holdBtn])}</span>`;
         };
         const prPills = groupedRepoPRs(r.openPrs || [], r.heldPrs || []).map(g => {
           const items = g.prs.map(entry => renderPrPill(entry.pr, entry.held, entry.info)).join('');

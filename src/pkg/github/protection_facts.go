@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"strings"
 )
 
@@ -29,11 +30,16 @@ type requiredSet struct {
 	known bool
 }
 
-// prReviewState is GitHub's review verdict for one PR.
+// prReviewState is GitHub's review verdict for one PR, plus the display-only
+// triage signals that ride the same query (hivecommons/hive#8968): comment
+// and review-thread totals and the issues the PR would close.
 type prReviewState struct {
 	decision           ReviewDecision
 	changesRequestedBy []string
 	approvals          int
+	comments           int
+	reviewThreads      int
+	linkedIssues       []PRLinkedIssue
 }
 
 func newProtectionCollector(c *Client) *protectionCollector {
@@ -61,6 +67,12 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 		f.ReviewDecision = rs.decision
 		f.ChangesRequestedBy = rs.changesRequestedBy
 		f.ApprovalsGiven = rs.approvals
+		// Triage signals go on the PR itself, not under Protection: they
+		// are not branch-protection facts, and they are wanted even when
+		// GitHub returned no review decision at all (#8968).
+		pr.CommentCount = rs.comments
+		pr.ReviewThreadCount = rs.reviewThreads
+		pr.LinkedIssues = rs.linkedIssues
 	}
 
 	if reported != nil {
@@ -97,7 +109,12 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 		}
 	}
 
-	if f.ReviewDecision == ReviewDecisionNone && !f.RequiredChecksKnown {
+	// Keep the review opinions even without a decision: GitHub reports a
+	// null reviewDecision on a base branch with no review rule, and the
+	// dashboard still wants "changes requested by @x" / "2 approvals" on
+	// such a PR (#8968). The decision itself stays ReviewDecisionNone —
+	// unknown, never inferred — exactly as the contract above requires.
+	if f.ReviewDecision == ReviewDecisionNone && !f.RequiredChecksKnown && f.ApprovalsGiven == 0 && len(f.ChangesRequestedBy) == 0 {
 		return
 	}
 	pr.Protection = &f
@@ -146,6 +163,29 @@ const reviewDecisionQuery = `query($owner:String!,$name:String!,$cursor:String){
   }
 }`
 
+// reviewSignalsQuery is reviewDecisionQuery plus the repo-card triage
+// signals (#8968): comment and review-thread totals (totalCount only — no
+// thread nodes) and the first 20 closingIssuesReferences behind the PR
+// pill's 🔗 badge. It is tried first; if the forge rejects it (a GHE that
+// does not serve one of the added fields, a scope that denies it), the
+// fetch falls back to reviewDecisionQuery so the review decision — which
+// the merge-block wording depends on — is never lost to a display field.
+const reviewSignalsQuery = `query($owner:String!,$name:String!,$cursor:String){
+  repository(owner:$owner,name:$name){
+    pullRequests(states:OPEN,first:100,after:$cursor){
+      pageInfo{hasNextPage endCursor}
+      nodes{
+        number
+        reviewDecision
+        latestOpinionatedReviews(first:50){nodes{state author{login}}}
+        comments(first:1){totalCount}
+        reviewThreads(first:1){totalCount}
+        closingIssuesReferences(first:20){nodes{number state url repository{nameWithOwner}}}
+      }
+    }
+  }
+}`
+
 type reviewDecisionResponse struct {
 	Repository struct {
 		PullRequests struct {
@@ -164,6 +204,22 @@ type reviewDecisionResponse struct {
 						} `json:"author"`
 					} `json:"nodes"`
 				} `json:"latestOpinionatedReviews"`
+				Comments struct {
+					TotalCount int `json:"totalCount"`
+				} `json:"comments"`
+				ReviewThreads struct {
+					TotalCount int `json:"totalCount"`
+				} `json:"reviewThreads"`
+				ClosingIssuesReferences struct {
+					Nodes []struct {
+						Number     int    `json:"number"`
+						State      string `json:"state"`
+						URL        string `json:"url"`
+						Repository struct {
+							NameWithOwner string `json:"nameWithOwner"`
+						} `json:"repository"`
+					} `json:"nodes"`
+				} `json:"closingIssuesReferences"`
 			} `json:"nodes"`
 		} `json:"pullRequests"`
 	} `json:"repository"`
@@ -183,14 +239,42 @@ func (c *Client) fetchReviewDecisions(ctx context.Context, repo string) map[int]
 	}
 	out := make(map[int]prReviewState)
 	vars := map[string]any{"owner": owner, "name": name}
+	query := reviewSignalsQuery
 	for page := 0; page < 20; page++ {
 		var resp reviewDecisionResponse
-		if err := c.graphQL(ctx, reviewDecisionQuery, vars, &resp); err != nil {
+		err := c.graphQL(ctx, query, vars, &resp)
+		// Fall back only when the forge answered and rejected the document
+		// (*graphQLErrors: an unknown field on an older GHE, a field this
+		// token may not read). A transport or scope failure would fail the
+		// decision-only query just the same, and that one is asked once.
+		var ge *graphQLErrors
+		if err != nil && query == reviewSignalsQuery && page == 0 && errors.As(err, &ge) {
+			c.logger.Debug("PR review signals query rejected; falling back to review decisions only", "repo", repo, "error", err)
+			query = reviewDecisionQuery
+			resp = reviewDecisionResponse{}
+			err = c.graphQL(ctx, query, vars, &resp)
+		}
+		if err != nil {
 			c.logger.Warn("failed to fetch PR review decisions", "repo", repo, "error", err)
 			return nil
 		}
 		for _, n := range resp.Repository.PullRequests.Nodes {
-			st := prReviewState{decision: ReviewDecision(strings.ToUpper(strings.TrimSpace(n.ReviewDecision)))}
+			st := prReviewState{
+				decision:      ReviewDecision(strings.ToUpper(strings.TrimSpace(n.ReviewDecision))),
+				comments:      n.Comments.TotalCount,
+				reviewThreads: n.ReviewThreads.TotalCount,
+			}
+			for _, li := range n.ClosingIssuesReferences.Nodes {
+				if li.Number <= 0 {
+					continue
+				}
+				st.linkedIssues = append(st.linkedIssues, PRLinkedIssue{
+					Number: li.Number,
+					Repo:   li.Repository.NameWithOwner,
+					State:  strings.ToLower(strings.TrimSpace(li.State)),
+					URL:    li.URL,
+				})
+			}
 			for _, r := range n.LatestOpinionatedReviews.Nodes {
 				login := ""
 				if r.Author != nil {

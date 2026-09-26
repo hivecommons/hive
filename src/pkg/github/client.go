@@ -576,8 +576,35 @@ type PullRequest struct {
 	ReviewState string     `json:"review_state,omitempty"`
 	ReviewCount int        `json:"review_count,omitempty"`
 	ReviewedAt  *time.Time `json:"reviewed_at,omitempty"`
+	// RequestedReviewers and RequestedTeams are the logins and team slugs a
+	// review is currently requested from, read from the list payload at
+	// enumeration time — no extra call (hivecommons/hive#8968). Display
+	// only: the repo-card pill names who a PR is waiting on; no gate reads
+	// them.
+	RequestedReviewers []string `json:"requested_reviewers,omitempty"`
+	RequestedTeams     []string `json:"requested_teams,omitempty"`
+	// CommentCount and ReviewThreadCount are GitHub's conversation-comment
+	// and review-thread totals, and LinkedIssues are the issues GitHub
+	// reports this PR will close (closingIssuesReferences). All three ride
+	// the one-query-per-repository GraphQL pass that already carries the
+	// review decision (protection_facts.go): no additional request, only a
+	// larger response. EnrichReviewSignals stamps them on stale drafts.
+	// Display only: the 🔗 #N badge on a PR pill mirrors the issue column's
+	// linked-PR badge (#8876); nothing gates on any of them.
+	CommentCount      int             `json:"comment_count,omitempty"`
+	ReviewThreadCount int             `json:"review_thread_count,omitempty"`
+	LinkedIssues      []PRLinkedIssue `json:"linked_issues,omitempty"`
 }
 
+// PRLinkedIssue is an issue GitHub reports a PR will close on merge
+// (closingIssuesReferences) — the PR-side mirror of IssueLinkedPR. State is
+// GitHub's issue state lower-cased ("open" / "closed"), as on Issue.State.
+type PRLinkedIssue struct {
+	Number int    `json:"number"`
+	Repo   string `json:"repo,omitempty"`
+	State  string `json:"state,omitempty"`
+	URL    string `json:"url,omitempty"`
+}
 type PRReworkStats struct {
 	ReviewRounds        int       `json:"review_rounds,omitempty"`
 	FixAttempts         int       `json:"fix_attempts,omitempty"`
@@ -1090,6 +1117,28 @@ func prBaseRef(pr *gh.PullRequest) string {
 	return pr.GetBase().GetRef()
 }
 
+// prRequestedReviews reads the logins and team slugs a review is requested
+// from, as carried by the list payload. nil slices when none, so the JSON
+// field is omitted rather than emitted as [].
+func prRequestedReviews(pr *gh.PullRequest) (logins, teams []string) {
+	for _, u := range pr.RequestedReviewers {
+		if login := safeGetLogin(u); login != "" {
+			logins = append(logins, login)
+		}
+	}
+	for _, t := range pr.RequestedTeams {
+		if t == nil {
+			continue
+		}
+		if slug := t.GetSlug(); slug != "" {
+			teams = append(teams, slug)
+		} else if name := t.GetName(); name != "" {
+			teams = append(teams, name)
+		}
+	}
+	return logins, teams
+}
+
 func reviewScopeContract(title, body, defaultRepo, runKey, planRef string) string {
 	refs := ParseClaimedIssues(title+"\n"+body, defaultRepo)
 	if len(refs) > 0 {
@@ -1160,29 +1209,32 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 			// merge sweep — the hold gate is untouched.
 			if !pr.GetDraft() {
 				headRef, headRepo, fromFork := prHeadOrigin(pr)
+				reqLogins, reqTeams := prRequestedReviews(pr)
 				heldPRs = append(heldPRs, PullRequest{
-					Repo:           repo,
-					Number:         pr.GetNumber(),
-					Title:          pr.GetTitle(),
-					Author:         safeGetLogin(pr.GetUser()),
-					Labels:         labels,
-					CreatedAt:      pr.GetCreatedAt().Time,
-					UpdatedAt:      pr.GetUpdatedAt().Time,
-					State:          pr.GetState(),
-					URL:            pr.GetHTMLURL(),
-					ReviewClass:    ClassifyReviewClass(pr.GetTitle(), labels),
-					HiveAttributed: hasAttr,
-					HiveAgent:      attrMeta.Agent,
-					HiveBackend:    attrMeta.Backend,
-					HiveModel:      attrMeta.Model,
-					HiveRun:        runKey,
-					HivePlan:       planRef,
-					ScopeContract:  scopeContract,
-					HeadSHA:        prHeadSHA(pr),
-					HeadRef:        headRef,
-					HeadRepo:       headRepo,
-					FromFork:       fromFork,
-					BaseRef:        prBaseRef(pr),
+					Repo:               repo,
+					Number:             pr.GetNumber(),
+					Title:              pr.GetTitle(),
+					Author:             safeGetLogin(pr.GetUser()),
+					Labels:             labels,
+					CreatedAt:          pr.GetCreatedAt().Time,
+					UpdatedAt:          pr.GetUpdatedAt().Time,
+					State:              pr.GetState(),
+					URL:                pr.GetHTMLURL(),
+					ReviewClass:        ClassifyReviewClass(pr.GetTitle(), labels),
+					HiveAttributed:     hasAttr,
+					HiveAgent:          attrMeta.Agent,
+					HiveBackend:        attrMeta.Backend,
+					HiveModel:          attrMeta.Model,
+					HiveRun:            runKey,
+					HivePlan:           planRef,
+					ScopeContract:      scopeContract,
+					HeadSHA:            prHeadSHA(pr),
+					HeadRef:            headRef,
+					HeadRepo:           headRepo,
+					FromFork:           fromFork,
+					BaseRef:            prBaseRef(pr),
+					RequestedReviewers: reqLogins,
+					RequestedTeams:     reqTeams,
 				})
 			}
 			continue
@@ -1197,17 +1249,20 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 			breakdown.Draft++
 			author := safeGetLogin(pr.GetUser())
 			if strings.EqualFold(author, c.appBotLogin) && now.Sub(pr.GetCreatedAt().Time) > staleDraftAfter {
+				reqLogins, reqTeams := prRequestedReviews(pr)
 				staleDrafts = append(staleDrafts, PullRequest{
-					Repo:        repo,
-					Number:      pr.GetNumber(),
-					Title:       pr.GetTitle(),
-					Author:      author,
-					Labels:      labels,
-					Draft:       true,
-					CreatedAt:   pr.GetCreatedAt().Time,
-					UpdatedAt:   pr.GetUpdatedAt().Time,
-					URL:         pr.GetHTMLURL(),
-					ReviewClass: ClassifyReviewClass(pr.GetTitle(), labels),
+					Repo:               repo,
+					Number:             pr.GetNumber(),
+					Title:              pr.GetTitle(),
+					Author:             author,
+					Labels:             labels,
+					Draft:              true,
+					CreatedAt:          pr.GetCreatedAt().Time,
+					UpdatedAt:          pr.GetUpdatedAt().Time,
+					URL:                pr.GetHTMLURL(),
+					ReviewClass:        ClassifyReviewClass(pr.GetTitle(), labels),
+					RequestedReviewers: reqLogins,
+					RequestedTeams:     reqTeams,
 				})
 			}
 			continue
@@ -1224,6 +1279,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 		}
 		breakdown.Actionable++
 		author := safeGetLogin(pr.GetUser())
+		reqLogins, reqTeams := prRequestedReviews(pr)
 
 		actionable = append(actionable, PullRequest{
 			Repo:        repo,
@@ -1252,13 +1308,15 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 			// per-PR and returns it only from the single-PR GET. Reading it
 			// here would yield false for every PR. EnrichCIStatus fills it in
 			// from a per-PR fetch; until then it stays MergeableUnknown.
-			MergeableState: pr.GetMergeableState(),
-			HeadSHA:        headSHA,
-			BaseSHA:        baseSHA,
-			HeadRef:        headRef,
-			HeadRepo:       headRepo,
-			FromFork:       fromFork,
-			BaseRef:        prBaseRef(pr),
+			MergeableState:     pr.GetMergeableState(),
+			HeadSHA:            headSHA,
+			BaseSHA:            baseSHA,
+			HeadRef:            headRef,
+			HeadRepo:           headRepo,
+			FromFork:           fromFork,
+			BaseRef:            prBaseRef(pr),
+			RequestedReviewers: reqLogins,
+			RequestedTeams:     reqTeams,
 		})
 	}
 
@@ -1349,6 +1407,23 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 	for i := range prs {
 		reported := c.enrichPRCI(ctx, &prs[i])
 		facts.attach(ctx, &prs[i], reported)
+	}
+}
+
+// EnrichReviewSignals stamps only the review-decision and repo-card triage
+// signals (protection.review_decision, comment/thread counts, linked
+// issues — hivecommons/hive#8968) onto prs, with at most one GraphQL query
+// per repository and no per-PR REST calls. It exists for the stale-draft
+// list, which the dashboard shows beside the actionable PRs but which
+// EnrichCIStatus deliberately never touches: a draft is not a merge
+// candidate, so its mergeability and check runs are never fetched.
+func (c *Client) EnrichReviewSignals(ctx context.Context, prs []PullRequest) {
+	if c == nil {
+		return
+	}
+	facts := newProtectionCollector(c)
+	for i := range prs {
+		facts.attach(ctx, &prs[i], nil)
 	}
 }
 

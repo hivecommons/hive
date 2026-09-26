@@ -6315,6 +6315,10 @@ func runEvalCycle(
 	// enriches the held list ONLY for the repair path — held PRs still never
 	// reach the merge sweep, escalation or the queue counts.
 	ghClient.EnrichCIStatus(ctx, actionable.PRs.Held)
+	// Stale drafts sit in the same dashboard PR column; they get the
+	// review/link signals only — no mergeability or check-run fetches, a
+	// draft is not a merge candidate (hivecommons/hive#8968).
+	ghClient.EnrichReviewSignals(ctx, actionable.PRs.StaleDrafts)
 
 	// Publish the human-facing "what should I merge next?" digest. This reads
 	// the PR set enumerated and CI-enriched immediately above, so it must stay

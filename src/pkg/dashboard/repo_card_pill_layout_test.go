@@ -18,7 +18,7 @@ func TestRepoCardPillRowsUseSharedGrid(t *testing.T) {
 		`<span class="repo-issue-pill-wrap repo-pill-row">`,
 		`<span class="repo-pr-pill-wrap repo-pill-row">`,
 		"repoPillActionCluster([prBadge, planBtn, designBtn, holdBtn])",
-		"repoPillActionCluster([reviewPill, queueBtn + stateBadge, '', holdBtn])",
+		"repoPillActionCluster([reviewPill, queueBtn + stateBadge, issueBadge, holdBtn])",
 		"holdToggleChip(cardRepo, i, 'issue', isHeldIssue, canToggleHold, heldTip)",
 		"repo-pill-action-slot empty",
 	} {

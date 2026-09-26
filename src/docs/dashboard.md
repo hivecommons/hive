@@ -152,7 +152,8 @@ First match wins for classification:
    auto-merge.
 3. **Blocked** — merge verdict `blocked`, conflicts (`mergeable: no`), or
    failing CI with failing check names.
-4. **In review** — merge verdict `outstanding`, or a recorded Hive review link.
+4. **In review** — merge verdict `outstanding`, a recorded Hive review link,
+   or a GitHub review decision (see below).
 5. **Draft** — draft PRs.
 6. **Open** — everything else.
 
@@ -168,6 +169,49 @@ queueing.
 ## Linked PR issue signals
 
 Repository issue pills can show a `🔗 #N` badge when Hive has verified a pull request related to that issue. Open PRs apply `hive/covered-by-pr`; merged PRs on still-open issues apply `hive/likely-done` and render as `🔗 #N merged`. These are pending signals, not resolution: the issue remains in the actionable list until GitHub closes it, GitHub reports the PR in `closingIssuesReferences`, or an operator confirms coverage. The status payload exposes the same evidence as `linked_prs: [{number, state, merged, url, closing}]` on each `github.Issue`.
+
+## PR review and link signals
+
+PR pills also carry GitHub's own review state and conversation evidence
+([#8968](https://github.com/hivecommons/hive/issues/8968)). Every field is
+display-only: no enumeration, review, hold, or merge gate reads any of them.
+
+- **Review decision.** `protection.review_decision` (`APPROVED`,
+  `CHANGES_REQUESTED`, `REVIEW_REQUIRED`), with `protection.approvals_given`
+  and `protection.changes_requested_by`, comes from the one-per-repository
+  GraphQL query the sweep already runs for branch-protection facts
+  (`protectionCollector`, `pkg/github/protection_facts.go`). The pill shows
+  👍 approved, 👎 changes requested (tooltip names the reviewers), or 👀
+  review required. GitHub reports a null decision on a base branch that
+  requires no review; the decision then stays unknown — it is never inferred
+  — and the reviewer opinions GitHub did return are shown as opinions
+  ("2 approvals on GitHub — no review decision", "changes requested by @x —
+  no review decision from GitHub"). Any decision or opinion places the PR in
+  the **In review** band unless a higher band already claimed it.
+- **Requested reviewers and teams.** `requested_reviewers` (logins) and
+  `requested_teams` (slugs) come from the list payload at enumeration time —
+  no additional request — on actionable, held, and stale-draft PRs alike. The
+  pill shows 👥; the tooltip lists them.
+- **Conversation volume.** `comment_count` and `review_thread_count` are
+  GitHub totals (`totalCount` only, no thread nodes) added to the same
+  per-repository GraphQL request as the review decision, so they cost
+  response size rather than an additional request. The pill shows `🗨 N`
+  with the sum; the tooltip splits comments from review threads. Nothing is
+  shown when both are zero.
+- **Linked issues.** `linked_issues: [{number, repo, state, url}]` are the
+  first 20 `closingIssuesReferences` GitHub reports for the PR, from that
+  same request. The pill's action cluster shows a `🔗` badge that opens the
+  first still-open one (else the first); the tooltip lists all. This is the
+  PR-side mirror of the issue column's `linked_prs` badge, and like it comes
+  only from the snapshot — the card never infers or fetches relationships.
+
+The extended request is tried first; a forge that rejects one of the added
+fields (an older GHE) is asked the decision-only query instead, so the review
+decision the merge-block wording depends on is never lost to a display
+field. Stale drafts, which `EnrichCIStatus` never touches, receive these
+signals through `EnrichReviewSignals` — the same per-repository query and no
+per-PR mergeability or check-run fetch, since a draft is not a merge
+candidate.
 
 
 ## Appearance themes

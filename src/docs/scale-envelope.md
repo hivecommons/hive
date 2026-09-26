@@ -34,7 +34,7 @@ ones to:
 2. **Truncation must drop the least important tail, not an arbitrary one.**
    This holds today and is easy to assume backwards:
    - Issues are sorted **oldest first** before any cap is applied
-     (`src/pkg/github/client.go:733-735`, descending `AgeMinutes`).
+     (`src/pkg/github/client.go:759-761`, descending `AgeMinutes`).
    - PRs are sorted by **review class then oldest-first within class**
      (`SortPullRequestsForReview`, `src/pkg/github/review_priority.go:181`;
      fixes → refactors/docs → tests).
@@ -50,7 +50,7 @@ enumeration-side.**
 
 Enumeration is deliberately complete. `fetchIssues` and `fetchPRs` page through
 every open item in every watched repo with no page ceiling
-(`src/pkg/github/client.go:785-798` and `898-911`, `PerPage: 100` looping until
+(`src/pkg/github/client.go:811-824` and `898-911`, `PerPage: 100` looping until
 `resp.NextPage == 0`). The governor therefore always sees true queue depth —
 which is what makes `governor-thresholds.md` scaling meaningful — and the caps
 below only decide how much of that is *rendered into a kick prompt*.
@@ -99,7 +99,7 @@ operator can change it without rebuilding.
 | Auto-merge sweep merges per pass | `DefaultAutoMergeSweepMaxMerges`, `src/pkg/github/automerge_sweep.go:18` | 3 | **Yes** (`auto_merge.max_merges`) | Shed load: remaining merges wait for the next pass |
 | Task-list sweep closures per tick | `DefaultTaskListSweepMaxCloses`, `src/pkg/github/task_list_sweep.go:20` | 5 | Partly (`MaxCloses` option) | Shed load: remaining closures wait for the next tick |
 | Prompt-history on disk | `promptHistoryMaxSizeMB` × backups, `src/pkg/dashboard/prompt_history.go:80` | 96 MiB worst case | **No** | Shed oldest: rotate + gzip, oldest prompts age out first |
-| Issue/PR enumeration | `fetchIssues` / `fetchPRs`, `src/pkg/github/client.go:782`, `:895` | **no cap** | n/a | Pages to completion; cost grows with backlog |
+| Issue/PR enumeration | `fetchIssues` / `fetchPRs`, `src/pkg/github/client.go:808`, `:895` | **no cap** | n/a | Pages to completion; cost grows with backlog |
 
 ### The inconsistency this inventory exposes
 
