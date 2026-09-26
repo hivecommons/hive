@@ -95,6 +95,12 @@ rule.
 
 ## Repository card legend, issue bands, and PR bands
 
+The collapsible **Overview** section above Repositories summarizes the same
+client-side issue and PR bands across the current repository view. Its two SVG
+donut charts reuse the repository-card classifiers for actionable plus held
+issues/PRs, so their totals match the visible band counters and respect any
+repo filtering without a separate API call.
+
 The **Repositories** section includes a compact, collapsible pill legend. It is
 stored per browser in `localStorage` and uses the same pill classes as the cards,
 so theme changes update the legend automatically. The legend explains issue

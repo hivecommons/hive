@@ -1509,6 +1509,35 @@
     .repo-issue-pill .pill-role { font-size:var(--fs-2xs); font-weight:700; letter-spacing:0.02em; text-transform:uppercase; margin-left:3px; opacity:0.85; }
     .repo-pr-pill .pill-state { font-size:var(--fs-2xs); margin-left:2px; opacity:0.9; }
     .repo-pr-pill .pill-role { font-size:var(--fs-2xs); font-weight:700; letter-spacing:0.02em; text-transform:uppercase; margin-left:3px; opacity:0.85; }
+    .overview-card { margin: var(--sp-0) var(--sp-0) var(--sp-6); padding: var(--sp-5); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2); }
+    .overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--sp-5); }
+    .overview-chart-card { display: grid; grid-template-columns: minmax(180px, 220px) minmax(0, 1fr); align-items: center; gap: var(--sp-4); min-width: 0; }
+    .overview-chart-title { color: var(--text); font-size: var(--fs-sm); font-weight: 800; margin-bottom: var(--sp-2); }
+    .overview-chart-subtitle { color: var(--muted); font-size: var(--fs-xs); margin-bottom: var(--sp-3); }
+    .overview-chart-svg { width: 100%; max-width: 220px; height: auto; overflow: visible; }
+    .overview-chart-track { fill: none; stroke: color-mix(in srgb, var(--muted) 18%, transparent); }
+    .overview-chart-slice { fill: none; stroke: var(--slice-c); transition: opacity 0.15s; }
+    .overview-chart-slice:hover { opacity: 0.78; }
+    .overview-chart-label { fill: var(--text); font-size: var(--fs-2xs); font-weight: 800; text-anchor: middle; dominant-baseline: central; paint-order: stroke; stroke: var(--surface-2); stroke-width: 3px; }
+    .overview-chart-total { fill: var(--text); font-size: var(--fs-sm); font-weight: 800; text-anchor: middle; dominant-baseline: central; }
+    .overview-chart-total-caption { fill: var(--muted); font-size: var(--fs-2xs); text-anchor: middle; dominant-baseline: central; }
+    .overview-chart-legend { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+    .overview-chart-legend-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--sp-2); color: var(--muted); font-size: var(--fs-xs); }
+    .overview-chart-swatch { width: 0.75rem; height: 0.75rem; border-radius: var(--r-pill); background: var(--slice-c); box-shadow: 0 0 0 1px color-mix(in srgb, var(--slice-c) 45%, transparent); }
+    .overview-chart-legend-label { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .overview-chart-legend-count { font-variant-numeric: tabular-nums; }
+    .overview-empty { color: var(--muted); font-size: var(--fs-sm); padding: var(--sp-5); border: 1px dashed var(--border); border-radius: var(--r); text-align: center; }
+    .overview-issue-ready { --slice-c: var(--status-info); }
+    .overview-issue-in-progress { --slice-c: var(--status-warn); }
+    .overview-issue-agent-filed { --slice-c: var(--acmm-level-5); }
+    .overview-issue-waiting { --slice-c: var(--status-attention); }
+    .overview-issue-done { --slice-c: var(--status-ok); }
+    .overview-pr-waiting { --slice-c: var(--status-attention); }
+    .overview-pr-eligible { --slice-c: var(--status-ok); }
+    .overview-pr-blocked { --slice-c: var(--status-error); }
+    .overview-pr-in-review { --slice-c: var(--status-warn); }
+    .overview-pr-open { --slice-c: var(--acmm-level-5); }
+    .overview-pr-draft { --slice-c: var(--status-neutral); }
 
     /* Sparklines */
     .sparkline { display: inline-block; vertical-align: middle; margin-left: var(--sp-3); flex-shrink: 0; }
@@ -3677,6 +3706,13 @@
   <div class="token-usage mb-8" id="token-panel"></div>
 
   <div class="cost-usage mb-8" id="cost-panel"></div>
+
+  <div class="repos" id="overview-section">
+    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="overview-section"><span class="section-chevron">▼</span> Overview</h2>
+    <div class="section-body">
+      <div class="overview-card" id="overview-card"></div>
+    </div>
+  </div>
 
   <div class="repos" id="repos-section">
     <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><span class="section-chevron">▼</span> Repositories <span id="repos-host-badge" title="Every repo in this hive is on this single GitHub host" style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3)"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: automated fix attempts exhausted — operator review required"></span> <button class="hv-btn btn-secondary btn" id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1" title="Scan the monitored repositories for issue/PR changes now instead of waiting for the governor's next eval cycle (read-only — no agents are kicked; server-debounced)">🔄 Rescan</button> <button class="hv-btn btn-secondary btn" id="repos-reset-layout-btn" data-action="resetRepoCardWidths" data-stop="1" title="Reset every repository card to the default width, discarding the widths you dragged (this browser only)" style="display:none">↔️ Reset layout</button> <button class="hv-btn config-gear btn-sm" data-action="gh1" data-stop="1" title="Manage monitored repositories">⚙️</button></h2>
@@ -8822,6 +8858,20 @@
     const MS_PER_DAY = 24 * 60 * 60 * 1000;
     window._repoIssueBandConfig = Object.assign({}, REPO_ISSUE_BAND_DEFAULTS);
     const REPO_LEGEND_COLLAPSED_KEY_PREFIX = 'hive-repos-legend-collapsed:';
+    const OVERVIEW_ISSUE_BAND_ORDER = ['ready', 'in-progress', 'agent-filed', 'waiting', 'done'];
+    const OVERVIEW_CHART_FULL = 100;
+    const OVERVIEW_CHART_VIEWBOX = 240;
+    const OVERVIEW_CHART_CENTER = OVERVIEW_CHART_VIEWBOX / 2;
+    const OVERVIEW_CHART_RADIUS = 78;
+    const OVERVIEW_CHART_STROKE = 34;
+    const OVERVIEW_CHART_LABEL_RADIUS = 104;
+    const OVERVIEW_CHART_START_ANGLE = -90;
+    const OVERVIEW_CHART_DEGREES = 360;
+    const OVERVIEW_CHART_PERCENT_SCALE = 100;
+    const OVERVIEW_CHART_LABEL_MIN_PERCENT = 7;
+    const OVERVIEW_CHART_DECIMAL_PLACES = 1;
+    const OVERVIEW_CHART_TOTAL_VALUE_Y_OFFSET = -8;
+    const OVERVIEW_CHART_TOTAL_CAPTION_Y_OFFSET = 12;
 
     function normalizeIssueBandConfig(raw) {
       const cfg = raw || {};
@@ -9478,6 +9528,82 @@
       return out;
     }
 
+    function overviewIssueBandSlices(repos) {
+      const counts = new Map(OVERVIEW_ISSUE_BAND_ORDER.map(band => [band, 0]));
+      (repos || []).forEach(r => {
+        const issues = (r.actionableIssues || []).concat(r.heldIssues || []);
+        groupedRepoIssues(issues).forEach(g => counts.set(g.band, (counts.get(g.band) || 0) + g.issues.length));
+      });
+      return OVERVIEW_ISSUE_BAND_ORDER.map(band => ({
+        key: band,
+        label: issueBandLabel(band, ''),
+        count: counts.get(band) || 0,
+        className: 'overview-issue-' + band
+      }));
+    }
+
+    function overviewPRBandSlices(repos) {
+      const counts = new Map(PR_BAND_ORDER.map(band => [band, 0]));
+      (repos || []).forEach(r => {
+        groupedRepoPRs(r.openPrs || [], r.heldPrs || []).forEach(g => counts.set(g.band, (counts.get(g.band) || 0) + g.prs.length));
+      });
+      return PR_BAND_ORDER.map(band => ({
+        key: band,
+        label: prBandLabel(band),
+        count: counts.get(band) || 0,
+        className: 'overview-pr-' + band
+      }));
+    }
+
+    function overviewChartLabelPoint(percentOffset, percentSize) {
+      const midPercent = percentOffset + (percentSize / 2);
+      const angle = (midPercent / OVERVIEW_CHART_PERCENT_SCALE) * OVERVIEW_CHART_DEGREES + OVERVIEW_CHART_START_ANGLE;
+      const radians = angle * Math.PI / (OVERVIEW_CHART_DEGREES / 2);
+      return {
+        x: OVERVIEW_CHART_CENTER + OVERVIEW_CHART_LABEL_RADIUS * Math.cos(radians),
+        y: OVERVIEW_CHART_CENTER + OVERVIEW_CHART_LABEL_RADIUS * Math.sin(radians)
+      };
+    }
+
+    function renderOverviewDonut(title, subtitle, slices) {
+      const visible = (slices || []).filter(s => s.count > 0);
+      const total = visible.reduce((n, s) => n + s.count, 0);
+      if (!total) {
+        return `<div class="overview-chart-card"><div><div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-empty">No matching items in this view.</div></div></div>`;
+      }
+      let offset = 0;
+      const sliceHtml = visible.map(s => {
+        const percent = (s.count / total) * OVERVIEW_CHART_PERCENT_SCALE;
+        const dashOffset = -offset;
+        const point = overviewChartLabelPoint(offset, percent);
+        offset += percent;
+        const percentLabel = percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + '%';
+        const text = percent >= OVERVIEW_CHART_LABEL_MIN_PERCENT
+          ? `<text class="overview-chart-label" x="${point.x.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" y="${point.y.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}">${s.count} · ${percentLabel}</text>`
+          : '';
+        return `<circle class="overview-chart-slice ${esc(s.className)}" cx="${OVERVIEW_CHART_CENTER}" cy="${OVERVIEW_CHART_CENTER}" r="${OVERVIEW_CHART_RADIUS}" pathLength="${OVERVIEW_CHART_FULL}" stroke-width="${OVERVIEW_CHART_STROKE}" stroke-dasharray="${percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)} ${OVERVIEW_CHART_FULL}" stroke-dashoffset="${dashOffset.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" transform="rotate(${OVERVIEW_CHART_START_ANGLE} ${OVERVIEW_CHART_CENTER} ${OVERVIEW_CHART_CENTER})"><title>${esc(s.label)}: ${s.count}</title></circle>${text}`;
+      }).join('');
+      const legendHtml = visible.map(s => {
+        const percent = (s.count / total) * OVERVIEW_CHART_PERCENT_SCALE;
+        const percentLabel = percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + '%';
+        return `<div class="overview-chart-legend-row"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${s.count} (${percentLabel})</span></div>`;
+      }).join('');
+      return `<div class="overview-chart-card"><svg class="overview-chart-svg" viewBox="0 0 ${OVERVIEW_CHART_VIEWBOX} ${OVERVIEW_CHART_VIEWBOX}" role="img" aria-label="${esc(title)}"><circle class="overview-chart-track" cx="${OVERVIEW_CHART_CENTER}" cy="${OVERVIEW_CHART_CENTER}" r="${OVERVIEW_CHART_RADIUS}" stroke-width="${OVERVIEW_CHART_STROKE}"></circle>${sliceHtml}<text class="overview-chart-total" x="${OVERVIEW_CHART_CENTER}" y="${OVERVIEW_CHART_CENTER + OVERVIEW_CHART_TOTAL_VALUE_Y_OFFSET}">${total}</text><text class="overview-chart-total-caption" x="${OVERVIEW_CHART_CENTER}" y="${OVERVIEW_CHART_CENTER + OVERVIEW_CHART_TOTAL_CAPTION_Y_OFFSET}">total</text></svg><div><div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${legendHtml}</div></div></div>`;
+    }
+
+    function renderOverviewCharts(repos) {
+      const el = document.getElementById('overview-card');
+      if (!el) return;
+      const issueSlices = overviewIssueBandSlices(repos);
+      const prSlices = overviewPRBandSlices(repos);
+      const total = issueSlices.concat(prSlices).reduce((n, s) => n + s.count, 0);
+      const html = total
+        ? `<div class="overview-grid">${renderOverviewDonut('Issues by band', 'Actionable and held issues in the current repo view', issueSlices)}${renderOverviewDonut('PRs by band', 'Open and held pull requests in the current repo view', prSlices)}</div>`
+        : '<div class="overview-empty">No repository issues or pull requests match the current hive view yet.</div>';
+      setIfChanged(el, html);
+      applySectionCollapse('overview-section');
+    }
+
     function issueTip(issue, info) {
       const labels = ((issue && issue.labels) || []).join(', ');
       const assignees = ((issue && issue.assignees) || []).join(', ');
@@ -9508,6 +9634,7 @@
       const layoutW = repoCardLayoutWidth(el);
       const status = window._lastStatus || {};
       renderRepoLegend();
+      renderOverviewCharts(repos);
       const activeSwarmRepo = ((status.swarm || {}).active || {}).repo || '';
       // Definitive single-host badge in the section header: every repo in this
       // hive is on ONE GitHub host (github.com or a GHE instance). Green =
@@ -9567,9 +9694,12 @@
         const canToggleHold = repoHoldPermissionKnown(cardRepo);
         const cardW = repoCardWidth(cardRepo);
         const MAX_PILL_TITLE_LEN = pillTitleLimit(cardW || layoutW);
+        const heldIssueKeys = new Set((r.heldIssues || []).map(i => String(i.number)));
         const renderIssuePill = (i, info) => {
           const title = pillDisplayTitle(i.title, MAX_PILL_TITLE_LEN);
           const repoFull = r.full || r.name || '';
+          const isHeldIssue = heldIssueKeys.has(String(i.number));
+          const heldTip = isHeldIssue ? heldReason(i) : '';
           // Plan action (Phase 4): mint an epic from this issue and request
           // decomposition. data-action wires into the delegated click handler.
           // Only rendered at ACMM L5+, where the architect that decomposes the
@@ -9580,38 +9710,25 @@
           // hunting through the Plans modal (hivecommons/hive#8011). The
           // button stays only for issues with no plan yet.
           const linked = planLinks[repoFull + '#' + i.number];
-          const planBtn = linked
+          const planBtn = linked && !isHeldIssue
             ? planIssueChip(linked)
-            : (showPlan ? `<button class="repo-issue-plan pill-icon" data-action="planIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Plan this issue" aria-label="Plan this issue">📋</button>` : '');
-          const designBtn = (!linked && showDesign) ? `<button class="repo-issue-plan pill-icon" data-action="designIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Design before planning" aria-label="Design before planning">📐</button>` : '';
-          const holdBtn = holdToggleChip(cardRepo, i, 'issue', false, canToggleHold, '');
+            : (!isHeldIssue && showPlan ? `<button class="repo-issue-plan pill-icon" data-action="planIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Plan this issue" aria-label="Plan this issue">📋</button>` : '');
+          const designBtn = (!isHeldIssue && !linked && showDesign) ? `<button class="repo-issue-plan pill-icon" data-action="designIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Design before planning" aria-label="Design before planning">📐</button>` : '';
+          const holdBtn = holdToggleChip(cardRepo, i, 'issue', isHeldIssue, canToggleHold, heldTip);
           const linkedPRs = Array.isArray(i.linked_prs) ? i.linked_prs : [];
           const primaryPR = linkedPRs.find(pr => pr.closing) || linkedPRs.find(pr => pr.state === 'open') || linkedPRs.find(pr => pr.merged) || linkedPRs[0];
           const prTip = linkedPRs.map(pr => `#${pr.number}${pr.merged ? ' merged' : (pr.state ? ' ' + pr.state : '')}`).join(', ');
-          const prBadge = primaryPR ? `<a class="repo-issue-plan pill-icon" href="${esc(primaryPR.url || '')}" target="_blank" rel="noopener" title="Linked PR${prTip ? ': ' + esc(prTip) : ''}" aria-label="Linked pull request #${primaryPR.number}">🔗</a>` : '';
+          const prBadge = (!isHeldIssue && primaryPR) ? `<a class="repo-issue-plan pill-icon" href="${esc(primaryPR.url || '')}" target="_blank" rel="noopener" title="Linked PR${prTip ? ': ' + esc(prTip) : ''}" aria-label="Linked pull request #${primaryPR.number}">🔗</a>` : '';
           const bandClass = info.band === 'ready' ? '' : ' ' + info.band;
+          const heldClass = isHeldIssue ? ' held' : '';
           const staleClass = issueIsStale(i) ? ' stale' : '';
-          const statusTip = issueBandLabel(info.band, info.role) + (info.signals.length ? ' — ' + info.signals.map(s => s.label).join(', ') : '');
-          return `<span class="repo-issue-pill-wrap repo-pill-row"><span class="repo-pill-status repo-issue-pill${bandClass}${staleClass}" title="${esc(statusTip)}">${esc(issueBandShortLabel(info.band, info.role))}</span><a class="repo-issue-pill repo-pill-main${bandClass}${staleClass}" href="${esc(i.url)}" target="_blank" rel="noopener" title="${esc(issueTip(i, info))}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span>${issueSignalHTML(info)}</a>${repoPillActionCluster([prBadge, planBtn, designBtn, holdBtn])}</span>`;
+          const statusTip = (isHeldIssue ? heldTip + ' — band: ' : '') + issueBandLabel(info.band, info.role) + (info.signals.length ? ' — ' + info.signals.map(s => s.label).join(', ') : '');
+          const issueUrl = i.url || (repoUrl + '/issues/' + i.number);
+          return `<span class="repo-issue-pill-wrap repo-pill-row"><span class="repo-pill-status repo-issue-pill${bandClass}${heldClass}${staleClass}" title="${esc(statusTip)}">${esc(isHeldIssue ? 'held' : issueBandShortLabel(info.band, info.role))}</span><a class="repo-issue-pill repo-pill-main${bandClass}${heldClass}${staleClass}" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(issueTip(i, info) + (isHeldIssue ? ' — ' + heldTip : ''))}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span>${issueSignalHTML(info)}</a>${repoPillActionCluster([prBadge, planBtn, designBtn, holdBtn])}</span>`;
         };
-        const issuePills = groupedRepoIssues(r.actionableIssues || []).map(g => {
+        const issuePills = groupedRepoIssues((r.actionableIssues || []).concat(r.heldIssues || [])).map(g => {
           const items = g.issues.map(entry => renderIssuePill(entry.issue, entry.info)).join('');
           return `<div class="repo-issue-band repo-issue-band-${esc(g.band)}"><div class="repo-issue-band-title">${esc(g.label)} · ${g.issues.length}</div><div class="repo-issue-band-items">${items}</div></div>`;
-        }).join('');
-        // Held issues (hivecommons/hive#7896): in the issue column, because
-        // the issues number counts them, but tinted held and without the
-        // Plan action — decomposing a parked issue would put it back in the
-        // automated lane the hold took it out of. A held issue is only a
-        // HoldItem on the wire (no author); the URL is built from the repo
-        // when an older snapshot omits it.
-        const heldIssuePills = (r.heldIssues || []).map(i => {
-          const title = pillDisplayTitle(i.title, MAX_PILL_TITLE_LEN);
-          const age = pillAge(i.created_at);
-          const heldTip = heldReason(i);
-          const tip = (i.title || '') + (age ? ' (' + age + ')' : '') + ' (' + heldTip + ')';
-          const url = i.url || (repoUrl + '/issues/' + i.number);
-          const holdBtn = holdToggleChip(cardRepo, i, 'issue', true, canToggleHold, heldTip);
-          return `<span class="repo-issue-pill-wrap repo-pill-row"><span class="repo-pill-status repo-issue-pill held" title="${esc(heldTip)}">held</span><a class="repo-issue-pill held repo-pill-main" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span></a>${repoPillActionCluster(['', '', '', holdBtn])}</span>`;
         }).join('');
         const renderPrPill = (p, held, info) => {
           const title = pillDisplayTitle(p.title, MAX_PILL_TITLE_LEN);
@@ -9681,10 +9798,11 @@
           const items = g.prs.map(entry => renderPrPill(entry.pr, entry.held, entry.info)).join('');
           return `<div class="repo-pr-band repo-pr-band-${esc(g.band)}"><div class="repo-pr-band-title">${esc(g.label)} · ${g.prs.length}</div><div class="repo-pr-band-items">${items}</div></div>`;
         }).join('');
-        // Two columns under the two numbers: issue pills (actionable, then
-        // held) under "issues", PR pills grouped into state bands under
-        // "PRs". Position says what a pill is; tint says what state it is in.
-        const issueCol = issuePills + heldIssuePills;
+        // Two columns under the two numbers: issue pills (actionable and held
+        // grouped into the same display bands) under "issues", PR pills grouped
+        // into state bands under "PRs". Position says what a pill is; tint says
+        // what state it is in.
+        const issueCol = issuePills;
         const prCol = prPills;
         const pillColClass = issueCol && prCol ? '' : (issueCol ? ' repo-pills-issues-only' : ' repo-pills-prs-only');
         const pillsHtml = (issueCol || prCol)
@@ -16217,7 +16335,7 @@ function burnAreaChart() {
       // Restore persisted collapsed state for all collapsible sections
       const COLLAPSIBLE_SECTION_IDS = [
         'advisory-section', 'hive-advice-section', 'acmm-reco-section', 'lifecycle-section',
-        'repos-section', 'beads-section', 'acmm-eval-section',
+        'overview-section', 'repos-section', 'beads-section', 'acmm-eval-section',
         'platform-section', 'fleet-report-section', 'audit-section', 'nous-section', 'inception-section',
         'knowledge-section', 'contributors-section', 'debug-section', 'logs-section',
         'agents-section', 'faq-section'

@@ -172,14 +172,15 @@ func TestRepoCardHeldPillStructure(t *testing.T) {
 		".repo-stats { display: grid; grid-template-columns: 1fr 1fr;",
 		".repo-pills { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);",
 		`<div class="repo-pills${pillColClass}"><div class="repo-pill-col repo-pill-col-issues">${issueCol}</div><div class="repo-pill-col repo-pill-col-prs">${prCol}</div></div>`,
-		"const issueCol = issuePills + heldIssuePills;",
+		"const issueCol = issuePills;",
 		"const prCol = prPills;",
 		// Held tint, distinct from every merge-state and from needs-human.
 		".repo-issue-pill.held, .repo-pr-pill.held { --pill-c: var(--muted); border-style: dashed; }",
+		"const heldIssueKeys = new Set((r.heldIssues || []).map(i => String(i.number)));",
+		"groupedRepoIssues((r.actionableIssues || []).concat(r.heldIssues || [])).map(g => {",
 		"const prPills = groupedRepoPRs(r.openPrs || [], r.heldPrs || []).map(g => {",
-		"const heldIssuePills = (r.heldIssues || []).map(i => {",
 		`<a class="repo-pr-pill repo-pill-main${heldClass}${tintClass}${staleClass}"`,
-		`<a class="repo-issue-pill held repo-pill-main"`,
+		`<a class="repo-issue-pill repo-pill-main${bandClass}${heldClass}${staleClass}"`,
 		// The state chip: ⚠ for the escalation kind of hold, ⏸ otherwise.
 		`<span class="repo-pr-pill needs-human pill-needs-human-badge pill-icon" title="${esc(heldTip)}"`,
 		"holdToggleChip(cardRepo, p, 'pr', held, canToggleHold, heldTip)",

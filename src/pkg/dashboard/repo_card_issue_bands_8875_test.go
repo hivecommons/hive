@@ -15,7 +15,7 @@ func TestRepoCardIssueBandsStaticWiring(t *testing.T) {
 		"function renderRepoLegend()",
 		"function groupedRepoIssues(issues)",
 		"function issueLinkedPRState(issue)",
-		"const issuePills = groupedRepoIssues(r.actionableIssues || []).map(g => {",
+		"const issuePills = groupedRepoIssues((r.actionableIssues || []).concat(r.heldIssues || [])).map(g => {",
 		"repoStaleIssueCount(r.actionableIssues || [])",
 		"window._repoIssueBandConfig = normalizeIssueBandConfig(cfg.dashboard_issue_bands || {});",
 		".repo-issue-pill.waiting",
