@@ -1,0 +1,1 @@
+- Spektacular runs now carry source-aware work item context so Linear, Jira, GitHub Projects, Gitea, GitLab, and GitHub work sources can drive spec/plan/implement stages.

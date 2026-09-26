@@ -7,10 +7,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/beads"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 func TestHandleRunSpecStart(t *testing.T) {
@@ -73,6 +75,7 @@ func TestStartDesignSpektacularAdmitsNonGitHubWorkItem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
+
 	s.deps.BeadStores = map[string]*beads.Store{planning.ArchitectAgentName: store}
 	epic, runKey, err := s.startDesignSpektacular(context.Background(), store, ghpkg.Issue{
 		SourceType: "jira",
@@ -93,6 +96,66 @@ func TestStartDesignSpektacularAdmitsNonGitHubWorkItem(t *testing.T) {
 	}
 	if len(stages) != 1 || stages[0].RunKey != runKey || stages[0].Stage != StageSpec {
 		t.Fatalf("stages = %+v", stages)
+	}
+}
+
+func TestAdmitExternalWorkItemsFlowToRunsAndDetail(t *testing.T) {
+	s := covApiServer(t)
+	s.contributeHub.persistTaskLedgers = false
+	s.deps.Config.Runs.Spektacular.Enabled = true
+	now := time.Now()
+	for _, tc := range []worksource.WorkItemContext{
+		{SourceType: "linear", Repo: "acme/widgets", ExternalID: "LIN-7", Title: "Linear run", Body: "Linear body", URL: "https://linear.app/acme/issue/LIN-7"},
+		{SourceType: "jira", Repo: "acme/widgets", ExternalID: "ENG-8", Title: "Jira run", Body: "Jira body", URL: "https://jira.example/browse/ENG-8"},
+	} {
+		if err := s.AdmitTriagedRunRefWithContext(tc.Ref(), tc, "spec", "needs a run", now); err != nil {
+			t.Fatalf("admit %s: %v", tc.ExternalID, err)
+		}
+	}
+	stages, err := s.RunStageAccessor().PendingRunStages(context.Background())
+	if err != nil {
+		t.Fatalf("PendingRunStages: %v", err)
+	}
+	if len(stages) != 2 {
+		t.Fatalf("stages = %+v", stages)
+	}
+	runs, err := s.activeRuns(true)
+	if err != nil {
+		t.Fatalf("activeRuns: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("runs = %+v", runs)
+	}
+	detail, err := s.buildRunDetail(httptest.NewRequest(http.MethodGet, "/api/runs/acme%2Fwidgets%21LIN-7/detail", nil), "acme/widgets!LIN-7")
+	if err != nil {
+		t.Fatalf("buildRunDetail: %v", err)
+	}
+	if detail.Issue.SourceType != "linear" || detail.Issue.ExternalID != "LIN-7" || detail.Issue.URL != "https://linear.app/acme/issue/LIN-7" {
+		t.Fatalf("detail issue = %+v", detail.Issue)
+	}
+}
+
+type fakeWorkItemCommenter struct {
+	ref  worksource.Ref
+	body string
+}
+
+func (f *fakeWorkItemCommenter) AddComment(_ context.Context, ref worksource.Ref, body string) error {
+	f.ref, f.body = ref, body
+	return nil
+}
+
+func TestCompletionPRCommentUsesWorksourceCommenter(t *testing.T) {
+	s := covApiServer(t)
+	commenter := &fakeWorkItemCommenter{}
+	prev := workItemCommenterOverride
+	workItemCommenterOverride = func(_ *Server, _ worksource.WorkItemContext) (worksource.Commenter, error) { return commenter, nil }
+	defer func() { workItemCommenterOverride = prev }()
+	item := worksource.WorkItemContext{SourceType: "jira", Repo: "acme/widgets", ExternalID: "ENG-9", Title: "Jira implement", URL: "https://jira.example/browse/ENG-9"}.Normalized()
+	task := &WSTaskAssign{TaskID: "task-impl", Kind: "issue", Stage: StageImplement, SourceType: worksource.SourceTypeRun, Repo: "acme/widgets", Key: "acme/widgets!acme/widgets!ENG-9:implement"}
+	s.contributeHub.postCompletionPRComment(context.Background(), task, item, "https://github.com/acme/widgets/pull/12")
+	if commenter.ref.ExternalID != "ENG-9" || !strings.Contains(commenter.body, "https://github.com/acme/widgets/pull/12") {
+		t.Fatalf("comment ref=%+v body=%q", commenter.ref, commenter.body)
 	}
 }
 

@@ -58,6 +58,7 @@ type taskLease struct {
 	gen             uint64
 	triageVerdict   string
 	triageRationale string
+	workItem        worksource.WorkItemContext
 	// restored marks a lease loadLeases read from disk at startup rather than one
 	// recordLease minted in this process (#5681). It is deliberately NOT persisted:
 	// it means "issued by the PREVIOUS process, whose holder has not reconnected
@@ -237,11 +238,13 @@ func (h *ContributeWSHub) recordLeaseForKeyStage(identity, taskID, repo string, 
 	k := leaseKey(identity, taskID)
 	prev := h.leases[k]
 	triageVerdict, triageRationale := "", ""
+	var workItem worksource.WorkItemContext
 	removedAdmissions := map[string]*taskLease{}
 	if stage != "" {
 		for admissionKey, l := range h.leases {
 			if l != nil && l.identity != identity && l.key == key && l.stage == stage && h.isStagePlaceholderIdentity(l.identity) {
 				triageVerdict, triageRationale = l.triageVerdict, l.triageRationale
+				workItem = l.workItem
 				copyLease := *l
 				removedAdmissions[admissionKey] = &copyLease
 				delete(h.leases, admissionKey)
@@ -259,6 +262,7 @@ func (h *ContributeWSHub) recordLeaseForKeyStage(identity, taskID, repo string, 
 		gen:             gen,
 		triageVerdict:   triageVerdict,
 		triageRationale: triageRationale,
+		workItem:        workItem.Normalized(),
 		expiresAt:       now.Add(leaseTTL),
 	}
 	// #5681: a lease the hub issued must outlive the process that issued it.
@@ -422,6 +426,11 @@ func (h *ContributeWSHub) emitLeaseStageTransitionAt(from, to, reason string, re
 	if l.key != "" {
 		attrs["issue_ref"] = l.key
 	}
+	if wi := l.workItem.Normalized(); wi.Repo != "" || wi.ExternalID != "" || wi.URL != "" {
+		attrs["work_item_source"] = wi.SourceType
+		attrs["work_item_external_id"] = wi.ExternalID
+		attrs["work_item_url"] = wi.URL
+	}
 	attrs["waiting_on"] = "agent"
 	if title := h.leaseTaskTitle(l); title != "" {
 		// Scrubbed at the source so the timeline never retains a raw title
@@ -556,6 +565,28 @@ func (h *ContributeWSHub) completeImplementStage(identity, taskID string, now ti
 			"identity", completed.identity, "task", taskID, "error", err)
 	}
 	return true
+}
+
+func (h *ContributeWSHub) postCompletionPRComment(ctx context.Context, task *WSTaskAssign, item worksource.WorkItemContext, prURL string) {
+	prURL = strings.TrimSpace(prURL)
+	if h == nil || h.server == nil || task == nil || task.Stage != StageImplement || task.SourceType != worksource.SourceTypeRun || prURL == "" {
+		return
+	}
+	runKey := runKeyOfLease(task.identityKey(), task.Repo)
+	item = item.Normalized()
+	if item.Repo == "" || item.ExternalID == "" && item.Number <= 0 {
+		return
+	}
+	ref := item.Ref()
+	commenter, err := h.server.workItemCommenter(item)
+	if err != nil {
+		h.logger.Warn("[contribute-ws] work item completion comment unavailable", "run", runKey, "error", err)
+		return
+	}
+	body := "Hive completed the Spektacular implement stage.\n\nPull request: " + prURL
+	if err := commenter.AddComment(ctx, ref, body); err != nil {
+		h.logger.Warn("[contribute-ws] work item completion comment failed", "run", runKey, "error", err)
+	}
 }
 
 func (h *ContributeWSHub) completeWavefrontTask(task *WSTaskAssign, labels []string, startedAt time.Time) {
@@ -827,21 +858,22 @@ func (h *ContributeWSHub) leaseStageForDecision(identity, taskID string) string 
 // to RE-ADOPT a task the hub already issued to that identity — and never the
 // ability to obtain a fresh credential without passing selectTask's gates.
 type persistedLease struct {
-	Identity        string    `json:"identity"`
-	TaskID          string    `json:"task_id"`
-	Repo            string    `json:"repo"`
-	Number          int       `json:"number"`
-	Key             string    `json:"key,omitempty"`
-	Title           string    `json:"title,omitempty"`
-	Tier            string    `json:"tier"`
-	Stage           string    `json:"stage,omitempty"`
-	Gen             uint64    `json:"gen"`
-	TriageVerdict   string    `json:"triage_verdict,omitempty"`
-	TriageRationale string    `json:"triage_rationale,omitempty"`
-	ExpiresAt       time.Time `json:"expires_at"`
-	MCPTokenID      string    `json:"mcp_token_id,omitempty"`
-	MCPTokenHash    string    `json:"mcp_token_hash,omitempty"`
-	MCPTokenStage   string    `json:"mcp_token_stage,omitempty"`
+	Identity        string                     `json:"identity"`
+	TaskID          string                     `json:"task_id"`
+	Repo            string                     `json:"repo"`
+	Number          int                        `json:"number"`
+	Key             string                     `json:"key,omitempty"`
+	Title           string                     `json:"title,omitempty"`
+	Tier            string                     `json:"tier"`
+	Stage           string                     `json:"stage,omitempty"`
+	Gen             uint64                     `json:"gen"`
+	TriageVerdict   string                     `json:"triage_verdict,omitempty"`
+	TriageRationale string                     `json:"triage_rationale,omitempty"`
+	WorkItem        worksource.WorkItemContext `json:"work_item,omitempty"`
+	ExpiresAt       time.Time                  `json:"expires_at"`
+	MCPTokenID      string                     `json:"mcp_token_id,omitempty"`
+	MCPTokenHash    string                     `json:"mcp_token_hash,omitempty"`
+	MCPTokenStage   string                     `json:"mcp_token_stage,omitempty"`
 	// Claim fields (#8380); all omitempty so a registry written with claims
 	// off is byte-for-byte what it was.
 	ClaimedBy      string     `json:"claimed_by,omitempty"`
@@ -925,6 +957,7 @@ func (h *ContributeWSHub) saveLeasesLocked() error {
 			Gen:             l.gen,
 			TriageVerdict:   l.triageVerdict,
 			TriageRationale: l.triageRationale,
+			WorkItem:        l.workItem.Normalized(),
 			ExpiresAt:       l.expiresAt,
 			MCPTokenID:      l.mcpTokenID,
 			MCPTokenHash:    l.mcpTokenHash,
@@ -1079,6 +1112,7 @@ func (h *ContributeWSHub) loadLeases() {
 			gen:             rec.Gen,
 			triageVerdict:   rec.TriageVerdict,
 			triageRationale: rec.TriageRationale,
+			workItem:        rec.WorkItem.Normalized(),
 			restored:        true,
 			expiresAt:       expiresAt,
 			mcpTokenID:      rec.MCPTokenID,

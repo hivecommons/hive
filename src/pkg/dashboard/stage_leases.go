@@ -252,6 +252,10 @@ func (s *Server) AdmitRunRef(ref worksource.Ref, title string, now time.Time) er
 // accepts string-keyed sources such as Jira and Linear in addition to GitHub
 // issue numbers.
 func (s *Server) AdmitTriagedRunRef(ref worksource.Ref, title, verdict, rationale string, now time.Time) error {
+	return s.AdmitTriagedRunRefWithContext(ref, worksource.WorkItemContextFromRef(ref, title), verdict, rationale, now)
+}
+
+func (s *Server) AdmitTriagedRunRefWithContext(ref worksource.Ref, ctx worksource.WorkItemContext, verdict, rationale string, now time.Time) error {
 	if s == nil || s.contributeHub == nil {
 		return errors.New("run lease registry unavailable")
 	}
@@ -263,6 +267,23 @@ func (s *Server) AdmitTriagedRunRef(ref worksource.Ref, title, verdict, rational
 	if ref.Repo == "" || (ref.Number <= 0 && ref.ExternalID == "") {
 		return errors.New("repo and issue number or external id are required")
 	}
+	ctx = ctx.Normalized()
+	if ctx.Repo == "" {
+		ctx.Repo = ref.Repo
+	}
+	if ctx.ExternalID == "" {
+		ctx.ExternalID = ref.ExternalID
+	}
+	if ctx.Number == 0 {
+		ctx.Number = ref.Number
+	}
+	if ctx.SourceType == "" {
+		ctx.SourceType = ref.SourceType
+	}
+	if ctx.URL == "" {
+		ctx.URL = ref.URL
+	}
+	ctx = ctx.Normalized()
 	if now.IsZero() {
 		now = time.Now()
 	}
@@ -286,12 +307,13 @@ func (s *Server) AdmitTriagedRunRef(ref worksource.Ref, title, verdict, rational
 		repo:            ref.Repo,
 		number:          ref.Number,
 		key:             leaseKeyForRun,
-		title:           title,
+		title:           ctx.Title,
 		tier:            "triage",
 		stage:           StageSpec,
 		gen:             1,
 		triageVerdict:   strings.TrimSpace(verdict),
 		triageRationale: strings.TrimSpace(rationale),
+		workItem:        ctx,
 		expiresAt:       now.Add(leaseTTL),
 	}
 	if err := h.saveLeasesLocked(); err != nil {
@@ -1013,9 +1035,28 @@ func (a *runStageAccessor) PendingRunStages(_ context.Context) ([]worksource.Run
 		if l.stage == StageImplement && l.identity != runFanoutIdentity && s.runPlanHasWaves(l.runKey) {
 			continue
 		}
-		out = append(out, worksource.RunStage{RunKey: l.runKey, Stage: l.stage, Repo: l.repo, Title: l.runKey})
+		item := s.workItemContextForRun(l.runKey)
+		title := firstRunNonEmpty(item.Title, l.runKey)
+		out = append(out, worksource.RunStage{RunKey: l.runKey, Stage: l.stage, Repo: l.repo, Title: title, URL: item.URL})
 	}
 	return out, nil
+}
+
+func (s *Server) workItemContextForRun(runKey string) worksource.WorkItemContext {
+	if s == nil || s.contributeHub == nil {
+		return worksource.WorkItemContext{}
+	}
+	s.contributeHub.leaseMu.Lock()
+	defer s.contributeHub.leaseMu.Unlock()
+	for _, l := range s.contributeHub.leases {
+		if l == nil || l.stage == "" {
+			continue
+		}
+		if runKeyOfLease(leaseWorkKey(l), l.repo) == runKey {
+			return l.workItem.Normalized()
+		}
+	}
+	return worksource.WorkItemContext{}
 }
 
 // StageHasLiveLease reports whether a connection is currently working that

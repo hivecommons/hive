@@ -117,23 +117,24 @@ type Run struct {
 	// lease (hivecommons/hive#8380). ClaimPosted says whether the claim
 	// comment reached the forge or lives on the lease only. All omitempty:
 	// absent while claims are off.
-	ClaimedBy       string          `json:"claimed_by,omitempty"`
-	ClaimExpiresAt  string          `json:"claim_expires_at,omitempty"`
-	ClaimPosted     bool            `json:"claim_posted,omitempty"`
-	LastReceipt     string          `json:"last_receipt,omitempty"`
-	PlanEpicID      string          `json:"plan_epic_id,omitempty"`
-	Stages          []RunStage      `json:"stages"`
-	ReviewWaves     []RunReviewWave `json:"review_waves,omitempty"`
-	WaveIDs         []string        `json:"wave_ids,omitempty"`
-	Burndown        *RunBurndown    `json:"burndown,omitempty"`
-	TriageVerdict   string          `json:"triage_verdict,omitempty"`
-	TriageRationale string          `json:"triage_rationale,omitempty"`
-	LastActivity    string          `json:"last_activity,omitempty"`
-	ActivitySummary string          `json:"activity_summary,omitempty"`
-	ArtifactID      string          `json:"artifact_id,omitempty"`
-	ArtifactName    string          `json:"artifact_name,omitempty"`
-	DocumentStatus  string          `json:"document_status,omitempty"`
-	CurrentStep     string          `json:"current_step,omitempty"`
+	ClaimedBy       string                      `json:"claimed_by,omitempty"`
+	ClaimExpiresAt  string                      `json:"claim_expires_at,omitempty"`
+	ClaimPosted     bool                        `json:"claim_posted,omitempty"`
+	LastReceipt     string                      `json:"last_receipt,omitempty"`
+	PlanEpicID      string                      `json:"plan_epic_id,omitempty"`
+	Stages          []RunStage                  `json:"stages"`
+	ReviewWaves     []RunReviewWave             `json:"review_waves,omitempty"`
+	WaveIDs         []string                    `json:"wave_ids,omitempty"`
+	Burndown        *RunBurndown                `json:"burndown,omitempty"`
+	TriageVerdict   string                      `json:"triage_verdict,omitempty"`
+	TriageRationale string                      `json:"triage_rationale,omitempty"`
+	WorkItem        *worksource.WorkItemContext `json:"work_item,omitempty"`
+	LastActivity    string                      `json:"last_activity,omitempty"`
+	ActivitySummary string                      `json:"activity_summary,omitempty"`
+	ArtifactID      string                      `json:"artifact_id,omitempty"`
+	ArtifactName    string                      `json:"artifact_name,omitempty"`
+	DocumentStatus  string                      `json:"document_status,omitempty"`
+	CurrentStep     string                      `json:"current_step,omitempty"`
 }
 
 type RunSummary = Run
@@ -201,6 +202,7 @@ type runLeaseSnapshot struct {
 	claimPosted     bool
 	triageVerdict   string
 	triageRationale string
+	workItem        worksource.WorkItemContext
 }
 
 type currentTaskRunInfo struct {
@@ -839,6 +841,7 @@ func (s *Server) activeRunLeaseSnapshots(now time.Time) ([]runLeaseSnapshot, err
 			title: title, stageStarted: info.startedAt,
 			claimedBy: l.claimedBy, claimExpiresAt: l.claimExpiresAt, claimPosted: l.claimPosted,
 			triageVerdict: l.triageVerdict, triageRationale: l.triageRationale,
+			workItem: l.workItem.Normalized(),
 		})
 	}
 	return out, nil
@@ -882,6 +885,9 @@ func runFromLease(lease runLeaseSnapshot, plan runPlanSnapshot, hold runHumanRev
 		WaveIDs:       append([]string(nil), plan.waveIDs...),
 		Stages:        leaseRunStages(lease.stage, lease.gen),
 		TriageVerdict: lease.triageVerdict, TriageRationale: lease.triageRationale,
+	}
+	if wi := lease.workItem.Normalized(); wi.Repo != "" || wi.ExternalID != "" || wi.URL != "" || wi.Title != "" {
+		run.WorkItem = &wi
 	}
 	planNeedsHuman := plan.state == planning.PlanStateReview ||
 		plan.state == planning.PlanStateStuck || plan.state == planning.PlanStateDesignReview || plan.state == planning.PlanStateDesignStuck
@@ -981,6 +987,16 @@ func completedRunFromJourney(j timeline.Journey, includeTimeline bool, plan runP
 	}
 	if title := stage.Attrs["title"]; title != "" {
 		run.Title = scrubRunTitle(title)
+	}
+	if stage.Attrs["work_item_external_id"] != "" || stage.Attrs["work_item_url"] != "" {
+		wi := worksource.WorkItemContext{
+			SourceType: stage.Attrs["work_item_source"],
+			Repo:       repo,
+			ExternalID: stage.Attrs["work_item_external_id"],
+			Title:      run.Title,
+			URL:        stage.Attrs["work_item_url"],
+		}.Normalized()
+		run.WorkItem = &wi
 	}
 	if includeTimeline {
 		run.Stages = mergeRunTimelineStages(run.Stages, synthesizeRunJourneyEvents(j))
@@ -1248,8 +1264,9 @@ func (s *Server) runPlanSnapshots() map[string]runPlanSnapshot {
 
 func (s *Server) canonicalRunKey(repo string, number int, runKey, fallback string) string {
 	runKey = strings.TrimSpace(runKey)
-	if ref, ok := worksource.ParseKey(runKey); ok && ref.Number > 0 {
-		return worksource.Ref{Repo: s.qualifyRunRepo(ref.Repo), Number: ref.Number}.Key()
+	if ref, ok := worksource.ParseKey(runKey); ok {
+		ref.Repo = s.qualifyRunRepo(ref.Repo)
+		return ref.Key()
 	}
 	if number > 0 {
 		return worksource.Ref{Repo: s.qualifyRunRepo(repo), Number: number}.Key()
