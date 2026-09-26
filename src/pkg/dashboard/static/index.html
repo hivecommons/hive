@@ -9875,7 +9875,13 @@
       if (Array.isArray(v)) v = v.map(x => x == null ? '' : String(x)).join(';');
       if (v == null) v = '';
       if (typeof v === 'boolean') v = v ? 'true' : 'false';
-      const text = String(v);
+      let text = String(v);
+      // Spreadsheet formula injection (CWE-1236): a leading =, +, -, @, tab or
+      // CR makes Excel/Sheets evaluate the cell as a formula, and titles/labels
+      // in these rows are written by anyone who can open an issue or PR on a
+      // watched repo. Neutralize with a leading apostrophe; plain numbers
+      // (e.g. -5) stay untouched so numeric columns still sort.
+      if (/^[=+\-@\t\r]/.test(text) && !/^-?\d+(\.\d+)?$/.test(text)) text = "'" + text;
       return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
     }
 

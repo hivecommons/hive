@@ -166,6 +166,19 @@ const triageRows = overviewCsvRows('issues', 'agent-filed');
 assert.deepEqual(triageRows, issueRows.filter(r => r.band === issueBandLabel('agent-filed')));
 assert.deepEqual(overviewCsvRows('prs', 'waiting'), prRows.filter(r => r.band === prBandLabel('waiting')));
 assert.equal(overviewBandSlug('Needs triage'), 'needs-triage');
+
+// Formula-injection neutralization (CWE-1236): attacker-controlled titles,
+// labels and hold reasons must never reach a spreadsheet as live formulas.
+assert.equal(overviewCsvCell('=cmd|calc'), "'=cmd|calc");
+assert.equal(overviewCsvCell('+SUM(A1:A9)'), "'+SUM(A1:A9)");
+assert.equal(overviewCsvCell('@import'), "'@import");
+assert.equal(overviewCsvCell('-run something'), "'-run something");
+assert.equal(overviewCsvCell('\tstart'), "'\tstart");
+assert.equal(overviewCsvCell('=HYPERLINK("http://x","y")'), '"\'=HYPERLINK(""http://x"",""y"")"');
+assert.equal(overviewCsvCell(-5), '-5');
+assert.equal(overviewCsvCell('-5.25'), '-5.25');
+assert.equal(overviewCsvCell(['=a', 'b']), "'=a;b");
+assert.equal(overviewCsvCell('plain title'), 'plain title');
 `)
 	if out, err := exec.Command(node, "-e", script.String()).CombinedOutput(); err != nil {
 		t.Fatalf("overview CSV export check failed: %v\n%s", err, strings.TrimSpace(string(out)))
