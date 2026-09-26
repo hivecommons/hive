@@ -126,9 +126,14 @@ type TaskRunRecord struct {
 	Reason             string  `json:"reason,omitempty"`
 	Permanent          bool    `json:"permanent,omitempty"`
 	DurationS          float64 `json:"duration_s,omitempty"`
-	PRURL              string  `json:"pr_url,omitempty"`
-	PRVerified         bool    `json:"pr_verified,omitempty"`
-	Scenario           string  `json:"scenario"`
+	// ReportedPRURL is the relay-reported PR before server-side verification.
+	// PRURL remains the verified URL used by older consumers.
+	ReportedPRURL string `json:"reported_pr_url,omitempty"`
+	PRURL         string `json:"pr_url,omitempty"`
+	PRVerified    bool   `json:"pr_verified,omitempty"`
+	// PRVerifyReason explains why ReportedPRURL did or did not verify.
+	PRVerifyReason string `json:"pr_verify_reason,omitempty"`
+	Scenario       string `json:"scenario"`
 	// Session mirrors TaskID for now: the correlation key reserved by
 	// github.InvocationMeta.Session, so a PR trailer can one day join back to
 	// this record without a format change.
