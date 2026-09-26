@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-26 (v5.63.1)
+
+### Changed
+
+- The dashboard's issue and PR bands are now named after the action an operator takes instead of how the classifier sorted them ([#9019](https://github.com/hivecommons/hive/issues/9019)): Ready → **Unclaimed**, In progress → **Claimed**, Agent-filed → **Needs triage**, Waiting on human → **Needs human** (issues and PRs), Likely done → **Confirm & close**, with short status chips `unclaimed` / `claimed` / `triage` / `needs human` / `close?`. "Needs triage" is keyed on #5117 acknowledgment rather than the `agent/<role>` label alone: an agent-filed issue leaves the band as soon as a human adds `approved-direction` or is assigned (the snapshot's `human_acknowledged`), falling through to Unclaimed/Claimed with the role badge still on the pill, so the band is exactly the agent proposals nobody has looked at. Every place a band is named — repo-card band headers, Overview donut slices and legend rows, and the pill legend — now carries the band's rule as a tooltip, all rendered from one shared spec table (`issueBandSpec` / `prBandSpec`) so the legend can no longer drift from the cards. Display only: enumeration, holds, ranking, and kick behaviour are unchanged.
+- Dashboard: the Overview band charts now sit above the Governor panel with an Overview entry in the sidebar, and legend counts stay right-aligned but close to their band names instead of at the far edge of the card.
+
 ## 2026-09-26 (v5.63.0)
 
 ### Added
