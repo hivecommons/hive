@@ -1,0 +1,1 @@
+- The contributor relay now gates `ready` work requests behind one tracked retry path so stale no-work timers cannot duplicate an outstanding request and abandon a newly assigned task ([#9063](https://github.com/hivecommons/hive/issues/9063)).

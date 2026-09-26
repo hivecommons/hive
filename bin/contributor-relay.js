@@ -1073,7 +1073,7 @@ function retryContributorQuota() {
   contributorQuotaPaused = false;
   console.log('Contributor quota guard released — a fresh reading clears every effective reserve. Asking for work again.');
   if (!currentTask && !cliReadyFailed && !quotaHoldActive()) {
-    sendTo(hubs[activeHubIndex], { type: 'ready', seq: nextSeq() });
+    requestWork(hubs[activeHubIndex], 'quota_guard_released');
   }
 }
 
@@ -1280,6 +1280,9 @@ function makeHub(url, token) {
     connectionId: '',
     connectGeneration: 0,
     reconnectTimer: null,
+    readyRetryTimer: null,
+    readyRetryGeneration: 0,
+    readyRequestSeq: 0,
     authenticated: false,
     authFailed: false,
     // #2547: set once we have reported a contributor-protocol difference with
@@ -1484,7 +1487,7 @@ function releaseQuotaHold(why) {
   if (quotaHoldTimer) { clearTimeout(quotaHoldTimer); quotaHoldTimer = null; }
   console.log(`Provider quota hold released — ${why}. Asking for work again (was: ${was})`);
   if (!currentTask && !cliReadyFailed) {
-    sendTo(hubs[activeHubIndex], { type: 'ready', seq: nextSeq() });
+    requestWork(hubs[activeHubIndex], 'quota_hold_released');
   }
 }
 
@@ -1585,7 +1588,7 @@ function releaseLoginHold(why) {
   cliReady = true;
   cliReadyFailed = false;
   if (!currentTask && !quotaHoldActive()) {
-    sendTo(hubs[activeHubIndex], { type: 'ready', seq: nextSeq() });
+    requestWork(hubs[activeHubIndex], 'login_hold_released');
   }
 }
 
@@ -1717,6 +1720,81 @@ function clampFrame(msg, maxFrameBytes) {
     if (frameByteLength(clamped) <= maxFrameBytes) return clamped;
   }
   return clamped;
+}
+
+
+function readyConnLabel(hub) {
+  return hub ? (hub.connectionId || hub.connectGeneration || 0) : 0;
+}
+
+function logSkippedWorkRequest(hub, trigger, reason) {
+  console.debug(`Skipping work request (trigger=${trigger}, conn=${readyConnLabel(hub)}) — ${reason}`);
+}
+
+function invalidateReadyRetry(hub, reason) {
+  if (!hub) return;
+  if (hub.readyRetryTimer) {
+    clearTimeout(hub.readyRetryTimer);
+    hub.readyRetryTimer = null;
+  }
+  hub.readyRetryGeneration++;
+  if (reason) console.debug(`Cancelled ready retry for ${hub.url} (${reason}, conn=${readyConnLabel(hub)})`);
+}
+
+function invalidateAllReadyRetries(reason) {
+  for (const hub of hubs) invalidateReadyRetry(hub, reason);
+}
+
+function requestWork(hub, trigger, expectedConnectGeneration = null) {
+  if (!hub) return false;
+  const conn = readyConnLabel(hub);
+  if (expectedConnectGeneration !== null && hub.connectGeneration !== expectedConnectGeneration) {
+    logSkippedWorkRequest(hub, trigger, `stale connection generation (expected ${expectedConnectGeneration}, current ${hub.connectGeneration})`);
+    return false;
+  }
+  if (currentTask) {
+    logSkippedWorkRequest(hub, trigger, `already working on ${currentTask.task_id || taskKey(currentTask)}`);
+    return false;
+  }
+  if (hub.readyOutstanding) {
+    logSkippedWorkRequest(hub, trigger, 'ready already outstanding');
+    return false;
+  }
+  if (!hub.ws || hub.ws.readyState !== WebSocket.OPEN) {
+    logSkippedWorkRequest(hub, trigger, 'hub socket is not open');
+    return false;
+  }
+  invalidateReadyRetry(hub, `superseded by ${trigger}`);
+  const request = ++hub.readyRequestSeq;
+  console.log(`Requesting work (trigger=${trigger}, conn=${conn}, request=${request})`);
+  sendTo(hub, { type: 'ready', seq: nextSeq() });
+  return hub.readyOutstanding;
+}
+
+function scheduleReadyRetry(hub, trigger) {
+  if (!hub) return;
+  invalidateReadyRetry(hub, `superseded by ${trigger}`);
+  const retryGeneration = hub.readyRetryGeneration;
+  const connectGeneration = hub.connectGeneration;
+  hub.readyRetryTimer = setTimeout(() => {
+    if (hub.readyRetryGeneration !== retryGeneration) {
+      logSkippedWorkRequest(hub, `${trigger}_retry`, 'stale retry generation');
+      return;
+    }
+    if (hub.connectGeneration !== connectGeneration) {
+      logSkippedWorkRequest(hub, `${trigger}_retry`, `stale connection generation (expected ${connectGeneration}, current ${hub.connectGeneration})`);
+      return;
+    }
+    hub.readyRetryTimer = null;
+    hub.readyRetryGeneration++;
+    if (currentTask) {
+      logSkippedWorkRequest(hub, `${trigger}_retry`, `already working on ${currentTask.task_id || taskKey(currentTask)}`);
+      return;
+    }
+    if (hubs.length > 1 && hub === hubs[activeHubIndex]) chooseHubForNextTask('unavailable');
+    const next = hubs[activeHubIndex];
+    requestWork(next, `${trigger}_retry`, next ? next.connectGeneration : null);
+  }, TASK_UNAVAILABLE_RETRY_MS);
 }
 
 function sendTo(hub, msg) {
@@ -1899,7 +1977,7 @@ function chooseHubForNextTask(reason) {
 
 function sendReadyForNextTask(reason) {
   const hub = chooseHubForNextTask(reason);
-  if (hub) sendTo(hub, { type: 'ready', seq: nextSeq() });
+  if (hub) requestWork(hub, reason);
 }
 
 function contributeStatusURL(hub) {
@@ -1993,6 +2071,7 @@ function stopHub(hub, reason) {
   console.log(`Disconnecting from ${hub.url}${reason ? ` (${reason})` : ''}`);
   if (hub.reconnectTimer) { clearTimeout(hub.reconnectTimer); hub.reconnectTimer = null; }
   if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
+  invalidateReadyRetry(hub, reason || 'hub stopped');
   if (hub.ws) {
     try { hub.ws.removeAllListeners(); hub.ws.close(1000, 'profile switch'); } catch (_) {
       try { hub.ws.terminate(); } catch (_) {}
@@ -2012,7 +2091,7 @@ function maybeAskActiveHubForWork() {
     return;
   }
   if (CONTRIBUTOR_MODE === MODE_HEADLESS || cliReady) {
-    sendTo(hub, { type: 'ready', seq: nextSeq() });
+    requestWork(hub, 'active_hub_switch');
   } else {
     console.log('Active hive switched, but CLI is not ready yet — withholding ready until the CLI reaches its prompt');
   }
@@ -3510,7 +3589,7 @@ function runHeadlessTask(task) {
       taskAssignedAt = 0;
       tasksCompletedCount++;
       writeHeadlessStatus(HEADLESS_STATE_WAITING);
-      send({ type: 'ready', seq: nextSeq() });
+      requestWork(hubs[activeHubIndex], 'headless_task_complete');
     });
   });
 }
@@ -4077,8 +4156,8 @@ function armCLIReadyWait() {
     cliReady = true;
     cliReadyFailed = false;
     const hub = currentTaskHub();
-    if (!currentTask && hub.authenticated && !hub.readyOutstanding) {
-      send({ type: 'ready', seq: nextSeq() });
+    if (!currentTask && hub.authenticated) {
+      requestWork(hub, 'cli_ready');
     }
     flushPendingTask();
   }).catch(e => {
@@ -7722,7 +7801,7 @@ function handleMessage(data, hub) {
         } else if (loginHoldActive()) {
           console.log(`Authenticated, but the ${BACKEND} CLI login has expired — withholding ready until someone runs /login in the pane (${loginHoldReason})`);
         } else if (CONTRIBUTOR_MODE === MODE_HEADLESS || cliReady) {
-          sendTo(hub, { type: 'ready', seq: nextSeq() });
+          requestWork(hub, 'auth_ok');
         } else if (cliReadyFailed) {
           console.log('Authenticated, but CLI readiness previously failed — withholding ready until the CLI recovers');
         } else {
@@ -7749,7 +7828,7 @@ function handleMessage(data, hub) {
         if (!currentTask && hub === hubs[activeHubIndex]) {
           const next = advanceActiveHub(hub);
           if (next && next.authenticated) {
-            sendTo(next, { type: 'ready', seq: nextSeq() });
+            requestWork(next, 'auth_failed_advance');
           }
         }
       }
@@ -7775,7 +7854,7 @@ function handleMessage(data, hub) {
       if (isGivenUp(taskKey(msg))) {
         console.log(`Rejecting ${taskKey(msg)} — previously given up on after ${MAX_TASK_CLI_RESTARTS} CLI crashes`);
         sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: `previously given up on after ${MAX_TASK_CLI_RESTARTS} CLI crashes`, permanent: true });
-        sendTo(hub, { type: 'ready', seq: nextSeq() });
+        requestWork(hub, 'given_up_reject');
         break;
       }
       // #6541: quota-blocked. Withholding `ready` stops us ASKING, but a hub can
@@ -7830,6 +7909,7 @@ function handleMessage(data, hub) {
         }
         break;
       }
+      invalidateAllReadyRetries('task assigned');
       currentTask = msg;
       // #6908: assignment is where a hub grants authority over a repo, so this
       // is where the review cycle's scope is earned. Recorded before anything
@@ -8005,7 +8085,7 @@ function handleMessage(data, hub) {
       stopAgentForTaskExit({ reason: 'task revoke', task: revokedTask });
       // Stay with the hub that just revoked — it's clearly alive and reachable.
       activeHubIndex = hubs.indexOf(hub);
-      if (CONTRIBUTOR_MODE === MODE_HEADLESS) sendTo(hub, { type: 'ready', seq: nextSeq() });
+      if (CONTRIBUTOR_MODE === MODE_HEADLESS) requestWork(hub, 'task_revoke_headless');
       break;
 
     case 'task_unavailable':
@@ -8029,15 +8109,7 @@ function handleMessage(data, hub) {
       // on a guessed timeout — means we never sit idle on a hub with no work
       // while a different configured hub has some.
       console.log(`No task assigned on ${hub.url} — reason: ${sanitizeHubText(msg.reason) || 'unspecified'}; retrying in ${TASK_UNAVAILABLE_RETRY_MS / 1000}s`);
-      setTimeout(() => {
-        if (currentTask) return; // picked up work elsewhere in the meantime
-        if (hubs.length > 1 && hub === hubs[activeHubIndex]) chooseHubForNextTask('unavailable');
-        const next = hubs[activeHubIndex];
-        // If `next` isn't connected/authenticated yet, its own auth_ok
-        // handler sends 'ready' once it comes up and finds itself the active
-        // hub (see the auth_ok case above) — self-healing, no extra state.
-        sendTo(next, { type: 'ready', seq: nextSeq() });
-      }, TASK_UNAVAILABLE_RETRY_MS);
+      scheduleReadyRetry(hub, 'task_unavailable');
       break;
 
     case 'notice':
@@ -8112,6 +8184,7 @@ function wsCloseCorrelation(hub, now = Date.now()) {
 function connectHub(hub) {
   if (hub.reconnectTimer) { clearTimeout(hub.reconnectTimer); hub.reconnectTimer = null; }
   if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
+  invalidateReadyRetry(hub, 'connecting');
   if (hub.ws) { try { hub.ws.removeAllListeners(); hub.ws.terminate(); } catch (_) {} }
   const gen = ++hub.connectGeneration;
   console.log(`Connecting to ${hub.url}...`);
@@ -8175,6 +8248,7 @@ function connectHub(hub) {
     // #7732: a `ready` in flight on this socket died with it; the auth_ok of
     // the reconnect asks afresh.
     hub.readyOutstanding = false;
+    invalidateReadyRetry(hub, 'socket closed');
     hub.reconnectTimer = setTimeout(() => connectHub(hub), hub.reconnectDelay);
     hub.reconnectDelay = Math.min(hub.reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
   });
@@ -8262,6 +8336,8 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     failCurrentTask,
     finishCurrentTask,
     sendReadyForNextTask,
+    requestWork,
+    scheduleReadyRetry,
     startProgressReporting,
     progressTick,
     // Local-only (synthetic pr-review) task surface — kubestellar/hive#5715.
@@ -8540,6 +8616,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     getCLIState,
     setWs: (w) => { hubs[0].ws = w; },
     getHubs: () => hubs,
+    getReadyRetryArmed: (hub = hubs[0]) => !!(hub && hub.readyRetryTimer),
     // Peer-protocol compatibility (kubestellar/hive#2547). Exported so the
     // relay-side half of "both sides can detect an incompatible peer" is tested
     // behaviourally here, not just asserted to exist from the Go side.

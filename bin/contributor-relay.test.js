@@ -3573,8 +3573,11 @@ test('ranked Commons routing skips auth-failed hives between tasks', () => {
 test('spread Commons routing rotates through subscribed hives with rank weights', () => {
   const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_COMMONS_STRATEGY: 'spread', HIVE_COMMONS_SPREAD_MIX_EVERY: '0' } });
   try {
-    const { sentA, sentB } = attachHubSinks(relay);
-    for (let i = 0; i < 3; i++) relay.sendReadyForNextTask('task_complete');
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+    for (let i = 0; i < 3; i++) {
+      relay.sendReadyForNextTask('task_complete');
+      for (const hub of hubs) hub.readyOutstanding = false;
+    }
 
     assert.strictEqual(sentA.filter(m => m.type === 'ready').length, 2,
       'top-ranked hive should receive its weighted share');
@@ -12955,6 +12958,150 @@ test('#6987 a guarded relay re-advertises once the awaited reading lands over a 
     'once the publisher\'s reading lands the guard must clear and re-advertise');
   teardown(relay);
   fs.rmSync(base, { recursive: true, force: true });
+});
+
+
+// ---------------------------------------------------------------------------
+// hivecommons/hive#9063 — all relay work requests pass through one gate, so a
+// stale task_unavailable retry cannot duplicate a fresh readiness request.
+// ---------------------------------------------------------------------------
+
+function readyFrames(relay) { return relay.__sent.filter(m => m.type === 'ready'); }
+
+function withCapturedReadyRetryTimers(fn) {
+  const realSetTimeout = global.setTimeout;
+  const realClearTimeout = global.clearTimeout;
+  const timers = [];
+  global.setTimeout = (cb, ms, ...args) => {
+    if (ms === 30000) {
+      const handle = { cb: () => cb(...args), ms, cleared: false };
+      timers.push(handle);
+      return handle;
+    }
+    return realSetTimeout(cb, ms, ...args);
+  };
+  global.clearTimeout = (handle) => {
+    if (handle && Object.prototype.hasOwnProperty.call(handle, 'cleared')) {
+      handle.cleared = true;
+      return;
+    }
+    return realClearTimeout(handle);
+  };
+  try { return fn(timers); } finally {
+    global.setTimeout = realSetTimeout;
+    global.clearTimeout = realClearTimeout;
+  }
+}
+
+async function flushMicrotasks() { await Promise.resolve(); await Promise.resolve(); }
+
+function authIdleRelay(relay) {
+  relay.setCliReady(true);
+  relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }));
+  assert.strictEqual(readyFrames(relay).length, 1, 'auth_ok should request initial work');
+}
+
+test('#9063 stale task_unavailable retry does not duplicate a CLI readiness ready', async () => {
+  await withCapturedReadyRetryTimers(async (timers) => {
+    const relay = loadRelay({ cliStates: ['ready'] });
+    try {
+      const hub = relay.getHubs()[0];
+      authIdleRelay(relay);
+      relay.handleMessage(JSON.stringify({ type: 'task_unavailable', reason: 'no_matching_work' }), hub);
+      assert.strictEqual(timers.length, 1, 'task_unavailable should schedule one retry');
+
+      relay.__sent.length = 0;
+      relay.armCLIReadyWait();
+      await flushMicrotasks();
+      assert.strictEqual(readyFrames(relay).length, 1, 'CLI readiness should request work once');
+      assert.strictEqual(hub.readyOutstanding, true, 'the readiness request remains outstanding');
+
+      timers[0].cb();
+      assert.strictEqual(readyFrames(relay).length, 1, 'stale retry must not send a duplicate ready');
+      assert.strictEqual(hub.readyOutstanding, true, 'readyOutstanding stays owned by the readiness request');
+    } finally { teardown(relay); }
+  });
+});
+
+test('#9063 multiple no-work replies keep only one live retry timer', () => {
+  withCapturedReadyRetryTimers((timers) => {
+    const relay = loadRelay({});
+    try {
+      const hub = relay.getHubs()[0];
+      authIdleRelay(relay);
+      relay.handleMessage(JSON.stringify({ type: 'task_unavailable', reason: 'no_work' }), hub);
+      relay.handleMessage(JSON.stringify({ type: 'task_unavailable', reason: 'no_work' }), hub);
+      assert.strictEqual(timers.length, 2, 'the second no-work response supersedes the first timer');
+      assert.strictEqual(timers[0].cleared, true, 'the first retry timer is cleared');
+      assert.strictEqual(timers[1].cleared, false, 'the newest retry timer remains armed');
+      assert.strictEqual(relay.getReadyRetryArmed(hub), true);
+
+      relay.__sent.length = 0;
+      timers[0].cb();
+      assert.strictEqual(readyFrames(relay).length, 0, 'the superseded retry callback is stale');
+      timers[1].cb();
+      assert.strictEqual(readyFrames(relay).length, 1, 'only the live retry asks for work');
+      assert.strictEqual(hub.readyOutstanding, true);
+    } finally { teardown(relay); }
+  });
+});
+
+test('#9063 assignment cancels a pending retry and stale callback retains the task', () => {
+  withCapturedReadyRetryTimers((timers) => {
+    const relay = loadRelay({});
+    try {
+      const hub = relay.getHubs()[0];
+      authIdleRelay(relay);
+      relay.handleMessage(JSON.stringify({ type: 'task_unavailable', reason: 'no_work' }), hub);
+      relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 'ct-9063', task_gen: 7, kind: 'issue', repo: 'foo/bar', number: 9063, title: 'race' }), hub);
+      assert.strictEqual(relay.getCurrentTask().task_id, 'ct-9063');
+      assert.strictEqual(timers[0].cleared, true, 'assignment clears the pending retry');
+
+      relay.__sent.length = 0;
+      timers[0].cb();
+      assert.strictEqual(readyFrames(relay).length, 0, 'a stale retry must not ask while a task is held');
+      assert.strictEqual(relay.getCurrentTask().task_id, 'ct-9063', 'the assigned task remains current');
+    } finally { teardown(relay); }
+  });
+});
+
+test('#9063 reconnect invalidates pending retry; new connection sends exactly one ready', () => {
+  withCapturedReadyRetryTimers((timers) => {
+    const relay = loadRelay({});
+    try {
+      const hub = relay.getHubs()[0];
+      authIdleRelay(relay);
+      relay.handleMessage(JSON.stringify({ type: 'task_unavailable', reason: 'no_work' }), hub);
+      hub.connectGeneration++;
+      hub.readyOutstanding = false;
+
+      relay.__sent.length = 0;
+      timers[0].cb();
+      assert.strictEqual(readyFrames(relay).length, 0, 'the old connection retry is stale by generation');
+
+      relay.requestWork(hub, 'auth_ok', hub.connectGeneration);
+      assert.strictEqual(readyFrames(relay).length, 1, 'the new connection asks exactly once');
+      assert.strictEqual(hub.readyOutstanding, true);
+    } finally { teardown(relay); }
+  });
+});
+
+test('#9063 readiness before a no-work response waits for the tracked retry', () => {
+  withCapturedReadyRetryTimers((timers) => {
+    const relay = loadRelay({});
+    try {
+      const hub = relay.getHubs()[0];
+      authIdleRelay(relay);
+      assert.strictEqual(hub.readyOutstanding, true);
+      relay.handleMessage(JSON.stringify({ type: 'task_unavailable', reason: 'no_matching_work' }), hub);
+      assert.strictEqual(readyFrames(relay).length, 1, 'the no-work ack should not immediately re-request');
+      assert.strictEqual(hub.readyOutstanding, false);
+
+      timers[0].cb();
+      assert.strictEqual(readyFrames(relay).length, 2, 'the tracked retry makes the next request');
+      assert.strictEqual(hub.readyOutstanding, true);
+    } finally { teardown(relay); }
+  });
 });
 
 // Each test is awaited (#7732). The runner used to call fn() and fall straight
