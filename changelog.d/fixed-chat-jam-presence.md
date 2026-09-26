@@ -1,0 +1,1 @@
+- Hive Chat: `/jam who is online?` (and plain "who is here" / "online" questions) now answers from the live presence roster instead of bouncing off the free-text responder.

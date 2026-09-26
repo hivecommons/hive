@@ -28866,7 +28866,7 @@ function burnAreaChart() {
       { name:'prs', aliases:['pr'], usage:'/prs <query>', description:'Ask about pull requests, merges and reviews.', example:'/prs waiting on review', details:'Forwards a focused PR question to Hive Chat search.', run: chatForwardCommand('prs') },
       { name:'governor', aliases:['gov'], usage:'/governor <query>', description:'Ask about governor cadence, kicks and policy.', example:'/governor next kick', details:'Forwards a focused governor question to Hive Chat search.', run: chatForwardCommand('governor') },
       { name:'knowledge', aliases:['kb'], usage:'/knowledge <query>', description:'Ask the knowledge base and imported docs.', example:'/knowledge relay setup', details:'Forwards a focused knowledge-base question to Hive Chat search.', run: chatForwardCommand('knowledge') },
-      { name:'jam', aliases:['swarm'], usage:'/jam <query>', description:'Ask about jam sessions, contributors and live collaboration.', example:'/jam who is free?', details:'Forwards a focused jam/contributor question to Hive Chat search.', run: chatForwardCommand('jam') },
+      { name:'jam', aliases:['swarm'], usage:'/jam <query>', description:'Ask about jam sessions, contributors and live collaboration.', example:'/jam who is free?', details:'Presence questions (who is online / free / here / active) are answered locally from `/api/presence`; anything else is forwarded to Hive Chat search.', run: chatCommandJam },
       { name:'spek', aliases:['spectacular','spec'], usage:'/spek <query>', description:'Ask about Spektacular/inception campaigns and spec runs (v6/edge when unavailable).', example:'/spek active campaigns', details:'Uses v6/edge Spektacular concepts: inception campaigns, spec runs, relay and campaign state.', run: chatForwardCommand('spek') },
     ];
     const CHAT_COMMAND_BY_NAME = new Map();
@@ -29063,6 +29063,12 @@ function burnAreaChart() {
       const users = (data && Array.isArray(data.users)) ? data.users : [];
       if (!users.length) return 'No authenticated users are visible. Local dashboards report only `local`.';
       return users.map(u => (u.active ? '🟢 ' : '⚪ ') + '**' + (u.display_name || u.username || 'local') + '**' + (u.you ? ' (you)' : '') + ' — ' + (u.active ? 'active' : 'idle') + (u.last_action ? ', last action ' + u.last_action : '')).join('\n');
+    }
+    const CHAT_JAM_PRESENCE_RE = /\b(online|who|free|here|around|present|presence|active|idle)\b/i;
+    async function chatCommandJam(args) {
+      const q = (args || '').trim();
+      if (!q || CHAT_JAM_PRESENCE_RE.test(q)) return await chatCommandWho();
+      return await chatForwardCommand('jam')(q);
     }
     function chatForwardCommand(scope) {
       return async function(args) {

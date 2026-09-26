@@ -88,6 +88,18 @@ func (s *Server) handlePresenceSnapshot(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	users := s.presenceRoster(viewer)
+
+	jsonResponse(w, map[string]interface{}{
+		"mode":  "authenticated",
+		"users": users,
+	})
+}
+
+// presenceRoster is the display-safe roster handlePresenceSnapshot returns for
+// an authenticated viewer; Hive Chat's local `/jam who is online?` answer
+// reuses it so both paths agree on who counts as active.
+func (s *Server) presenceRoster(viewer string) []presenceUser {
 	engaged := stringSet(s.EngagedSessionUsernames())
 	active := stringSet(s.ActiveSessionUsernames())
 	if len(active) == 0 {
@@ -126,10 +138,7 @@ func (s *Server) handlePresenceSnapshot(w http.ResponseWriter, r *http.Request) 
 		users = append(users, u)
 	}
 
-	jsonResponse(w, map[string]interface{}{
-		"mode":  "authenticated",
-		"users": users,
-	})
+	return users
 }
 
 func stringSet(in []string) map[string]struct{} {
