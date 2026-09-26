@@ -9590,7 +9590,7 @@
       const cfg = repoIssueBandConfig();
       switch (band) {
         case 'in-progress': return { label: 'Claimed', short: 'claimed', rule: 'assigned, claimed by an agent, or an open PR references it — nothing needed unless it stalls' };
-        case 'agent-filed': return { label: 'Needs triage', short: 'triage', rule: 'filed by an agent (agent/<role> label) and not yet acknowledged by a human — add approved-direction, assign a human, or close it' };
+        case 'agent-filed': return { label: 'Needs triage', short: 'triage', rule: 'filed by an agent (agent/<role> label) with no approved-direction label and no human assignee — add the label, assign a human, or close it. A human comment also acknowledges for #5117 but is not in the snapshot, so a commented-on proposal still shows here' };
         case 'waiting': return { label: 'Needs human', short: 'needs human', rule: 'labelled ' + (cfg.waitingLabels || []).join(', ') + ' — a human must unblock or decide before agents continue' };
         case 'done': return { label: 'Confirm & close', short: 'close?', rule: 'an agent applied ' + (cfg.doneLabels || []).join(', ') + ' or a merged PR references it — verify the work landed and close the issue' };
         default: return { label: 'Unclaimed', short: 'unclaimed', rule: 'no other band matched — nobody is assigned, nothing claimed it, and no human gate applies; this does not by itself mean agents will pick it up' };
