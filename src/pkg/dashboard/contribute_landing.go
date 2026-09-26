@@ -491,6 +491,10 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
 .effective-table th,.effective-table td{padding:var(--sp-4) 10px;border-bottom:1px solid var(--line-subtle);text-align:right;font-variant-numeric:tabular-nums;vertical-align:top}
 .effective-table th:first-child,.effective-table td:first-child{text-align:left}
 .effective-table th{color:var(--text-muted);font-size:.64rem;text-transform:uppercase;letter-spacing:.05em;background:var(--surface-0)}
+.ops-sort-heading{display:inline-flex;align-items:center;gap:var(--sp-1);min-width:0}
+.ops-sort-btn{display:inline-flex;align-items:center;justify-content:inherit;gap:var(--sp-1);width:100%%;border:0;background:transparent;color:inherit;font:inherit;text-transform:inherit;letter-spacing:inherit;text-align:inherit;padding:var(--sp-1);margin:calc(var(--sp-1) * -1);border-radius:var(--r-sm);cursor:pointer}
+.ops-sort-btn:hover,.ops-sort-btn:focus-visible{color:var(--text);background:var(--surface-2);outline:2px solid transparent}
+.ops-sort-arrow{display:inline-block;min-width:1em;text-align:center;color:var(--cc-accent);font-size:.8em}
 .effective-model{color:var(--text);font-weight:600;overflow-wrap:anywhere}
 .effective-sub{color:var(--text-muted);font-size:var(--fs-xs);margin-top:var(--sp-1)}
 .effective-muted{color:var(--text-muted)}
@@ -2909,8 +2913,60 @@ function renderTeamLeagues(data){
   var rareHTML=rare?'<div class="ops-empty"><b>Rarest setup:</b> '+esc(rare.team||'Wildcard')+(rare.member?' · '+esc(rare.member):'')+(rare.kernel?' · kernel '+esc(rare.kernel):'')+'</div>':'';
   el.innerHTML=rareHTML+'<div class="effective-section-title">Distros</div>'+teamRows(data.by_distro)+'<div class="effective-section-title">OS families</div>'+teamRows(data.by_os_family)+'<div class="effective-section-title">Agents</div>'+teamRows(data.by_agent);
 }
+
+var OPS_SORT_KEY='hive.ops.tableSort';
+function opsSortReadAll(){try{return JSON.parse(localStorage.getItem(OPS_SORT_KEY)||'{}')||{};}catch(e){return {};}}
+function opsSortRead(tableId){var all=opsSortReadAll(),s=all[tableId]||{};return(s.col&&s.dir)?{col:String(s.col),dir:s.dir==='desc'?'desc':'asc'}:{};}
+function opsSortWrite(tableId,state){try{var all=opsSortReadAll();if(state&&state.col&&state.dir)all[tableId]=state;else delete all[tableId];localStorage.setItem(OPS_SORT_KEY,JSON.stringify(all));}catch(e){}}
+function opsSortEmpty(v){return v==null||String(v).trim()==='';}
+function opsSortNumeric(v){if(typeof v==='number')return isFinite(v)?v:null;var n=parseFloat(String(v||'').replace(/[^0-9+.-]/g,''));return isFinite(n)?n:null;}
+function opsSortRows(rows,col,dir,type,valueOf){
+  var list=(rows||[]).map(function(row,i){return{row:row,i:i};});
+  if(!col||!dir)return list.map(function(x){return x.row;});
+  var numeric=type==='number'||type==='percent';
+  list.sort(function(a,b){
+    var av=valueOf?valueOf(a.row,col):a.row&&a.row[col],bv=valueOf?valueOf(b.row,col):b.row&&b.row[col];
+    var ae=opsSortEmpty(av),be=opsSortEmpty(bv);
+    if(ae||be){if(ae&&be)return a.i-b.i;return ae?1:-1;}
+    var cmp;
+    if(numeric){var an=opsSortNumeric(av),bn=opsSortNumeric(bv);if(an==null||bn==null){if(an==null&&bn==null)cmp=0;else return an==null?1:-1;}else cmp=an===bn?0:(an<bn?-1:1);}else{cmp=String(av).toLowerCase().localeCompare(String(bv).toLowerCase(),undefined,{numeric:true,sensitivity:'base'});}
+    if(cmp===0)return a.i-b.i;
+    return dir==='desc'?-cmp:cmp;
+  });
+  return list.map(function(x){return x.row;});
+}
+function opsSortNextState(cur,col,type){
+  var first=(type==='number'||type==='percent')?'desc':'asc',second=first==='asc'?'desc':'asc';
+  if(!cur||cur.col!==col)return{col:col,dir:first};
+  if(cur.dir===first)return{col:col,dir:second};
+  return{};
+}
+function opsSortableTable(tableId,opts){
+  opts=opts||{};
+  var cols={},columns=opts.columns||[];
+  columns.forEach(function(c){cols[c.key]=c;});
+  var state=opsSortRead(tableId);
+  if(!cols[state.col])state={};
+  var active=cols[state.col]||{};
+  var rows=opsSortRows(opts.rows||[],state.col,state.dir,active.type||'text',function(row,col){var c=cols[col]||{};return c.value?c.value(row):row&&row[col];});
+  return{rows:rows,state:state,ariaSort:function(col){return state.col===col?(state.dir==='asc'?'ascending':'descending'):'none';},header:function(col,label,cls){
+    var c=cols[col]||{},activeCol=state.col===col,arrow=activeCol?(state.dir==='asc'?'↑':'↓'):'';
+    return '<span class="ops-sort-heading '+(cls||'')+'" role="columnheader" aria-sort="'+(activeCol?(state.dir==='asc'?'ascending':'descending'):'none')+'"><button type="button" class="ops-sort-btn" data-ops-sort-table="'+esc(tableId)+'" data-ops-sort-col="'+esc(col)+'" data-ops-sort-type="'+esc(c.type||'text')+'" aria-label="Sort by '+esc(label)+'">'+esc(label)+'<span class="ops-sort-arrow" aria-hidden="true">'+arrow+'</span></button></span>';
+  }};
+}
+document.addEventListener('click',function(e){
+  var b=e.target&&e.target.closest&&e.target.closest('[data-ops-sort-table]');
+  if(!b)return;
+  e.preventDefault();
+  var tableId=b.getAttribute('data-ops-sort-table')||'',col=b.getAttribute('data-ops-sort-col')||'',type=b.getAttribute('data-ops-sort-type')||'text';
+  opsSortWrite(tableId,opsSortNextState(opsSortRead(tableId),col,type));
+  if(tableId==='effective-models'&&effectiveModelsLastData){renderEffectiveModels(effectiveModelsLastData);}
+  else if(tableId==='leaderboard'&&lbLastData){renderLeaderboard(lbLastData.contribs);}
+  else if(tableId==='admin-tier-limits'){renderAdminTierLimits();}
+});
 var effectiveModelsWindow='7d';
 var effectiveModelsFilter='all';
+var effectiveModelsLastData=null;
 function effectivePct(v){return ((Number(v)||0)*100).toFixed(0)+'%%';}
 function effectiveFixed(v){return (Number(v)||0).toFixed(1);}
 function loadEffectiveModels(){
@@ -2923,13 +2979,37 @@ function loadEffectiveModels(){
 }
 function renderEffectiveModels(data){
   var mount=document.getElementById('effective-models-ranked');if(!mount)return;
+  effectiveModelsLastData=data||{};
   var ranked=data.ranked||[], insufficient=data.insufficient||[];
   var count=document.getElementById('effective-models-count');
   if(count)count.textContent=ranked.length+' ranked · min '+(data.min_merged_prs||5)+' merged PRs';
+  var effColumns=[
+    {key:'model',type:'text',value:function(x){return (x.model||'')+' '+(x.backend||'')+' '+(x.runtime||'');}},
+    {key:'merged_prs',type:'number',value:function(x){return x.merged_prs;}},
+    {key:'first_pass_merge_rate',type:'percent',value:function(x){return x.first_pass_merge_rate;}},
+    {key:'avg_review_rounds',type:'number',value:function(x){return x.avg_review_rounds;}},
+    {key:'avg_fix_attempts',type:'number',value:function(x){return x.avg_fix_attempts;}},
+    {key:'runs',type:'number',value:function(x){return x.runs;}},
+    {key:'verified_pr_run_rate',type:'percent',value:function(x){return x.verified_pr_run_rate;}},
+    {key:'failure_rate',type:'percent',value:function(x){return x.failure_rate;}},
+    {key:'nothing_to_ship_rate',type:'percent',value:function(x){return x.nothing_to_ship_rate;}},
+    {key:'worst_prs',type:'text',value:function(x){return (x.most_reworked||[]).map(function(pr){return (pr.repo||'')+'#'+(pr.number||'');}).join(' ');}}
+  ];
   function rows(list, empty){
     if(!list.length)return '<div class="ops-empty">'+empty+'</div>';
-    return '<table class="effective-table"><thead><tr><th>Model / CLI</th><th>Merged PRs</th><th>First-pass</th><th>Review rounds</th><th>Fix attempts</th><th>Runs</th><th>PR run rate</th><th>Failure</th><th>Nothing to ship</th><th>Worst PRs</th></tr></thead><tbody>'+
-      list.map(function(x){
+    var sortable=opsSortableTable('effective-models',{rows:list,columns:effColumns});
+    return '<table class="effective-table"><thead><tr>'+
+      '<th aria-sort="'+sortable.ariaSort('model')+'">'+sortable.header('model','Model / CLI')+'</th>'+
+      '<th aria-sort="'+sortable.ariaSort('merged_prs')+'">'+sortable.header('merged_prs','Merged PRs')+'</th>'+
+      '<th aria-sort="'+sortable.ariaSort('first_pass_merge_rate')+'">'+sortable.header('first_pass_merge_rate','First-pass')+'</th>'+
+      '<th aria-sort="'+sortable.ariaSort('avg_review_rounds')+'">'+sortable.header('avg_review_rounds','Review rounds')+'</th>'+
+      '<th aria-sort="'+sortable.ariaSort('avg_fix_attempts')+'">'+sortable.header('avg_fix_attempts','Fix attempts')+'</th>'+
+      '<th aria-sort="'+sortable.ariaSort('runs')+'">'+sortable.header('runs','Runs')+'</th>'+
+      '<th aria-sort="'+sortable.ariaSort('verified_pr_run_rate')+'">'+sortable.header('verified_pr_run_rate','PR run rate')+'</th>'+
+      '<th aria-sort="'+sortable.ariaSort('failure_rate')+'">'+sortable.header('failure_rate','Failure')+'</th>'+
+      '<th aria-sort="'+sortable.ariaSort('nothing_to_ship_rate')+'">'+sortable.header('nothing_to_ship_rate','Nothing to ship')+'</th>'+
+      '<th aria-sort="'+sortable.ariaSort('worst_prs')+'">'+sortable.header('worst_prs','Worst PRs')+'</th></tr></thead><tbody>'+
+      sortable.rows.map(function(x){
         var worst=(x.most_reworked||[]).slice(0,3).map(function(pr){
           var label=(pr.repo||'')+'#'+(pr.number||'');
           return pr.url?'<a class="effective-link" href="'+esc(pr.url)+'" target="_blank" rel="noopener">'+esc(label)+'</a>':esc(label);
@@ -3066,6 +3146,11 @@ function lbRow(e,rank){
     +'<div class="lb-spark" data-user="'+esc(uname)+'"></div>'
     +'</div>';
 }
+function opsLeaderboardTrendValue(username){
+  var pud=ccMetrics&&ccMetrics.per_user_done,series=username&&pud&&pud[username];
+  if(!series||!series.length)return '';
+  return series.reduce(function(sum,v){return sum+(Number(v)||0);},0);
+}
 var lbLastData=null; // cache the last standings so a late username resolve can re-mark the me-row
 // renderLeaderboard renders the Rankings from CONTRIBUTORS ONLY (#2601). The hive's
 // own internal agents are excluded so real human + donated-compute contributors are
@@ -3085,9 +3170,27 @@ function renderLeaderboard(contribs){
   // the sum of tasks_done per hour over the last 7 days. Hydrated by
   // ccRenderLeaderboardSparklines; empty (flat) until metrics load.
   var trend='<div class="lb-trend"><span>Hive throughput &middot; last 7 days</span>'+socialShareControls('/share/leaderboard/contributors','Hive contributor leaderboard')+'<span class="spark" id="spark-lb-trend" title="Total tasks completed per hour, last 7 days"></span></div>';
-  var html=trend+'<div class="lb-head lb-row"><div class="lb-rank">#</div><div class="lb-name">Contributor</div><div class="lb-tier">Tier</div><div class="lb-stat lb-primary">Done</div><div class="lb-stat">Failed</div><div class="lb-stat">Findings</div><div class="lb-stat">Trend</div></div>';
-  var rank=0,i;
-  for(i=0;i<contribs.length;i++){rank++;html+=lbRow(contribs[i],rank);}
+  var lbColumns=[
+    {key:'rank',type:'number',value:function(r){return r.rank;}},
+    {key:'contributor',type:'text',value:function(r){return r.entry.github_username||'';}},
+    {key:'tier',type:'text',value:function(r){return r.entry.trust_tier||'';}},
+    {key:'done',type:'number',value:function(r){return r.entry.tasks_completed;}},
+    {key:'failed',type:'number',value:function(r){return r.entry.tasks_failed;}},
+    {key:'findings',type:'number',value:function(r){return r.entry.findings;}},
+    {key:'trend',type:'number',value:function(r){return opsLeaderboardTrendValue(r.entry.github_username);}}
+  ];
+  var rankedRows=contribs.map(function(e,i){return{entry:e,rank:Number(e.rank||0)||i+1};});
+  var sortable=opsSortableTable('leaderboard',{rows:rankedRows,columns:lbColumns});
+  var html=trend+'<div class="lb-head lb-row" role="row">'+
+    '<div class="lb-rank" aria-sort="'+sortable.ariaSort('rank')+'">'+sortable.header('rank','#')+'</div>'+
+    '<div class="lb-name" aria-sort="'+sortable.ariaSort('contributor')+'">'+sortable.header('contributor','Contributor')+'</div>'+
+    '<div class="lb-tier" aria-sort="'+sortable.ariaSort('tier')+'">'+sortable.header('tier','Tier')+'</div>'+
+    '<div class="lb-stat lb-primary" aria-sort="'+sortable.ariaSort('done')+'">'+sortable.header('done','Done')+'</div>'+
+    '<div class="lb-stat" aria-sort="'+sortable.ariaSort('failed')+'">'+sortable.header('failed','Failed')+'</div>'+
+    '<div class="lb-stat" aria-sort="'+sortable.ariaSort('findings')+'">'+sortable.header('findings','Findings')+'</div>'+
+    '<div class="lb-stat" aria-sort="'+sortable.ariaSort('trend')+'">'+sortable.header('trend','Trend')+'</div></div>';
+  var i;
+  for(i=0;i<sortable.rows.length;i++){html+=lbRow(sortable.rows[i].entry,sortable.rows[i].rank);}
   el.innerHTML=html;
   // Paint sparklines now that the rows exist (metrics may already be cached from a
   // prior opsPoll tick; if not, the next tick fills them in).
@@ -4022,6 +4125,9 @@ function ccMetricsPoll(){
     // with the three sparklines above instead of stretching a handful of active
     // hours across a strip labelled "last 7 days".
     ccRenderMineSpark();
+    // If the user sorted Rankings by the sparkline column, a metrics refresh can
+    // change the row order; re-render from cached standings before painting lines.
+    if(opsSortRead('leaderboard').col==='trend'&&lbLastData){try{renderLeaderboard(lbLastData.contribs);return;}catch(e){console.error('leaderboard trend sort refresh failed',e);}}
     // Leaderboard hive-wide trend + per-row sparklines, if the tab is rendered.
     ccRenderLeaderboardSparklines();
   }).catch(function(e){console.error('metrics poll failed',e);});
@@ -4430,8 +4536,15 @@ function renderAdminTierLimits(){
   if(!el||!adminHub)return;
   var limits=adminHub.tier_limits||{};
   var disabled=adminHub.disabled_tiers||[];
-  var head='<div class="admin-tier admin-tier--head"><span class="admin-tier__col" style="text-align:left">Tier</span><span class="admin-tier__col">Per&nbsp;hr</span><span class="admin-tier__col">Per&nbsp;day</span><span class="admin-tier__col">Concurr.</span></div>';
-  el.innerHTML=head+ADMIN_TIER_ORDER.map(function(t){
+  var tierRows=ADMIN_TIER_ORDER.map(function(t){var lim=limits[t]||{};return{tier:t,max_per_hour:lim.max_per_hour||0,max_per_day:lim.max_per_day||0,max_concurrent:lim.max_concurrent||0};});
+  var sortable=opsSortableTable('admin-tier-limits',{rows:tierRows,columns:[
+    {key:'tier',type:'text',value:function(r){return r.tier;}},
+    {key:'max_per_hour',type:'number',value:function(r){return r.max_per_hour;}},
+    {key:'max_per_day',type:'number',value:function(r){return r.max_per_day;}},
+    {key:'max_concurrent',type:'number',value:function(r){return r.max_concurrent;}}
+  ]});
+  var head='<div class="admin-tier admin-tier--head" role="row"><span class="admin-tier__col" style="text-align:left" aria-sort="'+sortable.ariaSort('tier')+'">'+sortable.header('tier','Tier')+'</span><span class="admin-tier__col" aria-sort="'+sortable.ariaSort('max_per_hour')+'">'+sortable.header('max_per_hour','Per hr')+'</span><span class="admin-tier__col" aria-sort="'+sortable.ariaSort('max_per_day')+'">'+sortable.header('max_per_day','Per day')+'</span><span class="admin-tier__col" aria-sort="'+sortable.ariaSort('max_concurrent')+'">'+sortable.header('max_concurrent','Concurr.')+'</span></div>';
+  el.innerHTML=head+sortable.rows.map(function(row){var t=row.tier;
     var lim=limits[t]||{};
     var off=disabled.indexOf(t)>=0;
     var h=(lim.max_per_hour||0),d=(lim.max_per_day||0),c=(lim.max_concurrent||0);
