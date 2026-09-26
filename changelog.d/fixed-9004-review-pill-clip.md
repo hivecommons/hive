@@ -1,0 +1,1 @@
+- Repo-card PR review pill (`💬×N`) and the other action-slot glyphs are no longer clipped: action slots keep their 1.65rem floor but grow to content, and the slot no longer hides overflow. (#9004)

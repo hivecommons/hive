@@ -1414,10 +1414,10 @@
     .repo-pill-main { display: flex; align-items: center; gap: var(--sp-1); min-width: 0; overflow: hidden; }
     .repo-pill-status { display: inline-flex; align-items: center; justify-content: center; min-width: 3.65rem; max-width: 5.25rem; padding: 3px 6px; border: 1px solid color-mix(in srgb, var(--pill-c, var(--border)) 45%, transparent); border-radius: var(--r-pill); color: var(--pill-c, var(--muted)); background: color-mix(in srgb, var(--pill-c, var(--muted)) 10%, transparent); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.02em; line-height: 1; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .repo-pill-status.held { --pill-c: var(--muted); border-style: dashed; }
-    .repo-pill-actions { display: grid; grid-template-columns: 1.65rem 1.65rem 1.65rem minmax(4.8rem, max-content); justify-content: end; align-items: center; gap: var(--sp-1); }
-    .repo-pill-action-slot { display: inline-flex; align-items: center; justify-content: center; min-width: 1.65rem; min-height: 1.45rem; overflow: hidden; }
-    .repo-pill-action-slot .pill-icon { max-width: 100%; overflow: hidden; text-overflow: clip; }
-    .repo-pill-action-slot:last-child .pill-icon { max-width: none; }
+    /* Slots keep a 1.65rem floor but grow to content so 💬×N and glyph pills are never clipped (#9004). */
+    .repo-pill-actions { display: grid; grid-template-columns: minmax(1.65rem, max-content) minmax(1.65rem, max-content) minmax(1.65rem, max-content) minmax(4.8rem, max-content); justify-content: end; align-items: center; gap: var(--sp-1); }
+    .repo-pill-action-slot { display: inline-flex; align-items: center; justify-content: center; min-width: 1.65rem; min-height: 1.45rem; overflow: visible; }
+    .repo-pill-action-slot .pill-icon { max-width: none; }
     .repo-pill-action-slot.empty { visibility: hidden; pointer-events: none; }
     /* A held pill: the item is in its column (it IS one of the repo's issues
        / PRs, and the count includes it) but parked behind a hold label, so
