@@ -31,11 +31,15 @@ jobs:
       - name: Render bee-swarm video
         run: xvfb-run -a bash src/scripts/gource-hive-of-the-week.sh
       - name: Archive gource source in knowledge
-        if: ${{ secrets.HIVE_PROXY_AUTH_TOKEN != '' }}
+        # The secrets context is not available in step-level `if`; guard in the script instead (#8990).
         env:
           HIVE_PROXY_AUTH_TOKEN: ${{ secrets.HIVE_PROXY_AUTH_TOKEN }}
         run: |
           set -euo pipefail
+          if [ -z "${HIVE_PROXY_AUTH_TOKEN:-}" ]; then
+            echo "HIVE_PROXY_AUTH_TOKEN not configured; skipping archive"
+            exit 0
+          fi
           week="${HIVE_OF_WEEK_WEEK}"
           query="week=${week}"
           if [ -n "${HIVE_OF_WEEK_PROJECT}" ]; then

@@ -1380,15 +1380,6 @@ jobs:
             echo "has-flakes=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Ensure ci-flake label exists
-        if: steps.flake-reports.outputs.has-flakes == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh label create ci-flake --repo "${GITHUB_REPOSITORY}" \
-            --description "Go test passed only after gotestsum reran a failed test" \
-            --color F9D0C4 --force
-
       - name: Create or update flake issues
         if: steps.flake-reports.outputs.has-flakes == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -1396,6 +1387,19 @@ jobs:
           script: |
             const fs = require('fs');
             const path = require('path');
+            // Self-hosted runners lack the gh CLI (#8991); ensure the label via the API instead.
+            const LABEL_ALREADY_EXISTS = 422;
+            try {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: 'ci-flake',
+                color: 'F9D0C4',
+                description: 'Go test passed only after gotestsum reran a failed test',
+              });
+            } catch (e) {
+              if (e.status !== LABEL_ALREADY_EXISTS) throw e;
+            }
 
             const root = 'flaky-reports';
             if (!fs.existsSync(root)) {
