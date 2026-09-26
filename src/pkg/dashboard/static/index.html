@@ -25405,6 +25405,9 @@ function burnAreaChart() {
       const reqList = (requireLabels || []).map((l, i) =>
         `<div class="config-list-item"><span>${esc(l)}</span><button class="remove-item" data-action="removeListItem" data-arg0="labels" data-arg1="require" data-arg2="${i}" data-arg-types="s,s,j">✕</button></div>`
       ).join('');
+      const writingGuide = (_configState.dirty.labels && _configState.dirty.labels.writing_guide !== undefined)
+        ? _configState.dirty.labels.writing_guide
+        : (_configState.data.writingGuide || '');
       return `
         <h4 style="margin:var(--sp-0) var(--sp-0) var(--sp-3)">Exempt labels (deny-list)</h4>
         <p style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:14px">Labels that filter issues <b>out</b> of the actionable issues list and PRs out of the mergeable PRs list — issues carrying one of these are never agent work. Agents receive the filtered lists as variable substitutions in their kick prompts.</p>
@@ -25425,6 +25428,15 @@ function burnAreaChart() {
           <div class="config-list-add">
             <input type="text" id="cfg-require-label-input" placeholder="label name" title="GitHub label an issue must carry before agents may work it (e.g. an approval/queue label).">
             <button class="hv-btn btn-primary" data-action="addListItem" data-arg0="labels" data-arg1="require" data-arg2="cfg-require-label-input" title="Add this label to the required (allow) list">+ Add</button>
+          </div>
+        </div>
+        <h4>Writing guide</h4>
+        <div class="config-field">
+          <label for="cfg-writing-guide">Project writing guide</label>
+          <textarea id="cfg-writing-guide" rows="7" placeholder="No writing guide is set." data-input-action="markDirty" data-change-action="markDirty" data-arg0="labels" data-arg1="writing_guide" data-arg-types="s,s,v">${esc(writingGuide)}</textarea>
+          <div class="fs-xs text-muted mt-2">
+            Lands as <code>${'${WRITING_GUIDE}'}</code> before the body template in every issue/PR-filing kick and now in review-swarm comments.
+            See <a class="text-accent" href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md#writing-guide-how-issues-and-prs-should-read-projectwriting_guide" target="_blank" rel="noopener">Writing guide docs ↗</a>.
           </div>
         </div>`;
     }

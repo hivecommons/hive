@@ -29,7 +29,7 @@ func TestWritingGuideSection_RendersTextUnderAScopedHeader(t *testing.T) {
 	for _, want := range []string{
 		"WRITING GUIDE",
 		"project.writing_guide",
-		"Every issue body and PR body",
+		"Every issue body, PR body and review comment",
 		"not what it contains",
 		"Short sentences. One idea per bullet.\n  Evidence under a <details> block.",
 	} {
@@ -54,10 +54,28 @@ project:
 	if err := yaml.Unmarshal([]byte(src), &cfg); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
+
 	if !strings.Contains(cfg.Project.WritingGuide, "not in your head") || !strings.Contains(cfg.Project.WritingGuide, "300 words") {
 		t.Fatalf("writing_guide block scalar not loaded: %q", cfg.Project.WritingGuide)
 	}
 	if !strings.Contains(cfg.Project.WritingGuideSection(), "Keep it to about 300 words.") {
 		t.Fatalf("loaded guide does not render: %q", cfg.Project.WritingGuideSection())
+	}
+}
+
+func TestWritingGuide_ValidateRejectsOversize(t *testing.T) {
+	cfg := validWritingGuideConfig()
+	cfg.Project.WritingGuide = strings.Repeat("x", MaxWritingGuideBytes+1)
+
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "project.writing_guide") {
+		t.Fatalf("Validate() error = %v, want project.writing_guide size error", err)
+	}
+}
+
+func validWritingGuideConfig() *Config {
+	return &Config{
+		Project: ProjectConfig{Org: "acme"},
+		GitHub:  GitHubConfig{Token: "token"},
+		Agents:  map[string]AgentConfig{"scanner": {Role: "scanner"}},
 	}
 }

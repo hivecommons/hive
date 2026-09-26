@@ -1,0 +1,1 @@
+- Add a dashboard Settings editor for project.writing_guide so owners can update agent writing style without editing hive.yaml.
