@@ -44,6 +44,7 @@ func TestInceptionApproveAdmitsSpecRunWhenSpektacularEnabled(t *testing.T) {
 	s, _, _ := covFInceptionServer(t)
 	s.contributeHub.persistTaskLedgers = false
 	s.deps.Config.Runs.Spektacular.Enabled = true
+	disableSpekHubExecutorForRelayTests(s)
 	driveInceptionToScaffold(t, s)
 
 	rec := doPost(s, "/api/inception/approve", map[string]interface{}{
@@ -92,6 +93,7 @@ func TestInceptionApproveTwiceAdmitsOneSpecRun(t *testing.T) {
 	s, _, _ := covFInceptionServer(t)
 	s.contributeHub.persistTaskLedgers = false
 	s.deps.Config.Runs.Spektacular.Enabled = true
+	disableSpekHubExecutorForRelayTests(s)
 	driveInceptionToScaffold(t, s)
 	body := map[string]interface{}{
 		"repo":         "repo1",
@@ -113,6 +115,7 @@ func TestInceptionApproveRequiresExplicitRepoTarget(t *testing.T) {
 	s, _, _ := covFInceptionServer(t)
 	s.contributeHub.persistTaskLedgers = false
 	s.deps.Config.Runs.Spektacular.Enabled = true
+	disableSpekHubExecutorForRelayTests(s)
 	driveInceptionToScaffold(t, s)
 
 	if rec := doPost(s, "/api/inception/approve", map[string]interface{}{"issue_number": 8290}); rec.Code != http.StatusOK {
@@ -127,6 +130,7 @@ func TestInceptionApproveRejectsNonGitHubIssueURL(t *testing.T) {
 	s, _, _ := covFInceptionServer(t)
 	s.contributeHub.persistTaskLedgers = false
 	s.deps.Config.Runs.Spektacular.Enabled = true
+	disableSpekHubExecutorForRelayTests(s)
 	driveInceptionToScaffold(t, s)
 
 	rec := doPost(s, "/api/inception/approve", map[string]interface{}{

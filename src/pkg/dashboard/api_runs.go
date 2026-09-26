@@ -70,6 +70,14 @@ type RunBurndown struct {
 	Scope     int    `json:"scope"`
 }
 
+type RunOtherHolder struct {
+	Identity string `json:"identity,omitempty"`
+	TaskID   string `json:"task_id,omitempty"`
+	Stage    string `json:"stage,omitempty"`
+	Gen      uint64 `json:"gen,omitempty"`
+	LeaseKey string `json:"lease_key,omitempty"`
+}
+
 // runResetRequest is the body of POST /api/runs/{key}/reset (#8350).
 type runResetRequest struct {
 	To     string `json:"to"`
@@ -136,6 +144,7 @@ type Run struct {
 	DocumentStatus  string                      `json:"document_status,omitempty"`
 	CurrentStep     string                      `json:"current_step,omitempty"`
 	Activity        *RunActivity                `json:"activity,omitempty"`
+	OtherHolders    []RunOtherHolder            `json:"other_holders,omitempty"`
 }
 
 type RunSummary = Run
@@ -216,6 +225,13 @@ type runLeaseSnapshot struct {
 	triageVerdict   string
 	triageRationale string
 	workItem        worksource.WorkItemContext
+}
+
+func (l runLeaseSnapshot) activityTime() time.Time {
+	if !l.stageStarted.IsZero() {
+		return l.stageStarted
+	}
+	return l.expiresAt
 }
 
 type currentTaskRunInfo struct {
@@ -744,15 +760,36 @@ func (s *Server) activeRuns(includeTimeline bool) ([]Run, error) {
 	holds := runHumanReviewHolds(runReviewDispatchStatePath)
 	runs := make([]Run, 0, len(leases))
 	active := map[string]bool{}
+	grouped := map[string][]runLeaseSnapshot{}
 	for _, lease := range leases {
+		grouped[lease.key] = append(grouped[lease.key], lease)
+	}
+	keys := make([]string, 0, len(grouped))
+	for key := range grouped {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, runKey := range keys {
+		group := grouped[runKey]
+		lease := bestRunLeaseSnapshot(group)
 		active[lease.key] = true
 		active[lease.leaseKey] = true
+		for _, l := range group {
+			active[l.key] = true
+			active[l.leaseKey] = true
+		}
 		plan := firstRunPlanSnapshot(plans[lease.key], plans[lease.leaseKey])
 		run := runFromLease(lease, plan, firstRunHold(holds[lease.key], holds[lease.leaseKey]), s.runsConfigSnapshot())
+		run.OtherHolders = otherRunHolders(group, lease)
 		if run.PlanEpicID != "" {
 			run.ReviewWaves = s.planReviewWaves(run.PlanEpicID)
 		}
-		events := append(s.LifecycleTimeline().ByIssue(lease.key), s.LifecycleTimeline().ByIssue(lease.leaseKey)...)
+		events := []timeline.Event{}
+		for _, l := range group {
+			events = append(events, s.LifecycleTimeline().ByIssue(l.key)...)
+			events = append(events, s.LifecycleTimeline().ByIssue(l.leaseKey)...)
+		}
+		events = dedupeTimelineEvents(events)
 		applyRunArtifactStatus(&run, events)
 		applyRunActivity(&run, events)
 		run.LastReceipt = latestRunReceipt(events)
@@ -781,6 +818,54 @@ func (s *Server) activeRuns(includeTimeline bool) ([]Run, error) {
 		return runs[i].Key < runs[j].Key
 	})
 	return runs, nil
+}
+
+func bestRunLeaseSnapshot(leases []runLeaseSnapshot) runLeaseSnapshot {
+	best := leases[0]
+	for _, lease := range leases[1:] {
+		if runStageRank(lease.stage) > runStageRank(best.stage) ||
+			(runStageRank(lease.stage) == runStageRank(best.stage) && lease.activityTime().After(best.activityTime())) {
+			best = lease
+		}
+	}
+	return best
+}
+
+func otherRunHolders(leases []runLeaseSnapshot, selected runLeaseSnapshot) []RunOtherHolder {
+	out := []RunOtherHolder{}
+	for _, lease := range leases {
+		if lease.identity == selected.identity && lease.taskID == selected.taskID {
+			continue
+		}
+		out = append(out, RunOtherHolder{
+			Identity: lease.identity, TaskID: lease.taskID, Stage: lease.stage, Gen: lease.gen, LeaseKey: lease.leaseKey,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Stage != out[j].Stage {
+			return runStageRank(out[i].Stage) > runStageRank(out[j].Stage)
+		}
+		if out[i].Identity != out[j].Identity {
+			return out[i].Identity < out[j].Identity
+		}
+		return out[i].TaskID < out[j].TaskID
+	})
+	return out
+}
+
+func runStageRank(stage string) int {
+	switch stage {
+	case StageSpec:
+		return 1
+	case StagePlan:
+		return 2
+	case StageImplement:
+		return 3
+	case "completed":
+		return 4
+	default:
+		return 0
+	}
 }
 
 func (s *Server) planReviewWaves(epicID string) []RunReviewWave {
@@ -1111,9 +1196,14 @@ func applyRunArtifactStatus(run *Run, events []timeline.Event) {
 	if run == nil {
 		return
 	}
-	for _, ev := range events {
+	sort.SliceStable(events, func(i, j int) bool { return events[i].At > events[j].At })
+	preferredStage := strings.TrimSpace(run.Stage)
+	apply := func(ev timeline.Event) bool {
 		if ev.Attrs == nil {
-			continue
+			return false
+		}
+		if preferredStage != "" && ev.Attrs[stageAttrStage] != "" && ev.Attrs[stageAttrStage] != preferredStage {
+			return false
 		}
 		if run.ArtifactName == "" {
 			run.ArtifactName = firstRunNonEmpty(ev.Attrs[stageAttrArtifact], ev.Attrs[stageAttrPath])
@@ -1127,7 +1217,19 @@ func applyRunArtifactStatus(run *Run, events []timeline.Event) {
 		if run.CurrentStep == "" {
 			run.CurrentStep = firstRunNonEmpty(ev.Attrs["current_step"], ev.Attrs["step"])
 		}
-		if run.ArtifactName != "" && run.ArtifactID != "" && run.DocumentStatus != "" && run.CurrentStep != "" {
+		return run.ArtifactName != "" && run.ArtifactID != "" && run.DocumentStatus != "" && run.CurrentStep != ""
+	}
+	for _, ev := range events {
+		if apply(ev) {
+			return
+		}
+	}
+	if run.ArtifactName != "" && run.ArtifactID != "" && run.DocumentStatus != "" && run.CurrentStep != "" {
+		return
+	}
+	preferredStage = ""
+	for _, ev := range events {
+		if apply(ev) {
 			return
 		}
 	}

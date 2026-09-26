@@ -47,6 +47,68 @@ func decodeRuns(t *testing.T, rec *httptest.ResponseRecorder) []Run {
 	return runs
 }
 
+func TestRunsDeduplicateLeasesByRunKeyAndExposeOtherHolders(t *testing.T) {
+	s, _ := runsTestServer(t)
+	now := time.Now()
+	const (
+		repo   = "kubestellar/console"
+		runKey = "kubestellar/console#23616"
+	)
+	if err := s.contributeHub.recordLeaseForKeyStage(config.DefaultSpektacularHubExecutorIdentity, "run-hub", repo, 23616, repo+"!"+runKey+":"+StageSpec, "trusted", StageSpec, 29, now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.contributeHub.recordLeaseForKeyStage("c-63e2b14bad27#copilot", "ct-plan", repo, 23616, repo+"!"+runKey+":"+StagePlan, "contributor", StagePlan, 37, now); err != nil {
+		t.Fatal(err)
+	}
+
+	runs, err := s.activeRuns(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs len = %d, want one deduped row: %+v", len(runs), runs)
+	}
+	if runs[0].Key != runKey || runs[0].Stage != StagePlan || len(runs[0].OtherHolders) != 1 {
+		t.Fatalf("deduped run = %+v, want plan row with one other holder", runs[0])
+	}
+	if runs[0].OtherHolders[0].Identity != config.DefaultSpektacularHubExecutorIdentity {
+		t.Fatalf("other holders = %+v, want hub executor listed", runs[0].OtherHolders)
+	}
+	detail, err := s.buildRunDetail(httptest.NewRequest(http.MethodGet, "/api/runs/"+url.PathEscape(runs[0].OtherHolders[0].LeaseKey), nil), runs[0].OtherHolders[0].LeaseKey)
+	if err != nil {
+		t.Fatalf("detail lookup by other holder lease key: %v", err)
+	}
+	if detail.Run.Key != runKey {
+		t.Fatalf("detail lookup by other holder key returned %+v, want %s", detail.Run, runKey)
+	}
+}
+
+func TestRunsHeaderUsesLatestCurrentStageArtifactStatus(t *testing.T) {
+	s, _ := runsTestServer(t)
+	now := time.Now()
+	const (
+		repo   = "kubestellar/console"
+		runKey = "kubestellar/console#23616"
+	)
+	if err := s.contributeHub.recordLeaseForKeyStage(config.DefaultSpektacularHubExecutorIdentity, "run-hub", repo, 23616, repo+"!"+runKey+":"+StageSpec, "trusted", StagePlan, 29, now); err != nil {
+		t.Fatal(err)
+	}
+	s.LifecycleTimeline().Record(timeline.Event{IssueRef: runKey, Kind: timeline.KindProgress, At: now.Add(-time.Minute).UnixMilli(), Attrs: map[string]string{
+		stageAttrStage: StageSpec, stageAttrArtifact: "success_metrics", stageAttrDocumentStatus: "draft", stageAttrCurrentStep: "authoring",
+	}})
+	s.LifecycleTimeline().Record(timeline.Event{IssueRef: runKey, Kind: timeline.KindBlocked, At: now.UnixMilli(), Attrs: map[string]string{
+		stageAttrStage: StagePlan, stageAttrArtifact: "implementation_plan", stageAttrDocumentStatus: "final", stageAttrCurrentStep: "review",
+	}})
+
+	detail, err := s.buildRunDetail(httptest.NewRequest(http.MethodGet, "/api/runs/"+url.PathEscape(runKey), nil), runKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Run.Stage != StagePlan || detail.Run.ArtifactID != "implementation_plan" || detail.Run.DocumentStatus != "final" || detail.Run.CurrentStep != "review" {
+		t.Fatalf("detail run header = %+v, want current plan/final/review from timeline state", detail.Run)
+	}
+}
+
 func TestRunsListNoRunLeasesAndStatusZeros(t *testing.T) {
 	s, _ := runsTestServer(t)
 
@@ -54,6 +116,7 @@ func TestRunsListNoRunLeasesAndStatusZeros(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /api/runs = %d body=%s", rec.Code, rec.Body.String())
 	}
+
 	if runs := decodeRuns(t, rec); len(runs) != 0 {
 		t.Fatalf("runs = %+v, want empty list", runs)
 	}

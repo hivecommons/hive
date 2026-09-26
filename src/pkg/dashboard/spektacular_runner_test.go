@@ -27,7 +27,7 @@ import (
 const (
 	spekRunKey   = "20260922132517-hcl-encoding-helpers"
 	spekRepo     = "myorg/repo1"
-	spekIdentity = "c-spek"
+	spekIdentity = config.DefaultSpektacularHubExecutorIdentity
 	spekTaskID   = "task-spek"
 	spekGen      = uint64(11)
 	spekPoll     = time.Minute
@@ -102,9 +102,18 @@ func spekHub(t *testing.T) (*ContributeWSHub, *Server, *beads.Store, *hookCaptur
 		t.Fatalf("bead store: %v", err)
 	}
 	s.deps.BeadStores = map[string]*beads.Store{planning.ArchitectAgentName: store}
+	disableSpekHubExecutorForRelayTests(s)
 	capture := &hookCapture{}
 	s.deps.HookFire = capture.fire
 	return hub, s, store, capture
+}
+
+func disableSpekHubExecutorForRelayTests(s *Server) {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return
+	}
+	off := false
+	s.deps.Config.Runs.Spektacular.HubExecutor.Enabled = &off
 }
 
 func spekRunner(hub *ContributeWSHub, ex *spekExec) *spektacular.Runner {
@@ -543,12 +552,90 @@ func (c *countingRunner) Tick(_ context.Context, now time.Time) {
 	c.last = now
 }
 
+func (c *countingRunner) Status() FrontendSpektacularHubExecutor {
+	return FrontendSpektacularHubExecutor{}
+}
+
+func (c *countingRunner) IsExecuting(string, string) bool { return false }
+
+func TestRunStageAccessor_HubExecutorOwnsSpecAndPlan(t *testing.T) {
+	hub, s, _, _ := spekHub(t)
+	s.deps.Config.Runs.Spektacular.Enabled = true
+	on := true
+	s.deps.Config.Runs.Spektacular.HubExecutor.Enabled = &on
+	now := time.Now()
+	for _, stage := range []string{StageSpec, StagePlan} {
+		key := spekRepo + "!" + spekRunKey + ":" + stage
+		if err := hub.recordLeaseForKeyStage(runAdmissionIdentity, "admit-"+stage, spekRepo, 0, key, "trusted", stage, spekGen, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stages, err := s.RunStageAccessor().PendingRunStages(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stages) != 0 {
+		t.Fatalf("pending stages with hub executor enabled = %+v, want spec/plan hidden", stages)
+	}
+
+	off := false
+	s.deps.Config.Runs.Spektacular.HubExecutor.Enabled = &off
+	stages, err = s.RunStageAccessor().PendingRunStages(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stages) != 2 {
+		t.Fatalf("pending stages with hub executor disabled = %+v, want spec/plan", stages)
+	}
+}
+
+func TestRunStageAccessor_SkipsExecutorInFlightStage(t *testing.T) {
+	hub, s, _, _ := spekHub(t)
+	off := false
+	s.deps.Config.Runs.Spektacular.Enabled = true
+	s.deps.Config.Runs.Spektacular.HubExecutor.Enabled = &off
+	now := time.Now()
+	key := spekRepo + "!" + spekRunKey + ":" + StageImplement
+	if err := hub.recordLeaseForKeyStage(runAdmissionIdentity, "admit-implement", spekRepo, 0, key, "trusted", StageImplement, spekGen, now); err != nil {
+		t.Fatal(err)
+	}
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	e.mu.Lock()
+	e.inFlight = map[string]time.Time{e.executionKey(spekHubStage{runKey: spekRunKey, stage: StageImplement, gen: spekGen}): now}
+	e.mu.Unlock()
+	s.SetStageExecutor(e)
+
+	stages, err := s.RunStageAccessor().PendingRunStages(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stages) != 0 {
+		t.Fatalf("in-flight executor stage was offered: %+v", stages)
+	}
+}
+
+func TestSpektacularRunner_SkipsRelayHeldLeaseWithoutRefusal(t *testing.T) {
+	hub, _, _, _ := spekHub(t)
+	now := time.Now()
+	key := spekRepo + "!" + spekRunKey + ":" + StagePlan
+	if err := hub.recordLeaseForKeyStage("relay", "relay-task", spekRepo, 0, key, "contributor", StagePlan, spekGen, now); err != nil {
+		t.Fatal(err)
+	}
+	r := spekRunner(hub, newSpekExec())
+	res := r.Tick(context.Background(), now)
+	if res.RelayHeld != 1 || res.Refused != 0 || res.Polled != 0 {
+		t.Fatalf("tick = %+v, want one relay-held skip and no refusal/poll", res)
+	}
+}
+
 func TestStageRunner_InstallAndTick(t *testing.T) {
 	hub, s, _, _ := spekHub(t)
 	now := time.Now()
 	if s.tickStageRunner(now) {
 		t.Fatal("ticked without an installed runner")
 	}
+
 	cr := &countingRunner{}
 	s.SetStageRunner(cr)
 	if !s.tickStageRunner(now) || cr.ticks != 1 || !cr.last.Equal(now) {

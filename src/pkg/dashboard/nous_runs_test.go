@@ -9,6 +9,7 @@ import (
 func TestNousApproveAdmitsSpektacularCampaignRun(t *testing.T) {
 	s, deps := runsTestServer(t)
 	deps.Config.Runs.Spektacular.Enabled = true
+	disableSpekHubExecutorForRelayTests(s)
 	deps.Nous = &NousState{
 		Status: map[string]interface{}{
 			"pending": map[string]interface{}{
@@ -44,6 +45,7 @@ func TestNousApproveAdmitsSpektacularCampaignRun(t *testing.T) {
 func TestNousApproveSpektacularCampaignRequiresTarget(t *testing.T) {
 	s, deps := runsTestServer(t)
 	deps.Config.Runs.Spektacular.Enabled = true
+	disableSpekHubExecutorForRelayTests(s)
 	deps.Nous = &NousState{
 		Status: map[string]interface{}{"pending": map[string]interface{}{"hypothesis": "missing target"}},
 		Config: map[string]interface{}{

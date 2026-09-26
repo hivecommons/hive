@@ -51,6 +51,36 @@ func TestRecordLeaseForKeyStage_RelayAdoptionEvictsHubExecutorPlaceholder(t *tes
 	}
 }
 
+func TestRecordLeaseForKeyStage_EvictsPlaceholderByRunKeyAndStage(t *testing.T) {
+	now := time.Now()
+	h := &ContributeWSHub{logger: covBLogger()}
+	const (
+		repo           = "kubestellar/console"
+		placeholderKey = "kubestellar/console!kubestellar/console#23725:spec"
+		relayKey       = "kubestellar/console!kubestellar/console#23725:implement"
+	)
+	exec := config.DefaultSpektacularHubExecutorIdentity
+	if err := h.recordLeaseForKeyStage(exec, "run-hub-x", repo, 23725, placeholderKey, "trusted", StageImplement, 6, now); err != nil {
+		t.Fatal(err)
+	}
+	h.leaseMu.Lock()
+	h.leaseForLocked(exec, "run-hub-x").triageVerdict = "proceed"
+	h.leaseMu.Unlock()
+
+	if err := h.recordLeaseForKeyStage("c-relay", "ct-1", repo, 23725, relayKey, "contributor", StageImplement, 8, now); err != nil {
+		t.Fatal(err)
+	}
+
+	h.leaseMu.Lock()
+	defer h.leaseMu.Unlock()
+	if h.leaseForLocked(exec, "run-hub-x") != nil {
+		t.Fatal("placeholder with stage-suffixed spec key survived same-run implement adoption")
+	}
+	if relay := h.leaseForLocked("c-relay", "ct-1"); relay == nil || relay.triageVerdict != "proceed" {
+		t.Fatalf("relay lease = %+v, want triage verdict carried from placeholder", relay)
+	}
+}
+
 // The hub executor re-claiming under its own identity is not an adoption and
 // evicts nothing of its own.
 func TestRecordLeaseForKeyStage_SameIdentityDoesNotEvictItself(t *testing.T) {
@@ -127,11 +157,14 @@ func TestPruneExpiredLeases_ReoffersOrphanedRelayStage(t *testing.T) {
 func TestPruneExpiredLeases_NoReofferWhenStageStillCovered(t *testing.T) {
 	now := time.Now()
 	h := &ContributeWSHub{logger: covBLogger()}
-	const key = "kubestellar/console!kubestellar/console#23725:spec"
+	const (
+		key      = "kubestellar/console!kubestellar/console#23725:spec"
+		otherKey = "kubestellar/console!kubestellar/console#23725:implement"
+	)
 	if err := h.recordLeaseForKeyStage("c-relay", "ct-1", "kubestellar/console", 23725, key, "trusted", StageImplement, 1, now.Add(-leaseTTL)); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.recordLeaseForKeyStage(runFanoutIdentity, "fan-w2", "kubestellar/console", 23725, key, "trusted", StageImplement, 2, now); err != nil {
+	if err := h.recordLeaseForKeyStage(runFanoutIdentity, "fan-w2", "kubestellar/console", 23725, otherKey, "trusted", StageImplement, 2, now); err != nil {
 		t.Fatal(err)
 	}
 	if dropped := h.pruneExpiredLeases(now.Add(time.Minute)); dropped != 1 {

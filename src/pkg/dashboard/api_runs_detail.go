@@ -209,6 +209,12 @@ func (s *Server) lookupRunForDetail(r *http.Request, key string) (Run, error) {
 			_ = s.populateRunBurndown(r, &run)
 			return run, nil
 		}
+		for _, holder := range run.OtherHolders {
+			if holder.LeaseKey == key {
+				_ = s.populateRunBurndown(r, &run)
+				return run, nil
+			}
+		}
 	}
 	if run, ok := s.queuedRunByKey(key); ok {
 		return run, nil

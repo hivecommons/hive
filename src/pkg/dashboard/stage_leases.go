@@ -139,6 +139,26 @@ func (s *Server) SetStageExecutor(e StageExecutor) {
 	s.stageExecutor = e
 }
 
+func (s *Server) stageExecutorExecuting(runKey, stage string) bool {
+	if s == nil {
+		return false
+	}
+	s.stageExecutorMu.Lock()
+	e := s.stageExecutor
+	s.stageExecutorMu.Unlock()
+	tracker, ok := e.(StageExecutionTracker)
+	return ok && tracker.IsExecuting(runKey, stage)
+}
+
+// IsPendingStageIdentity exposes the dashboard's server-side stage holders to
+// the Spektacular poll adapter without importing dashboard from that package.
+func (s *Server) IsPendingStageIdentity(identity string) bool {
+	if s == nil || s.contributeHub == nil {
+		return identity == runAdmissionIdentity || identity == runFanoutIdentity || identity == config.DefaultSpektacularHubExecutorIdentity
+	}
+	return s.contributeHub.isPendingStageIdentity(identity)
+}
+
 // tickStageRunner runs one tick of the installed runner and reports whether
 // one was installed.
 func (s *Server) tickStageRunner(now time.Time) bool {
@@ -1029,6 +1049,13 @@ func (a *runStageAccessor) PendingRunStages(_ context.Context) ([]worksource.Run
 		return nil, err
 	}
 	for _, l := range pending {
+		if s.deps != nil && s.deps.Config != nil && s.deps.Config.Runs.Spektacular.Enabled && s.deps.Config.Runs.Spektacular.HubExecutorEnabled() &&
+			(l.stage == StageSpec || l.stage == StagePlan) {
+			continue
+		}
+		if s.stageExecutorExecuting(l.runKey, l.stage) {
+			continue
+		}
 		if l.stage == StageImplement && !s.ensureRunPlanApproved(l.runKey, l.gen) {
 			continue
 		}
@@ -1070,6 +1097,10 @@ func (a *runStageAccessor) StageHasLiveLease(_ context.Context, runKey, stage st
 	live := false
 	err := s.VisitActiveStageLeases(func(rk, _, st, identity, taskID, _ string, _ uint64, _ time.Time) {
 		if rk != runKey || st != stage {
+			return
+		}
+		if s.stageExecutorExecuting(runKey, stage) {
+			live = true
 			return
 		}
 		if _, ok := infos[leaseKey(identity, taskID)]; ok {

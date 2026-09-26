@@ -19,6 +19,7 @@ func TestHandleRunSpecStart(t *testing.T) {
 	s := covApiServer(t)
 	s.contributeHub.persistTaskLedgers = false
 	s.deps.Config.Runs.Spektacular.Enabled = true
+	disableSpekHubExecutorForRelayTests(s)
 	if rec := doPost(s, "/api/runs/spec", map[string]any{"target": "acme/widgets#42", "title": "Spec widgets"}); rec.Code != http.StatusOK {
 		t.Fatalf("spec start: %d %s", rec.Code, rec.Body.String())
 	}
@@ -37,6 +38,7 @@ func TestHandleRunSpecStartValidationAndAuth(t *testing.T) {
 		t.Fatalf("no owner = %d", rec.Code)
 	}
 	s.deps.Config.Runs.Spektacular.Enabled = true
+	disableSpekHubExecutorForRelayTests(s)
 	if rec := doPost(s, "/api/runs/spec", map[string]any{"target": "not-a-target"}); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad target = %d", rec.Code)
 	}
@@ -46,6 +48,7 @@ func TestStartDesignSpektacularLinksEpicAndRun(t *testing.T) {
 	s := covApiServer(t)
 	s.contributeHub.persistTaskLedgers = false
 	s.deps.Config.Runs.Spektacular.Enabled = true
+	disableSpekHubExecutorForRelayTests(s)
 	store, err := beads.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
@@ -71,6 +74,7 @@ func TestStartDesignSpektacularAdmitsNonGitHubWorkItem(t *testing.T) {
 	s := covApiServer(t)
 	s.contributeHub.persistTaskLedgers = false
 	s.deps.Config.Runs.Spektacular.Enabled = true
+	disableSpekHubExecutorForRelayTests(s)
 	store, err := beads.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
@@ -103,6 +107,7 @@ func TestAdmitExternalWorkItemsFlowToRunsAndDetail(t *testing.T) {
 	s := covApiServer(t)
 	s.contributeHub.persistTaskLedgers = false
 	s.deps.Config.Runs.Spektacular.Enabled = true
+	disableSpekHubExecutorForRelayTests(s)
 	now := time.Now()
 	for _, tc := range []worksource.WorkItemContext{
 		{SourceType: "linear", Repo: "acme/widgets", ExternalID: "LIN-7", Title: "Linear run", Body: "Linear body", URL: "https://linear.app/acme/issue/LIN-7"},

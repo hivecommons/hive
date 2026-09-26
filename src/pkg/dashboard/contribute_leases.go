@@ -241,8 +241,9 @@ func (h *ContributeWSHub) recordLeaseForKeyStage(identity, taskID, repo string, 
 	var workItem worksource.WorkItemContext
 	removedAdmissions := map[string]*taskLease{}
 	if stage != "" {
+		runKey := runKeyOfLease(key, repo)
 		for admissionKey, l := range h.leases {
-			if l != nil && l.identity != identity && l.key == key && l.stage == stage && h.isStagePlaceholderIdentity(l.identity) {
+			if l != nil && l.identity != identity && runKeyOfLease(leaseWorkKey(l), l.repo) == runKey && l.stage == stage && h.isStagePlaceholderIdentity(l.identity) {
 				triageVerdict, triageRationale = l.triageVerdict, l.triageRationale
 				workItem = l.workItem
 				copyLease := *l
@@ -1280,12 +1281,13 @@ func (h *ContributeWSHub) pruneExpiredLeases(now time.Time) int {
 // took it. Nothing is minted when another lease still covers key+stage (a
 // fan-out wave, or a second relay that already adopted it). Caller holds leaseMu.
 func (h *ContributeWSHub) reofferOrphanedStageLocked(l taskLease, now time.Time) {
+	runKey := runKeyOfLease(leaseWorkKey(&l), l.repo)
 	for _, other := range h.leases {
-		if other != nil && other.key == l.key && other.stage == l.stage && !now.After(other.expiresAt) {
+		if other != nil && runKeyOfLease(leaseWorkKey(other), other.repo) == runKey && other.stage == l.stage && !now.After(other.expiresAt) {
 			return
 		}
 	}
-	taskID := runAdmissionTaskPrefix + sanitizeReceiptSegment(runKeyOfLease(leaseWorkKey(&l), l.repo))
+	taskID := runAdmissionTaskPrefix + sanitizeReceiptSegment(runKey)
 	h.leases[leaseKey(runAdmissionIdentity, taskID)] = &taskLease{
 		identity:        runAdmissionIdentity,
 		taskID:          taskID,
