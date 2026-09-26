@@ -56,10 +56,10 @@ func TestRepoCardPRBandsBehaviour(t *testing.T) {
 		"prGitHubReview",
 		"prRequestedReviews",
 		"prConversation",
+		"actionBandDef",
+		"actionBandRule",
 		"prBandInfo",
-		"prBandSpec",
 		"prBandLabel",
-		"prBandTip",
 		"prBandRank",
 		"groupedRepoPRs",
 	}
@@ -74,7 +74,17 @@ const REPO_ISSUE_BAND_DEFAULTS = {
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const HOLD_LABEL_SPELLINGS = ['hold', 'on-hold', 'hold/review'];
 const PR_HUMAN_GATE_LABELS = ['needs-human', 'needs-decision', '2-discussing'];
-const PR_BAND_ORDER = ['waiting', 'eligible', 'blocked', 'in-review', 'open', 'draft'];
+const ACTION_BANDS = {
+  pr: [
+    { key: 'waiting', label: 'Needs human', shortLabel: 'needs human', rule: 'Needs human: this PR is held, has needs-human, or carries a configured waiting label.' },
+    { key: 'eligible', label: 'Merge-eligible', shortLabel: 'eligible', rule: 'Merge-eligible: the sweep verdict says eligible or the PR is queued for auto-merge.' },
+    { key: 'blocked', label: 'Blocked', shortLabel: 'blocked', rule: 'Blocked: the merge verdict is blocked, GitHub reports conflicts, or CI is failing.' },
+    { key: 'in-review', label: 'In review', shortLabel: 'review', rule: 'In review: the PR has an outstanding verdict, a Hive review, or a GitHub review decision.' },
+    { key: 'open', label: 'Open', shortLabel: 'open', rule: 'Open: ordinary open PRs with no more specific display state.' },
+    { key: 'draft', label: 'Draft', shortLabel: 'draft', rule: 'Draft: GitHub marks this pull request as a draft.' }
+  ]
+};
+const PR_BAND_ORDER = ACTION_BANDS.pr.map(b => b.key);
 const window = { _repoIssueBandConfig: Object.assign({}, REPO_ISSUE_BAND_DEFAULTS), _hiveAutoMergeLabel: 'automerge', _lastStatus: { hiveId: 'h1' } };
 Date.now = () => Date.parse('2026-09-25T00:00:00Z');
 `)

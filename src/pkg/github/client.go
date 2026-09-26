@@ -770,14 +770,11 @@ type HoldItem struct {
 	// full. Both are omitted when unset so older snapshots round-trip.
 	URL    string   `json:"url,omitempty"`
 	Labels []string `json:"labels,omitempty"`
-	// Assignees and HumanAcknowledged are populated for Type=="issue" holds
-	// so the repo card bands a held issue the same way it bands an
-	// actionable one: assigned ⇒ claimed, and an agent-filed issue a human
-	// has acknowledged (#5117: approved-direction or a human assignee) is
-	// not a triage item (#9019). Both come from the list response — no
-	// extra API call — and are omitted when unset.
-	Assignees         []string `json:"assignees,omitempty"`
+	// HumanAcknowledged is populated for held issues from the same cheap
+	// acknowledgement signals the actionable issue payload carries. Held issues
+	// otherwise have no full Issue record on the repo card.
 	HumanAcknowledged bool     `json:"human_acknowledged,omitempty"`
+	Assignees         []string `json:"assignees,omitempty"`
 }
 
 type IssueCluster struct {
@@ -1034,6 +1031,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 			continue
 		}
 
+		humanAcknowledged := c.issueHumanAcknowledgedForRepoCard(ctx, owner, repoName, issue, labels)
 		if c.isHeld(labels) {
 			breakdown.Hold++
 			held = append(held, HoldItem{
@@ -1044,8 +1042,8 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 				CreatedAt:         issue.GetCreatedAt().Time,
 				URL:               issue.GetHTMLURL(),
 				Labels:            labels,
+				HumanAcknowledged: humanAcknowledged,
 				Assignees:         extractAssignees(issue.Assignees),
-				HumanAcknowledged: c.issueHasCheapHumanAcknowledgement(issue),
 			})
 			continue
 		}
@@ -1081,7 +1079,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 			Body:              issue.GetBody(),
 			Author:            safeGetLogin(issue.GetUser()),
 			AuthorIsHuman:     c.isHumanAuthor(issue.GetUser()),
-			HumanAcknowledged: c.issueHasCheapHumanAcknowledgement(issue),
+			HumanAcknowledged: humanAcknowledged,
 			Labels:            labels,
 			Assignees:         extractAssignees(issue.Assignees),
 			CreatedAt:         issue.GetCreatedAt().Time,
@@ -2913,6 +2911,31 @@ func (c *Client) issueHasCheapHumanAcknowledgement(issue *gh.Issue) bool {
 	}
 	for _, assignee := range issue.Assignees {
 		if c.isHumanAuthor(assignee) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Client) issueHumanAcknowledgedForRepoCard(ctx context.Context, owner, repo string, issue *gh.Issue, labels []string) bool {
+	if c.issueHasCheapHumanAcknowledgement(issue) {
+		return true
+	}
+	if !issueHasAgentRoleLabel(labels) || issue.GetComments() == 0 {
+		return false
+	}
+	acknowledged, err := c.issueHasHumanAcknowledgement(ctx, owner, repo, issue)
+	if err != nil {
+		c.logger.Warn("repo-card issue acknowledgement: could not read comments",
+			"repo", owner+"/"+repo, "issue", issue.GetNumber(), "error", err.Error())
+		return false
+	}
+	return acknowledged
+}
+
+func issueHasAgentRoleLabel(labels []string) bool {
+	for _, label := range labels {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(label)), "agent/") {
 			return true
 		}
 	}
