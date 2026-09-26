@@ -55,7 +55,7 @@ func TestRunDetailAggregatesIssueReceiptsPRsAndTranscripts(t *testing.T) {
 		AgentTranscript: &RunDetailTextBlock{Text: "answered clarification questions"},
 		StatusHistory:   []RunDetailStageStatus{{At: "2026-09-25T23:05:02Z", Step: "finished", DocumentStatus: "final", CompletedSteps: []string{"interview"}}},
 		Interview:       []RunDetailInterview{{Step: "interview", Question: "What should happen?", Answer: "Render prose.", AnsweredAt: "2026-09-25T23:04:00Z"}},
-		Documents:       []RunDetailStageDocument{{Path: "20260925212730-myorg-repo1-23725/plan.md", Markdown: "# Plan\n\nDo the work."}},
+		Documents:       []RunDetailStageDocument{{Path: "20260925212730-myorg-repo1-23725/plan.md", Markdown: "# Plan\n\nDo the work.", Content: "# Plan\n\nDo the work."}},
 	}); err != nil {
 		t.Fatalf("write capture: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestRunDetailAggregatesIssueReceiptsPRsAndTranscripts(t *testing.T) {
 	}
 	for _, st := range detail.Stages {
 		if st.Name == StagePlan {
-			if st.StartedAt != "2026-09-25T23:00:01Z" || len(st.Interview) != 1 || len(st.Documents) != 1 || st.AgentTranscript == nil {
+			if st.StartedAt != "2026-09-25T23:00:01Z" || len(st.Interview) != 1 || len(st.Documents) != 1 || st.Documents[0].Content == "" || st.AgentTranscript == nil {
 				t.Fatalf("plan stage missing capture: %+v", st)
 			}
 		}

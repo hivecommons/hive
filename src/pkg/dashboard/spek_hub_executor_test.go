@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -181,6 +182,19 @@ func TestSpekHubExecutorTickRestartsOwnStalledLeaseAndReportsRunning(t *testing.
 		t.Fatalf("running = %d, want 1", got)
 	}
 	close(release)
+	waitSpekHubExecutorIdle(t, e)
+}
+
+func waitSpekHubExecutorIdle(t *testing.T, e *SpekHubExecutor) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if e.Status().Running == 0 {
+			return
+		}
+		runtime.Gosched()
+	}
+	t.Fatalf("executor still running: %+v", e.Status())
 }
 
 func TestResolveRunStageWorkDirUsesSingleHubWorktreeAcrossRetryGenerations(t *testing.T) {
@@ -280,9 +294,10 @@ func TestSpekHubExecutorCapturesStageTranscriptAndDocument(t *testing.T) {
 	if err := os.WriteFile(specPath, []byte(spec), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	status := spekHubArtifactStatus{Name: "myorg-repo1-57", ArtifactID: "20260925163042-myorg-repo1-57", DocumentStatus: "final", CurrentStep: "finished", CompletedSteps: []string{"clarify"}}
+	status := spekHubArtifactStatus{Name: "myorg-repo1-57", ArtifactID: "20260925163042-myorg-repo1-57", DocumentStatus: "final", CurrentStep: "finished", CompletedSteps: []string{"clarify"}, Raw: map[string]any{"instruction": "Explain the desired behavior"}}
 	started := time.Now().Add(-time.Minute)
-	if err := e.captureCompletedStage(st, worktree, "myorg-repo1-57", status, []byte("agent answered the interview"), started, nil, runReceiptsDir); err != nil {
+	history := []RunDetailStageStatus{{At: started.Format(time.RFC3339Nano), Step: "clarify", Instruction: "Explain the desired behavior", DocumentStatus: "draft", Raw: status.Raw}}
+	if err := e.captureCompletedStage(st, worktree, "myorg-repo1-57", status, []byte("agent answered the interview"), started, history, runReceiptsDir, "session"); err != nil {
 		t.Fatalf("captureCompletedStage: %v", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(runReceiptsDir, sanitizeReceiptSegment(st.runKey), spekStageTranscriptFile(StageSpec, 2)))
@@ -293,11 +308,63 @@ func TestSpekHubExecutorCapturesStageTranscriptAndDocument(t *testing.T) {
 	if err := json.Unmarshal(raw, &cap); err != nil {
 		t.Fatalf("decode capture: %v", err)
 	}
-	if cap.SchemaVersion != spekStageTranscriptSchema || cap.Prompt == nil || cap.AgentTranscript == nil || len(cap.Documents) != 1 || len(cap.Interview) != 1 {
+	if cap.SchemaVersion != spekStageTranscriptSchema || cap.Prompt == nil || cap.AgentTranscript == nil || cap.AgentStdoutStderr == nil || len(cap.Documents) != 1 || len(cap.Interview) != 1 {
 		t.Fatalf("capture incomplete: %+v", cap)
+	}
+	if cap.Capture != "session" || cap.Documents[0].Content == "" || cap.Documents[0].Markdown == "" || cap.StatusHistory[0].Raw["instruction"] != "Explain the desired behavior" {
+		t.Fatalf("capture omitted mode, document content, or raw status: %+v", cap)
 	}
 	if _, err := os.Stat(filepath.Join(runReceiptsDir, sanitizeReceiptSegment(st.runKey), spekStageDocumentFile(StageSpec, 2))); err != nil {
 		t.Fatalf("document sidecar missing: %v", err)
+	}
+}
+
+func TestSpekHubExecutorAlreadyFinalDoesNotOverwriteSessionCapture(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	oldReceipts := runReceiptsDir
+	runReceiptsDir = filepath.Join(t.TempDir(), "receipts")
+	t.Cleanup(func() { runReceiptsDir = oldReceipts })
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	st := spekHubStage{runKey: "myorg/repo1#57", stage: StageSpec, taskID: "task", gen: 1}
+	worktree := t.TempDir()
+	if err := writeSpekStageCapture(st.runKey, st.stage, st.gen, RunDetailStageCapture{
+		Capture:         "session",
+		AgentTranscript: &RunDetailTextBlock{Text: "real session output"},
+		Documents:       []RunDetailStageDocument{{Path: "artifact.md", Markdown: "real doc", Content: "real doc"}},
+		StatusHistory:   []RunDetailStageStatus{{Step: "drafting", DocumentStatus: "draft"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.captureCompletedStage(st, worktree, "artifact", spekHubArtifactStatus{Name: "artifact", DocumentStatus: "final", CurrentStep: "finished"}, nil, time.Now(), nil, runReceiptsDir, "already_final"); err != nil {
+		t.Fatalf("already-final capture: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(runReceiptsDir, sanitizeReceiptSegment(st.runKey), spekStageTranscriptFile(st.stage, st.gen)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cap RunDetailStageCapture
+	if err := json.Unmarshal(raw, &cap); err != nil {
+		t.Fatal(err)
+	}
+	if cap.Capture != "session" || cap.AgentTranscript == nil || cap.AgentTranscript.Text != "real session output" || cap.Documents[0].Content != "real doc" {
+		t.Fatalf("already-final capture overwrote real session: %+v", cap)
+	}
+	if len(cap.StatusHistory) != 2 || cap.StatusHistory[1].DocumentStatus != "final" {
+		t.Fatalf("already-final status was not merged: %+v", cap.StatusHistory)
+	}
+}
+
+func TestStageStatusCaptureKeepsInstructionChanges(t *testing.T) {
+	history := appendDistinctStageStatus(nil,
+		RunDetailStageStatus{Step: "clarify", Instruction: "Question one?", DocumentStatus: "draft", Raw: map[string]any{"instruction": "Question one?"}},
+		RunDetailStageStatus{Step: "clarify", Instruction: "Question two?", DocumentStatus: "draft", Raw: map[string]any{"instruction": "Question two?"}},
+	)
+	if len(history) != 2 {
+		t.Fatalf("instruction-only status change was deduped: %+v", history)
+	}
+	interview := interviewFromStatusHistory(history, []RunDetailStageDocument{{Content: "final answer"}}, time.Now())
+	if len(interview) != 2 || interview[0].Question != "Question one?" || interview[1].Question != "Question two?" {
+		t.Fatalf("interview did not preserve status instructions: %+v", interview)
 	}
 }
 

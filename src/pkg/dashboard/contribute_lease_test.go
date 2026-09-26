@@ -223,8 +223,8 @@ func TestLeaseStageAdvance_RetryAndOrdering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("advance spec -> plan: %v", err)
 	}
-	if advanced.stage != StagePlan || advanced.gen <= 11 {
-		t.Fatalf("advance returned stage/gen = %q/%d, want plan and > 11", advanced.stage, advanced.gen)
+	if advanced.stage != StagePlan || advanced.gen != 12 {
+		t.Fatalf("advance returned stage/gen = %q/%d, want plan and gen 12", advanced.stage, advanced.gen)
 	}
 	if stale := hub.lookupLease("c-stage", "task-stage", "myorg/repo1", 8297, 11, now); stale != nil {
 		t.Fatalf("old generation still re-adopts after stage advance: %+v", stale)
@@ -245,8 +245,12 @@ func TestLeaseStageAdvance_RetryAndOrdering(t *testing.T) {
 	if _, err := hub.advanceLeaseStage("c-stage", "task-stage", StageSpec, now.Add(2*time.Minute)); err == nil {
 		t.Fatal("plan -> spec rollback accepted; only the owner reset path may roll back")
 	}
-	if _, err := hub.advanceLeaseStage("c-stage", "task-stage", StageImplement, now.Add(3*time.Minute)); err != nil {
+	implemented, err := hub.advanceLeaseStage("c-stage", "task-stage", StageImplement, now.Add(3*time.Minute))
+	if err != nil {
 		t.Fatalf("plan -> implement should be the next advance: %v", err)
+	}
+	if implemented.gen != 13 {
+		t.Fatalf("plan -> implement gen = %d, want 13", implemented.gen)
 	}
 
 	hub2, _ := covK2Hub(t)
@@ -265,8 +269,27 @@ func TestLeaseStageAdvance_RetryAndOrdering(t *testing.T) {
 	if retry.stage != StageImplement {
 		t.Fatalf("retry changed stage to %q, want %q", retry.stage, StageImplement)
 	}
-	if retry.gen <= advanced.gen {
-		t.Fatalf("retry gen = %d, want greater than prior advanced gen %d", retry.gen, advanced.gen)
+	if retry.gen != 14 {
+		t.Fatalf("retry gen = %d, want 14", retry.gen)
+	}
+}
+
+func TestLeaseStageAdvanceKeepsTaskGenerationCounterAhead(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	now := time.Now()
+	if err := hub.recordLeaseForKeyStage("c-stage", "task-stage", "myorg/repo1", 8297,
+		"myorg/repo1#8297", "contributor", StageSpec, 11, now); err != nil {
+		t.Fatalf("record staged lease: %v", err)
+	}
+	advanced, err := hub.advanceLeaseStage("c-stage", "task-stage", StagePlan, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("advance stage: %v", err)
+	}
+	if advanced.gen != 12 {
+		t.Fatalf("stage gen = %d, want 12", advanced.gen)
+	}
+	if next := hub.nextTaskGen(); next <= advanced.gen {
+		t.Fatalf("next task gen = %d, want greater than stage gen %d", next, advanced.gen)
 	}
 }
 

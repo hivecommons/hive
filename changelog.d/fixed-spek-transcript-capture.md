@@ -1,0 +1,1 @@
+- Fix Spektacular stage transcript capture so already-final probes no longer overwrite real session transcripts, status polls include raw step instructions, documents include content, and run stage generations advance once per stage attempt.

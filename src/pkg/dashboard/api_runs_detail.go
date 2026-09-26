@@ -90,6 +90,7 @@ type RunDetailStage struct {
 	Documents       []RunDetailStageDocument `json:"documents,omitempty"`
 	Prompt          *RunDetailTextBlock      `json:"prompt,omitempty"`
 	AgentTranscript *RunDetailTextBlock      `json:"agent_transcript,omitempty"`
+	AgentOutput     *RunDetailTextBlock      `json:"agent_stdout_stderr,omitempty"`
 	StatusHistory   []RunDetailStageStatus   `json:"status_history,omitempty"`
 	Missing         []string                 `json:"missing,omitempty"`
 	Transcript      []RunDetailTranscript    `json:"transcript,omitempty"`
@@ -481,7 +482,8 @@ func buildRunDetailStages(run Run, events []timeline.Event, receipts []RunDetail
 		}
 		st.StartedAt, st.EndedAt = firstRunNonEmpty(cap.StartedAt, st.StartedAt), firstRunNonEmpty(cap.EndedAt, st.EndedAt)
 		st.Prompt = cap.Prompt
-		st.AgentTranscript = cap.AgentTranscript
+		st.AgentTranscript = firstRunTextBlock(cap.AgentTranscript, cap.AgentStdoutStderr)
+		st.AgentOutput = firstRunTextBlock(cap.AgentStdoutStderr, cap.AgentTranscript)
 		st.StatusHistory = append(st.StatusHistory, cap.StatusHistory...)
 		st.Interview = append(st.Interview, cap.Interview...)
 		st.Documents = append(st.Documents, cap.Documents...)
@@ -521,11 +523,24 @@ func (s RunDetailStage) AgentTranscriptText() string {
 	if s.AgentTranscript == nil {
 		return ""
 	}
+
 	return s.AgentTranscript.Text
+}
+
+func firstRunTextBlock(blocks ...*RunDetailTextBlock) *RunDetailTextBlock {
+	for _, block := range blocks {
+		if block != nil {
+			return block
+		}
+	}
+	return nil
 }
 
 func runDetailCaptureNarrative(cap RunDetailStageCapture) []string {
 	var out []string
+	if cap.Capture == "already_final" {
+		out = append(out, "Document was already final when the executor looked; no agent session was captured in this pass.")
+	}
 	out = append(out, "Prepared hub executor worktree and wrote the stage prompt.")
 	if cap.Prompt != nil && cap.Prompt.Text != "" {
 		out = append(out, "Sent the prompt to the "+firstRunNonEmpty(cap.Backend, "agent")+" backend.")

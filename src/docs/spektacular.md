@@ -230,11 +230,16 @@ the run receipt directory as `<stage>-gen<N>.transcript.json` (schema
 markdown document. The transcript sidecar stores the prompt, bounded agent
 stdout/stderr, observed status/step transitions, extracted interview Q&A, and
 artifact files so `/api/runs/{key}/detail` can render prose instead of raw
-receipt JSON. The poll runner then observes that same worktree on the next tick
-and advances the lease when Spek reports `document_status: final`. Reusing the
-run worktree preserves `.spektacular/` artifacts across retry generations. If
-the hub executor is disabled, an unclaimed run stays parked until a relay
-declares the `run-stage` capability.
+receipt JSON. Session captures are marked `capture: "session"`; a later
+already-final probe for the same stage/generation only appends the final status
+snapshot and never overwrites the real session output. If Hive first sees a
+document after it is already final, the sidecar is marked
+`capture: "already_final"` so the UI can explain that no agent session was
+captured for that pass. The poll runner then observes that same worktree on the
+next tick and advances the lease when Spek reports `document_status: final`.
+Reusing the run worktree preserves `.spektacular/` artifacts across retry
+generations. If the hub executor is disabled, an unclaimed run stays parked
+until a relay declares the `run-stage` capability.
 
 Hub executor activity is visible in the normal run timeline/progress surfaces:
 Hive records `progress` events when the worktree is prepared, the CLI launches

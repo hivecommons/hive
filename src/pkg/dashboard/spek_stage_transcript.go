@@ -14,7 +14,7 @@ import (
 
 const (
 	spekStageTranscriptSchema       = "spek-stage-transcript/v1"
-	spekStageTranscriptMaxTextBytes = 128 * 1024
+	spekStageTranscriptMaxTextBytes = 512 * 1024
 	spekStagePromptMaxTextBytes     = 32 * 1024
 	spekStageFileMaxTextBytes       = 256 * 1024
 )
@@ -26,11 +26,13 @@ type RunDetailTextBlock struct {
 }
 
 type RunDetailStageStatus struct {
-	At             string   `json:"at,omitempty"`
-	Step           string   `json:"step,omitempty"`
-	DocumentStatus string   `json:"document_status,omitempty"`
-	CompletedSteps []string `json:"completed_steps,omitempty"`
-	Artifact       string   `json:"artifact,omitempty"`
+	At             string         `json:"at,omitempty"`
+	Step           string         `json:"step,omitempty"`
+	Instruction    string         `json:"instruction,omitempty"`
+	DocumentStatus string         `json:"document_status,omitempty"`
+	CompletedSteps []string       `json:"completed_steps,omitempty"`
+	Artifact       string         `json:"artifact,omitempty"`
+	Raw            map[string]any `json:"raw,omitempty"`
 }
 
 type RunDetailStageFile struct {
@@ -38,11 +40,13 @@ type RunDetailStageFile struct {
 	Bytes     int    `json:"bytes,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
 	Text      string `json:"text,omitempty"`
+	Content   string `json:"content,omitempty"`
 }
 
 type RunDetailStageDocument struct {
 	Path      string `json:"path"`
 	Markdown  string `json:"markdown,omitempty"`
+	Content   string `json:"content,omitempty"`
 	Bytes     int    `json:"bytes,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
 }
@@ -56,23 +60,25 @@ type RunDetailInterview struct {
 }
 
 type RunDetailStageCapture struct {
-	SchemaVersion   string                   `json:"schema_version"`
-	RunKey          string                   `json:"run_key,omitempty"`
-	Stage           string                   `json:"stage,omitempty"`
-	Generation      uint64                   `json:"generation,omitempty"`
-	Artifact        string                   `json:"artifact,omitempty"`
-	CapturedAt      string                   `json:"captured_at,omitempty"`
-	StartedAt       string                   `json:"started_at,omitempty"`
-	EndedAt         string                   `json:"ended_at,omitempty"`
-	Backend         string                   `json:"backend,omitempty"`
-	Model           string                   `json:"model,omitempty"`
-	Prompt          *RunDetailTextBlock      `json:"prompt,omitempty"`
-	AgentTranscript *RunDetailTextBlock      `json:"agent_transcript,omitempty"`
-	StatusHistory   []RunDetailStageStatus   `json:"status_history,omitempty"`
-	Interview       []RunDetailInterview     `json:"interview,omitempty"`
-	Documents       []RunDetailStageDocument `json:"documents,omitempty"`
-	Files           []RunDetailStageFile     `json:"files,omitempty"`
-	Notes           []string                 `json:"notes,omitempty"`
+	SchemaVersion     string                   `json:"schema_version"`
+	RunKey            string                   `json:"run_key,omitempty"`
+	Stage             string                   `json:"stage,omitempty"`
+	Generation        uint64                   `json:"generation,omitempty"`
+	Artifact          string                   `json:"artifact,omitempty"`
+	Capture           string                   `json:"capture,omitempty"`
+	CapturedAt        string                   `json:"captured_at,omitempty"`
+	StartedAt         string                   `json:"started_at,omitempty"`
+	EndedAt           string                   `json:"ended_at,omitempty"`
+	Backend           string                   `json:"backend,omitempty"`
+	Model             string                   `json:"model,omitempty"`
+	Prompt            *RunDetailTextBlock      `json:"prompt,omitempty"`
+	AgentTranscript   *RunDetailTextBlock      `json:"agent_transcript,omitempty"`
+	AgentStdoutStderr *RunDetailTextBlock      `json:"agent_stdout_stderr,omitempty"`
+	StatusHistory     []RunDetailStageStatus   `json:"status_history,omitempty"`
+	Interview         []RunDetailInterview     `json:"interview,omitempty"`
+	Documents         []RunDetailStageDocument `json:"documents,omitempty"`
+	Files             []RunDetailStageFile     `json:"files,omitempty"`
+	Notes             []string                 `json:"notes,omitempty"`
 }
 
 func spekStageTranscriptFile(stage string, gen uint64) string {
@@ -92,6 +98,16 @@ func writeSpekStageCaptureInDir(receiptsDir, runKey, stage string, gen uint64, c
 	if err := os.MkdirAll(dir, receiptDirMode); err != nil {
 		return err
 	}
+	path := filepath.Join(dir, spekStageTranscriptFile(stage, gen))
+	if capture.Capture == "already_final" {
+		if prior, ok := readSpekStageCaptureFile(path); ok {
+			prior.StatusHistory = appendDistinctStageStatus(prior.StatusHistory, capture.StatusHistory...)
+			if prior.Capture == "" {
+				prior.Capture = "session"
+			}
+			capture = prior
+		}
+	}
 	capture.SchemaVersion = spekStageTranscriptSchema
 	capture.RunKey = firstRunNonEmpty(capture.RunKey, runKey)
 	capture.Stage = firstRunNonEmpty(capture.Stage, stage)
@@ -105,13 +121,26 @@ func writeSpekStageCaptureInDir(receiptsDir, runKey, stage string, gen uint64, c
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, spekStageTranscriptFile(stage, gen)), data, receiptFileMode); err != nil {
+	if err := os.WriteFile(path, data, receiptFileMode); err != nil {
 		return err
 	}
+
 	if len(capture.Documents) > 0 && strings.TrimSpace(capture.Documents[0].Markdown) != "" {
 		_ = os.WriteFile(filepath.Join(dir, spekStageDocumentFile(stage, gen)), []byte(capture.Documents[0].Markdown), receiptFileMode)
 	}
 	return nil
+}
+
+func readSpekStageCaptureFile(path string) (RunDetailStageCapture, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return RunDetailStageCapture{}, false
+	}
+	var cap RunDetailStageCapture
+	if json.Unmarshal(data, &cap) != nil || cap.SchemaVersion != spekStageTranscriptSchema {
+		return RunDetailStageCapture{}, false
+	}
+	return cap, true
 }
 
 func readRunDetailStageCaptures(runKeys ...string) []RunDetailStageCapture {
@@ -145,7 +174,7 @@ func readRunDetailStageCaptures(runKeys ...string) []RunDetailStageCapture {
 			}
 			if len(cap.Documents) == 0 {
 				if doc, err := os.ReadFile(filepath.Join(dir, spekStageDocumentFile(cap.Stage, cap.Generation))); err == nil {
-					cap.Documents = append(cap.Documents, RunDetailStageDocument{Path: spekStageDocumentFile(cap.Stage, cap.Generation), Markdown: string(doc), Bytes: len(doc)})
+					cap.Documents = append(cap.Documents, RunDetailStageDocument{Path: spekStageDocumentFile(cap.Stage, cap.Generation), Markdown: string(doc), Content: string(doc), Bytes: len(doc)})
 				}
 			}
 			out = append(out, cap)
@@ -252,10 +281,10 @@ func collectSpekArtifactFiles(worktree, kind, artifact string) ([]RunDetailStage
 				return nil
 			}
 			text, truncated := boundedUTF8(data, spekStageFileMaxTextBytes)
-			file := RunDetailStageFile{Path: rel, Bytes: len(data), Truncated: truncated, Text: text}
+			file := RunDetailStageFile{Path: rel, Bytes: len(data), Truncated: truncated, Text: text, Content: text}
 			files = append(files, file)
 			if strings.HasSuffix(strings.ToLower(rel), ".md") {
-				docs = append(docs, RunDetailStageDocument{Path: rel, Markdown: text, Bytes: len(data), Truncated: truncated})
+				docs = append(docs, RunDetailStageDocument{Path: rel, Markdown: text, Content: text, Bytes: len(data), Truncated: truncated})
 			}
 			interview = append(interview, extractInterviewEntries(rel, text)...)
 			return nil
