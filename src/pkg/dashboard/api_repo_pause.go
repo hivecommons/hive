@@ -236,7 +236,16 @@ func (s *Server) handleRepoAutoMerge(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.requireRepoPausePermission(w, r, body.Repo) {
+	// Asymmetric gate (#9070): switching auto-merge OFF only reduces
+	// automation, so the pause/hold tier (owner or repo write) is enough.
+	// Switching it back ON restores Hive's merge authority on the repo — an
+	// owner-tier policy decision that a repo-write user must not be able to
+	// undo on the owner's behalf.
+	if body.Enabled {
+		if !requireOwnerRole(w, r) {
+			return
+		}
+	} else if !s.requireRepoPausePermission(w, r, body.Repo) {
 		return
 	}
 	if !s.watchesRepo(body.Repo) {

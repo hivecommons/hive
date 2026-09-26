@@ -117,6 +117,58 @@ func TestRepoAutoMergeEndpointPersistsAndAuthorizes(t *testing.T) {
 	}
 }
 
+// #9070: the gate is asymmetric. A repo-write user (here: the GitHub user who
+// owns the repo namespace, which canToggleRepoHold accepts without a GitHub
+// lookup) may switch auto-merge OFF, but switching it back ON restores Hive's
+// merge authority and stays owner-only.
+func TestRepoAutoMergeEnableRequiresVerifiedOwner(t *testing.T) {
+	srv := newFullServer(t)
+	postAsRepoWriter := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/repos/auto-merge", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Hive-User", "testorg")
+		w := httptest.NewRecorder()
+		srv.mux.ServeHTTP(w, req)
+		return w
+	}
+
+	w := postAsRepoWriter(`{"repo":"testrepo","enabled":false}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("repo-write disable: code = %d body = %s", w.Code, w.Body.String())
+	}
+	if srv.deps.Config.RepoAutoMergeEnabled("testrepo") {
+		t.Fatal("repo auto-merge still enabled after repo-write user disabled it")
+	}
+
+	w = postAsRepoWriter(`{"repo":"testrepo","enabled":true}`)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("repo-write enable: code = %d, want 403; body = %s", w.Code, w.Body.String())
+	}
+	if srv.deps.Config.RepoAutoMergeEnabled("testrepo") {
+		t.Fatal("repo-write user re-enabled auto-merge despite 403")
+	}
+
+	// A spoofed owner role without the server-only verification marker is
+	// still not an owner.
+	req := httptest.NewRequest(http.MethodPost, "/api/repos/auto-merge", strings.NewReader(`{"repo":"testrepo","enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hive-Role", "owner")
+	req.Header.Set("X-Hive-User", "testorg")
+	w = httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("unverified owner enable: code = %d, want 403", w.Code)
+	}
+
+	w = postRepoPause(t, srv, "/api/repos/auto-merge", `{"repo":"testrepo","enabled":true}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("verified owner enable: code = %d body = %s", w.Code, w.Body.String())
+	}
+	if !srv.deps.Config.RepoAutoMergeEnabled("testrepo") {
+		t.Fatal("verified owner could not re-enable auto-merge")
+	}
+}
+
 // changed=false distinguishes a real transition from a no-op, so a dashboard
 // with a stale belief cannot silently re-pause a repo the operator was trying
 // to resume — and re-pausing must not rewrite the original provenance.

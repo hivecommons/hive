@@ -274,3 +274,7 @@ For the narrow L6-except-one-repo case, `project.repo_policies[].auto_merge:
 false` disables only auto-merge on that repository. The hive-wide ACMM level
 still determines issue/PR creation authority, but merge authority is removed at
 the `hive-merge` relay, App self-authored sweep, and proxy direct-merge seam.
+The dashboard toggle (`POST /api/repos/auto-merge`) is gated asymmetrically:
+switching auto-merge *off* needs the same tier as pausing the repo (verified
+owner or GitHub repo write), but switching it back *on* restores Hive's merge
+authority and requires a verified owner (#9070).

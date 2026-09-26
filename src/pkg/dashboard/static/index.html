@@ -10658,7 +10658,10 @@
         const swarming = activeSwarmRepo && activeSwarmRepo.toLowerCase() === cardRepo.toLowerCase();
         const swarmPill = swarming ? `<span class="repo-swarm-pill" title="${esc('This repository is being prioritized by the active swarm')}">🐝 swarm</span>` : '';
         const canPauseRepo = canToggleHold;
-        const autoMergeBtn = canPauseRepo
+        // Asymmetric gate (#9070): repo-write users may switch auto-merge OFF,
+        // but only a verified owner may switch it back ON — mirror the server.
+        const canSetAutoMerge = autoMergeOn ? canPauseRepo : dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+        const autoMergeBtn = canSetAutoMerge
           ? `<button class="repo-automerge-btn" data-action="toggleRepoAutoMerge" data-arg0="${esc(cardRepo)}" data-arg1="${autoMergeOn ? 'true' : 'false'}" data-arg-types="s,j,t" data-stop="1" data-prevent="1" title="${autoMergeOn ? 'Disable Hive auto-merge for this repo' : 'Enable Hive auto-merge for this repo'}">${autoMergeOn ? 'auto-merge off' : 'auto-merge on'}</button>`
           : '';
         const pauseBtn = canPauseRepo

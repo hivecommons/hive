@@ -19,6 +19,8 @@ func TestRepoAutoMergeStaticWiring(t *testing.T) {
 		"fetch('/api/repos/auto-merge'",
 		"r.autoMerge !== false",
 		"data-action=\"toggleRepoAutoMerge\"",
+		// #9070: enabling is owner-only in the UI, mirroring the server gate.
+		"const canSetAutoMerge = autoMergeOn ? canPauseRepo : dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');",
 	} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("static dashboard missing %q", want)

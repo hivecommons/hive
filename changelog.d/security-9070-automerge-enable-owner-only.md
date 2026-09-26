@@ -1,0 +1,1 @@
+- `POST /api/repos/auto-merge` now requires a verified owner to re-enable auto-merge; repo-write users can still disable it, so they can no longer restore Hive merge authority an owner removed ([#9070](https://github.com/hivecommons/hive/issues/9070)).
