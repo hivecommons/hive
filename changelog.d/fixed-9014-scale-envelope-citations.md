@@ -1,0 +1,1 @@
+- Fix stale scale-envelope citations and anchor docs citation checks on nearby symbols.

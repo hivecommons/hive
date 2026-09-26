@@ -14,7 +14,8 @@ Usage: src/scripts/check-docs-citations.py [--fix] [docs-dir]
 
 --fix delegates to the older api-reference citation fixer, which has enough
 route/path context to rewrite moved route registrations. Generic docs citations
-only prove existence/range today, so there is nothing safe to rewrite for them.
+verify existence/range, plus a lightweight content anchor when the citing line
+names a backticked symbol near the citation.
 """
 from __future__ import annotations
 
@@ -41,6 +42,9 @@ CITATION_RE = re.compile(
     r":(\d+(?:[-–]\d+)?(?:,\d+(?:[-–]\d+)?)*)"
 )
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
+BACKTICK_RE = re.compile(r"`([^`\n]+)`")
+ANCHOR_SLACK_LINES = 2
+ANCHOR_CUE_RE = re.compile(r"\b(descending|looping\s+until|where|contains?|containing|shows?)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -49,6 +53,8 @@ class Citation:
     line_no: int
     cited_path: str
     line_spec: str
+    line: str
+    match_end: int
 
 
 def parse_line_spec(spec: str) -> list[tuple[int, int]]:
@@ -70,6 +76,54 @@ def is_probably_repo_local(path: str) -> bool:
 def source_lines(path: Path) -> int:
     with path.open("r", encoding="utf-8", errors="ignore") as fh:
         return sum(1 for _ in fh)
+
+
+def source_line_window(path: Path, ranges: list[tuple[int, int]], slack: int = ANCHOR_SLACK_LINES) -> str:
+    if not ranges:
+        return ""
+
+    wanted: set[int] = set()
+    with path.open("r", encoding="utf-8", errors="ignore") as fh:
+        lines = fh.readlines()
+    total = len(lines)
+    for start, end in ranges:
+        for line_no in range(max(1, start - slack), min(total, end + slack) + 1):
+            wanted.add(line_no)
+    return "\n".join(lines[line_no - 1] for line_no in sorted(wanted) if 1 <= line_no <= total)
+
+
+def is_symbol_anchor(text: str) -> bool:
+    token = text.strip()
+    if not token:
+        return False
+    if "/" in token or "\\" in token:
+        return False
+    if CITATION_RE.search(token):
+        return False
+    if re.fullmatch(r":?\d+(?:[-–]\d+)?(?:,\d+(?:[-–]\d+)?)*", token):
+        return False
+    if re.search(r"\s", token) and ":" not in token and "(" not in token:
+        return False
+    return bool(re.search(r"[A-Za-z_][A-Za-z0-9_]*|[A-Za-z_][A-Za-z0-9_]*\s*:", token))
+
+
+def citation_anchors(line: str, match_end: int) -> list[str]:
+    # Support explicit explanatory anchors that follow the citation, e.g.
+    # ``path/to/file.go:10-20`, where `SymbolName` appears``. Requiring a cue
+    # word keeps older prose with many unrelated backticks in range-only mode.
+    after = line[match_end:]
+    if after.startswith("`"):
+        after = after[1:]
+    after = after[:240]
+    if not ANCHOR_CUE_RE.search(after):
+        return []
+
+    anchors: list[str] = []
+    for match in BACKTICK_RE.finditer(after):
+        token = match.group(1).strip()
+        if is_symbol_anchor(token) and token not in anchors:
+            anchors.append(token)
+    return anchors
 
 
 class Resolver:
@@ -112,7 +166,7 @@ def iter_citations(docs_dir: Path) -> list[Citation]:
                 for match in CITATION_RE.finditer(line):
                     cited_path = match.group(1)
                     if is_probably_repo_local(cited_path):
-                        citations.append(Citation(doc, line_no, cited_path, match.group(2)))
+                        citations.append(Citation(doc, line_no, cited_path, match.group(2), line, match.end()))
     return citations
 
 
@@ -156,9 +210,10 @@ def main(argv: list[str]) -> int:
             failed += 1
             continue
 
+        ranges = parse_line_spec(citation.line_spec)
         total_lines = source_lines(target)
         bad_ranges = []
-        for start, end in parse_line_spec(citation.line_spec):
+        for start, end in ranges:
             if start < 1 or end < start or end > total_lines:
                 bad_ranges.append((start, end))
         if bad_ranges:
@@ -170,6 +225,21 @@ def main(argv: list[str]) -> int:
                 file=sys.stderr,
             )
             failed += 1
+            continue
+
+        anchors = citation_anchors(citation.line, citation.match_end)
+        if anchors:
+            window = source_line_window(target, ranges)
+            if not any(anchor in window for anchor in anchors):
+                rel_target = target.relative_to(repo_root) if target.is_relative_to(repo_root) else target
+                print(
+                    f"DRIFT {display_doc}:{citation.line_no} {citation.cited_path}:{citation.line_spec} "
+                    f"-> {rel_target} lacks anchor(s) near cited range: {', '.join(anchors)}",
+                    file=sys.stderr,
+                )
+                failed += 1
+                continue
+            checked += 1
         else:
             checked += 1
 
