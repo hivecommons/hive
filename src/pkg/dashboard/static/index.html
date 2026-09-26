@@ -16594,6 +16594,7 @@ function burnAreaChart() {
     // ── Inception section ──
     let _inceptionState = null;
     let _campaigns = [];
+    let _campaignActionsInFlight = new Set();
 
 
     async function loadInceptionState() {
@@ -16696,6 +16697,7 @@ function burnAreaChart() {
         const engine = c.engine || 'unknown engine';
         const logID = 'campaign-log-' + safeDomId(c.run_key || c.id);
         const canLog = !!c.run_key;
+        const actionDisabled = _campaignActionsInFlight.has(c.id) ? ' disabled aria-busy="true"' : '';
         return `<div class="campaign-row">
           <div>
             <div class="campaign-row-title">${escapeHtml(c.title || c.id)}</div>
@@ -16712,9 +16714,9 @@ function burnAreaChart() {
           <div class="campaign-row-actions">
             <button class="hv-btn btn-secondary btn-sm" data-action="openCampaignJam" data-arg0="${escapeHtml(c.id)}">Jam</button>
             ${canLog ? `<button class="hv-btn btn-secondary btn-sm" data-action="toggleRunLog" data-arg0="${escapeHtml(c.run_key)}" data-arg1="${escapeHtml(c.current_stage || 'spec')}" data-arg2="${escapeHtml(String(c.run_gen || 0))}" data-arg3="${escapeHtml(logID)}">Log</button>` : ''}
-            <button class="hv-btn btn-primary btn-sm" data-action="resumeCampaign" data-arg0="${escapeHtml(c.id)}">Continue</button>
-            <button class="hv-btn btn-secondary btn-sm" data-action="releaseCampaign" data-arg0="${escapeHtml(c.id)}">Release</button>
-            <button class="hv-btn btn-secondary btn-sm" data-action="reviseCampaign" data-arg0="${escapeHtml(c.id)}">Revise</button>
+            <button class="hv-btn btn-primary btn-sm" data-action="resumeCampaign" data-arg0="${escapeHtml(c.id)}"${actionDisabled}>Continue</button>
+            <button class="hv-btn btn-secondary btn-sm" data-action="releaseCampaign" data-arg0="${escapeHtml(c.id)}"${actionDisabled}>Release</button>
+            <button class="hv-btn btn-secondary btn-sm" data-action="reviseCampaign" data-arg0="${escapeHtml(c.id)}"${actionDisabled}>Revise</button>
           </div>
           ${canLog ? `<div id="${escapeHtml(logID)}" class="run-log-panel"></div>` : ''}
         </div>`;
@@ -16918,6 +16920,9 @@ function burnAreaChart() {
 
     async function resumeCampaign(id) {
       if (!id) return;
+      if (_campaignActionsInFlight.has(id)) return;
+      _campaignActionsInFlight.add(id);
+      renderCampaignsList();
       try {
         const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/resume', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({ surface: 'dashboard' }) });
         const data = await r.json();
@@ -16926,26 +16931,35 @@ function burnAreaChart() {
         if (data.resume_command) { await hiveAlert('Resume command:\n' + data.resume_command, 'Resume command'); }
         await loadCampaigns();
       } catch (e) { showToast('Error: ' + e.message, 'error'); }
+      finally { _campaignActionsInFlight.delete(id); renderCampaignsList(); }
     }
 
     async function releaseCampaign(id) {
       if (!id) return;
+      if (_campaignActionsInFlight.has(id)) return;
+      _campaignActionsInFlight.add(id);
+      renderCampaignsList();
       try {
         const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/release', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({}) });
         const data = await r.json();
         if (!data.ok) { showToast(data.error || 'Failed to release campaign', 'error'); return; }
         await loadCampaigns();
       } catch (e) { showToast('Error: ' + e.message, 'error'); }
+      finally { _campaignActionsInFlight.delete(id); renderCampaignsList(); }
     }
 
     async function reviseCampaign(id) {
       if (!id) return;
+      if (_campaignActionsInFlight.has(id)) return;
+      _campaignActionsInFlight.add(id);
+      renderCampaignsList();
       try {
         const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/revise', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({}) });
         const data = await r.json();
         if (!data.ok) { showToast(data.error || 'Failed to revise campaign', 'error'); return; }
         await loadCampaigns();
       } catch (e) { showToast('Error: ' + e.message, 'error'); }
+      finally { _campaignActionsInFlight.delete(id); renderCampaignsList(); }
     }
 
     function renderInceptionProgress(phase) {

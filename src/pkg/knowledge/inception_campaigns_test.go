@@ -128,16 +128,16 @@ func TestCampaignArchiveLifecycleLeaseReviseAndRestore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReviseCampaignArchive: %v", err)
 	}
-	if revision.ID != archive.ID+"-rev-2" || revision.RevisionOf != archive.ID || revision.Revision != 2 {
+	if revision.ID != archive.ID || revision.RevisionOf != "" || revision.Revision != 2 {
 		t.Fatalf("revision linkage = id:%q of:%q rev:%d", revision.ID, revision.RevisionOf, revision.Revision)
 	}
 	if revision.Lease == nil || revision.Lease.Owner != "carol" || revision.Lease.Surface != "revise" {
 		t.Fatalf("revision lease = %+v", revision.Lease)
 	}
-	if revision.State.IdeaSlug != revision.ID || revision.State.Phase != PhaseCapture {
+	if revision.State.IdeaSlug != archive.ID || revision.State.Phase != PhaseCapture {
 		t.Fatalf("revision state = slug:%q phase:%q", revision.State.IdeaSlug, revision.State.Phase)
 	}
-	revisionWiki := filepath.Join(e.dataDir, inceptionCampaignsDir, revision.ID, inceptionArchiveWiki, "brief.md")
+	revisionWiki := filepath.Join(e.dataDir, inceptionCampaignsDir, archive.ID, inceptionArchiveWiki, "brief.md")
 	if got := readCampaignFile(t, revisionWiki); got != "original brief" {
 		t.Fatalf("revision wiki brief = %q", got)
 	}
@@ -206,7 +206,7 @@ func TestCampaignArchiveExternalReviseAndErrorPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReviseExternalCampaign: %v", err)
 	}
-	if external.ID != "external-campaign-rev-2" || external.RevisionOf != "external-campaign" || external.Revision != 2 {
+	if external.ID != "external-campaign" || external.RevisionOf != "" || external.Revision != 1 {
 		t.Fatalf("external revision linkage = id:%q of:%q rev:%d", external.ID, external.RevisionOf, external.Revision)
 	}
 	if external.Engine != "Spektacular" || external.Type != "spektacular" || external.Lease == nil || external.Lease.Owner != "local" {
@@ -227,7 +227,7 @@ func TestCampaignArchiveExternalReviseAndErrorPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second ReviseExternalCampaign: %v", err)
 	}
-	if second.ID != "external-campaign-rev-3" || second.Engine != "Other" || second.Type != "custom" || second.Lease.Owner != "dana" {
+	if second.ID != "external-campaign" || second.Revision != 2 || second.Engine != "Other" || second.Type != "custom" || second.Lease.Owner != "dana" {
 		t.Fatalf("second external revision = %+v", second)
 	}
 	if _, err := e.ReviseExternalCampaign("../..", "bad", "", "", "", "", nil, now); err == nil {
