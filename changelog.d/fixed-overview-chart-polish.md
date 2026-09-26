@@ -1,0 +1,1 @@
+- Dashboard: Overview bar and age-histogram charts render as aligned HTML rows at the legend font size (no more labels running into bars), and each panel shows a visible ⏵/⏸ auto-play toggle and transition picker; transitions are slower so they are actually visible.
