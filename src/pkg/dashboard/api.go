@@ -88,6 +88,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/runs", s.handleRunsList)
 	s.mux.HandleFunc("GET /api/runs/audit", s.handleRunAuditIndex)
 	s.mux.HandleFunc("POST /api/runs/audit", s.handleRunAudit)
+	s.mux.HandleFunc("GET /api/runs/{key}/detail", s.handleRunDetail)
 	s.mux.HandleFunc("GET /api/runs/{key}/log", s.handleRunLog)
 	s.mux.HandleFunc("GET /api/runs/{key}/trace", s.handleRunTrace)
 	s.mux.HandleFunc("GET /api/runs/{key}/checkpoint", s.handleRunCheckpointGet)
@@ -1289,6 +1290,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"hive_id":               cfg.HiveID,
 		"github_base_url":       githubBaseURL,
 		"dashboard_issue_bands": cfg.Dashboard.IssueBands,
+		"writing_guide":         cfg.Project.WritingGuide,
 	}
 	// The active project.issue_filter, read-only: which issues agents may
 	// initiate work on, by label. Omitted entirely when no filter is
@@ -6584,30 +6586,21 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if !strings.HasPrefix(strings.TrimSpace(safeQuery), "!") {
+		jsonResponse(w, map[string]interface{}{
+			"answer": chatUnhandledIntentAnswer(safeQuery),
+			"status": "fallback",
+		})
+		return
+	}
+
 	if s.deps == nil || s.deps.DashboardChatSubmit == nil {
-		if !strings.HasPrefix(strings.TrimSpace(safeQuery), "!") {
-			jsonResponse(w, map[string]interface{}{
-				"answer": chatUnhandledIntentAnswer(safeQuery),
-				"status": "fallback",
-			})
-			return
-		}
 		jsonError(w, "dashboard chat is not configured", http.StatusServiceUnavailable)
 		return
 	}
 	seq, err := s.deps.DashboardChatSubmit(requestUser(r), safeQuery)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusServiceUnavailable)
-		return
-	}
-	if !strings.HasPrefix(strings.TrimSpace(safeQuery), "!") {
-		answer := "I sent that to the dashboard chat bot. If no follow-up appears, try `/help` or a narrower command such as `/agents`, `/beads`, `/prs`, `/governor`, or `/spek`."
-		jsonResponse(w, map[string]interface{}{
-			"answer": answer,
-			"seq":    seq,
-			"status": "queued",
-		})
-		s.auditFromRequest(r, "chat.dashboard.message", auditDetail("seq", strconv.FormatUint(seq, 10)), "")
 		return
 	}
 
@@ -6680,6 +6673,9 @@ func chatIntentTokens(query string) map[string]bool {
 
 func (s *Server) chatLocalIntentAnswer(query string) (string, bool) {
 	trimmed := strings.TrimSpace(query)
+	if answer, ok := s.chatCommandHintAnswer(trimmed); ok {
+		return answer, true
+	}
 	if strings.HasPrefix(trimmed, "!") || strings.HasPrefix(trimmed, "/") {
 		return "", false
 	}
@@ -6844,7 +6840,7 @@ func (s *Server) chatGovernorAnswer() string {
 
 func (s *Server) chatSpekAnswer() string {
 	if status := s.SpektacularStatus(); status != nil && status.Present {
-		return "Spektacular status is available in the Inception/Spektacular dashboard panels. I can answer general Spektacular questions here, but detailed spec-run listings should be read from the run/campaign tables."
+		return s.chatSpecRunsAnswer()
 	}
 	return "Spektacular/spec-run data is not available yet on this dashboard. Try the Inception/Spektacular panels or `!runs` if the chat bot is connected."
 }

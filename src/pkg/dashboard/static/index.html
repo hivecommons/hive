@@ -3140,6 +3140,17 @@
     .run-log-pre { max-height: 260px; overflow: auto; white-space: pre-wrap; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3); color: var(--muted); font-size: var(--fs-xs); }
     .run-log-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-3); }
     .run-activity-line { margin-top: var(--sp-2); color: var(--muted); font-size: var(--fs-sm); }
+    .run-detail-panel { grid-column: 1 / -1; margin-top: var(--sp-3); border: 1px solid var(--border); border-radius: var(--r); background: var(--card-bg); padding: var(--sp-4); display: grid; gap: var(--sp-4); }
+    .run-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--sp-3); }
+    .run-detail-box { border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3); background: color-mix(in srgb, var(--border) 7%, transparent); }
+    .run-detail-box h4 { margin: 0 0 var(--sp-2); font-size: var(--fs-sm); }
+    .run-detail-linklist { display: grid; gap: var(--sp-2); font-size: var(--fs-sm); }
+    .run-stage-detail { border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3); margin-top: var(--sp-2); }
+    .run-stage-detail summary { cursor: pointer; font-weight: 700; }
+    .run-transcript { margin-top: var(--sp-2); display: grid; gap: var(--sp-2); }
+    .run-transcript-entry { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-2); }
+    .run-transcript-entry pre { margin: var(--sp-2) 0 0; max-height: 260px; overflow: auto; white-space: pre-wrap; font-size: var(--fs-xs); color: var(--muted); }
+    .run-detail-raw { max-height: 360px; overflow: auto; white-space: pre-wrap; font-size: var(--fs-xs); }
     .campaign-empty { color: var(--muted); text-align: center; padding: var(--sp-7); border: 1px dashed var(--border); border-radius: var(--r); }
     .campaign-jam { margin-top: var(--sp-5); display: grid; gap: var(--sp-4); }
     .campaign-jam-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-4); }
@@ -16618,6 +16629,7 @@ function burnAreaChart() {
     // ── Inception section ──
     let _inceptionState = null;
     let _campaigns = [];
+    let _campaignActionsInFlight = new Set();
 
 
     async function loadInceptionState() {
@@ -16719,10 +16731,12 @@ function burnAreaChart() {
         const activity = c.activity_line || c.last_activity || 'no activity';
         const engine = c.engine || 'unknown engine';
         const logID = 'campaign-log-' + safeDomId(c.run_key || c.id);
+        const detailID = 'campaign-detail-' + safeDomId(c.run_key || c.id);
         const canLog = !!c.run_key;
+        const actionDisabled = _campaignActionsInFlight.has(c.id) ? ' disabled aria-busy="true"' : '';
         return `<div class="campaign-row">
           <div>
-            <div class="campaign-row-title">${escapeHtml(c.title || c.id)}</div>
+            <div class="campaign-row-title">${canLog ? `<button class="clanker-link" data-action="toggleCampaignRunDetail" data-arg0="${escapeHtml(c.run_key)}" data-arg1="${escapeHtml(detailID)}">${escapeHtml(c.title || c.id)}</button>` : escapeHtml(c.title || c.id)}</div>
             <div class="campaign-row-meta">
               <span class="campaign-pill">${escapeHtml(c.status || 'parked')}</span>
               <span>${escapeHtml(c.current_stage || '')}${c.current_step ? ' / ' + escapeHtml(c.current_step) : ''}</span>
@@ -16734,16 +16748,81 @@ function burnAreaChart() {
             </div>
           </div>
           <div class="campaign-row-actions">
+            ${canLog ? `<button class="hv-btn btn-secondary btn-sm" data-action="toggleCampaignRunDetail" data-arg0="${escapeHtml(c.run_key)}" data-arg1="${escapeHtml(detailID)}">Details</button>` : ''}
             <button class="hv-btn btn-secondary btn-sm" data-action="openCampaignJam" data-arg0="${escapeHtml(c.id)}">Jam</button>
             ${canLog ? `<button class="hv-btn btn-secondary btn-sm" data-action="toggleRunLog" data-arg0="${escapeHtml(c.run_key)}" data-arg1="${escapeHtml(c.current_stage || 'spec')}" data-arg2="${escapeHtml(String(c.run_gen || 0))}" data-arg3="${escapeHtml(logID)}">Log</button>` : ''}
-            <button class="hv-btn btn-primary btn-sm" data-action="resumeCampaign" data-arg0="${escapeHtml(c.id)}">Continue</button>
-            <button class="hv-btn btn-secondary btn-sm" data-action="releaseCampaign" data-arg0="${escapeHtml(c.id)}">Release</button>
-            <button class="hv-btn btn-secondary btn-sm" data-action="reviseCampaign" data-arg0="${escapeHtml(c.id)}">Revise</button>
+            <button class="hv-btn btn-primary btn-sm" data-action="resumeCampaign" data-arg0="${escapeHtml(c.id)}"${actionDisabled}>Continue</button>
+            <button class="hv-btn btn-secondary btn-sm" data-action="releaseCampaign" data-arg0="${escapeHtml(c.id)}"${actionDisabled}>Release</button>
+            <button class="hv-btn btn-secondary btn-sm" data-action="reviseCampaign" data-arg0="${escapeHtml(c.id)}"${actionDisabled}>Revise</button>
           </div>
+          ${canLog ? `<div id="${escapeHtml(detailID)}" class="run-detail-panel" style="display:none"></div>` : ''}
           ${canLog ? `<div id="${escapeHtml(logID)}" class="run-log-panel"></div>` : ''}
         </div>`;
       }).join('');
     }
+
+    async function toggleCampaignRunDetail(key, targetID) {
+      const panel = document.getElementById(targetID || '');
+      if (!panel || !key) return;
+      if (panel.dataset.open === '1') {
+        panel.dataset.open = '0';
+        panel.style.display = 'none';
+        panel.innerHTML = '';
+        return;
+      }
+      panel.dataset.open = '1';
+      panel.style.display = 'grid';
+      panel.innerHTML = '<div class="campaign-empty">Loading run details…</div>';
+      try {
+        const res = await fetch('/api/runs/' + encodeURIComponent(key) + '/detail', {headers: _inceptionAuthHeaders()});
+        const detail = await res.json();
+        if (!res.ok || !detail.ok) throw new Error((detail && detail.error) || ('HTTP ' + res.status));
+        panel.innerHTML = renderRunDetailPanel(detail);
+      } catch (e) {
+        panel.innerHTML = '<div class="campaign-empty">Run detail unavailable: ' + escapeHtml(e && e.message ? e.message : e) + '</div>';
+      }
+    }
+    window.toggleCampaignRunDetail = toggleCampaignRunDetail;
+
+    function renderRunDetailPanel(d) {
+      const issue = d.issue || {}, run = d.run || {};
+      const issueLabel = issue.repo && issue.number ? (issue.repo + '#' + issue.number) : (issue.key || d.key || '');
+      const issueLink = issue.url ? `<a href="${escapeHtml(issue.url)}" target="_blank" rel="noopener">${escapeHtml(issueLabel)}</a>` : escapeHtml(issueLabel);
+      const repoLink = d.repo_url ? `<a href="${escapeHtml(d.repo_url)}" target="_blank" rel="noopener">${escapeHtml(run.repo || issue.repo || 'repo')}</a>` : escapeHtml(run.repo || issue.repo || 'repo');
+      const plan = d.plan ? `<a href="${escapeHtml(d.plan.url || ('/api/plan/' + encodeURIComponent(d.plan.epic_id || '')))}" target="_blank" rel="noopener">${escapeHtml(d.plan.title || d.plan.epic_id || 'plan')}</a> <span class="campaign-pill">${escapeHtml(d.plan.status || (d.plan.approved ? 'approved' : ''))}</span>` : '<span class="text-muted">No plan epic recorded.</span>';
+      const prs = (d.prs || []).length ? (d.prs || []).map(p => `<div><a href="${escapeHtml(p.url)}" target="_blank" rel="noopener">${escapeHtml(p.url)}</a> <span class="campaign-pill">${p.verified ? 'verified' : 'unverified'}</span>${p.reason ? ` <span class="text-muted">${escapeHtml(p.reason)}</span>` : ''}${p.model || p.backend ? ` <span class="text-muted">${escapeHtml([p.backend,p.model].filter(Boolean).join(' / '))}</span>` : ''}</div>`).join('') : '<span class="text-muted">No PR URL recorded for this run.</span>';
+      const times = [['Admitted / stage start', run.stage_started_at], ['Completed', run.completed_at], ['Last activity', run.last_activity], ['Generated', d.generated_at]].filter(x => x[1]).map(x => `<div><strong>${escapeHtml(x[0])}:</strong> ${escapeHtml(x[1])}</div>`).join('') || '<span class="text-muted">No timestamps recorded.</span>';
+      const stages = (d.stages || []).map(renderRunDetailStage).join('') || '<div class="text-muted">No stage timeline recorded.</div>';
+      const notes = (d.notes || []).map(n => `<div class="campaign-empty" style="text-align:left;padding:var(--sp-3)">${escapeHtml(n)}</div>`).join('');
+      return `<div class="run-detail-grid">
+          <div class="run-detail-box"><h4>Source issue</h4><div class="run-detail-linklist"><div>${issueLink}</div><div>${escapeHtml(issue.title || run.title || '(untitled)')}</div><div>${repoLink}</div></div></div>
+          <div class="run-detail-box"><h4>Pull requests</h4><div class="run-detail-linklist">${prs}</div></div>
+          <div class="run-detail-box"><h4>Plan / assignee</h4><div class="run-detail-linklist"><div>${plan}</div><div>${escapeHtml(run.assignee || 'unassigned')}${run.waiting_on ? ' · waiting on ' + escapeHtml(run.waiting_on) : ''}</div></div></div>
+          <div class="run-detail-box"><h4>Timestamps</h4><div class="run-detail-linklist">${times}</div></div>
+        </div>${notes}<div><h4>Stage timeline</h4>${stages}</div>
+        <details class="run-stage-detail"><summary>Raw chronological log (${(d.events || []).length} events)</summary>
+          <div class="run-log-actions"><button class="hv-btn btn-secondary btn-sm" data-action="copyRunRawLog" data-arg0="${escapeHtml(btoa(unescape(encodeURIComponent(d.raw_log || ''))))}">Copy raw log</button></div>
+          <pre class="run-log-pre run-detail-raw">${escapeHtml(d.raw_log || '(empty)')}</pre>
+        </details>`;
+    }
+
+    function renderRunDetailStage(st) {
+      const meta = [st.status, st.gen ? 'gen ' + st.gen : '', st.actor, st.started_at, st.ended_at, st.duration].filter(Boolean).join(' · ');
+      const receipt = st.receipt ? `<div class="text-muted">receipt: ${escapeHtml(st.receipt.digest || st.receipt.file || '')}</div>` : (st.receipt_sha ? `<div class="text-muted">receipt: ${escapeHtml(st.receipt_sha)}</div>` : '');
+      const transcript = (st.transcript || []).length ? `<div class="run-transcript">${(st.transcript || []).map(renderRunTranscriptEntry).join('')}</div>` : '<div class="text-muted">Transcript not recorded for this stage.</div>';
+      return `<details class="run-stage-detail"><summary>${escapeHtml(st.name || 'stage')} <span class="campaign-pill">${escapeHtml(meta || 'observed')}</span></summary>${receipt}${transcript}</details>`;
+    }
+
+    function renderRunTranscriptEntry(t) {
+      const fields = t.fields ? JSON.stringify(t.fields, null, 2) : '';
+      return `<div class="run-transcript-entry"><div><strong>${escapeHtml(t.label || t.kind || 'event')}</strong>${t.at ? ' <span class="text-muted">' + escapeHtml(t.at) + '</span>' : ''}</div>${t.text ? `<pre>${escapeHtml(t.text)}</pre>` : ''}${fields ? `<pre>${escapeHtml(fields)}</pre>` : ''}</div>`;
+    }
+
+    function copyRunRawLog(encoded) {
+      const text = decodeURIComponent(escape(atob(encoded || '')));
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => showToast('Run log copied.', 'success')).catch(() => showToast('Copy failed.', 'error'));
+    }
+    window.copyRunRawLog = copyRunRawLog;
 
     let _campaignJamSocket = null;
     let _campaignJamLiveRevision = '';
@@ -16942,6 +17021,9 @@ function burnAreaChart() {
 
     async function resumeCampaign(id) {
       if (!id) return;
+      if (_campaignActionsInFlight.has(id)) return;
+      _campaignActionsInFlight.add(id);
+      renderCampaignsList();
       try {
         const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/resume', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({ surface: 'dashboard' }) });
         const data = await r.json();
@@ -16950,26 +17032,35 @@ function burnAreaChart() {
         if (data.resume_command) { await hiveAlert('Resume command:\n' + data.resume_command, 'Resume command'); }
         await loadCampaigns();
       } catch (e) { showToast('Error: ' + e.message, 'error'); }
+      finally { _campaignActionsInFlight.delete(id); renderCampaignsList(); }
     }
 
     async function releaseCampaign(id) {
       if (!id) return;
+      if (_campaignActionsInFlight.has(id)) return;
+      _campaignActionsInFlight.add(id);
+      renderCampaignsList();
       try {
         const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/release', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({}) });
         const data = await r.json();
         if (!data.ok) { showToast(data.error || 'Failed to release campaign', 'error'); return; }
         await loadCampaigns();
       } catch (e) { showToast('Error: ' + e.message, 'error'); }
+      finally { _campaignActionsInFlight.delete(id); renderCampaignsList(); }
     }
 
     async function reviseCampaign(id) {
       if (!id) return;
+      if (_campaignActionsInFlight.has(id)) return;
+      _campaignActionsInFlight.add(id);
+      renderCampaignsList();
       try {
         const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/revise', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({}) });
         const data = await r.json();
         if (!data.ok) { showToast(data.error || 'Failed to revise campaign', 'error'); return; }
         await loadCampaigns();
       } catch (e) { showToast('Error: ' + e.message, 'error'); }
+      finally { _campaignActionsInFlight.delete(id); renderCampaignsList(); }
     }
 
     function renderInceptionProgress(phase) {
@@ -25415,6 +25506,9 @@ function burnAreaChart() {
       const reqList = (requireLabels || []).map((l, i) =>
         `<div class="config-list-item"><span>${esc(l)}</span><button class="remove-item" data-action="removeListItem" data-arg0="labels" data-arg1="require" data-arg2="${i}" data-arg-types="s,s,j">✕</button></div>`
       ).join('');
+      const writingGuide = (_configState.dirty.labels && _configState.dirty.labels.writing_guide !== undefined)
+        ? _configState.dirty.labels.writing_guide
+        : (_configState.data.writingGuide || '');
       return `
         <h4 style="margin:var(--sp-0) var(--sp-0) var(--sp-3)">Exempt labels (deny-list)</h4>
         <p style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:14px">Labels that filter issues <b>out</b> of the actionable issues list and PRs out of the mergeable PRs list — issues carrying one of these are never agent work. Agents receive the filtered lists as variable substitutions in their kick prompts.</p>
@@ -25435,6 +25529,15 @@ function burnAreaChart() {
           <div class="config-list-add">
             <input type="text" id="cfg-require-label-input" placeholder="label name" title="GitHub label an issue must carry before agents may work it (e.g. an approval/queue label).">
             <button class="hv-btn btn-primary" data-action="addListItem" data-arg0="labels" data-arg1="require" data-arg2="cfg-require-label-input" title="Add this label to the required (allow) list">+ Add</button>
+          </div>
+        </div>
+        <h4>Writing guide</h4>
+        <div class="config-field">
+          <label for="cfg-writing-guide">Project writing guide</label>
+          <textarea id="cfg-writing-guide" rows="7" placeholder="No writing guide is set." data-input-action="markDirty" data-change-action="markDirty" data-arg0="labels" data-arg1="writing_guide" data-arg-types="s,s,v">${esc(writingGuide)}</textarea>
+          <div class="fs-xs text-muted mt-2">
+            Lands as <code>${'${WRITING_GUIDE}'}</code> before the body template in every issue/PR-filing kick and now in review-swarm comments.
+            See <a class="text-accent" href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md#writing-guide-how-issues-and-prs-should-read-projectwriting_guide" target="_blank" rel="noopener">Writing guide docs ↗</a>.
           </div>
         </div>`;
     }

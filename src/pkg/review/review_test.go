@@ -106,6 +106,24 @@ func TestPromptBuilders(t *testing.T) {
 	}
 }
 
+func TestReviewPromptsCarryWritingGuide(t *testing.T) {
+	const guide = "WRITING GUIDE (set by this hive's owner in project.writing_guide).\n\nKeep review comments concise.\n"
+	pr := PullRequest{Repo: "hivecommons/hive", Number: 2807, HeadSHA: testSHA}
+	opts := PromptOptions{WritingGuideSection: guide, PostComments: true}
+
+	for name, prompt := range map[string]string{
+		"single":   BuildPerspectivePromptWith(PerspectiveSecurity, pr, opts),
+		"combined": BuildCombinedPrompt(pr, []Perspective{PerspectiveSecurity, PerspectiveStyle}, opts),
+	} {
+		if !strings.Contains(prompt, guide) {
+			t.Fatalf("%s prompt does not carry writing guide:\n%s", name, prompt)
+		}
+		if strings.Index(prompt, guide) > strings.Index(prompt, "Return exactly one") {
+			t.Fatalf("%s prompt places writing guide after the answer schema:\n%s", name, prompt)
+		}
+	}
+}
+
 func TestValidateRoundTripAndCollect(t *testing.T) {
 	dir := t.TempDir()
 	reports := allApprove()

@@ -202,8 +202,54 @@ func TestCampaignLeaseReleaseAndReviseFlows(t *testing.T) {
 	if err := json.Unmarshal(revise.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode revise: %v", err)
 	}
-	if !resp.OK || resp.Campaign.RevisionOf != state.IdeaSlug || resp.Campaign.Revision == 0 || resp.Campaign.LeaseOwner != "bob" {
+	if !resp.OK || resp.Campaign.ID != state.IdeaSlug || resp.Campaign.RevisionOf != "" || resp.Campaign.Revision == 0 || resp.Campaign.LeaseOwner != "bob" {
 		t.Fatalf("revision campaign = %+v", resp.Campaign)
+	}
+}
+
+func TestCampaignReviseTwiceAndContinueUsesStableCampaign(t *testing.T) {
+	s := newMinimalServer(t)
+	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
+	state, err := s.deps.Inception.Start("what can I add to console to make it unique")
+	if err != nil {
+		t.Fatalf("start inception: %v", err)
+	}
+	if err := s.deps.Inception.SetQuestions([]knowledge.Question{{ID: "goal", Text: "Goal?"}}); err != nil {
+		t.Fatalf("set questions: %v", err)
+	}
+	if reset := doOwnerPost(s, "/api/inception/reset", map[string]interface{}{}); reset.Code != http.StatusOK {
+		t.Fatalf("reset = %d body=%s", reset.Code, reset.Body.String())
+	}
+
+	for i := 0; i < 2; i++ {
+		revise := doOwnerPostAsUser(s, "/api/campaigns/"+state.IdeaSlug+"/revise", "alice", map[string]string{})
+		if revise.Code != http.StatusOK {
+			t.Fatalf("revise #%d = %d body=%s", i+1, revise.Code, revise.Body.String())
+		}
+	}
+	list := doOwnerGet(s, "/api/campaigns?search=unique")
+	if list.Code != http.StatusOK {
+		t.Fatalf("campaigns list after revise = %d body=%s", list.Code, list.Body.String())
+	}
+	campaigns := decodeCampaignList(t, list.Body.Bytes())
+	if len(campaigns) != 1 {
+		t.Fatalf("campaigns after double revise len = %d, want 1: %+v", len(campaigns), campaigns)
+	}
+	if campaigns[0].ID != state.IdeaSlug || campaigns[0].CurrentStep != string(knowledge.PhaseCapture) {
+		t.Fatalf("campaign after double revise = %+v, want stable id %q rewound to capture", campaigns[0], state.IdeaSlug)
+	}
+
+	resume := doOwnerPostAsUser(s, "/api/campaigns/"+state.IdeaSlug+"/resume", "alice", map[string]string{"surface": "dashboard"})
+	if resume.Code != http.StatusOK {
+		t.Fatalf("continue after revise = %d body=%s", resume.Code, resume.Body.String())
+	}
+	list = doOwnerGet(s, "/api/campaigns?search=unique")
+	if list.Code != http.StatusOK {
+		t.Fatalf("campaigns list after continue = %d body=%s", list.Code, list.Body.String())
+	}
+	campaigns = decodeCampaignList(t, list.Body.Bytes())
+	if len(campaigns) != 1 || campaigns[0].ID != state.IdeaSlug {
+		t.Fatalf("campaigns after continue = %+v, want one stable campaign %q", campaigns, state.IdeaSlug)
 	}
 }
 
@@ -226,7 +272,7 @@ func TestCampaignReviseSpektacularRunCreatesLinkedRevision(t *testing.T) {
 	if err := json.Unmarshal(revise.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode revise: %v", err)
 	}
-	if !resp.OK || resp.Campaign.RevisionOf != "stable-spec-8665" || resp.Campaign.Engine != "Spektacular" || resp.Campaign.Type != "spektacular" {
+	if !resp.OK || resp.Campaign.ID != "stable-spec-8665" || resp.Campaign.RevisionOf != "" || resp.Campaign.Engine != "Spektacular" || resp.Campaign.Type != "spektacular" {
 		t.Fatalf("spektacular revision = %+v", resp.Campaign)
 	}
 	if resp.Campaign.CurrentStage != StagePlan || !strings.Contains(spektacularResumeCommand(resp.Campaign), "spektacular plan status ") {

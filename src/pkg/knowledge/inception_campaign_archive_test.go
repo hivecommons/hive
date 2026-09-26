@@ -68,7 +68,7 @@ func TestInceptionCampaignArchiveLeaseReviseAndRestore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("revise archive: %v", err)
 	}
-	if revision.RevisionOf != archived.ID || revision.Revision != 2 || revision.Lease == nil || revision.Lease.Owner != "carol" {
+	if revision.ID != archived.ID || revision.RevisionOf != "" || revision.Revision != 2 || revision.Lease == nil || revision.Lease.Owner != "carol" {
 		t.Fatalf("revision = %+v", revision)
 	}
 	if revision.State == nil || revision.State.IdeaSlug != revision.ID || revision.State.Phase != PhaseCapture {
@@ -101,7 +101,7 @@ func TestInceptionExternalCampaignRevisionDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("revise external campaign: %v", err)
 	}
-	if revision.ID == "" || revision.RevisionOf != "ownerrepo8687" || revision.Revision != 2 {
+	if revision.ID != "ownerrepo8687" || revision.RevisionOf != "" || revision.Revision != 1 {
 		t.Fatalf("external revision identity = %+v", revision)
 	}
 	if revision.Engine != "Spektacular" || revision.Type != "spektacular" {

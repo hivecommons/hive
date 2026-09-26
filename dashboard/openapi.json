@@ -21344,6 +21344,48 @@
         }
       }
     },
+    "/api/runs/{key}/detail": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Return detailed Campaign run evidence",
+        "description": "Aggregates the run lease projection, cached source issue title/link, reported pull request URLs, plan epic summary, stage receipts, lifecycle timeline events, task completion records, and persisted relay/hub progress transcript events for a Campaign run. The endpoint does not make live GitHub calls during render.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "URL-escaped canonical work-item key.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run detail payload.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Run key missing."
+          },
+          "404": {
+            "description": "Run not found."
+          },
+          "503": {
+            "description": "Run lease registry unavailable or unreadable."
+          }
+        }
+      }
+    },
     "/api/runs/{key}/log": {
       "get": {
         "tags": [

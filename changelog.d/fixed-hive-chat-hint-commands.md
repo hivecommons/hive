@@ -1,0 +1,1 @@
+- Hive Chat command hints now return data-backed answers or concrete diagnostics instead of silent dashboard-bot fallbacks.

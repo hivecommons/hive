@@ -3795,9 +3795,16 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 		// connection lock and applied below without it, matching how the other
 		// release paths call into the lease registry.
 		heldTaskID := ""
+		progressRunKey := ""
+		progressStage := ""
 		if s.contributor.currentTask != nil {
 			heldTaskID = s.contributor.currentTask.TaskID
+			progressRunKey = s.contributor.currentTask.identityKey()
+			progressStage = s.contributor.currentTask.Stage
 		}
+		progressActor := s.contributor.profile.GitHubUsername
+		progressBackend := s.contributor.cliBackend
+		progressModel := s.contributor.model
 		s.contributor.mu.Unlock()
 		// #4260: keep the lease registry's expiry on the same clock as
 		// lastLeaseRenew above. Stamping it only at assignment meant a task
@@ -3810,6 +3817,20 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 			h.logger.Warn("[contribute-ws] lease renewed in memory but not persisted",
 				"username", identityOf(s.contributor), "task", heldTaskID, "error", err)
 		}
+		appendRunDetailEvent(progressRunKey, runDetailPersistedEvent{
+			Kind:    "task_progress",
+			TaskID:  heldTaskID,
+			Gen:     msg.TaskGen,
+			Stage:   progressStage,
+			Actor:   progressActor,
+			Backend: progressBackend,
+			Model:   progressModel,
+			Summary: strings.TrimSpace(firstRunNonEmpty(msg.Summary, msg.Detail, msg.State, msg.Result)),
+			Fields: map[string]any{
+				"state":     msg.State,
+				"pane_tail": boundPaneTail(msg.TmuxOutput),
+			},
+		})
 	}
 
 }
@@ -4062,8 +4083,10 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 					}
 					return ""
 				}(),
-				PRURL:      verifiedPR,
-				PRVerified: verifiedPR != "",
+				ReportedPRURL:  strings.TrimSpace(msg.PRURL),
+				PRURL:          verifiedPR,
+				PRVerified:     verifiedPR != "",
+				PRVerifyReason: strings.TrimSpace(prDetail.Reason),
 			}
 			if _, alreadyDone := alreadyDoneVerdictRefs("", 0, strings.TrimSpace(msg.VerdictReason), msg.VerdictReasonKind, msg.Evidence); alreadyDone {
 				runRec.VerdictDisposition = verdictDispositionAlreadyDoneUnverified
@@ -4072,6 +4095,24 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				runRec.Repo = completedTask.Repo
 				runRec.Number = completedTask.Number
 				runRec.RepeatOfferCount = countPriorTaskRunsForIssue(h.taskRunLogPath(), completedTask.Repo, completedTask.Number)
+				appendRunDetailEvent(completedTask.identityKey(), runDetailPersistedEvent{
+					Kind:     "task_complete",
+					TaskID:   msg.TaskID,
+					Gen:      msg.TaskGen,
+					Stage:    completedTask.Stage,
+					Actor:    s.contributor.profile.GitHubUsername,
+					Backend:  s.contributor.cliBackend,
+					Model:    s.contributor.model,
+					Summary:  strings.TrimSpace(firstRunNonEmpty(msg.Summary, msg.Result, msg.VerdictReason)),
+					PRURL:    strings.TrimSpace(msg.PRURL),
+					Verified: verifiedPR != "",
+					Reason:   strings.TrimSpace(prDetail.Reason),
+					Fields: map[string]any{
+						"verdict":           verdict,
+						"verdict_reason":    strings.TrimSpace(msg.VerdictReason),
+						"completion_signal": normalizeCompletionSignal(msg.CompletionSignal),
+					},
+				})
 			}
 			if !taskAssignedAt.IsZero() {
 				runRec.DurationS = time.Since(taskAssignedAt).Seconds()
