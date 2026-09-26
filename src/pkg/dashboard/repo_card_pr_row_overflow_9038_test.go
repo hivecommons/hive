@@ -8,7 +8,7 @@ import (
 func TestRepoCardPRRowOverflow9038StaticWiring(t *testing.T) {
 	html := indexHTML(t)
 	want := []string{
-		".repo-issue-pill-wrap, .repo-pr-pill-wrap { display: grid; grid-template-columns: minmax(4.5rem, max-content) minmax(0, 1fr) max-content; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; }",
+		".repo-issue-pill-wrap, .repo-pr-pill-wrap { display: grid; grid-template-columns: minmax(4.5rem, max-content) minmax(6rem, 1fr) max-content; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; }",
 		".repo-pill-status { display: inline-block; text-align: center; min-width: 4.5rem; max-width: 5.25rem;",
 		".repo-pill-status.repo-issue-pill, .repo-pill-status.repo-pr-pill {",
 		"display: inline-block; text-align: center; min-width: 4.5rem; max-width: 5.25rem;",

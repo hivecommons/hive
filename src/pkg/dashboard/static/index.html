@@ -1338,7 +1338,7 @@
       background: var(--surface-2); border: var(--line-width) solid var(--line-subtle);
       border-radius: var(--r-lg); padding: var(--sp-5); overflow: hidden;
       box-shadow: var(--shadow-card);
-      position: relative; min-width: 0;
+      position: relative; min-width: 0; container-type: inline-size;
       flex: 1 1 calc((100% - (var(--repo-cols) - 1) * var(--repo-gap)) / var(--repo-cols));
     }
     /* A card the operator has sized keeps that width instead of sharing the
@@ -1409,20 +1409,22 @@
     .repo-stat a:hover { text-decoration: underline !important; }
     .repo-stat a:hover .label { color: var(--fg); }
     .repo-pills { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-2) var(--sp-5); margin-top: var(--sp-4); padding-top: var(--sp-3); border-top: 1px solid var(--border); }
+    @container (max-width: 520px) { .repo-pills { grid-template-columns: minmax(0, 1fr); } }
     .repo-pills.repo-pills-issues-only, .repo-pills.repo-pills-prs-only { grid-template-columns: minmax(0, 1fr); }
     .repo-pills-issues-only .repo-pill-col-prs, .repo-pills-prs-only .repo-pill-col-issues { display: none; }
     .repo-pills-issues-only .repo-pill-col-issues, .repo-pills-prs-only .repo-pill-col-prs { grid-column: 1 / -1; }
     .repo-pill-col { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; overflow: hidden; }
     .repo-pill-col .repo-issue-pill-wrap, .repo-pill-col .repo-pr-pill-wrap { flex: 0 1 auto; max-width: 100%; width: 100%; }
-    .repo-issue-pill-wrap, .repo-pr-pill-wrap { display: grid; grid-template-columns: minmax(4.5rem, max-content) minmax(0, 1fr) max-content; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; }
+    .repo-issue-pill-wrap, .repo-pr-pill-wrap { display: grid; grid-template-columns: minmax(4.5rem, max-content) minmax(6rem, 1fr) max-content; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; }
     .repo-pill-main { display: flex; align-items: center; gap: var(--sp-1); min-width: 0; overflow: hidden; }
     .repo-pill-status { display: inline-block; text-align: center; min-width: 4.5rem; max-width: 5.25rem; padding: 3px 6px; border: 1px solid color-mix(in srgb, var(--pill-c, var(--border)) 45%, transparent); border-radius: var(--r-pill); color: var(--pill-c, var(--muted)); background: color-mix(in srgb, var(--pill-c, var(--muted)) 10%, transparent); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.02em; line-height: 1; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .repo-pill-status.held { --pill-c: var(--muted); border-style: dashed; }
     /* Slots keep a 1.65rem floor but grow to content so 💬×N and glyph pills are never clipped (#9004). */
-    .repo-pill-actions { display: grid; grid-template-columns: minmax(1.65rem, max-content) minmax(1.65rem, max-content) minmax(1.65rem, max-content) minmax(4.8rem, max-content); justify-content: end; align-items: center; gap: var(--sp-1); }
+    .repo-pill-actions { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(1.65rem, max-content); min-width: 0; overflow: hidden; justify-content: end; align-items: center; gap: var(--sp-1); }
     .repo-pill-action-slot { display: inline-flex; align-items: center; justify-content: center; min-width: 1.65rem; min-height: 1.45rem; overflow: visible; }
+    .repo-pill-action-slot.repo-pill-hold-slot { min-width: 4.8rem; }
     .repo-pill-action-slot .pill-icon { max-width: none; }
-    .repo-pill-action-slot.empty { visibility: hidden; pointer-events: none; }
+    .repo-pill-action-slot.empty { display: none; pointer-events: none; }
     /* A held pill: the item is in its column (it IS one of the repo's issues
        / PRs, and the count includes it) but parked behind a hold label, so
        it is waiting on a human rather than on an agent. Neutral grey with a
@@ -9341,8 +9343,9 @@
       return raw.length > n ? raw.slice(0, n) + '…' : raw;
     }
 
-    function repoPillActionSlot(html) {
-      return html ? `<span class="repo-pill-action-slot">${html}</span>` : '<span class="repo-pill-action-slot empty" aria-hidden="true">•</span>';
+    function repoPillActionSlot(html, index) {
+      const cls = index === 3 ? 'repo-pill-action-slot repo-pill-hold-slot' : 'repo-pill-action-slot';
+      return html ? `<span class="${cls}">${html}</span>` : `<span class="${cls} empty" aria-hidden="true">•</span>`;
     }
 
     function repoPillActionCluster(slots) {

@@ -12,7 +12,7 @@ func TestRepoCardPillColumnsStaticWiring(t *testing.T) {
 		".repo-pills.repo-pills-issues-only, .repo-pills.repo-pills-prs-only { grid-template-columns: minmax(0, 1fr); }",
 		".repo-pills-issues-only .repo-pill-col-prs, .repo-pills-prs-only .repo-pill-col-issues { display: none; }",
 		".repo-pill-col { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; overflow: hidden; }",
-		".repo-issue-pill-wrap, .repo-pr-pill-wrap { display: grid; grid-template-columns: minmax(4.5rem, max-content) minmax(0, 1fr) max-content;",
+		".repo-issue-pill-wrap, .repo-pr-pill-wrap { display: grid; grid-template-columns: minmax(4.5rem, max-content) minmax(6rem, 1fr) max-content;",
 		".repo-issue-pill-wrap .repo-issue-pill:not(.repo-pill-status) { min-width: 0; overflow: hidden; }",
 		".repo-pr-pill-wrap .repo-pr-pill:not(.pill-icon):not(.repo-pill-status) { min-width: 0; overflow: hidden; }",
 		".repo-issue-pill .pill-num { flex: 0 0 auto;",
