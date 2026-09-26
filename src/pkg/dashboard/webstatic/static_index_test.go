@@ -266,6 +266,27 @@ func TestStaticPlanReviewWiring(t *testing.T) {
 	}
 }
 
+func TestStaticRunDetailTranscriptRenderingWiring(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		"function renderRunStageInterview(st)",
+		"function renderRunStageDocuments(st)",
+		"doc.markdown || doc.content || ''",
+		"st.agent_stdout_stderr",
+		"Agent transcript",
+		"Interview / Q&amp;A",
+		"Raw receipt JSON",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("run detail transcript rendering missing %q", want)
+		}
+	}
+}
+
 func TestNotificationsTabRendersEventCheckboxesAndSlack(t *testing.T) {
 	body, err := os.ReadFile("../static/index.html")
 	if err != nil {

@@ -16936,7 +16936,8 @@ function burnAreaChart() {
       const interview = renderRunStageInterview(st);
       const docs = renderRunStageDocuments(st);
       const prompt = st.prompt && st.prompt.text ? renderRunTextDetails('Prompt sent to agent', st.prompt.text, st.prompt.truncated) : '';
-      const agent = st.agent_transcript && st.agent_transcript.text ? renderRunTextDetails('Agent transcript', st.agent_transcript.text, st.agent_transcript.truncated, true) : '';
+      const agentBlock = (st.agent_transcript && st.agent_transcript.text) ? st.agent_transcript : ((st.agent_stdout_stderr && st.agent_stdout_stderr.text) ? st.agent_stdout_stderr : null);
+      const agent = agentBlock ? renderRunTextDetails('Agent transcript', agentBlock.text, agentBlock.truncated, true) : '';
       const transcript = (st.transcript || []).length ? `<h4>Progress and relay events</h4><div class="run-transcript">${(st.transcript || []).map(renderRunTranscriptEntry).join('')}</div>` : '';
       const raw = st.receipt && st.receipt.raw ? `<details class="run-stage-detail"><summary>Raw receipt JSON</summary><pre class="run-log-pre run-detail-raw">${escapeHtml(JSON.stringify(st.receipt.raw, null, 2))}</pre></details>` : '';
       return `<details class="run-stage-detail"><summary>${escapeHtml(st.name || 'stage')} <span class="campaign-pill">${escapeHtml(meta || 'observed')}</span></summary>${receipt}${missing}${narrative}${interview}${docs}${prompt}${agent}${transcript}${raw}</details>`;
@@ -16956,7 +16957,7 @@ function burnAreaChart() {
       if (!docs.length) return '<h4>Final document</h4><div class="text-muted">Final spec/plan markdown was not captured for this stage.</div>';
       return docs.map(function(doc, i) {
         const title = (i === 0 ? 'Final document' : 'Additional document') + (doc.path ? ': ' + doc.path : '');
-        return `<details class="run-stage-detail"><summary>${escapeHtml(title)}${doc.truncated ? ' (truncated)' : ''}</summary><div class="run-markdown">${renderSimpleMarkdown(doc.markdown || '')}</div></details>`;
+        return `<details class="run-stage-detail"><summary>${escapeHtml(title)}${doc.truncated ? ' (truncated)' : ''}</summary><div class="run-markdown">${renderSimpleMarkdown(doc.markdown || doc.content || '')}</div></details>`;
       }).join('');
     }
 

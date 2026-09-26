@@ -377,10 +377,8 @@ func (h *ContributeWSHub) mutateLeaseStage(identity, taskID, to string, mode lea
 	prevStage, prevGen, prevExpires := l.stage, l.gen, l.expiresAt
 	from = prevStage
 	l.stage = to
-	l.gen = h.nextTaskGen()
-	for l.gen <= prevGen {
-		l.gen = h.nextTaskGen()
-	}
+	l.gen = prevGen + 1
+	h.advanceTaskGenAtLeast(l.gen)
 	l.expiresAt = now.Add(leaseTTL)
 	if err := h.saveLeasesLocked(); err != nil {
 		l.stage, l.gen, l.expiresAt = prevStage, prevGen, prevExpires
@@ -1138,16 +1136,21 @@ func (h *ContributeWSHub) loadLeases() {
 	// straggler against a brand-new task that happened to draw the same number.
 	// Advancing the counter past every restored generation keeps what the hub
 	// issues strictly ahead of what it has already issued.
-	for {
-		cur := h.taskGen.Load()
-		if cur >= maxGen || h.taskGen.CompareAndSwap(cur, maxGen) {
-			break
-		}
-	}
+	h.advanceTaskGenAtLeast(maxGen)
 
 	if restored > 0 {
 		h.logger.Info("[contribute-ws] restored task leases across restart",
 			"count", restored, "max_gen", maxGen)
+	}
+
+}
+
+func (h *ContributeWSHub) advanceTaskGenAtLeast(maxGen uint64) {
+	for {
+		cur := h.taskGen.Load()
+		if cur >= maxGen || h.taskGen.CompareAndSwap(cur, maxGen) {
+			return
+		}
 	}
 }
 
