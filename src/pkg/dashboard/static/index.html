@@ -1522,7 +1522,7 @@
     .overview-settings-field { display: grid; gap: var(--sp-1); color: var(--muted); font-size: var(--fs-xs); }
     .overview-settings-field input, .overview-settings-field select, .overview-chart-select { min-width: 0; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg); color: var(--text); padding: var(--sp-1) var(--sp-2); font: inherit; }
     .overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--sp-5); }
-    .overview-chart-card { position: relative; display: grid; grid-template-columns: minmax(180px, 220px) minmax(0, 1fr); align-items: center; gap: var(--sp-4); min-width: 0; overflow: hidden; }
+    .overview-chart-card { position: relative; display: grid; grid-template-columns: minmax(200px, 240px) minmax(0, 1fr); align-items: center; gap: var(--sp-4); min-width: 0; overflow: hidden; }
     .overview-chart-card:has(.overview-hbar) { grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); }
     .overview-chart-meta { min-width: 0; }
     .overview-chart-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-3); font-size: var(--fs-xs); }
@@ -1539,6 +1539,7 @@
     .overview-hbar-value { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
     .overview-carousel-dots { display: inline-flex; gap: var(--sp-1); align-items: center; }
     .overview-carousel-dot { width: 0.45rem; height: 0.45rem; border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--bg); }
+    .overview-carousel-dot.ticked { border-color: var(--accent); }
     .overview-carousel-dot.active { background: var(--accent); border-color: var(--accent); }
     .overview-chart-bar-label { fill: var(--text); font-size: var(--fs-2xs); font-weight: 800; dominant-baseline: central; }
     .overview-chart-bar-value, .overview-chart-axis-label { fill: var(--muted); font-size: var(--fs-2xs); dominant-baseline: central; }
@@ -1586,7 +1587,7 @@
     @media (prefers-reduced-motion: reduce) { .overview-panel-in, .overview-panel-out { animation: none; } }
     .overview-chart-title { color: var(--text); font-size: var(--fs-sm); font-weight: 800; margin-bottom: var(--sp-2); }
     .overview-chart-subtitle { color: var(--muted); font-size: var(--fs-xs); margin-bottom: var(--sp-3); }
-    .overview-chart-svg { width: 100%; max-width: 220px; height: auto; overflow: visible; }
+    .overview-chart-svg { width: 100%; max-width: 240px; height: auto; overflow: hidden; }
     .overview-chart-track { fill: none; stroke: color-mix(in srgb, var(--muted) 18%, transparent); }
     .overview-chart-slice { fill: none; stroke: var(--slice-c); transition: opacity 0.15s; }
     .overview-chart-slice:hover { opacity: 0.78; }
@@ -8939,11 +8940,15 @@
     const REPO_LEGEND_COLLAPSED_KEY_PREFIX = 'hive-repos-legend-collapsed:';
     const OVERVIEW_ISSUE_BAND_ORDER = ['ready', 'in-progress', 'agent-filed', 'waiting', 'done'];
     const OVERVIEW_CHART_FULL = 100;
-    const OVERVIEW_CHART_VIEWBOX = 240;
+    // 300-unit viewBox leaves ~46 units either side of the label ring so edge labels
+    // stay inside the SVG box instead of spilling into the legend or past the card edge (#9036).
+    const OVERVIEW_CHART_VIEWBOX = 300;
     const OVERVIEW_CHART_CENTER = OVERVIEW_CHART_VIEWBOX / 2;
     const OVERVIEW_CHART_RADIUS = 78;
     const OVERVIEW_CHART_STROKE = 34;
     const OVERVIEW_CHART_LABEL_RADIUS = 104;
+    // Labels within this many degrees of straight up/down stay centred; others grow away from the ring.
+    const OVERVIEW_CHART_LABEL_POLE_DEGREES = 12;
     const OVERVIEW_CHART_START_ANGLE = -90;
     const OVERVIEW_CHART_DEGREES = 360;
     const OVERVIEW_CHART_PERCENT_SCALE = 100;
@@ -9752,9 +9757,12 @@
       const midPercent = percentOffset + (percentSize / 2);
       const angle = (midPercent / OVERVIEW_CHART_PERCENT_SCALE) * OVERVIEW_CHART_DEGREES + OVERVIEW_CHART_START_ANGLE;
       const radians = angle * Math.PI / (OVERVIEW_CHART_DEGREES / 2);
+      const cos = Math.cos(radians);
+      const nearPole = Math.abs(cos) < Math.sin(OVERVIEW_CHART_LABEL_POLE_DEGREES * Math.PI / (OVERVIEW_CHART_DEGREES / 2));
       return {
-        x: OVERVIEW_CHART_CENTER + OVERVIEW_CHART_LABEL_RADIUS * Math.cos(radians),
-        y: OVERVIEW_CHART_CENTER + OVERVIEW_CHART_LABEL_RADIUS * Math.sin(radians)
+        x: OVERVIEW_CHART_CENTER + OVERVIEW_CHART_LABEL_RADIUS * cos,
+        y: OVERVIEW_CHART_CENTER + OVERVIEW_CHART_LABEL_RADIUS * Math.sin(radians),
+        anchor: nearPole ? 'middle' : (cos > 0 ? 'start' : 'end')
       };
     }
 
@@ -9772,7 +9780,7 @@
         offset += percent;
         const percentLabel = percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + '%';
         const text = percent >= OVERVIEW_CHART_LABEL_MIN_PERCENT
-          ? `<text class="overview-chart-label" x="${point.x.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" y="${point.y.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}">${s.count} · ${percentLabel}</text>`
+          ? `<text class="overview-chart-label" text-anchor="${point.anchor}" x="${point.x.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" y="${point.y.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}">${s.count} · ${percentLabel}</text>`
           : '';
         return `<circle class="overview-chart-slice ${esc(s.className)}" cx="${OVERVIEW_CHART_CENTER}" cy="${OVERVIEW_CHART_CENTER}" r="${OVERVIEW_CHART_RADIUS}" pathLength="${OVERVIEW_CHART_FULL}" stroke-width="${OVERVIEW_CHART_STROKE}" stroke-dasharray="${percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)} ${OVERVIEW_CHART_FULL}" stroke-dashoffset="${dashOffset.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" transform="rotate(${OVERVIEW_CHART_START_ANGLE} ${OVERVIEW_CHART_CENTER} ${OVERVIEW_CHART_CENTER})"><title>${esc(s.label)}: ${s.count}${s.rule ? ' — ' + esc(s.rule) : ''}</title></circle>${text}`;
       }).join('');
@@ -9993,8 +10001,14 @@
       return renderer(title, subtitle, slices, kind === 'issue' ? state.history.issue : state.history.pr);
     }
 
-    function renderOverviewDots(types, active) {
-      return `<span class="overview-carousel-dots" aria-label="Overview carousel position">${types.map(type => `<span class="overview-carousel-dot${type === active ? ' active' : ''}" title="${esc(OVERVIEW_CHART_TYPE_LABELS[type])}"></span>`).join('')}</span>`;
+    // One dot per chart type (the ◀ ▶ domain); ticked types are the ones auto-play rotates through.
+    function renderOverviewDots(enabled, active) {
+      const ticked = new Set(enabled || []);
+      return `<span class="overview-carousel-dots" aria-label="Overview carousel position">${OVERVIEW_CHART_TYPES.map(type => {
+        const cls = 'overview-carousel-dot' + (type === active ? ' active' : '') + (ticked.has(type) ? ' ticked' : '');
+        const hint = ticked.has(type) ? ' — in auto-play rotation' : ' — not in auto-play (tick it in ⚙️)';
+        return `<span class="${cls}" title="${esc(OVERVIEW_CHART_TYPE_LABELS[type] + hint)}"></span>`;
+      }).join('')}</span>`;
     }
 
     function renderOverviewPanel(kind, title, subtitle, slices, state) {
@@ -10069,17 +10083,20 @@
       rerenderOverviewChartsFromState(state);
     }
 
-    function overviewCarouselStep(kind, delta) {
+    // Manual ◀ ▶ steps through every chart type (same domain as the <select>);
+    // the auto-play timer only rotates through the ticked types (#9036).
+    function overviewCarouselStep(kind, delta, types) {
       const state = overviewChartsState();
-      const enabled = overviewEnabledTypes(state);
-      const current = enabled.indexOf(state.active[kind]);
-      const next = (Math.max(0, current) + delta + enabled.length) % enabled.length;
-      state.active[kind] = enabled[next];
+      const domain = Array.isArray(types) && types.length ? types : OVERVIEW_CHART_TYPES;
+      const current = domain.indexOf(state.active[kind]);
+      const next = (Math.max(0, current) + delta + domain.length) % domain.length;
+      state.active[kind] = domain[next];
       rerenderOverviewChartsFromState(state);
     }
 
-    function overviewCarouselPrev(kind) { overviewCarouselStep(kind, -1); }
-    function overviewCarouselNext(kind) { overviewCarouselStep(kind, 1); }
+    function overviewCarouselPrev(kind) { overviewCarouselStep(kind, -1, OVERVIEW_CHART_TYPES); }
+    function overviewCarouselNext(kind) { overviewCarouselStep(kind, 1, OVERVIEW_CHART_TYPES); }
+    function overviewCarouselAutoNext(kind) { overviewCarouselStep(kind, 1, overviewEnabledTypes(overviewChartsState())); }
     function overviewPanelHover(kind) { if (kind === 'issue' || kind === 'pr') _overviewHoverState[kind] = true; }
     function overviewPanelUnhover(kind) { if (kind === 'issue' || kind === 'pr') _overviewHoverState[kind] = false; }
 
@@ -10102,7 +10119,7 @@
       if (!state.carousel || overviewEnabledTypes(state).length < 2) return;
       _overviewCarouselTimers.push(setInterval(() => {
         if (document.visibilityState !== 'visible' || _overviewHoverState[kind]) return;
-        overviewCarouselNext(kind);
+        overviewCarouselAutoNext(kind);
       }, state.intervalMs));
     }
 
