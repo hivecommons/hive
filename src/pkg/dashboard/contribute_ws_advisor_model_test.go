@@ -81,16 +81,32 @@ func TestAuthResponseRecordsAdvisorPair(t *testing.T) {
 	}
 
 	// And the activity rail's "joined" row carries it alongside the primary.
-	s.contributeHub.activityMu.Lock()
+	// The hub appends the "joined" row AFTER sending auth_ok (contribute_ws.go:
+	// handleAuth sends auth_ok, then calls addActivity), so an immediate check
+	// races the server goroutine under CI load — poll instead (v4 backport of
+	// the v5 fix; the hourly coverage gate measures v4, see #9074).
 	var joined *ActivityEntry
-	for i := range s.contributeHub.activity {
-		if s.contributeHub.activity[i].Username == "ompadvisor" && s.contributeHub.activity[i].Action == "joined" {
-			joined = &s.contributeHub.activity[i]
+	findJoined := func() bool {
+		s.contributeHub.activityMu.Lock()
+		defer s.contributeHub.activityMu.Unlock()
+		for i := range s.contributeHub.activity {
+			if s.contributeHub.activity[i].Username == "ompadvisor" && s.contributeHub.activity[i].Action == "joined" {
+				entry := s.contributeHub.activity[i]
+				joined = &entry
+				return true
+			}
 		}
+		return false
 	}
-	s.contributeHub.activityMu.Unlock()
-	if joined == nil {
-		t.Fatalf("no joined activity row for ompadvisor")
+	deadline := time.After(2 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for !findJoined() {
+		select {
+		case <-deadline:
+			t.Fatalf("no joined activity row for ompadvisor within 2s")
+		case <-tick.C:
+		}
 	}
 	if joined.AdvisorModel != "anthropic/claude-opus-5" || joined.AdvisorEffort != "high" {
 		t.Errorf("joined row advisor = %q/%q, want anthropic/claude-opus-5/high", joined.AdvisorModel, joined.AdvisorEffort)
