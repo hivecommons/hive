@@ -11,9 +11,9 @@ This glossary records the operator-facing names used by the dashboard. The ADR-0
 | Contributor agent (ClankeR) | A contributor's relay-backed worker. Use the full form on first or prominent mention, then Contributor agent for repeated inline mentions. | Use when the operator UI refers to the worker connected through the contributor relay. |
 | Governor | Policy engine that decides cadence, autonomy, budgets, and merge/apply gates. | Use for the overview/governance surface and settings that control automation policy. |
 | Fleet | The set of agents or contributor agents under observation in an operational context. | Use for aggregate operational controls and live monitoring. |
-| Issue band | A display-only group in a repository card's issue column: Ready, In progress, Agent-filed, Waiting on human, or Likely done. | Use for Repositories card grouping; do not imply scheduler eligibility changed. |
+| Issue band | A display-only group in a repository card's issue column, named for the operator's action: Unclaimed, Claimed, Needs triage (agent-filed and not yet acknowledged by a human), Needs human, or Confirm & close. | Use for Repositories card grouping; do not imply scheduler eligibility changed. Hover a band header, Overview slice, or legend row for its rule. |
 | Pill legend | The collapsible Repositories-section key explaining pill colours, borders, glyphs, and badges. | Use for the compact legend above repository cards. |
-| PR band | A display-only group in a repository card's pull-request column: Waiting on human, Merge-eligible, Blocked, In review, Open, or Draft. | Use for Repositories card grouping; do not imply merge queue, hold, or review eligibility changed. |
+| PR band | A display-only group in a repository card's pull-request column: Needs human, Merge-eligible, Blocked, In review, Open, or Draft. | Use for Repositories card grouping; do not imply merge queue, hold, or review eligibility changed. |
 | Stale issue | An actionable repository-card issue whose `updated_at` activity is older than the configured `dashboard.issue_bands.stale_days` threshold. | Use for the `N no activity > Nd` counter and `🕒` badge. |
 | Stale PR | A repository-card PR whose `updated_at` activity is older than the configured `dashboard.issue_bands.stale_days` threshold. | Use for the PR `🕒` badge. |
 

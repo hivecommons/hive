@@ -18,7 +18,7 @@ func TestRepoCardPRBandsStaticWiring(t *testing.T) {
 		"prUpdatedAt",
 		"prReviewClassRank",
 		"prSignalHTML(bandInfo)",
-		"Waiting on human",
+		"Needs human",
 		"Merge-eligible",
 		"✗ CI",
 		"⑂",
@@ -57,7 +57,9 @@ func TestRepoCardPRBandsBehaviour(t *testing.T) {
 		"prRequestedReviews",
 		"prConversation",
 		"prBandInfo",
+		"prBandSpec",
 		"prBandLabel",
+		"prBandTip",
 		"prBandRank",
 		"groupedRepoPRs",
 	}
