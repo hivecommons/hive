@@ -145,6 +145,7 @@ type Run struct {
 	CurrentStep     string                      `json:"current_step,omitempty"`
 	Activity        *RunActivity                `json:"activity,omitempty"`
 	OtherHolders    []RunOtherHolder            `json:"other_holders,omitempty"`
+	Interview       *RunInterviewState          `json:"interview,omitempty"`
 }
 
 type RunSummary = Run
@@ -791,6 +792,13 @@ func (s *Server) activeRuns(includeTimeline bool) ([]Run, error) {
 		}
 		events = dedupeTimelineEvents(events)
 		applyRunArtifactStatus(&run, events)
+		if interview := s.runInterviewStateForRun(run); interview != nil {
+			run.Interview = interview
+			run.WaitingOn = RunWaitingOnHuman
+			run.WaitingReason = worksource.RunWaitingReasonInterviewQuestions
+			run.WaitingSince = firstRunNonEmpty(interview.AskedAt, run.WaitingSince)
+			run.CurrentStep = firstRunNonEmpty(run.CurrentStep, worksource.RunWaitingReasonInterviewQuestions)
+		}
 		applyRunActivity(&run, events)
 		run.LastReceipt = latestRunReceipt(events)
 		if run.StageStartedAt == "" {

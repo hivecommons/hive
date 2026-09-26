@@ -105,6 +105,11 @@ func (e *SpekHubExecutor) Tick(ctx context.Context, now time.Time) {
 		if st.stage != StageSpec && st.stage != StagePlan {
 			continue
 		}
+		if e.stageInterviewMode() != "auto" {
+			if _, _, _, _, pending := spekInterviewPending(spekHubRunWorktreePath(e.Identity, st.runKey)); pending {
+				continue
+			}
+		}
 		key := e.executionKey(st)
 		e.mu.Lock()
 		if e.inFlight == nil {
@@ -320,6 +325,12 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 		e.log().Warn("[spektacular] hub executor lease renew failed", "task", taskID, "error", err)
 	}
 	worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
+	if e.stageInterviewMode() != "auto" {
+		if req, _, pending, askedAt, ok := spekInterviewPending(worktree); ok {
+			e.recordInterviewWait(st, taskID, worktree, req, pending, askedAt)
+			return nil
+		}
+	}
 	e.recordStageProgress(st, "worktree_prepared", map[string]string{"worktree": worktree, "backend": e.backend()})
 	artifact := e.artifact(st.runKey)
 	env, err := e.executorEnv(appToken)
@@ -339,6 +350,9 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 		return nil
 	}
 	prompt := SpekHubStagePromptWithContext(st.stage, st.repo, st.number, st.runKey, st.title, artifact, st.workItem)
+	if e.stageInterviewMode() != "auto" {
+		prompt += spekInterviewPromptBlock(st.stage, artifact, readSpekInterviewAnswers(worktree))
+	}
 	if err := writeSpekHubPrompt(worktree, prompt); err != nil {
 		return err
 	}
@@ -358,6 +372,12 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 	}
 	e.log().Info("[spektacular] hub executor finished stage", "run", st.runKey, "stage", st.stage, "gen", st.gen, "worktree", worktree, "pid", pid, "exit_code", exitCode, "duration", time.Since(started).String())
 	e.recordStageProgress(st, "cli_exited", map[string]string{"backend": e.backend(), "pid": strconv.Itoa(pid), "exit_code": strconv.Itoa(exitCode), "duration": time.Since(started).String(), "worktree": worktree})
+	if e.stageInterviewMode() != "auto" {
+		if req, _, pending, askedAt, ok := spekInterviewPending(worktree); ok {
+			e.recordInterviewWait(st, taskID, worktree, req, pending, askedAt)
+			return nil
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("agent CLI failed: %w: %s", err, tailString(string(out), spekHubOutputTailBytes))
 	}
@@ -508,6 +528,7 @@ func (e *SpekHubExecutor) captureCompletedStage(st spekHubStage, worktree, artif
 	promptBytes, _ := os.ReadFile(filepath.Join(worktree, spekHubPromptRelPath))
 	artifactKey := firstRunNonEmpty(status.JoinKey(), artifact)
 	docs, files, interview, notes := collectSpekArtifactFiles(worktree, st.stage, artifactKey)
+	interview = appendSpekHumanInterview(worktree, interview, ended.Format(time.RFC3339Nano))
 	if len(interview) == 0 {
 		interview = interviewFromStatusHistory(history, docs, ended)
 	}
@@ -518,7 +539,7 @@ func (e *SpekHubExecutor) captureCompletedStage(st spekHubStage, worktree, artif
 				Question:   step,
 				Answer:     "Answer text was captured in the final document and agent transcript.",
 				AnsweredAt: ended.Format(time.RFC3339Nano),
-				Source:     "spektacular status completed_steps",
+				Source:     "agent_assumed",
 			})
 		}
 	}

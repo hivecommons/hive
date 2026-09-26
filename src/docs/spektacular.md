@@ -81,6 +81,7 @@ runs:
     enabled: true             # default false
     binary: spektacular       # default; resolved through PATH
     poll_interval_s: 30       # default
+    interview: human          # default; "auto" lets the headless agent self-answer
 ```
 
 As of v6, the Hive hub/spoke image, hub image, and contributor-agent image
@@ -222,7 +223,38 @@ admission lease as `hive-spek`, clones the repository under
 `/data/agents/hive-spek/<owner>/<repo>`, creates one detached worktree per run
 under `/data/agents/hive-spek/runs/<run>/work`, initializes a `.spektacular/`
 project if needed, and runs the configured agent CLI headlessly with
-instructions to author the spec or plan only. The CLI transcript is captured in
+instructions to author the spec or plan only.
+
+By default (`runs.spektacular.interview: human`), Spektacular interview,
+clarification, question, confirmation, or stakeholder-gathering steps are
+human-in-the-loop instead of headless. The hub prompt tells the agent not to
+invent stakeholder answers. When it reaches such a step without matching human
+answers, it writes `.hive/spek-interview-request.json`:
+
+```json
+{
+  "schema_version": "hive-spek-interview/v1",
+  "stage": "spec",
+  "artifact": "repo-1234",
+  "step": "interview",
+  "questions": [
+    {"id": "scope", "text": "What scope should this spec cover?", "context": "Needed before drafting."}
+  ]
+}
+```
+
+Hive then keeps the same stage generation leased but marks the run
+`waiting_on=human`, `waiting_reason=interview_questions`. `GET
+/api/runs/{key}/interview` returns pending questions plus answered history, and
+owner-only `POST /api/runs/{key}/interview` accepts
+`{"answers":[{"id":"scope","answer":"..."}]}`. The dashboard Runs and Campaigns
+cards show "Spek has N questions for you" with an in-app form; after submit Hive
+writes `.hive/spek-interview-answers.json`, wakes the executor, and the
+relaunched agent receives the answer JSON verbatim in its prompt. Operators who
+prefer the old fully headless behavior can set `runs.spektacular.interview:
+auto`.
+
+The CLI transcript is captured in
 `.hive/spek-stage-<stage>-<generation>.log` inside that worktree. Before the
 worktree can be swept, Hive also snapshots the final Spektacular artifact into
 the run receipt directory as `<stage>-gen<N>.transcript.json` (schema

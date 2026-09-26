@@ -3192,6 +3192,12 @@
     .run-markdown { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3); max-height: 420px; overflow: auto; }
     .run-markdown pre { white-space: pre-wrap; font-size: var(--fs-xs); color: var(--muted); }
     .run-detail-raw { max-height: 360px; overflow: auto; white-space: pre-wrap; font-size: var(--fs-xs); }
+    .spek-interview-card { grid-column: 1 / -1; margin-top: var(--sp-3); border: 1px solid color-mix(in srgb, var(--status-attention) 60%, var(--border)); border-radius: var(--r); padding: var(--sp-3); background: color-mix(in srgb, var(--status-attention) 12%, transparent); }
+    .spek-interview-card textarea { width: 100%; min-height: 74px; resize: vertical; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-2); font: inherit; }
+    .spek-interview-options { display: grid; gap: var(--sp-1); margin-top: var(--sp-2); }
+    .spek-question { display: grid; gap: var(--sp-2); margin-top: var(--sp-3); }
+    .spek-interview-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+    .spek-interview-muted { color: var(--muted); margin-top: 4px; }
     .campaign-empty { color: var(--muted); text-align: center; padding: var(--sp-7); border: 1px dashed var(--border); border-radius: var(--r); }
     .campaign-jam { margin-top: var(--sp-5); display: grid; gap: var(--sp-4); }
     .campaign-jam-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-4); }
@@ -8432,8 +8438,12 @@
         const waitCls = waiting === 'human' ? 'needs-context' : waiting === 'agent' ? 'done' : '';
         const runGen = run.gen || 0;
         const runStage = run.stage || 'spec';
+        const interview = renderSpekInterviewInline(run);
+        const checkpoint = canApprove && waiting === 'human' && run.waiting_reason !== 'interview_questions' && run.plan_epic_id
+          ? `<div id="checkpoint" class="spek-interview-card"><strong>Checkpoint approval required</strong><div class="spek-interview-muted">${escapeHtml(run.waiting_reason || 'Spek checkpoint is waiting for owner approval.')}</div><div class="spek-interview-actions"><button class="btn" style="color:var(--green)" data-action="runPlanAction" data-arg0="${escapeHtml(run.plan_epic_id)}" data-arg1="approve">✓ Approve checkpoint</button><button class="btn" style="color:var(--red)" data-action="runPlanAction" data-arg0="${escapeHtml(run.plan_epic_id)}" data-arg1="reject">✕ Reject checkpoint</button></div></div>`
+          : '';
         const actions = canApprove && waiting === 'human' && run.plan_epic_id
-          ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px"><button class="btn" style="color:var(--green)" data-action="runPlanAction" data-arg0="${escapeHtml(run.plan_epic_id)}" data-arg1="approve">✓ Approve</button><button class="btn" style="color:var(--red)" data-action="runPlanAction" data-arg0="${escapeHtml(run.plan_epic_id)}" data-arg1="reject">✕ Reject</button></div>`
+          ? checkpoint
           : '';
         return `<div class="repo-card" style="min-width:260px">
           <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
@@ -8444,9 +8454,11 @@
           ${renderRunActivity(run)}
           <div style="margin-top:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
             <span class="status-badge ${waitCls}" title="Waiting on ${escapeHtml(waiting)}">waiting: ${escapeHtml(waiting)}</span>
+            ${run.waiting_reason === 'interview_questions' && run.interview ? `<span class="status-badge needs-context">Spek has ${escapeHtml(String(run.interview.pending || 0))} questions for you</span>` : ''}
             <span class="status-badge" title="${escapeHtml(run.waiting_since || run.stage_started_at || '')}">age ${escapeHtml(runCurrentAge(run))}</span>
             ${run.assignee ? `<span class="status-badge" title="Assignee">${escapeHtml(run.assignee)}</span>` : ''}
           </div>
+          ${interview}
           <div style="margin-top:10px;font-size:0.78rem;color:var(--muted)">${runArtifactLinks(run)}</div>
           ${(run.artifact_id || run.artifact_name || run.document_status || run.current_step) ? `<div>${run.artifact_id ? `<span class="status-badge" title="Resolved artifact id">artifact id: ${escapeHtml(run.artifact_id)}</span>` : ''}${run.artifact_name ? `<span class="status-badge" title="Artifact name">artifact: ${escapeHtml(run.artifact_name)}</span>` : ''}${run.document_status ? `<span class="status-badge" title="Spektacular document_status">document: ${escapeHtml(run.document_status)}</span>` : ''}${run.current_step ? `<span class="status-badge" title="Spektacular current_step">step: ${escapeHtml(run.current_step)}</span>` : ''}</div>` : ''}
           <div class="run-log-actions"><button class="btn" data-action="toggleRunLog" data-arg0="${escapeHtml(key)}" data-arg1="${escapeHtml(runStage)}" data-arg2="${escapeHtml(String(runGen))}" data-arg3="run-log-${escapeHtml(safeDomId(key))}">Log</button></div><div id="run-log-${escapeHtml(safeDomId(key))}" class="run-log-panel"></div>
@@ -8459,6 +8471,84 @@
         : '';
       setIfChanged(el, (cards || '<div style="color:var(--muted);font-size:0.85rem">No active runs.</div>') + history);
     }
+
+    const _runInterviewCache = new Map();
+    const _runInterviewLoading = new Set();
+    function renderSpekInterviewInline(run) {
+      if (!run || run.waiting_reason !== 'interview_questions' || !run.interview || !run.key) return '';
+      const key = run.key;
+      const cached = _runInterviewCache.get(key);
+      if (!cached && !_runInterviewLoading.has(key)) {
+        setTimeout(() => loadRunInterview(key), 0);
+      }
+      const pending = run.interview.pending || (cached && cached.pending) || 0;
+      if (!cached) {
+        return `<div id="interview" class="spek-interview-card"><strong>Spek has ${escapeHtml(String(pending))} questions for you</strong><div class="text-muted">Loading the in-app answer form…</div></div>`;
+      }
+      if (!cached.pending) {
+        return `<div class="spek-interview-card"><strong>Interview answers sent</strong><div class="text-muted">Spek is resuming with your answers.</div></div>`;
+      }
+      const questions = (cached.questions || []).map(q => {
+        const id = escapeHtml(q.id || '');
+        const inputName = 'answer-' + safeDomId(key) + '-' + safeDomId(q.id || '');
+        const control = Array.isArray(q.options) && q.options.length
+          ? `<div class="spek-interview-options">${q.options.map(opt => `<label><input type="radio" name="${inputName}" value="${escapeHtml(opt)}" ${q.default === opt ? 'checked' : ''}> ${escapeHtml(opt)}</label>`).join('')}</div>`
+          : `<textarea data-interview-answer="${id}" placeholder="${escapeHtml(q.default || 'Type your answer')}"></textarea>`;
+        return `<div class="spek-question" data-interview-question="${id}" data-interview-input="${escapeHtml(inputName)}"><label><strong>${escapeHtml(q.text || q.id)}</strong></label>${q.context ? `<div class="text-muted">${escapeHtml(q.context)}</div>` : ''}${control}</div>`;
+      }).join('');
+      return `<div id="interview" class="spek-interview-card"><strong>Spek has ${escapeHtml(String(cached.pending))} questions for you</strong><div class="text-muted">${escapeHtml(cached.step || 'Clarification needed')}</div>${questions}<div class="spek-interview-actions"><button class="btn" data-action="submitRunInterview" data-arg0="${escapeHtml(key)}" data-arg-types="s,t">Submit answers</button><button class="btn" data-action="loadRunInterview" data-arg0="${escapeHtml(key)}">Refresh questions</button></div></div>`;
+    }
+
+    async function loadRunInterview(key) {
+      if (!key || _runInterviewLoading.has(key)) return;
+      _runInterviewLoading.add(key);
+      try {
+        const res = await fetch('/api/runs/' + encodeURIComponent(key) + '/interview', { headers: _inceptionAuthHeaders() });
+        if (!res.ok) throw new Error(await res.text());
+        _runInterviewCache.set(key, await res.json());
+        refreshStatus();
+      } catch (e) {
+        showToast('Interview questions unavailable: ' + (e && e.message ? e.message : e), 'error');
+      } finally {
+        _runInterviewLoading.delete(key);
+      }
+    }
+    window.loadRunInterview = loadRunInterview;
+
+    async function submitRunInterview(key, button) {
+      if (!key) return;
+      const card = button && button.closest ? button.closest('.spek-interview-card') : null;
+      if (!card) return;
+      const answers = [];
+      card.querySelectorAll('[data-interview-question]').forEach(qEl => {
+        const id = qEl.getAttribute('data-interview-question') || '';
+        const ta = qEl.querySelector('[data-interview-answer]');
+        let answer = ta ? ta.value : '';
+        if (!ta) {
+          const checked = qEl.querySelector('input[type="radio"]:checked');
+          answer = checked ? checked.value : '';
+        }
+        if (id && String(answer).trim()) answers.push({ id, answer: String(answer).trim() });
+      });
+      const expected = card.querySelectorAll('[data-interview-question]').length;
+      if (!answers.length || answers.length < expected) {
+        showToast('Answer every pending Spek question before submitting.', 'warning');
+        return;
+      }
+      try {
+        const res = await fetch('/api/runs/' + encodeURIComponent(key) + '/interview', {
+          method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, _inceptionAuthHeaders()),
+          body: JSON.stringify({ answers })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        _runInterviewCache.set(key, { ok: true, pending: 0, questions: [] });
+        showToast('Interview answers sent; Spek is resuming.', 'success');
+        refreshStatus();
+      } catch (e) {
+        showToast('Submitting interview answers failed: ' + (e && e.message ? e.message : e), 'error');
+      }
+    }
+    window.submitRunInterview = submitRunInterview;
 
     async function runPlanAction(epicID, action) {
       if (!epicID || !['approve', 'reject'].includes(action)) return;
@@ -16944,11 +17034,13 @@ function burnAreaChart() {
         const canLog = !!c.run_key;
         const liveRun = canLog && Array.isArray(window._lastRuns) ? window._lastRuns.find(r => r && r.key === c.run_key) : null;
         const actionDisabled = _campaignActionsInFlight.has(c.id) ? ' disabled aria-busy="true"' : '';
+        const interview = c.interview && c.run_key ? renderSpekInterviewInline({ key: c.run_key, waiting_reason: 'interview_questions', interview: c.interview }) : '';
         return `<div class="campaign-row">
           <div>
             <div class="campaign-row-title">${canLog ? `<button class="clanker-link" data-action="toggleCampaignRunDetail" data-arg0="${escapeHtml(c.run_key)}" data-arg1="${escapeHtml(detailID)}">${escapeHtml(c.title || c.id)}</button>` : escapeHtml(c.title || c.id)}</div>
             <div class="campaign-row-meta">
               <span class="campaign-pill">${escapeHtml(c.status || 'parked')}</span>
+              ${c.interview ? `<span class="campaign-pill">Spek has ${escapeHtml(String(c.interview.pending || 0))} questions for you</span>` : ''}
               <span>${escapeHtml(c.current_stage || '')}${c.current_step ? ' / ' + escapeHtml(c.current_step) : ''}</span>
               <span>${escapeHtml(repo)}</span>
               <span>${escapeHtml(engine)}</span>
@@ -16966,6 +17058,7 @@ function burnAreaChart() {
             <button class="hv-btn btn-secondary btn-sm" data-action="releaseCampaign" data-arg0="${escapeHtml(c.id)}"${actionDisabled}>Release</button>
             <button class="hv-btn btn-secondary btn-sm" data-action="reviseCampaign" data-arg0="${escapeHtml(c.id)}"${actionDisabled}>Revise</button>
           </div>
+          ${interview}
           ${canLog ? `<div id="${escapeHtml(detailID)}" class="run-detail-panel" style="display:none"></div>` : ''}
           ${canLog ? `<div id="${escapeHtml(logID)}" class="run-log-panel"></div>` : ''}
         </div>`;
@@ -27321,6 +27414,7 @@ function burnAreaChart() {
               <div class="config-field"><label for="ext-spektacular-poll">Poll interval seconds</label><input id="ext-spektacular-poll" type="number" min="1" step="1" value="${esc(String(f.spektacularPollS || 30))}" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularPollS" data-arg-types="s,s,N"></div>
               <div class="config-field"><label for="ext-spektacular-retries">Max stage retries</label><input id="ext-spektacular-retries" type="number" min="0" step="1" value="${esc(String(f.maxStageRetries || 2))}" data-change-action="markDirty" data-arg0="features" data-arg1="maxStageRetries" data-arg-types="s,s,N"></div>
             </div>
+            <div class="config-field"><label for="ext-spektacular-interview">Interview mode <span class="config-info">i<span class="config-tooltip">human pauses interview/clarification steps for dashboard answers. auto preserves the previous headless self-answering behavior.</span></span></label><select id="ext-spektacular-interview" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularInterview" data-arg-types="s,s,v"><option value="human" ${(f.spektacularInterview || 'human') === 'human' ? 'selected' : ''}>human</option><option value="auto" ${f.spektacularInterview === 'auto' ? 'selected' : ''}>auto</option></select></div>
             <div class="extension-callout ${runStagesAuto ? 'success' : 'muted'}"><b>Run stages:</b> ${runStagesAuto ? '<span class="status-badge done">AUTO ON</span> Spektacular requires Governor work_source.run_stages, so Hive sets it automatically when enabled.' : '<span class="status-badge disabled">manual/off</span> Enable Spektacular to turn run-stage work on automatically.'}</div>
           `)}
           ${extensionSubsection('Hub executor', `
