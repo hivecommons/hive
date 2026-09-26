@@ -96,13 +96,24 @@ rule.
 ## Repository card legend, issue bands, and PR bands
 
 The collapsible **Overview** section above Repositories summarizes the same
-client-side issue and PR bands across the current repository view. Its two SVG
-donut charts reuse the repository-card classifiers for actionable plus held
+client-side issue and PR bands across the current repository view. Its SVG
+charts reuse the repository-card classifiers for actionable plus held
 issues/PRs, so their totals match the visible band counters and respect any
-repo filtering without a separate API call. Hovering a donut slice, an Overview
-legend row, or a repository-card band header shows that band's rule; the text
-comes from the same table the pill legend renders from (`issueBandSpec` /
-`prBandSpec` in `index.html`), so the three cannot drift.
+repo filtering without a separate API call. Operators can view each Issues or
+PRs panel as a donut, pie, horizontal bar, single 100% stacked bar, line/spark
+trend, or age histogram. Every shape is still driven by the same band slices and
+shared rule tables; hovering a chart element, an Overview legend row, or a
+repository-card band header shows that band's rule from `issueBandSpec` /
+`prBandSpec` in `index.html`, so the three cannot drift.
+
+The Overview header's ⚙️ popover stores browser-local chart preferences under
+`hive-overview-charts`: which chart types are in rotation, whether the carousel
+is enabled, the 5-second to 5-minute interval, transition style, duration, and
+the bounded client-side line/spark history. The default remains donut-only with
+the carousel off, a 30-second interval, fade transition, and normal duration.
+Manual arrows and dot indicators are available even when timed rotation is off;
+timed rotation pauses while the panel is hovered or the tab is hidden, and
+reduced-motion users get instant swaps.
 
 The **Repositories** section includes a compact, collapsible pill legend. It is
 stored per browser in `localStorage` and uses the same pill classes as the cards,

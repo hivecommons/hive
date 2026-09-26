@@ -1511,9 +1511,69 @@
     .repo-issue-pill .pill-role { font-size:var(--fs-2xs); font-weight:700; letter-spacing:0.02em; text-transform:uppercase; margin-left:3px; opacity:0.85; }
     .repo-pr-pill .pill-state { font-size:var(--fs-2xs); margin-left:2px; opacity:0.9; }
     .repo-pr-pill .pill-role { font-size:var(--fs-2xs); font-weight:700; letter-spacing:0.02em; text-transform:uppercase; margin-left:3px; opacity:0.85; }
-    .overview-card { margin: var(--sp-0) var(--sp-0) var(--sp-6); padding: var(--sp-5); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2); }
+    .overview-card { position: relative; margin: var(--sp-0) var(--sp-0) var(--sp-6); padding: var(--sp-5); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2); }
+    .overview-header { display: inline-flex; align-items: center; gap: var(--sp-2); }
+    .overview-settings-popover { position: absolute; z-index: 40; right: var(--sp-5); top: calc(var(--sp-5) + var(--sp-8)); width: min(28rem, calc(100vw - var(--sp-8))); padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r); background: var(--panel); box-shadow: var(--shadow-lg); }
+    .overview-settings-popover[hidden] { display: none; }
+    .overview-settings-title { font-size: var(--fs-sm); font-weight: 800; margin-bottom: var(--sp-3); }
+    .overview-settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-3); }
+    .overview-settings-row { display: flex; align-items: center; gap: var(--sp-2); color: var(--muted); font-size: var(--fs-xs); }
+    .overview-settings-row input, .overview-settings-row select { accent-color: var(--accent); }
+    .overview-settings-field { display: grid; gap: var(--sp-1); color: var(--muted); font-size: var(--fs-xs); }
+    .overview-settings-field input, .overview-settings-field select, .overview-chart-select { min-width: 0; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg); color: var(--text); padding: var(--sp-1) var(--sp-2); font: inherit; }
     .overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--sp-5); }
-    .overview-chart-card { display: grid; grid-template-columns: minmax(180px, 220px) minmax(0, 1fr); align-items: center; gap: var(--sp-4); min-width: 0; }
+    .overview-chart-card { position: relative; display: grid; grid-template-columns: minmax(180px, 220px) minmax(0, 1fr); align-items: center; gap: var(--sp-4); min-width: 0; overflow: hidden; }
+    .overview-chart-meta { min-width: 0; }
+    .overview-chart-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+    .overview-carousel-arrow { border: 1px solid var(--border); border-radius: var(--r-pill); background: var(--bg); color: var(--muted); cursor: pointer; padding: var(--sp-1) var(--sp-2); }
+    .overview-carousel-arrow:hover { color: var(--text); border-color: var(--accent); }
+    .overview-carousel-dots { display: inline-flex; gap: var(--sp-1); align-items: center; }
+    .overview-carousel-dot { width: 0.45rem; height: 0.45rem; border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--bg); }
+    .overview-carousel-dot.active { background: var(--accent); border-color: var(--accent); }
+    .overview-chart-bar-label { fill: var(--text); font-size: var(--fs-2xs); font-weight: 800; dominant-baseline: central; }
+    .overview-chart-bar-value, .overview-chart-axis-label { fill: var(--muted); font-size: var(--fs-2xs); dominant-baseline: central; }
+    .overview-chart-fill { fill: var(--slice-c); }
+    .overview-chart-line { fill: none; stroke: var(--slice-c); stroke-width: 2; }
+    .overview-chart-point { fill: var(--slice-c); }
+    .overview-chart-hist-cell { fill: var(--slice-c); }
+    .overview-panel-in { animation-duration: var(--overview-transition-duration, 180ms); animation-timing-function: ease; animation-fill-mode: both; }
+    .overview-panel-out { animation-duration: var(--overview-transition-duration, 180ms); animation-timing-function: ease; animation-fill-mode: both; }
+    .overview-duration-fast { --overview-transition-duration: 120ms; }
+    .overview-duration-normal { --overview-transition-duration: 180ms; }
+    .overview-duration-slow { --overview-transition-duration: 320ms; }
+    .overview-panel-in.overview-transition-fade { animation-name: overview-fade-in; }
+    .overview-panel-out.overview-transition-fade { animation-name: overview-fade-out; }
+    .overview-panel-in.overview-transition-rise-from-bottom { animation-name: overview-rise-from-bottom-in; }
+    .overview-panel-out.overview-transition-rise-from-bottom { animation-name: overview-rise-from-bottom-out; }
+    .overview-panel-in.overview-transition-lower-from-top { animation-name: overview-lower-from-top-in; }
+    .overview-panel-out.overview-transition-lower-from-top { animation-name: overview-lower-from-top-out; }
+    .overview-panel-in.overview-transition-slide-from-left { animation-name: overview-slide-from-left-in; }
+    .overview-panel-out.overview-transition-slide-from-left { animation-name: overview-slide-from-left-out; }
+    .overview-panel-in.overview-transition-slide-from-right { animation-name: overview-slide-from-right-in; }
+    .overview-panel-out.overview-transition-slide-from-right { animation-name: overview-slide-from-right-out; }
+    .overview-panel-in.overview-transition-zoom { animation-name: overview-zoom-in; }
+    .overview-panel-out.overview-transition-zoom { animation-name: overview-zoom-out; }
+    .overview-panel-in.overview-transition-flip { animation-name: overview-flip-in; }
+    .overview-panel-out.overview-transition-flip { animation-name: overview-flip-out; }
+    .overview-panel-in.overview-transition-blur { animation-name: overview-blur-in; }
+    .overview-panel-out.overview-transition-blur { animation-name: overview-blur-out; }
+    @keyframes overview-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes overview-fade-out { from { opacity: 1; } to { opacity: 0; } }
+    @keyframes overview-rise-from-bottom-in { from { opacity: 0; transform: translateY(var(--sp-5)); } to { opacity: 1; transform: translateY(var(--sp-0)); } }
+    @keyframes overview-rise-from-bottom-out { from { opacity: 1; transform: translateY(var(--sp-0)); } to { opacity: 0; transform: translateY(calc(-1 * var(--sp-3))); } }
+    @keyframes overview-lower-from-top-in { from { opacity: 0; transform: translateY(calc(-1 * var(--sp-5))); } to { opacity: 1; transform: translateY(var(--sp-0)); } }
+    @keyframes overview-lower-from-top-out { from { opacity: 1; transform: translateY(var(--sp-0)); } to { opacity: 0; transform: translateY(var(--sp-3)); } }
+    @keyframes overview-slide-from-left-in { from { opacity: 0; transform: translateX(calc(-1 * var(--sp-8))); } to { opacity: 1; transform: translateX(var(--sp-0)); } }
+    @keyframes overview-slide-from-left-out { from { opacity: 1; transform: translateX(var(--sp-0)); } to { opacity: 0; transform: translateX(var(--sp-8)); } }
+    @keyframes overview-slide-from-right-in { from { opacity: 0; transform: translateX(var(--sp-8)); } to { opacity: 1; transform: translateX(var(--sp-0)); } }
+    @keyframes overview-slide-from-right-out { from { opacity: 1; transform: translateX(var(--sp-0)); } to { opacity: 0; transform: translateX(calc(-1 * var(--sp-8))); } }
+    @keyframes overview-zoom-in { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: scale(1); } }
+    @keyframes overview-zoom-out { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(0.96); } }
+    @keyframes overview-flip-in { from { opacity: 0; transform: rotateX(-70deg); } to { opacity: 1; transform: rotateX(0); } }
+    @keyframes overview-flip-out { from { opacity: 1; transform: rotateX(0); } to { opacity: 0; transform: rotateX(70deg); } }
+    @keyframes overview-blur-in { from { opacity: 0; filter: blur(0.35rem); } to { opacity: 1; filter: blur(0); } }
+    @keyframes overview-blur-out { from { opacity: 1; filter: blur(0); } to { opacity: 0; filter: blur(0.35rem); } }
+    @media (prefers-reduced-motion: reduce) { .overview-panel-in, .overview-panel-out { animation: none; } }
     .overview-chart-title { color: var(--text); font-size: var(--fs-sm); font-weight: 800; margin-bottom: var(--sp-2); }
     .overview-chart-subtitle { color: var(--muted); font-size: var(--fs-xs); margin-bottom: var(--sp-3); }
     .overview-chart-svg { width: 100%; max-width: 220px; height: auto; overflow: visible; }
@@ -3663,7 +3723,8 @@
   <div id="planning-intro" style="display:none"></div>
   <div id="system-alerts-banner" style="display:none"></div>
   <div class="repos" id="overview-section">
-    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="overview-section"><span class="section-chevron">▼</span> Overview</h2>
+    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="overview-section"><span class="section-chevron">▼</span> <span class="overview-header">Overview <button type="button" class="hv-btn config-gear btn-sm" data-action="toggleOverviewChartSettings" data-stop="1" title="Configure Overview chart types, carousel timing, and transitions" aria-haspopup="true" aria-expanded="false" aria-controls="overview-chart-settings">⚙️</button></span></h2>
+    <div class="overview-settings-popover" id="overview-chart-settings" hidden></div>
     <div class="section-body">
       <div class="overview-card" id="overview-card"></div>
     </div>
@@ -9635,30 +9696,40 @@
 
     function overviewIssueBandSlices(repos) {
       const counts = new Map(OVERVIEW_ISSUE_BAND_ORDER.map(band => [band, 0]));
+      const items = new Map(OVERVIEW_ISSUE_BAND_ORDER.map(band => [band, []]));
       (repos || []).forEach(r => {
         const issues = (r.actionableIssues || []).concat(r.heldIssues || []);
-        groupedRepoIssues(issues).forEach(g => counts.set(g.band, (counts.get(g.band) || 0) + g.issues.length));
+        groupedRepoIssues(issues).forEach(g => {
+          counts.set(g.band, (counts.get(g.band) || 0) + g.issues.length);
+          items.set(g.band, (items.get(g.band) || []).concat(g.issues.map(entry => entry.issue)));
+        });
       });
       return OVERVIEW_ISSUE_BAND_ORDER.map(band => ({
         key: band,
         label: issueBandLabel(band),
         rule: issueBandRule(band),
         count: counts.get(band) || 0,
-        className: 'overview-issue-' + band
+        className: 'overview-issue-' + band,
+        items: items.get(band) || []
       }));
     }
 
     function overviewPRBandSlices(repos) {
       const counts = new Map(PR_BAND_ORDER.map(band => [band, 0]));
+      const items = new Map(PR_BAND_ORDER.map(band => [band, []]));
       (repos || []).forEach(r => {
-        groupedRepoPRs(r.openPrs || [], r.heldPrs || []).forEach(g => counts.set(g.band, (counts.get(g.band) || 0) + g.prs.length));
+        groupedRepoPRs(r.openPrs || [], r.heldPrs || []).forEach(g => {
+          counts.set(g.band, (counts.get(g.band) || 0) + g.prs.length);
+          items.set(g.band, (items.get(g.band) || []).concat(g.prs.map(entry => entry.pr)));
+        });
       });
       return PR_BAND_ORDER.map(band => ({
         key: band,
         label: prBandLabel(band),
         rule: prBandRule(band),
         count: counts.get(band) || 0,
-        className: 'overview-pr-' + band
+        className: 'overview-pr-' + band,
+        items: items.get(band) || []
       }));
     }
 
@@ -9698,16 +9769,334 @@
       return `<div class="overview-chart-card"><svg class="overview-chart-svg" viewBox="0 0 ${OVERVIEW_CHART_VIEWBOX} ${OVERVIEW_CHART_VIEWBOX}" role="img" aria-label="${esc(title)}"><circle class="overview-chart-track" cx="${OVERVIEW_CHART_CENTER}" cy="${OVERVIEW_CHART_CENTER}" r="${OVERVIEW_CHART_RADIUS}" stroke-width="${OVERVIEW_CHART_STROKE}"></circle>${sliceHtml}<text class="overview-chart-total" x="${OVERVIEW_CHART_CENTER}" y="${OVERVIEW_CHART_CENTER + OVERVIEW_CHART_TOTAL_VALUE_Y_OFFSET}">${total}</text><text class="overview-chart-total-caption" x="${OVERVIEW_CHART_CENTER}" y="${OVERVIEW_CHART_CENTER + OVERVIEW_CHART_TOTAL_CAPTION_Y_OFFSET}">total</text></svg><div><div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${legendHtml}</div></div></div>`;
     }
 
+    const OVERVIEW_CHARTS_KEY = 'hive-overview-charts';
+    const OVERVIEW_CHART_TYPES = ['donut', 'pie', 'bar', 'stacked', 'line', 'histogram'];
+    const OVERVIEW_CHART_TYPE_LABELS = { donut: 'Donut', pie: 'Pie', bar: 'Horizontal bar', stacked: '100% stacked bar', line: 'Line / spark', histogram: 'Age histogram' };
+    const OVERVIEW_TRANSITIONS = ['fade', 'rise-from-bottom', 'lower-from-top', 'slide-from-left', 'slide-from-right', 'zoom', 'flip', 'blur', 'random'];
+    const OVERVIEW_DURATIONS = ['fast', 'normal', 'slow'];
+    const OVERVIEW_CAROUSEL_MIN_MS = 5000;
+    const OVERVIEW_CAROUSEL_MAX_MS = 300000;
+    const OVERVIEW_CAROUSEL_DEFAULT_MS = 30000;
+    const OVERVIEW_HISTORY_MAX_SAMPLES = 288;
+    const OVERVIEW_HISTORY_MIN_SAMPLE_MS = 60000;
+    const OVERVIEW_BAR_W = 220, OVERVIEW_BAR_H = 150, OVERVIEW_BAR_LABEL_X = 4, OVERVIEW_BAR_X = 72, OVERVIEW_BAR_MAX_W = 120;
+    const OVERVIEW_BAR_ROW_H = 22, OVERVIEW_BAR_Y = 16, OVERVIEW_BAR_MIN_W = 2;
+    const OVERVIEW_STACK_W = 220, OVERVIEW_STACK_H = 86, OVERVIEW_STACK_X = 10, OVERVIEW_STACK_Y = 36, OVERVIEW_STACK_BAR_W = 200, OVERVIEW_STACK_BAR_H = 18;
+    const OVERVIEW_LINE_W = 220, OVERVIEW_LINE_H = 150, OVERVIEW_LINE_PAD = 12;
+    const OVERVIEW_HIST_W = 220, OVERVIEW_HIST_H = 150, OVERVIEW_HIST_LABEL_X = 4, OVERVIEW_HIST_X = 50, OVERVIEW_HIST_MAX_W = 154;
+    const OVERVIEW_AGE_BUCKETS = [
+      { key: 'lt1d', label: '<1d', maxMinutes: 1440 },
+      { key: '1to7d', label: '1-7d', maxMinutes: 10080 },
+      { key: '7to14d', label: '7-14d', maxMinutes: 20160 },
+      { key: 'gt14d', label: '>14d', maxMinutes: Number.POSITIVE_INFINITY }
+    ];
+    const _overviewCarouselTimers = [];
+    const _overviewHoverState = { issue: false, pr: false };
+    const _overviewCarouselState = { issue: 0, pr: 0 };
+    let _overviewLastRepos = [];
+
+    function overviewDefaultChartState() {
+      const enabled = {};
+      OVERVIEW_CHART_TYPES.forEach(type => { enabled[type] = type === 'donut'; });
+      return { enabled, carousel: false, intervalMs: OVERVIEW_CAROUSEL_DEFAULT_MS, transition: 'fade', duration: 'normal', active: { issue: 'donut', pr: 'donut' }, history: { issue: [], pr: [] } };
+    }
+
+    function overviewChartsState() {
+      const base = overviewDefaultChartState();
+      let saved = {};
+      try { saved = JSON.parse(localStorage.getItem(OVERVIEW_CHARTS_KEY) || '{}') || {}; } catch { saved = {}; }
+      const enabled = Object.assign({}, base.enabled, saved.enabled || {});
+      if (!OVERVIEW_CHART_TYPES.some(type => enabled[type])) enabled.donut = true;
+      const active = Object.assign({}, base.active, saved.active || {});
+      ['issue', 'pr'].forEach(kind => { if (!OVERVIEW_CHART_TYPES.includes(active[kind])) active[kind] = 'donut'; });
+      const intervalMs = Math.min(OVERVIEW_CAROUSEL_MAX_MS, Math.max(OVERVIEW_CAROUSEL_MIN_MS, Number(saved.intervalMs || base.intervalMs)));
+      const transition = OVERVIEW_TRANSITIONS.includes(saved.transition) ? saved.transition : base.transition;
+      const duration = OVERVIEW_DURATIONS.includes(saved.duration) ? saved.duration : base.duration;
+      const history = saved.history && typeof saved.history === 'object' ? saved.history : base.history;
+      return { enabled, carousel: !!saved.carousel, intervalMs, transition, duration, active, history };
+    }
+
+    function saveOverviewChartsState(state) {
+      try { localStorage.setItem(OVERVIEW_CHARTS_KEY, JSON.stringify(state)); } catch {}
+    }
+
+    function overviewEnabledTypes(state) {
+      const enabled = OVERVIEW_CHART_TYPES.filter(type => state.enabled && state.enabled[type]);
+      return enabled.length ? enabled : ['donut'];
+    }
+
+    function overviewHistoryCounts(slices) {
+      const counts = {};
+      (slices || []).forEach(s => { counts[s.key] = s.count || 0; });
+      return counts;
+    }
+
+    function overviewSampleHistory(kind, slices, state) {
+      const now = Date.now();
+      const history = Array.isArray(state.history && state.history[kind]) ? state.history[kind].slice() : [];
+      const last = history[history.length - 1];
+      if (last && now - Number(last.ts || 0) < OVERVIEW_HISTORY_MIN_SAMPLE_MS) return false;
+      history.push({ ts: now, counts: overviewHistoryCounts(slices) });
+      state.history[kind] = history.slice(-OVERVIEW_HISTORY_MAX_SAMPLES);
+      return true;
+    }
+
+    function overviewTransitionClass(state) {
+      let name = state.transition || 'fade';
+      if (name === 'random') {
+        const choices = OVERVIEW_TRANSITIONS.filter(t => t !== 'random');
+        name = choices[Math.floor(Math.random() * choices.length)] || 'fade';
+      }
+      return 'overview-transition-' + name;
+    }
+
+    function overviewLegendHTML(slices) {
+      const total = (slices || []).reduce((n, s) => n + s.count, 0);
+      const visible = (slices || []).filter(s => s.count > 0);
+      if (!total) return '<div class="overview-empty">No matching items in this view.</div>';
+      return visible.map(s => {
+        const percent = (s.count / total) * OVERVIEW_CHART_PERCENT_SCALE;
+        const percentLabel = percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + '%';
+        return `<div class="overview-chart-legend-row" title="${esc(s.label + (s.rule ? ': ' + s.rule : ''))}"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${s.count} (${percentLabel})</span></div>`;
+      }).join('');
+    }
+
+    function overviewChartTypeOptions(selected) {
+      return OVERVIEW_CHART_TYPES.map(type => `<option value="${esc(type)}"${type === selected ? ' selected' : ''}>${esc(OVERVIEW_CHART_TYPE_LABELS[type])}</option>`).join('');
+    }
+
+    function renderOverviewPie(title, subtitle, slices) {
+      const visible = (slices || []).filter(s => s.count > 0);
+      const total = visible.reduce((n, s) => n + s.count, 0);
+      if (!total) return renderOverviewDonut(title, subtitle, slices);
+      let offset = 0;
+      const radius = OVERVIEW_CHART_RADIUS / 2;
+      const strokeWidth = OVERVIEW_CHART_RADIUS;
+      const sliceHtml = visible.map(s => {
+        const percent = (s.count / total) * OVERVIEW_CHART_PERCENT_SCALE;
+        const dashOffset = -offset;
+        offset += percent;
+        return `<circle class="overview-chart-slice ${esc(s.className)}" cx="${OVERVIEW_CHART_CENTER}" cy="${OVERVIEW_CHART_CENTER}" r="${radius}" pathLength="${OVERVIEW_CHART_FULL}" stroke-width="${strokeWidth}" stroke-dasharray="${percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)} ${OVERVIEW_CHART_FULL}" stroke-dashoffset="${dashOffset.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" transform="rotate(${OVERVIEW_CHART_START_ANGLE} ${OVERVIEW_CHART_CENTER} ${OVERVIEW_CHART_CENTER})"><title>${esc(s.label)}: ${s.count}${s.rule ? ' — ' + esc(s.rule) : ''}</title></circle>`;
+      }).join('');
+      return `<svg class="overview-chart-svg" viewBox="0 0 ${OVERVIEW_CHART_VIEWBOX} ${OVERVIEW_CHART_VIEWBOX}" role="img" aria-label="${esc(title)}"><circle class="overview-chart-track" cx="${OVERVIEW_CHART_CENTER}" cy="${OVERVIEW_CHART_CENTER}" r="${radius}" stroke-width="${strokeWidth}"></circle>${sliceHtml}<text class="overview-chart-total" x="${OVERVIEW_CHART_CENTER}" y="${OVERVIEW_CHART_CENTER + OVERVIEW_CHART_TOTAL_VALUE_Y_OFFSET}">${total}</text><text class="overview-chart-total-caption" x="${OVERVIEW_CHART_CENTER}" y="${OVERVIEW_CHART_CENTER + OVERVIEW_CHART_TOTAL_CAPTION_Y_OFFSET}">total</text></svg>`;
+    }
+
+    function renderOverviewBar(title, subtitle, slices) {
+      const max = Math.max(1, ...(slices || []).map(s => s.count || 0));
+      const rows = (slices || []).map((s, idx) => {
+        const y = OVERVIEW_BAR_Y + idx * OVERVIEW_BAR_ROW_H;
+        const w = Math.max(s.count ? OVERVIEW_BAR_MIN_W : 0, (s.count / max) * OVERVIEW_BAR_MAX_W);
+        return `<g title="${esc(s.label + (s.rule ? ': ' + s.rule : ''))}"><text class="overview-chart-bar-label" x="${OVERVIEW_BAR_LABEL_X}" y="${y + 7}">${esc(s.label)}</text><rect class="overview-chart-fill ${esc(s.className)}" x="${OVERVIEW_BAR_X}" y="${y}" width="${w.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" height="12" rx="3"><title>${esc(s.label)}: ${s.count}${s.rule ? ' — ' + esc(s.rule) : ''}</title></rect><text class="overview-chart-bar-value" x="${OVERVIEW_BAR_X + w + 4}" y="${y + 7}">${s.count}</text></g>`;
+      }).join('');
+      return `<svg class="overview-chart-svg" viewBox="0 0 ${OVERVIEW_BAR_W} ${OVERVIEW_BAR_H}" role="img" aria-label="${esc(title)}">${rows}</svg>`;
+    }
+
+    function renderOverviewStacked(title, subtitle, slices) {
+      const visible = (slices || []).filter(s => s.count > 0);
+      const total = visible.reduce((n, s) => n + s.count, 0);
+      if (!total) return renderOverviewBar(title, subtitle, slices);
+      let x = OVERVIEW_STACK_X;
+      const bars = visible.map(s => {
+        const w = (s.count / total) * OVERVIEW_STACK_BAR_W;
+        const out = `<rect class="overview-chart-fill ${esc(s.className)}" x="${x.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" y="${OVERVIEW_STACK_Y}" width="${w.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" height="${OVERVIEW_STACK_BAR_H}" rx="3"><title>${esc(s.label)}: ${s.count}${s.rule ? ' — ' + esc(s.rule) : ''}</title></rect>`;
+        x += w;
+        return out;
+      }).join('');
+      return `<svg class="overview-chart-svg" viewBox="0 0 ${OVERVIEW_STACK_W} ${OVERVIEW_STACK_H}" role="img" aria-label="${esc(title)}"><rect class="overview-chart-track" x="${OVERVIEW_STACK_X}" y="${OVERVIEW_STACK_Y}" width="${OVERVIEW_STACK_BAR_W}" height="${OVERVIEW_STACK_BAR_H}" rx="3"></rect>${bars}<text class="overview-chart-total" x="${OVERVIEW_STACK_W / 2}" y="${OVERVIEW_STACK_Y - 10}">${total} total</text></svg>`;
+    }
+
+    function renderOverviewLine(title, subtitle, slices, history) {
+      const samples = Array.isArray(history) ? history : [];
+      if (samples.length < 2) return renderOverviewBar(title, subtitle, slices);
+      const max = Math.max(1, ...samples.flatMap(sample => (slices || []).map(s => Number((sample.counts || {})[s.key] || 0))));
+      const denom = Math.max(1, samples.length - 1);
+      const lines = (slices || []).map(s => {
+        const points = samples.map((sample, idx) => {
+          const x = OVERVIEW_LINE_PAD + idx * ((OVERVIEW_LINE_W - OVERVIEW_LINE_PAD * 2) / denom);
+          const y = OVERVIEW_LINE_H - OVERVIEW_LINE_PAD - (Number((sample.counts || {})[s.key] || 0) / max) * (OVERVIEW_LINE_H - OVERVIEW_LINE_PAD * 2);
+          return x.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + ',' + y.toFixed(OVERVIEW_CHART_DECIMAL_PLACES);
+        }).join(' ');
+        return `<polyline class="overview-chart-line ${esc(s.className)}" points="${points}"><title>${esc(s.label)}${s.rule ? ' — ' + esc(s.rule) : ''}</title></polyline>`;
+      }).join('');
+      return `<svg class="overview-chart-svg" viewBox="0 0 ${OVERVIEW_LINE_W} ${OVERVIEW_LINE_H}" role="img" aria-label="${esc(title)}">${lines}</svg>`;
+    }
+
+    function overviewItemAgeMinutes(item) {
+      const explicit = Number(item && (item.age_minutes ?? item.ageMinutes));
+      if (Number.isFinite(explicit) && explicit >= 0) return explicit;
+      const value = (item && (item.updated_at || item.created_at)) || '';
+      const t = Date.parse(value);
+      return Number.isFinite(t) ? Math.max(0, (Date.now() - t) / 60000) : 0;
+    }
+
+    function renderOverviewHistogram(title, subtitle, slices) {
+      const rows = OVERVIEW_AGE_BUCKETS.map((bucket, idx) => {
+        const bySlice = (slices || []).map(s => ({ slice: s, count: (s.items || []).filter(item => overviewItemAgeMinutes(item) <= bucket.maxMinutes && (idx === 0 || overviewItemAgeMinutes(item) > OVERVIEW_AGE_BUCKETS[idx - 1].maxMinutes)).length }));
+        const total = bySlice.reduce((n, x) => n + x.count, 0);
+        return { bucket, bySlice, total };
+      });
+      const max = Math.max(1, ...rows.map(r => r.total));
+      const svgRows = rows.map((row, idx) => {
+        const y = OVERVIEW_BAR_Y + idx * OVERVIEW_BAR_ROW_H;
+        let x = OVERVIEW_HIST_X;
+        const cells = row.bySlice.filter(x => x.count > 0).map(xr => {
+          const w = (xr.count / max) * OVERVIEW_HIST_MAX_W;
+          const cell = `<rect class="overview-chart-hist-cell ${esc(xr.slice.className)}" x="${x.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" y="${y}" width="${w.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" height="12" rx="3"><title>${esc(row.bucket.label + ' · ' + xr.slice.label)}: ${xr.count}${xr.slice.rule ? ' — ' + esc(xr.slice.rule) : ''}</title></rect>`;
+          x += w;
+          return cell;
+        }).join('');
+        return `<g><text class="overview-chart-axis-label" x="${OVERVIEW_HIST_LABEL_X}" y="${y + 7}">${esc(row.bucket.label)}</text>${cells}<text class="overview-chart-bar-value" x="${OVERVIEW_HIST_X + Math.max(0, (row.total / max) * OVERVIEW_HIST_MAX_W) + 4}" y="${y + 7}">${row.total}</text></g>`;
+      }).join('');
+      return `<svg class="overview-chart-svg" viewBox="0 0 ${OVERVIEW_HIST_W} ${OVERVIEW_HIST_H}" role="img" aria-label="${esc(title)}">${svgRows}</svg>`;
+    }
+
+    function renderOverviewDonutSVG(title, subtitle, slices) {
+      const html = renderOverviewDonut(title, subtitle, slices);
+      const start = html.indexOf('<svg');
+      const end = html.indexOf('</svg>');
+      return start >= 0 && end >= start ? html.slice(start, end + '</svg>'.length) : html;
+    }
+
+    const overviewChartRenderers = {
+      donut: renderOverviewDonutSVG,
+      pie: renderOverviewPie,
+      bar: renderOverviewBar,
+      stacked: renderOverviewStacked,
+      line: renderOverviewLine,
+      histogram: renderOverviewHistogram
+    };
+
+    function renderOverviewChartBody(type, title, subtitle, slices, kind, state) {
+      const renderer = overviewChartRenderers[type] || overviewChartRenderers.donut;
+      return renderer(title, subtitle, slices, kind === 'issue' ? state.history.issue : state.history.pr);
+    }
+
+    function renderOverviewDots(types, active) {
+      return `<span class="overview-carousel-dots" aria-label="Overview carousel position">${types.map(type => `<span class="overview-carousel-dot${type === active ? ' active' : ''}" title="${esc(OVERVIEW_CHART_TYPE_LABELS[type])}"></span>`).join('')}</span>`;
+    }
+
+    function renderOverviewPanel(kind, title, subtitle, slices, state) {
+      const enabled = overviewEnabledTypes(state);
+      const active = enabled.includes(state.active[kind]) ? state.active[kind] : enabled[0];
+      state.active[kind] = active;
+      const panelClass = `overview-panel-in ${overviewTransitionClass(state)} overview-duration-${state.duration}`;
+      const body = renderOverviewChartBody(active, title, subtitle, slices, kind, state);
+      const controls = `<div class="overview-chart-controls"><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselPrev" data-arg0="${kind}" data-stop="1" title="Previous Overview chart">◀</button><select class="overview-chart-select" data-change-action="setOverviewChartType" data-arg0="${kind}" data-arg-types="s,v" title="Overview chart type">${overviewChartTypeOptions(active)}</select><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselNext" data-arg0="${kind}" data-stop="1" title="Next Overview chart">▶</button>${renderOverviewDots(enabled, active)}</div>`;
+      return `<div class="overview-chart-card ${panelClass}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${body}<div class="overview-chart-meta">${controls}<div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices)}</div></div></div>`;
+    }
+
+    function renderOverviewSettingsPopover(state) {
+      const el = document.getElementById('overview-chart-settings');
+      if (!el) return;
+      const typeRows = OVERVIEW_CHART_TYPES.map(type => `<label class="overview-settings-row"><input type="checkbox" data-change-action="setOverviewChartRotation" data-arg0="${esc(type)}" data-arg-types="s,c"${state.enabled[type] ? ' checked' : ''}>${esc(OVERVIEW_CHART_TYPE_LABELS[type])}<span>in rotation</span></label>`).join('');
+      const transitionOptions = OVERVIEW_TRANSITIONS.map(t => `<option value="${esc(t)}"${state.transition === t ? ' selected' : ''}>${esc(t.replace(/-/g, ' '))}</option>`).join('');
+      const durationOptions = OVERVIEW_DURATIONS.map(d => `<option value="${esc(d)}"${state.duration === d ? ' selected' : ''}>${esc(d)}</option>`).join('');
+      const seconds = Math.round(state.intervalMs / 1000);
+      setIfChanged(el, `<div class="overview-settings-title">Overview charts</div><div class="overview-settings-grid">${typeRows}</div><label class="overview-settings-row"><input type="checkbox" data-change-action="setOverviewCarouselEnabled" data-arg-types="c"${state.carousel ? ' checked' : ''}>Carousel on</label><label class="overview-settings-field">Interval (seconds)<input type="number" min="5" max="300" step="5" value="${seconds}" data-change-action="setOverviewCarouselInterval" data-arg-types="N"></label><label class="overview-settings-field">Transition<select data-change-action="setOverviewTransition" data-arg-types="v">${transitionOptions}</select></label><label class="overview-settings-field">Duration<select data-change-action="setOverviewDuration" data-arg-types="v">${durationOptions}</select></label>`);
+    }
+
+    function rerenderOverviewChartsFromState(state) {
+      saveOverviewChartsState(state);
+      renderOverviewCharts(_overviewLastRepos || []);
+    }
+
+    function setOverviewChartRotation(type, checked) {
+      const state = overviewChartsState();
+      if (OVERVIEW_CHART_TYPES.includes(type)) state.enabled[type] = !!checked;
+      if (!OVERVIEW_CHART_TYPES.some(t => state.enabled[t])) state.enabled.donut = true;
+      rerenderOverviewChartsFromState(state);
+    }
+
+    function setOverviewCarouselEnabled(checked) {
+      const state = overviewChartsState();
+      state.carousel = !!checked;
+      rerenderOverviewChartsFromState(state);
+    }
+
+    function setOverviewCarouselInterval(seconds) {
+      const state = overviewChartsState();
+      state.intervalMs = Math.min(OVERVIEW_CAROUSEL_MAX_MS, Math.max(OVERVIEW_CAROUSEL_MIN_MS, Number(seconds || 30) * 1000));
+      rerenderOverviewChartsFromState(state);
+    }
+
+    function setOverviewTransition(value) {
+      const state = overviewChartsState();
+      if (OVERVIEW_TRANSITIONS.includes(value)) state.transition = value;
+      rerenderOverviewChartsFromState(state);
+    }
+
+    function setOverviewDuration(value) {
+      const state = overviewChartsState();
+      if (OVERVIEW_DURATIONS.includes(value)) state.duration = value;
+      rerenderOverviewChartsFromState(state);
+    }
+
+    function setOverviewChartType(kind, type) {
+      const state = overviewChartsState();
+      if ((kind === 'issue' || kind === 'pr') && OVERVIEW_CHART_TYPES.includes(type)) {
+        state.active[kind] = type;
+        state.enabled[type] = true;
+      }
+      rerenderOverviewChartsFromState(state);
+    }
+
+    function overviewCarouselStep(kind, delta) {
+      const state = overviewChartsState();
+      const enabled = overviewEnabledTypes(state);
+      const current = enabled.indexOf(state.active[kind]);
+      const next = (Math.max(0, current) + delta + enabled.length) % enabled.length;
+      state.active[kind] = enabled[next];
+      rerenderOverviewChartsFromState(state);
+    }
+
+    function overviewCarouselPrev(kind) { overviewCarouselStep(kind, -1); }
+    function overviewCarouselNext(kind) { overviewCarouselStep(kind, 1); }
+    function overviewPanelHover(kind) { if (kind === 'issue' || kind === 'pr') _overviewHoverState[kind] = true; }
+    function overviewPanelUnhover(kind) { if (kind === 'issue' || kind === 'pr') _overviewHoverState[kind] = false; }
+
+    function toggleOverviewChartSettings() {
+      const el = document.getElementById('overview-chart-settings');
+      const btn = document.querySelector('[data-action="toggleOverviewChartSettings"]');
+      if (!el) return;
+      const nextHidden = !el.hidden ? true : false;
+      el.hidden = nextHidden;
+      if (btn) btn.setAttribute('aria-expanded', String(!nextHidden));
+      if (!nextHidden) renderOverviewSettingsPopover(overviewChartsState());
+    }
+
+    function overviewCarouselVisibilityChanged() {
+      if (document.visibilityState === 'visible') renderOverviewCharts(_overviewLastRepos || []);
+    }
+    document.addEventListener('visibilitychange', overviewCarouselVisibilityChanged);
+
+    function scheduleOverviewCarousel(kind, state) {
+      if (!state.carousel || overviewEnabledTypes(state).length < 2) return;
+      _overviewCarouselTimers.push(setInterval(() => {
+        if (document.visibilityState !== 'visible' || _overviewHoverState[kind]) return;
+        overviewCarouselNext(kind);
+      }, state.intervalMs));
+    }
+
     function renderOverviewCharts(repos) {
       const el = document.getElementById('overview-card');
       if (!el) return;
+      _overviewLastRepos = Array.isArray(repos) ? repos : [];
+      _overviewCarouselTimers.splice(0).forEach(id => clearInterval(id));
+      const state = overviewChartsState();
       const issueSlices = overviewIssueBandSlices(repos);
       const prSlices = overviewPRBandSlices(repos);
+      const issueSampled = overviewSampleHistory('issue', issueSlices, state);
+      const prSampled = overviewSampleHistory('pr', prSlices, state);
+      const sampled = issueSampled || prSampled;
       const total = issueSlices.concat(prSlices).reduce((n, s) => n + s.count, 0);
       const html = total
-        ? `<div class="overview-grid">${renderOverviewDonut('Issues by band', 'Actionable and held issues in the current repo view · hover a band for its rule', issueSlices)}${renderOverviewDonut('PRs by band', 'Open and held pull requests in the current repo view · hover a band for its rule', prSlices)}</div>`
+        ? `<div class="overview-grid">${renderOverviewPanel('issue', 'Issues by band', 'Actionable and held issues in the current repo view · hover a band for its rule', issueSlices, state)}${renderOverviewPanel('pr', 'PRs by band', 'Open and held pull requests in the current repo view · hover a band for its rule', prSlices, state)}</div>`
         : '<div class="overview-empty">No repository issues or pull requests match the current hive view yet.</div>';
+      if (sampled) saveOverviewChartsState(state);
       setIfChanged(el, html);
+      renderOverviewSettingsPopover(state);
+      scheduleOverviewCarousel('issue', state);
+      scheduleOverviewCarousel('pr', state);
       applySectionCollapse('overview-section');
     }
 
