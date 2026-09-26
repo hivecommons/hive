@@ -573,6 +573,7 @@ func TestSpekHubExecutorDoesNotRelaunchWhenDocumentAlreadyFinal(t *testing.T) {
 	if err := os.MkdirAll(planDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := os.WriteFile(filepath.Join(planDir, "plan.md"), []byte("# plan"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -606,5 +607,26 @@ func TestSpekHubExecutorDoesNotRelaunchWhenDocumentAlreadyFinal(t *testing.T) {
 	e.Tick(context.Background(), now)
 	if e.Status().Running != 0 {
 		t.Fatal("Tick relaunched a held generation")
+	}
+}
+
+func TestSpekHubExecutorSkipsHeldSpecCheckpoint(t *testing.T) {
+	hub, s, store, _ := spekHub(t)
+	now := time.Now()
+	spekDesignEpic(t, store)
+	taskID := spekHubExecutorTaskPrefix + sanitizeReceiptSegment(spekRunKey) + "-spec-1"
+	hub.leaseMu.Lock()
+	hub.leases[leaseKey(config.DefaultSpektacularHubExecutorIdentity, taskID)] = &taskLease{identity: config.DefaultSpektacularHubExecutorIdentity, taskID: taskID, repo: spekRepo, key: spekRepo + "!" + spekRunKey + ":" + StageSpec, stage: StageSpec, gen: 1, expiresAt: now.Add(leaseTTL)}
+	hub.leaseMu.Unlock()
+	if _, err := writeStageReceipt(spekRunKey, StageSpec, 1, []byte(`{}`)); err != nil {
+		t.Fatalf("write held spec receipt: %v", err)
+	}
+	e := NewSpekHubExecutor(s, config.RunsConfig{MaxStageRetries: 2, Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	stages, err := e.unclaimedStages()
+	if err != nil {
+		t.Fatalf("unclaimedStages: %v", err)
+	}
+	if len(stages) != 0 {
+		t.Fatalf("held spec checkpoint offered to hub executor: %+v", stages)
 	}
 }

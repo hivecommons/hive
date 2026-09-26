@@ -1071,6 +1071,9 @@ func (e *SpekHubExecutor) unclaimedStages() ([]spekHubStage, error) {
 		if identity != runAdmissionIdentity && identity != worksource.RunAdmissionIdentity && identity != e.Identity {
 			return
 		}
+		if e.Server.runCheckpointStageHeld(runKey, stage, gen) {
+			return
+		}
 		number := 0
 		if ref, ok := worksource.ParseKey(runKey); ok {
 			number = ref.Number

@@ -8432,8 +8432,10 @@
         const waitCls = waiting === 'human' ? 'needs-context' : waiting === 'agent' ? 'done' : '';
         const runGen = run.gen || 0;
         const runStage = run.stage || 'spec';
-        const actions = canApprove && waiting === 'human' && run.plan_epic_id
-          ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px"><button class="btn" style="color:var(--green)" data-action="runPlanAction" data-arg0="${escapeHtml(run.plan_epic_id)}" data-arg1="approve">✓ Approve</button><button class="btn" style="color:var(--red)" data-action="runPlanAction" data-arg0="${escapeHtml(run.plan_epic_id)}" data-arg1="reject">✕ Reject</button></div>`
+        const checkpointHeld = waiting === 'human' && run.waiting_reason === 'checkpoint_enabled' && run.plan_epic_id;
+        const checkpointLabel = runStage === 'spec' ? 'Spec checkpoint held — review the design before Plan can start.' : 'Plan checkpoint held — review before Implement can start.';
+        const actions = canApprove && checkpointHeld
+          ? `<div class="campaign-empty"><strong>${escapeHtml(checkpointLabel)}</strong><div class="run-log-actions"><button class="btn" style="color:var(--green)" data-action="runCheckpointAction" data-arg0="${escapeHtml(key)}" data-arg1="${escapeHtml(String(runGen))}" data-arg2="approve">✓ Approve</button><button class="btn" style="color:var(--red)" data-action="runCheckpointAction" data-arg0="${escapeHtml(key)}" data-arg1="${escapeHtml(String(runGen))}" data-arg2="reject">✕ Reject</button><button class="btn" data-action="openRunDetail" data-arg0="${escapeHtml(key)}">Details</button></div></div>`
           : '';
         return `<div class="repo-card" style="min-width:260px">
           <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
@@ -8444,6 +8446,7 @@
           ${renderRunActivity(run)}
           <div style="margin-top:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
             <span class="status-badge ${waitCls}" title="Waiting on ${escapeHtml(waiting)}">waiting: ${escapeHtml(waiting)}</span>
+            ${run.waiting_reason ? `<span class="status-badge needs-context" title="Waiting reason">${escapeHtml(run.waiting_reason)}</span>` : ''}
             <span class="status-badge" title="${escapeHtml(run.waiting_since || run.stage_started_at || '')}">age ${escapeHtml(runCurrentAge(run))}</span>
             ${run.assignee ? `<span class="status-badge" title="Assignee">${escapeHtml(run.assignee)}</span>` : ''}
           </div>
@@ -8472,6 +8475,23 @@
       }
     }
     window.runPlanAction = runPlanAction;
+
+    async function runCheckpointAction(key, gen, action) {
+      if (!key || !['approve', 'reject'].includes(action)) return;
+      try {
+        const res = await fetch('/api/runs/' + encodeURIComponent(key) + '/checkpoint', {
+          method: 'POST',
+          headers: Object.assign({'Content-Type': 'application/json'}, _inceptionAuthHeaders()),
+          body: JSON.stringify({ action, gen: Number(gen) || 0 })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        showToast(action === 'approve' ? 'Run checkpoint approved.' : 'Run checkpoint rejected.', 'success');
+        refreshStatus();
+      } catch (e) {
+        showToast('Run checkpoint action failed: ' + (e && e.message ? e.message : e), 'error');
+      }
+    }
+    window.runCheckpointAction = runCheckpointAction;
 
     async function openRunDetail(key) {
       const panel = document.getElementById('run-detail');

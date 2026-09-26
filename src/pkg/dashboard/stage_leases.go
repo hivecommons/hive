@@ -476,16 +476,15 @@ func (s *Server) AdvanceStageLease(identity, taskID, to string, now time.Time, r
 			Attrs:    eventAttrs,
 		})
 	}
-	// The plan checkpoint (hivecommons/hive#8550): a run may not reach
-	// implement while its plan is still a draft. Holding is not an error - the
-	// stage did its work and the receipt stands - so the lease is extended and
-	// the runner is told nothing went wrong.
-	if stage == StagePlan && to == StageImplement && s.planCheckpointHolds(runKey) {
-		if err := s.extendHeldPlanLease(identity, taskID, now); err != nil {
+	// Checkpoints park the just-finished stage before the next boundary. Holding
+	// is not an error - the stage did its work and the receipt stands - so the
+	// lease is extended and the runner is told nothing went wrong.
+	if s.stageCheckpointHolds(runKey, stage, to) {
+		if err := s.extendHeldCheckpointLease(identity, taskID, stage, now); err != nil {
 			return err
 		}
 		recordReceipt(l.identity)
-		s.logger.Info("[runs] holding plan stage until approval", "run", runKey, "task", taskID)
+		s.logger.Info("[runs] holding stage until checkpoint approval", "run", runKey, "stage", stage, "task", taskID)
 		return nil
 	}
 	advanced, err := h.advanceLeaseStage(identity, taskID, to, now)
@@ -784,16 +783,57 @@ func (s *Server) runPlanApproved(runKey string) bool {
 	return epic != nil && epic.Meta(planning.MetaPlanStatus) == planning.PlanStatusApproved
 }
 
-// planCheckpointHolds reports whether the plan->implement advance must wait.
-func (s *Server) planCheckpointHolds(runKey string) bool {
-	decision := s.runCheckpointPolicy(StagePlan)
-	return decision.blocks && !s.runPlanApproved(runKey)
+// runSpecApproved reports whether the run's imported design artifact has been
+// approved through the Spec checkpoint.
+func (s *Server) runSpecApproved(runKey string) bool {
+	_, epic := s.findRunEpic(runKey)
+	return epic != nil && epic.Meta(planning.MetaDesignVia) == planning.DesignViaSpektacular && planning.DesignStatus(epic) == planning.DesignStatusApproved
 }
 
-// extendHeldPlanLease pushes a held plan lease's expiry out to the checkpoint
+// runCheckpointApproved reports whether the checkpoint gate for stage may open.
+func (s *Server) runCheckpointApproved(runKey, stage string) bool {
+	switch stage {
+	case StageSpec:
+		return s.runSpecApproved(runKey)
+	case StagePlan:
+		return s.runPlanApproved(runKey)
+	default:
+		return true
+	}
+}
+
+// stageCheckpointHolds reports whether an advance across a stage checkpoint
+// must wait for a human approval.
+func (s *Server) stageCheckpointHolds(runKey, stage, to string) bool {
+	if (stage != StageSpec || to != StagePlan) && (stage != StagePlan || to != StageImplement) {
+		return false
+	}
+	decision := s.runCheckpointPolicy(stage)
+	return decision.blocks && !s.runCheckpointApproved(runKey, stage)
+}
+
+// runCheckpointStageHeld reports whether a stage has already produced its
+// receipt and is now parked at a blocking checkpoint. Before the receipt exists,
+// the stage is still executable work and must remain claimable.
+func (s *Server) runCheckpointStageHeld(runKey, stage string, gen uint64) bool {
+	if stage != StageSpec && stage != StagePlan {
+		return false
+	}
+	decision := s.runCheckpointPolicy(stage)
+	if !decision.blocks || s.runCheckpointApproved(runKey, stage) {
+		return false
+	}
+	path := filepath.Join(runReceiptsDir, sanitizeReceiptSegment(runKey), fmt.Sprintf("%s-gen%d.json", stage, gen))
+	if _, err := os.Stat(path); err == nil {
+		return true
+	}
+	return false
+}
+
+// extendHeldCheckpointLease pushes a held lease's expiry out to the checkpoint
 // wait budget so the hold survives until an owner can act on it. A lease that
-// has already left the plan stage is left alone.
-func (s *Server) extendHeldPlanLease(identity, taskID string, now time.Time) error {
+// has already left the held stage is left alone.
+func (s *Server) extendHeldCheckpointLease(identity, taskID, stage string, now time.Time) error {
 	if s == nil || s.contributeHub == nil {
 		return errors.New("run lease registry unavailable")
 	}
@@ -804,7 +844,7 @@ func (s *Server) extendHeldPlanLease(identity, taskID string, now time.Time) err
 		h.leaseMu.Unlock()
 		return fmt.Errorf("%w for %s", errLeaseNotFound, taskID)
 	}
-	if l.stage != StagePlan {
+	if l.stage != stage {
 		h.leaseMu.Unlock()
 		return nil
 	}
@@ -816,7 +856,7 @@ func (s *Server) extendHeldPlanLease(identity, taskID string, now time.Time) err
 	if err := h.saveLeasesLocked(); err != nil {
 		l.expiresAt = prev
 		h.leaseMu.Unlock()
-		return fmt.Errorf("persisting held plan lease for %s: %w", taskID, err)
+		return fmt.Errorf("persisting held %s lease for %s: %w", stage, taskID, err)
 	}
 	h.leaseMu.Unlock()
 	return nil
@@ -960,6 +1000,10 @@ func (s *Server) advanceApprovedPlanLease(runKey, epicID, actor string, now time
 	return s.advanceApprovedStageLease(runKey, epicID, StagePlan, StageImplement, actor, now)
 }
 
+func (s *Server) advanceApprovedSpecLease(runKey, epicID, actor string, now time.Time) error {
+	return s.advanceApprovedStageLease(runKey, epicID, StageSpec, StagePlan, actor, now)
+}
+
 func (s *Server) advanceApprovedStageLease(runKey, epicID, fromStage, toStage, actor string, now time.Time) error {
 	if s == nil || s.contributeHub == nil || runKey == "" {
 		return nil
@@ -1051,6 +1095,9 @@ func (a *runStageAccessor) PendingRunStages(_ context.Context) ([]worksource.Run
 	for _, l := range pending {
 		if s.deps != nil && s.deps.Config != nil && s.deps.Config.Runs.Spektacular.Enabled && s.deps.Config.Runs.Spektacular.HubExecutorEnabled() &&
 			(l.stage == StageSpec || l.stage == StagePlan) {
+			continue
+		}
+		if s.runCheckpointStageHeld(l.runKey, l.stage, l.gen) {
 			continue
 		}
 		if s.stageExecutorExecuting(l.runKey, l.stage) {

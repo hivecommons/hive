@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -176,6 +178,8 @@ func auditActions(t *testing.T, hub *ContributeWSHub) []string {
 // stays unlisted until ApprovePlan.
 func TestSpektacularRunner_LeaseWorksourceHookIntegration(t *testing.T) {
 	hub, s, store, capture := spekHub(t)
+	off := false
+	s.deps.Config.Runs.Checkpoints.Spec = &off
 	now := time.Now()
 	spekLease(t, hub, StageSpec, now)
 	ex := newSpekExec()
@@ -273,8 +277,8 @@ func TestSpektacularRunner_LeaseWorksourceHookIntegration(t *testing.T) {
 	if err != nil || len(children.Children) != 3 {
 		t.Fatalf("plan tree = %+v err=%v", children, err)
 	}
-	if listed := spekListed(t, s); len(listed) != 1 || listed[0].Stage != StagePlan {
-		t.Fatalf("listed before ApprovePlan = %+v, want the held plan stage", listed)
+	if listed := spekListed(t, s); len(listed) != 0 {
+		t.Fatalf("listed before ApprovePlan = %+v, want no relay-offered held checkpoint", listed)
 	}
 	approvalAt := now.Add(leaseTTL + time.Second)
 	if err := planning.ApprovePlan(store, epic.ID); err != nil {
@@ -747,6 +751,8 @@ func TestStageLeaseSurface_HelpersAndErrorPaths(t *testing.T) {
 	if stage, _ := spekLeaseState(hub); stage != StageSpec {
 		t.Fatalf("lease advanced despite receipt failure: %s", stage)
 	}
+	off := false
+	s.deps.Config.Runs.Checkpoints.Spec = &off
 	if err := s.AdvanceStageLease(spekIdentity, spekTaskID, StagePlan, time.Now(), []byte("{}"), nil); err != nil {
 		t.Fatalf("advance with derived run key: %v", err)
 	}
@@ -939,6 +945,7 @@ func spekDraftEpic(t *testing.T, store *beads.Store) *beads.Bead {
 	if err != nil {
 		t.Fatalf("create epic: %v", err)
 	}
+
 	if err := store.Update(epic.ID, func(b *beads.Bead) {
 		b.Metadata[planning.MetaRunKey] = spekRunKey
 		b.Metadata[planning.MetaIssueRepo] = spekRepo
@@ -953,12 +960,32 @@ func spekDraftEpic(t *testing.T, store *beads.Store) *beads.Bead {
 	return got
 }
 
+func spekDesignEpic(t *testing.T, store *beads.Store) *beads.Bead {
+	t.Helper()
+	epic := spekDraftEpic(t, store)
+	if err := store.Update(epic.ID, func(b *beads.Bead) {
+		b.Metadata[planning.MetaDesignVia] = planning.DesignViaSpektacular
+		b.Metadata[planning.MetaDesignStatus] = planning.DesignStatusRequested
+	}); err != nil {
+		t.Fatalf("mark design epic: %v", err)
+	}
+	got, err := store.Get(epic.ID)
+	if err != nil {
+		t.Fatalf("reload design epic: %v", err)
+	}
+	return got
+}
+
 // spekReceipts counts the stage receipts recorded for the run's plan stage.
 // The timeline folds repeats of one IssueRef+Kind into a single stage and
 // carries the cardinality in Count, so the number of recordings is that
 // Count - ByIssue would synthesize one event no matter how many were written.
 func spekReceipts(s *Server) int {
-	j, ok := s.LifecycleTimeline().Journey(spekRepo + "!" + spekRunKey + ":" + StagePlan)
+	return spekStageReceipts(s, StagePlan)
+}
+
+func spekStageReceipts(s *Server, stage string) int {
+	j, ok := s.LifecycleTimeline().Journey(spekRepo + "!" + spekRunKey + ":" + stage)
 	if !ok {
 		return 0
 	}
@@ -967,6 +994,91 @@ func spekReceipts(s *Server) int {
 		return 0
 	}
 	return st.Count
+}
+
+func spekLeaseExpiry(hub *ContributeWSHub) time.Time {
+	hub.leaseMu.Lock()
+	defer hub.leaseMu.Unlock()
+	l := hub.leaseForLocked(spekIdentity, spekTaskID)
+	if l == nil {
+		return time.Time{}
+	}
+	return l.expiresAt
+}
+
+func TestSpecCheckpointHoldsUnapprovedDesign(t *testing.T) {
+	hub, s, store, _ := spekHub(t)
+	now := time.Now()
+	spekLease(t, hub, StageSpec, now)
+	spekDesignEpic(t, store)
+	before := spekLeaseExpiry(hub)
+
+	if err := s.AdvanceStageLease(spekIdentity, spekTaskID, StagePlan, now, []byte(`{}`), map[string]string{stageAttrRunKey: spekRunKey}); err != nil {
+		t.Fatalf("AdvanceStageLease on held spec returned an error: %v", err)
+	}
+	if stage, _ := spekLeaseState(hub); stage != StageSpec {
+		t.Fatalf("stage after held spec advance = %s, want spec", stage)
+	}
+	if after := spekLeaseExpiry(hub); !after.After(before) {
+		t.Fatalf("held spec lease not extended: before=%s after=%s", before, after)
+	}
+	if got := spekStageReceipts(s, StageSpec); got != 1 {
+		t.Fatalf("spec receipts on hold = %d, want 1", got)
+	}
+	runs, err := s.activeRuns(true)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("activeRuns = %d, %v", len(runs), err)
+	}
+	if runs[0].WaitingOn != RunWaitingOnHuman || runs[0].WaitingReason != "checkpoint_enabled" || runs[0].Stage != StageSpec {
+		t.Fatalf("held spec run projection = %+v", runs[0])
+	}
+	if listed := spekListed(t, s); len(listed) != 0 {
+		t.Fatalf("held spec was offered to relays: %+v", listed)
+	}
+}
+
+func TestSpecCheckpointApproveAdvancesToPlan(t *testing.T) {
+	hub, s, store, _ := spekHub(t)
+	now := time.Now()
+	spekLease(t, hub, StageSpec, now)
+	epic := spekDesignEpic(t, store)
+	if err := s.AdvanceStageLease(spekIdentity, spekTaskID, StagePlan, now, []byte(`{}`), map[string]string{stageAttrRunKey: spekRunKey}); err != nil {
+		t.Fatalf("held spec advance: %v", err)
+	}
+
+	checkpointKey := spekRepo + "!" + spekRunKey + ":" + StageSpec
+	rec := doOwnerPost(s, "/api/runs/"+url.PathEscape(checkpointKey)+"/checkpoint", runCheckpointDecisionRequest{Action: runCheckpointDecisionApprove, Gen: spekGen})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("approve spec checkpoint = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if stage, _ := spekLeaseState(hub); stage != StagePlan {
+		t.Fatalf("stage after spec approval = %s, want plan", stage)
+	}
+	if got, _ := store.Get(epic.ID); planning.DesignStatus(got) != planning.DesignStatusApproved {
+		t.Fatalf("design status = %q, want approved", planning.DesignStatus(got))
+	}
+}
+
+func TestSpecCheckpointRejectKeepsSpecParked(t *testing.T) {
+	hub, s, store, _ := spekHub(t)
+	now := time.Now()
+	spekLease(t, hub, StageSpec, now)
+	epic := spekDesignEpic(t, store)
+	if err := s.AdvanceStageLease(spekIdentity, spekTaskID, StagePlan, now, []byte(`{}`), map[string]string{stageAttrRunKey: spekRunKey}); err != nil {
+		t.Fatalf("held spec advance: %v", err)
+	}
+
+	checkpointKey := spekRepo + "!" + spekRunKey + ":" + StageSpec
+	rec := doOwnerPost(s, "/api/runs/"+url.PathEscape(checkpointKey)+"/checkpoint", runCheckpointDecisionRequest{Action: runCheckpointDecisionReject, Gen: spekGen})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reject spec checkpoint = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if stage, _ := spekLeaseState(hub); stage != StageSpec {
+		t.Fatalf("stage after spec reject = %s, want spec", stage)
+	}
+	if got, _ := store.Get(epic.ID); planning.DesignStatus(got) != planning.DesignStatusQueued {
+		t.Fatalf("design status after reject = %q, want queued", planning.DesignStatus(got))
+	}
 }
 
 // TestPlanCheckpointHoldsUnapprovedPlan is the core of hivecommons/hive#8550
@@ -1104,8 +1216,8 @@ func TestIssue8550RunCannotReachImplementWithDraftPlan(t *testing.T) {
 			t.Fatalf("#8550 regression: run reached stage=implement with a draft plan after advance %d", i)
 		}
 	}
-	if listed := spekListed(t, s); len(listed) != 1 || listed[0].Stage != StagePlan {
-		t.Fatalf("listed with a draft plan = %+v, want the held plan stage only", listed)
+	if listed := spekListed(t, s); len(listed) != 0 {
+		t.Fatalf("listed with a draft plan = %+v, want no relay-offered held checkpoint", listed)
 	}
 }
 

@@ -171,6 +171,7 @@ func TestRunCheckpointPayloadIdenticalAcrossSurfaces(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET checkpoint = %d body=%s", rec.Code, rec.Body.String())
 	}
+
 	fromHTTP := decodeCheckpointPayload(t, rec)
 	fromChat, err := s.RunCheckpointNotificationPayload(runKey, "chat")
 	if err != nil {
@@ -182,5 +183,57 @@ func TestRunCheckpointPayloadIdenticalAcrossSurfaces(t *testing.T) {
 	}
 	if !reflect.DeepEqual(fromHTTP, fromChat) || !reflect.DeepEqual(fromHTTP, fromPush) {
 		t.Fatalf("payloads differ\nhttp=%+v\nchat=%+v\npush=%+v", fromHTTP, fromChat, fromPush)
+	}
+}
+
+func TestRunCheckpointPayloadSummarizesSpecDocument(t *testing.T) {
+	s, store, epicID, runKey := checkpointTestServer(t, "Review spec checkpoint", 12)
+	oldReceipts := runReceiptsDir
+	runReceiptsDir = t.TempDir()
+	t.Cleanup(func() { runReceiptsDir = oldReceipts })
+	if err := store.Update(epicID, func(b *beads.Bead) {
+		b.Metadata[planning.MetaDesignVia] = planning.DesignViaSpektacular
+		b.Metadata[planning.MetaDesignStatus] = planning.DesignStatusRequested
+	}); err != nil {
+		t.Fatalf("mark design epic: %v", err)
+	}
+	s.contributeHub.leaseMu.Lock()
+	for _, l := range s.contributeHub.leases {
+		if l != nil && l.taskID == "task-8618" {
+			l.stage = StageSpec
+			l.gen = 12
+			l.key = "myorg/repo1!" + runKey + ":" + StageSpec
+		}
+	}
+	s.contributeHub.leaseMu.Unlock()
+	if _, err := writeStageReceipt(runKey, StageSpec, 12, []byte(`{}`)); err != nil {
+		t.Fatalf("write spec receipt: %v", err)
+	}
+	if err := writeSpekStageCapture(runKey, StageSpec, 12, RunDetailStageCapture{
+		SchemaVersion: "1",
+		RunKey:        runKey,
+		Stage:         StageSpec,
+		Generation:    12,
+		Documents: []RunDetailStageDocument{{
+			Path:     "spec.md",
+			Markdown: "# Checkout redesign\n\n## Goals\n\n## Non-goals",
+			Content:  "# Checkout redesign\n\n## Goals\n\n## Non-goals",
+		}},
+	}); err != nil {
+		t.Fatalf("write spec capture: %v", err)
+	}
+
+	rec := doOwnerGet(s, "/api/runs/"+url.PathEscape(runKey)+"/checkpoint")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET spec checkpoint = %d body=%s", rec.Code, rec.Body.String())
+	}
+	payload := decodeCheckpointPayload(t, rec)
+	if payload.Stage != StageSpec || payload.Gen != 12 {
+		t.Fatalf("payload stage/gen = %s/%d, want spec/12", payload.Stage, payload.Gen)
+	}
+	for _, want := range []string{"Checkout redesign", "- Goals", "- Non-goals", "Spec detail:"} {
+		if !strings.Contains(payload.Summary, want) {
+			t.Fatalf("spec summary missing %q: %s", want, payload.Summary)
+		}
 	}
 }

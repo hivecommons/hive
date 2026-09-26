@@ -245,6 +245,8 @@ type runPlanSnapshot struct {
 	reason       string
 	waitingSince time.Time
 	waveIDs      []string
+	designStatus string
+	designVia    string
 }
 
 type runHumanReviewHold struct {
@@ -994,6 +996,9 @@ func runFromLease(lease runLeaseSnapshot, plan runPlanSnapshot, hold runHumanRev
 	if lease.stage == StageSpec && (plan.state == planning.PlanStateDesignReview || plan.state == planning.PlanStateDesignStuck) {
 		planNeedsHuman = false
 	}
+	if lease.stage == StageSpec && plan.epicID != "" && plan.designVia == planning.DesignViaSpektacular && plan.designStatus != planning.DesignStatusApproved {
+		planNeedsHuman = true
+	}
 	if plan.epicID != "" && planNeedsHuman {
 		if decision := runCheckpointPolicyForConfig(cfg, lease.stage); decision.blocks {
 			run.WaitingOn = RunWaitingOnHuman
@@ -1348,6 +1353,8 @@ func (s *Server) runPlanSnapshots() map[string]runPlanSnapshot {
 			}
 			snap := out[key]
 			snap.epicID = firstRunNonEmpty(snap.epicID, b.ID)
+			snap.designStatus = firstRunNonEmpty(snap.designStatus, b.Meta(planning.MetaDesignStatus))
+			snap.designVia = firstRunNonEmpty(snap.designVia, b.Meta(planning.MetaDesignVia))
 			switch b.Meta(planning.MetaPlanStatus) {
 			case planning.PlanStatusDraft:
 				snap.state = firstRunNonEmpty(snap.state, planning.PlanStateReview)

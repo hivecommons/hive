@@ -34,6 +34,7 @@ type RunCheckpointPayload struct {
 	PlanEpicID      string                    `json:"plan_epic_id,omitempty"`
 	Summary         string                    `json:"summary"`
 	SummaryMaxBytes int                       `json:"summary_max_bytes"`
+	DetailURL       string                    `json:"detail_url,omitempty"`
 	Decisions       []RunCheckpointDecision   `json:"decisions"`
 	DashboardURL    string                    `json:"dashboard_url"`
 	Staleness       RunCheckpointStaleness    `json:"staleness"`
@@ -107,8 +108,15 @@ func (s *Server) handleRunCheckpointDecision(w http.ResponseWriter, r *http.Requ
 				jsonError(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			if err := s.applyDesignSignal(r.Context(), issueFromEpic(epic), s.designConfig().ApprovedLabelOrDefault(), s.designApprovedStatus()); err != nil {
-				jsonError(w, err.Error(), http.StatusBadGateway)
+			if s.deps != nil && s.deps.GHClient != nil {
+				if err := s.applyDesignSignal(r.Context(), issueFromEpic(epic), s.designConfig().ApprovedLabelOrDefault(), s.designApprovedStatus()); err != nil {
+					jsonError(w, err.Error(), http.StatusBadGateway)
+					return
+				}
+			}
+			runKey := s.runKeyForEpic(epic.Meta(planning.MetaIssueRepo), epic.Meta(planning.MetaIssueNumber), epic.Meta(planning.MetaRunKey))
+			if err := s.advanceApprovedSpecLease(runKey, payload.PlanEpicID, requestUser(r), time.Now()); err != nil {
+				jsonError(w, err.Error(), http.StatusConflict)
 				return
 			}
 			s.auditFromRequest(r, "design_approved", auditDetail("epic", payload.PlanEpicID, "run", payload.RunKey, "surface", "run_checkpoint"), agentName)
@@ -164,6 +172,7 @@ func (s *Server) RunCheckpointPayload(key string) (RunCheckpointPayload, error) 
 		Summary:         s.runCheckpointSummary(run),
 		SummaryMaxBytes: RunCheckpointSummaryMaxBytes,
 		DashboardURL:    runCheckpointDashboardURL(run.Key),
+		DetailURL:       runCheckpointDashboardURL(run.Key),
 		Staleness:       RunCheckpointStaleness{Fence: "lease_gen", Gen: run.Gen},
 		Approvers:       RunCheckpointApproverRule{Role: "owner", VerifiedOwnerRequired: true},
 	}
@@ -203,6 +212,9 @@ func (s *Server) runCheckpointRun(key string) (Run, error) {
 }
 
 func (s *Server) runCheckpointSummary(run Run) string {
+	if run.Stage == StageSpec {
+		return s.runCheckpointSpecSummary(run)
+	}
 	lines := []string{run.Title}
 	if run.WaitingReason != "" {
 		lines = append(lines, "Waiting: "+run.WaitingReason)
@@ -227,6 +239,56 @@ func (s *Server) runCheckpointSummary(run Run) string {
 		}
 	}
 	return capUTF8Bytes(strings.Join(lines, "\n"), RunCheckpointSummaryMaxBytes)
+}
+
+func (s *Server) runCheckpointSpecSummary(run Run) string {
+	lines := []string{firstRunNonEmpty(run.Title, run.Key)}
+	if run.WaitingReason != "" {
+		lines = append(lines, "Waiting: "+run.WaitingReason)
+	}
+	lines = append(lines, "Spec detail: "+runCheckpointDashboardURL(run.Key))
+	if detail, err := s.buildRunDetail(nil, run.Key); err == nil {
+		for _, st := range detail.Stages {
+			if st.Name != StageSpec || len(st.Documents) == 0 {
+				continue
+			}
+			doc := st.Documents[0]
+			title, sections := markdownTitleAndSections(firstRunNonEmpty(doc.Markdown, doc.Content))
+			if title != "" {
+				lines = append(lines, "Spec: "+title)
+			}
+			for _, section := range sections {
+				lines = append(lines, "- "+section)
+			}
+			break
+		}
+	}
+	return capUTF8Bytes(strings.Join(lines, "\n"), RunCheckpointSummaryMaxBytes)
+}
+
+func markdownTitleAndSections(markdown string) (string, []string) {
+	lines := strings.Split(markdown, "\n")
+	title := ""
+	sections := []string{}
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "#") {
+			continue
+		}
+		text := strings.TrimSpace(strings.TrimLeft(line, "#"))
+		if text == "" {
+			continue
+		}
+		if title == "" {
+			title = text
+			continue
+		}
+		sections = append(sections, text)
+		if len(sections) >= 8 {
+			break
+		}
+	}
+	return title, sections
 }
 
 func capUTF8Bytes(s string, max int) string {

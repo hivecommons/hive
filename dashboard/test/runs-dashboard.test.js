@@ -21,11 +21,11 @@ test('#8307: runs render defensively from status without substituting absent dat
   assert.match(INDEX, /renderRuns\(dashboardRunsFromStatus\(data\)\)/);
 });
 
-test('#8307: run cards expose owner-only plan actions and detail lookup', () => {
+test('#8307: run cards expose owner-only checkpoint actions and detail lookup', () => {
   assert.match(INDEX, /function renderRuns\(runs\)/);
   assert.match(INDEX, /dashboardRoleAtLeast\(window\._hiveRole \|\| 'read', 'owner'\)/);
-  assert.match(INDEX, /data-action="runPlanAction"/);
-  assert.match(INDEX, /\/api\/plan\//);
+  assert.match(INDEX, /data-action="runCheckpointAction"/);
+  assert.match(INDEX, /\/api\/runs\/' \+ encodeURIComponent\(key\) \+ '\/checkpoint/);
   assert.match(INDEX, /function openRunDetail\(key\)/);
   assert.match(INDEX, /\/api\/runs\//);
 });

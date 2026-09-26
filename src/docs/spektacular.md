@@ -152,8 +152,13 @@ On v6, design mode is admitted through the same run machinery as `!runs spec`.
 or find the work item's Spektacular `spec` lease and link it to the Hive epic
 bead. GitHub issues use `owner/repo#N`; Jira and Linear items use the
 source-neutral `<repo>!<external-id>` key so non-GitHub work sources enter the
-same campaign path. The Spec checkpoint is the design-approval gate; once
-approved, the run advances to Plan. A final Plan import materializes child beads
+same campaign path. The Spec checkpoint is the design-approval gate: when
+`runs.checkpoints.spec` is enabled (the fail-closed default, including an absent
+key), a final Spec parks the lease at `stage=spec`, surfaces
+`waiting_on=human` / `waiting_reason=checkpoint_enabled` in `/api/runs`, and
+requires an owner to approve or reject the `/api/runs/{key}/checkpoint` payload
+before Plan can start. Disabling the checkpoint records an `auto` approval and
+advances to Plan without a human. A final Plan import materializes child beads
 under the epic using the existing planning decompose path, so
 `plan_status=draft` at L5 and `plan_status=approved` at L6 continue to drive
 Gate 2 and pool admission.
