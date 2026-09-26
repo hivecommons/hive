@@ -8290,15 +8290,17 @@
       return s + 's';
     }
 
-    function runActivityLastLabel(lastMs, agentAlive, heartbeatMs) {
+    function runActivityLastLabel(lastMs, agentAlive, heartbeatMs, outputIdleSeconds) {
       if (!lastMs) return { text: 'last activity unknown', cls: 'stall' };
       const ageMs = Math.max(0, Date.now() - lastMs);
+      const idleSeconds = Number(outputIdleSeconds);
+      const thresholdMs = Number.isFinite(idleSeconds) && idleSeconds > 0 ? idleSeconds * 1000 : ageMs;
       let cls = '';
       let hint = '';
-      if (ageMs >= RUN_ACTIVITY_STALL_MS) {
+      if (thresholdMs >= RUN_ACTIVITY_STALL_MS) {
         cls = 'stall';
         hint = (agentAlive || heartbeatMs > Date.now() - RUN_ACTIVITY_STALL_MS) ? ' · still held; may be stalled' : ' · may be stalled';
-      } else if (ageMs >= RUN_ACTIVITY_WARN_MS) {
+      } else if (thresholdMs >= RUN_ACTIVITY_WARN_MS) {
         cls = 'warn';
       }
       if (agentAlive) hint += ' · agent alive';
@@ -8313,11 +8315,13 @@
       const elapsed = Number.isFinite(elapsedRaw) ? elapsedRaw : (startedMs ? Math.max(0, Math.floor((Date.now() - startedMs) / 1000)) : 0);
       const lastMs = runDateMs(a.last_activity_at);
       const heartbeatMs = runDateMs(a.lease_heartbeat_at);
-      const last = runActivityLastLabel(lastMs, !!a.agent_pid_alive, heartbeatMs);
+      const outputAtMs = runDateMs(a.agent_output_at);
+      const outputIdleSeconds = Number(a.agent_output_idle_seconds);
+      const last = runActivityLastLabel(lastMs, !!a.agent_pid_alive, heartbeatMs, outputIdleSeconds);
       const phase = a.phase || run.stage || 'stage';
       return `<div class="run-live-activity" aria-label="${escapeHtml(phase)} activity">
         <div class="run-live-head"><span class="run-live-dot active" aria-hidden="true"></span><span>${escapeHtml(phase)} · <span data-run-activity-elapsed data-start-ms="${startedMs}" data-rendered-ms="${Date.now()}" data-elapsed-seconds="${elapsed}">${escapeHtml(formatRunPreciseDuration(elapsed))}</span></span></div>
-        <div class="run-live-last${last.cls ? ' ' + last.cls : ''}" data-run-activity-last data-last-ms="${lastMs}" data-agent-alive="${a.agent_pid_alive ? '1' : '0'}" data-heartbeat-ms="${heartbeatMs}">${escapeHtml(last.text)}</div>
+        <div class="run-live-last${last.cls ? ' ' + last.cls : ''}" data-run-activity-last data-last-ms="${lastMs}" data-agent-alive="${a.agent_pid_alive ? '1' : '0'}" data-heartbeat-ms="${heartbeatMs}" data-output-at-ms="${outputAtMs}" data-output-idle-seconds="${Number.isFinite(outputIdleSeconds) ? outputIdleSeconds : ''}">${escapeHtml(last.text)}</div>
         ${a.last_event ? `<div>${escapeHtml(a.last_event)}</div>` : ''}
       </div>`;
     }
@@ -8331,7 +8335,9 @@
         el.textContent = formatRunPreciseDuration(elapsed);
       });
       document.querySelectorAll('[data-run-activity-last]').forEach(el => {
-        const label = runActivityLastLabel(Number(el.getAttribute('data-last-ms')) || 0, el.getAttribute('data-agent-alive') === '1', Number(el.getAttribute('data-heartbeat-ms')) || 0);
+        const outputAt = Number(el.getAttribute('data-output-at-ms')) || 0;
+        const outputIdle = outputAt ? Math.max(0, Math.floor((Date.now() - outputAt) / 1000)) : Number(el.getAttribute('data-output-idle-seconds'));
+        const label = runActivityLastLabel(Number(el.getAttribute('data-last-ms')) || 0, el.getAttribute('data-agent-alive') === '1', Number(el.getAttribute('data-heartbeat-ms')) || 0, outputIdle);
         el.textContent = label.text;
         el.classList.toggle('warn', label.cls === 'warn');
         el.classList.toggle('stall', label.cls === 'stall');

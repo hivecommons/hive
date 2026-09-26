@@ -473,6 +473,8 @@ func (e *SpekHubExecutor) startStageStatusCapture(ctx context.Context, st spekHu
 		if status, err := e.spekStatus(pollCtx, worktree, env, kind, resolved); err == nil {
 			remember(status)
 			e.recordStageProgress(st, "status_poll", map[string]string{stageAttrArtifact: status.JoinKey(), stageAttrDocumentStatus: status.DocumentStatus, stageAttrCurrentStep: status.CurrentStep})
+		} else if isSpekArtifactNotFound(err) {
+			e.recordActivity(st, "artifact_missing", map[string]string{stageAttrStage: kind}, 0)
 		}
 	}
 	go func() {
@@ -647,6 +649,9 @@ func (e *SpekHubExecutor) recordActivityLocked(st spekHubStage, at time.Time, ev
 	}
 	key := spekActivityKey(st.runKey, st.stage, st.gen)
 	sig := e.activity[key]
+	if sig.lastEvent == event && (strings.HasPrefix(event, "agent polled status") || strings.HasPrefix(event, "waiting for agent")) {
+		return
+	}
 	if sig.stageStartedAt.IsZero() {
 		if started := e.inFlight[e.executionKey(st)]; !started.IsZero() {
 			sig.stageStartedAt = started.UTC()
@@ -706,6 +711,9 @@ func spekActivityEvent(event string, attrs map[string]string) string {
 		return "agent CLI exited (" + firstRunNonEmpty(attrs["exit_code"], "unknown") + ")"
 	case "artifact_resolved":
 		return "artifact resolved"
+	case "artifact_missing":
+		stage := firstRunNonEmpty(attrs[stageAttrStage], "stage")
+		return "waiting for agent to create the " + stage + " artifact"
 	default:
 		event = strings.TrimSpace(strings.ReplaceAll(event, "_", " "))
 		if event == "" {
@@ -713,6 +721,14 @@ func spekActivityEvent(event string, attrs map[string]string) string {
 		}
 		return event
 	}
+}
+
+func isSpekArtifactNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not found") || strings.Contains(msg, "artifact_not_found")
 }
 
 type spekHubArtifactStatus struct {

@@ -150,14 +150,16 @@ type Run struct {
 type RunSummary = Run
 
 type RunActivity struct {
-	Alive            bool   `json:"alive"`
-	Phase            string `json:"phase,omitempty"`
-	StageStartedAt   string `json:"stage_started_at,omitempty"`
-	LastActivityAt   string `json:"last_activity_at,omitempty"`
-	ElapsedSeconds   int64  `json:"elapsed_seconds"`
-	LastEvent        string `json:"last_event,omitempty"`
-	AgentPIDAlive    bool   `json:"agent_pid_alive"`
-	LeaseHeartbeatAt string `json:"lease_heartbeat_at,omitempty"`
+	Alive                  bool   `json:"alive"`
+	Phase                  string `json:"phase,omitempty"`
+	StageStartedAt         string `json:"stage_started_at,omitempty"`
+	LastActivityAt         string `json:"last_activity_at,omitempty"`
+	ElapsedSeconds         int64  `json:"elapsed_seconds"`
+	LastEvent              string `json:"last_event,omitempty"`
+	AgentPIDAlive          bool   `json:"agent_pid_alive"`
+	AgentOutputAt          string `json:"agent_output_at,omitempty"`
+	AgentOutputIdleSeconds int64  `json:"agent_output_idle_seconds"`
+	LeaseHeartbeatAt       string `json:"lease_heartbeat_at,omitempty"`
 }
 
 type RunWaitSnapshot struct {
@@ -219,6 +221,7 @@ type runLeaseSnapshot struct {
 	title           string
 	stageStarted    time.Time
 	leaseHeartbeat  time.Time
+	serverSideLease bool
 	claimedBy       string
 	claimExpiresAt  time.Time
 	claimPosted     bool
@@ -940,7 +943,7 @@ func (s *Server) activeRunLeaseSnapshots(now time.Time) ([]runLeaseSnapshot, err
 		out = append(out, runLeaseSnapshot{
 			identity: l.identity, taskID: l.taskID, repo: repo, number: l.number,
 			key: key, leaseKey: stageLeaseKey, stage: l.stage, gen: l.gen, expiresAt: l.expiresAt,
-			title: title, stageStarted: info.startedAt, leaseHeartbeat: l.expiresAt.Add(-leaseTTL),
+			title: title, stageStarted: info.startedAt, leaseHeartbeat: l.expiresAt.Add(-leaseTTL), serverSideLease: h.isPendingStageIdentity(l.identity),
 			claimedBy: l.claimedBy, claimExpiresAt: l.claimExpiresAt, claimPosted: l.claimPosted,
 			triageVerdict: l.triageVerdict, triageRationale: l.triageRationale,
 			workItem: l.workItem.Normalized(),
