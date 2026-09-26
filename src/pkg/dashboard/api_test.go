@@ -737,11 +737,11 @@ func TestHandleChat(t *testing.T) {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
 	result := decodeJSON(t, rec)
-	if result["status"] != "queued" {
-		t.Errorf("status = %v, want queued", result["status"])
+	if result["status"] != "fallback" {
+		t.Errorf("status = %v, want fallback", result["status"])
 	}
-	if answer, _ := result["answer"].(string); !strings.Contains(answer, "I sent that to the dashboard chat bot") {
-		t.Errorf("answer = %q, want visible assistant acknowledgement", answer)
+	if answer, _ := result["answer"].(string); !strings.Contains(answer, "I don't know how to handle") {
+		t.Errorf("answer = %q, want visible fallback diagnostic", answer)
 	}
 }
 
@@ -786,8 +786,8 @@ func TestHandleChat_LocalStatusAgentsAndPRs(t *testing.T) {
 		{query: "AGENTS!!!", want: "brainstorm: idle (paused)"},
 		{query: "prs?", want: "myorg/repo: 1 open PR"},
 		{query: "status", want: "Hive status: ready"},
-		{query: "Show recent kick failures", want: "Governor/kick status: hive health is ready."},
-		{query: "spek: spec runs", want: "Spektacular/spec-run data is not available yet"},
+		{query: "Show recent kick failures", want: "No recent kick failures"},
+		{query: "spek: spec runs", want: "No active spec runs"},
 		{query: "help", want: "Try `beads`"},
 	} {
 		rec := doPost(s, "/api/chat", map[string]interface{}{"query": tc.query})
@@ -817,7 +817,7 @@ func TestHandleChat_BangCommandsStillUseDashboardBot(t *testing.T) {
 	}
 }
 
-func TestHandleChat_SpekRequiresPresentProbe(t *testing.T) {
+func TestHandleChat_SpekCommandsUseRunDataWithoutProbe(t *testing.T) {
 	s := newFullServer(t)
 	s.SetSpektacularStatus(FrontendSpektacular{Present: false, Binary: "spektacular"})
 	rec := doPost(s, "/api/chat", map[string]interface{}{"query": "spek: spec runs"})
@@ -825,8 +825,8 @@ func TestHandleChat_SpekRequiresPresentProbe(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	result := decodeJSON(t, rec)
-	if answer, _ := result["answer"].(string); !strings.Contains(answer, "not available yet") {
-		t.Fatalf("answer = %q, want unavailable when probe is absent", answer)
+	if answer, _ := result["answer"].(string); !strings.Contains(answer, "No active spec runs") {
+		t.Fatalf("answer = %q, want run listing diagnostic when probe is absent", answer)
 	}
 
 	s.SetSpektacularStatus(FrontendSpektacular{Present: true, Binary: "spektacular"})
@@ -835,8 +835,69 @@ func TestHandleChat_SpekRequiresPresentProbe(t *testing.T) {
 		t.Fatalf("present status = %d, want 200", rec.Code)
 	}
 	result = decodeJSON(t, rec)
-	if answer, _ := result["answer"].(string); !strings.Contains(answer, "Spektacular status is available") {
-		t.Fatalf("answer = %q, want available when probe is present", answer)
+	if answer, _ := result["answer"].(string); !strings.Contains(answer, "No active spec runs") {
+		t.Fatalf("answer = %q, want empty run listing when probe is present", answer)
+	}
+}
+
+func TestHandleChat_CommandHintsReturnConcreteAnswers(t *testing.T) {
+	s := newFullServer(t)
+	if _, err := s.deps.BeadStores["scanner"].Create("urgent release blocker", beads.TypeBug, beads.PriorityHigh, "scanner", ""); err != nil {
+		t.Fatalf("create high priority bead: %v", err)
+	}
+	s.deps.Config.Governor.WorkSource.Type = "linear"
+	s.deps.Config.Governor.WorkSource.Linear.SessionAgent = "scanner"
+	s.deps.Config.Governor.WorkSource.Linear.AssignedOnly = true
+	s.statusMu.Lock()
+	s.status = &StatusPayload{
+		Agents: []FrontendAgent{
+			{Name: "scanner", State: "running", Doing: "scanning", NextKick: "2026-09-25T21:00:00Z"},
+			{Name: "builder", State: "idle", Paused: true, PausedReason: "manual maintenance", LastError: "backend auth failed"},
+		},
+		Repos: []FrontendRepo{{Name: "repo", Full: "myorg/repo", OpenPrs: []any{map[string]any{"number": 7}}}},
+		Runs: []Run{{
+			Key: "myorg/repo#9", Title: "Spec thing", Repo: "myorg/repo", State: "active", Stage: StagePlan, Gen: 3, Assignee: "alice",
+		}},
+		DeepHealth: map[string]any{"status": "ready"},
+	}
+	s.statusMu.Unlock()
+
+	for _, tc := range []struct {
+		query string
+		want  string
+	}{
+		{query: "/agents stuck", want: "builder: idle (paused: manual maintenance)"},
+		{query: "agents: scanner status", want: "scanner: running"},
+		{query: "Which agent completed last?", want: "completion data is unavailable"},
+		{query: "beads: high priority", want: "urgent release blocker"},
+		{query: "prs: waiting on review", want: "myorg/repo: 1 open PR"},
+		{query: "Summarize open release blockers", want: "Open release blockers"},
+		{query: "governor: next kick", want: "scanner"},
+		{query: "Why is the governor paused?", want: "manual maintenance"},
+		{query: "Show recent kick failures", want: "backend auth failed"},
+		{query: "knowledge: work sources", want: "Linear"},
+		{query: "Search docs for relay setup", want: "Knowledge search is unavailable"},
+		{query: "What changed in v5?", want: "Knowledge search is unavailable"},
+		{query: "/who", want: "Who is online"},
+		{query: "/jam who is online?", want: "contributor agents online"},
+		{query: "Show contributor activity", want: "No contributor activity"},
+		{query: "!runs spec owner/repo#N", want: "Spec runs (1)"},
+		{query: "spek: active campaigns", want: "Active campaigns"},
+		{query: "spek: spec runs", want: "Spec runs (1)"},
+		{query: "Explain inception relay state", want: "Inception relay state"},
+	} {
+		rec := doPost(s, "/api/chat", map[string]interface{}{"query": tc.query})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d body=%s, want 200", tc.query, rec.Code, rec.Body.String())
+		}
+		result := decodeJSON(t, rec)
+		if result["status"] != "ok" {
+			t.Fatalf("%s: status = %v, want ok", tc.query, result["status"])
+		}
+		answer, _ := result["answer"].(string)
+		if !strings.Contains(answer, tc.want) {
+			t.Fatalf("%s: answer = %q, want to contain %q", tc.query, answer, tc.want)
+		}
 	}
 }
 
