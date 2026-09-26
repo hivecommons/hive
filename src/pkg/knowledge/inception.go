@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -846,18 +847,30 @@ func (e *InceptionEngine) GetState() *InceptionState {
 // InceptionCampaignArchive is the durable snapshot created before an inception
 // reset so New Inception never discards the session that just finished.
 type InceptionCampaignArchive struct {
-	ID         string          `json:"id"`
-	Title      string          `json:"title,omitempty"`
-	Source     string          `json:"source,omitempty"`
-	Repos      []string        `json:"repos,omitempty"`
-	Engine     string          `json:"engine"`
-	Type       string          `json:"type"`
-	RevisionOf string          `json:"revision_of,omitempty"`
-	Revision   int             `json:"revision,omitempty"`
-	Lease      *CampaignLease  `json:"lease,omitempty"`
-	ArchivedAt time.Time       `json:"archived_at"`
-	State      *InceptionState `json:"state"`
-	WikiFiles  []string        `json:"wiki_files,omitempty"`
+	ID         string                    `json:"id"`
+	Title      string                    `json:"title,omitempty"`
+	Source     string                    `json:"source,omitempty"`
+	Repos      []string                  `json:"repos,omitempty"`
+	Engine     string                    `json:"engine"`
+	Type       string                    `json:"type"`
+	RevisionOf string                    `json:"revision_of,omitempty"`
+	Revision   int                       `json:"revision,omitempty"`
+	Lease      *CampaignLease            `json:"lease,omitempty"`
+	ArchivedAt time.Time                 `json:"archived_at"`
+	State      *InceptionState           `json:"state"`
+	WikiFiles  []string                  `json:"wiki_files,omitempty"`
+	History    []CampaignRevisionHistory `json:"history,omitempty"`
+}
+
+// CampaignRevisionHistory records an in-place revision/dedupe event without
+// minting another campaign card for the same stable spec ID.
+type CampaignRevisionHistory struct {
+	ID         string    `json:"id"`
+	RevisionOf string    `json:"revision_of,omitempty"`
+	Revision   int       `json:"revision,omitempty"`
+	Phase      string    `json:"phase,omitempty"`
+	ArchivedAt time.Time `json:"archived_at,omitempty"`
+	Title      string    `json:"title,omitempty"`
 }
 
 // CampaignLease is the dashboard-level lock that prevents two operators from
@@ -922,6 +935,7 @@ func (e *InceptionEngine) ListCampaignArchives() ([]InceptionCampaignArchive, er
 		}
 		archives = append(archives, archive)
 	}
+	archives = e.dedupeCampaignArchivesLocked(archives)
 	sort.Slice(archives, func(i, j int) bool { return archives[i].ArchivedAt.After(archives[j].ArchivedAt) })
 	return archives, nil
 }
@@ -995,8 +1009,9 @@ func (e *InceptionEngine) ReleaseCampaignArchive(id, owner string, now time.Time
 	return &archive, nil
 }
 
-// ReviseCampaignArchive branches a shipped/parked campaign into a new revision
-// linked to the previous campaign instead of starting from a blank session.
+// ReviseCampaignArchive rewinds a campaign in place under its stable spec ID
+// instead of minting another campaign row. Repeated revise clicks by the same
+// owner while the campaign is already in a revise lease are idempotent.
 func (e *InceptionEngine) ReviseCampaignArchive(id, owner string, now time.Time) (*InceptionCampaignArchive, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -1007,41 +1022,28 @@ func (e *InceptionEngine) ReviseCampaignArchive(id, owner string, now time.Time)
 	if now.IsZero() {
 		now = time.Now()
 	}
-	rootID := strings.TrimSpace(base.RevisionOf)
-	if rootID == "" {
-		rootID = base.ID
+	owner = campaignOwner(owner)
+	if base.Lease != nil && base.Lease.Owner == owner && base.Lease.Surface == "revise" && now.Before(base.Lease.ExpiresAt) {
+		return &base, nil
 	}
-	next := base.Revision + 1
-	if next <= 1 {
-		next = 2
+	base.History = append(base.History, campaignRevisionHistoryFromArchive(base))
+	if base.Revision < 1 {
+		base.Revision = 1
 	}
-	var revisionID string
-	for {
-		revisionID = slugify(fmt.Sprintf("%s-rev-%d", rootID, next))
-		if _, err := e.readArchiveLocked(revisionID); err != nil {
-			break
-		}
-		next++
+	base.Revision++
+	base.RevisionOf = ""
+	base.ArchivedAt = now
+	base.Lease = &CampaignLease{Owner: owner, Surface: "revise", AcquiredAt: now, ExpiresAt: now.Add(campaignLeaseTTL)}
+	if base.State != nil {
+		base.State = copyInceptionState(base.State)
+		base.State.IdeaSlug = base.ID
+		base.State.Phase = PhaseCapture
+		base.State.PhaseChangedAt = &now
 	}
-	revision := base
-	revision.ID = revisionID
-	revision.RevisionOf = base.ID
-	revision.Revision = next
-	revision.ArchivedAt = now
-	revision.Lease = &CampaignLease{Owner: campaignOwner(owner), Surface: "revise", AcquiredAt: now, ExpiresAt: now.Add(campaignLeaseTTL)}
-	if revision.State != nil {
-		revision.State = copyInceptionState(revision.State)
-		revision.State.IdeaSlug = revisionID
-		revision.State.Phase = PhaseCapture
-		revision.State.PhaseChangedAt = &now
-	}
-	if err := e.copyArchiveWikiLocked(base.ID, revision.ID); err != nil {
+	if err := e.writeArchiveStateLocked(&base); err != nil {
 		return nil, err
 	}
-	if err := e.writeArchiveStateLocked(&revision); err != nil {
-		return nil, err
-	}
-	return &revision, nil
+	return &base, nil
 }
 
 // ReviseExternalCampaign records a new durable revision for a non-Inception
@@ -1056,28 +1058,232 @@ func (e *InceptionEngine) ReviseExternalCampaign(id, title, source, engine, camp
 	if now.IsZero() {
 		now = time.Now()
 	}
-	next := 2
-	for {
-		revisionID := slugify(fmt.Sprintf("%s-rev-%d", id, next))
-		if _, err := e.readArchiveLocked(revisionID); err != nil {
-			archive := &InceptionCampaignArchive{
-				ID: revisionID, Title: strings.TrimSpace(title), Source: strings.TrimSpace(source), Repos: repos,
-				Engine: strings.TrimSpace(engine), Type: strings.TrimSpace(campaignType), RevisionOf: id, Revision: next,
-				ArchivedAt: now, Lease: &CampaignLease{Owner: campaignOwner(owner), Surface: "revise", AcquiredAt: now, ExpiresAt: now.Add(campaignLeaseTTL)},
-			}
-			if archive.Engine == "" {
-				archive.Engine = "Spektacular"
-			}
-			if archive.Type == "" {
-				archive.Type = "spektacular"
-			}
-			if err := e.writeArchiveStateLocked(archive); err != nil {
-				return nil, err
-			}
-			return archive, nil
+	owner = campaignOwner(owner)
+	if existing, err := e.readArchiveLocked(id); err == nil {
+		if existing.Lease != nil && existing.Lease.Owner == owner && existing.Lease.Surface == "revise" && now.Before(existing.Lease.ExpiresAt) {
+			return &existing, nil
 		}
-		next++
+		existing.History = append(existing.History, campaignRevisionHistoryFromArchive(existing))
+		if existing.Revision < 1 {
+			existing.Revision = 1
+		}
+		existing.Revision++
+		existing.Title = strings.TrimSpace(firstNonEmpty(title, existing.Title))
+		existing.Source = strings.TrimSpace(firstNonEmpty(source, existing.Source))
+		if len(repos) > 0 {
+			existing.Repos = append([]string{}, repos...)
+		}
+		existing.Engine = strings.TrimSpace(firstNonEmpty(engine, existing.Engine, "Spektacular"))
+		existing.Type = strings.TrimSpace(firstNonEmpty(campaignType, existing.Type, "spektacular"))
+		existing.RevisionOf = ""
+		existing.ArchivedAt = now
+		existing.Lease = &CampaignLease{Owner: owner, Surface: "revise", AcquiredAt: now, ExpiresAt: now.Add(campaignLeaseTTL)}
+		if err := e.writeArchiveStateLocked(&existing); err != nil {
+			return nil, err
+		}
+		return &existing, nil
 	}
+	archive := &InceptionCampaignArchive{
+		ID: id, Title: strings.TrimSpace(title), Source: strings.TrimSpace(source), Repos: repos,
+		Engine: strings.TrimSpace(engine), Type: strings.TrimSpace(campaignType), Revision: 1,
+		ArchivedAt: now, Lease: &CampaignLease{Owner: owner, Surface: "revise", AcquiredAt: now, ExpiresAt: now.Add(campaignLeaseTTL)},
+	}
+	if archive.Engine == "" {
+		archive.Engine = "Spektacular"
+	}
+	if archive.Type == "" {
+		archive.Type = "spektacular"
+	}
+	if err := e.writeArchiveStateLocked(archive); err != nil {
+		return nil, err
+	}
+	return archive, nil
+}
+
+func (e *InceptionEngine) dedupeCampaignArchivesLocked(archives []InceptionCampaignArchive) []InceptionCampaignArchive {
+	if len(archives) == 0 {
+		return archives
+	}
+	byID := make(map[string]InceptionCampaignArchive, len(archives))
+	for _, archive := range archives {
+		byID[archive.ID] = archive
+	}
+	byStableID := make(map[string][]InceptionCampaignArchive, len(archives))
+	for _, archive := range archives {
+		stableID := stableCampaignArchiveID(archive, byID)
+		if stableID == "" {
+			stableID = archive.ID
+		}
+		byStableID[stableID] = append(byStableID[stableID], archive)
+	}
+	out := make([]InceptionCampaignArchive, 0, len(byStableID))
+	for stableID, group := range byStableID {
+		if len(group) == 1 {
+			archive := group[0]
+			if archive.ID != stableID {
+				sourceID := archive.ID
+				archive.ID = stableID
+				if archive.State != nil {
+					archive.State = copyInceptionState(archive.State)
+					archive.State.IdeaSlug = stableID
+				}
+				normalized := true
+				if err := e.writeArchiveStateLocked(&archive); err != nil {
+					e.logger.Warn("failed to normalize inception campaign archive", "campaign", archive.ID, "stable", stableID, "error", err)
+					normalized = false
+				}
+				if err := e.copyArchiveWikiLocked(sourceID, stableID); err != nil {
+					e.logger.Warn("failed to normalize inception campaign wiki", "campaign", stableID, "source", sourceID, "error", err)
+					normalized = false
+				}
+				if normalized {
+					if err := os.RemoveAll(filepath.Join(e.dataDir, inceptionCampaignsDir, slugify(sourceID))); err != nil {
+						e.logger.Warn("failed to remove duplicate inception campaign archive", "campaign", sourceID, "stable", stableID, "error", err)
+					}
+				}
+			}
+			out = append(out, archive)
+			continue
+		}
+		merged := newestCampaignArchive(group)
+		sourceID := merged.ID
+		merged.ID = stableID
+		merged.RevisionOf = ""
+		if merged.State != nil {
+			merged.State = copyInceptionState(merged.State)
+			merged.State.IdeaSlug = stableID
+		}
+		maxRevision := merged.Revision
+		history := append([]CampaignRevisionHistory{}, merged.History...)
+		seenHistory := map[string]bool{}
+		for _, event := range history {
+			seenHistory[campaignHistoryKey(event)] = true
+		}
+		for _, archive := range group {
+			if archive.Revision > maxRevision {
+				maxRevision = archive.Revision
+			}
+			event := campaignRevisionHistoryFromArchive(archive)
+			key := campaignHistoryKey(event)
+			if key != "" && !seenHistory[key] {
+				history = append(history, event)
+				seenHistory[key] = true
+			}
+			for _, event := range archive.History {
+				key := campaignHistoryKey(event)
+				if key != "" && !seenHistory[key] {
+					history = append(history, event)
+					seenHistory[key] = true
+				}
+			}
+		}
+		if maxRevision < 1 {
+			maxRevision = len(history) + 1
+		}
+		merged.Revision = maxRevision
+		merged.History = history
+		mergedOK := true
+		if err := e.writeArchiveStateLocked(&merged); err != nil {
+			e.logger.Warn("failed to merge duplicate inception campaign archives", "campaign", stableID, "error", err)
+			mergedOK = false
+		}
+		if sourceID != stableID {
+			if err := e.copyArchiveWikiLocked(sourceID, stableID); err != nil {
+				e.logger.Warn("failed to merge duplicate inception campaign wiki", "campaign", stableID, "source", sourceID, "error", err)
+				mergedOK = false
+			}
+		}
+		if mergedOK {
+			for _, archive := range group {
+				if archive.ID == stableID {
+					continue
+				}
+				if err := os.RemoveAll(filepath.Join(e.dataDir, inceptionCampaignsDir, slugify(archive.ID))); err != nil {
+					e.logger.Warn("failed to remove duplicate inception campaign archive", "campaign", archive.ID, "stable", stableID, "error", err)
+				}
+			}
+		}
+		out = append(out, merged)
+	}
+	return out
+}
+
+func newestCampaignArchive(archives []InceptionCampaignArchive) InceptionCampaignArchive {
+	newest := archives[0]
+	for _, archive := range archives[1:] {
+		if archiveLastActivity(archive).After(archiveLastActivity(newest)) {
+			newest = archive
+		}
+	}
+	return newest
+}
+
+func archiveLastActivity(archive InceptionCampaignArchive) time.Time {
+	last := archive.ArchivedAt
+	if archive.State != nil {
+		if !archive.State.StartedAt.IsZero() && last.IsZero() {
+			last = archive.State.StartedAt
+		}
+		if archive.State.PhaseChangedAt != nil {
+			last = *archive.State.PhaseChangedAt
+		}
+	}
+	return last
+}
+
+func stableCampaignArchiveID(archive InceptionCampaignArchive, byID map[string]InceptionCampaignArchive) string {
+	seen := map[string]bool{}
+	current := archive
+	for {
+		parentID := strings.TrimSpace(current.RevisionOf)
+		if parentID == "" {
+			break
+		}
+		if seen[parentID] {
+			break
+		}
+		seen[parentID] = true
+		parent, ok := byID[parentID]
+		if !ok {
+			return stripRevisionSuffix(archive.ID)
+		}
+		current = parent
+	}
+	if current.ID != "" {
+		return stripRevisionSuffix(current.ID)
+	}
+	return stripRevisionSuffix(archive.ID)
+}
+
+func stripRevisionSuffix(id string) string {
+	id = strings.TrimSpace(id)
+	idx := strings.LastIndex(id, "-rev-")
+	if idx <= 0 || idx+len("-rev-") >= len(id) {
+		return id
+	}
+	if _, err := strconv.Atoi(id[idx+len("-rev-"):]); err != nil {
+		return id
+	}
+	return id[:idx]
+}
+
+func campaignRevisionHistoryFromArchive(archive InceptionCampaignArchive) CampaignRevisionHistory {
+	phase := ""
+	if archive.State != nil {
+		phase = string(archive.State.Phase)
+	}
+	return CampaignRevisionHistory{
+		ID:         archive.ID,
+		RevisionOf: archive.RevisionOf,
+		Revision:   archive.Revision,
+		Phase:      phase,
+		ArchivedAt: archive.ArchivedAt,
+		Title:      archive.Title,
+	}
+}
+
+func campaignHistoryKey(event CampaignRevisionHistory) string {
+	return strings.TrimSpace(event.ID) + "|" + event.ArchivedAt.UTC().Format(time.RFC3339Nano) + "|" + strconv.Itoa(event.Revision)
 }
 
 // RestoreCampaignArchive makes an archived inception campaign the active L1
@@ -1149,6 +1355,9 @@ func (e *InceptionEngine) writeArchiveLocked(archive *InceptionCampaignArchive) 
 		if len(archive.Repos) == 0 {
 			archive.Repos = existing.Repos
 		}
+		if len(archive.History) == 0 {
+			archive.History = existing.History
+		}
 	}
 	return e.writeArchiveStateLocked(archive)
 }
@@ -1214,6 +1423,15 @@ func campaignOwner(owner string) string {
 		return "local"
 	}
 	return owner
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (e *InceptionEngine) copyWikiToArchiveLocked(root string) ([]string, error) {

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -243,8 +244,8 @@ func (s *Server) handleCampaignRevise(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		revision := campaignFromInceptionArchive(*archive)
-		s.auditFromRequest(r, "campaign_revise", auditDetail("campaign", campaign.ID, "revision", revision.ID, "type", campaign.Type), "")
-		jsonResponse(w, campaignReviseResponse{OK: true, Campaign: revision, Message: "Campaign revision created"})
+		s.auditFromRequest(r, "campaign_revise", auditDetail("campaign", revision.ID, "revision", strconv.Itoa(revision.Revision), "type", campaign.Type), "")
+		jsonResponse(w, campaignReviseResponse{OK: true, Campaign: revision, Message: "Campaign revision updated"})
 		return
 	}
 	jsonError(w, "campaign not found", http.StatusNotFound)
