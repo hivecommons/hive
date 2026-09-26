@@ -94,6 +94,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		// ONLY initiate work on issues carrying at least one of them. Edited
 		// on the same Labels tab so operators have one place for label policy.
 		"requireLabels":                  cfg.Project.IssueFilter.RequireLabels,
+		"writingGuide":                   cfg.Project.WritingGuide,
 		"repos":                          repos,
 		"primaryRepo":                    primaryRepo,
 		"selfAuthorizationHold":          cfg.GitHub.SelfAuthorizationHoldEnabled(),
@@ -534,6 +535,7 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Labels        *[]string `json:"labels"`
 		RequireLabels *[]string `json:"require_labels"`
+		WritingGuide  *string   `json:"writing_guide"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -547,6 +549,12 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.RequireLabels != nil {
 		if err := validateGovernorLabels(*body.RequireLabels); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if body.WritingGuide != nil {
+		if err := config.ValidateWritingGuide(*body.WritingGuide); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -584,6 +592,9 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 		if s.deps.GHClient != nil {
 			s.deps.GHClient.SetIssueFilter(s.deps.Config.Project.IssueFilter)
 		}
+	}
+	if body.WritingGuide != nil {
+		s.deps.Config.Project.WritingGuide = *body.WritingGuide
 	}
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after label update", "error", err)
