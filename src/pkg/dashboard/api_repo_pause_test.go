@@ -82,6 +82,41 @@ func TestRepoPauseResumeRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRepoAutoMergeEndpointPersistsAndAuthorizes(t *testing.T) {
+	srv := newFullServer(t)
+	w := postRepoPause(t, srv, "/api/repos/auto-merge", `{"repo":"testrepo","enabled":false}`, false)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("non-owner code = %d, want 403", w.Code)
+	}
+
+	w = postRepoPause(t, srv, "/api/repos/auto-merge", `{"repo":"testrepo","enabled":false}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("disable auto-merge: code = %d body = %s", w.Code, w.Body.String())
+	}
+	if srv.deps.Config.RepoAutoMergeEnabled("testrepo") {
+		t.Fatal("repo auto-merge still enabled after endpoint disabled it")
+	}
+	repos := buildRepos(srv.deps.Config, nil, governor.State{})
+	if len(repos) != 1 || repos[0].AutoMerge {
+		t.Fatalf("repo card AutoMerge = %+v, want false", repos)
+	}
+	reloaded, err := config.Load(srv.deps.Config.SourcePath)
+	if err != nil {
+		t.Fatalf("Load persisted config: %v", err)
+	}
+	if reloaded.RepoAutoMergeEnabled("testrepo") {
+		t.Fatal("repo auto-merge disable was not persisted")
+	}
+
+	w = postRepoPause(t, srv, "/api/repos/auto-merge", `{"repo":"testrepo","enabled":true}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("enable auto-merge: code = %d body = %s", w.Code, w.Body.String())
+	}
+	if !srv.deps.Config.RepoAutoMergeEnabled("testrepo") {
+		t.Fatal("repo auto-merge not re-enabled")
+	}
+}
+
 // changed=false distinguishes a real transition from a no-op, so a dashboard
 // with a stale belief cannot silently re-pause a repo the operator was trying
 // to resume — and re-pausing must not rewrite the original provenance.

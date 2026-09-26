@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"net/http"
 	"regexp"
 	"strings"
 	"sync"
@@ -333,11 +334,33 @@ func RepoPauseRefusal(isPaused func(repo string) bool, method, path string) (str
 	if isPaused == nil || !writeMethods[method] || gitUploadPackPath.MatchString(path) {
 		return "", false
 	}
+
 	repo := ExtractRepo(path)
 	if repo == "" || !isPaused(repo) {
 		return "", false
 	}
 	return "repository " + repo + " is PAUSED by the operator — this hive is deliberately quiet on it (release freeze, incident, staged onboarding or budget triage). Reads still work; every write is refused until an operator resumes the repo. Do NOT retry, do NOT route around this with another CLI, `hive-open-pr`/`hive-merge` or the GitHub MCP, and do NOT file an issue about it: this is an operator decision, not an outage. Work one of the other authorized repos instead.", true
+}
+
+var restPullMergePath = regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls/\d+/merge$`)
+
+// RepoAutoMergeRefusal reports whether this direct REST merge attempts a repo
+// with project.repo_policies[].auto_merge=false. It is separate from the
+// universal direct-merge hard deny so disabled repos surface the operator's
+// explicit reason rather than a generic "use hive-merge" instruction.
+func RepoAutoMergeRefusal(enabled func(repo string) bool, method, path string) (string, bool) {
+	if enabled == nil || method != http.MethodPut {
+		return "", false
+	}
+	repo := ExtractRepo(path)
+	if repo == "" || !restPullMergePath.MatchString(path) || enabled(repo) {
+		return "", false
+	}
+	return repoAutoMergeOffReason(repo), true
+}
+
+func repoAutoMergeOffReason(repo string) string {
+	return "auto-merge is disabled for repository " + repo + " by project.repo_policies[].auto_merge=false; Hive will open PRs but no Hive merge path may land them until an admin turns auto-merge back on"
 }
 
 // AgentRepoScopeRefusal reports whether this request writes to a repository the
@@ -406,6 +429,7 @@ const graphQLBodyLimit = 64 * 1024
 type graphQLRequest struct {
 	Query         string `json:"query"`
 	OperationName string `json:"operationName"`
+	Variables     any    `json:"variables"`
 }
 
 var graphQLMutationRe = regexp.MustCompile(`(?m)^\s*mutation\b`)
@@ -666,4 +690,80 @@ func GraphQLAllowedCaps(mode agent.AgentMode, caps agent.AgentCapabilities, body
 		}
 		return mode >= agent.ModeIssuesOnly, true
 	}
+}
+
+// GraphQLAutoMergeRefusal gives mergePullRequest mutations a repo-policy deny
+// when the request body carries an owner/repo literal or owner+name variables.
+// GitHub's native mergePullRequest input is a node id, so repo attribution is
+// best-effort here; unattributable merge mutations still fall through to the
+// existing ACMM merge gate.
+func GraphQLAutoMergeRefusal(enabled func(repo string) bool, body []byte) (string, bool) {
+	if enabled == nil {
+		return "", false
+	}
+	var req graphQLRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return "", false
+	}
+	if !graphQLMutationRe.MatchString(strings.TrimSpace(req.Query)) || !graphQLMergeMutationRe.MatchString(req.Query) {
+		return "", false
+	}
+	if repo := repoFromGraphQLValue(req.Variables); repo != "" && !enabled(repo) {
+		return repoAutoMergeOffReason(repo), true
+	}
+	if repo := extractRepoFromGraphQLBody(body); repo != "" && !enabled(repo) {
+		return repoAutoMergeOffReason(repo), true
+	}
+	return "", false
+}
+
+var graphQLRepoLiteralRe = regexp.MustCompile(`(?i)"(?:repo|repository|repositoryNameWithOwner)"\s*:\s*"([^"]+/[^"]+)"|"owner"\s*:\s*"([^"]+)"\s*,\s*"(?:repo|name|repository)"\s*:\s*"([^"]+)"`)
+
+func extractRepoFromGraphQLBody(body []byte) string {
+	m := graphQLRepoLiteralRe.FindSubmatch(body)
+	if len(m) == 0 {
+		return ""
+	}
+
+	if len(m[1]) > 0 {
+		return string(m[1])
+	}
+	if len(m[2]) > 0 && len(m[3]) > 0 {
+		return string(m[2]) + "/" + string(m[3])
+	}
+	return ""
+}
+
+func repoFromGraphQLValue(v any) string {
+	switch x := v.(type) {
+	case map[string]any:
+		for _, key := range []string{"repo", "repository", "repositoryNameWithOwner"} {
+			if s, ok := x[key].(string); ok && strings.Contains(s, "/") {
+				return s
+			}
+		}
+		owner, _ := x["owner"].(string)
+		name := ""
+		for _, key := range []string{"name", "repo", "repository"} {
+			if s, ok := x[key].(string); ok && s != "" && !strings.Contains(s, "/") {
+				name = s
+				break
+			}
+		}
+		if owner != "" && name != "" {
+			return owner + "/" + name
+		}
+		for _, child := range x {
+			if repo := repoFromGraphQLValue(child); repo != "" {
+				return repo
+			}
+		}
+	case []any:
+		for _, child := range x {
+			if repo := repoFromGraphQLValue(child); repo != "" {
+				return repo
+			}
+		}
+	}
+	return ""
 }

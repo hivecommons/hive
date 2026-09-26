@@ -540,6 +540,9 @@ type Manager struct {
 	// bobAPIKeyResolver above: it is read from deliverKickLocked and
 	// agentEnvPairs, both of which already hold m.mu.
 	explainModeDefaultResolver atomic.Pointer[func() string]
+	// repoAutoMergeEnabled resolves the live per-repo auto-merge switch used by
+	// the merge relay. Nil preserves the historic default-on behavior.
+	repoAutoMergeEnabled atomic.Pointer[func(repo string) bool]
 
 	// bobKeySourceResolver reports WHERE the key was found ("file:<path>" or
 	// "env:<NAME>"), never the value. The launch path needs the PATH so it can

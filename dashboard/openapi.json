@@ -19447,6 +19447,77 @@
         }
       }
     },
+    "/api/repos/auto-merge": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Enable or disable Hive auto-merge for one repository",
+        "description": "Admin-only, using the same owner/repository-write permission check as repository hold chips. Persists project.repo_policies[].auto_merge for one watched repository. false means Hive may still open PRs, but the hive-merge relay, App self-authored sweep, and proxy direct merge chokepoints refuse to merge that repo. The live config object is updated before the response, so the policy takes effect without a restart.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "repo",
+                  "enabled"
+                ],
+                "properties": {
+                  "repo": {
+                    "type": "string",
+                    "description": "Repository as project.repos spells it: a bare name or owner/repo."
+                  },
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "true to allow Hive auto-merge, false to disable every Hive merge path for this repo."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Auto-merge policy result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "changed": {
+                      "type": "boolean"
+                    },
+                    "persisted": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing/invalid repo, or a repo not listed in project.repos"
+          },
+          "403": {
+            "description": "Owner or repository write permission required"
+          },
+          "503": {
+            "description": "No config loaded"
+          }
+        }
+      }
+    },
     "/api/repos/{owner}/{repo}/hold-permission": {
       "get": {
         "tags": [

@@ -303,6 +303,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// cannot live in a single {repo} path value.
 	s.mux.HandleFunc("POST /api/repos/pause", s.handleRepoPause)
 	s.mux.HandleFunc("POST /api/repos/resume", s.handleRepoResume)
+	s.mux.HandleFunc("POST /api/repos/auto-merge", s.handleRepoAutoMerge)
 	s.mux.HandleFunc("GET /api/repos/pauses", s.handleRepoPauses)
 	s.mux.HandleFunc("GET /api/repos/{owner}/{repo}/hold-permission", s.handleRepoHoldPermission)
 	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/hold", s.handleRepoItemHold)

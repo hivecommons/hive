@@ -754,6 +754,7 @@ func TestSelfAuthorizationHoldForRepoResolution(t *testing.T) {
 			},
 		},
 	}
+
 	if cfg.SelfAuthorizationHoldEnabledForRepo("api") {
 		t.Fatal("repo override false should disable the hold")
 	}
@@ -770,6 +771,33 @@ func TestSelfAuthorizationHoldForRepoResolution(t *testing.T) {
 	}
 	if !cfg.SelfAuthorizationHoldEnabledForRepo("web") {
 		t.Fatal("repo override true should win over hive-wide false")
+	}
+}
+
+func TestRepoAutoMergeEnabledResolution(t *testing.T) {
+	f := false
+	tr := true
+	cfg := &Config{Project: ProjectConfig{
+		Org: "acme",
+		RepoPolicies: []RepoPolicy{
+			{Repo: "api", AutoMerge: &f},
+			{Repo: "web", AutoMerge: &tr},
+		},
+	}}
+	if cfg.RepoAutoMergeEnabled("api") {
+		t.Fatal("auto_merge=false should disable repo auto-merge")
+	}
+	if cfg.RepoAutoMergeEnabled("ACME/API") {
+		t.Fatal("owner/repo match should be case-insensitive")
+	}
+	if !cfg.RepoAutoMergeEnabled("acme/web") {
+		t.Fatal("auto_merge=true should enable repo auto-merge")
+	}
+	if !cfg.RepoAutoMergeEnabled("other") {
+		t.Fatal("missing auto_merge override should default to enabled")
+	}
+	if !(*Config)(nil).RepoAutoMergeEnabled("acme/api") {
+		t.Fatal("nil config should default to enabled")
 	}
 }
 

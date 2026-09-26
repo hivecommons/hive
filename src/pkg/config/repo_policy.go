@@ -11,6 +11,7 @@ import (
 type RepoPolicy struct {
 	Repo                  string               `yaml:"repo" json:"repo"`
 	SelfAuthorizationHold *bool                `yaml:"self_authorization_hold,omitempty" json:"self_authorization_hold,omitempty"`
+	AutoMerge             *bool                `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
 	ACMMLevel             *int                 `yaml:"acmm_level,omitempty" json:"acmm_level,omitempty"`
 	ACMMPinned            bool                 `yaml:"acmm_pinned,omitempty" json:"acmm_pinned,omitempty"`
 	ACMMLastAutomatic     *AutonomyLevelChange `yaml:"acmm_last_automatic,omitempty" json:"acmm_last_automatic,omitempty"`
@@ -229,7 +230,72 @@ func (c *Config) SetSelfAuthorizationHoldForRepoAndSave(repo string, enabled *bo
 }
 
 func repoPolicyHasNoOverrides(rp RepoPolicy) bool {
-	return rp.SelfAuthorizationHold == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil
+	return rp.SelfAuthorizationHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil
+}
+
+// RepoAutoMergeEnabled resolves project.repo_policies[].auto_merge for repo.
+// Unset means enabled so existing hives keep their prior L6 behavior.
+func (c *Config) RepoAutoMergeEnabled(repo string) bool {
+	if c == nil {
+		return true
+	}
+	if rp, ok := c.RepoPolicyFor(repo); ok && rp.AutoMerge != nil {
+		return *rp.AutoMerge
+	}
+	return true
+}
+
+// SetRepoAutoMergeForRepoAndSave records, clears, and persists one repo's
+// auto-merge override. nil clears the override so the repo inherits default ON.
+func (c *Config) SetRepoAutoMergeForRepoAndSave(repo string, enabled *bool) (bool, error) {
+	if c == nil {
+		return false, fmt.Errorf("no config loaded")
+	}
+	name := strings.TrimSpace(repo)
+	if name == "" {
+		return false, fmt.Errorf("repo is required")
+	}
+	name, _ = NormalizeRepoForOrg(c.Project.Org, name)
+
+	saveMu.Lock()
+	defer saveMu.Unlock()
+
+	key := repoPauseKey(c.Project.Org, name)
+	repoPauseMu.Lock()
+	idx := -1
+	for i, rp := range c.Project.RepoPolicies {
+		if repoPauseKey(c.Project.Org, rp.Repo) == key {
+			idx = i
+			break
+		}
+	}
+	changed := false
+	if enabled == nil {
+		if idx >= 0 && c.Project.RepoPolicies[idx].AutoMerge != nil {
+			c.Project.RepoPolicies[idx].AutoMerge = nil
+			if repoPolicyHasNoOverrides(c.Project.RepoPolicies[idx]) {
+				c.Project.RepoPolicies = append(c.Project.RepoPolicies[:idx:idx], c.Project.RepoPolicies[idx+1:]...)
+			}
+			changed = true
+		}
+	} else {
+		v := *enabled
+		if idx >= 0 {
+			if c.Project.RepoPolicies[idx].AutoMerge == nil || *c.Project.RepoPolicies[idx].AutoMerge != v {
+				c.Project.RepoPolicies[idx].AutoMerge = &v
+				changed = true
+			}
+		} else {
+			c.Project.RepoPolicies = append(c.Project.RepoPolicies, RepoPolicy{Repo: name, AutoMerge: &v})
+			changed = true
+		}
+	}
+	repoPauseMu.Unlock()
+
+	if !changed {
+		return false, nil
+	}
+	return true, c.saveLocked()
 }
 
 // SetSelfAuthorizationHoldForRepos applies a batch of per-repo #5117 override

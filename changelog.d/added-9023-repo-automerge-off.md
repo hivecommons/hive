@@ -1,0 +1,1 @@
+- Added per-repository `project.repo_policies[].auto_merge` controls so admins can disable Hive auto-merge for one repo while leaving the rest of an L6 hive unchanged; the switch is enforced at the merge relay, App self-merge sweep, and proxy direct-merge paths, and can be toggled from the dashboard repo card.

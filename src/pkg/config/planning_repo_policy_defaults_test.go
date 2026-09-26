@@ -161,6 +161,39 @@ func TestSetSelfAuthorizationHoldForRepoAndSave(t *testing.T) {
 	}
 }
 
+func TestSetRepoAutoMergeForRepoAndSave(t *testing.T) {
+	cfg := newPauseTestConfig(t, "api", "web")
+	f := false
+	changed, err := cfg.SetRepoAutoMergeForRepoAndSave("api", &f)
+	if err != nil || !changed {
+		t.Fatalf("set auto_merge=false: changed=%v err=%v, want true nil", changed, err)
+	}
+	if cfg.RepoAutoMergeEnabled("acme/api") {
+		t.Fatal("auto_merge=false not effective after set")
+	}
+	reloaded, err := Load(cfg.SourcePath)
+	if err != nil {
+		t.Fatalf("Load() after save error = %v", err)
+	}
+	if reloaded.RepoAutoMergeEnabled("api") {
+		t.Fatal("auto_merge=false did not persist")
+	}
+	changed, err = cfg.SetRepoAutoMergeForRepoAndSave("ACME/API", &f)
+	if err != nil || changed {
+		t.Fatalf("idempotent set: changed=%v err=%v, want false nil", changed, err)
+	}
+	changed, err = cfg.SetRepoAutoMergeForRepoAndSave("api", nil)
+	if err != nil || !changed {
+		t.Fatalf("clear auto_merge override: changed=%v err=%v, want true nil", changed, err)
+	}
+	if !cfg.RepoAutoMergeEnabled("api") {
+		t.Fatal("clearing auto_merge should restore default enabled")
+	}
+	if _, ok := cfg.RepoPolicyFor("api"); ok {
+		t.Fatal("empty repo policy should be pruned after clearing auto_merge")
+	}
+}
+
 // ClearRepoPolicies runs when a repo-list save migrates the hive to another
 // org: bare overrides from the previous org must not silently retarget to
 // same-named repos there.

@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -17,6 +18,11 @@ import (
 type repoPauseRequest struct {
 	Repo   string `json:"repo"`
 	Reason string `json:"reason,omitempty"`
+}
+
+type repoAutoMergeRequest struct {
+	Repo    string `json:"repo"`
+	Enabled bool   `json:"enabled"`
 }
 
 // RepoPauseState is one repo's pause as the dashboard reports it.
@@ -78,8 +84,23 @@ func decodeRepoPauseRequest(w http.ResponseWriter, r *http.Request) (repoPauseRe
 		jsonError(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
 		return body, false
 	}
+
 	body.Repo = strings.TrimSpace(body.Repo)
 	body.Reason = strings.TrimSpace(body.Reason)
+	if body.Repo == "" {
+		jsonError(w, "repo is required", http.StatusBadRequest)
+		return body, false
+	}
+	return body, true
+}
+
+func decodeRepoAutoMergeRequest(w http.ResponseWriter, r *http.Request) (repoAutoMergeRequest, bool) {
+	var body repoAutoMergeRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
+		jsonError(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return body, false
+	}
+	body.Repo = strings.TrimSpace(body.Repo)
 	if body.Repo == "" {
 		jsonError(w, "repo is required", http.StatusBadRequest)
 		return body, false
@@ -181,6 +202,7 @@ func (s *Server) handleRepoResume(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
 		return
 	}
+
 	body, ok := decodeRepoPauseRequest(w, r)
 	if !ok {
 		return
@@ -203,6 +225,42 @@ func (s *Server) handleRepoResume(w http.ResponseWriter, r *http.Request) {
 	s.auditFromRequest(r, "repo_resume", auditDetail("repo", body.Repo), "")
 	s.refreshAndPersist()
 	repoPauseToggleResponse(w, "resumed", changed, RepoPauseState{Repo: body.Repo}, err == nil, repoPausePersistWarning(err))
+}
+
+func (s *Server) handleRepoAutoMerge(w http.ResponseWriter, r *http.Request) {
+	if s.deps == nil || s.deps.Config == nil {
+		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	body, ok := decodeRepoAutoMergeRequest(w, r)
+	if !ok {
+		return
+	}
+	if !s.requireRepoPausePermission(w, r, body.Repo) {
+		return
+	}
+	if !s.watchesRepo(body.Repo) {
+		jsonError(w, "repo "+body.Repo+" is not in project.repos — nothing would be updated", http.StatusBadRequest)
+		return
+	}
+	enabled := body.Enabled
+	changed, err := s.deps.Config.SetRepoAutoMergeForRepoAndSave(body.Repo, &enabled)
+	if err != nil {
+		s.logger.Error("failed to persist repo auto-merge policy", "repo", body.Repo, "error", err)
+	}
+	s.auditFromRequest(r, "repo_auto_merge", auditDetail("repo", body.Repo, "enabled", fmt.Sprintf("%t", enabled)), "")
+	s.refreshAndPersist()
+	repo := body.Repo
+	if normalized, ok := config.NormalizeRepoForOrg(s.deps.Config.Project.Org, body.Repo); ok {
+		repo = normalized
+	}
+	jsonResponse(w, map[string]any{
+		"ok":        true,
+		"repo":      repo,
+		"enabled":   enabled,
+		"changed":   changed,
+		"persisted": err == nil,
+	})
 }
 
 // handleRepoPauses lists every repo pause with its provenance. Read-only, so

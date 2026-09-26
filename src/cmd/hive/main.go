@@ -2139,6 +2139,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	b.agentMgr.SetExplainModeDefaultResolver(func() string {
 		return b.cfg.Governor.ResolveExplainModeDefault()
 	})
+	b.agentMgr.SetRepoAutoMergeEnabledResolver(func(repo string) bool {
+		return b.cfg.RepoAutoMergeEnabled(repo)
+	})
 	// The launch path also needs to know WHICH FILE the key came from, so it can
 	// check that file is readable by the agent UID rather than only by the hive
 	// process. Returns a loggable source string, never the key value.
@@ -2376,6 +2379,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 
 		autoMergeOpts.MutationBoundary = b.mutationBoundary
 		autoMergeOpts.SelfAuthorizationHoldEnabled = func(repo string) bool { return b.cfg.SelfAuthorizationHoldEnabledForRepo(repo) }
+		autoMergeOpts.RepoAutoMergeEnabled = func(repo string) bool { return b.cfg.RepoAutoMergeEnabled(repo) }
 		// Intent tier gate (#6258): the human lane only queues PRs that
 		// survive writeMergeEligible's intent check, but this sweep lists
 		// the App's PRs on its own, so it carries the same policy (same
@@ -3943,6 +3947,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// config, so re-scoping an agent in the dashboard takes effect on the
 		// next request.
 		b.githubProxy.SetAgentRepoScopeFunc(b.cfg.AgentServesRepo)
+		b.githubProxy.SetRepoAutoMergeEnabledFunc(b.cfg.RepoAutoMergeEnabled)
 		// #1861: the proxy resolves an identified agent to its hub-held scoped
 		// token via the package-level registry WriteAgentToken feeds (NOT via
 		// the appAuth instance, which is replaced on key rotation — a closure

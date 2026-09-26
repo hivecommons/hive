@@ -65,9 +65,9 @@ func TestBindMergeAuthz(t *testing.T) {
 		]
 	}`)
 
-	allow := func(agent string, fileUID int) error { return nil }
+	allow := func(agent string, fileUID int, repo string) error { return nil }
 	innerErr := errors.New("uid mismatch")
-	deny := func(agent string, fileUID int) error { return innerErr }
+	deny := func(agent string, fileUID int, repo string) error { return innerErr }
 
 	t.Run("inner denial short-circuits", func(t *testing.T) {
 		err := bindMergeAuthz(deny)("guide", 1001, "hivecommons/hive", 42, goodSHA)

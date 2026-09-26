@@ -64,6 +64,8 @@ project:
 #   repo_policies:
 #     - repo: console
 #       self_authorization_hold: false
+#     - repo: sensitive-repo
+#       auto_merge: false  # PRs may be opened, but Hive will not merge them.
   # Optional: how the issues and PRs your agents file should read. Rendered as
   # ${WRITING_GUIDE} in every default policy that files an issue or PR, right
   # before the body template the agent fills in — next to the template, which

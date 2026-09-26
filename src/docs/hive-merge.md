@@ -29,6 +29,13 @@ check and a `CanMerge` ACMM gate (`AuthorizeMerge`) that a direct merge would
 need — an agent whose mode allows opening PRs but not merging them still
 cannot merge through this path.
 
+`project.repo_policies[].auto_merge: false` is also enforced here. A repo with
+that switch off may still receive Hive-opened PRs, but the relay refuses to
+merge them and reports that auto-merge is disabled for the repository. The same
+repo policy is enforced by the App self-merge sweep and by the proxy's direct
+REST/GraphQL merge denial path, so agents cannot bypass it by calling GitHub
+directly.
+
 On top of `AuthorizeMerge`, the watcher's authorizer is wrapped with a second,
 target-specific check (the F4 target-binding, CWE-863) before any merge is
 attempted:

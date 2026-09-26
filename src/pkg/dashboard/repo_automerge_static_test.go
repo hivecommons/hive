@@ -1,0 +1,30 @@
+package dashboard
+
+import (
+	"os"
+	"strings"
+	"testing"
+)
+
+func TestRepoAutoMergeStaticWiring(t *testing.T) {
+	html, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	s := string(html)
+	for _, want := range []string{
+		"repo-automerge-off-pill",
+		"repo-automerge-btn",
+		"function toggleRepoAutoMerge(repo, enabled, btn)",
+		"fetch('/api/repos/auto-merge'",
+		"r.autoMerge !== false",
+		"data-action=\"toggleRepoAutoMerge\"",
+	} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("static dashboard missing %q", want)
+		}
+	}
+	if strings.Contains(s, "toggleRepoAutoMerge") && (strings.Contains(s, "confirm(") || strings.Contains(s, "alert(")) {
+		t.Fatal("repo auto-merge toggle must not use native browser dialogs")
+	}
+}

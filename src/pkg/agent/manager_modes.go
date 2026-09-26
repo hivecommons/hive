@@ -233,6 +233,30 @@ func (m *Manager) AuthorizeIssueOpen(agentName string, fileUID int, kind string)
 	return nil
 }
 
+// SetRepoAutoMergeEnabledResolver installs the live per-repo auto-merge switch
+// used by AuthorizeMerge. Passing nil restores the default-on behavior.
+func (m *Manager) SetRepoAutoMergeEnabledResolver(fn func(repo string) bool) {
+	if m == nil {
+		return
+	}
+	if fn == nil {
+		m.repoAutoMergeEnabled.Store(nil)
+		return
+	}
+	m.repoAutoMergeEnabled.Store(&fn)
+}
+
+func (m *Manager) repoAutoMergeAllowed(repo string) bool {
+	if m == nil {
+		return true
+	}
+	fnp := m.repoAutoMergeEnabled.Load()
+	if fnp == nil || *fnp == nil {
+		return true
+	}
+	return (*fnp)(repo)
+}
+
 // AuthorizeMerge enforces the policy for the hive-merges-PR watcher, mirroring
 // AuthorizePROpen but with the stricter CanMerge() gate: the request's agent
 // must own the request file (forge-resistance) AND be merge-capable at the
@@ -240,7 +264,7 @@ func (m *Manager) AuthorizeIssueOpen(agentName string, fileUID int, kind string)
 // merge relay under the exact same authority as a direct merge would require —
 // an issues/PRs agent that can open PRs still cannot merge them unless its mode
 // grants merge. A nil manager or unknown agent is denied.
-func (m *Manager) AuthorizeMerge(agentName string, fileUID int) error {
+func (m *Manager) AuthorizeMerge(agentName string, fileUID int, repo string) error {
 	if strings.TrimSpace(agentName) == "" {
 		return fmt.Errorf("no agent named in the request")
 	}
@@ -265,6 +289,9 @@ func (m *Manager) AuthorizeMerge(agentName string, fileUID int) error {
 	if !m.agentMode(agent).CanMerge() {
 		return fmt.Errorf("agent %q is not merge-capable at this ACMM level (mode %s) — only ISSUES_PRS_MERGE agents may merge PRs",
 			agentName, m.agentMode(agent).String())
+	}
+	if !m.repoAutoMergeAllowed(repo) {
+		return fmt.Errorf("auto-merge is disabled for repository %s by project.repo_policies[].auto_merge=false", repo)
 	}
 	return nil
 }

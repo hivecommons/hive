@@ -273,7 +273,7 @@ func TestAuthorizeMergeAllowsMergeCapableAgent(t *testing.T) {
 	m.agents["scanner"] = &AgentProcess{Name: "scanner", Config: config.AgentConfig{Mode: "ISSUES_PRS_MERGE"}}
 	m.uidMap = &UIDMap{BaseUID: testUIDBase, Agents: map[string]int{"scanner": testUIDBase}}
 
-	if err := m.AuthorizeMerge("scanner", testUIDBase); err != nil {
+	if err := m.AuthorizeMerge("scanner", testUIDBase, "acme/repo"); err != nil {
 		t.Errorf("AuthorizeMerge() = %v, want nil (scanner mode ISSUES_PRS_MERGE is merge-capable)", err)
 	}
 }
@@ -285,7 +285,7 @@ func TestAuthorizeMergeRejectsNonMergeAgent(t *testing.T) {
 	m.agents["quality"] = &AgentProcess{Name: "quality", Config: config.AgentConfig{Mode: "ISSUES_AND_PRS"}}
 	m.uidMap = &UIDMap{BaseUID: testUIDBase, Agents: map[string]int{"quality": testUIDBase}}
 
-	err := m.AuthorizeMerge("quality", testUIDBase)
+	err := m.AuthorizeMerge("quality", testUIDBase, "acme/repo")
 	if err == nil {
 		t.Fatal("AuthorizeMerge() = nil, want denial: ISSUES_AND_PRS is push-capable but not merge-capable")
 	}
@@ -305,7 +305,7 @@ func TestAuthorizeMergeRejectsForgedAgentName(t *testing.T) {
 		"quality": testUIDBase + 1,
 	}}
 
-	err := m.AuthorizeMerge("scanner", testUIDBase+1) // file owned by quality's UID
+	err := m.AuthorizeMerge("scanner", testUIDBase+1, "acme/repo") // file owned by quality's UID
 	if err == nil {
 		t.Fatal("AuthorizeMerge() = nil, want a denial: file owned by a different agent")
 	}
@@ -317,7 +317,24 @@ func TestAuthorizeMergeRejectsForgedAgentName(t *testing.T) {
 // TestAuthorizeMergeRejectsEmptyAgentName: a request naming no agent is denied.
 func TestAuthorizeMergeRejectsEmptyAgentName(t *testing.T) {
 	m := testManager(acmmLevelPushCapable)
-	if err := m.AuthorizeMerge("  ", testUIDBase); err == nil {
+	if err := m.AuthorizeMerge("  ", testUIDBase, "acme/repo"); err == nil {
 		t.Fatal("AuthorizeMerge(\"  \") = nil, want an error")
+	}
+}
+
+func TestAuthorizeMergeRejectsRepoAutoMergeOff(t *testing.T) {
+	m := testManager(acmmLevelPushCapable)
+	m.agents["scanner"] = &AgentProcess{Name: "scanner", Config: config.AgentConfig{Mode: "ISSUES_PRS_MERGE"}}
+	m.uidMap = &UIDMap{BaseUID: testUIDBase, Agents: map[string]int{"scanner": testUIDBase}}
+	m.SetRepoAutoMergeEnabledResolver(func(repo string) bool {
+		return !strings.EqualFold(repo, "acme/repo")
+	})
+
+	err := m.AuthorizeMerge("scanner", testUIDBase, "ACME/Repo")
+	if err == nil {
+		t.Fatal("AuthorizeMerge() = nil, want repo auto-merge denial")
+	}
+	if !strings.Contains(err.Error(), "auto-merge is disabled") {
+		t.Fatalf("error = %q, want auto-merge disabled reason", err)
 	}
 }

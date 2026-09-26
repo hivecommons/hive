@@ -55,6 +55,9 @@ type Options struct {
 	// nil preserves the default-on behavior.
 	SelfAuthorizationHoldEnabled      func(repo string) bool
 	SelfAuthorizationHoldReleaseLimit int
+	// RepoAutoMergeEnabled returns the live per-repo auto-merge switch. nil
+	// preserves default-on behavior.
+	RepoAutoMergeEnabled func(repo string) bool
 }
 
 // Engine owns the automerge sweep policy state.
@@ -77,6 +80,7 @@ type Engine struct {
 
 	selfAuthorizationHoldEnabled      func(repo string) bool
 	selfAuthorizationHoldReleaseLimit int
+	repoAutoMergeEnabled              func(repo string) bool
 }
 
 // New returns an automerge sweep engine over a GitHub transport client.
@@ -96,7 +100,9 @@ func New(transport Transport, opts Options) *Engine {
 		intentGate:                        opts.IntentGate,
 		selfAuthorizationHoldEnabled:      opts.SelfAuthorizationHoldEnabled,
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
+		repoAutoMergeEnabled:              opts.RepoAutoMergeEnabled,
 	}
+
 	if e.mutation == nil {
 		if provider, ok := transport.(interface{ MutationBoundary() effects.Boundary }); ok {
 			e.mutation = provider.MutationBoundary()
@@ -107,6 +113,13 @@ func New(transport Transport, opts Options) *Engine {
 
 func (c *Engine) ready() bool {
 	return c != nil && c.transport != nil && c.gh != nil
+}
+
+func (c *Engine) repoAutoMergeAllowed(repo string) bool {
+	if c == nil || c.repoAutoMergeEnabled == nil {
+		return true
+	}
+	return c.repoAutoMergeEnabled(repo)
 }
 
 // activeRepos is Repositories() minus the repos under an operator pause
@@ -412,6 +425,10 @@ func (c *Engine) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepO
 		if len(result.Merged) >= maxMerges {
 			break
 		}
+		if !c.repoAutoMergeAllowed(repo) {
+			c.info("automerge sweep skipped repo", "repo", repo, "reason", "repo-auto-merge-disabled")
+			continue
+		}
 		owner, repoName := c.transport.SplitRepo(repo)
 		issues, err := c.listQueuedPullRequestIssues(ctx, owner, repoName, label)
 		if err != nil {
@@ -521,6 +538,10 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 	for _, repo := range c.activeRepos() {
 		if len(result.Merged) >= maxMerges {
 			break
+		}
+		if !c.repoAutoMergeAllowed(repo) {
+			c.info("self-authored automerge sweep skipped repo", "repo", repo, "reason", "repo-auto-merge-disabled")
+			continue
 		}
 		owner, repoName := c.transport.SplitRepo(repo)
 		prs, err := c.listOpenAppAuthoredPullRequests(ctx, owner, repoName)

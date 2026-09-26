@@ -131,9 +131,9 @@ func bareRepoName(repo string) string {
 // governor deemed eligible, at a pinned SHA". Both must pass before MergePR is
 // reached. Ordering: run the agent/UID/CanMerge check first (cheapest, and it
 // gives the clearest denial reason), then the SHA + eligible-list binding.
-func bindMergeAuthz(inner func(agent string, fileUID int) error) github.MergeRequestAuthorizer {
+func bindMergeAuthz(inner func(agent string, fileUID int, repo string) error) github.MergeRequestAuthorizer {
 	return func(agent string, fileUID int, repo string, number int, expectSHA string) error {
-		if err := inner(agent, fileUID); err != nil {
+		if err := inner(agent, fileUID, repo); err != nil {
 			return err
 		}
 		// (a) Require a pinned head SHA. An empty expectSHA means "merge whatever

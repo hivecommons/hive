@@ -1243,11 +1243,32 @@ func TestSweepSelfAuthoredAutoMergesMergesGreenAppPRWithoutHumanReview(t *testin
 	if err != nil {
 		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
 	}
+
 	if len(result.Merged) != 1 || len(merged) != 1 || merged[0] != 11 {
 		t.Fatalf("merged result=%v merge calls=%v, want PR 11 merged without any human review", result.Merged, merged)
 	}
 	if len(audits) != 1 || audits[0].Number != 11 || audits[0].Author != testHiveAppBotLogin || audits[0].QueuedBy != "" {
 		t.Fatalf("audit events = %#v, want App-authored PR 11 with no queuer", audits)
+	}
+}
+
+func TestSweepSelfAuthoredAutoMergesSkipsRepoWhenAutoMergeDisabled(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("disabled auto-merge repo should be skipped before API calls; got %s %s", r.Method, r.URL.Path)
+	}))
+	defer api.Close()
+
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	client.SetAppBotLogin(testHiveAppBotLogin)
+	c := New(client, Options{RepoAutoMergeEnabled: func(repo string) bool {
+		return !strings.EqualFold(repo, "widget") && !strings.EqualFold(repo, "acme/widget")
+	}})
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if result.Seen != 0 || result.Candidates != 0 || len(result.Merged) != 0 {
+		t.Fatalf("result = %+v, want disabled repo skipped before PR enumeration", result)
 	}
 }
 

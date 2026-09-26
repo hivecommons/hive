@@ -269,3 +269,8 @@ entry plus a visible decision bead. The hive-wide `acmm_level` remains the
 ceiling. Until the per-repo ACMM RFC (#6111) lands, Hive keeps this repo-keyed
 seam and teaches the live proxy to apply the repo override on matching
 repository requests so enforcement observes the decision without a restart.
+
+For the narrow L6-except-one-repo case, `project.repo_policies[].auto_merge:
+false` disables only auto-merge on that repository. The hive-wide ACMM level
+still determines issue/PR creation authority, but merge authority is removed at
+the `hive-merge` relay, App self-authored sweep, and proxy direct-merge seam.

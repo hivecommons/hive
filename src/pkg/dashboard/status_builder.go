@@ -1861,6 +1861,7 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 			OpenPrs:          prsByRepo[repoName],
 			HeldIssues:       heldIssuesByRepo[repoName],
 			HeldPrs:          heldPrsByRepo[repoName],
+			AutoMerge:        cfg.RepoAutoMergeEnabled(repoName),
 		}
 		// Deliberately iterating cfg.Project.Repos above, not ActiveRepos: a
 		// paused repo keeps its card and its counts. Dropping it here would

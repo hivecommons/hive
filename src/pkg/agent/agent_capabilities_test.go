@@ -35,7 +35,7 @@ func TestAgentCapabilities_TracksModeGates(t *testing.T) {
 
 		// The PR/merge results must agree with the actual authorization gates.
 		prAllowed := m.AuthorizePROpen(tc.name, 0) == nil
-		mergeAllowed := m.AuthorizeMerge(tc.name, 0) == nil
+		mergeAllowed := m.AuthorizeMerge(tc.name, 0, "acme/repo") == nil
 		if pr != prAllowed {
 			t.Errorf("%s: CanOpenPR=%v but AuthorizePROpen allowed=%v", tc.name, pr, prAllowed)
 		}

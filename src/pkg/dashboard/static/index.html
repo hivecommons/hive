@@ -1369,8 +1369,10 @@
        the provenance (who/when/why) in its tooltip. */
     .repo-card:has(.repo-paused-pill) { border-color: color-mix(in srgb, var(--yellow) 45%, var(--border)); background: color-mix(in srgb, var(--yellow) 5%, var(--surface)); }
     .repo-card:has(.repo-paused-pill) .repo-stats { opacity: 0.55; }
-    .repo-paused-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; line-height: 1; padding: 3px 7px; border-radius: var(--r-pill); white-space: nowrap; text-transform: uppercase; border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent); background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); cursor: help; }
+    .repo-paused-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; text-transform: uppercase; border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent); background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); cursor: help; }
+    .repo-automerge-off-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; text-transform: uppercase; border: 1px solid color-mix(in srgb, var(--red) 45%, transparent); background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red); cursor: help; }
     .repo-pause-btn { flex: 0 0 auto; margin-left: auto; font-size: 0.66rem; font-weight: 600; line-height: 1; padding: 3px 7px; border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--muted); opacity: 0.7; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
+    .repo-automerge-btn { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 600; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--muted); opacity: 0.7; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
     .repo-swarm-btn { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--border)); background: color-mix(in srgb, var(--amber) 10%, transparent); color: var(--amber); opacity: 0.85; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
     .repo-swarm-btn:hover { opacity: 1; border-color: var(--amber); }
     .repo-swarm-btn[data-busy="1"] { opacity: 0.5; cursor: default; }
@@ -1385,6 +1387,8 @@
     .repo-card:hover .repo-pause-btn { opacity: 1; }
     .repo-pause-btn:hover { color: var(--fg); border-color: color-mix(in srgb, var(--fg) 35%, transparent); }
     .repo-pause-btn[data-busy="1"] { opacity: 0.5; cursor: default; }
+    .repo-automerge-btn:hover { color: var(--fg); border-color: color-mix(in srgb, var(--fg) 35%, transparent); }
+    .repo-automerge-btn[data-busy="1"] { opacity: 0.5; cursor: default; }
     .repo-hold-toggle { cursor: pointer; }
     .repo-hold-toggle:hover { background: color-mix(in srgb, var(--pill-c) 24%, transparent); }
     .repo-hold-toggle[data-busy="1"] { opacity: 0.5; cursor: default; }
@@ -8846,6 +8850,27 @@
       }
     }
 
+    async function toggleRepoAutoMerge(repo, enabled, btn) {
+      if (btn && btn.dataset.busy === '1') return;
+      const nextEnabled = !enabled;
+      const label = btn ? btn.textContent : '';
+      if (btn) { btn.dataset.busy = '1'; btn.textContent = nextEnabled ? 'Enabling…' : 'Disabling…'; }
+      try {
+        const resp = await fetch('/api/repos/auto-merge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ repo: repo, enabled: nextEnabled })
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+        showToast((nextEnabled ? 'Enabled' : 'Disabled') + ' auto-merge for ' + repo, 'success');
+        fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
+      } catch (e) {
+        showToast('Auto-merge toggle failed: ' + (e && e.message ? e.message : 'network error'), 'error');
+        if (btn) { btn.dataset.busy = ''; btn.textContent = label || (enabled ? 'auto-merge off' : 'auto-merge on'); }
+      }
+    }
+
     async function startSwarm(repo, btn, force) {
       if (btn && btn.dataset.busy === '1') return;
       if (btn) { btn.dataset.busy = '1'; btn.textContent = 'Calling…'; }
@@ -10381,9 +10406,14 @@
             + '. No agent writes to it and none is handed work on it; it is still watched, scored and counted here.'
           : '';
         const pausedPill = r.paused ? `<span class="repo-paused-pill" title="${esc(pauseTip)}">⏸ paused</span>` : '';
+        const autoMergeOn = r.autoMerge !== false;
+        const autoMergeOffPill = autoMergeOn ? '' : `<span class="repo-automerge-off-pill" title="${esc('Auto-merge is disabled for this repository. Hive can open PRs, but the relay, self-authored sweep, and proxy will not merge them.')}">auto-merge off</span>`;
         const swarming = activeSwarmRepo && activeSwarmRepo.toLowerCase() === cardRepo.toLowerCase();
         const swarmPill = swarming ? `<span class="repo-swarm-pill" title="${esc('This repository is being prioritized by the active swarm')}">🐝 swarm</span>` : '';
         const canPauseRepo = canToggleHold;
+        const autoMergeBtn = canPauseRepo
+          ? `<button class="repo-automerge-btn" data-action="toggleRepoAutoMerge" data-arg0="${esc(cardRepo)}" data-arg1="${autoMergeOn ? 'true' : 'false'}" data-arg-types="s,j,t" data-stop="1" data-prevent="1" title="${autoMergeOn ? 'Disable Hive auto-merge for this repo' : 'Enable Hive auto-merge for this repo'}">${autoMergeOn ? 'auto-merge off' : 'auto-merge on'}</button>`
+          : '';
         const pauseBtn = canPauseRepo
           ? `<button class="repo-pause-btn" data-action="toggleRepoPause" data-arg0="${esc(cardRepo)}" data-arg1="${r.paused ? 'true' : 'false'}" data-arg-types="s,j,t" data-stop="1" data-prevent="1" title="${r.paused ? 'Resume agent activity on this repo' : 'Quiet this repo — agents stop writing to it and stop being handed work on it — without stopping the rest of the hive'}">${r.paused ? '▶ resume' : '⏸ pause'}</button>`
           : '';
@@ -10408,7 +10438,7 @@
         <div class="repo-card${cardW ? ' repo-card-sized' : ''}"${cardW ? ` style="flex-basis:${cardW}px"` : ''}>
           ${resizeHandle}
           <div style="font-size:var(--fs-2xs);font-weight:600;letter-spacing:0.02em;color:${isPublic ? 'var(--muted)' : 'var(--indigo)'};margin-bottom:var(--sp-1)" title="This repo lives on ${esc(hostLabel)}${isPublic ? '' : ' (GitHub Enterprise), not public github.com'}">${esc(hostLabel)}${isPublic ? '' : ' · Enterprise'}</div>
-          <div class="repo-name"><a href="${esc(repoUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a>${swarmPill}${pausedPill}${swarmBtn}${pauseBtn}</div>
+          <div class="repo-name"><a href="${esc(repoUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a>${swarmPill}${pausedPill}${autoMergeOffPill}${swarmBtn}${autoMergeBtn}${pauseBtn}</div>
           <div class="repo-stats">
             <div class="repo-stat"><a href="${esc(repoUrl)}/issues" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.issues >= 0 ? r.issues : '?'}</span>${iSpark}</div><div class="label">issues</div></a>${issueBreakdown}</div>
             <div class="repo-stat"><a href="${esc(repoUrl)}/pulls" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a>${prBreakdown}</div>

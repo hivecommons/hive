@@ -72,6 +72,7 @@ Top-level YAML keys accepted by `config.Config`:
 | Field | Default / behavior | Operator note |
 |---|---|---|
 | `governor.labels.automerge` | Defaults to `lgtm`. | Label applied when a merger/owner queues a PR for Hive auto-merge-on-green. Distinct from the [App self-merge sweep](#app-self-merge-sweep-auto_merge), which needs no label and no human queuer. |
+| `project.repo_policies[].auto_merge` | unset = `true` | Per-repo off switch. `false` lets Hive open PRs for that repo but blocks all Hive merge paths (`hive-merge`, App self-authored sweep, and proxy-visible direct REST/GraphQL merge attempts). The dashboard repo-card toggle persists this key and takes effect without restart. |
 | `auto_merge.allow_unprotected_base` | Empty by default. | Explicit repo list allowed to merge through `hive-merge` when the PR base branch has no GitHub branch protection; absent means refuse closed. |
 | `auto_merge.no_ci_ok` | Empty by default. | Explicit repo list whose zero-CI merge-request verdict may pass; failing or pending CI evidence is still enforced. |
 | `review.all_authors` | Off by default. | Makes every open PR eligible for review, not only agent-authored ones. It only widens what is reviewed; it never lets an agent push to those PRs (see the next row). Features -> Review Gate -> Reviewers. |
@@ -115,6 +116,13 @@ PR the Forge App itself opens can never collect the `lgtm`+`approved` labels
 tide requires, since nobody but the App authored it and the App cannot review
 its own work. The sweep merges such PRs directly over the GitHub REST API
 (squash), bypassing tide entirely.
+
+Per-repo `project.repo_policies[].auto_merge: false` is stronger than the
+hive-wide L6 setting: the merge relay refuses the repo, the self-authored sweep
+skips it before listing/merging, and the proxy returns 403 for direct
+REST/GraphQL merge attempts that name the repo. Existing hold labels (including
+`hive-pause/<hive-id>`) remain in place because disabled repos are never
+advanced into the merge path.
 
 | Key | Default | Meaning |
 |---|---|---|

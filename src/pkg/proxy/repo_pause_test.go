@@ -22,6 +22,14 @@ func pausedSet(repos ...string) func(string) bool {
 	return func(repo string) bool { return set[strings.ToLower(repo)] }
 }
 
+func autoMergeDisabledSet(repos ...string) func(string) bool {
+	set := make(map[string]bool, len(repos))
+	for _, r := range repos {
+		set[strings.ToLower(r)] = true
+	}
+	return func(repo string) bool { return !set[strings.ToLower(repo)] }
+}
+
 // readAllWithDeadline drains whatever the proxy has already written. The
 // blocked-response body carries no Content-Length (it is close-delimited), so a
 // plain ReadAll would block until the connection closed; a deadline turns "no
@@ -109,6 +117,77 @@ func TestRepoPauseRefusal_OnlyThePausedRepo(t *testing.T) {
 	// A path carrying no repo cannot be attributed to one.
 	if _, refused := RepoPauseRefusal(paused, http.MethodPost, "/graphql"); refused {
 		t.Error("refused a path with no repo in it")
+	}
+}
+
+func TestRepoAutoMergeRefusal_RESTAndGraphQL(t *testing.T) {
+	enabled := autoMergeDisabledSet("acme/frozen")
+	msg, refused := RepoAutoMergeRefusal(enabled, http.MethodPut, "/repos/acme/frozen/pulls/7/merge")
+	if !refused || !strings.Contains(msg, "auto-merge is disabled") || !strings.Contains(msg, "acme/frozen") {
+		t.Fatalf("REST refusal = (%q,%v), want auto-merge denial naming repo", msg, refused)
+	}
+	if _, refused := RepoAutoMergeRefusal(enabled, http.MethodPut, "/repos/acme/open/pulls/7/merge"); refused {
+		t.Fatal("REST merge on enabled repo was refused")
+	}
+	body := []byte(`{"query":"mutation($repo:String!){ mergePullRequest(input:{pullRequestId:\"PR_kw\"}){clientMutationId}}","variables":{"repo":"acme/frozen"}}`)
+	msg, refused = GraphQLAutoMergeRefusal(enabled, body)
+	if !refused || !strings.Contains(msg, "auto-merge is disabled") || !strings.Contains(msg, "acme/frozen") {
+		t.Fatalf("GraphQL refusal = (%q,%v), want auto-merge denial naming repo", msg, refused)
+	}
+	body = []byte(`{"query":"mutation($input:MergePullRequestInput!){ mergePullRequest(input:$input){clientMutationId}}","variables":{"input":{"name":"frozen","owner":"acme"}}}`)
+	msg, refused = GraphQLAutoMergeRefusal(enabled, body)
+	if !refused || !strings.Contains(msg, "acme/frozen") {
+		t.Fatalf("GraphQL nested owner/name refusal = (%q,%v), want order-independent repo attribution", msg, refused)
+	}
+}
+
+func TestProxyHTTP_AutoMergeOffDirectMergeReturnsJSON403(t *testing.T) {
+	p := newTestProxy()
+	p.SetRepoAutoMergeEnabledFunc(autoMergeDisabledSet("org/repo"))
+
+	clientConn, proxyClient := net.Pipe()
+	upstreamConn, proxyUpstream := net.Pipe()
+	defer clientConn.Close()
+	defer upstreamConn.Close()
+
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesPRsMerge, agent.AgentCapabilities{})
+	go func() {
+		fmt.Fprintf(clientConn, "PUT /repos/org/repo/pulls/1/merge HTTP/1.1\r\nHost: api.github.com\r\nContent-Length: 0\r\n\r\n")
+	}()
+
+	raw := readAllWithDeadline(t, clientConn)
+	if !strings.Contains(raw, "403") {
+		t.Fatalf("want 403, got:\n%s", raw)
+	}
+	if !strings.Contains(raw, "Content-Type: application/json") {
+		t.Fatalf("want JSON response, got:\n%s", raw)
+	}
+	if !strings.Contains(raw, "repo_auto_merge_disabled") || !strings.Contains(raw, "org/repo") {
+		t.Fatalf("want auto-merge disabled JSON reason, got:\n%s", raw)
+	}
+}
+
+func TestProxyHTTP_AutoMergeOffGraphQLMergeReturnsJSON403(t *testing.T) {
+	p := newTestProxy()
+	p.SetRepoAutoMergeEnabledFunc(autoMergeDisabledSet("org/repo"))
+
+	clientConn, proxyClient := net.Pipe()
+	upstreamConn, proxyUpstream := net.Pipe()
+	defer clientConn.Close()
+	defer upstreamConn.Close()
+
+	body := `{"query":"mutation { mergePullRequest(input:{pullRequestId:\"x\"}){clientMutationId}}","variables":{"repositoryNameWithOwner":"org/repo"}}`
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesPRsMerge, agent.AgentCapabilities{})
+	go func() {
+		fmt.Fprintf(clientConn, "POST /graphql HTTP/1.1\r\nHost: api.github.com\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s", len(body), body)
+	}()
+
+	raw := readAllWithDeadline(t, clientConn)
+	if !strings.Contains(raw, "403") {
+		t.Fatalf("want 403, got:\n%s", raw)
+	}
+	if !strings.Contains(raw, "Content-Type: application/json") || !strings.Contains(raw, "repo_auto_merge_disabled") || !strings.Contains(raw, "org/repo") {
+		t.Fatalf("want JSON auto-merge disabled reason, got:\n%s", raw)
 	}
 }
 
