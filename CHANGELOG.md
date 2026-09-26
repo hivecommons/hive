@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-26 (v5.64.1)
+
+### Fixed
+
+- Hive Chat: `/jam who is online?` (and plain "who is here" / "online" questions) now answers from the live presence roster instead of bouncing off the free-text responder.
+- Dashboard: Overview bar and age-histogram charts render as aligned HTML rows at the legend font size (no more labels running into bars), and each panel shows a visible ⏵/⏸ auto-play toggle and transition picker; transitions are slower so they are actually visible.
+
 ## 2026-09-26 (v5.64.0)
 
 ### Added
