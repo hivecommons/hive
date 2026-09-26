@@ -112,17 +112,26 @@ such as `FIX`).
 
 Actionable issue pills are grouped client-side for display only; enumeration,
 holds, filters, and agent kick behaviour are unchanged. Each issue appears in
-exactly one band, while non-winning states remain as badges on the pill:
+exactly one operator-action band, while non-winning states remain as badges on
+the pill and every band header/overview segment shares the legend's rule text:
 
-1. **Ready** — no display taxonomy state matched.
-2. **In progress** — assignee set, `claimed`, or `hive/claimed-by-*`.
-3. **Agent-filed** — an `agent/<role>` label; roles render as compact badges.
-4. **Waiting on human** — labels such as `blocked`, `needs-decision`,
+1. **Unclaimed** — no higher-priority display state matched.
+2. **Claimed** — assignee set, `claimed`, `hive/claimed-by-*`, or an open
+   linked PR.
+3. **Needs triage** — an `agent/<role>` label and no human acknowledgement;
+   acknowledgement is read from the repo-card issue payload's
+   `human_acknowledged` boolean, which is set server-side for
+   `approved-direction`, a human assignee, or a first-page human comment on
+   agent-labelled issues.
+   Roles render as compact badges, so acknowledged agent-filed issues fall
+   through to **Unclaimed** or **Claimed** with their role badge still visible.
+4. **Needs human** — labels such as `blocked`, `needs-decision`,
    `2-discussing`, `Epic`, `needs-human`, or `needs-triage`.
-5. **Likely done** — labels such as `hive/already-done`, `hive/covered-by-pr`, and `hive/likely-done`.
+5. **Confirm & close** — labels such as `hive/already-done`,
+   `hive/covered-by-pr`, and `hive/likely-done`, or a merged linked PR.
 
-Precedence is likely done → waiting on human → in progress → agent-filed → ready,
-so a human gate beats an assignment and done beats all other display states.
+Precedence is confirm-and-close → needs-human → claimed → needs-triage →
+unclaimed, so a human gate beats an assignment and done beats all other display states.
 Within each band, issues sort by `updated_at` oldest first. The issue breakdown
 also shows `N no activity > 14d` for actionable issues older than the stale
 threshold.
@@ -146,7 +155,7 @@ PR pills are also grouped client-side for display only. Open and held PRs appear
 in exactly one band; held PRs are no longer appended after the actionable list.
 First match wins for classification:
 
-1. **Waiting on human** — `needs-human`, held, `needs-decision`,
+1. **Needs human** — `needs-human`, held, `needs-decision`,
    `2-discussing`, or configured `dashboard.issue_bands.waiting_labels`.
 2. **Merge-eligible** — merge verdict `eligible`, or queued for Hive
    auto-merge.
@@ -157,7 +166,7 @@ First match wins for classification:
 5. **Draft** — draft PRs.
 6. **Open** — everything else.
 
-The display order is waiting on human → merge-eligible → blocked → in review →
+The display order is needs-human → merge-eligible → blocked → in review →
 open → draft. Within a band, PRs sort by oldest `updated_at`, then review class
 (`fix`, refactor/docs or unknown, `tests`), oldest `created_at`, and PR number.
 The PR snapshot includes `updated_at` specifically so this order can match issue

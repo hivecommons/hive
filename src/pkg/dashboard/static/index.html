@@ -1502,7 +1502,7 @@
     .repo-issue-pill.waiting { --component-status: var(--status-attention); --pill-c: var(--status-attention); }
     .repo-issue-pill.done { --component-status: var(--status-ok); --pill-c: var(--status-ok); }
     .repo-issue-pill.in-progress { --pill-c: var(--yellow); --component-status: var(--status-warn); }
-    .repo-issue-pill.agent-filed { --pill-c: var(--purple); --component-status: var(--acmm-level-5); }
+    .repo-issue-pill.needs-triage { --pill-c: var(--purple); --component-status: var(--acmm-level-5); }
     .repo-issue-pill.stale { opacity:0.68; }
     .repo-pr-pill.stale { opacity:0.68; }
     .repo-issue-pill .pill-state { font-size:var(--fs-2xs); margin-left:2px; opacity:0.9; }
@@ -1527,9 +1527,9 @@
     .overview-chart-legend-label { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .overview-chart-legend-count { font-variant-numeric: tabular-nums; }
     .overview-empty { color: var(--muted); font-size: var(--fs-sm); padding: var(--sp-5); border: 1px dashed var(--border); border-radius: var(--r); text-align: center; }
-    .overview-issue-ready { --slice-c: var(--status-info); }
+    .overview-issue-unclaimed { --slice-c: var(--status-info); }
     .overview-issue-in-progress { --slice-c: var(--status-warn); }
-    .overview-issue-agent-filed { --slice-c: var(--acmm-level-5); }
+    .overview-issue-needs-triage { --slice-c: var(--acmm-level-5); }
     .overview-issue-waiting { --slice-c: var(--status-attention); }
     .overview-issue-done { --slice-c: var(--status-ok); }
     .overview-pr-waiting { --slice-c: var(--status-attention); }
@@ -8858,7 +8858,25 @@
     const MS_PER_DAY = 24 * 60 * 60 * 1000;
     window._repoIssueBandConfig = Object.assign({}, REPO_ISSUE_BAND_DEFAULTS);
     const REPO_LEGEND_COLLAPSED_KEY_PREFIX = 'hive-repos-legend-collapsed:';
-    const OVERVIEW_ISSUE_BAND_ORDER = ['ready', 'in-progress', 'agent-filed', 'waiting', 'done'];
+    const ACTION_BANDS = {
+      issue: [
+        { key: 'unclaimed', label: 'Unclaimed', shortLabel: 'unclaimed', rule: 'Unclaimed: no higher-priority display state matched; no operator action is required before agents may consider it.' },
+        { key: 'in-progress', label: 'Claimed', shortLabel: 'claimed', rule: 'Claimed: an assignee, claim marker, or open linked PR shows someone is already working it.' },
+        { key: 'needs-triage', label: 'Needs triage', shortLabel: 'triage', rule: 'Needs triage: an agent filed this issue and no human acknowledgement is present (approved-direction, human assignee, or first-page human comment).' },
+        { key: 'waiting', label: 'Needs human', shortLabel: 'needs human', rule: 'Needs human: a waiting label such as blocked, needs-decision, 2-discussing, Epic, needs-human, or needs-triage says agents need human input.' },
+        { key: 'done', label: 'Confirm & close', shortLabel: 'close?', rule: 'Confirm & close: an agent applied hive/already-done, hive/covered-by-pr, or hive/likely-done, or a merged linked PR exists; verify and close.' }
+      ],
+      pr: [
+        { key: 'waiting', label: 'Needs human', shortLabel: 'needs human', rule: 'Needs human: this PR is held, has needs-human, or carries a configured waiting label.' },
+        { key: 'eligible', label: 'Merge-eligible', shortLabel: 'eligible', rule: 'Merge-eligible: the sweep verdict says eligible or the PR is queued for auto-merge.' },
+        { key: 'blocked', label: 'Blocked', shortLabel: 'blocked', rule: 'Blocked: the merge verdict is blocked, GitHub reports conflicts, or CI is failing.' },
+        { key: 'in-review', label: 'In review', shortLabel: 'review', rule: 'In review: the PR has an outstanding verdict, a Hive review, or a GitHub review decision.' },
+        { key: 'open', label: 'Open', shortLabel: 'open', rule: 'Open: ordinary open PRs with no more specific display state.' },
+        { key: 'draft', label: 'Draft', shortLabel: 'draft', rule: 'Draft: GitHub marks this pull request as a draft.' }
+      ]
+    };
+    const ISSUE_BAND_ORDER = ACTION_BANDS.issue.map(b => b.key);
+    const OVERVIEW_ISSUE_BAND_ORDER = ISSUE_BAND_ORDER;
     const OVERVIEW_CHART_FULL = 100;
     const OVERVIEW_CHART_VIEWBOX = 240;
     const OVERVIEW_CHART_CENTER = OVERVIEW_CHART_VIEWBOX / 2;
@@ -8909,14 +8927,32 @@
       renderRepoLegend();
     }
 
+    function actionBandDef(kind, band) {
+      const list = ACTION_BANDS[kind] || [];
+      return list.find(b => b.key === band) || list[0] || { key: band, label: band, shortLabel: band, rule: band };
+    }
+
+    function actionBandRule(kind, band) {
+      const def = actionBandDef(kind, band);
+      return def.rule;
+    }
+
     function renderRepoLegend() {
       const el = document.getElementById('repos-legend');
       if (!el) return;
       const collapsed = isRepoLegendCollapsed();
       el.className = 'repo-legend' + (collapsed ? ' collapsed' : '');
       const cfg = repoIssueBandConfig();
-      const waiting = cfg.waitingLabels.join(', ');
-      const done = cfg.doneLabels.join(', ');
+      const issueBandLegend = ACTION_BANDS.issue.map(b => {
+        const cls = b.key === 'unclaimed' ? '' : ' ' + b.key;
+        const icon = b.key === 'waiting' ? '<span class="pill-state">⛔</span> '
+          : b.key === 'in-progress' ? '<span class="pill-state">👤</span> '
+          : b.key === 'needs-triage' ? '<span class="pill-role">STRATEGIST</span> '
+          : b.key === 'done' ? '<span class="pill-state">✓</span> '
+          : '';
+        return `<span class="repo-issue-pill${cls}" title="${esc(actionBandRule('issue', b.key))}">${icon}${esc(b.shortLabel)}</span>`;
+      }).join('');
+      const prBandLegend = ACTION_BANDS.pr.map(b => `<span class="repo-pr-band-title" title="${esc(actionBandRule('pr', b.key))}">${esc(b.label)}</span>`).join('');
       setIfChanged(el, `
         <div class="repo-legend-head">
           <div class="repo-legend-title">Pill legend</div>
@@ -8926,11 +8962,7 @@
           <div class="repo-legend-row"><span class="repo-legend-row-label">Issues</span>
             <span class="repo-issue-pill" title="Actionable issue: agents may work it unless another badge says otherwise">actionable</span>
             <span class="repo-issue-pill held" title="Held issue: grey dashed border; agents will not act until the hold label is removed">held</span>
-            <span class="repo-issue-pill waiting" title="Waiting on a human: labels ${esc(waiting)}"><span class="pill-state">⛔</span> blocked</span>
-            <span class="repo-issue-pill waiting" title="Needs a human decision before agents should continue"><span class="pill-state">❓</span> decision</span>
-            <span class="repo-issue-pill in-progress" title="Assigned or claimed by a human or agent"><span class="pill-state">👤</span> assigned/claimed</span>
-            <span class="repo-issue-pill agent-filed" title="Filed by an agent; badge names the agent role"><span class="pill-role">STRATEGIST</span> agent-filed</span>
-            <span class="repo-issue-pill done" title="Likely done: labels ${esc(done)}"><span class="pill-state">✓</span> likely done</span>
+            ${issueBandLegend}
             <span class="repo-issue-pill stale" title="No activity for more than ${cfg.staleDays} days"><span class="pill-state">🕒</span> stale</span>
             <span class="repo-issue-plan pill-icon" title="Verified linked pull request">🔗 #42</span>
             <span class="repo-issue-plan pill-icon" title="Plan this issue (clipboard icon)">📋</span>
@@ -8941,12 +8973,7 @@
           </div>
           <div class="repo-legend-row"><span class="repo-legend-row-label">PRs</span>
             <span class="repo-pr-pill" title="Open PR with no merge verdict">open</span>
-            <span class="repo-pr-band-title" title="Band: needs-human, held, or configured waiting labels">Waiting on human</span>
-            <span class="repo-pr-band-title" title="Band: sweep eligible or queued for auto-merge">Merge-eligible</span>
-            <span class="repo-pr-band-title" title="Band: blocked verdict, conflicts, or failing CI">Blocked</span>
-            <span class="repo-pr-band-title" title="Band: outstanding verdict, hive review posted, or a GitHub review decision">In review</span>
-            <span class="repo-pr-band-title" title="Band: ordinary open PRs">Open</span>
-            <span class="repo-pr-band-title" title="Band: draft PRs">Draft</span>
+            ${prBandLegend}
             <span class="repo-pr-pill mergeable" title="Merge-eligible on the sweep verdict"><span class="pill-merge-icon">✓</span> eligible</span>
             <span class="repo-pr-pill merge-outstanding" title="GitHub says mergeable, but the sweep still wants something"><span class="pill-merge-icon">◐</span> outstanding</span>
             <span class="repo-pr-pill needs-human pill-icon" title="Automated fix attempts exhausted — human review required">⚠</span>
@@ -9344,7 +9371,7 @@
     }
 
     const PR_HUMAN_GATE_LABELS = ['needs-human', 'needs-decision', '2-discussing'];
-    const PR_BAND_ORDER = ['waiting', 'eligible', 'blocked', 'in-review', 'open', 'draft'];
+    const PR_BAND_ORDER = ACTION_BANDS.pr.map(b => b.key);
 
     function prLabelSet(pr) {
       return new Set(((pr && pr.labels) || []).map(l => String(l).toLowerCase()));
@@ -9487,14 +9514,7 @@
     }
 
     function prBandLabel(band) {
-      switch (band) {
-        case 'waiting': return 'Waiting on human';
-        case 'eligible': return 'Merge-eligible';
-        case 'blocked': return 'Blocked';
-        case 'in-review': return 'In review';
-        case 'draft': return 'Draft';
-        default: return 'Open';
-      }
+      return actionBandDef('pr', band).label;
     }
 
     function prBandRank(band) {
@@ -9508,7 +9528,7 @@
       entries.forEach(entry => {
         const info = prBandInfo(entry.pr, entry.held);
         const key = info.band;
-        if (!groups.has(key)) groups.set(key, { key, band: info.band, label: prBandLabel(info.band), prs: [] });
+        if (!groups.has(key)) groups.set(key, { key, band: info.band, label: prBandLabel(info.band), rule: actionBandRule('pr', info.band), prs: [] });
         groups.get(key).prs.push({ pr: entry.pr, held: entry.held, info });
       });
       const out = Array.from(groups.values());
@@ -9528,17 +9548,19 @@
       const labels = issueLabelSet(issue);
       const linked = issueLinkedPRState(issue) || {};
       const role = issueAgentRole(issue);
+      const assignees = ((issue && issue.assignees) || []).map(a => String(a || '').trim()).filter(Boolean);
+      const acknowledged = !!(issue && issue.human_acknowledged) || labels.has('approved-direction') || assignees.some(a => !a.toLowerCase().endsWith('[bot]'));
       const matches = {
         done: issueHasAnyLabel(issue, cfg.doneLabels) || !!linked.merged,
         waiting: issueHasAnyLabel(issue, cfg.waitingLabels),
-        inProgress: ((issue && issue.assignees) || []).length > 0 || issueClaimed(issue) || !!linked.open,
-        agentFiled: !!role
+        inProgress: assignees.length > 0 || issueClaimed(issue) || !!linked.open,
+        needsTriage: !!role && !acknowledged
       };
-      let band = 'ready';
+      let band = 'unclaimed';
       if (matches.done) band = 'done';
       else if (matches.waiting) band = 'waiting';
       else if (matches.inProgress) band = 'in-progress';
-      else if (matches.agentFiled) band = 'agent-filed';
+      else if (matches.needsTriage) band = 'needs-triage';
       const signals = [];
       if (labels.has('blocked')) signals.push({ glyph: '⛔', label: 'blocked' });
       if (labels.has('needs-decision') || labels.has('2-discussing')) signals.push({ glyph: '❓', label: 'needs decision' });
@@ -9546,41 +9568,31 @@
       if (matches.inProgress) signals.push({ glyph: '👤', label: 'assigned or claimed' });
       if (linked.open) signals.push({ glyph: '🔗', label: 'open PR references this issue' });
       if (matches.done) signals.push({ glyph: '✓', label: linked.merged ? 'merged PR references this issue' : 'already done' });
-      if (role) signals.push({ role: role, label: 'agent-filed by ' + role });
+      if (role) signals.push({ role: role, label: 'filed by agent role ' + role + (acknowledged ? '; human acknowledged' : '') });
       if (issueIsStale(issue)) signals.push({ glyph: '🕒', label: 'stale: no activity > ' + cfg.staleDays + 'd' });
-      return { band, role, matches, signals };
+      return { band, role, acknowledged, matches, signals };
     }
 
     function issueBandLabel(band, role) {
-      switch (band) {
-        case 'in-progress': return 'In progress';
-        case 'agent-filed': return role ? 'Agent-filed · ' + role : 'Agent-filed';
-        case 'waiting': return 'Waiting on human';
-        case 'done': return 'Likely done';
-        default: return 'Ready';
-      }
+      const label = actionBandDef('issue', band).label;
+      return label;
     }
 
     function issueBandShortLabel(band, role) {
-      switch (band) {
-        case 'in-progress': return 'claimed';
-        case 'agent-filed': return role ? role : 'agent';
-        case 'waiting': return 'blocked';
-        case 'done': return 'done';
-        default: return 'ready';
-      }
+      return actionBandDef('issue', band).shortLabel;
     }
 
     function issueBandRank(band) {
-      return { ready: 0, 'in-progress': 1, 'agent-filed': 2, waiting: 3, done: 4 }[band] ?? 9;
+      const idx = ISSUE_BAND_ORDER.indexOf(band);
+      return idx >= 0 ? idx : ISSUE_BAND_ORDER.length;
     }
 
     function groupedRepoIssues(issues) {
       const groups = new Map();
       (issues || []).forEach(issue => {
         const info = issueBandInfo(issue);
-        const key = info.band === 'agent-filed' ? ('agent-filed:' + (info.role || 'unknown').toLowerCase()) : info.band;
-        if (!groups.has(key)) groups.set(key, { key, band: info.band, role: info.role || '', label: issueBandLabel(info.band, info.role), issues: [] });
+        const key = info.band;
+        if (!groups.has(key)) groups.set(key, { key, band: info.band, role: info.role || '', label: issueBandLabel(info.band, info.role), rule: actionBandRule('issue', info.band), issues: [] });
         groups.get(key).issues.push({ issue, info });
       });
       const out = Array.from(groups.values());
@@ -9598,6 +9610,7 @@
       return OVERVIEW_ISSUE_BAND_ORDER.map(band => ({
         key: band,
         label: issueBandLabel(band, ''),
+        rule: actionBandRule('issue', band),
         count: counts.get(band) || 0,
         className: 'overview-issue-' + band
       }));
@@ -9611,6 +9624,7 @@
       return PR_BAND_ORDER.map(band => ({
         key: band,
         label: prBandLabel(band),
+        rule: actionBandRule('pr', band),
         count: counts.get(band) || 0,
         className: 'overview-pr-' + band
       }));
@@ -9642,12 +9656,12 @@
         const text = percent >= OVERVIEW_CHART_LABEL_MIN_PERCENT
           ? `<text class="overview-chart-label" x="${point.x.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" y="${point.y.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}">${s.count} · ${percentLabel}</text>`
           : '';
-        return `<circle class="overview-chart-slice ${esc(s.className)}" cx="${OVERVIEW_CHART_CENTER}" cy="${OVERVIEW_CHART_CENTER}" r="${OVERVIEW_CHART_RADIUS}" pathLength="${OVERVIEW_CHART_FULL}" stroke-width="${OVERVIEW_CHART_STROKE}" stroke-dasharray="${percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)} ${OVERVIEW_CHART_FULL}" stroke-dashoffset="${dashOffset.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" transform="rotate(${OVERVIEW_CHART_START_ANGLE} ${OVERVIEW_CHART_CENTER} ${OVERVIEW_CHART_CENTER})"><title>${esc(s.label)}: ${s.count}</title></circle>${text}`;
+        return `<circle class="overview-chart-slice ${esc(s.className)}" cx="${OVERVIEW_CHART_CENTER}" cy="${OVERVIEW_CHART_CENTER}" r="${OVERVIEW_CHART_RADIUS}" pathLength="${OVERVIEW_CHART_FULL}" stroke-width="${OVERVIEW_CHART_STROKE}" stroke-dasharray="${percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)} ${OVERVIEW_CHART_FULL}" stroke-dashoffset="${dashOffset.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" transform="rotate(${OVERVIEW_CHART_START_ANGLE} ${OVERVIEW_CHART_CENTER} ${OVERVIEW_CHART_CENTER})"><title>${esc(s.rule)}</title></circle>${text}`;
       }).join('');
       const legendHtml = visible.map(s => {
         const percent = (s.count / total) * OVERVIEW_CHART_PERCENT_SCALE;
         const percentLabel = percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + '%';
-        return `<div class="overview-chart-legend-row"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${s.count} (${percentLabel})</span></div>`;
+        return `<div class="overview-chart-legend-row" title="${esc(s.rule)}"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${s.count} (${percentLabel})</span></div>`;
       }).join('');
       return `<div class="overview-chart-card"><svg class="overview-chart-svg" viewBox="0 0 ${OVERVIEW_CHART_VIEWBOX} ${OVERVIEW_CHART_VIEWBOX}" role="img" aria-label="${esc(title)}"><circle class="overview-chart-track" cx="${OVERVIEW_CHART_CENTER}" cy="${OVERVIEW_CHART_CENTER}" r="${OVERVIEW_CHART_RADIUS}" stroke-width="${OVERVIEW_CHART_STROKE}"></circle>${sliceHtml}<text class="overview-chart-total" x="${OVERVIEW_CHART_CENTER}" y="${OVERVIEW_CHART_CENTER + OVERVIEW_CHART_TOTAL_VALUE_Y_OFFSET}">${total}</text><text class="overview-chart-total-caption" x="${OVERVIEW_CHART_CENTER}" y="${OVERVIEW_CHART_CENTER + OVERVIEW_CHART_TOTAL_CAPTION_Y_OFFSET}">total</text></svg><div><div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${legendHtml}</div></div></div>`;
     }
@@ -9659,7 +9673,7 @@
       const prSlices = overviewPRBandSlices(repos);
       const total = issueSlices.concat(prSlices).reduce((n, s) => n + s.count, 0);
       const html = total
-        ? `<div class="overview-grid">${renderOverviewDonut('Issues by band', 'Actionable and held issues in the current repo view', issueSlices)}${renderOverviewDonut('PRs by band', 'Open and held pull requests in the current repo view', prSlices)}</div>`
+        ? `<div class="overview-grid">${renderOverviewDonut('Issues by band', 'Actionable and held issues in the current repo view; hover a band for its rule', issueSlices)}${renderOverviewDonut('PRs by band', 'Open and held pull requests in the current repo view; hover a band for its rule', prSlices)}</div>`
         : '<div class="overview-empty">No repository issues or pull requests match the current hive view yet.</div>';
       setIfChanged(el, html);
       applySectionCollapse('overview-section');
@@ -9780,7 +9794,7 @@
           const primaryPR = linkedPRs.find(pr => pr.closing) || linkedPRs.find(pr => pr.state === 'open') || linkedPRs.find(pr => pr.merged) || linkedPRs[0];
           const prTip = linkedPRs.map(pr => `#${pr.number}${pr.merged ? ' merged' : (pr.state ? ' ' + pr.state : '')}`).join(', ');
           const prBadge = (!isHeldIssue && primaryPR) ? `<a class="repo-issue-plan pill-icon" href="${esc(primaryPR.url || '')}" target="_blank" rel="noopener" title="Linked PR${prTip ? ': ' + esc(prTip) : ''}" aria-label="Linked pull request #${primaryPR.number}">🔗</a>` : '';
-          const bandClass = info.band === 'ready' ? '' : ' ' + info.band;
+          const bandClass = info.band === 'unclaimed' ? '' : ' ' + info.band;
           const heldClass = isHeldIssue ? ' held' : '';
           const staleClass = issueIsStale(i) ? ' stale' : '';
           const statusTip = (isHeldIssue ? heldTip + ' — band: ' : '') + issueBandLabel(info.band, info.role) + (info.signals.length ? ' — ' + info.signals.map(s => s.label).join(', ') : '');
@@ -9789,7 +9803,7 @@
         };
         const issuePills = groupedRepoIssues((r.actionableIssues || []).concat(r.heldIssues || [])).map(g => {
           const items = g.issues.map(entry => renderIssuePill(entry.issue, entry.info)).join('');
-          return `<div class="repo-issue-band repo-issue-band-${esc(g.band)}"><div class="repo-issue-band-title">${esc(g.label)} · ${g.issues.length}</div><div class="repo-issue-band-items">${items}</div></div>`;
+          return `<div class="repo-issue-band repo-issue-band-${esc(g.band)}"><div class="repo-issue-band-title" title="${esc(g.rule)}">${esc(g.label)} · ${g.issues.length}</div><div class="repo-issue-band-items">${items}</div></div>`;
         }).join('');
         const renderPrPill = (p, held, info) => {
           const title = pillDisplayTitle(p.title, MAX_PILL_TITLE_LEN);
@@ -9877,7 +9891,7 @@
         };
         const prPills = groupedRepoPRs(r.openPrs || [], r.heldPrs || []).map(g => {
           const items = g.prs.map(entry => renderPrPill(entry.pr, entry.held, entry.info)).join('');
-          return `<div class="repo-pr-band repo-pr-band-${esc(g.band)}"><div class="repo-pr-band-title">${esc(g.label)} · ${g.prs.length}</div><div class="repo-pr-band-items">${items}</div></div>`;
+          return `<div class="repo-pr-band repo-pr-band-${esc(g.band)}"><div class="repo-pr-band-title" title="${esc(g.rule)}">${esc(g.label)} · ${g.prs.length}</div><div class="repo-pr-band-items">${items}</div></div>`;
         }).join('');
         // Two columns under the two numbers: issue pills (actionable and held
         // grouped into the same display bands) under "issues", PR pills grouped
