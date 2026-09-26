@@ -979,6 +979,9 @@ func completedRunFromJourney(j timeline.Journey, includeTimeline bool, plan runP
 		WaveIDs:        append([]string(nil), plan.waveIDs...),
 		Stages:         completedRunStages(gen),
 	}
+	if title := stage.Attrs["title"]; title != "" {
+		run.Title = scrubRunTitle(title)
+	}
 	if includeTimeline {
 		run.Stages = mergeRunTimelineStages(run.Stages, synthesizeRunJourneyEvents(j))
 	}
