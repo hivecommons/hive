@@ -99,46 +99,39 @@ The collapsible **Overview** section above Repositories summarizes the same
 client-side issue and PR bands across the current repository view. Its two SVG
 donut charts reuse the repository-card classifiers for actionable plus held
 issues/PRs, so their totals match the visible band counters and respect any
-repo filtering without a separate API call. Hovering a donut slice, an Overview
-legend row, or a repository-card band header shows that band's rule; the text
-comes from the same table the pill legend renders from (`issueBandSpec` /
-`prBandSpec` in `index.html`), so the three cannot drift.
+repo filtering without a separate API call.
 
 The **Repositories** section includes a compact, collapsible pill legend. It is
 stored per browser in `localStorage` and uses the same pill classes as the cards,
-so theme changes update the legend automatically. The legend lists the issue
-and PR bands (rendered from the shared band table, each with its rule as a
-tooltip), issue held pills, plan chips, hold/release controls, issue state
-glyphs (`⛔`, `❓`, `👤`, `✓`, role badges, stale `🕒`) and PR states (`✓`,
+so theme changes update the legend automatically. The legend explains issue
+actionable/held pills, plan chips, hold/release controls, issue state glyphs
+(`⛔`, `❓`, `👤`, `✓`, role badges, stale `🕒`) and PR bands/states (`✓`,
 `◐`, `⚠`, held `⏸`, failing CI `✗ CI`, conflicts `⑂`, stale `🕒`,
 reviewed `💬`, auto-merge `🔀`, agent role badges, and review-class badges
 such as `FIX`).
 
 Actionable issue pills are grouped client-side for display only; enumeration,
-holds, filters, ranking, and agent kick behaviour are unchanged. Bands are
-named after the action the operator should take (or an explicit "nothing
-needed"), not after how the dashboard classified the issue. Each issue appears
-in exactly one band, while non-winning states remain as badges on the pill:
+holds, filters, and agent kick behaviour are unchanged. Each issue appears in
+exactly one operator-action band, while non-winning states remain as badges on
+the pill and every band header/overview segment shares the legend's rule text:
 
-1. **Unclaimed** (`unclaimed`) — no other band matched: nobody is assigned,
-   nothing claimed it, and no human gate applies. This does not by itself mean
-   agents will pick it up.
-2. **Claimed** (`claimed`) — assignee set, `claimed`, or `hive/claimed-by-*`.
-3. **Needs triage** (`triage`) — an `agent/<role>` label and no human has
-   acknowledged the proposal under #5117: no `approved-direction` label and no
-   human assignee (the snapshot's `human_acknowledged`; a human *comment* only
-   satisfies the PR-time gate and is not in the payload). Acknowledge it, or
-   close it. Once acknowledged the issue falls through to Unclaimed/Claimed
-   with the role badge still on the pill.
-4. **Needs human** (`needs human`) — labels such as `blocked`, `needs-decision`,
-   `2-discussing`, `Epic`, `needs-human`, or `needs-triage`. Note that the
-   `needs-triage` *label* lands here, not in the Needs triage band.
-5. **Confirm & close** (`close?`) — labels such as `hive/already-done`,
-   `hive/covered-by-pr`, and `hive/likely-done`: an agent believes the work
-   landed; verify and close.
+1. **Unclaimed** — no higher-priority display state matched.
+2. **Claimed** — assignee set, `claimed`, `hive/claimed-by-*`, or an open
+   linked PR.
+3. **Needs triage** — an `agent/<role>` label and no human acknowledgement;
+   acknowledgement is read from the repo-card issue payload's
+   `human_acknowledged` boolean, which is set server-side for
+   `approved-direction`, a human assignee, or a first-page human comment on
+   agent-labelled issues.
+   Roles render as compact badges, so acknowledged agent-filed issues fall
+   through to **Unclaimed** or **Claimed** with their role badge still visible.
+4. **Needs human** — labels such as `blocked`, `needs-decision`,
+   `2-discussing`, `Epic`, `needs-human`, or `needs-triage`.
+5. **Confirm & close** — labels such as `hive/already-done`,
+   `hive/covered-by-pr`, and `hive/likely-done`, or a merged linked PR.
 
-Precedence is confirm & close → needs human → claimed → needs triage → unclaimed,
-so a human gate beats an assignment and done beats all other display states.
+Precedence is confirm-and-close → needs-human → claimed → needs-triage →
+unclaimed, so a human gate beats an assignment and done beats all other display states.
 Within each band, issues sort by `updated_at` oldest first. The issue breakdown
 also shows `N no activity > 14d` for actionable issues older than the stale
 threshold.
@@ -173,7 +166,7 @@ First match wins for classification:
 5. **Draft** — draft PRs.
 6. **Open** — everything else.
 
-The display order is needs human → merge-eligible → blocked → in review →
+The display order is needs-human → merge-eligible → blocked → in review →
 open → draft. Within a band, PRs sort by oldest `updated_at`, then review class
 (`fix`, refactor/docs or unknown, `tests`), oldest `created_at`, and PR number.
 The PR snapshot includes `updated_at` specifically so this order can match issue

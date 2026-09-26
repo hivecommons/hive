@@ -1,0 +1,1 @@
+- Dashboard repository issue and PR bands now use operator-action names, shared rules, and Needs triage based on human acknowledgement.

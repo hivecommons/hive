@@ -13,19 +13,20 @@ import (
 func TestDashboardBandActionsStaticWiring9019(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		"function issueAcknowledged(issue)",
-		"function issueBandSpec(band)",
-		"function prBandSpec(band)",
-		"agentFiled: !!role && !acknowledged",
+		"human_acknowledged",
+		"const ACTION_BANDS =",
+		"function actionBandDef(kind, band)",
+		"function actionBandRule(kind, band)",
+		"needsTriage: !!role && !acknowledged",
 		// Legend band rows are generated from the spec tables, not hand-written.
-		"const issueBands = OVERVIEW_ISSUE_BAND_ORDER.map(band => {",
-		"const prBands = PR_BAND_ORDER.map(band => `<span class=\"repo-pr-band-title\" title=\"${esc(prBandTip(band))}\">",
+		"ACTION_BANDS.issue.map(b => {",
+		"ACTION_BANDS.pr.map(b => `<span class=\"repo-pr-band-title\" title=\"${esc(actionBandRule('pr', b.key))}\">",
 		// Repo-card band headers carry the rule.
-		`<div class="repo-issue-band-title" title="${esc(g.tip)}">`,
-		`<div class="repo-pr-band-title" title="${esc(g.tip)}">`,
+		`<div class="repo-issue-band-title" title="${esc(g.rule)}">`,
+		`<div class="repo-pr-band-title" title="${esc(g.rule)}">`,
 		// Overview legend rows and slices carry the rule.
-		`<div class="overview-chart-legend-row" title="${esc(s.label + (s.rule ? ': ' + s.rule : ''))}">`,
-		"<title>${esc(s.label)}: ${s.count}${s.rule ? ' — ' + esc(s.rule) : ''}</title>",
+		`<div class="overview-chart-legend-row" title="${esc(s.rule)}">`,
+		"<title>${esc(s.rule)}</title>",
 		"hover a band for its rule",
 	} {
 		if !strings.Contains(html, want) {
@@ -58,22 +59,20 @@ func TestDashboardBandActionsBehaviour9019(t *testing.T) {
 		"esc",
 		"normalizeIssueBandConfig",
 		"repoIssueBandConfig",
+		"actionBandDef",
+		"actionBandRule",
 		"canonicalHiveHoldLabel",
 		"holdLabels",
 		"issueLabelSet",
 		"issueHasAnyLabel",
 		"issueAgentRole",
 		"issueClaimed",
-		"issueAcknowledged",
 		"issueLinkedPRState",
 		"issueUpdatedAt",
 		"issueIsStale",
 		"issueBandInfo",
-		"issueBandSpec",
 		"issueBandLabel",
 		"issueBandShortLabel",
-		"issueBandRule",
-		"issueBandTip",
 		"issueBandRank",
 		"groupedRepoIssues",
 		"prLabelSet",
@@ -89,10 +88,7 @@ func TestDashboardBandActionsBehaviour9019(t *testing.T) {
 		"prRequestedReviews",
 		"prConversation",
 		"prBandInfo",
-		"prBandSpec",
 		"prBandLabel",
-		"prBandRule",
-		"prBandTip",
 		"prBandRank",
 		"groupedRepoPRs",
 		"overviewIssueBandSlices",
@@ -110,8 +106,26 @@ const REPO_ISSUE_BAND_DEFAULTS = {
 };
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const PR_HUMAN_GATE_LABELS = ['needs-human', 'needs-decision', '2-discussing'];
-const PR_BAND_ORDER = ['waiting', 'eligible', 'blocked', 'in-review', 'open', 'draft'];
-const OVERVIEW_ISSUE_BAND_ORDER = ['ready', 'in-progress', 'agent-filed', 'waiting', 'done'];
+const ACTION_BANDS = {
+  issue: [
+    { key: 'unclaimed', label: 'Unclaimed', shortLabel: 'unclaimed', rule: 'Unclaimed: no higher-priority display state matched; no operator action is required before agents may consider it.' },
+    { key: 'in-progress', label: 'Claimed', shortLabel: 'claimed', rule: 'Claimed: an assignee, claim marker, or open linked PR shows someone is already working it.' },
+    { key: 'needs-triage', label: 'Needs triage', shortLabel: 'triage', rule: 'Needs triage: an agent filed this issue and no human acknowledgement is present (approved-direction, human assignee, or first-page human comment).' },
+    { key: 'waiting', label: 'Needs human', shortLabel: 'needs human', rule: 'Needs human: a waiting label such as blocked, needs-decision, 2-discussing, Epic, needs-human, or needs-triage says agents need human input.' },
+    { key: 'done', label: 'Confirm & close', shortLabel: 'close?', rule: 'Confirm & close: an agent applied hive/already-done, hive/covered-by-pr, or hive/likely-done, or a merged linked PR exists; verify and close.' }
+  ],
+  pr: [
+    { key: 'waiting', label: 'Needs human', shortLabel: 'needs human', rule: 'Needs human: this PR is held, has needs-human, or carries a configured waiting label.' },
+    { key: 'eligible', label: 'Merge-eligible', shortLabel: 'eligible', rule: 'Merge-eligible: the sweep verdict says eligible or the PR is queued for auto-merge.' },
+    { key: 'blocked', label: 'Blocked', shortLabel: 'blocked', rule: 'Blocked: the merge verdict is blocked, GitHub reports conflicts, or CI is failing.' },
+    { key: 'in-review', label: 'In review', shortLabel: 'review', rule: 'In review: the PR has an outstanding verdict, a Hive review, or a GitHub review decision.' },
+    { key: 'open', label: 'Open', shortLabel: 'open', rule: 'Open: ordinary open PRs with no more specific display state.' },
+    { key: 'draft', label: 'Draft', shortLabel: 'draft', rule: 'Draft: GitHub marks this pull request as a draft.' }
+  ]
+};
+const ISSUE_BAND_ORDER = ACTION_BANDS.issue.map(b => b.key);
+const OVERVIEW_ISSUE_BAND_ORDER = ISSUE_BAND_ORDER;
+const PR_BAND_ORDER = ACTION_BANDS.pr.map(b => b.key);
 const OVERVIEW_CHART_FULL = 100, OVERVIEW_CHART_VIEWBOX = 240, OVERVIEW_CHART_CENTER = 120, OVERVIEW_CHART_RADIUS = 90;
 const OVERVIEW_CHART_STROKE = 40, OVERVIEW_CHART_PERCENT_SCALE = 100, OVERVIEW_CHART_DEGREES = 360, OVERVIEW_CHART_START_ANGLE = -90;
 const OVERVIEW_CHART_LABEL_RADIUS = 90, OVERVIEW_CHART_LABEL_MIN_PERCENT = 8, OVERVIEW_CHART_DECIMAL_PLACES = 1;
@@ -137,47 +151,44 @@ assert.equal(prBandLabel('bogus'), 'Open');
 // approved-direction label empties the band, for actionable and held issues
 // alike (HoldItem carries assignees + human_acknowledged too).
 const filed = { labels: ['agent/strategist'], updated_at: at };
-assert.equal(issueBandInfo(filed).band, 'agent-filed');
-assert.equal(issueBandInfo(Object.assign({}, filed, { human_acknowledged: true })).band, 'ready');
-assert.equal(issueBandInfo({ labels: ['agent/strategist', 'Approved-Direction'], updated_at: at }).band, 'ready');
+assert.equal(issueBandInfo(filed).band, 'needs-triage');
+assert.equal(issueBandInfo(Object.assign({}, filed, { human_acknowledged: true })).band, 'unclaimed');
+assert.equal(issueBandInfo({ labels: ['agent/strategist', 'Approved-Direction'], updated_at: at }).band, 'unclaimed');
 assert.equal(issueBandInfo(Object.assign({}, filed, { human_acknowledged: true, assignees: ['dan'] })).band, 'in-progress');
 // A held agent issue a human is assigned to, exactly as HoldItem serializes it.
 const heldAcked = { number: 7, repo: 'o/r', title: 'held', type: 'issue', labels: ['hold', 'agent/strategist'], assignees: ['dan'], human_acknowledged: true, created_at: at };
 assert.equal(issueBandInfo(heldAcked).band, 'in-progress');
-assert.equal(issueBandInfo(Object.assign({}, heldAcked, { assignees: undefined })).band, 'ready');
-assert.equal(issueBandInfo({ number: 8, type: 'issue', labels: ['hold', 'agent/strategist'], created_at: at }).band, 'agent-filed');
+assert.equal(issueBandInfo(Object.assign({}, heldAcked, { assignees: undefined })).band, 'unclaimed');
+assert.equal(issueBandInfo({ number: 8, type: 'issue', labels: ['hold', 'agent/strategist'], created_at: at }).band, 'needs-triage');
 // Precedence above the triage band is unchanged.
 assert.equal(issueBandInfo({ labels: ['agent/strategist', 'blocked'], updated_at: at }).band, 'waiting');
 assert.equal(issueBandInfo({ labels: ['agent/strategist', 'hive/likely-done'], updated_at: at }).band, 'done');
 // The role stays on the pill either way, and the tooltip says which it is.
 const ackSignals = issueBandInfo(Object.assign({}, filed, { human_acknowledged: true })).signals;
-assert.equal(ackSignals.find(s => s.role).label, 'agent-filed by strategist, acknowledged by a human');
-assert.equal(issueBandInfo(filed).signals.find(s => s.role).label, 'agent-filed by strategist, not yet acknowledged');
+assert.equal(ackSignals.find(s => s.role).label, 'filed by agent role strategist; human acknowledged');
+assert.equal(issueBandInfo(filed).signals.find(s => s.role).label, 'filed by agent role strategist');
 // One triage band, not one per role.
 const groups = groupedRepoIssues([
   { number: 1, labels: ['agent/strategist'], updated_at: at },
   { number: 2, labels: ['agent/quality'], updated_at: at },
   { number: 3, labels: ['agent/quality'], human_acknowledged: true, updated_at: at }
 ]);
-assert.deepEqual(groups.map(g => [g.band, g.label, g.issues.length]), [['ready', 'Unclaimed', 1], ['agent-filed', 'Needs triage', 2]]);
+assert.deepEqual(groups.map(g => [g.band, g.label, g.issues.length]), [['unclaimed', 'Unclaimed', 1], ['needs-triage', 'Needs triage', 2]]);
 
-// 3. Rule text follows the configured taxonomy and is the same everywhere.
+// 3. Rule text comes from ACTION_BANDS and is the same everywhere.
 window._repoIssueBandConfig = normalizeIssueBandConfig({ waiting_labels: ['wait-human'], done_labels: ['done-custom'] });
-assert.equal(issueBandRule('done'), 'an agent applied done-custom or a merged PR references it — verify the work landed and close the issue');
-assert.equal(issueBandRule('waiting'), 'labelled wait-human — a human must unblock or decide before agents continue');
-assert.equal(prBandRule('waiting'), 'held, or labelled needs-human, needs-decision, 2-discussing, wait-human — a human must review, decide, or release the hold before automation continues');
-assert.equal(issueBandTip('done'), 'Confirm & close: ' + issueBandRule('done'));
-assert.equal(prBandTip('blocked'), 'Blocked: ' + prBandRule('blocked'));
-assert.equal(groupedRepoIssues([{ number: 9, labels: ['done-custom'], updated_at: at }])[0].tip, issueBandTip('done'));
-assert.equal(groupedRepoPRs([{ number: 9, labels: [], draft: true, updated_at: at, created_at: at }], [])[0].tip, prBandTip('draft'));
+assert.equal(actionBandRule('issue', 'done'), ACTION_BANDS.issue.find(b => b.key === 'done').rule);
+assert.equal(actionBandRule('pr', 'blocked'), ACTION_BANDS.pr.find(b => b.key === 'blocked').rule);
+assert.equal(groupedRepoIssues([{ number: 9, labels: ['done-custom'], updated_at: at }])[0].rule, actionBandRule('issue', 'done'));
+assert.equal(groupedRepoPRs([{ number: 9, labels: [], draft: true, updated_at: at, created_at: at }], [])[0].rule, actionBandRule('pr', 'draft'));
 
 const repos = [{ actionableIssues: [{ number: 9, labels: ['done-custom'], updated_at: at }], heldIssues: [], openPrs: [], heldPrs: [] }];
 const slices = overviewIssueBandSlices(repos);
-assert.deepEqual(slices.map(s => s.rule), OVERVIEW_ISSUE_BAND_ORDER.map(issueBandRule));
-assert.deepEqual(overviewPRBandSlices(repos).map(s => s.rule), PR_BAND_ORDER.map(prBandRule));
+assert.deepEqual(slices.map(s => s.rule), OVERVIEW_ISSUE_BAND_ORDER.map(band => actionBandRule('issue', band)));
+assert.deepEqual(overviewPRBandSlices(repos).map(s => s.rule), PR_BAND_ORDER.map(band => actionBandRule('pr', band)));
 const donut = renderOverviewDonut('Issues by band', 'sub', slices);
-assert.ok(donut.includes('<title>Confirm &amp; close: 1 — ' + esc(issueBandRule('done')) + '</title>'), donut);
-assert.ok(donut.includes('<div class="overview-chart-legend-row" title="' + esc(issueBandTip('done')) + '">'), donut);
+assert.ok(donut.includes('<title>' + esc(actionBandRule('issue', 'done')) + '</title>'), donut);
+assert.ok(donut.includes('<div class="overview-chart-legend-row" title="' + esc(actionBandRule('issue', 'done')) + '">'), donut);
 `)
 	if out, err := exec.Command(node, "-e", script.String()).CombinedOutput(); err != nil {
 		t.Fatalf("band action naming check failed: %v\n%s", err, strings.TrimSpace(string(out)))

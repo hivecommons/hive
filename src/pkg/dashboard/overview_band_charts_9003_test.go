@@ -19,7 +19,7 @@ func TestOverviewBandChartsStaticWiring9003(t *testing.T) {
 		"groupedRepoIssues(issues)",
 		"groupedRepoPRs(r.openPrs || [], r.heldPrs || [])",
 		"(r.actionableIssues || []).concat(r.heldIssues || [])",
-		"OVERVIEW_ISSUE_BAND_ORDER = ['ready', 'in-progress', 'agent-filed', 'waiting', 'done']",
+		"const OVERVIEW_ISSUE_BAND_ORDER = ISSUE_BAND_ORDER",
 		"PR_BAND_ORDER.map(band => ({",
 		"Issues by band",
 		"PRs by band",
@@ -41,9 +41,9 @@ func TestOverviewBandChartsStaticWiring9003(t *testing.T) {
 func TestOverviewBandChartClassMappings9003(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		"overview-issue-ready { --slice-c: var(--status-info); }",
+		"overview-issue-unclaimed { --slice-c: var(--status-info); }",
 		"overview-issue-in-progress { --slice-c: var(--status-warn); }",
-		"overview-issue-agent-filed { --slice-c: var(--acmm-level-5); }",
+		"overview-issue-needs-triage { --slice-c: var(--acmm-level-5); }",
 		"overview-issue-waiting { --slice-c: var(--status-attention); }",
 		"overview-issue-done { --slice-c: var(--status-ok); }",
 		"overview-pr-waiting { --slice-c: var(--status-attention); }",
