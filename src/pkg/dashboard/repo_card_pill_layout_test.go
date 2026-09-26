@@ -10,7 +10,7 @@ func TestRepoCardPillRowsUseSharedGrid(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
 		".repo-issue-pill-wrap, .repo-pr-pill-wrap { display: grid;",
-		"grid-template-columns: minmax(3.65rem, max-content) minmax(10.5rem, 1fr) max-content;",
+		"grid-template-columns: minmax(4.5rem, max-content) minmax(0, 1fr) max-content;",
 		".repo-pill-actions { display: grid; grid-template-columns: minmax(1.65rem, max-content) minmax(1.65rem, max-content) minmax(1.65rem, max-content) minmax(4.8rem, max-content);",
 		".repo-pill-action-slot { display: inline-flex; align-items: center; justify-content: center; min-width: 1.65rem; min-height: 1.45rem; overflow: visible; }",
 		".repo-pill-action-slot .pill-icon { max-width: none; }",

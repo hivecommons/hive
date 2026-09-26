@@ -1410,9 +1410,9 @@
     .repo-pills-issues-only .repo-pill-col-issues, .repo-pills-prs-only .repo-pill-col-prs { grid-column: 1 / -1; }
     .repo-pill-col { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; overflow: hidden; }
     .repo-pill-col .repo-issue-pill-wrap, .repo-pill-col .repo-pr-pill-wrap { flex: 0 1 auto; max-width: 100%; width: 100%; }
-    .repo-issue-pill-wrap, .repo-pr-pill-wrap { display: grid; grid-template-columns: minmax(3.65rem, max-content) minmax(10.5rem, 1fr) max-content; align-items: center; gap: var(--sp-2); min-width: 0; }
+    .repo-issue-pill-wrap, .repo-pr-pill-wrap { display: grid; grid-template-columns: minmax(4.5rem, max-content) minmax(0, 1fr) max-content; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; }
     .repo-pill-main { display: flex; align-items: center; gap: var(--sp-1); min-width: 0; overflow: hidden; }
-    .repo-pill-status { display: inline-flex; align-items: center; justify-content: center; min-width: 3.65rem; max-width: 5.25rem; padding: 3px 6px; border: 1px solid color-mix(in srgb, var(--pill-c, var(--border)) 45%, transparent); border-radius: var(--r-pill); color: var(--pill-c, var(--muted)); background: color-mix(in srgb, var(--pill-c, var(--muted)) 10%, transparent); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.02em; line-height: 1; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .repo-pill-status { display: inline-block; text-align: center; min-width: 4.5rem; max-width: 5.25rem; padding: 3px 6px; border: 1px solid color-mix(in srgb, var(--pill-c, var(--border)) 45%, transparent); border-radius: var(--r-pill); color: var(--pill-c, var(--muted)); background: color-mix(in srgb, var(--pill-c, var(--muted)) 10%, transparent); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.02em; line-height: 1; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .repo-pill-status.held { --pill-c: var(--muted); border-style: dashed; }
     /* Slots keep a 1.65rem floor but grow to content so 💬×N and glyph pills are never clipped (#9004). */
     .repo-pill-actions { display: grid; grid-template-columns: minmax(1.65rem, max-content) minmax(1.65rem, max-content) minmax(1.65rem, max-content) minmax(4.8rem, max-content); justify-content: end; align-items: center; gap: var(--sp-1); }
@@ -1436,7 +1436,7 @@
     .repo-issue-pill .pill-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* Plan/design/link actions live in the shared fixed action cluster so the
        Hold/Release slot lines up with PR rows. */
-    .repo-issue-pill-wrap .repo-issue-pill { min-width: 0; overflow: hidden; }
+    .repo-issue-pill-wrap .repo-issue-pill:not(.repo-pill-status) { min-width: 0; overflow: hidden; }
     .repo-issue-plan { --pill-c: var(--purple); flex: 0 0 auto; border: 1px solid color-mix(in srgb, var(--pill-c) 40%, transparent); background: color-mix(in srgb, var(--pill-c) 12%, transparent); color: var(--pill-c); font-size: 0.7rem; font-weight: 600; line-height: 1; padding: 3px 6px; border-radius: var(--r-pill); cursor: pointer; white-space: nowrap; opacity: 0.75; transition: opacity 0.15s, background 0.15s; }
     /* Plan-state chip (hivecommons/hive#8011): replaces the Plan button on an
        issue that already has a plan. Colour = what the plan needs — amber for a
@@ -1452,7 +1452,7 @@
     .repo-issue-plan:hover { background: color-mix(in srgb, var(--pill-c) 26%, transparent); }
     .repo-issue-plan:disabled { opacity: 0.5; cursor: default; }
     .repo-pr-pill { --component-status: var(--acmm-level-5); --pill-c: var(--acmm-level-5); text-decoration: none; max-width: 100%; transition: background 0.15s; }
-    .repo-pr-pill-wrap .repo-pr-pill:not(.pill-icon) { min-width: 0; overflow: hidden; }
+    .repo-pr-pill-wrap .repo-pr-pill:not(.pill-icon):not(.repo-pill-status) { min-width: 0; overflow: hidden; }
     .repo-pr-pill:hover { background: color-mix(in srgb, var(--pill-c) 24%, transparent); text-decoration: none; }
     /* Three pill states (#7478). Green = the governor's merge-eligible
        verdict: the sweep would merge this now. Amber = GitHub says
@@ -2840,6 +2840,11 @@
       background: color-mix(in srgb, var(--component-status) 12%, transparent);
       border-color: color-mix(in srgb, var(--component-status) 40%, transparent);
       color: var(--component-status);
+    }
+    .repo-pill-status.repo-issue-pill, .repo-pill-status.repo-pr-pill {
+      display: inline-block; text-align: center; min-width: 4.5rem; max-width: 5.25rem;
+      padding: 3px 6px; font-size: var(--fs-2xs); font-weight: 800; line-height: 1;
+      overflow: hidden; text-overflow: ellipsis;
     }
     .status-badge, .pause-badge, .off-badge, .on-demand-badge, .oc-health-badge,
     .summary-age, #fleet-breaker-pill {
