@@ -158,7 +158,9 @@ func ParseDefinition(yamlContent string) (*AgentDefinition, error) {
 //   - PromptSource / DefinitionSource (the source pointers themselves; a live
 //     definition must not be able to re-point the agent at a different repo)
 //   - Enabled / Paused / Managed (operator lifecycle state)
-//   - ID / BeadsDir / MetricsCollector / ACMMLevels / OnDemand / CavemanMode
+//   - ID / BeadsDir / MetricsCollector / ACMMLevels / OnDemand / CavemanMode /
+//     JevMode (a live definition must not be able to hand an agent a
+//     budget-spending tool the operator did not switch on)
 //   - anything under the hive-level Variables/Security policy (which does not
 //     even live on AgentConfig — it is seed-only by construction)
 //

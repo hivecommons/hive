@@ -175,6 +175,7 @@ new value at the same time.
 | `GOOSE_PROVIDER` | No | Goose CLI default | Provider passed through Goose backend/model resolution. |
 | `GOOSE_MODEL` | No | Goose CLI default | Model passed through Goose backend/model resolution and contributor relay fallback. |
 | `HIVE_EXPLAIN_MODE` | No | `off` | **Fallback** for the hive-wide default agent explain mode (`off`, `brief`, `full`) — see [agent-configuration.md](agent-configuration.md#explain-mode-debugging-agent-behaviour). `governor.explain_mode` in `hive.yaml` (Settings → Governor → General in the dashboard) takes precedence; this variable applies only when that is unset. Either way it applies only to agents that leave `explain_mode` unset; an agent with an explicit value, including `off`, keeps it. Hive also injects the *resolved* mode into every agent process under this same name. An unrecognized value resolves to `off`. |
+| `JEV_API_KEY` | No | none (falls back to the connected OpenRouter gateway key) | Key the hive uses for Jev typed decisions on behalf of agents with `jev_mode: assist` (see [agent-configuration.md](agent-configuration.md#jev-typed-decisions-jev_mode)). The variable name is configurable via `jev.api_key_env`. Read only by the hive; never exported to agents. **Secret.** |
 | `BD_DIR` | No | current directory | `bd` beads CLI data directory. |
 | `BD_DASHBOARD_URL` | No | none | Dashboard URL used by `bd kb` integration. |
 | `OPENAI_API_KEY` | No | none | OpenAI-compatible API key consulted by agent credential probing (`pkg/agent/authprobe.go`) for Codex API-key mode, including `CODEX_HOME/auth.json` entries written under the same key. |
@@ -260,6 +261,7 @@ Set conditionally:
 | `BOBSHELL_API_KEY`, `BOBSHELL_DEFAULT_AUTH_TYPE` | bob backend only | The resolved Bob API key (**secret**) and the literal `api-key` auth-type selector (non-secret by design - see the #2228 relaunch note in code). |
 | `BD_DIR` | When the agent has a configured `beads_dir` | Beads data directory for the `bd` CLI. |
 | `HIVE_CAVEMAN_MODE` | When set in the agent's config | Passed through from `caveman_mode`. |
+| `HIVE_JEV_MODE`, `HIVE_JEV_ENDPOINT` | Only when the agent's `jev_mode` is `assist` | The mode (`assist`) and the hive's loopback Jev decision endpoint (`http://127.0.0.1:18446`) that `hive jev decide` calls. The Jev API key itself is never exported — the hive attaches it server-side. |
 | `HIVE_AGENT_TOKEN_CACHE` | Per-UID agents | Path of the agent's cached scoped GitHub token (see [hive-open-pr.md](hive-open-pr.md) and [troubleshooting.md](troubleshooting.md)). |
 | `HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `DISABLE_AUTOUPDATER` | Per-UID agents | Per-agent home (#4596) and XDG data/state roots (#6238); `XDG_CONFIG_HOME` is deliberately **not** set (`~/.config` stays the shared credential/config bridge). The Claude CLI self-updater is disabled - the image pins the CLI version. |
 | `CODEX_HOME` | codex backend only | Per-agent Codex state directory (pre-created by the manager; codex refuses to create it itself). |

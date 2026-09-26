@@ -32,6 +32,11 @@ const (
 	AuditAgentBackendSet  = "agent_backend_changed"
 	AuditAgentModelSet    = "agent_model_changed"
 	AuditToolApproval     = "tool_approval"
+	// AuditJevDecision records one agent call to the Jev typed-decision
+	// endpoint (hivecommons/hive#8939): question type, confidence and the
+	// input tokens billed to the agent's budget. Never the question text or
+	// state — those can carry repository content.
+	AuditJevDecision = "jev_decision"
 
 	// AuditCopilotTokenMissing is recorded by the credential watchdog when the
 	// durable Copilot device-flow token file (/data/copilot-user-token) is

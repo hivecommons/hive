@@ -98,6 +98,9 @@ func (c *Config) validateAgentOverlay(name string, agent AgentConfig) error {
 	if !ValidateCavemanMode(agent.CavemanMode) {
 		return fmt.Errorf("invalid caveman_mode %q (must be lite, full, ultra, or wenyan)", agent.CavemanMode)
 	}
+	if !ValidateJevMode(agent.JevMode) {
+		return fmt.Errorf("invalid jev_mode %q (must be off or assist)", agent.JevMode)
+	}
 	if !ValidateExplainMode(agent.ExplainMode) {
 		return fmt.Errorf("invalid explain_mode %q (must be off, brief, or full, or empty to inherit %s)", agent.ExplainMode, ExplainModeEnvVar)
 	}

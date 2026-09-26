@@ -49,6 +49,7 @@ import (
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/inference"
 	"github.com/hivecommons/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/jev"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/loginscan"
 	"github.com/hivecommons/hive/pkg/logscrub"
@@ -3969,8 +3970,11 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// usage (from the gateway's OpenAI usage block) into the same metrics
 		// dir the token collector scans. Without this, bare-mode inference
 		// agents (litellm/vllm/llm-d) never write a scannable session file and
-		// their consumption reads as zero.
-		b.githubProxy.SetTokenSink(tokens.NewInferenceSink(b.cfg.Data.MetricsDir, b.logger))
+		// their consumption reads as zero. ONE sink: it owns each agent's
+		// usage file and rewrites it from in-memory totals, so a second
+		// instance on the same dir would clobber the first's numbers.
+		inferenceSink := tokens.NewInferenceSink(b.cfg.Data.MetricsDir, b.logger)
+		b.githubProxy.SetTokenSink(inferenceSink)
 		// Live Linear credential for agent requests — see
 		// spokeWire.linearCredentialResolver and proxy.injectLinearCredential.
 		b.githubProxy.SetLinearCredentialResolver(b.linearCredentialResolver)
@@ -4165,6 +4169,26 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		)
 
 		deps.startProxy(b.githubProxy, b.logger)
+		// Jev decision endpoint (hivecommons/hive#8939). Always bound so a
+		// jev_mode toggle in the dashboard takes effect on the agent's next
+		// call; every predicate reads the LIVE config, and an agent whose
+		// jev_mode is off is refused before any key is resolved or any
+		// provider traffic happens. Identity comes from the proxy's UID
+		// lookup, budget from the same inference sink the translator feeds,
+		// audit from the dashboard's agent audit sink.
+		if deps.startJev != nil {
+			cfg := b.cfg
+			deps.startJev(&jev.Server{
+				Identify: b.githubProxy.IdentifyAgentByUID,
+				Enabled:  cfg.JevAssistEnabled,
+				Key:      cfg.ResolveJevAPIKey,
+				Timeout:  cfg.Jev.EffectiveTimeout(),
+				Client:   jev.NewClient(func() config.JevConfig { return cfg.Jev }, nil),
+				Usage:    inferenceSink,
+				Audit:    b.dashSrv.AgentAuditSink(),
+				Logger:   b.logger,
+			}, b.logger)
+		}
 		if b.cfg.Governor.LiteLLM.LocalProxy {
 			deps.startLocalLiteLLM(b.ctx, b.logger)
 		}
@@ -8996,6 +9020,10 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		// Run from inside a headless agy agent's pane, one per kick; see
 		// pkg/agent/agy_turn.go.
 		return true, agent.RunAgyTurn(args[1:], stdout, stderr)
+	case jev.Subcommand:
+		// Run from inside an agent's pane by the jev-decide skill; see
+		// pkg/jev/cli.go. Talks only to the hive's loopback decision endpoint.
+		return true, jev.Run(args[1:], os.Stdin, stdout, stderr)
 	default:
 		return false, 0
 	}

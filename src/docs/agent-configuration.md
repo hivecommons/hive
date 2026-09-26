@@ -308,6 +308,7 @@ Rounding out the schema — fields you will rarely touch:
 | `id` | Stable identifier | agent name |
 | `acmm_levels` | ACMM levels this agent participates in | all |
 | `caveman_mode` | Prompt-compression experiment: `lite`, `full`, `ultra`, `wenyan`; see below | empty (disabled) |
+| `jev_mode` | Give the agent the Jev typed-decision tool: `off`, `assist`; see below | empty (off — nothing installed, no Jev calls) |
 | `explain_mode` | Ask the agent to report why it made each tool call: `off`, `brief`, `full`; see below | inherit the hive default |
 | `metrics_collector` | Named metrics source for the stats panel | none |
 | `stats_display` | Custom sidebar metrics (key, label, source, field, style). The `health` source (the primary repo's CI/coverage/release checks) is offered only to agents that can own CI — never to an `ADVISORY` or `on_demand` agent — and a `pct`/`pct-bar` stat with no measurement renders `—`, not `0%`. | none (an agent starts with no stats unless it is a built-in with defaults) |
@@ -402,6 +403,75 @@ Implementation notes:
 - `goose`, `codex`, and `aider` get the skill installed and then receive `/caveman <mode>` after the CLI reaches an input prompt.
 - Unsupported backends log that caveman is not supported and continue without compression.
 - The UI describes the feature as roughly 65% output reduction, but exact savings vary by prompt, backend, and task.
+
+## Jev typed decisions (`jev_mode`)
+
+`jev_mode: assist` gives an agent **Jev** (TypeSafe AI's confidence-scored
+typed-decision model) as a tool, so quick yes/no, pick-one and rubric-score
+judgments — duplicate checks, "which of these N issues is relevant", "does
+this diff touch secrets", rubric scoring before posting a review, gating
+low-value actions — are answered by a cheap model billed on input tokens only
+instead of frontier-model reasoning. It is per agent and off by default,
+mirroring `caveman_mode`.
+
+```yaml
+agents:
+  scanner:
+    jev_mode: assist      # off (default) | assist
+
+jev:                       # hive-wide client; all optional
+  provider: openrouter     # openrouter (default) | typesafe
+  model: typesafe/jev-1.13 # default per provider (typesafe: jev-latest)
+  endpoint: ""             # override the provider's systemone URL
+  api_key_env: JEV_API_KEY # falls back to the connected OpenRouter gateway key
+  timeout: 5s
+```
+
+Toggle it per agent from `hive.yaml`, the agent's General settings panel
+("Jev Mode", next to Caveman Mode), or `hivectl agent jev-mode-set <agent>
+assist`. The dashboard select stays disabled with a hint until the hive can
+resolve a Jev key (`JEV_API_KEY`, or an OpenRouter gateway connected under
+Settings → Governor → Model Gateways).
+Because the skill and env are applied at launch, saving a change of
+`jev_mode` from the dashboard or `hivectl` restarts the agent (as a model or
+backend change does); editing `hive.yaml` by hand takes effect on the agent's
+next start.
+
+What turning it on does:
+
+- **Skill.** Before the CLI starts, the manager writes the embedded
+  `jev-decide` `SKILL.md` into the agent's CLI home (`~/.claude/skills`,
+  `$CODEX_HOME/skills`, `~/.copilot/skills`, `~/.gemini/skills`,
+  `~/.config/goose/skills`), as the agent user. The skill tells the agent
+  when Jev is the right tool and that it must never be used to generate code
+  or prose. Backends without a known skills directory still get the CLI and
+  env below.
+- **Tool.** `hive jev decide --type choice|score|probability --question …
+  [--option name[=description]]… [--level …]… [--state json]` prints
+  `{"answer","confidence","probabilities","model","input_tokens"}`. `choice`
+  picks one of 2–32 options; `score` returns a position along 2–10 ordered
+  rubric levels; `probability` returns P(yes) for a statement (TypeSafe's
+  *Noul*; confidence is derived as |2·P − 1| because the provider reports
+  none for it).
+- **Proxying.** The CLI only ever talks to the hive's loopback decision
+  endpoint (`127.0.0.1:18446`). The hive identifies the caller from the
+  socket UID **only** (the unforgeable half of the egress proxy's check — the
+  self-asserted `Proxy-Authorization` fallback the proxy allows under
+  `HIVE_PROXY_ADVISORY_OK` is deliberately not honoured here), refuses any
+  agent whose live `jev_mode` is not `assist`, attaches the Jev key, and
+  forwards to the provider. Agents never see the key. Consequence: Jev
+  requires per-agent UID isolation (the entrypoint's `uid-map.json`); on a
+  shared-UID or advisory-only deployment every call is refused as
+  unidentified.
+- **Budget and audit.** Input tokens are recorded against the agent through
+  the same inference token sink the governor budget reads, and every call is
+  written to the audit log as `jev_decision` with `question_type`,
+  `confidence`, `input_tokens` and `model` — never the question or state.
+- **Env.** `HIVE_JEV_MODE=assist` and `HIVE_JEV_ENDPOINT` are exported to the
+  agent only when the mode is on.
+
+Config validation accepts only `off`, `assist`, or empty; the dashboard and
+`hivectl` writes apply the same gate.
 
 ## Methods: subscription CLIs vs self-hosted inference
 
@@ -686,7 +756,7 @@ Both call sites build the same `defsrc.Resolver` (`main.go:1356`), gated by `fun
 Two merge rules to know before you rely on this:
 
 - **A blank field never clears a baked value.** For most fields, an empty string or empty slice in the fetched definition is skipped, so a minimal definition can't silently wipe presentation you set elsewhere. `ClearOnKick` and `IncludeRepos` are the deliberate exceptions — their zero value (`false`) is a legitimate setting, so the definition's value is taken as authoritative whenever the source resolves live (`defsrc.go:212-216`).
-- **Everything else on the agent is preserved untouched**, explicitly including: `Enabled`/`Paused`/`Managed` (operator lifecycle state), `ID`, `BeadsDir`, `MetricsCollector`, `ACMMLevels`, `OnDemand`, `CavemanMode`, and — critically — the `definition_source`/`prompt_source` pointers themselves. A live definition cannot re-point the agent at a different repo (`ApplyToConfig` re-asserts this at `defsrc.go:437-440` even though the merge already excludes it). Nothing under the hive-level `variables.security` block is reachable either — it isn't part of `AgentConfig` at all.
+- **Everything else on the agent is preserved untouched**, explicitly including: `Enabled`/`Paused`/`Managed` (operator lifecycle state), `ID`, `BeadsDir`, `MetricsCollector`, `ACMMLevels`, `OnDemand`, `CavemanMode`, `JevMode`, and — critically — the `definition_source`/`prompt_source` pointers themselves. A live definition cannot re-point the agent at a different repo (`ApplyToConfig` re-asserts this at `defsrc.go:437-440` even though the merge already excludes it). Nothing under the hive-level `variables.security` block is reachable either — it isn't part of `AgentConfig` at all.
 
 ### The trust boundary: allowlisted repos are seed-only
 

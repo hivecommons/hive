@@ -125,6 +125,7 @@ hivectl agent prompt get quality --raw
 hivectl agent prompt set quality --file quality.md
 hivectl agent model-set quality claude-sonnet-4-6
 hivectl agent backend-set quality claude
+hivectl agent jev-mode-set scanner assist                  # Jev typed-decision tool: off | assist
 hivectl agent pipeline-set quality --file pipeline.yaml   # map of step: bool
 ```
 

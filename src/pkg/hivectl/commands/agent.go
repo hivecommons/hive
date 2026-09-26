@@ -47,6 +47,7 @@ func newAgentCommand(env *commandEnv) *cobra.Command {
 	agent.AddCommand(agentSpecsCommand(env))
 	agent.AddCommand(agentModelSetCommand(env))
 	agent.AddCommand(agentBackendSetCommand(env))
+	agent.AddCommand(agentJevModeSetCommand(env))
 	agent.AddCommand(agentPipelineSetCommand(env))
 	return agent
 }
@@ -355,6 +356,21 @@ func agentBackendSetCommand(env *commandEnv) *cobra.Command {
 		Example: "  hivectl agent backend-set quality claude",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return env.do(cmd, http.MethodPut, "/api/config/agent/"+url.PathEscape(args[0])+"/models", map[string]any{"backend": args[1]})
+		},
+	}
+}
+
+// agentJevModeSetCommand is the CLI arm of the per-agent Jev toggle
+// (hivecommons/hive#8939); it writes through the same PUT the dashboard
+// select uses, so the server-side jev_mode gate applies to both.
+func agentJevModeSetCommand(env *commandEnv) *cobra.Command {
+	return &cobra.Command{
+		Use:     "jev-mode-set <name> <off|assist>",
+		Short:   "Persist an agent's jev_mode (Jev typed-decision tool) in configuration",
+		Args:    argsExact(2),
+		Example: "  hivectl agent jev-mode-set scanner assist\n  hivectl agent jev-mode-set scanner off",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return env.do(cmd, http.MethodPut, "/api/config/agent/"+url.PathEscape(args[0])+"/general", map[string]any{"jevMode": args[1]})
 		},
 	}
 }

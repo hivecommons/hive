@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/jev"
 	"github.com/hivecommons/hive/pkg/proxy"
 )
 
@@ -23,6 +24,9 @@ type bootProxyDeps struct {
 	// startProxy binds the GitHub MITM listener and the inference translator.
 	startProxy        func(p *proxy.GitHubProxy, logger *slog.Logger)
 	startLocalLiteLLM func(ctx context.Context, logger *slog.Logger)
+	// startJev binds the loopback Jev decision endpoint agents with
+	// jev_mode: assist call (hivecommons/hive#8939).
+	startJev func(srv *jev.Server, logger *slog.Logger)
 }
 
 func defaultBootProxyDeps() bootProxyDeps {
@@ -48,5 +52,12 @@ func defaultBootProxyDeps() bootProxyDeps {
 			}()
 		},
 		startLocalLiteLLM: func(ctx context.Context, logger *slog.Logger) { go superviseLocalLiteLLM(ctx, logger) },
+		startJev: func(srv *jev.Server, logger *slog.Logger) {
+			go func() {
+				if err := srv.ListenAndServe(); err != nil {
+					logger.Error("jev decision endpoint failed", "error", err)
+				}
+			}()
+		},
 	}
 }

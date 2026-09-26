@@ -51,6 +51,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Publication.Validate(); err != nil {
 		return err
 	}
+	if err := c.Jev.Validate(); err != nil {
+		return err
+	}
 	if err := c.validateGitHubActivityNotifications(); err != nil {
 		return err
 	}
@@ -130,6 +133,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		}
 		if !ValidateCavemanMode(agent.CavemanMode) {
 			return fmt.Errorf("agent %s: invalid caveman_mode %q (must be lite, full, ultra, or wenyan)", label, agent.CavemanMode)
+		}
+		if !ValidateJevMode(agent.JevMode) {
+			return fmt.Errorf("agent %s: invalid jev_mode %q (must be off or assist)", label, agent.JevMode)
 		}
 		if !ValidateExplainMode(agent.ExplainMode) {
 			return fmt.Errorf("agent %s: invalid explain_mode %q (must be off, brief, or full, or empty to inherit %s)", name, agent.ExplainMode, ExplainModeEnvVar)

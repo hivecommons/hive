@@ -110,6 +110,9 @@ func TestLoadExampleConfigDoesNotEnableCavemanMode(t *testing.T) {
 		if agent.CavemanMode != "" {
 			t.Errorf("Agents[%s].CavemanMode = %q, want empty", name, agent.CavemanMode)
 		}
+		if agent.JevEnabled() {
+			t.Errorf("Agents[%s].JevMode = %q, want off: the example must not enable Jev", name, agent.JevMode)
+		}
 	}
 }
 

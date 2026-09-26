@@ -106,6 +106,7 @@ agents:
     backend: claude                       # claude | copilot | gemini | goose | bob | pi | codex | aider | vllm | llm-d | litellm | watsonx
     model: claude-sonnet-4-6
     # caveman_mode: lite                  # optional, experimental: lite | full | ultra | wenyan; omit to disable
+    # jev_mode: assist                    # optional: give the agent the Jev typed-decision tool (off | assist); omit to disable
     beads_dir: /data/beads/scanner
     # replicas: 3                         # Optional pool: scanner, scanner-2, scanner-3 (max 5)
     clear_on_kick: true                   # Send /clear before each kick to reset context

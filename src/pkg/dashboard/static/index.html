@@ -20569,6 +20569,12 @@ function burnAreaChart() {
     };
     const RESTART_STRATEGIES = ['immediate', 'backoff', 'none'];
     const CAVEMAN_MODES = ['', 'lite', 'full', 'ultra', 'wenyan'];
+    // Jev typed-decision tool (#8939): off (default) or assist. The select is
+    // disabled until the hive can resolve a Jev key (jevReady from the API).
+    const JEV_MODES = [
+      { value: '', label: '(disabled)' },
+      { value: 'assist', label: 'assist' },
+    ];
     // Explain mode (#3887). '' inherits the hive-wide HIVE_EXPLAIN_MODE default;
     // 'off' is an explicit opt-out that overrides it — the labels have to make
     // that difference visible or operators cannot tell the two apart.
@@ -23612,6 +23618,13 @@ function burnAreaChart() {
           <select id="cfg-caveman-mode" data-change-action="markDirty" data-arg0="general" data-arg1="cavemanMode" data-arg-types="s,s,v">
             ${CAVEMAN_MODES.map(m => `<option value="${m}" ${(g.cavemanMode || '') === m ? 'selected' : ''}>${m || '(disabled)'}</option>`).join('')}
           </select>
+        </div>
+        <div class="config-field">
+          <label>Jev Mode <span class="config-info">i<span class="config-tooltip">Give this agent the jev_decide tool: quick yes/no, pick-one and rubric-score judgments answered by Jev, TypeSafe AI's cheap confidence-scored typed-decision model, instead of frontier-model reasoning. Calls go through the hive (the agent never sees the key), count against the token budget and are written to the audit log. Requires JEV_API_KEY or a connected OpenRouter gateway, and per-agent UID isolation (the endpoint identifies callers by socket UID only). Saving a change restarts the agent so the skill and env apply. Leave disabled to install nothing and make no Jev calls.</span></span></label>
+          <select id="cfg-jev-mode" data-change-action="markDirty" data-arg0="general" data-arg1="jevMode" data-arg-types="s,s,v" ${g.jevReady ? '' : 'disabled'}>
+            ${JEV_MODES.map(m => `<option value="${m.value}" ${(g.jevMode || '') === m.value ? 'selected' : ''}>${m.label}</option>`).join('')}
+          </select>
+          ${g.jevReady ? '' : `<div style="font-size:0.7rem;color:var(--muted);margin-top:var(--sp-2)">⚠ No Jev key: set JEV_API_KEY or connect OpenRouter in Settings → Governor → Model Gateways to enable this toggle.</div>`}
         </div>
         <div class="config-field">
           <label>Explain Mode <span class="config-info">i<span class="config-tooltip">Ask this agent to say WHY it made each tool call, for debugging. Reasoning is emitted on EXPLAIN: lines alongside the work — the agent still acts, it does not narrate instead. Costs extra tokens on every kick, so leave it off unless you are debugging. View the reasoning on its own with "?explain=only" on the agent's full log. "(hive default)" follows the hive-wide Default explain mode in Settings &rarr; Governor &rarr; General (or the HIVE_EXPLAIN_MODE environment variable when that is unset); "off" opts this agent out even when the hive default is on.</span></span></label>

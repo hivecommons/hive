@@ -155,6 +155,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	if agent.Config.CavemanMode != "" {
 		m.installCavemanForAgent(agent, backend)
 	}
+	m.installJevForAgent(agent, backend)
 
 	effort := agent.Config.ReasoningEffort
 	if strings.TrimSpace(agent.Config.LaunchCmd) != "" {

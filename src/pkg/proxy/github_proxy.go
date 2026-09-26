@@ -940,6 +940,21 @@ func (p *GitHubProxy) identifyAgentFromReq(r *http.Request) string {
 	return p.fallbackAgentName(r)
 }
 
+// IdentifyAgentByUID names the agent behind an http.Server-delivered request
+// from the socket owner's UID ALONE. Unlike identifyAgentFromReq it never
+// falls back to the caller-controlled Proxy-Authorization header, not even
+// under HIVE_PROXY_ADVISORY_OK: see fallbackAgentName for why a self-asserted
+// name is impersonation, and for the loopback services beside the proxy (the
+// Jev decision endpoint, hivecommons/hive#8939) there is no "degraded but
+// functional" mode worth that trade — an unidentified caller is refused.
+// Returns "" when no UID map was loaded or the connection's UID is unmapped.
+func (p *GitHubProxy) IdentifyAgentByUID(r *http.Request) string {
+	if p.uidMap == nil || r == nil {
+		return ""
+	}
+	return p.identifyAgentByUID(r.RemoteAddr)
+}
+
 // identifyAgentFromConn identifies the calling agent for a request read off a
 // raw connection. It MUST be used instead of identifyAgentFromReq on any path
 // where the request came from http.ReadRequest rather than http.Server:

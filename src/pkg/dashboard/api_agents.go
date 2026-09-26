@@ -104,6 +104,10 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "caveman_mode must be one of: lite, full, ultra, wenyan (or empty to disable)", http.StatusBadRequest)
 		return
 	}
+	if !config.ValidateJevMode(body.Agent.JevMode) {
+		jsonError(w, "jev_mode must be one of: off, assist (or empty to disable)", http.StatusBadRequest)
+		return
+	}
 
 	if _, exists := s.deps.Config.Agents[body.Name]; exists {
 		jsonError(w, "agent already exists", http.StatusConflict)

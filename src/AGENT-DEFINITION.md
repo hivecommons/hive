@@ -61,6 +61,7 @@ These defaults match the loader in `src/pkg/config`: an omitted `enabled` defaul
 | `agent_spec` | string | — | BYO-agent spec file or directory; applies its backend, model, mode, launch command, prompt, tools, and skills at launch |
 | `cli_pinned` | bool | false | Pin the CLI binary version |
 | `caveman_mode` | string | empty (disabled) | Optional output compression: `lite`, `full`, `ultra`, `wenyan`; omit to disable |
+| `jev_mode` | string | empty (off) | Optional Jev typed-decision tool: `off`, `assist`; omit to install nothing and make no Jev calls |
 | `beads_dir` | string | — | Directory for bead storage |
 | `bead_role` | string | `"worker"` | `"supervisor"` or `"worker"` |
 

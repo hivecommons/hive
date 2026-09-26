@@ -4790,6 +4790,15 @@
                       ""
                     ]
                   },
+                  "jevMode": {
+                    "type": "string",
+                    "description": "Per-agent Jev typed-decision tool (#8939). `assist` installs the jev_decide skill and lets the agent call the hive's Jev endpoint; empty or `off` disables it.",
+                    "enum": [
+                      "off",
+                      "assist",
+                      ""
+                    ]
+                  },
                   "explainMode": {
                     "type": "string",
                     "enum": [

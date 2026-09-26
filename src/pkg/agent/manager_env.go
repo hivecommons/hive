@@ -12,6 +12,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/jev"
 )
 
 func (m *Manager) buildBootstrapPrompt(agent *AgentProcess) string {
@@ -358,6 +359,13 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	}
 	if agent.Config.CavemanMode != "" {
 		vars = append(vars, agentEnvPair{"HIVE_CAVEMAN_MODE", agent.Config.CavemanMode, false})
+	}
+	// Jev typed-decision tool (hivecommons/hive#8939): the skill and
+	// `hive jev decide` branch on HIVE_JEV_MODE; the endpoint is the hive's
+	// loopback decision server, never the provider. Exported only when on.
+	if agent.Config.JevEnabled() {
+		vars = append(vars, agentEnvPair{jev.ModeEnvVar, agent.Config.JevMode, false})
+		vars = append(vars, agentEnvPair{jev.EndpointEnvVar, jev.DefaultEndpoint, false})
 	}
 	// Export the RESOLVED explain mode, not the raw config value, so an agent's
 	// skills and helper scripts see the same answer the kick suffix acted on

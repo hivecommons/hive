@@ -89,6 +89,12 @@ type Config struct {
 	Intent       IntentConfig       `yaml:"intent,omitempty" json:"intent,omitempty"`
 	Escalation   EscalationConfig   `yaml:"escalation,omitempty" json:"escalation,omitempty"`
 	Retro        RetroConfig        `yaml:"retro,omitempty" json:"retro,omitempty"`
+	// Jev configures the shared Jev (TypeSafe AI typed-decision model) client
+	// that agents with jev_mode: assist reach through the hive's local decision
+	// endpoint (hivecommons/hive#8939). Zero value: OpenRouter-hosted
+	// typesafe/jev-1.13, key from JEV_API_KEY or the connected OpenRouter
+	// gateway. No agent has the tool unless its own jev_mode says so.
+	Jev JevConfig `yaml:"jev,omitempty" json:"jev,omitempty"`
 	// Runs tunes long-running runs and the opt-in Spektacular stage runner
 	// (hivecommons/hive#8303). Zero value: runner off, default retry budget.
 	Runs      RunsConfig      `yaml:"runs,omitempty" json:"runs,omitempty"`
@@ -1074,6 +1080,39 @@ var ValidCavemanModes = map[string]bool{
 // ValidateCavemanMode reports whether v is an accepted caveman_mode value.
 func ValidateCavemanMode(v string) bool { return ValidCavemanModes[v] }
 
+// Jev per-agent modes (hivecommons/hive#8939). "" and "off" both mean "no Jev
+// tool installed, no Jev network calls" — the default. "assist" installs the
+// jev_decide skill into the agent's CLI home and lets the agent call the
+// hive's Jev decision endpoint for quick typed judgments.
+const (
+	JevModeOff    = "off"
+	JevModeAssist = "assist"
+)
+
+// ValidJevModes are the accepted jev_mode values. "" is the same as "off".
+var ValidJevModes = map[string]bool{
+	"":            true,
+	JevModeOff:    true,
+	JevModeAssist: true,
+}
+
+// ValidateJevMode reports whether v is an accepted jev_mode value.
+func ValidateJevMode(v string) bool { return ValidJevModes[v] }
+
+// JevEnabled reports whether this agent may call the Jev decision tool.
+func (a AgentConfig) JevEnabled() bool { return a.JevMode == JevModeAssist }
+
+// JevAssistEnabled reports whether the named agent has jev_mode: assist. It
+// reads the live config so a dashboard toggle takes effect on the agent's
+// next decision call, mirroring IsRepoPaused / AgentServesRepo.
+func (c *Config) JevAssistEnabled(agent string) bool {
+	if c == nil {
+		return false
+	}
+	a, ok := c.Agents[agent]
+	return ok && a.JevEnabled()
+}
+
 // ValidateKickTemplateName gates the SHAPE of a kick_template value: it is a
 // bare file name that the scheduler looks up under the policy directories and
 // the embedded defaults, never a path. Empty is fine (convention lookup). A
@@ -1355,6 +1394,9 @@ type AgentConfig struct {
 	// own toggle (#7446) stamps FieldOwnerOperator and is left alone.
 	OnDemandOwner string `yaml:"on_demand_owner,omitempty" json:"on_demand_owner,omitempty"`
 	CavemanMode   string `yaml:"caveman_mode" json:"caveman_mode,omitempty"`
+	// JevMode opts this agent into the Jev typed-decision tool
+	// (hivecommons/hive#8939): "" | off | assist. See ValidJevModes.
+	JevMode string `yaml:"jev_mode,omitempty" json:"jev_mode,omitempty"`
 	// ExplainMode opts this agent into emitting EXPLAIN-prefixed reasoning
 	// lines alongside its tool calls, so an operator debugging "why did it do
 	// that" has something to read (#3887). Off by default because the
