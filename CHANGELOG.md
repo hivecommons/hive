@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-26 (v5.64.0)
+
+### Added
+
+- Added configurable Overview chart types, timed carousel rotation, transition styles, and browser-local persistence for dashboard band charts. (#9025)
+
 ## 2026-09-26 (v5.63.1)
 
 ### Changed
