@@ -22,12 +22,21 @@ func TestFromConfig_SourceTypes(t *testing.T) {
 		{"github_projects", "github_projects"},
 		{"linear", "linear"},
 		{"jira", "jira"},
+		{"gitea", "gitea"},
+		{"gitlab", "gitlab"},
 	}
 	for _, tc := range cases {
 		cfg := config.WorkSourceConfig{Type: tc.cfgType}
 		if tc.cfgType == "linear" {
 			cfg.Linear.APIKey = "key"
 			cfg.Linear.Teams = []config.LinearTeamSourceConfig{{Key: "ENG", Repo: "my-org/repo"}}
+		}
+		if tc.cfgType == "gitea" {
+			cfg.Gitea.BaseURL = "https://gitea.example"
+			cfg.Gitea.Repos = []config.ForgeWorkRepoSourceConfig{{Repo: "my-org/repo"}}
+		}
+		if tc.cfgType == "gitlab" {
+			cfg.GitLab.Repos = []config.ForgeWorkRepoSourceConfig{{Repo: "my-org/repo"}}
 		}
 		ws, err := FromConfig(cfg, nil, "tok", "my-org", logger)
 		if err != nil {
@@ -42,7 +51,7 @@ func TestFromConfig_SourceTypes(t *testing.T) {
 // TestFromConfig_UnknownType verifies an unrecognized type is a hard error,
 // not a silent fallback.
 func TestFromConfig_UnknownType(t *testing.T) {
-	_, err := FromConfig(config.WorkSourceConfig{Type: "gitlab"}, nil, "", "", slog.Default())
+	_, err := FromConfig(config.WorkSourceConfig{Type: "not-a-source"}, nil, "", "", slog.Default())
 	if err == nil {
 		t.Fatal("FromConfig with unknown type should error")
 	}

@@ -128,8 +128,48 @@ func FromConfig(cfg config.WorkSourceConfig, ghClient *github.Client, ghToken, g
 			return nil, err
 		}
 		primary = NewJiraSource(jiraCfg)
+	case "gitea":
+		c := cfg.Gitea
+		token, err := resolveSecretRef("work_source.gitea.token", c.Token)
+		if err != nil {
+			return nil, err
+		}
+		primary, err = newGiteaSource(forgeWorkSourceConfig{
+			BaseURL:    c.BaseURL,
+			Token:      token,
+			TokenEnv:   c.TokenEnv,
+			Org:        c.Org,
+			Repos:      forgeReposFromConfig(c.Repos),
+			States:     c.States,
+			Labels:     c.Labels,
+			Assignee:   c.Assignee,
+			HoldLabels: c.HoldLabels,
+		})
+		if err != nil {
+			return nil, err
+		}
+	case "gitlab":
+		c := cfg.GitLab
+		token, err := resolveSecretRef("work_source.gitlab.token", c.Token)
+		if err != nil {
+			return nil, err
+		}
+		primary, err = newGitLabSource(forgeWorkSourceConfig{
+			BaseURL:    c.BaseURL,
+			Token:      token,
+			TokenEnv:   c.TokenEnv,
+			Org:        c.Org,
+			Repos:      forgeReposFromConfig(c.Repos),
+			States:     c.States,
+			Labels:     c.Labels,
+			Assignee:   c.Assignee,
+			HoldLabels: c.HoldLabels,
+		})
+		if err != nil {
+			return nil, err
+		}
 	default:
-		return nil, fmt.Errorf("unknown work_source type %q (want github, github_projects, linear, or jira)", cfg.Type)
+		return nil, fmt.Errorf("unknown work_source type %q (want github, github_projects, linear, jira, gitea, or gitlab)", cfg.Type)
 	}
 	return AppendAdditive(primary, cfg)
 }

@@ -2435,7 +2435,7 @@ func (m GitHubMentionsConfig) Validate() error {
 // Absent or type="" defaults to GitHub Issues — backward-compatible for all
 // existing hives.
 type WorkSourceConfig struct {
-	// Type selects the work source: "" | "github" | "github_projects" | "linear" | "jira"
+	// Type selects the work source: "" | "github" | "github_projects" | "linear" | "jira" | "gitea" | "gitlab"
 	Type string `yaml:"type" json:"type"`
 	// RunStages appends pending long-running run stages as non-issue-shaped work
 	// items. Default false preserves byte-identical ListIssues output.
@@ -2446,6 +2446,10 @@ type WorkSourceConfig struct {
 	Linear LinearSourceConfig `yaml:"linear,omitempty" json:"linear,omitempty"`
 	// Jira configures the Jira Cloud or Jira Data Center REST adapter.
 	Jira JiraSourceConfig `yaml:"jira,omitempty" json:"jira,omitempty"`
+	// Gitea configures the Gitea/Forgejo REST work source.
+	Gitea GiteaSourceConfig `yaml:"gitea,omitempty" json:"gitea,omitempty"`
+	// GitLab configures the GitLab REST work source.
+	GitLab GitLabSourceConfig `yaml:"gitlab,omitempty" json:"gitlab,omitempty"`
 	// Wavefront appends the ready nodes of an imported, versioned migration
 	// graph (Crustify/Wavefront) as run-stage work items. Default disabled
 	// preserves byte-identical ListIssues output.
@@ -2504,6 +2508,8 @@ func (w WorkSourceConfig) IsZero() bool {
 		reflect.DeepEqual(w.GitHubProjects, GitHubProjectsSourceConfig{}) &&
 		reflect.DeepEqual(w.Linear, LinearSourceConfig{}) &&
 		reflect.DeepEqual(w.Jira, JiraSourceConfig{}) &&
+		reflect.DeepEqual(w.Gitea, GiteaSourceConfig{}) &&
+		reflect.DeepEqual(w.GitLab, GitLabSourceConfig{}) &&
 		reflect.DeepEqual(w.Wavefront, WavefrontSourceConfig{})
 }
 
@@ -2569,6 +2575,69 @@ type JiraSourceConfig struct {
 	Repo               string            `yaml:"repo,omitempty" json:"repo,omitempty"`
 	HoldLabels         []string          `yaml:"hold_labels,omitempty" json:"hold_labels,omitempty"`
 	Transitions        map[string]string `yaml:"transitions,omitempty" json:"transitions,omitempty"`
+}
+
+// ForgeWorkRepoSourceConfig maps one forge project/repository to the repository
+// Hive agents should clone. WorkRepo defaults to Repo.
+type ForgeWorkRepoSourceConfig struct {
+	Repo     string `yaml:"repo" json:"repo"`
+	WorkRepo string `yaml:"work_repo,omitempty" json:"work_repo,omitempty"`
+}
+
+// GiteaSourceConfig configures the Gitea/Forgejo work-source adapter.
+type GiteaSourceConfig struct {
+	BaseURL    string                      `yaml:"base_url,omitempty" json:"base_url,omitempty"`
+	Token      string                      `yaml:"token,omitempty" json:"token,omitempty"`
+	TokenEnv   string                      `yaml:"token_env,omitempty" json:"token_env,omitempty"`
+	Org        string                      `yaml:"org,omitempty" json:"org,omitempty"`
+	Repos      []ForgeWorkRepoSourceConfig `yaml:"repos,omitempty" json:"repos,omitempty"`
+	States     []string                    `yaml:"states,omitempty" json:"states,omitempty"`
+	Labels     []string                    `yaml:"labels,omitempty" json:"labels,omitempty"`
+	Assignee   string                      `yaml:"assignee,omitempty" json:"assignee,omitempty"`
+	HoldLabels []string                    `yaml:"hold_labels,omitempty" json:"hold_labels,omitempty"`
+}
+
+// GitLabSourceConfig configures the GitLab work-source adapter.
+type GitLabSourceConfig struct {
+	BaseURL    string                      `yaml:"base_url,omitempty" json:"base_url,omitempty"`
+	Token      string                      `yaml:"token,omitempty" json:"token,omitempty"`
+	TokenEnv   string                      `yaml:"token_env,omitempty" json:"token_env,omitempty"`
+	Org        string                      `yaml:"org,omitempty" json:"org,omitempty"`
+	Repos      []ForgeWorkRepoSourceConfig `yaml:"repos,omitempty" json:"repos,omitempty"`
+	States     []string                    `yaml:"states,omitempty" json:"states,omitempty"`
+	Labels     []string                    `yaml:"labels,omitempty" json:"labels,omitempty"`
+	Assignee   string                      `yaml:"assignee,omitempty" json:"assignee,omitempty"`
+	HoldLabels []string                    `yaml:"hold_labels,omitempty" json:"hold_labels,omitempty"`
+}
+
+// Validate checks work-source adapter-specific fields that can be validated
+// without contacting the external service.
+func (w WorkSourceConfig) Validate() error {
+	switch strings.TrimSpace(w.Type) {
+	case "", "github", "github_projects", "linear", "jira":
+		return nil
+	case "gitea":
+		if strings.TrimSpace(w.Gitea.BaseURL) == "" {
+			return fmt.Errorf("work_source.gitea.base_url is required")
+		}
+		return validateForgeWorkRepos("work_source.gitea.repos", w.Gitea.Repos)
+	case "gitlab":
+		return validateForgeWorkRepos("work_source.gitlab.repos", w.GitLab.Repos)
+	default:
+		return fmt.Errorf("unknown work_source type %q (want github, github_projects, linear, jira, gitea, or gitlab)", w.Type)
+	}
+}
+
+func validateForgeWorkRepos(field string, repos []ForgeWorkRepoSourceConfig) error {
+	if len(repos) == 0 {
+		return fmt.Errorf("%s must contain at least one repository", field)
+	}
+	for i, repo := range repos {
+		if strings.TrimSpace(repo.Repo) == "" {
+			return fmt.Errorf("%s[%d].repo is required", field, i)
+		}
+	}
+	return nil
 }
 
 // ProjectObservabilityBackendRef names references an agent may place in managed

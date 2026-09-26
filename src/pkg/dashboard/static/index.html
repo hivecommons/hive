@@ -27909,6 +27909,15 @@ function burnAreaChart() {
     function wsLinearToggleAssignedOnly(el) {
       markWorkSourceDirty('linear.assigned_only', el.classList.toggle('on'));
     }
+    function wsForgeReposFromText(value) {
+      return String(value || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean).map(s => {
+        const eq = s.indexOf('=');
+        return eq < 0 ? { repo: s } : { repo: s.slice(0, eq).trim(), work_repo: s.slice(eq + 1).trim() };
+      });
+    }
+    function wsForgeReposText(repos) {
+      return (Array.isArray(repos) ? repos : []).map(r => r.work_repo ? `${r.repo}=${r.work_repo}` : r.repo).join('\n');
+    }
 
     // renderGovWorkSource renders the work_source settings: which external planning
     // tool hive reads work items from (Step 01 of the loop). Saved to
@@ -27919,6 +27928,8 @@ function burnAreaChart() {
       const ghp = ws.github_projects || {};
       const lin = ws.linear || {};
       const jira = ws.jira || {};
+      const gitea = ws.gitea || {};
+      const gitlab = ws.gitlab || {};
       const linTeams = Array.isArray(lin.teams) ? lin.teams : [];
       const linAgents = Array.isArray(_configState.data.agents) ? _configState.data.agents.slice().sort() : [];
 
@@ -27927,6 +27938,8 @@ function burnAreaChart() {
         ['github_projects', 'GitHub Projects v2'],
         ['linear', 'Linear'],
         ['jira', 'Jira'],
+        ['gitea', 'Gitea / Forgejo'],
+        ['gitlab', 'GitLab'],
       ].map(([v, l]) => `<option value="${v}" ${type === v ? 'selected' : ''}>${l}</option>`).join('');
 
       return `
@@ -27936,7 +27949,7 @@ function burnAreaChart() {
         </p>
 
         <div class="config-field mb-7">
-          <label>Work source <span class="config-info">i<span class="config-tooltip">GitHub Issues is the default and requires no config. GitHub Projects, Linear, and Jira are opt-in — add credentials below after selecting.</span></span></label>
+          <label>Work source <span class="config-info">i<span class="config-tooltip">GitHub Issues is the default and requires no config. GitHub Projects, Linear, Jira, Gitea/Forgejo, and GitLab are opt-in — add credentials below after selecting.</span></span></label>
           <select data-change-action="gh61">${typeOpts}</select>
         </div>
 
@@ -27967,6 +27980,56 @@ function burnAreaChart() {
             <label>Default repo <span class="config-info">i<span class="config-tooltip">Fallback repo (owner/name) agents clone when an issue has no repository. Usually leave empty if your project only tracks one repo.</span></span></label>
             <input type="text" placeholder="my-org/my-repo" value="${esc(ghp.default_repo||'')}" data-change-action="markWorkSourceDirty" data-arg0="github_projects.default_repo" data-arg-types="s,w">
           </div>
+        </div>` : ''}
+
+        ${type === 'gitea' ? `
+        <div style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
+          <div style="color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Gitea / Forgejo</div>
+          <div class="config-field">
+            <label>Base URL</label>
+            <input type="text" placeholder="https://codeberg.org" value="${esc(gitea.base_url||'')}" data-change-action="markWorkSourceDirty" data-arg0="gitea.base_url" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Token <span class="config-info">i<span class="config-tooltip">Use \${GITEA_TOKEN} or leave empty to read token_env at runtime. The stored value is never shown after save.</span></span></label>
+            <input type="text" placeholder="${gitea.token_set ? '(set — leave blank to keep)' : '\${GITEA_TOKEN}'}" value="" data-change-action="markWorkSourceDirty" data-arg0="gitea.token" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Token env</label>
+            <input type="text" placeholder="GITEA_TOKEN" value="${esc(gitea.token_env||'')}" data-change-action="markWorkSourceDirty" data-arg0="gitea.token_env" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Repositories <span class="config-info">i<span class="config-tooltip">One per line: source repo, or source=work_repo when agents clone a different GitHub repo.</span></span></label>
+            <textarea rows="4" placeholder="acme/service&#10;acme/other=github-org/other" data-change-action="wsGiteaReposChanged">${esc(wsForgeReposText(gitea.repos))}</textarea>
+          </div>
+          <div class="config-field"><label>Labels</label><input type="text" placeholder="ready, bug" value="${esc((gitea.labels||[]).join(', '))}" data-change-action="wsGiteaLabelsChanged"></div>
+          <div class="config-field"><label>States</label><input type="text" placeholder="open" value="${esc((gitea.states||[]).join(', '))}" data-change-action="wsGiteaStatesChanged"></div>
+          <div class="config-field"><label>Assignee</label><input type="text" placeholder="hive-bot" value="${esc(gitea.assignee||'')}" data-change-action="markWorkSourceDirty" data-arg0="gitea.assignee" data-arg-types="s,w"></div>
+          <div class="config-field"><label>Hold labels</label><input type="text" placeholder="hold, blocked" value="${esc((gitea.hold_labels||[]).join(', '))}" data-change-action="wsGiteaHoldLabelsChanged"></div>
+        </div>` : ''}
+
+        ${type === 'gitlab' ? `
+        <div style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
+          <div style="color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">GitLab</div>
+          <div class="config-field">
+            <label>Base URL</label>
+            <input type="text" placeholder="https://gitlab.com" value="${esc(gitlab.base_url||'')}" data-change-action="markWorkSourceDirty" data-arg0="gitlab.base_url" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Token <span class="config-info">i<span class="config-tooltip">Use \${GITLAB_TOKEN} or leave empty to read token_env at runtime. The stored value is never shown after save.</span></span></label>
+            <input type="text" placeholder="${gitlab.token_set ? '(set — leave blank to keep)' : '\${GITLAB_TOKEN}'}" value="" data-change-action="markWorkSourceDirty" data-arg0="gitlab.token" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Token env</label>
+            <input type="text" placeholder="GITLAB_TOKEN" value="${esc(gitlab.token_env||'')}" data-change-action="markWorkSourceDirty" data-arg0="gitlab.token_env" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Projects <span class="config-info">i<span class="config-tooltip">One per line: GitLab project path, or project=work_repo when agents clone a different GitHub repo.</span></span></label>
+            <textarea rows="4" placeholder="acme/subgroup/service&#10;acme/other=github-org/other" data-change-action="wsGitLabReposChanged">${esc(wsForgeReposText(gitlab.repos))}</textarea>
+          </div>
+          <div class="config-field"><label>Labels</label><input type="text" placeholder="ready, bug" value="${esc((gitlab.labels||[]).join(', '))}" data-change-action="wsGitLabLabelsChanged"></div>
+          <div class="config-field"><label>States</label><input type="text" placeholder="opened" value="${esc((gitlab.states||[]).join(', '))}" data-change-action="wsGitLabStatesChanged"></div>
+          <div class="config-field"><label>Assignee</label><input type="text" placeholder="hive-bot" value="${esc(gitlab.assignee||'')}" data-change-action="markWorkSourceDirty" data-arg0="gitlab.assignee" data-arg-types="s,w"></div>
+          <div class="config-field"><label>Hold labels</label><input type="text" placeholder="hold, blocked" value="${esc((gitlab.hold_labels||[]).join(', '))}" data-change-action="wsGitLabHoldLabelsChanged"></div>
         </div>` : ''}
 
         ${type === 'linear' ? `
@@ -31316,6 +31379,14 @@ function burnAreaChart() {
       gh66: function (event, A) { markWorkSourceDirty('jira.hold_labels',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh77: function (event, A) { markWorkSourceDirty('jira.deployment',this.value);renderConfigTab('Work Source'); },
       gh78: function (event, A) { const v=!((_configState.data.work_source||{}).jira||{}).insecure_skip_verify; markWorkSourceDirty('jira.insecure_skip_verify',v);renderConfigTab('Work Source'); },
+      wsGiteaReposChanged: function (event, A) { markWorkSourceDirty('gitea.repos',wsForgeReposFromText(this.value)); },
+      wsGiteaLabelsChanged: function (event, A) { markWorkSourceDirty('gitea.labels',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
+      wsGiteaStatesChanged: function (event, A) { markWorkSourceDirty('gitea.states',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
+      wsGiteaHoldLabelsChanged: function (event, A) { markWorkSourceDirty('gitea.hold_labels',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
+      wsGitLabReposChanged: function (event, A) { markWorkSourceDirty('gitlab.repos',wsForgeReposFromText(this.value)); },
+      wsGitLabLabelsChanged: function (event, A) { markWorkSourceDirty('gitlab.labels',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
+      wsGitLabStatesChanged: function (event, A) { markWorkSourceDirty('gitlab.states',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
+      wsGitLabHoldLabelsChanged: function (event, A) { markWorkSourceDirty('gitlab.hold_labels',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
     };
 
   </script>

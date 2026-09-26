@@ -91,6 +91,7 @@ type gtUser struct {
 
 // gtLabel is the label shape returned inline on issues and pull requests.
 type gtLabel struct {
+	ID   int64  `json:"id"`
 	Name string `json:"name"`
 }
 
@@ -289,11 +290,52 @@ func (f *giteaForge) AddLabels(ctx context.Context, repo string, number int, lab
 // treated as success to satisfy the interface's idempotent-remove contract.
 func (f *giteaForge) RemoveLabel(ctx context.Context, repo string, number int, label string) error {
 	owner, name := f.ownerRepo(repo)
+	labelID, err := f.labelID(ctx, owner, name, label)
+	if err != nil {
+		return err
+	}
+	if labelID == 0 {
+		return nil
+	}
 	endpoint := fmt.Sprintf("/repos/%s/%s/issues/%d/labels/%s",
-		url.PathEscape(owner), url.PathEscape(name), number, url.PathEscape(label))
+		url.PathEscape(owner), url.PathEscape(name), number, strconv.FormatInt(labelID, 10))
 	okNotFound := func(status int) bool { return status == http.StatusNotFound }
 	if err := f.doWrite(ctx, http.MethodDelete, endpoint, nil, okNotFound); err != nil {
 		return fmt.Errorf("gitea: remove label from %s/%s#%d: %w", owner, name, number, err)
+	}
+	return nil
+}
+
+func (f *giteaForge) labelID(ctx context.Context, owner, name, label string) (int64, error) {
+	endpoint := fmt.Sprintf("/repos/%s/%s/labels", url.PathEscape(owner), url.PathEscape(name))
+	q := url.Values{}
+	q.Set("limit", strconv.Itoa(giteaPerPage))
+	for page := 1; page <= giteaMaxPages; page++ {
+		q.Set("page", strconv.Itoa(page))
+		var labels []gtLabel
+		if err := f.getJSON(ctx, endpoint, q, &labels); err != nil {
+			return 0, fmt.Errorf("gitea: list labels for %s/%s: %w", owner, name, err)
+		}
+		for _, candidate := range labels {
+			if candidate.ID > 0 && candidate.Name == label {
+				return candidate.ID, nil
+			}
+		}
+		if len(labels) < giteaPerPage {
+			break
+		}
+	}
+	return 0, nil
+}
+
+// SetIssueState updates an issue's open/closed state via
+// PATCH /repos/{owner}/{repo}/issues/{index}.
+func (f *giteaForge) SetIssueState(ctx context.Context, repo string, number int, state string) error {
+	owner, name := f.ownerRepo(repo)
+	endpoint := fmt.Sprintf("/repos/%s/%s/issues/%d", url.PathEscape(owner), url.PathEscape(name), number)
+	payload := map[string]string{"state": state}
+	if err := f.doWrite(ctx, http.MethodPatch, endpoint, payload, nil); err != nil {
+		return fmt.Errorf("gitea: set state on %s/%s#%d: %w", owner, name, number, err)
 	}
 	return nil
 }

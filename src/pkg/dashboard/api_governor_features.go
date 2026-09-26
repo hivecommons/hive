@@ -969,7 +969,9 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 			AssignedOnly *bool                           `json:"assigned_only"`
 			Teams        []config.LinearTeamSourceConfig `json:"teams"`
 		} `json:"linear"`
-		Jira *workSourceJiraPatch `json:"jira"`
+		Jira   *workSourceJiraPatch  `json:"jira"`
+		Gitea  *workSourceForgePatch `json:"gitea"`
+		GitLab *workSourceForgePatch `json:"gitlab"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -979,9 +981,9 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 	// --- validate before mutating anything ---
 	if body.Type != nil {
 		switch *body.Type {
-		case "", "github", "github_projects", "linear", "jira":
+		case "", "github", "github_projects", "linear", "jira", "gitea", "gitlab":
 		default:
-			jsonError(w, "type must be one of: github, github_projects, linear, jira", http.StatusBadRequest)
+			jsonError(w, "type must be one of: github, github_projects, linear, jira, gitea, gitlab", http.StatusBadRequest)
 			return
 		}
 	}
@@ -1048,6 +1050,12 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 	if body.Jira != nil {
 		applyJiraWorkSourcePatch(&ws.Jira, body.Jira)
 	}
+	if body.Gitea != nil {
+		applyForgeWorkSourcePatch(&ws.Gitea, body.Gitea)
+	}
+	if body.GitLab != nil {
+		applyForgeWorkSourcePatch(&ws.GitLab, body.GitLab)
+	}
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after work-source update", "error", err)
@@ -1096,6 +1104,104 @@ func workSourceSectionResponse(cfg *config.Config) map[string]interface{} {
 			"repo":                 ws.Jira.Repo,
 			"hold_labels":          ws.Jira.HoldLabels,
 		},
+		"gitea":  forgeWorkSourceResponse(ws.Gitea),
+		"gitlab": forgeWorkSourceResponse(ws.GitLab),
+	}
+}
+
+type workSourceForgePatch struct {
+	BaseURL    *string                            `json:"base_url"`
+	Token      *string                            `json:"token"`
+	TokenEnv   *string                            `json:"token_env"`
+	Org        *string                            `json:"org"`
+	Repos      []config.ForgeWorkRepoSourceConfig `json:"repos"`
+	States     []string                           `json:"states"`
+	Labels     []string                           `json:"labels"`
+	Assignee   *string                            `json:"assignee"`
+	HoldLabels []string                           `json:"hold_labels"`
+}
+
+type forgeWorkSourcePatchTarget interface {
+	config.GiteaSourceConfig | config.GitLabSourceConfig
+}
+
+func applyForgeWorkSourcePatch[T forgeWorkSourcePatchTarget](target *T, patch *workSourceForgePatch) {
+	switch t := any(target).(type) {
+	case *config.GiteaSourceConfig:
+		applyGiteaWorkSourcePatch(t, patch)
+	case *config.GitLabSourceConfig:
+		applyGitLabWorkSourcePatch(t, patch)
+	}
+}
+
+func applyGiteaWorkSourcePatch(g *config.GiteaSourceConfig, patch *workSourceForgePatch) {
+	if patch.BaseURL != nil {
+		g.BaseURL = strings.TrimSpace(*patch.BaseURL)
+	}
+	if patch.Token != nil {
+		g.Token = *patch.Token
+	}
+	if patch.TokenEnv != nil {
+		g.TokenEnv = strings.TrimSpace(*patch.TokenEnv)
+	}
+	if patch.Org != nil {
+		g.Org = strings.TrimSpace(*patch.Org)
+	}
+	if patch.Repos != nil {
+		g.Repos = patch.Repos
+	}
+	if patch.States != nil {
+		g.States = patch.States
+	}
+	if patch.Labels != nil {
+		g.Labels = patch.Labels
+	}
+	if patch.Assignee != nil {
+		g.Assignee = strings.TrimSpace(*patch.Assignee)
+	}
+	if patch.HoldLabels != nil {
+		g.HoldLabels = patch.HoldLabels
+	}
+}
+
+func applyGitLabWorkSourcePatch(g *config.GitLabSourceConfig, patch *workSourceForgePatch) {
+	if patch.BaseURL != nil {
+		g.BaseURL = strings.TrimSpace(*patch.BaseURL)
+	}
+	if patch.Token != nil {
+		g.Token = *patch.Token
+	}
+	if patch.TokenEnv != nil {
+		g.TokenEnv = strings.TrimSpace(*patch.TokenEnv)
+	}
+	if patch.Org != nil {
+		g.Org = strings.TrimSpace(*patch.Org)
+	}
+	if patch.Repos != nil {
+		g.Repos = patch.Repos
+	}
+	if patch.States != nil {
+		g.States = patch.States
+	}
+	if patch.Labels != nil {
+		g.Labels = patch.Labels
+	}
+	if patch.Assignee != nil {
+		g.Assignee = strings.TrimSpace(*patch.Assignee)
+	}
+	if patch.HoldLabels != nil {
+		g.HoldLabels = patch.HoldLabels
+	}
+}
+
+func forgeWorkSourceResponse[T forgeWorkSourcePatchTarget](src T) map[string]interface{} {
+	switch v := any(src).(type) {
+	case config.GiteaSourceConfig:
+		return map[string]interface{}{"base_url": v.BaseURL, "token_set": v.Token != "", "token_env": v.TokenEnv, "org": v.Org, "repos": v.Repos, "states": v.States, "labels": v.Labels, "assignee": v.Assignee, "hold_labels": v.HoldLabels}
+	case config.GitLabSourceConfig:
+		return map[string]interface{}{"base_url": v.BaseURL, "token_set": v.Token != "", "token_env": v.TokenEnv, "org": v.Org, "repos": v.Repos, "states": v.States, "labels": v.Labels, "assignee": v.Assignee, "hold_labels": v.HoldLabels}
+	default:
+		return map[string]interface{}{}
 	}
 }
 

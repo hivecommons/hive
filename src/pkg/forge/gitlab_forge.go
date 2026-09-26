@@ -270,6 +270,17 @@ func (f *gitLabForge) RemoveLabel(ctx context.Context, repo string, number int, 
 	return nil
 }
 
+// SetIssueState updates an issue's state via GitLab's state_event field.
+func (f *gitLabForge) SetIssueState(ctx context.Context, repo string, number int, stateEvent string) error {
+	slug := f.projectSlug(repo)
+	endpoint := fmt.Sprintf("/projects/%s/issues/%d", url.PathEscape(slug), number)
+	payload := map[string]string{"state_event": stateEvent}
+	if err := f.doWrite(ctx, http.MethodPut, endpoint, payload); err != nil {
+		return fmt.Errorf("gitlab: set state on %q#%d: %w", slug, number, err)
+	}
+	return nil
+}
+
 // SetHold applies or clears the hold gate label using AddLabels/RemoveLabel.
 func (f *gitLabForge) SetHold(ctx context.Context, repo string, number int, hold bool) error {
 	if hold {

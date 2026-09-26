@@ -395,6 +395,12 @@ func (s *Server) chatKnowledgeWorkSourcesAnswer() string {
 	case "jira":
 		lines = append(lines, fmt.Sprintf("- Jira: base_url=%s projects=%s repo=%s",
 			firstRunNonEmpty(ws.Jira.BaseURL, "(unset)"), strings.Join(ws.Jira.ProjectKeys, ","), firstRunNonEmpty(ws.Jira.Repo, "(unset)")))
+	case "gitea":
+		lines = append(lines, fmt.Sprintf("- Gitea/Forgejo: base_url=%s repos=%d labels=%s",
+			firstRunNonEmpty(ws.Gitea.BaseURL, "(unset)"), len(ws.Gitea.Repos), strings.Join(ws.Gitea.Labels, ",")))
+	case "gitlab":
+		lines = append(lines, fmt.Sprintf("- GitLab: base_url=%s repos=%d labels=%s",
+			firstRunNonEmpty(ws.GitLab.BaseURL, "(default gitlab.com)"), len(ws.GitLab.Repos), strings.Join(ws.GitLab.Labels, ",")))
 	default:
 		if sourceType == "github" {
 			lines = append(lines, "- GitHub issues/PRs from configured repositories are the active work source.")

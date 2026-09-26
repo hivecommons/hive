@@ -539,6 +539,10 @@ func TestGiteaAddLabels(t *testing.T) {
 func TestGiteaRemoveLabel(t *testing.T) {
 	var gotMethod, gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == giteaAPIPath+"/repos/hivecommons/hive/labels" {
+			_, _ = w.Write([]byte(`[{"id":99,"name":"hold"}]`))
+			return
+		}
 		gotMethod, gotPath = r.Method, r.URL.Path
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -551,7 +555,7 @@ func TestGiteaRemoveLabel(t *testing.T) {
 	if gotMethod != http.MethodDelete {
 		t.Errorf("method = %q, want DELETE", gotMethod)
 	}
-	if !strings.HasSuffix(gotPath, "/repos/hivecommons/hive/issues/7/labels/hold") {
+	if !strings.HasSuffix(gotPath, "/repos/hivecommons/hive/issues/7/labels/99") {
 		t.Errorf("path = %q", gotPath)
 	}
 }
@@ -560,8 +564,11 @@ func TestGiteaRemoveLabel(t *testing.T) {
 // success (idempotent-remove contract).
 func TestGiteaRemoveLabelNotFoundIsOK(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"message":"label not found"}`))
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`[{"id":99,"name":"other"}]`))
+			return
+		}
+		t.Fatalf("unexpected delete for absent label: %s %s", r.Method, r.URL.Path)
 	}))
 	defer srv.Close()
 
@@ -574,6 +581,10 @@ func TestGiteaRemoveLabelNotFoundIsOK(t *testing.T) {
 func TestGiteaSetHold(t *testing.T) {
 	var lastMethod, lastBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/labels") {
+			_, _ = w.Write([]byte(`[{"id":99,"name":"hold"}]`))
+			return
+		}
 		lastMethod = r.Method
 		b, _ := io.ReadAll(r.Body)
 		lastBody = string(b)
@@ -596,6 +607,27 @@ func TestGiteaSetHold(t *testing.T) {
 	}
 	if lastMethod != http.MethodDelete {
 		t.Errorf("SetHold(false) method = %q, want DELETE", lastMethod)
+	}
+}
+
+func TestGiteaSetIssueState(t *testing.T) {
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch || r.URL.Path != giteaAPIPath+"/repos/hivecommons/hive/issues/7" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		data, _ := io.ReadAll(r.Body)
+		gotBody = string(data)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	f := newTestGitea(t, srv.URL, "hivecommons")
+	if err := f.SetIssueState(context.Background(), "hive", 7, "closed"); err != nil {
+		t.Fatalf("SetIssueState: %v", err)
+	}
+	if !strings.Contains(gotBody, `"state":"closed"`) {
+		t.Fatalf("body = %q", gotBody)
 	}
 }
 
