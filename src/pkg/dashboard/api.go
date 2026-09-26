@@ -6541,7 +6541,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if answer, ok := s.chatLocalIntentAnswer(body.Query); ok {
+	if answer, ok := s.chatLocalIntentAnswerFor(r, body.Query); ok {
 		jsonResponse(w, map[string]interface{}{
 			"answer": answer,
 			"status": "ok",
@@ -6586,6 +6586,66 @@ func chatIntentTokens(query string) map[string]bool {
 		tokens[field] = true
 	}
 	return tokens
+}
+
+// chatLocalIntentAnswerFor answers intents that need the caller's identity
+// (presence) before falling back to the identity-free local intents.
+func (s *Server) chatLocalIntentAnswerFor(r *http.Request, query string) (string, bool) {
+	tokens := chatIntentTokens(query)
+	if chatPresenceIntent(tokens) {
+		return s.chatPresenceAnswer(chatViewer(s, r)), true
+	}
+	return s.chatLocalIntentAnswer(query)
+}
+
+// chatPresenceIntent is true for `/jam who is online?`-style questions: the
+// jam scope prefix, or an explicit online/presence word alongside "who".
+func chatPresenceIntent(tokens map[string]bool) bool {
+	if tokens["jam"] || tokens["presence"] || tokens["online"] {
+		return true
+	}
+	return tokens["who"] && (tokens["here"] || tokens["active"] || tokens["idle"] || tokens["free"] || tokens["around"])
+}
+
+func chatViewer(s *Server, r *http.Request) string {
+	viewer := strings.TrimSpace(r.Header.Get("X-Hive-User"))
+	if sess := s.sessionFromRequest(r); sess != nil {
+		viewer = strings.TrimSpace(sess.Username)
+	}
+	return viewer
+}
+
+func (s *Server) chatPresenceAnswer(viewer string) string {
+	if viewer == "" {
+		return "No authenticated users are visible. Local dashboards report only `local`. Use `/who` after signing in to see the live roster."
+	}
+	users := s.presenceRoster(viewer)
+	if len(users) == 0 {
+		return "Nobody is online in this hive right now."
+	}
+	active := 0
+	lines := make([]string, 0, len(users))
+	for _, u := range users {
+		name := u.DisplayName
+		if name == "" {
+			name = u.Username
+		}
+		marker, state := "⚪", "idle"
+		if u.Active {
+			marker, state = "🟢", "active"
+			active++
+		}
+		line := fmt.Sprintf("%s **%s**", marker, name)
+		if u.You {
+			line += " (you)"
+		}
+		line += " — " + state
+		if u.LastAction != "" {
+			line += ", last action " + u.LastAction
+		}
+		lines = append(lines, line)
+	}
+	return fmt.Sprintf("%d online (%d active, %d idle):\n%s", len(users), active, len(users)-active, strings.Join(lines, "\n"))
 }
 
 func (s *Server) chatLocalIntentAnswer(query string) (string, bool) {

@@ -1523,10 +1523,20 @@
     .overview-settings-field input, .overview-settings-field select, .overview-chart-select { min-width: 0; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg); color: var(--text); padding: var(--sp-1) var(--sp-2); font: inherit; }
     .overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--sp-5); }
     .overview-chart-card { position: relative; display: grid; grid-template-columns: minmax(180px, 220px) minmax(0, 1fr); align-items: center; gap: var(--sp-4); min-width: 0; overflow: hidden; }
+    .overview-chart-card:has(.overview-hbar) { grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); }
     .overview-chart-meta { min-width: 0; }
-    .overview-chart-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-3); }
-    .overview-carousel-arrow { border: 1px solid var(--border); border-radius: var(--r-pill); background: var(--bg); color: var(--muted); cursor: pointer; padding: var(--sp-1) var(--sp-2); }
+    .overview-chart-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-3); font-size: var(--fs-xs); }
+    .overview-chart-controls .overview-chart-select { font-size: var(--fs-xs); line-height: 1.2; padding: 2px var(--sp-2); }
+    .overview-carousel-arrow { border: 1px solid var(--border); border-radius: var(--r-pill); background: var(--bg); color: var(--muted); cursor: pointer; padding: 2px var(--sp-2); font-size: var(--fs-2xs); line-height: 1.2; }
     .overview-carousel-arrow:hover { color: var(--text); border-color: var(--accent); }
+    .overview-carousel-arrow[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+    .overview-chart-controls-sep { width: 1px; height: 1rem; background: var(--border); }
+    .overview-hbar { display: grid; grid-template-columns: max-content minmax(0, 1fr) auto; column-gap: var(--sp-2); row-gap: var(--sp-2); align-items: center; width: 100%; font-size: var(--fs-xs); }
+    .overview-hbar-label { color: var(--text); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 9rem; }
+    .overview-hbar-track { display: flex; height: 0.7rem; border-radius: var(--r-pill); background: color-mix(in srgb, var(--muted) 18%, transparent); overflow: hidden; }
+    .overview-hbar-fill { display: block; height: 100%; background: var(--slice-c); border-radius: inherit; }
+    .overview-hbar-track.overview-hbar-stacked .overview-hbar-fill { border-radius: 0; }
+    .overview-hbar-value { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
     .overview-carousel-dots { display: inline-flex; gap: var(--sp-1); align-items: center; }
     .overview-carousel-dot { width: 0.45rem; height: 0.45rem; border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--bg); }
     .overview-carousel-dot.active { background: var(--accent); border-color: var(--accent); }
@@ -1536,11 +1546,11 @@
     .overview-chart-line { fill: none; stroke: var(--slice-c); stroke-width: 2; }
     .overview-chart-point { fill: var(--slice-c); }
     .overview-chart-hist-cell { fill: var(--slice-c); }
-    .overview-panel-in { animation-duration: var(--overview-transition-duration, 180ms); animation-timing-function: ease; animation-fill-mode: both; }
-    .overview-panel-out { animation-duration: var(--overview-transition-duration, 180ms); animation-timing-function: ease; animation-fill-mode: both; }
-    .overview-duration-fast { --overview-transition-duration: 120ms; }
-    .overview-duration-normal { --overview-transition-duration: 180ms; }
-    .overview-duration-slow { --overview-transition-duration: 320ms; }
+    .overview-panel-in { animation-duration: var(--overview-transition-duration, 500ms); animation-timing-function: ease; animation-fill-mode: both; }
+    .overview-panel-out { animation-duration: var(--overview-transition-duration, 500ms); animation-timing-function: ease; animation-fill-mode: both; }
+    .overview-duration-fast { --overview-transition-duration: 250ms; }
+    .overview-duration-normal { --overview-transition-duration: 500ms; }
+    .overview-duration-slow { --overview-transition-duration: 900ms; }
     .overview-panel-in.overview-transition-fade { animation-name: overview-fade-in; }
     .overview-panel-out.overview-transition-fade { animation-name: overview-fade-out; }
     .overview-panel-in.overview-transition-rise-from-bottom { animation-name: overview-rise-from-bottom-in; }
@@ -9779,11 +9789,9 @@
     const OVERVIEW_CAROUSEL_DEFAULT_MS = 30000;
     const OVERVIEW_HISTORY_MAX_SAMPLES = 288;
     const OVERVIEW_HISTORY_MIN_SAMPLE_MS = 60000;
-    const OVERVIEW_BAR_W = 220, OVERVIEW_BAR_H = 150, OVERVIEW_BAR_LABEL_X = 4, OVERVIEW_BAR_X = 72, OVERVIEW_BAR_MAX_W = 120;
-    const OVERVIEW_BAR_ROW_H = 22, OVERVIEW_BAR_Y = 16, OVERVIEW_BAR_MIN_W = 2;
+    const OVERVIEW_BAR_MIN_PERCENT = 1.5;
     const OVERVIEW_STACK_W = 220, OVERVIEW_STACK_H = 86, OVERVIEW_STACK_X = 10, OVERVIEW_STACK_Y = 36, OVERVIEW_STACK_BAR_W = 200, OVERVIEW_STACK_BAR_H = 18;
     const OVERVIEW_LINE_W = 220, OVERVIEW_LINE_H = 150, OVERVIEW_LINE_PAD = 12;
-    const OVERVIEW_HIST_W = 220, OVERVIEW_HIST_H = 150, OVERVIEW_HIST_LABEL_X = 4, OVERVIEW_HIST_X = 50, OVERVIEW_HIST_MAX_W = 154;
     const OVERVIEW_AGE_BUCKETS = [
       { key: 'lt1d', label: '<1d', maxMinutes: 1440 },
       { key: '1to7d', label: '1-7d', maxMinutes: 10080 },
@@ -9861,6 +9869,10 @@
       }).join('');
     }
 
+    function overviewTransitionOptions(selected) {
+      return OVERVIEW_TRANSITIONS.map(t => `<option value="${esc(t)}"${t === selected ? ' selected' : ''}>${esc(t.replace(/-/g, ' '))}</option>`).join('');
+    }
+
     function overviewChartTypeOptions(selected) {
       return OVERVIEW_CHART_TYPES.map(type => `<option value="${esc(type)}"${type === selected ? ' selected' : ''}>${esc(OVERVIEW_CHART_TYPE_LABELS[type])}</option>`).join('');
     }
@@ -9881,14 +9893,22 @@
       return `<svg class="overview-chart-svg" viewBox="0 0 ${OVERVIEW_CHART_VIEWBOX} ${OVERVIEW_CHART_VIEWBOX}" role="img" aria-label="${esc(title)}"><circle class="overview-chart-track" cx="${OVERVIEW_CHART_CENTER}" cy="${OVERVIEW_CHART_CENTER}" r="${radius}" stroke-width="${strokeWidth}"></circle>${sliceHtml}<text class="overview-chart-total" x="${OVERVIEW_CHART_CENTER}" y="${OVERVIEW_CHART_CENTER + OVERVIEW_CHART_TOTAL_VALUE_Y_OFFSET}">${total}</text><text class="overview-chart-total-caption" x="${OVERVIEW_CHART_CENTER}" y="${OVERVIEW_CHART_CENTER + OVERVIEW_CHART_TOTAL_CAPTION_Y_OFFSET}">total</text></svg>`;
     }
 
+    // Bars are HTML rows in one grid (label | track | count) so every label
+    // shares a column, uses the legend's font size, and can never run into
+    // its bar the way SVG text scaled by the viewBox did.
+    function overviewHBarRow(label, tooltip, fills, value) {
+      const cells = fills.map(f => `<span class="overview-hbar-fill ${esc(f.className)}" style="width:${f.percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}%" title="${esc(f.tooltip)}"></span>`).join('');
+      return `<span class="overview-hbar-label" title="${esc(tooltip)}">${esc(label)}</span><span class="overview-hbar-track${fills.length > 1 ? ' overview-hbar-stacked' : ''}">${cells}</span><span class="overview-hbar-value" title="${esc(tooltip)}">${value}</span>`;
+    }
+
     function renderOverviewBar(title, subtitle, slices) {
       const max = Math.max(1, ...(slices || []).map(s => s.count || 0));
-      const rows = (slices || []).map((s, idx) => {
-        const y = OVERVIEW_BAR_Y + idx * OVERVIEW_BAR_ROW_H;
-        const w = Math.max(s.count ? OVERVIEW_BAR_MIN_W : 0, (s.count / max) * OVERVIEW_BAR_MAX_W);
-        return `<g title="${esc(s.label + (s.rule ? ': ' + s.rule : ''))}"><text class="overview-chart-bar-label" x="${OVERVIEW_BAR_LABEL_X}" y="${y + 7}">${esc(s.label)}</text><rect class="overview-chart-fill ${esc(s.className)}" x="${OVERVIEW_BAR_X}" y="${y}" width="${w.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" height="12" rx="3"><title>${esc(s.label)}: ${s.count}${s.rule ? ' — ' + esc(s.rule) : ''}</title></rect><text class="overview-chart-bar-value" x="${OVERVIEW_BAR_X + w + 4}" y="${y + 7}">${s.count}</text></g>`;
+      const rows = (slices || []).map(s => {
+        const tooltip = s.label + ': ' + s.count + (s.rule ? ' — ' + s.rule : '');
+        const percent = s.count ? Math.max(OVERVIEW_BAR_MIN_PERCENT, (s.count / max) * OVERVIEW_CHART_PERCENT_SCALE) : 0;
+        return overviewHBarRow(s.label, tooltip, [{ className: s.className, percent, tooltip }], s.count);
       }).join('');
-      return `<svg class="overview-chart-svg" viewBox="0 0 ${OVERVIEW_BAR_W} ${OVERVIEW_BAR_H}" role="img" aria-label="${esc(title)}">${rows}</svg>`;
+      return `<div class="overview-hbar" role="img" aria-label="${esc(title)}">${rows}</div>`;
     }
 
     function renderOverviewStacked(title, subtitle, slices) {
@@ -9936,18 +9956,15 @@
         return { bucket, bySlice, total };
       });
       const max = Math.max(1, ...rows.map(r => r.total));
-      const svgRows = rows.map((row, idx) => {
-        const y = OVERVIEW_BAR_Y + idx * OVERVIEW_BAR_ROW_H;
-        let x = OVERVIEW_HIST_X;
-        const cells = row.bySlice.filter(x => x.count > 0).map(xr => {
-          const w = (xr.count / max) * OVERVIEW_HIST_MAX_W;
-          const cell = `<rect class="overview-chart-hist-cell ${esc(xr.slice.className)}" x="${x.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" y="${y}" width="${w.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" height="12" rx="3"><title>${esc(row.bucket.label + ' · ' + xr.slice.label)}: ${xr.count}${xr.slice.rule ? ' — ' + esc(xr.slice.rule) : ''}</title></rect>`;
-          x += w;
-          return cell;
-        }).join('');
-        return `<g><text class="overview-chart-axis-label" x="${OVERVIEW_HIST_LABEL_X}" y="${y + 7}">${esc(row.bucket.label)}</text>${cells}<text class="overview-chart-bar-value" x="${OVERVIEW_HIST_X + Math.max(0, (row.total / max) * OVERVIEW_HIST_MAX_W) + 4}" y="${y + 7}">${row.total}</text></g>`;
+      const htmlRows = rows.map(row => {
+        const fills = row.bySlice.filter(x => x.count > 0).map(xr => ({
+          className: xr.slice.className,
+          percent: (xr.count / max) * OVERVIEW_CHART_PERCENT_SCALE,
+          tooltip: row.bucket.label + ' · ' + xr.slice.label + ': ' + xr.count + (xr.slice.rule ? ' — ' + xr.slice.rule : '')
+        }));
+        return overviewHBarRow(row.bucket.label, row.bucket.label + ': ' + row.total, fills, row.total);
       }).join('');
-      return `<svg class="overview-chart-svg" viewBox="0 0 ${OVERVIEW_HIST_W} ${OVERVIEW_HIST_H}" role="img" aria-label="${esc(title)}">${svgRows}</svg>`;
+      return `<div class="overview-hbar" role="img" aria-label="${esc(title)}">${htmlRows}</div>`;
     }
 
     function renderOverviewDonutSVG(title, subtitle, slices) {
@@ -9981,7 +9998,7 @@
       state.active[kind] = active;
       const panelClass = `overview-panel-in ${overviewTransitionClass(state)} overview-duration-${state.duration}`;
       const body = renderOverviewChartBody(active, title, subtitle, slices, kind, state);
-      const controls = `<div class="overview-chart-controls"><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselPrev" data-arg0="${kind}" data-stop="1" title="Previous Overview chart">◀</button><select class="overview-chart-select" data-change-action="setOverviewChartType" data-arg0="${kind}" data-arg-types="s,v" title="Overview chart type">${overviewChartTypeOptions(active)}</select><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselNext" data-arg0="${kind}" data-stop="1" title="Next Overview chart">▶</button>${renderOverviewDots(enabled, active)}</div>`;
+      const controls = `<div class="overview-chart-controls"><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselPrev" data-arg0="${kind}" data-stop="1" title="Previous Overview chart">◀</button><select class="overview-chart-select" data-change-action="setOverviewChartType" data-arg0="${kind}" data-arg-types="s,v" title="Overview chart type">${overviewChartTypeOptions(active)}</select><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselNext" data-arg0="${kind}" data-stop="1" title="Next Overview chart">▶</button>${renderOverviewDots(enabled, active)}<span class="overview-chart-controls-sep"></span><button type="button" class="overview-carousel-arrow" data-action="toggleOverviewCarousel" data-stop="1" aria-pressed="${state.carousel ? 'true' : 'false'}" title="${state.carousel ? 'Auto-play on — rotates every ' + Math.round(state.intervalMs / 1000) + 's through the ticked charts (⚙️ to choose). Click to pause.' : 'Auto-play off — click to rotate through the ticked charts every ' + Math.round(state.intervalMs / 1000) + 's'}">${state.carousel ? '⏸ auto' : '⏵ auto'}</button><select class="overview-chart-select" data-change-action="setOverviewTransition" data-arg-types="v" title="Transition between charts">${overviewTransitionOptions(state.transition)}</select></div>`;
       return `<div class="overview-chart-card ${panelClass}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${body}<div class="overview-chart-meta">${controls}<div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices)}</div></div></div>`;
     }
 
@@ -10004,6 +10021,13 @@
       const state = overviewChartsState();
       if (OVERVIEW_CHART_TYPES.includes(type)) state.enabled[type] = !!checked;
       if (!OVERVIEW_CHART_TYPES.some(t => state.enabled[t])) state.enabled.donut = true;
+      rerenderOverviewChartsFromState(state);
+    }
+
+    function toggleOverviewCarousel() {
+      const state = overviewChartsState();
+      state.carousel = !state.carousel;
+      if (state.carousel && overviewEnabledTypes(state).length < 2) OVERVIEW_CHART_TYPES.forEach(t => { state.enabled[t] = true; });
       rerenderOverviewChartsFromState(state);
     }
 
@@ -28842,7 +28866,7 @@ function burnAreaChart() {
       { name:'prs', aliases:['pr'], usage:'/prs <query>', description:'Ask about pull requests, merges and reviews.', example:'/prs waiting on review', details:'Forwards a focused PR question to Hive Chat search.', run: chatForwardCommand('prs') },
       { name:'governor', aliases:['gov'], usage:'/governor <query>', description:'Ask about governor cadence, kicks and policy.', example:'/governor next kick', details:'Forwards a focused governor question to Hive Chat search.', run: chatForwardCommand('governor') },
       { name:'knowledge', aliases:['kb'], usage:'/knowledge <query>', description:'Ask the knowledge base and imported docs.', example:'/knowledge relay setup', details:'Forwards a focused knowledge-base question to Hive Chat search.', run: chatForwardCommand('knowledge') },
-      { name:'jam', aliases:['swarm'], usage:'/jam <query>', description:'Ask about jam sessions, contributors and live collaboration.', example:'/jam who is free?', details:'Forwards a focused jam/contributor question to Hive Chat search.', run: chatForwardCommand('jam') },
+      { name:'jam', aliases:['swarm'], usage:'/jam <query>', description:'Ask about jam sessions, contributors and live collaboration.', example:'/jam who is free?', details:'Presence questions (who is online / free / here / active) are answered locally from `/api/presence`; anything else is forwarded to Hive Chat search.', run: chatCommandJam },
       { name:'spek', aliases:['spectacular','spec'], usage:'/spek <query>', description:'Ask about Spektacular/inception campaigns and spec runs (v6/edge when unavailable).', example:'/spek active campaigns', details:'Uses v6/edge Spektacular concepts: inception campaigns, spec runs, relay and campaign state.', run: chatForwardCommand('spek') },
     ];
     const CHAT_COMMAND_BY_NAME = new Map();
@@ -29039,6 +29063,12 @@ function burnAreaChart() {
       const users = (data && Array.isArray(data.users)) ? data.users : [];
       if (!users.length) return 'No authenticated users are visible. Local dashboards report only `local`.';
       return users.map(u => (u.active ? '🟢 ' : '⚪ ') + '**' + (u.display_name || u.username || 'local') + '**' + (u.you ? ' (you)' : '') + ' — ' + (u.active ? 'active' : 'idle') + (u.last_action ? ', last action ' + u.last_action : '')).join('\n');
+    }
+    const CHAT_JAM_PRESENCE_RE = /\b(online|who|free|here|around|present|presence|active|idle)\b/i;
+    async function chatCommandJam(args) {
+      const q = (args || '').trim();
+      if (!q || CHAT_JAM_PRESENCE_RE.test(q)) return await chatCommandWho();
+      return await chatForwardCommand('jam')(q);
     }
     function chatForwardCommand(scope) {
       return async function(args) {
