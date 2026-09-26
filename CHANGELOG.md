@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-26 (v5.63.0)
+
+### Added
+
+- Per-agent `jev_mode: assist` gives an agent the Jev typed-decision tool (like `caveman_mode`): a `jev-decide` skill plus `hive jev decide` for quick choice / score / probability judgments, proxied through the hive's loopback endpoint so the Jev key never reaches the agent, counted against the token budget and written to the audit log. Toggle from `hive.yaml`, the agent's General settings (disabled until a Jev/OpenRouter key is ready), or `hivectl agent jev-mode-set`. Off by default: nothing installed, no Jev calls ([#8939](https://github.com/hivecommons/hive/issues/8939)).
+
 ## 2026-09-26 (v5.62.1)
 
 ### Fixed
