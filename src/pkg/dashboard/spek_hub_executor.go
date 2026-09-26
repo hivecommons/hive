@@ -153,6 +153,7 @@ func (e *SpekHubExecutor) sweepStaleWorktrees(ctx context.Context) error {
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
+
 	if err != nil {
 		return err
 	}
@@ -276,6 +277,7 @@ func (e *SpekHubExecutor) runStage(parent context.Context, st spekHubStage, key 
 
 func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) error {
 	now := time.Now().UTC()
+	receiptDir := runReceiptsDir
 	taskID := st.taskID
 	if st.identity != e.Identity {
 		taskID = spekHubExecutorTaskPrefix + sanitizeReceiptSegment(st.runKey) + "-" + st.stage + "-" + strconv.FormatUint(st.gen, 10)
@@ -307,6 +309,9 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 		// approval); launching the agent again would only burn a slot.
 		e.log().Info("[spektacular] hub executor stage document already final; not relaunching", "run", st.runKey, "stage", st.stage, "gen", st.gen, "artifact", status.JoinKey())
 		e.recordStageProgress(st, "document_already_final", map[string]string{stageAttrArtifact: status.JoinKey(), stageAttrDocumentStatus: status.DocumentStatus})
+		if err := e.captureCompletedStage(st, worktree, artifact, status, nil, now, nil, receiptDir); err != nil {
+			e.log().Warn("[spektacular] stage transcript capture failed", "run", st.runKey, "stage", st.stage, "gen", st.gen, "error", err)
+		}
 		e.holdGeneration(st)
 		e.Server.tickStageRunner(time.Now().UTC())
 		return nil
@@ -322,7 +327,9 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 	started := time.Now()
 	e.log().Info("[spektacular] hub executor launching stage", "run", st.runKey, "stage", st.stage, "gen", st.gen, "worktree", worktree, "cmd", cmd[0])
 	e.recordStageProgress(st, "cli_launching", map[string]string{"backend": e.backend(), "worktree": worktree})
+	statusHistory, stopStatusPolling := e.startStageStatusCapture(ctx, worktree, env, st.stage, artifact)
 	out, pid, err := e.runStageCommand(ctx, worktree, env, st, cmd)
+	stopStatusPolling()
 	exitCode := 0
 	if err != nil {
 		exitCode = commandExitCode(err)
@@ -332,7 +339,7 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 	if err != nil {
 		return fmt.Errorf("agent CLI failed: %w: %s", err, tailString(string(out), spekHubOutputTailBytes))
 	}
-	if err := e.afterCLIExit(ctx, st, taskID, worktree, env, artifact, out); err != nil {
+	if err := e.afterCLIExit(ctx, st, taskID, worktree, env, artifact, out, started, statusHistory(), receiptDir); err != nil {
 		e.log().Warn("[spektacular] post-cli status check failed", "run", st.runKey, "stage", st.stage, "gen", st.gen, "error", err)
 	}
 	return nil
@@ -381,7 +388,7 @@ func (e *SpekHubExecutor) runStageCommand(ctx context.Context, worktree string, 
 	return out, 0, err
 }
 
-func (e *SpekHubExecutor) afterCLIExit(ctx context.Context, st spekHubStage, taskID, worktree string, env []string, artifact string, cliOut []byte) error {
+func (e *SpekHubExecutor) afterCLIExit(ctx context.Context, st spekHubStage, taskID, worktree string, env []string, artifact string, cliOut []byte, started time.Time, history []RunDetailStageStatus, receiptDir string) error {
 	kind := st.stage
 	if kind != StageSpec && kind != StagePlan {
 		return nil
@@ -398,6 +405,9 @@ func (e *SpekHubExecutor) afterCLIExit(ctx context.Context, st spekHubStage, tas
 	}
 	if strings.EqualFold(status.DocumentStatus, "final") {
 		e.recordStageProgress(st, "document_status", map[string]string{stageAttrArtifact: status.JoinKey(), stageAttrDocumentStatus: status.DocumentStatus, stageAttrCurrentStep: status.CurrentStep})
+		if err := e.captureCompletedStage(st, worktree, artifact, status, cliOut, started, history, receiptDir); err != nil {
+			e.log().Warn("[spektacular] stage transcript capture failed", "run", st.runKey, "stage", st.stage, "gen", st.gen, "error", err)
+		}
 		// Run the poll runner immediately instead of waiting for the next
 		// cleanup cadence; it owns advancement/receipts.
 		e.Server.tickStageRunner(time.Now().UTC())
@@ -408,6 +418,125 @@ func (e *SpekHubExecutor) afterCLIExit(ctx context.Context, st spekHubStage, tas
 		"output_tail", tailString(string(cliOut), spekHubOutputTailBytes))
 	e.recordNonFinal(st, taskID, status)
 	return nil
+}
+
+func (e *SpekHubExecutor) startStageStatusCapture(ctx context.Context, worktree string, env []string, kind, artifact string) (func() []RunDetailStageStatus, func()) {
+	pollCtx, cancel := context.WithCancel(ctx)
+	var mu sync.Mutex
+	var history []RunDetailStageStatus
+	remember := func(status spekHubArtifactStatus) {
+		snap := RunDetailStageStatus{
+			At:             time.Now().UTC().Format(time.RFC3339Nano),
+			Step:           status.CurrentStep,
+			DocumentStatus: status.DocumentStatus,
+			CompletedSteps: append([]string(nil), status.CompletedSteps...),
+			Artifact:       status.JoinKey(),
+		}
+		key := snap.Step + "\x00" + snap.DocumentStatus + "\x00" + strings.Join(snap.CompletedSteps, "\x00")
+		mu.Lock()
+		defer mu.Unlock()
+		if len(history) > 0 {
+			last := history[len(history)-1]
+			lastKey := last.Step + "\x00" + last.DocumentStatus + "\x00" + strings.Join(last.CompletedSteps, "\x00")
+			if key == lastKey {
+				return
+			}
+		}
+		history = append(history, snap)
+	}
+	poll := func() {
+		resolved := firstRunNonEmpty(resolveSpekArtifactFromFiles(worktree, kind, artifact), artifact)
+		if status, err := e.spekStatus(pollCtx, worktree, env, kind, resolved); err == nil {
+			remember(status)
+		}
+	}
+	go func() {
+		poll()
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				poll()
+			case <-pollCtx.Done():
+				return
+			}
+		}
+	}()
+	return func() []RunDetailStageStatus {
+			mu.Lock()
+			defer mu.Unlock()
+			return append([]RunDetailStageStatus(nil), history...)
+		}, func() {
+			cancel()
+		}
+}
+
+func (e *SpekHubExecutor) captureCompletedStage(st spekHubStage, worktree, artifact string, status spekHubArtifactStatus, cliOut []byte, started time.Time, history []RunDetailStageStatus, receiptDir string) error {
+	if st.stage != StageSpec && st.stage != StagePlan {
+		return nil
+	}
+	ended := time.Now().UTC()
+	if started.IsZero() {
+		started = ended
+	}
+	promptBytes, _ := os.ReadFile(filepath.Join(worktree, spekHubPromptRelPath))
+	artifactKey := firstRunNonEmpty(status.JoinKey(), artifact)
+	docs, files, interview, notes := collectSpekArtifactFiles(worktree, st.stage, artifactKey)
+	if len(interview) == 0 {
+		for _, step := range status.CompletedSteps {
+			interview = append(interview, RunDetailInterview{
+				Step:       step,
+				Question:   step,
+				Answer:     "Answer text was captured in the final document and agent transcript.",
+				AnsweredAt: ended.Format(time.RFC3339Nano),
+				Source:     "spektacular status completed_steps",
+			})
+		}
+	}
+	capture := RunDetailStageCapture{
+		SchemaVersion: spekStageTranscriptSchema,
+		RunKey:        st.runKey,
+		Stage:         st.stage,
+		Generation:    st.gen,
+		Artifact:      artifactKey,
+		CapturedAt:    ended.Format(time.RFC3339Nano),
+		StartedAt:     started.Format(time.RFC3339Nano),
+		EndedAt:       ended.Format(time.RFC3339Nano),
+		Backend:       e.backend(),
+		Model:         e.Model,
+		StatusHistory: appendDistinctStageStatus(history, RunDetailStageStatus{
+			At:             ended.Format(time.RFC3339Nano),
+			Step:           status.CurrentStep,
+			DocumentStatus: status.DocumentStatus,
+			CompletedSteps: append([]string(nil), status.CompletedSteps...),
+			Artifact:       status.JoinKey(),
+		}),
+		Documents: docs,
+		Files:     files,
+		Interview: interview,
+		Notes:     notes,
+	}
+	prompt := textBlock(promptBytes, spekStagePromptMaxTextBytes)
+	if prompt.Text != "" {
+		capture.Prompt = &prompt
+	}
+	out := textBlock(cliOut, spekStageTranscriptMaxTextBytes)
+	if out.Text != "" {
+		capture.AgentTranscript = &out
+	}
+	return writeSpekStageCaptureInDir(receiptDir, st.runKey, st.stage, st.gen, capture)
+}
+
+func appendDistinctStageStatus(history []RunDetailStageStatus, final RunDetailStageStatus) []RunDetailStageStatus {
+	key := final.Step + "\x00" + final.DocumentStatus + "\x00" + strings.Join(final.CompletedSteps, "\x00")
+	for _, item := range history {
+		itemKey := item.Step + "\x00" + item.DocumentStatus + "\x00" + strings.Join(item.CompletedSteps, "\x00")
+		if itemKey == key {
+			return history
+		}
+	}
+	return append(history, final)
 }
 
 func (e *SpekHubExecutor) recordStageProgress(st spekHubStage, event string, attrs map[string]string) {
@@ -430,10 +559,11 @@ func (e *SpekHubExecutor) recordStageProgress(st spekHubStage, event string, att
 }
 
 type spekHubArtifactStatus struct {
-	Name           string `json:"name"`
-	ArtifactID     string `json:"artifact_id"`
-	DocumentStatus string `json:"document_status"`
-	CurrentStep    string `json:"current_step"`
+	Name           string   `json:"name"`
+	ArtifactID     string   `json:"artifact_id"`
+	DocumentStatus string   `json:"document_status"`
+	CurrentStep    string   `json:"current_step"`
+	CompletedSteps []string `json:"completed_steps"`
 }
 
 func (s spekHubArtifactStatus) JoinKey() string {

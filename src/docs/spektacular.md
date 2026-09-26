@@ -205,12 +205,18 @@ admission lease as `hive-spek`, clones the repository under
 under `/data/agents/hive-spek/runs/<run>/work`, initializes a `.spektacular/`
 project if needed, and runs the configured agent CLI headlessly with
 instructions to author the spec or plan only. The CLI transcript is captured in
-`.hive/spek-stage-<stage>-<generation>.log` inside that worktree. The poll
-runner then observes that same worktree on the next tick and advances the lease
-when Spek reports `document_status: final`. Reusing the run worktree preserves
-`.spektacular/` artifacts across retry generations. If the hub executor is
-disabled, an unclaimed run stays parked until a relay declares the `run-stage`
-capability.
+`.hive/spek-stage-<stage>-<generation>.log` inside that worktree. Before the
+worktree can be swept, Hive also snapshots the final Spektacular artifact into
+the run receipt directory as `<stage>-gen<N>.transcript.json` (schema
+`spek-stage-transcript/v1`) plus `<stage>-gen<N>.<stage>.md` for the primary
+markdown document. The transcript sidecar stores the prompt, bounded agent
+stdout/stderr, observed status/step transitions, extracted interview Q&A, and
+artifact files so `/api/runs/{key}/detail` can render prose instead of raw
+receipt JSON. The poll runner then observes that same worktree on the next tick
+and advances the lease when Spek reports `document_status: final`. Reusing the
+run worktree preserves `.spektacular/` artifacts across retry generations. If
+the hub executor is disabled, an unclaimed run stays parked until a relay
+declares the `run-stage` capability.
 
 Hub executor activity is visible in the normal run timeline/progress surfaces:
 Hive records `progress` events when the worktree is prepared, the CLI launches

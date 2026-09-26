@@ -47,6 +47,18 @@ func TestRunDetailAggregatesIssueReceiptsPRsAndTranscripts(t *testing.T) {
 	if _, err := writeStageReceipt(key, StagePlan, 7, []byte(`{"stage":"plan","generation":7,"output_digest":"sha256:plan","started_at":"2026-09-25T23:00:00Z","ended_at":"2026-09-25T23:05:00Z","result_class":"completed"}`)); err != nil {
 		t.Fatalf("write receipt: %v", err)
 	}
+	if err := writeSpekStageCapture(key, StagePlan, 7, RunDetailStageCapture{
+		Artifact:        "20260925212730-myorg-repo1-23725",
+		StartedAt:       "2026-09-25T23:00:01Z",
+		EndedAt:         "2026-09-25T23:05:02Z",
+		Prompt:          &RunDetailTextBlock{Text: "author the plan"},
+		AgentTranscript: &RunDetailTextBlock{Text: "answered clarification questions"},
+		StatusHistory:   []RunDetailStageStatus{{At: "2026-09-25T23:05:02Z", Step: "finished", DocumentStatus: "final", CompletedSteps: []string{"interview"}}},
+		Interview:       []RunDetailInterview{{Step: "interview", Question: "What should happen?", Answer: "Render prose.", AnsweredAt: "2026-09-25T23:04:00Z"}},
+		Documents:       []RunDetailStageDocument{{Path: "20260925212730-myorg-repo1-23725/plan.md", Markdown: "# Plan\n\nDo the work."}},
+	}); err != nil {
+		t.Fatalf("write capture: %v", err)
+	}
 	appendRunDetailEvent(key, runDetailPersistedEvent{
 		TS:      now.Format(time.RFC3339),
 		Kind:    "task_complete",
@@ -88,9 +100,16 @@ func TestRunDetailAggregatesIssueReceiptsPRsAndTranscripts(t *testing.T) {
 		t.Fatalf("prs = %+v", detail.PRs)
 	}
 	body := string(rec.Body.Bytes())
-	for _, want := range []string{"sha256:plan", "cli_exited", "opened implementation PR", "GitHub App quota exhausted"} {
+	for _, want := range []string{"sha256:plan", "cli_exited", "opened implementation PR", "GitHub App quota exhausted", "What should happen?", "# Plan", "answered clarification questions"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("detail body missing %q: %s", want, body)
+		}
+	}
+	for _, st := range detail.Stages {
+		if st.Name == StagePlan {
+			if st.StartedAt != "2026-09-25T23:00:01Z" || len(st.Interview) != 1 || len(st.Documents) != 1 || st.AgentTranscript == nil {
+				t.Fatalf("plan stage missing capture: %+v", st)
+			}
 		}
 	}
 }
