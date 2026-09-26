@@ -93,6 +93,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/runs/{key}/trace", s.handleRunTrace)
 	s.mux.HandleFunc("GET /api/runs/{key}/checkpoint", s.handleRunCheckpointGet)
 	s.mux.HandleFunc("POST /api/runs/{key}/checkpoint", s.handleRunCheckpointDecision)
+	s.mux.HandleFunc("GET /api/runs/{key}/interview", s.handleRunInterviewGet)
+	s.mux.HandleFunc("POST /api/runs/{key}/interview", s.handleRunInterviewPost)
 	s.mux.HandleFunc("GET /api/runs/{key}", s.handleRunGet)
 	s.mux.HandleFunc("POST /api/runs/spec", s.handleRunSpecStart)
 	s.mux.HandleFunc("POST /api/runs/{key}/reset", s.handleRunReset)

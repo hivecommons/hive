@@ -1482,12 +1482,25 @@
                         "items": {
                           "type": "object",
                           "properties": {
-                            "repo": { "type": "string" },
-                            "number": { "type": "integer" },
-                            "title": { "type": "string" },
-                            "keyword_answer": { "type": "string" },
-                            "jev_answer": { "type": "string" },
-                            "confidence": { "type": "number", "format": "double" }
+                            "repo": {
+                              "type": "string"
+                            },
+                            "number": {
+                              "type": "integer"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "keyword_answer": {
+                              "type": "string"
+                            },
+                            "jev_answer": {
+                              "type": "string"
+                            },
+                            "confidence": {
+                              "type": "number",
+                              "format": "double"
+                            }
                           }
                         }
                       }
@@ -1497,13 +1510,30 @@
                       "items": {
                         "type": "object",
                         "properties": {
-                          "id": { "type": "string" },
-                          "decision": { "type": "string" },
-                          "answer": { "type": "string" },
-                          "keyword": { "type": "string" },
-                          "target": { "type": "string" },
-                          "support": { "type": "integer" },
-                          "examples": { "type": "array", "items": { "type": "string" } }
+                          "id": {
+                            "type": "string"
+                          },
+                          "decision": {
+                            "type": "string"
+                          },
+                          "answer": {
+                            "type": "string"
+                          },
+                          "keyword": {
+                            "type": "string"
+                          },
+                          "target": {
+                            "type": "string"
+                          },
+                          "support": {
+                            "type": "integer"
+                          },
+                          "examples": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
                         }
                       }
                     },
@@ -8349,9 +8379,19 @@
                   "suggestion": {
                     "type": "object",
                     "properties": {
-                      "decision": { "type": "string", "enum": ["lane", "tier"] },
-                      "answer": { "type": "string" },
-                      "keyword": { "type": "string" }
+                      "decision": {
+                        "type": "string",
+                        "enum": [
+                          "lane",
+                          "tier"
+                        ]
+                      },
+                      "answer": {
+                        "type": "string"
+                      },
+                      "keyword": {
+                        "type": "string"
+                      }
                     }
                   }
                 }
@@ -9111,7 +9151,12 @@
                       "properties": {
                         "deployment": {
                           "type": "string",
-                          "enum": ["", "cloud", "datacenter", "server"]
+                          "enum": [
+                            "",
+                            "cloud",
+                            "datacenter",
+                            "server"
+                          ]
                         },
                         "base_url": {
                           "type": "string"
@@ -9272,7 +9317,12 @@
                     "properties": {
                       "deployment": {
                         "type": "string",
-                        "enum": ["", "cloud", "datacenter", "server"]
+                        "enum": [
+                          "",
+                          "cloud",
+                          "datacenter",
+                          "server"
+                        ]
                       },
                       "base_url": {
                         "type": "string"
@@ -13436,37 +13486,202 @@
     },
     "/api/leaderboard/battle-log": {
       "get": {
-        "tags": ["Contribute"],
+        "tags": [
+          "Contribute"
+        ],
         "summary": "Public Battle Log",
         "description": "Returns scrubbed public hive activity for the leaderboard Battle Log widget. Targets are stripped of emails, URLs, token-like fields, and repository names unless the repo is listed in HIVE_PUBLIC_REPOS.",
-        "parameters": [{"name":"limit","in":"query","required":false,"schema":{"type":"integer","minimum":1,"maximum":100}}],
-        "responses": {"200": {"description": "Battle Log events", "content": {"application/json": {"schema": {"type":"object","properties":{"events":{"type":"array","items":{"type":"object","properties":{"timestamp":{"type":"string"},"actor":{"type":"string"},"action":{"type":"string"},"kind":{"type":"string"},"icon":{"type":"string"},"target":{"type":"string"},"repo":{"type":"string"}}}},"retained":{"type":"integer"}}}}}}}
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Battle Log events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "timestamp": {
+                            "type": "string"
+                          },
+                          "actor": {
+                            "type": "string"
+                          },
+                          "action": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "icon": {
+                            "type": "string"
+                          },
+                          "target": {
+                            "type": "string"
+                          },
+                          "repo": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "retained": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/leaderboard/hive-of-week": {
       "get": {
-        "tags": ["Contribute"],
+        "tags": [
+          "Contribute"
+        ],
         "summary": "Hive of the Week",
         "description": "Returns the featured weekly project, gource source URL, public render fallback URLs, and embed snippets.",
-        "responses": {"200": {"description": "Hive of the Week", "content": {"application/json": {"schema": {"type":"object","properties":{"project":{"type":"string"},"week":{"type":"string"},"activity_count":{"type":"integer"},"gource_log_url":{"type":"string"},"video_url":{"type":"string"},"poster_url":{"type":"string"},"leaderboard_url":{"type":"string"},"embed_html":{"type":"string"},"readme_markdown":{"type":"string"}}}}}}}
+        "responses": {
+          "200": {
+            "description": "Hive of the Week",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "project": {
+                      "type": "string"
+                    },
+                    "week": {
+                      "type": "string"
+                    },
+                    "activity_count": {
+                      "type": "integer"
+                    },
+                    "gource_log_url": {
+                      "type": "string"
+                    },
+                    "video_url": {
+                      "type": "string"
+                    },
+                    "poster_url": {
+                      "type": "string"
+                    },
+                    "leaderboard_url": {
+                      "type": "string"
+                    },
+                    "embed_html": {
+                      "type": "string"
+                    },
+                    "readme_markdown": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/leaderboard/gource-log": {
       "get": {
-        "tags": ["Contribute"],
+        "tags": [
+          "Contribute"
+        ],
         "summary": "Hive Gource source log",
         "description": "Returns a Gource custom log (timestamp|username|type|path|colour) for a HIVE_PUBLIC_REPOS-allowlisted project and ISO week from public hive event data.",
-        "parameters": [{"name":"project","in":"query","required":false,"schema":{"type":"string"}},{"name":"week","in":"query","required":false,"schema":{"type":"string"}}],
-        "responses": {"200": {"description": "Gource custom log", "content": {"text/plain": {"schema": {"type":"string"}}}}, "400": {"description": "Invalid project"}}
+        "parameters": [
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "week",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Gource custom log",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid project"
+          }
+        }
       }
     },
     "/api/leaderboard/hive-of-week/archive": {
       "post": {
-        "tags": ["Contribute"],
+        "tags": [
+          "Contribute"
+        ],
         "summary": "Archive Hive of the Week source",
         "description": "Owner-only endpoint that archives the selected weekly gource source log into the configured knowledge file vault. Rendered videos are never stored in knowledge.",
-        "parameters": [{"name":"project","in":"query","required":false,"schema":{"type":"string"}},{"name":"week","in":"query","required":false,"schema":{"type":"string"}}],
-        "responses": {"200": {"description": "Archived"}, "400": {"description": "Invalid project"}, "403": {"description": "Owner role required"}, "503": {"description": "Knowledge store unavailable"}}
+        "parameters": [
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "week",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Archived"
+          },
+          "400": {
+            "description": "Invalid project"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "503": {
+            "description": "Knowledge store unavailable"
+          }
+        }
       }
     },
     "/api/leaderboard/teams": {
@@ -21842,6 +22057,223 @@
           },
           "503": {
             "description": "Run lease registry unavailable or unreadable."
+          }
+        }
+      }
+    },
+    "/api/runs/{key}/interview": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Get pending Spek interview questions",
+        "description": "Returns pending stakeholder questions and answered history for a Spektacular run paused on an interactive interview step.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "URL-escaped canonical work-item key.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Interview questions and answer history.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "run_key",
+                    "pending"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "run_key": {
+                      "type": "string"
+                    },
+                    "stage": {
+                      "type": "string"
+                    },
+                    "artifact": {
+                      "type": "string"
+                    },
+                    "step": {
+                      "type": "string"
+                    },
+                    "asked_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "pending": {
+                      "type": "integer"
+                    },
+                    "questions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "text"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "text": {
+                            "type": "string"
+                          },
+                          "context": {
+                            "type": "string"
+                          },
+                          "options": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "default": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "answers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "answer"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "answer": {
+                            "type": "string"
+                          },
+                          "answered_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "actor": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Run interview not found."
+          },
+          "500": {
+            "description": "Interview state could not be read."
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Submit Spek interview answers",
+        "description": "Owner-only. Writes stakeholder answers for pending Spektacular interview questions and wakes the run executor to continue the same stage generation.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "URL-escaped canonical work-item key.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "answers"
+                ],
+                "properties": {
+                  "answers": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "answer"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "answer": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Answers accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "run_key",
+                    "answers",
+                    "status"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "run_key": {
+                      "type": "string"
+                    },
+                    "answers": {
+                      "type": "integer"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON, missing answers, or answer id is not pending."
+          },
+          "403": {
+            "description": "Caller is not a verified owner."
+          },
+          "404": {
+            "description": "Run interview not found."
+          },
+          "500": {
+            "description": "Answers could not be persisted."
           }
         }
       }

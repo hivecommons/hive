@@ -628,6 +628,7 @@ governor:
 #     enabled: false
 #     binary: spektacular
 #     poll_interval_s: 30
+#     interview: human # human (default) pauses for dashboard answers; auto preserves headless self-answering.
 #   checkpoints:
 #     spec: true        # false records finalized spec checkpoints as auto-approved by actor "auto".
 #     plan: true        # false auto-approves imported plans and records config_source in audit/timeline history.

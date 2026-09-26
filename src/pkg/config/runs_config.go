@@ -157,6 +157,10 @@ type SpektacularConfig struct {
 	// HubExecutor optionally lets the hub claim and execute unclaimed spec/plan
 	// stages itself. The zero value is enabled when Spektacular is enabled.
 	HubExecutor SpektacularHubExecutorConfig `yaml:"hub_executor,omitempty" json:"hub_executor,omitempty"`
+	// Interview controls Spektacular clarification/interview steps. Empty and
+	// "human" make the hub pause for dashboard answers; "auto" preserves the
+	// previous headless self-answering behavior.
+	Interview string `yaml:"interview,omitempty" json:"interview,omitempty"`
 }
 
 // SpektacularHubExecutorConfig configures the hub-resident Spektacular executor.
@@ -230,6 +234,15 @@ func (s SpektacularConfig) HubExecutorEnabled() bool {
 		return false
 	}
 	return s.HubExecutor.Enabled == nil || *s.HubExecutor.Enabled
+}
+
+func (s SpektacularConfig) InterviewMode() string {
+	switch strings.TrimSpace(strings.ToLower(s.Interview)) {
+	case "auto":
+		return "auto"
+	default:
+		return "human"
+	}
 }
 
 func (h SpektacularHubExecutorConfig) BackendOrDefault(fallback string) string {
