@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-26 (v5.62.1)
+
+### Fixed
+
+- Fix stale scale-envelope citations and anchor docs citation checks on nearby symbols.
+
 ## 2026-09-26 (v5.62.0)
 
 ### Added
