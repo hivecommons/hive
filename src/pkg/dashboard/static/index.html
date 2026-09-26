@@ -1601,10 +1601,12 @@
     .overview-chart-total { fill: var(--text); font-size: var(--fs-sm); font-weight: 800; text-anchor: middle; dominant-baseline: central; }
     .overview-chart-total-caption { fill: var(--muted); font-size: var(--fs-2xs); text-anchor: middle; dominant-baseline: central; }
     .overview-chart-legend { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; max-width: 22rem; }
-    .overview-chart-legend-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--sp-2); color: var(--muted); font-size: var(--fs-xs); }
+    .overview-chart-legend-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--sp-2); color: var(--muted); font-size: var(--fs-xs); }
     .overview-chart-swatch { width: 0.75rem; height: 0.75rem; border-radius: var(--r-pill); background: var(--slice-c); box-shadow: 0 0 0 1px color-mix(in srgb, var(--slice-c) 45%, transparent); }
     .overview-chart-legend-label { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .overview-chart-legend-count { font-variant-numeric: tabular-nums; text-align: right; }
+    .overview-band-download { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 0 var(--sp-1); line-height: 1; }
+    .overview-band-download:hover { color: var(--text); }
     .overview-empty { color: var(--muted); font-size: var(--fs-sm); padding: var(--sp-5); border: 1px dashed var(--border); border-radius: var(--r); text-align: center; }
     .overview-issue-ready { --slice-c: var(--status-info); }
     .overview-issue-in-progress { --slice-c: var(--status-warn); }
@@ -9742,15 +9744,38 @@
       return out;
     }
 
+    function overviewRepoName(repo) {
+      return (repo && (repo.full || repo.name)) || '';
+    }
+
     function overviewIssueBandSlices(repos) {
       const counts = new Map(OVERVIEW_ISSUE_BAND_ORDER.map(band => [band, 0]));
       const items = new Map(OVERVIEW_ISSUE_BAND_ORDER.map(band => [band, []]));
       (repos || []).forEach(r => {
-        const issues = (r.actionableIssues || []).concat(r.heldIssues || []);
-        groupedRepoIssues(issues).forEach(g => {
+        const repo = overviewRepoName(r);
+        const actionable = (r.actionableIssues || []).map(issue => ({ issue, held: false }));
+        const held = (r.heldIssues || []).map(issue => ({ issue, held: true }));
+        const meta = new Map(actionable.concat(held).map(entry => [entry.issue, entry]));
+        groupedRepoIssues(actionable.concat(held).map(entry => entry.issue)).forEach(g => {
           counts.set(g.band, (counts.get(g.band) || 0) + g.issues.length);
-          items.set(g.band, (items.get(g.band) || []).concat(g.issues.map(entry => entry.issue)));
+          const next = g.issues.map(entry => {
+            const source = meta.get(entry.issue) || {};
+            return Object.assign({}, entry.issue || {}, {
+              item: entry.issue,
+              issue: entry.issue,
+              repo,
+              held: !!source.held,
+              info: entry.info,
+              updated_at: (entry.issue && entry.issue.updated_at) || '',
+              created_at: (entry.issue && entry.issue.created_at) || '',
+              number: entry.issue && entry.issue.number
+            });
+          });
+          items.set(g.band, (items.get(g.band) || []).concat(next));
         });
+      });
+      OVERVIEW_ISSUE_BAND_ORDER.forEach(band => {
+        items.set(band, (items.get(band) || []).sort((a, b) => issueUpdatedAt(a.item || a.issue || a) - issueUpdatedAt(b.item || b.issue || b) || Number((a.item || a.issue || a).number || 0) - Number((b.item || b.issue || b).number || 0)));
       });
       return OVERVIEW_ISSUE_BAND_ORDER.map(band => ({
         key: band,
@@ -9766,10 +9791,24 @@
       const counts = new Map(PR_BAND_ORDER.map(band => [band, 0]));
       const items = new Map(PR_BAND_ORDER.map(band => [band, []]));
       (repos || []).forEach(r => {
+        const repo = overviewRepoName(r);
         groupedRepoPRs(r.openPrs || [], r.heldPrs || []).forEach(g => {
           counts.set(g.band, (counts.get(g.band) || 0) + g.prs.length);
-          items.set(g.band, (items.get(g.band) || []).concat(g.prs.map(entry => entry.pr)));
+          const next = g.prs.map(entry => Object.assign({}, entry.pr || {}, {
+            item: entry.pr,
+            pr: entry.pr,
+            repo,
+            held: !!entry.held,
+            info: entry.info,
+            updated_at: (entry.pr && entry.pr.updated_at) || '',
+            created_at: (entry.pr && entry.pr.created_at) || '',
+            number: entry.pr && entry.pr.number
+          }));
+          items.set(g.band, (items.get(g.band) || []).concat(next));
         });
+      });
+      PR_BAND_ORDER.forEach(band => {
+        items.set(band, (items.get(band) || []).sort((a, b) => prUpdatedAt(a.item || a.pr || a) - prUpdatedAt(b.item || b.pr || b) || prReviewClassRank(a.item || a.pr || a) - prReviewClassRank(b.item || b.pr || b) || prCreatedAt(a.item || a.pr || a) - prCreatedAt(b.item || b.pr || b) || Number((a.item || a.pr || a).number || 0) - Number((b.item || b.pr || b).number || 0)));
       });
       return PR_BAND_ORDER.map(band => ({
         key: band,
@@ -9779,6 +9818,155 @@
         className: 'overview-pr-' + band,
         items: items.get(band) || []
       }));
+    }
+
+    function overviewCsvCell(v) {
+      if (Array.isArray(v)) v = v.map(x => x == null ? '' : String(x)).join(';');
+      if (v == null) v = '';
+      if (typeof v === 'boolean') v = v ? 'true' : 'false';
+      const text = String(v);
+      return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+    }
+
+    function overviewCsv(rows, columns) {
+      const lineBreak = String.fromCharCode(13, 10);
+      const header = (columns || []).map(overviewCsvCell).join(',');
+      const body = (rows || []).map(row => (columns || []).map(col => overviewCsvCell(row ? row[col] : '')).join(','));
+      return String.fromCharCode(0xfeff) + [header].concat(body).join(lineBreak) + lineBreak;
+    }
+
+    function overviewCsvColumns(kind) {
+      if (kind === 'pr' || kind === 'prs') return ['band', 'band_rule', 'repo', 'number', 'title', 'url', 'author', 'draft', 'merge_verdict', 'mergeable', 'failing_checks', 'review_decision', 'review_class', 'held', 'hold_reason', 'labels', 'updated_at', 'stale', 'signals'];
+      return ['band', 'band_rule', 'repo', 'number', 'title', 'url', 'state_signals', 'labels', 'assignees', 'agent_role', 'acknowledged', 'held', 'hold_reason', 'linked_prs', 'updated_at', 'stale'];
+    }
+
+    function overviewBandSlug(label) {
+      return String(label || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'band';
+    }
+
+    function overviewCsvTimestamp(d) {
+      const date = d || new Date();
+      const pad = n => String(n).padStart(2, '0');
+      return String(date.getFullYear()) + pad(date.getMonth() + 1) + pad(date.getDate()) + '-' + pad(date.getHours()) + pad(date.getMinutes());
+    }
+
+    function overviewCsvHiveId() {
+      const raw = String(((window._lastStatus || {}).hiveId) || 'hive').trim() || 'hive';
+      return raw.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'hive';
+    }
+
+    function overviewItemUrl(item, kind) {
+      const raw = (item && (item.item || item.issue || item.pr)) || item || {};
+      if (raw.url) return raw.url;
+      const repo = (item && item.repo) || raw.repo || '';
+      if (!repo || !raw.number) return '';
+      const base = String(window._githubBaseUrl || 'https://github.com').replace(/\/$/, '');
+      return base + '/' + repo + '/' + (kind === 'pr' ? 'pull' : 'issues') + '/' + raw.number;
+    }
+
+    function overviewSignalLabels(info) {
+      return ((info && info.signals) || []).map(s => s && s.label ? s.label : '').filter(Boolean);
+    }
+
+    function overviewLinkedPRs(issue) {
+      return (Array.isArray(issue && issue.linked_prs) ? issue.linked_prs : []).map(pr => {
+        const num = pr && pr.number ? '#' + pr.number : '';
+        const state = pr && (pr.merged ? 'merged' : pr.state) ? ' ' + (pr.merged ? 'merged' : pr.state) : '';
+        const repo = pr && pr.repo ? pr.repo : '';
+        return (repo ? repo : '') + num + state;
+      }).filter(Boolean);
+    }
+
+    function overviewMergeVerdictText(pr) {
+      const v = pr && pr.merge_verdict;
+      if (!v) return '';
+      if (typeof v === 'string') return v;
+      if (v.state && v.reason) return String(v.state) + ': ' + String(v.reason);
+      return v.state || v.reason || '';
+    }
+
+    function overviewReviewDecision(pr) {
+      return (pr && pr.protection && pr.protection.review_decision) || pr.review_decision || '';
+    }
+
+    function overviewIssueCsvRow(item, band) {
+      const issue = (item && (item.item || item.issue)) || item || {};
+      const info = (item && item.info) || issueBandInfo(issue);
+      const key = band || info.band;
+      const held = !!(item && item.held);
+      return {
+        band: issueBandLabel(key),
+        band_rule: issueBandRule(key),
+        repo: (item && item.repo) || issue.repo || '',
+        number: issue.number || '',
+        title: issue.title || '',
+        url: overviewItemUrl(item || issue, 'issue'),
+        state_signals: overviewSignalLabels(info),
+        labels: (issue.labels || []).map(l => String(l)),
+        assignees: (issue.assignees || []).map(a => String(a)),
+        agent_role: issueAgentRole(issue),
+        acknowledged: issueAcknowledged(issue),
+        held,
+        hold_reason: held ? heldReason(issue) : '',
+        linked_prs: overviewLinkedPRs(issue),
+        updated_at: issue.updated_at || '',
+        stale: issueIsStale(issue)
+      };
+    }
+
+    function overviewPRCsvRow(item, band) {
+      const pr = (item && (item.item || item.pr)) || item || {};
+      const held = !!(item && item.held);
+      const info = (item && item.info) || prBandInfo(pr, held);
+      const key = band || info.band;
+      return {
+        band: prBandLabel(key),
+        band_rule: prBandRule(key),
+        repo: (item && item.repo) || pr.repo || '',
+        number: pr.number || '',
+        title: pr.title || '',
+        url: overviewItemUrl(item || pr, 'pr'),
+        author: pr.author || '',
+        draft: !!pr.draft,
+        merge_verdict: overviewMergeVerdictText(pr),
+        mergeable: pr.mergeable || '',
+        failing_checks: (pr.failing_checks || []).map(c => String(c)),
+        review_decision: overviewReviewDecision(pr),
+        review_class: pr.review_class || '',
+        held,
+        hold_reason: held ? heldReason(pr) : '',
+        labels: (pr.labels || []).map(l => String(l)),
+        updated_at: pr.updated_at || '',
+        stale: prIsStale(pr),
+        signals: overviewSignalLabels(info)
+      };
+    }
+
+    function overviewCsvRows(kind, band) {
+      const isPR = kind === 'pr' || kind === 'prs';
+      const slices = isPR ? overviewPRBandSlices(_overviewLastRepos || []) : overviewIssueBandSlices(_overviewLastRepos || []);
+      return slices.filter(s => !band || s.key === band).flatMap(s => (s.items || []).map(item => isPR ? overviewPRCsvRow(item, s.key) : overviewIssueCsvRow(item, s.key)));
+    }
+
+    function downloadOverviewCsv(kind, band) {
+      const isPR = kind === 'pr' || kind === 'prs';
+      const normalized = isPR ? 'pr' : 'issue';
+      const rows = overviewCsvRows(normalized, band);
+      if (!rows.length) return;
+      const slices = isPR ? overviewPRBandSlices(_overviewLastRepos || []) : overviewIssueBandSlices(_overviewLastRepos || []);
+      const slice = band ? slices.find(s => s.key === band) : null;
+      const parts = ['hive', overviewCsvHiveId(), isPR ? 'prs' : 'issues'];
+      if (slice) parts.push(overviewBandSlug(slice.label));
+      parts.push(overviewCsvTimestamp(new Date()));
+      const blob = new Blob([overviewCsv(rows, overviewCsvColumns(normalized))], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = parts.join('-') + '.csv';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     }
 
     function overviewChartLabelPoint(percentOffset, percentSize) {
@@ -9899,14 +10087,15 @@
       return 'overview-transition-' + name;
     }
 
-    function overviewLegendHTML(slices) {
+    function overviewLegendHTML(slices, kind) {
       const total = (slices || []).reduce((n, s) => n + s.count, 0);
       const visible = (slices || []).filter(s => s.count > 0);
       if (!total) return '<div class="overview-empty">No matching items in this view.</div>';
       return visible.map(s => {
         const percent = (s.count / total) * OVERVIEW_CHART_PERCENT_SCALE;
         const percentLabel = percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + '%';
-        return `<div class="overview-chart-legend-row" title="${esc(s.label + (s.rule ? ': ' + s.rule : ''))}"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${s.count} (${percentLabel})</span></div>`;
+        const download = kind ? `<button type="button" class="overview-band-download" data-action="downloadOverviewCsv" data-arg0="${esc(kind)}" data-arg1="${esc(s.key)}" data-stop="1" title="Export ${esc(s.label)} as CSV" aria-label="Export ${esc(s.label)} as CSV">⬇</button>` : '';
+        return `<div class="overview-chart-legend-row" title="${esc(s.label + (s.rule ? ': ' + s.rule : ''))}"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${s.count} (${percentLabel})</span>${download}</div>`;
       }).join('');
     }
 
@@ -10045,8 +10234,12 @@
       state.active[kind] = active;
       const panelClass = `overview-panel-in ${overviewTransitionClass(state)} overview-duration-${state.duration}`;
       const body = renderOverviewChartBody(active, title, subtitle, slices, kind, state);
-      const controls = `<div class="overview-chart-controls"><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselPrev" data-arg0="${kind}" data-stop="1" title="Previous Overview chart">◀</button><select class="overview-chart-select" data-change-action="setOverviewChartType" data-arg0="${kind}" data-arg-types="s,v" title="Overview chart type">${overviewChartTypeOptions(active)}</select><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselNext" data-arg0="${kind}" data-stop="1" title="Next Overview chart">▶</button>${renderOverviewDots(enabled, active)}<span class="overview-chart-controls-sep"></span><button type="button" class="overview-carousel-arrow" data-action="toggleOverviewCarousel" data-stop="1" aria-pressed="${state.carousel ? 'true' : 'false'}" title="${state.carousel ? 'Auto-play on — rotates every ' + Math.round(state.intervalMs / 1000) + 's through the ticked charts (⚙️ to choose). Click to pause.' : 'Auto-play off — click to rotate through the ticked charts every ' + Math.round(state.intervalMs / 1000) + 's'}">${state.carousel ? '⏸ auto' : '⏵ auto'}</button><select class="overview-chart-select" data-change-action="setOverviewTransition" data-arg-types="v" title="Transition between charts">${overviewTransitionOptions(state.transition)}</select></div>`;
-      return `<div class="overview-chart-card ${panelClass}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${body}<div class="overview-chart-meta">${controls}<div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices)}</div></div></div>`;
+      const total = (slices || []).reduce((n, s) => n + s.count, 0);
+      const csvKind = kind === 'pr' ? 'prs' : 'issues';
+      const csvDisabled = total ? '' : ' disabled';
+      const csvTitle = total ? ('Export ' + (kind === 'pr' ? 'PRs' : 'issues') + ' as CSV') : 'No matching items to export';
+      const controls = `<div class="overview-chart-controls"><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselPrev" data-arg0="${kind}" data-stop="1" title="Previous Overview chart">◀</button><select class="overview-chart-select" data-change-action="setOverviewChartType" data-arg0="${kind}" data-arg-types="s,v" title="Overview chart type">${overviewChartTypeOptions(active)}</select><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselNext" data-arg0="${kind}" data-stop="1" title="Next Overview chart">▶</button>${renderOverviewDots(enabled, active)}<span class="overview-chart-controls-sep"></span><button type="button" class="overview-carousel-arrow" data-action="toggleOverviewCarousel" data-stop="1" aria-pressed="${state.carousel ? 'true' : 'false'}" title="${state.carousel ? 'Auto-play on — rotates every ' + Math.round(state.intervalMs / 1000) + 's through the ticked charts (⚙️ to choose). Click to pause.' : 'Auto-play off — click to rotate through the ticked charts every ' + Math.round(state.intervalMs / 1000) + 's'}">${state.carousel ? '⏸ auto' : '⏵ auto'}</button><select class="overview-chart-select" data-change-action="setOverviewTransition" data-arg-types="v" title="Transition between charts">${overviewTransitionOptions(state.transition)}</select><span class="overview-chart-controls-sep"></span><button type="button" class="hv-btn btn-sm overview-export-csv" data-action="downloadOverviewCsv" data-arg0="${csvKind}" data-stop="1" title="${esc(csvTitle)}"${csvDisabled}>Export CSV</button></div>`;
+      return `<div class="overview-chart-card ${panelClass}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${body}<div class="overview-chart-meta">${controls}<div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices, csvKind)}</div></div></div>`;
     }
 
     function renderOverviewSettingsPopover(state) {

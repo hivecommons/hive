@@ -108,7 +108,10 @@ PRs panel as a donut, pie, horizontal bar, single 100% stacked bar, line/spark
 trend, or age histogram. Every shape is still driven by the same band slices and
 shared rule tables; hovering a chart element, an Overview legend row, or a
 repository-card band header shows that band's rule from `issueBandSpec` /
-`prBandSpec` in `index.html`, so the three cannot drift.
+`prBandSpec` in `index.html`, so the three cannot drift. The Issues and PRs
+panels can export the current band slices to UTF-8 CSV from the header, and
+non-empty legend rows include a per-band CSV download; both exports use the
+same ordered slices as the charts, so row counts match the donut legend.
 
 The Overview header's ⚙️ popover stores browser-local chart preferences under
 `hive-overview-charts`: which chart types are in rotation, whether the carousel

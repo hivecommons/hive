@@ -76,6 +76,7 @@ func TestDashboardBandActionsBehaviour9019(t *testing.T) {
 		"issueBandTip",
 		"issueBandRank",
 		"groupedRepoIssues",
+		"overviewRepoName",
 		"prLabelSet",
 		"prHasAnyLabel",
 		"prQueued",
