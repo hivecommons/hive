@@ -478,12 +478,14 @@ func buildRunDetailStages(run Run, events []timeline.Event, receipts []RunDetail
 		st.StartedAt, st.EndedAt = firstRunNonEmpty(st.StartedAt, rec.StartedAt), firstRunNonEmpty(st.EndedAt, rec.EndedAt)
 		st.Narrative = append(st.Narrative, "Receipt written: "+rec.File)
 	}
-	for _, cap := range captures {
+	// The lease generation keeps advancing after a stage finishes (the
+	// executor advances the same lease into the next stage), so a stage's
+	// reported gen can outrun the generation its capture was written under.
+	// Attach the newest capture per stage rather than dropping any capture
+	// older than the lease gen.
+	for _, cap := range latestRunDetailCaptures(captures) {
 		st := ensureRunDetailStage(byStage, &order, firstRunNonEmpty(cap.Stage, StageSpec))
-		if cap.Generation > 0 && st.Gen > 0 && cap.Generation < st.Gen {
-			continue
-		}
-		if cap.Generation > 0 && cap.Generation >= st.Gen {
+		if cap.Generation > 0 && cap.Generation > st.Gen {
 			st.Gen = cap.Generation
 		}
 		st.StartedAt, st.EndedAt = firstRunNonEmpty(cap.StartedAt, st.StartedAt), firstRunNonEmpty(cap.EndedAt, st.EndedAt)
@@ -563,6 +565,31 @@ func runDetailCaptureNarrative(cap RunDetailStageCapture) []string {
 	}
 	if cap.AgentTranscript != nil && cap.AgentTranscript.Text != "" {
 		out = append(out, "Captured the bounded agent transcript.")
+	}
+	return out
+}
+
+// latestRunDetailCaptures keeps one capture per stage: the highest generation,
+// preferring a real session capture over an already_final snapshot at the
+// same generation. Order follows first appearance of each stage.
+func latestRunDetailCaptures(captures []RunDetailStageCapture) []RunDetailStageCapture {
+	idx := map[string]int{}
+	out := []RunDetailStageCapture{}
+	for _, cap := range captures {
+		stage := firstRunNonEmpty(cap.Stage, StageSpec)
+		i, seen := idx[stage]
+		if !seen {
+			idx[stage] = len(out)
+			out = append(out, cap)
+			continue
+		}
+		cur := out[i]
+		switch {
+		case cap.Generation > cur.Generation:
+			out[i] = cap
+		case cap.Generation == cur.Generation && cur.Capture == spekCaptureAlreadyFinal && cap.Capture != spekCaptureAlreadyFinal:
+			out[i] = cap
+		}
 	}
 	return out
 }

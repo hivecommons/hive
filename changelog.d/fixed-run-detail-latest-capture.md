@@ -1,0 +1,1 @@
+- Run detail attaches the newest Spek stage transcript even after the lease generation advanced into the next stage, so spec/plan documents, interview Q&A and agent output no longer vanish once a stage completes.

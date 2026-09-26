@@ -17,6 +17,9 @@ const (
 	spekStageTranscriptMaxTextBytes = 512 * 1024
 	spekStagePromptMaxTextBytes     = 32 * 1024
 	spekStageFileMaxTextBytes       = 256 * 1024
+	// spekCaptureAlreadyFinal marks a capture written by the executor's
+	// already-final shortcut rather than a real agent session.
+	spekCaptureAlreadyFinal = "already_final"
 )
 
 type RunDetailTextBlock struct {
@@ -99,7 +102,7 @@ func writeSpekStageCaptureInDir(receiptsDir, runKey, stage string, gen uint64, c
 		return err
 	}
 	path := filepath.Join(dir, spekStageTranscriptFile(stage, gen))
-	if capture.Capture == "already_final" {
+	if capture.Capture == spekCaptureAlreadyFinal {
 		if prior, ok := readSpekStageCaptureFile(path); ok {
 			prior.StatusHistory = appendDistinctStageStatus(prior.StatusHistory, capture.StatusHistory...)
 			if prior.Capture == "" {

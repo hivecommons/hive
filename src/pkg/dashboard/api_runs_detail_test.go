@@ -127,3 +127,50 @@ func TestRunDetailReadRoleAllowed(t *testing.T) {
 		t.Fatalf("read role detail = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+// The lease generation advances past the generation a stage's capture was
+// written under (spec gen1 finishes, the same lease becomes plan gen2 and the
+// spec stage reports gen2). The capture must still attach.
+func TestBuildRunDetailStagesAttachesCaptureOlderThanLeaseGen(t *testing.T) {
+	run := Run{Key: "acme/repo#7", Stages: []RunStage{{Name: StageSpec, Status: "completed", Gen: 2}, {Name: StagePlan, Status: "current", Gen: 2}}}
+	captures := []RunDetailStageCapture{
+		{Stage: StageSpec, Generation: 1, Capture: spekCaptureAlreadyFinal, Documents: []RunDetailStageDocument{{Path: "shortcut.md", Content: "shortcut"}}},
+		{Stage: StageSpec, Generation: 1, Capture: "session", Documents: []RunDetailStageDocument{{Path: "spec.md", Content: "# real spec"}}, Interview: []RunDetailInterview{{Step: "interview", Question: "Who is the audience?", Answer: "Operators"}}},
+	}
+	stages := buildRunDetailStages(run, nil, nil, captures, nil, nil)
+	var spec *RunDetailStage
+	for i := range stages {
+		if stages[i].Name == StageSpec {
+			spec = &stages[i]
+		}
+	}
+	if spec == nil {
+		t.Fatalf("spec stage missing: %+v", stages)
+	}
+	if len(spec.Documents) != 1 || spec.Documents[0].Content != "# real spec" {
+		t.Fatalf("expected the real session capture to attach, got documents %+v", spec.Documents)
+	}
+	if len(spec.Interview) != 1 || spec.Interview[0].Answer != "Operators" {
+		t.Fatalf("expected interview from capture, got %+v", spec.Interview)
+	}
+	if spec.Gen != 2 {
+		t.Fatalf("lease gen must not regress, got %d", spec.Gen)
+	}
+	for _, m := range spec.Missing {
+		if strings.Contains(m, "were not captured") {
+			t.Fatalf("stage wrongly reported as uncaptured: %q", m)
+		}
+	}
+}
+
+func TestLatestRunDetailCapturesPrefersHighestGenThenSession(t *testing.T) {
+	got := latestRunDetailCaptures([]RunDetailStageCapture{
+		{Stage: StageSpec, Generation: 1, Capture: "session"},
+		{Stage: StageSpec, Generation: 3, Capture: spekCaptureAlreadyFinal},
+		{Stage: StageSpec, Generation: 3, Capture: "session", Artifact: "winner"},
+		{Stage: StagePlan, Generation: 2, Capture: "session", Artifact: "plan"},
+	})
+	if len(got) != 2 || got[0].Stage != StageSpec || got[0].Artifact != "winner" || got[1].Artifact != "plan" {
+		t.Fatalf("unexpected selection: %+v", got)
+	}
+}

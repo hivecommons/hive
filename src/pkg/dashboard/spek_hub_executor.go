@@ -331,7 +331,7 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 		// approval); launching the agent again would only burn a slot.
 		e.log().Info("[spektacular] hub executor stage document already final; not relaunching", "run", st.runKey, "stage", st.stage, "gen", st.gen, "artifact", status.JoinKey())
 		e.recordStageProgress(st, "document_already_final", map[string]string{stageAttrArtifact: status.JoinKey(), stageAttrDocumentStatus: status.DocumentStatus})
-		if err := e.captureCompletedStage(st, worktree, artifact, status, nil, now, nil, receiptDir, "already_final"); err != nil {
+		if err := e.captureCompletedStage(st, worktree, artifact, status, nil, now, nil, receiptDir, spekCaptureAlreadyFinal); err != nil {
 			e.log().Warn("[spektacular] stage transcript capture failed", "run", st.runKey, "stage", st.stage, "gen", st.gen, "error", err)
 		}
 		e.holdGeneration(st)
