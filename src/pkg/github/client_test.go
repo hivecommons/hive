@@ -975,8 +975,9 @@ func TestEnumerateActionable_NoSLAViolationsWhenAllFresh(t *testing.T) {
 // --------------------------------------------------------------------------
 
 type wireComment struct {
-	User wireUser `json:"user"`
-	Body string   `json:"body"`
+	User      wireUser `json:"user"`
+	Body      string   `json:"body"`
+	CreatedAt string   `json:"created_at,omitempty"`
 }
 
 func buildSHAHoldMux(t *testing.T, org, repo string, issues []wireIssue, commentsByIssue map[int][]wireComment) *http.ServeMux {
@@ -1020,53 +1021,154 @@ func buildSHAHoldMux(t *testing.T, org, repo string, issues []wireIssue, comment
 	return mux
 }
 
-func TestEnforceSHAHold_UnholdWhenSHAInComment(t *testing.T) {
-	org, repo := "testorg", "console"
-	issues := []wireIssue{
+// The SHA-hold sweep may only lift a `hold` it applied itself (#8927). Two
+// pieces of evidence are required: the newest `hold` label event is a
+// `labeled` by the App bot (as the level-hold and #5117 releases decide it),
+// AND an App-authored SHA-hold notice was posted at or after that event — so
+// a human's hold, a human re-hold after the App's, a hold applied by another
+// Hive subsystem through the same App (no notice), or a re-hold after the
+// notice all stay.
+func TestEnforceSHAHold_UnholdOnlyReleasesOwnHold(t *testing.T) {
+	type labelEvent struct {
+		kind, actor, at string
+	}
+	shaComment := wireComment{User: wireUser{"external-user"}, Body: "Here is the SHA: abc1234def", CreatedAt: "2026-09-15T15:00:00Z"}
+	notice := func(at string) wireComment {
+		return wireComment{User: wireUser{testHiveAppBotLogin}, Body: shaHoldComment, CreatedAt: at}
+	}
+	legacyNotice := func(at string) wireComment {
+		return wireComment{User: wireUser{testHiveAppBotLogin}, Body: "Thanks for filing this issue! " + shaHoldLegacyNoticeSentence + " Simply add a comment with the SHA._", CreatedAt: at}
+	}
+	cases := []struct {
+		name        string
+		appBotLogin string
+		events      []labelEvent
+		comments    []wireComment
+		wantUnheld  int
+		wantSkipped int
+		wantRemoved bool
+	}{
 		{
-			Number:    14391,
-			Title:     "Bug: something broken",
-			User:      wireUser{"external-user"},
-			Labels:    []wireLabel{{Name: "kind/bug"}, {Name: "hold"}},
-			CreatedAt: hoursAgo(2),
+			name:        "sweep applied the hold and posted its notice",
+			appBotLogin: testHiveAppBotLogin,
+			events:      []labelEvent{{"labeled", testHiveAppBotLogin, "2026-09-15T12:00:00Z"}},
+			comments:    []wireComment{notice("2026-09-15T12:00:01Z"), shaComment},
+			wantUnheld:  1,
+			wantRemoved: true,
+		},
+		{
+			name:        "notice posted before the marker existed still counts",
+			appBotLogin: testHiveAppBotLogin,
+			events:      []labelEvent{{"labeled", testHiveAppBotLogin, "2026-09-15T12:00:00Z"}},
+			comments:    []wireComment{legacyNotice("2026-09-15T12:00:00Z"), shaComment},
+			wantUnheld:  1,
+			wantRemoved: true,
+		},
+		{
+			name:        "human applied the hold",
+			appBotLogin: testHiveAppBotLogin,
+			events:      []labelEvent{{"labeled", "alice", "2026-09-15T12:00:00Z"}},
+			comments:    []wireComment{shaComment},
+			wantSkipped: 1,
+		},
+		{
+			name:        "human re-held after the sweep released",
+			appBotLogin: testHiveAppBotLogin,
+			events: []labelEvent{
+				{"labeled", testHiveAppBotLogin, "2026-09-15T12:00:00Z"},
+				{"unlabeled", testHiveAppBotLogin, "2026-09-15T13:00:00Z"},
+				{"labeled", "alice", "2026-09-15T14:00:00Z"},
+			},
+			comments:    []wireComment{notice("2026-09-15T12:00:01Z"), shaComment},
+			wantSkipped: 1,
+		},
+		{
+			name:        "another hive subsystem held through the same app without a notice",
+			appBotLogin: testHiveAppBotLogin,
+			events:      []labelEvent{{"labeled", testHiveAppBotLogin, "2026-09-15T12:00:00Z"}},
+			comments:    []wireComment{shaComment},
+			wantSkipped: 1,
+		},
+		{
+			name:        "same app re-held after the sweep's notice",
+			appBotLogin: testHiveAppBotLogin,
+			events: []labelEvent{
+				{"labeled", testHiveAppBotLogin, "2026-09-15T12:00:00Z"},
+				{"unlabeled", "alice", "2026-09-15T13:00:00Z"},
+				{"labeled", testHiveAppBotLogin, "2026-09-15T14:00:00Z"},
+			},
+			comments:    []wireComment{notice("2026-09-15T12:00:01Z"), shaComment},
+			wantSkipped: 1,
+		},
+		{
+			name:        "notice from a non-app author is not evidence",
+			appBotLogin: testHiveAppBotLogin,
+			events:      []labelEvent{{"labeled", testHiveAppBotLogin, "2026-09-15T12:00:00Z"}},
+			comments:    []wireComment{{User: wireUser{"mallory"}, Body: shaHoldComment, CreatedAt: "2026-09-15T12:00:01Z"}, shaComment},
+			wantSkipped: 1,
+		},
+		{
+			name:        "no bot login fails closed",
+			appBotLogin: "",
+			events:      []labelEvent{{"labeled", testHiveAppBotLogin, "2026-09-15T12:00:00Z"}},
+			comments:    []wireComment{notice("2026-09-15T12:00:01Z"), shaComment},
+			wantSkipped: 1,
 		},
 	}
-	comments := map[int][]wireComment{
-		14391: {
-			{User: wireUser{"external-user"}, Body: "Here is the SHA: abc1234def"},
-		},
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			org, repo := "testorg", "console"
+			issues := []wireIssue{{
+				Number:    14391,
+				Title:     "Bug: something broken",
+				User:      wireUser{"external-user"},
+				Labels:    []wireLabel{{Name: "kind/bug"}, {Name: "hold"}},
+				CreatedAt: hoursAgo(2),
+			}}
+			comments := map[int][]wireComment{14391: tc.comments}
 
-	var removedLabel string
-	mux := buildSHAHoldMux(t, org, repo, issues, comments)
-	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/14391/labels/hold", org, repo), func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "DELETE" {
-			removedLabel = "hold"
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`[]`))
-		}
-	})
+			removed := false
+			mux := buildSHAHoldMux(t, org, repo, issues, comments)
+			mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/14391/events", org, repo), func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				out := make([]map[string]any, 0, len(tc.events))
+				for _, ev := range tc.events {
+					out = append(out, map[string]any{
+						"event":      ev.kind,
+						"created_at": ev.at,
+						"actor":      map[string]string{"login": ev.actor},
+						"label":      map[string]string{"name": "hold"},
+					})
+				}
+				w.Write(mustMarshal(t, out))
+			})
+			mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/14391/labels/hold", org, repo), func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "DELETE" {
+					removed = true
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte(`[]`))
+				}
+			})
 
-	server := httptest.NewServer(mux)
-	defer server.Close()
+			server := httptest.NewServer(mux)
+			defer server.Close()
 
-	c := newTestClient(t, server, org, []string{repo})
-	result, err := c.EnforceSHAHold(context.Background(), SHAHoldConfig{
-		PrimaryRepo: repo,
-		AIAuthor:    "hive-bot",
-	})
-	if err != nil {
-		t.Fatalf("EnforceSHAHold: %v", err)
-	}
-
-	if result.Unheld != 1 {
-		t.Errorf("Unheld = %d, want 1", result.Unheld)
-	}
-	if result.Held != 0 {
-		t.Errorf("Held = %d, want 0", result.Held)
-	}
-	if removedLabel != "hold" {
-		t.Errorf("hold label was not removed (DELETE not called)")
+			c := newTestClient(t, server, org, []string{repo})
+			c.SetAppBotLogin(tc.appBotLogin)
+			result, err := c.EnforceSHAHold(context.Background(), SHAHoldConfig{
+				PrimaryRepo: repo,
+				AIAuthor:    "hive-bot",
+			})
+			if err != nil {
+				t.Fatalf("EnforceSHAHold: %v", err)
+			}
+			if result.Unheld != tc.wantUnheld || result.Skipped != tc.wantSkipped || result.Held != 0 {
+				t.Errorf("result = %+v, want Unheld=%d Skipped=%d Held=0", result, tc.wantUnheld, tc.wantSkipped)
+			}
+			if removed != tc.wantRemoved {
+				t.Errorf("hold label DELETE called = %v, want %v", removed, tc.wantRemoved)
+			}
+		})
 	}
 }
 

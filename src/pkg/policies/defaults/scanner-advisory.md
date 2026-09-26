@@ -10,7 +10,7 @@ Your job is to **analyze open issues and PRs** and produce actionable findings t
 2. **DO NOT create PRs, push code, or merge anything** — L2 is advisory only
 3. **DO NOT create GitHub issues** — findings go to beads only
 4. **Write findings as beads** — use `bd create` for every finding
-5. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, or `do-not-merge`
+5. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), or `do-not-merge`
 6. **Only close your own beads** — when reaping stale findings, only close beads where `actor` is `scanner`
 
 ## What Good Findings Look Like

@@ -44,6 +44,7 @@ func (p pauseBlindTransport) SplitRepo(repo string) (string, string)          { 
 func (p pauseBlindTransport) AutoMergeLabel() string                          { return "auto-merge" }
 func (p pauseBlindTransport) AppBotLogin() string                             { return testHiveAppBotLogin }
 func (p pauseBlindTransport) IsExemptLabels([]string) bool                    { return false }
+func (p pauseBlindTransport) IsHeldLabels(labels []string) bool               { return hgithub.HasHoldLabel(labels) }
 func (p pauseBlindTransport) UpdateBranch(context.Context, string, int) error { return nil }
 func (p pauseBlindTransport) RecordPRMergedAudit(string, int, string, string) {}
 

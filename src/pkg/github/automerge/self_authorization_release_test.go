@@ -23,6 +23,7 @@ func (stubTransport) SplitRepo(string) (string, string) { return "acme", "widget
 func (stubTransport) AutoMergeLabel() string            { return "automerge" }
 func (stubTransport) AppBotLogin() string               { return testHiveAppBotLogin }
 func (stubTransport) IsExemptLabels([]string) bool      { return false }
+func (stubTransport) IsHeldLabels(labels []string) bool { return hgithub.HasHoldLabel(labels) }
 func (stubTransport) UpdateBranch(context.Context, string, int) error {
 	return nil
 }

@@ -367,6 +367,36 @@ func TestSweepQueuedAutoMergesSkipsHeldIssueWithoutPRFetch(t *testing.T) {
 	}
 }
 
+func TestSweepQueuedAutoMergesSkipsHivePauseHeldIssueWithoutPRFetch(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues":
+			json.NewEncoder(w).Encode([]map[string]any{{
+				"number":       7,
+				"pull_request": map[string]any{"url": "https://api.example/pr/7"},
+				"labels":       issueLabels(hgithub.AutoMergeQueuedLabel, []string{"hive-pause/h1"}),
+			}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
+			t.Fatalf("unexpected PR fetch for hive-pause held queued issue")
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer api.Close()
+
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	client.SetAppBotLogin(testHiveAppBotLogin)
+	client.SetHoldLabels([]string{hgithub.CanonicalHiveHoldLabel("h1")})
+	c := New(client, Options{MergerAuthorizer: func(login string) bool { return true }})
+	result, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
+	}
+	if result.Seen != 1 || result.Skipped != 1 || len(result.Merged) != 0 {
+		t.Fatalf("result=%+v, want hive-pause held queued PR skipped without fetch", result)
+	}
+}
+
 func TestAutoMergeSweepHelpersAndNilClient(t *testing.T) {
 	var nilClient *Engine
 	if _, err := nilClient.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{}); err != hgithub.ErrNoGitHubClient {
@@ -1240,6 +1270,35 @@ func TestSweepSelfAuthoredAutoMergesSkipsHeldListedPRWithoutFetch(t *testing.T) 
 	}
 	if got := getCounts[11]; got != 0 {
 		t.Fatalf("/pulls/11 GET count = %d, want 0 for held PR from list response", got)
+	}
+}
+
+// A dashboard ⏸ Hold writes the exact, hive-scoped `hive-pause/<hive-id>`
+// label, which the generic hold substrings cannot see. Enumeration already
+// honours it through Client.SetHoldLabels; the sweep must gate on the same
+// configured set or a paused PR is fetched and merged (#8927).
+func TestSweepSelfAuthoredAutoMergesSkipsHivePauseHeldPRWithoutFetch(t *testing.T) {
+	var merged []int
+	var getCounts map[int]int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 11, author: testHiveAppBotLogin, extraLabels: []string{"hive-pause/h1"},
+		mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged, &getCounts)
+	defer api.Close()
+
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	client.SetAppBotLogin(testHiveAppBotLogin)
+	client.SetHoldLabels([]string{hgithub.CanonicalHiveHoldLabel("h1")})
+	c := New(client, Options{})
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if result.Seen != 1 || result.Skipped != 1 || result.Candidates != 0 || len(result.Merged) != 0 || len(merged) != 0 {
+		t.Fatalf("result=%+v merge calls=%v, want hive-pause held PR skipped before candidate fetch", result, merged)
+	}
+	if got := getCounts[11]; got != 0 {
+		t.Fatalf("/pulls/11 GET count = %d, want 0 for hive-pause held PR from list response", got)
 	}
 }
 

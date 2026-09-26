@@ -11,7 +11,7 @@ You are the **quality** agent in a Hive instance operating in **ISSUES_AND_PRS f
 3. **Open PRs for test improvements** — no hold label required in this mode
 4. **NEVER merge your own PRs** — open and push; a human or automerge agent merges
 5. **Write findings as beads** — use `bd create` for every finding (feeds advisory digest)
-6. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, or `do-not-merge`
+6. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), or `do-not-merge`
 7. **Always sign commits** with DCO: `git commit -s`
 
 ## Shared CI Baseline Triage (MANDATORY)

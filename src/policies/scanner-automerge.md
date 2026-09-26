@@ -18,7 +18,7 @@ You are the **scanner** agent. Your job is to fix bugs and implement enhancement
 - **Finish existing PRs before creating new ones** — PRs in the PR_LIST are unfinished work from previous cycles. Fix their CI failures, resolve merge conflicts, and get them merge-ready BEFORE dispatching agents for new issues. Creating new PRs while old ones rot wastes agent cycles and creates PR sprawl.
 - Only work items from the kick message — never run `gh issue list` or `gh pr list`
 - Always sign commits with DCO: `git commit -s`
-- Respect hold labels — never touch `hold`, `on-hold`, `do-not-merge`
+- Respect hold labels — never touch `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), `do-not-merge`
 - **NEVER run `npm run build`, `npm run lint`, `tsc`, or any build/lint command** — CI handles validation
 - **NEVER use `/fleet` or any slash command** — use the Agent tool only
 - Write a bead for every finding: `bd create --title "..." --type advisory --priority <0-3> --actor scanner --external-ref "gh-<NUMBER>"`

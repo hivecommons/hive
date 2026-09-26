@@ -2436,11 +2436,20 @@ func (c *Client) SearchOutreachPRCount(ctx context.Context, author, org, project
 
 var shaPattern = regexp.MustCompile(`[0-9a-f]{7,40}\b`)
 
-const shaHoldComment = "Thanks for filing this issue! To help us reproduce and investigate, " +
+// shaHoldMarker is the hidden ownership marker on the SHA-hold notice. The
+// sweep only lifts a `hold` whose newest label event is paired with an
+// App-authored notice carrying this marker (or the legacy notice sentence,
+// for holds applied before the marker existed).
+const shaHoldMarker = "<!-- hive:sha-hold -->"
+
+const shaHoldLegacyNoticeSentence = "_This issue will be on hold until a SHA is provided."
+
+const shaHoldComment = shaHoldMarker + "\n" +
+	"Thanks for filing this issue! To help us reproduce and investigate, " +
 	"could you please include the **commit SHA** of the build you're running?\n\n" +
 	"You can find it by running:\n```\ngit rev-parse --short HEAD\n```\n\n" +
 	"Or check the bottom of the console UI for the version string.\n\n" +
-	"_This issue will be on hold until a SHA is provided. " +
+	shaHoldLegacyNoticeSentence + " " +
 	"Simply add a comment with the SHA and the hold will be automatically removed._"
 
 type SHAHoldConfig struct {
@@ -2485,22 +2494,39 @@ func (c *Client) EnforceSHAHold(ctx context.Context, cfg SHAHoldConfig) (*SHAHol
 		}
 
 		labels := extractLabels(issue.Labels)
-		held := isHeld(labels)
+		held := c.isHeld(labels)
 		hasSHA := shaPattern.MatchString(issue.GetBody())
 
 		if !hasSHA {
 			hasSHA = c.checkCommentsForSHA(ctx, owner, repo, issue.GetNumber(), author)
 		}
 
-		if hasSHA && held {
+		switch {
+		case hasSHA && held:
+			// Only release a hold this sweep applied. A human's `hold`, a hold
+			// applied by another Hive subsystem through the same App (the
+			// dashboard hold on a hive with no id), or any non-literal hold
+			// spelling (`on-hold`, `hive-pause/<id>`) is left for its owner
+			// to lift (#8927).
+			ok, err := c.shaHoldIsOwn(ctx, owner, repo, issue.GetNumber())
+			if err != nil {
+				c.logger.Warn("SHA-UNHOLD skipped: could not verify hold provenance", "repo", repo, "issue", issue.GetNumber(), "error", err)
+				result.Skipped++
+				continue
+			}
+			if !ok {
+				c.logger.Info("SHA-UNHOLD skipped: current hold was not applied by the SHA-hold sweep", "repo", repo, "issue", issue.GetNumber(), "author", author)
+				result.Skipped++
+				continue
+			}
 			c.unhold(ctx, owner, repo, issue.GetNumber())
 			result.Unheld++
 			c.logger.Info("SHA-UNHOLD", "repo", repo, "issue", issue.GetNumber(), "author", author)
-		} else if !hasSHA && !held {
+		case !hasSHA && !held:
 			c.hold(ctx, owner, repo, issue.GetNumber())
 			result.Held++
 			c.logger.Info("SHA-HOLD", "repo", repo, "issue", issue.GetNumber(), "author", author)
-		} else {
+		default:
 			result.Skipped++
 		}
 	}
@@ -2543,6 +2569,38 @@ func (c *Client) unhold(ctx context.Context, owner, repo string, number int) {
 	if err != nil {
 		c.logger.Warn("failed to remove hold label", "repo", repo, "issue", number, "error", err)
 	}
+}
+
+// shaHoldIsOwn reports whether the issue's current `hold` was applied by this
+// sweep. Two pieces of evidence are required, mirroring the level-hold and
+// #5117 releases and then narrowing to this subsystem: the newest `hold`
+// label event must be a `labeled` by the App bot, and an App-authored
+// SHA-hold notice must have been posted at or after that event — hold() adds
+// the label and immediately posts the notice, so a later re-hold by a human,
+// or by another Hive subsystem through the same App, has no companion notice
+// and is left alone. A blank bot login fails closed.
+func (c *Client) shaHoldIsOwn(ctx context.Context, owner, repo string, number int) (bool, error) {
+	byApp, labeledAt, err := c.latestHoldLabelEventByApp(ctx, owner, repo, number)
+	if err != nil || !byApp {
+		return false, err
+	}
+	comments, err := c.listIssueComments(ctx, owner, repo, number)
+	if err != nil {
+		return false, err
+	}
+	for _, comment := range comments {
+		if comment == nil || !c.isTrustedAppBotCommentAuthor(comment) || !isSHAHoldNotice(comment.GetBody()) {
+			continue
+		}
+		if !comment.GetCreatedAt().Before(labeledAt.Time) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func isSHAHoldNotice(body string) bool {
+	return strings.Contains(body, shaHoldMarker) || strings.Contains(body, shaHoldLegacyNoticeSentence)
 }
 
 func isInternalAuthor(author string, internalAuthors []string) bool {
@@ -2606,6 +2664,15 @@ func (c *Client) AppBotLogin() string {
 // IsExemptLabels reports whether labels include a configured merge-exempt label.
 func (c *Client) IsExemptLabels(labels []string) bool {
 	return c.isExempt(labels)
+}
+
+// IsHeldLabels reports whether labels carry a hold: the generic hold
+// substrings (HoldLabels) plus the extra hold labels configured through
+// SetHoldLabels, which is where the exact hive-scoped `hive-pause/<hive-id>`
+// dashboard hold lives. It is the same predicate enumeration uses, exported so
+// the auto-merge sweeps gate on the identical hold set (#8927).
+func (c *Client) IsHeldLabels(labels []string) bool {
+	return c.isHeld(labels)
 }
 
 // RecordPRMergedAudit records the standard PR-merged audit event.

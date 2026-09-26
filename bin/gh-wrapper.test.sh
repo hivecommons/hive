@@ -734,6 +734,55 @@ else
     "no recorded 'gh pr comment' invocation"
 fi
 
+# The injected agent/<...> label is consumed by the scheduler's PR-ownership
+# check and the classifier's label routing, both of which compare the suffix
+# to the LANE name. A display name that differs from the lane must therefore
+# never leak into the label; it belongs in the footer only (#8927).
+_capture_agent_label() {
+  local d="$1" argc i a
+  argc="$(cat "${d}/argc")"
+  for ((i = 0; i < argc; i++)); do
+    a="$(cat "${d}/arg-${i}")"
+    if [[ "$a" == "--label" ]] && ((i + 1 < argc)); then
+      cat "${d}/arg-$((i + 1))"
+      return 0
+    fi
+  done
+  return 1
+}
+CAPTURE_SEQ=$((CAPTURE_SEQ + 1))
+CAPTURE_DIR="${WORK_DIR}/argv-${CAPTURE_SEQ}"
+mkdir -p "$CAPTURE_DIR"
+touch "${WORK_DIR}/contributor-marker"
+env \
+  HIVE_CONTRIBUTOR_MODE="true" \
+  HIVE_CONTRIBUTOR_USERNAME="test-contributor" \
+  HIVE_AGENT="$BODY_AGENT" \
+  HIVE_AGENT_DISPLAY_NAME="Code Scanner ${BODY_AGENT}" \
+  HIVE_AGENT_ID="$BODY_AGENT" \
+  HIVE_AGENT_MODE="" \
+  HIVE_ACMM_LEVEL="0" \
+  MOCK_GH_LOGIN="test-bot[bot]" \
+  GH_TOKEN="test-token-mock" \
+  MOCK_GH_ARGV_DIR="$CAPTURE_DIR" \
+  bash "$TEST_WRAPPER" pr create --repo test/repo --title 'a fix' --body 'x' >/dev/null 2>&1 || true
+rm -f "${WORK_DIR}/contributor-marker"
+if inv="$(_capture_invocation pr create)"; then
+  labels="$(_capture_agent_label "$inv" || true)"
+  case ",${labels}," in
+    *",agent/${BODY_AGENT},"*)
+      echo "PASS: pr create labels agent/<lane> even when the display name differs"
+      PASSED=$((PASSED + 1)) ;;
+    *)
+      _body_fail "pr create labels agent/<lane> even when the display name differs" \
+        "expected agent/${BODY_AGENT} in --label, got: ${labels}" \
+        "argv: $(_show_args "$inv")" ;;
+  esac
+else
+  _body_fail "pr create labels agent/<lane> even when the display name differs" \
+    "no recorded 'gh pr create' invocation"
+fi
+
 echo ""
 echo "Results: ${PASSED} passed, ${FAILED} failed"
 if [[ "$FAILED" -gt 0 ]]; then

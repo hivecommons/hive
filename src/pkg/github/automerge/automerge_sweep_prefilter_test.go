@@ -21,6 +21,7 @@ func newPrefilterEngine(t *testing.T) *Engine {
 	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, "http://127.0.0.1:0")
 	client.SetAppBotLogin(testHiveAppBotLogin)
 	client.SetExemptLabels([]string{"lfx"})
+	client.SetHoldLabels([]string{hgithub.CanonicalHiveHoldLabel("h1")})
 	return New(client, Options{})
 }
 
@@ -52,6 +53,15 @@ func TestPrefilterSelfAuthoredPRReasons(t *testing.T) {
 		{"held", func(pr *gh.PullRequest) {
 			pr.Labels = []*gh.Label{{Name: gh.Ptr("do-not-merge/hold")}}
 		}, "held"},
+		// The dashboard ⏸ Hold label is an exact, hive-scoped hold that the
+		// generic predicate cannot see; the sweep must gate on the
+		// transport's configured hold set (#8927).
+		{"hive-pause held", func(pr *gh.PullRequest) {
+			pr.Labels = []*gh.Label{{Name: gh.Ptr("hive-pause/h1")}}
+		}, "held"},
+		{"hive provenance is not a hold", func(pr *gh.PullRequest) {
+			pr.Labels = []*gh.Label{{Name: gh.Ptr(hgithub.HiveProvenanceLabel("h1"))}}
+		}, ""},
 		{"exempt label", func(pr *gh.PullRequest) {
 			pr.Labels = []*gh.Label{{Name: gh.Ptr("LFX")}}
 		}, "exempt-label"},
@@ -98,6 +108,8 @@ func TestPrefilterQueuedIssueReasons(t *testing.T) {
 		{"plain issue", &gh.Issue{Number: gh.Ptr(8), Labels: []*gh.Label{{Name: gh.Ptr(label)}}}, "not-pull-request"},
 		{"label removed since listing", queuedListIssue("kind/bug"), "label-removed"},
 		{"held", queuedListIssue(label, "hold"), "held"},
+		{"hive-pause held", queuedListIssue(label, "hive-pause/h1"), "held"},
+		{"hive provenance is not a hold", queuedListIssue(label, hgithub.HiveProvenanceLabel("h1")), ""},
 		{"exempt label", queuedListIssue(label, "LFX"), "exempt-label"},
 	}
 	for _, tc := range cases {

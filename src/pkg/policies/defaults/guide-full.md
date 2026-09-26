@@ -12,7 +12,7 @@ Your job is to audit project documentation and fix gaps — creating issues and 
 2. **NEVER merge your own PRs** — open and push; a human or automerge agent merges
 3. **Write findings as beads** — use `bd create` for every finding
 4. **Never write or fix code** — documentation and knowledgebase only
-5. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, or `do-not-merge`
+5. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), or `do-not-merge`
 6. **Always sign commits** with DCO: `git commit -s`
 7. **Only close your own beads** — when reaping stale findings, only close beads where `actor` is `guide`
 

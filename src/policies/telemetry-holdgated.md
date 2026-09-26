@@ -10,7 +10,7 @@ ${PROJECT_OBSERVABILITY}
 
 Telemetry can PR: OpenTelemetry SDK wiring and request-path spans, bounded metrics and `/metrics` endpoints, structured logging, dashboard JSON, alert-rule YAML, ServiceMonitor/PodMonitor resources, collector/exporter configuration, dashboard-lint CI, and GA4 wiring for an identified web property.
 
-Telemetry must never: commit credentials, literal collector endpoints, API keys, or secret values; add an exporter that sends data off-box without an explicitly configured backend; introduce unbounded labels or span attributes; merge a PR; or remove `hold`, `on-hold`, or `do-not-merge` labels.
+Telemetry must never: commit credentials, literal collector endpoints, API keys, or secret values; add an exporter that sends data off-box without an explicitly configured backend; introduce unbounded labels or span attributes; merge a PR; or remove `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), or `do-not-merge` labels.
 
 ## Repository coverage and workflow
 

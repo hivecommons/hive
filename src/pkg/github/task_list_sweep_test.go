@@ -537,6 +537,55 @@ func TestSweepTaskListIssue_NoMergedPR_DoesNotClose(t *testing.T) {
 	}
 }
 
+// A held issue is hands-off for the sweep: no closure, no progress or
+// remainder comment, no needs-human label — whichever spelling of hold the
+// issue carries, including the exact dashboard `hive-pause/<hive-id>` label
+// the generic substrings cannot see (#8927). Every fixture below would be
+// acted on if the hold were absent.
+func TestSweepTaskListIssue_HeldIssuesAreLeftAlone(t *testing.T) {
+	org, repo := "hivecommons", "hive"
+	fixtures := []taskListSweepFixture{
+		// all ticked + merged PR → would be closed
+		{Number: 900, Body: "- [x] a\n- [x] b\n" + hiveTrailer, Labels: []string{"hold"}, AuthorLogin: "hive-app[bot]"},
+		// partial + merged PR → would get a progress comment
+		{Number: 901, Body: "- [x] a\n- [ ] b\n" + hiveTrailer, Labels: []string{"on-hold"}, AuthorLogin: "hive-app[bot]"},
+		// no boxes + merged Refs PR with a needs-human remainder → would be
+		// commented on and labelled needs-human
+		{Number: 902, Body: "Prose finding." + hiveTrailer, Labels: []string{"hive-pause/h1"}, AuthorLogin: "hive-app[bot]"},
+		// hive/<id> is provenance, not a hold: this control still closes
+		{Number: 903, Body: "- [x] a\n" + hiveTrailer, Labels: []string{HiveProvenanceLabel("h1")}, AuthorLogin: "hive-app[bot]"},
+	}
+	merged := []taskListMergedPR{
+		{Number: 950, Title: "closes 900", Body: "Fixes #900"},
+		{Number: 951, Title: "partial 901", Body: "Refs #901"},
+		{Number: 952, Title: "remainder 902", Body: "Refs #902 (needs-human: maintainer must edit settings)\n\n## What this deliberately leaves undone\n\n- Change `.github/settings.yml`."},
+		{Number: 953, Title: "closes 903", Body: "Fixes #903"},
+	}
+	server, obs := taskListSweepServer(t, org, repo, fixtures, merged)
+	defer server.Close()
+	c := newTestClient(t, server, org, []string{repo})
+	c.SetHoldLabels([]string{CanonicalHiveHoldLabel("h1")})
+
+	result, err := c.SweepCompletedTaskListIssues(context.Background(), TaskListSweepOptions{})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(obs.closed) != 1 || obs.closed[0] != 903 {
+		t.Fatalf("closed = %v; want [903] — held issues must not be closed, provenance-only must", obs.closed)
+	}
+	for _, n := range []int{900, 901, 902} {
+		if got := obs.commentsPosted[n]; len(got) != 0 {
+			t.Errorf("commentsPosted[%d] = %q; a held issue must not be commented on", n, got)
+		}
+		if got := obs.labelsAdded[n]; len(got) != 0 {
+			t.Errorf("labelsAdded[%d] = %v; a held issue must not be relabelled", n, got)
+		}
+	}
+	if result.Skipped != 3 || len(result.Closed) != 1 {
+		t.Fatalf("result = %+v; want Skipped=3 and one closure", result)
+	}
+}
+
 // TestSweepTaskListIssue_PartialWithMergedPR_PostsProgressComment is the
 // standalone assertion for the "progress comment on partial completion" gate.
 func TestSweepTaskListIssue_PartialWithMergedPR_PostsProgressComment(t *testing.T) {

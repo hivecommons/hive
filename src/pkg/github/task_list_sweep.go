@@ -37,6 +37,7 @@ const taskListSweepScanWindow = mergedClaimScanWindow
 const (
 	taskListReasonNotHiveFiled  = "not-hive-filed"
 	taskListReasonExempt        = "exempt-label"
+	taskListReasonHeld          = "held"
 	taskListReasonNoBoxes       = "no-task-list"
 	taskListReasonHasUnticked   = "unticked-boxes"
 	taskListReasonNoMergedPR    = "no-merged-referencing-pr"
@@ -201,8 +202,10 @@ func issueLabelNames(labels []*gh.Label) []string {
 //   - partial completion posts an idempotent progress comment (updated in
 //     place on later cycles via the taskListSweepMarker) listing the
 //     outstanding items and the PRs that landed so far — never a duplicate;
-//   - respects the existing exempt/hold mechanism (Client.isExempt) rather
-//     than adding a second one; does not touch or fight the 72h weak-claim
+//   - respects the existing hold and exempt gates (Client.isHeld,
+//     Client.isExempt) rather than adding a second one — a held issue is
+//     hands-off for comments, labels and closure exactly as it is for kicks;
+//   - does not touch or fight the 72h weak-claim
 //     ledger in prclaims.go — that ledger governs AGENT DISPATCH, this sweep
 //     governs ISSUE CLOSURE. When this sweep closes an issue the ledger's
 //     72h deferral becomes moot naturally (the issue is closed, no dispatch
@@ -799,6 +802,14 @@ func (c *Client) trySweepTaskListIssue(ctx context.Context, displayRepo, owner, 
 		return TaskListSweepEvent{}, taskListReasonNotHiveFiled, nil
 	}
 	labels := issueLabelNames(issue.Labels)
+	// Hold outranks everything below: a held issue must not be commented on,
+	// relabelled, or closed by this sweep any more than it may be dispatched
+	// (#8927). Client.isHeld is the enumeration predicate, so the generic
+	// hold substrings and the exact dashboard `hive-pause/<hive-id>` both
+	// count.
+	if c.isHeld(labels) {
+		return TaskListSweepEvent{}, taskListReasonHeld, nil
+	}
 	if c.isExempt(labels) || hasIssueNeedsHumanLabel(labels) {
 		return TaskListSweepEvent{}, taskListReasonExempt, nil
 	}

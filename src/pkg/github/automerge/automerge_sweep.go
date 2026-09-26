@@ -27,6 +27,12 @@ type Transport interface {
 	AutoMergeLabel() string
 	AppBotLogin() string
 	IsExemptLabels(labels []string) bool
+	// IsHeldLabels reports whether labels carry a hold the transport's owner
+	// configured: the generic hold substrings plus the exact hive-scoped
+	// dashboard pause label (`hive-pause/<hive-id>`). The sweep must use it
+	// instead of the generic package predicate so a dashboard ⏸ Hold blocks
+	// merges the same way it blocks enumeration (#8927).
+	IsHeldLabels(labels []string) bool
 	UpdateBranch(ctx context.Context, repo string, number int) error
 	RecordPRMergedAudit(repo string, number int, method, sha string)
 }
@@ -539,7 +545,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			// #5117 hold release must run before the prefilter: the
 			// prefilter skips held PRs outright, and an eligible
 			// self-authorization hold has to be released, not skipped.
-			if selfAuthReleaseBudget > 0 && pr != nil && !c.selfAuthorizationHoldActive(repo) && hgithub.HasHoldLabel(labelNames(pr.Labels)) {
+			if selfAuthReleaseBudget > 0 && pr != nil && !c.selfAuthorizationHoldActive(repo) && c.isHeld(labelNames(pr.Labels)) {
 				released, err := c.releaseSelfAuthorizationHoldIfEligible(ctx, repo, owner, repoName, number)
 				if err != nil {
 					c.warn("self-authored automerge sweep could not evaluate #5117 hold release", "repo", repo, "pr", number, "error", err)
@@ -561,7 +567,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			// required (or is not a level-applied hold), count it as the returned
 			// skip reason; if it was released, skip this tick and let the next
 			// sweep evaluate the now-unheld PR.
-			if pr != nil && hgithub.HasHoldLabel(labelNames(pr.Labels)) {
+			if pr != nil && c.isHeld(labelNames(pr.Labels)) {
 				if _, reason, err := c.releaseLevelHoldIfEligible(ctx, owner, repoName, pr); err != nil {
 					c.warn("self-authored automerge sweep could not evaluate level hold release", "repo", repo, "pr", number, "reason", reason, "error", err)
 					result.Skipped++
@@ -802,14 +808,11 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, "not-app-authored", nil
 	}
 	selfLabels := labelNames(pr.Labels)
-	if hgithub.HasHoldLabel(selfLabels) {
+	if c.isHeld(selfLabels) {
 		return AutoMergeSweepEvent{}, "held", nil
 	}
 	if c.transport.IsExemptLabels(selfLabels) {
 		return AutoMergeSweepEvent{}, "exempt-label", nil
-	}
-	if _, reason, err := c.releaseLevelHoldIfEligible(ctx, owner, repo, pr); err != nil || reason != "" {
-		return AutoMergeSweepEvent{}, reason, err
 	}
 
 	evaluatedHeadSHA := ""
@@ -949,6 +952,17 @@ func (c *Engine) releaseLevelHoldIfEligible(ctx context.Context, owner, repo str
 	return transport.ReleaseLevelHoldIfEligible(ctx, owner, repo, pr)
 }
 
+// isHeld is the sweep's single hold predicate. It defers to the transport so
+// the configured hold set (generic substrings plus the exact hive-scoped
+// `hive-pause/<hive-id>` dashboard hold) gates merges exactly as it gates
+// enumeration. A nil engine or transport fails closed to the generic set.
+func (c *Engine) isHeld(labels []string) bool {
+	if c == nil || c.transport == nil {
+		return hgithub.HasHoldLabel(labels)
+	}
+	return c.transport.IsHeldLabels(labels)
+}
+
 func (c *Engine) prefilterSelfAuthoredPR(pr *gh.PullRequest) string {
 	if pr == nil {
 		return "missing-head-sha"
@@ -963,7 +977,7 @@ func (c *Engine) prefilterSelfAuthoredPR(pr *gh.PullRequest) string {
 		return "not-app-authored"
 	}
 	labels := labelNames(pr.Labels)
-	if hgithub.HasHoldLabel(labels) {
+	if c.isHeld(labels) {
 		return "held"
 	}
 	if c.transport.IsExemptLabels(labels) {
@@ -983,7 +997,7 @@ func (c *Engine) prefilterQueuedIssue(issue *gh.Issue, label string) string {
 	if !hasLabel(labels, label) {
 		return "label-removed"
 	}
-	if hgithub.HasHoldLabel(labels) {
+	if c.isHeld(labels) {
 		return "held"
 	}
 	if c.transport.IsExemptLabels(labels) {
@@ -1033,7 +1047,7 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	// Hold labels outrank the merger queue (#5589): a hold applied AFTER a
 	// merger queued the PR — including the hold guard re-applying one because
 	// the branch moved while hold-gated — must stop the sweep, not race it.
-	if hgithub.HasHoldLabel(labels) {
+	if c.isHeld(labels) {
 		return AutoMergeSweepEvent{}, "held", nil
 	}
 	if c.transport.IsExemptLabels(labels) {

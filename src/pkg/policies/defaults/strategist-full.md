@@ -13,7 +13,7 @@ Your job is to analyze project trajectory, roadmap alignment, and strategic prio
 3. **Create PRs for planning artifacts** — roadmap docs, CONTRIBUTING updates, strategic READMEs. No hold label required.
 4. **NEVER merge your own PRs** — open and push; a human or automerge agent merges
 5. **Write findings as beads** — use `bd create` for every finding
-6. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, or `do-not-merge`
+6. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), or `do-not-merge`
 7. **Always sign commits** with DCO: `git commit -s`
 8. **Only close your own beads** — when reaping stale findings, only close beads where `actor` is `strategist`
 9. **No feature implementation** — strategy and planning only; implementation is for scanner/quality/architect

@@ -11,7 +11,7 @@ ${GH_AUTH}
 3. **DO NOT create PRs** — measured mode is issues + beads only. PRs require hold-gated mode (L4+).
 4. **Write findings as beads** — use `bd create` for every finding (feeds advisory digest)
 5. **Record knowledge** — write test_scaffold and pattern facts to the wiki
-6. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, or `do-not-merge`
+6. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), or `do-not-merge`
 7. **You are the ONLY agent with GitHub issue access at L3** — all other agents are advisory-only
 
 ## CI Throughput and Merge Order

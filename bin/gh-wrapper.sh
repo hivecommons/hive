@@ -1066,7 +1066,12 @@ ${footer}")
 }
 
 if [[ -n "$AGENT_NAME" ]]; then
-  LABELS_CSV="agent/${AGENT_DISPLAY_NAME}"
+  # agent/<lane>, never agent/<display name>: the scheduler's PR-ownership
+  # check and the classifier's label routing compare this suffix to the lane
+  # name (`agents.<lane>`), so a display name such as "Code Scanner" would
+  # produce a label no consumer recognises (#8927). The display name is
+  # human-facing only — it goes in the label description and the footer.
+  LABELS_CSV="agent/${AGENT_NAME}"
   # Provenance only. The dashboard hold label is hive-pause/<id>; keeping this
   # as hive/<id> preserves hub activity attribution without parking work.
   [[ -n "$HIVE_INSTANCE_ID" ]] && LABELS_CSV="${LABELS_CSV},hive/${HIVE_INSTANCE_ID}"
@@ -1102,7 +1107,7 @@ if [[ -n "$AGENT_NAME" ]]; then
     [[ -f "$cache" ]] && return 0
     local rf=""
     [[ -n "$repo_flag" ]] && rf="--repo $repo_flag"
-    "$REAL_GH" label create "agent/${AGENT_DISPLAY_NAME}" --description "Work by the ${AGENT_DISPLAY_NAME} agent" --color 6f42c1 $rf 2>/dev/null || true
+    "$REAL_GH" label create "agent/${AGENT_NAME}" --description "Work by the ${AGENT_DISPLAY_NAME} agent" --color 6f42c1 $rf 2>/dev/null || true
     if [[ -n "$HIVE_INSTANCE_ID" ]]; then
       "$REAL_GH" label create "hive/${HIVE_INSTANCE_ID}" --description "Hive instance provenance ${HIVE_INSTANCE_ID}" --color 1d76db $rf 2>/dev/null || true
     fi

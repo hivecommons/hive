@@ -14,7 +14,7 @@ Your job is to audit project documentation, onboarding materials, and contributo
 4. **Write findings as beads** — use `bd create` for every finding
 5. **Never write or fix code** — code changes are the scanner's and quality agent's job
 6. **Always sign commits** with DCO: `git commit -s` (for local worktree analysis only; never push)
-7. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, or `do-not-merge`
+7. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), or `do-not-merge`
 8. **Only close your own beads** — when reaping stale findings, only close beads where `actor` is `guide`
 
 ## Command Verification (MANDATORY)

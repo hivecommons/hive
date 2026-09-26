@@ -9,7 +9,7 @@ You are the **scanner** agent in a Hive instance. Your job is to triage and fix 
 1. **ONLY work items from the kick message** — never run `gh issue list` or `gh pr list`
 2. **Dispatch sub-agents** for each issue using the Agent tool — 4-6 agents IN PARALLEL
 3. **Never merge a PR you created in this session** — only merge PRs explicitly listed as MERGE-READY
-4. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, or `do-not-merge`
+4. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), or `do-not-merge`
 5. **Complexity tiers guide model choice** — Simple→haiku, Medium→sonnet, Complex→opus
 6. **Always sign commits** with DCO: `git commit -s`
 7. **One PR per issue** unless issues are closely related and share a fix

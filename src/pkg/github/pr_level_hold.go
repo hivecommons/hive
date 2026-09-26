@@ -144,8 +144,17 @@ func hasSelfAuthorizationNotice(comments []*gh.IssueComment, appBotLogin string)
 }
 
 func (c *Client) latestHoldLabelEventWasByApp(ctx context.Context, owner, repo string, number int) (bool, error) {
+	ok, _, err := c.latestHoldLabelEventByApp(ctx, owner, repo, number)
+	return ok, err
+}
+
+// latestHoldLabelEventByApp reports whether the newest `hold` label event on
+// the issue or PR is a `labeled` by the App bot, and when that event happened
+// so a caller can pair it with the notice the App posted alongside it. A
+// blank bot login fails closed.
+func (c *Client) latestHoldLabelEventByApp(ctx context.Context, owner, repo string, number int) (bool, gh.Timestamp, error) {
 	if c == nil || strings.TrimSpace(c.appBotLogin) == "" {
-		return false, nil
+		return false, gh.Timestamp{}, nil
 	}
 	opts := &gh.ListOptions{PerPage: 100}
 	latestEvent := ""
@@ -155,7 +164,7 @@ func (c *Client) latestHoldLabelEventWasByApp(ctx context.Context, owner, repo s
 	for {
 		events, resp, err := c.client.Issues.ListIssueEvents(ctx, owner, repo, number, opts)
 		if err != nil {
-			return false, fmt.Errorf("listing issue events for %s/%s#%d: %w", owner, repo, number, err)
+			return false, gh.Timestamp{}, fmt.Errorf("listing issue events for %s/%s#%d: %w", owner, repo, number, err)
 		}
 		for _, event := range events {
 			if event == nil || !strings.EqualFold(event.GetLabel().GetName(), "hold") {
@@ -177,7 +186,7 @@ func (c *Client) latestHoldLabelEventWasByApp(ctx context.Context, owner, repo s
 		}
 		opts.Page = resp.NextPage
 	}
-	return latestEvent == "labeled" && strings.EqualFold(latestActor, c.appBotLogin), nil
+	return latestEvent == "labeled" && strings.EqualFold(latestActor, c.appBotLogin), latestAt, nil
 }
 
 func (c *Client) listIssueComments(ctx context.Context, owner, repo string, number int) ([]*gh.IssueComment, error) {

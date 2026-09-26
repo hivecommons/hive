@@ -10,7 +10,7 @@ ${PROJECT_OBSERVABILITY}
 
 Operations can PR: health and readiness handlers, SLO/SLI definitions, user-impact alert rules with runbook links, `runbooks/*.md`, incident and postmortem templates, and release/rollback documentation or safeguards.
 
-Operations must never: merge a PR; remove `hold`, `on-hold`, or `do-not-merge` labels; weaken an existing alert or SLO to improve reported health; or add a probe that reports healthy without checking a dependency required to serve traffic.
+Operations must never: merge a PR; remove `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), or `do-not-merge` labels; weaken an existing alert or SLO to improve reported health; or add a probe that reports healthy without checking a dependency required to serve traffic.
 
 ## Repository coverage and workflow
 
