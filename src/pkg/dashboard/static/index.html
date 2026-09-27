@@ -2273,6 +2273,37 @@
        for the section boundary and keeps meaning what it means. */
     .config-subgroup { font-size: 0.66rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; opacity: 0.75; margin: var(--sp-7) var(--sp-0) var(--sp-4); }
     .config-subgroup:first-of-type { margin-top: var(--sp-2); }
+    .auto-merge-repo-policy-list {
+      display: grid;
+      gap: var(--sp-3);
+      margin-top: var(--sp-4);
+    }
+    .auto-merge-repo-policy-row {
+      display: grid;
+      grid-template-columns: minmax(10rem, 1.2fr) minmax(12rem, 1fr) minmax(12rem, 1fr);
+      gap: var(--sp-4);
+      align-items: center;
+      padding: var(--sp-3) var(--sp-4);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      background: var(--surface);
+    }
+    .auto-merge-repo-policy-name {
+      font-family: var(--font-mono);
+      font-size: var(--fs-sm);
+      overflow-wrap: anywhere;
+    }
+    .auto-merge-repo-policy-warning {
+      border: 1px solid color-mix(in srgb, var(--amber) 55%, var(--border));
+      border-radius: var(--r);
+      background: color-mix(in srgb, var(--amber) 12%, transparent);
+      color: var(--text);
+      padding: var(--sp-4);
+      font-size: var(--fs-sm);
+    }
+    @media (max-width: 760px) {
+      .auto-merge-repo-policy-row { grid-template-columns: 1fr; }
+    }
 
     .config-stat-row { padding: var(--sp-3) var(--sp-0); border-bottom: 1px solid var(--border); }
     .config-stat-row .config-field-row { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
@@ -18666,6 +18697,7 @@ function burnAreaChart() {
         case 'loadLinearAgentStatus': loadLinearAgentStatus(); break;
         case 'linearAgentConnect': linearAgentConnect(); break;
         case 'linearAgentDisconnect': linearAgentDisconnect(); break;
+        case 'autoMergeRepoPolicyToggle': autoMergeRepoPolicyToggle(el); break;
         case 'toggleEscalationEnabled': toggleEscalationEnabled(el); break;
         case 'removeListItem': removeListItem(el.dataset.section || el.dataset.arg0, el.dataset.key || el.dataset.arg1, parseInt(el.dataset.index !== undefined ? el.dataset.index : el.dataset.arg2, 10)); break;
         case 'toggleRestriction': { if (el.dataset.index !== undefined) { const cb = el.querySelector('input[type=checkbox]') || el; toggleRestriction(parseInt(el.dataset.index, 10), cb.checked); } else { toggleRestriction(parseInt(el.dataset.arg0, 10), el.checked); } } break;
@@ -27349,10 +27381,75 @@ function burnAreaChart() {
     // renderGovFeatures renders operational features that are not security posture
     // controls. ioscan moved to Security/Input Defense; OpenTelemetry and retro
     // stay here as observability/quality-loop settings.
+    function autoMergeDefaultOwner(repos) {
+      const primary = String(((_configState || {}).data || {}).primaryRepo || '').trim();
+      if (primary.includes('/')) return primary.split('/')[0].toLowerCase();
+      const first = (Array.isArray(repos) ? repos : []).map(r => String(r || '').trim()).find(r => r.includes('/'));
+      return first ? first.split('/')[0].toLowerCase() : '';
+    }
+
+    function autoMergeRepoPolicyKey(repo, defaultOwner) {
+      let key = String(repo || '').trim().toLowerCase();
+      if (!key) return '';
+      if (!key.includes('/') && defaultOwner) key = defaultOwner + '/' + key;
+      return key;
+    }
+
+    function autoMergeRepoListValue(key) {
+      const dirty = (((_configState || {}).dirty || {})['auto-merge'] || {});
+      if (Object.prototype.hasOwnProperty.call(dirty, key)) {
+        return Array.isArray(dirty[key]) ? dirty[key].slice() : [];
+      }
+      const am = ((_configState || {}).data || {}).auto_merge || {};
+      const list = am[key];
+      return Array.isArray(list) ? list.slice() : [];
+    }
+
+    function autoMergeRepoInList(repo, list, defaultOwner) {
+      const repoKey = autoMergeRepoPolicyKey(repo, defaultOwner);
+      return !!repoKey && (list || []).some(item => autoMergeRepoPolicyKey(item, defaultOwner) === repoKey);
+    }
+
+    function renderAutoMergeRepoPolicyControls(repos) {
+      const configuredRepos = Array.isArray(repos) ? repos.filter(Boolean) : [];
+      const ownerCanEdit = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const defaultOwner = autoMergeDefaultOwner(configuredRepos);
+      const allowList = autoMergeRepoListValue('allow_unprotected_base');
+      const noCIList = autoMergeRepoListValue('no_ci_ok');
+      const disabled = ownerCanEdit ? '' : ' disabled';
+      const action = ownerCanEdit ? 'autoMergeRepoPolicyToggle' : '';
+      const rows = configuredRepos.map((repo, i) => {
+        const repoID = String(repo).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || ('repo-' + i);
+        const allowOn = autoMergeRepoInList(repo, allowList, defaultOwner);
+        const noCIOn = autoMergeRepoInList(repo, noCIList, defaultOwner);
+        return `<div class="auto-merge-repo-policy-row">
+          <div class="auto-merge-repo-policy-name">${esc(repo)}</div>
+          <div class="config-toggle">
+            <div id="auto-merge-allow-unprotected-${esc(repoID)}" class="config-toggle-switch ${allowOn ? 'on' : ''}${disabled}" data-action="${action}" data-auto-merge-list="allow_unprotected_base" data-repo="${esc(repo)}" data-disabled="${ownerCanEdit ? 'false' : 'true'}"></div>
+            <span class="config-toggle-label">Allow merging into unprotected branches</span>
+          </div>
+          <div class="config-toggle">
+            <div id="auto-merge-no-ci-ok-${esc(repoID)}" class="config-toggle-switch ${noCIOn ? 'on' : ''}${disabled}" data-action="${action}" data-auto-merge-list="no_ci_ok" data-repo="${esc(repo)}" data-disabled="${ownerCanEdit ? 'false' : 'true'}"></div>
+            <span class="config-toggle-label">Repo has no CI (allow unverified CI)</span>
+          </div>
+        </div>`;
+      }).join('');
+      return `<div class="config-subgroup">Merge-request repo exceptions</div>
+        <div id="auto-merge-unprotected-warning" class="auto-merge-repo-policy-warning">
+          Allowing an unprotected base branch means GitHub branch protection will not provide a merge gate; the hive's own CI-evidence gate is the only gate before merge. Use this only for repositories that intentionally run unprotected branches.
+        </div>
+        <p id="auto-merge-no-ci-warning" class="fs-xs text-muted mt-2">The no-CI opt-in permits only the zero-evidence CI verdict for a repo; failing or pending checks still block. A repo with no CI and an unprotected base needs both toggles.</p>
+        ${ownerCanEdit ? '' : '<p class="fs-xs text-muted mt-2">Owner role required to change these repo exceptions.</p>'}
+        <div id="auto-merge-repo-policy-list" class="auto-merge-repo-policy-list">
+          ${rows || '<div class="text-muted">No configured repositories.</div>'}
+        </div>`;
+    }
+
     function renderGovFeatures(f, am, rv) {
       f = f || {};
       am = am || {};
       rv = rv || {};
+      const repos = ((_configState || {}).data || {}).repos || [];
       const cv = (_configState.data || {}).convergence || {};
       const planOn = f.planFromLabel === true;
       const formalAvailable = f.formalAvailable === true;
@@ -27562,6 +27659,7 @@ function burnAreaChart() {
             <label>Required CI checks <span class="config-info">i<span class="config-tooltip">Comma-separated status-check/check-run names the sweep must see green before merging, e.g. build-gate. Empty falls back to the built-in allowlist.</span></span></label>
             <input type="text" value="${esc(amChecks.join(', '))}" placeholder="build-gate, lint" data-change-action="gh72">
           </div>
+          ${renderAutoMergeRepoPolicyControls(repos)}
         </div>
 
         <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
@@ -28168,6 +28266,19 @@ function burnAreaChart() {
       if (!el || el.classList.contains('disabled') || el.dataset.disabled === 'true') return;
       const isOn = el.classList.toggle('on');
       markDirty(section, key, isOn);
+    }
+
+    function autoMergeRepoPolicyToggle(el) {
+      if (!el || el.classList.contains('disabled') || el.dataset.disabled === 'true') return;
+      const key = el.dataset.autoMergeList;
+      const repo = (el.dataset.repo || '').trim();
+      if (!repo || (key !== 'allow_unprotected_base' && key !== 'no_ci_ok')) return;
+      const isOn = el.classList.toggle('on');
+      const defaultOwner = autoMergeDefaultOwner(((_configState || {}).data || {}).repos || []);
+      const repoKey = autoMergeRepoPolicyKey(repo, defaultOwner);
+      const next = autoMergeRepoListValue(key).filter(item => autoMergeRepoPolicyKey(item, defaultOwner) !== repoKey);
+      if (isOn) next.push(repo);
+      markDirty('auto-merge', key, next);
     }
 
     // markDirtyRecommendations reads the three Recommendations controls and

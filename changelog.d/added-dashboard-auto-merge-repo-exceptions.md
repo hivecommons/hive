@@ -1,0 +1,1 @@
+- Added dashboard owner controls for per-repo auto-merge exceptions: unprotected base branches and no-CI repositories.

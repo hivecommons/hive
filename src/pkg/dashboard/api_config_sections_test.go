@@ -110,6 +110,23 @@ func TestAutoMergePut_ValidatesAndApplies(t *testing.T) {
 	if len(am.NoCIOK) != 1 || am.NoCIOK[0] != "docs-only" {
 		t.Fatalf("no_ci_ok not normalized: %v", am.NoCIOK)
 	}
+	rec = doOwnerGet(s, "/api/config/auto-merge")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET after put: expected 200, got %d", rec.Code)
+	}
+	var roundTrip struct {
+		AllowUnprotectedBase []string `json:"allow_unprotected_base"`
+		NoCIOK               []string `json:"no_ci_ok"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &roundTrip); err != nil {
+		t.Fatalf("decode round-trip: %v", err)
+	}
+	if len(roundTrip.AllowUnprotectedBase) != 1 || roundTrip.AllowUnprotectedBase[0] != "repo-one" {
+		t.Fatalf("allow_unprotected_base did not round-trip: %v", roundTrip.AllowUnprotectedBase)
+	}
+	if len(roundTrip.NoCIOK) != 1 || roundTrip.NoCIOK[0] != "docs-only" {
+		t.Fatalf("no_ci_ok did not round-trip: %v", roundTrip.NoCIOK)
+	}
 
 	// Absent keys leave settings untouched (pointer semantics).
 	if rec := doPut(s, "/api/config/auto-merge", map[string]any{}); rec.Code != http.StatusOK {

@@ -132,6 +132,13 @@ advanced into the merge path.
 | `auto_merge.allow_unprotected_base` | unset (refuse) | **Merge-request watcher key, not a sweep key.** Per-repo allowlist (`owner/repo` or bare name) that lets [`hive-merge`](hive-merge.md) merge into a base branch with **no** GitHub branch protection. Default refuses, because on such a branch the hive's own CI-evidence gate is the only gate (#6281). |
 | `auto_merge.no_ci_ok` | unset (refuse) | **Merge-request watcher key, not a sweep key.** Per-repo opt-in that downgrades only the "unverified" CI verdict (zero statuses, check runs, and workflow runs) to green, for adopted repos with no CI by design. Red and pending verdicts are never downgraded (#6281). A no-CI repo whose base is also unprotected needs **both** this and `allow_unprotected_base` — the opt-outs are independent. See [hive-merge.md](hive-merge.md). |
 
+Owners can edit both per-repo lists without touching YAML in the dashboard:
+**Settings → Features → Auto-Merge → Merge-request repo exceptions** renders one
+row per configured repo with **Allow merging into unprotected branches** and
+**Repo has no CI (allow unverified CI)** switches. The warning in that panel
+calls out the safety model: on an unprotected branch, Hive's CI-evidence gate is
+the only merge gate.
+
 **The ACMM gate.** `self_authored: true` (or unset) is necessary but not
 sufficient: the sweep only starts when the hive's `acmm_level` is **6 or
 higher** (`config.SelfMergeMinACMMLevel`). An unset `acmm_level` fails closed

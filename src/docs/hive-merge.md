@@ -101,14 +101,18 @@ checks GitHub branch protection on the PR's base branch. A `404` response means
 the base is unprotected and the request is denied with a reason naming the
 repo-level override; any other branch-protection API error also fails closed.
 Repos that intentionally run without branch protection must be listed
-explicitly under `auto_merge.allow_unprotected_base`.
+explicitly under `auto_merge.allow_unprotected_base`. Owners can edit this from
+the dashboard at **Settings → Features → Auto-Merge → Merge-request repo
+exceptions**, using the per-repo **Allow merging into unprotected branches**
+toggle.
 
 **No-CI repositories require an explicit repo opt-in.** Repositories with no CI
 by design can be listed under `auto_merge.no_ci_ok`. That opt-in only downgrades
 the **unverified** verdict (zero statuses, zero check runs, zero workflow runs)
 to green for that listed repo, and the watcher logs that
 `auto_merge.no_ci_ok` enabled it. Any non-zero failing CI evidence still
-refuses, and pending evidence still waits.
+refuses, and pending evidence still waits. The same dashboard section exposes a
+per-repo **Repo has no CI (allow unverified CI)** toggle.
 
 ```yaml
 auto_merge:
