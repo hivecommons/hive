@@ -1,0 +1,1 @@
+- The merge CI gate now ignores superseded check and workflow runs on the same head SHA, so cancelled concurrency predecessors no longer block a merge after the latest run succeeds.

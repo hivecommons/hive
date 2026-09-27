@@ -209,7 +209,7 @@ func (c *Client) opaqueWorkflowRuns(ctx context.Context, owner, repo, sha string
 	if runs == nil {
 		return nil, nil, nil
 	}
-	for _, run := range runs.WorkflowRuns {
+	for _, run := range latestWorkflowRunsByWorkflowAndEvent(runs.WorkflowRuns) {
 		if run == nil {
 			continue
 		}
@@ -236,6 +236,51 @@ func (c *Client) opaqueWorkflowRuns(ctx context.Context, owner, repo, sha string
 		}
 	}
 	return failed, pending, nil
+}
+
+type workflowRunIdentity struct {
+	workflowID int64
+	event      string
+}
+
+func latestWorkflowRunsByWorkflowAndEvent(runs []*gh.WorkflowRun) []*gh.WorkflowRun {
+	if len(runs) == 0 {
+		return nil
+	}
+	latest := make(map[workflowRunIdentity]*gh.WorkflowRun, len(runs))
+	for _, run := range runs {
+		if run == nil {
+			continue
+		}
+		key := workflowRunIdentity{workflowID: run.GetWorkflowID(), event: run.GetEvent()}
+		if prev := latest[key]; prev == nil || workflowRunIsNewer(run, prev) {
+			latest[key] = run
+		}
+	}
+	out := make([]*gh.WorkflowRun, 0, len(latest))
+	for _, run := range latest {
+		out = append(out, run)
+	}
+	return out
+}
+
+func workflowRunIsNewer(candidate, current *gh.WorkflowRun) bool {
+	candidateStarted := candidate.GetRunStartedAt().Time
+	currentStarted := current.GetRunStartedAt().Time
+	if candidateStarted.IsZero() {
+		candidateStarted = candidate.GetCreatedAt().Time
+	}
+	if currentStarted.IsZero() {
+		currentStarted = current.GetCreatedAt().Time
+	}
+	switch {
+	case candidateStarted.After(currentStarted):
+		return true
+	case currentStarted.After(candidateStarted):
+		return false
+	default:
+		return candidate.GetID() > current.GetID()
+	}
 }
 
 // logCIVerdict records the gate's decision for the operator with the same

@@ -154,43 +154,45 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 	}
 
 	opts := &gh.ListCheckRunsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+	var allCheckRuns []*gh.CheckRun
 	for {
 		checkRuns, resp, err := client.Checks.ListCheckRunsForRef(ctx, owner, repo, sha, opts)
 		if err != nil {
 			st.Reason = "check-runs"
 			return st, err
 		}
-		for _, cr := range checkRuns.CheckRuns {
-			name := cr.GetName()
-			st.Evidence++
-			seen[name] = true
-			if requiredKnown {
-				if !required[name] {
-					continue
-				}
-			} else if isMetaCheck(name) {
-				continue
-			}
-			if cr.GetStatus() != "completed" {
-				if !requiredKnown && isIgnorableCICheck(name) {
-					continue
-				}
-				block("check-pending")
-				continue
-			}
-			switch cr.GetConclusion() {
-			case "success", "neutral", "skipped":
-			default:
-				if !requiredKnown && isIgnorableCICheck(name) {
-					continue
-				}
-				block("check-" + cr.GetConclusion())
-			}
-		}
+		allCheckRuns = append(allCheckRuns, checkRuns.CheckRuns...)
 		if resp == nil || resp.NextPage == 0 {
 			break
 		}
 		opts.Page = resp.NextPage
+	}
+	for _, cr := range latestCheckRunsByNameAndApp(allCheckRuns) {
+		name := cr.GetName()
+		st.Evidence++
+		seen[name] = true
+		if requiredKnown {
+			if !required[name] {
+				continue
+			}
+		} else if isMetaCheck(name) {
+			continue
+		}
+		if cr.GetStatus() != "completed" {
+			if !requiredKnown && isIgnorableCICheck(name) {
+				continue
+			}
+			block("check-pending")
+			continue
+		}
+		switch cr.GetConclusion() {
+		case "success", "neutral", "skipped":
+		default:
+			if !requiredKnown && isIgnorableCICheck(name) {
+				continue
+			}
+			block("check-" + cr.GetConclusion())
+		}
 	}
 
 	if requiredKnown {
@@ -203,4 +205,46 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 	}
 	st.Green = st.Reason == ""
 	return st, nil
+}
+
+type checkRunIdentity struct {
+	name  string
+	appID int64
+}
+
+func latestCheckRunsByNameAndApp(checks []*gh.CheckRun) []*gh.CheckRun {
+	if len(checks) == 0 {
+		return nil
+	}
+	latest := make(map[checkRunIdentity]*gh.CheckRun, len(checks))
+	for _, cr := range checks {
+		if cr == nil {
+			continue
+		}
+		key := checkRunIdentity{name: cr.GetName()}
+		if app := cr.GetApp(); app != nil {
+			key.appID = app.GetID()
+		}
+		if prev := latest[key]; prev == nil || checkRunIsNewer(cr, prev) {
+			latest[key] = cr
+		}
+	}
+	out := make([]*gh.CheckRun, 0, len(latest))
+	for _, cr := range latest {
+		out = append(out, cr)
+	}
+	return out
+}
+
+func checkRunIsNewer(candidate, current *gh.CheckRun) bool {
+	candidateStarted := candidate.GetStartedAt().Time
+	currentStarted := current.GetStartedAt().Time
+	switch {
+	case candidateStarted.After(currentStarted):
+		return true
+	case currentStarted.After(candidateStarted):
+		return false
+	default:
+		return candidate.GetID() > current.GetID()
+	}
 }

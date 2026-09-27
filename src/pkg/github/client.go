@@ -1592,13 +1592,14 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 		pr.CIStatus = ciStatusPending
 		return nil
 	}
-	reported := make(map[string]bool, len(checkRuns.CheckRuns))
-	for _, cr := range checkRuns.CheckRuns {
+	latestCheckRuns := latestCheckRunsByNameAndApp(checkRuns.CheckRuns)
+	reported := make(map[string]bool, len(latestCheckRuns))
+	for _, cr := range latestCheckRuns {
 		if name := cr.GetName(); name != "" {
 			reported[name] = true
 		}
 	}
-	if checkRuns.GetTotal() == 0 {
+	if len(latestCheckRuns) == 0 {
 		pr.CIStatus = ciStatusPending
 		return reported
 	}
@@ -1607,7 +1608,7 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 	ciChecksFound := 0
 	var failingNames []string
 	var failingIDs []int64
-	for _, cr := range checkRuns.CheckRuns {
+	for _, cr := range latestCheckRuns {
 		if isMetaCheck(cr.GetName()) {
 			continue
 		}

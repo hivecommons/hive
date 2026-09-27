@@ -41,22 +41,29 @@ type ciFixture struct {
 }
 
 type ciStatus struct{ context, state string }
-type ciCheck struct{ name, status, conclusion string }
+type ciCheck struct {
+	id                       int64
+	appID                    int64
+	name, status, conclusion string
+	startedAt                string
+}
 
 // ciRun is a workflow run on the head SHA. jobs is what GET .../jobs reports
 // as total_count: zero models a startup failure (or a run still queued with
 // no job created yet), which emits NO check run.
 type ciRun struct {
-	id                 int64
-	name, status, conc string
-	jobs               int
+	id                        int64
+	workflowID                int64
+	name, status, conc, event string
+	startedAt                 string
+	jobs                      int
 }
 
 func greenFixture() *ciFixture {
 	return &ciFixture{
 		defaultHead: "abc",
 		heads:       map[int]string{100: "abc123"},
-		checks:      []ciCheck{{"build", "completed", "success"}},
+		checks:      []ciCheck{{name: "build", status: "completed", conclusion: "success"}},
 		runs:        []ciRun{{id: 1, name: "CI", status: "completed", conc: "success", jobs: 1}},
 	}
 }
@@ -91,15 +98,34 @@ func (f *ciFixture) serveCI(w http.ResponseWriter, r *http.Request) bool {
 		}
 		enc(map[string]any{"state": "pending", "total_count": len(statuses), "statuses": statuses})
 	case strings.HasSuffix(p, "/check-runs"):
-		runs := []map[string]string{}
+		runs := []map[string]any{}
 		for _, c := range f.checks {
-			runs = append(runs, map[string]string{"name": c.name, "status": c.status, "conclusion": c.conclusion})
+			run := map[string]any{"id": c.id, "name": c.name, "status": c.status, "conclusion": c.conclusion}
+			if c.appID != 0 {
+				run["app"] = map[string]any{"id": c.appID}
+			}
+			if c.startedAt != "" {
+				run["started_at"] = c.startedAt
+			}
+			runs = append(runs, run)
 		}
 		enc(map[string]any{"total_count": len(runs), "check_runs": runs})
 	case strings.HasSuffix(p, "/actions/runs"):
 		runs := []map[string]any{}
 		for _, run := range f.runs {
-			runs = append(runs, map[string]any{"id": run.id, "name": run.name, "status": run.status, "conclusion": run.conc, "head_sha": r.URL.Query().Get("head_sha")})
+			event := run.event
+			if event == "" {
+				event = "pull_request"
+			}
+			workflowID := run.workflowID
+			if workflowID == 0 {
+				workflowID = run.id
+			}
+			item := map[string]any{"id": run.id, "workflow_id": workflowID, "name": run.name, "status": run.status, "conclusion": run.conc, "event": event, "head_sha": r.URL.Query().Get("head_sha")}
+			if run.startedAt != "" {
+				item["run_started_at"] = run.startedAt
+			}
+			runs = append(runs, item)
 		}
 		enc(map[string]any{"total_count": len(runs), "workflow_runs": runs})
 	case strings.HasSuffix(p, "/branches/main/protection"):
@@ -228,7 +254,7 @@ func TestMergeCIGate_ZeroCheckRunsRefuses(t *testing.T) {
 // All queued: the watcher WAITS. No merge, no attempt consumed, the request
 // file stays live so the next tick re-evaluates it.
 func TestMergeCIGate_AllQueuedWaits(t *testing.T) {
-	f := &ciFixture{defaultHead: "abc", checks: []ciCheck{{"build", "queued", ""}, {"test", "in_progress", ""}}}
+	f := &ciFixture{defaultHead: "abc", checks: []ciCheck{{name: "build", status: "queued"}, {name: "test", status: "in_progress"}}}
 	var merges atomic.Int32
 	srv := ciGateServer(t, f, &merges)
 	defer srv.Close()
@@ -256,7 +282,7 @@ func TestMergeCIGate_AllQueuedWaits(t *testing.T) {
 	}
 
 	// Once CI reports green on a later tick the same request merges.
-	f.checks = []ciCheck{{"build", "completed", "success"}, {"test", "completed", "success"}}
+	f.checks = []ciCheck{{name: "build", status: "completed", conclusion: "success"}, {name: "test", status: "completed", conclusion: "success"}}
 	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
 	if got := merges.Load(); got != 1 {
 		t.Fatalf("green CI after a wait should merge exactly once, got %d", got)
@@ -267,7 +293,7 @@ func TestMergeCIGate_AllQueuedWaits(t *testing.T) {
 // The pending budget is finite: after mergeRequestMaxCIWaits consecutive
 // waits the request becomes a failed attempt instead of parking forever.
 func TestMergeCIGate_PendingBudgetExhausts(t *testing.T) {
-	f := &ciFixture{defaultHead: "abc", checks: []ciCheck{{"build", "queued", ""}}}
+	f := &ciFixture{defaultHead: "abc", checks: []ciCheck{{name: "build", status: "queued"}}}
 	var merges atomic.Int32
 	srv := ciGateServer(t, f, &merges)
 	defer srv.Close()
@@ -290,7 +316,7 @@ func TestMergeCIGate_PendingBudgetExhausts(t *testing.T) {
 // check, the terminal attempt re-engages the fix loop exactly as a
 // branch-protection refusal would.
 func TestMergeCIGate_MixedSuccessAndFailureRefuses(t *testing.T) {
-	f := &ciFixture{defaultHead: "abc", checks: []ciCheck{{"build", "completed", "success"}, {"test", "completed", "failure"}}}
+	f := &ciFixture{defaultHead: "abc", checks: []ciCheck{{name: "build", status: "completed", conclusion: "success"}, {name: "test", status: "completed", conclusion: "failure"}}}
 	var merges atomic.Int32
 	srv := ciGateServer(t, f, &merges)
 	defer srv.Close()
@@ -320,7 +346,7 @@ func TestMergeCIGate_MixedSuccessAndFailureRefuses(t *testing.T) {
 // status) does not block, preserving the existing ignore list.
 func TestMergeCIGate_AllSuccessMerges(t *testing.T) {
 	f := greenFixture()
-	f.checks = append(f.checks, ciCheck{"Playwright", "completed", "cancelled"}, ciCheck{"lint", "completed", "skipped"})
+	f.checks = append(f.checks, ciCheck{name: "Playwright", status: "completed", conclusion: "cancelled"}, ciCheck{name: "lint", status: "completed", conclusion: "skipped"})
 	f.statuses = []ciStatus{{"tide", "pending"}}
 	var merges atomic.Int32
 	srv := ciGateServer(t, f, &merges)
@@ -338,6 +364,85 @@ func TestMergeCIGate_AllSuccessMerges(t *testing.T) {
 		t.Fatalf("expected ok result, got %+v", resp)
 	}
 	mustNotExist(t, reqPath, "request consumed after merge")
+}
+
+func TestMergeCIGate_DedupesSupersededCheckRuns(t *testing.T) {
+	const (
+		older = "2026-09-27T22:44:00Z"
+		later = "2026-09-27T22:45:01Z"
+	)
+	tests := []struct {
+		name       string
+		checks     []ciCheck
+		wantMerge  bool
+		wantReason string
+	}{
+		{
+			name: "superseded cancelled latest success passes",
+			checks: []ciCheck{
+				{id: 108724704279, appID: 15368, name: "changelog-fragment-guard", status: "completed", conclusion: "cancelled", startedAt: older},
+				{id: 108724738287, appID: 15368, name: "changelog-fragment-guard", status: "completed", conclusion: "success", startedAt: later},
+			},
+			wantMerge: true,
+		},
+		{
+			name: "latest cancelled still fails",
+			checks: []ciCheck{
+				{id: 108724704279, appID: 15368, name: "changelog-fragment-guard", status: "completed", conclusion: "success", startedAt: older},
+				{id: 108724738287, appID: 15368, name: "changelog-fragment-guard", status: "completed", conclusion: "cancelled", startedAt: later},
+			},
+			wantReason: "check-cancelled",
+		},
+		{
+			name: "different names remain independent",
+			checks: []ciCheck{
+				{id: 1, appID: 15368, name: "build", status: "completed", conclusion: "success", startedAt: later},
+				{id: 2, appID: 15368, name: "lint", status: "completed", conclusion: "cancelled", startedAt: later},
+			},
+			wantReason: "check-cancelled",
+		},
+		{
+			name: "same start time tiebreaks by highest id",
+			checks: []ciCheck{
+				{id: 10, appID: 15368, name: "build", status: "completed", conclusion: "cancelled", startedAt: later},
+				{id: 11, appID: 15368, name: "build", status: "completed", conclusion: "success", startedAt: later},
+			},
+			wantMerge: true,
+		},
+		{
+			name: "same name different app remains independent",
+			checks: []ciCheck{
+				{id: 10, appID: 1, name: "build", status: "completed", conclusion: "success", startedAt: later},
+				{id: 11, appID: 2, name: "build", status: "completed", conclusion: "cancelled", startedAt: later},
+			},
+			wantReason: "check-cancelled",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &ciFixture{defaultHead: "abc", checks: tt.checks}
+			var merges atomic.Int32
+			srv := ciGateServer(t, f, &merges)
+			defer srv.Close()
+			c := testMergeClient(t, srv.URL)
+
+			reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+			c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+
+			if tt.wantMerge {
+				if got := merges.Load(); got != 1 {
+					t.Fatalf("expected merge, got %d (%+v)", got, readMergeResult(t, reqPath))
+				}
+				return
+			}
+			if got := merges.Load(); got != 0 {
+				t.Fatalf("expected no merge, got %d", got)
+			}
+			if resp := readMergeResult(t, reqPath); resp.OK || !strings.Contains(resp.Error, tt.wantReason) {
+				t.Fatalf("expected refusal containing %q, got %+v", tt.wantReason, resp)
+			}
+		})
+	}
 }
 
 func TestMergeRequestBaseProtection_UnprotectedMergesWithGreenCI(t *testing.T) {
@@ -383,7 +488,7 @@ func TestMergeRequestBaseProtection_ProtectedMergesWithGreenCI(t *testing.T) {
 func TestMergeRequestBaseProtection_DeprecatedAllowlistDoesNotOverrideFailingCI(t *testing.T) {
 	f := &ciFixture{
 		defaultHead:     "abc",
-		checks:          []ciCheck{{"build", "completed", "failure"}},
+		checks:          []ciCheck{{name: "build", status: "completed", conclusion: "failure"}},
 		baseUnprotected: true,
 	}
 	var merges atomic.Int32
@@ -430,13 +535,80 @@ func TestMergeCIGate_ZeroJobWorkflowFailureRefuses(t *testing.T) {
 	}
 }
 
+func TestMergeCIGate_DedupesSupersededWorkflowRuns(t *testing.T) {
+	const (
+		older = "2026-09-27T22:44:00Z"
+		later = "2026-09-27T22:45:01Z"
+	)
+	tests := []struct {
+		name       string
+		runs       []ciRun
+		wantMerge  bool
+		wantReason string
+	}{
+		{
+			name: "superseded failure latest success passes",
+			runs: []ciRun{
+				{id: 101, workflowID: 7, name: "CI", status: "completed", conc: "failure", event: "pull_request", startedAt: older, jobs: 0},
+				{id: 102, workflowID: 7, name: "CI", status: "completed", conc: "success", event: "pull_request", startedAt: later, jobs: 0},
+			},
+			wantMerge: true,
+		},
+		{
+			name: "latest failure still fails",
+			runs: []ciRun{
+				{id: 101, workflowID: 7, name: "CI", status: "completed", conc: "success", event: "pull_request", startedAt: older, jobs: 0},
+				{id: 102, workflowID: 7, name: "CI", status: "completed", conc: "failure", event: "pull_request", startedAt: later, jobs: 0},
+			},
+			wantReason: `"CI"(102)`,
+		},
+		{
+			name: "same start time tiebreaks by highest id",
+			runs: []ciRun{
+				{id: 101, workflowID: 7, name: "CI", status: "completed", conc: "failure", event: "pull_request", startedAt: later, jobs: 0},
+				{id: 102, workflowID: 7, name: "CI", status: "completed", conc: "success", event: "pull_request", startedAt: later, jobs: 0},
+			},
+			wantMerge: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &ciFixture{
+				defaultHead: "abc",
+				checks:      []ciCheck{{id: 1, appID: 1, name: "build", status: "completed", conclusion: "success", startedAt: later}},
+				runs:        tt.runs,
+			}
+			var merges atomic.Int32
+			srv := ciGateServer(t, f, &merges)
+			defer srv.Close()
+			c := testMergeClient(t, srv.URL)
+
+			reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+			c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+
+			if tt.wantMerge {
+				if got := merges.Load(); got != 1 {
+					t.Fatalf("expected merge, got %d (%+v)", got, readMergeResult(t, reqPath))
+				}
+				return
+			}
+			if got := merges.Load(); got != 0 {
+				t.Fatalf("expected no merge, got %d", got)
+			}
+			if resp := readMergeResult(t, reqPath); resp.OK || !strings.Contains(resp.Error, tt.wantReason) {
+				t.Fatalf("expected refusal containing %q, got %+v", tt.wantReason, resp)
+			}
+		})
+	}
+}
+
 // A failed workflow run that DID produce jobs is already visible through its
 // check runs; when those check runs are non-gating (ignore list) the run's
 // own conclusion must not re-block the merge, or optional suites would wedge
 // the queue again.
 func TestMergeCIGate_FailedRunWithJobsDefersToCheckRuns(t *testing.T) {
 	f := &ciFixture{defaultHead: "abc",
-		checks: []ciCheck{{"build", "completed", "success"}, {"Playwright", "completed", "failure"}},
+		checks: []ciCheck{{name: "build", status: "completed", conclusion: "success"}, {name: "Playwright", status: "completed", conclusion: "failure"}},
 		runs:   []ciRun{{id: 21, name: "Playwright", status: "completed", conc: "failure", jobs: 3}},
 	}
 	var merges atomic.Int32
@@ -477,7 +649,7 @@ func TestMergeCIGate_QueuedZeroJobRunWaits(t *testing.T) {
 // created at all is "expected", not passed: wait. Other green checks on the
 // SHA do not substitute for it.
 func TestMergeCIGate_MissingRequiredCheckWaits(t *testing.T) {
-	f := &ciFixture{defaultHead: "abc", checks: []ciCheck{{"lint", "completed", "success"}}}
+	f := &ciFixture{defaultHead: "abc", checks: []ciCheck{{name: "lint", status: "completed", conclusion: "success"}}}
 	var merges atomic.Int32
 	srv := ciGateServer(t, f, &merges)
 	defer srv.Close()
@@ -495,7 +667,7 @@ func TestMergeCIGate_MissingRequiredCheckWaits(t *testing.T) {
 		t.Fatalf("expected a wait naming the missing required check, got %+v", resp)
 	}
 
-	f.checks = append(f.checks, ciCheck{"build-gate", "completed", "success"})
+	f.checks = append(f.checks, ciCheck{name: "build-gate", status: "completed", conclusion: "success"})
 	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
 	if merges.Load() != 1 {
 		t.Fatalf("required check reporting success should unblock the merge")
@@ -586,7 +758,7 @@ func TestMergeCIGate_NoCIOKOptInMergesUnverifiedRepo(t *testing.T) {
 }
 
 func TestMergeCIGate_NoCIOKDoesNotOverrideFailingCheck(t *testing.T) {
-	f := &ciFixture{defaultHead: "abc", checks: []ciCheck{{"build", "completed", "failure"}}}
+	f := &ciFixture{defaultHead: "abc", checks: []ciCheck{{name: "build", status: "completed", conclusion: "failure"}}}
 	var merges atomic.Int32
 	srv := ciGateServer(t, f, &merges)
 	defer srv.Close()
@@ -679,7 +851,7 @@ func TestMergeCIGate_NoCIOKOptIn(t *testing.T) {
 	mustNotExist(t, reqPath, "request consumed after merge")
 
 	// RED stays red: a failed check on an opted-in repo still refuses.
-	f2 := &ciFixture{defaultHead: "abc", checks: []ciCheck{{"build", "completed", "failure"}}}
+	f2 := &ciFixture{defaultHead: "abc", checks: []ciCheck{{name: "build", status: "completed", conclusion: "failure"}}}
 	var merges2 atomic.Int32
 	srv2 := ciGateServer(t, f2, &merges2)
 	defer srv2.Close()
