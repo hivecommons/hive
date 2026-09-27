@@ -4202,58 +4202,122 @@ function tmuxSendEnters() {
   }
 }
 
-// ── Confirming the prompt was SUBMITTED, not just typed (#6717) ─────────────
+// ── Confirming the prompt was SUBMITTED, not just pasted (#6717/#9078) ──────
 //
 // tmuxSendEnters() has always been fire-and-forget: the send loop below retries
-// when tmux itself errors, but nothing ever checked whether the keystrokes
-// achieved anything. A TUI that collapses the burst into a paste placeholder
-// swallows those Enters as newlines inside the pasted text, so the prompt sits
-// in the input widget and the agent never runs — while the relay logs
-// "Task prompt sent to CLI" and moves on (see paneHoldsUnsubmittedPrompt).
+// when tmux itself errors, but nothing ever checked whether the prompt started
+// a turn. A TUI that collapses or delays a large paste can swallow those Enters
+// as newlines inside the pasted text, so the prompt sits in the input widget
+// and the agent never runs — while the relay logs "Task prompt sent to CLI" and
+// moves on (see paneHoldsUnsubmittedPrompt).
 //
 // ENTER_COUNT is not the lever. The problem is not a dropped keystroke but a
 // widget consuming newlines as content; three of them are consumed exactly as
-// one is. What does help is giving the widget time to finish processing the
-// burst before the submit arrives, and then LOOKING at the pane and trying
-// again if the prompt is still sitting there.
+// one is. What does help is bracketed-pasting the prompt, giving the widget
+// time to finish processing it before the submit arrives, and then LOOKING at
+// the pane for positive turn-start evidence.
 const PROMPT_PASTE_SETTLE_MS = 1200;
 const PROMPT_SUBMIT_RETRIES = 3;
 const PROMPT_SUBMIT_RETRY_DELAY_MS = 1500;
+const PROMPT_SUBMIT_CONFIRM_POLLS = 8;
+const PROMPT_SUBMIT_DELAYED_RENDER_POLLS = 2;
+// Codex 0.156/0.157 has been reproduced dropping or delaying task-sized raw
+// `send-keys -l` bursts. Keep other backends on their long-tested literal path
+// until their panes show the same transport failure.
+const TASK_PROMPT_BRACKETED_PASTE_BACKENDS = new Set(['codex']);
+const STRICT_PROMPT_CONFIRM_BACKENDS = new Set(['codex']);
+let tmuxPromptBufferSeq = 0;
+
+function tmuxTaskPromptBufferName() {
+  tmuxPromptBufferSeq++;
+  return `hive-task-prompt-${process.pid}-${Date.now()}-${tmuxPromptBufferSeq}`;
+}
+
+function tmuxPasteTaskPrompt(text) {
+  const bufferName = tmuxTaskPromptBufferName();
+  let bufferSet = false;
+  try {
+    execFileSync('tmux', ['set-buffer', '-b', bufferName, '--', text], { timeout: 30000 });
+    bufferSet = true;
+    execFileSync('tmux', ['paste-buffer', '-p', '-d', '-b', bufferName, '-t', TMUX_SESSION], { timeout: 30000 });
+  } finally {
+    if (bufferSet) {
+      try {
+        execFileSync('tmux', ['delete-buffer', '-b', bufferName], { timeout: 15000, stdio: 'ignore' });
+      } catch (_) {}
+    }
+  }
+}
+
+function tmuxDeliverTaskPrompt(text) {
+  if (TASK_PROMPT_BRACKETED_PASTE_BACKENDS.has(BACKEND)) {
+    tmuxPasteTaskPrompt(text);
+  } else {
+    execSync(`tmux send-keys -t ${TMUX_SESSION} -l ${shellQuote(text)}`, { timeout: 30000 });
+  }
+}
+
+function paneShowsTaskTurnStarted(text, beforeDeliveryFingerprint) {
+  if (paneHoldsUnsubmittedPrompt(text, BACKEND)) return false;
+  const fingerprint = paneFingerprint(text);
+  if (beforeDeliveryFingerprint && fingerprint === beforeDeliveryFingerprint) return false;
+  const lines = String(text || '').split('\n');
+  if (detectHiveVerdict(lines, HIVE_VERDICT_TOKENS)) return true;
+  if (lines.some(line => agentActivityLineKey(line))) return true;
+  const paneState = classifyTmuxPane(text);
+  if (paneState !== PANE_STATE_IDLE_COMPLETE) return true;
+  const readiness = classifyReadiness(text, BACKEND);
+  return readiness !== 'ready' && /\S/.test(String(text || ''));
+}
 
 // confirmPromptSubmitted re-sends Enter while the pane still shows the prompt
 // collapsed in its input widget, and reports whether it ended up submitted.
 //
-// Returns true both when submission is confirmed and when this backend's
-// widget rendering is unknown to paneHoldsUnsubmittedPrompt() — "no evidence of
-// a stuck prompt" is the only honest answer there, and it is also the
-// pre-#6717 behaviour, so no backend regresses into extra keystrokes it never
-// needed. The chrome-idle veto in progressTick() is the backstop for whatever
-// this cannot see.
+// Returns true only when the pane shows positive evidence that a turn started:
+// working chrome, a prompt echo/tool row, or any other non-idle state that
+// differs from the pre-delivery pane. A blank idle widget is submission
+// UNKNOWN, not success (#9078).
 //
 // A bare Enter is the only key sent, and only while the placeholder is still
 // there: on a pane that did submit, the widget is empty (or holding its
 // "Ask Codex to…" placeholder) and an Enter is a no-op.
-function confirmPromptSubmitted() {
-  if (!paneHoldsUnsubmittedPrompt(capturePaneText(), BACKEND)) return true;
-  for (let attempt = 1; attempt <= PROMPT_SUBMIT_RETRIES; attempt++) {
-    console.warn(`Task prompt is still sitting unsubmitted in the ${BACKEND} input widget (collapsed paste) — re-sending Enter, attempt ${attempt}/${PROMPT_SUBMIT_RETRIES}`);
-    try {
-      execSync(`tmux send-keys -t ${TMUX_SESSION} Enter`, { timeout: 15000 });
-    } catch (e) {
-      console.error(`Re-sending Enter failed: ${e.message}`);
+function confirmPromptSubmitted(beforeDeliveryFingerprint = null) {
+  if (!STRICT_PROMPT_CONFIRM_BACKENDS.has(BACKEND)) {
+    if (!paneHoldsUnsubmittedPrompt(capturePaneText(), BACKEND)) return true;
+  }
+  let delayedRenderPolls = 0;
+  for (let poll = 0; poll < PROMPT_SUBMIT_CONFIRM_POLLS; poll++) {
+    const paneText = capturePaneText();
+    if (paneShowsTaskTurnStarted(paneText, beforeDeliveryFingerprint)) return true;
+    if (paneHoldsUnsubmittedPrompt(paneText, BACKEND)) {
+      for (let attempt = 1; attempt <= PROMPT_SUBMIT_RETRIES; attempt++) {
+        console.warn(`Task prompt is still sitting unsubmitted in the ${BACKEND} input widget (collapsed paste) — re-sending Enter, attempt ${attempt}/${PROMPT_SUBMIT_RETRIES}`);
+        try {
+          execSync(`tmux send-keys -t ${TMUX_SESSION} Enter`, { timeout: 15000 });
+        } catch (e) {
+          console.error(`Re-sending Enter failed: ${e.message}`);
+        }
+        sleepMs(PROMPT_SUBMIT_RETRY_DELAY_MS);
+        const afterEnter = capturePaneText();
+        if (paneShowsTaskTurnStarted(afterEnter, beforeDeliveryFingerprint)) {
+          console.log(`Task prompt submitted after ${attempt} extra Enter(s)`);
+          return true;
+        }
+        if (!paneHoldsUnsubmittedPrompt(afterEnter, BACKEND)) break;
+      }
+      console.error(`Task prompt delivery unconfirmed for ${BACKEND} — widget blank, no turn started`);
+      return false;
+    } else if (delayedRenderPolls < PROMPT_SUBMIT_DELAYED_RENDER_POLLS) {
+      delayedRenderPolls++;
     }
     sleepMs(PROMPT_SUBMIT_RETRY_DELAY_MS);
-    if (!paneHoldsUnsubmittedPrompt(capturePaneText(), BACKEND)) {
-      console.log(`Task prompt submitted after ${attempt} extra Enter(s)`);
-      return true;
-    }
   }
   // Deliberately NOT a silent give-up, and deliberately not left for the
   // 30-minute lease to notice either. The prompt is still in the widget, so the
   // agent has been told nothing — say so at the moment it is known, and let the
   // chrome-idle veto turn the resulting empty pane into a FAILURE the hub
   // re-offers rather than the false completion #6717 reports.
-  console.error(`Task prompt could NOT be submitted to ${BACKEND} after ${PROMPT_SUBMIT_RETRIES} extra Enter(s) — the agent has not been given this task`);
+  console.error(`Task prompt delivery unconfirmed for ${BACKEND} — widget blank, no turn started`);
   return false;
 }
 
@@ -4270,10 +4334,9 @@ function confirmPromptSubmitted() {
 // returns before any of this is consulted.
 let promptDeliveryFingerprint = null;
 
-// False only once confirmPromptSubmitted() has SEEN the prompt stuck in the
-// input widget and failed to clear it. Default true so that every backend
-// whose widget rendering is unknown, and every path that never reaches the
-// send loop, behaves exactly as it did before #6717.
+// False once confirmPromptSubmitted() cannot find positive evidence that the
+// pasted prompt started a turn. Default true so paths that never reach the send
+// loop behave exactly as they did before #6717.
 let promptSubmissionConfirmed = true;
 
 function paneFingerprint(tmuxLines) {
@@ -4282,7 +4345,7 @@ function paneFingerprint(tmuxLines) {
 
 // paneChangedSinceDelivery reports whether the pane differs from the delivery
 // snapshot — i.e. whether ANY output has appeared since this task's prompt was
-// typed in.
+// pasted in.
 //
 // PURE, like paneChangedSince() next to it and for the same reason: it reads
 // the already-captured lines and never touches the destructive paneStalled()
@@ -4324,10 +4387,10 @@ function tmuxSendKeys(text) {
   // submitted nothing and left no delivery snapshot to compare a pane against.
   promptSubmissionConfirmed = true;
   promptDeliveryFingerprint = null;
-  // Hard gate (issue #2203, bug 2): `send-keys -l` types literal keystrokes
-  // into whatever owns the pane. If the CLI is not confirmed ready, those
-  // keystrokes land on bash, whose readline chokes on the apostrophes in the
-  // prompt and drops the pane into PS2 continuation, wedging it permanently.
+  // Hard gate (issue #2203, bug 2): task-prompt delivery writes into whatever
+  // owns the pane. If the CLI is not confirmed ready, the prompt lands on bash,
+  // whose readline chokes on the apostrophes in the prompt and drops the pane
+  // into PS2 continuation, wedging it permanently.
   // Queue instead; flushPendingTask() delivers it once readiness is confirmed.
   //
   // cliReady is a LATCH: set once the CLI is confirmed up, cleared only by a
@@ -4336,7 +4399,7 @@ function tmuxSendKeys(text) {
   // relaunched, the latch stayed true, and this gate waved the prompt straight
   // through into a bare shell — observed live, with the hub's task prompt
   // executing as shell commands. So re-confirm against the LIVE pane before
-  // typing; the per-backend readiness patterns already exist in getCLIState().
+  // delivery; the per-backend readiness patterns already exist in getCLIState().
   if (!cliReady) {
     console.log('CLI not ready — queuing task prompt instead of typing into the pane');
     queuePendingTask(text);
@@ -4432,6 +4495,7 @@ function tmuxSendKeys(text) {
     deliveredVerdictBaseline = priorVerdict ? priorVerdict.line : null;
     const MAX_SEND_RETRIES = 3;
     const RETRY_DELAY_MS = 10000;
+    const beforeDeliveryFingerprint = paneFingerprint(capturePaneText());
     let sent = false;
     for (let attempt = 1; attempt <= MAX_SEND_RETRIES; attempt++) {
       try {
@@ -4440,45 +4504,47 @@ function tmuxSendKeys(text) {
         execSync(`tmux send-keys -t ${TMUX_SESSION} C-a`, { timeout: 15000 });
         execSync(`tmux send-keys -t ${TMUX_SESSION} C-k`, { timeout: 15000 });
         sleepMs(200);
-        execSync(`tmux send-keys -t ${TMUX_SESSION} -l ${shellQuote(text)}`, { timeout: 30000 });
-        // #6717: settle before submitting. A task prompt is ~2 KB and arrives
-        // as one burst; a TUI with bracketed-paste handling is still ingesting
-        // it 300ms later, and an Enter that lands while the widget is in that
-        // state is taken as a newline INSIDE the pasted text instead of as
-        // submit. Waiting for the widget to finish is what makes the Enter a
-        // keypress. sleepMs() is a no-op under HIVE_RELAY_TEST_MODE, so this
-        // costs the test suite nothing.
-        sleepMs(PROMPT_PASTE_SETTLE_MS);
-        tmuxSendEnters();
-        console.log('Task prompt sent to CLI');
-        // #6717: "typed" is not "submitted". Check the pane and re-send Enter
-        // if the prompt is still collapsed in the input widget.
-        //
-        // taskPromptDelivered is set TRUE either way, on purpose. It answers
-        // #5650's question — "did these keystrokes reach the pane" — and they
-        // did; a false here would park the task on progressTick()'s
-        // no-judgement branch until the max-duration lease expired, silently,
-        // half an hour later. The unsubmitted case is instead reported as a
-        // FAILURE by the chrome-idle veto, which has the evidence to say so.
-        promptSubmissionConfirmed = confirmPromptSubmitted();
-        // The delivery snapshot, taken AFTER the submit attempts: everything
-        // the agent draws from here on changes it, and a pane still identical
-        // to it when the chrome-idle grace elapses has produced nothing at all.
-        promptDeliveryFingerprint = paneFingerprint(captureTmuxLines(TMUX_TAIL_LINES));
-        taskPromptDelivered = true;
+        // #9078: Codex task prompts are large enough for Codex to mishandle a
+        // raw `send-keys -l` burst as delayed/partial paste content. For that
+        // backend, tmux's paste-buffer -p path delivers one bracketed paste as
+        // argv data, with no shell interpolation of the prompt and no duplicate
+        // re-paste after this call succeeds. Other backends keep their existing
+        // literal path until their own panes demonstrate the same failure.
+        tmuxDeliverTaskPrompt(text);
         sent = true;
         break;
       } catch (e) {
-        console.error(`tmux send-keys attempt ${attempt}/${MAX_SEND_RETRIES} failed: ${e.message}`);
+        console.error(`tmux prompt paste attempt ${attempt}/${MAX_SEND_RETRIES} failed: ${e.message}`);
       }
       if (!sent && attempt < MAX_SEND_RETRIES) {
         console.log(`Waiting ${RETRY_DELAY_MS/1000}s before retry...`);
         sleepMs(RETRY_DELAY_MS);
       }
     }
-    if (!sent) console.error('All tmux send-keys attempts failed — task prompt lost');
+    if (!sent) {
+      console.error('All tmux prompt paste attempts failed — task prompt lost');
+      return;
+    }
+    // #6717/#9078: settle before submitting. sleepMs() is a no-op under
+    // HIVE_RELAY_TEST_MODE, so this costs the test suite nothing.
+    sleepMs(PROMPT_PASTE_SETTLE_MS);
+    try {
+      tmuxSendEnters();
+    } catch (e) {
+      console.error(`Submitting pasted task prompt failed: ${e.message}`);
+    }
+    console.log('Task prompt sent to CLI');
+    // "Pasted" is not "submitted". Check the pane for positive turn-start
+    // evidence; a blank widget is UNKNOWN rather than success, and a visible
+    // collapsed-paste placeholder gets only Enter retries, never a re-paste.
+    promptSubmissionConfirmed = confirmPromptSubmitted(beforeDeliveryFingerprint);
+    // The delivery snapshot, taken AFTER the submit attempts: everything the
+    // agent draws from here on changes it, and a pane still identical to it
+    // when the chrome-idle grace elapses has produced nothing at all.
+    promptDeliveryFingerprint = paneFingerprint(captureTmuxLines(TMUX_TAIL_LINES));
+    taskPromptDelivered = true;
   } catch (e) {
-    console.error('tmux send-keys failed:', e.message);
+    console.error('tmux prompt delivery failed:', e.message);
   }
 }
 
@@ -7399,12 +7465,14 @@ function progressTick() {
   const nothingEverRan = idleWithoutVerdict &&
     promptStillInWidget &&
     !paneChangedSinceDelivery(tmuxLines);
-  if (chromeIdleGraceElapsed && nothingEverRan) {
-    console.error(`Task ${currentTask.task_id}: the pane has been idle for ${chromeIdleTicks} checks with the task prompt still unsubmitted in the ${BACKEND} input widget and NO output since delivery — the agent never ran this task. Reporting it FAILED so the hub re-offers the issue (#6717).`);
+  const unconfirmedDeliveryGraceElapsed = chromeIdleGraceElapsed ||
+    (!promptSubmissionConfirmed && idleWithoutVerdict);
+  if (unconfirmedDeliveryGraceElapsed && nothingEverRan) {
+    console.error(`Task ${currentTask.task_id}: the pane has been idle for ${chromeIdleTicks} checks with task prompt delivery unconfirmed for ${BACKEND} and NO output since delivery — the agent never ran this task. Reporting it FAILED so the hub re-offers the issue (#6717/#9078).`);
     resetChromeIdleGrace();
     // 'environment': this client's own runtime failed to hand the work over.
     // The agent never saw the task, so nothing about the task itself failed.
-    failCurrentTask(`task prompt was never submitted to the ${BACKEND} CLI — it stayed collapsed in the input widget and the agent produced no output`, { kind: 'environment' });
+    failCurrentTask(`task prompt was never submitted/confirmed to the ${BACKEND} CLI — no turn-start evidence appeared and the agent produced no output`, { kind: 'environment' });
     return;
   }
 

@@ -616,13 +616,12 @@ function paneTail(text, n) {
 
 // ── An input widget still holding a prompt nobody submitted (#6717) ──────────
 //
-// The relay delivers a task prompt by typing it into the pane with
-// `tmux send-keys -l` and then sending Enter. A ~2 KB prompt arrives as one
-// burst, and a TUI that implements bracketed-paste handling classifies a burst
-// that fast as PASTED CONTENT: it collapses the blob to a placeholder in its
-// input widget and takes the newlines that follow as content INSIDE the paste
-// rather than as submit. The prompt then sits in the widget, unsent, and the
-// agent never runs.
+// The relay delivers a task prompt through tmux bracketed paste and then sends
+// Enter. Older builds typed the prompt with `tmux send-keys -l`; a TUI could
+// classify that fast burst as PASTED CONTENT, collapse the blob to a
+// placeholder in its input widget and take the newlines that followed as
+// content INSIDE the paste rather than as submit. The prompt then sat in the
+// widget, unsent, and the agent never ran.
 //
 // Observed live (#6717, codex-cli 0.154.0): the pane showed the launch banner,
 // no spinner, no tool rows, no assistant output at all, and an input line

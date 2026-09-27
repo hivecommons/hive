@@ -1,0 +1,1 @@
+- The contributor relay now delivers task prompts through tmux bracketed paste and requires turn-start evidence before treating Codex submission as confirmed, avoiding blank-widget stalls for long prompts ([#9078](https://github.com/hivecommons/hive/issues/9078)).

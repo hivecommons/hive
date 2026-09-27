@@ -237,9 +237,9 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
       if (args.includes('status')) return gitStatus;
       return '';
     }
-    if (bin === 'tmux' && args[0] === 'send-keys' && args.includes('-l')) {
+    if (bin === 'tmux') {
       if (commands.length < MAX_RECORDED_COMMANDS) commands.push(`tmux ${args.join(' ')}`);
-      if (failNextLiteralSend) {
+      if (args[0] === 'send-keys' && args.includes('-l') && failNextLiteralSend) {
         failNextLiteralSend = false;
         throw new Error('tmux: server exited unexpectedly');
       }
@@ -11704,6 +11704,111 @@ const CODEX_FINISHED_TURN_PANE = [
   '  gpt-5.6-luna max · ~/.local/state/hive/agent-cwd',
   '',
 ].join('\n');
+
+const CODEX_BLANK_WIDGET_PANE = [
+  'OpenAI Codex',
+  '',
+  '› Ask Codex to do anything',
+].join('\n');
+
+const CODEX_WORKING_PANE = [
+  'OpenAI Codex',
+  '• Working (3s • esc to interrupt)',
+  '› Ask Codex to do anything',
+].join('\n');
+
+function tmuxCalls(relay, name) {
+  return relay.__execFileSyncCalls.filter(c => c.bin === 'tmux' && c.args[0] === name);
+}
+
+test('#9078 task prompts are delivered with tmux bracketed paste buffers', () => {
+  let armed = false;
+  let captures = 0;
+  const relay = loadRelay({
+    backend: 'codex',
+    paneText: () => (!armed || captures++ < 2 ? CODEX_BLANK_WIDGET_PANE : CODEX_WORKING_PANE),
+  });
+  armed = true;
+  try {
+    relay.setCliReady(true);
+    const prompt = 'Reply exactly HIVE_PASTE_CHECK_OK. Inert padding: ' + 'padding '.repeat(850);
+    relay.tmuxSendKeys(prompt);
+
+    const setBuffers = tmuxCalls(relay, 'set-buffer');
+    const pastes = tmuxCalls(relay, 'paste-buffer');
+    const deletes = tmuxCalls(relay, 'delete-buffer');
+    assert.strictEqual(setBuffers.length, 1, 'one tmux buffer is populated for the task prompt');
+    assert.strictEqual(pastes.length, 1, 'one tmux paste is used for the task prompt');
+    assert.strictEqual(deletes.length, 1, 'the safety cleanup tries to delete the buffer');
+    const bufferName = setBuffers[0].args[2];
+    assert.match(bufferName, /^hive-task-prompt-\d+-\d+-\d+$/);
+    assert.deepStrictEqual(setBuffers[0].args.slice(0, 4), ['set-buffer', '-b', bufferName, '--']);
+    assert.strictEqual(setBuffers[0].args[4], prompt, 'prompt text is one argv element, never shell-interpolated');
+    assert.deepStrictEqual(pastes[0].args, ['paste-buffer', '-p', '-d', '-b', bufferName, '-t', 'contributor']);
+    assert.deepStrictEqual(deletes[0].args, ['delete-buffer', '-b', bufferName]);
+  } finally { teardown(relay); }
+});
+
+test('#9078 short task prompts use the same bracketed-paste path', () => {
+  const relay = loadRelay({ backend: 'codex', paneText: CODEX_WORKING_PANE });
+  try {
+    relay.setCliReady(true);
+    relay.tmuxSendKeys('short task prompt');
+    assert.strictEqual(tmuxCalls(relay, 'set-buffer').length, 1);
+    assert.strictEqual(tmuxCalls(relay, 'paste-buffer').length, 1);
+    assert.deepStrictEqual(relay.__tmuxSends().filter(c => / -l short task prompt/.test(c)), [],
+      'task prompt text must not be sent as a literal keystroke burst');
+  } finally { teardown(relay); }
+});
+
+test('#9078 a blank input widget is not treated as confirmed submission', () => {
+  const relay = loadRelay({ backend: 'codex', paneText: CODEX_BLANK_WIDGET_PANE });
+  try {
+    const before = relay.paneFingerprint(CODEX_BLANK_WIDGET_PANE);
+    assert.strictEqual(relay.confirmPromptSubmitted(before), false,
+      'absence of [Pasted Content] is submission unknown, not success');
+  } finally { teardown(relay); }
+});
+
+test('#9078 delayed pasted-content rendering still triggers the Enter retry path', () => {
+  let armed = false;
+  let captures = 0;
+  const relay = loadRelay({
+    backend: 'codex',
+    paneText: () => {
+      if (!armed) return CODEX_BLANK_WIDGET_PANE;
+      captures++;
+      if (captures === 1) return CODEX_BLANK_WIDGET_PANE;
+      if (captures === 2) return UNSUBMITTED_PASTE_PANE;
+      return CODEX_WORKING_PANE;
+    },
+  });
+  armed = true;
+  try {
+    const before = relay.__tmuxSends().filter(c => /send-keys .* Enter$/.test(c)).length;
+    assert.strictEqual(relay.confirmPromptSubmitted(relay.paneFingerprint(CODEX_BLANK_WIDGET_PANE)), true);
+    const after = relay.__tmuxSends().filter(c => /send-keys .* Enter$/.test(c)).length;
+    assert.strictEqual(after - before, 1, 'late placeholder rendering should get one extra Enter');
+  } finally { teardown(relay); }
+});
+
+test('#9078 turn-start evidence confirms submission', () => {
+  const relay = loadRelay({ backend: 'codex', paneText: CODEX_WORKING_PANE });
+  try {
+    assert.strictEqual(relay.confirmPromptSubmitted(relay.paneFingerprint(CODEX_BLANK_WIDGET_PANE)), true);
+  } finally { teardown(relay); }
+});
+
+test('#9078 Enter retries never duplicate the task prompt paste', () => {
+  const relay = loadRelay({ backend: 'codex', paneText: UNSUBMITTED_PASTE_PANE });
+  try {
+    relay.setCliReady(true);
+    relay.tmuxSendKeys('Reply exactly once. ' + 'padding '.repeat(700));
+    assert.strictEqual(tmuxCalls(relay, 'paste-buffer').length, 1,
+      'submit retries may send Enter, but must never re-paste the task prompt');
+    assert.strictEqual(relay.getPromptSubmissionConfirmed(), false);
+  } finally { teardown(relay); }
+});
 
 test('#6717 pane-classifier: a collapsed paste in the input widget is detectable, per backend', () => {
   assert.strictEqual(
