@@ -250,9 +250,9 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit \
 #
 # No credential is baked in: muse needs META_API_KEY in the environment or a
 # credential at $HOME/.config/muse/auth.json.
-ARG MUSE_VERSION=1.4.0-R4161.1
-ARG MUSE_SHA256_AMD64=1b68bd4518d53a2aaff063915df4d141b0a205e6d79038299d04e3a14e85a5b9
-ARG MUSE_SHA256_ARM64=38a0e3b7f59825ffc60f7fae65ac9727cf9bbb47fe4e687cc29cede9deb8fabf
+ARG MUSE_VERSION=1.4.0-R4302.1
+ARG MUSE_SHA256_AMD64=ad21c22965f8600b4473b4ab8354ff7cc483d4cb681b46f2952561d855c8ed86
+ARG MUSE_SHA256_ARM64=79cfba1b9e417b370bdb9154a546c524b7f32a34026e6164b6f3f122f0ea3386
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64|x86_64) MUSE_FILE=muse-x86-linux; MUSE_SHA256="$MUSE_SHA256_AMD64" ;; \
@@ -370,9 +370,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
 # API-key mode, so a fresh container still needs an operator to sign in
 # inside it (or a future credential-mount fix, see Justfile's `agy)` staging
 # case) before it can do unattended work.
-ARG AGY_VERSION=1.2.11-6016716732497920
-ARG AGY_SHA256_AMD64=c91c62c5e6fa954f5a7e1d7b9ad417d749db4aa60a4ba0b3d604dec1b645d190
-ARG AGY_SHA256_ARM64=01513bc61f9592353045ba801ebb407fbccb8984fcbfde591bc6b681b24e92bc
+ARG AGY_VERSION=1.2.12-5784551402897408
+ARG AGY_SHA256_AMD64=26c7c4c661d6c9beda734fcf305031056a6ea46e697c4533e8151179724e2950
+ARG AGY_SHA256_ARM64=bd338c9d19ab963d9d2bc027e4e797b470ea84bae02080e4fde4555357ea9444
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64) AGY_PLATFORM=linux-x64; AGY_TARBALL=cli_linux_x64.tar.gz; AGY_SHA256="$AGY_SHA256_AMD64" ;; \
@@ -422,9 +422,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
 # No credential is baked in: omp reads the selected model's provider
 # credential from its documented environment variables (ANTHROPIC_API_KEY,
 # OPENAI_API_KEY, …), which the Justfile's container arm already forwards.
-ARG OMP_VERSION=18.3.2
-ARG OMP_SHA256_AMD64=8cbbcd4bea7a7b86116a13352f31e3778fd4d93df931036bb1771738b0702534
-ARG OMP_SHA256_ARM64=f56f4775abbf269c481c78799691eaa59a7d69644fa7d592c775e2c65f7b13da
+ARG OMP_VERSION=18.3.4
+ARG OMP_SHA256_AMD64=e8d13ea8da6281f183108bc25ae94c4a1a5159a2072d188ea8c30bbfce4735b8
+ARG OMP_SHA256_ARM64=bb058d49dde5bb84e6f1b96aa798d7393d3bce1a6927392694e49120ba2c2619
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64) OMP_ASSET=omp-linux-x64; OMP_SHA256="$OMP_SHA256_AMD64" ;; \

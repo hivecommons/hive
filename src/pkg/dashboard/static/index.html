@@ -1504,6 +1504,22 @@
     .repo-legend-band-name { margin-right:var(--sp-2); }
     .repo-legend .repo-pr-band-title { margin:var(--sp-0) var(--sp-2) var(--sp-0) var(--sp-0); }
     .repo-legend .repo-issue-pill, .repo-legend .repo-pr-pill, .repo-legend .repo-issue-plan { display:inline-flex; align-items:center; gap:var(--sp-1); max-width:none; }
+    .repo-legend-v2 .repo-legend-body { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:var(--sp-3) var(--sp-6); }
+    .repo-legend-colors { grid-column:1 / -1; display:flex; flex-wrap:wrap; gap:var(--sp-4); color:var(--muted); font-size:var(--fs-xs); padding-bottom:var(--sp-2); border-bottom:1px solid var(--border); }
+    .repo-legend-color { display:inline-flex; align-items:center; gap:var(--sp-2); }
+    .repo-legend-swatch { width:10px; height:10px; border-radius:var(--r-pill); background:color-mix(in srgb, var(--legend-c) 35%, transparent); border:1px solid var(--legend-c); }
+    .repo-legend-swatch.needs-you { --legend-c:var(--status-attention); }
+    .repo-legend-swatch.in-progress { --legend-c:var(--yellow); }
+    .repo-legend-swatch.ready-done { --legend-c:var(--status-ok); }
+    .repo-legend-swatch.agent-filed { --legend-c:var(--purple); }
+    .repo-legend-swatch.held, .repo-legend-swatch.stale { --legend-c:var(--muted); }
+    .repo-legend-swatch.dashed { background:transparent; border-style:dashed; }
+    .repo-legend-color.dimmed { opacity:0.68; }
+    .repo-legend-group { display:flex; flex-direction:column; gap:var(--sp-2); }
+    .repo-legend-group-title { color:var(--muted); font-size:var(--fs-2xs); font-weight:800; letter-spacing:0.08em; text-transform:uppercase; }
+    .repo-legend-items { display:grid; grid-template-columns:max-content 1fr; gap:var(--sp-1) var(--sp-3); align-items:center; color:var(--muted); font-size:var(--fs-xs); }
+    .repo-legend-items .repo-issue-pill, .repo-legend-items .repo-pr-pill, .repo-legend-items .repo-issue-plan { display:inline-flex; align-items:center; gap:var(--sp-1); }
+    @media (max-width:640px) { .repo-legend-v2 .repo-legend-body { grid-template-columns:1fr; } }
     .repo-issue-band, .repo-pr-band { margin-bottom:var(--sp-2); }
     .repo-issue-band-title, .repo-pr-band-title { color:var(--muted); font-size:var(--fs-2xs); font-weight:800; letter-spacing:0.08em; text-transform:uppercase; margin:var(--sp-2) var(--sp-0) var(--sp-1); }
     .repo-issue-band-items, .repo-pr-band-items { display:flex; flex-direction:column; gap:var(--sp-2); }
@@ -9649,61 +9665,85 @@
       const el = document.getElementById('repos-legend');
       if (!el) return;
       const collapsed = isRepoLegendCollapsed();
-      el.className = 'repo-legend' + (collapsed ? ' collapsed' : '');
+      el.className = 'repo-legend repo-legend-v2' + (collapsed ? ' collapsed' : '');
       const cfg = repoIssueBandConfig();
-      // Band rows come from the same spec tables the cards and the Overview
-      // read, so the legend cannot name a band that no longer exists (#9019).
-      const issueBands = OVERVIEW_ISSUE_BAND_ORDER.map(band => {
+      const issueCaptions = {
+        ready: 'nobody on it — pick up or assign',
+        'in-progress': 'assigned to a human or agent',
+        'agent-filed': 'agent-filed, not yet acknowledged',
+        waiting: '⛔ blocked · ❓ needs a decision',
+        done: 'agent thinks it landed — confirm & close'
+      };
+      const issueBandLegendEntries = OVERVIEW_ISSUE_BAND_ORDER.map(band => {
         const spec = issueBandSpec(band);
-        return `<span class="repo-issue-pill${band === 'ready' ? '' : ' ' + band}" title="${esc(issueBandTip(band))}">${esc(spec.short)}</span><span class="repo-legend-band-name">${esc(spec.label)}</span>`;
-      }).join('');
-      const prBands = PR_BAND_ORDER.map(band => `<span class="repo-pr-band-title" title="${esc(prBandTip(band))}">${esc(prBandLabel(band))}</span>`).join('');
+        return {
+          cls: 'repo-issue-pill' + (band === 'ready' ? '' : ' ' + band),
+          glyph: band === 'in-progress' ? '👤' : (band === 'done' ? '✓' : ''),
+          label: spec.short,
+          caption: issueCaptions[band] || spec.label,
+          tip: issueBandTip(band)
+        };
+      });
+      const legendGroups = [
+        {
+          title: 'Issues — left chip is the band',
+          entries: issueBandLegendEntries.concat([
+            { cls: 'repo-issue-pill agent-filed', label: 'STRATEGIST', labelCls: 'pill-role', caption: 'role of the agent that filed it', tip: 'Filed by an agent; the badge names the agent role and the tooltip says whether a human has acknowledged it' }
+          ])
+        },
+        {
+          title: 'Pull requests — merge state',
+          entries: [
+            { cls: 'repo-pr-pill mergeable', glyph: '✓', glyphCls: 'pill-merge-icon', label: 'eligible', caption: 'sweep would merge now', tip: 'Merge-eligible on the sweep verdict' },
+            { cls: 'repo-pr-pill merge-outstanding', glyph: '◐', glyphCls: 'pill-merge-icon', label: 'outstanding', caption: 'mergeable, sweep still wants something', tip: 'GitHub says mergeable, but the sweep still wants something' },
+            { cls: 'repo-pr-pill needs-human pill-icon', glyph: '⚠', caption: 'fix attempts exhausted — review it', tip: 'Automated fix attempts exhausted — human review required' },
+            { cls: 'repo-pr-pill pill-icon', glyph: '⏸', caption: 'waiting on a human', tip: 'Held / waiting on a human' },
+            { cls: 'repo-pr-pill pill-icon', label: '✗ CI', caption: 'failing checks (hover lists them)', tip: 'Failing CI; tooltip lists failing checks' },
+            { cls: 'repo-pr-pill pill-icon', glyph: '⑂', caption: 'merge conflict', tip: 'Conflicts or not mergeable on GitHub' },
+            { cls: 'repo-pr-pill', label: 'FIX', labelCls: 'pill-class fix', caption: 'review class — FIX prioritized over FEAT/DOCS/…', tip: 'Review class badge: FIX is red; FEAT/TESTS/DOCS/REFACTOR show why the PR is prioritized' }
+          ]
+        },
+        {
+          title: 'Review, links & actions',
+          entries: [
+            { cls: 'repo-pr-pill pill-icon', glyph: '👍', caption: 'approved on GitHub', tip: 'Approved on GitHub; tooltip counts the approvals' },
+            { cls: 'repo-pr-pill pill-icon', glyph: '👎', caption: 'changes requested', tip: 'Changes requested on GitHub; tooltip names the reviewers' },
+            { cls: 'repo-pr-pill pill-icon', glyph: '👀', caption: 'approval required, not yet given', tip: 'Approving review required by branch protection and not yet given' },
+            { cls: 'repo-pr-pill pill-icon', glyph: '👥', caption: 'review requested from someone', tip: 'Review requested; tooltip lists the reviewers and teams' },
+            { cls: 'repo-pr-pill pill-reviewed pill-icon', glyph: '💬', caption: 'hive posted a review', tip: 'Hive review posted; opens the recorded review' },
+            { cls: 'repo-pr-pill pill-icon', label: '🗨 3', caption: 'comment / thread count', tip: 'Comments and review threads on GitHub' },
+            { cls: 'repo-issue-plan pill-icon', label: '🔗 #42', caption: 'on an issue: verified linked PR', tip: 'Verified linked pull request' },
+            { cls: 'repo-pr-pill pill-icon', label: '🔗 #42', caption: 'on a PR: issue it closes on merge', tip: 'Issue this PR closes on merge (GitHub closing reference); opens the issue' },
+            { cls: 'repo-issue-plan pill-icon plan-review', glyph: '📋 📐', label: '●', caption: 'plan · design · plan awaiting review', tip: 'Plan this issue (clipboard icon); Design this issue before planning (ruler icon); Plan awaiting human review' },
+            { cls: 'repo-pr-pill mergeable pill-icon', glyph: '🔀', caption: 'queued for auto-merge', tip: 'Queued for Hive auto-merge' }
+          ]
+        }
+      ];
+      const renderLegendPill = item => {
+        const glyph = item.glyph ? `<span${item.glyphCls ? ` class="${esc(item.glyphCls)}"` : ''}>${esc(item.glyph)}</span>` : '';
+        const label = item.label ? `<span${item.labelCls ? ` class="${esc(item.labelCls)}"` : ''}>${esc(item.label)}</span>` : '';
+        return `<span class="${esc(item.cls)}" title="${esc(item.tip)}">${glyph}${label}</span><span>${esc(item.caption)}</span>`;
+      };
+      const colorKey = [
+        { label: 'needs you', colorCls: 'needs-you' },
+        { label: 'in progress / outstanding', colorCls: 'in-progress' },
+        { label: 'ready / done', colorCls: 'ready-done' },
+        { label: 'agent-filed', colorCls: 'agent-filed' },
+        { label: 'held (agents skip it)', colorCls: 'held', dashed: true, tip: 'Held issue: grey dashed border; agents will not act until the hold label is removed' },
+        { label: `🕒 dimmed = no activity > ${cfg.staleDays}d`, colorCls: 'stale', dimmed: true, tip: `No activity for more than ${cfg.staleDays} days` }
+      ].map(item => `<span class="repo-legend-color${item.dimmed ? ' dimmed' : ''}"${item.tip ? ` title="${esc(item.tip)}"` : ''}><i class="repo-legend-swatch ${esc(item.colorCls)}${item.dashed ? ' dashed' : ''}"></i>${esc(item.label)}</span>`).join('');
+      const groups = legendGroups.map(group => `
+          <div class="repo-legend-group">
+            <div class="repo-legend-group-title">${esc(group.title)}</div>
+            <div class="repo-legend-items">${group.entries.map(renderLegendPill).join('')}</div>
+          </div>`).join('');
       setIfChanged(el, `
         <div class="repo-legend-head">
           <div class="repo-legend-title">Pill legend</div>
           <button class="repo-legend-toggle" data-action="toggleRepoLegend" data-stop="1" type="button" aria-expanded="${collapsed ? 'false' : 'true'}" title="${collapsed ? 'Show' : 'Hide'} the repository pill legend (remembered in this browser)">${collapsed ? 'show' : 'hide'}</button>
         </div>
         <div class="repo-legend-body">
-          <div class="repo-legend-row"><span class="repo-legend-row-label">Issue bands</span>${issueBands}</div>
-          <div class="repo-legend-row"><span class="repo-legend-row-label">Issues</span>
-            <span class="repo-issue-pill held" title="Held issue: grey dashed border; agents will not act until the hold label is removed">held</span>
-            <span class="repo-issue-pill waiting" title="Blocked label; the issue sits in the Needs human band"><span class="pill-state">⛔</span> blocked</span>
-            <span class="repo-issue-pill waiting" title="Needs a human decision before agents should continue"><span class="pill-state">❓</span> decision</span>
-            <span class="repo-issue-pill in-progress" title="Assigned or claimed by a human or agent"><span class="pill-state">👤</span> assigned/claimed</span>
-            <span class="repo-issue-pill" title="Filed by an agent; the badge names the agent role and the tooltip says whether a human has acknowledged it"><span class="pill-role">STRATEGIST</span> role</span>
-            <span class="repo-issue-pill done" title="An agent believes the work landed; the issue sits in the Confirm &amp; close band"><span class="pill-state">✓</span> done?</span>
-            <span class="repo-issue-pill stale" title="No activity for more than ${cfg.staleDays} days"><span class="pill-state">🕒</span> stale</span>
-            <span class="repo-issue-plan pill-icon" title="Verified linked pull request">🔗 #42</span>
-            <span class="repo-issue-plan pill-icon" title="Plan this issue (clipboard icon)">📋</span>
-            <span class="repo-issue-plan pill-icon" title="Design this issue before planning (ruler icon)">📐</span>
-            <span class="repo-issue-plan pill-icon plan-review" title="Plan awaiting human review">●</span>
-            <span class="repo-issue-pill pill-icon" title="Hold actionable item">⏸ Hold</span>
-            <span class="repo-issue-pill held pill-icon" title="Release held item">▶ Release</span>
-          </div>
-          <div class="repo-legend-row"><span class="repo-legend-row-label">PR bands</span>${prBands}</div>
-          <div class="repo-legend-row"><span class="repo-legend-row-label">PRs</span>
-            <span class="repo-pr-pill" title="Open PR with no merge verdict">open</span>
-            <span class="repo-pr-pill mergeable" title="Merge-eligible on the sweep verdict"><span class="pill-merge-icon">✓</span> eligible</span>
-            <span class="repo-pr-pill merge-outstanding" title="GitHub says mergeable, but the sweep still wants something"><span class="pill-merge-icon">◐</span> outstanding</span>
-            <span class="repo-pr-pill needs-human pill-icon" title="Automated fix attempts exhausted — human review required">⚠</span>
-            <span class="repo-pr-pill held" title="Held PR: grey dashed border">held</span>
-            <span class="repo-pr-pill pill-icon" title="Held / waiting on a human">⏸</span>
-            <span class="repo-pr-pill pill-icon" title="Failing CI; tooltip lists failing checks">✗ CI</span>
-            <span class="repo-pr-pill pill-icon" title="Conflicts or not mergeable on GitHub">⑂</span>
-            <span class="repo-pr-pill stale" title="No activity for more than ${cfg.staleDays} days"><span class="pill-state">🕒</span> stale</span>
-            <span class="repo-pr-pill" title="Agent-authored PR; badge names the agent role"><span class="pill-role">SCANNER</span> agent</span>
-            <span class="repo-pr-pill pill-reviewed pill-icon" title="Hive review posted; opens the recorded review">💬</span>
-            <span class="repo-pr-pill pill-icon" title="Approved on GitHub; tooltip counts the approvals">👍</span>
-            <span class="repo-pr-pill pill-icon" title="Changes requested on GitHub; tooltip names the reviewers">👎</span>
-            <span class="repo-pr-pill pill-icon" title="Approving review required by branch protection and not yet given">👀</span>
-            <span class="repo-pr-pill pill-icon" title="Review requested; tooltip lists the reviewers and teams">👥</span>
-            <span class="repo-pr-pill pill-icon" title="Comments and review threads on GitHub">🗨 3</span>
-            <span class="repo-pr-pill pill-icon" title="Issue this PR closes on merge (GitHub closing reference); opens the issue">🔗 #42</span>
-            <span class="repo-pr-pill mergeable pill-icon" title="Queued for Hive auto-merge">🔀</span>
-            <span class="repo-pr-pill pill-icon" title="Queue for auto-merge, or disabled when not mergeable on GitHub">🔀</span>
-            <span class="repo-pr-pill" title="Review class badge: FIX is red; FEAT/TESTS/DOCS/REFACTOR show why the PR is prioritized"><span class="pill-class fix">FIX</span> class</span>
-            <span class="repo-pr-pill" title="Row status badge: the left chip is the issue band or PR review class; actions are aligned in fixed slots">aligned row</span>
-          </div>
+          <div class="repo-legend-colors">${colorKey}</div>${groups}
         </div>`);
     }
 

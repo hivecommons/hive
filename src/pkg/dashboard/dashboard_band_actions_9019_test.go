@@ -17,9 +17,9 @@ func TestDashboardBandActionsStaticWiring9019(t *testing.T) {
 		"function issueBandSpec(band)",
 		"function prBandSpec(band)",
 		"agentFiled: !!role && !acknowledged",
-		// Legend band rows are generated from the spec tables, not hand-written.
-		"const issueBands = OVERVIEW_ISSUE_BAND_ORDER.map(band => {",
-		"const prBands = PR_BAND_ORDER.map(band => `<span class=\"repo-pr-band-title\" title=\"${esc(prBandTip(band))}\">",
+		// Legend issue-band pills are generated from the spec table, not hand-written.
+		"const issueBandLegendEntries = OVERVIEW_ISSUE_BAND_ORDER.map(band => {",
+		"tip: issueBandTip(band)",
 		// Repo-card band headers carry the rule.
 		`<div class="repo-issue-band-title" title="${esc(g.tip)}">`,
 		`<div class="repo-pr-band-title" title="${esc(g.tip)}">`,
@@ -38,7 +38,6 @@ func TestDashboardBandActionsStaticWiring9019(t *testing.T) {
 		"'Waiting on human'",
 		"'Ready'",
 		"'In progress'",
-		"agent-filed</span>",
 		"likely done</span>",
 		"Band: needs-human, held, or configured waiting labels",
 	} {
