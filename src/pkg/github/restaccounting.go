@@ -60,7 +60,7 @@ func restAccountingWrap(inner http.RoundTripper) http.RoundTripper {
 func (t *restAccountingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.inner.RoundTrip(req)
 	if resp != nil {
-		RecordRESTRequest("hive", req.Method, req.URL.Path, resp.StatusCode, resp.Header)
+		RecordRESTRequest(restCallerFromContext(req.Context()), req.Method, req.URL.Path, resp.StatusCode, resp.Header)
 	}
 	return resp, err
 }

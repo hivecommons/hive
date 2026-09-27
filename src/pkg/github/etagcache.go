@@ -130,7 +130,7 @@ func etagCacheWrap(inner http.RoundTripper) http.RoundTripper {
 // conditional request is free against the PRIMARY quota but is still a
 // request as far as the secondary (burst) limiter is concerned.
 func githubTransportChain(inner http.RoundTripper) http.RoundTripper {
-	return slowStartWrap(etagCacheWrap(restAccountingWrap(inner)))
+	return slowStartWrap(etagCacheWrap(rest404NegativeCacheWrap(restAccountingWrap(inner))))
 }
 
 // etagCacheKey identifies a cacheable representation: who asked, for what,

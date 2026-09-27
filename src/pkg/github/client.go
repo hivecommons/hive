@@ -1463,7 +1463,7 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 	// "mergeable"/"mergeable_state" — GitHub computes them per-PR and
 	// returns them only from this single-PR GET. On error we leave the
 	// field as MergeableUnknown rather than guessing.
-	if full, _, err := c.client.PullRequests.Get(ctx, owner, repoName, pr.Number); err != nil {
+	if full, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:enrich_pr_ci"), owner, repoName, pr.Number); err != nil {
 		c.logger.Warn("failed to fetch PR mergeability", "repo", pr.Repo, "pr", pr.Number, "error", err)
 	} else {
 		pr.Mergeable = mergeableFromState(full.GetMergeableState(), full.Mergeable)
@@ -1712,7 +1712,7 @@ func (c *Client) GetPRAuthor(ctx context.Context, repo string, number int) (stri
 		return "", ErrNoGitHubClient
 	}
 	owner, repoName := c.splitRepo(repo)
-	pr, _, err := c.client.PullRequests.Get(ctx, owner, repoName, number)
+	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:get_pr_author"), owner, repoName, number)
 	if err != nil {
 		return "", err
 	}
@@ -1735,7 +1735,7 @@ func (c *Client) GetPRState(ctx context.Context, repo string, number int) (PRSta
 		return PRState{}, ErrNoGitHubClient
 	}
 	owner, repoName := c.splitRepo(repo)
-	pr, _, err := c.client.PullRequests.Get(ctx, owner, repoName, number)
+	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:get_pr_state"), owner, repoName, number)
 	if err != nil {
 		return PRState{}, err
 	}
@@ -1761,7 +1761,7 @@ func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, 
 		return errors.New("queuedBy is required for auto-merge audit and self-merge checks")
 	}
 	owner, repoName := c.splitRepo(repo)
-	pr, _, err := c.client.PullRequests.Get(ctx, owner, repoName, number)
+	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:queue_pr_automerge"), owner, repoName, number)
 	if err != nil {
 		return fmt.Errorf("fetching PR head for auto-merge approval: %w", err)
 	}

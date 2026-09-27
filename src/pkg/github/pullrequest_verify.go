@@ -112,7 +112,7 @@ func (c *Client) VerifyReportedPR(ctx context.Context, expectedRepo, prURL, expe
 		return PRVerification{Reason: "unparseable PR URL: " + err.Error()}
 	}
 
-	pr, _, err := c.client.PullRequests.Get(ctx, ref.Owner, ref.Repo, ref.Number)
+	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:pullrequest_verify"), ref.Owner, ref.Repo, ref.Number)
 	if err != nil {
 		// Transient/permission/404 — fail CLOSED on trust, but surface Err so the
 		// caller logs it and treats the completion as unverified rather than

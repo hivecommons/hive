@@ -134,7 +134,7 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 	if owner == "" {
 		owner = c.org
 	}
-	pr, _, err := c.client.PullRequests.Get(ctx, owner, name, number)
+	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:merge_request_ci_gate"), owner, name, number)
 	if err != nil {
 		return mergeCIUnverified, "ci gate: fetching PR", fmt.Errorf("ci gate: fetching PR %s/%s#%d: %w", owner, name, number, err)
 	}

@@ -106,7 +106,7 @@ func (c *Client) verifyMergeRequestBaseProtected(ctx context.Context, repo strin
 		return ErrNoGitHubClient
 	}
 	owner, name := c.splitRepo(repo)
-	pr, _, err := c.client.PullRequests.Get(ctx, owner, name, number)
+	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:merge_request_base_protection"), owner, name, number)
 	if err != nil {
 		return fmt.Errorf("base branch protection: fetching PR %s/%s#%d: %w", owner, name, number, err)
 	}

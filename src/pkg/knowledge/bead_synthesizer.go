@@ -16,6 +16,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/beads"
+	hgithub "github.com/hivecommons/hive/pkg/github"
 )
 
 const (
@@ -868,7 +869,7 @@ func (e *PREnricher) fetchPR(ctx context.Context, owner, repo string, number int
 	}
 	e.mu.Unlock()
 
-	pr, resp, err := e.ghClient.PullRequests.Get(ctx, owner, repo, number)
+	pr, resp, err := e.ghClient.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:bead_synthesizer"), owner, repo, number)
 	if err != nil {
 		// Only a definitive 404 is a cacheable miss. A transient failure
 		// (rate limit, network) must stay retryable, or one bad window would
