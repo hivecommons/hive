@@ -2,14 +2,10 @@ package github
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"strings"
 	"time"
-
-	gh "github.com/google/go-github/v72/github"
 )
 
 const baseBranchProtectionCacheTTL = 5 * time.Minute
@@ -138,24 +134,24 @@ func (c *Client) verifyMergeRequestBaseProtected(ctx context.Context, repo strin
 		return fmt.Errorf("base branch %q has no branch protection; set auto_merge.allow_unprotected_base for this repo to override", base)
 	}
 
-	_, _, err = c.client.Repositories.GetBranchProtection(ctx, owner, name, base)
+	branch, _, err := c.client.Repositories.GetBranch(ctx, owner, name, base, 1)
 	if err != nil {
-		if isGitHubNotFound(err) {
-			c.cacheBaseBranchProtection(key, false, now)
-			if c.mergeRequestAllowsUnprotectedBase(repo) {
-				if c.logger != nil {
-					c.logger.Info("merge-request watcher: unprotected base branch opt-in allows merge",
-						slog.String("repo", repo), slog.Int("number", number),
-						slog.String("base", base), slog.String("config", "auto_merge.allow_unprotected_base"))
-				}
-				return nil
-			}
-			return fmt.Errorf("base branch %q has no branch protection; set auto_merge.allow_unprotected_base for this repo to override", base)
-		}
 		return fmt.Errorf("base branch protection: checking %s/%s@%s: %w", owner, name, base, err)
 	}
-	c.cacheBaseBranchProtection(key, true, now)
-	return nil
+	protected := branch.GetProtected()
+	c.cacheBaseBranchProtection(key, protected, now)
+	if protected {
+		return nil
+	}
+	if c.mergeRequestAllowsUnprotectedBase(repo) {
+		if c.logger != nil {
+			c.logger.Info("merge-request watcher: unprotected base branch opt-in allows merge",
+				slog.String("repo", repo), slog.Int("number", number),
+				slog.String("base", base), slog.String("config", "auto_merge.allow_unprotected_base"))
+		}
+		return nil
+	}
+	return fmt.Errorf("base branch %q has no branch protection; set auto_merge.allow_unprotected_base for this repo to override", base)
 }
 
 func (c *Client) cacheBaseBranchProtection(key string, protected bool, now time.Time) {
@@ -183,15 +179,4 @@ func (c *Client) cachedBaseBranchProtection(owner, repo, branch string) (bool, b
 		return false, false
 	}
 	return cached.protected, true
-}
-
-func isGitHubNotFound(err error) bool {
-	if errors.Is(err, gh.ErrBranchNotProtected) {
-		return true
-	}
-	var ghErr *gh.ErrorResponse
-	if errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusNotFound {
-		return true
-	}
-	return false
 }

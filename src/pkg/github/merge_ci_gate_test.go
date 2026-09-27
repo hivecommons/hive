@@ -31,6 +31,10 @@ type ciFixture struct {
 	// exercising the #6281 unprotected-base gate. Zero value (false) models
 	// the common protected base so pre-#6281 fixtures are unaffected.
 	baseUnprotected bool
+	// branchStatus, when non-zero, is the HTTP status for GET
+	// /branches/{branch}. It exercises fail-closed handling when the readable
+	// Branch.protected field cannot be fetched.
+	branchStatus int
 	// mergeStatus, when non-zero, is the HTTP status PUT /merge answers with
 	// (to exercise the GitHub-side refusal paths); zero merges successfully.
 	mergeStatus int
@@ -74,6 +78,11 @@ func (f *ciFixture) serveCI(w http.ResponseWriter, r *http.Request) bool {
 		}
 		enc(map[string]any{"number": n, "state": "open", "head": map[string]any{"sha": head}, "base": map[string]any{"ref": "main"}})
 	case strings.Contains(p, "/branches/") && !strings.Contains(p, "/protection"): // /repos/{o}/{r}/branches/{branch}
+		if f.branchStatus != 0 {
+			w.WriteHeader(f.branchStatus)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "branch unavailable"})
+			return true
+		}
 		enc(map[string]any{"name": p[strings.LastIndex(p, "/")+1:], "protected": !f.baseUnprotected})
 	case strings.HasSuffix(p, "/status"):
 		statuses := []map[string]string{}
@@ -328,7 +337,7 @@ func TestMergeCIGate_AllSuccessMerges(t *testing.T) {
 
 func TestMergeRequestBaseProtection_UnprotectedRefuses(t *testing.T) {
 	f := greenFixture()
-	f.branchProtectionStatus = http.StatusNotFound
+	f.baseUnprotected = true
 	var merges atomic.Int32
 	srv := ciGateServer(t, f, &merges)
 	defer srv.Close()
@@ -349,7 +358,7 @@ func TestMergeRequestBaseProtection_UnprotectedRefuses(t *testing.T) {
 
 func TestMergeRequestBaseProtection_AllowlistedRepoProceeds(t *testing.T) {
 	f := greenFixture()
-	f.branchProtectionStatus = http.StatusNotFound
+	f.baseUnprotected = true
 	var merges atomic.Int32
 	srv := ciGateServer(t, f, &merges)
 	defer srv.Close()
@@ -370,9 +379,9 @@ func TestMergeRequestBaseProtection_AllowlistedRepoProceeds(t *testing.T) {
 
 func TestMergeRequestBaseProtection_AllowlistedRepoStillRefusesFailingCI(t *testing.T) {
 	f := &ciFixture{
-		defaultHead:            "abc",
-		checks:                 []ciCheck{{"build", "completed", "failure"}},
-		branchProtectionStatus: http.StatusNotFound,
+		defaultHead:     "abc",
+		checks:          []ciCheck{{"build", "completed", "failure"}},
+		baseUnprotected: true,
 	}
 	var merges atomic.Int32
 	srv := ciGateServer(t, f, &merges)
@@ -394,7 +403,7 @@ func TestMergeRequestBaseProtection_AllowlistedRepoStillRefusesFailingCI(t *test
 
 func TestMergeRequestBaseProtection_APIErrorRefuses(t *testing.T) {
 	f := greenFixture()
-	f.branchProtectionStatus = http.StatusInternalServerError
+	f.branchStatus = http.StatusInternalServerError
 	var merges atomic.Int32
 	srv := ciGateServer(t, f, &merges)
 	defer srv.Close()
@@ -408,9 +417,9 @@ func TestMergeRequestBaseProtection_APIErrorRefuses(t *testing.T) {
 	}
 	resp := readMergeResult(t, reqPath)
 	if resp.OK || !strings.Contains(resp.Error, "base branch protection") {
-		t.Fatalf("expected fail-closed branch-protection API refusal, got %+v", resp)
+		t.Fatalf("expected fail-closed base branch API refusal, got %+v", resp)
 	}
-	mustExist(t, reqPath+".denied", "branch-protection API error request")
+	mustExist(t, reqPath+".denied", "base branch API error request")
 }
 
 // The production shape from #6173: every workflow concluded failure with
@@ -642,16 +651,10 @@ func TestMergeCIGate_UnprotectedBaseRefuses(t *testing.T) {
 		t.Fatalf("INVARIANT VIOLATED: merged into an unprotected base branch (%d PUT /merge calls)", got)
 	}
 	resp := readMergeResult(t, reqPath)
-	if resp.OK || resp.Attempts != 1 || !strings.Contains(resp.Error, "allow_unprotected_base") {
+	if resp.OK || resp.Attempts != 0 || !strings.Contains(resp.Error, "allow_unprotected_base") {
 		t.Fatalf("expected a refusal naming allow_unprotected_base, got %+v", resp)
 	}
-	if hooks := driveToExhaustion(t, c, reqPath); hooks != 0 {
-		t.Fatalf("unprotected-base refusal must not re-engage the fix loop, got %d calls", hooks)
-	}
-	if merges.Load() != 0 {
-		t.Fatalf("INVARIANT VIOLATED on retry: %d merges", merges.Load())
-	}
-	mustExist(t, reqPath+".exhausted", "unprotected-base request after retry budget")
+	mustExist(t, reqPath+".denied", "unprotected-base request")
 	mustNotExist(t, reqPath, "live request after exhaustion")
 }
 

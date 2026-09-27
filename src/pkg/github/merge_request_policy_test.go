@@ -11,8 +11,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	gh "github.com/google/go-github/v72/github"
 )
 
 func TestMergeRequestPolicyNilClientIsSafe(t *testing.T) {
@@ -54,17 +52,23 @@ func TestMergeRequestPolicyRepoSetsNormalizeAndClear(t *testing.T) {
 	}
 }
 
-func TestMergeRequestBaseProtectionCacheAvoidsRepeatedBranchProtectionLookup(t *testing.T) {
+func TestMergeRequestBaseProtectionCacheAvoidsRepeatedBranchLookup(t *testing.T) {
+	var branchCalls atomic.Int32
 	var protectionCalls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/42"):
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"number":42,"head":{"sha":"abc"},"base":{"ref":"main"}}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/branches/main"):
+			branchCalls.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "main", "protected": true})
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/branches/main/protection"):
 			protectionCalls.Add(1)
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"url": "protected"})
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "Resource not accessible by integration"})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -77,22 +81,48 @@ func TestMergeRequestBaseProtectionCacheAvoidsRepeatedBranchProtectionLookup(t *
 			t.Fatalf("verify protected base attempt %d: %v", i+1, err)
 		}
 	}
-	if got := protectionCalls.Load(); got != 1 {
-		t.Fatalf("branch protection should be cached, got %d lookups", got)
+	if got := branchCalls.Load(); got != 1 {
+		t.Fatalf("branch protection should be cached from branch lookup, got %d lookups", got)
+	}
+	if got := protectionCalls.Load(); got != 0 {
+		t.Fatalf("legacy branch-protection endpoint should not be called, got %d calls", got)
 	}
 	if protected, ok := c.cachedBaseBranchProtection("o", "r", "main"); !ok || !protected {
 		t.Fatalf("cachedBaseBranchProtection = (%v,%v), want (true,true)", protected, ok)
 	}
 }
 
-func TestMergeRequestBaseProtectionEmptyBaseAndSentinel(t *testing.T) {
-	if !isGitHubNotFound(gh.ErrBranchNotProtected) || isGitHubNotFound(errors.New("other")) {
-		t.Fatal("isGitHubNotFound should recognize only GitHub not-found/unprotected errors")
+func TestMergeRequestBaseProtectionUnprotectedBaseRequiresOptIn(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/42") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"number":42,"head":{"sha":"abc"},"base":{"ref":"main"}}`)
+			return
+		}
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/branches/main") {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "main", "protected": false})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := NewClientForTest(srv.URL, "o", []string{"r"}, nil)
+	if err := c.verifyMergeRequestBaseProtected(context.Background(), "o/r", 42); err == nil || !strings.Contains(err.Error(), "allow_unprotected_base") {
+		t.Fatalf("expected unprotected-base refusal, got %v", err)
 	}
-	if !isGitHubNotFound(&gh.ErrorResponse{Response: &http.Response{StatusCode: http.StatusNotFound}}) {
-		t.Fatal("isGitHubNotFound should recognize GitHub 404 responses")
+	if protected, ok := c.cachedBaseBranchProtection("o", "r", "main"); !ok || protected {
+		t.Fatalf("cachedBaseBranchProtection = (%v,%v), want (false,true)", protected, ok)
 	}
 
+	c.SetMergeRequestAllowUnprotectedBaseRepos(map[string]bool{"o/r": true})
+	if err := c.verifyMergeRequestBaseProtected(context.Background(), "o/r", 42); err != nil {
+		t.Fatalf("allow_unprotected_base should permit unprotected base, got %v", err)
+	}
+}
+
+func TestMergeRequestBaseProtectionEmptyBaseAndExpiredCache(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/42") {
 			w.Header().Set("Content-Type", "application/json")
@@ -107,7 +137,6 @@ func TestMergeRequestBaseProtectionEmptyBaseAndSentinel(t *testing.T) {
 	if err := c.verifyMergeRequestBaseProtected(context.Background(), "o/r", 42); err == nil || !strings.Contains(err.Error(), "no base branch") {
 		t.Fatalf("expected empty-base refusal, got %v", err)
 	}
-
 	c.cacheBaseBranchProtection("o/r:old", true, time.Now().Add(-2*baseBranchProtectionCacheTTL))
 	if protected, ok := c.cachedBaseBranchProtection("o", "r", "old"); ok || protected {
 		t.Fatalf("expired cachedBaseBranchProtection = (%v,%v), want (false,false)", protected, ok)
