@@ -137,15 +137,19 @@ type Service struct {
 	heartbeatInterval time.Duration
 	sseReconnectBase  time.Duration
 	sseReconnectMax   time.Duration
+	topicDebounce     time.Duration
 	personaStore      PersonaStore
 	personaLearning   func() persona.LearningConfig
 	audit             agentaudit.AuditSink
 	now               func() time.Time
 
-	msgQueue           chan msgItem
-	lastState          *statusSnapshot
-	lastRuns           map[string]runSnapshot
-	lastTopic          string
+	msgQueue  chan msgItem
+	lastState *statusSnapshot
+	lastRuns  map[string]runSnapshot
+	lastTopic string
+	// topicDirty wakes topicLoop after updateTopic records a new lastTopic;
+	// capacity 1 so bursts coalesce into a single debounced SetTopic.
+	topicDirty         chan struct{}
 	pendingInterviews  map[pendingInterviewKey]*pendingInterview
 	pendingPersonas    map[pendingPersonaKey]*pendingPersonaSetup
 	pendingCheckpoints map[pendingCheckpointKey]*pendingCheckpoint
@@ -198,11 +202,13 @@ func NewService(backend Backend, cfg Config, logger *slog.Logger) *Service {
 		heartbeatInterval:  heartbeatInterval,
 		sseReconnectBase:   sseReconnectBase,
 		sseReconnectMax:    sseReconnectMax,
+		topicDebounce:      topicDebounce,
 		personaStore:       personaStore,
 		personaLearning:    cfg.PersonaLearning,
 		audit:              cfg.AuditSink,
 		now:                time.Now,
 		msgQueue:           make(chan msgItem, 100),
+		topicDirty:         make(chan struct{}, 1),
 		pendingInterviews:  make(map[pendingInterviewKey]*pendingInterview),
 		pendingPersonas:    make(map[pendingPersonaKey]*pendingPersonaSetup),
 		pendingCheckpoints: make(map[pendingCheckpointKey]*pendingCheckpoint),
@@ -259,6 +265,7 @@ func (s *Service) Start(ctx context.Context) error {
 	go s.backend.Listen(ctx, func(msg Message) { s.Deliver(ctx, msg) })
 	go s.sseLoop(ctx)
 	go s.heartbeatLoop(ctx)
+	go s.topicLoop(ctx)
 
 	s.enqueue("⚙️ **[pipeline]** Hive v2 Discord bot online")
 	return nil

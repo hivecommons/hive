@@ -13,7 +13,7 @@ Common setup for chat surfaces:
   spine. Chat commands call dashboard endpoints such as `/api/status` and
   `/api/kick/<agent>` (`src/pkg/chat/dashboard.go:14-18`,
   `src/pkg/chat/dashboard.go:126-142`), and notification delivery comes from the
-  `/api/events` SSE stream (`src/pkg/chat/notify.go:85-124`).
+  `/api/events` SSE stream (`consumeSSE`, `src/pkg/chat/notify.go:99-140`).
 - Pick an allowlisted human ID for the target surface. The shared command router
   fails closed when `allowed_users` is empty and logs ignored commands from
   non-allowlisted users (`src/pkg/chat/router.go:44-60`).
@@ -24,7 +24,8 @@ Common setup for chat surfaces:
   the bot has started, such as pausing and resuming a non-critical agent from
   the dashboard. Valid notifications are the rendered `Working`, `Completed`,
   `Paused`, `Resumed`, `Off (cadence rule)`, or governor-mode-change messages
-  emitted from SSE snapshots (`src/pkg/chat/notify.go:150-212`).
+  emitted from SSE snapshots (`diffAgents`/`diffGovernor`,
+  `src/pkg/chat/notify.go:231-275`, `src/pkg/chat/notify.go:376-381`).
 - The command round-trip can be `!status` because it reads `/api/status` and
   returns a status message (`src/pkg/chat/dashboard.go:14-57`); `!kick <agent>
   readiness smoke` is also acceptable when the agent can safely be kicked.
@@ -117,7 +118,7 @@ Run:
 
 1. Restart or confirm the hive log contains `slack bot starting` and
    `chat service starting` (`src/pkg/slack/bot.go:124-130`,
-   `src/pkg/chat/chat.go:174-189`).
+   `Start`, `src/pkg/chat/chat.go:255-272`).
 2. In the configured Slack channel, send `!status`. Save the Slack message link
    or screenshot and the bot reply.
 3. Trigger one notification delivery by pausing/resuming an agent or inducing a
@@ -150,7 +151,7 @@ Prerequisites:
 Run:
 
 1. Confirm the hive log has `discord bot starting` and `chat service starting`
-   (`src/pkg/discord/bot.go:92-99`, `src/pkg/chat/chat.go:174-189`).
+   (`src/pkg/discord/bot.go:92-99`, `Start`, `src/pkg/chat/chat.go:255-272`).
 2. In the configured channel, send `!status`; save the Discord message link or
    screenshot and the bot reply.
 3. Trigger one notification delivery by pausing/resuming an agent or waiting for
@@ -158,7 +159,7 @@ Run:
 4. Induce one safe disconnect and recovery observation. Prefer briefly
    interrupting the dashboard SSE connection, because the shared spine logs
    `discord SSE disconnected` and backs off before reconnecting
-   (`src/pkg/chat/notify.go:46-81`). If you instead interrupt Discord REST,
+   (`sseLoop`, `src/pkg/chat/notify.go:61-97`). If you instead interrupt Discord REST,
    save the `discord poll failed` log line and the later successful command or
    notification proving recovery (`src/pkg/discord/bot.go:179-195`).
 

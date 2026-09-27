@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	topicDebounceMS  = 5000
+	topicDebounce    = 5 * time.Second
 	sseReconnectBase = 5 * time.Second
 	sseReconnectMax  = 60 * time.Second
 )
@@ -24,6 +24,14 @@ type statusSnapshot struct {
 	Budget    budgetSnapshot    `json:"budget"`
 	Inception inceptionSnapshot `json:"inception"`
 	Runs      runSnapshotList   `json:"runs"`
+}
+
+// agentStatusSnapshot is the payload of an `event: agent-status` frame
+// (dashboard.AgentStatusPayload): agents plus govMode, broadcast every agent
+// poll. It carries no governor/inception/runs fields, so it must never be
+// decoded as a statusSnapshot (#9122).
+type agentStatusSnapshot struct {
+	Agents []agentSnapshot `json:"agents"`
 }
 
 type agentSnapshot struct {
@@ -121,22 +129,46 @@ func (s *Service) consumeSSE(ctx context.Context) (bool, error) {
 				if idx < 0 {
 					break
 				}
-				block := buffer[:idx]
+				s.handleSSEFrame(buffer[:idx])
 				buffer = buffer[idx+2:]
-
-				for _, line := range strings.Split(block, "\n") {
-					if strings.HasPrefix(line, "data:") {
-						payload := strings.TrimSpace(line[5:])
-						var snap statusSnapshot
-						if json.Unmarshal([]byte(payload), &snap) == nil {
-							s.onSSEEvent(&snap)
-						}
-					}
-				}
 			}
 		}
 		if err != nil {
 			return true, err
+		}
+	}
+}
+
+// handleSSEFrame routes one SSE frame by its event name. The dashboard emits
+// two kinds on /api/events: unnamed full-status frames every eval cycle and
+// `event: agent-status` frames every agent poll. Decoding the latter as a
+// full status blanks Governor/Inception/Runs between eval cycles (#9122).
+func (s *Service) handleSSEFrame(block string) {
+	event := ""
+	var data []string
+	for _, line := range strings.Split(block, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		switch {
+		case strings.HasPrefix(line, "event:"):
+			event = strings.TrimSpace(line[6:])
+		case strings.HasPrefix(line, "data:"):
+			data = append(data, strings.TrimSpace(line[5:]))
+		}
+	}
+	if len(data) == 0 {
+		return
+	}
+	payload := []byte(strings.Join(data, "\n"))
+	switch event {
+	case "", "message":
+		var snap statusSnapshot
+		if json.Unmarshal(payload, &snap) == nil {
+			s.onSSEEvent(&snap)
+		}
+	case "agent-status":
+		var status agentStatusSnapshot
+		if json.Unmarshal(payload, &status) == nil {
+			s.onAgentStatusEvent(&status)
 		}
 	}
 }
@@ -173,6 +205,27 @@ func (s *Service) onSSEEvent(snap *statusSnapshot) {
 		s.syncRunsFromSSE(context.Background())
 	}
 	s.updateTopic(snap)
+}
+
+// onAgentStatusEvent applies an agent-status frame: agent transitions are
+// announced and the cached agent list refreshed so the next full frame does
+// not announce them again. Governor, inception, runs and the channel topic
+// are owned by full frames, the only frames that carry those fields. Frames
+// before the first full frame are dropped: the dashboard replays a full
+// frame on connect, and diffing against nothing would announce every agent.
+func (s *Service) onAgentStatusEvent(status *agentStatusSnapshot) {
+	s.mu.Lock()
+	prev := s.lastState
+	if prev == nil {
+		s.mu.Unlock()
+		return
+	}
+	cur := *prev
+	cur.Agents = status.Agents
+	s.lastState = &cur
+	s.mu.Unlock()
+
+	s.diffAgents(prev, &cur)
 }
 
 func (s *Service) diffAgents(prev, cur *statusSnapshot) {
@@ -355,12 +408,39 @@ func (s *Service) updateTopic(snap *statusSnapshot) {
 	s.mu.Unlock()
 
 	if changed {
-		go func() {
-			time.Sleep(time.Duration(topicDebounceMS) * time.Millisecond)
-			if err := s.backend.SetTopic(topic); err != nil {
-				s.logger.Debug("topic update failed", "error", err)
-			}
-		}()
+		select {
+		case s.topicDirty <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// topicLoop applies lastTopic to the backend at most once per topicDebounce
+// window: a burst of changes wakes it once, it sleeps out the window, then
+// pushes whatever topic is latest. Cancelling ctx drops a pending update.
+func (s *Service) topicLoop(ctx context.Context) {
+	applied := ""
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.topicDirty:
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(s.topicDebounce):
+		}
+		s.mu.RLock()
+		topic := s.lastTopic
+		s.mu.RUnlock()
+		if topic == applied {
+			continue
+		}
+		if err := s.backend.SetTopic(topic); err != nil {
+			s.logger.Debug("topic update failed", "error", err)
+		}
+		applied = topic
 	}
 }
 
