@@ -1,0 +1,1 @@
+- Chat spine SSE consumer now honours `event:` names — partial `agent-status` frames diff agents against the last full snapshot instead of being parsed as full state — runs ioscan once per outbound message with the blocked-drop path audited, and tears down silent SSE streams via an idle watchdog so a dead dashboard connection reconnects instead of hanging forever.

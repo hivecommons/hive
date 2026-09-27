@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 func fullFrame(t *testing.T, busy, mode, phase string) string {
@@ -73,7 +75,11 @@ func TestHandleSSEBlock_AgentStatusPreservesFullState(t *testing.T) {
 		t.Fatalf("full-frame state lost: %+v", st)
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	testutil.Eventually(t, 2*time.Second, func() bool {
+		backend.mu.Lock()
+		defer backend.mu.Unlock()
+		return len(backend.topics) == 1
+	}, "debounced SetTopic never fired")
 	backend.mu.Lock()
 	topics := append([]string(nil), backend.topics...)
 	backend.mu.Unlock()
@@ -110,7 +116,11 @@ func TestUpdateTopic_DebounceLatestWins(t *testing.T) {
 	for _, mode := range []string{"a", "b", "c"} {
 		s.updateTopic(&statusSnapshot{Governor: governorSnapshot{Mode: mode}})
 	}
-	time.Sleep(100 * time.Millisecond)
+	testutil.Eventually(t, 2*time.Second, func() bool {
+		backend.mu.Lock()
+		defer backend.mu.Unlock()
+		return len(backend.topics) == 1
+	}, "debounced SetTopic never fired")
 	backend.mu.Lock()
 	topics := append([]string(nil), backend.topics...)
 	backend.mu.Unlock()
@@ -120,7 +130,9 @@ func TestUpdateTopic_DebounceLatestWins(t *testing.T) {
 
 	s.updateTopic(&statusSnapshot{Governor: governorSnapshot{Mode: "d"}})
 	s.stopTopicTimer()
-	time.Sleep(50 * time.Millisecond)
+	// Deliberate negative wait: the debounce is 20ms, so give a stopped timer
+	// more than one debounce window to (wrongly) fire before asserting silence.
+	<-time.After(50 * time.Millisecond)
 	backend.mu.Lock()
 	defer backend.mu.Unlock()
 	if len(backend.topics) != 1 {
