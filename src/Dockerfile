@@ -372,9 +372,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
 # credential at $HOME/.config/muse/auth.json seeded by an operator
 # (`muse login` / `muse auth set --api-key-stdin`). The image supplies only the
 # binary, exactly as the agy layer does for Google OAuth.
-ARG MUSE_VERSION=1.4.0-R4161.1
-ARG MUSE_SHA256_AMD64=1b68bd4518d53a2aaff063915df4d141b0a205e6d79038299d04e3a14e85a5b9
-ARG MUSE_SHA256_ARM64=38a0e3b7f59825ffc60f7fae65ac9727cf9bbb47fe4e687cc29cede9deb8fabf
+ARG MUSE_VERSION=1.4.0-R4302.1
+ARG MUSE_SHA256_AMD64=ad21c22965f8600b4473b4ab8354ff7cc483d4cb681b46f2952561d855c8ed86
+ARG MUSE_SHA256_ARM64=79cfba1b9e417b370bdb9154a546c524b7f32a34026e6164b6f3f122f0ea3386
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64|x86_64) MUSE_FILE=muse-x86-linux; MUSE_SHA256="$MUSE_SHA256_AMD64" ;; \
