@@ -4237,7 +4237,9 @@ function tmuxPasteTaskPrompt(text) {
   const bufferName = tmuxTaskPromptBufferName();
   let bufferSet = false;
   try {
-    execFileSync('tmux', ['set-buffer', '-b', bufferName, '--', text], { timeout: 30000 });
+    // load-buffer from stdin, not set-buffer argv: the prompt is not subject to
+    // the kernel's per-argument length limit and never touches a shell.
+    execFileSync('tmux', ['load-buffer', '-b', bufferName, '-'], { input: text, timeout: 30000 });
     bufferSet = true;
     execFileSync('tmux', ['paste-buffer', '-p', '-d', '-b', bufferName, '-t', TMUX_SESSION], { timeout: 30000 });
   } finally {

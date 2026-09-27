@@ -11734,16 +11734,17 @@ test('#9078 task prompts are delivered with tmux bracketed paste buffers', () =>
     const prompt = 'Reply exactly HIVE_PASTE_CHECK_OK. Inert padding: ' + 'padding '.repeat(850);
     relay.tmuxSendKeys(prompt);
 
-    const setBuffers = tmuxCalls(relay, 'set-buffer');
+    const loads = tmuxCalls(relay, 'load-buffer');
     const pastes = tmuxCalls(relay, 'paste-buffer');
     const deletes = tmuxCalls(relay, 'delete-buffer');
-    assert.strictEqual(setBuffers.length, 1, 'one tmux buffer is populated for the task prompt');
+    assert.strictEqual(loads.length, 1, 'one tmux buffer is populated for the task prompt');
     assert.strictEqual(pastes.length, 1, 'one tmux paste is used for the task prompt');
     assert.strictEqual(deletes.length, 1, 'the safety cleanup tries to delete the buffer');
-    const bufferName = setBuffers[0].args[2];
+    const bufferName = loads[0].args[2];
     assert.match(bufferName, /^hive-task-prompt-\d+-\d+-\d+$/);
-    assert.deepStrictEqual(setBuffers[0].args.slice(0, 4), ['set-buffer', '-b', bufferName, '--']);
-    assert.strictEqual(setBuffers[0].args[4], prompt, 'prompt text is one argv element, never shell-interpolated');
+    assert.deepStrictEqual(loads[0].args, ['load-buffer', '-b', bufferName, '-'],
+      'buffer is loaded from stdin, never from argv or a shell string');
+    assert.strictEqual(loads[0].opts && loads[0].opts.input, prompt, 'prompt text is piped on stdin byte-for-byte');
     assert.deepStrictEqual(pastes[0].args, ['paste-buffer', '-p', '-d', '-b', bufferName, '-t', 'contributor']);
     assert.deepStrictEqual(deletes[0].args, ['delete-buffer', '-b', bufferName]);
   } finally { teardown(relay); }
@@ -11754,11 +11755,34 @@ test('#9078 short task prompts use the same bracketed-paste path', () => {
   try {
     relay.setCliReady(true);
     relay.tmuxSendKeys('short task prompt');
-    assert.strictEqual(tmuxCalls(relay, 'set-buffer').length, 1);
+    assert.strictEqual(tmuxCalls(relay, 'load-buffer').length, 1);
     assert.strictEqual(tmuxCalls(relay, 'paste-buffer').length, 1);
     assert.deepStrictEqual(relay.__tmuxSends().filter(c => / -l short task prompt/.test(c)), [],
       'task prompt text must not be sent as a literal keystroke burst');
   } finally { teardown(relay); }
+});
+
+// #9082: tmux capture-pane -p pads to the pane height. A codex turn that is
+// in flight renders "esc to interrupt" near the top of a tall pane, so a raw
+// slice(-15) window is blank padding and the busy marker is never seen.
+const CODEX_WORKING_PANE_50_ROW_CAPTURE = [
+  'OpenAI Codex',
+  '• Running gh issue view 9082',
+  '• Working (12s • esc to interrupt)',
+  '',
+  '› Ask Codex to do anything',
+  ...Array.from({ length: 45 }, () => ''),
+].join('\n');
+
+test('#9082 a 50-row codex capture with "esc to interrupt" above a blank last-15-rows tail is WORKING', () => {
+  const rows = CODEX_WORKING_PANE_50_ROW_CAPTURE.split('\n');
+  assert.strictEqual(rows.length, 50, 'fixture must model the real 50-row pane geometry');
+  assert.strictEqual(rows.slice(-15).every((r) => r.trim() === ''), true,
+    'the raw last-15-rows window must be blank padding');
+  assert.strictEqual(
+    paneClassifier.classifyPane(CODEX_WORKING_PANE_50_ROW_CAPTURE, 'codex'),
+    paneClassifier.PANE_STATE_WORKING,
+    'an in-flight codex turn whose status row sits above blank tmux padding must stay WORKING, not be booked idle');
 });
 
 test('#9078 a blank input widget is not treated as confirmed submission', () => {

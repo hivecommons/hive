@@ -21,7 +21,7 @@ tmux set-option -t "$session" history-limit 20000 >/dev/null
 send_and_assert() {
   local label="$1"
   local text="$2"
-  tmux set-buffer -b "$buffer" -- "$text"
+  printf %s "$text" | tmux load-buffer -b "$buffer" -
   tmux paste-buffer -p -d -b "$buffer" -t "$session"
   sleep 1
   local pane

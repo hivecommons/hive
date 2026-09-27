@@ -833,7 +833,14 @@ function classifyPane(text, backend, deps = {}) {
     // Codex retains prior tool rows in its long-lived pane.  Scope transient
     // activity words to the tail so an old "Running" row cannot pin a
     // completed turn in WORKING forever.
-    const codexTail = text.split('\n').slice(-15).join('\n');
+    //
+    // paneTail (non-blank tail), not a raw slice(-15): tmux capture-pane -p
+    // pads to the pane's full height, so on a tall pane with a short transcript
+    // the last 15 raw rows are blank padding and "esc to interrupt" (rendered
+    // near the top) is never seen — an in-flight turn is booked idle, the relay
+    // types into a busy pane, and the turn is interrupted. Same defect as
+    // #6413/#6438 for agy; surfaced for codex by #9082.
+    const codexTail = paneTail(text, 15);
     // Same marker mismatch as getCLIState(): '›' (U+203A), not '>'.
     hasIdlePrompt = /codex>|›|>\s*$/.test(text);
     // Not a prose match. codex writes its own completion summary in whatever

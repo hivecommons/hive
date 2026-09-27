@@ -802,13 +802,13 @@ The hub books the issue for the full with-PR cooldown immediately and records a 
 
 ### A prompt that was pasted is not a prompt that was submitted
 
-The relay delivers a task prompt by storing it in a uniquely named tmux buffer (`tmux set-buffer -b … -- <prompt>`) and pasting it with bracketed paste (`tmux paste-buffer -p -d …`) before sending Enter. The older `tmux send-keys -l` path sent a task-sized prompt as one raw keystroke burst, and a TUI that implements bracketed-paste handling could classify a burst that fast as **pasted content**. codex collapsed it to `[Pasted Content 1024 chars]` in its input widget and took the Enters that followed as newlines *inside* the paste rather than as submit. The prompt sat in the widget, and the agent was never told anything.
+The relay delivers a task prompt by storing it in a uniquely named tmux buffer (`tmux load-buffer -b … -`, prompt piped on stdin) and pasting it with bracketed paste (`tmux paste-buffer -p -d …`) before sending Enter. The older `tmux send-keys -l` path sent a task-sized prompt as one raw keystroke burst, and a TUI that implements bracketed-paste handling could classify a burst that fast as **pasted content**. codex collapsed it to `[Pasted Content 1024 chars]` in its input widget and took the Enters that followed as newlines *inside* the paste rather than as submit. The prompt sat in the widget, and the agent was never told anything.
 
 Observed live ([#6717](https://github.com/hivecommons/hive/issues/6717), codex-cli 0.154.0): the pane showed the launch banner, the collapsed prompt on the input line, no spinner, no tool rows and no assistant output at all, byte-identical across two consecutive five-minute checks. The relay logged `Task prompt sent to CLI` and, eight minutes later, `completed — signal=chrome_idle`. The hub booked the issue **done** with no commit, no branch and no PR, and it left `/api/contribute/queue`.
 
 `ENTER_COUNT = 3` is not the lever: the problem is not a dropped keystroke but a widget consuming newlines as content, and three are consumed exactly as one is. Three things changed instead.
 
-1. **Use bracketed paste for the prompt.** The prompt text is passed as one `execFileSync()` argv element to `tmux set-buffer`, never shell-interpolated, and `paste-buffer -p -d` deletes the tmux buffer after delivery (with a best-effort cleanup fallback).
+1. **Use bracketed paste for the prompt.** The prompt text is piped on stdin to `tmux load-buffer` via `execFileSync()`, never shell-interpolated and never subject to the per-argument length limit, and `paste-buffer -p -d` deletes the tmux buffer after delivery (with a best-effort cleanup fallback).
 2. **Settle before submitting.** The send path still waits for the widget to finish ingesting the paste before the Enter goes out, so the Enter is a keypress and not pasted text.
 3. **Verify that a turn started.** It then re-reads the pane and looks for positive evidence that the CLI accepted the prompt: working chrome, a tool row, an echoed prompt, or another non-idle change from the pre-delivery pane. A blank input widget with no activity is `submission unknown`, not success. If `[Pasted Content …]` appears after the first check, the relay re-sends Enter up to the existing small budget; it never re-pastes the prompt.
 4. **`chrome_idle` may not complete a task that never started.** The fallback infers "the agent finished" from a pane that stopped changing, and that inference had one premise it never checked: that the agent *started*. When prompt submission is unconfirmed or visibly unsubmitted **and** the pane has not changed by a single byte since delivery, the task is reported `task_failed` with `failure_kind: environment` — so the hub re-offers the issue — instead of `task_complete`, which parks it as finished.
@@ -819,7 +819,7 @@ The placeholder rendering is recorded **per backend, and only where a real captu
 
 Finally, a `chrome_idle` completion carrying **neither** a verdict **nor** a PR is now logged as a warning. It is not always wrong — an agent that found nothing to do but never printed the sentinel lands there too — but it is the shape this bug takes, and nothing in the pane shows what such a task produced.
 
-For a real tmux transport smoke test outside CI, run `bin/relay-paste-smoke.sh` on a host with tmux installed. It starts a disposable tmux session running `cat -A`, sends both a short and task-sized prompt via the same `set-buffer`/`paste-buffer -p -d` sequence, and verifies the pane received the bytes intact.
+For a real tmux transport smoke test outside CI, run `bin/relay-paste-smoke.sh` on a host with tmux installed. It starts a disposable tmux session running `cat -A`, sends both a short and task-sized prompt via the same `load-buffer`/`paste-buffer -p -d` sequence, and verifies the pane received the bytes intact.
 
 ### Review notes that land after the verdict get one more turn
 
