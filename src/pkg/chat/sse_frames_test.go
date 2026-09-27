@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // sseFullFrame renders an unnamed (full status) SSE frame as the dashboard
@@ -127,20 +129,19 @@ func TestConsumeSSE_AgentStatusFrameDoesNotWipeFullState(t *testing.T) {
 		t.Fatalf("owner plain reply posted %d answers, want 1", got)
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
-	for {
+	testutil.Eventually(t, 2*time.Second, func() bool {
 		backend.mu.Lock()
 		topics := append([]string(nil), backend.topics...)
 		backend.mu.Unlock()
-		if len(topics) == 1 && strings.Contains(topics[0], "busy · 1i 0pr") {
-			break
-		}
-		if time.Now().After(deadline) || len(topics) > 1 {
+		if len(topics) > 1 {
 			t.Fatalf("SetTopic calls = %#v, want exactly one for the busy state", topics)
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	time.Sleep(4 * s.topicDebounce)
+		return len(topics) == 1 && strings.Contains(topics[0], "busy · 1i 0pr")
+	}, "topic never settled to the busy state")
+
+	// Deliberate negative wait: confirm the debounce doesn't fire a second
+	// SetTopic once its window has closed.
+	<-time.After(4 * s.topicDebounce)
 	backend.mu.Lock()
 	final := len(backend.topics)
 	backend.mu.Unlock()
@@ -209,22 +210,18 @@ func TestTopicLoop_LatestWinsAndStopsOnCancel(t *testing.T) {
 		s.updateTopic(&statusSnapshot{Agents: []agentSnapshot{{Name: "scanner", Busy: "idle"}}, Governor: governorSnapshot{Mode: mode}})
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
-	for {
+	testutil.Eventually(t, 2*time.Second, func() bool {
 		backend.mu.Lock()
 		topics := append([]string(nil), backend.topics...)
 		backend.mu.Unlock()
-		if len(topics) > 0 {
-			if len(topics) != 1 || !strings.Contains(topics[0], "busy") {
-				t.Fatalf("SetTopic calls = %#v, want one call with the latest topic", topics)
-			}
-			break
+		if len(topics) == 0 {
+			return false
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("debounced SetTopic never fired")
+		if len(topics) != 1 || !strings.Contains(topics[0], "busy") {
+			t.Fatalf("SetTopic calls = %#v, want one call with the latest topic", topics)
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
+		return true
+	}, "debounced SetTopic never fired")
 
 	// A change queued and then cancelled before the debounce elapses must not
 	// reach the backend.
@@ -235,7 +232,9 @@ func TestTopicLoop_LatestWinsAndStopsOnCancel(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("topicLoop did not exit after cancellation")
 	}
-	time.Sleep(3 * s.topicDebounce)
+	// Deliberate negative wait: cancellation must drop the queued update
+	// instead of firing it after the debounce window closes.
+	<-time.After(3 * s.topicDebounce)
 	backend.mu.Lock()
 	final := len(backend.topics)
 	backend.mu.Unlock()
