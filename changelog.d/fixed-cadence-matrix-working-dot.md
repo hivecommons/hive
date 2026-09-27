@@ -1,0 +1,1 @@
+- Cadence matrix no longer shows a green working dot for an agent that is paused or has no cadence in the current mode; the active-mode cell reads "no cadence" to match the row badge.

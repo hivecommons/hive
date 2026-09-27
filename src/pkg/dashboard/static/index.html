@@ -9187,21 +9187,29 @@
         const row = matrix.find(r => r.agent === aname);
         if (!row) return '';
         const agentData = agents.find(a => a.name === aname);
-        const isWorking = agentData && agentData.busy === 'working';
         // Manual/persisted pause wins over offByCadence (matches the card/
         // sidebar/detail renderers) — the row badge must say "paused", not
         // "off", when the operator paused the agent.
         const agentPaused = agentData && agentData.paused === true;
         const agentOff = agentData && agentData.offByCadence === true && !agentPaused;
         const agentOnDemand = agentData && agentData.onDemand === true;
+        // The green "working" dot means "the governor is running this agent
+        // on schedule". An agent that is paused or has no cadence in the
+        // current mode is NOT supposed to be running, so a lingering busy
+        // flag (a run kicked before the mode/pack change, or a stale summary)
+        // must not paint it green — that read as "L6 is kicking operations".
+        // Same rule the sidebar/card renderers apply via isRunning.
+        const isWorking = !!(agentData && agentData.busy === 'working' && !agentPaused && !agentOff);
         const cells = modes.map(m => {
           const val = row[m] || '?';
           const tip = row[`${m}Title`] || `Click to adjust ${aname} ${m} cadence`;
           const isActive = m === currentMode;
           const isOff = val === 'off';
-          const showOff = isOff && !agentOnDemand;
+          // In the active mode the cell must agree with the row badge: when the
+          // agent is off by cadence here, say "no cadence", not "paused".
+          const showOff = (isOff || (isActive && agentOff)) && !agentOnDemand;
           const showOnDemand = agentOnDemand || val === 'on demand';
-          const showPaused = !isOff && !showOnDemand && (val === 'paused' || agentPaused);
+          const showPaused = !showOff && !showOnDemand && (val === 'paused' || agentPaused);
           const colCls = isActive ? `col-active mode-${m}` : '';
           const stateCls = showOnDemand ? ' on-demand' : showOff ? ' off' : showPaused ? ' paused' : '';
           const dot = (isActive && isWorking && !agentPaused && !showOff && !showOnDemand) ? '<span class="active-dot"></span>' : '';
