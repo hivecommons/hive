@@ -1,0 +1,1 @@
+- Fixed the GitHub enumerator's closed-PR attribution scan so it is bounded by recent updates, capped at five pages, cached across ticks, and no longer fails repo enumeration when the closed-PR scan encounters a transient GitHub error.
