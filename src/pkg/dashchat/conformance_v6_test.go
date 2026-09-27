@@ -57,12 +57,16 @@ func TestV6ConformanceDashboardChat_InboundTextIsIOSCannedBeforeRouting(t *testi
 	}
 }
 
-func TestV6ConformanceDashboardChat_AllowlistFailsClosed(t *testing.T) {
+func TestV6ConformanceDashboardChat_AllowlistFailsClosedAndRefusesVisibly(t *testing.T) {
 	b := NewBot(Config{}, nil)
 	b.RegisterCommand("ping", func(_ context.Context, _ string) (string, error) { return "pong", nil })
 	b.Deliver(context.Background(), chat.Message{ID: "1", Text: "!ping", AuthorID: "alice"})
-	if got := b.Drain(0); len(got) != 0 {
-		t.Fatalf("v6 conformance (role floor/fail closed): empty allowlist replied: %+v", got)
+	got := b.Drain(0)
+	if len(got) != 1 || got[0].Role != "bot" || strings.Contains(got[0].Text, "pong") || !strings.Contains(got[0].Text, "refused") {
+		t.Fatalf("v6 conformance (role floor/fail closed): empty allowlist must refuse visibly and never run the command, got %+v", got)
+	}
+	if !strings.Contains(got[0].Text, "`!ping`") || !strings.Contains(got[0].Text, "`alice`") {
+		t.Fatalf("v6 conformance (role floor/fail closed): refusal must name the command and author, got %q", got[0].Text)
 	}
 }
 

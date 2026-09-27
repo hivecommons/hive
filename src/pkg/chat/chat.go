@@ -104,6 +104,16 @@ type Backend interface {
 	Listen(ctx context.Context, deliver func(Message))
 }
 
+// CommandRefuser is an optional Backend extension. The spine refuses commands
+// from authors outside the allowlist without replying on the channel, so a
+// public transport never becomes an oracle for who is allowlisted. A transport
+// whose author is already authenticated and is the only reader of the reply
+// (dashboard chat) implements this to show the refusal instead of leaving the
+// operator waiting; the decision itself stays in the spine.
+type CommandRefuser interface {
+	CommandRefused(msg Message, reason string)
+}
+
 type Config struct {
 	DashboardURL      string
 	DashboardToken    string

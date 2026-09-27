@@ -66,9 +66,11 @@ func TestSubmitRejectsBlockedInput(t *testing.T) {
 
 func TestAllowlistFailsClosed(t *testing.T) {
 	b := NewBot(Config{}, nil)
-	b.RegisterCommand("ping", func(_ context.Context, _ string) (string, error) { return "pong", nil })
+	ran := false
+	b.RegisterCommand("ping", func(_ context.Context, _ string) (string, error) { ran = true; return "pong", nil })
 	b.Deliver(context.Background(), chat.Message{ID: "1", Text: "!ping", AuthorID: "alice"})
-	if got := b.Drain(0); len(got) != 0 {
-		t.Fatalf("empty allowlist produced a reply: %+v", got)
+	got := b.Drain(0)
+	if ran || len(got) != 1 || got[0].Role != "bot" || !strings.Contains(got[0].Text, "refused") || strings.Contains(got[0].Text, "pong") {
+		t.Fatalf("empty allowlist must refuse visibly without running the command (ran=%v): %+v", ran, got)
 	}
 }

@@ -102,6 +102,19 @@ func (b *backend) Send(content string) error {
 
 func (b *backend) SetTopic(string) error { return chat.ErrTopicUnsupported }
 
+// CommandRefused implements chat.CommandRefuser: the spine refused a command
+// before dispatch, so the operator who typed it sees why instead of polling an
+// outbox that never answers. The allowlist decision is the spine's; this only
+// renders it.
+func (b *backend) CommandRefused(msg chat.Message, reason string) {
+	command := strings.Fields(msg.Text)
+	label := "command"
+	if len(command) > 0 {
+		label = "`" + command[0] + "`"
+	}
+	b.appendOutbox("bot", "", "❌ "+label+" from `"+msg.AuthorID+"` refused: "+reason+".")
+}
+
 func (b *backend) Listen(ctx context.Context, deliver func(chat.Message)) {
 	for {
 		select {

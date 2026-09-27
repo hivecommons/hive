@@ -9,7 +9,7 @@ The transport keeps the v6 guard invariant from [#7563](https://github.com/hivec
 - command execution still fails closed unless the dashboard user is in the chat allowlist derived from dashboard collaborators;
 - outbound bot text is scrubbed before it reaches the in-memory outbox;
 - the browser polls `GET /api/chat/messages?since=<seq>` every two seconds, leaving `/api/events` unchanged for status SSE;
-- `!`-prefixed text is never answered by the dashboard's local intents (`pkg/dashboard/chat_commands.go`); every command reaches the spine's allowlist and role checks. `src/pkg/dashboard/chat_conformance_v6_test.go` fails if a local intent answers a `!` command or if a started bot replies to a non-allowlisted author ([#9136](https://github.com/hivecommons/hive/issues/9136)).
+- `!`-prefixed text is never answered by the dashboard's local intents (`pkg/dashboard/chat_commands.go`); every command reaches the spine's allowlist and role checks. a command the spine refuses (author not allowlisted, or an empty allowlist) is shown in the panel as a visible `❌ … refused` line via the `chat.CommandRefuser` hook — the decision stays in the spine, dashboard chat only renders it. `src/pkg/dashboard/chat_conformance_v6_test.go` fails if a local intent answers a `!` command, if a started bot replies to a non-allowlisted author, or if the refusal is not visible ([#9136](https://github.com/hivecommons/hive/issues/9136)).
 
 The v6 readiness tracker is [#7563](https://github.com/hivecommons/hive/issues/7563). Its dashboard-chat evidence row is satisfied only after conformance passes and one live `!status` round trip from the panel is linked.
 

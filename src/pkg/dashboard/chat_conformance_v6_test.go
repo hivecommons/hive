@@ -57,12 +57,12 @@ func TestV6ConformanceDashboardChat_BangCommandsAreNeverAnsweredLocally(t *testi
 }
 
 // A started production bot (dashchat.NewBot + SetAgentNames + Start, as wired in
-// cmd/hive) must only reply to `!help` for allowlisted authors. The spine does
-// not emit a visible refusal for a denied author (pkg/chat/router.go — it logs
-// and drops), so the assertion is on the absence of a reply: with mallory's
-// `!help` queued before alice's, the inbox is FIFO and Listen delivers
-// synchronously, so mallory's command has been fully processed before alice's
-// help reply can exist. Exactly one help reply proves the gate.
+// cmd/hive) must reply to `!help` for an allowlisted author and visibly refuse
+// it for anyone else: the spine makes the allowlist decision and hands it to
+// the dashchat backend via chat.CommandRefuser, which renders it into the
+// outbox the browser polls. mallory's `!help` is queued before alice's, the
+// inbox is FIFO and Listen delivers synchronously, so the outbox order proves
+// which author got which answer.
 func TestV6ConformanceDashboardChat_StartedBotGatesRepliesOnAllowlist(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	bot := dashchat.NewBot(dashchat.Config{AllowedUsers: []string{"alice"}}, logger)
@@ -113,13 +113,21 @@ func TestV6ConformanceDashboardChat_StartedBotGatesRepliesOnAllowlist(t *testing
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	var botTexts, userAuthors []string
+	// The online banner travels through the spine's send queue while the
+	// refusal is written straight into the outbox, so only the relative order
+	// of the two answers (refusal, then help) is deterministic.
+	var answers, userAuthors []string
+	banners := 0
 	for _, raw := range msgs {
 		m, _ := raw.(map[string]interface{})
 		text, _ := m["text"].(string)
 		switch m["role"] {
 		case "bot":
-			botTexts = append(botTexts, text)
+			if strings.Contains(text, "bot online") {
+				banners++
+				continue
+			}
+			answers = append(answers, text)
 		case "user":
 			author, _ := m["author_id"].(string)
 			userAuthors = append(userAuthors, author)
@@ -128,9 +136,15 @@ func TestV6ConformanceDashboardChat_StartedBotGatesRepliesOnAllowlist(t *testing
 	if len(userAuthors) != 2 || userAuthors[0] != "mallory" || userAuthors[1] != "alice" {
 		t.Fatalf("v6 conformance (role floor): user echoes = %v, want [mallory alice]", userAuthors)
 	}
-	if len(botTexts) != 2 || !strings.Contains(botTexts[0], "online") || !strings.Contains(botTexts[1], helpMarker) {
-		t.Fatalf("v6 conformance (role floor / fail closed): bot messages = %q, want exactly the online banner "+
-			"and ONE spine help reply (denied author mallory must get none; allowlisted alice must get one)", botTexts)
+	if banners != 1 || len(answers) != 2 {
+		t.Fatalf("v6 conformance (role floor / fail closed): bot answers = %q (banners=%d), want exactly ONE visible "+
+			"refusal for mallory and ONE spine help reply for alice", answers, banners)
+	}
+	if refusal := answers[0]; !strings.Contains(refusal, "refused") || !strings.Contains(refusal, "`mallory`") || strings.Contains(refusal, helpMarker) {
+		t.Fatalf("v6 conformance (role floor / fail closed): denied author mallory was not visibly refused: %q", refusal)
+	}
+	if reply := answers[1]; !strings.Contains(reply, helpMarker) || strings.Contains(reply, "refused") {
+		t.Fatalf("v6 conformance (role floor): allowlisted author alice did not get the spine help reply: %q", reply)
 	}
 }
 

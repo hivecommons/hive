@@ -92,12 +92,14 @@ func (s *Service) routeMessage(ctx context.Context, msg Message) {
 	if len(s.allowedUsers) == 0 {
 		s.logger.Warn("discord: ignoring command — allowlist is empty (commands disabled; set allowed_users to enable)",
 			"user_id", msg.AuthorID, "content", content)
+		s.refuseCommand(msg, "commands are disabled because the chat allowlist is empty")
 		return
 	}
 	role, ok := s.allowedUsers[msg.AuthorID]
 	if !ok {
 		s.logger.Warn("discord: ignoring command from non-allowlisted user",
 			"user_id", msg.AuthorID, "content", content)
+		s.refuseCommand(msg, "author is not in the chat allowlist")
 		return
 	}
 	ctx = context.WithValue(ctx, commandRoleContextKey{}, role)
@@ -172,6 +174,14 @@ func (s *Service) routeMessage(ctx context.Context, msg Message) {
 	}
 
 	s.enqueue(fmt.Sprintf("❌ Unknown command: `%s`. Try `!help`", cmd))
+}
+
+// refuseCommand tells a CommandRefuser backend that msg was refused before
+// dispatch; every other backend stays silent.
+func (s *Service) refuseCommand(msg Message, reason string) {
+	if r, ok := s.backend.(CommandRefuser); ok {
+		r.CommandRefused(msg, reason)
+	}
 }
 
 func (s *Service) isValidAgent(name string) bool {
