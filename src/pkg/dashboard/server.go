@@ -1143,6 +1143,10 @@ func (s *Server) registerCoreRoutes() {
 	}
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/status/summary", s.handleStatusSummary)
+	s.mux.HandleFunc("GET /api/overview/issues.csv", s.handleOverviewIssuesCSV)
+	s.mux.HandleFunc("GET /api/overview/issues.json", s.handleOverviewIssuesJSON)
+	s.mux.HandleFunc("GET /api/overview/prs.csv", s.handleOverviewPRsCSV)
+	s.mux.HandleFunc("GET /api/overview/prs.json", s.handleOverviewPRsJSON)
 	s.mux.HandleFunc("GET /api/events", s.handleSSE)
 	s.mux.HandleFunc("POST /api/github-app/recheck", s.handleGitHubAppRecheck)
 	s.mux.HandleFunc("POST /api/github-app/install-clicked", s.handleGitHubAppInstallClicked)

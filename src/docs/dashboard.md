@@ -116,6 +116,10 @@ repository-card band header shows that band's rule from `issueBandSpec` /
 panels can export the current band slices to UTF-8 CSV from the header, and
 non-empty legend rows include a per-band CSV download; both exports use the
 same ordered slices as the charts, so row counts match the donut legend.
+Automation can fetch the same server-side classification from
+`/api/overview/issues.{csv,json}` and `/api/overview/prs.{csv,json}` with
+optional `band`, `repo`, `stale`, and `held` filters; the browser buttons stay
+client-side in the first server API release.
 
 The Overview header's ⚙️ popover stores browser-local chart preferences under
 `hive-overview-charts`: which chart types are in rotation, whether the carousel
