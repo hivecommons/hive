@@ -2264,13 +2264,17 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		holdLabel := func(agentName string) bool {
 			return shouldHoldAgentPR(agentName, b.agentMgr.GetACMMLevel())
 		}
+		selfAuthorizationHoldEnabled := func(repo string) bool {
+			level := b.agentMgr.GetACMMLevel()
+			return b.cfg.SelfAuthorizationHoldEnabledForRepoAtLevel(repo, level)
+		}
 		// #5117: tell the client which accounts are ours, so the
 		// self-authorization gate recognises an issue filed under
 		// project.ai_author's plain user account as hive-filed rather than
 		// mistaking it for a human's. The App bot is recognised without this;
 		// hiveIdentity() is the same resolver the duplicate-PR guard uses.
 		b.ghClient.SetHiveIdentity(hiveIdentity(b.cfg))
-		b.ghClient.SetSelfAuthorizationHoldEnabled(func(repo string) bool { return b.cfg.SelfAuthorizationHoldEnabledForRepo(repo) })
+		b.ghClient.SetSelfAuthorizationHoldEnabled(selfAuthorizationHoldEnabled)
 		b.ghClient.SetPRRepoPolicyGate(func(agentName, repo string) error {
 			level := b.cfg.EffectiveACMMLevelForRepo(repo)
 			if level <= 0 {
@@ -2378,7 +2382,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		}
 
 		autoMergeOpts.MutationBoundary = b.mutationBoundary
-		autoMergeOpts.SelfAuthorizationHoldEnabled = func(repo string) bool { return b.cfg.SelfAuthorizationHoldEnabledForRepo(repo) }
+		autoMergeOpts.SelfAuthorizationHoldEnabled = selfAuthorizationHoldEnabled
 		autoMergeOpts.RepoAutoMergeEnabled = func(repo string) bool { return b.cfg.RepoAutoMergeEnabled(repo) }
 		// Intent tier gate (#6258): the human lane only queues PRs that
 		// survive writeMergeEligible's intent check, but this sweep lists
@@ -6394,7 +6398,14 @@ func runEvalCycle(
 	// on a branch that moved, block the merge lanes and force a fresh review.
 	// Runs before writeMergeEligible so drifted PRs are excluded from the very
 	// tick their hold lifted — no window for the sweep to race the re-hold.
-	holdDriftPRs := enforceHoldGuard(ctx, cfg, ghClient, governorForge(cfg, ghClient, logger), actionable, logger)
+	selfAuthorizationHoldEnabled := func(repo string) bool {
+		level := cfg.ACMMLevelOrZero()
+		if agentMgr != nil {
+			level = agentMgr.GetACMMLevel()
+		}
+		return cfg.SelfAuthorizationHoldEnabledForRepoAtLevel(repo, level)
+	}
+	holdDriftPRs := enforceHoldGuard(ctx, cfg, ghClient, governorForge(cfg, ghClient, logger), actionable, logger, selfAuthorizationHoldEnabled)
 
 	// The per-PR verdicts come back so the dashboard's PR pills can be
 	// painted from the sweep's own classification rather than a looser

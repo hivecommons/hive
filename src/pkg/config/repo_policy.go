@@ -160,11 +160,20 @@ func (c *Config) SetRepoACMMAutomaticAndSave(repo string, level int, change Auto
 	return true, c.saveLocked()
 }
 
-// SelfAuthorizationHoldEnabledForRepo resolves the #5117 hold switch for repo:
-// per-repo override first, then the hive-wide GitHub default, then default ON.
+// SelfAuthorizationHoldEnabledForRepo resolves the #5117 hold switch for repo
+// without considering ACMM level: per-repo override first, then the hive-wide
+// GitHub default, then default ON.
 func (c *Config) SelfAuthorizationHoldEnabledForRepo(repo string) bool {
+	return c.SelfAuthorizationHoldEnabledForRepoAtLevel(repo, 0)
+}
+
+// SelfAuthorizationHoldEnabledForRepoAtLevel resolves the #5117 hold switch for
+// repo at the provided live ACMM level: env override first, then per-repo
+// override, then hive-wide GitHub override, then L6 defaults OFF and lower
+// levels default ON.
+func (c *Config) SelfAuthorizationHoldEnabledForRepoAtLevel(repo string, acmmLevel int) bool {
 	if c == nil {
-		return true
+		return acmmLevel < MaxACMMLevel
 	}
 	if c.GitHub.selfAuthorizationHoldEnvOverride != nil {
 		return *c.GitHub.selfAuthorizationHoldEnvOverride
@@ -172,7 +181,7 @@ func (c *Config) SelfAuthorizationHoldEnabledForRepo(repo string) bool {
 	if rp, ok := c.RepoPolicyFor(repo); ok && rp.SelfAuthorizationHold != nil {
 		return *rp.SelfAuthorizationHold
 	}
-	return c.GitHub.SelfAuthorizationHoldEnabled()
+	return c.GitHub.SelfAuthorizationHoldEnabledAtLevel(acmmLevel)
 }
 
 // SetSelfAuthorizationHoldForRepoAndSave records, clears, and persists one

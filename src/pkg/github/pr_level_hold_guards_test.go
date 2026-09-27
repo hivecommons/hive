@@ -296,6 +296,29 @@ func TestReleaseLevelHoldSelfAuthNoticeCommentErrorFailsClosed(t *testing.T) {
 	}
 }
 
+func TestReleaseLevelHoldSkipsSelfAuthorizationWhenPolicyDisabled(t *testing.T) {
+	c := newLevelHoldGuardClient(t, map[string]http.HandlerFunc{
+		"GET /repos/o/r/issues/7/comments": botComments(levelHoldNotice("quality")),
+		"GET /repos/o/r/issues/7/events": func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
+				"event":      "labeled",
+				"created_at": "2026-09-15T12:00:00Z",
+				"actor":      map[string]string{"login": testHiveAppBotLogin},
+				"label":      map[string]string{"name": "hold"},
+			}})
+		},
+		"DELETE /repos/o/r/issues/7/labels/hold": func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		},
+	})
+	c.prHoldLabel = func(string) bool { return false }
+	c.SetSelfAuthorizationHoldEnabled(func(string) bool { return false })
+	released, reason, err := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", heldPR("Closes #581"))
+	if err != nil || !released || reason != "level-hold-released" {
+		t.Fatalf("got (%v, %q, %v), want disabled self-authorization policy to let the level hold release", released, reason, err)
+	}
+}
+
 // TestEnsureLevelHoldNoticeIgnoresUntrustedNoticeAndSurfacesPostError shows a
 // forged marker from a non-bot author does not satisfy the dedupe check, and
 // that a failed comment post is surfaced rather than swallowed.
