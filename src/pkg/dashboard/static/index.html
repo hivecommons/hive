@@ -3314,11 +3314,26 @@
     .run-markdown { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3); max-height: 420px; overflow: auto; }
     .run-markdown pre { white-space: pre-wrap; font-size: var(--fs-xs); color: var(--muted); }
     .run-detail-raw { max-height: 360px; overflow: auto; white-space: pre-wrap; font-size: var(--fs-xs); }
-    .spek-interview-card { grid-column: 1 / -1; margin-top: var(--sp-3); border: 1px solid color-mix(in srgb, var(--status-attention) 60%, var(--border)); border-radius: var(--r); padding: var(--sp-3); background: color-mix(in srgb, var(--status-attention) 12%, transparent); }
-    .spek-interview-card textarea { width: 100%; min-height: 74px; resize: vertical; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-2); font: inherit; }
-    .spek-interview-options { display: grid; gap: var(--sp-1); margin-top: var(--sp-2); }
-    .spek-question { display: grid; gap: var(--sp-2); margin-top: var(--sp-3); }
-    .spek-interview-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+    .spek-interview-card { grid-column: 1 / -1; margin-top: var(--sp-3); border: 1px solid color-mix(in srgb, var(--status-attention) 60%, var(--border)); border-radius: var(--r); padding: var(--sp-4); background: color-mix(in srgb, var(--status-attention) 8%, var(--panel, transparent)); display: grid; gap: var(--sp-3); max-width: 960px; }
+    .spek-interview-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-2); flex-wrap: wrap; }
+    .spek-interview-head h4 { margin: 0; font-size: var(--fs-md); font-weight: 600; }
+    .spek-interview-head .spek-interview-step { color: var(--muted); font-size: var(--fs-sm); }
+    .spek-interview-card textarea { width: 100%; min-height: 64px; resize: vertical; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-2); font: inherit; line-height: 1.45; }
+    .spek-question { display: grid; grid-template-columns: 28px minmax(0, 1fr); column-gap: var(--sp-2); row-gap: var(--sp-2); padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg); }
+    .spek-question-num { grid-row: 1 / span 4; width: 24px; height: 24px; border-radius: var(--r-pill); display: inline-flex; align-items: center; justify-content: center; font-size: var(--fs-xs); font-weight: 600; background: color-mix(in srgb, var(--status-attention) 25%, transparent); color: var(--fg); }
+    .spek-question-text { font-weight: 500; line-height: 1.5; margin: 0; }
+    .spek-question-context { color: var(--muted); font-size: var(--fs-sm); line-height: 1.45; }
+    .spek-interview-options { display: grid; gap: 6px; }
+    .spek-interview-options label { display: flex; align-items: flex-start; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-sm); cursor: pointer; line-height: 1.4; transition: background .12s, border-color .12s; }
+    .spek-interview-options label:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+    .spek-interview-options label:has(input:checked) { border-color: var(--status-attention); background: color-mix(in srgb, var(--status-attention) 14%, transparent); }
+    .spek-interview-options input[type="radio"] { margin: 3px 0 0; flex: 0 0 auto; accent-color: var(--status-attention); }
+    .spek-interview-note { display: grid; gap: 4px; }
+    .spek-interview-note > span { color: var(--muted); font-size: var(--fs-xs); }
+    .spek-interview-note textarea { min-height: 44px; }
+    .spek-interview-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; align-items: center; justify-content: flex-end; padding-top: var(--sp-2); border-top: 1px solid var(--border); }
+    .spek-interview-actions .spek-interview-hint { margin-right: auto; color: var(--muted); font-size: var(--fs-xs); }
+    @media (max-width: 720px) { .spek-question { grid-template-columns: 1fr; } .spek-question-num { grid-row: auto; } }
     .spek-interview-muted { color: var(--muted); margin-top: 4px; }
     .campaign-empty { color: var(--muted); text-align: center; padding: var(--sp-7); border: 1px dashed var(--border); border-radius: var(--r); }
     .campaign-jam { margin-top: var(--sp-5); display: grid; gap: var(--sp-4); }
@@ -8659,20 +8674,23 @@
       }
       const pending = run.interview.pending || (cached && cached.pending) || 0;
       if (!cached) {
-        return `<div id="interview" class="spek-interview-card"><strong>Spek has ${escapeHtml(String(pending))} questions for you</strong><div class="text-muted">Loading the in-app answer form…</div></div>`;
+        return `<div id="interview" class="spek-interview-card"><div class="spek-interview-head"><h4>Spek has ${escapeHtml(String(pending))} question${pending === 1 ? '' : 's'} for you</h4></div><div class="spek-question-context">Loading the in-app answer form…</div></div>`;
       }
       if (!cached.pending) {
-        return `<div class="spek-interview-card"><strong>Interview answers sent</strong><div class="text-muted">Spek is resuming with your answers.</div></div>`;
+        return `<div class="spek-interview-card"><div class="spek-interview-head"><h4>Interview answers sent</h4></div><div class="spek-question-context">Spek is resuming with your answers.</div></div>`;
       }
-      const questions = (cached.questions || []).map(q => {
+      const questions = (cached.questions || []).map((q, i) => {
         const id = escapeHtml(q.id || '');
         const inputName = 'answer-' + safeDomId(key) + '-' + safeDomId(q.id || '');
-        const control = Array.isArray(q.options) && q.options.length
-          ? `<div class="spek-interview-options">${q.options.map(opt => `<label><input type="radio" name="${inputName}" value="${escapeHtml(opt)}" ${q.default === opt ? 'checked' : ''}> ${escapeHtml(opt)}</label>`).join('')}</div>`
-          : `<textarea data-interview-answer="${id}" placeholder="${escapeHtml(q.default || 'Type your answer')}"></textarea>`;
-        return `<div class="spek-question" data-interview-question="${id}" data-interview-input="${escapeHtml(inputName)}"><label><strong>${escapeHtml(q.text || q.id)}</strong></label>${q.context ? `<div class="text-muted">${escapeHtml(q.context)}</div>` : ''}${control}</div>`;
+        const hasOptions = Array.isArray(q.options) && q.options.length > 0;
+        const control = hasOptions
+          ? `<div class="spek-interview-options" role="radiogroup" aria-label="Options for question ${i + 1}">${q.options.map(opt => `<label><input type="radio" name="${inputName}" value="${escapeHtml(opt)}" ${q.default === opt ? 'checked' : ''}><span>${escapeHtml(opt)}</span></label>`).join('')}</div>
+             <div class="spek-interview-note"><span>Optional note for Spek (details, names, caveats)</span><textarea data-interview-note="${id}" placeholder="Add context if the option above needs qualifying"></textarea></div>`
+          : `<textarea data-interview-answer="${id}" aria-label="Answer to question ${i + 1}" placeholder="${escapeHtml(q.default || 'Type your answer')}"></textarea>`;
+        return `<div class="spek-question" data-interview-question="${id}" data-interview-input="${escapeHtml(inputName)}"><span class="spek-question-num" aria-hidden="true">${i + 1}</span><p class="spek-question-text">${escapeHtml(q.text || q.id)}</p>${q.context ? `<div class="spek-question-context">${escapeHtml(q.context)}</div>` : ''}${control}</div>`;
       }).join('');
-      return `<div id="interview" class="spek-interview-card"><strong>Spek has ${escapeHtml(String(cached.pending))} questions for you</strong><div class="text-muted">${escapeHtml(cached.step || 'Clarification needed')}</div>${questions}<div class="spek-interview-actions"><button class="btn" data-action="submitRunInterview" data-arg0="${escapeHtml(key)}" data-arg-types="s,t">Submit answers</button><button class="btn" data-action="loadRunInterview" data-arg0="${escapeHtml(key)}">Refresh questions</button></div></div>`;
+      const n = cached.pending;
+      return `<div id="interview" class="spek-interview-card" aria-live="polite"><div class="spek-interview-head"><h4>Spek has ${escapeHtml(String(n))} question${n === 1 ? '' : 's'} for you</h4><span class="spek-interview-step">Stage: ${escapeHtml(cached.stage || run.stage || 'spec')} · step: ${escapeHtml(cached.step || 'clarification')}</span></div>${questions}<div class="spek-interview-actions"><span class="spek-interview-hint">Answers resume the paused Spek session and are recorded in the run transcript.</span><button class="hv-btn btn-secondary btn-sm" data-action="loadRunInterview" data-arg0="${escapeHtml(key)}">Refresh questions</button><button class="hv-btn btn-primary btn-sm" data-action="submitRunInterview" data-arg0="${escapeHtml(key)}" data-arg-types="s,t">Submit answers</button></div></div>`;
     }
 
     async function loadRunInterview(key) {
@@ -8703,6 +8721,9 @@
         if (!ta) {
           const checked = qEl.querySelector('input[type="radio"]:checked');
           answer = checked ? checked.value : '';
+          const note = qEl.querySelector('[data-interview-note]');
+          const noteText = note && note.value ? note.value.trim() : '';
+          if (answer && noteText) answer = answer + ' — ' + noteText;
         }
         if (id && String(answer).trim()) answers.push({ id, answer: String(answer).trim() });
       });
