@@ -21,13 +21,17 @@
 #         src/Dockerfile.contributor.
 #   S  stub wire-contract scenarios — keyless, deterministic: a stub backend
 #      binary on PATH drives the full relay↔hub loop, locking the wire shape
-#      the live scenarios (and the hub) rely on, with zero API spend.
+#      the live scenarios (and the hub) rely on, with zero API spend. S4 is
+#      the task-prompt DELIVERY check (#9078): a real tmux pane, a raw-mode
+#      bracketed-paste stub, exactly-once byte-for-byte submission.
 #   B  live per-backend scenarios (needs the CLI + a credential; skips
 #      otherwise — fatally under HIVE_TEST_REQUIRE_BACKEND_SMOKE=1):
 #      B0 detect_cli health probe (contributor-agent.sh's own seam);
 #      B1 headless end-to-end: real relay, real CLI one-shot, fake hub;
 #      B2 interactive end-to-end: real CLI in tmux, the relay scraping the
-#         pane — the exact surface the thirteen chrome issues lived on.
+#         pane — the exact surface the thirteen chrome issues lived on;
+#      B3 (codex) task-sized prompt delivery (#9078): the real CLI must
+#         record exactly one turn carrying the ~6.8 KB prompt byte for byte.
 #
 # Env knobs:
 #   HIVE_SMOKE_BACKENDS              space-separated, default "claude codex"
@@ -433,6 +437,177 @@ OMP
   else
     skip "tmux not installed — OMP interactive stub scenario skipped"
   fi
+
+  # S4 (#9078): task-prompt DELIVERY through a real tmux pane into a real
+  # raw-mode TUI. The unit suite stubs child_process, so nothing there can show
+  # that a CLI actually consumed a prompt — which is exactly the seam that
+  # broke: codex 0.157.1 held a ~6.8 KB `send-keys -l` burst invisibly, the
+  # Enters started nothing, and a truncated "[Pasted Content 4096 chars]"
+  # surfaced seconds later. The stub below is a fixture of THAT captured
+  # behaviour, the way bin/testdata/pane-fixtures are fixtures of captured
+  # panes: it enables bracketed paste like the real TUI, takes an explicit
+  # bracketed paste as one composer edit and submits it on Enter, and treats a
+  # large raw burst the way the live CLI was observed to — buffered off-screen,
+  # Enter swallowed, placeholder late and short. It records every SUBMITTED
+  # turn as JSONL so the scenario can assert exactly-once, full-length
+  # delivery. Two prompts: task-sized (the failure) and short (the control).
+  echo ""
+  echo "-- S4: codex-shaped stub — task-sized prompt is delivered as one bracketed paste and starts exactly one turn --"
+  if command -v tmux >/dev/null 2>&1; then
+    STUB_CODEX="$WORK/stub-codex"
+    mkdir -p "$STUB_CODEX" "$WORK/ws-codex"
+    cat > "$STUB_CODEX/codex" <<'CODEX'
+#!/usr/bin/env node
+// codex-shaped interactive stub for bin/test_backend_smoke.sh S4 (#9078).
+// Raw-mode stdin, bracketed paste enabled, the real TUI's idle hint and
+// working/placeholder chrome, and the observed 0.157.1 raw-burst behaviour.
+const fs = require('fs');
+const turnsLog = process.env.CODEX_STUB_TURNS;
+const IDLE = '\u203a Ask Codex to do anything';
+const LARGE_PASTE = 1000;           // codex LARGE_PASTE_CHAR_THRESHOLD
+const RAW_BURST_QUIET_MS = 4000;    // observed: placeholder surfaced ~4 s later
+const RAW_BURST_SHOWN = 4096;       // observed: "[Pasted Content 4096 chars]"
+const out = (s) => process.stdout.write(s);
+let composer = '';
+let composerFromPaste = false;
+let rawBurst = '';
+let rawTimer = null;
+let pending = '';
+let inPaste = false;
+let turns = 0;
+process.stdin.setRawMode(true);
+process.stdin.resume();
+out('\x1b[?2004h');
+out('\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n');
+out('\u2502 >_ OpenAI Codex (v0.157.1)   \u2502\n');
+out('\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f\n\n');
+out(IDLE + '\n');
+function submit() {
+  const text = composer.replace(/\r\n?/g, '\n');
+  composer = ''; composerFromPaste = false; rawBurst = '';
+  turns++;
+  fs.appendFileSync(turnsLog, JSON.stringify({ turn: turns, chars: text.length, text }) + '\n');
+  // codex expands paste placeholders on submit and its history cell shows
+  // the full user message, so the echo is the whole text, not the marker.
+  out(`\u203a ${text}\n\n`);
+  out('\u2022 Working (1s \u2022 esc to interrupt)\n');
+  setTimeout(() => {
+    out('\u2022 Ran echo ok\n');
+    out(`HIVE_VERDICT: complete \u2014 codex paste stub turn ${turns} (${text.length} chars)\n\n`);
+    out(IDLE + '\n');
+  }, 1500);
+}
+function onPaste(text) {
+  composer += text; composerFromPaste = true;
+  out((composer.length > LARGE_PASTE ? `\u203a [Pasted Content ${composer.length} chars]` : `\u203a ${composer}`) + '\n');
+}
+function onRawChar(ch) {
+  // A short typed line renders and submits like typing. A burst past the
+  // large-paste threshold is what the live CLI mishandled: nothing renders,
+  // Enter is swallowed, and a short placeholder appears after a quiet gap.
+  rawBurst += ch;
+  composer += ch;
+  if (rawBurst.length <= LARGE_PASTE) return;
+  clearTimeout(rawTimer);
+  rawTimer = setTimeout(() => {
+    out(`\u203a [Pasted Content ${Math.min(rawBurst.length, RAW_BURST_SHOWN)} chars]\n`);
+  }, RAW_BURST_QUIET_MS);
+}
+process.stdin.on('data', (chunk) => {
+  pending += chunk.toString('utf8');
+  for (;;) {
+    if (inPaste) {
+      const end = pending.indexOf('\x1b[201~');
+      if (end < 0) return;
+      onPaste(pending.slice(0, end));
+      pending = pending.slice(end + 6);
+      inPaste = false;
+      continue;
+    }
+    if (!pending) return;
+    if (pending.startsWith('\x1b[200~')) { inPaste = true; pending = pending.slice(6); continue; }
+    if (pending.startsWith('\x1b[')) {
+      const m = /^\x1b\[[0-9;?]*[A-Za-z~]/.exec(pending);
+      if (!m) return;                       // partial CSI sequence
+      pending = pending.slice(m[0].length);
+      continue;
+    }
+    const ch = pending[0];
+    pending = pending.slice(1);
+    if (ch === '\x03') process.exit(0);    // C-c
+    if (ch === '\x1b' || ch === '\x01' || ch === '\x0b') continue;
+    if (ch === '\r' || ch === '\n') {
+      if (!composer) continue;             // Enter on an empty widget: no-op
+      if (composerFromPaste || rawBurst.length <= LARGE_PASTE) submit();
+      // else: the observed 0.157.1 behaviour — Enter after a large raw burst
+      // starts nothing.
+      continue;
+    }
+    onRawChar(ch);
+  }
+});
+CODEX
+    chmod +x "$STUB_CODEX/codex"
+    LONG_PROMPT="$(node -e "process.stdout.write('Reply exactly HIVE_PASTE_CHECK_OK. Do not use tools. Inert padding: ' + 'padding '.repeat(850))")"
+    SHORT_PROMPT='Reply exactly HIVE_PASTE_CHECK_OK. Do not use tools.'
+    run_s4() {
+      # run_s4 LABEL PROMPT — one relay + fake hub + tmux pane per prompt.
+      local label="$1" prompt="$2" turns="$WORK/codex-turns-$1.jsonl"
+      rm -f "$turns"
+      TMUX_SESS="hive-smoke-codex-$label"
+      tmux kill-session -t "$TMUX_SESS" 2>/dev/null || true
+      local launch
+      launch="CODEX_STUB_TURNS=$(printf %q "$turns") $(printf %q "$STUB_CODEX/codex")"
+      if SMOKE_PROMPT="$prompt" start_fakehub "s4-$label" && \
+         tmux new-session -d -s "$TMUX_SESS" -x 200 -y 50 -c "$WORK/ws-codex"; then
+        tmux send-keys -t "$TMUX_SESS" "$launch" Enter
+        RELAY_LOG="$WORK/relay-codex-$label.log"
+        (
+          cd "$ROOT" || exit 1
+          PATH="$STUB_CODEX:$PATH" \
+          HIVE_RELAY_TEST_TIMING=1 \
+          HOME="$WORK/home-s4-$label" \
+          AGENT_BACKEND=codex \
+          HIVE_AGENT_SESSION="$TMUX_SESS" \
+          HIVE_AGENT_CWD="$WORK/ws-codex" \
+          HIVE_HUB="ws://127.0.0.1:$HUB_PORT/contribute" \
+          HIVE_REGISTRATION_TOKEN=smoke-token \
+          HIVE_WORKSPACE_DIR="$WORK/ws-codex" \
+          HIVE_TASK_FILE="$WORK/task-codex-$label.json" \
+          AGENT_LAUNCH_CMD="$launch" \
+          HIVE_GH_TOKEN_CACHE="$WORK/gh-codex-$label.cache" \
+          exec node "$RELAY"
+        ) >"$RELAY_LOG" 2>&1 &
+        RELAY_PID=$!
+        if wait_for_terminal "$HUB_LOG" 60; then
+          check "S4 [$label] task_complete result" "completed" \
+                "$(msg_field "$HUB_LOG" task_complete .result)"
+          check "S4 [$label] completion signal is verdict" "verdict" \
+                "$(msg_field "$HUB_LOG" task_complete .completion_signal)"
+          check "S4 [$label] the stub started exactly one turn" "1" \
+                "$( [ -f "$turns" ] && wc -l < "$turns" | tr -d ' ' || echo 0)"
+          check "S4 [$label] the turn carried the whole prompt (${#prompt} chars)" "${#prompt}" \
+                "$(jq -r 'first(.chars)' "$turns" 2>/dev/null | head -n1)"
+          check "S4 [$label] the turn's text is the prompt, byte for byte" "true" \
+                "$(jq -r --arg p "$prompt" '.text == $p' "$turns" 2>/dev/null | head -n1)"
+          contains "S4 [$label] the relay logged the delivery" \
+                   "$(cat "$RELAY_LOG")" "Task prompt sent to CLI"
+          check "S4 [$label] the relay confirmed the delivery (no 'delivery unconfirmed')" "0" \
+                "$(grep -cF 'Task prompt delivery unconfirmed' "$RELAY_LOG" || true)"
+        else
+          fail "S4 [$label] reached a terminal message within 60s"
+          dump_evidence "S4-$label" "$RELAY_LOG"
+        fi
+      else
+        fail "fake hub + tmux session started (S4-$label)"
+      fi
+      stop_scenario
+    }
+    run_s4 long "$LONG_PROMPT"
+    run_s4 short "$SHORT_PROMPT"
+  else
+    skip "tmux not installed — codex paste-delivery scenario skipped"
+  fi
 fi
 
 # ── B. Live per-backend scenarios ────────────────────────────────────────────
@@ -617,6 +792,103 @@ if [ "$RIG_OK" = "1" ]; then
       continue
     fi
 
+    # interactive_round LABEL PROMPT — one real-CLI interactive task: a fresh
+    # tmux pane, the same launch line contributor-agent.sh types, the
+    # first-run auto-dismiss loop, the real relay against a fake hub serving
+    # PROMPT, and the common assertions (task_complete, completion_signal
+    # verdict, the verdict on the wire). Leaves HUB_LOG/RELAY_LOG/TMUX_SESS
+    # set and the scenario RUNNING so the caller can add checks before
+    # stop_scenario. Returns 0 when the task completed.
+    interactive_round() {
+      local label="$1" prompt="$2" completed=1
+      TMUX_SESS="hive-smoke-$b-$label"
+      tmux kill-session -t "$TMUX_SESS" 2>/dev/null
+      if SMOKE_PROMPT="$prompt" start_fakehub "$label-$b" && tmux new-session -d -s "$TMUX_SESS" -x 200 -y 50 -c "$WORK/ws-$b"; then
+        CMD="$(backend_binary "$b")"
+        PERM_FLAG="$(backend_perm_flag_shell "$b")"
+        MODEL_FLAG=""
+        case "$b" in goose|bob) ;; *) [ -n "$model" ] && MODEL_FLAG="--model $model" ;; esac
+        # Same launch line contributor-agent.sh types, into the same kind of
+        # fresh-HOME pane a new contributor gets.
+        tmux send-keys -t "$TMUX_SESS" \
+          "cd $(printf %q "$WORK/ws-$b") && HOME=$(printf %q "$bhome") CODEX_HOME=$(printf %q "$bhome/.codex") $CMD $PERM_FLAG $MODEL_FLAG" Enter
+
+        # contributor-agent.sh's auto-dismiss loop, abbreviated: first-run
+        # trust/theme/API-key dialogs must be cleared for readiness to be
+        # reachable at all — their patterns going stale is itself a drift
+        # failure this scenario would surface as a readiness timeout.
+        (
+          for _ in $(seq 1 10); do
+            sleep 3
+            PANE="$(tmux capture-pane -t "$TMUX_SESS" -p -S -10 2>/dev/null || true)"
+            if echo "$PANE" | grep -q "trust this folder\|trust the files\|Confirm folder trust\|Enter to confirm"; then
+              tmux send-keys -t "$TMUX_SESS" Enter 2>/dev/null || true
+            elif echo "$PANE" | grep -q "Do you trust the contents of this directory"; then
+              tmux send-keys -t "$TMUX_SESS" "1" Enter 2>/dev/null || true
+            elif echo "$PANE" | grep -q "Choose the text style"; then
+              tmux send-keys -t "$TMUX_SESS" "1" Enter 2>/dev/null || true
+            elif echo "$PANE" | grep -q "Bypass Permissions mode"; then
+              # Fallback only — the settings seed suppresses this menu. Its
+              # default selection is "No, exit", so a bare Enter kills the CLI.
+              tmux send-keys -t "$TMUX_SESS" "2" Enter 2>/dev/null || true
+            elif echo "$PANE" | grep -qi "custom API key"; then
+              tmux send-keys -t "$TMUX_SESS" "1" Enter 2>/dev/null || true
+            elif echo "$PANE" | grep -q "bypass permissions\|❯\|›\|/ commands\|> *$"; then
+              break
+            fi
+          done
+        ) &
+        DISMISS_PID=$!
+
+        RELAY_LOG="$WORK/relay-$b-interactive-$label.log"
+        (
+          cd "$ROOT" || exit 1
+          HOME="$bhome" \
+          CODEX_HOME="$bhome/.codex" \
+          AGENT_BACKEND="$b" \
+          AGENT_MODEL="$model" \
+          HIVE_AGENT_SESSION="$TMUX_SESS" \
+          HIVE_AGENT_CWD="$WORK/ws-$b" \
+          HIVE_HUB="ws://127.0.0.1:$HUB_PORT/contribute" \
+          HIVE_REGISTRATION_TOKEN=smoke-token \
+          HIVE_WORKSPACE_DIR="$WORK/ws-$b" \
+          HIVE_TASK_FILE="$WORK/task-$b-$label.json" \
+          HIVE_GH_TOKEN_CACHE="$WORK/gh-$b-$label.cache" \
+          exec node "$RELAY"
+        ) >"$RELAY_LOG" 2>&1 &
+        RELAY_PID=$!
+
+        # The interactive completion check runs on the relay's 120s progress
+        # tick, so the floor here is ~2.5 minutes even for an instant reply.
+        if wait_for_terminal "$HUB_LOG" 480; then
+          if msg_seen "$HUB_LOG" task_complete; then
+            completed=0
+            sig="$(msg_field "$HUB_LOG" task_complete .completion_signal)"
+            if [ "$sig" = "verdict" ]; then
+              pass "[$label] completion_signal=verdict — the $b CLI honored the sentinel contract"
+            else
+              fail "[$label] completion_signal=verdict — the $b CLI honored the sentinel contract" \
+                   "got '$sig': the task completed but only the chrome-idle fallback saved it; the HIVE_VERDICT contract is broken for $b"
+              dump_evidence "$label-$b" "$RELAY_LOG"
+            fi
+            check "[$label] verdict on the wire" "no_work_needed" \
+                  "$(msg_field "$HUB_LOG" task_complete .verdict)"
+          else
+            fail "[$label] interactive run completed" \
+                 "task_failed: $(msg_field "$HUB_LOG" task_failed .reason)"
+            dump_evidence "$label-$b" "$RELAY_LOG"
+          fi
+        else
+          fail "[$label] interactive run reached a terminal message within 480s (readiness regexes may no longer match the real $b pane)"
+          dump_evidence "$label-$b" "$RELAY_LOG"
+        fi
+        kill "$DISMISS_PID" 2>/dev/null
+      else
+        fail "fake hub + tmux session started ($label-$b)"
+      fi
+      return $completed
+    }
+
     echo ""
     echo "-- B2 [$b]: interactive end-to-end (tmux pane, completion_signal) --"
     # The drift surface: readiness regexes against a REAL current pane,
@@ -625,91 +897,50 @@ if [ "$RIG_OK" = "1" ]; then
     # completed only because the fallback saved it: the sentinel contract is
     # broken for this backend and the fleet is one chrome restyle away from
     # the next #4127.
-    TMUX_SESS="hive-smoke-$b"
-    tmux kill-session -t "$TMUX_SESS" 2>/dev/null
-    if start_fakehub "b2-$b" && tmux new-session -d -s "$TMUX_SESS" -c "$WORK/ws-$b"; then
-      CMD="$(backend_binary "$b")"
-      PERM_FLAG="$(backend_perm_flag_shell "$b")"
-      MODEL_FLAG=""
-      case "$b" in goose|bob) ;; *) [ -n "$model" ] && MODEL_FLAG="--model $model" ;; esac
-      # Same launch line contributor-agent.sh types, into the same kind of
-      # fresh-HOME pane a new contributor gets.
-      tmux send-keys -t "$TMUX_SESS" \
-        "cd $(printf %q "$WORK/ws-$b") && HOME=$(printf %q "$bhome") CODEX_HOME=$(printf %q "$bhome/.codex") $CMD $PERM_FLAG $MODEL_FLAG" Enter
+    interactive_round b2 "$SMOKE_PROMPT" || true
+    stop_scenario
 
-      # contributor-agent.sh's auto-dismiss loop, abbreviated: first-run
-      # trust/theme/API-key dialogs must be cleared for readiness to be
-      # reachable at all — their patterns going stale is itself a drift
-      # failure this scenario would surface as a readiness timeout.
-      (
-        for _ in $(seq 1 10); do
-          sleep 3
-          PANE="$(tmux capture-pane -t "$TMUX_SESS" -p -S -10 2>/dev/null || true)"
-          if echo "$PANE" | grep -q "trust this folder\|trust the files\|Confirm folder trust\|Enter to confirm"; then
-            tmux send-keys -t "$TMUX_SESS" Enter 2>/dev/null || true
-          elif echo "$PANE" | grep -q "Do you trust the contents of this directory"; then
-            tmux send-keys -t "$TMUX_SESS" "1" Enter 2>/dev/null || true
-          elif echo "$PANE" | grep -q "Choose the text style"; then
-            tmux send-keys -t "$TMUX_SESS" "1" Enter 2>/dev/null || true
-          elif echo "$PANE" | grep -q "Bypass Permissions mode"; then
-            # Fallback only — the settings seed suppresses this menu. Its
-            # default selection is "No, exit", so a bare Enter kills the CLI.
-            tmux send-keys -t "$TMUX_SESS" "2" Enter 2>/dev/null || true
-          elif echo "$PANE" | grep -qi "custom API key"; then
-            tmux send-keys -t "$TMUX_SESS" "1" Enter 2>/dev/null || true
-          elif echo "$PANE" | grep -q "bypass permissions\|❯\|›\|/ commands\|> *$"; then
-            break
-          fi
-        done
-      ) &
-      DISMISS_PID=$!
-
-      RELAY_LOG="$WORK/relay-$b-interactive.log"
-      (
-        cd "$ROOT" || exit 1
-        HOME="$bhome" \
-        CODEX_HOME="$bhome/.codex" \
-        AGENT_BACKEND="$b" \
-        AGENT_MODEL="$model" \
-        HIVE_AGENT_SESSION="$TMUX_SESS" \
-        HIVE_AGENT_CWD="$WORK/ws-$b" \
-        HIVE_HUB="ws://127.0.0.1:$HUB_PORT/contribute" \
-        HIVE_REGISTRATION_TOKEN=smoke-token \
-        HIVE_WORKSPACE_DIR="$WORK/ws-$b" \
-        HIVE_TASK_FILE="$WORK/task-$b.json" \
-        HIVE_GH_TOKEN_CACHE="$WORK/gh-$b.cache" \
-        exec node "$RELAY"
-      ) >"$RELAY_LOG" 2>&1 &
-      RELAY_PID=$!
-
-      # The interactive completion check runs on the relay's 120s progress
-      # tick, so the floor here is ~2.5 minutes even for an instant reply.
-      if wait_for_terminal "$HUB_LOG" 480; then
-        if msg_seen "$HUB_LOG" task_complete; then
-          sig="$(msg_field "$HUB_LOG" task_complete .completion_signal)"
-          if [ "$sig" = "verdict" ]; then
-            pass "completion_signal=verdict — the $b CLI honored the sentinel contract"
-          else
-            fail "completion_signal=verdict — the $b CLI honored the sentinel contract" \
-                 "got '$sig': the task completed but only the chrome-idle fallback saved it; the HIVE_VERDICT contract is broken for $b"
-            dump_evidence "B2-$b" "$RELAY_LOG"
-          fi
-          check "verdict on the wire" "no_work_needed" \
-                "$(msg_field "$HUB_LOG" task_complete .verdict)"
+    if [ "$b" = "codex" ]; then
+      echo ""
+      echo "-- B3 [$b]: task-sized prompt is delivered whole and starts exactly one turn (#9078) --"
+      # The seam #9078 broke, against the REAL CLI: a ~6.8 KB prompt (the
+      # size the issue reproduced with, on the 200×50 pane the contributor
+      # image runs) must reach codex as ONE bracketed paste and start ONE
+      # turn. The B2 prompt above is the short control the issue reports as
+      # working with either transport; this one is the size that did not.
+      # Exactly-once and full-length delivery are read from codex's own
+      # session rollout under the throwaway CODEX_HOME — the user message it
+      # recorded is what the model was actually given — not from the pane.
+      # Trailing whitespace is avoided so codex's default trim_submission
+      # cannot change the text; the comparison below is byte-for-byte, not a
+      # length, so the locale's idea of a character never enters into it.
+      LONG_SMOKE_PROMPT="$SMOKE_PROMPT Inert padding, ignore it:$(node -e "process.stdout.write(' padding'.repeat(850))")"
+      if interactive_round b3-long "$LONG_SMOKE_PROMPT"; then
+        contains "[b3-long] the relay logged the delivery" \
+                 "$(cat "$RELAY_LOG")" "Task prompt sent to CLI"
+        check "[b3-long] the relay confirmed the delivery (no 'delivery unconfirmed')" "0" \
+              "$(grep -cF 'Task prompt delivery unconfirmed' "$RELAY_LOG" || true)"
+        # codex rollout lines carry the submitted prompt as either an
+        # event_msg/user_message or a response_item user message; take both
+        # shapes so a format shift in one does not read as a lost prompt.
+        user_msgs="$(find "$bhome/.codex/sessions" -name '*.jsonl' -type f 2>/dev/null | xargs -r cat 2>/dev/null | jq -r '
+          if .type == "event_msg" and .payload.type == "user_message" then .payload.message
+          elif .type == "response_item" and .payload.type == "message" and .payload.role == "user"
+            then ([.payload.content[]? | select(.type == "input_text") | .text] | join(""))
+          else empty end' 2>/dev/null | grep -F 'Inert padding, ignore it:' || true)"
+        if [ -z "$user_msgs" ]; then
+          skip "[b3-long] codex recorded no user message for this prompt under $bhome/.codex/sessions — exactly-once cannot be read from the rollout (format drift?); the relay-side checks above stand"
         else
-          fail "interactive run completed" \
-               "task_failed: $(msg_field "$HUB_LOG" task_failed .reason)"
-          dump_evidence "B2-$b" "$RELAY_LOG"
+          check "[b3-long] codex recorded exactly one turn for the prompt" "1" \
+                "$(printf '%s\n' "$user_msgs" | wc -l | tr -d ' ')"
+          check "[b3-long] the recorded turn is the whole prompt, byte for byte" "true" \
+                "$(printf '%s' "$user_msgs" | head -n1 | jq -R --arg p "$LONG_SMOKE_PROMPT" '. == $p')"
         fi
       else
-        fail "interactive run reached a terminal message within 480s (readiness regexes may no longer match the real $b pane)"
-        dump_evidence "B2-$b" "$RELAY_LOG"
+        dump_evidence "B3-$b" "$RELAY_LOG"
       fi
-      kill "$DISMISS_PID" 2>/dev/null
-    else
-      fail "fake hub + tmux session started (B2-$b)"
+      stop_scenario
     fi
-    stop_scenario
   done
 fi
 
