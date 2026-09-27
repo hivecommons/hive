@@ -256,7 +256,7 @@ Teardown: `bin/hive-podman-teardown.sh`.
 
 - `kubectl` configured for your cluster
 - Kubernetes 1.24+
-- A StorageClass that supports `ReadWriteMany` (NFS recommended for zero-downtime rollouts)
+- A StorageClass that supports `ReadWriteOnce` (the cluster default StorageClass works)
 - cert-manager (for TLS certificates)
 - nginx-ingress (for ingress routing)
 
@@ -331,7 +331,11 @@ Apply the provided PVC manifest:
 kubectl apply -f src/deploy/k8s/pvc.yaml
 ```
 
-The default PVC requests 10Gi with `ReadWriteOnce`. For zero-downtime rollouts with rolling updates, use an NFS-backed StorageClass with `ReadWriteMany`:
+The default PVC requests 10Gi with `ReadWriteOnce`. The Deployment runs one replica with
+`strategy: Recreate`, so the old pod stops before the new one mounts `/data` and RWO is enough.
+
+If your storage is NFS or another shared backend, you can use `ReadWriteMany` instead. Rollouts
+still use `Recreate`, so this does not give zero-downtime updates:
 
 ```yaml
 apiVersion: v1
@@ -360,7 +364,8 @@ kubectl apply -f src/deploy/k8s/service.yaml
 `dashboard-route-rbac.yaml` creates the `hive` ServiceAccount the Deployment runs as.
 Apply it first, or the ReplicaSet cannot create a pod.
 
-The deployment runs a single replica with liveness and readiness probes on `/api/health`. Resource defaults: 500m CPU / 512Mi memory (requests), 2 CPU / 2Gi memory (limits).
+The deployment runs a single replica. A startup probe and the readiness probe use `/api/health`,
+and the liveness probe uses `/api/livez`. Resource defaults: 500m CPU / 512Mi memory (requests), 2 CPU / 2Gi memory (limits).
 
 #### 6. Set up Ingress with TLS
 
