@@ -183,16 +183,28 @@ Prerequisites:
   (`src/pkg/config/config.go:4127-4141`), and validation/startup require all
   Teams connection fields (`src/pkg/config/validate.go:107-125`,
   `src/pkg/msteams/bot.go:177-195`).
+- `webhook_url` must be a Teams **Workflows** webhook URL: in the target
+  channel, add the "Post to a channel when a webhook request is received"
+  workflow and copy its URL. Hive posts Adaptive Card message envelopes to it.
+  Office 365 Incoming Webhook connectors were retired by Microsoft in May 2026;
+  connector URLs no longer work and must not be used.
+- Inbound commands are read from top-level channel posts and from thread
+  replies under the bot's most recent posts (for example checkpoint prompts).
+  Replies under other users' posts are not observed; send commands there as a
+  new top-level post.
 
 Run:
 
 1. Confirm `msteams bot starting` and `chat service starting` in hive logs.
 2. In the configured Teams channel, send `!status`; save the Teams message
    link/screenshot and bot reply.
+   Also reply `!status` in the thread under one of the bot's posts and confirm
+   the bot answers.
 3. Trigger one notification delivery via an agent pause/resume or state
    transition; save the Teams notification link/screenshot.
-4. If anything fails, capture `msteams poll failed` or Graph rate-limit/backoff
-   logs (`src/pkg/msteams/bot.go:260-280`).
+4. If anything fails, capture `msteams poll failed`, `msteams delta token
+   expired`, or Graph rate-limit/backoff logs (`Backend.Listen` in
+   `src/pkg/msteams/bot.go`).
 
 Evidence checklist:
 

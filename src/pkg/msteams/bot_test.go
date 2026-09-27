@@ -31,6 +31,7 @@ type fakeGraph struct {
 	statusByPath     map[string]int
 	bodyByPath       map[string]string
 	retryAfterByPath map[string]string
+	locationByPath   map[string]string
 	blockToken       chan struct{}
 }
 
@@ -49,6 +50,7 @@ func newFakeGraph(t *testing.T) *fakeGraph {
 		statusByPath:     make(map[string]int),
 		bodyByPath:       make(map[string]string),
 		retryAfterByPath: make(map[string]string),
+		locationByPath:   make(map[string]string),
 	}
 	fg.server = httptest.NewServer(http.HandlerFunc(fg.serve))
 	t.Cleanup(fg.server.Close)
@@ -108,11 +110,29 @@ func (fg *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 		if retry := fg.retry(r.URL.RequestURI()); retry != "" {
 			w.Header().Set("Retry-After", retry)
 		}
+		fg.mu.Lock()
+		location := fg.locationByPath[r.URL.RequestURI()]
+		fg.mu.Unlock()
+		if location != "" {
+			w.Header().Set("Location", location)
+		}
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(fg.response(r.URL.RequestURI())))
 		return
 	}
 	_, _ = w.Write([]byte(fg.response(r.URL.RequestURI())))
+}
+
+func (fg *fakeGraph) calls(path string) int {
+	fg.mu.Lock()
+	defer fg.mu.Unlock()
+	n := 0
+	for _, call := range fg.graphCalls {
+		if call == path {
+			n++
+		}
+	}
+	return n
 }
 
 func (fg *fakeGraph) status(path string) int {
@@ -212,10 +232,33 @@ func TestBotWrappersAndStartSuccess(t *testing.T) {
 	}
 }
 
-func TestSendPostsTeamsHTMLToWebhook(t *testing.T) {
+func decodeWorkflowCard(t *testing.T, raw string) (workflowMessage, string) {
+	t.Helper()
+	var msg workflowMessage
+	if err := json.Unmarshal([]byte(raw), &msg); err != nil {
+		t.Fatalf("webhook body unmarshal: %v", err)
+	}
+	if msg.Type != "message" || len(msg.Attachments) != 1 {
+		t.Fatalf("webhook envelope = %s", raw)
+	}
+	att := msg.Attachments[0]
+	if att.ContentType != adaptiveCardType || att.Content.Type != "AdaptiveCard" || att.Content.Version == "" || att.Content.Schema != adaptiveCardSchema {
+		t.Fatalf("webhook attachment = %s", raw)
+	}
+	var texts []string
+	for _, block := range att.Content.Body {
+		if block.Type != "TextBlock" || !block.Wrap {
+			t.Fatalf("card block = %#v", block)
+		}
+		texts = append(texts, block.Text)
+	}
+	return msg, strings.Join(texts, "\n")
+}
+
+func TestSendPostsWorkflowAdaptiveCardToWebhook(t *testing.T) {
 	fg := newFakeGraph(t)
 	b := testBackend(t, fg)
-	if err := b.Send("**hi** `code` [link](https://example.com/?a=1&b=2) <tag>\n```\nx < y\n```"); err != nil {
+	if err := b.Send("**hi** [link](https://example.com/?a=1&b=2) <tag>\n```\nx < y\n```\nafter"); err != nil {
 		t.Fatalf("Send error = %v", err)
 	}
 	if err := b.Send("again"); err != nil {
@@ -224,18 +267,22 @@ func TestSendPostsTeamsHTMLToWebhook(t *testing.T) {
 	if fg.tokenCalls != 0 {
 		t.Fatalf("tokenCalls = %d", fg.tokenCalls)
 	}
-	var payload struct {
-		Text string `json:"text"`
-	}
 	bodies := fg.sentBodies()
-	if err := json.Unmarshal([]byte(bodies[0]), &payload); err != nil {
-		t.Fatalf("posted body unmarshal: %v", err)
+	if strings.Contains(bodies[0], `"text":"<`) {
+		t.Fatalf("legacy connector HTML payload posted: %s", bodies[0])
 	}
-	wantPieces := []string{"<strong>hi</strong>", "<code>code</code>", `<a href="https://example.com/?a=1&amp;b=2">link</a>`, "&lt;tag&gt;", "<pre>x &lt; y<br></pre>"}
-	for _, want := range wantPieces {
-		if !strings.Contains(payload.Text, want) {
-			t.Fatalf("Teams HTML %q missing %q", payload.Text, want)
-		}
+	msg, _ := decodeWorkflowCard(t, bodies[0])
+	blocks := msg.Attachments[0].Content.Body
+	want := []adaptiveTextBlock{
+		{Type: "TextBlock", Text: "**hi** [link](https://example.com/?a=1&b=2) <tag>", Wrap: true},
+		{Type: "TextBlock", Text: "x < y", Wrap: true, FontType: "Monospace"},
+		{Type: "TextBlock", Text: "after", Wrap: true},
+	}
+	if fmt.Sprint(blocks) != fmt.Sprint(want) {
+		t.Fatalf("card body = %#v, want %#v", blocks, want)
+	}
+	if _, text := decodeWorkflowCard(t, bodies[1]); text != "again" {
+		t.Fatalf("second card text = %q", text)
 	}
 }
 
@@ -246,20 +293,16 @@ func TestSendSplitsFenceAware(t *testing.T) {
 	if err := b.Send(long); err != nil {
 		t.Fatalf("Send error = %v", err)
 	}
-	bodies := fg.sentBodies()
-	posts := bodies
+	posts := fg.sentBodies()
 	if len(posts) < 2 {
 		t.Fatalf("posts = %d, want split", len(posts))
 	}
 	for i, raw := range posts {
-		var payload struct {
-			Text string `json:"text"`
-		}
-		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-			t.Fatalf("post %d unmarshal: %v", i, err)
-		}
-		if strings.Count(payload.Text, "<pre>") != strings.Count(payload.Text, "</pre>") {
-			t.Fatalf("post %d has unbalanced pre tags: %q", i, payload.Text)
+		msg, _ := decodeWorkflowCard(t, raw)
+		for _, block := range msg.Attachments[0].Content.Body {
+			if block.FontType != "Monospace" || strings.Contains(block.Text, "```") {
+				t.Fatalf("post %d fenced block not rendered monospace: %#v", i, block)
+			}
 		}
 	}
 }
@@ -400,7 +443,7 @@ func TestPollOnceDeliversAfterProcessingAndDedupes(t *testing.T) {
 	if b.deltaURL != "/delta-token" {
 		t.Fatalf("deltaURL = %q", b.deltaURL)
 	}
-	if prefers := fg.prefers(); len(prefers) == 0 || prefers[len(prefers)-1] != "odata.maxpagesize=20" {
+	if prefers := fg.prefers(); !strings.Contains(strings.Join(prefers, ","), "odata.maxpagesize=20") {
 		t.Fatalf("Prefer headers = %#v", prefers)
 	}
 	if len(got) != 3 || got[0].Text != "!status & more" || got[0].AuthorID != "user-a" || got[0].FromBot || !got[1].FromBot || !got[2].FromBot {
@@ -468,6 +511,163 @@ func TestPollOnceOversizedDeltaResetsStream(t *testing.T) {
 	}
 	if b.deltaURL != "" || b.deltaReady {
 		t.Fatalf("delta not reset: url=%q ready=%v", b.deltaURL, b.deltaReady)
+	}
+}
+
+func TestPollOnceExpiredDeltaResyncs(t *testing.T) {
+	cases := []struct {
+		name     string
+		status   int
+		body     string
+		location string
+		wantURL  string
+	}{
+		{name: "410 resyncRequired", status: http.StatusGone, body: `{"error":{"code":"resyncRequired","message":"expired"}}`},
+		{name: "400 syncStateNotFound", status: http.StatusBadRequest, body: `{"error":{"code":"syncStateNotFound","message":"gone"}}`},
+		{name: "410 with Location", status: http.StatusGone, body: "", location: "/delta-fresh", wantURL: "/delta-fresh"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fg := newFakeGraph(t)
+			b := testBackend(t, fg)
+			b.deltaURL = "/delta-expired"
+			b.deltaReady = true
+			b.lastDeltaOK = time.Unix(900, 0)
+			b.markSeen("old")
+			b.trackThread("root", true)
+			fg.set("/delta-expired", tc.status, tc.body)
+			fg.locationByPath["/delta-expired"] = tc.location
+			immediate, err := b.pollOnce(context.Background(), func(chat.Message) { t.Fatalf("unexpected delivery") })
+			if err != nil || immediate {
+				t.Fatalf("pollOnce immediate=%v err=%v", immediate, err)
+			}
+			if b.deltaURL != tc.wantURL || b.deltaReady || b.wasSeen("old") || len(b.threads) != 0 {
+				t.Fatalf("delta not reset: url=%q ready=%v threads=%v", b.deltaURL, b.deltaReady, b.threads)
+			}
+			fresh := b.channelMessagesPath() + "/delta"
+			if tc.wantURL != "" {
+				fresh = tc.wantURL
+			}
+			fg.set(fresh, 0, `{"value":[{"id":"gap","body":{"content":"x"},"from":{"user":{"id":"user-a"}}}],"@odata.deltaLink":"/delta-new"}`)
+			if _, err := b.pollOnce(context.Background(), func(chat.Message) { t.Fatalf("baseline delivered") }); err != nil {
+				t.Fatalf("fresh baseline error = %v", err)
+			}
+			if !b.deltaReady || b.deltaURL != "/delta-new" || fg.calls("/delta-expired") != 1 || fg.calls(fresh) != 1 {
+				t.Fatalf("fresh baseline not taken: ready=%v url=%q expired=%d fresh=%d", b.deltaReady, b.deltaURL, fg.calls("/delta-expired"), fg.calls(fresh))
+			}
+		})
+	}
+}
+
+func TestPollOnceNonResyncDeltaErrorKeepsStream(t *testing.T) {
+	fg := newFakeGraph(t)
+	b := testBackend(t, fg)
+	b.deltaURL = "/delta-ok"
+	b.deltaReady = true
+	fg.set("/delta-ok", http.StatusBadRequest, `{"error":{"code":"badRequest","message":"nope"}}`)
+	if _, err := b.pollOnce(context.Background(), func(chat.Message) {}); err == nil {
+		t.Fatalf("pollOnce error = nil")
+	}
+	if b.deltaURL != "/delta-ok" || !b.deltaReady {
+		t.Fatalf("delta reset on non-resync error: url=%q ready=%v", b.deltaURL, b.deltaReady)
+	}
+}
+
+func repliesPath(root string) string {
+	return "/teams/team/channels/chan/messages/" + root + "/replies?$top=50"
+}
+
+func TestPollOnceDeliversThreadRepliesToBotPosts(t *testing.T) {
+	fg := newFakeGraph(t)
+	b := testBackend(t, fg)
+	b.deltaURL = "/delta"
+	b.deltaReady = true
+	fg.set("/delta", 0, `{"value":[{"id":"prompt","body":{"content":"reply approve/reject"},"from":{"application":{"id":"flow"}}},{"id":"human","body":{"content":"hi"},"from":{"user":{"id":"user-a"}}}],"@odata.deltaLink":"/delta-2"}`)
+	fg.set(repliesPath("prompt"), 0, `{"value":[{"id":"reply-1","body":{"contentType":"html","content":"<p>approve</p>"},"from":{"user":{"id":"user-a"}}}]}`)
+	var got []chat.Message
+	if _, err := b.pollOnce(context.Background(), func(m chat.Message) { got = append(got, m) }); err != nil {
+		t.Fatalf("pollOnce error = %v", err)
+	}
+	if len(got) != 3 || got[2].ID != "reply-1" || got[2].Text != "approve" || got[2].AuthorID != "user-a" || got[2].FromBot {
+		t.Fatalf("delivered = %#v", got)
+	}
+	if fg.calls(repliesPath("human")) != 0 {
+		t.Fatalf("replies polled for non-bot root")
+	}
+	fg.set("/delta-2", 0, `{"@odata.deltaLink":"/delta-3"}`)
+	fg.set(repliesPath("prompt"), 0, `{"value":[{"id":"reply-1","body":{"content":"approve"},"from":{"user":{"id":"user-a"}}}],"@odata.nextLink":"`+fg.server.URL+`/replies-page-2"}`)
+	fg.set("/replies-page-2", 0, `{"value":[{"id":"reply-2","body":{"content":"!status"},"from":{"user":{"id":"user-b"}}}]}`)
+	got = nil
+	if _, err := b.pollOnce(context.Background(), func(m chat.Message) { got = append(got, m) }); err != nil {
+		t.Fatalf("second poll error = %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "reply-2" || got[0].Text != "!status" {
+		t.Fatalf("second delivery = %#v", got)
+	}
+}
+
+func TestPollOnceBaselinesRepliesOfHistoricalBotPosts(t *testing.T) {
+	fg := newFakeGraph(t)
+	b := testBackend(t, fg)
+	fg.set("/teams/team/channels/chan/messages/delta", 0, `{"value":[{"id":"old-prompt","body":{"content":"gate"},"from":{"application":{"id":"flow"}}}],"@odata.deltaLink":"/delta"}`)
+	fg.set(repliesPath("old-prompt"), 0, `{"value":[{"id":"old-reply","body":{"content":"approve"},"from":{"user":{"id":"user-a"}}}]}`)
+	if _, err := b.pollOnce(context.Background(), func(m chat.Message) { t.Fatalf("baseline delivered %#v", m) }); err != nil {
+		t.Fatalf("baseline error = %v", err)
+	}
+	if !b.wasSeen("old-reply") || !b.threadReady["old-prompt"] {
+		t.Fatalf("historical replies not baselined")
+	}
+	fg.set("/delta", 0, `{"@odata.deltaLink":"/delta"}`)
+	fg.set(repliesPath("old-prompt"), 0, `{"value":[{"id":"old-reply","body":{"content":"approve"},"from":{"user":{"id":"user-a"}}},{"id":"new-reply","body":{"content":"reject"},"from":{"user":{"id":"user-a"}}}]}`)
+	var got []chat.Message
+	if _, err := b.pollOnce(context.Background(), func(m chat.Message) { got = append(got, m) }); err != nil {
+		t.Fatalf("poll error = %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "new-reply" {
+		t.Fatalf("delivered = %#v", got)
+	}
+}
+
+func TestReplyThreadsBoundedAndDroppedOnNotFound(t *testing.T) {
+	fg := newFakeGraph(t)
+	b := testBackend(t, fg)
+	b.deltaURL = "/delta"
+	b.deltaReady = true
+	var roots []string
+	for i := 0; i < replyThreadLimit+3; i++ {
+		roots = append(roots, fmt.Sprintf(`{"id":"p%d","body":{"content":"x"},"from":{"application":{"id":"flow"}}}`, i))
+	}
+	fg.set("/delta", 0, `{"value":[`+strings.Join(roots, ",")+`],"@odata.deltaLink":"/delta"}`)
+	fg.set(repliesPath("p7"), http.StatusNotFound, `{"error":{"code":"NotFound","message":"deleted"}}`)
+	if _, err := b.pollOnce(context.Background(), func(chat.Message) {}); err != nil {
+		t.Fatalf("pollOnce error = %v", err)
+	}
+	if fg.calls(repliesPath("p0")) != 0 || fg.calls(repliesPath("p3")) != 1 {
+		t.Fatalf("thread window wrong: threads=%v", b.threads)
+	}
+	if len(b.threads) != replyThreadLimit-1 || b.threadReady["p7"] {
+		t.Fatalf("deleted thread not dropped: %v", b.threads)
+	}
+	fg.set(repliesPath("p6"), http.StatusTooManyRequests, "")
+	fg.retryAfterByPath[repliesPath("p6")] = "3"
+	var rl rateLimitError
+	if _, err := b.pollOnce(context.Background(), func(chat.Message) {}); !errorsAs(err, &rl) || rl.after != 3*time.Second {
+		t.Fatalf("replies rate limit err = %v", err)
+	}
+}
+
+func TestSeenSetIsBounded(t *testing.T) {
+	fg := newFakeGraph(t)
+	b := testBackend(t, fg)
+	for i := 0; i < 5000; i++ {
+		b.markSeen(fmt.Sprintf("m%d", i))
+	}
+	b.markSeen("m4999")
+	if len(b.seen) != seenIDCacheSize || len(b.seenOrder) != seenIDCacheSize {
+		t.Fatalf("seen=%d order=%d, want %d", len(b.seen), len(b.seenOrder), seenIDCacheSize)
+	}
+	if b.wasSeen("m0") || !b.wasSeen("m4999") {
+		t.Fatalf("seen eviction order wrong")
 	}
 }
 
@@ -650,11 +850,14 @@ func TestHelpers(t *testing.T) {
 	if len(parts) != 1 || parts[0] != "" {
 		t.Fatalf("empty split = %#v", parts)
 	}
-	if markdownToTeamsHTML("[bad](") != "[bad](" {
-		t.Fatalf("bad link conversion changed")
+	if blocks := markdownToCardBody(""); len(blocks) != 1 || blocks[0].Text != " " {
+		t.Fatalf("empty card body = %#v", blocks)
 	}
-	if markdownToTeamsHTML("**unterminated") != "**unterminated" {
-		t.Fatalf("unterminated bold changed")
+	if blocks := markdownToCardBody("**unterminated"); len(blocks) != 1 || blocks[0].Text != "**unterminated" || blocks[0].FontType != "" {
+		t.Fatalf("plain card body = %#v", blocks)
+	}
+	if isNotFound(nil) || !isNotFound(graphStatusError(http.StatusNotFound, nil)) {
+		t.Fatalf("isNotFound unexpected")
 	}
 	if inboundText(graphMessageBody{ContentType: "text", Content: "<b>raw</b>"}) != "<b>raw</b>" {
 		t.Fatalf("plain inbound text changed")
@@ -684,9 +887,9 @@ func errorsAs(err error, target any) bool {
 	return false
 }
 
-func BenchmarkMarkdownToTeamsHTML(b *testing.B) {
-	input := fmt.Sprintf("**hello** [link](https://example.com) `%s`", strings.Repeat("x", 10))
+func BenchmarkMarkdownToCardBody(b *testing.B) {
+	input := fmt.Sprintf("**hello** [link](https://example.com)\n```\n%s\n```", strings.Repeat("x", 10))
 	for i := 0; i < b.N; i++ {
-		_ = markdownToTeamsHTML(input)
+		_ = markdownToCardBody(input)
 	}
 }

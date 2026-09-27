@@ -5,9 +5,17 @@
 // Instead, it polls inbound messages with Microsoft Graph channel-message delta
 // queries using app-only client-credentials auth. Microsoft Graph channel-message
 // send is delegated-only for normal runtime channels (its application permission
-// is for migration/import), so outbound messages use a Teams Incoming Webhook
-// connector URL. This keeps Hive pull-only: no inbound listener or externally
+// is for migration/import), so outbound messages are posted to a Teams
+// Workflows (Power Automate) "post to a channel when a webhook request is
+// received" URL as an Adaptive Card message envelope. Legacy Office 365
+// Incoming Webhook connectors were retired by Microsoft in May 2026 and are not
+// supported. This keeps Hive pull-only: no inbound listener or externally
 // reachable webhook endpoint is required.
+//
+// Graph channel-message delta only returns root posts, so thread replies are
+// fetched separately via /messages/{id}/replies for the most recent
+// bot-authored root posts (e.g. checkpoint prompts). Replies under other
+// users' posts are not observed; commands there must be new top-level posts.
 package msteams
 
 import (
@@ -44,6 +52,16 @@ const (
 	tokenRefreshSkew   = time.Minute
 	readLimit          = 1 << 20
 	deltaReadLimit     = 10 << 20
+	// seenIDCacheSize bounds the inbound dedupe set, mirroring Matrix's
+	// dedupeEventIDCacheSize.
+	seenIDCacheSize = 1024
+	// replyThreadLimit is how many recent bot-authored root posts are polled
+	// for thread replies each delta round.
+	replyThreadLimit   = 5
+	replyPageSize      = 50
+	replyMaxPages      = 5
+	adaptiveCardType   = "application/vnd.microsoft.card.adaptive"
+	adaptiveCardSchema = "http://adaptivecards.io/schemas/adaptive-card.json"
 )
 
 type AgentIdentity = chat.AgentIdentity
@@ -92,10 +110,17 @@ type Backend struct {
 	token      string
 	tokenUntil time.Time
 
-	seenMu     sync.Mutex
-	seen       map[string]struct{}
-	deltaURL   string
-	deltaReady bool
+	seenMu      sync.Mutex
+	seen        map[string]struct{}
+	seenOrder   []string
+	deltaURL    string
+	deltaReady  bool
+	lastDeltaOK time.Time
+	// threads holds recent bot-authored root post IDs (oldest first) whose
+	// replies are polled; threadReady marks threads whose existing replies
+	// have been baselined and whose new replies are therefore delivered.
+	threads     []string
+	threadReady map[string]bool
 }
 
 type tokenResponse struct {
@@ -130,6 +155,38 @@ type deltaResponse struct {
 	DeltaLink string         `json:"@odata.deltaLink"`
 }
 
+type repliesResponse struct {
+	Value    []graphMessage `json:"value"`
+	NextLink string         `json:"@odata.nextLink"`
+}
+
+type adaptiveTextBlock struct {
+	Type     string `json:"type"`
+	Text     string `json:"text"`
+	Wrap     bool   `json:"wrap"`
+	FontType string `json:"fontType,omitempty"`
+}
+
+type adaptiveCard struct {
+	Schema  string              `json:"$schema"`
+	Type    string              `json:"type"`
+	Version string              `json:"version"`
+	Body    []adaptiveTextBlock `json:"body"`
+	MSTeams map[string]string   `json:"msteams,omitempty"`
+}
+
+type cardAttachment struct {
+	ContentType string       `json:"contentType"`
+	ContentURL  *string      `json:"contentUrl"`
+	Content     adaptiveCard `json:"content"`
+}
+
+// workflowMessage is the envelope Teams Workflows webhooks expect.
+type workflowMessage struct {
+	Type        string           `json:"type"`
+	Attachments []cardAttachment `json:"attachments"`
+}
+
 type graphError struct {
 	Error struct {
 		Code    string `json:"code"`
@@ -162,6 +219,7 @@ func NewBot(cfg Config, logger *slog.Logger) *Bot {
 		ctxSleep:     sleepContext,
 		now:          time.Now,
 		seen:         make(map[string]struct{}),
+		threadReady:  make(map[string]bool),
 	}
 	service := chat.NewService(backend, chat.Config{
 		DashboardURL:      cfg.DashboardURL,
@@ -205,7 +263,7 @@ func (b *Backend) validate() error {
 func (b *Backend) Send(content string) error {
 	content = logscrub.ScrubString(content)
 	for _, part := range splitTeamsMessage(content) {
-		payload := map[string]string{"text": markdownToTeamsHTML(part)}
+		payload := workflowCardMessage(part)
 		if err := b.postWebhook(context.Background(), payload); err != nil {
 			return b.sanitizeWebhookError(err)
 		}
@@ -317,9 +375,12 @@ func (b *Backend) pollOnce(ctx context.Context, deliver func(chat.Message)) (boo
 			continue
 		}
 		b.markSeen(msg.ID)
+		isBot := fromBot(msg, b.clientID)
+		if isBot {
+			b.trackThread(msg.ID, !baseline)
+		}
 		if !baseline {
-			text, _ := ioscan.EnforceInput(inboundText(msg.Body))
-			deliver(chat.Message{ID: msg.ID, Text: text, AuthorID: authorID(msg), FromBot: fromBot(msg, b.clientID)})
+			b.deliverMessage(msg, deliver)
 		}
 	}
 	if page.NextLink != "" {
@@ -329,8 +390,57 @@ func (b *Backend) pollOnce(ctx context.Context, deliver func(chat.Message)) (boo
 	if page.DeltaLink != "" {
 		b.deltaURL = page.DeltaLink
 		b.deltaReady = true
+		b.lastDeltaOK = b.now()
 	}
-	return false, nil
+	if !b.deltaReady {
+		return false, nil
+	}
+	return false, b.pollReplies(ctx, deliver)
+}
+
+func (b *Backend) deliverMessage(msg graphMessage, deliver func(chat.Message)) {
+	text, _ := ioscan.EnforceInput(inboundText(msg.Body))
+	deliver(chat.Message{ID: msg.ID, Text: text, AuthorID: authorID(msg), FromBot: fromBot(msg, b.clientID)})
+}
+
+// pollReplies fetches thread replies for recent bot-authored root posts, which
+// the channel-message delta never returns.
+func (b *Backend) pollReplies(ctx context.Context, deliver func(chat.Message)) error {
+	b.seenMu.Lock()
+	roots := append([]string(nil), b.threads...)
+	b.seenMu.Unlock()
+	for _, root := range roots {
+		b.seenMu.Lock()
+		ready := b.threadReady[root]
+		b.seenMu.Unlock()
+		path := b.channelMessagesPath() + "/" + url.PathEscape(root) + "/replies?$top=" + strconv.Itoa(replyPageSize)
+		for page := 0; path != "" && page < replyMaxPages; page++ {
+			var resp repliesResponse
+			if err := b.callGraphJSON(ctx, http.MethodGet, path, nil, &resp); err != nil {
+				if isNotFound(err) {
+					b.dropThread(root)
+					break
+				}
+				return err
+			}
+			for _, msg := range resp.Value {
+				if msg.ID == "" || b.wasSeen(msg.ID) {
+					continue
+				}
+				b.markSeen(msg.ID)
+				if ready {
+					b.deliverMessage(msg, deliver)
+				}
+			}
+			path = resp.NextLink
+		}
+		b.seenMu.Lock()
+		if _, tracked := b.threadReady[root]; tracked {
+			b.threadReady[root] = true
+		}
+		b.seenMu.Unlock()
+	}
+	return nil
 }
 
 func (b *Backend) callGraphJSON(ctx context.Context, method, path string, payload any, out any) error {
@@ -358,6 +468,10 @@ func (b *Backend) callGraphJSON(ctx context.Context, method, path string, payloa
 	respBody, truncated, err := readLimited(resp.Body, limit)
 	if err != nil {
 		return err
+	}
+	if isDelta && isDeltaResync(resp.StatusCode, respBody) {
+		b.resyncDelta(resp.StatusCode, resp.Header.Get("Location"))
+		return nil
 	}
 	if truncated && isDelta {
 		b.logger.Warn("msteams delta response exceeded read limit; resetting delta baseline", "limit", limit)
@@ -461,8 +575,51 @@ func (b *Backend) wasSeen(id string) bool {
 
 func (b *Backend) markSeen(id string) {
 	b.seenMu.Lock()
-	b.seen[id] = struct{}{}
+	if _, ok := b.seen[id]; !ok {
+		rememberID(b.seen, &b.seenOrder, id)
+	}
 	b.seenMu.Unlock()
+}
+
+func rememberID(seen map[string]struct{}, order *[]string, id string) {
+	seen[id] = struct{}{}
+	*order = append(*order, id)
+	if len(*order) <= seenIDCacheSize {
+		return
+	}
+	oldest := (*order)[0]
+	delete(seen, oldest)
+	copy(*order, (*order)[1:])
+	*order = (*order)[:len(*order)-1]
+}
+
+// trackThread records a bot-authored root post for reply polling. ready is
+// true for posts that arrived after the delta baseline, so all their replies
+// are new; baseline-era posts first have their existing replies marked seen.
+func (b *Backend) trackThread(id string, ready bool) {
+	b.seenMu.Lock()
+	defer b.seenMu.Unlock()
+	if _, ok := b.threadReady[id]; ok {
+		return
+	}
+	b.threads = append(b.threads, id)
+	b.threadReady[id] = ready
+	if len(b.threads) > replyThreadLimit {
+		delete(b.threadReady, b.threads[0])
+		b.threads = append([]string(nil), b.threads[1:]...)
+	}
+}
+
+func (b *Backend) dropThread(id string) {
+	b.seenMu.Lock()
+	defer b.seenMu.Unlock()
+	delete(b.threadReady, id)
+	for i, root := range b.threads {
+		if root == id {
+			b.threads = append(b.threads[:i:i], b.threads[i+1:]...)
+			break
+		}
+	}
 }
 
 func (b *Backend) resetDelta() {
@@ -470,7 +627,45 @@ func (b *Backend) resetDelta() {
 	b.deltaURL = ""
 	b.deltaReady = false
 	b.seen = make(map[string]struct{})
+	b.seenOrder = nil
+	b.threads = nil
+	b.threadReady = make(map[string]bool)
 	b.seenMu.Unlock()
+}
+
+// resyncDelta restarts the delta stream after Graph invalidates the delta
+// token (410 Gone / resyncRequired). Messages posted between the last
+// successful round and the fresh baseline are not delivered.
+func (b *Backend) resyncDelta(status int, location string) {
+	attrs := []any{"status", status}
+	if !b.lastDeltaOK.IsZero() {
+		attrs = append(attrs, "last_successful_poll", b.lastDeltaOK, "gap", b.now().Sub(b.lastDeltaOK).Round(time.Second))
+	}
+	b.logger.Warn("msteams delta token expired; restarting delta baseline, messages posted in the gap are dropped", attrs...)
+	b.resetDelta()
+	if location != "" {
+		b.seenMu.Lock()
+		b.deltaURL = location
+		b.seenMu.Unlock()
+	}
+}
+
+func isDeltaResync(status int, body []byte) bool {
+	if status == http.StatusGone {
+		return true
+	}
+	if status < 400 {
+		return false
+	}
+	var parsed graphError
+	if json.Unmarshal(body, &parsed) != nil {
+		return false
+	}
+	switch strings.ToLower(parsed.Error.Code) {
+	case "resyncrequired", "syncstatenotfound", "syncstateinvalid":
+		return true
+	}
+	return false
 }
 
 func (b *Backend) sanitizeWebhookError(err error) error {
@@ -553,6 +748,10 @@ func isForbidden(err error) bool {
 	return strings.Contains(err.Error(), "msteams API 403")
 }
 
+func isNotFound(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "msteams API 404")
+}
+
 func retryAfter(s string) time.Duration {
 	seconds, err := strconv.Atoi(strings.TrimSpace(s))
 	if err != nil || seconds <= 0 {
@@ -597,96 +796,56 @@ func sleepContext(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-func markdownToTeamsHTML(s string) string {
-	var out strings.Builder
+func workflowCardMessage(s string) workflowMessage {
+	return workflowMessage{
+		Type: "message",
+		Attachments: []cardAttachment{{
+			ContentType: adaptiveCardType,
+			Content: adaptiveCard{
+				Schema:  adaptiveCardSchema,
+				Type:    "AdaptiveCard",
+				Version: "1.4",
+				Body:    markdownToCardBody(s),
+				MSTeams: map[string]string{"width": "Full"},
+			},
+		}},
+	}
+}
+
+// markdownToCardBody maps chat markdown onto Adaptive Card TextBlocks, which
+// render a markdown subset natively; fenced code becomes monospace blocks.
+func markdownToCardBody(s string) []adaptiveTextBlock {
+	var blocks []adaptiveTextBlock
+	var cur []string
 	inFence := false
-	for _, line := range strings.SplitAfter(s, "\n") {
-		trimmed := strings.TrimSpace(strings.TrimSuffix(line, "\n"))
-		hasNL := strings.HasSuffix(line, "\n")
-		if strings.HasPrefix(trimmed, "```") {
-			if inFence {
-				out.WriteString("</pre>")
-				if hasNL {
-					out.WriteString("<br>")
-				}
-				inFence = false
-			} else {
-				out.WriteString("<pre>")
-				inFence = true
-			}
+	flush := func(fence bool) {
+		text := strings.Join(cur, "\n")
+		cur = nil
+		if !fence {
+			text = strings.Trim(text, "\n")
+		}
+		if strings.TrimSpace(text) == "" {
+			return
+		}
+		block := adaptiveTextBlock{Type: "TextBlock", Text: text, Wrap: true}
+		if fence {
+			block.FontType = "Monospace"
+		}
+		blocks = append(blocks, block)
+	}
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			flush(inFence)
+			inFence = !inFence
 			continue
 		}
-		content := strings.TrimSuffix(line, "\n")
-		if inFence {
-			out.WriteString(html.EscapeString(content))
-		} else {
-			out.WriteString(inlineMarkdownToHTML(content))
-		}
-		if hasNL {
-			out.WriteString("<br>")
-		}
+		cur = append(cur, line)
 	}
-	if inFence {
-		out.WriteString("</pre>")
+	flush(inFence)
+	if len(blocks) == 0 {
+		blocks = []adaptiveTextBlock{{Type: "TextBlock", Text: " ", Wrap: true}}
 	}
-	return out.String()
-}
-
-func inlineMarkdownToHTML(s string) string {
-	var out strings.Builder
-	inCode := false
-	for i := 0; i < len(s); {
-		if strings.HasPrefix(s[i:], "`") {
-			if inCode {
-				out.WriteString("</code>")
-			} else {
-				out.WriteString("<code>")
-			}
-			inCode = !inCode
-			i++
-			continue
-		}
-		if !inCode && strings.HasPrefix(s[i:], "**") {
-			if end := strings.Index(s[i+2:], "**"); end >= 0 {
-				out.WriteString("<strong>")
-				out.WriteString(inlineMarkdownToHTML(s[i+2 : i+2+end]))
-				out.WriteString("</strong>")
-				i += end + 4
-				continue
-			}
-		}
-		if !inCode && s[i] == '[' {
-			if text, href, width, ok := parseMarkdownLink(s[i:]); ok {
-				out.WriteString(`<a href="`)
-				out.WriteString(html.EscapeString(href))
-				out.WriteString(`">`)
-				out.WriteString(inlineMarkdownToHTML(text))
-				out.WriteString("</a>")
-				i += width
-				continue
-			}
-		}
-		r, size := utf8.DecodeRuneInString(s[i:])
-		out.WriteString(html.EscapeString(string(r)))
-		i += size
-	}
-	if inCode {
-		out.WriteString("</code>")
-	}
-	return out.String()
-}
-
-func parseMarkdownLink(s string) (text, href string, width int, ok bool) {
-	closeText := strings.Index(s, "](")
-	if closeText <= 1 {
-		return "", "", 0, false
-	}
-	closeURL := strings.IndexByte(s[closeText+2:], ')')
-	if closeURL < 1 {
-		return "", "", 0, false
-	}
-	closeURL += closeText + 2
-	return s[1:closeText], s[closeText+2 : closeURL], closeURL + 1, true
+	return blocks
 }
 
 func splitTeamsMessage(s string) []string {

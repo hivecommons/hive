@@ -8,7 +8,6 @@ package msteams
 
 import (
 	"context"
-	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -55,13 +54,8 @@ func TestV6ConformanceTeams_OutboundMessagesAreScrubbed(t *testing.T) {
 	if len(bodies) != 1 {
 		t.Fatalf("webhook received %d bodies, want 1", len(bodies))
 	}
-	var payload struct {
-		Text string `json:"text"`
-	}
-	if err := json.Unmarshal([]byte(bodies[0]), &payload); err != nil {
-		t.Fatalf("webhook JSON: %v", err)
-	}
-	assertNoSecrets(t, "msteams webhook", bodies[0]+"\n"+payload.Text)
+	_, text := decodeWorkflowCard(t, bodies[0])
+	assertNoSecrets(t, "msteams webhook", bodies[0]+"\n"+text)
 }
 
 func TestV6ConformanceTeams_TopicUpdatesAreScrubbed(t *testing.T) {

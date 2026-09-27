@@ -4879,7 +4879,12 @@ type MSTeamsConfig struct {
 	ClientSecret string `yaml:"client_secret"`
 	TeamID       string `yaml:"team_id"`
 	ChannelID    string `yaml:"channel_id"`
-	WebhookURL   string `yaml:"webhook_url"`
+	// WebhookURL is the outbound URL of a Teams Workflows (Power Automate)
+	// "Post to a channel when a webhook request is received" flow targeting
+	// channel_id; Hive posts Adaptive Card message envelopes to it. Legacy
+	// Office 365 Incoming Webhook connector URLs stopped working when Microsoft
+	// retired connectors in May 2026 and are not supported.
+	WebhookURL string `yaml:"webhook_url"`
 	// AllowedUsers is an allowlist of Azure AD user object IDs permitted to issue
 	// bot COMMANDS (!kick, !pause, agent actions — anything that drives an
 	// agent). SECURITY: without it, any channel member who can post in the channel
