@@ -287,27 +287,3 @@ func TestNotificationsTabRendersEventCheckboxesAndSlack(t *testing.T) {
 		}
 	}
 }
-
-func TestStaticAutoMergeRepoPolicyControls(t *testing.T) {
-	body, err := os.ReadFile("../static/index.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	html := string(body)
-	for _, want := range []string{
-		`id="auto-merge-repo-policy-list"`,
-		`id="auto-merge-unprotected-warning"`,
-		`id="auto-merge-no-ci-warning"`,
-		`auto-merge-allow-unprotected-`,
-		`auto-merge-no-ci-ok-`,
-		`data-auto-merge-list="allow_unprotected_base"`,
-		`data-auto-merge-list="no_ci_ok"`,
-		`function autoMergeRepoPolicyToggle`,
-		`markDirty('auto-merge', key, next)`,
-		`the hive's own CI-evidence gate is the only gate`,
-	} {
-		if !strings.Contains(html, want) {
-			t.Fatalf("auto-merge repo policy UI missing %q", want)
-		}
-	}
-}

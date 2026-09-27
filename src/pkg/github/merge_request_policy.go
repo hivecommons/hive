@@ -1,19 +1,9 @@
 package github
 
 import (
-	"context"
-	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 )
-
-const baseBranchProtectionCacheTTL = 5 * time.Minute
-
-type baseBranchProtectionCacheEntry struct {
-	protected bool
-	cachedAt  time.Time
-}
 
 func (c *Client) SetMergeRequestAllowUnprotectedBaseRepos(repos map[string]bool) {
 	if c == nil {
@@ -21,6 +11,8 @@ func (c *Client) SetMergeRequestAllowUnprotectedBaseRepos(repos map[string]bool)
 	}
 	c.mergePolicyMu.Lock()
 	defer c.mergePolicyMu.Unlock()
+	// Deprecated no-op: unprotected bases are no longer refused. Keep accepting
+	// and normalizing the config so existing hive.yaml overlays keep loading.
 	c.allowUnprotectedBaseRepos = normalizeRepoSet(c.org, repos)
 }
 
@@ -99,84 +91,4 @@ func (c *Client) maybeDowngradeNoCIVerdict(req MergeRequest, verdict mergeCIVerd
 			slog.String("agent", req.Agent), slog.String("config", "auto_merge.no_ci_ok"))
 	}
 	return mergeCIGreen, reason
-}
-
-func (c *Client) verifyMergeRequestBaseProtected(ctx context.Context, repo string, number int) error {
-	if c == nil || c.client == nil {
-		return ErrNoGitHubClient
-	}
-	owner, name := c.splitRepo(repo)
-	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:merge_request_base_protection"), owner, name, number)
-	if err != nil {
-		return fmt.Errorf("base branch protection: fetching PR %s/%s#%d: %w", owner, name, number, err)
-	}
-	base := strings.TrimSpace(pr.GetBase().GetRef())
-	if base == "" {
-		return fmt.Errorf("base branch protection: PR %s/%s#%d has no base branch", owner, name, number)
-	}
-	key := repoPolicyKey(owner, name) + ":" + strings.ToLower(base)
-	now := time.Now()
-	c.mergePolicyMu.RLock()
-	cached, ok := c.baseBranchProtectionCached[key]
-	c.mergePolicyMu.RUnlock()
-	if ok && now.Sub(cached.cachedAt) < baseBranchProtectionCacheTTL {
-		if cached.protected {
-			return nil
-		}
-		if c.mergeRequestAllowsUnprotectedBase(repo) {
-			if c.logger != nil {
-				c.logger.Info("merge-request watcher: cached unprotected base branch opt-in allows merge",
-					slog.String("repo", repo), slog.Int("number", number),
-					slog.String("base", base), slog.String("config", "auto_merge.allow_unprotected_base"))
-			}
-			return nil
-		}
-		return fmt.Errorf("base branch %q has no branch protection; set auto_merge.allow_unprotected_base for this repo to override", base)
-	}
-
-	branch, _, err := c.client.Repositories.GetBranch(ctx, owner, name, base, 1)
-	if err != nil {
-		return fmt.Errorf("base branch protection: checking %s/%s@%s: %w", owner, name, base, err)
-	}
-	protected := branch.GetProtected()
-	c.cacheBaseBranchProtection(key, protected, now)
-	if protected {
-		return nil
-	}
-	if c.mergeRequestAllowsUnprotectedBase(repo) {
-		if c.logger != nil {
-			c.logger.Info("merge-request watcher: unprotected base branch opt-in allows merge",
-				slog.String("repo", repo), slog.Int("number", number),
-				slog.String("base", base), slog.String("config", "auto_merge.allow_unprotected_base"))
-		}
-		return nil
-	}
-	return fmt.Errorf("base branch %q has no branch protection; set auto_merge.allow_unprotected_base for this repo to override", base)
-}
-
-func (c *Client) cacheBaseBranchProtection(key string, protected bool, now time.Time) {
-	if c == nil || key == "" {
-		return
-	}
-	c.mergePolicyMu.Lock()
-	defer c.mergePolicyMu.Unlock()
-	if c.baseBranchProtectionCached == nil {
-		c.baseBranchProtectionCached = make(map[string]baseBranchProtectionCacheEntry)
-	}
-	c.baseBranchProtectionCached[key] = baseBranchProtectionCacheEntry{protected: protected, cachedAt: now}
-}
-
-func (c *Client) cachedBaseBranchProtection(owner, repo, branch string) (bool, bool) {
-	if c == nil {
-		return false, false
-	}
-	key := repoPolicyKey(owner, repo) + ":" + strings.ToLower(strings.TrimSpace(branch))
-	now := time.Now()
-	c.mergePolicyMu.RLock()
-	cached, ok := c.baseBranchProtectionCached[key]
-	c.mergePolicyMu.RUnlock()
-	if !ok || now.Sub(cached.cachedAt) >= baseBranchProtectionCacheTTL {
-		return false, false
-	}
-	return cached.protected, true
 }

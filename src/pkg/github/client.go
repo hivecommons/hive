@@ -81,17 +81,19 @@ type Client struct {
 	// mergePolicyMu guards the merge-request watcher policy knobs below.
 	// Config reloads may replace them while a watcher tick is evaluating a
 	// request, so reads must be synchronized.
-	mergePolicyMu              sync.RWMutex
-	allowUnprotectedBaseRepos  map[string]bool
-	noCIAllowedRepos           map[string]bool
-	baseBranchProtectionCached map[string]baseBranchProtectionCacheEntry
-	logger                     *slog.Logger
-	appAuth                    *AppAuth // nil for token-authenticated clients
-	canariesEnabled            bool
-	canaryFailClosed           bool
-	canaryRegistry             *ioscan.CanaryRegistry
-	canaryLeakFunc             func(ioscan.CanaryLeak)
-	appBotLogin                string // "<app-slug>[bot]" when the client authenticates as a GitHub App
+	mergePolicyMu             sync.RWMutex
+	allowUnprotectedBaseRepos map[string]bool
+	noCIAllowedRepos          map[string]bool
+	mergeAlertMu              sync.Mutex
+	mergeAlertSink            MergeFailureAlertSink
+	mergeAlertIDsByRepo       map[string]map[string]bool
+	logger                    *slog.Logger
+	appAuth                   *AppAuth // nil for token-authenticated clients
+	canariesEnabled           bool
+	canaryFailClosed          bool
+	canaryRegistry            *ioscan.CanaryRegistry
+	canaryLeakFunc            func(ioscan.CanaryLeak)
+	appBotLogin               string // "<app-slug>[bot]" when the client authenticates as a GitHub App
 	// approvalDesk is the RFC #4000 approval-desk consultation performed per PR
 	// by the self-authored auto-merge sweep. nil (the default) means the sweep
 	// behaves exactly as it did before the desk existed. Set by SetApprovalDesk

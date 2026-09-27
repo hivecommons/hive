@@ -1634,6 +1634,9 @@ func (b *boot) wireBootClosures() {
 				newClient.SetAgentRepoScopeFunc(b.cfg.AgentServesRepo) // #6204: a client rebuild must not un-scope agents
 				installReviewRelaySettings(newClient, b.cfg, b.logger)
 				syncAutoMergePolicyToGitHubClient(b.cfg, newClient)
+				if b.dashSrv != nil {
+					newClient.SetMergeFailureAlertSink(b.dashSrv)
+				}
 				b.ghClient = newClient
 				b.installMutationBoundary(b.ghClient)
 				b.appAuth = newAppAuth
@@ -2320,6 +2323,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		// that API call fails closed to the coarser isMetaCheck/isIgnorableCICheck
 		// allowlist. Unset/empty leaves the API/allowlist fallback chain
 		// intact (SetRequiredChecks(nil) is a safe no-op).
+		logDeprecatedAllowUnprotectedBase(b.cfg, b.logger)
 		if set, ok := syncAutoMergePolicyToGitHubClient(b.cfg, b.ghClient); ok {
 			autoMergeOpts.RequiredChecks = set
 		}
@@ -2536,6 +2540,9 @@ func (b *boot) bootDashboard() { b.bootDashboardWith(defaultBootDashboardDeps())
 // persistence enables injected; see bootDashboardDeps.
 func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.dashSrv = deps.newServer(b.cfg.Dashboard.Port, b.cfg.Dashboard.AuthToken, b.logger)
+	if b.ghClient != nil {
+		b.ghClient.SetMergeFailureAlertSink(b.dashSrv)
+	}
 	worksource.SetRunStageAccessor(b.dashSrv.RunStageAccessor())
 	b.dashSrv.SetMutationStats(func() interface{} {
 		if b.mutationStats == nil {
@@ -3796,6 +3803,9 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 					newClient.SetAgentRepoScopeFunc(b.cfg.AgentServesRepo) // #6204: a client rebuild must not un-scope agents
 					installReviewRelaySettings(newClient, b.cfg, b.logger)
 					syncAutoMergePolicyToGitHubClient(b.cfg, newClient)
+					if b.dashSrv != nil {
+						newClient.SetMergeFailureAlertSink(b.dashSrv)
+					}
 					b.ghClient = newClient
 					b.installMutationBoundary(b.ghClient)
 					b.appAuth = newAppAuth
@@ -5154,6 +5164,9 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					newClient.SetRepoPausedFunc(b.cfg.IsRepoPaused)        // #6203: a client rebuild must not un-pause repos
 					newClient.SetAgentRepoScopeFunc(b.cfg.AgentServesRepo) // #6204: a client rebuild must not un-scope agents
 					syncAutoMergePolicyToGitHubClient(b.cfg, newClient)
+					if b.dashSrv != nil {
+						newClient.SetMergeFailureAlertSink(b.dashSrv)
+					}
 
 					b.ghClient = newClient
 					b.installMutationBoundary(b.ghClient)

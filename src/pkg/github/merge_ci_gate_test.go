@@ -27,9 +27,9 @@ type ciFixture struct {
 	// branchProtectionStatus is the HTTP status for GET
 	// /branches/{base}/protection. Zero means 200 protected.
 	branchProtectionStatus int
-	// baseUnprotected makes GET /branches/{branch} report protected=false,
-	// exercising the #6281 unprotected-base gate. Zero value (false) models
-	// the common protected base so pre-#6281 fixtures are unaffected.
+	// baseUnprotected makes GitHub's required-status-checks endpoint report
+	// ErrBranchNotProtected. The merge-request watcher must still merge when
+	// its own CI evidence is green.
 	baseUnprotected bool
 	// branchStatus, when non-zero, is the HTTP status for GET
 	// /branches/{branch}. It exercises fail-closed handling when the readable
@@ -103,6 +103,11 @@ func (f *ciFixture) serveCI(w http.ResponseWriter, r *http.Request) bool {
 		}
 		enc(map[string]any{"total_count": len(runs), "workflow_runs": runs})
 	case strings.HasSuffix(p, "/branches/main/protection"):
+		if f.baseUnprotected {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "Branch not protected"})
+			return true
+		}
 		if f.branchProtectionStatus != 0 {
 			w.WriteHeader(f.branchProtectionStatus)
 			message := "branch protection unavailable"
@@ -335,41 +340,39 @@ func TestMergeCIGate_AllSuccessMerges(t *testing.T) {
 	mustNotExist(t, reqPath, "request consumed after merge")
 }
 
-func TestMergeRequestBaseProtection_UnprotectedRefuses(t *testing.T) {
+func TestMergeRequestBaseProtection_UnprotectedMergesWithGreenCI(t *testing.T) {
 	f := greenFixture()
 	f.baseUnprotected = true
 	var merges atomic.Int32
 	srv := ciGateServer(t, f, &merges)
 	defer srv.Close()
 	c := testMergeClient(t, srv.URL)
-
-	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
-	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
-
-	if merges.Load() != 0 {
-		t.Fatalf("INVARIANT VIOLATED: unprotected base branch was merged")
-	}
-	resp := readMergeResult(t, reqPath)
-	if resp.OK || !strings.Contains(resp.Error, "no branch protection") || !strings.Contains(resp.Error, "allow_unprotected_base") {
-		t.Fatalf("expected refusal naming unprotected base override, got %+v", resp)
-	}
-	mustExist(t, reqPath+".denied", "unprotected-base request")
-}
-
-func TestMergeRequestBaseProtection_AllowlistedRepoProceeds(t *testing.T) {
-	f := greenFixture()
-	f.baseUnprotected = true
-	var merges atomic.Int32
-	srv := ciGateServer(t, f, &merges)
-	defer srv.Close()
-	c := testMergeClient(t, srv.URL)
-	c.SetMergeRequestAllowUnprotectedBaseRepos(map[string]bool{"o/r": true})
 
 	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
 	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
 
 	if merges.Load() != 1 {
-		t.Fatalf("allowlisted unprotected base should proceed to merge, got %d merges (result=%+v)", merges.Load(), readMergeResult(t, reqPath))
+		t.Fatalf("unprotected base with green CI should merge, got %d merges (result=%+v)", merges.Load(), readMergeResult(t, reqPath))
+	}
+	resp := readMergeResult(t, reqPath)
+	if !resp.OK {
+		t.Fatalf("expected successful merge, got %+v", resp)
+	}
+	mustNotExist(t, reqPath, "request consumed after merge")
+}
+
+func TestMergeRequestBaseProtection_ProtectedMergesWithGreenCI(t *testing.T) {
+	f := greenFixture()
+	var merges atomic.Int32
+	srv := ciGateServer(t, f, &merges)
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+
+	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+
+	if merges.Load() != 1 {
+		t.Fatalf("protected base with green CI should merge, got %d merges (result=%+v)", merges.Load(), readMergeResult(t, reqPath))
 	}
 	resp := readMergeResult(t, reqPath)
 	if !resp.OK {
@@ -377,7 +380,7 @@ func TestMergeRequestBaseProtection_AllowlistedRepoProceeds(t *testing.T) {
 	}
 }
 
-func TestMergeRequestBaseProtection_AllowlistedRepoStillRefusesFailingCI(t *testing.T) {
+func TestMergeRequestBaseProtection_DeprecatedAllowlistDoesNotOverrideFailingCI(t *testing.T) {
 	f := &ciFixture{
 		defaultHead:     "abc",
 		checks:          []ciCheck{{"build", "completed", "failure"}},
@@ -393,33 +396,12 @@ func TestMergeRequestBaseProtection_AllowlistedRepoStillRefusesFailingCI(t *test
 	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
 
 	if merges.Load() != 0 {
-		t.Fatalf("INVARIANT VIOLATED: allow_unprotected_base overrode failing CI")
+		t.Fatalf("INVARIANT VIOLATED: deprecated allow_unprotected_base overrode failing CI")
 	}
 	resp := readMergeResult(t, reqPath)
 	if resp.OK || !strings.Contains(resp.Error, "check-failure") {
 		t.Fatalf("expected failing check refusal, got %+v", resp)
 	}
-}
-
-func TestMergeRequestBaseProtection_APIErrorRefuses(t *testing.T) {
-	f := greenFixture()
-	f.branchStatus = http.StatusInternalServerError
-	var merges atomic.Int32
-	srv := ciGateServer(t, f, &merges)
-	defer srv.Close()
-	c := testMergeClient(t, srv.URL)
-
-	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
-	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
-
-	if merges.Load() != 0 {
-		t.Fatalf("INVARIANT VIOLATED: branch-protection API error merged")
-	}
-	resp := readMergeResult(t, reqPath)
-	if resp.OK || !strings.Contains(resp.Error, "base branch protection") {
-		t.Fatalf("expected fail-closed base branch API refusal, got %+v", resp)
-	}
-	mustExist(t, reqPath+".denied", "base branch API error request")
 }
 
 // The production shape from #6173: every workflow concluded failure with
@@ -624,19 +606,16 @@ func TestMergeCIGate_NoCIOKDoesNotOverrideFailingCheck(t *testing.T) {
 }
 
 func TestMergeCIVerdictString(t *testing.T) {
-	for v, want := range map[mergeCIVerdict]string{mergeCIGreen: "green", mergeCIPending: "pending", mergeCIRed: "red", mergeCIUnverified: "unverified", mergeCIUnprotectedBase: "unprotected-base", mergeCIVerdict(9): "mergeCIVerdict(9)"} {
+	for v, want := range map[mergeCIVerdict]string{mergeCIGreen: "green", mergeCIPending: "pending", mergeCIRed: "red", mergeCIUnverified: "unverified", mergeCIVerdict(9): "mergeCIVerdict(9)"} {
 		if got := v.String(); got != want {
 			t.Errorf("%d.String() = %q, want %q", int(v), got, want)
 		}
 	}
 }
 
-// #6281 gate 1: an unprotected base branch refuses the merge outright unless
-// the repo is explicitly allowlisted — even when CI is fully green. The
-// refusal names the missing allowlist entry so an operator can see why the
-// request was quarantined, and it must not re-engage the fix loop (there is
-// no red check to fix).
-func TestMergeCIGate_UnprotectedBaseRefuses(t *testing.T) {
+// The unprotected-base allowlist is now deprecated: an unprotected base with
+// green CI merges without consulting auto_merge.allow_unprotected_base.
+func TestMergeCIGate_UnprotectedBaseMergesWithoutAllowlist(t *testing.T) {
 	f := greenFixture()
 	f.baseUnprotected = true
 	var merges atomic.Int32
@@ -647,21 +626,19 @@ func TestMergeCIGate_UnprotectedBaseRefuses(t *testing.T) {
 	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
 	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
 
-	if got := merges.Load(); got != 0 {
-		t.Fatalf("INVARIANT VIOLATED: merged into an unprotected base branch (%d PUT /merge calls)", got)
+	if got := merges.Load(); got != 1 {
+		t.Fatalf("unprotected base with green CI should merge exactly once, got %d", got)
 	}
 	resp := readMergeResult(t, reqPath)
-	if resp.OK || resp.Attempts != 0 || !strings.Contains(resp.Error, "allow_unprotected_base") {
-		t.Fatalf("expected a refusal naming allow_unprotected_base, got %+v", resp)
+	if !resp.OK {
+		t.Fatalf("expected successful merge, got %+v", resp)
 	}
-	mustExist(t, reqPath+".denied", "unprotected-base request")
-	mustNotExist(t, reqPath, "live request after exhaustion")
+	mustNotExist(t, reqPath, "request consumed after merge")
 }
 
-// #6281 gate 1 opt-out: the explicit per-repo allowlist restores the pre-gate
-// behavior — an unprotected base with green CI merges. Both the "owner/repo"
-// and bare-name config forms must match.
-func TestMergeCIGate_UnprotectedBaseAllowlisted(t *testing.T) {
+// Existing configs may still carry auto_merge.allow_unprotected_base. It is
+// accepted as a no-op and does not change the outcome.
+func TestMergeCIGate_DeprecatedAllowUnprotectedBaseAcceptedAsNoop(t *testing.T) {
 	for name, allow := range map[string]map[string]bool{"owner/repo form": {"o/r": true}, "bare name form": {"r": true}} {
 		t.Run(name, func(t *testing.T) {
 			f := greenFixture()

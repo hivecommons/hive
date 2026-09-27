@@ -11,11 +11,9 @@ import (
 
 // mergeCIVerdict is the merge-request watcher's pre-merge CI verdict (#6173).
 //
-// Before this gate existed the watcher issued MergePR unconditionally and
-// relied on GitHub's branch protection to refuse a red PR. On a base branch
-// with no protection rules nothing refuses it, so a PR whose checks failed,
-// or that never produced a check at all, merged on request. The production
-// case that surfaced this: every workflow on the head SHA concluded
+// Before this gate existed the watcher issued MergePR unconditionally and could
+// merge a PR whose checks failed, or that never produced a check at all. The
+// production case that surfaced this: every workflow on the head SHA concluded
 // `failure` with ZERO jobs (startup failures), so the commit had zero check
 // runs, an empty status rollup, and looked clean to anything that asks "is a
 // check failing?". Absent is not passing. A merge now requires POSITIVE
@@ -36,12 +34,6 @@ const (
 	// on the head SHA. GitHub has no verdict at all, so neither does the
 	// hive. Refuse (unless the repo is opted in via auto_merge.no_ci_ok).
 	mergeCIUnverified
-	// mergeCIUnprotectedBase: the PR's base branch has no GitHub branch
-	// protection and the repo is not allowlisted in
-	// auto_merge.allow_unprotected_base (#6281). On such a branch the hive's
-	// own CI-evidence gate is the only gate — nothing external refuses a
-	// merge if the hive's evidence gathering has a bug — so refuse.
-	mergeCIUnprotectedBase
 )
 
 func (v mergeCIVerdict) String() string {
@@ -54,8 +46,6 @@ func (v mergeCIVerdict) String() string {
 		return "red"
 	case mergeCIUnverified:
 		return "unverified"
-	case mergeCIUnprotectedBase:
-		return "unprotected-base"
 	}
 	return fmt.Sprintf("mergeCIVerdict(%d)", int(v))
 }
@@ -84,13 +74,13 @@ var workflowRunFailureConclusions = map[string]bool{
 }
 
 // SetMergeRequestPolicy installs the per-repo merge-request policy sets
-// (#6281): allowUnprotectedBase (repos that may merge into a base branch with
-// no GitHub branch protection) and noCIOK (repos whose "unverified" CI
-// verdict — zero statuses, check runs, and workflow runs — is downgraded to
-// green). Keys are lowercase "owner/repo" and/or bare repo names, as produced
-// by config.AutoMergeConfig.AllowUnprotectedBaseSet / NoCIOKSet. nil/empty
-// clears a set (refuse everywhere — fail closed). Safe to call repeatedly on
-// config reload; the watcher goroutine reads through mergePolicyMu.
+// (#6281 compatibility): allowUnprotectedBase is accepted as a deprecated no-op
+// so existing configs keep loading; noCIOK repos have the "unverified" CI verdict
+// — zero statuses, check runs, and workflow runs — downgraded to green. Keys are
+// lowercase "owner/repo" and/or bare repo names, as produced by
+// config.AutoMergeConfig.AllowUnprotectedBaseSet / NoCIOKSet. nil/empty clears a
+// set. Safe to call repeatedly on config reload; the watcher goroutine reads
+// through mergePolicyMu.
 func (c *Client) SetMergeRequestPolicy(allowUnprotectedBase, noCIOK map[string]bool) {
 	if c == nil {
 		return
@@ -154,31 +144,14 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 		return mergeCIRed, fmt.Sprintf("ci gate: head moved: request pinned %s but PR head is %s", shortSHA(sha), shortSHA(headSHA)), nil
 	}
 
-	// Unprotected-base gate (#6281): on a base branch with no branch
-	// protection, GitHub refuses nothing — the hive's own CI-evidence gate
-	// below is the only gate. Require an explicit per-repo allowlisting
-	// (auto_merge.allow_unprotected_base) before merging into such a branch,
-	// so that a bug in the hive's evidence gathering never has zero external
-	// backstops silently. Branch.protected is readable with plain contents
-	// scope (unlike GetRequiredStatusChecks, which needs administration:read),
-	// so this check works with the Hive App token. An API failure here means
-	// the protection state is UNKNOWN — fail closed as a failed attempt.
-	if baseBranch != "" {
-		br, _, berr := c.client.Repositories.GetBranch(ctx, owner, name, baseBranch, 0)
-		if berr != nil {
-			return mergeCIUnverified, "merge gate: fetching base branch protection state", fmt.Errorf("merge gate: fetching base branch %q of %s/%s: %w", baseBranch, owner, name, berr)
-		}
-		if !br.GetProtected() && !c.repoAllowsUnprotectedBase(owner, name) {
-			return mergeCIUnprotectedBase, fmt.Sprintf("merge gate: base branch %q of %s/%s has no branch protection and the repo is not allowlisted in auto_merge.allow_unprotected_base - refusing to merge with no gate behind the hive's own", baseBranch, owner, name), nil
-		}
-	}
-
 	cfgSet, cfgKnown := c.configRequiredChecks()
 	required, requiredKnown := RequiredStatusCheckContexts(ctx, c.client, owner, name, baseBranch, cfgSet, cfgKnown)
-	if protected, known := c.cachedBaseBranchProtection(owner, name, baseBranch); known && !protected && !cfgKnown {
-		// An allowlisted unprotected base has no branch-protection required set
-		// to delegate to. Use the fail-closed fallback so failing evidence is
-		// still a blocker unless the operator declared required checks explicitly.
+	if !cfgKnown && requiredKnown && len(required) == 0 {
+		// GitHub reports both "branch not protected" and "protected but no
+		// required checks" as a known empty set. For the merge-request watcher
+		// that must not mean "ignore failing CI": absent required-check config
+		// falls back to Hive's positive evidence gate so red/pending non-meta
+		// checks still block on protected and unprotected branches alike.
 		required, requiredKnown = nil, false
 	}
 	st, err := EvaluateCommitCI(ctx, c.client, owner, name, sha, required, requiredKnown)

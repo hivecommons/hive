@@ -122,7 +122,7 @@ func TestAutoMergePut_ValidatesAndApplies(t *testing.T) {
 		t.Fatalf("decode round-trip: %v", err)
 	}
 	if len(roundTrip.AllowUnprotectedBase) != 1 || roundTrip.AllowUnprotectedBase[0] != "repo-one" {
-		t.Fatalf("allow_unprotected_base did not round-trip: %v", roundTrip.AllowUnprotectedBase)
+		t.Fatalf("deprecated allow_unprotected_base did not round-trip: %v", roundTrip.AllowUnprotectedBase)
 	}
 	if len(roundTrip.NoCIOK) != 1 || roundTrip.NoCIOK[0] != "docs-only" {
 		t.Fatalf("no_ci_ok did not round-trip: %v", roundTrip.NoCIOK)

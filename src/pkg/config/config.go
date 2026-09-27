@@ -7397,10 +7397,10 @@ type AutoMergeConfig struct {
 	// per-repo (e.g. console's main branch requires only "build-gate"), so
 	// the operator must declare it per-hive in `auto_merge.required_checks`.
 	RequiredChecks []string `yaml:"required_checks,omitempty" json:"required_checks,omitempty"`
-	// AllowUnprotectedBase is the explicit per-repo exception list for the
-	// merge-request relay's base-branch protection guard. By default the relay
-	// refuses to merge into a base branch with no GitHub branch protection; a
-	// repo listed here is allowed to rely on Hive's CI gate alone.
+	// AllowUnprotectedBase is deprecated and no longer changes merge-request
+	// behavior. It remains in the schema so existing configs keep loading; the
+	// watcher now merges into any protected or unprotected branch the App can
+	// write, subject to the positive CI-evidence gate below.
 	AllowUnprotectedBase []string `yaml:"allow_unprotected_base,omitempty" json:"allow_unprotected_base,omitempty"`
 	// NoCIOK is the explicit per-repo exception list for repositories that have
 	// no CI by design. A listed repo may downgrade the merge-request relay's
