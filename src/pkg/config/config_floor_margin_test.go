@@ -18,7 +18,7 @@ import (
 // APIKeySHA256 must never leak the key: an empty key yields an empty digest
 // (not the hash of ""), and a real key yields the exact lowercase hex SHA-256
 // the gateway will compare against.
-func TestAPIKeySHA256(t *testing.T) {
+func TestAPIKeySHA256FloorMargin(t *testing.T) {
 	if got := APIKeySHA256(""); got != "" {
 		t.Errorf("APIKeySHA256(\"\") = %q, want empty", got)
 	}
