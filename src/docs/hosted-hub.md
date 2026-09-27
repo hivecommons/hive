@@ -145,7 +145,9 @@ Three explicit signals are counted per user on the hub persona record (counts
 only, never transcripts):
 
 - `expanded`: the user asked `!runs <key> more` after seeing a summary.
-- `skipped`: the user approved or rejected a run without expanding it.
+- `skipped`: the user approved or rejected a run without expanding it, via
+  `!runs approve`/`!runs reject` or a plain `approve`/`reject` reply to the
+  checkpoint prompt.
 - `re-asked`: the user asked `!runs <key>` again for a summary they had
   already seen and not expanded.
 

@@ -168,6 +168,137 @@ func TestPersonaLearningSkippedAndReAskedSignals(t *testing.T) {
 	}
 }
 
+// A plain `approve`/`reject` reply to a pending checkpoint prompt is the
+// documented primary decision path; it must count the skip like `!runs
+// approve` does (hivecommons/hive#9130).
+func TestPersonaLearningPlainCheckpointReplyRecordsSkip(t *testing.T) {
+	store := &testPersonaStore{records: map[string]persona.Record{
+		"alice": {Depth: persona.DepthTechnical, SummaryLength: persona.SummaryStandard},
+		"bob":   {Depth: persona.DepthOutcomes, SummaryLength: persona.SummaryStandard},
+	}}
+	s := newLearningService(t, store, true, nil)
+	// bob viewed the summary but alice decides: her decision ends the gate for
+	// bob's marks as well, without waiting for the next run poll.
+	if _, err := s.cmdRuns(ownerCtx("bob"), "acme/w#1"); err != nil {
+		t.Fatalf("bob show: %v", err)
+	}
+	s.pendingCheckpoints[s.pendingCheckpointKey("acme/w#1")] = &pendingCheckpoint{
+		RunKey: "acme/w#1", Gen: 2, Authors: map[string]struct{}{"alice": {}, "bob": {}},
+		Payload: runCheckpointPayload{RunKey: "acme/w#1", Stage: "plan", Gen: 2},
+	}
+	s.routeMessage(context.Background(), Message{ID: "1", Text: "approve", AuthorID: "alice"})
+	var sent []string
+	drainQueue(s, &sent)
+	if len(sent) != 1 || !strings.Contains(sent[0], "Approved run `acme/w#1`") {
+		t.Fatalf("plain approve replies = %#v", sent)
+	}
+	if got := store.records["alice"].Learning; got == nil || got.Signals.Skipped != 1 {
+		t.Fatalf("plain approve skipped counter = %#v", got)
+	}
+	if _, ok := s.shownSummaries[s.personaRunKey("bob", "acme/w#1")]; ok {
+		t.Fatal("another viewer's mark survived alice's decision")
+	}
+	if store.records["bob"].Learning != nil {
+		t.Fatalf("bob was counted for alice's decision: %#v", store.records["bob"].Learning)
+	}
+
+	// A plain reject without expanding is a skip on the reject branch too; the
+	// second skip crosses the test threshold and proposes moving depth down.
+	s.pendingCheckpoints[s.pendingCheckpointKey("acme/w#3")] = &pendingCheckpoint{
+		RunKey: "acme/w#3", Gen: 1, Authors: map[string]struct{}{"alice": {}},
+		Payload: runCheckpointPayload{RunKey: "acme/w#3", Stage: "plan", Gen: 1},
+	}
+	s.routeMessage(context.Background(), Message{ID: "2", Text: "reject wrong repo", AuthorID: "alice"})
+	drainQueue(s, &sent)
+	if len(sent) != 3 || !strings.Contains(sent[1], "set depth from technical to outcomes (evidence: 2 skips in 7 days)") || !strings.Contains(sent[2], "Rejected run `acme/w#3`") {
+		t.Fatalf("plain reject replies = %#v", sent)
+	}
+	if got := store.records["alice"]; len(got.Suggestions()) != 1 || got.Depth != persona.DepthTechnical {
+		t.Fatalf("record after two plain skips = %#v", got)
+	}
+	skippedAfterSuggestion := store.records["alice"].Learning.Signals.Skipped
+
+	// Expanding first makes the plain reject an informed decision: no skip.
+	if _, err := s.cmdRuns(ownerCtx("alice"), "acme/w#2 more"); err != nil {
+		t.Fatalf("more: %v", err)
+	}
+	s.pendingCheckpoints[s.pendingCheckpointKey("acme/w#2")] = &pendingCheckpoint{
+		RunKey: "acme/w#2", Gen: 2, Authors: map[string]struct{}{"alice": {}},
+		Payload: runCheckpointPayload{RunKey: "acme/w#2", Stage: "plan", Gen: 2},
+	}
+	s.routeMessage(context.Background(), Message{ID: "3", Text: "reject not yet", AuthorID: "alice"})
+	drainQueue(s, &sent)
+	if len(sent) != 4 || !strings.Contains(sent[3], "Rejected run `acme/w#2`") {
+		t.Fatalf("plain reject after expanding replies = %#v", sent)
+	}
+	if got := store.records["alice"].Learning; got.Signals.Skipped != skippedAfterSuggestion {
+		t.Fatalf("plain reject after expanding counted a skip: %#v", got.Signals)
+	}
+	if len(s.expandedRuns)+len(s.shownSummaries) != 0 {
+		t.Fatalf("deciding author's marks survived the decision: expanded=%#v shown=%#v", s.expandedRuns, s.shownSummaries)
+	}
+}
+
+// Marks belong to a run's human gate. When the run leaves that gate — decided
+// by someone else, or finished — every author's marks for it are dropped, so
+// a non-deciding viewer's marks do not outlive the run (hivecommons/hive#9130).
+func TestPersonaLearningRunMarksClearedWhenRunLeavesPendingSet(t *testing.T) {
+	store := &testPersonaStore{records: map[string]persona.Record{
+		"alice": {Depth: persona.DepthOutcomes, SummaryLength: persona.SummaryStandard},
+		"bob":   {Depth: persona.DepthTechnical, SummaryLength: persona.SummaryStandard},
+	}}
+	s := newLearningService(t, store, true, nil)
+
+	// alice views the summary, bob expands; neither decides in chat.
+	if _, err := s.cmdRuns(ownerCtx("alice"), "acme/w#1"); err != nil {
+		t.Fatalf("alice show: %v", err)
+	}
+	if _, err := s.cmdRuns(ownerCtx("bob"), "acme/w#1 more"); err != nil {
+		t.Fatalf("bob more: %v", err)
+	}
+	if _, err := s.cmdRuns(ownerCtx("bob"), "acme/w#2 more"); err != nil {
+		t.Fatalf("bob more #2: %v", err)
+	}
+	if len(s.shownSummaries) != 1 || len(s.expandedRuns) != 2 {
+		t.Fatalf("marks before diff: shown=%#v expanded=%#v", s.shownSummaries, s.expandedRuns)
+	}
+
+	// The gate for #1 is decided elsewhere (dashboard): the run moves on.
+	s.diffRuns(
+		[]runSnapshot{{Key: "acme/w#1", Stage: "plan", WaitingOn: "human"}, {Key: "acme/w#2", Stage: "plan", WaitingOn: "agent"}},
+		[]runSnapshot{{Key: "acme/w#1", Stage: "implement", WaitingOn: "agent"}, {Key: "acme/w#2", Stage: "plan", WaitingOn: "agent"}},
+	)
+	if _, ok := s.shownSummaries[s.personaRunKey("alice", "acme/w#1")]; ok {
+		t.Fatal("alice's shown mark survived the run leaving the human gate")
+	}
+	if _, ok := s.expandedRuns[s.personaRunKey("bob", "acme/w#1")]; ok {
+		t.Fatal("bob's expanded mark survived the run leaving the human gate")
+	}
+	// #2 never reached a human gate: its expansion is still pending evidence.
+	if _, ok := s.expandedRuns[s.personaRunKey("bob", "acme/w#2")]; !ok {
+		t.Fatal("a run still in flight lost its expanded mark")
+	}
+
+	// A later plain approve on #1's next gate is a fresh, uninformed decision.
+	s.pendingCheckpoints[s.pendingCheckpointKey("acme/w#1")] = &pendingCheckpoint{
+		RunKey: "acme/w#1", Gen: 3, Authors: map[string]struct{}{"alice": {}, "bob": {}},
+		Payload: runCheckpointPayload{RunKey: "acme/w#1", Stage: "review", Gen: 3},
+	}
+	s.routeMessage(context.Background(), Message{ID: "1", Text: "approve", AuthorID: "bob"})
+	if got := store.records["bob"].Learning; got == nil || got.Signals.Skipped != 1 {
+		t.Fatalf("bob skipped counter after the next gate = %#v", got)
+	}
+
+	// #2 finishes without ever waiting on a human: its marks go too.
+	s.diffRuns(
+		[]runSnapshot{{Key: "acme/w#2", Stage: "plan", WaitingOn: "agent"}},
+		nil,
+	)
+	if len(s.expandedRuns)+len(s.shownSummaries) != 0 {
+		t.Fatalf("marks outlived the run: expanded=%#v shown=%#v", s.expandedRuns, s.shownSummaries)
+	}
+}
+
 func TestPersonaLearningAcceptAppliesAndAuditsRejectClears(t *testing.T) {
 	audit := &recordingAuditSink{}
 	store := &testPersonaStore{records: map[string]persona.Record{
@@ -507,7 +638,7 @@ func TestPersonaLearningSignalEdgeCases(t *testing.T) {
 
 	// A decision without a command author is ignored, and a technical-depth
 	// author's `more` marks the run without counting an expansion.
-	s.observeRunDecision(context.Background(), "acme/w#1")
+	s.observeRunDecision(context.Background(), "", "acme/w#1")
 	store.records["bob"] = persona.Record{Depth: persona.DepthTechnical}
 	if _, err := s.cmdRuns(ownerCtx("bob"), "acme/w#5 more"); err != nil {
 		t.Fatalf("bob more: %v", err)

@@ -93,24 +93,48 @@ func (s *Service) observeSummaryExpanded(ctx context.Context, author, runKey str
 }
 
 // observeRunDecision records the skipped signal when the deciding author
-// acted on a run they never expanded, then forgets the run's marks. It counts
-// for every depth: a technical author who never asks for more is the evidence
-// that moves depth back toward outcomes.
-func (s *Service) observeRunDecision(ctx context.Context, runKey string) {
-	author, _ := ctx.Value(commandAuthorContextKey{}).(string)
+// acted on a run they never expanded, then forgets every author's marks for
+// the run: the decision ends the gate for the other viewers too. It counts
+// for every depth: a technical author who never asks for more is the
+// evidence that moves depth back toward outcomes. The author is passed
+// explicitly because both decision paths reach here: `!runs approve` (author
+// on the command context) and a plain `approve` reply, which carries no
+// command context (hivecommons/hive#9130).
+func (s *Service) observeRunDecision(ctx context.Context, author, runKey string) {
 	if author == "" || !s.learningConfig().Enabled {
 		return
 	}
-	key := s.personaRunKey(author, runKey)
 	s.mu.Lock()
-	_, expanded := s.expandedRuns[key]
-	delete(s.expandedRuns, key)
-	delete(s.shownSummaries, key)
+	_, expanded := s.expandedRuns[s.personaRunKey(author, runKey)]
 	s.mu.Unlock()
+	s.forgetRunMarks(runKey)
 	if expanded {
 		return
 	}
 	s.recordPersonaSignal(ctx, author, persona.SignalSkipped)
+}
+
+// forgetRunMarks drops every author's marks for a run on this backend. Marks
+// are evidence for a decision at the run's human gate; once the run leaves
+// that gate — decided by someone else, or finished — they can no longer
+// produce a signal and would otherwise live for the process lifetime.
+func (s *Service) forgetRunMarks(runKey string) {
+	backend := ""
+	if s.backend != nil {
+		backend = s.backend.Name()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key := range s.expandedRuns {
+		if key.backend == backend && key.runKey == runKey {
+			delete(s.expandedRuns, key)
+		}
+	}
+	for key := range s.shownSummaries {
+		if key.backend == backend && key.runKey == runKey {
+			delete(s.shownSummaries, key)
+		}
+	}
 }
 
 // recordPersonaSignal counts one signal on the author's stored persona and

@@ -277,7 +277,8 @@ func (s *Service) cmdRunsApprove(ctx context.Context, key string) (string, error
 	if err := s.postRunCheckpointDecision(ctx, checkpoint, "approve"); err != nil {
 		return fmt.Sprintf("❌ Failed to approve run `%s`: %s", key, err), nil
 	}
-	s.observeRunDecision(ctx, key)
+	author, _ := ctx.Value(commandAuthorContextKey{}).(string)
+	s.observeRunDecision(ctx, author, key)
 	s.clearPendingCheckpoint(key)
 	return fmt.Sprintf("✅ Approved run `%s` checkpoint gen %d.", key, checkpoint.Gen), nil
 }
@@ -296,7 +297,8 @@ func (s *Service) cmdRunsReject(ctx context.Context, key, reason string) (string
 	if err := s.postRunCheckpointDecision(ctx, checkpoint, "reject"); err != nil {
 		return fmt.Sprintf("❌ Failed to reject run `%s`: %s", key, err), nil
 	}
-	s.observeRunDecision(ctx, key)
+	author, _ := ctx.Value(commandAuthorContextKey{}).(string)
+	s.observeRunDecision(ctx, author, key)
 	s.clearPendingCheckpoint(key)
 	return fmt.Sprintf("✅ Rejected run `%s` checkpoint gen %d: %s", key, checkpoint.Gen, reason), nil
 }
@@ -417,7 +419,7 @@ func (s *Service) handlePendingCheckpointReply(ctx context.Context, msg Message,
 			s.enqueue(fmt.Sprintf("❌ Failed to reject run `%s`: %s", runKey, err))
 			return true
 		}
-		s.observeRunDecision(ctx, runKey)
+		s.observeRunDecision(ctx, msg.AuthorID, runKey)
 		s.clearPendingCheckpoint(runKey)
 		s.enqueue(fmt.Sprintf("✅ Rejected run `%s` checkpoint gen %d: %s", runKey, checkpoint.Gen, reason))
 	default:
@@ -425,7 +427,7 @@ func (s *Service) handlePendingCheckpointReply(ctx context.Context, msg Message,
 			s.enqueue(fmt.Sprintf("❌ Failed to approve run `%s`: %s", runKey, err))
 			return true
 		}
-		s.observeRunDecision(ctx, runKey)
+		s.observeRunDecision(ctx, msg.AuthorID, runKey)
 		s.clearPendingCheckpoint(runKey)
 		s.enqueue(fmt.Sprintf("✅ Approved run `%s` checkpoint gen %d.", runKey, checkpoint.Gen))
 	}
@@ -452,6 +454,12 @@ func (s *Service) pendingCheckpointsForAuthor(author string) []*pendingCheckpoin
 	return out
 }
 
+// diffRuns posts checkpoint prompts for runs that reach the human gate and
+// clears pending state for runs that leave it. Leaving the gate — decided
+// elsewhere, or the run finishing — also drops every author's persona marks
+// for the run; a run that finishes without ever waiting on a human drops its
+// marks too. Marks on a run still in flight are kept: an expansion before the
+// gate is what makes the eventual decision informed.
 func (s *Service) diffRuns(prev, cur []runSnapshot) {
 	prevMap := make(map[string]runSnapshot, len(prev))
 	curMap := make(map[string]runSnapshot, len(cur))
@@ -466,12 +474,19 @@ func (s *Service) diffRuns(prev, cur []runSnapshot) {
 		}
 		if run.WaitingOn != "human" {
 			s.clearPendingCheckpoint(run.Key)
+			if existed && old.WaitingOn == "human" {
+				s.forgetRunMarks(run.Key)
+			}
 		}
 	}
 	for key, old := range prevMap {
-		if _, ok := curMap[key]; !ok && old.WaitingOn == "human" {
+		if _, ok := curMap[key]; ok {
+			continue
+		}
+		if old.WaitingOn == "human" {
 			s.clearPendingCheckpoint(key)
 		}
+		s.forgetRunMarks(key)
 	}
 }
 
