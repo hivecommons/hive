@@ -108,6 +108,14 @@ type Client struct {
 	// false → no comment is fetched, no Issue carries claim fields. Read live
 	// so a Features-panel toggle applies without a client rebuild.
 	issueClaims func() (enabled bool, ttl time.Duration)
+	// attributedClosedPRCache keeps the last successful bounded closed-PR
+	// attribution scan per repo. Closed attributions feed outcome/rework
+	// dashboards; they must not be re-fetched from all history each tick, and a
+	// transient closed-PR listing failure must not erase the repo's open PRs
+	// from the governor.
+	attributedClosedPRMu     sync.Mutex
+	attributedClosedPRCache  map[string]attributedClosedPRCacheEntry
+	attributedClosedPRErrors map[string]string
 	// issueClaimCache remembers the claim read for an issue at a given
 	// updated_at, so the per-issue comment fetch happens once per activity
 	// change rather than once per enumeration. Guarded by issueClaimMu.
@@ -796,7 +804,21 @@ var PermanentExemptLabels = []string{"do-not-merge"}
 // exists so a nil or unconfigured client still has a sane value.
 const AutoMergeQueuedLabel = "lgtm"
 
-const slaThresholdMinutes = 30
+const (
+	slaThresholdMinutes = 30
+
+	attributedClosedPRLookbackEnv = "HIVE_ATTRIBUTED_CLOSED_PR_LOOKBACK"
+	// attributedClosedPRDefaultLookback covers dashboard outcome/rework
+	// attribution for recent agent PRs without re-walking a repository's entire
+	// closed-PR history on every enumeration tick.
+	attributedClosedPRDefaultLookback = 14 * 24 * time.Hour
+	attributedClosedPRMaxPages        = 5
+)
+
+type attributedClosedPRCacheEntry struct {
+	prs     []PullRequest
+	fetched time.Time
+}
 
 // NewClient creates a GitHub API client. If apiURL is non-empty and differs
 // from the default (https://api.github.com), the client's BaseURL and
@@ -1333,7 +1355,8 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 	attributed = append(attributed, collectAttributedPRsFromList(repo, allPRs)...)
 	closed, err := c.fetchAttributedClosedPRs(ctx, owner, repoName, repo)
 	if err != nil {
-		return nil, nil, nil, nil, nil, 0, RepoPRBreakdown{}, err
+		c.warnAttributedClosedPRScan(repo, owner, repoName, err)
+		closed = c.cachedAttributedClosedPRs(repo)
 	}
 	attributed = append(attributed, closed...)
 	c.enrichAttributedPRRework(ctx, attributed)
@@ -1358,23 +1381,112 @@ func collectAttributedPRsFromList(repo string, prs []*gh.PullRequest) []PullRequ
 }
 
 func (c *Client) fetchAttributedClosedPRs(ctx context.Context, owner, repoName, repo string) ([]PullRequest, error) {
+	lookback := attributedClosedPRLookback()
+	cutoff := time.Now().Add(-lookback)
 	opts := &gh.PullRequestListOptions{
 		State:       "closed",
+		Sort:        "updated",
+		Direction:   "desc",
 		ListOptions: gh.ListOptions{PerPage: 100},
 	}
 	var out []PullRequest
-	for {
+	for page := 0; page < attributedClosedPRMaxPages; page++ {
 		prs, resp, err := c.client.PullRequests.List(ctx, owner, repoName, opts)
 		if err != nil {
 			return nil, fmt.Errorf("listing closed PRs for %s/%s: %w", owner, repoName, err)
 		}
-		out = append(out, collectAttributedPRsFromList(repo, prs)...)
-		if resp.NextPage == 0 {
+		pastWindow := false
+		for _, pr := range prs {
+			if pr == nil {
+				continue
+			}
+			if pr.GetUpdatedAt().Time.Before(cutoff) {
+				pastWindow = true
+				break
+			}
+			if meta, ok := ParseAttributionTrailer(pr.GetBody()); ok {
+				out = append(out, pullRequestAttributionRecord(repo, pr, meta))
+			}
+		}
+		if pastWindow || resp == nil || resp.NextPage == 0 {
 			break
 		}
 		opts.Page = resp.NextPage
 	}
+	c.storeAttributedClosedPRs(repo, out)
 	return out, nil
+}
+
+func attributedClosedPRLookback() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(attributedClosedPRLookbackEnv))
+	if raw == "" {
+		return attributedClosedPRDefaultLookback
+	}
+	if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+		return d
+	}
+	if strings.HasSuffix(raw, "d") {
+		if days, err := strconv.Atoi(strings.TrimSpace(strings.TrimSuffix(raw, "d"))); err == nil && days > 0 {
+			return time.Duration(days) * 24 * time.Hour
+		}
+	}
+	if days, err := strconv.Atoi(raw); err == nil && days > 0 {
+		return time.Duration(days) * 24 * time.Hour
+	}
+	return attributedClosedPRDefaultLookback
+}
+
+func (c *Client) storeAttributedClosedPRs(repo string, prs []PullRequest) {
+	if c == nil {
+		return
+	}
+	c.attributedClosedPRMu.Lock()
+	defer c.attributedClosedPRMu.Unlock()
+	if c.attributedClosedPRCache == nil {
+		c.attributedClosedPRCache = map[string]attributedClosedPRCacheEntry{}
+	}
+	c.attributedClosedPRCache[repo] = attributedClosedPRCacheEntry{
+		prs:     append([]PullRequest(nil), prs...),
+		fetched: time.Now(),
+	}
+	if c.attributedClosedPRErrors != nil {
+		delete(c.attributedClosedPRErrors, repo)
+	}
+}
+
+func (c *Client) cachedAttributedClosedPRs(repo string) []PullRequest {
+	if c == nil {
+		return nil
+	}
+	c.attributedClosedPRMu.Lock()
+	defer c.attributedClosedPRMu.Unlock()
+	entry, ok := c.attributedClosedPRCache[repo]
+	if !ok {
+		return nil
+	}
+	return append([]PullRequest(nil), entry.prs...)
+}
+
+func (c *Client) warnAttributedClosedPRScan(repo, owner, repoName string, err error) {
+	if c == nil {
+		return
+	}
+	msg := err.Error()
+	shouldLog := true
+	c.attributedClosedPRMu.Lock()
+	if c.attributedClosedPRErrors == nil {
+		c.attributedClosedPRErrors = map[string]string{}
+	}
+	if c.attributedClosedPRErrors[repo] == msg {
+		shouldLog = false
+	} else {
+		c.attributedClosedPRErrors[repo] = msg
+	}
+	c.attributedClosedPRMu.Unlock()
+	if shouldLog && c.logger != nil {
+		c.logger.Warn("closed PR attribution scan failed; keeping open PR enumeration and last-good closed attributions",
+			"repo", repo, "github_repo", owner+"/"+repoName, "error", err)
+	}
 }
 
 func pullRequestAttributionRecord(repo string, pr *gh.PullRequest, meta InvocationMeta) PullRequest {
