@@ -345,6 +345,17 @@ build, not a stable claim. The line's promotion bar is
 guard-invariant conformance rows are checked for all eight shipped
 surfaces; the per-surface live exercises remain open.
 
+**Known gap: no promotion mechanism yet.** Even once every readiness-bar
+row is checked, there is currently no way to *promote* `v6` past `edge`:
+`tagged-release.yml`, `promote-stable.yml`, and `.github/release-lines.yml`
+are still byte-identical to `v5` with `v5` hardcoded throughout, and
+`docker.yml` only ever publishes `v6` to `edge`
+([#9154](https://github.com/hivecommons/hive/issues/9154)). The readiness
+runbook is also missing evidence-checklist sections for 5 of the 11 open
+live-exercise rows
+([#9200](https://github.com/hivecommons/hive/issues/9200)). Tracked
+together in [#9227](https://github.com/hivecommons/hive/issues/9227).
+
 ## Hosted Hive Hub
 
 The hosted hub at [hive.hivecommons.dev](https://hive.hivecommons.dev) is the
