@@ -693,6 +693,7 @@ func TestValidate_ChannelsToolsConnectionsPropagate(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSaveLocked_CreateFallbackWhenOpenFails(t *testing.T) {
+	breakPVCLayers(t) // with working PVC layers Save() would return nil
 	dir := t.TempDir()
 	// SourcePath points at a path that is itself a directory, so
 	// os.OpenFile(O_WRONLY|O_TRUNC) fails and saveLocked falls back to
@@ -717,6 +718,7 @@ func TestSaveLocked_CreateFallbackWhenOpenFails(t *testing.T) {
 // TestSaveLocked_FileDoesNotExistYet exercises the "file may not exist yet"
 // fallback-to-create branch on the happy path (no file present at all).
 func TestSaveLocked_FileDoesNotExistYet(t *testing.T) {
+	breakPVCLayers(t) // with working PVC layers Save() would return nil
 	dir := t.TempDir()
 	path := filepath.Join(dir, "nested", "hive.yaml")
 	// Note: parent dir "nested" does not exist either, but os.WriteFile
