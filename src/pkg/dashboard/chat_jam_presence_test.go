@@ -68,16 +68,28 @@ func TestChatPresenceIntent(t *testing.T) {
 	}
 }
 
-func TestChatJamCommandStaticWiring(t *testing.T) {
+func TestChatJamCommandAnswersPresenceLocallyAndForwardsTheRest(t *testing.T) {
 	html := indexHTML(t)
-	for _, want := range []string{
-		"async function chatCommandJam(args)",
-		"run: chatCommandJam }",
-		"CHAT_JAM_PRESENCE_RE = /\\b(online|who|free|here|around|present|presence|active|idle)\\b/i",
-		"return await chatCommandWho();",
-	} {
-		if !strings.Contains(html, want) {
-			t.Errorf("index.html missing %q", want)
-		}
-	}
+	commands := indexSliceBetween(t, html, "async function chatCommandWho()", "\n\n    async function chatRunCommand(q)")
+	jamEntry := indexSliceBetween(t, html, "{ name:'jam',", "},\n") + "}"
+	runNodeScript(t, `
+const assert = require('node:assert/strict');
+let asked = [];
+async function chatFetchJson() { return { users: [{ username: 'alice', active: true, you: true }] }; }
+function _inceptionAuthHeaders() { return {}; }
+async function chatAskBackend(q, suppressUserEcho) { asked.push([q, suppressUserEcho]); return 'forwarded'; }
+`+commands+`
+const jam = (`+jamEntry+`);
+(async () => {
+  assert.equal(jam.run, chatCommandJam);
+  assert(jam.aliases.includes('swarm'), JSON.stringify(jam.aliases));
+  for (const q of ['who is online?', '', 'anyone around']) {
+    const answer = await chatCommandJam(q);
+    assert(answer.includes('🟢 **alice** (you) — active'), q + ' -> ' + answer);
+  }
+  assert.deepEqual(asked, [], 'presence questions must not reach the backend');
+  assert.equal(await chatCommandJam('start a session'), 'forwarded');
+  assert.deepEqual(asked, [['jam: start a session', true]]);
+})().catch(err => { console.error(err); process.exit(1); });
+`)
 }

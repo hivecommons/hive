@@ -49,6 +49,8 @@ type discordBackend struct {
 	channelID string
 	logger    *slog.Logger
 	client    *http.Client
+	// pollInterval is the Listen ticker period; zero means pollIntervalS seconds.
+	pollInterval time.Duration
 }
 
 type discordMessage struct {
@@ -76,6 +78,7 @@ func NewBot(cfg Config, logger *slog.Logger) *Bot {
 		client: &http.Client{
 			Timeout: httpTimeoutS * time.Second,
 		},
+		pollInterval: pollIntervalS * time.Second,
 	}
 	service := chat.NewService(backend, chat.Config{
 		DashboardURL:    cfg.DashboardURL,
@@ -183,7 +186,11 @@ func (b *discordBackend) setChannelTopic(topic string) error {
 }
 
 func (b *discordBackend) Listen(ctx context.Context, deliver func(chat.Message)) {
-	ticker := time.NewTicker(pollIntervalS * time.Second)
+	interval := b.pollInterval
+	if interval <= 0 {
+		interval = pollIntervalS * time.Second
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	var lastMessageID string

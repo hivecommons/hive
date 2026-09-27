@@ -59,6 +59,8 @@ func newTestBot(ts *httptest.Server, channelID string) *Bot {
 		Transport: &redirectTransport{target: ts.URL},
 		Timeout:   httpTimeoutS * time.Second,
 	}
+	// Poll in milliseconds so Listen-driven tests finish quickly.
+	b.pollInterval = 5 * time.Millisecond
 
 	return b
 }
@@ -476,142 +478,30 @@ func TestPollLoop_ContinuesOnFetchError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go b.Listen(ctx, func(msg chat.Message) { b.service.Deliver(ctx, msg) })
-
-	// Wait long enough for at least 2 ticks (pollIntervalS=5s is too slow for a
-	// unit test, but we only need to verify it doesn't panic/exit on error).
-	// We use a very short sleep just to let the goroutine reach the ticker select
-	// and not race with the goroutine startup.
-	time.Sleep(50 * time.Millisecond)
-
-	// Verify the loop goroutine is still running (it hasn't panicked or exited).
-	// We confirm this by cancelling and seeing the done channel close cleanly.
-	cancel()
-}
-
-// TestListen_TickerBranch waits for the 5-second ticker to fire so that the
-// fetchMessages + routeMessage body inside the ticker.C case is exercised.
-// This test is intentionally slow (~5.5s) but is the only way to reach those
-// lines without modifying the production source.
-func TestPollLoop_TickerBranch(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping slow ticker test in -short mode")
-	}
-
-	var fetchCount atomic.Int64
-	var sendCount atomic.Int64
-
-	// Listen skips messages on the first poll (firstPoll=true), so we serve
-	// the message on the second fetch when routeMessage is actually called.
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.Method {
-		case http.MethodGet:
-			n := fetchCount.Add(1)
-			if n == 2 {
-				msgs := []discordMessage{
-					{ID: "42", Content: "!ping", Author: struct {
-						ID  string `json:"id"`
-						Bot bool   `json:"bot"`
-					}{ID: "u1", Bot: false}},
-				}
-				_ = json.NewEncoder(w).Encode(msgs)
-			} else {
-				_ = json.NewEncoder(w).Encode([]discordMessage{})
-			}
-		case http.MethodPost:
-			sendCount.Add(1)
-			w.WriteHeader(http.StatusOK)
-		}
-	}))
-	defer ts.Close()
-
-	b := newTestBot(ts, "ch")
-	b.RegisterCommand("ping", func(_ context.Context, _ string) (string, error) {
-		return "pong", nil
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		b.Listen(ctx, func(msg chat.Message) { b.service.Deliver(ctx, msg) })
-	}()
-	// Start drainLoop so enqueued replies are sent via HTTP.
-	go b.service.DrainLoop(ctx)
-
-	// Wait for two ticks (pollIntervalS=5s each) so the second fetch is routed
-	// and its reply has gone out over HTTP, bounded at three ticks instead of a
-	// fixed margin past the second one.
-	testutil.Eventually(t, 3*pollIntervalS*time.Second, func() bool {
-		return fetchCount.Load() >= 2 && sendCount.Load() > 0
-	}, "expected two ticker fetches and a routed !ping reply")
-	cancel()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Listen did not stop after context cancellation")
-	}
-
-	if fc := fetchCount.Load(); fc < 2 {
-		t.Errorf("expected at least two fetchMessages calls via ticker, got %d", fc)
-	}
-	if sc := sendCount.Load(); sc == 0 {
-		t.Error("expected at least one SendMessage call (reply to !ping), got 0")
-	}
-}
-
-// TestListen_TickerBranch_FetchError exercises the error-continue path
-// inside the ticker.C case by making the server return 500 on the first tick.
-func TestPollLoop_TickerBranch_FetchError(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping slow ticker test in -short mode")
-	}
-
-	var fetchCount atomic.Int64
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fetchCount.Add(1)
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer ts.Close()
-
-	b := newTestBot(ts, "ch")
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		b.Listen(ctx, func(msg chat.Message) { b.service.Deliver(ctx, msg) })
 	}()
 
-	// One ticker fetch (pollIntervalS=5s) is enough; bounded at two ticks
-	// instead of a fixed margin past the first.
-	testutil.Eventually(t, 2*pollIntervalS*time.Second, func() bool {
-		return fetchCount.Load() > 0
-	}, "expected a ticker fetch attempt")
+	// The first poll fails with 500; the loop must keep polling afterwards.
+	testutil.Eventually(t, 2*time.Second, func() bool {
+		return requestCount.Load() >= 2
+	}, "expected the poll loop to continue past a fetch error")
 	cancel()
 
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Listen did not stop after context cancellation")
-	}
-
-	if fetchCount.Load() == 0 {
-		t.Error("expected at least one fetch attempt, got 0")
 	}
 }
 
 func TestPollLoop_ProcessesMessagesInReverseOrder(t *testing.T) {
-	// Discord returns newest-first; Listen reverses to process oldest-first.
-	// We verify that lastMessageID is updated correctly by checking the "after"
-	// query parameter on the second poll.
-
+	// Discord returns newest-first; Listen reverses to deliver oldest-first and
+	// advances the cursor to the newest ID. The first poll only seeds the
+	// cursor (its messages are skipped); the second poll must carry after=2 and
+	// its messages must be delivered as 3 then 4.
 	var callCount atomic.Int64
 	var secondAfter atomic.Value
 
@@ -619,69 +509,70 @@ func TestPollLoop_ProcessesMessagesInReverseOrder(t *testing.T) {
 		n := callCount.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 
-		if n == 1 {
-			// Return two messages: Discord sends newest first (id=2, id=1).
-			msgs := []discordMessage{
-				{ID: "2", Content: "hello", Author: struct {
-					ID  string `json:"id"`
-					Bot bool   `json:"bot"`
-				}{ID: "u", Bot: false}},
-				{ID: "1", Content: "world", Author: struct {
-					ID  string `json:"id"`
-					Bot bool   `json:"bot"`
-				}{ID: "u", Bot: false}},
-			}
-			_ = json.NewEncoder(w).Encode(msgs)
-			return
+		switch n {
+		case 1:
+			_ = json.NewEncoder(w).Encode([]discordMessage{
+				{ID: "2", Content: "hello"},
+				{ID: "1", Content: "world"},
+			})
+		case 2:
+			secondAfter.Store(r.URL.Query().Get("after"))
+			_ = json.NewEncoder(w).Encode([]discordMessage{
+				{ID: "4", Content: "second"},
+				{ID: "3", Content: "first"},
+			})
+		default:
+			_ = json.NewEncoder(w).Encode([]discordMessage{})
 		}
-
-		secondAfter.Store(r.URL.Query().Get("after"))
-		_ = json.NewEncoder(w).Encode([]discordMessage{})
 	}))
 	defer ts.Close()
 
 	b := newTestBot(ts, "ch")
 
-	// Run just two ticks by controlling context timing.
-	// Since pollIntervalS=5s we can't wait that long; instead we call
-	// fetchMessages and routeMessage directly to simulate what Listen does,
-	// and separately test that Listen updates lastMessageID correctly by
-	// exercising it for a short window.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Direct unit test of the ordering logic via fetchMessages + routeMessage:
-	msgs, err := b.fetchMessages(context.Background(), "")
-	if err != nil {
-		t.Fatalf("fetchMessages: %v", err)
+	delivered := make(chan string, 8)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		b.Listen(ctx, func(msg chat.Message) { delivered <- msg.ID })
+	}()
+
+	var got []string
+	for len(got) < 2 {
+		select {
+		case id := <-delivered:
+			got = append(got, id)
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for deliveries, got %v", got)
+		}
 	}
-	if len(msgs) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Listen did not stop after context cancellation")
 	}
 
-	// After processing in reverse order (oldest first), last processed is msgs[0] (id=2).
-	// Simulate what Listen does:
-	var lastID string
-	for i := len(msgs) - 1; i >= 0; i-- {
-		lastID = msgs[i].ID
+	if got[0] != "3" || got[1] != "4" {
+		t.Errorf("expected deliveries in oldest-first order [3 4], got %v", got)
 	}
-	if lastID != "2" {
-		t.Errorf("expected lastMessageID to be id of newest message (2), got %q", lastID)
+	if after, _ := secondAfter.Load().(string); after != "2" {
+		t.Errorf("expected second poll to carry after=2 (newest ID from first poll), got %q", after)
 	}
-	_ = secondAfter.Load() // checked in integration path above
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Listen – ticker.C branch coverage
 //
-// The production ticker fires every 5 s.  The tests below wait just over that
-// interval so the ticker.C case in Listen is actually executed.  They are NOT
-// guarded by testing.Short() because they are the only way to cover the
-// fetchMessages + routeMessage call sites inside the select-case without
-// modifying the production source.  Total extra wall-clock cost: ~5.1 s per
-// sub-test (run in parallel to keep the suite total near 5 s).
+// newTestBot shortens the poll interval to milliseconds so the ticker.C case
+// in Listen (fetchMessages + deliver) is exercised without waiting for the
+// production 5 s cadence.
 // ──────────────────────────────────────────────────────────────────────────────
 
-// TestListen_TickerSuccessPath exercises the happy-path ticker branch:
-// fetchMessages returns a non-bot !ping message and routeMessage dispatches it.
+// TestPollLoop_TickerSuccessPath exercises the happy-path ticker branch:
+// fetchMessages returns a non-bot !ping message and the spine dispatches it.
 // Listen skips messages on the first poll (firstPoll=true), so the message
 // is served on the second fetch.
 func TestPollLoop_TickerSuccessPath(t *testing.T) {
@@ -729,10 +620,7 @@ func TestPollLoop_TickerSuccessPath(t *testing.T) {
 	// Start drainLoop so enqueued replies are sent via HTTP.
 	go b.service.DrainLoop(ctx)
 
-	// Wait for two ticks (pollIntervalS=5s each) so the second fetch is routed
-	// and its reply has gone out over HTTP, bounded at three ticks instead of a
-	// fixed margin past the second one.
-	testutil.Eventually(t, 3*pollIntervalS*time.Second, func() bool {
+	testutil.Eventually(t, 2*time.Second, func() bool {
 		return fetchCount.Load() >= 2 && sendCount.Load() > 0
 	}, "expected two ticker fetches and a routed !ping reply")
 	cancel()
@@ -751,9 +639,9 @@ func TestPollLoop_TickerSuccessPath(t *testing.T) {
 	}
 }
 
-// TestListen_TickerFetchErrorPath exercises the error-continue branch inside
-// the ticker.C case (bot.go:111-113): fetchMessages fails and the loop logs the
-// warning and continues rather than exiting.
+// TestPollLoop_TickerFetchErrorPath exercises the error-continue branch inside
+// the ticker.C case: fetchMessages fails and the loop logs the warning and
+// continues rather than exiting.
 func TestPollLoop_TickerFetchErrorPath(t *testing.T) {
 	t.Parallel()
 
@@ -775,20 +663,14 @@ func TestPollLoop_TickerFetchErrorPath(t *testing.T) {
 		b.Listen(ctx, func(msg chat.Message) { b.service.Deliver(ctx, msg) })
 	}()
 
-	// One ticker fetch (pollIntervalS=5s) is enough; bounded at two ticks
-	// instead of a fixed margin past the first.
-	testutil.Eventually(t, 2*pollIntervalS*time.Second, func() bool {
-		return fetchAttempts.Load() > 0
-	}, "expected a ticker fetch attempt")
+	testutil.Eventually(t, 2*time.Second, func() bool {
+		return fetchAttempts.Load() > 1
+	}, "expected the poll loop to keep fetching after an error")
 	cancel()
 
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Listen did not stop after context cancellation")
-	}
-
-	if fetchAttempts.Load() == 0 {
-		t.Error("expected at least one fetch attempt through the ticker, got 0")
 	}
 }

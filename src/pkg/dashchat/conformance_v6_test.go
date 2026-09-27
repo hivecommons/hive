@@ -1,9 +1,13 @@
 package dashchat
 
-// v6 guard-invariant conformance for the dashboard chat transport. Dashboard
-// chat is the browser surface on the shared chat spine; this test fails if it
-// bypasses inbound ioscan, outbound scrubbing, fail-closed command allowlists,
-// or reaches dashboard/hub state directly instead of staying behind Deps.
+// v6 guard-invariant conformance for the dashboard chat transport — the
+// adapter-level checks. Dashboard chat is the browser surface on the shared
+// chat spine; this test fails if the adapter bypasses inbound ioscan, outbound
+// scrubbing, fail-closed command allowlists, or reaches dashboard/hub state
+// directly instead of staying behind Deps. The surface-level checks (local
+// intents in pkg/dashboard/chat_*.go never answering `!` commands, and the
+// started-bot allowlist gate observed through /api/chat) live in
+// pkg/dashboard/chat_conformance_v6_test.go (hivecommons/hive#9136).
 
 import (
 	"context"

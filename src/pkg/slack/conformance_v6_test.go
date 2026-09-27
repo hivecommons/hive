@@ -5,8 +5,13 @@ package slack
 // src/docs/v6-readiness.md §2 checks this row only with a suite that fails if
 // Slack can bypass: ioscan on inbound message text, Converse for replies,
 // canary/secret scrubbing on outbound text, the dashboard role floor, and the
-// proxy mode/capability ladder before Slack drives agent work. Issue:
-// hivecommons/hive#8042. Tracker: hivecommons/hive#7563.
+// proxy mode/capability ladder before Slack drives agent work. The authz test
+// drives the real surface — Listen against a fake Socket Mode server — rather
+// than the spine directly, so a surface that ignores author identity or POSTs
+// to the dashboard itself is caught; the credential pin statically confines
+// DashboardURL/DashboardToken and every "/api/" path to the spine hand-off in
+// NewBot. Issue: hivecommons/hive#8042, hivecommons/hive#9136. Tracker:
+// hivecommons/hive#7563.
 
 import (
 	"context"
@@ -18,11 +23,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/chat"
 )
 
@@ -97,12 +105,61 @@ func TestV6ConformanceSlack_InboundSocketTextPassesIOSCANBeforeRouting(t *testin
 }
 
 func TestV6ConformanceSlack_AuthorizationAndDashboardPathGateAgentWork(t *testing.T) {
-	var posts []string
+	var (
+		mu    sync.Mutex
+		posts []string
+	)
 	dashboard := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
 		posts = append(posts, r.Method+" "+r.URL.Path+"\n"+string(body))
+		mu.Unlock()
 	}))
 	defer dashboard.Close()
+	snapshot := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), posts...)
+	}
+
+	// The fake Socket Mode server pushes a denied then an allowed command over
+	// one connection and then parks until the test is done, so the bot never
+	// reconnects and the only way a dashboard request appears is through the
+	// surface's own Listen → deliver path.
+	testDone := make(chan struct{})
+	defer close(testDone)
+	upgrader := websocket.Upgrader{}
+	apiBase := ""
+	slackTS := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/apps.connections.open":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "url": strings.Replace(apiBase+"/socket", "http", "ws", 1)})
+		case "/socket":
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer conn.Close()
+			for i, ev := range []slackEvent{
+				{Type: "message", Channel: "C1", User: "U-denied", TS: "1700000000.000001", Text: "!scanner kick denied-probe"},
+				{Type: "message", Channel: "C1", User: "U-allowed", TS: "1700000000.000002", Text: "!scanner kick allowed-probe"},
+			} {
+				payload, _ := json.Marshal(eventPayload{Event: ev})
+				if err := conn.WriteJSON(socketEnvelope{EnvelopeID: "env-" + strconv.Itoa(i), Type: "events_api", Payload: payload}); err != nil {
+					return
+				}
+				if _, _, err := conn.ReadMessage(); err != nil {
+					return
+				}
+			}
+			<-testDone
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+		}
+	}))
+	defer slackTS.Close()
+	apiBase = slackTS.URL
 
 	b := NewBot(Config{
 		AppToken:       "xapp",
@@ -112,24 +169,105 @@ func TestV6ConformanceSlack_AuthorizationAndDashboardPathGateAgentWork(t *testin
 		DashboardToken: "dashboard-token",
 		AllowedUsers:   []string{"U-allowed"},
 	}, discardLogger())
+	b.apiBase = slackTS.URL
+	b.reconnectBase = time.Millisecond
+	b.reconnectMax = time.Millisecond
+	b.sleep = func(time.Duration) {}
 	b.SetAgentNames([]string{"scanner"})
 
-	b.service.Deliver(context.Background(), chat.Message{ID: "1", Text: "!scanner kick please inspect", AuthorID: "U-denied"})
-	if len(posts) != 0 {
-		t.Fatalf("v6 conformance (dashboard role floor): non-allowlisted Slack actor reached dashboard: %v", posts)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	listenDone := make(chan struct{})
+	go func() {
+		defer close(listenDone)
+		b.Listen(ctx, func(m chat.Message) { b.service.Deliver(ctx, m) })
+	}()
+
+	testutil.Eventually(t, 3*time.Second, func() bool { return len(snapshot()) >= 1 },
+		"v6 conformance (mode ladder/capability): allowed Slack actor never reached the dashboard through Listen")
+	cancel()
+	select {
+	case <-listenDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Listen did not return after cancel")
 	}
 
-	b.service.Deliver(context.Background(), chat.Message{ID: "2", Text: "!scanner kick please inspect", AuthorID: "U-allowed"})
-	if len(posts) != 1 {
-		t.Fatalf("v6 conformance (mode ladder/capability): allowed Slack actor did not route exactly once through dashboard, posts=%v", posts)
+	// consumeSocket delivers synchronously in envelope order, so by the time the
+	// allowed envelope produced its POST the denied one had been fully handled:
+	// any second request, or any trace of denied-probe, means the surface let a
+	// non-allowlisted actor drive agent work.
+	got := snapshot()
+	if len(got) != 1 {
+		t.Fatalf("v6 conformance (dashboard role floor): want exactly one dashboard request from the allowed actor, got %d: %v", len(got), got)
 	}
-	if !strings.Contains(posts[0], "POST /api/kick/scanner") {
-		t.Fatalf("v6 conformance (mode ladder/capability): Slack agent work bypassed dashboard kick path: %v", posts)
+	if !strings.HasPrefix(got[0], "POST /api/kick/scanner\n") {
+		t.Fatalf("v6 conformance (mode ladder/capability): Slack agent work bypassed dashboard kick path: %v", got)
+	}
+	if !strings.Contains(got[0], "allowed-probe") || strings.Contains(got[0], "denied-probe") {
+		t.Fatalf("v6 conformance (dashboard role floor): dashboard request did not come from the allowed actor's command: %v", got)
 	}
 }
 
+// TestV6ConformanceSlack_DashboardCredentialsOnlyReachTheSpine pins the
+// dashboard credentials to the chat.Config hand-off in NewBot: a surface that
+// reads cfg.DashboardURL/cfg.DashboardToken anywhere else, or that names a
+// hive dashboard "/api/..." path, is building its own dashboard client and
+// would skip the spine's allowlist, role floor and mode ladder — a bypass the
+// import blocklist cannot see because it needs only net/http.
+func TestV6ConformanceSlack_DashboardCredentialsOnlyReachTheSpine(t *testing.T) {
+	fset, files := parseSlackSurface(t)
+	for _, file := range files {
+		// One stack entry per visited node (nil for non-literals) so the pop on
+		// the nil post-visit keeps the enclosing composite literals in step.
+		var lits []*ast.CompositeLit
+		ast.Inspect(file, func(n ast.Node) bool {
+			if n == nil {
+				lits = lits[:len(lits)-1]
+				return false
+			}
+			lit, _ := n.(*ast.CompositeLit)
+			lits = append(lits, lit)
+			switch x := n.(type) {
+			case *ast.SelectorExpr:
+				if x.Sel.Name != "DashboardURL" && x.Sel.Name != "DashboardToken" {
+					return true
+				}
+				if !insideChatConfigLiteral(lits) {
+					t.Errorf("v6 conformance (dashboard role floor): %s reads %s outside the chat.Config literal in NewBot — "+
+						"dashboard credentials may only be handed to the shared chat spine (hivecommons/hive#9136)",
+						fset.Position(x.Pos()), x.Sel.Name)
+				}
+			case *ast.BasicLit:
+				if x.Kind == token.STRING && strings.HasPrefix(strings.Trim(x.Value, "`\""), "/api/") {
+					t.Errorf("v6 conformance (mode ladder/capability): %s names hive dashboard path %s — "+
+						"only the shared chat spine may address the dashboard API (hivecommons/hive#9136)",
+						fset.Position(x.Pos()), x.Value)
+				}
+			}
+			return true
+		})
+	}
+}
+
+func insideChatConfigLiteral(lits []*ast.CompositeLit) bool {
+	for _, lit := range lits {
+		if lit == nil {
+			continue
+		}
+		sel, ok := lit.Type.(*ast.SelectorExpr)
+		if !ok {
+			continue
+		}
+		if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "chat" && sel.Sel.Name == "Config" {
+			return true
+		}
+	}
+	return false
+}
+
 func TestV6ConformanceSlack_SurfaceDoesNotReachStateDirectly(t *testing.T) {
-	for path, file := range parseSlackSurface(t) {
+	_, files := parseSlackSurface(t)
+	for path, file := range files {
 		for _, spec := range file.Imports {
 			imported := strings.Trim(spec.Path.Value, `"`)
 			if why, blocked := slackBlockedImports[imported]; blocked {
@@ -141,7 +279,7 @@ func TestV6ConformanceSlack_SurfaceDoesNotReachStateDirectly(t *testing.T) {
 	}
 }
 
-func parseSlackSurface(t *testing.T) map[string]*ast.File {
+func parseSlackSurface(t *testing.T) (*token.FileSet, map[string]*ast.File) {
 	t.Helper()
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -163,7 +301,7 @@ func parseSlackSurface(t *testing.T) map[string]*ast.File {
 	if len(files) == 0 {
 		t.Fatal("parsed no Slack sources; conformance scan would pass vacuously")
 	}
-	return files
+	return fset, files
 }
 
 var slackBlockedImports = map[string]string{

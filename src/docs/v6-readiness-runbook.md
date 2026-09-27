@@ -145,12 +145,12 @@ Prerequisites:
 - Configure the Discord bot token, channel ID, and the maintainer's Discord user
   ID in `allowed_users`; the Discord config structure uses `bot_token`,
   `channel_id`, and `allowed_users` (`src/pkg/config/config.go:4144-4154`).
-  The backend refuses to start without the bot token (`src/pkg/discord/bot.go:92-99`).
+  The backend refuses to start without the bot token (`Start`, `src/pkg/discord/bot.go:101-108`).
 
 Run:
 
 1. Confirm the hive log has `discord bot starting` and `chat service starting`
-   (`src/pkg/discord/bot.go:92-99`, `src/pkg/chat/chat.go:174-189`).
+   (`Start`, `src/pkg/discord/bot.go:101-108`, `src/pkg/chat/chat.go:174-189`).
 2. In the configured channel, send `!status`; save the Discord message link or
    screenshot and the bot reply.
 3. Trigger one notification delivery by pausing/resuming an agent or waiting for
@@ -160,7 +160,7 @@ Run:
    `discord SSE disconnected` and backs off before reconnecting
    (`src/pkg/chat/notify.go:46-81`). If you instead interrupt Discord REST,
    save the `discord poll failed` log line and the later successful command or
-   notification proving recovery (`src/pkg/discord/bot.go:179-195`).
+   notification proving recovery (`Listen`, `src/pkg/discord/bot.go:188-220`).
 
 Evidence checklist:
 

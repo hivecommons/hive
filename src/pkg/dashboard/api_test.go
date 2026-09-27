@@ -881,7 +881,6 @@ func TestHandleChat_CommandHintsReturnConcreteAnswers(t *testing.T) {
 		{query: "/who", want: "Who is online"},
 		{query: "/jam who is online?", want: "contributor agents online"},
 		{query: "Show contributor activity", want: "No contributor activity"},
-		{query: "!runs spec owner/repo#N", want: "Spec runs (1)"},
 		{query: "spek: active campaigns", want: "Active campaigns"},
 		{query: "spek: spec runs", want: "Spec runs (1)"},
 		{query: "Explain inception relay state", want: "Inception relay state"},
