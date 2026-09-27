@@ -140,12 +140,12 @@ func TestRepoCardPRReviewSignalsStaticWiring(t *testing.T) {
 		"function prConversation(pr)",
 		"function prLinkedIssues(pr)",
 		"repoPillActionCluster([reviewPill, queueBtn + stateBadge, issueBadge, holdBtn])",
-		`title="Approved on GitHub; tooltip counts the approvals">👍`,
-		`title="Changes requested on GitHub; tooltip names the reviewers">👎`,
-		`title="Approving review required by branch protection and not yet given">👀`,
-		`title="Review requested; tooltip lists the reviewers and teams">👥`,
-		`title="Comments and review threads on GitHub">🗨 3`,
-		`title="Issue this PR closes on merge (GitHub closing reference); opens the issue">🔗 #42`,
+		`glyph: '👍', caption: 'approved on GitHub', tip: 'Approved on GitHub; tooltip counts the approvals'`,
+		`glyph: '👎', caption: 'changes requested', tip: 'Changes requested on GitHub; tooltip names the reviewers'`,
+		`glyph: '👀', caption: 'approval required, not yet given', tip: 'Approving review required by branch protection and not yet given'`,
+		`glyph: '👥', caption: 'review requested from someone', tip: 'Review requested; tooltip lists the reviewers and teams'`,
+		`label: '🗨 3', caption: 'comment / thread count', tip: 'Comments and review threads on GitHub'`,
+		`label: '🔗 #42', caption: 'on a PR: issue it closes on merge', tip: 'Issue this PR closes on merge (GitHub closing reference); opens the issue'`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing %q", want)

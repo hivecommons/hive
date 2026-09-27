@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-27 (v5.69.0)
+
+### Added
+
+- dashboard: redesign the Repositories pill legend as a colour key plus three captioned columns (#9096)
+
 ## 2026-09-27 (v5.68.4)
 
 ### Fixed
