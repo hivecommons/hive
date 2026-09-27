@@ -108,6 +108,11 @@ type Client struct {
 	// false → no comment is fetched, no Issue carries claim fields. Read live
 	// so a Features-panel toggle applies without a client rebuild.
 	issueClaims func() (enabled bool, ttl time.Duration)
+	// mttrIssueCache remembers issue creation times used by the MTTR dashboard
+	// card so the hourly metrics pass does not refetch the same referenced issue
+	// every cycle. Guarded by mttrIssueMu.
+	mttrIssueCache map[string]mttrIssueCacheEntry
+	mttrIssueMu    sync.Mutex
 	// issueClaimCache remembers the claim read for an issue at a given
 	// updated_at, so the per-issue comment fetch happens once per activity
 	// change rather than once per enumeration. Guarded by issueClaimMu.
@@ -2247,9 +2252,17 @@ func trackerTitlePrefix(title string) bool {
 }
 
 type RateLimitInfo struct {
-	Core    RateLimitEntry `json:"core"`
-	Search  RateLimitEntry `json:"search"`
-	GraphQL RateLimitEntry `json:"graphql"`
+	Core         RateLimitEntry `json:"core"`
+	Search       RateLimitEntry `json:"search"`
+	GraphQL      RateLimitEntry `json:"graphql"`
+	TopConsumers []RESTConsumer `json:"top_consumers,omitempty"`
+	ETagCache    ETagCacheInfo  `json:"etag_cache"`
+}
+
+type ETagCacheInfo struct {
+	Hits    int64 `json:"hits"`
+	Misses  int64 `json:"misses"`
+	Entries int64 `json:"entries"`
 }
 
 type RateLimitEntry struct {
@@ -2305,6 +2318,9 @@ func (c *Client) RateLimits(ctx context.Context) (*RateLimitInfo, error) {
 	info.Core = c.rateLimits.observe("core", info.Core)
 	info.Search = c.rateLimits.observe("search", info.Search)
 	info.GraphQL = c.rateLimits.observe("graphql", info.GraphQL)
+	hits, misses, entries := ETagCacheStats()
+	info.ETagCache = ETagCacheInfo{Hits: hits, Misses: misses, Entries: entries}
+	info.TopConsumers = RESTTopConsumers(10)
 
 	return info, nil
 }
