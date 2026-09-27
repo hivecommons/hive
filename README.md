@@ -351,9 +351,14 @@ spec:
 #### 5. Deploy
 
 ```bash
+kubectl apply -f src/deploy/k8s/dashboard-route-rbac.yaml
+kubectl apply -f src/deploy/k8s/sandbox-job-rbac.yaml
 kubectl apply -f src/deploy/k8s/deployment.yaml
 kubectl apply -f src/deploy/k8s/service.yaml
 ```
+
+`dashboard-route-rbac.yaml` creates the `hive` ServiceAccount the Deployment runs as.
+Apply it first, or the ReplicaSet cannot create a pod.
 
 The deployment runs a single replica with liveness and readiness probes on `/api/health`. Resource defaults: 500m CPU / 512Mi memory (requests), 2 CPU / 2Gi memory (limits).
 
