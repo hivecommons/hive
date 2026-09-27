@@ -130,6 +130,17 @@ soak-gated promotion workflow. Structural changes were gated by public
   [RFC doc](https://github.com/hivecommons/hive/blob/v5/docs/rfc-5691-constellation.md),
   [#5796](https://github.com/hivecommons/hive/pull/5796)).
 - **Per-repo policy scoping.** Proposed — awaiting maintainer sign-off on [#6208](https://github.com/hivecommons/hive/issues/6208): use one repo-scoped policy model for pause, per-repo agents, and per-repo ACMM/onboarding; hive-wide ACMM remains the ceiling, and repo overrides only narrow scope.
+- **Commons contributor-onboarding health.** Gap, not yet a workstream —
+  the public Commons join funnel (`just contribute-tui` →
+  `contribute-setup` → join a listed hive → working relay) currently has
+  five concurrent open failures spanning that whole path, including
+  hives the Commons registry lists as online being unreachable from a
+  public client
+  ([#9244](https://github.com/hivecommons/hive/issues/9244)). This is the
+  one code path every new adopter is guaranteed to exercise first, so it
+  should be prioritized ahead of general backlog ordering rather than
+  triaged issue-by-issue; a registry reachability probe would keep
+  "online" from being self-reported.
 - **Backend capacity, model inventory, and placement.** The same
   multi-spoke evidence made provider quota and model availability the
   practical constraint on splitting a hive. The accepted v5 capacity RFC
