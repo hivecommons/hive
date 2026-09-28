@@ -1,1 +1,0 @@
-- Dashboard Overview charts, repo cards, and legends now use server-provided bands and signals; CSV downloads link to the shared Overview API ([#9149](https://github.com/hivecommons/hive/issues/9149)).

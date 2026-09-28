@@ -1411,6 +1411,7 @@ func (b *boot) wireBootClosures() {
 			Inception:            b.inceptionEngine,
 			Nous:                 b.nousState,
 			Scheduler:            b.sched,
+			KnowledgePrimer:      knowledgePrimerControl{b: b},
 			MetricsCollector:     b.metricsCollector,
 			RotationMgr:          b.rotationMgr,
 			HeadroomPublisher:    b.quotaReadingPublisher,
@@ -1881,19 +1882,27 @@ func (b *boot) bootGovernor() {
 	}
 
 	if b.cfg.Knowledge.Enabled {
-		layers := convertKnowledgeLayers(b.cfg.Knowledge.Layers)
-		primerCfg := knowledge.PrimerConfig{
-			MaxFacts:      b.cfg.Knowledge.Primer.MaxFacts,
-			Priority:      b.cfg.Knowledge.Primer.Priority,
-			MergeStrategy: b.cfg.Knowledge.Primer.MergeStrategy,
-		}
-		b.primer = knowledge.NewPrimer(layers, primerCfg, b.logger)
-		b.sched.SetPrimer(b.primer)
-		b.logger.Info("knowledge primer enabled",
-			"layers", len(b.cfg.Knowledge.Layers),
-			"max_facts", primerCfg.MaxFacts,
-		)
+		b.sched.SetPrimer(b.newKnowledgePrimer())
 	}
+}
+
+// newKnowledgePrimer builds a kick primer from the configured wiki layers
+// and primer settings, with no file stores registered yet. bootGovernor and
+// the live dashboard toggle (knowledgePrimerControl, #9231) share it so both
+// prime from the same config.
+func (b *boot) newKnowledgePrimer() *knowledge.Primer {
+	layers := convertKnowledgeLayers(b.cfg.Knowledge.Layers)
+	primerCfg := knowledge.PrimerConfig{
+		MaxFacts:      b.cfg.Knowledge.Primer.MaxFacts,
+		Priority:      b.cfg.Knowledge.Primer.Priority,
+		MergeStrategy: b.cfg.Knowledge.Primer.MergeStrategy,
+	}
+	p := knowledge.NewPrimer(layers, primerCfg, b.logger)
+	b.logger.Info("knowledge primer enabled",
+		"layers", len(b.cfg.Knowledge.Layers),
+		"max_facts", primerCfg.MaxFacts,
+	)
+	return p
 }
 
 // bootAdvisory builds the notifier, infers the ACMM level, seeds the
@@ -2724,7 +2733,27 @@ func (b *boot) bootStores() {
 		}
 		store.SetHiveID(b.cfg.HiveID)
 		b.beadStores[name] = store
+		if qPath, qErr, quarantined := store.QuarantinedPath(); quarantined {
+			// beads.json was unparseable (e.g. a hand-written file missing a
+			// closing brace, kubestellar/hive#9328) but the store itself
+			// self-healed and is usable again — the operator still needs to
+			// know that this agent's PRIOR beads were lost, so this is ERROR
+			// rather than the routine startup Info line below.
+			b.logger.Error("beads.json was corrupt and has been quarantined; agent's bead store was reset to empty",
+				"agent", name, "quarantined_to", qPath, "parse_error", qErr)
+		}
 		b.logger.Info("beads store initialized", "agent", name, "count", store.Count())
+	}
+
+	// Names attempted by the enabled-agent loop above, success or failure.
+	// The orphan scan below must skip these regardless of outcome: a name
+	// only in beadStores (the old check) let a load FAILURE fall through to
+	// the orphan scan, which re-opens the same directory and re-fails it —
+	// counting one broken beads.json as two failures in
+	// beadStoreLoadFailures (kubestellar/hive#9328).
+	attempted := make(map[string]bool, len(b.cfg.EnabledAgents()))
+	for name := range b.cfg.EnabledAgents() {
+		attempted[name] = true
 	}
 
 	// Scan /data/beads/ for agent directories that have beads.json files on
@@ -2738,8 +2767,8 @@ func (b *boot) bootStores() {
 				continue
 			}
 			name := entry.Name()
-			if _, exists := b.beadStores[name]; exists {
-				continue // already loaded from config
+			if attempted[name] {
+				continue // already attempted (successfully or not) from config
 			}
 			agentBeadsDir := filepath.Join(beadsRootDir, name)
 			beadsFile := filepath.Join(agentBeadsDir, "beads.json")
@@ -2754,6 +2783,10 @@ func (b *boot) bootStores() {
 			}
 			store.SetHiveID(b.cfg.HiveID)
 			b.beadStores[name] = store
+			if qPath, qErr, quarantined := store.QuarantinedPath(); quarantined {
+				b.logger.Error("beads.json was corrupt and has been quarantined; agent's bead store was reset to empty",
+					"agent", name, "quarantined_to", qPath, "parse_error", qErr)
+			}
 			b.logger.Info("orphan beads store loaded from disk", "agent", name, "count", store.Count())
 		}
 	}
@@ -2958,13 +2991,6 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 				continue
 			}
 			b.logger.Info("vault auto-connected", "name", vc.Name, "path", vc.Path, "auto_index", vc.AutoIndex)
-			if b.primer = b.sched.GetPrimer(); b.primer != nil {
-				store := b.knowledgeAPI.GetVaultStore(vc.Path)
-				if store != nil {
-					b.primer.AddFileStore(vc.Name, store, knowledge.LayerPersonal)
-					b.logger.Info("vault registered with primer", "name", vc.Name)
-				}
-			}
 		}
 		if vc.GitSync {
 			// Find the store we just connected so the syncer can trigger reindex
@@ -2990,6 +3016,7 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 				Enabled: true,
 				Engine:  "file",
 			}, b.logger)
+			b.knowledgeAPIFallback = true
 			b.logger.Info("auto-enabled knowledge API for git sources")
 		}
 		gsConfig := knowledge.GitSourceConfig{
@@ -3013,19 +3040,6 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 				"subpath", gsc.Subpath,
 				"layer", gsc.Layer,
 			)
-			// Register the FileStore with the scheduler's primer so agents
-			// get primed with facts from this git source during kicks.
-			if b.primer = b.sched.GetPrimer(); b.primer != nil {
-				for _, gs := range b.knowledgeAPI.GitSources() {
-					if gs.Name == gsc.Name && gs.Ready {
-						store := b.knowledgeAPI.GetGitSourceStore(gsc.Name)
-						if store != nil {
-							b.primer.AddFileStore(gsc.Name, store, knowledge.LayerType(gsc.Layer))
-						}
-						break
-					}
-				}
-			}
 		}
 	}
 
@@ -3036,6 +3050,7 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 				Enabled: true,
 				Engine:  "file",
 			}, b.logger)
+			b.knowledgeAPIFallback = true
 			b.logger.Info("auto-enabled knowledge API for document sources")
 		}
 		docConfig := knowledge.DocSourceConfig{
@@ -3068,13 +3083,11 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 			Enabled: true,
 			Engine:  "file",
 		}, b.logger)
+		b.knowledgeAPIFallback = true
 		b.logger.Info("auto-enabled file-based knowledge API")
 	}
 	if len(b.beadStores) > 0 {
-		synthVaultPath := b.cfg.Knowledge.BeadSynthesizer.VaultPath
-		if synthVaultPath == "" {
-			synthVaultPath = beadSynthVaultDefaultPath
-		}
+		synthVaultPath := b.beadSynthVaultPath()
 		if err := os.MkdirAll(synthVaultPath, 0o755); err != nil {
 			b.logger.Warn("failed to create bead-synth vault dir", "path", synthVaultPath, "error", err)
 		}
@@ -3083,17 +3096,6 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 				b.logger.Warn("failed to auto-connect bead-synth vault", "path", synthVaultPath, "error", connErr)
 			} else {
 				b.logger.Info("auto-connected bead-synth vault", "path", synthVaultPath)
-				if b.primer = b.sched.GetPrimer(); b.primer != nil {
-					store := b.knowledgeAPI.GetVaultStore(synthVaultPath)
-					if store != nil {
-						beadLayer := knowledge.LayerType(b.cfg.Knowledge.BeadSynthesizer.TargetLayer)
-						if beadLayer == "" {
-							beadLayer = knowledge.LayerPersonal
-						}
-						b.primer.AddFileStore("bead-synth-wiki", store, beadLayer)
-						b.logger.Info("bead-synth vault registered with primer", "layer", beadLayer)
-					}
-				}
 			}
 		}
 		var rawGH *gh.Client
@@ -3143,6 +3145,13 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 		}
 	}
 
+	// Register everything connected above with the boot-time primer. With
+	// knowledge.enabled false there is none, and the stores are only primed
+	// once the dashboard toggle builds one (#9231).
+	if p := b.sched.GetPrimer(); p != nil {
+		b.registerKnowledgeStores(p)
+	}
+
 	// Scheduled knowledge promotion (#5430). knowledge.curator.schedule used to
 	// be parsed, defaulted to "daily", and never read. It now drives a real
 	// sweep — but ONLY when knowledge.curator.enabled is explicitly true.
@@ -3174,15 +3183,20 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 			return
 		}
 		b.logger.Info("knowledge graph store opened", "path", knowledgeGraphStorePath)
-		if b.primer = b.sched.GetPrimer(); b.primer != nil {
-			b.primer.SetGraphStore(graphStore)
-		}
+		// Serialized with the live dashboard toggle (knowledgePrimerControl):
+		// a primer it builds either reads this graph store from the API in
+		// registerKnowledgeStores or is already published and wired here.
+		b.knowledgePrimerMu.Lock()
 		if b.knowledgeAPI != nil {
 			b.knowledgeAPI.SetGraphStore(graphStore)
-			if b.primer = b.sched.GetPrimer(); b.primer != nil {
-				b.knowledgeAPI.WireContext7Suggester(b.primer)
+		}
+		if p := b.sched.GetPrimer(); p != nil {
+			p.SetGraphStore(graphStore)
+			if b.knowledgeAPI != nil {
+				b.knowledgeAPI.WireContext7Suggester(p)
 			}
 		}
+		b.knowledgePrimerMu.Unlock()
 		if b.beadSynth != nil {
 			b.beadSynth.SetGraphStore(graphStore)
 		}
@@ -3663,6 +3677,9 @@ func (b *boot) bootWatchers() { b.bootWatchersWith(defaultBootWatchersDeps()) }
 func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	// Watch hive.yaml for external changes and reload config when modified
 	b.configWatcher = deps.newConfigWatcher(b.configPath, func(newCfg *config.Config) {
+		b.cfgReloadMu.Lock()
+		defer b.cfgReloadMu.Unlock()
+
 		// Preserve runtime-only fields that are not in the YAML
 		newCfg.HiveID = b.cfg.HiveID
 
@@ -5665,6 +5682,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			deps.persist(b)
 			return
 		case <-ticker.Chan():
+			b.cfgReloadMu.Lock()
 			restarted := deps.restartCrashed(b.ctx, b.agentMgr)
 			for _, name := range restarted {
 				b.dashSrv.AuditLog("system", "restart", "trigger=crash-recovery", name)
@@ -5750,10 +5768,13 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 				ticker.Reset(time.Duration(b.cfg.Governor.EvalIntervalS) * time.Second)
 				lastEvalInterval = b.cfg.Governor.EvalIntervalS
 			}
+			b.cfgReloadMu.Unlock()
 		case <-agentTickCh:
+			b.cfgReloadMu.Lock()
 			govState := b.gov.GetState()
 			agentStatuses := b.agentMgr.AllStatuses()
 			payload := dashboard.BuildAgentOnlyStatus(govState, agentStatuses, b.cfg)
+			b.cfgReloadMu.Unlock()
 			b.dashSrv.BroadcastAgentStatus(payload)
 		}
 	}

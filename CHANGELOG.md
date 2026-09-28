@@ -11,6 +11,43 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-28 (v5.74.0)
+
+### Added
+
+- Added a daily `hive-gocache-prune` CronJob manifest (`src/deploy/ci-runners/`) that bounds the shared self-hosted runner Go cache volume, after it filled 200Gi and broke every Go CI step with `disk quota exceeded`.
+
+### Fixed
+
+- Dashboard legend pills (`triage`, `STRATEGIST`, `FIX`) are now horizontally centered like the rest of the legend pills, fixing their left-alignment in the Overview → Pill Legend section ([#9222](https://github.com/hivecommons/hive/issues/9222)).
+
+## 2026-09-28 (v5.73.5)
+
+### Fixed
+
+- The entrypoint's shared-tree permission guard (`hive_fix_tree` / `hive_fix_tree_recent`) no longer runs `chmod` and `chown` as separate tree-wide passes; each entry now gets both in one `find -exec`, closing the race where an entry created between the chmod and chown passes ended up `dev:node`-owned while still mode `0600` — locking its own creating agent out with `Failed to append to JSONL file ... Permission denied` ([#9226](https://github.com/hivecommons/hive/issues/9226)).
+- The dashboard's knowledge panel now reports whether agent kicks are actually primed with knowledge, and enabling knowledge from it takes effect without a restart ([#9231](https://github.com/hivecommons/hive/issues/9231)). Previously "enabled" meant only that the knowledge API existed, which it always does because the bead synthesizer needs it: a hive running with `knowledge.enabled: false` showed an enabled panel, hundreds of facts and "Synth active" while no kick ever received `${KNOWLEDGE}`, and `PUT /api/knowledge/enabled` persisted the flag without ever building the primer. The toggle now builds and registers the primer live (with the bead-synth vault, ready git sources and connected vaults) or unregisters it; `GET /api/knowledge/stats` and `GET /api/knowledge/health` report `enabled` from primer registration with a new `primer: {registered, sources, restart_required, restart_reason}` block; the panel shows "not primed" with an Enable button and a notice that stored facts are not injected, and names anything that still needs a restart. `GET /api/knowledge/health` is now always an object (`{enabled, layers, primer}`) instead of a bare layer array.
+- A corrupt `beads.json` (e.g. a hand-edited file with a missing brace) no longer silently drops an agent's entire bead store at startup. The store now quarantines the unparseable file to `beads.json.corrupt-<timestamp>` for forensics, logs loudly at ERROR, and starts fresh empty rather than returning an error that made `bootStores` drop the agent from `beadStores` entirely — which showed as a bare `0` on the dashboard with every subsequent `bd create` failing until a human noticed and restarted the pod. The orphan-store scan also no longer re-attempts (and double-counts) a directory the enabled-agent loop already tried, whether it succeeded or failed (#9328).
+
+## 2026-09-28 (v5.73.4)
+
+### Fixed
+
+- The post-merge DCO trailer check no longer pages on `@onkar717`'s commits ([#9250](https://github.com/hivecommons/hive/issues/9250)). GitHub's squash merges of #9168 and #9176 recorded the author as the privacy address `144542684+onkar717@users.noreply.github.com` while the sign-off used `shelkeonka@gmail.com` — the same person, mismatched identities, which the checker cannot resolve on its own. `shelkeonka@gmail.com` is now accepted as `@onkar717`'s standing sign-off identity in `DCO_ALLOWLIST_EMAILS` (same disposition as `raul.mturrubiates@gmail.com` in #6554).
+- A config reload no longer crashes the hive. The config watcher applied reloads on its own timer goroutine while the governor loop's fast agent-status tick read the same `cfg.Agents` map, so a reload landing mid-tick killed the process with `fatal error: concurrent map read and map write` (seen on a hosted spoke in `buildConfiguredAgents`). Reloads and governor-loop ticks are now serialized.
+
+## 2026-09-28 (v5.73.3)
+
+### Fixed
+
+- The self-hosted Kubernetes Deployment (`src/deploy/k8s/deployment.yaml`) now sets `imagePullPolicy: Always` on the hive container ([#9332](https://github.com/hivecommons/hive/issues/9332)). It runs the moving `:stable` tag, so the Kubernetes default of `IfNotPresent` let a node with the tag cached restart onto the old build, including during spoke self-upgrade. Hosted spokes and the backup CronJob already pull with `Always`.
+
+## 2026-09-28 (v5.73.2)
+
+### Changed
+
+- Dashboard Overview charts, repo cards, and legends now use server-provided bands and signals; CSV downloads link to the shared Overview API ([#9149](https://github.com/hivecommons/hive/issues/9149)).
+
 ## 2026-09-28 (v5.73.1)
 
 ### Fixed

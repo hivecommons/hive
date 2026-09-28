@@ -10098,7 +10098,7 @@
           "Knowledge"
         ],
         "summary": "Enable or disable the knowledge base",
-        "description": "Enables or disables the whole knowledge subsystem, (re)constructing the knowledge API from configured layers when turning on, and starting/stopping the bead synthesizer accordingly. Persists the setting. Requires owner role.",
+        "description": "Sets knowledge.enabled, builds or unregisters the kick primer live (registering every connected vault, git source and the bead-synth vault with it), and starts/stops the bead synthesizer accordingly. The knowledge API itself is kept on disable for browsing. `primer.restart_required` names anything that still needs a restart. Persists the setting. Requires owner role.",
         "requestBody": {
           "required": true,
           "content": {
@@ -10130,6 +10130,45 @@
                     },
                     "enabled": {
                       "type": "string"
+                    },
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "primer": {
+                      "type": "object",
+                      "description": "Kick primer registration (#9231): whether agent kicks are injected with knowledge, and from which sources. This, not the knowledge API's existence, is what knowledge.enabled gates.",
+                      "properties": {
+                        "registered": {
+                          "type": "boolean",
+                          "description": "True when the scheduler holds a primer, i.e. kicks carry a knowledge section."
+                        },
+                        "sources": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "layer": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "description": "`wiki` for an HTTP wiki layer, `store` for a local vault, git source or bead-synth vault."
+                              }
+                            }
+                          }
+                        },
+                        "restart_required": {
+                          "type": "boolean",
+                          "description": "True when part of knowledge.enabled can only be applied by restarting the hive."
+                        },
+                        "restart_reason": {
+                          "type": "string",
+                          "description": "What waits for a restart; empty when restart_required is false."
+                        }
+                      }
                     }
                   }
                 }
@@ -11005,28 +11044,72 @@
           "Knowledge"
         ],
         "summary": "Knowledge layer health",
-        "description": "Checks each configured wiki layer's reachability and returns its status. Returns `{\"enabled\": false}` if the knowledge base is not configured.",
+        "description": "Checks each configured wiki layer's reachability and reports the kick primer registration. `enabled` is primer registration \u2014 whether agent kicks receive knowledge \u2014 not whether the knowledge API exists (#9231).",
         "responses": {
           "200": {
-            "description": "Per-layer health",
+            "description": "Layer health and primer registration",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "type": {
-                        "type": "string"
-                      },
-                      "url": {
-                        "type": "string"
-                      },
-                      "healthy": {
-                        "type": "boolean"
-                      },
-                      "pages": {
-                        "type": "integer"
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "layers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "healthy": {
+                            "type": "boolean"
+                          },
+                          "pages": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "primer": {
+                      "type": "object",
+                      "description": "Kick primer registration (#9231): whether agent kicks are injected with knowledge, and from which sources. This, not the knowledge API's existence, is what knowledge.enabled gates.",
+                      "properties": {
+                        "registered": {
+                          "type": "boolean",
+                          "description": "True when the scheduler holds a primer, i.e. kicks carry a knowledge section."
+                        },
+                        "sources": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "layer": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "description": "`wiki` for an HTTP wiki layer, `store` for a local vault, git source or bead-synth vault."
+                              }
+                            }
+                          }
+                        },
+                        "restart_required": {
+                          "type": "boolean",
+                          "description": "True when part of knowledge.enabled can only be applied by restarting the hive."
+                        },
+                        "restart_reason": {
+                          "type": "string",
+                          "description": "What waits for a restart; empty when restart_required is false."
+                        }
                       }
                     }
                   }
@@ -11144,7 +11227,7 @@
           "Knowledge"
         ],
         "summary": "Aggregate knowledge base stats",
-        "description": "Returns aggregate stats across all layers, vaults, and git sources (fact counts by type/status, staleness, orphan counts). Also updates the fact-count and estimated-cost history sparklines as a side effect (throttled to ~5-min intervals). Returns `{\"enabled\": false}` if the knowledge base is not enabled.",
+        "description": "Returns aggregate stats across all layers, vaults, and git sources (fact counts by type/status, staleness, orphan counts). Also updates the fact-count and estimated-cost history sparklines as a side effect (throttled to ~5-min intervals). `enabled` reports kick primer registration (see `primer`), not whether the knowledge API exists: stats stay available for browsing while knowledge is disabled (#9231).",
         "responses": {
           "200": {
             "description": "Aggregate stats",
@@ -11247,6 +11330,42 @@
                           "pages": {
                             "type": "integer"
                           }
+                        }
+                      }
+                    },
+                    "primer": {
+                      "type": "object",
+                      "description": "Kick primer registration (#9231): whether agent kicks are injected with knowledge, and from which sources. This, not the knowledge API's existence, is what knowledge.enabled gates.",
+                      "properties": {
+                        "registered": {
+                          "type": "boolean",
+                          "description": "True when the scheduler holds a primer, i.e. kicks carry a knowledge section."
+                        },
+                        "sources": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "layer": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "description": "`wiki` for an HTTP wiki layer, `store` for a local vault, git source or bead-synth vault."
+                              }
+                            }
+                          }
+                        },
+                        "restart_required": {
+                          "type": "boolean",
+                          "description": "True when part of knowledge.enabled can only be applied by restarting the hive."
+                        },
+                        "restart_reason": {
+                          "type": "string",
+                          "description": "What waits for a restart; empty when restart_required is false."
                         }
                       }
                     }

@@ -1,0 +1,124 @@
+# hivecommons/hive#9338 follow-up — keep the shared Go cache volume bounded.
+#
+# Every hive-runners pod mounts PVC `hive-runner-gocache` (cephfs RWX) at
+# /mnt/gocache and points GOCACHE at /mnt/gocache/build. Nothing ever evicted
+# from it: it filled 200Gi in ~3.5 days (2026-09-25 → 09-28) and every Go step
+# on every runner failed with `disk quota exceeded` until the volume was grown.
+# `.github/scripts/go-cache-guard.sh` only prunes *after* a job finds the cache
+# unwritable, so it is a safety net, not a steady-state control.
+#
+# This CronJob is the steady-state control. Daily it:
+#   1. deletes GOCACHE (build/) files untouched for MAX_AGE_DAYS;
+#   2. if the volume is still above HIGH_WATER_PCT, tightens to
+#      EMERGENCY_AGE_HOURS so a burst cannot fill the disk between runs.
+# GOMODCACHE (mod/) is left alone: module zips are content-addressed and reused
+# indefinitely; the hostedtoolcache/ and actions-archive/ dirs are managed by
+# their own seeders.
+#
+# Apply with:
+#   kubectl -n arc-v2-hive apply -f src/deploy/ci-runners/gocache-prune-cronjob.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hive-gocache-prune
+  namespace: arc-v2-hive
+  labels:
+    owner: hive
+    team: hive
+data:
+  prune.sh: |
+    #!/bin/sh
+    set -u
+    ROOT="${GOCACHE_ROOT:-/mnt/gocache}"
+    BUILD="$ROOT/build"
+    MAX_AGE_DAYS="${MAX_AGE_DAYS:-3}"
+    EMERGENCY_AGE_HOURS="${EMERGENCY_AGE_HOURS:-12}"
+    HIGH_WATER_PCT="${HIGH_WATER_PCT:-85}"
+
+    usage_pct() { df -P "$ROOT" | awk 'NR==2 {gsub("%","",$5); print $5}'; }
+
+    if [ ! -d "$BUILD" ]; then
+      echo "gocache-prune: $BUILD missing; nothing to do"
+      exit 0
+    fi
+
+    echo "gocache-prune: before: $(df -h "$ROOT" | tail -1)"
+    echo "gocache-prune: deleting $BUILD files untouched for ${MAX_AGE_DAYS}d"
+    find "$BUILD" -type f -mtime "+$MAX_AGE_DAYS" -delete 2>/dev/null
+
+    pct="$(usage_pct)"
+    if [ "${pct:-0}" -ge "$HIGH_WATER_PCT" ]; then
+      echo "gocache-prune: ${pct}% >= ${HIGH_WATER_PCT}% high-water; tightening to ${EMERGENCY_AGE_HOURS}h"
+      find "$BUILD" -type f -mmin "+$((EMERGENCY_AGE_HOURS * 60))" -delete 2>/dev/null
+    fi
+
+    # Drop empty shard directories left behind so `find` stays fast.
+    find "$BUILD" -mindepth 1 -type d -empty -delete 2>/dev/null
+    echo "gocache-prune: after:  $(df -h "$ROOT" | tail -1)"
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hive-gocache-prune
+  namespace: arc-v2-hive
+  labels:
+    owner: hive
+    team: hive
+spec:
+  schedule: "41 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 14400  # cephfs metadata walks of a ~200G tree take well over 1h
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app: hive-gocache-prune
+            owner: hive
+            team: hive
+        spec:
+          restartPolicy: Never
+          serviceAccountName: hive-runner
+          # Same identity the runner pods write the cache with (uid/gid 1001,
+          # setgid dirs), so deletes are permitted without root.
+          securityContext:
+            runAsUser: 1001
+            runAsGroup: 1001
+            seLinuxOptions:
+              type: spc_t
+          containers:
+            - name: prune
+              image: busybox:1.36
+              imagePullPolicy: IfNotPresent
+              command: ["sh", "/prune/prune.sh"]
+              env:
+                - name: MAX_AGE_DAYS
+                  value: "3"
+                - name: EMERGENCY_AGE_HOURS
+                  value: "12"
+                - name: HIGH_WATER_PCT
+                  value: "85"
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 64Mi
+                limits:
+                  cpu: "1"
+                  memory: 256Mi
+              volumeMounts:
+                - name: gocache
+                  mountPath: /mnt/gocache
+                - name: script
+                  mountPath: /prune
+                  readOnly: true
+          volumes:
+            - name: gocache
+              persistentVolumeClaim:
+                claimName: hive-runner-gocache
+            - name: script
+              configMap:
+                name: hive-gocache-prune
+                defaultMode: 0555

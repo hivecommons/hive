@@ -415,6 +415,10 @@ func TestControlSurface(t *testing.T) {
 	if code, _ := post("/control/answer/" + string(key) + "?decision=accept"); code != http.StatusOK {
 		t.Fatalf("answer = %d", code)
 	}
+	// The answer endpoint returns once the workbench has SENT MsgAccept; the
+	// peer's Offer goroutine still has to consume it and record acceptance.
+	// Starting before that lands races into ErrNotAccepted.
+	testutil.Eventually(t, settle, func() bool { return p.Accepted(key) }, "accept for %s not recorded on the peer", key)
 	if _, err := p.Start(context.Background(), key, 1, "implement", bundle(t, "ctl", "")); err != nil {
 		t.Fatal(err)
 	}

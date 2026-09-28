@@ -48,6 +48,11 @@ type Dependencies struct {
 	Nous             *NousState
 	Scheduler        SchedulerControl
 	MetricsCollector *MetricsCollector
+	// KnowledgePrimer builds, publishes and reports the scheduler's kick
+	// primer — the one thing knowledge.enabled actually gates (#9231). Nil
+	// (bare test deps) means the toggle can only persist the flag, so it
+	// answers restart_required.
+	KnowledgePrimer KnowledgePrimerControl
 	// RotationMgr is the provider-rotation headroom reporter (RFC #3958). Nil
 	// when rotation is disabled; the headroom endpoint then reports
 	// enabled=false.
@@ -307,4 +312,33 @@ type SchedulerControl interface {
 	// the prompt editor and the general-settings guard (#7390).
 	ResolveTemplate(agentName string) scheduler.TemplateResolution
 	TemplateExists(templateName string) (source string, ok bool)
+}
+
+// KnowledgePrimerStatus reports whether kicks are primed with knowledge
+// (#9231). It is what the dashboard's knowledge "enabled" state means: the
+// KnowledgeAPI object exists regardless of knowledge.enabled (the bead
+// synthesizer and vault browsing need it), so its existence says nothing
+// about whether any kick receives ${KNOWLEDGE}.
+type KnowledgePrimerStatus struct {
+	// Registered is true when the scheduler holds a primer, i.e. kicks
+	// carry a knowledge section.
+	Registered bool `json:"registered"`
+	// Sources lists what the registered primer queries; empty when not
+	// registered.
+	Sources []knowledge.PrimerSource `json:"sources"`
+	// RestartRequired is set when the running process cannot fully apply
+	// knowledge.enabled live; RestartReason says what waits for a restart.
+	RestartRequired bool   `json:"restart_required"`
+	RestartReason   string `json:"restart_reason,omitempty"`
+}
+
+// KnowledgePrimerControl is implemented by the process that owns the
+// scheduler and the connected knowledge stores (cmd/hive).
+type KnowledgePrimerControl interface {
+	// SetKnowledgePrimer builds a primer from the configured layers,
+	// registers every connected store with it and publishes it to the
+	// scheduler (enabled), or unregisters it (disabled).
+	SetKnowledgePrimer(enabled bool) KnowledgePrimerStatus
+	// KnowledgePrimerStatus reports the current primer registration.
+	KnowledgePrimerStatus() KnowledgePrimerStatus
 }

@@ -553,6 +553,24 @@ for repair in hive_fix_tree_recent hive_fix_tree; do
   fi
 done
 
+# Functional: an entry that only matches the chown-worthy window (i.e. was
+# never touched by a chmod-only pass) must still end up group-writable, not
+# just chowned. This is the exact state #9226 describes: dev-owned, 0600.
+RACE_TREE="$WORK/race-tree"
+mkdir -p "$RACE_TREE/session-race"
+RACEFILE="$RACE_TREE/session-race/events.jsonl"
+printf 'x\n' > "$RACEFILE"
+chmod 0600 "$RACEFILE"
+sh -c 'set -e; . "$1"; hive_fix_tree_recent "$2" 10' sh "$WORK/guards.local.sh" "$RACE_TREE" \
+  >/dev/null 2>&1
+race_mode="$(stat -c '%a' "$RACEFILE" 2>/dev/null || stat -f '%Lp' "$RACEFILE")"
+race_group_digit="$(printf '%s' "$race_mode" | tail -c 2 | head -c 1)"
+case "$race_group_digit" in
+  2|3|6|7) ok "a 0600 entry is reopened group-writable in the same pass that would chown it (mode $race_mode)" ;;
+  *) bad "a 0600 entry is reopened group-writable in the same pass that would chown it" \
+         "mode is $race_mode — this is the dev-owned-0600 lockout from #9226" ;;
+esac
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

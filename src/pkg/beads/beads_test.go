@@ -670,9 +670,28 @@ func TestNewStore_CorruptJSON(t *testing.T) {
 	dir := t.TempDir()
 	// Write a corrupt beads.json
 	os.WriteFile(dir+"/beads.json", []byte(`{not json`), 0o644)
-	_, err := NewStore(dir)
-	if err == nil {
-		t.Error("expected error for corrupt beads.json")
+	// Corrupt JSON self-heals (kubestellar/hive#9328) rather than dropping
+	// the whole store: NewStore must succeed with an empty store, and the
+	// bad file must be quarantined on disk for forensics instead of erroring.
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("expected NewStore to self-heal a corrupt beads.json, got error: %v", err)
+	}
+	if store.Count() != 0 {
+		t.Errorf("expected empty store after quarantine, got count %d", store.Count())
+	}
+	qPath, qErr, ok := store.QuarantinedPath()
+	if !ok {
+		t.Fatal("expected QuarantinedPath to report a quarantine")
+	}
+	if qErr == nil {
+		t.Error("expected a non-nil quarantine cause")
+	}
+	if _, statErr := os.Stat(qPath); statErr != nil {
+		t.Errorf("expected quarantined file at %s, stat error: %v", qPath, statErr)
+	}
+	if _, statErr := os.Stat(dir + "/beads.json"); !os.IsNotExist(statErr) {
+		t.Errorf("expected original beads.json to be renamed away, stat error: %v", statErr)
 	}
 }
 

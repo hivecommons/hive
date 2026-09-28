@@ -194,3 +194,30 @@ requires this image to exist.
   temporarily set to `["ubuntu-latest"]` to divert jobs to GitHub-hosted
   runners. It has since been restored to `["self-hosted","hive"]`. If jobs are
   unexpectedly running on GitHub-hosted runners, check that variable first.
+
+## Shared Go cache volume: bounding growth (#9338 follow-up)
+
+The v2 ARC scale set (`autoscalingrunnerset/hive-runners`, namespace
+`arc-v2-hive`) mounts PVC `hive-runner-gocache` (cephfs RWX) at `/mnt/gocache`
+in every runner pod; `GOCACHE=/mnt/gocache/build`, `GOMODCACHE=/mnt/gocache/mod`.
+Nothing evicted from it, so it filled 200Gi in ~3.5 days and every Go step on
+every runner failed with `disk quota exceeded` (2026-09-28, ~03:00Z–12:13Z).
+
+Two controls now exist:
+
+| Control | Where | When it acts |
+| --- | --- | --- |
+| `go-cache-guard.sh` | `.github/scripts/`, run after every `setup-go` | Only once a job finds the cache unwritable: prunes files untouched >12h, else falls back to `$RUNNER_TEMP`. Safety net. |
+| `hive-gocache-prune` CronJob | `gocache-prune-cronjob.yaml` | Daily 03:41 UTC: deletes `build/` files untouched >3d; if usage is still ≥85% tightens to >12h. Steady state. |
+
+Apply / verify:
+
+```sh
+kubectl -n arc-v2-hive apply -f src/deploy/ci-runners/gocache-prune-cronjob.yaml
+kubectl -n arc-v2-hive create job --from=cronjob/hive-gocache-prune gocache-prune-now
+kubectl -n arc-v2-hive logs job/gocache-prune-now
+```
+
+The PVC was grown 200Gi → 500Gi on 2026-09-28 (`allowVolumeExpansion: true` on
+`ocs-storagecluster-cephfs`; online, no pod restart). If usage still trends up
+week over week, lower `MAX_AGE_DAYS` before growing the volume again.
