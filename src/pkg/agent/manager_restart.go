@@ -64,6 +64,8 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 	var crashed []string
 	var consentStuck, consentCleared []string
 	var stallChecks []inferencePaneCheck
+	type sessionRestart struct{ name, message, reason string }
+	var hungSessions []sessionRestart
 	for name, agent := range m.agents {
 		if agent.State != StateRunning {
 			continue
@@ -135,6 +137,9 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 		// An inference agent parked on a consent screen has a live CLI, so
 		// it is not "crashed" — but it is stuck. Restarting would loop back
 		// to the same screen; re-running prompt dismissal recovers it.
+		if reason := m.sessionStalled(agent, pane, time.Now()); reason != "" {
+			hungSessions = append(hungSessions, sessionRestart{name, agent.LastKickMessage, reason})
+		}
 		if IsInferenceBackend(effectiveBackend(agent)) {
 			if paneShowsConsentScreen(pane) {
 				consentStuck = append(consentStuck, name)
@@ -156,6 +161,25 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 	}
 	for _, check := range stallChecks {
 		m.nudgeIfKickStalled(check.name, check.pane)
+	}
+
+	for _, h := range hungSessions {
+		m.logger.Error("kick stalled: "+h.reason, "name", h.name)
+		m.mu.Lock()
+		if agent, ok := m.agents[h.name]; ok {
+			agent.lastSessionStallRestart = time.Now()
+			agent.LastError = "stalled: " + h.reason
+		}
+		m.mu.Unlock()
+		var err error
+		if h.message != "" {
+			err = m.RestartThenSendKick(ctx, h.name, h.message)
+		} else {
+			err = m.Restart(ctx, h.name)
+		}
+		if err != nil {
+			m.logger.Error("failed to restart stalled session", "name", h.name, "error", err)
+		}
 	}
 
 	var restarted []string

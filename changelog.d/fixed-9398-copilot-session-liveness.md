@@ -1,0 +1,1 @@
+- Copilot CLI agents whose session never starts after a kick, or whose turn hangs with no events, are now detected via `events.jsonl` and restarted with the kick re-delivered.

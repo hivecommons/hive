@@ -317,14 +317,15 @@ type AgentProcess struct {
 	// authenticated CLI sits there producing nothing. Written under paneMu by
 	// pollTmuxOutputForAgent alongside lastPaneCapture; zero until the poller
 	// has seen two differing captures, which reads as "unknown", never "idle".
-	LastPaneChange       time.Time
-	consentSeenAt        time.Time // watcher: when a consent screen was first seen in the pane
-	lastConsentDismiss   time.Time // watcher: cooldown for re-running dismissInferencePrompts
-	lastInferKickAt      time.Time // stall watchdog: when the last kick was delivered to an inference agent
-	lastInferKickPane    string    // stall watchdog: hash of the visible pane just after kick delivery
-	lastInferKickVisible string    // stall watchdog: visible pane text just after kick delivery
-	stallNudgeSent       bool      // stall watchdog: at most one nudge per kick
-	StallNudges          int       // total post-kick stall nudges sent (surfaced to the dashboard)
+	LastPaneChange          time.Time
+	consentSeenAt           time.Time // watcher: when a consent screen was first seen in the pane
+	lastConsentDismiss      time.Time // watcher: cooldown for re-running dismissInferencePrompts
+	lastInferKickAt         time.Time // stall watchdog: when the last kick was delivered to an inference agent
+	lastInferKickPane       string    // stall watchdog: hash of the visible pane just after kick delivery
+	lastInferKickVisible    string    // stall watchdog: visible pane text just after kick delivery
+	stallNudgeSent          bool      // stall watchdog: at most one nudge per kick
+	lastSessionStallRestart time.Time // session-liveness: last restart for a hung Copilot session
+	StallNudges             int       // total post-kick stall nudges sent (surfaced to the dashboard)
 	// Transient API-error recovery (#4697), for CLI backends. lastTransientNudge
 	// is the cooldown anchor — the poller runs every 3s and the error text stays
 	// on screen after the nudge is typed, so without it one incident would fire
