@@ -2461,6 +2461,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		autoMergeOpts.MutationBoundary = b.mutationBoundary
 		autoMergeOpts.SelfAuthorizationHoldEnabled = selfAuthorizationHoldEnabled
 		autoMergeOpts.RepoAutoMergeEnabled = func(repo string) bool { return b.cfg.RepoAutoMergeEnabled(repo) }
+		// Read through b.cfg on every sweep tick so a config reload of
+		// auto_merge.trusted_bot_authors takes effect without a restart.
+		autoMergeOpts.TrustedBotAuthors = func() map[string]bool { return b.cfg.AutoMerge.TrustedBotAuthorSet() }
 		// Intent tier gate (#6258): the human lane only queues PRs that
 		// survive writeMergeEligible's intent check, but this sweep lists
 		// the App's PRs on its own, so it carries the same policy (same
