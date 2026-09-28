@@ -15,6 +15,13 @@ const (
 	agyDefaultEffort = "low"
 
 	tokenRestartCooldownSec = 60 // minimum seconds between token-triggered restarts per agent
+	// rateLimitRestartCooldownSec paces relaunches of an agent parked on the
+	// CLI's rate-limited credential-validation banner. GitHub's core REST
+	// window is an hour, and every relaunch inside it burns one more request
+	// from the same exhausted budget, so this is deliberately far slower than
+	// tokenRestartCooldownSec and uncapped: it stops firing the moment a
+	// relaunch validates.
+	rateLimitRestartCooldownSec = 300
 	// loginPromptTailLines bounds the pane region the login-prompt detector
 	// reads: a prompt the CLI is stuck at sits at the pane bottom, while
 	// echoed kick text and startup flashes live in scrollback (see the poller).

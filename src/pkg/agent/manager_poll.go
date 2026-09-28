@@ -51,6 +51,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			showsLogin := paneShowsLoginPrompt(tail)
 			bobKeyRejected := effectiveBackend(agent) == bobBackend && paneShowsBobAPIKeyRejected(tail)
 			quotaExhausted := paneShowsQuotaExhausted(tail)
+			rateLimited := paneShowsStartupRateLimit(tail)
 			if showsLogin || bobKeyRejected {
 				showsLogin = true
 				loginStreak++
@@ -93,6 +94,36 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			agent.NeedsLogin = showsLogin
 			agent.QuotaExhausted = quotaExhausted
 			agent.paneMu.Unlock()
+
+			// The CLI could not VALIDATE its token because GitHub rate-limited
+			// the validation call. The credential is intact and no login will
+			// help; the only remedy is a relaunch after the window has had time
+			// to move. Paced by its own cooldown so a fleet sharing one user's
+			// budget does not hammer the exhausted quota, and kept off the
+			// token-restart cap so the give-up latch cannot strand the agent.
+			if rateLimited {
+				m.mu.RLock()
+				lastKick := agent.LastKick
+				m.mu.RUnlock()
+				if lastKick != nil && time.Since(*lastKick) < tokenRestartKickGrace {
+					continue
+				}
+				if time.Since(agent.lastRateLimitRestart).Seconds() < float64(rateLimitRestartCooldownSec) {
+					continue
+				}
+				agent.lastRateLimitRestart = time.Now()
+				agent.LastError = "copilot start-up blocked: GitHub rate-limited the token validation call (token intact; relaunching after cooldown)"
+				m.logger.Warn("copilot token validation rate-limited by GitHub; relaunching after cooldown",
+					"agent", agent.Name,
+					"cooldown_sec", rateLimitRestartCooldownSec,
+				)
+				go func() {
+					if err := m.RestartWithReason(ctx, agent.Name, "github rate limit on token validation"); err != nil {
+						m.logger.Warn("rate-limit relaunch failed", "agent", agent.Name, "error", err)
+					}
+				}()
+				return
+			}
 
 			// Auto-restart agents stuck on the login prompt when a valid
 			// token exists in the shared config.json. This handles the case
