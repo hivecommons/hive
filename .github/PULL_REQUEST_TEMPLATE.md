@@ -31,9 +31,9 @@ See the [backend support tiers and acceptance bar](../src/docs/backend-support-t
 
 ## Contributor checklist
 
+- [ ] **Changelog** (required when `src/` code changes, or CI fails): added `changelog.d/<added|changed|deprecated|fixed|security>-<pr-or-slug>.md` containing one `- ` bullet — e.g. `echo '- Fix X when Y' > changelog.d/fixed-1234.md` — **or** the change is not user-visible and a maintainer added the `no-changelog` label. Never edit `CHANGELOG.md` directly (#5675).
 - [ ] PR targets `v2` unless a maintainer requested another branch.
 - [ ] Title uses the repo emoji convention, for example `📖 docs: ...`, `🐛 fix: ...`, or `✨ feature: ...`.
 - [ ] Commits include DCO sign-off (`git commit -s`).
 - [ ] Docs, examples, and policies are updated when behavior changes.
-- [ ] A `changelog.d/<category>-<pr-or-slug>.md` fragment carries the changelog entry for user-visible changes (features, fixes, new env vars, behavior changes) — see `changelog.d/README.md`; or the change is not user-facing (`no-changelog` label). Do not append to `CHANGELOG.md`'s `## Unreleased` directly (#5675).
 - [ ] No secrets, credentials, or local runtime state are committed.
