@@ -93,6 +93,12 @@ intersect_files() {
   done | sort -u
 }
 
+# Prints the paths `git merge-tree` reports as conflicted when merging $a and
+# $b; prints nothing when they merge cleanly. With --name-only, a conflicted
+# merge prints the tree OID, then one conflicted path per line, then a blank
+# line followed by informational messages ("Auto-merging <path>", "CONFLICT
+# ..."). Only the section before the blank line lists conflicts: an
+# "Auto-merging" path merged cleanly and must not be reported (#9319).
 merge_conflicts() {
   local a=$1 b=$2 out status
   set +e
@@ -100,35 +106,54 @@ merge_conflicts() {
   status=$?
   set -e
   if [[ $status -eq 1 ]]; then
-    local line path
-    while IFS= read -r line; do
-      [[ -n "$line" ]] || continue
-      [[ "$line" =~ ^[0-9a-f]{40}$ ]] && continue
-      path=$line
-      if [[ "$path" == Auto-merging[[:space:]]* ]]; then
-        path=${path#Auto-merging }
-      elif [[ "$path" == CONFLICT*' in '* ]]; then
-        path=${path##* in }
-      fi
-      if git cat-file -e "${a}:${path}" 2>/dev/null || git cat-file -e "${b}:${path}" 2>/dev/null; then
-        printf '%s\n' "$path"
-      fi
-    done <<<"$out" | sort -u
+    sed -n '2,/^$/{/^$/!p;}' <<<"$out" | sort -u
   elif [[ $status -ne 0 ]]; then
     printf '%s\n' "$out" >&2
     return "$status"
   fi
 }
 
+# Materializes PR $number merged onto the tip of $base as refs/heads/pr-N-on-base
+# and prints that ref; prints nothing when the PR conflicts with $base itself.
+#
+# Sibling conflicts are checked between these merged refs, never between raw
+# PR heads. Two raw heads branched from different points of $base merge
+# against their OLDEST common ancestor, so every commit $base gained in between
+# is replayed as if the newer PR had authored it: a PR that merely needs a
+# rebase "conflicts" with every PR opened after it. On the v6 queue that turned
+# 6 real pairwise conflicts into 108 and labelled 20 of 22 PRs (#9319).
+pr_on_base_ref() {
+  local pr=$1 base=$2 out status tree commit
+  local ref="pr-${pr}-on-base"
+  set +e
+  out=$(git merge-tree --write-tree "origin/${base}" "pr-${pr}" 2>&1)
+  status=$?
+  set -e
+  if [[ $status -eq 1 ]]; then
+    return 0
+  elif [[ $status -ne 0 ]]; then
+    printf '%s\n' "$out" >&2
+    return "$status"
+  fi
+  tree=${out%%$'\n'*}
+  commit=$(GIT_AUTHOR_NAME=pr-overlap GIT_AUTHOR_EMAIL=pr-overlap@localhost \
+    GIT_COMMITTER_NAME=pr-overlap GIT_COMMITTER_EMAIL=pr-overlap@localhost \
+    git commit-tree "$tree" -p "origin/${base}" -p "pr-${pr}" -m "pr-${pr} on ${base}")
+  git update-ref "refs/heads/${ref}" "$commit"
+  printf '%s\n' "$ref"
+}
+
 make_report_for_pr() {
-  local target=$1 base=$2 rows_var=$3 has_conflicts_var=$4 has_any_var=$5
-  local target_ref="pr-${target}"
+  local target=$1 base=$2 rows_var=$3 has_conflicts_var=$4 has_any_var=$5 base_conflict_var=$6
+  local target_ref="pr-${target}" target_on_base
   fetch_pr_ref "$target"
   # shellcheck disable=SC2034 # consumed by intersect_files via nameref
   mapfile -t target_files < <(changed_files "$base" "$target_ref")
+  target_on_base=$(pr_on_base_ref "$target" "$base")
 
-  local report_rows='' report_has_conflicts=0 report_has_any=0
-  local number title other_ref relation files_md
+  local report_rows='' report_has_conflicts=0 report_has_any=0 report_base_conflict=0
+  [[ -n "$target_on_base" ]] || report_base_conflict=1
+  local number title other_ref other_on_base relation files_md
   while IFS=$'\t' read -r number title _head_repo _updated; do
     [[ -n "${number:-}" ]] || continue
     [[ "$number" == "$target" ]] && continue
@@ -137,7 +162,13 @@ make_report_for_pr() {
     fi
     other_ref="pr-${number}"
     fetch_pr_ref "$number"
-    mapfile -t conflict_files < <(merge_conflicts "$target_ref" "$other_ref")
+    conflict_files=()
+    if [[ -n "$target_on_base" ]]; then
+      other_on_base=$(pr_on_base_ref "$number" "$base")
+      if [[ -n "$other_on_base" ]]; then
+        mapfile -t conflict_files < <(merge_conflicts "$target_on_base" "$other_on_base")
+      fi
+    fi
     if ((${#conflict_files[@]})); then
       relation='CONFLICT'
       report_has_conflicts=1
@@ -160,10 +191,11 @@ make_report_for_pr() {
   printf -v "$rows_var" '%s' "$report_rows"
   printf -v "$has_conflicts_var" '%s' "$report_has_conflicts"
   printf -v "$has_any_var" '%s' "$report_has_any"
+  printf -v "$base_conflict_var" '%s' "$report_base_conflict"
 }
 
 report_body() {
-  local pr=$1 base=$2 rows=$3 truncated=${4:-0}
+  local pr=$1 base=$2 rows=$3 truncated=${4:-0} base_conflict=${5:-0}
   {
     printf '%s\n\n' "$MARKER"
     printf '### Open PR overlap check\n\n'
@@ -171,6 +203,10 @@ report_body() {
     if [[ "$truncated" == '1' ]]; then
       printf '> More than %d open PRs target %s%s%s; checked only the %d most recently updated.\n\n' "$MAX_OPEN_PRS" '`' "$base" '`' "$MAX_OPEN_PRS"
     fi
+    if [[ "$base_conflict" == '1' ]]; then
+      printf '> This PR conflicts with %s%s%s itself. Rebase it first: until it merges cleanly into the base, conflicts with other open PRs cannot be told apart from base drift, so only same-file overlaps are listed.\n\n' '`' "$base" '`'
+    fi
+    printf 'Conflicts are checked with every PR merged onto the current tip of %s%s%s, so a PR that only needs a rebase is not reported as conflicting with its siblings.\n\n' '`' "$base" '`'
     if [[ -z "$rows" ]]; then
       printf 'No conflicting open PRs or same-file overlaps were found.\n'
     else
@@ -217,9 +253,9 @@ write_summary() {
 
 run_for_one_pr() {
   local pr=$1 base=$2 writable=$3 truncated=${4:-0}
-  local rows has_conflicts _has_any body
-  make_report_for_pr "$pr" "$base" rows has_conflicts _has_any
-  body=$(report_body "$pr" "$base" "$rows" "$truncated")
+  local rows has_conflicts _has_any base_conflict body
+  make_report_for_pr "$pr" "$base" rows has_conflicts _has_any base_conflict
+  body=$(report_body "$pr" "$base" "$rows" "$truncated" "$base_conflict")
   write_summary "$body"
   if [[ "$writable" == '1' ]]; then
     upsert_comment_and_label "$pr" "$body" "$has_conflicts"
