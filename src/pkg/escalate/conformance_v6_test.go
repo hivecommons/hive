@@ -36,6 +36,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -127,6 +128,11 @@ func TestV6Conformance_OutboundPayloadsAreScrubbed(t *testing.T) {
 			t.Fatalf("deliver: %v", err)
 		}
 		wire := rec.wire(t)
+		// The Title header is RFC 2047-encoded when non-ASCII; decode it so an
+		// encoded secret is compared as plaintext too.
+		if title, err := new(mime.WordDecoder).DecodeHeader(headerValue(wire, "Title")); err == nil {
+			wire += "\n" + title
+		}
 		assertNoSecrets(t, sink.Name(), wire)
 		// The sink's own credential is configuration, not event text: it is
 		// the authorization to deliver and must survive scrubbing intact.
@@ -221,6 +227,16 @@ func decodeForm(encoded string) (string, error) {
 		b.WriteString(key + "=" + strings.Join(vals, ",") + "\n")
 	}
 	return b.String(), nil
+}
+
+// headerValue returns the named header's value from a capture's wire text.
+func headerValue(wire, name string) string {
+	for _, line := range strings.Split(wire, "\n") {
+		if v, ok := strings.CutPrefix(line, name+": "); ok {
+			return v
+		}
+	}
+	return ""
 }
 
 // --- structural invariants: mechanisms 1, 2, 4 and 5 -----------------------

@@ -337,10 +337,11 @@ Run:
    Pushover receipt, or PagerDuty incident/event link.
 3. Save hive evidence showing the event entered the dispatcher and the provider
    sink delivered it. Dispatch queues events by severity and logs/audits
-   `escalation_delivery_failed` on repeated sink failure
-   (`src/pkg/escalate/dispatcher.go:78-123`). Provider delivery paths are
-   `ntfy`, `pushover`, and `pagerduty` (`src/pkg/escalate/push.go:22-38`,
-   `src/pkg/escalate/push.go:54-72`, `src/pkg/escalate/push.go:81-102`).
+   `escalation_delivery_failed` once a delivery's bounded retries run out or
+   the provider rejects it outright (`Dispatch` and `deliver`,
+   `src/pkg/escalate/dispatcher.go:91-161`). Provider delivery paths are
+   `ntfy`, `pushover`, and `pagerduty` (`src/pkg/escalate/push.go:45-63`,
+   `src/pkg/escalate/push.go:89-117`, `src/pkg/escalate/push.go:126-147`).
 
 Evidence checklist:
 
