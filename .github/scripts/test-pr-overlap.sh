@@ -109,7 +109,11 @@ git clone -q "$ORIGIN" "$WORK"
 run_pr() { # pr -> sets OUT and WRITES
   local log="$TMP/writes-$1.log"
   : >"$log"
-  OUT=$(cd "$WORK" && env -u GIT_AUTHOR_NAME -u GIT_AUTHOR_EMAIL -u GIT_COMMITTER_NAME -u GIT_COMMITTER_EMAIL PATH="$BIN:$PATH" GH_WRITE_LOG="$log" REPO_SLUG="$REPO_SLUG" \
+  # Unset the runner's own PR context (GITHUB_BASE_REF=v5 on hive CI) so the
+  # script resolves the base from the gh double instead of the real workflow.
+  OUT=$(cd "$WORK" && env -u GIT_AUTHOR_NAME -u GIT_AUTHOR_EMAIL -u GIT_COMMITTER_NAME -u GIT_COMMITTER_EMAIL \
+    -u GITHUB_BASE_REF -u GITHUB_REF_NAME -u GITHUB_EVENT_PATH -u GITHUB_EVENT_PULL_REQUEST_NUMBER \
+    PATH="$BIN:$PATH" GH_WRITE_LOG="$log" REPO_SLUG="$REPO_SLUG" \
     GITHUB_REPOSITORY="$REPO_SLUG" GITHUB_EVENT_NAME=pull_request GITHUB_STEP_SUMMARY= \
     bash "$SCRIPT" --pr "$1" 2>&1)
   RC=$?
