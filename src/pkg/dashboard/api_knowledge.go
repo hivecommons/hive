@@ -30,6 +30,11 @@ func (s *Server) handleKnowledgeToggle(w http.ResponseWriter, r *http.Request) {
 
 	s.deps.Config.Knowledge.Enabled = body.Enabled
 
+	// The KnowledgeAPI is kept on disable: the bead synthesizer and vault
+	// browsing use it regardless of knowledge.enabled, and ensureKnowledge
+	// would only recreate a poorer one (no boot-connected vaults or git
+	// sources) on the next poll. What knowledge.enabled gates is the kick
+	// primer, handled below (#9231).
 	if body.Enabled && s.deps.Knowledge == nil {
 		layers := make([]knowledge.LayerConfig, len(s.deps.Config.Knowledge.Layers))
 		for i, l := range s.deps.Config.Knowledge.Layers {
@@ -37,6 +42,7 @@ func (s *Server) handleKnowledgeToggle(w http.ResponseWriter, r *http.Request) {
 		}
 		kcfg := knowledge.KnowledgeConfig{
 			Enabled: true,
+			Engine:  s.deps.Config.Knowledge.Engine,
 			Layers:  layers,
 			Primer: knowledge.PrimerConfig{
 				MaxFacts:      s.deps.Config.Knowledge.Primer.MaxFacts,
@@ -45,8 +51,13 @@ func (s *Server) handleKnowledgeToggle(w http.ResponseWriter, r *http.Request) {
 		}
 		api := knowledge.NewKnowledgeAPI(layers, kcfg, s.deps.Logger)
 		s.deps.Knowledge = api
-	} else if !body.Enabled {
-		s.deps.Knowledge = nil
+	}
+
+	var primer KnowledgePrimerStatus
+	if s.deps.KnowledgePrimer != nil {
+		primer = s.deps.KnowledgePrimer.SetKnowledgePrimer(body.Enabled)
+	} else {
+		primer = noKnowledgePrimerControlStatus(s.deps.Config)
 	}
 
 	if s.deps.BeadSynthesizer != nil {
@@ -64,7 +75,36 @@ func (s *Server) handleKnowledgeToggle(w http.ResponseWriter, r *http.Request) {
 	}
 	s.auditFromRequest(r, "knowledge_toggle", auditDetail("enabled", fmt.Sprintf("%v", body.Enabled)), "")
 	s.refreshAndPersist()
-	okResponse(w, map[string]string{"status": "updated", "enabled": fmt.Sprintf("%v", body.Enabled)})
+	jsonResponse(w, map[string]interface{}{
+		"ok":      true,
+		"status":  "updated",
+		"enabled": fmt.Sprintf("%v", body.Enabled),
+		"primer":  primer,
+	})
+}
+
+// knowledgePrimerStatus reports whether kicks are primed with knowledge —
+// the dashboard's meaning of knowledge "enabled" (#9231).
+func (s *Server) knowledgePrimerStatus() KnowledgePrimerStatus {
+	if s.deps == nil {
+		return noKnowledgePrimerControlStatus(nil)
+	}
+	if s.deps.KnowledgePrimer != nil {
+		return s.deps.KnowledgePrimer.KnowledgePrimerStatus()
+	}
+	return noKnowledgePrimerControlStatus(s.deps.Config)
+}
+
+// noKnowledgePrimerControlStatus is the status when no process-side primer
+// control is wired: no primer can be registered live, so a persisted
+// knowledge.enabled: true only takes effect after a restart.
+func noKnowledgePrimerControlStatus(cfg *config.Config) KnowledgePrimerStatus {
+	st := KnowledgePrimerStatus{Sources: []knowledge.PrimerSource{}}
+	if cfg != nil && cfg.Knowledge.Enabled {
+		st.RestartRequired = true
+		st.RestartReason = "knowledge.enabled is saved, but this process cannot register a kick primer live; restart the hive to prime kicks"
+	}
+	return st
 }
 
 func (s *Server) handleBeadSynthStatus(w http.ResponseWriter, r *http.Request) {
@@ -363,12 +403,20 @@ func (s *Server) handleKnowledgeSearch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleKnowledgeHealth reports per-layer health plus the kick primer
+// registration. "enabled" is primer registration — whether kicks receive
+// knowledge — not KnowledgeAPI existence (#9231).
 func (s *Server) handleKnowledgeHealth(w http.ResponseWriter, r *http.Request) {
-	if s.deps.Knowledge == nil {
-		jsonResponse(w, map[string]interface{}{"enabled": false})
-		return
+	primer := s.knowledgePrimerStatus()
+	layers := []knowledge.LayerStatus{}
+	if s.deps.Knowledge != nil {
+		layers = s.deps.Knowledge.Health(s.deps.Ctx)
 	}
-	jsonResponse(w, s.deps.Knowledge.Health(s.deps.Ctx))
+	jsonResponse(w, map[string]interface{}{
+		"enabled": primer.Registered,
+		"layers":  layers,
+		"primer":  primer,
+	})
 }
 
 func (s *Server) handleKnowledgeStats(w http.ResponseWriter, r *http.Request) {
@@ -377,6 +425,12 @@ func (s *Server) handleKnowledgeStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stats := s.deps.Knowledge.Stats(s.deps.Ctx)
+	// The API object exists whatever knowledge.enabled says (the bead
+	// synthesizer and vault browsing need it), so its own config cannot say
+	// whether kicks are primed; the primer registration can (#9231).
+	primer := s.knowledgePrimerStatus()
+	stats["enabled"] = primer.Registered
+	stats["primer"] = primer
 	stats["vaults"] = s.deps.Knowledge.Vaults()
 	stats["git_sources"] = s.deps.Knowledge.GitSources()
 

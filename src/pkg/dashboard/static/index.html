@@ -2725,6 +2725,7 @@
     .kb-empty { text-align: center; padding: 40px 20px; color: var(--muted); font-size: var(--fs-base); }
     .kb-empty-icon { font-size: var(--fs-3xl); margin-bottom: var(--sp-4); }
     .kb-disabled { text-align: center; padding: 40px 20px; color: var(--muted); }
+    .kb-notice { margin-bottom: var(--sp-5); padding: var(--sp-4) var(--sp-5); background: var(--bg); border-radius: var(--r); font-size: var(--fs-sm); color: var(--muted); border-left: 3px solid var(--yellow); }
     .kb-setup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-6); margin-top: var(--sp-6); }
     @media (max-width: 640px) { .kb-setup-grid { grid-template-columns: 1fr; } }
     .kb-setup-card { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); padding: var(--sp-7); cursor: pointer; transition: all 0.2s; text-align: left; }
@@ -14394,7 +14395,7 @@ function burnAreaChart() {
           _kbSetupView = 'none';
         }
         _kbInitialLoad = false;
-        const enabledChanged = !prev || prev.enabled !== _kbCache.enabled;
+        const enabledChanged = !prev || prev.enabled !== _kbCache.enabled || JSON.stringify(prev.primer || null) !== JSON.stringify(_kbCache.primer || null);
         const layersChanged = !prev || JSON.stringify((prev.layers||[]).map(l=>l.type)) !== JSON.stringify((_kbCache.layers||[]).map(l=>l.type));
         const docsChanged = !prev || JSON.stringify((prev._documents||[]).map(d=>d.slug)) !== JSON.stringify((_kbCache._documents||[]).map(d=>d.slug));
         if (!_kbRendered || enabledChanged || layersChanged || docsChanged) {
@@ -15109,7 +15110,14 @@ function burnAreaChart() {
       const badge = document.getElementById('kb-status-badge');
       if (!panel) return;
 
-      if (!_kbCache || !_kbCache.enabled) {
+      // `enabled` is primer registration — whether kicks receive knowledge —
+      // not whether the knowledge API exists (#9231). The API is always up
+      // for the bead synthesizer and vault browsing, so stored facts stay
+      // browsable below while the panel says they are not being primed.
+      const kbPrimer = (_kbCache && _kbCache.primer) || {};
+      const kbPrimed = !!(_kbCache && _kbCache.enabled);
+      const kbHasFacts = !!_kbCache && ((_kbCache.layers || []).length > 0 || (_kbCache.vaults || []).length > 0);
+      if (!_kbCache || (!kbPrimed && !kbHasFacts)) {
         if (badge) { badge.textContent = 'disabled'; badge.style.background = 'var(--muted)'; badge.style.color = 'white'; }
         panel.innerHTML = '<div class="kb-disabled"><div class="fs-3xl mb-4">📚</div><div>Knowledge system not enabled</div><div style="font-size:0.72rem;margin-top:var(--sp-2);color:var(--muted);margin-bottom:var(--sp-5)">Enable the knowledge base to store and retrieve facts across agents.</div><button class="hv-btn btn-primary" data-action="toggleKnowledge" data-arg0="true" data-arg-types="j" title="Enable the knowledge base system. Agents will be able to store and retrieve facts (patterns, gotchas, regressions, decisions) across sessions and layers (personal, project, org, community).">Enable Knowledge</button></div>';
         return;
@@ -15125,8 +15133,16 @@ function burnAreaChart() {
       const layers = _kbCache.layers || [];
       const healthyCount = layers.filter(l => l.healthy).length;
       if (badge) {
-        badge.textContent = healthyCount + '/' + layers.length + ' layers';
-        badge.style.background = healthyCount === layers.length ? 'var(--green)' : (healthyCount > 0 ? 'var(--yellow)' : 'var(--red)');
+        if (!kbPrimed) {
+          badge.textContent = 'not primed';
+          badge.style.background = 'var(--muted)';
+        } else if (kbPrimer.restart_required) {
+          badge.textContent = 'restart required';
+          badge.style.background = 'var(--yellow)';
+        } else {
+          badge.textContent = healthyCount + '/' + layers.length + ' layers';
+          badge.style.background = healthyCount === layers.length ? 'var(--green)' : (healthyCount > 0 ? 'var(--yellow)' : 'var(--red)');
+        }
         badge.style.color = 'white';
       }
 
@@ -15140,8 +15156,17 @@ function burnAreaChart() {
       } else {
         html += '<button class="hv-btn btn-primary btn-sm" data-action="toggleBeadSynth" data-arg0="true" data-arg-types="j" title="Enable the bead synthesizer. Completed beads will be automatically scanned and converted to wiki facts on an hourly schedule.">Enable Synth</button>';
       }
-      html += '<button class="hv-btn btn-danger btn-sm" data-action="toggleKnowledge" data-arg0="false" data-arg-types="j" title="Disable the knowledge base. Agents will no longer inject facts into prompts. Stored facts are preserved for when re-enabled.">Disable</button>';
+      if (kbPrimed) {
+        html += '<button class="hv-btn btn-danger btn-sm" data-action="toggleKnowledge" data-arg0="false" data-arg-types="j" title="Disable the knowledge base. Agents will no longer inject facts into prompts. Stored facts are preserved for when re-enabled.">Disable</button>';
+      } else {
+        html += '<button class="hv-btn btn-primary btn-sm" data-action="toggleKnowledge" data-arg0="true" data-arg-types="j" title="Enable the knowledge base. Agent kicks will be primed with relevant facts from the configured layers, vaults, git sources and the bead synthesizer.">Enable Knowledge</button>';
+      }
       html += '</div>';
+      if (!kbPrimed) {
+        html += '<div class="kb-notice">Knowledge is disabled: no agent kick receives these facts. They are stored and browsable (the bead synthesizer keeps writing here), but they are only injected into kicks once knowledge is enabled.</div>';
+      } else if (kbPrimer.restart_required) {
+        html += '<div class="kb-notice">' + escapeHtml(kbPrimer.restart_reason || 'Restart the hive to finish enabling knowledge.') + '</div>';
+      }
 
       // Stats row
       const totalPages = layers.reduce((sum, l) => sum + (l.total_pages || 0), 0);
