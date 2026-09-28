@@ -142,18 +142,43 @@ func (a *auditLog) snapshot() []string {
 func TestDispatcherRetriesThrottledDelivery(t *testing.T) {
 	// ntfy.sh answering 429 to a burst: two throttled answers must not lose
 	// the page when the provider recovers within the backoff.
-	srv, hits := providerServer(t, http.StatusTooManyRequests, http.StatusTooManyRequests)
+	// The server records each request's Title so the test can see which event
+	// every attempt belonged to. A sentinel page dispatched after the real one
+	// marks the end: the sink's worker is FIFO, so the sentinel's request can
+	// only arrive once the first event's deliver has returned, audit and all.
+	codes := []int{http.StatusTooManyRequests, http.StatusTooManyRequests}
+	var mu sync.Mutex
+	var titles []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		n := len(titles)
+		titles = append(titles, r.Header.Get("Title"))
+		mu.Unlock()
+		if n < len(codes) {
+			w.WriteHeader(codes[n])
+		}
+	}))
+	t.Cleanup(srv.Close)
+	seen := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), titles...)
+	}
 	var audits auditLog
 	d := NewDispatcher(context.Background(), nil, audits.record)
 	defer d.Stop()
 	d.backoff = []time.Duration{time.Millisecond, time.Millisecond}
 	d.Register(&NtfySink{URL: srv.URL}, SeverityPage, 4)
 	d.Dispatch(Event{Severity: SeverityPage, Title: "Governor budget exhausted"})
+	d.Dispatch(Event{Severity: SeverityPage, Title: "sentinel"})
 
-	waitFor(t, func() bool { return hits.Load() >= 3 })
-	time.Sleep(20 * time.Millisecond)
-	if got := hits.Load(); got != 3 {
-		t.Fatalf("provider requests = %d, want 3 (429, 429, 200)", got)
+	waitFor(t, func() bool {
+		got := seen()
+		return len(got) > 0 && got[len(got)-1] == "sentinel"
+	})
+	want := []string{"Governor budget exhausted", "Governor budget exhausted", "Governor budget exhausted", "sentinel"}
+	if got := seen(); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("provider requests = %q, want %q (429, 429, 200, then the sentinel)", got, want)
 	}
 	if lines := audits.snapshot(); len(lines) != 0 {
 		t.Fatalf("audits = %v, want none: the third attempt delivered", lines)
