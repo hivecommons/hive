@@ -3507,7 +3507,7 @@
     <div class="config-body" id="config-body"></div>
     <div class="config-footer">
       <button class="hv-btn btn-secondary btn config-cancel" data-action="closeConfigDialog">Cancel</button>
-      <button class="hv-btn btn-primary btn config-save" data-action="saveConfig">Save</button>
+      <button class="hv-btn btn-primary btn config-save" data-action="saveConfig">Save & close</button>
     </div>
   </div>
 </div>
@@ -21220,7 +21220,7 @@ function burnAreaChart() {
         `<div class="config-tab${i === 0 ? ' active' : ''}" data-tab="${t}" data-action="switchConfigTab">${t}</div>`
       ).join('');
       const saveBtn = document.querySelector('.config-save');
-      if (saveBtn) saveBtn.textContent = isCreate ? 'Create Agent' : 'Save';
+      if (saveBtn) saveBtn.textContent = isCreate ? 'Create & close' : 'Save & close';
       if (isCreate) {
         _configState.data = { general: { clearOnKick: true, restartStrategy: 'immediate', staleTimeout: 1200 }, cadences: {} };
         switchConfigTab(tabs[0]);

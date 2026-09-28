@@ -1,0 +1,1 @@
+- Dashboard settings dialogs (Governor, Agent, etc.): the primary action now reads "Save & close" (or "Create & close" for new agents) and automatically closes the dialog on successful save ([#9412](https://github.com/hivecommons/hive/issues/9412)). On save failure, the dialog stays open to let the operator correct the error.
