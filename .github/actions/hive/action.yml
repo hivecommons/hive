@@ -1,8 +1,8 @@
 name: Hive GitHub Actions trigger
-description: "Dispatch an @hive command by comment relay or hub OIDC dispatch. OIDC workflows need permissions id-token: write."
+description: "Dispatch an @hive command by comment relay or OIDC dispatch to the hive's dashboard. OIDC workflows need permissions id-token: write."
 outputs:
   receipt:
-    description: JSON stage receipt returned by the hub for transport=oidc; empty for comment transport.
+    description: JSON stage receipt returned by the hive dashboard for transport=oidc; empty for comment transport.
     value: ${{ steps.dispatch.outputs.receipt }}
 inputs:
   command:
@@ -23,8 +23,11 @@ inputs:
     description: "Dispatch transport: comment or oidc."
     required: false
     default: comment
-  hub_url:
-    description: Hub base URL. Required when transport is oidc.
+  hive_url:
+    description: >-
+      Base URL of the target hive's dashboard (the spoke that governs the repository), for example
+      https://<hive-id>.hive.hivecommons.dev for a hosted hive. Not the hub URL: the hub does not serve
+      /api/contribute/actions/dispatch. Required when transport is oidc.
     required: false
     default: ''
   audience:
@@ -42,7 +45,7 @@ runs:
         HIVE_ISSUE_INPUT: ${{ inputs.issue }}
         HIVE_PROMPT: ${{ inputs.prompt }}
         HIVE_TRANSPORT: ${{ inputs.transport }}
-        HIVE_HUB_URL: ${{ inputs.hub_url }}
+        HIVE_DISPATCH_URL: ${{ inputs.hive_url }}
         HIVE_AUDIENCE: ${{ inputs.audience }}
         GH_TOKEN: ${{ inputs.token || github.token }}
         GITHUB_REPOSITORY_NAME: ${{ github.repository }}
@@ -86,8 +89,8 @@ runs:
               -f body="${body}"
             ;;
           oidc)
-            if [[ -z "${HIVE_HUB_URL}" ]]; then
-              echo "hive action transport=oidc requires hub_url" >&2
+            if [[ -z "${HIVE_DISPATCH_URL}" ]]; then
+              echo "hive action transport=oidc requires hive_url (the hive dashboard URL, not the hub URL)" >&2
               exit 1
             fi
             if [[ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" || -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]]; then
@@ -102,7 +105,7 @@ runs:
               -H "Authorization: Bearer ${oidc_token}" \
               -H "Content-Type: application/json" \
               --data "${body_json}" \
-              "${HIVE_HUB_URL%/}/api/contribute/actions/dispatch")"
+              "${HIVE_DISPATCH_URL%/}/api/contribute/actions/dispatch")"
             receipt="$(RESPONSE_JSON="${response_json}" python3 -c 'import json, os; print(json.loads(os.environ["RESPONSE_JSON"]).get("receipt", ""))')"
             echo "receipt=${receipt}" >> "${GITHUB_OUTPUT}"
             ;;
