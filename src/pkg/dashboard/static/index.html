@@ -11187,6 +11187,17 @@
       }
       return BACKEND_REASONING_EFFORTS[a.cli] || [];
     }
+    // contributeEffortFloorOptions returns the effort-floor dropdown options:
+    // the union of the per-backend effort vocabularies
+    // (BACKEND_REASONING_EFFORTS), ordered on the server's canonical ladder,
+    // always keeping the currently-configured floor even if unknown.
+    function contributeEffortFloorOptions(effortLadder, minEffort) {
+      const known = new Set();
+      for (const b in BACKEND_REASONING_EFFORTS) {
+        (BACKEND_REASONING_EFFORTS[b] || []).forEach(function(e) { known.add(e); });
+      }
+      return effortLadder.filter(function(e) { return known.has(e) || e === minEffort; });
+    }
     // effortSelectHtml renders the reasoning-effort dropdown beside the model
     // dropdown, only for backends that have an effort control. "default"
     // clears the stored effort back to the backend's own default (the server
@@ -23580,11 +23591,8 @@ function burnAreaChart() {
       const rejectUnknownModels = hub.contribute_reject_unknown_models || false;
       const minEffort = hub.contribute_min_reasoning_effort || '';
       const rejectUnknownEffort = hub.contribute_reject_unknown_effort || false;
-      // Effort floor options: the union of the per-backend effort vocabularies
-      // (BACKEND_REASONING_EFFORTS), ordered on the server's canonical ladder.
       const effortLadder = hub.contribute_reasoning_effort_ladder || ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
-      const knownEfforts = new Set([].concat.apply([], Object.values(BACKEND_REASONING_EFFORTS)));
-      const effortFloorOptions = effortLadder.filter(function(e) { return knownEfforts.has(e) || e === minEffort; });
+      const effortFloorOptions = contributeEffortFloorOptions(effortLadder, minEffort);
       const delegatableRoles = (hub.contribute_delegatable_roles || ['scanner','quality','outreach']).map(function(r) { return String(r || '').toLowerCase(); });
       const helpLinksText = (hub.contribute_help_links || []).map(function(l) { return (l.label || '') + ' | ' + (l.url || ''); }).join('\n');
       const privilegedDelegatableRoles = ['ci-maintainer', 'sec-check', 'architect'];
