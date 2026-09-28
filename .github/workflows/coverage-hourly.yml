@@ -82,6 +82,8 @@ jobs:
         with:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
+      - name: Guard shared Go cache (fall back when the runner volume is full)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
 
       # The coverage run must NOT abort this job on a test failure: the
       # per-package check below is what turns a failure into a readable report.

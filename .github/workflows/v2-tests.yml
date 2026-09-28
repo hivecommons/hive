@@ -185,6 +185,8 @@ jobs:
         with:
           cache: false
           go-version-file: src/go.mod
+      - name: Guard shared Go cache (fall back when the runner volume is full)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
 
       - name: Install gotestsum
         run: |
@@ -337,6 +339,8 @@ jobs:
         with:
           cache: false
           go-version-file: src/go.mod
+      - name: Guard shared Go cache (fall back when the runner volume is full)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
 
       - name: Install gotestsum
         run: |
@@ -490,6 +494,8 @@ jobs:
         with:
           cache: false
           go-version-file: src/go.mod
+      - name: Guard shared Go cache (fall back when the runner volume is full)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
 
       # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
       # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
@@ -640,6 +646,8 @@ jobs:
         with:
           cache: false
           go-version-file: src/go.mod
+      - name: Guard shared Go cache (fall back when the runner volume is full)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
 
       - name: Install gotestsum
         run: |
@@ -791,6 +799,8 @@ jobs:
         with:
           cache: false
           go-version-file: src/go.mod
+      - name: Guard shared Go cache (fall back when the runner volume is full)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
 
       - name: Install gotestsum
         run: |
@@ -1515,6 +1525,8 @@ jobs:
         with:
           cache: false
           go-version-file: src/go.mod
+      - name: Guard shared Go cache (fall back when the runner volume is full)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
 
       - name: Restore warm Go build cache
         if: ${{ !contains(vars.HIVE_RUNNER_LABELS, 'hive-runners') }}
