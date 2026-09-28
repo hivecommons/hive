@@ -67,7 +67,7 @@ Prerequisites:
   (`src/pkg/config/config.go:1874-1876`, `src/pkg/mention/webhook.go:32-41`).
 - The selected agent must be enabled, hold `Converse`, have a mention channel,
   and be governor-kickable; the handler declines otherwise
-  (`src/pkg/mention/types.go:177-223`).
+  (`resolveAgent`, `src/pkg/mention/types.go:435`).
 
 Run:
 
@@ -78,8 +78,9 @@ Run:
    the handling window.
 3. Confirm the kick was recorded with `source=mention:<node id>` and the audit
    event is `agent_mention_kicked`; declined attempts use
-   `agent_mention_declined` (`src/pkg/mention/types.go:14-16`,
-   `src/pkg/mention/types.go:100-124`).
+   `agent_mention_declined` (`AuditKicked`/`AuditDeclined`,
+   `src/pkg/mention/types.go:15-16`; guards in `Handle`,
+   `src/pkg/mention/types.go:103`).
 4. If the run completes, link the App-bot completion reply or the run log. The
    responder promotes pending mention kicks when it sees `kick-delivered` /
    `kick-log-archived` and can post a thread reply (`src/pkg/mention/responder.go:34-61`,
