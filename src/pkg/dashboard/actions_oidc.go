@@ -217,7 +217,7 @@ func (g actionsGitHub) ListMentionComments(context.Context, string, time.Time) (
 	return nil, nil
 }
 func (g actionsGitHub) CreateMentionAck(context.Context, mention.Event, string) error { return nil }
-func (g actionsGitHub) CountAppAuthoredComments(context.Context, string, int) (int, error) {
+func (g actionsGitHub) CountMentionReplies(context.Context, string, int) (int, error) {
 	return 0, nil
 }
 func (g actionsGitHub) CreateIssueComment(context.Context, string, int, string) error { return nil }

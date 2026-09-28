@@ -67,10 +67,36 @@ Sync posts to `https://api.github.com/graphql` with the hive's `GITHUB_TOKEN`.
 own bearer token.
 
 Maintainers can invite Spektacular or another configured hive agent into a Jam
-thread. Agent participation is deliberately review-gated: the attributed agent
-reply is posted in-thread and any proposed spec text is created as an open
-suggestion, but a permitted human maintainer must still accept it before the
-spec revision changes.
+thread (`POST /api/campaigns/{id}/jam/agents`, handler
+`handleCampaignJamAgentsPost` in `pkg/dashboard/api_campaigns_jam_agents.go`).
+The invite makes one model call and records only what the model returned:
+
+- **Endpoint:** the hive reviewer endpoint (`governor.trajectory.endpoint`,
+  falling back to the `governor.litellm` endpoint and key) — the same
+  OpenAI-compatible `/v1/chat/completions` route the intent-alignment and
+  ioscan classifier lanes use. With no endpoint or model resolved the invite
+  fails with `503` and nothing is recorded.
+- **Model:** the invited agent's configured `agents.<name>.model`, falling back
+  to the reviewer model (`governor.trajectory.model`, then
+  `governor.litellm.default_model`). `spektacular` is not an `agents:` entry,
+  so it always uses the reviewer model. The reply is attributed to exactly the
+  model that was called. The `spektacular` binary is not run for Jam replies;
+  the name selects the persona in the prompt.
+- **Context:** the thread's section, title and last 20 comments, the current
+  spec content, and the maintainer's optional `prompt`, each bounded in size.
+  When `ioscan` is enabled every piece passes the input scanner: blocked text
+  is redacted before it reaches the model, and a critical injection at a
+  fail-closed ACMM level rejects the invite with `422`.
+- **Output:** the model must return a JSON object with `reply` and
+  `proposed_text`; invalid output is re-prompted up to three times, then the
+  invite fails with `502` and nothing is recorded.
+
+Callers cannot supply `reply`, `proposed_text` or `model` — the endpoint rejects
+them with `400`, so human-written text can never be recorded under
+agent/model attribution. Agent participation stays review-gated: the reply is
+posted in-thread, proposed spec text (when the model offers any) becomes an
+open suggestion, and a permitted human maintainer must still accept it before
+the spec revision changes.
 
 ## Enabling it
 
