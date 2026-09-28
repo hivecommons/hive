@@ -1,0 +1,1 @@
+- Scanner policies now forbid running tests, builds or linters locally in any language (`go test`, `npm run build`, `pytest`, …), not just the npm/tsc commands; CI validates and agents read `gh pr checks` (#9416).
