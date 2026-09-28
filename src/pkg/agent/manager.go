@@ -657,8 +657,18 @@ type Manager struct {
 	// manager's crash loop observes those two conditions without restarting
 	// them. Guarded by m.mu, like the agent map it gates work over.
 	deadSessionRecoveryOwnedElsewhere bool
-	sandboxConfig                     config.AgentSandboxConfig
-	sandboxLauncher                   sandbox.Launcher
+
+	// OOM-kill attribution for crash restarts (see oomkill.go). oomMu is its
+	// own mutex: the counter is read on the crash-check path, which already
+	// holds m.mu in read mode at times, and the flag is consumed from the
+	// eval loop.
+	oomMu                sync.Mutex
+	oomKillsSeen         int
+	oomKillsPrimed       bool
+	crashOOMSuspect      map[string]bool
+	oomKillFilesOverride []string
+	sandboxConfig        config.AgentSandboxConfig
+	sandboxLauncher      sandbox.Launcher
 	// sandboxJobLauncherFactory builds the Kubernetes Job launcher for an
 	// agent on sandbox.runtime: job (#6311). Nil means the real in-cluster
 	// launcher; tests inject a fake through setSandboxJobLauncherFactoryForTest.

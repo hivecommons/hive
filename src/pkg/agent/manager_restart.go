@@ -148,6 +148,8 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 	}
 	m.mu.RUnlock()
 
+	m.noteOOMKillsForCrashes(crashed)
+
 	for _, name := range consentCleared {
 		m.clearConsentTracking(name)
 	}
