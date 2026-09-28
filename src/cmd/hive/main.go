@@ -8513,6 +8513,9 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			Aliases:        ac.Aliases,
 		})
 	}
+	// Same resolution as installReviewBots; an unreadable project file is
+	// already warned about there, and leaves the bot section out here.
+	reviewBots, _ := cfg.EffectiveReviewBots(os.Getenv("HIVE_PROJECT_YAML"))
 	plan := review.PlanDispatch(prs, artifact, state, review.DispatchOptions{
 		RequireApproval:       cfg.Review.RequireApproval,
 		FanOut:                cfg.Review.FanOut,
@@ -8524,6 +8527,7 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		FixerAgent:            cfg.Review.FixerAgent,
 		PostComments:          cfg.Review.PostComments,
 		WritingGuideSection:   cfg.Project.WritingGuideSection(),
+		ReviewBotLogins:       reviewBots.Logins,
 		AllAuthors:            cfg.Review.AllAuthors,
 		FixHumanPRs:           cfg.Review.FixHumanPRsEnabled(),
 		AcknowledgeNoFindings: cfg.Review.AcknowledgeNoFindings,

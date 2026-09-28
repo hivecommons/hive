@@ -184,7 +184,7 @@ func Classify(issue github.Issue) Classification {
 // ISSUES_ONLY at L4 and cannot open a pull request. A live 4-repo L4 hive had
 // 11 of 11 ACMM issues parked there. The label whose entire purpose is to mark
 // an issue as AI-fixable was the reason no agent that could fix it ever saw it:
-// filterByLane (scheduler.go) admits an issue to an agent only when
+// filterByLane (pkg/scheduler/repofilter.go) admits an issue to an agent only when
 // issue.Lane == agentName || issue.Lane == "".
 //
 // The collision was demonstrable by toggling only the label — same title, same

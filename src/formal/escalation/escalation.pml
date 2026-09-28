@@ -5,7 +5,7 @@
  * Models ONE hive-authored PR interacting with:
  *   Sweeper   — runEscalationSweep + Store.Sweep     (cmd/hive/main.go, pkg/escalation)
  *   Reaper    — reapStuckRedPRs + Store.TryReEngage  (cmd/hive/main.go, pkg/escalation)
- *   Agent     — FIX-BEFORE-NEW fix lane pushes        (pkg/scheduler/scheduler.go)
+ *   Agent     — FIX-BEFORE-NEW fix lane pushes        (pkg/scheduler/policy_overlays.go)
  *   Reviewer  — reviewer lane adjudication            (pkg/scheduler/reviewer_lane.go)
  *   Human     — owner of the needs-human label queue
  *   CI        — per-SHA red/green verdicts
@@ -336,7 +336,7 @@ active proctype Timer() {
 	od
 }
 
-/* The fix lane: FIX-BEFORE-NEW (scheduler.go:834-893) routes red PRs back to
+/* The fix lane: FIX-BEFORE-NEW (policy_overlays.go, addRedPRFixFirst) routes red PRs back to
  * their author agent, which pushes another fix attempt (a new head SHA).
  * Escalated rows are skipped: `if pr.Escalated { continue }` — row.Escalated
  * is the ledger verdict carried through ci-failing.json. */
