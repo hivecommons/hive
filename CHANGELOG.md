@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-28 (v5.76.2)
+
+### Fixed
+
+- Fixed the `scale-envelope.md` citation of the issue oldest-first sort in `src/pkg/github/client.go` that drifted after the ranking-tier change and failed the relative-links check on every open PR.
+
 ## 2026-09-28 (v5.76.1)
 
 ### Fixed
