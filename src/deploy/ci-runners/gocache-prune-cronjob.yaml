@@ -71,7 +71,7 @@ spec:
   failedJobsHistoryLimit: 2
   jobTemplate:
     spec:
-      activeDeadlineSeconds: 3600
+      activeDeadlineSeconds: 14400  # cephfs metadata walks of a ~200G tree take well over 1h
       backoffLimit: 1
       template:
         metadata:
