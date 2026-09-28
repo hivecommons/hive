@@ -215,7 +215,7 @@ func (s *Server) decideSpecCheckpointLease(w http.ResponseWriter, r *http.Reques
 		s.recordRunCheckpointApproval(payload.RunKey, payload.PlanEpicID, StageSpec, requestUser(r), held.gen, now, nil)
 		s.auditFromRequest(r, "spec_approve", detail, "")
 	case runCheckpointDecisionReject:
-		if _, err := s.contributeHub.retryLeaseStage(held.identity, held.taskID, now); err != nil {
+		if _, err := s.contributeHub.retryLeaseStage(held.identity, held.taskID, held.gen, now); err != nil {
 			jsonError(w, err.Error(), runResetErrorStatus(err))
 			return
 		}
