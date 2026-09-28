@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-28 (v5.73.3)
+
+### Fixed
+
+- The self-hosted Kubernetes Deployment (`src/deploy/k8s/deployment.yaml`) now sets `imagePullPolicy: Always` on the hive container ([#9332](https://github.com/hivecommons/hive/issues/9332)). It runs the moving `:stable` tag, so the Kubernetes default of `IfNotPresent` let a node with the tag cached restart onto the old build, including during spoke self-upgrade. Hosted spokes and the backup CronJob already pull with `Always`.
+
 ## 2026-09-28 (v5.73.2)
 
 ### Changed
