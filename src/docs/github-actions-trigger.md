@@ -1,6 +1,6 @@
 # GitHub Actions trigger
 
-Hive v6 can be called from a GitHub Actions workflow through either the comment-relay transport or the hub OIDC dispatch transport shipped in `hivecommons/hive/.github/actions/hive@v6`. Both transports feed the same action guard path: role floor, ioscan input scanning, run dedupe, mode ladder, audit, and reply/kick handling stay shared with human mentions.
+Hive v6 can be called from a GitHub Actions workflow through either the comment-relay transport or the OIDC dispatch transport shipped in `hivecommons/hive/.github/actions/hive@v6`. Both transports feed the same action guard path: role floor, ioscan input scanning, run dedupe, mode ladder, audit, and reply/kick handling stay shared with human mentions.
 
 The separate `hive-action` repository described in the original proposal is out of scope; this repository-local composite action is the supported entry point.
 
@@ -84,12 +84,14 @@ jobs:
 A rerun of the same workflow attempt is deduped by `run_id` and `run_attempt`, so it does not double-kick the hive.
 
 
-## Hub OIDC dispatch
+## OIDC dispatch
 
-Use `transport: oidc` when the workflow can reach the hub directly. The job must grant `id-token: write`; the action requests a GitHub Actions OIDC token for the configured audience and posts to `/api/contribute/actions/dispatch`.
+Use `transport: oidc` when the workflow can reach the target hive's dashboard directly. The job must grant `id-token: write`; the action requests a GitHub Actions OIDC token for the configured audience and posts to `<hive_url>/api/contribute/actions/dispatch`.
+
+`hive_url` is the dashboard URL of the hive that governs the repository — the hive whose `github.actions.oidc` config is shown above and whose agents receive the kick. It is not the hub URL: the dispatch endpoint is served only by the hive dashboard (`src/pkg/dashboard/api_contribute.go`), and the hub (`hive-hub`) answers 404 for it. For a hub-provisioned hosted hive the dashboard URL is `https://<hive-id>.<spoke-domain>` (for example `https://my-hive.hive.hivecommons.dev`; see `HIVE_HUB_SPOKE_DOMAIN` in [env-vars.md](env-vars.md)), whose ingress routes `/api/contribute` to the hive; for a self-hosted hive it is the dashboard's own public origin.
 
 ```yaml
-name: Ask Hive through hub OIDC
+name: Ask Hive through OIDC dispatch
 
 on:
   workflow_dispatch:
@@ -105,10 +107,11 @@ jobs:
   hive-status:
     runs-on: ubuntu-latest
     steps:
-      - uses: hivecommons/hive/.github/actions/hive@v6
+      - id: hive
+        uses: hivecommons/hive/.github/actions/hive@v6
         with:
           transport: oidc
-          hub_url: https://hive.example.com
+          hive_url: https://my-hive.example.com
           audience: hive-prod
           command: status
           issue: ${{ inputs.issue }}
@@ -118,4 +121,4 @@ jobs:
         run: echo '${{ steps.hive.outputs.receipt }}' | jq .stage_receipt
 ```
 
-The hub verifies the JWT issuer, signature, audience, expiry, not-before, issued-at, `run_id`, `run_attempt`, and `jti` claims against GitHub's Actions JWKS. Refusals are audited without echoing prompt text. Reruns are deduped by repository, claim `run_id`, and claim `run_attempt` in the same store used by the comment transport; body run fields are accepted only when they match the token claims. Hive also records the claim `jti` in that store when available. For `transport: oidc`, the composite action exposes `steps.<id>.outputs.receipt`, a JSON `stage_receipt` report that callers can archive or assert in workflow steps.
+The hive dashboard verifies the JWT issuer, signature, audience, expiry, not-before, issued-at, `run_id`, `run_attempt`, and `jti` claims against GitHub's Actions JWKS. Refusals are audited without echoing prompt text. Reruns are deduped by repository, claim `run_id`, and claim `run_attempt` in the same store used by the comment transport; body run fields are accepted only when they match the token claims. Hive also records the claim `jti` in that store when available. For `transport: oidc`, the composite action exposes `steps.<id>.outputs.receipt`, a JSON `stage_receipt` report that callers can archive or assert in workflow steps.

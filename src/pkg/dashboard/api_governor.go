@@ -65,7 +65,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			full = org + "/" + repo
 			repos = append(repos, full)
 		}
-		entry := map[string]any{"effective": cfg.SelfAuthorizationHoldEnabledForRepo(repo)}
+		entry := map[string]any{"effective": cfg.SelfAuthorizationHoldEnabledForRepoAtLevel(repo, cfg.EffectiveACMMLevelForRepo(repo))}
 		if rp, ok := cfg.RepoPolicyFor(repo); ok && rp.SelfAuthorizationHold != nil {
 			entry["value"] = *rp.SelfAuthorizationHold
 		}
@@ -97,7 +97,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"writingGuide":                   cfg.Project.WritingGuide,
 		"repos":                          repos,
 		"primaryRepo":                    primaryRepo,
-		"selfAuthorizationHold":          cfg.GitHub.SelfAuthorizationHoldEnabled(),
+		"selfAuthorizationHold":          cfg.GitHub.SelfAuthorizationHoldEnabledAtLevel(cfg.ACMMLevelOrZero()),
 		"repoSelfAuthorizationHold":      repoSelfAuthorizationHold,
 		"selfAuthorizationHoldEnvLocked": cfg.GitHub.SelfAuthorizationHoldEnvOverrideSet(),
 		// Kick-list caps, rendered on the Repos tab. The EFFECTIVE values are
@@ -136,7 +136,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"classifier":            classifierSectionResponse(cfg),
 		"features":              s.featuresSectionWithLinked(cfg),
 		"review":                reviewSectionResponse(cfg),
-		"auto_merge":            autoMergeSectionResponse(cfg),
+		"auto_merge":            s.autoMergeSectionResponseWithBots(cfg),
 		"convergence":           s.convergenceSectionResponse(cfg),
 		"advisory":              advisorySectionResponse(cfg),
 		"project_observability": s.projectObservabilityResponse(cfg),

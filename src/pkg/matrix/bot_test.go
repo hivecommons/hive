@@ -129,7 +129,7 @@ func TestListenDiscardsFirstSyncFiltersDedupesAndMarksBot(t *testing.T) {
 			if r.URL.Query().Get("since") != "" {
 				t.Fatalf("first sync since = %q", r.URL.Query().Get("since"))
 			}
-			_, _ = w.Write([]byte(`{"next_batch":"s0","rooms":{"join":{"!room:example":{"timeline":{"events":[{"event_id":"old","type":"m.room.message","sender":"@old:example","content":{"msgtype":"m.text","body":"old"}}]}}}}}}`))
+			_, _ = w.Write([]byte(`{"next_batch":"s0","rooms":{"join":{"!room:example":{"timeline":{"events":[{"event_id":"old","type":"m.room.message","sender":"@old:example","content":{"msgtype":"m.text","body":"old"}}]}}}}}`))
 		case 2:
 			if r.URL.Query().Get("since") != "s0" {
 				t.Fatalf("second sync since = %q", r.URL.Query().Get("since"))
@@ -196,6 +196,8 @@ func TestListenWarnsWhenTimelineLimited(t *testing.T) {
 		t.Fatalf("delivered messages: %+v", got)
 	}
 }
+
+func TestListenHonorsLimitExceededRetryAfter(t *testing.T) {
 	var mu sync.Mutex
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -523,7 +525,8 @@ func TestMarkdownEdgeCases(t *testing.T) {
 	if got := markdownToMatrixHTML("`open"); got != "<code>open</code>" {
 		t.Fatalf("open inline code = %q", got)
 	}
-	if got := markdownToMatrixHTML("```open"); got != "<pre><code>open</code></pre>" {
+	// "open" is consumed as the fence's language tag (#9299), leaving an empty block.
+	if got := markdownToMatrixHTML("```open"); got != "<pre><code></code></pre>" {
 		t.Fatalf("open fence = %q", got)
 	}
 	if _, _, _, ok := parseMarkdownLink("[](x)"); ok {
