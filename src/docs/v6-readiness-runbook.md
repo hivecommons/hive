@@ -124,8 +124,8 @@ Run:
    safe working→idle transition after the first SSE snapshot. Save the Slack
    notification link or screenshot.
 4. Save any relevant Socket Mode lines. Valid reconnect evidence includes
-   `slack socket disconnected`, `slack socket ack failed`, or Slack
-   `disconnect` / `refresh_requested` handling (`slackBackend.Listen` and `slackBackend.consumeSocket` in
+   `slack socket refreshed`, `slack socket disconnected`, `slack socket ack failed`, or Slack
+   `disconnect` / `refresh_requested` handling (`slackBackend.Listen` and `slackBackend.serveSocket` in
    `src/pkg/slack/bot.go`).
 
 Evidence checklist:
