@@ -1,6 +1,7 @@
 package mention
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -60,6 +61,42 @@ func TestStoreRecoversFromTruncatedFile(t *testing.T) {
 	}
 	if !again.Seen("node-2") {
 		t.Fatal("mark after recovery was not persisted")
+	}
+}
+
+// #9166: after a corrupt store is recovered empty, the first poll must seed
+// the watermark to now and skip comments that predate recovery rather than
+// replaying the repo's mention history (the seen set is gone).
+func TestRecoveredStoreFirstPollDoesNotReplayHistory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "github-mention-triggers.json")
+	if err := os.WriteFile(path, []byte(`{"watermarks":{"org/repo":"2026-09-01T00:00:00Z"},"seen_at":{"old`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(path)
+	if err != nil {
+		t.Fatalf("NewStore on torn file: %v", err)
+	}
+	recovered := time.Now()
+	old := recovered.Add(-time.Hour)
+	gh := &fakeGH{app: "hive[bot]", events: []Event{{
+		Repo: "org/repo", Number: 1, NodeID: "old", CommentID: 1, Author: "alice",
+		Body: "@hive[bot] already handled before the crash", CreatedAt: old, UpdatedAt: old,
+	}}}
+	var audit, kick []string
+	p := NewPoller(gh, func() []string { return []string{"org/repo"} }, store, baseHandler(t, gh, &audit, &kick), time.Minute, nil)
+	p.Poll(context.Background())
+	if len(kick) != 0 {
+		t.Fatalf("first poll after recovery replayed a pre-recovery mention: kicks=%v", kick)
+	}
+	if wm := store.Watermark("org/repo"); wm.Before(recovered) {
+		t.Fatalf("watermark %v not seeded to recovery time %v", wm, recovered)
+	}
+	reloaded, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Watermark("org/repo").Before(recovered) {
+		t.Fatal("seeded watermark not persisted")
 	}
 }
 
