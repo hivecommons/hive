@@ -174,16 +174,20 @@ permissions:
 jobs:
   decide:
     # workflow_run: only a successful docker.yml build of a real push to the
-    # release line (a
-    # workflow_dispatch build is the scratch-branch gate dance this workflow
-    # itself starts — releasing off it would be releasing off our own tail).
+    # release line. `event == 'push'` is what makes `head_branch` trustworthy:
+    # docker.yml also runs on `pull_request` with no branch filter, and a fork
+    # PR's `head_branch` is whatever the fork named its branch — `v5` included
+    # — so comparing the name alone would admit a fork's commit. A push run's
+    # branch is always one of this repository's own. (A workflow_dispatch
+    # build is the scratch-branch gate dance this workflow itself starts —
+    # releasing off it would be releasing off our own tail.)
     # schedule/workflow_dispatch: the #5318 backstop, which has no triggering
     # run to qualify and instead resolves the line's current tip below.
     if: >-
       github.event_name != 'workflow_run' || (
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == github.ref_name &&
-      github.event.workflow_run.event != 'workflow_dispatch' )
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == github.ref_name )
     runs-on: ubuntu-latest
     outputs:
       release: ${{ steps.derive.outputs.release }}
@@ -210,25 +214,42 @@ jobs:
           fi
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout the commit docker.yml just built
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ steps.target.outputs.sha }}
-          fetch-depth: 0 # full history + tags: derive-release-version.sh reads `git tag`
-
-      # #9154: refuse any branch that is not a declared release line, read
-      # from the manifest in the tree being considered. Without this, a
-      # dispatch from a development line would derive and tag it as if it
-      # were one. A red run is right here: every automatic trigger resolves
+      # #9154: refuse any branch that is not a declared release line. Without
+      # this, a dispatch from a development line would derive and tag it as if
+      # it were one. A red run is right here: every automatic trigger resolves
       # to the default branch, so only a manual dispatch from the wrong ref
       # can reach the refusal.
+      #
+      # The guard and its manifest come from this workflow's own ref
+      # (github.sha: the default branch for workflow_run/schedule, the
+      # dispatched ref for workflow_dispatch — the same tree this workflow
+      # file was read from), never from the commit being considered, and run
+      # before that commit is checked out. A check read from the target tree
+      # would let whoever wrote that tree approve it.
+      - name: Checkout the release-line guard from this workflow's ref
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .release-line-guard
+          persist-credentials: false
+          sparse-checkout: |
+            .github/release-lines.yml
+            src/scripts/check-release-lines.sh
+          sparse-checkout-cone-mode: false
+
       - name: Require the triggering branch to be a declared release line
+        working-directory: .release-line-guard
         run: |
           set -euo pipefail
           if ! src/scripts/check-release-lines.sh --is-release-line "$RELEASE_LINE"; then
             echo "::error::Tagged Release was started from '${RELEASE_LINE}', which is not under release_lines in .github/release-lines.yml, so it has no tag line to cut. Dispatch it from a release line, or cut this branch as one first (src/docs/release-line-guard.md)." >&2
             exit 1
           fi
+
+      - name: Checkout the commit docker.yml just built
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.target.outputs.sha }}
+          fetch-depth: 0 # full history + tags: derive-release-version.sh reads `git tag`
 
       # The backstop must not tag a commit whose images were never published:
       # it retags an existing digest, so a tip whose docker.yml run is still

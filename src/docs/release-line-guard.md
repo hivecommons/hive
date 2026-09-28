@@ -101,7 +101,11 @@ the new line's branch unless noted:
    (`src/scripts/check-release-lines.sh --is-release-line <branch>`). Step 1
    is what turns them on for the new line; before it, a dispatch from that
    branch fails at its first step instead of releasing or promoting another
-   line. `derive-release-version.sh` mints `vN.0.0` as the first tag of a
+   line. The check reads the script and manifest from the workflow's own
+   ref, before the commit being released is checked out, and
+   `tagged-release.yml` accepts a `docker.yml` run only when it was a `push`,
+   so a fork PR whose branch is named after a release line cannot approve
+   itself. `derive-release-version.sh` mints `vN.0.0` as the first tag of a
    line on its own. Do **not** reintroduce a literal branch name in either
    workflow.
 5. **Channels — `docker.yml` on both branches, landed together.** Each
