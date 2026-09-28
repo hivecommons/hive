@@ -213,13 +213,23 @@ mechanism that already exists; none is new policy.
    allowed" would let anyone enumerate the allowlist by typing the App's
    name.
 3. **Rate limits, three keys.** Per user, per repo, and per thread. The
-   per-thread cap reuses `classification.review_bots.max_attempts_per_thread`
-   semantics exactly: the counter *is* the thread's list of App-authored
-   replies, no state file (`src/pkg/github/review_threads.go:131`,
-   `review_request_watcher.go:374`). Per user and per repo are sliding
-   windows in memory, sized in config with conservative defaults (a user gets
-   a handful of summons an hour; a repo a few dozen), and a global per-tick
-   budget bounds the worst case at one API call per accepted mention.
+   per-thread cap is its own key, `github.mentions.per_thread_max` (default
+   3, `GitHubMentionsConfig.PerThreadMaxEffective`), and keeps the review-bot
+   reply path's no-state-file shape: the counter *is* the conversation's list
+   of App-authored comments carrying the mention reply marker
+   (`mention.ReplyMarker`, counted by `Client.CountMentionReplies`,
+   `src/pkg/github/mention_comments.go`). Stage comments, review summaries and
+   other App comments on the same issue or PR never count, and marker text
+   pasted by anyone but the App does not either. A mention past the cap is
+   audited as `guard=thread-cap` with the count and the cap. It originally
+   aliased `classification.review_bots.max_attempts_per_thread` (default 1)
+   and counted every App comment on the conversation, which declined every
+   follow-up mention after the hive's own reply
+   ([#9164](https://github.com/hivecommons/hive/issues/9164)). Per user and
+   per repo are sliding windows in memory, sized in config with conservative
+   defaults (a user gets a handful of summons an hour; a repo a few dozen),
+   and a global per-tick budget bounds the worst case at one API call per
+   accepted mention.
 4. **Loop prevention.** A mention is ignored when its author is the App login
    itself, any `classification.review_bots.logins` entry
    (`src/pkg/config/review_bots.go:32`), or any login ending in `[bot]`.
@@ -256,14 +266,15 @@ github:
     min_role: read-write     # the dashboard role floor for summoners
     per_user_per_hour: 6
     per_repo_per_hour: 30
+    per_thread_max: 3        # mention replies per issue/PR conversation
     ack_reaction: eyes       # "" disables the acknowledgement reaction
     webhook_enabled: false   # optional latency accelerator; polling remains authoritative
     webhook_secret_env: GITHUB_MENTION_WEBHOOK_SECRET
     webhook_min_gap: 30s     # per-repo coalescing floor for webhook-triggered polls
 ```
 
-`classification.review_bots.logins` and `.max_attempts_per_thread` are read
-as they are today; the mention path adds no second copy of either.
+`classification.review_bots.logins` is read as it is today for loop
+prevention; the mention path adds no second copy of it.
 
 An agent opts in with a channel, and — because of #5591 — the channel type
 ships with its runtime in the same change:
@@ -283,8 +294,8 @@ agents:
   id, author, resolved agent. Rides the same `recordCreationAudit` convention
   as the watchers (`src/pkg/github/attribution.go`).
 - `agent_mention_declined` — one entry per dropped mention with the guard that
-  dropped it (`unauthorized`, `rate-limited`, `loop`, `no-agent`, `ioscan`),
-  never the body.
+  dropped it (`unauthorized`, `rate-limited`, `thread-cap`, `loop`,
+  `no-agent`, `ioscan`), never the body.
 - Kick history rows carry `source=mention`, so the dashboard's agent card and
   the kick outcome classifier (#7421) can say the turn was summoned, and the
   per-agent "last kick" no longer implies a cadence fired.
@@ -352,7 +363,7 @@ the decision follows each one, with the code on `v6` that now carries it.
 - `src/pkg/config/config.go:1716` — `linear.session_agent` resolution rule.
 - `src/pkg/config/config.go:5538` — the removed declarative channel types (#5591).
 - `src/pkg/config/review_bots.go:32` — `classification.review_bots`, the loop
-  list and the per-thread cap.
+  list.
 - `src/pkg/github/review_request_watcher.go`, `review_threads.go` — the
   App-authored in-thread reply path and its attempt counter.
 - `src/pkg/github/issue_request_watcher.go:70` — `Kind: "comment"`.

@@ -14,6 +14,15 @@ func TestGitHubMentionsConfigDefaultsAndValidation(t *testing.T) {
 	if m.PerUserPerHourEffective() != 6 || m.PerRepoPerHourEffective() != 30 {
 		t.Fatalf("rate defaults = %d/%d", m.PerUserPerHourEffective(), m.PerRepoPerHourEffective())
 	}
+	if m.PerThreadMaxEffective() != 3 {
+		t.Fatalf("per-thread default = %d, want 3 (independent of review_bots.max_attempts_per_thread)", m.PerThreadMaxEffective())
+	}
+	if got := (GitHubMentionsConfig{PerThreadMax: 7}).PerThreadMaxEffective(); got != 7 {
+		t.Fatalf("per-thread override = %d", got)
+	}
+	if err := (GitHubMentionsConfig{PerThreadMax: -1}).Validate(); err == nil {
+		t.Fatal("negative per_thread_max accepted")
+	}
 	if m.AckReactionEffective() != "eyes" {
 		t.Fatalf("ack = %q", m.AckReactionEffective())
 	}
