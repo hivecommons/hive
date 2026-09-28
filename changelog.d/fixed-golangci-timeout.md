@@ -1,0 +1,1 @@
+- Raised golangci-lint run timeout from 5m to 10m so clean cold-cache runs (~4m50s) no longer flake at the ceiling (#9263)
