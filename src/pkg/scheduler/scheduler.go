@@ -42,12 +42,6 @@ func (s *Scheduler) SetRunTriageDeps(admitter RunAdmitter, commenter TriageComme
 	s.triageCommenter = commenter
 }
 
-func (s *Scheduler) runTriageDeps() (RunAdmitter, TriageCommenter) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.runAdmitter, s.triageCommenter
-}
-
 // SetLifecycleRecorder attaches the lifecycle timeline sink. Once set, every
 // classifier pass records a KindClassified stage (lane/tier/model) for each
 // classified issue — this is the point where lane routing decides an issue's

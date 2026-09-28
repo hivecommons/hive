@@ -19,6 +19,12 @@ type TriageCommenter interface {
 	CreateIssueComment(ctx context.Context, repo string, number int, body string) error
 }
 
+func (s *Scheduler) runTriageDeps() (RunAdmitter, TriageCommenter) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.runAdmitter, s.triageCommenter
+}
+
 type runTriageFixRetirer interface {
 	RunTriageFixRetired(repo string, number int) bool
 }
