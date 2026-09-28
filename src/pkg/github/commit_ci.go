@@ -3,11 +3,60 @@ package github
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 )
+
+const (
+	requiredChecksForbiddenTTLEnv     = "HIVE_REQUIRED_CHECKS_FORBIDDEN_TTL"
+	defaultRequiredChecksForbiddenTTL = time.Hour
+)
+
+type requiredChecksForbiddenCache struct {
+	mu      sync.Mutex
+	entries map[string]time.Time
+	now     func() time.Time
+	ttl     time.Duration
+}
+
+var sharedRequiredChecksForbiddenCache = newRequiredChecksForbiddenCache()
+
+func newRequiredChecksForbiddenCache() *requiredChecksForbiddenCache {
+	return &requiredChecksForbiddenCache{
+		entries: map[string]time.Time{},
+		now:     time.Now,
+		ttl:     durationFromEnv(requiredChecksForbiddenTTLEnv, defaultRequiredChecksForbiddenTTL),
+	}
+}
+
+func (c *requiredChecksForbiddenCache) get(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	until, ok := c.entries[key]
+	if !ok {
+		return false
+	}
+	if c.now().After(until) {
+		delete(c.entries, key)
+		return false
+	}
+	return true
+}
+
+func (c *requiredChecksForbiddenCache) put(key string) {
+	if c.ttl <= 0 {
+		return
+	}
+	c.mu.Lock()
+	c.entries[key] = c.now().Add(c.ttl)
+	c.mu.Unlock()
+}
 
 // CommitCIState is the shared CI-evaluation result behind the self-merge
 // sweep's commitGreen (pkg/github/automerge) and the merge-request watcher's
@@ -64,10 +113,17 @@ func RequiredStatusCheckContexts(ctx context.Context, client *gh.Client, owner, 
 	if client == nil || strings.TrimSpace(branch) == "" {
 		return nil, false
 	}
+	cacheKey := requiredChecksForbiddenCacheKey(client, owner, repo, branch)
+	if sharedRequiredChecksForbiddenCache.get(cacheKey) {
+		return nil, false
+	}
 	rsc, _, err := client.Repositories.GetRequiredStatusChecks(ctx, owner, repo, branch)
 	if err != nil {
 		if errors.Is(err, gh.ErrBranchNotProtected) {
 			return map[string]bool{}, true
+		}
+		if isRequiredChecksForbiddenCacheable(err) {
+			sharedRequiredChecksForbiddenCache.put(cacheKey)
 		}
 		return nil, false
 	}
@@ -89,6 +145,37 @@ func RequiredStatusCheckContexts(ctx context.Context, client *gh.Client, owner, 
 		}
 	}
 	return required, true
+}
+
+func requiredChecksForbiddenCacheKey(client *gh.Client, owner, repo, branch string) string {
+	host := ""
+	if client != nil && client.BaseURL != nil {
+		host = strings.ToLower(client.BaseURL.Host)
+	}
+	clientID := fmt.Sprintf("%p", client)
+	return clientID + ":" + host + ":" +
+		strings.ToLower(strings.TrimSpace(owner)) + "/" +
+		strings.ToLower(strings.TrimSpace(repo)) + "#" +
+		strings.TrimSpace(branch)
+}
+
+func isRequiredChecksForbiddenCacheable(err error) bool {
+	var er *gh.ErrorResponse
+	if !errors.As(err, &er) || er.Response == nil {
+		return false
+	}
+	switch er.Response.StatusCode {
+	case http.StatusForbidden, http.StatusNotFound:
+		return true
+	default:
+		return false
+	}
+}
+
+func resetRequiredChecksForbiddenCacheForTest(now func() time.Time, ttl time.Duration) func() {
+	old := sharedRequiredChecksForbiddenCache
+	sharedRequiredChecksForbiddenCache = &requiredChecksForbiddenCache{entries: map[string]time.Time{}, now: now, ttl: ttl}
+	return func() { sharedRequiredChecksForbiddenCache = old }
 }
 
 // EvaluateCommitCI walks every commit status and check run on sha and

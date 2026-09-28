@@ -1,0 +1,1 @@
+- Required-status-check discovery now negative-caches forbidden branch-protection lookups for a bounded TTL, avoiding repeated GitHub REST calls when the App lacks administration permission.
