@@ -174,7 +174,7 @@ key generations (`/data/saas/hub-generations.json`).
 | 23 | Spoke heartbeat last-good-collect cache | `src/pkg/hub/heartbeat.go:104` (`lastGoodPayload`) | Historically: a just-restarted spoke with real repos could *never* finish a collect inside the budget, so it had no cache and skipped every beat — a healthy hive read OFFLINE permanently. Fixed by #3876: collect-independent identity published before the loop, `minimalLivenessPayload` when collect times out with no cache | **fixed** |
 | 24 | Agent mint-token cache | `/var/run/hive-metrics/agent-tokens/` (`manager.go:632`) — container filesystem, not the PVC | Re-minted on demand; by design a cache | **benign** |
 | 25 | Sandbox executor in-flight runs + `sandboxResumeAfterCancel` | `src/pkg/sandbox` (`PodmanLauncher`), `manager.go:188` | A sandbox one-shot dies with the pod; its bounded-lifetime design assumes exactly this | **benign** |
-| 26 | Runtime config overlay | `/data/hive.yaml.runtime` (`config.go:4287`); note `/etc/hive` is an emptyDir in the hosted deployment | Durable — the overlay exists precisely because the ConfigMap mount is unwritable | **fixed** |
+| 26 | Runtime config overlay | `/data/hive.yaml.runtime` (`save.go:212`); note `/etc/hive` is an emptyDir in the hosted deployment | Durable — the overlay exists precisely because the ConfigMap mount is unwritable | **fixed** |
 
 ### 2.3 Contribute plane (`src/pkg/dashboard/contribute_ws.go` + relay)
 

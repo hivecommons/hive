@@ -80,7 +80,7 @@ phase map stays small.
   selection already used to build kicks. Per-lane queue depth is a count over
   work the scheduler already computes.
 - **The tier vocabulary.** `RotationConfig.AgentTiers`
-  (`src/pkg/config/config.go:1745`) already spells T1/T2/T3 in `hive.yaml`. It
+  (`src/pkg/config/provider_rotation.go:68`) already spells T1/T2/T3 in `hive.yaml`. It
   maps *agent names*, not models — so standby borrows the vocabulary and needs
   its own mapping (below).
 - **The relay's configuration report.** `auth_response` already carries
@@ -253,8 +253,8 @@ is unaffected" a property of the design rather than a hope.
 
 Two places, matching where each kind of setting already lives: per-lane
 behaviour under the agent, hive-wide allow-lists under `hub:` next to
-`contribute_allow_models` (`ContributeAllowModels`, `src/pkg/config/config.go:4110`) and
-`contribute_delegatable_roles` (`ContributeDelegatableRoles`, `src/pkg/config/config.go:4201`).
+`contribute_allow_models` (`ContributeAllowModels`, `src/pkg/config/hub_config.go:112`) and
+`contribute_delegatable_roles` (`ContributeDelegatableRoles`, `src/pkg/config/hub_config.go:233`).
 
 ```yaml
 agents:
@@ -274,10 +274,10 @@ hub:
     - { label: kind/security, tier: T1 }
 ```
 
-`standby` is a new block on `AgentConfig` (`src/pkg/config/config.go:974`); the
+`standby` is a new block on `AgentConfig` (`src/pkg/config/agent_config.go:142`); the
 three `hub.standby_*` keys are new fields on `HubConfig`. Both landed in S2:
-`AgentConfig.Standby` (`src/pkg/config/config.go:1140`) and
-`HubConfig.StandbyContributors` (`src/pkg/config/config.go:4211`) with its two
+`AgentConfig.Standby` (`src/pkg/config/agent_config.go:323`) and
+`HubConfig.StandbyContributors` (`src/pkg/config/hub_config.go:243`) with its two
 neighbours. The types, defaults and validation are `pkg/config/standby.go`.
 
 ### Validation rules
@@ -652,7 +652,7 @@ per the v6 guard invariant). Nothing dispatches.
 
 ### S2 — Configuration and the approved list, validation only
 
-`src/pkg/config/config.go` (`AgentConfig.Standby`; `HubConfig.StandbyContributors`,
+`src/pkg/config/agent_config.go` (`AgentConfig.Standby`) · `src/pkg/config/hub_config.go` (`HubConfig.StandbyContributors`,
 `StandbyModelTiers`, `StandbyAllowPrivateRepos`) · the config `Normalize`/
 validation path · `src/hive.yaml.example` · `src/docs/agent-configuration.md`.
 No behaviour reads the block yet.
@@ -700,7 +700,7 @@ standby offers paused budget work, not an alternate path around normal cadence.
 
 ### S7 — Item-tier matching and the owner-editable T3 list
 
-`src/pkg/config/config.go` (`hub.standby_item_tiers`, empty default) ·
+`src/pkg/config/hub_config.go` (`hub.standby_item_tiers`, empty default) ·
 `src/pkg/standby/` (item tier threaded into `Qualifies`) ·
 `src/pkg/classify/classifier.go` (reuse label routing to propose an item's tier
 candidate; the owner's list is authoritative).

@@ -70,9 +70,9 @@ Prerequisites:
   `github.mentions.default_agent` or an unambiguous mention-capable agent, and
   either a trusted dashboard role floor or explicit summoners. The config fields
   and defaults include `summoners`, `min_role`, and the default `eyes` ack
-  reaction (`src/pkg/config/config.go:1865-1885`). If webhook acceleration is
+  reaction (`src/pkg/config/github_integration_config.go:10-23`). If webhook acceleration is
   used, set `github.mentions.webhook_secret_env`; polling alone is acceptable
-  (`src/pkg/config/config.go:1874-1876`, `src/pkg/mention/webhook.go:32-41`).
+  (`src/pkg/config/github_integration_config.go:21`, `src/pkg/mention/webhook.go:32-41`).
 - The selected agent must be enabled, hold `Converse`, have a mention channel,
   and be governor-kickable; the handler declines otherwise
   (`src/pkg/mention/types.go:177-223`).
@@ -234,7 +234,7 @@ Prerequisites:
   shipped v6 work (`src/docs/roadmap.md:55`).
 - Configure the Discord bot token, channel ID, and the maintainer's Discord user
   ID in `allowed_users`; the Discord config structure uses `bot_token`,
-  `channel_id`, and `allowed_users` (`src/pkg/config/config.go:4144-4154`).
+  `channel_id`, and `allowed_users` (`src/pkg/config/notifications_config.go:91-105`).
   The backend refuses to start without the bot token (`Start`, `src/pkg/discord/bot.go:105-112`).
 
 Run:
@@ -273,7 +273,7 @@ Prerequisites:
   `client_secret`, `team_id`, `channel_id`, `webhook_url`, and an
   `allowed_users` entry for the maintainer's Azure AD object ID. The config
   field names and fail-closed allowed-user contract are in `MSTeamsConfig`
-  (`src/pkg/config/config.go:4127-4141`), and validation/startup require all
+  (`src/pkg/config/notifications_config.go:67-89`), and validation/startup require all
   Teams connection fields (`src/pkg/config/validate.go:107-125`,
   `src/pkg/msteams/bot.go:180-198`).
 - `webhook_url` must be a Teams **Workflows** webhook URL: in the target
@@ -317,7 +317,7 @@ Prerequisites:
 - Configure `notifications.matrix.enabled`, `homeserver_url`, `access_token`,
   `room_id`, and an `allowed_users` entry containing the maintainer's MXID. The
   config field names and allowed-user contract are in `MatrixConfig`
-  (`src/pkg/config/config.go:4113-4124`), and startup requires homeserver URL,
+  (`src/pkg/config/notifications_config.go:51-65`), and startup requires homeserver URL,
   access token, and room ID (`src/pkg/matrix/bot.go:164-174`).
 
 Run:
@@ -349,7 +349,7 @@ Prerequisites:
 - Configure `notifications.telegram.enabled`, `bot_token`, `chat_id`, and
   `allowed_users` with the maintainer's Telegram numeric user ID. The config
   field names and fail-closed allowed-user contract are in `TelegramConfig`
-  (`src/pkg/config/config.go:4100-4110`), and startup requires bot token and
+  (`src/pkg/config/notifications_config.go:36-49`), and startup requires bot token and
   chat ID (`src/pkg/telegram/bot.go:124-129`).
 
 Run:
@@ -504,7 +504,7 @@ Prerequisites:
   digest recipients are optional. The design shows the operator-facing block
   (`src/docs/design/escalation-surfaces.md:73-103`), while the config schema
   and validation require host/from/to when enabled
-  (`src/pkg/config/config.go:6709-6727`, `src/pkg/config/validate.go:182-201`).
+  (`src/pkg/config/escalation_config.go:20-33`, `src/pkg/config/validate.go:182-201`).
 
 Run:
 
@@ -544,7 +544,7 @@ Prerequisites:
   and at least one provider: `ntfy.url` plus optional `token`, Pushover
   `app_token` and `user_key`, or PagerDuty `routing_key`. The config schema and
   validation enforce provider presence and the severity values
-  (`src/pkg/config/config.go:6729-6749`, `src/pkg/config/validate.go:202-225`).
+  (`src/pkg/config/escalation_config.go:40-60`, `src/pkg/config/validate.go:202-225`).
 
 Run:
 

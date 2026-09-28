@@ -37,7 +37,7 @@ The process also writes `hive.log` under the configured logs directory (default 
 
 ## Config fails to load or save
 
-Hive reads `/etc/hive/hive.yaml` by default, or `HIVE_CONFIG`/`--config` when set. Startup logs `failed to load config` when `config.LoadWithDashboardOverlay` fails. Common validation strings in `src/pkg/config/config.go` include:
+Hive reads `/etc/hive/hive.yaml` by default, or `HIVE_CONFIG`/`--config` when set. Startup logs `failed to load config` when `config.LoadWithDashboardOverlay` fails. Common validation strings in `src/pkg/config/` include:
 
 - `project.org is required`
 - `at least one agent must be configured`

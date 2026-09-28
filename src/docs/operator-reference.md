@@ -1,7 +1,7 @@
 # Hive operator reference
 
 This page is a concise operator reference for fields and runtime knobs that are
-easy to miss in `hive.yaml.example`. It was checked against `pkg/config/config.go`
+easy to miss in `hive.yaml.example`. It was checked against `pkg/config/`
 and `cmd/hive/main.go` on branch `v4`.
 
 For the full centralized environment variable table, including hub, backup,

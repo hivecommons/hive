@@ -67,7 +67,7 @@ The last row is the only inbound trigger in the system, and it is not GitHub.
   `responder.go:224`);
 - agent resolution is `SessionAgent`: the named agent, else the only
   configured agent, else an error activity naming the missing config
-  (`src/pkg/config/config.go:1688`).
+  (`src/pkg/config/work_sources.go:116`).
 
 **The reply half.** `AgentCapabilities.Converse` is documented in exactly the
 words this feature needs — "An ADVISORY agent with Converse can reply on a
@@ -89,7 +89,7 @@ and dispatches on `X-GitHub-Event` (`src/pkg/hub/webhook.go:53`), today for
 `pkg/channels` runtime meant to serve them was never wired into the binary,
 declaring one validated cleanly while suppressing governor kicks, and the agent
 sat permanently dormant with no diagnostics. The types were removed and
-`ValidateChannels` now rejects them (`src/pkg/config/config.go:5538`, #5591).
+`ValidateChannels` now rejects them (`src/pkg/config/validate.go:379`, #5591).
 A mention trigger is a new channel type, and it must land with its runtime in
 the same PR — never as a config key first.
 
@@ -209,7 +209,7 @@ mechanism that already exists; none is new policy.
 
 1. **Who may summon — fail closed.** A mention is honoured only from a login
    the hive already trusts, using the dashboard's own role list
-   (`DashboardConfig.AuthorizedRole`, `src/pkg/config/config.go:4218`) at
+   (`DashboardConfig.AuthorizedRole`, `src/pkg/config/dashboard_config.go:240`) at
    `read-write` or above by default — the same lookup `trustedMergerFunc`
    uses for the merge queue (`src/cmd/hive/merge_eligibility.go:50`). An explicit
    `github.mentions.summoners` list widens it. No configuration means the
@@ -345,7 +345,7 @@ the decision follows each one, with the code on `v6` that now carries it.
    for `merger`: a summon spends tokens on someone else's request.
    **Decided: `read-write`, operator-overridable** — `DefaultMentionMinRole =
    RoleReadWrite` with `GitHubMentionsConfig.MinRoleEffective()`,
-   `src/pkg/config/config.go` on `v6`.
+   `src/pkg/config/github_integration_config.go` on `v6`.
 2. **PR review comments.** `pull_request_review_comment` mentions land inside a
    review thread; should the reply go in-thread (the #7360 reply path, capped
    by `max_attempts_per_thread`) or as a PR-level comment? In-thread is more
@@ -367,8 +367,8 @@ the decision follows each one, with the code on `v6` that now carries it.
 - `src/pkg/linearagent/oauth.go:56` — `app:mentionable`.
 - `src/pkg/agent/capabilities.go:32` — `Converse`, documented for mentions.
 - `src/pkg/proxy/rules.go:152,170` — where `Converse` is enforced.
-- `src/pkg/config/config.go:1716` — `linear.session_agent` resolution rule.
-- `src/pkg/config/config.go:5538` — the removed declarative channel types (#5591).
+- `src/pkg/config/work_sources.go:116` — `linear.session_agent` resolution rule.
+- `src/pkg/config/validate.go:379` — the removed declarative channel types (#5591).
 - `src/pkg/config/review_bots.go:32` — `classification.review_bots`, the loop
   list.
 - `src/pkg/github/review_request_watcher.go`, `review_threads.go` — the

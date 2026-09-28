@@ -24,7 +24,7 @@ blocked findings when an audit sink is attached
 
 The v4 base also includes the fail-safe default-on mode: absent `ioscan:`
 configuration scans by default, while an explicit `ioscan.enabled: false`
-opts out ([config](../../pkg/config/config.go)).
+opts out ([config](../../pkg/config/ioscan_config.go)).
 
 Operators may additionally enable `ioscan.canaries: true`. Hive then prepends a
 random `HIVE-CANARY-...` marker to each kick with instructions that the agent

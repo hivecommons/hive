@@ -57,7 +57,7 @@ type subCriterion struct {
 // codebase has three genuine delegated-authority signals and ALL of them are
 // spoke-side configuration that never travels on the heartbeat:
 //
-//   - config.AutoMergeConfig.SelfAuthored (pkg/config/config.go) — the App
+//   - config.AutoMergeConfig.SelfAuthored (pkg/config/review_config.go) — the App
 //     merging its own PRs with no human approval. This is the strongest
 //     delegation bit in the product and would be the ideal trust criterion.
 //   - config.ReviewConfig.RequireApproval — the review gate.

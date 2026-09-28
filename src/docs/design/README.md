@@ -246,7 +246,7 @@ that status is the thing to check before treating a page as current behaviour:
   filesystem writes outside any denied command. Surveys confinement options
   (Podman sandbox, bwrap/systemd-run, seccomp, dedicated low-privilege UID, a
   disposable VM) with real costs, and recommends closing the existing Podman
-  sandbox's double opt-in gate (`src/pkg/config/config.go`) for
+  sandbox's double opt-in gate (`src/pkg/config/agent_config.go`) for
   `contribute-hive` once its CI coverage gap is closed, keeping the denylist as
   the floor elsewhere.
 
