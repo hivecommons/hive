@@ -725,6 +725,8 @@ type ContributeAdmissionPolicy struct {
 	AllowModels          []string                               `json:"allow_models,omitempty"`
 	RepoFilters          map[string]config.ContributeRepoFilter `json:"repo_filters,omitempty"`
 	RejectUnknownModels  bool                                   `json:"reject_unknown_models"`
+	MinReasoningEffort   string                                 `json:"min_reasoning_effort,omitempty"`
+	RejectUnknownEffort  bool                                   `json:"reject_unknown_effort"`
 	SkipAssignedToOthers bool                                   `json:"skip_assigned_to_others"`
 	DisabledTiers        []string                               `json:"disabled_tiers,omitempty"`
 	DisabledRepos        []string                               `json:"disabled_repos,omitempty"`
@@ -757,6 +759,8 @@ func (s *Server) buildContributeAdmissionPolicy() ContributeAdmissionPolicy {
 	p.AllowModels = h.ContributeAllowModels
 	p.RepoFilters = h.ContributeRepoFilters
 	p.RejectUnknownModels = h.ContributeRejectUnknownModels
+	p.MinReasoningEffort = h.ContributeMinReasoningEffort
+	p.RejectUnknownEffort = h.ContributeRejectUnknownEffort
 	p.SkipAssignedToOthers = h.ContributeSkipAssignedToOthers
 	p.DisabledTiers = h.DisabledTiers
 	p.DisabledRepos = h.DisabledRepos

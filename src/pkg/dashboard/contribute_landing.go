@@ -5402,6 +5402,7 @@ function renderPolicy(p){
        was configured (the source of the "Allow: (nothing)" + empty-queue confusion). */
     ['Label filter',esc(p.labels_mode||'deny')+': '+list(p.deny_labels)],
     ['Model allowlist',(p.reject_unknown_models?'strict &middot; ':'')+list(p.allow_models)],
+    ['Reasoning-effort floor',p.min_reasoning_effort?(p.reject_unknown_effort?'strict &middot; ':'')+'&ge; '+esc(p.min_reasoning_effort):'none'],
     ['Skip assigned-to-others',p.skip_assigned_to_others?'yes':'no'],
     ['Repo filter overrides',repoFilterList(p.repo_filters)],
     ['Disabled tiers',list(p.disabled_tiers)],

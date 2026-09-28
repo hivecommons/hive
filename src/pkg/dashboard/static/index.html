@@ -23578,6 +23578,13 @@ function burnAreaChart() {
       const allowModels = (hub.contribute_allow_models || []);
       const frameAncestors = (hub.snapshot_frame_ancestors || []);
       const rejectUnknownModels = hub.contribute_reject_unknown_models || false;
+      const minEffort = hub.contribute_min_reasoning_effort || '';
+      const rejectUnknownEffort = hub.contribute_reject_unknown_effort || false;
+      // Effort floor options: the union of the per-backend effort vocabularies
+      // (BACKEND_REASONING_EFFORTS), ordered on the server's canonical ladder.
+      const effortLadder = hub.contribute_reasoning_effort_ladder || ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+      const knownEfforts = new Set([].concat.apply([], Object.values(BACKEND_REASONING_EFFORTS)));
+      const effortFloorOptions = effortLadder.filter(function(e) { return knownEfforts.has(e) || e === minEffort; });
       const delegatableRoles = (hub.contribute_delegatable_roles || ['scanner','quality','outreach']).map(function(r) { return String(r || '').toLowerCase(); });
       const helpLinksText = (hub.contribute_help_links || []).map(function(l) { return (l.label || '') + ' | ' + (l.url || ''); }).join('\n');
       const privilegedDelegatableRoles = ['ci-maintainer', 'sec-check', 'architect'];
@@ -23725,6 +23732,19 @@ function burnAreaChart() {
             <button class="hv-btn btn-danger btn-sm" data-action="addModelPreset" data-arg0="deepseek*">+ deepseek</button>
           </div>
           <div style="display:flex;gap:var(--sp-2)"><input type="text" id="hub-allow-model-input" placeholder="e.g. claude-opus*, /gemini-\\d/" style="flex:1" data-keydown-action="addHubFilter" data-arg0="contribute_allow_models" data-arg1="hub-allow-model-input" data-prevent="1" data-keys="Enter"><button class="hv-btn btn-primary btn-sm" data-action="addHubFilter" data-arg0="contribute_allow_models" data-arg1="hub-allow-model-input">Add</button></div>
+        </div>
+
+        <div class="config-field">
+          <label for="hub-min-reasoning-effort">Effort floor <span class="config-info">i<span class="config-tooltip">Minimum reasoning effort a contributor relay must run at, compared per backend on minimal &lt; low &lt; medium &lt; high &lt; xhigh &lt; max. A floor above a backend's highest level is met by that backend's highest level. Relays below the floor are rejected at connect time. None = no floor.</span></span></label>
+          <select id="hub-min-reasoning-effort" data-change-action="markDirty" data-arg0="hub" data-arg1="contribute_min_reasoning_effort" data-arg-types="s,s,v">
+            <option value=""${minEffort ? '' : ' selected'}>none</option>
+            ${effortFloorOptions.map(function(e) { return '<option value="' + esc(e) + '"' + (e === minEffort ? ' selected' : '') + '>' + esc(e) + '</option>'; }).join('')}
+          </select>
+        </div>
+
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${rejectUnknownEffort ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="hub" data-key="contribute_reject_unknown_effort" style="${rejectUnknownEffort ? 'background:var(--red)' : ''}"></div>
+          <span class="config-toggle-label" style="${rejectUnknownEffort ? 'color:var(--red);font-weight:600' : ''}">Reject Unknown Effort <span class="config-info">i<span class="config-tooltip">When enabled and an effort floor is set, contributors whose reasoning effort is empty or not recognised for their backend are rejected at connect time. When off they are admitted.</span></span></span>
         </div>
 
         <hr style="border-color:var(--border);margin:var(--sp-6) var(--sp-0)">

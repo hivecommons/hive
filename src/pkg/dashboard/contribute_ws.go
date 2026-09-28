@@ -616,6 +616,10 @@ type WSMessage struct {
 	Summary        string   `json:"summary,omitempty"`
 	TmuxOutput     []string `json:"tmux_output,omitempty"`
 	AcceptedModels []string `json:"accepted_models,omitempty"`
+	// MinReasoningEffort is the hive's contributor reasoning-effort floor,
+	// echoed on an auth_failed effort rejection so the relay knows what to
+	// raise its effort to.
+	MinReasoningEffort string `json:"min_reasoning_effort,omitempty"`
 	// PRURL is the pull request the agent opened for this task, reported on
 	// task_complete. It is best-effort: the relay fills it when it can spot a
 	// PR link in the agent's output, and it is empty when the agent went idle
@@ -2567,6 +2571,19 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 		return true
 	}
 
+	if allowed, floor := h.checkEffortAllowed(msg.CLIBackend, msg.ReasoningEffort); !allowed {
+		reason := fmt.Sprintf("Reasoning effort %q is below this hive's floor (%s)", msg.ReasoningEffort, floor)
+		if msg.ReasoningEffort == "" {
+			reason = fmt.Sprintf("No reasoning effort specified — this hive requires at least %q", floor)
+		} else if _, known := config.ReasoningEffortMeetsFloor(msg.CLIBackend, msg.ReasoningEffort, floor); !known {
+			reason = fmt.Sprintf("Reasoning effort %q is not recognised for backend %q — this hive requires at least %q", msg.ReasoningEffort, msg.CLIBackend, floor)
+		}
+		_ = sendJSON(s.conn, WSMessage{Type: "auth_failed", Reason: reason, MinReasoningEffort: floor})
+		h.logger.Info("[contribute-ws] reasoning effort rejected", "username", profile.GitHubUsername, "backend", msg.CLIBackend, "effort", msg.ReasoningEffort, "floor", floor)
+		closeWithReason(s.conn, websocket.ClosePolicyViolation, "reasoning effort below this hive's floor")
+		return true
+	}
+
 	clientRole := normalizeAgentRole(msg.Role)
 	assignedRole := normalizeAgentRole(profile.AssignedAgentRole)
 	requestedRole := clientRole
@@ -4137,6 +4154,33 @@ func (h *ContributeWSHub) checkModelAllowed(model string) (bool, []string) {
 		return false, cfg.ContributeAllowModels
 	}
 	return true, nil
+}
+
+// checkEffortAllowed applies hub.contribute_min_reasoning_effort to a relay's
+// reported backend and reasoning effort. It returns false plus the configured
+// floor when the relay must be rejected: its effort ranks below the floor
+// (normalised per backend), or it cannot be ranked and
+// contribute_reject_unknown_effort is on.
+func (h *ContributeWSHub) checkEffortAllowed(backend, effort string) (bool, string) {
+	if h.server == nil || h.server.deps == nil || h.server.deps.Config == nil {
+		return true, ""
+	}
+	cfg := h.server.deps.Config.Hub
+	floor := cfg.ContributeMinReasoningEffort
+	if config.ReasoningEffortRank(floor) < 0 {
+		return true, ""
+	}
+	ok, known := config.ReasoningEffortMeetsFloor(backend, effort, floor)
+	if !known {
+		if cfg.ContributeRejectUnknownEffort {
+			return false, floor
+		}
+		return true, ""
+	}
+	if !ok {
+		return false, floor
+	}
+	return true, ""
 }
 
 func (h *ContributeWSHub) cleanupLoop() {

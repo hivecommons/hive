@@ -198,6 +198,9 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"contribute_deny_authors":            cfg.Hub.ContributeDenyAuthors,
 			"contribute_allow_models":            cfg.Hub.ContributeAllowModels,
 			"contribute_reject_unknown_models":   cfg.Hub.ContributeRejectUnknownModels,
+			"contribute_min_reasoning_effort":    cfg.Hub.ContributeMinReasoningEffort,
+			"contribute_reject_unknown_effort":   cfg.Hub.ContributeRejectUnknownEffort,
+			"contribute_reasoning_effort_ladder": config.ReasoningEffortLadder,
 			"contribute_repo_filters":            cfg.Hub.ContributeRepoFilters,
 			"contribute_skip_assigned_to_others": cfg.Hub.ContributeSkipAssignedToOthers,
 			// Cooldown toggle + period. contribute_cooldown_enabled is the RESOLVED
@@ -1019,6 +1022,8 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		ContributeDenyAuthors          []string                               `json:"contribute_deny_authors"`
 		ContributeAllowModels          []string                               `json:"contribute_allow_models"`
 		ContributeRejectUnknownModels  *bool                                  `json:"contribute_reject_unknown_models"`
+		ContributeMinReasoningEffort   *string                                `json:"contribute_min_reasoning_effort"`
+		ContributeRejectUnknownEffort  *bool                                  `json:"contribute_reject_unknown_effort"`
 		ContributeRepoFilters          map[string]config.ContributeRepoFilter `json:"contribute_repo_filters"`
 		ContributeSkipAssignedToOthers *bool                                  `json:"contribute_skip_assigned_to_others"`
 		ContributeCooldownEnabled      *bool                                  `json:"contribute_cooldown_enabled"`
@@ -1123,6 +1128,17 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ContributeRejectUnknownModels != nil {
 		cfg.Hub.ContributeRejectUnknownModels = *body.ContributeRejectUnknownModels
+	}
+	if body.ContributeMinReasoningEffort != nil {
+		floor, err := config.NormalizeContributeMinReasoningEffort(*body.ContributeMinReasoningEffort)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		cfg.Hub.ContributeMinReasoningEffort = floor
+	}
+	if body.ContributeRejectUnknownEffort != nil {
+		cfg.Hub.ContributeRejectUnknownEffort = *body.ContributeRejectUnknownEffort
 	}
 	if body.ContributeRepoFilters != nil {
 		cfg.Hub.ContributeRepoFilters = body.ContributeRepoFilters
