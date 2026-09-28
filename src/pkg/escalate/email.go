@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/smtp"
 	"strings"
@@ -30,6 +31,7 @@ type EmailConfig struct {
 	Spoke     string
 	Version   string
 	Now       func() time.Time
+	Logger    *slog.Logger
 	tlsConfig *tls.Config
 }
 
@@ -92,14 +94,18 @@ func (s *EmailSink) SendDigest(ctx context.Context) error {
 	s.mu.Lock()
 	events := append([]Event(nil), s.dig...)
 	dropped := s.dropped
-	s.dig = nil
-	s.dropped = 0
 	day := s.cfg.Now().Format("2006-01-02")
 	s.day = day
-	s.mu.Unlock()
 	if len(events) == 0 || len(s.cfg.DigestTo) == 0 {
+		s.mu.Unlock()
 		return nil
 	}
+	// Clear the buffer optimistically; on send failure below it is restored
+	// (merged with anything recorded while send() was in flight) so a
+	// transient SMTP outage doesn't discard the day's digest.
+	s.dig = nil
+	s.dropped = 0
+	s.mu.Unlock()
 	var b strings.Builder
 	fmt.Fprintf(&b, "Hive escalation digest for %s\n\n", day)
 	if dropped > 0 {
@@ -116,7 +122,21 @@ func (s *EmailSink) SendDigest(ctx context.Context) error {
 		b.WriteString("\n")
 	}
 	b.WriteString("\n" + s.footer())
-	return s.send(ctx, s.cfg.DigestTo, "Hive escalation digest", b.String())
+	err := s.send(ctx, s.cfg.DigestTo, "Hive escalation digest", b.String())
+	if err != nil {
+		// The send failed: put the snapshot back rather than discarding it.
+		// Anything recorded while send() was in flight was appended after
+		// the snapshot was taken, so it belongs after the restored events.
+		s.mu.Lock()
+		s.dig = append(append([]Event(nil), events...), s.dig...)
+		s.dropped += dropped
+		s.mu.Unlock()
+		if s.cfg.Logger != nil {
+			s.cfg.Logger.Warn("escalation digest send failed; retaining digest for retry", "error", err, "events", len(events), "day", day)
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *EmailSink) recordDigest(ev Event) {

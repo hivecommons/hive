@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net"
 	"strings"
@@ -49,6 +50,69 @@ func TestEmailSinkImmediateAndDigest(t *testing.T) {
 	digest := <-messages
 	if !strings.Contains(digest, "Hive escalation digest") || !strings.Contains(digest, "[info] Did work") || !strings.Contains(digest, "[decision] Need human") {
 		t.Fatalf("bad digest:\n%s", digest)
+	}
+}
+
+func TestEmailSinkDigestRetainedOnSendFailure(t *testing.T) {
+	serverTLS, clientTLS := testTLSConfig(t)
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", serverTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go serveSMTPRejectRCPT(ln)
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	var logBuf strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	cfg := EmailConfig{Host: "127.0.0.1", From: "hive@example.com", DigestTo: []string{"team@example.com"}, tlsConfig: clientTLS, Logger: logger, Now: func() time.Time { return time.Date(2026, 9, 18, 8, 0, 0, 0, time.Local) }}
+	if _, err := fmtSscanf(port, &cfg.Port); err != nil {
+		t.Fatal(err)
+	}
+	sink := NewEmailSink(cfg)
+	sink.recordDigest(Event{Severity: SeverityInfo, Title: "Did work"})
+	sink.recordDigest(Event{Severity: SeverityDecision, Title: "Need human"})
+
+	if err := sink.SendDigest(context.Background()); err == nil {
+		t.Fatal("want send error from rejected RCPT")
+	}
+	sink.mu.Lock()
+	got := len(sink.dig)
+	sink.mu.Unlock()
+	if got != 2 {
+		t.Fatalf("digest events after failed send = %d, want 2 (digest must survive a failed send)", got)
+	}
+	if !strings.Contains(logBuf.String(), "digest send failed") {
+		t.Fatalf("expected failed digest send to be logged, got:\n%s", logBuf.String())
+	}
+
+	// A subsequent successful send delivers the retained events and clears
+	// the buffer, proving nothing was silently dropped along the way.
+	fixedLn, err := tls.Listen("tcp", "127.0.0.1:0", serverTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fixedLn.Close()
+	messages := make(chan string, 1)
+	go func() { _ = ServeSMTPFake(context.Background(), fixedLn, messages) }()
+	_, fixedPort, _ := net.SplitHostPort(fixedLn.Addr().String())
+	sink.mu.Lock()
+	if _, err := fmtSscanf(fixedPort, &sink.cfg.Port); err != nil {
+		sink.mu.Unlock()
+		t.Fatal(err)
+	}
+	sink.mu.Unlock()
+	if err := sink.SendDigest(context.Background()); err != nil {
+		t.Fatalf("retry SendDigest: %v", err)
+	}
+	digest := <-messages
+	if !strings.Contains(digest, "[info] Did work") || !strings.Contains(digest, "[decision] Need human") {
+		t.Fatalf("retried digest missing retained events:\n%s", digest)
+	}
+	sink.mu.Lock()
+	remaining := len(sink.dig)
+	sink.mu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("digest buffer not cleared after successful send, len=%d", remaining)
 	}
 }
 

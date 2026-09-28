@@ -50,6 +50,7 @@ func configureEscalationDispatcher(ctx context.Context, cfg *config.Config, noti
 			HiveName: cfg.HiveID,
 			Spoke:    cfg.Project.Org,
 			Version:  reportedVersion(),
+			Logger:   logger,
 		})
 		d.Register(s, escalate.SeverityInfo, 64)
 		s.StartDigest(d.Context())
