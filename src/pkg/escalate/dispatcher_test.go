@@ -131,3 +131,82 @@ func waitFor(t *testing.T, ok func() bool) {
 		}
 	}
 }
+
+type auditLog struct {
+	mu      sync.Mutex
+	entries []string
+}
+
+func (a *auditLog) record(action, detail, sink string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.entries = append(a.entries, action+":"+sink)
+}
+
+func (a *auditLog) count(entry string) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	n := 0
+	for _, e := range a.entries {
+		if e == entry {
+			n++
+		}
+	}
+	return n
+}
+
+func TestDispatcherStopDeliversQueuedEvents(t *testing.T) {
+	audits := &auditLog{}
+	d := NewDispatcher(context.Background(), nil, audits.record)
+	sink := &fakeSink{name: "page", gate: make(chan struct{}), entered: make(chan struct{})}
+	d.Register(sink, SeverityPage, 8)
+	d.Dispatch(Event{Severity: SeverityPage, Title: "page1"})
+	<-sink.entered
+	d.Dispatch(Event{Severity: SeverityPage, Title: "page2"})
+	d.Dispatch(Event{Severity: SeverityPage, Title: "page3"})
+	d.Stop()
+	d.Dispatch(Event{Severity: SeverityPage, Title: "after stop"})
+	close(sink.gate)
+
+	waitFor(t, func() bool { return d.Context().Err() != nil })
+	if sink.count() != 3 {
+		t.Fatalf("delivered=%d, want the 3 events queued before Stop", sink.count())
+	}
+	if got := audits.count("escalation_dropped_on_stop:dispatcher"); got != 1 {
+		t.Fatalf("dispatch after Stop audited %d times, want 1", got)
+	}
+}
+
+// ctxSink parks in Deliver until the dispatcher context is cancelled, like an
+// SMTP relay that never answers.
+type ctxSink struct{ entered chan struct{} }
+
+func (s *ctxSink) Name() string { return "slow" }
+func (s *ctxSink) Deliver(ctx context.Context, ev Event) error {
+	select {
+	case s.entered <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestDispatcherStopAuditsEventsItCannotDrain(t *testing.T) {
+	audits := &auditLog{}
+	d := NewDispatcher(context.Background(), nil, audits.record)
+	d.drainTimeout = 20 * time.Millisecond
+	sink := &ctxSink{entered: make(chan struct{}, 1)}
+	d.Register(sink, SeverityPage, 8)
+	d.Dispatch(Event{Severity: SeverityPage, Title: "page1"})
+	<-sink.entered
+	d.Dispatch(Event{Severity: SeverityPage, Title: "page2"})
+	d.Dispatch(Event{Severity: SeverityPage, Title: "page3"})
+	d.Stop()
+
+	waitFor(t, func() bool {
+		return audits.count("escalation_delivery_failed:slow")+audits.count("escalation_dropped_on_stop:slow") == 3
+	})
+	if got := audits.count("escalation_delivery_failed:slow"); got != 1 {
+		t.Fatalf("in-flight delivery audited %d times, want 1", got)
+	}
+}

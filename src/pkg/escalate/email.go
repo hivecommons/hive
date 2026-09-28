@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/smtp"
 	"strings"
@@ -18,23 +19,34 @@ const defaultSMTPPort = 587
 const maxDigestEvents = 500
 
 type EmailConfig struct {
-	Host      string
-	Port      int
-	Username  string
-	Password  string
-	From      string
-	To        []string
-	DigestTo  []string
-	DigestAt  string
-	HiveName  string
-	Spoke     string
-	Version   string
-	Now       func() time.Time
+	Host     string
+	Port     int
+	Username string
+	Password string
+	From     string
+	To       []string
+	DigestTo []string
+	DigestAt string
+	HiveName string
+	Spoke    string
+	Version  string
+	Now      func() time.Time
+	// Logger and Audit report a digest mail the background sender could not
+	// deliver. Both may be nil.
+	Logger    *slog.Logger
+	Audit     AuditFunc
 	tlsConfig *tls.Config
 }
 
 type EmailSink struct {
-	cfg     EmailConfig
+	cfg EmailConfig
+	buf *digestBuffer
+}
+
+// digestBuffer holds the info/decision events waiting for the next digest
+// mail. It lives behind a pointer so a reconfigured sink can adopt its
+// predecessor's buffer (InheritDigest) instead of starting empty.
+type digestBuffer struct {
 	mu      sync.Mutex
 	day     string
 	dig     []Event
@@ -48,7 +60,19 @@ func NewEmailSink(cfg EmailConfig) *EmailSink {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &EmailSink{cfg: cfg}
+	return &EmailSink{cfg: cfg, buf: &digestBuffer{}}
+}
+
+// InheritDigest makes s share prev's pending digest, so replacing the sink on
+// a config reload does not discard the events collected since the last
+// digest mail. Call it before s is registered or started; events prev is
+// still recording, or restores after a failed send, land in the shared
+// buffer.
+func (s *EmailSink) InheritDigest(prev *EmailSink) {
+	if prev == nil || prev == s {
+		return
+	}
+	s.buf = prev.buf
 }
 
 func (s *EmailSink) Name() string { return "email" }
@@ -82,57 +106,97 @@ func (s *EmailSink) StartDigest(ctx context.Context) {
 				t.Stop()
 				return
 			case <-t.C:
-				_ = s.SendDigest(ctx)
+				if err := s.SendDigest(ctx); err != nil {
+					s.reportDigestFailure(err)
+				}
 			}
 		}
 	}()
 }
 
+// SendDigest mails the pending digest. On a send failure the events are put
+// back in the buffer, ahead of anything recorded meanwhile, so the next
+// digest still carries them.
 func (s *EmailSink) SendDigest(ctx context.Context) error {
-	s.mu.Lock()
-	events := append([]Event(nil), s.dig...)
-	dropped := s.dropped
-	s.dig = nil
-	s.dropped = 0
+	b := s.buf
+	b.mu.Lock()
+	events := b.dig
+	dropped := b.dropped
+	b.dig = nil
+	b.dropped = 0
 	day := s.cfg.Now().Format("2006-01-02")
-	s.day = day
-	s.mu.Unlock()
+	b.day = day
+	b.mu.Unlock()
 	if len(events) == 0 || len(s.cfg.DigestTo) == 0 {
 		return nil
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "Hive escalation digest for %s\n\n", day)
+	var body strings.Builder
+	fmt.Fprintf(&body, "Hive escalation digest for %s\n\n", day)
 	if dropped > 0 {
-		fmt.Fprintf(&b, "Dropped %d older digest event(s) because the digest buffer was full.\n\n", dropped)
+		fmt.Fprintf(&body, "Dropped %d older digest event(s) because the digest buffer was full.\n\n", dropped)
 	}
 	for _, ev := range events {
-		fmt.Fprintf(&b, "- [%s] %s", ev.Severity, ev.Title)
+		fmt.Fprintf(&body, "- [%s] %s", ev.Severity, ev.Title)
 		if ev.Link != "" {
-			fmt.Fprintf(&b, " (%s)", ev.Link)
+			fmt.Fprintf(&body, " (%s)", ev.Link)
 		}
 		if ev.Body != "" {
-			fmt.Fprintf(&b, "\n  %s", oneLine(ev.Body))
+			fmt.Fprintf(&body, "\n  %s", oneLine(ev.Body))
 		}
-		b.WriteString("\n")
+		body.WriteString("\n")
 	}
-	b.WriteString("\n" + s.footer())
-	return s.send(ctx, s.cfg.DigestTo, "Hive escalation digest", b.String())
+	body.WriteString("\n" + s.footer())
+	if err := s.send(ctx, s.cfg.DigestTo, "Hive escalation digest", body.String()); err != nil {
+		b.restore(events, dropped)
+		return fmt.Errorf("send digest of %d event(s): %w", len(events), err)
+	}
+	return nil
+}
+
+// restore puts a digest that failed to send back in front of the events
+// recorded since, keeping the newest maxDigestEvents and counting the rest as
+// dropped.
+func (b *digestBuffer) restore(events []Event, dropped int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	merged := append(events, b.dig...)
+	if over := len(merged) - maxDigestEvents; over > 0 {
+		merged = append([]Event(nil), merged[over:]...)
+		dropped += over
+	}
+	b.dig = merged
+	b.dropped += dropped
+}
+
+func (s *EmailSink) reportDigestFailure(err error) {
+	b := s.buf
+	b.mu.Lock()
+	pending := len(b.dig)
+	b.mu.Unlock()
+	detail := fmt.Sprintf("error=%v pending=%d", err, pending)
+	if s.cfg.Logger != nil {
+		s.cfg.Logger.Warn("escalation digest mail failed; events kept for the next digest", "sink", s.Name(), "pending", pending, "error", err)
+	}
+	if s.cfg.Audit != nil {
+		s.cfg.Audit("escalation_digest_failed", detail, s.Name())
+	}
 }
 
 func (s *EmailSink) recordDigest(ev Event) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	b := s.buf
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	day := s.cfg.Now().Format("2006-01-02")
-	if s.day == "" {
-		s.day = day
+	if b.day == "" {
+		b.day = day
 	}
-	if len(s.dig) >= maxDigestEvents {
-		copy(s.dig, s.dig[1:])
-		s.dig[len(s.dig)-1] = Event{}
-		s.dig = s.dig[:len(s.dig)-1]
-		s.dropped++
+	if len(b.dig) >= maxDigestEvents {
+		copy(b.dig, b.dig[1:])
+		b.dig[len(b.dig)-1] = Event{}
+		b.dig = b.dig[:len(b.dig)-1]
+		b.dropped++
 	}
-	s.dig = append(s.dig, ev)
+	b.dig = append(b.dig, ev)
 }
 
 func (s *EmailSink) send(ctx context.Context, to []string, subject, body string) error {
