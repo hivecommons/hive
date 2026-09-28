@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-28 (v5.76.2)
+
+### Fixed
+
+- Fixed the `scale-envelope.md` citation of the issue oldest-first sort in `src/pkg/github/client.go` that drifted after the ranking-tier change and failed the relative-links check on every open PR.
+
+## 2026-09-28 (v5.76.1)
+
+### Fixed
+
+- A hive whose ID contains "hold" (e.g. `hosted-available-oke-11-placeholder-r05x`) no longer treats its own `hive/<id>` provenance label as a hold label. The substring hold rule was parking every issue and PR the hive had ever claimed — excluded from the actionable set, skipped by the automerge sweep, and counted as on hold (69 items on one spoke). Provenance labels are now exempt from hold matching; `hold`, `*hold*`, and `hive-pause/<id>` behave as before.
+
 ## 2026-09-28 (v5.76.0)
 
 ### Added

@@ -86,7 +86,8 @@ type Client struct {
 	noCIAllowedRepos          map[string]bool
 	mergeAlertMu              sync.Mutex
 	mergeAlertSink            MergeFailureAlertSink
-	mergeAlertIDsByRepo       map[string]map[string]bool
+	mergeAlertIDsByRepo       map[string]map[string]mergeAlertEntry
+	mergeAlertLastRevalidate  time.Time
 	logger                    *slog.Logger
 	appAuth                   *AppAuth // nil for token-authenticated clients
 	canariesEnabled           bool
