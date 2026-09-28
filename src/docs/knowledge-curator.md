@@ -23,7 +23,7 @@ subdirectory of one) as a knowledge source, so agents get facts from an
 external repo — a runbook repo, an upstream docs repo, a shared pattern
 library — primed into their kicks the same way wiki-layer facts are. This is
 implemented and live, unlike curator scheduling above: `pkg/knowledge/gitsource.go`
-does the cloning, indexing, and periodic sync; `cmd/hive/main.go:2303-2347`
+does the cloning, indexing, and periodic sync; `cmd/hive/main.go:2304-2348`
 wires configured entries at startup.
 
 ```yaml
@@ -133,7 +133,7 @@ and are the *same* underlying list as `knowledge.git_sources` in
 - `DELETE` disconnects the live source and removes matching entries from
   `Config.Knowledge.GitSources`, then persists (`api_knowledge.go:1005-1015`).
 - Editing `git_sources:` directly in `hive.yaml` takes effect on the next
-  process restart (main.go's startup loop at `cmd/hive/main.go:2420-2466`);
+  process restart (main.go's startup loop at `cmd/hive/main.go:2421-2467`);
   it does not hot-reload while the process is running. Use the API for a
   live change without a restart.
 
@@ -159,7 +159,7 @@ and are the *same* underlying list as `knowledge.git_sources` in
 ## Local vaults (`knowledge.vaults`)
 
 `knowledge.vaults` lists local file-based (Obsidian-style) vaults that main.go
-auto-connects at boot (`cmd/hive/main.go:2381-2417`):
+auto-connects at boot (`cmd/hive/main.go:2382-2418`):
 
 ```yaml
 knowledge:
@@ -187,7 +187,7 @@ to the knowledge API, and registers its store with the kick primer at the
 ## Document sources (`knowledge.documents`)
 
 `knowledge.documents` imports standalone documents (PDF, HTML, markdown,
-plain text) as knowledge facts at boot (`cmd/hive/main.go:2467-2494`):
+plain text) as knowledge facts at boot (`cmd/hive/main.go:2468-2495`):
 
 ```yaml
 knowledge:
@@ -212,7 +212,7 @@ imported at runtime via `POST /api/knowledge/documents` — see
 The bead synthesizer periodically scans every agent's **closed** beads,
 classifies them into wiki fact types, and writes the results into a dedicated
 vault so future kicks are primed with past findings
-(`pkg/knowledge/bead_synthesizer.go`, wired at `cmd/hive/main.go:2508-2581`).
+(`pkg/knowledge/bead_synthesizer.go`, wired at `cmd/hive/main.go:2509-2582`).
 
 **It is on by default.** `enabled` is a tri-state pointer that defaults to
 true when absent (`IsEnabled`, `pkg/config/knowledge_config.go:51-56`), and

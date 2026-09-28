@@ -27,6 +27,7 @@ import (
 	"github.com/hivecommons/hive/pkg/apphealth"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/celtrigger"
+	"github.com/hivecommons/hive/pkg/chat"
 	"github.com/hivecommons/hive/pkg/classify"
 	"github.com/hivecommons/hive/pkg/config"
 	convergenceaudit "github.com/hivecommons/hive/pkg/convergence/audit"
@@ -4411,18 +4412,44 @@ func (b *boot) personaLearningConfig() persona.LearningConfig {
 	}
 }
 
-// bootLaunchWith is bootLaunch with its goroutines, Discord bot, stagger
-// wait, and agent starts injected; see bootLaunchDeps.
+// chatPersonaStores opens the durable persona store every chat transport
+// shares (hivecommons/hive#9175) and returns the per-transport view for a
+// transport name (its Backend.Name()). When the store cannot be opened the
+// failure is logged once and every view is nil, so each transport falls back
+// to process-local personas instead of failing to start; a malformed file is
+// left on disk untouched for the operator to repair.
+func (b *boot) chatPersonaStores(deps bootLaunchDeps) func(transport string) chat.PersonaStore {
+	var store *chat.FilePersonaStore
+	if deps.openPersonaStore != nil {
+		opened, err := deps.openPersonaStore()
+		if err != nil {
+			b.logger.Warn("chat persona store unavailable; personas will not survive a restart", "error", err)
+		} else {
+			store = opened
+		}
+	}
+	return func(transport string) chat.PersonaStore {
+		if store == nil {
+			return nil
+		}
+		return store.ForTransport(transport)
+	}
+}
+
+// bootLaunchWith is bootLaunch with its goroutines, Discord bot, persona
+// store, stagger wait, and agent starts injected; see bootLaunchDeps.
 func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 	var agentNameList []string
 	for name := range b.cfg.EnabledAgents() {
 		agentNameList = append(agentNameList, name)
 	}
+	personaStore := b.chatPersonaStores(deps)
 	if deps.startDashChat != nil {
 		bot, err := deps.startDashChat(b.ctx, dashchat.Config{
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    dashboardChatAllowedUsers(b.cfg),
+			PersonaStore:    personaStore("dashboard"),
 			PersonaLearning: b.personaLearningConfig,
 			AuditSink:       b.dashSrv.AgentAuditSink(),
 		}, agentNameList, b.logger)
@@ -4447,6 +4474,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.Discord.AllowedUsers,
+			PersonaStore:    personaStore("discord"),
 			PersonaLearning: b.personaLearningConfig,
 			AuditSink:       b.dashSrv.AgentAuditSink(),
 		}, agentNameList, b.logger)
@@ -4466,6 +4494,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.Slack.AllowedUsers,
+			PersonaStore:    personaStore("slack"),
 			PersonaLearning: b.personaLearningConfig,
 			AuditSink:       b.dashSrv.AgentAuditSink(),
 		}, b.logger)
@@ -4484,6 +4513,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.Telegram.AllowedUsers,
+			PersonaStore:    personaStore("telegram"),
 			PersonaLearning: b.personaLearningConfig,
 			AuditSink:       b.dashSrv.AgentAuditSink(),
 		}, b.logger)
@@ -4503,6 +4533,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.Matrix.AllowedUsers,
+			PersonaStore:    personaStore("matrix"),
 			PersonaLearning: b.personaLearningConfig,
 			AuditSink:       b.dashSrv.AgentAuditSink(),
 		}, b.logger)
@@ -4525,6 +4556,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.MSTeams.AllowedUsers,
+			PersonaStore:    personaStore("msteams"),
 			PersonaLearning: b.personaLearningConfig,
 			AuditSink:       b.dashSrv.AgentAuditSink(),
 		}, b.logger)

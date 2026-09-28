@@ -145,7 +145,7 @@ Prerequisites:
 - Configure the Discord bot token, channel ID, and the maintainer's Discord user
   ID in `allowed_users`; the Discord config structure uses `bot_token`,
   `channel_id`, and `allowed_users` (`src/pkg/config/config.go:4144-4154`).
-  The backend refuses to start without the bot token (`Start`, `src/pkg/discord/bot.go:101-108`).
+  The backend refuses to start without the bot token (`Start`, `src/pkg/discord/bot.go:105-112`).
 
 Run:
 
@@ -160,7 +160,7 @@ Run:
    `discord SSE disconnected` and backs off before reconnecting
    (`src/pkg/chat/notify.go:46-81`). If you instead interrupt Discord REST,
    save the `discord poll failed` log line and the later successful command or
-   notification proving recovery (`Listen`, `src/pkg/discord/bot.go:188-220`).
+   notification proving recovery (`Listen`, `src/pkg/discord/bot.go:192-224`).
 
 Evidence checklist:
 
@@ -182,7 +182,7 @@ Prerequisites:
   field names and fail-closed allowed-user contract are in `MSTeamsConfig`
   (`src/pkg/config/config.go:4127-4141`), and validation/startup require all
   Teams connection fields (`src/pkg/config/validate.go:107-125`,
-  `src/pkg/msteams/bot.go:177-195`).
+  `src/pkg/msteams/bot.go:180-198`).
 - `webhook_url` must be a Teams **Workflows** webhook URL: in the target
   channel, add the "Post to a channel when a webhook request is received"
   workflow and copy its URL. Hive posts Adaptive Card message envelopes to it.
@@ -224,7 +224,7 @@ Prerequisites:
   `room_id`, and an `allowed_users` entry containing the maintainer's MXID. The
   config field names and allowed-user contract are in `MatrixConfig`
   (`src/pkg/config/config.go:4113-4124`), and startup requires homeserver URL,
-  access token, and room ID (`src/pkg/matrix/bot.go:160-170`).
+  access token, and room ID (`src/pkg/matrix/bot.go:164-174`).
 
 Run:
 
@@ -235,7 +235,7 @@ Run:
    transition; save the Matrix event link/screenshot.
 4. If retry/backoff occurs, save `matrix sync failed` with `retry_after`;
    successful inbound messages are delivered from `m.room.message` events after
-   `ioscan` (`src/pkg/matrix/bot.go:235-250`, `src/pkg/matrix/bot.go:263-273`).
+   `ioscan` (`src/pkg/matrix/bot.go:239-254`, `src/pkg/matrix/bot.go:267-277`).
 
 Evidence checklist:
 
@@ -255,7 +255,7 @@ Prerequisites:
   `allowed_users` with the maintainer's Telegram numeric user ID. The config
   field names and fail-closed allowed-user contract are in `TelegramConfig`
   (`src/pkg/config/config.go:4100-4110`), and startup requires bot token and
-  chat ID (`src/pkg/telegram/bot.go:120-125`).
+  chat ID (`src/pkg/telegram/bot.go:124-129`).
 
 Run:
 
@@ -266,7 +266,7 @@ Run:
    transition; save the Telegram notification screenshot/link.
 4. If retry/backoff occurs, save `telegram poll failed`; successful inbound
    messages are delivered after chat-ID filtering and `ioscan`
-   (`src/pkg/telegram/bot.go:171-188`, `src/pkg/telegram/bot.go:208-214`).
+   (`src/pkg/telegram/bot.go:175-192`, `src/pkg/telegram/bot.go:212-218`).
 
 Evidence checklist:
 
