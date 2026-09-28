@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/agentaudit"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
@@ -490,13 +491,9 @@ func TestHubExecutorSpendsStageBudgetUnderCleanupLoop(t *testing.T) {
 			now := start
 			for now.Before(start.Add(2 * leaseTTL)) {
 				hub.tickLeaseLifecycle(now)
-				deadline := time.Now().Add(10 * time.Second)
-				for e.Status().Running != 0 {
-					if time.Now().After(deadline) {
-						t.Fatal("hub executor stage did not finish")
-					}
-					time.Sleep(time.Millisecond)
-				}
+				testutil.Eventually(t, 10*time.Second, func() bool {
+					return e.Status().Running == 0
+				}, "hub executor stage did not finish")
 				now = now.Add(30 * time.Second)
 			}
 
