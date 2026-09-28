@@ -8126,6 +8126,18 @@ type AutoMergeConfig struct {
 // safety is entirely established by the repo's own CI, which the sweep gates on.
 var DefaultTrustedBotAuthors = []string{"dependabot[bot]"}
 
+// KnownBotAuthors are dependency/maintenance bots the dashboard offers as
+// one-click toggles for TrustedBotAuthors. Only DefaultTrustedBotAuthors are on
+// by default; the rest are listed so an operator can enable them without
+// having to know the exact login spelling.
+var KnownBotAuthors = []string{
+	"dependabot[bot]",
+	"renovate[bot]",
+	"mergeraptor[bot]",
+	"pre-commit-ci[bot]",
+	"github-actions[bot]",
+}
+
 // TrustedBotAuthorSet returns the lower-cased membership set of bot logins the
 // self-authored sweep may merge. nil TrustedBotAuthors → DefaultTrustedBotAuthors;
 // an explicit empty list → empty set (lane disabled).

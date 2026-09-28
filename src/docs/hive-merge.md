@@ -142,6 +142,17 @@ auto_merge:
     - renovate[bot]
 ```
 
+The same list is editable from the dashboard: **Settings → Features → Auto
+merge → Trusted bot authors** shows a toggle per bot. Known dependency bots
+(`dependabot`, `renovate`, `mergeraptor`, `pre-commit-ci`, `github-actions`)
+are listed first, bots currently authoring open PRs in your repos are
+discovered from the last scan and listed automatically, and any other login
+can be typed in. Saving writes `auto_merge.trusted_bot_authors` in full;
+turning every bot off writes an explicit empty list (App-only sweep). The
+underlying endpoint is `GET/PUT /api/config/auto-merge` (owner-only), whose
+response carries `bot_authors: [{login, source: known|discovered|custom,
+trusted}]`.
+
 ## Usage
 
 ```sh
