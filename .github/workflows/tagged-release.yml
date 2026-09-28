@@ -7,12 +7,12 @@ name: Tagged Release
 # the short version.
 #
 # TRIGGER: `workflow_run` on "Build and Push Docker Image" (docker.yml)
-# completing successfully on branch v5. NOT a tag push — there is no tag until
-# THIS workflow creates one. Chaining off docker.yml rather than a parallel
-# `push: branches: [v5]` trigger means this workflow only ever runs after the
-# continuous-delivery images for that exact commit are already published,
-# which is also the digest this workflow retags — it can never race ahead of
-# or duplicate that build.
+# completing successfully on the release line this run serves. NOT a tag push
+# — there is no tag until THIS workflow creates one. Chaining off docker.yml
+# rather than a parallel `push:` trigger means this workflow only ever runs
+# after the continuous-delivery images for that exact commit are already
+# published, which is also the digest this workflow retags — it can never
+# race ahead of or duplicate that build.
 #
 # DECISION: src/scripts/derive-release-version.sh reads CHANGELOG.md's
 # `## Unreleased` section (already the human-curated, PR-time judgment call
@@ -141,9 +141,19 @@ on:
     - cron: "37 * * * *"
   workflow_dispatch:
 
+# RELEASE LINE (#9154): the line is the branch this run was started from —
+# the default branch for `workflow_run`/`schedule`, the chosen ref for
+# `workflow_dispatch` — never a literal. The `decide` job refuses unless that
+# branch is under `release_lines` in .github/release-lines.yml, so the same
+# file is correct on every line, a dispatch from a development line (v6 before
+# its GA cut) can no longer release another line's tip, and cutting a new line
+# needs no edit here. Checklist: src/docs/release-line-guard.md.
 concurrency:
-  group: tagged-release-v5
+  group: tagged-release-${{ github.ref_name }}
   cancel-in-progress: false
+
+env:
+  RELEASE_LINE: ${{ github.ref_name }}
 
 permissions:
   contents: write
@@ -163,15 +173,16 @@ permissions:
 
 jobs:
   decide:
-    # workflow_run: only a successful docker.yml build of a real v5 push (a
+    # workflow_run: only a successful docker.yml build of a real push to the
+    # release line (a
     # workflow_dispatch build is the scratch-branch gate dance this workflow
     # itself starts — releasing off it would be releasing off our own tail).
     # schedule/workflow_dispatch: the #5318 backstop, which has no triggering
-    # run to qualify and instead resolves v5's current tip below.
+    # run to qualify and instead resolves the line's current tip below.
     if: >-
       github.event_name != 'workflow_run' || (
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'v5' &&
+      github.event.workflow_run.head_branch == github.ref_name &&
       github.event.workflow_run.event != 'workflow_dispatch' )
     runs-on: ubuntu-latest
     outputs:
@@ -181,7 +192,7 @@ jobs:
       sha: ${{ steps.target.outputs.sha }}
     steps:
       # workflow_run carries the exact commit docker.yml built. The backstop
-      # has no such commit, so it resolves v5's tip — whose images are already
+      # has no such commit, so it resolves the line's tip — whose images are already
       # published (its docker.yml run completed long before an hourly tick),
       # which is what keeps the retag honest.
       - name: Resolve the commit to consider releasing
@@ -194,8 +205,8 @@ jobs:
             sha="${{ github.event.workflow_run.head_sha }}"
             echo "Triggered by docker.yml on ${sha}."
           else
-            sha="$(gh api "repos/${{ github.repository }}/branches/v5" --jq .commit.sha)"
-            echo "Backstop (${{ github.event_name }}): considering v5 tip ${sha}."
+            sha="$(gh api "repos/${{ github.repository }}/branches/${RELEASE_LINE}" --jq .commit.sha)"
+            echo "Backstop (${{ github.event_name }}): considering ${RELEASE_LINE} tip ${sha}."
           fi
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
 
@@ -204,6 +215,20 @@ jobs:
         with:
           ref: ${{ steps.target.outputs.sha }}
           fetch-depth: 0 # full history + tags: derive-release-version.sh reads `git tag`
+
+      # #9154: refuse any branch that is not a declared release line, read
+      # from the manifest in the tree being considered. Without this, a
+      # dispatch from a development line would derive and tag it as if it
+      # were one. A red run is right here: every automatic trigger resolves
+      # to the default branch, so only a manual dispatch from the wrong ref
+      # can reach the refusal.
+      - name: Require the triggering branch to be a declared release line
+        run: |
+          set -euo pipefail
+          if ! src/scripts/check-release-lines.sh --is-release-line "$RELEASE_LINE"; then
+            echo "::error::Tagged Release was started from '${RELEASE_LINE}', which is not under release_lines in .github/release-lines.yml, so it has no tag line to cut. Dispatch it from a release line, or cut this branch as one first (src/docs/release-line-guard.md)." >&2
+            exit 1
+          fi
 
       # The backstop must not tag a commit whose images were never published:
       # it retags an existing digest, so a tip whose docker.yml run is still
@@ -222,15 +247,15 @@ jobs:
         run: |
           set -euo pipefail
           sha="${{ steps.target.outputs.sha }}"
-          # A `push` run is the normal case; a `workflow_dispatch` run on v5
-          # is the post-release exact-SHA rebuild of a GITHUB_TOKEN merge commit
-          # (#6380). Both publish the <sha> / v5-latest / candidate tags, so
-          # both count as published for the backstop.
+          # A `push` run is the normal case; a `workflow_dispatch` run on the
+          # line is the post-release exact-SHA rebuild of a GITHUB_TOKEN merge
+          # commit (#6380). Both publish the <sha> / <line>-latest / channel
+          # tags, so both count as published for the backstop.
           conclusion="$(gh api \
             "repos/${{ github.repository }}/actions/workflows/docker.yml/runs?head_sha=${sha}&status=completed" \
-            --jq '[.workflow_runs[] | select(.event == "push" or (.event == "workflow_dispatch" and .head_branch == "v5"))] | last | .conclusion // ""')"
+            --jq "[.workflow_runs[] | select(.event == \"push\" or (.event == \"workflow_dispatch\" and .head_branch == \"${RELEASE_LINE}\"))] | last | .conclusion // \"\"")"
           if [ "$conclusion" != "success" ]; then
-            echo "::warning::Backstop standing down: docker.yml has no successful completed publishing run for v5 tip ${sha} (found '${conclusion:-none}'), so there is no published digest to retag. The next hourly tick will retry. If this persists, the images for v5's tip are not being built (#5318)."
+            echo "::warning::Backstop standing down: docker.yml has no successful completed publishing run for ${RELEASE_LINE} tip ${sha} (found '${conclusion:-none}'), so there is no published digest to retag. The next hourly tick will retry. If this persists, the images for ${RELEASE_LINE}'s tip are not being built (#5318)."
             echo "published=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -251,22 +276,20 @@ jobs:
         id: derive
         if: github.event_name == 'workflow_run' || steps.images.outputs.published == 'true'
         # The checkout above is a detached SHA, so the script cannot read the
-        # line from the branch name; name it explicitly. This workflow is
-        # pinned to v5 everywhere else (concurrency, --base, --ref), and the
-        # script refuses to run without it.
-        env:
-          RELEASE_LINE: v5
+        # line from the branch name; it reads the workflow-level RELEASE_LINE
+        # instead (the same value as concurrency, --base, --ref), and refuses
+        # to run without it.
         run: src/scripts/derive-release-version.sh
 
-  # Cheap supersession check BEFORE the expensive release job (#5142): if v5
-  # already moved past the commit this run was triggered for, every minute
+  # Cheap supersession check BEFORE the expensive release job (#5142): if the
+  # line already moved past the commit this run was triggered for, every minute
   # spent here is wasted — the final push can only ever be rejected
   # non-fast-forward — and worse, the `concurrency` group above serializes
   # release runs, so a doomed run delays the successor that CAN release. One
   # API call decides in seconds.
   #
   # #5318: this job used to claim the successor was GUARANTEED to exist ("the
-  # merge that advanced v5 triggered docker.yml, whose completion triggers
+  # merge that advanced the line triggered docker.yml, whose completion triggers
   # tagged-release.yml for that newer tip"). That guarantee does not hold — a
   # cancelled docker.yml run fires no workflow_run at all, and a successor
   # that does fire applies this same test and defers again. Deferring is still
@@ -282,19 +305,19 @@ jobs:
     outputs:
       proceed: ${{ steps.tip.outputs.proceed }}
     steps:
-      - name: Defer to the successor run if v5 already advanced
+      - name: Defer to the successor run if the release line already advanced
         id: tip
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           sha="${{ needs.decide.outputs.sha }}"
-          tip="$(gh api "repos/${{ github.repository }}/branches/v5" --jq .commit.sha)"
+          tip="$(gh api "repos/${{ github.repository }}/branches/${RELEASE_LINE}" --jq .commit.sha)"
           if [ "$tip" = "$sha" ]; then
-            echo "v5 is still at ${sha} — proceeding with the release."
+            echo "${RELEASE_LINE} is still at ${sha} — proceeding with the release."
             echo "proceed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::Release opportunity skipped for ${sha}: v5 is already at ${tip}. Deferring — this run's images were built from the older tree, so it must not tag. Unreleased is untouched, so nothing is dropped: either a successor run releases it, or the hourly backstop does. See the RACES note and the BACKSTOP note in this workflow's header (#5142/#5318)."
+            echo "::warning::Release opportunity skipped for ${sha}: ${RELEASE_LINE} is already at ${tip}. Deferring — this run's images were built from the older tree, so it must not tag. Unreleased is untouched, so nothing is dropped: either a successor run releases it, or the hourly backstop does. See the RACES note and the BACKSTOP note in this workflow's header (#5142/#5318)."
             echo "proceed=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -482,7 +505,7 @@ jobs:
       # silently couple a version tag to it.
       - name: Confirm channel tags were not touched
         run: |
-          echo "This workflow only ever writes vX.Y.Z tags. stable/candidate/edge are owned exclusively by docker.yml's merge jobs on every push to v5, independent of whether a release was cut here."
+          echo "This workflow only ever writes vX.Y.Z tags. stable/candidate/edge are owned exclusively by docker.yml's merge jobs on every push to a release branch, independent of whether a release was cut here."
 
       # SBOM: a standalone release ARTIFACT, not an in-image attestation.
       #
@@ -686,7 +709,7 @@ jobs:
               pending)
                 ;;
               *)
-                echo "::error::gate concluded '${conclusion}' on ${commit_sha} — cannot push to v5." >&2
+                echo "::error::gate concluded '${conclusion}' on ${commit_sha} — cannot push to ${RELEASE_LINE}." >&2
                 exit 1
                 ;;
             esac
@@ -728,8 +751,8 @@ jobs:
       # pinned to ACTIONS_TOKEN below, like the docker.yml dispatch (#6380)
       # already was. Widening the PAT instead would hand a long-lived secret
       # readable by every workflow more power than this one step needs.
-      - name: Open and merge a PR from the scratch branch into v5
-        id: push_v5
+      - name: Open and merge a PR from the scratch branch into the release line
+        id: push_line
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN != '' && secrets.RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}
           ACTIONS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -838,9 +861,9 @@ jobs:
             -f context=gate \
             -f description="docker.yml gate verified for automated release"
 
-          echo "Opening a PR from ${scratch} into v5..."
+          echo "Opening a PR from ${scratch} into ${RELEASE_LINE}..."
           if ! pr_url="$(gh pr create \
-              --base v5 \
+              --base "$RELEASE_LINE" \
               --head "${scratch}" \
               --title "release: v${VERSION}" \
               --body "Automated release PR (#5222/#5356). Merges the release commit for v${VERSION}, carrying a successful gate check and mirrored status on ${commit_sha}." 2>&1)"; then
@@ -931,9 +954,9 @@ jobs:
               # #6380: the GITHUB_TOKEN-authenticated merge cannot emit a push
               # event to docker.yml. Dispatch immediately after the merge,
               # before tag work widens the ordering window; pass the API's exact
-              # SHA because the v5 ref can advance before the build starts.
-              echo "Dispatching docker.yml for merged release commit ${release_sha} on v5 (#6380)..."
-              GH_TOKEN="$ACTIONS_TOKEN" gh workflow run docker.yml --ref v5 \
+              # SHA because the line's ref can advance before the build starts.
+              echo "Dispatching docker.yml for merged release commit ${release_sha} on ${RELEASE_LINE} (#6380)..."
+              GH_TOKEN="$ACTIONS_TOKEN" gh workflow run docker.yml --ref "$RELEASE_LINE" \
                 -f "release_sha=${release_sha}" \
                 -f "release_version=v${VERSION}"
               break
@@ -943,7 +966,7 @@ jobs:
             # modified" (the sha= guard fired) or "Base branch was modified" —
             # both are the base-moved case, not something a retry fixes.
             if grep -qiE 'base branch was modified|head branch was modified|is out of date|HTTP 409' <<<"$out"; then
-              echo "::warning::Release opportunity skipped for ${SHA}: v5 advanced while this run was in flight — deferring (see the RACES note, #5142/#5222). Nothing was pushed; Unreleased is untouched, so either a successor run or the hourly backstop (#5318) releases it."
+              echo "::warning::Release opportunity skipped for ${SHA}: ${RELEASE_LINE} advanced while this run was in flight — deferring (see the RACES note, #5142/#5222). Nothing was pushed; Unreleased is untouched, so either a successor run or the hourly backstop (#5318) releases it."
               echo "pushed=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -955,21 +978,21 @@ jobs:
                 sleep 8
                 continue
               fi
-              echo "::error::PR #${pr_number} still not mergeable ${RELEASE_PUSH_GH006_WINDOW:-120}s after gate succeeded on ${commit_sha} — this is no longer a settling-time artifact. Note this merge is SHA-keyed (#5318/#5324), so a pending non-required status such as 'tide' is no longer the cause; compare v5's REQUIRED contexts with the combined status for ${commit_sha}, including the mirrored gate status (#5356)." >&2
+              echo "::error::PR #${pr_number} still not mergeable ${RELEASE_PUSH_GH006_WINDOW:-120}s after gate succeeded on ${commit_sha} — this is no longer a settling-time artifact. Note this merge is SHA-keyed (#5318/#5324), so a pending non-required status such as 'tide' is no longer the cause; compare ${RELEASE_LINE}'s REQUIRED contexts with the combined status for ${commit_sha}, including the mirrored gate status (#5356)." >&2
               exit 1
             fi
             echo "::error::merging PR #${pr_number} failed for an unrecognized reason (see the API response above) — not retrying." >&2
             exit 1
           done
 
-          # The merge landed a NEW commit on v5 (a merge commit, or the same
+          # The merge landed a NEW commit on the line (a merge commit, or the same
           # tree via fast-forward depending on PR mergeability). Fetch it so
           # the object exists locally, but tag the merge API's exact returned
           # SHA rather than re-resolving a branch that another PR can advance
           # between our merge and this fetch.
-          git fetch origin v5
-          if ! git merge-base --is-ancestor "$release_sha" origin/v5; then
-            echo "::error::merge API returned ${release_sha}, but it is not contained in fetched origin/v5; refusing to tag or dispatch it." >&2
+          git fetch origin "$RELEASE_LINE"
+          if ! git merge-base --is-ancestor "$release_sha" "origin/${RELEASE_LINE}"; then
+            echo "::error::merge API returned ${release_sha}, but it is not contained in fetched origin/${RELEASE_LINE}; refusing to tag or dispatch it." >&2
             exit 1
           fi
           git tag "v${VERSION}" "$release_sha"
@@ -991,7 +1014,7 @@ jobs:
       # auto-generated commit/PR summary so a Release is still created with a
       # useful body instead of leaving a tag-only ledger gap.
       - name: Create GitHub Release
-        if: steps.push_v5.outputs.pushed == 'true'
+        if: steps.push_line.outputs.pushed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -1008,15 +1031,15 @@ jobs:
             echo
             echo "---"
             echo
-            echo "**SBOMs:** SPDX JSON, generated by Syft against the linux/amd64 image digest, attached below for \`hive\`, \`hive-contributor\`, and \`hive-hub\`. They cover linux/amd64 only — see [releases.md](https://github.com/${{ github.repository }}/blob/v5/src/docs/releases.md#software-bill-of-materials-sbom) for why linux/arm64 is not scanned separately."
+            echo "**SBOMs:** SPDX JSON, generated by Syft against the linux/amd64 image digest, attached below for \`hive\`, \`hive-contributor\`, and \`hive-hub\`. They cover linux/amd64 only — see [releases.md](https://github.com/${{ github.repository }}/blob/${RELEASE_LINE}/src/docs/releases.md#software-bill-of-materials-sbom) for why linux/arm64 is not scanned separately."
             echo
-            echo "**NOTICE:** third-party license attribution for the Go module dependencies compiled into these images, attached below. Does not cover base-image OS packages or the Node.js/tmux layers built from source — see [releases.md](https://github.com/${{ github.repository }}/blob/v5/src/docs/releases.md#third-party-notices) for the exact boundary."
+            echo "**NOTICE:** third-party license attribution for the Go module dependencies compiled into these images, attached below. Does not cover base-image OS packages or the Node.js/tmux layers built from source — see [releases.md](https://github.com/${{ github.repository }}/blob/${RELEASE_LINE}/src/docs/releases.md#third-party-notices) for the exact boundary."
           } >> "$notes_file"
           gh release create "v${VERSION}" \
             --repo "${{ github.repository }}" \
             --title "v${VERSION}" \
             --notes-file "$notes_file" \
-            --target v5 \
+            --target "$RELEASE_LINE" \
             "hive-v${VERSION}-sbom.spdx.json" \
             "hive-contributor-v${VERSION}-sbom.spdx.json" \
             "hive-hub-v${VERSION}-sbom.spdx.json" \
