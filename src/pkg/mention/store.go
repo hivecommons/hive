@@ -87,15 +87,15 @@ func (s *Store) Seen(id string) bool {
 	return id != "" && s.state.Seen[id]
 }
 
-func (s *Store) Mark(repo, id string, t time.Time) error {
+// Mark records id as handled. It never moves a repo's watermark: the poller
+// alone advances that, because only it knows which earlier mentions in the
+// same listing still await a retry.
+func (s *Store) Mark(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pruneExpiredLocked(time.Now(), "mutation")
 	if id != "" {
 		s.state.Seen[id] = true
-	}
-	if t.After(s.state.Watermarks[repo]) {
-		s.state.Watermarks[repo] = t
 	}
 	return s.saveLocked()
 }

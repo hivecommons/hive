@@ -83,7 +83,7 @@ func TestStageCommenterDoesNotAdvanceMentionWatermark(t *testing.T) {
 	store, _ := NewStore("")
 	repo := "org/repo"
 	before := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
-	if err := store.Mark(repo, "mention-comment-1", before); err != nil {
+	if err := store.Advance(repo, before); err != nil {
 		t.Fatal(err)
 	}
 	gh := &stageCommentGH{}
