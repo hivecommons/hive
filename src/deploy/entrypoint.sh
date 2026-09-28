@@ -1202,46 +1202,65 @@ if [ "$(id -u)" = "0" ]; then
     return 0
   }
 
-  # hive_fix_entries_sh — the per-batch repair script hive_fix_walk hands to
-  # `find -exec sh -c`. Its arguments are MODE and then the batch of paths ONE
-  # find enumeration produced, and it applies chmod, chown, chmod to exactly
-  # that batch, in that order (#9226).
+  # The tree repair used to be three independent walks: chmod every entry,
+  # then g+s every directory, then `chown dev:node` every entry (#9226). An
+  # entry an agent created after the chmod walk had passed its directory but
+  # before the chown walk reached it was chowned WITHOUT having been chmodded:
+  # a copilot session file the agent had just created owner-only
+  # (hive-sec-check, 0600) became dev-owned 0600, and its own creator -- no
+  # longer the owner, not granted by the group -- got EACCES appending to it
+  # until a later chmod. The in-process Go watcher (fixEntry) is no reliable
+  # backstop: it chmods only entries dev owns, never an agent-owned one, and
+  # does so from an unbounded 10s walk of the same tree. On the hourly
+  # unbounded pass each walk takes minutes over a large .copilot/session-state,
+  # so the window was minutes wide, and the failed append is a failed
+  # `session.send`, not just lost telemetry.
   #
-  # The repair used to be three independent walks: chmod every entry, then g+s
-  # every directory, then chown every entry. An entry an agent created after
-  # the chmod walk had passed its directory but before the chown walk reached
-  # it was therefore chowned WITHOUT having been chmodded: a copilot session
-  # file the agent had just created owner-only (hive-sec-check, 0600) became
-  # dev-owned 0600, and its own creator -- no longer the owner, not granted by
-  # the group -- got EACCES appending to it until the next cycle's chmod. On the
-  # hourly unbounded pass the walks take minutes each over a large
-  # .copilot/session-state, so that window was minutes wide, and the failed
-  # append is a failed `session.send`, not just lost telemetry.
+  # Two changes close it, in hive_fix_walk below:
+  #   1. Agent-owned entries are never re-owned. Handing an agent's file to dev
+  #      is what turned a transient mode gap into a lock-out of its creator;
+  #      the group (node) plus g+rw is all any peer needs. Non-root entries are
+  #      only regrouped to node, keeping their owner -- the same rule the Go
+  #      watcher applies (fixEntry: uid 0 -> dev, otherwise keep the uid).
+  #   2. One find enumeration feeds both chmod and chown, so an entry created
+  #      mid-sweep is either in the batch (and chmodded first) or not touched.
   #
-  # One enumeration fixes that: no entry reaches chown without first passing
-  # the chmod in front of it. The trailing chmod closes the remaining gap -- a
-  # path whose inode an agent swapped by rename between the first chmod and the
-  # chown would otherwise be left dev-owned and owner-only; the final chmod on
-  # the same path makes the end state group-writable whichever inode is there.
-  # `chown -h` so a path that became a symlink mid-batch moves the link, never
-  # its target. `exit 0`: find must not report a batch failure as the guard's.
-  hive_fix_entries_sh() {
-    printf '%s' 'm=$1; shift; chmod "$m" "$@" 2>/dev/null; chown -h dev:node "$@" 2>/dev/null; chmod "$m" "$@" 2>/dev/null; exit 0'
+  # hive_fix_regroup_sh — batch script for non-root entries: chmod MODE,
+  # regroup to node, chmod MODE again, over the whole batch. No ownership
+  # changes here, so a chmod failing for one entry cannot lock anyone out, and
+  # batching keeps the walk to one `sh` per few thousand entries. The trailing
+  # chmod makes a path whose inode an agent replaced by rename mid-batch end
+  # group-writable anyway. `exit 0`: a batch failure is not the guard's.
+  hive_fix_regroup_sh() {
+    printf '%s' 'm=$1; shift; chmod "$m" "$@" 2>/dev/null; chown -h :node "$@" 2>/dev/null; chmod "$m" "$@" 2>/dev/null; exit 0'
+  }
+
+  # hive_fix_reown_sh — script for ROOT-owned entries, the only ones handed to
+  # dev (dev is the Go watcher's uid, and root-owned files lock every agent
+  # out). Per entry and gated: chown runs only after that entry's chmod
+  # succeeded, so an ownership transfer never produces an owner-only dev file.
+  # Root-owned entries are rare, so the per-entry cost is negligible.
+  hive_fix_reown_sh() {
+    printf '%s' 'm=$1; shift; for p; do chmod "$m" "$p" 2>/dev/null && chown -h dev:node "$p" 2>/dev/null && chmod "$m" "$p" 2>/dev/null; done; exit 0'
   }
 
   # hive_fix_walk DIR [FIND_TESTS...] — one find walk over DIR (restricted by
-  # FIND_TESTS, e.g. `-mmin -10`) feeding hive_fix_entries_sh: directories get
-  # g+rwxs, everything else g+rwX.
+  # FIND_TESTS, e.g. `-mmin -10`): directories get g+rwxs, everything else
+  # g+rwX; root-owned entries go to hive_fix_reown_sh, all others to
+  # hive_fix_regroup_sh.
   #
-  # Symlinks are excluded. chmod and chown dereference the path they are given,
-  # and agents can create links in these trees, so a link to /etc/passwd would
-  # otherwise have root re-own and group-open the target. (`chmod -R`/`chown -R`
-  # never follow links met during recursion; a find-fed chmod does.)
+  # Symlinks present when find enumerates are skipped: chmod dereferences the
+  # path it is given, and agents can create links in these trees, so passing a
+  # link through would have root group-open its target. This is not a full
+  # no-follow guarantee -- chmod has no no-follow form, so an entry an agent
+  # swaps for a link between enumeration and the chmod is still followed (the
+  # same window `chmod -R` has). `chown -h` never follows.
   hive_fix_walk() {
     [ -d "$1" ] || return 0
     _walk_root="$1"; shift
-    _walk_sh="$(hive_fix_entries_sh)"
-    find "$_walk_root" ! -type l "$@" \( -type d -exec sh -c "$_walk_sh" sh g+rwxs {} + -o -exec sh -c "$_walk_sh" sh g+rwX {} + \) 2>/dev/null || true
+    _regroup_sh="$(hive_fix_regroup_sh)"
+    _reown_sh="$(hive_fix_reown_sh)"
+    find "$_walk_root" ! -type l "$@" \( -type d -uid 0 -exec sh -c "$_reown_sh" sh g+rwxs {} + -o -type d -exec sh -c "$_regroup_sh" sh g+rwxs {} + -o -uid 0 -exec sh -c "$_reown_sh" sh g+rwX {} + -o -exec sh -c "$_regroup_sh" sh g+rwX {} + \) 2>/dev/null || true
     return 0
   }
 
