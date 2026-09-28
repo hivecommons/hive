@@ -405,6 +405,44 @@ func TestCollectReviewThreads_Disabled(t *testing.T) {
 	}
 }
 
+// review.fix_human_prs on (hivecommons/hive#9361): a PR the hive did not
+// open (human author, no trailer) is now followed up on too, and marked
+// HumanOpened so the kick builder knows to withhold resolve_thread for it
+// regardless of the global resolve_after_fix setting.
+func TestCollectReviewThreads_FixHumanPRs(t *testing.T) {
+	mock := newGQLMock()
+	bot := gqlComment{Author: "chatgpt-codex-connector[bot]", Body: "nil deref"}
+	mock.add(&gqlThread{ID: "PRRT_1", Path: "a.go", Line: 3, Comments: []gqlComment{bot}, PRNumber: 1, RepoOwner: "o", RepoName: "r", HeadRef: "hive/fix-1", DatabaseID: 10})
+	mock.add(&gqlThread{ID: "PRRT_4", Path: "b.go", Line: 7, Comments: []gqlComment{bot}, PRNumber: 4, RepoOwner: "o", RepoName: "r", HeadRef: "human/branch", DatabaseID: 50})
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+	c := reviewThreadTestClient(t, srv.URL, testBots)
+	c.SetFixHumanPRs(true)
+
+	prs := []PullRequest{
+		{Repo: "r", Number: 1, Title: "fix one", Author: "hive[bot]"},
+		{Repo: "r", Number: 4, Title: "human PR", Author: "carol"},
+	}
+	report := c.CollectReviewThreads(context.Background(), prs, time.Now())
+	if len(report.PRs) != 2 {
+		t.Fatalf("expected both PRs listed with fix_human_prs on, got %d: %+v", len(report.PRs), report.PRs)
+	}
+	one, four := report.PRs[0], report.PRs[1]
+	if one.HumanOpened {
+		t.Errorf("hive-mediated PR 1 must not be marked HumanOpened: %+v", one)
+	}
+	if !four.HumanOpened || len(four.Threads) != 1 || four.Threads[0].ThreadID != "PRRT_4" {
+		t.Errorf("human-authored PR 4 must be listed and marked HumanOpened with its bot thread: %+v", four)
+	}
+
+	// Off (the default): PR 4 disappears again, exactly like before #9361.
+	c.SetFixHumanPRs(false)
+	report = c.CollectReviewThreads(context.Background(), prs, time.Now())
+	if len(report.PRs) != 1 || report.PRs[0].Number != 1 {
+		t.Errorf("fix_human_prs off must drop the non-mediated PR: %+v", report.PRs)
+	}
+}
+
 // A failed thread fetch skips that PR (no attempt this pass) without
 // poisoning the rest of the report.
 func TestCollectReviewThreads_FetchFailureSkipsPR(t *testing.T) {

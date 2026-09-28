@@ -117,6 +117,12 @@ type DispatchOptions struct {
 	ReviseVerdictsBefore time.Time
 	Agents               []AgentCapability
 	Now                  time.Time
+	// ReviewBotLogins is classification.review_bots.logins, carried into the
+	// read step (hivecommons/hive#9360) so the reviewer also addresses open
+	// Codex/review-bot findings instead of never fetching them. Empty means
+	// the feature is off; PromptOptions.ReviewBotLogins then stays empty too
+	// and the section is skipped.
+	ReviewBotLogins []string
 }
 
 type DispatchState struct {
@@ -358,6 +364,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				Perspectives:          opts.Perspectives,
 				ProposeFixesOnly:      !fixPushAllowed(pr, opts),
 				WritingGuideSection:   opts.WritingGuideSection,
+				ReviewBotLogins:       opts.ReviewBotLogins,
 			})
 			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: missing[0], Perspectives: missing, AuthorAgent: pr.AuthorAgent})
 			for _, p := range missing {
@@ -406,6 +413,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				Perspectives:          opts.Perspectives,
 				ProposeFixesOnly:      !fixPushAllowed(pr, opts),
 				WritingGuideSection:   opts.WritingGuideSection,
+				ReviewBotLogins:       opts.ReviewBotLogins,
 			})
 			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, AuthorAgent: pr.AuthorAgent})
 			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, Agent: agent, AuthorAgent: pr.AuthorAgent, Dispatched: now})

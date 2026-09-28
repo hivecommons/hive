@@ -85,6 +85,43 @@ func TestFormatReviewThreadFixData_ResolveAfterFixOff(t *testing.T) {
 	}
 }
 
+// A PR the hive did not open (human_opened, hivecommons/hive#9361 —
+// review.fix_human_prs) always gets the withhold-resolve instruction, even
+// when resolve_after_fix is globally true, and a hive-mediated PR in the
+// SAME report is unaffected.
+func TestFormatReviewThreadFixData_HumanOpenedForcesNoResolve(t *testing.T) {
+	fixture := `{"generated_at":"2026-09-17T00:00:00Z","enabled":true,"total_threads":2,"prs":[
+  {"repo":"test-org/console","number":501,"title":"fix: nil deref","head_ref":"hive/fix-501","agent":"scanner",
+   "threads":[{"thread_id":"PRRT_a","path":"src/x.go","line":42,"author":"chatgpt-codex-connector[bot]","body":"guard","hive_replies":0}]},
+  {"repo":"test-org/console","number":410,"title":"human PR","head_ref":"human/branch","human_opened":true,
+   "threads":[{"thread_id":"PRRT_h","path":"scripts/quickstart.sh","line":10,"author":"chatgpt-codex-connector[bot]","body":"verify signature first","hive_replies":0}]}
+]}`
+	out := formatReviewThreadFixData([]byte(fixture), "scanner", true)
+	if !strings.Contains(out, "#501 test-org/console") || !strings.Contains(out, "#410 test-org/console") {
+		t.Fatalf("both PRs must be listed (unattributed #410 defaults to scanner):\n%s", out)
+	}
+	lines := strings.Split(out, "\n")
+	var pr501, pr410 []string
+	var cur *[]string
+	for _, l := range lines {
+		switch {
+		case strings.Contains(l, "#501 "):
+			cur = &pr501
+		case strings.Contains(l, "#410 "):
+			cur = &pr410
+		}
+		if cur != nil {
+			*cur = append(*cur, l)
+		}
+	}
+	if strings.Contains(strings.Join(pr501, "\n"), "DO NOT resolve") {
+		t.Errorf("hive-mediated PR 501 must not carry the human-PR withhold note:\n%v", pr501)
+	}
+	if !strings.Contains(strings.Join(pr410, "\n"), "DO NOT resolve") {
+		t.Errorf("human-opened PR 410 must carry the withhold-resolve note even though resolve_after_fix is true:\n%v", pr410)
+	}
+}
+
 // Long findings are truncated and a large PR backlog is capped with a
 // summary line, using the same bounds as the red-CI block.
 func TestFormatReviewThreadFixData_Bounds(t *testing.T) {

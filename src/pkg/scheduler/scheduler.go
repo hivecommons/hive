@@ -1447,6 +1447,7 @@ func formatReviewThreadFixData(data []byte, agent string, resolveAfterFix bool) 
 	if resolveAfterFix {
 		b.WriteString("  3. Then resolve it:\n")
 		b.WriteString("       hive-review <number> --repo <owner/repo> --resolve-thread <thread_id>\n")
+		b.WriteString("     UNLESS the PR below says otherwise — read each PR's own step-3 line first.\n")
 	} else {
 		b.WriteString("  3. Do NOT resolve the thread — a human closes it on this hive (resolve_after_fix: false).\n")
 	}
@@ -1466,6 +1467,13 @@ func formatReviewThreadFixData(data []byte, agent string, resolveAfterFix bool) 
 		}
 		b.WriteString(fmt.Sprintf("  #%d %s%s\n", pr.Number, pr.Repo, title))
 		b.WriteString(fmt.Sprintf("    head_ref: %s\n", pr.HeadRef))
+		// resolveAfterFix (the global setting) already covers every PR when
+		// pr.HumanOpened is false; only a human-opened PR (hivecommons/
+		// hive#9361) can DISAGREE with the global setting, and only in the
+		// direction of withholding resolution, never granting it.
+		if pr.HumanOpened && resolveAfterFix {
+			b.WriteString("    step 3: DO NOT resolve — this PR is not yours (fix_human_prs), a person closes its threads (hivecommons/hive#9361). Reply and push the fix only.\n")
+		}
 		for _, t := range pr.Threads {
 			loc := t.Path
 			if t.Line > 0 {

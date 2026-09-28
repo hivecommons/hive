@@ -8237,6 +8237,9 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 // (config.DefaultProjectYAMLPath, overridable via HIVE_PROJECT_YAML — the
 // path the bash pipeline stages already honour). Nil-safe: a hive without
 // GitHub credentials runs with a nil client for the life of the process.
+// Also installs review.fix_human_prs (hivecommons/hive#9361), so the
+// review-thread reconciler follows PRs the hive did not open whenever the
+// fixer is already allowed to push to them.
 func installReviewBots(client *github.Client, cfg *config.Config, logger *slog.Logger) {
 	if client == nil || cfg == nil {
 		return
@@ -8246,11 +8249,13 @@ func installReviewBots(client *github.Client, cfg *config.Config, logger *slog.L
 		logger.Warn("classification.review_bots: project file unreadable; review-thread reconciler stays off", "error", err)
 	}
 	client.SetReviewBots(rb)
+	client.SetFixHumanPRs(cfg.Review.FixHumanPRsEnabled())
 	if logger != nil && rb.Enabled() {
 		logger.Info("review-thread reconciler enabled",
 			"review_bots", rb.Logins,
 			"max_attempts_per_thread", rb.MaxAttempts(),
-			"resolve_after_fix", rb.ResolveAfterFixEnabled())
+			"resolve_after_fix", rb.ResolveAfterFixEnabled(),
+			"fix_human_prs", cfg.Review.FixHumanPRsEnabled())
 	}
 }
 
@@ -8464,6 +8469,14 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 	if err != nil && !os.IsNotExist(err) {
 		logger.Warn("review dispatch state unavailable; starting fresh", "error", err)
 	}
+	// classification.review_bots, read the same way installReviewBots reads
+	// it for the thread reconciler (#7360): hive.yaml wins, hive-project.yaml
+	// is the fallback. Feeds the reviewer's read step (#9360); empty/off
+	// leaves ReviewBotLogins empty and the prompt section is skipped.
+	reviewBots, rbErr := cfg.EffectiveReviewBots(os.Getenv("HIVE_PROJECT_YAML"))
+	if rbErr != nil && logger != nil {
+		logger.Warn("classification.review_bots: project file unreadable; reviewer will not see bot findings this pass", "error", rbErr)
+	}
 	artifact, err := review.LoadArtifact("")
 	if err != nil && !os.IsNotExist(err) {
 		logger.Warn("review verdict artifact unavailable for dispatch planning", "error", err)
@@ -8513,6 +8526,10 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			Aliases:        ac.Aliases,
 		})
 	}
+	reviewBotLogins := []string{}
+	if reviewBots.Enabled() {
+		reviewBotLogins = reviewBots.Logins
+	}
 	plan := review.PlanDispatch(prs, artifact, state, review.DispatchOptions{
 		RequireApproval:       cfg.Review.RequireApproval,
 		FanOut:                cfg.Review.FanOut,
@@ -8532,6 +8549,7 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		ProjectOrg:            cfg.Project.Org,
 		AIAuthor:              cfg.EffectiveAIAuthor(),
 		Agents:                agents,
+		ReviewBotLogins:       reviewBotLogins,
 	})
 	if len(plan.ReviewKicks)+len(plan.FixKicks) > 0 {
 		logger.Info("review swarm dispatch planned", "review_kicks", len(plan.ReviewKicks), "fix_kicks", len(plan.FixKicks))

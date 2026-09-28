@@ -193,6 +193,13 @@ type Client struct {
 	// SetReviewBots.
 	reviewBotsMu sync.RWMutex
 	reviewBots   config.ReviewBotsConfig
+	// fixHumanPRs mirrors review.fix_human_prs (hivecommons/hive#8421) into
+	// the review-thread reconciler (#9361): when on, CollectReviewThreads also
+	// follows up on PRs the hive did not open, since the fixer is now allowed
+	// to push to them too. Guarded like reviewBots for the same reload race.
+	// Set by SetFixHumanPRs.
+	fixHumanPRsMu sync.RWMutex
+	fixHumanPRs   bool
 	// issueRetries tracks per-request-file retry backoff for the issue-request
 	// watcher (in-memory; reset on restart). Guarded by issueRetryMu.
 	issueRetryMu sync.Mutex

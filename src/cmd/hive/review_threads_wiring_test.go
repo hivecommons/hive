@@ -151,6 +151,35 @@ func TestInstallReviewBots_UnparseableProjectFileWarnsAndStaysOff(t *testing.T) 
 	}
 }
 
+// installReviewBots also installs review.fix_human_prs (hivecommons/
+// hive#9361): when both review_bots and fix_human_prs are on, the enabled
+// log says so, and the reconciler picks up a non-mediated PR — the direct,
+// observable effect of SetFixHumanPRs.
+func TestInstallReviewBots_WiresFixHumanPRs(t *testing.T) {
+	logger, buf := captureLogger()
+	client := github.NewClient("fake", "o", nil, logger, "")
+	on := true
+	cfg := &config.Config{
+		Classification: config.ClassificationConfig{
+			ReviewBots: config.ReviewBotsConfig{Logins: []string{"Copilot"}},
+		},
+		Review: config.ReviewConfig{FixHumanPRs: &on},
+	}
+	installReviewBots(client, cfg, logger)
+	if !bytes.Contains(buf.Bytes(), []byte("fix_human_prs=true")) {
+		t.Errorf("expected fix_human_prs=true in the enabled log, got:\n%s", buf.String())
+	}
+
+	off := false
+	cfg.Review.FixHumanPRs = &off
+	logger2, buf2 := captureLogger()
+	client2 := github.NewClient("fake", "o", nil, logger2, "")
+	installReviewBots(client2, cfg, logger2)
+	if !bytes.Contains(buf2.Bytes(), []byte("fix_human_prs=false")) {
+		t.Errorf("expected fix_human_prs=false in the enabled log, got:\n%s", buf2.String())
+	}
+}
+
 func TestWriteReviewThreads_NilArgsWriteNothing(t *testing.T) {
 	path := redirectReviewThreadsPath(t)
 	resetReviewThreadsThrottle(t)
