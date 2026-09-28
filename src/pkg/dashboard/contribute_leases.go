@@ -1300,7 +1300,10 @@ func (h *ContributeWSHub) reofferOrphanedStageLocked(l taskLease, now time.Time)
 		gen:             l.gen,
 		triageVerdict:   l.triageVerdict,
 		triageRationale: l.triageRationale,
+		workItem:        l.workItem,
 		expiresAt:       now.Add(leaseTTL),
+		mcpTokenID:      l.mcpTokenID,
+		mcpTokenHash:    l.mcpTokenHash,
 	}
 	h.logger.Info("[contribute-ws] run stage returned to offer pool after relay lease expired",
 		"key", l.key, "stage", l.stage, "gen", l.gen, "identity", l.identity)
