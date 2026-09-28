@@ -1,1 +1,1 @@
-Dashboard: URLs in system-alert banners are now rendered as clickable links (#9390).
+- Dashboard: URLs in system-alert banners are now rendered as clickable links (#9390).
