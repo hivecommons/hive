@@ -86,7 +86,7 @@ configured for the primary repo, parses that repo's `AGENTS.md` and adjacent
 `skills/` directory. It resolves each declared name against the hive-wide
 registry first and falls back to the repo-local definition when the registry
 has no match, then prepends the rendered block to the agent's `${KNOWLEDGE}`
-section (`src/pkg/scheduler/scheduler.go`, `primeSkills`). Loading happens **per
+section (`src/pkg/scheduler/kick_priming.go`, `primeSkills`). Loading happens **per
 kick, not once at startup**, so editing either source takes effect on the next
 kick — no hive restart required.
 

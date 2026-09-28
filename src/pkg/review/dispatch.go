@@ -95,6 +95,10 @@ type DispatchOptions struct {
 	// WritingGuideSection carries project.writing_guide into review-swarm
 	// prompt builders, matching template-based issue/PR filing kicks.
 	WritingGuideSection string
+	// ReviewBotLogins carries classification.review_bots.logins into the
+	// prompt builder, so reviewers read and answer those bots' unresolved
+	// threads (hivecommons/hive#9360).
+	ReviewBotLogins []string
 	// AllAuthors lifts the agent-authored restriction so every open PR is
 	// eligible for review, whoever opened it.
 	AllAuthors bool
@@ -358,6 +362,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				Perspectives:          opts.Perspectives,
 				ProposeFixesOnly:      !fixPushAllowed(pr, opts),
 				WritingGuideSection:   opts.WritingGuideSection,
+				ReviewBotLogins:       opts.ReviewBotLogins,
 			})
 			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: missing[0], Perspectives: missing, AuthorAgent: pr.AuthorAgent})
 			for _, p := range missing {
@@ -406,6 +411,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				Perspectives:          opts.Perspectives,
 				ProposeFixesOnly:      !fixPushAllowed(pr, opts),
 				WritingGuideSection:   opts.WritingGuideSection,
+				ReviewBotLogins:       opts.ReviewBotLogins,
 			})
 			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, AuthorAgent: pr.AuthorAgent})
 			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, Agent: agent, AuthorAgent: pr.AuthorAgent, Dispatched: now})

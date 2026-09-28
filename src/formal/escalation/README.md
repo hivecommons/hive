@@ -37,7 +37,7 @@ Either divergence exits nonzero. CI runs this via
 |---|---|
 | `Sweeper` proctype | `runEscalationSweep` (`cmd/hive/main.go`) driving `Store.Sweep` (`pkg/escalation/escalation.go`) once per governor tick |
 | `Reaper` proctype | `reapStuckRedPRs` (`cmd/hive/main.go`) → `Store.TryReEngage` |
-| `Agent` proctype | the FIX-BEFORE-NEW fix lane (`pkg/scheduler/scheduler.go:834-893`): red, non-escalated PRs are routed back to their author agent, which pushes another attempt |
+| `Agent` proctype | the FIX-BEFORE-NEW fix lane (`addRedPRFixFirst` / `formatRedPRFixData`, `pkg/scheduler/policy_overlays.go:184-307`): red, non-escalated PRs are routed back to their author agent, which pushes another attempt |
 | `Reviewer` proctype | the reviewer lane (`pkg/scheduler/reviewer_lane.go`): adjudicates escalated rows from `ci-failing.json`, excluding rows labeled `reviewer-passed` or `reviewer-recommend-close`; REPAIR and DE-ESCALATE are collapsed into one branch (both = label swap + push); RECOMMEND-CLOSE closes at ACMM ≥ 6 (`-DACMM6`), else comments, adds `reviewer-recommend-close`, and stands down |
 | `Human` proctype | the operator watching the `needs-human` label queue; eventually takes ownership or closes. **The queue is the label** — a PR without `needs-human` is invisible to the human |
 | `CI` proctype | per-SHA check verdict: each pushed SHA resolves nondeterministically red or green, once |

@@ -1,11 +1,16 @@
 package github
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
+	"time"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 type MergeFailureAlertSink interface {
@@ -18,6 +23,18 @@ type mergeFailureAlert struct {
 	message string
 }
 
+// mergeAlertEntry remembers what raised a system alert so the periodic
+// revalidation can retire it once the blocking condition is gone.
+type mergeAlertEntry struct {
+	key    string
+	number int
+}
+
+// mergeAlertRevalidateInterval bounds how often the merge-request watcher
+// re-checks live "merge blocked" alerts against GitHub. Package-level so
+// tests can shorten it.
+var mergeAlertRevalidateInterval = 5 * time.Minute
+
 func (c *Client) SetMergeFailureAlertSink(sink MergeFailureAlertSink) {
 	if c == nil {
 		return
@@ -26,11 +43,11 @@ func (c *Client) SetMergeFailureAlertSink(sink MergeFailureAlertSink) {
 	defer c.mergeAlertMu.Unlock()
 	c.mergeAlertSink = sink
 	if c.mergeAlertIDsByRepo == nil {
-		c.mergeAlertIDsByRepo = make(map[string]map[string]bool)
+		c.mergeAlertIDsByRepo = make(map[string]map[string]mergeAlertEntry)
 	}
 }
 
-func (c *Client) raiseMergeFailureAlert(repo, errMsg string) {
+func (c *Client) raiseMergeFailureAlert(repo string, number int, errMsg string) {
 	alert, ok := classifyMergeFailureForOperator(repo, errMsg)
 	if !ok || c == nil {
 		return
@@ -43,13 +60,13 @@ func (c *Client) raiseMergeFailureAlert(repo, errMsg string) {
 	}
 	id := mergeFailureAlertID(repo, alert.key)
 	if c.mergeAlertIDsByRepo == nil {
-		c.mergeAlertIDsByRepo = make(map[string]map[string]bool)
+		c.mergeAlertIDsByRepo = make(map[string]map[string]mergeAlertEntry)
 	}
 	repoKey := strings.ToLower(strings.TrimSpace(repo))
 	if c.mergeAlertIDsByRepo[repoKey] == nil {
-		c.mergeAlertIDsByRepo[repoKey] = make(map[string]bool)
+		c.mergeAlertIDsByRepo[repoKey] = make(map[string]mergeAlertEntry)
 	}
-	c.mergeAlertIDsByRepo[repoKey][id] = true
+	c.mergeAlertIDsByRepo[repoKey][id] = mergeAlertEntry{key: alert.key, number: number}
 	c.mergeAlertMu.Unlock()
 
 	sink.AddSystemAlert(id, "error", alert.message)
@@ -75,6 +92,83 @@ func (c *Client) clearMergeFailureAlertsForRepo(repo string) {
 	c.mergeAlertMu.Unlock()
 
 	for _, id := range clearIDs {
+		sink.ClearSystemAlert(id)
+	}
+}
+
+// revalidateMergeFailureAlerts retires "merge blocked" alerts whose cause has
+// gone away without an App merge in that repo: the blocked PR is no longer
+// open, or (fork-run-approval) its head no longer has workflow runs awaiting
+// maintainer approval — the operator approved them or relaxed the repo/org
+// setting. Errors leave the alert in place; only positive evidence clears it.
+func (c *Client) revalidateMergeFailureAlerts(ctx context.Context, nowFn func() time.Time) {
+	if c == nil || c.client == nil {
+		return
+	}
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	c.mergeAlertMu.Lock()
+	sink := c.mergeAlertSink
+	if sink == nil || len(c.mergeAlertIDsByRepo) == 0 ||
+		(!c.mergeAlertLastRevalidate.IsZero() && nowFn().Sub(c.mergeAlertLastRevalidate) < mergeAlertRevalidateInterval) {
+		c.mergeAlertMu.Unlock()
+		return
+	}
+	c.mergeAlertLastRevalidate = nowFn()
+	type pending struct {
+		repo, id string
+		entry    mergeAlertEntry
+	}
+	var work []pending
+	for repo, ids := range c.mergeAlertIDsByRepo {
+		for id, e := range ids {
+			work = append(work, pending{repo: repo, id: id, entry: e})
+		}
+	}
+	c.mergeAlertMu.Unlock()
+
+	for _, w := range work {
+		if ctx.Err() != nil {
+			return
+		}
+		owner, name, ok := strings.Cut(w.repo, "/")
+		if !ok || w.entry.number <= 0 {
+			continue
+		}
+		pr, _, err := c.client.PullRequests.Get(ctx, owner, name, w.entry.number)
+		if err != nil || pr == nil {
+			continue
+		}
+		resolved := pr.GetState() != "open"
+		if !resolved && w.entry.key == "fork-run-approval" {
+			runs, _, rerr := c.client.Actions.ListRepositoryWorkflowRuns(ctx, owner, name, &gh.ListWorkflowRunsOptions{
+				HeadSHA:     pr.GetHead().GetSHA(),
+				Status:      "action_required",
+				ListOptions: gh.ListOptions{PerPage: 1},
+			})
+			resolved = rerr == nil && runs != nil && runs.GetTotalCount() == 0
+		}
+		if !resolved {
+			continue
+		}
+		c.clearMergeFailureAlertID(w.repo, w.id)
+		c.logger.Info("merge alert cleared: blocking condition resolved",
+			slog.String("repo", w.repo), slog.Int("number", w.entry.number), slog.String("key", w.entry.key))
+	}
+}
+
+func (c *Client) clearMergeFailureAlertID(repoKey, id string) {
+	c.mergeAlertMu.Lock()
+	sink := c.mergeAlertSink
+	if ids := c.mergeAlertIDsByRepo[repoKey]; ids != nil {
+		delete(ids, id)
+		if len(ids) == 0 {
+			delete(c.mergeAlertIDsByRepo, repoKey)
+		}
+	}
+	c.mergeAlertMu.Unlock()
+	if sink != nil {
 		sink.ClearSystemAlert(id)
 	}
 }
