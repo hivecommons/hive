@@ -609,10 +609,11 @@ type KickMessage struct {
 
 func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agentsDue []string) []KickMessage {
 	s.resetClassifierBudget()
-	classify.BeginClassifyCycle()
-	classifiedIssues := classify.ClassifyAll(actionable.Issues.Items)
+	sweepCtx, cancelSweep := classify.SweepContext(context.Background())
+	classifiedIssues := classify.ClassifyAll(sweepCtx, actionable.Issues.Items)
 	s.recordClassified(classifiedIssues)
-	classifiedIssues = s.applyRunTriage(classifiedIssues)
+	classifiedIssues = s.applyRunTriage(sweepCtx, classifiedIssues)
+	cancelSweep()
 
 	var messages []KickMessage
 	for _, targetKey := range agentsDue {
@@ -814,10 +815,11 @@ func (s *Scheduler) BuildAgentMessageFromLastActionable(agentName string) string
 	actionable := s.GetLastActionable()
 	var classified []github.Issue
 	if actionable != nil {
-		classify.BeginClassifyCycle()
-		classified = classify.ClassifyAll(actionable.Issues.Items)
+		sweepCtx, cancelSweep := classify.SweepContext(context.Background())
+		classified = classify.ClassifyAll(sweepCtx, actionable.Issues.Items)
 		s.recordClassified(classified)
-		classified = s.applyRunTriage(classified)
+		classified = s.applyRunTriage(sweepCtx, classified)
+		cancelSweep()
 	}
 	return s.addIndependentReviewSection(agentName, s.BuildAgentMessage(agentName, classified, actionable))
 }
@@ -838,7 +840,7 @@ const (
 
 const triageCommentMarker = "<!-- hive-triage -->"
 
-func (s *Scheduler) applyRunTriage(issues []github.Issue) []github.Issue {
+func (s *Scheduler) applyRunTriage(ctx context.Context, issues []github.Issue) []github.Issue {
 	if s == nil || s.cfg == nil || !s.cfg.Runs.Triage.Enabled || len(issues) == 0 {
 		return issues
 	}
@@ -850,7 +852,7 @@ func (s *Scheduler) applyRunTriage(issues []github.Issue) []github.Issue {
 			Model: classify.ModelRecommendation(issue.ModelRec),
 			Lane:  classify.Lane(issue.Lane),
 		}
-		decision := classify.Triage(issue, c, s.cfg.Runs.Triage)
+		decision := classify.Triage(ctx, issue, c, s.cfg.Runs.Triage)
 		switch decision.Verdict {
 		case classify.TriageSpec:
 			if retired, ok := admitter.(runTriageFixRetirer); ok && retired.RunTriageFixRetired(issue.Repo, issue.Number) && !issueHasLabel(issue, "run/spec") {

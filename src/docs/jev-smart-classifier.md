@@ -145,13 +145,17 @@ unreachable, rate-limiting, or slow provider can delay kicks:
   keywords immediately. Editing the issue retries at once.
 - **Circuit breaker.** After 3 consecutive failed calls Hive stops calling Jev
   for 5 minutes and logs
-  `classify: jev: N consecutive failures (last: …); skipping Jev until …`.
-  The first call after the cooldown is a probe: success resumes normal calls,
-  failure reopens the breaker for another 5 minutes.
-- **Per-sweep time budget.** Each scheduler sweep (and each manual kick) may
-  spend at most `max(10s, classifier.jev.timeout)` waiting on Jev in total; a
-  call starts only while at least one full `timeout` of budget remains. Issues
-  left over fall back to keywords and are asked on a later sweep.
+  `classify: jev: N consecutive failures (last: HTTP 429); skipping Jev until …`.
+  The log names only the failure class (`HTTP <status>`, `timeout`,
+  `transport error`, `invalid response`), never provider response text, which
+  can echo issue content. After the cooldown exactly one call is sent as a
+  probe while others keep falling back: success resumes normal calls, failure
+  reopens the breaker for another 5 minutes.
+- **Per-sweep deadline.** Each scheduler sweep (and each manual kick) runs its
+  classification and run-triage passes under one deadline of
+  `max(10s, classifier.jev.timeout)`; a call starts only while at least one full
+  `timeout` remains. Issues left over fall back to keywords and are asked on a
+  later sweep.
 
 Every skipped call counts as `fallback` in `GET /api/classifier/stats`. Routing
 is never affected: keywords and labels decide either way.

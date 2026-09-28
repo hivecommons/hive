@@ -1,10 +1,15 @@
 package classify
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -368,7 +373,89 @@ func TestJevBreakerSkipsCallsAfterConsecutiveFailuresUntilProbeSucceeds(t *testi
 	}
 }
 
-func TestJevCycleBudgetBoundsSlowEndpoint(t *testing.T) {
+func TestJevBreakerAdmitsOneProbeAtATime(t *testing.T) {
+	ResetForTest()
+	defer ResetForTest()
+	var calls int32
+	var healthy atomic.Bool
+	var startOnce sync.Once
+	probeStarted := make(chan struct{})
+	releaseProbe := make(chan struct{})
+	server := jevTestServerFunc(t, func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		if !healthy.Load() {
+			http.Error(w, "down", http.StatusBadGateway)
+			return
+		}
+		startOnce.Do(func() { close(probeStarted) })
+		select {
+		case <-releaseProbe:
+		case <-r.Context().Done():
+			return
+		}
+		_ = json.NewEncoder(w).Encode(jevTestAnswers(0.95))
+	})
+	defer server.Close()
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseProbe) }) }
+	defer release() // runs before server.Close so no handler stays blocked
+	d := newJevDecider(config.JevClassifierConfig{Endpoint: server.URL, Timeout: 2 * time.Second}, func() string { return "key" }, server.Client())
+	now := time.Unix(3_000_000, 0)
+	var nowMu sync.Mutex
+	d.now = func() time.Time { nowMu.Lock(); defer nowMu.Unlock(); return now }
+	issue := func(n int) github.Issue {
+		return github.Issue{Repo: "o/r", Number: n, Title: "ordinary", Body: longTriageBody(), UpdatedAt: time.Unix(int64(n), 0)}
+	}
+	for n := 1; n <= jevBreakerThreshold; n++ {
+		_ = d.Decide(context.Background(), issue(n), config.TriageConfig{})
+	}
+
+	healthy.Store(true)
+	nowMu.Lock()
+	now = now.Add(jevBreakerCooldown)
+	nowMu.Unlock()
+	probeDone := make(chan struct{})
+	go func() {
+		defer close(probeDone)
+		_ = d.Decide(context.Background(), issue(100), config.TriageConfig{})
+	}()
+	<-probeStarted
+	// While the probe is in flight, concurrent callers (a manual kick racing
+	// the eval sweep) must not also hit the recovering endpoint.
+	for n := 101; n <= 105; n++ {
+		_ = d.Decide(context.Background(), issue(n), config.TriageConfig{})
+	}
+	if got := atomic.LoadInt32(&calls); got != jevBreakerThreshold+1 {
+		t.Fatalf("calls with probe in flight = %d, want %d", got, jevBreakerThreshold+1)
+	}
+	release()
+	<-probeDone
+}
+
+func TestJevBreakerLogOmitsProviderErrorBody(t *testing.T) {
+	ResetForTest()
+	defer ResetForTest()
+	server := jevTestServerFunc(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "echo: SECRET-ISSUE-BODY", http.StatusBadGateway)
+	})
+	defer server.Close()
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	d := newJevDecider(config.JevClassifierConfig{Endpoint: server.URL, Timeout: time.Second}, func() string { return "key" }, server.Client())
+	for n := 1; n <= jevBreakerThreshold; n++ {
+		_ = d.Decide(context.Background(), github.Issue{Repo: "o/r", Number: n, Title: "ordinary", Body: "SECRET-ISSUE-BODY", UpdatedAt: time.Unix(int64(n), 0)}, config.TriageConfig{})
+	}
+	out := buf.String()
+	if !strings.Contains(out, "classify: jev:") || !strings.Contains(out, "HTTP 502") {
+		t.Fatalf("breaker log = %q, want open notice with failure status", out)
+	}
+	if strings.Contains(out, "SECRET-ISSUE-BODY") {
+		t.Fatalf("breaker log leaked provider error body: %q", out)
+	}
+}
+
+func TestJevSweepDeadlineBoundsSlowEndpoint(t *testing.T) {
 	ResetForTest()
 	defer ResetForTest()
 	var calls int32
@@ -379,39 +466,49 @@ func TestJevCycleBudgetBoundsSlowEndpoint(t *testing.T) {
 	})
 	defer server.Close()
 	d := newJevDecider(config.JevClassifierConfig{Endpoint: server.URL, Timeout: 100 * time.Millisecond}, func() string { return "key" }, server.Client())
-	d.cycleBudget, d.budgetLeft = 250*time.Millisecond, 250*time.Millisecond
 	SetDecider(d)
 	issues := make([]github.Issue, 20)
 	for i := range issues {
 		issues[i] = github.Issue{Repo: "o/r", Number: 100 + i, Title: "ordinary", Body: longTriageBody(), UpdatedAt: time.Unix(int64(100+i), 0)}
 	}
 
-	BeginClassifyCycle()
+	sweepCtx, cancelSweep := SweepContext(context.Background())
+	deadline, hasDeadline := sweepCtx.Deadline()
+	cancelSweep()
+	if left := time.Until(deadline); !hasDeadline || left > jevMinSweepBudget || left < jevMinSweepBudget-time.Second {
+		t.Fatalf("SweepContext deadline = %v (set %v), want ~%s from now", deadline, hasDeadline, jevMinSweepBudget)
+	}
+
+	sweep, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
 	start := time.Now()
-	for _, c := range ClassifyAll(issues) {
+	for _, c := range ClassifyAll(sweep, issues) {
 		if c.Lane != string(LaneScanner) || c.ComplexityTier != string(TierMedium) {
 			t.Fatalf("classified %+v, want keyword scanner/Medium", c)
 		}
 	}
 	elapsed := time.Since(start)
 	first := atomic.LoadInt32(&calls)
-	// Each call takes >= 60ms and a call needs >= 100ms of budget left, so a
-	// 250ms budget admits at most 3 calls however many issues are queued.
+	// Each call takes >= 60ms and starts only with >= 100ms of deadline left,
+	// so a 250ms sweep admits at most 3 calls however many issues are queued.
 	if first < 1 || first > 3 {
-		t.Fatalf("calls in first cycle = %d, want 1..3 (bounded by cycle budget)", first)
+		t.Fatalf("calls in sweep = %d, want 1..3 (bounded by sweep deadline)", first)
 	}
 	if elapsed > time.Second {
-		t.Fatalf("first cycle took %s, want bounded by the cycle budget", elapsed)
+		t.Fatalf("sweep took %s, want bounded by the sweep deadline", elapsed)
 	}
-	// The run-triage pass of the same cycle shares the exhausted budget.
-	_ = ClassifyAll(issues)
+	// The run-triage pass shares the sweep's exhausted deadline.
+	for _, issue := range issues {
+		_ = Triage(sweep, issue, Classification{}, config.TriageConfig{})
+	}
 	if got := atomic.LoadInt32(&calls); got != first {
-		t.Fatalf("calls in second pass of the same cycle = %d, want %d", got, first)
+		t.Fatalf("calls in triage pass of the same sweep = %d, want %d", got, first)
 	}
 
-	BeginClassifyCycle()
-	_ = ClassifyAll(issues)
+	next, cancelNext := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancelNext()
+	_ = ClassifyAll(next, issues)
 	if got := atomic.LoadInt32(&calls); got <= first {
-		t.Fatalf("calls after BeginClassifyCycle = %d, want more than %d", got, first)
+		t.Fatalf("calls in next sweep = %d, want more than %d", got, first)
 	}
 }
