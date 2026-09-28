@@ -461,7 +461,13 @@ func TestJevSweepDeadlineBoundsSlowEndpoint(t *testing.T) {
 	var calls int32
 	server := jevTestServerFunc(t, func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&calls, 1)
-		time.Sleep(60 * time.Millisecond) // slow but succeeding
+		// Slow but succeeding: wait out the response delay without a fixed
+		// time.Sleep, and bail out early if the client already gave up.
+		select {
+		case <-time.After(60 * time.Millisecond):
+		case <-r.Context().Done():
+			return
+		}
 		_ = json.NewEncoder(w).Encode(jevTestAnswers(0.95))
 	})
 	defer server.Close()
