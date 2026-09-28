@@ -57,11 +57,13 @@ var conformanceSecrets = map[string]string{
 }
 
 // leakyEvent spreads the secrets across every operator-visible field, so a
-// scrub that covers only the body (or only the title) still fails.
+// scrub that covers only the body (or only the title) still fails. The title
+// carries a non-ASCII rune so the ntfy Title header is sent RFC 2047-encoded,
+// the form a leaked secret would actually take on that wire.
 func leakyEvent() Event {
 	return Event{
 		Severity: SeverityPage,
-		Title:    "requires_human: " + conformanceSecrets["github-token"],
+		Title:    "requires_human — " + conformanceSecrets["github-token"],
 		Body:     "reason: token " + conformanceSecrets["jwt"] + "\nkey " + conformanceSecrets["aws-key"] + "\n" + conformanceSecrets["hive-canary"],
 		Link:     "https://github.com/hivecommons/hive/pull/1?t=" + conformanceSecrets["github-token"],
 	}
@@ -128,11 +130,19 @@ func TestV6Conformance_OutboundPayloadsAreScrubbed(t *testing.T) {
 			t.Fatalf("deliver: %v", err)
 		}
 		wire := rec.wire(t)
-		// The Title header is RFC 2047-encoded when non-ASCII; decode it so an
-		// encoded secret is compared as plaintext too.
-		if title, err := new(mime.WordDecoder).DecodeHeader(headerValue(wire, "Title")); err == nil {
-			wire += "\n" + title
+		// The non-ASCII title goes out RFC 2047-encoded, where a secret's
+		// characters can be escaped past a substring check; decode it so the
+		// scan also sees the plaintext. A header that is not encoded, or does
+		// not decode, means this check is no longer looking at what ntfy shows.
+		rawTitle := headerValue(wire, "Title")
+		if !strings.HasPrefix(rawTitle, "=?") {
+			t.Fatalf("ntfy Title %q is not an RFC 2047 encoded-word; the decoded-title scan would be vacuous", rawTitle)
 		}
+		title, err := new(mime.WordDecoder).DecodeHeader(rawTitle)
+		if err != nil {
+			t.Fatalf("ntfy Title %q does not decode: %v", rawTitle, err)
+		}
+		wire += "\n" + title
 		assertNoSecrets(t, sink.Name(), wire)
 		// The sink's own credential is configuration, not event text: it is
 		// the authorization to deliver and must survive scrubbing intact.
