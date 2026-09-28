@@ -5,6 +5,11 @@
 // It is deliberately tiny and dependency-free: the stage runner emits an
 // Event, the dashboard turns it into an audit entry and a timeline marker, and
 // nothing in here reaches for a store, a socket, or a clock.
+//
+// Not to be confused with package escalation (pkg/escalation), the PR fix-loop
+// circuit breaker that counts distinct red CI head SHAs on agent-authored PRs.
+// Run-stage escalation events (a run exhausted its retry budget) belong here;
+// per-PR fix-attempt counting and re-engagement belong in escalation.
 package escalate
 
 import (
