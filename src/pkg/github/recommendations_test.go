@@ -321,7 +321,7 @@ func TestPostRecommendations_BotFallbackRequiresMarker(t *testing.T) {
 }
 
 // The lookup is exact-title only: the fuzzy canonicalIssueSubject fallback of
-// findOpenIssueByTitle must not pull in a maintainer's own issue whose title
+// scanOpenIssues must not pull in a maintainer's own issue whose title
 // merely normalizes to the same subject — that would overwrite their body.
 func TestPostRecommendations_NoFuzzyTitleAdoption(t *testing.T) {
 	org, repo := "testorg", "testrepo"

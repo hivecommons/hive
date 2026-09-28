@@ -180,6 +180,34 @@ shape error. A transient forge failure on the re-fetch or the mutation keeps
 the request for the same exponential-backoff retry and give-up horizon as a
 failed review.
 
+## 4. The hive reviewer answers bot findings on every PR it reviews
+
+The three pieces above act only on hive-mediated PRs. The review swarm reads
+the same threads on **every** PR it reviews
+([#9360](https://github.com/hivecommons/hive/issues/9360)): before that, a
+reviewer could post "Confidence: 5/5 (safe)" minutes after Codex left a correct
+P1 finding on the same commit, without mentioning it.
+
+When `review_bots.logins` names any bot, each review kick
+(`buildReviewBotFindingsInstruction`, `pkg/review/prompts.go`) carries a
+`gh api graphql` read of the PR's `reviewThreads`, filtered to unresolved
+threads whose first comment is from a configured bot. Logins are compared
+lower-cased with the `[bot]` suffix removed, because GraphQL reports an App's
+login without it. The reviewer must then:
+
+- answer every returned thread in its review: **agree**, **disagree** (reason
+  plus the refuting `file:line`), or **cannot verify**;
+- verify each finding against the code at head and classify it with
+  `review_scope`, like one of its own;
+- treat a confirmed, in-scope, severe finding (the bot's P0/P1) as a blocker:
+  the owning perspective may not approve, and the review may not call the PR
+  clean or safe. A refuted or out-of-scope finding is still answered but does
+  not lower the verdict.
+
+The reviewer stays comment-only. It never replies in, reacts to, or resolves
+a bot thread; that remains the reconciler's job on hive-mediated PRs. With no
+logins configured, the kick has no bot section.
+
 ## What a human sees
 
 - A PR with two bot threads gets, within one kick, a push, two in-thread
