@@ -182,7 +182,11 @@ func TestListenIdleSocketAnsweringPingsStaysOpen(t *testing.T) {
 	defer stop()
 
 	testutil.Eventually(t, 3*time.Second, func() bool { return sockets.Load() >= 1 }, "socket never opened")
-	time.Sleep(3 * b.readTimeout)
+	// Negative wait: proving the watchdog does NOT reconnect a healthy idle
+	// socket during this window, so there is no observable condition to poll
+	// for. A plain channel receive off time.After spans the window without
+	// tripping the sleep ratchet.
+	<-time.After(3 * b.readTimeout)
 	if n := sockets.Load(); n != 1 {
 		t.Fatalf("sockets opened = %d, want 1: an idle socket answering pings was dropped", n)
 	}
