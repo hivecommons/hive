@@ -5764,7 +5764,7 @@ func (c *Config) applyDefaults() {
 		c.Data.BobSessionsDir = "/data/home/.bob"
 	}
 	if c.Data.AgentsDir == "" {
-		c.Data.AgentsDir = "/data/agent-configs"
+		c.Data.AgentsDir = DefaultAgentOverlayDir
 	}
 	if c.Hub.URL == "" {
 		c.Hub.URL = "https://hive.hivecommons.dev"
@@ -6790,6 +6790,17 @@ const RuntimeConfigFileLegacy = "/data/hive.yaml.bak"
 // never changes at runtime in production.
 var DashboardOverlayFile = "/data/hive.yaml.dashboard"
 
+// DefaultAgentOverlayDir is the directory Load falls back to for per-agent
+// overlay files (<agent>.yaml) when data.agents_dir is not set in the config.
+// On a live hive host it holds the real roster, which Load merges over
+// whatever the caller passed in — so tests that exercise Load with fixture
+// YAML must not see it.
+//
+// A package var (not const) only so tests can point it at a temp dir; it
+// never changes at runtime in production (same convention as
+// RuntimeConfigFile and DashboardOverlayFile above).
+var DefaultAgentOverlayDir = "/data/agent-configs"
+
 // saTokenFile is the Kubernetes serviceaccount token path IsKubernetesPod
 // probes. It is a var (not a const) only so tests can point it at a
 // non-existent path and stay hermetic on hosts that really are pods;
@@ -7425,6 +7436,18 @@ type AutoMergeConfig struct {
 // declares none. Only dependabot: its PRs are single-dependency bumps whose
 // safety is entirely established by the repo's own CI, which the sweep gates on.
 var DefaultTrustedBotAuthors = []string{"dependabot[bot]"}
+
+// KnownBotAuthors are dependency/maintenance bots the dashboard offers as
+// one-click toggles for TrustedBotAuthors. Only DefaultTrustedBotAuthors are on
+// by default; the rest are listed so an operator can enable them without
+// having to know the exact login spelling.
+var KnownBotAuthors = []string{
+	"dependabot[bot]",
+	"renovate[bot]",
+	"mergeraptor[bot]",
+	"pre-commit-ci[bot]",
+	"github-actions[bot]",
+}
 
 // TrustedBotAuthorSet returns the lower-cased membership set of bot logins the
 // self-authored sweep may merge. nil TrustedBotAuthors → DefaultTrustedBotAuthors;

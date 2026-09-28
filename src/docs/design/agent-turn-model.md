@@ -131,7 +131,7 @@ Kick *timing* lives in `pkg/governor`; kick *text* is built in `pkg/scheduler`.
   `time.NewTicker(… EvalIntervalS …)` at `src/cmd/hive/main.go:5143`, loop at
   `src/cmd/hive/main.go:5164`, evaluation at `src/cmd/hive/main.go:5798`,
   message assembly via `sched.BuildKickMessages` at `src/cmd/hive/main.go:6076`
-  (`src/pkg/scheduler/scheduler.go:664`), and delivery via
+  (`src/pkg/scheduler/kickmessage.go:128`), and delivery via
   `agentMgr.SendKick` at `src/cmd/hive/main.go:6153`.
 
 This matters for the RFC: the scheduler is already **stateless with respect to

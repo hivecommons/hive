@@ -86,8 +86,8 @@ func TestMergeFailureAlertsDedupeAndClearOnSuccess(t *testing.T) {
 	c.SetMergeFailureAlertSink(sink)
 	errMsg := "403 Resource not accessible by integration"
 
-	c.raiseMergeFailureAlert("o/r", errMsg)
-	c.raiseMergeFailureAlert("o/r", errMsg)
+	c.raiseMergeFailureAlert("o/r", 7, errMsg)
+	c.raiseMergeFailureAlert("o/r", 7, errMsg)
 	if len(sink.adds) != 2 {
 		t.Fatalf("sink should receive idempotent updates for active alert, got %d", len(sink.adds))
 	}

@@ -86,7 +86,8 @@ type Client struct {
 	noCIAllowedRepos          map[string]bool
 	mergeAlertMu              sync.Mutex
 	mergeAlertSink            MergeFailureAlertSink
-	mergeAlertIDsByRepo       map[string]map[string]bool
+	mergeAlertIDsByRepo       map[string]map[string]mergeAlertEntry
+	mergeAlertLastRevalidate  time.Time
 	logger                    *slog.Logger
 	appAuth                   *AppAuth // nil for token-authenticated clients
 	canariesEnabled           bool
@@ -161,6 +162,10 @@ type Client struct {
 	// request without rebuilding the client. nil means off. See
 	// reauthorBranchSigned.
 	prSignedCommits func() bool
+	// signedReconcile is the state of the follow-up signing pass (#9364):
+	// last-seen head per open PR, PRs already told why they can't be signed,
+	// and when the pass last ran. See pr_signed_reconcile.go.
+	signedReconcile signedReconcileState
 	// prOpenedHook, when set, is told about every NEW PR the request watcher
 	// opens (agent, repo, number, url) — the seam progress surfaces such as
 	// the Linear session emitter hook. atomic so SetPROpenedHook is safe
@@ -2115,10 +2120,19 @@ func HasHoldLabelWith(labels, extraHoldLabels []string) bool {
 	}
 	for _, label := range labels {
 		lower := strings.ToLower(label)
-		for _, sub := range holdLabels {
-			sub = strings.ToLower(strings.TrimSpace(sub))
-			if sub != "" && strings.Contains(lower, sub) {
-				return true
+		// Provenance labels (hive/<id>) are never hold labels, whatever the
+		// hive ID happens to contain. The substring rule below otherwise
+		// reads hive/hosted-...-placeHOLDer-r05x as "hold" and parks every
+		// item that hive has ever claimed: excluded from the actionable set,
+		// skipped by the automerge sweep, counted as on-hold (69 items on
+		// one spoke, 2026-09-28). CanonicalHiveHoldLabel deliberately uses
+		// the hive-pause/ prefix so hive/<id> can stay provenance-only.
+		if !isProvenanceLabel(lower) {
+			for _, sub := range holdLabels {
+				sub = strings.ToLower(strings.TrimSpace(sub))
+				if sub != "" && strings.Contains(lower, sub) {
+					return true
+				}
 			}
 		}
 		for _, exact := range exactHoldLabels {
@@ -2134,6 +2148,12 @@ func HasHoldLabelWith(labels, extraHoldLabels []string) bool {
 		}
 	}
 	return false
+}
+
+// isProvenanceLabel reports whether a (lower-cased) label is a hive/<id>
+// provenance marker as produced by HiveProvenanceLabel.
+func isProvenanceLabel(lower string) bool {
+	return strings.HasPrefix(lower, "hive/")
 }
 
 func isHeld(labels []string) bool { return HasHoldLabel(labels) }

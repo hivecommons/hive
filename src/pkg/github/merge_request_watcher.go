@@ -203,6 +203,7 @@ func (c *Client) StartMergeRequestWatcher(ctx context.Context, authz MergeReques
 					return
 				}
 				c.processMergeRequests(ctx, nowFn)
+				c.revalidateMergeFailureAlerts(ctx, nowFn)
 			}
 		}
 	}()
@@ -357,7 +358,7 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 // and re-engaged exactly like a branch-protection refusal would be.
 func (c *Client) recordMergeFailure(path string, req MergeRequest, attempts int, errMsg string, nowFn func() time.Time) {
 	c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts, OK: false, Error: errMsg, At: nowFn().UTC().Format(time.RFC3339)})
-	c.raiseMergeFailureAlert(req.Repo, errMsg)
+	c.raiseMergeFailureAlert(req.Repo, req.Number, errMsg)
 	if attempts >= mergeRequestMaxAttempts {
 		// Terminal: a PR that still won't merge after N tries is blocked by
 		// something a retry can't fix. Fix #2: classify WHY. If the blocker
