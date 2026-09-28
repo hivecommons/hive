@@ -402,8 +402,9 @@ type Server struct {
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.
 type StatusPayload struct {
-	Timestamp string `json:"timestamp"`
-	TimeZone  string `json:"timeZone,omitempty"`
+	OverviewBands *OverviewBands `json:"overview_bands,omitempty"`
+	Timestamp     string         `json:"timestamp"`
+	TimeZone      string         `json:"timeZone,omitempty"`
 	// StatusSeq is a monotonic publish sequence (#4348): the frontend drops
 	// any status payload whose seq is older than the last one it rendered,
 	// so a stale in-flight poll/SSE response can never repaint over a newer
@@ -1189,6 +1190,10 @@ func (s *Server) registerCoreRoutes() {
 	s.mux.HandleFunc("GET /api/status/summary", s.handleStatusSummary)
 	s.mux.HandleFunc("GET /api/classifier/stats", s.handleClassifierStats)
 	s.mux.HandleFunc("POST /api/admin/mcp", s.handleAdminMCP)
+	s.mux.HandleFunc("GET /api/overview/issues.csv", s.handleOverviewIssuesCSV)
+	s.mux.HandleFunc("GET /api/overview/issues.json", s.handleOverviewIssuesJSON)
+	s.mux.HandleFunc("GET /api/overview/prs.csv", s.handleOverviewPRsCSV)
+	s.mux.HandleFunc("GET /api/overview/prs.json", s.handleOverviewPRsJSON)
 	s.mux.HandleFunc("GET /api/events", s.handleSSE)
 	s.mux.HandleFunc("POST /api/github-app/recheck", s.handleGitHubAppRecheck)
 	s.mux.HandleFunc("POST /api/github-app/install-clicked", s.handleGitHubAppInstallClicked)
@@ -2149,7 +2154,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	// consumption survives the reset that erases the live number.
 	s.ObserveBudgetWindow(status)
 
-	data, err := json.Marshal(status)
+	data, err := json.Marshal(s.statusWithOverviewBands(status, time.Now().UTC()))
 	if err != nil {
 		s.logger.Warn("failed to marshal status for SSE", "error", err)
 		return true
@@ -2954,7 +2959,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		statusJSONResponse(w, r, map[string]string{"status": "initializing"})
 		return
 	}
-	statusJSONResponse(w, r, filterStatusPayload(status, r.URL.Query().Get("fields"), r.URL.Query().Get("omit")))
+	statusJSONResponse(w, r, filterStatusPayload(s.statusWithOverviewBands(status, time.Now().UTC()), r.URL.Query().Get("fields"), r.URL.Query().Get("omit")))
 }
 
 func (s *Server) handleStatusSummary(w http.ResponseWriter, r *http.Request) {
@@ -3111,7 +3116,7 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 	s.statusMu.RLock()
 	if s.status != nil {
-		data, _ := json.Marshal(s.status)
+		data, _ := json.Marshal(s.statusWithOverviewBands(s.status, time.Now().UTC()))
 		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
 			s.statusMu.RUnlock()
 			return

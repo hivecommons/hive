@@ -207,8 +207,8 @@ that status is the thing to check before treating a page as current behaviour:
   `linear.session_agent` resolution rule, a kick built like the Linear
   responder's, replies through `Converse` on the existing watcher write path
   with no new outbound surface, and seven guards each mapped to a mechanism
-  that already has a runtime (dashboard role list, `review_bots` loop list and
-  per-thread cap, ioscan input enforcement). Records the #5591 lesson: the
+  that already has a runtime (dashboard role list, `review_bots` loop list,
+  an App-reply-counted per-thread cap, ioscan input enforcement). Records the #5591 lesson: the
   channel type ships with its runtime or not at all. Credits RFC #7483. Phases
   1–3 landed on `v6` in [#7582](https://github.com/hivecommons/hive/pull/7582),
   [#7597](https://github.com/hivecommons/hive/pull/7597), and

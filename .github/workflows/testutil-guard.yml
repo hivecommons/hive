@@ -122,6 +122,8 @@ jobs:
         with:
           cache: false
           go-version-file: src/go.mod
+      - name: Guard shared Go cache (fall back when the runner volume is full)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
 
       - name: internal/testutil coverage floor
         working-directory: src

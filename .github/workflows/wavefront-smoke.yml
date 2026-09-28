@@ -45,11 +45,14 @@ jobs:
             exit 0
           fi
           echo 'run=true' >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: steps.cfg.outputs.run == 'true' && matrix.lane == 'latest'
         with:
           cache: false
           go-version-file: src/go.mod
+      - name: Guard shared Go cache (fall back when the runner volume is full)
+        if: steps.cfg.outputs.run == 'true' && matrix.lane == 'latest'
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
       - name: Fetch real Crustify graph
         if: steps.cfg.outputs.run == 'true'
         run: |

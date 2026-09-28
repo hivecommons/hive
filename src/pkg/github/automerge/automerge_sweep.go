@@ -805,7 +805,7 @@ func (c *Engine) listOpenAppAuthoredPullRequests(ctx context.Context, owner, rep
 // gets from the queue approval's recorded HeadSHA, just without a stored
 // approval record to compare against (there is no queue step in this path).
 func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner, repo string, number int, branchUpdateAllowed bool) (AutoMergeSweepEvent, string, error) {
-	pr, _, err := c.gh.PullRequests.Get(ctx, owner, repo, number)
+	pr, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {
 			return AutoMergeSweepEvent{}, "gone", nil
@@ -905,7 +905,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// Re-verify the head SHA immediately before merging: a push landing
 	// between the green-check above and the merge call below must never be
 	// squashed without having gone through commitGreen itself.
-	current, _, err := c.gh.PullRequests.Get(ctx, owner, repo, number)
+	current, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {
 			return AutoMergeSweepEvent{}, "gone", nil
@@ -1048,7 +1048,7 @@ func (c *Engine) listQueuedPullRequestIssues(ctx context.Context, owner, repo, l
 }
 
 func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo string, number int, label string) (AutoMergeSweepEvent, string, error) {
-	pr, _, err := c.gh.PullRequests.Get(ctx, owner, repo, number)
+	pr, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {
 			return AutoMergeSweepEvent{}, "gone", nil

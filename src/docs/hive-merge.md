@@ -52,17 +52,18 @@ attempted:
 Both the agent/UID/`CanMerge` check and this target-binding check must pass
 before the merge is attempted.
 
-**The hive does not force-merge.** With admin bypass disabled, GitHub still
-enforces branch protection (required checks like build-gate). A PR whose
-required checks aren't green fails here, and the result file records why.
+**The hive does not force-merge.** GitHub still enforces whatever write
+permissions, branch protection, rulesets, required reviews, allowed merge
+methods, and required checks apply to the App token. A PR GitHub refuses fails
+here, and the result file records why.
 
-**The hive verifies CI itself, and absent is not passing.** Branch protection
-is not the only gate: before any merge is attempted the watcher requires
-*positive* CI confirmation on the pinned head SHA (#6173). On a base branch
-with no protection rules GitHub refuses nothing, so previously a red PR, or
-one whose workflows all died at startup with zero jobs (and therefore zero
-check runs and an empty status rollup), merged on request. The watcher now
-computes its own verdict:
+**The hive verifies CI itself, and absent is not passing.** Before any merge is
+attempted the watcher requires *positive* CI confirmation on the pinned head SHA
+(#6173). This gate applies equally to protected and unprotected base branches:
+a red PR, or one whose workflows all died at startup with zero jobs (and
+therefore zero check runs and an empty status rollup), does not merge merely
+because GitHub branch protection is absent. The watcher computes its own
+verdict:
 
 - **green** - at least one commit status or check run exists on the SHA, every
   gating one has succeeded (`neutral`/`skipped` count as success, the
@@ -84,24 +85,23 @@ computes its own verdict:
   (#6281): listing the repo (`owner/repo` or bare name) downgrades this — and
   ONLY this — verdict to green. Red and pending are never downgraded, and the
   default stays refuse.
-- **unprotected-base** (#6281) - the PR's base branch has no GitHub branch
-  protection. On such a branch the hive's own CI-evidence gate is the ONLY
-  gate — nothing external refuses the merge if the hive's evidence gathering
-  has a bug — so the watcher refuses unless the repo is explicitly
-  allowlisted in `auto_merge.allow_unprotected_base` (`owner/repo` or bare
-  name). The refusal reason lands in the result file and the log so an
-  operator can see why the request was quarantined. Note a no-CI repo whose
-  base is also unprotected needs BOTH entries — the two opt-outs are
-  deliberately independent.
 
 An API error while gathering that evidence is a failed attempt, never a pass.
 
-**The base branch must be protected by default.** Before merging, the watcher
-checks GitHub branch protection on the PR's base branch. A `404` response means
-the base is unprotected and the request is denied with a reason naming the
-repo-level override; any other branch-protection API error also fails closed.
-Repos that intentionally run without branch protection must be listed
-explicitly under `auto_merge.allow_unprotected_base`.
+**Fork PR workflow approval remains manual.** When a cross-repo pull request's
+workflow runs conclude `action_required`, the watcher refuses the merge with a
+reason that says the fork PR workflow runs are awaiting maintainer approval.
+The operator alert links to the repository Actions settings and tells the owner
+to approve the runs manually or relax "Approval for running fork pull request
+workflows". The hive does not call GitHub's workflow-run approval API.
+
+**Unprotected base branches are allowed.** The watcher no longer makes a
+separate branch-protection lookup and no longer refuses solely because the base
+branch is unprotected. It merges into any protected or unprotected branch the
+GitHub App can write, provided the hive's positive CI-evidence gate passes and
+GitHub accepts the merge. The legacy `auto_merge.allow_unprotected_base` key is
+accepted as a deprecated no-op so existing configs keep loading; it is no
+longer needed.
 
 **No-CI repositories require an explicit repo opt-in.** Repositories with no CI
 by design can be listed under `auto_merge.no_ci_ok`. That opt-in only downgrades
@@ -110,10 +110,17 @@ to green for that listed repo, and the watcher logs that
 `auto_merge.no_ci_ok` enabled it. Any non-zero failing CI evidence still
 refuses, and pending evidence still waits.
 
+**Actionable merge failures alert the operator.** Failures that require an
+operator configuration change raise one dashboard system alert per repo+reason,
+not one per PR or retry tick. The alert text names the fix: install/grant the
+App Contents and Pull requests write permissions, adjust review/ruleset bypass
+or approve the PR, make a missing required check report, or enable/use an
+allowed merge method. Conflicts re-engage the fix loop instead of alerting, and
+rate limits are treated as transient. A later successful merge in that repo
+clears its merge-failure alerts automatically.
+
 ```yaml
 auto_merge:
-  allow_unprotected_base:
-    - your-org/docs-only-repo
   no_ci_ok:
     - your-org/docs-only-repo
 ```

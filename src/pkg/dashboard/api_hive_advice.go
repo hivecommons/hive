@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hiveadvisor"
 )
 
@@ -67,9 +69,10 @@ func (s *Server) AttachHiveAdvice(status *StatusPayload, now time.Time) *hiveadv
 		s.hiveAdviceMu.RUnlock()
 	}
 	res := hiveadvisor.Recommend(hiveadvisor.Request{
-		Now:      now,
-		Signals:  buildHiveAdvisorSignals(status),
-		Previous: previous,
+		Now:        now,
+		Signals:    s.buildHiveAdvisorSignals(status, now),
+		Previous:   previous,
+		Thresholds: s.hiveAdviceThresholds(),
 	})
 	if s != nil {
 		s.hiveAdviceMu.Lock()
@@ -101,7 +104,11 @@ func (s *Server) CurrentHiveAdvice() *hiveadvisor.Result {
 	return out
 }
 
-func buildHiveAdvisorSignals(status *StatusPayload) hiveadvisor.Signals {
+// buildHiveAdvisorSignals collects the advisor's inputs. The governor
+// counters (Governor.Issues/PRs) are the ACTIONABLE queue; Queue is the
+// Overview chart's per-item breakdown, classified by the same bands.go
+// classifier the Overview donuts and the /api/overview exports use (#9102).
+func (s *Server) buildHiveAdvisorSignals(status *StatusPayload, now time.Time) hiveadvisor.Signals {
 	if status == nil {
 		return hiveadvisor.Signals{}
 	}
@@ -120,7 +127,98 @@ func buildHiveAdvisorSignals(status *StatusPayload) hiveadvisor.Signals {
 		BudgetUsedPct:       status.Budget.PctUsed,
 		BudgetExhausted:     status.Budget.Exhausted,
 		ACMM:                acmm,
+		Queue:               s.buildHiveAdvisorQueue(status, now),
 	}
+}
+
+func (s *Server) issueBandsConfig() config.DashboardIssueBandsConfig {
+	if s != nil && s.deps != nil && s.deps.Config != nil {
+		return s.deps.Config.Dashboard.IssueBands
+	}
+	return config.DashboardIssueBandsConfig{}
+}
+
+func (s *Server) hiveAdviceThresholds() hiveadvisor.Thresholds {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return hiveadvisor.Thresholds{}
+	}
+	q := s.deps.Config.Governor.Advisory.QueueHealth
+	return hiveadvisor.Thresholds{
+		BlockedPRPct:       q.BlockedPRPct,
+		NeedsHumanPRPct:    q.NeedsHumanPRPct,
+		NeedsHumanIssuePct: q.NeedsHumanIssuePct,
+		StaleBlockedPRs:    q.StaleBlockedPRs,
+		LaneSharePct:       q.LaneSharePct,
+		CheckSharePct:      q.CheckSharePct,
+	}
+}
+
+// buildHiveAdvisorQueue walks every open and held issue/PR across repo cards
+// through the Overview classifier and hands the advisor one PRItem/IssueItem
+// per item plus the band rule text the Overview tooltips print.
+func (s *Server) buildHiveAdvisorQueue(status *StatusPayload, now time.Time) hiveadvisor.Queue {
+	cfg := s.issueBandsConfig()
+	q := hiveadvisor.Queue{StaleDays: normalizeIssueBandsConfig(cfg).StaleDays}
+	for _, spec := range PRBandSpecs(cfg) {
+		q.PRBands = append(q.PRBands, hiveadvisor.BandRule{Kind: "pr", Key: spec.Key, Label: spec.Label, Rule: spec.Rule})
+	}
+	for _, spec := range IssueBandSpecs(cfg) {
+		q.IssueBands = append(q.IssueBands, hiveadvisor.BandRule{Kind: "issue", Key: spec.Key, Label: spec.Label, Rule: spec.Rule})
+	}
+	for _, item := range s.overviewPRItems(status, cfg, overviewFilters{}, now) {
+		pr := item.pr
+		labels := labelSet(pr.Labels)
+		q.PRs = append(q.PRs, hiveadvisor.PRItem{
+			Repo:           pr.Repo,
+			Number:         pr.Number,
+			URL:            overviewItemURL(pr.URL, pr.Repo, pr.Number, "pr", status.GitHubBaseURL),
+			Band:           item.info.Band,
+			Held:           item.held || len(holdLabels(pr.Labels, status.HiveID)) > 0,
+			NeedsHuman:     labels["needs-human"],
+			NeedsDecision:  labels["needs-decision"] || labels["2-discussing"],
+			CIFailing:      prCIFailing(pr),
+			FailingChecks:  append([]string(nil), pr.FailingChecks...),
+			Conflict:       pr.Mergeable == github.MergeableNo,
+			VerdictBlocked: item.verdict != nil && item.verdict.State == github.MergeVerdictBlocked,
+			VerdictReason:  verdictReason(item.verdict),
+			Lane:           item.info.Role,
+			Author:         pr.Author,
+			Stale:          item.info.Stale,
+			AgeDays:        daysSince(pr.CreatedAt, now),
+			IdleDays:       daysSince(issueActivityPR(pr), now),
+		})
+	}
+	for _, item := range overviewIssueItems(status, cfg, overviewFilters{}, now) {
+		issue := item.issue
+		labels := labelSet(issue.Labels)
+		q.Issues = append(q.Issues, hiveadvisor.IssueItem{
+			Repo:          issue.Repo,
+			Number:        issue.Number,
+			URL:           overviewItemURL(issue.URL, issue.Repo, issue.Number, "issue", status.GitHubBaseURL),
+			Band:          item.info.Band,
+			Blocked:       labels["blocked"],
+			NeedsDecision: labels["needs-decision"],
+			Discussing:    labels["2-discussing"],
+			AgeDays:       daysSince(issue.CreatedAt, now),
+			IdleDays:      daysSince(issueActivity(issue), now),
+		})
+	}
+	return q
+}
+
+func verdictReason(verdict *github.MergeVerdict) string {
+	if verdict == nil {
+		return ""
+	}
+	return verdict.Reason
+}
+
+// daysSince is whole days from t to now; 0 for a zero or sentinel time.
+func daysSince(t, now time.Time) int {
+	if t.IsZero() || !t.Before(now) {
+		return 0
+	}
+	return int(now.Sub(t) / (hoursPerDay * time.Hour))
 }
 
 func countDisabledConfiguredAgents(agents []FrontendConfiguredAgent) int {
@@ -158,6 +256,9 @@ func cloneHiveAdvisorRecommendations(in []hiveadvisor.Recommendation) []hiveadvi
 	copy(out, in)
 	for i := range out {
 		out[i].Signals = append([]hiveadvisor.Signal(nil), out[i].Signals...)
+		out[i].Links = append([]hiveadvisor.Link(nil), out[i].Links...)
+		out[i].Items = append([]hiveadvisor.Item(nil), out[i].Items...)
+		out[i].Bands = append([]string(nil), out[i].Bands...)
 	}
 	return out
 }

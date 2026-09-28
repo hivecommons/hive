@@ -181,3 +181,36 @@ func TestAdvisoryConfigTargetParsesLinear(t *testing.T) {
 		t.Errorf("unknown target resolved to %q, want it passed through for the caller to reject", got)
 	}
 }
+
+// TestAdvisoryQueueHealthRoundTrip (#9103): a tuned threshold survives the
+// yaml round-trip and applyDefaults leaves it alone; an untouched install
+// never sees the queue_health key appear in its file.
+func TestAdvisoryQueueHealthRoundTrip(t *testing.T) {
+	cfg := &Config{}
+	cfg.Governor.Advisory.QueueHealth.BlockedPRPct = 60
+	cfg.applyDefaults()
+	out, err := yaml.Marshal(cfg.Governor.Advisory)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(out), "queue_health:\n") || !strings.Contains(string(out), "blocked_pr_pct: 60") || strings.Contains(string(out), "lane_share_pct") {
+		t.Fatalf("yaml round-trip of queue_health wrong: %s", out)
+	}
+	var back AdvisoryConfig
+	if err := yaml.Unmarshal(out, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if back.QueueHealth != (AdvisoryQueueHealthConfig{BlockedPRPct: 60}) {
+		t.Fatalf("round-tripped queue_health = %+v", back.QueueHealth)
+	}
+
+	empty := &Config{}
+	empty.applyDefaults()
+	out, err = yaml.Marshal(empty.Governor.Advisory)
+	if err != nil {
+		t.Fatalf("marshal empty: %v", err)
+	}
+	if strings.Contains(string(out), "queue_health") {
+		t.Fatalf("unset queue_health must be omitted from yaml, got: %s", out)
+	}
+}

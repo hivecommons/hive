@@ -81,17 +81,19 @@ type Client struct {
 	// mergePolicyMu guards the merge-request watcher policy knobs below.
 	// Config reloads may replace them while a watcher tick is evaluating a
 	// request, so reads must be synchronized.
-	mergePolicyMu              sync.RWMutex
-	allowUnprotectedBaseRepos  map[string]bool
-	noCIAllowedRepos           map[string]bool
-	baseBranchProtectionCached map[string]baseBranchProtectionCacheEntry
-	logger                     *slog.Logger
-	appAuth                    *AppAuth // nil for token-authenticated clients
-	canariesEnabled            bool
-	canaryFailClosed           bool
-	canaryRegistry             *ioscan.CanaryRegistry
-	canaryLeakFunc             func(ioscan.CanaryLeak)
-	appBotLogin                string // "<app-slug>[bot]" when the client authenticates as a GitHub App
+	mergePolicyMu             sync.RWMutex
+	allowUnprotectedBaseRepos map[string]bool
+	noCIAllowedRepos          map[string]bool
+	mergeAlertMu              sync.Mutex
+	mergeAlertSink            MergeFailureAlertSink
+	mergeAlertIDsByRepo       map[string]map[string]bool
+	logger                    *slog.Logger
+	appAuth                   *AppAuth // nil for token-authenticated clients
+	canariesEnabled           bool
+	canaryFailClosed          bool
+	canaryRegistry            *ioscan.CanaryRegistry
+	canaryLeakFunc            func(ioscan.CanaryLeak)
+	appBotLogin               string // "<app-slug>[bot]" when the client authenticates as a GitHub App
 	// approvalDesk is the RFC #4000 approval-desk consultation performed per PR
 	// by the self-authored auto-merge sweep. nil (the default) means the sweep
 	// behaves exactly as it did before the desk existed. Set by SetApprovalDesk
@@ -108,6 +110,11 @@ type Client struct {
 	// false → no comment is fetched, no Issue carries claim fields. Read live
 	// so a Features-panel toggle applies without a client rebuild.
 	issueClaims func() (enabled bool, ttl time.Duration)
+	// mttrIssueCache remembers issue creation times used by the MTTR dashboard
+	// card so the hourly metrics pass does not refetch the same referenced issue
+	// every cycle. Guarded by mttrIssueMu.
+	mttrIssueCache map[string]mttrIssueCacheEntry
+	mttrIssueMu    sync.Mutex
 	// attributedClosedPRCache keeps the last successful bounded closed-PR
 	// attribution scan per repo. Closed attributions feed outcome/rework
 	// dashboards; they must not be re-fetched from all history each tick, and a
@@ -1570,7 +1577,7 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 	// "mergeable"/"mergeable_state" — GitHub computes them per-PR and
 	// returns them only from this single-PR GET. On error we leave the
 	// field as MergeableUnknown rather than guessing.
-	if full, _, err := c.client.PullRequests.Get(ctx, owner, repoName, pr.Number); err != nil {
+	if full, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:enrich_pr_ci"), owner, repoName, pr.Number); err != nil {
 		c.logger.Warn("failed to fetch PR mergeability", "repo", pr.Repo, "pr", pr.Number, "error", err)
 	} else {
 		pr.Mergeable = mergeableFromState(full.GetMergeableState(), full.Mergeable)
@@ -1585,13 +1592,14 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 		pr.CIStatus = ciStatusPending
 		return nil
 	}
-	reported := make(map[string]bool, len(checkRuns.CheckRuns))
-	for _, cr := range checkRuns.CheckRuns {
+	latestCheckRuns := latestCheckRunsByNameAndApp(checkRuns.CheckRuns)
+	reported := make(map[string]bool, len(latestCheckRuns))
+	for _, cr := range latestCheckRuns {
 		if name := cr.GetName(); name != "" {
 			reported[name] = true
 		}
 	}
-	if checkRuns.GetTotal() == 0 {
+	if len(latestCheckRuns) == 0 {
 		pr.CIStatus = ciStatusPending
 		return reported
 	}
@@ -1600,7 +1608,7 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 	ciChecksFound := 0
 	var failingNames []string
 	var failingIDs []int64
-	for _, cr := range checkRuns.CheckRuns {
+	for _, cr := range latestCheckRuns {
 		if isMetaCheck(cr.GetName()) {
 			continue
 		}
@@ -1819,7 +1827,7 @@ func (c *Client) GetPRAuthor(ctx context.Context, repo string, number int) (stri
 		return "", ErrNoGitHubClient
 	}
 	owner, repoName := c.splitRepo(repo)
-	pr, _, err := c.client.PullRequests.Get(ctx, owner, repoName, number)
+	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:get_pr_author"), owner, repoName, number)
 	if err != nil {
 		return "", err
 	}
@@ -1842,7 +1850,7 @@ func (c *Client) GetPRState(ctx context.Context, repo string, number int) (PRSta
 		return PRState{}, ErrNoGitHubClient
 	}
 	owner, repoName := c.splitRepo(repo)
-	pr, _, err := c.client.PullRequests.Get(ctx, owner, repoName, number)
+	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:get_pr_state"), owner, repoName, number)
 	if err != nil {
 		return PRState{}, err
 	}
@@ -1868,7 +1876,7 @@ func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, 
 		return errors.New("queuedBy is required for auto-merge audit and self-merge checks")
 	}
 	owner, repoName := c.splitRepo(repo)
-	pr, _, err := c.client.PullRequests.Get(ctx, owner, repoName, number)
+	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:queue_pr_automerge"), owner, repoName, number)
 	if err != nil {
 		return fmt.Errorf("fetching PR head for auto-merge approval: %w", err)
 	}
@@ -2359,9 +2367,17 @@ func trackerTitlePrefix(title string) bool {
 }
 
 type RateLimitInfo struct {
-	Core    RateLimitEntry `json:"core"`
-	Search  RateLimitEntry `json:"search"`
-	GraphQL RateLimitEntry `json:"graphql"`
+	Core         RateLimitEntry `json:"core"`
+	Search       RateLimitEntry `json:"search"`
+	GraphQL      RateLimitEntry `json:"graphql"`
+	TopConsumers []RESTConsumer `json:"top_consumers,omitempty"`
+	ETagCache    ETagCacheInfo  `json:"etag_cache"`
+}
+
+type ETagCacheInfo struct {
+	Hits    int64 `json:"hits"`
+	Misses  int64 `json:"misses"`
+	Entries int64 `json:"entries"`
 }
 
 type RateLimitEntry struct {
@@ -2417,6 +2433,9 @@ func (c *Client) RateLimits(ctx context.Context) (*RateLimitInfo, error) {
 	info.Core = c.rateLimits.observe("core", info.Core)
 	info.Search = c.rateLimits.observe("search", info.Search)
 	info.GraphQL = c.rateLimits.observe("graphql", info.GraphQL)
+	hits, misses, entries := ETagCacheStats()
+	info.ETagCache = ETagCacheInfo{Hits: hits, Misses: misses, Entries: entries}
+	info.TopConsumers = RESTTopConsumers(10)
 
 	return info, nil
 }

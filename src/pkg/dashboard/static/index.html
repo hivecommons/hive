@@ -10103,45 +10103,6 @@
       return `<button class="repo-issue-plan pill-icon plan-chip ${cls}" data-action="openPlanReview" data-arg0="${esc(l.epicId)}" title="${esc(tip + ' — click to open the plan')}" aria-label="${esc(tip)}">${esc(glyph)}</button>`;
     }
 
-    function issueLabelSet(issue) {
-      return new Set(((issue && issue.labels) || []).map(l => String(l).toLowerCase()));
-    }
-
-    function issueHasAnyLabel(issue, labels) {
-      const set = issueLabelSet(issue);
-      return (labels || []).some(l => set.has(String(l).toLowerCase()));
-    }
-
-    function issueAgentRole(issue) {
-      for (const label of ((issue && issue.labels) || [])) {
-        const raw = String(label || '');
-        if (raw.toLowerCase().startsWith('agent/')) return raw.slice(raw.indexOf('/') + 1).trim();
-      }
-      return '';
-    }
-
-    function issueClaimed(issue) {
-      const labels = ((issue && issue.labels) || []).map(l => String(l).toLowerCase());
-      return labels.includes('claimed') || labels.some(l => l.startsWith('hive/claimed-by-'));
-    }
-
-    // #5117 acknowledgment as the snapshot carries it: the server sets
-    // `human_acknowledged` on both actionable issues and held issues from
-    // the approved-direction label or a human assignee (no comment scan — a
-    // human comment only satisfies the PR-time gate and is not in the
-    // payload). The label is also read directly so an older snapshot
-    // without the flag still bands a labelled issue correctly.
-    function issueAcknowledged(issue) {
-      return !!(issue && issue.human_acknowledged) || issueLabelSet(issue).has('approved-direction');
-    }
-
-    // Extension point for #8876: return { open:true } or { merged:true } once
-    // the snapshot carries linked PRs. Until then repo-card banding intentionally
-    // does not infer or fetch PR relationships.
-    function issueLinkedPRState(issue) {
-      return null;
-    }
-
     function issueUpdatedAt(issue) {
       const value = (issue && (issue.updated_at || issue.created_at)) || '';
       const t = Date.parse(value);
@@ -10149,39 +10110,22 @@
     }
 
     function issueIsStale(issue) {
-      const t = issueUpdatedAt(issue);
-      if (!Number.isFinite(t)) return false;
-      return (Date.now() - t) > repoIssueBandConfig().staleDays * MS_PER_DAY;
+      return !!(issue && issue.stale);
     }
 
     function repoStaleIssueCount(issues) {
       return (issues || []).filter(issueIsStale).length;
     }
 
-    const PR_HUMAN_GATE_LABELS = ['needs-human', 'needs-decision', '2-discussing'];
     const PR_BAND_ORDER = ['waiting', 'eligible', 'blocked', 'in-review', 'open', 'draft'];
 
     function prLabelSet(pr) {
       return new Set(((pr && pr.labels) || []).map(l => String(l).toLowerCase()));
     }
 
-    function prHasAnyLabel(pr, labels) {
-      const set = prLabelSet(pr);
-      return (labels || []).some(l => set.has(String(l).toLowerCase()));
-    }
-
     function prQueued(pr) {
       const want = String(window._hiveAutoMergeLabel || 'lgtm').toLowerCase();
       return prLabelSet(pr).has(want);
-    }
-
-    function prAgentRole(pr) {
-      if (pr && pr.hive_agent) return String(pr.hive_agent).trim();
-      for (const label of ((pr && pr.labels) || [])) {
-        const raw = String(label || '');
-        if (raw.toLowerCase().startsWith('agent/')) return raw.slice(raw.indexOf('/') + 1).trim();
-      }
-      return pr && pr.app_authored ? 'app' : '';
     }
 
     function prUpdatedAt(pr) {
@@ -10205,14 +10149,7 @@
     }
 
     function prIsStale(pr) {
-      const t = prUpdatedAt(pr);
-      if (!Number.isFinite(t)) return false;
-      return (Date.now() - t) > repoIssueBandConfig().staleDays * MS_PER_DAY;
-    }
-
-    function prCIFailing(pr) {
-      const checks = (pr && pr.failing_checks) || [];
-      return pr && String(pr.ci_status || '').toLowerCase() === 'failing' && Array.isArray(checks) && checks.length > 0;
+      return !!(pr && pr.stale);
     }
 
     // GitHub's own review verdict, read from the protection facts the sweep
@@ -10264,58 +10201,14 @@
       return Array.isArray(pr && pr.linked_issues) ? pr.linked_issues.filter(i => i && i.number) : [];
     }
 
-    function prBandInfo(pr, held) {
-      const cfg = repoIssueBandConfig();
-      const labels = prLabelSet(pr);
-      const v = pr && pr.merge_verdict ? pr.merge_verdict : {};
-      const role = prAgentRole(pr);
-      const review = prGitHubReview(pr);
-      const matches = {
-        waiting: !!held || prHasAnyLabel(pr, PR_HUMAN_GATE_LABELS.concat(cfg.waitingLabels || [])) || holdLabels(Array.from(labels)).length > 0,
-        eligible: (v && v.state === 'eligible') || prQueued(pr),
-        blocked: (v && v.state === 'blocked') || (pr && pr.mergeable === 'no') || prCIFailing(pr),
-        inReview: (v && v.state === 'outstanding') || !!(pr && pr.review_url) || !!review,
-        draft: !!(pr && pr.draft)
-      };
-      let band = 'open';
-      if (matches.waiting) band = 'waiting';
-      else if (matches.eligible) band = 'eligible';
-      else if (matches.blocked) band = 'blocked';
-      else if (matches.inReview) band = 'in-review';
-      else if (matches.draft) band = 'draft';
-      const signals = [];
-      if (role) signals.push({ role: role, label: 'agent-authored by ' + role });
-      if (labels.has('needs-human')) signals.push({ glyph: '⚠', label: 'needs human review' });
-      if (held || holdLabels(Array.from(labels)).length > 0) signals.push({ glyph: '⏸', label: 'held' });
-      if (matches.eligible) signals.push({ glyph: '✓', label: prQueued(pr) ? 'queued or merge-eligible' : 'merge-eligible' });
-      if (matches.inReview) signals.push({ glyph: '◐', label: 'in review or outstanding' });
-      if (review) signals.push({ glyph: review.glyph, label: review.label });
-      const requested = prRequestedReviews(pr);
-      if (requested.length) signals.push({ glyph: '👥', label: 'review requested from ' + requested.join(', ') });
-      const convo = prConversation(pr);
-      if (convo) signals.push({ glyph: '🗨 ' + convo.total, label: convo.label });
-      if (prCIFailing(pr)) signals.push({ glyph: '✗ CI', label: 'failing CI: ' + ((pr.failing_checks || []).join(', ') || 'check failure') });
-      if (pr && pr.mergeable === 'no') signals.push({ glyph: '⑂', label: 'not mergeable' + (pr.mergeable_state ? ': ' + pr.mergeable_state : '') });
-      if (prQueued(pr)) signals.push({ glyph: '🔀', label: 'queued for auto-merge' });
-      if (prIsStale(pr)) signals.push({ glyph: '🕒', label: 'stale: no activity > ' + cfg.staleDays + 'd' });
-      return { band, role, held: !!held, matches, signals, review };
-    }
-
     // One table per band kind drives the band header, the short status chip
     // and the rule text shown wherever the band is named — the repo-card
     // header, the Overview slice and legend row, and the pill legend — so
     // the three cannot drift (#9019). Band keys stay stable (CSS, tests,
     // config); only the operator-facing wording is action-oriented.
     function prBandSpec(band) {
-      const cfg = repoIssueBandConfig();
-      switch (band) {
-        case 'waiting': return { label: 'Needs human', rule: 'held, or labelled ' + Array.from(new Set(PR_HUMAN_GATE_LABELS.concat(cfg.waitingLabels || []).map(l => String(l).toLowerCase()))).join(', ') + ' — a human must review, decide, or release the hold before automation continues' };
-        case 'eligible': return { label: 'Merge-eligible', rule: 'sweep verdict eligible, or queued for Hive auto-merge — nothing needed; it merges on its own' };
-        case 'blocked': return { label: 'Blocked', rule: 'blocked sweep verdict, merge conflicts, or failing CI — read the verdict, rebase, or fix the checks' };
-        case 'in-review': return { label: 'In review', rule: 'outstanding sweep verdict, a Hive review posted, or a GitHub review decision — nothing needed until the review resolves' };
-        case 'draft': return { label: 'Draft', rule: 'draft on GitHub — nothing needed until it is marked ready for review' };
-        default: return { label: 'Open', rule: 'no verdict, review, hold, or draft flag yet — an ordinary open PR' };
-      }
+      const specs = ((window._lastStatus || {}).overview_bands || {}).prs || [];
+      return specs.find(spec => spec.key === band) || { label: band, short: band, rule: '' };
     }
 
     function prBandLabel(band) {
@@ -10340,7 +10233,7 @@
       const groups = new Map();
       const entries = (openPrs || []).map(pr => ({ pr, held: false })).concat((heldPrs || []).map(pr => ({ pr, held: true })));
       entries.forEach(entry => {
-        const info = prBandInfo(entry.pr, entry.held);
+        const info = entry.pr;
         const key = info.band;
         if (!groups.has(key)) groups.set(key, { key, band: info.band, label: prBandLabel(info.band), tip: prBandTip(info.band), prs: [] });
         groups.get(key).prs.push({ pr: entry.pr, held: entry.held, info });
@@ -10357,47 +10250,9 @@
         : `<span class="pill-state" title="${esc(s.label)}">${esc(s.glyph)}</span>`).join('');
     }
 
-    function issueBandInfo(issue) {
-      const cfg = repoIssueBandConfig();
-      const labels = issueLabelSet(issue);
-      const linked = issueLinkedPRState(issue) || {};
-      const role = issueAgentRole(issue);
-      const acknowledged = issueAcknowledged(issue);
-      const matches = {
-        done: issueHasAnyLabel(issue, cfg.doneLabels) || !!linked.merged,
-        waiting: issueHasAnyLabel(issue, cfg.waitingLabels),
-        inProgress: ((issue && issue.assignees) || []).length > 0 || issueClaimed(issue) || !!linked.open,
-        // Agent-filed is an operator queue only until a human acknowledges
-        // the proposal (#5117); acknowledged issues fall through to the
-        // claimed/unclaimed bands with the role badge still on the pill.
-        agentFiled: !!role && !acknowledged
-      };
-      let band = 'ready';
-      if (matches.done) band = 'done';
-      else if (matches.waiting) band = 'waiting';
-      else if (matches.inProgress) band = 'in-progress';
-      else if (matches.agentFiled) band = 'agent-filed';
-      const signals = [];
-      if (labels.has('blocked')) signals.push({ glyph: '⛔', label: 'blocked' });
-      if (labels.has('needs-decision') || labels.has('2-discussing')) signals.push({ glyph: '❓', label: 'needs decision' });
-      if (labels.has('epic')) signals.push({ glyph: '◆', label: 'epic' });
-      if (matches.inProgress) signals.push({ glyph: '👤', label: 'assigned or claimed' });
-      if (linked.open) signals.push({ glyph: '🔗', label: 'open PR references this issue' });
-      if (matches.done) signals.push({ glyph: '✓', label: linked.merged ? 'merged PR references this issue' : 'already done' });
-      if (role) signals.push({ role: role, label: 'agent-filed by ' + role + (acknowledged ? ', acknowledged by a human' : ', not yet acknowledged') });
-      if (issueIsStale(issue)) signals.push({ glyph: '🕒', label: 'stale: no activity > ' + cfg.staleDays + 'd' });
-      return { band, role, matches, signals };
-    }
-
     function issueBandSpec(band) {
-      const cfg = repoIssueBandConfig();
-      switch (band) {
-        case 'in-progress': return { label: 'Claimed', short: 'claimed', rule: 'assigned, claimed by an agent, or an open PR references it — nothing needed unless it stalls' };
-        case 'agent-filed': return { label: 'Needs triage', short: 'triage', rule: 'filed by an agent (agent/<role> label) with no approved-direction label and no human assignee — add the label, assign a human, or close it. A human comment also acknowledges for #5117 but is not in the snapshot, so a commented-on proposal still shows here' };
-        case 'waiting': return { label: 'Needs human', short: 'needs human', rule: 'labelled ' + (cfg.waitingLabels || []).join(', ') + ' — a human must unblock or decide before agents continue' };
-        case 'done': return { label: 'Confirm & close', short: 'close?', rule: 'an agent applied ' + (cfg.doneLabels || []).join(', ') + ' or a merged PR references it — verify the work landed and close the issue' };
-        default: return { label: 'Unclaimed', short: 'unclaimed', rule: 'no other band matched — nobody is assigned, nothing claimed it, and no human gate applies; this does not by itself mean agents will pick it up' };
-      }
+      const specs = ((window._lastStatus || {}).overview_bands || {}).issues || [];
+      return specs.find(spec => spec.key === band) || { label: band, short: band, rule: '' };
     }
 
     function issueBandLabel(band) {
@@ -10424,7 +10279,7 @@
     function groupedRepoIssues(issues) {
       const groups = new Map();
       (issues || []).forEach(issue => {
-        const info = issueBandInfo(issue);
+        const info = issue;
         const key = info.band;
         if (!groups.has(key)) groups.set(key, { key, band: info.band, label: issueBandLabel(info.band), tip: issueBandTip(info.band), issues: [] });
         groups.get(key).issues.push({ issue, info });
@@ -10511,47 +10366,6 @@
       }));
     }
 
-    function overviewCsvCell(v) {
-      if (Array.isArray(v)) v = v.map(x => x == null ? '' : String(x)).join(';');
-      if (v == null) v = '';
-      if (typeof v === 'boolean') v = v ? 'true' : 'false';
-      let text = String(v);
-      // Spreadsheet formula injection (CWE-1236): a leading =, +, -, @, tab or
-      // CR makes Excel/Sheets evaluate the cell as a formula, and titles/labels
-      // in these rows are written by anyone who can open an issue or PR on a
-      // watched repo. Neutralize with a leading apostrophe; plain numbers
-      // (e.g. -5) stay untouched so numeric columns still sort.
-      if (/^[=+\-@\t\r]/.test(text) && !/^-?\d+(\.\d+)?$/.test(text)) text = "'" + text;
-      return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
-    }
-
-    function overviewCsv(rows, columns) {
-      const lineBreak = String.fromCharCode(13, 10);
-      const header = (columns || []).map(overviewCsvCell).join(',');
-      const body = (rows || []).map(row => (columns || []).map(col => overviewCsvCell(row ? row[col] : '')).join(','));
-      return String.fromCharCode(0xfeff) + [header].concat(body).join(lineBreak) + lineBreak;
-    }
-
-    function overviewCsvColumns(kind) {
-      if (kind === 'pr' || kind === 'prs') return ['band', 'band_rule', 'repo', 'number', 'title', 'url', 'author', 'draft', 'merge_verdict', 'mergeable', 'failing_checks', 'review_decision', 'review_class', 'held', 'hold_reason', 'labels', 'updated_at', 'stale', 'signals'];
-      return ['band', 'band_rule', 'repo', 'number', 'title', 'url', 'state_signals', 'labels', 'assignees', 'agent_role', 'acknowledged', 'held', 'hold_reason', 'linked_prs', 'updated_at', 'stale'];
-    }
-
-    function overviewBandSlug(label) {
-      return String(label || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'band';
-    }
-
-    function overviewCsvTimestamp(d) {
-      const date = d || new Date();
-      const pad = n => String(n).padStart(2, '0');
-      return String(date.getFullYear()) + pad(date.getMonth() + 1) + pad(date.getDate()) + '-' + pad(date.getHours()) + pad(date.getMinutes());
-    }
-
-    function overviewCsvHiveId() {
-      const raw = String(((window._lastStatus || {}).hiveId) || 'hive').trim() || 'hive';
-      return raw.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'hive';
-    }
-
     function overviewItemUrl(item, kind) {
       const raw = (item && (item.item || item.issue || item.pr)) || item || {};
       if (raw.url) return raw.url;
@@ -10561,109 +10375,15 @@
       return base + '/' + repo + '/' + (kind === 'pr' ? 'pull' : 'issues') + '/' + raw.number;
     }
 
-    function overviewSignalLabels(info) {
-      return ((info && info.signals) || []).map(s => s && s.label ? s.label : '').filter(Boolean);
-    }
-
-    function overviewLinkedPRs(issue) {
-      return (Array.isArray(issue && issue.linked_prs) ? issue.linked_prs : []).map(pr => {
-        const num = pr && pr.number ? '#' + pr.number : '';
-        const state = pr && (pr.merged ? 'merged' : pr.state) ? ' ' + (pr.merged ? 'merged' : pr.state) : '';
-        const repo = pr && pr.repo ? pr.repo : '';
-        return (repo ? repo : '') + num + state;
-      }).filter(Boolean);
-    }
-
-    function overviewMergeVerdictText(pr) {
-      const v = pr && pr.merge_verdict;
-      if (!v) return '';
-      if (typeof v === 'string') return v;
-      if (v.state && v.reason) return String(v.state) + ': ' + String(v.reason);
-      return v.state || v.reason || '';
-    }
-
-    function overviewReviewDecision(pr) {
-      return (pr && pr.protection && pr.protection.review_decision) || pr.review_decision || '';
-    }
-
-    function overviewIssueCsvRow(item, band) {
-      const issue = (item && (item.item || item.issue)) || item || {};
-      const info = (item && item.info) || issueBandInfo(issue);
-      const key = band || info.band;
-      const held = !!(item && item.held);
-      return {
-        band: issueBandLabel(key),
-        band_rule: issueBandRule(key),
-        repo: (item && item.repo) || issue.repo || '',
-        number: issue.number || '',
-        title: issue.title || '',
-        url: overviewItemUrl(item || issue, 'issue'),
-        state_signals: overviewSignalLabels(info),
-        labels: (issue.labels || []).map(l => String(l)),
-        assignees: (issue.assignees || []).map(a => String(a)),
-        agent_role: issueAgentRole(issue),
-        acknowledged: issueAcknowledged(issue),
-        held,
-        hold_reason: held ? heldReason(issue) : '',
-        linked_prs: overviewLinkedPRs(issue),
-        updated_at: issue.updated_at || '',
-        stale: issueIsStale(issue)
-      };
-    }
-
-    function overviewPRCsvRow(item, band) {
-      const pr = (item && (item.item || item.pr)) || item || {};
-      const held = !!(item && item.held);
-      const info = (item && item.info) || prBandInfo(pr, held);
-      const key = band || info.band;
-      return {
-        band: prBandLabel(key),
-        band_rule: prBandRule(key),
-        repo: (item && item.repo) || pr.repo || '',
-        number: pr.number || '',
-        title: pr.title || '',
-        url: overviewItemUrl(item || pr, 'pr'),
-        author: pr.author || '',
-        draft: !!pr.draft,
-        merge_verdict: overviewMergeVerdictText(pr),
-        mergeable: pr.mergeable || '',
-        failing_checks: (pr.failing_checks || []).map(c => String(c)),
-        review_decision: overviewReviewDecision(pr),
-        review_class: pr.review_class || '',
-        held,
-        hold_reason: held ? heldReason(pr) : '',
-        labels: (pr.labels || []).map(l => String(l)),
-        updated_at: pr.updated_at || '',
-        stale: prIsStale(pr),
-        signals: overviewSignalLabels(info)
-      };
-    }
-
-    function overviewCsvRows(kind, band) {
-      const isPR = kind === 'pr' || kind === 'prs';
-      const slices = isPR ? overviewPRBandSlices(_overviewLastRepos || []) : overviewIssueBandSlices(_overviewLastRepos || []);
-      return slices.filter(s => !band || s.key === band).flatMap(s => (s.items || []).map(item => isPR ? overviewPRCsvRow(item, s.key) : overviewIssueCsvRow(item, s.key)));
-    }
-
-    function downloadOverviewCsv(kind, band) {
-      const isPR = kind === 'pr' || kind === 'prs';
-      const normalized = isPR ? 'pr' : 'issue';
-      const rows = overviewCsvRows(normalized, band);
-      if (!rows.length) return;
-      const slices = isPR ? overviewPRBandSlices(_overviewLastRepos || []) : overviewIssueBandSlices(_overviewLastRepos || []);
-      const slice = band ? slices.find(s => s.key === band) : null;
-      const parts = ['hive', overviewCsvHiveId(), isPR ? 'prs' : 'issues'];
-      if (slice) parts.push(overviewBandSlug(slice.label));
-      parts.push(overviewCsvTimestamp(new Date()));
-      const blob = new Blob([overviewCsv(rows, overviewCsvColumns(normalized))], { type: 'text/csv;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = parts.join('-') + '.csv';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+    function overviewExportURL(kind, band) {
+      const path = '/api/overview/' + (kind === 'pr' || kind === 'prs' ? 'prs' : 'issues') + '.csv';
+      const params = new URLSearchParams();
+      if (band) params.set('band', band);
+      // Links use the same token accepted by the API; cookie auth needs no query.
+      let token = '';
+      try { token = localStorage.getItem('hive-token') || ''; } catch {}
+      if (token) params.set('token', token);
+      return path + (params.size ? '?' + params.toString() : '');
     }
 
     function overviewChartLabelPoint(percentOffset, percentSize) {
@@ -10791,7 +10511,7 @@
       return visible.map(s => {
         const percent = (s.count / total) * OVERVIEW_CHART_PERCENT_SCALE;
         const percentLabel = percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + '%';
-        const download = kind ? `<button type="button" class="overview-band-download" data-action="downloadOverviewCsv" data-arg0="${esc(kind)}" data-arg1="${esc(s.key)}" data-stop="1" title="Export ${esc(s.label)} as CSV" aria-label="Export ${esc(s.label)} as CSV">⬇</button>` : '';
+        const download = kind ? `<a class="overview-band-download" href="${esc(overviewExportURL(kind, s.key))}" data-stop="1" title="Export ${esc(s.label)} as CSV" aria-label="Export ${esc(s.label)} as CSV">⬇</a>` : '';
         return `<div class="overview-chart-legend-row" title="${esc(s.label + (s.rule ? ': ' + s.rule : ''))}"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${s.count} (${percentLabel})</span>${download}</div>`;
       }).join('');
     }
@@ -10933,9 +10653,8 @@
       const body = renderOverviewChartBody(active, title, subtitle, slices, kind, state);
       const total = (slices || []).reduce((n, s) => n + s.count, 0);
       const csvKind = kind === 'pr' ? 'prs' : 'issues';
-      const csvDisabled = total ? '' : ' disabled';
       const csvTitle = total ? ('Export ' + (kind === 'pr' ? 'PRs' : 'issues') + ' as CSV') : 'No matching items to export';
-      const controls = `<div class="overview-chart-controls"><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselPrev" data-arg0="${kind}" data-stop="1" title="Previous Overview chart">◀</button><select class="overview-chart-select" data-change-action="setOverviewChartType" data-arg0="${kind}" data-arg-types="s,v" title="Overview chart type">${overviewChartTypeOptions(active)}</select><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselNext" data-arg0="${kind}" data-stop="1" title="Next Overview chart">▶</button>${renderOverviewDots(enabled, active)}<span class="overview-chart-controls-sep"></span><button type="button" class="overview-carousel-arrow" data-action="toggleOverviewCarousel" data-stop="1" aria-pressed="${state.carousel ? 'true' : 'false'}" title="${state.carousel ? 'Auto-play on — rotates every ' + Math.round(state.intervalMs / 1000) + 's through the ticked charts (⚙️ to choose). Click to pause.' : 'Auto-play off — click to rotate through the ticked charts every ' + Math.round(state.intervalMs / 1000) + 's'}">${state.carousel ? '⏸ auto' : '⏵ auto'}</button><select class="overview-chart-select" data-change-action="setOverviewTransition" data-arg-types="v" title="Transition between charts">${overviewTransitionOptions(state.transition)}</select><span class="overview-chart-controls-sep"></span><button type="button" class="hv-btn btn-sm overview-export-csv" data-action="downloadOverviewCsv" data-arg0="${csvKind}" data-stop="1" title="${esc(csvTitle)}"${csvDisabled}>Export CSV</button></div>`;
+      const controls = `<div class="overview-chart-controls"><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselPrev" data-arg0="${kind}" data-stop="1" title="Previous Overview chart">◀</button><select class="overview-chart-select" data-change-action="setOverviewChartType" data-arg0="${kind}" data-arg-types="s,v" title="Overview chart type">${overviewChartTypeOptions(active)}</select><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselNext" data-arg0="${kind}" data-stop="1" title="Next Overview chart">▶</button>${renderOverviewDots(enabled, active)}<span class="overview-chart-controls-sep"></span><button type="button" class="overview-carousel-arrow" data-action="toggleOverviewCarousel" data-stop="1" aria-pressed="${state.carousel ? 'true' : 'false'}" title="${state.carousel ? 'Auto-play on — rotates every ' + Math.round(state.intervalMs / 1000) + 's through the ticked charts (⚙️ to choose). Click to pause.' : 'Auto-play off — click to rotate through the ticked charts every ' + Math.round(state.intervalMs / 1000) + 's'}">${state.carousel ? '⏸ auto' : '⏵ auto'}</button><select class="overview-chart-select" data-change-action="setOverviewTransition" data-arg-types="v" title="Transition between charts">${overviewTransitionOptions(state.transition)}</select><span class="overview-chart-controls-sep"></span><a class="hv-btn btn-sm overview-export-csv" href="${esc(overviewExportURL(csvKind))}" data-stop="1" title="${esc(csvTitle)}">Export CSV</a></div>`;
       return `<div class="overview-chart-card ${panelClass}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${body}<div class="overview-chart-meta">${controls}<div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices, csvKind)}</div></div></div>`;
     }
 
@@ -11212,13 +10931,14 @@
           // ordered by (fix > refactor-docs > tests, then age; #6183). It is
           // derived server-side from the title prefix and lane label only.
           const reviewClass = p.review_class ? String(p.review_class) : '';
-          const bandInfo = info || prBandInfo(p, held);
+          const bandInfo = info || p;
           const bandTip = ' [band: ' + prBandLabel(bandInfo.band) + ']';
           const activityTip = p.updated_at ? ' [last activity: ' + p.updated_at + (activityAge ? ' / ' + activityAge : '') + ']' : '';
           // GitHub review signals (#8968): decision, who a review is requested
           // from, conversation volume, and the issues the PR closes. All read
           // from the snapshot; the tooltip is where the full lists live.
-          const reviewDecisionTip = bandInfo.review ? ' [review: ' + bandInfo.review.label + ']' : '';
+          const review = prGitHubReview(p);
+          const reviewDecisionTip = review ? ' [review: ' + review.label + ']' : '';
           const requested = prRequestedReviews(p);
           const requestedTip = requested.length ? ' [review requested: ' + requested.join(', ') + ']' : '';
           const convo = prConversation(p);
@@ -13648,19 +13368,38 @@ function burnAreaChart() {
       const days = Number.isFinite(Number(dto.nextReviewInDays)) ? Number(dto.nextReviewInDays) : 0;
       const mode = escapeHtml(epoch.mode || 'IDLE');
       const until = epoch.end ? new Date(epoch.end).toLocaleDateString() : '';
-      const review = `Frozen for ${mode}; next review in ${days} day${days === 1 ? '' : 's'}${until ? ' (' + escapeHtml(until) + ')' : ''}.`;
+      const review = `Frozen for ${mode}; next review in ${days} day${days === 1 ? '' : 's'}${until ? ' (' + escapeHtml(until) + ')' : ''}. Numbers refresh every cycle.`;
+      const counts = dto.counts || {};
+      const countsHtml = `<div class="crit-cmp">Counts: governor actionable queue ${escapeHtml(String(counts.governorPRs ?? 0))} PRs / ${escapeHtml(String(counts.governorIssues ?? 0))} issues (mode &amp; cadence); Overview chart ${escapeHtml(String(counts.overviewPRs ?? 0))} open PRs / ${escapeHtml(String(counts.overviewIssues ?? 0))} issues (every open or held item; queue-health advice counts these).</div>`;
       const items = recs.map((r, i) => {
         r = r || {};
+        if (r.cleared) {
+          return `<li class="reco-crit met">
+          <span class="mark">✓</span>
+          <div class="crit-body"><div class="crit-name"><s>${escapeHtml(r.title || r.id || 'Recommendation')}</s></div>
+          <div class="crit-detail">${escapeHtml(r.rationale || '')}</div></div>
+        </li>`;
+        }
         const sigs = Array.isArray(r.signals) ? r.signals : [];
         const sigHtml = sigs.length ? `<div class="crit-cmp">signals: ${sigs.map((s) => `${escapeHtml(s.name || '')}=${escapeHtml(s.value || '')}`).join(', ')}</div>` : '';
+        const its = Array.isArray(r.items) ? r.items : [];
+        const itemHtml = its.length ? `<div class="crit-cmp">First: ${its.map((it) => {
+          const ref = `${escapeHtml(it.repo || '')}#${escapeHtml(String(it.number || ''))}`;
+          const link = it.url ? `<a href="${escapeHtml(it.url)}" target="_blank" rel="noopener noreferrer">${ref}</a>` : ref;
+          return it.note ? `${link} (${escapeHtml(it.note)})` : link;
+        }).join(', ')}</div>` : '';
+        const links = Array.isArray(r.links) ? r.links : [];
+        const linkHtml = links.length ? `<div class="crit-cmp">Full list: ${links.map((l) => `<a href="${escapeHtml(l.url || '')}" target="_blank" rel="noopener noreferrer">${escapeHtml(l.label || l.url || '')}</a>`).join(', ')}</div>` : '';
         return `<li class="reco-crit met">
           <span class="mark">${i + 1}</span>
           <div class="crit-body"><div class="crit-name">${escapeHtml(r.title || r.id || 'Recommendation')}</div>
-          <div class="crit-detail">${escapeHtml(r.rationale || '')}</div>${sigHtml}</div>
+          <div class="crit-detail">${escapeHtml(r.rationale || '')}</div>${itemHtml}${linkHtml}${sigHtml}</div>
         </li>`;
       }).join('');
+      const bands = Array.isArray(dto.bands) ? dto.bands : [];
+      const bandHtml = bands.length ? `<div class="crit-cmp">Bands named above (same rules as the Overview chart): ${bands.map((b) => `<b>${escapeHtml(b.label || b.key || '')}</b> (${b.kind === 'issue' ? 'issues' : 'PRs'}): ${escapeHtml(b.rule || '')}`).join('; ')}</div>` : '';
       section.style.display = '';
-      card.innerHTML = `<div class="reco-level-flow"><span class="reco-badge raise">owner advice</span><span class="reco-rationale" style="margin-top:var(--sp-0)">${review}</span></div><ul class="reco-checklist">${items}</ul>`;
+      card.innerHTML = `<div class="reco-level-flow"><span class="reco-badge raise">owner advice</span><span class="reco-rationale" style="margin-top:var(--sp-0)">${review}</span></div>${countsHtml}<ul class="reco-checklist">${items}</ul>${bandHtml}`;
       applySectionCollapse('hive-advice-section');
     }
 

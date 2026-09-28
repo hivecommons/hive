@@ -80,6 +80,9 @@ type Config struct {
 	DashboardURL   string
 	DashboardToken string
 	AllowedUsers   []string
+	// PersonaStore persists each author's persona; nil keeps personas in
+	// memory for this process only (hivecommons/hive#9175).
+	PersonaStore chat.PersonaStore
 	// PersonaLearning and AuditSink feed persona learning on the shared chat
 	// spine (hivecommons/hive#8363); both are optional.
 	PersonaLearning chat.PersonaLearningFunc
@@ -225,6 +228,7 @@ func NewBot(cfg Config, logger *slog.Logger) *Bot {
 		DashboardURL:      cfg.DashboardURL,
 		DashboardToken:    cfg.DashboardToken,
 		AllowedUsers:      cfg.AllowedUsers,
+		PersonaStore:      cfg.PersonaStore,
 		PersonaLearning:   cfg.PersonaLearning,
 		AuditSink:         cfg.AuditSink,
 		MessageLimit:      teamsMessageLimit,

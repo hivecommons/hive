@@ -2,7 +2,8 @@ package config
 
 // PersonaConfig holds operator settings for the per-user communication
 // persona. It configures how persona LEARNING behaves; the persona record
-// itself lives on the hub user record (pkg/persona) and shares no key with
+// itself (pkg/persona) lives in the spoke's chat persona store
+// (/data/chat-personas.json, see chat.FilePersonaStore) and shares no key with
 // this or any autonomy configuration.
 type PersonaConfig struct {
 	Learning PersonaLearningConfig `yaml:"learning,omitempty" json:"learning,omitempty"`

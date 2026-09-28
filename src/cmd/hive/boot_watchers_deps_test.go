@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
@@ -236,5 +237,57 @@ func TestBootWatchersWith_ReloadWithChangedIdentityRebuildsAuth(t *testing.T) {
 	f.onReload(&same)
 	if f.tokenRefreshes != 1 {
 		t.Fatal("unchanged identity triggered another rebuild")
+	}
+}
+
+// A config reload runs on the watcher's timer goroutine and mutates *cfg
+// (including the cfg.Agents map) that the governor loop's ticks read. It must
+// wait for cfgReloadMu, or a reload racing the fast agent-status tick crashes
+// the process with "concurrent map read and map write".
+func TestBootWatchersWith_ReloadWaitsForConfigLock(t *testing.T) {
+	const reloadWait = 5 * time.Second
+	const blockedCheck = 100 * time.Millisecond
+
+	f := newBootWatchersFake()
+	cfg := bootWatchersConfig()
+	b, _ := newBootWatchersBoot(t, f, cfg)
+	b.bootWatchersWith(f.deps)
+	if f.onReload == nil {
+		t.Fatal("reload callback not installed")
+	}
+
+	newCfg := &config.Config{}
+	newCfg.Project.Org = "acme"
+	newCfg.Project.Repos = []string{"widgets", "reloaded"}
+	newCfg.Agents = map[string]config.AgentConfig{
+		"scanner": {Enabled: true, Backend: "copilot", Model: "gpt-5.4"},
+	}
+
+	b.cfgReloadMu.Lock()
+	done := make(chan struct{})
+	go func() {
+		f.onReload(newCfg)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		b.cfgReloadMu.Unlock()
+		t.Fatal("reload applied while the governor loop held cfgReloadMu")
+	case <-time.After(blockedCheck):
+	}
+	if sameStringSlice(cfg.Project.Repos, []string{"widgets", "reloaded"}) {
+		b.cfgReloadMu.Unlock()
+		t.Fatal("reload mutated cfg while the governor loop held cfgReloadMu")
+	}
+
+	b.cfgReloadMu.Unlock()
+	select {
+	case <-done:
+	case <-time.After(reloadWait):
+		t.Fatal("reload never completed after cfgReloadMu was released")
+	}
+	if !sameStringSlice(cfg.Project.Repos, []string{"widgets", "reloaded"}) {
+		t.Fatalf("repos = %v after reload, want the reloaded list", cfg.Project.Repos)
 	}
 }

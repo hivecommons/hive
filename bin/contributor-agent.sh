@@ -11,10 +11,12 @@
 # the file is absent rather than populated with placeholder text.
 #
 # Environment (from ~/.config/hive/contributor.env):
-#   HIVE_HUB                — WebSocket URL; comma-separated URLs subscribe to multiple hubs
-#   HIVE_REGISTRATION_TOKEN — contributor's token; for multiple hubs, one comma-separated token
-#                             per hub in the same order as HIVE_HUB
-#   AGENT_BACKEND           — preferred CLI backend
+#   HIVE_HUB                  — WebSocket URL; comma-separated URLs subscribe to multiple hubs
+#   HIVE_REGISTRATION_TOKEN   — contributor's token; for multiple hubs, one comma-separated token
+#                               per hub in the same order as HIVE_HUB
+#   HIVE_COMMONS_STRATEGY     — commons hub routing strategy (e.g. "neediest"); optional
+#   HIVE_CONTRIBUTOR_STRATEGY — alias for HIVE_COMMONS_STRATEGY; optional
+#   AGENT_BACKEND             — preferred CLI backend
 
 set -euo pipefail
 
@@ -35,6 +37,11 @@ fi
 # Docker -e takes precedence over config file
 export HIVE_HUB="${HIVE_HUB:-wss://hive.hivecommons.dev/contribute}"
 export HIVE_REGISTRATION_TOKEN="${HIVE_REGISTRATION_TOKEN:?Not registered — run 'just contribute-register' first}"
+# Export the commons routing strategy so a relay started here (not just one
+# reloaded via SIGUSR1) honors HIVE_COMMONS_STRATEGY / HIVE_CONTRIBUTOR_STRATEGY
+# from contributor.env from its first solicitation.
+[[ -n "${HIVE_COMMONS_STRATEGY:-}" ]] && export HIVE_COMMONS_STRATEGY || true
+[[ -n "${HIVE_CONTRIBUTOR_STRATEGY:-}" ]] && export HIVE_CONTRIBUTOR_STRATEGY || true
 export AGENT_BACKEND="${_DOCKER_BACKEND:-${AGENT_BACKEND:-claude}}"
 export HIVE_AGENT_SESSION="$TMUX_SESSION"
 export HIVE_AGENT_ID="contributor"
