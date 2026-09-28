@@ -1,0 +1,1 @@
+- Fixed agents SIGKILLing their own process tree when hive's Go test suite runs inside an agent pane: `killAgentProcesses`/`reapAgentCLI` now refuse a real-`/proc` sweep from a test binary or a `HIVE_AGENT` context (#9416).
