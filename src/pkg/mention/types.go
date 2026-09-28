@@ -171,6 +171,7 @@ func (h *Handler) Handle(ctx context.Context, ev Event) error {
 	text, verdict := ioscan.EnforceInput(p.Text)
 	if verdict.Blocked {
 		h.decline(ev, "ioscan", ioscanRules(verdict))
+		return h.mark(ev)
 	}
 	if reaction := cfg.AckReactionEffective(); reaction != "" && ev.CommentID != 0 && gh != nil {
 		if err := gh.CreateMentionAck(ctx, ev, reaction); err != nil {

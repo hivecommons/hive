@@ -1,0 +1,1 @@
+- GitHub mentions blocked by ioscan content filtering are now properly declined without triggering a kick or acknowledgment reaction ([#9169](https://github.com/hivecommons/hive/issues/9169)).
