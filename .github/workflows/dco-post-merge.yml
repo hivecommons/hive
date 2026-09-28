@@ -44,7 +44,17 @@ env:
   # raul.mturrubiates@gmail.com: @mendezr signs off with this address while
   # GitHub records the author as mendezr@users.noreply.github.com (privacy
   # email). Same person; accepted by maintainer disposition in #6554.
-  DCO_ALLOWLIST_EMAILS: 'raul.mturrubiates@gmail.com'
+  #
+  # shelkeonka@gmail.com: @onkar717 signs off with this address while GitHub
+  # records the author as 144542684+onkar717@users.noreply.github.com
+  # (privacy email). Same person, mismatched identities — the checker cannot
+  # map a personal sign-off address to a GitHub login. Reported by the
+  # monitor for the squash of #9168 (commit 8ea18ef) and again for the
+  # squash of #9176 (commit bdf1088) in #9250; two occurrences from the same
+  # contributor make this a standing identity rather than a one-off, so it is
+  # accepted here (same class as raul.mturrubiates in #6554) rather than
+  # waived per-commit.
+  DCO_ALLOWLIST_EMAILS: 'raul.mturrubiates@gmail.com shelkeonka@gmail.com'
   # Per-commit maintainer DCO dispositions, by FULL SHA. This is the record
   # src/docs/v5-sync-policy.md asks for — "listing every affected SHA and the
   # reason the override is acceptable" — and the only instrument that can clear
