@@ -86,6 +86,49 @@ FAIL: docker.yml:56 env LONG_LIVED: has [dd,mk,v2,v4], expected
 The check is an equality in both directions, so *retiring* a line is proven
 complete the same way: every list still naming it is reported as `unexpected`.
 
+Those three steps are what the guard enforces. They are not the whole cut: a
+release line also cuts `vN.x.y` tags and, when it becomes the stable line,
+owns the `candidate`/`latest`/`stable` channels. The v4→v5 cut
+([#7721](https://github.com/hivecommons/hive/issues/7721)) did the rest by
+hand-editing the release workflows, and the edited copies were then carried
+onto `v6` still naming `v5`
+([#9154](https://github.com/hivecommons/hive/issues/9154)). The full cut, on
+the new line's branch unless noted:
+
+4. **Tag path — no edit.** `tagged-release.yml` and `promote-stable.yml` serve
+   the branch they were started from (`github.ref_name`) and refuse unless
+   that branch is under `release_lines`
+   (`src/scripts/check-release-lines.sh --is-release-line <branch>`). Step 1
+   is what turns them on for the new line; before it, a dispatch from that
+   branch fails at its first step instead of releasing or promoting another
+   line. The check reads the script and manifest from the workflow's own
+   ref, before the commit being released is checked out, and
+   `tagged-release.yml` accepts a `docker.yml` run only when it was a `push`,
+   so a fork PR whose branch is named after a release line cannot approve
+   itself. `derive-release-version.sh` mints `vN.0.0` as the first tag of a
+   line on its own. Do **not** reintroduce a literal branch name in either
+   workflow.
+5. **Channels — `docker.yml` on both branches, landed together.** Each
+   branch's copy names its own channels in the three `publish-image-tags.sh`
+   calls (`<branch> <include-latest> <channels>`) and the matching
+   `INCLUDE_LATEST` / `RELEASE_BRANCH` / `CHANNELS` env on the three
+   cross-org mirror steps. The new stable line takes `true candidate`
+   (candidate plus `:latest`); the outgoing line gives them up. Flipping one
+   branch without the other leaves two lines retagging `candidate` and
+   `:latest` on every merge. What the outgoing line keeps (`edge`, or no
+   channel as `v4` has today) is a maintainer decision to record on the cut
+   issue.
+6. **Default branch.** `schedule` and `workflow_run` triggers only fire from
+   the repository's default branch, so the hourly tagged-release backstop,
+   the per-merge release, and the hourly `stable` promotion all follow it.
+   Switch the default branch to the new line when it should cut tags on
+   every merge; until then it releases only by manual `workflow_dispatch`
+   from that branch. The outgoing line keeps the same manual path.
+7. **Docs.** Update [releases.md](releases.md#release-lines-and-the-v5-semver-policy)
+   §Release lines, [release-channels.md](release-channels.md) (which branch
+   publishes which channel), the branch table in `CONTRIBUTING.md`, and the
+   line policy in `ROADMAP.md`.
+
 ## What it checks
 
 - **Both YAML spellings.** `branches: [v2, v4]` (v2-ci.yml, v2-tests.yml) and
@@ -107,11 +150,11 @@ complete the same way: every list still naming it is reported as `unexpected`.
   `<workflow.yml> <ENV_NAME>`, are held to the same set as the pinned triggers.
   The value takes the same `[extra]` / `[-excluded]` grammar; `mk` and `dd` are
   declared extras on `LONG_LIVED` — standing experimental branches that are not
-  release lines but that a hive can be assigned to, so they legitimately publish
+  release lines, but that a hive can be assigned to, so they legitimately publish
   a tag — and so is `v6`, the development line the `edge` channel is re-based on
   ([#7721](https://github.com/hivecommons/hive/issues/7721)): published, but not
-  a supported release line, so it is an extra here rather than a `release_lines`
-  entry. The value is read in any of the spellings a workflow env can take
+  yet cut as a release line (step 1 above), so it is an extra here rather than a
+  `release_lines` entry. The value is read in any of the spellings a workflow env can take
   (`"v2 v4"`, unquoted, or `[v2, v4]`), with trailing comments ignored.
 - **That the env list is still there to check.** The variable must appear
   exactly once in the workflow. Zero occurrences means it was renamed or
@@ -199,4 +242,5 @@ guard proves the edit is complete. See the note at the bottom of
 ```sh
 src/scripts/check-release-lines.sh          # assert the repository is in sync
 src/scripts/test-release-lines-guard.sh     # prove the checker still fails when it should
+src/scripts/check-release-lines.sh --is-release-line v6   # may the release workflows serve v6? (exit 0 = yes)
 ```
