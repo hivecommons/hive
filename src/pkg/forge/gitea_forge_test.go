@@ -591,6 +591,26 @@ func TestGiteaSetHoldClearsOrgLevelLabel(t *testing.T) {
 	}
 }
 
+// TestGiteaRemoveLabelAttachedWithoutIDErrors: a label that is on the PR but
+// carries no usable id cannot be deleted; reporting success would leave it in
+// place silently (#9180), so RemoveLabel must return an error.
+func TestGiteaRemoveLabelAttachedWithoutIDErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`[{"name":"hold"}]`))
+			return
+		}
+		t.Errorf("unexpected write for unresolvable label: %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+
+	f := newTestGitea(t, srv.URL, "hivecommons")
+	err := f.RemoveLabel(context.Background(), "hive", 7, "hold")
+	if err == nil || !strings.Contains(err.Error(), "no resolvable id") {
+		t.Fatalf("RemoveLabel = %v, want unresolvable-id error", err)
+	}
+}
+
 // TestGiteaRemoveLabelNotFoundIsOK verifies a 404 on remove is treated as
 // success (idempotent-remove contract).
 func TestGiteaRemoveLabelNotFoundIsOK(t *testing.T) {

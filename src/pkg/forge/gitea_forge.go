@@ -311,8 +311,11 @@ func (f *giteaForge) RemoveLabel(ctx context.Context, repo string, number int, l
 }
 
 // issueLabelID returns the id of the label named label attached to issue/PR
-// number, or 0 when it is not attached. Gitea returns the issue's full label
-// set (repo and org labels alike) unpaginated.
+// number, or 0 when it is not attached (already removed — idempotent success).
+// Gitea returns the issue's full label set (repo and org labels alike)
+// unpaginated. A label that IS attached but carries no usable id cannot be
+// deleted, so that is an explicit error rather than a silent nil that would
+// leave e.g. a hold label in place (#9180).
 func (f *giteaForge) issueLabelID(ctx context.Context, owner, name string, number int, label string) (int64, error) {
 	endpoint := fmt.Sprintf("/repos/%s/%s/issues/%d/labels", url.PathEscape(owner), url.PathEscape(name), number)
 	var labels []gtLabel
@@ -320,9 +323,13 @@ func (f *giteaForge) issueLabelID(ctx context.Context, owner, name string, numbe
 		return 0, fmt.Errorf("gitea: list labels on %s/%s#%d: %w", owner, name, number, err)
 	}
 	for _, candidate := range labels {
-		if candidate.ID > 0 && candidate.Name == label {
-			return candidate.ID, nil
+		if candidate.Name != label {
+			continue
 		}
+		if candidate.ID <= 0 {
+			return 0, fmt.Errorf("gitea: label %q on %s/%s#%d has no resolvable id (%d)", label, owner, name, number, candidate.ID)
+		}
+		return candidate.ID, nil
 	}
 	return 0, nil
 }
