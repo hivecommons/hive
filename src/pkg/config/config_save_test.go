@@ -98,6 +98,7 @@ func TestSaveNoAgents(t *testing.T) {
 }
 
 func TestSaveReadOnlyDir(t *testing.T) {
+	breakPVCLayers(t) // with working PVC layers Save() would return nil
 	dir := t.TempDir()
 	readOnlyPath := filepath.Join(dir, "readonly", "config.yaml")
 
