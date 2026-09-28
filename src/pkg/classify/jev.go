@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"sort"
@@ -31,6 +32,22 @@ const (
 	jevInputCostPerToken = 0.042 / 1000000.0
 	jevCacheCap          = 1024
 	maxJevErrBody        = 4 << 10
+
+	// A failed Jev call for an issue revision is not retried until this TTL
+	// passes, so one scheduler cycle (which classifies each issue twice:
+	// ClassifyAll, then run triage) and the next few cycles fall straight
+	// back to keywords instead of paying the timeout again (#9178).
+	jevFailureTTL = 5 * time.Minute
+	// After jevBreakerThreshold consecutive failed calls the decider stops
+	// calling Jev for jevBreakerCooldown. The first call after the cooldown is
+	// a probe: success closes the breaker, failure reopens it.
+	jevBreakerThreshold = 3
+	jevBreakerCooldown  = 5 * time.Minute
+	// jevMinCycleBudget bounds the wall time Decide may spend blocked on Jev
+	// between BeginClassifyCycle calls. The effective budget is at least one
+	// configured timeout so a long timeout still allows one call per cycle.
+	jevMinCycleBudget = 10 * time.Second
+
 	disagreementRingCap  = 50
 	suggestionMinSupport = 3
 )
@@ -115,13 +132,109 @@ type jevDecider struct {
 	keyFunc func() string
 	client  *http.Client
 	cache   *jevCache
+	now     func() time.Time
+
+	// mu guards the failure bookkeeping below. Jev is advisory only, so every
+	// gate here trades measurement coverage for scheduler latency, never
+	// routing correctness.
+	mu                  sync.Mutex
+	failed              map[string]time.Time // issue revision → retry-after
+	consecutiveFailures int
+	openUntil           time.Time
+	cycleBudget         time.Duration
+	budgetLeft          time.Duration
 }
 
 func newJevDecider(cfg config.JevClassifierConfig, keyFunc func() string, client *http.Client) *jevDecider {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &jevDecider{cfg: cfg, keyFunc: keyFunc, client: client, cache: newJevCache(jevCacheCap)}
+	budget := max(jevMinCycleBudget, cfg.EffectiveTimeout())
+	return &jevDecider{
+		cfg:         cfg,
+		keyFunc:     keyFunc,
+		client:      client,
+		cache:       newJevCache(jevCacheCap),
+		now:         time.Now,
+		failed:      map[string]time.Time{},
+		cycleBudget: budget,
+		budgetLeft:  budget,
+	}
+}
+
+// BeginClassifyCycle refills the active Jev decider's per-cycle time budget.
+// The scheduler calls it once before each classification sweep so a slow or
+// unreachable Jev endpoint can delay a sweep by at most the budget, however
+// many uncached issues the queue holds. It is a no-op for the keyword backend.
+func BeginClassifyCycle() {
+	if d, ok := currentDecider().(*jevDecider); ok {
+		d.beginCycle()
+	}
+}
+
+func (d *jevDecider) beginCycle() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.budgetLeft = d.cycleBudget
+}
+
+// admit reports whether a Jev call for key may run now: the revision has no
+// recent failure, the breaker is closed (or its cooldown has elapsed), and
+// the cycle budget still covers a full timeout.
+func (d *jevDecider) admit(key string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	now := d.now()
+	if until, ok := d.failed[key]; ok {
+		if now.Before(until) {
+			return false
+		}
+		delete(d.failed, key)
+	}
+	if now.Before(d.openUntil) {
+		return false
+	}
+	return d.budgetLeft >= d.cfg.EffectiveTimeout()
+}
+
+// settle charges elapsed against the cycle budget and updates the negative
+// cache and breaker from the call result. Failures caused by the caller's own
+// context ending say nothing about the endpoint and are not recorded.
+func (d *jevDecider) settle(parent context.Context, key string, elapsed time.Duration, err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.budgetLeft -= elapsed
+	if err == nil {
+		d.consecutiveFailures = 0
+		return
+	}
+	if parent.Err() != nil {
+		return
+	}
+	now := d.now()
+	d.rememberFailureLocked(key, now)
+	d.consecutiveFailures++
+	if d.consecutiveFailures >= jevBreakerThreshold {
+		d.openUntil = now.Add(jevBreakerCooldown)
+		log.Printf("classify: jev: %d consecutive failures (last: %v); skipping Jev until %s, keyword decisions unaffected", d.consecutiveFailures, err, d.openUntil.UTC().Format(time.RFC3339))
+	}
+}
+
+func (d *jevDecider) rememberFailureLocked(key string, now time.Time) {
+	if len(d.failed) >= jevCacheCap {
+		for k, until := range d.failed {
+			if !now.Before(until) {
+				delete(d.failed, k)
+			}
+		}
+		for k := range d.failed {
+			if len(d.failed) < jevCacheCap {
+				break
+			}
+			delete(d.failed, k)
+		}
+	}
+	d.failed[key] = now.Add(jevFailureTTL)
 }
 
 func (d *jevDecider) Decide(ctx context.Context, issue github.Issue, triageCfg config.TriageConfig) DecisionResult {
@@ -144,9 +257,15 @@ func (d *jevDecider) Decide(ctx context.Context, issue github.Issue, triageCfg c
 		recordFallbacks(d.cfg.EffectiveDecisions())
 		return kw
 	}
-	ctx, cancel := context.WithTimeout(ctx, d.cfg.EffectiveTimeout())
+	if !d.admit(key) {
+		recordFallbacks(d.cfg.EffectiveDecisions())
+		return kw
+	}
+	callCtx, cancel := context.WithTimeout(ctx, d.cfg.EffectiveTimeout())
 	defer cancel()
-	out, err := d.call(ctx, issue, apiKey)
+	start := time.Now()
+	out, err := d.call(callCtx, issue, apiKey)
+	d.settle(ctx, key, time.Since(start), err)
 	if err != nil {
 		recordFallbacks(d.cfg.EffectiveDecisions())
 		return kw

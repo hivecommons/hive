@@ -609,6 +609,7 @@ type KickMessage struct {
 
 func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agentsDue []string) []KickMessage {
 	s.resetClassifierBudget()
+	classify.BeginClassifyCycle()
 	classifiedIssues := classify.ClassifyAll(actionable.Issues.Items)
 	s.recordClassified(classifiedIssues)
 	classifiedIssues = s.applyRunTriage(classifiedIssues)
@@ -813,6 +814,7 @@ func (s *Scheduler) BuildAgentMessageFromLastActionable(agentName string) string
 	actionable := s.GetLastActionable()
 	var classified []github.Issue
 	if actionable != nil {
+		classify.BeginClassifyCycle()
 		classified = classify.ClassifyAll(actionable.Issues.Items)
 		s.recordClassified(classified)
 		classified = s.applyRunTriage(classified)

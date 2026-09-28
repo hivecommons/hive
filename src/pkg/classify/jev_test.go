@@ -283,3 +283,135 @@ func jevTestAnswers(conf float64) map[string]any {
 func longTriageBody() string {
 	return "This issue has enough detail to explain the requested behaviour, constraints, and expected outcome."
 }
+
+func TestJevFailedIssueIsNotRetriedWithinTTL(t *testing.T) {
+	ResetForTest()
+	defer ResetForTest()
+	var calls int32
+	server := jevTestServerFunc(t, func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		http.Error(w, "down", http.StatusBadGateway)
+	})
+	defer server.Close()
+	d := newJevDecider(config.JevClassifierConfig{Endpoint: server.URL, Timeout: time.Second}, func() string { return "key" }, server.Client())
+	now := time.Unix(1_000_000, 0)
+	d.now = func() time.Time { return now }
+	issue := github.Issue{Repo: "o/r", Number: 50, Title: "Fix typo", UpdatedAt: time.Unix(50, 0)}
+
+	// One scheduler cycle classifies each issue twice (ClassifyAll, then run
+	// triage); the failed revision must not pay the endpoint twice.
+	for range 2 {
+		if got := d.Decide(context.Background(), issue, config.TriageConfig{}); got.Classification.Source != SourceKeywords || got.Classification.Tier != TierSimple {
+			t.Fatalf("classification = %+v, want keyword fallback", got.Classification)
+		}
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("calls within failure TTL = %d, want 1", got)
+	}
+	if fb := CurrentStats().Decisions[DecisionLane].Fallback; fb != 2 {
+		t.Fatalf("lane fallback = %d, want 2 (skipped call still counts as fallback)", fb)
+	}
+
+	now = now.Add(jevFailureTTL)
+	_ = d.Decide(context.Background(), issue, config.TriageConfig{})
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("calls after failure TTL = %d, want 2", got)
+	}
+}
+
+func TestJevBreakerSkipsCallsAfterConsecutiveFailuresUntilProbeSucceeds(t *testing.T) {
+	ResetForTest()
+	defer ResetForTest()
+	var calls int32
+	var healthy atomic.Bool
+	server := jevTestServerFunc(t, func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		if !healthy.Load() {
+			http.Error(w, "rate limited", http.StatusTooManyRequests)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(jevTestAnswers(0.95))
+	})
+	defer server.Close()
+	d := newJevDecider(config.JevClassifierConfig{Endpoint: server.URL, Timeout: time.Second}, func() string { return "key" }, server.Client())
+	now := time.Unix(2_000_000, 0)
+	d.now = func() time.Time { return now }
+	issue := func(n int) github.Issue {
+		return github.Issue{Repo: "o/r", Number: n, Title: "ordinary", Body: longTriageBody(), UpdatedAt: time.Unix(int64(n), 0)}
+	}
+
+	for n := 1; n <= 20; n++ {
+		_ = d.Decide(context.Background(), issue(n), config.TriageConfig{})
+	}
+	if got := atomic.LoadInt32(&calls); got != jevBreakerThreshold {
+		t.Fatalf("calls with failing endpoint = %d, want breaker to stop after %d", got, jevBreakerThreshold)
+	}
+
+	// Cooldown elapsed but the endpoint is still failing: one probe, then the
+	// breaker reopens.
+	now = now.Add(jevBreakerCooldown)
+	for n := 21; n <= 25; n++ {
+		_ = d.Decide(context.Background(), issue(n), config.TriageConfig{})
+	}
+	if got := atomic.LoadInt32(&calls); got != jevBreakerThreshold+1 {
+		t.Fatalf("calls after failed probe = %d, want %d", got, jevBreakerThreshold+1)
+	}
+
+	// A successful probe closes the breaker for every following issue.
+	healthy.Store(true)
+	now = now.Add(jevBreakerCooldown)
+	for n := 26; n <= 30; n++ {
+		_ = d.Decide(context.Background(), issue(n), config.TriageConfig{})
+	}
+	if got := atomic.LoadInt32(&calls); got != jevBreakerThreshold+1+5 {
+		t.Fatalf("calls after successful probe = %d, want %d", got, jevBreakerThreshold+1+5)
+	}
+}
+
+func TestJevCycleBudgetBoundsSlowEndpoint(t *testing.T) {
+	ResetForTest()
+	defer ResetForTest()
+	var calls int32
+	server := jevTestServerFunc(t, func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		time.Sleep(60 * time.Millisecond) // slow but succeeding
+		_ = json.NewEncoder(w).Encode(jevTestAnswers(0.95))
+	})
+	defer server.Close()
+	d := newJevDecider(config.JevClassifierConfig{Endpoint: server.URL, Timeout: 100 * time.Millisecond}, func() string { return "key" }, server.Client())
+	d.cycleBudget, d.budgetLeft = 250*time.Millisecond, 250*time.Millisecond
+	SetDecider(d)
+	issues := make([]github.Issue, 20)
+	for i := range issues {
+		issues[i] = github.Issue{Repo: "o/r", Number: 100 + i, Title: "ordinary", Body: longTriageBody(), UpdatedAt: time.Unix(int64(100+i), 0)}
+	}
+
+	BeginClassifyCycle()
+	start := time.Now()
+	for _, c := range ClassifyAll(issues) {
+		if c.Lane != string(LaneScanner) || c.ComplexityTier != string(TierMedium) {
+			t.Fatalf("classified %+v, want keyword scanner/Medium", c)
+		}
+	}
+	elapsed := time.Since(start)
+	first := atomic.LoadInt32(&calls)
+	// Each call takes >= 60ms and a call needs >= 100ms of budget left, so a
+	// 250ms budget admits at most 3 calls however many issues are queued.
+	if first < 1 || first > 3 {
+		t.Fatalf("calls in first cycle = %d, want 1..3 (bounded by cycle budget)", first)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("first cycle took %s, want bounded by the cycle budget", elapsed)
+	}
+	// The run-triage pass of the same cycle shares the exhausted budget.
+	_ = ClassifyAll(issues)
+	if got := atomic.LoadInt32(&calls); got != first {
+		t.Fatalf("calls in second pass of the same cycle = %d, want %d", got, first)
+	}
+
+	BeginClassifyCycle()
+	_ = ClassifyAll(issues)
+	if got := atomic.LoadInt32(&calls); got <= first {
+		t.Fatalf("calls after BeginClassifyCycle = %d, want more than %d", got, first)
+	}
+}
