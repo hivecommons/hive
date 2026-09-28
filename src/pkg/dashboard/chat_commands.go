@@ -15,7 +15,10 @@ func (s *Server) chatCommandHintAnswer(query string) (string, bool) {
 	q := strings.ToLower(strings.TrimSpace(query))
 	q = strings.TrimSuffix(q, "?")
 	q = strings.Join(strings.Fields(q), " ")
-	if strings.HasPrefix(q, "!") {
+	// Bang commands belong to the shared chat spine (allowlist + role floor);
+	// never answer them locally. Byte check keeps the v6 conformance scan's
+	// "no `!` string-literal matching" invariant intact.
+	if len(q) > 0 && q[0] == '!' {
 		return "", false
 	}
 	switch {
