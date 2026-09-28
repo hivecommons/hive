@@ -504,6 +504,10 @@ func SuspendState(rows []Outcome, threshold int) (suspended bool, streak int)
 - `merged_after_rework` → **counts as neither**; skipped, streak preserved.
 - `cleared` → resets to zero and stops.
 - `open` → skipped (not yet an outcome).
+- The rule counts PRs, not rows: a PR (`repo`, `number`) with more than one
+  settled row is read once, from its newest row
+  ([#9184](https://github.com/hivecommons/hive/issues/9184)). Rows naming no PR
+  are each read.
 - `suspended` when `streak >= threshold`; `threshold` defaults to 2.
 
 The function is total, takes no clock, and is tested as a table. The default of
