@@ -134,6 +134,7 @@ var (
 	errLeaseExpired      = errors.New("lease expired")
 	errLeaseStageInvalid = errors.New("invalid lease stage transition")
 	errLeaseResetReason  = errors.New("lease stage reset requires a reason")
+	errLeaseGenStale     = errors.New("lease generation is stale")
 )
 
 func validStage(s string) bool {
@@ -286,11 +287,18 @@ func (h *ContributeWSHub) advanceLeaseStage(identity, taskID, to string, now tim
 }
 
 func (h *ContributeWSHub) advanceLeaseStageAt(identity, taskID, to string, now, transitionAt time.Time) (taskLease, error) {
-	return h.mutateLeaseStage(identity, taskID, to, leaseStageAdvance, "", now, transitionAt)
+	return h.mutateLeaseStage(identity, taskID, to, leaseStageAdvance, "", 0, now, transitionAt)
+}
+
+// advanceLeaseStageFromGen advances only while the lease still holds
+// generation gen, so an approval of the generation a reviewer saw can never
+// release a newer one minted in the meantime.
+func (h *ContributeWSHub) advanceLeaseStageFromGen(identity, taskID, to string, gen uint64, now, transitionAt time.Time) (taskLease, error) {
+	return h.mutateLeaseStage(identity, taskID, to, leaseStageAdvance, "", gen, now, transitionAt)
 }
 
 func (h *ContributeWSHub) retryLeaseStage(identity, taskID string, now time.Time) (taskLease, error) {
-	return h.mutateLeaseStage(identity, taskID, "", leaseStageRetry, "", now, time.Time{})
+	return h.mutateLeaseStage(identity, taskID, "", leaseStageRetry, "", 0, now, time.Time{})
 }
 
 // resetLeaseStage moves a run's lease BACK to an earlier stage (#8350): for
@@ -317,10 +325,12 @@ func (h *ContributeWSHub) resetLeaseStage(identity, taskID, to, reason string, n
 	if reason == "" {
 		return taskLease{}, errLeaseResetReason
 	}
-	return h.mutateLeaseStage(identity, taskID, to, leaseStageReset, reason, now, time.Time{})
+	return h.mutateLeaseStage(identity, taskID, to, leaseStageReset, reason, 0, now, time.Time{})
 }
 
-func (h *ContributeWSHub) mutateLeaseStage(identity, taskID, to string, mode leaseStageMutation, reason string, now, transitionAt time.Time) (taskLease, error) {
+// mutateLeaseStage applies one stage move under leaseMu. A non-zero expectGen
+// makes the move a compare-and-swap on the lease generation.
+func (h *ContributeWSHub) mutateLeaseStage(identity, taskID, to string, mode leaseStageMutation, reason string, expectGen uint64, now, transitionAt time.Time) (taskLease, error) {
 	if identity == "" || taskID == "" {
 		return taskLease{}, fmt.Errorf("identity and taskID are required")
 	}
@@ -345,6 +355,10 @@ func (h *ContributeWSHub) mutateLeaseStage(identity, taskID, to string, mode lea
 	if l.stage == "" {
 		h.leaseMu.Unlock()
 		return taskLease{}, fmt.Errorf("%w: lease for %s has no stage", errLeaseStageInvalid, taskID)
+	}
+	if expectGen != 0 && l.gen != expectGen {
+		h.leaseMu.Unlock()
+		return taskLease{}, fmt.Errorf("%w for %s: have gen %d, want %d", errLeaseGenStale, taskID, l.gen, expectGen)
 	}
 	switch mode {
 	case leaseStageRetry:
