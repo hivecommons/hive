@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/chat"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/dashchat"
@@ -16,15 +17,20 @@ import (
 // startup so a fleet of agents does not all hit the model gateway at once.
 const agentLaunchStagger = 15 * time.Second
 
+// chatPersonaStorePath is the persona store every chat transport shares, on
+// the /data PVC so `!persona` records survive a restart (hivecommons/hive#9175).
+const chatPersonaStorePath = "/data/chat-personas.json"
+
 // bootLaunchDeps are bootLaunch's effects (#7571, step 2): the goroutines
-// (dashboard serve, staggered launch loop), the Discord bot, the stagger
-// wait, the per-agent process start, and the pack on-demand lookup. The
-// launch loop body itself runs for real so a test can drive it synchronously
-// through spawn.
+// (dashboard serve, staggered launch loop), the Discord bot, the chat persona
+// store, the stagger wait, the per-agent process start, and the pack
+// on-demand lookup. The launch loop body itself runs for real so a test can
+// drive it synchronously through spawn.
 type bootLaunchDeps struct {
 	spawn            func(name string, fn func())
 	startDashChat    func(ctx context.Context, cfg dashchat.Config, agentNames []string, logger *slog.Logger) (*dashchat.Bot, error)
 	startDiscordBot  func(ctx context.Context, cfg discord.Config, agentNames []string, logger *slog.Logger) (func(string) error, error)
+	openPersonaStore func() (*chat.FilePersonaStore, error)
 	onDemandFromPack func() map[string]bool
 	// waitStagger blocks for the launch stagger; it returns false when ctx
 	// ended first so the loop aborts instead of launching into a shutdown.
@@ -46,6 +52,7 @@ func defaultBootLaunchDeps() bootLaunchDeps {
 			bot.SetAgentNames(agentNames)
 			return bot.SendMessage, bot.Start(ctx)
 		},
+		openPersonaStore: func() (*chat.FilePersonaStore, error) { return chat.OpenFilePersonaStore(chatPersonaStorePath) },
 		onDemandFromPack: config.OnDemandAgentsFromPacks,
 		waitStagger: func(ctx context.Context) bool {
 			select {

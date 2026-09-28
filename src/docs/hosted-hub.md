@@ -117,12 +117,21 @@ CLI when prompted. The login modal shows a device code, **Copy**, **Open GitHub
 
 ### Set your communication persona
 
-Hive records a per-user communication persona on the hosted hub user record,
-keyed by the same identity used for OAuth. The proposal is intentionally scoped:
-persona data describes how summaries should be phrased, not what agents may do.
-It contains `persona.depth` (`outcomes` or `technical`),
-`persona.summary_length` (`short`, `standard`, or `detailed`), and free-text
-notes. It is stored separately from hive ACMM level and agent mode settings.
+Hive records a per-user communication persona on the spoke, in
+`/data/chat-personas.json` on the hive's data volume, so it survives restarts.
+The record is intentionally scoped: persona data describes how summaries should
+be phrased, not what agents may do. It contains `persona.depth` (`outcomes` or
+`technical`), `persona.summary_length` (`short`, `standard`, or `detailed`),
+and free-text notes. It is stored separately from hive ACMM level and agent mode
+settings, and it is not sent to the hub.
+
+Records are keyed by chat transport and that transport's author ID (a Slack
+user ID, a Discord user ID, a Matrix user ID, and so on). Nothing maps one
+transport's ID to another's, so someone who talks to the hive over both Slack
+and Discord has a separate persona on each; run `!persona setup` once per
+transport. If the file cannot be read at startup (for example it is not valid
+JSON), the spoke logs `chat persona store unavailable`, leaves the file
+untouched for repair, and keeps personas in memory until the next restart.
 
 In the chat spine, run `!persona setup` to answer the three onboarding
 questions. Use `!persona show` to inspect the current record and
@@ -141,7 +150,7 @@ autonomy setting: the persona record and the autonomy configuration share no
 key, and the adjustment code in `pkg/persona` is stdlib-only, both enforced by
 tests.
 
-Three explicit signals are counted per user on the hub persona record (counts
+Three explicit signals are counted per user on the persona record (counts
 only, never transcripts):
 
 - `expanded`: the user asked `!runs <key> more` after seeing a summary.
@@ -175,16 +184,11 @@ The user must confirm every change:
   `!persona pin` pins without reverting. A pinned persona collects no signals
   and receives no suggestions until `!persona unpin`.
 
-Hub operators can also inspect the read-only **Persona profile** section on the
-hub dashboard when persona learning is enabled. The section is hidden while
-`persona.learning.enabled` is off (and the hub mirror flag is off) or for
-non-operators. It lists each stored persona's current traits, signal counters
-as weights, pending suggestions with evidence counts, accepted/declined
-history, and the user-record last-updated time. This reconciles the original
-#8363 "automatic adjustment" request with the safer shipped design: Hive learns
-from behaviour, but adjustment is deliberately a confirmed suggestion because a
-silent persona mutation would be hard to notice, hard to attribute, and too
-easy to confuse with an autonomy change.
+This reconciles the original #8363 "automatic adjustment" request with the
+safer shipped design: Hive learns from behaviour, but adjustment is
+deliberately a confirmed suggestion because a silent persona mutation would be
+hard to notice, hard to attribute, and too easy to confuse with an autonomy
+change.
 
 Users without a persona record are never counted; run `!persona setup` first.
 

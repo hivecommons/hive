@@ -81,6 +81,8 @@ jobs:
         with:
           cache: false
           go-version-file: src/go.mod
+      - name: Guard shared Go cache (fall back when the runner volume is full)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
 
       # Installed by version rather than via a marketplace action so the tool
       # itself is pinned and the supply chain is one hop shorter.
@@ -104,6 +106,8 @@ jobs:
         with:
           cache: false
           go-version-file: src/go.mod
+      - name: Guard shared Go cache (fall back when the runner volume is full)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
 
       # Version floor is load-bearing: gosec v2.21.4 pins golang.org/x/tools
       # v0.25.0, which does not COMPILE under Go 1.25 ("invalid array length").
@@ -144,6 +148,8 @@ jobs:
         with:
           cache: false
           go-version-file: src/go.mod
+      - name: Guard shared Go cache (fall back when the runner volume is full)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
 
       # skip-cache: the action's own cache save/restore is the same multi-GB
       # tar problem as setup-go's; the runners already keep GOCACHE warm.
@@ -214,6 +220,8 @@ jobs:
         with:
           cache: false
           go-version-file: src/go.mod
+      - name: Guard shared Go cache (fall back when the runner volume is full)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
 
       - name: Regenerate NOTICE from the current module graph
         run: src/scripts/generate-notice.sh /tmp/NOTICE.generated

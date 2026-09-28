@@ -576,6 +576,14 @@ func (s *Server) AdvanceStageLease(identity, taskID, to string, now time.Time, r
 	if stage == StageSpec {
 		if decision := s.runCheckpointPolicy(StageSpec); !decision.blocks {
 			s.recordRunCheckpointAutoApproval(runKey, "", StageSpec, advanced.gen, now, decision)
+			// A disabled Spec checkpoint still has to open Gate 1 on a
+			// design-mode epic, or the run reaches plan with the design
+			// still pending (hivecommons/hive#9181).
+			if store, epic := s.findRunEpic(runKey); epic != nil {
+				if err := s.approveRunDesign(context.Background(), store, epic.ID, runKey, runCheckpointAutoActor); err != nil {
+					s.logger.Warn("[runs] auto-approving design at disabled spec checkpoint failed", "run", runKey, "epic", epic.ID, "error", err)
+				}
+			}
 		}
 	}
 	return nil
@@ -1136,34 +1144,85 @@ func (s *Server) runKeyForEpic(repo, number, runKey string) string {
 // plan checkpoint, once the plan has actually been approved. A run with no
 // live held plan lease is a no-op, not an error.
 func (s *Server) advanceApprovedPlanLease(runKey, epicID, actor string, now time.Time) error {
-	return s.advanceApprovedStageLease(runKey, epicID, StagePlan, StageImplement, actor, now)
-}
-
-func (s *Server) advanceApprovedSpecLease(runKey, epicID, actor string, now time.Time) error {
-	return s.advanceApprovedStageLease(runKey, epicID, StageSpec, StagePlan, actor, now)
-}
-
-func (s *Server) advanceApprovedStageLease(runKey, epicID, fromStage, toStage, actor string, now time.Time) error {
-	if s == nil || s.contributeHub == nil || runKey == "" {
+	_, err := s.advanceCheckpointLease(runKey, epicID, StagePlan, StageImplement, 0, actor, now)
+	if errors.Is(err, errRunCheckpointNotHeld) {
 		return nil
 	}
-	var identity, taskID string
-	var gen uint64
+	return err
+}
+
+// advanceCheckpointLease moves the run's live fromStage lease to toStage and
+// records the stage approval. A non-zero gen pins the generation the approver
+// reviewed, checked again under leaseMu. With no matching live lease it returns
+// errRunCheckpointNotHeld, so a checkpoint decision can never report success
+// without a transition; callers for which that is benign filter it.
+func (s *Server) advanceCheckpointLease(runKey, epicID, fromStage, toStage string, gen uint64, actor string, now time.Time) (string, error) {
+	if s == nil || s.contributeHub == nil || runKey == "" {
+		return "", errRunCheckpointNotHeld
+	}
+	var identity, taskID, leaseRunKey string
+	var leaseGen uint64
 	found := false
-	err := s.VisitActiveStageLeases(func(rk, _, stage, id, task, repo string, g uint64, expiresAt time.Time) {
-		if found || !s.sameRunKey(runKey, rk, repo) || stage != fromStage || now.After(expiresAt) {
+	err := s.VisitActiveStageLeases(func(rk, key, stage, id, task, repo string, g uint64, expiresAt time.Time) {
+		// runKey may be the canonical run key or, for a run without a numbered
+		// issue, the lease work key the runs API reports as Run.Key.
+		if found || (key != runKey && !s.sameRunKey(runKey, rk, repo)) || stage != fromStage || now.After(expiresAt) || (gen != 0 && g != gen) {
 			return
 		}
-		identity, taskID, gen, found = id, task, g, true
+		identity, taskID, leaseRunKey, leaseGen, found = id, task, rk, g, true
 	})
-	if err != nil || !found {
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", fmt.Errorf("%w: no live %s lease for %s", errRunCheckpointNotHeld, fromStage, runKey)
+	}
+	if _, err := s.contributeHub.advanceLeaseStageFromGen(identity, taskID, toStage, leaseGen, now, now.Add(time.Millisecond)); err != nil {
+		return "", err
+	}
+	s.recordRunCheckpointApproval(leaseRunKey, epicID, fromStage, actor, leaseGen, now, nil)
+	return leaseRunKey, nil
+}
+
+// approveRunDesign records a crossed Spec checkpoint on the run's Spektacular
+// design epic. It is idempotent. The lease move that precedes it is the
+// authoritative transition, so the forge signal (approved label / status) is
+// best effort: a failure is logged, audited, and put on the run's timeline
+// instead of undoing or failing an approval that already happened.
+func (s *Server) approveRunDesign(ctx context.Context, store *beads.Store, epicID, runKey, actor string) error {
+	if store == nil || epicID == "" {
+		return nil
+	}
+	epic, err := store.Get(epicID)
+	if err != nil {
 		return err
 	}
-	_, err = s.contributeHub.advanceLeaseStageAt(identity, taskID, toStage, now, now.Add(time.Millisecond))
-	if err == nil {
-		s.recordRunCheckpointApproval(runKey, epicID, fromStage, actor, gen, now, nil)
+	if epic.Meta(planning.MetaDesignVia) != planning.DesignViaSpektacular || planning.DesignStatus(epic) == planning.DesignStatusApproved {
+		return nil
 	}
-	return err
+	if err := planning.ApproveDesign(store, epicID); err != nil {
+		return err
+	}
+	if s.deps == nil || s.deps.GHClient == nil {
+		return nil
+	}
+	if err := s.applyDesignSignal(ctx, issueFromEpic(epic), s.designConfig().ApprovedLabelOrDefault(), s.designApprovedStatus()); err != nil {
+		s.logger.Warn("[runs] design approved but forge signal failed", "run", runKey, "epic", epicID, "error", err)
+		s.audit.Log(actor, "design_signal_failed", auditDetail("epic", epicID, "run", runKey, "error", err.Error()), planning.ArchitectAgentName)
+		s.LifecycleTimeline().Record(timeline.Event{
+			IssueRef: runKey,
+			Kind:     timeline.KindProgress,
+			Agent:    actor,
+			At:       time.Now().UnixMilli(),
+			Attrs: map[string]string{
+				stageAttrRunKey: runKey,
+				stageAttrStage:  StageSpec,
+				stageAttrReason: "design_signal_failed",
+				"error":         err.Error(),
+			},
+		})
+	}
+	return nil
 }
 
 func (s *Server) activeRunStage(runKey string) string {

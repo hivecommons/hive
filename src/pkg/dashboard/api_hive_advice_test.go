@@ -75,7 +75,7 @@ func TestBuildHiveAdvisorSignals(t *testing.T) {
 		Agents: []FrontendAgent{{Name: "scanner", Enabled: true, NoCadence: true}},
 		Budget: FrontendBudget{PctUsed: 91, Exhausted: true},
 	}
-	got := buildHiveAdvisorSignals(status)
+	got := newTestServer().buildHiveAdvisorSignals(status, time.Now())
 	if got.Mode != "busy" || got.QueueIssues != 2 || got.QueuePRs != 5 || got.HoldCount != 1 || got.RepoCount != 2 || got.DisabledAgentCount != 1 || got.NoCadenceAgentCount != 1 || got.BudgetUsedPct != 91 || !got.BudgetExhausted {
 		t.Fatalf("signals = %#v", got)
 	}

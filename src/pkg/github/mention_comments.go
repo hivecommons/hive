@@ -172,7 +172,11 @@ func (c *Client) CreateMentionAck(ctx context.Context, ev mention.Event, reactio
 	return nil
 }
 
-func (c *Client) CountAppAuthoredComments(ctx context.Context, repo string, number int) (int, error) {
+// CountMentionReplies counts the App's own mention completion replies on an
+// issue or PR conversation: comments authored by the App login whose body
+// carries mention.ReplyMarker. Other App comments (stage status, review
+// summaries, escalations) and marker text pasted by other users do not count.
+func (c *Client) CountMentionReplies(ctx context.Context, repo string, number int) (int, error) {
 	if c == nil || c.client == nil {
 		return 0, ErrNoGitHubClient
 	}
@@ -182,10 +186,10 @@ func (c *Client) CountAppAuthoredComments(ctx context.Context, repo string, numb
 	for {
 		comments, resp, err := c.client.Issues.ListComments(ctx, owner, repoName, number, opts)
 		if err != nil {
-			return 0, fmt.Errorf("counting app comments for %s#%d: %w", owner+"/"+repoName, number, err)
+			return 0, fmt.Errorf("counting mention replies for %s#%d: %w", owner+"/"+repoName, number, err)
 		}
 		for _, cm := range comments {
-			if strings.EqualFold(safeGetLogin(cm.GetUser()), c.appBotLogin) {
+			if strings.EqualFold(safeGetLogin(cm.GetUser()), c.appBotLogin) && strings.Contains(cm.GetBody(), mention.ReplyMarker) {
 				count++
 			}
 		}
