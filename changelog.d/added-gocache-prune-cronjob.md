@@ -1,0 +1,1 @@
+- Added a daily `hive-gocache-prune` CronJob manifest (`src/deploy/ci-runners/`) that bounds the shared self-hosted runner Go cache volume, after it filled 200Gi and broke every Go CI step with `disk quota exceeded`.
