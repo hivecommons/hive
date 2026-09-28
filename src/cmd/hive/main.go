@@ -3663,6 +3663,9 @@ func (b *boot) bootWatchers() { b.bootWatchersWith(defaultBootWatchersDeps()) }
 func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	// Watch hive.yaml for external changes and reload config when modified
 	b.configWatcher = deps.newConfigWatcher(b.configPath, func(newCfg *config.Config) {
+		b.cfgReloadMu.Lock()
+		defer b.cfgReloadMu.Unlock()
+
 		// Preserve runtime-only fields that are not in the YAML
 		newCfg.HiveID = b.cfg.HiveID
 
@@ -5665,6 +5668,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			deps.persist(b)
 			return
 		case <-ticker.Chan():
+			b.cfgReloadMu.Lock()
 			restarted := deps.restartCrashed(b.ctx, b.agentMgr)
 			for _, name := range restarted {
 				b.dashSrv.AuditLog("system", "restart", "trigger=crash-recovery", name)
@@ -5750,10 +5754,13 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 				ticker.Reset(time.Duration(b.cfg.Governor.EvalIntervalS) * time.Second)
 				lastEvalInterval = b.cfg.Governor.EvalIntervalS
 			}
+			b.cfgReloadMu.Unlock()
 		case <-agentTickCh:
+			b.cfgReloadMu.Lock()
 			govState := b.gov.GetState()
 			agentStatuses := b.agentMgr.AllStatuses()
 			payload := dashboard.BuildAgentOnlyStatus(govState, agentStatuses, b.cfg)
+			b.cfgReloadMu.Unlock()
 			b.dashSrv.BroadcastAgentStatus(payload)
 		}
 	}

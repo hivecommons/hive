@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -60,6 +61,13 @@ type boot struct {
 	// cleanup collects what main() used to `defer` so it still runs LIFO on
 	// main()'s return, not on the return of the phase that registered it.
 	cleanup deferStack
+
+	// cfgReloadMu serializes the config watcher's reload callback (which runs
+	// on a timer goroutine and swaps/mutates *cfg, including cfg.Agents) with
+	// the governor loop's tick bodies that read cfg. Without it, a reload
+	// racing the fast agent-status tick crashed the process with "concurrent
+	// map read and map write" in buildConfiguredAgents.
+	cfgReloadMu sync.Mutex
 
 	// bootConfig
 	startTime                     time.Time
