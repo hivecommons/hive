@@ -50,7 +50,7 @@ Paste one filled block into the surface issue and link the same comment from
 Notes / redactions: `<what was redacted and why>`
 ```
 
-## GitHub @-mention triggers (#8041)
+## GitHub @-mention triggers
 
 Prerequisites:
 
@@ -92,10 +92,10 @@ Evidence checklist:
 - [ ] Audit/log line containing `agent_mention_kicked` with repo, number,
       comment ID, author, and agent.
 - [ ] Kick/run evidence showing `source=mention`.
-- [ ] Paste the template, tick the GitHub @-mention live row in #7563's **v6 readiness bar** section, then
-      close #8041.
+- [ ] Paste the template, tick the GitHub @-mention live row in #7563's **v6 readiness bar** section, and
+      link the evidence comment.
 
-## Slack Socket Mode (#8042)
+## Slack Socket Mode
 
 Prerequisites:
 
@@ -133,9 +133,10 @@ Evidence checklist:
 - [ ] `!status` command link/screenshot and bot reply.
 - [ ] One notification delivery link/screenshot.
 - [ ] Hive log line for `slack bot starting` or Socket Mode activity.
-- [ ] Paste the template, tick the Slack live row in #7563's **v6 readiness bar** section, then close #8042.
+- [ ] Paste the template, tick the Slack live row in #7563's **v6 readiness bar** section, and
+      link the evidence comment.
 
-## Discord (#8043)
+## Discord
 
 Prerequisites:
 
@@ -168,9 +169,10 @@ Evidence checklist:
 - [ ] Notification parity screenshot/link after recovery.
 - [ ] `discord SSE disconnected` or `discord poll failed` log line plus
       timestamp of subsequent recovery.
-- [ ] Paste the template, tick the Discord live row in #7563's **v6 readiness bar** section, then close #8043.
+- [ ] Paste the template, tick the Discord live row in #7563's **v6 readiness bar** section, and
+      link the evidence comment.
 
-## Microsoft Teams (#8044)
+## Microsoft Teams
 
 Prerequisites:
 
@@ -212,9 +214,9 @@ Evidence checklist:
 - [ ] Teams notification screenshot/link.
 - [ ] Hive log line with `msteams bot starting` or relevant poll evidence.
 - [ ] Paste the template, tick the Teams portion of the shared row in #7563's **v6 readiness bar** section,
-      then close #8044.
+      and link the evidence comment.
 
-## Matrix (#8045)
+## Matrix
 
 Prerequisites:
 
@@ -243,9 +245,9 @@ Evidence checklist:
 - [ ] Matrix notification event link/screenshot.
 - [ ] Hive log line with `matrix bot starting` or sync evidence.
 - [ ] Paste the template, tick the Matrix portion of the shared row in #7563's **v6 readiness bar** section,
-      then close #8045.
+      and link the evidence comment.
 
-## Telegram (#8046)
+## Telegram
 
 Prerequisites:
 
@@ -274,9 +276,9 @@ Evidence checklist:
 - [ ] Telegram notification screenshot/link.
 - [ ] Hive log line with `telegram bot starting` or poll evidence.
 - [ ] Paste the template, tick the Telegram portion of the shared row in #7563's **v6 readiness bar** section,
-      then close #8046.
+      and link the evidence comment.
 
-## Email escalation (#8047)
+## Email escalation
 
 Prerequisites:
 
@@ -314,9 +316,10 @@ Evidence checklist:
 - [ ] Hive log/audit around the escalation producer and email sink.
 - [ ] Explicit inbound reply-to-act deferral (current v6) or allowlisted reply
       action evidence (future v6).
-- [ ] Paste the template, tick/link the Email row in #7563's **v6 readiness bar** section, then close #8047.
+- [ ] Paste the template, tick/link the Email row in #7563's **v6 readiness bar** section, and
+      link the evidence comment.
 
-## Push / on-call (#8048)
+## Push / on-call
 
 Prerequisites:
 
@@ -348,8 +351,219 @@ Evidence checklist:
 - [ ] Hive log/audit line showing severity `decision`/`page` and provider name.
 - [ ] If no page arrived, include any `escalation_delivery_failed` line and do
       not tick #7563's **v6 readiness bar** section until a retry succeeds.
-- [ ] Paste the template, tick/link the Push / on-call row in #7563's **v6 readiness bar** section, then close
-      #8048.
+- [ ] Paste the template, tick/link the Push / on-call row in #7563's **v6 readiness bar** section, and
+      link the evidence comment.
+
+## GitHub Actions trigger
+
+Prerequisites:
+
+- Enable the shipped Actions trigger described in
+  [GitHub Actions trigger](design/github-actions-trigger.md), which records
+  `source=action` kicks, 👀 ack, and audits on v6
+  (`src/docs/design/github-actions-trigger.md`).
+- Configure `github.actions.enabled`, the managed repo list, and a
+  `github.actions.default_agent` or an unambiguous action-capable agent. The
+  config fields include `enabled`, `max_concurrent`, and the agent selection
+  (`src/pkg/config/config.go`). The workflow file `hive-action-smoke` must be
+  available in the target repository with `workflow_dispatch` trigger.
+- The selected agent must be enabled, hold `Converse`, and be governor-kickable;
+  the handler declines otherwise.
+
+Run:
+
+1. As a repository contributor with Actions permissions, dispatch the
+   `hive-action-smoke` workflow manually against the v6 branch via the GitHub
+   UI. Save the Actions run link.
+2. Wait for the workflow to handle the dispatch. Save the hive log around the
+   handling window and confirm the kick was recorded with `source=action`.
+3. Confirm the audit event is `agent_action_kicked`; declined attempts use
+   `agent_action_declined`.
+4. If the run completes, link the run log or dashboard completion evidence.
+
+Evidence checklist:
+
+- [ ] GitHub Actions workflow_dispatch URL/link.
+- [ ] Audit/log line containing `agent_action_kicked` with repository, workflow
+      run ID, and agent.
+- [ ] Kick/run evidence showing `source=action`.
+- [ ] Paste the template, tick the GitHub Actions trigger live row in #7563's **v6 readiness bar** section, and
+      link the evidence comment.
+
+## Dashboard chat
+
+Prerequisites:
+
+- Use a v6 hive with dashboard auth available to the chat spine. Dashboard
+  commands call the same chat backbone used by Slack, Discord, Teams, Matrix,
+  and Telegram (`src/pkg/dashchat`, `src/pkg/chat/dashboard.go`).
+- Pick an allowlisted human ID for the dashboard. The shared command router
+  fails closed when `allowed_users` is empty. The panel author's dashboard user
+  ID must match the chat allowlist exactly; the browser renders a 👀 ack and
+  refusal line if not allowlisted (`src/pkg/dashboard/chat_commands.go`,
+  `src/pkg/dashboard/chat_conformance_v6_test.go`).
+- `allowed_users` entries may be `id` or `id:role`; roles are `read`,
+  `read-write`, `merger`, and `owner`. The first bare entry is treated as
+  `owner`, and later bare entries are treated as `read`.
+- For the notification half, create a harmless visible state transition after
+  the bot has started, such as pausing and resuming a non-critical agent from
+  the dashboard. Valid notifications are the rendered `Working`, `Completed`,
+  `Paused`, `Resumed`, `Off (cadence rule)`, or governor-mode-change messages
+  emitted from SSE snapshots (`src/pkg/chat/notify.go:150-212`).
+
+Run:
+
+1. Confirm the hive log contains `dashchat service starting` or `chat service
+   starting` (`src/pkg/dashchat`, `Service.Start` in `src/pkg/chat/chat.go`).
+2. In the dashboard chat panel, send `!status`. Save the panel screenshot and
+   the bot reply.
+3. Trigger one notification delivery by pausing/resuming an agent or inducing a
+   safe working→idle transition after the first SSE snapshot. Save the
+   notification screenshot from the panel.
+4. If refusals occur, confirm the 👀 ack and refusal line appear in the panel
+   for non-allowlisted users (`src/pkg/dashboard/chat_conformance_v6_test.go`).
+
+Evidence checklist:
+
+- [ ] Dashboard chat panel `!status` screenshot and bot reply.
+- [ ] One notification delivery screenshot from the panel.
+- [ ] Hive log line for `dashchat service starting` or `chat service starting`.
+- [ ] Paste the template, tick the Dashboard chat live row in #7563's **v6 readiness bar** section, and
+      link the evidence comment.
+
+## Inception via chat
+
+Prerequisites:
+
+- Use a v6 hive with the chat spine enabled. Chat commands are routed to the
+  orchestrator, which can start a new run from the `!inception` command or
+  inbound Slack/Discord/Teams/Matrix/Telegram thread.
+- Configure `orchestrator.enabled: true` and the `inception` agent with
+  `Converse` capability. The inception agent must be allowlisted in the chat
+  `allowed_users` (`src/pkg/config/config.go`, `src/pkg/orchestrator`).
+- The chat allowlist and the inception agent must be configured so that at
+  least one human can execute `!inception <run-config>`.
+
+Run:
+
+1. From an allowlisted user account in the chat surface (dashboard, Slack, or
+   other), send `!inception <run-config>` or trigger an inception via the chat
+   surface. Save the chat message link/screenshot.
+2. Confirm the inception agent receives the message and starts a greenfield run.
+   Save the hive log showing the run initialization and the agent receiving the
+   command.
+3. Allow the run to proceed through all stages until it reaches `complete`.
+   Save the run completion evidence and the chat notification showing the run
+   finished.
+4. Confirm the entire flow (message → agent → run completion → notification) is
+   recorded in hive audit logs.
+
+Evidence checklist:
+
+- [ ] Inception command chat message link/screenshot.
+- [ ] Hive log showing `agent_inception_kicked` or similar inception trigger
+      with run key and agent.
+- [ ] Run completion log or dashboard evidence showing `complete` status.
+- [ ] Chat notification screenshot showing run completion alert.
+- [ ] Paste the template, tick the Inception via chat live row in #7563's **v6 readiness bar** section, and
+      link the evidence comment.
+
+## Operator admin MCP
+
+Prerequisites:
+
+- Deploy the v6 admin MCP endpoint behind the dashboard. The endpoint is
+  mounted at `/api/admin/mcp/call` and requires dashboard authentication
+  (`src/pkg/dashboard`, `src/cmd/hive-admin-mcp`, `design/admin-mcp.md`).
+- Alternatively, build and run the stdio admin MCP binary (`hive-admin-mcp`)
+  pointing at a live hive. The stdio transport maintains a roster of hives and
+  switches between them on demand.
+- Configure at least one hive available to both transports; the endpoint
+  administers only the hive serving it, while stdio may maintain a roster but
+  operates on exactly one active hive at a time (`design/admin-mcp.md`).
+
+Run:
+
+1. **Endpoint transport:**
+   - Use an MCP client (e.g. Claude desktop with MCP integration) to connect to
+     `http://<hive>:<port>/api/admin/mcp/call` with dashboard authentication.
+   - Invoke `tools/list` and verify the tool inventory is returned.
+   - Invoke one read tool (e.g. `agent_status`) and save the response.
+   - Invoke one write tool preview (e.g. `set_agent_mode`) and confirm the
+     preview shows the proposed change and confirmation text.
+   - Send the confirmation token and invoke the confirmed write. Verify the
+     write executed and the hive log shows the action.
+   - Save the MCP transcript showing all calls and responses.
+
+2. **Stdio transport:**
+   - Run `hive-admin-mcp` and use the roster prompt to select a hive.
+   - Invoke `tools/list` and verify the tool inventory is returned.
+   - Invoke one read tool and save the response.
+   - Verify the hive selection is persistent across commands and the stdio
+     roster works correctly.
+
+3. **Shared evidence:**
+   - Verify all tool responses are scrubbed (secrets redacted, sensitive paths
+     masked) before being sent to the operator.
+   - Confirm dashboard audit logs show the MCP operations with the operator's
+     identity and action details.
+   - Verify the confirmation text is verbatim and includes a clear statement of
+     the change being made.
+
+Evidence checklist:
+
+- [ ] Endpoint `tools/list` response screenshot or transcript.
+- [ ] Endpoint read tool response showing successful read with scrubbing applied.
+- [ ] Endpoint write preview showing confirmation text and proposed change.
+- [ ] Endpoint confirmed write execution log and dashboard audit entry.
+- [ ] Stdio `tools/list` response and hive roster selection evidence.
+- [ ] Stdio read operation response with scrubbing verification.
+- [ ] Hive/audit evidence showing MCP operations recorded with operator identity.
+- [ ] Paste the template, tick the Operator admin MCP live row in #7563's **v6 readiness bar** section, and
+      link the evidence comment.
+
+## Standby S5–S6
+
+Prerequisites:
+
+- Use a v6 hive with standby contributors enabled. Standby is the mechanism by
+  which a paused lane offers its queue to approved standby contributors behind a
+  per-lane capability floor, implemented according to RFC #7629
+  (`docs/rfc-7629-standby-contributors.md`, `design/standby-contributors.md`).
+- Configure `lanes.<lane-id>.standby_enabled: true` and
+  `lanes.<lane-id>.min_model_capability` to a tier that at least one standby
+  contributor meets (S1–S4 configuration; S5–S6 are live-exercise phases).
+- Enroll standby contributors in the hive's contributor list with matching
+  capability metadata. Record the standby protocol flow in
+  `src/docs/design/standby-contributors.md` phases S1–S4.
+
+Run:
+
+1. Pause a configured lane that has queued items and at least one enrolled
+   standby contributor who meets the capability floor. Save the lane state
+   screenshot.
+2. Confirm the hive offers the paused queue to standby via the internal state
+   machine (not a user-visible surface yet). Save relevant log lines showing
+   standby evaluation.
+3. Confirm at least one standby contributor receives the offer and their work
+   is assigned from the paused queue. Save assignment log entries.
+4. Monitor one assigned run to completion. Save run completion logs and confirm
+   the work was executed by a standby contributor (audit/capability checks in
+   logs).
+5. Resume the lane and confirm standby offers are revoked when the lane is no
+   longer paused.
+
+Evidence checklist:
+
+- [ ] Paused lane screenshot or state showing queued work.
+- [ ] Hive log lines showing standby offer evaluation and matching (S5 phase).
+- [ ] Standby contributor assignment log with capability matching evidence (S6
+      phase).
+- [ ] Completed run audit showing the standby contributor's work and capability
+      verification.
+- [ ] Lane resume log showing standby offers revoked.
+- [ ] Paste the template, tick the Standby S5–S6 live row in #7563's **v6 readiness bar** section, and
+      link the evidence comment.
 
 ## How to close
 

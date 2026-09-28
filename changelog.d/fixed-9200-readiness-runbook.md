@@ -1,0 +1,1 @@
+- v6 readiness runbook now includes evidence templates and procedures for five previously undocumented live-exercise rows: Standby S5–S6, GitHub Actions trigger, Dashboard chat, Inception via chat, and Operator admin MCP; all sections updated to reference #7563 tracker instead of closed issues (#9200)
