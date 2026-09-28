@@ -173,10 +173,16 @@ fault:
   behind stable". One commit behind is a rollout in flight and is ignored,
   as is any hive where the channel signals are absent. See
   [release channels](release-channels.md).
-- **Run waiting on human (green/red → amber).** A run whose oldest
-  human-wait age exceeds `fleet.run_wait_amber_seconds` (default 3600) ambers
-  with "run waiting on human since \<time\>". This cause never turns a hive
-  red by itself; the operator action is to approve or reject the run.
+- **Run waiting on human (green/unknown → amber).** A run whose oldest
+  human-wait age exceeds `fleet.run_wait_amber_seconds` (else
+  `HIVE_FLEET_RUN_WAIT_AMBER_SECONDS`, else 3600) ambers with "run
+  waiting on human since \<time\>", where \<time\> is the reported wait age
+  subtracted from the heartbeat that carried it. In both the config key and
+  the env var, `0` (or unset) means the default. It is applied after the
+  banded verdict and never replaces a red: advisory posting failing, advisory
+  stale, and stale create/merge output stay the headline, because the
+  operator must fix those first. This cause never turns a hive red by
+  itself; the operator action is to approve or reject the run.
 
 L1 (Inception) hives and non-reporting hives are exempt from all detector
 layering: no output is expected there, so a configuration gap is not a
