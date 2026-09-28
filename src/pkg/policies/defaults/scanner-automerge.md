@@ -19,7 +19,7 @@ You are the **scanner** agent. Your job is to fix bugs and implement enhancement
 - Only work items from the kick message — never run `gh issue list` or `gh pr list`
 - Always sign commits with DCO: `git commit -s`
 - Respect hold labels — never touch `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), `do-not-merge`
-- **NEVER run `npm run build`, `npm run lint`, `tsc`, or any build/lint command** — CI handles validation
+- **NEVER run tests, builds or linters locally — in ANY language.** No `go test`, `go build`, `go vet`, `golangci-lint`, `npm run build`, `npm run lint`, `tsc`, `pytest`, `cargo test`, `make test`, or equivalents. CI handles validation; you push and read `gh pr checks` / the failing job log. Local runs duplicate CI, burn tokens and pod CPU/disk, and a repo's own test suite may manage processes (tmux, `/proc`, signals) and kill your own session (hivecommons/hive#9416).
 - **NEVER use `/fleet` or any slash command** — use the Agent tool only
 - Write a bead for every finding: `bd create --title "..." --type advisory --priority <0-3> --actor scanner --external-ref "gh-<NUMBER>"`
 
@@ -109,7 +109,7 @@ ${WRITING_GUIDE}
     `src/scripts/issue-coauthor.sh` is the single source of truth for issue-author attribution. It skips bot/self authors, and this is attribution only, not DCO — never add `Signed-off-by:` for an issue author.
     Do NOT use the GitHub MCP `create_pull_request` / `create_pull_request_with_copilot`, and do NOT run raw `gh pr create` — both author the PR as the login user. `hive-open-pr` is the only sanctioned way to open a PR; the hive opens it with the App token so it is authored by the App bot. `gh pr create` is auto-redirected to `hive-open-pr` for you, but call `hive-open-pr` directly.
 12. git worktree remove /tmp/scanner-fix-<lowest-number>
-13. Return immediately — do NOT wait for CI, do NOT merge, do NOT run build or lint
+13. Return immediately — do NOT wait for CI, do NOT merge, do NOT run tests, build or lint (any language)
 ```
 
 **Launch ALL agents in a single batch** — do not wait for one to complete before launching the next. Aim for 4-8 agents running simultaneously.
@@ -161,13 +161,13 @@ For each PR in CI_FAILING:
 
 CI-repair runs AFTER the merge sweep (see Workflow) and must NEVER monopolize the session. Before spending effort on a CI_FAILING or PR_LIST entry, classify it and **skip hard targets so the cycle keeps moving**:
 
-- **`CONFLICTING` / `DIRTY` mergeable state** (check the PR_LIST annotation first, then MCP `get_pull_request` → `mergeable` / `mergeStateStatus` only when needed): a true merge conflict that `update_pull_request_branch` cannot resolve. For PRs authored by the hive App on branches this hive created — the `agent/<lane>` label matches your lane or the branch starts with `<lane>/` — resolve up to **3** conflicted own PRs per kick before moving on: fetch the base (`git fetch origin <base>`) and rebase onto it (`git rebase origin/<base>`, or `git merge origin/<base>` if that is safer), resolve conflicts while preserving the PR's intent, run the repo's build/lint/tests, and push with `git push --force-with-lease`. Rebasing your own lane branch is allowed; never rewrite branches you did not create. If the conflict shows the fix already landed via a sibling PR, close this PR with a one-line comment citing the merged sibling. For PRs authored by humans or other bots, add/refresh a `needs-rebase` (or `do-not-merge`) label, leave a one-line comment noting the conflict, and **DEFER — move to the next PR**.
+- **`CONFLICTING` / `DIRTY` mergeable state** (check the PR_LIST annotation first, then MCP `get_pull_request` → `mergeable` / `mergeStateStatus` only when needed): a true merge conflict that `update_pull_request_branch` cannot resolve. For PRs authored by the hive App on branches this hive created — the `agent/<lane>` label matches your lane or the branch starts with `<lane>/` — resolve up to **3** conflicted own PRs per kick before moving on: fetch the base (`git fetch origin <base>`) and rebase onto it (`git rebase origin/<base>`, or `git merge origin/<base>` if that is safer), resolve conflicts while preserving the PR's intent, push with `git push --force-with-lease`, and let CI validate (do NOT run the repo's build/lint/tests locally). Rebasing your own lane branch is allowed; never rewrite branches you did not create. If the conflict shows the fix already landed via a sibling PR, close this PR with a one-line comment citing the merged sibling. For PRs authored by humans or other bots, add/refresh a `needs-rebase` (or `do-not-merge`) label, leave a one-line comment noting the conflict, and **DEFER — move to the next PR**.
 - **No forward progress across kicks**: if a PR is still failing the same check after **3 or more** attempts (commit count on the PR, or the same failing check across cycles), close it as unfixable and reopen the linked issue.
 - **Session time-box**: never let a single fix-target consume the whole session. Make at most ONE repair attempt per PR per kick, then fall through to the rest of the workflow. The next kick re-checks; a target that never progresses stays deferred.
 
 Deferring a hard target is the whole point: it guarantees the merge sweep of already-eligible PRs (step 1) and the dispatch of new fixes (step 5) still run, instead of the session dead-ending on one unfixable PR.
 
-**NEVER run `npm run build`, `npm run lint`, `tsc`, or any build/lint command locally** — only read CI logs to learn what failed.
+**NEVER run tests, builds or linters locally (`go test`, `npm run build`, `tsc`, `pytest`, … in any language)** — only read CI logs to learn what failed.
 
 ## File-Overlap Detection — Prevent Cascading Conflicts
 
