@@ -45,8 +45,8 @@ func TestClassifyMergeFailureForOperator(t *testing.T) {
 		},
 		{
 			name: "fork approval permission",
-			err:  forkRunApprovalPermissionAlert,
-			want: []string{"Fork PR CI runs need approval", "Actions: Read and write", "approve the runs manually"},
+			err:  "ci gate: fork PR workflow runs are awaiting maintainer approval (action_required): \"CI\"(41). Approve the runs or relax the repo setting at https://github.com/o/r/settings/actions (Approval for running fork pull request workflows)",
+			want: []string{"fork PR workflow runs are awaiting maintainer approval", "https://github.com/o/r/settings/actions", "Approve the runs manually"},
 		},
 		{
 			name: "merge method",

@@ -1,0 +1,1 @@
+- The merge-request watcher now reports fork PR workflow runs awaiting maintainer approval accurately and raises an actionable alert that links owners to the repository Actions setting.

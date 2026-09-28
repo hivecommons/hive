@@ -41,12 +41,8 @@ type ciFixture struct {
 	branchStatus int
 	// mergeStatus, when non-zero, is the HTTP status PUT /merge answers with
 	// (to exercise the GitHub-side refusal paths); zero merges successfully.
-	mergeStatus int
-	// trustedAuthors are authors whose bounded merged-PR search returns a hit.
-	trustedAuthors map[string]bool
-	// approveStatus, when non-zero, is the HTTP status POST run approval returns.
-	approveStatus int
-	approveCalls  *atomic.Int32
+	mergeStatus  int
+	approveCalls *atomic.Int32
 }
 
 type ciStatus struct{ context, state string }
@@ -86,16 +82,6 @@ func (f *ciFixture) serveCI(w http.ResponseWriter, r *http.Request) bool {
 	p := r.URL.Path
 	enc := func(v any) { w.Header().Set("Content-Type", "application/json"); _ = json.NewEncoder(w).Encode(v) }
 	switch {
-	case p == "/search/issues":
-		total := 0
-		q := r.URL.Query().Get("q")
-		for author, trusted := range f.trustedAuthors {
-			if trusted && strings.Contains(q, "author:"+author) {
-				total = 1
-				break
-			}
-		}
-		enc(map[string]any{"total_count": total, "items": []any{}})
 	case strings.Contains(p, "/pulls/") && strings.Count(p, "/") == 5: // /repos/{o}/{r}/pulls/{n}
 		n, _ := strconv.Atoi(p[strings.LastIndex(p, "/")+1:])
 		head := f.defaultHead
@@ -230,11 +216,6 @@ func ciGateServer(t *testing.T, f *ciFixture, merges *atomic.Int32) *httptest.Se
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/approve"):
 			if f.approveCalls != nil {
 				f.approveCalls.Add(1)
-			}
-			if f.approveStatus != 0 {
-				w.WriteHeader(f.approveStatus)
-				_, _ = io.WriteString(w, `{"message":"approval failed"}`)
-				return
 			}
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -696,74 +677,14 @@ func TestMergeCIGate_QueuedZeroJobRunWaits(t *testing.T) {
 	mustExist(t, reqPath, "request parked on queued run")
 }
 
-func TestMergeCIGate_ApprovesTrustedForkActionRequiredRuns(t *testing.T) {
+func TestMergeCIGate_ActionRequiredForkRunAlerts(t *testing.T) {
 	var merges, approvals atomic.Int32
 	f := &ciFixture{
-		defaultHead:    "abc",
-		author:         "returning",
-		headRepo:       "returning/r",
-		baseRepo:       "o/r",
-		trustedAuthors: map[string]bool{"returning": true},
-		approveCalls:   &approvals,
-		runs:           []ciRun{{id: 41, workflowID: 4, name: "CI", status: "completed", conc: "action_required", jobs: 0}},
-	}
-	srv := ciGateServer(t, f, &merges)
-	defer srv.Close()
-	c := testMergeClient(t, srv.URL)
-
-	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
-	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
-
-	if approvals.Load() != 1 {
-		t.Fatalf("expected one workflow approval, got %d", approvals.Load())
-	}
-	if merges.Load() != 0 {
-		t.Fatalf("action_required approval should wait for rerun, got %d merges", merges.Load())
-	}
-	resp := readMergeResult(t, reqPath)
-	if resp.Attempts != 0 || resp.CIWaits != 1 || !strings.Contains(resp.Error, "approved trusted returning contributor") {
-		t.Fatalf("trusted fork approval should park pending without consuming an attempt, got %+v", resp)
-	}
-}
-
-func TestMergeCIGate_BlocksUntrustedForkActionRequiredRuns(t *testing.T) {
-	var merges, approvals atomic.Int32
-	f := &ciFixture{
-		defaultHead:    "abc",
-		author:         "firsttimer",
-		headRepo:       "firsttimer/r",
-		baseRepo:       "o/r",
-		trustedAuthors: map[string]bool{"firsttimer": false},
-		approveCalls:   &approvals,
-		runs:           []ciRun{{id: 42, workflowID: 4, name: "CI", status: "completed", conc: "action_required", jobs: 0}},
-	}
-	srv := ciGateServer(t, f, &merges)
-	defer srv.Close()
-	c := testMergeClient(t, srv.URL)
-
-	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
-	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
-
-	if approvals.Load() != 0 {
-		t.Fatalf("untrusted author must not be approved, got %d approvals", approvals.Load())
-	}
-	resp := readMergeResult(t, reqPath)
-	if resp.Attempts != 1 || !strings.Contains(resp.Error, "workflow runs awaiting fork-PR approval (action_required)") {
-		t.Fatalf("expected accurate action_required refusal, got %+v", resp)
-	}
-}
-
-func TestMergeCIGate_ForkApprovalPermissionAlertIsCached(t *testing.T) {
-	var merges, approvals atomic.Int32
-	f := &ciFixture{
-		defaultHead:    "abc",
-		author:         "returning",
-		headRepo:       "returning/r",
-		baseRepo:       "o/r",
-		trustedAuthors: map[string]bool{"returning": true},
-		approveStatus:  http.StatusForbidden,
-		approveCalls:   &approvals,
-		runs:           []ciRun{{id: 43, workflowID: 4, name: "CI", status: "completed", conc: "action_required", jobs: 0}},
+		defaultHead:  "abc",
+		headRepo:     "contributor/r",
+		baseRepo:     "o/r",
+		approveCalls: &approvals,
+		runs:         []ciRun{{id: 41, workflowID: 4, name: "CI", status: "completed", conc: "action_required", jobs: 0}},
 	}
 	srv := ciGateServer(t, f, &merges)
 	defer srv.Close()
@@ -773,45 +694,19 @@ func TestMergeCIGate_ForkApprovalPermissionAlertIsCached(t *testing.T) {
 
 	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
 	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
-	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
-
-	if approvals.Load() != 1 {
-		t.Fatalf("permission denial should be negative-cached after one approval call, got %d", approvals.Load())
-	}
-	if len(sink.adds) != 1 || !strings.Contains(sink.adds[0].message, "Actions: Read and write") {
-		t.Fatalf("expected one actionable fork approval alert, got %+v", sink.adds)
-	}
-	resp := readMergeResult(t, reqPath)
-	if resp.Attempts != 0 || resp.CIWaits != 2 || !strings.Contains(resp.Error, "Actions: Read and write") {
-		t.Fatalf("permission-denied approval should park pending with actionable reason, got %+v", resp)
-	}
-}
-
-func TestMergeCIGate_ForkApprovalDisabledBlocksWithoutApproval(t *testing.T) {
-	var merges, approvals atomic.Int32
-	f := &ciFixture{
-		defaultHead:    "abc",
-		author:         "returning",
-		headRepo:       "returning/r",
-		baseRepo:       "o/r",
-		trustedAuthors: map[string]bool{"returning": true},
-		approveCalls:   &approvals,
-		runs:           []ciRun{{id: 44, workflowID: 4, name: "CI", status: "completed", conc: "action_required", jobs: 0}},
-	}
-	srv := ciGateServer(t, f, &merges)
-	defer srv.Close()
-	c := testMergeClient(t, srv.URL)
-	c.SetApproveReturningForkRuns(false)
-
-	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
-	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
 
 	if approvals.Load() != 0 {
-		t.Fatalf("disabled auto-approval must not call approve, got %d", approvals.Load())
+		t.Fatalf("gate must not approve workflow runs, got %d approvals", approvals.Load())
+	}
+	if merges.Load() != 0 {
+		t.Fatalf("action_required workflow runs must not merge, got %d merges", merges.Load())
 	}
 	resp := readMergeResult(t, reqPath)
-	if resp.Attempts != 1 || !strings.Contains(resp.Error, "auto_merge.approve_returning_fork_runs is disabled") {
-		t.Fatalf("expected disabled-knob refusal, got %+v", resp)
+	if resp.Attempts != 1 || !strings.Contains(resp.Error, "fork PR workflow runs are awaiting maintainer approval") || !strings.Contains(resp.Error, "https://github.com/o/r/settings/actions") {
+		t.Fatalf("expected accurate action_required refusal, got %+v", resp)
+	}
+	if len(sink.adds) != 1 || !strings.Contains(strings.ToLower(sink.adds[0].message), "approve the runs manually") || !strings.Contains(sink.adds[0].message, "https://github.com/o/r/settings/actions") {
+		t.Fatalf("expected actionable fork approval alert, got %+v", sink.adds)
 	}
 }
 

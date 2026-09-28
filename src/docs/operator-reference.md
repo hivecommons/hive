@@ -131,15 +131,14 @@ advanced into the merge path.
 | `auto_merge.required_checks` | unset | Operator-declared status-check contexts / check-run names (e.g. `["build-gate"]`) that the sweep's green gate requires on the head commit. See below. |
 | `auto_merge.allow_unprotected_base` | deprecated no-op | Accepted for compatibility only. [`hive-merge`](hive-merge.md) no longer refuses solely because a base branch has no GitHub branch protection; it may merge into any branch the App can write after positive CI evidence. |
 | `auto_merge.no_ci_ok` | unset (refuse) | **Merge-request watcher key, not a sweep key.** Per-repo opt-in that downgrades only the "unverified" CI verdict (zero statuses, check runs, and workflow runs) to green, for adopted repos with no CI by design. Red and pending verdicts are never downgraded (#6281). See [hive-merge.md](hive-merge.md). |
-| `auto_merge.approve_returning_fork_runs` | **on** when unset | **Merge-request watcher key.** Approves `action_required` Actions runs on cross-repo PRs only when the human author already has a merged PR in that repository. First-time contributors, bots, and app authors remain human-gated; missing App Actions write permission raises an operator alert. |
 
 Actionable merge failures surface as dashboard system alerts, deduplicated by
 repo+reason and cleared by the next successful merge in that repo. Alerts name
 the operator action: grant/install the App with Contents and Pull requests write,
-grant Actions read/write for trusted fork-run approvals, adjust review/ruleset
-bypass or approve the PR, make a missing required check report, or enable/use an
-allowed merge method. Conflicts go back to the agent fix loop, and rate limits
-do not alert.
+approve fork PR workflow runs or relax the repo's fork-workflow approval
+setting, adjust review/ruleset bypass or approve the PR, make a missing
+required check report, or enable/use an allowed merge method. Conflicts go back
+to the agent fix loop, and rate limits do not alert.
 
 **The ACMM gate.** `self_authored: true` (or unset) is necessary but not
 sufficient: the sweep only starts when the hive's `acmm_level` is **6 or

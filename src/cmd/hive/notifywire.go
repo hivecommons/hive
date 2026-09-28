@@ -32,6 +32,5 @@ func syncAutoMergePolicyToGitHubClient(cfg *config.Config, ghClient *github.Clie
 	ghClient.SetRequiredChecks(set)
 	ghClient.SetMergeRequestAllowUnprotectedBaseRepos(cfg.AutoMerge.AllowUnprotectedBaseSet())
 	ghClient.SetMergeRequestNoCIAllowedRepos(cfg.AutoMerge.NoCIOKSet())
-	ghClient.SetApproveReturningForkRuns(cfg.AutoMerge.ApproveReturningForkRunsEnabled())
 	return set, ok
 }
