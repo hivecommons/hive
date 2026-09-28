@@ -1,0 +1,1 @@
+- Dashboard legend pills (`triage`, `STRATEGIST`, `FIX`) are now horizontally centered like the rest of the legend pills, fixing their left-alignment in the Overview → Pill Legend section ([#9222](https://github.com/hivecommons/hive/issues/9222)).
