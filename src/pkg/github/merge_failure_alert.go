@@ -96,6 +96,11 @@ func classifyMergeFailureForOperator(repo, errMsg string) (mergeFailureAlert, bo
 	switch {
 	case isMergeFailureRateLimited(lower), isConflictMergeBlocker(msg):
 		return mergeFailureAlert{}, false
+	case strings.Contains(msg, "Fork PR CI runs need approval"):
+		return mergeFailureAlert{
+			key:     "fork-run-approval",
+			message: fmt.Sprintf("Merge blocked for %s: %s", repo, forkRunApprovalPermissionAlert),
+		}, true
 	case strings.Contains(lower, "resource not accessible by integration") ||
 		(strings.Contains(lower, "403") && (strings.Contains(lower, "contents") || strings.Contains(lower, "pull request") || strings.Contains(lower, "pull_requests"))) ||
 		strings.Contains(lower, "contents:write") || strings.Contains(lower, "contents write") ||

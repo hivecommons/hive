@@ -84,6 +84,10 @@ type Client struct {
 	mergePolicyMu             sync.RWMutex
 	allowUnprotectedBaseRepos map[string]bool
 	noCIAllowedRepos          map[string]bool
+	approveForkRunsDisabled   bool
+	forkRunApprovalMu         sync.Mutex
+	forkRunTrustCache         map[string]forkRunTrustCacheEntry
+	forkRunPermissionCache    map[string]time.Time
 	mergeAlertMu              sync.Mutex
 	mergeAlertSink            MergeFailureAlertSink
 	mergeAlertIDsByRepo       map[string]map[string]bool

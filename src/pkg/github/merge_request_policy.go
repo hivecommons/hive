@@ -25,6 +25,24 @@ func (c *Client) SetMergeRequestNoCIAllowedRepos(repos map[string]bool) {
 	c.noCIAllowedRepos = normalizeRepoSet(c.org, repos)
 }
 
+func (c *Client) SetApproveReturningForkRuns(enabled bool) {
+	if c == nil {
+		return
+	}
+	c.mergePolicyMu.Lock()
+	defer c.mergePolicyMu.Unlock()
+	c.approveForkRunsDisabled = !enabled
+}
+
+func (c *Client) approveReturningForkRunsEnabled() bool {
+	if c == nil {
+		return false
+	}
+	c.mergePolicyMu.RLock()
+	defer c.mergePolicyMu.RUnlock()
+	return !c.approveForkRunsDisabled
+}
+
 func normalizeRepoSet(defaultOwner string, in map[string]bool) map[string]bool {
 	if len(in) == 0 {
 		return nil

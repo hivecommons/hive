@@ -2,9 +2,12 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 )
@@ -61,6 +64,12 @@ const mergeRequestMaxCIWaits = 360
 // workflowRunsPerPage is the page size for the head-SHA workflow-run listing.
 // A single PR head rarely has more than a handful of runs; one page is ample.
 const workflowRunsPerPage = 100
+
+const (
+	forkRunTrustCacheTTL            = time.Hour
+	forkRunPermissionDeniedCacheTTL = time.Hour
+	forkRunApprovalPermissionAlert  = "Fork PR CI runs need approval. Grant the hive GitHub App 'Actions: Read and write' permission (org owner: Settings → GitHub Apps → <app> → Permissions), or change the repo's 'Approval for running fork pull request workflows' to first-time contributors, or approve the runs manually."
+)
 
 // workflowRunFailureConclusions are the workflow-run conclusions that mean
 // "CI said no" even when the run produced no job (and therefore no check
@@ -165,22 +174,24 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 	// opaque, and an opaque failure is a failure, an opaque in-flight run is
 	// pending. Completed runs that are not failures (success, cancelled,
 	// skipped) carry no verdict of their own here.
-	opaqueFailed, opaquePending, err := c.opaqueWorkflowRuns(ctx, owner, name, sha)
+	opaque, err := c.opaqueWorkflowRuns(ctx, owner, name, sha)
 	if err != nil {
 		return mergeCIUnverified, "ci gate: workflow-runs", fmt.Errorf("ci gate: listing workflow runs for %s/%s@%s: %w", owner, name, shortSHA(sha), err)
 	}
 
 	switch {
-	case len(opaqueFailed) > 0:
-		return mergeCIRed, fmt.Sprintf("ci gate: required status check has not succeeded: workflow run(s) %s concluded failure without producing a job (zero check runs)", strings.Join(opaqueFailed, ", ")), nil
+	case len(opaque.failed) > 0:
+		return mergeCIRed, fmt.Sprintf("ci gate: required status check has not succeeded: workflow run(s) %s concluded failure without producing a job (zero check runs)", strings.Join(opaque.failed, ", ")), nil
 	case !st.Green && !strings.HasSuffix(st.Reason, "-pending"):
 		return mergeCIRed, fmt.Sprintf("ci gate: required status check has not succeeded (%s)", st.Reason), nil
 	case !st.Green:
 		return mergeCIPending, fmt.Sprintf("ci gate: CI still running (%s)", st.Reason), nil
 	case len(st.MissingRequired) > 0:
 		return mergeCIPending, fmt.Sprintf("ci gate: required check(s) not yet reported on %s: %s", shortSHA(sha), strings.Join(st.MissingRequired, ", ")), nil
-	case len(opaquePending) > 0:
-		return mergeCIPending, fmt.Sprintf("ci gate: workflow run(s) %s still in flight without a job yet", strings.Join(opaquePending, ", ")), nil
+	case len(opaque.pending) > 0:
+		return mergeCIPending, fmt.Sprintf("ci gate: workflow run(s) %s still in flight without a job yet", strings.Join(opaque.pending, ", ")), nil
+	case len(opaque.actionRequired) > 0:
+		return c.handleActionRequiredWorkflowRuns(ctx, owner, name, pr, sha, opaque.actionRequiredRuns, opaque.actionRequired)
 	case st.Evidence == 0:
 		// Per-repo no-CI opt-in (#6281): a repo with genuinely no CI (docs-
 		// only, config-only) can never produce evidence, so "unverified"
@@ -195,47 +206,60 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 	return mergeCIGreen, fmt.Sprintf("ci gate: %d status/check run(s) on %s, all gating checks succeeded", st.Evidence, shortSHA(sha)), nil
 }
 
-// opaqueWorkflowRuns lists the workflow runs for sha and returns the names of
-// those that FAILED without a job and those still IN FLIGHT without a job.
-// Runs that produced jobs speak through their check runs and are not listed.
-func (c *Client) opaqueWorkflowRuns(ctx context.Context, owner, repo, sha string) (failed, pending []string, err error) {
+type opaqueWorkflowRunResult struct {
+	failed             []string
+	actionRequired     []string
+	actionRequiredRuns []*gh.WorkflowRun
+	pending            []string
+}
+
+// opaqueWorkflowRuns lists the workflow runs for sha and returns those that
+// failed, await fork-PR approval, or remain in flight without a job. Runs that
+// produced jobs speak through their check runs and are not listed.
+func (c *Client) opaqueWorkflowRuns(ctx context.Context, owner, repo, sha string) (opaqueWorkflowRunResult, error) {
 	runs, _, err := c.client.Actions.ListRepositoryWorkflowRuns(ctx, owner, repo, &gh.ListWorkflowRunsOptions{
 		HeadSHA:     sha,
 		ListOptions: gh.ListOptions{PerPage: workflowRunsPerPage},
 	})
 	if err != nil {
-		return nil, nil, err
+		return opaqueWorkflowRunResult{}, err
 	}
 	if runs == nil {
-		return nil, nil, nil
+		return opaqueWorkflowRunResult{}, nil
 	}
+	var out opaqueWorkflowRunResult
 	for _, run := range latestWorkflowRunsByWorkflowAndEvent(runs.WorkflowRuns) {
 		if run == nil {
 			continue
 		}
 		status, conclusion := run.GetStatus(), run.GetConclusion()
-		isFailure := status == "completed" && workflowRunFailureConclusions[conclusion]
+		isActionRequired := status == "completed" && conclusion == "action_required"
+		isFailure := status == "completed" && workflowRunFailureConclusions[conclusion] && !isActionRequired
 		isPending := status != "completed"
-		if !isFailure && !isPending {
+		if !isFailure && !isActionRequired && !isPending {
 			continue
 		}
 		jobs, _, jerr := c.client.Actions.ListWorkflowJobs(ctx, owner, repo, run.GetID(), &gh.ListWorkflowJobsOptions{
 			ListOptions: gh.ListOptions{PerPage: 1},
 		})
 		if jerr != nil {
-			return nil, nil, jerr
+			return opaqueWorkflowRunResult{}, jerr
 		}
 		if jobs != nil && jobs.GetTotalCount() > 0 {
 			continue // visible through its check runs
 		}
 		label := fmt.Sprintf("%q(%d)", run.GetName(), run.GetID())
-		if isFailure {
-			failed = append(failed, label)
-		} else {
-			pending = append(pending, label)
+		switch {
+		case isActionRequired:
+			out.actionRequired = append(out.actionRequired, label)
+			out.actionRequiredRuns = append(out.actionRequiredRuns, run)
+		case isFailure:
+			out.failed = append(out.failed, label)
+		default:
+			out.pending = append(out.pending, label)
 		}
 	}
-	return failed, pending, nil
+	return out, nil
 }
 
 type workflowRunIdentity struct {
@@ -281,6 +305,142 @@ func workflowRunIsNewer(candidate, current *gh.WorkflowRun) bool {
 	default:
 		return candidate.GetID() > current.GetID()
 	}
+}
+
+type forkRunTrustCacheEntry struct {
+	trusted bool
+	expires time.Time
+}
+
+func (c *Client) handleActionRequiredWorkflowRuns(ctx context.Context, owner, repo string, pr *gh.PullRequest, sha string, runs []*gh.WorkflowRun, labels []string) (mergeCIVerdict, string, error) {
+	reason := fmt.Sprintf("ci gate: workflow runs awaiting fork-PR approval (action_required): %s", strings.Join(labels, ", "))
+	if !c.approveReturningForkRunsEnabled() {
+		return mergeCIRed, reason + "; auto_merge.approve_returning_fork_runs is disabled", nil
+	}
+	author := pr.GetUser().GetLogin()
+	if !isCrossRepoPullRequest(pr) || isBotOrAppAuthor(pr.GetUser()) {
+		return mergeCIRed, reason, nil
+	}
+	trusted, err := c.returningContributorTrusted(ctx, owner, repo, author)
+	if err != nil {
+		return mergeCIUnverified, "ci gate: checking fork PR author trust", fmt.Errorf("ci gate: checking merged PR history for %s/%s author %q: %w", owner, repo, author, err)
+	}
+	if !trusted {
+		return mergeCIRed, reason, nil
+	}
+	repoFull := owner + "/" + repo
+	if c.forkRunApprovalPermissionDenied(repoFull, time.Now()) {
+		return mergeCIPending, reason + "; " + forkRunApprovalPermissionAlert, nil
+	}
+	for _, run := range runs {
+		if run == nil {
+			continue
+		}
+		if err := c.approveWorkflowRun(ctx, owner, repo, run.GetID()); err != nil {
+			if isForkRunApprovalPermissionError(err) {
+				c.cacheForkRunApprovalPermissionDenied(repoFull, time.Now())
+				c.raiseMergeFailureAlert(repoFull, forkRunApprovalPermissionAlert)
+				return mergeCIPending, reason + "; " + forkRunApprovalPermissionAlert, nil
+			}
+			return mergeCIUnverified, "ci gate: approving fork workflow run", fmt.Errorf("ci gate: approving workflow run %d for %s/%s@%s: %w", run.GetID(), owner, repo, shortSHA(sha), err)
+		}
+		if c.logger != nil {
+			c.logger.Info("merge-request watcher: approved trusted fork PR workflow run",
+				slog.String("repo", repoFull), slog.Int("pr", pr.GetNumber()),
+				slog.Int64("run_id", run.GetID()), slog.String("author", author))
+		}
+	}
+	return mergeCIPending, reason + "; approved trusted returning contributor workflow run(s), waiting for CI to rerun", nil
+}
+
+func isCrossRepoPullRequest(pr *gh.PullRequest) bool {
+	if pr == nil || pr.Head == nil || pr.Base == nil {
+		return false
+	}
+	headRepo := pr.Head.GetRepo()
+	baseRepo := pr.Base.GetRepo()
+	if headRepo == nil || baseRepo == nil {
+		return false
+	}
+	return !strings.EqualFold(headRepo.GetFullName(), baseRepo.GetFullName())
+}
+
+func isBotOrAppAuthor(user *gh.User) bool {
+	if user == nil {
+		return true
+	}
+	login := strings.ToLower(strings.TrimSpace(user.GetLogin()))
+	userType := strings.ToLower(strings.TrimSpace(user.GetType()))
+	return login == "" || strings.HasSuffix(login, "[bot]") || userType == "bot" || userType == "app"
+}
+
+func (c *Client) returningContributorTrusted(ctx context.Context, owner, repo, author string) (bool, error) {
+	if c == nil || c.client == nil {
+		return false, ErrNoGitHubClient
+	}
+	key := strings.ToLower(owner + "/" + repo + "\x00" + strings.TrimSpace(author))
+	now := time.Now()
+	c.forkRunApprovalMu.Lock()
+	if c.forkRunTrustCache != nil {
+		if entry, ok := c.forkRunTrustCache[key]; ok && now.Before(entry.expires) {
+			c.forkRunApprovalMu.Unlock()
+			return entry.trusted, nil
+		}
+	}
+	c.forkRunApprovalMu.Unlock()
+
+	query := fmt.Sprintf("repo:%s/%s is:pr is:merged author:%s", owner, repo, author)
+	result, _, err := c.client.Search.Issues(WithRESTCaller(ctx, "hive:fork_run_approval"), query, &gh.SearchOptions{
+		ListOptions: gh.ListOptions{PerPage: 1},
+	})
+	if err != nil {
+		return false, err
+	}
+	trusted := result.GetTotal() > 0
+	c.forkRunApprovalMu.Lock()
+	if c.forkRunTrustCache == nil {
+		c.forkRunTrustCache = make(map[string]forkRunTrustCacheEntry)
+	}
+	c.forkRunTrustCache[key] = forkRunTrustCacheEntry{trusted: trusted, expires: now.Add(forkRunTrustCacheTTL)}
+	c.forkRunApprovalMu.Unlock()
+	return trusted, nil
+}
+
+func (c *Client) forkRunApprovalPermissionDenied(repo string, now time.Time) bool {
+	c.forkRunApprovalMu.Lock()
+	defer c.forkRunApprovalMu.Unlock()
+	if c.forkRunPermissionCache == nil {
+		return false
+	}
+	expires, ok := c.forkRunPermissionCache[strings.ToLower(repo)]
+	return ok && now.Before(expires)
+}
+
+func (c *Client) cacheForkRunApprovalPermissionDenied(repo string, now time.Time) {
+	c.forkRunApprovalMu.Lock()
+	defer c.forkRunApprovalMu.Unlock()
+	if c.forkRunPermissionCache == nil {
+		c.forkRunPermissionCache = make(map[string]time.Time)
+	}
+	c.forkRunPermissionCache[strings.ToLower(repo)] = now.Add(forkRunPermissionDeniedCacheTTL)
+}
+
+func (c *Client) approveWorkflowRun(ctx context.Context, owner, repo string, runID int64) error {
+	u := fmt.Sprintf("repos/%s/%s/actions/runs/%d/approve", owner, repo, runID)
+	req, err := c.client.NewRequest(http.MethodPost, u, nil)
+	if err != nil {
+		return err
+	}
+	_, err = c.client.Do(WithRESTCaller(ctx, "hive:fork_run_approval"), req, nil)
+	return err
+}
+
+func isForkRunApprovalPermissionError(err error) bool {
+	var ghErr *gh.ErrorResponse
+	if !errors.As(err, &ghErr) || ghErr.Response == nil {
+		return false
+	}
+	return ghErr.Response.StatusCode == http.StatusForbidden || ghErr.Response.StatusCode == http.StatusNotFound
 }
 
 // logCIVerdict records the gate's decision for the operator with the same

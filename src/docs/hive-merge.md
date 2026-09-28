@@ -88,6 +88,16 @@ verdict:
 
 An API error while gathering that evidence is a failed attempt, never a pass.
 
+**Fork PR workflow approval.** When a cross-repo pull request's workflow runs
+conclude `action_required`, the watcher can approve those runs for returning
+human contributors: the PR author must already have at least one merged PR in
+the same repository. First-time contributors, bots, and app authors remain
+human-gated. Set `auto_merge.approve_returning_fork_runs: false` to disable
+this default-on behavior. If the GitHub App lacks Actions write permission, the
+request stays pending and the operator alert explains the choices: grant
+`Actions: Read and write`, relax the repository's fork-workflow approval
+policy, or approve the runs manually.
+
 **Unprotected base branches are allowed.** The watcher no longer makes a
 separate branch-protection lookup and no longer refuses solely because the base
 branch is unprotected. It merges into any protected or unprotected branch the
@@ -114,6 +124,7 @@ clears its merge-failure alerts automatically.
 
 ```yaml
 auto_merge:
+  approve_returning_fork_runs: true
   no_ci_ok:
     - your-org/docs-only-repo
 ```

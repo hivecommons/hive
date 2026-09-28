@@ -44,6 +44,11 @@ func TestClassifyMergeFailureForOperator(t *testing.T) {
 			want: []string{"required status check(s) never reported: build-gate, lint", "auto_merge.required_checks"},
 		},
 		{
+			name: "fork approval permission",
+			err:  forkRunApprovalPermissionAlert,
+			want: []string{"Fork PR CI runs need approval", "Actions: Read and write", "approve the runs manually"},
+		},
+		{
 			name: "merge method",
 			err:  "Validation Failed: squash commits are not allowed for this repository",
 			want: []string{"requested merge method is not allowed", "Enable squash/merge"},

@@ -1,0 +1,1 @@
+- The merge-request watcher can now approve pending fork-PR workflow runs for returning human contributors, and raises an actionable alert when the GitHub App lacks Actions write permission.

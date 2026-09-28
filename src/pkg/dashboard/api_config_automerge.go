@@ -44,6 +44,7 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		RequiredChecks       []string `json:"required_checks"`
 		AllowUnprotectedBase []string `json:"allow_unprotected_base"`
 		NoCIOK               []string `json:"no_ci_ok"`
+		ApproveForkRuns      *bool    `json:"approve_returning_fork_runs"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -81,6 +82,10 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	if body.NoCIOK != nil {
 		cfg.AutoMerge.NoCIOK = normalizeAutoMergeRepoList(body.NoCIOK)
 	}
+	if body.ApproveForkRuns != nil {
+		v := *body.ApproveForkRuns
+		cfg.AutoMerge.ApproveReturningForkRuns = &v
+	}
 	syncAutoMergePolicyToGitHubClient(cfg, s.deps.GHClient)
 
 	if err := s.saveConfig(); err != nil {
@@ -115,12 +120,14 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 		noCIOK = []string{}
 	}
 	return map[string]interface{}{
-		"self_authored":          selfAuthored,
-		"self_authored_set":      am.SelfAuthored != nil,
-		"max_merges":             am.MaxMerges,
-		"required_checks":        checks,
-		"allow_unprotected_base": allowUnprotected,
-		"no_ci_ok":               noCIOK,
+		"self_authored":                   selfAuthored,
+		"self_authored_set":               am.SelfAuthored != nil,
+		"max_merges":                      am.MaxMerges,
+		"required_checks":                 checks,
+		"allow_unprotected_base":          allowUnprotected,
+		"no_ci_ok":                        noCIOK,
+		"approve_returning_fork_runs":     am.ApproveReturningForkRunsEnabled(),
+		"approve_returning_fork_runs_set": am.ApproveReturningForkRuns != nil,
 	}
 }
 
@@ -132,6 +139,7 @@ func syncAutoMergePolicyToGitHubClient(cfg *config.Config, ghClient *ghpkg.Clien
 	ghClient.SetRequiredChecks(set)
 	ghClient.SetMergeRequestAllowUnprotectedBaseRepos(cfg.AutoMerge.AllowUnprotectedBaseSet())
 	ghClient.SetMergeRequestNoCIAllowedRepos(cfg.AutoMerge.NoCIOKSet())
+	ghClient.SetApproveReturningForkRuns(cfg.AutoMerge.ApproveReturningForkRunsEnabled())
 }
 
 func normalizeAutoMergeRepoList(repos []string) []string {

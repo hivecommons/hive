@@ -7407,6 +7407,10 @@ type AutoMergeConfig struct {
 	// "zero statuses + zero check runs + zero workflow runs" verdict from
 	// unverified to green. Red or pending evidence still refuses/waits.
 	NoCIOK []string `yaml:"no_ci_ok,omitempty" json:"no_ci_ok,omitempty"`
+	// ApproveReturningForkRuns lets the merge-request watcher approve GitHub
+	// Actions runs that are waiting on fork-PR approval when the PR author has
+	// previously merged a PR in the same repository. nil defaults to enabled.
+	ApproveReturningForkRuns *bool `yaml:"approve_returning_fork_runs,omitempty" json:"approve_returning_fork_runs,omitempty"`
 }
 
 func (a AutoMergeConfig) AllowUnprotectedBaseSet() map[string]bool {
@@ -7415,6 +7419,10 @@ func (a AutoMergeConfig) AllowUnprotectedBaseSet() map[string]bool {
 
 func (a AutoMergeConfig) NoCIOKSet() map[string]bool {
 	return repoListSet(a.NoCIOK)
+}
+
+func (a AutoMergeConfig) ApproveReturningForkRunsEnabled() bool {
+	return a.ApproveReturningForkRuns == nil || *a.ApproveReturningForkRuns
 }
 
 // RequiredCheckSet returns the config-declared required-status-check set as a
