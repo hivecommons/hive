@@ -132,11 +132,9 @@ func TestConfigureEscalationDispatcherSurvivesUnchangedReload(t *testing.T) {
 	if second == nil || second == first {
 		t.Fatal("changed escalation config did not rebuild the dispatcher")
 	}
-	deadline := time.Now().Add(time.Second)
-	for first.Context().Err() == nil {
-		if time.Now().After(deadline) {
-			t.Fatal("replaced dispatcher was never stopped")
-		}
-		time.Sleep(5 * time.Millisecond)
+	select {
+	case <-first.Context().Done():
+	case <-time.After(time.Second):
+		t.Fatal("replaced dispatcher was never stopped")
 	}
 }
