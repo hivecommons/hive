@@ -15,7 +15,9 @@ func (s *Server) chatCommandHintAnswer(query string) (string, bool) {
 	q := strings.ToLower(strings.TrimSpace(query))
 	q = strings.TrimSuffix(q, "?")
 	q = strings.Join(strings.Fields(q), " ")
-	if strings.HasPrefix(q, "!") {
+	// Bang commands belong to the shared chat spine (allowlist + role floor);
+	// byte comparison keeps this surface free of local `!` string matching.
+	if len(q) > 0 && q[0] == '!' {
 		return "", false
 	}
 	switch {
