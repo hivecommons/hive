@@ -1,0 +1,1 @@
+- Spec runs admitted without a design epic (triage `spec` verdict, `POST /api/runs/spec` outside design mode, nous, inception) no longer wedge at the default-blocking spec checkpoint: the held spec now shows `waiting_on=human` and can be approved or rejected through `/api/runs/{key}/checkpoint` and the dashboard ([#9182](https://github.com/hivecommons/hive/issues/9182)).

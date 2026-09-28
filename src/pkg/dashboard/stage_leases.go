@@ -897,18 +897,45 @@ func (s *Server) stageCheckpointHolds(runKey, stage, to string) bool {
 // receipt and is now parked at a blocking checkpoint. Before the receipt exists,
 // the stage is still executable work and must remain claimable.
 func (s *Server) runCheckpointStageHeld(runKey, stage string, gen uint64) bool {
+	_, held := s.runCheckpointHeldSince(runKey, stage, gen)
+	return held
+}
+
+// runCheckpointHeldSince is runCheckpointStageHeld plus the moment the hold
+// began: the write time of the receipt that parked the stage.
+func (s *Server) runCheckpointHeldSince(runKey, stage string, gen uint64) (time.Time, bool) {
 	if stage != StageSpec && stage != StagePlan {
-		return false
+		return time.Time{}, false
 	}
 	decision := s.runCheckpointPolicy(stage)
 	if !decision.blocks || s.runCheckpointApproved(runKey, stage) {
-		return false
+		return time.Time{}, false
 	}
 	path := filepath.Join(runReceiptsDir, sanitizeReceiptSegment(runKey), fmt.Sprintf("%s-gen%d.json", stage, gen))
-	if _, err := os.Stat(path); err == nil {
-		return true
+	info, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}, false
 	}
-	return false
+	return info.ModTime(), true
+}
+
+// heldSpecCheckpointLease returns the live lease holding run key at a spec
+// checkpoint its receipt has already parked. It is how a spec run admitted
+// without a Spektacular design epic (triage, non-design POST /api/runs/spec,
+// nous, inception) is recognised as awaiting review (hivecommons/hive#9182):
+// the epic-based signals never fire for such a run.
+func (s *Server) heldSpecCheckpointLease(key string, now time.Time) (taskLease, bool) {
+	if s == nil || s.contributeHub == nil {
+		return taskLease{}, false
+	}
+	l, ok := s.contributeHub.runLeaseHolder(key, now)
+	if !ok || l.stage != StageSpec {
+		return taskLease{}, false
+	}
+	if !s.runCheckpointStageHeld(runKeyOfLease(leaseWorkKey(&l), l.repo), StageSpec, l.gen) {
+		return taskLease{}, false
+	}
+	return l, true
 }
 
 // extendHeldCheckpointLease pushes a held lease's expiry out to the checkpoint

@@ -8645,7 +8645,7 @@
         const runGen = run.gen || 0;
         const runStage = run.stage || 'spec';
         const interview = renderSpekInterviewInline(run);
-        const checkpointHeld = waiting === 'human' && run.waiting_reason === 'checkpoint_enabled' && run.plan_epic_id;
+        const checkpointHeld = waiting === 'human' && run.waiting_reason === 'checkpoint_enabled' && (run.plan_epic_id || runStage === 'spec');
         const checkpointLabel = runStage === 'spec' ? 'Spec checkpoint held — review the design before Plan can start.' : 'Plan checkpoint held — review before Implement can start.';
         const actions = canApprove && checkpointHeld
           ? `<div class="campaign-empty"><strong>${escapeHtml(checkpointLabel)}</strong><div class="run-log-actions"><button class="btn" style="color:var(--green)" data-action="runCheckpointAction" data-arg0="${escapeHtml(key)}" data-arg1="${escapeHtml(String(runGen))}" data-arg2="approve">✓ Approve</button><button class="btn" style="color:var(--red)" data-action="runCheckpointAction" data-arg0="${escapeHtml(key)}" data-arg1="${escapeHtml(String(runGen))}" data-arg2="reject">✕ Reject</button><button class="btn" data-action="openRunDetail" data-arg0="${escapeHtml(key)}">Details</button></div></div>`
