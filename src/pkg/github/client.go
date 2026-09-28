@@ -161,6 +161,10 @@ type Client struct {
 	// request without rebuilding the client. nil means off. See
 	// reauthorBranchSigned.
 	prSignedCommits func() bool
+	// signedReconcile is the state of the follow-up signing pass (#9364):
+	// last-seen head per open PR, PRs already told why they can't be signed,
+	// and when the pass last ran. See pr_signed_reconcile.go.
+	signedReconcile signedReconcileState
 	// prOpenedHook, when set, is told about every NEW PR the request watcher
 	// opens (agent, repo, number, url) — the seam progress surfaces such as
 	// the Linear session emitter hook. atomic so SetPROpenedHook is safe

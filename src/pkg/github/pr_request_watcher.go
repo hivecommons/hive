@@ -208,6 +208,10 @@ func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAutho
 					return
 				}
 				c.processPRRequestsInDir(ctx, nowFn, dir)
+				// Same goroutine as the open path, so the two never rewrite
+				// one branch concurrently (#9364). Throttled internally and
+				// a no-op unless github.app_signed_commits is on.
+				c.maybeReconcileSignedCommits(ctx, nowFn())
 			}
 		}
 	}()
