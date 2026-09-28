@@ -174,11 +174,12 @@ fault:
   as is any hive where the channel signals are absent. See
   [release channels](release-channels.md).
 - **Run waiting on human (green/unknown → amber).** A run whose oldest
-  human-wait age exceeds `fleet.run_wait_amber_seconds` (else
+  human-wait age exceeds the threshold (a positive
+  `fleet.run_wait_amber_seconds`, else a positive
   `HIVE_FLEET_RUN_WAIT_AMBER_SECONDS`, else 3600) ambers with "run
   waiting on human since \<time\>", where \<time\> is the reported wait age
-  subtracted from the heartbeat that carried it. In both the config key and
-  the env var, `0` (or unset) means the default. It is applied after the
+  subtracted from the heartbeat that carried it. In both sources `0`
+  counts as unset. It is applied after the
   banded verdict and never replaces a red: advisory posting failing, advisory
   stale, and stale create/merge output stay the headline, because the
   operator must fix those first. This cause never turns a hive red by
