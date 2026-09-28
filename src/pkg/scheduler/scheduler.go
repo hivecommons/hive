@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -17,13 +16,11 @@ import (
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/knowledge"
-	"github.com/hivecommons/hive/pkg/policies"
 	"github.com/hivecommons/hive/pkg/promptsrc"
 	"github.com/hivecommons/hive/pkg/resolve"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/skillreg"
 	"github.com/hivecommons/hive/pkg/timeline"
-	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 type RunAdmitter interface {
@@ -192,220 +189,6 @@ func (s *Scheduler) GetLastActionable() *github.ActionableResult {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.lastActionable
-}
-
-// userSavedPolicyDir is where the dashboard prompt editor
-// (PUT /api/config/agent/{name}/prompt → handleAgentPromptSave) writes a
-// template a user edited in the UI. It must be searched BEFORE the git-cloned
-// policies repo (…/examples/kubestellar/agents/) and the embedded defaults, or
-// an edit made in the UI never reaches the kick — the kick keeps rendering the
-// stale upstream copy that shadows the override (issue #3239). The dashboard's
-// own read path (loadPromptTemplateRaw) already checks this location first; the
-// scheduler must agree so a saved edit takes effect on the next kick.
-//
-// It is a var (not a const) only so tests can point it at a temp dir; production
-// always uses the fixed /data/policies path that handleAgentPromptSave writes to.
-var userSavedPolicyDir = "/data/policies"
-
-// agentHomeDir is where per-agent homes live on a hive host; the per-agent
-// CLAUDE.md (<agentHomeDir>/<name>/CLAUDE.md) is checked first by
-// loadPromptTemplate. It is a var (not a const) only so tests can point it at
-// a temp dir; production always uses the fixed /data/agents path.
-var agentHomeDir = "/data/agents"
-
-// clonedPoliciesDir is the root of the git-cloned policies repo checkout on a
-// hive host (…/<root>/examples/kubestellar/agents/). Like userSavedPolicyDir,
-// it is a var only so tests can point it at a temp dir; production always
-// uses /data/policies.
-var clonedPoliciesDir = "/data/policies"
-
-// loadPromptTemplate searches standard paths for an agent's policy template.
-// It checks on-disk paths first, then falls back to embedded default policies.
-func (s *Scheduler) loadPromptTemplate(agentName string) string {
-	paths := []string{
-		fmt.Sprintf("%s/%s/CLAUDE.md", agentHomeDir, agentName),
-		// User-saved override from the dashboard prompt editor wins over the
-		// git-cloned examples copy and embedded defaults (#3239).
-		fmt.Sprintf("%s/%s.md", userSavedPolicyDir, agentName),
-		fmt.Sprintf("%s/examples/kubestellar/agents/%s.md", clonedPoliciesDir, agentName),
-	}
-	if s.cfg.Policies.LocalDir != "" {
-		paths = append(paths,
-			fmt.Sprintf("%s/examples/kubestellar/agents/%s.md", s.cfg.Policies.LocalDir, agentName),
-			fmt.Sprintf("%s/%s%s.md", s.cfg.Policies.LocalDir, s.cfg.Policies.Path, agentName),
-		)
-	}
-	for _, p := range paths {
-		if data, err := os.ReadFile(p); err == nil {
-			return string(data)
-		}
-	}
-	if data, err := policies.DefaultPolicies.ReadFile("defaults/" + agentName + ".md"); err == nil {
-		return string(data)
-	}
-	return ""
-}
-
-// loadNamedTemplate loads a kick template by explicit filename (from config kick_template field).
-// It checks on-disk paths first, then falls back to embedded default policies.
-func (s *Scheduler) loadNamedTemplate(templateName string) string {
-	content, _, _ := s.resolveNamedTemplate(templateName)
-	return content
-}
-
-// TemplateSourceEmbedded is the source label for a template served from the
-// compiled-in defaults (pkg/policies/defaults); every other source is the
-// file path that served it.
-const TemplateSourceEmbedded = "embedded default"
-
-// resolveNamedTemplate is loadNamedTemplate with provenance: the content, the
-// source that served it ("" when nothing did), and every location that was
-// tried. The provenance is what lets a dangling kick_template be REPORTED
-// rather than silently skipped (hivecommons/hive#7390): the success path
-// always logged "using config kick_template", the miss path logged nothing,
-// and an operator saw a blank prompt editor with a 404 repo link and no way
-// to tell a lost template from one that never existed.
-func (s *Scheduler) resolveNamedTemplate(templateName string) (content, source string, tried []string) {
-	paths := []string{
-		// User-saved override from the dashboard prompt editor wins over the
-		// git-cloned examples copy and embedded defaults (#3239). handleAgentPromptSave
-		// writes the edited template to /data/policies/<KickTemplate>, so when an
-		// agent has a kick_template set (e.g. quality-advisory.md at ACMM L2) the
-		// edit lands here and must be picked up on the next kick.
-		fmt.Sprintf("%s/%s", userSavedPolicyDir, templateName),
-		fmt.Sprintf("%s/examples/kubestellar/agents/%s", clonedPoliciesDir, templateName),
-	}
-	if s.cfg.Policies.LocalDir != "" {
-		paths = append(paths,
-			fmt.Sprintf("%s/examples/kubestellar/agents/%s", s.cfg.Policies.LocalDir, templateName),
-			fmt.Sprintf("%s/%s%s", s.cfg.Policies.LocalDir, s.cfg.Policies.Path, templateName),
-		)
-	}
-	for _, p := range paths {
-		if data, err := os.ReadFile(p); err == nil {
-			return string(data), p, paths
-		}
-	}
-	tried = append(paths, "pkg/policies/defaults/"+templateName+" ("+TemplateSourceEmbedded+")")
-	if data, err := policies.DefaultPolicies.ReadFile("defaults/" + templateName); err == nil {
-		return string(data), TemplateSourceEmbedded, tried
-	}
-	return "", "", tried
-}
-
-// TemplateResolution describes how an agent's kick prompt template resolves,
-// for the dashboard prompt editor (hivecommons/hive#7390). It answers the
-// questions a blank editor cannot: is a kick_template configured, was it
-// found, where, and — when it was not — what the scheduler will use instead.
-type TemplateResolution struct {
-	// Agent is the base agent name the resolution was computed for.
-	Agent string `json:"agent"`
-	// KickTemplate is the configured kick_template name ("" when unset).
-	KickTemplate string `json:"kickTemplate,omitempty"`
-	// Resolved is true when the configured kick_template was found.
-	Resolved bool `json:"resolved"`
-	// Source is what served the configured template: a file path, or
-	// TemplateSourceEmbedded. Empty when unresolved or unset.
-	Source string `json:"source,omitempty"`
-	// PathsTried lists every location consulted for the configured template,
-	// in order, so an operator can see exactly where a missing file was
-	// expected. Empty when no kick_template is configured.
-	PathsTried []string `json:"pathsTried,omitempty"`
-	// Fallback names what a kick will actually use when the configured
-	// template is missing (or none is configured): the ACMM pack template,
-	// the <agent>.md convention template, or the hardcoded kick.
-	Fallback string `json:"fallback"`
-	// EmbeddedDefaultExists reports whether pkg/policies/defaults ships a
-	// file of the kick_template's name — i.e. whether a repo link to it would
-	// resolve. The editor must not render a link to a path that 404s.
-	EmbeddedDefaultExists bool `json:"embeddedDefaultExists"`
-}
-
-// ResolveTemplate reports how agentName's kick prompt resolves, without
-// building a kick. It mirrors BuildAgentMessage's chain (prompt_source is
-// excluded: it is resolved live at kick time and has its own status) so the
-// prompt editor can show the truth the scheduler would act on.
-func (s *Scheduler) ResolveTemplate(agentName string) TemplateResolution {
-	res := TemplateResolution{Agent: agentName}
-	if s == nil || s.cfg == nil {
-		return res
-	}
-	baseName := s.cfg.BaseAgentName(agentName)
-	res.Agent = baseName
-	if agentCfg, ok := s.cfg.Agents[baseName]; ok && agentCfg.KickTemplate != "" {
-		res.KickTemplate = agentCfg.KickTemplate
-		content, source, tried := s.resolveNamedTemplate(agentCfg.KickTemplate)
-		res.PathsTried = tried
-		res.Resolved = content != ""
-		res.Source = source
-		_, err := policies.DefaultPolicies.ReadFile("defaults/" + agentCfg.KickTemplate)
-		res.EmbeddedDefaultExists = err == nil
-	}
-	res.Fallback = s.describeTemplateFallback(baseName)
-	return res
-}
-
-// TemplateExists reports whether a kick_template NAME resolves anywhere the
-// scheduler looks (user override dir, cloned examples, configured local dir,
-// embedded defaults) and what served it. The dashboard's config write path
-// uses it to refuse a newly set dangling name (hivecommons/hive#7390).
-func (s *Scheduler) TemplateExists(templateName string) (source string, ok bool) {
-	if s == nil || s.cfg == nil || strings.TrimSpace(templateName) == "" {
-		return "", false
-	}
-	content, source, _ := s.resolveNamedTemplate(templateName)
-	return source, content != ""
-}
-
-// WarnDanglingKickTemplates checks every enabled agent's configured
-// kick_template at startup and logs a WARN for each one that resolves nowhere,
-// naming the fallback the kicks will use and the paths tried. Returns the
-// offending agents (name → template) so callers and tests can act on the
-// list. The per-kick warning in BuildAgentMessage covers the steady state;
-// this catches the misconfiguration once, at load, where an operator reading
-// the boot log will see it (hivecommons/hive#7390 item 3).
-func (s *Scheduler) WarnDanglingKickTemplates() map[string]string {
-	if s == nil || s.cfg == nil {
-		return nil
-	}
-	dangling := map[string]string{}
-	for name, agentCfg := range s.cfg.Agents {
-		if agentCfg.KickTemplate == "" {
-			continue
-		}
-		res := s.ResolveTemplate(name)
-		if res.Resolved {
-			continue
-		}
-		dangling[name] = agentCfg.KickTemplate
-		if s.logger != nil {
-			s.logger.Warn("config: kick_template does not resolve; kicks will use the fallback until the file exists or the field is cleared",
-				"agent", name, "template", agentCfg.KickTemplate,
-				"fallback", res.Fallback, "paths_tried", strings.Join(res.PathsTried, ", "))
-		}
-	}
-	return dangling
-}
-
-// describeTemplateFallback names the template BuildAgentMessage would use for
-// baseName when no configured kick_template resolves — the same chain, in the
-// same order, described rather than executed.
-func (s *Scheduler) describeTemplateFallback(baseName string) string {
-	if s.cfg.ACMMLevel != nil && *s.cfg.ACMMLevel > 0 {
-		if pack, err := config.ACMMPackByLevel(*s.cfg.ACMMLevel); err == nil {
-			for _, pa := range pack.Agents {
-				if pa.Name == baseName && pa.KickTemplate != "" {
-					if content, _, _ := s.resolveNamedTemplate(pa.KickTemplate); content != "" {
-						return fmt.Sprintf("ACMM level %d pack template %s", *s.cfg.ACMMLevel, pa.KickTemplate)
-					}
-				}
-			}
-		}
-	}
-	if template := s.loadPromptTemplate(baseName); template != "" {
-		return "convention template " + baseName + ".md"
-	}
-	return "hardcoded kick for " + baseName
 }
 
 // substituteTemplateWithPolicy replaces ${VAR} placeholders in a prompt
@@ -609,121 +392,6 @@ func (s *Scheduler) selectReviewModel(agentCfg config.AgentConfig, pr github.Pul
 	}
 }
 
-func actionableForRepo(actionable *github.ActionableResult, repo string) *github.ActionableResult {
-	if actionable == nil || repo == "" {
-		return actionable
-	}
-	out := *actionable
-	out.Issues = github.IssueResultFromItems(filterIssuesByRepo(actionable.Issues.Items, repo))
-	out.PRs = github.PRResult{
-		Items:       filterPRsByRepo(actionable.PRs.Items, repo),
-		StaleDrafts: filterPRsByRepo(actionable.PRs.StaleDrafts, repo),
-	}
-	out.PRs.Count = len(out.PRs.Items)
-	out.Hold = filterHoldByRepo(actionable.Hold, repo)
-	out.TotalByRepo = map[string]github.RepoCounts{repo: actionable.TotalByRepo[repo]}
-	return &out
-}
-
-func filterIssuesByRepo(issues []github.Issue, repo string) []github.Issue {
-	filtered := make([]github.Issue, 0, len(issues))
-	for _, issue := range issues {
-		if issue.Repo == repo {
-			filtered = append(filtered, issue)
-		}
-	}
-	return filtered
-}
-
-func filterPRsByRepo(prs []github.PullRequest, repo string) []github.PullRequest {
-	filtered := make([]github.PullRequest, 0, len(prs))
-	for _, pr := range prs {
-		if pr.Repo == repo {
-			filtered = append(filtered, pr)
-		}
-	}
-	return filtered
-}
-
-func filterHoldByRepo(hold github.HoldResult, repo string) github.HoldResult {
-	filtered := make([]github.HoldItem, 0, len(hold.Items))
-	for _, item := range hold.Items {
-		if item.Repo == repo {
-			filtered = append(filtered, item)
-		}
-	}
-	out := github.HoldResult{Items: filtered}
-	for _, item := range filtered {
-		switch item.Type {
-		case "pr":
-			out.PRs++
-		default:
-			out.Issues++
-		}
-	}
-	out.Total = len(filtered)
-	return out
-}
-
-func issueRefsForAgent(agentName string, issues []github.Issue, limit int) []string {
-	agentIssues := issues
-	if agentName != "scanner" {
-		agentIssues = filterByLane(issues, agentName)
-	}
-	if limit <= 0 {
-		limit = maxIssuesPerKick
-	}
-	if len(agentIssues) > limit {
-		agentIssues = agentIssues[:limit]
-	}
-	refs := make([]string, 0, len(agentIssues))
-	seen := make(map[string]bool, len(agentIssues))
-	for _, issue := range agentIssues {
-		// One canonical key implementation (kubestellar/hive#4245). The old
-		// `Number <= 0` skip dropped every Linear and Jira item on the floor:
-		// they reach here with Number == 0, so no non-GitHub work was ever
-		// referenced in an internal-agent kick at all. issueKey keeps
-		// GitHub-backed refs byte-identical "repo#number" and gives external
-		// work its own "repo!EXT-1" identity instead of a shared "repo#0".
-		ref := issueKey(issue)
-		if ref == "" || seen[ref] {
-			continue
-		}
-		seen[ref] = true
-		refs = append(refs, ref)
-	}
-	return refs
-}
-
-// issueKey is the scheduler's single entry point to the canonical work
-// identity. It delegates to pkg/worksource so the scheduler cannot drift into a
-// second key format — the parity test in scheduler_worksource_identity_test.go
-// pins that it produces exactly what worksource.Ref.Key() does.
-func issueKey(issue github.Issue) string {
-	return worksource.Ref{
-		SourceType: issue.SourceType,
-		Repo:       issue.Repo,
-		ExternalID: issue.ExternalID,
-		Number:     issue.Number,
-		URL:        issue.URL,
-	}.Key()
-}
-
-// issueDisplayRef is the human-facing form written into kick message bodies:
-// "owner/repo#42" for GitHub-backed work, "owner/repo!ENG-123" for a
-// string-keyed source. It exists so no rendering site formats "%s#%d" directly
-// and prints "owner/repo#0" for an item that simply has no issue number.
-//
-// It falls back to the bare repo when an item carries no usable identity at
-// all, which keeps a malformed enumeration readable in the message rather than
-// rendering a key nothing can match.
-func issueDisplayRef(issue github.Issue) string {
-	if key := issueKey(issue); key != "" {
-		return key
-	}
-	return issue.Repo
-}
-
 // BuildAgentMessageFromLastActionable builds a kick message for the named
 // agent from the scheduler's cached actionable snapshot, classifying issues
 // exactly like governor-driven kicks do. The dashboard's manual-kick path
@@ -852,71 +520,6 @@ func (s *Scheduler) prCap() int {
 // a silent slice would read as "these are all the PRs".
 func prListOverflowLine(omitted, limit int) string {
 	return fmt.Sprintf("  … and %d more open PRs not listed (cap %d per kick, shared evenly across repos; they return on later kicks as this list drains)\n", omitted, limit)
-}
-
-// fairShareByRepo picks which items survive a kick list cap, spreading the
-// budget evenly across the repos present instead of filling it from the head
-// of the list (hivecommons/hive#7455).
-//
-// A flat prefix cut spends the whole budget on whichever repos sort first. On
-// a 16-repo spoke with 305 open PRs the cap of 50 was exhausted inside the
-// third repo, so 13 repos contributed nothing to any kick — and an agent handed
-// an issue in one of those repos could not see the open PR already doing that
-// work, which is how two PRs get opened for the same change.
-//
-// Allocation is round-robin over repos in first-appearance order: every repo
-// takes one slot per pass until the cap is reached or the items run out. That
-// yields an even share without computing one, and a repo holding fewer items
-// than its share simply drops out of later passes, redistributing the
-// remainder to repos that still have work — "10 from each unless there aren't
-// 10 to retrieve".
-//
-// A limit of config.KickListUnlimited (0) or less returns every item. The
-// result preserves the caller's original ordering so the rendered list still
-// groups by repo; only membership is decided here.
-func fairShareByRepo[T any](items []T, limit int, repoOf func(T) string) []T {
-	if limit <= config.KickListUnlimited || len(items) <= limit {
-		return items
-	}
-
-	order := make([]string, 0, 16)
-	pending := make(map[string][]int, 16)
-	for i, item := range items {
-		repo := repoOf(item)
-		if _, seen := pending[repo]; !seen {
-			order = append(order, repo)
-		}
-		pending[repo] = append(pending[repo], i)
-	}
-
-	picked := make([]int, 0, limit)
-	for len(picked) < limit {
-		progressed := false
-		for _, repo := range order {
-			if len(picked) >= limit {
-				break
-			}
-			queue := pending[repo]
-			if len(queue) == 0 {
-				continue
-			}
-			picked = append(picked, queue[0])
-			pending[repo] = queue[1:]
-			progressed = true
-		}
-		// Every repo is drained; nothing left to hand out even though the cap
-		// has room. Without this the loop spins forever.
-		if !progressed {
-			break
-		}
-	}
-
-	sort.Ints(picked)
-	out := make([]T, 0, len(picked))
-	for _, i := range picked {
-		out = append(out, items[i])
-	}
-	return out
 }
 
 const (
@@ -2780,20 +2383,6 @@ func prHasConflictSignal(pr github.PullRequest, mergeableState string) bool {
 func prIsAppAuthored(pr github.PullRequest) bool {
 	author := strings.TrimSpace(pr.Author)
 	return pr.AppAuthored || strings.HasPrefix(strings.ToLower(author), "app/")
-}
-
-// filterIssuesForRepos keeps only the issues in repos the predicate accepts.
-func filterIssuesForRepos(issues []github.Issue, keep func(repo string) bool) []github.Issue {
-	if keep == nil {
-		return issues
-	}
-	out := make([]github.Issue, 0, len(issues))
-	for _, issue := range issues {
-		if keep(issue.Repo) {
-			out = append(out, issue)
-		}
-	}
-	return out
 }
 
 // buildReposSectionFor renders the AUTHORIZED REPOS block for one agent.
