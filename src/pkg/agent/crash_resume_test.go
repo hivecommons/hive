@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -81,7 +82,7 @@ func TestRestartAfterCrash_ArmsResumeIntent(t *testing.T) {
 
 	// Not running, so restartWithReason relaunches through launchInTmux, which
 	// fails fast here without tmux. The intent must already be armed by then.
-	_ = m.RestartAfterCrash(nil, "scanner")
+	_ = m.RestartAfterCrash(context.Background(), "scanner")
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
