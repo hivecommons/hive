@@ -1,1 +1,0 @@
-- Claude login-expiry renewal warnings no longer mark authenticated agents as needing login, trigger login recovery restarts, or block scheduled kicks ([#9356](https://github.com/hivecommons/hive/issues/9356)).

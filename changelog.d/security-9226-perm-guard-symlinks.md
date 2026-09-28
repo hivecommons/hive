@@ -1,1 +1,0 @@
-- The 5-minute shared-home permission sweep now skips symlinks ([#9226](https://github.com/hivecommons/hive/issues/9226)). It used to pass recently modified entries to `chmod`/`chown` by path, and both commands dereference symlinks. An agent could therefore plant a link in a shared dot-dir and have the root-run sweep re-own and group-open the link's target.

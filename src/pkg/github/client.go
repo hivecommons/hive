@@ -2119,10 +2119,19 @@ func HasHoldLabelWith(labels, extraHoldLabels []string) bool {
 	}
 	for _, label := range labels {
 		lower := strings.ToLower(label)
-		for _, sub := range holdLabels {
-			sub = strings.ToLower(strings.TrimSpace(sub))
-			if sub != "" && strings.Contains(lower, sub) {
-				return true
+		// Provenance labels (hive/<id>) are never hold labels, whatever the
+		// hive ID happens to contain. The substring rule below otherwise
+		// reads hive/hosted-...-placeHOLDer-r05x as "hold" and parks every
+		// item that hive has ever claimed: excluded from the actionable set,
+		// skipped by the automerge sweep, counted as on-hold (69 items on
+		// one spoke, 2026-09-28). CanonicalHiveHoldLabel deliberately uses
+		// the hive-pause/ prefix so hive/<id> can stay provenance-only.
+		if !isProvenanceLabel(lower) {
+			for _, sub := range holdLabels {
+				sub = strings.ToLower(strings.TrimSpace(sub))
+				if sub != "" && strings.Contains(lower, sub) {
+					return true
+				}
 			}
 		}
 		for _, exact := range exactHoldLabels {
@@ -2138,6 +2147,12 @@ func HasHoldLabelWith(labels, extraHoldLabels []string) bool {
 		}
 	}
 	return false
+}
+
+// isProvenanceLabel reports whether a (lower-cased) label is a hive/<id>
+// provenance marker as produced by HiveProvenanceLabel.
+func isProvenanceLabel(lower string) bool {
+	return strings.HasPrefix(lower, "hive/")
 }
 
 func isHeld(labels []string) bool { return HasHoldLabel(labels) }
