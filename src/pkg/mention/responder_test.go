@@ -356,7 +356,7 @@ func TestStoreExpiresContextsOnLoadAndMutation(t *testing.T) {
 	fresh := time.Now()
 	state := storeState{
 		Watermarks: map[string]time.Time{},
-		Seen:       map[string]bool{},
+		Seen:       map[string]time.Time{},
 		Pending: map[string][]Context{"scanner": {
 			{Agent: "scanner", KickSource: "mention:old-pending", Repo: "org/repo", Number: 1, Accepted: old},
 			{Agent: "scanner", KickSource: "mention:fresh-pending", Repo: "org/repo", Number: 2, Accepted: fresh},

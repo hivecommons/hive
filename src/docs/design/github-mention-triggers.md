@@ -112,6 +112,13 @@ spoke already does for everything else:
    (`Issues.ListComments` / `PullRequests.ListComments` with `since`), plus
    issues opened since it. One or two calls per repo per tick; the watermark is
    the newest `updated_at` seen, persisted with the other `/data` ledgers.
+   The store (`/data/github-mention-triggers.json`, `mention.NewStore` in
+   `src/pkg/mention/store.go`) is replaced atomically (temp file, fsync,
+   rename). A file that still fails to parse is moved aside to
+   `*.corrupt-<unix-nanos>` and the store starts empty — the watermark
+   re-seeds to now, so older comments are not replayed — instead of
+   disabling mentions. Dedupe keys age out after 45 days, longer than
+   GitHub's 35-day workflow-run limit that bounds Actions run-key replays.
 2. Filter to bodies that mention the App login and pass the guards below.
 3. Hand each surviving mention to the same responder shape Linear uses.
 
@@ -387,4 +394,4 @@ Action-originated comments keep the existing mention guards and add transport-sp
 
 Transport B, hub OIDC dispatch, is the direct hub path for workflows that can reach the hub. The composite action requests a GitHub Actions OIDC token with `permissions: id-token: write`, an audience pinned to `github.actions.oidc.audience`, and posts to `POST /api/contribute/actions/dispatch` with `{command,prompt,issue,run_id,run_attempt}`. The body run fields are optional compatibility fields and must match the token claims when present. The endpoint lives under `/api/contribute/` so hosted spokes inherit the same hub gateway identity rules.
 
-The hub verifies the token against the GitHub Actions issuer (`https://token.actions.githubusercontent.com`) and JWKS, rejects wrong `aud`, `iss`, expired/not-yet-valid tokens, and requires `run_id`, `run_attempt`, and `jti`. It then maps the verified claims into the same action guard path as transport A: `repository` must be governed, `actor` maps through `github.actions.identity_map` or an existing dashboard identity, bot actors remain constrained by `github.actions.allowed_commands`, and apply-like `kick` commands still require owner plus `github.actions.allow_apply: true`. The prompt is scanned with `ioscan.EnforceInput` before kick text is built. Dedupe shares transport A's store and key shape (`repo + claim run_id + claim run_attempt`), and the store records the claim `jti` as an additional seen key. Audit entries use `source=action` and add `transport=comment` or `transport=oidc`, plus OIDC `workflow` and `ref`, so operators can distinguish the relay path without creating a new authorization surface.
+The hub verifies the token against the GitHub Actions issuer (`https://token.actions.githubusercontent.com`) and JWKS, rejects wrong `aud`, `iss`, expired/not-yet-valid tokens, and requires `run_id`, `run_attempt`, and `jti`. It then maps the verified claims into the same action guard path as transport A: `repository` must be governed, `actor` maps through `github.actions.identity_map` or an existing dashboard identity, bot actors remain constrained by `github.actions.allowed_commands`, and apply-like `kick` commands still require owner plus `github.actions.allow_apply: true`. The prompt is scanned with `ioscan.EnforceInput` before kick text is built. Dedupe shares transport A's store and key shape (`repo + claim run_id + claim run_attempt`), and the store records the claim `jti` as an additional seen key. If the hub has no mention store loaded, the endpoint refuses with `503` (audit `guard=store`) rather than dispatching without replay dedupe. Audit entries use `source=action` and add `transport=comment` or `transport=oidc`, plus OIDC `workflow` and `ref`, so operators can distinguish the relay path without creating a new authorization surface.

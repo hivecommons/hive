@@ -2737,7 +2737,10 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	if b.cfg.GitHub.Mentions.Enabled || b.cfg.GitHub.Actions.OIDC.Enabled {
 		store, err := mention.NewStore("/data/github-mention-triggers.json")
 		if err != nil {
-			b.logger.Warn("mention trigger store unavailable", "error", err)
+			// Parse failures self-heal inside NewStore; reaching here means the
+			// file is unreadable or cannot be moved aside, which disables GitHub
+			// mentions and makes Actions OIDC dispatch refuse (503) until fixed.
+			b.logger.Error("mention trigger store unavailable; GitHub mentions disabled and Actions OIDC dispatch will refuse", "error", err)
 		} else {
 			b.mentionStore = store
 			mentionStore = store
