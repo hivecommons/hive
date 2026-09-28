@@ -195,7 +195,7 @@ func TestMergeResumeKicks(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var asked []string
 			allow := func(a string) bool { asked = append(asked, a); return tc.allow[a] }
-			got := mergeResumeKicks(append([]string(nil), tc.due...), tc.restarted, allow, testLogger())
+			got, _ := mergeResumeKicks(append([]string(nil), tc.due...), tc.restarted, allow, testLogger())
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("due = %v, want %v", got, tc.want)
 			}
