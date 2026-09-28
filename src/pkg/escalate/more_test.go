@@ -35,8 +35,9 @@ func TestDispatcherFailureAuditAndRegisterNoops(t *testing.T) {
 	defer cancel()
 	var audits atomic.Int32
 	d := NewDispatcher(ctx, nil, func(action, detail, sink string) { audits.Add(1) })
+	d.backoff = []time.Duration{time.Millisecond, time.Millisecond}
 	d.Register(nil, SeverityInfo, 0)
-	d.Register(&fakeSink{name: "bad", fail: 2}, SeverityInfo, 0)
+	d.Register(&fakeSink{name: "bad", fail: 3}, SeverityInfo, 0)
 	d.Dispatch(Event{Severity: SeverityInfo, Title: "x"})
 	waitFor(t, func() bool { return audits.Load() > 0 })
 	d.Stop()

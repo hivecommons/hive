@@ -251,13 +251,25 @@ func hiveHealthBase(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealt
 		return v
 	}
 
-	if stalled, since := stalledRunWaitingOnHuman(e.Runs, now); stalled {
+	// Run waiting on human is an overlay on the banded verdict, not a gate in
+	// front of it (#9180): it demotes green/unknown/amber to amber, but a red
+	// the band computes (advisory posting failing, advisory stale, stale
+	// create/merge output) stays the headline so the WHY chip names the real
+	// fault instead of pointing at Runs.
+	v = hiveHealthBanded(e, v, queuedWork, now)
+	if stalled, since := stalledRunWaitingOnHuman(e.Runs, runsObservedAt(e, now)); stalled && v.State != HealthStateRed {
 		v.State = HealthStateAmber
 		v.cause = causeRunWaitingOnHuman
 		v.causeAt = since
+		v.staleOutput = false
 		v.Reason = "run waiting on human since " + since
-		return v
 	}
+	return v
+}
+
+// hiveHealthBanded is the ACMM-banded output-freshness verdict: run-stage
+// output, then the per-level stream (advisory / writes / merges).
+func hiveHealthBanded(e RegistryEntry, v HealthVerdict, queuedWork int, now time.Time) HealthVerdict {
 	advisoryPostFailing := e.ACMMLevel == acmmAdvisoryMax && e.AdvisoryError != "" && !appAwaitingDelivery(e)
 	if completedAt := recentRunStageCompletedAt(e.Runs, now); completedAt != "" && e.ACMMLevel > acmmInceptionMax && !advisoryPostFailing {
 		v.State = HealthStateGreen
@@ -365,6 +377,12 @@ func hiveHealthBase(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealt
 	}
 }
 
+// defaultRunWaitAmberSeconds is the human-wait age a run must EXCEED before the
+// verdict ambers. fleet.run_wait_amber_seconds overrides it, then the
+// HIVE_FLEET_RUN_WAIT_AMBER_SECONDS env var. In both sources 0 (and anything
+// unparseable or negative) means "unset, use the default": the YAML key is
+// omitempty, so config cannot tell 0 from absent, and the env var must not
+// give 0 a different meaning (#9180 — env 0 used to amber every waiting run).
 const defaultRunWaitAmberSeconds int64 = 3600
 
 var configuredRunWaitAmberSeconds atomic.Int64
@@ -380,22 +398,33 @@ func runWaitAmberSeconds() int64 {
 	if configured := configuredRunWaitAmberSeconds.Load(); configured > 0 {
 		return configured
 	}
-	v := strings.TrimSpace(os.Getenv("HIVE_FLEET_RUN_WAIT_AMBER_SECONDS"))
-	if v == "" {
-		return defaultRunWaitAmberSeconds
-	}
-	n, err := strconv.ParseInt(v, 10, 64)
-	if err != nil || n < 0 {
+	n, err := strconv.ParseInt(strings.TrimSpace(os.Getenv("HIVE_FLEET_RUN_WAIT_AMBER_SECONDS")), 10, 64)
+	if err != nil || n <= 0 {
 		return defaultRunWaitAmberSeconds
 	}
 	return n
 }
 
-func stalledRunWaitingOnHuman(runs *RunsSummary, now time.Time) (bool, string) {
+// runsObservedAt is the instant the entry's RunsSummary describes: the
+// heartbeat that carried it. OldestWaitSeconds is an age AT that beat, so
+// anchoring "since" to the hub's clock instead made it drift forward on every
+// read between beats (#9180). Falls back to now when the beat time is missing,
+// unparseable, or ahead of now (clock skew).
+func runsObservedAt(e RegistryEntry, now time.Time) time.Time {
+	if beat, ok := parseRFC3339(e.LastHeartbeat); ok && !beat.After(now) {
+		return beat
+	}
+	return now
+}
+
+// stalledRunWaitingOnHuman reports whether the oldest human-wait age exceeds
+// the amber threshold, and since when the run has been waiting. observedAt is
+// the time the summary was reported (see runsObservedAt).
+func stalledRunWaitingOnHuman(runs *RunsSummary, observedAt time.Time) (bool, string) {
 	if runs == nil || runs.OldestWaitSeconds == nil || *runs.OldestWaitSeconds <= runWaitAmberSeconds() {
 		return false, ""
 	}
-	since := now.Add(-time.Duration(*runs.OldestWaitSeconds) * time.Second).UTC().Format(time.RFC3339)
+	since := observedAt.Add(-time.Duration(*runs.OldestWaitSeconds) * time.Second).UTC().Format(time.RFC3339)
 	return true, since
 }
 

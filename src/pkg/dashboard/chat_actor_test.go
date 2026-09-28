@@ -10,9 +10,9 @@ import (
 
 func TestChatActorAuthenticationAndAudit(t *testing.T) {
 	for _, tc := range []struct {
-		name, token, auth, actor, session, proxy, path, want string
-		direct                                               bool
-		status                                               int
+		name, token, auth, internal, actor, session, proxy, path, want string
+		direct                                                         bool
+		status                                                         int
 	}{
 		{name: "chat alice", token: "secret", auth: "Bearer secret", actor: "slack:alice", want: "slack:alice"},
 		{name: "chat bob", token: "secret", auth: "Bearer secret", actor: "discord:bob", want: "discord:bob"},
@@ -24,6 +24,11 @@ func TestChatActorAuthenticationAndAudit(t *testing.T) {
 		{name: "session wins", token: "secret", auth: "Bearer secret", actor: "slack:alice", session: "viewer", want: "viewer"},
 		{name: "proxy wins", token: "secret", auth: "Bearer secret", actor: "slack:alice", proxy: "proxy-user", want: "proxy-user"},
 		{name: "direct route rejects token", token: "secret", auth: "Bearer secret", actor: "slack:alice", direct: true, status: 401},
+		{name: "internal chat alice", token: "secret", internal: "secret", actor: "slack:alice", want: "slack:alice"},
+		{name: "internal direct route chat bob", token: "secret", internal: "secret", actor: "discord:bob", direct: true, want: "discord:bob"},
+		{name: "internal ordinary", token: "secret", internal: "secret", want: "local"},
+		{name: "internal invalid token", token: "secret", internal: "wrong", actor: "slack:alice", status: 401},
+		{name: "internal session wins", token: "secret", internal: "secret", actor: "slack:alice", session: "viewer", want: "viewer"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &Server{authToken: tc.token, audit: &AuditLog{}, userSessions: map[string]*userSession{}}
@@ -36,6 +41,7 @@ func TestChatActorAuthenticationAndAudit(t *testing.T) {
 			}
 			r := httptest.NewRequest(http.MethodPost, path, nil)
 			r.Header.Set("Authorization", tc.auth)
+			r.Header.Set("X-Hive-Internal", tc.internal)
 			r.Header.Set("X-Hive-Chat-Actor", tc.actor)
 			if tc.session != "" {
 				r.AddCookie(&http.Cookie{Name: "hive_session", Value: s.createUserSession(tc.session, config.RoleRead)})

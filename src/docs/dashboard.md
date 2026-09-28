@@ -110,12 +110,19 @@ issues/PRs, so their totals match the visible band counters and respect any
 repo filtering without a separate API call. Operators can view each Issues or
 PRs panel as a donut, pie, horizontal bar, single 100% stacked bar, line/spark
 trend, or age histogram. Every shape is still driven by the same band slices and
-shared rule tables; hovering a chart element, an Overview legend row, or a
-repository-card band header shows that band's rule from `issueBandSpec` /
-`prBandSpec` in `index.html`, so the three cannot drift. The Issues and PRs
-panels can export the current band slices to UTF-8 CSV from the header, and
-non-empty legend rows include a per-band CSV download; both exports use the
-same ordered slices as the charts, so row counts match the donut legend.
+server-provided classifications. Hovering a chart element, an Overview legend
+row, or a repository-card band header shows its rule from the Go band specs
+carried in `/api/status` as `overview_bands`. Each actionable/held issue and PR
+carries `band`, `signals`, `stale`, and `held`; the browser does not classify
+labels or timestamps again. Full SSE updates carry the same fields.
+
+The Issues and PRs panels link directly to `/api/overview/issues.csv` and
+`/api/overview/prs.csv`; non-empty legend rows add a `band` query filter.
+Exports use the current cached snapshot and the same Go classifier as the
+page, so a download reflects the latest server state even between page updates.
+Automation can use the corresponding `.json` endpoints and optional `band`,
+`repo`, `stale`, and `held` filters. Cookie sessions work directly; token-authenticated
+pages include their API token in the download link's query string.
 
 The Overview header's ⚙️ popover stores browser-local chart preferences under
 `hive-overview-charts`: which chart types are in rotation, whether the carousel

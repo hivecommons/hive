@@ -161,8 +161,18 @@ All three are a single HTTPS POST with a JSON/form body — `pkg/escalate`
 implements them directly (~50 lines each), no dependencies. `page` events map
 to PagerDuty `critical` / Pushover `priority=1` / ntfy `priority=high`.
 Delivery failures are logged and audited but never block the producer: an
-escalation sink that is down must not stall a review pipeline. No retries
-beyond one immediate re-attempt; the mail sink is the durable fallback.
+escalation sink that is down must not stall a review pipeline. Each sink
+truncates title and body to its provider's limits (Pushover 250/1024
+characters, PagerDuty summary 1024, ntfy body 4096 bytes) and RFC 2047-encodes
+the ntfy `Title` header. A throttled (429/408), server-failed (5xx), or
+transport-failed delivery is re-attempted twice with a short backoff
+(1s, then 4s, stretched to a provider's `Retry-After` up to 30s); any other
+4xx is final on the first answer. While a stopped dispatcher drains its
+queue, no retry wait runs past the 30s drain deadline: a wait that would is
+skipped and the event gets its final attempt at once, audited as
+`escalation_delivery_failed` if that attempt fails too. Failure audits never
+carry the request URL, since an ntfy topic URL is the topic's credential. The
+mail sink is the durable fallback.
 
 ## The guard invariant, restated
 

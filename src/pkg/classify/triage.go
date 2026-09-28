@@ -24,11 +24,13 @@ type TriageDecision struct {
 	Signals   []string
 }
 
-func Triage(issue github.Issue, c Classification, cfg config.TriageConfig) TriageDecision {
+// Triage returns the run triage verdict for issue. ctx bounds any Jev call
+// the active decider makes; pass the sweep's SweepContext.
+func Triage(ctx context.Context, issue github.Issue, c Classification, cfg config.TriageConfig) TriageDecision {
 	if _, ok := currentDecider().(keywordDecider); ok {
 		return keywordTriage(issue, c, cfg)
 	}
-	res := currentDecider().Decide(context.Background(), issue, cfg)
+	res := currentDecider().Decide(ctx, issue, cfg)
 	if res.Triage != nil {
 		return *res.Triage
 	}

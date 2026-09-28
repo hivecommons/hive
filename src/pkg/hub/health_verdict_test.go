@@ -93,6 +93,7 @@ func TestHiveHealthFor_StalledRunWaitingOnHumanIsAmberWithHint(t *testing.T) {
 		}},
 		Runs: &RunsSummary{OldestWaitSeconds: int64Ptr(7200)},
 	}
+	e = withActivity(e, ractivity("o/r", now.Add(-time.Hour).Format(time.RFC3339), "", "", ""))
 	v := hiveHealthFor(e, okRollup(), okApp(), 2, now)
 	if v.State != HealthStateAmber || v.Remediation == nil {
 		t.Fatalf("verdict = %+v, want amber with remediation", v)
@@ -125,6 +126,116 @@ func TestRunWaitAmberSecondsUsesConfiguredFleetKey(t *testing.T) {
 	SetFleetRunWaitAmberSeconds(42)
 	if got := runWaitAmberSeconds(); got != 42 {
 		t.Fatalf("runWaitAmberSeconds = %d, want configured fleet.run_wait_amber_seconds", got)
+	}
+}
+
+// #9180: a stalled run is an amber overlay; it must not soften a red the band
+// computes, or the WHY chip points at Runs instead of the real fault.
+func TestHiveHealthFor_StalledRunDoesNotMaskBandedRed(t *testing.T) {
+	t.Setenv("HIVE_FLEET_RUN_WAIT_AMBER_SECONDS", "3600")
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	stalled := &RunsSummary{OldestWaitSeconds: int64Ptr(7200)}
+	writer := AgentSummary{Name: "architect", State: agentStateRunning, Enabled: true, ExpectedActive: true, CanOpenIssue: true, CanOpenPR: true}
+
+	cases := []struct {
+		name       string
+		e          RegistryEntry
+		wantReason string
+	}{
+		{
+			name: "L2 advisory posting failing",
+			e: RegistryEntry{
+				Online: true, ACMMLevel: 2,
+				AdvisoryLastPostedAt: now.Add(-30 * time.Minute).Format(time.RFC3339),
+				AdvisoryError:        "403 issues:write denied",
+				Agents:               []AgentSummary{writer},
+				Runs:                 stalled,
+			},
+			wantReason: "advisory posting failing",
+		},
+		{
+			name: "L2 advisory stale",
+			e: RegistryEntry{
+				Online: true, ACMMLevel: 2,
+				AdvisoryLastPostedAt: now.Add(-72 * time.Hour).Format(time.RFC3339),
+				Agents:               []AgentSummary{writer},
+				Runs:                 stalled,
+			},
+			wantReason: "advisory stale",
+		},
+		{
+			name: "L4 stale write output",
+			e: withActivity(RegistryEntry{
+				Online: true, ACMMLevel: 4,
+				Agents: []AgentSummary{writer},
+				Runs:   stalled,
+			}, ractivity("o/r", now.Add(-48*time.Hour).Format(time.RFC3339), "", "", "")),
+			wantReason: "no write in 2d (5 queued)",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v := hiveHealthFor(tc.e, okRollup(), okApp(), 5, now)
+			if v.State != HealthStateRed || v.Reason != tc.wantReason || v.cause == causeRunWaitingOnHuman {
+				t.Fatalf("verdict = %+v, want red %q to outrank the stalled run", v, tc.wantReason)
+			}
+		})
+	}
+}
+
+// The stale-output red kept under a stalled run is still the generic
+// no-output red, so the error-streak detector can re-explain it.
+func TestHiveHealthFor_StalledRunKeepsErrorStreakReexplanation(t *testing.T) {
+	t.Setenv("HIVE_FLEET_RUN_WAIT_AMBER_SECONDS", "3600")
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	e := withActivity(RegistryEntry{
+		Online: true, ACMMLevel: 4,
+		Agents: []AgentSummary{{
+			Name: "architect", State: agentStateRunning, Enabled: true, ExpectedActive: true, CanOpenIssue: true, CanOpenPR: true,
+		}},
+		Runs:              &RunsSummary{OldestWaitSeconds: int64Ptr(7200)},
+		AgentErrorStreaks: map[string]int{"architect": errorStreakRedThreshold},
+	}, ractivity("o/r", now.Add(-48*time.Hour).Format(time.RFC3339), "", "", ""))
+	v := hiveHealthFor(e, okRollup(), okApp(), 5, now)
+	if v.State != HealthStateRed || v.cause != causeErrorStreak {
+		t.Fatalf("verdict = %+v, want error-streak red", v)
+	}
+}
+
+// "since" is the reported wait age subtracted from the heartbeat that carried
+// it, so it does not drift forward as the hub's clock advances between beats.
+func TestHiveHealthFor_StalledRunSinceAnchoredToHeartbeat(t *testing.T) {
+	t.Setenv("HIVE_FLEET_RUN_WAIT_AMBER_SECONDS", "3600")
+	beat := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	e := RegistryEntry{
+		Online: true, ACMMLevel: 4,
+		LastHeartbeat: beat.Format(time.RFC3339),
+		Agents: []AgentSummary{{
+			Name: "architect", State: agentStateRunning, Enabled: true, ExpectedActive: true, CanOpenIssue: true, CanOpenPR: true,
+		}},
+		Runs: &RunsSummary{OldestWaitSeconds: int64Ptr(7200)},
+	}
+	for _, read := range []time.Time{beat, beat.Add(4 * time.Minute)} {
+		v := hiveHealthFor(e, okRollup(), okApp(), 0, read)
+		if v.State != HealthStateAmber || v.Reason != "run waiting on human since 2026-09-22T10:00:00Z" {
+			t.Fatalf("read at %s: verdict = %+v, want amber anchored to the heartbeat", read.Format(time.RFC3339), v)
+		}
+	}
+}
+
+// Config 0 and env 0 must mean the same thing: unset, use the default.
+func TestRunWaitAmberSecondsZeroMeansDefaultInBothSources(t *testing.T) {
+	t.Cleanup(func() { SetFleetRunWaitAmberSeconds(0) })
+	SetFleetRunWaitAmberSeconds(0)
+	for _, env := range []string{"", "0", "-5", "junk"} {
+		t.Setenv("HIVE_FLEET_RUN_WAIT_AMBER_SECONDS", env)
+		if got := runWaitAmberSeconds(); got != defaultRunWaitAmberSeconds {
+			t.Fatalf("env %q: runWaitAmberSeconds = %d, want default %d", env, got, defaultRunWaitAmberSeconds)
+		}
+	}
+	t.Setenv("HIVE_FLEET_RUN_WAIT_AMBER_SECONDS", "120")
+	if got := runWaitAmberSeconds(); got != 120 {
+		t.Fatalf("env 120 with config 0: runWaitAmberSeconds = %d, want 120", got)
 	}
 }
 

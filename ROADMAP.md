@@ -130,6 +130,17 @@ soak-gated promotion workflow. Structural changes were gated by public
   [RFC doc](https://github.com/hivecommons/hive/blob/v5/docs/rfc-5691-constellation.md),
   [#5796](https://github.com/hivecommons/hive/pull/5796)).
 - **Per-repo policy scoping.** Proposed — awaiting maintainer sign-off on [#6208](https://github.com/hivecommons/hive/issues/6208): use one repo-scoped policy model for pause, per-repo agents, and per-repo ACMM/onboarding; hive-wide ACMM remains the ceiling, and repo overrides only narrow scope.
+- **Commons contributor-onboarding health.** Gap, not yet a workstream —
+  the public Commons join funnel (`just contribute-tui` →
+  `contribute-setup` → join a listed hive → working relay) currently has
+  five concurrent open failures spanning that whole path, including
+  hives the Commons registry lists as online being unreachable from a
+  public client
+  ([#9244](https://github.com/hivecommons/hive/issues/9244)). This is the
+  one code path every new adopter is guaranteed to exercise first, so it
+  should be prioritized ahead of general backlog ordering rather than
+  triaged issue-by-issue; a registry reachability probe would keep
+  "online" from being self-reported.
 - **Backend capacity, model inventory, and placement.** The same
   multi-spoke evidence made provider quota and model availability the
   practical constraint on splitting a hive. The accepted v5 capacity RFC
@@ -181,6 +192,19 @@ evidence. The line's own release bar is
 with live tracker [#7563](https://github.com/hivecommons/hive/issues/7563) §v6 readiness bar.
 (Original sequencing decision: [#7577](https://github.com/hivecommons/hive/issues/7577);
 v4 freeze policy: [#6346](https://github.com/hivecommons/hive/issues/6346).)
+
+**Known gaps ahead of promotion.** No GA/release-workflow path exists for
+`v6` yet — `tagged-release.yml`, `promote-stable.yml`, and
+`.github/release-lines.yml` are still `v5`-only, so even a fully green
+readiness bar has nowhere to promote to today
+([#9154](https://github.com/hivecommons/hive/issues/9154)). A fast-growing
+bug backlog has appeared across nearly every shipped chat surface and is
+not reflected in the readiness bar's conformance checkmarks
+([#9227](https://github.com/hivecommons/hive/issues/9227),
+[#9245](https://github.com/hivecommons/hive/issues/9245)), and the
+resulting bugfix-PR volume has produced a merge-conflict pileup, with most
+open `v6` PRs colliding on the same few hotspot files
+([#9319](https://github.com/hivecommons/hive/issues/9319)).
 
 **Theme.** Every operator interaction the dashboard offers should be
 reachable from the places humans already are — a GitHub thread, a chat
@@ -359,6 +383,17 @@ build, not a stable claim. The line's promotion bar is
 (live tracker: [#7563](https://github.com/hivecommons/hive/issues/7563) §v6 readiness bar):
 guard-invariant conformance rows are checked for all eight shipped
 surfaces; the per-surface live exercises remain open.
+
+**Known gap: no promotion mechanism yet.** Even once every readiness-bar
+row is checked, there is currently no way to *promote* `v6` past `edge`:
+`tagged-release.yml`, `promote-stable.yml`, and `.github/release-lines.yml`
+are still byte-identical to `v5` with `v5` hardcoded throughout, and
+`docker.yml` only ever publishes `v6` to `edge`
+([#9154](https://github.com/hivecommons/hive/issues/9154)). The readiness
+runbook is also missing evidence-checklist sections for 5 of the 11 open
+live-exercise rows
+([#9200](https://github.com/hivecommons/hive/issues/9200)). Tracked
+together in [#9227](https://github.com/hivecommons/hive/issues/9227).
 
 ## Hosted Hive Hub
 

@@ -577,7 +577,7 @@ func (c *Client) ReconcilePRAttribution(ctx context.Context, prURL string, meta 
 		return nil
 	}
 
-	pr, _, err := c.client.PullRequests.Get(ctx, ref.Owner, ref.Repo, ref.Number)
+	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:attribution"), ref.Owner, ref.Repo, ref.Number)
 	if err != nil {
 		return fmt.Errorf("reconcile attribution: get PR %s#%d: %w", ref.FullName(), ref.Number, err)
 	}

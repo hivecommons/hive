@@ -144,9 +144,9 @@ func TestConsumeSocketFullQueueDoesNotAck(t *testing.T) {
 	apiBase = ts.URL
 	queue := make(chan chat.Message, 1)
 	queue <- chat.Message{ID: "1"}
-	connected, err := newTestBot(ts.URL).consumeSocket(context.Background(), queue)
-	if !connected || err == nil || !strings.Contains(err.Error(), "queue full") {
-		t.Fatalf("consumeSocket = %v, %v", connected, err)
+	err := consumeOnce(context.Background(), newTestBot(ts.URL), queue)
+	if err == nil || !strings.Contains(err.Error(), "queue full") {
+		t.Fatalf("consumeOnce = %v, want queue full", err)
 	}
 	if err := <-result; err == nil {
 		t.Fatal("overflow envelope was acknowledged")
