@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-28 (v5.76.3)
+
+### Fixed
+
+- Kick-refusal detection no longer fires on echoed kick content. Security-review and scan kicks legitimately list issues titled "prompt injection …"; when the CLI echoed those bullets, the agent was marked as having refused the kick (scanner and reviewer on one spoke), hiding the turn's real output. Structured markdown lines — bullets, table rows, headings, numbered items, bold spans, `#123` references — are now skipped; first-person refusal prose still registers.
+- Dashboard "Merge blocked" alerts now clear on their own once the blocked PR closes or its fork workflow runs are approved / the approval setting is relaxed, instead of waiting for an unrelated App merge or a restart (#9391).
+
 ## 2026-09-28 (v5.76.2)
 
 ### Fixed
