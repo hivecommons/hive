@@ -37,6 +37,9 @@ jobs:
         with:
           cache: false
           go-version-file: src/go.mod
+      - name: Guard shared Go cache (fall back when the runner volume is full)
+        if: matrix.lane == 'latest'
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
       - name: Flue smoke (latest)
         if: matrix.lane == 'latest'
         working-directory: src
