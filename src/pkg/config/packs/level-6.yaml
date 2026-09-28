@@ -34,9 +34,11 @@ governor:
   # every 5–30m in surge just compounds the backlog. reviewer stays at 30m
   # across every mode: it drains the PR queue and is the one agent whose
   # frequency helps. supervisor/strategist/outreach are paused by default;
-  # operators opt in. architect/guide/telemetry/operations go to no cadence
-  # (omitted) or paused once the fleet is busy/surging, so it stops
-  # generating new work while already saturated.
+  # operators opt in. architect/guide go to no cadence (omitted) or paused
+  # once the fleet is busy/surging, so it stops generating new work while
+  # already saturated. telemetry/operations stay opt-in (paused) in every
+  # mode, same as L5 — pausing operability agents by default is an invariant,
+  # not a busy/surge-only optimization (hivecommons/hive#9372).
   cadences:
     surge:
       supervisor: paused
@@ -58,6 +60,8 @@ governor:
       sec-check: 2h
       reviewer: 30m
       strategist: paused
+      telemetry: paused
+      operations: paused
     quiet:
       supervisor: paused
       scanner: 1h
@@ -69,8 +73,8 @@ governor:
       sec-check: 2h
       reviewer: 30m
       strategist: paused
-      telemetry: 3h
-      operations: 3h
+      telemetry: paused
+      operations: paused
     idle:
       supervisor: paused
       scanner: 1h
@@ -82,8 +86,8 @@ governor:
       sec-check: 2h
       reviewer: 30m
       strategist: paused
-      telemetry: 3h
-      operations: 3h
+      telemetry: paused
+      operations: paused
 agents:
 - name: supervisor
   display_name: Supervisor
