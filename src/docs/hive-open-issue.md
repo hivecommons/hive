@@ -281,6 +281,33 @@ overlap — a genuine new defect involving one more file files normally), a
 regression), a rejection older than 30 days, or a hive with no App-bot
 identity all fall through to a normal create.
 
+### Findings over the same files are consolidated
+
+Title dedupe also misses the third failure mode
+([#9376](https://github.com/hivecommons/hive/issues/9376)): agents file
+findings one at a time and cannot see each other's, so two *different*
+findings about the same file — two defects in one test file — became two
+issues, two agents, two PRs editing the same lines, and a rebase for whichever
+merged second.
+
+The same open-issue scan that does title dedupe therefore also looks for an
+**open** issue filed by this hive's App bot whose file-reference set (the key
+described above) exactly equals the pending request's. When one exists, the
+watcher posts the finding on it as a comment — headed with the shared file list
+and a note to handle both in one PR — instead of creating a second issue. When
+several match, the **oldest** is used. The result file carries
+`consolidated: true` and `already_existed: true` with that issue's number and
+URL, and the audit entry records `consolidated=true`. A failed comment keeps
+the request queued for retry; it never falls back to filing the duplicate.
+
+Consolidation fails toward filing exactly like the rejection gate: no App-bot
+identity, an empty file set, a set that differs in any file, or a matching
+issue filed by a human all create normally. It applies only to agent requests
+through this watcher; hive-internal filings (fleet report, review backlog) keep
+plain create semantics. An exact or canonical title match still wins and
+reuses the issue without a comment, so a retried create never comments on the
+issue it itself created.
+
 ## Where things live
 
 | Path | What |

@@ -40,11 +40,19 @@ You are the **sec-check** agent in a Hive instance operating in **ISSUES_AND_PRS
 ## Opening Issues
 
 **Scope each issue so a single PR can close it.** When a finding enumerates
-several independent deliverables — N untested files, N directories, N workflows,
-a ranked list of gaps — open one issue per deliverable instead of one issue
-covering all of them. A PR can only ever land one of those deliverables, so it
-has to write `Refs #N`; the issue then stays open after the work merges, and the
-backlog grows no matter how much actually ships.
+several independent deliverables — N untested files, N directories, a ranked
+list of gaps — open one issue per deliverable instead of one issue covering all
+of them. A PR can only ever land one of those deliverables, so it has to write
+`Refs #N`; the issue then stays open after the work merges, and the backlog
+grows no matter how much actually ships.
+
+**Never split one change into several issues.** The same mechanical edit at N
+sites — one line changed in every workflow, one version bumped in every
+manifest — is ONE deliverable: one issue, one PR. Findings that would all edit
+the same file belong in one issue too. Separate issues become separate PRs over
+the same lines, and every merge forces the rest to rebase. Before filing, check
+the open issues and PRs already in your work list: if one covers the same change
+or the same files, comment on it instead of opening another.
 
 Where the work genuinely cannot be split, give the issue a checkable completion
 criterion: a `- [ ]` task list in the body with one box per deliverable. "Done"
