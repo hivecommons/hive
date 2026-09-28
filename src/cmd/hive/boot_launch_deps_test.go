@@ -6,15 +6,19 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/chat"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/dashchat"
 	"github.com/hivecommons/hive/pkg/discord"
+	"github.com/hivecommons/hive/pkg/persona"
 )
 
 // launchHarness is a bootLaunchDeps whose spawn runs synchronously and whose
@@ -192,6 +196,63 @@ func TestBootLaunchWithStartsDiscordBotWhenConfigured(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBootLaunchWithSharesDurablePersonaStore pins #9175: every chat
+// transport gets a view of the one durable persona store, so a persona written
+// through a transport survives a restart; an unopenable store degrades to
+// process-local personas with a warning instead of blocking the transports.
+func TestBootLaunchWithSharesDurablePersonaStore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "chat-personas.json")
+	b := newLaunchBoot(t, map[string]config.AgentConfig{"alpha": {Enabled: true}})
+	b.cfg.Notifications.Discord = &config.DiscordConfig{BotToken: "tok", ChannelID: "chan"}
+	h := &launchHarness{}
+	deps := h.deps()
+	var dash *dashchat.Config
+	deps.startDashChat = func(_ context.Context, cfg dashchat.Config, _ []string, _ *slog.Logger) (*dashchat.Bot, error) {
+		dash = &cfg
+		return nil, nil
+	}
+	deps.openPersonaStore = func() (*chat.FilePersonaStore, error) { return chat.OpenFilePersonaStore(path) }
+	b.bootLaunchWith(deps)
+
+	if dash == nil || dash.PersonaStore == nil {
+		t.Fatal("dashboard chat started without the durable persona store")
+	}
+	if h.discord == nil || h.discord.PersonaStore == nil {
+		t.Fatal("discord bot started without the durable persona store")
+	}
+	ctx := context.Background()
+	if err := h.discord.PersonaStore.PutPersona(ctx, "u1", persona.Record{Depth: persona.DepthTechnical}); err != nil {
+		t.Fatalf("PutPersona: %v", err)
+	}
+	reopened, err := chat.OpenFilePersonaStore(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if got, ok, _ := reopened.ForTransport("discord").GetPersona(ctx, "u1"); !ok || got.Depth != persona.DepthTechnical {
+		t.Fatalf("discord persona after restart = %#v (ok=%v)", got, ok)
+	}
+	if _, ok, _ := reopened.ForTransport("dashboard").GetPersona(ctx, "u1"); ok {
+		t.Fatal("dashboard chat must not see a discord author's persona")
+	}
+
+	t.Run("unopenable store", func(t *testing.T) {
+		b := newLaunchBoot(t, map[string]config.AgentConfig{"alpha": {Enabled: true}})
+		var sb strings.Builder
+		b.logger = slog.New(slog.NewTextHandler(&sb, nil))
+		b.cfg.Notifications.Discord = &config.DiscordConfig{BotToken: "tok", ChannelID: "chan"}
+		h := &launchHarness{}
+		deps := h.deps()
+		deps.openPersonaStore = func() (*chat.FilePersonaStore, error) { return nil, errors.New("parsing persona store: bad json") }
+		b.bootLaunchWith(deps)
+		if h.discord == nil || h.discord.PersonaStore != nil {
+			t.Fatalf("discord config = %+v, want started with nil (process-local) persona store", h.discord)
+		}
+		if !strings.Contains(sb.String(), "chat persona store unavailable") || !strings.Contains(sb.String(), "bad json") {
+			t.Fatalf("missing persona store warning:\n%s", sb.String())
+		}
+	})
 }
 
 func TestBootLaunchWithAbortsLaunchOnShutdown(t *testing.T) {

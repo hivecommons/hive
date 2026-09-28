@@ -189,7 +189,11 @@ repo, title, a bounded plain-text summary capped by
 deep link, the `lease_gen` staleness fence, and the verified-owner approver
 rule. Compact approvals and rejections post the chosen action plus the lease
 generation back to `/api/runs/{key}/checkpoint`; Hive refuses stale generations
-with `409 Conflict` and refuses non-owner decisions with `403 Forbidden`.
+with `409 Conflict` and refuses non-owner decisions with `403 Forbidden`. The
+checkpoint's `stage` decides what a decision acts on: `spec` approves or rejects
+the design, and `plan` approves or rejects the plan. A spec or plan approval
+that cannot move the held lease to the next stage answers `409 Conflict` and
+never reports success.
 
 When `governor.work_source.wavefront.enabled` is true, a final Spek plan
 that declares repositories with `[repo:<owner/name>]` annotations fans out the

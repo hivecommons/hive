@@ -11,6 +11,98 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-28 (v5.73.3)
+
+### Fixed
+
+- The self-hosted Kubernetes Deployment (`src/deploy/k8s/deployment.yaml`) now sets `imagePullPolicy: Always` on the hive container ([#9332](https://github.com/hivecommons/hive/issues/9332)). It runs the moving `:stable` tag, so the Kubernetes default of `IfNotPresent` let a node with the tag cached restart onto the old build, including during spoke self-upgrade. Hosted spokes and the backup CronJob already pull with `Always`.
+
+## 2026-09-28 (v5.73.2)
+
+### Changed
+
+- Dashboard Overview charts, repo cards, and legends now use server-provided bands and signals; CSV downloads link to the shared Overview API ([#9149](https://github.com/hivecommons/hive/issues/9149)).
+
+## 2026-09-28 (v5.73.1)
+
+### Fixed
+
+- Contributor commands announce release-image downloads before pulling and show Podman progress, so the first `just contribute-tui` no longer appears hung ([#9151](https://github.com/hivecommons/hive/issues/9151)).
+
+## 2026-09-28 (v5.73.0)
+
+### Added
+
+- Added a published-image contributor Compose example with container-owned accounts and persistent state, device-login and registration instructions, resource limits, and configurable CPU niceness ([#9188](https://github.com/hivecommons/hive/issues/9188)).
+
+## 2026-09-28 (v5.72.5)
+
+### Fixed
+
+- Codex contributors recognize usage-limit refusals and hold new assignments across CLI relaunches and reconnects until quota recovery is confirmed, instead of repeatedly failing tasks as idle ([#9247](https://github.com/hivecommons/hive/issues/9247)).
+
+## 2026-09-28 (v5.72.4)
+
+### Fixed
+
+- `contribute-setup` now joins any hive at the registry entry's `dashboardUrl` when one is published, including `hosted-*` (e.g. LKE slot) ids — previously those ids always derived `wss://<id>.hive.hivecommons.dev/contribute`, which serves an HTML error page on the contributor API/WS paths for several hives ([#9232](https://github.com/hivecommons/hive/issues/9232)).
+- `contributor-agent.sh` now exports `HIVE_COMMONS_STRATEGY` / `HIVE_CONTRIBUTOR_STRATEGY` from `contributor.env` alongside `HIVE_HUB`, so a relay started with a `neediest` (or other) strategy already on disk uses it from its first solicitation instead of only after a `SIGUSR1` reload ([#9239](https://github.com/hivecommons/hive/issues/9239)).
+- Raised golangci-lint run timeout from 5m to 10m so clean cold-cache runs (~4m50s) no longer flake at the ceiling (#9263)
+
+## 2026-09-28 (v5.72.3)
+
+### Fixed
+
+- Bead synthesis now remembers dead PR enrichment misses across cycles, skips low-quality unenrichable beads for the retry window, and caps GitHub enrichment calls so issue-like `gh-N` refs cannot exhaust the REST budget.
+- The merge CI gate now ignores superseded check and workflow runs on the same head SHA, so cancelled concurrency predecessors no longer block a merge after the latest run succeeds.
+- The merge-request watcher now reports fork PR workflow runs awaiting maintainer approval accurately and raises an actionable alert that links owners to the repository Actions setting.
+- Required-status-check discovery now negative-caches forbidden branch-protection lookups for a bounded TTL, avoiding repeated GitHub REST calls when the App lacks administration permission.
+
+## 2026-09-28 (v5.72.2)
+
+### Fixed
+
+- Fixed the GitHub enumerator's closed-PR attribution scan so it is bounded by recent updates, capped at five pages, cached across ticks, and no longer fails repo enumeration when the closed-PR scan encounters a transient GitHub error.
+
+## 2026-09-27 (v5.72.1)
+
+### Changed
+
+- Changed merge-request handling to allow merges into any branch the GitHub App can write while surfacing actionable operator alerts for merge failures that need configuration fixes.
+
+### Fixed
+
+- Stop repeatedly refetching missing GitHub PR and `.claude/settings.json` resources after 404s, preserving REST budget for merge and hold-release work.
+
+## 2026-09-27 (v5.72.0)
+
+### Added
+
+- Added dashboard owner controls for per-repo auto-merge exceptions: unprotected base branches and no-CI repositories.
+
+## 2026-09-27 (v5.71.0)
+
+### Added
+
+- The weekly owner advice now explains the queue: mode-independent queue-health rules read the Overview band breakdown and say why PRs are blocked, what to do first, and where the list is — with the first items, the CSV export link and each named band's rule text — and a frozen epoch keeps which advice shows while recomputing its numbers every digest ([#9103](https://github.com/hivecommons/hive/issues/9103)).
+
+## 2026-09-27 (v5.70.0)
+
+### Added
+
+- Add authenticated Overview issue and PR band export endpoints for CSV and JSON consumers.
+
+### Fixed
+
+- Reduce GitHub REST budget burn with per-caller accounting in `/api/gh-rate-limits`, MTTR issue lookup caching, and low-budget shedding for dashboard-only MTTR fetches.
+- ACMM L6 Fully Autonomous hives now default the #5117 self-authorization hold off unless an explicit hive, repo, or environment override keeps it enabled, allowing eligible Hive-authored PRs to auto-merge under L6 policy.
+
+## 2026-09-27 (v5.69.1)
+
+### Fixed
+
+- The merge-request watcher now reads base-branch protection from GitHub's branch metadata endpoint, so Hive App installs without Administration:read no longer deny every protected-base agent merge when branch protection or rulesets are enabled.
+
 ## 2026-09-27 (v5.69.0)
 
 ### Added

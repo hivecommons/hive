@@ -738,6 +738,60 @@ func TestRunSynthesis_MinConfidenceFilter(t *testing.T) {
 	}
 }
 
+func TestRunSynthesis_LowQualityUnenrichableBeadNotReprobedNextCycle(t *testing.T) {
+	srv, ingested := newMockWikiServer(t)
+	store := newTestStore(t)
+	b, err := store.Create("merged dead issue ref", beads.TypeBug, beads.PriorityHigh, "scanner", "gh-404")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(b.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	e, calls := newEnricherServer(t, "org", []string{"a", "b"},
+		nil, map[string]bool{"a": true, "b": true})
+	synth := newTestSynthesizer(t, map[string]*beads.Store{"scanner": store}, srv.URL)
+	synth.enricher = e
+
+	count, err := synth.RunSynthesis(context.Background())
+	if err != nil {
+		t.Fatalf("first RunSynthesis failed: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("first RunSynthesis count = %d, want 0", count)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("first cycle made %d PR requests; want 2", got)
+	}
+	if len(*ingested) != 0 {
+		t.Fatalf("ingested %d facts; want 0", len(*ingested))
+	}
+
+	e.ClearCache()
+	count, err = synth.RunSynthesis(context.Background())
+	if err != nil {
+		t.Fatalf("second RunSynthesis failed: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("second RunSynthesis count = %d, want 0", count)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("second cycle re-probed dead ref: %d total PR requests, want 2", got)
+	}
+
+	if err := store.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := store.Get(b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Meta(beadSynthMetaKeySkippedAt) == "" {
+		t.Fatal("low-quality unenrichable bead was not marked skipped")
+	}
+}
+
 func TestPREnricher_ParseRef_GhFormat(t *testing.T) {
 	e := NewPREnricher(nil, "kubestellar", []string{"console", "docs"}, synthTestLogger())
 

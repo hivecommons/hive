@@ -3,7 +3,11 @@ package escalate
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -51,8 +55,9 @@ func TestDispatcherSeverityRetryAndDrop(t *testing.T) {
 	d := NewDispatcher(ctx, nil, func(action, detail, sink string) {
 		auditMu.Lock()
 		defer auditMu.Unlock()
-		audits = append(audits, action+":"+sink)
+		audits = append(audits, action+":"+sink+":"+detail)
 	})
+	d.backoff = []time.Duration{time.Millisecond}
 	decision := &fakeSink{name: "decision", fail: 1}
 	page := &fakeSink{name: "page", gate: make(chan struct{}), entered: make(chan struct{})}
 	d.Register(decision, SeverityDecision, 4)
@@ -88,14 +93,171 @@ func TestDispatcherSeverityRetryAndDrop(t *testing.T) {
 	}
 	auditMu.Lock()
 	defer auditMu.Unlock()
+	// page2 is the event evicted from the full queue; the audit must name it,
+	// not page3, which was the one that got in.
+	want := `escalation_drop_oldest:page:severity=page title="page2"`
 	found := false
 	for _, a := range audits {
-		if a == "escalation_drop_oldest:page" {
+		if a == want {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("expected escalation_drop_oldest:page audit, got %v", audits)
+		t.Fatalf("expected %s audit, got %v", want, audits)
+	}
+}
+
+// providerServer answers each request with the next status in codes, then
+// 200 once they run out, and counts the requests it saw.
+func providerServer(t *testing.T, codes ...int) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := int(hits.Add(1))
+		if n <= len(codes) {
+			w.WriteHeader(codes[n-1])
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &hits
+}
+
+type auditLog struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (a *auditLog) record(action, detail, sink string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.lines = append(a.lines, action+":"+sink+":"+detail)
+}
+
+func (a *auditLog) snapshot() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.lines...)
+}
+
+func TestDispatcherRetriesThrottledDelivery(t *testing.T) {
+	// ntfy.sh answering 429 to a burst: two throttled answers must not lose
+	// the page when the provider recovers within the backoff.
+	// The server records each request's Title so the test can see which event
+	// every attempt belonged to. A sentinel page dispatched after the real one
+	// marks the end: the sink's worker is FIFO, so the sentinel's request can
+	// only arrive once the first event's deliver has returned, audit and all.
+	codes := []int{http.StatusTooManyRequests, http.StatusTooManyRequests}
+	var mu sync.Mutex
+	var titles []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		n := len(titles)
+		titles = append(titles, r.Header.Get("Title"))
+		mu.Unlock()
+		if n < len(codes) {
+			w.WriteHeader(codes[n])
+		}
+	}))
+	t.Cleanup(srv.Close)
+	seen := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), titles...)
+	}
+	var audits auditLog
+	d := NewDispatcher(context.Background(), nil, audits.record)
+	defer d.Stop()
+	d.backoff = []time.Duration{time.Millisecond, time.Millisecond}
+	d.Register(&NtfySink{URL: srv.URL}, SeverityPage, 4)
+	d.Dispatch(Event{Severity: SeverityPage, Title: "Governor budget exhausted"})
+	d.Dispatch(Event{Severity: SeverityPage, Title: "sentinel"})
+
+	waitFor(t, func() bool {
+		got := seen()
+		return len(got) > 0 && got[len(got)-1] == "sentinel"
+	})
+	want := []string{"Governor budget exhausted", "Governor budget exhausted", "Governor budget exhausted", "sentinel"}
+	if got := seen(); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("provider requests = %q, want %q (429, 429, 200, then the sentinel)", got, want)
+	}
+	if lines := audits.snapshot(); len(lines) != 0 {
+		t.Fatalf("audits = %v, want none: the third attempt delivered", lines)
+	}
+}
+
+func TestDispatcherDoesNotRetryRejectedRequest(t *testing.T) {
+	srv, hits := providerServer(t, http.StatusBadRequest, http.StatusBadRequest, http.StatusBadRequest)
+	var audits auditLog
+	d := NewDispatcher(context.Background(), nil, audits.record)
+	defer d.Stop()
+	d.backoff = []time.Duration{time.Millisecond, time.Millisecond}
+	d.Register(&NtfySink{URL: srv.URL}, SeverityPage, 4)
+	d.Dispatch(Event{Severity: SeverityPage, Title: "bad"})
+
+	waitFor(t, func() bool { return len(audits.snapshot()) > 0 })
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("provider requests = %d, want 1: a 400 rejects the request itself", got)
+	}
+	want := `escalation_delivery_failed:ntfy:severity=page title="bad" error=status 400`
+	if lines := audits.snapshot(); len(lines) != 1 || lines[0] != want {
+		t.Fatalf("audits = %v, want [%s]", lines, want)
+	}
+}
+
+func TestDispatcherGivesUpAfterBoundedAttempts(t *testing.T) {
+	srv, hits := providerServer(t, 503, 503, 503, 503, 503)
+	var audits auditLog
+	d := NewDispatcher(context.Background(), nil, audits.record)
+	defer d.Stop()
+	d.backoff = []time.Duration{time.Millisecond, time.Millisecond}
+	d.Register(&NtfySink{URL: srv.URL}, SeverityPage, 4)
+	d.Dispatch(Event{Severity: SeverityPage, Title: "down"})
+
+	waitFor(t, func() bool { return len(audits.snapshot()) > 0 })
+	if got := hits.Load(); got != 3 {
+		t.Fatalf("provider requests = %d, want 3 (first attempt + len(backoff))", got)
+	}
+}
+
+func TestDispatcherFailureAuditRedactsTopicURL(t *testing.T) {
+	// A closed server gives a transport error, whose *url.Error text would
+	// otherwise carry the full topic URL — the topic's only credential.
+	srv := httptest.NewServer(http.NotFoundHandler())
+	topicURL := srv.URL + "/hive-secret-topic-8f3a"
+	srv.Close()
+	var audits auditLog
+	d := NewDispatcher(context.Background(), nil, audits.record)
+	defer d.Stop()
+	d.backoff = nil
+	d.Register(&NtfySink{URL: topicURL}, SeverityPage, 4)
+	d.Dispatch(Event{Severity: SeverityPage, Title: "page"})
+
+	waitFor(t, func() bool { return len(audits.snapshot()) > 0 })
+	lines := audits.snapshot()
+	if !strings.HasPrefix(lines[0], "escalation_delivery_failed:ntfy:") {
+		t.Fatalf("audits = %v, want delivery failure", lines)
+	}
+	if strings.Contains(lines[0], "hive-secret-topic-8f3a") {
+		t.Fatalf("delivery failure audit leaks the topic URL: %s", lines[0])
+	}
+}
+
+func TestRetryWait(t *testing.T) {
+	step := time.Second
+	cases := []struct {
+		name string
+		err  error
+		want time.Duration
+	}{
+		{"non-status error uses the step", errors.New("dial"), step},
+		{"shorter Retry-After uses the step", &statusError{code: 429, retryAfter: time.Millisecond}, step},
+		{"longer Retry-After is honoured", &statusError{code: 429, retryAfter: 7 * time.Second}, 7 * time.Second},
+		{"Retry-After is capped", &statusError{code: 429, retryAfter: time.Hour}, maxRetryAfter},
+	}
+	for _, tc := range cases {
+		if got := retryWait(step, tc.err); got != tc.want {
+			t.Errorf("%s: retryWait = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
 

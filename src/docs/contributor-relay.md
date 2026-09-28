@@ -34,6 +34,11 @@ That MCP lease is read-only and bound to the task id, contributor session identi
 
 ## Basic setup
 
+For a homelab service with accounts independent of the host, use the
+[published-image Compose example](../examples/contributor-isolated/README.md).
+It keeps GitHub, Codex, Hive configuration and work in a named volume and
+requires no host GitHub or provider CLI installation.
+
 From a checkout of this repository:
 
 ```bash
@@ -995,6 +1000,17 @@ A quota refusal now parks the loop:
 - **The window comes from the provider.** `Resets in 4h42m28s` is parsed off the banner, plus a small grace so the first re-ask is not one second early. A banner with no stated expiry — most backends print none — gets a bounded fallback instead, and the hold re-arms if the quota is genuinely still out. A parsed window is capped, because the duration is provider text the relay cannot validate and a malformed `Resets in 999h` must not wedge a contributor out of the fleet.
 - **The operator is told once, clearly.** The banner previously lived only inside the agy pane while the relay log said `[environment]`; nobody reading the log could learn their quota was gone for four hours, or that switching model or backend was the remedy.
 - **The failure says what happened.** `[environment] … the agent CLI is not visibly working` reads as a broken contributor host. The CLI was working perfectly and the provider said no, so the reason now says so.
+
+Codex's `■ You’ve hit your usage limit` banner also enters this hold, including
+when it is followed by the optional model-switch menu ([#9247](https://github.com/hivecommons/hive/issues/9247)).
+The relay preserves the displayed reset information in its failure reason and
+operator log. A clock time such as `10:21 PM` has no established timezone, so
+this hold does **not** expire on a guessed deadline or the generic fallback.
+It survives CLI relaunches and hub reconnects, even if the new pane looks idle.
+A fresh quota reading captured after the refusal, with every window above its
+reserve, releases it. Without a quota reader, verify that the configured model
+can run again, then restart the contributor relay explicitly. The relay never
+selects the suggested model or purchases credits.
 
 Only quota takes this path. An authorization refusal is not time-bounded, an operator has to change something, and parking the relay would hide it — a 403 still fails fast and stays available.
 

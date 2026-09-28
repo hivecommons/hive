@@ -3,7 +3,7 @@
 # src/Dockerfile: resolve via auth.docker.io token + HEAD manifest for repo
 # library/golang, tag 1.27-alpine) and update both the tag and the @sha256
 # digest together.
-FROM golang:1.27-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS builder
+FROM golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS builder
 RUN apk add --no-cache git
 WORKDIR /src
 
@@ -46,7 +46,7 @@ RUN GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || echo "unknown") && \
 # already digest-pinned; this was the last tag-only one. Digest resolved from
 # docker.io/library/alpine:3.24 (an OCI index, so it stays multi-arch — the
 # amd64/arm64 hub builds both still work).
-FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS runtime
+FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS runtime
 ARG TARGETARCH
 ARG KUBECTL_VERSION=v1.36.3
 ARG KUBECTL_SHA256_AMD64=ebbd080e7c2e275093b55915722043257eb24004363e20acb3c4d71919f88336

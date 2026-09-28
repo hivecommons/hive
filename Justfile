@@ -390,16 +390,17 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
         exit 1
       fi
       SELECTED="${HIVE_IDS[$((CHOICE-1))]}"
-      if [[ "$SELECTED" == hosted-* ]]; then
-        export HIVE_HUB="wss://${SELECTED}.hive.hivecommons.dev/contribute"
+      # Prefer the registry entry's dashboardUrl regardless of id shape: for
+      # hosted-* (e.g. LKE slot) hives, <id>.hive.hivecommons.dev serves an
+      # HTML error page on the contributor API/WS paths, while dashboardUrl
+      # serves them correctly. Fall back to the derived <id> host only when
+      # the registry has no dashboardUrl for this entry.
+      DASH_URL=$(echo "$HIVES_JSON" | jq -r --arg id "$SELECTED" '.hives[] | select(.id==$id) | .dashboardUrl' 2>/dev/null || echo "")
+      if [[ -n "$DASH_URL" && "$DASH_URL" != "null" ]]; then
+        DASH_URL=$(echo "$DASH_URL" | sed 's|^http://|ws://|;s|^https://|wss://|')
+        export HIVE_HUB="${DASH_URL}/contribute"
       else
-        DASH_URL=$(echo "$HIVES_JSON" | jq -r --arg id "$SELECTED" '.hives[] | select(.id==$id) | .dashboardUrl' 2>/dev/null || echo "")
-        if [[ -n "$DASH_URL" ]]; then
-          DASH_URL=$(echo "$DASH_URL" | sed 's|^http://|ws://|;s|^https://|wss://|')
-          export HIVE_HUB="${DASH_URL}/contribute"
-        else
-          export HIVE_HUB="wss://${SELECTED}.hive.hivecommons.dev/contribute"
-        fi
+        export HIVE_HUB="wss://${SELECTED}.hive.hivecommons.dev/contribute"
       fi
       echo ""
       echo "Selected: ${HIVE_HUB}"

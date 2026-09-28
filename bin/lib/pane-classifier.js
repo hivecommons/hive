@@ -196,8 +196,37 @@ function parseQuotaResetMs(line) {
   return total > 0 ? total : null;
 }
 
+// Codex uses a square error glyph, not "API Error:". Keep the glyph and
+// refusal at column zero; indented prompt/prose rows and fenced examples are not UI.
+// Scan fence context before taking the tail so a long quoted example stays inert.
+function codexQuotaExhaustion(text) {
+  const lines = String(text).trimEnd().split('\n');
+  let fence = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const marker = /^\s*(?:[›•]\s*)?(`{3,}|~{3,})/.exec(line);
+    if (marker) {
+      if (!fence) fence = marker[1][0];
+      else if (marker[1][0] === fence) fence = null;
+      continue;
+    }
+    // The refusal plus wrapped links and model menu outlive the 12-line API tail.
+    if (fence || i < lines.length - 24) continue;
+    if (!/^■\s+You[’']ve hit your usage limit\./i.test(line)) continue;
+    const banner = [line.trim()];
+    // Preserve wrapped reset information in the operator-facing reason without
+    // including the model-switch menu (which we must never select automatically).
+    for (let j = i + 1; j < lines.length && /^\s+\S/.test(lines[j]); j++) {
+      banner.push(lines[j].trim());
+    }
+    return { line: banner.join(' '), resetMs: null, requiresRecovery: true };
+  }
+  return null;
+}
+
 // paneQuotaExhaustion reports the quota banner in the visible tail, if any, as
-// { line, resetMs } — resetMs null when the banner states no expiry. Returns
+// { line, resetMs, requiresRecovery? } — resetMs is null without a reliable expiry;
+// requiresRecovery forbids a timed release for Codex's ambiguous clock time. Returns
 // null when the tail carries no quota banner at all, INCLUDING when it carries
 // some other unretryable error: an authorization refusal must keep taking the
 // plain fatal path.
@@ -205,9 +234,11 @@ function parseQuotaResetMs(line) {
 // Gated exactly as paneShowsUnretryableAPIError is, and for the same reason: a
 // bare substring match would let an agent that merely WRITES about quotas —
 // this repo's own sources contain every string in the list — park its relay.
-// Either agy's ⚠ line-start chrome, or Claude's "API Error:" chrome, plus the
+// Codex's ■ refusal, agy's ⚠ banner, or Claude's "API Error:" chrome, plus the
 // wording. Two independent signals, never one.
 function paneQuotaExhaustion(text) {
+  const codex = codexQuotaExhaustion(text);
+  if (codex) return codex;
   const lines = paneTail(text, TRANSIENT_API_ERROR_TAIL_LINES).split('\n');
   for (const line of lines) {
     const lower = line.toLowerCase();
@@ -256,6 +287,7 @@ function blockingPromptKey(text, backend) {
 
 
 function classifyReadiness(text, backend) {
+  if (backend === 'codex' && codexQuotaExhaustion(text)) return 'quota-exhausted';
   if (backend === 'claude') {
       // Order matters, as it does for bob and codex below: the blocked states
       // are classified FIRST, so a pane sitting on a login or trust gate is
@@ -708,6 +740,7 @@ function paneShowsTransientAPIError(text) {
 // its own ⚠ line-start chrome and is matched by CHROMELESS_QUOTA_BANNER_RE
 // above (#6541).
 function paneShowsUnretryableAPIError(text) {
+  if (codexQuotaExhaustion(text)) return true;
   const lines = paneTail(text, TRANSIENT_API_ERROR_TAIL_LINES).split('\n');
   return lines.some((line) => {
     if (CHROMELESS_QUOTA_BANNER_RE.test(line)) return true;
@@ -781,6 +814,7 @@ function paneUnknownAPIErrorLine(text) {
 }
 
 function classifyPane(text, backend, deps = {}) {
+  if (backend === 'codex' && codexQuotaExhaustion(text)) return PANE_STATE_FATAL_API_ERROR;
   let hasIdlePrompt, hasCompletionMarker, isWorking;
 
   if (backend === 'claude') {

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
@@ -36,9 +38,18 @@ const (
 	mttrBucketHours = 6
 	// mttrBackfillDays limits how far back history buckets go.
 	mttrBackfillDays = 30
+	// mttrIssueCacheTTL is intentionally longer than the collection cadence; an
+	// issue creation timestamp is immutable, so successful lookups are safe to
+	// reuse while bounding memory and avoiding stale test state.
+	mttrIssueCacheTTL = 24 * time.Hour
 	// msPerMinute converts milliseconds to minutes.
 	msPerMinute = 60000
 )
+
+type mttrIssueCacheEntry struct {
+	createdAt time.Time
+	seenAt    time.Time
+}
 
 // fixesPattern matches "Fixes #123", "Closes #456", "Resolves #789" in PR bodies.
 var fixesPattern = regexp.MustCompile(`(?i)(?:fixes|closes|resolves)\s+#(\d+)`)
@@ -100,15 +111,31 @@ func (c *Client) ComputeMTTR(ctx context.Context, primaryRepo string) (*MTTRResu
 		issueNums[ref.issueNum] = struct{}{}
 	}
 
-	// Fetch creation times for referenced issues
+	// Fetch creation times for referenced issues. Issue creation timestamps are
+	// immutable; cache hits and low-budget skips keep this dashboard-only metric
+	// from burning the App installation's last merge/hold-release quota.
 	createdAt := make(map[int]time.Time)
 	for num := range issueNums {
-		issue, _, err := c.client.Issues.Get(ctx, owner, repo, num)
-		if err != nil {
-			c.logger.Warn("failed to fetch issue for MTTR", "issue", num, "error", err)
+		if at, ok := c.cachedMTTRIssueCreatedAt(owner, repo, num); ok {
+			createdAt[num] = at
 			continue
 		}
-		createdAt[num] = issue.GetCreatedAt().Time
+		if c.shouldShedMTTRIssueFetches() {
+			if c.logger != nil {
+				c.logger.Warn("skipping MTTR issue fetch; GitHub REST budget below reserve", "issue", num, "reserve", lowValueRESTBudgetFloor)
+			}
+			continue
+		}
+		issue, _, err := c.client.Issues.Get(ctx, owner, repo, num)
+		if err != nil {
+			if c.logger != nil {
+				c.logger.Warn("failed to fetch issue for MTTR", "issue", num, "error", err)
+			}
+			continue
+		}
+		at := issue.GetCreatedAt().Time
+		createdAt[num] = at
+		c.rememberMTTRIssueCreatedAt(owner, repo, num, at)
 	}
 
 	// Compute durations
@@ -188,4 +215,51 @@ func (c *Client) ComputeMTTR(ctx context.Context, primaryRepo string) (*MTTRResu
 		UpdatedAt:      time.Now().UTC().Format(time.RFC3339),
 		History:        history,
 	}, nil
+}
+
+func mttrIssueCacheKey(owner, repo string, num int) string {
+	return strings.ToLower(owner) + "/" + strings.ToLower(repo) + "#" + strconv.Itoa(num)
+}
+
+func (c *Client) cachedMTTRIssueCreatedAt(owner, repo string, num int) (time.Time, bool) {
+	if c == nil {
+		return time.Time{}, false
+	}
+	key := mttrIssueCacheKey(owner, repo, num)
+	now := time.Now()
+	c.mttrIssueMu.Lock()
+	defer c.mttrIssueMu.Unlock()
+	ent, ok := c.mttrIssueCache[key]
+	if !ok {
+		return time.Time{}, false
+	}
+	if now.Sub(ent.seenAt) > mttrIssueCacheTTL {
+		delete(c.mttrIssueCache, key)
+		return time.Time{}, false
+	}
+	return ent.createdAt, true
+}
+
+func (c *Client) rememberMTTRIssueCreatedAt(owner, repo string, num int, createdAt time.Time) {
+	if c == nil || createdAt.IsZero() {
+		return
+	}
+	key := mttrIssueCacheKey(owner, repo, num)
+	c.mttrIssueMu.Lock()
+	defer c.mttrIssueMu.Unlock()
+	if c.mttrIssueCache == nil {
+		c.mttrIssueCache = make(map[string]mttrIssueCacheEntry)
+	}
+	c.mttrIssueCache[key] = mttrIssueCacheEntry{createdAt: createdAt, seenAt: time.Now()}
+}
+
+func (c *Client) shouldShedMTTRIssueFetches() bool {
+	if c == nil || c.client == nil || c.client.BaseURL == nil {
+		return !LowValueRESTWorkAllowed()
+	}
+	host := strings.ToLower(c.client.BaseURL.Host)
+	if strings.HasPrefix(host, "127.0.0.1") || strings.HasPrefix(host, "localhost") || strings.HasPrefix(host, "[::1]") {
+		return false
+	}
+	return !LowValueRESTWorkAllowed()
 }
