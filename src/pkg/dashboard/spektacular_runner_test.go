@@ -556,6 +556,10 @@ func TestHubExecutorSpendsStageBudgetUnderCleanupLoop(t *testing.T) {
 			if restored == nil || !restored.stageEscalatedAt.Equal(l.stageEscalatedAt) || restored.stageRetries != 1 || restored.gen != 2 {
 				t.Fatalf("restored lease = %+v, want escalated gen 2 after one retry", restored)
 			}
+			// The fresh executor must see only the reloaded registry.
+			s.SetStageExecutor(nil)
+			s.contributeHub = h2
+			t.Cleanup(func() { s.contributeHub = hub })
 			fresh := NewSpekHubExecutor(s, e.Config, "copilot", "", nil, nil)
 			if stages, err := fresh.unclaimedStages(); err != nil || len(stages) != 0 {
 				t.Fatalf("a fresh executor would relaunch the escalated stage: %+v, %v", stages, err)

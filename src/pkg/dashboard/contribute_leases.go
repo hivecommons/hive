@@ -249,6 +249,9 @@ func (h *ContributeWSHub) recordLeaseForKeyStage(identity, taskID, repo string, 
 	prev := h.leases[k]
 	triageVerdict, triageRationale := "", ""
 	var workItem worksource.WorkItemContext
+	// The stage budget spent so far travels with the stage: a taker adopting a
+	// placeholder must not refund the generations it already spent (#9143).
+	stageRetries := 0
 	removedAdmissions := map[string]*taskLease{}
 	if stage != "" {
 		runKey := runKeyOfLease(key, repo)
@@ -256,6 +259,9 @@ func (h *ContributeWSHub) recordLeaseForKeyStage(identity, taskID, repo string, 
 			if l != nil && l.identity != identity && runKeyOfLease(leaseWorkKey(l), l.repo) == runKey && l.stage == stage && h.isStagePlaceholderIdentity(l.identity) {
 				triageVerdict, triageRationale = l.triageVerdict, l.triageRationale
 				workItem = l.workItem
+				if l.stageRetries > stageRetries {
+					stageRetries = l.stageRetries
+				}
 				copyLease := *l
 				removedAdmissions[admissionKey] = &copyLease
 				delete(h.leases, admissionKey)
@@ -275,6 +281,7 @@ func (h *ContributeWSHub) recordLeaseForKeyStage(identity, taskID, repo string, 
 		triageRationale: triageRationale,
 		workItem:        workItem.Normalized(),
 		expiresAt:       now.Add(leaseTTL),
+		stageRetries:    stageRetries,
 	}
 	// #5681: a lease the hub issued must outlive the process that issued it.
 	if err := h.saveLeasesLocked(); err != nil {
@@ -353,9 +360,17 @@ func (h *ContributeWSHub) settleStageGeneration(identity, taskID string, gen uin
 		}
 		return stageSettleRetried, lease, attempts, nil
 	}
+	prevExpires := l.expiresAt
 	l.stageEscalatedAt = now
+	// The escalated lease is the parked run's only record; give it a fresh
+	// window so a generation settled after a stall is not already expired
+	// (saveLeasesLocked skips it, pruneExpiredLeases drops it). From here
+	// keepPendingStageLeasesAlive keeps it.
+	if exp := now.Add(leaseTTL); l.expiresAt.Before(exp) {
+		l.expiresAt = exp
+	}
 	if err := h.saveLeasesLocked(); err != nil {
-		l.stageEscalatedAt = time.Time{}
+		l.stageEscalatedAt, l.expiresAt = time.Time{}, prevExpires
 		h.leaseMu.Unlock()
 		return stageSettleNone, taskLease{}, attempts, fmt.Errorf("persisting stage escalation for %s: %w", taskID, err)
 	}
@@ -1424,6 +1439,7 @@ func (h *ContributeWSHub) reofferOrphanedStageLocked(l taskLease, now time.Time)
 		expiresAt:       now.Add(leaseTTL),
 		mcpTokenID:      l.mcpTokenID,
 		mcpTokenHash:    l.mcpTokenHash,
+		stageRetries:    l.stageRetries,
 	}
 	h.logger.Info("[contribute-ws] run stage returned to offer pool after relay lease expired",
 		"key", l.key, "stage", l.stage, "gen", l.gen, "identity", l.identity)

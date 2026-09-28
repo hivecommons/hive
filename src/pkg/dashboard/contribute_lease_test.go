@@ -16,6 +16,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/hivecommons/hive/pkg/agentaudit"
 	"github.com/hivecommons/hive/pkg/celtrigger"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/timeline"
 )
@@ -908,5 +909,47 @@ func TestLeaseStageReset_PersistFailureSurfacesAndRollsBack(t *testing.T) {
 		if e.Action == agentaudit.AuditLeaseStageReset {
 			t.Fatalf("failed reset was audited as if it happened: %+v", e)
 		}
+	}
+}
+
+// A taker adopting a stage placeholder inherits the budget the stage already
+// spent (#9143): claiming an admission lease that was retried once must not
+// refund that generation.
+func TestRecordLeaseForKeyStage_AdoptingPlaceholderKeepsStageBudget(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	now := time.Now()
+	const key = "myorg/repo1!myorg/repo1#9143:spec"
+	if err := hub.recordLeaseForKeyStage(runAdmissionIdentity, "admit", "myorg/repo1", 9143, key, "triage", StageSpec, 1, now); err != nil {
+		t.Fatal(err)
+	}
+	retried, err := hub.retryLeaseStage(runAdmissionIdentity, "admit", 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := hub.recordLeaseForKeyStage(config.DefaultSpektacularHubExecutorIdentity, "run-hub-9143", "myorg/repo1", 9143, key, "trusted", StageSpec, retried.gen, now); err != nil {
+		t.Fatal(err)
+	}
+	outcome, _, attempts, err := hub.settleStageGeneration(config.DefaultSpektacularHubExecutorIdentity, "run-hub-9143", retried.gen, config.DefaultMaxStageRetries, now)
+	if err != nil || outcome != stageSettleEscalated || attempts != 2 {
+		t.Fatalf("settle after adopting a retried placeholder = %v attempts %d err %v, want escalation on attempt 2", outcome, attempts, err)
+	}
+}
+
+// An escalation settled after a stall long enough to lapse the lease must
+// leave the parked run leased: an expired lease is skipped by the keepalive
+// and dropped by the prune, taking the run with it.
+func TestSettleStageGeneration_EscalationSurvivesStalledLease(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	start := time.Now()
+	if err := hub.recordLeaseForKeyStage(config.DefaultSpektacularHubExecutorIdentity, "run-hub-1", "myorg/repo1", 1, "myorg/repo1!myorg/repo1#1:plan", "trusted", StagePlan, 7, start); err != nil {
+		t.Fatal(err)
+	}
+	stalled := start.Add(leaseTTL + time.Minute)
+	if outcome, _, _, err := hub.settleStageGeneration(config.DefaultSpektacularHubExecutorIdentity, "run-hub-1", 7, 1, stalled); err != nil || outcome != stageSettleEscalated {
+		t.Fatalf("settle = %v, %v", outcome, err)
+	}
+	hub.tickLeaseLifecycle(stalled)
+	if !hub.stageLeaseEscalated(config.DefaultSpektacularHubExecutorIdentity, "run-hub-1") {
+		t.Fatal("escalated lease was pruned by the cleanup tick after a stall")
 	}
 }
