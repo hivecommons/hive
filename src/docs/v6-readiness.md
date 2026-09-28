@@ -83,6 +83,18 @@ four inbound mechanisms positively.
 
 ## 3. Live exercise (per surface)
 
+**Sequencing note.** Before scheduling a live-exercise attempt for a given
+surface below, do a quick pass of that surface's open bug list and either fix
+or explicitly accept (with a note in this row) any known bug that would
+visibly break the specific exercise scenario described (for example, a
+socket-lifecycle disconnect bug would directly break a "reconnect/backoff
+observed" scenario). Conformance tests only prove guard-invariant wiring —
+they do not exercise this kind of functional correctness — so bugs on an
+otherwise-conformant surface are invisible to the checkmarks above and will
+surface only when the live exercise is attempted, burning the attempt instead
+of producing new readiness evidence
+([#9245](https://github.com/hivecommons/hive/issues/9245)).
+
 Checked only with linked evidence of one real round-trip against a live hive —
 not a unit test:
 
