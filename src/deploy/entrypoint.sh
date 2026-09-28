@@ -1206,11 +1206,18 @@ if [ "$(id -u)" = "0" ]; then
   # an active CLI. Every arm is `|| true`: `chmod -R` over a live tree returns
   # non-zero whenever an entry vanishes mid-walk, and that must cost one sweep,
   # never the guard.
+  #
+  # chmod and chown run PER ENTRY, in one `find -exec`, not as three separate
+  # tree-wide passes (hivecommons/hive#9226). Three passes each walk the whole
+  # tree in turn, so an entry created after the chmod pass has already gone by
+  # but before the chown pass reaches it is picked up ONLY by chown: it ends up
+  # owned by dev:node while still mode 0600 from its creating agent, which
+  # locks that agent out of its own file until the next cycle. Doing both
+  # operations back-to-back for each entry closes that window: an entry is
+  # never observed dev-owned while still owner-only.
   hive_fix_tree() {
     [ -d "$1" ] || return 0
-    chmod -R g+rwX "$1" 2>/dev/null || true
-    find "$1" -type d -exec chmod g+s {} + 2>/dev/null || true
-    chown -R dev:node "$1" 2>/dev/null || true
+    find "$1" -exec sh -c 'for f; do chmod g+rwX "$f" 2>/dev/null || true; [ -d "$f" ] && { chmod g+s "$f" 2>/dev/null || true; }; chown dev:node "$f" 2>/dev/null || true; done' _ {} + 2>/dev/null || true
     return 0
   }
 
@@ -1232,12 +1239,19 @@ if [ "$(id -u)" = "0" ]; then
   # nothing in coverage: same spoke, same moment, the bounded pass took 6s and
   # found 2 entries to fix. hive_fix_full_cycle still runs the unbounded sweep
   # hourly as a backstop for anything a missed window left behind.
+  #
+  # As in hive_fix_tree, chmod and chown run PER ENTRY in one `find -exec`, not
+  # as three separate `-mmin` passes (hivecommons/hive#9226). Three separate
+  # tree-wide passes each re-evaluate the `-mmin` window at a different moment,
+  # so an entry can fall inside the window for the chown pass while having been
+  # missed by the chmod pass moments earlier — it ends up dev:node-owned but
+  # still mode 0600 from its creator, locking that agent out of its own file
+  # until the next cycle repairs it. Coupling both operations for the same
+  # entry closes that window.
   hive_fix_tree_recent() {
     [ -d "$1" ] || return 0
     _mins="${2:-10}"
-    find "$1" -mmin -"$_mins" -exec chmod g+rwX {} + 2>/dev/null || true
-    find "$1" -mmin -"$_mins" -type d -exec chmod g+s {} + 2>/dev/null || true
-    find "$1" -mmin -"$_mins" -exec chown dev:node {} + 2>/dev/null || true
+    find "$1" -mmin -"$_mins" -exec sh -c 'for f; do chmod g+rwX "$f" 2>/dev/null || true; [ -d "$f" ] && { chmod g+s "$f" 2>/dev/null || true; }; chown dev:node "$f" 2>/dev/null || true; done' _ {} + 2>/dev/null || true
     return 0
   }
 

@@ -404,6 +404,49 @@ else
   bad "the bounded repair returns 0 on an absent path" "it must not end the guard"
 fi
 
+# ── 11. No inter-pass chown race (hivecommons/hive#9226) ───────────────────
+# #9226: three separate tree-wide passes (chmod, chmod g+s, chown) each walk
+# the whole tree in turn. An entry created after the chmod pass has already
+# gone by, but before the chown pass reaches it, is picked up ONLY by chown:
+# it ends up owned by dev:node while still mode 0600 from its creating agent —
+# EACCES for that agent's own session file until the next cycle. The fix
+# couples chmod and chown for the SAME entry in one `find -exec`, so this must
+# never regress back to separate tree-wide chmod/chown passes.
+for fn_name in hive_fix_tree hive_fix_tree_recent; do
+  FN_BODY="$(awk -v fn="  ${fn_name}() {" '$0==fn{f=1} f{print} /^  \}$/{if(f)exit}' "$GUARDS")"
+  CHOWN_LINES="$(printf '%s\n' "$FN_BODY" | grep -c 'chown ')"
+  if [ "$CHOWN_LINES" -eq 1 ] && printf '%s' "$FN_BODY" | grep -q "chown dev:node .*done' _ {} +\|chown dev:node \"\$f\""; then
+    ok "$fn_name couples chmod and chown for the same entry (single chown site)"
+  else
+    bad "$fn_name couples chmod and chown for the same entry" \
+        "expected exactly one chown, run per-entry alongside chmod: $FN_BODY"
+  fi
+  if printf '%s' "$FN_BODY" | grep -qE '^\s*chown -R|^\s*find [^|]*-exec chown'; then
+    bad "$fn_name has no standalone tree-wide chown pass" \
+        "a separate chmod-then-chown sweep reintroduces the #9226 race: $FN_BODY"
+  else
+    ok "$fn_name has no standalone tree-wide chown pass"
+  fi
+done
+
+# Functional: an entry that only matches the chown-worthy window (i.e. was
+# never touched by a chmod-only pass) must still end up group-writable, not
+# just chowned. This is the exact state #9226 describes: dev-owned, 0600.
+RACE_TREE="$WORK/race-tree"
+mkdir -p "$RACE_TREE/session-race"
+RACEFILE="$RACE_TREE/session-race/events.jsonl"
+printf 'x\n' > "$RACEFILE"
+chmod 0600 "$RACEFILE"
+sh -c 'set -e; . "$1"; hive_fix_tree_recent "$2" 10' sh "$WORK/guards.local.sh" "$RACE_TREE" \
+  >/dev/null 2>&1
+race_mode="$(stat -c '%a' "$RACEFILE" 2>/dev/null || stat -f '%Lp' "$RACEFILE")"
+race_group_digit="$(printf '%s' "$race_mode" | tail -c 2 | head -c 1)"
+case "$race_group_digit" in
+  2|3|6|7) ok "a 0600 entry is reopened group-writable in the same pass that would chown it (mode $race_mode)" ;;
+  *) bad "a 0600 entry is reopened group-writable in the same pass that would chown it" \
+         "mode is $race_mode — this is the dev-owned-0600 lockout from #9226" ;;
+esac
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1
