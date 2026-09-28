@@ -354,7 +354,7 @@ func (s *HubServer) handleSlackMessageUser(w http.ResponseWriter, r *http.Reques
 	}
 	actor := s.getAuthUser(r)
 	username := r.PathValue("username")
-	if !isHubAdmin(actor) && !strings.EqualFold(actor, username) {
+	if !isHubAdmin(actor) && !canonicalEqual(actor, username) {
 		http.Error(w, `{"error":"only an admin can message another user"}`, http.StatusForbidden)
 		return
 	}

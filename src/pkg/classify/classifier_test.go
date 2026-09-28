@@ -1,6 +1,7 @@
 package classify
 
 import (
+	"context"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/github"
@@ -376,7 +377,7 @@ func TestClassifyAll_MutatesSlice(t *testing.T) {
 		makeIssue("Update error message wording"),
 	}
 
-	result := ClassifyAll(issues)
+	result := ClassifyAll(context.Background(), issues)
 
 	// ClassifyAll returns the same (mutated) slice. The underlying array
 	// might differ due to slice semantics, so the mutation is verified by
@@ -412,7 +413,7 @@ func TestClassifyAll_LaneFieldSet(t *testing.T) {
 		makeIssue("Handle nil pointer in parser"),
 	}
 
-	result := ClassifyAll(issues)
+	result := ClassifyAll(context.Background(), issues)
 
 	wantLanes := []string{
 		string(LaneArchitect),
@@ -429,7 +430,7 @@ func TestClassifyAll_LaneFieldSet(t *testing.T) {
 }
 
 func TestClassifyAll_EmptySlice(t *testing.T) {
-	result := ClassifyAll([]github.Issue{})
+	result := ClassifyAll(context.Background(), []github.Issue{})
 	if len(result) != 0 {
 		t.Errorf("want empty result, got len=%d", len(result))
 	}
@@ -439,7 +440,7 @@ func TestClassifyAll_OriginalSliceIsMutated(t *testing.T) {
 	issues := []github.Issue{
 		makeIssue("Fix typo"),
 	}
-	ClassifyAll(issues)
+	ClassifyAll(context.Background(), issues)
 	// ClassifyAll mutates via index range, so issues[0] itself should be updated
 	if issues[0].ComplexityTier != string(TierSimple) {
 		t.Errorf("original slice not mutated: want %q, got %q", TierSimple, issues[0].ComplexityTier)

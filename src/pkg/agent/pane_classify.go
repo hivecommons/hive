@@ -420,7 +420,48 @@ func paneShowsBobAPIKeyRejected(lines []string) bool {
 	return false
 }
 
+// startupRateLimitPatterns identify the Copilot CLI's start-up banner for a
+// credential it could not VALIDATE because GitHub rate-limited the validation
+// call itself:
+//
+//	Authentication token found but could not be validated.
+//	GitHub returned: API rate limit exceeded for user ID 407614. ...
+//	Check your network connection and credentials, then restart Copilot. Use /login to re-authenticate.
+//
+// The token is fine; the REST budget of the user it belongs to is spent. The
+// only remedy is to wait for the window to reset and start again.
+var startupRateLimitPatterns = []string{
+	"api rate limit exceeded",
+	"secondary rate limit",
+}
+
+// paneShowsStartupRateLimit reports whether the pane carries the CLI's
+// rate-limited credential-validation banner (see startupRateLimitPatterns).
+// Matched at pane level, not per line, because the "/login" advice the banner
+// ends with sits on a DIFFERENT line from the rate-limit text.
+func paneShowsStartupRateLimit(lines []string) bool {
+	for _, line := range lines {
+		lower := strings.ToLower(line)
+		for _, pat := range startupRateLimitPatterns {
+			if strings.Contains(lower, pat) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func paneShowsLoginPrompt(lines []string) bool {
+	// A rate-limited validation banner ends with "Use /login to
+	// re-authenticate", but /login is not the remedy: the token was never
+	// rejected, GitHub just refused to CHECK it. Reading it as a login prompt
+	// spent the whole token-restart budget inside the same rate-limit window
+	// (three restarts, ~60s apart, each re-hitting the exhausted quota) and
+	// latched the give-up flag, leaving healthy agents parked on the banner
+	// for the rest of the day. The poller handles this state on its own lane.
+	if paneShowsStartupRateLimit(lines) {
+		return false
+	}
 	for _, line := range lines {
 		// An upstream authorization failure is not a login prompt, whatever
 		// the CLI decorated it with.

@@ -31,7 +31,7 @@ func TestGiteaSourceListFiltersAndMutates(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/repos/acme/repo/issues/1/labels":
 			assertJSONField(t, r, "labels", []any{"design"})
 			w.WriteHeader(http.StatusCreated)
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/repo/labels":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/repo/issues/1/labels":
 			_ = json.NewEncoder(w).Encode([]map[string]any{{"id": 44, "name": "design"}})
 		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/repos/acme/repo/issues/1/labels/44":
 			w.WriteHeader(http.StatusNoContent)

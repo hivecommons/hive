@@ -99,13 +99,13 @@ type MergeResponse struct {
 type MergeRequestAuthorizer func(agent string, fileUID int, repo string, number int, expectSHA string) error
 
 // MergeReEngageFunc is Fix #2's re-engagement hook (see Client.mergeReEngage).
-// Called when a merge attempt fails terminally because a REQUIRED CHECK failed
-// (classified from the merge error). It should surface the PR into the fix-loop
-// work set (CI_FAILING) and record the dispatch under a loop-safety cap keyed on
-// the PR's current red head SHA. It returns true when a fix was (re)dispatched
-// and false when the cap for this red SHA is exhausted — the watcher logs
-// accordingly. The repo is passed in whatever form the request used; the hook
-// normalizes. GENERIC: the caller keys only off check state + staleness.
+// Called when a merge attempt fails terminally because a code change can
+// plausibly unblock it: a required check failed, or GitHub reports a merge
+// conflict. It should surface the PR into the fix-loop work set and record the
+// dispatch under a loop-safety cap keyed on the PR's current red/conflicted head
+// SHA. It returns true when a fix was (re)dispatched and false when the cap is
+// exhausted — the watcher logs accordingly. The repo is passed in whatever form
+// the request used; the hook normalizes.
 type MergeReEngageFunc func(repo string, number int) bool
 
 // SetMergeReEngageHook installs the Fix #2 re-engagement hook. Safe to call
@@ -142,6 +142,14 @@ func isRequiredCheckMergeBlocker(errMsg string) bool {
 		}
 	}
 	return false
+}
+
+func isConflictMergeBlocker(errMsg string) bool {
+	m := strings.ToLower(errMsg)
+	return strings.Contains(m, "merge conflict") ||
+		strings.Contains(m, "not mergeable") ||
+		strings.Contains(m, "mergeable state: dirty") ||
+		strings.Contains(m, "cannot be automatically merged")
 }
 
 // StartMergeRequestWatcher runs a loop that merges PRs for request files dropped
@@ -286,11 +294,6 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 		return
 	}
 
-	if err := c.verifyMergeRequestBaseProtected(ctx, req.Repo, req.Number); err != nil {
-		c.denyMergeRequest(path, req, err.Error(), nowFn)
-		return
-	}
-
 	// Optional branch-update-first (resolves "behind main"). A failure here is
 	// not fatal — the merge attempt below will surface the real blocker.
 	if req.UpdateBranch {
@@ -345,6 +348,7 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 	c.logger.Info("merge-request watcher: PR merged by App bot",
 		slog.String("repo", req.Repo), slog.Int("number", req.Number),
 		slog.String("sha", res.SHA), slog.String("agent", req.Agent))
+	c.clearMergeFailureAlertsForRepo(req.Repo)
 }
 
 // recordMergeFailure writes the failed attempt's result and applies the retry
@@ -353,6 +357,7 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 // and re-engaged exactly like a branch-protection refusal would be.
 func (c *Client) recordMergeFailure(path string, req MergeRequest, attempts int, errMsg string, nowFn func() time.Time) {
 	c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts, OK: false, Error: errMsg, At: nowFn().UTC().Format(time.RFC3339)})
+	c.raiseMergeFailureAlert(req.Repo, errMsg)
 	if attempts >= mergeRequestMaxAttempts {
 		// Terminal: a PR that still won't merge after N tries is blocked by
 		// something a retry can't fix. Fix #2: classify WHY. If the blocker
@@ -362,18 +367,22 @@ func (c *Client) recordMergeFailure(path string, req MergeRequest, attempts int,
 		// genuinely-unfixable blocker (true conflict / permission) keeps the
 		// quarantine-and-forget path. The hook's own cap prevents an infinite
 		// re-engagement loop on a permanently-red PR.
-		if c.mergeReEngage != nil && isRequiredCheckMergeBlocker(errMsg) {
+		if c.mergeReEngage != nil && (isRequiredCheckMergeBlocker(errMsg) || isConflictMergeBlocker(errMsg)) {
 			reEngaged := c.mergeReEngage(req.Repo, req.Number)
 			// Quarantine the MERGE request either way (the merge cannot
 			// succeed until the check goes green), but record that the fix
 			// loop owns the PR now rather than that it was abandoned.
 			_ = os.Rename(path, path+".exhausted")
+			blocker := "failing required check"
+			if isConflictMergeBlocker(errMsg) {
+				blocker = "merge conflict"
+			}
 			if reEngaged {
-				c.logger.Info("merge-request watcher: merge blocked by failing required check — re-engaged fix loop",
+				c.logger.Info("merge-request watcher: merge blocked by "+blocker+" — re-engaged fix loop",
 					slog.String("repo", req.Repo), slog.Int("number", req.Number),
 					slog.Int("attempts", attempts), slog.String("error", errMsg))
 			} else {
-				c.logger.Warn("merge-request watcher: merge blocked by failing required check — re-engagement cap reached, escalation path owns it",
+				c.logger.Warn("merge-request watcher: merge blocked by "+blocker+" — re-engagement cap reached, escalation path owns it",
 					slog.String("repo", req.Repo), slog.Int("number", req.Number),
 					slog.Int("attempts", attempts), slog.String("error", errMsg))
 			}

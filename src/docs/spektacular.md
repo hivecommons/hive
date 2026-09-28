@@ -67,10 +67,36 @@ Sync posts to `https://api.github.com/graphql` with the hive's `GITHUB_TOKEN`.
 own bearer token.
 
 Maintainers can invite Spektacular or another configured hive agent into a Jam
-thread. Agent participation is deliberately review-gated: the attributed agent
-reply is posted in-thread and any proposed spec text is created as an open
-suggestion, but a permitted human maintainer must still accept it before the
-spec revision changes.
+thread (`POST /api/campaigns/{id}/jam/agents`, handler
+`handleCampaignJamAgentsPost` in `pkg/dashboard/api_campaigns_jam_agents.go`).
+The invite makes one model call and records only what the model returned:
+
+- **Endpoint:** the hive reviewer endpoint (`governor.trajectory.endpoint`,
+  falling back to the `governor.litellm` endpoint and key) — the same
+  OpenAI-compatible `/v1/chat/completions` route the intent-alignment and
+  ioscan classifier lanes use. With no endpoint or model resolved the invite
+  fails with `503` and nothing is recorded.
+- **Model:** the invited agent's configured `agents.<name>.model`, falling back
+  to the reviewer model (`governor.trajectory.model`, then
+  `governor.litellm.default_model`). `spektacular` is not an `agents:` entry,
+  so it always uses the reviewer model. The reply is attributed to exactly the
+  model that was called. The `spektacular` binary is not run for Jam replies;
+  the name selects the persona in the prompt.
+- **Context:** the thread's section, title and last 20 comments, the current
+  spec content, and the maintainer's optional `prompt`, each bounded in size.
+  When `ioscan` is enabled every piece passes the input scanner: blocked text
+  is redacted before it reaches the model, and a critical injection at a
+  fail-closed ACMM level rejects the invite with `422`.
+- **Output:** the model must return a JSON object with `reply` and
+  `proposed_text`; invalid output is re-prompted up to three times, then the
+  invite fails with `502` and nothing is recorded.
+
+Callers cannot supply `reply`, `proposed_text` or `model` — the endpoint rejects
+them with `400`, so human-written text can never be recorded under
+agent/model attribution. Agent participation stays review-gated: the reply is
+posted in-thread, proposed spec text (when the model offers any) becomes an
+open suggestion, and a permitted human maintainer must still accept it before
+the spec revision changes.
 
 ## Enabling it
 
@@ -165,8 +191,17 @@ same campaign path. The Spec checkpoint is the design-approval gate: when
 key), a final Spec parks the lease at `stage=spec`, surfaces
 `waiting_on=human` / `waiting_reason=checkpoint_enabled` in `/api/runs`, and
 requires an owner to approve or reject the `/api/runs/{key}/checkpoint` payload
-before Plan can start. Disabling the checkpoint records an `auto` approval and
-advances to Plan without a human. A final Plan import materializes child beads
+before Plan can start. Approving moves the reviewed spec generation to Plan
+first, then marks the design approved and applies the approved label/status on
+the work item. A failed label or status write does not undo or fail the
+approval: it is logged, audited as `design_signal_failed`, and recorded on the
+run's timeline. The same checkpoint holds runs admitted without a design epic
+(a triage `spec` verdict, `POST /api/runs/spec` outside design mode, nous or
+inception): their parked Spec receipt surfaces the same `waiting_on=human`
+projection, approval advances the lease to Plan and records a `stage_approval`
+timeline event, and rejection re-mints the Spec generation so the stage is
+offered again. Disabling the checkpoint records an `auto` approval, marks the
+design approved, and advances to Plan without a human. A final Plan import materializes child beads
 under the epic using the existing planning decompose path. For Spek runs,
 `runs.checkpoints.<stage>` governs the interactive checkpoints first: the absent
 key still means hold. The ACMM pack's `plan_auto_approve` applies to

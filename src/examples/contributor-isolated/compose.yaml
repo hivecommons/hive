@@ -1,0 +1,43 @@
+# Published-image companion to src/compose-contributor.yaml.
+services:
+  contributor:
+    image: ${HIVE_CONTRIBUTOR_IMAGE:-ghcr.io/hivecommons/hive-contributor:latest}
+    restart: unless-stopped
+    init: true
+    user: "1000:1000"
+    working_dir: /home/dev
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: ${HIVE_CONTAINER_MEMORY:-4g}
+    memswap_limit: ${HIVE_CONTAINER_MEMORY:-4g}
+    cpus: ${HIVE_CONTAINER_CPUS:-2}
+    volumes:
+      - contributor-home:/home/dev
+    environment:
+      HOME: /home/dev
+      HIVE_HUB: ${HIVE_HUB:-wss://hive.hivecommons.dev/contribute}
+      AGENT_BACKEND: ${AGENT_BACKEND:-codex}
+      AGENT_MODEL: ${AGENT_MODEL:-}
+      AGENT_REASONING_EFFORT: ${AGENT_REASONING_EFFORT:-}
+      CONTRIBUTOR_MODE: headless
+      HIVE_CODEX_SANDBOX_MODE: danger-full-access
+      HIVE_CONTRIBUTOR_NICE: ${HIVE_CONTRIBUTOR_NICE:-10}
+    # $$ defers expansion to the container. Never forward host GH_TOKEN or
+    # provider credentials: use only the logins saved in contributor-home.
+    entrypoint:
+      - /bin/bash
+      - -euc
+      - |
+        umask 077
+        case "$${HIVE_CONTRIBUTOR_NICE}" in
+          [0-9]|1[0-9]) ;;
+          *) echo 'HIVE_CONTRIBUTOR_NICE must be an integer from 0 to 19' >&2; exit 1 ;;
+        esac
+        if ! GH_TOKEN=$$(/usr/bin/gh auth token --hostname github.com) || [ -z "$$GH_TOKEN" ]; then
+          echo 'Sign in first using the documented one-off GitHub login command.' >&2
+          exit 1
+        fi
+        export GH_TOKEN
+        exec nice -n "$${HIVE_CONTRIBUTOR_NICE}" /usr/local/bin/contributor-agent.sh
+volumes:
+  contributor-home:

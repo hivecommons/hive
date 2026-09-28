@@ -185,7 +185,10 @@ func TestSlackBroadcastIsAdminOnlyAtTheRoute(t *testing.T) {
 
 // TestSlackMessageUserAuthorization locks the single-user rule: an admin may
 // message anyone, a user may message only themselves. Without the self-only
-// floor the hub becomes a spam relay between its own users.
+// floor the hub becomes a spam relay between its own users. "Themselves" is
+// canonicalEqual, not a flat case-fold (#9139): a GitHub login folds, but an
+// OIDC sub is case-sensitive, so `custom:AbC` is a different user from
+// `custom:abc`.
 func TestSlackMessageUserAuthorization(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
@@ -194,6 +197,9 @@ func TestSlackMessageUserAuthorization(t *testing.T) {
 		{GitHubUsername: hubAdminUsername, SlackID: "U00ADMIN"},
 		{GitHubUsername: "alice", SlackID: "U01ALICE"},
 		{GitHubUsername: "mallory", SlackID: "U09MAL"},
+		// Two DISTINCT registered OIDC users whose subs differ only by case.
+		{GitHubUsername: "custom:abc", CanonicalID: "custom:abc", Provider: "custom", SlackID: "U03SUB"},
+		{GitHubUsername: "custom:AbC", CanonicalID: "custom:AbC", Provider: "custom", SlackID: "U04SUB"},
 	} {
 		user := u
 		if err := saveSaaSUser(&user); err != nil {
@@ -217,6 +223,16 @@ func TestSlackMessageUserAuthorization(t *testing.T) {
 		map[string]string{"username": "alice"}, s.handleSlackMessageUser)
 	if rec.Code != http.StatusOK {
 		t.Errorf("an admin messaging any user = %d, want 200 (%q)", rec.Code, rec.Body.String())
+	}
+	rec = postSlack(t, "custom:AbC", body, "/api/saas/slack/user/custom:abc",
+		map[string]string{"username": "custom:abc"}, s.handleSlackMessageUser)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("a case-variant OIDC sub messaging ANOTHER user = %d, want 403 — custom:AbC is not custom:abc (%q)", rec.Code, rec.Body.String())
+	}
+	rec = postSlack(t, "custom:abc", body, "/api/saas/slack/user/custom:abc",
+		map[string]string{"username": "custom:abc"}, s.handleSlackMessageUser)
+	if rec.Code != http.StatusOK {
+		t.Errorf("an OIDC user messaging THEMSELVES = %d, want 200 (%q)", rec.Code, rec.Body.String())
 	}
 }
 

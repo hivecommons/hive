@@ -761,7 +761,7 @@ func (s *Server) patternExists(ctx context.Context, owner, repo, path string, di
 	if ghClient == nil {
 		return false
 	}
-	_, _, _, err := ghClient.Repositories.GetContents(ctx, owner, repo, cleanPath, nil)
+	_, _, _, err := ghClient.Repositories.GetContents(github.WithRESTCaller(ctx, "hive:acmm_pattern_exists"), owner, repo, cleanPath, nil)
 	return err == nil
 }
 

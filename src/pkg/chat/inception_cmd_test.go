@@ -12,8 +12,8 @@ import (
 
 func TestCmdInceptionStateReportsPhaseAndQuestions(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer dash-token" {
-			t.Fatalf("missing dashboard bearer auth: %q", r.Header.Get("Authorization"))
+		if r.Header.Get("X-Hive-Internal") != "dash-token" {
+			t.Fatalf("missing dashboard internal auth: %q", r.Header.Get("X-Hive-Internal"))
 		}
 		if r.URL.Path != "/api/inception/state" {
 			t.Fatalf("path = %q, want /api/inception/state", r.URL.Path)
@@ -48,8 +48,8 @@ func TestCmdInceptionStateReportsPhaseAndQuestions(t *testing.T) {
 func TestCmdInceptionAnswerPostsQuestionID(t *testing.T) {
 	var answerBody map[string]map[string]string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer dash-token" {
-			t.Fatalf("missing dashboard bearer auth: %q", r.Header.Get("Authorization"))
+		if r.Header.Get("X-Hive-Internal") != "dash-token" {
+			t.Fatalf("missing dashboard internal auth: %q", r.Header.Get("X-Hive-Internal"))
 		}
 		switch r.URL.Path {
 		case "/api/inception/state":

@@ -30,6 +30,19 @@ func newTestBot(apiBase string) *Bot {
 	return b
 }
 
+// consumeOnce dials one socket and serves it until it ends.
+func consumeOnce(ctx context.Context, b *Bot, queue chan<- chat.Message) error {
+	conn, err := b.dialSocket(ctx)
+	if err != nil {
+		return err
+	}
+	next, err := b.serveSocket(ctx, conn, queue)
+	if next != nil {
+		_ = next.Close()
+	}
+	return err
+}
+
 func TestSendPostMessageSuccessAndMrkdwnSplit(t *testing.T) {
 	var posts []map[string]string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -362,7 +375,7 @@ func TestConsumeSocketIgnoresMalformedAndFiltersThenMarksBot(t *testing.T) {
 
 	b := newTestBot(ts.URL)
 	queue := make(chan chat.Message, 10)
-	_, err := b.consumeSocket(context.Background(), queue)
+	err := consumeOnce(context.Background(), b, queue)
 	var delivered []chat.Message
 	for len(queue) > 0 {
 		delivered = append(delivered, <-queue)
@@ -554,6 +567,7 @@ func TestListenBackoffResetsAfterConnectedSession(t *testing.T) {
 	b := newTestBot(ts.URL)
 	b.reconnectBase = 20 * time.Millisecond
 	b.reconnectMax = 200 * time.Millisecond
+	b.jitter = func(d time.Duration) time.Duration { return d }
 	b.sleep = func(d time.Duration) {
 		mu.Lock()
 		delays = append(delays, d)
@@ -567,7 +581,9 @@ func TestListenBackoffResetsAfterConnectedSession(t *testing.T) {
 		close(done)
 	}()
 	deadline := time.After(2 * time.Second)
-	for calls.Load() < 4 {
+	// Call 4 is the refresh handoff dial (fails); call 5 follows the
+	// post-session sleep, so all three asserted delays are recorded by then.
+	for calls.Load() < 5 {
 		select {
 		case <-deadline:
 			t.Fatalf("timed out waiting for reconnects; calls=%d", calls.Load())
@@ -641,7 +657,7 @@ func TestConsumeSocketAckFailureSkipsDelivery(t *testing.T) {
 
 	b := newTestBot(ts.URL)
 	queue := make(chan chat.Message, 10)
-	_, _ = b.consumeSocket(context.Background(), queue)
+	_ = consumeOnce(context.Background(), b, queue)
 	if len(queue) != 0 {
 		t.Fatalf("delivered = %d, want 0 when ack fails", len(queue))
 	}

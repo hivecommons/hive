@@ -285,12 +285,16 @@ func (f *giteaForge) AddLabels(ctx context.Context, repo string, number int, lab
 }
 
 // RemoveLabel removes a single label via
-// DELETE /repos/{owner}/{repo}/issues/{index}/labels/{label}. Modern
-// Gitea/Forgejo accept the label name in the path. A 404 (label not present) is
-// treated as success to satisfy the interface's idempotent-remove contract.
+// DELETE /repos/{owner}/{repo}/issues/{index}/labels/{id}. The id is resolved
+// from the labels currently ON the issue (GET .../issues/{index}/labels), not
+// from the repo's label list: that list omits organisation-level labels, so an
+// org-defined hold label was never found and SetHold(false) returned nil while
+// the PR stayed held (#9180). A label that is not on the issue is already
+// removed, which satisfies the interface's idempotent-remove contract; a 404
+// on the DELETE (removed concurrently) is treated the same way.
 func (f *giteaForge) RemoveLabel(ctx context.Context, repo string, number int, label string) error {
 	owner, name := f.ownerRepo(repo)
-	labelID, err := f.labelID(ctx, owner, name, label)
+	labelID, err := f.issueLabelID(ctx, owner, name, number, label)
 	if err != nil {
 		return err
 	}
@@ -306,24 +310,26 @@ func (f *giteaForge) RemoveLabel(ctx context.Context, repo string, number int, l
 	return nil
 }
 
-func (f *giteaForge) labelID(ctx context.Context, owner, name, label string) (int64, error) {
-	endpoint := fmt.Sprintf("/repos/%s/%s/labels", url.PathEscape(owner), url.PathEscape(name))
-	q := url.Values{}
-	q.Set("limit", strconv.Itoa(giteaPerPage))
-	for page := 1; page <= giteaMaxPages; page++ {
-		q.Set("page", strconv.Itoa(page))
-		var labels []gtLabel
-		if err := f.getJSON(ctx, endpoint, q, &labels); err != nil {
-			return 0, fmt.Errorf("gitea: list labels for %s/%s: %w", owner, name, err)
+// issueLabelID returns the id of the label named label attached to issue/PR
+// number, or 0 when it is not attached (already removed — idempotent success).
+// Gitea returns the issue's full label set (repo and org labels alike)
+// unpaginated. A label that IS attached but carries no usable id cannot be
+// deleted, so that is an explicit error rather than a silent nil that would
+// leave e.g. a hold label in place (#9180).
+func (f *giteaForge) issueLabelID(ctx context.Context, owner, name string, number int, label string) (int64, error) {
+	endpoint := fmt.Sprintf("/repos/%s/%s/issues/%d/labels", url.PathEscape(owner), url.PathEscape(name), number)
+	var labels []gtLabel
+	if err := f.getJSON(ctx, endpoint, nil, &labels); err != nil {
+		return 0, fmt.Errorf("gitea: list labels on %s/%s#%d: %w", owner, name, number, err)
+	}
+	for _, candidate := range labels {
+		if candidate.Name != label {
+			continue
 		}
-		for _, candidate := range labels {
-			if candidate.ID > 0 && candidate.Name == label {
-				return candidate.ID, nil
-			}
+		if candidate.ID <= 0 {
+			return 0, fmt.Errorf("gitea: label %q on %s/%s#%d has no resolvable id (%d)", label, owner, name, number, candidate.ID)
 		}
-		if len(labels) < giteaPerPage {
-			break
-		}
+		return candidate.ID, nil
 	}
 	return 0, nil
 }

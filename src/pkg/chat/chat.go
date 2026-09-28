@@ -123,7 +123,10 @@ type Config struct {
 	MessageLimit      int
 	SendInterval      time.Duration
 	HeartbeatInterval time.Duration
-	PersonaStore      PersonaStore
+	// PersonaStore holds each author's persona. cmd/hive passes a view of the
+	// shared durable FilePersonaStore; nil falls back to an in-memory map that
+	// is lost on restart (hivecommons/hive#9175).
+	PersonaStore PersonaStore
 	// PersonaLearning returns the live persona learning configuration
 	// (hivecommons/hive#8363). Nil or a disabled result means no signals are
 	// counted and no suggestions are made. It is a func so a Features panel

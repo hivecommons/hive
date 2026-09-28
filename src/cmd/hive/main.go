@@ -27,6 +27,7 @@ import (
 	"github.com/hivecommons/hive/pkg/apphealth"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/celtrigger"
+	"github.com/hivecommons/hive/pkg/chat"
 	"github.com/hivecommons/hive/pkg/classify"
 	"github.com/hivecommons/hive/pkg/config"
 	convergenceaudit "github.com/hivecommons/hive/pkg/convergence/audit"
@@ -1658,6 +1659,9 @@ func (b *boot) wireBootClosures() {
 				newClient.SetAgentRepoScopeFunc(b.cfg.AgentServesRepo) // #6204: a client rebuild must not un-scope agents
 				installReviewRelaySettings(newClient, b.cfg, b.logger)
 				syncAutoMergePolicyToGitHubClient(b.cfg, newClient)
+				if b.dashSrv != nil {
+					newClient.SetMergeFailureAlertSink(b.dashSrv)
+				}
 				b.ghClient = newClient
 				b.installMutationBoundary(b.ghClient)
 				b.appAuth = newAppAuth
@@ -2336,13 +2340,17 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		holdLabel := func(agentName string) bool {
 			return shouldHoldAgentPR(agentName, b.agentMgr.GetACMMLevel())
 		}
+		selfAuthorizationHoldEnabled := func(repo string) bool {
+			level := b.agentMgr.GetACMMLevel()
+			return b.cfg.SelfAuthorizationHoldEnabledForRepoAtLevel(repo, level)
+		}
 		// #5117: tell the client which accounts are ours, so the
 		// self-authorization gate recognises an issue filed under
 		// project.ai_author's plain user account as hive-filed rather than
 		// mistaking it for a human's. The App bot is recognised without this;
 		// hiveIdentity() is the same resolver the duplicate-PR guard uses.
 		b.ghClient.SetHiveIdentity(hiveIdentity(b.cfg))
-		b.ghClient.SetSelfAuthorizationHoldEnabled(func(repo string) bool { return b.cfg.SelfAuthorizationHoldEnabledForRepo(repo) })
+		b.ghClient.SetSelfAuthorizationHoldEnabled(selfAuthorizationHoldEnabled)
 		b.ghClient.SetPRRepoPolicyGate(func(agentName, repo string) error {
 			level := b.cfg.EffectiveACMMLevelForRepo(repo)
 			if level <= 0 {
@@ -2388,6 +2396,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		// that API call fails closed to the coarser isMetaCheck/isIgnorableCICheck
 		// allowlist. Unset/empty leaves the API/allowlist fallback chain
 		// intact (SetRequiredChecks(nil) is a safe no-op).
+		logDeprecatedAllowUnprotectedBase(b.cfg, b.logger)
 		if set, ok := syncAutoMergePolicyToGitHubClient(b.cfg, b.ghClient); ok {
 			autoMergeOpts.RequiredChecks = set
 		}
@@ -2450,8 +2459,11 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		}
 
 		autoMergeOpts.MutationBoundary = b.mutationBoundary
-		autoMergeOpts.SelfAuthorizationHoldEnabled = func(repo string) bool { return b.cfg.SelfAuthorizationHoldEnabledForRepo(repo) }
+		autoMergeOpts.SelfAuthorizationHoldEnabled = selfAuthorizationHoldEnabled
 		autoMergeOpts.RepoAutoMergeEnabled = func(repo string) bool { return b.cfg.RepoAutoMergeEnabled(repo) }
+		// Read through b.cfg on every sweep tick so a config reload of
+		// auto_merge.trusted_bot_authors takes effect without a restart.
+		autoMergeOpts.TrustedBotAuthors = func() map[string]bool { return b.cfg.AutoMerge.TrustedBotAuthorSet() }
 		// Intent tier gate (#6258): the human lane only queues PRs that
 		// survive writeMergeEligible's intent check, but this sweep lists
 		// the App's PRs on its own, so it carries the same policy (same
@@ -2604,6 +2616,9 @@ func (b *boot) bootDashboard() { b.bootDashboardWith(defaultBootDashboardDeps())
 // persistence enables injected; see bootDashboardDeps.
 func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.dashSrv = deps.newServer(b.cfg.Dashboard.Port, b.cfg.Dashboard.AuthToken, b.logger)
+	if b.ghClient != nil {
+		b.ghClient.SetMergeFailureAlertSink(b.dashSrv)
+	}
 	worksource.SetRunStageAccessor(b.dashSrv.RunStageAccessor())
 	b.dashSrv.SetMutationStats(func() interface{} {
 		if b.mutationStats == nil {
@@ -2737,7 +2752,10 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	if b.cfg.GitHub.Mentions.Enabled || b.cfg.GitHub.Actions.OIDC.Enabled {
 		store, err := mention.NewStore("/data/github-mention-triggers.json")
 		if err != nil {
-			b.logger.Warn("mention trigger store unavailable", "error", err)
+			// Parse failures self-heal inside NewStore; reaching here means the
+			// file is unreadable or cannot be moved aside, which disables GitHub
+			// mentions and makes Actions OIDC dispatch refuse (503) until fixed.
+			b.logger.Error("mention trigger store unavailable; GitHub mentions disabled and Actions OIDC dispatch will refuse", "error", err)
 		} else {
 			b.mentionStore = store
 			mentionStore = store
@@ -2803,7 +2821,7 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 			b.mentionWebhook = receiver
 		}
 		go poller.Run(b.ctx)
-		responder := mention.NewResponder(store, func() mention.GitHub { return b.ghClient }, mentionAgents, b.cfg.Classification.ReviewBots, b.logger)
+		responder := mention.NewResponder(store, func() mention.GitHub { return b.ghClient }, mentionAgents, b.cfg.GitHub.Mentions.PerThreadMaxEffective(), b.logger)
 		b.agentMgr.SetKickObserver(responder.HandleAgentEvent)
 		b.logger.Info("GitHub mention trigger poller started", "interval", b.cfg.GitHub.Mentions.PollIntervalEffective())
 	}
@@ -3807,6 +3825,9 @@ func (b *boot) bootWatchers() { b.bootWatchersWith(defaultBootWatchersDeps()) }
 func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	// Watch hive.yaml for external changes and reload config when modified
 	b.configWatcher = deps.newConfigWatcher(b.configPath, func(newCfg *config.Config) {
+		b.cfgReloadMu.Lock()
+		defer b.cfgReloadMu.Unlock()
+
 		// Preserve runtime-only fields that are not in the YAML
 		newCfg.HiveID = b.cfg.HiveID
 
@@ -3948,6 +3969,9 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 					newClient.SetAgentRepoScopeFunc(b.cfg.AgentServesRepo) // #6204: a client rebuild must not un-scope agents
 					installReviewRelaySettings(newClient, b.cfg, b.logger)
 					syncAutoMergePolicyToGitHubClient(b.cfg, newClient)
+					if b.dashSrv != nil {
+						newClient.SetMergeFailureAlertSink(b.dashSrv)
+					}
 					b.ghClient = newClient
 					b.installMutationBoundary(b.ghClient)
 					b.appAuth = newAppAuth
@@ -4411,18 +4435,44 @@ func (b *boot) personaLearningConfig() persona.LearningConfig {
 	}
 }
 
-// bootLaunchWith is bootLaunch with its goroutines, Discord bot, stagger
-// wait, and agent starts injected; see bootLaunchDeps.
+// chatPersonaStores opens the durable persona store every chat transport
+// shares (hivecommons/hive#9175) and returns the per-transport view for a
+// transport name (its Backend.Name()). When the store cannot be opened the
+// failure is logged once and every view is nil, so each transport falls back
+// to process-local personas instead of failing to start; a malformed file is
+// left on disk untouched for the operator to repair.
+func (b *boot) chatPersonaStores(deps bootLaunchDeps) func(transport string) chat.PersonaStore {
+	var store *chat.FilePersonaStore
+	if deps.openPersonaStore != nil {
+		opened, err := deps.openPersonaStore()
+		if err != nil {
+			b.logger.Warn("chat persona store unavailable; personas will not survive a restart", "error", err)
+		} else {
+			store = opened
+		}
+	}
+	return func(transport string) chat.PersonaStore {
+		if store == nil {
+			return nil
+		}
+		return store.ForTransport(transport)
+	}
+}
+
+// bootLaunchWith is bootLaunch with its goroutines, Discord bot, persona
+// store, stagger wait, and agent starts injected; see bootLaunchDeps.
 func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 	var agentNameList []string
 	for name := range b.cfg.EnabledAgents() {
 		agentNameList = append(agentNameList, name)
 	}
+	personaStore := b.chatPersonaStores(deps)
 	if deps.startDashChat != nil {
 		bot, err := deps.startDashChat(b.ctx, dashchat.Config{
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    dashboardChatAllowedUsers(b.cfg),
+			PersonaStore:    personaStore("dashboard"),
 			PersonaLearning: b.personaLearningConfig,
 			AuditSink:       b.dashSrv.AgentAuditSink(),
 		}, agentNameList, b.logger)
@@ -4447,6 +4497,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.Discord.AllowedUsers,
+			PersonaStore:    personaStore("discord"),
 			PersonaLearning: b.personaLearningConfig,
 			AuditSink:       b.dashSrv.AgentAuditSink(),
 		}, agentNameList, b.logger)
@@ -4466,6 +4517,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.Slack.AllowedUsers,
+			PersonaStore:    personaStore("slack"),
 			PersonaLearning: b.personaLearningConfig,
 			AuditSink:       b.dashSrv.AgentAuditSink(),
 		}, b.logger)
@@ -4484,6 +4536,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.Telegram.AllowedUsers,
+			PersonaStore:    personaStore("telegram"),
 			PersonaLearning: b.personaLearningConfig,
 			AuditSink:       b.dashSrv.AgentAuditSink(),
 		}, b.logger)
@@ -4503,6 +4556,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.Matrix.AllowedUsers,
+			PersonaStore:    personaStore("matrix"),
 			PersonaLearning: b.personaLearningConfig,
 			AuditSink:       b.dashSrv.AgentAuditSink(),
 		}, b.logger)
@@ -4525,6 +4579,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.MSTeams.AllowedUsers,
+			PersonaStore:    personaStore("msteams"),
 			PersonaLearning: b.personaLearningConfig,
 			AuditSink:       b.dashSrv.AgentAuditSink(),
 		}, b.logger)
@@ -5452,6 +5507,9 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					newClient.SetRepoPausedFunc(b.cfg.IsRepoPaused)        // #6203: a client rebuild must not un-pause repos
 					newClient.SetAgentRepoScopeFunc(b.cfg.AgentServesRepo) // #6204: a client rebuild must not un-scope agents
 					syncAutoMergePolicyToGitHubClient(b.cfg, newClient)
+					if b.dashSrv != nil {
+						newClient.SetMergeFailureAlertSink(b.dashSrv)
+					}
 
 					b.ghClient = newClient
 					b.installMutationBoundary(b.ghClient)
@@ -5955,6 +6013,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			deps.persist(b)
 			return
 		case <-ticker.Chan():
+			b.cfgReloadMu.Lock()
 			restarted := deps.restartCrashed(b.ctx, b.agentMgr)
 			for _, name := range restarted {
 				b.dashSrv.AuditLog("system", "restart", "trigger=crash-recovery", name)
@@ -6040,10 +6099,13 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 				ticker.Reset(time.Duration(b.cfg.Governor.EvalIntervalS) * time.Second)
 				lastEvalInterval = b.cfg.Governor.EvalIntervalS
 			}
+			b.cfgReloadMu.Unlock()
 		case <-agentTickCh:
+			b.cfgReloadMu.Lock()
 			govState := b.gov.GetState()
 			agentStatuses := b.agentMgr.AllStatuses()
 			payload := dashboard.BuildAgentOnlyStatus(govState, agentStatuses, b.cfg)
+			b.cfgReloadMu.Unlock()
 			b.dashSrv.BroadcastAgentStatus(payload)
 		}
 	}
@@ -6750,7 +6812,14 @@ func runEvalCycle(
 	// on a branch that moved, block the merge lanes and force a fresh review.
 	// Runs before writeMergeEligible so drifted PRs are excluded from the very
 	// tick their hold lifted — no window for the sweep to race the re-hold.
-	holdDriftPRs := enforceHoldGuard(ctx, cfg, ghClient, governorForge(cfg, ghClient, logger), actionable, logger)
+	selfAuthorizationHoldEnabled := func(repo string) bool {
+		level := cfg.ACMMLevelOrZero()
+		if agentMgr != nil {
+			level = agentMgr.GetACMMLevel()
+		}
+		return cfg.SelfAuthorizationHoldEnabledForRepoAtLevel(repo, level)
+	}
+	holdDriftPRs := enforceHoldGuard(ctx, cfg, ghClient, governorForge(cfg, ghClient, logger), actionable, logger, selfAuthorizationHoldEnabled)
 
 	// The per-PR verdicts come back so the dashboard's PR pills can be
 	// painted from the sweep's own classification rather than a looser
@@ -7231,12 +7300,13 @@ func runEvalCycle(
 			}
 
 			md := advisory.FormatDigestMarkdown(digest, advisory.DigestOptions{
-				MaxFindings: digestOpts.MaxFindings,
-				ShowAll:     digestOpts.ShowAll,
-				Org:         org,
-				ShowEmpty:   digest.TotalCount == 0 && len(digest.RecentlyResolved) == 0,
-				PrimaryRepo: repoName,
-				Advice:      hiveAdvice,
+				MaxFindings:  digestOpts.MaxFindings,
+				ShowAll:      digestOpts.ShowAll,
+				Org:          org,
+				ShowEmpty:    digest.TotalCount == 0 && len(digest.RecentlyResolved) == 0,
+				PrimaryRepo:  repoName,
+				Advice:       hiveAdvice,
+				DashboardURL: advisoryDashboardOrigin(cfg),
 			})
 			// The routing/classification decisions live in
 			// publishAdvisoryDigest (#7232); only the effects are wired here.
@@ -9449,12 +9519,14 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 	}
 }
 
-// chatDashboardToken is the bearer token the chat services use to call the
-// local dashboard API. It must be the same token the dashboard middleware
-// accepts (config.Dashboard.AuthToken, resolved from DASHBOARD_AUTH_TOKEN,
-// HIVE_DASHBOARD_TOKEN or the token file). Reading only HIVE_DASHBOARD_TOKEN
-// left hosted spokes — which mount a token file — sending no Authorization
-// at all, so every `!runs`, heartbeat and spec-start call answered 401.
+// chatDashboardToken is the shared token the chat services present to the
+// local dashboard API (as X-Hive-Internal, the server-to-server credential the
+// middleware honors on direct-route spokes too — #9134). It must be the same
+// token the dashboard middleware accepts (config.Dashboard.AuthToken, resolved
+// from DASHBOARD_AUTH_TOKEN, HIVE_DASHBOARD_TOKEN or the token file). Reading
+// only HIVE_DASHBOARD_TOKEN left hosted spokes — which mount a token file —
+// sending no credential at all, so every `!runs`, heartbeat and spec-start
+// call answered 401.
 func (b *boot) chatDashboardToken() string {
 	if b != nil && b.cfg != nil && b.cfg.Dashboard.AuthToken != "" {
 		return b.cfg.Dashboard.AuthToken
