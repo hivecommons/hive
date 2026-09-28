@@ -27,9 +27,17 @@ const (
 	beadSynthHighPriorityBoost    = 0.1
 
 	beadSynthMetaKeySynthesizedAt = "synthesized_at"
+	beadSynthMetaKeySkippedAt     = "synthesis_skipped_at"
 
 	prDescriptionMaxLen = 300
 	prEnricherCacheSize = 200
+
+	prEnricherMissCacheSize      = 5000
+	prEnricherMissTTLEnv         = "HIVE_BEAD_SYNTH_MISS_TTL"
+	prEnricherDefaultMissTTL     = 24 * time.Hour
+	prEnricherMaxAPICallsEnv     = "HIVE_BEAD_SYNTH_MAX_API_CALLS"
+	prEnricherDefaultMaxAPICalls = 200
+	prEnricherUnlimitedAPICalls  = 0
 )
 
 // BeadSynthesizer periodically scans completed beads across all agents and
@@ -190,8 +198,15 @@ func (s *BeadSynthesizer) RunSynthesis(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 
+	if s.enricher != nil {
+		s.enricher.BeginCycle()
+	}
+
 	var classified []classifiedFact
 	for _, c := range candidates {
+		if s.shouldSkipSynthesisCandidate(c.bead) {
+			continue
+		}
 		factType, confidence := ClassifyBead(c.bead)
 		if factType == "" {
 			continue
@@ -200,8 +215,11 @@ func (s *BeadSynthesizer) RunSynthesis(ctx context.Context) (int, error) {
 			continue
 		}
 
-		body := s.buildEnrichedBody(ctx, c.bead, c.agent)
+		body, markSkipped := s.buildEnrichedBody(ctx, c.bead, c.agent)
 		if body == "" {
+			if markSkipped {
+				s.markSynthesisSkipped(c)
+			}
 			continue
 		}
 
@@ -249,6 +267,35 @@ func (s *BeadSynthesizer) RunSynthesis(ctx context.Context) (int, error) {
 	}
 
 	return ingested, nil
+}
+
+func (s *BeadSynthesizer) shouldSkipSynthesisCandidate(b *beads.Bead) bool {
+	if b == nil {
+		return true
+	}
+	skippedAt := strings.TrimSpace(b.Meta(beadSynthMetaKeySkippedAt))
+	if skippedAt == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, skippedAt)
+	if err != nil {
+		return false
+	}
+	return !time.Now().UTC().After(t.Add(beadSynthMissTTL()))
+}
+
+func (s *BeadSynthesizer) markSynthesisSkipped(c beadCandidate) {
+	store := s.beadStores[c.agent]
+	if store == nil {
+		return
+	}
+	if err := store.SetMetadata(c.bead.ID, beadSynthMetaKeySkippedAt, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		s.logger.Warn("failed to mark bead synthesis skipped",
+			"bead_id", c.bead.ID,
+			"agent", c.agent,
+			"error", err,
+		)
+	}
 }
 
 // ClassifyBead maps a bead's type and metadata to a wiki FactType and confidence score.
@@ -609,24 +656,28 @@ func (s *BeadSynthesizer) findRelatedByTags(tags []string, seen map[string]bool)
 
 // buildEnrichedBody produces the fact body, enriching with GitHub PR data when possible.
 // Returns empty string if the bead is too low-quality to synthesize.
-func (s *BeadSynthesizer) buildEnrichedBody(ctx context.Context, b *beads.Bead, agent string) string {
+func (s *BeadSynthesizer) buildEnrichedBody(ctx context.Context, b *beads.Bead, agent string) (string, bool) {
 	baseBody := BuildFactBody(b, agent)
 
 	enriched := ""
+	enrichStatus := prFetchMiss
 	if s.enricher != nil && b.ExternalRef != "" {
-		enriched = s.enricher.EnrichBody(ctx, b, agent)
+		enriched, enrichStatus = s.enricher.enrichBody(ctx, b, agent)
 		if enriched != "" {
-			return enriched
+			return enriched, false
+		}
+		if enrichStatus == prFetchBudgetExhausted {
+			return baseBody, false
 		}
 	}
 
 	if isLowQualityBead(b) {
 		s.logger.Debug("skipping low-quality bead",
 			"bead_id", b.ID, "title", b.Title, "enrichment_attempted", enriched == "" && s.enricher != nil)
-		return ""
+		return "", enrichStatus == prFetchMiss
 	}
 
-	return baseBody
+	return baseBody, false
 }
 
 // isLowQualityBead detects beads with no substantive content beyond the title.
@@ -739,10 +790,23 @@ type PREnricher struct {
 	// 235 GET /repos/*/*/pulls/{n} per minute during a pass, 60% of all API
 	// traffic), and once the allowance is gone every other subsystem 403s for
 	// the rest of the window. Bounded like cache; entries live for the
-	// enricher's lifetime — one synthesizer run — so a PR created mid-run is
-	// picked up next cycle.
-	misses map[string]bool
+	// miss TTL, so dead issue refs do not burn the full repo fan-out every
+	// hourly synthesis cycle while still allowing later-created PRs to be seen.
+	misses      map[string]time.Time
+	now         func() time.Time
+	missTTL     time.Duration
+	maxAPICalls int
+	apiCalls    int
 }
+
+type prFetchStatus int
+
+const (
+	prFetchFound prFetchStatus = iota
+	prFetchMiss
+	prFetchTransient
+	prFetchBudgetExhausted
+)
 
 var (
 	ghRefPattern   = regexp.MustCompile(`^gh-(\d+)$`)
@@ -752,36 +816,50 @@ var (
 // NewPREnricher creates an enricher with the given GitHub client and repo context.
 func NewPREnricher(client *gh.Client, org string, repos []string, logger *slog.Logger) *PREnricher {
 	return &PREnricher{
-		ghClient: client,
-		org:      org,
-		repos:    repos,
-		logger:   logger,
-		cache:    make(map[string]*gh.PullRequest),
-		misses:   make(map[string]bool),
+		ghClient:    client,
+		org:         org,
+		repos:       repos,
+		logger:      logger,
+		cache:       make(map[string]*gh.PullRequest),
+		misses:      make(map[string]time.Time),
+		now:         time.Now,
+		missTTL:     beadSynthMissTTL(),
+		maxAPICalls: beadSynthMaxAPICalls(),
 	}
 }
 
-// ClearCache resets the in-memory PR cache between synthesis cycles.
+// BeginCycle resets per-cycle API accounting.
+func (e *PREnricher) BeginCycle() {
+	e.mu.Lock()
+	e.apiCalls = 0
+	e.mu.Unlock()
+}
+
+// ClearCache resets the positive in-memory PR cache between synthesis cycles
+// and prunes expired misses. Negative misses intentionally survive cycles.
 func (e *PREnricher) ClearCache() {
 	e.mu.Lock()
 	e.cache = make(map[string]*gh.PullRequest)
-	// Misses clear on the same boundary: a PR opened mid-cycle was legitimately
-	// absent when probed, and must become visible next cycle.
-	e.misses = make(map[string]bool)
+	e.pruneExpiredMissesLocked(e.now())
 	e.mu.Unlock()
 }
 
 // EnrichBody fetches PR data for a bead's ExternalRef and builds a fact body
 // with the PR description, labels, and change stats.
 func (e *PREnricher) EnrichBody(ctx context.Context, b *beads.Bead, agent string) string {
+	body, _ := e.enrichBody(ctx, b, agent)
+	return body
+}
+
+func (e *PREnricher) enrichBody(ctx context.Context, b *beads.Bead, agent string) (string, prFetchStatus) {
 	owner, repo, number := e.parseRef(b.ExternalRef)
 	if number == 0 {
-		return ""
+		return "", prFetchTransient
 	}
 
-	pr := e.fetchPR(ctx, owner, repo, number)
+	pr, status := e.fetchPRWithStatus(ctx, owner, repo, number)
 	if pr == nil {
-		return ""
+		return "", status
 	}
 
 	var buf strings.Builder
@@ -822,7 +900,7 @@ func (e *PREnricher) EnrichBody(ctx context.Context, b *beads.Bead, agent string
 		body = string([]rune(body)[:beadSynthMaxBodyLen]) + "..."
 	}
 
-	return body
+	return body, prFetchFound
 }
 
 // parseRef extracts owner, repo, and PR number from an ExternalRef string.
@@ -849,23 +927,33 @@ func (e *PREnricher) parseRef(ref string) (string, string, int) {
 
 // fetchPR retrieves a PR from GitHub, using the in-memory cache first.
 func (e *PREnricher) fetchPR(ctx context.Context, owner, repo string, number int) *gh.PullRequest {
+	pr, _ := e.fetchPRWithStatus(ctx, owner, repo, number)
+	return pr
+}
+
+func (e *PREnricher) fetchPRWithStatus(ctx context.Context, owner, repo string, number int) (*gh.PullRequest, prFetchStatus) {
 	if e.ghClient == nil {
-		return nil
+		return nil, prFetchTransient
 	}
 	if repo == "" {
-		return e.fetchPRFromRepos(ctx, owner, number)
+		return e.fetchPRFromReposWithStatus(ctx, owner, number)
 	}
 
 	key := fmt.Sprintf("%s/%s#%d", owner, repo, number)
 
 	e.mu.Lock()
+	now := e.now()
 	if cached, ok := e.cache[key]; ok {
 		e.mu.Unlock()
-		return cached
+		return cached, prFetchFound
 	}
-	if e.misses[key] {
+	if e.isMissCachedLocked(key, now) {
 		e.mu.Unlock()
-		return nil
+		return nil, prFetchMiss
+	}
+	if !e.reserveAPICallLocked() {
+		e.mu.Unlock()
+		return nil, prFetchBudgetExhausted
 	}
 	e.mu.Unlock()
 
@@ -876,14 +964,15 @@ func (e *PREnricher) fetchPR(ctx context.Context, owner, repo string, number int
 		// wrongly blacklist real PRs for the rest of the run.
 		if resp != nil && resp.StatusCode == http.StatusNotFound {
 			e.mu.Lock()
-			if len(e.misses) < prEnricherCacheSize {
-				e.misses[key] = true
-			}
+			e.cacheMissLocked(key, e.now())
 			e.mu.Unlock()
 		}
 		e.logger.Debug("failed to fetch PR for enrichment",
 			"owner", owner, "repo", repo, "number", number, "error", err)
-		return nil
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			return nil, prFetchMiss
+		}
+		return nil, prFetchTransient
 	}
 
 	e.mu.Lock()
@@ -892,7 +981,7 @@ func (e *PREnricher) fetchPR(ctx context.Context, owner, repo string, number int
 	}
 	e.mu.Unlock()
 
-	return pr
+	return pr, prFetchFound
 }
 
 // fetchPRFromRepos tries each configured repo to find the PR.
@@ -903,26 +992,123 @@ func (e *PREnricher) fetchPR(ctx context.Context, owner, repo string, number int
 // of once per bead per cycle; the fan-out-level miss is cached here too so
 // repeated references to the same dead number skip the loop entirely.
 func (e *PREnricher) fetchPRFromRepos(ctx context.Context, owner string, number int) *gh.PullRequest {
+	pr, _ := e.fetchPRFromReposWithStatus(ctx, owner, number)
+	return pr
+}
+
+func (e *PREnricher) fetchPRFromReposWithStatus(ctx context.Context, owner string, number int) (*gh.PullRequest, prFetchStatus) {
 	fanKey := fmt.Sprintf("%s/*#%d", owner, number)
 	e.mu.Lock()
-	if e.misses[fanKey] {
+	if e.isMissCachedLocked(fanKey, e.now()) {
 		e.mu.Unlock()
-		return nil
+		return nil, prFetchMiss
 	}
 	e.mu.Unlock()
 
+	allMisses := true
 	for _, repo := range e.repos {
-		pr := e.fetchPR(ctx, owner, repo, number)
+		pr, status := e.fetchPRWithStatus(ctx, owner, repo, number)
 		if pr != nil {
-			return pr
+			return pr, prFetchFound
+		}
+		switch status {
+		case prFetchBudgetExhausted:
+			return nil, prFetchBudgetExhausted
+		case prFetchMiss:
+		default:
+			allMisses = false
 		}
 	}
-	e.mu.Lock()
-	if len(e.misses) < prEnricherCacheSize {
-		e.misses[fanKey] = true
+	if allMisses {
+		e.mu.Lock()
+		e.cacheMissLocked(fanKey, e.now())
+		e.mu.Unlock()
+		return nil, prFetchMiss
 	}
-	e.mu.Unlock()
-	return nil
+	return nil, prFetchTransient
+}
+
+func (e *PREnricher) isMissCachedLocked(key string, now time.Time) bool {
+	until, ok := e.misses[key]
+	if !ok {
+		return false
+	}
+	if now.After(until) {
+		delete(e.misses, key)
+		return false
+	}
+	return true
+}
+
+func (e *PREnricher) cacheMissLocked(key string, now time.Time) {
+	if e.missTTL <= 0 {
+		return
+	}
+	e.pruneExpiredMissesLocked(now)
+	e.misses[key] = now.Add(e.missTTL)
+	e.evictOldestMissesLocked()
+}
+
+func (e *PREnricher) pruneExpiredMissesLocked(now time.Time) {
+	for key, until := range e.misses {
+		if now.After(until) {
+			delete(e.misses, key)
+		}
+	}
+}
+
+func (e *PREnricher) evictOldestMissesLocked() {
+	for len(e.misses) > prEnricherMissCacheSize {
+		var victim string
+		var oldest time.Time
+		for key, until := range e.misses {
+			if victim == "" || until.Before(oldest) {
+				victim = key
+				oldest = until
+			}
+		}
+		if victim == "" {
+			return
+		}
+		delete(e.misses, victim)
+	}
+}
+
+func (e *PREnricher) reserveAPICallLocked() bool {
+	if e.maxAPICalls == prEnricherUnlimitedAPICalls {
+		return true
+	}
+	if e.apiCalls >= e.maxAPICalls {
+		return false
+	}
+	e.apiCalls++
+	return true
+}
+
+func beadSynthMissTTL() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(prEnricherMissTTLEnv))
+	if raw == "" {
+		return prEnricherDefaultMissTTL
+	}
+	if d, err := time.ParseDuration(raw); err == nil && d >= 0 {
+		return d
+	}
+	if hours, err := strconv.Atoi(raw); err == nil && hours >= 0 {
+		return time.Duration(hours) * time.Hour
+	}
+	return prEnricherDefaultMissTTL
+}
+
+func beadSynthMaxAPICalls() int {
+	raw := strings.TrimSpace(os.Getenv(prEnricherMaxAPICallsEnv))
+	if raw == "" {
+		return prEnricherDefaultMaxAPICalls
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return prEnricherDefaultMaxAPICalls
+	}
+	return n
 }
 
 // ParseSynthSchedule converts a schedule string to a duration.

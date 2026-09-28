@@ -1,0 +1,1 @@
+- Bead synthesis now remembers dead PR enrichment misses across cycles, skips low-quality unenrichable beads for the retry window, and caps GitHub enrichment calls so issue-like `gh-N` refs cannot exhaust the REST budget.
