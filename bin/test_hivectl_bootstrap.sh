@@ -99,6 +99,7 @@ case "${1:-} ${2:-}" in
   "image inspect")
     [[ "${FAKE_IMAGE_INSPECT_FAIL:-0}" == "1" ]] && exit 125
     is_unavailable "${5:-}" && exit 125
+    if [[ -n "${FAKE_PULL_MARKER:-}" && ! -f "$FAKE_PULL_MARKER" ]]; then exit 125; fi
     if [[ "${3:-}" == "--format" && "${4:-}" == *".Labels"* ]]; then
       printf '%s\n' "${FAKE_IMAGE_REVISION:-}"
       exit 0
@@ -106,8 +107,20 @@ case "${1:-} ${2:-}" in
     printf '%s\n' "${FAKE_IMAGE_DIGEST:-sha256:fresh}"
     ;;
   "pull "*)
+    if [[ -n "${FAKE_PULL_MARKER:-}" ]]; then
+      # Inspect the actual stderr file while the pull is starting, so a note
+      # emitted only after completion cannot satisfy the regression test.
+      if ! grep -qF "hivectl bootstrap: pulling ${2}" "$FAKE_BOOTSTRAP_STDERR"; then
+        printf 'pull started without an announcement\n' >>"$FAKE_PODMAN_LOG"
+        exit 125
+      fi
+      touch "$FAKE_PULL_MARKER"
+    fi
+    printf 'Copying blob test-layer\n' >&2
+    printf 'pull-stdout-must-not-leak\n'
     [[ "${FAKE_PULL_FAIL:-0}" == "1" ]] && exit 125
     is_unavailable "${2:-}" && exit 125
+    exit 0
     ;;
   "create --name")
     printf 'ctr\n'
@@ -148,6 +161,8 @@ run_bootstrap() {
     FAKE_BINARY_VERSION="${FAKE_BINARY_VERSION:-staged}" \
     FAKE_BINARY_COMMIT="${FAKE_BINARY_COMMIT:-}" \
     FAKE_UNAVAILABLE_IMAGE="${FAKE_UNAVAILABLE_IMAGE:-}" \
+    FAKE_PULL_MARKER="${FAKE_PULL_MARKER:-}" \
+    FAKE_BOOTSTRAP_STDERR="${fixture}/stderr" \
     HIVECTL_BOOTSTRAP_IMAGE="${HIVECTL_BOOTSTRAP_IMAGE-test-image}" \
     "$fixture/bin/hivectl-bootstrap.sh" "$@"
   )
@@ -301,6 +316,26 @@ if [[ "$status" -eq 0 ]]; then pass "tag checkout bootstraps successfully"; else
 assert_file_contains "${fixture}/stderr" "using release image ghcr.io/hivecommons/hive:v5.4.0" "release tag image is announced"
 assert_file_contains "${fixture}/bin/.hivectl.source" "image=ghcr.io/hivecommons/hive:v5.4.0" "release tag image is recorded"
 assert_file_contains "$RUN_LOG" "staged hives list" "release tag binary handles command"
+
+assert_not_contains "$(cat "$CALL_LOG")" "podman pull" "cached release image needs no pull"
+assert_not_contains "$(cat "${fixture}/stderr")" "hivectl bootstrap: pulling" "cached release image has no pull announcement"
+
+CASE="uncached-release-pull-progress"
+: >"$CALL_LOG"; : >"$RUN_LOG"
+fixture="$(make_fixture)"
+init_fixture_git "$fixture"
+git -C "$fixture" tag v5.4.0
+head_commit="$(git -C "$fixture" rev-parse HEAD)"
+HIVECTL_BOOTSTRAP_IMAGE="" FAKE_BINARY_COMMIT="$head_commit" \
+  FAKE_PULL_MARKER="${fixture}/pulled" \
+  run_bootstrap "$fixture" tui --hives >"${fixture}/stdout" 2>"${fixture}/stderr"
+status=$?
+if [[ "$status" -eq 0 ]]; then pass "uncached release bootstraps successfully"; else fail "uncached release exited ${status}"; fi
+assert_not_contains "$(cat "$CALL_LOG")" "pull started without an announcement" "pull announcement is visible before pull starts"
+assert_file_contains "${fixture}/stderr" "Copying blob test-layer" "podman progress reaches stderr"
+if [[ ! -s "${fixture}/stdout" ]]; then pass "bootstrap keeps stdout clean"; else fail "bootstrap polluted stdout"; fi
+assert_file_contains "${fixture}/bin/.hivectl.source" "image=ghcr.io/hivecommons/hive:v5.4.0" "pull output does not corrupt selected image"
+assert_file_contains "$RUN_LOG" "staged tui --hives" "first contribute-tui command reaches staged binary"
 
 CASE="at-stable-rev-uses-branch-channel"
 : >"$CALL_LOG"; : >"$RUN_LOG"

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 
@@ -151,7 +152,7 @@ func TestPREnricher_FetchPRFromRepos_MissEverywhereCachesFanKey(t *testing.T) {
 	}
 }
 
-func TestPREnricher_ClearCacheResetsFanOutMiss(t *testing.T) {
+func TestPREnricher_ClearCacheKeepsFanOutMissAcrossCycles(t *testing.T) {
 	e, calls := newEnricherServer(t, "org", []string{"a"},
 		nil, map[string]bool{"a": true})
 
@@ -160,12 +161,41 @@ func TestPREnricher_ClearCacheResetsFanOutMiss(t *testing.T) {
 		t.Fatalf("first fan-out made %d requests; want 1", got)
 	}
 
-	// ClearCache is the cycle boundary: a PR opened mid-cycle was legitimately
-	// absent when probed and must be re-probed next cycle.
+	// ClearCache is the cycle boundary, but definitive misses survive it for
+	// the miss TTL so dead issue refs do not burn API every hour.
 	e.ClearCache()
 	e.fetchPRFromRepos(context.Background(), "org", 5)
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("post-ClearCache fan-out made %d total requests; want 1", got)
+	}
+}
+
+func TestPREnricher_FanOutMissExpiresAfterTTL(t *testing.T) {
+	e, calls := newEnricherServer(t, "org", []string{"a"},
+		nil, map[string]bool{"a": true})
+	now := time.Unix(1700000000, 0)
+	e.now = func() time.Time { return now }
+	e.missTTL = time.Hour
+
+	e.fetchPRFromRepos(context.Background(), "org", 5)
+	e.ClearCache()
+	now = now.Add(time.Hour + time.Second)
+	e.fetchPRFromRepos(context.Background(), "org", 5)
 	if got := calls.Load(); got != 2 {
-		t.Fatalf("post-ClearCache fan-out made %d total requests; want 2", got)
+		t.Fatalf("expired miss fan-out made %d total requests; want 2", got)
+	}
+}
+
+func TestPREnricher_MaxAPICallsCapsFanOut(t *testing.T) {
+	t.Setenv(prEnricherMaxAPICallsEnv, "2")
+	e, calls := newEnricherServer(t, "org", []string{"a", "b", "c"},
+		nil, map[string]bool{"a": true, "b": true, "c": true})
+
+	if pr := e.fetchPRFromRepos(context.Background(), "org", 77); pr != nil {
+		t.Fatalf("fetchPRFromRepos = %v; want nil", pr)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("fan-out made %d requests; want cap of 2", got)
 	}
 }
 

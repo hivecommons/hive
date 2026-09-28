@@ -7,28 +7,31 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 type Responder struct {
-	store      *Store
-	github     func() GitHub
-	agents     AgentFunc
-	reviewBots configReviewBots
-	logger     *slog.Logger
-	threadMu   sync.Mutex
-	threads    map[string]*sync.Mutex
+	store        *Store
+	github       func() GitHub
+	agents       AgentFunc
+	perThreadMax int
+	logger       *slog.Logger
+	threadMu     sync.Mutex
+	threads      map[string]*sync.Mutex
 }
 
-type configReviewBots interface {
-	MaxAttempts() int
-}
-
-func NewResponder(store *Store, github func() GitHub, agents AgentFunc, reviewBots configReviewBots, logger *slog.Logger) *Responder {
+// NewResponder builds the phase-2 completion responder. perThreadMax is
+// github.mentions.per_thread_max (GitHubMentionsConfig.PerThreadMaxEffective);
+// a non-positive value falls back to config.DefaultMentionPerThreadMax.
+func NewResponder(store *Store, github func() GitHub, agents AgentFunc, perThreadMax int, logger *slog.Logger) *Responder {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Responder{store: store, github: github, agents: agents, reviewBots: reviewBots, logger: logger, threads: map[string]*sync.Mutex{}}
+	if perThreadMax <= 0 {
+		perThreadMax = config.DefaultMentionPerThreadMax
+	}
+	return &Responder{store: store, github: github, agents: agents, perThreadMax: perThreadMax, logger: logger, threads: map[string]*sync.Mutex{}}
 }
 
 func (r *Responder) HandleAgentEvent(agentName, event, detail string) {
@@ -84,12 +87,13 @@ func (r *Responder) HandleAgentEvent(agentName, event, detail string) {
 	}
 	unlock := r.lockThread(ctx.Repo, ctx.Number)
 	defer unlock()
-	count, err := gh.CountAppAuthoredComments(context.Background(), ctx.Repo, ctx.Number)
+	count, err := gh.CountMentionReplies(context.Background(), ctx.Repo, ctx.Number)
 	if err != nil {
 		r.logger.Warn("mention: completion reply thread count failed", "agent", agentName, "repo", ctx.Repo, "number", ctx.Number, "error", err)
 		return
 	}
-	if r.reviewBots != nil && count >= r.reviewBots.MaxAttempts() {
+	if count >= r.perThreadMax {
+		r.logger.Info("mention: completion reply skipped at per-thread cap", "agent", agentName, "repo", ctx.Repo, "number", ctx.Number, "count", count, "max", r.perThreadMax)
 		return
 	}
 	if err := gh.CreateIssueComment(context.Background(), ctx.Repo, ctx.Number, completionReply(agentName, kickObserverDetailReason(detail))); err != nil {
@@ -141,10 +145,12 @@ func (r *Responder) agentCanConverse(agentName string) bool {
 	return false
 }
 
+// completionReply renders the mention completion comment. The trailing
+// ReplyMarker is what CountMentionReplies counts toward per_thread_max.
 func completionReply(agentName, detail string) string {
 	detail = logscrub.ScrubString(detail)
 	if detail != "" {
-		return fmt.Sprintf("Agent `%s` finished the mention-summoned run. The full log is retained on the hive dashboard. (%s)", agentName, detail)
+		return fmt.Sprintf("Agent `%s` finished the mention-summoned run. The full log is retained on the hive dashboard. (%s)\n\n%s", agentName, detail, ReplyMarker)
 	}
-	return fmt.Sprintf("Agent `%s` finished the mention-summoned run. The full log is retained on the hive dashboard.", agentName)
+	return fmt.Sprintf("Agent `%s` finished the mention-summoned run. The full log is retained on the hive dashboard.\n\n%s", agentName, ReplyMarker)
 }

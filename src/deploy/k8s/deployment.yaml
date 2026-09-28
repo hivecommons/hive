@@ -66,6 +66,11 @@ spec:
           # ghcr.io/hivecommons/hive@sha256:<digest> of a release they've
           # reviewed and are willing to manage upgrades for manually.
           image: ghcr.io/hivecommons/hive:stable
+          # `stable` is a moving tag: without Always, Kubernetes defaults to
+          # IfNotPresent and a node with the tag cached keeps the old build on
+          # restart. Spoke self-upgrade (pkg/hub/spoke/self_upgrade.go) relies
+          # on the re-pull (#9332).
+          imagePullPolicy: Always
           # SECURITY: drop the ambient root capability set down to only what the
           # runtime actually needs, and pin the default seccomp profile. This
           # container CANNOT run fully unprivileged: it starts as root to set up

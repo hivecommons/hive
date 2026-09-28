@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/mention"
 )
 
 func TestListMentionCommentsAndAckHTTP(t *testing.T) {
@@ -95,22 +97,27 @@ func TestListMentionCommentsAndAckHTTP(t *testing.T) {
 	}
 }
 
-func TestCountAppAuthoredCommentsHTTP(t *testing.T) {
+func TestCountMentionRepliesHTTP(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/repos/org/repo/issues/7/comments" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.String())
 		}
-		_ = json.NewEncoder(w).Encode([]map[string]any{{"id": 1, "body": "done", "user": map[string]any{"login": "hive[bot]"}}, {"id": 2, "body": "human", "user": map[string]any{"login": "alice"}}})
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"id": 1, "body": "Agent `scanner` finished the mention-summoned run.\n\n" + mention.ReplyMarker, "user": map[string]any{"login": "hive[bot]"}},
+			{"id": 2, "body": "<!-- hive:run-stage-status run=r1 -->\nstage: implement", "user": map[string]any{"login": "hive[bot]"}},
+			{"id": 3, "body": "review summary", "user": map[string]any{"login": "Hive[bot]"}},
+			{"id": 4, "body": "spoofed " + mention.ReplyMarker, "user": map[string]any{"login": "alice"}},
+		})
 	}))
 	defer srv.Close()
 	c := NewClientForTest(srv.URL, "org", []string{"repo"}, nil)
 	c.SetAppBotLogin("hive[bot]")
-	count, err := c.CountAppAuthoredComments(context.Background(), "repo", 7)
+	count, err := c.CountMentionReplies(context.Background(), "repo", 7)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {
-		t.Fatalf("count=%d", count)
+		t.Fatalf("count=%d, want only the App's marked mention reply", count)
 	}
 }
 

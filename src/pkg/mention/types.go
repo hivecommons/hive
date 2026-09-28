@@ -16,6 +16,11 @@ const (
 	SourceMention = "mention"
 	SourceAction  = "action"
 	kickLimit     = 10000
+	// ReplyMarker tags every mention completion reply the hive posts. The
+	// per-thread cap counts only App-authored comments carrying it, so stage
+	// comments, review summaries and other App comments on the same
+	// conversation never exhaust the mention budget (#9164).
+	ReplyMarker = "<!-- hive:mention-reply -->"
 )
 
 type Event struct {
@@ -36,7 +41,9 @@ type GitHub interface {
 	AppBotLogin() string
 	ListMentionComments(ctx context.Context, repo string, since time.Time) ([]Event, error)
 	CreateMentionAck(ctx context.Context, ev Event, reaction string) error
-	CountAppAuthoredComments(ctx context.Context, repo string, number int) (int, error)
+	// CountMentionReplies returns how many App-authored comments on the issue
+	// or PR conversation carry ReplyMarker.
+	CountMentionReplies(ctx context.Context, repo string, number int) (int, error)
 	CreateIssueComment(ctx context.Context, repo string, number int, body string) error
 }
 
@@ -152,14 +159,15 @@ func (h *Handler) Handle(ctx context.Context, ev Event) error {
 		h.decline(ev, "rate-limited", "")
 		return h.mark(ev)
 	}
-	if gh != nil && cfg.PerThreadMaxAttemptsEffective() > 0 {
-		count, err := gh.CountAppAuthoredComments(ctx, ev.Repo, ev.Number)
+	if gh != nil {
+		limit := cfg.PerThreadMaxEffective()
+		count, err := gh.CountMentionReplies(ctx, ev.Repo, ev.Number)
 		if err != nil {
-			h.decline(ev, "rate-limited", "thread-count-error")
+			h.decline(ev, "thread-cap", "count-error")
 			return err
 		}
-		if count >= h.opts.ReviewBots.MaxAttempts() {
-			h.decline(ev, "rate-limited", "thread")
+		if count >= limit {
+			h.decline(ev, "thread-cap", fmt.Sprintf("count=%d max=%d", count, limit))
 			return h.mark(ev)
 		}
 	}
