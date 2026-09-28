@@ -7407,6 +7407,42 @@ type AutoMergeConfig struct {
 	// "zero statuses + zero check runs + zero workflow runs" verdict from
 	// unverified to green. Red or pending evidence still refuses/waits.
 	NoCIOK []string `yaml:"no_ci_ok,omitempty" json:"no_ci_ok,omitempty"`
+	// TrustedBotAuthors lists bot logins whose open PRs the self-authored
+	// automerge sweep treats like the App's own: merged once mergeable and
+	// CI-green through the identical gates (required checks, hold/exempt
+	// labels, intent tier, approval desk, head re-verify). Without this the
+	// sweep skipped every non-App PR as "not-app-authored" and a dependency
+	// bot burst (26 dependabot PRs in one morning on kubestellar/console) sat
+	// green for hours waiting on an agent's capped quick-merge window.
+	//
+	// nil/unset means DefaultTrustedBotAuthors. An explicit empty list
+	// (`trusted_bot_authors: []`) disables the lane. Matched case-insensitively
+	// by exact login, e.g. "dependabot[bot]".
+	TrustedBotAuthors []string `yaml:"trusted_bot_authors,omitempty" json:"trusted_bot_authors,omitempty"`
+}
+
+// DefaultTrustedBotAuthors is the TrustedBotAuthors value when the operator
+// declares none. Only dependabot: its PRs are single-dependency bumps whose
+// safety is entirely established by the repo's own CI, which the sweep gates on.
+var DefaultTrustedBotAuthors = []string{"dependabot[bot]"}
+
+// TrustedBotAuthorSet returns the lower-cased membership set of bot logins the
+// self-authored sweep may merge. nil TrustedBotAuthors → DefaultTrustedBotAuthors;
+// an explicit empty list → empty set (lane disabled).
+func (a AutoMergeConfig) TrustedBotAuthorSet() map[string]bool {
+	src := a.TrustedBotAuthors
+	if src == nil {
+		src = DefaultTrustedBotAuthors
+	}
+	set := make(map[string]bool, len(src))
+	for _, login := range src {
+		login = strings.ToLower(strings.TrimSpace(login))
+		if login == "" {
+			continue
+		}
+		set[login] = true
+	}
+	return set
 }
 
 func (a AutoMergeConfig) AllowUnprotectedBaseSet() map[string]bool {

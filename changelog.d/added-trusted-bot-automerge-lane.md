@@ -1,0 +1,1 @@
+- Self-authored automerge sweep now also merges CI-green PRs from `auto_merge.trusted_bot_authors` (default `dependabot[bot]`) through the same gates, instead of leaving dependency-bot bursts to an agent's capped quick-merge window. Set `trusted_bot_authors: []` to keep the sweep App-only.
