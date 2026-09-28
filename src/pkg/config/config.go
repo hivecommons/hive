@@ -2300,6 +2300,7 @@ type GitHubMentionsConfig struct {
 	MinRole          string        `yaml:"min_role,omitempty" json:"min_role,omitempty"`
 	PerUserPerHour   int           `yaml:"per_user_per_hour,omitempty" json:"per_user_per_hour,omitempty"`
 	PerRepoPerHour   int           `yaml:"per_repo_per_hour,omitempty" json:"per_repo_per_hour,omitempty"`
+	PerThreadMax     int           `yaml:"per_thread_max,omitempty" json:"per_thread_max,omitempty"`
 	AckReaction      *string       `yaml:"ack_reaction,omitempty" json:"ack_reaction,omitempty"`
 	WebhookEnabled   bool          `yaml:"webhook_enabled,omitempty" json:"webhook_enabled,omitempty"`
 	WebhookSecretEnv string        `yaml:"webhook_secret_env,omitempty" json:"webhook_secret_env,omitempty"`
@@ -2311,6 +2312,7 @@ const (
 	DefaultMentionMinRole        = RoleReadWrite
 	DefaultMentionPerUserPerHour = 6
 	DefaultMentionPerRepoPerHour = 30
+	DefaultMentionPerThreadMax   = 3
 	DefaultMentionAckReaction    = "eyes"
 	DefaultMentionWebhookMinGap  = 30 * time.Second
 )
@@ -2439,8 +2441,16 @@ func (m GitHubMentionsConfig) PerRepoPerHourEffective() int {
 	return DefaultMentionPerRepoPerHour
 }
 
-func (m GitHubMentionsConfig) PerThreadMaxAttemptsEffective() int {
-	return DefaultReviewBotMaxAttempts
+// PerThreadMaxEffective returns github.mentions.per_thread_max: how many
+// mention completion replies the hive posts on one issue or PR conversation.
+// Only App-authored replies carrying the mention reply marker count; stage
+// comments and other App comments on the conversation do not (#9164). It is
+// deliberately independent of classification.review_bots.max_attempts_per_thread.
+func (m GitHubMentionsConfig) PerThreadMaxEffective() int {
+	if m.PerThreadMax > 0 {
+		return m.PerThreadMax
+	}
+	return DefaultMentionPerThreadMax
 }
 
 func (m GitHubMentionsConfig) AckReactionEffective() string {
@@ -2471,7 +2481,7 @@ func (m GitHubMentionsConfig) Validate() error {
 	if m.PollInterval < 0 {
 		return fmt.Errorf("github.mentions.poll_interval must be non-negative")
 	}
-	if m.PerUserPerHour < 0 || m.PerRepoPerHour < 0 {
+	if m.PerUserPerHour < 0 || m.PerRepoPerHour < 0 || m.PerThreadMax < 0 {
 		return fmt.Errorf("github.mentions rate limits must be non-negative")
 	}
 	if m.WebhookEnabled && strings.TrimSpace(m.WebhookSecretEnv) == "" {

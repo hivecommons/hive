@@ -2803,7 +2803,7 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 			b.mentionWebhook = receiver
 		}
 		go poller.Run(b.ctx)
-		responder := mention.NewResponder(store, func() mention.GitHub { return b.ghClient }, mentionAgents, b.cfg.Classification.ReviewBots, b.logger)
+		responder := mention.NewResponder(store, func() mention.GitHub { return b.ghClient }, mentionAgents, b.cfg.GitHub.Mentions.PerThreadMaxEffective(), b.logger)
 		b.agentMgr.SetKickObserver(responder.HandleAgentEvent)
 		b.logger.Info("GitHub mention trigger poller started", "interval", b.cfg.GitHub.Mentions.PollIntervalEffective())
 	}

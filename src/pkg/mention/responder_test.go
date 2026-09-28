@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/hivecommons/hive/pkg/config"
 )
 
 func TestResponderRepliesOnArchivedMentionRun(t *testing.T) {
@@ -22,7 +20,7 @@ func TestResponderRepliesOnArchivedMentionRun(t *testing.T) {
 	gh := &fakeGH{app: "hive[bot]"}
 	r := NewResponder(store, func() GitHub { return gh }, func() []AgentInfo {
 		return []AgentInfo{{Name: "scanner", Enabled: true, Converse: true}}
-	}, config.ReviewBotsConfig{MaxAttemptsPerThread: 2}, nil)
+	}, 2, nil)
 
 	r.HandleAgentEvent("scanner", "kick-delivered", "ignored")
 	if gh.comment != "" {
@@ -53,7 +51,7 @@ func TestResponderPromotesOnlyDeliveredMentionKicks(t *testing.T) {
 	if err := store.RecordPending("scanner", ev, source, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	r := NewResponder(store, nil, nil, nil, nil)
+	r := NewResponder(store, nil, nil, 0, nil)
 	r.HandleAgentEvent("scanner", "kick-delivered", "governor")
 	if _, ok := store.ActiveForAgent("scanner"); ok {
 		t.Fatal("non-mention delivery promoted pending mention")
@@ -78,7 +76,7 @@ func TestResponderDroppedEventClearsPendingAndActiveContext(t *testing.T) {
 	if err := store.RecordActive("scanner", active, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	r := NewResponder(store, nil, nil, nil, nil)
+	r := NewResponder(store, nil, nil, 0, nil)
 	r.HandleAgentEvent("scanner", "kick-dropped", "governor")
 	if ctx, ok := store.ActiveForAgent("scanner"); !ok || ctx.NodeID != "active" {
 		t.Fatalf("non-mention drop changed active context: %+v ok=%v", ctx, ok)
@@ -103,7 +101,7 @@ func TestResponderArchiveBeforeDeliveryPromotesMatchingPending(t *testing.T) {
 	gh := &fakeGH{app: "hive[bot]"}
 	r := NewResponder(store, func() GitHub { return gh }, func() []AgentInfo {
 		return []AgentInfo{{Name: "scanner", Enabled: true, Converse: true}}
-	}, config.ReviewBotsConfig{MaxAttemptsPerThread: 2}, nil)
+	}, 2, nil)
 	r.HandleAgentEvent("scanner", "kick-log-archived", "archive source="+source)
 	if gh.commentNumber != 1 {
 		t.Fatalf("archive-before-delivery did not post matching reply, number=%d", gh.commentNumber)
@@ -124,7 +122,7 @@ func TestResponderDropEventWithPersistentStore(t *testing.T) {
 	if err := store.RecordPending("scanner", ev, source, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	r := NewResponder(store, nil, nil, nil, nil)
+	r := NewResponder(store, nil, nil, 0, nil)
 	r.HandleAgentEvent("scanner", "kick-dropped", source)
 	loaded, err := NewStore(path)
 	if err != nil {
@@ -143,7 +141,7 @@ func TestResponderPromotionStoreErrorDoesNotPanic(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(filepath.Dir(filepath.Dir(store.path)), "missing"), []byte("not dir"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r := NewResponder(store, nil, nil, nil, nil)
+	r := NewResponder(store, nil, nil, 0, nil)
 	r.HandleAgentEvent("scanner", "kick-delivered", SourceMention)
 	r.HandleAgentEvent("scanner", "kick-dropped", SourceMention)
 	r.HandleAgentEvent("scanner", "kick-log-archived", "archive source="+SourceMention)
@@ -162,7 +160,7 @@ func TestResponderRepliesFIFOWhenAgentRekickedBeforeArchiveObserverRuns(t *testi
 	gh := &fakeGH{app: "hive[bot]"}
 	r := NewResponder(store, func() GitHub { return gh }, func() []AgentInfo {
 		return []AgentInfo{{Name: "scanner", Enabled: true, Converse: true}}
-	}, config.ReviewBotsConfig{MaxAttemptsPerThread: 3}, nil)
+	}, 3, nil)
 	r.HandleAgentEvent("scanner", "kick-log-archived", "archive source="+mentionKickSource(first))
 	if _, ok := store.ActiveForAgent("scanner"); !ok {
 		t.Fatal("second active mention was cleared with the first")
@@ -181,7 +179,7 @@ func TestResponderSilentWithoutKnownContextOrConverse(t *testing.T) {
 	gh := &fakeGH{app: "hive[bot]"}
 	r := NewResponder(store, func() GitHub { return gh }, func() []AgentInfo {
 		return []AgentInfo{{Name: "scanner", Enabled: true, Converse: false}}
-	}, config.ReviewBotsConfig{MaxAttemptsPerThread: 2}, nil)
+	}, 2, nil)
 	r.HandleAgentEvent("scanner", "kick-log-archived", "archive source=mention")
 	if gh.comment != "" {
 		t.Fatalf("unknown context replied: %q", gh.comment)
@@ -208,7 +206,7 @@ func TestResponderNilGitHubAndNilAgentsDropClaimedContext(t *testing.T) {
 	}
 	r := NewResponder(store, func() GitHub { return nil }, func() []AgentInfo {
 		return []AgentInfo{{Name: "scanner", Enabled: true, Converse: true}}
-	}, config.ReviewBotsConfig{MaxAttemptsPerThread: 2}, nil)
+	}, 2, nil)
 	r.HandleAgentEvent("scanner", "kick-log-archived", "archive source="+source)
 	if _, ok := store.ActiveForAgent("scanner"); ok {
 		t.Fatal("nil github left a permanent active context")
@@ -217,7 +215,7 @@ func TestResponderNilGitHubAndNilAgentsDropClaimedContext(t *testing.T) {
 	if err := store.RecordActive("scanner", ev, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	r = NewResponder(store, func() GitHub { return &fakeGH{app: "hive[bot]"} }, nil, config.ReviewBotsConfig{MaxAttemptsPerThread: 2}, nil)
+	r = NewResponder(store, func() GitHub { return &fakeGH{app: "hive[bot]"} }, nil, 2, nil)
 	r.HandleAgentEvent("scanner", "kick-log-archived", "archive source="+source)
 	if _, ok := store.ActiveForAgent("scanner"); ok {
 		t.Fatal("nil agent resolver did not silently drop claimed context")
@@ -226,7 +224,7 @@ func TestResponderNilGitHubAndNilAgentsDropClaimedContext(t *testing.T) {
 
 func TestResponderNilAndClaimFailureNoop(t *testing.T) {
 	(*Responder)(nil).HandleAgentEvent("scanner", "kick-log-archived", "archive")
-	r := NewResponder(nil, nil, nil, nil, nil)
+	r := NewResponder(nil, nil, nil, 0, nil)
 	r.HandleAgentEvent("scanner", "kick-log-archived", "archive source=mention")
 	if r.agentCanConverse("missing") {
 		t.Fatal("missing agent reported converse")
@@ -243,7 +241,7 @@ func TestResponderRateLimitAndTransientErrors(t *testing.T) {
 	gh := &fakeGH{app: "hive[bot]", count: 1}
 	r := NewResponder(store, func() GitHub { return gh }, func() []AgentInfo {
 		return []AgentInfo{{Name: "scanner", Enabled: true, Converse: true}}
-	}, config.ReviewBotsConfig{MaxAttemptsPerThread: 1}, nil)
+	}, 1, nil)
 	r.HandleAgentEvent("scanner", "kick-log-archived", "archive source="+source)
 	if gh.comment != "" {
 		t.Fatalf("rate-limited reply posted: %q", gh.comment)

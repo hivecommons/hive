@@ -129,12 +129,12 @@ func TestListenDiscardsFirstSyncFiltersDedupesAndMarksBot(t *testing.T) {
 			if r.URL.Query().Get("since") != "" {
 				t.Fatalf("first sync since = %q", r.URL.Query().Get("since"))
 			}
-			_, _ = w.Write([]byte(`{"next_batch":"s0","rooms":{"join":{"!room:example":{"timeline":{"events":[{"event_id":"old","type":"m.room.message","sender":"@old:example","content":{"msgtype":"m.text","body":"old"}}]}}}}}`))
+			_, _ = w.Write([]byte(`{"next_batch":"s0","rooms":{"join":{"!room:example":{"timeline":{"events":[{"event_id":"old","type":"m.room.message","sender":"@old:example","content":{"msgtype":"m.text","body":"old"}}]}}}}}}`))
 		case 2:
 			if r.URL.Query().Get("since") != "s0" {
 				t.Fatalf("second sync since = %q", r.URL.Query().Get("since"))
 			}
-			_, _ = w.Write([]byte(`{"next_batch":"s1","rooms":{"join":{"!room:example":{"timeline":{"events":[{"event_id":"e1","type":"m.room.message","sender":"@alice:example","content":{"msgtype":"m.text","body":"hello"}},{"event_id":"e1","type":"m.room.message","sender":"@alice:example","content":{"msgtype":"m.text","body":"dupe"}},{"event_id":"topic","type":"m.room.topic","sender":"@alice:example","content":{"body":"ignore"}},{"event_id":"e2","type":"m.room.message","sender":"@bot:example","content":{"msgtype":"m.text","body":"bot"}}]},"state":{"events":[]}},"!other:example":{"timeline":{"events":[{"event_id":"other","type":"m.room.message","sender":"@mallory:example","content":{"body":"wrong room"}}]}}}}}`))
+			_, _ = w.Write([]byte(`{"next_batch":"s1","rooms":{"join":{"!room:example":{"timeline":{"events":[{"event_id":"e1","type":"m.room.message","sender":"@alice:example","content":{"msgtype":"m.text","body":"hello"}},{"event_id":"e1","type":"m.room.message","sender":"@alice:example","content":{"msgtype":"m.text","body":"dupe"}},{"event_id":"topic","type":"m.room.topic","sender":"@alice:example","content":{"body":"ignore"}},{"event_id":"e2","type":"m.room.message","sender":"@bot:example","content":{"msgtype":"m.text","body":"bot"}}],"limited":false,"prev_batch":"pb1"},"state":{"events":[]}},"!other:example":{"timeline":{"events":[{"event_id":"other","type":"m.room.message","sender":"@mallory:example","content":{"body":"wrong room"}}]}}}}}`))
 		default:
 			_, _ = w.Write([]byte(`{"next_batch":"s2"}`))
 		}
@@ -163,7 +163,39 @@ func TestListenDiscardsFirstSyncFiltersDedupesAndMarksBot(t *testing.T) {
 	}
 }
 
-func TestListenHonorsLimitExceededRetryAfter(t *testing.T) {
+func TestListenWarnsWhenTimelineLimited(t *testing.T) {
+	var mu sync.Mutex
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		requests++
+		switch requests {
+		case 1:
+			_, _ = w.Write([]byte(`{"next_batch":"s0"}`))
+		case 2:
+			_, _ = w.Write([]byte(`{"next_batch":"s1","rooms":{"join":{"!room:example":{"timeline":{"events":[{"event_id":"e1","type":"m.room.message","sender":"@alice:example","content":{"msgtype":"m.text","body":"hello"}}],"limited":true,"prev_batch":"pb1"}}}}}`))
+		default:
+			_, _ = w.Write([]byte(`{"next_batch":"s2"}`))
+		}
+	}))
+	defer server.Close()
+
+	backend := testBackend(server.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var got []chat.Message
+	backend.Listen(ctx, func(msg chat.Message) {
+		got = append(got, msg)
+		if len(got) >= 1 {
+			cancel()
+		}
+	})
+
+	if len(got) != 1 || got[0].ID != "e1" {
+		t.Fatalf("delivered messages: %+v", got)
+	}
+}
 	var mu sync.Mutex
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -262,9 +294,16 @@ func assertSyncFilter(t *testing.T, rawFilter, roomID string) {
 func TestMarkdownToMatrixHTML(t *testing.T) {
 	in := "**bold** `<tag>`\n```\ncode & more\n```"
 	got := markdownToMatrixHTML(in)
-	want := "<strong>bold</strong> <code>&lt;tag&gt;</code><br />\n<pre><code><br />\ncode &amp; more<br />\n</code></pre>"
+	want := "<strong>bold</strong> <code>&lt;tag&gt;</code><br />\n<pre><code>\ncode &amp; more\n</code></pre>"
 	if got != want {
 		t.Fatalf("markdownToMatrixHTML() = %q want %q", got, want)
+	}
+	// Test language tag stripping
+	inLang := "```go\nx := 1\n```"
+	gotLang := markdownToMatrixHTML(inLang)
+	wantLang := "<pre><code>\nx := 1\n</code></pre>"
+	if gotLang != wantLang {
+		t.Fatalf("markdownToMatrixHTML with lang = %q want %q", gotLang, wantLang)
 	}
 }
 
