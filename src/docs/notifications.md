@@ -181,6 +181,36 @@ After editing `hive.yaml`, restart or reload Hive through your normal deployment
 
 Webhook notifications are the `notifications.discord.webhook` field above.
 
-The repository also contains a separate Discord bot under [`../../discord/`](../../discord/). That bot is a Node.js service using `DISCORD_BOT_TOKEN` and `DISCORD_CHANNEL_PRIMARY` to connect to Discord, route commands, and bridge dashboard/pipeline status. It is not required for webhook notifications, and a bot token cannot replace `notifications.discord.webhook`.
+The Discord bot is part of the Hive Go process (`src/pkg/discord`), started when both `notifications.discord.bot_token` and `notifications.discord.channel_id` are set. It is not required for webhook notifications, and a bot token cannot replace `notifications.discord.webhook`; those fields start the bot integration and do not by themselves send ordinary webhook notifications unless `notifications.discord.webhook` is also configured.
 
-For the Hive Go process, bot startup uses `notifications.discord.bot_token` and `notifications.discord.channel_id` when both are set. Those fields start the bot integration; they do not send ordinary webhook notifications unless `notifications.discord.webhook` is also configured.
+> A legacy standalone Node.js bot previously lived under `discord/` and used
+> `DISCORD_BOT_TOKEN`/`DISCORD_CHANNEL_PRIMARY`. It was removed on `v6` in
+> hivecommons/hive#9140 (it had been crash-looping on a `SyntaxError` since May
+> and lacked the command-allowlist/ioscan/scrub guards the Go bot enforces).
+> Migrate any host still running it: `systemctl disable --now
+> hive-discord.service`, then set `notifications.discord.bot_token`,
+> `notifications.discord.channel_id`, and `notifications.discord.allowed_users`
+> in `hive.yaml` instead of `DISCORD_BOT_TOKEN`/`DISCORD_CHANNEL_PRIMARY`.
+
+### Bot prerequisites (hivecommons/hive#9141)
+
+The Go bot reads messages over Discord's REST API
+(`GET /channels/{id}/messages`), but Discord's Message Object contract applies
+to REST reads the same as gateway events: an app receives **empty**
+`content` (and `embeds`/`attachments`/`components`) unless it has been granted
+the **MESSAGE_CONTENT privileged intent**. Without it, the bot logs `discord
+bot starting`, posts "bot online", and polls successfully, but every command
+is silently ignored because `msg.Content` is always `""`.
+
+Before enabling the bot, in the [Discord Developer Portal](https://discord.com/developers/applications):
+
+1. Select your application → **Bot** → **Privileged Gateway Intents** → enable
+   **Message Content Intent**.
+2. Grant the bot, in the target channel, at least: **View Channel**, **Read
+   Message History**, and **Send Messages** (plus **Manage Channels** if you
+   want `SetTopic`/dashboard-status topic updates to work).
+
+If commands still appear ignored after enabling the intent, check the hive
+log for `discord poll failed` — that indicates a permissions problem
+(e.g. missing Read Message History), not a missing intent, since a missing
+intent produces no error at all, only empty content.

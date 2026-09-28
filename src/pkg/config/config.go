@@ -4899,8 +4899,15 @@ type MSTeamsConfig struct {
 type DiscordConfig struct {
 	Webhook        string `yaml:"webhook"`
 	FactoryWebhook string `yaml:"factory_webhook,omitempty"`
-	BotToken       string `yaml:"bot_token"`
-	ChannelID      string `yaml:"channel_id"`
+	// BotToken and ChannelID start the command bot (pkg/discord). The
+	// underlying Discord application MUST have the MESSAGE_CONTENT privileged
+	// intent enabled (Developer Portal → Bot → Privileged Gateway Intents),
+	// or the REST message poll returns messages with empty content and every
+	// command is silently ignored with no error logged (hivecommons/hive#9141).
+	// The bot also needs View Channel, Read Message History, and Send
+	// Messages on the target channel.
+	BotToken  string `yaml:"bot_token"`
+	ChannelID string `yaml:"channel_id"`
 	// AllowedUsers is an allowlist of Discord user IDs permitted to issue bot
 	// COMMANDS (!kick, !pause, agent actions — anything that drives an agent).
 	// SECURITY: without it, any member of the guild who can post in the channel

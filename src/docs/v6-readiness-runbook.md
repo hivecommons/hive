@@ -146,6 +146,16 @@ Prerequisites:
   ID in `allowed_users`; the Discord config structure uses `bot_token`,
   `channel_id`, and `allowed_users` (`src/pkg/config/config.go:4144-4154`).
   The backend refuses to start without the bot token (`Start`, `src/pkg/discord/bot.go:101-108`).
+- In the Discord Developer Portal, enable the **Message Content Intent**
+  (Bot → Privileged Gateway Intents) for the application backing the bot
+  token. Discord's Message Object contract applies to REST reads the same as
+  gateway events: without this intent the poller's `GET
+  /channels/{id}/messages` calls return messages with empty `content`, so the
+  bot looks healthy (polling, "bot online") but silently ignores every
+  command (hivecommons/hive#9141). There is no error to grep for this case —
+  see the notes below on distinguishing it from a permissions problem.
+- Grant the bot channel permissions View Channel, Read Message History, and
+  Send Messages (plus Manage Channels if topic updates are used).
 
 Run:
 
