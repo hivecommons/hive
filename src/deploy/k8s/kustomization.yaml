@@ -13,5 +13,7 @@ resources:
   - deployment.yaml
   - service.yaml
 
-commonLabels:
-  app.kubernetes.io/part-of: hive
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: hive
+    includeSelectors: true
