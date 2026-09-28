@@ -163,7 +163,7 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 	var restarted []string
 	for _, name := range crashed {
 		m.logger.Info("restarting crashed agent", "name", name)
-		if err := m.Restart(ctx, name); err != nil {
+		if err := m.RestartAfterCrash(ctx, name); err != nil {
 			m.logger.Error("failed to restart crashed agent", "name", name, "error", err)
 		} else {
 			m.mu.RLock()

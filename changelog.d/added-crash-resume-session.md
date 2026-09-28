@@ -1,0 +1,1 @@
+- Crash restarts now resume the agent's previous CLI session (`claude --continue`, `copilot --continue` under per-agent homes) instead of starting from a blank prompt, so in-flight work survives OOM kills, stray SIGKILLs of the agent process tree and CLI crashes. Runs that died within 2 minutes come back fresh to avoid resume loops; `HIVE_CRASH_RESUME=0` disables it (#9416).

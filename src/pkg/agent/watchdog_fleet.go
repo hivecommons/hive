@@ -183,11 +183,12 @@ func (f WatchdogFleet) IsPaused(name string) bool {
 	return ok && agent.Paused
 }
 
-// Restart delegates to the manager's session restart — the same path the
-// dashboard restart button and the token-restart recovery use, so restart
-// accounting (RestartCount) stays in one place.
+// Restart delegates to the manager's crash restart: the watchdog only
+// restarts agents it has classified dead, so the relaunch resumes the dead
+// run's CLI session where the backend allows (RestartAfterCrash). Restart
+// accounting (RestartCount) stays in one place with the other restart paths.
 func (f WatchdogFleet) Restart(ctx context.Context, name string) error {
-	return f.M.Restart(ctx, name)
+	return f.M.RestartAfterCrash(ctx, name)
 }
 
 // Pause delegates to the manager's system pause (no human actor).

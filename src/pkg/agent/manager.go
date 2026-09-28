@@ -250,6 +250,9 @@ type AgentProcess struct {
 	tmuxSocket        string
 	cancel            context.CancelFunc
 	forceRelaunch     bool
+	// resumeOnLaunch asks the next launchInTmux to reopen the most recent CLI
+	// session (crash restart, see RestartAfterCrash). Consumed by the launch.
+	resumeOnLaunch bool
 	// launching is set true under m.mu while Start runs this agent's launch
 	// with m.mu RELEASED (so a slow /data NFS write or a hung MITM-proxy token
 	// mint during launch cannot block AllStatuses()/the heartbeat collect() and

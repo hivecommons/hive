@@ -232,6 +232,14 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		launchCmd += fmt.Sprintf(" --text \"$(cat %s)\"", minimalPrompt)
 	}
 
+	if agent.resumeOnLaunch {
+		agent.resumeOnLaunch = false
+		if flag := crashResumeFlag(backend, agent.UID); flag != "" && strings.TrimSpace(agent.Config.LaunchCmd) == "" {
+			launchCmd += " " + flag
+			m.logger.Info("resuming previous CLI session after crash", "name", agent.Name, "backend", backend, "flag", flag)
+		}
+	}
+
 	if !agent.forceRelaunch && m.tmuxPaneHasCLIForAgent(agent) {
 		m.logger.Info("CLI already running in tmux pane, skipping launch", "name", agent.Name, "session", agent.tmuxSession)
 		now := time.Now()
