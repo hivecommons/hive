@@ -25,55 +25,65 @@ governor:
     busy: 5
     quiet: 2
     idle: 0
+  # Tuned r05x cadence matrix (hivecommons/hive#9350): hand-tuned on the hive
+  # (v5) and console spokes after the pack defaults' surge/busy cadences
+  # outran merge throughput (119 issues opened vs 31 closed in 24h). At L6,
+  # agents merge autonomously, so the binding constraint is CI/merge
+  # throughput and human confirmation of audit issues, not agent wake
+  # frequency — waking issue-filing agents (architect, telemetry, operations)
+  # every 5–30m in surge just compounds the backlog. reviewer stays at 30m
+  # across every mode: it drains the PR queue and is the one agent whose
+  # frequency helps. supervisor/strategist/outreach are paused by default;
+  # operators opt in. architect/guide/telemetry/operations go to no cadence
+  # (omitted) or paused once the fleet is busy/surging, so it stops
+  # generating new work while already saturated.
   cadences:
     surge:
-      supervisor: 1m
-      scanner: 5m
-      ci-maintainer: 5m
-      quality: 10m
-      architect: 15m
-      outreach: 30m
-      sec-check: 15m
+      supervisor: paused
+      scanner: 1h
+      ci-maintainer: 3h
+      quality: 3h
+      outreach: paused
+      sec-check: 2h
       reviewer: 30m
-      strategist: 30m
+      strategist: paused
       telemetry: paused
       operations: paused
     busy:
-      supervisor: 2m
-      scanner: 10m
-      ci-maintainer: 10m
-      quality: 15m
-      architect: 30m
-      outreach: 1h
-      sec-check: 30m
-      reviewer: 30m
-      strategist: 1h
-      telemetry: paused
-      operations: paused
-    quiet:
-      supervisor: 3m
-      scanner: 20m
-      ci-maintainer: 20m
-      quality: 30m
-      architect: 1h
-      outreach: 2h
-      sec-check: 1h
-      reviewer: 30m
-      strategist: 2h
-      telemetry: paused
-      operations: paused
-    idle:
-      supervisor: 5m
-      scanner: 30m
-      ci-maintainer: 30m
-      quality: 1h
-      architect: 2h
-      outreach: 4h
+      supervisor: paused
+      scanner: 1h
+      ci-maintainer: 3h
+      quality: 3h
+      outreach: paused
       sec-check: 2h
       reviewer: 30m
-      strategist: 4h
-      telemetry: paused
-      operations: paused
+      strategist: paused
+    quiet:
+      supervisor: paused
+      scanner: 1h
+      ci-maintainer: 3h
+      quality: 3h
+      guide: 4h
+      architect: 3h
+      outreach: paused
+      sec-check: 2h
+      reviewer: 30m
+      strategist: paused
+      telemetry: 3h
+      operations: 3h
+    idle:
+      supervisor: paused
+      scanner: 1h
+      ci-maintainer: 3h
+      quality: 3h
+      guide: 4h
+      architect: 2h
+      outreach: paused
+      sec-check: 2h
+      reviewer: 30m
+      strategist: paused
+      telemetry: 3h
+      operations: 3h
 agents:
 - name: supervisor
   display_name: Supervisor
@@ -117,7 +127,7 @@ agents:
   mode: ISSUES_PRS_MERGE
   kick_template: scanner-automerge.md
   include_repos: true
-  stale_timeout: 3600  # 1h — must exceed longest cadence (30m idle)
+  stale_timeout: 7200  # 2h — must exceed longest cadence (1h, #9350)
   lane_keywords:
   - bug
   - triage
@@ -145,7 +155,7 @@ agents:
   mode: ISSUES_AND_PRS
   kick_template: ci-maintainer-full.md
   include_repos: true
-  stale_timeout: 3600  # 1h — must exceed longest cadence (30m idle)
+  stale_timeout: 21600  # 6h — must exceed longest cadence (3h, #9350)
   lane_keywords:
   - ci
   - build
@@ -174,7 +184,7 @@ agents:
   mode: ISSUES_AND_PRS
   kick_template: quality-full.md
   include_repos: true
-  stale_timeout: 7200  # 2h — must exceed longest cadence (1h idle)
+  stale_timeout: 21600  # 6h — must exceed longest cadence (3h, #9350)
   interactions: 'Auto-approves PRs when coverage + CI gates pass.
 
     '
@@ -196,7 +206,7 @@ agents:
   mode: ISSUES_AND_PRS
   kick_template: guide-full.md
   include_repos: true
-  stale_timeout: 3600
+  stale_timeout: 28800  # 8h — must exceed longest cadence (4h, #9350)
   interactions: 'Creates documentation PRs autonomously.
 
     '
@@ -218,7 +228,7 @@ agents:
   mode: ISSUES_AND_PRS
   kick_template: sec-check-full.md
   include_repos: true
-  stale_timeout: 14400  # 4h — must exceed longest cadence (2h idle)
+  stale_timeout: 14400  # 4h — must exceed longest cadence (2h, #9350)
   lane_keywords:
   - security
   - cve
@@ -246,7 +256,7 @@ agents:
   mode: ISSUES_AND_PRS
   kick_template: architect-full.md
   include_repos: true
-  stale_timeout: 14400  # 4h — must exceed longest cadence (2h idle)
+  stale_timeout: 14400  # 4h — must exceed longest cadence (3h quiet, #9350)
   lane_keywords:
   - refactor
   - architecture
@@ -274,7 +284,7 @@ agents:
   mode: ISSUES_AND_PRS
   kick_template: strategist-full.md
   include_repos: false
-  stale_timeout: 28800  # 8h — must exceed longest cadence (4h idle)
+  stale_timeout: 28800  # 8h — strategist is paused in every L6 mode (#9350); this bound only matters if an operator overrides the cadence
   lane_keywords:
   - strategy
   - roadmap
@@ -301,7 +311,7 @@ agents:
   mode: ISSUES_AND_PRS
   kick_template: outreach-full.md
   include_repos: false
-  stale_timeout: 28800  # 8h — must exceed longest cadence (4h idle)
+  stale_timeout: 28800  # 8h — outreach is paused in every L6 mode (#9350); this bound only matters if an operator overrides the cadence
   lane_keywords:
   - community
   - adopters
@@ -393,7 +403,7 @@ agents:
   mode: ISSUES_AND_PRS
   kick_template: telemetry-full.md
   include_repos: true
-  stale_timeout: 28800
+  stale_timeout: 28800  # 8h — must exceed longest cadence (3h, #9350)
   lane_keywords: [observability, opentelemetry, prometheus, grafana, tracing, metrics, structured-logging, servicemonitor, podmonitor]
   interactions: Opens issues and PRs for bounded, explicitly configured telemetry improvements; never merges its own PRs.
   knowledge_use: Reads project stack and selected observability backends from the knowledge base.
@@ -410,7 +420,7 @@ agents:
   mode: ISSUES_AND_PRS
   kick_template: operations-full.md
   include_repos: true
-  stale_timeout: 28800
+  stale_timeout: 28800  # 8h — must exceed longest cadence (3h, #9350)
   lane_keywords: [healthz, readyz, readiness, slo-, sli-, service-level-objective, service-level-indicator, error-budget, runbook, incident-response, rollback, alerting]
   interactions: Opens issues and PRs for operational-practice improvements; never merges its own PRs.
   knowledge_use: Reads reliability goals and operational conventions from the knowledge base.
