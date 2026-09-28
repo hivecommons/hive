@@ -1394,6 +1394,8 @@
     .repo-hold-toggle[data-busy="1"] { opacity: 0.5; cursor: default; }
     .repo-hold-static { cursor: help; opacity: 0.85; }
     .repo-name a:hover { text-decoration: underline !important; }
+    .system-alert-link { color: inherit; text-decoration: underline; font-weight: 600; }
+    .system-alert-link:hover { opacity: 0.8; }
     /* The two stat columns (issues | PRs) and the two pill columns under
        them share one grid, so a pill sits under the number it counts
        toward. Kind is said by POSITION (and the column's tint: blue
@@ -4338,6 +4340,25 @@
     function escapeHtml(str) {
       if (typeof str !== 'string') return '';
       return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    /**
+     * Escape HTML special characters, then turn http(s) URLs into clickable
+     * <a> tags. Escaping always runs first so linkification can never
+     * introduce unescaped markup from untrusted text (hivecommons/hive#9390).
+     */
+    function escapeHtmlAndLinkify(str) {
+      var escaped = escapeHtml(str);
+      return escaped.replace(/https?:\/\/[^\s<>"']+/g, function(url) {
+        // Trim trailing punctuation that's likely sentence syntax, not part of the URL.
+        var trailing = '';
+        var trailingMatch = url.match(/[).,;:!?]+$/);
+        if (trailingMatch) {
+          trailing = trailingMatch[0];
+          url = url.slice(0, url.length - trailing.length);
+        }
+        return '<a class="system-alert-link" href="' + url + '" target="_blank" rel="noopener noreferrer">' + url + '</a>' + trailing;
+      });
     }
     // ── Collapsible sections (issue #1533) ──
     const SECTION_LS_PREFIX = 'hive-section-collapsed-';
@@ -8218,7 +8239,7 @@
         var textColor = 'var(--text)'; // banner copy stays neutral; severity lives in the tint/border
         return '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:8px;padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-4);display:flex;align-items:center;gap:10px;font-size:0.85rem">'
           + '<span style="font-size:1.3rem">⚠️</span>'
-          + '<span style="color:' + textColor + '">' + a.message.replace(/</g, '&lt;') + '</span>'
+          + '<span style="color:' + textColor + '">' + escapeHtmlAndLinkify(a.message) + '</span>'
           + '</div>';
       }).join('');
     }
