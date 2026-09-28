@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -467,7 +468,41 @@ var kickRefusalPatterns = []string{
 	"characteristic of a prompt injection attack",
 }
 
+// kickEchoIssueRef matches "#123" / "PR #50" style references, which occur in
+// echoed kick content (issue and PR lists) and never in an agent's own
+// first-person refusal sentence.
+var kickEchoIssueRef = regexp.MustCompile(`#\d+`)
+
+// looksLikeEchoedKickContent reports whether a pane line is structured
+// markdown from the kick text itself (a bullet, table row, heading, quote,
+// numbered item, bold span, or an issue/PR reference) rather than prose the
+// agent produced. Security-review kicks legitimately list issues titled
+// "prompt injection ..." — matching those as a refusal marked scanner and
+// reviewer KickRefused on hive-qual0 (2026-09-28) and hid the kick's output.
+func looksLikeEchoedKickContent(line string) bool {
+	t := strings.TrimSpace(line)
+	if t == "" {
+		return false
+	}
+	switch t[0] {
+	case '-', '*', '|', '#', '>', '`':
+		return true
+	}
+	if i := strings.IndexByte(t, '.'); i > 0 && i <= 3 {
+		if _, err := strconv.Atoi(t[:i]); err == nil {
+			return true
+		}
+	}
+	if strings.Contains(t, "**") || kickEchoIssueRef.MatchString(t) {
+		return true
+	}
+	return false
+}
+
 func (m *Manager) checkKickRefusal(agent *AgentProcess, line string) {
+	if looksLikeEchoedKickContent(line) {
+		return
+	}
 	lower := strings.ToLower(line)
 	for _, pattern := range kickRefusalPatterns {
 		if strings.Contains(lower, strings.ToLower(pattern)) {
