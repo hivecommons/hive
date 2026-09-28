@@ -1,1 +1,1 @@
-- The changelog-fragment-guard check now posts a sticky PR comment with the exact fix when a PR lacks a fragment, and the PR template leads with the changelog requirement, so contributors stop tripping the check.
+- The changelog-fragment-guard check now pushes a signed-off fragment generated from the PR title to same-repo PRs that lack one (fork PRs get a guidance comment), and the PR template leads with the changelog requirement.
