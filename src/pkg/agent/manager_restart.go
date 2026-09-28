@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"testing"
 	"time"
 )
 
@@ -516,8 +517,41 @@ var cliProcessMarkers = []string{
 // and nothing on the launch path mutates it.
 var procRoot = "/proc"
 
+// realProcRoot is the production /proc mount. The sweep guards below only
+// apply when scanning it: tests that redirect procRoot at a fake tree keep
+// exercising the kill path end to end.
+const realProcRoot = "/proc"
+
+// sweepGuardReason reports why the calling process must NOT run a real-/proc
+// SIGKILL sweep, or "" when the sweep is allowed.
+//
+// Regression guard for the recurring "scanner whole-tree SIGKILL" (#9416): an
+// agent ran hive's own Go test suite inside its tmux pane. Tests that build a
+// Manager loaded the world-readable production UID map, resolved the agent's
+// real UID, and reached killAgentProcesses / reapAgentCLI against the real
+// /proc — SIGKILLing the agent's tmux server, every CLI and the ttyd attach
+// client, with the test binary as the sole survivor (self-skip). Hive never
+// runs with HIVE_AGENT set (only launched agent CLIs do) and never runs as a
+// test binary, so both conditions unambiguously identify a non-hive caller.
+func sweepGuardReason(procPath string) string {
+	if procPath != realProcRoot {
+		return ""
+	}
+	if testing.Testing() {
+		return "running inside a Go test binary"
+	}
+	if os.Getenv("HIVE_AGENT") != "" {
+		return "running inside an agent pane (HIVE_AGENT set)"
+	}
+	return ""
+}
+
 func (m *Manager) reapAgentCLI(agent *AgentProcess) int {
 	procPath := procRoot
+	if reason := sweepGuardReason(procPath); reason != "" {
+		m.logger.Warn("reapAgentCLI: refusing real-/proc sweep", "agent", agent.Name, "reason", reason)
+		return 0
+	}
 	marker := "HIVE_AGENT=" + agent.Name
 
 	entries, err := os.ReadDir(procPath)
@@ -623,6 +657,12 @@ func killAgentProcesses(uid int, logger *slog.Logger) int {
 	}
 
 	procPath := procRoot
+	if reason := sweepGuardReason(procPath); reason != "" {
+		if logger != nil {
+			logger.Warn("killAgentProcesses: refusing real-/proc sweep", "uid", uid, "reason", reason)
+		}
+		return 0
+	}
 	entries, err := os.ReadDir(procPath)
 	if err != nil {
 		logger.Warn("failed to read /proc for process cleanup", "uid", uid, "error", err)
