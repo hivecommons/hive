@@ -302,7 +302,12 @@ type AgentProcess struct {
 	// spend the token-restart budget (see paneShowsStartupRateLimit).
 	lastRateLimitRestart time.Time
 	NeedsLogin           bool // true when pane shows a login prompt
-	QuotaExhausted       bool // true when pane shows provider/monthly quota exhaustion
+	// Starting is snapshot-only: true while the agent is still in the boot
+	// stagger (startupLaunchQueued) or its launch is in progress (launching).
+	// Its State is still "stopped" in that window, which the dashboard used to
+	// paint as down-red on every hive restart even though nothing is wrong.
+	Starting       bool
+	QuotaExhausted bool // true when pane shows provider/monthly quota exhaustion
 	// WatchdogConditions is the k8s-style observed-health condition set the
 	// watchdog reconciler publishes for this agent (RFC #4665): Ready /
 	// Authenticated / Producing with lastTransitionTime + reason. Written by

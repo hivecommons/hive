@@ -463,6 +463,7 @@
     .oc-agent-detail-header .status-dot.paused { background: var(--status-warn); }
     .oc-agent-detail-header .status-dot.on-demand { background: var(--status-info); }
     .oc-agent-detail-header .status-dot.stopped { background: var(--status-error); }
+    .oc-agent-detail-header .status-dot.starting { background: var(--status-info); animation: oc-pulse 1.5s ease-in-out infinite; }
     /* needs-login is a HOLLOW attention ring — paused is a solid warning dot.
        The two states were both rendered as near-identical solid amber/yellow
        and operators could not tell "resting by choice" from "blocked on a
@@ -542,6 +543,7 @@
     .oc-agent-dot.paused { background: var(--status-warn); }
     .oc-agent-dot.on-demand { background: var(--status-info); }
     .oc-agent-dot.stopped { background: var(--status-error); }
+    .oc-agent-dot.starting { background: var(--status-info); animation: oc-pulse 1.5s ease-in-out infinite; }
     .oc-agent-dot.needs-login { background: transparent; border: 2px solid var(--status-attention); box-sizing: border-box; }
     /* off-healthy: hollow GREEN ring — healthy agent whose governor cadence for
        the current mode is pause/off, so it will not be kicked. Mirrors the
@@ -1125,6 +1127,7 @@
        the current mode, so it will not be kicked (mirrors needs-login, green). */
     .dot.off-healthy { background: transparent; border: 2px solid var(--status-ok); box-sizing: border-box; }
     .dot.stopped { background: var(--status-error); }
+    .dot.starting { background: var(--status-info); animation: oc-pulse 1.5s ease-in-out infinite; }
     .dot.needs-login { background: transparent; border: 2px solid var(--status-attention); box-sizing: border-box; }
     .agent-field { display: flex; justify-content: space-between; font-size: 0.8rem; padding: var(--sp-1) var(--sp-0); }
     .agent-field .label { color: var(--muted); }
@@ -4377,6 +4380,7 @@
       paused: { label: 'paused', status: 'warn' },
       pause: { label: 'paused', status: 'warn' },
       stopped: { label: 'stopped', status: 'error' },
+      starting: { label: 'starting', status: 'info' },
       down: { label: 'down', status: 'error' },
       error: { label: 'error', status: 'error' },
       failed: { label: 'failed', status: 'error' },
@@ -5099,7 +5103,10 @@
       // Down = process not alive ('stopped', 'failed', …) — anything but
       // 'running'. Matching only 'stopped' let 'failed' agents render the
       // green idle styling here (#2465).
-      const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand;
+      // Post-restart boot stagger / launch in progress: the agent is not down,
+      // it just hasn't reached its pane yet. Render as 'starting', not red.
+      const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
+      const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting;
       // Same formula as the Auth section's Login button below: a down agent
       // with an unauthenticated CLI gets the amber needs-login state instead
       // of plain down-red (#2465).
@@ -5110,7 +5117,7 @@
          cannot repaint a genuinely working agent. */
       const needsLoginDown = _agentNeedsLogin(a, isStopped);
       const isRunning = a.busy === 'working' && !isPaused && !isOff && !isStopped;
-      const dotCls = needsLoginDown ? 'needs-login' : isStopped ? 'stopped' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
+      const dotCls = needsLoginDown ? 'needs-login' : isStarting ? 'starting' : isStopped ? 'stopped' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
       // A healthy agent that is off *because of its governor cadence* (offByCadence,
       // i.e. cadence==pause/off for the current mode) reaches the isOff branch above
       // only after the stopped / needs-login / on-demand / manual-paused guards, so
@@ -5488,7 +5495,8 @@
       // green 'idle' class while the deep "agents" health check reported it
       // down (#2465). Match the deep check: non-running + non-paused = down,
       // with paused/off/on-demand keeping their own styling.
-      const isDown = a.state !== 'running' && !isPaused && !isOff && !isOnDemand;
+      const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
+      const isDown = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting;
       // A down agent whose CLI is unauthenticated is not merely down — it can
       // never do work until someone logs it in. Same formula as the agent
       // panel's Login button; rendered amber with a "needs login" note. Only
@@ -5497,7 +5505,7 @@
       const needsLoginDown = _agentNeedsLogin(a, isDown);
       const isRunning = a.busy === 'working' && !isPaused && !isOff && !isDown;
       const isOnDemandIdle = isOnDemand && !isRunning;
-      const dotCls = needsLoginDown ? 'needs-login' : isDown ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
+      const dotCls = needsLoginDown ? 'needs-login' : isStarting ? 'starting' : isDown ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
       // Healthy-but-governor-paused → hollow green dot (see detail-header renderer).
       // isOff is only reached past the down / needs-login / on-demand / manual-paused
       // guards, so the agent is provably alive; render off-healthy instead of grey off.
@@ -7537,7 +7545,8 @@
         const isOff = agentHeldByMode(a) && !isPaused && !isOnDemand;
         // Down = process not alive — anything but 'running'. 'stopped'-only
         // matching rendered crash-looping ('failed') agents green (#2465).
-        const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand;
+        const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
+        const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting;
         const needsLogin = _agentNeedsLogin(a, isStopped);
         const STALE_MS = 1200000; // 20 minutes
         const isStale = a.summaryUpdated && !isPaused && a.busy === 'working' && (Date.now() - new Date(a.summaryUpdated).getTime()) > STALE_MS;
@@ -7546,10 +7555,10 @@
         else if (a.structuredStatus === 'NEEDS_CONTEXT') statusCls = 'status-needs-context';
         else if (isStale) statusCls = 'status-stale';
         const isOnDemandIdle = isOnDemand && a.busy !== 'working';
-        const cls = needsLogin ? 'needs-login' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isStopped ? 'stopped' : `${a.busy} ${statusCls}`.trim();
+        const cls = needsLogin ? 'needs-login' : isStarting ? 'starting' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isStopped ? 'stopped' : `${a.busy} ${statusCls}`.trim();
         // Down + unauthenticated CLI = attention-token needs-login (same formula as the
         // card's Login button above), not plain down-red (#2465).
-        const dotCls = (isStopped && needsLogin) ? 'needs-login' : isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
+        const dotCls = (isStopped && needsLogin) ? 'needs-login' : isStarting ? 'starting' : isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
         // Healthy-but-governor-paused → hollow green dot (see detail-header renderer).
         const dotState = isOff ? 'off-healthy' : dotCls;
         const canToggle = a.beadRole !== 'supervisor';

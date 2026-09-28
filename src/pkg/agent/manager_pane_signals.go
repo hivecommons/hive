@@ -424,6 +424,7 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		LastKickMessage:           a.LastKickMessage,
 		KickOutcome:               a.KickOutcome,
 		NeedsLogin:                needsLogin,
+		Starting:                  a.startupLaunchQueued || a.launching,
 		QuotaExhausted:            quotaExhausted,
 		LastPaneChange:            lastPaneChange,
 		WatchdogConditions:        conds,

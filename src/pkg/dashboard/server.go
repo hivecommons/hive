@@ -568,21 +568,25 @@ type InferenceBackend struct {
 }
 
 type FrontendAgent struct {
-	Name             string `json:"name"`
-	ID               string `json:"id"`
-	DisplayName      string `json:"displayName,omitempty"`
-	Description      string `json:"description,omitempty"`
-	Role             string `json:"role,omitempty"`
-	SortOrder        int    `json:"sortOrder"`
-	Emoji            string `json:"emoji,omitempty"`
-	Color            string `json:"color,omitempty"`
-	BeadRole         string `json:"beadRole,omitempty"`
-	Managed          bool   `json:"managed,omitempty"`
-	ReplicaBase      string `json:"replicaBase,omitempty"`
-	ReplicaIndex     int    `json:"replicaIndex,omitempty"`
-	ReplicaCount     int    `json:"replicaCount,omitempty"`
-	Session          string `json:"session"`
-	State            string `json:"state"`
+	Name         string `json:"name"`
+	ID           string `json:"id"`
+	DisplayName  string `json:"displayName,omitempty"`
+	Description  string `json:"description,omitempty"`
+	Role         string `json:"role,omitempty"`
+	SortOrder    int    `json:"sortOrder"`
+	Emoji        string `json:"emoji,omitempty"`
+	Color        string `json:"color,omitempty"`
+	BeadRole     string `json:"beadRole,omitempty"`
+	Managed      bool   `json:"managed,omitempty"`
+	ReplicaBase  string `json:"replicaBase,omitempty"`
+	ReplicaIndex int    `json:"replicaIndex,omitempty"`
+	ReplicaCount int    `json:"replicaCount,omitempty"`
+	Session      string `json:"session"`
+	State        string `json:"state"`
+	// Starting is true while the agent is queued in the post-restart boot
+	// stagger or its launch is in progress. State is still "stopped" then;
+	// the SPA renders this window as "starting" rather than down.
+	Starting         bool   `json:"starting,omitempty"`
 	Busy             string `json:"busy"`
 	Paused           bool   `json:"paused"`
 	PausedAt         string `json:"pausedAt,omitempty"`

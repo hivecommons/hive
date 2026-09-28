@@ -837,6 +837,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			Sandboxed:       agentCfg.SandboxEnabled(cfg.AgentSandbox),
 			Session:         name,
 			State:           string(proc.State),
+			Starting:        proc.Starting && proc.State != agent.StateRunning,
 			Busy:            busy,
 			Paused:          proc.Paused,
 			PausedAt:        formatOptionalTime(proc.PausedAt),
