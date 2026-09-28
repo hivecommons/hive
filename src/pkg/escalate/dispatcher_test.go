@@ -293,3 +293,157 @@ func waitFor(t *testing.T, ok func() bool) {
 		}
 	}
 }
+
+// count reports how many audits carry action and sink, whatever the detail.
+func (a *auditLog) count(actionSink string) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	n := 0
+	for _, l := range a.lines {
+		if strings.HasPrefix(l, actionSink+":") {
+			n++
+		}
+	}
+	return n
+}
+
+func TestDispatcherStopDeliversQueuedEvents(t *testing.T) {
+	audits := &auditLog{}
+	d := NewDispatcher(context.Background(), nil, audits.record)
+	sink := &fakeSink{name: "page", gate: make(chan struct{}), entered: make(chan struct{})}
+	d.Register(sink, SeverityPage, 8)
+	d.Dispatch(Event{Severity: SeverityPage, Title: "page1"})
+	<-sink.entered
+	d.Dispatch(Event{Severity: SeverityPage, Title: "page2"})
+	d.Dispatch(Event{Severity: SeverityPage, Title: "page3"})
+	d.Stop()
+	d.Dispatch(Event{Severity: SeverityPage, Title: "after stop"})
+	close(sink.gate)
+
+	waitFor(t, func() bool { return d.Context().Err() != nil })
+	if sink.count() != 3 {
+		t.Fatalf("delivered=%d, want the 3 events queued before Stop", sink.count())
+	}
+	if got := audits.count("escalation_dropped_on_stop:dispatcher"); got != 1 {
+		t.Fatalf("dispatch after Stop audited %d times, want 1", got)
+	}
+}
+
+// ctxSink parks in Deliver until the dispatcher context is cancelled, like an
+// SMTP relay that never answers.
+type ctxSink struct{ entered chan struct{} }
+
+func (s *ctxSink) Name() string { return "slow" }
+func (s *ctxSink) Deliver(ctx context.Context, ev Event) error {
+	select {
+	case s.entered <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestDispatcherStopAuditsEventsItCannotDrain(t *testing.T) {
+	audits := &auditLog{}
+	d := NewDispatcher(context.Background(), nil, audits.record)
+	d.drainTimeout = 20 * time.Millisecond
+	sink := &ctxSink{entered: make(chan struct{}, 1)}
+	d.Register(sink, SeverityPage, 8)
+	d.Dispatch(Event{Severity: SeverityPage, Title: "page1"})
+	<-sink.entered
+	d.Dispatch(Event{Severity: SeverityPage, Title: "page2"})
+	d.Dispatch(Event{Severity: SeverityPage, Title: "page3"})
+	d.Stop()
+
+	waitFor(t, func() bool {
+		return audits.count("escalation_delivery_failed:slow")+audits.count("escalation_dropped_on_stop:slow") == 3
+	})
+	if got := audits.count("escalation_delivery_failed:slow"); got != 1 {
+		t.Fatalf("in-flight delivery audited %d times, want 1", got)
+	}
+}
+
+// throttleSink answers 429 with the given Retry-After to its first throttles
+// attempts, then accepts. entered receives once per attempt.
+type throttleSink struct {
+	mu         sync.Mutex
+	throttles  int
+	retryAfter time.Duration
+	attempts   int
+	delivered  int
+	entered    chan struct{}
+}
+
+func (s *throttleSink) Name() string { return "throttled" }
+func (s *throttleSink) Deliver(ctx context.Context, ev Event) error {
+	s.mu.Lock()
+	s.attempts++
+	throttled := s.attempts <= s.throttles
+	if !throttled {
+		s.delivered++
+	}
+	s.mu.Unlock()
+	select {
+	case s.entered <- struct{}{}:
+	default:
+	}
+	if throttled {
+		return &statusError{code: http.StatusTooManyRequests, retryAfter: s.retryAfter}
+	}
+	return nil
+}
+
+func (s *throttleSink) counts() (attempts, delivered int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.attempts, s.delivered
+}
+
+// A throttled event being retried when Stop begins must not wait past the
+// drain deadline: a backoff that would end after it is skipped and the event
+// gets its final attempt at once, while one that fits is still waited out.
+func TestDispatcherStopCapsRetryWaitAtDrainDeadline(t *testing.T) {
+	cases := []struct {
+		name          string
+		retryAfter    time.Duration
+		throttles     int
+		wantAttempts  int
+		wantDelivered int
+		wantFailed    int
+	}{
+		// Retry-After 30s against a 10s drain budget: waitFor gives up after
+		// 1s, so only a skipped wait passes, and the context is cancelled by
+		// the drain finishing, not by the deadline.
+		{"over budget: final attempt now, delivered", 30 * time.Second, 1, 2, 1, 0},
+		{"over budget: final attempt now, fails", 30 * time.Second, 5, 2, 0, 1},
+		{"within budget: backoff still honoured", 0, 2, 3, 1, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			audits := &auditLog{}
+			d := NewDispatcher(context.Background(), nil, audits.record)
+			d.drainTimeout = 10 * time.Second
+			// The backoff steps are the floor; tc.retryAfter stretches them.
+			d.backoff = []time.Duration{time.Millisecond, time.Millisecond}
+			sink := &throttleSink{throttles: tc.throttles, retryAfter: tc.retryAfter, entered: make(chan struct{}, 1)}
+			d.Register(sink, SeverityPage, 4)
+			d.Dispatch(Event{Severity: SeverityPage, Title: "page"})
+			<-sink.entered
+			d.Stop()
+
+			// The drain ends when the worker returns, which cancels the
+			// context well inside the 10s drain budget.
+			waitFor(t, func() bool { return d.Context().Err() != nil })
+			attempts, delivered := sink.counts()
+			if attempts != tc.wantAttempts || delivered != tc.wantDelivered {
+				t.Fatalf("attempts=%d delivered=%d, want %d/%d", attempts, delivered, tc.wantAttempts, tc.wantDelivered)
+			}
+			if got := audits.count("escalation_delivery_failed:throttled"); got != tc.wantFailed {
+				t.Fatalf("escalation_delivery_failed audits=%d, want %d (%v)", got, tc.wantFailed, audits.snapshot())
+			}
+			if got := audits.count("escalation_dropped_on_stop:throttled"); got != 0 {
+				t.Fatalf("event audited as dropped on stop: %v", audits.snapshot())
+			}
+		})
+	}
+}

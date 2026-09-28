@@ -628,11 +628,12 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 		if msg != "" {
 			msg = s.finalizeKickMessage(agentName, repo, msg)
 			if elideStuffed && s.logger != nil {
-				fullMsg := s.buildAgentMessage(agentName, targetIssues, targetActionable, false)
-				if fullMsg != "" {
-					fullMsg = s.finalizeKickMessage(agentName, repo, fullMsg)
-					s.logger.Info("task MCP stuffed context elided", "agent", agentName, "full_bytes", len(fullMsg), "elided_bytes", len(msg))
-				}
+				// Never re-run buildAgentMessage just to log a byte count: it is
+				// not pure (ioscan audit rows, classifier budget/LLM calls,
+				// duplicate prompt-source GitHub fetches all fire again). Log the
+				// size of the message we actually send instead of diffing it
+				// against a second, discarded full render.
+				s.logger.Info("task MCP stuffed context elided", "agent", agentName, "elided_bytes", len(msg))
 			}
 			messages = append(messages, KickMessage{
 				Agent:     agentName,

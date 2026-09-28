@@ -198,8 +198,11 @@ mentioning comment (`Reactions.CreateIssueCommentReaction`; the hive already
 uses reactions for fleet-report dedupe, `src/pkg/github/fleet_report.go:42`).
 It is the GitHub analogue of Linear's `thought` ack — cheap, non-textual, and
 tells the human the mention was heard without a comment that would itself be a
-target for the loop guard. It is posted only after every guard has passed, so
-a declined mention gets no reaction (see *No oracle* below).
+target for the loop guard. It is posted only after every guard has passed and
+the kick was delivered, so a declined or undelivered mention gets no reaction
+(see *No oracle* below). A failed reaction on a delivered kick — a locked issue
+answers 403 — is recorded on the `agent_mention_kicked` entry as `ack=failed`
+and never retried, because a retry would kick the agent twice.
 
 ## Guards
 
@@ -302,7 +305,13 @@ agents:
   as the watchers (`src/pkg/github/attribution.go`).
 - `agent_mention_declined` — one entry per dropped mention with the guard that
   dropped it (`unauthorized`, `rate-limited`, `thread-cap`, `loop`,
-  `no-agent`, `ioscan`), never the body.
+  `no-agent`, `ioscan`, `thread-count-failed`, `kick-failed`), never the body.
+- A mention that passed every guard but whose thread count or kick failed is
+  retried on later polls without stalling the mentions after it: the poller
+  holds the repo watermark at the failed mention's creation time and keeps
+  going, and the failed attempt returns its per-user and per-repo rate-limit
+  tokens. After three failed attempts it is declined as `thread-count-failed`
+  or `kick-failed` and marked, so it cannot hold the watermark forever.
 - Kick history rows carry `source=mention`, so the dashboard's agent card and
   the kick outcome classifier (#7421) can say the turn was summoned, and the
   per-agent "last kick" no longer implies a cadence fired.

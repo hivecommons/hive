@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/chat"
@@ -150,9 +153,8 @@ func (b *discordBackend) Send(content string) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("discord API %d: %s", resp.StatusCode, string(body))
+	if err := discordAPIError(resp); err != nil {
+		return err
 	}
 
 	return nil
@@ -208,6 +210,16 @@ func (b *discordBackend) Listen(ctx context.Context, deliver func(chat.Message))
 			messages, err := b.fetchMessages(ctx, lastMessageID)
 			if err != nil {
 				b.logger.Warn("discord poll failed", "error", err)
+				// A rate-limited poll waits out Discord's retry_after before the
+				// next tick so the poller does not keep tripping the same bucket.
+				var retryable *chat.RetryableError
+				if errors.As(err, &retryable) && retryable.RetryAfter > 0 {
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(retryable.RetryAfter):
+					}
+				}
 				continue
 			}
 
@@ -246,9 +258,8 @@ func (b *discordBackend) fetchMessages(ctx context.Context, after string) ([]dis
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("discord API %d: %s", resp.StatusCode, string(body))
+	if err := discordAPIError(resp); err != nil {
+		return nil, err
 	}
 
 	var messages []discordMessage
@@ -256,4 +267,39 @@ func (b *discordBackend) fetchMessages(ctx context.Context, after string) ([]dis
 		return nil, err
 	}
 	return messages, nil
+}
+
+// discordAPIError maps a >= 400 response to an error. A 429 carries the
+// `retry_after` Discord reports (seconds, fractional; the `Retry-After`
+// header is the integer fallback) as a chat.RetryableError so the spine can
+// wait it out and resend instead of dropping the message; 5xx responses are
+// retryable with no hint. Other statuses are terminal.
+func discordAPIError(resp *http.Response) error {
+	if resp.StatusCode < 400 {
+		return nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	err := fmt.Errorf("discord API %d: %s", resp.StatusCode, string(body))
+	switch {
+	case resp.StatusCode == http.StatusTooManyRequests:
+		return chat.Retryable(err, discordRetryAfter(body, resp.Header.Get("Retry-After")))
+	case resp.StatusCode >= 500:
+		return chat.Retryable(err, 0)
+	}
+	return err
+}
+
+// discordRetryAfter reads the wait from a 429 body's `retry_after` field,
+// falling back to the Retry-After header. Zero means no usable hint.
+func discordRetryAfter(body []byte, header string) time.Duration {
+	var rl struct {
+		RetryAfter float64 `json:"retry_after"`
+	}
+	if json.Unmarshal(body, &rl) == nil && rl.RetryAfter > 0 {
+		return time.Duration(rl.RetryAfter * float64(time.Second))
+	}
+	if seconds, err := strconv.ParseFloat(strings.TrimSpace(header), 64); err == nil && seconds > 0 {
+		return time.Duration(seconds * float64(time.Second))
+	}
+	return 0
 }

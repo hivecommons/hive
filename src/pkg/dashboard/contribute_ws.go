@@ -1005,6 +1005,15 @@ type ContributeWSHub struct {
 	persistActivity     bool
 	persistTaskLedgers  bool
 	completedMu         sync.Mutex
+	// standbyReconcileMu serializes reconcileOpenStandbyOutcomes (#9184): two
+	// reconciles that both snapshot a still-open PR before either appends would
+	// each record its closure, and one closed PR would count twice toward the
+	// suspend rule. Taken before completedMu, never while holding it.
+	standbyReconcileMu sync.Mutex
+	// standbyOutcomesSaveMu spans saveStandbyOutcomes' snapshot→rename (#9184),
+	// so a later save always writes a snapshot at least as new as an earlier
+	// one. Taken before completedMu, never while holding it.
+	standbyOutcomesSaveMu sync.Mutex
 	// standbyDispatches records manual donated dispatches inside the rolling
 	// standby daily-cap window. The cap decrements at dispatch, not completion,
 	// so abandoned donated work still consumes a slot.

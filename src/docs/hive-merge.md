@@ -95,6 +95,14 @@ The operator alert links to the repository Actions settings and tells the owner
 to approve the runs manually or relax "Approval for running fork pull request
 workflows". The hive does not call GitHub's workflow-run approval API.
 
+"Merge blocked" operator alerts retire themselves. Besides clearing on the next
+successful App merge in that repo, the watcher re-checks live alerts every
+five minutes (`mergeAlertRevalidateInterval` in
+`src/pkg/github/merge_failure_alert.go`): an alert is dropped once the blocked
+PR is no longer open, and a fork-approval alert is dropped as soon as the PR
+head has no workflow runs still `action_required` — i.e. the operator approved
+them or relaxed the repo/org setting. API errors keep the alert in place.
+
 **Unprotected base branches are allowed.** The watcher no longer makes a
 separate branch-protection lookup and no longer refuses solely because the base
 branch is unprotected. It merges into any protected or unprotected branch the

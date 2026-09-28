@@ -30,6 +30,17 @@ func newAuthedDashboard(t *testing.T, hubProxied bool) (*Service, *httptest.Serv
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 
+	// The first request through Handler() pays a one-time cost: securityHeaders
+	// hashes the embedded SPA's inline scripts for the CSP (baseScriptSrcElem,
+	// a sync.Once). That takes about 2s under -race and several times that on a
+	// loaded CI runner, which alone blew the callers' 5s deadlines. Pay it here
+	// on a public path, so those deadlines time only the calls under test.
+	warm, err := ts.Client().Get(ts.URL + "/api/health")
+	if err != nil {
+		t.Fatalf("warm-up GET /api/health: %v", err)
+	}
+	_ = warm.Body.Close()
+
 	s := NewService(&recordingBackend{}, Config{
 		DashboardURL:   ts.URL,
 		DashboardToken: token,

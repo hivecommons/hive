@@ -20,7 +20,10 @@ func TestStoreRecoversFromTruncatedFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Mark("org/repo", "node-1", time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+	if err := s.Advance("org/repo", time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Mark("node-1"); err != nil {
 		t.Fatal(err)
 	}
 	full, err := os.ReadFile(path)
@@ -52,7 +55,7 @@ func TestStoreRecoversFromTruncatedFile(t *testing.T) {
 	}
 
 	// The recovered store persists again, and what it writes loads cleanly.
-	if err := loaded.Mark("org/repo", "node-2", time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)); err != nil {
+	if err := loaded.Mark("node-2"); err != nil {
 		t.Fatal(err)
 	}
 	again, err := NewStore(path)
@@ -109,7 +112,7 @@ func TestStoreSaveReplacesFileAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Mark("org/repo", "first", time.Now()); err != nil {
+	if err := s.Mark("first"); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.ReadFile(path)
@@ -122,7 +125,7 @@ func TestStoreSaveReplacesFileAtomically(t *testing.T) {
 	if err := os.Link(path, snapshot); err != nil {
 		t.Skipf("hard links unsupported: %v", err)
 	}
-	if err := s.Mark("org/repo", "second", time.Now()); err != nil {
+	if err := s.Mark("second"); err != nil {
 		t.Fatal(err)
 	}
 	pinned, err := os.ReadFile(snapshot)
@@ -161,7 +164,7 @@ func TestStorePrunesSeenAfterTTL(t *testing.T) {
 	s.state.Seen["inside-ttl"] = now.Add(-seenTTL + time.Hour)
 	s.mu.Unlock()
 
-	if err := s.Mark("org/repo", "fresh", time.Time{}); err != nil {
+	if err := s.Mark("fresh"); err != nil {
 		t.Fatal(err)
 	}
 	if s.Seen("expired") {

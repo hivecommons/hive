@@ -192,3 +192,107 @@ func serveSMTPRejectRCPT(ln net.Listener) {
 		}
 	}
 }
+
+func TestEmailDigestSurvivesFailedSend(t *testing.T) {
+	serverTLS, clientTLS := testTLSConfig(t)
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", serverTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	cfg := EmailConfig{Host: "127.0.0.1", Port: 1, From: "hive@example.com", DigestTo: []string{"team@example.com"}, tlsConfig: clientTLS}
+	sink := NewEmailSink(cfg)
+	for _, title := range []string{"first", "second"} {
+		if err := sink.Deliver(context.Background(), Event{Severity: SeverityInfo, Title: title}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := sink.SendDigest(context.Background()); err == nil {
+		t.Fatal("want dial error from port 1")
+	}
+	if err := sink.Deliver(context.Background(), Event{Severity: SeverityInfo, Title: "third"}); err != nil {
+		t.Fatal(err)
+	}
+
+	messages := make(chan string, 1)
+	go func() { _ = ServeSMTPFake(context.Background(), ln, messages) }()
+	if _, err := fmtSscanf(port, &sink.cfg.Port); err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.SendDigest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	digest := <-messages
+	first, second, third := strings.Index(digest, "[info] first"), strings.Index(digest, "[info] second"), strings.Index(digest, "[info] third")
+	if first < 0 || second < first || third < second {
+		t.Fatalf("retried digest must carry the failed events ahead of later ones:\n%s", digest)
+	}
+}
+
+func TestEmailDigestRestoreKeepsNewestAndCountsOverflow(t *testing.T) {
+	sink := NewEmailSink(EmailConfig{Host: "127.0.0.1", Port: 1, From: "hive@example.com", DigestTo: []string{"team@example.com"}})
+	for i := 0; i < maxDigestEvents; i++ {
+		sink.recordDigest(Event{Severity: SeverityInfo, Title: fmt.Sprintf("old-%d", i)})
+	}
+	sink.buf.dropped = 2
+	events, dropped := sink.buf.dig, sink.buf.dropped
+	sink.buf.dig, sink.buf.dropped = nil, 0
+	sink.recordDigest(Event{Severity: SeverityInfo, Title: "new"})
+	sink.buf.restore(events, dropped)
+	if len(sink.buf.dig) != maxDigestEvents {
+		t.Fatalf("restored digest len=%d, want cap %d", len(sink.buf.dig), maxDigestEvents)
+	}
+	if got := sink.buf.dig[0].Title; got != "old-1" {
+		t.Fatalf("oldest kept event=%q, want old-1", got)
+	}
+	if got := sink.buf.dig[maxDigestEvents-1].Title; got != "new" {
+		t.Fatalf("newest event=%q, want new", got)
+	}
+	if sink.buf.dropped != 3 {
+		t.Fatalf("dropped=%d, want 3 (2 carried + 1 overflow)", sink.buf.dropped)
+	}
+}
+
+func TestEmailStartDigestReportsFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	failures := make(chan string, 1)
+	sink := NewEmailSink(EmailConfig{
+		Host: "127.0.0.1", Port: 1, From: "hive@example.com", DigestTo: []string{"team@example.com"},
+		// A digest time already in the past fires the timer at once.
+		Now: func() time.Time { return time.Date(2000, 1, 1, 7, 0, 0, 0, time.Local) },
+		Audit: func(action, detail, sink string) {
+			select {
+			case failures <- action + ":" + sink + ":" + detail:
+			default:
+			}
+		},
+	})
+	sink.recordDigest(Event{Severity: SeverityInfo, Title: "kept"})
+	sink.StartDigest(ctx)
+	select {
+	case got := <-failures:
+		if !strings.HasPrefix(got, "escalation_digest_failed:email:") || !strings.Contains(got, "pending=1") {
+			t.Fatalf("audit=%q, want escalation_digest_failed with the kept event pending", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("failed digest send was not audited")
+	}
+}
+
+func TestEmailInheritDigestCarriesPendingEvents(t *testing.T) {
+	cfg := EmailConfig{DigestTo: []string{"team@example.com"}}
+	prev := NewEmailSink(cfg)
+	prev.recordDigest(Event{Severity: SeverityInfo, Title: "before reload"})
+	next := NewEmailSink(cfg)
+	next.InheritDigest(prev)
+	// The old sink's worker may still be finishing an event after the swap.
+	prev.recordDigest(Event{Severity: SeverityInfo, Title: "old worker tail"})
+	next.recordDigest(Event{Severity: SeverityInfo, Title: "after reload"})
+	next.buf.mu.Lock()
+	defer next.buf.mu.Unlock()
+	if len(next.buf.dig) != 3 {
+		t.Fatalf("inherited digest len=%d, want 3", len(next.buf.dig))
+	}
+}

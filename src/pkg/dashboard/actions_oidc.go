@@ -153,7 +153,7 @@ func (s *Server) handleActionsDispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if jtiKey != "" {
-		_ = store.Mark(strings.TrimSpace(claims.Repository), jtiKey, now)
+		_ = store.Mark(jtiKey)
 	}
 	s.auditActionDispatch("accepted", "transport", "oidc", "repo", claims.Repository, "actor", claims.Actor, "workflow", claims.Workflow, "ref", claims.Ref, "run_id", claims.RunID, "run_attempt", claims.RunAttempt)
 	receipt := actionsStageReceiptJSON(claims, body, kickID, now)

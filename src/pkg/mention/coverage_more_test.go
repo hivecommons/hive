@@ -52,7 +52,10 @@ func TestStoreFileRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	wm := time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC)
-	if err := s.Mark("org/repo", "node", wm); err != nil {
+	if err := s.Mark("node"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Advance("org/repo", wm); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := NewStore(path)
@@ -146,9 +149,11 @@ func TestResolveAgentVariants(t *testing.T) {
 	}
 }
 
-func TestHandleAckAndNoKickFailures(t *testing.T) {
-	ackErr := errors.New("ack failed")
-	gh := &fakeGH{app: "hive[bot]", ackErr: ackErr}
+func TestHandleAckFailureAfterKickAndNoKick(t *testing.T) {
+	var kicks int
+	var audit []string
+	store := mustStore(t)
+	gh := &fakeGH{app: "hive[bot]", ackErr: errors.New("403 issue is locked")}
 	h := NewHandler(Options{
 		Config: config.GitHubMentionsConfig{Enabled: true},
 		GitHub: gh,
@@ -156,19 +161,28 @@ func TestHandleAckAndNoKickFailures(t *testing.T) {
 		Agents: func() []AgentInfo {
 			return []AgentInfo{{Name: "scanner", Enabled: true, Converse: true, Mention: true, GovernorKick: true}}
 		},
-		Store: mustStore(t),
-		Kick:  func(agent, msg, source string) error { return nil },
+		Store: store,
+		Kick:  func(agent, msg, source string) error { kicks++; return nil },
+		Audit: func(action, detail, agent string) { audit = append(audit, action+":"+detail) },
 	})
-	err := h.Handle(context.Background(), Event{Repo: "org/repo", Number: 1, NodeID: "ack", CommentID: 1, Author: "alice", Body: "@hive hi", CreatedAt: time.Now(), UpdatedAt: time.Now()})
-	if !errors.Is(err, ackErr) {
-		t.Fatalf("ack err=%v", err)
+	ev := Event{Repo: "org/repo", Number: 1, NodeID: "ack", CommentID: 1, Author: "alice", Body: "@hive hi", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	// The kick was delivered, so a failed reaction must not leave the
+	// mention retryable: a retry would kick the agent a second time.
+	if err := h.Handle(context.Background(), ev); err != nil {
+		t.Fatalf("ack failure after a delivered kick returned %v", err)
+	}
+	if err := h.Handle(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if kicks != 1 || !store.Seen("ack") || !containsAudit(audit, AuditKicked+":") || !containsAudit(audit, "ack=failed") {
+		t.Fatalf("kicks=%d seen=%v audit=%v", kicks, store.Seen("ack"), audit)
 	}
 
-	var audit []string
-	off := ""
+	audit = nil
+	gh = &fakeGH{app: "hive[bot]"}
 	h = NewHandler(Options{
-		Config: config.GitHubMentionsConfig{Enabled: true, AckReaction: &off},
-		GitHub: &fakeGH{app: "hive[bot]"},
+		Config: config.GitHubMentionsConfig{Enabled: true},
+		GitHub: gh,
 		Roles:  func(string) (string, bool) { return config.RoleReadWrite, true },
 		Agents: func() []AgentInfo {
 			return []AgentInfo{{Name: "scanner", Enabled: true, Converse: true, Mention: true, GovernorKick: true}}
@@ -176,11 +190,11 @@ func TestHandleAckAndNoKickFailures(t *testing.T) {
 		Store: mustStore(t),
 		Audit: func(action, detail, agent string) { audit = append(audit, action+":"+detail) },
 	})
-	if err := h.Handle(context.Background(), Event{Repo: "org/repo", Number: 1, NodeID: "nokick", Author: "alice", Body: "@hive hi", CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
+	if err := h.Handle(context.Background(), Event{Repo: "org/repo", Number: 1, NodeID: "nokick", CommentID: 2, Author: "alice", Body: "@hive hi", CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	if !containsAudit(audit, "guard=no-kick") {
-		t.Fatalf("audit lacks no-kick: %v", audit)
+	if !containsAudit(audit, "guard=no-kick") || gh.ack != 0 {
+		t.Fatalf("no-kick decline: ack=%d audit=%v", gh.ack, audit)
 	}
 }
 
@@ -203,18 +217,27 @@ func TestPollerNilPollFailureAndRunCancel(t *testing.T) {
 	p.Run(ctx)
 }
 
-func TestRateLimiterDefaultsAndExpiredWindow(t *testing.T) {
+func TestRateLimiterDefaultsExpiredWindowAndRelease(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	r := NewRateLimiter(func() time.Time { return now })
-	if r.Allow("k", 0, time.Hour) {
+	allow := func() bool {
+		_, ok := r.Reserve("k", 1, time.Hour)
+		return ok
+	}
+	if _, ok := r.Reserve("k", 0, time.Hour); ok {
 		t.Fatal("zero max allowed")
 	}
-	if !r.Allow("k", 1, time.Hour) || r.Allow("k", 1, time.Hour) {
+	if !allow() || allow() {
 		t.Fatal("limit did not apply")
 	}
 	now = now.Add(2 * time.Hour)
-	if !r.Allow("k", 1, time.Hour) {
+	release, ok := r.Reserve("k", 1, time.Hour)
+	if !ok {
 		t.Fatal("expired hit was not pruned")
+	}
+	release()
+	if !allow() {
+		t.Fatal("released slot was not returned to the window")
 	}
 	if NewRateLimiter(nil).now == nil {
 		t.Fatal("nil clock did not default")

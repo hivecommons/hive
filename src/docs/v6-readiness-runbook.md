@@ -75,7 +75,7 @@ Prerequisites:
   (`src/pkg/config/github_integration_config.go:21`, `src/pkg/mention/webhook.go:32-41`).
 - The selected agent must be enabled, hold `Converse`, have a mention channel,
   and be governor-kickable; the handler declines otherwise
-  (`src/pkg/mention/types.go:177-223`).
+  (`resolveAgent`, `src/pkg/mention/types.go:435`).
 
 Run:
 
@@ -86,8 +86,9 @@ Run:
    the handling window.
 3. Confirm the kick was recorded with `source=mention:<node id>` and the audit
    event is `agent_mention_kicked`; declined attempts use
-   `agent_mention_declined` (`src/pkg/mention/types.go:14-16`,
-   `src/pkg/mention/types.go:100-124`).
+   `agent_mention_declined` (`AuditKicked`/`AuditDeclined`,
+   `src/pkg/mention/types.go:15-16`; guards in `Handle`,
+   `src/pkg/mention/types.go:103`).
 4. If the run completes, link the App-bot completion reply or the run log. The
    responder promotes pending mention kicks when it sees `kick-delivered` /
    `kick-log-archived` and can post a thread reply (`src/pkg/mention/responder.go:34-61`,
@@ -195,12 +196,12 @@ Prerequisites:
 - Configure the `slack` notification block with `enabled: true`,
   `app_token: ${SLACK_APP_TOKEN}`, `bot_token: ${SLACK_BOT_TOKEN}`,
   `channel_id`, and `allowed_users` containing the maintainer's Slack user ID
-  (`src/docs/design/slack-integration.md:104-117`). The backend refuses to
+  (`src/docs/design/slack-integration.md:113-128`). The backend refuses to
   start without app token, bot token, and channel ID
   (`Bot.Start` in `src/pkg/slack/bot.go`).
 - Slack app scopes/events must cover Socket Mode and messages as documented:
   `chat:write`, channel history/manage as needed, `connections:write`, and
-  `message.channels` (`src/docs/design/slack-integration.md:116-119`).
+  `message.channels` (`src/docs/design/slack-integration.md:130-135`).
 
 Run:
 
@@ -235,12 +236,12 @@ Prerequisites:
 - Configure the Discord bot token, channel ID, and the maintainer's Discord user
   ID in `allowed_users`; the Discord config structure uses `bot_token`,
   `channel_id`, and `allowed_users` (`src/pkg/config/notifications_config.go:91-105`).
-  The backend refuses to start without the bot token (`Start`, `src/pkg/discord/bot.go:105-112`).
+  The backend refuses to start without the bot token (`Bot.Start`, `src/pkg/discord/bot.go:108-115`).
 
 Run:
 
 1. Confirm the hive log has `discord bot starting` and `chat service starting`
-   (`Start` in `src/pkg/discord/bot.go`, `Service.Start` in `src/pkg/chat/chat.go`).
+   (`Bot.Start` in `src/pkg/discord/bot.go`, `Service.Start` in `src/pkg/chat/chat.go`).
 2. In the configured channel, send `!status`; save the Discord message link or
    screenshot and the bot reply.
 3. Trigger one notification delivery by pausing/resuming an agent or waiting for
@@ -250,7 +251,7 @@ Run:
    `discord SSE disconnected` and backs off before reconnecting
    (`sseLoop`, `src/pkg/chat/notify.go:70-106`). If you instead interrupt Discord REST,
    save the `discord poll failed` log line and the later successful command or
-   notification proving recovery (`Listen`, `src/pkg/discord/bot.go:192-224`).
+   notification proving recovery (`discordBackend.Listen`, `src/pkg/discord/bot.go:194-236`).
 
 Evidence checklist:
 

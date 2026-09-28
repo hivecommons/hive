@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 )
 
 const stageStatusMarker = "<!-- hive:run-stage-status"
@@ -93,19 +92,13 @@ func (c *StageCommenter) Post(ctx context.Context, tr StageTransition) error {
 			if err := editor.EditIssueComment(ctx, repo, commentID, body); err != nil {
 				return err
 			}
-			return c.markStageSeen(repo, dedupe)
+			return c.Store.Mark(dedupe)
 		}
 	}
 	if err := gh.CreateIssueComment(ctx, repo, number, body); err != nil {
 		return err
 	}
-	return c.markStageSeen(repo, dedupe)
-}
-
-func (c *StageCommenter) markStageSeen(repo, dedupe string) error {
-	// Mark only the idempotency key. Stage comments are not mention events, so
-	// they must not advance the shared mention polling watermark.
-	return c.Store.Mark(repo, dedupe, time.Time{})
+	return c.Store.Mark(dedupe)
 }
 
 func (c *StageCommenter) audit(action, detail, agent string) {

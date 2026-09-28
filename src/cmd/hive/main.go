@@ -6281,7 +6281,11 @@ func planFromLabeledIssues(
 		}
 	}
 	if cfg != nil && cfg.Runs.Spektacular.Enabled && dashSrv != nil {
-		filtered := issues[:0]
+		// issues may alias actionable.Issues.Items (when PlanFromLabelEnabled),
+		// which is already published to lastActionable/dashboard readers, so we
+		// must never compact it in place (issues[:0]) — allocate a fresh backing
+		// array instead.
+		filtered := make([]github.Issue, 0, len(issues))
 		for _, issue := range issues {
 			if planning.HasDesignLabel(issue, designCfg) {
 				if epic, runKey, err := dashSrv.StartDesignSpektacularFromIssue(context.Background(), store, issue); err != nil {
