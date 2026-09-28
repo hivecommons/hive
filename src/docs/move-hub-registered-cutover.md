@@ -59,9 +59,9 @@ move procedures in the other guides should regenerate:
 - The spoke sends a heartbeat payload including `dashboard_url` (JSON field
   `dashboard_url`, `src/pkg/hub/spoke/heartbeat.go:744`,
   `DashboardURL string json:"dashboard_url"`).
-- The hub's heartbeat handler validates it (`src/pkg/hub/server.go:1749`,
+- The hub's heartbeat handler validates it (`src/pkg/hub/server.go:1745`,
   must start with `http://` or `https://`) and writes it straight into the
-  registry entry for that hive (`src/pkg/hub/server.go:1816`,
+  registry entry for that hive (`src/pkg/hub/server.go:1812`,
   `DashboardURL: payload.DashboardURL`). **The heartbeat is the only writer.**
   Nothing else — not a hand-edit of the hub's registry file, not a hub API
   call — durably sets it, because the next heartbeat overwrites whatever was

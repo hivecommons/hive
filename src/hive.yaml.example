@@ -30,13 +30,14 @@ project:
   #     by: your-github-login
   #     reason: release freeze until Friday
 
-# Optional merge-request safety exceptions. Defaults are refuse-closed:
-# Hive refuses to merge into an unprotected base branch, and refuses a PR with
-# zero statuses + zero check runs + zero workflow runs. List only repos that
-# intentionally need those exceptions.
+# Optional merge-request safety exceptions. Hive now merges into any protected
+# or unprotected base branch the App can write, while still refusing a PR with
+# zero statuses + zero check runs + zero workflow runs. `allow_unprotected_base`
+# is accepted as a deprecated no-op for old configs; list only repos that
+# intentionally have no CI in `no_ci_ok`.
 # auto_merge:
 #   allow_unprotected_base:
-#     - your-org/docs-only-repo
+#     - legacy-entry-no-longer-needed
 #   no_ci_ok:
 #     - your-org/docs-only-repo
 
@@ -51,15 +52,17 @@ project:
 #     - label: Chat with other contributors
 #       url: https://discord.gg/your-hive
 
-# GitHub App / PR policy. The #5117 self-authorization hold is on by default:
-# App-authored PRs whose only tracked rationale is an unacknowledged hive-filed
-# issue receive `hold` until a human signs off on the direction. Set false only
-# for hives that are allowed to act on their own findings.
+# GitHub App / PR policy. The #5117 self-authorization hold defaults on through
+# ACMM L5 and off at ACMM L6 Fully Autonomous. App-authored PRs whose only
+# tracked rationale is an unacknowledged hive-filed issue receive `hold` until a
+# human signs off on the direction. Set true to keep that hold at L6; set false
+# below L6 only for hives that are allowed to act on their own findings.
 # github:
 #   self_authorization_hold: true
 #
 # Optional per-repo override for the same policy. Omit a repo entry (or omit
-# self_authorization_hold in it) to inherit github.self_authorization_hold.
+# self_authorization_hold in it) to inherit github.self_authorization_hold, then
+# the live ACMM-level default when the hive-wide setting is also unset.
 # project:
 #   repo_policies:
 #     - repo: console

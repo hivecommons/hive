@@ -58,6 +58,10 @@ type Options struct {
 	// RepoAutoMergeEnabled returns the live per-repo auto-merge switch. nil
 	// preserves default-on behavior.
 	RepoAutoMergeEnabled func(repo string) bool
+	// TrustedBotAuthors returns the live lower-cased set of bot logins whose
+	// PRs the self-authored sweep merges alongside the App's own (see
+	// config.AutoMergeConfig.TrustedBotAuthors). nil means App-only.
+	TrustedBotAuthors func() map[string]bool
 }
 
 // Engine owns the automerge sweep policy state.
@@ -81,6 +85,7 @@ type Engine struct {
 	selfAuthorizationHoldEnabled      func(repo string) bool
 	selfAuthorizationHoldReleaseLimit int
 	repoAutoMergeEnabled              func(repo string) bool
+	trustedBotAuthors                 func() map[string]bool
 }
 
 // New returns an automerge sweep engine over a GitHub transport client.
@@ -101,6 +106,7 @@ func New(transport Transport, opts Options) *Engine {
 		selfAuthorizationHoldEnabled:      opts.SelfAuthorizationHoldEnabled,
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
 		repoAutoMergeEnabled:              opts.RepoAutoMergeEnabled,
+		trustedBotAuthors:                 opts.TrustedBotAuthors,
 	}
 
 	if e.mutation == nil {
@@ -805,7 +811,7 @@ func (c *Engine) listOpenAppAuthoredPullRequests(ctx context.Context, owner, rep
 // gets from the queue approval's recorded HeadSHA, just without a stored
 // approval record to compare against (there is no queue step in this path).
 func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner, repo string, number int, branchUpdateAllowed bool) (AutoMergeSweepEvent, string, error) {
-	pr, _, err := c.gh.PullRequests.Get(ctx, owner, repo, number)
+	pr, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {
 			return AutoMergeSweepEvent{}, "gone", nil
@@ -819,13 +825,14 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, "draft", nil
 	}
 	author := hgithub.SafeGetLogin(pr.GetUser())
-	if !strings.EqualFold(author, c.transport.AppBotLogin()) {
-		// Not the App's own PR: this path never touches non-App-authored PRs,
-		// matching the human-queue sweep's untouched behavior for PRs it does
-		// not own. Defense in depth — listOpenAppAuthoredPullRequests already
-		// filtered on author, but a PR can change hands (rare, but GitHub
-		// permits transferring PR authorship attribution in some flows) between
-		// listing and evaluating it here.
+	lane, laneOK := c.sweepLaneForAuthor(author)
+	if !laneOK {
+		// Neither the App's own PR nor a trusted bot's: this path never touches
+		// other PRs, matching the human-queue sweep's untouched behavior for
+		// PRs it does not own. Defense in depth — prefilterSelfAuthoredPR
+		// already filtered on author, but a PR can change hands (rare, but
+		// GitHub permits transferring PR authorship attribution in some flows)
+		// between listing and evaluating it here.
 		return AutoMergeSweepEvent{}, "not-app-authored", nil
 	}
 	selfLabels := labelNames(pr.Labels)
@@ -905,7 +912,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// Re-verify the head SHA immediately before merging: a push landing
 	// between the green-check above and the merge call below must never be
 	// squashed without having gone through commitGreen itself.
-	current, _, err := c.gh.PullRequests.Get(ctx, owner, repo, number)
+	current, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {
 			return AutoMergeSweepEvent{}, "gone", nil
@@ -926,7 +933,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		Kind:   effects.KindPullRequestMerge,
 		Target: fmt.Sprintf("%d", number),
 		Actor:  "automerge",
-		Inputs: map[string]string{"method": "squash", "expect_sha": evaluatedHeadSHA, "lane": "self-authored"},
+		Inputs: map[string]string{"method": "squash", "expect_sha": evaluatedHeadSHA, "lane": lane},
 	}, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
 		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, "", &gh.PullRequestOptions{
@@ -958,7 +965,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		HeadSHA:  evaluatedHeadSHA,
 		MergeSHA: mergeResult.GetSHA(),
 	}
-	c.info("self-authored automerge sweep merged PR", "repo", displayRepo, "pr", number, "author", author, "merge_sha", event.MergeSHA)
+	c.info("self-authored automerge sweep merged PR", "repo", displayRepo, "pr", number, "author", author, "lane", lane, "merge_sha", event.MergeSHA)
 	return event, "", nil
 }
 
@@ -977,6 +984,28 @@ func (c *Engine) releaseLevelHoldIfEligible(ctx context.Context, owner, repo str
 // the configured hold set (generic substrings plus the exact hive-scoped
 // `hive-pause/<hive-id>` dashboard hold) gates merges exactly as it gates
 // enumeration. A nil engine or transport fails closed to the generic set.
+// sweepLaneForAuthor reports which self-authored-sweep lane a PR author falls
+// in: "self-authored" for the App's own login, "trusted-bot" for a login in
+// the operator's trusted_bot_authors set, or ok=false for anyone else. The
+// lane is recorded on the mutation claim and the merge log so audits can tell
+// the two apart; both lanes pass through exactly the same eligibility gates.
+func (c *Engine) sweepLaneForAuthor(author string) (string, bool) {
+	author = strings.TrimSpace(author)
+	if author == "" {
+		return "", false
+	}
+	if c != nil && c.transport != nil && strings.EqualFold(author, c.transport.AppBotLogin()) {
+		return "self-authored", true
+	}
+	if c == nil || c.trustedBotAuthors == nil {
+		return "", false
+	}
+	if c.trustedBotAuthors()[strings.ToLower(author)] {
+		return "trusted-bot", true
+	}
+	return "", false
+}
+
 func (c *Engine) isHeld(labels []string) bool {
 	if c == nil || c.transport == nil {
 		return hgithub.HasHoldLabel(labels)
@@ -994,7 +1023,7 @@ func (c *Engine) prefilterSelfAuthoredPR(pr *gh.PullRequest) string {
 	if pr.GetDraft() {
 		return "draft"
 	}
-	if !strings.EqualFold(hgithub.SafeGetLogin(pr.GetUser()), c.transport.AppBotLogin()) {
+	if _, ok := c.sweepLaneForAuthor(hgithub.SafeGetLogin(pr.GetUser())); !ok {
 		return "not-app-authored"
 	}
 	labels := labelNames(pr.Labels)
@@ -1048,7 +1077,7 @@ func (c *Engine) listQueuedPullRequestIssues(ctx context.Context, owner, repo, l
 }
 
 func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo string, number int, label string) (AutoMergeSweepEvent, string, error) {
-	pr, _, err := c.gh.PullRequests.Get(ctx, owner, repo, number)
+	pr, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {
 			return AutoMergeSweepEvent{}, "gone", nil

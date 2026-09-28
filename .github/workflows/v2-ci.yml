@@ -871,6 +871,20 @@ jobs:
         working-directory: .
         run: bash src/deploy/test_attach_hint_runtime.sh
 
+      - name: Isolated contributor Compose contract (#9188)
+        working-directory: .
+        run: |
+          # hive-runners lack python3-venv (ensurepip); the job's first step
+          # already guarantees PyYAML for the system python3, so fall back to it.
+          if python3 -m venv "$RUNNER_TEMP/isolated-contributor-tests" 2>/dev/null; then
+            "$RUNNER_TEMP/isolated-contributor-tests/bin/pip" install PyYAML==6.0.2
+            PY="$RUNNER_TEMP/isolated-contributor-tests/bin/python"
+          else
+            python3 -c "import yaml"
+            PY=python3
+          fi
+          "$PY" src/deploy/test_isolated_contributor_compose.py
+
       # #6485: the default contributor container had no resource ceiling, so a
       # healthy coding task could consume enough RAM and zram for systemd-oomd
       # to kill it (or another process in the contributor's desktop session).

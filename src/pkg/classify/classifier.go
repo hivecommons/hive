@@ -412,9 +412,12 @@ func extractClusterKey(titleLower string) string {
 	return ""
 }
 
-func ClassifyAll(issues []github.Issue) []github.Issue {
+// ClassifyAll classifies issues in place. ctx bounds any Jev calls the active
+// decider makes; pass the sweep's SweepContext.
+func ClassifyAll(ctx context.Context, issues []github.Issue) []github.Issue {
+	d := currentDecider()
 	for i := range issues {
-		c := Classify(issues[i])
+		c := d.Decide(ctx, issues[i], config.TriageConfig{}).Classification
 		issues[i].ComplexityTier = string(c.Tier)
 		issues[i].ModelRec = string(c.Model)
 		issues[i].Lane = string(c.Lane)

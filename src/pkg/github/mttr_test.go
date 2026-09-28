@@ -184,6 +184,46 @@ func TestComputeMTTR_NoFixesReferences(t *testing.T) {
 	}
 }
 
+func TestComputeMTTRCachesIssueLookups(t *testing.T) {
+	now := time.Now()
+	issueCreated := now.Add(-48 * time.Hour)
+	prMerged := now.Add(-1 * time.Hour)
+	issueFetches := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/myorg/repo1/pulls":
+			_ = json.NewEncoder(w).Encode([]map[string]interface{}{{
+				"number":    1,
+				"body":      "Fixes #10",
+				"merged_at": prMerged.Format(time.RFC3339),
+				"state":     "closed",
+				"user":      map[string]string{"login": "bot"},
+			}})
+		case "/repos/myorg/repo1/issues/10":
+			issueFetches++
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"number":     10,
+				"created_at": issueCreated.Format(time.RFC3339),
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv, "myorg", []string{"repo1"})
+	if _, err := c.ComputeMTTR(context.Background(), "repo1"); err != nil {
+		t.Fatalf("first ComputeMTTR: %v", err)
+	}
+	if _, err := c.ComputeMTTR(context.Background(), "repo1"); err != nil {
+		t.Fatalf("second ComputeMTTR: %v", err)
+	}
+	if issueFetches != 1 {
+		t.Fatalf("issue fetches = %d, want 1", issueFetches)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // NewClientForTest
 // ---------------------------------------------------------------------------

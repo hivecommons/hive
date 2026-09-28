@@ -98,8 +98,15 @@ interval, which Slack simply keeps. On `429` the backend honours
 `Retry-After` before the next drain.
 
 **Reconnect.** Socket Mode URLs expire and Slack sends `disconnect` envelopes
-(`refresh_requested`). `Listen` reconnects with the same 5 s → 60 s capped
-backoff the Discord SSE consumer uses; the spine never sees the gap.
+(`warning` ~10 s ahead of the cut, then `refresh_requested`). On the first one
+`serveSocket` (`src/pkg/slack/bot.go`) opens the replacement socket while it
+keeps acknowledging on the old one, closes the old socket only once the
+replacement is open, and `Listen` switches without a reconnect sleep, so a
+routine refresh leaves no window with zero connections (#9138). A socket that
+stays silent for 90 s — no data, ping, or pong; the bot pings every 30 s — is
+treated as dead, which catches a path that died without a FIN. Any other drop
+or failed connect reconnects with a 5 s → 60 s capped backoff jittered by
+±20%; the spine never sees the gap.
 
 ## Configuration
 

@@ -20,8 +20,8 @@ on:
         options:
           - comment
           - oidc
-      hub_url:
-        description: Hub URL for transport=oidc.
+      hive_url:
+        description: Hive dashboard URL for transport=oidc (the spoke serving /api/contribute/actions/dispatch, not the hub).
         required: false
         type: string
       audience:
@@ -50,7 +50,7 @@ jobs:
           issue: ${{ inputs.issue }}
           prompt: ${{ inputs.prompt }}
           transport: ${{ inputs.transport }}
-          hub_url: ${{ inputs.hub_url }}
+          hive_url: ${{ inputs.hive_url }}
           audience: ${{ inputs.audience }}
 
       - name: Assert OIDC receipt output

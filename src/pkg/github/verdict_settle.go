@@ -197,7 +197,7 @@ func (c *Client) VerifySettlingRef(ctx context.Context, taskRepo string, taskIss
 }
 
 func (c *Client) verifySettlingPR(ctx context.Context, owner, name, taskRepo string, taskIssue, number int, dispatchedAt time.Time) (SettleVerification, error) {
-	pr, _, err := c.client.PullRequests.Get(ctx, owner, name, number)
+	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:verdict_settle"), owner, name, number)
 	if err != nil {
 		return SettleVerification{Reason: "github lookup failed"}, err
 	}

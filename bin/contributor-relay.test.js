@@ -11586,6 +11586,152 @@ test('#6908 the prompt the relay actually dispatches is the scoped one', () => {
 // and it expires; agy prints the expiry on the banner.
 // ---------------------------------------------------------------------------
 
+const CODEX_QUOTA_PANE = fs.readFileSync(path.join(__dirname, 'testdata/codex-quota/usage-limit.txt'), 'utf8');
+
+test('#9247 Codex quota banner wins over its model menu and idle/readiness chrome', () => {
+  const wrapped = CODEX_QUOTA_PANE.replace('visit https:', 'visit\n  https:')
+    .replace('or try again', '\n  or try again');
+  for (const pane of [CODEX_QUOTA_PANE, wrapped, wrapped.replace('You’ve', "You've") + '\n'.repeat(50)]) {
+    assert.strictEqual(paneClassifier.paneShowsUnretryableAPIError(pane), true);
+    assert.strictEqual(paneClassifier.classifyPane(pane, 'codex'), 'FATAL_API_ERROR');
+    assert.strictEqual(paneClassifier.classifyReadiness(pane, 'codex'), 'quota-exhausted');
+    const quota = paneClassifier.paneQuotaExhaustion(pane);
+    assert.strictEqual(quota.resetMs, null, 'do not guess the timezone of 10:21 PM');
+    assert.strictEqual(quota.requiresRecovery, true);
+    assert.match(quota.line, /try again at 10:21 PM/);
+  }
+});
+
+test('#9247 quota wording in prompts, prose, fences, and old scrollback is not a refusal', () => {
+  const banner = CODEX_QUOTA_PANE.split('\n')[0];
+  for (const pane of [
+    `› ${banner}\n`,
+    `› Reproduce this banner:\n  ${banner}\n`,
+    `• The CLI refused with:\n  ${banner}\n› Ask Codex to work\n`,
+    `• The CLI said: ${banner}\n› Ask Codex to work\n`,
+    `> ${banner}\n› Ask Codex to work\n`,
+    '› Reproduce this example:\n  ```text\n' + CODEX_QUOTA_PANE + '  ```\n',
+    '• Example output:\n  ```text\n' + CODEX_QUOTA_PANE + '  ```\n› Ask Codex to work\n',
+    CODEX_QUOTA_PANE + 'normal output\n'.repeat(25) + '› Ask Codex to work\n',
+    CODEX_QUOTA_PANE.slice(CODEX_QUOTA_PANE.indexOf('  Approaching rate limits')),
+  ]) {
+    assert.strictEqual(paneClassifier.paneQuotaExhaustion(pane), null, pane);
+    assert.strictEqual(paneClassifier.paneShowsUnretryableAPIError(pane), false, pane);
+  }
+});
+
+test('#9247 Codex hold survives ticks, relaunch readiness, reconnects and missing readings', async () => {
+  let pane = '› Ask Codex to work\n';
+  const relay = loadRelay({ backend: 'codex', paneText: () => pane });
+  const warn = console.warn; console.warn = () => {};
+  try {
+    dispatchTask(relay, 't-codex-quota');
+    pane = CODEX_QUOTA_PANE;
+    const before = relay.__sent.length;
+    relay.__stallTick();
+    const failures = relay.__sent.slice(before).filter(m => m.type === 'task_failed');
+    assert.strictEqual(failures.length, 1);
+    assert.match(failures[0].reason, /provider quota exhausted/);
+    assert.match(failures[0].reason, /10:21 PM/);
+    assert.doesNotMatch(failures[0].reason, /prompt may not have been submitted/);
+    assert.strictEqual(relay.quotaHoldActive(), true);
+    assert.strictEqual(relay.getQuotaHoldUntil(), Infinity);
+    pane = '› Ask Codex to work\n';
+    relay.relaunchCLI();
+    relay.armCLIReadyWait();
+    await Promise.resolve();
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }));
+    for (let i = 0; i < 3; i++) {
+      relay.progressTick();
+      relay.probeQuotaRecovery();
+    }
+    relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 't-declined', kind: 'issue', repo: 'foo/bar', number: 9, title: 'declined' }));
+    assert.strictEqual(relay.getCurrentTask(), null);
+    assert.ok(relay.__sent.some(m => m.task_id === 't-declined' && /provider quota exhausted/.test(m.reason)));
+    assert.ok(!relay.__sent.slice(before).some(m => m.type === 'ready'));
+    assert.ok(!relay.__tmuxSends().some(cmd => /gpt-6-luna/.test(cmd)), 'never select the suggested model');
+  } finally { console.warn = warn; teardown(relay); }
+});
+
+test('#9247 startup quota banner withholds readiness without selecting the menu', async () => {
+  const warn = console.warn; console.warn = () => {};
+  const relay = loadRelay({ backend: 'codex', paneText: CODEX_QUOTA_PANE });
+  try {
+    await Promise.resolve();
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }));
+    assert.strictEqual(relay.quotaHoldActive(), true);
+    assert.ok(!relay.__sent.some(m => m.type === 'ready'));
+    assert.strictEqual(relay.__tmuxSends().length, 0);
+  } finally { console.warn = warn; teardown(relay); }
+});
+
+test('#9247 recovery restarts a startup quota menu before requesting work', async () => {
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'codex-startup-quota-'));
+  const file = path.join(dir, 'reading.json');
+  let now = Date.now();
+  const originalNow = Date.now;
+  Date.now = () => now;
+  fs.writeFileSync(file, JSON.stringify({ state: 'available', captured_at: new Date(now).toISOString(),
+    limits: [{ kind: 'weekly', pct_remaining: 90 }] }));
+  let recovering = false;
+  let captures = 0;
+  const warn = console.warn; console.warn = () => {};
+  const relay = loadRelay({ backend: 'codex',
+    paneText: () => recovering && captures++ > 0 ? '› Ask Codex to work\n' : CODEX_QUOTA_PANE,
+    env: { HIVE_CONTRIBUTOR_QUOTA_READING_FILE: file } });
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }));
+    now += 1000;
+    fs.writeFileSync(file, JSON.stringify({ state: 'available', captured_at: new Date(now).toISOString(),
+      limits: [{ kind: 'weekly', pct_remaining: 90 }] }));
+    recovering = true;
+    relay.probeQuotaRecovery();
+    assert.ok(relay.__tmuxSends().some(cmd => /codex/.test(cmd)), 'relaunch the configured CLI');
+    assert.ok(!relay.__sent.some(m => m.type === 'ready'), 'wait for the readiness callback');
+    await Promise.resolve();
+    assert.strictEqual(relay.quotaHoldActive(), false);
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'ready').length, 1);
+  } finally {
+    Date.now = originalNow; console.warn = warn; teardown(relay);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('#9247 Codex recovery requires a newer healthy reading and resumes once', () => {
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'codex-quota-'));
+  const file = path.join(dir, 'reading.json');
+  let now = Date.now();
+  const originalNow = Date.now;
+  Date.now = () => now;
+  const write = (remaining, captured = now, state = 'available', limits = null) => fs.writeFileSync(file,
+    JSON.stringify({ state, captured_at: new Date(captured).toISOString(),
+      limits: limits || [{ kind: 'weekly', pct_remaining: remaining }] }));
+  write(90);
+  const relay = loadRelay({ backend: 'codex', paneText: '› Ask Codex to work\n',
+    env: { HIVE_CONTRIBUTOR_QUOTA_READING_FILE: file } });
+  const warn = console.warn; console.warn = () => {};
+  try {
+    relay.enterQuotaHold(paneClassifier.paneQuotaExhaustion(CODEX_QUOTA_PANE));
+    const before = relay.__sent.length;
+    relay.probeQuotaRecovery();
+    assert.strictEqual(relay.quotaHoldActive(), true, 'a pre-refusal reading cannot recover');
+    now += 1000;
+    for (const [remaining, state, limits] of [[0, 'available'], [90, 'stale'], [90, 'unknown'], [90, 'available', []], [90, 'available', [null]]]) {
+      write(remaining, now, state, limits);
+      relay.probeQuotaRecovery();
+      assert.strictEqual(relay.quotaHoldActive(), true);
+    }
+    write(90);
+    relay.probeQuotaRecovery();
+    assert.strictEqual(relay.quotaHoldActive(), false);
+    relay.probeQuotaRecovery();
+    assert.strictEqual(relay.__sent.slice(before).filter(m => m.type === 'ready').length, 1);
+  } finally {
+    Date.now = originalNow; console.warn = warn; teardown(relay);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 const AGY_QUOTA_BANNER =
   '⚠ Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 4h42m28s.';
 

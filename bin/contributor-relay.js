@@ -1422,12 +1422,15 @@ function nextSeq() { return ++seq; }
 let quotaHoldUntil = 0;
 let quotaHoldReason = '';
 let quotaHoldTimer = null;
+let quotaRecoveryRequired = false;
+let quotaExhaustedAt = 0;
 
 function quotaHoldActive() {
   return quotaHoldUntil > Date.now();
 }
 
 function formatQuotaHoldRemaining(ms) {
+  if (!Number.isFinite(ms)) return 'an unknown duration (until quota recovery is confirmed)';
   const total = Math.max(0, Math.round(ms / 1000));
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
@@ -1453,13 +1456,16 @@ function enterQuotaHold(hint) {
     stated !== null ? stated + QUOTA_HOLD_GRACE_MS : QUOTA_HOLD_FALLBACK_MS,
     QUOTA_HOLD_MAX_MS
   );
-  const until = Date.now() + holdMs;
+  const requiresRecovery = quotaRecoveryRequired || !!(hint && hint.requiresRecovery);
+  const until = requiresRecovery ? Infinity : Date.now() + holdMs;
   // Never SHORTEN a live hold: a second banner arriving mid-hold (a raced tick,
   // or a task that slipped through) restates the same exhaustion, and taking
   // the smaller window would walk the release time backwards on every repeat.
   if (until <= quotaHoldUntil) return;
 
   quotaHoldUntil = until;
+  quotaRecoveryRequired = requiresRecovery;
+  quotaExhaustedAt = Date.now();
   quotaHoldReason = (hint && hint.line) || 'provider quota exhausted';
   if (quotaHoldTimer) clearTimeout(quotaHoldTimer);
 
@@ -1467,12 +1473,22 @@ function enterQuotaHold(hint) {
   console.warn('┌─ PROVIDER QUOTA EXHAUSTED ─────────────────────────────────');
   console.warn(`│ ${quotaHoldReason}`);
   console.warn(`│ This is the provider refusing ${BACKEND}, not a fault of this machine.`);
-  console.warn(`│ Not asking the hub for work for ${formatQuotaHoldRemaining(holdMs)}` +
-    `${stated === null ? ' (the banner stated no reset time — will re-probe)' : ' (the reset the provider stated)'}.`);
-  console.warn('│ To work sooner: switch AGENT_MODEL/AGENT_BACKEND, or upgrade the plan.');
+  if (requiresRecovery) {
+    console.warn('│ Not asking for work until a fresh quota reading confirms recovery.');
+    console.warn('│ The displayed reset time has no established timezone; it is not a release deadline.');
+    console.warn('│ Without a quota reader, verify recovery for the configured model, then restart the relay.');
+  } else {
+    console.warn(`│ Not asking the hub for work for ${formatQuotaHoldRemaining(holdMs)}` +
+      `${stated === null ? ' (the banner stated no reset time — will re-probe)' : ' (the reset the provider stated)'}.`);
+    console.warn('│ To work sooner: switch AGENT_MODEL/AGENT_BACKEND, or upgrade the plan.');
+  }
   console.warn('└────────────────────────────────────────────────────────────');
   console.warn('');
 
+  if (requiresRecovery) {
+    armQuotaRecoveryProbe();
+    return;
+  }
   quotaHoldTimer = setTimeout(() => {
     quotaHoldTimer = null;
     releaseQuotaHold('the provider reset window has passed');
@@ -1483,18 +1499,53 @@ function enterQuotaHold(hint) {
   if (typeof quotaHoldTimer.unref === 'function') quotaHoldTimer.unref();
 }
 
+// A new splash/idle prompt is not evidence of restored account quota. Only a
+// fresh, nonempty reading captured AFTER the refusal can release this hold.
+function probeQuotaRecovery() {
+  if (!quotaRecoveryRequired) return;
+  const reading = readContributorQuotaReading();
+  const captured = contributorReadingCapturedAtMs(reading);
+  const limits = reading && reading.limits;
+  if (reading.state === 'available' && captured > quotaExhaustedAt && captured <= Date.now() &&
+      Array.isArray(limits) && limits.length > 0 && limits.every(window => {
+        if (!window || typeof window !== 'object') return false;
+        const remaining = Number(window.pct_remaining ?? window.remaining_pct);
+        return Number.isFinite(remaining) && remaining > quotaWindowReserve(window.kind);
+      })) {
+    // A startup refusal may still be displaying the model-switch menu. Clear
+    // it by restarting the same CLI, then let readiness request the next task.
+    const restart = !currentTask && BACKEND === 'codex' &&
+      paneQuotaExhaustion(capturePaneText()) !== null;
+    if (restart) { quitLiveCLI(); relaunchCLI(); }
+    releaseQuotaHold('a fresh provider quota reading confirms recovery', { skipReady: restart });
+    return;
+  }
+  armQuotaRecoveryProbe();
+}
+
+function armQuotaRecoveryProbe() {
+  if (quotaHoldTimer) clearTimeout(quotaHoldTimer);
+  quotaHoldTimer = setTimeout(() => {
+    quotaHoldTimer = null;
+    probeQuotaRecovery();
+  }, QUOTA_GUARD_RETRY_MS);
+  if (typeof quotaHoldTimer.unref === 'function') quotaHoldTimer.unref();
+}
+
 // releaseQuotaHold clears the hold and re-advertises. The explicit `ready` is
 // the whole point: `ready` is suppressed while held (see sendTo), so nothing
 // else would restart the loop — the hub has heard nothing from this contributor
 // since the hold began and is not going to offer work unprompted.
-function releaseQuotaHold(why) {
+function releaseQuotaHold(why, { skipReady = false } = {}) {
   if (!quotaHoldUntil) return;
   const was = quotaHoldReason;
   quotaHoldUntil = 0;
   quotaHoldReason = '';
+  quotaRecoveryRequired = false;
+  quotaExhaustedAt = 0;
   if (quotaHoldTimer) { clearTimeout(quotaHoldTimer); quotaHoldTimer = null; }
   console.log(`Provider quota hold released — ${why}. Asking for work again (was: ${was})`);
-  if (!currentTask && !cliReadyFailed) {
+  if (!skipReady && !currentTask && !cliReadyFailed) {
     requestWork(hubs[activeHubIndex], 'quota_hold_released');
   }
 }
@@ -3843,6 +3894,7 @@ function getCLIState() {
   try {
     const text = capturePaneText();
     const state = classifyReadiness(text, BACKEND);
+    if (state === 'quota-exhausted') enterQuotaHold(paneQuotaExhaustion(text));
     // #7922: an omp whose configured provider credential is DISABLED draws
     // exactly the chrome a ready one does — it has already, silently, picked
     // some other provider's model (the incident: `qwen3-coder:30b` in the
@@ -4071,6 +4123,9 @@ function waitForCLI() {
         }
         console.log('CLI ready — accepting tasks');
         resolve();
+      } else if (state === 'quota-exhausted') {
+        if (currentTask) reject(new Error(`provider quota exhausted: ${quotaHoldReason}`));
+        else setTimeout(check, CLI_READY_POLL_MS);
       } else if (state === 'onboarding') {
         needsLoginTicks = 0;
         // A numbered menu needs its option typed before Enter; a yes/no confirm
@@ -7777,7 +7832,7 @@ function progressTick() {
       failCurrentTask(
         `provider quota exhausted for ${BACKEND} — not a fault of this host; ` +
           `the relay is standing down for ${formatQuotaHoldRemaining(quotaHoldUntil - Date.now())} ` +
-          `and will ask for work again after that (${quota.line})`,
+          `${quota.requiresRecovery ? 'and will resume only after recovery' : 'and will ask for work again after that'} (${quota.line})`,
         { kind: 'environment', skipReady: true }
       );
     } else {
@@ -8452,6 +8507,7 @@ function connect() {
 }
 
 function cleanup() {
+  if (quotaHoldTimer) { clearTimeout(quotaHoldTimer); quotaHoldTimer = null; }
   if (hubsSeenWriteTimer) { clearTimeout(hubsSeenWriteTimer); hubsSeenWriteTimer = null; }
   writeHubsSeenNow();
   removeRelayPidFile();
@@ -8565,6 +8621,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     quotaHoldActive,
     enterQuotaHold,
     releaseQuotaHold,
+    probeQuotaRecovery,
     getQuotaHoldUntil: () => quotaHoldUntil,
     getQuotaHoldReason: () => quotaHoldReason,
     // CLI login hold (hivecommons/hive#7996).

@@ -539,8 +539,8 @@ func TestGiteaAddLabels(t *testing.T) {
 func TestGiteaRemoveLabel(t *testing.T) {
 	var gotMethod, gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == giteaAPIPath+"/repos/hivecommons/hive/labels" {
-			_, _ = w.Write([]byte(`[{"id":99,"name":"hold"}]`))
+		if r.Method == http.MethodGet && r.URL.Path == giteaAPIPath+"/repos/hivecommons/hive/issues/7/labels" {
+			_, _ = w.Write([]byte(`[{"id":98,"name":"kind/bug"},{"id":99,"name":"hold"}]`))
 			return
 		}
 		gotMethod, gotPath = r.Method, r.URL.Path
@@ -557,6 +557,57 @@ func TestGiteaRemoveLabel(t *testing.T) {
 	}
 	if !strings.HasSuffix(gotPath, "/repos/hivecommons/hive/issues/7/labels/99") {
 		t.Errorf("path = %q", gotPath)
+	}
+}
+
+// TestGiteaSetHoldClearsOrgLevelLabel covers #9180: a hold label defined at
+// the organisation level is absent from /repos/{owner}/{repo}/labels, so
+// resolving the id from the repo list returned nil without deleting and the PR
+// stayed held. The id must come from the labels actually on the PR.
+func TestGiteaSetHoldClearsOrgLevelLabel(t *testing.T) {
+	var deleted string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == giteaAPIPath+"/repos/hivecommons/hive/labels":
+			_, _ = w.Write([]byte(`[{"id":3,"name":"kind/bug"}]`))
+		case r.Method == http.MethodGet && r.URL.Path == giteaAPIPath+"/repos/hivecommons/hive/issues/7/labels":
+			_, _ = w.Write([]byte(`[{"id":3,"name":"kind/bug"},{"id":501,"name":"hold"}]`))
+		case r.Method == http.MethodDelete:
+			deleted = r.URL.Path
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	f := newTestGitea(t, srv.URL, "hivecommons")
+	if err := f.SetHold(context.Background(), "hive", 7, false); err != nil {
+		t.Fatalf("SetHold(false): %v", err)
+	}
+	if want := giteaAPIPath + "/repos/hivecommons/hive/issues/7/labels/501"; deleted != want {
+		t.Fatalf("DELETE path = %q, want %q (org-level hold label left on the PR)", deleted, want)
+	}
+}
+
+// TestGiteaRemoveLabelAttachedWithoutIDErrors: a label that is on the PR but
+// carries no usable id cannot be deleted; reporting success would leave it in
+// place silently (#9180), so RemoveLabel must return an error.
+func TestGiteaRemoveLabelAttachedWithoutIDErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`[{"name":"hold"}]`))
+			return
+		}
+		t.Errorf("unexpected write for unresolvable label: %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+
+	f := newTestGitea(t, srv.URL, "hivecommons")
+	err := f.RemoveLabel(context.Background(), "hive", 7, "hold")
+	if err == nil || !strings.Contains(err.Error(), "no resolvable id") {
+		t.Fatalf("RemoveLabel = %v, want unresolvable-id error", err)
 	}
 }
 

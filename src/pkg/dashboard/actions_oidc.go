@@ -72,6 +72,15 @@ func (s *Server) handleActionsDispatch(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "actions oidc dispatch is disabled", http.StatusForbidden)
 		return
 	}
+	// Replay dedupe (repo:run_id:run_attempt and jti) lives in the persistent
+	// mention store. Without it every retry of a run would be accepted, so
+	// refuse rather than dedupe against a throwaway in-memory store.
+	store := s.deps.MentionStore
+	if store == nil {
+		s.auditActionDispatch("refused", "transport", "oidc", "guard", "store")
+		jsonError(w, "actions dispatch unavailable: mention store not loaded", http.StatusServiceUnavailable)
+		return
+	}
 	claims, err := s.verifyActionsOIDC(r.Context(), actionsBearerToken(r.Header.Get("Authorization")), cfg.OIDC)
 	if err != nil {
 		s.auditActionDispatch("refused", "transport", "oidc", "guard", "jwt", "detail", refusalDetail(err.Error()))
@@ -96,12 +105,11 @@ func (s *Server) handleActionsDispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	store := s.actionsMentionStore()
 	now := s.actionsNow()
 	runKey := actionsRunDedupeKey(claims)
 	kickID := "action:" + runKey
 	jtiKey := actionsJTIKey(claims)
-	replay := store != nil && (store.Seen(runKey) || (jtiKey != "" && store.Seen(jtiKey)))
+	replay := store.Seen(runKey) || (jtiKey != "" && store.Seen(jtiKey))
 	event := mention.Event{
 		Repo:      strings.TrimSpace(claims.Repository),
 		Kind:      "issue",
@@ -144,7 +152,7 @@ func (s *Server) handleActionsDispatch(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "actions dispatch refused", http.StatusForbidden)
 		return
 	}
-	if store != nil && jtiKey != "" {
+	if jtiKey != "" {
 		_ = store.Mark(jtiKey)
 	}
 	s.auditActionDispatch("accepted", "transport", "oidc", "repo", claims.Repository, "actor", claims.Actor, "workflow", claims.Workflow, "ref", claims.Ref, "run_id", claims.RunID, "run_attempt", claims.RunAttempt)
@@ -267,14 +275,6 @@ func (s *Server) actionsAppLogin() string {
 		return s.deps.GHClient.AppBotLogin()
 	}
 	return "hive[bot]"
-}
-
-func (s *Server) actionsMentionStore() *mention.Store {
-	if s.deps != nil && s.deps.MentionStore != nil {
-		return s.deps.MentionStore
-	}
-	st, _ := mention.NewStore("")
-	return st
 }
 
 func (s *Server) actionsNow() time.Time {

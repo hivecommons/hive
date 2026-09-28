@@ -191,8 +191,17 @@ same campaign path. The Spec checkpoint is the design-approval gate: when
 key), a final Spec parks the lease at `stage=spec`, surfaces
 `waiting_on=human` / `waiting_reason=checkpoint_enabled` in `/api/runs`, and
 requires an owner to approve or reject the `/api/runs/{key}/checkpoint` payload
-before Plan can start. Disabling the checkpoint records an `auto` approval and
-advances to Plan without a human. A final Plan import materializes child beads
+before Plan can start. Approving moves the reviewed spec generation to Plan
+first, then marks the design approved and applies the approved label/status on
+the work item. A failed label or status write does not undo or fail the
+approval: it is logged, audited as `design_signal_failed`, and recorded on the
+run's timeline. The same checkpoint holds runs admitted without a design epic
+(a triage `spec` verdict, `POST /api/runs/spec` outside design mode, nous or
+inception): their parked Spec receipt surfaces the same `waiting_on=human`
+projection, approval advances the lease to Plan and records a `stage_approval`
+timeline event, and rejection re-mints the Spec generation so the stage is
+offered again. Disabling the checkpoint records an `auto` approval, marks the
+design approved, and advances to Plan without a human. A final Plan import materializes child beads
 under the epic using the existing planning decompose path. For Spek runs,
 `runs.checkpoints.<stage>` governs the interactive checkpoints first: the absent
 key still means hold. The ACMM pack's `plan_auto_approve` applies to

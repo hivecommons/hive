@@ -412,6 +412,627 @@
         }
       }
     },
+    "/api/overview/issues.csv": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Export Overview issues as CSV",
+        "description": "Serves the Overview band export from the cached /api/status snapshot; no GitHub calls are made on request.",
+        "parameters": [
+          {
+            "name": "band",
+            "in": "query",
+            "description": "Band filter; repeat or comma-separate values. Unknown values return 400 with the valid keys.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "ready",
+                  "in-progress",
+                  "agent-filed",
+                  "waiting",
+                  "done"
+                ]
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "repo",
+            "in": "query",
+            "description": "Repository full name (owner/name); repeatable.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "stale",
+            "in": "query",
+            "description": "Filter rows by stale flag.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "held",
+            "in": "query",
+            "description": "Filter rows by held flag.",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Overview issues export from the cached status snapshot.",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string",
+                  "description": "UTF-8 BOM-prefixed RFC-4180 CSV using the dashboard Overview export columns."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid filter value such as an unknown band."
+          },
+          "401": {
+            "description": "Missing or invalid dashboard authentication."
+          }
+        }
+      }
+    },
+    "/api/overview/issues.json": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Export Overview issues as JSON",
+        "description": "Serves the Overview band export from the cached /api/status snapshot; no GitHub calls are made on request.",
+        "parameters": [
+          {
+            "name": "band",
+            "in": "query",
+            "description": "Band filter; repeat or comma-separate values. Unknown values return 400 with the valid keys.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "ready",
+                  "in-progress",
+                  "agent-filed",
+                  "waiting",
+                  "done"
+                ]
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "repo",
+            "in": "query",
+            "description": "Repository full name (owner/name); repeatable.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "stale",
+            "in": "query",
+            "description": "Filter rows by stale flag.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "held",
+            "in": "query",
+            "description": "Filter rows by held flag.",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Overview issues export from the cached status snapshot.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "kind",
+                    "generated_at",
+                    "hive_id",
+                    "stale_days",
+                    "bands",
+                    "rows"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "issues"
+                      ]
+                    },
+                    "generated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "hive_id": {
+                      "type": "string"
+                    },
+                    "stale_days": {
+                      "type": "integer"
+                    },
+                    "bands": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "key",
+                          "label",
+                          "rule",
+                          "count"
+                        ],
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "short": {
+                            "type": "string"
+                          },
+                          "rule": {
+                            "type": "string"
+                          },
+                          "count": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "band",
+                          "band_rule",
+                          "repo",
+                          "number",
+                          "title",
+                          "url",
+                          "state_signals",
+                          "labels",
+                          "assignees",
+                          "agent_role",
+                          "acknowledged",
+                          "held",
+                          "hold_reason",
+                          "linked_prs",
+                          "updated_at",
+                          "stale"
+                        ],
+                        "properties": {
+                          "band": {
+                            "type": "string"
+                          },
+                          "band_rule": {
+                            "type": "string"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "oneOf": [
+                              {
+                                "type": "integer"
+                              },
+                              {
+                                "type": "string"
+                              }
+                            ]
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "state_signals": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "labels": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "assignees": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "agent_role": {
+                            "type": "string"
+                          },
+                          "acknowledged": {
+                            "type": "boolean"
+                          },
+                          "held": {
+                            "type": "boolean"
+                          },
+                          "hold_reason": {
+                            "type": "string"
+                          },
+                          "linked_prs": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "updated_at": {
+                            "type": "string"
+                          },
+                          "stale": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid filter value such as an unknown band."
+          },
+          "401": {
+            "description": "Missing or invalid dashboard authentication."
+          }
+        }
+      }
+    },
+    "/api/overview/prs.csv": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Export Overview prs as CSV",
+        "description": "Serves the Overview band export from the cached /api/status snapshot; no GitHub calls are made on request.",
+        "parameters": [
+          {
+            "name": "band",
+            "in": "query",
+            "description": "Band filter; repeat or comma-separate values. Unknown values return 400 with the valid keys.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "waiting",
+                  "eligible",
+                  "blocked",
+                  "in-review",
+                  "open",
+                  "draft"
+                ]
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "repo",
+            "in": "query",
+            "description": "Repository full name (owner/name); repeatable.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "stale",
+            "in": "query",
+            "description": "Filter rows by stale flag.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "held",
+            "in": "query",
+            "description": "Filter rows by held flag.",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Overview prs export from the cached status snapshot.",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string",
+                  "description": "UTF-8 BOM-prefixed RFC-4180 CSV using the dashboard Overview export columns."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid filter value such as an unknown band."
+          },
+          "401": {
+            "description": "Missing or invalid dashboard authentication."
+          }
+        }
+      }
+    },
+    "/api/overview/prs.json": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Export Overview prs as JSON",
+        "description": "Serves the Overview band export from the cached /api/status snapshot; no GitHub calls are made on request.",
+        "parameters": [
+          {
+            "name": "band",
+            "in": "query",
+            "description": "Band filter; repeat or comma-separate values. Unknown values return 400 with the valid keys.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "waiting",
+                  "eligible",
+                  "blocked",
+                  "in-review",
+                  "open",
+                  "draft"
+                ]
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "repo",
+            "in": "query",
+            "description": "Repository full name (owner/name); repeatable.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "stale",
+            "in": "query",
+            "description": "Filter rows by stale flag.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "held",
+            "in": "query",
+            "description": "Filter rows by held flag.",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Overview prs export from the cached status snapshot.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "kind",
+                    "generated_at",
+                    "hive_id",
+                    "stale_days",
+                    "bands",
+                    "rows"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "prs"
+                      ]
+                    },
+                    "generated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "hive_id": {
+                      "type": "string"
+                    },
+                    "stale_days": {
+                      "type": "integer"
+                    },
+                    "bands": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "key",
+                          "label",
+                          "rule",
+                          "count"
+                        ],
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "short": {
+                            "type": "string"
+                          },
+                          "rule": {
+                            "type": "string"
+                          },
+                          "count": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "band",
+                          "band_rule",
+                          "repo",
+                          "number",
+                          "title",
+                          "url",
+                          "author",
+                          "draft",
+                          "merge_verdict",
+                          "mergeable",
+                          "failing_checks",
+                          "review_decision",
+                          "review_class",
+                          "held",
+                          "hold_reason",
+                          "labels",
+                          "updated_at",
+                          "stale",
+                          "signals"
+                        ],
+                        "properties": {
+                          "band": {
+                            "type": "string"
+                          },
+                          "band_rule": {
+                            "type": "string"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "oneOf": [
+                              {
+                                "type": "integer"
+                              },
+                              {
+                                "type": "string"
+                              }
+                            ]
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "author": {
+                            "type": "string"
+                          },
+                          "draft": {
+                            "type": "boolean"
+                          },
+                          "merge_verdict": {
+                            "type": "string"
+                          },
+                          "mergeable": {
+                            "type": "string"
+                          },
+                          "failing_checks": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "review_decision": {
+                            "type": "string"
+                          },
+                          "review_class": {
+                            "type": "string"
+                          },
+                          "held": {
+                            "type": "boolean"
+                          },
+                          "hold_reason": {
+                            "type": "string"
+                          },
+                          "labels": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "updated_at": {
+                            "type": "string"
+                          },
+                          "stale": {
+                            "type": "boolean"
+                          },
+                          "signals": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid filter value such as an unknown band."
+          },
+          "401": {
+            "description": "Missing or invalid dashboard authentication."
+          }
+        }
+      }
+    },
     "/api/status": {
       "get": {
         "tags": [
@@ -653,30 +1274,166 @@
                           "actionableIssues": {
                             "type": "array",
                             "items": {
-                              "type": "object"
+                              "type": "object",
+                              "properties": {
+                                "band": {
+                                  "type": "string"
+                                },
+                                "signals": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "glyph": {
+                                        "type": "string"
+                                      },
+                                      "role": {
+                                        "type": "string"
+                                      },
+                                      "label": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  }
+                                },
+                                "stale": {
+                                  "type": "boolean"
+                                },
+                                "held": {
+                                  "type": "boolean"
+                                },
+                                "hold_reason": {
+                                  "type": "string"
+                                },
+                                "role": {
+                                  "type": "string"
+                                }
+                              }
                             },
-                            "description": "Untyped in the Go source ([]any) \u2014 populated from forge issue records whose shape is not fixed by a Go struct."
+                            "description": "Cached forge records enriched with the same Go classification used by /api/overview exports."
                           },
                           "openPrs": {
                             "type": "array",
                             "items": {
-                              "type": "object"
+                              "type": "object",
+                              "properties": {
+                                "band": {
+                                  "type": "string"
+                                },
+                                "signals": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "glyph": {
+                                        "type": "string"
+                                      },
+                                      "role": {
+                                        "type": "string"
+                                      },
+                                      "label": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  }
+                                },
+                                "stale": {
+                                  "type": "boolean"
+                                },
+                                "held": {
+                                  "type": "boolean"
+                                },
+                                "hold_reason": {
+                                  "type": "string"
+                                },
+                                "role": {
+                                  "type": "string"
+                                }
+                              }
                             },
-                            "description": "Untyped in the Go source ([]any) \u2014 populated from forge PR records whose shape is not fixed by a Go struct."
+                            "description": "Cached forge records enriched with the same Go classification used by /api/overview exports."
                           },
                           "heldIssues": {
                             "type": "array",
                             "items": {
-                              "type": "object"
+                              "type": "object",
+                              "properties": {
+                                "band": {
+                                  "type": "string"
+                                },
+                                "signals": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "glyph": {
+                                        "type": "string"
+                                      },
+                                      "role": {
+                                        "type": "string"
+                                      },
+                                      "label": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  }
+                                },
+                                "stale": {
+                                  "type": "boolean"
+                                },
+                                "held": {
+                                  "type": "boolean"
+                                },
+                                "hold_reason": {
+                                  "type": "string"
+                                },
+                                "role": {
+                                  "type": "string"
+                                }
+                              }
                             },
-                            "description": "Issues parked behind a hold label, display-only (#7896). Untyped in the Go source ([]any) \u2014 populated from the hold list's items (number, title, url, labels, created_at)."
+                            "description": "Cached forge records enriched with the same Go classification used by /api/overview exports."
                           },
                           "heldPrs": {
                             "type": "array",
                             "items": {
-                              "type": "object"
+                              "type": "object",
+                              "properties": {
+                                "band": {
+                                  "type": "string"
+                                },
+                                "signals": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "glyph": {
+                                        "type": "string"
+                                      },
+                                      "role": {
+                                        "type": "string"
+                                      },
+                                      "label": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  }
+                                },
+                                "stale": {
+                                  "type": "boolean"
+                                },
+                                "held": {
+                                  "type": "boolean"
+                                },
+                                "hold_reason": {
+                                  "type": "string"
+                                },
+                                "role": {
+                                  "type": "string"
+                                }
+                              }
                             },
-                            "description": "Non-draft PRs parked behind a hold label, display-only (#7896) \u2014 kept apart from openPrs so the hold gate is untouched. Untyped in the Go source ([]any) \u2014 the same PR record shape as openPrs."
+                            "description": "Cached forge records enriched with the same Go classification used by /api/overview exports."
                           }
                         },
                         "required": [
@@ -816,6 +1573,58 @@
                         "initializing"
                       ],
                       "description": "Present ONLY in the pre-first-build response, which is the bare object {\"status\": \"initializing\"} with no other field set."
+                    },
+                    "overview_bands": {
+                      "type": "object",
+                      "description": "Ordered Go band specs and counts shared with Overview exports, repo cards and legends. Also included in full status SSE events.",
+                      "properties": {
+                        "issues": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "short": {
+                                "type": "string"
+                              },
+                              "rule": {
+                                "type": "string"
+                              },
+                              "count": {
+                                "type": "integer"
+                              }
+                            }
+                          }
+                        },
+                        "prs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "short": {
+                                "type": "string"
+                              },
+                              "rule": {
+                                "type": "string"
+                              },
+                              "count": {
+                                "type": "integer"
+                              }
+                            }
+                          }
+                        }
+                      }
                     }
                   }
                 }
@@ -21176,7 +21985,7 @@
           "System"
         ],
         "summary": "Get weekly frozen Hive owner advice",
-        "description": "Returns the ranked, mode-aware owner advice epoch shared by the dashboard card and advisory digest. The top recommendations are frozen for seven days unless the governor mode changes.",
+        "description": "Returns the ranked owner advice epoch shared by the dashboard card and advisory digest. WHICH recommendations show is frozen for seven days unless the governor mode changes; their numbers, items and links are recomputed on every call, and a frozen recommendation whose trigger cleared is returned with cleared=true. Queue-health rules (reduce-blocked-prs, fix-failing-check, throttle-lane, clear-human-gate-prs, unblock-human-issues, review-stale-prs, confirm-and-close) fire in every governor mode from the same band classifier the Overview exports use; thresholds come from governor.advisory.queue_health.",
         "responses": {
           "200": {
             "description": "hiveadvisor.Result",
@@ -21218,6 +22027,31 @@
                     },
                     "frozen": {
                       "type": "boolean"
+                    },
+                    "bands": {
+                      "type": "array",
+                      "description": "Rule text for every Overview band the recommendations name.",
+                      "items": {
+                        "$ref": "#/components/schemas/HiveAdviceBandRule"
+                      }
+                    },
+                    "counts": {
+                      "type": "object",
+                      "description": "Which totals the advice quotes: the governor's actionable queue versus the Overview chart's every-open-or-held-item totals.",
+                      "properties": {
+                        "governorIssues": {
+                          "type": "integer"
+                        },
+                        "governorPRs": {
+                          "type": "integer"
+                        },
+                        "overviewIssues": {
+                          "type": "integer"
+                        },
+                        "overviewPRs": {
+                          "type": "integer"
+                        }
+                      }
                     }
                   }
                 }
@@ -25059,8 +25893,82 @@
               "$ref": "#/components/schemas/HiveAdviceSignal"
             }
           },
+          "links": {
+            "type": "array",
+            "description": "Overview export lists, relative to the dashboard origin.",
+            "items": {
+              "$ref": "#/components/schemas/HiveAdviceLink"
+            }
+          },
+          "items": {
+            "type": "array",
+            "description": "First few issues/PRs the advice is about (oldest activity first, max 5).",
+            "items": {
+              "$ref": "#/components/schemas/HiveAdviceItem"
+            }
+          },
+          "bands": {
+            "type": "array",
+            "description": "Band keys named, e.g. pr/blocked, issue/waiting.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cleared": {
+            "type": "boolean",
+            "description": "True when the epoch froze this recommendation but its trigger no longer holds; numbers are dropped."
+          },
           "score": {
             "type": "integer"
+          }
+        }
+      },
+      "HiveAdviceLink": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "HiveAdviceItem": {
+        "type": "object",
+        "properties": {
+          "repo": {
+            "type": "string"
+          },
+          "number": {
+            "type": "integer"
+          },
+          "url": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      },
+      "HiveAdviceBandRule": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "pr",
+              "issue"
+            ]
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "rule": {
+            "type": "string"
           }
         }
       },

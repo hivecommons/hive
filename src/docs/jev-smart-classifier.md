@@ -16,6 +16,26 @@ agrees with the deterministic keyword/label answer. Jev never changes routing,
 tier/model selection, or triage; keywords and labels remain authoritative. With
 the default `backend: keywords`, Hive makes **zero Jev network calls**.
 
+## Data sent to the provider
+
+Enabling `backend: jev` sends issue content to a third party. Each Jev request
+POSTs the following fields of the issue to the configured
+`classifier.jev.endpoint` (by default `https://openrouter.ai/api/v1/systemone`,
+or `https://api.typesafe.ai/v1/systemone` with `provider: typesafe`):
+
+- repository (`owner/name`) and issue number
+- **title** and the **full issue body**
+- labels
+- **author** login
+- `updated_at`
+
+This applies to every repository the hive schedules, **including private
+repositories**, and a request is sent again whenever an issue's `updated_at`
+changes. The provider's data-retention and training policies apply to that
+content. Do not enable Jev for hives whose issue text must not leave your
+infrastructure, or point `endpoint` at a provider you have a data agreement
+with.
+
 ## When to use it
 
 Use Jev when keyword routing is too coarse for your issue queue and you want a
@@ -114,6 +134,32 @@ The cache key is repository, issue number, and `updated_at`. Repeated scheduler
 sweeps of the same unchanged issue do not re-bill; editing the issue invalidates
 the cache because the state may have changed.
 
+## Failure handling
+
+Jev calls run inline in the scheduler sweep, so Hive bounds how long an
+unreachable, rate-limiting, or slow provider can delay kicks:
+
+- **Failed issues are not retried for 5 minutes.** A failed call (timeout,
+  transport error, non-2xx, bad JSON) is remembered for that issue revision, so
+  the run-triage pass of the same sweep and the next sweeps fall back to
+  keywords immediately. Editing the issue retries at once.
+- **Circuit breaker.** After 3 consecutive failed calls Hive stops calling Jev
+  for 5 minutes and logs
+  `classify: jev: N consecutive failures (last: HTTP 429); skipping Jev until …`.
+  The log names only the failure class (`HTTP <status>`, `timeout`,
+  `transport error`, `invalid response`), never provider response text, which
+  can echo issue content. After the cooldown exactly one call is sent as a
+  probe while others keep falling back: success resumes normal calls, failure
+  reopens the breaker for another 5 minutes.
+- **Per-sweep deadline.** Each scheduler sweep (and each manual kick) runs its
+  classification and run-triage passes under one deadline of
+  `max(10s, classifier.jev.timeout)`; a call starts only while at least one full
+  `timeout` remains. Issues left over fall back to keywords and are asked on a
+  later sweep.
+
+Every skipped call counts as `fallback` in `GET /api/classifier/stats`. Routing
+is never affected: keywords and labels decide either way.
+
 ## Observability
 
 `GET /api/classifier/stats` returns:
@@ -153,8 +199,8 @@ authoritative classifier source.
 |---|---|
 | Jev option disabled in Settings | Connect OpenRouter or set `JEV_API_KEY` / `classifier.jev.api_key_env`. |
 | `key_source: none` | The dashboard cannot see an env key and `openrouter` has no resolved gateway key. |
-| High fallback count | Check missing key, provider errors, timeout, low confidence, and whether the decision is enabled. |
-| Scheduler feels slow | Keep `classifier.jev.timeout` low; timeout fallback is bounded and defaults to `2s`. |
+| High fallback count | Check missing key, provider errors, timeout, low confidence, and whether the decision is enabled. Search the hive log for `classify: jev:` to see whether the circuit breaker is open. |
+| Scheduler feels slow | Keep `classifier.jev.timeout` low (default `2s`). Jev waiting per sweep is capped at `max(10s, timeout)`; see [Failure handling](#failure-handling). |
 | No spend changes | Backend may still be `keywords`, cache may be serving unchanged issues, or no classified issues have changed. |
 | Need emergency rollback | Set `classifier.backend: keywords` and save. |
 
