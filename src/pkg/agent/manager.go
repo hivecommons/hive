@@ -295,8 +295,14 @@ type AgentProcess struct {
 	// tokenRestartGaveUp latches once the cap is hit so the diagnosis is logged
 	// a single time rather than every poll (~3s). Cleared alongside the counter.
 	tokenRestartGaveUp bool
-	NeedsLogin         bool // true when pane shows a login prompt
-	QuotaExhausted     bool // true when pane shows provider/monthly quota exhaustion
+	// lastRateLimitRestart paces the relaunch of an agent whose CLI start-up
+	// banner reports GitHub rate-limited the credential validation. Distinct
+	// from lastTokenRestart on purpose: this lane has no attempt cap because
+	// the condition clears by itself once the window resets, and it must not
+	// spend the token-restart budget (see paneShowsStartupRateLimit).
+	lastRateLimitRestart time.Time
+	NeedsLogin           bool // true when pane shows a login prompt
+	QuotaExhausted       bool // true when pane shows provider/monthly quota exhaustion
 	// WatchdogConditions is the k8s-style observed-health condition set the
 	// watchdog reconciler publishes for this agent (RFC #4665): Ready /
 	// Authenticated / Producing with lastTransitionTime + reason. Written by
