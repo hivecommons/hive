@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-release-push-retry.sh — exercises the `push_v5` step of
+# test-release-push-retry.sh — exercises the `push_line` step of
 # .github/workflows/tagged-release.yml (#5142, #5222) by extracting its script
 # from the workflow file itself and driving it with stubbed `git`/`gh`, so the
 # merge state machine is proven against the shipped source rather than a copy.
@@ -57,15 +57,15 @@ if ! python3 -c 'import yaml' 2>/dev/null; then
 fi
 
 # --- extract the step's script verbatim from the workflow ---------------------
-python3 - "$workflow" > "$tmp/push_v5.sh" <<'PY'
+python3 - "$workflow" > "$tmp/push_line.sh" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 for st in w["jobs"]["release"]["steps"]:
-    if st.get("id") == "push_v5":
+    if st.get("id") == "push_line":
         sys.stdout.write(st["run"])
         break
 else:
-    sys.exit("no step with id push_v5 in the release job")
+    sys.exit("no step with id push_line in the release job")
 PY
 
 # --- stub git + gh + sleep -----------------------------------------------------
@@ -195,9 +195,10 @@ run_step() {
   RPR_SCENARIO="$1" RPR_TAG_SCENARIO="${2:-ok}" RPR_STATE="$st" \
     RELEASE_PUSH_GH006_WINDOW="${3:-120}" \
     VERSION="4.0.1" SHA="deadbeefcafe" GITHUB_OUTPUT="$st/gh_output" \
+    RELEASE_LINE="v5" \
     ACTIONS_TOKEN="actions-token-for-test" \
     GITHUB_REPOSITORY="hivecommons/hive" \
-    PATH="$tmp/bin:$PATH" bash "$tmp/push_v5.sh" > "$st/out" 2>&1
+    PATH="$tmp/bin:$PATH" bash "$tmp/push_line.sh" > "$st/out" 2>&1
   rc=$?
   output=$(cat "$st/out")
   ghout=$(cat "$st/gh_output" 2>/dev/null || true)
@@ -333,7 +334,7 @@ gh_release = next((s for s in rel.get("steps", [])
                    if "Create GitHub Release" in (s.get("name") or "")), None)
 if gh_release is None:
     bad("the Create GitHub Release step was not found")
-elif "steps.push_v5.outputs.pushed == 'true'" not in (gh_release.get("if") or ""):
+elif "steps.push_line.outputs.pushed == 'true'" not in (gh_release.get("if") or ""):
     bad("Create GitHub Release is not gated on pushed=true — a deferred run would "
         "publish a Release for a tag that was never pushed")
 perms = w.get("permissions", {})
@@ -401,15 +402,15 @@ else:
     # not a push. The backstop may count that publishing run, but the decide
     # job's workflow_run filter above must still reject workflow_dispatch so
     # the handoff cannot re-enter the release loop.
-    if '.event == "workflow_dispatch"' not in guard_run or '.head_branch == "v5"' not in guard_run:
-        bad("the backstop no longer accepts v5 workflow_dispatch docker.yml publishing runs (#6380)")
+    if '.event == \\"workflow_dispatch\\"' not in guard_run or '.head_branch == \\"${RELEASE_LINE}\\"' not in guard_run:
+        bad("the backstop no longer accepts the release line's workflow_dispatch docker.yml publishing runs (#6380)")
     decide_if = dec.get("if") or ""
-    if "github.event.workflow_run.event != 'workflow_dispatch'" not in decide_if:
-        bad("decide no longer filters workflow_dispatch workflow_run events, risking a release loop (#6380)")
+    if "github.event.workflow_run.event == 'push'" not in decide_if:
+        bad("decide no longer admits only push workflow_run events, risking a release loop (#6380) and fork-branch releases (#9154)")
 push_step = next((s for s in rel.get("steps", [])
-                   if s.get("id") == "push_v5"), None)
+                   if s.get("id") == "push_line"), None)
 if push_step is None:
-    bad("no step with id push_v5 found")
+    bad("no step with id push_line found")
 else:
     run = push_step.get("run", "")
     # Comments in this step DISCUSS `gh pr merge` (explaining why it was
@@ -417,18 +418,18 @@ else:
     code = "\n".join(l for l in run.splitlines()
                      if not l.lstrip().startswith("#"))
     if "gh pr create" not in code:
-        bad("push_v5 no longer merges via a PR (#5222) — check for a regression back to a raw v5 push")
+        bad("push_line no longer merges via a PR (#5222) — check for a regression back to a raw v5 push")
     if "/merge" not in code or "gh api -X PUT" not in code:
-        bad("push_v5 no longer merges via the SHA-keyed merge API (#5318/#5324)")
+        bad("push_line no longer merges via the SHA-keyed merge API (#5318/#5324)")
     if '-f sha="${commit_sha}"' not in code:
         bad("the merge API call no longer passes -f sha=<head> — without it a mid-flight "
             "head move merges the wrong tree instead of deferring (#5318/#5324)")
     if "${{" in code:
-        bad("push_v5's code uses a ${{ }} expression — this step is extracted and run under "
+        bad("push_line's code uses a ${{ }} expression — this step is extracted and run under "
             "plain bash by this test, where that is a bad-substitution. Use the runner's "
             "environment variables (e.g. $GITHUB_REPOSITORY) instead.")
     if "gh pr merge" in code:
-        bad("push_v5 regressed to `gh pr merge`, which refuses any PR whose AGGREGATE "
+        bad("push_line regressed to `gh pr merge`, which refuses any PR whose AGGREGATE "
             "mergeStateStatus is BLOCKED — a pending non-required `tide` status alone is "
             "enough to block every release forever (#5318/#5324)")
     # #5356: workflow_dispatch check-runs are not PR-associated, even when
@@ -436,24 +437,24 @@ else:
     # SHA-scoped commit status BEFORE opening the PR so its rollup can see it.
     status_endpoint = 'repos/${GITHUB_REPOSITORY}/statuses/${commit_sha}'
     if status_endpoint not in code:
-        bad("push_v5 no longer publishes the SHA-scoped gate status — the release PR "
+        bad("push_line no longer publishes the SHA-scoped gate status — the release PR "
             "rollup cannot see workflow_dispatch check-runs and protection 405s (#5356)")
     else:
         status_at = code.index(status_endpoint)
         pr_at = code.index("gh pr create")
         merge_at = code.index("gh api -X PUT")
         if not status_at < pr_at < merge_at:
-            bad("push_v5 must publish gate status, then open the PR, then merge it (#5356)")
+            bad("push_line must publish gate status, then open the PR, then merge it (#5356)")
     if "-f state=success" not in code or "-f context=gate" not in code:
-        bad("push_v5's commit status is not the required gate:success verdict (#5356)")
+        bad("push_line's commit status is not the required gate:success verdict (#5356)")
     # #6380: a release PR merged with GITHUB_TOKEN cannot emit docker.yml's
     # push event. Dispatch immediately after the SHA-keyed merge, before tag
     # retries widen the window in which a later v5 push could get an earlier
     # docker.yml run number. The exact merge SHA must be an explicit input.
     merge_at = code.index("gh api -X PUT")
-    dispatch_call = "gh workflow run docker.yml --ref v5"
+    dispatch_call = 'gh workflow run docker.yml --ref "$RELEASE_LINE"'
     if dispatch_call not in code:
-        bad("push_v5 no longer dispatches docker.yml after the GITHUB_TOKEN merge (#6380)")
+        bad("push_line no longer dispatches docker.yml after the GITHUB_TOKEN merge (#6380)")
     else:
         dispatch_at = code.index(dispatch_call)
         tag_at = code.index('git tag "v${VERSION}"')
