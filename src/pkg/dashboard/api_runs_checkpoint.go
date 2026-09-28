@@ -99,6 +99,10 @@ func (s *Server) handleRunCheckpointDecision(w http.ResponseWriter, r *http.Requ
 		jsonError(w, "stale checkpoint generation", http.StatusConflict)
 		return
 	}
+	if payload.Stage == StageSpec && !s.designCheckpointPending(payload.PlanEpicID) {
+		s.decideSpecCheckpointLease(w, r, payload, action)
+		return
+	}
 	store, agentName := s.findEpicStore(payload.PlanEpicID)
 	if store == nil {
 		jsonError(w, "checkpoint plan not found", http.StatusNotFound)
@@ -167,6 +171,58 @@ func (s *Server) handleRunCheckpointDecision(w http.ResponseWriter, r *http.Requ
 	}
 	s.refreshAndPersist()
 	jsonResponse(w, map[string]any{"ok": true, "status": action, "run_key": payload.RunKey, "gen": req.Gen})
+}
+
+// designCheckpointPending reports whether epicID names a Spektacular design
+// epic whose design still awaits approval. Only such a spec checkpoint is
+// decided on the epic; every other held spec is decided on its lease.
+func (s *Server) designCheckpointPending(epicID string) bool {
+	if epicID == "" {
+		return false
+	}
+	store, _ := s.findEpicStore(epicID)
+	if store == nil {
+		return false
+	}
+	epic, err := store.Get(epicID)
+	return err == nil && epic.Meta(planning.MetaDesignVia) == planning.DesignViaSpektacular && planning.DesignStatus(epic) != planning.DesignStatusApproved
+}
+
+// decideSpecCheckpointLease decides a spec checkpoint that has no design epic
+// to approve - the run was admitted through triage, non-design POST
+// /api/runs/spec, nous or inception (hivecommons/hive#9182). Approval releases
+// the parked lease to plan and records the stage_approval; rejection re-mints
+// the spec generation so the stage is offered for another attempt instead of
+// staying parked behind the rejected receipt.
+func (s *Server) decideSpecCheckpointLease(w http.ResponseWriter, r *http.Request, payload RunCheckpointPayload, action string) {
+	now := time.Now()
+	held, ok := s.heldSpecCheckpointLease(payload.RunKey, now)
+	if !ok {
+		jsonError(w, errRunCheckpointNotHeld.Error(), http.StatusConflict)
+		return
+	}
+	if held.gen != payload.Gen {
+		jsonError(w, "stale checkpoint generation", http.StatusConflict)
+		return
+	}
+	detail := auditDetail("run", payload.RunKey, "gen", strconv.FormatUint(held.gen, 10), "surface", "run_checkpoint")
+	switch action {
+	case runCheckpointDecisionApprove:
+		if _, err := s.contributeHub.advanceLeaseStageAt(held.identity, held.taskID, StagePlan, now, now.Add(time.Millisecond)); err != nil {
+			jsonError(w, err.Error(), runResetErrorStatus(err))
+			return
+		}
+		s.recordRunCheckpointApproval(payload.RunKey, payload.PlanEpicID, StageSpec, requestUser(r), held.gen, now, nil)
+		s.auditFromRequest(r, "spec_approve", detail, "")
+	case runCheckpointDecisionReject:
+		if _, err := s.contributeHub.retryLeaseStage(held.identity, held.taskID, now); err != nil {
+			jsonError(w, err.Error(), runResetErrorStatus(err))
+			return
+		}
+		s.auditFromRequest(r, "spec_reject", detail, "")
+	}
+	s.refreshAndPersist()
+	jsonResponse(w, map[string]any{"ok": true, "status": action, "run_key": payload.RunKey, "gen": payload.Gen})
 }
 
 // RunCheckpointPayload returns the compact checkpoint review payload. Chat and
@@ -255,8 +311,13 @@ func (s *Server) runCheckpointRun(key string) (Run, error) {
 		if run.Key != key && run.LeaseKey != key {
 			continue
 		}
-		if run.WaitingOn != RunWaitingOnHuman || run.PlanEpicID == "" {
+		if run.WaitingOn != RunWaitingOnHuman {
 			return Run{}, errRunCheckpointNotHeld
+		}
+		if run.PlanEpicID == "" {
+			if _, held := s.heldSpecCheckpointLease(run.Key, time.Now()); !held {
+				return Run{}, errRunCheckpointNotHeld
+			}
 		}
 		return run, nil
 	}

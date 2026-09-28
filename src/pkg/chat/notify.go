@@ -120,9 +120,7 @@ func (s *Service) consumeSSE(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if s.dashboardToken != "" {
-		req.Header.Set("Authorization", "Bearer "+s.dashboardToken)
-	}
+	s.authorizeDashboardRequest(ctx, req)
 
 	sseClient := &http.Client{Timeout: 0}
 	resp, err := sseClient.Do(req)

@@ -2461,6 +2461,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		autoMergeOpts.MutationBoundary = b.mutationBoundary
 		autoMergeOpts.SelfAuthorizationHoldEnabled = selfAuthorizationHoldEnabled
 		autoMergeOpts.RepoAutoMergeEnabled = func(repo string) bool { return b.cfg.RepoAutoMergeEnabled(repo) }
+		// Read through b.cfg on every sweep tick so a config reload of
+		// auto_merge.trusted_bot_authors takes effect without a restart.
+		autoMergeOpts.TrustedBotAuthors = func() map[string]bool { return b.cfg.AutoMerge.TrustedBotAuthorSet() }
 		// Intent tier gate (#6258): the human lane only queues PRs that
 		// survive writeMergeEligible's intent check, but this sweep lists
 		// the App's PRs on its own, so it carries the same policy (same
@@ -2749,7 +2752,10 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	if b.cfg.GitHub.Mentions.Enabled || b.cfg.GitHub.Actions.OIDC.Enabled {
 		store, err := mention.NewStore("/data/github-mention-triggers.json")
 		if err != nil {
-			b.logger.Warn("mention trigger store unavailable", "error", err)
+			// Parse failures self-heal inside NewStore; reaching here means the
+			// file is unreadable or cannot be moved aside, which disables GitHub
+			// mentions and makes Actions OIDC dispatch refuse (503) until fixed.
+			b.logger.Error("mention trigger store unavailable; GitHub mentions disabled and Actions OIDC dispatch will refuse", "error", err)
 		} else {
 			b.mentionStore = store
 			mentionStore = store
@@ -9509,12 +9515,14 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 	}
 }
 
-// chatDashboardToken is the bearer token the chat services use to call the
-// local dashboard API. It must be the same token the dashboard middleware
-// accepts (config.Dashboard.AuthToken, resolved from DASHBOARD_AUTH_TOKEN,
-// HIVE_DASHBOARD_TOKEN or the token file). Reading only HIVE_DASHBOARD_TOKEN
-// left hosted spokes — which mount a token file — sending no Authorization
-// at all, so every `!runs`, heartbeat and spec-start call answered 401.
+// chatDashboardToken is the shared token the chat services present to the
+// local dashboard API (as X-Hive-Internal, the server-to-server credential the
+// middleware honors on direct-route spokes too — #9134). It must be the same
+// token the dashboard middleware accepts (config.Dashboard.AuthToken, resolved
+// from DASHBOARD_AUTH_TOKEN, HIVE_DASHBOARD_TOKEN or the token file). Reading
+// only HIVE_DASHBOARD_TOKEN left hosted spokes — which mount a token file —
+// sending no credential at all, so every `!runs`, heartbeat and spec-start
+// call answered 401.
 func (b *boot) chatDashboardToken() string {
 	if b != nil && b.cfg != nil && b.cfg.Dashboard.AuthToken != "" {
 		return b.cfg.Dashboard.AuthToken

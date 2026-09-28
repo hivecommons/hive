@@ -72,6 +72,9 @@ func TestActionsDispatchEndpointGuardsAndAccepts(t *testing.T) {
 		{name: "bot actor unmapped", claims: withActor(actionsTestClaims(now), "github-actions[bot]"), want: http.StatusForbidden},
 		{name: "disallowed command", claims: actionsTestClaims(now), mutateReq: func(r *actionsDispatchRequest) { r.Command = "kick" }, want: http.StatusForbidden},
 		{name: "allow apply gated", claims: actionsTestClaims(now), mutateReq: func(r *actionsDispatchRequest) { r.Command = "kick" }, mutateDeps: func(d *Dependencies) { d.Config.GitHub.Actions.AllowedCommands = []string{"status", "review", "kick"} }, want: http.StatusForbidden},
+		// #9166: without the persistent store there is no run_id/jti replay
+		// dedupe, so the endpoint must refuse rather than accept every retry.
+		{name: "no mention store fails closed", claims: actionsTestClaims(now), mutateDeps: func(d *Dependencies) { d.MentionStore = nil }, want: http.StatusServiceUnavailable},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1,6 +1,7 @@
 package classify
 
 import (
+	"context"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -31,7 +32,7 @@ func TestTriageRules(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Triage(tc.issue, tc.class, tc.cfg)
+			got := Triage(context.Background(), tc.issue, tc.class, tc.cfg)
 			if got.Verdict != tc.want {
 				t.Fatalf("verdict = %q, want %q (%+v)", got.Verdict, tc.want, got)
 			}

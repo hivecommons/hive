@@ -125,6 +125,34 @@ auto_merge:
     - your-org/docs-only-repo
 ```
 
+### Trusted bot authors
+
+The self-authored automerge sweep merges the App's own open, CI-green PRs. It
+also merges PRs from `auto_merge.trusted_bot_authors` through the identical
+gates (required checks green, mergeable, no hold/exempt label, intent tier,
+approval desk, head SHA re-verified at merge time). The default is
+`dependabot[bot]` only; set an explicit empty list to keep the sweep App-only,
+or add other dependency bots you trust. Each merge is recorded with
+`lane=trusted-bot` so audits can tell it from `lane=self-authored`.
+
+```yaml
+auto_merge:
+  trusted_bot_authors:
+    - dependabot[bot]
+    - renovate[bot]
+```
+
+The same list is editable from the dashboard: **Settings → Features → Auto
+merge → Trusted bot authors** shows a toggle per bot. Known dependency bots
+(`dependabot`, `renovate`, `mergeraptor`, `pre-commit-ci`, `github-actions`)
+are listed first, bots currently authoring open PRs in your repos are
+discovered from the last scan and listed automatically, and any other login
+can be typed in. Saving writes `auto_merge.trusted_bot_authors` in full;
+turning every bot off writes an explicit empty list (App-only sweep). The
+underlying endpoint is `GET/PUT /api/config/auto-merge` (owner-only), whose
+response carries `bot_authors: [{login, source: known|discovered|custom,
+trusted}]`.
+
 ## Usage
 
 ```sh

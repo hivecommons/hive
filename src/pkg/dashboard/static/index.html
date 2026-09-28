@@ -2222,6 +2222,12 @@
     /* .config-save / .config-cancel — primary/ghost buttons (system recipe) */
 
     .config-field { margin-bottom: 14px; }
+    .am-trusted-bots { margin-top: 12px; }
+    .am-bot-row { margin-top: 6px; }
+    .am-bot-source { color: var(--muted); font-weight: 400; }
+    .am-bot-empty { color: var(--muted); margin: var(--sp-1) 0; }
+    .am-bot-add { display: flex; gap: var(--sp-3); margin-top: var(--sp-4); align-items: center; }
+    .am-bot-add input { flex: 1; }
     .config-field label { display: block; font-size: var(--fs-xs); color: var(--muted); margin-bottom: var(--sp-2); text-transform: uppercase; letter-spacing: 0.5px; }
     /* .config-field inputs — shared input recipe (end of style block) */
     .config-field input[type="text"],
@@ -8645,7 +8651,7 @@
         const runGen = run.gen || 0;
         const runStage = run.stage || 'spec';
         const interview = renderSpekInterviewInline(run);
-        const checkpointHeld = waiting === 'human' && run.waiting_reason === 'checkpoint_enabled' && run.plan_epic_id;
+        const checkpointHeld = waiting === 'human' && run.waiting_reason === 'checkpoint_enabled' && (run.plan_epic_id || runStage === 'spec');
         const checkpointLabel = runStage === 'spec' ? 'Spec checkpoint held — review the design before Plan can start.' : 'Plan checkpoint held — review before Implement can start.';
         const actions = canApprove && checkpointHeld
           ? `<div class="campaign-empty"><strong>${escapeHtml(checkpointLabel)}</strong><div class="run-log-actions"><button class="btn" style="color:var(--green)" data-action="runCheckpointAction" data-arg0="${escapeHtml(key)}" data-arg1="${escapeHtml(String(runGen))}" data-arg2="approve">✓ Approve</button><button class="btn" style="color:var(--red)" data-action="runCheckpointAction" data-arg0="${escapeHtml(key)}" data-arg1="${escapeHtml(String(runGen))}" data-arg2="reject">✕ Reject</button><button class="btn" data-action="openRunDetail" data-arg0="${escapeHtml(key)}">Details</button></div></div>`
@@ -28297,6 +28303,12 @@ function burnAreaChart() {
       const publicationMinACMMLevel = f.publicationMinACMMLevel || 3;
       const amSelfOn = am.self_authored !== false; // nil/undefined = enabled
       const amChecks = Array.isArray(am.required_checks) ? am.required_checks : [];
+      const amBots = Array.isArray(am.bot_authors) ? am.bot_authors : [];
+      const amBotSourceLabel = { known: 'known bot', discovered: 'seen in open PRs', custom: 'added manually' };
+      const amBotRow = (b) => `<div class="config-toggle am-bot-row" data-bot-login="${esc(b.login)}">
+              <div class="config-toggle-switch am-bot-switch ${b.trusted ? 'on' : ''}" data-action="gh97" data-arg0="${esc(b.login)}" data-arg-types="s" role="switch" aria-checked="${b.trusted ? 'true' : 'false'}"></div>
+              <span class="config-toggle-label"><code>${esc(b.login)}</code> <span class="am-bot-source">${esc(amBotSourceLabel[b.source] || b.source || '')}</span> <span class="config-info">i<span class="config-tooltip">On: PRs authored by ${esc(b.login)} are merged by the self-authored sweep once every gate passes (required CI green, mergeable, no hold label, intent tier, approval desk). Off: the sweep skips them and they wait for a human.</span></span>${b.source === 'custom' ? ` <button type="button" class="hv-btn btn-secondary btn-sm btn-small" data-action="gh99" data-arg0="${esc(b.login)}" data-arg-types="s">remove</button>` : ''}</span>
+            </div>`;
       const rvAgents = Array.isArray(rv.reviewer_agents) ? rv.reviewer_agents : [];
       const rvBuiltin = Array.isArray(rv.builtin_perspectives) ? rv.builtin_perspectives : [];
       const rvSelected = Array.isArray(rv.perspectives) ? rv.perspectives : [];
@@ -28518,6 +28530,14 @@ function burnAreaChart() {
           <div class="config-field" style="margin-top:10px">
             <label>Required CI checks <span class="config-info">i<span class="config-tooltip">Comma-separated status-check/check-run names the sweep must see green before merging, e.g. build-gate. Empty falls back to the built-in allowlist.</span></span></label>
             <input type="text" value="${esc(amChecks.join(', '))}" placeholder="build-gate, lint" data-change-action="gh72">
+          </div>
+          <div class="config-field am-trusted-bots" id="am-trusted-bots">
+            <label>Trusted bot authors <span class="config-info">i<span class="config-tooltip">PRs from these bots are merged by the self-authored sweep through exactly the same gates as Hive&apos;s own PRs: required CI green, mergeable, no hold label, intent tier, approval desk, head SHA re-verified at merge. Known bots are listed first; bots currently authoring open PRs in your repos are discovered automatically. Turn every bot off to keep the sweep App-only.</span></span></label>
+            ${amBots.length ? amBots.map(amBotRow).join('') : '<p class="am-bot-empty">No bots known or discovered yet.</p>'}
+            <div class="am-bot-add">
+              <input type="text" id="am-new-bot" placeholder="another bot login, e.g. snyk-bot">
+              <button type="button" class="hv-btn btn-secondary btn-sm btn-small" data-action="gh98">Add bot</button>
+            </div>
           </div>
         </div>
 
@@ -29210,6 +29230,14 @@ function burnAreaChart() {
     // checked list; if every built-in is checked and nothing custom exists,
     // it is sent empty, which the server treats as "all built-ins" — so a hive
     // that never touched this keeps the default even after a save.
+    function markDirtyTrustedBots() {
+      const list = Array.from(document.querySelectorAll('#am-trusted-bots .am-bot-row'))
+        .filter(r => { const sw = r.querySelector('.am-bot-switch'); return sw && sw.classList.contains('on'); })
+        .map(r => r.dataset.botLogin)
+        .filter(Boolean);
+      markDirty('auto-merge', 'trusted_bot_authors', list);
+    }
+
     function markDirtyPerspectives() {
       const rows = Array.from(document.querySelectorAll('#rv-perspectives .rv-perspective'));
       const builtin = ((_configState.data || {}).review || {}).builtin_perspectives || [];
@@ -32401,6 +32429,37 @@ function burnAreaChart() {
       gh93: function (event, A) { const row = document.querySelector(`.rv-perspective[data-perspective="${CSS.escape(A[0])}"]`); if (row) row.remove(); markDirtyPerspectives(); },
       gh94: function (event, A) { const row = document.querySelector(`.rv-perspective[data-perspective="${CSS.escape(A[0])}"]`); const ta = row && row.querySelector('.rv-perspective-focus'); if (ta) { ta.value = ''; } markDirtyPerspectives(); },
       gh96: function (event, A) { markNotificationEventsDirty(); },
+      // Trusted bot authors are sent as ONE full list (an empty list is a
+      // deliberate "App-only"), so every toggle/add/remove rebuilds it from
+      // the rows currently on screen.
+      gh97: function (event, A) {
+        const isOn = this.classList.toggle('on');
+        this.setAttribute('aria-checked', isOn ? 'true' : 'false');
+        markDirtyTrustedBots();
+      },
+      gh98: function (event, A) {
+        const input = document.getElementById('am-new-bot');
+        const login = (input.value || '').trim();
+        if (!login || /\s/.test(login)) { showToast('Enter a single GitHub login, e.g. renovate[bot]', 'error'); return; }
+        const existing = Array.from(document.querySelectorAll('#am-trusted-bots .am-bot-row')).find(r => (r.dataset.botLogin || '').toLowerCase() === login.toLowerCase());
+        if (existing) {
+          const sw = existing.querySelector('.am-bot-switch');
+          if (sw && !sw.classList.contains('on')) { sw.classList.add('on'); sw.setAttribute('aria-checked', 'true'); }
+          input.value = ''; markDirtyTrustedBots(); return;
+        }
+        const anchorEl = input.parentElement;
+        const row = document.createElement('div');
+        row.className = 'config-toggle am-bot-row'; row.dataset.botLogin = login;
+        row.innerHTML = `<div class="config-toggle-switch am-bot-switch on" data-action="gh97" data-arg0="${esc(login)}" data-arg-types="s" role="switch" aria-checked="true"></div><span class="config-toggle-label"><code>${esc(login)}</code> <span class="am-bot-source">added manually</span> <button type="button" class="hv-btn btn-secondary btn-sm btn-small" data-action="gh99" data-arg0="${esc(login)}" data-arg-types="s">remove</button></span>`;
+        anchorEl.parentElement.insertBefore(row, anchorEl);
+        input.value = '';
+        markDirtyTrustedBots();
+      },
+      gh99: function (event, A) {
+        const row = Array.from(document.querySelectorAll('#am-trusted-bots .am-bot-row')).find(r => (r.dataset.botLogin || '').toLowerCase() === String(A[0]).toLowerCase());
+        if (row) row.remove();
+        markDirtyTrustedBots();
+      },
       gh95: function (event, A) {
         const input = document.getElementById('rv-new-perspective');
         const name = (input.value || '').trim().toLowerCase();

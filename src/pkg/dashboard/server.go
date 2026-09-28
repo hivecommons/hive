@@ -1517,6 +1517,15 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 				// endpoints on every shared-token deployment (#4134).
 				r.Header.Set("X-Hive-Role", config.RoleOwner)
 				r.Header.Set(ownerRoleVerifiedHeader, "true")
+				// The chat spine authenticates with this header (it must: the
+				// bearer path below is disabled on direct-route spokes, #9134)
+				// and delegates audit attribution exactly as it did on the bearer
+				// path (#9125). Only the owner-equivalent shared token reaches
+				// here, and only when no session identity exists, so a claimed
+				// actor never overrides a session/proxy identity or changes role.
+				if actor := r.Header.Get("X-Hive-Chat-Actor"); actor != "" {
+					r.Header.Set("X-Hive-User", actor)
+				}
 			}
 		}
 

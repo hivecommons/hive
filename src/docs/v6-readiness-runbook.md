@@ -15,7 +15,7 @@ Common setup for chat surfaces:
   spine. Chat commands call dashboard endpoints such as `/api/status` and
   `/api/kick/<agent>` (`src/pkg/chat/dashboard.go:15-19`,
   `src/pkg/chat/dashboard.go:127-143`), and notification delivery comes from the
-  `/api/events` SSE stream (`src/pkg/chat/notify.go:85-124`).
+  `/api/events` SSE stream (`consumeSSE`, `src/pkg/chat/notify.go:108-161`).
 - Pick an allowlisted human ID for the target surface. The shared command router
   fails closed when `allowed_users` is empty and logs ignored commands from
   non-allowlisted users (`Service.routeMessage` in `src/pkg/chat/router.go`).
@@ -26,7 +26,8 @@ Common setup for chat surfaces:
   the bot has started, such as pausing and resuming a non-critical agent from
   the dashboard. Valid notifications are the rendered `Working`, `Completed`,
   `Paused`, `Resumed`, `Off (cadence rule)`, or governor-mode-change messages
-  emitted from SSE snapshots (`src/pkg/chat/notify.go:150-212`).
+  emitted from SSE snapshots (`diffAgents`, `src/pkg/chat/notify.go:253-297`;
+  `diffGovernor`, `src/pkg/chat/notify.go:398-403`).
 - The command round-trip can be `!status` because it reads `/api/status` and
   returns a status message (`src/pkg/chat/dashboard.go:15-58`); `!kick <agent>
   readiness smoke` is also acceptable when the agent can safely be kicked.
@@ -212,8 +213,8 @@ Run:
    safe working→idle transition after the first SSE snapshot. Save the Slack
    notification link or screenshot.
 4. Save any relevant Socket Mode lines. Valid reconnect evidence includes
-   `slack socket disconnected`, `slack socket ack failed`, or Slack
-   `disconnect` / `refresh_requested` handling (`slackBackend.Listen` and `slackBackend.consumeSocket` in
+   `slack socket refreshed`, `slack socket disconnected`, `slack socket ack failed`, or Slack
+   `disconnect` / `refresh_requested` handling (`slackBackend.Listen` and `slackBackend.serveSocket` in
    `src/pkg/slack/bot.go`).
 
 Evidence checklist:
@@ -247,7 +248,7 @@ Run:
 4. Induce one safe disconnect and recovery observation. Prefer briefly
    interrupting the dashboard SSE connection, because the shared spine logs
    `discord SSE disconnected` and backs off before reconnecting
-   (`src/pkg/chat/notify.go:46-81`). If you instead interrupt Discord REST,
+   (`sseLoop`, `src/pkg/chat/notify.go:70-106`). If you instead interrupt Discord REST,
    save the `discord poll failed` log line and the later successful command or
    notification proving recovery (`Listen`, `src/pkg/discord/bot.go:192-224`).
 
@@ -554,10 +555,11 @@ Run:
    Pushover receipt, or PagerDuty incident/event link.
 3. Save hive evidence showing the event entered the dispatcher and the provider
    sink delivered it. Dispatch queues events by severity and logs/audits
-   `escalation_delivery_failed` on repeated sink failure
-   (`src/pkg/escalate/dispatcher.go:78-123`). Provider delivery paths are
-   `ntfy`, `pushover`, and `pagerduty` (`src/pkg/escalate/push.go:22-38`,
-   `src/pkg/escalate/push.go:54-72`, `src/pkg/escalate/push.go:81-102`).
+   `escalation_delivery_failed` once a delivery's bounded retries run out or
+   the provider rejects it outright (`Dispatch` and `deliver`,
+   `src/pkg/escalate/dispatcher.go:91-161`). Provider delivery paths are
+   `ntfy`, `pushover`, and `pagerduty` (`src/pkg/escalate/push.go:45-63`,
+   `src/pkg/escalate/push.go:89-117`, `src/pkg/escalate/push.go:126-147`).
 
 Evidence checklist:
 

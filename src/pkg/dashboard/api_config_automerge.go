@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -22,7 +23,107 @@ func (s *Server) handleAutoMergeGet(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	jsonResponse(w, autoMergeSectionResponse(s.deps.Config))
+	jsonResponse(w, s.autoMergeSectionResponseWithBots(s.deps.Config))
+}
+
+// autoMergeSectionResponseWithBots is autoMergeSectionResponse plus the
+// bot_authors catalogue: every known bot, every bot login currently authoring
+// an open PR in a governed repo (discovered from the scheduler's last
+// enumeration, never a GitHub call), and whether each is trusted right now.
+func (s *Server) autoMergeSectionResponseWithBots(cfg *config.Config) map[string]interface{} {
+	resp := autoMergeSectionResponse(cfg)
+	var discovered []string
+	if s != nil && s.deps != nil && s.deps.Scheduler != nil {
+		if a := s.deps.Scheduler.GetLastActionable(); a != nil {
+			discovered = discoverBotAuthors(a.PRs.Items, cfg.GitHub.BotLogin())
+		}
+	}
+	resp["bot_authors"] = botAuthorCatalogue(cfg.AutoMerge, discovered)
+	return resp
+}
+
+// discoverBotAuthors returns the distinct bot logins (GitHub App identities
+// end in "[bot]") authoring PRs in the snapshot, excluding the hive's own App.
+func discoverBotAuthors(prs []ghpkg.PullRequest, ownLogin string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, pr := range prs {
+		login := strings.TrimSpace(pr.Author)
+		lower := strings.ToLower(login)
+		if login == "" || pr.AppAuthored || !strings.HasSuffix(lower, "[bot]") {
+			continue
+		}
+		if ownLogin != "" && strings.EqualFold(login, ownLogin) {
+			continue
+		}
+		if seen[lower] {
+			continue
+		}
+		seen[lower] = true
+		out = append(out, login)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// botAuthorCatalogue merges known, discovered, and explicitly configured bot
+// logins into one list of {login, source, trusted} rows. source is "known",
+// "discovered", or "custom" (configured but neither known nor currently seen).
+func botAuthorCatalogue(am config.AutoMergeConfig, discovered []string) []map[string]interface{} {
+	trusted := am.TrustedBotAuthorSet()
+	type row struct {
+		login, source string
+	}
+	var rows []row
+	index := map[string]int{}
+	add := func(login, source string) {
+		lower := strings.ToLower(strings.TrimSpace(login))
+		if lower == "" {
+			return
+		}
+		if _, ok := index[lower]; ok {
+			return
+		}
+		index[lower] = len(rows)
+		rows = append(rows, row{login: strings.TrimSpace(login), source: source})
+	}
+	for _, b := range config.KnownBotAuthors {
+		add(b, "known")
+	}
+	for _, b := range discovered {
+		add(b, "discovered")
+	}
+	configured := am.TrustedBotAuthors
+	if configured == nil {
+		configured = config.DefaultTrustedBotAuthors
+	}
+	for _, b := range configured {
+		add(b, "custom")
+	}
+	out := make([]map[string]interface{}, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, map[string]interface{}{
+			"login":   r.login,
+			"source":  r.source,
+			"trusted": trusted[strings.ToLower(r.login)],
+		})
+	}
+	return out
+}
+
+func normalizeBotLoginList(logins []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(logins))
+	for _, l := range logins {
+		l = strings.TrimSpace(l)
+		lower := strings.ToLower(l)
+		if l == "" || seen[lower] {
+			continue
+		}
+		seen[lower] = true
+		out = append(out, l)
+	}
+	return out
 }
 
 // handleAutoMergePut updates the top-level auto_merge config. Every field is a
@@ -44,6 +145,9 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		RequiredChecks       []string `json:"required_checks"`
 		AllowUnprotectedBase []string `json:"allow_unprotected_base"`
 		NoCIOK               []string `json:"no_ci_ok"`
+		// TrustedBotAuthors is the FULL desired list; an empty (non-nil) list
+		// disables the trusted-bot lane, absent leaves it untouched.
+		TrustedBotAuthors []string `json:"trusted_bot_authors"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -81,6 +185,9 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	if body.NoCIOK != nil {
 		cfg.AutoMerge.NoCIOK = normalizeAutoMergeRepoList(body.NoCIOK)
 	}
+	if body.TrustedBotAuthors != nil {
+		cfg.AutoMerge.TrustedBotAuthors = normalizeBotLoginList(body.TrustedBotAuthors)
+	}
 	syncAutoMergePolicyToGitHubClient(cfg, s.deps.GHClient)
 
 	if err := s.saveConfig(); err != nil {
@@ -89,7 +196,7 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 
 	s.auditFromRequest(r, "config_auto_merge", auditDetail("section", "auto_merge"), "")
 	s.refreshAndPersist()
-	jsonResponse(w, autoMergeSectionResponse(cfg))
+	jsonResponse(w, s.autoMergeSectionResponseWithBots(cfg))
 }
 
 // autoMergeSectionResponse renders AutoMergeConfig for the dashboard. The
@@ -114,13 +221,19 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 	if noCIOK == nil {
 		noCIOK = []string{}
 	}
+	trustedBots := am.TrustedBotAuthors
+	if trustedBots == nil {
+		trustedBots = append([]string{}, config.DefaultTrustedBotAuthors...)
+	}
 	return map[string]interface{}{
-		"self_authored":          selfAuthored,
-		"self_authored_set":      am.SelfAuthored != nil,
-		"max_merges":             am.MaxMerges,
-		"required_checks":        checks,
-		"allow_unprotected_base": allowUnprotected,
-		"no_ci_ok":               noCIOK,
+		"self_authored":           selfAuthored,
+		"self_authored_set":       am.SelfAuthored != nil,
+		"max_merges":              am.MaxMerges,
+		"required_checks":         checks,
+		"allow_unprotected_base":  allowUnprotected,
+		"no_ci_ok":                noCIOK,
+		"trusted_bot_authors":     trustedBots,
+		"trusted_bot_authors_set": am.TrustedBotAuthors != nil,
 	}
 }
 
