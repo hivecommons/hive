@@ -1,0 +1,1 @@
+- Documented three known gaps ahead of v6 promotion directly in the roadmap: the missing v6 release/GA workflow path (#9154), the un-triaged shipped-surface bug backlog (#9227, #9245), and the resulting PR merge-conflict pileup (#9319), so the published roadmap no longer reads as more finished than the branch is.

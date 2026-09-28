@@ -182,6 +182,19 @@ with live tracker [#7563](https://github.com/hivecommons/hive/issues/7563) §v6 
 (Original sequencing decision: [#7577](https://github.com/hivecommons/hive/issues/7577);
 v4 freeze policy: [#6346](https://github.com/hivecommons/hive/issues/6346).)
 
+**Known gaps ahead of promotion.** No GA/release-workflow path exists for
+`v6` yet — `tagged-release.yml`, `promote-stable.yml`, and
+`.github/release-lines.yml` are still `v5`-only, so even a fully green
+readiness bar has nowhere to promote to today
+([#9154](https://github.com/hivecommons/hive/issues/9154)). A fast-growing
+bug backlog has appeared across nearly every shipped chat surface and is
+not reflected in the readiness bar's conformance checkmarks
+([#9227](https://github.com/hivecommons/hive/issues/9227),
+[#9245](https://github.com/hivecommons/hive/issues/9245)), and the
+resulting bugfix-PR volume has produced a merge-conflict pileup, with most
+open `v6` PRs colliding on the same few hotspot files
+([#9319](https://github.com/hivecommons/hive/issues/9319)).
+
 **Theme.** Every operator interaction the dashboard offers should be
 reachable from the places humans already are — a GitHub thread, a chat
 workspace, an inbox, a phone. The dashboard remains the richest surface,
