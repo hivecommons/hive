@@ -2724,7 +2724,27 @@ func (b *boot) bootStores() {
 		}
 		store.SetHiveID(b.cfg.HiveID)
 		b.beadStores[name] = store
+		if qPath, qErr, quarantined := store.QuarantinedPath(); quarantined {
+			// beads.json was unparseable (e.g. a hand-written file missing a
+			// closing brace, kubestellar/hive#9328) but the store itself
+			// self-healed and is usable again — the operator still needs to
+			// know that this agent's PRIOR beads were lost, so this is ERROR
+			// rather than the routine startup Info line below.
+			b.logger.Error("beads.json was corrupt and has been quarantined; agent's bead store was reset to empty",
+				"agent", name, "quarantined_to", qPath, "parse_error", qErr)
+		}
 		b.logger.Info("beads store initialized", "agent", name, "count", store.Count())
+	}
+
+	// Names attempted by the enabled-agent loop above, success or failure.
+	// The orphan scan below must skip these regardless of outcome: a name
+	// only in beadStores (the old check) let a load FAILURE fall through to
+	// the orphan scan, which re-opens the same directory and re-fails it —
+	// counting one broken beads.json as two failures in
+	// beadStoreLoadFailures (kubestellar/hive#9328).
+	attempted := make(map[string]bool, len(b.cfg.EnabledAgents()))
+	for name := range b.cfg.EnabledAgents() {
+		attempted[name] = true
 	}
 
 	// Scan /data/beads/ for agent directories that have beads.json files on
@@ -2738,8 +2758,8 @@ func (b *boot) bootStores() {
 				continue
 			}
 			name := entry.Name()
-			if _, exists := b.beadStores[name]; exists {
-				continue // already loaded from config
+			if attempted[name] {
+				continue // already attempted (successfully or not) from config
 			}
 			agentBeadsDir := filepath.Join(beadsRootDir, name)
 			beadsFile := filepath.Join(agentBeadsDir, "beads.json")
@@ -2754,6 +2774,10 @@ func (b *boot) bootStores() {
 			}
 			store.SetHiveID(b.cfg.HiveID)
 			b.beadStores[name] = store
+			if qPath, qErr, quarantined := store.QuarantinedPath(); quarantined {
+				b.logger.Error("beads.json was corrupt and has been quarantined; agent's bead store was reset to empty",
+					"agent", name, "quarantined_to", qPath, "parse_error", qErr)
+			}
 			b.logger.Info("orphan beads store loaded from disk", "agent", name, "count", store.Count())
 		}
 	}

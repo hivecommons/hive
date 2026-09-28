@@ -154,6 +154,25 @@ type Store struct {
 	// its dependent (kubestellar/hive#3845 review).
 	retired map[string]bool
 	mu      sync.RWMutex
+
+	// quarantinedPath is set when load() finds a beads.json that fails to
+	// parse as JSON. Rather than surfacing that as a NewStore error — which
+	// drops the ENTIRE store from bootStores and stops the agent's own bd
+	// writes until a human notices and restarts the pod (kubestellar/hive#9328)
+	// — the unreadable file is renamed aside for forensics and the store
+	// starts empty, exactly like a first boot. Callers (bootStores) read this
+	// back via QuarantinedPath to log loudly instead of a routine WARN.
+	quarantinedPath string
+	quarantineErr   error
+}
+
+// QuarantinedPath reports the path a corrupt beads.json was renamed to
+// during load, if the most recent load quarantined one. ok is false when
+// nothing was quarantined (the common case).
+func (s *Store) QuarantinedPath() (path string, cause error, ok bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.quarantinedPath, s.quarantineErr, s.quarantinedPath != ""
 }
 
 func NewStore(dir string) (*Store, error) {
@@ -762,7 +781,32 @@ func (s *Store) load() error {
 
 	var beads []*Bead
 	if err := json.Unmarshal(data, &beads); err != nil {
-		return fmt.Errorf("parsing %s: %w", path, err)
+		// Invalid JSON (a hand-edited beads.json, a torn write, a truncated
+		// file) used to bubble up as a NewStore error. bootStores treated that
+		// as fatal for the whole store: the agent vanished from beadStores
+		// entirely, the dashboard showed a bare 0 with no indication anything
+		// was wrong, and every subsequent `bd create` from that agent hit the
+		// same parse error until a human restarted the pod
+		// (kubestellar/hive#9328).
+		//
+		// Self-heal instead: quarantine the unparseable file under a
+		// timestamped suffix so the bad bytes are preserved for forensics
+		// (matching the hub-generations precedent), then start this store
+		// empty exactly as if beads.json had never existed. That restores the
+		// agent's ability to record beads immediately rather than after a
+		// restart, at the cost of the beads that were in the corrupt file —
+		// the same trade the flexTime fail-soft above already makes for a
+		// single bad field, extended to the whole-file case.
+		quarantinePath := fmt.Sprintf("%s.corrupt-%d", path, time.Now().UTC().UnixNano())
+		if renameErr := os.Rename(path, quarantinePath); renameErr != nil {
+			// Could not move the bad file out of the way (e.g. this uid
+			// doesn't own the directory). Fail closed as before rather than
+			// silently dropping data with no trace of it anywhere.
+			return fmt.Errorf("parsing %s: %w (quarantine also failed: %v)", path, err, renameErr)
+		}
+		s.quarantinedPath = quarantinePath
+		s.quarantineErr = err
+		return nil
 	}
 
 	for _, b := range beads {

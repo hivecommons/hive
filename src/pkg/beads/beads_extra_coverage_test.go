@@ -198,8 +198,13 @@ func TestPersistAndReload(t *testing.T) {
 func TestLoadCorruptedFile(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "beads.json"), []byte("not json"), 0o644)
-	_, err := NewStore(dir)
-	if err == nil {
-		t.Error("expected error loading corrupted beads file")
+	// Corrupt beads.json self-heals into an empty, usable store rather than
+	// failing NewStore outright (kubestellar/hive#9328).
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("expected NewStore to self-heal corrupted beads file, got error: %v", err)
+	}
+	if _, _, ok := store.QuarantinedPath(); !ok {
+		t.Error("expected QuarantinedPath to report a quarantine")
 	}
 }
