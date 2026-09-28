@@ -1,0 +1,1 @@
+- The changelog-fragment-guard check now posts a sticky PR comment with the exact fix when a PR lacks a fragment, and the PR template leads with the changelog requirement, so contributors stop tripping the check.

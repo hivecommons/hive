@@ -55,6 +55,9 @@ on:
 
 permissions:
   contents: read
+  # Sticky guidance comment on failure (same-repo PRs only; the token is
+  # read-only on fork PRs and the step tolerates that).
+  pull-requests: write
 
 concurrency:
   group: changelog-fragment-guard-${{ github.event.pull_request.number }}
@@ -88,6 +91,7 @@ jobs:
           fetch-depth: 0
 
       - name: Code changes must carry a changelog.d fragment (or no-changelog)
+        id: guard
         if: ${{ steps.sync_branch.outputs.skip != 'true' }}
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -208,3 +212,52 @@ jobs:
           automatically at release time (src/scripts/compile-changelog.sh).
           EOF
           exit 1
+
+      # Contributors rarely open the job log; most guard failures are humans
+      # who never heard of changelog.d. Put the exact fix in front of them once
+      # (one sticky comment, updated in place) and remove it when they comply.
+      - name: Post or update guidance comment
+        if: ${{ always() && steps.sync_branch.outputs.skip != 'true' && github.event.pull_request.head.repo.full_name == github.repository }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          GUARD_OUTCOME: ${{ steps.guard.outcome }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        with:
+          script: |
+            const marker = '<!-- changelog-fragment-guard -->';
+            const number = Number(process.env.PR_NUMBER);
+            const { owner, repo } = context.repo;
+            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number: number, per_page: 100 });
+            const existing = comments.find(c => c.user?.type === 'Bot' && (c.body || '').includes(marker));
+            const failed = process.env.GUARD_OUTCOME === 'failure';
+            if (!failed) {
+              if (existing) {
+                await github.rest.issues.deleteComment({ owner, repo, comment_id: existing.id });
+              }
+              return;
+            }
+            const body = [
+              marker,
+              '### Changelog fragment needed',
+              '',
+              'This PR changes code under `src/` but has no `changelog.d/` fragment and no `no-changelog` label, so the **changelog-fragment-guard** check fails.',
+              '',
+              'Pick one:',
+              '',
+              '**A. The change is user-visible** (feature, fix, new env var, behavior/security change) — add one file and push:',
+              '',
+              '```sh',
+              '# category: added | changed | deprecated | fixed | security',
+              "echo '- <one-line entry in the style of CHANGELOG.md>' > changelog.d/<category>-" + number + '.md',
+              'git add changelog.d && git commit -s -m "changelog: fragment for #' + number + '"',
+              '```',
+              '',
+              '**B. Not user-visible** (refactor, internal test plumbing, CI) — ask a maintainer to add the `no-changelog` label.',
+              '',
+              'Do not edit `CHANGELOG.md` directly; the release compiler assembles it from fragments (see `changelog.d/README.md`, #5675). This comment is removed automatically once the check passes.',
+            ].join('\n');
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number: number, body });
+            }
