@@ -3,14 +3,12 @@ package spektacular
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/escalate"
 	"github.com/hivecommons/hive/pkg/outputschema"
 )
 
@@ -55,22 +53,20 @@ type Stage struct {
 	RelayHeld bool
 	// Gen is the lease generation; a change means a retry or advance happened.
 	Gen uint64
-	// ExpiresAt is when the lease lapses without renewal. It is Hive's own
-	// lease clock and the only input to the stale-stage decision; the status
-	// document's updated_at is never consulted.
-	ExpiresAt time.Time
 }
 
 // Registry is what the runner needs from the lease registry. The dashboard
 // implements it over ContributeWSHub; tests use an in-memory fake.
+//
+// There is deliberately no Retry: the retry budget (runs.max_stage_retries) is
+// owned by the hub executor, the only component that knows when a generation
+// has actually been spent (#9143). The runner only observes documents.
 type Registry interface {
 	// ActiveStages lists every lease that carries a stage.
 	ActiveStages(now time.Time) ([]Stage, error)
 	// Advance records receipt, imports plan when non-nil (only for a final
 	// plan), and advances the lease to the next stage.
 	Advance(ctx context.Context, st Stage, status ArtifactStatus, receipt outputschema.StageReceipt, plan *Plan, now time.Time) error
-	// Retry mints a new generation of the same stage.
-	Retry(ctx context.Context, st Stage, now time.Time) error
 	// Refuse records that the runner will not advance st for reason (stale
 	// plan, replaced document) so an operator can see why the run is parked.
 	Refuse(st Stage, reason string, status *ArtifactStatus)
@@ -96,18 +92,17 @@ const (
 
 // Runner polls Spektacular for every active stage lease and drives the lease
 // registry. All time comes from the caller (Tick's now), so tests never sleep.
+//
+// The runner advances on final and refuses stale or replaced documents. It
+// never retries or escalates a stage: a non-final generation is settled by the
+// hub executor against runs.max_stage_retries (#9143).
 type Runner struct {
 	// Exec is the only path to the outside world.
 	Exec ExecFunc
 	// Poll is the minimum interval between two status calls for one stage.
 	Poll time.Duration
-	// MaxRetries bounds how many generations one stage may burn before an
-	// escalation is raised. Zero means the config default.
-	MaxRetries int
 	// Registry is the lease registry the runner drives.
 	Registry Registry
-	// Escalate receives the decision event when a stage exhausts its budget.
-	Escalate func(escalate.Event)
 	// Logger receives operational logs; nil means slog.Default.
 	Logger *slog.Logger
 
@@ -124,8 +119,6 @@ type stageState struct {
 	artifact        string
 	seenFinal       bool
 	advanced        bool
-	expiries        int
-	escalated       bool
 	refused         bool
 	relaySkipLogged bool
 	// seeded marks a successor entry created by an advance before the
@@ -137,11 +130,9 @@ type stageState struct {
 
 // TickResult counts what one Tick did.
 type TickResult struct {
-	Polled    int
-	Advanced  int
-	Retried   int
-	Escalated int
-	Refused   int
+	Polled   int
+	Advanced int
+	Refused  int
 	// Unclaimed counts admission leases still waiting for a relay to take
 	// them; they are listed but neither polled nor refused.
 	Unclaimed int
@@ -149,22 +140,11 @@ type TickResult struct {
 	Errors    int
 }
 
-// DefaultMaxRetries mirrors config.DefaultMaxStageRetries without importing
-// the config package.
-const DefaultMaxRetries = 2
-
 func (r *Runner) logger() *slog.Logger {
 	if r.Logger != nil {
 		return r.Logger
 	}
 	return slog.Default()
-}
-
-func (r *Runner) maxRetries() int {
-	if r.MaxRetries <= 0 {
-		return DefaultMaxRetries
-	}
-	return r.MaxRetries
 }
 
 func stageKey(st Stage) string { return st.RunKey + "\x1f" + st.Stage }
@@ -193,9 +173,9 @@ func nextStage(stage string) string {
 	return ""
 }
 
-// Tick polls every active stage once (respecting Poll), advancing, retrying,
-// refusing, or escalating as the status dictates. It is safe to call from a
-// single goroutine at a time; Run does so on a ticker.
+// Tick polls every active stage once (respecting Poll), advancing or refusing
+// as the status dictates. It is safe to call from a single goroutine at a
+// time; Run does so on a ticker.
 func (r *Runner) Tick(ctx context.Context, now time.Time) TickResult {
 	var res TickResult
 	if r == nil || r.Registry == nil {
@@ -223,9 +203,9 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) TickResult {
 		}
 		if state.gen != st.Gen || state.seeded {
 			// A new generation (a retry, or the successor stage of an advance):
-			// forget the per-generation observations but keep the budget, any
-			// terminal decision, and the poll pacing. lastPolled is deliberately
-			// NOT reset, so a generation change never earns an extra status call
+			// forget the per-generation observations but keep any terminal
+			// decision and the poll pacing. lastPolled is deliberately NOT
+			// reset, so a generation change never earns an extra status call
 			// and a second tick at the same instant is a no-op. The idempotency
 			// key is therefore (runKey, stage, gen): one generation is polled and
 			// advanced at most once.
@@ -259,7 +239,7 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) TickResult {
 }
 
 func (r *Runner) tickStage(ctx context.Context, st Stage, state *stageState, now time.Time, res *TickResult) {
-	if state.escalated || state.refused || state.advanced {
+	if state.refused || state.advanced {
 		return
 	}
 	kind, ok := kindForStage(st.Stage)
@@ -283,68 +263,61 @@ func (r *Runner) tickStage(ctx context.Context, st Stage, state *stageState, now
 		res.RelayHeld++
 		return
 	}
-	// The poll interval only paces the status call. Expiry is checked on
-	// every tick so a lapsed lease is retried before the registry prunes it,
-	// whatever the poll cadence is.
-	if state.lastPolled.IsZero() || now.Sub(state.lastPolled) >= r.Poll {
-		dir := strings.TrimSpace(st.WorkDir)
-		if dir == "" {
-			state.refused = true
-			res.Refused++
-			err := &WorkDirError{RunKey: st.RunKey, Stage: st.Stage, Repo: st.Repo}
-			r.Registry.Refuse(st, RefuseMissingWorkDir, nil)
-			r.logger().Warn("[spektacular] refusing to poll without a repo workdir",
-				"run", st.RunKey, "stage", st.Stage, "artifact", st.Artifact, "repo", st.Repo, "error", err)
-			return
-		}
-		state.lastPolled = now
-		res.Polled++
-		artifact := strings.TrimSpace(state.artifact)
-		if artifact == "" {
-			artifact = st.Artifact
-		}
-		status, err := r.statusInDir(ctx, dir, kind, artifact)
-		switch {
-		case err == nil:
-			state.artifact = status.JoinKey()
-			r.observe(ctx, st, state, status, now, res)
-		default:
-			var nf *NotFoundError
-			if errors.As(err, &nf) && state.lastStatus == "" {
-				resolved, resolveErr := r.ResolveArtifact(ctx, dir, kind, st.Artifact)
-				if resolveErr == nil && resolved != "" && resolved != artifact {
-					status, err = r.statusInDir(ctx, dir, kind, resolved)
-					if err == nil {
-						state.artifact = status.JoinKey()
-						r.logger().Info("[spektacular] resolved run artifact id",
-							"run", st.RunKey, "stage", st.Stage, "requested", st.Artifact, "resolved", state.artifact)
-						r.recordProgress(st, map[string]string{
-							AttrArtifact: status.JoinKey(),
-							AttrReason:   "artifact_resolved",
-						}, now)
-						r.observe(ctx, st, state, status, now, res)
-						break
-					}
-				}
-			}
-			if errors.As(err, &nf) && state.lastStatus != "" {
-				// Seen before, gone now: a new document has replaced it. Never
-				// rebind the lease to whatever appeared; park it for a reset.
-				state.refused = true
-				res.Refused++
-				r.Registry.Refuse(st, RefuseReplacedDocument, nil)
-				r.logger().Warn("[spektacular] artifact vanished after being observed; lease needs reset",
-					"run", st.RunKey, "stage", st.Stage, "artifact", st.Artifact, "error", err)
+	if !state.lastPolled.IsZero() && now.Sub(state.lastPolled) < r.Poll {
+		return
+	}
+	dir := strings.TrimSpace(st.WorkDir)
+	if dir == "" {
+		state.refused = true
+		res.Refused++
+		err := &WorkDirError{RunKey: st.RunKey, Stage: st.Stage, Repo: st.Repo}
+		r.Registry.Refuse(st, RefuseMissingWorkDir, nil)
+		r.logger().Warn("[spektacular] refusing to poll without a repo workdir",
+			"run", st.RunKey, "stage", st.Stage, "artifact", st.Artifact, "repo", st.Repo, "error", err)
+		return
+	}
+	state.lastPolled = now
+	res.Polled++
+	artifact := strings.TrimSpace(state.artifact)
+	if artifact == "" {
+		artifact = st.Artifact
+	}
+	status, err := r.statusInDir(ctx, dir, kind, artifact)
+	if err == nil {
+		state.artifact = status.JoinKey()
+		r.observe(ctx, st, state, status, now, res)
+		return
+	}
+	var nf *NotFoundError
+	if errors.As(err, &nf) && state.lastStatus == "" {
+		resolved, resolveErr := r.ResolveArtifact(ctx, dir, kind, st.Artifact)
+		if resolveErr == nil && resolved != "" && resolved != artifact {
+			status, err = r.statusInDir(ctx, dir, kind, resolved)
+			if err == nil {
+				state.artifact = status.JoinKey()
+				r.logger().Info("[spektacular] resolved run artifact id",
+					"run", st.RunKey, "stage", st.Stage, "requested", st.Artifact, "resolved", state.artifact)
+				r.recordProgress(st, map[string]string{
+					AttrArtifact: status.JoinKey(),
+					AttrReason:   "artifact_resolved",
+				}, now)
+				r.observe(ctx, st, state, status, now, res)
 				return
 			}
-			res.Errors++
-			r.logger().Warn("[spektacular] status failed", "run", st.RunKey, "stage", st.Stage, "artifact", st.Artifact, "error", err)
-		}
-		if state.advanced || state.refused {
-			return
 		}
 	}
-	r.expire(ctx, st, state, now, res)
+	if errors.As(err, &nf) && state.lastStatus != "" {
+		// Seen before, gone now: a new document has replaced it. Never
+		// rebind the lease to whatever appeared; park it for a reset.
+		state.refused = true
+		res.Refused++
+		r.Registry.Refuse(st, RefuseReplacedDocument, nil)
+		r.logger().Warn("[spektacular] artifact vanished after being observed; lease needs reset",
+			"run", st.RunKey, "stage", st.Stage, "artifact", st.Artifact, "error", err)
+		return
+	}
+	res.Errors++
+	r.logger().Warn("[spektacular] status failed", "run", st.RunKey, "stage", st.Stage, "artifact", st.Artifact, "error", err)
 }
 
 func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, status ArtifactStatus, now time.Time, res *TickResult) {
@@ -427,48 +400,6 @@ func (r *Runner) recordProgress(st Stage, attrs map[string]string, now time.Time
 		return
 	}
 	rec.RecordProgress(st, attrs, now)
-}
-
-// expire applies the retry budget when the lease has lapsed without final:
-// each expiry but the last mints a retry generation; the last raises a
-// decision escalation and the runner stops touching the stage.
-func (r *Runner) expire(ctx context.Context, st Stage, state *stageState, now time.Time, res *TickResult) {
-	if st.ExpiresAt.IsZero() || !now.After(st.ExpiresAt) {
-		return
-	}
-	state.expiries++
-	if state.expiries < r.maxRetries() {
-		if err := r.Registry.Retry(ctx, st, now); err != nil {
-			res.Errors++
-			r.logger().Warn("[spektacular] retry failed", "run", st.RunKey, "stage", st.Stage, "error", err)
-			return
-		}
-		res.Retried++
-		r.recordProgress(st, map[string]string{
-			AttrReason: "retry_generation_minted",
-			"attempt":  strconv.Itoa(state.expiries + 1),
-			"budget":   strconv.Itoa(r.maxRetries()),
-		}, now)
-		r.logger().Info("[spektacular] lease expired without final; retry generation minted",
-			"run", st.RunKey, "stage", st.Stage, "attempt", state.expiries+1, "budget", r.maxRetries())
-		return
-	}
-	state.escalated = true
-	res.Escalated++
-	ev := escalate.Event{
-		Severity: escalate.SeverityDecision,
-		RunKey:   st.RunKey,
-		Stage:    st.Stage,
-		Artifact: st.Artifact,
-		Gen:      st.Gen,
-		Attempts: state.expiries,
-		Reason:   fmt.Sprintf("lease expired %d times without document_status final (budget %d)", state.expiries, r.maxRetries()),
-		At:       now,
-	}
-	r.logger().Warn("[spektacular] retry budget exhausted; escalating", "event", ev.String())
-	if r.Escalate != nil {
-		r.Escalate(ev)
-	}
 }
 
 // Run ticks on Poll until ctx is done. now supplies the clock so callers can

@@ -78,6 +78,16 @@ type taskLease struct {
 	claimedBy      string
 	claimExpiresAt time.Time
 	claimPosted    bool
+	// stageRetries counts the retry generations retryLeaseStage has minted
+	// for the CURRENT stage; an advance or reset starts the stage over at
+	// zero. stageEscalatedAt, when set, is when the current generation spent
+	// the last of runs.max_stage_retries: the hub executor will not relaunch
+	// it, /api/runs shows it waiting on a human since then, and it waits for a
+	// person to reset the stage or abandon the run. Both are persisted so a
+	// restart neither refunds the budget nor relaunches an escalated stage
+	// (#9143).
+	stageRetries     int
+	stageEscalatedAt time.Time
 }
 
 // leaseTTL is how long a hub-issued task lease remains re-adoptable after the last
@@ -286,11 +296,84 @@ func (h *ContributeWSHub) advanceLeaseStage(identity, taskID, to string, now tim
 }
 
 func (h *ContributeWSHub) advanceLeaseStageAt(identity, taskID, to string, now, transitionAt time.Time) (taskLease, error) {
-	return h.mutateLeaseStage(identity, taskID, to, leaseStageAdvance, "", now, transitionAt)
+	return h.mutateLeaseStage(identity, taskID, to, leaseStageAdvance, "", now, transitionAt, 0)
 }
 
-func (h *ContributeWSHub) retryLeaseStage(identity, taskID string, now time.Time) (taskLease, error) {
-	return h.mutateLeaseStage(identity, taskID, "", leaseStageRetry, "", now, time.Time{})
+// retryLeaseStage mints the next generation of the lease's current stage. gen
+// is the generation the caller is retrying: a lease that has already moved to
+// another generation (advanced, reset, or retried by someone else) is refused
+// with errLeaseStageInvalid rather than re-minted a second time.
+func (h *ContributeWSHub) retryLeaseStage(identity, taskID string, gen uint64, now time.Time) (taskLease, error) {
+	return h.mutateLeaseStage(identity, taskID, "", leaseStageRetry, "", now, time.Time{}, gen)
+}
+
+// stageSettlement is what settleStageGeneration did with a spent generation.
+type stageSettlement int
+
+const (
+	// stageSettleNone: the lease had already moved past the generation, or
+	// that generation was already escalated; nothing changed.
+	stageSettleNone stageSettlement = iota
+	// stageSettleRetried: a retry generation of the same stage was minted.
+	stageSettleRetried
+	// stageSettleEscalated: the budget is spent; the generation is marked
+	// escalated and stays leased so a person can act on it.
+	stageSettleEscalated
+)
+
+// settleStageGeneration applies runs.max_stage_retries to generation gen of
+// the lease, which ended without a final document (#9143). budget counts
+// generations including the first: while fewer than budget generations of
+// the stage have been spent a retry generation is minted; the generation that
+// spends the last of the budget is marked escalated instead, so no generation
+// past the budget is ever minted. attempts is the number of generations spent,
+// gen included. The lease is never dropped: an escalated run stays in
+// /api/runs, kept alive by keepPendingStageLeasesAlive, until it is reset or
+// abandoned.
+func (h *ContributeWSHub) settleStageGeneration(identity, taskID string, gen uint64, budget int, now time.Time) (outcome stageSettlement, lease taskLease, attempts int, err error) {
+	h.leaseMu.Lock()
+	l := h.leaseForLocked(identity, taskID)
+	if l == nil {
+		h.leaseMu.Unlock()
+		return stageSettleNone, taskLease{}, 0, fmt.Errorf("%w for %s", errLeaseNotFound, taskID)
+	}
+	attempts = l.stageRetries + 1
+	if l.gen != gen || !l.stageEscalatedAt.IsZero() {
+		out := *l
+		h.leaseMu.Unlock()
+		return stageSettleNone, out, attempts, nil
+	}
+	if attempts < budget {
+		h.leaseMu.Unlock()
+		// retryLeaseStage re-checks gen under the lock, so a move made in
+		// between is refused rather than retried twice.
+		lease, err = h.retryLeaseStage(identity, taskID, gen, now)
+		if err != nil {
+			return stageSettleNone, taskLease{}, attempts, err
+		}
+		return stageSettleRetried, lease, attempts, nil
+	}
+	l.stageEscalatedAt = now
+	if err := h.saveLeasesLocked(); err != nil {
+		l.stageEscalatedAt = time.Time{}
+		h.leaseMu.Unlock()
+		return stageSettleNone, taskLease{}, attempts, fmt.Errorf("persisting stage escalation for %s: %w", taskID, err)
+	}
+	out := *l
+	h.leaseMu.Unlock()
+	return stageSettleEscalated, out, attempts, nil
+}
+
+// stageLeaseEscalated reports whether the lease's current generation has
+// exhausted its stage budget and waits for a person.
+func (h *ContributeWSHub) stageLeaseEscalated(identity, taskID string) bool {
+	if h == nil {
+		return false
+	}
+	h.leaseMu.Lock()
+	defer h.leaseMu.Unlock()
+	l := h.leaseForLocked(identity, taskID)
+	return l != nil && !l.stageEscalatedAt.IsZero()
 }
 
 // resetLeaseStage moves a run's lease BACK to an earlier stage (#8350): for
@@ -317,10 +400,14 @@ func (h *ContributeWSHub) resetLeaseStage(identity, taskID, to, reason string, n
 	if reason == "" {
 		return taskLease{}, errLeaseResetReason
 	}
-	return h.mutateLeaseStage(identity, taskID, to, leaseStageReset, reason, now, time.Time{})
+	return h.mutateLeaseStage(identity, taskID, to, leaseStageReset, reason, now, time.Time{}, 0)
 }
 
-func (h *ContributeWSHub) mutateLeaseStage(identity, taskID, to string, mode leaseStageMutation, reason string, now, transitionAt time.Time) (taskLease, error) {
+// mutateLeaseStage is the one locked read-validate-persist-audit-emit path for
+// stage moves. expectGen, when non-zero, refuses the move unless the lease is
+// still at that generation, so a caller acting on a snapshot never moves a
+// lease someone else has already moved.
+func (h *ContributeWSHub) mutateLeaseStage(identity, taskID, to string, mode leaseStageMutation, reason string, now, transitionAt time.Time, expectGen uint64) (taskLease, error) {
 	if identity == "" || taskID == "" {
 		return taskLease{}, fmt.Errorf("identity and taskID are required")
 	}
@@ -345,6 +432,10 @@ func (h *ContributeWSHub) mutateLeaseStage(identity, taskID, to string, mode lea
 	if l.stage == "" {
 		h.leaseMu.Unlock()
 		return taskLease{}, fmt.Errorf("%w: lease for %s has no stage", errLeaseStageInvalid, taskID)
+	}
+	if expectGen != 0 && l.gen != expectGen {
+		h.leaseMu.Unlock()
+		return taskLease{}, fmt.Errorf("%w: lease for %s is at generation %d, not %d", errLeaseStageInvalid, taskID, l.gen, expectGen)
 	}
 	switch mode {
 	case leaseStageRetry:
@@ -376,13 +467,24 @@ func (h *ContributeWSHub) mutateLeaseStage(identity, taskID, to string, mode lea
 	}
 
 	prevStage, prevGen, prevExpires := l.stage, l.gen, l.expiresAt
+	prevRetries, prevEscalatedAt := l.stageRetries, l.stageEscalatedAt
 	from = prevStage
 	l.stage = to
 	l.gen = prevGen + 1
 	h.advanceTaskGenAtLeast(l.gen)
 	l.expiresAt = now.Add(leaseTTL)
+	// A retry spends one generation of the current stage's budget; any other
+	// move starts a stage afresh. Either way the new generation is not
+	// escalated.
+	if mode == leaseStageRetry {
+		l.stageRetries++
+	} else {
+		l.stageRetries = 0
+	}
+	l.stageEscalatedAt = time.Time{}
 	if err := h.saveLeasesLocked(); err != nil {
 		l.stage, l.gen, l.expiresAt = prevStage, prevGen, prevExpires
+		l.stageRetries, l.stageEscalatedAt = prevRetries, prevEscalatedAt
 		h.leaseMu.Unlock()
 		return taskLease{}, fmt.Errorf("persisting lease stage for %s: %w", taskID, err)
 	}
@@ -878,6 +980,10 @@ type persistedLease struct {
 	ClaimedBy      string     `json:"claimed_by,omitempty"`
 	ClaimExpiresAt *time.Time `json:"claim_expires_at,omitempty"`
 	ClaimPosted    bool       `json:"claim_posted,omitempty"`
+	// Stage retry budget (#9143); omitempty keeps an unretried lease's
+	// record unchanged.
+	StageRetries     int        `json:"stage_retries,omitempty"`
+	StageEscalatedAt *time.Time `json:"stage_escalated_at,omitempty"`
 }
 
 // setLeaseClaim records an issue claim on an existing lease (#8380). A lease
@@ -963,10 +1069,15 @@ func (h *ContributeWSHub) saveLeasesLocked() error {
 			MCPTokenStage:   l.mcpTokenStage,
 			ClaimedBy:       l.claimedBy,
 			ClaimPosted:     l.claimPosted,
+			StageRetries:    l.stageRetries,
 		}
 		if !l.claimExpiresAt.IsZero() {
 			exp := l.claimExpiresAt
 			rec.ClaimExpiresAt = &exp
+		}
+		if !l.stageEscalatedAt.IsZero() {
+			at := l.stageEscalatedAt
+			rec.StageEscalatedAt = &at
 		}
 		records = append(records, rec)
 	}
@@ -1119,9 +1230,13 @@ func (h *ContributeWSHub) loadLeases() {
 			mcpTokenStage:   rec.MCPTokenStage,
 			claimedBy:       rec.ClaimedBy,
 			claimPosted:     rec.ClaimPosted,
+			stageRetries:    rec.StageRetries,
 		}
 		if rec.ClaimExpiresAt != nil {
 			l.claimExpiresAt = *rec.ClaimExpiresAt
+		}
+		if rec.StageEscalatedAt != nil {
+			l.stageEscalatedAt = *rec.StageEscalatedAt
 		}
 		h.leases[leaseKey(rec.Identity, rec.TaskID)] = l
 		if rec.Gen > maxGen {
@@ -1201,6 +1316,11 @@ func (h *ContributeWSHub) isStagePlaceholderIdentity(identity string) bool {
 // implement stage found no ready contributor within 30 minutes was pruned
 // with its lease, silently vanishing from /api/runs and the offer pool while
 // its approved plan epic lived on. Returns how many leases were extended.
+//
+// Because these leases never lapse, lease expiry cannot be what spends a
+// stage's retry budget: the hub executor settles each spent generation itself
+// (settleStageGeneration, #9143), and an escalated generation stays leased —
+// kept alive here — so a person can still reset or abandon the run.
 func (h *ContributeWSHub) keepPendingStageLeasesAlive(now time.Time) int {
 	if h == nil {
 		return 0

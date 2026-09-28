@@ -643,7 +643,7 @@ governor:
 #     implement: true   # false may auto-approve only at ACMM L5+; lower ACMM levels keep this checkpoint blocking.
 #   wait_timeout_seconds: 3600
 #   wait_severity: decision
-#   max_stage_retries: 2
+#   max_stage_retries: 2 # generations (agent launches) one hub-executed stage may spend before a decision escalation
 #   max_worktrees: 8
 
 # Report-only external-execution binding pilot (#8361; Gate 0 decision in

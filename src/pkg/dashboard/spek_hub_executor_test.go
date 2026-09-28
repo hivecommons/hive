@@ -42,7 +42,12 @@ func TestSpekHubExecutorClaimPreservesTriageAndSkipsRelayLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := NewSpekHubExecutor(s, config.RunsConfig{MaxStageRetries: 2, Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
-	e.Exec = func(context.Context, string, []string, string, ...string) ([]byte, error) { return []byte("ok"), nil }
+	e.Exec = func(_ context.Context, _ string, _ []string, name string, args ...string) ([]byte, error) {
+		if name == "spektacular" && len(args) >= 3 && args[1] == "status" {
+			return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","artifact_id":"` + args[2] + `","document_status":"draft"}`), nil
+		}
+		return []byte("ok"), nil
+	}
 	stages, err := e.unclaimedStages()
 	if err != nil || len(stages) != 1 {
 		t.Fatalf("unclaimed stages = %d, %v", len(stages), err)
@@ -251,8 +256,8 @@ func TestSpekHubExecutorCLIExitNonFinalRecordsBlockedTimeline(t *testing.T) {
 	if !found {
 		t.Fatal("non-final exit did not record blocked timeline event")
 	}
-	if got := e.failures[e.executionKey(st)]; got != e.maxAttempts() {
-		t.Fatalf("non-final exit failure budget = %d, want %d", got, e.maxAttempts())
+	if !e.held[e.executionKey(st)] {
+		t.Fatal("non-final exit did not hold the generation")
 	}
 }
 
@@ -378,7 +383,7 @@ func TestSpekInitAgentMapsCopilotToSupportedInitAgent(t *testing.T) {
 	}
 }
 
-func TestSpekHubExecutorFailureRecordsAuditTimelineAndBudget(t *testing.T) {
+func TestSpekHubExecutorFailureRecordsAuditTimelineAndHoldsGeneration(t *testing.T) {
 	_, s, _, _ := spekHub(t)
 	e := NewSpekHubExecutor(s, config.RunsConfig{MaxStageRetries: 1, Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
 	st := spekHubStage{runKey: "myorg/repo1#57", stage: StageSpec, taskID: "task", gen: 1}
@@ -396,8 +401,8 @@ func TestSpekHubExecutorFailureRecordsAuditTimelineAndBudget(t *testing.T) {
 	if !found {
 		t.Fatal("failure did not record blocked timeline event")
 	}
-	if e.failures[key] != e.maxAttempts() {
-		t.Fatalf("failure budget = %d, want %d", e.failures[key], e.maxAttempts())
+	if !e.held[key] {
+		t.Fatal("failure did not hold the generation")
 	}
 }
 

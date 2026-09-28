@@ -262,7 +262,10 @@ func TestLeaseStageAdvance_RetryAndOrdering(t *testing.T) {
 		t.Fatal("spec -> implement skip accepted")
 	}
 
-	retry, err := hub.retryLeaseStage("c-stage", "task-stage", now.Add(4*time.Minute))
+	if _, err := hub.retryLeaseStage("c-stage", "task-stage", implemented.gen-1, now.Add(4*time.Minute)); !errors.Is(err, errLeaseStageInvalid) {
+		t.Fatalf("retry of a generation the lease has moved past = %v, want errLeaseStageInvalid", err)
+	}
+	retry, err := hub.retryLeaseStage("c-stage", "task-stage", implemented.gen, now.Add(4*time.Minute))
 	if err != nil {
 		t.Fatalf("retry current stage: %v", err)
 	}
@@ -271,6 +274,9 @@ func TestLeaseStageAdvance_RetryAndOrdering(t *testing.T) {
 	}
 	if retry.gen != 14 {
 		t.Fatalf("retry gen = %d, want 14", retry.gen)
+	}
+	if _, err := hub.retryLeaseStage("c-stage", "task-stage", implemented.gen, now.Add(5*time.Minute)); !errors.Is(err, errLeaseStageInvalid) {
+		t.Fatalf("second retry of the same generation = %v, want errLeaseStageInvalid", err)
 	}
 }
 

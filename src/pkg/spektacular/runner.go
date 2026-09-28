@@ -160,8 +160,8 @@ func hasMarkdownExt(name string) bool { return markdownExt(name) != "" }
 // in-progress workflow state matches this artifact, and a file mtime
 // otherwise (moved by a checkout, a reformat or a touch), and Spektacular
 // may omit it entirely. Nothing in this package reads it to decide progress
-// or staleness; a stale lease is decided by Hive's own lease clock
-// (Stage.ExpiresAt). Spec and Plan are the frontmatter cross-references,
+// or staleness; whether a generation is spent is decided by the hub executor
+// that ran it (#9143). Spec and Plan are the frontmatter cross-references,
 // which are almost never populated; they are surfaced for diagnostics and
 // are never a join key.
 type ArtifactStatus struct {

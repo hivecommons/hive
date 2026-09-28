@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -123,10 +124,14 @@ func spekRunner(hub *ContributeWSHub, ex *spekExec) *spektacular.Runner {
 		Exec:     ex.exec,
 		Poll:     spekPoll,
 		Registry: spektacular.NewLeaseRegistryAdapter(hub.server),
-		Escalate: spektacular.EscalationSink(hub.server),
 		Logger:   hub.logger,
 	}
 }
+
+// spekStageRunner installs a *spektacular.Runner as the Server's StageRunner.
+type spekStageRunner struct{ r *spektacular.Runner }
+
+func (s spekStageRunner) Tick(ctx context.Context, now time.Time) { s.r.Tick(ctx, now) }
 
 func spekLease(t *testing.T, hub *ContributeWSHub, stage string, now time.Time) {
 	t.Helper()
@@ -407,53 +412,155 @@ func TestImportRunPlanFanoutDisabledIsNoop(t *testing.T) {
 	}
 }
 
-// TestSpektacularRunner_ExpiryRetriesThenEscalates: a stage whose lease lapses
-// without final is retried through retryLeaseStage exactly once at the default
-// budget of two, then escalated with decision severity, and never gets a third
-// generation.
-func TestSpektacularRunner_ExpiryRetriesThenEscalates(t *testing.T) {
-	hub, s, _, _ := spekHub(t)
-	now := time.Now()
-	spekLease(t, hub, StagePlan, now)
-	ex := newSpekExec()
-	ex.push(spektacular.KindPlan, spektacular.DocumentDraft)
-	r := spekRunner(hub, ex)
-	r.MaxRetries = config.DefaultMaxStageRetries
+// TestHubExecutorSpendsStageBudgetUnderCleanupLoop is the #9143 regression: a
+// hub-executed spec stage whose agent never produces a final document — it
+// exits with the document still draft, or the CLI fails outright. Driven
+// through tickLeaseLifecycle, the cleanup loop's own order in which
+// keepPendingStageLeasesAlive re-arms the executor's lease on every tick, the
+// default budget of two must mint exactly one retry generation and then raise
+// one decision escalation, launch nothing further for two lease windows, and
+// keep the escalated run leased (not pruned) across a restart so a person can
+// act on it. Before the fix the keepalive re-armed the lease forever and
+// neither a retry nor an escalation ever happened.
+func TestHubExecutorSpendsStageBudgetUnderCleanupLoop(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		cliErr error
+	}{
+		{name: "exits_draft"},
+		{name: "cli_fails", cliErr: errors.New("exit status 1")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hub, s, _, _ := spekHub(t)
+			hub.persistTaskLedgers = true
+			const runKey = spekRepo + "#9143"
+			start := time.Now()
+			admitTask := runAdmissionTaskPrefix + sanitizeReceiptSegment(runKey)
+			if err := hub.recordLeaseForKeyStage(runAdmissionIdentity, admitTask, spekRepo, 9143, spekRepo+"!"+runKey+":"+StageSpec, "triage", StageSpec, 1, start); err != nil {
+				t.Fatal(err)
+			}
 
-	r.Tick(context.Background(), now)
-	now = now.Add(leaseTTL + time.Second)
-	if res := r.Tick(context.Background(), now); res.Retried != 1 || res.Escalated != 0 {
-		t.Fatalf("first expiry = %+v", res)
-	}
-	stage, gen := spekLeaseState(hub)
-	if stage != StagePlan || gen <= spekGen {
-		t.Fatalf("lease after retry = %s/%d", stage, gen)
-	}
-	if !contains(auditActions(t, hub), agentaudit.AuditLeaseStageRetried) {
-		t.Fatalf("retry audit missing: %v", auditActions(t, hub))
-	}
-	now = now.Add(leaseTTL + time.Second)
-	if res := r.Tick(context.Background(), now); res.Retried != 0 || res.Escalated != 1 {
-		t.Fatalf("second expiry = %+v", res)
-	}
-	if _, after := spekLeaseState(hub); after != gen {
-		t.Fatalf("a third generation was minted: %d -> %d", gen, after)
-	}
-	if !contains(auditActions(t, hub), agentaudit.AuditLeaseStageEscalated) {
-		t.Fatalf("escalation audit missing: %v", auditActions(t, hub))
-	}
-	var blocked bool
-	for _, ev := range s.LifecycleTimeline().ByIssue(spekRunKey) {
-		if ev.Kind == timeline.KindBlocked && ev.Attrs["severity"] == string(escalate.SeverityDecision) && ev.Attrs["stage"] == StagePlan {
-			blocked = true
-		}
-	}
-	if !blocked {
-		t.Fatal("escalation did not mark the run blocked on the timeline")
-	}
-	now = now.Add(leaseTTL + time.Second)
-	if res := r.Tick(context.Background(), now); res.Retried != 0 || res.Escalated != 0 || res.Polled != 0 {
-		t.Fatalf("post-escalation tick = %+v", res)
+			e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+			worktree := spekHubRunWorktreePath(e.Identity, runKey)
+			for _, dir := range []string{
+				filepath.Join(worktree, ".spektacular", "specs"),
+				filepath.Join(agentWorkspaceRoot, e.Identity, filepath.FromSlash(spekRepo), ".git"),
+			} {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(worktree, ".spektacular", "specs", sanitizeRunPromptPath(e.artifact(runKey))+".md"), []byte("# spec"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var mu sync.Mutex
+			launches := 0
+			e.Exec = func(_ context.Context, _ string, _ []string, name string, args ...string) ([]byte, error) {
+				switch name {
+				case "git":
+					return []byte("ok"), nil
+				case "spektacular":
+					if len(args) >= 3 && args[1] == "status" {
+						return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","artifact_id":"` + args[2] + `","document_status":"draft","current_step":"authoring"}`), nil
+					}
+					return []byte("ok"), nil
+				}
+				mu.Lock()
+				launches++
+				mu.Unlock()
+				return []byte("agent exited"), tc.cliErr
+			}
+			s.SetStageExecutor(e)
+			ex := newSpekExec()
+			ex.push(spektacular.KindSpec, spektacular.DocumentDraft)
+			s.SetStageRunner(spekStageRunner{r: spekRunner(hub, ex)})
+
+			execTask := e.stageTaskID(spekHubStage{runKey: runKey, stage: StageSpec, gen: 1})
+			leaseNow := func() (taskLease, bool) {
+				hub.leaseMu.Lock()
+				defer hub.leaseMu.Unlock()
+				l := hub.leaseForLocked(e.Identity, execTask)
+				if l == nil {
+					return taskLease{}, false
+				}
+				return *l, true
+			}
+			// Every 30 s, as cleanupLoop does, for two lease windows; each tick
+			// waits for the executor's stage goroutine before the next.
+			now := start
+			for now.Before(start.Add(2 * leaseTTL)) {
+				hub.tickLeaseLifecycle(now)
+				deadline := time.Now().Add(10 * time.Second)
+				for e.Status().Running != 0 {
+					if time.Now().After(deadline) {
+						t.Fatal("hub executor stage did not finish")
+					}
+					time.Sleep(time.Millisecond)
+				}
+				now = now.Add(30 * time.Second)
+			}
+
+			mu.Lock()
+			got := launches
+			mu.Unlock()
+			if got != config.DefaultMaxStageRetries {
+				t.Fatalf("agent launches = %d, want one per generation of the budget (%d)", got, config.DefaultMaxStageRetries)
+			}
+			retried, escalated := 0, 0
+			for _, action := range auditActions(t, hub) {
+				switch action {
+				case agentaudit.AuditLeaseStageRetried:
+					retried++
+				case agentaudit.AuditLeaseStageEscalated:
+					escalated++
+				}
+			}
+			if retried != 1 || escalated != 1 {
+				t.Fatalf("audit retried=%d escalated=%d, want 1 and 1", retried, escalated)
+			}
+			var decision *timeline.Event
+			for _, ev := range s.LifecycleTimeline().ByIssue(runKey) {
+				if ev.Kind == timeline.KindBlocked && ev.Attrs[stageAttrSeverity] == string(escalate.SeverityDecision) {
+					ev := ev
+					decision = &ev
+				}
+			}
+			if decision == nil || decision.Attrs[stageAttrStage] != StageSpec || decision.Attrs[stageAttrAttempts] != "2" || decision.Attrs["waiting_on"] != worksource.RunWaitingOnHuman {
+				t.Fatalf("decision escalation on the timeline = %+v", decision)
+			}
+			l, ok := leaseNow()
+			if !ok {
+				t.Fatal("escalated run's lease was pruned; nobody can reset it")
+			}
+			if l.stage != StageSpec || l.gen != 2 || l.stageEscalatedAt.IsZero() || l.stageRetries != 1 || now.After(l.expiresAt) {
+				t.Fatalf("escalated lease = stage %s gen %d escalated %s retries %d expires %s (now %s)", l.stage, l.gen, l.stageEscalatedAt, l.stageRetries, l.expiresAt, now)
+			}
+			// /api/runs reports the run as waiting on a human, which is what the
+			// run-wait escalation sweep dispatches to the escalation sinks.
+			waiting := false
+			for _, run := range s.RunWaitSnapshot() {
+				if strings.Contains(run.Key, "9143") && run.Stage == StageSpec && run.WaitingOn == worksource.RunWaitingOnHuman && !run.WaitingSince.IsZero() {
+					waiting = true
+				}
+			}
+			if !waiting {
+				t.Fatalf("escalated run not waiting on a human in /api/runs: %+v", s.RunWaitSnapshot())
+			}
+
+			// A restart must neither refund the budget nor relaunch the stage.
+			h2 := &ContributeWSHub{logger: hub.logger, persistTaskLedgers: true, taskLeasesFile: hub.taskLeasesPath()}
+			h2.loadLeases()
+			h2.leaseMu.Lock()
+			restored := h2.leaseForLocked(e.Identity, execTask)
+			h2.leaseMu.Unlock()
+			if restored == nil || !restored.stageEscalatedAt.Equal(l.stageEscalatedAt) || restored.stageRetries != 1 || restored.gen != 2 {
+				t.Fatalf("restored lease = %+v, want escalated gen 2 after one retry", restored)
+			}
+			fresh := NewSpekHubExecutor(s, e.Config, "copilot", "", nil, nil)
+			if stages, err := fresh.unclaimedStages(); err != nil || len(stages) != 0 {
+				t.Fatalf("a fresh executor would relaunch the escalated stage: %+v, %v", stages, err)
+			}
+		})
 	}
 }
 
@@ -671,8 +778,7 @@ func TestStageAttrKeysMatchSpektacular(t *testing.T) {
 		stageAttrDocumentStatus: spektacular.AttrDocumentStatus,
 		stageAttrCurrentStep:    spektacular.AttrCurrentStep,
 		stageAttrReason:         spektacular.AttrReason,
-		stageAttrSeverity:       spektacular.AttrSeverity,
-		stageAttrAttempts:       spektacular.AttrAttempts,
+		stageEscalationSeverity: string(escalate.SeverityDecision),
 	}
 	for dash, spek := range pairs {
 		if dash != spek {
@@ -720,21 +826,15 @@ func TestStageLeaseSurface_HelpersAndErrorPaths(t *testing.T) {
 	if err := bare.AdvanceStageLease(spekIdentity, spekTaskID, StagePlan, time.Now(), nil, nil); err == nil {
 		t.Fatal("bare AdvanceStageLease did not error")
 	}
-	if err := bare.RetryStageLease(spekIdentity, spekTaskID, time.Now()); err == nil {
-		t.Fatal("bare RetryStageLease did not error")
-	}
 	var nilServer *Server
 	nilServer.RefuseStageLease(spekTaskID, nil)
-	nilServer.EscalateStageLease(spekRunKey, time.Now(), nil)
+	nilServer.escalateStageLease(spekRunKey, time.Now(), nil)
 	if err := nilServer.ImportRunPlan(spekRunKey, spekRepo, "1. x"); err == nil {
 		t.Fatal("nil ImportRunPlan did not error")
 	}
-	// Unknown leases cannot be advanced or retried.
+	// Unknown leases cannot be advanced.
 	if err := s.AdvanceStageLease("nobody", "none", StagePlan, time.Now(), nil, nil); err == nil {
 		t.Fatal("advance of an unknown lease did not error")
-	}
-	if err := s.RetryStageLease("nobody", "none", time.Now()); err == nil {
-		t.Fatal("retry of an unknown lease did not error")
 	}
 	// A receipt that cannot be written blocks the advance, and the run key
 	// falls back to the lease key when the runner sent none.

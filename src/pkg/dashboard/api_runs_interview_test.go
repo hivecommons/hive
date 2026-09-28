@@ -359,7 +359,10 @@ func TestSpekInterviewExecutorClearsConsumedRound(t *testing.T) {
 	}
 	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
 	launched := false
-	e.Exec = func(_ context.Context, dir string, _ []string, name string, _ ...string) ([]byte, error) {
+	e.Exec = func(_ context.Context, dir string, _ []string, name string, args ...string) ([]byte, error) {
+		if name == "spektacular" && len(args) >= 3 && args[1] == "status" {
+			return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","artifact_id":"` + args[2] + `","document_status":"draft"}`), nil
+		}
 		if name == "sh" {
 			launched = true
 			prompt, err := os.ReadFile(filepath.Join(dir, spekHubPromptRelPath))

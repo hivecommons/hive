@@ -10,12 +10,11 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/escalate"
 	"github.com/hivecommons/hive/pkg/outputschema"
 )
 
 // fakeLeaseRegistry is a primitives-only registry the adapter drives, with
-// the same generation and expiry rules the dashboard applies.
+// the same generation rules the dashboard applies.
 type fakeLeaseRegistry struct {
 	workDir    string
 	runKey     string
@@ -27,9 +26,7 @@ type fakeLeaseRegistry struct {
 	advanceErr error
 	advances   []map[string]string
 	receipts   [][]byte
-	retries    int
 	refusals   []map[string]string
-	escalates  []map[string]string
 	progress   []map[string]string
 	plans      []string
 }
@@ -70,23 +67,12 @@ func (f *fakeLeaseRegistry) AdvanceStageLease(identity, taskID, to string, now t
 	return nil
 }
 
-func (f *fakeLeaseRegistry) RetryStageLease(_, _ string, now time.Time) error {
-	f.retries++
-	f.gen++
-	f.expiresAt = now.Add(testLeaseTTL)
-	return nil
-}
-
 func (f *fakeLeaseRegistry) RefuseStageLease(_ string, attrs map[string]string) {
 	f.refusals = append(f.refusals, attrs)
 }
 
 func (f *fakeLeaseRegistry) RecordStageProgress(_ string, _ string, attrs map[string]string, _ time.Time) {
 	f.progress = append(f.progress, attrs)
-}
-
-func (f *fakeLeaseRegistry) EscalateStageLease(_ string, _ time.Time, attrs map[string]string) {
-	f.escalates = append(f.escalates, attrs)
 }
 
 func (f *fakeLeaseRegistry) ImportRunPlan(_, _, taskList string) error {
@@ -105,10 +91,10 @@ func TestLeaseAdapter_ActiveStagesUsesRunArtifactNameForIssueRunKey(t *testing.T
 	}
 }
 
-func TestLeaseAdapter_AdvanceRetryRefuseThroughPrimitives(t *testing.T) {
+func TestLeaseAdapter_AdvanceAndRefuseThroughPrimitives(t *testing.T) {
 	reg := &fakeLeaseRegistry{stage: StagePlan, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true}
 	ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, DocumentFinal)}, exportJSON: exportJSON}
-	r := &Runner{Exec: ex.exec, Poll: testPoll, Registry: NewLeaseRegistryAdapter(reg), Escalate: EscalationSink(reg), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	r := &Runner{Exec: ex.exec, Poll: testPoll, Registry: NewLeaseRegistryAdapter(reg), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
 	if res := r.Tick(context.Background(), t0); res.Advanced != 1 {
 		t.Fatalf("plan final tick = %+v", res)
@@ -130,35 +116,22 @@ func TestLeaseAdapter_AdvanceRetryRefuseThroughPrimitives(t *testing.T) {
 		t.Fatalf("same-instant tick = %+v", res)
 	}
 
-	// Refusal and escalation reach the registry as attrs.
+	// Refusal reaches the registry as attrs.
 	reg2 := &fakeLeaseRegistry{stage: StageSpec, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true}
 	ex2 := &scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentDraft), notFoundJSON}}
-	r2 := &Runner{Exec: ex2.exec, Poll: testPoll, MaxRetries: 1, Registry: NewLeaseRegistryAdapter(reg2), Escalate: EscalationSink(reg2), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	r2 := &Runner{Exec: ex2.exec, Poll: testPoll, Registry: NewLeaseRegistryAdapter(reg2), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	r2.Tick(context.Background(), t0)
 	r2.Tick(context.Background(), t0.Add(testPoll))
 	if len(reg2.refusals) != 1 || reg2.refusals[0][AttrReason] != RefuseReplacedDocument || reg2.refusals[0][AttrStage] != StageSpec {
 		t.Fatalf("refusals = %+v", reg2.refusals)
 	}
-	reg2.gen = 5 // operator reset
-	ex2.statuses = []string{statusJSON(KindSpec, testRunKey, DocumentDraft)}
-	ex2.idx = 0
-	if res := r2.Tick(context.Background(), t0.Add(testLeaseTTL+testPoll)); res.Escalated != 1 {
-		t.Fatalf("expiry tick = %+v", res)
-	}
-	if len(reg2.escalates) != 1 || reg2.escalates[0][AttrSeverity] != string(escalate.SeverityDecision) || reg2.escalates[0][AttrAttempts] != "1" || reg2.escalates[0][AttrGen] != "5" {
-		t.Fatalf("escalations = %+v", reg2.escalates)
-	}
-
-	// Retry goes through RetryStageLease; visit and advance errors surface.
-	reg3 := &fakeLeaseRegistry{stage: StageSpec, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true}
+	// Visit errors surface as counted errors.
+	reg3 := &fakeLeaseRegistry{stage: StageSpec, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true, visitErr: errors.New("registry down")}
 	r3 := &Runner{Exec: (&scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentDraft)}}).exec, Poll: testPoll, Registry: NewLeaseRegistryAdapter(reg3), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	if res := r3.Tick(context.Background(), t0.Add(testLeaseTTL+time.Second)); res.Retried != 1 || reg3.retries != 1 {
-		t.Fatalf("retry tick = %+v retries=%d", res, reg3.retries)
-	}
-	reg3.visitErr = errors.New("registry down")
-	if res := r3.Tick(context.Background(), t0.Add(2*testLeaseTTL)); res.Errors != 1 {
+	if res := r3.Tick(context.Background(), t0); res.Errors != 1 {
 		t.Fatalf("visit error tick = %+v", res)
 	}
+	// Advance errors surface and do not advance.
 	reg4 := &fakeLeaseRegistry{stage: StageSpec, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true, advanceErr: errors.New("persist failed")}
 	r4 := &Runner{Exec: (&scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentFinal)}}).exec, Poll: testPoll, Registry: NewLeaseRegistryAdapter(reg4), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	if res := r4.Tick(context.Background(), t0); res.Errors != 1 || res.Advanced != 0 {
@@ -171,7 +144,7 @@ func TestHubRunner_BuildsFromConfigAndTicks(t *testing.T) {
 	cfg := config.RunsConfig{MaxStageRetries: 3, Spektacular: config.SpektacularConfig{Binary: "false", PollIntervalS: 7}}
 	h := NewHubRunner(cfg, reg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	r := h.Runner()
-	if r == nil || r.MaxRetries != 3 || r.Poll != 7*time.Second || r.Exec == nil || r.Registry == nil || r.Escalate == nil {
+	if r == nil || r.Poll != 7*time.Second || r.Exec == nil || r.Registry == nil {
 		t.Fatalf("hub runner = %+v", r)
 	}
 	h.Tick(context.Background(), t0) // no leases: inert
@@ -195,7 +168,7 @@ func TestLeaseAdapter_SameInstantTickAfterAdvanceIsNoOp(t *testing.T) {
 		statusJSON(KindSpec, testRunKey, DocumentFinal),
 		statusJSON(KindPlan, testRunKey, DocumentFinal),
 	}, exportJSON: exportJSON}
-	r := &Runner{Exec: ex.exec, Poll: testPoll, Registry: NewLeaseRegistryAdapter(reg), Escalate: EscalationSink(reg), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	r := &Runner{Exec: ex.exec, Poll: testPoll, Registry: NewLeaseRegistryAdapter(reg), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
 	now := t0
 	if res := r.Tick(context.Background(), now); res.Advanced != 0 || res.Polled != 1 {

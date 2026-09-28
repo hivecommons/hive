@@ -229,6 +229,8 @@ type runLeaseSnapshot struct {
 	triageVerdict   string
 	triageRationale string
 	workItem        worksource.WorkItemContext
+	// stageEscalatedAt is when the stage spent its retry budget (#9143).
+	stageEscalatedAt time.Time
 }
 
 func (l runLeaseSnapshot) activityTime() time.Time {
@@ -954,7 +956,8 @@ func (s *Server) activeRunLeaseSnapshots(now time.Time) ([]runLeaseSnapshot, err
 			title: title, stageStarted: info.startedAt, leaseHeartbeat: l.expiresAt.Add(-leaseTTL), serverSideLease: h.isPendingStageIdentity(l.identity),
 			claimedBy: l.claimedBy, claimExpiresAt: l.claimExpiresAt, claimPosted: l.claimPosted,
 			triageVerdict: l.triageVerdict, triageRationale: l.triageRationale,
-			workItem: l.workItem.Normalized(),
+			workItem:         l.workItem.Normalized(),
+			stageEscalatedAt: l.stageEscalatedAt,
 		})
 	}
 	return out, nil
@@ -1025,6 +1028,13 @@ func runFromLease(lease runLeaseSnapshot, plan runPlanSnapshot, hold runHumanRev
 	if !hold.UpdatedAt.IsZero() && runCheckpointBlocks(cfg, lease.stage) {
 		run.WaitingOn = RunWaitingOnHuman
 		run.WaitingSince = formatRunTime(hold.UpdatedAt)
+	}
+	if !lease.stageEscalatedAt.IsZero() {
+		// The stage spent runs.max_stage_retries (#9143); nothing will run it
+		// again until a person resets the stage or abandons the run.
+		run.WaitingOn = RunWaitingOnHuman
+		run.WaitingReason = runWaitingReasonStageBudgetExhausted
+		run.WaitingSince = formatRunTime(lease.stageEscalatedAt)
 	}
 	return run
 }

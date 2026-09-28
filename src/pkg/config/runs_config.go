@@ -9,11 +9,13 @@ import (
 // documented default that the `runs:` block can override; the feature itself
 // is OFF until runs.spektacular.enabled is set.
 const (
-	// DefaultMaxStageRetries is how many times one run stage may let its lease
-	// expire without reaching `document_status: final` before the runner stops
-	// retrying and raises a decision escalation. The count includes the first
-	// generation: at the default of 2 a stage runs once, is retried once, and
-	// escalates on the second expiry, so no third generation is ever minted.
+	// DefaultMaxStageRetries is how many generations one hub-executed run
+	// stage may spend without reaching `document_status: final` before the hub
+	// executor stops retrying and raises a decision escalation. A generation is
+	// spent when its one agent launch fails or exits with the document still
+	// not final. The count includes the first generation: at the default of 2
+	// a stage runs once, is retried once, and escalates when the second
+	// generation is spent, so no third generation is ever minted (#9143).
 	DefaultMaxStageRetries = 2
 	// DefaultRunsMaxWorktrees caps live per-stage git worktrees on one hive.
 	DefaultRunsMaxWorktrees = 8
@@ -64,8 +66,9 @@ type RunsConfig struct {
 	// WaitSeverity is the escalation severity for timed-out checkpoints.
 	// Empty means DefaultRunsWaitSeverity.
 	WaitSeverity string `yaml:"wait_severity,omitempty" json:"wait_severity,omitempty"`
-	// MaxStageRetries bounds the generations one stage may burn before the
-	// runner escalates. Zero or negative means DefaultMaxStageRetries.
+	// MaxStageRetries bounds the generations one hub-executed stage may spend
+	// before the hub executor escalates. Zero or negative means
+	// DefaultMaxStageRetries.
 	MaxStageRetries int `yaml:"max_stage_retries,omitempty" json:"max_stage_retries,omitempty"`
 	// MaxWorktrees caps live per-stage git worktrees. Zero or negative means
 	// DefaultRunsMaxWorktrees.

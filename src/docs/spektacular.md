@@ -76,7 +76,7 @@ spec revision changes.
 
 ```yaml
 runs:
-  max_stage_retries: 2        # default; generations one stage may burn
+  max_stage_retries: 2        # default; generations one hub-executed stage may spend
   spektacular:
     enabled: true             # default false
     binary: spektacular       # default; resolved through PATH
@@ -357,24 +357,47 @@ id is cached for the stage and used for subsequent status/export calls.
   mtime that a `git checkout`, a reformat or a `touch` moves without anything
   having happened. Spek may also omit it entirely when no workflow
   state matches, so the parser treats an absent, `null` or empty
-  `updated_at` (and an empty `created_at` / `closed_at`) as unknown. A stale
-  stage is decided by Hive's own lease clock (the lease's expiry), never by
-  the artifact's timestamps. `TestUpdatedAtNeverDecides` in `pkg/spektacular`
-  keeps it that way.
-- A lease that lapses without `final` is retried through `retryLeaseStage`
-  (a new generation of the same stage, `lease_stage_retried` in the audit
-  log) while the budget allows. `max_stage_retries` counts generations
-  including the first: at the default of 2 the stage runs once, is retried
-  once, and the second expiry raises an escalation with `decision` severity
-  (`lease_stage_escalated` in the audit log, a `blocked` timeline event with
-  `severity=decision`). No third generation is ever minted; a person resets
-  the stage or abandons the run.
+  `updated_at` (and an empty `created_at` / `closed_at`) as unknown. Whether
+  a stage generation is spent is decided by the hub executor that ran it
+  (below), never by the artifact's timestamps. `TestUpdatedAtNeverDecides` in
+  `pkg/spektacular` keeps it that way.
+- The retry budget is owned by the hub executor, the one component that knows
+  when a generation has been spent (#9143). A generation is spent when its
+  agent CLI fails (including a failed claim, workspace preparation, or
+  post-exit status check) or exits with the document still not final — Hive
+  logs the exit/output tail at WARN and records
+  `hub_executor_cli_exited_nonfinal` or `hub_executor_failed` on the run
+  timeline. Each generation is launched exactly once, so
+  `max_stage_retries` has one meaning: the number of generations (agent
+  launches) one stage may spend, the first included. While budget remains the
+  executor mints a retry generation through `retryLeaseStage` (a new generation
+  of the same stage, `lease_stage_retried` in the audit log, a
+  `retry_generation_minted` progress event) and launches it on the next tick.
+  The generation that spends the last of the budget raises an escalation with
+  `decision` severity instead: `lease_stage_escalated` in the audit log and a
+  `blocked` timeline event with `severity=decision`, `attempts` and `budget`.
+  At the default of 2 the stage runs once, is retried once, and the second
+  spent generation escalates. No generation past the budget is ever minted.
+  The escalated lease is not dropped: it stays in `/api/runs`, kept alive like
+  every hub-held stage lease, with `waiting_on=human`,
+  `waiting_reason=stage_budget_exhausted` and `waiting_since` set to the
+  escalation, so the run-wait escalation sweep (`runs.wait_timeout_seconds`,
+  `runs.wait_severity`) routes it to the configured escalation sinks. The
+  executor never relaunches it; a person resets the stage or abandons the run.
+  The generations spent (`stage_retries`) and the escalation
+  (`stage_escalated_at`) are persisted on the lease, so a restart neither
+  refunds the budget nor relaunches an escalated stage.
+- Lease expiry never spends the budget. The cleanup loop keeps hub-held stage
+  leases alive so a run waiting on a taker never ages out, and the poll runner
+  only advances on final or refuses; it never retries or escalates. An
+  interview round waiting for a person does not spend a generation either, nor
+  does an agent exit that leaves the plan `stale` (that run is parked as
+  `stale_plan`, above). A relay-held stage whose relay vanishes is re-offered
+  at the same generation when its lease lapses; that is not a spent
+  generation.
 - The hub executor also treats a live lease already owned by its own identity as
   restartable work when no in-flight process is tracked for that lease
-  key/generation. If the agent CLI exits and the artifact is still not final,
-  Hive performs an immediate status check, logs the exit/output tail at WARN,
-  and records `hub_executor_cli_exited_nonfinal` on the run timeline instead of
-  leaving operators with only a silent lease expiry.
+  key/generation and the generation is not escalated.
 - The `implement` stage has no Spek document. The runner never polls
   it; its completion is the existing hold-gated PR flow.
 
@@ -383,10 +406,10 @@ is never polled or advanced again, a generation change (a retry, or the
 successor stage of an advance) keeps the poll pacing instead of earning an
 extra status call, and a second tick at the same instant is a no-op.
 
-A retry is the one lease mutation allowed on an expired lease: it exists
-because the generation lapsed, so the expired lease is its expected input and
-receives a fresh window under its new generation. An advance still requires a
-live lease.
+A retry names the generation it replaces and is refused if the lease has
+already moved past it, so a spent generation is settled at most once. Unlike
+an advance, a retry is also accepted on an expired lease and receives a fresh
+window under its new generation.
 
 ### Plan import
 

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/escalate"
 	"github.com/hivecommons/hive/pkg/outputschema"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
@@ -29,8 +28,6 @@ const (
 	AttrDocumentStatus = "document_status"
 	AttrCurrentStep    = "current_step"
 	AttrReason         = "reason"
-	AttrSeverity       = "severity"
-	AttrAttempts       = "attempts"
 )
 
 // LeaseRegistry is the primitives-only surface the runner needs from the
@@ -47,8 +44,6 @@ type LeaseRegistry interface {
 	// generation and advances the lease to stage `to`. attrs carry the
 	// Attr* keys (run key, receipt digest, artifact, document status).
 	AdvanceStageLease(identity, taskID, to string, now time.Time, receipt []byte, attrs map[string]string) error
-	// RetryStageLease mints a new generation of the lease's current stage.
-	RetryStageLease(identity, taskID string, now time.Time) error
 	// RefuseStageLease records that the runner will not advance the lease.
 	RefuseStageLease(taskID string, attrs map[string]string)
 	// RecordStageProgress records non-terminal activity for the run timeline.
@@ -56,8 +51,6 @@ type LeaseRegistry interface {
 	// ResolveRunStageWorkDir returns the repo checkout or per-stage worktree that
 	// owns the Spektacular project for this stage. An empty result parks the lease.
 	ResolveRunStageWorkDir(runKey, stage, identity, repo string, gen uint64) (string, error)
-	// EscalateStageLease records a decision escalation for the run.
-	EscalateStageLease(runKey string, at time.Time, attrs map[string]string)
 	// ImportRunPlan admits taskList (the planner's task-list text) as the
 	// run's DRAFT plan.
 	ImportRunPlan(runKey, repo, taskList string) error
@@ -80,7 +73,7 @@ func NewLeaseRegistryAdapter(reg LeaseRegistry) Registry {
 
 func (a *leaseAdapter) ActiveStages(time.Time) ([]Stage, error) {
 	out := []Stage{}
-	err := a.reg.VisitActiveStageLeases(func(runKey, key, stage, identity, taskID, repo string, gen uint64, expiresAt time.Time) {
+	err := a.reg.VisitActiveStageLeases(func(runKey, key, stage, identity, taskID, repo string, gen uint64, _ time.Time) {
 		workDir, _ := a.reg.ResolveRunStageWorkDir(runKey, stage, identity, repo, gen)
 		artifact := ArtifactKey(runKey)
 		if ref, ok := worksource.ParseKey(runKey); ok && ref.Repo != "" {
@@ -92,7 +85,7 @@ func (a *leaseAdapter) ActiveStages(time.Time) ([]Stage, error) {
 		}
 		out = append(out, Stage{
 			RunKey: runKey, Artifact: artifact, Stage: stage, Key: key,
-			Identity: identity, TaskID: taskID, Repo: repo, WorkDir: workDir, Gen: gen, ExpiresAt: expiresAt,
+			Identity: identity, TaskID: taskID, Repo: repo, WorkDir: workDir, Gen: gen,
 			Unclaimed: identity == worksource.RunAdmissionIdentity,
 			RelayHeld: relayHeld,
 		})
@@ -135,10 +128,6 @@ func (a *leaseAdapter) Advance(_ context.Context, st Stage, status ArtifactStatu
 	})
 }
 
-func (a *leaseAdapter) Retry(_ context.Context, st Stage, now time.Time) error {
-	return a.reg.RetryStageLease(st.Identity, st.TaskID, now)
-}
-
 func (a *leaseAdapter) Refuse(st Stage, reason string, status *ArtifactStatus) {
 	attrs := map[string]string{
 		AttrRunKey: st.RunKey,
@@ -167,20 +156,6 @@ func (a *leaseAdapter) RecordProgress(st Stage, attrs map[string]string, now tim
 	a.reg.RecordStageProgress(st.RunKey, st.TaskID, eventAttrs, now)
 }
 
-// EscalationSink returns the Escalate callback that records decision events
-// on the registry.
-func EscalationSink(reg LeaseRegistry) func(escalate.Event) {
-	return func(ev escalate.Event) {
-		reg.EscalateStageLease(ev.RunKey, ev.At, map[string]string{
-			AttrStage:    ev.Stage,
-			AttrGen:      strconv.FormatUint(ev.Gen, 10),
-			AttrAttempts: strconv.Itoa(ev.Attempts),
-			AttrSeverity: string(ev.Severity),
-			AttrReason:   ev.Reason,
-		})
-	}
-}
-
 // HubRunner is the boot-time shape of the runner: it satisfies the
 // dashboard's StageRunner interface (Tick without a result) so the contribute
 // hub's cleanup loop can drive it without knowing this package.
@@ -192,12 +167,10 @@ type HubRunner struct {
 // dashboard's lease registry.
 func NewHubRunner(cfg config.RunsConfig, reg LeaseRegistry, logger *slog.Logger) *HubRunner {
 	return &HubRunner{runner: &Runner{
-		Exec:       BinaryExec(cfg.Spektacular.BinaryOrDefault()),
-		Poll:       cfg.Spektacular.PollInterval(),
-		MaxRetries: cfg.MaxStageRetriesOrDefault(),
-		Registry:   NewLeaseRegistryAdapter(reg),
-		Escalate:   EscalationSink(reg),
-		Logger:     logger,
+		Exec:     BinaryExec(cfg.Spektacular.BinaryOrDefault()),
+		Poll:     cfg.Spektacular.PollInterval(),
+		Registry: NewLeaseRegistryAdapter(reg),
+		Logger:   logger,
 	}}
 }
 

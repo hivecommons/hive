@@ -36,21 +36,34 @@ type StageRunner interface {
 // constants in pkg/spektacular (asserted equal by this package's tests) so the
 // two sides agree without an import.
 const (
-	stageAttrRunKey          = "run_key"
-	stageAttrStage           = "stage"
-	stageAttrGen             = "gen"
-	stageAttrReceipt         = "receipt"
-	stageAttrArtifact        = "artifact"
-	stageAttrArtifactBody    = "artifact_body"
-	stageAttrDocumentStatus  = "document_status"
-	stageAttrCurrentStep     = "current_step"
-	stageAttrReason          = "reason"
+	stageAttrRunKey         = "run_key"
+	stageAttrStage          = "stage"
+	stageAttrGen            = "gen"
+	stageAttrReceipt        = "receipt"
+	stageAttrArtifact       = "artifact"
+	stageAttrArtifactBody   = "artifact_body"
+	stageAttrDocumentStatus = "document_status"
+	stageAttrCurrentStep    = "current_step"
+	stageAttrReason         = "reason"
+)
+
+// Attribute keys the dashboard records on its own stage events.
+const (
 	stageAttrSeverity        = "severity"
 	stageAttrAttempts        = "attempts"
+	stageAttrBudget          = "budget"
 	stageAttrPath            = "path"
 	stageAttrTriageVerdict   = "triage_verdict"
 	stageAttrTriageRationale = "triage_rationale"
 )
+
+// stageEscalationSeverity is escalate.SeverityDecision, spelled here because
+// this package may not import pkg/escalate (asserted equal by its tests).
+const stageEscalationSeverity = "decision"
+
+// runWaitingReasonStageBudgetExhausted is the /api/runs waiting_reason of a
+// stage that spent runs.max_stage_retries without a final document (#9143).
+const runWaitingReasonStageBudgetExhausted = "stage_budget_exhausted"
 
 const (
 	runAdmissionIdentity   = worksource.RunAdmissionIdentity
@@ -581,16 +594,6 @@ func (s *Server) AdvanceStageLease(identity, taskID, to string, now time.Time, r
 	return nil
 }
 
-// RetryStageLease mints a new generation of the lease's current stage; it is
-// the reclaim path, so an expired lease is its expected input.
-func (s *Server) RetryStageLease(identity, taskID string, now time.Time) error {
-	if s == nil || s.contributeHub == nil {
-		return errors.New("run lease registry unavailable")
-	}
-	_, err := s.contributeHub.retryLeaseStage(identity, taskID, now)
-	return err
-}
-
 // RefuseStageLease records that the runner declined to advance a stage (a
 // final artifact went back to draft, or the document it was bound to
 // vanished) so an operator can see why the run is parked.
@@ -656,9 +659,10 @@ func (s *Server) RecordStageProgress(runKey, taskID string, attrs map[string]str
 		"document_status", eventAttrs[stageAttrDocumentStatus])
 }
 
-// EscalateStageLease turns the runner's decision event into an audit entry
-// and a timeline block so the run shows up as waiting on a human.
-func (s *Server) EscalateStageLease(runKey string, at time.Time, attrs map[string]string) {
+// escalateStageLease records the hub executor's decision escalation for a
+// stage that spent runs.max_stage_retries (#9143): an audit entry and a
+// timeline block so the run shows up as waiting on a human.
+func (s *Server) escalateStageLease(runKey string, at time.Time, attrs map[string]string) {
 	if s == nil {
 		return
 	}

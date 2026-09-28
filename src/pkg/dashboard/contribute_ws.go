@@ -4610,29 +4610,7 @@ func (h *ContributeWSHub) cleanupLoop() {
 		case <-h.stopCh:
 			return
 		case <-ticker.C:
-			// #2568: reclaim wedged-but-connected task leases first (the backstop). A
-			// connection whose lastPong is still fresh (so the heartbeat sweep below will
-			// NOT remove it) but that has stopped renewing its task lease is exactly the
-			// "connected but wedged" case the issue describes; this releases its task
-			// through the SAME cooldown+generation-bump path a manual requeue uses.
-			h.reclaimExpiredLeases(time.Now())
-
-			// #8303: drive the installed stage runner (advance on final, retry or
-			// escalate on expiry). Nothing is installed unless
-			// runs.spektacular.enabled was set at boot.
-			if h.server != nil {
-				h.server.tickStageRunner(time.Now())
-			}
-
-			// A run stage waiting on a taker must outlive leaseTTL; extend those
-			// BEFORE the prune below can drop them.
-			h.keepPendingStageLeasesAlive(time.Now())
-
-			// #5681: drop leases that aged out without ever being looked up — a relay
-			// that never came back after a restart leaves one behind, and it would
-			// otherwise keep its issue out of the assignment pool until the process
-			// ended.
-			h.pruneExpiredLeases(time.Now())
+			h.tickLeaseLifecycle(time.Now())
 
 			// #8380: lapse worker claims on the same cadence so their GitHub
 			// labels come off and the issue returns to the offer pool.
@@ -4683,6 +4661,35 @@ func (h *ContributeWSHub) cleanupLoop() {
 			}
 		}
 	}
+}
+
+// tickLeaseLifecycle is the lease half of one cleanupLoop tick, in the order
+// the loop has always run it. It is a method so tests drive the exact
+// production order rather than a hand-copied one (#9143).
+func (h *ContributeWSHub) tickLeaseLifecycle(now time.Time) {
+	// #2568: reclaim wedged-but-connected task leases first (the backstop). A
+	// connection whose lastPong is still fresh (so the heartbeat sweep will NOT
+	// remove it) but that has stopped renewing its task lease is exactly the
+	// "connected but wedged" case the issue describes; this releases its task
+	// through the SAME cooldown+generation-bump path a manual requeue uses.
+	h.reclaimExpiredLeases(now)
+
+	// #8303: drive the installed hub executor (launch, then retry or escalate
+	// a spent generation, #9143) and stage runner (advance on final). Nothing
+	// is installed unless runs.spektacular.enabled was set at boot.
+	if h.server != nil {
+		h.server.tickStageRunner(now)
+	}
+
+	// A run stage waiting on a taker must outlive leaseTTL; extend those
+	// BEFORE the prune below can drop them.
+	h.keepPendingStageLeasesAlive(now)
+
+	// #5681: drop leases that aged out without ever being looked up — a relay
+	// that never came back after a restart leaves one behind, and it would
+	// otherwise keep its issue out of the assignment pool until the process
+	// ended.
+	h.pruneExpiredLeases(now)
 }
 
 // Close terminates the hub's background cleanup loop and blocks until it

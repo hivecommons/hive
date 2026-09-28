@@ -17,7 +17,6 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agentparse"
 	"github.com/hivecommons/hive/pkg/beads"
-	"github.com/hivecommons/hive/pkg/escalate"
 	"github.com/hivecommons/hive/pkg/outputschema"
 	"github.com/hivecommons/hive/pkg/planning"
 )
@@ -124,8 +123,8 @@ const notFoundJSON = `ERR:{"error":true,"code":"artifact_not_found","message":"p
 
 const exportJSON = `{"kind":"plan","name":"` + testRunKey + `","tasks":[{"ref":"T1","title":"Add encoding helpers","repo":"hivecommons/hive","execution":"agent_suitable"},{"ref":"T2","title":"Wire helpers into the parser","depends_on":["T1"]},{"ref":"T3","title":"Sign off on the public API","depends_on":["T2"],"execution":"human_required"}]}`
 
-// fakeRegistry is an in-memory lease registry with the same generation and
-// expiry rules the dashboard applies.
+// fakeRegistry is an in-memory lease registry with the same generation rules
+// the dashboard applies.
 type fakeRegistry struct {
 	mu         sync.Mutex
 	stage      Stage
@@ -133,11 +132,9 @@ type fakeRegistry struct {
 	gen        uint64
 	listErr    error
 	advanceErr error
-	retryErr   error
 	advances   []Stage
 	receipts   []outputschema.StageReceipt
 	plans      []*Plan
-	retries    []Stage
 	refusals   []string
 	progress   []map[string]string
 }
@@ -145,7 +142,7 @@ type fakeRegistry struct {
 func newFakeRegistry(stage string) *fakeRegistry {
 	return &fakeRegistry{present: true, gen: 1, stage: Stage{
 		RunKey: testRunKey, Artifact: testRunKey, Stage: stage, Identity: testIdentity,
-		TaskID: testTaskID, Repo: testRepo, WorkDir: testWorkDir, Gen: 1, ExpiresAt: t0.Add(testLeaseTTL),
+		TaskID: testTaskID, Repo: testRepo, WorkDir: testWorkDir, Gen: 1,
 	}}
 }
 
@@ -161,7 +158,7 @@ func (f *fakeRegistry) ActiveStages(time.Time) ([]Stage, error) {
 	return []Stage{f.stage}, nil
 }
 
-func (f *fakeRegistry) Advance(_ context.Context, st Stage, _ ArtifactStatus, receipt outputschema.StageReceipt, plan *Plan, now time.Time) error {
+func (f *fakeRegistry) Advance(_ context.Context, st Stage, _ ArtifactStatus, receipt outputschema.StageReceipt, plan *Plan, _ time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.advanceErr != nil {
@@ -173,20 +170,6 @@ func (f *fakeRegistry) Advance(_ context.Context, st Stage, _ ArtifactStatus, re
 	f.gen++
 	f.stage.Gen = f.gen
 	f.stage.Stage = nextStage(st.Stage)
-	f.stage.ExpiresAt = now.Add(testLeaseTTL)
-	return nil
-}
-
-func (f *fakeRegistry) Retry(_ context.Context, st Stage, now time.Time) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.retryErr != nil {
-		return f.retryErr
-	}
-	f.retries = append(f.retries, st)
-	f.gen++
-	f.stage.Gen = f.gen
-	f.stage.ExpiresAt = now.Add(testLeaseTTL)
 	return nil
 }
 
@@ -206,23 +189,11 @@ func (f *fakeRegistry) RecordProgress(_ Stage, attrs map[string]string, _ time.T
 	f.progress = append(f.progress, cp)
 }
 
-type escalations struct {
-	mu     sync.Mutex
-	events []escalate.Event
-}
-
-func (e *escalations) record(ev escalate.Event) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.events = append(e.events, ev)
-}
-
-func newRunner(reg Registry, ex *scriptedExec, esc *escalations) *Runner {
+func newRunner(reg Registry, ex *scriptedExec) *Runner {
 	return &Runner{
 		Exec:     ex.exec,
 		Poll:     testPoll,
 		Registry: reg,
-		Escalate: esc.record,
 		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
@@ -594,8 +565,7 @@ func TestTick_DraftThenFinalAdvancesOnceAndWritesOneReceipt(t *testing.T) {
 		statusJSON(KindSpec, testRunKey, DocumentDraft),
 		statusJSON(KindSpec, testRunKey, DocumentFinal),
 	}}
-	esc := &escalations{}
-	r := newRunner(reg, ex, esc)
+	r := newRunner(reg, ex)
 
 	now := t0
 	var total TickResult
@@ -622,8 +592,8 @@ func TestTick_DraftThenFinalAdvancesOnceAndWritesOneReceipt(t *testing.T) {
 	if receipt.Stage != StageSpec || receipt.Generation != 1 || receipt.WorkKey != testRepo+"!"+testRunKey || receipt.AssignmentID != testTaskID {
 		t.Fatalf("receipt = %+v", receipt)
 	}
-	if len(esc.events) != 0 || len(reg.retries) != 0 || len(reg.refusals) != 0 {
-		t.Fatalf("unexpected side effects: esc=%d retries=%d refusals=%v", len(esc.events), len(reg.retries), reg.refusals)
+	if len(reg.refusals) != 0 {
+		t.Fatalf("unexpected refusals: %v", reg.refusals)
 	}
 	if len(reg.progress) == 0 || reg.progress[0][AttrDocumentStatus] != string(DocumentDraft) || reg.progress[0][AttrCurrentStep] != "authoring" {
 		t.Fatalf("status progress not recorded: %+v", reg.progress)
@@ -643,53 +613,10 @@ func TestTick_DraftThenFinalAdvancesOnceAndWritesOneReceipt(t *testing.T) {
 	}
 }
 
-func TestTick_NeverFinalRetriesOnceThenEscalatesWithNoThirdGeneration(t *testing.T) {
-	reg := newFakeRegistry(StagePlan)
-	ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, DocumentDraft)}}
-	esc := &escalations{}
-	r := newRunner(reg, ex, esc)
-
-	if res := r.Tick(context.Background(), t0); res.Retried != 0 || res.Escalated != 0 {
-		t.Fatalf("first tick before expiry = %+v", res)
-	}
-	// First expiry: reclaim mints ONE retry generation.
-	now := t0.Add(testLeaseTTL + time.Second)
-	if res := r.Tick(context.Background(), now); res.Retried != 1 || res.Escalated != 0 {
-		t.Fatalf("first expiry = %+v", res)
-	}
-	if reg.stage.Gen != 2 || len(reg.retries) != 1 {
-		t.Fatalf("after first expiry gen=%d retries=%d", reg.stage.Gen, len(reg.retries))
-	}
-	if len(reg.progress) == 0 || reg.progress[len(reg.progress)-1][AttrReason] != "retry_generation_minted" {
-		t.Fatalf("retry progress not recorded: %+v", reg.progress)
-	}
-	// Second expiry: budget (2) exhausted, escalation raised, no third generation.
-	now = now.Add(testLeaseTTL + time.Second)
-	if res := r.Tick(context.Background(), now); res.Retried != 0 || res.Escalated != 1 {
-		t.Fatalf("second expiry = %+v", res)
-	}
-	if len(esc.events) != 1 {
-		t.Fatalf("escalations = %d, want 1", len(esc.events))
-	}
-	ev := esc.events[0]
-	if ev.Severity != escalate.SeverityDecision || ev.RunKey != testRunKey || ev.Stage != StagePlan || ev.Gen != 2 || ev.Attempts != 2 || !ev.At.Equal(now) {
-		t.Fatalf("escalation = %+v", ev)
-	}
-	// Any later tick is inert: no third generation, no second escalation.
-	now = now.Add(testLeaseTTL + time.Second)
-	if res := r.Tick(context.Background(), now); res.Polled != 0 || res.Retried != 0 || res.Escalated != 0 {
-		t.Fatalf("post-escalation tick = %+v", res)
-	}
-	if reg.stage.Gen != 2 || len(reg.retries) != 1 || len(esc.events) != 1 || len(reg.advances) != 0 {
-		t.Fatalf("third generation minted: gen=%d retries=%d esc=%d", reg.stage.Gen, len(reg.retries), len(esc.events))
-	}
-}
-
 func TestTick_PlanFinalImportsStructuredPlanAsDraft(t *testing.T) {
 	reg := newFakeRegistry(StagePlan)
 	ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, DocumentFinal)}, exportJSON: exportJSON}
-	esc := &escalations{}
-	r := newRunner(reg, ex, esc)
+	r := newRunner(reg, ex)
 
 	if res := r.Tick(context.Background(), t0); res.Advanced != 1 {
 		t.Fatalf("plan final tick = %+v", res)
@@ -753,7 +680,7 @@ func TestTick_PlanFinalFallsBackWhenExportVerbIsMissing(t *testing.T) {
 			testRunKey + "/tasks.json": `{"name":"` + testRunKey + `","tasks":[{"id":"T1","title":"Read task JSON","repo":"hivecommons/hive"},{"id":"T2","title":"Advance plan","depends_on":["T1"]}]}`,
 		},
 	}
-	r := newRunner(reg, ex, &escalations{})
+	r := newRunner(reg, ex)
 	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
 		t.Fatalf("plan final fallback tick = %+v", res)
 	}
@@ -787,7 +714,7 @@ func TestTick_PlanFinalFallsBackToPlanMarkdown(t *testing.T) {
 			testRunKey + "/plan.md": "- [T1] Add markdown fallback [agent_suitable]\n- [T2] Advance implement (depends: T1)\n",
 		},
 	}
-	r := newRunner(reg, ex, &escalations{})
+	r := newRunner(reg, ex)
 	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
 		t.Fatalf("plan.md fallback tick = %+v", res)
 	}
@@ -872,7 +799,7 @@ func TestTick_PlanFinalFallsBackWhenExportFlagIsRejected(t *testing.T) {
 			testRunKey + "/plan.md": spekNativePlanMD,
 		},
 	}
-	r := newRunner(reg, ex, &escalations{})
+	r := newRunner(reg, ex)
 	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
 		t.Fatalf("plan final fallback tick = %+v", res)
 	}
@@ -929,7 +856,7 @@ func TestTick_PlanFallbackReadsResolvedArtifactID(t *testing.T) {
 func TestTick_PlanFinalWithFailedExportDoesNotAdvance(t *testing.T) {
 	reg := newFakeRegistry(StagePlan)
 	ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, DocumentFinal)}, exportErr: errors.New("exit status 2")}
-	r := newRunner(reg, ex, &escalations{})
+	r := newRunner(reg, ex)
 	if res := r.Tick(context.Background(), t0); res.Advanced != 0 || res.Errors != 1 {
 		t.Fatalf("tick = %+v", res)
 	}
@@ -941,7 +868,7 @@ func TestTick_PlanFinalWithFailedExportDoesNotAdvance(t *testing.T) {
 func TestTick_StalePlanStatusRefusesImplementAdvance(t *testing.T) {
 	reg := newFakeRegistry(StagePlan)
 	ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, DocumentStale)}, exportJSON: exportJSON}
-	r := newRunner(reg, ex, &escalations{})
+	r := newRunner(reg, ex)
 
 	if res := r.Tick(context.Background(), t0); res.Refused != 1 || res.Advanced != 0 || res.Errors != 0 {
 		t.Fatalf("stale tick = %+v", res)
@@ -961,7 +888,7 @@ func TestTick_FinalThenDraftRefusesStalePlan(t *testing.T) {
 		statusJSON(KindPlan, testRunKey, DocumentFinal),
 		statusJSON(KindPlan, testRunKey, DocumentDraft),
 	}, exportJSON: exportJSON}
-	r := newRunner(reg, ex, &escalations{})
+	r := newRunner(reg, ex)
 
 	// final observed, but the registry could not persist the advance.
 	if res := r.Tick(context.Background(), t0); res.Errors != 1 || res.Advanced != 0 {
@@ -975,9 +902,9 @@ func TestTick_FinalThenDraftRefusesStalePlan(t *testing.T) {
 	if len(reg.refusals) != 1 || reg.refusals[0] != RefuseStalePlan {
 		t.Fatalf("refusals = %v", reg.refusals)
 	}
-	// Refused stages are parked: not polled, not retried, not escalated even
-	// past expiry, until the generation changes.
-	if res := r.Tick(context.Background(), t0.Add(testLeaseTTL*3)); res.Polled != 0 || res.Retried != 0 || res.Escalated != 0 {
+	// Refused stages are parked: not polled, even much later, until the
+	// generation changes.
+	if res := r.Tick(context.Background(), t0.Add(testLeaseTTL*3)); res.Polled != 0 || res.Refused != 0 {
 		t.Fatalf("parked tick = %+v", res)
 	}
 	if len(reg.advances) != 0 {
@@ -985,7 +912,6 @@ func TestTick_FinalThenDraftRefusesStalePlan(t *testing.T) {
 	}
 	// An operator reset (new generation) lets the runner look again.
 	reg.stage.Gen = 9
-	reg.stage.ExpiresAt = t0.Add(testLeaseTTL * 4)
 	ex.statuses = []string{statusJSON(KindPlan, testRunKey, DocumentFinal)}
 	ex.idx = 0
 	if res := r.Tick(context.Background(), t0.Add(testLeaseTTL*3+testPoll)); res.Advanced != 1 {
@@ -996,8 +922,7 @@ func TestTick_FinalThenDraftRefusesStalePlan(t *testing.T) {
 func TestTick_VanishedAfterObservationRefusesRebind(t *testing.T) {
 	reg := newFakeRegistry(StageSpec)
 	ex := &scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentDraft), notFoundJSON}}
-	esc := &escalations{}
-	r := newRunner(reg, ex, esc)
+	r := newRunner(reg, ex)
 	r.Tick(context.Background(), t0)
 	if res := r.Tick(context.Background(), t0.Add(testPoll)); res.Refused != 1 {
 		t.Fatalf("vanished tick = %+v", res)
@@ -1005,32 +930,27 @@ func TestTick_VanishedAfterObservationRefusesRebind(t *testing.T) {
 	if len(reg.refusals) != 1 || reg.refusals[0] != RefuseReplacedDocument {
 		t.Fatalf("refusals = %v", reg.refusals)
 	}
-	if len(reg.advances) != 0 || len(reg.retries) != 0 || len(esc.events) != 0 {
-		t.Fatal("a replaced document must not advance, retry, or escalate on its own")
+	if len(reg.advances) != 0 || reg.stage.Gen != 1 {
+		t.Fatal("a replaced document must not advance or mint a generation on its own")
 	}
 }
 
-func TestTick_MissingFromTheStartIsAnErrorAndStillExpires(t *testing.T) {
+func TestTick_MissingFromTheStartIsAnError(t *testing.T) {
 	reg := newFakeRegistry(StageSpec)
 	ex := &scriptedExec{statuses: []string{notFoundJSON}}
-	esc := &escalations{}
-	r := &Runner{Exec: ex.exec, Poll: testPoll, MaxRetries: 1, Registry: reg, Escalate: esc.record, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	r := newRunner(reg, ex)
 	if res := r.Tick(context.Background(), t0); res.Errors != 1 || res.Refused != 0 {
 		t.Fatalf("missing tick = %+v", res)
 	}
-	// Budget of 1: the first expiry escalates straight away.
-	if res := r.Tick(context.Background(), t0.Add(testLeaseTTL+time.Second)); res.Escalated != 1 || res.Retried != 0 {
-		t.Fatalf("expiry tick = %+v", res)
-	}
-	if len(esc.events) != 1 || len(reg.refusals) != 0 {
-		t.Fatalf("esc=%d refusals=%v", len(esc.events), reg.refusals)
+	if len(reg.refusals) != 0 || len(reg.advances) != 0 {
+		t.Fatalf("refusals=%v advances=%d", reg.refusals, len(reg.advances))
 	}
 }
 
 func TestTick_PollIntervalAndHousekeeping(t *testing.T) {
 	reg := newFakeRegistry(StageSpec)
 	ex := &scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentDraft)}}
-	r := newRunner(reg, ex, &escalations{})
+	r := newRunner(reg, ex)
 	r.Tick(context.Background(), t0)
 	if res := r.Tick(context.Background(), t0.Add(testPoll/2)); res.Polled != 0 {
 		t.Fatalf("polled inside the interval: %+v", res)
@@ -1049,13 +969,6 @@ func TestTick_PollIntervalAndHousekeeping(t *testing.T) {
 	if res := r.Tick(context.Background(), t0.Add(3*testPoll)); res.Errors != 1 {
 		t.Fatalf("registry error tick = %+v", res)
 	}
-	// Retry failures are counted and leave the budget untouched for next time.
-	reg2 := newFakeRegistry(StageSpec)
-	reg2.retryErr = errors.New("persist failed")
-	r2 := newRunner(reg2, &scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentDraft)}}, &escalations{})
-	if res := r2.Tick(context.Background(), t0.Add(testLeaseTTL+time.Second)); res.Errors != 1 || res.Retried != 0 {
-		t.Fatalf("retry failure tick = %+v", res)
-	}
 	// Nil receivers and a runner without a registry are inert.
 	var nilRunner *Runner
 	if res := nilRunner.Tick(context.Background(), t0); res != (TickResult{}) {
@@ -1063,9 +976,6 @@ func TestTick_PollIntervalAndHousekeeping(t *testing.T) {
 	}
 	if res := (&Runner{}).Tick(context.Background(), t0); res != (TickResult{}) {
 		t.Fatalf("registry-less tick = %+v", res)
-	}
-	if (&Runner{}).maxRetries() != DefaultMaxRetries || (&Runner{MaxRetries: 4}).maxRetries() != 4 {
-		t.Fatal("maxRetries default/override wrong")
 	}
 	if (&Runner{}).logger() == nil {
 		t.Fatal("logger() returned nil")
@@ -1078,7 +988,7 @@ func TestTick_PollIntervalAndHousekeeping(t *testing.T) {
 func TestRun_TicksUntilCancelled(t *testing.T) {
 	reg := newFakeRegistry(StageSpec)
 	ex := &scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentFinal)}}
-	r := newRunner(reg, ex, &escalations{})
+	r := newRunner(reg, ex)
 	r.Poll = 5 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -1258,16 +1168,20 @@ func TestFixture_FinalThenDraftAndNeverFinal(t *testing.T) {
 		t.Fatalf("fixture final-then-draft: %+v", res)
 	}
 
+	// A never-final document leaves the lease alone: no advance, no refusal,
+	// no new generation, however far past the lease window the runner ticks.
 	reg2 := newFakeRegistry(StageSpec)
-	esc := &escalations{}
-	r2 := &Runner{Exec: fixtureExec(t, "never-final"), Poll: testPoll, Registry: reg2, Escalate: esc.record, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	r2 := &Runner{Exec: fixtureExec(t, "never-final"), Poll: testPoll, Registry: reg2, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	now := t0
 	for i := 0; i < 3; i++ {
+		res := r2.Tick(context.Background(), now)
+		if res.Polled != 1 || res.Advanced != 0 || res.Refused != 0 || res.Errors != 0 {
+			t.Fatalf("fixture never-final tick %d: %+v", i, res)
+		}
 		now = now.Add(testLeaseTTL + time.Second)
-		r2.Tick(context.Background(), now)
 	}
-	if len(reg2.retries) != 1 || len(esc.events) != 1 || reg2.stage.Gen != 2 {
-		t.Fatalf("fixture never-final: retries=%d esc=%d gen=%d", len(reg2.retries), len(esc.events), reg2.stage.Gen)
+	if len(reg2.advances) != 0 || len(reg2.refusals) != 0 || reg2.stage.Gen != 1 {
+		t.Fatalf("fixture never-final: advances=%d refusals=%v gen=%d", len(reg2.advances), reg2.refusals, reg2.stage.Gen)
 	}
 }
 
@@ -1325,8 +1239,7 @@ func TestTick_UnclaimedAdmissionWaitsForClaim(t *testing.T) {
 	reg.stage.WorkDir = ""
 	reg.stage.Unclaimed = true
 	ex := &scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentFinal)}}
-	esc := &escalations{}
-	r := newRunner(reg, ex, esc)
+	r := newRunner(reg, ex)
 
 	res := r.Tick(context.Background(), t0)
 	if res.Unclaimed != 1 || res.Refused != 0 || res.Polled != 0 {
@@ -1356,8 +1269,7 @@ func TestTick_OwnerChangeReArmsRefusedStage(t *testing.T) {
 	reg := newFakeRegistry(StageSpec)
 	reg.stage.WorkDir = ""
 	ex := &scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentDraft)}}
-	esc := &escalations{}
-	r := newRunner(reg, ex, esc)
+	r := newRunner(reg, ex)
 
 	res := r.Tick(context.Background(), t0)
 	if res.Refused != 1 || len(reg.refusals) != 1 || reg.refusals[0] != RefuseMissingWorkDir {

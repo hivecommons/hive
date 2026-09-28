@@ -54,14 +54,14 @@ func wireSpektacularRunnerWithCloneAuth(cfg *config.Config, srv *dashboard.Serve
 			logger.Info("[spektacular] hub executor installed",
 				"identity", exec.Identity,
 				"backend", exec.Backend,
-				"max_concurrent", cfg.Runs.Spektacular.HubExecutor.MaxConcurrentOrDefault())
+				"max_concurrent", cfg.Runs.Spektacular.HubExecutor.MaxConcurrentOrDefault(),
+				"max_stage_retries", cfg.Runs.MaxStageRetriesOrDefault())
 		}
 	}
 	if logger != nil {
 		logger.Info("[spektacular] stage runner installed",
 			"binary", binary,
-			"poll", cfg.Runs.Spektacular.PollInterval().String(),
-			"max_stage_retries", cfg.Runs.MaxStageRetriesOrDefault())
+			"poll", cfg.Runs.Spektacular.PollInterval().String())
 	}
 	return true
 }
@@ -111,7 +111,7 @@ func rewireSpektacular(cfg *config.Config, srv *dashboard.Server, logger *slog.L
 	}
 	if keepExecutor {
 		// wireSpektacularRunnerWithCloneAuth would replace it; restore the
-		// original so its failure counters and activity survive.
+		// original so its held generations and activity survive.
 		defer srv.SetStageExecutor(current)
 	} else {
 		srv.SetStageExecutor(nil)

@@ -60,9 +60,12 @@ type SpekHubExecutor struct {
 	CloneURL  func(repo string) string
 	Artifact  func(runKey string) string
 
-	mu        sync.Mutex
-	inFlight  map[string]time.Time
-	failures  map[string]int
+	mu       sync.Mutex
+	inFlight map[string]time.Time
+	// held marks generations (executionKey) Tick must not launch again: the
+	// document is already final, or the generation was spent and settled
+	// against the stage budget. The key changes with every new generation.
+	held      map[string]bool
 	activity  map[string]runActivitySignal
 	lastError string
 }
@@ -119,10 +122,10 @@ func (e *SpekHubExecutor) Tick(ctx context.Context, now time.Time) {
 		if e.inFlight == nil {
 			e.inFlight = map[string]time.Time{}
 		}
-		if e.failures == nil {
-			e.failures = map[string]int{}
+		if e.held == nil {
+			e.held = map[string]bool{}
 		}
-		if _, running := e.inFlight[key]; running || e.failures[key] >= e.maxAttempts() || e.runningLocked() >= e.maxConcurrent() {
+		if _, running := e.inFlight[key]; running || e.held[key] || e.runningLocked() >= e.maxConcurrent() {
 			e.mu.Unlock()
 			continue
 		}
@@ -303,21 +306,19 @@ func (e *SpekHubExecutor) runStage(parent context.Context, st spekHubStage, key 
 	}
 	if err := e.executeStage(ctx, st); err != nil {
 		e.recordFailure(st, key, err)
+		e.settleGeneration(st, spekHubFailureReason)
 	}
 }
 
 func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) error {
 	now := time.Now().UTC()
 	receiptDir := runReceiptsDir
-	taskID := st.taskID
+	taskID := e.stageTaskID(st)
 	if st.identity != e.Identity {
-		taskID = spekHubExecutorTaskPrefix + sanitizeReceiptSegment(st.runKey) + "-" + st.stage + "-" + strconv.FormatUint(st.gen, 10)
 		e.log().Info("[spektacular] hub executor claiming stage", "run", st.runKey, "stage", st.stage, "gen", st.gen, "task", taskID)
 		if err := e.Server.contributeHub.recordLeaseForKeyStage(e.Identity, taskID, st.repo, st.number, st.key, spekHubExecutorTier, st.stage, st.gen, now); err != nil {
 			return err
 		}
-	} else if strings.TrimSpace(taskID) == "" {
-		taskID = spekHubExecutorTaskPrefix + sanitizeReceiptSegment(st.runKey) + "-" + st.stage + "-" + strconv.FormatUint(st.gen, 10)
 	}
 	stopRenew := e.startRenewing(ctx, taskID)
 	defer stopRenew()
@@ -396,7 +397,10 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 		return fmt.Errorf("agent CLI failed: %w: %s", err, tailString(string(out), spekHubOutputTailBytes))
 	}
 	if err := e.afterCLIExit(ctx, st, taskID, worktree, env, artifact, out, started, statusHistory(), receiptDir); err != nil {
-		e.log().Warn("[spektacular] post-cli status check failed", "run", st.runKey, "stage", st.stage, "gen", st.gen, "error", err)
+		// The CLI exited but whether it reached final is unknown; treat the
+		// generation as spent rather than relaunching it on every tick. If the
+		// document is in fact final the poll runner still advances it.
+		return fmt.Errorf("post-cli status check failed: %w", err)
 	}
 	return nil
 }
@@ -553,6 +557,13 @@ func (e *SpekHubExecutor) afterCLIExit(ctx context.Context, st spekHubStage, tas
 		"run", st.runKey, "stage", st.stage, "gen", st.gen, "artifact", status.JoinKey(), "document_status", status.DocumentStatus,
 		"output_tail", tailString(string(cliOut), spekHubOutputTailBytes))
 	e.recordNonFinal(st, taskID, status)
+	if strings.EqualFold(status.DocumentStatus, "stale") {
+		// Spek invalidated the plan; the poll runner parks the run as
+		// stale_plan for a fresh plan or re-approval. Retrying the generation
+		// cannot fix that, so it spends nothing and stays held.
+		return nil
+	}
+	e.settleGeneration(st, spekHubNonFinalReason)
 	return nil
 }
 
@@ -917,18 +928,19 @@ func (e *SpekHubExecutor) finalArtifact(ctx context.Context, worktree string, en
 func (e *SpekHubExecutor) holdGeneration(st spekHubStage) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.failures == nil {
-		e.failures = map[string]int{}
+	e.holdLocked(e.executionKey(st))
+}
+
+func (e *SpekHubExecutor) holdLocked(key string) {
+	if e.held == nil {
+		e.held = map[string]bool{}
 	}
-	e.failures[e.executionKey(st)] = e.maxAttempts()
+	e.held[key] = true
 }
 
 func (e *SpekHubExecutor) recordNonFinal(st spekHubStage, taskID string, status spekHubArtifactStatus) {
 	e.mu.Lock()
-	if e.failures == nil {
-		e.failures = map[string]int{}
-	}
-	e.failures[e.executionKey(st)] = e.maxAttempts()
+	e.holdLocked(e.executionKey(st))
 	e.lastError = spekHubNonFinalReason
 	e.mu.Unlock()
 	attrs := map[string]string{
@@ -1199,24 +1211,69 @@ func filteredSpekEnv(env []string, keys ...string) []string {
 func (e *SpekHubExecutor) recordFailure(st spekHubStage, key string, err error) {
 	msg := spekHubLastErrorSummary(err.Error())
 	e.mu.Lock()
-	if e.failures == nil {
-		e.failures = map[string]int{}
-	}
-	e.failures[key]++
-	attempts := e.failures[key]
+	e.holdLocked(key)
 	e.lastError = msg
 	e.mu.Unlock()
 	attrs := map[string]string{
-		stageAttrRunKey:   st.runKey,
-		stageAttrStage:    st.stage,
-		stageAttrGen:      strconv.FormatUint(st.gen, 10),
-		stageAttrReason:   spekHubFailureReason,
-		stageAttrAttempts: strconv.Itoa(attempts),
-		"waiting_on":      worksource.RunWaitingOnHuman,
+		stageAttrRunKey: st.runKey,
+		stageAttrStage:  st.stage,
+		stageAttrGen:    strconv.FormatUint(st.gen, 10),
+		stageAttrReason: spekHubFailureReason,
+		"waiting_on":    worksource.RunWaitingOnHuman,
 	}
-	e.Server.AgentAuditSink().Record("system", agent.AuditLeaseStageRefused, st.taskID, agent.Fields("run", st.runKey, "stage", st.stage, "gen", st.gen, "reason", spekHubFailureReason, "error", msg, "attempts", attempts))
+	e.Server.AgentAuditSink().Record("system", agent.AuditLeaseStageRefused, st.taskID, agent.Fields("run", st.runKey, "stage", st.stage, "gen", st.gen, "reason", spekHubFailureReason, "error", msg))
 	e.Server.LifecycleTimeline().Record(timeline.Event{IssueRef: st.runKey, Kind: timeline.KindBlocked, At: time.Now().UnixMilli(), Attrs: attrs})
-	e.log().Warn("[spektacular] hub executor failed", "run", st.runKey, "stage", st.stage, "attempts", attempts, "error", msg)
+	e.log().Warn("[spektacular] hub executor failed", "run", st.runKey, "stage", st.stage, "gen", st.gen, "error", msg)
+}
+
+// settleGeneration spends one generation of the stage budget
+// (runs.max_stage_retries) once a generation has ended without a final
+// document — the agent CLI failed, or exited with the document still draft —
+// and either mints the retry generation Tick launches next or raises the
+// decision escalation (#9143). The executor is the budget's only owner: it is
+// the one component that knows a generation is spent. Leases it holds are kept
+// alive by keepPendingStageLeasesAlive, so waiting for them to lapse would
+// never settle anything.
+func (e *SpekHubExecutor) settleGeneration(st spekHubStage, reason string) {
+	hub := e.Server.contributeHub
+	if hub == nil {
+		return
+	}
+	now := time.Now().UTC()
+	budget := e.budget()
+	identity, taskID := e.Identity, e.stageTaskID(st)
+	outcome, lease, attempts, err := hub.settleStageGeneration(identity, taskID, st.gen, budget, now)
+	if errors.Is(err, errLeaseNotFound) && st.identity != identity {
+		// The claim itself failed, so the spent generation is still held by
+		// the placeholder the executor was claiming.
+		identity, taskID = st.identity, st.taskID
+		outcome, lease, attempts, err = hub.settleStageGeneration(identity, taskID, st.gen, budget, now)
+	}
+	if err != nil {
+		e.log().Warn("[spektacular] settling spent stage generation failed", "run", st.runKey, "stage", st.stage, "gen", st.gen, "task", taskID, "error", err)
+		return
+	}
+	switch outcome {
+	case stageSettleRetried:
+		e.recordStageProgress(st, "retry_generation_minted", map[string]string{
+			stageAttrReason:   reason,
+			stageAttrAttempts: strconv.Itoa(attempts + 1),
+			stageAttrBudget:   strconv.Itoa(budget),
+			"next_gen":        strconv.FormatUint(lease.gen, 10),
+		})
+		e.log().Info("[spektacular] stage generation spent without final; retry generation minted",
+			"run", st.runKey, "stage", st.stage, "gen", st.gen, "next_gen", lease.gen, "attempt", attempts+1, "budget", budget, "reason", reason)
+	case stageSettleEscalated:
+		e.Server.escalateStageLease(st.runKey, now, map[string]string{
+			stageAttrStage:    st.stage,
+			stageAttrGen:      strconv.FormatUint(st.gen, 10),
+			stageAttrAttempts: strconv.Itoa(attempts),
+			stageAttrBudget:   strconv.Itoa(budget),
+			stageAttrSeverity: stageEscalationSeverity,
+			stageAttrReason:   fmt.Sprintf("%d of %d stage generations spent without document_status final (last: %s)", attempts, budget, reason),
+			"waiting_on":      worksource.RunWaitingOnHuman,
+		})
+	}
 }
 
 func (e *SpekHubExecutor) unclaimedStages() ([]spekHubStage, error) {
@@ -1234,11 +1291,18 @@ func (e *SpekHubExecutor) unclaimedStages() ([]spekHubStage, error) {
 		}
 		out = append(out, spekHubStage{runKey: runKey, key: key, stage: stage, identity: identity, taskID: taskID, repo: repo, number: number, gen: gen})
 	})
-	for i := range out {
-		out[i].title = e.Server.stageLeaseTitle(out[i].identity, out[i].taskID)
-		out[i].workItem = e.Server.workItemContextForRun(out[i].runKey)
+	// An escalated generation spent the stage budget; it waits for a person,
+	// across restarts too (the flag is persisted on the lease).
+	live := out[:0]
+	for _, st := range out {
+		if e.Server.contributeHub.stageLeaseEscalated(st.identity, st.taskID) {
+			continue
+		}
+		st.title = e.Server.stageLeaseTitle(st.identity, st.taskID)
+		st.workItem = e.Server.workItemContextForRun(st.runKey)
+		live = append(live, st)
 	}
-	return out, err
+	return live, err
 }
 
 // stageStillActive reports whether some active lease on st's run key is
@@ -1275,7 +1339,20 @@ func (e *SpekHubExecutor) executionKeyPrefix(runKey, stage string) string {
 	return strings.TrimSpace(runKey) + "\x1f" + strings.TrimSpace(stage) + "\x1f"
 }
 
-func (e *SpekHubExecutor) maxAttempts() int { return e.Config.MaxStageRetriesOrDefault() }
+// budget is runs.max_stage_retries: how many generations one stage may spend,
+// the first included, before settleGeneration escalates instead of retrying.
+// Each generation is launched once; a launch failure spends it like a
+// non-final exit does.
+func (e *SpekHubExecutor) budget() int { return e.Config.MaxStageRetriesOrDefault() }
+
+// stageTaskID is the task the executor holds st under: the lease's own task
+// when the executor already owns it, else the task it claims st as.
+func (e *SpekHubExecutor) stageTaskID(st spekHubStage) string {
+	if st.identity == e.Identity && strings.TrimSpace(st.taskID) != "" {
+		return st.taskID
+	}
+	return spekHubExecutorTaskPrefix + sanitizeReceiptSegment(st.runKey) + "-" + st.stage + "-" + strconv.FormatUint(st.gen, 10)
+}
 
 func (e *SpekHubExecutor) maxConcurrent() int {
 	return e.Config.Spektacular.HubExecutor.MaxConcurrentOrDefault()
