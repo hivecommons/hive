@@ -1,6 +1,7 @@
 package github
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -124,5 +125,64 @@ func TestRESTNegativeCache_MatchesGitHubEnterprisePathPrefix(t *testing.T) {
 	}
 	if requests != 1 {
 		t.Fatalf("server requests = %d, want GHE-prefixed PR 404 cached", requests)
+	}
+}
+
+func TestDurationFromEnv(t *testing.T) {
+	const name = "HIVE_TEST_DURATION_FROM_ENV"
+	cases := []struct {
+		raw  string
+		want time.Duration
+	}{
+		{"", time.Minute},         // unset → fallback
+		{"45m", 45 * time.Minute}, // Go duration string
+		{"7", 7 * time.Minute},    // bare integer = minutes
+		{"-5", time.Minute},       // negative integer → fallback
+		{"garbage", time.Minute},  // unparsable → fallback
+		{"-30m", time.Minute},     // negative duration → fallback
+	}
+	for _, tc := range cases {
+		t.Setenv(name, tc.raw)
+		if got := durationFromEnv(name, time.Minute); got != tc.want {
+			t.Fatalf("durationFromEnv(%q) = %v, want %v", tc.raw, got, tc.want)
+		}
+	}
+}
+
+func TestRESTNegativeCache_PrunesExpiredAndEvictsOldest(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	c := &rest404NegativeCache{entries: map[string]rest404NegativeEntry{}, now: func() time.Time { return now }}
+
+	// A zero/negative TTL is never cached.
+	c.put("never", 0, "test")
+	if len(c.entries) != 0 {
+		t.Fatalf("zero-TTL put must be a no-op: %v", c.entries)
+	}
+
+	// An expired entry is pruned by the next put.
+	c.put("stale", time.Second, "test")
+	now = now.Add(2 * time.Second)
+	c.put("fresh", time.Hour, "test")
+	if _, ok := c.entries["stale"]; ok {
+		t.Fatal("expired entry should have been pruned on the next put")
+	}
+	if _, ok := c.entries["fresh"]; !ok {
+		t.Fatal("fresh entry missing after prune")
+	}
+
+	// Filling past the cap evicts the entries expiring soonest, never the
+	// newest long-lived one.
+	for i := 0; i < rest404NegativeCacheMaxEntries; i++ {
+		c.put(fmt.Sprintf("k%05d", i), time.Duration(i+2)*time.Hour, "test")
+	}
+	if len(c.entries) != rest404NegativeCacheMaxEntries {
+		t.Fatalf("cache size = %d, want cap %d", len(c.entries), rest404NegativeCacheMaxEntries)
+	}
+	if _, ok := c.entries["fresh"]; ok {
+		t.Fatal("the soonest-expiring entry should have been evicted at the cap")
+	}
+	newest := fmt.Sprintf("k%05d", rest404NegativeCacheMaxEntries-1)
+	if _, ok := c.entries[newest]; !ok {
+		t.Fatalf("the longest-lived entry %s must survive eviction", newest)
 	}
 }
