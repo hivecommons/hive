@@ -5,7 +5,16 @@
 // (hivecommons/hive#9583). "Changes requested" is GitHub's review decision;
 // "review threads" are the unresolved review-bot threads from review-threads.json (#7360), which are
 // already filtered to non-hive authors, so the agent's own replies can never
-// trigger another follow-up.
+// trigger another follow-up. Human feedback (conversation comments, review
+// bodies, inline comments) arrives through Options.Comments with the same
+// per-comment authorship guarantee (github.FetchHumanPRComments).
+//
+// When the authoring conversation is gone (a pod restart, or the agent's next
+// regular kick /clear'd it), a follow-up falls back to the ordinary
+// fresh-dispatch path. The PR's handoff note (handoff.go) travels with that
+// fallback: HandoffSection renders it, plus any human feedback that had no
+// other route, into the agent's next kick, so the fresh session still starts
+// from the original reasoning.
 //
 // It builds on the re-entrant turn model (pkg/turn, RFC #4002) rather than
 // adding a parallel mechanism: the pointer for one PR IS a
@@ -33,6 +42,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/github"
@@ -55,6 +65,21 @@ const (
 	varNumber     = "pr_number"
 	varURL        = "pr_url"
 	varCLISession = "cli_session"
+	// varNote holds the PR's handoff note (see handoff.go).
+	varNote = "handoff_note"
+	// varLive is "1" while the PR has follow-up activity the authoring agent
+	// has not finished with; HandoffSection only renders live PRs.
+	varLive = "followup_live"
+	// varPending holds the human feedback queued for the next fresh kick
+	// (JSON []pendingHandoff).
+	varPending = "handoff_pending"
+	// varHandoffs counts human-feedback events handed to a fresh kick; with
+	// TurnCount it is the per-PR follow-up budget MaxFollowUpsPerPR bounds.
+	varHandoffs = "handoff_count"
+	// varSkip records why the PR is currently skipped, so a skip is counted
+	// once per transition rather than once per tick.
+	varSkip  = "skip_reason"
+	liveFlag = "1"
 
 	// messageTriggerKey tags each follow-up turn appended to the envelope.
 	messageTriggerKey = "trigger"
@@ -90,6 +115,29 @@ const (
 	ReasonNoResumer    = "no agent manager"
 	ReasonSuperseded   = "superseded before delivery"
 )
+
+// Skip reasons: a PR with a pointer that is currently not routed at all.
+const (
+	SkipDraft     = "draft"
+	SkipFork      = "fork"
+	SkipEscalated = "escalated to a human"
+)
+
+// Audit actions recorded through Options.Audit / SweepOptions.Audit.
+const (
+	AuditActionRouted  = "pr_followup_routed"
+	AuditActionSkipped = "pr_followup_skipped"
+	AuditActionPruned  = "pr_followup_pruned"
+)
+
+// AuditFunc records one audit event (see agentaudit.AuditSink.Record; the
+// actor is always the hive itself).
+type AuditFunc func(action, agent string, fields map[string]any)
+
+// storeMu serialises every read-modify-write of the pointer store in this
+// process: the eval tick (Route, Sweep), the PR-opened hook (Record) and the
+// kick builder (HandoffSection) run on different goroutines.
+var storeMu sync.Mutex
 
 // Route values reported in Outcome.
 const (
@@ -149,6 +197,14 @@ func PointerID(repo string, number int) string {
 // agent had no resumable session, and the pointer is still written so the PR
 // is known to be this hive's (later follow-ups then fall back).
 func Record(ctx context.Context, dir, agentName, repo string, number int, url, cliSession string, now time.Time) error {
+	return RecordWithNote(ctx, dir, agentName, repo, number, url, cliSession, "", now)
+}
+
+// RecordWithNote is Record plus the PR's handoff note (BuildHandoffNote). An
+// empty note leaves any note already saved for the PR in place.
+func RecordWithNote(ctx context.Context, dir, agentName, repo string, number int, url, cliSession, note string, now time.Time) error {
+	storeMu.Lock()
+	defer storeMu.Unlock()
 	if strings.TrimSpace(agentName) == "" || strings.TrimSpace(repo) == "" || number <= 0 {
 		return fmt.Errorf("prfollowup: agent, repo and PR number are required (agent=%q repo=%q number=%d)", agentName, repo, number)
 	}
@@ -182,6 +238,9 @@ func Record(ctx context.Context, dir, agentName, repo string, number int, url, c
 	env.Agent = toolapprove.AgentIdentity{Name: agentName}
 	env.Variables[varURL] = url
 	env.Variables[varCLISession] = cliSession
+	if note = strings.TrimSpace(note); note != "" {
+		env.Variables[varNote] = note
+	}
 	env.UpdatedAt = now
 	return store.Persist(ctx, env)
 }
@@ -199,6 +258,7 @@ const (
 	EventCIFailure        EventKind = "ci_failure"
 	EventChangesRequested EventKind = "changes_requested"
 	EventReviewThread     EventKind = "review_thread"
+	EventHumanComment     EventKind = "human_comment"
 )
 
 // Event is one follow-up to deliver. Key is stable for the underlying fact
@@ -223,7 +283,13 @@ type Options struct {
 	// Threads holds the unresolved review-bot threads per PR, keyed by
 	// ThreadsKey (from review-threads.json). Nil means none known.
 	Threads map[string][]github.ReviewThread
-	Logger  *slog.Logger
+	// Comments holds the human feedback per PR, keyed by ThreadsKey (from
+	// github.FetchHumanPRComments, already filtered to human authors). Nil
+	// means none known.
+	Comments map[string][]github.PRComment
+	// Audit, when non-nil, records every routing decision and skip.
+	Audit  AuditFunc
+	Logger *slog.Logger
 }
 
 // Outcome reports what Route did for one PR that had pending follow-ups.
@@ -234,26 +300,30 @@ type Outcome struct {
 	Events []Event
 	Route  string
 	Reason string
+	// Queued counts human-feedback events handed to the agent's next fresh
+	// kick (HandoffSection) because the session could not be resumed.
+	Queued int
 }
 
 // Route walks the open PRs, and for every PR this hive authored (has a
 // pointer) with new follow-up events, either resumes the authoring session
 // with them or records a fallback to the ordinary fresh-dispatch path. It
 // performs no GitHub calls: every signal it reads is already on the PR from
-// the eval tick's enumeration.
+// the eval tick's enumeration, or was collected by the caller (Threads,
+// Comments).
 func Route(ctx context.Context, prs []github.PullRequest, r Resumer, opts Options, now time.Time) []Outcome {
+	storeMu.Lock()
+	defer storeMu.Unlock()
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
 	store := turn.FileStore{Dir: opts.Dir}
 	var outcomes []Outcome
+	var delta Stats
 	for i := range prs {
 		pr := &prs[i]
-		if pr.Draft || pr.FromFork || pr.Number <= 0 || pr.Repo == "" {
-			continue
-		}
-		if opts.Skip != nil && opts.Skip(pr.Repo, pr.Number) {
+		if pr.Number <= 0 || pr.Repo == "" {
 			continue
 		}
 		env, err := store.Load(ctx, PointerID(pr.Repo, pr.Number))
@@ -268,7 +338,33 @@ func Route(ctx context.Context, prs []github.PullRequest, r Resumer, opts Option
 		if !pointerIs(env, pr.Repo, pr.Number) || env.Agent.Name == "" {
 			continue
 		}
-		out, changed := routeOne(&env, pr, opts.Threads[ThreadsKey(pr.Repo, pr.Number)], r, opts, now)
+		var out *Outcome
+		changed := false
+		if reason := skipReason(pr, opts); reason != "" {
+			// Skipped PRs are left entirely alone (no events are journaled),
+			// so a draft marked ready, or a PR a human hands back, routes its
+			// follow-ups normally again. Only the transition is counted.
+			if env.Variables[varSkip] != reason {
+				env.Variables[varSkip] = reason
+				changed = true
+				delta.addSkipped(reason)
+				audit(opts.Audit, AuditActionSkipped, env.Agent.Name, "outcome", "skipped", "reason", reason,
+					"repo", pr.Repo, "pr", pr.Number)
+			}
+			if env.Variables[varLive] != "" {
+				delete(env.Variables, varLive)
+				changed = true
+			}
+		} else {
+			if env.Variables[varSkip] != "" {
+				delete(env.Variables, varSkip)
+				changed = true
+			}
+			key := ThreadsKey(pr.Repo, pr.Number)
+			var routed bool
+			out, routed = routeOne(&env, pr, opts.Threads[key], opts.Comments[key], r, opts, now, &delta)
+			changed = changed || routed
+		}
 		if changed {
 			env.UpdatedAt = now
 			if err := store.Persist(ctx, env); err != nil {
@@ -279,20 +375,81 @@ func Route(ctx context.Context, prs []github.PullRequest, r Resumer, opts Option
 			level := slog.LevelInfo
 			if out.Route == RouteDeferred {
 				level = slog.LevelDebug // retried every tick while the agent works
+			} else {
+				audit(opts.Audit, AuditActionRouted, out.Agent, "outcome", out.Route, "reason", out.Reason,
+					"repo", out.Repo, "pr", out.Number, "events", len(out.Events), "kinds", eventKinds(out.Events),
+					"queued", out.Queued)
 			}
 			logger.Log(ctx, level, "prfollowup: routed PR follow-up", "repo", out.Repo, "pr", out.Number,
-				"agent", out.Agent, "route", out.Route, "reason", out.Reason, "events", len(out.Events))
+				"agent", out.Agent, "route", out.Route, "reason", out.Reason, "events", len(out.Events), "queued", out.Queued)
 			outcomes = append(outcomes, *out)
 		}
+	}
+	if err := addStats(opts.Dir, delta, now); err != nil {
+		logger.Warn("prfollowup: failed to update follow-up counters", "error", err)
 	}
 	return outcomes
 }
 
+// skipReason says why a PR with a pointer is not routed at all, or "".
+func skipReason(pr *github.PullRequest, opts Options) string {
+	switch {
+	case pr.Draft:
+		return SkipDraft
+	case pr.FromFork:
+		return SkipFork
+	case opts.Skip != nil && opts.Skip(pr.Repo, pr.Number):
+		return SkipEscalated
+	}
+	return ""
+}
+
+func audit(fn AuditFunc, action, agent string, kv ...any) {
+	if fn == nil {
+		return
+	}
+	fields := make(map[string]any, len(kv)/2)
+	for i := 0; i+1 < len(kv); i += 2 {
+		k, ok := kv[i].(string)
+		if !ok {
+			continue
+		}
+		if s, isStr := kv[i+1].(string); isStr && s == "" {
+			continue
+		}
+		fields[k] = kv[i+1]
+	}
+	fn(action, agent, fields)
+}
+
+func eventKinds(events []Event) string {
+	seen := map[EventKind]bool{}
+	var kinds []string
+	for _, ev := range events {
+		if !seen[ev.Kind] {
+			seen[ev.Kind] = true
+			kinds = append(kinds, string(ev.Kind))
+		}
+	}
+	sort.Strings(kinds)
+	return strings.Join(kinds, ",")
+}
+
 // routeOne handles one eligible PR. It returns the outcome (nil when there
 // was nothing to do) and whether env changed and must be persisted.
-func routeOne(env *turn.SessionEnvelope, pr *github.PullRequest, threads []github.ReviewThread, r Resumer, opts Options, now time.Time) (*Outcome, bool) {
-	events := detectEvents(pr, threads)
-	changed := false
+func routeOne(env *turn.SessionEnvelope, pr *github.PullRequest, threads []github.ReviewThread, comments []github.PRComment, r Resumer, opts Options, now time.Time, delta *Stats) (result *Outcome, changed bool) {
+	events := detectEvents(pr, threads, comments, env.CreatedAt)
+	changed = reconcilePending(env, r, delta)
+	// A PR is "live" while it still has follow-up activity: a fact that stays
+	// true until the agent fixes it (red CI, changes requested, an open bot
+	// thread) or human feedback still waiting for a fresh kick. A human
+	// comment that was already resumed or handed off does not keep it live.
+	// Only live PRs get their handoff note in the agent's kicks.
+	defer func() {
+		if setLive(env, hasStandingFact(events) || len(pendingHandoffs(env)) > 0) {
+			changed = true
+		}
+	}()
 	keyOf := func(ev Event) string {
 		return turn.DeriveIdempotencyKey(env.SessionID, turn.OpIntent{
 			Kind: turn.OpFollowUpKick, Repo: pr.Repo, Target: "#" + strconv.Itoa(pr.Number), Body: ev.Key,
@@ -339,6 +496,9 @@ func routeOne(env *turn.SessionEnvelope, pr *github.PullRequest, threads []githu
 		intend()
 		settle(turn.OpFailed, "", fallbackPrefix+reason)
 		out.Route, out.Reason = RouteFallback, reason
+		out.Queued = queueHandoffs(env, pending, r, now)
+		delta.addFallback(reason, len(pending))
+		delta.HandoffsQueued += out.Queued
 		return out, true
 	}
 
@@ -356,11 +516,10 @@ func routeOne(env *turn.SessionEnvelope, pr *github.PullRequest, threads []githu
 	if err := r.SendResumeKick(env.Agent.Name, msg, current); err != nil {
 		if errors.Is(err, ErrBusy) {
 			out.Route, out.Reason = RouteDeferred, err.Error()
+			delta.Deferred++
 			return out, true
 		}
-		settle(turn.OpFailed, "", fallbackPrefix+err.Error())
-		out.Route, out.Reason = RouteFallback, err.Error()
-		return out, true
+		return fallback(err.Error())
 	}
 	settle(turn.OpSucceeded, externalRefResumed, "")
 	env.AddMessage(turn.RoleUser, msg)
@@ -372,7 +531,42 @@ func routeOne(env *turn.SessionEnvelope, pr *github.PullRequest, threads []githu
 		env.Variables[varCLISession] = next
 	}
 	out.Route = RouteResumed
+	delta.Resumed += len(pending)
 	return out, true
+}
+
+// hasStandingFact reports whether events include a fact that stays true
+// until the agent acts on it (anything but a one-off human comment).
+func hasStandingFact(events []Event) bool {
+	for _, ev := range events {
+		if ev.Kind != EventHumanComment {
+			return true
+		}
+	}
+	return false
+}
+
+// setLive records whether the PR has live follow-up activity and reports
+// whether that changed.
+func setLive(env *turn.SessionEnvelope, live bool) bool {
+	was := env.Variables[varLive] == liveFlag
+	if live == was {
+		return false
+	}
+	if live {
+		env.Variables[varLive] = liveFlag
+	} else {
+		delete(env.Variables, varLive)
+	}
+	return true
+}
+
+// followUpsUsed is how much of MaxFollowUpsPerPR a PR has spent: follow-ups
+// resumed into the authoring session plus human feedback handed to a fresh
+// kick.
+func followUpsUsed(env *turn.SessionEnvelope) int {
+	n, _ := strconv.Atoi(env.Variables[varHandoffs])
+	return env.TurnCount + n
 }
 
 // resumeBlocker returns why the authoring session cannot be resumed, or ""
@@ -381,7 +575,7 @@ func resumeBlocker(env *turn.SessionEnvelope, r Resumer, opts Options, now time.
 	if opts.MaxAge > 0 && now.Sub(env.CreatedAt) > opts.MaxAge {
 		return ReasonExpired
 	}
-	if env.TurnCount >= MaxFollowUpsPerPR {
+	if followUpsUsed(env) >= MaxFollowUpsPerPR {
 		return ReasonCapReached
 	}
 	if r == nil {
@@ -398,9 +592,10 @@ func resumeBlocker(env *turn.SessionEnvelope, r Resumer, opts Options, now time.
 	return ""
 }
 
-// detectEvents derives the follow-up events visible on pr and its
-// unresolved review-bot threads.
-func detectEvents(pr *github.PullRequest, threads []github.ReviewThread) []Event {
+// detectEvents derives the follow-up events visible on pr, its unresolved
+// review-bot threads, and the human comments left since the pointer was
+// created (since).
+func detectEvents(pr *github.PullRequest, threads []github.ReviewThread, comments []github.PRComment, since time.Time) []Event {
 	var events []Event
 	// A settled red CI: CIChecksRunning means other shards are still
 	// reporting, and the whole failure set is not known yet.
@@ -434,7 +629,37 @@ func detectEvents(pr *github.PullRequest, threads []github.ReviewThread) []Event
 			Detail: threadDetail(th),
 		})
 	}
+	for _, c := range comments {
+		// Dedupe is per comment id (the journal key). A comment older than
+		// the pointer predates the PR's follow-up window: never routed.
+		if c.ID == "" || c.CreatedAt.Before(since) {
+			continue
+		}
+		events = append(events, Event{
+			Kind:   EventHumanComment,
+			Key:    "comment:" + c.ID,
+			Detail: commentDetail(c),
+		})
+	}
 	return events
+}
+
+func commentDetail(c github.PRComment) string {
+	what := "Comment"
+	switch c.Kind {
+	case github.PRCommentReview:
+		what = "Review"
+	case github.PRCommentInline:
+		what = "Review comment"
+	}
+	where := ""
+	if c.Path != "" {
+		where = " on " + c.Path
+		if c.Line > 0 {
+			where = fmt.Sprintf(" on %s:%d", c.Path, c.Line)
+		}
+	}
+	return fmt.Sprintf("%s from %s%s (%s): %s", what, c.Author, where, c.ID, truncateRunes(strings.TrimSpace(c.Body), threadBodyRunes))
 }
 
 func threadDetail(th github.ReviewThread) string {

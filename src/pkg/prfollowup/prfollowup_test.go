@@ -352,7 +352,7 @@ func TestRoute_ReviewEventsAndThreads(t *testing.T) {
 
 func TestDetectEvents_ChangesRequestedWithoutReviewers(t *testing.T) {
 	pr := github.PullRequest{Protection: &github.ProtectionFacts{ReviewDecision: github.ReviewDecisionChangesRequested}}
-	ev := detectEvents(&pr, nil)
+	ev := detectEvents(&pr, nil, nil, time.Time{})
 	if len(ev) != 1 || ev[0].Detail != "A reviewer requested changes." {
 		t.Fatalf("events = %+v", ev)
 	}
