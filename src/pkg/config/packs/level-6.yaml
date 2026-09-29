@@ -48,6 +48,7 @@ governor:
       outreach: paused
       sec-check: 2h
       reviewer: 30m
+      adjudicator: 30m
       strategist: paused
       telemetry: paused
       operations: paused
@@ -59,6 +60,7 @@ governor:
       outreach: paused
       sec-check: 2h
       reviewer: 30m
+      adjudicator: 30m
       strategist: paused
       telemetry: paused
       operations: paused
@@ -72,6 +74,7 @@ governor:
       outreach: paused
       sec-check: 2h
       reviewer: 30m
+      adjudicator: 30m
       strategist: paused
       telemetry: paused
       operations: paused
@@ -85,6 +88,7 @@ governor:
       outreach: paused
       sec-check: 2h
       reviewer: 30m
+      adjudicator: 30m
       strategist: paused
       telemetry: paused
       operations: paused
@@ -366,6 +370,34 @@ agents:
 
     '
   knowledge_use: 'Reads the repository at the PR head; cites file:line evidence.
+
+    '
+- name: adjudicator
+  display_name: adjudicator
+  role: reviewer
+  description: 'Escalated-PR adjudicator (the reviewer lane). Works hive-authored PRs
+    carrying needs-human and delivers exactly one verdict per PR: REPAIR, DE-ESCALATE
+    or RECOMMEND-CLOSE. Gets no kick_template on purpose, so its kick is routed by
+    role to reviewer-lane.md (hivecommons/hive#9477). Never merges.
+
+    '
+  emoji: ⚖️
+  color: '#2c3e50'
+  sort_order: 27
+  backend: copilot
+  model: claude-fable-5
+  bead_role: worker
+  mode: ISSUES_AND_PRS
+  include_repos: true
+  on_demand: false
+  stale_timeout: 3600  # 1h — must exceed the 30m cadence
+  interactions: 'Adjudicates escalated (needs-human) hive-authored PRs at most three
+    per kick, one pass per PR (reviewer-passed / reviewer-recommend-close). Pushes
+    repairs to the same branch; never opens a replacement PR and never merges.
+
+    '
+  knowledge_use: 'Reads the escalated PR, its CI evidence and the base branch to decide
+    whether the change is still wanted and can be made lossless.
 
     '
 - name: brainstorm

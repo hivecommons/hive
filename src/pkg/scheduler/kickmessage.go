@@ -386,8 +386,11 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 	// Role-based routing (#5480): an operator-added agent with `role: reviewer`
 	// gets the escalated-PR adjudication kick regardless of its name. Checked
 	// before the name switch because the lane is enabled by ROLE — the agent
-	// may be named anything. (The pack-defined on-demand "reviewer" agent
-	// never reaches this fallback: its kick_template resolves above.)
+	// may be named anything. The pack-defined queue "reviewer" never reaches
+	// this fallback because its kick_template resolves above, which is why the
+	// L5/L6 packs ship the lane as a separate template-less "adjudicator"
+	// agent (hivecommons/hive#9477). A kick_template on a reviewer-role
+	// agent shadows the lane.
 	if s.agentRole(agentName) == RoleReviewer {
 		return s.buildReviewerMessage(agentName, actionable)
 	}

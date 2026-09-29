@@ -294,3 +294,71 @@ func TestFormatReviewerWorkList_UnknownCreationTimeSortsLast(t *testing.T) {
 		t.Errorf("only the row with a known creation time may render an opened line (got %d):\n%s", n, out)
 	}
 }
+
+// hivecommons/hive#9477: an escalated PR that is conflicted has no failing
+// check (CI does not run on it), so it is absent from ci_failing. The hub lists
+// it under "escalated" instead, and the lane must adjudicate it from there,
+// with GitHub's mergeability shown as the evidence. A row present in both lists
+// renders once.
+func TestFormatReviewerWorkList_IncludesEscalatedNonFailingPRs(t *testing.T) {
+	fixture := `{"ci_failing":[
+  {"number":9,"repo":"o/r","title":"red escalated","escalated":true,"failing_checks":["build"]}
+],"escalated":[
+  {"number":9258,"repo":"o/r","title":"conflicted escalated","escalated":true,
+   "labels":["needs-human"],"mergeable":"no","ci_status":"success"},
+  {"number":9,"repo":"o/r","title":"red escalated","escalated":true},
+  {"number":77,"repo":"o/r","title":"already adjudicated","escalated":true,
+   "labels":["reviewer-passed"],"mergeable":"no"}
+]}`
+	out := formatReviewerWorkList([]byte(fixture))
+	for _, want := range []string{"o/r#9258", "state: mergeable=no, ci=success", "gh pr checkout 9258 --repo o/r", "o/r#9 "} {
+		if !strings.Contains(out, want) {
+			t.Errorf("work list missing %q:\n%s", want, out)
+		}
+	}
+	if n := strings.Count(out, "o/r#9 "); n != 1 {
+		t.Errorf("row in both lists rendered %d times, want 1:\n%s", n, out)
+	}
+	if strings.Contains(out, "#77") {
+		t.Errorf("reviewer-passed row from the escalated list must be excluded:\n%s", out)
+	}
+}
+
+// hivecommons/hive#9477: with the L6 pack roster, the template-less
+// adjudicator receives the lane contract and the escalated PR, while the queue
+// reviewer keeps its kick_template (reviewer-queue.md). Before the fix the
+// only role-reviewer agent in the pack was the templated one, so the lane was
+// unreachable.
+func TestBuildAgentMessage_PackL6AdjudicatorGetsLaneReviewerKeepsQueue(t *testing.T) {
+	s := reviewerTestScheduler(t, 6, `{"ci_failing":[],"escalated":[
+  {"number":9258,"repo":"test-org/console","title":"conflicted escalated","escalated":true,
+   "labels":["needs-human"],"mergeable":"no","ci_status":"success"}]}`)
+	pack, err := config.ACMMPackByLevel(6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.cfg.Agents = map[string]config.AgentConfig{}
+	for _, pa := range pack.Agents {
+		if pa.Name == "reviewer" || pa.Name == "adjudicator" {
+			s.cfg.Agents[pa.Name] = config.AgentConfig{Role: pa.Role, Mode: pa.Mode, KickTemplate: pa.KickTemplate}
+		}
+	}
+	if len(s.cfg.Agents) != 2 {
+		t.Fatalf("L6 pack must define both reviewer and adjudicator, got %v", s.cfg.Agents)
+	}
+
+	lane := s.BuildAgentMessage("adjudicator", nil, &github.ActionableResult{})
+	for _, want := range []string{"[agent:adjudicator]", "ADJUDICATION CONTRACT", "test-org/console#9258", "MAY then close the PR yourself"} {
+		if !strings.Contains(lane, want) {
+			t.Errorf("adjudicator kick missing %q:\n%s", want, lane)
+		}
+	}
+
+	queue := s.BuildAgentMessage("reviewer", nil, &github.ActionableResult{})
+	if strings.Contains(queue, "ADJUDICATION CONTRACT") {
+		t.Errorf("the queue reviewer must keep reviewer-queue.md, not the lane contract:\n%s", queue)
+	}
+	if queue == "" || !strings.Contains(queue, "[agent:reviewer]") {
+		t.Errorf("the queue reviewer must still receive its templated kick, got:\n%s", queue)
+	}
+}

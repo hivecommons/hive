@@ -66,9 +66,9 @@ Delivery agents open GitHub issues — bugs, docs gaps, CI problems, security vu
 | **sec-check** | **holdgated** | `sec-check-holdgated.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
 
-### L5 — Semi-Autonomous (Semi-Automated) (12 agents)
+### L5 — Semi-Autonomous (Semi-Automated) (13 agents)
 
-Agents open issues AND pull requests. Agent PRs get literal `hold` from the level gate — humans batch-review and approve. The dashboard `hive-pause/<hive-id>` label is a separate manual hold, and `hive/<hive-id>` is provenance only. Architect produces RFCs, strategist coordinates across agents, and reviewer works the hold-gated PR queue every 30 minutes. The system proposes; it does not merge autonomously.
+Agents open issues AND pull requests. Agent PRs get literal `hold` from the level gate — humans batch-review and approve. The dashboard `hive-pause/<hive-id>` label is a separate manual hold, and `hive/<hive-id>` is provenance only. Architect produces RFCs, strategist coordinates across agents, and reviewer works the hold-gated PR queue every 30 minutes, and adjudicator works escalated (`needs-human`) hive PRs through the reviewer lane every 30 minutes (recommend-close only; closing is operator-only below L6). The system proposes; it does not merge autonomously.
 
 | Agent | Mode | Template |
 |-------|------|----------|
@@ -81,13 +81,14 @@ Agents open issues AND pull requests. Agent PRs get literal `hold` from the leve
 | architect | holdgated | `architect-holdgated.md` |
 | strategist | holdgated | `strategist-holdgated.md` |
 | reviewer | converse | `reviewer-queue.md` |
+| adjudicator | issues+prs | `reviewer-lane.md` (by role; no `kick_template`) |
 | telemetry (paused) | holdgated | `telemetry-holdgated.md` |
 | operations (paused) | holdgated | `operations-holdgated.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
 
-### L6 — Fully Autonomous (13 agents)
+### L6 — Fully Autonomous (14 agents)
 
-Existing autonomous lanes can open issues, create PRs, and auto-merge on green CI. Non-outreach L6 PRs do not get the level hold, but outreach PRs are still held for human review. Outreach handles community engagement. Reviewer stays advisory even here — its `requires_human` verdict is what pulls a PR out of the auto-merge lane. Telemetry and operations remain paused and use `ISSUES_AND_PRS`, so they never merge their own PRs.
+Existing autonomous lanes can open issues, create PRs, and auto-merge on green CI. Non-outreach L6 PRs do not get the level hold, but outreach PRs are still held for human review. Outreach handles community engagement. Reviewer stays advisory even here — its `requires_human` verdict is what pulls a PR out of the auto-merge lane. Adjudicator is the reviewer lane: it repairs, de-escalates, or recommends closing (and may close) escalated `needs-human` hive PRs, and never merges. Telemetry and operations remain paused and use `ISSUES_AND_PRS`, so they never merge their own PRs.
 
 | Agent | Mode | Template |
 |-------|------|----------|
@@ -101,6 +102,7 @@ Existing autonomous lanes can open issues, create PRs, and auto-merge on green C
 | strategist | full | `strategist-full.md` |
 | outreach | full | `outreach-full.md` |
 | reviewer | converse | `reviewer-queue.md` |
+| adjudicator | issues+prs | `reviewer-lane.md` (by role; no `kick_template`) |
 | telemetry (paused) | full | `telemetry-full.md` |
 | operations (paused) | full | `operations-full.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |

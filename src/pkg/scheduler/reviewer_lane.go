@@ -261,7 +261,11 @@ func (s *Scheduler) buildReviewerWorkList() string {
 }
 
 // formatReviewerWorkList renders the reviewer work list from raw
-// ci-failing.json bytes. Rows are ESCALATED hive-authored PRs only —
+// ci-failing.json bytes: the escalated rows of "ci_failing" plus the
+// "escalated" list, which carries escalated PRs that are NOT red — conflicted
+// (CI never runs), green or pending ones (hivecommons/hive#9477). Without it
+// such a PR dropped out of the lane the moment its checks stopped failing.
+// Rows are ESCALATED hive-authored PRs only —
 // writeMergeEligible builds the file exclusively from the hive's own PR
 // enumeration with per-agent attribution, so every row is hive work; rows
 // whose Labels carry ReviewerPassedLabel or ReviewerRecommendCloseLabel are
@@ -280,18 +284,27 @@ func formatReviewerWorkList(data []byte) string {
 		Excerpt       string    `json:"excerpt"`
 		Escalated     bool      `json:"escalated"`
 		CreatedAt     time.Time `json:"created_at"`
+		Mergeable     string    `json:"mergeable"`
+		CIStatus      string    `json:"ci_status"`
 	}
 	var payload struct {
-		Items []ciFailingRow `json:"ci_failing"`
+		Items     []ciFailingRow `json:"ci_failing"`
+		Escalated []ciFailingRow `json:"escalated"`
 	}
 	if json.Unmarshal(data, &payload) != nil {
 		return ""
 	}
 	var rows []ciFailingRow
-	for _, pr := range payload.Items {
+	seen := make(map[string]bool, len(payload.Items)+len(payload.Escalated))
+	for _, pr := range append(payload.Items, payload.Escalated...) {
 		if !pr.Escalated {
 			continue // still in the automated fix lane — not the reviewer's
 		}
+		key := fmt.Sprintf("%s#%d", pr.Repo, pr.Number)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		adjudicated := false
 		for _, l := range pr.Labels {
 			// One reviewer pass per PR, ever — for EVERY verdict class:
@@ -355,6 +368,9 @@ func formatReviewerWorkList(data []byte) string {
 			b.WriteString(fmt.Sprintf("    opened: %s\n", pr.CreatedAt.UTC().Format(time.RFC3339)))
 		}
 		b.WriteString(fmt.Sprintf("    checkout: gh pr checkout %d --repo %s\n", pr.Number, pr.Repo))
+		if pr.Mergeable != "" || pr.CIStatus != "" {
+			b.WriteString(fmt.Sprintf("    state: mergeable=%s, ci=%s\n", orUnknown(pr.Mergeable), orUnknown(pr.CIStatus)))
+		}
 		if len(pr.FailingChecks) > 0 {
 			b.WriteString(fmt.Sprintf("    failing: %s\n", strings.Join(pr.FailingChecks, ", ")))
 		}
@@ -366,4 +382,11 @@ func formatReviewerWorkList(data []byte) string {
 		}
 	}
 	return b.String()
+}
+
+func orUnknown(v string) string {
+	if v == "" {
+		return "unknown"
+	}
+	return v
 }

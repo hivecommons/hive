@@ -498,12 +498,24 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		// so it is listed here with the flag rather than dropped — the owning
 		// agent's fix-before-new block says "fix CI, do not remove the hold".
 		Held bool `json:"held,omitempty"`
+		// Mergeable and CIStatus are set on the escalated rows only
+		// (hivecommons/hive#9477): an escalated PR that is conflicted, green
+		// or pending has no failing check to explain it, so the reviewer lane
+		// needs GitHub's own verdict to pick REPAIR vs DE-ESCALATE.
+		Mergeable string `json:"mergeable,omitempty"`
+		CIStatus  string `json:"ci_status,omitempty"`
 	}
 
 	prAgents := auditPRAgents(org, time.Now().Add(-auditPRAttributionWindow), "")
 
 	var eligible []eligiblePR
 	var failing []failingPR
+	// escalated holds the escalated (needs-human) hive PRs that did NOT land
+	// in the failing bucket — conflicted, green or pending ones
+	// (hivecommons/hive#9477). ci_failing alone dropped them, and with them
+	// every chance of the reviewer lane adjudicating them: CI does not even
+	// run on a conflicted PR, so it is never red.
+	var escalated []failingPR
 	var reviewArtifact review.Artifact
 	reviewLoaded := false
 	if requireReviewApproval {
@@ -559,28 +571,34 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			iv := intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]
 			logger.Info("excluding PR from merge-eligible due to intent verification", "repo", fullRepo, "number", pr.Number, "tier", iv.Tier, "reason", intentReason)
 		}
+		row := failingPR{
+			Number:          pr.Number,
+			Repo:            fullRepo,
+			Title:           pr.Title,
+			Author:          pr.Author,
+			HeadSHA:         pr.HeadSHA,
+			FailingChecks:   pr.FailingChecks,
+			Excerpt:         pr.CIFailureExcerpt,
+			Escalated:       escalatedPRs[escalation.Key(fullRepo, pr.Number)],
+			Agent:           prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)],
+			Labels:          pr.Labels,
+			CreatedAt:       pr.CreatedAt,
+			HeadRef:         pr.HeadRef,
+			HeadRepo:        pr.HeadRepo,
+			FromFork:        pr.FromFork,
+			ReachableAction: github.ReachableAction(pr),
+			Held:            held,
+		}
+		if bucket != mergeBucketFailing && row.Escalated && !holdDriftPRs[key] {
+			row.Mergeable = mergeableJSON(pr.Mergeable)
+			row.CIStatus = pr.CIStatus
+			escalated = append(escalated, row)
+		}
 		switch bucket {
 		case mergeBucketSkip:
 			continue
 		case mergeBucketFailing:
-			failing = append(failing, failingPR{
-				Number:          pr.Number,
-				Repo:            fullRepo,
-				Title:           pr.Title,
-				Author:          pr.Author,
-				HeadSHA:         pr.HeadSHA,
-				FailingChecks:   pr.FailingChecks,
-				Excerpt:         pr.CIFailureExcerpt,
-				Escalated:       escalatedPRs[escalation.Key(fullRepo, pr.Number)],
-				Agent:           prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)],
-				Labels:          pr.Labels,
-				CreatedAt:       pr.CreatedAt,
-				HeadRef:         pr.HeadRef,
-				HeadRepo:        pr.HeadRepo,
-				FromFork:        pr.FromFork,
-				ReachableAction: github.ReachableAction(pr),
-				Held:            held,
-			})
+			failing = append(failing, row)
 			continue
 		}
 
@@ -623,6 +641,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 	failPayload := map[string]any{
 		"generated_at": time.Now().UTC().Format(time.RFC3339),
 		"ci_failing":   failing,
+		"escalated":    escalated,
 	}
 	failData, err := json.Marshal(failPayload)
 	if err != nil {
