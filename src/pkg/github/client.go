@@ -2049,6 +2049,14 @@ func (c *Client) EnsureIssueLabel(ctx context.Context, repo, name, color, descri
 	if color == "" {
 		color = "8250df"
 	}
+	if def, ok := escalationIssueLabelDefinition(name); ok {
+		if color == "8250df" {
+			color = def.color
+		}
+		if strings.TrimSpace(description) == "" {
+			description = def.description
+		}
+	}
 	_, _, err := c.client.Issues.CreateLabel(ctx, owner, repoName, &gh.Label{
 		Name:        gh.Ptr(name),
 		Color:       gh.Ptr(color),

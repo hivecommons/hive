@@ -11,6 +11,21 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-29 (v5.85.2)
+
+### Changed
+
+- Steady Overview chart card sizing, move carousel controls into the gear popover, and make chart transitions more perceptible.
+
+### Fixed
+
+- Pushbroker's DCO sign-off guard (`rejectForgedLaneSignoffs`) now reads the pushing lane's identity via `git var GIT_AUTHOR_IDENT`, which honours the `GIT_AUTHOR_*`/`GIT_COMMITTER_*` environment variables pinned per agent, instead of `git config user.name`/`user.email`, which resolves from the fleet-shared, last-writer-wins `~/.gitconfig` bridge ([#9478](https://github.com/hivecommons/hive/issues/9478)). Previously the guard could compare an outgoing commit against whichever agent's config write landed last rather than the identity that actually produced the commit.
+- `src/docs/health-checks.md` now applies `src/deploy/k8s/dashboard-route-rbac.yaml` ([#9538](https://github.com/hivecommons/hive/issues/9538)). The old `deploy/k8s/` path failed from the repository root.
+- Two docs now cite the right lines in `src/deploy/k8s` ([#9539](https://github.com/hivecommons/hive/issues/9539)): the pod security context in `deployment.yaml` (`src/docs/design/agent-host-confinement.md`) and the Secret keys in `secret.yaml` (`src/docs/move-cross-runtime.md`).
+- The Kubernetes block in `src/README.md` now runs from the repository root, builds the ConfigMap from a copy of `src/hive.yaml.example`, and applies both RBAC manifests before the Deployment ([#9540](https://github.com/hivecommons/hive/issues/9540)). It used to mix `deploy/k8s/` and `src/` paths, so it failed from either directory.
+- CI toolchain installation now keeps apt mirror-fallback work inside each retry slice and tests fallback rewriting against hermetic apt sources instead of the runner's `/etc/apt`.
+- Align the governor threshold settings slider with the scaled pressure-bar thresholds, current pressure marker, and explicit in-force scaling math.
+
 ## 2026-09-29 (v5.85.1)
 
 ### Fixed

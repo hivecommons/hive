@@ -1,1 +1,0 @@
-- The Kubernetes block in `src/README.md` now runs from the repository root, builds the ConfigMap from a copy of `src/hive.yaml.example`, and applies both RBAC manifests before the Deployment ([#9540](https://github.com/hivecommons/hive/issues/9540)). It used to mix `deploy/k8s/` and `src/` paths, so it failed from either directory.

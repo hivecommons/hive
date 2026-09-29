@@ -1545,20 +1545,22 @@
     .repo-pr-pill .pill-role { font-size:var(--fs-2xs); font-weight:700; letter-spacing:0.02em; text-transform:uppercase; margin-left:3px; opacity:0.85; }
     .overview-card { position: relative; margin: var(--sp-0) var(--sp-0) var(--sp-6); padding: var(--sp-5); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2); }
     .overview-header { display: inline-flex; align-items: center; gap: var(--sp-2); }
-    .overview-settings-popover { position: absolute; z-index: 40; right: var(--sp-5); top: calc(var(--sp-5) + var(--sp-8)); width: min(28rem, calc(100vw - var(--sp-8))); padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r); background: var(--panel); box-shadow: var(--shadow-lg); }
+    .overview-settings-popover { position: absolute; z-index: 40; right: var(--sp-5); top: calc(var(--sp-5) + var(--sp-8)); width: min(34rem, calc(100vw - var(--sp-8))); padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r); background: var(--panel); box-shadow: var(--shadow-lg); }
     .overview-settings-popover[hidden] { display: none; }
     .overview-settings-title { font-size: var(--fs-sm); font-weight: 800; margin-bottom: var(--sp-3); }
+    .overview-settings-section { display: grid; gap: var(--sp-3); padding-top: var(--sp-3); margin-top: var(--sp-3); border-top: 1px solid var(--border); }
+    .overview-settings-card-title { color: var(--text); font-size: var(--fs-xs); font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; }
     .overview-settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-3); }
     .overview-settings-row { display: flex; align-items: center; gap: var(--sp-2); color: var(--muted); font-size: var(--fs-xs); }
     .overview-settings-row input, .overview-settings-row select { accent-color: var(--accent); }
     .overview-settings-field { display: grid; gap: var(--sp-1); color: var(--muted); font-size: var(--fs-xs); }
     .overview-settings-field input, .overview-settings-field select, .overview-chart-select { min-width: 0; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg); color: var(--text); padding: var(--sp-1) var(--sp-2); font: inherit; }
-    .overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--sp-5); }
-    .overview-chart-card { position: relative; display: grid; grid-template-columns: minmax(200px, 240px) minmax(0, 1fr); align-items: center; gap: var(--sp-4); min-width: 0; overflow: hidden; }
-    .overview-chart-card:has(.overview-hbar) { grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); }
-    .overview-chart-meta { min-width: 0; }
-    .overview-chart-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-3); font-size: var(--fs-xs); }
-    .overview-chart-controls .overview-chart-select { font-size: var(--fs-xs); line-height: 1.2; padding: 2px var(--sp-2); }
+    .overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--sp-5); align-items: start; }
+    .overview-chart-card { --overview-chart-card-min-height: 18rem; position: relative; display: grid; grid-template-columns: minmax(200px, 240px) minmax(0, 1fr); align-items: start; gap: var(--sp-4); min-width: 0; min-height: var(--overview-chart-card-min-height); overflow: hidden; }
+    .overview-chart-meta { min-width: 0; padding-right: var(--sp-7); }
+    .overview-chart-download { position: absolute; top: var(--sp-2); right: var(--sp-2); display: inline-flex; align-items: center; justify-content: center; width: var(--sp-7); height: var(--sp-7); padding: var(--sp-0); }
+    .overview-chart-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); font-size: var(--fs-xs); }
+    .overview-chart-controls .overview-chart-select { font-size: var(--fs-xs); line-height: 1.2; padding: var(--sp-1) var(--sp-2); }
     .overview-carousel-arrow { border: 1px solid var(--border); border-radius: var(--r-pill); background: var(--bg); color: var(--muted); cursor: pointer; padding: 2px var(--sp-2); font-size: var(--fs-2xs); line-height: 1.2; }
     .overview-carousel-arrow:hover { color: var(--text); border-color: var(--accent); }
     .overview-carousel-arrow[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
@@ -1579,11 +1581,11 @@
     .overview-chart-line { fill: none; stroke: var(--slice-c); stroke-width: 2; }
     .overview-chart-point { fill: var(--slice-c); }
     .overview-chart-hist-cell { fill: var(--slice-c); }
-    .overview-panel-in { animation-duration: var(--overview-transition-duration, 500ms); animation-timing-function: ease; animation-fill-mode: both; }
-    .overview-panel-out { animation-duration: var(--overview-transition-duration, 500ms); animation-timing-function: ease; animation-fill-mode: both; }
-    .overview-duration-fast { --overview-transition-duration: 250ms; }
-    .overview-duration-normal { --overview-transition-duration: 500ms; }
-    .overview-duration-slow { --overview-transition-duration: 900ms; }
+    .overview-panel-in { animation-duration: var(--overview-transition-duration, 1000ms); animation-timing-function: ease; animation-fill-mode: both; }
+    .overview-panel-out { animation-duration: var(--overview-transition-duration, 1000ms); animation-timing-function: ease; animation-fill-mode: both; }
+    .overview-duration-fast { --overview-transition-duration: 500ms; }
+    .overview-duration-normal { --overview-transition-duration: 1000ms; }
+    .overview-duration-slow { --overview-transition-duration: 1800ms; }
     .overview-panel-in.overview-transition-fade { animation-name: overview-fade-in; }
     .overview-panel-out.overview-transition-fade { animation-name: overview-fade-out; }
     .overview-panel-in.overview-transition-rise-from-bottom { animation-name: overview-rise-from-bottom-in; }
@@ -9896,6 +9898,7 @@
     const OVERVIEW_CHART_TYPE_LABELS = { donut: 'Donut', pie: 'Pie', bar: 'Horizontal bar', stacked: '100% stacked bar', line: 'Line / spark', histogram: 'Age histogram' };
     const OVERVIEW_TRANSITIONS = ['fade', 'rise-from-bottom', 'lower-from-top', 'slide-from-left', 'slide-from-right', 'zoom', 'flip', 'blur', 'random'];
     const OVERVIEW_DURATIONS = ['fast', 'normal', 'slow'];
+    const OVERVIEW_TRANSITION_DURATION_MS = { fast: 500, normal: 1000, slow: 1800 };
     const OVERVIEW_CAROUSEL_MIN_MS = 5000;
     const OVERVIEW_CAROUSEL_MAX_MS = 300000;
     const OVERVIEW_CAROUSEL_DEFAULT_MS = 30000;
@@ -10084,7 +10087,7 @@
       const html = renderOverviewDonut(title, subtitle, slices);
       const start = html.indexOf('<svg');
       const end = html.indexOf('</svg>');
-      return start >= 0 && end >= start ? html.slice(start, end + '</svg>'.length) : html;
+      return start >= 0 && end >= start ? html.slice(start, end + '</svg>'.length) : '<div class="overview-empty">No matching items in this view.</div>';
     }
 
     const overviewChartRenderers = {
@@ -10119,19 +10122,24 @@
       const body = renderOverviewChartBody(active, title, subtitle, slices, kind, state);
       const total = (slices || []).reduce((n, s) => n + s.count, 0);
       const csvKind = kind === 'pr' ? 'prs' : 'issues';
-      const csvTitle = total ? ('Export ' + (kind === 'pr' ? 'PRs' : 'issues') + ' as CSV') : 'No matching items to export';
-      const controls = `<div class="overview-chart-controls"><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselPrev" data-arg0="${kind}" data-stop="1" title="Previous Overview chart">◀</button><select class="overview-chart-select" data-change-action="setOverviewChartType" data-arg0="${kind}" data-arg-types="s,v" title="Overview chart type">${overviewChartTypeOptions(active)}</select><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselNext" data-arg0="${kind}" data-stop="1" title="Next Overview chart">▶</button>${renderOverviewDots(enabled, active)}<span class="overview-chart-controls-sep"></span><button type="button" class="overview-carousel-arrow" data-action="toggleOverviewCarousel" data-stop="1" aria-pressed="${state.carousel ? 'true' : 'false'}" title="${state.carousel ? 'Auto-play on — rotates every ' + Math.round(state.intervalMs / 1000) + 's through the ticked charts (⚙️ to choose). Click to pause.' : 'Auto-play off — click to rotate through the ticked charts every ' + Math.round(state.intervalMs / 1000) + 's'}">${state.carousel ? '⏸ auto' : '⏵ auto'}</button><select class="overview-chart-select" data-change-action="setOverviewTransition" data-arg-types="v" title="Transition between charts">${overviewTransitionOptions(state.transition)}</select><span class="overview-chart-controls-sep"></span><a class="hv-btn btn-sm overview-export-csv" href="${esc(overviewExportURL(csvKind))}" data-stop="1" title="${esc(csvTitle)}">Export CSV</a></div>`;
-      return `<div class="overview-chart-card ${panelClass}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${body}<div class="overview-chart-meta">${controls}<div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices, csvKind)}</div></div></div>`;
+      const csvTitle = total ? ('Download ' + (kind === 'pr' ? 'PRs' : 'issues') + ' as CSV') : 'No matching items to download';
+      const download = `<a class="hv-btn btn-icon btn-sm overview-export-csv overview-chart-download" href="${esc(overviewExportURL(csvKind))}" data-stop="1" title="Download CSV" aria-label="${esc(csvTitle)}">⬇︎</a>`;
+      return `<div class="overview-chart-card ${panelClass}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${download}${body}<div class="overview-chart-meta"><div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices, csvKind)}</div></div></div>`;
     }
 
     function renderOverviewSettingsPopover(state) {
       const el = document.getElementById('overview-chart-settings');
       if (!el) return;
       const typeRows = OVERVIEW_CHART_TYPES.map(type => `<label class="overview-settings-row"><input type="checkbox" data-change-action="setOverviewChartRotation" data-arg0="${esc(type)}" data-arg-types="s,c"${state.enabled[type] ? ' checked' : ''}>${esc(OVERVIEW_CHART_TYPE_LABELS[type])}<span>in rotation</span></label>`).join('');
-      const transitionOptions = OVERVIEW_TRANSITIONS.map(t => `<option value="${esc(t)}"${state.transition === t ? ' selected' : ''}>${esc(t.replace(/-/g, ' '))}</option>`).join('');
       const durationOptions = OVERVIEW_DURATIONS.map(d => `<option value="${esc(d)}"${state.duration === d ? ' selected' : ''}>${esc(d)}</option>`).join('');
       const seconds = Math.round(state.intervalMs / 1000);
-      setIfChanged(el, `<div class="overview-settings-title">Overview charts</div><div class="overview-settings-grid">${typeRows}</div><label class="overview-settings-row"><input type="checkbox" data-change-action="setOverviewCarouselEnabled" data-arg-types="c"${state.carousel ? ' checked' : ''}>Carousel on</label><label class="overview-settings-field">Interval (seconds)<input type="number" min="5" max="300" step="5" value="${seconds}" data-change-action="setOverviewCarouselInterval" data-arg-types="N"></label><label class="overview-settings-field">Transition<select data-change-action="setOverviewTransition" data-arg-types="v">${transitionOptions}</select></label><label class="overview-settings-field">Duration<select data-change-action="setOverviewDuration" data-arg-types="v">${durationOptions}</select></label>`);
+      const cardControls = (kind, label) => {
+        const enabled = overviewEnabledTypes(state);
+        const active = enabled.includes(state.active[kind]) ? state.active[kind] : enabled[0];
+        const autoTitle = state.carousel ? 'Auto-play on — rotates every ' + Math.round(overviewCarouselDwellMs(state) / 1000) + 's through the ticked charts. Click to pause.' : 'Auto-play off — click to rotate through the ticked charts every ' + Math.round(overviewCarouselDwellMs(state) / 1000) + 's';
+        return `<div class="overview-settings-section" aria-label="${esc(label)} chart controls"><div class="overview-settings-card-title">${esc(label)}</div><div class="overview-chart-controls"><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselPrev" data-arg0="${kind}" data-stop="1" title="Previous ${esc(label)} chart" aria-label="Previous ${esc(label)} chart">◀</button><label class="overview-settings-field">Chart type<select class="overview-chart-select" data-change-action="setOverviewChartType" data-arg0="${kind}" data-arg-types="s,v" title="${esc(label)} chart type">${overviewChartTypeOptions(active)}</select></label><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselNext" data-arg0="${kind}" data-stop="1" title="Next ${esc(label)} chart" aria-label="Next ${esc(label)} chart">▶</button>${renderOverviewDots(enabled, active)}<span class="overview-chart-controls-sep"></span><button type="button" class="overview-carousel-arrow" data-action="toggleOverviewCarousel" data-stop="1" aria-pressed="${state.carousel ? 'true' : 'false'}" title="${esc(autoTitle)}" aria-label="${esc(autoTitle)}">${state.carousel ? '⏸ auto' : '⏵ auto'}</button><label class="overview-settings-field">Transition<select class="overview-chart-select" data-change-action="setOverviewTransition" data-arg-types="v" title="Transition between charts">${overviewTransitionOptions(state.transition)}</select></label></div></div>`;
+      };
+      setIfChanged(el, `<div class="overview-settings-title">Overview charts</div><div class="overview-settings-grid">${typeRows}</div><label class="overview-settings-field">Interval (seconds)<input type="number" min="5" max="300" step="5" value="${seconds}" data-change-action="setOverviewCarouselInterval" data-arg-types="N"></label><label class="overview-settings-field">Duration<select data-change-action="setOverviewDuration" data-arg-types="v">${durationOptions}</select></label>${cardControls('issue', 'Issues')}${cardControls('pr', 'PRs')}`);
     }
 
     function rerenderOverviewChartsFromState(state) {
@@ -10163,6 +10171,14 @@
       const state = overviewChartsState();
       state.intervalMs = Math.min(OVERVIEW_CAROUSEL_MAX_MS, Math.max(OVERVIEW_CAROUSEL_MIN_MS, Number(seconds || 30) * 1000));
       rerenderOverviewChartsFromState(state);
+    }
+
+    function overviewTransitionDurationMs(state) {
+      return OVERVIEW_TRANSITION_DURATION_MS[(state && state.duration) || 'normal'] || OVERVIEW_TRANSITION_DURATION_MS.normal;
+    }
+
+    function overviewCarouselDwellMs(state) {
+      return Math.max(Number((state && state.intervalMs) || OVERVIEW_CAROUSEL_DEFAULT_MS), overviewTransitionDurationMs(state));
     }
 
     function setOverviewTransition(value) {
@@ -10223,7 +10239,7 @@
       _overviewCarouselTimers.push(setInterval(() => {
         if (document.visibilityState !== 'visible' || _overviewHoverState[kind]) return;
         overviewCarouselAutoNext(kind);
-      }, state.intervalMs));
+      }, overviewCarouselDwellMs(state)));
     }
 
     function renderOverviewCharts(repos) {
@@ -25713,6 +25729,14 @@ function burnAreaChart() {
       return repos;
     }
 
+    function governorScalingSummary(repoCount, scaling, activeScope) {
+      const repos = Math.max(1, Number(repoCount) || 1);
+      const factor = governorScalingFactor(repos, scaling, activeScope);
+      if (factor <= 1) return '';
+      if (scaling === 'sqrt') return `Scaling: Square-root × ceil(sqrt(${repos} watched repos)) = ×${factor}`;
+      return `Scaling: Linear × ${repos} watched repos`;
+    }
+
     function governorThresholdIsPinned(d, key) {
       const dirty = (_configState.dirty && _configState.dirty.thresholds) || {};
       if (Object.prototype.hasOwnProperty.call(dirty, key)) return true;
@@ -25767,10 +25791,13 @@ function burnAreaChart() {
       return Number(baseValue) === Number(effectiveValue) ? String(baseValue) : `${baseValue} → ${effectiveValue}`;
     }
 
-    function governorThresholdHintText(effectiveValue, pinned, factor, repoCount) {
-      if (Number(factor) <= 1 || Number(repoCount) <= 1) return '';
-      const suffix = pinned ? `pinned, ${repoCount} repos` : `× ${factor}, ${repoCount} repos`;
-      return `= ${effectiveValue} in force (${suffix})`;
+    function governorThresholdHintText(baseValue, effectiveValue, pinned, repoCount, scaling, activeScope) {
+      const repos = Math.max(1, Number(repoCount) || 1);
+      const factor = governorScalingFactor(repos, scaling, activeScope);
+      if (factor <= 1) return '';
+      if (pinned) return `${effectiveValue} (pinned, scaling off)`;
+      if (scaling === 'sqrt') return `${baseValue} × ceil(sqrt(${repos} repos)) = ${effectiveValue} in force`;
+      return `${baseValue} × ${repos} repos = ${effectiveValue} in force`;
     }
 
     function renderGovThresholds(d) {
@@ -25791,7 +25818,7 @@ function burnAreaChart() {
       const activeScaling = scalingDirty !== undefined ? scalingDirty : scaling;
       const scaled = activeScaling !== 'none' && repoCount > 1 && activeScope !== 'per_repo';
       const effective = governorEffectiveThresholds(d, base, activeScope, activeScaling);
-      const factor = governorScalingFactor(repoCount, activeScaling, activeScope);
+      const scalingSummary = governorScalingSummary(repoCount, activeScaling, activeScope);
       const pinned = {
         quiet: governorThresholdIsPinned(d, 'quiet'),
         busy: governorThresholdIsPinned(d, 'busy'),
@@ -25806,9 +25833,9 @@ function burnAreaChart() {
         { key: 'surge', pct: bounds.surgePct, text: governorThresholdLabel(s, effective.surge, pinned.surge), color: GOVERNOR_MODE_COLORS.surge },
       ], 11);
       const hints = {
-        quiet: scaled ? governorThresholdHintText(effective.quiet, pinned.quiet, factor, repoCount) : '',
-        busy: scaled ? governorThresholdHintText(effective.busy, pinned.busy, factor, repoCount) : '',
-        surge: scaled ? governorThresholdHintText(effective.surge, pinned.surge, factor, repoCount) : '',
+        quiet: scaled ? governorThresholdHintText(q, effective.quiet, pinned.quiet, repoCount, activeScaling, activeScope) : '',
+        busy: scaled ? governorThresholdHintText(b, effective.busy, pinned.busy, repoCount, activeScaling, activeScope) : '',
+        surge: scaled ? governorThresholdHintText(s, effective.surge, pinned.surge, repoCount, activeScaling, activeScope) : '',
       };
       const zoneLabels = governorStaggerLabels([
         { key: 'idle', pct: bounds.quietPct / 2, color: GOVERNOR_MODE_COLORS.idle },
@@ -25847,6 +25874,7 @@ function burnAreaChart() {
         </div>
         <p class="fs-sm text-muted mb-7">Drag the handles to set issue-count thresholds for governor mode transitions.</p>
         ${effNote}
+        ${scalingSummary ? `<p class="fs-sm text-muted mb-4" id="thresh-scaling-summary"><strong>${scalingSummary}</strong></p>` : ''}
         <div class="thresh-bar-wrap">
           <div class="thresh-bar-track" id="thresh-track"
                data-max="${maxValue}" style="background:${governorModeGradient(bounds)}">
@@ -25953,7 +25981,7 @@ function burnAreaChart() {
         const hint = document.getElementById('thresh-hint-' + key);
         if (handle) { handle.style.left = pct + '%'; handle.dataset.val = raw; }
         if (lbl) { lbl.textContent = governorThresholdLabel(raw, effVal, pinned[key]); lbl.style.left = pct + '%'; lbl.style.top = ((labelLanes[key] || 0) * 1.35) + 'em'; }
-        if (hint) hint.textContent = scaled ? governorThresholdHintText(effVal, pinned[key], factor, repoCount) : '';
+        if (hint) hint.textContent = scaled ? governorThresholdHintText(raw, effVal, pinned[key], repoCount, activeScaling, activeScope) : '';
       }
       const pressureMarker = track.querySelector('.thresh-pressure-marker');
       if (pressureMarker) pressureMarker.style.left = bounds.pressurePct + '%';

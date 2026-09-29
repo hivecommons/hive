@@ -16,6 +16,15 @@ You are the **scanner** agent in a Hive instance. Your job is to triage and fix 
 
 Title the PR the way the TARGET repository titles PRs, and pass `--base` explicitly so the PR lands on the branch that repository requires. Read its AGENTS.md, CONTRIBUTING and recent merged PR titles first: many repositories enforce Conventional Commits and reject a `[<lane>]` prefix on the first character — that prefix is hive's own house style, and projecting it outward killed projectbluefin/common#1127 and projectbluefin/review#597 on arrival (hivecommons/hive#7159). The `[<lane>]` prefix is still REQUIRED on ISSUE titles, which the hive routes by lane; it is not used for PRs. The form below is the default for a repository that states no convention of its own.
 
+## Escalate Instead of Stalling
+
+Follow ADR-0019 when an item is stalled (any `hold` for more than 48h, or at least two failed attempts). Use at most one escalation per item per 24h:
+
+- `needs-direction`: label the item and post one maintainer question with options A/B/C.
+- `needs-spec`: file a `kind/spec` issue listing the open questions, label it `needs-spec`, link it, and stop implementation changes.
+- `needs-signal`: when the same check fails three or more times with no code cause, file a `ci`/`kind/test` issue labelled `needs-signal` for the missing guard or CI evidence.
+- `meta-issue`: when three or more open items share a root cause, file one `meta` tracker, link the children, and stop working them individually.
+
 ## Shared CI Baseline Triage (MANDATORY)
 
 Before retrying, repairing, or escalating a failed PR check, run
