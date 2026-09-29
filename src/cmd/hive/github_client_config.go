@@ -61,15 +61,13 @@ func (b *boot) newConfiguredGitHubAppClient(auth *github.AppAuth) *github.Client
 	return client
 }
 
-// githubHoldLabels is the hold-label set every client carries. Normally the
-// canonical per-hive hold label; after a failed hold-label migration (see
-// runLoopWith) the legacy provenance spelling is kept as a hold too, fail
-// closed, and a client rebuild must keep it rather than silently releasing
-// that work.
+// githubHoldLabels is the hold-label set every client carries: the canonical
+// per-hive hold label (hive-pause/<id>). The legacy hive/<id> spelling is
+// deliberately NOT part of it: that label is the provenance label on every
+// item the hive claims, and github.HasHoldLabelWith never treats it as a hold
+// (#9371), so carrying it here could hold nothing and treating it as a hold
+// would park every claimed item.
 func (b *boot) githubHoldLabels() []string {
-	if fallback := b.holdLabelFallback.Load(); fallback != nil && len(*fallback) > 0 {
-		return append([]string(nil), (*fallback)...)
-	}
 	return []string{github.CanonicalHiveHoldLabel(b.cfg.HiveID)}
 }
 
@@ -261,4 +259,21 @@ func (b *boot) handleCanaryLeak(leak ioscan.CanaryLeak) {
 			_ = store.SetMetadata(bead.ID, "source", leak.Source)
 		}
 	}
+}
+
+// holdMigrationFailedAlertID is the dashboard system alert raised when the
+// startup hive hold-label migration fails (see runLoopWith).
+const holdMigrationFailedAlertID = "hive-hold-migration-failed"
+
+// holdMigrationFailedAlertMessage explains a failed hold-label migration to the
+// operator: items still carrying only the legacy hive/<id> label are not held,
+// because that label is provenance and is never matched as a hold (#9371).
+func holdMigrationFailedAlertMessage(hiveID, reportPath string) string {
+	msg := "Hive hold-label migration failed: items still carrying only the legacy " +
+		github.HiveProvenanceLabel(hiveID) + " label are NOT treated as held (it is the provenance label, #9371). " +
+		"Re-apply " + github.CanonicalHiveHoldLabel(hiveID) + " to anything that must stay held, or restart to retry the migration."
+	if reportPath != "" {
+		msg += " Migration report: " + reportPath
+	}
+	return msg
 }

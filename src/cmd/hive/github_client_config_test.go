@@ -236,33 +236,86 @@ func TestConfigureGitHubClientTiersWaitForDependencies(t *testing.T) {
 	nilBoot.configureGitHubClient(client)
 }
 
-// A failed hold-label migration keeps the legacy provenance label as a hold
-// for the life of the process. A rebuild must keep it too, or the rebuild
-// silently releases exactly the work the fail-closed path was protecting.
-func TestRebuiltGitHubClientKeepsHoldLabelFallback(t *testing.T) {
+// A rebuilt client must carry exactly the hold labels the boot client does:
+// the canonical hive-pause/<id> hold (the only hive-configured hold label;
+// the generic "hold" substrings are built into pkg/github). Before #9614 each
+// rebuild site re-typed this list by hand.
+func TestRebuiltGitHubClientGetsBootHoldLabels(t *testing.T) {
 	cfg := rebuildTestConfig(true)
 	b, _ := newDepsTestBoot(t, cfg)
-	provenance := []string{github.HiveProvenanceLabel(rebuildTestHiveID)}
-
-	before := b.newConfiguredGitHubAppClient(testAppAuth(t, cfg))
-	if before.IsHeldLabels(provenance) {
-		t.Fatal("positive control: the provenance label already holds without the fallback")
-	}
-
-	fallback := []string{github.CanonicalHiveHoldLabel(rebuildTestHiveID), github.HiveProvenanceLabel(rebuildTestHiveID)}
-	b.holdLabelFallback.Store(&fallback)
+	bootAuth := testAppAuth(t, cfg)
+	b.bootGitHubWith(bootGitHubDeps{
+		initGitHubAuth: func(_ context.Context, c *config.Config, logger *slog.Logger) githubAuth {
+			client := github.NewClientFromAppWithBotLogin(bootAuth, c.Project.Org, c.Project.Repos, logger, c.GitHub.BotLogin())
+			return githubAuth{Client: client, AppAuth: bootAuth}
+		},
+	})
 	rebuilt := b.newConfiguredGitHubAppClient(testAppAuth(t, cfg))
-	if !rebuilt.IsHeldLabels(provenance) {
-		t.Fatal("a rebuild dropped the fail-closed legacy hold label")
-	}
-	if !rebuilt.IsHeldLabels([]string{github.CanonicalHiveHoldLabel(rebuildTestHiveID)}) {
-		t.Fatal("a rebuild dropped the canonical hold label")
-	}
 
-	got := b.githubHoldLabels()
-	got[0] = "mutated"
-	if again := b.githubHoldLabels(); again[0] == "mutated" {
-		t.Fatal("githubHoldLabels returned the stored slice; callers can corrupt the fallback")
+	canonical := []string{github.CanonicalHiveHoldLabel(rebuildTestHiveID)}
+	otherHive := []string{github.CanonicalHiveHoldLabel("some-other-hive")}
+	bare := github.NewClientFromAppWithBotLogin(testAppAuth(t, cfg), cfg.Project.Org, cfg.Project.Repos, b.logger, cfg.GitHub.BotLogin())
+	if bare.IsHeldLabels(canonical) {
+		t.Fatal("positive control: an unconfigured client already holds the canonical label; the check is vacuous")
+	}
+	for label, c := range map[string]*github.Client{"boot": b.ghClient, "rebuilt": rebuilt} {
+		if !c.IsHeldLabels(canonical) {
+			t.Fatalf("%s client does not hold %v", label, canonical)
+		}
+		if c.IsHeldLabels(otherHive) {
+			t.Fatalf("%s client holds another hive's pause label %v; the hold must be hive-scoped", label, otherHive)
+		}
+	}
+	if got, want := b.githubHoldLabels(), canonical; !reflect.DeepEqual(got, want) {
+		t.Fatalf("githubHoldLabels = %v, want %v", got, want)
+	}
+}
+
+// Pins #9371: the legacy hive/<id> label is the provenance label on every
+// item the hive claims and is never a hold, not even when it is passed to the
+// client explicitly as a hold label. A failed hold-label migration therefore
+// cannot "fail closed" by adding it (that parked every claimed item), which is
+// why runLoopWith warns instead.
+func TestProvenanceLabelIsNeverAHold(t *testing.T) {
+	cfg := rebuildTestConfig(true)
+	b, _ := newDepsTestBoot(t, cfg)
+	client := b.newConfiguredGitHubAppClient(testAppAuth(t, cfg))
+	provenance := github.HiveProvenanceLabel(rebuildTestHiveID)
+
+	if client.IsHeldLabels([]string{provenance}) {
+		t.Fatalf("configured client treats provenance label %q as a hold", provenance)
+	}
+	client.SetHoldLabels([]string{github.CanonicalHiveHoldLabel(rebuildTestHiveID), provenance})
+	if client.IsHeldLabels([]string{provenance}) {
+		t.Fatalf("provenance label %q became a hold when passed explicitly; this recreates #9371", provenance)
+	}
+	// A hive ID containing "hold" must not turn its provenance label into a
+	// hold through the generic substring rule either.
+	holdy := github.HiveProvenanceLabel("hosted-placeholder-r05x")
+	if client.IsHeldLabels([]string{holdy}) {
+		t.Fatalf("provenance label %q matched the generic hold substring", holdy)
+	}
+	// Positive control: the canonical hold still holds.
+	if !client.IsHeldLabels([]string{github.CanonicalHiveHoldLabel(rebuildTestHiveID)}) {
+		t.Fatal("positive control: the canonical hold label does not hold")
+	}
+}
+
+func TestHoldMigrationFailedAlertMessage(t *testing.T) {
+	msg := holdMigrationFailedAlertMessage(rebuildTestHiveID, "/data/hold-migration.json")
+	for _, want := range []string{
+		github.HiveProvenanceLabel(rebuildTestHiveID),
+		github.CanonicalHiveHoldLabel(rebuildTestHiveID),
+		"NOT treated as held",
+		"#9371",
+		"/data/hold-migration.json",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("alert message %q missing %q", msg, want)
+		}
+	}
+	if strings.Contains(holdMigrationFailedAlertMessage(rebuildTestHiveID, ""), "Migration report") {
+		t.Error("alert message names a report when there is none")
 	}
 }
 

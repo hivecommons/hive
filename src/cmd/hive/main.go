@@ -5533,21 +5533,24 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			HiveID: b.cfg.HiveID,
 			Logger: b.logger,
 		}); err != nil {
-			// Fail closed: if the migration cannot prove/carry ambiguous or
-			// audit-backed holds, keep the old provenance spelling in the hold
-			// set for this process rather than silently releasing work.
-			// Recorded on b so a later client rebuild keeps it (#9614).
-			fallback := []string{
-				github.CanonicalHiveHoldLabel(b.cfg.HiveID),
-				github.HiveProvenanceLabel(b.cfg.HiveID),
-			}
-			b.holdLabelFallback.Store(&fallback)
-			b.ghClient.SetHoldLabels(b.githubHoldLabels())
+			// No fail-closed fallback is possible here: the legacy hold label
+			// hive/<id> IS the provenance label on every claimed item, and
+			// github.HasHoldLabelWith never treats provenance labels as holds
+			// (#9371 - treating it as one parked every claimed item). Items
+			// still carrying only the legacy label are therefore NOT held.
+			// Say so loudly, in the log and on the dashboard, instead of
+			// pretending to fail closed (#9614).
 			reportPath := ""
 			if report != nil {
 				reportPath = report.ReportPath
 			}
-			b.logger.Error("hive hold label migration failed; keeping legacy hive provenance label as a hold until next restart", "error", err, "report", reportPath)
+			b.logger.Error("hive hold label migration failed; items still carrying only the legacy "+
+				github.HiveProvenanceLabel(b.cfg.HiveID)+" label are NOT treated as held (#9371) - re-apply "+
+				github.CanonicalHiveHoldLabel(b.cfg.HiveID)+" by hand or restart to retry the migration",
+				"error", err, "report", reportPath)
+			if b.dashSrv != nil {
+				b.dashSrv.AddSystemAlert(holdMigrationFailedAlertID, "warning", holdMigrationFailedAlertMessage(b.cfg.HiveID, reportPath))
+			}
 		}
 	}
 	deps.runEval(b, nil)
