@@ -33,8 +33,8 @@ else
       "expected recursive repair in the worker and an '&' at its call site"
 fi
 
-if grep -q "'isolation_marker_dir':" "$ENTRYPOINT" \
-   && grep -q "'isolation_revision':" "$ENTRYPOINT"; then
+if grep -q "isolation_marker_dir" "$ENTRYPOINT" \
+   && grep -q "isolation_revision" "$ENTRYPOINT"; then
   ok "uid-map.json carries the marker contract to the Go manager"
 else
   bad "uid-map.json does not carry both isolation marker fields"
@@ -47,8 +47,10 @@ if [ -z "$helpers" ]; then
   bad "could not extract the marker helpers from entrypoint.sh"
 else
   marker_tmp="$(mktemp -d)"
-  # shellcheck disable=SC1090,SC2086 -- intentionally execute extracted shipped helpers.
+  # shellcheck disable=SC1090,SC2086
+  # Intentionally execute extracted shipped helpers.
   eval "$helpers"
+  # shellcheck disable=SC2034
   HIVE_UID_ISOLATION_MARKER_DIR="$marker_tmp"
   marker="$(hive_uid_isolation_marker_path 2001)"
   if hive_publish_uid_isolation_marker "$marker" "1:2001" \

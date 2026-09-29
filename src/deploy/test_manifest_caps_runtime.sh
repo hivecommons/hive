@@ -271,7 +271,7 @@ ENTRY_ID="$(sed -n 's/^[[:space:]]*_SETPRIV_ID="\(.*\)"[[:space:]]*$/\1/p' "$ENT
 AGENT_UID_BASE="$(sed -n 's/^[[:space:]]*HIVE_UID_BASE=\([0-9]\+\)[[:space:]]*$/\1/p' "$ENTRYPOINT" | head -1)"
 # `useradd --system -u "$AGENT_UID" -g node -d /data/home -M ... "hive-${agent_name}"`
 # shellcheck disable=SC2016  # $AGENT_UID is literal text in the entrypoint, not an expansion
-AGENT_GROUP="$(grep -m1 'useradd --system -u "\$AGENT_UID"' "$ENTRYPOINT" | sed -n 's/.*-g \([A-Za-z0-9_-]\+\).*/\1/p')"
+AGENT_GROUP="$(grep -Em1 'useradd --system -u "\$(_agent_uid|AGENT_UID)"' "$ENTRYPOINT" | sed -n 's/.*-g \([A-Za-z0-9_-]\+\).*/\1/p')"
 
 echo "-- runtime: fixture parameters derived from src/Dockerfile + entrypoint.sh --"
 printf '     runtime base = %s\n' "${RUNTIME_BASE:-<none>}"

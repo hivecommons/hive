@@ -80,9 +80,11 @@ HIVE_RUNTIME_GROUP="node"
 # from the image. Keying the marker to every image SHA would turn every edge
 # rollout back into an O(size of PVC) walk; bump this only when the ownership
 # contract itself changes and an existing tree needs another full pass.
-HIVE_UID_ISOLATION_REVISION="1"
+HIVE_UID_ISOLATION_REVISION="2"
+HIVE_UID_MAP_PERSISTED="${HIVE_UID_MAP_PERSISTED:-/data/.hive/uid-map.json}"
+HIVE_UID_MAP_RUNTIME="${HIVE_UID_MAP_RUNTIME:-/var/run/hive/uid-map.json}"
 HIVE_UID_ISOLATION_MARKER_DIR="${HIVE_UID_ISOLATION_MARKER_DIR:-/data/.hive/uid-isolation}"
-export HIVE_UID_ISOLATION_REVISION HIVE_UID_ISOLATION_MARKER_DIR
+export HIVE_UID_ISOLATION_REVISION HIVE_UID_ISOLATION_MARKER_DIR HIVE_UID_MAP_PERSISTED HIVE_UID_MAP_RUNTIME
 
 hive_uid_isolation_marker_path() {
   echo "${HIVE_UID_ISOLATION_MARKER_DIR}/agent-$1.ready"
@@ -133,10 +135,8 @@ hive_run_uid_isolation_migration() {
     echo "[entrypoint] UID isolation: shared-home pass complete"
   fi
 
-  _uid_offset=0
-  echo "$AGENT_NAMES" | while read -r _agent_name; do
+  printf '%s\n' "$AGENT_UID_LINES" | while IFS="$(printf '\t')" read -r _agent_name _agent_uid; do
     [ -n "$_agent_name" ] || continue
-    _agent_uid=$((HIVE_UID_BASE + _uid_offset))
     _agent_dir="/data/agents/${_agent_name}"
     _agent_marker="$(hive_uid_isolation_marker_path "$_agent_uid")"
     _agent_expected="${HIVE_UID_ISOLATION_REVISION}:${_agent_uid}"
@@ -147,19 +147,174 @@ hive_run_uid_isolation_migration() {
       echo "[entrypoint] UID isolation: ${_agent_name} already current — skipping"
     else
       echo "[entrypoint] UID isolation: repairing ${_agent_name} (uid ${_agent_uid}) in background"
-      chown -R "hive-${_agent_name}:node" "$_agent_dir" 2>/dev/null \
-        || echo "[entrypoint] WARN: UID-isolation chown for ${_agent_name} was incomplete; continuing with the existing fail-open permission policy"
+      hive_reown_agent_paths_if_needed "$_agent_name" "$_agent_uid"
       chmod g+rwX "$_agent_dir" 2>/dev/null || true
       hive_publish_uid_isolation_marker "$_agent_marker" "$_agent_expected" || true
       echo "[entrypoint] UID isolation: ${_agent_name} pass complete"
     fi
-    _uid_offset=$((_uid_offset + 1))
   done
 }
 
 hive_start_uid_isolation_migration() {
   hive_run_uid_isolation_migration &
   echo "[entrypoint] UID-isolation migration running in background (PID $!)"
+}
+
+# Build the stable per-agent UID allocation. The persisted map on /data is the
+# source of truth across image upgrades; /var/run receives a runtime copy for
+# the proxy and Go manager. On the first boot after this logic lands, existing
+# PVC ownership is adopted before allocating any new UID, so an already-shifted
+# fleet becomes self-consistent without a full-volume chown.
+hive_build_uid_map() {
+  python3 - <<'PY'
+import json
+import os
+import subprocess
+
+base = int(os.environ.get('HIVE_UID_BASE', '2001'))
+proxy_uid = int(os.environ.get('PROXY_UID', '1001'))
+persisted_path = os.environ.get('HIVE_UID_MAP_PERSISTED', '/data/.hive/uid-map.json')
+runtime_path = os.environ.get('HIVE_UID_MAP_RUNTIME', '/var/run/hive/uid-map.json')
+data_root = os.environ.get('HIVE_DATA_ROOT', '/data').rstrip('/') or '/data'
+names = sorted({n.strip() for n in os.environ.get('AGENT_NAMES', '').splitlines() if n.strip()})
+
+
+def load_map(path):
+    try:
+        with open(path) as f:
+            raw = json.load(f) or {}
+    except FileNotFoundError:
+        return None
+    agents = {}
+    for name, uid in (raw.get('agents') or {}).items():
+        try:
+            agents[str(name)] = int(uid)
+        except (TypeError, ValueError):
+            pass
+    raw['agents'] = agents
+    return raw
+
+
+def stat_uid(path):
+    try:
+        out = subprocess.check_output(['stat', '-c', '%u', path], stderr=subprocess.DEVNULL, text=True)
+        return int(out.strip())
+    except Exception:
+        return None
+
+uid_map = load_map(persisted_path)
+observed_uids = []
+if uid_map is None:
+    uid_map = {'agents': {}}
+    candidates = {}
+    counts = {}
+    for name in names:
+        for root in ('home/agents', 'agents', 'beads'):
+            uid = stat_uid(f'{data_root}/{root}/{name}')
+            if uid is not None and uid >= base:
+                candidates[name] = uid
+                observed_uids.append(uid)
+                counts[uid] = counts.get(uid, 0) + 1
+                break
+    for name, uid in candidates.items():
+        if counts.get(uid) == 1:
+            uid_map['agents'][name] = uid
+
+agents = uid_map.setdefault('agents', {})
+max_uid = base - 1
+for uid in agents.values():
+    try:
+        uid = int(uid)
+    except (TypeError, ValueError):
+        continue
+    if uid > max_uid:
+        max_uid = uid
+for uid in observed_uids:
+    if uid > max_uid:
+        max_uid = uid
+for name in names:
+    if name not in agents:
+        max_uid += 1
+        agents[name] = max_uid
+
+uid_map['agents'] = {name: int(uid) for name, uid in agents.items()}
+uid_map['proxy_uid'] = proxy_uid
+uid_map['base_uid'] = base
+uid_map['iptables_active'] = False
+uid_map['isolation_marker_dir'] = os.environ['HIVE_UID_ISOLATION_MARKER_DIR']
+uid_map['isolation_revision'] = os.environ['HIVE_UID_ISOLATION_REVISION']
+
+for path in (persisted_path, runtime_path):
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    tmp = f'{path}.tmp.{os.getpid()}'
+    with open(tmp, 'w') as f:
+        json.dump(uid_map, f, indent=2)
+        f.write('\n')
+    os.replace(tmp, path)
+
+print('[entrypoint] UID map written to %s and %s' % (persisted_path, runtime_path), file=os.sys.stderr)
+for name in names:
+    print('%s\t%s' % (name, uid_map['agents'][name]))
+PY
+}
+
+hive_reown_path_if_needed() {
+  _reown_path="$1"
+  _reown_uid="$2"
+  [ -e "$_reown_path" ] || return 0
+  _reown_owner="$(stat -c '%u' "$_reown_path" 2>/dev/null || echo 0)"
+  if [ "$_reown_owner" != "$_reown_uid" ]; then
+    chown -R "${_reown_uid}:node" "$_reown_path" 2>/dev/null || true
+    echo "[entrypoint] re-owned ${_reown_path} ${_reown_owner}→${_reown_uid}"
+  fi
+}
+
+hive_reown_agent_paths_if_needed() {
+  _reown_agent="$1"
+  _reown_uid="$2"
+  _reown_data_root="${HIVE_DATA_ROOT:-/data}"
+  hive_reown_path_if_needed "${_reown_data_root}/home/agents/${_reown_agent}" "$_reown_uid"
+  hive_reown_path_if_needed "${_reown_data_root}/beads/${_reown_agent}" "$_reown_uid"
+  hive_reown_path_if_needed "${_reown_data_root}/agents/${_reown_agent}" "$_reown_uid"
+}
+
+hive_reown_agent_token_caches_if_needed() {
+  _token_agent="$1"
+  _token_group="$2"
+  _token_root="${HIVE_AGENT_TOKEN_ROOT:-/var/run/hive-metrics/agent-tokens}"
+  _token_expected="$(id -u dev 2>/dev/null || echo 1001):${_token_group}"
+  for _token_path in "$_token_root"/*"${_token_agent}"*; do
+    [ -e "$_token_path" ] || continue
+    _token_owner="$(stat -c '%u:%G' "$_token_path" 2>/dev/null || echo 0:unknown)"
+    if [ "$_token_owner" != "$_token_expected" ]; then
+      chown "dev:${_token_group}" "$_token_path" 2>/dev/null || true
+      chmod 640 "$_token_path" 2>/dev/null || true
+      echo "[entrypoint] re-owned ${_token_path} ${_token_owner}→${_token_expected}"
+    fi
+  done
+}
+
+hive_ensure_agent_user() {
+  _agent_name="$1"
+  _agent_uid="$2"
+  _agent_user="hive-${_agent_name}"
+  _uid_owner="$(getent passwd "$_agent_uid" 2>/dev/null | awk -F: '{print $1}')"
+  if [ -n "$_uid_owner" ] && [ "$_uid_owner" != "$_agent_user" ]; then
+    case "$_uid_owner" in
+      hive-*) userdel "$_uid_owner" 2>/dev/null || true ;;
+    esac
+  fi
+  if id "$_agent_user" >/dev/null 2>&1; then
+    _current_uid="$(id -u "$_agent_user" 2>/dev/null || echo 0)"
+    if [ "$_current_uid" != "$_agent_uid" ]; then
+      usermod -u "$_agent_uid" -g node -d /data/home -s /bin/bash "$_agent_user" 2>/dev/null \
+        || { userdel "$_agent_user" 2>/dev/null || true; useradd --system -u "$_agent_uid" -g node -d /data/home -M -s /bin/bash "$_agent_user" 2>/dev/null || true; }
+    fi
+  else
+    useradd --system -u "$_agent_uid" -g node -d /data/home -M -s /bin/bash "$_agent_user" 2>/dev/null || true
+  fi
 }
 
 # hive_harden_runtime_config makes $1 readable by the user that reads it, and
@@ -950,11 +1105,11 @@ if [ "$(id -u)" = "0" ]; then
   # bob silently falls back to the W3ID browser SSO flow that cannot complete
   # in a pod — the fleet-wide "stuck at the auth prompt" bug. Group-read only;
   # never world-readable.
-  for key_file in /secrets/litellm_api_key; do
-    [ -f "$key_file" ] || continue
+  key_file=/secrets/litellm_api_key
+  if [ -f "$key_file" ]; then
     chown dev:node "$key_file" 2>/dev/null || true
     chmod 400 "$key_file" 2>/dev/null || true
-  done
+  fi
   if [ -f /secrets/bob_api_key ]; then
     chown dev:node /secrets/bob_api_key 2>/dev/null || true
     chmod 440 /secrets/bob_api_key 2>/dev/null || true
@@ -1232,6 +1387,7 @@ if [ "$(id -u)" = "0" ]; then
   # chmod makes a path whose inode an agent replaced by rename mid-batch end
   # group-writable anyway. `exit 0`: a batch failure is not the guard's.
   hive_fix_regroup_sh() {
+    # shellcheck disable=SC2016
     printf '%s' 'm=$1; shift; chmod "$m" "$@" 2>/dev/null; chown -h :node "$@" 2>/dev/null; chmod "$m" "$@" 2>/dev/null; exit 0'
   }
 
@@ -1241,6 +1397,7 @@ if [ "$(id -u)" = "0" ]; then
   # succeeded, so an ownership transfer never produces an owner-only dev file.
   # Root-owned entries are rare, so the per-entry cost is negligible.
   hive_fix_reown_sh() {
+    # shellcheck disable=SC2016
     printf '%s' 'm=$1; shift; for p; do chmod "$m" "$p" 2>/dev/null && chown -h dev:node "$p" 2>/dev/null && chmod "$m" "$p" 2>/dev/null; done; exit 0'
   }
 
@@ -1474,6 +1631,7 @@ BASHRC
   # Login shells (tmux default-command) read ~/.profile, not ~/.bashrc — chain
   # them so both shell flavors get the same environment.
   if [ ! -f /data/home/.profile ]; then
+    # shellcheck disable=SC2016
     printf '[ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"\n' > /data/home/.profile 2>/dev/null || true
     chmod 644 /data/home/.profile 2>/dev/null || true
     # Same as .bashrc above — created by root, so hand it over here (#5369).
@@ -1547,7 +1705,7 @@ print('\n'.join(sorted(names)))
   # causing a livelock where the container restarts before cleanup finishes.
   # The Go binary's workspace_cleanup.go handles ongoing cleanup at runtime.
   WORKSPACE_MAX_AGE_SECS=7200
-  if [ -d "$agentWorkspaceRoot" ] 2>/dev/null || [ -d /data/agents ]; then
+  if [ -d "${agentWorkspaceRoot:-}" ] 2>/dev/null || [ -d /data/agents ]; then
     _CLEANUP_ROOT="${agentWorkspaceRoot:-/data/agents}"
     (
       _CLEANUP_DIRS=0
@@ -1579,17 +1737,19 @@ print('\n'.join(sorted(names)))
 
   if [ -n "$AGENT_NAMES" ]; then
     echo "[entrypoint] Creating per-agent users for UID isolation..."
-    mkdir -p /var/run/hive
-    UID_OFFSET=0
-    UID_JSON='{"agents":{'
-    FIRST=true
-    echo "$AGENT_NAMES" | while read -r agent_name; do
+    mkdir -p /var/run/hive /data/.hive
+    export HIVE_UID_BASE PROXY_UID AGENT_NAMES
+    if ! AGENT_UID_LINES="$(hive_build_uid_map)"; then
+      echo "[entrypoint] WARN: Failed to build UID map"
+      AGENT_UID_LINES=""
+    fi
+    export AGENT_UID_LINES
+    printf '%s\n' "$AGENT_UID_LINES" | while IFS="$(printf '\t')" read -r agent_name AGENT_UID; do
       [ -z "$agent_name" ] && continue
-      AGENT_UID=$((HIVE_UID_BASE + UID_OFFSET))
-      if ! id "hive-${agent_name}" >/dev/null 2>&1; then
-        useradd --system -u "$AGENT_UID" -g node -d /data/home -M -s /bin/bash "hive-${agent_name}" 2>/dev/null || true
-      fi
+      [ -n "$AGENT_UID" ] || continue
+      hive_ensure_agent_user "$agent_name" "$AGENT_UID"
       mkdir -p "/data/agents/${agent_name}"
+      hive_reown_agent_paths_if_needed "$agent_name" "$AGENT_UID"
       # Invalidate a stale/incomplete marker synchronously, then leave the
       # recursive work to the background migration. Manager.Start waits for
       # this protected marker before the agent can enter its tree.
@@ -1651,32 +1811,12 @@ print('\n'.join(sorted(names)))
       touch "$AGENT_TOKEN_FILE" 2>/dev/null || true
       chown "dev:${AGENT_TOKEN_GROUP}" "$AGENT_TOKEN_FILE" 2>/dev/null || true
       chmod 640 "$AGENT_TOKEN_FILE" 2>/dev/null || true
+      hive_reown_agent_token_caches_if_needed "$agent_name" "$AGENT_TOKEN_GROUP"
       echo "[entrypoint] Agent token cache: ${AGENT_TOKEN_FILE} (dev:${AGENT_TOKEN_GROUP} 0640)"
       echo "[entrypoint] Agent user: hive-${agent_name} (UID ${AGENT_UID})"
-      UID_OFFSET=$((UID_OFFSET + 1))
     done
 
     # Write uid-map.json using python for proper JSON
-    python3 -c "
-import json, os
-names = '''$AGENT_NAMES'''.strip().split('\n')
-names = [n for n in names if n]
-agents = {}
-for i, name in enumerate(sorted(names)):
-    agents[name] = $HIVE_UID_BASE + i
-uid_map = {
-    'agents': agents,
-    'proxy_uid': $PROXY_UID,
-    'base_uid': $HIVE_UID_BASE,
-    'iptables_active': False,
-    'isolation_marker_dir': os.environ['HIVE_UID_ISOLATION_MARKER_DIR'],
-    'isolation_revision': os.environ['HIVE_UID_ISOLATION_REVISION']
-}
-os.makedirs('/var/run/hive', exist_ok=True)
-with open('/var/run/hive/uid-map.json', 'w') as f:
-    json.dump(uid_map, f, indent=2)
-print('[entrypoint] UID map written to /var/run/hive/uid-map.json')
-" 2>/dev/null || echo "[entrypoint] WARN: Failed to write UID map"
 
     # This returns immediately. The root child keeps the capabilities needed
     # for chown/chmod while the re-exec below drops PID 1 to dev and starts the
@@ -1921,12 +2061,17 @@ print('[entrypoint] UID map written to /var/run/hive/uid-map.json')
           _iptables_ok=true
           # Update uid-map to record iptables active
           python3 -c "
-import json
-with open('/var/run/hive/uid-map.json') as f:
-    m = json.load(f)
-m['iptables_active'] = True
-with open('/var/run/hive/uid-map.json', 'w') as f:
-    json.dump(m, f, indent=2)
+import json, os
+for path in (os.environ.get('HIVE_UID_MAP_PERSISTED', '/data/.hive/uid-map.json'), os.environ.get('HIVE_UID_MAP_RUNTIME', '/var/run/hive/uid-map.json')):
+    try:
+        with open(path) as f:
+            m = json.load(f)
+        m['iptables_active'] = True
+        with open(path, 'w') as f:
+            json.dump(m, f, indent=2)
+            f.write('\n')
+    except Exception:
+        pass
 " 2>/dev/null || true
         else
           hive_flush_iptables_proxy_chain
@@ -2155,6 +2300,7 @@ with open('/var/run/hive/uid-map.json', 'w') as f:
   # they are the ones whose failure is fatal — an unreadable
   # /data/hive.yaml.runtime is #5360 verbatim, and it is the exact fault this
   # assertion exists to name in one line instead of four merges.
+  # shellcheck disable=SC2086
   hive_assert_runtime_readable $HIVE_DATA_ROOT_PHASE_PATHS \
     "$HIVE_CONFIG_RUNTIME" "$HIVE_CONFIG_RUNTIME_LEGACY" /data/hive.yaml.dashboard
 
@@ -2196,6 +2342,7 @@ with open('/var/run/hive/uid-map.json', 'w') as f:
   # therefore treated as a FAILURE and falls through to the honest gosu path,
   # instead of silently claiming an egress exemption the proxy does not have.
   _setpriv_grants_ambient_net_admin() {
+    # shellcheck disable=SC2086
     _probe_amb="$(setpriv $_SETPRIV_CAPS $_SETPRIV_ID \
       sh -c 'grep -m1 "^CapAmb:" /proc/self/status' 2>/dev/null | awk '{print $2}')"
     [ -n "$_probe_amb" ] && [ $(( 0x${_probe_amb} & 0x1000 )) -ne 0 ]
@@ -2208,6 +2355,7 @@ with open('/var/run/hive/uid-map.json', 'w') as f:
     # ambient set. Drop to dev WITH ambient+effective NET_ADMIN so the Go hive
     # process can SO_MARK its proxy dials.
     echo "[entrypoint] Dropping to dev user (ambient CAP_NET_ADMIN granted for proxy SO_MARK egress-gate)"
+    # shellcheck disable=SC2086
     exec setpriv $_SETPRIV_CAPS $_SETPRIV_ID "$0" "$@"
   elif command -v gosu >/dev/null 2>&1 && gosu dev true 2>/dev/null; then
     if [ "$_cap_net_admin_in_bset" != "true" ]; then
@@ -2320,6 +2468,7 @@ fi
 
 # Generate initial GitHub App token if credentials are available
 if [ -x /usr/local/bin/hive-config.sh ]; then
+  # shellcheck disable=SC1091
   . /usr/local/bin/hive-config.sh 2>/dev/null || true
 fi
 # Use the dev-readable copy if the configured key file isn't readable
@@ -2333,7 +2482,8 @@ if [ -n "${GH_APP_ID:-}" ] && [ -n "${GH_APP_INSTALLATION_ID:-}" ]; then
   /usr/local/bin/gh-app-token.sh >/dev/null 2>&1 && \
     echo "[entrypoint] Token cached at /var/run/hive-metrics/gh-app-token.cache" || \
     echo "[entrypoint] WARN: GitHub App token generation failed"
-  export HIVE_GITHUB_TOKEN="$(cat /var/run/hive-metrics/gh-app-token.cache 2>/dev/null || true)"
+  HIVE_GITHUB_TOKEN="$(cat /var/run/hive-metrics/gh-app-token.cache 2>/dev/null || true)"
+  export HIVE_GITHUB_TOKEN
 fi
 
 # Load Copilot PAT from persistent volume so the Go binary can inject it
@@ -2609,6 +2759,7 @@ TTYD_RESPAWN_DELAY_SECS=5
     # ttyd-tmux.sh. Without it ttyd discards the query, the attach script falls
     # back to its default session name, and the browser terminal dies with
     # "no tmux socket found for session 'supervisor'" (#4593).
+    # shellcheck disable=SC2086
     ttyd -W -a ${CRED_ARGS} -i "${TTYD_BIND}" -p "${TTYD_PORT}" -t fontSize=14 -t disableLeaveAlert=true /usr/local/bin/ttyd-tmux.sh
     echo "[entrypoint] ttyd exited (rc=$?), respawning in ${TTYD_RESPAWN_DELAY_SECS}s..."
     sleep "$TTYD_RESPAWN_DELAY_SECS"

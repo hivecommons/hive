@@ -99,6 +99,7 @@ func TestMain(m *testing.M) {
 	// it into the test temp tree, where it never exists unless a test creates
 	// it.
 	UIDMapPath = filepath.Join(dir, "uid-map.json")
+	PersistedUIDMapPath = filepath.Join(dir, "persisted-uid-map.json")
 	// fixPermissions/ensureWatchedDirs walk (and chown/chmod!) the production
 	// /data trees when they exist. Point every walk root into the temp tree so
 	// no test can touch live agent data or spend minutes walking real dirs.

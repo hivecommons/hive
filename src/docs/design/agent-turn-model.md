@@ -158,18 +158,18 @@ CLI subprocess.
 | **Rendered terminal scrollback, per kick** | `/data/logs/kicks/<agent>/<ts>-<reason>.log` | `src/pkg/agent/kick_logs.go:43` (`defaultKickLogDir`); writer `archiveKickLogLocked` `src/pkg/agent/kick_logs.go:180` |
 | Token-usage summary | `/data/token-summary.json` | `src/pkg/tokens/collector.go:194`, `:112-116` |
 | Structured audit trail | `/data/audit.jsonl`, reloaded into a ring at boot | `src/pkg/dashboard/audit.go:22`, `loadFromDisk` `:94` |
-| Agent-name → UID allocation | `/var/run/hive/uid-map.json` | `UIDMapPath` `src/pkg/agent/uidmap.go:17`; load `src/pkg/agent/manager.go:670` |
+| Agent-name → UID allocation | durable source `/data/.hive/uid-map.json`, runtime copy `/var/run/hive/uid-map.json` | `PersistedUIDMapPath` / `UIDMapPath` `src/pkg/agent/uidmap.go`; load `src/pkg/agent/manager.go` |
 | Backend CLI's own session/credential files | the CLI's own `HOME` / `CODEX_HOME`, rooted at `/data/home` | per-agent `CODEX_HOME` `src/pkg/agent/manager_env.go:400`, helper `src/pkg/agent/manager_homes.go:56`; per-agent HOME `src/pkg/agent/interactive_home.go:59`; shared `.claude` bridged by symlink `interactive_home.go:74` |
 
 Two caveats on that table:
 
-- The UID map is the one entry **not** rooted at the `/data` PVC. `/var/run` is
-  conventionally ephemeral, so whether it survives a pod restart depends on the
-  deployment's volume configuration rather than on the code. The load path
-  treats absence as a recoverable fallback
-  (`src/pkg/agent/manager.go:1535-1539`), so this is a durability *asymmetry* rather than
-  a known failure — noted here because it is the only place the otherwise
-  consistent "durable means `/data`" rule does not hold.
+- The UID map is rooted at `/data/.hive/uid-map.json` and copied to `/var/run`
+  for runtime consumers. Existing entries are preserved exactly; new agent names
+  get `max(existing uid)+1`, so adding an alphabetically earlier agent cannot
+  shift established per-agent state. On the first boot without a persisted map,
+  the entrypoint adopts the unique owner UID of `/data/home/agents/<agent>`,
+  falling back to `/data/agents/<agent>` and then `/data/beads/<agent>`, before
+  allocating fresh UIDs for names with no owned state.
 - The last row is the important one for the RFC and is discussed in §5.
 
 ### 2.2 In-process — lost on restart
