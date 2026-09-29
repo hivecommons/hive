@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -115,6 +116,7 @@ func TestTruncateCommentBody(t *testing.T) {
 
 func TestFetchHumanPRComments(t *testing.T) {
 	since := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
 	var gotVars map[string]any
 	notFound := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -128,9 +130,12 @@ func TestFetchHumanPRComments(t *testing.T) {
 		}
 		b, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(b, &req)
+		mu.Lock()
 		gotVars = req.Variables
+		missing := notFound
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		if notFound {
+		if missing {
 			_, _ = w.Write([]byte(`{"data":{"repository":{"pullRequest":null}}}`))
 			return
 		}
@@ -153,11 +158,14 @@ func TestFetchHumanPRComments(t *testing.T) {
 	if len(got) != 1 || got[0].ID != "conversation:5" || got[0].Author != "alice" {
 		t.Fatalf("comments = %+v, want only alice's", got)
 	}
-	if gotVars["owner"] != "o" || gotVars["repo"] != "r" || gotVars["number"] != float64(9) {
-		t.Fatalf("query variables = %v", gotVars)
+	mu.Lock()
+	vars := gotVars
+	notFound = true
+	mu.Unlock()
+	if vars["owner"] != "o" || vars["repo"] != "r" || vars["number"] != float64(9) {
+		t.Fatalf("query variables = %v", vars)
 	}
 
-	notFound = true
 	if _, err := c.FetchHumanPRComments(context.Background(), "o/r", 9, since); err == nil {
 		t.Fatal("a missing PR must be an error")
 	}
