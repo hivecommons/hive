@@ -9,7 +9,7 @@ This page covers *reachability* — HTTP probes of the dashboard URL and route. 
 Apply the dashboard route RBAC manifest with the other Kubernetes resources:
 
 ```bash
-kubectl apply -f deploy/k8s/dashboard-route-rbac.yaml
+kubectl apply -f src/deploy/k8s/dashboard-route-rbac.yaml
 ```
 
 It grants the `hive` ServiceAccount permission to list same-namespace `networking.k8s.io` Ingresses and OpenShift `route.openshift.io` Routes. Without this RBAC, the spoke reports route existence as `unknown` with an RBAC error; Hive treats unknown as non-fatal.
