@@ -1,0 +1,1 @@
+- images: bump copilot 1.0.88 -> 1.0.89 (#9500)
