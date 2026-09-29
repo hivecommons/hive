@@ -295,6 +295,22 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 		return
 	}
 
+	// Contributor-PR gate (hivecommons/hive#9624): a PR the hive did not open
+	// is merged only when the operator opted in AND a person with write access
+	// approved the pinned head. A review-swarm verdict never counts. Checked
+	// before the optional branch-update so a refused PR receives no write. A
+	// failed lookup is a retryable attempt, never an allow.
+	refusal, author, err := c.contributorMergeGuard(ctx, req)
+	if err != nil {
+		c.recordMergeFailure(path, req, priorMergeAttempts(path)+1, err.Error(), nowFn)
+		return
+	}
+	if refusal != "" {
+		c.recordContributorMergeRefusal(req, author)
+		c.denyMergeRequest(path, req, refusal, nowFn)
+		return
+	}
+
 	// Optional branch-update-first (resolves "behind main"). A failure here is
 	// not fatal — the merge attempt below will surface the real blocker.
 	if req.UpdateBranch {

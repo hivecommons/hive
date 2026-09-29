@@ -42,6 +42,12 @@ type ProtectionFacts struct {
 	// ApprovalsGiven counts distinct reviewers whose latest opinionated
 	// review is an approval.
 	ApprovalsGiven int `json:"approvals_given,omitempty"`
+	// MaintainerApprovals are the standing approvals among those from a
+	// person (not a bot, not this hive) with push access, each with the
+	// commit it approved. Only these can make a PR the hive did not open
+	// merge-eligible (hivecommons/hive#9624); see
+	// PullRequest.MaintainerApprovalAt.
+	MaintainerApprovals []MaintainerApproval `json:"maintainer_approvals,omitempty"`
 	// RequiredChecksKnown records that the required status-check set for the
 	// PR's base branch was determined (from auto_merge.required_checks or
 	// from the branch-protection API). Without it, FailingRequiredChecks and

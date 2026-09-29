@@ -2310,6 +2310,8 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		// mistaking it for a human's. The App bot is recognised without this;
 		// hiveIdentity() is the same resolver the duplicate-PR guard uses.
 		b.ghClient.SetHiveIdentity(hiveIdentity(b.cfg))
+		// #9624: the merge relay refuses contributor PRs on the same rule.
+		b.ghClient.SetContributorMergePolicy(func() github.ContributorMergePolicy { return contributorMergePolicyFor(b.cfg) })
 		b.ghClient.SetSelfAuthorizationHoldEnabled(selfAuthorizationHoldEnabled)
 		b.ghClient.SetPRRepoPolicyGate(func(agentName, repo string) error {
 			level := b.cfg.EffectiveACMMLevelForRepo(repo)

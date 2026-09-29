@@ -200,6 +200,67 @@ type mergeGates struct {
 	reviewArtifact        review.Artifact
 	reviewLoaded          bool
 	requiredChecks        map[string]bool
+	// authors is the contributor-PR gate (hivecommons/hive#9624). nil means
+	// the gate is not installed: writeMergeEligible installs it whenever it
+	// has a config, which the governor's eval cycle always passes.
+	authors *mergeAuthorPolicy
+}
+
+// mergeAuthorPolicy is what the classifier needs to tell a PR the hive opened
+// (or a trusted bot opened) from a contributor's, and whether the operator
+// lets the hive merge contributor PRs at all.
+type mergeAuthorPolicy struct {
+	identity            github.HiveIdentity
+	trustedBots         map[string]bool
+	allowContributorPRs bool
+}
+
+// newMergeAuthorPolicy reads the gate from cfg. It resolves identity through
+// hiveIdentity, the same resolver the client and the duplicate-PR guard use,
+// and trusted bots through the set the self-authored sweep merges, so no new
+// list of accounts is introduced. nil cfg returns nil (gate not installed).
+func newMergeAuthorPolicy(cfg *config.Config) *mergeAuthorPolicy {
+	if cfg == nil {
+		return nil
+	}
+	return &mergeAuthorPolicy{
+		identity:            hiveIdentity(cfg),
+		trustedBots:         cfg.AutoMerge.TrustedBotAuthorSet(),
+		allowContributorPRs: cfg.AutoMerge.ContributorPRs,
+	}
+}
+
+// contributorMergePolicyFor is the merge relay's view of the same gate. The
+// relay calls it per request (through b.cfg) so a config reload applies
+// without a restart. nil cfg is the most restrictive policy: no trusted bots,
+// no contributor merges.
+func contributorMergePolicyFor(cfg *config.Config) github.ContributorMergePolicy {
+	if cfg == nil {
+		return github.ContributorMergePolicy{}
+	}
+	return github.ContributorMergePolicy{
+		AllowContributorPRs: cfg.AutoMerge.ContributorPRs,
+		TrustedBots:         cfg.AutoMerge.TrustedBotAuthorSet(),
+	}
+}
+
+// contributorGate applies the contributor-PR rule to a PR that has passed
+// every earlier gate. isContributor reports whether the PR is a contributor's
+// (so the review-swarm gate must not stand in for a maintainer); refusal is
+// non-empty when it may not become eligible; approvedBy names the maintainer
+// whose approval of the current head let it through.
+func (p *mergeAuthorPolicy) contributorGate(pr github.PullRequest) (isContributor bool, refusal, approvedBy string) {
+	if p == nil || github.ClassifyMergeAuthor(pr.Author, pr.AppAuthored, p.identity, p.trustedBots) != github.MergeAuthorContributor {
+		return false, "", ""
+	}
+	if !p.allowContributorPRs {
+		return true, github.ContributorMergeRefusalReason(false), ""
+	}
+	login, ok := pr.MaintainerApprovalAt(pr.HeadSHA)
+	if !ok {
+		return true, github.ContributorMergeRefusalReason(true), ""
+	}
+	return true, "", login
 }
 
 // classifyMergeEligibility is THE merge-eligibility rule: the one place that
@@ -310,11 +371,22 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 		return mergeBucketSkip, blockedOrOutstanding("CI pending"), ""
 	}
 
+	// Contributor-PR gate (hivecommons/hive#9624). It sits after the red and
+	// hold classification on purpose, so red routing is unchanged: a red
+	// contributor PR still lands in ci-failing.json exactly as before. Only
+	// eligibility changes. A contributor PR needs the operator's opt-in AND a
+	// maintainer's approval of this head; the review-swarm verdict never
+	// stands in for that approval, so it is not consulted for such a PR.
+	isContributor, contributorRefusal, approvedBy := g.authors.contributorGate(pr)
+	if contributorRefusal != "" {
+		return mergeBucketSkip, blockedOrOutstanding(contributorRefusal), ""
+	}
+
 	// The review gate runs BEFORE the GitHub-says-no return below so that a
 	// PR GitHub calls "blocked" for want of a review carries that reason
 	// (hivecommons/hive#7515). Both paths file a MergeableNo PR in the skip
 	// bucket, so the order changes only the verdict's wording.
-	if g.requireReviewApproval {
+	if g.requireReviewApproval && !isContributor {
 		if !g.reviewLoaded {
 			return mergeBucketSkip, blockedOrOutstanding("review approval required, but review-verdicts.json is unavailable"), ""
 		}
@@ -350,6 +422,9 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 		reason += " — non-required checks outstanding (GitHub: unstable)"
 	case pr.Mergeable == github.MergeableUnknown:
 		reason += " — mergeability not yet fetched; the sweep re-checks it at merge time"
+	}
+	if approvedBy != "" {
+		reason += "; contributor PR approved at this head by " + approvedBy
 	}
 	return mergeBucketEligible, github.MergeVerdict{State: github.MergeVerdictEligible, Reason: reason}, ""
 }
@@ -651,6 +726,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		reviewArtifact:        reviewArtifact,
 		reviewLoaded:          reviewLoaded,
 		requiredChecks:        requiredChecks,
+		authors:               newMergeAuthorPolicy(cfg),
 	}
 	seen := make(map[string]bool, len(candidates))
 	for _, cand := range candidates {

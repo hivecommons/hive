@@ -37,9 +37,13 @@ type prReviewState struct {
 	decision           ReviewDecision
 	changesRequestedBy []string
 	approvals          int
-	comments           int
-	reviewThreads      int
-	linkedIssues       []PRLinkedIssue
+	// maintainerApprovals are the standing approvals from people with write
+	// access (hivecommons/hive#9624), the only approvals that can make a
+	// contributor PR merge-eligible.
+	maintainerApprovals []MaintainerApproval
+	comments            int
+	reviewThreads       int
+	linkedIssues        []PRLinkedIssue
 }
 
 func newProtectionCollector(c *Client) *protectionCollector {
@@ -67,6 +71,7 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 		f.ReviewDecision = rs.decision
 		f.ChangesRequestedBy = rs.changesRequestedBy
 		f.ApprovalsGiven = rs.approvals
+		f.MaintainerApprovals = rs.maintainerApprovals
 		// Triage signals go on the PR itself, not under Protection: they
 		// are not branch-protection facts, and they are wanted even when
 		// GitHub returned no review decision at all (#8968).
@@ -157,7 +162,7 @@ const reviewDecisionQuery = `query($owner:String!,$name:String!,$cursor:String){
       nodes{
         number
         reviewDecision
-        latestOpinionatedReviews(first:50){nodes{state author{login}}}
+        latestOpinionatedReviews(first:50){nodes{state authorCanPushToRepository commit{oid} author{__typename login}}}
       }
     }
   }
@@ -177,7 +182,7 @@ const reviewSignalsQuery = `query($owner:String!,$name:String!,$cursor:String){
       nodes{
         number
         reviewDecision
-        latestOpinionatedReviews(first:50){nodes{state author{login}}}
+        latestOpinionatedReviews(first:50){nodes{state authorCanPushToRepository commit{oid} author{__typename login}}}
         comments(first:1){totalCount}
         reviewThreads(first:1){totalCount}
         closingIssuesReferences(first:20){nodes{number state url repository{nameWithOwner}}}
@@ -198,9 +203,18 @@ type reviewDecisionResponse struct {
 				ReviewDecision           string `json:"reviewDecision"`
 				LatestOpinionatedReviews struct {
 					Nodes []struct {
-						State  string `json:"state"`
+						State string `json:"state"`
+						// AuthorCanPushToRepository and Commit feed the
+						// contributor merge gate (#9624): an approval counts
+						// for it only from someone with push access, and only
+						// for the commit it was given on.
+						AuthorCanPushToRepository bool `json:"authorCanPushToRepository"`
+						Commit                    *struct {
+							OID string `json:"oid"`
+						} `json:"commit"`
 						Author *struct {
-							Login string `json:"login"`
+							Typename string `json:"__typename"`
+							Login    string `json:"login"`
 						} `json:"author"`
 					} `json:"nodes"`
 				} `json:"latestOpinionatedReviews"`
@@ -283,6 +297,10 @@ func (c *Client) fetchReviewDecisions(ctx context.Context, repo string) map[int]
 				switch strings.ToUpper(strings.TrimSpace(r.State)) {
 				case "APPROVED":
 					st.approvals++
+					if r.Author != nil && r.Commit != nil && strings.TrimSpace(r.Commit.OID) != "" &&
+						c.isMaintainerApprover(r.Author.Typename, login, r.AuthorCanPushToRepository) {
+						st.maintainerApprovals = append(st.maintainerApprovals, MaintainerApproval{Login: login, CommitSHA: strings.TrimSpace(r.Commit.OID)})
+					}
 				case "CHANGES_REQUESTED":
 					if login != "" {
 						st.changesRequestedBy = append(st.changesRequestedBy, login)

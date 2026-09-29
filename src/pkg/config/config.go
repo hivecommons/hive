@@ -7489,6 +7489,14 @@ type AutoMergeConfig struct {
 	// (`trusted_bot_authors: []`) disables the lane. Matched case-insensitively
 	// by exact login, e.g. "dependabot[bot]".
 	TrustedBotAuthors []string `yaml:"trusted_bot_authors,omitempty" json:"trusted_bot_authors,omitempty"`
+	// ContributorPRs lets the hive merge a PR it did not open: one whose
+	// author is not the App bot, not project.ai_author and not in
+	// TrustedBotAuthors (hivecommons/hive#9624). Off (the default), such a PR
+	// is never merge-eligible and the merge relay refuses it, whatever the
+	// review swarm said; a maintainer merges it. On, it becomes eligible only
+	// once a person with write access has approved its current head on the
+	// forge. A swarm verdict never counts toward that approval.
+	ContributorPRs bool `yaml:"contributor_prs,omitempty" json:"contributor_prs,omitempty"`
 }
 
 // DefaultAutoMergeMinHeadAge is the fail-closed post-push quiet period used

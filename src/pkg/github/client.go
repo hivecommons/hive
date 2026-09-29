@@ -187,6 +187,11 @@ type Client struct {
 	// MergeRequestAuthorizer / F4). nil fails closed. Set by
 	// StartMergeRequestWatcher.
 	mergeAuthz MergeRequestAuthorizer
+	// contributorMergePolicy is the merge relay's author gate
+	// (hivecommons/hive#9624): whether a PR the hive did not open may be
+	// merged at all, and which bots count as trusted. nil leaves the gate
+	// uninstalled. Set by SetContributorMergePolicy at startup.
+	contributorMergePolicy func() ContributorMergePolicy
 	// issueAuthz gates issue-create/comment/claim requests from the issue-request
 	// watcher against the per-agent mode policy (CanCreateIssues) +
 	// forge-resistance. nil fails closed. Set by StartIssueRequestWatcher.
