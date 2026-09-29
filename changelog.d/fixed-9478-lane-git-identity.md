@@ -1,0 +1,1 @@
+- Isolated per-agent `~/.gitconfig` files and made pushbroker's lane sign-off guard use the same lane identity as agent commit env vars ([#9478](https://github.com/hivecommons/hive/issues/9478)).
