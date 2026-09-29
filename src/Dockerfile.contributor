@@ -347,9 +347,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
 # API-key mode, so a fresh container still needs an operator to sign in
 # inside it (or a future credential-mount fix, see Justfile's `agy)` staging
 # case) before it can do unattended work.
-ARG AGY_VERSION=1.2.12-5784551402897408
-ARG AGY_SHA256_AMD64=26c7c4c661d6c9beda734fcf305031056a6ea46e697c4533e8151179724e2950
-ARG AGY_SHA256_ARM64=bd338c9d19ab963d9d2bc027e4e797b470ea84bae02080e4fde4555357ea9444
+ARG AGY_VERSION=1.2.13-6662628811079680
+ARG AGY_SHA256_AMD64=b0f195d37973be7b08c3b705d7fbbcd948dacb4a3c2176ee52ca29f7159bdc21
+ARG AGY_SHA256_ARM64=43bf59be5895475f8a32d4f94f1241f665986ea41a3622579e03b74e1b63dcfb
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64) AGY_PLATFORM=linux-x64; AGY_TARBALL=cli_linux_x64.tar.gz; AGY_SHA256="$AGY_SHA256_AMD64" ;; \
