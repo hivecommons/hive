@@ -100,3 +100,67 @@ release_sentinel:
 		t.Fatalf("parsed = %+v", r)
 	}
 }
+
+func TestReleaseSentinelRetagDefaultOffAndSeparate(t *testing.T) {
+	t.Setenv(ReleaseSentinelEnabledEnvVar, "")
+	t.Setenv(ReleaseSentinelRetagEnabledEnvVar, "")
+	var nilCfg *Config
+	if nilCfg.ReleaseSentinelRetagEnabled() {
+		t.Fatal("nil config enabled retag")
+	}
+	if (&Config{ReleaseSentinel: ReleaseSentinelConfig{Enabled: true}}).ReleaseSentinelRetagEnabled() {
+		t.Fatal("enabling the sentinel enabled retag; retag must be its own opt-in")
+	}
+	if (&Config{ReleaseSentinel: ReleaseSentinelConfig{RetagEnabled: true}}).ReleaseSentinelRetagEnabled() {
+		t.Fatal("retag took effect while the sentinel itself is off")
+	}
+	if !(&Config{ReleaseSentinel: ReleaseSentinelConfig{Enabled: true, RetagEnabled: true}}).ReleaseSentinelRetagEnabled() {
+		t.Fatal("explicit retag opt-in ignored")
+	}
+}
+
+func TestReleaseSentinelRetagEnvOverride(t *testing.T) {
+	t.Setenv(ReleaseSentinelEnabledEnvVar, "")
+	on := &Config{ReleaseSentinel: ReleaseSentinelConfig{Enabled: true, RetagEnabled: true}}
+	sentinelOnly := &Config{ReleaseSentinel: ReleaseSentinelConfig{Enabled: true}}
+	t.Setenv(ReleaseSentinelRetagEnabledEnvVar, "false")
+	if on.ReleaseSentinelRetagEnabled() {
+		t.Fatal("retag env=false did not override config=true")
+	}
+	t.Setenv(ReleaseSentinelRetagEnabledEnvVar, "true")
+	if !sentinelOnly.ReleaseSentinelRetagEnabled() {
+		t.Fatal("retag env=true did not override config=false")
+	}
+	if (&Config{}).ReleaseSentinelRetagEnabled() {
+		t.Fatal("retag env=true turned retag on while the sentinel is off")
+	}
+	t.Setenv(ReleaseSentinelEnabledEnvVar, "true")
+	var nilCfg *Config
+	if !nilCfg.ReleaseSentinelRetagEnabled() {
+		t.Fatal("both env overrides on did not apply to a nil config")
+	}
+	t.Setenv(ReleaseSentinelRetagEnabledEnvVar, "")
+	if nilCfg.ReleaseSentinelRetagEnabled() {
+		t.Fatal("nil config with no retag override enabled retag")
+	}
+}
+
+func TestReleaseSentinelPhase2YAML(t *testing.T) {
+	var cfg Config
+	src := `
+release_sentinel:
+  enabled: true
+  retag_enabled: true
+  release_branch: v5
+  retag_allow_intervening_commits: true
+  release_workflows: [Tagged Release, release-gate.yml]
+`
+	if err := yaml.Unmarshal([]byte(src), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	r := cfg.ReleaseSentinel
+	if !r.RetagEnabled || r.ReleaseBranch != "v5" || !r.RetagAllowInterveningCommits ||
+		len(r.ReleaseWorkflows) != 2 || r.ReleaseWorkflows[0] != "Tagged Release" || r.ReleaseWorkflows[1] != "release-gate.yml" {
+		t.Fatalf("parsed = %+v", r)
+	}
+}

@@ -18,10 +18,11 @@ const (
 // answerable on its own: it names the tag, the SHA, every blocking run with
 // its failed step and evidence, the round budget and the deadline.
 //
-// The instructions deliberately route the fix through the normal PR path and
-// forbid touching the tag: in this phase the sentinel never pushes or moves a
-// tag, so a merged fix reaches users as the next patch release, which
-// supersedes this one.
+// The instructions always route the fix through the normal PR path and
+// forbid touching the tag. Without retag, a merged fix reaches users as the
+// next patch release, which supersedes this one. With retag (req.Retag), the
+// PR carries the FixMarker line and the HIVE moves the tag to the merge
+// commit once the PR is merged; the agent still never touches the tag.
 func RenderRepairKick(req RepairRequest) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "🚀 RELEASE REPAIR - %s %s CI is red (round %d/%d)\n\n", req.Repo, req.Tag, req.Round, req.MaxRounds)
@@ -29,7 +30,13 @@ func RenderRepairKick(req RepairRequest) string {
 	b.WriteString("Repair it BEFORE claiming new issues or opening any other PR:\n")
 	fmt.Fprintf(&b, "  1. Read the failing logs: gh run view <run-id> --repo %s --log-failed\n", req.Repo)
 	b.WriteString("  2. Fix the cause on a new branch cut from the release branch, commit -s, and open a PR with hive-open-pr.\n")
-	b.WriteString("     The merged fix ships as the next patch release, which supersedes this one.\n")
+	if req.Retag {
+		fmt.Fprintf(&b, "     Put this line, on its own, in the PR body: %s\n", FixMarker(req.Tag))
+		fmt.Fprintf(&b, "     Keep the PR to the fix alone. Once it is merged, the hive moves %s to the merge commit and\n", req.Tag)
+		b.WriteString("     re-checks the release CI there.\n")
+	} else {
+		b.WriteString("     The merged fix ships as the next patch release, which supersedes this one.\n")
+	}
 	b.WriteString("  3. Do NOT move, delete or re-create the tag, and do NOT push to the release branch directly.\n")
 	b.WriteString("  4. If the cause is an org/repo setting, a token permission or a missing secret, do NOT attempt a\n")
 	b.WriteString("     code workaround: report it as needs-human and stop.\n")
@@ -40,15 +47,22 @@ func RenderRepairKick(req RepairRequest) string {
 
 // RenderEscalation renders the human notification for a failed release.
 func RenderEscalation(e Escalation) (title, body string) {
-	switch e.Reason {
-	case EscalationPolicy:
+	preTag := e.Workflow != "" && e.Tag == ""
+	switch {
+	case preTag:
+		title = fmt.Sprintf("Release workflow %q in %s failed before tagging, blocked by a setting an agent cannot fix", e.Workflow, e.Repo)
+	case e.Reason == EscalationPolicy:
 		title = fmt.Sprintf("Release %s %s blocked by a setting an agent cannot fix", e.Repo, e.Tag)
 	default:
 		title = fmt.Sprintf("Release %s %s still red after %d repair round(s)", e.Repo, e.Tag, e.Round)
 	}
 	var b strings.Builder
 	b.WriteString("The release sentinel stopped and needs a human.\n\n")
-	fmt.Fprintf(&b, "tag: %s (%s)\nreason: %s\n%s\n", e.Tag, shortSHA(e.SHA), e.Reason, e.Detail)
+	if preTag {
+		fmt.Fprintf(&b, "workflow: %s (commit %s, no release tag yet)\nreason: %s\n%s\n", e.Workflow, shortSHA(e.SHA), e.Reason, e.Detail)
+	} else {
+		fmt.Fprintf(&b, "tag: %s (%s)\nreason: %s\n%s\n", e.Tag, shortSHA(e.SHA), e.Reason, e.Detail)
+	}
 	if e.Reason == EscalationPolicy {
 		b.WriteString("\nNo repair round was dispatched and nothing was pushed: change the setting, then re-run the release.\n")
 	}

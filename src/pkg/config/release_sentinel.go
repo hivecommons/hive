@@ -10,6 +10,11 @@ import (
 // unparseable leaves the config value in charge.
 const ReleaseSentinelEnabledEnvVar = "HIVE_RELEASE_SENTINEL_ENABLED"
 
+// ReleaseSentinelRetagEnabledEnvVar overrides release_sentinel.retag_enabled
+// for one process, with the same values as ReleaseSentinelEnabledEnvVar. It
+// never turns retagging on while the sentinel itself is off.
+const ReleaseSentinelRetagEnabledEnvVar = "HIVE_RELEASE_SENTINEL_RETAG_ENABLED"
+
 // ReleaseSentinelConfig is the operator opt-in for the release sentinel
 // (hivecommons/hive#9585): a bounded repair loop that watches the CI of the
 // current v<version> release tag and dispatches repair rounds to an agent
@@ -38,6 +43,27 @@ type ReleaseSentinelConfig struct {
 	// IgnoreWorkflows names workflows whose runs never block a release
 	// (advisory bots and similar noise).
 	IgnoreWorkflows []string `yaml:"ignore_workflows,omitempty" json:"ignore_workflows,omitempty"`
+
+	// RetagEnabled turns on retag after merge: once a repair PR marked for
+	// the release is merged into the release branch, the hive moves the
+	// v<version> tag to the merge commit with one leased, atomic tag push.
+	// Separate from Enabled and default false: with it off the sentinel never
+	// moves a tag. Needs a GitHub App installation (the push token is minted
+	// from it).
+	RetagEnabled bool `yaml:"retag_enabled,omitempty" json:"retag_enabled,omitempty"`
+	// ReleaseBranch is the branch release tags are cut from and fix PRs merge
+	// into. Empty means the repository's default branch.
+	ReleaseBranch string `yaml:"release_branch,omitempty" json:"release_branch,omitempty"`
+	// RetagAllowInterveningCommits lets the tag move past commits that are
+	// not part of the fix PR (other merges that landed on the release branch
+	// after the tag was cut). Default false: the tag only ever moves to the
+	// old release plus the fix.
+	RetagAllowInterveningCommits bool `yaml:"retag_allow_intervening_commits,omitempty" json:"retag_allow_intervening_commits,omitempty"`
+	// ReleaseWorkflows names the workflows that cut a release (name or file
+	// name, e.g. "Tagged Release" or "tagged-release.yml"). A policy failure
+	// in one of them before any tag exists is escalated to a human. Empty
+	// turns pre-tag detection off.
+	ReleaseWorkflows []string `yaml:"release_workflows,omitempty" json:"release_workflows,omitempty"`
 }
 
 // ReleaseSentinelEnabled resolves the opt-in: the env override wins, then the
@@ -50,6 +76,22 @@ func (c *Config) ReleaseSentinelEnabled() bool {
 		return false
 	}
 	return c.ReleaseSentinel.Enabled
+}
+
+// ReleaseSentinelRetagEnabled resolves the separate retag opt-in. It is
+// false whenever the sentinel itself is off; otherwise the retag env override
+// wins, then the config field. Nil-safe.
+func (c *Config) ReleaseSentinelRetagEnabled() bool {
+	if !c.ReleaseSentinelEnabled() {
+		return false
+	}
+	if v, ok := parseBoolEnv(ReleaseSentinelRetagEnabledEnvVar); ok {
+		return v
+	}
+	if c == nil {
+		return false
+	}
+	return c.ReleaseSentinel.RetagEnabled
 }
 
 // ReleaseSentinelRepo is the "owner/name" the sentinel watches: the explicit

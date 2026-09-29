@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 )
@@ -27,6 +29,19 @@ const (
 	// annotationLevelFailure is the check-run annotation level ::error lines
 	// are recorded at.
 	annotationLevelFailure = "failure"
+	// maxWorkflowPages bounds the workflow listing used to resolve release
+	// workflow names.
+	maxWorkflowPages = 2
+	// latestRunPageSize is the page size when only a workflow's newest
+	// completed run is wanted.
+	latestRunPageSize = 1
+	// prStateClosed, prSortUpdated and prDirectionDesc select recently
+	// closed PRs, newest first, when looking for a merged fix PR. One page
+	// is enough: the fix merged after its round started, and rounds are
+	// bounded to hours.
+	prStateClosed   = "closed"
+	prSortUpdated   = "updated"
+	prDirectionDesc = "desc"
 )
 
 // releaseTagPattern matches the tags tagged-release.yml cuts: v<MAJOR>.<MINOR>.<PATCH>
@@ -229,4 +244,117 @@ func truncateRunes(s string, n int) string {
 		return string(r[:n]) + "…"
 	}
 	return s
+}
+
+// DefaultBranch returns the repository's default branch.
+func (s *GitHubSource) DefaultBranch(ctx context.Context) (string, error) {
+	repo, _, err := s.client.Repositories.Get(ctx, s.owner, s.repo)
+	if err != nil {
+		return "", err
+	}
+	return repo.GetDefaultBranch(), nil
+}
+
+// MergedFixPR finds the most recently merged PR into branch that carries
+// FixMarker(tag) and merged at or after since, with its commits.
+func (s *GitHubSource) MergedFixPR(ctx context.Context, branch, tag string, since time.Time) (FixPR, bool, error) {
+	prs, _, err := s.client.PullRequests.List(ctx, s.owner, s.repo, &gh.PullRequestListOptions{
+		State:       prStateClosed,
+		Base:        branch,
+		Sort:        prSortUpdated,
+		Direction:   prDirectionDesc,
+		ListOptions: gh.ListOptions{PerPage: githubPerPage},
+	})
+	if err != nil {
+		return FixPR{}, false, err
+	}
+	var best *gh.PullRequest
+	for _, pr := range prs {
+		if pr == nil || pr.MergedAt == nil || pr.GetMergeCommitSHA() == "" || pr.GetBase().GetRef() != branch {
+			continue
+		}
+		merged := pr.GetMergedAt().Time
+		if merged.Before(since) || !HasFixMarker(pr.GetBody(), tag) {
+			continue
+		}
+		if best == nil || merged.After(best.GetMergedAt().Time) {
+			best = pr
+		}
+	}
+	if best == nil {
+		return FixPR{}, false, nil
+	}
+	commits, _, err := s.client.PullRequests.ListCommits(ctx, s.owner, s.repo, best.GetNumber(), &gh.ListOptions{PerPage: githubPerPage})
+	if err != nil {
+		return FixPR{}, false, err
+	}
+	fix := FixPR{
+		Number:   best.GetNumber(),
+		URL:      best.GetHTMLURL(),
+		MergeSHA: best.GetMergeCommitSHA(),
+		MergedAt: best.GetMergedAt().Time,
+	}
+	for _, c := range commits {
+		if sha := c.GetSHA(); sha != "" {
+			fix.Commits = append(fix.Commits, sha)
+		}
+	}
+	return fix, true, nil
+}
+
+// LatestReleaseWorkflowRuns returns the newest completed run of each
+// workflow whose name or file name is in names. Names that match no
+// workflow are skipped.
+func (s *GitHubSource) LatestReleaseWorkflowRuns(ctx context.Context, names []string) ([]Run, error) {
+	want := map[string]bool{}
+	for _, n := range names {
+		if n = strings.ToLower(strings.TrimSpace(n)); n != "" {
+			want[n] = true
+		}
+	}
+	if len(want) == 0 {
+		return nil, nil
+	}
+	var matched []*gh.Workflow
+	opts := &gh.ListOptions{PerPage: githubPerPage}
+	for page := 0; page < maxWorkflowPages; page++ {
+		wfs, resp, err := s.client.Actions.ListWorkflows(ctx, s.owner, s.repo, opts)
+		if err != nil {
+			return nil, err
+		}
+		if wfs != nil {
+			for _, w := range wfs.Workflows {
+				if w != nil && (want[strings.ToLower(w.GetName())] || want[strings.ToLower(path.Base(w.GetPath()))]) {
+					matched = append(matched, w)
+				}
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	var out []Run
+	for _, w := range matched {
+		runs, _, err := s.client.Actions.ListWorkflowRunsByID(ctx, s.owner, s.repo, w.GetID(), &gh.ListWorkflowRunsOptions{
+			Status:      statusCompleted,
+			ListOptions: gh.ListOptions{PerPage: latestRunPageSize},
+		})
+		if err != nil {
+			return nil, err
+		}
+		if runs == nil || len(runs.WorkflowRuns) == 0 || runs.WorkflowRuns[0] == nil {
+			continue
+		}
+		r := runs.WorkflowRuns[0]
+		out = append(out, Run{
+			ID:         r.GetID(),
+			Name:       w.GetName(),
+			HeadSHA:    r.GetHeadSHA(),
+			Status:     r.GetStatus(),
+			Conclusion: r.GetConclusion(),
+			URL:        r.GetHTMLURL(),
+		})
+	}
+	return out, nil
 }

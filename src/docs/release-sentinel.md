@@ -26,10 +26,18 @@ release_sentinel:
   poll_interval: 5m          # default: 5m
   ignore_workflows:          # runs of these workflows never block
     - Greetings
+  # Phase 2, each separately opt-in:
+  retag_enabled: false       # default false; see "Retag after merge"
+  release_branch: ""         # default: the repo's default branch
+  retag_allow_intervening_commits: false
+  release_workflows:         # default empty = pre-tag detection off
+    - Tagged Release
 ```
 
 `HIVE_RELEASE_SENTINEL_ENABLED=true|false` overrides `enabled` for one
-process, in either direction. The sentinel needs read access to Actions,
+process, in either direction. `HIVE_RELEASE_SENTINEL_RETAG_ENABLED=true|false`
+does the same for `retag_enabled`; it never turns retagging on while the
+sentinel itself is off. The sentinel needs read access to Actions,
 tags and Releases on the watched repo; the hive's GitHub App already has it
 wherever the ci-maintainer lane works.
 
@@ -64,7 +72,7 @@ stateDiagram-v2
     awaiting_ci --> fixing: blocking failure, agent-fixable, rounds left
     awaiting_ci --> failed: policy failure, or round cap reached
     awaiting_ci --> green: all runs non-blocking and Release published
-    fixing --> awaiting_ci: tag moved, or round timed out
+    fixing --> awaiting_ci: tag moved (by anyone, or by retag after merge), or round timed out
     fixing --> green: all runs non-blocking and Release published
     fixing --> failed: round timed out at the cap
     awaiting_ci --> superseded: newer release tag
@@ -114,24 +122,100 @@ stuck-PR reaper uses. The kick names the tag, the commit, every blocking run
 with its failed step and evidence, the round number and the deadline. The
 evidence passes through the mention sanitizer before it reaches the agent.
 
-In this phase the agent fixes through the **normal PR path**: a branch, a
-signed commit, a PR through `hive-open-pr`. The kick tells it not to move,
-delete or re-create the tag and not to push to the release branch. The merged
-fix ships as the next patch release, which supersedes the red one.
+The agent always fixes through the **normal PR path**: a branch, a signed
+commit, a PR through `hive-open-pr`. The kick tells it not to move, delete or
+re-create the tag and not to push to the release branch. With
+`retag_enabled` off (the default), the merged fix ships as the next patch
+release, which supersedes the red one. With it on, see below.
 
 Escalations go to the hive's notification channels (ntfy, Slack, Discord) at
 high priority, and always to the log.
 
-## Deliberately not in this phase
+## Retag after merge
 
-- **Pushing the fix and moving the tag together.** The issue's full loop has
-  the sentinel push the fix in a dedicated release worktree and re-point the
-  tag at it, so the re-run happens on the same version. That is a separate,
-  later step. Until it lands the sentinel never pushes, never moves a tag and
-  never writes to a protected branch, even when enabled.
-- **Webhook triggering.** The sentinel polls completed runs for the tag's
-  commit rather than receiving `workflow_run` events; the decision is the same
-  and a spoke needs no inbound webhook.
-- **Failures before a tag exists.** A release that fails before it is tagged
-  (as in #5875 and #6804) has no `v<version>` tag to scope a record to; those
-  still surface through the ci-maintainer lane's normal CI-failure path.
+`release_sentinel.retag_enabled: true` (default `false`, and separate from
+`enabled`) lets a repair round finish on the **same version**: once the fix is
+merged, the hive moves `v<version>` to it and the sentinel re-checks CI there.
+
+The design keeps the blast radius as small as it can be:
+
+- **The hive never pushes a branch.** The fix reaches the release branch only
+  through the normal PR path, so branch protection, required checks and review
+  apply exactly as they do to any other change. Nothing bypasses them.
+- **The handoff is a marker line.** The kick asks the agent to put
+  `Release-Sentinel: v<version>` on its own line in the PR body. A PR counts as
+  the round's fix only when it carries that line, was merged into the release
+  branch (`release_branch`, default the repo's default branch), and merged
+  after the round started.
+- **The tag move is one leased, atomic push** from a scratch bare repository
+  on the PVC (`/data/release-sentinel-git`, commits only):
+  `git push --atomic --force-with-lease=refs/tags/v<version>:<old> <fix>:refs/tags/v<version>`.
+  The tag is the only ref in the push, and the lease means a tag someone else
+  moved in the meantime is never overwritten.
+- **Before pushing, the retagger refuses** when:
+  - the tag no longer points at the commit the round was for;
+  - the tag is annotated (only lightweight tags are moved);
+  - the fix commit is not a fast-forward of the tagged commit;
+  - the fix commit is not contained in the release branch;
+  - any commit between the old tag and the fix is not part of the fix PR.
+    `retag_allow_intervening_commits: true` relaxes this for busy release
+    branches where other merges land between the tag and the fix. Leave it
+    off unless you accept that those merges ship under the old version
+    number.
+- **A refusal is final for that PR** and is recorded on the release record
+  (`retag_refused_pr`, `retag_note`) and in the log. The release then falls
+  back to the default behavior: the merged fix ships as the next patch
+  release. A different marked PR is a new candidate.
+- **After a move** the record goes back to `awaiting_ci` on the new commit.
+  The next pass evaluates that commit's runs with the same stale-SHA and
+  classification rules as any tag move, so a still-red fix starts the next
+  round (still bounded by `max_rounds`) and a green one with a published
+  Release goes `green`.
+
+Requirements and caveats:
+
+- The push token is minted from the hive's GitHub App installation (the
+  trusted tier: `contents: write`, plus `workflows: write` when the
+  installation grants it, which GitHub requires when the moved range touches
+  `.github/workflows/`). A hive that authenticates with a static token logs
+  a warning and does not retag.
+- Tag rulesets or immutable releases that forbid moving the tag make the push
+  fail; the sentinel reports the error and retries on the next pass until the
+  round times out.
+- Moving the tag triggers workflows on the tag push. Whether that republishes
+  the GitHub Release is the release workflow's business: `green` still needs a
+  published, non-draft Release for the tag.
+
+## Failures before a tag exists
+
+A release can fail before any `v<version>` tag exists: in
+[#5875](https://github.com/hivecommons/hive/issues/5875) and
+[#6804](https://github.com/hivecommons/hive/issues/6804) the release workflow
+itself failed, so there was no tag to scope a record to. List the workflows
+that cut releases in `release_sentinel.release_workflows` (by name, such as
+`Tagged Release`, or file name, such as `tagged-release.yml`). Each pass
+checks the latest completed run of each one, on any branch or event (the
+release PR, `release-gate/*` scratch branches, the release branch), and
+classifies a blocking one with the same classifier as a tagged release:
+
+| Classification | Effect |
+|---|---|
+| policy (a setting, permission or secret) | escalated to a human through the notification channels, **no dispatch**. Paged once: repeats of the same block (an hourly release run failing the same way) do not page again until a run of that workflow succeeds. |
+| fixable | left to the ci-maintainer lane's normal CI-failure path. The sentinel never dispatches from here, so it cannot double-dispatch a failure another lane owns. |
+
+A run on the commit the current tag points at belongs to the tag's own
+record, not to this path. Pre-tag records live in the same state file under a
+`pre-tag:<workflow>` key with `"kind": "pre_tag"` and are never pruned or
+superseded.
+
+## Trigger: polling, not webhooks
+
+The sentinel polls on the governor eval tick (`poll_interval`) rather than
+reacting to `workflow_run` events. Spokes do not receive GitHub webhooks: the
+only GitHub App webhook endpoint is on the hub, and it handles installation
+events. The decision logic is the same either way; the poll interval bounds
+the delay.
+
+## Not yet covered
+
+- A dashboard surface for the state file.

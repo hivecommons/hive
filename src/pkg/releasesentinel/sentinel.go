@@ -23,11 +23,20 @@
 //     escalated to a human on the FIRST round, with no dispatch and no push.
 //   - Hard caps: MaxRounds (default 5) and a per-round timeout.
 //
-// It never pushes, never moves a tag and never talks to an agent runtime of
-// its own: a round is handed to a Dispatcher (in the hive: a targeted kick to
-// the ci-maintainer lane), and escalation goes to an Escalator (the hive's
-// notification channels). Moving the tag together with a fix push is a
-// deliberately separate, later step.
+// It never pushes a branch and never talks to an agent runtime of its own: a
+// round is handed to a Dispatcher (in the hive: a targeted kick to the
+// ci-maintainer lane), and escalation goes to an Escalator (the hive's
+// notification channels).
+//
+// Two opt-in extensions (phase 2):
+//   - Retag after merge (retag.go, behind its own toggle): the agent's fix goes
+//     through the normal PR path with a marker line; once that PR is merged
+//     into the release branch, the sentinel moves the tag to the merge commit
+//     with one leased, atomic tag push, and then re-evaluates CI on the new
+//     commit. Branches are never pushed.
+//   - Pre-tag failures (pretag.go): release workflows that fail before a tag
+//     exists go through the same policy classifier; a policy failure is
+//     escalated to a human, and nothing is ever dispatched from that path.
 package releasesentinel
 
 import (
@@ -149,6 +158,11 @@ type RepairRequest struct {
 	MaxRounds int
 	Deadline  time.Time
 	Blocking  []BlockingRun
+	// Retag is true when the hive will move the tag to the fix PR's merge
+	// commit (retag after merge). The kick then asks for the FixMarker line
+	// in the PR body instead of telling the agent the fix ships as the next
+	// patch release.
+	Retag bool
 }
 
 // Dispatcher hands a repair round to an agent. An error means the round was
@@ -177,6 +191,9 @@ type Escalation struct {
 	Detail   string
 	Round    int
 	Blocking []BlockingRun
+	// Workflow is set for a pre-tag escalation: the release workflow that
+	// failed before any v<version> tag existed (Tag is then empty).
+	Workflow string
 }
 
 // Escalator notifies a human. It must not fail the transition: the state is
@@ -206,6 +223,9 @@ type Transition struct {
 
 // Record is the durable per-release state.
 type Record struct {
+	// Kind is empty for a release-tag record and KindPreTag for a release
+	// workflow that failed before tagging (keyed by preTagKey(workflow)).
+	Kind  string `json:"kind,omitempty"`
 	Tag   string `json:"tag"`
 	Repo  string `json:"repo"`
 	SHA   string `json:"sha"`
@@ -224,6 +244,21 @@ type Record struct {
 	Reason           string           `json:"reason,omitempty"`
 	BlockingRuns     []RunRef         `json:"blocking_runs,omitempty"`
 	History          []Transition     `json:"history,omitempty"`
+
+	// Pre-tag records only: the release workflow and the run last classified.
+	Workflow string `json:"workflow,omitempty"`
+	RunID    int64  `json:"run_id,omitempty"`
+
+	// Retag after merge. RetagPR is the fix PR whose merge commit the tag was
+	// last moved to, RetagFromSHA the commit it was moved away from and
+	// RetaggedAt when. RetagRefusedPR is a merged fix PR the retagger refused
+	// (non-fast-forward, not on the release branch, unrelated commits, lost
+	// lease): it is never retried, and RetagNote says why.
+	RetagPR        int       `json:"retag_pr,omitempty"`
+	RetagFromSHA   string    `json:"retag_from_sha,omitempty"`
+	RetaggedAt     time.Time `json:"retagged_at,omitempty"`
+	RetagRefusedPR int       `json:"retag_refused_pr,omitempty"`
+	RetagNote      string    `json:"retag_note,omitempty"`
 }
 
 func (r *Record) transition(now time.Time, to State, reason string) {
@@ -253,6 +288,23 @@ type Options struct {
 	IgnoreWorkflows []string
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
+
+	// RetagEnabled turns on retag after merge. It only takes effect when a
+	// FixSource and a Retagger were supplied with WithRetag; off (the
+	// default) the sentinel never moves a tag.
+	RetagEnabled bool
+	// ReleaseBranch is the branch release tags are cut from. Empty means the
+	// repository's default branch.
+	ReleaseBranch string
+	// RetagAllowIntervening lets the tag move past commits that are not part
+	// of the fix PR (other merges that landed on the release branch after the
+	// tag). Off by default: the tag only ever moves to "old tag + the fix".
+	RetagAllowIntervening bool
+	// ReleaseWorkflows names the workflows that cut a release (matched
+	// case-insensitively against the workflow name or its file name). A
+	// blocking run of one of them whose head is not the current tag's commit
+	// is a pre-tag failure. Empty turns pre-tag detection off.
+	ReleaseWorkflows []string
 }
 
 func (o Options) maxRounds() int {
@@ -299,6 +351,31 @@ type Sentinel struct {
 	store      Store
 	dispatcher Dispatcher
 	escalator  Escalator
+	fixes      FixSource
+	retagger   Retagger
+	preTag     PreTagSource
+}
+
+// WithRetag supplies the fix-PR lookup and the tag mover used when
+// Options.RetagEnabled is on. It returns s for chaining.
+func (s *Sentinel) WithRetag(fixes FixSource, retagger Retagger) *Sentinel {
+	s.fixes, s.retagger = fixes, retagger
+	return s
+}
+
+// WithPreTag supplies the release-workflow run lookup used when
+// Options.ReleaseWorkflows is non-empty. It returns s for chaining.
+func (s *Sentinel) WithPreTag(p PreTagSource) *Sentinel {
+	s.preTag = p
+	return s
+}
+
+func (s *Sentinel) retagOn() bool {
+	return s.opts.RetagEnabled && s.fixes != nil && s.retagger != nil
+}
+
+func (s *Sentinel) preTagOn() bool {
+	return s.preTag != nil && len(s.opts.ReleaseWorkflows) > 0
 }
 
 // ErrMissingDependency is returned by Evaluate when the sentinel was built
@@ -321,6 +398,7 @@ const (
 	ActionEscalated    Action = "escalated"     // handed to a human, state failed
 	ActionGreen        Action = "green"         // release confirmed green
 	ActionTerminal     Action = "terminal"      // record already terminal; nothing to do
+	ActionRetagged     Action = "retagged"      // a merged fix PR's commit is now the tag; CI re-evaluated next pass
 )
 
 // Result reports one Evaluate pass.
@@ -334,6 +412,16 @@ type Result struct {
 	// StaleRuns counts runs ignored because their head SHA is not the SHA the
 	// tag points at now.
 	StaleRuns int
+	// RetagRefused is why a merged fix PR did not move the tag this pass
+	// (final for that PR). RetagError is a transient retag failure, retried
+	// next pass; it never fails the pass.
+	RetagRefused string
+	RetagError   string
+	// PreTagEscalated lists release workflows escalated this pass for a
+	// pre-tag policy failure; PreTagFixable lists ones whose pre-tag failure
+	// was left to the normal CI-failure path.
+	PreTagEscalated []string
+	PreTagFixable   []string
 }
 
 // Evaluate runs one pass of the state machine for the current release tag
@@ -348,7 +436,8 @@ func (s *Sentinel) Evaluate(ctx context.Context) (Result, error) {
 	if err != nil {
 		return Result{Action: ActionNone}, fmt.Errorf("resolve current release tag: %w", err)
 	}
-	if !ok || tag.Name == "" || tag.SHA == "" {
+	hasTag := ok && tag.Name != "" && tag.SHA != ""
+	if !hasTag && !s.preTagOn() {
 		return Result{Action: ActionNone}, nil
 	}
 	records, err := s.store.Load()
@@ -357,7 +446,23 @@ func (s *Sentinel) Evaluate(ctx context.Context) (Result, error) {
 	}
 
 	res := Result{Action: ActionNone}
+	// Pre-tag detection never blocks the tag's own pass: its error is
+	// reported after that pass has run and been persisted.
+	var preTagErr error
+	if s.preTagOn() {
+		preTagErr = s.evaluatePreTag(ctx, now, tag, hasTag, records, &res)
+	}
+	if !hasTag {
+		if err := s.store.Save(prune(records)); err != nil {
+			return res, errors.Join(preTagErr, fmt.Errorf("save release sentinel state: %w", err))
+		}
+		return res, preTagErr
+	}
+
 	for name, r := range records {
+		if r.Kind == KindPreTag {
+			continue
+		}
 		if name != tag.Name && !r.State.Terminal() {
 			r.transition(now, StateSuperseded, "newer release tag "+tag.Name+" is current")
 			res.Superseded = append(res.Superseded, name)
@@ -375,14 +480,14 @@ func (s *Sentinel) Evaluate(ctx context.Context) (Result, error) {
 		// Persist whatever was decided before the failure (supersessions, a
 		// tag move) so a restart does not redo it, then report the error.
 		_ = s.store.Save(prune(records))
-		return res, err
+		return res, errors.Join(err, preTagErr)
 	}
 	if err := s.store.Save(prune(records)); err != nil {
-		return res, fmt.Errorf("save release sentinel state: %w", err)
+		return res, errors.Join(fmt.Errorf("save release sentinel state: %w", err), preTagErr)
 	}
 	cp := *rec
 	res.Record = &cp
-	return res, nil
+	return res, preTagErr
 }
 
 // step advances one record. It mutates rec and res in place.
@@ -391,12 +496,35 @@ func (s *Sentinel) step(ctx context.Context, now time.Time, tag Tag, rec *Record
 		res.Action = ActionTerminal
 		return nil
 	}
+	if rec.SHA != tag.SHA && tag.SHA == rec.RetagFromSHA && now.Sub(rec.RetaggedAt) < retagSettleWindow {
+		// The sentinel itself just moved the tag away from this commit; a tag
+		// listing that still shows the old commit is a lagging read, not a
+		// move back. Wait instead of re-opening the old failure as a new round.
+		res.Action = ActionWaiting
+		return nil
+	}
 	if rec.SHA != tag.SHA {
 		// The tag moved (a fix was pushed and the tag re-pointed). The old
 		// SHA's runs are now stale; wait for the new SHA's CI.
 		rec.SHA = tag.SHA
 		rec.BlockingRuns = nil
 		rec.transition(now, StateAwaitingCI, "tag moved to "+shortSHA(tag.SHA))
+	}
+
+	if rec.State == StateFixing && rec.RoundSHA == rec.SHA && s.retagOn() {
+		moved, err := s.tryRetag(ctx, now, rec, res)
+		if err != nil {
+			// Transient (forge or push down): retried next pass. It must not
+			// end the pass, or a push that keeps failing would also keep the
+			// round timeout and the cap from ever firing.
+			res.RetagError = err.Error()
+		}
+		if moved {
+			// CI on the new commit is evaluated from the next pass on, with
+			// the same stale-SHA and classification rules as any tag move.
+			res.Action = ActionRetagged
+			return nil
+		}
 	}
 
 	runs, err := s.source.Runs(ctx, rec.SHA)
@@ -497,6 +625,7 @@ func (s *Sentinel) startRound(ctx context.Context, now time.Time, rec *Record, b
 		MaxRounds: s.opts.maxRounds(),
 		Deadline:  now.Add(s.opts.roundTimeout()),
 		Blocking:  detailed,
+		Retag:     s.retagOn(),
 	}
 	if err := s.dispatcher.DispatchRepair(ctx, req); err != nil {
 		// Not delivered, so not counted: the round cap measures rounds an
@@ -530,13 +659,15 @@ func refs(runs []Run) []RunRef {
 
 // prune bounds the state file: once more than maxRecords releases are
 // remembered, the least recently updated terminal records are dropped.
+// Pre-tag records are never pruned: there is one per configured release
+// workflow, and dropping an escalated one would page a human again.
 func prune(records map[string]*Record) map[string]*Record {
 	if len(records) <= maxRecords {
 		return records
 	}
 	var terminal []string
 	for name, r := range records {
-		if r.State.Terminal() {
+		if r.State.Terminal() && r.Kind != KindPreTag {
 			terminal = append(terminal, name)
 		}
 	}

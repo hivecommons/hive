@@ -6514,7 +6514,8 @@ func runEvalCycle(
 	// Release sentinel (hivecommons/hive#9585), opt-in and default OFF: when
 	// the current v<version> tag's CI fails, dispatch a bounded repair round
 	// through the same kick path as the reaper above, or escalate to a human
-	// when the failure is a setting no commit can fix. Never pushes or retags.
+	// when the failure is a setting no commit can fix. Never pushes a branch;
+	// moves the tag to a merged fix PR only with retag_enabled (also opt-in).
 	runReleaseSentinel(ctx, cfg, ghClient, agentKicker{mgr: agentMgr},
 		agentAvailability(cfg, agentMgr), notifier, logger)
 
