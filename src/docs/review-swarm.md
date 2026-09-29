@@ -137,7 +137,27 @@ review:
 
 The confidence score also feeds the **PR review queue** (`GET /api/review/queue`), which ranks every open PR - agent- and contributor-authored - by triage class, confidence band, CI state and age, with the reasons for each position. An unreviewed PR ranks as *needs attention*, never *safe*. See [review-queue-triage.md](review-queue-triage.md#pr-review-queue).
 
-When `review.require_approval` is false or omitted, `merge-eligible.json` is produced as before. When true, a PR is included only if `review-verdicts.json` contains an aggregate `approve` for the same repo, PR number, and head SHA.
+When `review.require_approval` is false or omitted, `merge-eligible.json` is produced as before. When true, a PR is included only if `review-verdicts.json` contains an aggregate `approve` for the same repo, PR number, and head SHA. That rule applies to PRs the hive opened; a contributor's PR follows the rule below instead.
+
+### A swarm approval never merges a contributor's PR
+
+A swarm verdict is advisory AI output. It is never what lets the hive merge someone else's code (hivecommons/hive#9624).
+
+**Who counts as the hive.** A PR opened by the hive's App bot or by `project.ai_author` (case-insensitive), or by a bot listed in `auto_merge.trusted_bot_authors` (default `dependabot[bot]`), is gated exactly as described above. Every other PR is a **contributor PR**, including one whose author is unknown and one from a bot the operator did not list. The hive attribution trailer in a PR body does not count: anyone can type it. A hive whose agents open PRs under a personal token must set `project.ai_author` to that account, or its own PRs read as contributor PRs.
+
+**The rule for a contributor PR.** It is merge-eligible only when both hold:
+
+1. The operator opted in with `auto_merge.contributor_prs: true`. It is off by default, so by default the hive never merges a PR it did not open; a maintainer does.
+2. A person with write access to the repository has approved the PR's **current head** on the forge. The approval is read from GitHub's own reviews (the reviewer's latest review is an approval, the reviewer is a person rather than a bot or this hive's account, and the reviewer can push to the repository). An approval of an older head does not vouch for commits pushed after it.
+
+With both, the maintainer's approval takes the place of the swarm gate: `require_approval` does not also need a swarm `approve`. A swarm `approve` alone never satisfies it for a contributor PR.
+
+**Where it is enforced.** In two places, so neither is the only wall:
+
+- The merge-eligibility classifier keeps such a PR out of `merge-eligible.json`. The dashboard verdict reads `contributor PR: needs a maintainer's review`, followed by what is missing (the opt-in, or an approval of the current head).
+- The merge relay (`hive-merge`) re-checks the author and, when the hive opted in, reads the reviews API and the reviewer's repository permission itself before merging. A refused request gets `.result.json` with `ok: false` and that reason, is set aside as `.denied`, and adds a `merge_request_refused` audit entry with `repo=`, `number=`, `author=` and `reason=contributor_pr`. A failed lookup is a retryable failed attempt, never an allow.
+
+**What does not change.** Red CI routing: a red contributor PR still lands in `ci-failing.json` exactly as before, held or not. The self-authored auto-merge sweep merges only the App's own and trusted-bot PRs, as before. A maintainer can still queue any PR for merge from the dashboard; that is a person's decision, not the swarm's.
 
 `review.fan_out` is separately defaulted to false. When both `require_approval` and `fan_out` are true, the governor eval cycle plans review kicks for agent-authored PRs that do not yet have a fresh aggregate verdict for their current head SHA.
 

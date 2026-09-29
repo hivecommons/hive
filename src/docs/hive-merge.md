@@ -161,6 +161,23 @@ underlying endpoint is `GET/PUT /api/config/auto-merge` (owner-only), whose
 response carries `bot_authors: [{login, source: known|discovered|custom,
 trusted}]`.
 
+### Contributor PRs
+
+A PR not opened by the App bot, `project.ai_author` or a trusted bot is a
+contributor PR, and a review-swarm approval never makes it mergeable
+(hivecommons/hive#9624). By default the relay refuses every merge request
+for one, with `contributor PR: needs a maintainer's review` in the
+`.result.json` and a `merge_request_refused` audit entry. Setting
+`auto_merge.contributor_prs: true` lets the relay merge it once a person with
+write access has approved the pinned head SHA on GitHub. See
+[review-swarm.md](review-swarm.md#a-swarm-approval-never-merges-a-contributors-pr)
+for the full rule.
+
+```yaml
+auto_merge:
+  contributor_prs: false # default; true = merge after a maintainer approves the current head
+```
+
 ## Usage
 
 ```sh

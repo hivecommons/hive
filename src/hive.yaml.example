@@ -611,6 +611,9 @@ governor:
 # Review swarm merge gate — optional structured multi-perspective PR review.
 # Default is false to preserve existing merge eligibility behavior; when true,
 # merge-eligible.json requires an aggregate approve in review-verdicts.json.
+# A swarm approve never makes a contributor's PR (not the App, project.ai_author
+# or auto_merge.trusted_bot_authors) eligible; see auto_merge.contributor_prs
+# in docs/review-swarm.md (#9624).
 # review:
 #   require_approval: false
 #   fan_out: false
