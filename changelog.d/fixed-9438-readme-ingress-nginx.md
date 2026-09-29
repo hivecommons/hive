@@ -1,0 +1,1 @@
+- The README Kubernetes prerequisites now name ingress-nginx instead of nginx-ingress ([#9438](https://github.com/hivecommons/hive/issues/9438)). The example Ingress uses `nginx.ingress.kubernetes.io/*` annotations, which F5's NGINX Ingress Controller ignores, so the 50m body size and 3600s SSE timeouts did not apply on that controller.
