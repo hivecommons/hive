@@ -58,9 +58,12 @@ func (s *Service) Deliver(ctx context.Context, msg Message) {
 }
 
 func (s *Service) routeMessage(ctx context.Context, msg Message) {
-	if msg.FromBot {
+	if msg.FromBot || !s.inbound.remember(msg.ID) {
 		return
 	}
+
+	// Carry identity through commands and conversational checkpoint replies.
+	ctx = context.WithValue(ctx, commandAuthorContextKey{}, msg.AuthorID)
 
 	content := strings.TrimSpace(msg.Text)
 	// Transports pre-enforce inbound text and deliver the redaction marker, so
@@ -91,13 +94,13 @@ func (s *Service) routeMessage(ctx context.Context, msg Message) {
 	// contract on Config.AllowedUsers ("Empty = commands disabled (fail closed)").
 	// An empty allowlist rejects every command; operators enable command control
 	// by populating allowed_users with the specific transport user IDs they trust.
-	if len(s.allowedUsers) == 0 {
+	if s.allowedUserCount() == 0 {
 		s.logger.Warn("chat: ignoring command — allowlist is empty (commands disabled; set allowed_users to enable)",
 			"user_id", msg.AuthorID, "content", content)
 		s.refuseCommand(msg, "commands are disabled because the chat allowlist is empty")
 		return
 	}
-	role, ok := s.allowedUsers[msg.AuthorID]
+	role, ok := s.allowedUserRole(msg.AuthorID)
 	if !ok {
 		s.logger.Warn("chat: ignoring command from non-allowlisted user",
 			"user_id", msg.AuthorID, "content", content)
@@ -105,7 +108,6 @@ func (s *Service) routeMessage(ctx context.Context, msg Message) {
 		return
 	}
 	ctx = context.WithValue(ctx, commandRoleContextKey{}, role)
-	ctx = context.WithValue(ctx, commandAuthorContextKey{}, msg.AuthorID)
 
 	content = content[1:]
 

@@ -92,7 +92,7 @@ func TestV6ConformanceSlack_InboundSocketTextPassesIOSCANBeforeRouting(t *testin
 
 	b := newTestBot(ts.URL)
 	delivered := make(chan chat.Message, 1)
-	_, _ = b.consumeSocket(context.Background(), func(msg chat.Message) { delivered <- msg })
+	_ = consumeOnce(context.Background(), b, delivered)
 
 	select {
 	case msg := <-delivered:
@@ -192,7 +192,7 @@ func TestV6ConformanceSlack_AuthorizationAndDashboardPathGateAgentWork(t *testin
 		t.Fatal("Listen did not return after cancel")
 	}
 
-	// consumeSocket delivers synchronously in envelope order, so by the time the
+	// serveSocket delivers synchronously in envelope order, so by the time the
 	// allowed envelope produced its POST the denied one had been fully handled:
 	// any second request, or any trace of denied-probe, means the surface let a
 	// non-allowlisted actor drive agent work.

@@ -1,0 +1,1 @@
+- Spektacular interview answers now pass through the input scanner, identical submissions are idempotent, and consumed request/answer files are cleared without letting reused question IDs inherit stale answers ([#9146](https://github.com/hivecommons/hive/issues/9146)).

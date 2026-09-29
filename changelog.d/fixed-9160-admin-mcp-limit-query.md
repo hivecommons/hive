@@ -1,0 +1,1 @@
+- `hive-admin-mcp` (stdio) capped list tools (`agents_list`, `runs_list`, `leases_list`, `claims_list`, `plans_list`, `contributors_list`) now send `limit` as a query parameter instead of a percent-encoded path segment, so they no longer answer `HTTP 404` against a real hive ([#9160](https://github.com/hivecommons/hive/issues/9160)).

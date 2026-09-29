@@ -432,3 +432,38 @@ func TestNewInceptionEngineWithDir(t *testing.T) {
 		t.Error("fresh engine should have nil state")
 	}
 }
+
+// TestRecordFactsKeepsUnconfirmedProposalsOnAdvance pins #9171: advancing to
+// scaffold must drop only the proposals that were just recorded as confirmed,
+// not every pending proposal a human has not reviewed yet.
+func TestRecordFactsKeepsUnconfirmedProposalsOnAdvance(t *testing.T) {
+	e := newTestEngine(t)
+	if _, err := e.Start("transcript proposals survive advance"); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	e.mu.Lock()
+	e.state.Phase = PhaseStructure
+	e.mu.Unlock()
+
+	pending := IdeationFact{Title: "Pending option", Body: "Maybe add SMS.", Type: FactRequirement, SourceRef: "transcripts/m.txt:1-2"}
+	confirmed := IdeationFact{Title: "Confirmed option", Body: "Use SSO.", Type: FactRequirement, SourceRef: "transcripts/m.txt:3-4"}
+	if err := e.AddProposedFacts([]IdeationFact{pending, confirmed}); err != nil {
+		t.Fatalf("AddProposedFacts: %v", err)
+	}
+
+	confirmed.Proposed, confirmed.Confirmed = true, true
+	if err := e.RecordFacts(context.Background(), []IdeationFact{
+		{Title: "Vision", Body: "A digest service.", Type: FactVision},
+		confirmed,
+	}); err != nil {
+		t.Fatalf("RecordFacts: %v", err)
+	}
+
+	state := e.GetState()
+	if state.Phase != PhaseScaffold {
+		t.Fatalf("phase = %s, want scaffold", state.Phase)
+	}
+	if len(state.ProposedFacts) != 1 || state.ProposedFacts[0].Title != "Pending option" {
+		t.Fatalf("proposed facts = %+v, want only the unconfirmed proposal", state.ProposedFacts)
+	}
+}

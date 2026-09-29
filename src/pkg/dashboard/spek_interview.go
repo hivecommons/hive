@@ -1,6 +1,8 @@
 package dashboard
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,9 +12,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
@@ -31,7 +35,12 @@ type SpekInterviewQuestion struct {
 	Default string   `json:"default,omitempty"`
 }
 
+// Serialize dashboard submissions with executor cleanup. The CLI writes requests
+// only while it runs; cleanup happens after it exits.
+var spekInterviewMu sync.Mutex
+
 type SpekInterviewRequest struct {
+	RequestID     string                  `json:"-"`
 	SchemaVersion string                  `json:"schema_version"`
 	Stage         string                  `json:"stage"`
 	Artifact      string                  `json:"artifact"`
@@ -47,6 +56,7 @@ type SpekInterviewAnswer struct {
 }
 
 type SpekInterviewAnswers struct {
+	RequestID     string                `json:"request_id"`
 	SchemaVersion string                `json:"schema_version"`
 	RunKey        string                `json:"run_key,omitempty"`
 	Stage         string                `json:"stage,omitempty"`
@@ -61,6 +71,7 @@ type RunInterviewState struct {
 }
 
 type RunInterviewPayload struct {
+	RequestID string                  `json:"request_id"`
 	OK        bool                    `json:"ok"`
 	RunKey    string                  `json:"run_key"`
 	Stage     string                  `json:"stage,omitempty"`
@@ -73,7 +84,8 @@ type RunInterviewPayload struct {
 }
 
 type runInterviewPostRequest struct {
-	Answers []SpekInterviewAnswer `json:"answers"`
+	RequestID string                `json:"request_id,omitempty"`
+	Answers   []SpekInterviewAnswer `json:"answers"`
 }
 
 func spekInterviewPromptBlock(stage, artifact string, answers []byte) string {
@@ -87,7 +99,7 @@ func spekInterviewPromptBlock(stage, artifact string, answers []byte) string {
 	b.WriteString(",\"artifact\":")
 	b.WriteString(strconv.Quote(artifact))
 	b.WriteString(",\"step\":\"<current step>\",\"questions\":[{\"id\":\"stable-short-id\",\"text\":\"question for the stakeholder\",\"context\":\"optional why it matters\",\"options\":[\"optional choice\"],\"default\":\"optional default\"}]}.\n")
-	b.WriteString("- If `.hive/spek-interview-answers.json` exists and contains answers for those ids, use those human answers verbatim, record them in the Spektacular document/transcript, and continue the Spektacular workflow until document_status is final or another stakeholder question is needed.\n")
+	b.WriteString("- If `.hive/spek-interview-answers.json` exists and contains answers for those ids, use those human answers verbatim for that request only (never reuse them for a new round just because question IDs match), record them in the Spektacular document/transcript, and continue the Spektacular workflow until document_status is final or another stakeholder question is needed.\n")
 	if len(strings.TrimSpace(string(answers))) > 0 {
 		b.WriteString("\nExisting human interview answers (verbatim JSON):\n")
 		b.Write(answers)
@@ -97,11 +109,51 @@ func spekInterviewPromptBlock(stage, artifact string, answers []byte) string {
 }
 
 func readSpekInterviewAnswers(worktree string) []byte {
-	data, err := os.ReadFile(filepath.Join(worktree, spekInterviewAnswersRelPath))
-	if err != nil {
+	_, answers, _, err := readSpekInterviewFiles(worktree)
+	if err != nil || len(answers.Answers) == 0 {
 		return nil
 	}
+	data, _ := json.Marshal(answers)
 	return data
+}
+
+// Clear only the consumed round. A relaunched CLI may have written another
+// request (even with identical question IDs), and an owner may have answered it.
+func clearConsumedSpekInterview(worktree string, consumed []byte) error {
+	if len(consumed) == 0 {
+		return nil
+	}
+	spekInterviewMu.Lock()
+	defer spekInterviewMu.Unlock()
+	var old SpekInterviewAnswers
+	if err := json.Unmarshal(consumed, &old); err != nil {
+		return err
+	}
+	req, _, _, err := readSpekInterviewFiles(worktree)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err == nil && req.RequestID == old.RequestID {
+		if err := os.Remove(filepath.Join(worktree, spekInterviewRequestRelPath)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	path := filepath.Join(worktree, spekInterviewAnswersRelPath)
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var current SpekInterviewAnswers
+	if err := json.Unmarshal(data, &current); err != nil {
+		return err
+	}
+	if current.RequestID == old.RequestID {
+		return os.Remove(path)
+	}
+	return nil
 }
 
 func readSpekInterviewFiles(worktree string) (SpekInterviewRequest, SpekInterviewAnswers, time.Time, error) {
@@ -114,13 +166,23 @@ func readSpekInterviewFiles(worktree string) (SpekInterviewRequest, SpekIntervie
 	if err := json.Unmarshal(data, &req); err != nil {
 		return req, SpekInterviewAnswers{}, time.Time{}, err
 	}
-	askedAt := time.Time{}
-	if info, statErr := os.Stat(reqPath); statErr == nil {
-		askedAt = info.ModTime()
+	info, err := os.Stat(reqPath)
+	if err != nil {
+		return req, SpekInterviewAnswers{}, time.Time{}, err
 	}
+	askedAt := info.ModTime()
+	// Include modification time so rewriting an identical request starts a new round.
+	fingerprint := sha256.Sum256(append(append([]byte(nil), data...), []byte(askedAt.UTC().Format(time.RFC3339Nano))...))
+	req.RequestID = hex.EncodeToString(fingerprint[:])
 	var answers SpekInterviewAnswers
 	if answerData, answerErr := os.ReadFile(filepath.Join(worktree, spekInterviewAnswersRelPath)); answerErr == nil {
-		_ = json.Unmarshal(answerData, &answers)
+		if err := json.Unmarshal(answerData, &answers); err != nil {
+			answers = SpekInterviewAnswers{}
+		}
+	}
+	// Unstamped legacy files cannot safely be associated with the current round.
+	if answers.RequestID != req.RequestID {
+		answers = SpekInterviewAnswers{}
 	}
 	return req, answers, askedAt, nil
 }
@@ -228,6 +290,8 @@ func (s *Server) handleRunInterviewPost(w http.ResponseWriter, r *http.Request) 
 	if !requireOwnerRole(w, r) {
 		return
 	}
+	spekInterviewMu.Lock()
+	defer spekInterviewMu.Unlock()
 	key := pathRunKey(r)
 	payload, err := s.RunInterviewPayload(key)
 	if err != nil {
@@ -239,6 +303,10 @@ func (s *Server) handleRunInterviewPost(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "invalid JSON body", http.StatusBadRequest)
 		return
 	}
+	if req.RequestID != "" && req.RequestID != payload.RequestID {
+		jsonError(w, "interview request has changed", http.StatusConflict)
+		return
+	}
 	answerByID := map[string]SpekInterviewAnswer{}
 	for _, a := range payload.Answers {
 		answerByID[strings.TrimSpace(a.ID)] = a
@@ -248,23 +316,31 @@ func (s *Server) handleRunInterviewPost(w http.ResponseWriter, r *http.Request) 
 	for _, q := range payload.Questions {
 		allowed[q.ID] = true
 	}
+	changed := false
 	for _, a := range req.Answers {
 		a.ID = strings.TrimSpace(a.ID)
 		a.Answer = strings.TrimSpace(a.Answer)
-		if a.ID == "" || !allowed[a.ID] {
-			jsonError(w, "answer id is not pending", http.StatusBadRequest)
-			return
-		}
 		if a.Answer == "" {
 			jsonError(w, "answer text is required", http.StatusBadRequest)
 			return
 		}
-		if a.AnsweredAt == "" {
-			a.AnsweredAt = now
+		var accepted bool
+		a.Answer, accepted = s.enforceInterviewAnswer(r, key, a.Answer)
+		if !accepted {
+			jsonError(w, "interview answer blocked by input policy", http.StatusForbidden)
+			return
 		}
-		if a.Actor == "" {
-			a.Actor = requestUser(r)
+		if old, ok := answerByID[a.ID]; ok && old.Answer == a.Answer {
+			continue
 		}
+		if a.ID == "" || !allowed[a.ID] {
+			jsonError(w, "answer id is not pending", http.StatusBadRequest)
+			return
+		}
+		// Attribution is server-owned, never supplied by the browser.
+		a.AnsweredAt = now
+		a.Actor = requestUser(r)
+		changed = true
 		answerByID[a.ID] = a
 	}
 	if len(req.Answers) == 0 {
@@ -277,6 +353,10 @@ func (s *Server) handleRunInterviewPost(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
+	if !changed {
+		jsonResponse(w, map[string]any{"ok": true, "run_key": key, "answers": len(req.Answers), "status": "answers_sent"})
+		return
+	}
 	worktree, err := s.spekInterviewWorktree(key)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusNotFound)
@@ -287,7 +367,7 @@ func (s *Server) handleRunInterviewPost(w http.ResponseWriter, r *http.Request) 
 		all = append(all, a)
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
-	doc := SpekInterviewAnswers{SchemaVersion: spekInterviewSchemaVersion, RunKey: key, Stage: payload.Stage, Artifact: payload.Artifact, Step: payload.Step, Answers: all}
+	doc := SpekInterviewAnswers{RequestID: payload.RequestID, SchemaVersion: spekInterviewSchemaVersion, RunKey: key, Stage: payload.Stage, Artifact: payload.Artifact, Step: payload.Step, Answers: all}
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -297,7 +377,12 @@ func (s *Server) handleRunInterviewPost(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := os.WriteFile(filepath.Join(worktree, spekInterviewAnswersRelPath), append(data, '\n'), 0o600); err != nil {
+	current, _, _, readErr := readSpekInterviewFiles(worktree)
+	if readErr != nil || current.RequestID != payload.RequestID {
+		jsonError(w, "interview request has changed", http.StatusConflict)
+		return
+	}
+	if err := writeSpekInterviewAnswers(worktree, append(data, '\n')); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -306,6 +391,39 @@ func (s *Server) handleRunInterviewPost(w http.ResponseWriter, r *http.Request) 
 	}})
 	go s.tickStageRunner(time.Now().UTC())
 	jsonResponse(w, map[string]any{"ok": true, "run_key": key, "answers": len(req.Answers), "status": "answers_sent"})
+}
+
+// Publish the complete document atomically for the concurrently polling executor.
+func writeSpekInterviewAnswers(worktree string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Join(worktree, ".hive"), "spek-interview-answers-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	_, writeErr := f.Write(data)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return os.Rename(f.Name(), filepath.Join(worktree, spekInterviewAnswersRelPath))
+}
+
+func (s *Server) enforceInterviewAnswer(r *http.Request, key, text string) (string, bool) {
+	if s.deps == nil || s.deps.Config == nil || !s.deps.Config.Ioscan.IsEnabled() {
+		return text, true
+	}
+	sanitized, v := ioscan.EnforceInput(text)
+	if v.Blocked {
+		s.auditFromRequest(r, "ioscan_block", auditDetail("context", "spek_interview", "findings", strconv.Itoa(len(v.Findings))), key)
+	}
+	if s.deps.Config.Ioscan.FailClosedAtLevel(detectACMMLevel(s.deps.Config)) && v.HasCriticalInjection() {
+		s.auditFromRequest(r, "ioscan_fail_closed", auditDetail("context", "spek_interview", "findings", strconv.Itoa(len(v.Findings))), key)
+		return sanitized, false
+	}
+	return sanitized, true
 }
 
 func (s *Server) RunInterviewPayload(key string) (RunInterviewPayload, error) {
@@ -318,7 +436,7 @@ func (s *Server) RunInterviewPayload(key string) (RunInterviewPayload, error) {
 		return RunInterviewPayload{}, errRunInterviewNotFound
 	}
 	return RunInterviewPayload{
-		OK: true, RunKey: key, Stage: req.Stage, Artifact: req.Artifact, Step: req.Step,
+		RequestID: req.RequestID, OK: true, RunKey: key, Stage: req.Stage, Artifact: req.Artifact, Step: req.Step,
 		AskedAt: formatRunTime(askedAt), Questions: pending, Answers: answers.Answers, Pending: len(pending),
 	}, nil
 }

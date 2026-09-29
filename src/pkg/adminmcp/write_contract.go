@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -20,6 +21,12 @@ const (
 	ToolWriteConfirm = "write_confirm"
 
 	DefaultConfirmationTTL = 10 * time.Minute
+
+	// MaxPendingConfirmations bounds how many unconfirmed previews a store
+	// keeps. Previews are free to issue and most are never confirmed, so
+	// without a cap an exploring model grows the store (and the file rewritten
+	// on every call) until entries expire. The oldest entry is evicted first.
+	MaxPendingConfirmations = 64
 )
 
 var (
@@ -140,6 +147,7 @@ func (s *MemoryPendingStore) Put(_ context.Context, pending PendingConfirmation)
 	defer s.mu.Unlock()
 	s.pruneLocked(time.Now().UTC())
 	s.pending[pending.ID] = pending
+	capPendingConfirmations(s.pending, MaxPendingConfirmations)
 	return nil
 }
 
@@ -190,6 +198,7 @@ func (s *FilePendingStore) Put(ctx context.Context, pending PendingConfirmation)
 		return err
 	}
 	items[pending.ID] = pending
+	capPendingConfirmations(items, MaxPendingConfirmations)
 	return s.saveLocked(items)
 }
 
@@ -265,9 +274,24 @@ func (s *FilePendingStore) loadLocked(ctx context.Context) (map[string]PendingCo
 		return items, false, nil
 	}
 	if err := json.Unmarshal(data, &items); err != nil {
-		return nil, false, err
+		// A torn or hand-edited file must not disable every admin write
+		// until an operator deletes it. Pending confirmations are cheap to
+		// re-issue, so set the bad file aside for inspection and start empty.
+		if qerr := s.quarantineLocked(err); qerr != nil {
+			return nil, false, fmt.Errorf("pending confirmation store %s is unreadable (%v) and could not be set aside: %w", s.path, err, qerr)
+		}
+		return map[string]PendingConfirmation{}, false, nil
 	}
 	return items, prunePendingConfirmations(items, time.Now().UTC()), nil
+}
+
+func (s *FilePendingStore) quarantineLocked(cause error) error {
+	dest := fmt.Sprintf("%s.corrupt-%s", s.path, time.Now().UTC().Format("20060102T150405.000000000Z"))
+	if err := os.Rename(s.path, dest); err != nil {
+		return err
+	}
+	slog.Warn("admin MCP pending confirmation store was unreadable; moved aside and started empty", "path", s.path, "moved_to", dest, "err", cause)
+	return nil
 }
 
 func (s *FilePendingStore) saveLocked(items map[string]PendingConfirmation) error {
@@ -279,7 +303,36 @@ func (s *FilePendingStore) saveLocked(items map[string]PendingConfirmation) erro
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, append(data, '\n'), 0o600)
+	return writeFileAtomic(s.path, append(data, '\n'), 0o600)
+}
+
+// writeFileAtomic replaces path via a synced temp file in the same directory
+// and a rename, so a crash mid-write leaves the previous complete file instead
+// of a truncated one.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmp.Name())
+		}
+	}()
+	if err = tmp.Chmod(perm); err != nil {
+		return err
+	}
+	if _, err = tmp.Write(data); err != nil {
+		return err
+	}
+	if err = tmp.Sync(); err != nil {
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
 func prunePendingConfirmations(items map[string]PendingConfirmation, now time.Time) bool {
@@ -291,6 +344,28 @@ func prunePendingConfirmations(items map[string]PendingConfirmation, now time.Ti
 		}
 	}
 	return pruned
+}
+
+// capPendingConfirmations evicts the oldest entries (by CreatedAt, then ID
+// for a stable order) until at most limit remain.
+func capPendingConfirmations(items map[string]PendingConfirmation, limit int) {
+	if limit <= 0 || len(items) <= limit {
+		return
+	}
+	ids := make([]string, 0, len(items))
+	for id := range items {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		a, b := items[ids[i]], items[ids[j]]
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.Before(b.CreatedAt)
+		}
+		return ids[i] < ids[j]
+	})
+	for _, id := range ids[:len(ids)-limit] {
+		delete(items, id)
+	}
 }
 
 func newConfirmationID() (string, error) {

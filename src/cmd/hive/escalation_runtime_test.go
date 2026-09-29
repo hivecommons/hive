@@ -85,3 +85,56 @@ func TestGovernorModeChangeDoesNotFakePausePage(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 }
+
+func escalationReloadConfig(ntfyURL string) *config.Config {
+	cfg := &config.Config{HiveID: "h1"}
+	cfg.Escalation.Email = config.EscalationEmailConfig{
+		Enabled: true,
+		SMTP:    config.EscalationSMTPConfig{Host: "127.0.0.1", Port: 1},
+		From:    "hive@example.com",
+		To:      []string{"ops@example.com"},
+		Digest:  config.EscalationDigestConfig{To: []string{"team@example.com"}, At: "08:00"},
+	}
+	cfg.Escalation.Push = config.EscalationPushConfig{Enabled: true, Ntfy: config.EscalationNtfyConfig{URL: ntfyURL}}
+	return cfg
+}
+
+func TestConfigureEscalationDispatcherSurvivesUnchangedReload(t *testing.T) {
+	escalationRuntime.Lock()
+	oldD, oldEmail, oldKey := escalationRuntime.d, escalationRuntime.email, escalationRuntime.key
+	escalationRuntime.d, escalationRuntime.email, escalationRuntime.key = nil, nil, nil
+	escalationRuntime.Unlock()
+	t.Cleanup(func() {
+		configureEscalationDispatcher(context.Background(), nil, nil, nil, hookTestLogger())
+		escalationRuntime.Lock()
+		escalationRuntime.d, escalationRuntime.email, escalationRuntime.key = oldD, oldEmail, oldKey
+		escalationRuntime.Unlock()
+	})
+	ctx := context.Background()
+
+	configureEscalationDispatcher(ctx, escalationReloadConfig("http://127.0.0.1:1/a"), nil, nil, hookTestLogger())
+	first := currentEscalationDispatcher()
+	if first == nil {
+		t.Fatal("no dispatcher for an enabled escalation config")
+	}
+
+	// A reload re-parses hive.yaml into a fresh value: same content, new slices.
+	configureEscalationDispatcher(ctx, escalationReloadConfig("http://127.0.0.1:1/a"), nil, nil, hookTestLogger())
+	if got := currentEscalationDispatcher(); got != first {
+		t.Fatal("unchanged escalation config replaced the running dispatcher")
+	}
+	if first.Context().Err() != nil {
+		t.Fatal("unchanged escalation config stopped the running dispatcher")
+	}
+
+	configureEscalationDispatcher(ctx, escalationReloadConfig("http://127.0.0.1:1/b"), nil, nil, hookTestLogger())
+	second := currentEscalationDispatcher()
+	if second == nil || second == first {
+		t.Fatal("changed escalation config did not rebuild the dispatcher")
+	}
+	select {
+	case <-first.Context().Done():
+	case <-time.After(time.Second):
+		t.Fatal("replaced dispatcher was never stopped")
+	}
+}

@@ -259,7 +259,10 @@ set of recent disagreement examples, and proposes deterministic keyword edits
 that operators can approve. Errors, missing keys, timeouts, disabled decisions,
 and low-confidence answers count as fallback. With `provider: openrouter`, Hive
 uses the configured `api_key_env` first and otherwise falls back to the connected
-`openrouter` model-gateway key.
+`openrouter` model-gateway key. Each request sends the issue's repository, number,
+title, full body, labels, author, and `updated_at` to the configured provider,
+including for private repositories — see
+[Data sent to the provider](jev-smart-classifier.md#data-sent-to-the-provider).
 
 The same rollout controls are discoverable in the spoke dashboard under
 **Settings → Smart classifier**. The panel explains the lane/tier/triage

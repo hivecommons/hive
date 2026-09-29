@@ -29,7 +29,31 @@ func (s *Server) handleAdminMCP(w http.ResponseWriter, r *http.Request) {
 		role:          r.Header.Get("X-Hive-Role"),
 		authorization: r.Header.Get("Authorization"),
 	}
-	adminmcp.NewHandler(provider, adminmcp.WithWritesEnabled(adminMCPWritesEnabled()), adminmcp.WithPendingStore(adminmcp.NewFilePendingStore(adminMCPPendingPath())), adminmcp.WithHiveID("dashboard")).ServeHTTP(w, r)
+	adminmcp.NewHandler(provider,
+		adminmcp.WithWritesEnabled(adminMCPWritesEnabled()),
+		adminmcp.WithWritesUnavailable(s.adminMCPWritesUnavailableReason(provider.authorization)),
+		adminmcp.WithPendingStore(adminmcp.NewFilePendingStore(adminMCPPendingPath())),
+		adminmcp.WithHiveID("dashboard"),
+	).ServeHTTP(w, r)
+}
+
+// adminMCPWritesUnavailableReason reports why a confirmed write could not
+// authenticate for this caller. ExecuteWrite re-enters authenticate carrying
+// only the caller's Authorization header (the write contract never forwards
+// identity headers), so a caller admitted by session, hub proof or the internal
+// header would preview successfully and then get 401 on confirm.
+func (s *Server) adminMCPWritesUnavailableReason(authorization string) string {
+	directRoute := s.directRouteAuthzEnabled()
+	if s.authToken == "" && !directRoute {
+		return ""
+	}
+	if directRoute {
+		return "this spoke enforces per-user direct-route authorization, which refuses the shared dashboard token that admin MCP writes authenticate with"
+	}
+	if !secureCompare(strings.TrimSpace(authorization), "Bearer "+s.authToken) {
+		return "admin MCP writes re-authenticate with the dashboard token (Authorization: Bearer); this request was admitted another way (session, hub proxy or internal header), so a confirmed write would be refused with 401"
+	}
+	return ""
 }
 
 func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map[string]any) (any, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -17,19 +18,59 @@ import (
 
 var escalationRuntime = struct {
 	sync.RWMutex
-	d *escalate.Dispatcher
+	d     *escalate.Dispatcher
+	email *escalate.EmailSink
+	key   *escalationRuntimeKey
 }{}
+
+// escalationRuntimeKey is every input that shapes the dispatcher and its
+// sinks. A hive.yaml reload whose key is unchanged keeps the running
+// dispatcher, so queued escalations and the pending email digest survive it.
+type escalationRuntimeKey struct {
+	email    config.EscalationEmailConfig
+	push     config.EscalationPushConfig
+	hiveID   string
+	spoke    string
+	notifier *notify.Notifier
+}
+
+func newEscalationRuntimeKey(cfg *config.Config, notifier *notify.Notifier) *escalationRuntimeKey {
+	return &escalationRuntimeKey{
+		email:    cfg.Escalation.Email,
+		push:     cfg.Escalation.Push,
+		hiveID:   cfg.HiveID,
+		spoke:    cfg.Project.Org,
+		notifier: notifier,
+	}
+}
 
 func configureEscalationDispatcher(ctx context.Context, cfg *config.Config, notifier *notify.Notifier, audit agent.AuditSink, logger *slog.Logger) {
 	escalationRuntime.Lock()
+	defer escalationRuntime.Unlock()
+	var key *escalationRuntimeKey
+	if cfg != nil {
+		key = newEscalationRuntimeKey(cfg, notifier)
+		if escalationRuntime.key != nil && reflect.DeepEqual(*escalationRuntime.key, *key) {
+			return
+		}
+	}
+	// Build the replacement before stopping the old dispatcher: Stop drains
+	// what is already queued, and producers never see a nil dispatcher in
+	// between.
+	var d *escalate.Dispatcher
+	var email *escalate.EmailSink
+	if cfg != nil {
+		d, email = buildEscalationDispatcher(ctx, cfg, notifier, audit, logger, escalationRuntime.email)
+	}
 	if escalationRuntime.d != nil {
 		escalationRuntime.d.Stop()
-		escalationRuntime.d = nil
 	}
-	escalationRuntime.Unlock()
-	if cfg == nil {
-		return
-	}
+	escalationRuntime.d, escalationRuntime.email, escalationRuntime.key = d, email, key
+}
+
+// buildEscalationDispatcher returns nil when no sink is configured. A new
+// email sink inherits prev's pending digest.
+func buildEscalationDispatcher(ctx context.Context, cfg *config.Config, notifier *notify.Notifier, audit agent.AuditSink, logger *slog.Logger, prev *escalate.EmailSink) (*escalate.Dispatcher, *escalate.EmailSink) {
 	auditFn := func(action, detail, sink string) {
 		if audit != nil {
 			audit.Record("system", action, sink, map[string]any{"detail": detail})
@@ -37,8 +78,9 @@ func configureEscalationDispatcher(ctx context.Context, cfg *config.Config, noti
 	}
 	d := escalate.NewDispatcher(ctx, logger, auditFn)
 	registered := false
+	var email *escalate.EmailSink
 	if cfg.Escalation.Email.Enabled {
-		s := escalate.NewEmailSink(escalate.EmailConfig{
+		email = escalate.NewEmailSink(escalate.EmailConfig{
 			Host:     cfg.Escalation.Email.SMTP.Host,
 			Port:     cfg.Escalation.Email.SMTP.Port,
 			Username: cfg.Escalation.Email.SMTP.Username,
@@ -50,9 +92,12 @@ func configureEscalationDispatcher(ctx context.Context, cfg *config.Config, noti
 			HiveName: cfg.HiveID,
 			Spoke:    cfg.Project.Org,
 			Version:  reportedVersion(),
+			Logger:   logger,
+			Audit:    auditFn,
 		})
-		d.Register(s, escalate.SeverityInfo, 64)
-		s.StartDigest(d.Context())
+		email.InheritDigest(prev)
+		d.Register(email, escalate.SeverityInfo, 64)
+		email.StartDigest(d.Context())
 		registered = true
 	}
 	if cfg.Escalation.Push.Enabled {
@@ -78,11 +123,9 @@ func configureEscalationDispatcher(ctx context.Context, cfg *config.Config, noti
 	}
 	if !registered {
 		d.Stop()
-		return
+		return nil, nil
 	}
-	escalationRuntime.Lock()
-	escalationRuntime.d = d
-	escalationRuntime.Unlock()
+	return d, email
 }
 
 func currentEscalationDispatcher() *escalate.Dispatcher {

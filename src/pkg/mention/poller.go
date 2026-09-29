@@ -124,6 +124,7 @@ func (p *Poller) pollRepoOnce(ctx context.Context, repo string) {
 		return events[i].UpdatedAt.Before(events[j].UpdatedAt)
 	})
 	safeWatermark := since
+	var retryFrom time.Time
 	for _, ev := range events {
 		if ev.CreatedAt.IsZero() || (!since.IsZero() && ev.CreatedAt.Before(since)) {
 			if ev.UpdatedAt.After(safeWatermark) {
@@ -132,12 +133,23 @@ func (p *Poller) pollRepoOnce(ctx context.Context, repo string) {
 			continue
 		}
 		if err := p.handler.Handle(ctx, ev); err != nil {
+			// One mention that cannot be delivered must not stall the ones
+			// after it. Keep going, and hold the watermark at its creation
+			// time so the next poll lists it again; Handle bounds the retries
+			// and marks it once they are spent. Holding at its update time
+			// instead would skip an edited mention as created-before-since.
 			p.logger.Warn("mention: handle failed", "repo", repo, "node_id", ev.NodeID, "error", err)
-			break
+			if retryFrom.IsZero() || ev.CreatedAt.Before(retryFrom) {
+				retryFrom = ev.CreatedAt
+			}
+			continue
 		}
 		if ev.UpdatedAt.After(safeWatermark) {
 			safeWatermark = ev.UpdatedAt
 		}
+	}
+	if !retryFrom.IsZero() && retryFrom.Before(safeWatermark) {
+		safeWatermark = retryFrom
 	}
 	if p.store != nil {
 		_ = p.store.Advance(repo, safeWatermark)

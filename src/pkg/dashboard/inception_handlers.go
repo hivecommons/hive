@@ -682,16 +682,36 @@ func filenameFromMultipart(r *http.Request) string {
 	return r.MultipartForm.File["file"][0].Filename
 }
 
+// zipMagic is the local-file-header signature every non-empty zip starts with;
+// an empty archive starts with the end-of-central-directory signature.
+var (
+	zipMagic      = []byte("PK\x03\x04")
+	zipEmptyMagic = []byte("PK\x05\x06")
+)
+
+func isZipPayload(data []byte) bool {
+	return bytes.HasPrefix(data, zipMagic) || bytes.HasPrefix(data, zipEmptyMagic)
+}
+
+// importTranscriptUpload imports a single .txt/.md transcript, or every
+// .txt/.md entry of a zip. Only a payload carrying the zip signature is read
+// as an archive, so a plain-file failure (e.g. "no inception in progress")
+// surfaces as-is instead of as a misleading format error, and a zip that
+// yields no transcript is an error rather than a 200 with imported=0 (#9171).
 func (s *Server) importTranscriptUpload(data []byte, filename string) (int, []knowledge.TranscriptDocument, error) {
-	var docs []knowledge.TranscriptDocument
-	if doc, err := s.deps.Inception.ImportTranscript(filename, data); err == nil {
+	if !isZipPayload(data) {
+		doc, err := s.deps.Inception.ImportTranscript(filename, data)
+		if err != nil {
+			return 0, nil, err
+		}
 		return 1, []knowledge.TranscriptDocument{*doc}, nil
 	}
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
-		return 0, nil, fmt.Errorf("transcript upload must be a .txt/.md file or zip")
+		return 0, nil, fmt.Errorf("invalid zip file: %w", err)
 	}
-	imported := 0
+	var docs []knowledge.TranscriptDocument
+	var firstErr error
 	for _, f := range zr.File {
 		if f.FileInfo().IsDir() {
 			continue
@@ -702,25 +722,40 @@ func (s *Server) importTranscriptUpload(data []byte, filename string) (int, []kn
 		if strings.Contains(baseName, "..") || (ext != ".txt" && ext != ".md") {
 			continue
 		}
-		const maxFileBytes = 1 << 20
-		rc, err := f.Open()
+		doc, err := s.importTranscriptZipEntry(f, baseName)
 		if err != nil {
-			continue
-		}
-		content, readErr := io.ReadAll(io.LimitReader(rc, maxFileBytes))
-		closeErr := rc.Close()
-		if readErr != nil || closeErr != nil {
-			s.logger.Warn("inception transcript archive entry read failed", "file", baseName, "read_error", readErr, "close_error", closeErr)
-			continue
-		}
-		doc, err := s.deps.Inception.ImportTranscript(baseName, content)
-		if err != nil {
+			s.logger.Warn("inception transcript archive entry import failed", "file", baseName, "error", err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("%s: %w", baseName, err)
+			}
 			continue
 		}
 		docs = append(docs, *doc)
-		imported++
 	}
-	return imported, docs, nil
+	if len(docs) == 0 {
+		if firstErr != nil {
+			return 0, nil, fmt.Errorf("no transcript imported from zip: %w", firstErr)
+		}
+		return 0, nil, fmt.Errorf("no transcript imported from zip: it contains no .txt or .md file")
+	}
+	return len(docs), docs, nil
+}
+
+func (s *Server) importTranscriptZipEntry(f *zip.File, baseName string) (*knowledge.TranscriptDocument, error) {
+	const maxFileBytes = 1 << 20
+	rc, err := f.Open()
+	if err != nil {
+		return nil, fmt.Errorf("opening entry: %w", err)
+	}
+	content, readErr := io.ReadAll(io.LimitReader(rc, maxFileBytes))
+	closeErr := rc.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("reading entry: %w", readErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("closing entry: %w", closeErr)
+	}
+	return s.deps.Inception.ImportTranscript(baseName, content)
 }
 
 func (s *Server) kickBrainstorm() {

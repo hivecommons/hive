@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Covers ActiveRepositories (client.go), previously 0%: the pause-aware
@@ -185,6 +186,57 @@ func TestRequiredStatusCheckContexts(t *testing.T) {
 		c := NewClientForTest(srv.URL, "o", []string{"o/r"}, nil)
 		if set, known := RequiredStatusCheckContexts(ctx, c.client, "o", "r", "main", nil, false); known || set != nil {
 			t.Fatalf("API error: got (%v,%v), want (nil,false)", set, known)
+		}
+	})
+
+	t.Run("forbidden branch protection lookup is negative cached", func(t *testing.T) {
+		now := time.Unix(1700000000, 0)
+		restore := resetRequiredChecksForbiddenCacheForTest(func() time.Time { return now }, time.Hour)
+		defer restore()
+
+		calls := 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `{"message":"Resource not accessible by integration"}`)
+		}))
+		defer srv.Close()
+
+		c := NewClientForTest(srv.URL, "o", []string{"o/r"}, nil)
+		if set, known := RequiredStatusCheckContexts(ctx, c.client, "o", "r", "main", nil, false); known || set != nil {
+			t.Fatalf("first 403: got (%v,%v), want (nil,false)", set, known)
+		}
+		if set, known := RequiredStatusCheckContexts(ctx, c.client, "o", "r", "main", nil, false); known || set != nil {
+			t.Fatalf("cached 403: got (%v,%v), want (nil,false)", set, known)
+		}
+		if calls != 1 {
+			t.Fatalf("forbidden lookup calls = %d, want 1", calls)
+		}
+
+		now = now.Add(time.Hour + time.Second)
+		RequiredStatusCheckContexts(ctx, c.client, "o", "r", "main", nil, false)
+		if calls != 2 {
+			t.Fatalf("expired forbidden cache calls = %d, want 2", calls)
+		}
+	})
+
+	t.Run("transient errors are not negative cached", func(t *testing.T) {
+		restore := resetRequiredChecksForbiddenCacheForTest(time.Now, time.Hour)
+		defer restore()
+
+		calls := 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+
+		c := NewClientForTest(srv.URL, "o", []string{"o/r"}, nil)
+		RequiredStatusCheckContexts(ctx, c.client, "o", "r", "main", nil, false)
+		RequiredStatusCheckContexts(ctx, c.client, "o", "r", "main", nil, false)
+		if calls != 2 {
+			t.Fatalf("transient lookup calls = %d, want 2", calls)
 		}
 	})
 

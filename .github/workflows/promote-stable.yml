@@ -36,12 +36,19 @@ permissions:
   issues: write
   packages: write
 
+# RELEASE LINE (#9154): `stable` is promoted from the candidate published by
+# the branch this run was started from — the default branch for `schedule`,
+# the chosen ref for `workflow_dispatch` — never a literal. The first step
+# refuses unless that branch is under `release_lines` in
+# .github/release-lines.yml, so a dispatch from a development line can no
+# longer promote another line's candidate, and cutting a new line needs no
+# edit here. Checklist: src/docs/release-line-guard.md.
 concurrency:
-  group: stable-promotion-v5
+  group: stable-promotion-${{ github.ref_name }}
   cancel-in-progress: false
 
 env:
-  RELEASE_BRANCH: v5
+  RELEASE_BRANCH: ${{ github.ref_name }}
   SOAK_HOURS: ${{ inputs.soak-hours || '24' }}
   DRY_RUN: ${{ inputs.dry-run || 'false' }}
   IMAGE_NAMES: hive hive-contributor hive-hub
@@ -56,8 +63,14 @@ jobs:
     steps:
       - name: Checkout promotion scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: v5
+
+      - name: Require the triggering branch to be a declared release line
+        run: |
+          set -euo pipefail
+          if ! src/scripts/check-release-lines.sh --is-release-line "$RELEASE_BRANCH"; then
+            echo "::error::Promote Stable was started from '${RELEASE_BRANCH}', which is not under release_lines in .github/release-lines.yml, so it has no candidate to promote. Dispatch it from a release line, or cut this branch as one first (src/docs/release-line-guard.md)." >&2
+            exit 1
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1

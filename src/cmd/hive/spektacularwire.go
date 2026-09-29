@@ -6,9 +6,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -62,6 +64,72 @@ func wireSpektacularRunnerWithCloneAuth(cfg *config.Config, srv *dashboard.Serve
 			"max_stage_retries", cfg.Runs.MaxStageRetriesOrDefault())
 	}
 	return true
+}
+
+// spektacularRewireMu serializes live rewires: two dashboard saves racing
+// must not interleave their runner/executor swaps.
+var spektacularRewireMu sync.Mutex
+
+// rewireSpektacular re-applies runs.spektacular from the live config after a
+// dashboard edit (#9172). The runner only carries config, so it is always
+// rebuilt; the binary is re-probed so the Extensions card shows what is now
+// installed. The hub executor is different: while it is running a stage it
+// owns the in-flight bookkeeping that keeps that stage's lease alive and its
+// worktree unswept, so a busy executor whose settings changed is never swapped
+// out from under the stage. Then nothing is touched and false is returned; the
+// dashboard retries on every cleanup tick until the executor is idle. An
+// executor whose settings did not change is kept as is.
+func rewireSpektacular(cfg *config.Config, srv *dashboard.Server, logger *slog.Logger, cloneAuth dashboard.SpekHubCloneAuth) bool {
+	if cfg == nil || srv == nil {
+		return false
+	}
+	spektacularRewireMu.Lock()
+	defer spektacularRewireMu.Unlock()
+
+	current := srv.StageExecutor()
+	keepExecutor := false
+	if current != nil {
+		if spekExecutorUpToDate(current, cfg) {
+			keepExecutor = true
+		} else if current.Status().Running > 0 {
+			if logger != nil {
+				logger.Info("[spektacular] config change deferred until the hub executor's running stage finishes",
+					"running", current.Status().Running)
+			}
+			return false
+		}
+	}
+
+	if !cfg.Runs.Spektacular.Enabled {
+		srv.SetStageRunner(nil)
+		srv.SetStageExecutor(nil)
+		srv.ClearSpektacularStatus()
+		if logger != nil {
+			logger.Info("[spektacular] stage runner removed (runs.spektacular.enabled is off)")
+		}
+		return true
+	}
+	if keepExecutor {
+		// wireSpektacularRunnerWithCloneAuth would replace it; restore the
+		// original so its failure counters and activity survive.
+		defer srv.SetStageExecutor(current)
+	} else {
+		srv.SetStageExecutor(nil)
+	}
+	wireSpektacularRunnerWithCloneAuth(cfg, srv, logger, cloneAuth)
+	return true
+}
+
+// spekExecutorUpToDate reports whether the installed executor was built from
+// the same settings the live config would build it from now.
+func spekExecutorUpToDate(current dashboard.StageExecutor, cfg *config.Config) bool {
+	exec, ok := current.(*dashboard.SpekHubExecutor)
+	if !ok || !cfg.Runs.Spektacular.Enabled || !cfg.Runs.Spektacular.HubExecutorEnabled() {
+		return false
+	}
+	want := dashboard.NewSpekHubExecutor(nil, cfg.Runs, cfg.Runs.Spektacular.HubExecutor.BackendOrDefault(defaultAgentBackend(cfg)), "", nil, nil)
+	return exec.Backend == want.Backend && exec.Model == want.Model && exec.Identity == want.Identity &&
+		reflect.DeepEqual(exec.Config, cfg.Runs)
 }
 
 func spektacularCloneAuth(minter pushbroker.TokenMinter) dashboard.SpekHubCloneAuth {

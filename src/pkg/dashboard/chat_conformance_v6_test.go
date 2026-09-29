@@ -76,7 +76,7 @@ func TestV6ConformanceDashboardChat_StartedBotGatesRepliesOnAllowlist(t *testing
 	s.RegisterAPI(&Dependencies{
 		Config:              &config.Config{},
 		DashboardChatSubmit: bot.Submit,
-		DashboardChatDrain:  chatDrainForTest(bot),
+		DashboardChatPoll:   chatPollForTest(bot),
 	})
 
 	submit := func(user string) {

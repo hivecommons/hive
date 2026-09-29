@@ -121,3 +121,33 @@ func TestAdminMCPAgentNudgeStatusReadPath(t *testing.T) {
 		t.Fatal("expected missing agent to be rejected")
 	}
 }
+
+func TestAdminMCPWritePreviewFailsFastWithoutDashboardBearer(t *testing.T) {
+	t.Setenv("HIVE_ADMIN_MCP_ENABLE_WRITES", "1")
+	t.Setenv("HIVE_ADMIN_MCP_PENDING_FILE", t.TempDir()+"/pending.json")
+	s := NewServerWithAuth(0, "secret", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h := s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux)))
+	preview := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"write_preview","arguments":{"operation":"agent.pause","args":{"agent":"scanner"}}}}`
+
+	// Admitted as owner through the internal header, which ExecuteWrite does not
+	// forward: confirm would 401, so preview must refuse instead of minting a
+	// confirmation.
+	internal := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, adminmcp.EndpointPath, strings.NewReader(preview))
+	req.Header.Set("X-Hive-Internal", "secret")
+	h.ServeHTTP(internal, req)
+	if internal.Code != http.StatusOK {
+		t.Fatalf("internal status = %d body=%s", internal.Code, internal.Body.String())
+	}
+	if strings.Contains(internal.Body.String(), "confirmation_id") || !strings.Contains(internal.Body.String(), "Authorization: Bearer") {
+		t.Fatalf("preview without bearer = %s", internal.Body.String())
+	}
+
+	bearer := httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, adminmcp.EndpointPath, strings.NewReader(preview))
+	req.Header.Set("Authorization", "Bearer secret")
+	h.ServeHTTP(bearer, req)
+	if !strings.Contains(bearer.Body.String(), "confirmation_id") {
+		t.Fatalf("preview with bearer = %s", bearer.Body.String())
+	}
+}

@@ -1,0 +1,1 @@
+- v6 chat suppresses recently seen inbound message IDs, and Slack Socket Mode keeps acknowledging messages and answering pings while commands run in order on a bounded delivery queue, preventing slow commands from causing duplicate execution on redelivery ([#9123](https://github.com/hivecommons/hive/issues/9123)).

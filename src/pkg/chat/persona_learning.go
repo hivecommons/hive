@@ -157,7 +157,7 @@ func (s *Service) recordPersonaSignal(ctx context.Context, author, signal string
 	}
 	if pending := updated.Suggestions(); len(pending) > before {
 		prefix := ""
-		if len(s.allowedUsers) > 1 {
+		if s.allowedUserCount() > 1 {
 			prefix = "For " + author + ": "
 		}
 		s.enqueue(fmt.Sprintf("💡 %sPersona suggestion: %s. Reply `!persona accept %d` to apply or `!persona reject` to dismiss.",

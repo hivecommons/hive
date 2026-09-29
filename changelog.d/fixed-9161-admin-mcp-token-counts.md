@@ -1,0 +1,1 @@
+- Admin MCP output no longer masks token counts and hive identifiers as credentials: `budget.update` previews, `settings_read` and `fleet_status` now show `totalTokens`, `max_tokens`, the `tokens` usage block and `hive_*` names, while credential keys and `hive_mcp_v1.` lease tokens stay masked ([#9161](https://github.com/hivecommons/hive/issues/9161)).

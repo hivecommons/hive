@@ -351,14 +351,14 @@ func TestCampaignArchiveListCollapsesStableSpecDuplicates(t *testing.T) {
 		t.Fatalf("archives len = %d, want 1: %#v", len(archives), archives)
 	}
 	got := archives[0]
-	if got.ID != root.ID || got.RevisionOf != "" || got.State == nil || got.State.IdeaSlug != root.ID || got.State.Phase != PhaseCapture {
+	if got.ID != dup.ID || got.RevisionOf != root.ID || got.State == nil || got.State.IdeaSlug != dup.ID || got.State.Phase != PhaseCapture {
 		t.Fatalf("deduped archive = %#v", got)
 	}
 	if len(got.History) < 2 {
 		t.Fatalf("deduped archive history = %#v, want merged duplicate history", got.History)
 	}
-	if _, err := os.Stat(filepath.Join(e.dataDir, inceptionCampaignsDir, dup.ID)); !os.IsNotExist(err) {
-		t.Fatalf("duplicate archive dir still exists or stat failed: %v", err)
+	if _, err := os.Stat(filepath.Join(e.dataDir, inceptionCampaignsDir, dup.ID)); err != nil {
+		t.Fatalf("duplicate archive dir was lost: %v", err)
 	}
 }
 
@@ -453,5 +453,108 @@ func TestCampaignArchiveSmallBranches(t *testing.T) {
 	}
 	if _, err := e.ReleaseCampaignArchive(state.IdeaSlug, " ", time.Time{}); err != nil {
 		t.Fatalf("ReleaseCampaignArchive default owner error = %v", err)
+	}
+}
+
+func TestCampaignArchiveListPreservesLegacySnapshots(t *testing.T) {
+	for _, ids := range [][]string{
+		{"spec", "spec-rev-2", "spec-rev-3"},
+		{"spec-rev-2", "spec-rev-3"},
+		{"spec-rev-3"},
+	} {
+		t.Run(strings.Join(ids, "+"), func(t *testing.T) {
+			e := newTestEngine(t)
+			baseTime := time.Date(2026, 9, 26, 0, 0, 0, 0, time.UTC)
+			for i, id := range ids {
+				archive := &InceptionCampaignArchive{
+					ID: id, Revision: i + 1, ArchivedAt: baseTime.Add(time.Duration(i) * time.Hour),
+					State:     &InceptionState{IdeaSlug: id, IdeaText: id, Phase: PhaseCapture},
+					WikiFiles: []string{"snapshot.md"},
+				}
+				if id != "spec" {
+					archive.RevisionOf = "spec"
+					if i > 0 {
+						archive.RevisionOf = ids[i-1]
+					}
+				}
+				if err := e.writeArchiveStateLocked(archive); err != nil {
+					t.Fatal(err)
+				}
+				wiki := filepath.Join(e.dataDir, inceptionCampaignsDir, id, inceptionArchiveWiki)
+				if err := os.MkdirAll(filepath.Join(wiki, "attachments"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				for _, name := range []string{"snapshot.md", "attachments/original.txt"} {
+					if err := os.WriteFile(filepath.Join(wiki, name), []byte(id+":"+name), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			type snapshot struct {
+				Content string
+				Mode    os.FileMode
+				ModTime time.Time
+			}
+			readTree := func() map[string]snapshot {
+				t.Helper()
+				files := map[string]snapshot{}
+				err := filepath.Walk(filepath.Join(e.dataDir, inceptionCampaignsDir), func(path string, info os.FileInfo, err error) error {
+					if err != nil {
+						return err
+					}
+					var data []byte
+					if !info.IsDir() {
+						data, err = os.ReadFile(path)
+						if err != nil {
+							return err
+						}
+					}
+					files[path] = snapshot{string(data), info.Mode(), info.ModTime()}
+					return nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return files
+			}
+			before := readTree()
+			newestID := ids[len(ids)-1]
+			for attempt := 0; attempt < 3; attempt++ {
+				if attempt == 2 {
+					e = NewInceptionEngine(e.dataDir, nil, nil)
+				}
+				archives, err := e.ListCampaignArchives()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if after := readTree(); !reflect.DeepEqual(before, after) {
+					t.Fatal("listing campaigns modified legacy archive files or directories")
+				}
+				if len(archives) != 1 || archives[0].ID != newestID || archives[0].State.IdeaSlug != newestID {
+					t.Fatalf("list = %#v, want newest snapshot %s", archives, newestID)
+				}
+				loaded, err := e.LoadCampaignArchive(archives[0].ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(loaded.State, archives[0].State) {
+					t.Fatal("listed state differs from loaded state")
+				}
+			}
+			if _, err := e.RestoreCampaignArchive(newestID); err != nil {
+				t.Fatal(err)
+			}
+			wiki, err := os.ReadFile(filepath.Join(e.dataDir, inceptionWikiDir, "snapshot.md"))
+			if err != nil || string(wiki) != newestID+":snapshot.md" {
+				t.Fatalf("restored wiki = %q, %v", wiki, err)
+			}
+			if _, err := e.ReviseCampaignArchive(newestID, "owner", baseTime.Add(24*time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			archives, err := e.ListCampaignArchives()
+			if err != nil || len(archives) != 1 || archives[0].ID != newestID {
+				t.Fatalf("list after revise = %#v, %v", archives, err)
+			}
+		})
 	}
 }

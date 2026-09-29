@@ -202,12 +202,12 @@ func TestBootHeartbeatWith_CallbacksReconcileRunningConfig(t *testing.T) {
 	}
 
 	users := heartbeatCallback[spoke.AuthorizedUsersCallback](t, f)
-	users([]string{"alice", "bob"}, map[string]string{"bob": "Bob"})
-	if !sameStringSlice(cfg.Dashboard.AuthorizedUsers, []string{"alice", "bob"}) || cfg.Dashboard.AuthorizedUserNames["bob"] != "Bob" {
+	users([]string{"bob"}, map[string]string{"bob": "Bob"})
+	if !sameStringSlice(cfg.Dashboard.AuthorizedUsers, []string{"bob"}) || cfg.Dashboard.AuthorizedUserNames["bob"] != "Bob" {
 		t.Fatalf("authorized users not reconciled: %v %v", cfg.Dashboard.AuthorizedUsers, cfg.Dashboard.AuthorizedUserNames)
 	}
 	f.log.Reset()
-	users([]string{"alice", "bob"}, nil)
+	users([]string{"bob"}, nil)
 	if strings.Contains(f.log.String(), "authorized users updated") {
 		t.Fatal("unchanged allowlist logged as an update")
 	}

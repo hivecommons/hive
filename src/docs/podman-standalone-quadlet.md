@@ -277,7 +277,7 @@ dashboard was refusing connections (#4476 — see the trap below). Podman runs a
 shell's and either half failing is unhealthy.
 
 3002 is where the Go default puts the API
-(`defaultDashboardPort` in `src/pkg/config/config.go`), where the `hive`
+(`defaultDashboardPort` in `src/pkg/config/defaults.go`), where the `hive`
 service's healthcheck in `src/docker-compose.yaml` looks for it, and what
 `src/deploy/hive.yaml` sets. Deleting the `port:` line outright works too, since
 3002 is what the default gives you. What does not work is keeping the example's

@@ -30,12 +30,34 @@
 # be assigned to the new line and the image looks healthy throughout. Green
 # rather than absent.
 #
+# It also answers the one question the release workflows need at run time:
+# is this branch a declared release line? tagged-release.yml and
+# promote-stable.yml serve the branch they were started from
+# (`github.ref_name`) rather than a hard-coded line, and refuse unless that
+# branch is listed under `release_lines` here — an extra under `pinned` or
+# `env_lists` (v6 as a development line, mk, dd) does not qualify. Before
+# #9154 both workflows were pinned to `v5` by literal, so the copies carried
+# onto `v6` would have released and promoted v5 content from a v6 dispatch,
+# and nothing could ever mint a v6 tag.
+#
 # Usage: src/scripts/check-release-lines.sh [manifest] [workflows-dir]
+#        src/scripts/check-release-lines.sh --is-release-line <branch> [manifest]
 #   manifest        default .github/release-lines.yml
 #   workflows-dir   default .github/workflows
 #
-# Exit 0 = in sync, 1 = out of sync (or the inputs are unreadable).
+# Exit 0 = in sync (or <branch> is a release line), 1 = out of sync (or
+# <branch> is not a release line, or the inputs are unreadable), 2 = usage.
 set -uo pipefail
+
+QUERY_LINE=""
+if [[ "${1:-}" == "--is-release-line" ]]; then
+  if [[ -z "${2:-}" ]]; then
+    echo "ERROR: --is-release-line needs a branch name" >&2
+    exit 2
+  fi
+  QUERY_LINE="$2"
+  shift 2
+fi
 
 MANIFEST="${1:-.github/release-lines.yml}"
 WORKFLOW_DIR="${2:-.github/workflows}"
@@ -44,7 +66,7 @@ if [[ ! -f "$MANIFEST" ]]; then
   echo "ERROR: manifest not found at ${MANIFEST}" >&2
   exit 1
 fi
-if [[ ! -d "$WORKFLOW_DIR" ]]; then
+if [[ -z "$QUERY_LINE" && ! -d "$WORKFLOW_DIR" ]]; then
   echo "ERROR: workflow directory not found at ${WORKFLOW_DIR}" >&2
   exit 1
 fi
@@ -180,6 +202,21 @@ done < "$MANIFEST"
 
 if [[ ${#RELEASE_LINES[@]} -eq 0 ]]; then
   echo "ERROR: ${MANIFEST} declares no release_lines" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Query mode: only `release_lines` counts. An extra (`pinned`/`env_lists`) is a
+# branch CI builds or publishes, not a line that cuts tags or owns `stable`.
+# ---------------------------------------------------------------------------
+if [[ -n "$QUERY_LINE" ]]; then
+  for rl in "${RELEASE_LINES[@]}"; do
+    if [[ "$rl" == "$QUERY_LINE" ]]; then
+      echo "${QUERY_LINE} is a release line (${MANIFEST} release_lines: $(normalise "${RELEASE_LINES[@]}"))."
+      exit 0
+    fi
+  done
+  echo "${QUERY_LINE} is not a release line (${MANIFEST} release_lines: $(normalise "${RELEASE_LINES[@]}")). Cutting it as one is the release-line cut in src/docs/release-line-guard.md, not a workflow input." >&2
   exit 1
 fi
 

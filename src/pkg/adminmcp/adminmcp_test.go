@@ -133,6 +133,70 @@ func TestScrubCoversOutboundTextPatternsAndCounters(t *testing.T) {
 	}
 }
 
+// Regression for #9161: token-count fields and hive identifiers are data the
+// operator must see, not credentials.
+func TestScrubKeepsTokenCountFieldsAndHiveIdentifiers(t *testing.T) {
+	lease := "hive_mcp_v1." + strings.Repeat("p", 24) + "." + strings.Repeat("s", 24)
+	input := map[string]any{
+		"tokens": map[string]any{
+			"lookbackHours": float64(24),
+			"totals":        map[string]any{"input_tokens": float64(10), "output_tokens": float64(20)},
+		},
+		"total_tokens":         float64(42),
+		"max_tokens":           float64(4096),
+		"github_token_present": true,
+		"hive_id":              "hive_status",
+		"tool":                 "hive_advisor",
+		"access_token":         "opaque-access",
+		"refresh_tokens":       []any{"opaque-refresh"},
+		"lease":                lease,
+	}
+	out := Scrub(input).(map[string]any)
+	data, _ := json.Marshal(out)
+	text := string(data)
+
+	tokens, ok := out["tokens"].(map[string]any)
+	if !ok || tokens["lookbackHours"] != float64(24) {
+		t.Fatalf("tokens usage block masked: %s", text)
+	}
+	totals, _ := tokens["totals"].(map[string]any)
+	if totals["input_tokens"] != float64(10) || totals["output_tokens"] != float64(20) {
+		t.Fatalf("nested token counters masked: %s", text)
+	}
+	if out["total_tokens"] != float64(42) || out["max_tokens"] != float64(4096) {
+		t.Fatalf("token counters masked: %s", text)
+	}
+	if out["github_token_present"] != true {
+		t.Fatalf("boolean token flag masked: %s", text)
+	}
+	if out["hive_id"] != "hive_status" || out["tool"] != "hive_advisor" {
+		t.Fatalf("hive_ identifiers masked: %s", text)
+	}
+	for _, forbidden := range []string{"opaque-access", "opaque-refresh", lease} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("credential %q leaked in %s", forbidden, text)
+		}
+	}
+}
+
+func TestScrubPendingKeepsBudgetTokenCount(t *testing.T) {
+	out := scrubPendingMap(map[string]any{
+		"details": map[string]any{"periodDays": 30, "totalTokens": 5000000},
+		"tokens":  map[string]any{"input_tokens": 7},
+		"token":   "opaque-secret",
+	}).(map[string]any)
+	details := out["details"].(map[string]any)
+	if details["totalTokens"] != 5000000 {
+		t.Fatalf("budget totalTokens masked in preview: %#v", out)
+	}
+	if tokens, ok := out["tokens"].(map[string]any); !ok || tokens["input_tokens"] != 7 {
+		t.Fatalf("tokens block masked in preview: %#v", out)
+	}
+	if out["token"] != "[masked:token]" {
+		t.Fatalf("credential token not masked: %#v", out)
+	}
+}
+
 func TestHTTPErrorMessageIsScrubbed(t *testing.T) {
 	githubToken := "gh" + "s_" + strings.Repeat("e", 24)
 	bearer := "Bearer " + strings.Repeat("f", 20)

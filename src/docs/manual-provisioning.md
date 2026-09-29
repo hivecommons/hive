@@ -72,7 +72,7 @@ Path B, `meta.json`, placeholder pools, claiming, upgrade-via-hub) is
 
 ### What "standalone" means
 
-A standalone hive has **no hub**. In `src/pkg/config/config.go` the `hub:` block
+A standalone hive has **no hub**. In `src/pkg/config/hub_config.go` the `hub:` block
 is a `HubConfig` whose zero value has `Enabled: false`, so a config that simply
 omits `hub:` is already hub-less. Concretely, a standalone hive needs **none** of
 the hub plumbing the rest of this guide describes:
@@ -607,7 +607,7 @@ Before the first `apply -k`, verify:
 Every value below is a placeholder in the overlay. Cited location is where the
 key is defined (config struct) and where you edit it (overlay file).
 
-| Swap | Default / placeholder | Where you edit it | Config location (`src/pkg/config/config.go`) |
+| Swap | Default / placeholder | Where you edit it | Config location (`src/pkg/config/`) |
 |---|---|---|---|
 | RWX/RWO `storageClassName` | `YOUR_RWX_STORAGE_CLASS` (example uses `ocs-storagecluster-cephfs`) | `patch-pvc-storageclass.yaml` | base `hive-data` PVC (`src/deploy/k8s/pvc.yaml`) — RWO is fine for the default single replica |
 | Route host domain (OpenShift) | `hive.apps.joes-cluster.example.com` (example) | `route.yaml` `spec.host` | `route.openshift.io/v1` Route |
@@ -796,7 +796,7 @@ Swap `backend: vllm` to hit `HIVE_VLLM_ENDPOINT` directly. Hive does not
 default this to an in-cluster Service; set it only when the target cluster can
 resolve and reach that endpoint (hosted provisioning injects it from the
 cluster `inference_endpoint` setting). Verify any key against
-`src/pkg/config/config.go` before adding it.
+`src/pkg/config/` before adding it.
 
 ---
 
@@ -1143,7 +1143,7 @@ YAML
 
 > **Gotcha — `github.app_id` cannot be empty.** Config validation requires
 > **either** `github.token` **or** `github.app_id` to be set
-> (`pkg/config/config.go`: `github.token or github.app_id is required`). A hive
+> (`pkg/config/validate.go`: `github.token or github.app_id is required`). A hive
 > awaiting its real App must carry the **placeholder sentinel**
 > `app_id: 999999999` or it will refuse to boot.
 

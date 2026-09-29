@@ -38,6 +38,9 @@ type roster struct {
 	hives   []hiveConfig
 	active  int
 	timeout time.Duration
+	// clients caches one hivectl.Client per roster entry: each client owns its
+	// own transport, so building one per call would discard the connection pool.
+	clients map[string]*hivectl.Client
 }
 
 type readProvider struct {
@@ -111,18 +114,18 @@ func (p readProvider) handler(name string) mcp.ToolHandler {
 		if name == adminmcp.ToolWritePreview || name == adminmcp.ToolWriteConfirm {
 			data, err := p.callWrite(ctx, name, args)
 			if refusal, ok := adminmcp.HiveRefusalFromError(err); ok {
-				return textResult(adminmcp.DataEnvelope{Data: adminmcp.Scrub(refusal)}, true)
+				return dataResult(refusal, true)
 			}
 			if err != nil {
 				return textResult(map[string]any{"error": adminmcp.Scrub(err.Error())}, true)
 			}
-			return textResult(adminmcp.DataEnvelope{Data: adminmcp.Scrub(data)}, false)
+			return dataResult(data, false)
 		}
 		data, err := p.Read(ctx, name, args)
 		if err != nil {
 			return textResult(map[string]any{"error": adminmcp.Scrub(err.Error())}, true)
 		}
-		return textResult(adminmcp.DataEnvelope{Data: adminmcp.Scrub(data)}, false)
+		return dataResult(data, false)
 	}
 }
 
@@ -194,7 +197,14 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 	if err != nil {
 		return nil, err
 	}
-	data, err := client.Do(ctx, http.MethodGet, path, nil, nil)
+	// ReadPath carries the limit as a "?limit=" suffix; hivectl.Client takes the
+	// query separately and would percent-encode a "?" left in the path (#9160).
+	apiPath, rawQuery, _ := strings.Cut(path, "?")
+	query, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return nil, err
+	}
+	data, err := client.Do(ctx, http.MethodGet, apiPath, query, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -224,8 +234,25 @@ func (r *roster) activeClient() (*hivectl.Client, hiveConfig, error) {
 		return nil, hiveConfig{}, errors.New("no active hive selected")
 	}
 	h := r.hives[r.active]
-	client, err := hivectl.NewClient(h.Address, h.Token, r.timeout)
+	client, err := r.clientLocked(h)
 	return client, h, err
+}
+
+// clientLocked returns the cached client for h, creating it on first use.
+// The caller must hold r.mu.
+func (r *roster) clientLocked(h hiveConfig) (*hivectl.Client, error) {
+	if client, ok := r.clients[h.Name]; ok {
+		return client, nil
+	}
+	client, err := hivectl.NewClient(h.Address, h.Token, r.timeout)
+	if err != nil {
+		return nil, err
+	}
+	if r.clients == nil {
+		r.clients = map[string]*hivectl.Client{}
+	}
+	r.clients[h.Name] = client
+	return client, nil
 }
 
 func (r *roster) selectHive(ctx context.Context, name string) (hiveConfig, error) {
@@ -238,11 +265,12 @@ func (r *roster) selectHive(ctx context.Context, name string) (hiveConfig, error
 			break
 		}
 	}
-	r.mu.Unlock()
 	if idx < 0 {
+		r.mu.Unlock()
 		return hiveConfig{}, fmt.Errorf("unknown hive %q", name)
 	}
-	client, err := hivectl.NewClient(h.Address, h.Token, r.timeout)
+	client, err := r.clientLocked(h)
+	r.mu.Unlock()
 	if err != nil {
 		return hiveConfig{}, err
 	}
@@ -280,6 +308,16 @@ func readPath(tool string, args map[string]any) (string, bool) {
 		return "/api/kick/" + url.PathEscape(agent) + "/status", true
 	}
 	return adminmcp.ReadPath(tool, adminmcp.LimitFromArgs(args))
+}
+
+// dataResult encodes a tool result through adminmcp.EncodeResult so stdio
+// applies the same scrubbing, envelope and text cap as the dashboard endpoint.
+func dataResult(data any, isError bool) (*mcp.CallToolResult, error) {
+	b, err := adminmcp.EncodeResult(data)
+	if err != nil {
+		return nil, err
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}, IsError: isError}, nil
 }
 
 func textResult(v any, isError bool) (*mcp.CallToolResult, error) {

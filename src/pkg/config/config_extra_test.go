@@ -714,6 +714,40 @@ func TestSelfAuthorizationHoldEnabled_DefaultsOn(t *testing.T) {
 	}
 }
 
+func TestSelfAuthorizationHoldEnabledForRepoAtLevel(t *testing.T) {
+	f := false
+	tr := true
+	cfg := &Config{Project: ProjectConfig{
+		Org: "acme",
+		RepoPolicies: []RepoPolicy{
+			{Repo: "explicit-on", SelfAuthorizationHold: &tr},
+			{Repo: "explicit-off", SelfAuthorizationHold: &f},
+		},
+	}}
+
+	if !cfg.SelfAuthorizationHoldEnabledForRepoAtLevel("plain", MaxACMMLevel-1) {
+		t.Fatal("unset policy at L5 should default the hold on")
+	}
+	if cfg.SelfAuthorizationHoldEnabledForRepoAtLevel("plain", MaxACMMLevel) {
+		t.Fatal("unset policy at L6 should default the hold off")
+	}
+	if !cfg.SelfAuthorizationHoldEnabledForRepoAtLevel("explicit-on", MaxACMMLevel) {
+		t.Fatal("repo explicit true should keep the hold on at L6")
+	}
+	if cfg.SelfAuthorizationHoldEnabledForRepoAtLevel("explicit-off", MaxACMMLevel-1) {
+		t.Fatal("repo explicit false should turn the hold off below L6")
+	}
+
+	cfg.GitHub.SelfAuthorizationHold = &tr
+	if !cfg.SelfAuthorizationHoldEnabledForRepoAtLevel("plain", MaxACMMLevel) {
+		t.Fatal("hive-wide explicit true should keep the hold on at L6")
+	}
+	cfg.GitHub.SelfAuthorizationHold = &f
+	if cfg.SelfAuthorizationHoldEnabledForRepoAtLevel("plain", MaxACMMLevel-1) {
+		t.Fatal("hive-wide explicit false should turn the hold off below L6")
+	}
+}
+
 func TestSelfAuthorizationHoldEnvOverride(t *testing.T) {
 	t.Setenv("HIVE_SELF_AUTHORIZATION_HOLD", "false")
 	yaml := `
@@ -738,6 +772,27 @@ agents:
 	cfg.GitHub.SelfAuthorizationHold = &tr
 	if cfg.GitHub.SelfAuthorizationHoldEnabled() {
 		t.Fatal("HIVE_SELF_AUTHORIZATION_HOLD=false must remain the effective override after live config mutation")
+	}
+}
+
+func TestSelfAuthorizationHoldEnvOverrideWinsAtLevel(t *testing.T) {
+	t.Setenv("HIVE_SELF_AUTHORIZATION_HOLD", "true")
+	cfg, err := Load(writeTempConfig(t, `
+project:
+  org: acme
+  repos: [api]
+github:
+  token: ghp_tok
+  self_authorization_hold: false
+agents:
+  w:
+    backend: claude
+`))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.SelfAuthorizationHoldEnabledForRepoAtLevel("api", MaxACMMLevel) {
+		t.Fatal("env override true should keep the hold on at L6")
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"strconv"
@@ -22,11 +23,23 @@ import (
 )
 
 const (
-	slackAPIBase           = "https://slack.com/api"
-	httpTimeoutS           = 10
-	socketReconnectBase    = 5 * time.Second
-	socketReconnectMax     = 60 * time.Second
+	slackAPIBase        = "https://slack.com/api"
+	httpTimeoutS        = 10
+	socketReconnectBase = 5 * time.Second
+	socketReconnectMax  = 60 * time.Second
+	socketAckTimeout    = 2 * time.Second
+	// socketReadTimeout bounds how long a socket may stay silent — no data,
+	// ping, or pong frame — before it is treated as dead. socketPingInterval
+	// keeps a healthy idle socket inside that bound by eliciting pongs, so a
+	// path that died without a FIN (NAT/VPN change, idle-killing middlebox)
+	// is detected within socketReadTimeout instead of hanging ReadMessage.
+	socketReadTimeout  = 90 * time.Second
+	socketPingInterval = 30 * time.Second
+	// socketBackoffJitter spreads reconnect sleeps by ±20% so hives that lose
+	// Slack together do not retry in lockstep.
+	socketBackoffJitter    = 0.2
 	slackMessageLimit      = 4000
+	socketQueueSize        = 256
 	slackDefaultSendPacing = 1200 * time.Millisecond
 )
 
@@ -41,6 +54,9 @@ type Config struct {
 	DashboardURL   string
 	DashboardToken string
 	AllowedUsers   []string
+	// PersonaStore persists each author's persona; nil keeps personas in
+	// memory for this process only (hivecommons/hive#9175).
+	PersonaStore chat.PersonaStore
 	// PersonaLearning and AuditSink feed persona learning on the shared chat
 	// spine (hivecommons/hive#8363); both are optional.
 	PersonaLearning chat.PersonaLearningFunc
@@ -62,8 +78,11 @@ type slackBackend struct {
 	dial      func(context.Context, string, http.Header) (*websocket.Conn, *http.Response, error)
 
 	sleep         func(time.Duration)
+	jitter        func(time.Duration) time.Duration
 	reconnectBase time.Duration
 	reconnectMax  time.Duration
+	readTimeout   time.Duration
+	pingInterval  time.Duration
 }
 
 type apiResponse struct {
@@ -107,13 +126,17 @@ func NewBot(cfg Config, logger *slog.Logger) *Bot {
 		client:        &http.Client{Timeout: httpTimeoutS * time.Second},
 		dial:          websocket.DefaultDialer.DialContext,
 		sleep:         time.Sleep,
+		jitter:        jitterBackoff,
 		reconnectBase: socketReconnectBase,
 		reconnectMax:  socketReconnectMax,
+		readTimeout:   socketReadTimeout,
+		pingInterval:  socketPingInterval,
 	}
 	service := chat.NewService(backend, chat.Config{
 		DashboardURL:      cfg.DashboardURL,
 		DashboardToken:    cfg.DashboardToken,
 		AllowedUsers:      cfg.AllowedUsers,
+		PersonaStore:      cfg.PersonaStore,
 		PersonaLearning:   cfg.PersonaLearning,
 		AuditSink:         cfg.AuditSink,
 		MessageLimit:      slackMessageLimit,
@@ -163,6 +186,25 @@ func (b *slackBackend) SetTopic(topic string) error {
 }
 
 func (b *slackBackend) Listen(ctx context.Context, deliver func(chat.Message)) {
+	// One worker preserves command order across socket reconnects. The reader
+	// never waits for a command handler, so it can keep acknowledging and ponging.
+	queue := make(chan chat.Message, socketQueueSize)
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg := <-queue:
+				if ctx.Err() != nil {
+					return
+				}
+				deliver(msg)
+			}
+		}
+	}()
+	defer func() { <-workerDone }()
 	delay := b.reconnectBase
 	if delay == 0 {
 		delay = socketReconnectBase
@@ -171,13 +213,37 @@ func (b *slackBackend) Listen(ctx context.Context, deliver func(chat.Message)) {
 	if maxDelay == 0 {
 		maxDelay = socketReconnectMax
 	}
+	// next is a replacement socket opened while the previous one was still
+	// serving, after Slack announced a disconnect; it is used without a sleep.
+	var next *websocket.Conn
 	for {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
+			if next != nil {
+				_ = next.Close()
+			}
 			return
-		default:
 		}
-		connected, err := b.consumeSocket(ctx, deliver)
+		conn := next
+		next = nil
+		var err error
+		if conn == nil {
+			conn, err = b.dialSocket(ctx)
+		}
+		connected := err == nil
+		if connected {
+			next, err = b.serveSocket(ctx, conn, queue)
+		}
+		if next != nil {
+			if err != nil {
+				b.logger.Warn("slack socket ended during refresh", "error", err)
+			}
+			b.logger.Info("slack socket refreshed")
+			delay = b.reconnectBase
+			if delay == 0 {
+				delay = socketReconnectBase
+			}
+			continue
+		}
 		// A canceled ctx closes the socket from under ReadMessage, which then
 		// reports net.ErrClosed; that is the clean shutdown path, not a
 		// disconnect worth a WARN (hivecommons/hive#9129).
@@ -190,13 +256,29 @@ func (b *slackBackend) Listen(ctx context.Context, deliver func(chat.Message)) {
 				delay = socketReconnectBase
 			}
 		}
-		if !sleepWithContext(ctx, b.sleep, delay) {
+		wait := delay
+		if b.jitter != nil {
+			wait = b.jitter(delay)
+		}
+		// callSlack no longer sleeps out a 429 itself, so a rate-limited
+		// apps.connections.open must not be redialed before Slack's Retry-After.
+		var retryable *chat.RetryableError
+		if !connected && errors.As(err, &retryable) && retryable.RetryAfter > wait {
+			wait = retryable.RetryAfter
+		}
+		if !sleepWithContext(ctx, b.sleep, wait) {
 			return
 		}
 		if !connected {
 			delay = min(delay*2, maxDelay)
 		}
 	}
+}
+
+// jitterBackoff spreads d uniformly across ±socketBackoffJitter.
+func jitterBackoff(d time.Duration) time.Duration {
+	spread := (rand.Float64()*2 - 1) * socketBackoffJitter
+	return d + time.Duration(spread*float64(d))
 }
 
 // sleepWithContext waits for d using the injected sleep so tests can observe
@@ -227,10 +309,11 @@ func sleepWithContext(ctx context.Context, sleep func(time.Duration), d time.Dur
 	}
 }
 
-func (b *slackBackend) consumeSocket(ctx context.Context, deliver func(chat.Message)) (bool, error) {
+// dialSocket asks Slack for a fresh Socket Mode URL and connects to it.
+func (b *slackBackend) dialSocket(ctx context.Context) (*websocket.Conn, error) {
 	url, err := b.openSocketURL(ctx)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	h := http.Header{"Authorization": {"Bearer " + b.appToken}}
 	conn, resp, err := b.dial(ctx, url, h)
@@ -238,55 +321,145 @@ func (b *slackBackend) consumeSocket(ctx context.Context, deliver func(chat.Mess
 		_ = resp.Body.Close()
 	}
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	connCtx, stopConnWatcher := context.WithCancel(ctx)
-	watcherDone := make(chan struct{})
+	return conn, nil
+}
+
+type socketDial struct {
+	conn *websocket.Conn
+	err  error
+}
+
+// serveSocket reads conn until it fails, always closing it before returning.
+//
+// When Slack sends a `disconnect` envelope (a `warning` ~10 s ahead of the
+// cut, or `refresh_requested`), serveSocket dials the replacement while it
+// keeps acknowledging on conn, closes conn once the replacement is open, and
+// returns the replacement as next so Listen switches without a gap. Envelopes
+// left unread on conn are unacknowledged, so Slack redelivers them.
+func (b *slackBackend) serveSocket(ctx context.Context, conn *websocket.Conn, queue chan<- chat.Message) (next *websocket.Conn, err error) {
+	readTimeout := b.readTimeout
+	if readTimeout <= 0 {
+		readTimeout = socketReadTimeout
+	}
+	pingInterval := b.pingInterval
+	if pingInterval <= 0 {
+		pingInterval = socketPingInterval
+	}
+	// Any frame from Slack proves the path is alive; silence past readTimeout
+	// fails ReadMessage with a timeout, which ends this session.
+	extendDeadline := func() { _ = conn.SetReadDeadline(time.Now().Add(readTimeout)) }
+	extendDeadline()
+	conn.SetPongHandler(func(string) error { extendDeadline(); return nil })
+	conn.SetPingHandler(func(data string) error {
+		extendDeadline()
+		// Same reply and error tolerance as gorilla's default ping handler.
+		err := conn.WriteControl(websocket.PongMessage, []byte(data), time.Now().Add(socketAckTimeout))
+		var netErr net.Error
+		if err == nil || errors.Is(err, websocket.ErrCloseSent) || (errors.As(err, &netErr) && netErr.Timeout()) {
+			return nil
+		}
+		return err
+	})
+
+	connCtx, stopConn := context.WithCancel(ctx)
+	connDone := make(chan struct{})
 	go func() {
-		defer close(watcherDone)
-		<-connCtx.Done()
-		_ = conn.Close()
+		defer close(connDone)
+		ticker := time.NewTicker(pingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-connCtx.Done():
+				_ = conn.Close()
+				return
+			case <-ticker.C:
+				// WriteControl is safe beside the reader's ack writes. A failed
+				// ping needs no handling: the read deadline ends the session.
+				_ = conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(socketAckTimeout))
+			}
+		}
 	}()
+
+	var handoff chan socketDial // non-nil once Slack announced a disconnect
 	defer func() {
-		stopConnWatcher()
-		<-watcherDone
+		stopConn()
+		<-connDone
 		_ = conn.Close()
+		if handoff == nil {
+			return
+		}
+		dialed := <-handoff
+		if dialed.err != nil {
+			err = errors.Join(err, fmt.Errorf("slack socket replacement: %w", dialed.err))
+			return
+		}
+		next = dialed.conn
 	}()
+
 	for {
 		_, data, err := conn.ReadMessage()
 		if err != nil {
-			return true, err
+			if handoff != nil {
+				// Expected: Slack cut the refreshed socket, or the handoff
+				// closed it once the replacement was open.
+				return nil, nil
+			}
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				return nil, fmt.Errorf("slack socket silent for %s: %w", readTimeout, err)
+			}
+			return nil, err
 		}
+		extendDeadline()
 		var env socketEnvelope
 		if err := json.Unmarshal(data, &env); err != nil {
 			continue
 		}
-		if env.EnvelopeID != "" {
-			if err := conn.WriteJSON(map[string]string{"envelope_id": env.EnvelopeID}); err != nil {
-				b.logger.Warn("slack socket ack failed", "error", err, "envelope_id", env.EnvelopeID)
-				continue
+		var msg *chat.Message
+		if env.Type == "events_api" {
+			var payload eventPayload
+			if json.Unmarshal(env.Payload, &payload) == nil {
+				e := payload.Event
+				if e.Type == "message" && e.Channel == b.channelID {
+					id := e.ClientMsgID
+					if id == "" {
+						id = e.TS
+					}
+					text, _ := ioscan.EnforceInput(e.Text)
+					msg = &chat.Message{ID: id, Text: text, AuthorID: e.User, FromBot: e.BotID != "" || e.Subtype == "bot_message"}
+				}
 			}
 		}
-		if env.Type == "disconnect" || env.Type == "refresh_requested" || env.Reason == "refresh_requested" {
-			return true, fmt.Errorf("slack socket refresh requested")
+		// This loop is the sole producer. Reserve capacity before acknowledging:
+		// reconnect without an ack on overload so Slack can retry the message.
+		if msg != nil && len(queue) == cap(queue) {
+			return nil, fmt.Errorf("slack inbound queue full")
 		}
-		if env.Type != "events_api" {
-			continue
+		if env.EnvelopeID != "" {
+			if err := conn.SetWriteDeadline(time.Now().Add(socketAckTimeout)); err != nil {
+				return nil, err
+			}
+			if err := conn.WriteJSON(map[string]string{"envelope_id": env.EnvelopeID}); err != nil {
+				b.logger.Warn("slack socket ack failed", "error", err, "envelope_id", env.EnvelopeID)
+				return nil, err
+			}
 		}
-		var payload eventPayload
-		if err := json.Unmarshal(env.Payload, &payload); err != nil {
-			continue
+		if handoff == nil && (env.Type == "disconnect" || env.Type == "refresh_requested" || env.Reason == "refresh_requested") {
+			b.logger.Debug("slack socket refresh announced", "reason", env.Reason)
+			handoff = make(chan socketDial, 1)
+			go func() {
+				replacement, err := b.dialSocket(ctx)
+				if err == nil {
+					_ = conn.Close()
+				}
+				handoff <- socketDial{conn: replacement, err: err}
+			}()
 		}
-		e := payload.Event
-		if e.Type != "message" || e.Channel != b.channelID {
-			continue
+		if msg != nil {
+			queue <- *msg
 		}
-		id := e.ClientMsgID
-		if id == "" {
-			id = e.TS
-		}
-		text, _ := ioscan.EnforceInput(e.Text)
-		deliver(chat.Message{ID: id, Text: text, AuthorID: e.User, FromBot: e.BotID != "" || e.Subtype == "bot_message"})
 	}
 }
 
@@ -326,14 +499,17 @@ func (b *slackBackend) callSlack(ctx context.Context, path string, body io.Reade
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusTooManyRequests {
-		if retry := retryAfter(resp.Header.Get("Retry-After")); retry > 0 {
-			b.sleep(retry)
-		}
-		return apiResponse{}, fmt.Errorf("slack API 429: rate limited")
+		// Do not sleep here: this runs on the spine's drain goroutine. The
+		// spine waits out Retry-After (capped, context-aware) and resends.
+		return apiResponse{}, chat.Retryable(fmt.Errorf("slack API 429: rate limited"), retryAfter(resp.Header.Get("Retry-After")))
 	}
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 400 {
-		return apiResponse{}, fmt.Errorf("slack API %d: %s", resp.StatusCode, string(respBody))
+		err := fmt.Errorf("slack API %d: %s", resp.StatusCode, string(respBody))
+		if resp.StatusCode >= 500 {
+			return apiResponse{}, chat.Retryable(err, 0)
+		}
+		return apiResponse{}, err
 	}
 	var parsed apiResponse
 	if len(respBody) > 0 {

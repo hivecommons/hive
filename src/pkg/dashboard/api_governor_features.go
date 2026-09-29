@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 
@@ -297,6 +298,11 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// --- apply ---
+	// runsBefore is compared after the apply to decide whether the stage
+	// runner / hub executor, which snapshot runs config, must be rewired
+	// (#9172). The apply below replaces pointer and slice fields rather than
+	// writing through them, so a shallow copy is a faithful "before".
+	runsBefore := cfg.Runs
 	if body.IoscanEnabled != nil {
 		v := *body.IoscanEnabled
 		cfg.Ioscan.Enabled = &v
@@ -504,11 +510,40 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := s.saveConfig(); err != nil {
+		// A 200 here told the operator a read-only config volume had saved
+		// their change (#9172).
 		s.logger.Error("failed to persist config after features update", "error", err)
+		jsonError(w, "failed to save config: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 	s.auditFromRequest(r, "config_governor_features", auditDetail("section", "features"), "")
 	s.refreshAndPersist()
-	jsonResponse(w, s.featuresSectionWithLinked(cfg))
+	out := s.featuresSectionWithLinked(cfg)
+	if !reflect.DeepEqual(runsBefore, cfg.Runs) {
+		// Tell the UI whether the new settings are live, instead of
+		// implying they are.
+		out["spektacularApply"] = s.applySpektacularChange()
+	}
+	jsonResponse(w, out)
+}
+
+// Values of the features response's spektacularApply field (#9172).
+const (
+	spektacularApplyLive     = "live"     // runner/executor/probe rewired now
+	spektacularApplyDeferred = "deferred" // waiting for the busy hub executor; retried every cleanup tick
+	spektacularApplyRestart  = "restart"  // nothing wired to rewire; takes effect on next boot
+)
+
+// applySpektacularChange rewires the Spektacular runner after a runs config
+// change and reports how the change took effect.
+func (s *Server) applySpektacularChange() string {
+	if s.ReconfigureSpektacular() {
+		return spektacularApplyLive
+	}
+	if s.SpektacularReconfigurePending() {
+		return spektacularApplyDeferred
+	}
+	return spektacularApplyRestart
 }
 
 // featuresSectionResponse builds the opt-in-features payload for the governor

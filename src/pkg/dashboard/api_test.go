@@ -77,16 +77,9 @@ func testDeps(t *testing.T) *Dependencies {
 		NewLinearAgent:       newTestLinearAgentFactory(logger, "", ""),
 		LinearStoredViewerID: testLinearStoredViewerID,
 		DashboardChatSubmit:  chatBot.Submit,
-		DashboardChatDrain: func(since uint64) []ChatOutbound {
-			msgs := chatBot.Drain(since)
-			out := make([]ChatOutbound, 0, len(msgs))
-			for _, msg := range msgs {
-				out = append(out, ChatOutbound{Seq: msg.Seq, Text: msg.Text, Role: msg.Role, AuthorID: msg.AuthorID})
-			}
-			return out
-		},
-		RefreshFunc: func() { refreshCalled.Store(true) },
-		PersistFunc: func() { persistCalled.Store(true) },
+		DashboardChatPoll:    chatPollForTest(chatBot),
+		RefreshFunc:          func() { refreshCalled.Store(true) },
+		PersistFunc:          func() { persistCalled.Store(true) },
 	}
 }
 

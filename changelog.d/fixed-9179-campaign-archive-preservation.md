@@ -1,0 +1,1 @@
+- Listing campaigns now groups legacy revisions without rewriting archive state or deleting revision directories and wiki snapshots; campaign actions use the newest snapshot's existing ID ([#9179](https://github.com/hivecommons/hive/issues/9179)).

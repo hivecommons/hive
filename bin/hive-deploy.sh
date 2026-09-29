@@ -81,7 +81,6 @@ cd "$HIVE_REPO"
 
 SYNCED=""
 DASHBOARD_CHANGED=""
-DISCORD_CHANGED=""
 
 # Fail closed before running git hooks or copying root-installed files from a
 # predictable checkout path. systemd also runs this as ExecStartPre, but the
@@ -135,7 +134,6 @@ if [ "$BEFORE" != "$AFTER" ]; then
     fi
   done
   DASHBOARD_CHANGED=$(echo "$CHANGED_FILES" | grep '^dashboard/' || true)
-  DISCORD_CHANGED=$(echo "$CHANGED_FILES" | grep '^discord/' || true)
 fi
 
 # Drift check: even if HEAD unchanged, installed files may be stale
@@ -161,8 +159,8 @@ if [ -f "$BASELINE_HELPER_SRC" ] && ! cmp -s "$BASELINE_HELPER_SRC" "$BASELINE_H
   SYNCED="$SYNCED hive-baseline-check.sh"
 fi
 
-# Same bootstrap problem as the baseline helper above: the ExecStartPre of both
-# hive-discord.service (#5435) and hive-snapshot.service (#5483) references
+# Same bootstrap problem as the baseline helper above: the ExecStartPre of
+# hive-snapshot.service (#5483) references
 # /usr/local/bin/hive-checkout-guard.sh, and
 # neither sync loop above can create it — both skip any file that is not
 # already installed. Without this block an upgraded host would pull a unit that
@@ -220,42 +218,6 @@ if [ -n "$DASH_RESTART_NEEDED" ] && [ -z "$DASHBOARD_CHANGED" ]; then
   sudo systemctl restart hive-dashboard.service 2>/dev/null && \
     SYNCED="$SYNCED dashboard(drift-restart)" || \
     log "WARN: failed to restart hive-dashboard (drift)"
-fi
-
-# Install Discord bot dependencies if package.json changed or node_modules missing
-if [ -n "$DISCORD_CHANGED" ] || [ ! -d "$HIVE_REPO/discord/node_modules" ]; then
-  (cd "$HIVE_REPO/discord" && npm install --production 2>/dev/null) && \
-    SYNCED="$SYNCED discord(npm-install)" || \
-    log "WARN: failed to npm install in discord/"
-fi
-
-# Restart Discord bot if any discord/ files changed during pull
-if [ -n "$DISCORD_CHANGED" ]; then
-  sudo systemctl restart hive-discord.service 2>/dev/null && \
-    SYNCED="$SYNCED discord(restart)" || \
-    log "WARN: failed to restart hive-discord"
-fi
-
-# Discord bot drift check: restart if running process is older than discord files
-DISCORD_RESTART_NEEDED=""
-if systemctl is-active --quiet hive-discord.service 2>/dev/null; then
-  DISCORD_PID=$(systemctl show hive-discord.service --property=MainPID --value 2>/dev/null)
-  if [ -n "$DISCORD_PID" ] && [ "$DISCORD_PID" != "0" ]; then
-    DISCORD_START=$(stat -c %Y "/proc/$DISCORD_PID" 2>/dev/null || echo 0)
-    for df in "$HIVE_REPO"/discord/*.js "$HIVE_REPO"/discord/lib/*.js; do
-      [ -f "$df" ] || continue
-      FILE_MTIME=$(stat -c %Y "$df" 2>/dev/null || echo 0)
-      if [ "$FILE_MTIME" -gt "$DISCORD_START" ]; then
-        DISCORD_RESTART_NEEDED="yes"
-        break
-      fi
-    done
-  fi
-fi
-if [ -n "$DISCORD_RESTART_NEEDED" ] && [ -z "$DISCORD_CHANGED" ]; then
-  sudo systemctl restart hive-discord.service 2>/dev/null && \
-    SYNCED="$SYNCED discord(drift-restart)" || \
-    log "WARN: failed to restart hive-discord (drift)"
 fi
 
 # Sync hive-project.yaml (code-managed config) — safe to overwrite since

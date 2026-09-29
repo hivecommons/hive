@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -31,6 +32,54 @@ func TestBackendOutboxCapAndOrdering(t *testing.T) {
 	}
 	if after := b.Drain(got[len(got)-2].Seq); len(after) != 1 || after[0].Text != "msg-204" {
 		t.Fatalf("Drain(since) = %+v", after)
+	}
+}
+
+// The browser cursor is only meaningful together with the process epoch and
+// an eviction signal (hivecommons/hive#9135): a restart renumbers from 1 and
+// the ring drops old entries without trace, so Poll must expose both.
+func TestBackendPollReportsEpochNextAndGap(t *testing.T) {
+	b := NewBot(Config{}, nil)
+	empty := b.Poll(0)
+	if empty.Epoch == "" || empty.Next != 0 || empty.Gap || len(empty.Messages) != 0 {
+		t.Fatalf("fresh Poll = %+v, want epoch, next=0, no gap", empty)
+	}
+	for i := range 3 {
+		if err := b.Send(fmt.Sprintf("msg-%d", i)); err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+	}
+	got := b.Poll(1)
+	if got.Epoch != empty.Epoch {
+		t.Fatalf("epoch changed within one process: %q -> %q", empty.Epoch, got.Epoch)
+	}
+	if got.Next != 3 || got.Gap || len(got.Messages) != 2 || got.Messages[0].Seq != 2 {
+		t.Fatalf("Poll(1) = %+v, want next=3, no gap, seqs 2..3", got)
+	}
+	if other := NewBot(Config{}, nil).Poll(0); other.Epoch == empty.Epoch {
+		t.Fatalf("two processes share epoch %q; a restart would be invisible to the browser", other.Epoch)
+	}
+
+	// Overflow the ring: seqs 1..10 are evicted, 11..210 retained.
+	for i := 3; i < outboxCap+10; i++ {
+		if err := b.Send(fmt.Sprintf("msg-%d", i)); err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+	}
+	if stale := b.Poll(4); !stale.Gap || len(stale.Messages) != outboxCap || stale.Messages[0].Seq != 11 || stale.Next != outboxCap+10 {
+		t.Fatalf("Poll(4) after eviction = gap=%v len=%d first=%d next=%d; want gap, %d retained from seq 11", stale.Gap, len(stale.Messages), stale.Messages[0].Seq, stale.Next, outboxCap)
+	}
+	if edge := b.Poll(10); edge.Gap || len(edge.Messages) != outboxCap {
+		t.Fatalf("Poll(10) = gap=%v len=%d; cursor at the eviction edge lost nothing", edge.Gap, len(edge.Messages))
+	}
+	if fresh := b.Poll(0); !fresh.Gap {
+		t.Fatal("Poll(0) after eviction reported no gap; evicted history must not look complete")
+	}
+	if current := b.Poll(outboxCap + 10); current.Gap || len(current.Messages) != 0 {
+		t.Fatalf("Poll(next) = %+v, want empty and no gap", current)
+	}
+	if hostile := b.Poll(math.MaxUint64); hostile.Gap || len(hostile.Messages) != 0 {
+		t.Fatalf("Poll(MaxUint64) = gap=%v len=%d; a wrapped since+1 must not report a phantom gap", hostile.Gap, len(hostile.Messages))
 	}
 }
 

@@ -135,6 +135,30 @@ func TestSuspendStateTable(t *testing.T) {
 			suspended: true,
 			streak:    1,
 		},
+		{
+			// #9184: a racing reconcile appended one closed PR twice. The
+			// rule counts PRs, not rows, so a single closure cannot
+			// suspend a donor on its own.
+			name:   "one closed PR recorded twice counts once",
+			rows:   []Outcome{row(OutcomeOpen, 57), row(OutcomeClosedUnmerged, 57), row(OutcomeClosedUnmerged, 57)},
+			streak: 1,
+		},
+		{
+			name: "a PR's repo is matched case-insensitively",
+			rows: []Outcome{
+				row(OutcomeClosedUnmerged, 57),
+				func() Outcome { r := row(OutcomeClosedUnmerged, 57); r.Repo = "Org/X"; return r }(),
+			},
+			streak: 1,
+		},
+		{
+			// Rows that name no PR (a hand-written or legacy row) carry no
+			// identity to deduplicate on; each still counts.
+			name:      "rows without a PR identity each count",
+			rows:      []Outcome{{Key: donorKey, Kind: OutcomeClosedUnmerged}, {Key: donorKey, Kind: OutcomeClosedUnmerged}},
+			suspended: true,
+			streak:    2,
+		},
 	}
 
 	for _, tc := range cases {

@@ -11,11 +11,9 @@ import (
 
 // mergeCIVerdict is the merge-request watcher's pre-merge CI verdict (#6173).
 //
-// Before this gate existed the watcher issued MergePR unconditionally and
-// relied on GitHub's branch protection to refuse a red PR. On a base branch
-// with no protection rules nothing refuses it, so a PR whose checks failed,
-// or that never produced a check at all, merged on request. The production
-// case that surfaced this: every workflow on the head SHA concluded
+// Before this gate existed the watcher issued MergePR unconditionally and could
+// merge a PR whose checks failed, or that never produced a check at all. The
+// production case that surfaced this: every workflow on the head SHA concluded
 // `failure` with ZERO jobs (startup failures), so the commit had zero check
 // runs, an empty status rollup, and looked clean to anything that asks "is a
 // check failing?". Absent is not passing. A merge now requires POSITIVE
@@ -36,12 +34,6 @@ const (
 	// on the head SHA. GitHub has no verdict at all, so neither does the
 	// hive. Refuse (unless the repo is opted in via auto_merge.no_ci_ok).
 	mergeCIUnverified
-	// mergeCIUnprotectedBase: the PR's base branch has no GitHub branch
-	// protection and the repo is not allowlisted in
-	// auto_merge.allow_unprotected_base (#6281). On such a branch the hive's
-	// own CI-evidence gate is the only gate — nothing external refuses a
-	// merge if the hive's evidence gathering has a bug — so refuse.
-	mergeCIUnprotectedBase
 )
 
 func (v mergeCIVerdict) String() string {
@@ -54,8 +46,6 @@ func (v mergeCIVerdict) String() string {
 		return "red"
 	case mergeCIUnverified:
 		return "unverified"
-	case mergeCIUnprotectedBase:
-		return "unprotected-base"
 	}
 	return fmt.Sprintf("mergeCIVerdict(%d)", int(v))
 }
@@ -84,13 +74,13 @@ var workflowRunFailureConclusions = map[string]bool{
 }
 
 // SetMergeRequestPolicy installs the per-repo merge-request policy sets
-// (#6281): allowUnprotectedBase (repos that may merge into a base branch with
-// no GitHub branch protection) and noCIOK (repos whose "unverified" CI
-// verdict — zero statuses, check runs, and workflow runs — is downgraded to
-// green). Keys are lowercase "owner/repo" and/or bare repo names, as produced
-// by config.AutoMergeConfig.AllowUnprotectedBaseSet / NoCIOKSet. nil/empty
-// clears a set (refuse everywhere — fail closed). Safe to call repeatedly on
-// config reload; the watcher goroutine reads through mergePolicyMu.
+// (#6281 compatibility): allowUnprotectedBase is accepted as a deprecated no-op
+// so existing configs keep loading; noCIOK repos have the "unverified" CI verdict
+// — zero statuses, check runs, and workflow runs — downgraded to green. Keys are
+// lowercase "owner/repo" and/or bare repo names, as produced by
+// config.AutoMergeConfig.AllowUnprotectedBaseSet / NoCIOKSet. nil/empty clears a
+// set. Safe to call repeatedly on config reload; the watcher goroutine reads
+// through mergePolicyMu.
 func (c *Client) SetMergeRequestPolicy(allowUnprotectedBase, noCIOK map[string]bool) {
 	if c == nil {
 		return
@@ -134,7 +124,7 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 	if owner == "" {
 		owner = c.org
 	}
-	pr, _, err := c.client.PullRequests.Get(ctx, owner, name, number)
+	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:merge_request_ci_gate"), owner, name, number)
 	if err != nil {
 		return mergeCIUnverified, "ci gate: fetching PR", fmt.Errorf("ci gate: fetching PR %s/%s#%d: %w", owner, name, number, err)
 	}
@@ -154,31 +144,14 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 		return mergeCIRed, fmt.Sprintf("ci gate: head moved: request pinned %s but PR head is %s", shortSHA(sha), shortSHA(headSHA)), nil
 	}
 
-	// Unprotected-base gate (#6281): on a base branch with no branch
-	// protection, GitHub refuses nothing — the hive's own CI-evidence gate
-	// below is the only gate. Require an explicit per-repo allowlisting
-	// (auto_merge.allow_unprotected_base) before merging into such a branch,
-	// so that a bug in the hive's evidence gathering never has zero external
-	// backstops silently. Branch.protected is readable with plain contents
-	// scope (unlike GetRequiredStatusChecks, which needs administration:read),
-	// so this check works with the Hive App token. An API failure here means
-	// the protection state is UNKNOWN — fail closed as a failed attempt.
-	if baseBranch != "" {
-		br, _, berr := c.client.Repositories.GetBranch(ctx, owner, name, baseBranch, 0)
-		if berr != nil {
-			return mergeCIUnverified, "merge gate: fetching base branch protection state", fmt.Errorf("merge gate: fetching base branch %q of %s/%s: %w", baseBranch, owner, name, berr)
-		}
-		if !br.GetProtected() && !c.repoAllowsUnprotectedBase(owner, name) {
-			return mergeCIUnprotectedBase, fmt.Sprintf("merge gate: base branch %q of %s/%s has no branch protection and the repo is not allowlisted in auto_merge.allow_unprotected_base - refusing to merge with no gate behind the hive's own", baseBranch, owner, name), nil
-		}
-	}
-
 	cfgSet, cfgKnown := c.configRequiredChecks()
 	required, requiredKnown := RequiredStatusCheckContexts(ctx, c.client, owner, name, baseBranch, cfgSet, cfgKnown)
-	if protected, known := c.cachedBaseBranchProtection(owner, name, baseBranch); known && !protected && !cfgKnown {
-		// An allowlisted unprotected base has no branch-protection required set
-		// to delegate to. Use the fail-closed fallback so failing evidence is
-		// still a blocker unless the operator declared required checks explicitly.
+	if !cfgKnown && requiredKnown && len(required) == 0 {
+		// GitHub reports both "branch not protected" and "protected but no
+		// required checks" as a known empty set. For the merge-request watcher
+		// that must not mean "ignore failing CI": absent required-check config
+		// falls back to Hive's positive evidence gate so red/pending non-meta
+		// checks still block on protected and unprotected branches alike.
 		required, requiredKnown = nil, false
 	}
 	st, err := EvaluateCommitCI(ctx, c.client, owner, name, sha, required, requiredKnown)
@@ -192,22 +165,24 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 	// opaque, and an opaque failure is a failure, an opaque in-flight run is
 	// pending. Completed runs that are not failures (success, cancelled,
 	// skipped) carry no verdict of their own here.
-	opaqueFailed, opaquePending, err := c.opaqueWorkflowRuns(ctx, owner, name, sha)
+	opaque, err := c.opaqueWorkflowRuns(ctx, owner, name, sha)
 	if err != nil {
 		return mergeCIUnverified, "ci gate: workflow-runs", fmt.Errorf("ci gate: listing workflow runs for %s/%s@%s: %w", owner, name, shortSHA(sha), err)
 	}
 
 	switch {
-	case len(opaqueFailed) > 0:
-		return mergeCIRed, fmt.Sprintf("ci gate: required status check has not succeeded: workflow run(s) %s concluded failure without producing a job (zero check runs)", strings.Join(opaqueFailed, ", ")), nil
+	case len(opaque.failed) > 0:
+		return mergeCIRed, fmt.Sprintf("ci gate: required status check has not succeeded: workflow run(s) %s concluded failure without producing a job (zero check runs)", strings.Join(opaque.failed, ", ")), nil
 	case !st.Green && !strings.HasSuffix(st.Reason, "-pending"):
 		return mergeCIRed, fmt.Sprintf("ci gate: required status check has not succeeded (%s)", st.Reason), nil
 	case !st.Green:
 		return mergeCIPending, fmt.Sprintf("ci gate: CI still running (%s)", st.Reason), nil
 	case len(st.MissingRequired) > 0:
 		return mergeCIPending, fmt.Sprintf("ci gate: required check(s) not yet reported on %s: %s", shortSHA(sha), strings.Join(st.MissingRequired, ", ")), nil
-	case len(opaquePending) > 0:
-		return mergeCIPending, fmt.Sprintf("ci gate: workflow run(s) %s still in flight without a job yet", strings.Join(opaquePending, ", ")), nil
+	case len(opaque.pending) > 0:
+		return mergeCIPending, fmt.Sprintf("ci gate: workflow run(s) %s still in flight without a job yet", strings.Join(opaque.pending, ", ")), nil
+	case len(opaque.actionRequired) > 0:
+		return mergeCIRed, forkRunApprovalReason(owner, name, opaque.actionRequired), nil
 	case st.Evidence == 0:
 		// Per-repo no-CI opt-in (#6281): a repo with genuinely no CI (docs-
 		// only, config-only) can never produce evidence, so "unverified"
@@ -222,47 +197,107 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 	return mergeCIGreen, fmt.Sprintf("ci gate: %d status/check run(s) on %s, all gating checks succeeded", st.Evidence, shortSHA(sha)), nil
 }
 
-// opaqueWorkflowRuns lists the workflow runs for sha and returns the names of
-// those that FAILED without a job and those still IN FLIGHT without a job.
-// Runs that produced jobs speak through their check runs and are not listed.
-func (c *Client) opaqueWorkflowRuns(ctx context.Context, owner, repo, sha string) (failed, pending []string, err error) {
+type opaqueWorkflowRunResult struct {
+	failed         []string
+	actionRequired []string
+	pending        []string
+}
+
+// opaqueWorkflowRuns lists the workflow runs for sha and returns those that
+// failed, await fork-PR approval, or remain in flight without a job. Runs that
+// produced jobs speak through their check runs and are not listed.
+func (c *Client) opaqueWorkflowRuns(ctx context.Context, owner, repo, sha string) (opaqueWorkflowRunResult, error) {
 	runs, _, err := c.client.Actions.ListRepositoryWorkflowRuns(ctx, owner, repo, &gh.ListWorkflowRunsOptions{
 		HeadSHA:     sha,
 		ListOptions: gh.ListOptions{PerPage: workflowRunsPerPage},
 	})
 	if err != nil {
-		return nil, nil, err
+		return opaqueWorkflowRunResult{}, err
 	}
 	if runs == nil {
-		return nil, nil, nil
+		return opaqueWorkflowRunResult{}, nil
 	}
-	for _, run := range runs.WorkflowRuns {
+	var out opaqueWorkflowRunResult
+	for _, run := range latestWorkflowRunsByWorkflowAndEvent(runs.WorkflowRuns) {
 		if run == nil {
 			continue
 		}
 		status, conclusion := run.GetStatus(), run.GetConclusion()
-		isFailure := status == "completed" && workflowRunFailureConclusions[conclusion]
+		isActionRequired := status == "completed" && conclusion == "action_required"
+		isFailure := status == "completed" && workflowRunFailureConclusions[conclusion] && !isActionRequired
 		isPending := status != "completed"
-		if !isFailure && !isPending {
+		if !isFailure && !isActionRequired && !isPending {
 			continue
 		}
 		jobs, _, jerr := c.client.Actions.ListWorkflowJobs(ctx, owner, repo, run.GetID(), &gh.ListWorkflowJobsOptions{
 			ListOptions: gh.ListOptions{PerPage: 1},
 		})
 		if jerr != nil {
-			return nil, nil, jerr
+			return opaqueWorkflowRunResult{}, jerr
 		}
 		if jobs != nil && jobs.GetTotalCount() > 0 {
 			continue // visible through its check runs
 		}
 		label := fmt.Sprintf("%q(%d)", run.GetName(), run.GetID())
-		if isFailure {
-			failed = append(failed, label)
-		} else {
-			pending = append(pending, label)
+		switch {
+		case isActionRequired:
+			out.actionRequired = append(out.actionRequired, label)
+		case isFailure:
+			out.failed = append(out.failed, label)
+		default:
+			out.pending = append(out.pending, label)
 		}
 	}
-	return failed, pending, nil
+	return out, nil
+}
+
+type workflowRunIdentity struct {
+	workflowID int64
+	event      string
+}
+
+func latestWorkflowRunsByWorkflowAndEvent(runs []*gh.WorkflowRun) []*gh.WorkflowRun {
+	if len(runs) == 0 {
+		return nil
+	}
+	latest := make(map[workflowRunIdentity]*gh.WorkflowRun, len(runs))
+	for _, run := range runs {
+		if run == nil {
+			continue
+		}
+		key := workflowRunIdentity{workflowID: run.GetWorkflowID(), event: run.GetEvent()}
+		if prev := latest[key]; prev == nil || workflowRunIsNewer(run, prev) {
+			latest[key] = run
+		}
+	}
+	out := make([]*gh.WorkflowRun, 0, len(latest))
+	for _, run := range latest {
+		out = append(out, run)
+	}
+	return out
+}
+
+func workflowRunIsNewer(candidate, current *gh.WorkflowRun) bool {
+	candidateStarted := candidate.GetRunStartedAt().Time
+	currentStarted := current.GetRunStartedAt().Time
+	if candidateStarted.IsZero() {
+		candidateStarted = candidate.GetCreatedAt().Time
+	}
+	if currentStarted.IsZero() {
+		currentStarted = current.GetCreatedAt().Time
+	}
+	switch {
+	case candidateStarted.After(currentStarted):
+		return true
+	case currentStarted.After(candidateStarted):
+		return false
+	default:
+		return candidate.GetID() > current.GetID()
+	}
+}
+
+func forkRunApprovalReason(owner, repo string, labels []string) string {
+	return fmt.Sprintf("ci gate: fork PR workflow runs are awaiting maintainer approval (action_required): %s. Approve the runs or relax the repo setting at https://github.com/%s/%s/settings/actions (Approval for running fork pull request workflows)", strings.Join(labels, ", "), owner, repo)
 }
 
 // logCIVerdict records the gate's decision for the operator with the same

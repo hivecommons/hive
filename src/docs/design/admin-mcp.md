@@ -91,6 +91,21 @@ Writes are disabled by default on both transports. Set `HIVE_ADMIN_MCP_ENABLE_WR
 
 The write contract deliberately goes through existing dashboard REST endpoints and sends only the dashboard token. It never sends `X-Hive-User`, `X-Hive-Role`, or `X-Hive-Owner-Role-Verified`. A hive refusal from the underlying endpoint is returned as a `hive-refusal` result with the status and original response body preserved rather than rewritten as a client-side authorization decision. Audit attribution therefore remains `local`, as recorded below.
 
+Because a confirmed write re-authenticates with the dashboard token alone, the endpoint checks up front whether that can succeed for the current caller. When the dashboard enforces authentication and the caller was admitted some other way (a per-user session, hub proxy proof, or the internal header) rather than with `Authorization: Bearer <dashboard token>`, or when the spoke enforces direct-route authorization (which refuses the shared token), writes are reported as unavailable for that caller: `tools/list` and `exclusion_catalogue` show `writes_enabled: false` with the reason (`writes_unavailable_reason` in the catalogue), and `write_preview` refuses without minting a confirmation that could never execute.
+
+### Configuring the stdio binary
+
+`hive-admin-mcp` is configured entirely from its environment:
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `HIVE_ADMIN_MCP_HIVES` | yes | JSON array of `{"name","address","token"}` roster entries. `token` is that hive's dashboard token, so treat this value as a secret. Names must be unique. |
+| `HIVE_ADMIN_MCP_ACTIVE` | no | Name of the hive that is active at start-up; defaults to the first roster entry. The `select_hive` tool switches the single active hive at runtime. |
+| `HIVE_ADMIN_MCP_ENABLE_WRITES` | no | `1`/`true`/`yes`/`on` enables the preview-and-confirm write tools. |
+| `HIVE_ADMIN_MCP_PENDING_FILE` | no | Path of the durable pending-confirmation store. |
+
+The binary keeps one API client per roster entry for the life of the process.
+
 A write operation is registered by implementing `adminmcp.WriteOp` and adding it to the registry (the default registry is `adminmcp.DefaultWriteRegistry()`):
 
 ```go
@@ -250,6 +265,10 @@ Three of task-mcp's disciplines apply unchanged, and for the same reasons:
   a transport error, as `RefusalData` / `outside_lease_scope` / `stage_mismatch` already are.
 - **Hard caps.** Item counts and text sizes are bounded and truncation is disclosed, in the
   spirit of `MaxPageSize = 20` and `MaxTextBytes = 16 KiB`.
+  The admin surface caps each result at `MaxTextBytes = 256 KiB` on both transports. An
+  oversized result is truncated, never turned into an error: the longest top-level lists are
+  shortened first (`<field>_truncated: true`), and a result that still does not fit becomes a
+  bounded `text_preview`; either way `_admin_mcp.truncated` is `true` with the original size.
 
 To them the admin surface adds one the read-only sibling never needed: **no write happens on
 a single call.** Each write is previewed — reporting exactly what would change, on which

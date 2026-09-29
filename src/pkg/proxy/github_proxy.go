@@ -31,6 +31,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/issueshape"
@@ -1439,6 +1440,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			p.logTimeout("proxy upstream response read timed out", err, "agent", agentName, "path", req.URL.Path)
 			return
 		}
+		hgithub.RecordRESTRequest("agent:"+agentName, req.Method, req.URL.Path, resp.StatusCode, resp.Header)
 
 		// Bound the BODY relay too, not just the header read above. The
 		// deadline was cleared once headers arrived, so a "reachable but slow"

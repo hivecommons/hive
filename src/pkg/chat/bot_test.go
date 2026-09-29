@@ -263,6 +263,26 @@ func TestRouteMessage_NonAllowlistedUserBlocked(t *testing.T) {
 	}
 }
 
+func TestSetAllowedUsersUpdatesLiveCommandAuthorization(t *testing.T) {
+	b := NewService(&recordingBackend{}, Config{AllowedUsers: []string{"alice:owner"}}, discardLogger())
+	b.RegisterCommand("ping", func(_ context.Context, _ string) (string, error) { return "pong", nil })
+
+	b.routeMessage(context.Background(), Message{Text: "!ping", AuthorID: "alice"})
+	var sent []string
+	drainQueue(b, &sent)
+	if len(sent) != 1 || sent[0] != "pong" {
+		t.Fatalf("initial allowlisted user got %v, want pong", sent)
+	}
+
+	b.SetAllowedUsers([]string{"bob:owner"})
+	b.routeMessage(context.Background(), Message{Text: "!ping", AuthorID: "alice"})
+	b.routeMessage(context.Background(), Message{Text: "!ping", AuthorID: "bob"})
+	drainQueue(b, &sent)
+	if len(sent) != 2 || sent[1] != "pong" {
+		t.Fatalf("updated allowlist replies = %v, want only bob's pong", sent)
+	}
+}
+
 func TestRouteMessage_EmptyAllowlistBlocksAll(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) }))
 	t.Cleanup(ts.Close)

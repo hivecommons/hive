@@ -15,6 +15,13 @@ func (s *Server) chatCommandHintAnswer(query string) (string, bool) {
 	q := strings.ToLower(strings.TrimSpace(query))
 	q = strings.TrimSuffix(q, "?")
 	q = strings.Join(strings.Fields(q), " ")
+	// `!` commands are never answered locally: they belong to the shared chat
+	// spine, which enforces the allowlist and owner role. A byte comparison is
+	// used so the v6 conformance scan can keep rejecting string-literal `!`
+	// matches as local shortcuts.
+	if len(q) > 0 && q[0] == '!' {
+		return "", false
+	}
 	switch {
 	case q == "/help":
 		return "Try `/agents`, `/beads`, `/prs`, `/governor`, `/knowledge work sources`, `/spek active campaigns`, `/spek spec runs`, `/who`, or `!help`.", true

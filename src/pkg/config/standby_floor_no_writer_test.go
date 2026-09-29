@@ -153,17 +153,17 @@ func TestStandbyFloorIsOwnedByConfig(t *testing.T) {
 	}
 	// The item-tier list's guard must not be vacuous either. Its Go field is
 	// declared on HubConfig and its wire key is named by the struct tag, so
-	// config.go is where both spellings live.
-	cfgData, err := os.ReadFile("config.go")
+	// hub_config.go is where both spellings live.
+	cfgData, err := os.ReadFile("hub_config.go")
 	if err != nil {
-		t.Fatalf("reading config.go: %v", err)
+		t.Fatalf("reading hub_config.go: %v", err)
 	}
 	cfgBody := string(cfgData)
 	if !strings.Contains(cfgBody, standbyItemTiersGoField) {
-		t.Errorf("pkg/config/config.go does not mention %s; the no-writer guard is scanning for a dead string", standbyItemTiersGoField)
+		t.Errorf("pkg/config/hub_config.go does not mention %s; the no-writer guard is scanning for a dead string", standbyItemTiersGoField)
 	}
 	if !strings.Contains(cfgBody, standbyItemTiersWireKey) {
-		t.Errorf("pkg/config/config.go does not mention %s; the no-writer guard is scanning for a dead string", standbyItemTiersWireKey)
+		t.Errorf("pkg/config/hub_config.go does not mention %s; the no-writer guard is scanning for a dead string", standbyItemTiersWireKey)
 	}
 	// And pkg/config is where the list is normalized and validated, which is
 	// what the exception above is for.

@@ -1,0 +1,1 @@
+- Bound ARC runner pod ephemeral storage and documented the node-spread patch so self-hosted CI no longer overpacks node-local disks before jobs start.

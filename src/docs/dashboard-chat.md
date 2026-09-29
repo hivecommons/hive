@@ -8,10 +8,47 @@ The transport keeps the v6 guard invariant from [#7563](https://github.com/hivec
 - inbound text is enforced with `ioscan` before it is delivered to the spine;
 - command execution still fails closed unless the dashboard user is in the chat allowlist derived from dashboard collaborators;
 - outbound bot text is scrubbed before it reaches the in-memory outbox;
-- the browser polls `GET /api/chat/messages?since=<seq>` every two seconds, leaving `/api/events` unchanged for status SSE;
+- the browser polls `GET /api/chat/messages?since=<seq>` (every 2 s while the panel is open, every 10 s while it is closed, never while the tab is hidden), leaving `/api/events` unchanged for status SSE;
 - `!`-prefixed text is never answered by the dashboard's local intents (`pkg/dashboard/chat_commands.go`); every command reaches the spine's allowlist and role checks. a command the spine refuses (author not allowlisted, or an empty allowlist) is shown in the panel as a visible `❌ … refused` line via the `chat.CommandRefuser` hook — the decision stays in the spine, dashboard chat only renders it. `src/pkg/dashboard/chat_conformance_v6_test.go` fails if a local intent answers a `!` command, if a started bot replies to a non-allowlisted author, or if the refusal is not visible ([#9136](https://github.com/hivecommons/hive/issues/9136)).
 
 The v6 readiness tracker is [#7563](https://github.com/hivecommons/hive/issues/7563). Its dashboard-chat evidence row is satisfied only after conformance passes and one live `!status` round trip from the panel is linked.
+
+## One shared channel
+
+The dashboard panel is a **shared channel**, not a private conversation: every
+dashboard reader (`RoleRead` and up) polls the same in-memory outbox, exactly as
+every member of a Slack or Discord channel sees the same bot. Bot replies carry
+no target user, so a per-viewer feed is not expressible on the spine. Each
+outbox entry names its author (`author_id`) and each poll names the caller
+(`viewer`, from the authenticated request). Only a line whose `author_id`
+equals `viewer` is rendered as the viewer's own; anyone else's — or an
+unattributed line — is a labelled peer line kept out of the viewer's own
+conversational context (the `history` posted back with `POST /api/chat`), so one
+operator's `!runs reject …` never shows up in another's panel as their own words
+([#9135](https://github.com/hivecommons/hive/issues/9135)).
+
+## Poll cursor contract
+
+`GET /api/chat/messages?since=<seq>` returns an envelope, not a bare list
+(`Poll`, `src/pkg/dashchat/bot.go:50`; `handleChatMessages`,
+`src/pkg/dashboard/api.go:6669`):
+
+```json
+{"messages":[…], "next": 42, "epoch": "<per-process id>", "gap": false, "viewer": "alice"}
+```
+
+- `seq` is a per-process counter, so a cursor is only meaningful inside the
+  `epoch` that minted it. The browser persists `{epoch, seq}` alongside the
+  transcript (`hive-chat-cursor-v1`), so a reload resumes where it left off
+  instead of replaying the retained outbox with fresh unread badges.
+- A new `epoch` (hive restart) or a `next` below the cursor resets the cursor
+  to `0`, prints a restart notice, and re-polls at once; before this, the
+  browser silently discarded the first N replies of the new process.
+- The outbox is a 200-entry ring. `gap: true` means entries newer than `since`
+  were already evicted; a browser that was tracking the channel renders a gap
+  marker rather than presenting the retained tail as complete.
+- Non-2xx responses and network failures back off exponentially (base cadence
+  × 2ⁿ, capped at 60 s) and a 2xx resets the backoff.
 
 ## Run decisions
 

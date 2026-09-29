@@ -113,10 +113,10 @@ func (s *Service) cmdPersona(ctx context.Context, args string) (string, error) {
 const personaUsage = "Usage: `!persona setup` | `show` | `set <depth|summary_length|notes> <value>` | `suggestions` | `accept <n>` | `reject` | `undo` | `pin` | `unpin`"
 
 func (s *Service) handlePendingPersonaReply(ctx context.Context, msg Message, content string) bool {
-	if len(s.allowedUsers) == 0 {
+	if s.allowedUserCount() == 0 {
 		return false
 	}
-	if _, ok := s.allowedUsers[msg.AuthorID]; !ok {
+	if _, ok := s.allowedUserRole(msg.AuthorID); !ok {
 		return false
 	}
 	key := s.pendingPersonaKey(msg.AuthorID)

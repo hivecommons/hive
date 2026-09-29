@@ -12,7 +12,7 @@ operator must get right for the trust boundary to hold.**
 
 **Disabled by default.** An absent `mint:` block, or `enabled: false`, is
 byte-identical to a hive with no mint — the config comment says so
-explicitly (`pkg/config/config.go:222-226`), and this document exists
+explicitly (`pkg/config/mint_config.go:3-7`), and this document exists
 because the feature had zero operator docs before this page.
 
 ## What it issues, and to whom
@@ -62,7 +62,7 @@ mint:
   max_ttl_seconds: 900                # optional — default 900 (15m), hard-capped at 3600 (1h)
 ```
 
-Fields (`MintConfig`, `pkg/config/config.go:227-239`):
+Fields (`MintConfig`, `pkg/config/mint_config.go:8-20`):
 
 | YAML key | Go field | Required (when `enabled: true`) | Default | Notes |
 |---|---|---|---|---|

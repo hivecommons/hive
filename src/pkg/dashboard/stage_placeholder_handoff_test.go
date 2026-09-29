@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // The hub executor advances a run to implement under its own identity and
@@ -174,5 +175,64 @@ func TestPruneExpiredLeases_NoReofferWhenStageStillCovered(t *testing.T) {
 	defer h.leaseMu.Unlock()
 	if n := len(h.leases); n != 1 {
 		t.Errorf("leases = %d, want only the surviving fan-out wave", n)
+	}
+}
+
+// When a relay lease with workItem context expires, reofferOrphanedStageLocked
+// must preserve the workItem so the re-minted placeholder carries the Jira/Linear
+// context for the next adopter. Without this, the completion comment is silently
+// skipped and the run title in /api/runs falls back to the bare run key.
+func TestPruneExpiredLeases_PreservesWorkItemOnReoffer(t *testing.T) {
+	now := time.Now()
+	h := &ContributeWSHub{logger: covBLogger()}
+	const (
+		key  = "external!ACME#ENG-123:implement"
+		repo = "kubestellar/console"
+	)
+	// Relay adopts the stage with workItem context (Jira/Linear).
+	if err := h.recordLeaseForKeyStage("c-relay", "ct-1", repo, 0, key, "contributor", StageImplement, 1, now.Add(-leaseTTL)); err != nil {
+		t.Fatal(err)
+	}
+	h.leaseMu.Lock()
+	relay := h.leaseForLocked("c-relay", "ct-1")
+	relay.workItem = worksource.WorkItemContext{
+		SourceType: "jira",
+		Repo:       "ACME",
+		ExternalID: "ENG-123",
+		Title:      "Fix widget",
+		URL:        "https://jira.example.com/browse/ENG-123",
+	}
+	relay.mcpTokenID = "token-id-123"
+	relay.mcpTokenHash = "hash-456"
+	h.leaseMu.Unlock()
+
+	// Relay lease expires; pruneExpiredLeases re-offers the stage.
+	if dropped := h.pruneExpiredLeases(now.Add(time.Minute)); dropped != 1 {
+		t.Fatalf("dropped = %d, want 1", dropped)
+	}
+
+	h.leaseMu.Lock()
+	defer h.leaseMu.Unlock()
+	var placeholders []*taskLease
+	for _, l := range h.leases {
+		if l.key == key {
+			placeholders = append(placeholders, l)
+		}
+	}
+	if len(placeholders) != 1 {
+		t.Fatalf("leases on run key = %d, want exactly one re-minted placeholder", len(placeholders))
+	}
+	p := placeholders[0]
+	if p.identity != runAdmissionIdentity || p.stage != StageImplement || p.gen != 1 {
+		t.Errorf("placeholder = %+v, want admission identity at implement gen 1", p)
+	}
+	// Verify workItem is preserved.
+	if p.workItem.SourceType != "jira" || p.workItem.Repo != "ACME" || p.workItem.ExternalID != "ENG-123" || p.workItem.Title != "Fix widget" {
+		t.Errorf("placeholder workItem = %+v, want preserved jira context from relay", p.workItem)
+	}
+	// Verify mcpToken fields are preserved.
+	if p.mcpTokenID != "token-id-123" || p.mcpTokenHash != "hash-456" {
+		t.Errorf("placeholder mcpToken: ID = %q, Hash = %q, want ID = %q, Hash = %q",
+			p.mcpTokenID, p.mcpTokenHash, "token-id-123", "hash-456")
 	}
 }

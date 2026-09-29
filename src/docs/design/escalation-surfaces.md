@@ -104,6 +104,14 @@ email:
 - Plain text first; HTML alternative part later if anyone asks. Every mail
   ends with a provenance footer (hive name, spoke, version) so multi-hive
   operators can filter.
+- **Delivery durability**: a digest that fails to send stays buffered (ahead
+  of newer events, capped at 500 with an overflow count) and is audited as
+  `escalation_digest_failed`. A hive.yaml reload that leaves the escalation
+  settings unchanged keeps the running dispatcher; one that changes them
+  hands the pending digest to the new email sink and lets the old dispatcher
+  deliver its queue for up to 30s. Events still queued after that, or
+  dispatched to a stopped dispatcher, are audited as
+  `escalation_dropped_on_stop`.
 
 ### Inbound reply-to-act (phase 2, explicitly later)
 
@@ -153,8 +161,18 @@ All three are a single HTTPS POST with a JSON/form body — `pkg/escalate`
 implements them directly (~50 lines each), no dependencies. `page` events map
 to PagerDuty `critical` / Pushover `priority=1` / ntfy `priority=high`.
 Delivery failures are logged and audited but never block the producer: an
-escalation sink that is down must not stall a review pipeline. No retries
-beyond one immediate re-attempt; the mail sink is the durable fallback.
+escalation sink that is down must not stall a review pipeline. Each sink
+truncates title and body to its provider's limits (Pushover 250/1024
+characters, PagerDuty summary 1024, ntfy body 4096 bytes) and RFC 2047-encodes
+the ntfy `Title` header. A throttled (429/408), server-failed (5xx), or
+transport-failed delivery is re-attempted twice with a short backoff
+(1s, then 4s, stretched to a provider's `Retry-After` up to 30s); any other
+4xx is final on the first answer. While a stopped dispatcher drains its
+queue, no retry wait runs past the 30s drain deadline: a wait that would is
+skipped and the event gets its final attempt at once, audited as
+`escalation_delivery_failed` if that attempt fails too. Failure audits never
+carry the request URL, since an ntfy topic URL is the topic's credential. The
+mail sink is the durable fallback.
 
 ## The guard invariant, restated
 

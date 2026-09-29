@@ -39,6 +39,16 @@ type ChatOutbound struct {
 	AuthorID string `json:"author_id,omitempty"`
 }
 
+// ChatPoll mirrors dashchat.Poll for GET /api/chat/messages: the retained
+// entries newer than the client's cursor plus the metadata that makes the
+// cursor safe across restarts and ring eviction (hivecommons/hive#9135).
+type ChatPoll struct {
+	Messages []ChatOutbound `json:"messages"`
+	Next     uint64         `json:"next"`
+	Epoch    string         `json:"epoch"`
+	Gap      bool           `json:"gap,omitempty"`
+}
+
 type Dependencies struct {
 	Config   *config.Config
 	AgentMgr *agent.Manager
@@ -172,7 +182,7 @@ type Dependencies struct {
 	ActionsJWKSFetcher   func(ctx context.Context, url string) ([]byte, error)
 	ActionsClock         func() time.Time
 	DashboardChatSubmit  func(user, text string) (uint64, error)
-	DashboardChatDrain   func(since uint64) []ChatOutbound
+	DashboardChatPoll    func(since uint64) ChatPoll
 	// LinearStoredViewerID reports the persisted Linear install's viewer id
 	// ("" when none) plus the store path, for the assigned_only validation
 	// message. Nil disables the check's install probe.

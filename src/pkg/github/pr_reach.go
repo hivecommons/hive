@@ -79,7 +79,7 @@ func (c *Client) MergedPR(ctx context.Context, owner, repo string, number int) (
 	}
 	prReachCacheMu.Unlock()
 
-	pr, _, err := c.client.PullRequests.Get(ctx, owner, repo, number)
+	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:pr_reach"), owner, repo, number)
 	if err != nil {
 		return MergedPR{}, fmt.Errorf("fetching PR %s: %w", key, err)
 	}
@@ -120,7 +120,7 @@ func (c *Client) ListMergedPRFiles(ctx context.Context, owner, repo string, numb
 	}
 	prReachCacheMu.Unlock()
 
-	pr, _, err := c.client.PullRequests.Get(ctx, owner, repo, number)
+	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:pr_reach"), owner, repo, number)
 	if err != nil {
 		return nil, fmt.Errorf("fetching PR %s: %w", key, err)
 	}

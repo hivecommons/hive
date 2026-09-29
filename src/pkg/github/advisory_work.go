@@ -21,7 +21,7 @@ func (c *Client) AdvisoryWorkState(ctx context.Context, owner, repo string, numb
 	}
 	work := advisory.LinkedWork{Kind: "issue", State: strings.ToUpper(issue.GetState())}
 	if issue.IsPullRequest() {
-		pr, _, err := c.client.PullRequests.Get(ctx, owner, repo, number)
+		pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:advisory_work"), owner, repo, number)
 		if err != nil {
 			return advisory.LinkedWork{}, err
 		}

@@ -2,6 +2,15 @@
 
 Status: Proposed — discussion on #6239.
 
+> **v6 note (hivecommons/hive#9140):** every `discord/bot.js` / `discord/lib/`
+> reference below describes the legacy standalone Node bot, which was removed
+> on the `v6` branch (it had been crash-looping on a `SyntaxError` since May
+> and predated the v6 command spine — no allowlist/ioscan/scrub). The current
+> Discord implementation is the Go bot at `src/pkg/discord`, built on the
+> shared `pkg/chat` spine. This proposal has not been re-checked against that
+> implementation; treat the paths below as historical context for the RFC's
+> intent, not as current line references.
+
 RFC credit: this design turns the adopter RFC in
 [#6239](https://github.com/hivecommons/hive/issues/6239) into a reviewable plan
 without implementing it. The core insight from the RFC is that Discord consensus

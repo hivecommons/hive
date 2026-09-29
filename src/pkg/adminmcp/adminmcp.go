@@ -127,9 +127,10 @@ func RefusalFor(operation string) (RefusalData, bool) {
 	if operation == "" {
 		operation = "unspecified operation"
 	}
-	needle := strings.ToLower(operation)
+	// Exact, case-folded match only: a partial name ("knowledge", "api") must
+	// not borrow the recorded refusal of a different operation.
 	for _, ex := range exclusions {
-		if strings.ToLower(ex.Operation) == needle || strings.Contains(strings.ToLower(ex.Operation), needle) || strings.Contains(needle, strings.ToLower(ex.Operation)) {
+		if strings.EqualFold(ex.Operation, operation) {
 			return refusalData(ex), true
 		}
 	}
@@ -149,6 +150,11 @@ type Handler struct {
 	ConfirmationTTL time.Duration
 	HiveID          string
 	Now             func() time.Time
+	// WritesUnavailableReason, when set, reports writes as disabled for this
+	// caller even if the operator enabled them, because a confirmed write could
+	// not authenticate. Preview fails fast instead of minting a confirmation
+	// that can never be executed.
+	WritesUnavailableReason string
 }
 
 type HandlerOption func(*Handler)
@@ -172,6 +178,20 @@ func WithConfirmationTTL(ttl time.Duration) HandlerOption {
 	return func(h *Handler) { h.ConfirmationTTL = ttl }
 }
 func WithClock(now func() time.Time) HandlerOption { return func(h *Handler) { h.Now = now } }
+func WithWritesUnavailable(reason string) HandlerOption {
+	return func(h *Handler) { h.WritesUnavailableReason = strings.TrimSpace(reason) }
+}
+
+func (h *Handler) writesUsable() bool {
+	return h.WritesEnabled && h.WritesUnavailableReason == ""
+}
+
+func (h *Handler) writesDisabledErr() error {
+	if h.WritesEnabled && h.WritesUnavailableReason != "" {
+		return fmt.Errorf("%w for this caller: %s", ErrWritesDisabled, h.WritesUnavailableReason)
+	}
+	return ErrWritesDisabled
+}
 
 func NewHandler(provider Provider, opts ...HandlerOption) *Handler {
 	h := &Handler{Provider: provider, WriteRegistry: DefaultWriteRegistry(), ConfirmationTTL: DefaultConfirmationTTL, HiveID: "local"}
@@ -244,7 +264,7 @@ func (h *Handler) dispatch(r *http.Request, req rpcRequest) (any, *rpcError) {
 	case "notifications/initialized":
 		return map[string]any{}, nil
 	case "tools/list":
-		return map[string]any{"tools": ToolsWithWritesEnabled(h.WritesEnabled)}, nil
+		return map[string]any{"tools": toolDefs(h.writesUsable(), h.WritesUnavailableReason)}, nil
 	case "tools/call":
 		return h.callTool(r.Context(), req.Params)
 	default:
@@ -272,7 +292,7 @@ func (h *Handler) callTool(ctx context.Context, raw json.RawMessage) (any, *rpcE
 	var data any
 	switch p.Name {
 	case ToolExclusionCatalogue:
-		data = Catalogue(h.WritesEnabled, h.WriteRegistry)
+		data = catalogue(h.writesUsable(), h.WritesUnavailableReason, h.WriteRegistry)
 	case ToolRefuseOperation:
 		data, _ = RefusalFor(stringArg(p.Arguments, "operation"))
 	case ToolWritePreview:
@@ -301,12 +321,9 @@ func (h *Handler) callTool(ctx context.Context, raw json.RawMessage) (any, *rpcE
 		}
 		data = result
 	}
-	b, err := json.Marshal(DataEnvelope{Data: Scrub(data)})
+	b, err := EncodeResult(data)
 	if err != nil {
 		return nil, toolErr(err)
-	}
-	if len(b) > MaxTextBytes {
-		return nil, &rpcError{Code: -32000, Message: "admin MCP result exceeds text cap"}
 	}
 	return map[string]any{"content": []map[string]string{{"type": "text", "text": string(b)}}}, nil
 }
@@ -314,6 +331,10 @@ func (h *Handler) callTool(ctx context.Context, raw json.RawMessage) (any, *rpcE
 func Tools() []map[string]any { return ToolsWithWritesEnabled(false) }
 
 func ToolsWithWritesEnabled(writesEnabled bool) []map[string]any {
+	return toolDefs(writesEnabled, "")
+}
+
+func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 	defs := []struct{ name, desc string }{
 		{ToolHiveStatus, "Read this hive's dashboard status summary."},
 		{ToolFleetStatus, "Read this hive's fleet status, including repo and agent health rollups."},
@@ -340,7 +361,7 @@ func ToolsWithWritesEnabled(writesEnabled bool) []map[string]any {
 		metadata := phaseOneMetadata()
 		readOnly := true
 		if d.name == ToolWritePreview || d.name == ToolWriteConfirm {
-			metadata = writeMetadata(writesEnabled)
+			metadata = writeMetadata(writesEnabled, unavailableReason)
 			readOnly = false
 		}
 		out = append(out, map[string]any{"name": d.name, "description": d.desc, "inputSchema": inputSchema(d.name), "annotations": map[string]any{"readOnlyHint": readOnly}, "metadata": metadata})
@@ -363,10 +384,12 @@ func phaseOneMetadata() ToolMetadata {
 	return ToolMetadata{Preview: PreviewContract{Mode: "phase_3_write_contract", Enabled: false, Note: "Read tools require no confirmation; write tools use the phase 3 preview-and-confirm contract when explicitly enabled."}, Confirm: ConfirmContract{Required: false, Note: "Reads require no confirmation; write confirmations are handled by write_confirm."}, Writes: false}
 }
 
-func writeMetadata(enabled bool) ToolMetadata {
+func writeMetadata(enabled bool, unavailableReason string) ToolMetadata {
 	note := "Writes are registered but disabled until the operator explicitly enables admin MCP writes."
 	if enabled {
 		note = "Writes require preview followed by durable confirmation."
+	} else if unavailableReason != "" {
+		note = "Writes are enabled on this hive but unavailable to this caller: " + unavailableReason
 	}
 	return ToolMetadata{Preview: PreviewContract{Mode: "preview_confirm", Enabled: enabled, Note: note}, Confirm: ConfirmContract{Required: true, Note: "Confirmations are one-use, hive-bound, action-bound, and expire."}, Writes: true}
 }
@@ -392,8 +415,8 @@ func inputSchema(name string) map[string]any {
 }
 
 func (h *Handler) PreviewWrite(ctx context.Context, args map[string]any) (any, error) {
-	if !h.WritesEnabled {
-		return nil, ErrWritesDisabled
+	if !h.writesUsable() {
+		return nil, h.writesDisabledErr()
 	}
 	opName := cleanOperationName(stringArg(args, "operation"))
 	op, ok := h.WriteRegistry.Get(opName)
@@ -416,7 +439,7 @@ func (h *Handler) PreviewWrite(ctx context.Context, args map[string]any) (any, e
 	if err != nil {
 		return nil, err
 	}
-	pending := PendingConfirmation{ID: id, Operation: op.Name(), Args: scrubPendingMap(opArgs).(map[string]any), Preview: scrubPendingPreview(preview), Hive: h.HiveID, CreatedAt: now, ExpiresAt: now.Add(h.ConfirmationTTL)}
+	pending := PendingConfirmation{ID: id, Operation: op.Name(), Args: scrubPendingMap(opArgs).(map[string]any), Preview: persistedPendingPreview(preview), Hive: h.HiveID, CreatedAt: now, ExpiresAt: now.Add(h.ConfirmationTTL)}
 	if err := h.PendingStore.Put(ctx, pending); err != nil {
 		return nil, err
 	}
@@ -424,8 +447,8 @@ func (h *Handler) PreviewWrite(ctx context.Context, args map[string]any) (any, e
 }
 
 func (h *Handler) ConfirmWrite(ctx context.Context, args map[string]any) (any, error) {
-	if !h.WritesEnabled {
-		return nil, ErrWritesDisabled
+	if !h.writesUsable() {
+		return nil, h.writesDisabledErr()
 	}
 	if h.WriteClient == nil {
 		return nil, fmt.Errorf("write client unavailable")
@@ -483,6 +506,14 @@ func pendingValueNeedsFreshConfirm(v any) bool {
 	return origErr == nil && nextErr == nil && !bytes.Equal(orig, next)
 }
 
+// persistedPendingPreview keeps only what ConfirmWrite reads back — the
+// request it executes. Summary, effects, disclosure and details are for the
+// caller of write_preview and would otherwise duplicate the args (up to a
+// 10 000-char nudge prompt) in every stored entry (#9162).
+func persistedPendingPreview(preview WritePreview) WritePreview {
+	return WritePreview{Operation: preview.Operation, Target: scrubOutboundString(preview.Target), Request: scrubPendingPreview(preview).Request}
+}
+
 func scrubPendingPreview(preview WritePreview) WritePreview {
 	out := preview
 	out.Summary = scrubOutboundString(out.Summary)
@@ -516,7 +547,7 @@ func scrubPendingValue(v any, key string) any {
 	case map[string]any:
 		out := make(map[string]any, len(x))
 		for k, val := range x {
-			if credentialBearingKey(k) && !numericTokenCounter(k, val) {
+			if credentialBearingKey(k) && !maskExempt(k, val) {
 				out[k] = "[masked:" + maskLabel(k) + "]"
 				continue
 			}
@@ -547,7 +578,7 @@ func scrubPendingValue(v any, key string) any {
 
 func credentialBearingKey(k string) bool {
 	key := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(k), "_", ""), "-", ""))
-	if key == "" || key == "tokens" || key == "totaltokens" {
+	if key == "" {
 		return false
 	}
 	if key == "otelheaders" {
@@ -696,7 +727,7 @@ func maskSensitive(b []byte) []byte {
 		case map[string]any:
 			out := map[string]any{}
 			for k, val := range x {
-				if sensitiveKey(k) && !numericTokenCounter(k, val) {
+				if sensitiveKey(k) && !maskExempt(k, val) {
 					out[k] = "[masked:" + maskLabel(k) + "]"
 				} else {
 					out[k] = walk(val)
@@ -728,14 +759,40 @@ func sensitiveKey(k string) bool {
 	k = strings.ToLower(k)
 	return strings.Contains(k, "token") || strings.Contains(k, "secret") || strings.Contains(k, "password") || strings.Contains(k, "credential") || strings.Contains(k, "authorization")
 }
-func numericTokenCounter(k string, v any) bool {
+
+// credentialTokenQualifiers mark a plural "*tokens" key as a collection of
+// credentials (refresh_tokens, access_tokens) rather than a usage count.
+var credentialTokenQualifiers = []string{
+	"access", "refresh", "id", "bearer", "auth", "api", "registration",
+	"session", "lease", "oauth", "bot", "webhook", "github", "csrf", "jwt", "device",
+}
+
+// tokenCountKey reports whether k names a token count or usage block
+// (tokens, totalTokens, input_tokens, max_tokens) rather than a credential.
+func tokenCountKey(k string) bool {
 	key := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(k, "_", ""), "-", ""))
-	if key != "tokens" && key != "totaltokens" {
+	stem, ok := strings.CutSuffix(key, "tokens")
+	if !ok {
 		return false
 	}
+	for _, q := range credentialTokenQualifiers {
+		if strings.HasSuffix(stem, q) {
+			return false
+		}
+	}
+	return true
+}
+
+// maskExempt reports whether a value under a sensitive-looking key cannot be
+// a credential and must stay visible (#9161). Booleans carry no secret; a
+// token count is numeric, and a token usage block is an object that the
+// caller keeps walking, so its fields are still scrubbed by key and shape.
+func maskExempt(k string, v any) bool {
 	switch v.(type) {
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, json.Number:
+	case bool:
 		return true
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, json.Number, map[string]any:
+		return tokenCountKey(k)
 	default:
 		return false
 	}
@@ -750,8 +807,12 @@ func maskLabel(k string) string {
 	}
 	return "secret"
 }
+
+// looksSecret matches credential prefixes. The only hive-issued prefixed
+// token is the task MCP lease (taskmcp.LeaseTokenPrefix); a bare "hive_"
+// prefix would also mask identifiers such as hive_id or tool names.
 func looksSecret(s string) bool {
-	return strings.HasPrefix(s, "Bearer ") || strings.HasPrefix(s, "ghp_") || strings.HasPrefix(s, "github_pat_") || strings.HasPrefix(s, "hive_")
+	return strings.HasPrefix(s, "Bearer ") || strings.HasPrefix(s, "ghp_") || strings.HasPrefix(s, "github_pat_") || strings.HasPrefix(s, "hive_mcp_v1.")
 }
 func scrubOutboundString(s string) string {
 	out := logscrub.ScrubString(s, logscrub.WithMarkers())
@@ -789,7 +850,16 @@ func SortKeys(m map[string]any) []string {
 func Errorf(format string, args ...any) error { return fmt.Errorf(format, args...) }
 
 func Catalogue(writesEnabled bool, registry *WriteRegistry) map[string]any {
-	return map[string]any{"exclusions": Exclusions(), "writes_enabled": writesEnabled, "write_operations": WriteOperationDescriptions(registry), "preview": writeMetadata(writesEnabled).Preview, "confirm": writeMetadata(writesEnabled).Confirm}
+	return catalogue(writesEnabled, "", registry)
+}
+
+func catalogue(writesEnabled bool, unavailableReason string, registry *WriteRegistry) map[string]any {
+	meta := writeMetadata(writesEnabled, unavailableReason)
+	out := map[string]any{"exclusions": Exclusions(), "writes_enabled": writesEnabled, "write_operations": WriteOperationDescriptions(registry), "preview": meta.Preview, "confirm": meta.Confirm}
+	if unavailableReason != "" {
+		out["writes_unavailable_reason"] = unavailableReason
+	}
+	return out
 }
 
 func WriteOperationDescriptions(registry *WriteRegistry) []map[string]any {

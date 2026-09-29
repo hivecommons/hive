@@ -133,6 +133,39 @@ func TestReadProviderCapsActiveHiveList(t *testing.T) {
 	}
 }
 
+// TestReadProviderSendsLimitAsQuery pins #9160: the capped list tools must put
+// limit in the query string, not in the path where hivectl would escape the
+// "?" into "/api/agents%3Flimit=1" and the hive would answer 404.
+func TestReadProviderSendsLimitAsQuery(t *testing.T) {
+	for _, tc := range []struct {
+		tool string
+		path string
+	}{
+		{adminmcp.ToolAgentsList, "/api/agents"},
+		{adminmcp.ToolRunsList, "/api/runs"},
+		{adminmcp.ToolLeasesList, "/api/runs"},
+		{adminmcp.ToolClaimsList, "/api/claims"},
+		{adminmcp.ToolPlansList, "/api/plans"},
+		{adminmcp.ToolContributorsList, "/api/contributors"},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != tc.path || r.URL.Query().Get("limit") != "1" {
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer server.Close()
+			r := &roster{hives: []hiveConfig{{Name: "active", Address: server.URL, Token: "token"}}, active: 0, timeout: time.Second}
+			if _, err := (readProvider{roster: r}).Read(context.Background(), tc.tool, map[string]any{"limit": float64(1)}); err != nil {
+				t.Fatalf("Read(%s) err = %v", tc.tool, err)
+			}
+		})
+	}
+}
+
 func TestRosterActiveHiveOnly(t *testing.T) {
 	var hitsA, hitsB int
 	serverA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -308,5 +341,47 @@ func TestReadPathAgentNudgeStatus(t *testing.T) {
 	path, ok := readPath(adminmcp.ToolAgentNudgeStatus, map[string]any{"agent": "team/scanner"})
 	if !ok || path != "/api/kick/team%2Fscanner/status" {
 		t.Fatalf("path = %q ok=%v", path, ok)
+	}
+}
+
+func TestStdioHandlerTruncatesOversizedResult(t *testing.T) {
+	repos := make([]map[string]any, 4000)
+	for i := range repos {
+		repos[i] = map[string]any{"name": "repo", "health": strings.Repeat("x", 120)}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "repos": repos})
+	}))
+	defer server.Close()
+	r := &roster{hives: []hiveConfig{{Name: "active", Address: server.URL, Token: "token"}}, active: 0, timeout: time.Second}
+
+	result, err := (readProvider{roster: r}).handler(adminmcp.ToolFleetStatus)(context.Background(), &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Arguments: []byte(`{}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := mustMarshalContentText(t, result.Content[0])
+	if len(text) > adminmcp.MaxTextBytes {
+		t.Fatalf("stdio text is %d bytes, cap is %d", len(text), adminmcp.MaxTextBytes)
+	}
+	if !strings.Contains(text, `"truncated":true`) || !strings.Contains(text, `"repos_truncated":true`) {
+		t.Fatalf("stdio result missing truncation disclosure: %.300s", text)
+	}
+}
+
+func TestRosterReusesClientPerHive(t *testing.T) {
+	r := &roster{hives: []hiveConfig{{Name: "a", Address: "http://127.0.0.1:1", Token: "t"}, {Name: "b", Address: "http://127.0.0.1:2", Token: "t"}}, timeout: time.Second}
+	first, _, err := r.activeClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, _ := r.activeClient()
+	if first != second {
+		t.Fatal("activeClient built a new client for the same hive")
+	}
+	r.active = 1
+	other, _, _ := r.activeClient()
+	if other == first {
+		t.Fatal("different hives share one client")
 	}
 }

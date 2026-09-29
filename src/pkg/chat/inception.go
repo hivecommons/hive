@@ -223,10 +223,10 @@ func (s *Service) fetchInceptionState(ctx context.Context) (*inceptionStateRespo
 }
 
 func (s *Service) handlePendingInterviewReply(ctx context.Context, msg Message, content string) {
-	if len(s.allowedUsers) == 0 {
+	if s.allowedUserCount() == 0 {
 		return
 	}
-	role, ok := s.allowedUsers[msg.AuthorID]
+	role, ok := s.allowedUserRole(msg.AuthorID)
 	if !ok || !config.RoleAtLeast(role, config.RoleOwner) {
 		return
 	}
@@ -301,7 +301,7 @@ func (s *Service) seedPendingInterviews(questions []inceptionQuestion, answers m
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for author, role := range s.allowedUsers {
+	for author, role := range s.allowedUsersSnapshot() {
 		if !config.RoleAtLeast(role, config.RoleOwner) {
 			continue
 		}

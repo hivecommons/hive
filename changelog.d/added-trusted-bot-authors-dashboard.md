@@ -1,0 +1,1 @@
+- Settings → Features → Auto merge now lists trusted bot authors with a toggle per bot: known dependency bots, bots discovered authoring open PRs in the last scan, and any login typed in manually. Saving writes `auto_merge.trusted_bot_authors`; the auto-merge config API returns a `bot_authors` catalogue.

@@ -1,0 +1,1 @@
+- Attribute token-authenticated chat actions, including kicks, checkpoint decisions, and inception, to the chat transport and author instead of `local` ([#9125](https://github.com/hivecommons/hive/issues/9125)).

@@ -55,7 +55,7 @@ Telemetry's lane keywords (`observability`, `opentelemetry`, `prometheus`, `graf
 
 ## Configuration reference
 
-Registered defaults (`applyKnownAgentDefaults` in `src/pkg/config/config.go`), applied when a field is left blank in your own config:
+Registered defaults (`applyKnownAgentDefaults` in `src/pkg/config/defaults.go`), applied when a field is left blank in your own config:
 
 | Field | Default |
 |-------|---------|

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +58,7 @@ type InceptionWatcher struct {
 
 	lastQuestionCount int
 	lastFactCount     int
+	lastFactKey       string // fingerprint of the fact set last handed to RecordFacts
 	lastSlug          string
 	lastKickRetry     time.Time
 	kickRetryCount    int
@@ -154,6 +157,7 @@ func (w *InceptionWatcher) poll(ctx context.Context) {
 	if state == nil {
 		w.lastQuestionCount = 0
 		w.lastFactCount = 0
+		w.lastFactKey = ""
 		w.lastSlug = ""
 		w.factGraceStart = time.Time{}
 		return
@@ -162,6 +166,7 @@ func (w *InceptionWatcher) poll(ctx context.Context) {
 	if state.IdeaSlug != w.lastSlug {
 		w.lastQuestionCount = 0
 		w.lastFactCount = 0
+		w.lastFactKey = ""
 		w.kickRetryCount = 0
 		w.lastKickRetry = time.Time{}
 		w.rateLimitedUntil = time.Time{}
@@ -916,12 +921,11 @@ func (w *InceptionWatcher) checkForFacts(ctx context.Context, inceptionBeads []*
 		})
 	}
 
-	var proposedFacts []knowledge.IdeationFact
-	for _, f := range facts {
-		if f.Proposed && !f.Confirmed {
-			proposedFacts = append(proposedFacts, f)
-		}
-	}
+	// Unconfirmed transcript proposals (#8316) are parked for human review
+	// and must not count toward the advance thresholds nor reach RecordFacts:
+	// counting them let a proposal-only tick advance to scaffold on the
+	// Q&A-derived facts alone while the proposals were discarded (#9171).
+	facts, proposedFacts := splitProposedFacts(facts)
 	if len(proposedFacts) > 0 {
 		if err := w.inception.AddProposedFacts(proposedFacts); err != nil {
 			w.logger.Warn("inception watcher: failed to store proposed facts", "error", err, "count", len(proposedFacts))
@@ -967,9 +971,14 @@ func (w *InceptionWatcher) recordAndAdvanceFacts(ctx context.Context, facts []kn
 		facts = w.supplementFactsFromQA(facts, state)
 	}
 
-	if len(facts) == w.lastFactCount {
+	// Dedupe on the fact set rather than its size: a human confirming a
+	// proposal can replace a Q&A-supplemented fact and leave the count
+	// unchanged, and that confirmation must still be recorded.
+	key := factSetKey(facts)
+	if key == w.lastFactKey {
 		return
 	}
+	w.lastFactKey = key
 	w.lastFactCount = len(facts)
 	w.factGraceStart = time.Time{}
 
@@ -981,6 +990,30 @@ func (w *InceptionWatcher) recordAndAdvanceFacts(ctx context.Context, facts []kn
 	w.logger.Info("inception watcher: facts extracted, advancing to scaffold",
 		"count", len(facts),
 	)
+}
+
+// splitProposedFacts separates facts that may be recorded (plain facts and
+// human-confirmed proposals) from proposals still awaiting confirmation.
+func splitProposedFacts(all []knowledge.IdeationFact) (recordable, proposed []knowledge.IdeationFact) {
+	for _, f := range all {
+		if f.Proposed && !f.Confirmed {
+			proposed = append(proposed, f)
+			continue
+		}
+		recordable = append(recordable, f)
+	}
+	return recordable, proposed
+}
+
+// factSetKey fingerprints a fact set independent of order so the watcher can
+// tell a changed set from an unchanged one even when the size is equal.
+func factSetKey(facts []knowledge.IdeationFact) string {
+	keys := make([]string, 0, len(facts))
+	for _, f := range facts {
+		keys = append(keys, string(f.Type)+"\x00"+f.Title+"\x00"+strconv.FormatBool(f.Confirmed))
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, "\x01")
 }
 
 func (w *InceptionWatcher) supplementFactsFromQA(existing []knowledge.IdeationFact, state *knowledge.InceptionState) []knowledge.IdeationFact {

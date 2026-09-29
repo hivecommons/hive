@@ -1,0 +1,1 @@
+- Preserve lease's `workItem` and MCP token fields in `reofferOrphanedStageLocked`, so when a relay lease expires and its stage is re-offered, the next adopter receives the Jira/Linear context. This fixes silent failure of `postCompletionPRComment` and the run title falling back to the bare run key in `/api/runs`.

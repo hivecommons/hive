@@ -409,6 +409,70 @@ func TestOnSSEEventRunsBranches(t *testing.T) {
 	}
 }
 
+// TestOnSSEEventFirstSnapshotAnnouncesExistingHumanGate reproduces issue
+// #9124: a run that is already at waiting_on=human in the very first SSE
+// snapshot the bot ever sees (e.g. after a restart) must still be announced,
+// not silently adopted as the diff baseline.
+func TestOnSSEEventFirstSnapshotAnnouncesExistingHumanGate(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() != "/api/runs/repo%2Fa%231/checkpoint" {
+			t.Fatalf("unexpected path %q", r.URL.EscapedPath())
+		}
+		writeRunCheckpointPayload(w, "repo/a#1", "Already waiting", 3)
+	}))
+	defer ts.Close()
+
+	s := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL, AllowedUsers: []string{"uid:owner"}}, discardLogger())
+	s.client = ts.Client()
+
+	// This is the FIRST event this Service instance ever receives: s.lastState
+	// and s.lastRuns both start nil, mirroring a fresh process after a restart.
+	s.onSSEEvent(&statusSnapshot{Runs: runSnapshotList{{Key: "repo/a#1", Title: "Already waiting", Stage: "plan", Gen: 3, WaitingOn: "human"}}})
+
+	var sent []string
+	drainQueue(s, &sent)
+	if len(sent) != 1 || !strings.Contains(sent[0], "Already waiting") || !strings.Contains(sent[0], "needs a decision") {
+		t.Fatalf("first-snapshot checkpoint prompt = %#v, want one prompt for the already-pending run", sent)
+	}
+	if len(s.pendingCheckpoints) != 1 {
+		t.Fatalf("pending checkpoints = %#v, want 1", s.pendingCheckpoints)
+	}
+}
+
+// TestSyncRunsFromSSEFirstFetchAnnouncesExistingHumanGate covers the same
+// restart scenario via the polling fallback path (syncRunsFromSSE), used when
+// an SSE frame carries no run array and the bot falls back to /api/runs.
+func TestSyncRunsFromSSEFirstFetchAnnouncesExistingHumanGate(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() == "/api/runs/repo%2Fa%231/checkpoint" {
+			writeRunCheckpointPayload(w, "repo/a#1", "Already waiting", 3)
+			return
+		}
+		if r.URL.EscapedPath() != "/api/runs" {
+			t.Fatalf("unexpected path %q", r.URL.EscapedPath())
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"key": "repo/a#1", "title": "Already waiting", "stage": "plan", "gen": 3, "waiting_on": "human", "plan_epic_id": "epic-1",
+		}})
+	}))
+	defer ts.Close()
+
+	s := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL, AllowedUsers: []string{"uid:owner"}}, discardLogger())
+	s.client = ts.Client()
+
+	// First-ever fetch: s.lastRuns starts nil, exactly like after a restart.
+	s.syncRunsFromSSE(context.Background())
+
+	var sent []string
+	drainQueue(s, &sent)
+	if len(sent) != 1 || !strings.Contains(sent[0], "Already waiting") {
+		t.Fatalf("first fetch checkpoint prompt = %#v, want one prompt for the already-pending run", sent)
+	}
+	if len(s.pendingCheckpoints) != 1 {
+		t.Fatalf("pending checkpoints = %#v, want 1", s.pendingCheckpoints)
+	}
+}
+
 func TestCmdRunsListSortsByKey(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.EscapedPath() != "/api/runs" {

@@ -264,6 +264,10 @@ func socketTransportOf(t *testing.T, rt http.RoundTripper) *http.Transport {
 			rt = w.inner
 		case *etagCacheTransport:
 			rt = w.inner
+		case *rest404NegativeCacheTransport:
+			rt = w.inner
+		case *restAccountingTransport:
+			rt = w.inner
 		case *http.Transport:
 			return w
 		default:
@@ -388,7 +392,18 @@ func TestGitHubTransportChain_AppClientIsPacedAndCached(t *testing.T) {
 	if !ok {
 		t.Fatalf("chain inner = %T, want *etagCacheTransport", ss.inner)
 	}
-	if ec.cache != sharedETagCache || ec.inner != http.DefaultTransport {
-		t.Error("chain does not use the shared ETag cache over the given transport")
+	if ec.cache != sharedETagCache {
+		t.Error("chain does not use the shared ETag cache")
+	}
+	neg, ok := ec.inner.(*rest404NegativeCacheTransport)
+	if !ok {
+		t.Fatalf("etag inner = %T, want *rest404NegativeCacheTransport", ec.inner)
+	}
+	acct, ok := neg.inner.(*restAccountingTransport)
+	if !ok {
+		t.Fatalf("negative-cache inner = %T, want *restAccountingTransport", neg.inner)
+	}
+	if acct.inner != http.DefaultTransport {
+		t.Error("accounting transport does not wrap the given transport")
 	}
 }

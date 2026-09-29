@@ -365,7 +365,9 @@ func (e *InceptionEngine) RecordFacts(ctx context.Context, facts []IdeationFact)
 	e.state.Phase = PhaseScaffold
 	now := time.Now()
 	e.state.PhaseChangedAt = &now
-	e.state.ProposedFacts = nil
+	// Keep proposals nobody has confirmed yet: wiping them here silently
+	// discarded transcript-derived candidates before a human saw them (#9171).
+	e.state.ProposedFacts = dropRecordedProposals(e.state.ProposedFacts, accepted)
 
 	e.writeFactsToVault(accepted)
 
@@ -556,10 +558,30 @@ func scrubIdeationFact(f IdeationFact) IdeationFact {
 	return f
 }
 
+// dropRecordedProposals returns the pending proposals that were not just
+// recorded as confirmed facts. It never mutates the input slice.
+func dropRecordedProposals(pending, recorded []IdeationFact) []IdeationFact {
+	done := make(map[string]bool, len(recorded))
+	for _, f := range recorded {
+		done[proposalKey(f)] = true
+	}
+	kept := make([]IdeationFact, 0, len(pending))
+	for _, p := range pending {
+		if !done[proposalKey(p)] {
+			kept = append(kept, p)
+		}
+	}
+	return kept
+}
+
+func proposalKey(f IdeationFact) string {
+	return strings.ToLower(f.Title + "\x00" + f.SourceRef)
+}
+
 func appendProposedFact(existing []IdeationFact, fact IdeationFact) []IdeationFact {
-	key := strings.ToLower(fact.Title + "\x00" + fact.SourceRef)
+	key := proposalKey(fact)
 	for i, current := range existing {
-		if strings.ToLower(current.Title+"\x00"+current.SourceRef) == key {
+		if proposalKey(current) == key {
 			existing[i] = fact
 			return existing
 		}
@@ -935,7 +957,7 @@ func (e *InceptionEngine) ListCampaignArchives() ([]InceptionCampaignArchive, er
 		}
 		archives = append(archives, archive)
 	}
-	archives = e.dedupeCampaignArchivesLocked(archives)
+	archives = dedupeCampaignArchives(archives)
 	sort.Slice(archives, func(i, j int) bool { return archives[i].ArchivedAt.After(archives[j].ArchivedAt) })
 	return archives, nil
 }
@@ -1100,7 +1122,10 @@ func (e *InceptionEngine) ReviseExternalCampaign(id, title, source, engine, camp
 	return archive, nil
 }
 
-func (e *InceptionEngine) dedupeCampaignArchivesLocked(archives []InceptionCampaignArchive) []InceptionCampaignArchive {
+// dedupeCampaignArchives builds a read-only view of legacy revision chains.
+// Keep the newest snapshot's real ID so subsequent load, restore, and revise
+// operations address the same state and wiki that the list describes.
+func dedupeCampaignArchives(archives []InceptionCampaignArchive) []InceptionCampaignArchive {
 	if len(archives) == 0 {
 		return archives
 	}
@@ -1117,42 +1142,12 @@ func (e *InceptionEngine) dedupeCampaignArchivesLocked(archives []InceptionCampa
 		byStableID[stableID] = append(byStableID[stableID], archive)
 	}
 	out := make([]InceptionCampaignArchive, 0, len(byStableID))
-	for stableID, group := range byStableID {
+	for _, group := range byStableID {
 		if len(group) == 1 {
-			archive := group[0]
-			if archive.ID != stableID {
-				sourceID := archive.ID
-				archive.ID = stableID
-				if archive.State != nil {
-					archive.State = copyInceptionState(archive.State)
-					archive.State.IdeaSlug = stableID
-				}
-				normalized := true
-				if err := e.writeArchiveStateLocked(&archive); err != nil {
-					e.logger.Warn("failed to normalize inception campaign archive", "campaign", archive.ID, "stable", stableID, "error", err)
-					normalized = false
-				}
-				if err := e.copyArchiveWikiLocked(sourceID, stableID); err != nil {
-					e.logger.Warn("failed to normalize inception campaign wiki", "campaign", stableID, "source", sourceID, "error", err)
-					normalized = false
-				}
-				if normalized {
-					if err := os.RemoveAll(filepath.Join(e.dataDir, inceptionCampaignsDir, slugify(sourceID))); err != nil {
-						e.logger.Warn("failed to remove duplicate inception campaign archive", "campaign", sourceID, "stable", stableID, "error", err)
-					}
-				}
-			}
-			out = append(out, archive)
+			out = append(out, group[0])
 			continue
 		}
 		merged := newestCampaignArchive(group)
-		sourceID := merged.ID
-		merged.ID = stableID
-		merged.RevisionOf = ""
-		if merged.State != nil {
-			merged.State = copyInceptionState(merged.State)
-			merged.State.IdeaSlug = stableID
-		}
 		maxRevision := merged.Revision
 		history := append([]CampaignRevisionHistory{}, merged.History...)
 		seenHistory := map[string]bool{}
@@ -1182,27 +1177,6 @@ func (e *InceptionEngine) dedupeCampaignArchivesLocked(archives []InceptionCampa
 		}
 		merged.Revision = maxRevision
 		merged.History = history
-		mergedOK := true
-		if err := e.writeArchiveStateLocked(&merged); err != nil {
-			e.logger.Warn("failed to merge duplicate inception campaign archives", "campaign", stableID, "error", err)
-			mergedOK = false
-		}
-		if sourceID != stableID {
-			if err := e.copyArchiveWikiLocked(sourceID, stableID); err != nil {
-				e.logger.Warn("failed to merge duplicate inception campaign wiki", "campaign", stableID, "source", sourceID, "error", err)
-				mergedOK = false
-			}
-		}
-		if mergedOK {
-			for _, archive := range group {
-				if archive.ID == stableID {
-					continue
-				}
-				if err := os.RemoveAll(filepath.Join(e.dataDir, inceptionCampaignsDir, slugify(archive.ID))); err != nil {
-					e.logger.Warn("failed to remove duplicate inception campaign archive", "campaign", archive.ID, "stable", stableID, "error", err)
-				}
-			}
-		}
 		out = append(out, merged)
 	}
 	return out
@@ -1379,42 +1353,6 @@ func (e *InceptionEngine) writeArchiveStateLocked(archive *InceptionCampaignArch
 		return fmt.Errorf("writing campaign archive: %w", err)
 	}
 	return os.Rename(tmp, filepath.Join(root, inceptionArchiveState))
-}
-
-func (e *InceptionEngine) copyArchiveWikiLocked(fromID, toID string) error {
-	from := filepath.Join(e.dataDir, inceptionCampaignsDir, slugify(fromID), inceptionArchiveWiki)
-	toRoot := filepath.Join(e.dataDir, inceptionCampaignsDir, slugify(toID))
-	to := filepath.Join(toRoot, inceptionArchiveWiki)
-	if err := os.MkdirAll(toRoot, 0o755); err != nil {
-		return fmt.Errorf("creating campaign archive: %w", err)
-	}
-	entries, err := os.ReadDir(from)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("reading campaign wiki archive: %w", err)
-	}
-	if err := os.RemoveAll(to); err != nil {
-		return fmt.Errorf("clearing campaign revision wiki: %w", err)
-	}
-	if err := os.MkdirAll(to, 0o755); err != nil {
-		return fmt.Errorf("creating campaign revision wiki: %w", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-			continue
-		}
-		name := filepath.Base(entry.Name())
-		data, err := os.ReadFile(filepath.Join(from, name))
-		if err != nil {
-			return fmt.Errorf("reading campaign wiki file %s: %w", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(to, name), data, 0o644); err != nil {
-			return fmt.Errorf("writing campaign revision wiki file %s: %w", name, err)
-		}
-	}
-	return nil
 }
 
 func campaignOwner(owner string) string {

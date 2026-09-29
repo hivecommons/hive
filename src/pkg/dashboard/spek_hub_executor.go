@@ -353,9 +353,11 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 		e.Server.tickStageRunner(time.Now().UTC())
 		return nil
 	}
+	var interviewAnswers []byte
 	prompt := SpekHubStagePromptWithContext(st.stage, st.repo, st.number, st.runKey, st.title, artifact, st.workItem)
 	if e.stageInterviewMode() != "auto" {
-		prompt += spekInterviewPromptBlock(st.stage, artifact, readSpekInterviewAnswers(worktree))
+		interviewAnswers = readSpekInterviewAnswers(worktree)
+		prompt += spekInterviewPromptBlock(st.stage, artifact, interviewAnswers)
 	}
 	if err := writeSpekHubPrompt(worktree, prompt); err != nil {
 		return err
@@ -370,6 +372,14 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 	statusHistory, stopStatusPolling := e.startStageStatusCapture(ctx, st, worktree, env, st.stage, artifact)
 	out, pid, err := e.runStageCommand(ctx, worktree, env, st, cmd)
 	stopStatusPolling()
+	// Preserve files through transcript capture, and keep them on launch failure.
+	if err == nil || pid > 0 {
+		defer func() {
+			if cleanupErr := clearConsumedSpekInterview(worktree, interviewAnswers); cleanupErr != nil {
+				e.log().Warn("[spektacular] clearing consumed interview failed", "run", st.runKey, "error", cleanupErr)
+			}
+		}()
+	}
 	exitCode := 0
 	if err != nil {
 		exitCode = commandExitCode(err)

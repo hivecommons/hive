@@ -148,6 +148,32 @@ func TestRunCheckpointReadOnlyApproveWithoutPendingNotConsumed(t *testing.T) {
 	}
 }
 
+// TestRunCheckpointOwnerBareApproveWithoutPendingGetsExplicitFormHint
+// reproduces the second half of issue #9124: when an owner's bare "approve"
+// or "reject" (no pending checkpoint tracked for them, e.g. after a restart)
+// used to fall through routeMessage with no reply at all. It must now be
+// consumed with a hint toward the explicit `!runs approve/reject <key>` form.
+func TestRunCheckpointOwnerBareApproveWithoutPendingGetsExplicitFormHint(t *testing.T) {
+	s := NewService(&recordingBackend{}, Config{AllowedUsers: []string{"uid:owner"}}, discardLogger())
+	if !s.handlePendingCheckpointReply(context.Background(), makeMsg("1", "approve", false), "approve") {
+		t.Fatal("owner's bare approve without a pending checkpoint should be consumed, not fall through")
+	}
+	var sent []string
+	drainQueue(s, &sent)
+	if len(sent) != 1 || !strings.Contains(sent[0], "!runs approve <key>") || !strings.Contains(sent[0], "!runs reject <key>") {
+		t.Fatalf("bare approve hint = %#v, want explicit-form hint", sent)
+	}
+
+	sent = nil
+	if !s.handlePendingCheckpointReply(context.Background(), makeMsg("2", "reject", false), "reject") {
+		t.Fatal("owner's bare reject without a pending checkpoint should be consumed, not fall through")
+	}
+	drainQueue(s, &sent)
+	if len(sent) != 1 || !strings.Contains(sent[0], "!runs approve <key>") || !strings.Contains(sent[0], "!runs reject <key>") {
+		t.Fatalf("bare reject hint = %#v, want explicit-form hint", sent)
+	}
+}
+
 func TestRunCheckpointClearsWhenRunCompletes(t *testing.T) {
 	s := NewService(&recordingBackend{}, Config{AllowedUsers: []string{"uid:owner"}}, discardLogger())
 	s.pendingCheckpoints[s.pendingCheckpointKey("repo/a#1")] = &pendingCheckpoint{RunKey: "repo/a#1", Authors: map[string]struct{}{"uid": {}}}

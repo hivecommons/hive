@@ -48,8 +48,8 @@ assert(filled.includes('ready'), filled);
 
 func TestHiveChatForwardCommandDoesNotAppendNormalizedUserBubble(t *testing.T) {
 	forwardCommand := indexSliceBetween(t, indexHTML(t), "function chatForwardCommand(scope)", "\n\n    async function chatRunCommand(q)")
-	trackEcho := indexSliceBetween(t, indexHTML(t), "function chatTrackPendingUserEcho(text, delta)", "\n\n    function chatRenderOutbound(msg)")
-	renderOutbound := indexSliceBetween(t, indexHTML(t), "function chatRenderOutbound(msg)", "\n\n    async function chatPollMessages()")
+	trackEcho := indexSliceBetween(t, indexHTML(t), "function chatTrackPendingUserEcho(text, delta)", "\n\n    function chatRenderOutbound(msg, viewer)")
+	renderOutbound := indexSliceBetween(t, indexHTML(t), "function chatRenderOutbound(msg, viewer)", "\n\n    // Applies one /api/chat/messages envelope.")
 	runNodeScript(t, `
 const assert = require('node:assert/strict');
 let asked = [];

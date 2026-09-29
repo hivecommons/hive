@@ -28,7 +28,7 @@ changes because this feature exists.
 
 ## The `TriggerRule` schema
 
-Each entry under `triggers:` is one `TriggerRule` (`pkg/config/config.go`):
+Each entry under `triggers:` is one `TriggerRule` (`pkg/config/triggers_config.go`):
 
 | YAML field | Type | Required | Notes |
 | --- | --- | --- | --- |
@@ -37,7 +37,7 @@ Each entry under `triggers:` is one `TriggerRule` (`pkg/config/config.go`):
 | `agent` | string | **yes** | The agent to trigger when `expr` evaluates `true`. A rule with an empty `agent` compiles fine but is silently skipped when collecting matched agents. |
 | `priority` | int | no (default `0`) | Orders competing rules when several match the same event — higher sorts first. Ties preserve declaration order. |
 
-Source: `TriggerRule` struct, `pkg/config/config.go` (`Name`, `Expr`, `Agent`,
+Source: `TriggerRule` struct, `pkg/config/triggers_config.go` (`Name`, `Expr`, `Agent`,
 `Priority` fields with their `yaml:"..."` tags), and `pkg/celtrigger/wire.go`'s
 `CompileFromConfig`, which maps each `TriggerRule` 1:1 onto a
 `celtrigger.Rule`.

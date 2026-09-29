@@ -372,15 +372,23 @@ func (s *Service) handlePendingCheckpointReply(ctx context.Context, msg Message,
 	if verb != "approve" && verb != "reject" {
 		return false
 	}
-	if len(s.allowedUsers) == 0 {
+	if s.allowedUserCount() == 0 {
 		return false
 	}
-	role, ok := s.allowedUsers[msg.AuthorID]
+	role, ok := s.allowedUserRole(msg.AuthorID)
 	if !ok {
 		return false
 	}
 	matches := s.pendingCheckpointsForAuthor(msg.AuthorID)
 	if len(matches) == 0 {
+		// A run reaching the human gate while the bot was down (or before this
+		// author was ever prompted) leaves no pendingCheckpoints entry. Without
+		// this, a bare "approve"/"reject" from an owner falls through to the
+		// persona/interview handlers with no reply at all (issue #9124).
+		if config.RoleAtLeast(role, config.RoleOwner) {
+			s.enqueue("❌ No pending run checkpoint for you right now. Use `!runs list` to see active runs, then `!runs approve <key>` or `!runs reject <key> <reason>`.")
+			return true
+		}
 		return false
 	}
 	if !config.RoleAtLeast(role, config.RoleOwner) {
@@ -534,7 +542,7 @@ func (s *Service) formatRunCheckpointForAuthor(ctx context.Context, author strin
 		}
 	}
 	prefix := ""
-	if author != "" && len(s.allowedUsers) > 1 {
+	if author != "" && s.allowedUserCount() > 1 {
 		prefix = "For " + author + ": "
 	}
 	return fmt.Sprintf("%sRun %s stage %s gen %d needs a decision: %s. Reply approve or reject <reason>. Full artifact: %s",
@@ -553,7 +561,7 @@ func checkpointTechnicalSummary(payload runCheckpointPayload) string {
 
 func (s *Service) ownerAuthors() map[string]struct{} {
 	authors := map[string]struct{}{}
-	for author, role := range s.allowedUsers {
+	for author, role := range s.allowedUsersSnapshot() {
 		if config.RoleAtLeast(role, config.RoleOwner) {
 			authors[author] = struct{}{}
 		}
@@ -586,9 +594,9 @@ func (s *Service) syncRunsFromSSE(ctx context.Context) {
 	curMap := runSliceMap(runs)
 	s.lastRuns = curMap
 	s.mu.Unlock()
-	if prevMap == nil {
-		return
-	}
+	// Diff even when prevMap is nil (first fetch): runMapSlice(nil) yields an
+	// empty slice, so diffRuns treats every waiting_on=human run here as a
+	// transition and announces it instead of silently adopting it as baseline.
 	s.diffRuns(runMapSlice(prevMap), runs)
 }
 

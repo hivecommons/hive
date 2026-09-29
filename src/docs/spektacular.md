@@ -67,10 +67,36 @@ Sync posts to `https://api.github.com/graphql` with the hive's `GITHUB_TOKEN`.
 own bearer token.
 
 Maintainers can invite Spektacular or another configured hive agent into a Jam
-thread. Agent participation is deliberately review-gated: the attributed agent
-reply is posted in-thread and any proposed spec text is created as an open
-suggestion, but a permitted human maintainer must still accept it before the
-spec revision changes.
+thread (`POST /api/campaigns/{id}/jam/agents`, handler
+`handleCampaignJamAgentsPost` in `pkg/dashboard/api_campaigns_jam_agents.go`).
+The invite makes one model call and records only what the model returned:
+
+- **Endpoint:** the hive reviewer endpoint (`governor.trajectory.endpoint`,
+  falling back to the `governor.litellm` endpoint and key) — the same
+  OpenAI-compatible `/v1/chat/completions` route the intent-alignment and
+  ioscan classifier lanes use. With no endpoint or model resolved the invite
+  fails with `503` and nothing is recorded.
+- **Model:** the invited agent's configured `agents.<name>.model`, falling back
+  to the reviewer model (`governor.trajectory.model`, then
+  `governor.litellm.default_model`). `spektacular` is not an `agents:` entry,
+  so it always uses the reviewer model. The reply is attributed to exactly the
+  model that was called. The `spektacular` binary is not run for Jam replies;
+  the name selects the persona in the prompt.
+- **Context:** the thread's section, title and last 20 comments, the current
+  spec content, and the maintainer's optional `prompt`, each bounded in size.
+  When `ioscan` is enabled every piece passes the input scanner: blocked text
+  is redacted before it reaches the model, and a critical injection at a
+  fail-closed ACMM level rejects the invite with `422`.
+- **Output:** the model must return a JSON object with `reply` and
+  `proposed_text`; invalid output is re-prompted up to three times, then the
+  invite fails with `502` and nothing is recorded.
+
+Callers cannot supply `reply`, `proposed_text` or `model` — the endpoint rejects
+them with `400`, so human-written text can never be recorded under
+agent/model attribution. Agent participation stays review-gated: the reply is
+posted in-thread, proposed spec text (when the model offers any) becomes an
+open suggestion, and a permitted human maintainer must still accept it before
+the spec revision changes.
 
 ## Enabling it
 
@@ -100,9 +126,16 @@ source flag. When Spektacular is enabled from the dashboard, Hive also sets
 the work-source loop. The same backward-compatible keys remain accepted by
 `PUT /api/config/governor/features` (`spektacularEnabled`,
 `spektacularBinary`, plus the newer poll/retry/triage/checkpoint fields). The
-runner is installed at boot (`cmd/hive`, `wireSpektacularRunner`), so runner
-process changes take effect on the next boot; dashboard-visible config is
-persisted immediately.
+runner is installed at boot (`cmd/hive`, `wireSpektacularRunner`) and rewired
+when a dashboard save changes `runs` config (`rewireSpektacular`, #9172): the
+binary is re-probed, the stage runner and hub executor are rebuilt from the new
+settings, and turning Spektacular off removes them. A hub executor that is
+running a stage is never swapped out from under it; the change is deferred and
+retried on every hub cleanup tick until the executor is idle. The save
+response's `spektacularApply` field reports `live`, `deferred`, or `restart`
+(nothing wired to rewire; the change takes effect on the next boot), and the
+dashboard warns on the last two. A save the config volume refuses returns 500
+rather than reporting success.
 
 Spek-enabled hives also enable the hub-resident executor by default:
 
@@ -158,8 +191,17 @@ same campaign path. The Spec checkpoint is the design-approval gate: when
 key), a final Spec parks the lease at `stage=spec`, surfaces
 `waiting_on=human` / `waiting_reason=checkpoint_enabled` in `/api/runs`, and
 requires an owner to approve or reject the `/api/runs/{key}/checkpoint` payload
-before Plan can start. Disabling the checkpoint records an `auto` approval and
-advances to Plan without a human. A final Plan import materializes child beads
+before Plan can start. Approving moves the reviewed spec generation to Plan
+first, then marks the design approved and applies the approved label/status on
+the work item. A failed label or status write does not undo or fail the
+approval: it is logged, audited as `design_signal_failed`, and recorded on the
+run's timeline. The same checkpoint holds runs admitted without a design epic
+(a triage `spec` verdict, `POST /api/runs/spec` outside design mode, nous or
+inception): their parked Spec receipt surfaces the same `waiting_on=human`
+projection, approval advances the lease to Plan and records a `stage_approval`
+timeline event, and rejection re-mints the Spec generation so the stage is
+offered again. Disabling the checkpoint records an `auto` approval, marks the
+design approved, and advances to Plan without a human. A final Plan import materializes child beads
 under the epic using the existing planning decompose path. For Spek runs,
 `runs.checkpoints.<stage>` governs the interactive checkpoints first: the absent
 key still means hold. The ACMM pack's `plan_auto_approve` applies to
@@ -255,10 +297,19 @@ Hive then keeps the same stage generation leased but marks the run
 `waiting_on=human`, `waiting_reason=interview_questions`. `GET
 /api/runs/{key}/interview` returns pending questions plus answered history, and
 owner-only `POST /api/runs/{key}/interview` accepts
-`{"answers":[{"id":"scope","answer":"..."}]}`. The dashboard Runs and Campaigns
+`{"request_id":"<from GET>","answers":[{"id":"scope","answer":"..."}]}`.
+The request ID is optional for older clients; supplying it rejects stale forms
+with HTTP 409. Identical retries for the current round return HTTP 200 without
+rewriting attribution or waking the executor again. The dashboard Runs and Campaigns
 cards show "Spek has N questions for you" with an in-app form; after submit Hive
 writes `.hive/spek-interview-answers.json`, wakes the executor, and the
-relaunched agent receives the answer JSON verbatim in its prompt. Operators who
+relaunched agent receives the answer JSON in its prompt. Answers pass through
+`ioscan.EnforceInput` under the configured input policy before storage, with
+secret-safe block auditing and fail-closed rejection where configured. Answers
+are bound to the request content and modification time, so reused question IDs
+cannot inherit previous answers. Legacy unstamped answers require resubmission.
+After the CLI returns, Hive removes the consumed request and answers, preserving
+any new round written during that launch. Operators who
 prefer the old fully headless behavior can set `runs.spektacular.interview:
 auto`.
 

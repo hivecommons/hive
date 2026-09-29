@@ -1,0 +1,1 @@
+- Dashboard chat now sends `!runs spec <owner/repo#n>` to the chat command spine so it starts a spec run instead of returning the active-run listing ([#9133](https://github.com/hivecommons/hive/issues/9133)).
