@@ -98,6 +98,13 @@ func (f *fakeTracker) IsHeldLabels(labels []string) bool {
 	return github.HasHoldLabel(labels)
 }
 
+// hiveLogin is the fake's only hive posting identity.
+const hiveLogin = "hive-app[bot]"
+
+func (f *fakeTracker) IsHiveAuthorLogin(login string) bool {
+	return strings.EqualFold(login, hiveLogin)
+}
+
 func (f *fakeTracker) addComment(id int64, author, body string, at time.Time) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -112,7 +119,7 @@ func answeredThread() github.IssueThread {
 		Labels: []string{"question"},
 		Comments: []github.ThreadComment{
 			{ID: 800, Author: testAuthor, Body: "more context", CreatedAt: t0.Add(-time.Hour)},
-			{ID: answerID, Author: "hive-app[bot]", Body: "Use X.\n\n" + AnswerFooter(testWindow), CreatedAt: t0},
+			{ID: answerID, Author: hiveLogin, Body: "Use X.\n\n" + AnswerFooter(testWindow), CreatedAt: t0},
 		},
 	}
 }
@@ -376,6 +383,14 @@ func TestNeverSchedulesOutOfScopeIssues(t *testing.T) {
 		"enhancement label": func(tr *fakeTracker) []string { return []string{"question", "enhancement"} },
 		"hold label":        func(tr *fakeTracker) []string { return []string{"question", "hold"} },
 		"no question label": func(tr *fakeTracker) []string { return []string{"docs"} },
+		"marker pasted by a non-hive user": func(tr *fakeTracker) []string {
+			tr.thread.Comments[1].Author = "stranger"
+			return []string{"question"}
+		},
+		"marker pasted by another bot": func(tr *fakeTracker) []string {
+			tr.thread.Comments[1].Author = "dependabot[bot]"
+			return []string{"question"}
+		},
 		"answer by the author": func(tr *fakeTracker) []string {
 			tr.thread.Comments[1].Author = testAuthor
 			return []string{"question"}
@@ -434,7 +449,7 @@ func TestSettledAnswerIsNotRescheduledButANewAnswerIs(t *testing.T) {
 	tr.mu.Lock()
 	tr.thread.Comments = append(tr.thread.Comments,
 		github.ThreadComment{ID: 902, Author: testAuthor, Body: "still stuck", CreatedAt: fresh.Add(-time.Minute)},
-		github.ThreadComment{ID: 903, Author: "hive-app[bot]", Body: "Try Y.\n" + AnswerFooter(testWindow), CreatedAt: fresh})
+		github.ThreadComment{ID: 903, Author: hiveLogin, Body: "Try Y.\n" + AnswerFooter(testWindow), CreatedAt: fresh})
 	tr.mu.Unlock()
 	c.now = fresh.Add(time.Minute)
 	m.Offer([]github.Issue{questionIssue(fresh)})

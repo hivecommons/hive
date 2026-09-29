@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
@@ -106,4 +107,20 @@ func (c *Client) CommentReactors(ctx context.Context, repo string, commentID int
 		}
 		opts.Page = resp.NextPage
 	}
+}
+
+// IsHiveAuthorLogin reports whether login is one of this hive's own posting
+// identities: the GitHub App bot login (SetAppBotLogin) or an account in the
+// configured HiveIdentity (project.ai_author, the App slug's "[bot]" login).
+// Any other account, including other bots, is not the hive. With no identity
+// configured nothing matches, so callers that need hive authorship fail closed.
+func (c *Client) IsHiveAuthorLogin(login string) bool {
+	login = strings.TrimSpace(login)
+	if c == nil || login == "" {
+		return false
+	}
+	if c.appBotLogin != "" && strings.EqualFold(login, c.appBotLogin) {
+		return true
+	}
+	return c.getHiveIdentity().Matches(login)
 }

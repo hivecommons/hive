@@ -157,3 +157,26 @@ func TestCloseIssueSendsStateReason(t *testing.T) {
 		t.Fatalf("state_reason = %q, want completed", gotReason)
 	}
 }
+
+func TestIsHiveAuthorLogin(t *testing.T) {
+	var nilClient *Client
+	if nilClient.IsHiveAuthorLogin("hive-app[bot]") {
+		t.Fatal("nil client must match nothing")
+	}
+	c := testClient(t, "http://127.0.0.1:1")
+	if c.IsHiveAuthorLogin("hive-app[bot]") {
+		t.Fatal("with no identity configured nothing is the hive")
+	}
+	c.SetAppBotLogin("hive-app[bot]")
+	c.SetHiveIdentity(HiveIdentity{AIAuthor: "hive-agent", AppLogin: "other-slug[bot]"})
+	for _, login := range []string{"Hive-App[bot]", "hive-agent", "other-slug[bot]"} {
+		if !c.IsHiveAuthorLogin(login) {
+			t.Fatalf("%q is a hive identity", login)
+		}
+	}
+	for _, login := range []string{"", "  ", "stranger", "dependabot[bot]"} {
+		if c.IsHiveAuthorLogin(login) {
+			t.Fatalf("%q is not a hive identity", login)
+		}
+	}
+}

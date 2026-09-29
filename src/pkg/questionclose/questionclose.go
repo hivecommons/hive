@@ -10,7 +10,8 @@
 //     comment ending in the AnswerFooter: a hidden marker plus the opt-out
 //     line "react 👎 to this comment and the issue will stay open".
 //  3. Tick, on its own loop, reads each candidate's thread. When the LAST
-//     comment is a marked answer by someone other than the author, it
+//     comment is a marked answer posted by the hive's own identity (App bot
+//     login or project.ai_author, never merely anyone pasting the marker), it
 //     schedules a close at answer time + the configured window. The schedule
 //     is persisted, so a restart does not lose or restart the clock.
 //  4. At the deadline Tick re-reads the thread. A 👎 from the issue author on
@@ -98,6 +99,9 @@ type Tracker interface {
 	CloseIssue(ctx context.Context, repo string, number int, opts github.IssueCloseOptions) error
 	AddLabels(ctx context.Context, repo string, number int, labels []string) error
 	IsHeldLabels(labels []string) bool
+	// IsHiveAuthorLogin reports whether login is one of the hive's own
+	// posting identities. Only those comments count as an answer.
+	IsHiveAuthorLogin(login string) bool
 }
 
 // Settings is the resolved configuration.
@@ -451,8 +455,11 @@ func (m *Manager) discover(ctx context.Context, tr Tracker, is github.Issue, now
 		!m.eligibleByLabels(thread.Labels, tr) || len(thread.Comments) == 0 {
 		return
 	}
+	// Only the hive's own posting identity can start the clock: the marker is
+	// plain text, so anyone else pasting it must not get a question closed.
 	last := thread.Comments[len(thread.Comments)-1]
-	if !strings.Contains(last.Body, AnswerMarker) || strings.EqualFold(last.Author, thread.Author) {
+	if !strings.Contains(last.Body, AnswerMarker) || strings.EqualFold(last.Author, thread.Author) ||
+		!tr.IsHiveAuthorLogin(last.Author) {
 		return
 	}
 	answeredAt := last.CreatedAt
