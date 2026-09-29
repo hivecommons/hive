@@ -156,6 +156,19 @@ func newSessionCommands(session, dir string) []string {
 		// ships truncated.
 		"set-option", "-g", "status-right-length", strconv.Itoa(tmuxStatusRightLength), ";",
 		"set-option", "-g", "status-interval", strconv.Itoa(tmuxStatusInterval), ";",
+		// #9579: agent CLIs (Claude Code, Copilot CLI, etc.) render their TUI on
+		// the alternate screen (DEC mode 1049). tmux's alternate-screen support
+		// makes that switch transparent to the CLIENT, but it also means NONE of
+		// the output written while the alt screen is active reaches history —
+		// capture-pane -S -N only ever sees the single current frame, no matter
+		// how deep history-limit is, because there is no scrollback to reach
+		// into. That is why archived kick logs looked like a bare tail: the
+		// "log" was really just the TUI's last rendered screen. Turning the
+		// window option off makes tmux ignore smcup/rmcup entirely, so a CLI's
+		// alt-screen redraws scroll into history like any other output. Global
+		// and set BEFORE new-session so the window is born without alt-screen
+		// support, matching the history-limit ordering requirement above.
+		"set-window-option", "-g", "alternate-screen", "off", ";",
 		"new-session", "-d", "-s", session, "-c", dir,
 		"-x", strconv.Itoa(tmuxPaneWidth()), "-y", strconv.Itoa(defaultTmuxPaneHeight), ";",
 		// #4399: hide tmux's unlabelled black-on-yellow copy-mode marker (its
