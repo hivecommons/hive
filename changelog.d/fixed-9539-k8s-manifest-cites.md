@@ -1,0 +1,1 @@
+- Two docs now cite the right lines in `src/deploy/k8s` ([#9539](https://github.com/hivecommons/hive/issues/9539)): the pod security context in `deployment.yaml` (`src/docs/design/agent-host-confinement.md`) and the Secret keys in `secret.yaml` (`src/docs/move-cross-runtime.md`).
