@@ -96,6 +96,9 @@ func TestParseGrammar(t *testing.T) {
 		{"bot suffix still accepted", "@hive[bot] review this", "", "review this", true},
 		{"slug boundary", "@hivekeeper review this", "", "", false},
 		{"no mention", "@other hi", "", "", false},
+		{"email address is not a mention", "contact ops@hive.example.com for access", "", "", false},
+		{"email in url is not a mention", "see https://x.test/?u=a@hive", "", "", false},
+		{"mention preceded by whitespace still matches", "hi ok @hive[bot] review", "", "review", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

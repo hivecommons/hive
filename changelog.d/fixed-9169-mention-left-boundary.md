@@ -1,0 +1,1 @@
+- GitHub mention detection now requires a word boundary before `@hive` (or `@hive[bot]`), so an unrelated e-mail address like `ops@hive.example.com` no longer triggers a mention kick ([#9169](https://github.com/hivecommons/hive/issues/9169)).
