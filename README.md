@@ -413,6 +413,8 @@ kubectl -n hive create secret generic hive-secrets \
   --from-literal=HIVE_GITHUB_TOKEN=ghp_...   # classic PAT: repo scope — see src/docs/github-app-setup.md#personal-access-token-pat-scopes
 kubectl create configmap hive-config -n hive --from-file=hive.yaml=hive.yaml
 kubectl apply -f src/deploy/k8s/pvc.yaml
+kubectl apply -f src/deploy/k8s/dashboard-route-rbac.yaml
+kubectl apply -f src/deploy/k8s/sandbox-job-rbac.yaml
 kubectl apply -f src/deploy/k8s/deployment.yaml
 kubectl apply -f src/deploy/k8s/service.yaml
 ```
