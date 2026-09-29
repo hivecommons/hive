@@ -85,7 +85,7 @@ Workspace "confinement" is a `cd`, not a boundary:
   chroot, no bind mount restricting that uid's view of the pod's filesystem.
   The pod itself is the confinement boundary here, and its blast radius is
   bounded by whatever the pod's own `securityContext` and volumes expose
-  (`src/deploy/k8s/deployment.yaml:34-79` sets pod-level security context; not
+  (`src/deploy/k8s/deployment.yaml:38-55` sets pod-level security context; not
   audited further here — out of scope for this pass).
 
 So "the operator's host" means two different things depending on deployment
