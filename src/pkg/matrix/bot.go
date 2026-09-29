@@ -112,6 +112,12 @@ type joinedRoom struct {
 	} `json:"timeline"`
 }
 
+// messagesResponse is the /rooms/{roomId}/messages response used to
+// backfill events a limited sync dropped from the timeline.
+type messagesResponse struct {
+	Chunk []matrixEvent `json:"chunk"`
+}
+
 type matrixEvent struct {
 	EventID string `json:"event_id"`
 	Type    string `json:"type"`
@@ -275,17 +281,12 @@ func (b *matrixBackend) Listen(ctx context.Context, deliver func(chat.Message)) 
 		if room, ok := resp.Rooms.Join[b.roomID]; ok {
 			if room.Timeline.Limited {
 				b.logger.Warn("matrix timeline limited", "prev_batch", room.Timeline.PrevBatch)
+				for _, event := range b.backfill(ctx, room.Timeline.PrevBatch) {
+					b.deliverEvent(event, seen, &seenOrder, deliver)
+				}
 			}
 			for _, event := range room.Timeline.Events {
-				if event.Type != "m.room.message" || event.Content.Body == "" || event.EventID == "" {
-					continue
-				}
-				if _, ok := seen[event.EventID]; ok {
-					continue
-				}
-				rememberEvent(seen, &seenOrder, event.EventID)
-				text, _ := ioscan.EnforceInput(event.Content.Body)
-				deliver(chat.Message{ID: event.EventID, Text: text, AuthorID: event.Sender, FromBot: event.Sender == b.userID})
+				b.deliverEvent(event, seen, &seenOrder, deliver)
 			}
 		}
 		since = resp.NextBatch
@@ -301,6 +302,48 @@ func (b *matrixBackend) sync(ctx context.Context, since string) (syncResponse, e
 	var parsed syncResponse
 	err := b.doJSON(ctx, http.MethodGet, "/sync?"+values.Encode(), nil, &parsed)
 	return parsed, err
+}
+
+// backfill pages backwards from prevBatch to recover events a limited sync
+// dropped from the timeline (hivecommons/hive#9159). It fetches a single
+// page (bounded by syncTimelineLimit) and returns the missed events in
+// chronological order; callers are responsible for de-duplication.
+func (b *matrixBackend) backfill(ctx context.Context, prevBatch string) []matrixEvent {
+	if prevBatch == "" {
+		return nil
+	}
+	values := url.Values{
+		"from":  {prevBatch},
+		"dir":   {"b"},
+		"limit": {fmt.Sprintf("%d", syncTimelineLimit)},
+	}
+	var parsed messagesResponse
+	path := fmt.Sprintf("/rooms/%s/messages?%s", url.PathEscape(b.roomID), values.Encode())
+	if err := b.doJSON(ctx, http.MethodGet, path, nil, &parsed); err != nil {
+		b.logger.Warn("matrix backfill failed", "error", err, "prev_batch", prevBatch)
+		return nil
+	}
+	// /messages with dir=b returns newest-first; reverse to chronological
+	// order so callers deliver events in the order they occurred.
+	events := parsed.Chunk
+	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+		events[i], events[j] = events[j], events[i]
+	}
+	return events
+}
+
+// deliverEvent applies the shared message-event filter, dedupe, and delivery
+// used for both live timeline events and backfilled ones.
+func (b *matrixBackend) deliverEvent(event matrixEvent, seen map[string]struct{}, order *[]string, deliver func(chat.Message)) {
+	if event.Type != "m.room.message" || event.Content.Body == "" || event.EventID == "" {
+		return
+	}
+	if _, ok := seen[event.EventID]; ok {
+		return
+	}
+	rememberEvent(seen, order, event.EventID)
+	text, _ := ioscan.EnforceInput(event.Content.Body)
+	deliver(chat.Message{ID: event.EventID, Text: text, AuthorID: event.Sender, FromBot: event.Sender == b.userID})
 }
 
 func (b *matrixBackend) doJSON(ctx context.Context, method, path string, payload any, out any) error {

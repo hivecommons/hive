@@ -163,12 +163,20 @@ func TestListenDiscardsFirstSyncFiltersDedupesAndMarksBot(t *testing.T) {
 	}
 }
 
-func TestListenWarnsWhenTimelineLimited(t *testing.T) {
+func TestListenBackfillsDroppedEventsWhenTimelineLimited(t *testing.T) {
 	var mu sync.Mutex
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
+		if strings.HasPrefix(r.URL.Path, "/_matrix/client/v3/rooms/") {
+			if r.URL.Query().Get("from") != "pb1" || r.URL.Query().Get("dir") != "b" {
+				t.Fatalf("unexpected backfill query: %s", r.URL.RawQuery)
+			}
+			// dir=b returns newest-first; e0 is the older, dropped event.
+			_, _ = w.Write([]byte(`{"chunk":[{"event_id":"e0","type":"m.room.message","sender":"@alice:example","content":{"msgtype":"m.text","body":"dropped"}}]}`))
+			return
+		}
 		requests++
 		switch requests {
 		case 1:
@@ -187,12 +195,12 @@ func TestListenWarnsWhenTimelineLimited(t *testing.T) {
 	var got []chat.Message
 	backend.Listen(ctx, func(msg chat.Message) {
 		got = append(got, msg)
-		if len(got) >= 1 {
+		if len(got) >= 2 {
 			cancel()
 		}
 	})
 
-	if len(got) != 1 || got[0].ID != "e1" {
+	if len(got) != 2 || got[0].ID != "e0" || got[1].ID != "e1" {
 		t.Fatalf("delivered messages: %+v", got)
 	}
 }
