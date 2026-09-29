@@ -90,6 +90,21 @@ hub_registration_tokens() {
   done < <(printf '%s\n' "$tokens" | tr ',' '\n')
 }
 
+# knowledge_export_token_for_index picks the bearer for the hub at index N of
+# KNOWLEDGE_EXPORT_TOKENS, never falling back to the combined comma-separated
+# HIVE_REGISTRATION_TOKEN: with exactly one configured token every hub gets it
+# (the single-token fleet case), while with several tokens a hub beyond the end
+# of the list gets an EMPTY token and its fetch is skipped — sending the joined
+# value there would hand every other hub's registration token to that hub.
+knowledge_export_token_for_index() {
+  local index="$1"
+  if [[ "${#KNOWLEDGE_EXPORT_TOKENS[@]}" -eq 1 ]]; then
+    printf '%s\n' "${KNOWLEDGE_EXPORT_TOKENS[0]}"
+    return 0
+  fi
+  printf '%s\n' "${KNOWLEDGE_EXPORT_TOKENS[$index]:-}"
+}
+
 # KNOWLEDGE_FETCH_REASON is set by fetch_knowledge_export whenever it returns
 # non-zero: one line naming the URL, the HTTP status (or the curl exit code
 # when no status came back) and why the body was rejected. Before #8294 the
@@ -150,11 +165,18 @@ knowledge_fetch_failure_reason() {
 fetch_knowledge_export() {
   local url="$1"
   local dest="$2"
-  local token="${3:-$HIVE_REGISTRATION_TOKEN}"
+  local token="${3:-}"
   local tmp_body tmp_status http_code redirect_url curl_rc
   local -a proto_redir_args
 
   KNOWLEDGE_FETCH_REASON=""
+  if [[ -z "$token" ]]; then
+    # Never substitute the combined comma-separated HIVE_REGISTRATION_TOKEN
+    # here: it carries every hub's registration token, and presenting it to
+    # one hub discloses the others' credentials to that hub.
+    KNOWLEDGE_FETCH_REASON="no registration token configured for this hub (HIVE_REGISTRATION_TOKEN has fewer entries than HIVE_HUB)"
+    return 1
+  fi
   mkdir -p "$(dirname "$dest")"
   tmp_body=$(mktemp "${dest}.tmp.XXXXXX") || return 1
   tmp_status=$(mktemp "${dest}.status.XXXXXX") || {
@@ -544,7 +566,7 @@ if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_FETCH:-}" == "1" ]]; then
   fi
   for KNOWLEDGE_EXPORT_INDEX in "${!KNOWLEDGE_EXPORT_URLS[@]}"; do
     KNOWLEDGE_EXPORT_URL="${KNOWLEDGE_EXPORT_URLS[$KNOWLEDGE_EXPORT_INDEX]}"
-    if fetch_knowledge_export "$KNOWLEDGE_EXPORT_URL" "$AGENT_MD" "${KNOWLEDGE_EXPORT_TOKENS[$KNOWLEDGE_EXPORT_INDEX]:-$HIVE_REGISTRATION_TOKEN}"; then
+    if fetch_knowledge_export "$KNOWLEDGE_EXPORT_URL" "$AGENT_MD" "$(knowledge_export_token_for_index "$KNOWLEDGE_EXPORT_INDEX")"; then
       echo "knowledge_fetch=installed from ${KNOWLEDGE_EXPORT_URL}"
       exit 0
     fi
@@ -909,7 +931,7 @@ done < <(hub_registration_tokens "$HIVE_REGISTRATION_TOKEN")
 KNOWLEDGE_EXPORT_URL=""
 for KNOWLEDGE_EXPORT_INDEX in "${!KNOWLEDGE_EXPORT_URLS[@]}"; do
   KNOWLEDGE_EXPORT_CANDIDATE_URL="${KNOWLEDGE_EXPORT_URLS[$KNOWLEDGE_EXPORT_INDEX]}"
-  if fetch_knowledge_export "$KNOWLEDGE_EXPORT_CANDIDATE_URL" "$AGENT_MD" "${KNOWLEDGE_EXPORT_TOKENS[$KNOWLEDGE_EXPORT_INDEX]:-$HIVE_REGISTRATION_TOKEN}"; then
+  if fetch_knowledge_export "$KNOWLEDGE_EXPORT_CANDIDATE_URL" "$AGENT_MD" "$(knowledge_export_token_for_index "$KNOWLEDGE_EXPORT_INDEX")"; then
     KNOWLEDGE_EXPORT_URL="$KNOWLEDGE_EXPORT_CANDIDATE_URL"
     echo "Agent knowledge downloaded from ${KNOWLEDGE_EXPORT_URL} ($(wc -l < "$AGENT_MD") lines)"
     break
@@ -935,7 +957,7 @@ KNOWLEDGE_REFRESH_SECS=600
     knowledge_refresh_succeeded=0
     for KNOWLEDGE_EXPORT_INDEX in "${!KNOWLEDGE_EXPORT_URLS[@]}"; do
       KNOWLEDGE_EXPORT_CANDIDATE_URL="${KNOWLEDGE_EXPORT_URLS[$KNOWLEDGE_EXPORT_INDEX]}"
-      if fetch_knowledge_export "$KNOWLEDGE_EXPORT_CANDIDATE_URL" "$AGENT_MD" "${KNOWLEDGE_EXPORT_TOKENS[$KNOWLEDGE_EXPORT_INDEX]:-$HIVE_REGISTRATION_TOKEN}"; then
+      if fetch_knowledge_export "$KNOWLEDGE_EXPORT_CANDIDATE_URL" "$AGENT_MD" "$(knowledge_export_token_for_index "$KNOWLEDGE_EXPORT_INDEX")"; then
         KNOWLEDGE_EXPORT_URL="$KNOWLEDGE_EXPORT_CANDIDATE_URL"
         knowledge_refresh_succeeded=1
         if [[ "$knowledge_refresh_failing" -eq 1 ]]; then

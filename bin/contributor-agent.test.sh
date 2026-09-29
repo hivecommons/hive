@@ -158,6 +158,18 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
             self.wfile.write(b"<!DOCTYPE html>\n<html lang=\"en\">\n<head></head></html>\n")
+        elif mode == "hub-combined":
+            # Accepts ONLY the combined comma-separated token list. A fetch
+            # must never authenticate here: presenting the joined value to one
+            # hub would disclose every other hub's registration token to it.
+            if self.headers.get("Authorization") != "Bearer token-a,token-b":
+                self.send_response(401)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(VALID)
         elif mode == "missing":
             self.send_response(404)
             self.send_header("Content-Type", "text/html")
@@ -380,6 +392,39 @@ case "$multi_token_output_reordered" in
     exit 1
     ;;
 esac
+
+rm -f "${HOME_DIR}/agent.md"
+# A hub listed beyond the end of a multi-entry token list must get NO token,
+# never the combined comma-separated value: hub-combined authenticates ONLY
+# the joined "token-a,token-b" string, so an install from it proves the other
+# hubs' registration tokens were disclosed to it.
+short_token_output=""
+if short_token_output="$(
+  env -i \
+    PATH="${PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="token-a,token-b" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_FETCH=1 \
+    HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_DEST="${HOME_DIR}/agent.md" \
+    HIVE_HUB="http://127.0.0.1:${PORT}/missing/contribute,http://127.0.0.1:${PORT}/missing/contribute,http://127.0.0.1:${PORT}/hub-combined/contribute" \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh" 2>&1
+)"; then
+  echo "expected knowledge fetch with fewer tokens than hubs to fail rather than send the combined token list; got:" >&2
+  echo "$short_token_output" >&2
+  exit 1
+fi
+case "$short_token_output" in
+  *"no registration token configured"* ) ;;
+  *)
+    echo "expected the token-less hub to be skipped with a clear reason; got:" >&2
+    echo "$short_token_output" >&2
+    exit 1
+    ;;
+esac
+if [[ -e "${HOME_DIR}/agent.md" ]]; then
+  echo "expected no agent.md when every hub fetch fails; found one" >&2
+  exit 1
+fi
 
 rm -f "${HOME_DIR}/agent.md"
 joined_regression_output="$(
