@@ -29,6 +29,10 @@ import (
 //
 // A stored response carries the hive it came from and never a user identity:
 // the spoke does not send one and the hub has no field to keep it in.
+//
+// Standalone hives (no hub link) reach the same store through the hivecommons
+// NPS relay (issue #9619): the hub pulls the relay's entries periodically and
+// merges them here tagged source=relay. See nps_relay.go.
 
 const (
 	// npsIngestPath is the spoke-to-hub ingest route.
@@ -95,6 +99,15 @@ type npsRecord struct {
 	Feedback         string `json:"feedback,omitempty"`
 	Timestamp        string `json:"timestamp"`
 	DashboardVersion string `json:"dashboard_version,omitempty"`
+	// Source is "" for a response a spoke forwarded directly and
+	// npsSourceRelay for one pulled from the NPS relay (#9619).
+	Source string `json:"source,omitempty"`
+	// RelayID is the relay's stable id for a pulled entry, the dedupe key
+	// that makes a retried pull idempotent. Empty for direct responses.
+	RelayID string `json:"relay_id,omitempty"`
+	// InstallID is the relay operator's label for the install token that
+	// submitted a relay entry. Empty for direct responses.
+	InstallID string `json:"install_id,omitempty"`
 }
 
 type npsFile struct {
@@ -321,6 +334,9 @@ type npsHiveBreakdown struct {
 	HiveID   string `json:"hive_id"`
 	HiveName string `json:"hive_name,omitempty"`
 	LastAt   string `json:"last_at,omitempty"`
+	// Source is the source of the hive's latest response ("relay" for a
+	// standalone hive reached through the relay).
+	Source string `json:"source,omitempty"`
 	npsTally
 }
 
@@ -332,6 +348,7 @@ type npsRecentResponse struct {
 	Feedback         string `json:"feedback,omitempty"`
 	Timestamp        string `json:"timestamp"`
 	DashboardVersion string `json:"dashboard_version,omitempty"`
+	Source           string `json:"source,omitempty"`
 }
 
 // npsAggregation is the GET /api/admin/nps response.
@@ -386,6 +403,7 @@ func buildNPSAggregation(records []npsRecord, names map[string]string) npsAggreg
 			HiveID:   id,
 			HiveName: names[id],
 			LastAt:   rs[len(rs)-1].Timestamp,
+			Source:   rs[len(rs)-1].Source,
 			npsTally: npsTallyOf(rs),
 		})
 	}
@@ -406,6 +424,7 @@ func buildNPSAggregation(records []npsRecord, names map[string]string) npsAggreg
 			Feedback:         r.Feedback,
 			Timestamp:        r.Timestamp,
 			DashboardVersion: r.DashboardVersion,
+			Source:           r.Source,
 		})
 	}
 	return agg
