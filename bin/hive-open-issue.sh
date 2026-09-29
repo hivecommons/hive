@@ -16,10 +16,17 @@
 # forge-resistance as the gh wrapper; this shim adds no privilege.
 #
 # Usage (drop-in for the common gh shapes):
-#   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b]
+#   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>]
 #   hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>"
 #   hive-open-issue claim   --repo <owner/repo> <number|url>
 #   hive-open-issue close   --repo <owner/repo> <number|url> [--override-reason "..."]
+#
+# --parent <n> links the new issue as a GitHub sub-issue of issue <n> in the
+# same repo (hivecommons/hive#9435), so the parent shows it in a native
+# sub-issue list with a completion progress bar. Use it when splitting a
+# large issue into child issues; keep the "Part of #<n>" line in the body too
+# so the link still reads in plain text. A failed link (parent missing, at
+# GitHub's sub-issue cap, …) does not stop the child issue from being created.
 #
 # Every shape accepts --dry-run (-n): validate the arguments, print the exact
 # request that WOULD be written, and exit 0 without writing it — nothing is
@@ -57,9 +64,10 @@ esac
 
 REPO=""; TITLE=""; BODY=""; BODY_FILE=""; NUMBER=""
 OVERRIDE_REASON=""
+PARENT=""
 DRY_RUN=0
 LABELS=()
-SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --number, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
+SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --number, --parent, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo|-R) REPO="$2"; shift 2;;
@@ -68,6 +76,7 @@ while [ $# -gt 0 ]; do
     --body-file|-F) BODY_FILE="$2"; shift 2;;
     --label|-l) LABELS+=("$2"); shift 2;;
     --number) NUMBER="$2"; shift 2;;
+    --parent) PARENT="$2"; shift 2;;
     --override-reason) OVERRIDE_REASON="$2"; shift 2;;
     --repo=*) REPO="${1#*=}"; shift;;
     --title=*) TITLE="${1#*=}"; shift;;
@@ -75,6 +84,7 @@ while [ $# -gt 0 ]; do
     --body-file=*) BODY_FILE="${1#*=}"; shift;;
     --label=*) LABELS+=("${1#*=}"); shift;;
     --number=*) NUMBER="${1#*=}"; shift;;
+    --parent=*) PARENT="${1#*=}"; shift;;
     --override-reason=*) OVERRIDE_REASON="${1#*=}"; shift;;
     --dry-run|-n) DRY_RUN=1; shift;;
     # Tolerate gh flags we don't need; skip a following value only for flags
@@ -165,9 +175,9 @@ if [ "$DRY_RUN" -eq 0 ]; then
 fi
 
 LABELS_JSON="$(printf '%s\n' "${LABELS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
-python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" <<'PY'
+python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" <<'PY'
 import json, os, sys
-temporary, path, kind, repo, title, body, agent, labels, number, dry_run = sys.argv[1:11]
+temporary, path, kind, repo, title, body, agent, labels, number, dry_run, parent = sys.argv[1:12]
 labels = [part.strip() for value in json.loads(labels)
           for part in value.split(",") if part.strip()]
 req = {"kind": kind, "repo": repo, "agent": agent}
@@ -188,6 +198,10 @@ else:
     # Always present (even empty) — the original shim contract, pinned by
     # bin/test_hive_open_issue.sh; the watcher accepts both shapes.
     req["labels"] = labels
+    # --parent: link the new issue as a GitHub sub-issue of this number
+    # (hivecommons/hive#9435). Only meaningful for a create.
+    if int(parent) > 0:
+        req["parent"] = int(parent)
 if dry_run == "1":
     # Honour --dry-run: show exactly what would be queued, write nothing.
     print("hive-open-issue: DRY RUN — no request written, nothing will be created. Would write %s:" % path)
@@ -210,5 +224,8 @@ elif [ "$KIND" = "close" ]; then
   echo "hive-open-issue: requested close of $REPO#$NUMBER as the App bot"
 else
   echo "hive-open-issue: requested issue on $REPO as the App bot: $TITLE"
+  if [ -n "$PARENT" ] && [ "$PARENT" != "0" ]; then
+    echo "hive-open-issue: will link as a GitHub sub-issue of $REPO#$PARENT"
+  fi
 fi
 echo "hive-open-issue: request $REQ_FILE (Hive validates and fulfills it within one watcher tick; result appears at ${REQ_FILE%.json}.result.json)"

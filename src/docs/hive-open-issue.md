@@ -40,7 +40,7 @@ Three shapes, selected by an optional leading positional keyword
 (`comment` or `claim`; the default with no keyword is `issue`):
 
 ```sh
-hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b]
+hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>]
 hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>"
 hive-open-issue claim   --repo <owner/repo> <number|url>
 ```
@@ -52,6 +52,7 @@ hive-open-issue claim   --repo <owner/repo> <number|url>
 | `--body` | `-b` | issue, comment | required for `issue` and `comment`; not used by `claim` |
 | `--body-file` | `-F` | issue, comment | reads body from a file; `-` reads stdin |
 | `--label` | `-l` | issue | repeatable |
+| `--parent` | — | issue | issue number in the same repo to link the new issue to as a GitHub sub-issue |
 | `--number` | — | comment, claim | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
 | `--dry-run` | `-n` | all | validate the arguments and print the exact request that would be written, then exit `0` **without writing it** — nothing is created, commented, claimed, or closed |
 
@@ -80,6 +81,18 @@ as an agent bug, not a valid issue, and the script exits `2` rather than
 letting the watcher quarantine it later. This is a deliberate, pinned contract
 (`bin/test_hive_open_issue.sh`), not an oversight. `--label` may be repeated;
 labels are always sent as a JSON array (empty if none given).
+
+`--parent <n>` links the new issue as a GitHub sub-issue of issue `n` in the
+same repo, via the sub-issues REST API
+(`POST /repos/{owner}/{repo}/issues/{n}/sub_issues`), after the watcher
+creates it. This is how a split-out child issue gets a real sub-issue link and
+shows up in the parent's sub-issue list and completion progress bar, instead
+of only the plain-text "Part of #`n`" line agents are asked to keep in the
+body regardless
+([#9435](https://github.com/hivecommons/hive/issues/9435)). A failed link
+(parent missing, GitHub's sub-issue cap reached, a transient API error, …)
+never stops the child issue from being created; the failure is logged and
+recorded on the request's result file (`parent_link_error`) instead.
 
 ### `comment`
 

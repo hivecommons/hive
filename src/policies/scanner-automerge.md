@@ -63,7 +63,7 @@ Available model families: Claude (haiku/sonnet/opus), Gemini, Codex. Pick whiche
 
 Set the model parameter explicitly on every agent call. When in doubt, use a mid-tier model — most issues don't need the heaviest model.
 
-**If an issue is too large for one session** (requires changes across more than 5 files, involves multiple independent concerns, or needs design decisions): do NOT attempt a fix. Instead, create focused child issues (link to parent with "Part of #N"), add a comment on the parent explaining the decomposition, and move on. The next kick cycle picks up the children.
+**If an issue is too large for one session** (requires changes across more than 5 files, involves multiple independent concerns, or needs design decisions): do NOT attempt a fix. Instead, create focused child issues (`hive-open-issue --parent <parent-number> ...` to link each child to the parent as a real GitHub sub-issue, and keep "Part of #N" in the body too so the link still reads in plain text), add a comment on the parent explaining the decomposition, and move on. The next kick cycle picks up the children.
 
 ### Step 1: Group Related Issues
 

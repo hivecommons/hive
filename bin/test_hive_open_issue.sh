@@ -158,7 +158,56 @@ fi
 rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
-# --- Section 4: --body-file reading ---
+# --- Section 3b: --parent flag (sub-issue link, #9435) ---
+echo ""
+echo "--- --parent flag ---"
+
+run_script "parentbot" --repo "org/repo" --title "Split child" --body "body Part of #100" \
+  --parent 100
+
+REQ_FILE="$(find_req parentbot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT_PARENT="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('parent', 0))" "$REQ_FILE")"
+  check "--parent produces JSON parent field" "100" "$GOT_PARENT"
+else
+  echo "  FAIL: request file not created for --parent test"
+  FAIL=$((FAIL + 1))
+fi
+
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
+# Omitting --parent must not add the field at all (optional, not zero-valued).
+run_script "noparentbot" --repo "org/repo" --title "No parent" --body "body"
+
+REQ_FILE="$(find_req noparentbot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT_HAS_PARENT="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print('parent' in d)" "$REQ_FILE")"
+  check "no --parent omits JSON parent field" "False" "$GOT_HAS_PARENT"
+else
+  echo "  FAIL: request file not created for no-parent test"
+  FAIL=$((FAIL + 1))
+fi
+
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
+# --parent=value style also works.
+run_script "eqparentbot" --repo=org/repo --title="Eq parent" --body="body" --parent=42
+
+REQ_FILE="$(find_req eqparentbot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT_PARENT="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('parent', 0))" "$REQ_FILE")"
+  check "--parent=value style works" "42" "$GOT_PARENT"
+else
+  echo "  FAIL: request file not created for --parent=value test"
+  FAIL=$((FAIL + 1))
+fi
+
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
+
 echo ""
 echo "--- --body-file reading ---"
 

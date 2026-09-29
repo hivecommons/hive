@@ -57,7 +57,7 @@ func newIssueMockServer(t *testing.T, existingTitle string, created *int, failCr
 				*created++
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"number":99,"html_url":"https://github.example/o/r/issues/99"}`)
+			_, _ = io.WriteString(w, `{"id":990099,"number":99,"html_url":"https://github.example/o/r/issues/99"}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -483,7 +483,7 @@ func TestIssueRequestWatcher_StartLoop(t *testing.T) {
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/issues"):
 			created.Add(1)
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"number":99,"html_url":"https://github.example/o/r/issues/99"}`)
+			_, _ = io.WriteString(w, `{"id":990099,"number":99,"html_url":"https://github.example/o/r/issues/99"}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -858,5 +858,176 @@ func TestIssueRequestWatcher_ClaimMalformed(t *testing.T) {
 	c.ProcessIssueRequestsOnce(context.Background())
 	if _, err := os.Stat(reqPath + ".bad"); err != nil {
 		t.Errorf("malformed claim should be quarantined as .bad")
+	}
+}
+
+// newIssueMockServerWithSubIssues extends newIssueMockServer's create/dedupe
+// handling with the sub-issues link endpoint (#9435), recording each
+// POST .../issues/{parent}/sub_issues so a test can assert the child got
+// linked to the right parent.
+func newIssueMockServerWithSubIssues(t *testing.T, created *int, linkedParents *[]string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/sub_issues"):
+			if linkedParents != nil {
+				*linkedParents = append(*linkedParents, r.URL.Path)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":1}`)
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/labels/"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"name":"x"}`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/labels"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"name":"x"}`)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/issues"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/issues"):
+			if created != nil {
+				*created++
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":990099,"number":99,"html_url":"https://github.example/o/r/issues/99"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+// An "issue" request carrying a parent links the created child as a GitHub
+// sub-issue of that parent (#9435): the watcher must call the created
+// issue's numeric ID (990099, from the mock create response), not its
+// repo-scoped number (99), as sub_issue_id.
+func TestIssueRequestWatcher_LinksParentSubIssue(t *testing.T) {
+	created := 0
+	var linkedParents []string
+	srv := newIssueMockServerWithSubIssues(t, &created, &linkedParents)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Repo: "o/r", Title: "[scanner] split child", Body: "Part of #100", Agent: "scanner", Parent: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if created != 1 {
+		t.Fatalf("expected 1 issue created, got %d", created)
+	}
+	if len(linkedParents) != 1 || !strings.HasSuffix(linkedParents[0], "/issues/100/sub_issues") {
+		t.Fatalf("expected one sub-issue link against parent 100, got %v", linkedParents)
+	}
+	if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+		t.Errorf("request file should be removed after success")
+	}
+
+	resultData, err := os.ReadFile(reqPath + ".result.json")
+	if err != nil {
+		t.Fatalf("reading result file: %v", err)
+	}
+	var resp IssueResponse
+	if err := json.Unmarshal(resultData, &resp); err != nil {
+		t.Fatalf("unmarshaling result: %v", err)
+	}
+	if !resp.OK || !resp.ParentLinked {
+		t.Fatalf("expected OK result with ParentLinked=true, got %+v", resp)
+	}
+}
+
+// A sub-issue request with no parent field never calls the link endpoint.
+func TestIssueRequestWatcher_NoParent_NoSubIssueCall(t *testing.T) {
+	created := 0
+	var linkedParents []string
+	srv := newIssueMockServerWithSubIssues(t, &created, &linkedParents)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	_, err := WriteIssueRequest(dir, IssueRequest{
+		Repo: "o/r", Title: "[scanner] standalone", Body: "no parent here", Agent: "scanner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if created != 1 {
+		t.Fatalf("expected 1 issue created, got %d", created)
+	}
+	if len(linkedParents) != 0 {
+		t.Fatalf("expected no sub-issue link calls, got %v", linkedParents)
+	}
+}
+
+// A parent-link failure (e.g. GitHub's sub-issue cap) is logged and recorded
+// on the result, but the child issue creation still succeeds and the request
+// is consumed like any other successful create.
+func TestIssueRequestWatcher_ParentLinkFailureDoesNotFailCreate(t *testing.T) {
+	created := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/sub_issues"):
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = io.WriteString(w, `{"message":"Maximum number of sub-issues reached"}`)
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/labels/"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"name":"x"}`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/labels"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"name":"x"}`)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/issues"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/issues"):
+			created++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":990099,"number":99,"html_url":"https://github.example/o/r/issues/99"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Repo: "o/r", Title: "[scanner] split child", Body: "Part of #100", Agent: "scanner", Parent: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if created != 1 {
+		t.Fatalf("expected 1 issue created despite link failure, got %d", created)
+	}
+	if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+		t.Errorf("request file should still be consumed when only the sub-issue link fails")
+	}
+
+	resultData, err := os.ReadFile(reqPath + ".result.json")
+	if err != nil {
+		t.Fatalf("reading result file: %v", err)
+	}
+	var resp IssueResponse
+	if err := json.Unmarshal(resultData, &resp); err != nil {
+		t.Fatalf("unmarshaling result: %v", err)
+	}
+	if !resp.OK {
+		t.Fatalf("expected OK=true even though the sub-issue link failed, got %+v", resp)
+	}
+	if resp.ParentLinked {
+		t.Fatalf("expected ParentLinked=false on link failure")
+	}
+	if resp.ParentLinkError == "" {
+		t.Fatalf("expected ParentLinkError to be populated on link failure")
 	}
 }

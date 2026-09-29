@@ -82,6 +82,13 @@ type IssueRequest struct {
 	// OverrideReason is required to deliberately close a human-filed bug-family
 	// issue before reporter confirmation (duplicate, not-a-bug, reporter asked).
 	OverrideReason string `json:"override_reason,omitempty"` // close only
+	// Parent is an optional issue number in the same repo. When set on an
+	// "issue" request, the watcher links the newly created issue to it as a
+	// GitHub sub-issue (POST .../issues/{parent}/sub_issues) after creating it,
+	// so a split-out child shows up on the parent's sub-issue list and
+	// progress bar instead of only a "Part of #N" line in the body
+	// (hivecommons/hive#9435). A failure to link does not fail the create.
+	Parent int `json:"parent,omitempty"` // issue only
 }
 
 // claimLabelPrefix is the label namespace applied for a "claim" request. The
@@ -108,6 +115,11 @@ type IssueResponse struct {
 	RejectedDuplicate bool   `json:"rejected_duplicate,omitempty"`
 	Error             string `json:"error,omitempty"`
 	At                string `json:"at"`
+	// ParentLinked reports that the created issue was linked as a GitHub
+	// sub-issue of req.Parent. ParentLinkError carries the (non-fatal) reason
+	// when a requested link did not succeed; the issue is still created OK.
+	ParentLinked    bool   `json:"parent_linked,omitempty"`
+	ParentLinkError string `json:"parent_link_error,omitempty"`
 }
 
 // IssueRequestAuthorizer mirrors PRRequestAuthorizer: it receives the claimed
@@ -416,6 +428,21 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			resp.URL = res.URL
 			resp.AlreadyExisted = res.AlreadyExisted
 			resp.Consolidated = res.Consolidated
+			// Best-effort GitHub sub-issue link (#9435): the child issue is
+			// already created at this point, so a link failure (parent
+			// missing, already at GitHub's sub-issue cap, transient API
+			// error, …) is logged and surfaced in the result but never turns
+			// a successful create into a failure or a retry.
+			if req.Parent > 0 && !res.Consolidated && res.ID > 0 {
+				if linkErr := c.AddSubIssue(ctx, req.Repo, req.Parent, res.ID); linkErr != nil {
+					resp.ParentLinkError = linkErr.Error()
+					c.logger.Warn("issue-request watcher: sub-issue link failed, issue still created",
+						slog.String("repo", req.Repo), slog.Int("number", res.Number),
+						slog.Int("parent", req.Parent), slog.String("error", linkErr.Error()))
+				} else {
+					resp.ParentLinked = true
+				}
+			}
 		}
 	}
 
@@ -507,6 +534,10 @@ func WriteIssueRequest(dir string, req IssueRequest) (string, error) {
 type CreateIssueResult struct {
 	Number int
 	URL    string
+	// ID is the issue's numeric database ID (distinct from Number, its
+	// repo-scoped issue number). The sub-issues API takes this as
+	// sub_issue_id, so callers linking a fresh child under a parent need it.
+	ID int64
 	// AlreadyExisted is true when an OPEN issue with the same exact title was
 	// already present in the repo, so we returned it instead of creating a
 	// duplicate. This makes the watcher's retry loop idempotent: a create that
@@ -590,7 +621,7 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 		c.logger.Info("CreateIssue: open issue with the same subject exists, reusing",
 			slog.String("repo", repoName), slog.Int("number", existing.GetNumber()),
 			slog.String("existing_title", existing.GetTitle()))
-		return CreateIssueResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), AlreadyExisted: true}, nil
+		return CreateIssueResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), ID: existing.GetID(), AlreadyExisted: true}, nil
 	} else {
 		fileSetTwin = found.fileSet
 	}
@@ -673,7 +704,7 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 	}
 	c.logger.Info("CreateIssue: issue created as the App bot",
 		slog.String("repo", repoName), slog.Int("number", issue.GetNumber()))
-	return CreateIssueResult{Number: issue.GetNumber(), URL: issue.GetHTMLURL()}, nil
+	return CreateIssueResult{Number: issue.GetNumber(), URL: issue.GetHTMLURL(), ID: issue.GetID()}, nil
 }
 
 // openIssueMatches is what one scan of the recent open issues found.
