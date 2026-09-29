@@ -21,8 +21,27 @@ and raw failure evidence when available, and applies the `needs-human` label so
 future fix dispatch skips the PR.
 
 For unchanged red heads, track staleness separately and cap re-engagements at
-three per current SHA. A branch that moves resets the re-engagement counter; a
-permanently red, never-moving branch is not nudged forever.
+`MaxReEngagements` (six) per current SHA. A branch that moves resets the
+re-engagement counter; a permanently red, never-moving branch is not nudged
+forever.
+
+A re-engagement is a DELIVERED kick, not a counter increment: the reaper and
+the merge watcher resolve the PR's owning agent (falling back to
+`review.fixer_agent`, then `scanner`, when the owner is paused or unreachable),
+send it a targeted FIX-BEFORE-NEW kick for that one PR, and charge the budget
+only once the kick is accepted. Spacing is at least the staleness window and at
+least the owner's slowest cadence, so six attempts cannot be spent inside one
+cadence window. The staleness clock starts when CI SETTLES — a head red on one
+check while others are still running is not yet stuck. The escalation comment
+quotes the number of kicks actually delivered.
+
+Shared CI breakage is not a fix attempt. A failing check red on at least three
+other open PRs in the same pass is an incident (a broken base branch, a runner
+outage), so the pass is treated as no-information: no attempt counted, no
+staleness clock, no re-engagement. Attempts are counted per head TREE, so an
+empty `ci: retrigger` commit does not consume one. An escalation is un-parked
+automatically — `needs-human` removed, ledger reset, one comment saying why —
+when the head goes green or when the shared breakage it escalated over clears.
 
 A PR escalating for the SECOND time — after the reviewer lane ([#5480]) already
 repaired or de-escalated it once — gets a structured hand-off note instead of

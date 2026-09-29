@@ -2309,7 +2309,8 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		// returns whether the cap still allowed a dispatch. The PR is already
 		// surfaced into CI_FAILING by writeMergeEligible each eval tick; the hook
 		// is the loop-safety authority that decides when to STOP nudging.
-		b.ghClient.SetMergeReEngageHook(mergeReEngageHook(b.cfg))
+		b.ghClient.SetMergeReEngageHook(mergeReEngageHook(b.cfg, agentKicker{mgr: b.agentMgr},
+			agentAvailability(b.cfg, b.agentMgr), b.logger))
 
 		// SECURITY (audit F3): re-verify the merger tier inside the sweep. The
 		// dashboard's queue endpoint gates on requireMergerOrOwnerRole, but the
@@ -5895,6 +5896,9 @@ func applyModeUnscheduledAlert(gov *governor.Governor, dashSrv *dashboard.Server
 type agentKicker struct{ mgr *agent.Manager }
 
 func (k agentKicker) Kick(agent, message string) error {
+	if k.mgr == nil {
+		return fmt.Errorf("agent manager unavailable: cannot kick %s", agent)
+	}
 	return k.mgr.SendKick(agent, message)
 }
 
@@ -6455,17 +6459,19 @@ func runEvalCycle(
 	// to its author for a fix + in-thread replies before any new work.
 	writeReviewThreads(ctx, ghClient, actionable, cfg.Project.Org, escalatedPRs, logger)
 
-	// Stuck-PR reaper (backstop): re-dispatch a fix for any hive-authored PR
-	// that is red on a required check AND stale (its red head SHA unchanged past
-	// RedPRStaleAfter). writeMergeEligible already surfaces every red PR into
-	// ci-failing.json (the CI_FAILING kick block), so the PR is already in the
-	// work list; the reaper's job is to guarantee a STALE one is not silently
-	// abandoned, to dedup the dispatch via the escalation store's re-engagement
-	// cap (so a permanently-red PR is not re-nudged every tick forever), and to
-	// stand down for PRs already escalated to a human. Composes with the merge
-	// watcher (#2): both go through the same TryReEngage cap, so the same PR is
-	// never double-dispatched within a red-SHA's budget.
-	reapStuckRedPRs(cfg, actionable, escalatedPRs, logger)
+	// Stuck-PR reaper (backstop): DELIVER a targeted FIX-BEFORE-NEW kick for any
+	// hive-authored PR that is red on a required check AND stale (its red head
+	// SHA unchanged past RedPRStaleAfter). writeMergeEligible already surfaces
+	// every red PR into ci-failing.json (the CI_FAILING kick block), but relying
+	// on the owner's next cadence kick to carry it meant a red PR could be
+	// escalated as "6 automated fix re-dispatches" having been mentioned to
+	// nobody (hivecommons/hive#9472); the reaper now kicks the owner — or the
+	// fallback fixer when the owner is paused or unreachable — and charges the
+	// re-engagement budget only for kicks that were accepted. Composes with the
+	// merge watcher (#2): both go through the same per-red-SHA cap, so the same
+	// PR is never double-dispatched within a red-SHA's budget.
+	reapStuckRedPRs(cfg, actionable, escalatedPRs, agentKicker{mgr: agentMgr},
+		agentAvailability(cfg, agentMgr), logger)
 
 	shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
 		PrimaryRepo:     cfg.Project.PrimaryRepo,
@@ -7549,7 +7555,13 @@ func getEscalationStore() *escalation.Store {
 // recordRedStaleness and the reaper so both classify PRs identically. A PR is
 // "red" here strictly per HasFailingRequiredCheck — GENERIC check state, never a
 // specific linter or language.
-func hivePRObservations(cfg *config.Config, actionable *github.ActionableResult) []escalation.Observation {
+//
+// owners maps "org/repo#number" to the agent that opened the PR (see
+// auditPRAgents); pass nil when ownership is not needed. Shared/base CI
+// breakage is classified across the WHOLE pass before the observations are
+// returned, so every consumer agrees on which failures belong to this PR
+// (hivecommons/hive#9473).
+func hivePRObservations(cfg *config.Config, actionable *github.ActionableResult, owners map[string]string) []escalation.Observation {
 	if actionable == nil {
 		return nil
 	}
@@ -7558,8 +7570,9 @@ func hivePRObservations(cfg *config.Config, actionable *github.ActionableResult)
 		if !isHiveAgentAuthor(cfg, pr.Author) {
 			continue
 		}
-		obs = append(obs, escalationObservation(cfg, pr))
+		obs = append(obs, escalationObservation(cfg, pr, owners))
 	}
+	escalation.MarkSharedFailures(obs)
 	return obs
 }
 
@@ -7573,22 +7586,39 @@ func hivePRObservations(cfg *config.Config, actionable *github.ActionableResult)
 // current forge labels so Sweep can reconcile reviewer-lane verdicts
 // (label-only edits: needs-human removed, reviewer-passed added) back into
 // the ledger (#5511, gap G1).
-func escalationObservation(cfg *config.Config, pr github.PullRequest) escalation.Observation {
+func escalationObservation(cfg *config.Config, pr github.PullRequest, owners map[string]string) escalation.Observation {
 	repo := pr.Repo
 	if !strings.Contains(repo, "/") && cfg.Project.Org != "" {
 		repo = cfg.Project.Org + "/" + repo
 	}
 	red := pr.HasFailingRequiredCheck()
 	return escalation.Observation{
-		Repo:    repo,
-		Number:  pr.Number,
-		HeadSHA: pr.HeadSHA,
-		Red:     red,
-		Pending: !red && pr.CIStatus != "success",
-		Labeled: escalation.HasNeedsHumanLabel(pr.Labels),
-		Excerpt: pr.CIFailureExcerpt,
-		Labels:  pr.Labels,
+		Repo:          repo,
+		Number:        pr.Number,
+		HeadSHA:       pr.HeadSHA,
+		HeadTree:      pr.HeadTree,
+		Red:           red,
+		Pending:       !red && pr.CIStatus != "success",
+		CIRunning:     red && pr.CIChecksRunning,
+		Labeled:       escalation.HasNeedsHumanLabel(pr.Labels),
+		Excerpt:       pr.CIFailureExcerpt,
+		Labels:        pr.Labels,
+		FailingChecks: pr.FailingChecks,
+		Agent:         owners[escalation.Key(repo, pr.Number)],
 	}
+}
+
+// redPRFixOwner resolves who should be asked to repair a red PR: the agent the
+// audit trail attributes it to, or — when that agent is unattributed — the
+// fleet's primary PR creator, exactly the default formatRedPRFixData applies
+// to an unattributed ci-failing.json row. Keeping the two in step is what lets
+// a hook predicate (`t.agent == "scanner"`) and the FIX-BEFORE-NEW block name
+// the same owner (hivecommons/hive#9474).
+func redPRFixOwner(agent string) string {
+	if agent = strings.TrimSpace(agent); agent != "" {
+		return agent
+	}
+	return review.DefaultFixerAgent
 }
 
 // dependencyBots are forge bots whose PRs are dependency bumps, not hive fix
@@ -7626,11 +7656,17 @@ func isHiveAgentAuthor(cfg *config.Config, author string) bool {
 // head SHA) for every hive-authored PR in this pass. It must run before the
 // claim guard and the reaper so their StaleRed() reads reflect the current tick.
 // A disabled escalation subsystem skips it (the whole fix-loop machinery is off).
+//
+// It also fires the escalation_red hook for each red PR, WITH the owning agent
+// on the payload: the catalog and hooks.md have always documented `agent` on
+// this transition, but nothing ever set it, so a predicate like
+// `t.agent == "scanner"` could never match (hivecommons/hive#9474).
 func recordRedStaleness(cfg *config.Config, actionable *github.ActionableResult) {
 	if cfg.Escalation.Disabled || actionable == nil {
 		return
 	}
-	obs := hivePRObservations(cfg, actionable)
+	owners := auditPRAgents(cfg.Project.Org, time.Now().Add(-auditPRAttributionWindow), "")
+	obs := hivePRObservations(cfg, actionable, owners)
 	getEscalationStore().ObserveRed(obs)
 	for _, ob := range obs {
 		if !ob.Red {
@@ -7639,6 +7675,7 @@ func recordRedStaleness(cfg *config.Config, actionable *github.ActionableResult)
 		hookDispatcher().Fire(context.Background(), hooks.Payload{
 			Transition: hooks.TransitionEscalationRed,
 			Repo:       ob.Repo,
+			Agent:      redPRFixOwner(ob.Agent),
 			Reason:     "required CI check red",
 			Attrs: map[string]string{
 				hooks.AttrPR: strconv.Itoa(ob.Number),
@@ -7649,15 +7686,139 @@ func recordRedStaleness(cfg *config.Config, actionable *github.ActionableResult)
 	}
 }
 
+// fixKicker is the out-of-band kick path the re-engagement lanes deliver
+// through. *agent.Manager satisfies it via agentKicker, which is the same
+// adapter the governor tick's replan lane uses.
+type fixKicker interface {
+	Kick(agent, message string) error
+}
+
+// agentAvailability reports, per agent, whether a kick sent right now could
+// reach it: the agent must not be paused by the manager, and at least one
+// governor mode must schedule it with a non-paused cadence. An agent paused in
+// every mode (the v5 L6 pack pauses `strategist` everywhere) can never answer a
+// FIX-BEFORE-NEW kick, so charging its red PRs' re-engagement budget only
+// escalates them to a human having asked nobody (hivecommons/hive#9472).
+func agentAvailability(cfg *config.Config, mgr *agent.Manager) func(string) bool {
+	return func(name string) bool {
+		if name == "" {
+			return false
+		}
+		if mgr != nil && mgr.IsPaused(name) {
+			return false
+		}
+		return cfg == nil || cadenceReachable(cfg, name)
+	}
+}
+
+// cadenceReachable reports whether ANY governor mode gives the agent a cadence
+// that is not paused/off. An agent with no cadence entry at all is treated as
+// reachable: "nothing schedules it" is a fleet-configuration signal of its own
+// (NoCadenceAgents), and refusing to route repairs to it would silently widen
+// this gate into an agent-disablement policy.
+func cadenceReachable(cfg *config.Config, name string) bool {
+	configured := false
+	for mode := range cfg.Governor.Modes {
+		cad := cfg.CadenceValueForMode(name, mode)
+		if cad == "" {
+			continue
+		}
+		configured = true
+		if !cad.IsPaused() {
+			return true
+		}
+	}
+	return !configured
+}
+
+// ownerReEngageCooldown is the minimum spacing between two re-engagements of a
+// PR owned by this agent: its slowest configured cadence, so a budget of six
+// attempts cannot be spent inside a single cadence window where no kick the
+// owner could answer would ever fit. The escalation store floors it at
+// ReEngageCooldown and caps it at MaxReEngageCooldown.
+func ownerReEngageCooldown(cfg *config.Config, name string) time.Duration {
+	if cfg == nil || name == "" {
+		return 0
+	}
+	var slowest time.Duration
+	for mode := range cfg.Governor.Modes {
+		cad := cfg.CadenceValueForMode(name, mode)
+		if cad == "" || cad.IsPaused() {
+			continue
+		}
+		d, err := time.ParseDuration(strings.TrimSpace(cad.Interval()))
+		if err == nil && d > slowest {
+			slowest = d
+		}
+	}
+	return slowest
+}
+
+// resolveRedPRFixer picks the agent a stuck red PR's fix kick should go to: its
+// owner, else the configured review fixer agent, else the fleet's default
+// fixer — the same chain the review-fix kick uses (src/docs/review-swarm.md).
+// It returns "" when no candidate is reachable, which tells the caller to leave
+// the PR alone rather than spend budget nobody can answer.
+func resolveRedPRFixer(cfg *config.Config, owner string, available func(string) bool) string {
+	candidates := []string{redPRFixOwner(owner), strings.TrimSpace(cfg.Review.FixerAgent), review.DefaultFixerAgent}
+	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
+		if available == nil || available(c) {
+			return c
+		}
+	}
+	return ""
+}
+
+// redPRFixKick renders the targeted FIX-BEFORE-NEW kick a re-engagement
+// delivers. It names ONE PR — the stuck one — with its evidence, so the kick is
+// answerable on its own rather than relying on the owner's next cadence kick
+// happening to carry the ci-failing.json block.
+func redPRFixKick(o escalation.Observation, rerouted bool) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "🔴 FIX-BEFORE-NEW — %s#%d is red and has not moved\n\n", o.Repo, o.Number)
+	if rerouted {
+		fmt.Fprintf(&b, "Its owning agent (%s) is not reachable right now, so this repair is routed to you.\n\n", redPRFixOwner(o.Agent))
+	}
+	b.WriteString("Repair it BEFORE claiming new issues or opening any new PR:\n")
+	fmt.Fprintf(&b, "  gh pr checkout %d --repo %s → fix → git commit -s → git push\n", o.Number, o.Repo)
+	b.WriteString("Push to the SAME branch. Do NOT open a replacement PR.\n")
+	if o.HeadSHA != "" {
+		fmt.Fprintf(&b, "\nhead: %s\n", o.HeadSHA)
+	}
+	if len(o.FailingChecks) > 0 {
+		fmt.Fprintf(&b, "failing: %s\n", strings.Join(o.FailingChecks, ", "))
+	}
+	if excerpt := strings.TrimSpace(o.Excerpt); excerpt != "" {
+		if runes := []rune(excerpt); len(runes) > redPRFixKickExcerptRunes {
+			excerpt = string(runes[:redPRFixKickExcerptRunes]) + "…"
+		}
+		fmt.Fprintf(&b, "\nevidence:\n%s\n", excerpt)
+	}
+	return b.String()
+}
+
+// redPRFixKickExcerptRunes bounds the CI evidence carried in a targeted fix
+// kick, matching the FIX-BEFORE-NEW block's own budget.
+const redPRFixKickExcerptRunes = 400
+
 // mergeReEngageHook builds the Fix #2 re-engagement callback for the merge
-// watcher. It normalizes the repo, then records a re-engagement under the shared
-// escalation store's per-red-SHA cap. Passing an empty head SHA tells the store
-// to reuse the red head SHA it last observed for this PR (the eval cycle's
-// ObserveRed keeps it current), so the merge watcher does not need to re-fetch
-// the head. Returns false when the cap is exhausted, so the watcher can log that
+// watcher. It normalizes the repo, resolves the PR's owner, DELIVERS a targeted
+// fix kick to it (or to the fallback fixer when the owner is unreachable), and
+// only then records the attempt under the shared escalation store's per-red-SHA
+// cap. Passing an empty head SHA tells the store to reuse the red head SHA it
+// last observed for this PR (the eval cycle's ObserveRed keeps it current), so
+// the merge watcher does not need to re-fetch the head. Returns false when the
+// cap is exhausted or no kick could be delivered, so the watcher can log that
 // the escalation path now owns the PR. A disabled escalation subsystem yields a
 // nil hook (watcher falls back to quarantine-only).
-func mergeReEngageHook(cfg *config.Config) github.MergeReEngageFunc {
+//
+// Delivery is the point: before hivecommons/hive#9472 this only incremented a
+// counter, so a PR could be escalated as "6 automated fix re-dispatches" having
+// never been mentioned to any agent.
+func mergeReEngageHook(cfg *config.Config, kicker fixKicker, available func(string) bool, logger *slog.Logger) github.MergeReEngageFunc {
 	if cfg.Escalation.Disabled {
 		return nil
 	}
@@ -7668,29 +7829,91 @@ func mergeReEngageHook(cfg *config.Config) github.MergeReEngageFunc {
 		return repo
 	}
 	return func(repo string, number int) bool {
+		full := fullRepo(repo)
+		owners := auditPRAgents(cfg.Project.Org, time.Now().Add(-auditPRAttributionWindow), "")
+		o := escalation.Observation{
+			Repo:   full,
+			Number: number,
+			Agent:  owners[escalation.Key(full, number)],
+		}
 		// Empty head SHA: reuse the store's tracked current red SHA for this PR
 		// (do not reset the cap counter). The eval cycle records it via
-		// ObserveRed; if the store has never seen this PR red, TryReEngage still
+		// ObserveRed; if the store has never seen this PR red, the store still
 		// allows the first MaxReEngagements nudges.
-		return getEscalationStore().TryReEngage(fullRepo(repo), number, "")
+		return deliverReEngagement(cfg, getEscalationStore(), o, "", kicker, available, logger)
 	}
+}
+
+// deliverReEngagement is the one place a fix re-dispatch is both SENT and
+// COUNTED. It resolves a reachable fixer, checks the budget without spending
+// it, delivers the kick, and only records the attempt once the kick was
+// accepted: an undeliverable kick (agent not running, provider backoff,
+// restart) must not consume a PR's budget and strand it in needs-human
+// (hivecommons/hive#9472).
+func deliverReEngagement(
+	cfg *config.Config,
+	store *escalation.Store,
+	o escalation.Observation,
+	headSHA string,
+	kicker fixKicker,
+	available func(string) bool,
+	logger *slog.Logger,
+) bool {
+	fixer := resolveRedPRFixer(cfg, o.Agent, available)
+	if fixer == "" {
+		// Nobody can be asked right now. Charging budget here is what escalated
+		// red strategist PRs on a pack that pauses strategist in every mode.
+		if logger != nil {
+			logger.Info("re-engagement skipped: no reachable fixer agent",
+				"repo", o.Repo, "pr", o.Number, "owner", redPRFixOwner(o.Agent))
+		}
+		return false
+	}
+	if !store.ReEngageEligible(o.Repo, o.Number, headSHA, ownerReEngageCooldown(cfg, fixer)) {
+		return false
+	}
+	if kicker == nil {
+		return false
+	}
+	if err := kicker.Kick(fixer, redPRFixKick(o, fixer != redPRFixOwner(o.Agent))); err != nil {
+		if logger != nil {
+			logger.Warn("re-engagement kick undeliverable; budget not charged",
+				"repo", o.Repo, "pr", o.Number, "agent", fixer, "error", err)
+		}
+		return false
+	}
+	store.RecordReEngagement(o.Repo, o.Number)
+	return true
 }
 
 // reapStuckRedPRs is Fix #4: the governor's backstop sweep. For each
 // hive-authored PR that is red on a required check AND stale (StaleRed) AND not
-// already escalated to a human, it records a re-engagement (deduped + capped via
-// the escalation store) and logs the fix dispatch. The PR is already present in
-// ci-failing.json via writeMergeEligible, so recording the re-engagement is what
-// guarantees a stale PR is treated as actionable rather than abandoned, while
-// the cap prevents re-firing every tick on a permanently-red, never-moving head.
-// Entirely generic: it keys only off check state + staleness, never a linter.
-func reapStuckRedPRs(cfg *config.Config, actionable *github.ActionableResult, escalatedPRs map[string]bool, logger *slog.Logger) {
+// already escalated to a human, it DELIVERS a targeted FIX-BEFORE-NEW kick to
+// the PR's owner (or the fallback fixer when the owner is unreachable) and
+// records the re-engagement only if that kick was accepted — deduped and capped
+// via the escalation store. Entirely generic: it keys only off check state +
+// staleness, never a linter.
+func reapStuckRedPRs(
+	cfg *config.Config,
+	actionable *github.ActionableResult,
+	escalatedPRs map[string]bool,
+	kicker fixKicker,
+	available func(string) bool,
+	logger *slog.Logger,
+) {
 	if cfg.Escalation.Disabled || actionable == nil {
 		return
 	}
 	store := getEscalationStore()
-	for _, o := range hivePRObservations(cfg, actionable) {
+	owners := auditPRAgents(cfg.Project.Org, time.Now().Add(-auditPRAttributionWindow), "")
+	for _, o := range hivePRObservations(cfg, actionable, owners) {
 		if !o.Red {
+			continue
+		}
+		if o.Shared {
+			// Every failing check is red across the fleet: the PR is not
+			// broken, a shared incident is. Nudging its owner to "fix" it
+			// wastes budget on work that cannot succeed (hivecommons/hive#9473).
 			continue
 		}
 		key := escalation.Key(o.Repo, o.Number)
@@ -7702,12 +7925,12 @@ func reapStuckRedPRs(cfg *config.Config, actionable *github.ActionableResult, es
 		if !store.StaleRed(o.Repo, o.Number, o.HeadSHA) {
 			continue // still churning (fresh red SHA) — leave it to the fix agent
 		}
-		if !store.TryReEngage(o.Repo, o.Number, o.HeadSHA) {
-			// Re-engagement cap reached for this red SHA: stop nudging. The
-			// distinct-SHA escalation path owns it from here.
+		if !deliverReEngagement(cfg, store, o, o.HeadSHA, kicker, available, logger) {
+			// Cap reached, cooldown not elapsed, or nothing could be delivered.
+			// The distinct-SHA escalation path owns it from here.
 			continue
 		}
-		logger.Info("reaper: re-dispatching fix for stuck red PR",
+		logger.Info("reaper: re-dispatched fix for stuck red PR",
 			"repo", o.Repo, "pr", o.Number, "head_sha", o.HeadSHA,
 			"re_engagements", store.ReEngagements(o.Repo, o.Number))
 	}
@@ -7746,20 +7969,33 @@ func runEscalationSweep(
 	var obs []escalation.Observation
 	type prMeta struct{ checks []string }
 	meta := map[string]prMeta{}
+	owners := auditPRAgents(cfg.Project.Org, time.Now().Add(-auditPRAttributionWindow), "")
 	for _, pr := range actionable.PRs.Items {
 		if !isHiveAgentAuthor(cfg, pr.Author) {
 			continue
 		}
-		o := escalationObservation(cfg, pr)
+		o := escalationObservation(cfg, pr, owners)
 		obs = append(obs, o)
 		meta[escalation.Key(o.Repo, o.Number)] = prMeta{checks: pr.FailingChecks}
 	}
+	// Classify shared/base CI breakage across the whole pass before counting:
+	// a check failing on this PR and on at least SharedFailureSiblings others
+	// is an incident, not a failed fix attempt (hivecommons/hive#9473).
+	escalation.MarkSharedFailures(obs)
 	results := escalationStore.Sweep(obs, cfg.Escalation.EffectiveThreshold())
 
 	for _, o := range obs {
 		key := escalation.Key(o.Repo, o.Number)
 		r, ok := results[key]
 		if !ok {
+			continue
+		}
+		if r.Unparked {
+			// The sweep returned this PR to the automated lane by itself: its
+			// head went green, or the shared incident it escalated over
+			// cleared. Take the label off (retried on later passes until a
+			// pass sees it gone) and say why, once.
+			unparkEscalatedPR(ctx, writer, o, r, logger)
 			continue
 		}
 		if r.Escalated {
@@ -7788,11 +8024,18 @@ func runEscalationSweep(
 		// left on the branch, when, and that no second automated pass is
 		// coming. Before this, the only thing distinguishing that hand-off
 		// from a first escalation was the label set.
-		body := escalation.CommentBody(r.Attempts, meta[key].checks, excerpt, r.Exhausted)
+		ev := escalation.Evidence{
+			Attempts:      r.Attempts,
+			FailingChecks: meta[key].checks,
+			SharedChecks:  r.SharedChecks,
+			Excerpt:       excerpt,
+			Exhausted:     r.Exhausted,
+			ReEngagements: r.ReEngagements,
+		}
+		body := escalation.CommentBody(ev)
 		afterReviewerPass := false
 		if sha, at, ok := escalationStore.ReviewerPass(o.Repo, o.Number); ok {
-			body = escalation.HandoffCommentBody(r.Attempts, meta[key].checks, excerpt, r.Exhausted,
-				escalation.ReviewerHandoff{SHA: sha, At: at})
+			body = escalation.HandoffCommentBody(ev, escalation.ReviewerHandoff{SHA: sha, At: at})
 			afterReviewerPass = true
 		}
 		if err := writer.CreateIssueComment(ctx, o.Repo, o.Number, body); err != nil {
@@ -7832,6 +8075,43 @@ func runEscalationSweep(
 		}
 	}
 	return escalated
+}
+
+// labelRemover is the optional forge capability the auto-un-park path needs.
+// Every real adapter (GitHub, GitLab, Gitea) implements RemoveLabel on
+// forge.Forge; the narrow IssueWriter the sweep takes does not declare it, so
+// a writer that cannot remove labels simply leaves the PR labeled and logs.
+type labelRemover interface {
+	RemoveLabel(ctx context.Context, repo string, number int, label string) error
+}
+
+// unparkEscalatedPR performs the forge side of an automatic un-park: the
+// needs-human label comes off, and — on the pass that decided it — a one-line
+// comment says why. Before hivecommons/hive#9473 nothing did this: a PR
+// escalated over a base-branch or runner outage stayed parked after the
+// incident cleared, and a labeled PR that went green stayed parked forever,
+// because the labeled branch returned before the green branch.
+func unparkEscalatedPR(ctx context.Context, writer forge.IssueWriter, o escalation.Observation, r escalation.Result, logger *slog.Logger) {
+	remover, ok := writer.(labelRemover)
+	if !ok {
+		logger.Warn("cannot un-park escalated PR: forge writer cannot remove labels",
+			"repo", o.Repo, "pr", o.Number)
+		return
+	}
+	if err := remover.RemoveLabel(ctx, o.Repo, o.Number, escalation.NeedsHumanLabel); err != nil {
+		// Retried on the next pass: the ledger keeps asking until a pass
+		// observes the label gone.
+		logger.Warn("un-park label removal failed; will retry next pass",
+			"repo", o.Repo, "pr", o.Number, "error", err)
+		return
+	}
+	if r.UnparkReason == "" {
+		return // label-removal retry: the comment was posted on the deciding pass
+	}
+	if err := writer.CreateIssueComment(ctx, o.Repo, o.Number, escalation.UnparkCommentBody(r.UnparkReason)); err != nil {
+		logger.Warn("un-park comment failed", "repo", o.Repo, "pr", o.Number, "error", err)
+	}
+	logger.Info("escalation un-parked", "repo", o.Repo, "pr", o.Number, "reason", r.UnparkReason)
 }
 
 // autoMergeSweepInterval is the minimum spacing between label-queued

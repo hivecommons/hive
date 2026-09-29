@@ -440,6 +440,7 @@ Positional lists have no names, and one hand-edit that drops a field transposes 
 ```bash
 hivectl hives list                                        # which hives, and which one is active
 hivectl hives add hive-b --hub wss://hive-b.example.com/contribute
+hivectl hives reissue hive-b                              # rotate only hive-b's saved token
 hivectl hives use hive-b                                  # make it the hub the relay starts on
 hivectl hives rename hive-b staging
 hivectl hives remove staging                              # asks you to type the name
@@ -455,7 +456,7 @@ The same list is available in the terminal UI: `just contribute-tui` (or `hivect
 
 From a fresh checkout, `just contribute-tui` and `just contribute-hives` share `bin/hivectl-bootstrap.sh`: they first honor `HIVECTL`, then `./bin/hivectl`, user/system installs, and `PATH`; when none is present, they extract `hivectl` from the Hive image into `./bin/hivectl`. The checkout records the image digest beside the binary and refreshes when the digest changes, refusing to run an unverifiable stale copy if Podman cannot inspect or pull the image.
 
-See [hivectl.md](hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to) for the full command reference, including adding a hive whose token you already hold (`--token-stdin`).
+See [hivectl.md](hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to) for the full command reference, including adding a hive whose token you already hold (`--token-stdin`) and reissuing one saved hive token through the profile store (`hivectl hives reissue <name> --hub <url>`).
 
 ## Moving the relay to another machine
 
@@ -479,7 +480,26 @@ The bundle is passphrase-encrypted and contains one profile: hub URL, contributo
 
 Use this when you want to switch back and forth, or to try the VM before committing to it. The cost is that the credential now exists in two places: remove the imported profile or the old profile once you no longer want both machines able to connect as the same contributor id.
 
-### Option 2 — reissue the credential (`just contribute-move`)
+### Option 2 — reissue the credential
+
+If this machine uses named profiles (`~/.config/hive/profiles.yml` exists),
+reissue through `hivectl` so the profile store remains the source of truth:
+
+```bash
+hivectl hives reissue acme --hub wss://hive.example.com/contribute
+# if acme already exists locally with its hub saved:
+hivectl hives reissue acme
+```
+
+`hivectl hives reissue` calls `POST /api/contribute/reissue-token` with your
+GitHub token from `gh auth token`, replaces only that named profile's
+registration token in `profiles.yml`, and then regenerates `contributor.env`
+with the existing projection code. Other profile tokens are left untouched. If
+the hub says the GitHub account is not registered, run
+`hivectl hives add <name> --hub <url>` instead.
+
+The legacy `just contribute-move` path is for positional `contributor.env`
+setups without profiles:
 
 ```bash
 export HIVE_HUB=wss://hive.example.com/contribute
@@ -487,6 +507,12 @@ just contribute-move claude
 ```
 
 `contribute-move` does everything `contribute-setup` does — backend preflight, `gh auth`, `gh-auth.env`, CLI config staging — except that instead of registering it calls `POST /api/contribute/reissue-token`, which authenticates with your GitHub token and therefore *can* prove you own the identity. It then writes `contributor.env` for you.
+
+When `profiles.yml` exists, `contribute-move` aborts unless
+`HIVE_FORCE_MOVE=1` is set. Forcing it is unsafe with profiles because it
+rewrites `contributor.env` behind `profiles.yml`; the next `hivectl hives`
+mutation regenerates `contributor.env` from `profiles.yml` and can restore the
+old token.
 
 **This rotates the credential.** Reissuing overwrites the stored hash, so a relay still running on the old machine stops authenticating the moment this succeeds. That is the point when you are moving off a machine you no longer want holding the token — but it means this is not the way to switch back and forth.
 

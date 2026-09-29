@@ -490,3 +490,51 @@ func TestWriteMergeEligible_FailingEntryCarriesForkOrigin(t *testing.T) {
 		t.Errorf("same-repo PR entry = %+v, want reachable_action=push", f)
 	}
 }
+
+// An escalated PR that is conflicted (CI never ran, so nothing is red) or
+// green must still reach the reviewer lane (hivecommons/hive#9477). It is not
+// fix-lane work, so it stays out of ci_failing, and goes to the separate
+// "escalated" list with GitHub's mergeability and CI state instead.
+func TestWriteMergeEligible_EscalatedNonFailingPRsListedForReviewerLane(t *testing.T) {
+	prs := []github.PullRequest{
+		{Repo: "hive", Number: 9258, CIStatus: "success", Mergeable: github.MergeableNo, MergeableState: "dirty", HeadSHA: "3e20e38dd", Labels: []string{"needs-human"}},
+		{Repo: "hive", Number: 7, CIStatus: "failure", Mergeable: github.MergeableYes, FailingChecks: []string{"build"}},
+		{Repo: "hive", Number: 8, CIStatus: "success", Mergeable: github.MergeableNo},
+	}
+	escalated := map[string]bool{
+		escalation.Key("hivecommons/hive", 9258): true,
+		escalation.Key("hivecommons/hive", 7):    true,
+	}
+	_, failing := runWriteMergeEligible(t, prs, mergeEligibleInputs{org: "hivecommons", escalated: escalated})
+	if len(failing) != 1 || failing[0].Number != 7 {
+		t.Fatalf("ci_failing = %+v, want only the red PR #7", failing)
+	}
+
+	data, err := os.ReadFile(ciFailingPath)
+	if err != nil {
+		t.Fatalf("read ci-failing.json: %v", err)
+	}
+	var payload struct {
+		Escalated []struct {
+			Number    int      `json:"number"`
+			Repo      string   `json:"repo"`
+			Escalated bool     `json:"escalated"`
+			Labels    []string `json:"labels"`
+			Mergeable string   `json:"mergeable"`
+			CIStatus  string   `json:"ci_status"`
+		} `json:"escalated"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("decode ci-failing.json: %v", err)
+	}
+	if len(payload.Escalated) != 1 {
+		t.Fatalf("escalated = %+v, want only the conflicted escalated PR #9258 (the red one is already in ci_failing; #8 is not escalated)", payload.Escalated)
+	}
+	got := payload.Escalated[0]
+	if got.Number != 9258 || got.Repo != "hivecommons/hive" || !got.Escalated {
+		t.Errorf("escalated row = %+v", got)
+	}
+	if got.Mergeable != string(github.MergeableNo) || got.CIStatus != "success" {
+		t.Errorf("escalated row mergeable=%q ci_status=%q, want no/success", got.Mergeable, got.CIStatus)
+	}
+}

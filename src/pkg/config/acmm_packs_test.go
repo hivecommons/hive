@@ -28,8 +28,12 @@ func TestACMMPacksAgentCounts(t *testing.T) {
 	// on-demand `reviewer`, which is PR-triggered rather than cadence-kicked.
 	// It is defined only at the levels where a PR can reach merge without a
 	// mandatory human read (L5 gates on `hold`, L6 auto-merges on green).
+	//
+	// L5 and L6 also carry the `adjudicator` (hivecommons/hive#9477): a
+	// role-reviewer agent with no kick_template, so its kick reaches the
+	// escalated-PR lane that the queue reviewer's template shadows.
 	expected := map[int]int{
-		1: 2, 2: 5, 3: 6, 4: 7, 5: 12, 6: 13, // reviewer joins at L5/L6 (#8023)
+		1: 2, 2: 5, 3: 6, 4: 7, 5: 13, 6: 14, // reviewer (#8023) + adjudicator (#9477) at L5/L6
 	}
 	for _, p := range packs {
 		want, ok := expected[p.Level]

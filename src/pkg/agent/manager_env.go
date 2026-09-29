@@ -145,6 +145,41 @@ var inferenceQuietCLIEnv = []string{
 	"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
 }
 
+// defaultGitBotEmailDomain matches hive_git_bot_identity in deploy/entrypoint.sh.
+const defaultGitBotEmailDomain = "hive.kubestellar.io"
+
+// agentGitIdentity returns the lane-distinct commit identity
+// "<agent> <agent>@<HIVE_GIT_BOT_EMAIL_DOMAIN>" (#9478). The address is the
+// bracket-free form DCO accepts (see hive_git_bot_identity). The domain is
+// validated the same way the entrypoint does, falling back to the default. A
+// name that is not a safe email local-part yields ok=false so the caller
+// leaves git's own resolution untouched rather than export a malformed ident.
+func agentGitIdentity(agentName string) (name, email string, ok bool) {
+	if !isGitIdentToken(agentName, true) {
+		return "", "", false
+	}
+	domain := strings.TrimSpace(os.Getenv("HIVE_GIT_BOT_EMAIL_DOMAIN"))
+	if !isGitIdentToken(domain, false) {
+		domain = defaultGitBotEmailDomain
+	}
+	return agentName, agentName + "@" + domain, true
+}
+
+func isGitIdentToken(s string, allowUnderscore bool) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-':
+		case r == '_' && allowUnderscore:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	model := agent.Config.Model
 	if agent.ModelOverride != "" {
@@ -408,6 +443,23 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		// source; a per-agent npm prefix would instead let an agent drift off
 		// the pinned image version.
 		vars = append(vars, agentEnvPair{"DISABLE_AUTOUPDATER", "1", false})
+
+		// Pin the commit identity to the lane at launch (#9478). Per-agent
+		// ~/.gitconfig is bridged to one shared file and every agent shares
+		// one working tree per repo, so any `git config user.*` write by one
+		// agent used to re-attribute every other lane's commits and DCO
+		// sign-offs until the next write. GIT_AUTHOR_*/GIT_COMMITTER_* beat
+		// every config layer (system, global and repo-local), and
+		// `git commit -s` signs off with the committer identity, so author,
+		// committer and Signed-off-by all name the lane that did the work.
+		if name, email, ok := agentGitIdentity(agent.Name); ok {
+			vars = append(vars,
+				agentEnvPair{"GIT_AUTHOR_NAME", name, false},
+				agentEnvPair{"GIT_AUTHOR_EMAIL", email, false},
+				agentEnvPair{"GIT_COMMITTER_NAME", name, false},
+				agentEnvPair{"GIT_COMMITTER_EMAIL", email, false},
+			)
+		}
 	}
 
 	// Codex CLI 0.144.1's in-process app-server performs OWNER-gated operations

@@ -11,7 +11,11 @@ name: CLI pin bump
 # a user hit a wall (#8417: Claude Code 2.1.226 refusing claude-opus-5-5 for
 # six weeks).
 #
-# Once a day (and on demand) this workflow, per CLI:
+# Once a day (and on demand) this workflow, per CLI, only opens bump PRs for
+# major/minor version changes. Patch-only releases are skipped by default; run
+# the workflow manually with `include_patch=true` to force one.
+#
+# Per CLI:
 #   1. resolves the latest release from its source of truth (npm registry,
 #      GitHub releases, the vendor's own manifest) and recomputes every digest
 #      from the downloaded artifact, cross-checked against the vendor-published
@@ -50,6 +54,10 @@ on:
         description: 'Branch whose pins to bump and to open the PR against'
         type: string
         default: v5
+      include_patch:
+        description: 'Also bump patch-only releases (daily automation skips them)'
+        type: boolean
+        default: false
   # The self-test runs on PRs that touch the bump machinery itself; the bump
   # jobs never run on pull_request.
   pull_request:
@@ -130,6 +138,7 @@ jobs:
         id: bump
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HIVE_PIN_INCLUDE_PATCH: ${{ inputs.include_patch == true && '1' || '' }}
           HIVE_PIN_WORKDIR: ${{ runner.temp }}/cli-pin-${{ matrix.cli }}
         run: |
           set -euo pipefail
@@ -142,7 +151,12 @@ jobs:
 
       - name: Nothing to do
         if: steps.scope.outputs.run == 'true' && steps.bump.outputs.CHANGED != 'true'
-        run: echo "$CLI ${{ steps.bump.outputs.OLD }} is current."
+        run: |
+          if [ "${{ steps.bump.outputs.SKIPPED }}" = "patch" ]; then
+            echo "$CLI ${{ steps.bump.outputs.OLD }} -> ${{ steps.bump.outputs.NEW }} is patch-only; skipped."
+          else
+            echo "$CLI ${{ steps.bump.outputs.OLD }} is current."
+          fi
 
       - name: Skip when an open PR already carries this exact bump
         if: steps.scope.outputs.run == 'true' && steps.bump.outputs.CHANGED == 'true'

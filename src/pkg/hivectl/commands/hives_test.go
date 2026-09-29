@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -28,13 +29,27 @@ func (f *fakeRegistrar) Register(_ context.Context, base, user string) (hubRegis
 	return f.result, f.err
 }
 
+type fakeReissuer struct {
+	calls  []string
+	result hubRegistration
+	err    error
+}
+
+func (f *fakeReissuer) Reissue(_ context.Context, base, token string) (hubRegistration, error) {
+	f.calls = append(f.calls, base+" "+token)
+	return f.result, f.err
+}
+
 type hivesHarness struct {
 	dir          string
 	store        *hivectl.ProfileStore
 	reg          *fakeRegistrar
+	reissuer     *fakeReissuer
 	out          *bytes.Buffer
 	errs         *bytes.Buffer
 	in           *bytes.Reader
+	githubToken  string
+	githubErr    error
 	signalResult hivectl.RelaySwitchResult
 	signalErr    error
 	signalCalls  int
@@ -50,16 +65,26 @@ func newHivesHarness(t *testing.T) *hivesHarness {
 		dir:   dir,
 		store: hivectl.NewProfileStore(dir),
 		reg:   &fakeRegistrar{result: hubRegistration{RegistrationToken: "new-token", ContributorID: "contrib_new", Message: "registered"}},
-		out:   &bytes.Buffer{},
-		errs:  &bytes.Buffer{},
-		in:    bytes.NewReader(nil),
+		reissuer: &fakeReissuer{result: hubRegistration{
+			RegistrationToken: "reissued-token",
+			ContributorID:     "contrib_reissued",
+			Message:           "reissued",
+		}},
+		out:         &bytes.Buffer{},
+		errs:        &bytes.Buffer{},
+		in:          bytes.NewReader(nil),
+		githubToken: "gh-token",
 	}
 	prev := hivesDepsFor
 	hivesDepsFor = func(*commandEnv) (*hivesDeps, error) {
 		return &hivesDeps{
 			store:      h.store,
 			registrar:  h.reg,
+			reissuer:   h.reissuer,
 			githubUser: func(context.Context) (string, error) { return "octocat", nil },
+			githubToken: func(context.Context) (string, error) {
+				return h.githubToken, h.githubErr
+			},
 			signalRelay: func(context.Context, *hivectl.ProfileStore) (hivectl.RelaySwitchResult, error) {
 				h.signalCalls++
 				return h.signalResult, h.signalErr
@@ -596,7 +621,7 @@ func TestHivesAddAlreadyRegisteredNamesTheWayForward(t *testing.T) {
 	if err == nil {
 		t.Fatal("hives add succeeded with no token")
 	}
-	for _, want := range []string{"already registered", "--token-stdin", "contribute-move", "unauthenticated"} {
+	for _, want := range []string{"already registered", "--token-stdin", "hives reissue acme --hub wss://acme.example/contribute", "hives export", "hives import", "rewrites contributor.env behind profiles.yml", "unauthenticated"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error missing %q: %v", want, err)
 		}
@@ -612,6 +637,250 @@ func TestHivesAddSurfacesRegistrationFailure(t *testing.T) {
 	err := h.run(t, "", "hives", "add", "x", "--hub", "wss://x.example/contribute")
 	if err == nil || !strings.Contains(err.Error(), "hub unreachable") {
 		t.Fatalf("error = %v, want the registrar's failure", err)
+	}
+}
+
+func TestHivesReissueWithHTTPHub(t *testing.T) {
+	tests := []struct {
+		name         string
+		githubToken  string
+		profileName  string
+		args         []string
+		wantErr      string
+		wantToken    string
+		wantOther    string
+		wantEnvToken string
+	}{
+		{
+			name:         "success updates one profile and projection",
+			githubToken:  "good-token",
+			profileName:  "acme",
+			args:         []string{"hives", "reissue", "acme"},
+			wantToken:    "new-token",
+			wantOther:    "tok-other",
+			wantEnvToken: "HIVE_REGISTRATION_TOKEN=new-token,tok-other",
+		},
+		{
+			name:        "not registered points at add",
+			githubToken: "not-registered",
+			profileName: "acme",
+			args:        []string{"hives", "reissue", "acme"},
+			wantErr:     "hivectl hives add acme",
+			wantToken:   "tok-acme",
+			wantOther:   "tok-other",
+		},
+		{
+			name:        "bad token rejected",
+			githubToken: "bad-token",
+			profileName: "acme",
+			args:        []string{"hives", "reissue", "acme"},
+			wantErr:     "HTTP 401",
+			wantToken:   "tok-acme",
+			wantOther:   "tok-other",
+		},
+		{
+			name:         "hub flag can add missing local profile",
+			githubToken:  "good-token",
+			profileName:  "missing",
+			args:         []string{"hives", "reissue", "missing", "--hub"},
+			wantToken:    "new-token",
+			wantOther:    "tok-other",
+			wantEnvToken: "tok-acme,tok-other,new-token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var sawAuth string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/api/contribute/reissue-token" {
+					t.Errorf("request = %s %s, want POST /api/contribute/reissue-token", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				sawAuth = r.Header.Get("Authorization")
+				switch strings.TrimPrefix(sawAuth, "Bearer ") {
+				case "good-token":
+					_ = json.NewEncoder(w).Encode(hubRegistration{
+						RegistrationToken: "new-token",
+						ContributorID:     "contrib_new",
+						Message:           "Token reissued",
+					})
+				case "not-registered":
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = w.Write([]byte(`{"error":"Not registered as a contributor"}`))
+				default:
+					w.WriteHeader(http.StatusUnauthorized)
+					_, _ = w.Write([]byte(`{"error":"Invalid or missing GitHub token"}`))
+				}
+			}))
+			defer server.Close()
+
+			dir := t.TempDir()
+			store := hivectl.NewProfileStore(dir)
+			hub := strings.Replace(server.URL, "http://", "ws://", 1) + "/contribute"
+			set := &hivectl.ProfileSet{
+				Active: "acme",
+				Profiles: []hivectl.Profile{
+					{Name: "acme", Hub: hub, ContributorID: "c1", RegistrationToken: "tok-acme", Session: "review"},
+					{Name: "other", Hub: "wss://other.example/contribute", ContributorID: "c2", RegistrationToken: "tok-other"},
+				},
+			}
+			if err := store.Save(set); err != nil {
+				t.Fatalf("seed profiles: %v", err)
+			}
+
+			prev := hivesDepsFor
+			hivesDepsFor = func(*commandEnv) (*hivesDeps, error) {
+				return &hivesDeps{
+					store:       store,
+					registrar:   &fakeRegistrar{},
+					reissuer:    httpReissuer{timeout: 5 * time.Second},
+					githubUser:  func(context.Context) (string, error) { return "octocat", nil },
+					githubToken: func(context.Context) (string, error) { return tt.githubToken, nil },
+					now:         func() time.Time { return time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC) },
+				}, nil
+			}
+			t.Cleanup(func() { hivesDepsFor = prev })
+
+			args := append([]string{}, tt.args...)
+			if len(args) > 0 && args[len(args)-1] == "--hub" {
+				args = append(args, hub)
+			}
+			out, errs := &bytes.Buffer{}, &bytes.Buffer{}
+			root := NewRootCommand(strings.NewReader(""), out, errs)
+			root.SetArgs(args)
+			err := root.Execute()
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want one containing %q", err, tt.wantErr)
+				}
+			} else if err != nil {
+				t.Fatalf("hives reissue: %v", err)
+			}
+			if sawAuth != "Bearer "+tt.githubToken {
+				t.Fatalf("Authorization = %q, want bearer GitHub token", sawAuth)
+			}
+
+			got, err := store.Load()
+			if err != nil {
+				t.Fatalf("load profiles: %v", err)
+			}
+			profile, _ := got.Find(tt.profileName)
+			if profile == nil || profile.RegistrationToken != tt.wantToken {
+				t.Fatalf("profile %q = %+v, want token %q", tt.profileName, profile, tt.wantToken)
+			}
+			other, _ := got.Find("other")
+			if other == nil || other.RegistrationToken != tt.wantOther {
+				t.Fatalf("other profile = %+v, want token %q", other, tt.wantOther)
+			}
+			if tt.wantEnvToken != "" {
+				data, err := os.ReadFile(store.EnvPath())
+				if err != nil {
+					t.Fatalf("read contributor.env: %v", err)
+				}
+				if !strings.Contains(string(data), tt.wantEnvToken) {
+					t.Fatalf("projection missing %q:\n%s", tt.wantEnvToken, string(data))
+				}
+			}
+		})
+	}
+}
+
+func TestHivesReissueValidationAndFailures(t *testing.T) {
+	tests := []struct {
+		name    string
+		setup   func(*hivesHarness)
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "bad profile name",
+			args:    []string{"hives", "reissue", "bad/name", "--hub", "wss://acme.example/contribute"},
+			wantErr: "may use only letters",
+		},
+		{
+			name:    "missing hub for new profile",
+			args:    []string{"hives", "reissue", "acme"},
+			wantErr: "--hub is required",
+		},
+		{
+			name: "invalid hub",
+			args: []string{"hives", "reissue", "acme", "--hub", "ftp://acme.example/contribute"},
+			setup: func(h *hivesHarness) {
+				h.seed(t, twoHives())
+			},
+			wantErr: "must use ws://",
+		},
+		{
+			name: "gh token failure",
+			args: []string{"hives", "reissue", "acme"},
+			setup: func(h *hivesHarness) {
+				h.seed(t, twoHives())
+				h.githubErr = errors.New("not logged in")
+			},
+			wantErr: "not logged in",
+		},
+		{
+			name: "not registered guidance",
+			args: []string{"hives", "reissue", "acme"},
+			setup: func(h *hivesHarness) {
+				h.seed(t, twoHives())
+				h.reissuer.err = fmt.Errorf("%w on hub", hivectl.ErrContributorNotRegistered)
+			},
+			wantErr: "hivectl hives add acme",
+		},
+		{
+			name: "empty hub response token",
+			args: []string{"hives", "reissue", "acme"},
+			setup: func(h *hivesHarness) {
+				h.seed(t, twoHives())
+				h.reissuer.result.RegistrationToken = ""
+			},
+			wantErr: "no registration token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHivesHarness(t)
+			if tt.setup != nil {
+				tt.setup(h)
+			}
+			err := h.run(t, "", tt.args...)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %v, want one containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestHivesReissueWithFakeHubUpdatesExistingProfile(t *testing.T) {
+	h := newHivesHarness(t)
+	h.seed(t, twoHives())
+	h.writeEnv(t, "HIVE_REGISTRATION_TOKEN=tok-acme,tok-other\nHIVE_HUB=wss://acme.example/contribute,wss://other.example/contribute\nCONTRIBUTOR_ID=c1,c2\n")
+
+	if err := h.run(t, "", "hives", "reissue", "acme", "--hub", "wss://replacement.example/contribute"); err != nil {
+		t.Fatalf("hives reissue: %v", err)
+	}
+	if len(h.reissuer.calls) != 1 || h.reissuer.calls[0] != "https://replacement.example gh-token" {
+		t.Fatalf("reissuer calls = %v, want replacement hub and gh token", h.reissuer.calls)
+	}
+	set := h.profiles(t)
+	acme, _ := set.Find("acme")
+	if acme == nil || acme.Hub != "wss://replacement.example/contribute" || acme.RegistrationToken != "reissued-token" || acme.ContributorID != "contrib_reissued" {
+		t.Fatalf("acme profile after reissue = %+v", acme)
+	}
+	other, _ := set.Find("other")
+	if other == nil || other.RegistrationToken != "tok-other" {
+		t.Fatalf("other profile token was not preserved: %+v", other)
+	}
+	if env := h.env(t); !strings.Contains(env, "HIVE_REGISTRATION_TOKEN=reissued-token,tok-other") ||
+		!strings.Contains(env, "HIVE_HUB=wss://replacement.example/contribute,wss://other.example/contribute") {
+		t.Fatalf("projection not regenerated from profiles:\n%s", env)
+	}
+	if !strings.Contains(h.out.String(), "Reissued token for hive \"acme\"") {
+		t.Fatalf("output did not confirm reissue:\n%s", h.out.String())
 	}
 }
 
@@ -839,11 +1108,14 @@ func TestDefaultHivesDepsWiresTheProductionPieces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("defaultHivesDeps: %v", err)
 	}
-	if deps.store == nil || deps.registrar == nil || deps.githubUser == nil || deps.now == nil {
+	if deps.store == nil || deps.registrar == nil || deps.reissuer == nil || deps.githubUser == nil || deps.githubToken == nil || deps.now == nil {
 		t.Fatalf("defaultHivesDeps left a dependency nil: %+v", deps)
 	}
 	if reg, ok := deps.registrar.(httpRegistrar); !ok || reg.timeout != 3*time.Second {
 		t.Errorf("registrar = %#v, want httpRegistrar with the given timeout", deps.registrar)
+	}
+	if reissuer, ok := deps.reissuer.(httpReissuer); !ok || reissuer.timeout != 3*time.Second {
+		t.Errorf("reissuer = %#v, want httpReissuer with the given timeout", deps.reissuer)
 	}
 
 	// With no override installed, commandEnv.hivesDeps() takes the same path.
@@ -877,6 +1149,25 @@ func TestDefaultHivesDepsUsesTheSharedGitHubLogin(t *testing.T) {
 	}
 	if user, err := deps.githubUser(context.Background()); err != nil || user != "octocat" {
 		t.Errorf("deps.githubUser = %q, %v; want octocat", user, err)
+	}
+}
+
+func TestDefaultHivesDepsUsesTheSharedGitHubToken(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	deps, err := defaultHivesDeps(3 * time.Second)
+	if err != nil {
+		t.Fatalf("defaultHivesDeps: %v", err)
+	}
+	old := hivectl.RunGH
+	t.Cleanup(func() { hivectl.RunGH = old })
+	hivectl.RunGH = func(_ context.Context, args ...string) (string, error) {
+		if strings.Join(args, " ") != "auth token" {
+			t.Errorf("unexpected gh invocation: %v", args)
+		}
+		return "ghp_test\n", nil
+	}
+	if token, err := deps.githubToken(context.Background()); err != nil || token != "ghp_test" {
+		t.Errorf("deps.githubToken = %q, %v; want ghp_test", token, err)
 	}
 }
 

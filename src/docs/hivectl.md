@@ -677,6 +677,8 @@ repository PAT or long-lived secret.
 hivectl hives list                                            # active hive marked *
 hivectl hives list --check -o json                            # also probe each hub
 hivectl hives add acme --hub wss://acme.hive.hivecommons.dev/contribute
+hivectl hives reissue acme                                    # rotate one saved profile
+hivectl hives reissue acme --hub wss://acme.hive.hivecommons.dev/contribute
 hivectl hives use acme
 hivectl hives export acme --out acme.hive-profile
 hivectl hives import acme.hive-profile --name acme-laptop
@@ -767,10 +769,23 @@ Notes:
   `gh` login or the backend CLI preflight, so a first-time machine still wants
   `just contribute-setup <backend>`. No bearer credential is sent to the hub.
 - **Already registered elsewhere?** The register endpoint is unauthenticated,
-  so the hub will never hand an existing contributor's token back. Add the
-  credential you already hold instead:
+  so the hub will never hand an existing contributor's token back. On a
+  profile-store machine, rotate and save only that one profile with
+  `hivectl hives reissue acme --hub <url>` (or omit `--hub` when `acme`
+  already exists locally). If you want to keep the old machine working, use
+  `hivectl hives export` on the holding machine and `hivectl hives import` on
+  the new one. Add the credential you already hold instead only when you have
+  the token and contributor id in hand:
   `printf '%s' "$TOKEN" | hivectl hives add acme --hub <url> --token-stdin --contributor-id <id>`,
-  or move the identity with `just contribute-move`.
+  `just contribute-move` is unsafe with profiles because it rewrites
+  `contributor.env` behind `profiles.yml`; the next profile-store command
+  regenerates `contributor.env` from `profiles.yml`.
+- **`reissue` rotates exactly one hive token.** It calls the hub's
+  authenticated `/api/contribute/reissue-token` endpoint using your local `gh`
+  token, replaces only the named profile's registration token in
+  `profiles.yml`, and regenerates `contributor.env` through the profile store.
+  If the hub says this GitHub account is not registered, run
+  `hivectl hives add <name> --hub <url>` instead.
 - **Moving a profile to another machine:** `hivectl hives export <name> --out
   <file>` writes one passphrase-encrypted bundle. On the other machine,
   `hivectl hives import <file> [--name <new-name>]` decrypts, validates and

@@ -158,3 +158,67 @@ func TestReviewerIsNotOnDemandFleetWide(t *testing.T) {
 		t.Fatal("reviewer must not appear in OnDemandAgentsFromPacks — it is started and cadence-kicked like every other pack agent")
 	}
 }
+
+// The escalated-PR adjudication lane (reviewer-lane.md) is reached only through
+// the role-based kick fallback, which a kick_template shadows. The queue
+// reviewer above carries one, so the L5/L6 packs ship the lane as a separate
+// agent (hivecommons/hive#9477). These tests pin the properties that keep it
+// reachable and able to act on its verdicts.
+func adjudicatorIn(t *testing.T, level int) (PackAgent, bool) {
+	t.Helper()
+	p, err := ACMMPackByLevel(level)
+	if err != nil {
+		t.Fatalf("ACMMPackByLevel(%d): %v", level, err)
+	}
+	for _, a := range p.Agents {
+		if a.Name == "adjudicator" {
+			return a, true
+		}
+	}
+	return PackAgent{}, false
+}
+
+func TestAdjudicatorReachesReviewerLane(t *testing.T) {
+	for _, lvl := range reviewerLevels {
+		a, ok := adjudicatorIn(t, lvl)
+		if !ok {
+			t.Fatalf("L%d pack is missing the adjudicator agent: nothing would work needs-human PRs", lvl)
+		}
+		if a.Role != "reviewer" {
+			t.Errorf("L%d: adjudicator role = %q, want \"reviewer\" (the role routes its kick to reviewer-lane.md)", lvl, a.Role)
+		}
+		if a.KickTemplate != "" {
+			t.Errorf("L%d: adjudicator kick_template = %q, want none — any template shadows the reviewer lane", lvl, a.KickTemplate)
+		}
+		if a.OnDemand {
+			t.Errorf("L%d: adjudicator must not be on_demand — the governor cadence-kicks it", lvl)
+		}
+		// REPAIR pushes to the PR branch and DE-ESCALATE edits labels; both
+		// need ISSUES_AND_PRS. MERGE is deliberately withheld.
+		if a.Mode != "ISSUES_AND_PRS" {
+			t.Errorf("L%d: adjudicator mode = %q, want ISSUES_AND_PRS", lvl, a.Mode)
+		}
+		if !a.IncludeRepos {
+			t.Errorf("L%d: adjudicator must have include_repos: true to repair a branch", lvl)
+		}
+	}
+	for _, lvl := range nonReviewerLevels {
+		if _, ok := adjudicatorIn(t, lvl); ok {
+			t.Errorf("L%d must not define the adjudicator: the lane is dormant below L5", lvl)
+		}
+	}
+}
+
+func TestAdjudicatorHasCadenceEntry(t *testing.T) {
+	for _, lvl := range reviewerLevels {
+		p, err := ACMMPackByLevel(lvl)
+		if err != nil {
+			t.Fatalf("ACMMPackByLevel(%d): %v", lvl, err)
+		}
+		for mode, cadences := range p.Governor.Cadences {
+			if _, ok := cadences["adjudicator"]; !ok {
+				t.Errorf("L%d governor cadence %q has no adjudicator entry", lvl, mode)
+			}
+		}
+	}
+}

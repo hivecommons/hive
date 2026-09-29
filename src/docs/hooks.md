@@ -110,7 +110,7 @@ The window is *sliding and half-open*: the guarantee is "at most `limit` firings
 | `agent_paused` | an agent's paused flag is durably set | `agent`, `trigger`, `reason` |
 | `agent_resumed` | an agent's paused flag is durably cleared | `agent`, `trigger`, `reason` |
 | `sweep_completed` | an auto-merge sweep records its result | `repo`, `reason`, `attrs.merged`, `attrs.skipped` |
-| `escalation_red` | escalation observes a red-CI state it reacts to | `repo`, `agent`, `reason`, `attrs.pr` |
+| `escalation_red` | escalation observes a red-CI state it reacts to. `agent` is the agent the audit trail attributes the PR to, falling back to `scanner` for an unattributed PR — the same default the FIX-BEFORE-NEW block applies — so `when: t.agent == "scanner"` matches the agent that would be asked to repair it | `repo`, `agent`, `reason`, `attrs.pr`, `attrs.head_sha`, `attrs.excerpt` |
 | `acmm_level_change` | the ACMM level changes via the audited path | `from`, `to`, `actor` |
 | `upgrade_pause` | the #3836 upgrade kill switch flips (`to` is `on`/`off`) | `to`, `actor`, `reason` |
 | `review_rejected` | an owner denies a queued agent action on the approval desk (`POST /api/approvals/resolve` or `/bulk` with `approved: false`), sending that agent's output back | `agent`, `repo`, `actor`, `reason`, `model`, `backend`, `pin`, `acmm_level`, `attrs.pr`, `attrs.model_knob_url` |
