@@ -2332,6 +2332,19 @@
        features instead of one feature with parts, so the rule stays reserved
        for the section boundary and keeps meaning what it means. */
     .config-subgroup { font-size: 0.66rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; opacity: 0.75; margin: var(--sp-7) var(--sp-0) var(--sp-4); }
+    /* Question auto-close section and its live schedule table (#9584). */
+    .qa-section { margin: var(--sp-7) var(--sp-0); padding-top: var(--sp-6); border-top: 1px solid var(--border); }
+    .qa-section-title { font-size: var(--fs-xs); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: var(--sp-3); }
+    .qa-hours { margin-top: var(--sp-5); }
+    .qa-schedule { margin-top: var(--sp-5); }
+    .qa-schedule-label { font-size: var(--fs-2xs); color: var(--muted); margin-bottom: var(--sp-3); }
+    .qa-note { font-size: var(--fs-2xs); color: var(--muted); }
+    .qa-note.warn { color: var(--yellow); }
+    .qa-table { width: 100%; border-collapse: collapse; font-size: var(--fs-2xs); }
+    .qa-table thead tr { text-align: left; color: var(--muted); border-bottom: 1px solid var(--border); }
+    .qa-table th, .qa-table td { padding: var(--sp-2) var(--sp-5); }
+    .qa-table th:first-child, .qa-table td:first-child { padding-left: var(--sp-0); }
+    .qa-table th:last-child, .qa-table td:last-child { padding-right: var(--sp-0); }
     .config-subgroup:first-of-type { margin-top: var(--sp-2); }
 
     .config-stat-row { padding: var(--sp-3) var(--sp-0); border-bottom: 1px solid var(--border); }
@@ -28117,16 +28130,16 @@ function burnAreaChart() {
       const qaOn = qa.enabled === true;
       setTimeout(() => { if (qaOn) loadQuestionAutocloseSchedule(); }, 0);
       return `
-        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Question Auto-Close</div>
+        <div class="qa-section">
+          <div class="qa-section-title">Question Auto-Close</div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${qaOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="question-autoclose" data-key="enabled"></div>
             <span class="config-toggle-label">Auto-close answered questions <span class="config-info">i<span class="config-tooltip">Once the hive posts an answer on a question-labelled issue, it closes the issue after the window below unless the author reacts 👎 to the answer. Off by default.</span></span></span>
           </div>
-          <div class="config-field" style="margin-top:10px"><label>Objection window (hours) <span class="config-info">i<span class="config-tooltip">How long an answered question stays open for the author to object before it is closed. Minimum 1 hour; default 4.</span></span></label><input type="number" min="1" step="1" value="${qa.hours || 4}" placeholder="4" data-change-action="markDirty" data-arg0="question-autoclose" data-arg1="hours" data-arg-types="s,s,N"></div>
-          <div style="margin-top:12px">
-            <div style="font-size:var(--fs-2xs);color:var(--muted);margin-bottom:6px">Live schedule</div>
-            <div id="qa-schedule-host">${qaOn ? '<div style="color:var(--muted);font-size:var(--fs-2xs)">Loading…</div>' : '<div style="color:var(--muted);font-size:var(--fs-2xs)">Enable auto-close to see the live schedule.</div>'}</div>
+          <div class="config-field qa-hours"><label>Objection window (hours) <span class="config-info">i<span class="config-tooltip">How long an answered question stays open for the author to object before it is closed. Minimum 1 hour; default 4.</span></span></label><input type="number" min="1" step="1" value="${qa.hours || 4}" placeholder="4" data-change-action="markDirty" data-arg0="question-autoclose" data-arg1="hours" data-arg-types="s,s,N"></div>
+          <div class="qa-schedule">
+            <div class="qa-schedule-label">Live schedule</div>
+            <div id="qa-schedule-host">${qaOn ? '<div class="qa-note">Loading…</div>' : '<div class="qa-note">Enable auto-close to see the live schedule.</div>'}</div>
           </div>
         </div>`;
     }
@@ -28139,23 +28152,23 @@ function burnAreaChart() {
     function renderQuestionAutocloseScheduleTable(entries) {
       entries = entries || [];
       if (entries.length === 0) {
-        return '<div style="color:var(--muted);font-size:var(--fs-2xs)">Nothing scheduled right now.</div>';
+        return '<div class="qa-note">Nothing scheduled right now.</div>';
       }
       const rows = entries.map(e => `
         <tr>
-          <td style="padding:4px 10px 4px 0">${esc(e.repo || '')}#${esc(String(e.issue || ''))}</td>
-          <td style="padding:4px 10px">${esc(e.answered_at || '')}</td>
-          <td style="padding:4px 10px">${esc(e.closes_at || '')}</td>
-          <td style="padding:4px 0">${esc(e.state || '')}</td>
+          <td>${esc(e.repo || '')}#${esc(String(e.issue || ''))}</td>
+          <td>${esc(e.answered_at || '')}</td>
+          <td>${esc(e.closes_at || '')}</td>
+          <td>${esc(e.state || '')}</td>
         </tr>`).join('');
       return `
-        <table style="width:100%;border-collapse:collapse;font-size:var(--fs-2xs)">
+        <table class="qa-table">
           <thead>
-            <tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--border)">
-              <th style="padding:4px 10px 4px 0">Issue</th>
-              <th style="padding:4px 10px">Answered</th>
-              <th style="padding:4px 10px">Closes</th>
-              <th style="padding:4px 0">State</th>
+            <tr>
+              <th>Issue</th>
+              <th>Answered</th>
+              <th>Closes</th>
+              <th>State</th>
             </tr>
           </thead>
           <tbody>${rows}</tbody>
@@ -28175,7 +28188,7 @@ function burnAreaChart() {
         if (!resp.ok) throw new Error((data && data.error) || ('HTTP ' + resp.status));
         host.innerHTML = renderQuestionAutocloseScheduleTable(data.entries);
       } catch (e) {
-        host.innerHTML = '<div style="color:var(--yellow);font-size:var(--fs-2xs)">Schedule unavailable: ' + esc(e.message) + '</div>';
+        host.innerHTML = '<div class="qa-note warn">Schedule unavailable: ' + esc(e.message) + '</div>';
       }
     }
 

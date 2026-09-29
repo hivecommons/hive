@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/questionclose"
 	"github.com/hivecommons/hive/pkg/scheduler"
@@ -56,4 +57,35 @@ func wireQuestionAutoclose(ctx context.Context, cfg *config.Config, sched *sched
 		logger.Info("question-autoclose: enabled", "window", settings.Window.String(), "labels", settings.QuestionLabels, "human_label", settings.HumanLabel)
 	}
 	return m
+}
+
+// questionAutocloseView adapts the live questionclose.Manager to the
+// dashboard's consumer-defined QuestionAutocloseSchedule, so pkg/dashboard
+// does not import pkg/questionclose. It reads the manager through *boot at
+// call time: the dashboard dependencies are built before bootSupervision
+// constructs the manager, and a nil manager (feature off) reads as disabled
+// with an empty schedule.
+type questionAutocloseView struct{ b *boot }
+
+func (v questionAutocloseView) manager() *questionclose.Manager {
+	if v.b == nil {
+		return nil
+	}
+	return v.b.questionAutoclose.Load()
+}
+
+func (v questionAutocloseView) Enabled() bool { return v.manager().Enabled() }
+
+func (v questionAutocloseView) ScheduledQuestions() []dashboard.QuestionAutocloseScheduled {
+	entries := v.manager().Scheduled()
+	out := make([]dashboard.QuestionAutocloseScheduled, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, dashboard.QuestionAutocloseScheduled{
+			Repo:       e.Repo,
+			Issue:      e.Issue,
+			AnsweredAt: e.AnsweredAt,
+			Deadline:   e.Deadline,
+		})
+	}
+	return out
 }

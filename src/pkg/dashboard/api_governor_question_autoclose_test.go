@@ -211,11 +211,27 @@ func buildScheduleFixtureManager(t *testing.T) *questionclose.Manager {
 	return mgr
 }
 
+// managerScheduleView adapts a real questionclose.Manager to the
+// dashboard's QuestionAutocloseSchedule in tests (cmd/hive owns the
+// production adapter), so the schedule endpoint is exercised against the
+// manager's own load path.
+type managerScheduleView struct{ m *questionclose.Manager }
+
+func (v managerScheduleView) Enabled() bool { return v.m.Enabled() }
+
+func (v managerScheduleView) ScheduledQuestions() []QuestionAutocloseScheduled {
+	var out []QuestionAutocloseScheduled
+	for _, e := range v.m.Scheduled() {
+		out = append(out, QuestionAutocloseScheduled{Repo: e.Repo, Issue: e.Issue, AnsweredAt: e.AnsweredAt, Deadline: e.Deadline})
+	}
+	return out
+}
+
 func TestGovernorQuestionAutocloseSchedule_ListsLiveEntries(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	s := NewServer(0, logger)
 	deps := testDeps(t)
-	deps.QuestionAutoclose = buildScheduleFixtureManager(t)
+	deps.QuestionAutoclose = managerScheduleView{m: buildScheduleFixtureManager(t)}
 	s.RegisterAPI(deps)
 
 	rec := doOwnerGet(s, "/api/config/governor/question-autoclose/schedule")

@@ -23,7 +23,6 @@ import (
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/knowledge"
-	"github.com/hivecommons/hive/pkg/questionclose"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/tokens"
@@ -208,15 +207,13 @@ type Dependencies struct {
 	// into this binary (#8361). cmd/hive backs it with the extwork registry;
 	// nil means none, and the Features panel says so.
 	ExternalExec ExternalExecution
-	// QuestionAutoclose is the question auto-close manager (#9584), read
-	// here only for its live in-memory schedule (GET /api/config/governor/
-	// question-autoclose/schedule) — every write to governor.
-	// question_autoclose goes through Config like any other setting. Nil
-	// when the feature is off (wireQuestionAutoclose does not construct a
-	// Manager in that case) or in bare test Dependencies; every accessor on
-	// *questionclose.Manager is nil-receiver safe, so callers do not need to
-	// check this before using it.
-	QuestionAutoclose *questionclose.Manager
+	// QuestionAutoclose is the live question auto-close schedule (#9584),
+	// read only by GET /api/config/governor/question-autoclose/schedule;
+	// every write to governor.question_autoclose goes through Config like
+	// any other setting. cmd/hive adapts questionclose.Manager to this
+	// consumer-defined interface so pkg/dashboard does not import it. Nil in
+	// bare test Dependencies.
+	QuestionAutoclose QuestionAutocloseSchedule
 }
 
 type NousState struct {

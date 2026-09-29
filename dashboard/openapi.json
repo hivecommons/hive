@@ -9075,6 +9075,155 @@
         }
       }
     },
+    "/api/config/governor/question-autoclose": {
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Question auto-close settings",
+        "description": "Returns governor.question_autoclose (enabled, hours) with env overrides and the default resolved. Requires owner role.",
+        "responses": {
+          "200": {
+            "description": "Question auto-close config",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "hours": {
+                      "type": "integer",
+                      "description": "Objection window in hours, env overrides and default resolved"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires owner role"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Update question auto-close settings",
+        "description": "Updates governor.question_autoclose. Fields are pointer-typed; absent fields are unchanged. Requires owner role.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "hours": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Must be 1 or greater"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated (same shape as GET)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "hours": {
+                      "type": "integer",
+                      "description": "Objection window in hours, env overrides and default resolved"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body or hours below 1"
+          },
+          "403": {
+            "description": "Requires owner role"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
+    "/api/config/governor/question-autoclose/schedule": {
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Live question auto-close schedule",
+        "description": "Read-only view of the in-memory schedule: one row per answered question issue waiting out its objection window. Empty and disabled when the feature is off. Requires owner role.",
+        "responses": {
+          "200": {
+            "description": "Schedule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "issue": {
+                            "type": "integer"
+                          },
+                          "answered_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "closes_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "scheduled"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires owner role"
+          }
+        }
+      }
+    },
     "/api/config/governor/replan": {
       "get": {
         "tags": [

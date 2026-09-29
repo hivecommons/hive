@@ -1430,7 +1430,7 @@ func (b *boot) wireBootClosures() {
 			KnowledgePrimer:      knowledgePrimerControl{b: b},
 			MetricsCollector:     b.metricsCollector,
 			RotationMgr:          b.rotationMgr,
-			QuestionAutoclose:    b.questionAutoclose,
+			QuestionAutoclose:    questionAutocloseView{b: b},
 			HeadroomPublisher:    b.quotaReadingPublisher,
 			// #3972: hand the ACMM advisor the SAME cached fleet-stats collector
 			// the heartbeat reads, so its merge-success signal reuses the existing
@@ -3330,7 +3330,7 @@ func (b *boot) bootSupervision() {
 	b.sched.SetInflightLookup(composeInflight(b.dashSrv.LinearSessionHolder,
 		claimsInflightLookup(b.issueClaims, b.cfg.Project.Org)))
 	// #9584: close answered question issues unless the author objects (default off).
-	b.questionAutoclose = wireQuestionAutoclose(b.ctx, b.cfg, b.sched, func() *github.Client { return b.ghClient }, b.logger)
+	b.questionAutoclose.Store(wireQuestionAutoclose(b.ctx, b.cfg, b.sched, func() *github.Client { return b.ghClient }, b.logger))
 	// The pr-request watcher's PR-opened hook (Linear session narration, the
 	// lifecycle timeline and the #9583 follow-up session pointer) is installed
 	// by configureGitHubClient's dashboard tier (#9614), so a rebuilt client

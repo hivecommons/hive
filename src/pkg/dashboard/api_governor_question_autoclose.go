@@ -2,9 +2,9 @@ package dashboard
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/questionclose"
 )
 
 // Question auto-close (hivecommons/hive#9584) dashboard surface — the
@@ -123,30 +123,47 @@ type questionAutocloseScheduleEntry struct {
 	State      string `json:"state"`
 }
 
+// QuestionAutocloseScheduled is one issue the hive has answered and is
+// waiting out the objection window for.
+type QuestionAutocloseScheduled struct {
+	Repo       string
+	Issue      int
+	AnsweredAt time.Time
+	Deadline   time.Time
+}
+
+// QuestionAutocloseSchedule is the consumer-defined view of the live
+// question auto-close schedule (the questionclose.Manager in production).
+// Defined here so pkg/dashboard does not import pkg/questionclose; the
+// composition root in cmd/hive adapts the concrete Manager.
+type QuestionAutocloseSchedule interface {
+	Enabled() bool
+	ScheduledQuestions() []QuestionAutocloseScheduled
+}
+
 // questionAutocloseScheduleResponse reads the live schedule off the wired
-// *questionclose.Manager. deps.QuestionAutoclose is nil when the feature is
-// off (wireQuestionAutoclose never constructs a Manager in that case) or
-// when bare test Dependencies never set it — either way Scheduled() on a
-// nil Manager returns nil, so this renders an empty list rather than
+// QuestionAutocloseSchedule. deps.QuestionAutoclose is nil in bare test
+// Dependencies, and the production adapter reports disabled with no entries
+// when the feature is off (wireQuestionAutoclose never constructs a Manager
+// in that case) - either way this renders an empty list rather than
 // erroring.
 func questionAutocloseScheduleResponse(deps *Dependencies) map[string]interface{} {
-	var mgr *questionclose.Manager
-	if deps != nil {
-		mgr = deps.QuestionAutoclose
-	}
-	entries := mgr.Scheduled()
-	out := make([]questionAutocloseScheduleEntry, 0, len(entries))
-	for _, e := range entries {
-		out = append(out, questionAutocloseScheduleEntry{
-			Repo:       e.Repo,
-			Issue:      e.Issue,
-			AnsweredAt: e.AnsweredAt.UTC().Format(rfc3339Millis),
-			ClosesAt:   e.Deadline.UTC().Format(rfc3339Millis),
-			State:      "scheduled",
-		})
+	out := make([]questionAutocloseScheduleEntry, 0)
+	enabled := false
+	if deps != nil && deps.QuestionAutoclose != nil {
+		enabled = deps.QuestionAutoclose.Enabled()
+		for _, e := range deps.QuestionAutoclose.ScheduledQuestions() {
+			out = append(out, questionAutocloseScheduleEntry{
+				Repo:       e.Repo,
+				Issue:      e.Issue,
+				AnsweredAt: e.AnsweredAt.UTC().Format(rfc3339Millis),
+				ClosesAt:   e.Deadline.UTC().Format(rfc3339Millis),
+				State:      "scheduled",
+			})
+		}
 	}
 	return map[string]interface{}{
-		"enabled": mgr.Enabled(),
+		"enabled": enabled,
 		"entries": out,
 	}
 }

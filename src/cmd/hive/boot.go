@@ -105,7 +105,7 @@ type boot struct {
 	nousState                     *dashboard.NousState
 	inceptionEngine               *knowledge.InceptionEngine
 	rotationMgr                   *rotation.Manager
-	questionAutoclose             *questionclose.Manager
+	questionAutoclose             atomic.Pointer[questionclose.Manager]
 	wd                            *watchdog.Reconciler
 	onDemandFromPack              map[string]bool
 	refreshDashboard              func()

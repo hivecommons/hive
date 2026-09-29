@@ -46,3 +46,33 @@ func TestWireQuestionAutoclose_RespectsToggle(t *testing.T) {
 		t.Fatalf("nil client provider did work: %+v", rep)
 	}
 }
+
+// TestQuestionAutocloseView_ReadsManagerLazily pins the dashboard adapter:
+// before bootSupervision stores a manager (and whenever the feature is off)
+// it reports disabled with an empty schedule, and after the store it reflects
+// the live manager without re-registering the dashboard dependencies.
+func TestQuestionAutocloseView_ReadsManagerLazily(t *testing.T) {
+	t.Setenv(config.QuestionAutocloseEnvVar, "")
+	questionAutoclosePath = filepath.Join(t.TempDir(), "question-autoclose.json")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	b := &boot{}
+	view := questionAutocloseView{b: b}
+	if view.Enabled() || len(view.ScheduledQuestions()) != 0 {
+		t.Fatal("view before any manager must be disabled and empty")
+	}
+	if (questionAutocloseView{}).Enabled() {
+		t.Fatal("zero view must be disabled")
+	}
+
+	on := &config.Config{Governor: config.GovernorConfig{QuestionAutoclose: config.QuestionAutocloseConfig{Enabled: true, Hours: 2}}}
+	b.questionAutoclose.Store(wireQuestionAutoclose(ctx, on, scheduler.New(on, logger), func() *github.Client { return nil }, logger))
+	if !view.Enabled() {
+		t.Fatal("view did not pick up the stored manager")
+	}
+	if got := view.ScheduledQuestions(); got == nil || len(got) != 0 {
+		t.Fatalf("fresh manager schedule = %#v, want empty non-nil slice", got)
+	}
+}
