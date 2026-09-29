@@ -18,6 +18,14 @@ concurrency:
   group: omp-smoke
   cancel-in-progress: false
 
+# Build-cache isolation for the self-hosted pool (see
+# .github/scripts/go-cache-guard.sh). `job` gives each job its own GOCACHE
+# under RUNNER_TEMP instead of the cephfs volume every runner pod shares;
+# GOMODCACHE stays shared. Set the repo variable HIVE_GO_BUILD_CACHE=shared
+# to go back to the shared build cache without a code change.
+env:
+  GO_CACHE_GUARD_BUILD_CACHE: ${{ vars.HIVE_GO_BUILD_CACHE || 'job' }}
+
 jobs:
   smoke:
     if: github.repository == 'hivecommons/hive'

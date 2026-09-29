@@ -84,6 +84,12 @@ env:
   # observed 16-minute "Restore warm Go build cache" steps against a ~2-minute
   # cold compile. Abort a segment after 1 minute and let the job build instead.
   ACTIONS_CACHE_SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
+  # Build-cache isolation for the self-hosted pool (see
+  # .github/scripts/go-cache-guard.sh). `job` gives each job its own GOCACHE
+  # under RUNNER_TEMP instead of the cephfs volume every runner pod shares;
+  # GOMODCACHE stays shared. Set the repo variable HIVE_GO_BUILD_CACHE=shared
+  # to go back to the shared build cache without a code change.
+  GO_CACHE_GUARD_BUILD_CACHE: ${{ vars.HIVE_GO_BUILD_CACHE || 'job' }}
 
 
 # Cancel superseded PR runs only (#4623). A new push to a PR makes the

@@ -221,3 +221,45 @@ kubectl -n arc-v2-hive logs job/gocache-prune-now
 The PVC was grown 200Gi → 500Gi on 2026-09-28 (`allowVolumeExpansion: true` on
 `ocs-storagecluster-cephfs`; online, no pod restart). If usage still trends up
 week over week, lower `MAX_AGE_DAYS` before growing the volume again.
+
+## Shared Go build cache: per-job isolation (2026-09-29)
+
+Bounding the volume's size (above) did not stop Go jobs failing on it. On
+2026-09-29, with the PVC at ~238G of 500G (far from full), a sample of 371
+failed self-hosted jobs showed:
+
+| Symptom | Jobs | Where |
+| --- | --- | --- |
+| `open /mnt/gocache/build/<xx>/<id>-a: permission denied` | 73 | every runner node, 766 distinct cache files |
+| `can't find export data (bufio: buffer full)` | ~22 | every runner node |
+| golangci-lint `no go files to analyze` | 10 | follows from the two above (package load fails) |
+| `write /mnt/gocache/build/...: no space left on device` | 5 | while the volume had ~300G free |
+
+The `-a` error is Go failing to *reopen an existing index entry for write*
+(`os.OpenFile(O_WRONLY|O_CREATE)`), and the export-data error is a torn
+build output. Neither can be seen by `go-cache-guard.sh`'s writability probe,
+because the directory itself stays writable. Both come from up to
+`maxRunners` pods on several nodes writing one cephfs directory tree at once;
+Go only promises safe concurrent cache use on a local filesystem.
+
+`go-cache-guard.sh` now takes `GO_CACHE_GUARD_BUILD_CACHE`:
+
+| Value | Effect |
+| --- | --- |
+| `job` | GOCACHE under `/mnt/gocache` is moved to `$RUNNER_TEMP/go-cache-guard/gocache` for the job. GOMODCACHE stays shared. |
+| `shared` | Previous behaviour: shared GOCACHE, pruned / fallen back only when unwritable. |
+
+Every workflow that runs the guard sets it from the repository variable
+`HIVE_GO_BUILD_CACHE`, defaulting to `job`. To go back to the shared build
+cache without a code change:
+
+```sh
+gh variable set HIVE_GO_BUILD_CACHE --repo hivecommons/hive --body shared
+```
+
+Cost: each job compiles cold (~2 minutes for a `-race` shard, the same cost
+GitHub-hosted runners pay without a warm-cache hit) and holds its build cache
+in the pod's `runner-home` emptyDir (node disk, gone with the pod). A GOCACHE
+outside `/mnt/gocache` (GitHub-hosted runners) is never moved, so their
+Actions-cache warm restore keeps working. With `job` as the default the
+`build/` tree on the PVC stops growing; `hive-gocache-prune` ages it out.

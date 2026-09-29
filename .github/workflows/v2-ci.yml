@@ -13,7 +13,7 @@ on:
     # not run on the one change that can break it — which is how the quick start
     # shipped broken twice over. src/docs/** already triggers this workflow via
     # src/**, so this is the same rule applied to the docs outside src/.
-    paths: ['src/**', 'bin/**', 'config/**', 'README.md', 'docs/**', '.github/scripts/ci-install-tool.sh', '.github/scripts/test-ci-install-tool-apt-cache.sh', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/docker.yml', '.github/workflows/tagged-release.yml']
+    paths: ['src/**', 'bin/**', 'config/**', 'README.md', 'docs/**', '.github/scripts/ci-install-tool.sh', '.github/scripts/test-ci-install-tool-apt-cache.sh', '.github/scripts/go-cache-guard.sh', '.github/scripts/test-go-cache-guard.sh', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/docker.yml', '.github/workflows/tagged-release.yml']
   pull_request:
     branches: [v4, v5, v6]
     # bin/** is in scope because the gh wrapper is a SECURITY boundary (it is the
@@ -26,7 +26,7 @@ on:
     # not run on the one change that can break it — which is how the quick start
     # shipped broken twice over. src/docs/** already triggers this workflow via
     # src/**, so this is the same rule applied to the docs outside src/.
-    paths: ['src/**', 'bin/**', 'config/**', 'README.md', 'docs/**', '.github/scripts/ci-install-tool.sh', '.github/scripts/test-ci-install-tool-apt-cache.sh', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/docker.yml', '.github/workflows/tagged-release.yml']
+    paths: ['src/**', 'bin/**', 'config/**', 'README.md', 'docs/**', '.github/scripts/ci-install-tool.sh', '.github/scripts/test-ci-install-tool-apt-cache.sh', '.github/scripts/go-cache-guard.sh', '.github/scripts/test-go-cache-guard.sh', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/docker.yml', '.github/workflows/tagged-release.yml']
 
 permissions:
   contents: read
@@ -46,6 +46,12 @@ concurrency:
 # (see v2-tests.yml — observed 16-minute restore steps on some nodes).
 env:
   ACTIONS_CACHE_SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
+  # Build-cache isolation for the self-hosted pool (see
+  # .github/scripts/go-cache-guard.sh). `job` gives each job its own GOCACHE
+  # under RUNNER_TEMP instead of the cephfs volume every runner pod shares;
+  # GOMODCACHE stays shared. Set the repo variable HIVE_GO_BUILD_CACHE=shared
+  # to go back to the shared build cache without a code change.
+  GO_CACHE_GUARD_BUILD_CACHE: ${{ vars.HIVE_GO_BUILD_CACHE || 'job' }}
 
 jobs:
   build-and-test:
@@ -86,6 +92,10 @@ jobs:
       - name: CI install tool apt cache tests
         working-directory: .
         run: bash .github/scripts/test-ci-install-tool-apt-cache.sh
+
+      - name: Go cache guard tests
+        working-directory: .
+        run: bash .github/scripts/test-go-cache-guard.sh
 
       - name: Vet
         run: go vet ./...
