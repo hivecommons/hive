@@ -143,7 +143,7 @@ func (h *Handler) Handle(ctx context.Context, ev Event) error {
 		return h.opts.Store.Mark(ev.NodeID)
 	}
 	if ev.Action.Source != "" {
-		if !trustedActionCommentAuthor(ev.Author, h.opts.Actions) {
+		if !trustedActionCommentAuthor(ev.Author, h.actionsConfig()) {
 			h.decline(ev, "action-author", "")
 			return h.mark(ev)
 		}

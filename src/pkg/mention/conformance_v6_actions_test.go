@@ -181,6 +181,51 @@ func TestV6ConformanceAction_UsesLiveActionsConfig(t *testing.T) {
 	}
 }
 
+// TestV6ConformanceAction_TrustedCommentAuthorReadLive guards against a
+// regression where the action-marker author check re-read h.opts.Actions
+// (a value snapshot, zero unless the static Options.Actions field is set)
+// instead of the live h.actionsConfig() getter, silently ignoring a
+// configured trusted_comment_authors override (hivecommons/hive#9169).
+func TestV6ConformanceAction_TrustedCommentAuthorReadLive(t *testing.T) {
+	store, err := NewStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := config.GitHubActionsConfig{
+		Enabled:               true,
+		IdentityMap:           map[string]string{"ci-bot": "alice"},
+		TrustedCommentAuthors: []string{"relay[bot]"},
+	}
+	var audit, kick []string
+	h := NewHandler(Options{
+		Config:      config.GitHubMentionsConfig{Enabled: true, MinRole: config.RoleReadWrite},
+		ActionsFunc: func() config.GitHubActionsConfig { return actions },
+		Roles: func(login string) (string, bool) {
+			if login == "alice" {
+				return config.RoleReadWrite, true
+			}
+			return "", false
+		},
+		Repos: func() []string { return []string{"org/repo"} },
+		Agents: func() []AgentInfo {
+			return []AgentInfo{{Name: "scanner", Enabled: true, Converse: true, Mention: true, GovernorKick: true}}
+		},
+		GitHub: &fakeGH{app: "hive[bot]", actionRun: ActionRun{Repository: "org/repo", Actor: "ci-bot"}},
+		Store:  store,
+		Kick:   func(agent, msg, source string) error { kick = append(kick, source); return nil },
+		Audit:  func(action, detail, agent string) { audit = append(audit, action+":"+detail) },
+	})
+
+	ev := actionEvent("@hive ask scanner review this PR")
+	ev.Author = "relay[bot]"
+	if err := h.Handle(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if len(kick) != 1 || containsAudit(audit, "guard=action-author") {
+		t.Fatalf("custom trusted_comment_authors was not read from the live actions config: kicks=%v audit=%v", kick, audit)
+	}
+}
+
 func TestV6ConformanceAction_IOSCANBlocksPrompt(t *testing.T) {
 	var audit, kick []string
 	h := actionHandler(t, config.GitHubActionsConfig{
