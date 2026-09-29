@@ -614,6 +614,10 @@ type DigestOptions struct {
 	VerifyPath func(path string) bool
 	// Advice carries the frozen owner-advice epoch shared with the dashboard card.
 	Advice *hiveadvisor.Result
+	// DashboardURL is the dashboard's public origin (dashboard.public_url or
+	// hub.dashboard_url). Advice links are dashboard-relative export paths;
+	// with an origin they render as clickable links, without one as code.
+	DashboardURL string
 
 	// ResolveRef reports whether a GitHub issue or pull request has closed.
 	//
@@ -1270,7 +1274,7 @@ func FormatDigestMarkdown(d *Digest, opts DigestOptions) string {
 		b.WriteString(fmt.Sprintf("## 🐝 Advisory Digest — %s\n\n", d.GeneratedAt.Format("2006-01-02 15:04 MST")))
 		b.WriteString("> Automated code review findings from [Hive](https://github.com/hivecommons/hive) agents. ")
 		b.WriteString("This comment is updated periodically.\n\n")
-		writeAdviceSection(&b, opts.Advice)
+		writeAdviceSection(&b, opts.Advice, opts.DashboardURL)
 		_, unverifiedShown := splitResolved(d.RecentlyResolved)
 		unverified := len(unverifiedShown) + d.UnverifiedOverflowCount
 		switch {
@@ -1310,7 +1314,7 @@ func FormatDigestMarkdown(d *Digest, opts DigestOptions) string {
 	b.WriteString(fmt.Sprintf("## 🐝 Advisory Digest — %s\n\n", d.GeneratedAt.Format("2006-01-02 15:04 MST")))
 	b.WriteString("> Automated code review findings from [Hive](https://github.com/hivecommons/hive) agents. ")
 	b.WriteString("Each finding includes a file reference and suggested fix. This comment is updated periodically.\n\n")
-	writeAdviceSection(&b, opts.Advice)
+	writeAdviceSection(&b, opts.Advice, opts.DashboardURL)
 	b.WriteString(fmt.Sprintf("**Findings:** %d\n\n", d.TotalCount))
 	writeCapNote(&b, d)
 
@@ -1438,14 +1442,22 @@ func FormatDigestMarkdown(d *Digest, opts DigestOptions) string {
 // writeCapNote announces a top-N cap and how to lift it. Rendered only when the
 // digest was actually shortened, so an uncapped digest carries no noise.
 
-func writeAdviceSection(b *strings.Builder, advice *hiveadvisor.Result) {
+func writeAdviceSection(b *strings.Builder, advice *hiveadvisor.Result, dashboardURL string) {
 	if advice == nil || len(advice.Recommendations) == 0 {
 		return
 	}
 	b.WriteString("## Advice\n\n")
-	b.WriteString(fmt.Sprintf("> Frozen for governor mode `%s` until %s (next review in %d day(s)).\n\n",
+	b.WriteString(fmt.Sprintf("> Frozen for governor mode `%s` until %s (next review in %d day(s)). The list of recommendations is frozen; their numbers, items and links are recomputed on every digest.\n",
 		advice.Epoch.Mode, advice.Epoch.End.Format("2006-01-02"), advice.NextReviewInDays))
+	c := advice.Counts
+	b.WriteString(fmt.Sprintf(">\n> Counts quoted: governor actionable queue %d PRs / %d issues (what mode and cadence key on; excludes held, draft, in-review and human-gated items) — Overview chart %d open PRs / %d open issues (every open or held item across repo cards; the queue-health advice counts these).\n\n",
+		c.GovernorPRs, c.GovernorIssues, c.OverviewPRs, c.OverviewIssues))
+	base := strings.TrimRight(strings.TrimSpace(dashboardURL), "/")
 	for _, rec := range advice.Recommendations {
+		if rec.Cleared {
+			b.WriteString(fmt.Sprintf("- ~~**%s**~~ — %s\n", rec.Title, rec.Rationale))
+			continue
+		}
 		b.WriteString(fmt.Sprintf("- **%s** — %s", rec.Title, rec.Rationale))
 		if len(rec.Signals) > 0 {
 			parts := make([]string, 0, len(rec.Signals))
@@ -1455,6 +1467,41 @@ func writeAdviceSection(b *strings.Builder, advice *hiveadvisor.Result) {
 			b.WriteString(" (signals: " + strings.Join(parts, ", ") + ")")
 		}
 		b.WriteString("\n")
+		if len(rec.Items) > 0 {
+			parts := make([]string, 0, len(rec.Items))
+			for _, it := range rec.Items {
+				ref := fmt.Sprintf("%s#%d", it.Repo, it.Number)
+				if it.URL != "" {
+					ref = fmt.Sprintf("[%s](%s)", ref, it.URL)
+				}
+				if it.Note != "" {
+					ref += " (" + it.Note + ")"
+				}
+				parts = append(parts, ref)
+			}
+			b.WriteString("  - First: " + strings.Join(parts, ", ") + "\n")
+		}
+		if len(rec.Links) > 0 {
+			parts := make([]string, 0, len(rec.Links))
+			for _, l := range rec.Links {
+				if base != "" {
+					parts = append(parts, fmt.Sprintf("[%s](%s%s)", l.Label, base, l.URL))
+				} else {
+					parts = append(parts, fmt.Sprintf("%s: `%s`", l.Label, l.URL))
+				}
+			}
+			b.WriteString("  - Full list: " + strings.Join(parts, ", ") + "\n")
+		}
+	}
+	if len(advice.Bands) > 0 {
+		b.WriteString("\nBands named above (same rules as the Overview chart):\n")
+		for _, band := range advice.Bands {
+			kind := "PRs"
+			if band.Kind == "issue" {
+				kind = "issues"
+			}
+			b.WriteString(fmt.Sprintf("- **%s** (%s): %s\n", band.Label, kind, band.Rule))
+		}
 	}
 	b.WriteString("\n")
 }

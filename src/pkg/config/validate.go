@@ -359,3 +359,91 @@ func validateAPIURL(raw string) error {
 	}
 	return nil
 }
+
+func (c *Config) validate() error {
+	return c.validateWithOptions(ValidateOptions{RequireAgents: true})
+}
+
+func (c *Config) validateWithOptions(opts ValidateOptions) error {
+	return c.ValidateWithOptions(opts)
+}
+
+func validateChannels(agentName string, channels []ChannelConfig) error {
+	return ValidateChannels(agentName, channels)
+}
+
+// ValidateChannels rejects any channel declaration whose type has no trigger
+// runtime, and rejects mention-only configs that would suppress governor kicks
+// while waiting for an inbound mention. Exported so config writers such as the
+// dashboard channels endpoint can fail fast before persisting.
+func ValidateChannels(agentName string, channels []ChannelConfig) error {
+	hasKick := false
+	for _, ch := range channels {
+		if ch.Type == ChannelTypeKick {
+			hasKick = true
+			break
+		}
+	}
+	for i, ch := range channels {
+		if ch.Type != ChannelTypeKick && ch.Type != ChannelTypeMention {
+			return fmt.Errorf("agent %s: channel[%d]: type %q has no trigger runtime (only %q and %q are supported; the webhook/discord/schedule/bead runtime was removed, see #5591) — declaring it would leave the agent permanently unkicked", agentName, i, ch.Type, ChannelTypeKick, ChannelTypeMention)
+		}
+		if ch.Type == ChannelTypeMention && !hasKick {
+			return fmt.Errorf("agent %s: channel[%d]: type %q must be paired with a %q channel; mention-only agents have no governor kick runtime and would remain permanently dormant", agentName, i, ch.Type, ChannelTypeKick)
+		}
+	}
+	return nil
+}
+
+func validateTools(agentName string, tools *ToolsConfig) error {
+	if tools == nil {
+		return nil
+	}
+	validPresets := map[string]bool{"": true, "advisory": true, "issues-only": true, "issues-prs": true, "full": true}
+	if !validPresets[tools.Preset] {
+		return fmt.Errorf("agent %s: tools.preset %q is invalid (must be advisory, issues-only, issues-prs, or full)", agentName, tools.Preset)
+	}
+	validActions := map[string]bool{"allow": true, "deny": true}
+	for i, rule := range tools.Rules {
+		if rule.Pattern == "" {
+			return fmt.Errorf("agent %s: tools.rules[%d]: pattern is required", agentName, i)
+		}
+		if !validActions[rule.Action] {
+			return fmt.Errorf("agent %s: tools.rules[%d]: action must be allow or deny, got %q", agentName, i, rule.Action)
+		}
+	}
+	return nil
+}
+
+func validateConnections(agentName string, conns []ConnectionConfig) error {
+	validTypes := map[string]bool{"mcp": true, "api": true, "knowledge": true}
+	seen := map[string]bool{}
+	for i, conn := range conns {
+		if conn.Name == "" {
+			return fmt.Errorf("agent %s: connections[%d]: name is required", agentName, i)
+		}
+		if seen[conn.Name] {
+			return fmt.Errorf("agent %s: connections[%d]: duplicate name %q", agentName, i, conn.Name)
+		}
+		seen[conn.Name] = true
+		if !validTypes[conn.Type] {
+			return fmt.Errorf("agent %s: connections[%d]: invalid type %q (must be mcp, api, or knowledge)", agentName, i, conn.Type)
+		}
+		if (conn.Type == "mcp" || conn.Type == "api") && conn.URI == "" {
+			return fmt.Errorf("agent %s: connections[%d]: %s requires a uri", agentName, i, conn.Type)
+		}
+		if conn.Auth != nil {
+			validAuthTypes := map[string]bool{"env": true, "file": true}
+			if !validAuthTypes[conn.Auth.Type] {
+				return fmt.Errorf("agent %s: connections[%d]: auth.type must be env or file, got %q", agentName, i, conn.Auth.Type)
+			}
+			if conn.Auth.Type == "env" && conn.Auth.EnvVar == "" {
+				return fmt.Errorf("agent %s: connections[%d]: auth.env_var is required when auth.type is env", agentName, i)
+			}
+			if conn.Auth.Type == "file" && conn.Auth.File == "" {
+				return fmt.Errorf("agent %s: connections[%d]: auth.file is required when auth.type is file", agentName, i)
+			}
+		}
+	}
+	return nil
+}

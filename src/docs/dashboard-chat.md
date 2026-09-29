@@ -30,7 +30,7 @@ operator's `!runs reject …` never shows up in another's panel as their own wor
 ## Poll cursor contract
 
 `GET /api/chat/messages?since=<seq>` returns an envelope, not a bare list
-(`Poll`, `src/pkg/dashchat/bot.go:47`; `handleChatMessages`,
+(`Poll`, `src/pkg/dashchat/bot.go:50`; `handleChatMessages`,
 `src/pkg/dashboard/api.go:6669`):
 
 ```json

@@ -17,8 +17,8 @@ func TestDashboardChatActor(t *testing.T) {
 					if got := r.Header.Get("X-Hive-Chat-Actor"); got != "test:"+author {
 						t.Errorf("actor = %q, want test:%s", got, author)
 					}
-					if got := r.Header.Get("Authorization"); got != "Bearer secret" {
-						t.Errorf("authorization = %q", got)
+					if got := r.Header.Get("X-Hive-Internal"); got != "secret" {
+						t.Errorf("X-Hive-Internal = %q", got)
 					}
 					if r.Method == http.MethodGet {
 						writeRunCheckpointPayload(w, "repo/a#1", "Task", 2)

@@ -72,6 +72,7 @@ func enforceHoldGuard(
 	writer forge.IssueWriter,
 	actionable *github.ActionableResult,
 	logger *slog.Logger,
+	selfAuthHoldEnabledOverride ...func(string) bool,
 ) map[string]bool {
 	reReview := map[string]bool{}
 	if actionable == nil {
@@ -83,6 +84,9 @@ func enforceHoldGuard(
 	if cfg != nil {
 		selfAuthHoldEnabledForRepo = cfg.SelfAuthorizationHoldEnabledForRepo
 		org = cfg.Project.Org
+	}
+	if len(selfAuthHoldEnabledOverride) > 0 && selfAuthHoldEnabledOverride[0] != nil {
+		selfAuthHoldEnabledForRepo = selfAuthHoldEnabledOverride[0]
 	}
 
 	fetchCommits := func(repo string, number int) []holdguard.Commit {

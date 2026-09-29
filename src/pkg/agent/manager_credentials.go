@@ -104,6 +104,12 @@ var authErrorPatterns = []string{
 // paneShowsLoginPrompt (a non-destructive "needs login" UI signal) so a slow
 // cold start after an upgrade cannot destroy a still-valid token.
 func matchesAuthError(output string) bool {
+	// "token found but could not be validated" is also what the CLI prints
+	// when GitHub RATE-LIMITED the validation call. That is not a rejection,
+	// and rewriting the token store over it would be pure churn.
+	if paneShowsStartupRateLimit(strings.Split(output, "\n")) {
+		return false
+	}
 	for _, pat := range authErrorPatterns {
 		if strings.Contains(output, pat) {
 			return true

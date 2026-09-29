@@ -718,7 +718,7 @@ agents:
       ref: main              # optional; branch/tag/SHA — omit for the default branch
 ```
 
-`definition_source` is `DefinitionSourceConfig` (`src/pkg/config/config.go:518`), a field on `AgentConfig` (`config.go:935`). `owner`, `repo`, and `path` are required for the source to be considered set (`IsSet()`, `config.go:544`); `ref` is optional and falls back to the repo's default branch. `url` is a fifth, informational-only field the dashboard import UI uses to round-trip the pasted `github.com` blob URL — it plays no part in fetching.
+`definition_source` is `DefinitionSourceConfig` (`src/pkg/config/variables_config.go:93`), a field on `AgentConfig` (`agent_config.go:257`). `owner`, `repo`, and `path` are required for the source to be considered set (`IsSet()`, `variables_config.go:119`); `ref` is optional and falls back to the repo's default branch. `url` is a fifth, informational-only field the dashboard import UI uses to round-trip the pasted `github.com` blob URL — it plays no part in fetching.
 
 ### What it does
 
@@ -765,7 +765,7 @@ Two merge rules to know before you rely on this:
 
 ### The trust boundary: allowlisted repos are seed-only
 
-`definition_source` is gated by `Config.GitHubDefinitionAllowed(slug)` (`config.go:4731`), which simply delegates to `Config.GitHubPromptAllowed(slug)` (`config.go:4711`) — the **same** seed-only gate used by `prompt_source`. Fetching requires both:
+`definition_source` is gated by `Config.GitHubDefinitionAllowed(slug)` (`load.go:565`), which simply delegates to `Config.GitHubPromptAllowed(slug)` (`load.go:545`) — the **same** seed-only gate used by `prompt_source`. Fetching requires both:
 
 ```yaml
 variables:
@@ -775,7 +775,7 @@ variables:
       - my-org/agent-definitions           # exact "owner/repo" slugs only
 ```
 
-This is the property operators most need to understand before enabling the feature: **`variables.security` is honored only from the trusted config seed.** `LoadWithDashboardOverlay` never merges the dashboard overlay's `Variables` block (`config.go:4412`, `config.go:4483-4485`), so:
+This is the property operators most need to understand before enabling the feature: **`variables.security` is honored only from the trusted config seed.** `LoadWithDashboardOverlay` never merges the dashboard overlay's `Variables` block (`load.go:183`, `load.go:246-248`), so:
 
 - A dashboard save cannot turn `allow_github_prompt` on if the seed has it off.
 - A dashboard save cannot add a repo slug to `github_prompt_allowlist`.

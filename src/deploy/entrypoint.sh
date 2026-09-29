@@ -366,7 +366,7 @@ hive_runtime_config_read() {
 # hive_ghe_git_host echoes this hive's configured GitHub host when it is NOT
 # public github.com (i.e. a GitHub Enterprise instance such as github.ibm.com),
 # and nothing at all otherwise. Derived the same way the Go binary's
-# GitHubConfig.HostLabel() derives it (pkg/config/config.go): prefer
+# GitHubConfig.HostLabel() derives it (pkg/config/forge_config.go): prefer
 # github.base_url, fall back to the host portion of github.api_url, strip the
 # scheme and a trailing /api/v3.
 #
@@ -401,7 +401,7 @@ if host and host.lower() != 'api.github.com' and host.lower() != 'github.com':
 
 # hive_git_bot_identity echoes the git identity every agent commits as, as a
 # single "name<TAB>email" line, derived from the SAME config the Go binary uses
-# for Config.EffectiveAIAuthor() (pkg/config/config.go):
+# for Config.EffectiveAIAuthor() (pkg/config/forge_config.go):
 #
 #   1. project.ai_author, when set — the operator's explicit choice, always wins.
 #   2. else, unless github.app_authored_prs is false, the App bot

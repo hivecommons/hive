@@ -17,9 +17,9 @@ verdict` shape with a different failure mode:
 
 | Gate | Location | Failure mode it grew from |
 | --- | --- | --- |
-| Self-merge | `SelfMergeMinACMMLevel` / `AutoMergeConfig.SelfAuthoredAutoMergeAllowed` (`pkg/config/config.go`) | The self-authored sweep originally had **no ACMM check at all** — an L4 hive wrongly self-merged its own PR, and the gate was bolted on afterward. |
+| Self-merge | `SelfMergeMinACMMLevel` / `AutoMergeConfig.SelfAuthoredAutoMergeAllowed` (`pkg/config/review_config.go`) | The self-authored sweep originally had **no ACMM check at all** — an L4 hive wrongly self-merged its own PR, and the gate was bolted on afterward. |
 | Plan approval | `PlanAutoApproveForLevel` (`pkg/config/acmm_packs.go`) | A separate pack lookup consulted only by the decomposition path. |
-| Plan-from-label | `PlanningConfig.PlanFromLabelEnabled` (`pkg/config/config.go`) | A third, independent level check. |
+| Plan-from-label | `PlanningConfig.PlanFromLabelEnabled` (`pkg/config/planning_config.go`) | A third, independent level check. |
 | Merge queue | `isTrustedMerger` + `latestHiveQueueApproval` (`pkg/github/automerge_sweep.go`) | Role- and review-based approval implemented *inside* the sweep. |
 
 The desk is the refactor all four were independently converging on.

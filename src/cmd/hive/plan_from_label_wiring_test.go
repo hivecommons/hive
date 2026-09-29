@@ -6,6 +6,7 @@ import (
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/planning"
 )
@@ -86,4 +87,43 @@ func TestPlanFromLabeledIssuesNilInputs(t *testing.T) {
 		planning.PlanningMinACMMLevel)
 	planFromLabeledIssues(&github.ActionableResult{}, nil, mgr, nil, nil, restoreTestLogger(), planLabelTestConfig(),
 		planning.PlanningMinACMMLevel)
+}
+
+// With runs.spektacular enabled and a dashboard server present, none of the
+// enumerated issues carrying a design label, planFromLabeledIssues must not
+// compact actionable.Issues.Items in place: that slice is already published
+// to lastActionable/dashboard readers (refreshDashboard, BuildFrontendStatus)
+// which iterate it concurrently on the eval goroutine. Regression test for
+// the issues[:0] aliasing bug (hivecommons/hive#9174).
+func TestPlanFromLabeledIssuesDoesNotCorruptActionableItemsWithSpektacular(t *testing.T) {
+	store := newPlanTestStore(t)
+	stores := map[string]*beads.Store{planning.ArchitectAgentName: store}
+	mgr := agent.NewManager(map[string]config.AgentConfig{}, restoreTestLogger(), agent.ProjectContext{})
+	dashSrv := dashboard.NewServer(0, restoreTestLogger())
+
+	original := []github.Issue{
+		planLabeledIssue(1, "hive-plan"),
+		planLabeledIssue(2, "kind/bug"),
+		planLabeledIssue(3),
+	}
+	items := make([]github.Issue, len(original))
+	copy(items, original)
+	actionable := &github.ActionableResult{Issues: github.IssueResult{Items: items}}
+
+	v := true
+	cfg := &config.Config{Planning: config.PlanningConfig{PlanFromLabel: &v}}
+	cfg.Runs.Spektacular.Enabled = true
+
+	planFromLabeledIssues(actionable, stores, mgr, nil, dashSrv, restoreTestLogger(), cfg,
+		planning.PlanningMinACMMLevel)
+
+	if len(actionable.Issues.Items) != len(original) {
+		t.Fatalf("actionable.Issues.Items len changed: got %d, want %d", len(actionable.Issues.Items), len(original))
+	}
+	for i, want := range original {
+		got := actionable.Issues.Items[i]
+		if got.Number != want.Number {
+			t.Errorf("actionable.Issues.Items[%d].Number = %d, want %d (slice corrupted in place)", i, got.Number, want.Number)
+		}
+	}
 }

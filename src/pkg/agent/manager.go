@@ -299,8 +299,14 @@ type AgentProcess struct {
 	// tokenRestartGaveUp latches once the cap is hit so the diagnosis is logged
 	// a single time rather than every poll (~3s). Cleared alongside the counter.
 	tokenRestartGaveUp bool
-	NeedsLogin         bool // true when pane shows a login prompt
-	QuotaExhausted     bool // true when pane shows provider/monthly quota exhaustion
+	// lastRateLimitRestart paces the relaunch of an agent whose CLI start-up
+	// banner reports GitHub rate-limited the credential validation. Distinct
+	// from lastTokenRestart on purpose: this lane has no attempt cap because
+	// the condition clears by itself once the window resets, and it must not
+	// spend the token-restart budget (see paneShowsStartupRateLimit).
+	lastRateLimitRestart time.Time
+	NeedsLogin           bool // true when pane shows a login prompt
+	QuotaExhausted       bool // true when pane shows provider/monthly quota exhaustion
 	// WatchdogConditions is the k8s-style observed-health condition set the
 	// watchdog reconciler publishes for this agent (RFC #4665): Ready /
 	// Authenticated / Producing with lastTransitionTime + reason. Written by
@@ -651,8 +657,18 @@ type Manager struct {
 	// manager's crash loop observes those two conditions without restarting
 	// them. Guarded by m.mu, like the agent map it gates work over.
 	deadSessionRecoveryOwnedElsewhere bool
-	sandboxConfig                     config.AgentSandboxConfig
-	sandboxLauncher                   sandbox.Launcher
+
+	// OOM-kill attribution for crash restarts (see oomkill.go). oomMu is its
+	// own mutex: the counter is read on the crash-check path, which already
+	// holds m.mu in read mode at times, and the flag is consumed from the
+	// eval loop.
+	oomMu                sync.Mutex
+	oomKillsSeen         int
+	oomKillsPrimed       bool
+	crashOOMSuspect      map[string]bool
+	oomKillFilesOverride []string
+	sandboxConfig        config.AgentSandboxConfig
+	sandboxLauncher      sandbox.Launcher
 	// sandboxJobLauncherFactory builds the Kubernetes Job launcher for an
 	// agent on sandbox.runtime: job (#6311). Nil means the real in-cluster
 	// launcher; tests inject a fake through setSandboxJobLauncherFactoryForTest.

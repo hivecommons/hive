@@ -1,0 +1,145 @@
+# hivecommons/hive#9377 et al. — bound node-local ephemeral storage for the
+# ARC v2 runner scale set.
+#
+# JSON-merge patch against AutoscalingRunnerSet/hive-runners in namespace
+# `arc-v2-hive`. CustomResource arrays are replaced by merge patches, so this
+# file carries the full initContainers, containers, and volumes lists from the
+# live scale set plus the ephemeral-storage bounds and spread selector changes.
+#
+# Apply with:
+#   kubectl -n arc-v2-hive patch autoscalingrunnerset hive-runners \
+#     --type merge --patch-file src/deploy/ci-runners/autoscalingrunnerset-ephemeral-storage-patch.yaml
+#
+# Applying this rolls runner pods. Apply while the queue is quiet.
+spec:
+  template:
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              actions.github.com/scale-set-name: hive-runners
+              actions.github.com/scale-set-namespace: arc-v2-hive
+      initContainers:
+        - name: stage-runner
+          image: ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1
+          command:
+            - bash
+            - -c
+            - >-
+              cp -r /runnertmp/. /home/runner/ && mv /home/runner/externalstmp
+              /home/runner/externals && mkdir -p /home/runner/_work && (mkdir -p
+              /mnt/gocache/build /mnt/gocache/mod /mnt/gocache/actions-archive
+              /mnt/gocache/hostedtoolcache || echo WARN: gocache not writable)
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+              ephemeral-storage: 2Gi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+              ephemeral-storage: 5Gi
+          volumeMounts:
+            - name: runner-home
+              mountPath: /home/runner
+            - name: gocache
+              mountPath: /mnt/gocache
+      containers:
+        - name: runner
+          resources:
+            requests:
+              cpu: "2"
+              memory: 1Gi
+              ephemeral-storage: 10Gi
+            limits:
+              cpu: "6"
+              memory: 8Gi
+              ephemeral-storage: 30Gi
+          env:
+            - name: DOCKER_HOST
+              value: unix:///var/run/docker.sock
+            - name: RUNNER_WAIT_FOR_DOCKER_IN_SECONDS
+              value: "120"
+            - name: GOCACHE
+              value: /mnt/gocache/build
+            - name: GOMODCACHE
+              value: /mnt/gocache/mod
+            - name: GOFLAGS
+              value: -modcacherw
+            - name: ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE
+              value: /mnt/gocache/actions-archive
+            - name: GOMAXPROCS
+              value: "6"
+            - name: ACTIONS_RUNNER_SYMLINK_CACHED_ACTIONS
+              value: "true"
+            - name: RUNNER_TOOL_CACHE
+              value: /mnt/gocache/hostedtoolcache
+          volumeMounts:
+            - name: runner-home
+              mountPath: /home/runner
+            - name: runner-tmp
+              mountPath: /tmp
+            - name: dind-sock
+              mountPath: /var/run
+            - name: apt-mirror
+              mountPath: /etc/apt/sources.list.d/ubuntu.sources
+              subPath: ubuntu.sources
+              readOnly: true
+            - name: apt-mirror
+              mountPath: /etc/apt/apt.conf.d/99-force-ipv4
+              subPath: 99-force-ipv4
+              readOnly: true
+            - name: gocache
+              mountPath: /mnt/gocache
+        - name: dind
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+              ephemeral-storage: 10Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+              ephemeral-storage: 30Gi
+          env:
+            - name: DOCKER_GROUP_GID
+              value: "121"
+          args:
+            - >-
+              for i in 1 2 3 4 5; do dockerd
+              --host=unix:///var/run/docker.sock --group=$(DOCKER_GROUP_GID) && exit
+              0; echo "dockerd exited, retry $i" >&2; sleep 5; done; exit 1
+          volumeMounts:
+            - name: runner-home
+              mountPath: /home/runner
+            - name: dind-sock
+              mountPath: /var/run
+            - name: dind-tmp
+              mountPath: /tmp
+            - name: dind-docker-lib
+              mountPath: /var/lib/docker
+      volumes:
+        - name: runner-home
+          emptyDir:
+            sizeLimit: 25Gi
+        - name: runner-tmp
+          emptyDir:
+            sizeLimit: 5Gi
+        - name: dind-sock
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: dind-tmp
+          emptyDir:
+            sizeLimit: 5Gi
+        - name: dind-docker-lib
+          emptyDir:
+            sizeLimit: 25Gi
+        - name: apt-mirror
+          configMap:
+            name: hive-runner-apt-mirror
+        - name: gocache
+          persistentVolumeClaim:
+            claimName: hive-runner-gocache

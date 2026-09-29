@@ -2,6 +2,8 @@ package mention
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,6 +14,15 @@ import (
 
 const contextTTL = 24 * time.Hour
 
+// seenTTL bounds how long a dedupe key stays in the seen set. Mention node
+// IDs only need to outlive the per-repo watermark (the poller drops comments
+// created before it) and GitHub's 3-day webhook redelivery window, but the
+// set also carries Actions run keys (repo:run_id:run_attempt) and OIDC jti
+// keys, so the TTL must exceed GitHub's 35-day maximum workflow-run
+// lifetime: a later job of the same run attempt must still be recognised as
+// a replay.
+const seenTTL = 45 * 24 * time.Hour
+
 type Store struct {
 	mu    sync.Mutex
 	path  string
@@ -20,7 +31,14 @@ type Store struct {
 
 type storeState struct {
 	Watermarks map[string]time.Time `json:"watermarks"`
-	Seen       map[string]bool      `json:"seen"`
+	// Seen maps each dedupe key to when it was first marked so entries age
+	// out after seenTTL. It persists under "seen_at", not the legacy "seen"
+	// key, so an older build reading a newer file sees an empty legacy set
+	// instead of failing to parse.
+	Seen map[string]time.Time `json:"seen_at"`
+	// LegacySeen is the pre-TTL bool set: read on load, migrated into Seen,
+	// never written back.
+	LegacySeen map[string]bool      `json:"seen,omitempty"`
 	Pending    map[string][]Context `json:"pending,omitempty"`
 	Active     map[string][]Context `json:"active,omitempty"`
 }
@@ -38,8 +56,14 @@ type Context struct {
 	Accepted   time.Time `json:"accepted"`
 }
 
+// NewStore loads the store at path (an empty path is an in-memory store). A
+// file that cannot be parsed — a torn write from before saves were atomic, or
+// any other corruption — is moved aside to a timestamped ".corrupt-*" backup
+// and the store starts empty instead of failing: the poller re-seeds each
+// repo's watermark to now, so older comments are not replayed, and the
+// mention feature and Actions dispatch dedupe stay available.
 func NewStore(path string) (*Store, error) {
-	s := &Store{path: path, state: storeState{Watermarks: map[string]time.Time{}, Seen: map[string]bool{}, Pending: map[string][]Context{}, Active: map[string][]Context{}}}
+	s := &Store{path: path, state: emptyStoreState()}
 	if path == "" {
 		return s, nil
 	}
@@ -50,29 +74,47 @@ func NewStore(path string) (*Store, error) {
 		}
 		return nil, err
 	}
+	now := time.Now()
 	if len(b) > 0 {
 		if err := json.Unmarshal(b, &s.state); err != nil {
-			return nil, err
+			backup := fmt.Sprintf("%s.corrupt-%d", path, now.UnixNano())
+			if rerr := os.Rename(path, backup); rerr != nil {
+				return nil, errors.Join(fmt.Errorf("parse mention store %s: %w", path, err), fmt.Errorf("back up corrupt mention store: %w", rerr))
+			}
+			slog.Default().Error("mention store corrupt; moved aside and starting empty", "path", path, "backup", backup, "error", err)
+			s.state = emptyStoreState()
+			return s, nil
 		}
 	}
 	if s.state.Watermarks == nil {
 		s.state.Watermarks = map[string]time.Time{}
 	}
 	if s.state.Seen == nil {
-		s.state.Seen = map[string]bool{}
+		s.state.Seen = map[string]time.Time{}
 	}
+	migrated := len(s.state.LegacySeen) > 0
+	for id, ok := range s.state.LegacySeen {
+		if _, exists := s.state.Seen[id]; ok && id != "" && !exists {
+			s.state.Seen[id] = now
+		}
+	}
+	s.state.LegacySeen = nil
 	if s.state.Pending == nil {
 		s.state.Pending = map[string][]Context{}
 	}
 	if s.state.Active == nil {
 		s.state.Active = map[string][]Context{}
 	}
-	if s.pruneExpiredLocked(time.Now(), "load") {
+	if s.pruneExpiredLocked(now, "load") || migrated {
 		if err := s.saveLocked(); err != nil {
 			return nil, err
 		}
 	}
 	return s, nil
+}
+
+func emptyStoreState() storeState {
+	return storeState{Watermarks: map[string]time.Time{}, Seen: map[string]time.Time{}, Pending: map[string][]Context{}, Active: map[string][]Context{}}
 }
 
 func (s *Store) Watermark(repo string) time.Time {
@@ -84,18 +126,23 @@ func (s *Store) Watermark(repo string) time.Time {
 func (s *Store) Seen(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return id != "" && s.state.Seen[id]
+	if id == "" {
+		return false
+	}
+	_, ok := s.state.Seen[id]
+	return ok
 }
 
-func (s *Store) Mark(repo, id string, t time.Time) error {
+// Mark records id as handled. It never moves a repo's watermark: the poller
+// alone advances that, because only it knows which earlier mentions in the
+// same listing still await a retry.
+func (s *Store) Mark(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pruneExpiredLocked(time.Now(), "mutation")
-	if id != "" {
-		s.state.Seen[id] = true
-	}
-	if t.After(s.state.Watermarks[repo]) {
-		s.state.Watermarks[repo] = t
+	now := time.Now()
+	s.pruneExpiredLocked(now, "mutation")
+	if _, exists := s.state.Seen[id]; id != "" && !exists {
+		s.state.Seen[id] = now
 	}
 	return s.saveLocked()
 }
@@ -292,6 +339,12 @@ func (s *Store) pruneExpiredLocked(now time.Time, reason string) bool {
 	changed := false
 	s.state.Pending, changed = pruneContextQueues(s.state.Pending, now, reason, changed)
 	s.state.Active, changed = pruneContextQueues(s.state.Active, now, reason, changed)
+	for id, marked := range s.state.Seen {
+		if now.Sub(marked) > seenTTL {
+			delete(s.state.Seen, id)
+			changed = true
+		}
+	}
 	return changed
 }
 
@@ -315,16 +368,50 @@ func pruneContextQueues(queues map[string][]Context, now time.Time, reason strin
 	return queues, changed
 }
 
+// saveLocked replaces the store file atomically: a crash or OOM kill mid-save
+// leaves either the previous complete document or the new one, never a torn
+// file that would fail to parse on the next boot.
 func (s *Store) saveLocked() error {
 	if s.path == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+	dir := filepath.Dir(s.path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(s.state, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, b, 0o600)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(s.path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := tmp.Write(b); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, s.path); err != nil {
+		return err
+	}
+	committed = true
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
 }

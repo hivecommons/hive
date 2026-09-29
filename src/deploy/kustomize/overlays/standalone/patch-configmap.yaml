@@ -3,7 +3,7 @@
 #
 # A ConfigMap's `data` values are opaque strings, so this whole `hive.yaml`
 # block REPLACES the base one (there is no deep-merge inside the string). Keep
-# it complete. Every key below is verified against src/pkg/config/config.go —
+# it complete. Every key below is verified against src/pkg/config/ —
 # note the exact struct locations, which are easy to get wrong:
 #   - hub.enabled ......... top-level `hub:` block  (HubConfig)
 #   - acmm_level .......... TOP-LEVEL key           (Config.ACMMLevel, *int)
@@ -12,7 +12,7 @@
 #                           — openrouter is a gateway KIND, not a backend value.
 #   - dashboard.hub_proxied / dashboard.authorized_users  (DashboardConfig — the
 #                           runtime reads these off Dashboard, see server.go
-#                           handleLivez/isHubProxied and config.go:3175)
+#                           handleLivez/isHubProxied and pkg/config/dashboard_config.go DashboardConfig)
 #   - github.oauth_client_id  (GitHubConfig.OAuthClientID — read from GitHub,
 #                           NOT Dashboard: see dashboard device-flow auth)
 #   - governor.litellm .... LiteLLMConfig lives UNDER governor: (Config.Governor)

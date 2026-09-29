@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -51,6 +52,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			showsLogin := paneShowsLoginPrompt(tail)
 			bobKeyRejected := effectiveBackend(agent) == bobBackend && paneShowsBobAPIKeyRejected(tail)
 			quotaExhausted := paneShowsQuotaExhausted(tail)
+			rateLimited := paneShowsStartupRateLimit(tail)
 			if showsLogin || bobKeyRejected {
 				showsLogin = true
 				loginStreak++
@@ -93,6 +95,36 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			agent.NeedsLogin = showsLogin
 			agent.QuotaExhausted = quotaExhausted
 			agent.paneMu.Unlock()
+
+			// The CLI could not VALIDATE its token because GitHub rate-limited
+			// the validation call. The credential is intact and no login will
+			// help; the only remedy is a relaunch after the window has had time
+			// to move. Paced by its own cooldown so a fleet sharing one user's
+			// budget does not hammer the exhausted quota, and kept off the
+			// token-restart cap so the give-up latch cannot strand the agent.
+			if rateLimited {
+				m.mu.RLock()
+				lastKick := agent.LastKick
+				m.mu.RUnlock()
+				if lastKick != nil && time.Since(*lastKick) < tokenRestartKickGrace {
+					continue
+				}
+				if time.Since(agent.lastRateLimitRestart).Seconds() < float64(rateLimitRestartCooldownSec) {
+					continue
+				}
+				agent.lastRateLimitRestart = time.Now()
+				agent.LastError = "copilot start-up blocked: GitHub rate-limited the token validation call (token intact; relaunching after cooldown)"
+				m.logger.Warn("copilot token validation rate-limited by GitHub; relaunching after cooldown",
+					"agent", agent.Name,
+					"cooldown_sec", rateLimitRestartCooldownSec,
+				)
+				go func() {
+					if err := m.RestartWithReason(ctx, agent.Name, "github rate limit on token validation"); err != nil {
+						m.logger.Warn("rate-limit relaunch failed", "agent", agent.Name, "error", err)
+					}
+				}()
+				return
+			}
 
 			// Auto-restart agents stuck on the login prompt when a valid
 			// token exists in the shared config.json. This handles the case
@@ -436,7 +468,41 @@ var kickRefusalPatterns = []string{
 	"characteristic of a prompt injection attack",
 }
 
+// kickEchoIssueRef matches "#123" / "PR #50" style references, which occur in
+// echoed kick content (issue and PR lists) and never in an agent's own
+// first-person refusal sentence.
+var kickEchoIssueRef = regexp.MustCompile(`#\d+`)
+
+// looksLikeEchoedKickContent reports whether a pane line is structured
+// markdown from the kick text itself (a bullet, table row, heading, quote,
+// numbered item, bold span, or an issue/PR reference) rather than prose the
+// agent produced. Security-review kicks legitimately list issues titled
+// "prompt injection ..." — matching those as a refusal marked scanner and
+// reviewer KickRefused on hive-qual0 (2026-09-28) and hid the kick's output.
+func looksLikeEchoedKickContent(line string) bool {
+	t := strings.TrimSpace(line)
+	if t == "" {
+		return false
+	}
+	switch t[0] {
+	case '-', '*', '|', '#', '>', '`':
+		return true
+	}
+	if i := strings.IndexByte(t, '.'); i > 0 && i <= 3 {
+		if _, err := strconv.Atoi(t[:i]); err == nil {
+			return true
+		}
+	}
+	if strings.Contains(t, "**") || kickEchoIssueRef.MatchString(t) {
+		return true
+	}
+	return false
+}
+
 func (m *Manager) checkKickRefusal(agent *AgentProcess, line string) {
+	if looksLikeEchoedKickContent(line) {
+		return
+	}
 	lower := strings.ToLower(line)
 	for _, pattern := range kickRefusalPatterns {
 		if strings.Contains(lower, strings.ToLower(pattern)) {

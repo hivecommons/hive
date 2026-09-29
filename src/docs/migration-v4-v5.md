@@ -73,8 +73,10 @@ comments are new in `src/hive.yaml.example`; none are required to boot v5 with a
 v4 config:
 
 - `project.paused_repos` — optional run-state seed for pausing one repository.
-- top-level `auto_merge.allow_unprotected_base` and `auto_merge.no_ci_ok` —
-  explicit safety exceptions for merge-request handling.
+- top-level `auto_merge.no_ci_ok` — explicit safety exception for repositories
+  with no CI by design. `auto_merge.allow_unprotected_base` may still appear in
+  existing v5 configs, but is now accepted as a deprecated no-op: merge requests
+  may target any branch the GitHub App can write.
 - `github.self_authorization_hold` and `project.repo_policies[].self_authorization_hold`
   — optional controls for the self-authorization hold.
 - `agents.<name>.repos` — optional per-agent repository scoping.

@@ -35,8 +35,9 @@ func TestDispatcherFailureAuditAndRegisterNoops(t *testing.T) {
 	defer cancel()
 	var audits atomic.Int32
 	d := NewDispatcher(ctx, nil, func(action, detail, sink string) { audits.Add(1) })
+	d.backoff = []time.Duration{time.Millisecond, time.Millisecond}
 	d.Register(nil, SeverityInfo, 0)
-	d.Register(&fakeSink{name: "bad", fail: 2}, SeverityInfo, 0)
+	d.Register(&fakeSink{name: "bad", fail: 3}, SeverityInfo, 0)
 	d.Dispatch(Event{Severity: SeverityInfo, Title: "x"})
 	waitFor(t, func() bool { return audits.Load() > 0 })
 	d.Stop()
@@ -106,16 +107,16 @@ func TestEmailDigestSpansMidnightAndCapsOldest(t *testing.T) {
 	s.recordDigest(Event{Severity: SeverityInfo, Title: "before midnight"})
 	current = current.Add(2 * time.Minute)
 	s.recordDigest(Event{Severity: SeverityInfo, Title: "after midnight"})
-	if len(s.dig) != 2 {
-		t.Fatalf("midnight rollover dropped events: %d", len(s.dig))
+	if len(s.buf.dig) != 2 {
+		t.Fatalf("midnight rollover dropped events: %d", len(s.buf.dig))
 	}
 	for i := 0; i < maxDigestEvents+3; i++ {
 		s.recordDigest(Event{Severity: SeverityInfo, Title: fmt.Sprintf("event-%d", i)})
 	}
-	if len(s.dig) != maxDigestEvents {
-		t.Fatalf("digest cap len=%d", len(s.dig))
+	if len(s.buf.dig) != maxDigestEvents {
+		t.Fatalf("digest cap len=%d", len(s.buf.dig))
 	}
-	if s.dropped == 0 {
+	if s.buf.dropped == 0 {
 		t.Fatal("expected dropped counter")
 	}
 }

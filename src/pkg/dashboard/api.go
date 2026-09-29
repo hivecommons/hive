@@ -5655,7 +5655,7 @@ func (s *Server) finishGitHubConfigUpdateLocked(auditUser, detail string) (map[s
 		"app_id":                  cfg.GitHub.AppID,
 		"installation_id":         cfg.GitHub.InstallationID,
 		"key_file":                cfg.GitHub.KeyFile,
-		"self_authorization_hold": cfg.GitHub.SelfAuthorizationHoldEnabled(),
+		"self_authorization_hold": cfg.GitHub.SelfAuthorizationHoldEnabledAtLevel(cfg.ACMMLevelOrZero()),
 	}
 
 	// Resolve the signing key the same way the boot and heartbeat-apply paths

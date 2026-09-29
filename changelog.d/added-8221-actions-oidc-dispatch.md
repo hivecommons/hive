@@ -1,1 +1,1 @@
-- Add GitHub Actions hub OIDC dispatch for v6 action triggers, including JWT verification, shared action guard/dedupe handling, composite action support, and operator docs.
+- Add GitHub Actions OIDC dispatch for v6 action triggers (served by the hive dashboard at `/api/contribute/actions/dispatch`; the composite action takes the target hive dashboard URL as `hive_url`, not the hub URL — [#9173](https://github.com/hivecommons/hive/issues/9173)), including JWT verification, shared action guard/dedupe handling, composite action support, and operator docs.

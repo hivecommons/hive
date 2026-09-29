@@ -1,7 +1,7 @@
 # Hive operator reference
 
 This page is a concise operator reference for fields and runtime knobs that are
-easy to miss in `hive.yaml.example`. It was checked against `pkg/config/config.go`
+easy to miss in `hive.yaml.example`. It was checked against `pkg/config/`
 and `cmd/hive/main.go` on branch `v4`.
 
 For the full centralized environment variable table, including hub, backup,
@@ -74,7 +74,7 @@ Top-level YAML keys accepted by `config.Config`:
 |---|---|---|
 | `governor.labels.automerge` | Defaults to `lgtm`. | Label applied when a merger/owner queues a PR for Hive auto-merge-on-green. Distinct from the [App self-merge sweep](#app-self-merge-sweep-auto_merge), which needs no label and no human queuer. |
 | `project.repo_policies[].auto_merge` | unset = `true` | Per-repo off switch. `false` lets Hive open PRs for that repo but blocks all Hive merge paths (`hive-merge`, App self-authored sweep, and proxy-visible direct REST/GraphQL merge attempts). The dashboard repo-card toggle persists this key and takes effect without restart. |
-| `auto_merge.allow_unprotected_base` | Empty by default. | Explicit repo list allowed to merge through `hive-merge` when the PR base branch has no GitHub branch protection; absent means refuse closed. |
+| `auto_merge.allow_unprotected_base` | Deprecated no-op. | Accepted so older configs keep loading. `hive-merge` now merges into any protected or unprotected branch the App can write, subject to the CI-evidence gate and GitHub's own merge rules. |
 | `auto_merge.no_ci_ok` | Empty by default. | Explicit repo list whose zero-CI merge-request verdict may pass; failing or pending CI evidence is still enforced. |
 | `review.all_authors` | Off by default. | Makes every open PR eligible for review, not only agent-authored ones. It only widens what is reviewed; it never lets an agent push to those PRs (see the next row). Features -> Review Gate -> Reviewers. |
 | `review.fix_human_prs` | Off by default; owner-only. | Lets the review-fix kick push commits onto PRs the hive's own agents did not open (a contributor's fork via "allow edits by maintainers", a maintainer's branch, another bot's PR). Off, a `changes_requested` verdict on such a PR stops at the published review, with the proposed fix as a suggestion or patch block in the comment, and the refusal is audited as `review_fix_withheld`. Upgrade rule: a hive that already had `all_authors: true` with this never set is stored as `true` so its behaviour does not change; an explicit `false` is never overwritten. See [review-swarm.md](review-swarm.md#who-may-be-pushed-to-all_authors-versus-fix_human_prs). |
@@ -126,8 +126,8 @@ Three different mechanisms merge PRs automatically, and they share the word
   top-level `auto_merge:` block controls.
 - **The merge-request watcher** (`hive-merge`) — agents request merges through
   a result-file protocol and the watcher verifies CI evidence itself before
-  merging. It reads two per-repo keys from the same `auto_merge:` block
-  (`allow_unprotected_base`, `no_ci_ok`, below). See
+  merging. It reads `auto_merge.no_ci_ok` for repos with no CI by design; the
+  older `allow_unprotected_base` key is now accepted but ignored. See
   [hive-merge.md](hive-merge.md).
 
 The self-merge sweep exists because Prow structurally forbids self-approval: a
@@ -148,8 +148,16 @@ advanced into the merge path.
 | `auto_merge.self_authored` | **on** when unset | The only off switch. `false` disables the sweep and App-authored PRs fall back to fully manual merges. |
 | `auto_merge.max_merges` | `3` (`DefaultAutoMergeSweepMaxMerges`) when 0/unset | Caps merges per sweep pass. |
 | `auto_merge.required_checks` | unset | Operator-declared status-check contexts / check-run names (e.g. `["build-gate"]`) that the sweep's green gate requires on the head commit. See below. |
-| `auto_merge.allow_unprotected_base` | unset (refuse) | **Merge-request watcher key, not a sweep key.** Per-repo allowlist (`owner/repo` or bare name) that lets [`hive-merge`](hive-merge.md) merge into a base branch with **no** GitHub branch protection. Default refuses, because on such a branch the hive's own CI-evidence gate is the only gate (#6281). |
-| `auto_merge.no_ci_ok` | unset (refuse) | **Merge-request watcher key, not a sweep key.** Per-repo opt-in that downgrades only the "unverified" CI verdict (zero statuses, check runs, and workflow runs) to green, for adopted repos with no CI by design. Red and pending verdicts are never downgraded (#6281). A no-CI repo whose base is also unprotected needs **both** this and `allow_unprotected_base` — the opt-outs are independent. See [hive-merge.md](hive-merge.md). |
+| `auto_merge.allow_unprotected_base` | deprecated no-op | Accepted for compatibility only. [`hive-merge`](hive-merge.md) no longer refuses solely because a base branch has no GitHub branch protection; it may merge into any branch the App can write after positive CI evidence. |
+| `auto_merge.no_ci_ok` | unset (refuse) | **Merge-request watcher key, not a sweep key.** Per-repo opt-in that downgrades only the "unverified" CI verdict (zero statuses, check runs, and workflow runs) to green, for adopted repos with no CI by design. Red and pending verdicts are never downgraded (#6281). See [hive-merge.md](hive-merge.md). |
+
+Actionable merge failures surface as dashboard system alerts, deduplicated by
+repo+reason and cleared by the next successful merge in that repo. Alerts name
+the operator action: grant/install the App with Contents and Pull requests write,
+approve fork PR workflow runs or relax the repo's fork-workflow approval
+setting, adjust review/ruleset bypass or approve the PR, make a missing
+required check report, or enable/use an allowed merge method. Conflicts go back
+to the agent fix loop, and rate limits do not alert.
 
 **The ACMM gate.** `self_authored: true` (or unset) is necessary but not
 sufficient: the sweep only starts when the hive's `acmm_level` is **6 or

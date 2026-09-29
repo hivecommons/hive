@@ -97,27 +97,34 @@ func (s emptyWorkSource) ListIssues(context.Context) ([]worksource.Issue, error)
 // crash-looping CLI burn tokens on every eval cycle, past any cadence or
 // budget. allow is Governor.AllowResumeKick. An agent already due keeps its
 // single slot; order is governor-due first, then admitted restarts.
-func mergeResumeKicks(agentsDue, restartedAgents []string, allow func(string) bool, logger *slog.Logger) []string {
+//
+// The second result lists the restarted agents the gate REFUSED: they now sit
+// at a fresh prompt with no work until their next scheduled slot, which an
+// operator watching the pane cannot distinguish from a healthy idle agent.
+// The caller surfaces them as a dashboard alert (spokealerts.ResumeKickHeld).
+func mergeResumeKicks(agentsDue, restartedAgents []string, allow func(string) bool, logger *slog.Logger) ([]string, []string) {
 	if len(restartedAgents) == 0 {
-		return agentsDue
+		return agentsDue, nil
 	}
 	dueSet := make(map[string]bool, len(agentsDue))
 	for _, a := range agentsDue {
 		agent, _ := config.SplitCadenceTargetKey(a)
 		dueSet[agent] = true
 	}
+	var held []string
 	for _, a := range restartedAgents {
 		if dueSet[a] {
 			continue
 		}
 		if !allow(a) {
-			logger.Info("restarted agent NOT resume-kicked (cadence/budget gate); it will be kicked at its next scheduled slot", "agent", a)
+			logger.Warn("restarted agent NOT resume-kicked (cadence/budget gate); it idles until its next scheduled slot", "agent", a)
+			held = append(held, a)
 			continue
 		}
 		agentsDue = append(agentsDue, a)
 		logger.Info("adding restarted agent to kick list", "agent", a)
 	}
-	return agentsDue
+	return agentsDue, held
 }
 
 // kickSkipReason returns a non-empty reason when the governor must never kick

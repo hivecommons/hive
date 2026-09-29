@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/worksource"
@@ -35,6 +36,20 @@ func resolveAdvisoryDigestRoute(cfg *config.Config) (target, linearIssue string,
 		return t, "", fmt.Errorf("governor.advisory.target = %q (want %s or %s) — digest not posted",
 			adv.Target, config.AdvisoryTargetGitHub, config.AdvisoryTargetLinear)
 	}
+}
+
+// advisoryDashboardOrigin is the public dashboard origin the digest prefixes
+// its owner-advice export links with: dashboard.public_url first, then the
+// hub-delivered hub.dashboard_url. Empty when neither is set, in which case
+// the digest prints the relative export path as code instead of a link.
+func advisoryDashboardOrigin(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	if v := strings.TrimSpace(cfg.Dashboard.PublicURL); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	return strings.TrimRight(strings.TrimSpace(cfg.Hub.DashboardURL), "/")
 }
 
 // linearAdvisoryPosterFor builds the digest poster for the Linear route from

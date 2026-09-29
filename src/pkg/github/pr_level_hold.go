@@ -101,14 +101,16 @@ func (c *Client) releaseLevelHoldIfEligible(ctx context.Context, owner, repo str
 	if c.prHoldLabel(agent) {
 		return false, "level-hold-still-required", nil
 	}
-	selfAuth := c.EvaluateSelfAuthorization(ctx, owner+"/"+repo, pr.GetTitle(), pr.GetBody(), nil)
-	if selfAuth.Held {
-		if !hasSelfAuthorizationNotice(comments, c.appBotLogin) {
-			if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(selfAuthorizationNotice(selfAuth))}); err != nil {
-				return false, "self-authorization-notice", fmt.Errorf("commenting on self-authorization hold: %w", err)
+	if c.selfAuthorizationHoldActive(owner + "/" + repo) {
+		selfAuth := c.EvaluateSelfAuthorization(ctx, owner+"/"+repo, pr.GetTitle(), pr.GetBody(), nil)
+		if selfAuth.Held {
+			if !hasSelfAuthorizationNotice(comments, c.appBotLogin) {
+				if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(selfAuthorizationNotice(selfAuth))}); err != nil {
+					return false, "self-authorization-notice", fmt.Errorf("commenting on self-authorization hold: %w", err)
+				}
 			}
+			return false, "self-authorization-hold", nil
 		}
-		return false, "self-authorization-hold", nil
 	}
 	if ok, err := c.latestHoldLabelEventWasByApp(ctx, owner, repo, number); err != nil {
 		return false, "level-hold-event-check", err

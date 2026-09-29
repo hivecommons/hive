@@ -88,18 +88,34 @@ composes messages once, so the seam is a translation hook on the backend:
 posting. No `chat.Service` change; Discord's backend passes text through
 untouched.
 
-**Limits.** Discord truncates at 1,900 chars; Slack's practical ceiling is
-4,000 per message. The spine's limit is per-backend config, so Slack sets its
-own and long statuses split on paragraph boundaries rather than truncating.
+**Limits.** Discord's Create Message ceiling is 2,000 chars; Slack's practical
+ceiling is 4,000 per message. The spine owns splitting
+([#9127](https://github.com/hivecommons/hive/issues/9127)): `drainLoop`
+cuts every queued message to the backend's configured `MessageLimit` with
+`chat.SplitMessage` (line boundaries, code fences closed and reopened across
+chunks) before `Send` sees it — 1,900 for Discord, 4,000 for Slack. Slack
+additionally re-splits after its Markdown→mrkdwn pass in case the translation
+grew a chunk; nothing is truncated.
 
 **Pacing.** Slack Web API tier for `chat.postMessage` is ~1 message/second per
 channel — coincidentally close to the spine's existing 1,200 ms drain
-interval, which Slack simply keeps. On `429` the backend honours
-`Retry-After` before the next drain.
+interval, which Slack simply keeps. On `429` the backend returns a
+`chat.RetryableError` carrying `Retry-After` instead of sleeping on the drain
+goroutine; the spine waits it out (capped at `chat.MaxRetryAfter`, 60 s,
+context-aware so shutdown is never blocked) and re-sends the same chunk, up to
+three attempts before the chunk is dropped with a warning. 5xx responses
+follow the same path with the spine's own pacing as the wait.
 
 **Reconnect.** Socket Mode URLs expire and Slack sends `disconnect` envelopes
-(`refresh_requested`). `Listen` reconnects with the same 5 s → 60 s capped
-backoff the Discord SSE consumer uses; the spine never sees the gap.
+(`warning` ~10 s ahead of the cut, then `refresh_requested`). On the first one
+`serveSocket` (`src/pkg/slack/bot.go`) opens the replacement socket while it
+keeps acknowledging on the old one, closes the old socket only once the
+replacement is open, and `Listen` switches without a reconnect sleep, so a
+routine refresh leaves no window with zero connections (#9138). A socket that
+stays silent for 90 s — no data, ping, or pong; the bot pings every 30 s — is
+treated as dead, which catches a path that died without a FIN. Any other drop
+or failed connect reconnects with a 5 s → 60 s capped backoff jittered by
+±20%; the spine never sees the gap.
 
 ## Configuration
 

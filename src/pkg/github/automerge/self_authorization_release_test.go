@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -59,6 +60,21 @@ func TestSelfAuthorizationHoldActiveDefaultsOn(t *testing.T) {
 	c := &Engine{selfAuthorizationHoldEnabled: func(repo string) bool { return repo == "acme/other" }}
 	if c.selfAuthorizationHoldActive("acme/widget") {
 		t.Fatal("hold switch returning false must deactivate the hold")
+	}
+}
+
+func TestSelfAuthorizationReleaseUsesLevelAwareDisabledPolicy(t *testing.T) {
+	cfg := &config.Config{}
+	c := &Engine{
+		selfAuthorizationHoldEnabled: func(repo string) bool {
+			return cfg.SelfAuthorizationHoldEnabledForRepoAtLevel(repo, config.MaxACMMLevel)
+		},
+	}
+	if c.selfAuthorizationReleaseBudget() == 0 {
+		t.Fatal("level-aware L6 default-off policy must enable the disabled-policy release path")
+	}
+	if c.selfAuthorizationHoldActive("acme/widget") {
+		t.Fatal("level-aware L6 default-off policy should deactivate the #5117 hold")
 	}
 }
 

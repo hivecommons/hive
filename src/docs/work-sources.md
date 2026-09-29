@@ -10,7 +10,7 @@ kind, `wavefront`, lists the ready nodes of an imported migration graph the
 same way (see below).
 Absent or `type: ""` behaves exactly like existing hives with no
 `work_source` block — GitHub Issues on the configured `project.repos`
-(`pkg/config/config.go:1336-1348`, `pkg/worksource/factory.go:15-89`).
+(`pkg/config/work_sources.go:12-32`, `pkg/worksource/factory.go:15-89`).
 
 This page documents all six. Linear has its own deeper guide —
 [Linear agent integration](linear-agent.md) — for the two-way agent-session
@@ -181,7 +181,7 @@ governor:
       default_repo: your-org/repo  # optional — used when an item's own repo can't be determined
 ```
 
-Config fields (`GitHubProjectsSourceConfig`, `pkg/config/config.go:1696-1703`):
+Config fields (`GitHubProjectsSourceConfig`, `pkg/config/work_sources.go:92-99`):
 
 | YAML key | Go field | Required | Notes |
 |---|---|---|---|
@@ -304,7 +304,7 @@ governor:
       hold_labels: [hold, blocked]
 ```
 
-Config fields (`JiraSourceConfig`, `pkg/config/config.go`):
+Config fields (`JiraSourceConfig`, `pkg/config/work_sources.go`):
 
 | YAML key | Go field | Required | Notes |
 |---|---|---|---|

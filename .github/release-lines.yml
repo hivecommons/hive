@@ -25,7 +25,12 @@
 # CUTTING A NEW RELEASE LINE: add the branch name to `release_lines` below AND
 # to every workflow listed under `pinned` AND to every list under `env_lists`.
 # The guard fails until all three are done — that is the whole point, so do not
-# "fix" it by only editing one side.
+# "fix" it by only editing one side. `release_lines` is ALSO the run-time
+# allow-list tagged-release.yml and promote-stable.yml check before serving
+# the branch they were started from (#9154): adding a line here is what lets it
+# mint vN.x.y tags and promote `stable`. The rest of the cut (docker.yml
+# channel rows, default branch, docs) is the checklist in
+# src/docs/release-line-guard.md.
 
 # The release lines CI is expected to cover.
 release_lines: [v4, v5]
@@ -48,8 +53,9 @@ pinned:
   # where this file does not exist. Same excluded-not-backfilled reasoning as
   # docs-link-check.yml below.
   # v6 is carried as an EXTRA on the workflows below rather than added to
-  # `release_lines`: it is a development line for the #7563 epic, not a
-  # supported release line with a GA bar. What it DOES need is the same PR
+  # `release_lines`: it is the #7563 development line and has not been cut as
+  # a release line — until it is, the release workflows refuse to tag or
+  # promote from it (#9154). What it DOES need is the same PR
   # gating as v4, because feature PRs target it directly (spine, mention
   # triggers); without these extras a v6-base PR runs no Go build, test, or
   # security lane at all. It is ALSO published — `v6-latest` and, once its own

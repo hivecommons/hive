@@ -159,7 +159,7 @@ func fetchIntentPREvidence(ctx context.Context, ghClient *github.Client, repo st
 		return "", nil, false, fmt.Errorf("invalid repo %q", repo)
 	}
 	client := ghClient.GoGitHub()
-	pr, _, err := client.PullRequests.Get(ctx, owner, repoName, number)
+	pr, _, err := client.PullRequests.Get(github.WithRESTCaller(ctx, "hive:intent_verdicts"), owner, repoName, number)
 	if err != nil {
 		return "", nil, false, fmt.Errorf("getting PR: %w", err)
 	}

@@ -149,13 +149,13 @@ already persists private key material on the same PVC at the same mode:
 `appkey.DefaultDataDir = "/data"`, with `appkey.DefaultFileMode = 0o600`
 and the comment "signing material must never be readable by anything
 else sharing the PVC or the pod" (`src/pkg/appkey/appkey.go`). `/data` is the PVC mount in the spoke template
-(`src/pkg/hub/saas_provision.go:2585`), and `/data/hive-id` (`src/cmd/hive/main.go:5297`)
+(`src/pkg/hub/saas_provision.go:2585`), and `/data/hive-id` (`src/cmd/hive/main.go:5329`)
 already establishes that identity-critical state persists there across
 restarts.
 
 Following that precedent, the path should be a `var` not a `const`, so tests
 can redirect it and exercise the real resolution order — the reason given at
-`src/cmd/hive/main.go:203-204`.
+`src/cmd/hive/main.go:204-205`.
 
 ### First boot, pod roll, PVC loss
 
@@ -218,7 +218,7 @@ function's banner states the invariant: "identity-bound under EVERY generation
 ... There is deliberately no code path here that derives without hiveID; if one
 ever appears, F2 is re-opened" (`:322-327`). `handleHeartbeat` verifies the
 bearer against the *claimed* `hive_id` after parsing the body
-(`src/pkg/hub/server.go:1649`; the N1 comment at `:1395-1405` explains why the check must
+(`src/pkg/hub/server.go:1645`; the N1 comment at `:1395-1405` explains why the check must
 follow the parse — the per-hive bearer is derived from the claimed ID, so the
 ID must be parsed and validated first).
 

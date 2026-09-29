@@ -6,7 +6,7 @@ Hive can send operator notifications through three outbound channels configured 
 - Slack incoming webhooks
 - Discord webhooks
 
-The notifier is implemented in `src/pkg/notify/notify.go` and is constructed from `config.NotificationsConfig` in `src/pkg/config/config.go`. The same notification is sent to every configured channel.
+The notifier is implemented in `src/pkg/notify/notify.go` and is constructed from `config.NotificationsConfig` in `src/pkg/config/notifications_config.go`. The same notification is sent to every configured channel.
 
 Every notification title is prefixed with the sending hive's ID as `[<hive-id>] <title>` (`Notifier.SetHiveID` in `src/pkg/notify/notify.go`). Filters or routing rules that match on title - an ntfy topic shared by several hives, for example - should account for the prefix.
 

@@ -47,6 +47,9 @@ type Config struct {
 	// AllowedUsers is the set of Discord user IDs permitted to issue commands.
 	// Empty = commands disabled (fail closed).
 	AllowedUsers []string
+	// PersonaStore persists each author's persona; nil keeps personas in
+	// memory for this process only (hivecommons/hive#9175).
+	PersonaStore chat.PersonaStore
 	// PersonaLearning and AuditSink feed persona learning on the shared chat
 	// spine (hivecommons/hive#8363); both are optional.
 	PersonaLearning chat.PersonaLearningFunc
@@ -118,6 +121,7 @@ func NewBot(cfg Config, logger *slog.Logger) *Bot {
 		DashboardURL:    cfg.DashboardURL,
 		DashboardToken:  cfg.DashboardToken,
 		AllowedUsers:    cfg.AllowedUsers,
+		PersonaStore:    cfg.PersonaStore,
 		PersonaLearning: cfg.PersonaLearning,
 		AuditSink:       cfg.AuditSink,
 	}, logger)
@@ -374,7 +378,6 @@ func discordChatMessage(msg discordMessage) chat.Message {
 	text, _ := ioscan.EnforceInput(msg.Content)
 	return chat.Message{ID: msg.ID, Text: text, AuthorID: msg.Author.ID, FromBot: msg.Author.Bot}
 }
-
 
 func (b *discordBackend) fetchMessages(ctx context.Context, after string) ([]discordMessage, error) {
 	url := fmt.Sprintf("%s/channels/%s/messages?limit=10", discordAPIBase, b.channelID)
