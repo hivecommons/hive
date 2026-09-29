@@ -95,6 +95,7 @@ let window = {_lastStatus:{governor:{issues:30, prs:10}}};
 		jsFunc(t, html, "governorModeGradient"),
 		jsFunc(t, html, "governorScaleThreshold"),
 		jsFunc(t, html, "governorScalingFactor"),
+		jsFunc(t, html, "governorScalingSummary"),
 		jsFunc(t, html, "governorThresholdIsPinned"),
 		jsFunc(t, html, "governorStaggerLabels"),
 		jsFunc(t, html, "governorPressureFromStatus"),
@@ -117,11 +118,23 @@ const scaled = renderGovThresholds({
   cadenceScope: 'aggregate',
   thresholdScaling: 'linear',
 });
-requireIncludes('scaled quiet hint', scaled, '= 14 in force (× 7, 7 repos)');
-requireIncludes('scaled surge hint', scaled, '= 70 in force (× 7, 7 repos)');
-requireIncludes('pinned busy hint', scaled, '= 5 in force (pinned, 7 repos)');
+requireIncludes('scaling summary', scaled, 'Scaling: Linear × 7 watched repos');
+requireIncludes('scaled quiet hint', scaled, '2 × 7 repos = 14 in force');
+requireIncludes('scaled surge hint', scaled, '10 × 7 repos = 70 in force');
+requireIncludes('pinned busy hint', scaled, '5 (pinned, scaling off)');
 requireIncludes('arrow label', scaled, '2 → 14');
 requireIncludes('pinned label', scaled, '5 pinned');
+
+const sqrt = renderGovThresholds({
+  thresholds: {quiet:2, busy:5, surge:10},
+  effectiveThresholds: {quiet:6, busy:15, surge:30},
+  pinnedThresholds: {},
+  repoCount: 7,
+  cadenceScope: 'aggregate',
+  thresholdScaling: 'sqrt',
+});
+requireIncludes('sqrt summary', sqrt, 'Scaling: Square-root × ceil(sqrt(7 watched repos)) = ×3');
+requireIncludes('sqrt hint', sqrt, '5 × ceil(sqrt(7 repos)) = 15 in force');
 
 const plain = renderGovThresholds({
   thresholds: {quiet:2, busy:5, surge:10},
@@ -132,6 +145,7 @@ const plain = renderGovThresholds({
   thresholdScaling: 'none',
 });
 requireExcludes('plain hints', plain, 'in force');
+requireExcludes('plain summary', plain, 'Scaling:');
 requireExcludes('plain arrows', plain, '→');
 requireExcludes('plain pinned labels', plain, 'pinned');
 `

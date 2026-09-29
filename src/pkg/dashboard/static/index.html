@@ -25713,6 +25713,14 @@ function burnAreaChart() {
       return repos;
     }
 
+    function governorScalingSummary(repoCount, scaling, activeScope) {
+      const repos = Math.max(1, Number(repoCount) || 1);
+      const factor = governorScalingFactor(repos, scaling, activeScope);
+      if (factor <= 1) return '';
+      if (scaling === 'sqrt') return `Scaling: Square-root × ceil(sqrt(${repos} watched repos)) = ×${factor}`;
+      return `Scaling: Linear × ${repos} watched repos`;
+    }
+
     function governorThresholdIsPinned(d, key) {
       const dirty = (_configState.dirty && _configState.dirty.thresholds) || {};
       if (Object.prototype.hasOwnProperty.call(dirty, key)) return true;
@@ -25767,10 +25775,13 @@ function burnAreaChart() {
       return Number(baseValue) === Number(effectiveValue) ? String(baseValue) : `${baseValue} → ${effectiveValue}`;
     }
 
-    function governorThresholdHintText(effectiveValue, pinned, factor, repoCount) {
-      if (Number(factor) <= 1 || Number(repoCount) <= 1) return '';
-      const suffix = pinned ? `pinned, ${repoCount} repos` : `× ${factor}, ${repoCount} repos`;
-      return `= ${effectiveValue} in force (${suffix})`;
+    function governorThresholdHintText(baseValue, effectiveValue, pinned, repoCount, scaling, activeScope) {
+      const repos = Math.max(1, Number(repoCount) || 1);
+      const factor = governorScalingFactor(repos, scaling, activeScope);
+      if (factor <= 1) return '';
+      if (pinned) return `${effectiveValue} (pinned, scaling off)`;
+      if (scaling === 'sqrt') return `${baseValue} × ceil(sqrt(${repos} repos)) = ${effectiveValue} in force`;
+      return `${baseValue} × ${repos} repos = ${effectiveValue} in force`;
     }
 
     function renderGovThresholds(d) {
@@ -25791,7 +25802,7 @@ function burnAreaChart() {
       const activeScaling = scalingDirty !== undefined ? scalingDirty : scaling;
       const scaled = activeScaling !== 'none' && repoCount > 1 && activeScope !== 'per_repo';
       const effective = governorEffectiveThresholds(d, base, activeScope, activeScaling);
-      const factor = governorScalingFactor(repoCount, activeScaling, activeScope);
+      const scalingSummary = governorScalingSummary(repoCount, activeScaling, activeScope);
       const pinned = {
         quiet: governorThresholdIsPinned(d, 'quiet'),
         busy: governorThresholdIsPinned(d, 'busy'),
@@ -25806,9 +25817,9 @@ function burnAreaChart() {
         { key: 'surge', pct: bounds.surgePct, text: governorThresholdLabel(s, effective.surge, pinned.surge), color: GOVERNOR_MODE_COLORS.surge },
       ], 11);
       const hints = {
-        quiet: scaled ? governorThresholdHintText(effective.quiet, pinned.quiet, factor, repoCount) : '',
-        busy: scaled ? governorThresholdHintText(effective.busy, pinned.busy, factor, repoCount) : '',
-        surge: scaled ? governorThresholdHintText(effective.surge, pinned.surge, factor, repoCount) : '',
+        quiet: scaled ? governorThresholdHintText(q, effective.quiet, pinned.quiet, repoCount, activeScaling, activeScope) : '',
+        busy: scaled ? governorThresholdHintText(b, effective.busy, pinned.busy, repoCount, activeScaling, activeScope) : '',
+        surge: scaled ? governorThresholdHintText(s, effective.surge, pinned.surge, repoCount, activeScaling, activeScope) : '',
       };
       const zoneLabels = governorStaggerLabels([
         { key: 'idle', pct: bounds.quietPct / 2, color: GOVERNOR_MODE_COLORS.idle },
@@ -25847,6 +25858,7 @@ function burnAreaChart() {
         </div>
         <p class="fs-sm text-muted mb-7">Drag the handles to set issue-count thresholds for governor mode transitions.</p>
         ${effNote}
+        ${scalingSummary ? `<p class="fs-sm text-muted mb-4" id="thresh-scaling-summary"><strong>${scalingSummary}</strong></p>` : ''}
         <div class="thresh-bar-wrap">
           <div class="thresh-bar-track" id="thresh-track"
                data-max="${maxValue}" style="background:${governorModeGradient(bounds)}">
@@ -25953,7 +25965,7 @@ function burnAreaChart() {
         const hint = document.getElementById('thresh-hint-' + key);
         if (handle) { handle.style.left = pct + '%'; handle.dataset.val = raw; }
         if (lbl) { lbl.textContent = governorThresholdLabel(raw, effVal, pinned[key]); lbl.style.left = pct + '%'; lbl.style.top = ((labelLanes[key] || 0) * 1.35) + 'em'; }
-        if (hint) hint.textContent = scaled ? governorThresholdHintText(effVal, pinned[key], factor, repoCount) : '';
+        if (hint) hint.textContent = scaled ? governorThresholdHintText(raw, effVal, pinned[key], repoCount, activeScaling, activeScope) : '';
       }
       const pressureMarker = track.querySelector('.thresh-pressure-marker');
       if (pressureMarker) pressureMarker.style.left = bounds.pressurePct + '%';
