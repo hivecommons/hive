@@ -44,11 +44,21 @@ type hubRegistrar interface {
 // interface above does not force every test double to import the shared type.
 type hubRegistration = hivectl.Registration
 
+// hubReissuer performs the reissue half of `just contribute-move`, profile-
+// store aware: POST <hub>/api/contribute/reissue-token, authenticated with a
+// GitHub token rather than a username. Injected so tests never reach the
+// network (hivecommons/hive#9241).
+type hubReissuer interface {
+	Reissue(ctx context.Context, hubHTTPBase, githubToken string) (hubRegistration, error)
+}
+
 // hivesDeps are the seams `hivectl hives` is tested through.
 type hivesDeps struct {
 	store       *hivectl.ProfileStore
 	registrar   hubRegistrar
+	reissuer    hubReissuer
 	githubUser  func(ctx context.Context) (string, error)
+	githubToken func(ctx context.Context) (string, error)
 	signalRelay func(ctx context.Context, store *hivectl.ProfileStore) (hivectl.RelaySwitchResult, error)
 	now         func() time.Time
 }
@@ -70,7 +80,8 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
   hivectl hives import acme.hive-profile --name acme-laptop
   hivectl hives session acme --label review
   hivectl hives rename acme acme-prod
-  hivectl hives remove acme`,
+  hivectl hives remove acme
+  hivectl hives reissue acme`,
 	}
 	cmd.AddCommand(newHivesListCommand(env))
 	cmd.AddCommand(newHivesAddCommand(env))
@@ -83,6 +94,7 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
 	cmd.AddCommand(newHivesWebCommand(env))
 	cmd.AddCommand(newHivesRenameCommand(env))
 	cmd.AddCommand(newHivesRemoveCommand(env))
+	cmd.AddCommand(newHivesReissueCommand(env))
 	return cmd
 }
 
@@ -95,7 +107,9 @@ func defaultHivesDeps(timeout time.Duration) (*hivesDeps, error) {
 	return &hivesDeps{
 		store:       store,
 		registrar:   httpRegistrar{timeout: timeout},
+		reissuer:    httpReissuer{timeout: timeout},
 		githubUser:  hivectl.GitHubLogin,
+		githubToken: hivectl.GitHubToken,
 		signalRelay: hivectl.SignalRunningRelay,
 		now:         time.Now,
 	}, nil
@@ -958,4 +972,135 @@ type httpRegistrar struct {
 
 func (r httpRegistrar) Register(ctx context.Context, base, githubUser string) (hubRegistration, error) {
 	return hivectl.Register(ctx, base, githubUser, r.timeout)
+}
+
+// httpReissuer is the production hubReissuer: the timeout this command run
+// was given, bound to the shared reissue call.
+type httpReissuer struct {
+	timeout time.Duration
+}
+
+func (r httpReissuer) Reissue(ctx context.Context, base, githubToken string) (hubRegistration, error) {
+	return hivectl.ReissueToken(ctx, base, githubToken, r.timeout)
+}
+
+// ── reissue ─────────────────────────────────────────────────────────────────
+
+type hivesReissueOptions struct {
+	hub      string
+	session  string
+	backend  string
+	model    string
+	activate bool
+}
+
+func newHivesReissueCommand(env *commandEnv) *cobra.Command {
+	opts := &hivesReissueOptions{}
+	cmd := &cobra.Command{
+		Use:   "reissue <name>",
+		Short: "Reissue a hive's token through GitHub auth, keeping profiles.yml consistent",
+		Long: "Rotates one hive's registration token by proving your GitHub identity " +
+			"(POST /api/contribute/reissue-token), the same way 'just contribute-move' does — but " +
+			"through the profile store instead of overwriting contributor.env directly, so this " +
+			"hive's other profiles and their tokens are untouched (hivecommons/hive#9241).\n\n" +
+			"<name> may name an existing profile (its own --hub is reused unless overridden) or a " +
+			"new one — pass --hub for a hive you are already registered with from another machine, " +
+			"which 'hivectl hives add' correctly refuses to hand you a token for.\n\n" +
+			"This ROTATES the credential: any relay still using the previous token stops " +
+			"authenticating as soon as this succeeds.",
+		Example: `  hivectl hives reissue acme
+  hivectl hives reissue cncf-endusers --hub wss://cncf-endusers.hive.hivecommons.dev/contribute`,
+		Args: argsExact(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return env.runHivesReissue(cmd, args[0], opts)
+		},
+	}
+	cmd.Flags().StringVar(&opts.hub, "hub", "", "contributor hub URL (required unless <name> is an existing profile)")
+	cmd.Flags().StringVar(&opts.session, "session", "", "session label recorded on a NEW profile")
+	cmd.Flags().StringVar(&opts.backend, "backend", "", "backend default recorded on a NEW profile")
+	cmd.Flags().StringVar(&opts.model, "model", "", "model default recorded on a NEW profile")
+	cmd.Flags().BoolVar(&opts.activate, "activate", false, "make this hive the active one")
+	return cmd
+}
+
+func (e *commandEnv) runHivesReissue(cmd *cobra.Command, name string, opts *hivesReissueOptions) error {
+	if err := hivectl.ValidateProfileName(name); err != nil {
+		return &usageError{message: err.Error()}
+	}
+	deps, err := e.hivesDeps()
+	if err != nil {
+		return err
+	}
+	set, err := loadProfiles(cmd, deps, true)
+	if err != nil {
+		return err
+	}
+
+	existing, _ := set.Find(name)
+	hub := strings.TrimSpace(opts.hub)
+	switch {
+	case existing != nil && hub == "":
+		hub = existing.Hub
+	case existing == nil && hub == "":
+		return &usageError{message: fmt.Sprintf("no hive profile named %q — pass --hub <url> to reissue and save it as a new profile, or check 'hivectl hives list'", name)}
+	}
+	if err := hivectl.ValidateHubURL(hub); err != nil {
+		return &usageError{message: err.Error()}
+	}
+	base, err := hivectl.HubHTTPBase(hub)
+	if err != nil {
+		return &usageError{message: err.Error()}
+	}
+
+	token, err := deps.githubToken(cmd.Context())
+	if err != nil {
+		return err
+	}
+	reg, err := deps.reissuer.Reissue(cmd.Context(), base, token)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(reg.RegistrationToken) == "" {
+		return fmt.Errorf("reissue with %s succeeded but returned no token: %s", base, reg.Message)
+	}
+	newToken := strings.TrimSpace(reg.RegistrationToken)
+	newContributorID := strings.TrimSpace(reg.ContributorID)
+
+	if existing != nil {
+		if _, err := set.Reissue(existing.Name, newToken, newContributorID); err != nil {
+			return err
+		}
+		if opts.activate {
+			if _, _, err := set.Use(existing.Name); err != nil {
+				return err
+			}
+		}
+	} else {
+		profile := hivectl.Profile{
+			Name:              name,
+			Hub:               hub,
+			Session:           strings.TrimSpace(opts.session),
+			Backend:           strings.TrimSpace(opts.backend),
+			Model:             strings.TrimSpace(opts.model),
+			ContributorID:     newContributorID,
+			RegistrationToken: newToken,
+			AddedAt:           deps.now().UTC().Truncate(time.Second),
+		}
+		if err := set.Add(profile, opts.activate); err != nil {
+			return err
+		}
+	}
+	if err := commit(deps, set); err != nil {
+		return err
+	}
+
+	out := cmd.OutOrStdout()
+	_, _ = fmt.Fprintf(out, "✓ Reissued token for hive %q (%s)\n", name, hub)
+	if newContributorID != "" {
+		_, _ = fmt.Fprintf(out, "  contributor id: %s\n", newContributorID)
+	}
+	_, _ = fmt.Fprintf(out, "  saved to %s; %s regenerated\n", deps.store.Path(), deps.store.EnvPath())
+	_, _ = fmt.Fprintln(out, "  the previous token for this hive no longer authenticates")
+	_, _ = fmt.Fprintln(out, "  restart the relay ('just contribute-stop' then 'just contribute-hive') to pick this up")
+	return nil
 }

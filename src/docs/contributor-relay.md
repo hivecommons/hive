@@ -507,6 +507,8 @@ Three things it does that a hand-rolled rotation makes easy to get wrong:
 
 Keys `contribute-move` does not manage — `HIVE_LITELLM_ENDPOINT`, for instance — are carried across from the previous file rather than dropped, and the previous file is kept at `contributor.env.bak`.
 
+**On a machine with named profiles, prefer `hivectl hives reissue <name> [--hub <url>]` instead.** `contribute-move` writes `contributor.env` directly; on a profile-store machine the next `hivectl hives` mutation regenerates that file from `profiles.yml` and would clobber the token it just rotated (hivecommons/hive#9241). `hivectl hives reissue` calls the same `POST /api/contribute/reissue-token` endpoint, authenticated the same way, but updates only the named profile and commits it through the profile store, so `profiles.yml` and `contributor.env` stay in agreement and every other profile's token is untouched. Pass `--hub` to reissue and save a hive you are already registered with from another machine but have not added a profile for here — the case `hivectl hives add` correctly refuses (see [Named profiles](#named-profiles-instead-of-hand-edited-lists-hivectl-hives)).
+
 ### Adding another hive to an existing setup
 
 That is not a move: run `contribute-setup` against the new hive with `HIVE_HUB` pointing at it. It appends to the hub, token, and id lists already in `contributor.env` rather than replacing them, so a working multi-hive setup survives. The previous file is kept at `contributor.env.bak`.

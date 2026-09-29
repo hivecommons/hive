@@ -28,10 +28,22 @@ func (f *fakeRegistrar) Register(_ context.Context, base, user string) (hubRegis
 	return f.result, f.err
 }
 
+type fakeReissuer struct {
+	calls  []string
+	result hubRegistration
+	err    error
+}
+
+func (f *fakeReissuer) Reissue(_ context.Context, base, token string) (hubRegistration, error) {
+	f.calls = append(f.calls, base+" "+token)
+	return f.result, f.err
+}
+
 type hivesHarness struct {
 	dir          string
 	store        *hivectl.ProfileStore
 	reg          *fakeRegistrar
+	reissue      *fakeReissuer
 	out          *bytes.Buffer
 	errs         *bytes.Buffer
 	in           *bytes.Reader
@@ -47,19 +59,22 @@ func newHivesHarness(t *testing.T) *hivesHarness {
 	t.Helper()
 	dir := t.TempDir()
 	h := &hivesHarness{
-		dir:   dir,
-		store: hivectl.NewProfileStore(dir),
-		reg:   &fakeRegistrar{result: hubRegistration{RegistrationToken: "new-token", ContributorID: "contrib_new", Message: "registered"}},
-		out:   &bytes.Buffer{},
-		errs:  &bytes.Buffer{},
-		in:    bytes.NewReader(nil),
+		dir:     dir,
+		store:   hivectl.NewProfileStore(dir),
+		reg:     &fakeRegistrar{result: hubRegistration{RegistrationToken: "new-token", ContributorID: "contrib_new", Message: "registered"}},
+		reissue: &fakeReissuer{result: hubRegistration{RegistrationToken: "reissued-token", ContributorID: "contrib_reissued", Message: "reissued"}},
+		out:     &bytes.Buffer{},
+		errs:    &bytes.Buffer{},
+		in:      bytes.NewReader(nil),
 	}
 	prev := hivesDepsFor
 	hivesDepsFor = func(*commandEnv) (*hivesDeps, error) {
 		return &hivesDeps{
-			store:      h.store,
-			registrar:  h.reg,
-			githubUser: func(context.Context) (string, error) { return "octocat", nil },
+			store:       h.store,
+			registrar:   h.reg,
+			reissuer:    h.reissue,
+			githubUser:  func(context.Context) (string, error) { return "octocat", nil },
+			githubToken: func(context.Context) (string, error) { return "gh-token-123", nil },
 			signalRelay: func(context.Context, *hivectl.ProfileStore) (hivectl.RelaySwitchResult, error) {
 				h.signalCalls++
 				return h.signalResult, h.signalErr
@@ -742,6 +757,83 @@ func TestHivesRemoveUnknownName(t *testing.T) {
 	}
 }
 
+// TestHivesReissueRotatesInPlace covers the profile-safe reissue path
+// (hivecommons/hive#9241): reissuing one hive's token must update only that
+// profile, leave every other one untouched, and commit through the store so
+// profiles.yml and contributor.env agree.
+func TestHivesReissueRotatesInPlace(t *testing.T) {
+	h := newHivesHarness(t)
+	h.seed(t, twoHives())
+
+	if err := h.run(t, "", "hives", "reissue", "acme"); err != nil {
+		t.Fatalf("hives reissue: %v", err)
+	}
+	if len(h.reissue.calls) != 1 || h.reissue.calls[0] != "https://acme.example gh-token-123" {
+		t.Fatalf("reissuer calls = %v, want one POST with the GitHub token", h.reissue.calls)
+	}
+	set := h.profiles(t)
+	acme, _ := set.Find("acme")
+	if acme == nil || acme.RegistrationToken != "reissued-token" || acme.ContributorID != "contrib_reissued" {
+		t.Fatalf("acme profile = %+v", acme)
+	}
+	other, _ := set.Find("other")
+	if other == nil || other.RegistrationToken != "tok-other" {
+		t.Fatalf("the other profile's token must be untouched, got %+v", other)
+	}
+	env := h.env(t)
+	if !strings.Contains(env, "reissued-token") || !strings.Contains(env, "tok-other") {
+		t.Errorf("projection did not reflect the rotation and preserve the other hive:\n%s", env)
+	}
+}
+
+// TestHivesReissueAddsANewProfile covers reissuing a hive this machine has no
+// local profile for yet — the case `hivectl hives add` correctly refuses
+// because register is unauthenticated.
+func TestHivesReissueAddsANewProfile(t *testing.T) {
+	h := newHivesHarness(t)
+	h.seed(t, twoHives())
+
+	if err := h.run(t, "", "hives", "reissue", "third", "--hub", "wss://third.example/contribute"); err != nil {
+		t.Fatalf("hives reissue: %v", err)
+	}
+	set := h.profiles(t)
+	added, _ := set.Find("third")
+	if added == nil || added.RegistrationToken != "reissued-token" || added.Hub != "wss://third.example/contribute" {
+		t.Fatalf("added profile = %+v", added)
+	}
+	if set.Active != "acme" {
+		t.Errorf("active = %q, want the previously active hive unchanged", set.Active)
+	}
+}
+
+func TestHivesReissueUnknownNameWithoutHubIsAUsageError(t *testing.T) {
+	h := newHivesHarness(t)
+	h.seed(t, twoHives())
+	err := h.run(t, "", "hives", "reissue", "nope")
+	if err == nil || !strings.Contains(err.Error(), "--hub") {
+		t.Fatalf("error = %v, want a usage error naming --hub", err)
+	}
+	if len(h.reissue.calls) != 0 {
+		t.Fatalf("reissuer must not be called before a hub is known, calls = %v", h.reissue.calls)
+	}
+}
+
+func TestHivesReissueSurfacesEmptyTokenResponse(t *testing.T) {
+	h := newHivesHarness(t)
+	h.seed(t, twoHives())
+	h.reissue.result = hubRegistration{Message: "not registered as a contributor"}
+
+	err := h.run(t, "", "hives", "reissue", "acme")
+	if err == nil || !strings.Contains(err.Error(), "no token") {
+		t.Fatalf("error = %v, want a no-token error", err)
+	}
+	set := h.profiles(t)
+	acme, _ := set.Find("acme")
+	if acme.RegistrationToken != "tok-acme" {
+		t.Fatalf("acme profile must be unchanged on failure, got %+v", acme)
+	}
+}
+
 func TestHivesListCheckProbesTheHub(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/contribute/status" {
@@ -839,11 +931,14 @@ func TestDefaultHivesDepsWiresTheProductionPieces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("defaultHivesDeps: %v", err)
 	}
-	if deps.store == nil || deps.registrar == nil || deps.githubUser == nil || deps.now == nil {
+	if deps.store == nil || deps.registrar == nil || deps.reissuer == nil || deps.githubUser == nil || deps.githubToken == nil || deps.now == nil {
 		t.Fatalf("defaultHivesDeps left a dependency nil: %+v", deps)
 	}
 	if reg, ok := deps.registrar.(httpRegistrar); !ok || reg.timeout != 3*time.Second {
 		t.Errorf("registrar = %#v, want httpRegistrar with the given timeout", deps.registrar)
+	}
+	if reissuer, ok := deps.reissuer.(httpReissuer); !ok || reissuer.timeout != 3*time.Second {
+		t.Errorf("reissuer = %#v, want httpReissuer with the given timeout", deps.reissuer)
 	}
 
 	// With no override installed, commandEnv.hivesDeps() takes the same path.

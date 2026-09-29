@@ -171,6 +171,59 @@ func GitHubLogin(ctx context.Context) (string, error) {
 	return user, nil
 }
 
+// GitHubToken asks the already-installed gh CLI for the bearer token of the
+// signed-in identity, so a reissue call can prove ownership of it the same
+// way `just contribute-move` does (POST /api/contribute/reissue-token with
+// Authorization: ****** GitHub token>).
+func GitHubToken(ctx context.Context) (string, error) {
+	out, err := RunGH(ctx, "auth", "token")
+	if err != nil {
+		return "", fmt.Errorf("could not read your GitHub token from 'gh' (%w)\n  sign in with: gh auth login --web --scopes repo,read:org", err)
+	}
+	token := strings.TrimSpace(out)
+	if token == "" {
+		return "", errors.New("'gh auth token' returned nothing; sign in with: gh auth login --web --scopes repo,read:org")
+	}
+	return token, nil
+}
+
+// ReissueToken performs the reissue half of `just contribute-move`: POST
+// <hubHTTPBase>/api/contribute/reissue-token, proving identity with a GitHub
+// token rather than registering fresh. Unlike Register, this DOES send a
+// bearer credential (Authorization header) — that is the whole point of the
+// endpoint (hivecommons/hive#9241) — so callers must only ever pass a hub URL
+// they trust, exactly as the Justfile recipe's TLS/confirmation guards do.
+func ReissueToken(ctx context.Context, hubHTTPBase, githubToken string, timeout time.Duration) (Registration, error) {
+	if timeout <= 0 {
+		timeout = defaultRegisterTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hubHTTPBase+"/api/contribute/reissue-token", nil)
+	if err != nil {
+		return Registration{}, fmt.Errorf("build reissue request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+githubToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return Registration{}, fmt.Errorf("reissue with %s failed: %w\n  is the hub reachable? try: curl -sf %s/api/contribute/status", hubHTTPBase, err, hubHTTPBase)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return Registration{}, fmt.Errorf("read reissue response from %s: %w", hubHTTPBase, err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return Registration{}, fmt.Errorf("reissue with %s returned HTTP %d: %s", hubHTTPBase, resp.StatusCode, truncateForMessage(string(payload)))
+	}
+	var reg Registration
+	if err := json.Unmarshal(payload, &reg); err != nil {
+		return Registration{}, fmt.Errorf("hub %s returned a non-JSON reissue response: %s", hubHTTPBase, truncateForMessage(string(payload)))
+	}
+	return reg, nil
+}
+
 func truncateForMessage(s string) string {
 	s = strings.TrimSpace(s)
 	if len(s) > 200 {

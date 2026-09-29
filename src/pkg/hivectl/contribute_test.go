@@ -173,6 +173,79 @@ func TestProbeHubReportsReachability(t *testing.T) {
 	}
 }
 
+// TestReissueTokenSendsBearerCredential is the mirror of the #4408 invariant
+// for the reissue path: unlike Register, ReissueToken MUST send the GitHub
+// token, because that is how the hub proves identity for a rotation
+// (hivecommons/hive#9241) — the endpoint has no other authentication.
+func TestReissueTokenSendsBearerCredential(t *testing.T) {
+	var sawAuth, sawMethod string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawAuth = r.Header.Get("Authorization")
+		sawMethod = r.Method
+		_ = json.NewEncoder(w).Encode(Registration{RegistrationToken: "tok_2", ContributorID: "contrib_2", Message: "reissued"})
+	}))
+	defer server.Close()
+
+	reg, err := ReissueToken(context.Background(), server.URL, "gh-secret-token", 5*time.Second)
+	if err != nil {
+		t.Fatalf("ReissueToken: %v", err)
+	}
+	if sawMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", sawMethod)
+	}
+	if sawAuth != "Bearer gh-secret-token" {
+		t.Errorf("Authorization = %q, want the GitHub token as a bearer credential", sawAuth)
+	}
+	if reg.RegistrationToken != "tok_2" || reg.ContributorID != "contrib_2" {
+		t.Errorf("ReissueToken = %+v, want the hub's reissued token and id", reg)
+	}
+}
+
+func TestReissueTokenSurfacesNonJSONAndHTTPErrors(t *testing.T) {
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "revoked", http.StatusForbidden)
+	}))
+	defer bad.Close()
+	if _, err := ReissueToken(context.Background(), bad.URL, "tok", time.Second); err == nil ||
+		!strings.Contains(err.Error(), "403") {
+		t.Errorf("a non-2xx should name its status, got %v", err)
+	}
+
+	garbage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("<html>not json</html>"))
+	}))
+	defer garbage.Close()
+	if _, err := ReissueToken(context.Background(), garbage.URL, "tok", time.Second); err == nil ||
+		!strings.Contains(err.Error(), "non-JSON") {
+		t.Errorf("a non-JSON body should say so, got %v", err)
+	}
+}
+
+func TestGitHubToken(t *testing.T) {
+	old := RunGH
+	t.Cleanup(func() { RunGH = old })
+
+	RunGH = func(_ context.Context, args ...string) (string, error) {
+		if strings.Join(args, " ") != "auth token" {
+			t.Errorf("unexpected gh invocation: %v", args)
+		}
+		return "gho_abc123\n", nil
+	}
+	if token, err := GitHubToken(context.Background()); err != nil || token != "gho_abc123" {
+		t.Errorf("GitHubToken = %q, %v; want gho_abc123", token, err)
+	}
+
+	RunGH = func(context.Context, ...string) (string, error) { return "  \n", nil }
+	if _, err := GitHubToken(context.Background()); err == nil || !strings.Contains(err.Error(), "gh auth login") {
+		t.Errorf("empty token should point at gh auth login, got %v", err)
+	}
+
+	RunGH = func(context.Context, ...string) (string, error) { return "", errors.New("not logged in") }
+	if _, err := GitHubToken(context.Background()); err == nil || !strings.Contains(err.Error(), "gh auth login") {
+		t.Errorf("a gh failure should point at gh auth login, got %v", err)
+	}
+}
+
 func TestTruncateForMessage(t *testing.T) {
 	long := strings.Repeat("x", 250)
 	if got := truncateForMessage("  " + long + "  "); len(got) != 200+len("…") || !strings.HasSuffix(got, "…") {

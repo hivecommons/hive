@@ -686,6 +686,8 @@ hivectl hives strategy spread                                 # ranked|spread|ne
 hivectl hives web                                             # loopback web UI for The Commons
 hivectl hives rename acme acme-prod
 hivectl hives remove acme                                     # confirm, or --yes
+hivectl hives reissue acme                                    # rotate its token via GitHub auth
+hivectl hives reissue cncf-endusers --hub wss://cncf-endusers.hive.hivecommons.dev/contribute
 ```
 
 `hives` is the one command group that does **not** talk to a dashboard API:
@@ -767,10 +769,13 @@ Notes:
   `gh` login or the backend CLI preflight, so a first-time machine still wants
   `just contribute-setup <backend>`. No bearer credential is sent to the hub.
 - **Already registered elsewhere?** The register endpoint is unauthenticated,
-  so the hub will never hand an existing contributor's token back. Add the
-  credential you already hold instead:
-  `printf '%s' "$TOKEN" | hivectl hives add acme --hub <url> --token-stdin --contributor-id <id>`,
-  or move the identity with `just contribute-move`.
+  so the hub will never hand an existing contributor's token back. Two
+  profile-safe options: add the credential you already hold —
+  `printf '%s' "$TOKEN" | hivectl hives add acme --hub <url> --token-stdin --contributor-id <id>`
+  — or reissue it through GitHub auth and save it as a profile in one step:
+  `hivectl hives reissue acme --hub <url>` (hivecommons/hive#9241). Both leave
+  every other profile's token untouched; `just contribute-move` also works but
+  writes `contributor.env` directly and is not profile-store aware.
 - **Moving a profile to another machine:** `hivectl hives export <name> --out
   <file>` writes one passphrase-encrypted bundle. On the other machine,
   `hivectl hives import <file> [--name <new-name>]` decrypts, validates and

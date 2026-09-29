@@ -153,6 +153,29 @@ func (set *ProfileSet) SetCommonsStrategy(strategy string) error {
 	return nil
 }
 
+// Reissue updates an existing profile's credential in place after a
+// hub has rotated it (hivecommons/hive#9241): a token reissued through
+// GitHub auth replaces RegistrationToken (and ContributorID, when the hub
+// returned one) for exactly the named profile, leaving every other profile —
+// and the active marker — untouched. This is what makes the reissue path
+// profile-safe: unlike `contribute-move` rewriting contributor.env directly,
+// the result goes through Commit like any other mutation, so profiles.yml and
+// its contributor.env projection cannot disagree about this hub's token.
+func (set *ProfileSet) Reissue(name, newToken, newContributorID string) (Profile, error) {
+	target, _ := set.Find(name)
+	if target == nil {
+		return Profile{}, fmt.Errorf("%w: %q", ErrProfileNotFound, name)
+	}
+	if err := validateEnvValue("registration token", newToken); err != nil {
+		return Profile{}, err
+	}
+	target.RegistrationToken = newToken
+	if newContributorID != "" {
+		target.ContributorID = newContributorID
+	}
+	return *target, nil
+}
+
 // Commit persists a mutated set: profiles.yml first, then the contributor.env
 // projection regenerated from it.
 //

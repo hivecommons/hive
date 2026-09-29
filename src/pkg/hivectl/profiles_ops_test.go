@@ -105,6 +105,44 @@ func TestRenameCarriesTheActiveMarker(t *testing.T) {
 	}
 }
 
+// TestReissueUpdatesOnlyTheNamedProfile pins the profile-safety invariant
+// behind hivectl#9241: rotating one hive's token must not touch any other
+// profile or the active marker, and must reject a name the set does not have.
+func TestReissueUpdatesOnlyTheNamedProfile(t *testing.T) {
+	set := opsSet()
+	updated, err := set.Reissue("acme", "new-token", "new-contrib")
+	if err != nil {
+		t.Fatalf("Reissue: %v", err)
+	}
+	if updated.RegistrationToken != "new-token" || updated.ContributorID != "new-contrib" {
+		t.Fatalf("Reissue returned %+v, want the rotated credential", updated)
+	}
+	acme, _ := set.Find("acme")
+	if acme.RegistrationToken != "new-token" || acme.ContributorID != "new-contrib" {
+		t.Fatalf("acme in the set = %+v, want the rotated credential", acme)
+	}
+	other, _ := set.Find("other")
+	if other.RegistrationToken != "t2" || other.ContributorID != "c2" {
+		t.Fatalf("other profile changed by an unrelated reissue: %+v", other)
+	}
+	if set.Active != "acme" {
+		t.Errorf("active = %q, want unchanged", set.Active)
+	}
+
+	// An empty new contributor id leaves the existing one alone — some hubs'
+	// reissue answers may omit it when it has not changed.
+	if _, err := set.Reissue("acme", "another-token", ""); err != nil {
+		t.Fatalf("Reissue with empty id: %v", err)
+	}
+	if acme, _ := set.Find("acme"); acme.ContributorID != "new-contrib" {
+		t.Errorf("contributor id = %q, want preserved when the hub sends none", acme.ContributorID)
+	}
+
+	if _, err := set.Reissue("nope", "t", "c"); !errors.Is(err, ErrProfileNotFound) {
+		t.Errorf("reissuing an unknown hive = %v, want ErrProfileNotFound", err)
+	}
+}
+
 func TestRemoveReElectsTheActiveProfile(t *testing.T) {
 	set := opsSet()
 	removed, wasActive, err := set.Remove("acme")
