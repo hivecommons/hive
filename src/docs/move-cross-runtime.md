@@ -91,7 +91,7 @@ Standalone Compose/Quadlet has no PVC, no ConfigMap, and no Kubernetes `Secret` 
 
 ### Secrets → Kubernetes Secret (DOCUMENTED, NOT EXECUTED)
 
-The source-side `secrets/` directory (Compose `./secrets`, Quadlet `%E/hive/secrets`) holds the same file set `src/deploy/k8s/secret.yaml` expects as `stringData` keys — `gh-app-key.pem` (or `HIVE_GITHUB_TOKEN`), `HIVE_DASHBOARD_TOKEN`, `bob_api_key`, etc. (`src/deploy/k8s/secret.yaml:8-27`). There is no automated converter; build the target Secret by hand (or `kubectl create secret generic hive-secrets --from-file=...`) from the same file contents, then `kubectl apply -f`. This is a content copy, not a mount-type translation — nothing here is bind-mounted on the Kubernetes side.
+The source-side `secrets/` directory (Compose `./secrets`, Quadlet `%E/hive/secrets`) holds the same file set `src/deploy/k8s/secret.yaml` expects as `stringData` keys — `gh-app-key.pem` (or `HIVE_GITHUB_TOKEN`), `HIVE_DASHBOARD_TOKEN`, `bob_api_key`, etc. (`src/deploy/k8s/secret.yaml:8-30`). There is no automated converter; build the target Secret by hand (or `kubectl create secret generic hive-secrets --from-file=...`) from the same file contents, then `kubectl apply -f`. This is a content copy, not a mount-type translation — nothing here is bind-mounted on the Kubernetes side.
 
 ### Config → ConfigMap + dashboard overlay (DOCUMENTED, NOT EXECUTED)
 
