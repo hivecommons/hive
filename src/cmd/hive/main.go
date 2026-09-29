@@ -8178,6 +8178,15 @@ const taskListSweepInterval = 15 * time.Minute
 // the same conservative cadence as the task-list sweep.
 const supersessionSweepInterval = 15 * time.Minute
 
+// questionAutoCloseSweepInterval is the minimum spacing between sweeps that
+// mark and later close answered kind/question issues (#9584). The sweep is
+// scoped to a single label and pages comments/reactions only for issues that
+// already carry it, so it is cheap enough to run at the same 15-minute
+// cadence as the task-list and supersession sweeps — and a tighter loop
+// matters here: the default close window is only 4 hours, so a coarser
+// cadence would eat a meaningful fraction of it in scheduling slack alone.
+const questionAutoCloseSweepInterval = 15 * time.Minute
+
 // duplicateSweepInterval is the minimum spacing between duplicate sweeps. It
 // is an hour rather than the task-list sweep's fifteen minutes for two
 // reasons. Cost: the sweep fingerprints the changed-file set of every open PR,
@@ -8397,6 +8406,55 @@ func runSupersessionSweepIfDue(ctx context.Context, ghClient *github.Client, cfg
 			"seen":      strconv.Itoa(result.Seen),
 			"closed":    strconv.Itoa(len(result.Closed)),
 			"commented": strconv.Itoa(len(result.Commented)),
+			"skipped":   strconv.Itoa(result.Skipped),
+		},
+	})
+}
+
+// runQuestionAutoCloseSweepIfDue marks the hive's newest answer on an open
+// kind/question issue and, absent a 👎 from the issue's author or any further
+// comment, closes it once the configured window has elapsed (#9584). All
+// safety gates — kind/question only, hold/exempt labels respected, per-tick
+// cap, author-objection relabel instead of close — live inside
+// SweepAnsweredQuestions; this function is only the scheduler and the
+// dashboard audit sink, mirroring runSupersessionSweepIfDue above.
+func runQuestionAutoCloseSweepIfDue(ctx context.Context, ghClient *github.Client, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
+	if ghClient == nil {
+		return
+	}
+	now := time.Now()
+	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < questionAutoCloseSweepInterval {
+		return
+	}
+	if lastRun != nil {
+		*lastRun = now
+	}
+	result, err := ghClient.SweepAnsweredQuestions(ctx, github.QuestionAutoCloseOptions{
+		MaxActions: github.DefaultQuestionAutoCloseMaxActions,
+		Audit: func(event github.QuestionAutoCloseEvent) {
+			if dashSrv == nil {
+				return
+			}
+			detail := fmt.Sprintf("repo=%s, issue=%d, author=%s, action=%s",
+				event.Repo, event.Number, event.Author, event.Action)
+			dashSrv.AuditLog("system", "question-autoclose-"+event.Action, detail, "")
+		},
+	})
+	if err != nil {
+		logger.Warn("question autoclose sweep failed", "error", err)
+		return
+	}
+	if len(result.Marked) > 0 || len(result.Relabeled) > 0 || len(result.Closed) > 0 || result.Seen > 0 {
+		logger.Info("question autoclose sweep complete", "seen", result.Seen, "marked", len(result.Marked), "relabeled", len(result.Relabeled), "closed", len(result.Closed), "skipped", result.Skipped)
+	}
+	hookDispatcher().Fire(context.Background(), hooks.Payload{
+		Transition: hooks.TransitionSweepCompleted,
+		Reason:     "question autoclose sweep complete",
+		Attrs: map[string]string{
+			"seen":      strconv.Itoa(result.Seen),
+			"marked":    strconv.Itoa(len(result.Marked)),
+			"relabeled": strconv.Itoa(len(result.Relabeled)),
+			"closed":    strconv.Itoa(len(result.Closed)),
 			"skipped":   strconv.Itoa(result.Skipped),
 		},
 	})

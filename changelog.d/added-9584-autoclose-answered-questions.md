@@ -1,0 +1,1 @@
+- Auto-close `kind/question` issues: the hive now stamps its newest answer on an open question with a downvote-to-reopen footer, then closes the issue as `completed` once `HIVE_QUESTION_AUTOCLOSE_HOURS` (default 4) has elapsed with no 👎 from the author and no further comment from anyone; a 👎 relabels the issue `needs-human` instead (#9584).
