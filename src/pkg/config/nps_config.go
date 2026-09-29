@@ -52,8 +52,6 @@ func (h HubConfig) NPSHubLinked() bool {
 const (
 	// NPSRelayURLEnvVar overrides Hub.NPSRelayURL.
 	NPSRelayURLEnvVar = "HIVE_NPS_RELAY_URL"
-	// NPSRelayTokenEnvVar overrides Hub.NPSRelayToken (spoke side).
-	NPSRelayTokenEnvVar = "HIVE_NPS_RELAY_TOKEN"
 	// NPSRelayPullSecretEnvVar overrides Hub.NPSRelayPullSecret (hub side).
 	NPSRelayPullSecretEnvVar = "HIVE_NPS_RELAY_PULL_SECRET"
 )
@@ -67,10 +65,11 @@ func npsEnvOr(name, fallback string) string {
 }
 
 // ValidNPSRelayURL returns raw with any trailing slash removed when it is an
-// acceptable relay base URL, else "". The relay carries a bearer token, so
-// only https is accepted, except plain http to a loopback host (local
-// development and tests). Query strings, fragments and credentials in the URL
-// are refused so the token can never end up somewhere it is logged.
+// acceptable relay base URL, else "". The hub's pull secret travels to it as a
+// bearer, and spoke submissions must not be readable in transit, so only
+// https is accepted, except plain http to a loopback host (local development
+// and tests). Query strings, fragments and credentials in the URL are refused
+// so a secret can never end up somewhere it is logged.
 func ValidNPSRelayURL(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -99,12 +98,6 @@ func (h HubConfig) EffectiveNPSRelayURL() string {
 	return ValidNPSRelayURL(npsEnvOr(NPSRelayURLEnvVar, h.NPSRelayURL))
 }
 
-// EffectiveNPSRelayToken resolves this install's relay token:
-// HIVE_NPS_RELAY_TOKEN, then hub.nps_relay_token. A secret; never log it.
-func (h HubConfig) EffectiveNPSRelayToken() string {
-	return npsEnvOr(NPSRelayTokenEnvVar, h.NPSRelayToken)
-}
-
 // EffectiveNPSRelayPullSecret resolves the hub's relay pull secret:
 // HIVE_NPS_RELAY_PULL_SECRET, then hub.nps_relay_pull_secret. A secret; never
 // log it.
@@ -112,9 +105,11 @@ func (h HubConfig) EffectiveNPSRelayPullSecret() string {
 	return npsEnvOr(NPSRelayPullSecretEnvVar, h.NPSRelayPullSecret)
 }
 
-// NPSRelayConfigured reports whether a standalone spoke has everything it
-// needs to submit to the relay: a valid relay URL and an install token. It
-// says nothing about opt-in; callers must still check NPSFeedbackEnabled.
+// NPSRelayConfigured reports whether a standalone spoke has a valid relay URL
+// to submit to. No per-install credential is configured: the spoke generates
+// and self-registers its own signing key on first use (pkg/dashboard
+// nps_relay.go). It says nothing about opt-in; callers must still check
+// NPSFeedbackEnabled.
 func (h HubConfig) NPSRelayConfigured() bool {
-	return h.EffectiveNPSRelayURL() != "" && h.EffectiveNPSRelayToken() != ""
+	return h.EffectiveNPSRelayURL() != ""
 }

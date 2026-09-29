@@ -65,7 +65,7 @@ func TestNPSHubLinked(t *testing.T) {
 }
 
 // TestValidNPSRelayURL pins the relay URL rule (issue #9619): https only, or
-// plain http to loopback, and never a URL that could smuggle the bearer token
+// plain http to loopback, and never a URL that could smuggle a bearer secret
 // into a query string or userinfo.
 func TestValidNPSRelayURL(t *testing.T) {
 	cases := map[string]string{
@@ -98,11 +98,10 @@ func TestValidNPSRelayURL(t *testing.T) {
 // (relay disabled), reads the config field, and is overridden by its env var.
 func TestNPSRelaySettingsPrecedence(t *testing.T) {
 	t.Setenv(NPSRelayURLEnvVar, "")
-	t.Setenv(NPSRelayTokenEnvVar, "")
 	t.Setenv(NPSRelayPullSecretEnvVar, "")
 
 	var empty HubConfig
-	if empty.EffectiveNPSRelayURL() != "" || empty.EffectiveNPSRelayToken() != "" || empty.EffectiveNPSRelayPullSecret() != "" {
+	if empty.EffectiveNPSRelayURL() != "" || empty.EffectiveNPSRelayPullSecret() != "" {
 		t.Fatal("relay settings must default to empty")
 	}
 	if empty.NPSRelayConfigured() {
@@ -111,30 +110,24 @@ func TestNPSRelaySettingsPrecedence(t *testing.T) {
 
 	cfg := HubConfig{
 		NPSRelayURL:        "https://cfg.example/api/nps",
-		NPSRelayToken:      " cfg-token ",
-		NPSRelayPullSecret: "cfg-pull",
+		NPSRelayPullSecret: " cfg-pull ",
 	}
 	if got := cfg.EffectiveNPSRelayURL(); got != "https://cfg.example/api/nps" {
 		t.Errorf("config URL = %q", got)
 	}
-	if got := cfg.EffectiveNPSRelayToken(); got != "cfg-token" {
-		t.Errorf("config token = %q, want trimmed cfg-token", got)
-	}
 	if got := cfg.EffectiveNPSRelayPullSecret(); got != "cfg-pull" {
-		t.Errorf("config pull secret = %q", got)
+		t.Errorf("config pull secret = %q, want trimmed cfg-pull", got)
 	}
+	// A valid relay URL is all a standalone spoke needs: its signing key is
+	// self-generated, so there is no per-install credential to configure.
 	if !cfg.NPSRelayConfigured() {
-		t.Error("URL + token must report the relay as configured")
+		t.Error("a valid relay URL must report the relay as configured")
 	}
 
 	t.Setenv(NPSRelayURLEnvVar, "https://env.example/api/nps")
-	t.Setenv(NPSRelayTokenEnvVar, "env-token")
 	t.Setenv(NPSRelayPullSecretEnvVar, "env-pull")
 	if got := cfg.EffectiveNPSRelayURL(); got != "https://env.example/api/nps" {
 		t.Errorf("env URL = %q", got)
-	}
-	if got := cfg.EffectiveNPSRelayToken(); got != "env-token" {
-		t.Errorf("env token = %q", got)
 	}
 	if got := cfg.EffectiveNPSRelayPullSecret(); got != "env-pull" {
 		t.Errorf("env pull secret = %q", got)
@@ -144,12 +137,5 @@ func TestNPSRelaySettingsPrecedence(t *testing.T) {
 	t.Setenv(NPSRelayURLEnvVar, "http://relay.example")
 	if cfg.EffectiveNPSRelayURL() != "" || cfg.NPSRelayConfigured() {
 		t.Error("a plain-http non-loopback relay URL must disable the relay")
-	}
-
-	// A URL without a token is not configured.
-	t.Setenv(NPSRelayURLEnvVar, "")
-	t.Setenv(NPSRelayTokenEnvVar, "")
-	if (HubConfig{NPSRelayURL: "https://cfg.example"}).NPSRelayConfigured() {
-		t.Error("a relay URL without an install token must not report configured")
 	}
 }

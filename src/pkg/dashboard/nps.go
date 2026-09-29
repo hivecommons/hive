@@ -31,8 +31,10 @@ import (
 // Off by default everywhere except hosted spokes (config.HubConfig
 // .NPSFeedbackEnabled). A standalone hive (no hub link) that opts in forwards
 // to the hivecommons NPS relay instead (issue #9619), but only when the
-// operator has also configured a relay URL and this install's relay token
-// (config.HubConfig.NPSRelayConfigured). Without either, it sends nothing
+// operator has also configured a relay URL (config.HubConfig
+// .NPSRelayConfigured). The relay needs no per-install credential from the
+// operator: the spoke generates and self-registers its own signing key on
+// first use (nps_relay.go). Without opt-in or a relay URL it sends nothing
 // anywhere. The same payload, caps and rate limits apply on both paths.
 
 const (
@@ -326,61 +328,60 @@ func (s *Server) npsRoute() string {
 	return npsRouteRelay
 }
 
-// npsDestination resolves the URL and bearer for the current route. The
-// relay token is a secret: it only ever travels in the Authorization header
-// and is never part of an error or log line.
-func (s *Server) npsDestination() (endpoint, bearer string, err error) {
-	hub := s.deps.Config.Hub
-	if s.npsRoute() == npsRouteHub {
-		bearer = spoke.SpokeHeartbeatKey()
-		if bearer == "" {
-			return "", "", errors.New("no hub credential (HIVE_HEARTBEAT_KEY / HIVE_HUB_SECRET) configured")
-		}
-		return strings.TrimRight(strings.TrimSpace(hub.URL), "/") + npsHubIngestPath, bearer, nil
+// npsNoRedirectClient never follows a redirect: the hub bearer and the
+// relay's signed requests must reach only the configured endpoint, and a 3xx
+// is a failure here.
+func npsNoRedirectClient() *http.Client {
+	return &http.Client{
+		Timeout: npsForwardTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
-	endpoint = hub.EffectiveNPSRelayURL()
-	bearer = hub.EffectiveNPSRelayToken()
-	if endpoint == "" || bearer == "" {
-		return "", "", errors.New("no NPS relay configured (hub.nps_relay_url and hub.nps_relay_token)")
-	}
-	return endpoint, bearer, nil
+}
+
+// npsIsSuccess reports whether an upstream status is 2xx.
+func npsIsSuccess(status int) bool {
+	return status >= http.StatusOK && status < http.StatusMultipleChoices
 }
 
 // forwardNPS POSTs payload to the hub with the spoke's per-hive heartbeat
-// bearer or, for a standalone hive, to the relay with this install's relay
-// token. It sends no cookie and no identity header: the request is built
-// fresh, never copied from the browser's. Returns the upstream status (0 when
-// no response) and an error for anything but 2xx.
+// bearer or, for a standalone hive, to the relay as a request signed with
+// this install's self-registered key (nps_relay.go). It sends no cookie and
+// no identity header: the request is built fresh, never copied from the
+// browser's. Returns the upstream status (0 when no response) and an error
+// for anything but 2xx.
 func (s *Server) forwardNPS(r *http.Request, payload npsHubPayload) (int, error) {
-	endpoint, bearer, err := s.npsDestination()
-	if err != nil {
-		return 0, err
-	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return 0, fmt.Errorf("marshal: %w", err)
 	}
+	hub := s.deps.Config.Hub
+	if s.npsRoute() == npsRouteRelay {
+		relayURL := hub.EffectiveNPSRelayURL()
+		if relayURL == "" {
+			return 0, errors.New("no NPS relay configured (hub.nps_relay_url)")
+		}
+		return npsRelayForward(r.Context(), npsNoRedirectClient(), relayURL, data)
+	}
+	bearer := spoke.SpokeHeartbeatKey()
+	if bearer == "" {
+		return 0, errors.New("no hub credential (HIVE_HEARTBEAT_KEY / HIVE_HUB_SECRET) configured")
+	}
+	endpoint := strings.TrimRight(strings.TrimSpace(hub.URL), "/") + npsHubIngestPath
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return 0, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+bearer)
-	// Never follow a redirect: the bearer (the relay token in particular)
-	// must reach only the configured endpoint, and a 3xx is a failure here.
-	client := &http.Client{
-		Timeout: npsForwardTimeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	resp, err := client.Do(req)
+	resp, err := npsNoRedirectClient().Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("post: %w", err)
 	}
 	defer closeHTTPBody(resp.Body)
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, npsMaxHubResponseBytes))
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+	if !npsIsSuccess(resp.StatusCode) {
 		return resp.StatusCode, fmt.Errorf("upstream answered %d", resp.StatusCode)
 	}
 	return resp.StatusCode, nil
