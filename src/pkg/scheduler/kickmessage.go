@@ -294,6 +294,10 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 		// agent opened is stuck behind unresolved external review-bot threads
 		// and needs a push + in-thread replies before any new work.
 		message = s.addReviewThreadFixFirst(agentName, message)
+		// PR follow-up handoff (hivecommons/hive#9583, default off): the
+		// reasoning behind the agent's own PRs with open follow-ups, for the
+		// fresh session this kick starts.
+		message = s.addPRFollowUpHandoff(agentName, message)
 		// Non-GitHub work source: tell the agent how the tracker half of its
 		// policy maps onto Linear (identity, auth, filing, PR linking, hold).
 		// Same seam, same reason — a customized template cannot omit it.
