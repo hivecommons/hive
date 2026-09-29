@@ -2392,13 +2392,24 @@
       background: color-mix(in srgb, var(--text) 88%, var(--bg));
       box-shadow: 0 0 12px color-mix(in srgb, var(--text) 90%, transparent);
     }
+    .thresh-pressure-marker {
+      position: absolute; top: -7px; width: 2px; height: 42px;
+      background: var(--text); z-index: 4; transform: translateX(-50%);
+      box-shadow: 0 0 10px color-mix(in srgb, var(--text) 80%, transparent);
+      pointer-events: none;
+    }
+    .thresh-pressure-marker::after {
+      content: attr(data-val); position: absolute; top: -1.35em; left: 50%;
+      transform: translateX(-50%); padding: 0 var(--sp-1); border-radius: var(--r-xs);
+      background: var(--surface); color: var(--text); font-size: var(--fs-2xs); font-weight: 700;
+    }
     .thresh-bar-labels {
-      position: relative; margin-top: var(--sp-3); height: 1.2em;
+      position: relative; margin-top: var(--sp-4); height: 3.2em;
       font-size: var(--fs-sm); font-weight: 600;
     }
     .thresh-bar-labels span { position: absolute; transform: translateX(-50%); }
     .thresh-zone-labels {
-      position: relative; margin-top: var(--sp-1); height: 1em;
+      position: relative; margin-top: var(--sp-1); height: 2.4em;
       font-size: var(--fs-2xs);
     }
     .thresh-zone-labels span { position: absolute; transform: translateX(-50%); text-transform: uppercase; letter-spacing: 0.5px; }
@@ -8560,10 +8571,10 @@
       const CLASSIC_THRESH_QUIET = _gt.quiet ?? 2;
       const CLASSIC_THRESH_BUSY = _gt.busy ?? 10;
       const CLASSIC_THRESH_SURGE = _gt.surge ?? 20;
-      const maxQ = Math.max(CLASSIC_THRESH_SURGE + 10, govPressure + 5);
-      const pct = Math.min(govPressure / maxQ * 100, 100);
-      const modeColors = { idle: 'var(--green)', quiet: 'var(--blue)', busy: 'var(--yellow)', surge: 'var(--red)' };
-      const modeColor = modeColors[gov.mode] || 'var(--muted)';
+      const gaugeBounds = governorPressureBarBoundaries({ quiet: CLASSIC_THRESH_QUIET, busy: CLASSIC_THRESH_BUSY, surge: CLASSIC_THRESH_SURGE }, govPressure);
+      const maxQ = gaugeBounds.max;
+      const pct = gaugeBounds.pressurePct;
+      const modeColor = GOVERNOR_MODE_COLORS[gov.mode] || 'var(--muted)';
 
       // Timeline strip from 24h persistent timeline data
       const rawTl = window._timelineData || {};
@@ -8626,16 +8637,16 @@
         </div>
         <div class="temp-gauge" style="cursor:pointer" data-action="gh5" title="Click to adjust governor thresholds">
           <div class="temp-gauge-label"><span>Pressure: ${govPressure} (${issueCount} issues + ${prCount} PRs)</span><span>max ${maxQ}</span></div>
-          <div class="temp-gauge-track" style="background:linear-gradient(to right, var(--green) 0%, var(--green) ${CLASSIC_THRESH_QUIET/maxQ*100}%, var(--blue) ${CLASSIC_THRESH_QUIET/maxQ*100}%, var(--blue) ${CLASSIC_THRESH_BUSY/maxQ*100}%, var(--yellow) ${CLASSIC_THRESH_BUSY/maxQ*100}%, var(--yellow) ${CLASSIC_THRESH_SURGE/maxQ*100}%, var(--red) ${CLASSIC_THRESH_SURGE/maxQ*100}%, var(--red) 100%)">
+          <div class="temp-gauge-track" style="background:${governorModeGradient(gaugeBounds)}">
             <div class="temp-gauge-glow" style="width:100%"></div>
-            <div class="temp-gauge-ticks"><span style="left:2%;-webkit-transform:translate(0,-50%);transform:translate(0,-50%)">0</span><span style="left:${CLASSIC_THRESH_QUIET/maxQ*100}%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%)">${CLASSIC_THRESH_QUIET}</span><span style="left:${CLASSIC_THRESH_BUSY/maxQ*100}%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%)">${CLASSIC_THRESH_BUSY}</span><span style="left:${CLASSIC_THRESH_SURGE/maxQ*100}%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%)">${CLASSIC_THRESH_SURGE}</span><span style="left:98%;-webkit-transform:translate(-100%,-50%);transform:translate(-100%,-50%)">${maxQ}</span></div>
+            <div class="temp-gauge-ticks"><span style="left:2%;-webkit-transform:translate(0,-50%);transform:translate(0,-50%)">0</span><span style="left:${gaugeBounds.quietPct}%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%)">${CLASSIC_THRESH_QUIET}</span><span style="left:${gaugeBounds.busyPct}%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%)">${CLASSIC_THRESH_BUSY}</span><span style="left:${gaugeBounds.surgePct}%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%)">${CLASSIC_THRESH_SURGE}</span><span style="left:98%;-webkit-transform:translate(-100%,-50%);transform:translate(-100%,-50%)">${maxQ}</span></div>
             <div class="temp-gauge-needle" style="left:${pct}%" data-val="${govPressure}"></div>
           </div>
           <div class="temp-gauge-labels">
-            <span class="tl-idle" style="position:absolute;left:${CLASSIC_THRESH_QUIET / maxQ * 50}%;transform:translateX(-50%)">idle</span>
-            <span class="tl-quiet" style="position:absolute;left:${(CLASSIC_THRESH_QUIET + CLASSIC_THRESH_BUSY) / 2 / maxQ * 100}%;transform:translateX(-50%)">quiet</span>
-            <span class="tl-busy" style="position:absolute;left:${(CLASSIC_THRESH_BUSY + CLASSIC_THRESH_SURGE) / 2 / maxQ * 100}%;transform:translateX(-50%)">busy</span>
-            <span class="tl-surge" style="position:absolute;left:${(CLASSIC_THRESH_SURGE + maxQ) / 2 / maxQ * 100}%;transform:translateX(-50%)">surge</span>
+            <span class="tl-idle" style="position:absolute;left:${gaugeBounds.quietPct / 2}%;transform:translateX(-50%)">idle</span>
+            <span class="tl-quiet" style="position:absolute;left:${(gaugeBounds.quietPct + gaugeBounds.busyPct) / 2}%;transform:translateX(-50%)">quiet</span>
+            <span class="tl-busy" style="position:absolute;left:${(gaugeBounds.busyPct + gaugeBounds.surgePct) / 2}%;transform:translateX(-50%)">busy</span>
+            <span class="tl-surge" style="position:absolute;left:${(gaugeBounds.surgePct + 100) / 2}%;transform:translateX(-50%)">surge</span>
           </div>
         </div>
         <div class="gov-timeline">
@@ -25644,18 +25655,112 @@ function burnAreaChart() {
         </div>`;
     }
 
-    const THRESH_BAR_MAX = 200;
-    const THRESH_COLORS = { idle: 'var(--green)', quiet: 'var(--blue)', busy: 'var(--yellow)', surge: 'var(--red)' };
+    const GOVERNOR_MODE_COLORS = { idle: 'var(--green)', quiet: 'var(--blue)', busy: 'var(--yellow)', surge: 'var(--red)' };
+
+    function governorTrackMax(effectiveSurge, pressure) {
+      const surge = Math.max(0, Number(effectiveSurge) || 0);
+      const current = Math.max(0, Number(pressure) || 0);
+      return Math.max(surge + 10, current + 5, 1);
+    }
+
+    function governorPct(value, max) {
+      const n = Math.max(0, Number(value) || 0);
+      const cap = Math.max(1, Number(max) || 1);
+      return Math.min((n / cap) * 100, 100);
+    }
+
+    function governorSegmentBoundaries(quiet, busy, surge, pressure) {
+      const max = governorTrackMax(surge, pressure);
+      return {
+        max,
+        quietPct: governorPct(quiet, max),
+        busyPct: governorPct(busy, max),
+        surgePct: governorPct(surge, max),
+        pressurePct: governorPct(pressure, max),
+      };
+    }
+
+    function governorPressureBarBoundaries(effectiveThresholds, pressure) {
+      const t = effectiveThresholds || {};
+      return governorSegmentBoundaries(t.quiet || 2, t.busy || 10, t.surge || 20, pressure);
+    }
+
+    function governorThresholdSliderBoundaries(effectiveThresholds, pressure) {
+      return governorPressureBarBoundaries(effectiveThresholds, pressure);
+    }
+
+    function governorModeGradient(bounds) {
+      return `linear-gradient(to right,
+        ${GOVERNOR_MODE_COLORS.idle} 0%,${GOVERNOR_MODE_COLORS.idle} ${bounds.quietPct}%,
+        ${GOVERNOR_MODE_COLORS.quiet} ${bounds.quietPct}%,${GOVERNOR_MODE_COLORS.quiet} ${bounds.busyPct}%,
+        ${GOVERNOR_MODE_COLORS.busy} ${bounds.busyPct}%,${GOVERNOR_MODE_COLORS.busy} ${bounds.surgePct}%,
+        ${GOVERNOR_MODE_COLORS.surge} ${bounds.surgePct}%,${GOVERNOR_MODE_COLORS.surge} 100%)`;
+    }
+
+    function governorScaleThreshold(base, repoCount, scaling) {
+      const n = Number(base) || 0;
+      if (n <= 0) return n;
+      const repos = Math.max(1, Number(repoCount) || 1);
+      if (scaling === 'none') return n;
+      if (scaling === 'sqrt') return n * Math.ceil(Math.sqrt(repos));
+      return n * repos;
+    }
+
+    function governorStaggerLabels(labels, minGapPct) {
+      const gap = Number(minGapPct) || 8;
+      const sorted = (labels || []).map((label, idx) => Object.assign({ idx, pct: 0 }, label)).sort((a, b) => a.pct - b.pct);
+      const laneEnds = [];
+      for (const label of sorted) {
+        let lane = laneEnds.findIndex(end => (label.pct - end) >= gap);
+        if (lane < 0) lane = laneEnds.length;
+        laneEnds[lane] = label.pct;
+        label.lane = lane;
+      }
+      return sorted.sort((a, b) => a.idx - b.idx).map(({ idx, ...label }) => label);
+    }
+
+    function governorPressureFromStatus(status) {
+      const gov = (status && status.governor) || {};
+      return (Number(gov.issues) || 0) + (Number(gov.prs) || 0);
+    }
+
+    function governorEffectiveThresholds(d, base, activeScope, activeScaling) {
+      const repoCount = (d && d.repoCount) || 1;
+      const dirty = (_configState.dirty && _configState.dirty.thresholds) || {};
+      const hasDirtyThreshold = Object.prototype.hasOwnProperty.call(dirty, 'quiet') ||
+        Object.prototype.hasOwnProperty.call(dirty, 'busy') ||
+        Object.prototype.hasOwnProperty.call(dirty, 'surge');
+      const scalingDirty = _configState.dirty && _configState.dirty['threshold-scaling'];
+      const scopeDirty = _configState.dirty && _configState.dirty['cadence-scope'];
+      const serverEff = (d && d.effectiveThresholds) || {};
+      if (!hasDirtyThreshold && !scalingDirty && !scopeDirty && serverEff.quiet && serverEff.busy && serverEff.surge) {
+        return { quiet: serverEff.quiet, busy: serverEff.busy, surge: serverEff.surge };
+      }
+      const scaleRepos = activeScope === 'per_repo' ? 1 : repoCount;
+      const out = {
+        quiet: governorScaleThreshold(base.quiet, scaleRepos, activeScaling),
+        busy: governorScaleThreshold(base.busy, scaleRepos, activeScaling),
+        surge: governorScaleThreshold(base.surge, scaleRepos, activeScaling),
+      };
+      for (const key of ['quiet', 'busy', 'surge']) {
+        if (Object.prototype.hasOwnProperty.call(dirty, key)) out[key] = base[key];
+      }
+      return out;
+    }
+
+    function governorThresholdLabel(baseValue, effectiveValue) {
+      return Number(baseValue) === Number(effectiveValue) ? String(baseValue) : `${baseValue} → ${effectiveValue}`;
+    }
 
     function renderGovThresholds(d) {
       const t = (d && d.thresholds) || {};
       const merged = Object.assign({}, t, _configState.dirty.thresholds || {});
       const q = merged.quiet || 2, b = merged.busy || 10, s = merged.surge || 20;
+      const base = { quiet: q, busy: b, surge: s };
       // The handles edit BASE thresholds; the governor ladders on the effective
       // ones, which for an unset mode are the base scaled by repo count (#3498).
       // Show both — a 39-repo hive surges at 780, far past this bar's range, and
       // a slider reading 20 with no further explanation would be a lie.
-      const eff = (d && d.effectiveThresholds) || {};
       const repoCount = (d && d.repoCount) || 1;
       const scope = ((d && d.cadenceScope) || 'aggregate');
       const scopeDirty = (_configState.dirty['cadence-scope'] || {}).cadenceScope;
@@ -25664,10 +25769,25 @@ function burnAreaChart() {
       const scalingDirty = (_configState.dirty['threshold-scaling'] || {}).thresholdScaling;
       const activeScaling = scalingDirty !== undefined ? scalingDirty : scaling;
       const scaled = activeScaling !== 'none' && repoCount > 1 && activeScope !== 'per_repo';
-      const effNote = scaled && eff.surge
+      const effective = governorEffectiveThresholds(d, base, activeScope, activeScaling);
+      const pressure = governorPressureFromStatus(window._lastStatus || {});
+      const bounds = governorThresholdSliderBoundaries(effective, pressure);
+      const maxValue = bounds.max;
+      const labels = governorStaggerLabels([
+        { key: 'quiet', pct: bounds.quietPct, text: governorThresholdLabel(q, effective.quiet), color: GOVERNOR_MODE_COLORS.quiet },
+        { key: 'busy', pct: bounds.busyPct, text: governorThresholdLabel(b, effective.busy), color: GOVERNOR_MODE_COLORS.busy },
+        { key: 'surge', pct: bounds.surgePct, text: governorThresholdLabel(s, effective.surge), color: GOVERNOR_MODE_COLORS.surge },
+      ], 11);
+      const zoneLabels = governorStaggerLabels([
+        { key: 'idle', pct: bounds.quietPct / 2, color: GOVERNOR_MODE_COLORS.idle },
+        { key: 'quiet', pct: (bounds.quietPct + bounds.busyPct) / 2, color: GOVERNOR_MODE_COLORS.quiet },
+        { key: 'busy', pct: (bounds.busyPct + bounds.surgePct) / 2, color: GOVERNOR_MODE_COLORS.busy },
+        { key: 'surge', pct: (bounds.surgePct + 100) / 2, color: GOVERNOR_MODE_COLORS.surge },
+      ], 14);
+      const effNote = scaled && effective.surge
         ? `<p style="font-size:var(--fs-sm);color:var(--muted);margin:-12px 0 20px">
              In force for <strong>${repoCount}</strong> watched repos:
-             quiet <strong>${eff.quiet}</strong> · busy <strong>${eff.busy}</strong> · surge <strong>${eff.surge}</strong>.
+             quiet <strong>${effective.quiet}</strong> · busy <strong>${effective.busy}</strong> · surge <strong>${effective.surge}</strong>.
              Dragging a handle pins that threshold to an absolute value and opts it out of scaling.
            </p>`
         : activeScope === 'per_repo'
@@ -25677,9 +25797,6 @@ function burnAreaChart() {
                Multi-repo threshold scaling does not apply to per-repo mode resolution.
              </p>`
         : '';
-      const qPct = (q / THRESH_BAR_MAX) * 100;
-      const bPct = (b / THRESH_BAR_MAX) * 100;
-      const sPct = (s / THRESH_BAR_MAX) * 100;
       return `
         <div class="config-field mb-7">
           <label>Cadence mode scope <span class="config-info">i<span class="config-tooltip">Aggregate preserves the current one-mode behavior. Per repo computes each successfully scanned repo's mode from its own actionable queue; hive-wide agents continue using the aggregate mode.</span></span></label>
@@ -25700,45 +25817,34 @@ function burnAreaChart() {
         ${effNote}
         <div class="thresh-bar-wrap">
           <div class="thresh-bar-track" id="thresh-track"
-               style="background:linear-gradient(to right,
-                 ${THRESH_COLORS.idle} 0%,${THRESH_COLORS.idle} ${qPct}%,
-                 ${THRESH_COLORS.quiet} ${qPct}%,${THRESH_COLORS.quiet} ${bPct}%,
-                 ${THRESH_COLORS.busy} ${bPct}%,${THRESH_COLORS.busy} ${sPct}%,
-                 ${THRESH_COLORS.surge} ${sPct}%,${THRESH_COLORS.surge} 100%)">
-            <div class="thresh-handle" id="thresh-quiet" style="left:${qPct}%" data-key="quiet" data-val="${q}"></div>
-            <div class="thresh-handle" id="thresh-busy" style="left:${bPct}%" data-key="busy" data-val="${b}"></div>
-            <div class="thresh-handle" id="thresh-surge" style="left:${sPct}%" data-key="surge" data-val="${s}"></div>
+               data-max="${maxValue}" style="background:${governorModeGradient(bounds)}">
+            <div class="thresh-pressure-marker" style="left:${bounds.pressurePct}%" data-val="${pressure}" title="Current pressure: ${pressure}"></div>
+            <div class="thresh-handle" id="thresh-quiet" style="left:${bounds.quietPct}%" data-key="quiet" data-val="${q}"></div>
+            <div class="thresh-handle" id="thresh-busy" style="left:${bounds.busyPct}%" data-key="busy" data-val="${b}"></div>
+            <div class="thresh-handle" id="thresh-surge" style="left:${bounds.surgePct}%" data-key="surge" data-val="${s}"></div>
           </div>
           <div class="thresh-bar-labels">
-            <span style="left:0;transform:none;color:${THRESH_COLORS.idle}">0</span>
-            <span style="left:${qPct}%;color:${THRESH_COLORS.quiet}" id="thresh-lbl-quiet">${q}</span>
-            <span style="left:${bPct}%;color:${THRESH_COLORS.busy}" id="thresh-lbl-busy">${b}</span>
-            <span style="left:${sPct}%;color:${THRESH_COLORS.surge}" id="thresh-lbl-surge">${s}</span>
-            <span style="right:0;left:auto;transform:none;color:var(--muted)">${THRESH_BAR_MAX}</span>
+            <span style="left:0;top:0;transform:none;color:${GOVERNOR_MODE_COLORS.idle}">0</span>
+            ${labels.map(l => `<span style="left:${l.pct}%;top:${l.lane * 1.35}em;color:${l.color}" id="thresh-lbl-${l.key}">${l.text}</span>`).join('')}
+            <span style="right:0;left:auto;top:0;transform:none;color:var(--muted)">${maxValue}</span>
           </div>
           <div class="thresh-zone-labels">
-            <span style="left:${qPct / 2}%;color:${THRESH_COLORS.idle}">idle</span>
-            <span style="left:${(qPct + bPct) / 2}%;color:${THRESH_COLORS.quiet}">quiet</span>
-            <span style="left:${(bPct + sPct) / 2}%;color:${THRESH_COLORS.busy}">busy</span>
-            <span style="left:${(sPct + 100) / 2}%;color:${THRESH_COLORS.surge}">surge</span>
+            ${zoneLabels.map(l => `<span style="left:${l.pct}%;top:${l.lane * 1.15}em;color:${l.color}">${l.key}</span>`).join('')}
           </div>
         </div>
         <div class="config-field-row" style="margin-top:var(--sp-8)">
-          <div class="config-field"><label title="Number of actionable issues at which the governor transitions from idle to quiet mode. Below this count, agents run at their idle cadence.">Quiet</label><input type="number" min="1" max="${THRESH_BAR_MAX}" id="thresh-in-quiet" value="${q}" data-input-action="setThreshFromInput" data-arg0="quiet" data-arg-types="s,v"></div>
-          <div class="config-field"><label title="Number of actionable issues at which the governor transitions from quiet to busy mode. Agents increase their kick frequency to handle the growing workload.">Busy</label><input type="number" min="1" max="${THRESH_BAR_MAX}" id="thresh-in-busy" value="${b}" data-input-action="setThreshFromInput" data-arg0="busy" data-arg-types="s,v"></div>
-          <div class="config-field"><label title="Number of actionable issues at which the governor transitions from busy to surge mode. Maximum agent activity — monitor your token budget closely at this level.">Surge</label><input type="number" min="1" max="${THRESH_BAR_MAX}" id="thresh-in-surge" value="${s}" data-input-action="setThreshFromInput" data-arg0="surge" data-arg-types="s,v"></div>
+          <div class="config-field"><label title="Number of actionable issues at which the governor transitions from idle to quiet mode. Below this count, agents run at their idle cadence.">Quiet</label><input type="number" min="1" max="${maxValue}" id="thresh-in-quiet" value="${q}" data-input-action="setThreshFromInput" data-arg0="quiet" data-arg-types="s,v"></div>
+          <div class="config-field"><label title="Number of actionable issues at which the governor transitions from quiet to busy mode. Agents increase their kick frequency to handle the growing workload.">Busy</label><input type="number" min="1" max="${maxValue}" id="thresh-in-busy" value="${b}" data-input-action="setThreshFromInput" data-arg0="busy" data-arg-types="s,v"></div>
+          <div class="config-field"><label title="Number of actionable issues at which the governor transitions from busy to surge mode. Maximum agent activity — monitor your token budget closely at this level.">Surge</label><input type="number" min="1" max="${maxValue}" id="thresh-in-surge" value="${s}" data-input-action="setThreshFromInput" data-arg0="surge" data-arg-types="s,v"></div>
 
         </div>`;
     }
 
     function setThreshFromInput(key, val) {
-      const v = Math.max(1, Math.min(THRESH_BAR_MAX, parseInt(val) || 1));
+      const track = document.getElementById('thresh-track');
+      const maxValue = track ? (parseInt(track.dataset.max, 10) || governorTrackMax(((_configState.data.effectiveThresholds || {}).surge || 20), governorPressureFromStatus(window._lastStatus || {}))) : governorTrackMax(((_configState.data.effectiveThresholds || {}).surge || 20), governorPressureFromStatus(window._lastStatus || {}));
+      const v = Math.max(1, Math.min(maxValue, parseInt(val) || 1));
       markDirty('thresholds', key, v);
-      const handle = document.getElementById('thresh-' + key);
-      const lbl = document.getElementById('thresh-lbl-' + key);
-      const pct = (v / THRESH_BAR_MAX) * 100;
-      if (handle) { handle.style.left = pct + '%'; handle.dataset.val = v; }
-      if (lbl) { lbl.textContent = v; lbl.style.left = pct + '%'; }
       updateThreshBarGradient();
     }
 
@@ -25754,18 +25860,17 @@ function burnAreaChart() {
       document.addEventListener('pointermove', (e) => {
         if (!active || !trackRect) return;
         const pct = Math.max(0, Math.min(100, ((e.clientX - trackRect.left) / trackRect.width) * 100));
-        const val = Math.round((pct / 100) * THRESH_BAR_MAX);
+        const track = document.getElementById('thresh-track');
+        const maxValue = track ? (parseInt(track.dataset.max, 10) || 1) : 1;
+        const val = Math.round((pct / 100) * maxValue);
         const key = active.dataset.key;
         const d = _configState.data.thresholds || {};
         const merged = Object.assign({}, d, _configState.dirty.thresholds || {});
         let clamped = val;
         if (key === 'quiet') clamped = Math.max(1, Math.min(clamped, (merged.busy || 10) - 1));
         if (key === 'busy') clamped = Math.max((merged.quiet || 2) + 1, Math.min(clamped, (merged.surge || 20) - 1));
-        if (key === 'surge') clamped = Math.max((merged.busy || 10) + 1, Math.min(clamped, THRESH_BAR_MAX - 1));
+        if (key === 'surge') clamped = Math.max((merged.busy || 10) + 1, Math.min(clamped, maxValue - 1));
         active.dataset.val = clamped;
-        active.style.left = ((clamped / THRESH_BAR_MAX) * 100) + '%';
-        const lbl = document.getElementById('thresh-lbl-' + key);
-        if (lbl) { lbl.textContent = clamped; lbl.style.left = ((clamped / THRESH_BAR_MAX) * 100) + '%'; }
         const inp = document.getElementById('thresh-in-' + key);
         if (inp) inp.value = clamped;
         markDirty('thresholds', key, clamped);
@@ -25779,21 +25884,49 @@ function burnAreaChart() {
       if (!track) return;
       const d = _configState.data.thresholds || {};
       const m = Object.assign({}, d, _configState.dirty.thresholds || {});
-      const qP = ((m.quiet || 2) / THRESH_BAR_MAX) * 100;
-      const bP = ((m.busy || 10) / THRESH_BAR_MAX) * 100;
-      const sP = ((m.surge || 20) / THRESH_BAR_MAX) * 100;
-      track.style.background = `linear-gradient(to right,
-        ${THRESH_COLORS.idle} 0%,${THRESH_COLORS.idle} ${qP}%,
-        ${THRESH_COLORS.quiet} ${qP}%,${THRESH_COLORS.quiet} ${bP}%,
-        ${THRESH_COLORS.busy} ${bP}%,${THRESH_COLORS.busy} ${sP}%,
-        ${THRESH_COLORS.surge} ${sP}%,${THRESH_COLORS.surge} 100%)`;
+      const base = { quiet: m.quiet || 2, busy: m.busy || 10, surge: m.surge || 20 };
+      const scope = ((_configState.data && _configState.data.cadenceScope) || 'aggregate');
+      const scopeDirty = (_configState.dirty['cadence-scope'] || {}).cadenceScope;
+      const activeScope = scopeDirty !== undefined ? scopeDirty : scope;
+      const scaling = ((_configState.data && _configState.data.thresholdScaling) || 'linear');
+      const scalingDirty = (_configState.dirty['threshold-scaling'] || {}).thresholdScaling;
+      const activeScaling = scalingDirty !== undefined ? scalingDirty : scaling;
+      const effective = governorEffectiveThresholds(_configState.data || {}, base, activeScope, activeScaling);
+      const bounds = governorThresholdSliderBoundaries(effective, governorPressureFromStatus(window._lastStatus || {}));
+      const labels = governorStaggerLabels([
+        { key: 'quiet', pct: bounds.quietPct },
+        { key: 'busy', pct: bounds.busyPct },
+        { key: 'surge', pct: bounds.surgePct },
+      ], 11);
+      const labelLanes = {};
+      labels.forEach(l => { labelLanes[l.key] = l.lane; });
+      track.dataset.max = String(bounds.max);
+      track.style.background = governorModeGradient(bounds);
+      for (const item of [
+        ['quiet', base.quiet, effective.quiet, bounds.quietPct],
+        ['busy', base.busy, effective.busy, bounds.busyPct],
+        ['surge', base.surge, effective.surge, bounds.surgePct],
+      ]) {
+        const [key, raw, effVal, pct] = item;
+        const handle = document.getElementById('thresh-' + key);
+        const lbl = document.getElementById('thresh-lbl-' + key);
+        if (handle) { handle.style.left = pct + '%'; handle.dataset.val = raw; }
+        if (lbl) { lbl.textContent = governorThresholdLabel(raw, effVal); lbl.style.left = pct + '%'; lbl.style.top = ((labelLanes[key] || 0) * 1.35) + 'em'; }
+      }
+      const pressureMarker = track.querySelector('.thresh-pressure-marker');
+      if (pressureMarker) pressureMarker.style.left = bounds.pressurePct + '%';
       const zones = track.parentElement.querySelector('.thresh-zone-labels');
       if (zones) {
         const spans = zones.querySelectorAll('span');
-        if (spans[0]) spans[0].style.left = (qP / 2) + '%';
-        if (spans[1]) spans[1].style.left = ((qP + bP) / 2) + '%';
-        if (spans[2]) spans[2].style.left = ((bP + sP) / 2) + '%';
-        if (spans[3]) spans[3].style.left = ((sP + 100) / 2) + '%';
+        const zoneLabels = governorStaggerLabels([
+          { pct: bounds.quietPct / 2 },
+          { pct: (bounds.quietPct + bounds.busyPct) / 2 },
+          { pct: (bounds.busyPct + bounds.surgePct) / 2 },
+          { pct: (bounds.surgePct + 100) / 2 },
+        ], 14);
+        zoneLabels.forEach((label, i) => {
+          if (spans[i]) { spans[i].style.left = label.pct + '%'; spans[i].style.top = (label.lane * 1.15) + 'em'; }
+        });
       }
     }
 
