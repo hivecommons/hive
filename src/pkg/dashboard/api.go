@@ -1406,7 +1406,7 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}
-	if user != "" {
+	if user != "" && !s.syntheticInternalUser(r, user) {
 		req.Header.Set("X-Hive-User", user)
 	}
 	if role != "" {
@@ -1433,6 +1433,12 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)
+}
+
+func (s *Server) syntheticInternalUser(r *http.Request, user string) bool {
+	return strings.TrimSpace(user) == dashboardInternalActorUser &&
+		strings.TrimSpace(r.Header.Get("X-Hive-Internal")) != "" &&
+		s.configuredOwnerUser() == ""
 }
 
 func (s *Server) handleReleaseChannelSwitch(w http.ResponseWriter, r *http.Request) {

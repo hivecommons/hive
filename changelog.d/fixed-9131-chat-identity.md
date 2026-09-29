@@ -1,0 +1,1 @@
+- Ensure dashboard chat commands from owner-authenticated token, internal, and open/dev paths carry a verified user identity instead of falling back to `local`.

@@ -949,6 +949,11 @@ type TokenSparklineEntry struct {
 // tokenSparklineMaxEntries caps the on-disk history to ~24h at 5-min intervals.
 const tokenSparklineMaxEntries = 288
 
+const (
+	dashboardFallbackOwnerUser = "owner"
+	dashboardInternalActorUser = "internal"
+)
+
 // FactHistoryEntry records a total-facts snapshot at a point in time.
 type FactHistoryEntry struct {
 	Timestamp int64 `json:"t"`
@@ -1431,10 +1436,14 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 					r.Header.Set("X-Hive-User", inboundUser)
 				}
 				r.Header.Set("X-Hive-Role", inboundRole)
+				if config.RoleAtLeast(inboundRole, config.RoleReadWrite) && r.Header.Get("X-Hive-User") == "" {
+					r.Header.Set("X-Hive-User", s.verifiedOwnerUser(dashboardFallbackOwnerUser))
+				}
 				if isOwnerRole(inboundRole) {
 					r.Header.Set(ownerRoleVerifiedHeader, "true")
 				}
 			} else {
+				r.Header.Set("X-Hive-User", s.verifiedOwnerUser(dashboardFallbackOwnerUser))
 				r.Header.Set("X-Hive-Role", config.RoleOwner)
 				r.Header.Set(ownerRoleVerifiedHeader, "true")
 			}
@@ -1443,7 +1452,8 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		}
 		// Internal automation authenticates with the shared token via the
 		// X-Hive-Internal header; this is a trusted server-to-server path
-		// (the local proxy injects it) and carries no browser user identity.
+		// (the local proxy injects it) and carries a server-selected operator
+		// identity when no browser session scopes it down.
 		// Guard against an empty authToken: subtle.ConstantTimeCompare("","")
 		// is TRUE, so without this an absent/empty header would authenticate on
 		// a direct-route spoke that has no token. The shared-token paths are only
@@ -1478,6 +1488,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 				// which is owner-equivalent by definition. Without this, the F14
 				// provenance hardening locked the real owner out of owner-gated
 				// endpoints on every shared-token deployment (#4134).
+				r.Header.Set("X-Hive-User", s.verifiedOwnerUser(dashboardInternalActorUser))
 				r.Header.Set("X-Hive-Role", config.RoleOwner)
 				r.Header.Set(ownerRoleVerifiedHeader, "true")
 			}
@@ -1583,6 +1594,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 				// per-user session path already ran and did not match, and
 				// inbound identity headers were stripped, so granting owner here
 				// requires possession of the secret — nothing less (#4134).
+				r.Header.Set("X-Hive-User", s.verifiedOwnerUser(dashboardFallbackOwnerUser))
 				r.Header.Set("X-Hive-Role", config.RoleOwner)
 				r.Header.Set(ownerRoleVerifiedHeader, "true")
 			}
@@ -1628,6 +1640,44 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 func (s *Server) directRouteAuthzEnabled() bool {
 	return s.deps != nil && s.deps.Config != nil &&
 		s.deps.Config.Dashboard.IsDirectRouteAuthzEnabled()
+}
+
+func (s *Server) verifiedOwnerUser(fallback string) string {
+	if owner := s.configuredOwnerUser(); owner != "" {
+		return owner
+	}
+	if fallback = strings.TrimSpace(fallback); fallback != "" {
+		return fallback
+	}
+	return dashboardFallbackOwnerUser
+}
+
+func (s *Server) configuredOwnerUser() string {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return ""
+	}
+	for i, entry := range s.deps.Config.Dashboard.AuthorizedUsers {
+		name, role := dashboardAuthorizedUserEntry(entry)
+		if name == "" {
+			continue
+		}
+		if role == config.RoleOwner || (role == "" && i == 0) {
+			return name
+		}
+	}
+	return ""
+}
+
+func dashboardAuthorizedUserEntry(entry string) (name, role string) {
+	entry = strings.TrimSpace(entry)
+	if idx := strings.LastIndex(entry, ":"); idx >= 0 {
+		name = strings.TrimSpace(entry[:idx])
+		role = strings.ToLower(strings.TrimSpace(entry[idx+1:]))
+		if config.ValidRole(role) {
+			return name, role
+		}
+	}
+	return entry, ""
 }
 
 // requestRoleAllowsOwner reports whether the request should be treated as an
