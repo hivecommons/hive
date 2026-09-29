@@ -59,20 +59,22 @@ The relay path is used only when **all** of these hold:
 
 - NPS is enabled (`hub.nps_enabled: true` or `HIVE_NPS_ENABLED=true`). For a standalone hive this is off by default, so nothing is sent until the operator turns it on.
 - The hive has no hub link. A hive with a hub link always forwards to its hub and never uses the relay.
-- A relay URL is configured (`hub.nps_relay_url` / `HIVE_NPS_RELAY_URL`). It defaults to empty, which disables the relay. It must be `https` (plain `http` is accepted only for a loopback host). The hivecommons relay URL will be published here once it is deployed.
-- This install has a relay token (`hub.nps_relay_token` / `HIVE_NPS_RELAY_TOKEN`). Without a token the hive sends nothing and the prompt does not appear.
+- A relay URL is configured (`hub.nps_relay_url` / `HIVE_NPS_RELAY_URL`). It defaults to empty, which disables the relay. It must be `https` (plain `http` is accepted only for a loopback host). The hivecommons relay is `https://docs.hivecommons.dev/api/nps`.
 
 ```bash
 HIVE_NPS_ENABLED=true
-HIVE_NPS_RELAY_URL=https://<relay host>/api/nps
-HIVE_NPS_RELAY_TOKEN=<token from the relay operator>
+HIVE_NPS_RELAY_URL=https://docs.hivecommons.dev/api/nps
 ```
 
-**Getting a token.** In this first phase tokens are issued by the relay operator (a hivecommons maintainer) on request. The operator generates a random token, adds a hash of it to the relay's allowlist under a label for your install, and sends you the token. The relay stores only the hash. Treat the token as a secret: the hive sends it only in the `Authorization` header to the configured relay URL, never follows a redirect with it, and never logs it.
+That is all. There is no token to request and nothing for a hivecommons maintainer to do per hive.
 
-**What the relay receives** is the same payload the hub path sends: `hive_id`, `score`, `feedback` and `dashboard_version`, with no user identity. The spoke applies the same validation, size caps and per-user / per-hive rate limits as on the hub path. The relay independently caps the body by bytes read, validates the score and the 500-character feedback limit, accepts at most one response per client IP per 24 hours, and keeps a rolling window of entries. It has **no public read path**.
+**Self-registered install keys.** On the first response it forwards, the hive generates an Ed25519 keypair and a random install id (a UUID) and stores both in `/data/secrets/nps_relay_identity.json`, readable only by the hive process (mode `0600`). It then registers the public key with the relay (`POST <relay url>/register` with `{install_id, public_key, hive_version}`), proving it holds the private key by signing the request. Every submission after that is signed: the signature covers the install id, a timestamp, a random nonce and the SHA-256 of the exact body. The relay rejects a bad or missing signature, an unknown install id, a timestamp more than 5 minutes off, and a nonce it has already seen. If the relay answers that it does not know the install (for example after its store was reset), the hive registers the same key again, once, and retries. The private key is never sent anywhere, never logged, and never part of an error message. Deleting the identity file makes the hive start over as a new install.
 
-**How the hub gets them.** A hub configured with the relay URL and a pull secret (`hub.nps_relay_pull_secret` / `HIVE_NPS_RELAY_PULL_SECRET`) pulls pending entries every 15 minutes, in batches of up to 100. Each entry is validated with the same rules as a direct response, stored with `source: relay`, and then acknowledged so the relay deletes it. The relay's stable entry id is kept as a dedupe key, so a pull that is retried after a failed acknowledgement never duplicates a response. An entry that claims the ID of a hive registered with the hub is discarded, since a hub-linked hive never uses the relay. Relay responses appear in the hub admin NPS card marked "via relay". With no relay URL or no pull secret, the hub does not pull.
+A self-registered key proves **continuity of one install**, not that the install is a real or trusted hive: anyone can register a key. That is why relay responses are labeled "unverified install" in the hub admin view, and why the relay bounds what one caller can do (below) instead of trusting it.
+
+**What the relay receives** is the same payload the hub path sends: `hive_id`, `score`, `feedback` and `dashboard_version`, with no user identity. The spoke applies the same validation, size caps and per-user / per-hive rate limits as on the hub path. The relay independently caps every body by bytes read, validates the score, the 500-character feedback limit and the hive id, accepts at most one response per client IP and 10 per install per 24 hours, limits registrations per client IP and in total per day, never lets a different key take over a registered install id, and keeps a rolling window of entries. It has **no public read path**.
+
+**How the hub gets them.** A hub configured with the relay URL and a pull secret (`hub.nps_relay_pull_secret` / `HIVE_NPS_RELAY_PULL_SECRET`) pulls pending entries every 15 minutes, in batches of up to 100. Each entry is validated with the same rules as a direct response, stored with `source: relay` and the entry's `install_id`, and then acknowledged so the relay deletes it. The relay's stable entry id is kept as a dedupe key, so a pull that is retried after a failed acknowledgement never duplicates a response. An entry that claims the ID of a hive registered with the hub is discarded, since a hub-linked hive never uses the relay. Relay responses appear in the hub admin NPS card marked "unverified install" with their install id. With no relay URL or no pull secret, the hub does not pull.
 
 ## Who can see it
 
@@ -115,11 +117,12 @@ Each of these is covered by tests in `src/pkg/dashboard/nps_test.go`, `nps_relay
 - **Rate limits.** The spoke allows one response per signed-in user and 10 per hive per 24 hours; the hub independently allows 10 per hive per 24 hours, counted from its durable store.
 - **No unauthenticated read path** (console #16486). Totals and free text are served only to hub admins.
 - **Body caps on bytes read** (console #16666). Both the spoke (4096 bytes) and the hub (4096 bytes) cap the bytes they actually read, so a chunked body or a false `Content-Length` cannot make them buffer more. Free text is capped at 500 characters on both sides.
-- **Relay credentials** (#9619). The relay accepts a submission only with an allowlisted install token and serves pending entries only to the hub's pull secret. The hive sends either secret only to the configured `https` relay URL, never follows a redirect with it, and never logs it; a hub drops any relay entry that claims a hub-registered hive's ID.
+- **Relay signatures and pull secret** (#9619). The relay accepts a submission only when it is signed by the key registered for its install id, within the timestamp window and with an unused nonce, and serves pending entries only to the hub's pull secret. The spoke's private key never leaves its `0600` identity file and is never logged; the hub sends its pull secret only to the configured `https` relay URL and never logs it. Neither side follows redirects. A hub drops any relay entry that claims a hub-registered hive's ID, and labels the rest "unverified install".
 - **No stored XSS** (console #17030). Both the dashboard card and the hub admin card build their DOM with `textContent` only; tests execute the hub renderer against hostile input and fail on any use of `innerHTML`.
 
 ## Not yet implemented
 
-- **A dedicated relay site and self-service tokens.** The relay's first phase runs as a function on the docs site with an operator-issued token list. A dedicated site and an automated way to request a token are follow-ups.
+- **A dedicated relay site.** The relay runs as a function on the docs site. Moving it to its own site is a follow-up.
+- **Verified installs.** Self-registered keys are unverified by design. Tying a relay install to a verified identity (for example a GitHub App installation) is a possible follow-up.
 - **Optional public issue for detractors.** The console can open a GitHub issue from a detractor's feedback with explicit consent. The hive has no existing feedback-to-issue path to reuse, so this is deferred. When built, it will need an explicit consent checkbox, a minimum text length, and the mention sanitizer.
 - **GA4 events.** The v6 dashboard has no GA4 wiring, so the `hive_nps_survey_shown` / `hive_nps_response` / `hive_nps_dismissed` events are deferred. When added, they carry only score, category and feedback length, never the free text.
