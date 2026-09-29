@@ -258,7 +258,7 @@ Teardown: `bin/hive-podman-teardown.sh`.
 - Kubernetes 1.24+
 - A StorageClass that supports `ReadWriteOnce` (the cluster default StorageClass works)
 - cert-manager (for TLS certificates)
-- nginx-ingress (for ingress routing)
+- ingress-nginx, the `kubernetes/ingress-nginx` controller (for ingress routing)
 
 ### Hosted Option
 
