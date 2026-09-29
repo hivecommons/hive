@@ -1,0 +1,1 @@
+- Add `hivectl hives reissue` for profile-safe single-hive token rotation and guard legacy `contribute-move` when profiles are present. ([#9241](https://github.com/hivecommons/hive/issues/9241))

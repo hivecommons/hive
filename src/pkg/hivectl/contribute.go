@@ -34,6 +34,10 @@ type Registration struct {
 	Message           string `json:"message"`
 }
 
+// ErrContributorNotRegistered is returned by Reissue when the authenticated
+// GitHub identity does not have a contributor profile on that hub.
+var ErrContributorNotRegistered = errors.New("not registered as a contributor")
+
 // defaultRegisterTimeout bounds a registration POST when the caller has no
 // timeout of its own.
 const defaultRegisterTimeout = 15 * time.Second
@@ -87,6 +91,52 @@ func Register(ctx context.Context, hubHTTPBase, githubUser string, timeout time.
 	var reg Registration
 	if err := json.Unmarshal(payload, &reg); err != nil {
 		return Registration{}, fmt.Errorf("hub %s returned a non-JSON registration response: %s", hubHTTPBase, truncateForMessage(string(payload)))
+	}
+	return reg, nil
+}
+
+// Reissue asks a contributor hub to rotate the caller's registration token.
+//
+// Unlike Register, this endpoint intentionally sends a GitHub token: the hub
+// validates it with GitHub and only reissues for the matching contributor.
+func Reissue(ctx context.Context, hubHTTPBase, githubToken string, timeout time.Duration) (Registration, error) {
+	if timeout <= 0 {
+		timeout = defaultRegisterTimeout
+	}
+	token := strings.TrimSpace(githubToken)
+	if token == "" {
+		return Registration{}, errors.New("GitHub token is empty")
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hubHTTPBase+"/api/contribute/reissue-token", nil)
+	if err != nil {
+		return Registration{}, fmt.Errorf("build token reissue request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return Registration{}, fmt.Errorf("reissue token with %s failed: %w\n  is the hub reachable? try: curl -sf %s/api/contribute/status", hubHTTPBase, err, hubHTTPBase)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return Registration{}, fmt.Errorf("read token reissue response from %s: %w", hubHTTPBase, err)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return Registration{}, fmt.Errorf("%w on %s: %s", ErrContributorNotRegistered, hubHTTPBase, truncateForMessage(string(payload)))
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return Registration{}, fmt.Errorf("reissue token with %s returned HTTP %d: %s", hubHTTPBase, resp.StatusCode, truncateForMessage(string(payload)))
+	}
+	var reg Registration
+	if err := json.Unmarshal(payload, &reg); err != nil {
+		return Registration{}, fmt.Errorf("hub %s returned a non-JSON token reissue response: %s", hubHTTPBase, truncateForMessage(string(payload)))
+	}
+	if strings.TrimSpace(reg.RegistrationToken) == "" {
+		return Registration{}, fmt.Errorf("hub %s returned no registration token while reissuing", hubHTTPBase)
 	}
 	return reg, nil
 }
@@ -169,6 +219,20 @@ func GitHubLogin(ctx context.Context) (string, error) {
 		return "", errors.New("'gh api user' returned no login; pass --github-user <login>")
 	}
 	return user, nil
+}
+
+// GitHubToken returns the operator's GitHub token from gh, matching the
+// identity source used by GitHubLogin and contribute-setup.
+func GitHubToken(ctx context.Context) (string, error) {
+	out, err := RunGH(ctx, "auth", "token")
+	if err != nil {
+		return "", fmt.Errorf("could not read your GitHub token from 'gh' (%w)\n  sign in with: gh auth login --web --scopes repo,read:org", err)
+	}
+	token := strings.TrimSpace(out)
+	if token == "" {
+		return "", errors.New("'gh auth token' returned no token; sign in with: gh auth login --web --scopes repo,read:org")
+	}
+	return token, nil
 }
 
 func truncateForMessage(s string) string {

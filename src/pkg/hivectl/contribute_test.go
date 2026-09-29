@@ -91,6 +91,31 @@ func TestGitHubLogin(t *testing.T) {
 	}
 }
 
+func TestGitHubToken(t *testing.T) {
+	old := RunGH
+	t.Cleanup(func() { RunGH = old })
+
+	RunGH = func(_ context.Context, args ...string) (string, error) {
+		if strings.Join(args, " ") != "auth token" {
+			t.Errorf("unexpected gh invocation: %v", args)
+		}
+		return "ghp_test\n", nil
+	}
+	if token, err := GitHubToken(context.Background()); err != nil || token != "ghp_test" {
+		t.Errorf("GitHubToken = %q, %v; want ghp_test", token, err)
+	}
+
+	RunGH = func(context.Context, ...string) (string, error) { return "  \n", nil }
+	if _, err := GitHubToken(context.Background()); err == nil || !strings.Contains(err.Error(), "gh auth login") {
+		t.Errorf("empty token should point at gh auth login, got %v", err)
+	}
+
+	RunGH = func(context.Context, ...string) (string, error) { return "", errors.New("not logged in") }
+	if _, err := GitHubToken(context.Background()); err == nil || !strings.Contains(err.Error(), "gh auth login") {
+		t.Errorf("a gh failure should point at gh auth login, got %v", err)
+	}
+}
+
 // TestRegisterSendsNoBearerCredential is the #4408 H7/CWE-522 invariant, not a
 // smoke test: the hub URL can come from a registry entry, so a token forwarded
 // here would be harvestable by a poisoned registry. It fails if any
@@ -139,6 +164,99 @@ func TestRegisterSurfacesNonJSONAndHTTPErrors(t *testing.T) {
 	if _, err := Register(context.Background(), garbage.URL, "octocat", time.Second); err == nil ||
 		!strings.Contains(err.Error(), "non-JSON") {
 		t.Errorf("a non-JSON body should say so, got %v", err)
+	}
+}
+
+func TestReissue(t *testing.T) {
+	tests := []struct {
+		name      string
+		token     string
+		status    int
+		body      string
+		wantToken string
+		wantID    string
+		wantErr   string
+		wantIs    error
+	}{
+		{
+			name:      "success",
+			token:     "good",
+			status:    http.StatusOK,
+			body:      `{"registration_token":"tok_new","contributor_id":"contrib_1","message":"Token reissued"}`,
+			wantToken: "tok_new",
+			wantID:    "contrib_1",
+		},
+		{
+			name:    "not registered",
+			token:   "ghost",
+			status:  http.StatusNotFound,
+			body:    `{"error":"Not registered as a contributor"}`,
+			wantErr: "not registered",
+			wantIs:  ErrContributorNotRegistered,
+		},
+		{
+			name:    "bad GitHub token",
+			token:   "bad",
+			status:  http.StatusUnauthorized,
+			body:    `{"error":"Invalid or missing GitHub token"}`,
+			wantErr: "HTTP 401",
+		},
+		{
+			name:    "non JSON",
+			token:   "good",
+			status:  http.StatusOK,
+			body:    `<html>login</html>`,
+			wantErr: "non-JSON",
+		},
+		{
+			name:    "empty token in response",
+			token:   "good",
+			status:  http.StatusOK,
+			body:    `{"contributor_id":"contrib_1"}`,
+			wantErr: "no registration token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var sawAuth string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/api/contribute/reissue-token" {
+					t.Errorf("request = %s %s, want POST /api/contribute/reissue-token", r.Method, r.URL.Path)
+				}
+				sawAuth = r.Header.Get("Authorization")
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+
+			reg, err := Reissue(context.Background(), server.URL, tt.token, 5*time.Second)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want one containing %q", err, tt.wantErr)
+				}
+				if tt.wantIs != nil && !errors.Is(err, tt.wantIs) {
+					t.Fatalf("error = %v, want errors.Is(..., %v)", err, tt.wantIs)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Reissue: %v", err)
+			}
+			if sawAuth != "Bearer "+tt.token {
+				t.Fatalf("Authorization = %q, want bearer GitHub token", sawAuth)
+			}
+			if reg.RegistrationToken != tt.wantToken || reg.ContributorID != tt.wantID {
+				t.Fatalf("Reissue = %+v, want token %q id %q", reg, tt.wantToken, tt.wantID)
+			}
+		})
+	}
+}
+
+func TestReissueRejectsEmptyGitHubToken(t *testing.T) {
+	if _, err := Reissue(context.Background(), "https://hub.example", " \n", time.Second); err == nil ||
+		!strings.Contains(err.Error(), "empty") {
+		t.Fatalf("Reissue empty token error = %v, want empty-token refusal", err)
 	}
 }
 
