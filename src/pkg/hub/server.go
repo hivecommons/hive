@@ -1630,6 +1630,10 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 
 	s.mux.HandleFunc("POST /api/heartbeat", s.handleHeartbeat)
 	s.mux.HandleFunc("POST /api/task-status", s.handleTaskStatus)
+	// NPS feedback forwarded by spokes (#9610): per-hive heartbeat bearer, the
+	// same credential as /api/task-status. The only read path is the admin-gated
+	// GET registered in registerSaaSRoutes.
+	s.mux.HandleFunc("POST "+npsIngestPath, s.handleNPSIngest)
 	s.mux.HandleFunc("GET /api/registry", s.handleRegistry)
 	s.mux.HandleFunc("GET /api/hub/leaderboard", s.handleLeaderboard)
 	s.mux.HandleFunc("GET /api/hub/stats", s.handleStats)

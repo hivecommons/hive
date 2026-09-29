@@ -18887,6 +18887,111 @@
         }
       }
     },
+    "/api/feedback/nps/status": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "NPS feedback prompt status",
+        "description": "Whether this hive runs the NPS feedback prompt (issue #9610). enabled is the operator opt-in (on by default only for hosted spokes; HIVE_NPS_ENABLED / hub.nps_enabled override) AND a hub link to forward over. can_submit additionally requires a signed-in, non-read-only user.",
+        "responses": {
+          "200": {
+            "description": "Prompt status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "can_submit": {
+                      "type": "boolean"
+                    },
+                    "max_feedback_chars": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/feedback/nps": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Submit an NPS feedback response",
+        "description": "Validates a 1-4 score and optional free text, rate-limits (one per user and a small per-hive cap per 24h), and forwards it to the hub over the spoke's per-hive heartbeat bearer. The hub payload carries the hive ID, score, feedback and dashboard version, never the user. The body cap is enforced on bytes read, not Content-Length.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "score": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 4
+                  },
+                  "feedback": {
+                    "type": "string",
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "score"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Forwarded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "category": {
+                      "type": "string",
+                      "enum": [
+                        "detractor",
+                        "passive",
+                        "promoter"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON or score"
+          },
+          "403": {
+            "description": "Not signed in, read-only role, or NPS not enabled on this hive"
+          },
+          "413": {
+            "description": "Body larger than 4096 bytes"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "The hub could not be reached or refused the response"
+          }
+        }
+      }
+    },
     "/api/budget/history": {
       "get": {
         "tags": [

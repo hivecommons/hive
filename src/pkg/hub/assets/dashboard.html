@@ -478,6 +478,21 @@
       .hive-modal { padding: 14px; }
       h1 { font-size: 1.2rem; }
     }
+    /* NPS feedback card (#9610). Admin-only; every value is set with
+       textContent, so this block only lays out plain text nodes. Tokens only,
+       per the style ratchet. */
+    .nps-admin-title { font-size: var(--fs-md); color: var(--hub-dashboard-accent); font-weight: 600; margin-bottom: var(--sp-4); }
+    .nps-admin-summary { font-size: var(--fs-sm); color: var(--text); margin-bottom: var(--sp-2); }
+    .nps-admin-sub { font-size: var(--fs-xs); color: var(--muted); margin: var(--sp-4) 0 var(--sp-2); text-transform: uppercase; letter-spacing: 0.04em; }
+    .nps-admin-row { display: flex; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-2); font-size: var(--fs-xs); }
+    .nps-admin-row-label { flex: none; width: 72px; color: var(--text); }
+    .nps-admin-row-value { flex: none; width: 140px; text-align: right; color: var(--muted); }
+    .nps-admin-bar { flex: 1; height: 8px; background: var(--border); border-radius: var(--r-sm); overflow: hidden; }
+    .nps-admin-bar-fill { height: 100%; background: var(--hub-dashboard-accent); }
+    .nps-admin-hive-label { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .nps-admin-response { border-top: 1px solid var(--border); padding: var(--sp-3) 0; }
+    .nps-admin-response-meta { font-size: var(--fs-xs); color: var(--muted); }
+    .nps-admin-response-text { font-size: var(--fs-sm); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; margin-top: var(--sp-2); }
   </style>
 </head>
 <body>
@@ -647,6 +662,11 @@
              Rendered as a plain ranked bar list; no map, no charting library,
              no external asset (the hub forbids external CDNs/images). -->
         <div class="mt-7" id="user-countries-container"></div>
+        <!-- NPS feedback from every hive's dashboard (#9610). Same double
+             gating as the country rollup: inside the admin section, and fed
+             by /api/admin/nps, which is behind requireAdmin. Free text is
+             rendered with textContent only, never as markup. -->
+        <div class="mt-7" id="nps-container"></div>
       </div>
     </div>
 
@@ -9851,6 +9871,8 @@
            two can never disagree about the roster. Not awaited: a slow or
            failed rollup must not delay or break the users table. */
         loadUserCountries();
+        /* NPS card (#9610): same admin poll, same not-awaited rule. */
+        loadAdminNPS();
       } catch(e) {
         if (!_adminLoaded) document.getElementById('admin-section').style.display = 'none';
       } finally {
@@ -10014,6 +10036,107 @@
            that it exists and refused them. */
         if (!resp.ok) return;
         renderCountryRollup(await resp.json());
+      } catch(e) {}
+    }
+
+    /* ---- NPS feedback (#9610) --------------------------------------------
+       Aggregate of the voluntary NPS prompt every hive's dashboard shows,
+       forwarded by each spoke over its authenticated hub link. Reads
+       /api/admin/nps, which is requireAdmin and the ONLY read path for this
+       data, free text included.
+
+       SECURITY: responses are user-written text from other hives. Everything
+       here is built with createElement + textContent; nothing is ever
+       assigned to innerHTML, so a response containing markup renders as the
+       literal characters (the stored-XSS class from console #17030). */
+
+    /* Bars in the monthly trend are scaled against the busiest month, like
+       the country rollup, so a quiet month stays visible. */
+    var NPS_TREND_BAR_MAX_PCT = 100;
+
+    /* npsEl creates an element whose content is TEXT. The one DOM helper the
+       NPS card uses, so there is no markup path to forget to escape. */
+    function npsEl(tag, cls, text) {
+      var el = document.createElement(tag);
+      if (cls) el.className = cls;
+      if (text !== undefined && text !== null) el.textContent = String(text);
+      return el;
+    }
+
+    function npsTallyText(t) {
+      return 'NPS ' + (Number(t && t.nps_score) || 0) + ' \u00b7 ' +
+        (Number(t && t.total) || 0) + ' response' + ((Number(t && t.total) || 0) === 1 ? '' : 's') +
+        ' \u00b7 avg ' + (Number(t && t.average_score) || 0);
+    }
+
+    function renderAdminNPS(data) {
+      var el = document.getElementById('nps-container');
+      if (!el) return;
+      while (el.firstChild) el.removeChild(el.firstChild);
+      el.appendChild(npsEl('div', 'nps-admin-title', 'NPS feedback'));
+      var total = Number(data && data.total) || 0;
+      if (total <= 0) {
+        el.appendChild(npsEl('div', 'fs-sm text-muted', 'No NPS responses yet.'));
+        return;
+      }
+      var scoreMax = Number(data.score_max) || 0;
+      el.appendChild(npsEl('div', 'nps-admin-summary', npsTallyText(data) + ' / ' + scoreMax));
+      el.appendChild(npsEl('div', 'nps-admin-summary',
+        'Promoters ' + (Number(data.promoters) || 0) + ' (' + (Number(data.promoter_pct) || 0) + '%) \u00b7 ' +
+        'Passives ' + (Number(data.passives) || 0) + ' (' + (Number(data.passive_pct) || 0) + '%) \u00b7 ' +
+        'Detractors ' + (Number(data.detractors) || 0) + ' (' + (Number(data.detractor_pct) || 0) + '%)'));
+
+      var trend = Array.isArray(data.trend) ? data.trend : [];
+      if (trend.length) {
+        el.appendChild(npsEl('div', 'nps-admin-sub', 'Monthly trend'));
+        var maxCount = 1;
+        trend.forEach(function(m) { if ((Number(m.total) || 0) > maxCount) maxCount = Number(m.total); });
+        trend.forEach(function(m) {
+          var row = npsEl('div', 'nps-admin-row');
+          row.appendChild(npsEl('div', 'nps-admin-row-label', m.month));
+          var bar = npsEl('div', 'nps-admin-bar');
+          var fill = npsEl('div', 'nps-admin-bar-fill');
+          fill.style.width = Math.round(((Number(m.total) || 0) / maxCount) * NPS_TREND_BAR_MAX_PCT) + '%';
+          bar.appendChild(fill);
+          row.appendChild(bar);
+          row.appendChild(npsEl('div', 'nps-admin-row-value', npsTallyText(m)));
+          el.appendChild(row);
+        });
+      }
+
+      var perHive = Array.isArray(data.per_hive) ? data.per_hive : [];
+      if (perHive.length) {
+        el.appendChild(npsEl('div', 'nps-admin-sub', 'By hive'));
+        perHive.forEach(function(h) {
+          var row = npsEl('div', 'nps-admin-row');
+          row.appendChild(npsEl('div', 'nps-admin-hive-label', h.hive_name || h.hive_id));
+          row.appendChild(npsEl('div', 'nps-admin-row-value', npsTallyText(h)));
+          el.appendChild(row);
+        });
+      }
+
+      var recent = Array.isArray(data.recent) ? data.recent : [];
+      if (recent.length) {
+        el.appendChild(npsEl('div', 'nps-admin-sub', 'Recent responses'));
+        recent.forEach(function(r) {
+          var item = npsEl('div', 'nps-admin-response');
+          item.appendChild(npsEl('div', 'nps-admin-response-meta',
+            (Number(r.score) || 0) + '/' + scoreMax + ' ' + (r.category || '') + ' \u00b7 ' +
+            (r.hive_name || r.hive_id || '') + ' \u00b7 ' + (r.timestamp || '') +
+            (r.dashboard_version ? ' \u00b7 ' + r.dashboard_version : '')));
+          if (r.feedback) item.appendChild(npsEl('div', 'nps-admin-response-text', r.feedback));
+          el.appendChild(item);
+        });
+      }
+    }
+
+    async function loadAdminNPS() {
+      try {
+        var resp = await fetch('/api/admin/nps');
+        /* 403 means not admin: leave the container empty, so a non-admin
+           learns nothing about this surface, not even that it exists. */
+        if (!resp.ok) return;
+        renderAdminNPS(await resp.json());
       } catch(e) {}
     }
 

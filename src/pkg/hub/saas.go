@@ -478,6 +478,9 @@ func (s *HubServer) registerSaaSRoutes() {
 	// data, so even the aggregate stays behind requireAdmin. Takes no query
 	// parameters — no country ever appears in a URL. See user_country_rollup.go.
 	s.mux.HandleFunc("GET /api/saas/admin/user-countries", s.requireAdmin(s.handleAdminUserCountries))
+	// NPS feedback aggregate, free text included (#9610). Admin-only and the ONLY
+	// read path for NPS data: a non-admin gets 403 and no data.
+	s.mux.HandleFunc("GET "+npsAdminPath, s.requireAdmin(s.handleAdminNPS))
 	// #3234: fleet readiness for removing the N1/N2 legacy compatibility lanes.
 	s.mux.HandleFunc("GET /api/saas/admin/auth-rollout", s.requireAdmin(s.handleAuthRollout))
 	s.mux.HandleFunc("GET /api/saas/admin/notifications", s.requireAdmin(s.handleGetAdminNotifications))
