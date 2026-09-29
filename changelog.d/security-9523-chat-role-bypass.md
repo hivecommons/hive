@@ -1,0 +1,1 @@
+- Fixed a chat command allowlist bypass where any authenticated dashboard role — regardless of the specific chat author — could issue `!` commands even when `allowed_users` was explicitly configured, restoring per-author enforcement of the allowlist.

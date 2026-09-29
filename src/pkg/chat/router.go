@@ -87,16 +87,24 @@ func (s *Service) routeMessage(ctx context.Context, msg Message) {
 		return
 	}
 
-	role, ok := trustedMessageRole(msg)
-	if !ok {
-		// SECURITY (F8, CWE-862): channel transports without a server-verified
-		// dashboard role still fail closed through the explicit chat allowlist.
-		if s.allowedUserCount() == 0 {
+	// SECURITY (F8, CWE-862): a server-verified dashboard role only stands in
+	// for the chat allowlist when no allowlist is configured at all — it is
+	// proof the caller passed the dashboard's own role floor, not proof of
+	// which specific chat user they are. Once operators configure explicit
+	// allowed_users, per-author membership must still be checked for every
+	// author, trusted role or not, or any authenticated dashboard caller could
+	// issue commands as someone else's identity.
+	var role string
+	var ok bool
+	if s.allowedUserCount() == 0 {
+		role, ok = trustedMessageRole(msg)
+		if !ok {
 			s.logger.Warn("chat: ignoring command — allowlist is empty (commands disabled; set allowed_users to enable)",
 				"user_id", msg.AuthorID, "content", content)
 			s.refuseCommand(msg, "commands are disabled because the chat allowlist is empty")
 			return
 		}
+	} else {
 		role, ok = s.allowedUserRole(msg.AuthorID)
 		if !ok {
 			s.logger.Warn("chat: ignoring command from non-allowlisted user",
