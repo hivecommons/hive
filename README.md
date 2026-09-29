@@ -421,9 +421,10 @@ kubectl apply -f src/deploy/k8s/service.yaml
 
 | Port | Purpose |
 |------|---------|
-| 3001 | Dashboard (supports auth token) |
-| 3002 | Internal API |
-| 7681 | ttyd web terminal |
+| 3002 | Dashboard UI and `/api/*` (Service port `dashboard`) |
+
+ttyd listens on 7681 inside the pod only. The Service does not expose it. Open the terminal
+through the authenticated `/terminal` proxy on 3002.
 
 ### Volumes
 
