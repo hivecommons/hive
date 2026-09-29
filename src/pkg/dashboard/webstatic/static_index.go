@@ -3,8 +3,6 @@ package webstatic
 import (
 	"bytes"
 	"compress/gzip"
-	"crypto/sha256"
-	"encoding/hex"
 	"net/http"
 	"strconv"
 	"strings"
@@ -71,12 +69,9 @@ func InjectBranding(raw []byte) []byte {
 }
 
 func NewIndexDocument(raw []byte) *IndexDocument {
-	sum := sha256.Sum256(raw)
-	// 16 hex bytes of the digest is plenty for cache validation and keeps the
-	// header short; the quotes are part of the ETag grammar (RFC 9110 §8.8.3).
 	return &IndexDocument{
 		raw:  raw,
-		etag: `"` + hex.EncodeToString(sum[:])[:16] + `"`,
+		etag: ETagFor(raw),
 	}
 }
 

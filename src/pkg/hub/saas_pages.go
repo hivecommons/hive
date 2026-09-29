@@ -7,7 +7,15 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 )
+
+// dashboardHTMLETag is computed once from the embedded dashboard document so
+// every request revalidates against the exact bytes this process serves; a
+// new hub image embeds new bytes, which yields a new ETag automatically
+// (hivecommons/hive#9674).
+var dashboardHTMLETag = webstatic.ETagFor([]byte(dashboardHTML))
 
 func isUnfurlBot(ua string) bool {
 	bots := []string{"Slackbot", "Slack-ImgProxy", "Discordbot", "Twitterbot", "facebookexternalhit", "LinkedInBot", "WhatsApp", "TelegramBot"}
@@ -42,6 +50,9 @@ func (s *HubServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if webstatic.WriteCacheHeaders(w, r, dashboardHTMLETag) {
+		return
+	}
 	_, _ = fmt.Fprint(w, dashboardHTML)
 }
 
