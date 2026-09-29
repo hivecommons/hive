@@ -443,6 +443,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// or contributor-authored, in one ranked order with the reasons for each
 	// position. Read-only; paged like /api/v1/queue (#6537).
 	s.mux.HandleFunc("GET /api/review/queue", s.handleReviewQueue)
+	// write_surface is a top-level Config field; the lane write allowlist
+	// editor lives on the governor Security tab (#9587, api_config_write_surface.go).
+	s.mux.HandleFunc("GET /api/config/write-surface", s.handleWriteSurfaceGet)
+	s.mux.HandleFunc("PUT /api/config/write-surface", s.handleWriteSurfacePut)
 }
 
 var (

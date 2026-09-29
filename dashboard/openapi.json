@@ -19339,6 +19339,123 @@
         }
       }
     },
+    "/api/config/write-surface": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get lane write allowlist",
+        "description": "Returns write_surface.allowlist (the per-lane allowlist for the audited GitHub write surface, #9587), the operation vocabulary and any warnings (unknown operation, lane naming no configured agent). Requires owner role.",
+        "responses": {
+          "200": {
+            "description": "Write surface allowlist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "allowlist": {
+                      "type": "object",
+                      "description": "Lane (agent) name -> relay operations it may perform. Empty object = nothing restricted.",
+                      "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "ops": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Known relay operations, plus \"*\" (all)."
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Replace lane write allowlist",
+        "description": "Replaces write_surface.allowlist. The whole allowlist is sent; {\"allowlist\": {}} clears it (nothing restricted). A missing allowlist key, an unknown operation or an invalid lane name is refused with 400 and nothing changes. Requires owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "allowlist"
+                ],
+                "properties": {
+                  "allowlist": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated allowlist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "allowlist": {
+                      "type": "object",
+                      "description": "Lane (agent) name -> relay operations it may perform. Empty object = nothing restricted.",
+                      "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "ops": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Known relay operations, plus \"*\" (all)."
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "missing allowlist, unknown operation, or invalid lane name"
+          }
+        }
+      }
+    },
     "/api/config/github/forge-apps": {
       "get": {
         "tags": [

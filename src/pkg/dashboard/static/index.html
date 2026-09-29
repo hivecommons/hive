@@ -27518,6 +27518,12 @@ function burnAreaChart() {
       const backupKey = `
         <div id="gov-backup-key-host"><div style="color:var(--muted);font-size:0.8rem">Loading…</div></div>`;
 
+      /* Lane write allowlist (#9587): painted asynchronously from its own
+         owner-only endpoint, like the Backup panel. */
+      loadWriteSurfaceAllowlist();
+      const writeSurface = `
+        <div id="gov-write-surface-host"><div style="color:var(--muted);font-size:0.8rem">Loading…</div></div>`;
+
       return `
         ${securityModelDatalistHtml()}${agentList}
         <p style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:10px">Security posture and access controls saved through the dashboard overlay.</p>
@@ -27527,7 +27533,131 @@ function burnAreaChart() {
         ${renderSecuritySection('Input Defense', inputDefense)}
         ${renderSecuritySection('Merge Gates', mergeGates)}
         ${renderSecuritySection('Isolation', isolation)}
+        ${renderSecuritySection('Write Surface', writeSurface)}
         ${renderSecuritySection('Backup', backupKey)}`;
+    }
+
+    /* Lane write allowlist editor (#9587): write_surface.allowlist, loaded
+       from and saved to the owner-only /api/config/write-surface endpoint.
+       Everything is rendered with DOM nodes and textContent only, so a lane
+       or operation name from hive.yaml is never parsed as markup. The editor
+       is plain text, one lane per line: "scanner: create_issue, comment".
+       An empty editor clears the allowlist, which restricts nothing. */
+    async function loadWriteSurfaceAllowlist() {
+      let host = null;
+      try {
+        const r = await fetch('/api/config/write-surface');
+        host = document.getElementById('gov-write-surface-host');
+        if (!host) return;
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        renderWriteSurfacePanel(host, await r.json());
+      } catch (e) {
+        host = host || document.getElementById('gov-write-surface-host');
+        if (!host) return;
+        host.textContent = '';
+        host.appendChild(writeSurfaceNode('div', 'color:var(--red);font-size:0.8rem',
+          'Failed to load the write allowlist: ' + e.message));
+      }
+    }
+
+    /* writeSurfaceNode builds one element whose content is plain text. */
+    function writeSurfaceNode(tag, style, text) {
+      const node = document.createElement(tag);
+      if (style) node.style.cssText = style;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    /* writeSurfaceAllowlistToText renders {lane: [ops]} as editor text. */
+    function writeSurfaceAllowlistToText(allowlist) {
+      allowlist = allowlist || {};
+      return Object.keys(allowlist).sort()
+        .map(lane => lane + ': ' + (allowlist[lane] || []).join(', '))
+        .join('\n');
+    }
+
+    /* parseWriteSurfaceText turns editor text into {lane: [ops]}. It only
+       splits lines; the server validates lane names and operations and its
+       error message says what is wrong. Blank lines and "#" comments are
+       skipped. "lane:" with nothing after it allows that lane nothing. */
+    function parseWriteSurfaceText(text) {
+      const allowlist = {};
+      const lines = String(text || '').split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line || line.startsWith('#')) continue;
+        const colon = line.indexOf(':');
+        if (colon < 0) throw new Error('Line ' + (i + 1) + ': expected "lane: operation, operation"');
+        const lane = line.slice(0, colon).trim();
+        if (!lane) throw new Error('Line ' + (i + 1) + ': the lane name is empty');
+        if (Object.prototype.hasOwnProperty.call(allowlist, lane)) {
+          throw new Error('Line ' + (i + 1) + ': lane ' + lane + ' is listed twice');
+        }
+        allowlist[lane] = line.slice(colon + 1).split(',').map(op => op.trim()).filter(Boolean);
+      }
+      return allowlist;
+    }
+
+    /* renderWriteSurfacePanel paints the allowlist card and wires its Save. */
+    function renderWriteSurfacePanel(host, d) {
+      if (!host) return;
+      d = d || {};
+      host.textContent = '';
+      const card = writeSurfaceNode('div', 'border:1px solid var(--border);border-radius:8px;padding:14px;background:var(--surface);max-width:640px');
+      card.appendChild(writeSurfaceNode('div', 'font-weight:600;font-size:0.9rem;margin-bottom:var(--sp-4)', 'Lane write allowlist'));
+      card.appendChild(writeSurfaceNode('div', 'font-size:0.74rem;color:var(--muted);line-height:1.5;margin-bottom:var(--sp-4)',
+        'Limits which GitHub writes each agent lane may ask the hive to perform (open a PR, comment, merge and so on). ' +
+        'A lane that is not listed is unrestricted, so an empty allowlist changes nothing. Listing a lane narrows it to the ' +
+        'listed operations; "lane:" with nothing after it allows nothing, and "*" allows everything. ' +
+        'One lane per line, for example "scanner: create_issue, comment, claim".'));
+      card.appendChild(writeSurfaceNode('div', 'font-size:0.72rem;color:var(--muted);margin-bottom:var(--sp-3)',
+        'Operations: ' + (d.ops || []).join(', ')));
+      const editor = writeSurfaceNode('textarea', 'width:100%;min-height:96px;padding:var(--sp-4);border:1px solid var(--border);border-radius:var(--r);background:var(--bg);color:var(--fg);font-family:var(--font-mono);font-size:var(--fs-sm)');
+      editor.id = 'gov-write-surface-editor';
+      editor.spellcheck = false;
+      editor.placeholder = 'scanner: create_issue, comment, claim';
+      editor.value = writeSurfaceAllowlistToText(d.allowlist);
+      card.appendChild(editor);
+      const warnings = d.warnings || [];
+      if (warnings.length) {
+        const list = writeSurfaceNode('ul', 'font-size:0.72rem;color:var(--yellow);margin:var(--sp-3) var(--sp-0) var(--sp-0);padding-left:18px');
+        warnings.forEach(w => list.appendChild(writeSurfaceNode('li', '', w)));
+        card.appendChild(list);
+      }
+      const row = writeSurfaceNode('div', 'display:flex;align-items:center;gap:10px;margin-top:var(--sp-4)');
+      const saveBtn = writeSurfaceNode('button', '', 'Save allowlist');
+      saveBtn.className = 'hv-btn btn-primary btn-sm';
+      const statusEl = writeSurfaceNode('div', 'font-size:0.74rem;min-height:18px');
+      row.appendChild(saveBtn);
+      row.appendChild(statusEl);
+      card.appendChild(row);
+      host.appendChild(card);
+
+      const setStatus = (msg, color) => { statusEl.textContent = msg; statusEl.style.color = color || 'var(--muted)'; };
+      saveBtn.addEventListener('click', async () => {
+        let allowlist;
+        try {
+          allowlist = parseWriteSurfaceText(editor.value);
+        } catch (e) {
+          setStatus(e.message, 'var(--red)');
+          return;
+        }
+        saveBtn.disabled = true;
+        setStatus('Saving…');
+        try {
+          const res = await fetch('/api/config/write-surface', {
+            method: 'PUT',
+            headers: _inceptionAuthHeaders(),
+            body: JSON.stringify({ allowlist })
+          });
+          if (!res.ok) throw new Error(await saveErrorMessage(res));
+          renderWriteSurfacePanel(host, await res.json());
+          showToast('Write allowlist saved', 'success');
+        } catch (e) {
+          saveBtn.disabled = false;
+          setStatus(e.message, 'var(--red)');
+        }
+      });
     }
 
     /* loadBackupKeyStatus fetches presence-only backup-key status and paints

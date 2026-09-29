@@ -1,10 +1,21 @@
 package config
 
 import (
+	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
+
+// writeSurfaceMu guards WriteSurface.Allowlist against the dashboard editor
+// (#9587 phase 2). The relays read the allowlist on their own goroutines on
+// every request, while the dashboard replaces it at runtime.
+//
+// Lock order is saveMu -> writeSurfaceMu, never the reverse (the same order as
+// agentReposMu).
+var writeSurfaceMu sync.RWMutex
 
 // WriteSurfaceAllowAll is the allowlist entry that grants a lane every relay
 // operation. It lets an operator list a lane explicitly (so it is visible in
@@ -36,7 +47,12 @@ type WriteSurfaceConfig struct {
 // answer true: the allowlist can only NARROW what an agent may already do, so
 // turning the feature on for one lane changes nothing for the others.
 func (c *Config) AgentMayWrite(agent, op string) bool {
-	if c == nil || len(c.WriteSurface.Allowlist) == 0 {
+	if c == nil {
+		return true
+	}
+	writeSurfaceMu.RLock()
+	defer writeSurfaceMu.RUnlock()
+	if len(c.WriteSurface.Allowlist) == 0 {
 		return true
 	}
 	agent = strings.TrimSpace(agent)
@@ -83,7 +99,12 @@ var KnownWriteOps = []string{
 // silently denies the operation the operator meant to grant, so it is worth a
 // line in the boot log.
 func WriteSurfaceWarnings(cfg *Config) []string {
-	if cfg == nil || len(cfg.WriteSurface.Allowlist) == 0 {
+	if cfg == nil {
+		return nil
+	}
+	writeSurfaceMu.RLock()
+	defer writeSurfaceMu.RUnlock()
+	if len(cfg.WriteSurface.Allowlist) == 0 {
 		return nil
 	}
 	known := make(map[string]bool, len(KnownWriteOps)+1)
@@ -104,6 +125,132 @@ func WriteSurfaceWarnings(cfg *Config) []string {
 				out = append(out, "write_surface.allowlist."+agent+": unknown operation "+strconv.Quote(op)+" (known: "+strings.Join(KnownWriteOps, ", ")+")")
 			}
 		}
+	}
+	return out
+}
+
+// Bounds on an allowlist edited through the dashboard (#9587 phase 2). They
+// keep one PUT from writing an unbounded config; a real hive has a handful of
+// lanes, each with at most every known operation.
+const (
+	// WriteSurfaceMaxLanes caps how many lanes one allowlist may list.
+	WriteSurfaceMaxLanes = 256
+	// WriteSurfaceMaxLaneNameLen caps one lane (agent) name.
+	WriteSurfaceMaxLaneNameLen = 64
+)
+
+// writeSurfaceLaneNamePattern is the shape of a lane name the editor accepts:
+// an agent or replica name ("scanner", "scanner-2", "ci.fixer"). It keeps
+// markup, whitespace and path characters out of hive.yaml keys.
+var writeSurfaceLaneNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// NormalizeWriteSurfaceAllowlist validates an allowlist submitted by an
+// operator and returns it in canonical form, or an error naming the first
+// problem. Unlike the boot-time check (WriteSurfaceWarnings), an unknown
+// operation is an ERROR here: the editor can say so before anything is
+// saved, instead of the entry silently denying what the operator meant to
+// grant.
+//
+// Canonical form: lane names trimmed; operations lower-cased, de-duplicated
+// and in KnownWriteOps order; a list containing "*" collapses to ["*"]; a
+// lane with no operations is kept as an empty (allow-nothing) list. A nil or
+// empty map normalizes to nil, which is "no allowlist, nothing restricted".
+func NormalizeWriteSurfaceAllowlist(in map[string][]string) (map[string][]string, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	if len(in) > WriteSurfaceMaxLanes {
+		return nil, fmt.Errorf("write_surface.allowlist lists %d lanes; the limit is %d", len(in), WriteSurfaceMaxLanes)
+	}
+	rank := make(map[string]int, len(KnownWriteOps))
+	for i, op := range KnownWriteOps {
+		rank[op] = i
+	}
+	out := make(map[string][]string, len(in))
+	for rawLane, ops := range in {
+		lane := strings.TrimSpace(rawLane)
+		if lane == "" {
+			return nil, fmt.Errorf("write_surface.allowlist: a lane name is empty")
+		}
+		if len(lane) > WriteSurfaceMaxLaneNameLen {
+			return nil, fmt.Errorf("write_surface.allowlist: lane name %q is longer than %d characters", lane, WriteSurfaceMaxLaneNameLen)
+		}
+		if !writeSurfaceLaneNamePattern.MatchString(lane) {
+			return nil, fmt.Errorf("write_surface.allowlist: lane name %q may contain only letters, digits, '.', '_' and '-'", lane)
+		}
+		if _, dup := out[lane]; dup {
+			return nil, fmt.Errorf("write_surface.allowlist: lane %q is listed twice", lane)
+		}
+		seen := map[string]bool{}
+		norm := []string{}
+		allowAll := false
+		for _, rawOp := range ops {
+			op := strings.ToLower(strings.TrimSpace(rawOp))
+			if op == "" {
+				continue
+			}
+			if op == WriteSurfaceAllowAll {
+				allowAll = true
+				continue
+			}
+			if _, known := rank[op]; !known {
+				return nil, fmt.Errorf("write_surface.allowlist.%s: unknown operation %s (known: %s, or %q for all)",
+					lane, strconv.Quote(rawOp), strings.Join(KnownWriteOps, ", "), WriteSurfaceAllowAll)
+			}
+			if !seen[op] {
+				seen[op] = true
+				norm = append(norm, op)
+			}
+		}
+		if allowAll {
+			norm = []string{WriteSurfaceAllowAll}
+		} else {
+			sort.Slice(norm, func(i, j int) bool { return rank[norm[i]] < rank[norm[j]] })
+		}
+		out[lane] = norm
+	}
+	return out, nil
+}
+
+// WriteSurfaceAllowlist returns a deep copy of the current allowlist, safe to
+// hand to a caller that may read it while the dashboard replaces it.
+func (c *Config) WriteSurfaceAllowlist() map[string][]string {
+	if c == nil {
+		return nil
+	}
+	writeSurfaceMu.RLock()
+	defer writeSurfaceMu.RUnlock()
+	return copyWriteSurfaceAllowlist(c.WriteSurface.Allowlist)
+}
+
+// SetWriteSurfaceAllowlist replaces the allowlist in memory. The new value is
+// in force for the very next relay request. It takes saveMu so a concurrent
+// Save never marshals a half-replaced map; the caller persists afterwards
+// (the dashboard's saveConfig), exactly as with every other runtime setting.
+//
+// The caller must pass a value from NormalizeWriteSurfaceAllowlist. It is
+// copied, so later changes to the caller's map do not reach the config.
+func (c *Config) SetWriteSurfaceAllowlist(allowlist map[string][]string) {
+	if c == nil {
+		return
+	}
+	next := copyWriteSurfaceAllowlist(allowlist)
+	saveMu.Lock()
+	defer saveMu.Unlock()
+	writeSurfaceMu.Lock()
+	defer writeSurfaceMu.Unlock()
+	c.WriteSurface.Allowlist = next
+}
+
+// copyWriteSurfaceAllowlist deep-copies an allowlist, keeping an empty
+// (allow-nothing) list distinct from an absent lane.
+func copyWriteSurfaceAllowlist(in map[string][]string) map[string][]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(in))
+	for lane, ops := range in {
+		out[lane] = append([]string{}, ops...)
 	}
 	return out
 }

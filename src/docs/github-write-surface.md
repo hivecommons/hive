@@ -7,15 +7,17 @@ These relays are the fixed, allowlisted and audited write surface proposed in
 [#9587](https://github.com/hivecommons/hive/issues/9587). This page lists them,
 along with the other places the hive writes to GitHub by itself.
 
-Phase 1 (this page) covers:
+This page covers:
 
 - the inventory below;
-- typed `repo` and `target` fields on the audit entries for these writes;
-- a per-lane allowlist enforced by the relays;
+- typed `repo` and `target` fields on the audit entries for these writes,
+  passed explicitly by every write site;
+- audit entries for the hive's own writes, not only the agent relays;
+- a per-lane allowlist enforced by the relays, editable from the dashboard;
 - redaction of credential material in audited arguments and results.
 
 Agents still have their direct write paths (`gh`, the API through the proxy,
-`git push`). Removing those is a later phase.
+`git push`). Removing those is a later phase; see [Not yet done](#not-yet-done).
 
 ## Relay operations
 
@@ -45,8 +47,12 @@ the level-hold notice, and re-author the branch as a signed commit.
 ## Hive-internal writes (not agent requests)
 
 The hive also writes to GitHub on its own schedule, with no agent request
-behind the write. These writes are not subject to the lane allowlist. They are
-listed so the surface is complete.
+behind the write. These writes are not subject to the lane allowlist. Every
+one of them is audited with typed `repo` and `target` fields and redacted
+detail, the same as the relay writes. The entries for the rows below the
+sweeps are recorded under the `governor` agent, and only when the write
+landed: a skipped, unchanged or failed write produced nothing on GitHub and
+writes no entry.
 
 | Write | Entry point | Audited? | Typed `repo` / `target`? |
 | --- | --- | :---: | :---: |
@@ -57,14 +63,20 @@ listed so the surface is complete.
 | Task-list sweep closes | `task_list_sweep.go` | yes (`task-list-sweep-closed`) | yes |
 | Supersession sweep | `pr_supersession_sweep.go` | yes (`supersession-sweep-*`) | yes |
 | Duplicate-PR sweep suggestions | `duplicate_sweep.go` | yes (`duplicate-sweep-suggested`) | yes (target = surviving PR) |
-| Hold-label migration | `hive_hold_migration.go` | no (migration report file) | no |
-| Signed-commit reconcile (branch rewrite, explanatory comment) | `pr_signed_reconcile.go`, `pr_request_signed.go` | no (hive log only) | no |
-| Review backlog issues | `review_backlog.go` | no (hive log only) | no |
-| Human-decision label | `human_decision_label.go` | no | no |
-| Recommendations issue | `recommendations.go` | no | no |
-| Fleet report issue | `fleet_report.go` | no | no |
+| Hold-label migration (one-time) | `hive_hold_migration.go` | yes (`hold_migration_label_added`, one per item labeled; the migration report file is still written) | yes |
+| Signed-commit reconcile: branch rewrite | `pr_signed_reconcile.go` | yes (`signed_commit_reauthored`, with `branch`, `base`, `commit`, `replaced_commits`) | yes / PR number |
+| Signed-commit reconcile: "cannot sign" comment | `pr_signed_reconcile.go` | yes (`signed_commit_skip_noted`, with `reason`) | yes / PR number |
+| Review backlog issues | `review_backlog.go` | yes (`review_backlog_issue_filed`, one per issue, with `pr`, `perspective`, `reused`) | yes / backlog issue number |
+| Review backlog summary comment | `review_backlog.go` | yes (`review_backlog_summary_posted`) | yes / PR number |
+| Human-decision and review-priority labels | `human_decision_label.go` | yes (`hive_label_applied`, with `label`) | yes / PR number |
+| Recommendations issue | `recommendations.go` | yes (`recommendations_posted`, `outcome=created` or `updated`) | yes / issue number |
+| Fleet report issue | `fleet_report.go` | yes (`fleet_report_posted`, `outcome=created` or `commented`) | yes / issue number |
+| Fleet report recovery | `fleet_report.go` | yes (`fleet_report_recovered`, with `closed`) | yes / issue number |
 
-Rows marked "no" are follow-ups for later phases.
+The open-time signed rewrite in `pr_request_signed.go` is part of `open_pr`
+and is covered by that operation's `agent_pr_created` entry. Creating a
+missing label on a repository (the hold label, `from-review`) is a side
+effect of the labeled write and is not audited on its own.
 
 ## Lane allowlist
 
@@ -96,6 +108,36 @@ write_surface:
 - The allowlist cannot widen anything. The ACMM mode gate, repo pause and repo
   scope still apply to a listed operation.
 
+### Editing it from the dashboard
+
+The allowlist can be edited at runtime in **Settings > Security > Write
+Surface**. The editor is plain text, one lane per line:
+
+```text
+scanner: create_issue, comment, claim
+reviewer: review, resolve_thread, comment
+muted:
+```
+
+`muted:` with nothing after it allows that lane nothing. An empty editor clears
+the allowlist, which restricts nothing. Saving takes effect on the next relay
+request, with no restart, and is persisted like every other dashboard setting.
+
+The editor is backed by an owner-only API:
+
+- `GET /api/config/write-surface` returns `allowlist`, the known `ops`, and
+  `warnings` (an unknown operation from a hand-edited `hive.yaml`, or a lane
+  that names no configured agent or replica).
+- `PUT /api/config/write-surface` takes `{"allowlist": {...}}` and replaces the
+  whole allowlist. `{"allowlist": {}}` clears it. A missing `allowlist` key, an
+  unknown operation, or a lane name with anything other than letters, digits,
+  `.`, `_` and `-` is refused with `400` and nothing changes. Operations are
+  stored lower-cased, de-duplicated and in the order listed above; a list
+  containing `"*"` is stored as `["*"]`.
+
+Each accepted change is audited as `config_write_surface` with the number of
+listed lanes and their names. The editor renders every name as text.
+
 A refused request is handled like every other policy denial:
 
 - the request is renamed `.denied`;
@@ -116,8 +158,11 @@ string (see [audit log format](audit-log.md)):
 | `repo` | Repository written to, as the request named it (bare or `owner/repo`). |
 | `target` | Issue or PR number written to. Omitted when there is none, for example a refused `open_pr`. |
 
-The `repo=` and `number=` pairs stay in `detail`, so existing parsers keep
-working. The activity collector and per-repo cost attribution
+Every write site passes the repository and number it wrote to directly
+(`recordWriteAudit` with a `WriteTarget`), so the typed fields are the values
+the write used, not a re-parse of `detail`. The `repo=` and `number=` pairs
+are still written first in `detail`, in the same order as before, so existing
+parsers keep working. The activity collector and per-repo cost attribution
 ([#4836](https://github.com/hivecommons/hive/issues/4836)) read the typed field
 first. They fall back to `detail` for entries written before the field existed.
 
@@ -136,3 +181,24 @@ the typed `repo` are masked with `[REDACTED]` for:
 The masking reuses `pkg/logscrub`. A test in `pkg/github/write_surface_test.go`
 feeds each of these shapes through every audited slot and asserts that none of
 them survives.
+
+## Not yet done
+
+These are deliberately out of scope so far. They change what an agent can do,
+so they need operator sign-off first. ACMM L6 is full autonomy by design: none
+of them may reduce what an L6 hive can do by default.
+
+- **Removing direct write access from the agent sandbox.** Agents can still
+  run `gh`, call the API through the proxy, and `git push`. A likely shape: the
+  proxy refuses GitHub write methods for a lane that opted in (a per-lane
+  `write_surface.enforce` flag, default off), and the relays become the only
+  write path for that lane. Unlisted lanes and L6 hives keep direct access
+  unless the operator turns enforcement on. `git push` needs its own relay
+  first (below), or pushes would simply stop.
+- **New operations with no relay yet:** `push_branch`, a standalone `label`,
+  and `request_review`. Each would be a new relay (request file, file-UID
+  authorizer, allowlist check, audit), following the existing four. A hive with
+  no allowlist would allow them, like every other operation.
+- **Lifecycle timeline reader.** `recordLifecycleFromAudit` still reads
+  `repo=`/`number=` from `detail`. It works, because the pairs are still
+  written, but it could take the typed fields directly.
