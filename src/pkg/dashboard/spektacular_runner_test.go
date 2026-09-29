@@ -432,6 +432,11 @@ func TestHubExecutorSpendsStageBudgetUnderCleanupLoop(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			hub, s, _, _ := spekHub(t)
+			// Drive the cleanup lifecycle with the synthetic clock below. The
+			// fixture's real 30s cleanup ticker can otherwise interleave with
+			// these manual ticks and make the stage-budget assertions depend on
+			// wall-clock scheduling under -race.
+			hub.Close()
 			hub.persistTaskLedgers = true
 			const runKey = spekRepo + "#9143"
 			start := time.Now()

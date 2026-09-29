@@ -80,7 +80,7 @@ func (s *Server) chatCommandHintAnswer(query string) (string, bool) {
 }
 
 func (s *Server) chatStatusRuns() []Run {
-	if status := s.chatStatusSnapshot(); status != nil && len(status.Runs) > 0 {
+	if status := s.chatStatusSnapshot(); status != nil {
 		return append([]Run(nil), status.Runs...)
 	}
 	runs, err := s.activeRuns(true)

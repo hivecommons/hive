@@ -1,0 +1,1 @@
+- Dashboard chat and Spektacular hub-executor tests are now isolated from shuffled CI state, so local status answers and synthetic cleanup ticks no longer depend on unrelated run projections or wall-clock cleanup scheduling.
