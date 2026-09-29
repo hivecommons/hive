@@ -69,6 +69,7 @@ func npsServer(t *testing.T, hub *npsFakeHub, hiveType string) *Server {
 	t.Helper()
 	t.Setenv(config.NPSEnabledEnvVar, "")
 	t.Setenv(spoke.EnvHeartbeatKey, npsTestBearer)
+	npsClearRelayEnv(t)
 	s := NewServer(0, dismissLogger())
 	url := ""
 	if hub != nil {
