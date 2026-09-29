@@ -685,6 +685,19 @@ const (
 // Edit/write variants are included for completeness across versions.
 var toolSummaryRe = regexp.MustCompile(`(?i)\b(?:ran|running) \d+ shell command|\bread \d+ file|\bedited \d+ file|\bwrote \d+ file|\bupdated \d+ file`)
 
+// cliBusyEscapeFooterRe matches stable footer actions the CLIs show only while
+// work is in flight. Callers must still pass the VISIBLE pane only: scrollback
+// can retain a completed turn's footer after the prompt is genuinely idle.
+var cliBusyEscapeFooterRe = regexp.MustCompile(`(?i)\besc (?:to )?(?:interrupt|stop agents|cancel)\b`)
+
+const cliWaitingForBackgroundAgentsMarker = "Waiting for background agents"
+
+func paneShowsBusyFooter(pane string) bool {
+	return pane != "" &&
+		(cliBusyEscapeFooterRe.MatchString(pane) ||
+			strings.Contains(pane, cliWaitingForBackgroundAgentsMarker))
+}
+
 // expandedToolCallMarkers are literal fragments of Claude Code's expanded
 // per-tool rendering. "⎿" is the result elbow drawn under a tool call
 // (verified live on v2.1.204: "⎿  $ sleep 15 && echo probe3"); the
@@ -756,17 +769,20 @@ func stripExplainLines(pane string) string {
 	return strings.Join(kept, "\n")
 }
 
-// paneShowsActiveWork reports whether the CLI is mid-response: either the
-// legacy "esc to interrupt" footer hint or the live spinner counter is
-// visible. The idle input prompt "❯" alone proves nothing on v2.1.204 —
-// the input box stays rendered while a response streams.
+// paneShowsActiveWork reports whether the CLI is mid-response: either a busy
+// footer action (esc interrupt / esc to interrupt / esc stop agents / esc to
+// cancel), the live spinner counter, or an OMP work label is visible. The idle
+// input prompt "❯" alone proves nothing on v2.1.204 — the input box stays
+// rendered while a response streams. Callers must pass the VISIBLE pane only:
+// a completed turn's busy footer can linger in scrollback.
 //
 // OMP renders neither marker (verified live, omp 18.1.16/18.1.17): a tool
 // call shows "⏺ Running… (esc to cancel)" and plain generation shows a
 // spinner glyph plus "Working…", so an in-flight OMP turn read as idle
 // without these two additions.
 func paneShowsActiveWork(pane string) bool {
-	return strings.Contains(pane, cliWorkingMarker) ||
+	return paneShowsBusyFooter(pane) ||
+		strings.Contains(pane, cliWorkingMarker) ||
 		strings.Contains(pane, cliActiveCounterMarker) ||
 		strings.Contains(pane, "Working…") ||
 		strings.Contains(pane, "Running…")

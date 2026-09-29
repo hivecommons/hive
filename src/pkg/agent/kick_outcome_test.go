@@ -112,6 +112,9 @@ func TestPaneShowsTurnEnded(t *testing.T) {
 	if paneShowsTurnEnded("⏺ Reading files…\n  ◉ Working (12s · esc to interrupt)\n❯") {
 		t.Error("a pane with the working marker must not read as turn ended")
 	}
+	if paneShowsTurnEnded("❯\n────────\n ● Waiting for background agents · 500 B esc stop agents") {
+		t.Error("a pane waiting for background agents must not read as turn ended")
+	}
 	if paneShowsTurnEnded("") {
 		t.Error("an empty capture is not a finished turn")
 	}

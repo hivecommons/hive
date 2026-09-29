@@ -110,7 +110,8 @@ func paneHasCLIMarker(output string) bool {
 // the shapes those backends emit today: "esc interrupt" is the abort hint on
 // the streaming footer and "◉ Working" is the live activity spinner — both
 // present in the mid-task Claude Fable 5 capture in #7085, alongside a fully
-// rendered "❯" input box.
+// rendered "❯" input box. paneShowsBusyFooter covers newer escape-action
+// footers such as "esc stop agents" while waiting on background agents.
 var agentWorkingMarkers = []string{
 	"esc interrupt",
 	"◉ Working",
@@ -138,6 +139,9 @@ func paneShowsAgentWorking(pane string) bool {
 		if lastReady < lastRunning {
 			return true
 		}
+	}
+	if paneShowsBusyFooter(pane) {
+		return true
 	}
 	for _, marker := range agentWorkingMarkers {
 		if strings.Contains(pane, marker) {

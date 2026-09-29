@@ -1,0 +1,1 @@
+- Keep Copilot turns that are waiting for background agents marked as busy so scheduled kicks do not interrupt and clear their parent turn or sub-agents. ([#9450](https://github.com/hivecommons/hive/issues/9450))
