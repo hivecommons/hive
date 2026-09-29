@@ -1492,6 +1492,35 @@ const gitInjectBasicUser = "x-access-token"
 // get strip-only treatment.
 const loginPathPrefix = "/login/"
 
+// copilotInternalPathPrefix marks the Copilot CLI's auth-exchange endpoints on
+// the GitHub API host (/copilot_internal/v2/token, /copilot_internal/user).
+// The CLI calls them with the USER's Copilot OAuth token
+// (COPILOT_GITHUB_TOKEN / the /data/copilot-user-token device-flow token) to
+// obtain its short-lived Copilot session token and discover its completion
+// host. A GitHub App installation token cannot perform that exchange, so
+// rewriting these requests would cut every copilot-backend agent off from its
+// model the moment injection is on (#9586). They are passed through with the
+// agent's own Authorization untouched - nothing stripped, nothing injected.
+//
+// Residual (documented in security-model.md): the Copilot user OAuth token
+// stays agent-readable and spendable on these paths; moving it server-side too
+// is a follow-up. The hub-held App tokens injection protects are never
+// attached here.
+const copilotInternalPathPrefix = "/copilot_internal/"
+
+// gheAPIPathPrefix is the REST prefix GitHub Enterprise Server serves its API
+// under (https://<ghe-host>/api/v3/...), so the Copilot exchange on a GHE host
+// arrives as /api/v3/copilot_internal/...
+const gheAPIPathPrefix = "/api/v3"
+
+// isCopilotAuthExchangePath reports whether path is a Copilot CLI
+// auth-exchange endpoint that must keep the agent's own credential (see
+// copilotInternalPathPrefix), on api.github.com or a GHE /api/v3 host.
+func isCopilotAuthExchangePath(path string) bool {
+	return strings.HasPrefix(path, copilotInternalPathPrefix) ||
+		strings.HasPrefix(path, gheAPIPathPrefix+copilotInternalPathPrefix)
+}
+
 // rewriteGitHubAuth enforces #1861 on one MITM'd request: the proxy — not the
 // agent — decides what credential GitHub sees.
 //
@@ -1515,6 +1544,10 @@ const loginPathPrefix = "/login/"
 //     ride a real credential, recreating the pre-#3888 identity hole this
 //     design depends on having closed.
 //
+//   - COPILOT AUTH-EXCHANGE PASSTHROUGH: /copilot_internal/ on a GitHub
+//     host keeps the agent's own Authorization (the user's Copilot OAuth
+//     token); see copilotInternalPathPrefix for why and the residual.
+//
 //   - INTERNAL CALLER PASSTHROUGH: the hive's own control plane
 //     (internalCallerName) legitimately holds and sends its own App
 //     credentials (token mint, heartbeat, hive-open-pr fulfillment); its
@@ -1534,6 +1567,13 @@ func (p *GitHubProxy) rewriteGitHubAuth(req *http.Request, agentName string) {
 		return
 	}
 	if agentName == internalCallerName {
+		return
+	}
+	if isCopilotAuthExchangePath(req.URL.Path) {
+		// Before the strip: the Copilot session-token exchange needs the
+		// user's Copilot OAuth token, which no hub-held App token can stand in
+		// for (copilotInternalPathPrefix).
+		p.logger.Debug("proxy auth injection: Copilot auth-exchange endpoint - agent credential passed through", "agent", agentName, "injected", false)
 		return
 	}
 
