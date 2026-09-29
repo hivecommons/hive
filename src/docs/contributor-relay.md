@@ -682,13 +682,30 @@ Contributors declare their CLI backend and model when the relay connects. The **
 
 This is the admin's quality floor: a hive doing subtle refactors can require `claude-opus*`/`claude-sonnet*`, while a hive full of `good-first-issue` label work can accept anything, including local Ollama models.
 
+### Minimum reasoning effort
+
+Relays also report their reasoning effort (`reasoning_effort` on `auth_response`). The **Effort floor** control, next to the Model Filter in **Governor → Hub**, sets a minimum:
+
+| Control | Config key | Behavior |
+|---|---|---|
+| **Effort floor** | `contribute_min_reasoning_effort` | Minimum reasoning effort on the ladder `minimal < low < medium < high < xhigh < max`. **Empty = no floor.** A relay whose effort ranks below the floor is rejected **at connect time** with an `auth_failed` message that echoes the floor (`min_reasoning_effort`). The comparison is per backend, not a raw string compare: a floor above a backend's highest level is met by that backend's highest level (e.g. a `max` floor is met by codex at `xhigh` and agy at `high`). Invalid values are rejected by `PUT /api/config/governor/hub` and ignored (with a warning) when loaded from YAML. |
+| **Reject Unknown Effort** | `contribute_reject_unknown_effort` | Only applies when a floor is set. When on, a relay whose effort is empty, unrecognised, or not valid for its backend is rejected; when off (default) it is admitted. |
+
+A single ordered floor was chosen over a per-backend allow-list because effort vocabularies differ per backend (codex `model_reasoning_effort`, claude `--effort`, …): one floor on a shared ladder says "at least this much reasoning" once for every backend. Both keys are returned by `GET /api/config/governor` (alongside `contribute_reasoning_effort_ladder`) and on the contribute admission policy (`min_reasoning_effort`, `reject_unknown_effort`) so relays can pre-check before connecting.
+
+```yaml
+hub:
+  contribute_min_reasoning_effort: high
+  contribute_reject_unknown_effort: true
+```
+
 ### Trust tiers and individual controls
 
 Each trust tier can be toggled on/off and given its own rate limits (`0` = unlimited); tiers promote automatically as contributors complete tasks that open PRs. Admins can also promote, demote, or revoke individual contributors from the dashboard's contributor list (`GET /api/contributors`, with `PUT /api/contributors/{id}/trust` and `POST /api/contributors/{id}/revoke`); revoked contributors cannot reconnect. Completed-task counts and standings are public on the hive's `/leaderboard`. Tier names, promotion thresholds, and delegated roles are documented in [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md).
 
 ### Filter timing
 
-- **Queue-time vs. connect-time.** Repo, label, title, author, and assignment filters, cooldown, and the hold/priority sets apply when the queue is next built, so tightening them affects the *next* queue build. The Model Filter applies at connect time, so tightening it affects the *next* connection, not agents already mid-task.
+- **Queue-time vs. connect-time.** Repo, label, title, author, and assignment filters, cooldown, and the hold/priority sets apply when the queue is next built, so tightening them affects the *next* queue build. The Model Filter and the effort floor apply at connect time, so tightening them affects the *next* connection, not agents already mid-task.
 - **Suspending vs. revoking.** Suspension idles everyone and is instant to undo; revocation is per-contributor and blocks reconnection.
 
 ## Kubernetes contributor workload

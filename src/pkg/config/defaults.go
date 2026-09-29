@@ -151,6 +151,12 @@ func (c *Config) applyDefaults() {
 	c.Hub.ContributeAuthorsMode = NormalizeFilterMode(c.Hub.ContributeAuthorsMode)
 	c.Hub.ContributeLabelsMode = NormalizeFilterMode(c.Hub.ContributeLabelsMode)
 	c.Hub.NormalizeContributeRepoFilters()
+	if floor, err := NormalizeContributeMinReasoningEffort(c.Hub.ContributeMinReasoningEffort); err != nil {
+		log.Printf("WARNING: hub.%v — ignoring the floor", err)
+		c.Hub.ContributeMinReasoningEffort = ""
+	} else {
+		c.Hub.ContributeMinReasoningEffort = floor
+	}
 
 	// Contribute completion-cooldown period: leave 0 (== "use default") alone, but
 	// clamp any explicitly-set value to [min,max] so a stray input cannot park an
