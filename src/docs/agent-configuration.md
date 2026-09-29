@@ -206,6 +206,10 @@ spec omits `launch_cmd`, Hive still builds the backend command normally.
     clear_on_kick: true          # default true; false keeps session context across kicks
     stale_timeout: 28800         # seconds of silence before the agent counts as stale —
                                  #   must exceed its longest cadence
+    busy_no_activity_threshold: 30m
+                                 # surface Working/no-transcript activity after repeated
+                                 #   undeliverable kicks; default 30m
+    max_turn_duration: 0s        # optional visibility-only Working ceiling; 0 disables
     restart_strategy: immediate  # how to bring a dead session back
     beads_dir: /data/beads/scanner   # work-record (bead) storage; default per-agent
     replicas: 3                  # materialize scanner, scanner-2, scanner-3 (max 5)

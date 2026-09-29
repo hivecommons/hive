@@ -205,18 +205,30 @@ const (
 const BreakerTrigger = "fleet-breaker"
 
 type AgentProcess struct {
-	Name          string
-	ID            string
-	Config        config.AgentConfig
-	State         ProcessState
-	PID           int
-	UID           int
-	StartedAt     *time.Time
-	LastKick      *time.Time
-	Paused        bool
-	PausedAt      time.Time
-	PausedReason  string
-	PausedTrigger string
+	Name      string
+	ID        string
+	Config    config.AgentConfig
+	State     ProcessState
+	PID       int
+	UID       int
+	StartedAt *time.Time
+	LastKick  *time.Time
+	// KicksUndeliverable counts consecutive kicks that could not be delivered
+	// because the pane never became safe for input. It resets on successful
+	// delivery or restart and is surfaced so operators can distinguish "due
+	// now" from "due but still busy".
+	KicksUndeliverable int
+	// BusySince is the first undeliverable-kick time in the current busy run.
+	BusySince time.Time
+	// LastTranscriptActivity is the newest events.jsonl mtime seen under this
+	// agent's own Copilot session-state tree.
+	LastTranscriptActivity time.Time
+	BusyCondition          string
+	BusyConditionMessage   string
+	Paused                 bool
+	PausedAt               time.Time
+	PausedReason           string
+	PausedTrigger          string
 	// PausedBy is the acting user behind the pause when one is known — the
 	// authenticated dashboard user for a dashboard-api pause, empty for
 	// system-initiated pauses (login-detector, fleet-breaker, acmm-pack).
@@ -419,6 +431,10 @@ type AgentProcess struct {
 	// followed within seconds by a kick that will itself be restarted.
 	kickHoldUntil  time.Time
 	kickHoldReason string
+	// busyConditionWarned is the last visibility condition logged at warn
+	// level for this busy episode. Empty when no condition is active.
+	busyConditionWarned  string
+	lastTranscriptScanAt time.Time
 }
 
 // ProjectContext holds project-level config injected into agent boot prompts.
@@ -1491,11 +1507,20 @@ func (m *Manager) CountAgentsWithModel() int {
 }
 
 func (m *Manager) AllStatuses() map[string]*AgentProcess {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	now := time.Now()
+	m.mu.Lock()
+	scans := m.pendingTranscriptActivityScansLocked(now)
+	m.mu.Unlock()
+
+	results := scanTranscriptActivity(scans)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.applyTranscriptActivityResultsLocked(results, now)
 
 	result := make(map[string]*AgentProcess, len(m.agents))
 	for k, v := range m.agents {
+		m.refreshBusyVisibilityLocked(v, now)
 		snap := v.snapshot()
 		result[k] = &snap
 	}

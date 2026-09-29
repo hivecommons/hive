@@ -180,6 +180,7 @@ func (m *Manager) SendKick(name string, message string) error {
 		if agent.kickEpoch != epoch {
 			return fmt.Errorf("%w: agent %s restarted while the kick was waiting for its input prompt", errKickCancelledByRestart, name)
 		}
+		m.markKickUndeliverableLocked(agent, time.Now())
 		return fmt.Errorf("agent %s CLI did not reach input prompt", name)
 	}
 	m.mu.Lock()
@@ -259,6 +260,7 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 
 	visible := m.captureVisiblePaneForAgent(agent)
 	if !paneShowsInputPrompt(visible) || paneShowsConsentScreen(visible) || paneShowsAgentWorking(visible) {
+		m.markKickUndeliverableLocked(agent, time.Now())
 		m.logger.Warn("kick delivery skipped: CLI is not at a ready prompt; refusing to type kick into shell",
 			"agent", agent.Name, "trigger", trigger, "has_cli_marker", paneHasCLIMarker(visible),
 			"consent_screen", paneShowsConsentScreen(visible), "working", paneShowsAgentWorking(visible))
@@ -376,6 +378,7 @@ func (m *Manager) deliverAgyHeadlessKickLocked(agent *AgentProcess, message, tri
 
 func (m *Manager) recordDeliveredKickLocked(agent *AgentProcess, message, trigger string) {
 	now := time.Now()
+	m.resetBusyVisibilityLocked(agent)
 	agent.LastKick = &now
 	agent.LastKickMessage = message
 	agent.KickRefused = false

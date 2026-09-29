@@ -27,6 +27,7 @@ var kickHoldNow = time.Now
 // is set.
 func (m *Manager) invalidateKicksOnRestartLocked(agent *AgentProcess, reason string, armHold, failDispatch bool) {
 	agent.kickEpoch++
+	m.resetBusyVisibilityLocked(agent)
 	reason = sanitizeRestartReason(reason)
 	if failDispatch {
 		if m.kickDispatches.cancel(agent.Name, "cancelled: agent restarted ("+reason+") while the kick was pending") {

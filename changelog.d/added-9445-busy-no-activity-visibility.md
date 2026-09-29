@@ -1,0 +1,1 @@
+- Agents that stay on a Working pane while governor kicks remain undeliverable now surface their kick backlog, transcript silence, and optional max-turn ceiling in status instead of looking like a normal due-now turn, giving operators a read-only hang signal without interrupting legitimate long work ([#9445](https://github.com/hivecommons/hive/issues/9445))
