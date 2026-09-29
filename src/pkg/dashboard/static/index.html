@@ -27192,8 +27192,8 @@ function burnAreaChart() {
         (sec.ioscanCanaries ? 'canaries on' : 'canaries off'),
         'sandbox ' + (sec.sandboxedAgents || 0) + '/' + (sec.totalAgents || 0) + ' agents',
       ];
-      // #9586: resolved proxy GitHub auth injection (explicit, hosted-App
-      // default, or off) - the reason rides in the tooltip.
+      // #9586: proxy GitHub auth injection (opt-in: on only when explicitly
+      // set; unset is off) - the reason rides in the tooltip.
       const inj = sec.credentialInjection;
       let title = 'Effective security posture from the dashboard overlay and running config';
       if (inj && inj.source) {

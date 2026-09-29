@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 
@@ -10,73 +11,72 @@ import (
 	"github.com/hivecommons/hive/pkg/github"
 )
 
-// TestBootGitHubResolvesProxyInjectDefault (#9586): bootGitHub - the first
-// boot phase, before the proxy or any agent token mint - applies the
-// hosted-App default by writing the explicit value into the env, and logs
-// exactly one line saying which way it resolved and why. Everything that is
-// not a hosted spoke with live App auth, or that carries an explicit value,
-// leaves the env alone.
-func TestBootGitHubResolvesProxyInjectDefault(t *testing.T) {
-	const testAppID = 12345
+// TestBootConfigLogsProxyInjectOptIn (#9586): the spoke boot logs exactly one
+// line saying which way proxy GitHub auth injection resolved. Injection is
+// opt-in only: unset is off (naming the opt-in), only the explicit value is on.
+func TestBootConfigLogsProxyInjectOptIn(t *testing.T) {
 	cases := []struct {
-		name     string
-		hiveType string
-		appID    int64
-		appAuth  bool
-		value    string
-		advisory string
-		hubMode  bool
-		wantOn   bool
-		wantEnv  string
+		value  string
+		wantOn bool
 	}{
-		{name: "hosted App unset defaults on", hiveType: config.HiveTypeHosted, appID: testAppID, appAuth: true, wantOn: true, wantEnv: config.ProxyInjectGHAuthOnValue},
-		{name: "hosted App explicit false wins", hiveType: config.HiveTypeHosted, appID: testAppID, appAuth: true, value: config.ProxyInjectGHAuthOffValue, wantEnv: config.ProxyInjectGHAuthOffValue},
-		{name: "hosted PAT stays off", hiveType: config.HiveTypeHosted},
-		{name: "hosted App key not delivered yet stays off", hiveType: config.HiveTypeHosted, appID: testAppID},
-		{name: "hosted placeholder app_id stays off", hiveType: config.HiveTypeHosted, appID: config.PlaceholderAppID, appAuth: true},
-		{name: "hosted App in advisory mode stays off", hiveType: config.HiveTypeHosted, appID: testAppID, appAuth: true, advisory: "true"},
-		{name: "self-hosted App stays off", appID: testAppID, appAuth: true},
-		{name: "hub mode stays off", hiveType: config.HiveTypeHosted, appID: testAppID, appAuth: true, hubMode: true},
+		{value: ""},
+		{value: config.ProxyInjectGHAuthOffValue},
+		{value: config.ProxyInjectGHAuthOnValue, wantOn: true},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := &config.Config{}
-			cfg.Hub.HiveType = tc.hiveType
-			cfg.GitHub.AppID = tc.appID
-			b, log := newDepsTestBoot(t, cfg)
-
-			env := map[string]string{config.ProxyInjectGHAuthEnv: tc.value, config.ProxyAdvisoryOKEnv: tc.advisory}
-			if tc.hubMode {
-				env["HIVE_MODE"] = "hub"
+		t.Run("value="+tc.value, func(t *testing.T) {
+			f := newBootConfigFake(t)
+			f.env[config.ProxyInjectGHAuthEnv] = tc.value
+			if returned, ok, code := runBootConfig(t, &boot{}, f.deps); !returned || !ok {
+				t.Fatalf("returned=%v ok=%v code=%d, want a normal boot", returned, ok, code)
 			}
-			b.bootGitHubWith(bootGitHubDeps{
-				initGitHubAuth: func(context.Context, *config.Config, *slog.Logger) githubAuth {
-					if tc.appAuth {
-						return githubAuth{AppAuth: &github.AppAuth{}}
-					}
-					return githubAuth{}
-				},
-				getenv: func(k string) string { return env[k] },
-				setenv: func(k, v string) error { env[k] = v; return nil },
-			})
-
-			if got := env[config.ProxyInjectGHAuthEnv]; got != tc.wantEnv {
-				t.Errorf("%s = %q after boot, want %q", config.ProxyInjectGHAuthEnv, got, tc.wantEnv)
+			log := f.log.String()
+			if n := strings.Count(log, "proxy GitHub auth injection: "); n != 1 {
+				t.Fatalf("boot logged the injection decision %d times, want 1:\n%s", n, log)
 			}
 			state := "off"
 			if tc.wantOn {
 				state = "on"
 			}
-			prefix := "proxy GitHub auth injection: " + state + " ("
-			if n := strings.Count(log.String(), "proxy GitHub auth injection: "); n != 1 {
-				t.Fatalf("boot logged the injection decision %d times, want 1:\n%s", n, log.String())
+			if !strings.Contains(log, "proxy GitHub auth injection: "+state+" (") {
+				t.Errorf("boot log does not say injection is %s:\n%s", state, log)
 			}
-			if !strings.Contains(log.String(), prefix) {
-				t.Errorf("boot log missing %q:\n%s", prefix, log.String())
+			if tc.value == "" && !strings.Contains(log, config.ProxyInjectGHAuthOptInReason) {
+				t.Errorf("unset boot line does not name the opt-in %q:\n%s", config.ProxyInjectGHAuthOptInReason, log)
 			}
-			if tc.wantOn && !strings.Contains(log.String(), config.ProxyInjectGHAuthEnv+"="+config.ProxyInjectGHAuthOffValue+" to opt out") {
-				t.Errorf("default-on line does not name the opt-out:\n%s", log.String())
+			if got := f.env[config.ProxyInjectGHAuthEnv]; got != tc.value {
+				t.Errorf("%s = %q after boot, want it untouched (%q)", config.ProxyInjectGHAuthEnv, got, tc.value)
 			}
 		})
+	}
+}
+
+// TestBootGitHubDoesNotDefaultProxyInjectOn (#9586): the reverted #9625
+// default turned injection on during bootGitHub for a hosted spoke with live
+// GitHub App auth by writing HIVE_PROXY_INJECT_GH_AUTH=true into the process
+// env. That spoke must now boot with the variable still unset and injection
+// off.
+func TestBootGitHubDoesNotDefaultProxyInjectOn(t *testing.T) {
+	const testAppID = 12345
+	t.Setenv(config.ProxyInjectGHAuthEnv, "")
+	if err := os.Unsetenv(config.ProxyInjectGHAuthEnv); err != nil {
+		t.Fatalf("unsetenv: %v", err)
+	}
+
+	cfg := &config.Config{}
+	cfg.Hub.HiveType = config.HiveTypeHosted
+	cfg.GitHub.AppID = testAppID
+	b, _ := newDepsTestBoot(t, cfg)
+	b.bootGitHubWith(bootGitHubDeps{
+		initGitHubAuth: func(context.Context, *config.Config, *slog.Logger) githubAuth {
+			return githubAuth{AppAuth: &github.AppAuth{}}
+		},
+	})
+
+	if v, ok := os.LookupEnv(config.ProxyInjectGHAuthEnv); ok {
+		t.Fatalf("hosted App spoke boot wrote %s=%q; injection must stay opt-in", config.ProxyInjectGHAuthEnv, v)
+	}
+	if config.ProxyInjectGHAuth() {
+		t.Fatal("hosted App spoke resolved injection ON with the variable unset")
 	}
 }

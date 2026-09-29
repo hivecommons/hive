@@ -1009,6 +1009,11 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	for _, warning := range config.ProxyInjectGHAuthWarnings(deps.getenv) {
 		b.logger.Error("GitHub credential configuration warning (#9586): agents hold their real token", "warning", warning)
 	}
+	// #9586: one line saying which way injection resolved and why. Injection
+	// is opt-in only (HIVE_PROXY_INJECT_GH_AUTH=true); unset is off on every
+	// hive, and nothing here writes the env.
+	injection := config.ResolveProxyInjectGHAuth(deps.getenv)
+	b.logger.Info(injection.LogLine(), "enabled", injection.Enabled, "source", string(injection.Source), "env", config.ProxyInjectGHAuthEnv)
 
 	var cancel context.CancelFunc
 
@@ -1746,34 +1751,6 @@ func (b *boot) bootGitHubWith(deps bootGitHubDeps) {
 	// Long-lived consumers read the client through this provider, never a
 	// captured b.ghClient, so every rebuild reaches them (#9621).
 	b.publishGitHubClient(b.ghClient)
-	b.resolveProxyInjectGHAuth(deps)
-}
-
-// resolveProxyInjectGHAuth applies the #9586 default for proxy-side GitHub
-// auth injection: an existing hosted App spoke with HIVE_PROXY_INJECT_GH_AUTH
-// unset turns injection on here, so the fleet flips through the normal
-// channel rollout rather than by hand. It runs in bootGitHub - the first boot
-// phase, right after credentials resolve and before the proxy (bootProxy) or
-// any agent token mint - because "is App auth live" is only known now.
-//
-// Decided ONCE per process: the proxy snapshots the flag at construction, so
-// a spoke that boots before its App is delivered (ReinitGitHubFunc / the
-// heartbeat app-config path) stays off until its next restart - which every
-// channel upgrade performs. Never fatal.
-func (b *boot) resolveProxyInjectGHAuth(deps bootGitHubDeps) {
-	getenv, setenv := deps.getenv, deps.setenv
-	if getenv == nil {
-		getenv = os.Getenv
-	}
-	if setenv == nil {
-		setenv = os.Setenv
-	}
-	d := config.ApplyProxyInjectGHAuthDefault(getenv, setenv, config.ProxyInjectGHAuthInputs{
-		HubMode:  getenv("HIVE_MODE") == "hub",
-		HiveType: b.cfg.Hub.HiveType,
-		AppAuth:  b.cfg.GitHub.HasApp() && b.ghAuth.AppAuth != nil,
-	})
-	b.logger.Info(d.LogLine(), "enabled", d.Enabled, "source", string(d.Source), "env", config.ProxyInjectGHAuthEnv)
 }
 
 // bootGovernor constructs the governor and scheduler, wires the prompt and

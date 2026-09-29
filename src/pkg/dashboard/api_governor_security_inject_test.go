@@ -7,18 +7,18 @@ import (
 )
 
 // TestSecuritySectionSurfacesResolvedProxyInjection (#9586): the Security tab
-// carries the RESOLVED injection state and its source, so an operator can see
-// what an unset HIVE_PROXY_INJECT_GH_AUTH meant on this spoke. With no boot
-// decision recorded (this test binary) it falls back to the explicit env.
+// carries the injection state and its source. Injection is opt-in, so an
+// unset HIVE_PROXY_INJECT_GH_AUTH reports off with the opt-in hint.
 func TestSecuritySectionSurfacesResolvedProxyInjection(t *testing.T) {
 	cases := []struct {
 		value      string
 		wantOn     bool
 		wantSource config.ProxyInjectGHAuthSource
+		wantReason string
 	}{
 		{value: config.ProxyInjectGHAuthOnValue, wantOn: true, wantSource: config.ProxyInjectGHAuthSourceExplicitOn},
 		{value: config.ProxyInjectGHAuthOffValue, wantSource: config.ProxyInjectGHAuthSourceExplicitOff},
-		{value: "", wantSource: config.ProxyInjectGHAuthSourceDefaultOff},
+		{value: "", wantSource: config.ProxyInjectGHAuthSourceDefaultOff, wantReason: "opt-in: set " + config.ProxyInjectGHAuthEnv + "=" + config.ProxyInjectGHAuthOnValue},
 	}
 	for _, tc := range cases {
 		t.Run("value="+tc.value, func(t *testing.T) {
@@ -39,8 +39,12 @@ func TestSecuritySectionSurfacesResolvedProxyInjection(t *testing.T) {
 			if got, _ := inj["source"].(string); got != string(tc.wantSource) {
 				t.Errorf("credentialInjection.source = %v, want %q", inj["source"], tc.wantSource)
 			}
-			if got, _ := inj["reason"].(string); got == "" {
+			got, _ := inj["reason"].(string)
+			if got == "" {
 				t.Error("credentialInjection.reason is empty")
+			}
+			if tc.wantReason != "" && got != tc.wantReason {
+				t.Errorf("credentialInjection.reason = %q, want %q", got, tc.wantReason)
 			}
 		})
 	}
