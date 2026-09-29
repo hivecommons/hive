@@ -606,3 +606,47 @@ func TestBuildUpstreamRequest_BadURI(t *testing.T) {
 		t.Fatalf("bad method: %v", err)
 	}
 }
+
+// A sidecar response whose body stalls must not park the proxy's handler: the
+// client cancels after bodyIdle with no progress and the Read errors out.
+func TestClient_StalledResponseBodyIsCancelled(t *testing.T) {
+	release := make(chan struct{})
+	stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("partial"))
+		if fl, ok := w.(http.Flusher); ok {
+			fl.Flush()
+		}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() { close(release); stalled.Close() })
+	u, _ := url.Parse(stalled.URL)
+	c, err := NewClient(ClientConfig{URL: u, Key: testKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.bodyIdle = 50 * time.Millisecond
+	resp, err := c.Forward(httptest.NewRequest("GET", "/user", nil), "api.github.com", "a", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := io.ReadAll(resp.Body)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a stalled body read ended cleanly; want it cancelled")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a stalled response body parked the reader")
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Logf("close after cancel: %v", err)
+	}
+}

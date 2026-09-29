@@ -2,6 +2,7 @@ package credsidecar
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -20,6 +21,7 @@ type Client struct {
 	key          []byte
 	maxBodyBytes int64
 	http         *http.Client
+	bodyIdle     time.Duration
 	now          func() time.Time
 	nonce        func() (string, error)
 }
@@ -61,8 +63,9 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 			},
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
-		now:   time.Now,
-		nonce: newNonce,
+		bodyIdle: clientBodyIdleTimeout,
+		now:      time.Now,
+		nonce:    newNonce,
 	}, nil
 }
 
@@ -93,7 +96,16 @@ func (c *Client) Forward(req *http.Request, host, agentName, tier string) (*http
 	if len(body) > 0 {
 		reader = bytes.NewReader(body)
 	}
-	out, err := http.NewRequestWithContext(req.Context(), req.Method, target, reader)
+	// The cancel is what bounds a stalled response body (idleBody below); it
+	// is released by the returned body's Close, or here on any early return.
+	ctx, cancel := context.WithCancel(req.Context())
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			cancel()
+		}
+	}()
+	out, err := http.NewRequestWithContext(ctx, req.Method, target, reader)
 	if err != nil {
 		return nil, fmt.Errorf("building sidecar request: %w", err)
 	}
@@ -139,5 +151,43 @@ func (c *Client) Forward(req *http.Request, host, agentName, tier string) (*http
 	if err != nil {
 		return nil, fmt.Errorf("credential sidecar unreachable: %w", err)
 	}
+	resp.Body = newIdleBody(resp.Body, c.bodyIdle, cancel)
+	handedOff = true
 	return resp, nil
+}
+
+// clientBodyIdleTimeout is how long a response body may deliver NO bytes
+// before the relay is cancelled. A body that keeps flowing is never cut for
+// being long (a large clone streams for minutes); one that stalls releases the
+// proxy's handler and sockets instead of parking them (the #3875 lesson the
+// direct relay learned with stallBoundedBody).
+const clientBodyIdleTimeout = 60 * time.Second
+
+// idleBody cancels the request context when a Read makes no progress within
+// idle, which aborts the blocked Read with an error.
+type idleBody struct {
+	rc     io.ReadCloser
+	idle   time.Duration
+	timer  *time.Timer
+	cancel context.CancelFunc
+}
+
+func newIdleBody(rc io.ReadCloser, idle time.Duration, cancel context.CancelFunc) *idleBody {
+	t := time.AfterFunc(idle, cancel)
+	t.Stop()
+	return &idleBody{rc: rc, idle: idle, timer: t, cancel: cancel}
+}
+
+func (b *idleBody) Read(p []byte) (int, error) {
+	b.timer.Reset(b.idle)
+	n, err := b.rc.Read(p)
+	b.timer.Stop()
+	return n, err
+}
+
+func (b *idleBody) Close() error {
+	b.timer.Stop()
+	err := b.rc.Close()
+	b.cancel()
+	return err
 }
