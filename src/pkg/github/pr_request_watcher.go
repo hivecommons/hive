@@ -172,6 +172,22 @@ func (c *Client) SetPRRepoPolicyGate(fn PRRepoPolicyGate) {
 	c.prRepoPolicyGate.Store(&fn)
 }
 
+// CheckPRRepoPolicy runs the installed PR repo policy gate (the per-repo
+// effective-ACMM check on whether agent may open a PR on repo) and returns its
+// refusal. It is the exact check the pr-request watcher applies before opening
+// anything; exported so the wiring that installs the gate can prove a client
+// (including one rebuilt after an App credential change, #9614) enforces it.
+// Returns nil when no gate is installed or the client is nil.
+func (c *Client) CheckPRRepoPolicy(agent, repo string) error {
+	if c == nil {
+		return nil
+	}
+	if gate := c.prRepoPolicyGate.Load(); gate != nil && *gate != nil {
+		return (*gate)(agent, repo)
+	}
+	return nil
+}
+
 func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAuthorizer, holdLabel func(agent string) bool, nowFn func() time.Time) <-chan struct{} {
 	done := make(chan struct{})
 	if c == nil {
@@ -299,11 +315,9 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		c.denyPRRequest(path, req, err.Error(), nowFn)
 		return
 	}
-	if gate := c.prRepoPolicyGate.Load(); gate != nil && *gate != nil {
-		if err := (*gate)(req.Agent, req.Repo); err != nil {
-			c.denyPRRequest(path, req, err.Error(), nowFn)
-			return
-		}
+	if err := c.CheckPRRepoPolicy(req.Agent, req.Repo); err != nil {
+		c.denyPRRequest(path, req, err.Error(), nowFn)
+		return
 	}
 
 	// Per-repo pause (#6203). Checked here, immediately after authorization and

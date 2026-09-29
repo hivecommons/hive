@@ -119,7 +119,6 @@ type boot struct {
 	leaderboardForHeartbeat       func() []spoke.LeaderboardEntry
 	ownerForHeartbeat             func() string
 	dashboardURLForHeartbeat      func() string
-	installMutationBoundary       func(client interface{ SetMutationBoundary(effects.Boundary) })
 	dashboardDependencies         func() *dashboard.Dependencies
 	wireSessionPrune              func()
 
@@ -192,6 +191,12 @@ type boot struct {
 	lastTaskListSweep     time.Time
 	lastDuplicateSweep    time.Time
 	lastSupersessionSweep time.Time
+	// holdLabelFallback, when set, is the fail-closed hold-label set a failed
+	// hive hold-label migration keeps for the life of the process (see
+	// runLoopWith). Atomic because the rebuild paths that read it, through
+	// githubHoldLabels, run on the heartbeat, config-watcher and dashboard
+	// goroutines.
+	holdLabelFallback atomic.Pointer[[]string]
 }
 
 // deferStack stands in for the `defer` statements that used to sit in
