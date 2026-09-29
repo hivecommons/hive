@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/credsidecar"
 	"github.com/hivecommons/hive/pkg/tracing"
 )
 
@@ -507,4 +508,49 @@ func TestBootConfigWith_HubModeNotGatedByProxyInjectGuard(t *testing.T) {
 	if !returned || ok || !f.hubRun {
 		t.Fatalf("returned=%v ok=%v code=%d hubRun=%v, want the hub started", returned, ok, code, f.hubRun)
 	}
+}
+
+// #9586 phase 2: the credential sidecar configured while the hive process
+// would still hold agent tokens (injection off) is the "both token sources"
+// misconfiguration. It must refuse before config load, with the posture exit
+// code and a log line naming both variables.
+func TestBootConfigWith_CredSidecarWithInProcessTokenExits(t *testing.T) {
+	f := newBootConfigFake(t)
+	f.env[credsidecar.URLEnv] = credsidecar.DefaultURL
+	f.env[credsidecar.KeyFileEnv] = writeBootSidecarKey(t)
+	f.env[config.ProxyInjectGHAuthEnv] = config.ProxyInjectGHAuthOffValue
+	f.deps.loadConfig = func(string) (*config.Config, error) {
+		t.Fatal("config loaded despite two agent token sources")
+		return nil, nil
+	}
+	returned, _, code := runBootConfig(t, &boot{}, f.deps)
+	if returned || code != proxyInjectConfigExitCode {
+		t.Fatalf("returned=%v code=%d, want exit(%d)", returned, code, proxyInjectConfigExitCode)
+	}
+	log := f.log.String()
+	for _, want := range []string{"refusing to start", credsidecar.URLEnv, config.ProxyInjectGHAuthEnv} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("refusal log does not mention %q:\n%s", want, log)
+		}
+	}
+}
+
+// With injection on and a usable key the sidecar posture boots normally.
+func TestBootConfigWith_ConsistentCredSidecarPostureBoots(t *testing.T) {
+	f := newBootConfigFake(t)
+	f.env[credsidecar.URLEnv] = credsidecar.DefaultURL
+	f.env[credsidecar.KeyFileEnv] = writeBootSidecarKey(t)
+	f.env[config.ProxyInjectGHAuthEnv] = config.ProxyInjectGHAuthOnValue
+	if returned, ok, code := runBootConfig(t, &boot{}, f.deps); !returned || !ok {
+		t.Fatalf("returned=%v ok=%v code=%d, want a normal boot", returned, ok, code)
+	}
+}
+
+func writeBootSidecarKey(t *testing.T) string {
+	t.Helper()
+	path := t.TempDir() + "/hmac"
+	if err := os.WriteFile(path, []byte(strings.Repeat("b", credsidecar.MinKeyBytes)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

@@ -3,6 +3,7 @@ package proxy
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -31,6 +32,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/credsidecar"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
 	"github.com/hivecommons/hive/pkg/ioscan"
@@ -86,6 +88,17 @@ func proxyEgressMark() int {
 		return int(v)
 	}
 	return defaultProxyEgressMark
+}
+
+// EgressMarkDialContext is markDialer's DialContext, exported for the
+// credential sidecar (#9586 phase 2). The sidecar runs in its own container
+// but shares the pod's network namespace, so the hive container's forced-egress
+// redirect of outbound :443 applies to its GitHub dials too. Stamping the same
+// egress mark exempts them where the owner-match exemption is unavailable
+// (OpenShift/OVN has no xt_owner); where the mark cannot be set the dial
+// proceeds unmarked, exactly as the proxy's own dials do.
+func EgressMarkDialContext(timeout time.Duration) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return markDialer(timeout).DialContext
 }
 
 // markDialer returns a *net.Dialer whose Control hook stamps the proxy egress
@@ -215,6 +228,23 @@ type GitHubProxy struct {
 	// a header, and stripped requests proceed unauthenticated — fail loud at
 	// GitHub, never fall back to a shared token).
 	agentTokenSource func(agentName string) (string, bool)
+
+	// credSidecarMode snapshots credential-sidecar mode at construction (#9586
+	// phase 2: HIVE_CRED_SIDECAR_URL set on top of injection). When true this
+	// process holds NO agent token: agentTokenSource is never consulted, and
+	// every GitHub request from a non-internal caller is signed and sent to the
+	// isolated credential sidecar (forwardViaCredSidecar), which attaches the
+	// token and talks to GitHub itself. credSidecar is nil only when the
+	// sidecar config was unusable at construction (the boot guard normally
+	// refuses that first); requests then fail closed with 502 - never a
+	// fallback to a direct, unauthenticated or in-process-authenticated call.
+	credSidecarMode bool
+	credSidecar     *credsidecar.Client
+
+	// agentTierSource resolves an identified agent to the token tier the
+	// sidecar should attach (github.AgentProxyTier, wired in main). Consulted
+	// only in sidecar mode.
+	agentTierSource func(agentName string) (string, bool)
 
 	mu         sync.RWMutex
 	violations map[string]int // agent name -> blocked request count
@@ -361,6 +391,13 @@ func (p *GitHubProxy) SetAgentTokenSource(source func(agentName string) (string,
 	p.agentTokenSource = source
 }
 
+// SetAgentTierSource wires the resolver from identified agent name to the
+// token tier the credential sidecar attaches for it (#9586 phase 2). Wired
+// once at boot, before Start(), like SetAgentTokenSource.
+func (p *GitHubProxy) SetAgentTierSource(source func(agentName string) (string, bool)) {
+	p.agentTierSource = source
+}
+
 // hostNeedsMITM decides whether a GitHub-family host must be TLS-intercepted
 // rather than opaquely tunneled.
 //
@@ -450,7 +487,28 @@ func newGitHubProxyWithCA(caCert tls.Certificate, caX509 *x509.Certificate, logg
 			"env", config.ProxyInjectGHAuthEnv)
 	}
 
+	// #9586 phase 2: credential-sidecar mode, snapshotted like injection. It
+	// only exists ON TOP of injection (config.ValidateCredSidecar refuses to
+	// boot the sidecar with injection off).
+	credSidecarMode := injectGHAuth && credsidecar.Enabled(os.Getenv)
+	var sidecarClient *credsidecar.Client
+	if credSidecarMode {
+		cfg, cfgErr := credsidecar.LoadClientConfig(os.Getenv)
+		if cfgErr == nil {
+			sidecarClient, cfgErr = credsidecar.NewClient(cfg)
+		}
+		if cfgErr != nil {
+			logger.Error("proxy credential sidecar configured but unusable - agent GitHub requests will be refused (502), never sent without the sidecar (#9586)",
+				"env", credsidecar.URLEnv, "error", cfgErr.Error())
+		} else {
+			logger.Info("proxy credential sidecar mode - this process holds no agent GitHub token; agent GitHub requests are signed and sent to the sidecar (#9586)",
+				"sidecar", cfg.URL.String())
+		}
+	}
+
 	p := &GitHubProxy{
+		credSidecarMode: credSidecarMode,
+		credSidecar:     sidecarClient,
 		listenAddr:      fmt.Sprintf("127.0.0.1:%d", proxyListenPort),
 		caCert:          caCert,
 		caX509:          caX509,
@@ -1394,6 +1452,16 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// does not overwrite the header (an ADVISORY agent, or a hive with no
 		// Linear credential).
 		if injectsGitHubAuthForHost(host) {
+			// #9586 phase 2: in sidecar mode the credential is attached by
+			// the sidecar, not here. The request has passed every gate
+			// above; it is signed and relayed, and this process never sees
+			// a token. The hive's own control plane keeps its direct path.
+			if p.credSidecarMode && agentName != internalCallerName {
+				if !p.forwardViaCredSidecar(client, req, host, agentName) {
+					return
+				}
+				continue
+			}
 			p.rewriteGitHubAuth(req, agentName)
 		}
 
@@ -1581,6 +1649,96 @@ func (p *GitHubProxy) rewriteGitHubAuth(req *http.Request, agentName string) {
 		req.Header.Set("Authorization", "token "+token)
 	}
 	p.logger.Debug("proxy auth injection: scoped token attached", "agent", agentName, "injected", true)
+}
+
+// defaultGitHubAPIHost is the host a GitHub-implied relay (proxyHTTP, empty
+// host) is bound for, named explicitly for the sidecar, which forwards only to
+// the host that was signed.
+const defaultGitHubAPIHost = "api.github.com"
+
+// forwardViaCredSidecar relays one policy-checked agent request to GitHub
+// through the credential sidecar (#9586 phase 2) and writes the response back
+// to the agent. It reports whether the client connection may carry another
+// request.
+//
+// The credential decision mirrors rewriteGitHubAuth exactly, minus the token:
+// the agent's own Authorization is dropped (the signer strips it); an
+// unidentified caller, an OAuth flow endpoint, or an identified agent with no
+// recorded tier is sent with tier "" and so reaches GitHub with NO credential
+// (fail loud, no fallback); otherwise the agent's tier is signed in and the
+// sidecar attaches that tier's token.
+func (p *GitHubProxy) forwardViaCredSidecar(client net.Conn, req *http.Request, host, agentName string) bool {
+	if host == "" {
+		host = defaultGitHubAPIHost
+	}
+	tier := ""
+	switch {
+	case agentName == "":
+		p.logger.Debug("proxy credential sidecar: caller unidentified - forwarding without credentials (fail-loud, no fallback)")
+	case strings.HasPrefix(req.URL.Path, loginPathPrefix):
+		p.logger.Debug("proxy credential sidecar: OAuth flow endpoint - no credential", "agent", agentName)
+	case p.agentTierSource == nil:
+		p.logger.Warn("proxy credential sidecar: no tier source wired - forwarding without credentials", "agent", agentName)
+	default:
+		if t, ok := p.agentTierSource(agentName); ok {
+			tier = t
+		} else {
+			p.logger.Warn("proxy credential sidecar: no tier recorded for identified agent - forwarding without credentials (check the per-agent mint lane)", "agent", agentName)
+		}
+	}
+
+	if p.credSidecar == nil {
+		_ = client.SetReadDeadline(time.Time{})
+		p.writeSidecarFailure(client, http.StatusBadGateway, "credential sidecar is configured but unusable; see the hive log")
+		return false
+	}
+	// The client read deadline set at the top of the request loop still bounds
+	// the body read the signer does here.
+	resp, err := p.credSidecar.Forward(req, host, agentName, tier)
+	_ = client.SetReadDeadline(time.Time{})
+	if err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, credsidecar.ErrBodyTooLarge) {
+			status = http.StatusRequestEntityTooLarge
+		}
+		p.logger.Warn("proxy credential sidecar: relay failed", "agent", agentName, "path", req.URL.Path, "status", status, "error", err.Error())
+		p.writeSidecarFailure(client, status, err.Error())
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	hgithub.RecordRESTRequest("agent:"+agentName, req.Method, req.URL.Path, resp.StatusCode, resp.Header)
+	if err := resp.Write(&stallBoundedWriter{conn: client, idle: httpWriteTimeout}); err != nil {
+		_ = client.SetWriteDeadline(time.Time{})
+		p.logTimeout("proxy credential sidecar response relay timed out", err, "agent", agentName, "path", req.URL.Path)
+		return false
+	}
+	_ = client.SetWriteDeadline(time.Time{})
+	// Keep the agent's connection only when the response was delimited. A body
+	// of unknown length is written close-delimited (Response.Write marks it
+	// Connection: close), so the agent reads to EOF - which only arrives when
+	// this handler returns and closes the connection.
+	delimited := resp.ContentLength >= 0 || (len(resp.TransferEncoding) > 0 && resp.TransferEncoding[0] == "chunked")
+	return !req.Close && !resp.Close && delimited
+}
+
+// writeSidecarFailure answers the agent when the sidecar leg itself failed.
+func (p *GitHubProxy) writeSidecarFailure(client net.Conn, status int, msg string) {
+	body := "hive proxy: " + msg + "\n"
+	resp := &http.Response{
+		StatusCode:    status,
+		Proto:         "HTTP/1.1",
+		ProtoMajor:    1,
+		ProtoMinor:    1,
+		Header:        make(http.Header),
+		Body:          io.NopCloser(strings.NewReader(body)),
+		ContentLength: int64(len(body)),
+		Close:         true,
+	}
+	resp.Header.Set("Content-Type", "text/plain")
+	resp.Header.Set(credsidecar.HeaderRefused, msg)
+	_ = client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
+	_ = resp.Write(client)
+	_ = client.SetWriteDeadline(time.Time{})
 }
 
 // injectsGitHubAuthForHost reports whether a request relayed for host may have

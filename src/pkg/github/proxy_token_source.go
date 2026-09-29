@@ -1,7 +1,10 @@
 package github
 
 import (
+	"os"
 	"sync"
+
+	"github.com/hivecommons/hive/pkg/credsidecar"
 )
 
 // This file is the hub-side half of proxy-side GitHub credential injection
@@ -70,4 +73,42 @@ func AgentProxyToken(agentName string) (string, bool) {
 	token, ok := agentProxyTokens[agentName]
 	agentProxyTokensMu.RUnlock()
 	return token, ok && token != ""
+}
+
+// Sidecar mode (#9586 phase 2). With HIVE_CRED_SIDECAR_URL set on top of
+// injection, the real token never exists in this process at all: the isolated
+// credential sidecar (pkg/credsidecar) holds the App key and mints per tier,
+// and WriteAgentToken records here only WHICH tier each agent is entitled to.
+// The proxy signs that tier into each request it sends to the sidecar. A tier
+// name is not a credential, so nothing in this registry is worth stealing.
+var (
+	agentProxyTiersMu sync.RWMutex
+	agentProxyTiers   = make(map[string]string)
+)
+
+// credSidecarEnabled reports whether this process runs in sidecar mode. It
+// reads the same variable through the same reader as the proxy and the boot
+// guard (credsidecar.Enabled), so the three can never disagree.
+func credSidecarEnabled() bool {
+	return credsidecar.Enabled(os.Getenv)
+}
+
+// storeAgentProxyTier records an agent's token tier for sidecar mode. Called
+// only from WriteAgentToken, in place of a mint.
+func storeAgentProxyTier(agentName, tier string) {
+	agentProxyTiersMu.Lock()
+	agentProxyTiers[agentName] = tier
+	agentProxyTiersMu.Unlock()
+}
+
+// AgentProxyTier resolves an agent name to the token tier the sidecar should
+// attach for it (#9586 phase 2). ok is false when WriteAgentToken has not run
+// for that agent in sidecar mode during this process's lifetime; the proxy
+// then asks the sidecar to forward with NO credential, the same fail-loud
+// posture as AgentProxyToken's miss.
+func AgentProxyTier(agentName string) (string, bool) {
+	agentProxyTiersMu.RLock()
+	tier, ok := agentProxyTiers[agentName]
+	agentProxyTiersMu.RUnlock()
+	return tier, ok && tier != ""
 }

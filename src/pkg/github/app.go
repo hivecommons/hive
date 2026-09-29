@@ -525,9 +525,23 @@ func (a *AppAuth) publishBotLogin() {
 // replace the pre-created inode with a fresh dev:node one and silently
 // destroy both the ownership and the isolation guarantee.
 func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName, tier string, agentUID int) error {
-	token, err := a.ScopedToken(ctx, tier)
-	if err != nil {
-		return fmt.Errorf("minting scoped token for %s: %w", agentName, err)
+	// #9586 phase 2 (sidecar mode, opt-in, requires injection): this process
+	// must never hold an agent's real token, so there is nothing to mint here.
+	// The isolated credential sidecar mints per tier on demand; all this
+	// process keeps is the agent's tier, which the proxy signs into each
+	// request. The boot guard (config.ValidateCredSidecar) refuses to start
+	// with the sidecar configured and injection off, so sidecar mode always
+	// takes the placeholder branch below.
+	sidecar := proxyInjectGHAuth() && credSidecarEnabled()
+	var token string
+	if sidecar {
+		storeAgentProxyTier(agentName, tier)
+	} else {
+		minted, err := a.ScopedToken(ctx, tier)
+		if err != nil {
+			return fmt.Errorf("minting scoped token for %s: %w", agentName, err)
+		}
+		token = minted
 	}
 
 	// #1861 (proxy-side credential injection, opt-in): with the flag on, the
@@ -542,7 +556,10 @@ func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName, tier string, a
 	// registry is never populated and the file receives the real token,
 	// byte-identical to the pre-#1861 behavior.
 	fileToken := token
-	if proxyInjectGHAuth() {
+	switch {
+	case sidecar:
+		fileToken = AgentDummyToken(agentName)
+	case proxyInjectGHAuth():
 		storeAgentProxyToken(agentName, token)
 		fileToken = AgentDummyToken(agentName)
 	}
@@ -591,7 +608,7 @@ func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName, tier string, a
 	// true = the file holds the inert placeholder and the real token went to the
 	// proxy's in-memory registry. Never log token material itself — not even a
 	// prefix — on either path.
-	a.logger.Info("per-agent token cached", "agent", agentName, "tier", tier, "uid", agentUID, "pre_created", preCreated, "proxy_injected", fileToken != token)
+	a.logger.Info("per-agent token cached", "agent", agentName, "tier", tier, "uid", agentUID, "pre_created", preCreated, "proxy_injected", fileToken != token, "cred_sidecar", sidecar)
 	return nil
 }
 

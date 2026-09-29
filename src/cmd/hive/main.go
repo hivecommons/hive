@@ -32,6 +32,7 @@ import (
 	convergenceaudit "github.com/hivecommons/hive/pkg/convergence/audit"
 	"github.com/hivecommons/hive/pkg/convergence/mutation"
 	"github.com/hivecommons/hive/pkg/convergence/outcome"
+	"github.com/hivecommons/hive/pkg/credsidecar"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/defsrc"
@@ -850,9 +851,11 @@ const (
 	// container's termination state.
 	duplicateProcessExitCode = 18
 	// proxyInjectConfigExitCode marks an exit caused by the #9586 credential
-	// posture guard (config.ValidateProxyInjectGHAuth: injection combined with
-	// HIVE_PROXY_ADVISORY_OK=true). Its own code so a refusing pod's
-	// termination state says "fix the env", not "bug".
+	// posture guards (config.ValidateProxyInjectGHAuth: injection combined with
+	// HIVE_PROXY_ADVISORY_OK=true; config.ValidateCredSidecar: the credential
+	// sidecar configured alongside an in-process agent token source, or with an
+	// unusable URL/key). Its own code so a refusing pod's termination state
+	// says "fix the env", not "bug".
 	proxyInjectConfigExitCode = 19
 )
 
@@ -1006,6 +1009,14 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	// nothing is ever minted under it. The hub branch above runs no agents and
 	// is not gated.
 	if err := config.ValidateProxyInjectGHAuth(deps.getenv); err != nil {
+		b.logger.Error("refusing to start: contradictory GitHub credential configuration (#9586)", "error", err.Error())
+		deps.exit(proxyInjectConfigExitCode)
+		return false
+	}
+	// #9586 phase 2: the credential sidecar and an in-process agent token
+	// source are mutually exclusive. Fatal only when the sidecar is explicitly
+	// configured (HIVE_CRED_SIDECAR_URL), so no existing spoke is affected.
+	if err := config.ValidateCredSidecar(deps.getenv); err != nil {
 		b.logger.Error("refusing to start: contradictory GitHub credential configuration (#9586)", "error", err.Error())
 		deps.exit(proxyInjectConfigExitCode)
 		return false
@@ -4027,6 +4038,10 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// unconditionally: with HIVE_PROXY_INJECT_GH_AUTH unset (the default)
 		// the proxy never consults the source and the registry stays empty.
 		b.githubProxy.SetAgentTokenSource(github.AgentProxyToken)
+		// #9586 phase 2: in credential-sidecar mode the proxy never reads the
+		// token registry above (it stays empty); it signs each agent's TIER,
+		// from this registry, into the request it sends to the sidecar.
+		b.githubProxy.SetAgentTierSource(github.AgentProxyTier)
 		dashboard.SetProxyViolationsProvider(b.githubProxy.Violations)
 		// Lets the dashboard narrow the LiteLLM model dropdown to the set the
 		// configured key is entitled to, learned by the proxy from a key-info
@@ -9486,6 +9501,10 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		// Run from inside a headless agy agent's pane, one per kick; see
 		// pkg/agent/agy_turn.go.
 		return true, agent.RunAgyTurn(args[1:], stdout, stderr)
+	case credsidecar.Subcommand:
+		// The isolated GitHub credential holder (#9586 phase 2), run as its
+		// own container next to the hive; see pkg/credsidecar.
+		return true, runCredSidecar(args[1:], os.Getenv, stdout, stderr)
 	case jev.Subcommand:
 		// Run from inside an agent's pane by the jev-decide skill; see
 		// pkg/jev/cli.go. Talks only to the hive's loopback decision endpoint.
