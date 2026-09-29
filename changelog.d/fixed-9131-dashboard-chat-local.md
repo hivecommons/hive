@@ -1,0 +1,1 @@
+- Fixed dashboard chat `!` commands on token and open spokes by forwarding the authenticated dashboard role to the shared chat spine.

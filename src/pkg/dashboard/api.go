@@ -6644,7 +6644,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "dashboard chat is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	seq, err := s.deps.DashboardChatSubmit(requestUser(r), safeQuery)
+	seq, err := s.deps.DashboardChatSubmit(requestUser(r), r.Header.Get("X-Hive-Role"), safeQuery)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusServiceUnavailable)
 		return

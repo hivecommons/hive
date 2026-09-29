@@ -181,7 +181,7 @@ type Dependencies struct {
 	ActionDispatchAgents func() []mention.AgentInfo
 	ActionsJWKSFetcher   func(ctx context.Context, url string) ([]byte, error)
 	ActionsClock         func() time.Time
-	DashboardChatSubmit  func(user, text string) (uint64, error)
+	DashboardChatSubmit  func(user, role, text string) (uint64, error)
 	DashboardChatPoll    func(since uint64) ChatPoll
 	// LinearStoredViewerID reports the persisted Linear install's viewer id
 	// ("" when none) plus the store path, for the assigned_only validation

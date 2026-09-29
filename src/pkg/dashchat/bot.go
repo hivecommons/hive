@@ -146,10 +146,15 @@ func (b *backend) Listen(ctx context.Context, deliver func(chat.Message)) {
 }
 
 func (b *backend) Submit(user, text string) (uint64, error) {
+	return b.SubmitAs(user, "", text)
+}
+
+func (b *backend) SubmitAs(user, role, text string) (uint64, error) {
 	user = strings.TrimSpace(user)
 	if user == "" {
 		user = "local"
 	}
+	role = strings.TrimSpace(role)
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return 0, ErrInputRejected
@@ -159,7 +164,7 @@ func (b *backend) Submit(user, text string) (uint64, error) {
 		return 0, ErrInputRejected
 	}
 	seq := b.appendOutbox("user", user, safe)
-	msg := chat.Message{ID: uuid.NewString(), Text: safe, AuthorID: user, FromBot: false}
+	msg := chat.Message{ID: uuid.NewString(), Text: safe, AuthorID: user, TrustedRole: role, FromBot: false}
 	select {
 	case b.inbox <- inbound{msg: msg}:
 		return seq, nil

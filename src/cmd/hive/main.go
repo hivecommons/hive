@@ -1419,11 +1419,11 @@ func (b *boot) wireBootClosures() {
 			LinearStoredViewerID: linearStoredViewerID,
 			MentionWebhook:       b.mentionWebhook,
 			MentionStore:         b.mentionStore,
-			DashboardChatSubmit: func(user, text string) (uint64, error) {
+			DashboardChatSubmit: func(user, role, text string) (uint64, error) {
 				if b.dashChat == nil {
 					return 0, fmt.Errorf("dashboard chat is not configured")
 				}
-				return b.dashChat.Submit(user, text)
+				return b.dashChat.SubmitAs(user, role, text)
 			},
 			DashboardChatPoll: func(since uint64) dashboard.ChatPoll {
 				if b.dashChat == nil {

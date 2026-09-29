@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/ioscan"
 )
 
@@ -86,26 +87,23 @@ func (s *Service) routeMessage(ctx context.Context, msg Message) {
 		return
 	}
 
-	// SECURITY (F8, CWE-862): command dispatch is gated on the allowlist and FAILS
-	// CLOSED. Commands (!kick / agent commands) inject prompts and can reach
-	// dashboardKick, which POSTs attacker-supplied text with the privileged
-	// dashboard bearer — so an unconfigured allowlist must mean "no one is
-	// authorized", not "everyone is authorized". This matches the documented
-	// contract on Config.AllowedUsers ("Empty = commands disabled (fail closed)").
-	// An empty allowlist rejects every command; operators enable command control
-	// by populating allowed_users with the specific transport user IDs they trust.
-	if s.allowedUserCount() == 0 {
-		s.logger.Warn("chat: ignoring command — allowlist is empty (commands disabled; set allowed_users to enable)",
-			"user_id", msg.AuthorID, "content", content)
-		s.refuseCommand(msg, "commands are disabled because the chat allowlist is empty")
-		return
-	}
-	role, ok := s.allowedUserRole(msg.AuthorID)
+	role, ok := trustedMessageRole(msg)
 	if !ok {
-		s.logger.Warn("chat: ignoring command from non-allowlisted user",
-			"user_id", msg.AuthorID, "content", content)
-		s.refuseCommand(msg, "author is not in the chat allowlist")
-		return
+		// SECURITY (F8, CWE-862): channel transports without a server-verified
+		// dashboard role still fail closed through the explicit chat allowlist.
+		if s.allowedUserCount() == 0 {
+			s.logger.Warn("chat: ignoring command — allowlist is empty (commands disabled; set allowed_users to enable)",
+				"user_id", msg.AuthorID, "content", content)
+			s.refuseCommand(msg, "commands are disabled because the chat allowlist is empty")
+			return
+		}
+		role, ok = s.allowedUserRole(msg.AuthorID)
+		if !ok {
+			s.logger.Warn("chat: ignoring command from non-allowlisted user",
+				"user_id", msg.AuthorID, "content", content)
+			s.refuseCommand(msg, "author is not in the chat allowlist")
+			return
+		}
 	}
 	ctx = context.WithValue(ctx, commandRoleContextKey{}, role)
 
@@ -186,6 +184,14 @@ func (s *Service) refuseCommand(msg Message, reason string) {
 	if r, ok := s.backend.(CommandRefuser); ok {
 		r.CommandRefused(msg, reason)
 	}
+}
+
+func trustedMessageRole(msg Message) (string, bool) {
+	role := strings.ToLower(strings.TrimSpace(msg.TrustedRole))
+	if !config.ValidRole(role) {
+		return "", false
+	}
+	return role, true
 }
 
 func (s *Service) isValidAgent(name string) bool {

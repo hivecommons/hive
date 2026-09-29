@@ -92,7 +92,11 @@ type Message struct {
 	ID       string
 	Text     string
 	AuthorID string
-	FromBot  bool
+	// TrustedRole is set only by authenticated in-process transports (dashboard)
+	// after their own role floor has admitted the caller. External transports
+	// leave it empty and continue through the explicit chat allowlist.
+	TrustedRole string
+	FromBot     bool
 }
 
 // Backend is the transport seam used by Service.

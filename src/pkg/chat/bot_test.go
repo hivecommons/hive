@@ -301,6 +301,47 @@ func TestRouteMessage_EmptyAllowlistBlocksAll(t *testing.T) {
 	}
 }
 
+func TestRouteMessage_TrustedDashboardRoleAuthorizesWithoutAllowlist(t *testing.T) {
+	b := NewService(&recordingBackend{}, Config{}, discardLogger())
+	called := false
+	b.RegisterCommand("ping", func(ctx context.Context, _ string) (string, error) {
+		called = true
+		if role, _ := ctx.Value(commandRoleContextKey{}).(string); role != "owner" {
+			t.Fatalf("command role = %q, want owner", role)
+		}
+		return "pong", nil
+	})
+
+	var sent []string
+	b.routeMessage(context.Background(), Message{ID: "1", Text: "!ping", AuthorID: "local", TrustedRole: "owner"})
+	drainQueue(b, &sent)
+	if !called {
+		t.Fatal("trusted dashboard role did not reach command handler")
+	}
+	if len(sent) != 1 || sent[0] != "pong" {
+		t.Fatalf("trusted dashboard replies = %v, want pong", sent)
+	}
+}
+
+func TestRouteMessage_InvalidTrustedRoleStillRequiresAllowlist(t *testing.T) {
+	b := NewService(&recordingBackend{}, Config{}, discardLogger())
+	called := false
+	b.RegisterCommand("ping", func(context.Context, string) (string, error) {
+		called = true
+		return "pong", nil
+	})
+
+	var sent []string
+	b.routeMessage(context.Background(), Message{ID: "1", Text: "!ping", AuthorID: "local", TrustedRole: "admin"})
+	drainQueue(b, &sent)
+	if called {
+		t.Fatal("invalid trusted role bypassed the empty allowlist")
+	}
+	if len(sent) != 0 {
+		t.Fatalf("invalid trusted role replies = %v, want none", sent)
+	}
+}
+
 func TestRouteMessage_IgnoresBotMessages(t *testing.T) {
 	b, sent := makeBotWithSendCapture(t)
 

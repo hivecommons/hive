@@ -76,7 +76,7 @@ func testDeps(t *testing.T) *Dependencies {
 		OpenRouter:           testOpenRouterGateway{},
 		NewLinearAgent:       newTestLinearAgentFactory(logger, "", ""),
 		LinearStoredViewerID: testLinearStoredViewerID,
-		DashboardChatSubmit:  chatBot.Submit,
+		DashboardChatSubmit:  dashboardChatSubmitForTest(chatBot),
 		DashboardChatPoll:    chatPollForTest(chatBot),
 		RefreshFunc:          func() { refreshCalled.Store(true) },
 		PersistFunc:          func() { persistCalled.Store(true) },
