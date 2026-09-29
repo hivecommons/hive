@@ -1,0 +1,1 @@
+- Added hermetic unit tests for `pkg/convergence/mutation`'s `Boundary.Execute`, covering the previously-untested `Mode` override hook and the `effects.Recorder` stats counters (`IncDenied`, `IncFenced`, `IncJournaled`) and the shadow-mode fenced-denial logger warning, lifting the package toward its coverage floor (#9632).
