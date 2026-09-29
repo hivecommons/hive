@@ -154,6 +154,19 @@ func TestHandleGovernorConfigGet_ThresholdsExcludeIdleAndEffectiveThresholdsMatc
 	if _, present := effective["idle"]; present {
 		t.Errorf("effectiveThresholds contains idle entry: %v", effective["idle"])
 	}
+
+	pinned, ok := result["pinnedThresholds"].(map[string]any)
+	if !ok {
+		t.Fatalf("pinnedThresholds section missing or wrong type: %v", result["pinnedThresholds"])
+	}
+	for _, mode := range wantModes {
+		if got := pinned[mode]; got != true {
+			t.Errorf("pinnedThresholds[%s] = %v, want true for operator-set threshold", mode, got)
+		}
+	}
+	if _, present := pinned["idle"]; present {
+		t.Errorf("pinnedThresholds contains idle entry: %v", pinned["idle"])
+	}
 }
 
 // --- repos / primaryRepo org-qualification ---
@@ -338,7 +351,7 @@ func TestHandleGovernorConfigGet_TopLevelSectionsPresent(t *testing.T) {
 	result := decodeGovernorConfigGet(t, srv)
 
 	wantKeys := []string{
-		"agents", "thresholds", "effectiveThresholds", "repos", "primaryRepo",
+		"agents", "thresholds", "effectiveThresholds", "pinnedThresholds", "repos", "primaryRepo",
 		"cadenceScope", "thresholdScaling", "notifications", "budget", "health", "sensing", "logging", "litellm",
 		"review", "auto_merge", "hub", "attribution",
 	}

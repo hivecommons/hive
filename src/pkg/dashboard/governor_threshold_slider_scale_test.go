@@ -76,6 +76,71 @@ for (let i = 0; i < labels.length; i++) {
 	}
 }
 
+func TestGovernorThresholdHintsReflectScalingAndPinnedState(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — threshold hint rendering was NOT executed by this run")
+	}
+	html := indexHTML(t)
+	script := `
+const GOVERNOR_MODE_COLORS = { idle: 'var(--green)', quiet: 'var(--blue)', busy: 'var(--yellow)', surge: 'var(--red)' };
+let _configState = {dirty:{}};
+let window = {_lastStatus:{governor:{issues:30, prs:10}}};
+` + strings.Join([]string{
+		jsFunc(t, html, "governorTrackMax"),
+		jsFunc(t, html, "governorPct"),
+		jsFunc(t, html, "governorSegmentBoundaries"),
+		jsFunc(t, html, "governorPressureBarBoundaries"),
+		jsFunc(t, html, "governorThresholdSliderBoundaries"),
+		jsFunc(t, html, "governorModeGradient"),
+		jsFunc(t, html, "governorScaleThreshold"),
+		jsFunc(t, html, "governorScalingFactor"),
+		jsFunc(t, html, "governorThresholdIsPinned"),
+		jsFunc(t, html, "governorStaggerLabels"),
+		jsFunc(t, html, "governorPressureFromStatus"),
+		jsFunc(t, html, "governorEffectiveThresholds"),
+		jsFunc(t, html, "governorThresholdLabel"),
+		jsFunc(t, html, "governorThresholdHintText"),
+		jsFunc(t, html, "renderGovThresholds"),
+	}, "\n") + `
+function requireIncludes(name, body, needle) {
+  if (!body.includes(needle)) throw new Error(name + ' missing ' + needle + ' in ' + body);
+}
+function requireExcludes(name, body, needle) {
+  if (body.includes(needle)) throw new Error(name + ' unexpectedly contained ' + needle + ' in ' + body);
+}
+const scaled = renderGovThresholds({
+  thresholds: {quiet:2, busy:5, surge:10},
+  effectiveThresholds: {quiet:14, busy:5, surge:70},
+  pinnedThresholds: {busy:true},
+  repoCount: 7,
+  cadenceScope: 'aggregate',
+  thresholdScaling: 'linear',
+});
+requireIncludes('scaled quiet hint', scaled, '= 14 in force (× 7, 7 repos)');
+requireIncludes('scaled surge hint', scaled, '= 70 in force (× 7, 7 repos)');
+requireIncludes('pinned busy hint', scaled, '= 5 in force (pinned, 7 repos)');
+requireIncludes('arrow label', scaled, '2 → 14');
+requireIncludes('pinned label', scaled, '5 pinned');
+
+const plain = renderGovThresholds({
+  thresholds: {quiet:2, busy:5, surge:10},
+  effectiveThresholds: {quiet:2, busy:5, surge:10},
+  pinnedThresholds: {},
+  repoCount: 1,
+  cadenceScope: 'aggregate',
+  thresholdScaling: 'none',
+});
+requireExcludes('plain hints', plain, 'in force');
+requireExcludes('plain arrows', plain, '→');
+requireExcludes('plain pinned labels', plain, 'pinned');
+`
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("node threshold hint rendering test failed: %v\n%s", err, out)
+	}
+}
+
 func TestGovernorThresholdSliderDoesNotUseHardCodedMax(t *testing.T) {
 	html := indexHTML(t)
 	if strings.Contains(html, "const THRESH_BAR_MAX = 200") {

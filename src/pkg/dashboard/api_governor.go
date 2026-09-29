@@ -53,6 +53,14 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"busy":  cfg.Governor.EffectiveThreshold("busy", thresholdRepoCount),
 		"surge": cfg.Governor.EffectiveThreshold("surge", thresholdRepoCount),
 	}
+	pinnedThresholds := map[string]bool{}
+	if !cfg.Governor.ThresholdsArePackSeeded() {
+		for _, modeName := range []string{"quiet", "busy", "surge"} {
+			if mode, ok := cfg.Governor.Modes[modeName]; ok && mode.Threshold > 0 {
+				pinnedThresholds[modeName] = true
+			}
+		}
+	}
 
 	// Build full org/repo paths
 	org := cfg.Project.Org
@@ -85,6 +93,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"agents":              agents,
 		"thresholds":          thresholds,
 		"effectiveThresholds": effectiveThresholds,
+		"pinnedThresholds":    pinnedThresholds,
 		"cadenceScope":        cfg.Governor.CadenceScopeMode(),
 		"thresholdScaling":    cfg.Governor.ThresholdScalingMode(),
 		"repoCount":           repoCount,
