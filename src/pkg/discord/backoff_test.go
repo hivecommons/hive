@@ -74,27 +74,27 @@ func TestBackoffDelay_ZeroIntervalFallsBackToDefault(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// parseRetryAfter — 429 handling must honor Discord's JSON retry_after body,
+// discordRetryAfter — 429 handling must honor Discord's JSON retry_after body,
 // falling back to the Retry-After header.
 // ──────────────────────────────────────────────────────────────────────────────
 
 func TestParseRetryAfter_PrefersJSONBody(t *testing.T) {
 	body := []byte(`{"message":"rate limited","retry_after":1.5}`)
-	d := parseRetryAfter("3", body)
+	d := discordRetryAfter(body, "3")
 	if d != 1500*time.Millisecond {
 		t.Fatalf("expected 1.5s from body, got %v", d)
 	}
 }
 
 func TestParseRetryAfter_FallsBackToHeader(t *testing.T) {
-	d := parseRetryAfter("2.25", []byte(`not json`))
+	d := discordRetryAfter([]byte(`not json`), "2.25")
 	if d != 2250*time.Millisecond {
 		t.Fatalf("expected 2.25s from header, got %v", d)
 	}
 }
 
 func TestParseRetryAfter_NoHintReturnsZero(t *testing.T) {
-	d := parseRetryAfter("", []byte(`{}`))
+	d := discordRetryAfter([]byte(`{}`), "")
 	if d != 0 {
 		t.Fatalf("expected zero delay when no hint present, got %v", d)
 	}

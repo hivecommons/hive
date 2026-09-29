@@ -68,9 +68,6 @@ type discordBackend struct {
 	client    *http.Client
 	// pollInterval is the Listen ticker period; zero means pollIntervalS seconds.
 	pollInterval time.Duration
-	// sleep is injected for tests; production uses time.Sleep. Used to honor
-	// a 429's Retry-After on outbound (POST) calls, mirroring pkg/slack.
-	sleep func(time.Duration)
 }
 
 type discordMessage struct {
@@ -115,7 +112,6 @@ func NewBot(cfg Config, logger *slog.Logger) *Bot {
 			Timeout: httpTimeoutS * time.Second,
 		},
 		pollInterval: pollIntervalS * time.Second,
-		sleep:        time.Sleep,
 	}
 	service := chat.NewService(backend, chat.Config{
 		DashboardURL:    cfg.DashboardURL,
@@ -184,14 +180,8 @@ func (b *discordBackend) Send(content string) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if apiErr := b.responseError(resp); apiErr != nil {
-		// Honor Retry-After on POST the same way pkg/slack does, so a 429
-		// during a burst of sends doesn't hammer the API again immediately
-		// (hivecommons/hive#9142).
-		if apiErr.StatusCode == http.StatusTooManyRequests && apiErr.RetryAfter > 0 && b.sleep != nil {
-			b.sleep(apiErr.RetryAfter)
-		}
-		return apiErr
+	if err := b.responseError(resp); err != nil {
+		return err
 	}
 
 	return nil
@@ -221,35 +211,40 @@ func (b *discordBackend) setChannelTopic(topic string) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if apiErr := b.responseError(resp); apiErr != nil {
-		if apiErr.StatusCode == http.StatusTooManyRequests && apiErr.RetryAfter > 0 && b.sleep != nil {
-			b.sleep(apiErr.RetryAfter)
-		}
-		return apiErr
+	if err := b.responseError(resp); err != nil {
+		return err
 	}
 	return nil
 }
 
-// responseError builds a *discordAPIError from a >=400 response, reading and
-// closing the caller-owned body's remaining content is left to the caller;
-// responseError only reads (it does not close) resp.Body. It returns nil for
-// non-error responses.
-func (b *discordBackend) responseError(resp *http.Response) *discordAPIError {
+// responseError maps a >=400 response to an error; it reads (but does not
+// close) resp.Body and returns nil for non-error responses. A 429 carries
+// Discord's retry_after hint and a 5xx a zero hint as a chat.RetryableError,
+// so the chat spine's drain loop waits it out and resends instead of
+// dropping the message (hivecommons/hive#9127/#9142); the wrapped
+// *discordAPIError keeps the status code readable for Listen's log-level
+// decisions. Other statuses are terminal.
+func (b *discordBackend) responseError(resp *http.Response) error {
 	if resp.StatusCode < 400 {
 		return nil
 	}
-	body, _ := io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	apiErr := &discordAPIError{StatusCode: resp.StatusCode, Body: string(body)}
-	if resp.StatusCode == http.StatusTooManyRequests {
-		apiErr.RetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"), body)
+	switch {
+	case resp.StatusCode == http.StatusTooManyRequests:
+		apiErr.RetryAfter = discordRetryAfter(body, resp.Header.Get("Retry-After"))
+		return chat.Retryable(apiErr, apiErr.RetryAfter)
+	case resp.StatusCode >= 500:
+		return chat.Retryable(apiErr, 0)
 	}
 	return apiErr
 }
 
-// parseRetryAfter extracts a 429's retry delay, preferring the JSON body's
+// discordRetryAfter extracts a 429's retry delay, preferring the JSON body's
 // "retry_after" (seconds, possibly fractional, per Discord's rate-limit
-// response shape) and falling back to the Retry-After header.
-func parseRetryAfter(header string, body []byte) time.Duration {
+// response shape) and falling back to the Retry-After header. Zero means no
+// usable hint.
+func discordRetryAfter(body []byte, header string) time.Duration {
 	var parsed struct {
 		RetryAfter float64 `json:"retry_after"`
 	}
@@ -293,12 +288,13 @@ func (b *discordBackend) Listen(ctx context.Context, deliver func(chat.Message))
 			if err != nil {
 				consecutiveFailures++
 				delay := backoffDelay(interval, consecutiveFailures)
-				var apiErr *discordAPIError
-				if errors.As(err, &apiErr) && apiErr.RetryAfter > delay {
-					delay = apiErr.RetryAfter
+				var retryable *chat.RetryableError
+				if errors.As(err, &retryable) && retryable.RetryAfter > delay {
+					delay = retryable.RetryAfter
 				}
 				nextAttempt = time.Now().Add(delay)
 
+				var apiErr *discordAPIError
 				if errors.As(err, &apiErr) && (apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden) {
 					// A bad token or missing permissions will not clear on its
 					// own; logging every 5s forever (~17k lines/day) drowns
