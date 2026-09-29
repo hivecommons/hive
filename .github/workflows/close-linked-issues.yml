@@ -1,0 +1,14 @@
+name: Close linked issues
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  close-linked-issue:
+    uses: hivecommons/infra/.github/workflows/reusable-close-linked-issues.yml@7eaab83306d9246052a49e1cbfc44a0e527e5980 # hivecommons/infra main as of 2026-09-29

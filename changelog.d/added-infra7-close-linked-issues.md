@@ -1,0 +1,1 @@
+- Add shared CI automation to close linked issues when PRs merge to non-default branches.
