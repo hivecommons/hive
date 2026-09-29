@@ -60,6 +60,7 @@ func defaultRunLoopDeps() runLoopDeps {
 		runSweeps: func(b *boot) {
 			runAutoMergeSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastAutoMergeSweep, b.logger)
 			runTaskListSweepIfDue(b.ctx, b.ghClient, b.dashSrv, &b.lastTaskListSweep, b.logger)
+			runSupersessionSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastSupersessionSweep, b.logger)
 			runDuplicateSweepIfDue(b.ctx, b.cfg, b.ghClient, b.dashSrv, &b.lastDuplicateSweep, b.logger)
 		},
 		persist: func(b *boot) {

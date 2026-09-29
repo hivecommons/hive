@@ -1,0 +1,1 @@
+- Add a scanner supersession sweep for open PRs whose claimed issue was closed by another merged PR, and allow the fallback fixer to update hive-created sibling branches.

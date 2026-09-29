@@ -7847,6 +7847,12 @@ const autoMergeSweepInterval = time.Minute
 // epics on the same day the last box gets ticked.
 const taskListSweepInterval = 15 * time.Minute
 
+// supersessionSweepInterval is the minimum spacing between sweeps that retire
+// open PRs whose claimed issue was already closed by a different merged PR.
+// It walks open PRs and may inspect issue timelines and file lists, so it uses
+// the same conservative cadence as the task-list sweep.
+const supersessionSweepInterval = 15 * time.Minute
+
 // duplicateSweepInterval is the minimum spacing between duplicate sweeps. It
 // is an hour rather than the task-list sweep's fifteen minutes for two
 // reasons. Cost: the sweep fingerprints the changed-file set of every open PR,
@@ -8020,6 +8026,53 @@ func runTaskListSweepIfDue(ctx context.Context, ghClient *github.Client, dashSrv
 			"seen":    strconv.Itoa(result.Seen),
 			"closed":  strconv.Itoa(len(result.Closed)),
 			"skipped": strconv.Itoa(result.Skipped),
+		},
+	})
+}
+
+func runSupersessionSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *config.Config, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
+	if ghClient == nil {
+		return
+	}
+	now := time.Now()
+	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < supersessionSweepInterval {
+		return
+	}
+	if lastRun != nil {
+		*lastRun = now
+	}
+	result, err := ghClient.SweepSupersededOpenPRs(ctx, github.SupersessionSweepOptions{
+		MaxActions: github.DefaultSupersessionSweepMaxActions,
+		ACMMLevelForRepo: func(repo string) int {
+			if cfg == nil {
+				return 0
+			}
+			return cfg.EffectiveACMMLevelForRepo(repo)
+		},
+		Audit: func(event github.SupersessionSweepEvent) {
+			if dashSrv == nil {
+				return
+			}
+			detail := fmt.Sprintf("repo=%s, pr=%d, issue=%s#%d, closer_pr=%d, action=%s",
+				event.Repo, event.Number, event.IssueRepo, event.Issue, event.CloserPR, event.Action)
+			dashSrv.AuditLog("system", "supersession-sweep-"+event.Action, detail, "")
+		},
+	})
+	if err != nil {
+		logger.Warn("supersession sweep failed", "error", err)
+		return
+	}
+	if len(result.Closed) > 0 || len(result.Commented) > 0 || result.Seen > 0 {
+		logger.Info("supersession sweep complete", "seen", result.Seen, "closed", len(result.Closed), "commented", len(result.Commented), "skipped", result.Skipped)
+	}
+	hookDispatcher().Fire(context.Background(), hooks.Payload{
+		Transition: hooks.TransitionSweepCompleted,
+		Reason:     "supersession sweep complete",
+		Attrs: map[string]string{
+			"seen":      strconv.Itoa(result.Seen),
+			"closed":    strconv.Itoa(len(result.Closed)),
+			"commented": strconv.Itoa(len(result.Commented)),
+			"skipped":   strconv.Itoa(result.Skipped),
 		},
 	})
 }

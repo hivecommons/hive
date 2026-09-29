@@ -188,9 +188,10 @@ type boot struct {
 	retroLane  *retro.Lane
 
 	// runLoop
-	lastAutoMergeSweep time.Time
-	lastTaskListSweep  time.Time
-	lastDuplicateSweep time.Time
+	lastAutoMergeSweep    time.Time
+	lastTaskListSweep     time.Time
+	lastDuplicateSweep    time.Time
+	lastSupersessionSweep time.Time
 }
 
 // deferStack stands in for the `defer` statements that used to sit in
