@@ -20,7 +20,7 @@ that status is the thing to check before treating a page as current behaviour:
 
 ## Records
 
-- [PR follow-up session resume](pr-follow-up-resume.md) - **partly shipped (v5, default off).** #9583: ties each agent-opened PR to the CLI session that authored it (a `pkg/turn` envelope per PR) and feeds CI failures, changes-requested reviews and new review-bot threads back into that session without `/clear` while it is still live, falling back to the fix-before-new path otherwise. Resuming across a pod restart and human review comments are listed as follow-ups.
+- [PR follow-up session resume](pr-follow-up-resume.md) - **shipped (v5, default off).** #9583: ties each agent-opened PR to the CLI session that authored it (a `pkg/turn` envelope per PR) and feeds CI failures, changes-requested reviews, new review-bot threads and comments from people with write access back into that session without `/clear` while it is still live. When the session is gone (a restart or the next regular kick), the follow-up takes the fix-before-new path and the agent's next kick carries a compact handoff note of the PR's original reasoning. Pointers are pruned on merge or close; a live-review soak is the remaining follow-up.
 
 - [Achievement system 2.0](achievements-2.md) — **shipped (v5).** Spektacular-ready spec for #8832: teamwork-first Solo/Dual/Fireteam/Raid tiers, local-model achievements, the “local always wins” mastery tier, dark-pattern guardrails, anti-gaming rules, data sources, and shipped dossier/leaderboard rollout.
 
