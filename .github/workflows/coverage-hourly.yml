@@ -12,14 +12,14 @@ on:
   # v2-tests.yml's `coverage` job, which parses the coverprofile emitted by the
   # SAME sharded `go test -short -race -count=1` run that gates the PR, so PRs
   # run the test suite exactly once instead of twice. This workflow remains the
-  # scheduled hourly monitor for the v4 branch, including the
-  # create-issue-on-coverage-drop machinery below.
+  # scheduled hourly monitor for the v5 branch (the default branch, #9632),
+  # including the create-issue-on-coverage-drop machinery below.
   #
   # v5 is covered by the pre-merge half too: v2-tests.yml's `pull_request`
-  # filter is `branches: [v4, v5]`, so the coverage floor still gates every
-  # v5 PR. v5 was added to the (now removed) trigger here in the #4058 top-up;
-  # #4112 relocated the whole pre-merge job rather than the branch list, so
-  # there is nothing v5-specific left to carry in this file.
+  # filter is `branches: [v4, v5, v6]`, so the coverage floor already gates
+  # every v5 PR. This workflow is the hourly monitor for whatever lands on
+  # v5 between PRs (merge commits, direct pushes) and the issue-filer of
+  # record for a sustained drop.
   #
   # KEEP THE FLOORS IN SYNC: PKG_THRESHOLD below is duplicated in
   # v2-tests.yml's coverage job; a floor change must land in both.
@@ -52,31 +52,20 @@ jobs:
       # On `schedule`/`workflow_dispatch` there is no PR ref, so pin explicitly
       # to the branch whose floor this gate reports on hourly.
       #
-      # That branch is now v4 (#3903). It was v2, and v2 is sunset — the fleet
-      # runs v4 and v2 is no longer a merge target, so the gate was measuring a
-      # branch nobody can fix. The practical effect was worse than "stale
-      # numbers": v4 carries 14 packages that do not exist on v2 at all
-      # (ioscan, sandbox, intent, pushbroker, tracing, review, retro,
-      # escalation, forge, mint, planning, timeline, agentparse, outputschema),
-      # so every one of them had never been subject to any floor.
-      #
-      # On `schedule`/`workflow_dispatch` there is no PR ref, so pin explicitly
-      # to the branch whose floor this gate reports on hourly.
-      #
-      # That branch is now v4 (#3903). It was v2, and v2 is sunset — the fleet
-      # runs v4 and v2 is no longer a merge target, so the gate was measuring a
-      # branch nobody can fix. The practical effect was worse than "stale
-      # numbers": v4 carries 14 packages that do not exist on v2 at all
-      # (ioscan, sandbox, intent, pushbroker, tracing, review, retro,
-      # escalation, forge, mint, planning, timeline, agentparse, outputschema),
-      # so every one of them had never been subject to any floor.
+      # That branch is v5 (#9632) — the default branch and the one Tide
+      # actually merges to. It was v4 (#3903) before that, and v2 before that;
+      # each move happened because the previous branch stopped being where the
+      # fleet lands work, so a gate measuring it was reporting on a branch
+      # nobody could fix from. Pinning to a frozen branch has repeatedly cost
+      # more than "stale numbers": moving v2->v4 surfaced 14 packages that
+      # never existed on v2 and so had never been subject to any floor.
       #
       # (This workflow no longer runs on pull_request — the pre-merge floor
       # check lives in v2-tests.yml now, see #4112 — so the ref can be pinned
       # unconditionally.)
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 'v4'
+          ref: 'v5'
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -131,8 +120,8 @@ jobs:
           # KEEP IN SYNC with the copy of this map in v2-tests.yml's coverage
           # job (the pre-merge half of this gate, #4112).
           declare -A PKG_THRESHOLD=(
-            [dashboard]=82   # ~17% is inception tmux watcher + copilot/claude device-flow + /data file I/O + k8s
-            [hub]=87         # kubectl-shelling + live-GitHub paths; see #2355. Was 89 against v2's 89.9%; v4 measures 87.6%.
+            [dashboard]=84   # 86.2% on 2026-09-01; the residue is the inception tmux watcher + copilot/claude device-flow + /data file I/O + k8s
+            [hub]=87         # kubectl-shelling + live-GitHub paths; see #2355. Was 89 against v2's 89.9%; v4/v5 measure 87.6%.
             [agent]=89       # pre-existing shortfall inherited from #2350, NOT a new regression. See #2355.
 
             # ── Floors recorded when the gate moved from v2 to v4 (#3903) ─────
@@ -168,7 +157,7 @@ jobs:
             [tracing]=85
             [review]=80
             [retro]=82
-            [github]=88
+            [github]=89      # 91.8% on 2026-09-01
             [hivectl]=88
             [knowledge]=89
             [proxy]=89
