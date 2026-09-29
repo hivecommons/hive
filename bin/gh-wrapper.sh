@@ -976,21 +976,39 @@ _identity_footer() {
 # real thematic break. Fenced code blocks are left untouched: `---` inside a
 # fence is literal content (YAML front matter, diffs, tables of dashes).
 _guard_markdown_rules() {
+  # Portable awk only (mawk on the CI runners has no {n,m} intervals): a rule
+  # is a line of three or more dashes with optional spaces between them.
   awk '
+    function is_blank(s) { return s ~ /^[ \t]*$/ }
+    function is_dash_rule(s) {
+      gsub(/[ \t]/, "", s)
+      return s ~ /^---+$/
+    }
+    function fence_marker(s) {
+      sub(/^ */, "", s)
+      if (s ~ /^```/) { match(s, /^`+/); return substr(s, 1, RLENGTH) }
+      if (s ~ /^~~~/) { match(s, /^~+/); return substr(s, 1, RLENGTH) }
+      return ""
+    }
     BEGIN { prev_blank = 1; fence = "" }
     {
       line = $0
       if (fence == "") {
-        if (match(line, /^ {0,3}(```+|~~~+)/)) {
-          fence = substr(line, RSTART, RLENGTH); sub(/^ +/, "", fence)
-        } else if (!prev_blank && line ~ /^ {0,3}(-[ \t]*){3,}$/) {
+        m = fence_marker(line)
+        if (m != "") {
+          fence = m
+        } else if (!prev_blank && is_dash_rule(line)) {
           print ""
         }
-      } else if (line ~ /^ {0,3}(```+|~~~+)[ \t]*$/ && index(line, substr(fence, 1, 1)) && length(line) >= length(fence)) {
-        fence = ""
+      } else {
+        m = fence_marker(line)
+        closing = line; sub(/^ */, "", closing); sub(/[ \t]*$/, "", closing)
+        if (m != "" && substr(m, 1, 1) == substr(fence, 1, 1) && length(m) >= length(fence) && closing == m) {
+          fence = ""
+        }
       }
       print line
-      prev_blank = (line ~ /^[ \t]*$/)
+      prev_blank = is_blank(line)
     }
   '
 }
