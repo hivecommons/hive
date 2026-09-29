@@ -297,7 +297,7 @@ type handoffEntry struct {
 // HandoffSection renders the PR handoff block for the agent's next kick: for
 // every live PR the agent (any of names) opened, the PR's handoff note and
 // the human feedback that is waiting for it. Empty when there is nothing to
-// hand off. It only reads the store.
+// hand off. It only reads the store, and takes no lock.
 func HandoffSection(ctx context.Context, dir string, names ...string) string {
 	if ctx.Err() != nil || strings.TrimSpace(dir) == "" {
 		return ""
@@ -311,9 +311,10 @@ func HandoffSection(ctx context.Context, dir string, names ...string) string {
 	if len(want) == 0 {
 		return ""
 	}
-	storeMu.Lock()
+	// No storeMu: pointer files are replaced by atomic rename, so a read sees
+	// a whole old or new envelope, and the kick builder must never wait on
+	// the eval tick (Route holds storeMu while it talks to the agent manager).
 	entries := loadHandoffEntries(dir, want)
-	storeMu.Unlock()
 	if len(entries) == 0 {
 		return ""
 	}

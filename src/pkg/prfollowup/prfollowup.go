@@ -135,8 +135,8 @@ const (
 type AuditFunc func(action, agent string, fields map[string]any)
 
 // storeMu serialises every read-modify-write of the pointer store in this
-// process: the eval tick (Route, Sweep), the PR-opened hook (Record) and the
-// kick builder (HandoffSection) run on different goroutines.
+// process: the eval tick (Route, Sweep) and the PR-opened hook (Record) run on
+// different goroutines. HandoffSection only reads and does not take it.
 var storeMu sync.Mutex
 
 // Route values reported in Outcome.
@@ -505,8 +505,8 @@ func routeOne(env *turn.SessionEnvelope, pr *github.PullRequest, threads []githu
 			env.Journal.Settle(keyOf(ev), status, ref, errStr, now)
 		}
 	}
+	// fallback settles the (already intended) events as not resumed.
 	fallback := func(reason string) (*Outcome, bool) {
-		intend()
 		settle(turn.OpFailed, "", fallbackPrefix+reason)
 		out.Route, out.Reason = RouteFallback, reason
 		out.Queued = queueHandoffs(env, pending, r, now)
@@ -516,6 +516,7 @@ func routeOne(env *turn.SessionEnvelope, pr *github.PullRequest, threads []githu
 	}
 
 	if reason := resumeBlocker(env, r, opts, now); reason != "" {
+		intend()
 		return fallback(reason)
 	}
 	current, _ := r.SessionID(env.Agent.Name)
