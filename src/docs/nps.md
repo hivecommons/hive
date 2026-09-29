@@ -14,16 +14,17 @@ The card is shown only when all of these hold:
 
 - NPS is enabled for this hive (see [Turning it on or off](#turning-it-on-or-off)) and the hive has a hub link, or, for a standalone hive, a configured relay (see [Standalone hives: the NPS relay](#standalone-hives-the-nps-relay)).
 - The viewer is signed in with write access. Anonymous visitors, public snapshots and read-only users never see it.
-- The per-browser timing rules allow it:
+- The per-browser timing rules allow it (defaults shown; see [Tuning the timing](#tuning-the-timing)):
 
-| Rule | Value |
-|------|-------|
-| First prompt | not before the 2nd browser session |
-| Engaged time before prompting | 5 minutes in the 2nd session, 1 minute from the 3rd session on |
-| After a response | wait 30 days |
-| After a dismissal | wait 7 days |
-| After 3 dismissals | wait 30 days |
-| Per page load | at most once |
+| Rule | Default | `hub.nps_timing` key |
+|------|---------|----------------------|
+| First prompt | not before the 2nd browser session | `min_sessions` |
+| Engaged time before prompting, first eligible session | 5 minutes | `second_session_engagement_seconds` |
+| Engaged time before prompting, from the 3rd session on | 1 minute | `returning_engagement_seconds` |
+| After a response | wait 30 days | `reprompt_days` |
+| After a dismissal | wait 7 days | `dismiss_retry_days` |
+| After this many dismissals, wait `reprompt_days` instead | 3 | `max_dismissals` |
+| Per page load | at most once | - |
 
 "Engaged time" counts only while the tab is visible and the user has used the mouse, keyboard or scroll in the last minute. The timing state lives in the browser's `localStorage` and `sessionStorage` (keys prefixed `hive-nps-`). If storage is unavailable (a private window, blocked site data) the prompt simply does not appear.
 
@@ -109,6 +110,69 @@ HIVE_NPS_ENABLED=false   # 1/true/yes/on or 0/false/no/off; anything else is ign
 
 The dashboard asks `GET /api/feedback/nps/status` whether to run the prompt, so a change takes effect on the next page load.
 
+## Tuning the timing
+
+Every timing rule above can be overridden per hive. Unset (or `0`) keeps the default, which is the console's value:
+
+```yaml
+hub:
+  nps_timing:
+    min_sessions: 2                         # 1-100
+    second_session_engagement_seconds: 300  # 1-86400
+    returning_engagement_seconds: 60        # 1-86400
+    reprompt_days: 30                       # 1-365
+    dismiss_retry_days: 7                   # 1-365
+    max_dismissals: 3                       # 1-100
+```
+
+A negative or out-of-range value is rejected when the config loads. The spoke hands the effective values to the dashboard in `GET /api/feedback/nps/status` (only to a viewer who can submit), and the dashboard falls back to its built-in constants for anything missing or malformed. A change takes effect on the next page load; a snooze already stored in a browser keeps the length it had when it was set.
+
+## GA4 funnel events (optional, off by default)
+
+An operator can send three funnel events to a Google Analytics 4 property, to see how often the prompt is shown, answered and dismissed:
+
+| Event | Parameters |
+|-------|------------|
+| `hive_nps_survey_shown` | none |
+| `hive_nps_response` | `score` (1-4), `category`, `feedback_length` (number of characters) |
+| `hive_nps_dismissed` | none |
+
+**The free text is never sent to GA4**, only its length. No user identity is added either.
+
+GA4 is off unless the operator sets a measurement ID:
+
+```bash
+HIVE_NPS_GA4_MEASUREMENT_ID=G-XXXXXXXXXX   # empty or malformed = off
+```
+
+It is an environment variable rather than a `hive.yaml` key because the dashboard document is served by the Node proxy in the combined image, which reads only its environment, and the proxy and the Go server must widen their Content Security Policy from the same source.
+
+When the ID is unset nothing changes: no script is loaded and the CSP is byte-for-byte the same. When it is set:
+
+- `gtag.js` is loaded from Google's tag host only when the card is about to appear, and only for a viewer who has not opted out. Automatic page views, Google signals and ad personalization are turned off, so the three events above are the only hits.
+- The CSP adds `https://*.googletagmanager.com` to `script-src` / `script-src-elem`, and the GA4 collection hosts (`https://*.google-analytics.com`, `https://*.analytics.google.com`, `https://*.googletagmanager.com`) to `connect-src`. Nothing else is widened, and `/terminal` is untouched.
+- The card says that it sends anonymous usage events and offers **Turn off** / **Turn on**, a per-browser opt-out stored in `localStorage` (`hive-analytics-opt-out-v1`). A browser sending Global Privacy Control or Do Not Track is treated as opted out, and so is a browser whose storage cannot be read. The very first "shown" event for a browser is sent before the viewer can see that notice; GPC or DNT prevents even that one.
+
+## Public issue for detractors (optional, off by default)
+
+A hive can let a detractor turn their feedback into a **public** issue:
+
+```yaml
+hub:
+  nps_detractor_issues:
+    enabled: true
+    repo: my-org/my-repo   # owner/name; this hive's App must be installed there
+```
+
+When it is on, a user who picks 😠 Not great (score 1) sees an unticked checkbox under the text box: *Also open a public issue in my-org/my-repo with this feedback. Anyone can read it; your name is not included.* Only if they tick it, and after their NPS response has been accepted, the dashboard calls `POST /api/feedback/nps/issue`, and the spoke files the issue through the hive App's existing issue-creation path (the same one agents use, with its duplicate-title reuse and secret scrubbing). The spoke refuses the request unless:
+
+- the user is signed in with write access and NPS is enabled for the hive;
+- the score is exactly 1 and `consent` is exactly `true`;
+- the feedback has at least 20 characters after trimming (a one-word complaint is not actionable in a public tracker);
+- the user has not opened one in the last 24 hours, and the hive has opened fewer than 3 in the last 24 hours.
+
+The issue body quotes the feedback and says it was filed with the user's consent. It carries no username and no hive ID, and every `@mention` in the title and body is neutralized so filing it notifies nobody. No labels are added. A `hive.yaml` with `enabled: true` and no valid `owner/name` repo fails validation; a hive with no forge client never offers the checkbox.
+
 ## Security properties
 
 Each of these is covered by tests in `src/pkg/dashboard/nps_test.go`, `nps_relay_test.go`, `nps_ui_test.go`, and `src/pkg/hub/nps_test.go`, `nps_relay_test.go`.
@@ -119,10 +183,10 @@ Each of these is covered by tests in `src/pkg/dashboard/nps_test.go`, `nps_relay
 - **Body caps on bytes read** (console #16666). Both the spoke (4096 bytes) and the hub (4096 bytes) cap the bytes they actually read, so a chunked body or a false `Content-Length` cannot make them buffer more. Free text is capped at 500 characters on both sides.
 - **Relay signatures and pull secret** (#9619). The relay accepts a submission only when it is signed by the key registered for its install id, within the timestamp window and with an unused nonce, and serves pending entries only to the hub's pull secret. The spoke's private key never leaves its `0600` identity file and is never logged; the hub sends its pull secret only to the configured `https` relay URL and never logs it. Neither side follows redirects. A hub drops any relay entry that claims a hub-registered hive's ID, and labels the rest "unverified install".
 - **No stored XSS** (console #17030). Both the dashboard card and the hub admin card build their DOM with `textContent` only; tests execute the hub renderer against hostile input and fail on any use of `innerHTML`.
+- **No free text in analytics.** Tests execute the dashboard's GA4 helpers against a fake browser and fail if any payload carries the text, if anything loads without a measurement ID, or if an opted-out browser sends an event.
+- **Detractor issues need consent.** Tests cover the off-by-default switch, the consent flag, the score and length checks, mention neutralization and the rate limits (`src/pkg/dashboard/nps_extras_test.go`).
 
 ## Not yet implemented
 
 - **A dedicated relay site.** The relay runs as a function on the docs site. Moving it to its own site is a follow-up.
 - **Verified installs.** Self-registered keys are unverified by design. Tying a relay install to a verified identity (for example a GitHub App installation) is a possible follow-up.
-- **Optional public issue for detractors.** The console can open a GitHub issue from a detractor's feedback with explicit consent. The hive has no existing feedback-to-issue path to reuse, so this is deferred. When built, it will need an explicit consent checkbox, a minimum text length, and the mention sanitizer.
-- **GA4 events.** The v6 dashboard has no GA4 wiring, so the `hive_nps_survey_shown` / `hive_nps_response` / `hive_nps_dismissed` events are deferred. When added, they carry only score, category and feedback length, never the free text.

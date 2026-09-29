@@ -18893,7 +18893,7 @@
           "System"
         ],
         "summary": "NPS feedback prompt status",
-        "description": "Whether this hive runs the NPS feedback prompt (issue #9610). enabled is the operator opt-in (on by default only for hosted spokes; HIVE_NPS_ENABLED / hub.nps_enabled override) AND somewhere to forward to: a hub link, or for a standalone hive a configured NPS relay (HIVE_NPS_RELAY_URL / hub.nps_relay_url, issue #9619). can_submit additionally requires a signed-in, non-read-only user.",
+        "description": "Whether this hive runs the NPS feedback prompt (issue #9610). enabled is the operator opt-in (on by default only for hosted spokes; HIVE_NPS_ENABLED / hub.nps_enabled override) AND somewhere to forward to: a hub link, or for a standalone hive a configured NPS relay (HIVE_NPS_RELAY_URL / hub.nps_relay_url, issue #9619). can_submit additionally requires a signed-in, non-read-only user. For a viewer who can submit, the response also carries the effective eligibility timing (hub.nps_timing over the defaults), the GA4 measurement ID when HIVE_NPS_GA4_MEASUREMENT_ID is set, and detractor_issue when hub.nps_detractor_issues is enabled.",
         "responses": {
           "200": {
             "description": "Prompt status",
@@ -18910,6 +18910,49 @@
                     },
                     "max_feedback_chars": {
                       "type": "integer"
+                    },
+                    "timing": {
+                      "type": "object",
+                      "properties": {
+                        "min_sessions": {
+                          "type": "integer"
+                        },
+                        "second_session_min_engagement_ms": {
+                          "type": "integer"
+                        },
+                        "returning_min_engagement_ms": {
+                          "type": "integer"
+                        },
+                        "reprompt_days": {
+                          "type": "integer"
+                        },
+                        "dismiss_retry_days": {
+                          "type": "integer"
+                        },
+                        "max_dismissals": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "ga4_measurement_id": {
+                      "type": "string"
+                    },
+                    "detractor_issue": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "score": {
+                          "type": "integer"
+                        },
+                        "min_feedback_chars": {
+                          "type": "integer"
+                        },
+                        "repo": {
+                          "type": "string"
+                        }
+                      }
                     }
                   }
                 }
@@ -18988,6 +19031,87 @@
           },
           "502": {
             "description": "The hub could not be reached or refused the response"
+          }
+        }
+      }
+    },
+    "/api/feedback/nps/issue": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Open a public issue from detractor NPS feedback",
+        "description": "Opt-in per hive (hub.nps_detractor_issues, default off). For a signed-in, non-read-only user whose score is 1, who ticked the consent box, and whose feedback has at least 20 characters, files a public issue in the configured repository through the hive App's issue-creation path. Every @mention is neutralized; the issue carries no user identity. Rate-limited to one per user and three per hive per 24h. The body cap is enforced on bytes read.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "score": {
+                    "type": "integer",
+                    "enum": [
+                      1
+                    ]
+                  },
+                  "feedback": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 500
+                  },
+                  "consent": {
+                    "type": "boolean",
+                    "enum": [
+                      true
+                    ]
+                  }
+                },
+                "required": [
+                  "score",
+                  "feedback",
+                  "consent"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Issue opened (or an identical open issue reused)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON, score other than 1, no consent, or feedback too short"
+          },
+          "403": {
+            "description": "Not signed in, read-only role, NPS or detractor issues not enabled, or no forge client"
+          },
+          "413": {
+            "description": "Body larger than 4096 bytes"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "502": {
+            "description": "The forge refused or could not be reached"
           }
         }
       }

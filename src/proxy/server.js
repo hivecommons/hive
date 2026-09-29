@@ -938,6 +938,17 @@ function spaScriptElemHashes() {
   return indexScriptHashes;
 }
 
+// GA4 for the NPS prompt (hivecommons/hive#9610): only while
+// HIVE_NPS_GA4_MEASUREMENT_ID holds a well-formed ID (the same pattern the Go
+// server applies in config.NPSGA4MeasurementID) may the SPA load gtag.js, so
+// only then do Google's tag hosts join script-src and script-src-elem.
+// connect-src and img-src already allow https: here. Unset, the policy is
+// unchanged.
+const NPS_GA4_ID_RE = /^G-[A-Z0-9]{4,20}$/;
+const NPS_GA4_SCRIPT_SOURCES = NPS_GA4_ID_RE.test((process.env.HIVE_NPS_GA4_MEASUREMENT_ID || '').trim())
+  ? ['https://*.googletagmanager.com']
+  : [];
+
 // Paths whose HTML this proxy does not render itself; they keep the blanket
 // CSP2 script-src (see the comment above).
 const UPSTREAM_DOC_PATHS = ['/contribute', '/leaderboard', '/snapshot', '/terminal'];
@@ -952,8 +963,8 @@ app.use(async (req, res, next) => {
   const scriptDirectives = isUpstreamDocPath(req.path)
     ? ["script-src 'self' 'unsafe-inline' https://cdn.redoc.ly"]
     : [
-        "script-src 'self' https://cdn.redoc.ly",
-        `script-src-elem ${["'self'", 'https://cdn.redoc.ly', ...spaScriptElemHashes()].join(' ')}`,
+        ["script-src 'self' https://cdn.redoc.ly", ...NPS_GA4_SCRIPT_SOURCES].join(' '),
+        `script-src-elem ${["'self'", 'https://cdn.redoc.ly', ...NPS_GA4_SCRIPT_SOURCES, ...spaScriptElemHashes()].join(' ')}`,
         "script-src-attr 'none'",
       ];
   res.setHeader('Content-Security-Policy', [

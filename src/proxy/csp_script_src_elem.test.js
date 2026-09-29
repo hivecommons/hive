@@ -176,6 +176,8 @@ async function main() {
       `script-src fallback must NEVER carry hashes (disables 'unsafe-inline' on ` +
       `hash-aware pre-CSP3 browsers): ${fallback}`);
     assert.ok(!fallback.includes("'unsafe-eval'"), 'script-src must never permit unsafe-eval');
+    assert.ok(!csp.includes('googletagmanager'),
+      `with HIVE_NPS_GA4_MEASUREMENT_ID unset the CSP must not allow Google's tag host: ${csp}`);
     console.log('  ok: SPA served hash-allowlisted; element half closed, attr staged, fallback intact');
 
     // -------------------------------------------------------------------
@@ -227,6 +229,33 @@ async function main() {
     console.log('  ok: source guard — fallback literal and hash-free');
   } finally {
     await stop(proxy);
+  }
+
+  // ---------------------------------------------------------------------
+  // 6. GA4 for the NPS prompt (#9610): a well-formed measurement ID adds
+  //    Google's tag host to script-src and script-src-elem, and nothing
+  //    else; a malformed one changes nothing.
+  // ---------------------------------------------------------------------
+  const GTM = 'https://*.googletagmanager.com';
+  const gaProxy = await startProxy({ HIVE_NPS_GA4_MEASUREMENT_ID: 'G-TEST12345' });
+  try {
+    const csp = (await get('/')).headers['content-security-policy'];
+    assert.ok(directive(csp, 'script-src').includes(GTM), `GA4 set: script-src must allow ${GTM}: ${csp}`);
+    assert.ok(directive(csp, 'script-src-elem').includes(GTM), `GA4 set: script-src-elem must allow ${GTM}: ${csp}`);
+    assert.ok(!/'sha256-/.test(directive(csp, 'script-src')), 'GA4 set: script-src fallback must stay hash-free');
+    assert.equal(directive(csp, 'script-src-attr'), "script-src-attr 'none'", 'GA4 set: script-src-attr unchanged');
+    console.log('  ok: GA4 measurement ID widens script-src(-elem) for the tag host only');
+  } finally {
+    await stop(gaProxy);
+  }
+  const badProxy = await startProxy({ HIVE_NPS_GA4_MEASUREMENT_ID: "G-X'; script-src *" });
+  try {
+    const csp = (await get('/')).headers['content-security-policy'];
+    assert.ok(!csp.includes('googletagmanager') && !csp.includes('script-src *'),
+      `malformed GA4 ID must not change the CSP: ${csp}`);
+    console.log('  ok: malformed GA4 measurement ID is ignored');
+  } finally {
+    await stop(badProxy);
   }
 }
 

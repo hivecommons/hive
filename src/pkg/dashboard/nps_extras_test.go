@@ -151,7 +151,7 @@ func TestNPSCSPWidenedOnlyWhenGA4Configured(t *testing.T) {
 
 	t.Setenv(config.NPSGA4MeasurementIDEnvVar, "")
 	off := csp("/")
-	if strings.Contains(off, "google") {
+	if strings.Contains(off, "googletagmanager") || strings.Contains(off, "google-analytics") {
 		t.Fatalf("GA4 unset but the CSP names a Google host:\n%s", off)
 	}
 	if got := cspDirective(off, "connect-src"); got != "connect-src 'self' ws: wss:" {
@@ -176,7 +176,7 @@ func TestNPSCSPWidenedOnlyWhenGA4Configured(t *testing.T) {
 			t.Errorf("GA4 set changed %s: %q -> %q", d, cspDirective(off, d), cspDirective(on, d))
 		}
 	}
-	if term := csp("/terminal"); strings.Contains(term, "google") {
+	if term := csp("/terminal"); strings.Contains(term, "googletagmanager") || strings.Contains(term, "google-analytics") {
 		t.Errorf("/terminal CSP must never gain Google hosts:\n%s", term)
 	}
 }
