@@ -57,10 +57,8 @@ func (g *scriptedGit) Run(_ context.Context, _ string, _ []string, name string, 
 		return []byte(commit + " parent\n"), nil
 	}
 	switch {
-	case key == "config user.name":
-		return []byte("Hive Test\n"), nil
-	case key == "config user.email":
-		return []byte("hive@example.com\n"), nil
+	case key == "var GIT_AUTHOR_IDENT":
+		return []byte("Hive Test <hive@example.com> 1700000000 +0000\n"), nil
 	case strings.HasPrefix(key, "log --format=%H%x00%an%x00%ae%x00%B%x1e "):
 		return nil, nil
 	case strings.HasPrefix(key, "log -1 --format=%H%x00%an%x00%ae%x00%B%x1e "):

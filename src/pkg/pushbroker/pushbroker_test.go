@@ -268,25 +268,17 @@ func TestRejectForgedLaneSignoffsSurfacesConfigAndLogFailures(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name: "user name",
+			name: "author ident",
 			git: &scriptedGit{fails: map[string]error{
-				"config user.name": errors.New("missing name"),
+				"var GIT_AUTHOR_IDENT": errors.New("missing ident"),
 			}},
-			wantErr: "reading git user.name",
-		},
-		{
-			name: "user email",
-			git: &scriptedGit{fails: map[string]error{
-				"config user.email": errors.New("missing email"),
-			}},
-			wantErr: "reading git user.email",
+			wantErr: "reading git author identity",
 		},
 		{
 			name: "log",
 			git: &scriptedGit{
 				replies: map[string]string{
-					"config user.name":  "Hive Test\n",
-					"config user.email": "hive@example.com\n",
+					"var GIT_AUTHOR_IDENT": "Hive Test <hive@example.com> 1700000000 +0000\n",
 				},
 				fails: map[string]error{
 					"log -1 --format=%H%x00%an%x00%ae%x00%B%x1e HEAD": errors.New("bad log"),
@@ -313,23 +305,26 @@ func TestRejectForgedLaneSignoffsSkipsUncheckableRecords(t *testing.T) {
 		{
 			name: "empty identity",
 			replies: map[string]string{
-				"config user.name":  "\n",
-				"config user.email": "hive@example.com\n",
+				"var GIT_AUTHOR_IDENT": " <hive@example.com> 1700000000 +0000\n",
+			},
+		},
+		{
+			name: "no email in ident",
+			replies: map[string]string{
+				"var GIT_AUTHOR_IDENT": "malformed-ident-with-no-brackets\n",
 			},
 		},
 		{
 			name: "malformed log record",
 			replies: map[string]string{
-				"config user.name":  "Hive Test\n",
-				"config user.email": "hive@example.com\n",
+				"var GIT_AUTHOR_IDENT":                            "Hive Test <hive@example.com> 1700000000 +0000\n",
 				"log -1 --format=%H%x00%an%x00%ae%x00%B%x1e HEAD": "not-enough-fields\x1e",
 			},
 		},
 		{
 			name: "own authored commit",
 			replies: map[string]string{
-				"config user.name":  "Hive Test\n",
-				"config user.email": "hive@example.com\n",
+				"var GIT_AUTHOR_IDENT":                            "Hive Test <hive@example.com> 1700000000 +0000\n",
 				"log -1 --format=%H%x00%an%x00%ae%x00%B%x1e HEAD": "abc\x00Hive Test\x00hive@example.com\x00Signed-off-by: Hive Test <hive@example.com>\x1e",
 			},
 		},
@@ -339,6 +334,50 @@ func TestRejectForgedLaneSignoffsSkipsUncheckableRecords(t *testing.T) {
 			err := (&Broker{Workspace: fakeGitWorkspace(t), Runner: &scriptedGit{replies: tc.replies}}).rejectForgedLaneSignoffs(context.Background(), "", false)
 			if err != nil {
 				t.Fatalf("rejectForgedLaneSignoffs = %v, want nil", err)
+			}
+		})
+	}
+}
+
+func TestParseGitIdent(t *testing.T) {
+	cases := []struct {
+		name      string
+		ident     string
+		wantName  string
+		wantEmail string
+		wantOK    bool
+	}{
+		{
+			name:      "well formed",
+			ident:     "scanner <scanner@hive.kubestellar.io> 1700000000 +0000",
+			wantName:  "scanner",
+			wantEmail: "scanner@hive.kubestellar.io",
+			wantOK:    true,
+		},
+		{
+			name:      "extra whitespace",
+			ident:     "  Hive Test   <hive@example.com>   1700000000 +0000  \n",
+			wantName:  "Hive Test",
+			wantEmail: "hive@example.com",
+			wantOK:    true,
+		},
+		{
+			name:   "no brackets",
+			ident:  "not-a-valid-ident",
+			wantOK: false,
+		},
+		{
+			name:   "empty",
+			ident:  "",
+			wantOK: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			name, email, ok := parseGitIdent(tc.ident)
+			if ok != tc.wantOK || name != tc.wantName || email != tc.wantEmail {
+				t.Fatalf("parseGitIdent(%q) = (%q, %q, %v), want (%q, %q, %v)",
+					tc.ident, name, email, ok, tc.wantName, tc.wantEmail, tc.wantOK)
 			}
 		})
 	}

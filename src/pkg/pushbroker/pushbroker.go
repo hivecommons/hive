@@ -352,18 +352,25 @@ func (b *Broker) ensureFastForward(ctx context.Context, base string) error {
 
 var signedOffByRE = regexp.MustCompile(`(?mi)^Signed-off-by:\s*(.*?)\s*<([^<>]+)>\s*$`)
 
+// gitIdentRE parses the `git var GIT_AUTHOR_IDENT` output format:
+// "Name <email> <timestamp> <tzoffset>". Only the name/email prefix is used.
+var gitIdentRE = regexp.MustCompile(`^(.*?)\s*<([^<>]*)>`)
+
 func (b *Broker) rejectForgedLaneSignoffs(ctx context.Context, base string, baseExists bool) error {
-	nameOut, err := b.git(ctx, "config", "user.name")
+	// Read the pinned lane identity via `git var GIT_AUTHOR_IDENT` (#9478),
+	// not `git config user.name`/`user.email`. Every per-agent home bridges
+	// ~/.gitconfig to one shared file and all agents share one working tree
+	// per repo, so a config read reflects whichever agent's config write
+	// landed last, not the identity actually pinned via GIT_AUTHOR_*/
+	// GIT_COMMITTER_* env vars (manager_env.go's agentGitIdentity) that
+	// produced the outgoing commits. `git var` honours those env vars, so it
+	// resolves to the same identity the commits were actually made with.
+	identOut, err := b.git(ctx, "var", "GIT_AUTHOR_IDENT")
 	if err != nil {
-		return fmt.Errorf("reading git user.name for sign-off guard: %w", err)
+		return fmt.Errorf("reading git author identity for sign-off guard: %w", err)
 	}
-	emailOut, err := b.git(ctx, "config", "user.email")
-	if err != nil {
-		return fmt.Errorf("reading git user.email for sign-off guard: %w", err)
-	}
-	laneName := strings.TrimSpace(string(nameOut))
-	laneEmail := strings.TrimSpace(string(emailOut))
-	if laneName == "" || laneEmail == "" {
+	laneName, laneEmail, ok := parseGitIdent(string(identOut))
+	if !ok || laneName == "" || laneEmail == "" {
 		return nil
 	}
 
@@ -398,6 +405,19 @@ func (b *Broker) rejectForgedLaneSignoffs(ctx context.Context, base string, base
 		}
 	}
 	return nil
+}
+
+// parseGitIdent extracts the name/email prefix from a `git var
+// GIT_AUTHOR_IDENT`-shaped string ("Name <email> timestamp tzoffset"). ok is
+// false when the ident does not contain a "<...>" email segment at all (e.g.
+// a scripted test failure or truly unset identity), so callers can tell that
+// apart from a validly-parsed-but-empty name/email.
+func parseGitIdent(ident string) (name, email string, ok bool) {
+	match := gitIdentRE.FindStringSubmatch(strings.TrimSpace(ident))
+	if match == nil {
+		return "", "", false
+	}
+	return strings.TrimSpace(match[1]), strings.TrimSpace(match[2]), true
 }
 
 func sameIdentity(name, email, wantName, wantEmail string) bool {
