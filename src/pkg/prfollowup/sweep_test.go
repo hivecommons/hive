@@ -133,3 +133,21 @@ func TestSweep_NoLookupsAndEdgeCases(t *testing.T) {
 		t.Fatalf("candidates = %+v, want none", got)
 	}
 }
+
+func TestPointerCreatedAt(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC().Truncate(time.Second)
+	if _, ok := PointerCreatedAt(context.Background(), dir, testRepo, testPR); ok {
+		t.Fatal("no pointer must report false")
+	}
+	record(t, dir, "s1", now)
+	got, ok := PointerCreatedAt(context.Background(), dir, testRepo, testPR)
+	if !ok || !got.Equal(now) {
+		t.Fatalf("PointerCreatedAt = %v, %v; want %v, true", got, ok, now)
+	}
+	// "hivecommons_hive" sanitises to the same file name, but it is a
+	// different PR: never eligible through the collision.
+	if _, ok := PointerCreatedAt(context.Background(), dir, "hivecommons_hive", testPR); ok {
+		t.Fatal("a filename-colliding repo must not borrow the pointer")
+	}
+}

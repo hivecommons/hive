@@ -3331,7 +3331,8 @@ func (b *boot) bootSupervision() {
 	// #9584: close answered question issues unless the author objects (default off).
 	wireQuestionAutoclose(b.ctx, b.cfg, b.sched, func() *github.Client { return b.ghClient }, b.logger)
 	// The pr-request watcher's PR-opened hook (Linear session narration, the
-	// lifecycle timeline and the #9583 follow-up session pointer) is installed
+	// lifecycle timeline) and the #9583 PR-opened detail hook (follow-up session
+	// pointer and handoff note) are installed
 	// by configureGitHubClient's dashboard tier (#9614), so a rebuilt client
 	// keeps it.
 }
@@ -6385,7 +6386,7 @@ func runEvalCycle(
 	// PR this hive opened back into the CLI session that authored it, while
 	// that session is still live. Anything it cannot resume stays on the
 	// fix-before-new path above, unchanged.
-	routePRFollowUps(ctx, cfg, actionable, escalatedPRs, agentMgr, logger)
+	routePRFollowUps(ctx, cfg, ghClient, actionable, escalatedPRs, agentMgr, logger)
 
 	// Stuck-PR reaper (backstop): DELIVER a targeted FIX-BEFORE-NEW kick for any
 	// hive-authored PR that is red on a required check AND stale (its red head

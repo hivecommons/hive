@@ -245,6 +245,19 @@ func RecordWithNote(ctx context.Context, dir, agentName, repo string, number int
 	return store.Persist(ctx, env)
 }
 
+// PointerCreatedAt returns when the pointer for repo#number was created, and
+// whether this hive holds one (the eligibility test: a PR without a pointer
+// is not this hive's to follow up).
+func PointerCreatedAt(ctx context.Context, dir, repo string, number int) (time.Time, bool) {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	env, err := turn.FileStore{Dir: dir}.Load(ctx, PointerID(repo, number))
+	if err != nil || !pointerIs(env, repo, number) {
+		return time.Time{}, false
+	}
+	return env.CreatedAt, true
+}
+
 // pointerIs guards against the store's filename sanitisation mapping two
 // different PRs onto one file: the envelope must name exactly this PR.
 func pointerIs(env turn.SessionEnvelope, repo string, number int) bool {
