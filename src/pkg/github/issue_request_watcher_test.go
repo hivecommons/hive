@@ -927,7 +927,7 @@ func TestIssueRequestWatcher_LinksParentSubIssue(t *testing.T) {
 		t.Errorf("request file should be removed after success")
 	}
 
-	resultData, err := os.ReadFile(reqPath + ".result.json")
+	resultData, err := os.ReadFile(strings.TrimSuffix(reqPath, ".json") + ".result.json")
 	if err != nil {
 		t.Fatalf("reading result file: %v", err)
 	}
@@ -1013,7 +1013,7 @@ func TestIssueRequestWatcher_ParentLinkFailureDoesNotFailCreate(t *testing.T) {
 		t.Errorf("request file should still be consumed when only the sub-issue link fails")
 	}
 
-	resultData, err := os.ReadFile(reqPath + ".result.json")
+	resultData, err := os.ReadFile(strings.TrimSuffix(reqPath, ".json") + ".result.json")
 	if err != nil {
 		t.Fatalf("reading result file: %v", err)
 	}
