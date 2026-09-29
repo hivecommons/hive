@@ -27858,6 +27858,14 @@ function burnAreaChart() {
         </div>
 
         <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.prFollowUpEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="prFollowUpEnabled"></div>
+            <span class="config-toggle-label">PR follow-up resume <span class="config-info">i<span class="config-tooltip">OFF by default. When an agent opens a PR, the hive remembers which live session wrote it and keeps a short handoff note (why, approach, rejected alternatives, repro, files touched). Later CI failures, changes-requested reviews, review-bot threads and comments from people with write access on that PR are sent to the same session without clearing it. When that session is gone (a restart or the agent&apos;s next regular kick), the follow-up takes the normal fix-before-new path and the agent&apos;s next kick carries the handoff note. The hive&apos;s own replies and bot comments never trigger a follow-up. Pointers are deleted when the PR merges or closes. See src/docs/design/pr-follow-up-resume.md.</span></span></span>
+          </div>
+          ${f.prFollowUpEffective !== f.prFollowUpEnabled ? `<p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">HIVE_PR_FOLLOWUP_RESUME overrides this setting: the feature is currently <b>${f.prFollowUpEffective ? 'on' : 'off'}</b>.</p>` : ''}
+        </div>
+
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
           <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Long-running runs <span class="config-info">i<span class="config-tooltip">The spec, plan, and implement stages on one lease. Off by default; an absent runs block is zero behaviour change.</span></span></div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${f.spektacularEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="spektacularEnabled"></div>

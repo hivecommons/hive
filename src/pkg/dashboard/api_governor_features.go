@@ -43,6 +43,9 @@ const (
 //     endpoint and workflow version are yaml-only)
 //   - runs.external.omp  (Enabled + Mode of the report-only OMP workbench host,
 //     #8361 step 9; workflow version is yaml-only)
+//   - turn.pr_follow_up (Config.Turn.PRFollowUp.Enabled, PR follow-up session
+//     resume and handoff notes, hivecommons/hive#9583, default off; max_age
+//     and retention stay yaml-only)
 //
 // Every field is a pointer so an absent key leaves the corresponding config
 // untouched — the same "only what you send is changed" contract the other
@@ -106,6 +109,8 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 
 		ClaimsEnabled *bool `json:"claimsEnabled"`
 		ClaimsTTLS    *int  `json:"claimsTtlS"`
+
+		PRFollowUpEnabled *bool `json:"prFollowUpEnabled"`
 
 		AutonomyAutoPromote  *bool   `json:"autonomyAutoPromote"`
 		AutonomyAutoDemote   *bool   `json:"autonomyAutoDemote"`
@@ -262,6 +267,9 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.ClaimsEnabled != nil {
 		cfg.Governor.Claims.Enabled = *body.ClaimsEnabled
 	}
+	if body.PRFollowUpEnabled != nil {
+		cfg.Turn.PRFollowUp.Enabled = *body.PRFollowUpEnabled
+	}
 	if body.ClaimsTTLS != nil {
 		cfg.Governor.Claims.TTLS = *body.ClaimsTTLS
 	}
@@ -361,6 +369,10 @@ func (s *Server) featuresSectionWithLinked(cfg *config.Config) map[string]interf
 	return out
 }
 
+// featuresSectionResponse reports prFollowUpEnabled as the saved
+// turn.pr_follow_up.enabled and prFollowUpEffective with the
+// HIVE_PR_FOLLOWUP_RESUME override applied, so the dialog can say when the
+// environment is overriding the toggle.
 func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 	var planFromLabel interface{}
 	if cfg.Planning.PlanFromLabel != nil {
@@ -399,6 +411,8 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"formalMinACMMLevel":         config.FormalQualityMinACMMLevel,
 		"claimsEnabled":              cfg.Governor.Claims.Enabled,
 		"claimsTtlS":                 int(cfg.Governor.Claims.EffectiveTTL().Seconds()),
+		"prFollowUpEnabled":          cfg.Turn.PRFollowUp.Enabled,
+		"prFollowUpEffective":        cfg.PRFollowUpResumeEnabled(),
 		"publicationEnabled":         cfg.Publication.Enabled,
 		"publicationPrivateChannel":  cfg.Publication.PrivateChannel,
 		"publicationOwner":           cfg.Publication.Owner,
