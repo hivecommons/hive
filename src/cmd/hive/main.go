@@ -1779,6 +1779,34 @@ func (b *boot) bootGitHubWith(deps bootGitHubDeps) {
 	// even when no exempt labels are configured.
 	b.ghClient.SetIssueFilter(b.cfg.Project.IssueFilter)
 	installReviewBots(b.ghClient, b.cfg, b.logger)
+	b.resolveProxyInjectGHAuth(deps)
+}
+
+// resolveProxyInjectGHAuth applies the #9586 default for proxy-side GitHub
+// auth injection: an existing hosted App spoke with HIVE_PROXY_INJECT_GH_AUTH
+// unset turns injection on here, so the fleet flips through the normal
+// channel rollout rather than by hand. It runs in bootGitHub - the first boot
+// phase, right after credentials resolve and before the proxy (bootProxy) or
+// any agent token mint - because "is App auth live" is only known now.
+//
+// Decided ONCE per process: the proxy snapshots the flag at construction, so
+// a spoke that boots before its App is delivered (ReinitGitHubFunc / the
+// heartbeat app-config path) stays off until its next restart - which every
+// channel upgrade performs. Never fatal.
+func (b *boot) resolveProxyInjectGHAuth(deps bootGitHubDeps) {
+	getenv, setenv := deps.getenv, deps.setenv
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	if setenv == nil {
+		setenv = os.Setenv
+	}
+	d := config.ApplyProxyInjectGHAuthDefault(getenv, setenv, config.ProxyInjectGHAuthInputs{
+		HubMode:  getenv("HIVE_MODE") == "hub",
+		HiveType: b.cfg.Hub.HiveType,
+		AppAuth:  b.cfg.GitHub.HasApp() && b.ghAuth.AppAuth != nil,
+	})
+	b.logger.Info(d.LogLine(), "enabled", d.Enabled, "source", string(d.Source), "env", config.ProxyInjectGHAuthEnv)
 }
 
 // bootGovernor constructs the governor and scheduler, wires the prompt and

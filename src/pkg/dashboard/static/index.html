@@ -26990,7 +26990,15 @@ function burnAreaChart() {
         (sec.ioscanCanaries ? 'canaries on' : 'canaries off'),
         'sandbox ' + (sec.sandboxedAgents || 0) + '/' + (sec.totalAgents || 0) + ' agents',
       ];
-      return '<div style="display:inline-flex;align-items:center;gap:var(--sp-4);flex-wrap:wrap;padding:6px 10px;border:1px solid var(--border);border-radius:var(--r-pill);background:var(--surface);font-size:0.72rem;color:var(--muted)" title="Effective security posture from the dashboard overlay and running config">' + esc(parts.join(' · ')) + '</div>';
+      // #9586: resolved proxy GitHub auth injection (explicit, hosted-App
+      // default, or off) - the reason rides in the tooltip.
+      const inj = sec.credentialInjection;
+      let title = 'Effective security posture from the dashboard overlay and running config';
+      if (inj && inj.source) {
+        parts.push('GitHub auth ' + (inj.enabled ? 'proxy-injected' : 'agent-held'));
+        title += '\nProxy GitHub auth injection: ' + (inj.enabled ? 'on' : 'off') + ' (' + (inj.reason || inj.source) + ')';
+      }
+      return '<div style="display:inline-flex;align-items:center;gap:var(--sp-4);flex-wrap:wrap;padding:6px 10px;border:1px solid var(--border);border-radius:var(--r-pill);background:var(--surface);font-size:0.72rem;color:var(--muted)" title="' + esc(title) + '">' + esc(parts.join(' · ')) + '</div>';
     }
 
     function securityWarningsHtml(sec) {

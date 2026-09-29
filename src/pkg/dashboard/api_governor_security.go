@@ -135,9 +135,15 @@ func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 	// operator sees it. Read from the process env, the same source the proxy
 	// and the token-divert path read.
 	credentialWarnings := credentialPostureWarnings(os.Getenv)
+	// credentialInjection (#9586): the RESOLVED proxy-injection state and why
+	// (explicit value, the hosted-App default, or default-off), as decided and
+	// logged once at boot - so the operator sees what an unset variable meant
+	// on this spoke without reading the pod log.
+	credentialInjection := config.ProxyInjectGHAuthState(os.Getenv)
 
 	return map[string]interface{}{
 		"credentialWarnings":               credentialWarnings,
+		"credentialInjection":              credentialInjection,
 		"ioscanEnabled":                    cfg.Ioscan.IsEnabled(),
 		"ioscanFailMode":                   failMode,
 		"ioscanCanaries":                   cfg.Ioscan.CanariesEnabled(),
