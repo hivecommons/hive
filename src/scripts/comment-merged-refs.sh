@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # comment-merged-refs.sh — after a PR merges, ask about still-open issues that
 # were referenced with a non-closing "Refs #N" and have no other open PR.
+# Also auto-closes a parent issue once every GitHub sub-issue it links to
+# (#9435) is closed (hivecommons/hive#9449).
 set -euo pipefail
 
 GH_BIN="${GH_BIN:-gh}"
@@ -97,14 +99,18 @@ def refs_after(pattern):
 
 weak = refs_after(weak_kw)
 closing = refs_after(closing_kw)
-for number in sorted(weak - closing):
+section = sys.argv[2]
+selected = sorted(weak - closing) if section == "weak" else sorted(closing)
+for number in selected:
     print(number)'
 
-weak_issues=$(python3 -c "$extract_refs_py" "$REPO" <<<"$pr_body")
+weak_issues=$(python3 -c "$extract_refs_py" "$REPO" "weak" <<<"$pr_body")
+# Issues this PR closed outright (Closes/Fixes/Resolves #N) — the candidates
+# for the parent auto-close sweep below (hivecommons/hive#9449).
+closing_issues=$(python3 -c "$extract_refs_py" "$REPO" "closing" <<<"$pr_body")
 
 if [ -z "$weak_issues" ]; then
   echo "PR #${PR_NUMBER} has no same-repo Refs-only issue references to sweep."
-  exit 0
 fi
 
 flatten_json_pages='import json,sys
@@ -187,3 +193,102 @@ $weak_issues
 EOF_ISSUES
 
 printf 'Refs sweep complete for PR #%s: %s comment(s) posted, %s issue(s) skipped.\n' "$PR_NUMBER" "$posted" "$skipped"
+
+# --- Auto-close a parent whose sub-issues are all now closed (hivecommons/hive#9449) ---
+#
+# For each issue this PR closed outright (a closing keyword, not a weak Refs),
+# ask GitHub whether it has a parent sub-issue relationship (#9435) and, if
+# so, whether every one of the parent's sub-issues is now closed. If so, the
+# parent is closed too, with a comment listing each sub-issue and the PR(s)
+# that closed it. A parent is only ever considered once per run (tracked in
+# closed_parents) and only while it is still open, so a later sweep run finds
+# it already closed and skips it — no separate marker comment is needed.
+owner="${REPO%%/*}"
+repo_name="${REPO#*/}"
+closed_parents=""
+
+parent_query='query($owner:String!, $name:String!, $number:Int!) {
+  repository(owner:$owner, name:$name) {
+    issue(number:$number) {
+      number
+      parent {
+        number
+        state
+        url
+        subIssuesSummary { total completed }
+        subIssues(first: 100) {
+          nodes {
+            number
+            title
+            state
+            closedByPullRequestsReferences(first: 10) { nodes { number merged } }
+          }
+        }
+      }
+    }
+  }
+}'
+
+parent_closed=0
+parent_skipped=0
+while IFS= read -r issue; do
+  [ -n "$issue" ] || continue
+
+  parent_json=$(api graphql -f query="$parent_query" -f owner="$owner" -f name="$repo_name" -F number="$issue" 2>/dev/null) || {
+    echo "Skipping parent lookup for #${issue}: GraphQL query failed."
+    continue
+  }
+
+  parent_number=$(printf '%s' "$parent_json" | python3 -c 'import json,sys
+p=(json.load(sys.stdin).get("data") or {}).get("repository", {}).get("issue") or {}
+parent=p.get("parent")
+print(parent["number"]) if parent else sys.exit(1)' 2>/dev/null) || continue
+
+  case " $closed_parents " in
+    *" $parent_number "*)
+      continue
+      ;;
+  esac
+
+  ready_py='import json,sys
+p=(json.load(sys.stdin).get("data") or {}).get("repository", {}).get("issue") or {}
+parent=p.get("parent") or {}
+summary=parent.get("subIssuesSummary") or {}
+total=summary.get("total") or 0
+completed=summary.get("completed") or 0
+if parent.get("state") == "OPEN" and total > 0 and completed == total:
+    sys.exit(0)
+sys.exit(1)'
+  if ! printf '%s' "$parent_json" | python3 -c "$ready_py"; then
+    parent_skipped=$((parent_skipped + 1))
+    continue
+  fi
+
+  summary_lines=$(printf '%s' "$parent_json" | python3 -c 'import json,sys
+p=(json.load(sys.stdin).get("data") or {}).get("repository", {}).get("issue") or {}
+parent=p.get("parent") or {}
+for sub in parent.get("subIssues", {}).get("nodes", []):
+    prs = [n["number"] for n in (sub.get("closedByPullRequestsReferences") or {}).get("nodes", []) if n.get("merged")]
+    pr_str = ", ".join("#%d" % n for n in prs) if prs else "(no closing PR found)"
+    print("- #%d %s — closed by %s" % (sub["number"], sub.get("title", ""), pr_str))')
+  parent_url=$(printf '%s' "$parent_json" | python3 -c 'import json,sys
+p=(json.load(sys.stdin).get("data") or {}).get("repository", {}).get("issue") or {}
+print((p.get("parent") or {}).get("url") or "")')
+
+  comment_body=$(printf 'All sub-issues of this issue are now closed:\n\n%s\n\nClosing this parent. If something is later found broken or missing, please file a new issue rather than reopening this one.' "$summary_lines")
+
+  if [ "$DRY_RUN" = "1" ]; then
+    echo "DRY-RUN: would close parent #${parent_number} (${parent_url}) and comment:"
+    printf '%s\n' "$comment_body"
+  else
+    api -X POST "repos/${REPO}/issues/${parent_number}/comments" -f "body=${comment_body}" >/dev/null
+    api -X PATCH "repos/${REPO}/issues/${parent_number}" -f state=closed -f state_reason=completed >/dev/null
+    echo "Closed parent #${parent_number}: all sub-issues are closed."
+  fi
+  closed_parents="${closed_parents} ${parent_number}"
+  parent_closed=$((parent_closed + 1))
+done <<EOF_CLOSING
+$closing_issues
+EOF_CLOSING
+
+printf 'Parent auto-close sweep complete for PR #%s: %s parent(s) closed, %s parent(s) skipped.\n' "$PR_NUMBER" "$parent_closed" "$parent_skipped"

@@ -3,8 +3,10 @@ name: Refs sweep
 # Mechanical follow-up for #6547: #6152 tightened the hive-open-pr guidance,
 # but 22% of merged issue-linked PRs still shipped a non-closing `Refs #N`,
 # leaving the resolved issue open. This sweeps merged PRs on a schedule and
-# calls src/scripts/comment-merged-refs.sh once per PR number; the script
-# itself never closes an issue, only comments.
+# calls src/scripts/comment-merged-refs.sh once per PR number. The script
+# never closes an issue for a non-closing `Refs #N` (only comments), but it
+# does close a parent issue once every one of its GitHub sub-issues (#9435)
+# is closed, posting a comment listing them first (hivecommons/hive#9449).
 
 on:
   schedule:
