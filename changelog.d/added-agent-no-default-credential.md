@@ -1,0 +1,1 @@
+- Proxy GitHub auth injection now re-authenticates the Copilot `/copilot_internal/` auth exchange with the Copilot user OAuth token the hive itself holds, instead of relying on the credential the agent sends; with no hub-held token the exchange passes through untouched as before ([#9586](https://github.com/hivecommons/hive/issues/9586)).

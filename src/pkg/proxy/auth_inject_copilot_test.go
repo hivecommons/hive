@@ -102,3 +102,94 @@ func TestIsCopilotAuthExchangePath(t *testing.T) {
 		}
 	}
 }
+
+// testCopilotHubToken stands in for the Copilot user OAuth token the hive
+// process itself holds (agent.Manager.CopilotToken).
+const testCopilotHubToken = "gho_copilot_user_oauth_held_by_hub"
+
+// TestInjectAuth_CopilotAuthExchangeUsesHubHeldToken (#9586): when the hive
+// holds the Copilot user OAuth token, the exchange is re-authenticated by the
+// proxy with that token instead of riding whatever the agent sent — the step
+// that lets the live credential be kept out of agent environments. The App
+// token source must still never be consulted on these paths.
+func TestInjectAuth_CopilotAuthExchangeUsesHubHeldToken(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		host string
+	}{
+		{name: "session token exchange", path: "/copilot_internal/v2/token", host: "api.github.com"},
+		{name: "copilot user discovery", path: "/copilot_internal/user", host: "api.github.com"},
+		{name: "GHE api/v3 prefix", path: "/api/v3/copilot_internal/v2/token", host: testCopilotGHEHost},
+	}
+	RegisterGitHubHost(testCopilotGHEHost)
+	t.Cleanup(func() { unregisterGitHubHost(testCopilotGHEHost) })
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls []string
+			p := injectionTestProxy(&calls)
+			p.SetCopilotTokenSource(func() (string, bool) { return testCopilotHubToken, true })
+
+			c := runInjectionExchange(t, p, testAgentName, agent.ModeAdvisory,
+				"GET "+tc.path+" HTTP/1.1\r\nHost: "+tc.host+"\r\nAuthorization: token "+testCopilotUserToken+"\r\n\r\n")
+
+			if got, want := c.req.Header.Get("Authorization"), "token "+testCopilotHubToken; got != want {
+				t.Errorf("Copilot exchange Authorization = %q, want hub-held %q", got, want)
+			}
+			if strings.Contains(c.raw, testCopilotUserToken) {
+				t.Errorf("agent-supplied Copilot credential reached upstream:\n%s", c.raw)
+			}
+			if strings.Contains(c.raw, testScopedToken) {
+				t.Errorf("hub-held App token attached to a Copilot exchange:\n%s", c.raw)
+			}
+			if len(calls) != 0 {
+				t.Errorf("App token source consulted for a Copilot exchange (%v)", calls)
+			}
+		})
+	}
+}
+
+// TestInjectAuth_CopilotAuthExchangeFallsBackWhenHubHoldsNoToken: a wired
+// source that reports no token (dashboard logged out, never provisioned) must
+// leave today's passthrough behavior intact rather than stripping the agent's
+// credential and breaking model access.
+func TestInjectAuth_CopilotAuthExchangeFallsBackWhenHubHoldsNoToken(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		token string
+		ok    bool
+	}{
+		{name: "source reports none", token: "", ok: false},
+		{name: "source reports blank token", token: "   ", ok: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := injectionTestProxy(nil)
+			p.SetCopilotTokenSource(func() (string, bool) { return tc.token, tc.ok })
+
+			c := runInjectionExchange(t, p, testAgentName, agent.ModeAdvisory,
+				"GET /copilot_internal/v2/token HTTP/1.1\r\nHost: api.github.com\r\nAuthorization: token "+testCopilotUserToken+"\r\n\r\n")
+
+			if got, want := c.req.Header.Get("Authorization"), "token "+testCopilotUserToken; got != want {
+				t.Errorf("Authorization = %q, want the agent's own %q", got, want)
+			}
+		})
+	}
+}
+
+// TestInjectAuth_CopilotTokenSourceIsPathScoped: the hub-held Copilot token is
+// for the auth-exchange endpoints only — an ordinary REST path still gets the
+// agent's scoped App token, never the Copilot credential.
+func TestInjectAuth_CopilotTokenSourceIsPathScoped(t *testing.T) {
+	p := injectionTestProxy(nil)
+	p.SetCopilotTokenSource(func() (string, bool) { return testCopilotHubToken, true })
+
+	c := runInjectionExchange(t, p, testAgentName, agent.ModeAdvisory,
+		"GET /repos/org/repo HTTP/1.1\r\nHost: api.github.com\r\nAuthorization: token "+testCopilotUserToken+"\r\n\r\n")
+
+	if got, want := c.req.Header.Get("Authorization"), "token "+testScopedToken; got != want {
+		t.Errorf("REST Authorization = %q, want injected %q", got, want)
+	}
+	if strings.Contains(c.raw, testCopilotHubToken) {
+		t.Errorf("hub-held Copilot token attached to a REST request:\n%s", c.raw)
+	}
+}

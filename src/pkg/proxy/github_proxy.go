@@ -216,6 +216,16 @@ type GitHubProxy struct {
 	// GitHub, never fall back to a shared token).
 	agentTokenSource func(agentName string) (string, bool)
 
+	// copilotTokenSource resolves the hub-held Copilot user OAuth token
+	// (agent.Manager.CopilotToken, wired in main) for the Copilot
+	// auth-exchange endpoints, which no App installation token can serve (see
+	// copilotInternalPathPrefix). Same decoupling rationale as
+	// agentTokenSource: the proxy consumes the credential the hive already
+	// holds, it never acquires one. May be nil or report no token, in which
+	// case those requests keep the agent's own Authorization exactly as
+	// before (#9586).
+	copilotTokenSource func() (string, bool)
+
 	mu         sync.RWMutex
 	violations map[string]int // agent name -> blocked request count
 
@@ -359,6 +369,13 @@ func (p *GitHubProxy) SetTokenSink(sink *tokens.InferenceSink) {
 // so no lock is needed on the read path.
 func (p *GitHubProxy) SetAgentTokenSource(source func(agentName string) (string, bool)) {
 	p.agentTokenSource = source
+}
+
+// SetCopilotTokenSource wires the resolver for the hub-held Copilot user OAuth
+// token used on the Copilot auth-exchange endpoints (#9586). Wired once at
+// boot, before Start(), so no lock is needed on the read path.
+func (p *GitHubProxy) SetCopilotTokenSource(source func() (string, bool)) {
+	p.copilotTokenSource = source
 }
 
 // hostNeedsMITM decides whether a GitHub-family host must be TLS-intercepted
@@ -1502,10 +1519,11 @@ const loginPathPrefix = "/login/"
 // model the moment injection is on (#9586). They are passed through with the
 // agent's own Authorization untouched - nothing stripped, nothing injected.
 //
-// Residual (documented in security-model.md): the Copilot user OAuth token
-// stays agent-readable and spendable on these paths; moving it server-side too
-// is a follow-up. The hub-held App tokens injection protects are never
-// attached here.
+// Residual (documented in security-model.md): when the hive holds no Copilot
+// token of its own, the agent's Copilot user OAuth token stays agent-readable
+// and spendable on these paths. With a hub-held token wired
+// (SetCopilotTokenSource) the proxy re-authenticates the exchange itself. The
+// hub-held App tokens injection protects are never attached here.
 const copilotInternalPathPrefix = "/copilot_internal/"
 
 // gheAPIPathPrefix is the REST prefix GitHub Enterprise Server serves its API
@@ -1544,9 +1562,10 @@ func isCopilotAuthExchangePath(path string) bool {
 //     ride a real credential, recreating the pre-#3888 identity hole this
 //     design depends on having closed.
 //
-//   - COPILOT AUTH-EXCHANGE PASSTHROUGH: /copilot_internal/ on a GitHub
-//     host keeps the agent's own Authorization (the user's Copilot OAuth
-//     token); see copilotInternalPathPrefix for why and the residual.
+//   - COPILOT AUTH-EXCHANGE: /copilot_internal/ on a GitHub host gets the
+//     hub-held Copilot user OAuth token when one is wired, and otherwise
+//     keeps the agent's own Authorization; see copilotInternalPathPrefix for
+//     why an App token cannot serve these paths, and the residual.
 //
 //   - INTERNAL CALLER PASSTHROUGH: the hive's own control plane
 //     (internalCallerName) legitimately holds and sends its own App
@@ -1573,6 +1592,20 @@ func (p *GitHubProxy) rewriteGitHubAuth(req *http.Request, agentName string) {
 		// Before the strip: the Copilot session-token exchange needs the
 		// user's Copilot OAuth token, which no hub-held App token can stand in
 		// for (copilotInternalPathPrefix).
+		//
+		// When the hive holds that Copilot token itself, inject it here the
+		// same way scoped App tokens are injected below: the agent-supplied
+		// header is replaced, so the exchange no longer depends on the agent
+		// carrying a live credential and the token can be kept out of agent
+		// environments (#9586). With no source wired, or none held, the
+		// request passes through untouched exactly as before.
+		if p.copilotTokenSource != nil {
+			if token, ok := p.copilotTokenSource(); ok && strings.TrimSpace(token) != "" {
+				req.Header.Set("Authorization", "token "+token)
+				p.logger.Debug("proxy auth injection: Copilot auth-exchange endpoint - hub-held Copilot token attached", "agent", agentName, "injected", true)
+				return
+			}
+		}
 		p.logger.Debug("proxy auth injection: Copilot auth-exchange endpoint - agent credential passed through", "agent", agentName, "injected", false)
 		return
 	}

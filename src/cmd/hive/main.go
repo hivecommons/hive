@@ -3911,6 +3911,20 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// unconditionally: with HIVE_PROXY_INJECT_GH_AUTH unset (the default)
 		// the proxy never consults the source and the registry stays empty.
 		b.githubProxy.SetAgentTokenSource(github.AgentProxyToken)
+		// #9586: the Copilot auth-exchange endpoints (/copilot_internal/)
+		// cannot be served by an App installation token, so the proxy
+		// re-authenticates them with the Copilot user OAuth token the hive
+		// already holds. Read through the manager on every request (not
+		// snapshotted) so a dashboard login/logout takes effect immediately.
+		// With no token held the exchange passes through untouched, exactly as
+		// before.
+		b.githubProxy.SetCopilotTokenSource(func() (string, bool) {
+			if b.agentMgr == nil {
+				return "", false
+			}
+			token := strings.TrimSpace(b.agentMgr.CopilotToken())
+			return token, token != ""
+		})
 		dashboard.SetProxyViolationsProvider(b.githubProxy.Violations)
 		// Lets the dashboard narrow the LiteLLM model dropdown to the set the
 		// configured key is entitled to, learned by the proxy from a key-info
