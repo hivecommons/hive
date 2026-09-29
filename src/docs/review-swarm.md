@@ -70,7 +70,7 @@ The cadence reviewer's kick template (`reviewer-queue.md`) quotes that schema ve
 
 The mark has two sources: the verdict artifact, and the relay's own `review-links.json` ledger of what it actually posted (with the head it posted at), so a review whose verdict was discarded — a PR the fan-out lane never dispatched — still marks the row.
 
-**Per-head backstop.** Independently of any prompt, the relay suppresses the comment of a new top-level review on a head that already carries its quota of hive reviews — the verdict is still recorded, so a dispatch-bound judgement is never lost to the cap: one in `combined_perspectives` mode, one per perspective otherwise, or `review.max_reviews_per_head` when set (negative disables). `--revise` (update the existing review), `--thread` (reply in it) and APPROVE are exempt. The current head is read from GitHub, not from the verdict; a failed lookup proceeds, since this is a backstop against a loop rather than the primary gate. The result is `ok: true`, `state: record_verdict`, with a `note` naming the existing review and the way out.
+**Per-head backstop.** Independently of any prompt, the relay suppresses the comment of a new top-level review on a head that already carries its quota of hive reviews — the verdict is still recorded, so a dispatch-bound judgement is never lost to the cap: one in `combined_perspectives` mode, one per perspective otherwise, or `review.max_reviews_per_head` when set (negative disables). `--revise` (update the existing review), `--thread` (reply in it) and APPROVE are exempt (an approve on a contributor PR is submitted as a comment and is not; see [Contributor PRs are comment-only](#contributor-prs-are-comment-only)). The current head is read from GitHub, not from the verdict; a failed lookup proceeds, since this is a backstop against a loop rather than the primary gate. The result is `ok: true`, `state: record_verdict`, with a `note` naming the existing review and the way out.
 
 A verdict that is never handed over is not a neutral outcome: aggregation reports "never reviewed", and the PR is dispatched for review again from scratch.
 
@@ -195,6 +195,33 @@ Before every fix kick the planner checks authorship. A PR counts as the hive's o
 When the check refuses, the `changes_requested` verdict still stands and the review is still published (`post_comments`). The reviewer's kick for such a PR carries an extra instruction: no agent will push to this branch, so every fix it wants goes into the review comment as a ```` ```suggestion ```` block or a ```` ```diff ```` patch the author can apply, and the reviewer must not check out or push to the branch itself. The refusal is recorded once per PR head in dispatch state (`withheld_fixes`) and on the audit log as `review_fix_withheld`, with the PR, its author, and `setting=review.fix_human_prs=false`, so a fix that did not happen can be traced rather than guessed at. A new push to the PR is a new decision.
 
 **Upgrading.** Before `fix_human_prs` existed, `all_authors: true` alone made the fixer push to every PR. A hive already running that way keeps running that way: on load, a config with `all_authors: true` and `fix_human_prs` never set is stored with `fix_human_prs: true`, logged once, and shown as on in the dashboard so the operator can turn it off deliberately. New hives and hives with `all_authors` off get `false`; an explicit `fix_human_prs: false` is never overwritten; no other review field is touched.
+
+### Contributor PRs are comment-only
+
+With `review.all_authors` on, the swarm reviews PRs people opened, not only the hive's own. On those PRs the hive says what it found but never casts a formal vote: an APPROVE from the App bot can count toward a branch's required reviews on a stranger's change, and a REQUEST_CHANGES blocks a person's PR on a bot's say-so (hivecommons/hive#9608).
+
+The review relay enforces this, not the prompt or the dispatcher, because an agent can drop a review request for any PR number whether or not it was dispatched. Before submitting an `approve` or `request_changes` (in any accepted spelling: `approved`, `changes_requested`, `request-changes`, any case), the relay reads the PR's author with one `GET /pulls/{n}`:
+
+- **Hive or bot author** - the App bot login, `project.ai_author` (case-insensitive), or any other bot account (`[bot]` login or `Bot` account type). This is the same set the swarm reviews without `all_authors`. The verdict is submitted as asked, unchanged.
+- **Anyone else** - submitted as a `COMMENT` review instead. The body is kept and gains a leading line naming the intended verdict ("Reviewer verdict: approve." / "request changes."), so the author and maintainers still see the reviewer's judgement.
+- **Unknown** - the PR could not be read, or has no author login. Treated as a contributor PR (fail closed): the vote becomes a comment, the review is never lost.
+
+A PR opened by an agent under a person's credentials counts as that person's here, since GitHub attributes the review to the PR the person's account opened. `comment` requests, thread replies and `record_verdict` skip the lookup; they are already comment-only.
+
+Downgrade was chosen over refusal. The reviewer's findings are real and the author is owed them, and the structured verdict must still be recorded, or the PR reads as never reviewed and is dispatched again from scratch. Refusing would lose both. The verdict in `review-verdicts.json` is unchanged; only its form on the forge is.
+
+The agent and the operator both see what happened. The `.result.json` is `ok: true`, `state: commented`, with a `note` such as `contributor PR: approved submitted as a comment-only review (PR was opened by <login>, not by this hive)`. The `agent_pr_reviewed` audit entry records `state=commented, requested_state=approved, downgraded=contributor_pr`. A downgraded approve is a comment for the per-head backstop, so it counts against `max_reviews_per_head`.
+
+**What the swarm never does on a contributor PR.** Its only forge writes are a review, a reply in a thread a configured review bot opened, and resolving such a thread. It has no merge or close call; a `reject` aggregate only *recommends* closing. It pushes only through the review-fix kick, which needs `review.fix_human_prs: true` (an explicit operator opt-in, above). Merging is not the swarm's: the governor's merge sweep decides it. With `require_approval` on, a swarm `approve` aggregate is one of the gates that sweep checks, for any PR, so a hive that auto-merges and reviews `all_authors` should use its merge policy (hold labels, branch protection requiring a human review) to keep people's PRs for a maintainer.
+
+**First-time contributors are not gated separately.** #9590 asked whether a first-time contributor's PR should wait for a maintainer-applied label before the hive reviews it, to bound review cost and abuse. Not implemented, deliberately:
+
+- Reviewing contributor PRs at all is already triple opt-in (`require_approval` + `fan_out` + `all_authors`), and every PR on a hold label is kept out of fan-out, so a maintainer can already stop the hive reviewing a given PR.
+- With this guard the worst a contributor PR can get from the hive is a comment. The abuse surface is comment text, which the relay already canary-scans, redaction-guards and caps per head.
+- Cost is already bounded by `max_parallel_reviews`, `max_perspectives_per_pr` (or `combined_perspectives`) and `max_reviews_per_head`.
+- A forge-neutral gate needs the PR's author association (first-time vs returning), which the PR model the governor enumerates does not carry today. Adding it touches enumeration for every PR to serve an opt-in that the controls above mostly cover.
+
+If review spend on drive-by PRs becomes a measured problem, the follow-up is an optional allow-list label (for example `review.contributor_gate_label`, empty by default) checked in dispatch, not in the relay. It must stay a plain forge label a maintainer applies, never a CI-bot command.
 
 ## Revising a recorded verdict
 

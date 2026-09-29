@@ -76,7 +76,9 @@ type ReviewResponse struct {
 	ThreadID string `json:"thread_id,omitempty"`
 	Error    string `json:"error,omitempty"`
 	// Note explains a successful result that did less than asked — the
-	// per-head cap recording a verdict but suppressing its comment.
+	// per-head cap recording a verdict but suppressing its comment, or an
+	// approve/request_changes on a PR this hive did not open submitted as a
+	// comment-only review (hivecommons/hive#9608).
 	Note string `json:"note,omitempty"`
 	At   string `json:"at"`
 }
@@ -310,6 +312,19 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 		return
 	}
 
+	// Contributor PRs get comment-only reviews, whatever the agent asked for
+	// (hivecommons/hive#9608, review_contributor_guard.go). Only a formal
+	// verdict costs the authorship lookup; a comment is already safe.
+	var intendedState, downgradeReason string
+	if isFormalReviewVerdict(apiEvent) {
+		hiveAuthored, reason := c.reviewTargetHiveAuthored(ctx, req)
+		apiEvent, state, intendedState, _ = contributorSafeReviewEvent(req.Event, hiveAuthored)
+		if intendedState != "" {
+			downgradeReason = reason
+			req.Body = contributorVerdictNote(intendedState, req.Body)
+		}
+	}
+
 	// Per-head backstop. Everything above depends on the agent doing the
 	// right thing; this does not. A head that already carries as many hive
 	// reviews as it can legitimately receive (one in combined mode, one per
@@ -463,16 +478,24 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 			slog.String("error", err.Error()))
 	}
 
-	c.recordCreationAudit(AuditActionPRReviewed, meta,
+	auditExtra := []string{
 		"repo", req.Repo,
 		"number", strconv.Itoa(req.Number),
-		"state", state)
+		"state", state,
+	}
+	if intendedState != "" {
+		// The agent and the audit trail both see that the vote was not cast.
+		auditExtra = append(auditExtra, "requested_state", intendedState, "downgraded", "contributor_pr")
+		resp.Note = "contributor PR: " + intendedState + " submitted as a comment-only review (" + downgradeReason + ")"
+	}
+	c.recordCreationAudit(AuditActionPRReviewed, meta, auditExtra...)
 	c.writeReviewResult(path, resp)
 	_ = os.Remove(path)
 	c.reviewRetries.clear(path)
 	c.logger.Info("review-request watcher: review submitted by App bot",
 		slog.String("repo", req.Repo), slog.Int("number", req.Number),
-		slog.String("state", state), slog.String("agent", req.Agent))
+		slog.String("state", state), slog.String("requested_state", intendedState),
+		slog.String("agent", req.Agent))
 }
 
 func (c *Client) denyReviewRequest(path string, req ReviewRequest, reason string, nowFn func() time.Time) {

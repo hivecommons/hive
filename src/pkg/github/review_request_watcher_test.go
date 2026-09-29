@@ -36,6 +36,12 @@ func newReviewMockServer(t *testing.T, reviewed *int, lastEvent *string) *httpte
 			_, _ = io.WriteString(w, `{"id":1,"state":"APPROVED"}`)
 			return
 		}
+		// The contributor guard (#9608) reads the PR's author before a
+		// formal verdict. These tests exercise a bot-authored PR, on which
+		// approve/request_changes pass through unchanged.
+		if servePRAuthor(w, r, testBotPRAuthor) {
+			return
+		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
 }

@@ -302,8 +302,15 @@ func TestIssueRequestWatcher_RepoPause(t *testing.T) {
 func TestReviewRequestWatcher_RepoPause(t *testing.T) {
 	for _, event := range []string{"approve", "request_changes", "comment"} {
 		t.Run(event, func(t *testing.T) {
-			var calls atomic.Int32
+			var calls, lookups atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// The contributor guard's author lookup (#9608) is counted
+				// apart: a paused repo must see neither, a resumed one
+				// exactly one review whatever the lookup did.
+				if servePRAuthor(w, r, testBotPRAuthor) {
+					lookups.Add(1)
+					return
+				}
 				calls.Add(1)
 				if r.Method != http.MethodPost || r.URL.Path != "/repos/o/r/pulls/7/reviews" {
 					t.Errorf("unexpected GitHub request: %s %s", r.Method, r.URL.Path)
@@ -325,7 +332,7 @@ func TestReviewRequestWatcher_RepoPause(t *testing.T) {
 
 			c.ProcessReviewRequestsOnce(context.Background())
 
-			if got := calls.Load(); got != 0 {
+			if got := calls.Load() + lookups.Load(); got != 0 {
 				t.Errorf("paused repo received %d GitHub calls, want 0", got)
 			}
 			if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
@@ -348,7 +355,7 @@ func TestReviewRequestWatcher_RepoPause(t *testing.T) {
 
 			c.SetRepoPausedFunc(pauseAll("some-other-repo"))
 			c.ProcessReviewRequestsOnce(context.Background())
-			if got := calls.Load(); got != 0 {
+			if got := calls.Load() + lookups.Load(); got != 0 {
 				t.Errorf("quarantined request was replayed: %d GitHub calls, want 0", got)
 			}
 			reqPath, err = WriteReviewRequest(dir, req)
