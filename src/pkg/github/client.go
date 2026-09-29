@@ -90,6 +90,7 @@ type Client struct {
 	mergeAlertLastRevalidate  time.Time
 	logger                    *slog.Logger
 	appAuth                   *AppAuth // nil for token-authenticated clients
+	authToken                 string   // token-authenticated clients only; never log
 	canariesEnabled           bool
 	canaryFailClosed          bool
 	canaryRegistry            *ioscan.CanaryRegistry
@@ -162,6 +163,13 @@ type Client struct {
 	// request without rebuilding the client. nil means off. See
 	// reauthorBranchSigned.
 	prSignedCommits func() bool
+	// prPrecheck runs deterministic docs and touched-package checks in the hive
+	// process before the watcher opens a PR. Nil preserves the legacy Tier A-only
+	// precheck path for tests and unwired clients; production wiring installs the
+	// default-on config-backed options.
+	prPrecheckMu        sync.RWMutex
+	prPrecheckOptions   *PRPrecheckOptions
+	prPrecheckSkippedBy map[string][]string
 	// signedReconcile is the state of the follow-up signing pass (#9364):
 	// last-seen head per open PR, PRs already told why they can't be signed,
 	// and when the pass last ran. See pr_signed_reconcile.go.
@@ -861,10 +869,11 @@ func NewClient(token string, org string, repos []string, logger *slog.Logger, ap
 	// (see proxytrust.go).
 	client := newTokenClient(token, apiURL)
 	return &Client{
-		client: client,
-		org:    org,
-		repos:  repos,
-		logger: logger,
+		client:    client,
+		org:       org,
+		repos:     repos,
+		logger:    logger,
+		authToken: token,
 	}
 }
 

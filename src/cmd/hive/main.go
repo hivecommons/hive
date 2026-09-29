@@ -2302,6 +2302,16 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		// GitHub-signed and authored by the App bot. Read through a func so a
 		// config reload takes effect on the next request.
 		b.ghClient.SetSignedCommits(func() bool { return b.cfg.GitHub.AppSignedCommitsEnabled() })
+		prPrecheckDataRoot := filepath.Dir(b.cfg.Data.MetricsDir)
+		b.ghClient.SetPRPrecheckOptions(&github.PRPrecheckOptions{
+			DocsEnabled:    func() bool { return b.cfg.GitHub.PRPrecheck.DocsEnabled() },
+			GoTestsEnabled: func() bool { return b.cfg.GitHub.PRPrecheck.GoTestsEnabled() },
+			Timeout:        func() time.Duration { return b.cfg.GitHub.PRPrecheck.EffectiveTimeout() },
+			MaxConcurrent:  func() int { return b.cfg.GitHub.PRPrecheck.EffectiveMaxConcurrent() },
+			CacheDir:       b.cfg.GitHub.PRPrecheck.EffectiveCacheDir(prPrecheckDataRoot),
+			WorkRoot:       filepath.Join(prPrecheckDataRoot, "pr-precheck", "checkouts"),
+			CloneBaseURL:   b.cfg.GitHub.ResolvedBaseURL(),
+		})
 		// Fix #2: on a terminal merge failure caused by a failing REQUIRED check,
 		// re-engage the fix loop instead of abandoning the PR. The hook records a
 		// re-engagement under the escalation store's per-red-SHA cap (shared with

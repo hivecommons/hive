@@ -94,8 +94,12 @@ type PRResponse struct {
 	// signs it; the reason is reported so the agent can say so rather than
 	// reading the block as an unexplained failure.
 	SignedSkipped string `json:"signed_skipped,omitempty"`
-	Error         string `json:"error,omitempty"`
-	At            string `json:"at"`
+	// PrecheckSkipped lists optional Tier B/C precheck work that the hive could
+	// not run for infrastructure reasons. These notes never reject the request;
+	// genuine findings still appear as a precheck rejection.
+	PrecheckSkipped []string `json:"precheck_skipped,omitempty"`
+	Error           string   `json:"error,omitempty"`
+	At              string   `json:"at"`
 }
 
 // PRRequestAuthorizer decides whether a PR-open request may proceed. It receives
@@ -431,7 +435,12 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	}
 
 	res, err := c.CreatePR(ctx, req.Repo, req.Head, req.Base, title, body)
-	resp := PRResponse{At: nowFn().UTC().Format(time.RFC3339), SignedCommit: signed.OID, SignedSkipped: signed.Skipped}
+	resp := PRResponse{
+		At:              nowFn().UTC().Format(time.RFC3339),
+		SignedCommit:    signed.OID,
+		SignedSkipped:   signed.Skipped,
+		PrecheckSkipped: c.consumePRPrecheckSkipped(req),
+	}
 	if err != nil {
 		c.failPRRequest(path, req, err, nowFn)
 		return
