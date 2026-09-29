@@ -1,0 +1,1 @@
+- The dashboard no longer lists autonomous L6 agent-filed issues as needing human triage when the repo's self-authorization hold is off, so Overview bands, exports, and status payloads match the scheduler's actionable queue ([#9443](https://github.com/hivecommons/hive/issues/9443)).

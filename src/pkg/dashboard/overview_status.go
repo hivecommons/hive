@@ -32,10 +32,11 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 	if s.deps != nil && s.deps.Config != nil {
 		cfg = s.deps.Config.Dashboard.IssueBands
 	}
+	selfAuthorizationHoldActive := s.selfAuthorizationHoldActiveForRepo
 	out := *status
 	out.OverviewBands = &OverviewBands{Issues: IssueBandSpecs(cfg), PRs: PRBandSpecs(cfg)}
 	out.Repos = append([]FrontendRepo(nil), status.Repos...)
-	issues := func(items []any, held bool) []any {
+	issues := func(items []any, held bool, repoName string) []any {
 		if items == nil {
 			return nil
 		}
@@ -46,7 +47,8 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 				result = append(result, raw)
 				continue
 			}
-			info := IssueBand(issue, held, cfg, now)
+			issue.Repo = nonEmpty(issue.Repo, repoName)
+			info := IssueBand(issue, held, cfg, now, selfAuthorizationHoldActive)
 			if held {
 				info.HoldReason = heldReason(issue.Labels, false, status.HiveID)
 			}
@@ -89,8 +91,9 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 	}
 	for i := range out.Repos {
 		repo := &out.Repos[i]
-		repo.ActionableIssues = issues(repo.ActionableIssues, false)
-		repo.HeldIssues = issues(repo.HeldIssues, true)
+		repoName := overviewRepoName(*repo)
+		repo.ActionableIssues = issues(repo.ActionableIssues, false, repoName)
+		repo.HeldIssues = issues(repo.HeldIssues, true, repoName)
 		repo.OpenPrs = prs(repo.OpenPrs, false)
 		repo.HeldPrs = prs(repo.HeldPrs, true)
 	}
