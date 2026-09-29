@@ -79,7 +79,25 @@ func TestDashboardAdminMCPIssuesByBandRefusesUnknownBand(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, adminmcp.EndpointPath, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"issues_by_band","arguments":{"band":"nope"}}}`))
 	adminmcp.NewHandler(dashboardAdminMCPProvider{server: s}).ServeHTTP(rec, req)
-	if !strings.Contains(rec.Body.String(), `"type":"refusal"`) || !strings.Contains(rec.Body.String(), "ready") {
-		t.Fatalf("body = %s", rec.Body.String())
+	// A tools/call result carries the tool payload as a JSON string in
+	// content[0].text, so decode it before asserting on the refusal fields.
+	var rpc struct {
+		Result struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &rpc); err != nil || len(rpc.Result.Content) == 0 {
+		t.Fatalf("body = %s (err %v)", rec.Body.String(), err)
+	}
+	var env struct {
+		Data adminmcp.RefusalData `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(rpc.Result.Content[0].Text), &env); err != nil {
+		t.Fatalf("tool text = %s (err %v)", rpc.Result.Content[0].Text, err)
+	}
+	if env.Data.Type != "refusal" || env.Data.Kind != adminmcp.RefusalKindInvalidArgument || !strings.Contains(env.Data.Reason, "ready") {
+		t.Fatalf("refusal = %+v", env.Data)
 	}
 }
