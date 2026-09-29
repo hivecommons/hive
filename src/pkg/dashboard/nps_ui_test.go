@@ -14,7 +14,7 @@ import (
 func npsUIBlock(t *testing.T) string {
 	t.Helper()
 	html := indexHTML(t)
-	start := strings.Index(html, "// ── NPS feedback prompt (#9610)")
+	start := strings.Index(html, "// ── NPS feedback survey, #9610")
 	end := strings.Index(html, "// ── Welcome / Getting Started dialog")
 	if start < 0 || end < start {
 		t.Fatalf("NPS prompt block not found in index.html (start=%d end=%d)", start, end)

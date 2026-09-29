@@ -31963,7 +31963,7 @@ function burnAreaChart() {
       }
     }
 
-    // ── NPS feedback prompt (#9610) ───────────────────────────────────
+    // ── NPS feedback survey, #9610 ───────────────────────────────────
     // An occasional "how is the hive working for you?" card with a 4-point
     // emoji scale, a category-specific follow-up and a dismiss. Timing and
     // backoff are identical to kubestellar/console's useNPSSurvey.ts (see
@@ -31973,7 +31973,7 @@ function burnAreaChart() {
     // to this spoke's backend, which forwards it to the hub without the
     // user's identity. Per-browser state lives in localStorage; every storage
     // access is wrapped so a private window or blocked storage just means no
-    // prompt. All user-visible text is set with textContent, never innerHTML.
+    // prompt. All user-visible text is set with textContent, never a markup sink.
     //
     // The eligibility rules are pure functions of (state, now, timing) so
     // nps_ui_test.go can execute them under node without a browser.
