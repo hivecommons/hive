@@ -401,7 +401,12 @@ jobs:
               ? `\n\n### What the gate reported\n\n\`\`\`\n${failing}\n\`\`\``
               : '';
 
-            const title = `[Coverage] packages below 90% threshold`;
+            // The title must not claim a shortfall the body contradicts:
+            // triage reads titles first (#9664 audit). Both keep the
+            // [Coverage] prefix the dedupe below matches on.
+            const title = neverMeasured
+              ? `[Coverage] gate job failed before measuring coverage`
+              : `[Coverage] packages below 90% threshold`;
             const body = `## Coverage gate failed\n\n`
               + `- **Measured:** \`${measuredRef}\` @ \`${measuredSha}\`\n`
               + `- **Run:** ${runUrl}\n`

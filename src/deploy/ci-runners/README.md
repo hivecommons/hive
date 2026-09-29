@@ -263,3 +263,38 @@ in the pod's `runner-home` emptyDir (node disk, gone with the pod). A GOCACHE
 outside `/mnt/gocache` (GitHub-hosted runners) is never moved, so their
 Actions-cache warm restore keeps working. With `job` as the default the
 `build/` tree on the PVC stops growing; `hive-gocache-prune` ages it out.
+
+## Classifying infra failures, rerunning once, and alerting on the rate (#9664)
+
+The failures above were found by hand, after hours of reruns, and misled the
+fleet into "fixing" code. Three pieces now catch them automatically:
+
+| Piece | Where | What it does |
+| --- | --- | --- |
+| Classifier | `.github/scripts/ci_infra_classify.py` + `ci-infra-signatures.tsv` | Sorts one failed job into `infra:<class>`, `derived` (a shard gate that only reports other jobs) or `code`, from the failing step's output and the job's annotations. Anything unrecognised is `code`. |
+| Rerun once | `.github/workflows/ci-infra-rerun.yml` | On every failed run of the watched CI workflows, classifies the failed jobs and reruns them once when all are infra. Never past attempt 1, never when any job is `code`, never for a fork. |
+| Rate alert | `.github/workflows/ci-infra-rate.yml` (hourly) | Share of the last 100 completed CI runs with at least one infra failure. At 15% or more it opens or updates one tracking issue with a class x runner breakdown; below that it closes it. |
+
+Classes shipped: `gocache-permission`, `build-cache-corrupt`, `disk-full`,
+`lint-no-go-files`, `lint-timeout`, `runner-lost` (the runner pod died; seen
+only as the job annotation "The self-hosted runner lost communication with the
+server") and `test-list-empty` (a `go test -list` step that exited without
+printing anything). To add one, append a row to `ci-infra-signatures.tsv` and a
+trimmed real log under `.github/scripts/testdata/ci-infra/`; the self-test
+(`python3 .github/scripts/test-ci-infra.py`, run in v2 CI) fails if a class has
+no fixture.
+
+Repository variables, all optional:
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `HIVE_CI_INFRA_RERUN` | `on` | `off` keeps classifying (the rate still counts) but never reruns. |
+| `HIVE_CI_INFRA_ALERT` | on | `off` disables the rate workflow. |
+| `HIVE_CI_INFRA_WINDOW_RUNS` | `100` | Completed runs in the window. |
+| `HIVE_CI_INFRA_ALERT_THRESHOLD` | `0.15` | Alert fraction, 0-1, inclusive. |
+| `HIVE_CI_INFRA_MIN_RUNS` | `20` | Fewer runs than this: no open or close. |
+
+A run counts as infra-hit even when the automatic rerun turned it green: the
+rate measures the pool, not the final verdict. Runner pods are ephemeral and
+the Actions API does not expose the Kubernetes node, so the breakdown groups
+pods by scale set; map a pod to its node with `kubectl` while it is alive.

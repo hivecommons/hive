@@ -1,0 +1,18 @@
+# fixture (basename)<TAB>expected verdict. Every .log here must be listed.
+# Real excerpts from failed hivecommons/hive jobs on 2026-09-29, trimmed to
+# the runner header and the failing step (job id in the comment).
+infra-gocache-permission-build	infra:gocache-permission
+infra-gocache-permission-list	infra:gocache-permission
+infra-build-cache-corrupt	infra:build-cache-corrupt
+infra-disk-full-setup-job	infra:disk-full
+infra-lint-no-go-files	infra:lint-no-go-files
+infra-lint-timeout	infra:lint-timeout
+infra-runner-lost	infra:runner-lost
+infra-test-list-empty	infra:test-list-empty
+derived-shard-gate	derived
+code-compile-redeclared	code
+code-vet-undefined	code
+code-lint-typecheck	code
+code-test-shuffle-failure	code
+code-missing-script	code
+code-permission-denied-not-gocache	code

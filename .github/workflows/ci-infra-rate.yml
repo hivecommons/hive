@@ -1,0 +1,57 @@
+name: CI infra rate
+
+# Hourly: what share of the last N completed CI runs hit a runner
+# infrastructure failure (#9664)? At or above the threshold, open or update ONE
+# tracking issue (found by a hidden marker) with a class x runner breakdown;
+# below it, close that issue. Never one issue per failure.
+#
+# The verdicts come from ci-infra-rerun.yml's artifacts, so this job never
+# downloads a job log. There is no separate notification channel in this
+# repository; the tracking issue is the alert.
+#
+# Tunables (repository variables, all optional):
+#   HIVE_CI_INFRA_WINDOW_RUNS      runs in the window            (default 100)
+#   HIVE_CI_INFRA_ALERT_THRESHOLD  alert fraction, 0-1           (default 0.15)
+#   HIVE_CI_INFRA_MIN_RUNS         fewer runs than this: no call (default 20)
+#   HIVE_CI_INFRA_ALERT            set to `off` to disable this workflow
+
+on:
+  schedule:
+    # Off the top of the hour (GitHub drops scheduled runs in the busiest
+    # slot); :41 is not used by another workflow here.
+    - cron: '41 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  rate:
+    if: vars.HIVE_CI_INFRA_ALERT != 'off'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # workflows/ too: the self-test checks the watched-workflow list
+          # in ci-infra-rerun.yml against the script.
+          sparse-checkout: |
+            .github/scripts
+            .github/workflows
+          persist-credentials: false
+      - name: Self-test classifier and tracking-issue logic
+        run: python3 .github/scripts/test-ci-infra.py
+      - name: Update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_INFRA_WINDOW_RUNS: ${{ vars.HIVE_CI_INFRA_WINDOW_RUNS }}
+          CI_INFRA_ALERT_THRESHOLD: ${{ vars.HIVE_CI_INFRA_ALERT_THRESHOLD }}
+          CI_INFRA_MIN_RUNS: ${{ vars.HIVE_CI_INFRA_MIN_RUNS }}
+        run: python3 .github/scripts/ci_infra_actions.py rate

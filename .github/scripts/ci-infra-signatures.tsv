@@ -1,0 +1,37 @@
+# Runner-infrastructure failure signatures for ci_infra_classify.py (#9664).
+#
+# One signature per line: <class> TAB <scope> TAB <python regex>
+# Blank lines and lines starting with '#' are ignored. The FIRST matching row
+# wins, so keep the most specific rows first. A job whose failure matches no
+# row is classified `code` - the safe default, because `code` is never rerun.
+#
+# Scopes:
+#   step         regex searched in the FAILING STEP's output (the step that
+#                printed the first ##[error] line; the whole log when the job
+#                failed before any step ran, e.g. in "Set up job"). Matching
+#                only the failing step keeps a noisy but passing earlier step
+#                from turning a real code failure into `infra`.
+#   annotation   regex searched in the job's check-run annotations. A runner
+#                that died mid-job never uploads its log; the only trace is
+#                the annotation GitHub adds.
+#   silent-step  regex searched in the failing step's SCRIPT; matches only
+#                when that step printed nothing before it failed. A `go test
+#                -list` that exits 1 with no output never reached a test.
+#
+# Every class below was observed on the self-hosted pool on 2026-09-29; the
+# fixtures under testdata/ci-infra/ are real excerpts from those jobs.
+
+gocache-permission	step	open /mnt/gocache/\S+: permission denied
+build-cache-corrupt	step	can't find export data \(bufio: buffer full\)
+disk-full	step	No space left on device
+lint-no-go-files	step	context loading failed: no go files to analyze
+lint-timeout	step	level=error msg="Timeout exceeded
+runner-lost	annotation	The self-hosted runner lost communication with the server
+runner-lost	annotation	The runner has received a shutdown signal
+test-list-empty	step	^##\[error\]go test -list produced no test functions
+test-list-empty	silent-step	\bgo test\b.*\s-list\b
+
+# Reserved class `derived`: the job failed only to REPORT that other jobs
+# failed (v2 Tests' shard gate). Keep these rows last.
+derived	step	^##\[error\]Failing shard\(s\):
+derived	step	^##\[error\]Skipped shard\(s\):

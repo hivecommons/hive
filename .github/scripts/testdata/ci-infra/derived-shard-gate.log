@@ -1,0 +1,100 @@
+﻿2026-09-29T11:23:56.3013102Z Current runner version: '2.337.0'
+2026-09-29T11:23:56.3019545Z Runner name: 'hive-runners-w7f7t-runner-4zslh'
+2026-09-29T11:23:56.3020451Z Runner group name: 'Default'
+2026-09-29T11:23:56.3021381Z Machine name: 'hive-runners-w7f7t-runner-4zslh'
+2026-09-29T11:23:56.4169822Z ##[group]Run set -euo pipefail
+2026-09-29T11:23:56.4170604Z [36;1mset -euo pipefail[0m
+2026-09-29T11:23:56.4171059Z [36;1m[0m
+2026-09-29T11:23:56.4171443Z [36;1mshard_names=([0m
+2026-09-29T11:23:56.4171885Z [36;1m  list-packages[0m
+2026-09-29T11:23:56.4172511Z [36;1m  test-hub[0m
+2026-09-29T11:23:56.4173021Z [36;1m  test-agent[0m
+2026-09-29T11:23:56.4173437Z [36;1m  test-rest[0m
+2026-09-29T11:23:56.4173880Z [36;1m  test-dashboard-shuffle[0m
+2026-09-29T11:23:56.4174359Z [36;1m)[0m
+2026-09-29T11:23:56.4174746Z [36;1mshard_results=([0m
+2026-09-29T11:23:56.4175211Z [36;1m  "${LIST_PACKAGES_RESULT:-}"[0m
+2026-09-29T11:23:56.4175729Z [36;1m  "${TEST_HUB_RESULT:-}"[0m
+2026-09-29T11:23:56.4176232Z [36;1m  "${TEST_AGENT_RESULT:-}"[0m
+2026-09-29T11:23:56.4176733Z [36;1m  "${TEST_REST_RESULT:-}"[0m
+2026-09-29T11:23:56.4177263Z [36;1m  "${TEST_DASHBOARD_SHUFFLE_RESULT:-}"[0m
+2026-09-29T11:23:56.4178006Z [36;1m)[0m
+2026-09-29T11:23:56.4178395Z [36;1m[0m
+2026-09-29T11:23:56.4178825Z [36;1mfailures=()[0m
+2026-09-29T11:23:56.4179358Z [36;1mskipped=()[0m
+2026-09-29T11:23:56.4179793Z [36;1mcancelled=()[0m
+2026-09-29T11:23:56.4180242Z [36;1munknown=()[0m
+2026-09-29T11:23:56.4180660Z [36;1m[0m
+2026-09-29T11:23:56.4181094Z [36;1mfor i in "${!shard_names[@]}"; do[0m
+2026-09-29T11:23:56.4181651Z [36;1m  name=${shard_names[$i]}[0m
+2026-09-29T11:23:56.4182176Z [36;1m  result=${shard_results[$i]}[0m
+2026-09-29T11:23:56.4182812Z [36;1m  printf '%-23s %s\n' "${name}:" "${result:-<missing>}"[0m
+2026-09-29T11:23:56.4183445Z [36;1m  case "$result" in[0m
+2026-09-29T11:23:56.4183928Z [36;1m    success) ;;[0m
+2026-09-29T11:23:56.4184409Z [36;1m    failure) failures+=("$name") ;;[0m
+2026-09-29T11:23:56.4184991Z [36;1m    skipped) skipped+=("$name") ;;[0m
+2026-09-29T11:23:56.4185568Z [36;1m    cancelled) cancelled+=("$name") ;;[0m
+2026-09-29T11:23:56.4186190Z [36;1m    *) unknown+=("$name=${result:-<missing>}") ;;[0m
+2026-09-29T11:23:56.4186761Z [36;1m  esac[0m
+2026-09-29T11:23:56.4187170Z [36;1mdone[0m
+2026-09-29T11:23:56.4187704Z [36;1m[0m
+2026-09-29T11:23:56.4188106Z [36;1mjoin_by_comma() {[0m
+2026-09-29T11:23:56.4188573Z [36;1m  local IFS=', '[0m
+2026-09-29T11:23:56.4189029Z [36;1m  echo "$*"[0m
+2026-09-29T11:23:56.4189456Z [36;1m}[0m
+2026-09-29T11:23:56.4189842Z [36;1m[0m
+2026-09-29T11:23:56.4190256Z [36;1mappend_summary() {[0m
+2026-09-29T11:23:56.4190787Z [36;1m  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then[0m
+2026-09-29T11:23:56.4191349Z [36;1m    {[0m
+2026-09-29T11:23:56.4191780Z [36;1m      echo "## v2 shard aggregate"[0m
+2026-09-29T11:23:56.4192314Z [36;1m      echo ""[0m
+2026-09-29T11:23:56.4192763Z [36;1m      echo "$1"[0m
+2026-09-29T11:23:56.4193220Z [36;1m    } >> "$GITHUB_STEP_SUMMARY"[0m
+2026-09-29T11:23:56.4193717Z [36;1m  fi[0m
+2026-09-29T11:23:56.4194094Z [36;1m}[0m
+2026-09-29T11:23:56.4194466Z [36;1m[0m
+2026-09-29T11:23:56.4195080Z [36;1mif [ "${#failures[@]}" -gt 0 ] || [ "${#skipped[@]}" -gt 0 ] || [ "${#unknown[@]}" -gt 0 ]; then[0m
+2026-09-29T11:23:56.4195837Z [36;1m  if [ "${#failures[@]}" -gt 0 ]; then[0m
+2026-09-29T11:23:56.4196532Z [36;1m    echo "::error::Failing shard(s): $(join_by_comma "${failures[@]}")"[0m
+2026-09-29T11:23:56.4197198Z [36;1m  fi[0m
+2026-09-29T11:23:56.4197998Z [36;1m  if [ "${#skipped[@]}" -gt 0 ]; then[0m
+2026-09-29T11:23:56.4198935Z [36;1m    echo "::error::Skipped shard(s): $(join_by_comma "${skipped[@]}"). A skipped shard means tests may not have run."[0m
+2026-09-29T11:23:56.4199821Z [36;1m  fi[0m
+2026-09-29T11:23:56.4200276Z [36;1m  if [ "${#unknown[@]}" -gt 0 ]; then[0m
+2026-09-29T11:23:56.4201001Z [36;1m    echo "::error::Unknown shard result(s): $(join_by_comma "${unknown[@]}")"[0m
+2026-09-29T11:23:56.4201683Z [36;1m  fi[0m
+2026-09-29T11:23:56.4202118Z [36;1m  if [ "${#cancelled[@]}" -gt 0 ]; then[0m
+2026-09-29T11:23:56.4203538Z [36;1m    echo "Cancelled shard(s) were also present: $(join_by_comma "${cancelled[@]}"). They are not treated as infrastructure-only because another shard failed, skipped, or reported an unknown state."[0m
+2026-09-29T11:23:56.4204789Z [36;1m  fi[0m
+2026-09-29T11:23:56.4205767Z [36;1m  append_summary "❌ At least one shard failed, skipped, or reported an unknown state. Cancelled shards, if any, were not allowed to mask that result."[0m
+2026-09-29T11:23:56.4206842Z [36;1m  exit 1[0m
+2026-09-29T11:23:56.4207237Z [36;1mfi[0m
+2026-09-29T11:23:56.4207703Z [36;1m[0m
+2026-09-29T11:23:56.4208121Z [36;1mif [ "${#cancelled[@]}" -gt 0 ]; then[0m
+2026-09-29T11:23:56.4209418Z [36;1m  message="Infrastructure cancellation: shard(s) did not complete: $(join_by_comma "${cancelled[@]}"). No test failure was observed, but this run is not complete test evidence for those shard(s)."[0m
+2026-09-29T11:23:56.4210843Z [36;1m  echo "::warning title=Infrastructure cancellation::$message"[0m
+2026-09-29T11:23:56.4211512Z [36;1m  append_summary "⚠️ $message"[0m
+2026-09-29T11:23:56.4212010Z [36;1m  exit 0[0m
+2026-09-29T11:23:56.4212418Z [36;1mfi[0m
+2026-09-29T11:23:56.4212796Z [36;1m[0m
+2026-09-29T11:23:56.4213237Z [36;1mappend_summary "✅ All shards succeeded."[0m
+2026-09-29T11:23:56.4213819Z [36;1mecho "All shards succeeded."[0m
+2026-09-29T11:23:56.4235171Z shell: /usr/bin/bash -e {0}
+2026-09-29T11:23:56.4235951Z env:
+2026-09-29T11:23:56.4236346Z   CGO_ENABLED: 1
+2026-09-29T11:23:56.4236776Z   KUBERNETES_SERVICE_HOST: 
+2026-09-29T11:23:56.4237254Z   KUBERNETES_SERVICE_PORT: 
+2026-09-29T11:23:56.4237950Z   ACTIONS_CACHE_SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
+2026-09-29T11:23:56.4238599Z   LIST_PACKAGES_RESULT: success
+2026-09-29T11:23:56.4239091Z   TEST_HUB_RESULT: success
+2026-09-29T11:23:56.4239559Z   TEST_AGENT_RESULT: failure
+2026-09-29T11:23:56.4240036Z   TEST_REST_RESULT: success
+2026-09-29T11:23:56.4240530Z   TEST_DASHBOARD_SHUFFLE_RESULT: success
+2026-09-29T11:23:56.4241100Z ##[endgroup]
+2026-09-29T11:23:56.4468638Z list-packages:          success
+2026-09-29T11:23:56.4469224Z test-hub:               success
+2026-09-29T11:23:56.4469753Z test-agent:             failure
+2026-09-29T11:23:56.4535020Z test-rest:              success
+2026-09-29T11:23:56.4535768Z test-dashboard-shuffle: success
+2026-09-29T11:23:56.4564772Z ##[error]Failing shard(s): test-agent
+2026-09-29T11:23:56.4580780Z ##[error]Process completed with exit code 1.

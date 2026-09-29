@@ -1,0 +1,84 @@
+name: CI infra rerun
+
+# Classify every failed job of a completed CI run as runner infrastructure or
+# code, and rerun the failed jobs ONCE when all of them are infrastructure
+# (#9664). On 2026-09-29 about 160 of 371 failed jobs were the runner pool (a
+# shared Go build cache, full disks, runner pods that died), and each one was
+# rerun by hand or, worse, "fixed" in code.
+#
+# Guards, all enforced in .github/scripts/ci_infra_actions.py and tested by
+# .github/scripts/test-ci-infra.py:
+#   - only attempt 1 of a run is ever rerun, and only while it is still the
+#     latest attempt: an automatic rerun can never loop;
+#   - never when any failed job is a `code` failure;
+#   - never for a run whose head is a fork.
+# Set the repository variable HIVE_CI_INFRA_RERUN=off to keep classifying
+# (and feeding ci-infra-rate.yml) without rerunning anything.
+#
+# Runs on a GitHub-hosted runner on purpose: the self-hosted pool is the thing
+# being diagnosed. It checks out the default branch only, never PR code.
+
+on:
+  workflow_run:
+    # KEEP IN SYNC with DEFAULT_WATCHED_WORKFLOWS in
+    # .github/scripts/ci_infra_actions.py (the self-test enforces it). Release
+    # and publish workflows are deliberately absent: a rerun must never
+    # re-publish anything.
+    workflows:
+      - v2 CI
+      - v2 Tests
+      - Go Security Analysis
+      - Backend smoke
+      - Flue smoke
+      - Dashboard Lint
+      - Coverage Hourly
+      - testutil-guard
+      - SUID + NET_ADMIN Contract
+      - Podman Rootless Contract
+      - Docs Link Check
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  classify:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      checks: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # workflows/ too: the self-test checks the watched-workflow list
+          # in ci-infra-rerun.yml against the script.
+          sparse-checkout: |
+            .github/scripts
+            .github/workflows
+          persist-credentials: false
+      # Hermetic, about a second: a broken classifier would rerun code
+      # failures or miss infra ones, so it must not act untested.
+      - name: Self-test classifier and rerun guard
+        run: python3 .github/scripts/test-ci-infra.py
+      - name: Classify failed jobs and rerun once if all are infra
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_INFRA_RUN_ID: ${{ github.event.workflow_run.id }}
+          CI_INFRA_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          CI_INFRA_WORKFLOW: ${{ github.event.workflow_run.name }}
+          CI_INFRA_HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          CI_INFRA_RERUN: ${{ vars.HIVE_CI_INFRA_RERUN || 'on' }}
+        run: python3 .github/scripts/ci_infra_actions.py rerun --out ci-infra/verdicts.json
+      # ci-infra-rate.yml counts infra failures from these records, so it never
+      # has to download a job log itself.
+      - name: Upload verdicts
+        if: always() && hashFiles('ci-infra/verdicts.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-infra-verdicts-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          path: ci-infra/verdicts.json
+          retention-days: 14

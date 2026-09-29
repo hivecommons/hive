@@ -1,0 +1,15 @@
+﻿2026-09-29T15:32:31.2808813Z Current runner version: '2.337.0'
+2026-09-29T15:32:31.2816172Z Runner name: 'hive-runners-w7f7t-runner-kxwrz'
+2026-09-29T15:32:31.2817010Z Runner group name: 'Default'
+2026-09-29T15:32:31.2817873Z Machine name: 'hive-runners-w7f7t-runner-kxwrz'
+2026-09-29T15:33:14.7766090Z ##[group]Run go vet ./...
+2026-09-29T15:33:14.7766436Z [36;1mgo vet ./...[0m
+2026-09-29T15:33:14.7774395Z shell: /usr/bin/bash -e {0}
+2026-09-29T15:33:14.7774659Z env:
+2026-09-29T15:33:14.7774904Z   ACTIONS_CACHE_SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
+2026-09-29T15:33:14.7775196Z   GOTOOLCHAIN: local
+2026-09-29T15:33:14.7775546Z ##[endgroup]
+2026-09-29T15:33:28.6125546Z # github.com/hivecommons/hive/pkg/turn
+2026-09-29T15:33:28.6125922Z # [github.com/hivecommons/hive/pkg/turn]
+2026-09-29T15:33:28.6149331Z ##[error]vet: pkg/turn/executor_errorpaths_test.go:14:9: undefined: testEnvelope
+2026-09-29T15:33:29.8666116Z ##[error]Process completed with exit code 1.

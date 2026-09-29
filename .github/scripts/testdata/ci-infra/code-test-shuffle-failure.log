@@ -1,0 +1,59 @@
+﻿2026-09-29T07:57:12.3146458Z Current runner version: '2.337.0'
+2026-09-29T07:57:12.3152767Z Runner name: 'hive-runners-w7f7t-runner-lsj8j'
+2026-09-29T07:57:12.3153553Z Runner group name: 'Default'
+2026-09-29T07:57:12.3154403Z Machine name: 'hive-runners-w7f7t-runner-lsj8j'
+2026-09-29T07:57:17.0068454Z ##[group]Run set -o pipefail
+2026-09-29T07:57:17.0068872Z [36;1mset -o pipefail[0m
+2026-09-29T07:57:17.0069418Z [36;1m# Sliced like test-hub (NR mod N — pairwise disjoint, jointly[0m
+2026-09-29T07:57:17.0069913Z [36;1m# exhaustive) so no single job carries the whole ~6-minute lane;[0m
+2026-09-29T07:57:17.0070444Z [36;1m# -shuffle still varies order within each slice every run.[0m
+2026-09-29T07:57:17.0071053Z [36;1mgo test ./pkg/dashboard -short -list '.*' | grep -E '^(Test|Example|Fuzz)' | LC_ALL=C sort > all-tests.txt[0m
+2026-09-29T07:57:17.0071622Z [36;1mif [ ! -s all-tests.txt ]; then[0m
+2026-09-29T07:57:17.0072246Z [36;1m  echo "::error::go test -list produced no test functions for pkg/dashboard — refusing to run an empty slice (fail closed)"[0m
+2026-09-29T07:57:17.0072818Z [36;1m  exit 1[0m
+2026-09-29T07:57:17.0073062Z [36;1mfi[0m
+2026-09-29T07:57:17.0073423Z [36;1mawk -v n="$TOTAL" -v i="$IDX" 'NR % n == i - 1' all-tests.txt > slice.txt[0m
+2026-09-29T07:57:17.0074080Z [36;1mecho "slice $IDX/$TOTAL: $(wc -l < slice.txt) of $(wc -l < all-tests.txt) test functions"[0m
+2026-09-29T07:57:17.0074612Z [36;1mRUN="^($(paste -sd'|' slice.txt))$"[0m
+2026-09-29T07:57:17.0075027Z [36;1m# Bound on concurrent t.Parallel tests inside the package: high[0m
+2026-09-29T07:57:17.0075539Z [36;1m# enough to keep the lane fast, low enough that the package's many[0m
+2026-09-29T07:57:17.0076108Z [36;1m# httptest servers cannot exhaust ephemeral ports (see job comment).[0m
+2026-09-29T07:57:17.0076561Z [36;1mPARALLEL_TESTS=4[0m
+2026-09-29T07:57:17.0077050Z [36;1mif gotestsum --format=standard-verbose --rerun-fails=2 --rerun-fails-max-failures=5 \[0m
+2026-09-29T07:57:17.0077677Z [36;1m  --rerun-fails-report=flaky-tests-dashboard-shuffle-"$IDX".txt \[0m
+2026-09-29T07:57:17.0078400Z [36;1m  --packages="./pkg/dashboard" --junitfile junit-dashboard-shuffle-"$IDX".xml \[0m
+2026-09-29T07:57:17.0079145Z [36;1m  -- -short -race -count=1 -v -shuffle=on -p 1 -parallel "$PARALLEL_TESTS" -run "$RUN" \[0m
+2026-09-29T07:57:17.0079820Z [36;1m  2>&1 | grep --line-buffered -vE '^=== (RUN|PAUSE|CONT) ' | tee test-dashboard-shuffle-"$IDX".log; then[0m
+2026-09-29T07:57:17.0080364Z [36;1m  exit 0[0m
+2026-09-29T07:57:17.0080614Z [36;1mfi[0m
+2026-09-29T07:57:17.0080957Z [36;1m# The test binary prints "-test.shuffle <seed>" as its first line;[0m
+2026-09-29T07:57:17.0081466Z [36;1m# put the seed in the annotation so the failure is reproducible.[0m
+2026-09-29T07:57:17.0082092Z [36;1mSEED=$(grep -m1 -E '^-test\.shuffle [0-9]+' test-dashboard-shuffle-"$IDX".log | awk '{print $2}')[0m
+2026-09-29T07:57:17.0083413Z [36;1mecho "::error::pkg/dashboard failed under shuffled order (slice $IDX/$TOTAL). Reproduce from src/ with: go test ./pkg/dashboard -short -race -count=1 -p 1 -parallel $PARALLEL_TESTS -run '$RUN' -shuffle=${SEED:-<seed line missing from log>}"[0m
+2026-09-29T07:57:17.0084349Z [36;1mexit 1[0m
+2026-09-29T07:57:17.0092001Z shell: /usr/bin/bash -e {0}
+2026-09-29T07:57:17.0092323Z env:
+2026-09-29T07:57:17.0092562Z   CGO_ENABLED: 1
+2026-09-29T07:57:17.0092818Z   KUBERNETES_SERVICE_HOST: 
+2026-09-29T07:57:17.0093124Z   KUBERNETES_SERVICE_PORT: 
+2026-09-29T07:57:17.0093449Z   ACTIONS_CACHE_SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
+2026-09-29T07:57:17.0093837Z   GOTOOLCHAIN: local
+2026-09-29T07:57:17.0094098Z   IDX: 1
+2026-09-29T07:57:17.0094337Z   TOTAL: 2
+2026-09-29T07:57:17.0094586Z ##[endgroup]
+2026-09-29T08:00:07.0417335Z 
+2026-09-29T08:00:07.0417454Z === [31mFailed[0m
+2026-09-29T08:00:07.0417886Z === [31mFAIL[0m: pkg/dashboard TestOpenAPISpecCoversEveryRegisteredRoute (0.74s)
+2026-09-29T08:00:07.0418788Z     openapi_route_parity_test.go:388: dashboard/openapi.json has drifted from the registered dashboard routes (407 registered, 397 documented, 1 problem(s)):
+2026-09-29T08:00:07.0421610Z           registered but undocumented: GET /api/pr-throughput — add it to dashboard/openapi.json or, if it genuinely should stay unpublished, add a routeParityException with a reason
+2026-09-29T08:00:07.0422651Z 
+2026-09-29T08:00:07.0423396Z === [31mFAIL[0m: pkg/dashboard TestOpenAPISpecCoversEveryRegisteredRoute (re-run 1) (0.69s)
+2026-09-29T08:00:07.0425029Z     openapi_route_parity_test.go:388: dashboard/openapi.json has drifted from the registered dashboard routes (407 registered, 397 documented, 1 problem(s)):
+2026-09-29T08:00:07.0427681Z           registered but undocumented: GET /api/pr-throughput — add it to dashboard/openapi.json or, if it genuinely should stay unpublished, add a routeParityException with a reason
+2026-09-29T08:00:07.0428276Z 
+2026-09-29T08:00:07.0428643Z === [31mFAIL[0m: pkg/dashboard TestOpenAPISpecCoversEveryRegisteredRoute (re-run 2) (0.74s)
+2026-09-29T08:00:07.0429789Z     openapi_route_parity_test.go:388: dashboard/openapi.json has drifted from the registered dashboard routes (407 registered, 397 documented, 1 problem(s)):
+2026-09-29T08:00:07.0431319Z           registered but undocumented: GET /api/pr-throughput — add it to dashboard/openapi.json or, if it genuinely should stay unpublished, add a routeParityException with a reason
+2026-09-29T08:00:07.0431915Z 
+2026-09-29T08:00:07.0432089Z DONE 3 runs, 3050 tests, 15 skipped, 3 failures in 86.951s
+2026-09-29T08:00:07.1005356Z ##[error]Process completed with exit code 1.
