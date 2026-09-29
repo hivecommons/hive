@@ -320,6 +320,25 @@ func latestCheckRunsByNameAndApp(checks []*gh.CheckRun) []*gh.CheckRun {
 	for _, cr := range latest {
 		out = append(out, cr)
 	}
+	// Map iteration order is randomized, so callers that build a failure
+	// excerpt from the first few entries (fetchFailureExcerpt) would see a
+	// different, arbitrary subset of failing checks on every call. Sort by
+	// name (with app ID as a tie-break for same-named checks from different
+	// apps) so the same PR head always yields the same ordering.
+	sort.Slice(out, func(i, j int) bool {
+		ni, nj := out[i].GetName(), out[j].GetName()
+		if ni != nj {
+			return ni < nj
+		}
+		var ai, aj int64
+		if app := out[i].GetApp(); app != nil {
+			ai = app.GetID()
+		}
+		if app := out[j].GetApp(); app != nil {
+			aj = app.GetID()
+		}
+		return ai < aj
+	})
 	return out
 }
 
