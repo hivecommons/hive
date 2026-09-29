@@ -72,6 +72,25 @@ type hiveHoldAuditEntry struct {
 	Timestamp string `json:"ts"`
 	Action    string `json:"action"`
 	Detail    string `json:"detail"`
+	// Repo and Target are the typed audit fields (#9587). Entries written
+	// before they existed carry the same values only as repo=/number= pairs
+	// in Detail; auditItemRef reads the typed field first and falls back.
+	Repo   string `json:"repo,omitempty"`
+	Target int    `json:"target,omitempty"`
+}
+
+// auditItemRef returns the repo and item number an audit entry names: the
+// typed fields when present, else the legacy repo=/number= detail pairs.
+func auditItemRef(entry hiveHoldAuditEntry, fields map[string]string) (string, int) {
+	repo := strings.TrimSpace(entry.Repo)
+	if repo == "" {
+		repo = fields["repo"]
+	}
+	number := entry.Target
+	if number <= 0 {
+		number, _ = strconv.Atoi(fields["number"])
+	}
+	return repo, number
 }
 
 type hiveHoldAuditRecord struct {
@@ -238,6 +257,9 @@ func (c *Client) ensureMigrationHold(ctx context.Context, repo string, number in
 	if err := c.AddLabels(ctx, repo, number, []string{label}); err != nil {
 		return fmt.Errorf("adding %s to %s#%d: %w", label, repo, number, err)
 	}
+	c.recordWriteAudit(AuditActionHoldMigrationLabelAdded, hiveWriteMeta(),
+		WriteTarget{Repo: repo, Number: number},
+		"label", label, "migration", HiveHoldMigrationID)
 	return nil
 }
 
@@ -302,8 +324,7 @@ func activeHiveHoldAuditHolds(auditPath, label string) map[string]bool {
 	})
 	for _, record := range records {
 		fields := parseAuditDetail(record.entry.Detail)
-		repo := fields["repo"]
-		number, _ := strconv.Atoi(fields["number"])
+		repo, number := auditItemRef(record.entry, fields)
 		if repo == "" || number <= 0 {
 			continue
 		}

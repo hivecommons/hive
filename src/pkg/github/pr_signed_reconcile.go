@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -273,6 +274,10 @@ func (c *Client) reconcileSignedPR(ctx context.Context, owner, repo string, pr *
 		c.noteSignedSkip(ctx, owner, repo, number, err.Error())
 		return headSHA
 	}
+	c.recordWriteAudit(AuditActionSignedCommitReauthored, hiveWriteMeta(),
+		WriteTarget{Repo: owner + "/" + repo, Number: number},
+		"branch", head, "base", base, "commit", oid,
+		"replaced_commits", strconv.Itoa(replaced))
 	c.info("signed-commit reconciler: unsigned tail re-authored as one GitHub-signed commit by the App bot",
 		append(logArgs, "base", base, "commit", oid, "replaced_commits", replaced)...)
 	return oid
@@ -359,5 +364,7 @@ func (c *Client) noteSignedSkip(ctx context.Context, owner, repo string, number 
 		return
 	}
 	c.signedReconcile.markNoted(key)
+	c.recordWriteAudit(AuditActionSignedCommitSkipNoted, hiveWriteMeta(),
+		WriteTarget{Repo: owner + "/" + repo, Number: number}, "reason", reason)
 	c.info("signed-commit reconciler: noted on the PR why it can't be signed", "repo", owner+"/"+repo, "pr", number)
 }

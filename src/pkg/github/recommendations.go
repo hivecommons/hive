@@ -91,6 +91,9 @@ func (c *Client) PostRecommendations(ctx context.Context, repo, title, body stri
 		if err != nil {
 			return RecommendationsResult{}, fmt.Errorf("PostRecommendations: create failed: %w", err)
 		}
+		c.recordWriteAudit(AuditActionRecommendationsPosted, hiveWriteMeta(),
+			WriteTarget{Repo: owner + "/" + repoName, Number: created.GetNumber()},
+			"outcome", auditOutcomeCreated)
 		c.logger.Info("recommendations issue opened",
 			slog.String("repo", repo), slog.Int("number", created.GetNumber()))
 		return RecommendationsResult{Number: created.GetNumber(), URL: created.GetHTMLURL(), Created: true}, nil
@@ -109,6 +112,9 @@ func (c *Client) PostRecommendations(ctx context.Context, repo, title, body stri
 	if err != nil {
 		return RecommendationsResult{}, fmt.Errorf("PostRecommendations: edit failed: %w", err)
 	}
+	c.recordWriteAudit(AuditActionRecommendationsPosted, hiveWriteMeta(),
+		WriteTarget{Repo: owner + "/" + repoName, Number: existing.GetNumber()},
+		"outcome", auditOutcomeUpdated)
 	c.logger.Info("recommendations issue updated",
 		slog.String("repo", repo), slog.Int("number", updated.GetNumber()))
 	return RecommendationsResult{Number: updated.GetNumber(), URL: updated.GetHTMLURL(), Updated: true}, nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
@@ -44,6 +45,10 @@ func (c *Client) EnsureFleetReport(ctx context.Context, report fleetreport.Repor
 		} else {
 			c.logger.Warn("fleet report: could not add +1 reaction", "issue", existing.GetNumber(), "error", err)
 		}
+		c.recordWriteAudit(AuditActionFleetReportPosted, hiveWriteMeta(),
+			WriteTarget{Repo: fleetReportRepo, Number: existing.GetNumber()},
+			"outcome", auditOutcomeCommented, "reaction", strconv.FormatBool(reacted),
+			"fingerprint", report.Fingerprint)
 		return FleetReportResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), Commented: true, ReactionSent: reacted}, nil
 	}
 
@@ -51,6 +56,13 @@ func (c *Client) EnsureFleetReport(ctx context.Context, report fleetreport.Repor
 	if err != nil {
 		return FleetReportResult{}, err
 	}
+	outcome := auditOutcomeCreated
+	if res.AlreadyExisted {
+		outcome = auditOutcomeCommented
+	}
+	c.recordWriteAudit(AuditActionFleetReportPosted, hiveWriteMeta(),
+		WriteTarget{Repo: fleetReportRepo, Number: res.Number},
+		"outcome", outcome, "fingerprint", report.Fingerprint)
 	return FleetReportResult{Number: res.Number, URL: res.URL, Created: !res.AlreadyExisted, Commented: res.AlreadyExisted}, nil
 }
 
@@ -64,11 +76,17 @@ func (c *Client) PostFleetReportRecovery(ctx context.Context, issueNumber int, r
 	if err := c.CreateIssueComment(ctx, fleetReportRepo, issueNumber, report.Body); err != nil {
 		return err
 	}
+	var closeErr error
 	if closeIfOwner {
-		_, _, err := c.client.Issues.Edit(ctx, "hivecommons", "hive", issueNumber, &gh.IssueRequest{State: gh.Ptr("closed")})
-		return err
+		_, _, closeErr = c.client.Issues.Edit(ctx, "hivecommons", "hive", issueNumber, &gh.IssueRequest{State: gh.Ptr("closed")})
 	}
-	return nil
+	// The comment landed either way, so the entry is written either way; a
+	// failed close is recorded as closed=false and still returned.
+	c.recordWriteAudit(AuditActionFleetReportRecovered, hiveWriteMeta(),
+		WriteTarget{Repo: fleetReportRepo, Number: issueNumber},
+		"closed", strconv.FormatBool(closeIfOwner && closeErr == nil),
+		"fingerprint", report.Fingerprint)
+	return closeErr
 }
 
 func (c *Client) findFleetReportIssue(ctx context.Context, fingerprint string) (*gh.Issue, error) {

@@ -619,9 +619,8 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	if hook := c.prOpenedDetailHook.Load(); hook != nil && *hook != nil && !res.AlreadyExisted {
 		go (*hook)(PROpenedDetail{Agent: req.Agent, Repo: req.Repo, Number: res.Number, URL: res.URL, Body: body, Handoff: req.Handoff})
 	}
-	c.recordCreationAudit(AuditActionAgentPRCreated, meta,
-		"repo", req.Repo,
-		"number", strconv.Itoa(res.Number),
+	c.recordWriteAudit(AuditActionAgentPRCreated, meta,
+		WriteTarget{Repo: req.Repo, Number: res.Number},
 		"author", res.Author,
 		"url", res.URL,
 		"reused", strconv.FormatBool(res.AlreadyExisted),

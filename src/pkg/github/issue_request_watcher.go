@@ -416,9 +416,8 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			resp.Number = res.Number
 			resp.URL = res.URL
 			resp.Error = fmt.Sprintf("not filed: a maintainer closed issue #%d (%s) as %q over the same file references within the last 30 days; do not re-file this finding — read the closure rationale and record the rejection instead", res.Number, res.URL, res.RejectedReason)
-			c.recordCreationAudit(AuditActionAgentIssueRejectedDuplicate, meta,
-				"repo", req.Repo,
-				"number", strconv.Itoa(res.Number),
+			c.recordWriteAudit(AuditActionAgentIssueRejectedDuplicate, meta,
+				WriteTarget{Repo: req.Repo, Number: res.Number},
 				"url", res.URL)
 			c.writeIssueResult(path, resp)
 			_ = os.Remove(path)
@@ -479,8 +478,6 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		action = AuditActionIssueClosed
 	}
 	extra := []string{
-		"repo", req.Repo,
-		"number", strconv.Itoa(resp.Number),
 		"url", resp.URL,
 		"reused", strconv.FormatBool(resp.AlreadyExisted),
 		"consolidated", strconv.FormatBool(resp.Consolidated),
@@ -492,7 +489,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		action = AuditActionPRClosed
 		extra = append(extra, "path", PRAuditPathRelay)
 	}
-	c.recordCreationAudit(action, meta, extra...)
+	c.recordWriteAudit(action, meta, WriteTarget{Repo: req.Repo, Number: resp.Number}, extra...)
 	c.writeIssueResult(path, resp)
 	_ = os.Remove(path)
 	c.issueClearRetry(path)

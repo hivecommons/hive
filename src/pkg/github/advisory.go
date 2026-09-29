@@ -120,9 +120,8 @@ func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, err
 	if err != nil {
 		return 0, fmt.Errorf("creating advisory issue: %w", err)
 	}
-	c.recordCreationAudit(AuditActionHiveIssueCreated, meta,
-		"repo", owner+"/"+repo,
-		"number", strconv.Itoa(issue.GetNumber()),
+	c.recordWriteAudit(AuditActionHiveIssueCreated, meta,
+		WriteTarget{Repo: owner + "/" + repo, Number: issue.GetNumber()},
 		"author", issue.GetUser().GetLogin(),
 		"url", issue.GetHTMLURL(),
 		"flow", "advisory")
@@ -275,9 +274,8 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 
 		// Audit-log only — deliberately NOT a comment on the issue, which
 		// would swap one kind of subscriber noise for another.
-		c.recordCreationAudit(AuditActionAdvisoryDigestSuppressed, InvocationMeta{Agent: AttributionAgentGovernor},
-			"repo", owner+"/"+repoName,
-			"number", strconv.Itoa(issueNum),
+		c.recordWriteAudit(AuditActionAdvisoryDigestSuppressed, InvocationMeta{Agent: AttributionAgentGovernor},
+			WriteTarget{Repo: owner + "/" + repoName, Number: issueNum},
 			"reason", sup.reason,
 			"flow", "advisory-digest")
 		c.logger.Info("advisory digest suppressed — not posting",
@@ -331,9 +329,8 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 	c.advisoryMu.Unlock()
 
 	if count == 1 || count%advisoryDigestAuditInterval == 0 {
-		c.recordCreationAudit(AuditActionAdvisoryCommented, InvocationMeta{Agent: AttributionAgentGovernor},
-			"repo", owner+"/"+repoName,
-			"number", strconv.Itoa(issueNum),
+		c.recordWriteAudit(AuditActionAdvisoryCommented, InvocationMeta{Agent: AttributionAgentGovernor},
+			WriteTarget{Repo: owner + "/" + repoName, Number: issueNum},
 			"author", author,
 			"post_count", strconv.Itoa(count),
 			"flow", "advisory-digest")

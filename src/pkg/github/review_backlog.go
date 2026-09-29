@@ -156,6 +156,12 @@ func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequ
 					return err
 				}
 			}
+			c.recordWriteAudit(AuditActionReviewBacklogIssueFiled, hiveWriteMeta(),
+				WriteTarget{Repo: req.Repo, Number: res.Number},
+				"pr", strconv.Itoa(req.Number),
+				"perspective", string(report.Perspective),
+				"reused", strconv.FormatBool(res.AlreadyExisted),
+				"review_agent", req.Agent)
 			ledger.Items[key] = reviewBacklogRecord{
 				Repo:        req.Repo,
 				PRNumber:    req.Number,
@@ -179,6 +185,10 @@ func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequ
 		if err := c.CreateIssueComment(ctx, req.Repo, req.Number, reviewBacklogSummaryComment(filedIssues, cap)); err != nil {
 			return err
 		}
+		c.recordWriteAudit(AuditActionReviewBacklogSummaryPosted, hiveWriteMeta(),
+			WriteTarget{Repo: req.Repo, Number: req.Number},
+			"issues", strconv.Itoa(len(filedIssues)),
+			"review_agent", req.Agent)
 		ledger.SummaryCommented[prKey] = true
 	}
 	return ledger.save("", now)

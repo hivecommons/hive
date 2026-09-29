@@ -32,5 +32,7 @@ func (c *Client) ApplyHumanDecisionLabel(ctx context.Context, repo string, numbe
 	if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, name, number, []string{label}); err != nil {
 		return fmt.Errorf("apply label %q to %s/%s#%d: %w", label, owner, name, number, err)
 	}
+	c.recordWriteAudit(AuditActionHiveLabelApplied, hiveWriteMeta(),
+		WriteTarget{Repo: owner + "/" + name, Number: number}, "label", label)
 	return nil
 }

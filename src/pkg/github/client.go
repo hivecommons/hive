@@ -2032,8 +2032,8 @@ func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, 
 	// Audit the review so it counts as activity on the trail. This is the hive's
 	// own auto-merge self-approval (a governor action); agent-authored reviews
 	// come through the review-request watcher, which audits separately.
-	c.recordCreationAudit(AuditActionPRReviewed, InvocationMeta{Agent: AttributionAgentGovernor},
-		"repo", owner+"/"+repoName, "number", strconv.Itoa(number),
+	c.recordWriteAudit(AuditActionPRReviewed, InvocationMeta{Agent: AttributionAgentGovernor},
+		WriteTarget{Repo: owner + "/" + repoName, Number: number},
 		"agent", queuedBy, "state", "approved")
 	if err := c.AddLabels(ctx, owner+"/"+repoName, number, []string{label}); err != nil {
 		return fmt.Errorf("adding %s label: %w", label, err)
@@ -3042,9 +3042,8 @@ func (c *Client) RecordPRMergedAudit(repo string, number int, method, sha, path 
 	if c == nil {
 		return
 	}
-	c.recordCreationAudit(AuditActionPRMerged, InvocationMeta{Agent: AttributionAgentGovernor},
-		"repo", repo,
-		"number", strconv.Itoa(number),
+	c.recordWriteAudit(AuditActionPRMerged, InvocationMeta{Agent: AttributionAgentGovernor},
+		WriteTarget{Repo: repo, Number: number},
 		"method", method,
 		"sha", sha,
 		"path", path)

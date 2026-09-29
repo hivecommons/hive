@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os/exec"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -531,13 +530,27 @@ func (c *Client) attributionTrailerOn() bool {
 // recordCreationAudit writes the unconditional audit entry for a mediated
 // creation. With no sink wired yet (pre-dashboard startup window) it falls
 // back to the hive log so the event is still recorded somewhere durable.
+//
+// It derives the typed repo/target from the "repo" and "number" pairs in extra.
+// Write sites pass them explicitly through recordWriteAudit instead (#9587
+// phase 2); this form stays for callers that still build pairs.
 func (c *Client) recordCreationAudit(action string, m InvocationMeta, extra ...string) {
 	if c == nil {
 		return
 	}
 	// Credential material is masked before the entry reaches ANY sink (#9587):
 	// details carry agent-supplied values, and the audit log is durable.
-	rec := auditRecordFor(action, m, extra...)
+	c.deliverAuditRecord(auditRecordFor(action, m, extra...))
+}
+
+// deliverAuditRecord hands one already-redacted record to the audit sink: the
+// typed sink when wired, else the legacy untyped sink, else the hive log. Every
+// audited GitHub write funnels through here, so the precedence (and the
+// never-double-record rule) lives in exactly one place.
+func (c *Client) deliverAuditRecord(rec AuditRecord) {
+	if c == nil {
+		return
+	}
 	c.attribMu.RLock()
 	auditRecord := c.attribution.AuditRecord
 	audit := c.attribution.Audit
@@ -603,9 +616,8 @@ func (c *Client) ReconcilePRAttribution(ctx context.Context, prURL string, meta 
 	if err != nil {
 		return fmt.Errorf("reconcile attribution: edit PR %s#%d: %w", ref.FullName(), ref.Number, err)
 	}
-	c.recordCreationAudit(AuditActionPRAttributionReconciled, meta,
-		"repo", ref.FullName(),
-		"number", strconv.Itoa(ref.Number),
+	c.recordWriteAudit(AuditActionPRAttributionReconciled, meta,
+		WriteTarget{Repo: ref.FullName(), Number: ref.Number},
 		"url", prURL,
 		"reconciled", "true",
 	)

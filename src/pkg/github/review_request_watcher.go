@@ -472,9 +472,8 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 			slog.String("error", err.Error()))
 	}
 
-	c.recordCreationAudit(AuditActionPRReviewed, meta,
-		"repo", req.Repo,
-		"number", strconv.Itoa(req.Number),
+	c.recordWriteAudit(AuditActionPRReviewed, meta,
+		WriteTarget{Repo: req.Repo, Number: req.Number},
 		"state", state)
 	c.writeReviewResult(path, resp)
 	_ = os.Remove(path)
@@ -571,9 +570,8 @@ func (c *Client) handleReviewThreadRequest(ctx context.Context, path string, req
 		return
 	}
 
-	c.recordCreationAudit(AuditActionPRReviewed, meta,
-		"repo", req.Repo,
-		"number", strconv.Itoa(req.Number),
+	c.recordWriteAudit(AuditActionPRReviewed, meta,
+		WriteTarget{Repo: req.Repo, Number: req.Number},
 		"state", state,
 		"thread", threadID)
 	c.writeReviewResult(path, ReviewResponse{OK: true, Number: req.Number, State: state, ThreadID: threadID, At: nowFn().UTC().Format(time.RFC3339)})

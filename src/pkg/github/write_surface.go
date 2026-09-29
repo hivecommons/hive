@@ -129,14 +129,69 @@ func (c *Client) refuseWrite(agent, op, repo string, target int) (string, bool) 
 		return "", false
 	}
 	reason := WriteAllowlistReason(agent, op)
-	extra := []string{"repo", repo}
-	if target > 0 {
-		extra = append(extra, "number", strconv.Itoa(target))
-	}
-	extra = append(extra, "op", op, "outcome", "refused")
-	c.recordCreationAudit(AuditActionAgentWriteRefused, InvocationMeta{Agent: agent}, extra...)
+	c.recordWriteAudit(AuditActionAgentWriteRefused, InvocationMeta{Agent: agent},
+		WriteTarget{Repo: repo, Number: target}, "op", op, "outcome", "refused")
 	return reason, true
 }
+
+// WriteTarget names what one hive-mediated GitHub write touched. Write sites
+// pass it explicitly (#9587 phase 2) so the audit entry's typed repo and target
+// come from the value the write actually used, never from re-parsing a string.
+type WriteTarget struct {
+	// Repo is the repository written to (bare or "owner/repo").
+	Repo string
+	// Number is the issue or PR number written to; zero when the write has no
+	// numbered target (a label created on a repo, a refused open_pr).
+	Number int
+}
+
+// recordWriteAudit writes the audit entry for one hive-mediated GitHub write,
+// with the typed repo/target taken from target. The legacy "repo=" and
+// "number=" detail pairs are still written first, in the same order as
+// before, so every reader of the detail string keeps working.
+//
+// Any "repo" or "number" pair in extra is dropped: target is the one source
+// of both, so the typed field and the detail pair can never disagree.
+func (c *Client) recordWriteAudit(action string, m InvocationMeta, target WriteTarget, extra ...string) {
+	if c == nil {
+		return
+	}
+	c.deliverAuditRecord(writeAuditRecord(action, m, target, extra...))
+}
+
+// writeAuditRecord builds the redacted record recordWriteAudit delivers.
+func writeAuditRecord(action string, m InvocationMeta, target WriteTarget, extra ...string) AuditRecord {
+	repo := strings.TrimSpace(target.Repo)
+	pairs := make([]string, 0, len(extra)+auditTargetPairLen)
+	pairs = append(pairs, auditPairRepo, repo)
+	if target.Number > 0 {
+		pairs = append(pairs, auditPairNumber, strconv.Itoa(target.Number))
+	}
+	for i := 0; i+1 < len(extra); i += 2 {
+		if extra[i] == auditPairRepo || extra[i] == auditPairNumber {
+			continue
+		}
+		pairs = append(pairs, extra[i], extra[i+1])
+	}
+	rec := AuditRecord{
+		Action: action,
+		Detail: redactAuditText(m.AuditDetail(pairs...)),
+		Agent:  m.Agent,
+		Repo:   redactAuditText(repo),
+	}
+	if target.Number > 0 {
+		rec.Target = target.Number
+	}
+	return rec
+}
+
+// Detail pair keys that carry the typed repo/target in the legacy format.
+const (
+	auditPairRepo   = "repo"
+	auditPairNumber = "number"
+	// auditTargetPairLen is the room the repo and number pairs take.
+	auditTargetPairLen = 4
+)
 
 // AuditRecord is one typed audit entry for a hive-mediated GitHub write. Repo
 // and Target are first-class so consumers (the activity collector, per-repo
@@ -189,11 +244,11 @@ func auditRecordFor(action string, m InvocationMeta, extra ...string) AuditRecor
 	}
 	for i := 0; i+1 < len(extra); i += 2 {
 		switch extra[i] {
-		case "repo":
+		case auditPairRepo:
 			if rec.Repo == "" {
 				rec.Repo = redactAuditText(strings.TrimSpace(extra[i+1]))
 			}
-		case "number":
+		case auditPairNumber:
 			if rec.Target == 0 {
 				if n, err := strconv.Atoi(strings.TrimSpace(extra[i+1])); err == nil && n > 0 {
 					rec.Target = n
