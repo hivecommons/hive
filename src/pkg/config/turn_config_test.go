@@ -107,3 +107,25 @@ func TestPRFollowUpMaxAge(t *testing.T) {
 		t.Fatalf("env max age = %v, want 90m", got)
 	}
 }
+
+func TestPRFollowUpRetention(t *testing.T) {
+	t.Setenv(PRFollowUpRetentionEnvVar, "")
+	var nilCfg *Config
+	if got := nilCfg.PRFollowUpRetention(); got != DefaultPRFollowUpRetention {
+		t.Fatalf("nil config retention = %v, want default %v", got, DefaultPRFollowUpRetention)
+	}
+	for _, raw := range []string{"", "soon", "-1h", "0s"} {
+		cfg := &Config{Turn: TurnConfig{PRFollowUp: PRFollowUpConfig{Retention: raw}}}
+		if got := cfg.PRFollowUpRetention(); got != DefaultPRFollowUpRetention {
+			t.Fatalf("retention %q = %v, want default %v", raw, got, DefaultPRFollowUpRetention)
+		}
+	}
+	cfg := &Config{Turn: TurnConfig{PRFollowUp: PRFollowUpConfig{Retention: "72h"}}}
+	if got := cfg.PRFollowUpRetention(); got != 72*time.Hour {
+		t.Fatalf("configured retention = %v, want 72h", got)
+	}
+	t.Setenv(PRFollowUpRetentionEnvVar, "48h")
+	if got := cfg.PRFollowUpRetention(); got != 48*time.Hour {
+		t.Fatalf("env retention = %v, want the env override 48h", got)
+	}
+}

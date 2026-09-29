@@ -25,6 +25,11 @@ type PRFollowUpConfig struct {
 	// be resumed (Go duration, e.g. "12h"). Empty or invalid means
 	// DefaultPRFollowUpMaxAge. Older follow-ups fall back to a fresh dispatch.
 	MaxAge string `yaml:"max_age,omitempty" json:"max_age,omitempty"`
+	// Retention bounds how long a PR's pointer and handoff note are kept at
+	// all (Go duration, e.g. "336h"). Pointers are also deleted as soon as
+	// their PR merges or closes; this is the backstop for PRs whose end the
+	// hive never observes. Empty or invalid means DefaultPRFollowUpRetention.
+	Retention string `yaml:"retention,omitempty" json:"retention,omitempty"`
 }
 
 // ReentrantTurnConfig is the explicit opt-in surface for the pkg/turn envelope.
@@ -53,6 +58,15 @@ const (
 	// round; past it the conversation is stale enough that a fresh dispatch
 	// rebuilding context from the PR is the better answer.
 	DefaultPRFollowUpMaxAge = 24 * time.Hour
+	// PRFollowUpRetentionEnvVar overrides turn.pr_follow_up.retention.
+	PRFollowUpRetentionEnvVar = "HIVE_PR_FOLLOWUP_RETENTION"
+	// DefaultPRFollowUpRetention is how long a pointer (and the handoff note
+	// it carries) may live before the sweep deletes it even if the PR's merge
+	// or close was never observed. Two weeks matches the audit window the
+	// fix-before-new blocks use to attribute a PR to its agent
+	// (auditPRAttributionWindow): past it the PR no longer reaches its
+	// author through those blocks either.
+	DefaultPRFollowUpRetention = 14 * 24 * time.Hour
 )
 
 // PRFollowUpResumeEnabled reports whether PR follow-ups should try to resume
@@ -78,6 +92,19 @@ func (c *Config) PRFollowUpMaxAge() time.Duration {
 		return d
 	}
 	return DefaultPRFollowUpMaxAge
+}
+
+// PRFollowUpRetention returns how long pointers are kept, falling back to
+// DefaultPRFollowUpRetention for an unset, unparsable, or non-positive value.
+func (c *Config) PRFollowUpRetention() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(PRFollowUpRetentionEnvVar))
+	if raw == "" && c != nil {
+		raw = strings.TrimSpace(c.Turn.PRFollowUp.Retention)
+	}
+	if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+		return d
+	}
+	return DefaultPRFollowUpRetention
 }
 
 // ReentrantTurnEnabled reports whether agent is enrolled in the pkg/turn
