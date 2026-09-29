@@ -127,13 +127,15 @@ func perAgentXDGHome(agentName string, uid int, backend string) (string, bool) {
 }
 
 // interactiveHomeBridgeFiles are shared regular files bridged the same way.
-// .gitconfig carries the git identity + the git-credential-hive.sh helper
-// wiring the entrypoint writes with HOME=/data/home; without the bridge every
-// per-agent git push would lose its credential helper. .bashrc/.profile are
-// the shared shell rc files the entrypoint writes for agent panes. Links are
-// created even when the target does not exist yet (a dangling link goes live
-// the moment the entrypoint or a later step writes the shared file).
-var interactiveHomeBridgeFiles = []string{".gitconfig", ".bashrc", ".profile"}
+// .bashrc/.profile are the shared shell rc files the entrypoint writes for
+// agent panes. Links are created even when the target does not exist yet (a
+// dangling link goes live the moment the entrypoint or a later step writes
+// the shared file).
+//
+// DELIBERATELY NOT BRIDGED: .gitconfig (hivecommons/hive#9478 — one shared,
+// last-writer-wins global config for the whole fleet; see
+// retireSharedGitConfigBridge).
+var interactiveHomeBridgeFiles = []string{".bashrc", ".profile"}
 
 // interactiveHomeDirMode / interactiveHomeSharedDirMode mirror the inference-
 // home pair: 0700 once chowned to the agent UID (isolation is the point);
@@ -189,11 +191,13 @@ func (m *Manager) setupInteractiveHome(agent *AgentProcess, backend string) {
 	}
 
 	m.bridgeInteractiveHome(agent.Name, home)
+	m.retireSharedGitConfigBridge(agent.Name, home)
 	m.setupAgentXDGDirs(agent.Name, home, agent.UID)
 	m.setupCopilotHome(agent.Name, home, agent.UID)
 	m.seedClaudeSessionForAgent(agent, home)
 	m.tightenInteractiveHome(agent.Name, home, agent.UID)
 	m.sweepOrphanedClaudeTmp(agent.Name)
+	m.warnOnStrayGitIdentity(agent.Name, home)
 }
 
 // bridgeInteractiveHome creates the symlink bridges from a per-agent home to
@@ -322,6 +326,108 @@ func (m *Manager) setupCopilotHome(agentName, home string, uid int) {
 	m.bridgeHomeEntry(agentName,
 		filepath.Join(dir, copilotConfigFileName),
 		filepath.Join(sharedAgentHome, ".copilot", copilotConfigFileName))
+}
+
+// retireSharedGitConfigBridge removes the legacy ~/.gitconfig symlink that
+// pointed every per-agent home at the one shared /data/home/.gitconfig
+// (hivecommons/hive#9478).
+//
+// That bridge made the GLOBAL git config a single fleet-wide file: a
+// `git config --global user.name` by any agent (and global config outranks
+// the system /etc/gitconfig) silently re-attributed every other lane until
+// the next agent overwrote it — last-writer-wins commit identity, the bug
+// this issue reports. The commit identity itself is now pinned per lane at
+// launch via GIT_AUTHOR_*/GIT_COMMITTER_* (agentGitIdentity in
+// manager_env.go), which outranks every config layer; retiring the bridge
+// removes the shared layer that made the config files misleading in the
+// first place. Nothing is lost: /etc/gitconfig carries both the bot identity
+// and the git-credential-hive.sh helper for every UID regardless of $HOME
+// (hivecommons/hive#5343), which the entrypoint asserts at boot.
+//
+// Only a symlink pointing at the shared file is removed — a REAL per-agent
+// .gitconfig is the agent's own state and is never touched, and removing the
+// link touches nothing it pointed at.
+func (m *Manager) retireSharedGitConfigBridge(agentName, home string) {
+	link := filepath.Join(home, gitConfigFileName)
+	info, err := os.Lstat(link)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return
+	}
+	if target, rerr := os.Readlink(link); rerr != nil || target != filepath.Join(sharedAgentHome, gitConfigFileName) {
+		return
+	}
+	if err := os.Remove(link); err != nil {
+		m.logger.Warn("failed to retire shared .gitconfig bridge; global git config stays fleet-shared for this agent",
+			"agent", agentName, "link", link, "error", err)
+		return
+	}
+	m.logger.Info("retired shared .gitconfig bridge; agent reads the system /etc/gitconfig and the pinned GIT_AUTHOR_*/GIT_COMMITTER_* identity",
+		"agent", agentName, "home", home)
+}
+
+// warnOnStrayGitIdentity logs a WARN when a global git config layer reachable
+// from the agent's HOME still declares user.name/user.email
+// (hivecommons/hive#9478, proposed fix item 4).
+//
+// The launch-pinned GIT_AUTHOR_*/GIT_COMMITTER_* env vars outrank every config
+// layer, so such a file no longer changes who commits — but it still answers
+// `git config --show-origin user.email` with a stale, fleet-shared value, which
+// is exactly what made the original investigation chase the wrong lane. Naming
+// the file at launch keeps the discrepancy visible instead of silent. The check
+// is read-only and best-effort: an unreadable candidate is not a finding.
+func (m *Manager) warnOnStrayGitIdentity(agentName, home string) {
+	for _, rel := range gitIdentityConfigCandidates {
+		path := filepath.Join(home, rel)
+		if !gitConfigDeclaresUserIdentity(path) {
+			continue
+		}
+		m.logger.Warn("agent git config declares a user identity outside the system /etc/gitconfig; commits still use the pinned per-lane GIT_AUTHOR_*/GIT_COMMITTER_* identity, but `git config user.email` reads this shared value instead (hivecommons/hive#9478)",
+			"agent", agentName, "config", path)
+	}
+}
+
+// gitConfigFileName is git's global config file in $HOME; the .config/git
+// candidate is the XDG-located second global layer (~/.config is itself a
+// shared bridge, see interactiveHomeBridgeDirs), which git reads when the
+// first is absent.
+const gitConfigFileName = ".gitconfig"
+
+var gitIdentityConfigCandidates = []string{gitConfigFileName, filepath.Join(".config", "git", "config")}
+
+// gitConfigDeclaresUserIdentity reports whether a git config file sets
+// user.name or user.email. It is a deliberately small INI scan rather than a
+// `git config` shell-out: provisioning runs as the hive process, not as the
+// agent UID, so a shell-out would resolve a different HOME and a different
+// answer than the one this check is about.
+func gitConfigDeclaresUserIdentity(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	section := ""
+	for _, line := range strings.Split(string(data), "\n") {
+		entry := strings.TrimSpace(line)
+		if strings.HasPrefix(entry, "[") {
+			end := strings.Index(entry, "]")
+			if end < 0 {
+				continue
+			}
+			section = strings.ToLower(strings.TrimSpace(entry[1:end]))
+			entry = strings.TrimSpace(entry[end+1:])
+		}
+		if entry == "" || strings.HasPrefix(entry, "#") || strings.HasPrefix(entry, ";") || section != "user" {
+			continue
+		}
+		key := entry
+		if eq := strings.Index(key, "="); eq >= 0 {
+			key = key[:eq]
+		}
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "name", "email":
+			return true
+		}
+	}
+	return false
 }
 
 // ownAgentDir gives one freshly created per-agent directory to the agent UID

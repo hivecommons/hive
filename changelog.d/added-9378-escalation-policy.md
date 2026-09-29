@@ -1,1 +1,0 @@
-- Add ADR-0019 and agent policy guidance for escalating stalled work to direction, spec, signal, or meta-issues.

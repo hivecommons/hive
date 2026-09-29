@@ -11,6 +11,26 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-29 (v5.86.1)
+
+### Fixed
+
+- Per-agent homes no longer bridge `~/.gitconfig` to the one shared `/data/home/.gitconfig`, and an existing bridge is retired at launch ([#9478](https://github.com/hivecommons/hive/issues/9478)). That single shared file made the *global* git config fleet-wide, so a `git config --global user.*` by any agent (global outranks the system `/etc/gitconfig`) re-attributed every other lane until the next agent overwrote it. Commit identity is already pinned per lane via `GIT_AUTHOR_*`/`GIT_COMMITTER_*`, and `/etc/gitconfig` still carries the bot identity and the `git-credential-hive.sh` helper for every agent UID, so nothing an agent needs is lost. A real per-agent `.gitconfig` is never touched.
+- Agent launch now logs a WARN naming any global git config layer in an agent's `HOME` that still declares `user.name`/`user.email` ([#9478](https://github.com/hivecommons/hive/issues/9478)). Such a file no longer decides who commits, but it is what `git config --show-origin user.email` reports, so surfacing it keeps a stale fleet-shared identity from misleading the next investigation.
+- Isolated per-agent `~/.gitconfig` files and made pushbroker's lane sign-off guard use the same lane identity as agent commit env vars ([#9478](https://github.com/hivecommons/hive/issues/9478)).
+- Fix the dashboard painting the 🔑 "needs login" badge and offering a "Copy login URL" control for inference/gateway-backed agents whose CLI printed a generic `/login` banner on an upstream 401 (e.g. a gateway database outage) — those backends authenticate by API key and never show an interactive login URL, so clicking Copy correctly reported "No login URL on the terminal right now" while the badge kept insisting one was there (#9576).
+
+## 2026-09-29 (v5.86.0)
+
+### Added
+
+- Add an internal testutil ratchet that prevents pkg/dashboard from gaining new top-level pkg dependencies without an allowlist update and PR justification.
+- Add ADR-0019 and agent policy guidance for escalating stalled work to direction, spec, signal, or meta-issues.
+
+### Fixed
+
+- Ensure dashboard chat commands from owner-authenticated token, internal, and open/dev paths carry a verified user identity instead of falling back to `local`.
+
 ## 2026-09-29 (v5.85.2)
 
 ### Changed

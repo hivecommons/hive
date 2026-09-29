@@ -110,6 +110,10 @@ func TestSetupInteractiveHome_CreatesHomeAndBridges(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(home, ".bash_history")); !os.IsNotExist(err) {
 		t.Errorf(".bash_history should not be bridged (err=%v)", err)
 	}
+	// .gitconfig must NOT be bridged; any file there is per-agent state.
+	if _, err := os.Lstat(filepath.Join(home, ".gitconfig")); !os.IsNotExist(err) {
+		t.Errorf(".gitconfig should not be bridged without a shared seed (err=%v)", err)
+	}
 	// .local must be a REAL per-agent directory (#6238), not a bridge.
 	if info, err := os.Lstat(filepath.Join(home, ".local")); err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		t.Errorf(".local should be a real per-agent dir: info=%v err=%v", info, err)

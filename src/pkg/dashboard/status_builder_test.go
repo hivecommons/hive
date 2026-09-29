@@ -603,6 +603,46 @@ func TestBuildFrontendStatus_AgentAuthHealthFailsOnProviderAuthBlock(t *testing.
 	}
 }
 
+func TestBuildFrontendStatus_BackendAuthErrorBlocksWithoutLogin(t *testing.T) {
+	cfg := &config.Config{
+		Agents: map[string]config.AgentConfig{
+			"scanner": {Backend: "claude", Model: "claude-sonnet", Enabled: true},
+		},
+	}
+	gov := governor.New(cfg.Governor, cfg.Agents, nil)
+	statuses := map[string]*agent.AgentProcess{
+		"scanner": {
+			Name:                      "scanner",
+			Config:                    cfg.Agents["scanner"],
+			State:                     agent.StateRunning,
+			OutputBuffer:              agent.NewRingBuffer(10),
+			ProviderErrorClass:        "backend_auth_error",
+			ProviderErrorLine:         "Inference backend outage (401): Error querying the database: FATAL: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+			ProviderErrorBackoffUntil: time.Now().Add(time.Minute),
+			BackendAuth: agent.BackendAuthState{
+				Status:    agent.BackendAuthUnreachable,
+				Since:     time.Now(),
+				LastError: "Inference backend outage (401): Error querying the database",
+			},
+		},
+	}
+
+	payload := BuildFrontendStatus(gov.GetState(), nil, statuses, cfg, nil, gov, nil, nil, nil, nil)
+	a := payload.Agents[0]
+	if a.NeedsLogin {
+		t.Fatal("backend_auth_error must not surface as an interactive login wait")
+	}
+	if a.StructuredStatus != "BLOCKED" || a.Condition != "ProviderError" {
+		t.Fatalf("status/condition = %q/%q, want BLOCKED/ProviderError", a.StructuredStatus, a.Condition)
+	}
+	if !strings.Contains(a.StatusEvidence, "backend_auth_error") || !strings.Contains(a.StatusEvidence, "Inference backend outage") {
+		t.Fatalf("StatusEvidence = %q, want backend auth outage detail", a.StatusEvidence)
+	}
+	if a.BackendAuthStatus != agent.BackendAuthUnreachable || a.BackendAuthLastError == "" {
+		t.Fatalf("backend auth fields = %q/%q, want unreachable with detail", a.BackendAuthStatus, a.BackendAuthLastError)
+	}
+}
+
 func TestBuildFrontendStatus_AgentAuthHealthRecoversWhenProviderBackoffExpires(t *testing.T) {
 	cfg := &config.Config{
 		Agents: map[string]config.AgentConfig{

@@ -1,6 +1,7 @@
 package pushbroker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -29,6 +30,34 @@ func (r *recordingRunner) Run(ctx context.Context, dir string, env []string, nam
 		return []byte("ok"), nil
 	}
 	return ExecRunner{}.Run(ctx, dir, env, name, args...)
+}
+
+type envRecordingRunner struct {
+	env []string
+}
+
+func (r *envRecordingRunner) Run(_ context.Context, _ string, env []string, _ string, _ ...string) ([]byte, error) {
+	r.env = append([]string(nil), env...)
+	return []byte("ok"), nil
+}
+
+func TestGitUsesAgentIdentityEnv(t *testing.T) {
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "bots.example.org")
+	r := &envRecordingRunner{}
+
+	if _, err := (&Broker{Workspace: fakeGitWorkspace(t), AgentName: "scanner", Runner: r}).git(context.Background(), "status"); err != nil {
+		t.Fatalf("git: %v", err)
+	}
+	for _, want := range []string{
+		"GIT_AUTHOR_NAME=scanner",
+		"GIT_AUTHOR_EMAIL=scanner@bots.example.org",
+		"GIT_COMMITTER_NAME=scanner",
+		"GIT_COMMITTER_EMAIL=scanner@bots.example.org",
+	} {
+		if !slices.Contains(r.env, want) {
+			t.Fatalf("git env missing %s: %v", want, r.env)
+		}
+	}
 }
 
 func TestBrokerRejectsTokenLikeSecretInOutgoingDiff(t *testing.T) {
@@ -281,7 +310,7 @@ func TestRejectForgedLaneSignoffsSurfacesConfigAndLogFailures(t *testing.T) {
 					"var GIT_AUTHOR_IDENT": "Hive Test <hive@example.com> 1700000000 +0000\n",
 				},
 				fails: map[string]error{
-					"log -1 --format=%H%x00%an%x00%ae%x00%B%x1e HEAD": errors.New("bad log"),
+					"log -1 --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": errors.New("bad log"),
 				},
 			},
 			wantErr: "reading outgoing commits for sign-off guard",
@@ -317,15 +346,15 @@ func TestRejectForgedLaneSignoffsSkipsUncheckableRecords(t *testing.T) {
 		{
 			name: "malformed log record",
 			replies: map[string]string{
-				"var GIT_AUTHOR_IDENT":                            "Hive Test <hive@example.com> 1700000000 +0000\n",
-				"log -1 --format=%H%x00%an%x00%ae%x00%B%x1e HEAD": "not-enough-fields\x1e",
+				"var GIT_AUTHOR_IDENT": "Hive Test <hive@example.com> 1700000000 +0000\n",
+				"log -1 --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": "not-enough-fields\x1e",
 			},
 		},
 		{
 			name: "own authored commit",
 			replies: map[string]string{
-				"var GIT_AUTHOR_IDENT":                            "Hive Test <hive@example.com> 1700000000 +0000\n",
-				"log -1 --format=%H%x00%an%x00%ae%x00%B%x1e HEAD": "abc\x00Hive Test\x00hive@example.com\x00Signed-off-by: Hive Test <hive@example.com>\x1e",
+				"var GIT_AUTHOR_IDENT": "Hive Test <hive@example.com> 1700000000 +0000\n",
+				"log -1 --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": "abc\x00Hive Test\x00hive@example.com\x00Hive Test\x00hive@example.com\x00Signed-off-by: Hive Test <hive@example.com>\x1e",
 			},
 		},
 	}
@@ -336,6 +365,89 @@ func TestRejectForgedLaneSignoffsSkipsUncheckableRecords(t *testing.T) {
 				t.Fatalf("rejectForgedLaneSignoffs = %v, want nil", err)
 			}
 		})
+	}
+}
+
+func TestRejectForgedLaneSignoffsUsesAgentIdentityInsteadOfGitConfig(t *testing.T) {
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "bots.example.org")
+	git := &scriptedGit{replies: map[string]string{
+		"log -1 --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": "abc123\x00Human Author\x00human@example.com\x00Human Author\x00human@example.com\x00fix\n\nSigned-off-by: scanner <scanner@bots.example.org>\x1e",
+	}}
+
+	err := (&Broker{Workspace: fakeGitWorkspace(t), AgentName: "scanner", Runner: git}).rejectForgedLaneSignoffs(context.Background(), "", false)
+	if err == nil || !strings.Contains(err.Error(), "refusing to push commit") {
+		t.Fatalf("rejectForgedLaneSignoffs = %v, want forged lane sign-off rejection", err)
+	}
+	if slices.Contains(git.calls, "var GIT_AUTHOR_IDENT") {
+		t.Fatalf("guard read git author identity from config/env fallback despite AgentName: calls=%v", git.calls)
+	}
+}
+
+func TestRejectForgedLaneSignoffsAllowsAgentAuthoredCommit(t *testing.T) {
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "bots.example.org")
+	git := &scriptedGit{replies: map[string]string{
+		"log -1 --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": "abc123\x00scanner\x00scanner@bots.example.org\x00scanner\x00scanner@bots.example.org\x00fix\n\nSigned-off-by: scanner <scanner@bots.example.org>\x1e",
+	}}
+
+	if err := (&Broker{Workspace: fakeGitWorkspace(t), AgentName: "scanner", Runner: git}).rejectForgedLaneSignoffs(context.Background(), "", false); err != nil {
+		t.Fatalf("rejectForgedLaneSignoffs = %v, want nil", err)
+	}
+	if slices.Contains(git.calls, "var GIT_AUTHOR_IDENT") {
+		t.Fatalf("guard read git author identity from config/env fallback despite AgentName: calls=%v", git.calls)
+	}
+}
+
+func TestRejectForgedLaneSignoffsRejectsLaneSignoffWithDifferentCommitter(t *testing.T) {
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "bots.example.org")
+	git := &scriptedGit{replies: map[string]string{
+		"log -1 --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": "abc123\x00scanner\x00scanner@bots.example.org\x00Human Committer\x00human@example.com\x00fix\n\nSigned-off-by: scanner <scanner@bots.example.org>\x1e",
+	}}
+
+	err := (&Broker{Workspace: fakeGitWorkspace(t), AgentName: "scanner", Runner: git}).rejectForgedLaneSignoffs(context.Background(), "", false)
+	if err == nil || !strings.Contains(err.Error(), "committed by Human Committer <human@example.com>") {
+		t.Fatalf("rejectForgedLaneSignoffs = %v, want committer mismatch rejection", err)
+	}
+}
+
+func TestRejectForgedLaneSignoffsLogsAuthorMismatchWithoutLaneSignoff(t *testing.T) {
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "bots.example.org")
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	git := &scriptedGit{replies: map[string]string{
+		"log -1 --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": "abc123\x00Human Author\x00human@example.com\x00scanner\x00scanner@bots.example.org\x00fix\n\nSigned-off-by: Human Author <human@example.com>\x1e",
+	}}
+
+	err := (&Broker{Workspace: fakeGitWorkspace(t), AgentName: "scanner", Runner: git, Logger: logger}).rejectForgedLaneSignoffs(context.Background(), "", false)
+	if err != nil {
+		t.Fatalf("rejectForgedLaneSignoffs = %v, want nil", err)
+	}
+	if !strings.Contains(logs.String(), "outgoing commit author differs") {
+		t.Fatalf("warning log missing author mismatch: %s", logs.String())
+	}
+}
+
+func TestLaneGitIdentityInvalidAgentSkipsWithoutGitFallback(t *testing.T) {
+	git := &scriptedGit{}
+
+	name, email, err := (&Broker{Workspace: fakeGitWorkspace(t), AgentName: "bad agent", Runner: git}).laneGitIdentity(context.Background())
+	if err != nil {
+		t.Fatalf("laneGitIdentity error = %v", err)
+	}
+	if name != "" || email != "" {
+		t.Fatalf("laneGitIdentity = (%q, %q), want empty identity", name, email)
+	}
+	if slices.Contains(git.calls, "var GIT_AUTHOR_IDENT") {
+		t.Fatalf("invalid AgentName should not fall back to git config/env: calls=%v", git.calls)
+	}
+}
+
+func TestGitEnvInvalidAgentDoesNotAppendLaneIdentity(t *testing.T) {
+	t.Setenv("GIT_AUTHOR_NAME", "")
+	env := (&Broker{AgentName: "bad agent"}).gitEnv()
+	for _, entry := range env {
+		if entry == "GIT_AUTHOR_EMAIL=bad agent@hive.kubestellar.io" || entry == "GIT_COMMITTER_EMAIL=bad agent@hive.kubestellar.io" {
+			t.Fatalf("gitEnv appended malformed lane identity: %v", env)
+		}
 	}
 }
 
