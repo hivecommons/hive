@@ -1,6 +1,9 @@
 package dashboard
 
 import (
+	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -46,13 +49,16 @@ func TestOverviewCarouselControlsAndTransitions9025(t *testing.T) {
 		"id=\"overview-chart-settings\"",
 		"function toggleOverviewChartSettings()",
 		"data-change-action=\"setOverviewChartRotation\"",
-		"data-change-action=\"setOverviewCarouselEnabled\"",
 		"data-change-action=\"setOverviewCarouselInterval\"",
+		"data-change-action=\"setOverviewChartType\"",
 		"data-change-action=\"setOverviewTransition\"",
 		"data-change-action=\"setOverviewDuration\"",
 		"data-action=\"overviewCarouselPrev\"",
 		"data-action=\"overviewCarouselNext\"",
+		"data-action=\"toggleOverviewCarousel\"",
 		"overview-carousel-dot",
+		"overview-settings-section",
+		"aria-label=\"${esc(label)} chart controls\"",
 		"data-mouseover-action=\"overviewPanelHover\"",
 		"data-mouseout-action=\"overviewPanelUnhover\"",
 		"document.visibilityState !== 'visible'",
@@ -62,6 +68,10 @@ func TestOverviewCarouselControlsAndTransitions9025(t *testing.T) {
 		"OVERVIEW_CAROUSEL_MIN_MS = 5000",
 		"OVERVIEW_CAROUSEL_MAX_MS = 300000",
 		"OVERVIEW_CAROUSEL_DEFAULT_MS = 30000",
+		"OVERVIEW_TRANSITION_DURATION_MS = { fast: 500, normal: 1000, slow: 1800 }",
+		"function overviewTransitionDurationMs(state)",
+		"function overviewCarouselDwellMs(state)",
+		"}, overviewCarouselDwellMs(state)));",
 		"transition: 'fade', duration: 'normal'",
 		"carousel: false",
 	} {
@@ -90,5 +100,78 @@ func TestOverviewCarouselControlsAndTransitions9025(t *testing.T) {
 	}
 	if strings.Contains(html, "time.Sleep") {
 		t.Errorf("static wiring must not add sleep-based tests or UI timing")
+	}
+}
+
+func TestOverviewCarouselControlsMovedToSettings9025(t *testing.T) {
+	html := indexHTML(t)
+	panel := jsFunc(t, html, "renderOverviewPanel")
+	settings := jsFunc(t, html, "renderOverviewSettingsPopover")
+	for _, gone := range []string{"overview-chart-controls", "data-action=\"overviewCarouselPrev\"", "data-action=\"toggleOverviewCarousel\"", "Export CSV"} {
+		if strings.Contains(panel, gone) {
+			t.Errorf("renderOverviewPanel should not include moved control %q", gone)
+		}
+	}
+	for _, want := range []string{
+		"overview-chart-download",
+		"title=\"Download CSV\"",
+		"aria-label=\"${esc(csvTitle)}\"",
+	} {
+		if !strings.Contains(panel, want) {
+			t.Errorf("renderOverviewPanel missing card download affordance %q", want)
+		}
+	}
+	for _, want := range []string{
+		"cardControls('issue', 'Issues')",
+		"cardControls('pr', 'PRs')",
+		"overview-chart-controls",
+		"data-action=\"overviewCarouselPrev\"",
+		"data-action=\"overviewCarouselNext\"",
+		"data-action=\"toggleOverviewCarousel\"",
+		"data-change-action=\"setOverviewChartType\"",
+		"data-change-action=\"setOverviewTransition\"",
+	} {
+		if !strings.Contains(settings, want) {
+			t.Errorf("renderOverviewSettingsPopover missing moved control %q", want)
+		}
+	}
+}
+
+func TestOverviewCarouselDwellCoversTransition9025(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: Overview carousel timing rule was not executed")
+	}
+	html := indexHTML(t)
+	durationRe := regexp.MustCompile(`const OVERVIEW_TRANSITION_DURATION_MS = \{ fast: ([0-9]+), normal: ([0-9]+), slow: ([0-9]+) \};`)
+	minRe := regexp.MustCompile(`const OVERVIEW_CAROUSEL_MIN_MS = ([0-9]+);`)
+	durations := durationRe.FindStringSubmatch(html)
+	min := minRe.FindStringSubmatch(html)
+	if len(durations) != 4 || len(min) != 2 {
+		t.Fatalf("overview timing constants missing from index.html")
+	}
+	slow, err := strconv.Atoi(durations[3])
+	if err != nil {
+		t.Fatalf("parse slow duration: %v", err)
+	}
+	minMS, err := strconv.Atoi(min[1])
+	if err != nil {
+		t.Fatalf("parse carousel min: %v", err)
+	}
+	script := `const assert = require('node:assert/strict');
+const OVERVIEW_TRANSITION_DURATION_MS = { fast: ` + durations[1] + `, normal: ` + durations[2] + `, slow: ` + durations[3] + ` };
+const OVERVIEW_CAROUSEL_DEFAULT_MS = 30000;
+` + jsFunc(t, html, "overviewTransitionDurationMs") + `
+` + jsFunc(t, html, "overviewCarouselDwellMs") + `
+assert.equal(overviewTransitionDurationMs({ duration: 'fast' }), 500);
+assert.equal(overviewTransitionDurationMs({ duration: 'normal' }), 1000);
+assert.equal(overviewTransitionDurationMs({ duration: 'slow' }), 1800);
+assert.ok(overviewCarouselDwellMs({ intervalMs: 500, duration: 'slow' }) >= overviewTransitionDurationMs({ duration: 'slow' }));
+`
+	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
+		t.Fatalf("node overview carousel timing failed: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
+	if minMS < slow {
+		t.Fatalf("carousel minimum %dms must cover slow transition %dms", minMS, slow)
 	}
 }

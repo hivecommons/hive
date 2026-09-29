@@ -1,0 +1,1 @@
+- Steady Overview chart card sizing, move carousel controls into the gear popover, and make chart transitions more perceptible.
