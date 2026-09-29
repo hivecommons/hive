@@ -89,15 +89,16 @@ See [docs/README.md](docs/README.md) for the full v2 documentation index, includ
 ## Kubernetes
 
 ```bash
+# Run from the repository root.
 # Create the namespace, config, secret, and storage
-kubectl apply -f deploy/k8s/namespace.yaml
+kubectl apply -f src/deploy/k8s/namespace.yaml
 kubectl -n hive create secret generic hive-secrets \
   --from-literal=HIVE_GITHUB_TOKEN=ghp_...
 kubectl create configmap hive-config -n hive --from-file=hive.yaml=src/hive.yaml
-kubectl apply -f deploy/k8s/pvc.yaml
-kubectl apply -f deploy/k8s/deployment.yaml
-kubectl apply -f deploy/k8s/service.yaml
-kubectl apply -f deploy/k8s/dashboard-route-rbac.yaml
+kubectl apply -f src/deploy/k8s/pvc.yaml
+kubectl apply -f src/deploy/k8s/deployment.yaml
+kubectl apply -f src/deploy/k8s/service.yaml
+kubectl apply -f src/deploy/k8s/dashboard-route-rbac.yaml
 ```
 
 `dashboard-route-rbac.yaml` lets the spoke report `route_exists` in heartbeats.
