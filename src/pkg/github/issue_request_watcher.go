@@ -802,10 +802,16 @@ func (c *Client) ensureCreateIssueLabel(ctx context.Context, owner, repo, name s
 	} else if ghErr, ok := err.(*gh.ErrorResponse); !ok || ghErr.Response == nil || ghErr.Response.StatusCode != http.StatusNotFound {
 		return err
 	}
+	color := "8250df"
+	description := "Created by Hive for agent-filed issue provenance"
+	if def, ok := escalationIssueLabelDefinition(name); ok {
+		color = def.color
+		description = def.description
+	}
 	_, _, err := c.client.Issues.CreateLabel(ctx, owner, repo, &gh.Label{
 		Name:        gh.Ptr(name),
-		Color:       gh.Ptr("8250df"),
-		Description: gh.Ptr("Created by Hive for agent-filed issue provenance"),
+		Color:       gh.Ptr(color),
+		Description: gh.Ptr(description),
 	})
 	if ghErr, ok := err.(*gh.ErrorResponse); ok && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusUnprocessableEntity {
 		if _, _, getErr := c.client.Issues.GetLabel(ctx, owner, repo, name); getErr == nil {

@@ -202,6 +202,56 @@ func TestPolicyGuardrailsPresent(t *testing.T) {
 	}
 }
 
+func TestEscalationPolicyPresent(t *testing.T) {
+	names := []string{
+		"architect-full.md",
+		"architect-holdgated.md",
+		"ci-maintainer-advisory.md",
+		"ci-maintainer-full.md",
+		"ci-maintainer-holdgated.md",
+		"ci-maintainer.md",
+		"guide-full.md",
+		"guide-holdgated.md",
+		"guide-issues.md",
+		"guide.md",
+		"scanner-advisory.md",
+		"scanner-automerge.md",
+		"scanner-full.md",
+		"scanner-holdgated.md",
+		"scanner-issues.md",
+		"scanner.md",
+		"sec-check-full.md",
+		"sec-check-holdgated.md",
+		"strategist-full.md",
+		"strategist-holdgated.md",
+	}
+	required := []string{
+		"## Escalate Instead of Stalling",
+		"ADR-0019",
+		"`needs-direction`",
+		"`needs-spec`",
+		"`needs-signal`",
+		"`meta-issue`",
+		"one escalation per item per 24h",
+	}
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			source, embedded, ok := readPolicyPair(t, name)
+			if !ok {
+				return
+			}
+			for _, fragment := range required {
+				if !strings.Contains(source, fragment) {
+					t.Errorf("source policy %s is missing escalation fragment %q", name, fragment)
+				}
+				if !strings.Contains(embedded, fragment) {
+					t.Errorf("embedded policy %s is missing escalation fragment %q", name, fragment)
+				}
+			}
+		})
+	}
+}
+
 func TestPRCapablePolicyDefaultsIncludePRTitleGuidance(t *testing.T) {
 	guidance := "it is not used for PRs"
 	prCapable := []string{

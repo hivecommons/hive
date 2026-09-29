@@ -1,1 +1,0 @@
-- Align the governor threshold settings slider with the scaled pressure-bar thresholds, current pressure marker, and unmistakable in-force value hints.

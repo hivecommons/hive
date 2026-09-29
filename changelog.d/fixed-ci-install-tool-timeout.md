@@ -1,1 +1,0 @@
-- CI toolchain installation now keeps apt mirror-fallback work inside each retry slice and tests fallback rewriting against hermetic apt sources instead of the runner's `/etc/apt`.

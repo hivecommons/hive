@@ -265,6 +265,19 @@ Agent **identity** is derived from the connection's owning UID (`/proc/net/tcp`
 repo outside the configured set. Only `api.github.com` is inspected; `github.com`
 (OAuth, git smart-HTTP) is tunneled opaquely.
 
+### Structural dependency ratchets
+
+Some guardrails are intentionally mechanical ratchets rather than immediate
+decomposition work. `internal/testutil/sleep_ratchet_test.go` prevents fixed
+test sleeps from regrowing, and
+`internal/testutil/dashboard_import_ratchet_test.go` does the same for
+`pkg/dashboard` coupling: it scans the top-level dashboard package's non-test Go
+files, collapses internal imports to `github.com/hivecommons/hive/pkg/<x>`, and
+compares them to `internal/testutil/dashboard_import_allowlist.txt`. New
+top-level `pkg/` dependencies must route through an existing seam or be added to
+the allowlist with PR justification, while stale allowlist entries must be
+removed so the dependency surface only shrinks.
+
 ---
 
 ## 6. ACMM — controlling agent autonomy
