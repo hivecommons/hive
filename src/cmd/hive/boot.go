@@ -69,6 +69,14 @@ type boot struct {
 	// map read and map write" in buildConfiguredAgents.
 	cfgReloadMu sync.Mutex
 
+	// ghClientLive is the GitHub client provider that long-lived consumers
+	// (collectors, the scheduler's triage commenter) read on every use, and
+	// requestRelays runs the request watchers and the self-authored merge
+	// sweep on the current client. adoptGitHubClient swaps both on every
+	// rebuild (#9621); see github_client_provider.go.
+	ghClientLive  atomic.Pointer[githubClientRef]
+	requestRelays *requestRelaySupervisor
+
 	// bootConfig
 	startTime                     time.Time
 	configPath                    string

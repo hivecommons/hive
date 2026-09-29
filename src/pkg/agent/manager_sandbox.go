@@ -45,6 +45,16 @@ func (m *Manager) SetSandboxPRClient(client PRCreator) {
 	m.sandboxPRClient = client
 }
 
+// SandboxGitHubWiring returns the PR client and push minter the sandbox kick
+// executor will use next. The hive re-points both whenever it rebuilds its
+// GitHub client (#9621), so a sandbox kick never opens a PR or mints a push
+// token through a client or App credential that has been replaced.
+func (m *Manager) SandboxGitHubWiring() (PRCreator, pushbroker.TokenMinter) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.sandboxPRClient, m.sandboxPushMinter
+}
+
 func (m *Manager) SetSandboxAuditCallback(fn func(agent, action, detail string)) {
 	if fn == nil {
 		m.sandboxAuditCallback.Store(nil)

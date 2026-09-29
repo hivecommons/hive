@@ -51,6 +51,9 @@ var fleetStatsRetryBaseDelay = time.Minute
 // landing page's live fleet-stats strip.
 type FleetStatsCollector struct {
 	ghClient *ghpkg.Client
+	// clientFn, when set, supplies the GitHub client on every collect instead
+	// of ghClient (#9621); see SetGitHubClientProvider.
+	clientFn func() *ghpkg.Client
 	author   string
 	org      string
 	logger   *slog.Logger
@@ -178,15 +181,45 @@ func (fc *FleetStatsCollector) persistLocked() {
 	}
 }
 
+// SetGitHubClientProvider makes the collector read its GitHub client through
+// fn on every collect instead of the pointer it was constructed with. The hive
+// swaps its client when App credentials change, and a hosted spoke that boots
+// without an App only gets one later over the heartbeat; with a captured
+// pointer the collector kept the old client, or never ran at all, until the
+// pod restarted (#9621). With a provider installed Start runs the loop even
+// while fn returns nil, and each collect simply waits for a client. Call
+// before Start.
+func (fc *FleetStatsCollector) SetGitHubClientProvider(fn func() *ghpkg.Client) {
+	if fc == nil {
+		return
+	}
+	fc.clientFn = fn
+}
+
+// client returns the GitHub client to use now: the provider's current client
+// when one is installed, otherwise the constructor's.
+func (fc *FleetStatsCollector) client() *ghpkg.Client {
+	if fc.clientFn != nil {
+		return fc.clientFn()
+	}
+	return fc.ghClient
+}
+
+// hasClientSource reports whether a collect could ever find a client: a
+// constructor client, or a provider that may supply one later.
+func (fc *FleetStatsCollector) hasClientSource() bool {
+	return fc.clientFn != nil || fc.ghClient != nil
+}
+
 // Start runs the collect loop until ctx is cancelled. It computes once up
 // front, then on fleetStatsCollectInterval. The ticker takes ctx and is
 // stopped on return, so there is no uncancellable timer leak.
 func (fc *FleetStatsCollector) Start(ctx context.Context) {
-	if fc == nil || fc.ghClient == nil || fc.author == "" || fc.org == "" {
+	if fc == nil || !fc.hasClientSource() || fc.author == "" || fc.org == "" {
 		if fc != nil && fc.logger != nil {
 			fc.logger.Warn("fleet stats collector not started; this hive will never "+
 				"contribute to the public fleet total",
-				"author", fc.author, "org", fc.org, "has_github_client", fc.ghClient != nil)
+				"author", fc.author, "org", fc.org, "has_github_client", fc.hasClientSource())
 		}
 		return
 	}
@@ -225,11 +258,20 @@ func (fc *FleetStatsCollector) startupDelay() time.Duration {
 // GitHub search rejection (rate limit, transient 5xx) must not cost this hive
 // its place in the fleet total until the next 30-minute tick.
 func (fc *FleetStatsCollector) collect(ctx context.Context) {
+	gh := fc.client()
+	if gh == nil {
+		// Provider installed but no client yet (an App-less boot waiting for
+		// heartbeat delivery). Not a failure: the next tick tries again.
+		if fc.logger != nil {
+			fc.logger.Debug("fleet stats collect skipped: no GitHub client yet")
+		}
+		return
+	}
 	delay := fleetStatsRetryBaseDelay
 	var err error
 	for attempt := 1; attempt <= fleetStatsRetryAttempts; attempt++ {
 		var counts ghpkg.FleetContribCounts
-		counts, err = fc.ghClient.ComputeFleetContribCounts(ctx, fc.author, fc.org)
+		counts, err = gh.ComputeFleetContribCounts(ctx, fc.author, fc.org)
 		if err == nil {
 			fc.mu.Lock()
 			fc.counts = counts

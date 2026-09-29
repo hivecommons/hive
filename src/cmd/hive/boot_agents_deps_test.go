@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
@@ -26,6 +28,13 @@ type bootAgentsFake struct {
 	deps bootAgentsDeps
 	log  bytes.Buffer
 
+	// relayMu guards the relay/sweep fields: since #9621 the relay
+	// supervisor starts them on its own goroutine. sweepStarted receives once
+	// per (re)start, after both the relays and the sweep were started.
+	relayMu      sync.Mutex
+	sweepStarted chan struct{}
+	relayStarts  int
+
 	loopsMgr        *agent.Manager
 	dirsPrepared    bool
 	auditStarted    bool
@@ -40,16 +49,24 @@ type bootAgentsFake struct {
 }
 
 func newBootAgentsFake() *bootAgentsFake {
-	f := &bootAgentsFake{}
+	f := &bootAgentsFake{sweepStarted: make(chan struct{}, fakeRelayStartBuffer)}
 	f.deps = bootAgentsDeps{
 		startAgentLoops:       func(_ context.Context, mgr *agent.Manager) { f.loopsMgr = mgr },
 		prepareRequestDirs:    func(*slog.Logger) { f.dirsPrepared = true },
 		startTokenAccessAudit: func(context.Context, *slog.Logger) { f.auditStarted = true },
-		startRequestRelays: func(_ context.Context, c *github.Client, r requestRelays) {
+		startRequestRelays: func(ctx context.Context, c *github.Client, r requestRelays) <-chan struct{} {
+			f.relayMu.Lock()
 			f.relayClient, f.relays = c, &r
+			f.relayStarts++
+			f.relayMu.Unlock()
+			return ctx.Done()
 		},
-		startSelfAuthoredSweep: func(_ context.Context, c *github.Client, max int, allowed bool, level *int, _ automerge.Options) {
+		startSelfAuthoredSweep: func(ctx context.Context, c *github.Client, max int, allowed bool, level *int, _ automerge.Options) <-chan struct{} {
+			f.relayMu.Lock()
 			f.sweepClient, f.sweepMax, f.sweepAllowed, f.sweepLevel = c, max, allowed, level
+			f.relayMu.Unlock()
+			f.sweepStarted <- struct{}{}
+			return ctx.Done()
 		},
 		buildMinter: func(*config.Config, *slog.Logger) (agent.AgentMintIssuer, error) {
 			f.minterCalls++
@@ -58,6 +75,28 @@ func newBootAgentsFake() *bootAgentsFake {
 		startPermissionsWatcher: func(*slog.Logger) { f.permWatcherRuns++ },
 	}
 	return f
+}
+
+// fakeRelayStartBuffer is how many relay (re)starts a test may leave
+// unconsumed on bootAgentsFake.sweepStarted without blocking the supervisor.
+const fakeRelayStartBuffer = 8
+
+// fakeRelayStartTimeout bounds how long a test waits for the supervisor's
+// goroutine to (re)start the relays.
+const fakeRelayStartTimeout = 10 * time.Second
+
+// waitRelaysStarted blocks until the supervisor has (re)started the relays
+// once more, then returns what they were started with.
+func (f *bootAgentsFake) waitRelaysStarted(t *testing.T) (*github.Client, *requestRelays, *github.Client) {
+	t.Helper()
+	select {
+	case <-f.sweepStarted:
+	case <-time.After(fakeRelayStartTimeout):
+		t.Fatal("request relays were not started")
+	}
+	f.relayMu.Lock()
+	defer f.relayMu.Unlock()
+	return f.relayClient, f.relays, f.sweepClient
 }
 
 func newBootAgentsBoot(t *testing.T, f *bootAgentsFake, cfg *config.Config) *boot {
@@ -103,8 +142,11 @@ func TestBootAgentsWith_NoAppKeepsUnconditionalWiringAndSkipsRelays(t *testing.T
 	if !f.dirsPrepared || !f.auditStarted || f.permWatcherRuns != 1 {
 		t.Fatalf("unconditional effects: dirs=%v audit=%v perm=%d, want all", f.dirsPrepared, f.auditStarted, f.permWatcherRuns)
 	}
-	if f.relays != nil || f.sweepClient != nil {
+	if c, _ := b.requestRelays.current(); c != nil {
 		t.Fatal("request relays / self-authored sweep started with no App client")
+	}
+	if b.requestRelays == nil {
+		t.Fatal("relay supervisor not built on an App-less boot; a heartbeat-delivered App could never start the relays (#9621)")
 	}
 	if f.minterCalls != 0 {
 		t.Fatal("minter built with mint.enabled=false")
@@ -146,7 +188,8 @@ func TestBootAgentsWith_UsableAppArmsRelaysAfterClientIsConfigured(t *testing.T)
 
 	b.bootAgentsWith(f.deps)
 
-	if f.relays == nil || f.relayClient != b.ghClient {
+	relayClient, relays, sweepClient := f.waitRelaysStarted(t)
+	if relays == nil || relayClient != b.ghClient {
 		t.Fatal("request relays not started on the App client")
 	}
 	if f.relays.prOpen == nil || f.relays.issueOpen == nil || f.relays.review == nil || f.relays.merge == nil || f.relays.holdLabel == nil {
@@ -157,8 +200,8 @@ func TestBootAgentsWith_UsableAppArmsRelaysAfterClientIsConfigured(t *testing.T)
 	if err := f.relays.prOpen("ghost", 0); err == nil {
 		t.Fatal("PR relay authorizer accepted an unknown agent")
 	}
-	if f.sweepClient != b.ghClient || f.sweepMax != 3 || f.sweepLevel != cfg.ACMMLevel {
-		t.Fatalf("self-authored sweep: client ok=%v max=%d level=%v, want the App client, 3, cfg.ACMMLevel", f.sweepClient == b.ghClient, f.sweepMax, f.sweepLevel)
+	if sweepClient != b.ghClient || f.sweepMax != 3 || f.sweepLevel != cfg.ACMMLevel {
+		t.Fatalf("self-authored sweep: client ok=%v max=%d level=%v, want the App client, 3, cfg.ACMMLevel", sweepClient == b.ghClient, f.sweepMax, f.sweepLevel)
 	}
 	if f.sweepAllowed != cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(cfg.ACMMLevel) {
 		t.Fatalf("sweep acmmAllowed = %v, want the config's verdict", f.sweepAllowed)
@@ -177,7 +220,7 @@ func TestBootAgentsWith_AppConfiguredButNotUsableKeepsRelaysOff(t *testing.T) {
 
 	b.bootAgentsWith(f.deps)
 
-	if f.relays != nil || f.sweepClient != nil {
+	if c, _ := b.requestRelays.current(); c != nil {
 		t.Fatal("relays armed without an installation to author as")
 	}
 	if !f.dirsPrepared {

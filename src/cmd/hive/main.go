@@ -1641,14 +1641,12 @@ func (b *boot) wireBootClosures() {
 				}
 				// #9614: every boot-time hook, not a hand-kept subset.
 				newClient := b.newConfiguredGitHubAppClient(newAppAuth)
-				b.ghClient = newClient
-				b.appAuth = newAppAuth
-				b.agentMgr.SetAppAuth(newAppAuth)
+				// #9621: every consumer follows (sandbox, relays, collectors).
+				b.adoptGitHubClient(newClient, newAppAuth)
 				// Deliver fresh per-agent scoped tokens to already-running agents
 				// immediately — the periodic refresh loop only ticks every 40m,
 				// far too long for agents whose caches are empty or stale (#4072).
 				go b.agentMgr.RefreshAgentTokens(b.ctx)
-				b.dashSrv.UpdateGitHubClient(newClient, newAppAuth)
 				b.logger.Info("github client reinitialized via config API", "app_id", newAppID, "installation_id", newInstallationID)
 
 				primaryRepo := b.cfg.Project.PrimaryRepo
@@ -1744,6 +1742,9 @@ func (b *boot) bootGitHubWith(deps bootGitHubDeps) {
 	// dependencies exist yet apply here; bootAdvisory, bootAgents and
 	// bootDashboard apply the rest as those dependencies come up.
 	b.configureGitHubClient(b.ghClient)
+	// Long-lived consumers read the client through this provider, never a
+	// captured b.ghClient, so every rebuild reaches them (#9621).
+	b.publishGitHubClient(b.ghClient)
 	b.resolveProxyInjectGHAuth(deps)
 }
 
@@ -2245,121 +2246,131 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		// settings were installed by bootGitHub; every rebuild path applies
 		// all of them through the same function.
 		b.applyGitHubClientAgentHooks(b.ghClient)
-		// authz enforces the SAME per-agent ACMM write-gate + forge-resistance as
-		// the direct `gh pr create` path — the request-file route grants no extra
-		// privilege. A denied request is quarantined, never opened.
-		// holdLabel (F6): at hold-gated ACMM levels (L3/L4/L5) every agent-opened
-		// PR must carry the "hold" label so the merge gate holds it for human
-		// approval. Outreach content is public speech on the project's behalf, so
-		// it remains human-reviewed at L6 too. This is decided server-side from the
-		// authenticated agent identity and authoritative hive level
-		// (GetACMMLevel), NOT from a client flag — the gh-wrapper.sh tail that used
-		// to add the label was dead code after `exec hive-open-pr`. L1/L2 open no
-		// agent PRs (manual); non-outreach L6 PRs retain their existing automerge
-		// behavior.
-		holdLabel := func(agentName string) bool {
-			return shouldHoldAgentPR(agentName, b.agentMgr.GetACMMLevel())
-		}
-		selfAuthorizationHoldEnabled := b.selfAuthorizationHoldEnabled
+	}
+	// The relays themselves are built whether or not the App is usable yet
+	// and run by a supervisor (#9621): armRequestRelays is the usable-App
+	// gate, evaluated now for the boot client and again by adoptGitHubClient
+	// for every rebuilt one. A hosted spoke that boots without an App starts
+	// its relays when the heartbeat delivers one, and a credential rebuild
+	// hands running relays over to the new client instead of leaving them on
+	// the old AppAuth for the life of the process.
+	//
+	// authz enforces the SAME per-agent ACMM write-gate + forge-resistance as
+	// the direct `gh pr create` path — the request-file route grants no extra
+	// privilege. A denied request is quarantined, never opened.
+	// holdLabel (F6): at hold-gated ACMM levels (L3/L4/L5) every agent-opened
+	// PR must carry the "hold" label so the merge gate holds it for human
+	// approval. Outreach content is public speech on the project's behalf, so
+	// it remains human-reviewed at L6 too. This is decided server-side from the
+	// authenticated agent identity and authoritative hive level
+	// (GetACMMLevel), NOT from a client flag — the gh-wrapper.sh tail that used
+	// to add the label was dead code after `exec hive-open-pr`. L1/L2 open no
+	// agent PRs (manual); non-outreach L6 PRs retain their existing automerge
+	// behavior.
+	holdLabel := func(agentName string) bool {
+		return shouldHoldAgentPR(agentName, b.agentMgr.GetACMMLevel())
+	}
+	selfAuthorizationHoldEnabled := b.selfAuthorizationHoldEnabled
 
-		// SECURITY (audit F3): re-verify the merger tier inside the sweep. The
-		// dashboard's queue endpoint gates on requireMergerOrOwnerRole, but the
-		// sweep merges a minute later off the label + App-authored approval body
-		// alone, so without this ANY actor who can get the label applied merges
-		// anything, and a sockpuppet pair defeats the self-merge ban. Resolved
-		// against the SAME allowlist the dashboard uses so there is one notion of
-		// trust; read through cfg on every call so a config reload takes effect.
-		autoMergeOpts := automerge.Options{
-			Logger:           b.logger,
-			MergerAuthorizer: trustedMergerFunc(b.cfg),
-		}
+	// SECURITY (audit F3): re-verify the merger tier inside the sweep. The
+	// dashboard's queue endpoint gates on requireMergerOrOwnerRole, but the
+	// sweep merges a minute later off the label + App-authored approval body
+	// alone, so without this ANY actor who can get the label applied merges
+	// anything, and a sockpuppet pair defeats the self-merge ban. Resolved
+	// against the SAME allowlist the dashboard uses so there is one notion of
+	// trust; read through cfg on every call so a config reload takes effect.
+	autoMergeOpts := automerge.Options{
+		Logger:           b.logger,
+		MergerAuthorizer: trustedMergerFunc(b.cfg),
+	}
 
-		// commitGreen's required-checks gate (self-merge sweep, see
-		// automerge_sweep.go): install the operator-declared
-		// auto_merge.required_checks list, if any, so naming required checks
-		// does not depend on GitHub's required-status-checks branch-protection
-		// API. Older Hive App installations often lack administration:read, so
-		// that API call fails closed to the coarser isMetaCheck/isIgnorableCICheck
-		// allowlist. Unset/empty leaves the API/allowlist fallback chain
-		// intact (SetRequiredChecks(nil) is a safe no-op).
-		logDeprecatedAllowUnprotectedBase(b.cfg, b.logger)
-		// The same set configureGitHubClient installed on the client via
-		// syncAutoMergePolicyToGitHubClient.
-		if set, ok := b.cfg.AutoMerge.RequiredCheckSet(); ok {
-			autoMergeOpts.RequiredChecks = set
-		}
+	// commitGreen's required-checks gate (self-merge sweep, see
+	// automerge_sweep.go): install the operator-declared
+	// auto_merge.required_checks list, if any, so naming required checks
+	// does not depend on GitHub's required-status-checks branch-protection
+	// API. Older Hive App installations often lack administration:read, so
+	// that API call fails closed to the coarser isMetaCheck/isIgnorableCICheck
+	// allowlist. Unset/empty leaves the API/allowlist fallback chain
+	// intact (SetRequiredChecks(nil) is a safe no-op).
+	logDeprecatedAllowUnprotectedBase(b.cfg, b.logger)
+	// The same set configureGitHubClient installed on the client via
+	// syncAutoMergePolicyToGitHubClient.
+	if set, ok := b.cfg.AutoMerge.RequiredCheckSet(); ok {
+		autoMergeOpts.RequiredChecks = set
+	}
 
-		// Issue relay: agents request issue creation and comments by dropping a
-		// file (hive-open-issue via the gh wrapper) instead of calling GitHub
-		// from their own shell. The agent-side call used to ride the agent's
-		// shell tool — one GHE secondary-rate-limit stall or mangled multiline
-		// command and the finding was silently lost (root-caused live
-		// 2026-08-21: sec-check's creates timed out and survived only as
-		// beads). The watcher executes server-side with the App token, retries
-		// with backoff, dedupes by exact open-issue title, and enforces the
-		// same forge-resistance + CanCreateIssues mode gate the wrapper does.
-		// Review relay: agents request PR reviews by dropping a file (hive-review)
-		// instead of running `gh pr review` in their own shell, which the hive
-		// never observes. The watcher submits the review with the App token and
-		// records it on the audit/activity trail, gated by the same
-		// forge-resistance + push-capability (CanPush) check as opening a PR —
-		// reviewing is a PR-write, so AuthorizePROpen is the correct gate.
-		// Merge relay: agents request merges by dropping a file (hive-merge)
-		// instead of calling the GitHub MCP merge_pull_request tool, whose GraphQL
-		// mutation GitHub rejects for App tokens ("Resource not accessible by
-		// integration"). The hive merges over REST with the App token, gated by
-		// the same forge-resistance + a CanMerge ACMM check.
-		// bindMergeAuthz layers the F4 target-binding (CWE-863) on top of the
-		// manager's agent/UID/CanMerge check: the merge must name a pinned head
-		// SHA (no unpinned "merge whatever HEAD is now") AND the (repo, number)
-		// must appear in the governor's current merge-eligible list — so an
-		// injected agent cannot land an arbitrary reachable PR of its choosing.
-		// Fix #2: on a terminal merge failure caused by a failing REQUIRED check,
-		// re-engage the fix loop instead of abandoning the PR. The hook records a
-		// re-engagement under the escalation store's per-red-SHA cap (shared with
-		// the reaper so a PR is never double-dispatched beyond its budget) and
-		// returns whether the cap still allowed a dispatch. The PR is already
-		// surfaced into CI_FAILING by writeMergeEligible each eval tick; the hook
-		// is the loop-safety authority that decides when to STOP nudging.
-		// Self-authored auto-merge: the App merges its OWN open, CI-green PRs
-		// directly over the REST API, without a human "Approved ... for Hive
-		// auto-merge" queue review and without waiting on tide. Prow forbids
-		// self-approval (lgtm+approved must come from someone other than the
-		// author), and the author here is always the App itself, so the
-		// human-queue path (StartMergeRequestWatcher above / the governor
-		// sweep) can never clear for the App's own PRs — this is the only
-		// route that lands them. See AutoMergeConfig and
-		// SweepSelfAuthoredAutoMerges for the full rationale and the safety
-		// properties preserved (green required checks, head-SHA re-verified
-		// immediately before merge, squash method, all tiers included).
-		// Default ON; `auto_merge.self_authored: false` disables it. ALSO
-		// gated on ACMM level (config.SelfMergeMinACMMLevel): l4.md/l5.md
-		// both forbid the App merging its own PRs, so an L4/L5 hive must
-		// never start this loop regardless of the flag above — see
-		// AutoMergeConfig.SelfAuthoredAutoMergeAllowed. StartSelfAuthoredAutoMergeSweep
-		// itself no-ops (with a one-time INFO log) when acmmAllowed is false.
-		// Approval desk (RFC #4000). Installed BEFORE the sweep starts so the
-		// first tick already consults it. A nil desk (the default —
-		// `tool_approval.enabled` is false) installs no hook, leaving the
-		// sweep's behavior byte-identical to the pre-desk build.
-		if b.approvalDesk != nil && b.approvalInbox != nil {
-			autoMergeOpts.ApprovalDesk = newSelfMergeDeskHook(b.approvalDesk, b.approvalInbox, b.cfg, b.logger)
-		}
+	// Issue relay: agents request issue creation and comments by dropping a
+	// file (hive-open-issue via the gh wrapper) instead of calling GitHub
+	// from their own shell. The agent-side call used to ride the agent's
+	// shell tool — one GHE secondary-rate-limit stall or mangled multiline
+	// command and the finding was silently lost (root-caused live
+	// 2026-08-21: sec-check's creates timed out and survived only as
+	// beads). The watcher executes server-side with the App token, retries
+	// with backoff, dedupes by exact open-issue title, and enforces the
+	// same forge-resistance + CanCreateIssues mode gate the wrapper does.
+	// Review relay: agents request PR reviews by dropping a file (hive-review)
+	// instead of running `gh pr review` in their own shell, which the hive
+	// never observes. The watcher submits the review with the App token and
+	// records it on the audit/activity trail, gated by the same
+	// forge-resistance + push-capability (CanPush) check as opening a PR —
+	// reviewing is a PR-write, so AuthorizePROpen is the correct gate.
+	// Merge relay: agents request merges by dropping a file (hive-merge)
+	// instead of calling the GitHub MCP merge_pull_request tool, whose GraphQL
+	// mutation GitHub rejects for App tokens ("Resource not accessible by
+	// integration"). The hive merges over REST with the App token, gated by
+	// the same forge-resistance + a CanMerge ACMM check.
+	// bindMergeAuthz layers the F4 target-binding (CWE-863) on top of the
+	// manager's agent/UID/CanMerge check: the merge must name a pinned head
+	// SHA (no unpinned "merge whatever HEAD is now") AND the (repo, number)
+	// must appear in the governor's current merge-eligible list — so an
+	// injected agent cannot land an arbitrary reachable PR of its choosing.
+	// Fix #2: on a terminal merge failure caused by a failing REQUIRED check,
+	// re-engage the fix loop instead of abandoning the PR. The hook records a
+	// re-engagement under the escalation store's per-red-SHA cap (shared with
+	// the reaper so a PR is never double-dispatched beyond its budget) and
+	// returns whether the cap still allowed a dispatch. The PR is already
+	// surfaced into CI_FAILING by writeMergeEligible each eval tick; the hook
+	// is the loop-safety authority that decides when to STOP nudging.
+	// Self-authored auto-merge: the App merges its OWN open, CI-green PRs
+	// directly over the REST API, without a human "Approved ... for Hive
+	// auto-merge" queue review and without waiting on tide. Prow forbids
+	// self-approval (lgtm+approved must come from someone other than the
+	// author), and the author here is always the App itself, so the
+	// human-queue path (StartMergeRequestWatcher above / the governor
+	// sweep) can never clear for the App's own PRs — this is the only
+	// route that lands them. See AutoMergeConfig and
+	// SweepSelfAuthoredAutoMerges for the full rationale and the safety
+	// properties preserved (green required checks, head-SHA re-verified
+	// immediately before merge, squash method, all tiers included).
+	// Default ON; `auto_merge.self_authored: false` disables it. ALSO
+	// gated on ACMM level (config.SelfMergeMinACMMLevel): l4.md/l5.md
+	// both forbid the App merging its own PRs, so an L4/L5 hive must
+	// never start this loop regardless of the flag above — see
+	// AutoMergeConfig.SelfAuthoredAutoMergeAllowed. StartSelfAuthoredAutoMergeSweep
+	// itself no-ops (with a one-time INFO log) when acmmAllowed is false.
+	// Approval desk (RFC #4000). Installed BEFORE the sweep starts so the
+	// first tick already consults it. A nil desk (the default —
+	// `tool_approval.enabled` is false) installs no hook, leaving the
+	// sweep's behavior byte-identical to the pre-desk build.
+	if b.approvalDesk != nil && b.approvalInbox != nil {
+		autoMergeOpts.ApprovalDesk = newSelfMergeDeskHook(b.approvalDesk, b.approvalInbox, b.cfg, b.logger)
+	}
 
-		autoMergeOpts.MutationBoundary = b.mutationBoundary
-		autoMergeOpts.SelfAuthorizationHoldEnabled = selfAuthorizationHoldEnabled
-		autoMergeOpts.MinHeadAge = b.cfg.AutoMerge.EffectiveMinHeadAge()
-		autoMergeOpts.RepoAutoMergeEnabled = func(repo string) bool { return b.cfg.RepoAutoMergeEnabled(repo) }
-		// Read through b.cfg on every sweep tick so a config reload of
-		// auto_merge.trusted_bot_authors takes effect without a restart.
-		autoMergeOpts.TrustedBotAuthors = func() map[string]bool { return b.cfg.AutoMerge.TrustedBotAuthorSet() }
-		// Intent tier gate (#6258): the human lane only queues PRs that
-		// survive writeMergeEligible's intent check, but this sweep lists
-		// the App's PRs on its own, so it carries the same policy (same
-		// config, same bead evidence, same BlocksMerge predicate) and asks
-		// intent.EvaluateForAppSelfMerge before every self-merge.
-		autoMergeOpts.IntentGate = selfMergeIntentGate(b.cfg, b.beadStores)
-		deps.startRequestRelays(b.ctx, b.ghClient, requestRelays{
+	autoMergeOpts.MutationBoundary = b.mutationBoundary
+	autoMergeOpts.SelfAuthorizationHoldEnabled = selfAuthorizationHoldEnabled
+	autoMergeOpts.MinHeadAge = b.cfg.AutoMerge.EffectiveMinHeadAge()
+	autoMergeOpts.RepoAutoMergeEnabled = func(repo string) bool { return b.cfg.RepoAutoMergeEnabled(repo) }
+	// Read through b.cfg on every sweep tick so a config reload of
+	// auto_merge.trusted_bot_authors takes effect without a restart.
+	autoMergeOpts.TrustedBotAuthors = func() map[string]bool { return b.cfg.AutoMerge.TrustedBotAuthorSet() }
+	// Intent tier gate (#6258): the human lane only queues PRs that
+	// survive writeMergeEligible's intent check, but this sweep lists
+	// the App's PRs on its own, so it carries the same policy (same
+	// config, same bead evidence, same BlocksMerge predicate) and asks
+	// intent.EvaluateForAppSelfMerge before every self-merge.
+	autoMergeOpts.IntentGate = selfMergeIntentGate(b.cfg, b.beadStores)
+	b.requestRelays = newRequestRelaySupervisor(b.ctx, func(ctx context.Context, client *github.Client) <-chan struct{} {
+		relaysDone := deps.startRequestRelays(ctx, client, requestRelays{
 			prOpen:    b.agentMgr.AuthorizePROpen,
 			holdLabel: holdLabel,
 			issueOpen: b.agentMgr.AuthorizeIssueOpen,
@@ -2367,8 +2378,12 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 			merge:     bindMergeAuthz(b.agentMgr.AuthorizeMerge),
 			logger:    b.logger,
 		})
-		deps.startSelfAuthoredSweep(b.ctx, b.ghClient, b.cfg.AutoMerge.MaxMerges, b.cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(b.cfg.ACMMLevel), b.cfg.ACMMLevel, autoMergeOpts)
-	}
+		// The ACMM verdict is re-read on every (re)start, so a hand-over
+		// after a level change starts the sweep under the current level.
+		sweepDone := deps.startSelfAuthoredSweep(ctx, client, b.cfg.AutoMerge.MaxMerges, b.cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(b.cfg.ACMMLevel), b.cfg.ACMMLevel, autoMergeOpts)
+		return joinDone(relaysDone, sweepDone)
+	}, b.logger)
+	b.armRequestRelays(b.ghClient)
 
 	// Opt-in mint credential: when mint.enabled, build a Minter from the config
 	// (signing key + issuer + TTL) and attach it so each per-agent token refresh
@@ -2546,7 +2561,8 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.sched.SetAuditFunc(func(action, detail, agent string) {
 		b.dashSrv.AuditLog(agent, action, detail, agent)
 	})
-	b.sched.SetRunTriageDeps(b.dashSrv, b.ghClient)
+	// Through the client provider, not a captured b.ghClient (#9621).
+	b.sched.SetRunTriageDeps(b.dashSrv, liveTriageCommenter{client: b.currentGitHubClient})
 	b.sched.SetAdvisoryFunc(func(title, detail, agentName string) {
 		store := b.beadStores[agentName]
 		if store == nil {
@@ -2789,7 +2805,11 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	// number, and when that gist broke they all dropped to 0 at once.
 	badgeURL := resolveCoverageBadgeURL(os.Getenv(coverageBadgeURLEnv), b.cfg.Project.Org)
 	primaryRepo := metricsPrimaryRepo(b.cfg.Project)
-	b.metricsCollector = dashboard.NewMetricsCollector(b.ghClient, b.cfg.Project.Org, primaryRepo, badgeURL, b.cfg.Project.AIAuthor, b.cfg.Project.Name, b.logger)
+	// nil client + provider: every collect reads the hive's current client,
+	// so a rebuilt (or first-delivered) App client is used without a restart
+	// (#9621).
+	b.metricsCollector = dashboard.NewMetricsCollector(nil, b.cfg.Project.Org, primaryRepo, badgeURL, b.cfg.Project.AIAuthor, b.cfg.Project.Name, b.logger)
+	b.metricsCollector.SetGitHubClientProvider(b.currentGitHubClient)
 	deps.startCollector(b.ctx, "metrics", b.metricsCollector)
 
 	// Fleet-stats collector: computes this hive's AI-author contribution counts
@@ -2829,7 +2849,8 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 			"set project.ai_author in hive.yaml so this hive contributes to the fleet total",
 			"author", fleetStatsAuthor, "org", b.cfg.Project.Org)
 	}
-	b.fleetStatsCollector = collect.NewFleetStatsCollector(b.ghClient, fleetStatsAuthor, b.cfg.Project.Org, b.logger)
+	b.fleetStatsCollector = collect.NewFleetStatsCollector(nil, fleetStatsAuthor, b.cfg.Project.Org, b.logger)
+	b.fleetStatsCollector.SetGitHubClientProvider(b.currentGitHubClient) // #9621, as above
 	// Persist the collected counts on the /data PVC (same store as sessions and
 	// cost/fact history) so a restart resumes from the last-known counts instead
 	// of nil. Without this, a fleet-wide upgrade clears every spoke's in-memory
@@ -3758,14 +3779,10 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 				} else {
 					// #9614: every boot-time hook, not a hand-kept subset.
 					newClient := b.newConfiguredGitHubAppClient(newAppAuth)
-					b.ghClient = newClient
-					b.appAuth = newAppAuth
-					b.agentMgr.SetAppAuth(newAppAuth)
+					// #9621: every consumer follows (sandbox, relays, collectors).
+					b.adoptGitHubClient(newClient, newAppAuth)
 					// Immediate per-agent token delivery — see #4072.
 					deps.refreshAgentTokens(b.ctx, b.agentMgr)
-					b.agentMgr.SetSandboxPushMinter(pushbroker.GitHubAppMinter{Auth: newAppAuth})
-					b.agentMgr.SetSandboxPRClient(newClient)
-					b.dashSrv.UpdateGitHubClient(newClient, newAppAuth)
 					b.logger.Info("github app auth rebuilt after config reload",
 						"app_id", b.cfg.GitHub.AppID,
 						"installation_id", b.cfg.GitHub.InstallationID,
@@ -5097,16 +5114,15 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					healGitHubAppInstallation(b.ctx, newAppAuth, b.cfg, b.logger)
 					// #9614: every boot-time hook, not a hand-kept subset.
 					newClient := b.newConfiguredGitHubAppClient(newAppAuth)
-
-					b.ghClient = newClient
-					b.appAuth = newAppAuth
-					b.agentMgr.SetAppAuth(newAppAuth)
+					// #9621: every consumer follows (sandbox, relays, collectors).
+					// On a spoke that booted without an App this is also where
+					// the request relays start for the first time.
+					b.adoptGitHubClient(newClient, newAppAuth)
 					// Immediate per-agent token delivery: hosted spokes get their
 					// App creds via this heartbeat path AFTER agents have already
 					// launched (with empty 0-byte caches), so waiting for the next
 					// 40-minute tick guarantees a window of gh 401s (#4072).
 					go b.agentMgr.RefreshAgentTokens(b.ctx)
-					b.dashSrv.UpdateGitHubClient(newClient, newAppAuth)
 					b.dashSrv.SetGitHubAppRequired(false)
 					b.dashSrv.ClearPendingGitHubAppInstall()
 					b.logger.Info("github app configured via heartbeat delivery",

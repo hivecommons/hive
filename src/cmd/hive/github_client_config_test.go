@@ -499,6 +499,7 @@ func TestGitHubClientRebuildSitesUseSharedConstructor(t *testing.T) {
 	wantConstructors := map[string]bool{"initGitHubAuth": true, "newConfiguredGitHubAppClient": true}
 	gotConstructors := map[string]bool{}
 	rebuildSites := 0
+	adoptSites := 0
 
 	for _, f := range hivePackageFiles(t) {
 		for _, decl := range f.Decls {
@@ -520,6 +521,13 @@ func TestGitHubClientRebuildSitesUseSharedConstructor(t *testing.T) {
 						gotConstructors[fn] = true
 					case recv == "b" && sel.Sel.Name == "newConfiguredGitHubAppClient":
 						rebuildSites++
+					case recv == "b" && sel.Sel.Name == "adoptGitHubClient":
+						// #9621: the rebuilt client goes live through the one
+						// function that also re-points every long-lived consumer.
+						if len(x.Args) == 0 || exprString(x.Args[0]) != "newClient" {
+							t.Errorf("%s: b.adoptGitHubClient called with something other than the rebuilt newClient (#9621)", fn)
+						}
+						adoptSites++
 					case isSetter[sel.Sel.Name] && (recv == "newClient" || recv == "out.Client"):
 						t.Errorf("%s: %s.%s called inline on a freshly built client; install it in "+
 							"configureGitHubClient so boot and every rebuild apply it (#9614)", fn, recv, sel.Sel.Name)
@@ -569,5 +577,12 @@ func TestGitHubClientRebuildSitesUseSharedConstructor(t *testing.T) {
 	const knownRebuildSites = 3
 	if rebuildSites < knownRebuildSites {
 		t.Errorf("found %d calls to b.newConfiguredGitHubAppClient, want at least %d rebuild sites", rebuildSites, knownRebuildSites)
+	}
+	// #9621: every rebuild site hands its client to adoptGitHubClient, which
+	// swaps the provider, the sandbox, the dashboard and the request relays
+	// together. A site that assigned b.ghClient by hand would leave those
+	// consumers on the old client again.
+	if adoptSites != rebuildSites {
+		t.Errorf("found %d rebuild sites but %d calls to b.adoptGitHubClient; every rebuilt client must be adopted (#9621)", rebuildSites, adoptSites)
 	}
 }

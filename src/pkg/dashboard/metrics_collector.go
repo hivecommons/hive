@@ -25,7 +25,12 @@ const (
 )
 
 type MetricsCollector struct {
-	ghClient      *ghpkg.Client
+	ghClient *ghpkg.Client
+	// clientFn, when set, supplies the GitHub client on every collect instead
+	// of ghClient, so a client rebuilt after an App credential change (or
+	// first delivered after an App-less boot) is used without a restart
+	// (#9621). See SetGitHubClientProvider.
+	clientFn      func() *ghpkg.Client
 	org           string
 	repo          string
 	badgeURL      string
@@ -58,6 +63,27 @@ func NewMetricsCollector(ghClient *ghpkg.Client, org, primaryRepo, badgeURL, aiA
 	mc.loadMTTRFromDisk()
 	mc.loadPRIssueCountsFromDisk()
 	return mc
+}
+
+// SetGitHubClientProvider makes the collector read its GitHub client through
+// fn on every use instead of the pointer it was constructed with. The hive
+// swaps its client when App credentials change or first arrive over the
+// heartbeat; a captured pointer would keep collecting with the old (or
+// absent) client until the pod restarted (#9621). Call before Start.
+func (mc *MetricsCollector) SetGitHubClientProvider(fn func() *ghpkg.Client) {
+	if mc == nil {
+		return
+	}
+	mc.clientFn = fn
+}
+
+// client returns the GitHub client to use now: the provider's current client
+// when one is installed, otherwise the constructor's.
+func (mc *MetricsCollector) client() *ghpkg.Client {
+	if mc.clientFn != nil {
+		return mc.clientFn()
+	}
+	return mc.ghClient
 }
 
 func (mc *MetricsCollector) Start(ctx context.Context) {
@@ -128,11 +154,12 @@ func (mc *MetricsCollector) collect(ctx context.Context) {
 // collectMTTR computes issue-to-merge time from recently merged PRs with
 // "Fixes #N" references, persists the result to disk, and stores it in memory.
 func (mc *MetricsCollector) collectMTTR(ctx context.Context) {
-	if mc.ghClient == nil || mc.repo == "" {
+	gh := mc.client()
+	if gh == nil || mc.repo == "" {
 		return
 	}
 
-	result, err := mc.ghClient.ComputeMTTR(ctx, mc.repo)
+	result, err := gh.ComputeMTTR(ctx, mc.repo)
 	if err != nil {
 		mc.logger.Warn("failed to compute MTTR", "error", err)
 		return
@@ -154,11 +181,12 @@ func (mc *MetricsCollector) collectMTTR(ctx context.Context) {
 // the primary repo, persists the result to disk, and stores it in memory. Used
 // by the dashboard's Cost section to derive cost-per-PR / cost-per-issue.
 func (mc *MetricsCollector) collectPRIssueCounts(ctx context.Context) {
-	if mc.ghClient == nil || mc.repo == "" {
+	gh := mc.client()
+	if gh == nil || mc.repo == "" {
 		return
 	}
 
-	result, err := mc.ghClient.ComputePRIssueCounts(ctx, mc.repo)
+	result, err := gh.ComputePRIssueCounts(ctx, mc.repo)
 	if err != nil {
 		mc.logger.Warn("failed to compute PR/issue counts", "error", err)
 		return
@@ -186,7 +214,8 @@ func (mc *MetricsCollector) collectOutreach(ctx context.Context) map[string]any 
 		"outreachMerged": 0,
 	}
 
-	if mc.ghClient == nil {
+	gh := mc.client()
+	if gh == nil {
 		return result
 	}
 
@@ -196,13 +225,13 @@ func (mc *MetricsCollector) collectOutreach(ctx context.Context) map[string]any 
 		return result
 	}
 
-	repo, _, err := mc.ghClient.GetRepo(ctx, parts[0], parts[1])
+	repo, _, err := gh.GetRepo(ctx, parts[0], parts[1])
 	if err == nil && repo != nil {
 		result["stars"] = repo.GetStargazersCount()
 		result["forks"] = repo.GetForksCount()
 	}
 
-	contribs, err := mc.ghClient.GetContributorCount(ctx, parts[0], parts[1])
+	contribs, err := gh.GetContributorCount(ctx, parts[0], parts[1])
 	if err == nil {
 		result["contributors"] = contribs
 	}
@@ -260,9 +289,13 @@ func (mc *MetricsCollector) collectArchitect() map[string]any {
 }
 
 func (mc *MetricsCollector) countAdopters(ctx context.Context, owner, repo string) int {
-	content, err := mc.ghClient.GetFileContent(ctx, owner, repo, "ADOPTERS.MD")
+	gh := mc.client()
+	if gh == nil {
+		return 0
+	}
+	content, err := gh.GetFileContent(ctx, owner, repo, "ADOPTERS.MD")
 	if err != nil {
-		content, err = mc.ghClient.GetFileContent(ctx, owner, repo, "ADOPTERS.md")
+		content, err = gh.GetFileContent(ctx, owner, repo, "ADOPTERS.md")
 		if err != nil {
 			return 0
 		}
@@ -287,7 +320,11 @@ func (mc *MetricsCollector) countACMM(ctx context.Context, owner, repo string) i
 	if docsOwner == "hivecommons" {
 		docsOwner = "kubestellar"
 	}
-	content, err := mc.ghClient.GetFileContent(ctx, docsOwner, "docs", acmmLeaderboardPath)
+	gh := mc.client()
+	if gh == nil {
+		return 0
+	}
+	content, err := gh.GetFileContent(ctx, docsOwner, "docs", acmmLeaderboardPath)
 	if err != nil {
 		mc.logger.Warn("failed to fetch ACMM leaderboard page", "error", err)
 		return 0
@@ -317,16 +354,17 @@ func (mc *MetricsCollector) countACMM(ctx context.Context, owner, repo string) i
 }
 
 func (mc *MetricsCollector) countOutreachPRs(ctx context.Context) (open, merged int) {
-	if mc.ghClient == nil || mc.aiAuthor == "" {
+	gh := mc.client()
+	if gh == nil || mc.aiAuthor == "" {
 		return 0, 0
 	}
 
-	openCount, err := mc.ghClient.SearchOutreachPRCount(ctx, mc.aiAuthor, mc.org, mc.projectName, "open")
+	openCount, err := gh.SearchOutreachPRCount(ctx, mc.aiAuthor, mc.org, mc.projectName, "open")
 	if err != nil {
 		mc.logger.Warn("failed to count open outreach PRs", "error", err)
 	}
 
-	mergedCount, err := mc.ghClient.SearchOutreachPRCount(ctx, mc.aiAuthor, mc.org, mc.projectName, "merged")
+	mergedCount, err := gh.SearchOutreachPRCount(ctx, mc.aiAuthor, mc.org, mc.projectName, "merged")
 	if err != nil {
 		mc.logger.Warn("failed to count merged outreach PRs", "error", err)
 	}
@@ -449,11 +487,12 @@ func (mc *MetricsCollector) fetchCoverageBadge(ctx context.Context) (string, boo
 			mc.logger.Warn("coverage badge: repo:// form must be repo://<ref>/<path>", "badge_url", mc.badgeURL)
 			return "", false
 		}
-		if mc.ghClient == nil || mc.org == "" || mc.repo == "" {
+		gh := mc.client()
+		if gh == nil || mc.org == "" || mc.repo == "" {
 			// No App client (or no primary repo) — nothing to read it with.
 			return "", false
 		}
-		content, err := mc.ghClient.GetFileContentRef(ctx, mc.org, mc.repo, path, ref)
+		content, err := gh.GetFileContentRef(ctx, mc.org, mc.repo, path, ref)
 		if err != nil {
 			mc.logger.Warn("coverage badge: could not read from primary repo",
 				"repo", mc.org+"/"+mc.repo, "ref", ref, "path", path, "error", err)

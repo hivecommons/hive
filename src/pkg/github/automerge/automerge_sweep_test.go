@@ -1862,7 +1862,12 @@ func TestStartSelfAuthoredAutoMergeSweepDisabledBelowMinACMMLevel(t *testing.T) 
 	defer cancel()
 
 	l4 := 4
-	c.StartSelfAuthoredAutoMergeSweep(ctx, 0, false, &l4)
+	done := c.StartSelfAuthoredAutoMergeSweep(ctx, 0, false, &l4)
+	select {
+	case <-done:
+	default:
+		t.Fatal("disabled sweep returned an open done channel; a restarting caller would wait forever")
+	}
 
 	if !strings.Contains(logs.String(), "self-authored auto-merge sweep disabled") {
 		t.Fatalf("logs = %q, want disabled-sweep INFO log", logs.String())
@@ -1883,8 +1888,21 @@ func TestStartSelfAuthoredAutoMergeSweepEnabledAtMinACMMLevel(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	l6 := config.SelfMergeMinACMMLevel
-	c.StartSelfAuthoredAutoMergeSweep(ctx, 0, true, &l6)
+	done := c.StartSelfAuthoredAutoMergeSweep(ctx, 0, true, &l6)
+	select {
+	case <-done:
+		t.Fatal("done closed while the sweep is still running")
+	default:
+	}
 	cancel()
+	// #9621: done closes only once the loop has exited, which is what lets a
+	// caller restart the sweep on a rebuilt client without two sweeps
+	// overlapping.
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("done did not close after ctx was cancelled")
+	}
 
 	if strings.Contains(logs.String(), "self-authored auto-merge sweep disabled") {
 		t.Fatalf("logs = %q, want no disabled-sweep log at min ACMM level", logs.String())
@@ -1899,14 +1917,18 @@ func TestStartSelfAuthoredAutoMergeSweepEnabledAtMinACMMLevel(t *testing.T) {
 func TestStartSelfAuthoredAutoMergeSweepNilClient(t *testing.T) {
 	var nilClient *Engine
 	l6 := config.SelfMergeMinACMMLevel
-	nilClient.StartSelfAuthoredAutoMergeSweep(context.Background(), 0, true, &l6)
+	if done := nilClient.StartSelfAuthoredAutoMergeSweep(context.Background(), 0, true, &l6); done == nil {
+		t.Fatal("nil engine returned a nil done channel")
+	} else {
+		<-done
+	}
 }
 
 func TestAutoMergeSweepPackageWrappersHandleNilTransport(t *testing.T) {
 	if _, err := SweepQueuedAutoMerges(context.Background(), nil, Options{}, AutoMergeSweepOptions{}); err != hgithub.ErrNoGitHubClient {
 		t.Fatalf("SweepQueuedAutoMerges wrapper error = %v, want hgithub.ErrNoGitHubClient", err)
 	}
-	StartSelfAuthoredAutoMergeSweep(context.Background(), nil, 0, true, nil, Options{})
+	<-StartSelfAuthoredAutoMergeSweep(context.Background(), nil, 0, true, nil, Options{})
 }
 
 func TestAutoMergeSweepSettersAndApprovalDeskBranches(t *testing.T) {

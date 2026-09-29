@@ -164,8 +164,10 @@ func SweepQueuedAutoMerges(ctx context.Context, transport Transport, opts Option
 }
 
 // StartSelfAuthoredAutoMergeSweep starts the self-authored sweep using caller-owned options.
-func StartSelfAuthoredAutoMergeSweep(ctx context.Context, transport Transport, maxMerges int, acmmAllowed bool, acmmLevel *int, opts Options) {
-	New(transport, opts).StartSelfAuthoredAutoMergeSweep(ctx, maxMerges, acmmAllowed, acmmLevel)
+// The returned channel closes once the sweep loop has exited (see the Engine
+// method).
+func StartSelfAuthoredAutoMergeSweep(ctx context.Context, transport Transport, maxMerges int, acmmAllowed bool, acmmLevel *int, opts Options) <-chan struct{} {
+	return New(transport, opts).StartSelfAuthoredAutoMergeSweep(ctx, maxMerges, acmmAllowed, acmmLevel)
 }
 
 // selfMergeMinACMMLevel mirrors config.SelfMergeMinACMMLevel. It is duplicated
@@ -856,9 +858,16 @@ func isRateLimited(err error) bool {
 	return errors.As(err, &ab)
 }
 
-func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges int, acmmAllowed bool, acmmLevel *int) {
+// StartSelfAuthoredAutoMergeSweep starts the sweep loop in its own goroutine.
+// The returned channel closes once that loop has exited after ctx is
+// cancelled, including any sweep tick that was in flight, or immediately when
+// the sweep does not start at all. A caller that restarts the sweep on a
+// rebuilt client (#9621) waits on it so two sweeps never overlap.
+func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges int, acmmAllowed bool, acmmLevel *int) <-chan struct{} {
+	done := make(chan struct{})
 	if !c.ready() {
-		return
+		close(done)
+		return done
 	}
 	if !acmmAllowed {
 		level := "unset"
@@ -867,11 +876,13 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 		}
 		c.info("self-authored auto-merge sweep disabled: acmm_level below minimum (or auto_merge.self_authored is off)",
 			"acmm_level", level, "min_acmm_level", selfMergeMinACMMLevel)
-		return
+		close(done)
+		return done
 	}
 	repos := len(c.transport.Repositories())
 	interval := selfAuthoredSweepInterval(repos)
 	go func() {
+		defer close(done)
 		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
@@ -906,6 +917,7 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 		}
 	}()
 	c.info("self-authored automerge sweep started", "interval", interval, "repos", len(c.transport.Repositories()))
+	return done
 }
 
 // listOpenAppAuthoredPullRequests returns every open PR in owner/repo. Uses the
