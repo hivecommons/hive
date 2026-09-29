@@ -1,0 +1,1 @@
+- The README "Quick apply (all manifests)" block now applies `dashboard-route-rbac.yaml` and `sandbox-job-rbac.yaml` before the Deployment ([#9532](https://github.com/hivecommons/hive/issues/9532)). Without them the `hive` ServiceAccount did not exist and no pod started.
