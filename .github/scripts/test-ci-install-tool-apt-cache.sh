@@ -321,11 +321,19 @@ scenario_timeout_does_not_starve_retries() {
   # given, so every attempt fails with 124 exactly as a dead mirror does. Before
   # the per-attempt slice, attempt 1 consumed the whole deadline and the loop
   # reported "0s of network budget left" and gave up after ONE try.
+  #
+  # The deadline needs real headroom over 3 slices + 2 backoffs: the slice only
+  # bounds the subcommands run_bounded starts, not the fork/exec overhead
+  # between them, and on a degraded runner (e.g. disk-full, run 36638874026)
+  # that overhead ate ~7s of a 12s ceiling, so attempt 3 never started and this
+  # scenario failed without any product bug. 30s keeps the same assertions —
+  # attempts 2 and 3 must genuinely start — while leaving the overhead outside
+  # the margin of error.
   local output rc
   set +e
   output=$(HIVE_CI_APT_CACHE_DIR="$cache" \
     HIVE_CI_APT_ATTEMPTS=3 \
-    HIVE_CI_APT_DEADLINE_SECONDS=12 \
+    HIVE_CI_APT_DEADLINE_SECONDS=30 \
     HIVE_CI_APT_BACKOFF_SECONDS=1 \
     HIVE_FAKE_APT_MODE=hang \
     run_installer "$work" env 2>&1)
