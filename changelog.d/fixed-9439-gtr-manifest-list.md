@@ -1,0 +1,1 @@
+- `src/docs/general-technical-review.md` now lists every manifest under `src/deploy/k8s/`, including `sandbox-job-rbac.yaml` and `error-pages.yaml`, and its Kubernetes install path includes the `hive` ServiceAccount and RBAC ([#9439](https://github.com/hivecommons/hive/issues/9439)).
