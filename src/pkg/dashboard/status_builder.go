@@ -959,7 +959,19 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 		a.ModeEmoji = mode.Emoji()
 		a.DefaultMode = defaultMode.String()
 		a.IsCustomMode = mode != defaultMode
-		a.NeedsLogin = proc.NeedsLogin
+		// #9576: proc.NeedsLogin is a pane TEXT match ("Please run /login …")
+		// and fires on ANY backend whose CLI prints that imperative,
+		// including an inference backend (litellm/vllm/watsonx) reporting its
+		// OWN upstream 401 (e.g. a dead gateway DB connection) with the same
+		// generic banner Claude Code always prints on an API 401. An
+		// inference backend has no interactive login at all — there is no
+		// URL that will ever appear on its pane — so painting the 🔑 badge
+		// and "Copy login URL" control there promises a login flow that does
+		// not exist and cannot be fixed by clicking Copy. Gate on the same
+		// method check the auth probe already applies
+		// (BackendRequiresInteractiveAuth) so the badge and control only
+		// ever appear for a backend where a login URL is a real possibility.
+		a.NeedsLogin = proc.NeedsLogin && agent.BackendRequiresInteractiveAuth(cli)
 		// Per-agent probe FIRST: it resolves this agent's own per-UID HOME and
 		// answers "does this backend even have an interactive login?" before
 		// looking at any file. The backend-level probe (shared legacy path
