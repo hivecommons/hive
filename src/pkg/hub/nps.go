@@ -470,7 +470,7 @@ func (s *HubServer) handleNPSIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.npsHiveRegistered(hiveID) {
-		npsJSONError(w, "unknown hive — heartbeat first", http.StatusForbidden)
+		npsJSONError(w, "unknown hive - heartbeat first", http.StatusForbidden)
 		return
 	}
 	if p.Score < npsScoreMin || p.Score > npsScoreMax {

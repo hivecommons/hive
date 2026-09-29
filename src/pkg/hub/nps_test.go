@@ -523,7 +523,7 @@ func TestNPSAdminCardWired(t *testing.T) {
 		"loadAdminNPS();",
 	} {
 		if !strings.Contains(html, snippet) {
-			t.Errorf("dashboardHTML is missing %q — the NPS card is not wired", snippet)
+			t.Errorf("dashboardHTML is missing %q - the NPS card is not wired", snippet)
 		}
 	}
 	// The container must live inside the admin-gated section, i.e. after the
@@ -567,7 +567,7 @@ func TestNPSAdminCardNeverUsesInnerHTML(t *testing.T) {
 		body := npsHubJSFunc(t, html, fn)
 		for _, sink := range []string{"innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"} {
 			if strings.Contains(body, sink) {
-				t.Errorf("%s() uses %s — NPS free text must be rendered as text only", fn, sink)
+				t.Errorf("%s() uses %s - NPS free text must be rendered as text only", fn, sink)
 			}
 		}
 	}
@@ -579,7 +579,7 @@ func TestNPSAdminCardNeverUsesInnerHTML(t *testing.T) {
 func TestNPSAdminCardRendersFeedbackAsText(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("node not on PATH — the NPS text-rendering rule was NOT executed by this run; the source-level guard above still ran")
+		t.Skip("node not on PATH - the NPS text-rendering rule was NOT executed by this run; the source-level guard above still ran")
 	}
 	html := dashScript(t)
 	script := "var NPS_TREND_BAR_MAX_PCT = 100;\n" +
