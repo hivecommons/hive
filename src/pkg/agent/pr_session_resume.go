@@ -133,3 +133,14 @@ func (m *Manager) SendResumeKick(name, message, sessionID string) error {
 	}
 	return nil
 }
+
+// RecordAudit records a hive-originated audit event through the manager's
+// audit sink (a no-op when none is installed). It lets callers outside this
+// package that already hold the manager, such as the PR follow-up router,
+// write to the same durable audit trail as agent lifecycle events.
+func (m *Manager) RecordAudit(action, agentName string, fields map[string]any) {
+	if m == nil {
+		return
+	}
+	m.audit(action, agentName, fields)
+}

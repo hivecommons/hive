@@ -163,3 +163,21 @@ func TestNewSessionBootNonce_Unique(t *testing.T) {
 		t.Fatalf("boot nonces must be non-empty and distinct: %q %q", a, b)
 	}
 }
+
+// RecordAudit writes through the manager's sink as the hive itself, and is a
+// no-op on a nil manager or with no sink installed.
+func TestRecordAudit_UsesManagerSink(t *testing.T) {
+	m, sink := testManagerWithSink(t)
+	m.RecordAudit("pr_followup_routed", "scanner", map[string]any{"outcome": "resumed"})
+	got := sink.find("pr_followup_routed")
+	if got == nil || got.Actor != auditActorSystem || got.Agent != "scanner" || got.Fields["outcome"] != "resumed" {
+		t.Fatalf("recorded = %+v, want a system-attributed pr_followup_routed for scanner", got)
+	}
+	var nilMgr *Manager
+	nilMgr.RecordAudit("pr_followup_routed", "scanner", nil) // must not panic
+	m.SetAuditSink(nil)
+	m.RecordAudit("pr_followup_routed", "scanner", nil)
+	if sink.count() != 1 {
+		t.Fatalf("events after sink removal = %d, want 1", sink.count())
+	}
+}
