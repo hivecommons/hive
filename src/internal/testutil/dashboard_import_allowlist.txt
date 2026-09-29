@@ -1,0 +1,48 @@
+# pkg/dashboard top-level pkg import ratchet.
+#
+# Seeded from the current v5 state for hivecommons/hive#9270.
+# This is a structural guardrail for the dashboard decomposition work tracked
+# in hivecommons/hive#5565: new github.com/hivecommons/hive/pkg/<x> imports
+# from pkg/dashboard must route through an existing seam or be added here with
+# PR justification; removed imports must be deleted so the ratchet tightens.
+github.com/hivecommons/hive/pkg/acmmadvisor
+github.com/hivecommons/hive/pkg/advisory
+github.com/hivecommons/hive/pkg/agent
+github.com/hivecommons/hive/pkg/agentparse
+github.com/hivecommons/hive/pkg/beads
+github.com/hivecommons/hive/pkg/celtrigger
+github.com/hivecommons/hive/pkg/claims
+github.com/hivecommons/hive/pkg/classify
+github.com/hivecommons/hive/pkg/claude
+github.com/hivecommons/hive/pkg/config
+github.com/hivecommons/hive/pkg/convergence
+github.com/hivecommons/hive/pkg/dashboard
+github.com/hivecommons/hive/pkg/defsrc
+github.com/hivecommons/hive/pkg/fleetreport
+github.com/hivecommons/hive/pkg/github
+github.com/hivecommons/hive/pkg/governor
+github.com/hivecommons/hive/pkg/hiveadvisor
+github.com/hivecommons/hive/pkg/hooks
+github.com/hivecommons/hive/pkg/hub
+github.com/hivecommons/hive/pkg/hubbackup
+github.com/hivecommons/hive/pkg/inferencehealth
+github.com/hivecommons/hive/pkg/ioscan
+github.com/hivecommons/hive/pkg/knowledge
+github.com/hivecommons/hive/pkg/notify
+github.com/hivecommons/hive/pkg/planning
+github.com/hivecommons/hive/pkg/policies
+github.com/hivecommons/hive/pkg/promptsrc
+github.com/hivecommons/hive/pkg/resolve
+github.com/hivecommons/hive/pkg/retro
+github.com/hivecommons/hive/pkg/review
+github.com/hivecommons/hive/pkg/rotation
+github.com/hivecommons/hive/pkg/scheduler
+github.com/hivecommons/hive/pkg/skillreg
+github.com/hivecommons/hive/pkg/spokebackup
+github.com/hivecommons/hive/pkg/terminalassert
+github.com/hivecommons/hive/pkg/timeline
+github.com/hivecommons/hive/pkg/tokens
+github.com/hivecommons/hive/pkg/toolapprove
+github.com/hivecommons/hive/pkg/turn
+github.com/hivecommons/hive/pkg/watchdog
+github.com/hivecommons/hive/pkg/worksource

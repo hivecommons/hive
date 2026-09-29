@@ -1,0 +1,1 @@
+- Add an internal testutil ratchet that prevents pkg/dashboard from gaining new top-level pkg dependencies without an allowlist update and PR justification.
