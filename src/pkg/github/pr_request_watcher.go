@@ -365,6 +365,13 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 			c.rejectPRRequest(path, req, "base-drift", reason, nowFn)
 			return
 		}
+		// Deterministic first-head checks (#9481): reject the request while the
+		// agent can still amend the branch, instead of opening a PR that CI will
+		// mark red a few minutes later.
+		if reason, policy := prRequestPrecheckReason(err); policy {
+			c.rejectPRRequest(path, req, "precheck", reason, nowFn)
+			return
+		}
 		c.failPRRequest(path, req, err, nowFn)
 		return
 	}

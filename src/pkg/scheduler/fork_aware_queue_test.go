@@ -70,7 +70,7 @@ func TestBuildCIFailingList_SplitsForkPRs(t *testing.T) {
 	s := newScheduler()
 	out := s.buildCIFailingList()
 
-	forkIdx := strings.Index(out, "FORK PRs (2 — review/comment only, you CANNOT push to these)")
+	forkIdx := strings.Index(out, "FORK PRs (2 — review/comment only, do not push unless an explicit contributor-PR gate says this hive may)")
 	if forkIdx < 0 {
 		t.Fatalf("fork section missing:\n%s", out)
 	}
@@ -87,10 +87,10 @@ func TestBuildCIFailingList_SplitsForkPRs(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"#839 projectbluefin/testsuite by @alice [fork: alice/testsuite:sec-check-dashboard — comment only]",
-		"#841 projectbluefin/testsuite by @bob [fork: (fork deleted):gone — comment only]",
-		"NEVER `git push origin HEAD:<head_ref>`",
-		"stray branch",
+		"#839 projectbluefin/testsuite by @alice [fork: alice/testsuite:sec-check-dashboard — comment/check-report only]",
+		"#841 projectbluefin/testsuite by @bob [fork: (fork deleted):gone — comment/check-report only]",
+		"same-named branch on the base repo",
+		"owner-enabled contributor_prs gate",
 	} {
 		if !strings.Contains(forks, want) {
 			t.Errorf("fork section missing %q:\n%s", want, forks)

@@ -1,0 +1,1 @@
+- Add deterministic PR-open prechecks for changelog/DCO failures and clearer fork-PR red-check guidance so stuck contributor and agent PRs fail before review.

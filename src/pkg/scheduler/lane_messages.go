@@ -489,15 +489,17 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 		return "(none)\n"
 	}
 	type ciFailingRow struct {
-		Number   int    `json:"number"`
-		Repo     string `json:"repo"`
-		Title    string `json:"title"`
-		Author   string `json:"author"`
-		HeadSHA  string `json:"head_sha"`
-		HeadRef  string `json:"head_ref"`
-		HeadRepo string `json:"head_repo"`
-		FromFork bool   `json:"from_fork"`
-		Held     bool   `json:"held"`
+		Number        int      `json:"number"`
+		Repo          string   `json:"repo"`
+		Title         string   `json:"title"`
+		Author        string   `json:"author"`
+		HeadSHA       string   `json:"head_sha"`
+		HeadRef       string   `json:"head_ref"`
+		HeadRepo      string   `json:"head_repo"`
+		FromFork      bool     `json:"from_fork"`
+		Held          bool     `json:"held"`
+		FailingChecks []string `json:"failing_checks"`
+		Excerpt       string   `json:"excerpt"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
@@ -563,11 +565,11 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 		b.WriteString(fmt.Sprintf("  #%d %s by @%s (sha:%s)%s — %s\n", pr.Number, pr.Repo, pr.Author, pr.HeadSHA, heldMarker(pr.Held), pr.Title))
 	}
 	if len(forks) > 0 {
-		b.WriteString(fmt.Sprintf("FORK PRs (%d — review/comment only, you CANNOT push to these):\n", len(forks)))
-		b.WriteString("  Their head branch lives in the contributor's fork, not in this repo. Do NOT\n")
-		b.WriteString("  `gh pr checkout` + push, and NEVER `git push origin HEAD:<head_ref>` — that creates\n")
-		b.WriteString("  a stray branch on the base repo under a name you do not own. Leave a review\n")
-		b.WriteString("  comment with the fix, or skip.\n")
+		b.WriteString(fmt.Sprintf("FORK PRs (%d — review/comment only, do not push unless an explicit contributor-PR gate says this hive may):\n", len(forks)))
+		b.WriteString("  Their head branch lives in the contributor's fork. Default action is to report the\n")
+		b.WriteString("  failing/held required check and the exact fix in one PR comment; do NOT create a\n")
+		b.WriteString("  same-named branch on the base repo. Only an owner-enabled contributor_prs gate may\n")
+		b.WriteString("  allow DCO-safe unstick moves such as merge-commit base syncs or approved reruns.\n")
 		for i, pr := range forks {
 			if i >= limit {
 				b.WriteString(prListOverflowLine(len(forks)-i, limit))
@@ -580,7 +582,15 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 			if pr.HeadRef != "" {
 				head += ":" + pr.HeadRef
 			}
-			b.WriteString(fmt.Sprintf("  #%d %s by @%s [fork: %s — comment only]%s — %s\n", pr.Number, pr.Repo, pr.Author, head, heldMarker(pr.Held), pr.Title))
+			checks := ""
+			if len(pr.FailingChecks) > 0 {
+				checks = " — failing: " + strings.Join(pr.FailingChecks, ", ")
+			}
+			excerpt := strings.TrimSpace(pr.Excerpt)
+			if excerpt != "" {
+				checks += " — " + excerpt
+			}
+			b.WriteString(fmt.Sprintf("  #%d %s by @%s [fork: %s — comment/check-report only]%s — %s%s\n", pr.Number, pr.Repo, pr.Author, head, heldMarker(pr.Held), pr.Title, checks))
 		}
 	}
 	return b.String()

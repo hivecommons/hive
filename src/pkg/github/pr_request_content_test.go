@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 func TestAddedInternalMetadata(t *testing.T) {
@@ -225,5 +227,105 @@ func TestValidatePRRequestContentUsesExplicitBase(t *testing.T) {
 	}
 	if comparePath != "/repos/o/r/compare/release...fix" {
 		t.Fatalf("compare path = %q", comparePath)
+	}
+}
+
+func TestPRRequestWatcherPrecheckRejectsMissingChangelogFragment(t *testing.T) {
+	created := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/1":
+			_, _ = io.WriteString(w, `{"number":1,"title":"bug","body":"please fix","state":"open"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/compare/v5...scanner/fix":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"files": []map[string]string{{"filename": "src/pkg/example/example.go", "status": "modified", "patch": "@@ -1 +1 @@\n+package example"}},
+				"commits": []map[string]any{{
+					"sha": "1234567890abcdef", "parents": []map[string]string{{"sha": "parent"}},
+					"commit": map[string]any{"author": map[string]string{"email": "agent@example.com"}, "message": "fix\n\nSigned-off-by: Agent <agent@example.com>"},
+				}},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/pulls":
+			created++
+			w.WriteHeader(http.StatusCreated)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClientForTest(srv.URL, "o", []string{"r"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c.prAuthz = func(string, int) error { return nil }
+	dir := t.TempDir()
+	old := prRequestDirForTest
+	prRequestDirForTest = dir
+	defer func() { prRequestDirForTest = old }()
+
+	reqPath, err := WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "scanner/fix", Base: "v5", Title: "fix: code", Body: "Fixes #1", Agent: "scanner", IssueN: []int{1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessPRRequestsOnce(context.Background())
+
+	if created != 0 {
+		t.Fatalf("precheck failure must not create a PR; got %d creates", created)
+	}
+	if _, err := os.Stat(reqPath + ".rejected"); err != nil {
+		t.Fatalf("precheck request was not quarantined as .rejected: %v", err)
+	}
+	result, err := os.ReadFile(strings.TrimSuffix(reqPath, ".json") + ".result.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"precheck", "changelog.d", "src/pkg/example/example.go"} {
+		if !strings.Contains(string(result), want) {
+			t.Errorf("result %q does not contain %q", result, want)
+		}
+	}
+}
+
+func TestPRRequestChangelogPrecheckRejectsMalformedFragment(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/contents/changelog.d/changed-bad.md":
+			_ = json.NewEncoder(w).Encode(map[string]string{"type": "file", "encoding": "base64", "content": "Tm90IGEgYnVsbGV0Cg=="})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "o", []string{"r"}, slog.Default())
+
+	reason := prRequestChangelogPrecheck(context.Background(), c, "o", "r", "scanner/fix", []*gh.CommitFile{
+		{Filename: gh.Ptr("src/pkg/example/example.go"), Status: gh.Ptr("modified")},
+		{Filename: gh.Ptr("changelog.d/changed-bad.md"), Status: gh.Ptr("added")},
+	})
+	if !strings.Contains(reason, "must start with a '- ' entry bullet") {
+		t.Fatalf("reason = %q", reason)
+	}
+}
+
+func TestPRRequestDCOPrecheckRejectsUnsignedCommit(t *testing.T) {
+	reason := prRequestDCOPrecheck([]*gh.RepositoryCommit{{
+		SHA:     gh.Ptr("1234567890abcdef"),
+		Commit:  &gh.Commit{Author: &gh.CommitAuthor{Email: gh.Ptr("agent@example.com")}, Message: gh.Ptr("fix without signoff")},
+		Parents: []*gh.Commit{{SHA: gh.Ptr("parent")}},
+	}})
+	if !strings.Contains(reason, "DCO precheck failed") || !strings.Contains(reason, "1234567890ab") {
+		t.Fatalf("reason = %q", reason)
+	}
+}
+
+func TestPRRequestDCOPrecheckAcceptsEquivalentNoreplyForms(t *testing.T) {
+	reason := prRequestDCOPrecheck([]*gh.RepositoryCommit{{
+		SHA:    gh.Ptr("1234567890abcdef"),
+		Author: &gh.User{Login: gh.Ptr("octocat")},
+		Commit: &gh.Commit{
+			Author:  &gh.CommitAuthor{Email: gh.Ptr("12345+octocat@users.noreply.github.com")},
+			Message: gh.Ptr("fix\n\nSigned-off-by: Octo Cat <octocat@users.noreply.github.com>"),
+		},
+		Parents: []*gh.Commit{{SHA: gh.Ptr("parent")}},
+	}})
+	if reason != "" {
+		t.Fatalf("reason = %q, want pass", reason)
 	}
 }
