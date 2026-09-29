@@ -252,14 +252,12 @@ func TestCovD_SweepWorkspaces(t *testing.T) {
 	logger := testLoggerCovD()
 
 	// missing root → early Debug+return (default macOS path has no /data/agents).
-	oldRoot := agentWorkspaceRoot
-	agentWorkspaceRoot = filepath.Join(t.TempDir(), "does-not-exist")
+	setAgentWorkspaceRootForTest(t, filepath.Join(t.TempDir(), "does-not-exist"))
 	sweepWorkspaces(logger, nil)
 
 	// Build a real temp workspace tree.
 	root := t.TempDir()
-	agentWorkspaceRoot = root
-	defer func() { agentWorkspaceRoot = oldRoot }()
+	setAgentWorkspaceRootForTest(t, root)
 
 	agentDir := filepath.Join(root, "scanner")
 	if err := os.MkdirAll(agentDir, 0o755); err != nil {

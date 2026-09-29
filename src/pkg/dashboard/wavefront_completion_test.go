@@ -19,9 +19,7 @@ func TestTaskCompleteDrivesWavefrontCompleteAndCleansWorktree(t *testing.T) {
 	if err := hub.recordLeaseForKeyStage(identity, taskID, "acme/repo", 0, key, "contributor", StageImplement, 7, started); err != nil {
 		t.Fatalf("record lease: %v", err)
 	}
-	origRoot := agentWorkspaceRoot
-	agentWorkspaceRoot = t.TempDir()
-	t.Cleanup(func() { agentWorkspaceRoot = origRoot })
+	setAgentWorkspaceRootForTest(t, t.TempDir())
 	worktree := runStageWorktreePath(identity, key, StageImplement, 7)
 	if err := os.MkdirAll(filepath.Join(worktree, "nested"), 0o755); err != nil {
 		t.Fatalf("mkdir worktree: %v", err)

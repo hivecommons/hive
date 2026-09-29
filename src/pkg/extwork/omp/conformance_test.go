@@ -26,7 +26,7 @@ import (
 // a loopback listener that stands in for the hub's contributor WebSocket.
 
 const (
-	fixtureStartTimeout = 10 * time.Second
+	fixtureStartTimeout = 30 * time.Second
 	settleTimeout       = 5 * time.Second
 	stageCount          = 2
 	testAckTimeout      = 5 * time.Second

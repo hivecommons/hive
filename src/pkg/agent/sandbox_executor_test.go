@@ -17,6 +17,8 @@ import (
 	"github.com/hivecommons/hive/pkg/sandbox"
 )
 
+const sandboxStateTransitionTimeout = 30 * time.Second
+
 type sandboxFakeRunner struct {
 	mu       sync.Mutex
 	envs     [][]string
@@ -233,6 +235,13 @@ func TestManagerSandboxStateMachine(t *testing.T) {
 	// flaked under full-suite load.
 	started := make(chan struct{})
 	release := make(chan struct{})
+	completed := make(chan struct{})
+	var completeOnce sync.Once
+	m.SetSandboxAuditCallback(func(agent, action, detail string) {
+		if agent == "scanner" && action == "sandbox_complete" {
+			completeOnce.Do(func() { close(completed) })
+		}
+	})
 	m.SetSandboxLauncher(sandboxFakeLauncher{started: started, release: release})
 	m.setSandboxRunnerForTest(&sandboxFakeRunner{})
 	if err := m.Start(context.Background(), "scanner"); err != nil {
@@ -246,21 +255,21 @@ func TestManagerSandboxStateMachine(t *testing.T) {
 	}
 	select {
 	case <-started:
-	case <-time.After(5 * time.Second):
+	case <-time.After(sandboxStateTransitionTimeout):
 		t.Fatal("sandbox launcher was never invoked")
 	}
 	if err := m.SendKick("scanner", "again"); err == nil {
 		t.Fatal("second kick while sandbox is running should be refused")
 	}
 	close(release)
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if got := m.AllStatuses()["scanner"].State; got == StateIdle {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	select {
+	case <-completed:
+	case <-time.After(sandboxStateTransitionTimeout):
+		t.Fatalf("sandbox completion audit did not arrive: %+v", m.AllStatuses()["scanner"])
 	}
-	t.Fatalf("sandbox agent did not return to idle: %+v", m.AllStatuses()["scanner"])
+	if got := m.AllStatuses()["scanner"].State; got != StateIdle {
+		t.Fatalf("sandbox agent state after completion=%s want idle: %+v", got, m.AllStatuses()["scanner"])
+	}
 }
 
 func TestManagerSandboxRespectsPause(t *testing.T) {

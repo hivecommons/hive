@@ -102,7 +102,6 @@ func TestFileOwnerNameNotExist(t *testing.T) {
 }
 
 func TestSweepWorkspacesSkipsRecent(t *testing.T) {
-	origRoot := agentWorkspaceRoot
 	root := t.TempDir()
 
 	// Create agent dir with a recent workspace
@@ -114,9 +113,6 @@ func TestSweepWorkspacesSkipsRecent(t *testing.T) {
 	if err := os.MkdirAll(wsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-
-	// Temporarily override (test-only — not thread-safe but acceptable for unit test)
-	_ = origRoot
 
 	// Verify the recent workspace would not be removed by age check
 	info, err := os.Stat(wsDir)
@@ -135,6 +131,19 @@ func sweepTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+func setAgentWorkspaceRootForTest(t *testing.T, root string) {
+	t.Helper()
+	agentWorkspaceRootMu.Lock()
+	orig := agentWorkspaceRoot
+	agentWorkspaceRoot = root
+	agentWorkspaceRootMu.Unlock()
+	t.Cleanup(func() {
+		agentWorkspaceRootMu.Lock()
+		agentWorkspaceRoot = orig
+		agentWorkspaceRootMu.Unlock()
+	})
+}
+
 // newSweepAgentDir points agentWorkspaceRoot at a fresh temp root (restored on
 // cleanup) and creates one agent workspace under it, populated with a stale
 // directory (with a file inside) and a stale top-level file. It returns the
@@ -142,9 +151,7 @@ func sweepTestLogger() *slog.Logger {
 func newSweepAgentDir(t *testing.T, agent string) (agentDir, staleDir, staleFile string) {
 	t.Helper()
 	root := t.TempDir()
-	orig := agentWorkspaceRoot
-	agentWorkspaceRoot = root
-	t.Cleanup(func() { agentWorkspaceRoot = orig })
+	setAgentWorkspaceRootForTest(t, root)
 
 	agentDir = filepath.Join(root, agent)
 	staleDir = filepath.Join(agentDir, "src")

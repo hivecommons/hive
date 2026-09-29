@@ -1,0 +1,1 @@
+- CI flake coverage for dashboard workspace cleanup, sandbox state transitions, and fixture startup now uses race-safe workspace root access and deterministic readiness/completion signals instead of short polling windows.

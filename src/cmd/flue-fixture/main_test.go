@@ -16,7 +16,7 @@ import (
 
 const (
 	workflowDir  = "../../pkg/extwork/flue/testdata/flue-fixture"
-	startTimeout = 5 * time.Second
+	startTimeout = 30 * time.Second
 	childEnv     = "FLUE_FIXTURE_MAIN_CHILD"
 )
 
@@ -39,18 +39,40 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
+type notifyingBuffer struct {
+	syncBuffer
+	prefix string
+	once   sync.Once
+	seen   chan struct{}
+}
+
+func newNotifyingBuffer(prefix string) *notifyingBuffer {
+	return &notifyingBuffer{prefix: prefix, seen: make(chan struct{})}
+}
+
+func (b *notifyingBuffer) Write(p []byte) (int, error) {
+	n, err := b.syncBuffer.Write(p)
+	if strings.Contains(string(p), b.prefix) || strings.Contains(b.String(), b.prefix) {
+		b.once.Do(func() { close(b.seen) })
+	}
+	return n, err
+}
+
 // TestRunPrintsAddress drives run in-process: the fixture starts, prints its
 // address line, and exits cleanly when the context ends.
 func TestRunPrintsAddress(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	var out, errOut syncBuffer
+	out := newNotifyingBuffer(fixture.AddrLinePrefix)
+	var errOut syncBuffer
 	done := make(chan int, 1)
 	go func() {
-		done <- run([]string{"-workflow", workflowDir, "-state", t.TempDir()}, &out, &errOut, func() (context.Context, context.CancelFunc) { return ctx, cancel })
+		done <- run([]string{"-workflow", workflowDir, "-state", t.TempDir()}, out, &errOut, func() (context.Context, context.CancelFunc) { return ctx, cancel })
 	}()
-	deadline := time.Now().Add(startTimeout)
-	for !strings.Contains(out.String(), fixture.AddrLinePrefix) && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+	select {
+	case <-out.seen:
+	case <-time.After(startTimeout):
+		cancel()
+		t.Fatalf("fixture did not print address within %s; stdout=%q stderr=%q", startTimeout, out.String(), errOut.String())
 	}
 	cancel()
 	select {
@@ -64,7 +86,7 @@ func TestRunPrintsAddress(t *testing.T) {
 	if !strings.Contains(out.String(), fixture.AddrLinePrefix+"http://127.0.0.1:") {
 		t.Fatalf("no address line in %q", out.String())
 	}
-	if code := run(nil, &out, &errOut, signalContext); code != 2 {
+	if code := run(nil, out, &errOut, signalContext); code != 2 {
 		t.Fatalf("missing -workflow exit code = %d", code)
 	}
 }

@@ -12,6 +12,8 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 )
 
+const applyPackIsolationMarkerTimeout = 30 * time.Second
+
 // packAgentNames returns the non-hidden agent names defined by a pack level.
 func packAgentNames(t *testing.T, level int) []string {
 	t.Helper()
@@ -146,7 +148,7 @@ func TestApplyPackLiveLookingUIDMapUsesHermeticIsolationMarkers(t *testing.T) {
 		done <- err
 	}()
 
-	timer := time.NewTimer(5 * time.Second)
+	timer := time.NewTimer(applyPackIsolationMarkerTimeout)
 	defer timer.Stop()
 	select {
 	case err := <-done:

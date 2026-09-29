@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -69,7 +70,16 @@ func durationFromEnv(env string, def time.Duration) time.Duration {
 // agentWorkspaceRoot is the directory swept for stale agent workspace
 // artifacts. A package var (not a const) so tests can point it at a temp
 // dir; the production value never changes at runtime.
-var agentWorkspaceRoot = "/data/agents"
+var (
+	agentWorkspaceRootMu sync.RWMutex
+	agentWorkspaceRoot   = "/data/agents"
+)
+
+func currentAgentWorkspaceRoot() string {
+	agentWorkspaceRootMu.RLock()
+	defer agentWorkspaceRootMu.RUnlock()
+	return agentWorkspaceRoot
+}
 
 // StartWorkspaceCleanup runs a background loop that periodically sweeps
 // /data/agents/*/ for stale workspace artifacts and removes them.
@@ -98,9 +108,10 @@ func StartWorkspaceCleanup(ctx context.Context, logger *slog.Logger, audit *Audi
 }
 
 func sweepWorkspaces(logger *slog.Logger, audit *AuditLog) {
-	agentDirs, err := os.ReadDir(agentWorkspaceRoot)
+	root := currentAgentWorkspaceRoot()
+	agentDirs, err := os.ReadDir(root)
 	if err != nil {
-		logger.Debug("workspace cleanup: cannot read agent root", "path", agentWorkspaceRoot, "error", err)
+		logger.Debug("workspace cleanup: cannot read agent root", "path", root, "error", err)
 		return
 	}
 
@@ -115,7 +126,7 @@ func sweepWorkspaces(logger *slog.Logger, audit *AuditLog) {
 			continue
 		}
 		agentName := agentEntry.Name()
-		agentPath := filepath.Join(agentWorkspaceRoot, agentName)
+		agentPath := filepath.Join(root, agentName)
 
 		// GIT-CLONE GUARD: a workspace root that IS a git clone must never be
 		// swept. On hosted spoke hive-hosted-hosted-available-vllmd-07 (tenant

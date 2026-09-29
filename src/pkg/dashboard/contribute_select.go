@@ -1381,7 +1381,7 @@ func runStageWorktreePath(identity, runKey, stage string, gen uint64) string {
 	if identity == "" || runKey == "" || stage == "" || gen == 0 {
 		return ""
 	}
-	return filepath.Join(agentWorkspaceRoot, identity, "runs", sanitizeRunPromptPath(runKey), fmt.Sprintf("%s-%d", sanitizeRunPromptPath(stage), gen))
+	return filepath.Join(currentAgentWorkspaceRoot(), identity, "runs", sanitizeRunPromptPath(runKey), fmt.Sprintf("%s-%d", sanitizeRunPromptPath(stage), gen))
 }
 
 func removeRunStageWorktree(identity, runKey, stage string, gen uint64) error {
