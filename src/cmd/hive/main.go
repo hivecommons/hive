@@ -1911,10 +1911,10 @@ func (b *boot) newKnowledgePrimer() *knowledge.Primer {
 
 // bootAdvisory builds the notifier, infers the ACMM level, seeds the
 // GitHub App banner state, opens the mutation-convergence ledger and journal,
-// finds or creates the pinned advisory issue and writes the embedded
-// brainstorm policy to the policy dir. It returns false when main() should
-// return without booting further — the v5 mutation ledger/journal failure
-// paths, which returned from main() before the split and still do.
+// finds or creates the pinned advisory issue and seeds the embedded default
+// policies to the policy dir. It returns false when main() should return
+// without booting further — the v5 mutation ledger/journal failure paths,
+// which returned from main() before the split and still do.
 func (b *boot) bootAdvisory() bool { return b.bootAdvisoryWith(defaultBootAdvisoryDeps()) }
 
 // bootAdvisoryWith is bootAdvisory with its GitHub calls injected; see
@@ -2041,21 +2041,16 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 
 	b.policyDirPath = policyDir(b.cfg.Policies)
 
-	// Write brainstorm policy to disk so the agent can find it.
-	// The policy is embedded in the binary but the agent searches the filesystem.
-	brainstormPolicyDir := b.policyDirPath
-	if err := os.MkdirAll(brainstormPolicyDir, 0o755); err != nil {
-		b.logger.Warn("failed to create brainstorm policy dir", "path", brainstormPolicyDir, "error", err)
-	}
-	if policyData, err := policies.DefaultPolicies.ReadFile("defaults/brainstorm-advisory.md"); err == nil {
-		policyPath := filepath.Join(brainstormPolicyDir, "brainstorm-advisory.md")
-		// Always overwrite — the embedded policy may have been updated
-		// (e.g., inception reaping guard added in bug #113 fix).
-		if err := os.WriteFile(policyPath, policyData, 0o644); err != nil {
-			b.logger.Warn("failed to write brainstorm policy", "path", policyPath, "error", err)
-		} else {
-			b.logger.Info("wrote brainstorm policy to disk", "path", policyPath)
-		}
+	// Seed every embedded default policy to disk so agents that search the
+	// filesystem find them, and keep them in sync with the running image on
+	// every later boot without clobbering a genuine dashboard edit. This
+	// generalizes what used to be a brainstorm-advisory.md-only force-rewrite
+	// (added so an embedded fix, e.g. bug #113's inception reaping guard,
+	// always reached the agent) to every template: a stale seeded copy that
+	// nobody edited now gets refreshed the same way, instead of silently
+	// shadowing embedded policy updates forever (hivecommons/hive#9428).
+	if err := policies.ReconcileSeededDefaults(b.policyDirPath, b.logger); err != nil {
+		b.logger.Warn("failed to seed default policies", "path", b.policyDirPath, "error", err)
 	}
 
 	b.projectCtx = agent.ProjectContext{
