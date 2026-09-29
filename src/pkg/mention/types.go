@@ -98,17 +98,59 @@ type Handler struct {
 
 	mu       sync.Mutex
 	attempts map[string]int // failed delivery attempts per unmarked mention
+
+	// cfgMu guards Config/Actions/ReviewBots, which the caller can swap live
+	// via UpdateConfig (#9169: these three fields used to be captured once
+	// at construction and never re-synced, so a hive.yaml reload that added
+	// a summoner, raised per_user_per_hour or set allow_apply: false had no
+	// effect until restart).
+	cfgMu      sync.RWMutex
+	cfg        config.GitHubMentionsConfig
+	actionsCfg config.GitHubActionsConfig
+	reviewBots config.ReviewBotsConfig
 }
 
 func NewHandler(opts Options) *Handler {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	return &Handler{opts: opts, lim: NewRateLimiter(opts.Now), attempts: map[string]int{}}
+	h := &Handler{opts: opts, lim: NewRateLimiter(opts.Now), attempts: map[string]int{}}
+	h.cfg = opts.Config
+	h.actionsCfg = opts.Actions
+	h.reviewBots = opts.ReviewBots
+	return h
+}
+
+// UpdateConfig swaps the mentions, actions and review-bots configuration
+// live, so a hive.yaml reload takes effect without restarting the process.
+func (h *Handler) UpdateConfig(mentions config.GitHubMentionsConfig, actions config.GitHubActionsConfig, reviewBots config.ReviewBotsConfig) {
+	h.cfgMu.Lock()
+	defer h.cfgMu.Unlock()
+	h.cfg = mentions
+	h.actionsCfg = actions
+	h.reviewBots = reviewBots
+}
+
+func (h *Handler) config() config.GitHubMentionsConfig {
+	h.cfgMu.RLock()
+	defer h.cfgMu.RUnlock()
+	return h.cfg
+}
+
+func (h *Handler) actionsConfig() config.GitHubActionsConfig {
+	h.cfgMu.RLock()
+	defer h.cfgMu.RUnlock()
+	return h.actionsCfg
+}
+
+func (h *Handler) reviewBotsConfig() config.ReviewBotsConfig {
+	h.cfgMu.RLock()
+	defer h.cfgMu.RUnlock()
+	return h.reviewBots
 }
 
 func (h *Handler) Handle(ctx context.Context, ev Event) error {
-	cfg := h.opts.Config
+	cfg := h.config()
 	if !cfg.Enabled {
 		return nil
 	}
@@ -121,7 +163,7 @@ func (h *Handler) Handle(ctx context.Context, ev Event) error {
 	cleanBody, marker := ExtractActionMarker(ev.Body)
 	if marker.Source != "" {
 		p = Parse(cleanBody, app)
-		if trustedActionCommentAuthor(ev.Author, h.opts.Actions) {
+		if trustedActionCommentAuthor(ev.Author, h.actionsConfig()) {
 			ev.Body = cleanBody
 			ev.Action = marker
 		} else {
@@ -140,7 +182,7 @@ func (h *Handler) Handle(ctx context.Context, ev Event) error {
 		return h.opts.Store.Mark(ev.NodeID)
 	}
 	if ev.Action.Source != "" {
-		if !trustedActionCommentAuthor(ev.Author, h.opts.Actions) {
+		if !trustedActionCommentAuthor(ev.Author, h.actionsConfig()) {
 			h.decline(ev, "action-author", "")
 			return h.mark(ev)
 		}
@@ -303,7 +345,7 @@ func (h *Handler) authorized(login string, cfg config.GitHubMentionsConfig) bool
 }
 
 func (h *Handler) authorizeAction(ctx context.Context, ev Event, p Parsed) (string, bool) {
-	cfg := h.opts.Actions
+	cfg := h.actionsConfig()
 	if !cfg.Enabled {
 		h.decline(ev, "action-disabled", "")
 		return "", false
@@ -336,7 +378,7 @@ func (h *Handler) authorizeAction(ctx context.Context, ev Event, p Parsed) (stri
 	if h.opts.Roles != nil {
 		role, ok = h.opts.Roles(mapped)
 	}
-	if !ok || !config.RoleAtLeast(role, h.opts.Config.MinRoleEffective()) {
+	if !ok || !config.RoleAtLeast(role, h.config().MinRoleEffective()) {
 		h.decline(ev, "identity", "unmapped")
 		return "", false
 	}
@@ -438,7 +480,7 @@ func (h *Handler) loopAuthor(login, app string) bool {
 	if strings.HasSuffix(strings.ToLower(login), "[bot]") {
 		return true
 	}
-	return h.opts.ReviewBots.IsBot(login)
+	return h.reviewBotsConfig().IsBot(login)
 }
 
 func (h *Handler) resolveAgent(named string) (string, error) {
@@ -456,7 +498,7 @@ func (h *Handler) resolveAgent(named string) (string, error) {
 		}
 		return "", fmt.Errorf("agent %q is not configured for mention summons", named)
 	}
-	def := h.opts.Config.DefaultAgent
+	def := h.config().DefaultAgent
 	if def != "" {
 		return h.resolveAgent(def)
 	}
@@ -484,7 +526,7 @@ func (h *Handler) audit(action string, ev Event, agent, extra string) {
 	}
 	parts := []string{"repo=" + ev.Repo, fmt.Sprintf("number=%d", ev.Number), fmt.Sprintf("comment_id=%d", ev.CommentID), "author=" + ev.Author}
 	if ev.Action.Source != "" {
-		parts = append(parts, "source="+h.opts.Actions.SourceLabelEffective(), "actor="+ev.Action.Actor, "run_id="+ev.Action.RunID, "run_attempt="+ev.Action.RunAttempt)
+		parts = append(parts, "source="+h.actionsConfig().SourceLabelEffective(), "actor="+ev.Action.Actor, "run_id="+ev.Action.RunID, "run_attempt="+ev.Action.RunAttempt)
 		if ev.Action.Workflow != "" {
 			parts = append(parts, "workflow="+ev.Action.Workflow)
 		}

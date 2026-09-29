@@ -112,7 +112,7 @@ func findMention(lowerBody, appBotLogin string) (int, int) {
 			}
 			idx += searchAt
 			end := idx + len(needle)
-			if mentionBoundary(lowerBody, end) {
+			if mentionBoundary(lowerBody, end) && mentionLeftBoundary(lowerBody, idx) {
 				return idx, end
 			}
 			searchAt = end
@@ -127,4 +127,17 @@ func mentionBoundary(s string, end int) bool {
 	}
 	next := s[end]
 	return !((next >= 'a' && next <= 'z') || (next >= '0' && next <= '9') || next == '-' || next == '_' || next == '[' || next == ']')
+}
+
+// mentionLeftBoundary requires the character immediately before the "@" to
+// not be part of a word, an e-mail local-part, or a URL, mirroring GitHub's
+// autolink rule. Without it, "ops@hive.example.com" or
+// "https://x.test/?u=a@hive" are parsed as a mention of "hive" (#9169).
+func mentionLeftBoundary(s string, idx int) bool {
+	if idx <= 0 {
+		return true
+	}
+	prev := s[idx-1]
+	return !((prev >= 'a' && prev <= 'z') || (prev >= '0' && prev <= '9') ||
+		prev == '-' || prev == '_' || prev == '.' || prev == '/' || prev == ':')
 }

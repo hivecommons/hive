@@ -1,0 +1,1 @@
+- Matrix's `/sync` timeline limit is raised from 20 to 100 so bursts of events (backoff windows, chatty bridges) are far less likely to be silently dropped even after the `limited`/`prev_batch` WARN log was added ([#9159](https://github.com/hivecommons/hive/issues/9159)).

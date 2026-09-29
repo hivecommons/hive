@@ -39,7 +39,13 @@ const (
 	maxResponseBodyBytes   = 1 << 20
 	maxSyncResponseBytes   = 20 << 20
 	dedupeEventIDCacheSize = 1024
-	syncTimelineLimit      = 20
+	// syncTimelineLimit bounds how many timeline events a single /sync
+	// response returns per room. PR #9299 added detection and a WARN log for
+	// limited/prev_batch, but never raised this from Matrix's low default,
+	// so events beyond it were still dropped, only now with a log line
+	// (#9159). 100 gives real bursts (backoff windows, chatty bridges) enough
+	// headroom that the WARN path becomes the rare exception, not the norm.
+	syncTimelineLimit = 100
 )
 
 type AgentIdentity = chat.AgentIdentity

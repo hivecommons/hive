@@ -2805,6 +2805,7 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 				recordLifecycleFromAudit(b.dashSrv, b.cfg.Project.Org, action, detail, agentName)
 			},
 		})
+		b.mentionHandler = handler
 		poller := mention.NewPoller(nil, func() []string {
 			if b.ghClient == nil {
 				return nil
@@ -3879,6 +3880,13 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		// threshold — re-sync it alongside the repo list above.
 		b.gov.SetRepoCount(b.cfg.Project.RepoCount())
 		b.agentMgr.SetSandboxConfig(b.cfg.AgentSandbox)
+		// Re-sync the GitHub mention handler's config live (#9169): it used
+		// to capture Mentions/Actions/ReviewBots once at construction, so a
+		// reload that added a summoner, raised per_user_per_hour or flipped
+		// allow_apply had no effect until restart.
+		if b.mentionHandler != nil {
+			b.mentionHandler.UpdateConfig(b.cfg.GitHub.Mentions, b.cfg.GitHub.Actions, b.cfg.Classification.ReviewBots)
+		}
 		// Re-run the posture check on reload, not only at boot: flipping the
 		// Security tab's sandbox toggle writes the config and lands here, which
 		// is the exact moment an operator forms the belief that they are now

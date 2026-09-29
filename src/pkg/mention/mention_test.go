@@ -96,6 +96,9 @@ func TestParseGrammar(t *testing.T) {
 		{"bot suffix still accepted", "@hive[bot] review this", "", "review this", true},
 		{"slug boundary", "@hivekeeper review this", "", "", false},
 		{"no mention", "@other hi", "", "", false},
+		{"email local part is not a mention", "contact ops@hive.example.com for access", "", "", false},
+		{"query string is not a mention", "see https://x.test/?u=a@hive", "", "", false},
+		{"parenthesized mention still matches", "(@hive) please look", "", ") please look", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -593,4 +596,48 @@ func mustStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	return s
+}
+
+// TestUpdateConfigTakesEffectLive covers #9169's third item: Options.Config
+// used to be captured once at NewHandler and never re-synced, so raising
+// per_user_per_hour (or authorizing a new summoner) during a hive.yaml
+// reload had no effect until restart. UpdateConfig must change behavior on
+// the very next Handle call, with no new Handler/reconstruction involved.
+func TestUpdateConfigTakesEffectLive(t *testing.T) {
+	store := mustStore(t)
+	gh := &fakeGH{app: "hive[bot]"}
+	var audit, kick []string
+	h := NewHandler(Options{
+		Config:     config.GitHubMentionsConfig{Enabled: true, PerUserPerHour: 2, PerRepoPerHour: 2},
+		ReviewBots: config.ReviewBotsConfig{},
+		Roles:      func(login string) (string, bool) { return "", false },
+		Agents: func() []AgentInfo {
+			return []AgentInfo{{Name: "scanner", Enabled: true, Converse: true, Mention: true, GovernorKick: true}}
+		},
+		GitHub: gh,
+		Store:  store,
+		Kick:   func(agent, msg, source string) error { kick = append(kick, agent); return nil },
+		Audit:  func(action, detail, agent string) { audit = append(audit, action+":"+detail) },
+	})
+
+	ev := Event{Repo: "org/repo", Number: 1, NodeID: "before", CommentID: 1, Author: "mallory", Body: "@hive[bot] hi", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := h.Handle(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if !containsAudit(audit, "guard=unauthorized") {
+		t.Fatalf("expected unauthorized before reload, got %v", audit)
+	}
+	kick = nil
+	audit = nil
+
+	// Simulate a hive.yaml reload that adds "mallory" as a summoner.
+	h.UpdateConfig(config.GitHubMentionsConfig{Enabled: true, PerUserPerHour: 2, PerRepoPerHour: 2, Summoners: []string{"mallory"}}, config.GitHubActionsConfig{}, config.ReviewBotsConfig{})
+
+	ev.NodeID = "after"
+	if err := h.Handle(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if len(kick) != 1 {
+		t.Fatalf("expected the reloaded summoner allow-list to take effect without restart, kick=%v audit=%v", kick, audit)
+	}
 }

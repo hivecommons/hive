@@ -112,6 +112,7 @@ type boot struct {
 	onDemandFromPack              map[string]bool
 	mentionWebhook                http.Handler
 	mentionStore                  *mention.Store
+	mentionHandler                *mention.Handler
 	refreshDashboard              func()
 	mutationBoundary              effects.Boundary
 	findingPublisher              *publish.Publisher
