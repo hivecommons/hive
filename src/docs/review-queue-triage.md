@@ -82,14 +82,61 @@ conflicts`).
 
 Where it shows up:
 
+- **Dashboard -> Review queue** - a section (sidebar: Review queue, shown
+  wherever the Governor is, ACMM L2+) that renders the queue in
+  rank order: position, PR (`repo#number`, linked), author and whether a hive
+  agent or a contributor opened it, triage class and priority, confidence
+  band (or *unreviewed*), CI state and age. Each row expands to its
+  `reasons`. 25 rows per page with Prev/Next. Like the API it is read-only
+  and visible to any dashboard session; every PR field is rendered as
+  escaped text.
 - **`GET /api/review/queue?limit=N&offset=M`** - the ranked queue with
   reasons, paged (`limit` 1-200, default 50; `total` and `has_more` for
-  walking it). Reads only the last enumeration snapshot and the verdict
-  artifact; never calls GitHub.
+  walking it), plus a `version` fingerprint of the whole queue (see
+  [Freshness](#freshness-when-the-queue-re-ranks)). Reads only the last
+  enumeration snapshot and the verdict artifact; never calls GitHub.
 - **`last-actionable.json`** - each PR in `prs.items` and `prs.held` carries
   `review_rank` (its 1-based queue position), `review_priority` and
   `review_rank_reasons`. The lists keep their existing class-then-age order.
 - **`review-priority/*` labels** - option 2, off by default; see below.
+
+### Freshness: when the queue re-ranks
+
+The queue has no rank cache to invalidate: it is recomputed from its inputs
+every time it is read, and each input reaches the hive through exactly one
+path.
+
+| Input | How the hive learns it changed | When the queue reflects it |
+| --- | --- | --- |
+| New commits (head SHA), CI state, merge conflicts, labels, title, PR opened / merged / closed | The eval cycle's enumeration and CI enrichment (every `governor.eval_interval_s`, default 300s). The hive has no GitHub webhook receiver, so there is no earlier signal to react to. | The next eval cycle's snapshot, then the next API request |
+| A review verdict (and its confidence) for the current head | The review relay writes `review-verdicts.json` when it records the verdict | The very next API request, without waiting for a cycle |
+
+So the API is already event-driven with respect to every signal the hive
+has: a verdict shows up on the next request, and everything else as soon
+as the hive can know it. Adding a separate invalidation layer would need a
+new change source (webhooks or extra GitHub polling), which the queue is
+designed never to add.
+
+Two consumers do run once per cycle, and neither goes stale in a way that
+matters:
+
+- `review_rank` / `review_rank_reasons` in `last-actionable.json` are stamped
+  at enumeration time, so a verdict recorded mid-cycle appears there one
+  cycle later. The API and the dashboard view never read the stamp; they
+  re-rank on each request.
+- The `review-priority/*` label (option 2) follows the triage class alone,
+  and the class only changes with the title, labels or changed paths, which
+  are themselves refreshed once per cycle. A verdict never moves the label.
+
+To make changes observable without diffing the whole list, the response
+carries `version`, a fingerprint of the full ranked queue. It changes
+exactly when something the queue shows changes: a PR opens or leaves, a new
+head SHA (which also drops a verdict recorded for the old head), a CI flip, a
+verdict for the current head, a class, label, title or hold change, merge
+conflicts, or an age reason ticking over. A verdict for a head the PR no
+longer has does not change it. The dashboard view polls every 30s (not while
+the tab is hidden) and re-renders only when `version` or the page changes, so
+expanded rows stay open between changes.
 
 The queue ranks contributor PRs, but ranking is not reviewing: whether the
 review swarm reviews a contributor PR is still governed by

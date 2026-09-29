@@ -3611,6 +3611,7 @@
     <div class="oc-nav-group">
       <div class="oc-nav-label">Resources</div>
       <a class="oc-nav-item" data-section="repos-section" data-action="ocNavigate" data-arg0="repos-section"><span class="oc-nav-emoji">📦</span><span class="oc-nav-text">Repos</span><span id="repos-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
+      <a class="oc-nav-item" data-section="review-queue-section" data-action="ocNavigate" data-arg0="review-queue-section" title="Every open PR - agent and contributor - in one ranked review order, with the reasons for each position"><span class="oc-nav-emoji">🧮</span><span class="oc-nav-text">Review queue</span><span id="review-queue-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item" data-section="beads-section" data-action="ocNavigate" data-arg0="beads-section"><span class="oc-nav-emoji">🔮</span><span class="oc-nav-text">Beads</span><span id="beads-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item" data-section="contributors-section" data-action="ocNavigate" data-arg0="contributors-section"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
     </div>
@@ -3947,6 +3948,24 @@
         </div>
         <div id="approvals-list"></div>
         <div id="approvals-empty" class="muted" style="font-size:0.78rem">No pending approvals.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PR review queue (#9590): GET /api/review/queue rendered in rank order.
+       Read-only, like the API: any dashboard session can see it. Every field
+       is untrusted PR data and is rendered through esc(). -->
+  <div class="mt-6 mb-8" id="review-queue-section" data-dashboard-section="review-queue-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="review-queue-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Review queue section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧮 Review queue <span id="review-queue-count" class="muted" style="font-size:0.7rem;font-weight:400;margin-left:var(--sp-3)"></span></h2>
+    <div class="section-body">
+      <div style="font-size:0.72rem;color:var(--muted);margin-bottom:var(--sp-4)">Every open PR in the governed repos, agent- or contributor-authored, ranked by triage class, then review confidence for the current head, then CI, then age. Expand a row to see why it sits where it does. Ranking is not reviewing: nothing here approves, merges or labels anything.</div>
+      <div id="review-queue-panel" style="overflow-x:auto">
+        <div class="loading">Loading review queue...</div>
+      </div>
+      <div id="review-queue-pager" style="display:flex;align-items:center;gap:var(--sp-4);margin-top:var(--sp-4);font-size:var(--fs-sm)">
+        <button type="button" class="hv-btn btn-secondary btn-sm" id="review-queue-prev" data-action="reviewQueuePage" data-arg0="-1" data-arg-types="j" disabled>&larr; Prev</button>
+        <span id="review-queue-range" class="muted"></span>
+        <button type="button" class="hv-btn btn-secondary btn-sm" id="review-queue-next" data-action="reviewQueuePage" data-arg0="1" data-arg-types="j" disabled>Next &rarr;</button>
       </div>
     </div>
   </div>
@@ -4517,7 +4536,7 @@
     var DASHBOARD_LAYOUT_KEY='hive.dashboard.layout';
     var DASHBOARD_LAYOUT_VERSION=1;
     var DASHBOARD_LAYOUT_REGIONS=['main'];
-    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','platform-section','audit-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']};
+    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','review-queue-section','platform-section','audit-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']};
     var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
     var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
     var dashboardDragState=null;
@@ -16353,6 +16372,161 @@ function burnAreaChart() {
     }
     // fetchAuditLog() — deferred to _deferredInit
 
+    // --- PR review queue (#9590) ---
+    // Renders GET /api/review/queue. The server re-ranks on every request from
+    // the last eval-cycle snapshot and the review verdict artifact, and stamps
+    // the whole queue with a `version` that changes whenever a rank input does
+    // (new head SHA, CI flip, a verdict for the current head, merge conflicts,
+    // hold, a PR opening or leaving). The poll below re-renders only when that
+    // version (or the page) changes, so expanded rows stay open in between.
+    const REVIEW_QUEUE_PAGE_SIZE = 25;
+    const REVIEW_QUEUE_POLL_MS = 30000;
+    const REVIEW_QUEUE_HOURS_PER_DAY = 24;
+    const REVIEW_QUEUE_DAYS_AFTER_HOURS = 48;
+    // Mirrors review.ConfidenceMax: the swarm's confidence score is 0-5.
+    const REVIEW_QUEUE_CONFIDENCE_MAX = 5;
+    const REVIEW_QUEUE_BAND_COLORS = {
+      'safe': 'var(--green)',
+      'needs attention': 'var(--yellow)',
+      'do not merge': 'var(--red)',
+    };
+    const REVIEW_QUEUE_CI_COLORS = { green: 'var(--green)', pending: 'var(--yellow)', red: 'var(--red)' };
+    const REVIEW_QUEUE_PRIORITY_COLORS = { high: 'var(--red)', normal: 'var(--blue)', low: 'var(--muted)' };
+    let _reviewQueueOffset = 0;
+    let _reviewQueueVersion = '';
+    let _reviewQueueRenderedOffset = -1;
+    const _reviewQueueExpanded = new Set();
+
+    function reviewQueueAge(hours) {
+      const h = Math.max(0, Number(hours) || 0);
+      return h < REVIEW_QUEUE_DAYS_AFTER_HOURS ? h + 'h' : Math.floor(h / REVIEW_QUEUE_HOURS_PER_DAY) + 'd';
+    }
+
+    function reviewQueueChip(text, color, tip) {
+      return '<span title="' + esc(tip || text) + '" style="display:inline-block;padding:var(--sp-1) var(--sp-3);border-radius:var(--r-pill);font-size:0.68rem;white-space:nowrap;color:' + color + ';border:1px solid color-mix(in srgb, ' + color + ' 45%, transparent)">' + esc(text) + '</span>';
+    }
+
+    function renderReviewQueueRow(e, i) {
+      const key = String(e.repo || '') + '#' + String(e.number || '');
+      const url = typeof e.url === 'string' && /^https?:\/\//i.test(e.url) ? e.url : '';
+      const prCell = (url
+        ? '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" style="font-weight:600">' + esc(key) + '</a>'
+        : '<span style="font-weight:600">' + esc(key) + '</span>') +
+        '<div style="color:var(--muted);max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(String(e.title || '')) + '">' + esc(String(e.title || '')) + '</div>';
+      const who = e.hive_authored ? 'hive agent' : 'contributor';
+      const authorCell = esc(String(e.author || '-')) + '<div style="color:var(--muted);font-size:0.68rem">' + esc(who) + (e.held ? ' · on hold' : '') + '</div>';
+      const tier = String(e.tier || '');
+      const cls = String(e.review_class || 'unclassified');
+      const prio = String(e.priority || '');
+      const classCell = esc(tier) + ' ' + esc(cls) + (prio ? ' ' + reviewQueueChip(prio, REVIEW_QUEUE_PRIORITY_COLORS[prio] || 'var(--muted)', 'review-priority/' + prio) : '');
+      const band = String(e.confidence_band || '');
+      const score = (e.reviewed && typeof e.confidence_score === 'number') ? ' ' + e.confidence_score + '/' + REVIEW_QUEUE_CONFIDENCE_MAX : '';
+      const bandCell = reviewQueueChip((e.reviewed ? band : 'unreviewed') + score, REVIEW_QUEUE_BAND_COLORS[band] || 'var(--muted)',
+        e.reviewed ? 'Review confidence for the current head' : 'No verdict for the current head: ranked as needs attention, never safe');
+      const ci = String(e.ci_state || 'pending');
+      const ciCell = reviewQueueChip(ci, REVIEW_QUEUE_CI_COLORS[ci] || 'var(--muted)', 'CI ' + ci);
+      const reasons = Array.isArray(e.reasons) ? e.reasons : [];
+      const open = _reviewQueueExpanded.has(key);
+      const toggle = '<button type="button" class="hv-btn btn-secondary btn-sm" id="rq-toggle-' + i + '" data-action="reviewQueueToggleReasons" data-arg0="' + esc(key) + '" data-arg1="' + i + '" data-count="' + reasons.length + '" aria-expanded="' + (open ? 'true' : 'false') + '" aria-controls="rq-reasons-' + i + '">' + (open ? '▾ ' : '▸ ') + reasons.length + ' reasons</button>';
+      const cellStyle = 'padding:var(--sp-2) var(--sp-4);vertical-align:top';
+      return '<tr style="border-bottom:1px solid var(--border)">' +
+        '<td style="' + cellStyle + ';font-weight:700;text-align:right">' + esc(String(e.position || '')) + '</td>' +
+        '<td style="' + cellStyle + '">' + prCell + '</td>' +
+        '<td style="' + cellStyle + '">' + authorCell + '</td>' +
+        '<td style="' + cellStyle + ';white-space:nowrap">' + classCell + '</td>' +
+        '<td style="' + cellStyle + '">' + bandCell + '</td>' +
+        '<td style="' + cellStyle + '">' + ciCell + '</td>' +
+        '<td style="' + cellStyle + ';white-space:nowrap">' + esc(reviewQueueAge(e.age_hours)) + '</td>' +
+        '<td style="' + cellStyle + '">' + toggle + '</td>' +
+        '</tr>' +
+        '<tr id="rq-reasons-' + i + '"' + (open ? '' : ' hidden') + '><td></td><td colspan="7" style="padding:0 var(--sp-4) var(--sp-3)">' +
+        '<ol style="margin:0;padding-left:var(--sp-6);font-size:0.72rem;color:var(--muted)">' +
+        reasons.map(function(r) { return '<li>' + esc(String(r)) + '</li>'; }).join('') +
+        '</ol></td></tr>';
+    }
+
+    function renderReviewQueue(d) {
+      const panel = document.getElementById('review-queue-panel');
+      if (!panel) return;
+      const items = Array.isArray(d && d.items) ? d.items : [];
+      const total = Number(d && d.total) || 0;
+      const offset = Number(d && d.offset) || 0;
+      const countEl = document.getElementById('review-queue-count');
+      if (countEl) countEl.textContent = total ? total + ' open PR' + (total === 1 ? '' : 's') : '';
+      const badge = document.getElementById('review-queue-sidebar-badge');
+      if (badge) {
+        badge.textContent = String(total);
+        if (total) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', '');
+      }
+      const range = document.getElementById('review-queue-range');
+      if (range) {
+        const snap = d && d.snapshot_at ? new Date(d.snapshot_at) : null;
+        const snapText = snap && !isNaN(snap.getTime()) ? ' · PRs as of ' + snap.toLocaleTimeString() : '';
+        range.textContent = total ? (offset + 1) + '-' + (offset + items.length) + ' of ' + total + snapText : '';
+      }
+      const prev = document.getElementById('review-queue-prev');
+      if (prev) prev.disabled = offset <= 0;
+      const next = document.getElementById('review-queue-next');
+      if (next) next.disabled = !(d && d.has_more);
+      if (!items.length) {
+        panel.innerHTML = '<div style="color:var(--muted);font-size:var(--fs-base);padding:var(--sp-4)">No open PRs in the governed repos.</div>';
+        return;
+      }
+      const th = 'text-align:left;padding:var(--sp-2) var(--sp-4)';
+      panel.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:0.78rem">' +
+        '<thead><tr style="color:var(--muted);font-size:0.7rem;border-bottom:1px solid var(--border)">' +
+        '<th style="' + th + ';text-align:right">#</th><th style="' + th + '">PR</th><th style="' + th + '">Author</th><th style="' + th + '">Class</th>' +
+        '<th style="' + th + '">Confidence</th><th style="' + th + '">CI</th><th style="' + th + '">Age</th><th style="' + th + '">Why</th>' +
+        '</tr></thead><tbody>' + items.map(renderReviewQueueRow).join('') + '</tbody></table>';
+    }
+
+    async function fetchReviewQueue(force) {
+      // setInterval passes no argument; only explicit loads force a render.
+      force = force === true;
+      if (!force && document.hidden) return;
+      const panel = document.getElementById('review-queue-panel');
+      if (!panel) return;
+      try {
+        const r = await fetch('/api/review/queue?limit=' + REVIEW_QUEUE_PAGE_SIZE + '&offset=' + _reviewQueueOffset);
+        if (!r.ok) {
+          if (force || !_reviewQueueVersion) panel.innerHTML = '<div style="color:var(--muted);font-size:var(--fs-base);padding:var(--sp-4)">Review queue unavailable (HTTP ' + esc(String(r.status)) + ').</div>';
+          return;
+        }
+        const d = await r.json();
+        const total = Number(d.total) || 0;
+        // The queue shrank under the current page (PRs merged or closed):
+        // step back to the last page that still exists.
+        if (_reviewQueueOffset > 0 && _reviewQueueOffset >= total) {
+          _reviewQueueOffset = total > 0 ? Math.floor((total - 1) / REVIEW_QUEUE_PAGE_SIZE) * REVIEW_QUEUE_PAGE_SIZE : 0;
+          return fetchReviewQueue(true);
+        }
+        if (!force && d.version && d.version === _reviewQueueVersion && _reviewQueueRenderedOffset === _reviewQueueOffset) return;
+        _reviewQueueVersion = String(d.version || '');
+        _reviewQueueRenderedOffset = _reviewQueueOffset;
+        renderReviewQueue(d);
+      } catch (e) {}
+    }
+
+    function reviewQueuePage(dir) {
+      const step = Number(dir) < 0 ? -REVIEW_QUEUE_PAGE_SIZE : REVIEW_QUEUE_PAGE_SIZE;
+      _reviewQueueOffset = Math.max(0, _reviewQueueOffset + step);
+      return fetchReviewQueue(true);
+    }
+
+    function reviewQueueToggleReasons(key, idx) {
+      const row = document.getElementById('rq-reasons-' + idx);
+      if (!row) return;
+      const open = row.hidden;
+      row.hidden = !open;
+      if (open) _reviewQueueExpanded.add(String(key)); else _reviewQueueExpanded.delete(String(key));
+      const btn = document.getElementById('rq-toggle-' + idx);
+      if (btn) {
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        btn.textContent = (open ? '▾ ' : '▸ ') + (btn.dataset.count || '0') + ' reasons';
+      }
+    }
+    // fetchReviewQueue() - deferred to _deferredInit
+
     // --- Contributors & Leaderboard ---
     const CONTRIBUTOR_POLL_MS = 10000;
     const LEADERBOARD_POLL_MS = 30000;
@@ -17168,7 +17342,7 @@ function burnAreaChart() {
       const COLLAPSIBLE_SECTION_IDS = [
         'advisory-section', 'hive-advice-section', 'acmm-reco-section', 'lifecycle-section', 'pr-throughput-section',
         'overview-section', 'repos-section', 'beads-section', 'acmm-eval-section',
-        'platform-section', 'fleet-report-section', 'audit-section', 'nous-section', 'inception-section',
+        'review-queue-section', 'platform-section', 'fleet-report-section', 'audit-section', 'nous-section', 'inception-section',
         'knowledge-section', 'contributors-section', 'debug-section', 'logs-section',
         'agents-section', 'faq-section'
       ];
@@ -21734,6 +21908,7 @@ function burnAreaChart() {
       const reposSection = document.getElementById('repos-section');
       const beadsSection = document.getElementById('beads-section');
       const contributorsSection = document.getElementById('contributors-section');
+      const reviewQueueSection = document.getElementById('review-queue-section');
       const leaderboardSection = document.getElementById('leaderboard-section');
       const nousSection = document.getElementById('nous-section');
       const debugSection = document.getElementById('debug-section');
@@ -21762,6 +21937,9 @@ function burnAreaChart() {
         sidebarItems.forEach(item => show(item, ''));
 
         level >= ACMM_GOVERNOR_MIN_LEVEL ? show(governor, '') : hide(governor);
+        // The review queue ranks the governor's PR enumeration, so it shows
+        // wherever the governor does.
+        level >= ACMM_GOVERNOR_MIN_LEVEL ? show(reviewQueueSection, '') : hide(reviewQueueSection);
         level >= ACMM_ADVISORY_MIN_LEVEL ? show(advisorySection, '') : hide(advisorySection);
         level >= ACMM_TOKENS_MIN_LEVEL ? show(tokenPanel, '') : hide(tokenPanel);
         level >= ACMM_BEADS_MIN_LEVEL ? show(beadsSection, '') : hide(beadsSection);
@@ -21786,6 +21964,7 @@ function burnAreaChart() {
           if (section === 'repos-section' && level < ACMM_REPOS_MIN_LEVEL) hide(item);
           if (section === 'beads-section' && level < ACMM_BEADS_MIN_LEVEL) hide(item);
           if (section === 'contributors-section' && level < ACMM_CONTRIBUTORS_MIN_LEVEL) hide(item);
+          if (section === 'review-queue-section' && level < ACMM_GOVERNOR_MIN_LEVEL) hide(item);
           if (section === 'leaderboard-section' && level < ACMM_LEADERBOARD_MIN_LEVEL) hide(item);
           if (section === 'nous-section' && level < ACMM_NOUS_MIN_LEVEL) hide(item);
         });
@@ -31292,6 +31471,7 @@ function burnAreaChart() {
           () => fetchNousStatus().then(() => { setInterval(fetchNousStatus, NOUS_POLL_MS); }),
           () => fetchKnowledgeStats().then(() => { setInterval(fetchKnowledgeStats, KB_POLL_MS); }),
           () => fetchAuditLog().then(() => { setInterval(fetchAuditLog, AUDIT_POLL_MS); }),
+          () => fetchReviewQueue(true).then(() => { setInterval(fetchReviewQueue, REVIEW_QUEUE_POLL_MS); }),
           () => fetchContributors().then(() => { setInterval(fetchContributors, CONTRIBUTOR_POLL_MS); }),
           () => fetchLeaderboard().then(() => { setInterval(fetchLeaderboard, LEADERBOARD_POLL_MS); }),
           () => fetchGitVersion().then(() => { setInterval(fetchGitVersion, GIT_VERSION_POLL_MS); }),

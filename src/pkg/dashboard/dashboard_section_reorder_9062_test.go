@@ -9,8 +9,8 @@ import (
 
 var dashboardLayoutIDs9062 = []string{
 	"overview-section", "governor", "advisory-section", "token-panel", "cost-panel",
-	"repos-section", "beads-section", "acmm-eval-section", "approvals-section", "platform-section",
-	"audit-section", "nous-section", "inception-section", "knowledge-section", "contributors-section",
+	"repos-section", "beads-section", "acmm-eval-section", "approvals-section", "review-queue-section",
+	"platform-section", "audit-section", "nous-section", "inception-section", "knowledge-section", "contributors-section",
 	"debug-section", "logs-section", "agents-section", "faq-section",
 }
 
@@ -18,7 +18,7 @@ func dashboardLayoutPreamble9062() string {
 	return `var DASHBOARD_LAYOUT_KEY='hive.dashboard.layout';
 var DASHBOARD_LAYOUT_VERSION=1;
 var DASHBOARD_LAYOUT_REGIONS=['main'];
-var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','platform-section','audit-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']};
+var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','review-queue-section','platform-section','audit-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']};
 var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
 var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
 var dashboardDragState=null;
@@ -38,7 +38,7 @@ func TestDashboardSectionReorderStaticWiring(t *testing.T) {
 	}
 	for _, want := range []string{
 		`hive.dashboard.layout`,
-		`DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','platform-section','audit-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']}`,
+		`DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','review-queue-section','platform-section','audit-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']}`,
 		`id="dashboard-layout-reset"`,
 		`id="dashboard-layout-live" aria-live="polite"`,
 		`class="dashboard-grip"`,
@@ -100,7 +100,7 @@ func TestDashboardLayoutNormalizeFutureUnknownAndMissing(t *testing.T) {
 	html := indexHTML(t)
 	script := dashboardLayoutPreamble9062() + jsFunc(t, html, "dashboardLayoutAllIds") + "\n" + jsFunc(t, html, "dashboardLayoutNormalize") + `
 const got = dashboardLayoutNormalize({v:99, main:['faq-section','unknown','governor','faq-section']});
-const want = ['faq-section','overview-section','governor','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','platform-section','audit-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section'];
+const want = ['faq-section','overview-section','governor','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','review-queue-section','platform-section','audit-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section'];
 if (got.v !== 1) throw new Error('version not normalized: '+got.v);
 if (JSON.stringify(got.main) !== JSON.stringify(want)) throw new Error('normalized order '+JSON.stringify(got.main));
 `
@@ -191,9 +191,10 @@ if (got[got.length-1] !== 'faq-section') throw new Error('FAQ not last: '+JSON.s
 const tail = got.slice(-4).join(',');
 if (tail !== 'debug-section,logs-section,agents-section,faq-section') throw new Error('new sections not slotted before FAQ: '+tail);
 if (new Set(got).size !== got.length) throw new Error('duplicate ids: '+JSON.stringify(got));
+if (got.indexOf('review-queue-section') !== got.indexOf('approvals-section')+1) throw new Error('review queue not slotted after approvals: '+JSON.stringify(got));
 const moved = dashboardLayoutNormalize({v:1, main:['faq-section','cost-panel','overview-section']}).main;
 if (moved[0] !== 'faq-section') throw new Error('operator-moved FAQ not respected: '+JSON.stringify(moved));
-if (moved.length !== 19) throw new Error('missing sections not restored: '+moved.length);
+if (moved.length !== 20) throw new Error('missing sections not restored: '+moved.length);
 `
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {
