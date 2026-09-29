@@ -176,6 +176,57 @@ func TestUpdateBudgetFromTotals_RebaselinesOnShrink(t *testing.T) {
 	}
 }
 
+// BudgetLevel must read as exhausted from persisted state alone, with no
+// UpdateBudgetFromTotals call in between — this is the restart case (#9612
+// follow-up): a pod restart mid-exhaustion restores CurrentSpend via
+// SeedBudget before the token collector has produced a fresh summary, and
+// the banner must be derivable from that restored state on its own.
+func TestBudgetLevel_ExhaustedFromSeededStateAlone(t *testing.T) {
+	g := testGovernor()
+	g.SetBudgetLimit(1000)
+	g.SeedBudget(1000, nil, nil, time.Now())
+
+	level := g.BudgetLevel()
+	if !level.ExhaustedActive {
+		t.Error("ExhaustedActive = false after seeding spend at the limit, want true")
+	}
+	if !level.WarnActive {
+		t.Error("WarnActive = false while exhausted, want true (exhausted implies over the warn threshold)")
+	}
+	if level.WarnCrossed || level.ExhaustedCrossed {
+		t.Errorf("BudgetLevel must never report a one-shot crossing: %+v", level)
+	}
+}
+
+// BudgetLevel must not silently arm/consume the one-shot budgetWarned /
+// budgetExhaustedAlerted flags: calling it must not suppress a genuine
+// crossing reported by a later UpdateBudgetFromTotals call.
+func TestBudgetLevel_DoesNotConsumeOneShotCrossing(t *testing.T) {
+	g := testGovernor()
+	g.SetBudgetLimit(1000)
+	g.SeedBudget(1000, nil, nil, time.Now())
+
+	// Calling BudgetLevel any number of times before the real update must not
+	// touch the crossing latch.
+	g.BudgetLevel()
+	g.BudgetLevel()
+
+	trans := g.UpdateBudgetFromTotals(1000, nil, nil)
+	if !trans.ExhaustedCrossed {
+		t.Error("ExhaustedCrossed = false on the first real UpdateBudgetFromTotals call, want true — BudgetLevel must not have consumed the one-shot flag")
+	}
+}
+
+func TestBudgetLevel_BudgetingDisabledReportsNothing(t *testing.T) {
+	g := testGovernor()
+	g.SeedBudget(999999, nil, nil, time.Now())
+
+	level := g.BudgetLevel()
+	if level.WarnActive || level.ExhaustedActive {
+		t.Errorf("BudgetLevel active with WeeklyLimit=0: %+v", level)
+	}
+}
+
 func TestModeToConfigKey(t *testing.T) {
 	tests := []struct {
 		mode Mode

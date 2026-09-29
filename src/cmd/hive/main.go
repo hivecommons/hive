@@ -5919,49 +5919,17 @@ var providerBudgetNotify governor.ProviderBudgetNotifyState
 // providerBudgetNotify: runEvalCycle has no state of its own.
 var providerBudgetProbe governor.ProviderBudgetProbeState
 
-// applyBudgetAlerts turns budget threshold crossings into dashboard system
-// alerts and notifications. Crossings fire once per window (governor tracks
-// the one-shot flags); alerts are cleared when the threshold no longer
-// applies (window rolled, limit raised, or budgeting disabled).
+// applyBudgetAlerts is a thin wrapper around spokealerts.ApplyBudget, kept so
+// call sites in this file do not need the package-qualified name (same
+// pattern as applyModeUnscheduledAlert below).
 func applyBudgetAlerts(gov *governor.Governor, trans governor.BudgetTransitions, dashSrv *dashboard.Server, notifier *notify.Notifier) {
-	if !trans.WarnActive {
-		dashSrv.ClearSystemAlert(budgetWarnAlertID)
-	}
-	if !trans.ExhaustedActive {
-		dashSrv.ClearSystemAlert(budgetExhaustedAlertID)
-	}
-
-	budget := gov.GetBudget()
-	if trans.WarnCrossed {
-		msg := fmt.Sprintf("token budget at %d%%+ of weekly limit: %d of %d tokens used",
-			governor.BudgetWarnPct, budget.CurrentSpend, budget.WeeklyLimit)
-		dashSrv.AddSystemAlert(budgetWarnAlertID, "warning", msg)
-		notifier.Send("Budget warning", msg, notify.PriorityDefault)
-	}
-	if trans.ExhaustedCrossed {
-		windowEnd := budget.ResetAt.Add(governor.BudgetWindowDuration)
-		msg := fmt.Sprintf("token budget exhausted: %d of %d tokens used — agent kicks suspended until %s (exempt agents keep running)",
-			budget.CurrentSpend, budget.WeeklyLimit, windowEnd.Format(time.RFC1123))
-		dashSrv.AddSystemAlert(budgetExhaustedAlertID, "error", msg)
-		notifier.Send("Budget exhausted", msg, notify.PriorityHigh)
-	}
+	spokealerts.ApplyBudget(gov, trans, dashSrv, notifier)
 }
 
-// applyNoCadenceAlert keeps the never-kicked cause+fix banner (#5577) in sync
-// with the governor's view: raised (warning, not error — the hive is not
-// broken, it is unconfigured) while any enabled, governor-kickable agent has
-// no cadence in any mode and has never been kicked; cleared the moment the
-// operator sets a cadence or any kick path reaches the agent. This is the
-// spoke-side parity for the hub verdict's no-cadence amber: the same
-// governor-derived signal, rendered where the operator can act on it, with no
-// hub round-trip.
+// applyNoCadenceAlert is a thin wrapper around spokealerts.ApplyNoCadence
+// (see that package for the banner's design: #5577).
 func applyNoCadenceAlert(gov *governor.Governor, dashSrv *dashboard.Server) {
-	agents := gov.NoCadenceAgents()
-	if len(agents) == 0 {
-		dashSrv.ClearSystemAlert(noCadenceAlertID)
-		return
-	}
-	dashSrv.AddSystemAlert(noCadenceAlertID, "warning", noCadenceAlertMessage(agents))
+	spokealerts.ApplyNoCadence(gov, dashSrv)
 }
 
 func applyModeUnscheduledAlert(gov *governor.Governor, dashSrv *dashboard.Server) {
@@ -6590,13 +6558,21 @@ func runEvalCycle(
 	}
 
 	// Refresh budget spend from lifetime token totals before Evaluate so
-	// the kick gate sees current-window numbers.
+	// the kick gate sees current-window numbers. The banner itself is
+	// level-triggered every cycle (#9612 follow-up): a collector summary may
+	// not be available yet (right after a restart, before the first session
+	// scan completes), and the one-shot Crossed edge that used to gate the
+	// raise is lost on restart too, so gate ONLY the spend refresh on the
+	// summary and re-derive the banner from whatever budget state the
+	// governor currently holds (persisted spend if the summary is not in
+	// yet, refreshed spend once it is) on every cycle.
+	trans := gov.BudgetLevel()
 	if tokenCollector != nil {
 		if summary := tokenCollector.Summary(); summary != nil {
-			trans := gov.UpdateBudgetFromTotals(summary.TotalTokens, summary.ByAgent, summary.ByModel)
-			applyBudgetAlerts(gov, trans, dashSrv, notifier)
+			trans = gov.UpdateBudgetFromTotals(summary.TotalTokens, summary.ByAgent, summary.ByModel)
 		}
 	}
+	applyBudgetAlerts(gov, trans, dashSrv, notifier)
 
 	// Cause+fix banner for the never-kicked class (#5577): the dashboard's
 	// not-producing warnings name the SYMPTOM (agent idle, zero tokens); this
@@ -9509,18 +9485,11 @@ func parseEndpointList(raw string) []string {
 	return out
 }
 
-// Dashboard system-alert IDs for the budget thresholds.
-const (
-	budgetWarnAlertID      = "budget-warn"
-	budgetExhaustedAlertID = "budget-exhausted"
-	// noCadenceAlertID is the never-kicked cause+fix banner (#5577): enabled
-	// agents with no cadence in any mode and no kick ever.
-	noCadenceAlertID = "agent-no-cadence"
-	// providerBudgetAlertID is the PROVIDER spend rebuff (#4294), kept distinct
-	// from the two token-budget alerts above so an operator can tell "we used
-	// our token allowance" from "the gateway will not spend more money".
-	providerBudgetAlertID = "provider-budget-exceeded"
-)
+// providerBudgetAlertID is the PROVIDER spend rebuff (#4294) system-alert ID,
+// kept distinct from spokealerts.BudgetWarnAlertID/BudgetExhaustedAlertID so
+// an operator can tell "we used our token allowance" from "the gateway will
+// not spend more money".
+const providerBudgetAlertID = "provider-budget-exceeded"
 
 func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 	if len(args) == 0 {

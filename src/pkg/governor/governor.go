@@ -1403,6 +1403,27 @@ func (g *Governor) BudgetWindow() (start, end time.Time, ok bool) {
 	return g.budget.ResetAt, g.budget.ResetAt.Add(g.budgetWindowDuration()), true
 }
 
+// BudgetLevel reports the current WarnActive/ExhaustedActive state from
+// g.budget as it stands right now, with no dependency on a fresh
+// UpdateBudgetFromTotals call. It never touches the one-shot
+// budgetWarned/budgetExhaustedAlerted flags, so it is safe to call on every
+// eval cycle (and once at boot, right after SeedBudget restores CurrentSpend)
+// purely to re-derive whether the standing banner should be up: a restart
+// mid-exhaustion has no fresh token summary yet, so UpdateBudgetFromTotals
+// may not run for a cycle or more, but the persisted spend already says the
+// budget is exhausted (#9612 follow-up).
+func (g *Governor) BudgetLevel() BudgetTransitions {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	var trans BudgetTransitions
+	if g.budget.WeeklyLimit > 0 {
+		warnThreshold := g.budget.WeeklyLimit * int64(g.budgetWarnPct()) / percentDenominator
+		trans.WarnActive = g.budget.CurrentSpend >= warnThreshold
+		trans.ExhaustedActive = g.budget.CurrentSpend >= g.budget.WeeklyLimit
+	}
+	return trans
+}
+
 // UpdateBudgetFromTotals refreshes budget spend from the token collector's
 // lifetime totals. Session-file scans are cumulative, so window spend is
 // derived by subtracting the baseline captured when the window opened.

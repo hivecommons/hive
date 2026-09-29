@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -162,6 +163,80 @@ func TestApplyBudgetAlertsClearsAlertsWhenThresholdNoLongerApplies(t *testing.T)
 	}
 	if _, ok := alertByID(alerts, spokealerts.BudgetWarnAlertID); ok {
 		t.Error("warn alert not cleared after limit raise")
+	}
+}
+
+// End-to-end restart scenario against the real dashboard.Server: a pod
+// restart mid-exhaustion restores CurrentSpend via SeedBudget (what boot does
+// through bootState), with no UpdateBudgetFromTotals call yet since the token
+// collector has not produced a summary. BudgetLevel must read the standing
+// exhaustion straight off the restored governor state, and applyBudgetAlerts
+// must raise the banner from that alone (#9612 follow-up: previously this
+// state produced a zero-value BudgetTransitions and no banner appeared).
+func TestApplyBudgetAlertsRestartMidExhaustionShowsBanner(t *testing.T) {
+	gov, srv, notifier := budgetAlertsFixture(t)
+	gov.SetBudgetLimit(1000)
+	gov.SeedBudget(1000, nil, nil, time.Now())
+
+	applyBudgetAlerts(gov, gov.BudgetLevel(), srv, notifier)
+
+	alerts := publishedAlerts(t, srv)
+	if _, ok := alertByID(alerts, spokealerts.BudgetExhaustedAlertID); !ok {
+		t.Fatalf("exhausted banner missing after restart-mid-exhaustion state, alerts: %+v", alerts)
+	}
+	// notify.Notifier has no exported call-recording hook (Send fans out to
+	// real channels which are no-ops for this empty NotificationsConfig
+	// fixture), so the no-notify-on-restart assertion for this path is
+	// covered against a recording fake by
+	// TestApplyBudgetRestartMidExhaustionRaisesBannerWithoutNotifying in
+	// pkg/spokealerts.
+}
+
+// Recovery: once the budget window rolls (or the limit is raised) and spend
+// is no longer over any threshold, the banner set by the restart scenario
+// above must clear on the next cycle.
+func TestApplyBudgetAlertsRestartThenRecoveryClearsBanner(t *testing.T) {
+	gov, srv, notifier := budgetAlertsFixture(t)
+	gov.SetBudgetLimit(1000)
+	gov.SeedBudget(1000, nil, nil, time.Now())
+	applyBudgetAlerts(gov, gov.BudgetLevel(), srv, notifier)
+	if _, ok := alertByID(publishedAlerts(t, srv), spokealerts.BudgetExhaustedAlertID); !ok {
+		t.Fatal("fixture: exhausted banner not raised")
+	}
+
+	// Window rolls once its duration has elapsed: baseline re-anchors and
+	// spend drops to 0.
+	gov.SeedBudget(1000, nil, nil, time.Now().Add(-governor.BudgetWindowDuration-time.Hour))
+	trans := gov.UpdateBudgetFromTotals(1000, nil, nil)
+	applyBudgetAlerts(gov, trans, srv, notifier)
+
+	alerts := publishedAlerts(t, srv)
+	if _, ok := alertByID(alerts, spokealerts.BudgetExhaustedAlertID); ok {
+		t.Errorf("exhausted banner still present after window roll: %+v", alerts)
+	}
+}
+
+// Re-deriving the banner every cycle (the level-triggered raise) must not
+// stack duplicate entries in the published status snapshot — AddSystemAlert
+// upserts by ID.
+func TestApplyBudgetAlertsNoDoubleBannerAcrossRepeatedCycles(t *testing.T) {
+	gov, srv, notifier := budgetAlertsFixture(t)
+	gov.SetBudgetLimit(1000)
+	gov.SeedBudget(1000, nil, nil, time.Now())
+
+	for i := 0; i < 5; i++ {
+		applyBudgetAlerts(gov, gov.BudgetLevel(), srv, notifier)
+	}
+
+	alerts := publishedAlerts(t, srv)
+	count := 0
+	for _, a := range alerts {
+		if a.ID == spokealerts.BudgetExhaustedAlertID {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("exhausted banner count = %d after 5 re-derive cycles, want exactly 1", count)
 	}
 }
 

@@ -69,30 +69,45 @@ const (
 	ModeUnscheduledAlertID = "agent-mode-unscheduled"
 )
 
-// ApplyBudget turns budget threshold crossings into dashboard system
-// alerts and notifications. Crossings fire once per window (governor tracks
-// the one-shot flags); alerts are cleared when the threshold no longer
-// applies (window rolled, limit raised, or budgeting disabled).
+// ApplyBudget turns budget threshold state into dashboard system alerts and
+// notifications. The banner is level-triggered: it is raised whenever
+// WarnActive/ExhaustedActive is true on THIS call (AddSystemAlert upserts by
+// ID, so re-raising an already-standing banner is a no-op on screen) and
+// cleared the moment the threshold no longer applies (window rolled, limit
+// raised, or budgeting disabled). This is deliberate, not merely cheap: a
+// pod restart mid-exhaustion has no "crossing" to observe (Crossed is a
+// one-shot the governor tracks in memory and loses on restart) so an
+// edge-only raise left the banner MISSING after a restart even though the
+// budget was still exhausted (#9612 follow-up). The one-shot Crossed fields
+// still gate the operator notification, so a steady-state banner does not
+// re-notify every eval cycle.
 func ApplyBudget(gov BudgetSource, trans governor.BudgetTransitions, alerts AlertSink, notifier Notifier) {
-	if !trans.WarnActive {
-		alerts.ClearSystemAlert(BudgetWarnAlertID)
-	}
-	if !trans.ExhaustedActive {
-		alerts.ClearSystemAlert(BudgetExhaustedAlertID)
-	}
-
 	budget := gov.GetBudget()
-	if trans.WarnCrossed {
+	if trans.WarnActive {
 		msg := fmt.Sprintf("token budget at %d%%+ of weekly limit: %d of %d tokens used",
 			governor.BudgetWarnPct, budget.CurrentSpend, budget.WeeklyLimit)
 		alerts.AddSystemAlert(BudgetWarnAlertID, "warning", msg)
+	} else {
+		alerts.ClearSystemAlert(BudgetWarnAlertID)
+	}
+	if trans.ExhaustedActive {
+		windowEnd := budget.ResetAt.Add(governor.BudgetWindowDuration)
+		msg := fmt.Sprintf("token budget exhausted: %d of %d tokens used — agent kicks suspended until %s (exempt agents keep running)",
+			budget.CurrentSpend, budget.WeeklyLimit, windowEnd.Format(time.RFC1123))
+		alerts.AddSystemAlert(BudgetExhaustedAlertID, "error", msg)
+	} else {
+		alerts.ClearSystemAlert(BudgetExhaustedAlertID)
+	}
+
+	if trans.WarnCrossed {
+		msg := fmt.Sprintf("token budget at %d%%+ of weekly limit: %d of %d tokens used",
+			governor.BudgetWarnPct, budget.CurrentSpend, budget.WeeklyLimit)
 		notifier.Send("Budget warning", msg, notify.PriorityDefault)
 	}
 	if trans.ExhaustedCrossed {
 		windowEnd := budget.ResetAt.Add(governor.BudgetWindowDuration)
 		msg := fmt.Sprintf("token budget exhausted: %d of %d tokens used — agent kicks suspended until %s (exempt agents keep running)",
 			budget.CurrentSpend, budget.WeeklyLimit, windowEnd.Format(time.RFC1123))
-		alerts.AddSystemAlert(BudgetExhaustedAlertID, "error", msg)
 		notifier.Send("Budget exhausted", msg, notify.PriorityHigh)
 	}
 }

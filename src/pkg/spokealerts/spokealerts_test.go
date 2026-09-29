@@ -126,6 +126,101 @@ func TestBudgetClearsInactiveThresholdsAndRaisesNothingWithoutACrossing(t *testi
 	}
 }
 
+// A pod restart mid-exhaustion has Active=true but Crossed=false: the
+// governor's one-shot budgetWarned/budgetExhaustedAlerted flags are in-memory
+// only and reset on restart, so the crossing that originally raised the
+// banner can never be observed again — but CurrentSpend, restored from the
+// persisted snapshot, still says the budget is over the threshold. The
+// banner must come back on this state alone, level-triggered, with no
+// duplicate notification (#9612 follow-up).
+func TestApplyBudgetRestartMidExhaustionRaisesBannerWithoutNotifying(t *testing.T) {
+	sink := &recordingSink{}
+	note := &recordingNotifier{}
+	gov := fakeBudget{governor.BudgetInfo{CurrentSpend: 1000, WeeklyLimit: 1000}}
+
+	ApplyBudget(gov, governor.BudgetTransitions{ExhaustedActive: true}, sink, note)
+
+	ex, ok := sink.find(BudgetExhaustedAlertID)
+	if !ok {
+		t.Fatalf("no %q alert raised on restart-mid-exhaustion state; got %+v", BudgetExhaustedAlertID, sink.added)
+	}
+	if ex.severity != "error" {
+		t.Errorf("severity = %q, want %q", ex.severity, "error")
+	}
+	if !strings.Contains(ex.message, "1000 of 1000 tokens used") {
+		t.Errorf("message = %q, want spend/limit figures", ex.message)
+	}
+	if len(note.sent) != 0 {
+		t.Errorf("restart-mid-exhaustion must not notify (no fresh crossing); got %+v", note.sent)
+	}
+}
+
+// The same restart scenario, but only warn-level: exercises the sibling
+// branch so a copy/paste regression between Warn and Exhausted cannot hide.
+func TestApplyBudgetRestartMidWarnRaisesBannerWithoutNotifying(t *testing.T) {
+	sink := &recordingSink{}
+	note := &recordingNotifier{}
+	gov := fakeBudget{governor.BudgetInfo{CurrentSpend: 950, WeeklyLimit: 1000}}
+
+	ApplyBudget(gov, governor.BudgetTransitions{WarnActive: true}, sink, note)
+
+	if _, ok := sink.find(BudgetWarnAlertID); !ok {
+		t.Fatalf("no %q alert raised on restart-mid-warn state; got %+v", BudgetWarnAlertID, sink.added)
+	}
+	if len(note.sent) != 0 {
+		t.Errorf("restart-mid-warn must not notify (no fresh crossing); got %+v", note.sent)
+	}
+}
+
+// Recovery (the window rolled, or the operator raised the limit) must clear
+// the banner: Active flips false and the standing alert comes down.
+func TestApplyBudgetRecoveryClearsBanner(t *testing.T) {
+	sink := &recordingSink{}
+	note := &recordingNotifier{}
+	gov := fakeBudget{governor.BudgetInfo{CurrentSpend: 0, WeeklyLimit: 1000}}
+
+	// Banner standing from a prior cycle.
+	ApplyBudget(gov, governor.BudgetTransitions{ExhaustedActive: true}, sink, note)
+	if _, ok := sink.find(BudgetExhaustedAlertID); !ok {
+		t.Fatal("fixture: exhausted alert not raised")
+	}
+
+	// Window rolled: Active goes false.
+	ApplyBudget(gov, governor.BudgetTransitions{Rolled: true}, sink, note)
+	if !contains(sink.cleared, BudgetExhaustedAlertID) {
+		t.Errorf("exhausted alert not cleared on recovery; cleared=%v", sink.cleared)
+	}
+}
+
+// Raising the banner every cycle while the level stays active must not stack
+// duplicate entries: AddSystemAlert upserts by ID, and this pins that
+// ApplyBudget relies on that rather than accumulating raises itself.
+func TestApplyBudgetLevelTriggeredRaiseNeverDuplicatesAcrossCycles(t *testing.T) {
+	sink := &recordingSink{}
+	note := &recordingNotifier{}
+	gov := fakeBudget{governor.BudgetInfo{CurrentSpend: 1000, WeeklyLimit: 1000}}
+
+	// First cycle crosses (notifies); the next several stay active without a
+	// fresh crossing (steady state / re-derivation after a restart).
+	ApplyBudget(gov, governor.BudgetTransitions{ExhaustedActive: true, ExhaustedCrossed: true}, sink, note)
+	for i := 0; i < 3; i++ {
+		ApplyBudget(gov, governor.BudgetTransitions{ExhaustedActive: true}, sink, note)
+	}
+
+	count := 0
+	for _, a := range sink.added {
+		if a.id == BudgetExhaustedAlertID {
+			count++
+		}
+	}
+	if count != 4 {
+		t.Errorf("AddSystemAlert called %d times across 4 cycles, want 4 (recordingSink logs every call; the dashboard's real AddSystemAlert upserts by ID so the operator sees exactly one banner)", count)
+	}
+	if len(note.sent) != 1 {
+		t.Errorf("notifications = %d across 4 cycles, want exactly 1 (only the first carried Crossed=true)", len(note.sent))
+	}
+}
+
 // The no-cadence banner exists because the dashboard's other not-producing
 // warnings name only the SYMPTOM. Its whole value is that it also carries the
 // cause and the fix, so the copy is the feature (#5577).

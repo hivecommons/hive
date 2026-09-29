@@ -16,14 +16,6 @@ import (
 	"github.com/hivecommons/hive/pkg/intent"
 )
 
-// noCadenceAlertMessage renders the banner line: symptom, cause AND fix — the
-// exact gap the RFC calls out in the dashboard's not-producing warnings,
-// which name only the symptom.
-func noCadenceAlertMessage(agents []string) string {
-	return fmt.Sprintf("agent(s) %s enabled but never kicked — no cadence configured; set cadences on the agent card",
-		strings.Join(agents, ", "))
-}
-
 var (
 	holdGuardStoreOnce sync.Once
 	holdGuardStore     *holdguard.Store
