@@ -400,8 +400,12 @@ apt_fetch_current_sources_once() {
   # download below is what actually proves a usable index/package path exists.
   # Still run update on every retry so an initially-empty or stale index can
   # recover when egress returns.
-  run_bounded "${sudo_prefix[@]}" apt-get "${apt_opts[@]}" update -qq \
-    || echo "ci-install-tool: apt-get update did not complete cleanly; attempting package download anyway" >&2
+  local update_status=0
+  run_bounded "${sudo_prefix[@]}" apt-get "${apt_opts[@]}" update -qq || update_status=$?
+  if [ "$update_status" -ne 0 ]; then
+    echo "ci-install-tool: apt-get update did not complete cleanly; attempting package download anyway" >&2
+    [ "$update_status" -ne 124 ] || return "$update_status"
+  fi
   local reinstall_opts=()
   if [ "${HIVE_CI_APT_DOWNLOAD_REINSTALL:-0}" = "1" ]; then
     # The runner already has the tool, so plain `install --download-only` is a

@@ -159,9 +159,18 @@ run_installer() {
   local work="$1"
   shift
   local fake_bin="${work}/bin"
+  local apt_etc="${work}/apt"
   install_fakes "$fake_bin"
+  mkdir -p "${apt_etc}/sources.list.d"
+  cat > "${apt_etc}/sources.list.d/ubuntu.sources" <<'EOF'
+Types: deb
+URIs: http://azure.archive.ubuntu.com/ubuntu/
+Suites: noble noble-updates
+Components: main
+EOF
   HIVE_FAKE_BIN="$fake_bin" \
   HIVE_FAKE_LOG="${work}/commands.log" \
+  HIVE_CI_APT_ETC_DIR="${HIVE_CI_APT_ETC_DIR:-$apt_etc}" \
   PATH="${fake_bin}:${PATH}" \
   "$@" bash "$SCRIPT" \
     --require hive-fake-gcc --for '-race tests' \
