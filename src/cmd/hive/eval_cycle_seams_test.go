@@ -7,9 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/scheduler"
+	"github.com/hivecommons/hive/pkg/spokealerts"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -194,7 +197,13 @@ func TestMergeResumeKicks(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var asked []string
-			allow := func(a string) bool { asked = append(asked, a); return tc.allow[a] }
+			allow := func(a string) (bool, governor.ResumeRefusal) {
+				asked = append(asked, a)
+				if tc.allow[a] {
+					return true, governor.ResumeAllowed
+				}
+				return false, governor.ResumeRefusalIntervalThrottle
+			}
 			got, _ := mergeResumeKicks(append([]string(nil), tc.due...), tc.restarted, allow, testLogger())
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("due = %v, want %v", got, tc.want)
@@ -203,6 +212,108 @@ func TestMergeResumeKicks(t *testing.T) {
 				t.Fatalf("gate consulted for %v, want %v", asked, tc.wantAsked)
 			}
 		})
+	}
+}
+
+// TestMergeResumeKicks_HeldCarriesReason (#9612): every refused restart is
+// reported with the gate's reason, so the banner layer can raise one only for
+// an interval throttle; admitted and already-due agents are not reported.
+func TestMergeResumeKicks_HeldCarriesReason(t *testing.T) {
+	reasons := map[string]governor.ResumeRefusal{
+		"reviewer":  governor.ResumeRefusalIntervalThrottle,
+		"telemetry": governor.ResumeRefusalPausedInMode,
+		"guide":     governor.ResumeRefusalOnDemand,
+		"architect": governor.ResumeRefusalBudgetExhausted,
+		"fixer":     governor.ResumeAllowed,
+	}
+	allow := func(a string) (bool, governor.ResumeRefusal) {
+		r := reasons[a]
+		return r == governor.ResumeAllowed, r
+	}
+	due, held := mergeResumeKicks([]string{"scanner"}, []string{"scanner", "reviewer", "telemetry", "guide", "architect", "fixer"}, allow, testLogger())
+	if want := []string{"scanner", "fixer"}; !reflect.DeepEqual(due, want) {
+		t.Fatalf("due = %v, want %v", due, want)
+	}
+	want := []spokealerts.ResumeKickHeldAgent{
+		{Agent: "reviewer", Reason: governor.ResumeRefusalIntervalThrottle},
+		{Agent: "telemetry", Reason: governor.ResumeRefusalPausedInMode},
+		{Agent: "guide", Reason: governor.ResumeRefusalOnDemand},
+		{Agent: "architect", Reason: governor.ResumeRefusalBudgetExhausted},
+	}
+	if !reflect.DeepEqual(held, want) {
+		t.Fatalf("held = %+v, want %+v", held, want)
+	}
+}
+
+type fakeResumeKickStatus struct {
+	fast        map[string]*agent.AgentProcess
+	all         map[string]*agent.AgentProcess
+	allStatuses int
+}
+
+func (f *fakeResumeKickStatus) GetStatusFast(name string) (*agent.AgentProcess, error) {
+	if st, ok := f.fast[name]; ok {
+		return st, nil
+	}
+	return nil, errors.New("status unavailable")
+}
+
+func (f *fakeResumeKickStatus) AllStatuses() map[string]*agent.AgentProcess {
+	f.allStatuses++
+	return f.all
+}
+
+// TestResumeKickHeldFacts wires the #9612 reconcile facts to agent status:
+// a missing GetStatusFast entry is settled by ONE AllStatuses snapshot, so a
+// busy manager (agent present in the roster) never reads as a removal, while
+// an agent absent from the roster does.
+func TestResumeKickHeldFacts(t *testing.T) {
+	since := time.Date(2026, 9, 29, 8, 0, 0, 0, time.UTC)
+	kick := since.Add(time.Minute)
+	status := &fakeResumeKickStatus{
+		fast: map[string]*agent.AgentProcess{
+			"scanner":  {Name: "scanner", Config: config.AgentConfig{Enabled: true}, LastKick: &kick},
+			"paused":   {Name: "paused", Config: config.AgentConfig{Enabled: true}, Paused: true},
+			"stateP":   {Name: "stateP", Config: config.AgentConfig{Enabled: true}, State: agent.StatePaused},
+			"disabled": {Name: "disabled"},
+			"busy":     {Name: "busy", Config: config.AgentConfig{Enabled: true}, KicksUndeliverable: 1},
+			"worked":   {Name: "worked", Config: config.AgentConfig{Enabled: true}, LastTranscriptActivity: since.Add(time.Second)},
+			"stale":    {Name: "stale", Config: config.AgentConfig{Enabled: true}, LastTranscriptActivity: since.Add(-time.Second)},
+		},
+		all: map[string]*agent.AgentProcess{
+			"slow": {Name: "slow", Config: config.AgentConfig{Enabled: true}},
+		},
+	}
+	gateCalls := 0
+	gate := func(string) (governor.ResumeRefusal, time.Duration) {
+		gateCalls++
+		return governor.ResumeRefusalIntervalThrottle, time.Hour
+	}
+	facts := resumeKickHeldFacts(status, gate)
+
+	if got, ok := facts.LastKick("scanner"); !ok || !got.Equal(kick) {
+		t.Fatalf("LastKick(scanner) = %v, %v", got, ok)
+	}
+	if _, ok := facts.LastKick("stale"); ok {
+		t.Fatal("LastKick with no recorded kick must report unknown")
+	}
+	inactive := map[string]bool{"scanner": false, "slow": false, "paused": true, "stateP": true, "disabled": true, "removed": true}
+	for name, want := range inactive {
+		if got := facts.Inactive(name); got != want {
+			t.Errorf("Inactive(%s) = %v, want %v", name, got, want)
+		}
+	}
+	if status.allStatuses != 1 {
+		t.Fatalf("AllStatuses called %d times, want exactly 1 (lazy, cached per call)", status.allStatuses)
+	}
+	worked := map[string]bool{"busy": true, "worked": true, "stale": false, "scanner": false, "removed": false}
+	for name, want := range worked {
+		if got := facts.WorkedSince(name, since); got != want {
+			t.Errorf("WorkedSince(%s) = %v, want %v", name, got, want)
+		}
+	}
+	if reason, interval := facts.Gate("scanner"); reason != governor.ResumeRefusalIntervalThrottle || interval != time.Hour || gateCalls != 1 {
+		t.Fatalf("Gate = (%q, %v), calls=%d; want the injected gate", reason, interval, gateCalls)
 	}
 }
 
