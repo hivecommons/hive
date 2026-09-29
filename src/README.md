@@ -94,7 +94,8 @@ See [docs/README.md](docs/README.md) for the full v2 documentation index, includ
 kubectl apply -f src/deploy/k8s/namespace.yaml
 kubectl -n hive create secret generic hive-secrets \
   --from-literal=HIVE_GITHUB_TOKEN=ghp_...
-kubectl create configmap hive-config -n hive --from-file=hive.yaml=src/hive.yaml
+cp src/hive.yaml.example hive.yaml   # then edit org, repos, agents
+kubectl create configmap hive-config -n hive --from-file=hive.yaml=hive.yaml
 kubectl apply -f src/deploy/k8s/pvc.yaml
 kubectl apply -f src/deploy/k8s/deployment.yaml
 kubectl apply -f src/deploy/k8s/service.yaml
