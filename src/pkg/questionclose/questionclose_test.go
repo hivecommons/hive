@@ -669,3 +669,22 @@ func TestRunStopsOnContextCancel(t *testing.T) {
 	cancel2()
 	m.Run(ctx2, 0)
 }
+
+func TestAnswerWithoutTimestampUsesNowAndBlankAuthorNeverKeepsOpen(t *testing.T) {
+	tr := &fakeTracker{thread: answeredThread(), reactors: []string{"someone"}}
+	tr.thread.Comments[1].CreatedAt = time.Time{}
+	tr.thread.Author = ""
+	c := &clock{now: t0.Add(time.Hour)}
+	m := newManager(t, "", enabledSettings(), tr, c)
+	m.Offer([]github.Issue{questionIssue(t0)})
+	if rep := m.Tick(context.Background()); rep.Scheduled != 1 {
+		t.Fatalf("got %+v", rep)
+	}
+	if got := m.Scheduled(); !got[0].Deadline.Equal(c.now.Add(testWindow)) {
+		t.Fatalf("deadline = %v, want now+window", got[0].Deadline)
+	}
+	c.now = c.now.Add(testWindow)
+	if rep := m.Tick(context.Background()); rep.Closed != 1 {
+		t.Fatalf("an unknown author cannot object; got %+v", rep)
+	}
+}

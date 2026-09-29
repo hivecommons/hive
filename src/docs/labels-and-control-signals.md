@@ -91,9 +91,31 @@ The "respect hold labels" text in policy templates names the enforced set (`hold
 - `governor.labels.exempt`, `governor.labels.automerge`, and `project.issue_filter.require_labels` decide exempt/admit/queue behavior.
 - `planning.plan_from_label`, `planning.plan_labels`, `planning.design_labels`, and `planning.design_approved_label` control planning labels, with the L5+ planning floor.
 - `runs.triage.enabled`, `runs.triage.spec_labels`, and `runs.triage.fix_labels` control run triage labels.
+- `governor.question_autoclose.*` (`HIVE_QUESTION_AUTOCLOSE`, `HIVE_QUESTION_AUTOCLOSE_HOURS`) closes answered `question` issues; see [Question auto-close](#question-auto-close).
 - `governor.claims.*`, `review.human_decision_label`, `hub.contribute_*`, `dashboard.issue_bands.*`, and `HIVE_ACTIONABLE_PRIORITY_LABELS` control the display/contributor/ranking labels above, including contributor label allow/deny filters and per-repo narrowing.
 - `work_source.linear.hold_labels` and `work_source.jira.hold_labels` are non-GitHub label-equivalent gates with the different matching rules described above.
 - Not labels: `project.paused_repos` pauses an entire repo; contributor queue holds can park `owner/repo#N` without changing GitHub labels.
+
+## Question auto-close
+
+Off by default ([#9584](https://github.com/hivecommons/hive/issues/9584)). When on, a question issue the hive has answered is closed after a short window unless the person who asked objects, so answered questions stop inflating the open-issue count and being rescanned every sweep.
+
+```yaml
+governor:
+  question_autoclose:
+    enabled: true          # or HIVE_QUESTION_AUTOCLOSE=true
+    hours: 4               # or HIVE_QUESTION_AUTOCLOSE_HOURS; default 4
+    labels: [question, kind/question]   # default; what marks a question
+    human_label: needs-human            # default; added when the author objects
+```
+
+How it works:
+
+1. The scanner kick gains a short answer contract: an issue that only asks a question gets the `question` label and ONE answer comment, which ends with a hidden `<!-- hive-question-answer -->` marker and the line "If this doesn't answer your question, react 👎 to this comment and the issue will stay open." The footer text is built by Hive and passed through the mention sanitizer.
+2. Hive watches question-labelled issues from the normal issue pass. When the last comment on one is a marked answer (not written by the issue author), it schedules a close at answer time + `hours`. The schedule lives in `/data/question-autoclose.json`, so a restart keeps the original deadline.
+3. At the deadline Hive re-reads the issue. A 👎 from the issue author on the answer keeps it open and adds `human_label`. Otherwise the issue is closed with `state_reason: completed` and no extra comment, so the answer stays the last thing Hive said.
+
+A schedule is cancelled (never acted on) when anyone comments after the answer, the issue is closed by someone else, the question label is removed, or a bug, enhancement, hold or `human_label` label appears. Bugs (`bug`, `kind/bug`, human-filed bug reports), enhancements/features and held issues are never auto-closed. A cancelled or finished answer is remembered for 30 days so the same answer is never scheduled twice; a new answer after a follow-up starts a new window.
 
 ## Lifecycle examples
 

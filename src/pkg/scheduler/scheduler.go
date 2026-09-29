@@ -28,6 +28,7 @@ type Scheduler struct {
 	inflight             InflightLookup
 	runAdmitter          RunAdmitter
 	triageCommenter      TriageCommenter
+	questionAutocloser   QuestionAutocloser
 	lifecycle            timeline.Recorder
 	mu                   sync.RWMutex
 }

@@ -144,6 +144,7 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 	classifiedIssues := classify.ClassifyAll(actionable.Issues.Items)
 	s.recordClassified(classifiedIssues)
 	classifiedIssues = s.applyRunTriage(classifiedIssues)
+	s.offerQuestions(classifiedIssues)
 
 	var messages []KickMessage
 	for _, targetKey := range agentsDue {
@@ -306,6 +307,7 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 		// deployment — so it is stated here, at the same seam, for the one mode
 		// that has it (#6681).
 		message = s.addWorkflowPushCeiling(agentName, message)
+		message = s.addQuestionAnswerContract(agentName, message, issues)
 	}()
 
 	baseName := s.cfg.BaseAgentName(agentName)

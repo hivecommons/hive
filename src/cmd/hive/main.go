@@ -3379,6 +3379,8 @@ func (b *boot) bootSupervision() {
 	// human, contributor or another agent holds is withheld from kicks too.
 	b.sched.SetInflightLookup(composeInflight(b.dashSrv.LinearSessionHolder,
 		claimsInflightLookup(b.issueClaims, b.cfg.Project.Org)))
+	// #9584: close answered question issues unless the author objects (default off).
+	wireQuestionAutoclose(b.ctx, b.cfg, b.sched, func() *github.Client { return b.ghClient }, b.logger)
 	if b.ghClient != nil {
 		b.ghClient.SetPROpenedHook(func(agentName, repo string, number int, url string) {
 			b.dashSrv.LinearAgentPROpened(agentName, repo, number, url)
