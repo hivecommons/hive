@@ -3626,6 +3626,7 @@
       <div class="oc-nav-label">Admin</div>
       <a class="oc-nav-item" data-section="token-panel" data-action="ocNavigate" data-arg0="token-panel"><span class="oc-nav-emoji">🪙</span><span class="oc-nav-text">Tokens</span></a>
       <a class="oc-nav-item" data-section="cost-panel" data-action="ocNavigate" data-arg0="cost-panel"><span class="oc-nav-emoji">💵</span><span class="oc-nav-text">Cost</span></a>
+      <a class="oc-nav-item" data-section="review-queue-section" data-action="ocNavigate" data-arg0="review-queue-section"><span class="oc-nav-emoji">🔎</span><span class="oc-nav-text">Review Queue</span></a>
       <a class="oc-nav-item" data-section="audit-section" data-action="ocNavigate" data-arg0="audit-section"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Audit Log</span></a>
     </div>
     <div class="oc-nav-group">
@@ -3979,6 +3980,21 @@
       </div>
       <div id="audit-panel" style="padding:var(--sp-5);max-height:320px;overflow-y:auto">
         <div class="loading">Loading audit log...</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mt-6 mb-8" id="review-queue-section" data-dashboard-section="review-queue-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="review-queue-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Review Queue section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🔎 Review Queue <span id="review-queue-count" style="font-size:0.7rem;color:var(--muted);margin-left:var(--sp-4)"></span></h2>
+    <div class="section-body">
+      <div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--sp-4)">Every open PR across the governed repos in one deterministic rank order (<code>GET /api/review/queue</code>), agent- or contributor-authored, with the reasons for each position.</div>
+      <div id="review-queue-panel" style="padding:var(--sp-4);max-height:520px;overflow-y:auto">
+        <div class="loading">Loading review queue…</div>
+      </div>
+      <div id="review-queue-paging" style="display:none;align-items:center;gap:var(--sp-4);margin-top:var(--sp-4)">
+        <button class="hv-btn btn-secondary btn-sm" id="review-queue-prev" data-action="reviewQueuePrevPage" title="Previous page">← Prev</button>
+        <span id="review-queue-range" style="font-size:0.72rem;color:var(--muted);white-space:nowrap"></span>
+        <button class="hv-btn btn-secondary btn-sm" id="review-queue-next" data-action="reviewQueueNextPage" title="Next page">Next →</button>
       </div>
     </div>
   </div>
@@ -4517,7 +4533,7 @@
     var DASHBOARD_LAYOUT_KEY='hive.dashboard.layout';
     var DASHBOARD_LAYOUT_VERSION=1;
     var DASHBOARD_LAYOUT_REGIONS=['main'];
-    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','platform-section','audit-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']};
+    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','platform-section','audit-section','review-queue-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']};
     var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
     var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
     var dashboardDragState=null;
@@ -16353,6 +16369,124 @@ function burnAreaChart() {
     }
     // fetchAuditLog() — deferred to _deferredInit
 
+    // --- Review queue (GET /api/review/queue) — #9607 ---
+    // UI-only view over the deterministic PR review queue backend (#9598,
+    // #9590): every open PR across the governed repos in one ranked order with
+    // the reasons for each position, paged like the API (limit/offset/has_more).
+    const REVIEW_QUEUE_POLL_MS = 30000;
+    const REVIEW_QUEUE_PAGE_SIZE = 25;
+    var _reviewQueueOffset = 0;
+    var _reviewQueueLimit = REVIEW_QUEUE_PAGE_SIZE;
+    var _reviewQueueTotal = 0;
+    var _reviewQueueHasMore = false;
+
+    // reviewQueuePriorityMeta maps the API's priority (high|normal|low) to the
+    // review-priority/* label family the backend mirrors onto PRs, plus a badge
+    // colour. Unknown values fall back to normal so a new band still renders.
+    function reviewQueuePriorityMeta(priority) {
+      var p = String(priority || '').toLowerCase();
+      if (p === 'high') return { key: 'high', label: 'review-priority/high', color: 'var(--red)' };
+      if (p === 'low') return { key: 'low', label: 'review-priority/low', color: 'var(--muted)' };
+      return { key: 'normal', label: 'review-priority/normal', color: 'var(--blue)' };
+    }
+
+    function reviewQueueAgeLabel(hours) {
+      var h = Number(hours) || 0;
+      if (h < 24) return h + 'h';
+      return Math.floor(h / 24) + 'd';
+    }
+
+    function renderReviewQueueEntry(e) {
+      var meta = reviewQueuePriorityMeta(e.priority);
+      var title = String(e.title || '');
+      var titleHtml = e.url
+        ? '<a href="' + esc(String(e.url)) + '" target="_blank" rel="noopener noreferrer" style="color:var(--text);font-weight:600">' + esc(title) + '</a>'
+        : '<span style="font-weight:600">' + esc(title) + '</span>';
+      var repoRef = esc(String(e.repo || '')) + '#' + esc(String(e.number || ''));
+      var priorityBadge = '<span class="review-priority review-priority-' + meta.key + '" data-priority="' + meta.key + '" title="' + esc(meta.label) + '" style="display:inline-block;padding:var(--sp-1) var(--sp-4);border-radius:var(--r-sm);font-size:0.66rem;color:var(--muted);border:1px solid ' + meta.color + '">' + esc(meta.label) + '</span>';
+      var metaBits = [];
+      if (e.author) metaBits.push('@' + esc(String(e.author)));
+      metaBits.push(e.hive_authored ? 'agent' : 'contributor');
+      if (e.ci_state) metaBits.push('CI ' + esc(String(e.ci_state)));
+      if (e.confidence_band) metaBits.push(esc(String(e.confidence_band)));
+      metaBits.push(reviewQueueAgeLabel(e.age_hours) + ' old');
+      if (e.held) metaBits.push('held');
+      var reasons = Array.isArray(e.reasons) ? e.reasons : [];
+      var reasonsHtml = reasons.length
+        ? '<ul class="review-queue-reasons" style="margin:var(--sp-2) 0 0;padding-left:var(--sp-6);color:var(--muted);font-size:0.72rem">' + reasons.map(function(r) { return '<li>' + esc(String(r)) + '</li>'; }).join('') + '</ul>'
+        : '<div style="color:var(--muted);font-size:0.72rem;margin-top:var(--sp-2)">no ranking reasons recorded</div>';
+      return '<div class="review-queue-entry" style="padding:var(--sp-4) 0;border-bottom:1px solid var(--terminal-line)">' +
+        '<div style="display:flex;align-items:baseline;gap:var(--sp-4)">' +
+          '<span class="review-queue-rank" style="font-weight:700;color:var(--muted);min-width:2.2em">#' + esc(String(e.position || '')) + '</span>' +
+          '<div style="flex:1;min-width:0">' +
+            '<div style="display:flex;align-items:center;gap:var(--sp-4);flex-wrap:wrap">' + priorityBadge + titleHtml + '</div>' +
+            '<div style="font-size:0.72rem;color:var(--muted);margin-top:var(--sp-1)">' + repoRef + ' · ' + metaBits.join(' · ') + '</div>' +
+            reasonsHtml +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    }
+
+    function renderReviewQueue(data) {
+      var panel = document.getElementById('review-queue-panel');
+      if (!panel) return;
+      var items = (data && Array.isArray(data.items)) ? data.items : [];
+      _reviewQueueTotal = Number(data && data.total) || 0;
+      _reviewQueueLimit = Number(data && data.limit) || REVIEW_QUEUE_PAGE_SIZE;
+      _reviewQueueOffset = Number(data && data.offset) || 0;
+      _reviewQueueHasMore = !!(data && data.has_more);
+      var countEl = document.getElementById('review-queue-count');
+      if (countEl) countEl.textContent = _reviewQueueTotal ? _reviewQueueTotal + ' PR' + (_reviewQueueTotal === 1 ? '' : 's') : '';
+      if (!items.length) {
+        panel.innerHTML = '<div style="color:var(--terminal-muted);font-size:var(--fs-base);padding:var(--sp-4)">Review queue is empty — no open PRs to rank.</div>';
+      } else {
+        panel.innerHTML = items.map(renderReviewQueueEntry).join('');
+      }
+      var paging = document.getElementById('review-queue-paging');
+      if (paging) {
+        var multiPage = _reviewQueueHasMore || _reviewQueueOffset > 0;
+        paging.style.display = multiPage ? 'flex' : 'none';
+        var prev = document.getElementById('review-queue-prev');
+        var next = document.getElementById('review-queue-next');
+        if (prev) prev.disabled = _reviewQueueOffset <= 0;
+        if (next) next.disabled = !_reviewQueueHasMore;
+        var range = document.getElementById('review-queue-range');
+        if (range) {
+          var first = items.length ? _reviewQueueOffset + 1 : 0;
+          var last = _reviewQueueOffset + items.length;
+          range.textContent = first + '–' + last + ' of ' + _reviewQueueTotal;
+        }
+      }
+    }
+
+    async function fetchReviewQueue() {
+      var panel = document.getElementById('review-queue-panel');
+      try {
+        var resp = await fetch('/api/review/queue?limit=' + REVIEW_QUEUE_PAGE_SIZE + '&offset=' + _reviewQueueOffset);
+        if (!resp.ok) {
+          if (panel && !panel.querySelector('.review-queue-entry')) {
+            panel.innerHTML = '<div style="color:var(--terminal-muted);font-size:var(--fs-base);padding:var(--sp-4)">Review queue unavailable.</div>';
+          }
+          return;
+        }
+        var data = await resp.json();
+        renderReviewQueue(data);
+      } catch (e) {}
+    }
+
+    function reviewQueuePrevPage() {
+      if (_reviewQueueOffset <= 0) return;
+      _reviewQueueOffset = Math.max(0, _reviewQueueOffset - REVIEW_QUEUE_PAGE_SIZE);
+      fetchReviewQueue();
+    }
+
+    function reviewQueueNextPage() {
+      if (!_reviewQueueHasMore) return;
+      _reviewQueueOffset += REVIEW_QUEUE_PAGE_SIZE;
+      fetchReviewQueue();
+    }
+    // fetchReviewQueue() — deferred to _deferredInit
+
     // --- Contributors & Leaderboard ---
     const CONTRIBUTOR_POLL_MS = 10000;
     const LEADERBOARD_POLL_MS = 30000;
@@ -17168,7 +17302,7 @@ function burnAreaChart() {
       const COLLAPSIBLE_SECTION_IDS = [
         'advisory-section', 'hive-advice-section', 'acmm-reco-section', 'lifecycle-section', 'pr-throughput-section',
         'overview-section', 'repos-section', 'beads-section', 'acmm-eval-section',
-        'platform-section', 'fleet-report-section', 'audit-section', 'nous-section', 'inception-section',
+        'platform-section', 'fleet-report-section', 'audit-section', 'review-queue-section', 'nous-section', 'inception-section',
         'knowledge-section', 'contributors-section', 'debug-section', 'logs-section',
         'agents-section', 'faq-section'
       ];
@@ -31292,6 +31426,7 @@ function burnAreaChart() {
           () => fetchNousStatus().then(() => { setInterval(fetchNousStatus, NOUS_POLL_MS); }),
           () => fetchKnowledgeStats().then(() => { setInterval(fetchKnowledgeStats, KB_POLL_MS); }),
           () => fetchAuditLog().then(() => { setInterval(fetchAuditLog, AUDIT_POLL_MS); }),
+          () => fetchReviewQueue().then(() => { setInterval(fetchReviewQueue, REVIEW_QUEUE_POLL_MS); }),
           () => fetchContributors().then(() => { setInterval(fetchContributors, CONTRIBUTOR_POLL_MS); }),
           () => fetchLeaderboard().then(() => { setInterval(fetchLeaderboard, LEADERBOARD_POLL_MS); }),
           () => fetchGitVersion().then(() => { setInterval(fetchGitVersion, GIT_VERSION_POLL_MS); }),
