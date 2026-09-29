@@ -182,8 +182,8 @@ const (
 )
 
 // addRedPRFixFirst prepends a fix-before-new section listing the agent's OWN
-// red-CI PRs, with the failing checks and the raw CI evidence, right below the
-// kick header. It reads ci-failing.json (written by writeMergeEligible each
+// red-CI or conflicted PRs, with the failing checks and raw CI evidence, right
+// below the kick header. It reads ci-failing.json (written by writeMergeEligible each
 // eval tick), which attributes each PR to the agent whose relay request opened
 // it. Unattributed rows default to scanner — the fleet's primary PR creator.
 // Escalated (needs-human) PRs are never listed: they belong to a human.
@@ -221,20 +221,23 @@ const heldRedPRExemptAgent = "outreach"
 
 // formatRedPRFixData renders the fix-before-new section for one agent from
 // raw ci-failing.json bytes. Empty result means the agent has no open,
-// non-escalated red PRs. A held red PR (hivecommons/hive#7438) is listed like
-// any other — with heldRedPRNote — except for outreach's.
+// non-escalated red or conflicted PRs. A held red PR (hivecommons/hive#7438)
+// is listed like any other — with heldRedPRNote — except for outreach's.
 func formatRedPRFixData(data []byte, agent string) string {
 	type ciFailingRow struct {
-		Number        int      `json:"number"`
-		Repo          string   `json:"repo"`
-		Title         string   `json:"title"`
-		Agent         string   `json:"agent"`
-		FailingChecks []string `json:"failing_checks"`
-		Excerpt       string   `json:"excerpt"`
-		Escalated     bool     `json:"escalated"`
-		FromFork      bool     `json:"from_fork"`
-		HeadRepo      string   `json:"head_repo"`
-		Held          bool     `json:"held"`
+		Number         int      `json:"number"`
+		Repo           string   `json:"repo"`
+		Title          string   `json:"title"`
+		Agent          string   `json:"agent"`
+		FailingChecks  []string `json:"failing_checks"`
+		Excerpt        string   `json:"excerpt"`
+		Escalated      bool     `json:"escalated"`
+		FromFork       bool     `json:"from_fork"`
+		HeadRepo       string   `json:"head_repo"`
+		Held           bool     `json:"held"`
+		MergeableState string   `json:"mergeable_state"`
+		Conflict       bool     `json:"conflict"`
+		ReroutedFrom   string   `json:"rerouted_from"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
@@ -274,11 +277,11 @@ func formatRedPRFixData(data []byte, agent string) string {
 	}
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("\n## 🔴 FIX-BEFORE-NEW — your open PRs with failing CI (%d)\n\n", len(mine)))
+	b.WriteString(fmt.Sprintf("\n## 🔴 FIX-BEFORE-NEW — your open PRs with failing CI or merge conflicts (%d)\n\n", len(mine)))
 	if forks > 0 {
 		b.WriteString(fmt.Sprintf("(%d red PR(s) from forks are NOT listed here: you cannot push to a fork — they appear under CI_FAILING as comment-only.)\n", forks))
 	}
-	b.WriteString("These PRs are YOURS and they are red. Repairing them comes BEFORE claiming\n")
+	b.WriteString("These PRs are YOURS and they are red or conflicted. Repairing them comes BEFORE claiming\n")
 	b.WriteString("new issues or opening ANY new PR. For each one:\n")
 	b.WriteString("  gh pr checkout <number> → fix using the evidence below → commit -s → git push\n")
 	b.WriteString("Push to the SAME branch. Do NOT open a replacement PR. Do NOT leave these\n")
@@ -289,6 +292,16 @@ func formatRedPRFixData(data []byte, agent string) string {
 			break
 		}
 		b.WriteString(fmt.Sprintf("  #%d %s — %s\n", pr.Number, pr.Repo, pr.Title))
+		if pr.Conflict {
+			state := strings.TrimSpace(pr.MergeableState)
+			if state == "" {
+				state = "dirty"
+			}
+			b.WriteString("    conflict: mergeable_state=" + state + " — merge the base branch or rebase the PR branch\n")
+			if from := strings.TrimSpace(pr.ReroutedFrom); from != "" {
+				b.WriteString("    rerouted from paused/unavailable lane: " + from + "\n")
+			}
+		}
 		if pr.Held {
 			b.WriteString("    " + heldRedPRNote + "\n")
 		}

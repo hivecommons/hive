@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
@@ -35,6 +36,7 @@ type eligibleEntry struct {
 type failingEntry struct {
 	Number          int      `json:"number"`
 	Repo            string   `json:"repo"`
+	Agent           string   `json:"agent"`
 	HeadSHA         string   `json:"head_sha"`
 	FailingChecks   []string `json:"failing_checks"`
 	Excerpt         string   `json:"excerpt"`
@@ -44,6 +46,9 @@ type failingEntry struct {
 	FromFork        bool     `json:"from_fork"`
 	ReachableAction string   `json:"reachable_action"`
 	Held            bool     `json:"held"`
+	MergeableState  string   `json:"mergeable_state"`
+	Conflict        bool     `json:"conflict"`
+	ReroutedFrom    string   `json:"rerouted_from"`
 }
 
 type mergeEligibleInputs struct {
@@ -55,6 +60,7 @@ type mergeEligibleInputs struct {
 	escalated      map[string]bool
 	requireReview  bool
 	requiredChecks map[string]bool
+	cfg            *config.Config
 }
 
 // runWriteMergeEligible points the two output seams at a TempDir, runs
@@ -73,7 +79,7 @@ func runWriteMergeEligible(t *testing.T, prs []github.PullRequest, in mergeEligi
 
 	actionable := &github.ActionableResult{PRs: github.PRResult{Items: prs, Held: in.heldPRs}}
 	writeMergeEligible(actionable, in.hold, in.org, in.escalated, false, nil, in.requireReview, in.requiredChecks,
-		nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		nil, in.cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	var mergePayload struct {
 		GeneratedAt   string          `json:"generated_at"`
@@ -314,6 +320,43 @@ func TestWriteMergeEligible_FailingEntryCarriesEvidenceAndEscalation(t *testing.
 	}
 }
 
+// A hive-created PR with mergeable_state=dirty needs a base merge/rebase even
+// when CI is green, so it rides the same fix-lane artifact as red CI with a
+// conflict marker and an owning lane. If that lane is unavailable in config,
+// the row is assigned to scanner, the fallback fixer.
+func TestWriteMergeEligible_ConflictedHivePRRoutesToOwnerOrFallback(t *testing.T) {
+	dirty := github.PullRequest{
+		Repo: "hive", Number: 9510, Title: "dirty hive PR", CIStatus: "success",
+		Mergeable: github.MergeableNo, MergeableState: "dirty", AppAuthored: true,
+		Labels: []string{"agent/strategist"}, HeadRef: "strategist/v6-readiness",
+	}
+	eligible, failing := runWriteMergeEligible(t, []github.PullRequest{dirty}, mergeEligibleInputs{org: "hivecommons"})
+	if len(eligible) != 0 || len(failing) != 1 {
+		t.Fatalf("eligible=%+v failing=%+v, want one conflict row", eligible, failing)
+	}
+	if f := failing[0]; !f.Conflict || f.MergeableState != "dirty" || f.Agent != "strategist" || len(f.FailingChecks) != 0 {
+		t.Fatalf("conflict row = %+v, want strategist-owned dirty row without CI failures", f)
+	}
+
+	cfg := &config.Config{
+		Agents: map[string]config.AgentConfig{
+			"scanner":    {Enabled: true},
+			"strategist": {Enabled: true},
+		},
+		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
+			"idle":  {Cadences: map[string]config.Cadence{"strategist": config.NewIntervalCadence("paused")}},
+			"surge": {Cadences: map[string]config.Cadence{"strategist": config.NewIntervalCadence("pause")}},
+		}},
+	}
+	_, failing = runWriteMergeEligible(t, []github.PullRequest{dirty}, mergeEligibleInputs{org: "hivecommons", cfg: cfg})
+	if len(failing) != 1 {
+		t.Fatalf("failing=%+v, want one rerouted conflict row", failing)
+	}
+	if f := failing[0]; f.Agent != "scanner" || f.ReroutedFrom != "strategist" || !f.Conflict {
+		t.Fatalf("rerouted conflict row = %+v, want scanner rerouted_from=strategist", f)
+	}
+}
+
 // Eligible entries carry the fields the merge step and relay compare against:
 // the org-qualified repo, the head SHA (CWE-367 guard), the tri-state
 // mergeability as a string (a bool defaulted every PR to false, #M4), and the
@@ -408,7 +451,7 @@ func TestWriteMergeEligible_EmptyInputStillRewritesBothFiles(t *testing.T) {
 		}
 	}
 	writeMergeEligible(&github.ActionableResult{}, github.HoldResult{}, "", nil, false, nil, false, nil,
-		nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	for _, p := range []string{mergeEligiblePath, ciFailingPath} {
 		var got map[string]any
 		readJSON(t, p, &got)

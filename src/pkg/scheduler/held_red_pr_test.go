@@ -50,7 +50,7 @@ func TestFormatRedPRFixData_HeldPRsGoBackToTheirAuthor(t *testing.T) {
 	if strings.Contains(out, "#191 ") {
 		t.Error("an escalated PR must stay out of the fix block even when held")
 	}
-	if !strings.Contains(out, "FIX-BEFORE-NEW — your open PRs with failing CI (2)") {
+	if !strings.Contains(out, "FIX-BEFORE-NEW — your open PRs with failing CI or merge conflicts (2)") {
 		t.Errorf("count should be 2 (held #188 + unheld #190):\n%s", out)
 	}
 

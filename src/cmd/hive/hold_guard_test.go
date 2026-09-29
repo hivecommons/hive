@@ -605,7 +605,7 @@ func TestWriteMergeEligibleExcludesHoldDriftPRs(t *testing.T) {
 		{Repo: "acme/widgets", Number: 9, Title: "clean", Author: "agent", CIStatus: "success", Mergeable: github.MergeableYes},
 	}}}
 	drift := map[string]bool{"acme/widgets/7": true, "acme/widgets/8": true}
-	writeMergeEligible(actionable, github.HoldResult{}, "acme", nil, false, nil, false, nil, drift, discardLogger())
+	writeMergeEligible(actionable, github.HoldResult{}, "acme", nil, false, nil, false, nil, drift, nil, discardLogger())
 
 	var eligible struct {
 		MergeEligible []struct {

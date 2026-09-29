@@ -187,6 +187,7 @@ const (
 	mergeBucketSkip mergeBucket = iota
 	mergeBucketFailing
 	mergeBucketEligible
+	mergeBucketConflict
 )
 
 // mergeGates bundles the per-tick inputs the classifier applies beyond the
@@ -244,6 +245,10 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 		return mergeBucketSkip, blockedOrOutstanding("intent verification: " + reason), reason
 	}
 
+	if hiveAuthoredPR(pr) && conflictMergeState(pr) {
+		return mergeBucketConflict, github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: notMergeableReason(pr, "")}, ""
+	}
+
 	if pr.CIStatus == "failure" {
 		// A PR red ONLY on non-required checks (perma-red Playwright
 		// shards, coverage) that GitHub itself reports mergeable is NOT a
@@ -265,6 +270,7 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 			if len(pr.FailingChecks) > 0 {
 				reason += ": " + strings.Join(pr.FailingChecks, ", ")
 			}
+
 			if len(g.requiredChecks) == 0 && pr.Mergeable == github.MergeableYes {
 				// GitHub calls it mergeable (unstable): nothing REQUIRED is
 				// red. The sweep still refuses it because, with no
@@ -409,7 +415,90 @@ func notMergeableReason(pr github.PullRequest, sweepReason string) string {
 	return msg
 }
 
-func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, escalatedPRs map[string]bool, enforceIntent bool, intentVerdicts map[string]intent.Verdict, requireReviewApproval bool, requiredChecks map[string]bool, holdDriftPRs map[string]bool, logger *slog.Logger) map[string]github.MergeVerdict {
+func hiveAuthoredPR(pr github.PullRequest) bool {
+	if pr.AppAuthored || pr.HiveAttributed || strings.TrimSpace(pr.HiveAgent) != "" {
+		return true
+	}
+	author := strings.ToLower(strings.TrimSpace(pr.Author))
+	return strings.HasPrefix(author, "app/")
+}
+
+func conflictMergeState(pr github.PullRequest) bool {
+	if hasLabel(pr.Labels, "needs-rebase") {
+		return true
+	}
+	state := strings.ToLower(strings.TrimSpace(pr.MergeableState))
+	return state == "dirty" || state == "conflicting"
+}
+
+func prFixAgent(pr github.PullRequest, audited string) string {
+	if agent := strings.TrimSpace(audited); agent != "" {
+		return agent
+	}
+	if agent := strings.TrimSpace(pr.HiveAgent); agent != "" {
+		return agent
+	}
+	for _, label := range pr.Labels {
+		if agent, ok := strings.CutPrefix(strings.TrimSpace(label), "agent/"); ok && agent != "" {
+			return agent
+		}
+	}
+	if head := strings.TrimSpace(pr.HeadRef); head != "" {
+		if agent, _, ok := strings.Cut(head, "/"); ok && agent != "" {
+			return agent
+		}
+	}
+	return ""
+}
+
+func routeConflictFixAgent(agent string, cfg *config.Config) (string, string) {
+	owner := strings.TrimSpace(agent)
+	if owner == "" {
+		return "scanner", ""
+	}
+	if strings.EqualFold(owner, "scanner") || cfg == nil {
+		return owner, ""
+	}
+	base := cfg.BaseAgentName(owner)
+	ac, ok := cfg.Agents[base]
+	if !ok || ac.Paused || !cfg.HasAnyCadence(base) || allConfiguredCadencesPaused(cfg, base) {
+		return "scanner", owner
+	}
+	return owner, ""
+}
+
+func allConfiguredCadencesPaused(cfg *config.Config, agent string) bool {
+	if cfg == nil {
+		return false
+	}
+	seen := false
+	base := cfg.BaseAgentName(agent)
+	for _, mode := range cfg.Governor.Modes {
+		cad, ok := mode.Cadences[agent]
+		if !ok && base != agent {
+			cad, ok = mode.Cadences[base]
+		}
+		if !ok {
+			continue
+		}
+		seen = true
+		if !cad.IsPaused() {
+			return false
+		}
+	}
+	return seen
+}
+
+func hasLabel(labels []string, want string) bool {
+	for _, label := range labels {
+		if strings.EqualFold(strings.TrimSpace(label), want) {
+			return true
+		}
+	}
+	return false
+}
+
+func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, escalatedPRs map[string]bool, enforceIntent bool, intentVerdicts map[string]intent.Verdict, requireReviewApproval bool, requiredChecks map[string]bool, holdDriftPRs map[string]bool, cfg *config.Config, logger *slog.Logger) map[string]github.MergeVerdict {
 	// holdDriftPRs ("repo/number", same keying as holdSet) are PRs whose hold
 	// just lifted on a branch that MOVED while hold-gated (#5589). They are
 	// treated exactly like held PRs — invisible to both the eligible and the
@@ -498,6 +587,17 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		// so it is listed here with the flag rather than dropped — the owning
 		// agent's fix-before-new block says "fix CI, do not remove the hold".
 		Held bool `json:"held,omitempty"`
+		// MergeableState carries GitHub's raw mergeable_state into
+		// ci-failing.json. For conflict rows this is the work item: a green but
+		// dirty hive PR still needs a base merge/rebase before its owner can do
+		// new work.
+		MergeableState string `json:"mergeable_state,omitempty"`
+		// Conflict marks hive-authored PRs listed for merge-conflict repair even
+		// when CI is green, skipped or pending.
+		Conflict bool `json:"conflict,omitempty"`
+		// ReroutedFrom records the paused or unavailable lane whose conflicted PR
+		// was assigned to the fallback fixer instead.
+		ReroutedFrom string `json:"rerouted_from,omitempty"`
 	}
 
 	prAgents := auditPRAgents(org, time.Now().Add(-auditPRAttributionWindow), "")
@@ -562,7 +662,12 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		switch bucket {
 		case mergeBucketSkip:
 			continue
-		case mergeBucketFailing:
+		case mergeBucketFailing, mergeBucketConflict:
+			agent := prFixAgent(pr, prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)])
+			reroutedFrom := ""
+			if bucket == mergeBucketConflict {
+				agent, reroutedFrom = routeConflictFixAgent(agent, cfg)
+			}
 			failing = append(failing, failingPR{
 				Number:          pr.Number,
 				Repo:            fullRepo,
@@ -572,7 +677,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 				FailingChecks:   pr.FailingChecks,
 				Excerpt:         pr.CIFailureExcerpt,
 				Escalated:       escalatedPRs[escalation.Key(fullRepo, pr.Number)],
-				Agent:           prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)],
+				Agent:           agent,
 				Labels:          pr.Labels,
 				CreatedAt:       pr.CreatedAt,
 				HeadRef:         pr.HeadRef,
@@ -580,6 +685,9 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 				FromFork:        pr.FromFork,
 				ReachableAction: github.ReachableAction(pr),
 				Held:            held,
+				MergeableState:  pr.MergeableState,
+				Conflict:        bucket == mergeBucketConflict,
+				ReroutedFrom:    reroutedFrom,
 			})
 			continue
 		}

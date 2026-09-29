@@ -6446,7 +6446,7 @@ func runEvalCycle(
 	// The per-PR verdicts come back so the dashboard's PR pills can be
 	// painted from the sweep's own classification rather than a looser
 	// reading of GitHub's mergeable flag (hivecommons/hive#7478).
-	mergeVerdicts := writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, escalatedPRs, cfg.Intent.Enforce, intentVerdicts, cfg.Review.RequireApproval, requiredCheckSet, holdDriftPRs, logger)
+	mergeVerdicts := writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, escalatedPRs, cfg.Intent.Enforce, intentVerdicts, cfg.Review.RequireApproval, requiredCheckSet, holdDriftPRs, cfg, logger)
 
 	// Review-bot threads (hivecommons/hive#7360): list every unresolved
 	// external-review-bot thread on an open hive-authored PR into

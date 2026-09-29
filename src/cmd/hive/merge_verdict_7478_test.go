@@ -199,7 +199,7 @@ func TestWriteMergeEligible_ReturnsVerdictsForEveryPR(t *testing.T) {
 	actionable := &github.ActionableResult{PRs: github.PRResult{Items: []github.PullRequest{green, red}, Held: []github.PullRequest{heldGreen}}}
 
 	got := writeMergeEligible(actionable, github.HoldResult{}, "org", nil, false, nil, false, nil,
-		nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	want := map[string]github.MergeVerdictState{
 		github.MergeVerdictKey(green):     github.MergeVerdictEligible,

@@ -75,6 +75,30 @@ func TestFormatRedPRFixData_Bounds(t *testing.T) {
 	}
 }
 
+func TestFormatRedPRFixData_ConflictRowsPromptRebaseAndReroute(t *testing.T) {
+	data := `{"ci_failing":[
+	  {"number":9258,"repo":"hivecommons/hive","title":"v6 readiness","agent":"scanner",
+	   "mergeable_state":"dirty","conflict":true,"rerouted_from":"strategist"},
+	  {"number":9259,"repo":"hivecommons/hive","title":"quality conflict","agent":"quality",
+	   "mergeable_state":"dirty","conflict":true}
+	]}`
+	out := formatRedPRFixData([]byte(data), "scanner")
+	for _, want := range []string{
+		"failing CI or merge conflicts (1)",
+		"#9258 hivecommons/hive",
+		"conflict: mergeable_state=dirty",
+		"merge the base branch or rebase",
+		"rerouted from paused/unavailable lane: strategist",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("conflict fix block missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "#9259 ") {
+		t.Errorf("quality conflict must not appear in scanner block unless rerouted:\n%s", out)
+	}
+}
+
 // addRedPRFixFirst injects the section right below the kick header for
 // PR-capable agents on every resolution path, and stays out of advisory
 // agents' kicks entirely.
