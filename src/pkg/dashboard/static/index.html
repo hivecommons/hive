@@ -3289,6 +3289,26 @@
     .campaign-jam-live-pill { border: 1px solid var(--border); border-radius: var(--r-full); padding: var(--sp-1) var(--sp-2); background: var(--bg); color: var(--fg); }
     @media (max-width: 1100px) { .campaign-jam-grid { grid-template-columns: 1fr; } }
     @media (max-width: 900px) { .campaigns-filters { grid-template-columns: 1fr 1fr; } .campaign-row { grid-template-columns: 1fr; } }
+    /* Review queue (#9607) */
+    .review-queue-count { font-size: var(--fs-xs); color: var(--muted); margin-left: var(--sp-4); }
+    .review-queue-desc { font-size: var(--fs-sm); color: var(--muted); margin-bottom: var(--sp-4); }
+    .review-queue-panel { padding: var(--sp-4); max-height: 520px; overflow-y: auto; }
+    .review-queue-paging { display: none; align-items: center; gap: var(--sp-4); margin-top: var(--sp-4); }
+    .review-queue-range { font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
+    .review-queue-entry { padding: var(--sp-4) 0; border-bottom: 1px solid var(--terminal-line); }
+    .review-queue-head { display: flex; align-items: baseline; gap: var(--sp-4); }
+    .review-queue-rank { font-weight: 700; color: var(--muted); min-width: 2.2em; }
+    .review-queue-body { flex: 1; min-width: 0; }
+    .review-queue-titlerow { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; }
+    .review-queue-title { font-weight: 600; }
+    a.review-queue-title { color: var(--text); }
+    .review-queue-meta { font-size: var(--fs-xs); color: var(--muted); margin-top: var(--sp-1); }
+    .review-queue-reasons { margin: var(--sp-2) 0 0; padding-left: var(--sp-6); color: var(--muted); font-size: var(--fs-xs); }
+    .review-queue-noreasons { color: var(--muted); font-size: var(--fs-xs); margin-top: var(--sp-2); }
+    .review-queue-empty { color: var(--terminal-muted); font-size: var(--fs-base); padding: var(--sp-4); }
+    .review-priority { display: inline-block; padding: var(--sp-1) var(--sp-4); border-radius: var(--r-sm); font-size: var(--fs-2xs); color: var(--muted); border: 1px solid var(--blue); }
+    .review-priority-high { border-color: var(--red); }
+    .review-priority-low { border-color: var(--muted); }
   </style>
   <link rel="stylesheet" href="/api/theme.css" id="hive-theme-css">
 </head>
@@ -3985,15 +4005,15 @@
   </div>
 
   <div class="mt-6 mb-8" id="review-queue-section" data-dashboard-section="review-queue-section">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="review-queue-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Review Queue section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🔎 Review Queue <span id="review-queue-count" style="font-size:0.7rem;color:var(--muted);margin-left:var(--sp-4)"></span></h2>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="review-queue-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Review Queue section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🔎 Review Queue <span id="review-queue-count" class="review-queue-count"></span></h2>
     <div class="section-body">
-      <div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--sp-4)">Every open PR across the governed repos in one deterministic rank order (<code>GET /api/review/queue</code>), agent- or contributor-authored, with the reasons for each position.</div>
-      <div id="review-queue-panel" style="padding:var(--sp-4);max-height:520px;overflow-y:auto">
+      <div class="review-queue-desc">Every open PR across the governed repos in one deterministic rank order (<code>GET /api/review/queue</code>), agent- or contributor-authored, with the reasons for each position.</div>
+      <div id="review-queue-panel" class="review-queue-panel">
         <div class="loading">Loading review queue…</div>
       </div>
-      <div id="review-queue-paging" style="display:none;align-items:center;gap:var(--sp-4);margin-top:var(--sp-4)">
+      <div id="review-queue-paging" class="review-queue-paging">
         <button class="hv-btn btn-secondary btn-sm" id="review-queue-prev" data-action="reviewQueuePrevPage" title="Previous page">← Prev</button>
-        <span id="review-queue-range" style="font-size:0.72rem;color:var(--muted);white-space:nowrap"></span>
+        <span id="review-queue-range" class="review-queue-range"></span>
         <button class="hv-btn btn-secondary btn-sm" id="review-queue-next" data-action="reviewQueueNextPage" title="Next page">Next →</button>
       </div>
     </div>
@@ -16381,13 +16401,14 @@ function burnAreaChart() {
     var _reviewQueueHasMore = false;
 
     // reviewQueuePriorityMeta maps the API's priority (high|normal|low) to the
-    // review-priority/* label family the backend mirrors onto PRs, plus a badge
-    // colour. Unknown values fall back to normal so a new band still renders.
+    // review-priority/* label family the backend mirrors onto PRs; the badge
+    // colour comes from the .review-priority-<key> CSS class. Unknown values
+    // fall back to normal so a new band still renders.
     function reviewQueuePriorityMeta(priority) {
       var p = String(priority || '').toLowerCase();
-      if (p === 'high') return { key: 'high', label: 'review-priority/high', color: 'var(--red)' };
-      if (p === 'low') return { key: 'low', label: 'review-priority/low', color: 'var(--muted)' };
-      return { key: 'normal', label: 'review-priority/normal', color: 'var(--blue)' };
+      if (p === 'high') return { key: 'high', label: 'review-priority/high' };
+      if (p === 'low') return { key: 'low', label: 'review-priority/low' };
+      return { key: 'normal', label: 'review-priority/normal' };
     }
 
     function reviewQueueAgeLabel(hours) {
@@ -16400,10 +16421,10 @@ function burnAreaChart() {
       var meta = reviewQueuePriorityMeta(e.priority);
       var title = String(e.title || '');
       var titleHtml = e.url
-        ? '<a href="' + esc(String(e.url)) + '" target="_blank" rel="noopener noreferrer" style="color:var(--text);font-weight:600">' + esc(title) + '</a>'
-        : '<span style="font-weight:600">' + esc(title) + '</span>';
+        ? '<a href="' + esc(String(e.url)) + '" target="_blank" rel="noopener noreferrer" class="review-queue-title">' + esc(title) + '</a>'
+        : '<span class="review-queue-title">' + esc(title) + '</span>';
       var repoRef = esc(String(e.repo || '')) + '#' + esc(String(e.number || ''));
-      var priorityBadge = '<span class="review-priority review-priority-' + meta.key + '" data-priority="' + meta.key + '" title="' + esc(meta.label) + '" style="display:inline-block;padding:var(--sp-1) var(--sp-4);border-radius:var(--r-sm);font-size:0.66rem;color:var(--muted);border:1px solid ' + meta.color + '">' + esc(meta.label) + '</span>';
+      var priorityBadge = '<span class="review-priority review-priority-' + meta.key + '" data-priority="' + meta.key + '" title="' + esc(meta.label) + '">' + esc(meta.label) + '</span>';
       var metaBits = [];
       if (e.author) metaBits.push('@' + esc(String(e.author)));
       metaBits.push(e.hive_authored ? 'agent' : 'contributor');
@@ -16413,14 +16434,14 @@ function burnAreaChart() {
       if (e.held) metaBits.push('held');
       var reasons = Array.isArray(e.reasons) ? e.reasons : [];
       var reasonsHtml = reasons.length
-        ? '<ul class="review-queue-reasons" style="margin:var(--sp-2) 0 0;padding-left:var(--sp-6);color:var(--muted);font-size:0.72rem">' + reasons.map(function(r) { return '<li>' + esc(String(r)) + '</li>'; }).join('') + '</ul>'
-        : '<div style="color:var(--muted);font-size:0.72rem;margin-top:var(--sp-2)">no ranking reasons recorded</div>';
-      return '<div class="review-queue-entry" style="padding:var(--sp-4) 0;border-bottom:1px solid var(--terminal-line)">' +
-        '<div style="display:flex;align-items:baseline;gap:var(--sp-4)">' +
-          '<span class="review-queue-rank" style="font-weight:700;color:var(--muted);min-width:2.2em">#' + esc(String(e.position || '')) + '</span>' +
-          '<div style="flex:1;min-width:0">' +
-            '<div style="display:flex;align-items:center;gap:var(--sp-4);flex-wrap:wrap">' + priorityBadge + titleHtml + '</div>' +
-            '<div style="font-size:0.72rem;color:var(--muted);margin-top:var(--sp-1)">' + repoRef + ' · ' + metaBits.join(' · ') + '</div>' +
+        ? '<ul class="review-queue-reasons">' + reasons.map(function(r) { return '<li>' + esc(String(r)) + '</li>'; }).join('') + '</ul>'
+        : '<div class="review-queue-noreasons">no ranking reasons recorded</div>';
+      return '<div class="review-queue-entry">' +
+        '<div class="review-queue-head">' +
+          '<span class="review-queue-rank">#' + esc(String(e.position || '')) + '</span>' +
+          '<div class="review-queue-body">' +
+            '<div class="review-queue-titlerow">' + priorityBadge + titleHtml + '</div>' +
+            '<div class="review-queue-meta">' + repoRef + ' · ' + metaBits.join(' · ') + '</div>' +
             reasonsHtml +
           '</div>' +
         '</div>' +
@@ -16438,7 +16459,7 @@ function burnAreaChart() {
       var countEl = document.getElementById('review-queue-count');
       if (countEl) countEl.textContent = _reviewQueueTotal ? _reviewQueueTotal + ' PR' + (_reviewQueueTotal === 1 ? '' : 's') : '';
       if (!items.length) {
-        panel.innerHTML = '<div style="color:var(--terminal-muted);font-size:var(--fs-base);padding:var(--sp-4)">Review queue is empty — no open PRs to rank.</div>';
+        panel.innerHTML = '<div class="review-queue-empty">Review queue is empty — no open PRs to rank.</div>';
       } else {
         panel.innerHTML = items.map(renderReviewQueueEntry).join('');
       }
@@ -16465,7 +16486,7 @@ function burnAreaChart() {
         var resp = await fetch('/api/review/queue?limit=' + REVIEW_QUEUE_PAGE_SIZE + '&offset=' + _reviewQueueOffset);
         if (!resp.ok) {
           if (panel && !panel.querySelector('.review-queue-entry')) {
-            panel.innerHTML = '<div style="color:var(--terminal-muted);font-size:var(--fs-base);padding:var(--sp-4)">Review queue unavailable.</div>';
+            panel.innerHTML = '<div class="review-queue-empty">Review queue unavailable.</div>';
           }
           return;
         }
