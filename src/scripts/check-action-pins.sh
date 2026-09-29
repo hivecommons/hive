@@ -66,6 +66,27 @@ if [ -n "$empty_expr" ]; then
   fail=1
 fi
 
+# A bare `git config user.email "hive-release[bot]@users.noreply.github.com"`
+# LOOKS like a normal bot address but the probot DCO app rejects the local
+# part's `[`/`]` as malformed before it ever compares the email to the
+# commit's Signed-off-by trailer, so `git commit -s` cannot make the commit
+# pass DCO no matter what it signs with (#9471, following the #6251/#6276
+# convention of a bracket-free `<slug>@hive.kubestellar.io` address). This
+# caught the same bug recurring in `cli-pin-bump.yml`, `v5-topup.yml` and
+# `v6-topup.yml` after #6276 had already fixed it once.
+#
+# The numeric GitHub noreply form (`<id>+<login>[bot]@users.noreply.github.com`,
+# e.g. `changelog-fragment-guard.yml`'s `github-actions[bot]`) is excluded: it
+# names a real GitHub account whose login legitimately contains brackets, and
+# probot DCO already accepts it.
+bad_email=$(grep -rnE 'git config[[:space:]]+user\.email[[:space:]]+"[^"]*[][][^"]*"' "$DIR" 2>/dev/null \
+  | grep -vE '"[0-9]+\+[^"]*[][][^"]*"' || true)
+if [ -n "$bad_email" ]; then
+  echo "BRACKETED-EMAIL a git user.email containing [ or ] fails DCO validation:"
+  echo "$bad_email"
+  fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "action pin check FAILED"
   exit 1
