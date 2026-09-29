@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/config"
@@ -1079,6 +1080,95 @@ func TestCommitGreenNoConfigRequiredChecksFallsBackToAPIThenAllowlist(t *testing
 	}
 	if !green || reason != "" {
 		t.Fatalf("commitGreen = (%v,%q), want (true,\"\")", green, reason)
+	}
+}
+
+func TestCommitGreenCachesExpectedReferenceChecksPerRepoBase(t *testing.T) {
+	var referenceFetches int
+	var mergedPRFetches int
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
+			http.Error(w, "forbidden", http.StatusForbidden)
+		case r.Method == http.MethodGet && (r.URL.Path == "/repos/acme/widget/commits/sha-one/status" || r.URL.Path == "/repos/acme/widget/commits/sha-two/status"):
+			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0})
+		case r.Method == http.MethodGet && (r.URL.Path == "/repos/acme/widget/commits/sha-one/check-runs" || r.URL.Path == "/repos/acme/widget/commits/sha-two/check-runs"):
+			json.NewEncoder(w).Encode(map[string]any{"total_count": 1, "check_runs": []map[string]string{
+				{"name": "build", "status": "completed", "conclusion": "success"},
+			}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls":
+			mergedPRFetches++
+			if r.URL.Query().Get("state") != "closed" || r.URL.Query().Get("base") != "main" {
+				t.Fatalf("pulls query = %q, want closed PRs for main", r.URL.RawQuery)
+			}
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"number": 3, "merged_at": nil, "head": map[string]string{"sha": "unmerged"}},
+				{"number": 2, "merged_at": "2026-09-29T16:00:00Z", "head": map[string]string{"sha": "merged-head"}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/merged-head/check-runs":
+			referenceFetches++
+			json.NewEncoder(w).Encode(map[string]any{"total_count": 3, "check_runs": []map[string]any{
+				{"name": "build", "status": "completed", "conclusion": "success", "pull_requests": []map[string]any{{"number": 2}}},
+				{"name": "test (rest 1/4)", "status": "completed", "conclusion": "success", "pull_requests": []map[string]any{{"number": 2}}},
+				{"name": "push-only", "status": "completed", "conclusion": "success", "pull_requests": []map[string]any{}},
+			}})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	cache := newExpectedCheckCache()
+	for _, sha := range []string{"sha-one", "sha-two"} {
+		green, reason, err := c.commitGreenForPR(context.Background(), "acme", "widget", "main", sha, 7, time.Time{}, cache)
+		if err != nil {
+			t.Fatalf("commitGreenForPR(%s) returned error: %v", sha, err)
+		}
+		if green || reason != "pending: test (rest 1/4) has not started" {
+			t.Fatalf("commitGreenForPR(%s) = (%v,%q), want pending expected check", sha, green, reason)
+		}
+	}
+	if referenceFetches != 1 {
+		t.Fatalf("reference check-runs fetched %d times, want 1", referenceFetches)
+	}
+	if mergedPRFetches != 1 {
+		t.Fatalf("merged PR list fetched %d times, want 1", mergedPRFetches)
+	}
+}
+
+func TestCommitGreenUsesPreviousEvaluatedHeadBeforeMergedPRFallback(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
+			http.Error(w, "forbidden", http.StatusForbidden)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls":
+			t.Fatalf("previous PR head should be preferred over merged-PR fallback")
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/new-head/status":
+			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/new-head/check-runs":
+			json.NewEncoder(w).Encode(map[string]any{"total_count": 1, "check_runs": []map[string]string{
+				{"name": "build", "status": "completed", "conclusion": "success"},
+			}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/old-head/check-runs":
+			json.NewEncoder(w).Encode(map[string]any{"total_count": 2, "check_runs": []map[string]any{
+				{"name": "build", "status": "completed", "conclusion": "success", "pull_requests": []map[string]any{{"number": 7}}},
+				{"name": "test (rest 1/4)", "status": "completed", "conclusion": "success", "pull_requests": []map[string]any{{"number": 7}}},
+			}})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	c.rememberEvaluatedHead("acme", "widget", 7, "old-head")
+	green, reason, err := c.commitGreenForPR(context.Background(), "acme", "widget", "main", "new-head", 7, time.Time{}, newExpectedCheckCache())
+	if err != nil {
+		t.Fatalf("commitGreenForPR returned error: %v", err)
+	}
+	if green || reason != "pending: test (rest 1/4) has not started" {
+		t.Fatalf("commitGreenForPR = (%v,%q), want pending expected check from previous head", green, reason)
 	}
 }
 

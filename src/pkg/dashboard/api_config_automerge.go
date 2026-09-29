@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
@@ -142,6 +143,7 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		SelfAuthored         *bool    `json:"self_authored"`
 		MaxMerges            *int     `json:"max_merges"`
+		MinHeadAge           *string  `json:"min_head_age"`
 		RequiredChecks       []string `json:"required_checks"`
 		AllowUnprotectedBase []string `json:"allow_unprotected_base"`
 		NoCIOK               []string `json:"no_ci_ok"`
@@ -159,6 +161,15 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "max_merges must be 0 (default) or greater", http.StatusBadRequest)
 		return
 	}
+	var minHeadAge time.Duration
+	if body.MinHeadAge != nil {
+		parsed, err := time.ParseDuration(strings.TrimSpace(*body.MinHeadAge))
+		if err != nil || parsed <= 0 {
+			jsonError(w, "min_head_age must be a positive duration (for example \"3m\")", http.StatusBadRequest)
+			return
+		}
+		minHeadAge = parsed
+	}
 
 	// --- apply ---
 	cfg := s.deps.Config
@@ -168,6 +179,9 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.MaxMerges != nil {
 		cfg.AutoMerge.MaxMerges = *body.MaxMerges
+	}
+	if body.MinHeadAge != nil {
+		cfg.AutoMerge.MinHeadAge = minHeadAge
 	}
 	if body.RequiredChecks != nil {
 		checks := make([]string, 0, len(body.RequiredChecks))
@@ -229,6 +243,7 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 		"self_authored":           selfAuthored,
 		"self_authored_set":       am.SelfAuthored != nil,
 		"max_merges":              am.MaxMerges,
+		"min_head_age":            am.EffectiveMinHeadAge().String(),
 		"required_checks":         checks,
 		"allow_unprotected_base":  allowUnprotected,
 		"no_ci_ok":                noCIOK,
@@ -245,6 +260,7 @@ func syncAutoMergePolicyToGitHubClient(cfg *config.Config, ghClient *ghpkg.Clien
 	ghClient.SetRequiredChecks(set)
 	ghClient.SetMergeRequestAllowUnprotectedBaseRepos(cfg.AutoMerge.AllowUnprotectedBaseSet())
 	ghClient.SetMergeRequestNoCIAllowedRepos(cfg.AutoMerge.NoCIOKSet())
+	ghClient.SetAutoMergeMinHeadAge(cfg.AutoMerge.EffectiveMinHeadAge())
 }
 
 func normalizeAutoMergeRepoList(repos []string) []string {

@@ -7426,6 +7426,11 @@ type AutoMergeConfig struct {
 	// AutoMergeSweepOptions.MaxMerges for the human queue sweep. Zero means
 	// DefaultAutoMergeSweepMaxMerges.
 	MaxMerges int `yaml:"max_merges,omitempty" json:"max_merges,omitempty"`
+	// MinHeadAge is the minimum age of a PR head before automerge may trust an
+	// unknown required-check set. It closes the post-push window where slow
+	// GitHub Actions check-runs have not registered yet. Non-positive values
+	// use DefaultAutoMergeMinHeadAge.
+	MinHeadAge time.Duration `yaml:"min_head_age,omitempty" json:"min_head_age,omitempty"`
 	// RequiredChecks is the operator-declared list of status-check
 	// contexts/check-run names that the self-merge sweep's commitGreen must
 	// gate on, e.g. ["build-gate"]. This is the scope-free alternative to
@@ -7468,6 +7473,10 @@ type AutoMergeConfig struct {
 	// by exact login, e.g. "dependabot[bot]".
 	TrustedBotAuthors []string `yaml:"trusted_bot_authors,omitempty" json:"trusted_bot_authors,omitempty"`
 }
+
+// DefaultAutoMergeMinHeadAge is the fail-closed post-push quiet period used
+// when auto_merge.min_head_age is unset.
+const DefaultAutoMergeMinHeadAge = 3 * time.Minute
 
 // DefaultTrustedBotAuthors is the TrustedBotAuthors value when the operator
 // declares none. Only dependabot: its PRs are single-dependency bumps whose
@@ -7537,6 +7546,13 @@ func (a AutoMergeConfig) RequiredCheckSet() (map[string]bool, bool) {
 		return nil, false
 	}
 	return set, true
+}
+
+func (a AutoMergeConfig) EffectiveMinHeadAge() time.Duration {
+	if a.MinHeadAge > 0 {
+		return a.MinHeadAge
+	}
+	return DefaultAutoMergeMinHeadAge
 }
 
 // SelfAuthoredEnabled reports whether the App-self-merge sweep is on for this

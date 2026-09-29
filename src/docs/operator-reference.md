@@ -128,6 +128,7 @@ advanced into the merge path.
 |---|---|---|
 | `auto_merge.self_authored` | **on** when unset | The only off switch. `false` disables the sweep and App-authored PRs fall back to fully manual merges. |
 | `auto_merge.max_merges` | `3` (`DefaultAutoMergeSweepMaxMerges`) when 0/unset | Caps merges per sweep pass. |
+| `auto_merge.min_head_age` | `3m` | Minimum PR head age before automerge trusts an unknown required-check set. A fresh head pushed more recently than this waits with `pending: head pushed ... ago (< min_head_age)` unless `auto_merge.required_checks` is declared and every required check is complete and successful. |
 | `auto_merge.required_checks` | unset | Operator-declared status-check contexts / check-run names (e.g. `["build-gate"]`) that the sweep's green gate requires on the head commit. See below. |
 | `auto_merge.allow_unprotected_base` | deprecated no-op | Accepted for compatibility only. [`hive-merge`](hive-merge.md) no longer refuses solely because a base branch has no GitHub branch protection; it may merge into any branch the App can write after positive CI evidence. |
 | `auto_merge.no_ci_ok` | unset (refuse) | **Merge-request watcher key, not a sweep key.** Per-repo opt-in that downgrades only the "unverified" CI verdict (zero statuses, check runs, and workflow runs) to green, for adopted repos with no CI by design. Red and pending verdicts are never downgraded (#6281). See [hive-merge.md](hive-merge.md). |
@@ -165,6 +166,17 @@ meta-check allowlist — which can block on *non-required* checks (a cancelled
 real required set per hive removes the scope dependency entirely. The
 required-checks set is per-repo/per-branch, so there is deliberately no
 hardcoded default.
+
+When `required_checks` is unset and GitHub's branch-protection API is not
+available, the sweep also waits for every non-meta, non-ignorable PR-context
+check-run name expected for the PR to appear on the new head. The reference is
+the PR's previously evaluated head when known, otherwise the head SHA of the
+most recently merged PR into the same base branch; base-branch commits are not
+used because they include push-only workflows. Check-runs whose
+`pull_requests` list is empty are excluded from the expected set. This avoids
+the short post-push window where fast checks have passed but slower PR
+workflows have not created check-runs yet, while `min_head_age` remains the
+backstop when no PR-context reference is available.
 
 **Rate-limit behavior.** The sweep ticks every 10 seconds on hives with ≤4
 configured repos. Above that, the interval scales so the sweep's list+candidate

@@ -2396,6 +2396,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 
 		autoMergeOpts.MutationBoundary = b.mutationBoundary
 		autoMergeOpts.SelfAuthorizationHoldEnabled = selfAuthorizationHoldEnabled
+		autoMergeOpts.MinHeadAge = b.cfg.AutoMerge.EffectiveMinHeadAge()
 		autoMergeOpts.RepoAutoMergeEnabled = func(repo string) bool { return b.cfg.RepoAutoMergeEnabled(repo) }
 		// Read through b.cfg on every sweep tick so a config reload of
 		// auto_merge.trusted_bot_authors takes effect without a restart.
