@@ -427,44 +427,60 @@ func TestDefaultBootConfigDeps_AdaptersDelegate(t *testing.T) {
 	}
 }
 
-// #9586: a spoke whose credential posture is self-contradictory must refuse to
-// boot BEFORE config load (so no agent, proxy or token mint ever runs under
-// it), with its own exit code and a log line naming the variable to fix.
-func TestBootConfigWith_ContradictoryProxyInjectPostureExits(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		env  map[string]string
-	}{
-		{"injection with self-asserted identity", map[string]string{config.ProxyInjectGHAuthEnv: config.ProxyInjectGHAuthOnValue, config.ProxyAdvisoryOKEnv: "true"}},
-		{"unrecognized injection value", map[string]string{config.ProxyInjectGHAuthEnv: "1"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newBootConfigFake(t)
-			for k, v := range tc.env {
-				f.env[k] = v
-			}
-			f.deps.loadConfig = func(string) (*config.Config, error) {
-				t.Fatal("config loaded despite a contradictory credential posture")
-				return nil, nil
-			}
-			b := &boot{}
+// #9586: injection combined with the advisory-mode self-asserted identity is
+// exploitable, so the spoke must refuse to boot BEFORE config load (no agent,
+// proxy or token mint ever runs under it), with its own exit code and a log
+// line naming the variables to fix.
+func TestBootConfigWith_ExploitableProxyInjectPostureExits(t *testing.T) {
+	f := newBootConfigFake(t)
+	f.env[config.ProxyInjectGHAuthEnv] = config.ProxyInjectGHAuthOnValue
+	f.env[config.ProxyAdvisoryOKEnv] = "true"
+	f.deps.loadConfig = func(string) (*config.Config, error) {
+		t.Fatal("config loaded despite an exploitable credential posture")
+		return nil, nil
+	}
+	b := &boot{}
 
-			returned, _, code := runBootConfig(t, b, f.deps)
-			if returned || code != proxyInjectConfigExitCode {
-				t.Fatalf("returned=%v code=%d, want exit(%d)", returned, code, proxyInjectConfigExitCode)
+	returned, _, code := runBootConfig(t, b, f.deps)
+	if returned || code != proxyInjectConfigExitCode {
+		t.Fatalf("returned=%v code=%d, want exit(%d)", returned, code, proxyInjectConfigExitCode)
+	}
+	log := f.log.String()
+	for _, want := range []string{"refusing to start", config.ProxyInjectGHAuthEnv, config.ProxyAdvisoryOKEnv} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("refusal log does not mention %q:\n%s", want, log)
+		}
+	}
+	if b.cfg != nil {
+		t.Fatal("boot state populated after the refusal")
+	}
+}
+
+// An unrecognized value must NOT stop the boot - existing spokes auto-deploy
+// and would crash-loop - but it must be logged loudly (ERROR level) so the
+// operator learns agents still hold their real token.
+func TestBootConfigWith_UnrecognizedProxyInjectValueWarnsAndBoots(t *testing.T) {
+	for _, v := range []string{"1", "TRUE", "yes"} {
+		t.Run("value="+v, func(t *testing.T) {
+			f := newBootConfigFake(t)
+			f.env[config.ProxyInjectGHAuthEnv] = v
+			returned, ok, code := runBootConfig(t, &boot{}, f.deps)
+			if !returned || !ok {
+				t.Fatalf("returned=%v ok=%v code=%d, want a normal boot", returned, ok, code)
 			}
-			if log := f.log.String(); !strings.Contains(log, "refusing to start") || !strings.Contains(log, config.ProxyInjectGHAuthEnv) {
-				t.Fatalf("missing an actionable refusal naming %s in log:\n%s", config.ProxyInjectGHAuthEnv, log)
+			log := f.log.String()
+			if !strings.Contains(log, "GitHub credential configuration warning") || !strings.Contains(log, config.ProxyInjectGHAuthEnv) {
+				t.Fatalf("missing the credential warning naming %s:\n%s", config.ProxyInjectGHAuthEnv, log)
 			}
-			if b.cfg != nil {
-				t.Fatal("boot state populated after the refusal")
+			if !strings.Contains(log, "level=ERROR") && !strings.Contains(log, `"level":"ERROR"`) {
+				t.Fatalf("credential warning not logged at ERROR:\n%s", log)
 			}
 		})
 	}
 }
 
-// The accepted postures boot normally: injection on (what a fresh hosted
-// App spoke is provisioned with), the explicit opt-out, and unset.
+// The accepted postures boot normally and quietly: injection on (what a fresh
+// hosted App spoke is provisioned with), the explicit opt-out, and unset.
 func TestBootConfigWith_ConsistentProxyInjectPostureBoots(t *testing.T) {
 	for _, v := range []string{config.ProxyInjectGHAuthOnValue, config.ProxyInjectGHAuthOffValue, ""} {
 		t.Run("value="+v, func(t *testing.T) {
@@ -472,6 +488,9 @@ func TestBootConfigWith_ConsistentProxyInjectPostureBoots(t *testing.T) {
 			f.env[config.ProxyInjectGHAuthEnv] = v
 			if returned, ok, code := runBootConfig(t, &boot{}, f.deps); !returned || !ok {
 				t.Fatalf("returned=%v ok=%v code=%d, want a normal boot", returned, ok, code)
+			}
+			if strings.Contains(f.log.String(), "GitHub credential configuration warning") {
+				t.Fatalf("recognized value %q produced a credential warning", v)
 			}
 		})
 	}
@@ -481,7 +500,8 @@ func TestBootConfigWith_ConsistentProxyInjectPostureBoots(t *testing.T) {
 func TestBootConfigWith_HubModeNotGatedByProxyInjectGuard(t *testing.T) {
 	f := newBootConfigFake(t)
 	f.env["HIVE_MODE"] = "hub"
-	f.env[config.ProxyInjectGHAuthEnv] = "1"
+	f.env[config.ProxyInjectGHAuthEnv] = config.ProxyInjectGHAuthOnValue
+	f.env[config.ProxyAdvisoryOKEnv] = "true"
 
 	returned, ok, code := runBootConfig(t, &boot{}, f.deps)
 	if !returned || ok || !f.hubRun {

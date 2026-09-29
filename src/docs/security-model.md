@@ -140,10 +140,10 @@ Who has it on:
 - **Existing spokes and self-hosted installs are unchanged.** The provisioning template is applied once (see above) and no reconcile carries this variable, so a spoke that predates #9586 keeps the flag unset, which means off. Turn it on per spoke by setting the variable on its Deployment.
 - **Opting a single spoke out:** set `HIVE_PROXY_INJECT_GH_AUTH=false` on its Deployment.
 
-The spoke refuses to start (exit code 19, log line `refusing to start: contradictory GitHub credential configuration`) when the setting contradicts itself:
+Two settings are checked at spoke startup:
 
-- **An unrecognized value** such as `1`, `TRUE`, `yes` or `on`. The reader treats anything but `true` as off, so the agent would silently keep its real token while the pod spec suggests otherwise. Only unset, `true` and `false` are accepted.
-- **`true` together with `HIVE_PROXY_ADVISORY_OK=true`.** Advisory mode lets the proxy trust a self-asserted `Proxy-Authorization` agent name when UID identification fails. Under injection that name picks whose real token is attached, so a caller could claim a more privileged agent and receive its token. Restore forced egress, or opt the spoke out of injection.
+- **`true` together with `HIVE_PROXY_ADVISORY_OK=true` is refused** (exit code 19, log line `refusing to start: contradictory GitHub credential configuration`). Advisory mode lets the proxy trust a self-asserted `Proxy-Authorization` agent name when UID identification fails. Under injection that name picks whose real token is attached, so a caller could claim a more privileged agent and receive its token. Restore forced egress, or opt the spoke out of injection.
+- **An unrecognized value** such as `1`, `TRUE`, `yes` or `on` is **not** fatal, because spokes auto-deploy shortly after a merge and a refusal would crash-loop any spoke that already carries one. It keeps its old meaning (off, so the agent still holds its real token) and is reported loudly: an ERROR log line `GitHub credential configuration warning` at boot, and an entry in the dashboard Security tab's coherence warnings (`security.credentialWarnings` in `GET /api/config/governor`). Only unset, `true` and `false` are recognized.
 
 What this does not yet do, tracked in [#9586](https://github.com/hivecommons/hive/issues/9586): the token holder still lives in the hive process rather than a separate signing sidecar on an internal-only network, and existing spokes are not flipped.
 

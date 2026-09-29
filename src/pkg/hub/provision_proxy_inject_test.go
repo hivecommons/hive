@@ -90,6 +90,9 @@ func TestFreshHostedAppSpokePodSpecInjectsByDefault(t *testing.T) {
 			if err := config.ValidateProxyInjectGHAuth(func(k string) string { return plain[k] }); err != nil {
 				t.Fatalf("the posture a fresh spoke is born with fails its own startup guard: %v", err)
 			}
+			if w := config.ProxyInjectGHAuthWarnings(func(k string) string { return plain[k] }); w != nil {
+				t.Fatalf("the posture a fresh spoke is born with draws credential warnings: %v", w)
+			}
 		})
 	}
 }
@@ -170,6 +173,14 @@ func TestProvisionProxyInjectGHAuth(t *testing.T) {
 				return ""
 			}); err != nil {
 				t.Fatalf("rendered value %q fails the spoke startup guard: %v", got, err)
+			}
+			if w := config.ProxyInjectGHAuthWarnings(func(k string) string {
+				if k == config.ProxyInjectGHAuthEnv {
+					return got
+				}
+				return ""
+			}); w != nil {
+				t.Fatalf("rendered value %q draws credential warnings: %v", got, w)
 			}
 		})
 	}

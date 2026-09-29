@@ -49,11 +49,6 @@ const ProxyAdvisoryOKEnv = "HIVE_PROXY_ADVISORY_OK"
 // proxyAdvisoryOKEnabledValue mirrors the proxy's strict "true" comparison.
 const proxyAdvisoryOKEnabledValue = "true"
 
-// ErrProxyInjectGHAuthInvalidValue is returned by ValidateProxyInjectGHAuth
-// when HIVE_PROXY_INJECT_GH_AUTH holds anything other than unset, "true" or
-// "false".
-var ErrProxyInjectGHAuthInvalidValue = errors.New("unrecognized " + ProxyInjectGHAuthEnv + " value")
-
 // ErrProxyInjectGHAuthWithSelfAssertedIdentity is returned by
 // ValidateProxyInjectGHAuth when injection is enabled together with
 // HIVE_PROXY_ADVISORY_OK=true.
@@ -69,19 +64,8 @@ func ProxyInjectGHAuth() bool {
 }
 
 // ValidateProxyInjectGHAuth is the spoke startup guard for the credential
-// posture (#9586). The readers above fail SAFE on a bad value in the narrow
-// sense that injection stays off - but "off" means the agent's REAL scoped
-// token is written to its readable cache file, which is exactly the posture an
-// operator setting the flag was trying to leave. A silent fallback to
-// in-process token delivery is the failure mode this guard exists to prevent,
-// so each contradictory combination refuses to start with a message naming
-// the fix instead:
-//
-//   - An unrecognized value ("1", "TRUE", "yes", "on", a typo). The operator
-//     plainly meant something, the reader would treat it as off, and the agent
-//     would hold its real token while the pod spec claims otherwise. Only
-//     unset/empty, ProxyInjectGHAuthOnValue and ProxyInjectGHAuthOffValue are
-//     accepted.
+// posture (#9586). It returns an error - and the spoke refuses to boot - only
+// for a combination that is EXPLOITABLE, not merely wrong:
 //
 //   - Injection ON together with HIVE_PROXY_ADVISORY_OK=true. Advisory mode
 //     makes the proxy accept a self-asserted Proxy-Authorization agent name
@@ -92,19 +76,16 @@ func ProxyInjectGHAuth() bool {
 //     into a credential grant (the exact escalation fallbackAgentName's doc
 //     warns about). The two settings cannot both hold their promise.
 //
+// An unrecognized HIVE_PROXY_INJECT_GH_AUTH value is deliberately NOT fatal
+// here: spokes auto-deploy shortly after a merge, and a spoke that already
+// carries such a value would crash-loop on the upgrade. That case is reported
+// by ProxyInjectGHAuthWarnings instead and keeps today's behavior (off).
+//
 // getenv is injected (os.Getenv in production) so the boot phase and its tests
 // share one implementation.
 func ValidateProxyInjectGHAuth(getenv func(string) string) error {
-	raw := strings.TrimSpace(getenv(ProxyInjectGHAuthEnv))
-	switch raw {
-	case "", ProxyInjectGHAuthOffValue:
+	if strings.TrimSpace(getenv(ProxyInjectGHAuthEnv)) != ProxyInjectGHAuthOnValue {
 		return nil
-	case ProxyInjectGHAuthOnValue:
-	default:
-		return fmt.Errorf("%w %q: set %s=%s to enable proxy-side GitHub credential injection or %s=%s to opt out explicitly (any other value would silently leave the agent's real token in its readable cache)",
-			ErrProxyInjectGHAuthInvalidValue, raw,
-			ProxyInjectGHAuthEnv, ProxyInjectGHAuthOnValue,
-			ProxyInjectGHAuthEnv, ProxyInjectGHAuthOffValue)
 	}
 	if strings.TrimSpace(getenv(ProxyAdvisoryOKEnv)) == proxyAdvisoryOKEnabledValue {
 		return fmt.Errorf("%w: advisory mode lets the proxy trust a self-asserted Proxy-Authorization agent name, so a caller could claim another agent and receive that agent's injected token; unset %s (restore forced egress) or set %s=%s",
@@ -112,4 +93,28 @@ func ValidateProxyInjectGHAuth(getenv func(string) string) error {
 			ProxyAdvisoryOKEnv, ProxyInjectGHAuthEnv, ProxyInjectGHAuthOffValue)
 	}
 	return nil
+}
+
+// ProxyInjectGHAuthWarnings reports the non-fatal credential-posture problems
+// (#9586): today, an unrecognized HIVE_PROXY_INJECT_GH_AUTH value ("1", "TRUE",
+// "yes", "on", a typo). The readers treat such a value as OFF, which means the
+// agent's REAL scoped token is written to its readable cache while the
+// operator, who plainly meant something by setting it, may believe injection
+// is on. The spoke keeps running with injection off (today's behavior, so an
+// auto-deployed upgrade never crash-loops a spoke that already carries such a
+// value); the warning is logged at ERROR at boot and surfaced in the dashboard
+// Security tab's coherence warnings. Only unset/empty,
+// ProxyInjectGHAuthOnValue and ProxyInjectGHAuthOffValue are recognized.
+//
+// Returns nil when there is nothing to report.
+func ProxyInjectGHAuthWarnings(getenv func(string) string) []string {
+	raw := strings.TrimSpace(getenv(ProxyInjectGHAuthEnv))
+	switch raw {
+	case "", ProxyInjectGHAuthOnValue, ProxyInjectGHAuthOffValue:
+		return nil
+	}
+	return []string{fmt.Sprintf("%s=%q is not a recognized value, so proxy-side GitHub credential injection is OFF and agents hold their real GitHub token; set %s=%s to enable injection or %s=%s to opt out explicitly",
+		ProxyInjectGHAuthEnv, raw,
+		ProxyInjectGHAuthEnv, ProxyInjectGHAuthOnValue,
+		ProxyInjectGHAuthEnv, ProxyInjectGHAuthOffValue)}
 }

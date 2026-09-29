@@ -850,8 +850,9 @@ const (
 	// container's termination state.
 	duplicateProcessExitCode = 18
 	// proxyInjectConfigExitCode marks an exit caused by the #9586 credential
-	// posture guard (config.ValidateProxyInjectGHAuth). Its own code so a
-	// crash-looping pod's termination state says "fix the env", not "bug".
+	// posture guard (config.ValidateProxyInjectGHAuth: injection combined with
+	// HIVE_PROXY_ADVISORY_OK=true). Its own code so a refusing pod's
+	// termination state says "fix the env", not "bug".
 	proxyInjectConfigExitCode = 19
 )
 
@@ -999,17 +1000,23 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	}
 
 	// #9586: refuse to boot a spoke whose GitHub credential posture is
-	// self-contradictory - an unrecognized HIVE_PROXY_INJECT_GH_AUTH value
-	// (the reader would silently treat it as off and hand agents their real
-	// token), or injection combined with the advisory-mode self-asserted
-	// identity (a spoofed agent name would select whose real token gets
-	// injected). Before config load and before any agent or proxy starts, so
-	// nothing is ever minted under the contradictory posture. The hub branch
-	// above runs no agents and is not gated.
+	// EXPLOITABLE - injection combined with the advisory-mode self-asserted
+	// identity, where a spoofed agent name would select whose real token gets
+	// injected. Before config load and before any agent or proxy starts, so
+	// nothing is ever minted under it. The hub branch above runs no agents and
+	// is not gated.
 	if err := config.ValidateProxyInjectGHAuth(deps.getenv); err != nil {
 		b.logger.Error("refusing to start: contradictory GitHub credential configuration (#9586)", "error", err.Error())
 		deps.exit(proxyInjectConfigExitCode)
 		return false
+	}
+	// An unrecognized HIVE_PROXY_INJECT_GH_AUTH value is loud but NOT fatal:
+	// spokes auto-deploy within about a minute of a merge, so failing here
+	// would crash-loop any live spoke that already carries such a value. It
+	// keeps today's meaning (injection off); the dashboard Security tab shows
+	// the same diagnosis (securitySectionResponse, credentialWarnings).
+	for _, warning := range config.ProxyInjectGHAuthWarnings(deps.getenv) {
+		b.logger.Error("GitHub credential configuration warning (#9586): agents hold their real token", "warning", warning)
 	}
 
 	var cancel context.CancelFunc

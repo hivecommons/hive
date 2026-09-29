@@ -35,8 +35,8 @@ const hostedProxyInjectGHAuthEnv = "HIVE_HOSTED_PROXY_INJECT_GH_AUTH"
 //
 // An unrecognized hub setting keeps the secure default (ON) and logs, rather
 // than silently provisioning spokes that hand agents their real tokens - the
-// same "no silent fallback to in-process tokens" rule the spoke-side startup
-// guard (config.ValidateProxyInjectGHAuth) enforces.
+// same "no silent fallback to in-process tokens" concern the spoke reports
+// through config.ProxyInjectGHAuthWarnings.
 func provisionProxyInjectGHAuth(useApp bool, getenv func(string) string, logger *slog.Logger) string {
 	if !useApp {
 		return config.ProxyInjectGHAuthOffValue
