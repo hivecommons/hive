@@ -14,7 +14,14 @@ var ErrReporterConfirmationRequired = errors.New("reporter confirmation required
 type IssueCloseOptions struct {
 	OverrideReason          string
 	SuppressOverrideComment bool
+	// StateReason, when set, is sent as GitHub's state_reason ("completed" or
+	// "not_planned"). Empty leaves GitHub's default.
+	StateReason string
 }
+
+// IssueStateReasonCompleted is GitHub's state_reason for an issue closed
+// because it was resolved.
+const IssueStateReasonCompleted = "completed"
 
 func ReporterConfirmationCloseGateReason(issue *gh.Issue) string {
 	return humanFiledBugReason(issue)
@@ -84,7 +91,11 @@ func (c *Client) closeIssue(ctx context.Context, repo string, number int, opts I
 			"override_reason", overrideReason)
 	}
 
-	if _, _, err := c.client.Issues.Edit(ctx, owner, repoName, number, &gh.IssueRequest{State: gh.Ptr("closed")}); err != nil {
+	req := &gh.IssueRequest{State: gh.Ptr("closed")}
+	if sr := strings.TrimSpace(opts.StateReason); sr != "" {
+		req.StateReason = gh.Ptr(sr)
+	}
+	if _, _, err := c.client.Issues.Edit(ctx, owner, repoName, number, req); err != nil {
 		return false, fmt.Errorf("closing issue %s/%s#%d: %w", owner, repoName, number, err)
 	}
 	return isPR, nil

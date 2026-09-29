@@ -1971,6 +1971,8 @@ type GovernorConfig struct {
 	// covering the window before a PR exists. Zero value = off; see
 	// ClaimsConfig.
 	Claims ClaimsConfig `yaml:"claims,omitempty" json:"claims,omitempty"`
+	// QuestionAutoclose closes answered question issues (#9584). Default off.
+	QuestionAutoclose QuestionAutocloseConfig `yaml:"question_autoclose,omitempty" json:"question_autoclose,omitempty"`
 }
 
 // FleetReportConfig controls upstream fleet self-reporting.
