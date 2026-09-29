@@ -401,6 +401,10 @@ type Server struct {
 
 	// nps rate-limits NPS feedback submissions (#9610). Zero value is ready.
 	nps npsRateLimiter
+	// npsIssueLimiter rate-limits detractor public issues (#9610, nps_extras.go).
+	npsIssueLimiter npsRateLimiter
+	// npsIssueFiler overrides the forge client for detractor issues (tests).
+	npsIssueFiler npsIssueFiler
 }
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.
@@ -1377,12 +1381,19 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		// Both are listed AFTER the style-src fallback, which browsers without
 		// CSP3 support use instead; the effective policy is identical either way,
 		// so this split names the decision without changing behaviour.
-		scriptDirectives := "script-src 'self'; script-src-elem " + baseScriptSrcElem() + "; script-src-attr 'none'"
+		//
+		// GA4 (#9610): only while HIVE_NPS_GA4_MEASUREMENT_ID is set, the NPS
+		// prompt may load gtag.js, so Google's tag hosts join script-src(-elem)
+		// and connect-src. Unset, both strings are empty and the policy is
+		// unchanged. See npsGA4CSPSources in nps_extras.go.
+		gaScript, gaConnect := npsGA4CSPSources()
+		scriptDirectives := "script-src 'self'" + gaScript + "; script-src-elem " + baseScriptSrcElem() + gaScript + "; script-src-attr 'none'"
 		if r.URL.Path == "/terminal" || strings.HasPrefix(r.URL.Path, "/terminal/") {
 			scriptDirectives = "script-src 'self' 'unsafe-inline'"
+			gaConnect = ""
 		}
 		w.Header().Set("Content-Security-Policy",
-			"default-src 'self'; "+scriptDirectives+"; style-src 'self' 'unsafe-inline'; style-src-elem 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors "+frameAncestors)
+			"default-src 'self'; "+scriptDirectives+"; style-src 'self' 'unsafe-inline'; style-src-elem 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss:"+gaConnect+"; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors "+frameAncestors)
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		next.ServeHTTP(w, r)
 	})

@@ -128,6 +128,13 @@ func npsRemoveOne(times []time.Time, at time.Time) []time.Time {
 // and recording separately) keeps two concurrent submissions from both
 // passing the check.
 func (l *npsRateLimiter) reserve(user string, now time.Time) (release func(), err error) {
+	return l.reserveWith(user, now, npsMaxPerUserPerWindow, npsMaxPerHivePerWindow)
+}
+
+// reserveWith is reserve with explicit per-user and per-hive caps over
+// npsRateWindow, so the detractor-issue path (nps_extras.go) reuses the same
+// limiter logic with its own, tighter caps.
+func (l *npsRateLimiter) reserveWith(user string, now time.Time, perUser, perHive int) (release func(), err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	cutoff := now.Add(-npsRateWindow)
@@ -143,10 +150,10 @@ func (l *npsRateLimiter) reserve(user string, now time.Time) (release func(), er
 	}
 	l.hive = npsPrune(l.hive, cutoff)
 
-	if len(l.users[user]) >= npsMaxPerUserPerWindow {
+	if len(l.users[user]) >= perUser {
 		return nil, errNPSUserLimited
 	}
-	if len(l.hive) >= npsMaxPerHivePerWindow {
+	if len(l.hive) >= perHive {
 		return nil, errNPSHiveLimited
 	}
 	l.users[user] = append(l.users[user], now)
@@ -218,6 +225,11 @@ type npsStatusResponse struct {
 	Enabled          bool `json:"enabled"`
 	CanSubmit        bool `json:"can_submit"`
 	MaxFeedbackChars int  `json:"max_feedback_chars"`
+	// Timing, GA4MeasurementID and DetractorIssue are set only when
+	// CanSubmit is true; see npsStatusExtras in nps_extras.go.
+	Timing           *npsTimingPayload        `json:"timing,omitempty"`
+	GA4MeasurementID string                   `json:"ga4_measurement_id,omitempty"`
+	DetractorIssue   *npsDetractorIssueStatus `json:"detractor_issue,omitempty"`
 }
 
 // handleNPSStatus answers GET /api/feedback/nps/status. The dashboard only
@@ -226,11 +238,15 @@ type npsStatusResponse struct {
 func (s *Server) handleNPSStatus(w http.ResponseWriter, r *http.Request) {
 	enabled := s.npsEnabled()
 	user, role := s.npsActor(r)
-	jsonResponse(w, npsStatusResponse{
+	resp := npsStatusResponse{
 		Enabled:          enabled,
 		CanSubmit:        enabled && user != "" && role != "read",
 		MaxFeedbackChars: npsMaxFeedbackRunes,
-	})
+	}
+	if resp.CanSubmit {
+		s.npsStatusExtras(&resp)
+	}
+	jsonResponse(w, resp)
 }
 
 // npsSubmitRequest is the browser's body. Score is a pointer so a missing
