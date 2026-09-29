@@ -7349,6 +7349,15 @@ type ReviewConfig struct {
 	// by default: a review surface a repo did not ask for is noise, and the
 	// verdict marker already routes the decision.
 	ConfidenceScore bool `yaml:"confidence_score,omitempty" json:"confidence_score,omitempty"`
+	// PriorityLabels mirrors each open PR's place in the PR review queue onto
+	// exactly one review-priority/high|normal|low label (hivecommons/hive#9590;
+	// option 2 of src/docs/review-queue-triage.md), so the order shows up in
+	// plain `gh` searches and outside tools. The governor applies it
+	// mechanically from the computed rank; no agent, and never the PR's
+	// author, writes it. Like HumanDecisionLabel the labels are never created:
+	// a repo that does not already have them is skipped. Off by default: a
+	// label on every PR is churn a repo must ask for.
+	PriorityLabels bool `yaml:"priority_labels,omitempty" json:"priority_labels,omitempty"`
 	// OutOfScopeBacklogDisabled opts out of filing cited out-of-scope review
 	// findings as follow-up issues. Default is enabled: the review can stay
 	// narrow without losing real adjacent defects.

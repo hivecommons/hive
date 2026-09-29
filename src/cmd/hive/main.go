@@ -6452,6 +6452,12 @@ func runEvalCycle(
 	// closed (keeps the last known claims) when the GitHub API is unavailable.
 	applyDuplicatePRGuard(ctx, cfg, ghClient, actionable, logger)
 
+	// PR review queue (#9590): stamp each PR's rank, priority and reasons
+	// onto the snapshot so last-actionable.json carries them next to
+	// review_class. Additive only: Items and Held keep their order, and
+	// nothing that gates work reads the stamp.
+	reviewQueue := stampReviewQueue(cfg, actionable, logger)
+
 	lastActionable.Store(actionable)
 	if data, err := json.Marshal(actionable); err == nil {
 		atomicWrite(lastActionablePath, data)
@@ -6708,6 +6714,9 @@ func runEvalCycle(
 	reviewPlan := planReviewDispatch(cfg, actionable, agentMgr, beadStores, logger)
 	auditWithheldReviewFixes(reviewPlan, dashSrv, logger)
 	applyHumanDecisionLabels(ctx, cfg, ghClient, actionable, reviewPlan, logger)
+	if ghClient != nil {
+		applyReviewPriorityLabels(ctx, cfg, ghClient, reviewQueue, logger)
+	}
 	messages := sched.BuildKickMessages(kickActionable, agentsDue)
 	reviewKickByMessage := map[string]review.DispatchKick{}
 	for _, k := range append(reviewPlan.ReviewKicks, reviewPlan.FixKicks...) {

@@ -428,6 +428,11 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// audit actions in a trailing window, bucketed per day, plus per-agent
 	// liveness — the data an Observe → Heal decision rests on.
 	s.mux.HandleFunc("GET /api/watchdog/activity", s.handleWatchdogActivity)
+
+	// PR review queue (#9590): every open PR in the governed repos, agent-
+	// or contributor-authored, in one ranked order with the reasons for each
+	// position. Read-only; paged like /api/v1/queue (#6537).
+	s.mux.HandleFunc("GET /api/review/queue", s.handleReviewQueue)
 }
 
 var (

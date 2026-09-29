@@ -14,9 +14,12 @@ import (
 // PRs of identical apparent urgency.
 //
 // It is PRESENTATIONAL ONLY. Nothing in the governor, scheduler, or any agent
-// reads it; no label is written from it. It is derived from metadata the PR
-// already carries — the conventional title prefix and the lane label — so
-// adopting it costs zero label churn and zero agent behaviour change.
+// reads it to decide work. It is derived from metadata the PR already carries
+// — the conventional title prefix and the lane label, plus changed paths for
+// contributor PRs (ClassifyContributorReviewClass) — so adopting it costs
+// zero agent behaviour change. The one writer is the opt-in, default-off
+// review.priority_labels toggle, which mirrors the review queue's rank onto a
+// review-priority/* label (review_queue.go, #9590).
 type ReviewClass string
 
 const (
@@ -83,25 +86,42 @@ var (
 	reviewDocsLaneLabels = []string{"agent/architect", "agent/guide", "agent/strategist", "kind/documentation", "kind/cleanup"}
 )
 
+// Class sources: which signal ClassifyReviewClass (or the contributor path
+// fallback) actually used. They exist for the review queue's rank reasons
+// (#9590), so a maintainer can see WHY a PR landed in its tier.
+const (
+	reviewClassSourceTitle = "title prefix"
+	reviewClassSourceLabel = "label"
+	reviewClassSourcePaths = "changed paths"
+	reviewClassSourceNone  = "no title prefix, label or path signal"
+)
+
 // ClassifyReviewClass derives the triage class from a PR's title and labels.
 // The title prefix wins over labels because it is the more explicit signal
 // (a quality-lane agent that ships a genuine "fix:" gets fix priority), and
 // labels break the tie for prefix-less titles. Anything else is unknown.
 func ClassifyReviewClass(title string, labels []string) ReviewClass {
+	class, _ := classifyReviewClassWithSource(title, labels)
+	return class
+}
+
+// classifyReviewClassWithSource is ClassifyReviewClass plus the name of the
+// signal that decided the class (reviewClassSource*).
+func classifyReviewClassWithSource(title string, labels []string) (ReviewClass, string) {
 	trimmed := strings.TrimSpace(title)
 	for _, p := range reviewFixEmojiPrefixes {
 		if strings.HasPrefix(trimmed, p) {
-			return ReviewClassFix
+			return ReviewClassFix, reviewClassSourceTitle
 		}
 	}
 	for _, p := range reviewTestEmojiPrefixes {
 		if strings.HasPrefix(trimmed, p) {
-			return ReviewClassTests
+			return ReviewClassTests, reviewClassSourceTitle
 		}
 	}
 	for _, p := range reviewDocsEmojiPrefixes {
 		if strings.HasPrefix(trimmed, p) {
-			return ReviewClassRefactorDocs
+			return ReviewClassRefactorDocs, reviewClassSourceTitle
 		}
 	}
 
@@ -112,17 +132,17 @@ func ClassifyReviewClass(title string, labels []string) ReviewClass {
 	}))
 	for _, p := range reviewFixWordPrefixes {
 		if hasWordPrefix(words, p) {
-			return ReviewClassFix
+			return ReviewClassFix, reviewClassSourceTitle
 		}
 	}
 	for _, p := range reviewTestWordPrefixes {
 		if hasWordPrefix(words, p) {
-			return ReviewClassTests
+			return ReviewClassTests, reviewClassSourceTitle
 		}
 	}
 	for _, p := range reviewDocsWordPrefixes {
 		if hasWordPrefix(words, p) {
-			return ReviewClassRefactorDocs
+			return ReviewClassRefactorDocs, reviewClassSourceTitle
 		}
 	}
 
@@ -130,7 +150,7 @@ func ClassifyReviewClass(title string, labels []string) ReviewClass {
 		ll := strings.ToLower(l)
 		for _, want := range reviewFixLaneLabels {
 			if ll == want {
-				return ReviewClassFix
+				return ReviewClassFix, reviewClassSourceLabel
 			}
 		}
 	}
@@ -138,7 +158,7 @@ func ClassifyReviewClass(title string, labels []string) ReviewClass {
 		ll := strings.ToLower(l)
 		for _, want := range reviewTestLaneLabels {
 			if ll == want {
-				return ReviewClassTests
+				return ReviewClassTests, reviewClassSourceLabel
 			}
 		}
 	}
@@ -146,11 +166,143 @@ func ClassifyReviewClass(title string, labels []string) ReviewClass {
 		ll := strings.ToLower(l)
 		for _, want := range reviewDocsLaneLabels {
 			if ll == want {
-				return ReviewClassRefactorDocs
+				return ReviewClassRefactorDocs, reviewClassSourceLabel
 			}
 		}
 	}
-	return ReviewClassUnknown
+	return ReviewClassUnknown, reviewClassSourceNone
+}
+
+// agentLaneLabelPrefix marks the lane label every hive agent PR carries
+// ("agent/scanner", "agent/quality", ...).
+const agentLaneLabelPrefix = "agent/"
+
+// hasAgentLaneLabel reports whether labels include an agent lane label.
+func hasAgentLaneLabel(labels []string) bool {
+	for _, l := range labels {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(l)), agentLaneLabelPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// ClassifyContributorReviewClass extends ClassifyReviewClass to PRs that
+// carry no agent lane label - outside contributors' and maintainers' PRs,
+// which rarely follow the lane conventions (#9590). It tries the same title
+// prefix and label signals first; only when both are silent does it look at
+// the changed paths (ClassifyReviewClassFromPaths).
+//
+// A PR WITH an agent lane label classifies exactly as ClassifyReviewClass
+// does, paths ignored, so agent PRs keep the class they always had.
+func ClassifyContributorReviewClass(title string, labels, paths []string) ReviewClass {
+	class, _ := classifyContributorReviewClassWithSource(title, labels, paths)
+	return class
+}
+
+func classifyContributorReviewClassWithSource(title string, labels, paths []string) (ReviewClass, string) {
+	class, source := classifyReviewClassWithSource(title, labels)
+	if class != ReviewClassUnknown || hasAgentLaneLabel(labels) {
+		return class, source
+	}
+	if pc := ClassifyReviewClassFromPaths(paths); pc != ReviewClassUnknown {
+		return pc, reviewClassSourcePaths
+	}
+	return ReviewClassUnknown, reviewClassSourceNone
+}
+
+// Path signals for ClassifyReviewClassFromPaths. A path is a TEST path when
+// its file name carries a test suffix/infix or any directory segment is a
+// test directory; a DOCS path when it has a docs extension or sits under a
+// docs directory.
+var (
+	reviewTestFileSuffixes = []string{"_test.go", "_test.py", "_spec.rb", "_test.rs"}
+	reviewTestFileInfixes  = []string{".test.", ".spec."}
+	reviewTestFilePrefixes = []string{"test_"}
+	reviewTestDirs         = []string{"test", "tests", "testdata", "__tests__", "e2e", "testutil"}
+	reviewDocsExtensions   = []string{".md", ".mdx", ".rst", ".adoc"}
+	reviewDocsDirs         = []string{"docs", "doc"}
+)
+
+// ClassifyReviewClassFromPaths derives a class from a PR's changed files
+// alone. It is deliberately conservative: only a PR whose EVERY path is a
+// test file is T2 tests, and only one whose every path is documentation is
+// T1 docs. A path signal can never make a PR a fix - "this touches code"
+// says nothing about whether it repairs something - so anything mixed, and
+// an empty list, is unknown.
+func ClassifyReviewClassFromPaths(paths []string) ReviewClass {
+	allTests, allDocs, seen := true, true, false
+	for _, p := range paths {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p == "" {
+			continue
+		}
+		seen = true
+		if !isReviewTestPath(p) {
+			allTests = false
+		}
+		if !isReviewDocsPath(p) {
+			allDocs = false
+		}
+	}
+	switch {
+	case !seen:
+		return ReviewClassUnknown
+	case allTests:
+		return ReviewClassTests
+	case allDocs:
+		return ReviewClassRefactorDocs
+	default:
+		return ReviewClassUnknown
+	}
+}
+
+// isReviewTestPath expects a lower-cased, slash-separated path.
+func isReviewTestPath(p string) bool {
+	segments := strings.Split(p, "/")
+	base := segments[len(segments)-1]
+	for _, s := range reviewTestFileSuffixes {
+		if strings.HasSuffix(base, s) {
+			return true
+		}
+	}
+	for _, s := range reviewTestFileInfixes {
+		if strings.Contains(base, s) {
+			return true
+		}
+	}
+	for _, s := range reviewTestFilePrefixes {
+		if strings.HasPrefix(base, s) {
+			return true
+		}
+	}
+	for _, dir := range segments[:len(segments)-1] {
+		for _, want := range reviewTestDirs {
+			if dir == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isReviewDocsPath expects a lower-cased, slash-separated path.
+func isReviewDocsPath(p string) bool {
+	segments := strings.Split(p, "/")
+	base := segments[len(segments)-1]
+	for _, ext := range reviewDocsExtensions {
+		if strings.HasSuffix(base, ext) {
+			return true
+		}
+	}
+	for _, dir := range segments[:len(segments)-1] {
+		for _, want := range reviewDocsDirs {
+			if dir == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // hasWordPrefix reports whether s starts with word as a WHOLE word: the word
