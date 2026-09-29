@@ -23,7 +23,7 @@ func defaultBootGitHubDeps() bootGitHubDeps {
 // bootAdvisoryDeps are the effects bootAdvisory performs against GitHub
 // (#7571, step 2): ensuring the pinned advisory issue and, when that fails,
 // classifying the App failure to decide whether the banner is raised. The
-// notifier, ACMM inference, attribution hook, and on-disk brainstorm policy
+// notifier, ACMM inference, attribution hook, and on-disk default policy seed
 // run for real (cfg.Policies.LocalDir points a test at a temp dir).
 type bootAdvisoryDeps struct {
 	ensureAdvisoryIssue func(ctx context.Context, c *github.Client, repo string) (int, error)

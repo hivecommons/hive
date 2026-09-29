@@ -102,6 +102,9 @@ const (
 	// LikelyDoneLabel marks an open issue with an API-verified merged PR relation
 	// that is not yet a resolved/closed issue.
 	LikelyDoneLabel = "hive/likely-done"
+	// VerifiedOpenLabel records that verification found the issue still open/not
+	// done, suppressing renewed likely-done labeling from the same stale claim.
+	VerifiedOpenLabel = "hive/verified-open"
 
 	// claimLedgerFileMode is the permission mode for the ledger file. It holds
 	// no secrets (issue and PR numbers only), so it is world-readable like the
@@ -365,7 +368,46 @@ var claimRefPattern = regexp.MustCompile(
 // supplies the repository for bare `#N` references. Results are de-duplicated
 // and returned in first-seen order. A nil/empty text yields no claims.
 func ParseClaimedIssues(text, defaultRepo string) []ClaimedRef {
-	return parseRefs(claimRefPattern, text, defaultRepo)
+	return parseRefs(claimRefPattern, stripClosingFalsePositiveText(text), defaultRepo)
+}
+
+// FindClosingKeywordReference reports the first explicit closing keyword
+// fragment in text that targets issueRepo#issue. It shares ParseClaimedIssues'
+// cheap false-positive stripping for code spans/fences and URLs.
+func FindClosingKeywordReference(text, defaultRepo, issueRepo string, issue int) (string, bool) {
+	if text == "" || issue <= 0 {
+		return "", false
+	}
+	text = stripClosingFalsePositiveText(text)
+	for _, m := range claimRefPattern.FindAllString(text, -1) {
+		for _, r := range issueRefPattern.FindAllStringSubmatch(m, -1) {
+			num, err := strconv.Atoi(r[2])
+			if err != nil || num != issue {
+				continue
+			}
+			repo := defaultRepo
+			if r[1] != "" {
+				repo = r[1]
+			}
+			if strings.EqualFold(repo, issueRepo) {
+				return strings.TrimSpace(m), true
+			}
+		}
+	}
+	return "", false
+}
+
+var (
+	fencedCodeBlockPattern = regexp.MustCompile("(?s)```.*?```")
+	inlineCodeSpanPattern  = regexp.MustCompile("`[^`\n]*`")
+	closingURLPattern      = regexp.MustCompile(`https?://[^\s)]+`)
+)
+
+func stripClosingFalsePositiveText(text string) string {
+	text = fencedCodeBlockPattern.ReplaceAllString(text, " ")
+	text = inlineCodeSpanPattern.ReplaceAllString(text, " ")
+	text = closingURLPattern.ReplaceAllString(text, " ")
+	return text
 }
 
 // parseRefs is the shared body behind ParseClaimedIssues and
@@ -1260,7 +1302,12 @@ func annotateIssueWithClaim(issue *Issue, claim IssueClaim) {
 		issue.LinkedPRs = append(issue.LinkedPRs, link)
 	}
 	if claim.MergedPR {
-		issue.Labels = addIssueLabel(removeIssueLabel(issue.Labels, CoveredByPRLabel), LikelyDoneLabel)
+		issue.Labels = removeIssueLabel(issue.Labels, CoveredByPRLabel)
+		if issueHasLabel(issue.Labels, VerifiedOpenLabel) {
+			issue.Labels = removeIssueLabel(issue.Labels, LikelyDoneLabel)
+		} else {
+			issue.Labels = addIssueLabel(issue.Labels, LikelyDoneLabel)
+		}
 		issue.ClaimContext = claimContext(claim, "merged_pr_needs_verification")
 		return
 	}
@@ -1398,7 +1445,13 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 			continue
 		}
 		coveredWanted := ok && claim.PRNumber > 0 && !claim.MergedPR
-		likelyWanted := ok && claim.PRNumber > 0 && claim.MergedPR
+		verifiedOpen := issueHasLabel(originalLabels, VerifiedOpenLabel)
+		if verifiedOpen {
+			if err := client.EnsureIssueLabel(ctx, issue.Repo, VerifiedOpenLabel, "6a737d", "Hive verified that a likely/already-done claim did not finish this issue; keep open for more work"); err != nil && logger != nil {
+				logger.Warn("ensuring verified-open label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			}
+		}
+		likelyWanted := ok && claim.PRNumber > 0 && claim.MergedPR && !verifiedOpen
 		if coveredWanted {
 			if err := client.EnsureIssueLabel(ctx, issue.Repo, CoveredByPRLabel, "1d76db", "Hive verified that an open PR references or claims this issue; still actionable until confirmed"); err != nil && logger != nil {
 				logger.Warn("ensuring covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)

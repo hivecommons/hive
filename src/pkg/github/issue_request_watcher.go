@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -81,6 +82,13 @@ type IssueRequest struct {
 	// OverrideReason is required to deliberately close a human-filed bug-family
 	// issue before reporter confirmation (duplicate, not-a-bug, reporter asked).
 	OverrideReason string `json:"override_reason,omitempty"` // close only
+	// Parent is an optional issue number in the same repo. When set on an
+	// "issue" request, the watcher links the newly created issue to it as a
+	// GitHub sub-issue (POST .../issues/{parent}/sub_issues) after creating it,
+	// so a split-out child shows up on the parent's sub-issue list and
+	// progress bar instead of only a "Part of #N" line in the body
+	// (hivecommons/hive#9435). A failure to link does not fail the create.
+	Parent int `json:"parent,omitempty"` // issue only
 }
 
 // claimLabelPrefix is the label namespace applied for a "claim" request. The
@@ -95,6 +103,11 @@ type IssueResponse struct {
 	Number         int    `json:"number,omitempty"`
 	URL            string `json:"url,omitempty"`
 	AlreadyExisted bool   `json:"already_existed,omitempty"`
+	// Consolidated reports that no issue was created because an OPEN
+	// agent-filed issue already references exactly the same files (#9376):
+	// the finding was posted there as a comment instead, so the two land in
+	// one PR rather than two PRs that conflict. Number/URL name that issue.
+	Consolidated bool `json:"consolidated,omitempty"`
 	// RejectedDuplicate reports that no issue was created because a maintainer
 	// recently closed an agent-filed issue covering the same file set as
 	// not-planned or duplicate (#6463). Number/URL point at that closed issue
@@ -102,6 +115,11 @@ type IssueResponse struct {
 	RejectedDuplicate bool   `json:"rejected_duplicate,omitempty"`
 	Error             string `json:"error,omitempty"`
 	At                string `json:"at"`
+	// ParentLinked reports that the created issue was linked as a GitHub
+	// sub-issue of req.Parent. ParentLinkError carries the (non-fatal) reason
+	// when a requested link did not succeed; the issue is still created OK.
+	ParentLinked    bool   `json:"parent_linked,omitempty"`
+	ParentLinkError string `json:"parent_link_error,omitempty"`
 }
 
 // IssueRequestAuthorizer mirrors PRRequestAuthorizer: it receives the claimed
@@ -358,6 +376,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	}
 
 	resp := IssueResponse{At: nowFn().UTC().Format(time.RFC3339)}
+	closedPR := false
 	switch kind {
 	case "claim":
 		// Apply a namespaced ownership label (App bots can't be assignees).
@@ -374,14 +393,14 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			resp.Number = req.Number
 		}
 	case "close":
-		err = c.CloseIssue(ctx, req.Repo, req.Number, IssueCloseOptions{OverrideReason: req.OverrideReason})
+		closedPR, err = c.closeIssue(ctx, req.Repo, req.Number, IssueCloseOptions{OverrideReason: req.OverrideReason})
 		if err == nil {
 			resp.OK = true
 			resp.Number = req.Number
 		}
 	default: // "issue"
 		var res CreateIssueResult
-		res, err = c.CreateIssue(ctx, req.Repo, req.Title, body, req.Labels)
+		res, err = c.createIssue(ctx, req.Repo, req.Title, body, req.Labels, true)
 		if err == nil && res.RejectedTwin {
 			// Terminal, not retried: a maintainer already rejected this
 			// finding, and no amount of retrying changes their verdict
@@ -409,6 +428,22 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			resp.Number = res.Number
 			resp.URL = res.URL
 			resp.AlreadyExisted = res.AlreadyExisted
+			resp.Consolidated = res.Consolidated
+			// Best-effort GitHub sub-issue link (#9435): the child issue is
+			// already created at this point, so a link failure (parent
+			// missing, already at GitHub's sub-issue cap, transient API
+			// error, …) is logged and surfaced in the result but never turns
+			// a successful create into a failure or a retry.
+			if req.Parent > 0 && !res.Consolidated && res.ID > 0 {
+				if linkErr := c.AddSubIssue(ctx, req.Repo, req.Parent, res.ID); linkErr != nil {
+					resp.ParentLinkError = linkErr.Error()
+					c.logger.Warn("issue-request watcher: sub-issue link failed, issue still created",
+						slog.String("repo", req.Repo), slog.Int("number", res.Number),
+						slog.Int("parent", req.Parent), slog.String("error", linkErr.Error()))
+				} else {
+					resp.ParentLinked = true
+				}
+			}
 		}
 	}
 
@@ -438,18 +473,28 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	case "close":
 		action = AuditActionIssueClosed
 	}
-	c.recordCreationAudit(action, meta,
+	extra := []string{
 		"repo", req.Repo,
 		"number", strconv.Itoa(resp.Number),
 		"url", resp.URL,
 		"reused", strconv.FormatBool(resp.AlreadyExisted),
-		"override_reason", req.OverrideReason)
+		"consolidated", strconv.FormatBool(resp.Consolidated),
+		"override_reason", req.OverrideReason,
+	}
+	if closedPR {
+		// The number was a pull request: this is the hive closing a PR
+		// without merging it, counted apart from issue closes.
+		action = AuditActionPRClosed
+		extra = append(extra, "path", PRAuditPathRelay)
+	}
+	c.recordCreationAudit(action, meta, extra...)
 	c.writeIssueResult(path, resp)
 	_ = os.Remove(path)
 	c.issueClearRetry(path)
 	c.logger.Info("issue-request watcher: request completed",
 		slog.String("repo", req.Repo), slog.String("kind", kind),
 		slog.Int("number", resp.Number), slog.Bool("reused", resp.AlreadyExisted),
+		slog.Bool("consolidated", resp.Consolidated),
 		slog.String("agent", req.Agent))
 }
 
@@ -498,6 +543,10 @@ func WriteIssueRequest(dir string, req IssueRequest) (string, error) {
 type CreateIssueResult struct {
 	Number int
 	URL    string
+	// ID is the issue's numeric database ID (distinct from Number, its
+	// repo-scoped issue number). The sub-issues API takes this as
+	// sub_issue_id, so callers linking a fresh child under a parent need it.
+	ID int64
 	// AlreadyExisted is true when an OPEN issue with the same exact title was
 	// already present in the repo, so we returned it instead of creating a
 	// duplicate. This makes the watcher's retry loop idempotent: a create that
@@ -511,12 +560,25 @@ type CreateIssueResult struct {
 	// and RejectedReason carries its state_reason.
 	RejectedTwin   bool
 	RejectedReason string
+	// Consolidated is true when no issue was created because an OPEN
+	// App-bot-filed issue has the same file-reference set (#9376); the
+	// finding was appended to it as a comment. AlreadyExisted is also true.
+	Consolidated bool
 }
 
 // CreateIssue creates an issue as the hive's App bot, ensuring requested labels
 // exist first and deduping by exact open-issue title. repo may be "owner/repo"
 // or bare (owner defaults to the hive org).
 func (c *Client) CreateIssue(ctx context.Context, repo, title, body string, labels []string) (CreateIssueResult, error) {
+	return c.createIssue(ctx, repo, title, body, labels, false)
+}
+
+// createIssue is CreateIssue with the open-twin consolidation switch. The
+// agent issue-request watcher turns it on: agents file findings one at a time
+// and cannot see each other's, so two findings about the same files become
+// two issues, two PRs, and a merge conflict (#9376). Hive-internal callers
+// (fleet report, review backlog) keep plain create semantics.
+func (c *Client) createIssue(ctx context.Context, repo, title, body string, labels []string, consolidateOpen bool) (CreateIssueResult, error) {
 	if c == nil || c.client == nil {
 		return CreateIssueResult{}, ErrNoGitHubClient
 	}
@@ -550,18 +612,27 @@ func (c *Client) CreateIssue(ctx context.Context, repo, title, body string, labe
 
 	// Idempotency: list recent open issues and reuse an exact-title match.
 	// Issues.ListByRepo is strongly consistent (unlike the Search API, whose
-	// index can lag minutes on GHE — useless against a 10s retry loop).
-	if existing, err := c.findOpenIssueByTitle(ctx, owner, repoName, title); err != nil {
+	// index can lag minutes on GHE — useless against a 10s retry loop). The
+	// same scan also looks for an open App-bot twin over the same file set,
+	// so consolidation costs no extra API calls.
+	var wantFiles map[string]bool
+	if consolidateOpen && strings.TrimSpace(c.appBotLogin) != "" {
+		wantFiles = issueFileRefSet(title + "\n" + body)
+	}
+	var fileSetTwin *gh.Issue
+	if found, err := c.scanOpenIssues(ctx, owner, repoName, title, wantFiles); err != nil {
 		if isRetryableGitHubError(err) {
 			return CreateIssueResult{}, fmt.Errorf("CreateIssue: dedupe lookup failed with retryable error in %s/%s: %w", owner, repoName, err)
 		}
 		c.logger.Warn("CreateIssue: dedupe lookup failed with terminal error, creating without dedupe",
 			slog.String("repo", repoName), slog.String("reason_class", "terminal"), slog.String("error", err.Error()))
-	} else if existing != nil {
+	} else if existing := found.subject; existing != nil {
 		c.logger.Info("CreateIssue: open issue with the same subject exists, reusing",
 			slog.String("repo", repoName), slog.Int("number", existing.GetNumber()),
 			slog.String("existing_title", existing.GetTitle()))
-		return CreateIssueResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), AlreadyExisted: true}, nil
+		return CreateIssueResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), ID: existing.GetID(), AlreadyExisted: true}, nil
+	} else {
+		fileSetTwin = found.fileSet
 	}
 
 	// Rejected-finding gate (#6463): a maintainer who recently closed an
@@ -581,6 +652,22 @@ func (c *Client) CreateIssue(ctx context.Context, repo, title, body string, labe
 			RejectedTwin:   true,
 			RejectedReason: twin.GetStateReason(),
 		}, nil
+	}
+
+	// Open-twin consolidation (#9376): an open agent-filed issue over exactly
+	// the same files already owns this work. A second issue would be picked up
+	// by a second agent and become a second PR editing the same files, and
+	// whichever merges first forces the other to rebase. Fold the finding into
+	// the existing issue so one PR handles both.
+	if fileSetTwin != nil {
+		if err := c.CreateIssueComment(ctx, owner+"/"+repoName, fileSetTwin.GetNumber(),
+			consolidatedFindingComment(title, body, wantFiles)); err != nil {
+			return CreateIssueResult{}, fmt.Errorf("CreateIssue: consolidating into open issue #%d in %s/%s: %w", fileSetTwin.GetNumber(), owner, repoName, err)
+		}
+		c.logger.Info("CreateIssue: consolidated finding into open issue over the same file set",
+			slog.String("repo", repoName), slog.Int("number", fileSetTwin.GetNumber()),
+			slog.String("existing_title", fileSetTwin.GetTitle()))
+		return CreateIssueResult{Number: fileSetTwin.GetNumber(), URL: fileSetTwin.GetHTMLURL(), AlreadyExisted: true, Consolidated: true}, nil
 	}
 
 	// Ensure labels exist. Retryable failures keep the whole request queued
@@ -626,20 +713,33 @@ func (c *Client) CreateIssue(ctx context.Context, repo, title, body string, labe
 	}
 	c.logger.Info("CreateIssue: issue created as the App bot",
 		slog.String("repo", repoName), slog.Int("number", issue.GetNumber()))
-	return CreateIssueResult{Number: issue.GetNumber(), URL: issue.GetHTMLURL()}, nil
+	return CreateIssueResult{Number: issue.GetNumber(), URL: issue.GetHTMLURL(), ID: issue.GetID()}, nil
 }
 
-// findOpenIssueByTitle scans up to the 3 most recent pages of open issues for
-// an exact (whitespace-trimmed) title match, falling back to a canonical
-// subject match (see canonicalIssueSubject) so a finding re-filed with a
-// different model-authored qualifier is recognised as the same finding.
-// Exact matches win; otherwise the OLDEST canonical match is returned so
-// repeats consolidate onto the original issue rather than the newest copy.
-// Bounded: agent-filed issues are recent by construction, and an unbounded
-// scan of a busy repo would burn API budget on every create.
-func (c *Client) findOpenIssueByTitle(ctx context.Context, owner, repo, title string) (*gh.Issue, error) {
+// openIssueMatches is what one scan of the recent open issues found.
+type openIssueMatches struct {
+	// subject is an exact-title match, else the oldest canonical-subject
+	// match (see canonicalIssueSubject).
+	subject *gh.Issue
+	// fileSet is the oldest App-bot-filed open issue whose file-reference set
+	// equals the requested one. Only looked for when wantFiles is non-empty.
+	fileSet *gh.Issue
+}
+
+// scanOpenIssues scans up to the 3 most recent pages of open issues for an
+// exact (whitespace-trimmed) title match, falling back to a canonical subject
+// match so a finding re-filed with a different model-authored qualifier is
+// recognised as the same finding. Exact matches win; otherwise the OLDEST
+// canonical match is returned so repeats consolidate onto the original issue
+// rather than the newest copy. When wantFiles is non-empty the same pass also
+// records the oldest open issue filed by this hive's App bot whose
+// file-reference set equals wantFiles (#9376). Bounded: agent-filed issues
+// are recent by construction, and an unbounded scan of a busy repo would burn
+// API budget on every create.
+func (c *Client) scanOpenIssues(ctx context.Context, owner, repo, title string, wantFiles map[string]bool) (openIssueMatches, error) {
 	wantCanonical := canonicalIssueSubject(title)
-	var canonicalMatch *gh.Issue
+	botLogin := strings.TrimSpace(c.appBotLogin)
+	var found openIssueMatches
 	opts := &gh.IssueListByRepoOptions{
 		State:       "open",
 		Sort:        "created",
@@ -650,7 +750,7 @@ func (c *Client) findOpenIssueByTitle(ctx context.Context, owner, repo, title st
 		opts.ListOptions.Page = page
 		issues, resp, err := c.client.Issues.ListByRepo(ctx, owner, repo, opts)
 		if err != nil {
-			return nil, err
+			return openIssueMatches{}, err
 		}
 		for _, is := range issues {
 			if is.IsPullRequest() {
@@ -658,19 +758,42 @@ func (c *Client) findOpenIssueByTitle(ctx context.Context, owner, repo, title st
 			}
 			candidate := strings.TrimSpace(is.GetTitle())
 			if candidate == title {
-				return is, nil
+				return openIssueMatches{subject: is}, nil
 			}
 			// Pages arrive newest-first, so overwriting leaves the oldest
-			// canonical match in hand once the scan finishes.
+			// match in hand once the scan finishes.
 			if wantCanonical != "" && canonicalIssueSubject(candidate) == wantCanonical {
-				canonicalMatch = is
+				found.subject = is
+			}
+			if len(wantFiles) > 0 && botLogin != "" && is.GetUser().GetLogin() == botLogin &&
+				equalFileRefSets(wantFiles, issueFileRefSet(candidate+"\n"+is.GetBody())) {
+				found.fileSet = is
 			}
 		}
 		if resp == nil || resp.NextPage == 0 {
 			break
 		}
 	}
-	return canonicalMatch, nil
+	return found, nil
+}
+
+// consolidatedFindingComment renders a finding folded into an open issue that
+// covers the same files (#9376). The header says why it is a comment rather
+// than its own issue, so whoever picks the issue up handles both in one PR.
+func consolidatedFindingComment(title, body string, files map[string]bool) string {
+	paths := make([]string, 0, len(files))
+	for f := range files {
+		paths = append(paths, "`"+f+"`")
+	}
+	sort.Strings(paths)
+	var b strings.Builder
+	b.WriteString("**Consolidated finding.** This was filed as a separate issue; it references exactly the same files as this one (")
+	b.WriteString(strings.Join(paths, ", "))
+	b.WriteString("), so it was folded in here instead. Address it in the same PR as this issue — two PRs editing the same files would conflict.\n\n### ")
+	b.WriteString(title)
+	b.WriteString("\n\n")
+	b.WriteString(body)
+	return b.String()
 }
 
 func (c *Client) ensureCreateIssueLabel(ctx context.Context, owner, repo, name string) error {

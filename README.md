@@ -258,7 +258,7 @@ Teardown: `bin/hive-podman-teardown.sh`.
 - Kubernetes 1.24+
 - A StorageClass that supports `ReadWriteOnce` (the cluster default StorageClass works)
 - cert-manager (for TLS certificates)
-- nginx-ingress (for ingress routing)
+- ingress-nginx, the `kubernetes/ingress-nginx` controller (for ingress routing)
 
 ### Hosted Option
 
@@ -400,6 +400,10 @@ spec:
 ```
 
 Long timeouts are needed for SSE streaming connections to the dashboard.
+
+The `nginx.ingress.kubernetes.io/*` annotations only work with ingress-nginx. Other controllers,
+including F5's NGINX Ingress Controller, ignore them, so set the same body size and timeouts with
+that controller's own options.
 
 #### Quick apply (all manifests)
 

@@ -207,18 +207,30 @@ const (
 const BreakerTrigger = "fleet-breaker"
 
 type AgentProcess struct {
-	Name          string
-	ID            string
-	Config        config.AgentConfig
-	State         ProcessState
-	PID           int
-	UID           int
-	StartedAt     *time.Time
-	LastKick      *time.Time
-	Paused        bool
-	PausedAt      time.Time
-	PausedReason  string
-	PausedTrigger string
+	Name      string
+	ID        string
+	Config    config.AgentConfig
+	State     ProcessState
+	PID       int
+	UID       int
+	StartedAt *time.Time
+	LastKick  *time.Time
+	// KicksUndeliverable counts consecutive kicks that could not be delivered
+	// because the pane never became safe for input. It resets on successful
+	// delivery or restart and is surfaced so operators can distinguish "due
+	// now" from "due but still busy".
+	KicksUndeliverable int
+	// BusySince is the first undeliverable-kick time in the current busy run.
+	BusySince time.Time
+	// LastTranscriptActivity is the newest events.jsonl mtime seen under this
+	// agent's own Copilot session-state tree.
+	LastTranscriptActivity time.Time
+	BusyCondition          string
+	BusyConditionMessage   string
+	Paused                 bool
+	PausedAt               time.Time
+	PausedReason           string
+	PausedTrigger          string
 	// PausedBy is the acting user behind the pause when one is known — the
 	// authenticated dashboard user for a dashboard-api pause, empty for
 	// system-initiated pauses (login-detector, fleet-breaker, acmm-pack).
@@ -306,7 +318,12 @@ type AgentProcess struct {
 	// spend the token-restart budget (see paneShowsStartupRateLimit).
 	lastRateLimitRestart time.Time
 	NeedsLogin           bool // true when pane shows a login prompt
-	QuotaExhausted       bool // true when pane shows provider/monthly quota exhaustion
+	// Starting is snapshot-only: true while the agent is still in the boot
+	// stagger (startupLaunchQueued) or its launch is in progress (launching).
+	// Its State is still "stopped" in that window, which the dashboard used to
+	// paint as down-red on every hive restart even though nothing is wrong.
+	Starting       bool
+	QuotaExhausted bool // true when pane shows provider/monthly quota exhaustion
 	// WatchdogConditions is the k8s-style observed-health condition set the
 	// watchdog reconciler publishes for this agent (RFC #4665): Ready /
 	// Authenticated / Producing with lastTransitionTime + reason. Written by
@@ -321,14 +338,15 @@ type AgentProcess struct {
 	// authenticated CLI sits there producing nothing. Written under paneMu by
 	// pollTmuxOutputForAgent alongside lastPaneCapture; zero until the poller
 	// has seen two differing captures, which reads as "unknown", never "idle".
-	LastPaneChange       time.Time
-	consentSeenAt        time.Time // watcher: when a consent screen was first seen in the pane
-	lastConsentDismiss   time.Time // watcher: cooldown for re-running dismissInferencePrompts
-	lastInferKickAt      time.Time // stall watchdog: when the last kick was delivered to an inference agent
-	lastInferKickPane    string    // stall watchdog: hash of the visible pane just after kick delivery
-	lastInferKickVisible string    // stall watchdog: visible pane text just after kick delivery
-	stallNudgeSent       bool      // stall watchdog: at most one nudge per kick
-	StallNudges          int       // total post-kick stall nudges sent (surfaced to the dashboard)
+	LastPaneChange          time.Time
+	consentSeenAt           time.Time // watcher: when a consent screen was first seen in the pane
+	lastConsentDismiss      time.Time // watcher: cooldown for re-running dismissInferencePrompts
+	lastInferKickAt         time.Time // stall watchdog: when the last kick was delivered to an inference agent
+	lastInferKickPane       string    // stall watchdog: hash of the visible pane just after kick delivery
+	lastInferKickVisible    string    // stall watchdog: visible pane text just after kick delivery
+	stallNudgeSent          bool      // stall watchdog: at most one nudge per kick
+	lastSessionStallRestart time.Time // session-liveness: last restart for a hung Copilot session
+	StallNudges             int       // total post-kick stall nudges sent (surfaced to the dashboard)
 	// Transient API-error recovery (#4697), for CLI backends. lastTransientNudge
 	// is the cooldown anchor — the poller runs every 3s and the error text stays
 	// on screen after the nudge is typed, so without it one incident would fire
@@ -417,6 +435,10 @@ type AgentProcess struct {
 	// followed within seconds by a kick that will itself be restarted.
 	kickHoldUntil  time.Time
 	kickHoldReason string
+	// busyConditionWarned is the last visibility condition logged at warn
+	// level for this busy episode. Empty when no condition is active.
+	busyConditionWarned  string
+	lastTranscriptScanAt time.Time
 }
 
 // ProjectContext holds project-level config injected into agent boot prompts.
@@ -1503,11 +1525,20 @@ func (m *Manager) CountAgentsWithModel() int {
 }
 
 func (m *Manager) AllStatuses() map[string]*AgentProcess {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	now := time.Now()
+	m.mu.Lock()
+	scans := m.pendingTranscriptActivityScansLocked(now)
+	m.mu.Unlock()
+
+	results := scanTranscriptActivity(scans)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.applyTranscriptActivityResultsLocked(results, now)
 
 	result := make(map[string]*AgentProcess, len(m.agents))
 	for k, v := range m.agents {
+		m.refreshBusyVisibilityLocked(v, now)
 		snap := v.snapshot()
 		result[k] = &snap
 	}

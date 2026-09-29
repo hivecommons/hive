@@ -162,6 +162,10 @@ type Client struct {
 	// request without rebuilding the client. nil means off. See
 	// reauthorBranchSigned.
 	prSignedCommits func() bool
+	// signedReconcile is the state of the follow-up signing pass (#9364):
+	// last-seen head per open PR, PRs already told why they can't be signed,
+	// and when the pass last ran. See pr_signed_reconcile.go.
+	signedReconcile signedReconcileState
 	// prOpenedHook, when set, is told about every NEW PR the request watcher
 	// opens (agent, repo, number, url) — the seam progress surfaces such as
 	// the Linear session emitter hook. atomic so SetPROpenedHook is safe
@@ -190,6 +194,13 @@ type Client struct {
 	// SetReviewBots.
 	reviewBotsMu sync.RWMutex
 	reviewBots   config.ReviewBotsConfig
+	// fixHumanPRs mirrors review.fix_human_prs (hivecommons/hive#8421) into
+	// the review-thread reconciler (#9361): when on, CollectReviewThreads also
+	// follows up on PRs the hive did not open, since the fixer is now allowed
+	// to push to them too. Guarded like reviewBots for the same reload race.
+	// Set by SetFixHumanPRs.
+	fixHumanPRsMu sync.RWMutex
+	fixHumanPRs   bool
 	// issueRetries tracks per-request-file retry backoff for the issue-request
 	// watcher (in-memory; reset on restart). Guarded by issueRetryMu.
 	issueRetryMu sync.Mutex
@@ -2907,8 +2918,10 @@ func (c *Client) IsHeldLabels(labels []string) bool {
 	return c.isHeld(labels)
 }
 
-// RecordPRMergedAudit records the standard PR-merged audit event.
-func (c *Client) RecordPRMergedAudit(repo string, number int, method, sha string) {
+// RecordPRMergedAudit records the standard PR-merged audit event. path names
+// the code path that performed the merge (PRAuditPathSweep, PRAuditPathQueue,
+// PRAuditPathRelay).
+func (c *Client) RecordPRMergedAudit(repo string, number int, method, sha, path string) {
 	if c == nil {
 		return
 	}
@@ -2916,7 +2929,8 @@ func (c *Client) RecordPRMergedAudit(repo string, number int, method, sha string
 		"repo", repo,
 		"number", strconv.Itoa(number),
 		"method", method,
-		"sha", sha)
+		"sha", sha,
+		"path", path)
 }
 
 // RepoWorkBreakdown explains the raw open issue and PR totals for one

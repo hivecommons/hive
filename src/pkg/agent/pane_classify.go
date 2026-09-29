@@ -24,6 +24,8 @@ var loginPromptPatterns = []string{
 	"Authenticate to use",
 	"log in to use",
 	"Log in to use",
+	"Not logged in",
+	"not logged in",
 	// Claude Code OAuth sign-in screen
 	"Use the url below to sign in",
 	"Paste code here if prompted",
@@ -320,10 +322,18 @@ var loginDirectiveVerbs = []string{
 	"please", "run", "type", "use", "enter", "try", "must", "need",
 }
 
+// Claude's renewal banner describes credentials that are still valid (#9356).
+// Match the whole warning so an expired login or an attached authentication
+// failure still reaches the normal login detector.
+var loginExpiryWarningRe = regexp.MustCompile(`(?i)^\s*(?:⚠\x{FE0F}?\s*)?your login (?:expires|will expire) (?:in [^·\r\n]+|soon)\s*·\s*run /login to renew\s*$`)
+
 // lineHasLoginDirective reports whether a line both mentions "/login" AND
-// carries an imperative that makes it a directive to the operator.
+// carries an imperative requiring authentication, rather than optional renewal.
 func lineHasLoginDirective(line string) bool {
 	if !strings.Contains(line, "/login") {
+		return false
+	}
+	if loginExpiryWarningRe.MatchString(line) {
 		return false
 	}
 	lower := strings.ToLower(line)

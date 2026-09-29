@@ -181,9 +181,15 @@ What it does not do, and falls back on (the PR still opens on the agent's own co
 - changes the mutation cannot express: executable bits, symlinks, submodule pointers;
 - changes above 20 MiB of file content, or past the compare API's 300-file list;
 - a head branch that moved (the agent pushed again) between reading the diff and updating the ref — nothing is replaced that the signed commit does not carry;
-- a head branch that already has an open PR — that PR is reused untouched, as before.
+- a head branch that already has an open PR — that PR is reused untouched at open time, and the follow-up pass below signs it instead.
 
-It covers the PR as opened. A commit an agent pushes to the branch afterwards is plain git again and unsigned. Leave it off (the default) on hives whose base branches do not require signatures; it rewrites agent branches for no benefit there.
+**Follow-up commits.** An agent's later pushes to its open PR (a CI fix, review follow-ups, a rebase) are plain git and unsigned, and so is a PR that opened on a `signed_skipped` fallback. With `app_signed_commits` on, the PR-request watcher also runs a reconcile pass, at most once a minute (#9364). For every open PR authored by the App bot whose head is not **Verified**, it finds the newest Verified commit and re-authors the unsigned commits after it as one GitHub-signed commit on top of that commit. The tree is the same, and the message carries the tail's messages and DCO trailers, re-addressed as above. With no Verified commit in the PR, it signs against the PR's base branch, as at open time. The open path's guards all still apply. A head that moves mid-rewrite is retried on the next pass. A PR whose head hasn't changed since the last pass costs no calls beyond the open-PR list.
+
+The pass re-signs only the hive's own work. Every commit in the unsigned tail must have an author and committer that are the App bot or an address in the pane identity domain (`HIVE_GIT_BOT_EMAIL_DOMAIN`, default `hive.kubestellar.io`). A person's commit, or a merge commit, in the tail leaves the branch as pushed. So does any change the mutation can't express. The PR then gets one comment (marked `<!-- hive:signed-commits-blocked -->`, posted once per PR) saying why its head can't be signed and so can't merge under `required_signatures`.
+
+**Agents after a push.** The rewrite replaces the agent's commits on the remote, so its local branch no longer matches, even though the tree is identical. Before committing again on a branch with an open PR, run `git fetch && git rebase origin/<branch>`. The rebase drops the now-empty local commits and keeps any new work. Never force-push over the signed commit: that puts the unsigned commits back, and the next pass has to sign them again.
+
+Leave it off (the default) on hives whose base branches do not require signatures; it rewrites agent branches for no benefit there.
 
 ## Choosing a Setup URL
 

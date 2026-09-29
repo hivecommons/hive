@@ -34,7 +34,7 @@ type Transport interface {
 	// merges the same way it blocks enumeration (#8927).
 	IsHeldLabels(labels []string) bool
 	UpdateBranch(ctx context.Context, repo string, number int) error
-	RecordPRMergedAudit(repo string, number int, method, sha string)
+	RecordPRMergedAudit(repo string, number int, method, sha, path string)
 }
 
 type levelHoldTransport interface {
@@ -956,7 +956,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// health verdict is judged on them. When the fleet's merges moved to this
 	// sweep, the unaudited path made merging hives read as "no merge in Nd"
 	// red on /fleet (observed live on kubestellar/console, 2026-08-26).
-	c.transport.RecordPRMergedAudit(owner+"/"+repo, number, "squash", mergeResult.GetSHA())
+	c.transport.RecordPRMergedAudit(owner+"/"+repo, number, "squash", mergeResult.GetSHA(), hgithub.PRAuditPathSweep)
 	event := AutoMergeSweepEvent{
 		Repo:     displayRepo,
 		Number:   number,
@@ -1215,8 +1215,9 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		return AutoMergeSweepEvent{}, "merge-not-applied", nil
 	}
 	// Same audit obligation as the self-authored path above: pr_merged on
-	// the trail is what makes this merge count as hive output.
-	c.transport.RecordPRMergedAudit(owner+"/"+repo, number, "squash", mergeResult.GetSHA())
+	// the trail is what makes this merge count as hive output. path=queue:
+	// a person queued this PR; the sweep only carried the merge out.
+	c.transport.RecordPRMergedAudit(owner+"/"+repo, number, "squash", mergeResult.GetSHA(), hgithub.PRAuditPathQueue)
 	event := AutoMergeSweepEvent{
 		Repo:     displayRepo,
 		Number:   number,

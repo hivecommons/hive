@@ -314,6 +314,11 @@ func (m *Manager) deliverKickAsync(name, message string) error {
 		if m.kickEpochChanged(agent, epoch) {
 			return fmt.Errorf("%w: agent %s restarted while the kick was waiting for its input prompt", errKickCancelledByRestart, name)
 		}
+		m.mu.Lock()
+		if current, ok := m.agents[name]; ok && current == agent && agent.kickEpoch == epoch {
+			m.markKickUndeliverableLocked(agent, time.Now())
+		}
+		m.mu.Unlock()
 		return fmt.Errorf("agent %s CLI did not reach input prompt", name)
 	}
 

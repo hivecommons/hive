@@ -43,8 +43,15 @@ const (
 	AuditActionHiveIssueCreated = "hive_issue_created"
 	// AuditActionPRMerged is the audit action recorded when the hive merges a
 	// PR as the App bot over REST (MergePR). It closes the create→merge loop on
-	// the dashboard audit log: issue created → PR created → PR merged.
+	// the dashboard audit log: issue created → PR created → PR merged. Detail
+	// carries path= naming which hive path merged it (see PRAuditPath*).
 	AuditActionPRMerged = "pr_merged"
+	// AuditActionPRClosed is the audit action recorded when the hive closes a
+	// PR WITHOUT merging it: the issue-request watcher's close relay targeting
+	// a pull request number. It is the "closed without merging" half of the
+	// PR throughput counts; agent_issue_closed stays issues-only. Detail
+	// carries path= (see PRAuditPath*).
+	AuditActionPRClosed = "pr_closed"
 	// AuditActionAdvisoryCommented is the audit action recorded when the hive
 	// FIRST posts the advisory digest comment on the advisory issue. The digest
 	// is refreshed (EditComment) roughly once a minute; those updates are NOT
@@ -77,6 +84,24 @@ const (
 	// AuditActionReviewModelFallback is recorded when an adversarial reviewer
 	// pool has no independent candidate and the configured fallback is used.
 	AuditActionReviewModelFallback = "review_model_fallback"
+)
+
+// PR audit path values: the "path=" detail field on pr_merged and pr_closed
+// entries names which hive code path performed the merge or close, so the
+// dashboard can split merges the hive decided on alone from merges a person
+// asked for. Existing consumers parse detail as key=value pairs and ignore
+// keys they do not know, so the field is additive.
+const (
+	// PRAuditPathSweep marks a merge the self-authored auto-merge sweep
+	// decided on by itself (no human queued it).
+	PRAuditPathSweep = "sweep"
+	// PRAuditPathQueue marks a merge the auto-merge sweep carried out for a PR
+	// a person queued (the auto-merge label / dashboard queue).
+	PRAuditPathQueue = "queue"
+	// PRAuditPathRelay marks a merge or close performed by a request relay:
+	// MergePR from the hive-merge relay, or a PR close from the issue-request
+	// watcher.
+	PRAuditPathRelay = "relay"
 )
 
 // System "agent" names recorded for creations no single coding agent

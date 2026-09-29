@@ -28,7 +28,7 @@ func (stubTransport) IsHeldLabels(labels []string) bool { return hgithub.HasHold
 func (stubTransport) UpdateBranch(context.Context, string, int) error {
 	return nil
 }
-func (stubTransport) RecordPRMergedAudit(string, int, string, string) {}
+func (stubTransport) RecordPRMergedAudit(string, int, string, string, string) {}
 
 func TestSelfAuthorizationReleaseBudget(t *testing.T) {
 	var nilEngine *Engine

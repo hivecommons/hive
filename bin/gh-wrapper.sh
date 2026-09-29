@@ -965,6 +965,54 @@ _identity_footer() {
   echo -e "$parts"
 }
 
+# Guard Markdown thematic breaks against becoming setext heading underlines.
+#
+# A line of `---` placed DIRECTLY under a paragraph is not a rule in Markdown —
+# it is a setext underline that turns the paragraph above into an <h2>. Agents write
+# `Filed by …\n---` and `Resolved — outage cleared\n---` all the time, and the
+# identity footer below opens with `---` too, so the last paragraph of nearly
+# every agent comment rendered as a large bold heading (hivecommons/hive#9454).
+# Inserting a blank line before every rule that follows text makes each one a
+# real thematic break. Fenced code blocks are left untouched: `---` inside a
+# fence is literal content (YAML front matter, diffs, tables of dashes).
+_guard_markdown_rules() {
+  # Portable awk only (mawk on the CI runners has no {n,m} intervals): a rule
+  # is a line of three or more dashes with optional spaces between them.
+  awk '
+    function is_blank(s) { return s ~ /^[ \t]*$/ }
+    function is_dash_rule(s) {
+      gsub(/[ \t]/, "", s)
+      return s ~ /^---+$/
+    }
+    function fence_marker(s) {
+      sub(/^ */, "", s)
+      if (s ~ /^```/) { match(s, /^`+/); return substr(s, 1, RLENGTH) }
+      if (s ~ /^~~~/) { match(s, /^~+/); return substr(s, 1, RLENGTH) }
+      return ""
+    }
+    BEGIN { prev_blank = 1; fence = "" }
+    {
+      line = $0
+      if (fence == "") {
+        m = fence_marker(line)
+        if (m != "") {
+          fence = m
+        } else if (!prev_blank && is_dash_rule(line)) {
+          print ""
+        }
+      } else {
+        m = fence_marker(line)
+        closing = line; sub(/^ */, "", closing); sub(/[ \t]*$/, "", closing)
+        if (m != "" && substr(m, 1, 1) == substr(fence, 1, 1) && length(m) >= length(fence) && closing == m) {
+          fence = ""
+        }
+      }
+      print line
+      prev_blank = is_blank(line)
+    }
+  '
+}
+
 # Inject the identity footer into whichever body flag the caller used, and
 # append `--body <footer>` only when there is genuinely no body at all.
 #
@@ -1054,7 +1102,16 @@ _inject_identity() {
     # Normalized to the separated `--body` form. gh, hive-open-issue and
     # hive-open-pr all accept it, and emitting one shape keeps the six input
     # spellings from multiplying into six output spellings.
+    #
+    # The footer starts with a `---` rule. A blank line MUST separate it from
+    # the body: in Markdown a `---` directly under a paragraph is a setext
+    # heading underline, which rendered every agent comment's last paragraph
+    # as a large bold H2. Trailing whitespace in the body is trimmed first so
+    # the gap is exactly one blank line regardless of how the file ended.
+    body_val="$(printf '%s\n' "${body_val}" | _guard_markdown_rules)"
+    body_val="${body_val%"${body_val##*[![:space:]]}"}"
     new_args+=("--body" "${body_val}
+
 ${footer}")
     body_found=true
     i=$((i+consumed))

@@ -48,8 +48,17 @@ type ReviewThreadPR struct {
 	Agent string `json:"agent,omitempty"`
 	// Escalated marks a PR handed to a human (needs-human). The kick builder
 	// never lists escalated PRs, same as the red-CI block.
-	Escalated bool           `json:"escalated,omitempty"`
-	Threads   []ReviewThread `json:"threads"`
+	Escalated bool `json:"escalated,omitempty"`
+	// HumanOpened is true when this PR is here only because
+	// review.fix_human_prs is on (hivecommons/hive#9361): neither the author
+	// nor the `— hive:` trailer says the hive is answerable for it. The kick
+	// builder forces resolve_after_fix off for these regardless of the
+	// global setting — an agent may reply and push a fix, but per #9361's
+	// open question, a person decides whether the thread is actually closed,
+	// since the bot's finding may be disputing a deliberate decision the PR's
+	// own author made.
+	HumanOpened bool           `json:"human_opened,omitempty"`
+	Threads     []ReviewThread `json:"threads"`
 }
 
 // ReviewThread is one unresolved, non-outdated inline thread whose first
@@ -112,6 +121,27 @@ func (c *Client) getReviewBots() config.ReviewBotsConfig {
 	c.reviewBotsMu.RLock()
 	defer c.reviewBotsMu.RUnlock()
 	return c.reviewBots
+}
+
+// SetFixHumanPRs installs review.fix_human_prs. Nil-receiver safe and guarded
+// like SetReviewBots: config reload and the monitor read it from different
+// goroutines. See the fixHumanPRs field doc (hivecommons/hive#9361).
+func (c *Client) SetFixHumanPRs(enabled bool) {
+	if c == nil {
+		return
+	}
+	c.fixHumanPRsMu.Lock()
+	defer c.fixHumanPRsMu.Unlock()
+	c.fixHumanPRs = enabled
+}
+
+func (c *Client) getFixHumanPRs() bool {
+	if c == nil {
+		return false
+	}
+	c.fixHumanPRsMu.RLock()
+	defer c.fixHumanPRsMu.RUnlock()
+	return c.fixHumanPRs
 }
 
 // isHiveLogin reports whether login is one of this hive's own accounts: the
@@ -289,11 +319,17 @@ func (c *Client) isHiveMediatedPR(pr PullRequest) bool {
 // PRs. Callers pass the governor's already-enumerated actionable PR list, so
 // the hold / do-not-merge / exempt-label and draft exclusions are exactly the
 // ones every other kick input already has (fetchPRs applies them). This
-// function additionally keeps only HIVE-MEDIATED PRs (isHiveMediatedPR: a
-// hive login as author, or the attribution trailer in the body) and skips the
-// GraphQL round trip entirely when review_bots is off. A PR whose thread
-// fetch fails is logged and omitted (omission means "no attempt this pass",
-// the safe direction); it is not an error for the report as a whole.
+// function keeps HIVE-MEDIATED PRs (isHiveMediatedPR: a hive login as author,
+// or the attribution trailer in the body) always, and additionally keeps
+// every OTHER open PR when review.fix_human_prs is on (hivecommons/hive#9361):
+// that setting already lets the fixer push to PRs the hive did not open, so
+// the reconciler follows the same PRs rather than leaving their bot threads
+// unanswered. Those PRs are marked HumanOpened so the kick builder can force
+// resolve_after_fix off for them regardless of the global setting. Either way
+// this skips the GraphQL round trip entirely when review_bots is off. A PR
+// whose thread fetch fails is logged and omitted (omission means "no attempt
+// this pass", the safe direction); it is not an error for the report as a
+// whole.
 func (c *Client) CollectReviewThreads(ctx context.Context, prs []PullRequest, now time.Time) ReviewThreadsReport {
 	report := ReviewThreadsReport{GeneratedAt: now.UTC().Format(time.RFC3339), PRs: []ReviewThreadPR{}}
 	if c == nil {
@@ -304,8 +340,10 @@ func (c *Client) CollectReviewThreads(ctx context.Context, prs []PullRequest, no
 	if !report.Enabled {
 		return report
 	}
+	fixHumanPRs := c.getFixHumanPRs()
 	for _, pr := range prs {
-		if pr.Draft || !c.isHiveMediatedPR(pr) {
+		mediated := c.isHiveMediatedPR(pr)
+		if pr.Draft || (!mediated && !fixHumanPRs) {
 			continue
 		}
 		if isHeld(pr.Labels) || c.isExempt(pr.Labels) || hasBlockedLabel(pr.Labels) {
@@ -334,11 +372,12 @@ func (c *Client) CollectReviewThreads(ctx context.Context, prs []PullRequest, no
 			threads = []ReviewThread{}
 		}
 		report.PRs = append(report.PRs, ReviewThreadPR{
-			Repo:    owner + "/" + repoName,
-			Number:  pr.Number,
-			Title:   pr.Title,
-			HeadRef: headRef,
-			Threads: threads,
+			Repo:        owner + "/" + repoName,
+			Number:      pr.Number,
+			Title:       pr.Title,
+			HeadRef:     headRef,
+			HumanOpened: !mediated,
+			Threads:     threads,
 		})
 		report.TotalThreads += len(threads)
 	}

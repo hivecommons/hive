@@ -1202,15 +1202,74 @@ if [ "$(id -u)" = "0" ]; then
     return 0
   }
 
+  # The tree repair used to be three independent walks: chmod every entry,
+  # then g+s every directory, then `chown dev:node` every entry (#9226). An
+  # entry an agent created after the chmod walk had passed its directory but
+  # before the chown walk reached it was chowned WITHOUT having been chmodded:
+  # a copilot session file the agent had just created owner-only
+  # (hive-sec-check, 0600) became dev-owned 0600, and its own creator -- no
+  # longer the owner, not granted by the group -- got EACCES appending to it
+  # until a later chmod. The in-process Go watcher (fixEntry) is no reliable
+  # backstop: it chmods only entries dev owns, never an agent-owned one, and
+  # does so from an unbounded 10s walk of the same tree. On the hourly
+  # unbounded pass each walk takes minutes over a large .copilot/session-state,
+  # so the window was minutes wide, and the failed append is a failed
+  # `session.send`, not just lost telemetry.
+  #
+  # Two changes close it, in hive_fix_walk below:
+  #   1. Agent-owned entries are never re-owned. Handing an agent's file to dev
+  #      is what turned a transient mode gap into a lock-out of its creator;
+  #      the group (node) plus g+rw is all any peer needs. Non-root entries are
+  #      only regrouped to node, keeping their owner -- the same rule the Go
+  #      watcher applies (fixEntry: uid 0 -> dev, otherwise keep the uid).
+  #   2. One find enumeration feeds both chmod and chown, so an entry created
+  #      mid-sweep is either in the batch (and chmodded first) or not touched.
+  #
+  # hive_fix_regroup_sh — batch script for non-root entries: chmod MODE,
+  # regroup to node, chmod MODE again, over the whole batch. No ownership
+  # changes here, so a chmod failing for one entry cannot lock anyone out, and
+  # batching keeps the walk to one `sh` per few thousand entries. The trailing
+  # chmod makes a path whose inode an agent replaced by rename mid-batch end
+  # group-writable anyway. `exit 0`: a batch failure is not the guard's.
+  hive_fix_regroup_sh() {
+    printf '%s' 'm=$1; shift; chmod "$m" "$@" 2>/dev/null; chown -h :node "$@" 2>/dev/null; chmod "$m" "$@" 2>/dev/null; exit 0'
+  }
+
+  # hive_fix_reown_sh — script for ROOT-owned entries, the only ones handed to
+  # dev (dev is the Go watcher's uid, and root-owned files lock every agent
+  # out). Per entry and gated: chown runs only after that entry's chmod
+  # succeeded, so an ownership transfer never produces an owner-only dev file.
+  # Root-owned entries are rare, so the per-entry cost is negligible.
+  hive_fix_reown_sh() {
+    printf '%s' 'm=$1; shift; for p; do chmod "$m" "$p" 2>/dev/null && chown -h dev:node "$p" 2>/dev/null && chmod "$m" "$p" 2>/dev/null; done; exit 0'
+  }
+
+  # hive_fix_walk DIR [FIND_TESTS...] — one find walk over DIR (restricted by
+  # FIND_TESTS, e.g. `-mmin -10`): directories get g+rwxs, everything else
+  # g+rwX; root-owned entries go to hive_fix_reown_sh, all others to
+  # hive_fix_regroup_sh.
+  #
+  # Symlinks present when find enumerates are skipped: chmod dereferences the
+  # path it is given, and agents can create links in these trees, so passing a
+  # link through would have root group-open its target. This is not a full
+  # no-follow guarantee -- chmod has no no-follow form, so an entry an agent
+  # swaps for a link between enumeration and the chmod is still followed (the
+  # same window `chmod -R` has). `chown -h` never follows.
+  hive_fix_walk() {
+    [ -d "$1" ] || return 0
+    _walk_root="$1"; shift
+    _regroup_sh="$(hive_fix_regroup_sh)"
+    _reown_sh="$(hive_fix_reown_sh)"
+    find "$_walk_root" ! -type l "$@" \( -type d -uid 0 -exec sh -c "$_reown_sh" sh g+rwxs {} + -o -type d -exec sh -c "$_regroup_sh" sh g+rwxs {} + -o -uid 0 -exec sh -c "$_reown_sh" sh g+rwX {} + -o -exec sh -c "$_regroup_sh" sh g+rwX {} + \) 2>/dev/null || true
+    return 0
+  }
+
   # hive_fix_tree DIR — the recursive sweep, for trees that do not churn under
-  # an active CLI. Every arm is `|| true`: `chmod -R` over a live tree returns
+  # an active CLI. Every arm is `|| true`: a walk over a live tree returns
   # non-zero whenever an entry vanishes mid-walk, and that must cost one sweep,
   # never the guard.
   hive_fix_tree() {
-    [ -d "$1" ] || return 0
-    chmod -R g+rwX "$1" 2>/dev/null || true
-    find "$1" -type d -exec chmod g+s {} + 2>/dev/null || true
-    chown -R dev:node "$1" 2>/dev/null || true
+    hive_fix_walk "$1"
     return 0
   }
 
@@ -1233,11 +1292,8 @@ if [ "$(id -u)" = "0" ]; then
   # found 2 entries to fix. hive_fix_full_cycle still runs the unbounded sweep
   # hourly as a backstop for anything a missed window left behind.
   hive_fix_tree_recent() {
-    [ -d "$1" ] || return 0
     _mins="${2:-10}"
-    find "$1" -mmin -"$_mins" -exec chmod g+rwX {} + 2>/dev/null || true
-    find "$1" -mmin -"$_mins" -type d -exec chmod g+s {} + 2>/dev/null || true
-    find "$1" -mmin -"$_mins" -exec chown dev:node {} + 2>/dev/null || true
+    hive_fix_walk "$1" -mmin -"$_mins"
     return 0
   }
 

@@ -235,6 +235,17 @@ const RuntimeConfigFileLegacy = "/data/hive.yaml.bak"
 // never changes at runtime in production.
 var DashboardOverlayFile = "/data/hive.yaml.dashboard"
 
+// DefaultAgentOverlayDir is the directory Load falls back to for per-agent
+// overlay files (<agent>.yaml) when data.agents_dir is not set in the config.
+// On a live hive host it holds the real roster, which Load merges over
+// whatever the caller passed in — so tests that exercise Load with fixture
+// YAML must not see it.
+//
+// A package var (not const) only so tests can point it at a temp dir; it
+// never changes at runtime in production (same convention as
+// RuntimeConfigFile and DashboardOverlayFile above).
+var DefaultAgentOverlayDir = "/data/agent-configs"
+
 // saTokenFile is the Kubernetes serviceaccount token path IsKubernetesPod
 // probes. It is a var (not a const) only so tests can point it at a
 // non-existent path and stay hermetic on hosts that really are pods;

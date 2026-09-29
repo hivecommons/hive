@@ -48,6 +48,17 @@ func TestPaneShowsAgentWorking(t *testing.T) {
 	spinnerOnly := ` ◉ Working · 3.0 KiB                                           Claude Fable 5
 ❯`
 
+	waitingForBackgroundAgents := `❯
+────────
+ ● Waiting for background agents · 500 B esc stop agents`
+
+	legacyEscToInterrupt := `❯
+────────
+ ◉ Working · 29.1 KiB esc to interrupt`
+
+	ompRunningCancel := `⏺ Running… (esc to cancel)
+❯`
+
 	// goose and codex render no working indicator at all; their idle panes
 	// must never be misclassified as working.
 	gooseIdle := "goose is ready\n> "
@@ -64,6 +75,9 @@ func TestPaneShowsAgentWorking(t *testing.T) {
 		{"visible idle prompt, no working marker", idleVisibleWorkingInScrollback, false},
 		{"esc interrupt footer is working", escInterruptOnly, true},
 		{"working spinner is working", spinnerOnly, true},
+		{"waiting for background agents footer is working", waitingForBackgroundAgents, true},
+		{"legacy esc to interrupt footer is working", legacyEscToInterrupt, true},
+		{"omp esc to cancel footer is working", ompRunningCancel, true},
 		{"goose idle is not working", gooseIdle, false},
 		{"codex idle is not working", codexIdle, false},
 	}
@@ -112,6 +126,12 @@ func TestPaneShowsAgentWorking_ReadinessContract(t *testing.T) {
 	if !ready(visibleIdle, fullWithScrollback) {
 		t.Errorf("idle visible pane with working marker in scrollback classified " +
 			"NOT ready; must be ready or the agent is never kicked again")
+	}
+
+	fullWithWaitingFooterScrollback := " ● Waiting for background agents · 500 B esc stop agents\n" + visibleIdle
+	if !ready(visibleIdle, fullWithWaitingFooterScrollback) {
+		t.Errorf("idle visible pane with background-agent footer in scrollback classified " +
+			"NOT ready; must be ready because only the visible pane decides busy")
 	}
 }
 

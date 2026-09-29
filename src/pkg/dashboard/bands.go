@@ -96,7 +96,7 @@ func uniqueLabels(labels, fallback []string) []string {
 	return out
 }
 
-func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConfig, now time.Time) IssueBandInfo {
+func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConfig, now time.Time, selfAuthorizationHoldActive ...func(string) bool) IssueBandInfo {
 	norm := normalizeIssueBandsConfig(cfg)
 	labels := labelSet(issue.Labels)
 	role := issueAgentRole(issue.Labels)
@@ -105,7 +105,11 @@ func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConf
 	done := hasAnyLabel(labels, norm.DoneLabels) || linked.merged
 	waiting := hasAnyLabel(labels, norm.WaitingLabels)
 	inProgress := len(issue.Assignees) > 0 || issueClaimed(issue.Labels) || linked.open
-	agentFiled := role != "" && !acknowledged
+	selfAuthorizationHeld := true
+	if len(selfAuthorizationHoldActive) > 0 && selfAuthorizationHoldActive[0] != nil {
+		selfAuthorizationHeld = selfAuthorizationHoldActive[0](issue.Repo)
+	}
+	agentFiled := role != "" && !acknowledged && selfAuthorizationHeld
 
 	band := "ready"
 	switch {
@@ -311,7 +315,7 @@ func issueBandSpec(key string, cfg config.DashboardIssueBandsConfig) BandSpec {
 	case "in-progress":
 		return BandSpec{Key: key, Label: "Claimed", Short: "claimed", Rule: "assigned, claimed by an agent, or an open PR references it — nothing needed unless it stalls"}
 	case "agent-filed":
-		return BandSpec{Key: key, Label: "Needs triage", Short: "triage", Rule: "filed by an agent (agent/<role> label) with no approved-direction label and no human assignee — add the label, assign a human, or close it. A human comment also acknowledges for #5117 but is not in the snapshot, so a commented-on proposal still shows here"}
+		return BandSpec{Key: key, Label: "Needs triage", Short: "triage", Rule: "filed by an agent (agent/<role> label) with no approved-direction label, no human assignee, and self-authorization hold is on for the repo (ACMM < 6 or github.self_authorization_hold=true) — add the label, assign a human, or close it. A human comment also acknowledges for #5117 but is not in the snapshot, so a commented-on proposal still shows here"}
 	case "waiting":
 		return BandSpec{Key: key, Label: "Needs human", Short: "needs human", Rule: "labelled " + strings.Join(norm.WaitingLabels, ", ") + " — a human must unblock or decide before agents continue"}
 	case "done":

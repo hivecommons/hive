@@ -36,6 +36,13 @@ type signedMock struct {
 	blobs         map[string]string // sha → raw content
 	treeTruncated bool
 
+	// Follow-up reconciler (#9364) fixtures: the open-PR list, the PR's
+	// commits, and its issue comments. Nil openPRs answers the list with [].
+	openPRs   []map[string]any
+	prCommits []map[string]any
+	comments  []map[string]any
+	posted    []string // bodies of POSTed issue comments
+
 	calls    []string // "METHOD path"
 	graphql  map[string]any
 	refPatch map[string]any
@@ -63,7 +70,35 @@ func (m *signedMock) server() *httptest.Server {
 				"files":             m.files,
 			})
 		case r.Method == "GET" && strings.HasSuffix(p, "/pulls"):
-			_, _ = io.WriteString(w, `[]`)
+			m.mu.Lock()
+			prs := m.openPRs
+			m.mu.Unlock()
+			if prs == nil {
+				_, _ = io.WriteString(w, `[]`)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(prs)
+		case r.Method == "GET" && strings.Contains(p, "/pulls/") && strings.HasSuffix(p, "/commits"):
+			m.mu.Lock()
+			commits := m.prCommits
+			m.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(commits)
+		case r.Method == "GET" && strings.HasSuffix(p, "/comments"):
+			m.mu.Lock()
+			comments := m.comments
+			m.mu.Unlock()
+			if comments == nil {
+				comments = []map[string]any{}
+			}
+			_ = json.NewEncoder(w).Encode(comments)
+		case r.Method == "POST" && strings.HasSuffix(p, "/comments"):
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			m.mu.Lock()
+			m.posted = append(m.posted, body["body"].(string))
+			m.mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, `{"id":1}`)
 		case r.Method == "GET" && strings.Contains(p, "/git/ref/heads/"):
 			m.mu.Lock()
 			m.headRefReads++

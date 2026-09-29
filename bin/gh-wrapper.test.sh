@@ -711,6 +711,65 @@ _capture_run /dev/null pr comment 42 --repo test/repo --body='Equals form body.'
 _expect_injected_body "pr comment --body=<text> still gets exactly one footer" \
   pr comment 'Equals form body.'
 
+# The footer opens with a `---` rule. Markdown treats `---` directly under a
+# paragraph as a setext H2 underline, which rendered the last paragraph of
+# every agent comment as a large bold heading. A blank line must separate the
+# body from the footer, and exactly one even when the body file ends with
+# trailing newlines.
+_expect_footer_separated() {
+  local desc="$1" sub="$2" act="$3" last_para="$4"
+  local inv body
+  if ! inv="$(_capture_invocation "$sub" "$act")"; then
+    _body_fail "$desc" "no recorded 'gh ${sub} ${act}' invocation"
+    return 1
+  fi
+  body="$(_capture_body "$inv")"
+  # Pattern matching on the whole string: grep -F would split a multi-line
+  # pattern into one pattern per line, and an empty line matches anything.
+  if [[ "$body" == *"${last_para}"$'\n---'* ]]; then
+    _body_fail "$desc" "'---' sits directly under the last paragraph (renders as an H2 heading)" "body: ${body}"
+    return 1
+  fi
+  if [[ "$body" == *"${last_para}"$'\n\n\n---'* ]]; then
+    _body_fail "$desc" "more than one blank line before the footer" "body: ${body}"
+    return 1
+  fi
+  if [[ "$body" != *"${last_para}"$'\n\n---'* ]]; then
+    _body_fail "$desc" "expected '<last paragraph>\\n\\n---' before the footer" "body: ${body}"
+    return 1
+  fi
+  echo "PASS: $desc"
+  PASSED=$((PASSED + 1))
+}
+
+_capture_run /dev/null pr comment 42 --repo test/repo --body 'Final paragraph.'
+_expect_footer_separated "pr comment --body <text>: one blank line separates the body from the footer rule" \
+  pr comment 'Final paragraph.'
+
+TRAILING_NL_BODY_FILE="${WORK_DIR}/trailing-nl-body.md"
+printf 'First paragraph.\n\nFinal paragraph.\n\n\n' >"$TRAILING_NL_BODY_FILE"
+_capture_run /dev/null issue comment 42 --repo test/repo -F "$TRAILING_NL_BODY_FILE"
+_expect_footer_separated "issue comment -F <file ending in blank lines>: still exactly one blank line before the footer" \
+  issue comment 'Final paragraph.'
+
+# Agents also write their own `---` directly under text (`*Filed by …*\n---`),
+# which turned THAT line into a heading too. Every dash rule that follows text
+# gets a blank line; headings, existing blank-separated rules, and `---` inside
+# a fenced block are left exactly as written.
+INBODY_RULES_FILE="${WORK_DIR}/inbody-rules.md"
+printf '%s\n' '## Resolved' '' 'Closing; will re-file if it recurs.' '---' '*Filed by agent*' '' '---' 'kept' '```yaml' '---' 'key: v' '```' >"$INBODY_RULES_FILE"
+_capture_run /dev/null issue comment 42 --repo test/repo -F "$INBODY_RULES_FILE"
+if inv="$(_capture_invocation issue comment)" && body="$(_capture_body "$inv")"; then
+  desc="issue comment -F <file with in-body --- rules>: dash rules under text get a blank line, fences and headings untouched"
+  if [[ "$body" == *$'recurs.\n\n---\n*Filed by agent*\n\n---\nkept\n```yaml\n---\nkey: v\n```\n\n---\n'* && "$body" == $'## Resolved\n\nClosing'* ]]; then
+    echo "PASS: $desc"; PASSED=$((PASSED + 1))
+  else
+    _body_fail "$desc" "unexpected normalisation" "body: ${body}"
+  fi
+else
+  _body_fail "in-body --- rules" "no recorded 'gh issue comment' invocation"
+fi
+
 # No body at all is still the case that MUST add one.
 _capture_run /dev/null pr comment 42 --repo test/repo
 _expect_injected_body "pr comment with no body flag still gets --body <footer>" \

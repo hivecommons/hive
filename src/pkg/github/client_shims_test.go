@@ -54,7 +54,7 @@ func TestExportedClientShims(t *testing.T) {
 	if nilClient.AppBotLogin() != "" {
 		t.Error("nil client AppBotLogin should be empty")
 	}
-	nilClient.RecordPRMergedAudit("o/r", 1, "rebase", "sha")
+	nilClient.RecordPRMergedAudit("o/r", 1, "rebase", "sha", PRAuditPathRelay)
 
 	// Real client forwarding.
 	c := &Client{org: "defaultorg", repos: []string{"o/r"}, appBotLogin: "hive-bot[bot]", exemptLabels: []string{"exempt-me"}}
@@ -81,7 +81,7 @@ func TestExportedClientShims(t *testing.T) {
 	if c.IsExemptLabels([]string{"ordinary"}) {
 		t.Error("IsExemptLabels must not match an ordinary label")
 	}
-	c.RecordPRMergedAudit("o/r", 7, "rebase", "abc123")
+	c.RecordPRMergedAudit("o/r", 7, "rebase", "abc123", PRAuditPathRelay)
 }
 
 // TestSelfAuthorizationHelpers pins the pure helpers of the #5117

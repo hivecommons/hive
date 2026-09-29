@@ -463,6 +463,7 @@
     .oc-agent-detail-header .status-dot.paused { background: var(--status-warn); }
     .oc-agent-detail-header .status-dot.on-demand { background: var(--status-info); }
     .oc-agent-detail-header .status-dot.stopped { background: var(--status-error); }
+    .oc-agent-detail-header .status-dot.starting { background: var(--status-info); animation: oc-pulse 1.5s ease-in-out infinite; }
     /* needs-login is a HOLLOW attention ring — paused is a solid warning dot.
        The two states were both rendered as near-identical solid amber/yellow
        and operators could not tell "resting by choice" from "blocked on a
@@ -542,6 +543,7 @@
     .oc-agent-dot.paused { background: var(--status-warn); }
     .oc-agent-dot.on-demand { background: var(--status-info); }
     .oc-agent-dot.stopped { background: var(--status-error); }
+    .oc-agent-dot.starting { background: var(--status-info); animation: oc-pulse 1.5s ease-in-out infinite; }
     .oc-agent-dot.needs-login { background: transparent; border: 2px solid var(--status-attention); box-sizing: border-box; }
     /* off-healthy: hollow GREEN ring — healthy agent whose governor cadence for
        the current mode is pause/off, so it will not be kicked. Mirrors the
@@ -1125,6 +1127,7 @@
        the current mode, so it will not be kicked (mirrors needs-login, green). */
     .dot.off-healthy { background: transparent; border: 2px solid var(--status-ok); box-sizing: border-box; }
     .dot.stopped { background: var(--status-error); }
+    .dot.starting { background: var(--status-info); animation: oc-pulse 1.5s ease-in-out infinite; }
     .dot.needs-login { background: transparent; border: 2px solid var(--status-attention); box-sizing: border-box; }
     .agent-field { display: flex; justify-content: space-between; font-size: 0.8rem; padding: var(--sp-1) var(--sp-0); }
     .agent-field .label { color: var(--muted); }
@@ -1291,6 +1294,11 @@
     .lc-fleet-stat .val.blocked { color: var(--red); }
     .lc-fleet-stat .lbl { font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-top: var(--sp-1); }
     .lc-window { color: var(--muted); font-size: var(--fs-xs); margin-bottom: var(--sp-5); }
+    .prt-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-6); }
+    .prt-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: var(--sp-4); }
+    .lc-fleet-stat .val.opened { color: var(--blue); }
+    .lc-fleet-stat .val.closed { color: var(--red); }
+    .prt-paths { color: var(--muted); font-size: var(--fs-xs); margin-bottom: var(--sp-2); }
     .lc-journeys { list-style: none; margin: var(--sp-0); padding: var(--sp-0); display: flex; flex-direction: column; gap: var(--sp-2);
       max-height: 320px; overflow-y: auto; }
     .lc-journey { display: flex; align-items: center; gap: var(--sp-4); font-size: 0.78rem; padding: 5px 8px;
@@ -1394,6 +1402,8 @@
     .repo-hold-toggle[data-busy="1"] { opacity: 0.5; cursor: default; }
     .repo-hold-static { cursor: help; opacity: 0.85; }
     .repo-name a:hover { text-decoration: underline !important; }
+    .system-alert-link { color: inherit; text-decoration: underline; font-weight: 600; }
+    .system-alert-link:hover { opacity: 0.8; }
     /* The two stat columns (issues | PRs) and the two pill columns under
        them share one grid, so a pill sits under the number it counts
        toward. Kind is said by POSITION (and the column's tint: blue
@@ -1518,7 +1528,7 @@
     .repo-legend-group { display:flex; flex-direction:column; gap:var(--sp-2); }
     .repo-legend-group-title { color:var(--muted); font-size:var(--fs-2xs); font-weight:800; letter-spacing:0.08em; text-transform:uppercase; }
     .repo-legend-items { display:grid; grid-template-columns:max-content 1fr; gap:var(--sp-1) var(--sp-3); align-items:center; color:var(--muted); font-size:var(--fs-xs); }
-    .repo-legend-items .repo-issue-pill, .repo-legend-items .repo-pr-pill, .repo-legend-items .repo-issue-plan { display:inline-flex; align-items:center; gap:var(--sp-1); }
+    .repo-legend-items .repo-issue-pill, .repo-legend-items .repo-pr-pill, .repo-legend-items .repo-issue-plan { display:inline-flex; align-items:center; justify-content:center; gap:var(--sp-1); }
     @media (max-width:640px) { .repo-legend-v2 .repo-legend-body { grid-template-columns:1fr; } }
     .repo-issue-band, .repo-pr-band { margin-bottom:var(--sp-2); }
     .repo-issue-band-title, .repo-pr-band-title { color:var(--muted); font-size:var(--fs-2xs); font-weight:800; letter-spacing:0.08em; text-transform:uppercase; margin:var(--sp-2) var(--sp-0) var(--sp-1); }
@@ -2313,6 +2323,7 @@
       transition: transform 0.2s;
     }
     .config-toggle-switch.on::before { transform: translateX(16px); }
+    .config-toggle-switch.on.danger { background: var(--red); }
     .config-toggle-label { font-size: 0.8rem; color: var(--text); }
     .smart-classifier-section { display: grid; gap: var(--sp-6); }
     .smart-classifier-card { border: var(--line-width) solid var(--border); border-radius: var(--r); background: var(--surface); padding: var(--sp-6); }
@@ -2336,6 +2347,8 @@
     .smart-classifier-list-main { min-width: 0; }
     .smart-classifier-list-main strong { color: var(--text); }
     .smart-classifier-list-main span { display: block; color: var(--muted); font-size: var(--fs-sm); margin-top: var(--sp-1); }
+    .config-toggle-label.danger { color: var(--red); font-weight: 600; }
+    .config-section-rule { border: none; border-top: 1px solid var(--border); margin: var(--sp-6) var(--sp-0); }
 
     /* A heading INSIDE a settings section, for a feature with several distinct
        concerns. It groups by whitespace and a quiet label rather than a rule:
@@ -2799,6 +2812,7 @@
     .kb-empty { text-align: center; padding: 40px 20px; color: var(--muted); font-size: var(--fs-base); }
     .kb-empty-icon { font-size: var(--fs-3xl); margin-bottom: var(--sp-4); }
     .kb-disabled { text-align: center; padding: 40px 20px; color: var(--muted); }
+    .kb-notice { margin-bottom: var(--sp-5); padding: var(--sp-4) var(--sp-5); background: var(--bg); border-radius: var(--r); font-size: var(--fs-sm); color: var(--muted); border-left: 3px solid var(--yellow); }
     .kb-setup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-6); margin-top: var(--sp-6); }
     @media (max-width: 640px) { .kb-setup-grid { grid-template-columns: 1fr; } }
     .kb-setup-card { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); padding: var(--sp-7); cursor: pointer; transition: all 0.2s; text-align: left; }
@@ -3617,7 +3631,7 @@
     <div class="config-body" id="config-body"></div>
     <div class="config-footer">
       <button class="hv-btn btn-secondary btn config-cancel" data-action="closeConfigDialog">Cancel</button>
-      <button class="hv-btn btn-primary btn config-save" data-action="saveConfig">Save</button>
+      <button class="hv-btn btn-primary btn config-save" data-action="saveConfig">Save & close</button>
     </div>
   </div>
 </div>
@@ -3951,6 +3965,13 @@
       <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="lifecycle-section"><span class="section-chevron">▼</span> 🔀 Lifecycle Timeline</h2>
       <div class="section-body">
         <div id="lifecycle-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:var(--sp-6)"></div>
+      </div>
+    </div>
+
+    <div id="pr-throughput-section" style="margin-top: var(--sp-6); margin-bottom: var(--sp-8); display: none;">
+      <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="pr-throughput-section"><span class="section-chevron">▼</span> 📬 PR Throughput</h2>
+      <div class="section-body">
+        <div id="pr-throughput-card" class="prt-card"></div>
       </div>
     </div>
     </div>
@@ -4467,6 +4488,25 @@
     function safeDomId(str) {
       return String(str || '').replace(/[^a-zA-Z0-9_-]/g, '-');
     }
+
+    /**
+     * Escape HTML special characters, then turn http(s) URLs into clickable
+     * <a> tags. Escaping always runs first so linkification can never
+     * introduce unescaped markup from untrusted text (hivecommons/hive#9390).
+     */
+    function escapeHtmlAndLinkify(str) {
+      var escaped = escapeHtml(str);
+      return escaped.replace(/https?:\/\/[^\s<>"']+/g, function(url) {
+        // Trim trailing punctuation that's likely sentence syntax, not part of the URL.
+        var trailing = '';
+        var trailingMatch = url.match(/[).,;:!?]+$/);
+        if (trailingMatch) {
+          trailing = trailingMatch[0];
+          url = url.slice(0, url.length - trailing.length);
+        }
+        return '<a class="system-alert-link" href="' + url + '" target="_blank" rel="noopener noreferrer">' + url + '</a>' + trailing;
+      });
+    }
     // ── Collapsible sections (issue #1533) ──
     const SECTION_LS_PREFIX = 'hive-section-collapsed-';
     const AGENT_COMPACT_LS_PREFIX = 'hive-agent-compact-';
@@ -4484,6 +4524,7 @@
       paused: { label: 'paused', status: 'warn' },
       pause: { label: 'paused', status: 'warn' },
       stopped: { label: 'stopped', status: 'error' },
+      starting: { label: 'starting', status: 'info' },
       down: { label: 'down', status: 'error' },
       error: { label: 'error', status: 'error' },
       failed: { label: 'failed', status: 'error' },
@@ -4600,7 +4641,10 @@
     function dashboardLayoutAllIds(){return DASHBOARD_LAYOUT_TEMPLATE.main.slice();}
     function dashboardLayoutRead(){try{var raw=localStorage.getItem(DASHBOARD_LAYOUT_KEY);return raw?JSON.parse(raw):null;}catch(e){return null;}}
     function dashboardLayoutCurrent(){var out={v:DASHBOARD_LAYOUT_VERSION,main:[]};var region=dashboardRegionEl('main');if(!region)return out;Array.prototype.forEach.call(region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR),function(card){var id=card.getAttribute('data-dashboard-section');if(id)out.main.push(id);});return out;}
-    function dashboardLayoutNormalize(saved){var valid=dashboardLayoutAllIds(),seen={},out={v:DASHBOARD_LAYOUT_VERSION,main:[]};var arr=saved&&Array.isArray(saved.main)?saved.main:[];arr.forEach(function(id){if(valid.indexOf(id)<0||seen[id])return;seen[id]=true;out.main.push(id);});DASHBOARD_LAYOUT_TEMPLATE.main.forEach(function(id){if(!seen[id]){seen[id]=true;out.main.push(id);}});return out;}
+    // Sections missing from a saved layout (added after the layout was
+    // saved) slot in next to their template neighbour instead of being
+    // appended after the trailing FAQ section (#9426).
+    function dashboardLayoutNormalize(saved){var valid=dashboardLayoutAllIds(),seen={},out={v:DASHBOARD_LAYOUT_VERSION,main:[]};var arr=saved&&Array.isArray(saved.main)?saved.main:[];arr.forEach(function(id){if(valid.indexOf(id)<0||seen[id])return;seen[id]=true;out.main.push(id);});var tpl=DASHBOARD_LAYOUT_TEMPLATE.main;tpl.forEach(function(id,i){if(seen[id])return;seen[id]=true;var at=-1;for(var j=i-1;j>=0&&at<0;j--){at=out.main.indexOf(tpl[j]);}if(at>=0){out.main.splice(at+1,0,id);return;}var before=out.main.length;for(var k=i+1;k<tpl.length;k++){var idx=out.main.indexOf(tpl[k]);if(idx>=0){before=idx;break;}}out.main.splice(before,0,id);});return out;}
     function dashboardLayoutEquals(a,b){a=dashboardLayoutNormalize(a);b=dashboardLayoutNormalize(b);if(a.main.length!==b.main.length)return false;for(var i=0;i<a.main.length;i++){if(a.main[i]!==b.main[i])return false;}return true;}
     function dashboardUpdateResetButton(){var show=!dashboardLayoutEquals(dashboardLayoutCurrent(),dashboardLayoutNormalize(null));['dashboard-layout-reset','dashboard-layout-reset-main'].forEach(function(id){var b=document.getElementById(id);if(b)b.hidden=!show;});}
     function dashboardLayoutWrite(){try{localStorage.setItem(DASHBOARD_LAYOUT_KEY,JSON.stringify(dashboardLayoutCurrent()));}catch(e){}dashboardUpdateResetButton();dashboardSortSidebar();}
@@ -5206,7 +5250,10 @@
       // Down = process not alive ('stopped', 'failed', …) — anything but
       // 'running'. Matching only 'stopped' let 'failed' agents render the
       // green idle styling here (#2465).
-      const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand;
+      // Post-restart boot stagger / launch in progress: the agent is not down,
+      // it just hasn't reached its pane yet. Render as 'starting', not red.
+      const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
+      const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting;
       // Same formula as the Auth section's Login button below: a down agent
       // with an unauthenticated CLI gets the amber needs-login state instead
       // of plain down-red (#2465).
@@ -5217,7 +5264,7 @@
          cannot repaint a genuinely working agent. */
       const needsLoginDown = _agentNeedsLogin(a, isStopped);
       const isRunning = a.busy === 'working' && !isPaused && !isOff && !isStopped;
-      const dotCls = needsLoginDown ? 'needs-login' : isStopped ? 'stopped' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
+      const dotCls = needsLoginDown ? 'needs-login' : isStarting ? 'starting' : isStopped ? 'stopped' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
       // A healthy agent that is off *because of its governor cadence* (offByCadence,
       // i.e. cadence==pause/off for the current mode) reaches the isOff branch above
       // only after the stopped / needs-login / on-demand / manual-paused guards, so
@@ -5596,7 +5643,8 @@
       // green 'idle' class while the deep "agents" health check reported it
       // down (#2465). Match the deep check: non-running + non-paused = down,
       // with paused/off/on-demand keeping their own styling.
-      const isDown = a.state !== 'running' && !isPaused && !isOff && !isOnDemand;
+      const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
+      const isDown = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting;
       // A down agent whose CLI is unauthenticated is not merely down — it can
       // never do work until someone logs it in. Same formula as the agent
       // panel's Login button; rendered amber with a "needs login" note. Only
@@ -5605,7 +5653,7 @@
       const needsLoginDown = _agentNeedsLogin(a, isDown);
       const isRunning = a.busy === 'working' && !isPaused && !isOff && !isDown;
       const isOnDemandIdle = isOnDemand && !isRunning;
-      const dotCls = needsLoginDown ? 'needs-login' : isDown ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
+      const dotCls = needsLoginDown ? 'needs-login' : isStarting ? 'starting' : isDown ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
       // Healthy-but-governor-paused → hollow green dot (see detail-header renderer).
       // isOff is only reached past the down / needs-login / on-demand / manual-paused
       // guards, so the agent is provably alive; render off-healthy instead of grey off.
@@ -7686,7 +7734,8 @@
         const isOff = agentHeldByMode(a) && !isPaused && !isOnDemand;
         // Down = process not alive — anything but 'running'. 'stopped'-only
         // matching rendered crash-looping ('failed') agents green (#2465).
-        const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand;
+        const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
+        const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting;
         const needsLogin = _agentNeedsLogin(a, isStopped);
         const STALE_MS = 1200000; // 20 minutes
         const isStale = a.summaryUpdated && !isPaused && a.busy === 'working' && (Date.now() - new Date(a.summaryUpdated).getTime()) > STALE_MS;
@@ -7695,10 +7744,10 @@
         else if (a.structuredStatus === 'NEEDS_CONTEXT') statusCls = 'status-needs-context';
         else if (isStale) statusCls = 'status-stale';
         const isOnDemandIdle = isOnDemand && a.busy !== 'working';
-        const cls = needsLogin ? 'needs-login' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isStopped ? 'stopped' : `${a.busy} ${statusCls}`.trim();
+        const cls = needsLogin ? 'needs-login' : isStarting ? 'starting' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isStopped ? 'stopped' : `${a.busy} ${statusCls}`.trim();
         // Down + unauthenticated CLI = attention-token needs-login (same formula as the
         // card's Login button above), not plain down-red (#2465).
-        const dotCls = (isStopped && needsLogin) ? 'needs-login' : isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
+        const dotCls = (isStopped && needsLogin) ? 'needs-login' : isStarting ? 'starting' : isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
         // Healthy-but-governor-paused → hollow green dot (see detail-header renderer).
         const dotState = isOff ? 'off-healthy' : dotCls;
         const canToggle = a.beadRole !== 'supervisor';
@@ -8389,7 +8438,7 @@
         var textColor = 'var(--text)'; // banner copy stays neutral; severity lives in the tint/border
         return '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:8px;padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-4);display:flex;align-items:center;gap:10px;font-size:0.85rem">'
           + '<span style="font-size:1.3rem">⚠️</span>'
-          + '<span style="color:' + textColor + '">' + a.message.replace(/</g, '&lt;') + '</span>'
+          + '<span style="color:' + textColor + '">' + escapeHtmlAndLinkify(a.message) + '</span>'
           + '</div>';
       }).join('');
     }
@@ -11756,6 +11805,17 @@
       }
       return BACKEND_REASONING_EFFORTS[a.cli] || [];
     }
+    // contributeEffortFloorOptions returns the effort-floor dropdown options:
+    // the union of the per-backend effort vocabularies
+    // (BACKEND_REASONING_EFFORTS), ordered on the server's canonical ladder,
+    // always keeping the currently-configured floor even if unknown.
+    function contributeEffortFloorOptions(effortLadder, minEffort) {
+      const known = new Set();
+      for (const b in BACKEND_REASONING_EFFORTS) {
+        (BACKEND_REASONING_EFFORTS[b] || []).forEach(function(e) { known.add(e); });
+      }
+      return effortLadder.filter(function(e) { return known.has(e) || e === minEffort; });
+    }
     // effortSelectHtml renders the reasoning-effort dropdown beside the model
     // dropdown, only for backends that have an effort control. "default"
     // clears the stored effort back to the backend's own default (the server
@@ -13680,6 +13740,82 @@ function burnAreaChart() {
       } catch (e) { /* transient — leave last render in place */ }
     }
 
+    // PR throughput card (#9427): how many PRs the hive opened, merged and
+    // closed without merging over a selectable window, from
+    // /api/pr-throughput. hours=0 is all time (durable counters).
+    const PRT_WINDOWS = [[1, '1h'], [6, '6h'], [12, '12h'], [24, '24h'], [48, '48h'], [168, '7d'], [0, 'all']];
+    let prtHours = 24;
+    let prtLast = null;
+
+    // Mirrors lcWindowLabel: counts are honest only relative to how much
+    // history backs them, so say so when the data is shorter than the window.
+    function prtWindowLabel(dto) {
+      const fmt = (ms) => {
+        const min = Math.round(ms / 60000);
+        if (min < 60) return min + 'm';
+        const hr = Math.round(min / 60);
+        if (hr < 48) return hr + 'h';
+        return Math.round(hr / 24) + 'd';
+      };
+      const recorded = dto.recorded_since ? Date.parse(dto.recorded_since) : NaN;
+      const coveredMs = Number.isNaN(recorded) ? 0 : Math.max(0, Date.now() - recorded);
+      if (dto.all_time) {
+        return coveredMs > 0 ? `all time — over the last ${fmt(coveredMs)} of recorded history` : 'all time — nothing recorded yet';
+      }
+      const windowMs = (Number(dto.hours) || 0) * 3600000;
+      if (!windowMs) return '';
+      if (coveredMs > 0 && coveredMs < windowMs) {
+        return `over the last ${fmt(coveredMs)} of recorded history (window ${fmt(windowMs)})`;
+      }
+      return `over the last ${fmt(windowMs)}`;
+    }
+
+    function renderPRThroughput(dto) {
+      const section = document.getElementById('pr-throughput-section');
+      const card = document.getElementById('pr-throughput-card');
+      if (!section || !card) return;
+      dto = dto || {};
+      section.style.display = '';
+
+      const buttons = PRT_WINDOWS.map(([h, label]) => `<button type="button" class="${prtHours === h ? 'active' : ''}" data-action="setPRThroughputHours" data-arg0="${h}" title="${h === 0 ? 'All time' : 'Last ' + label}">${label}</button>`).join('');
+      const opened = Number(dto.opened) || 0;
+      const merged = Number(dto.merged) || 0;
+      const closed = Number(dto.closed) || 0;
+      const byPath = dto.merged_by_path || {};
+      const pathLabels = { sweep: 'auto-merge sweep', queue: 'queued by a person', relay: 'merge relay', unknown: 'unrecorded path' };
+      const pathParts = Object.keys(byPath).filter((k) => Number(byPath[k]) > 0).sort()
+        .map((k) => `${Number(byPath[k])} ${escapeHtml(pathLabels[k] || k)}`);
+      const pathsHtml = pathParts.length ? `<div class="prt-paths">Merged by: ${pathParts.join(' · ')}</div>` : '';
+      const label = prtWindowLabel(dto);
+      card.innerHTML = `<div class="prt-head"><div class="lc-window">${escapeHtml(label)}</div><div class="gov-pr-models-toggle">${buttons}</div></div>
+        <div class="lc-fleet">
+          <div class="lc-fleet-stat"><div class="val opened">${opened}</div><div class="lbl">Opened</div></div>
+          <div class="lc-fleet-stat"><div class="val merged">${merged}</div><div class="lbl">Merged</div></div>
+          <div class="lc-fleet-stat"><div class="val closed">${closed}</div><div class="lbl">Closed without merging</div></div>
+        </div>${pathsHtml}`;
+      applySectionCollapse('pr-throughput-section');
+    }
+
+    async function fetchPRThroughput() {
+      const hours = prtHours;
+      try {
+        const r = await fetch(`/api/pr-throughput?hours=${encodeURIComponent(hours)}`);
+        if (!r.ok) return;
+        const dto = await r.json();
+        if (hours !== prtHours) return; // a newer selection is in flight
+        prtLast = dto;
+        renderPRThroughput(dto);
+      } catch (e) { /* transient — leave last render in place */ }
+    }
+
+    function setPRThroughputHours(hours) {
+      const h = Number(hours);
+      prtHours = PRT_WINDOWS.some(([v]) => v === h) ? h : 24;
+      if (prtLast) renderPRThroughput(prtLast);
+      return fetchPRThroughput();
+    }
+    window.setPRThroughputHours = setPRThroughputHours;
+
     // ---- Approvals desk (RFC #4000) -------------------------------------
     // Pending operator-lane approvals. The panel stays hidden entirely unless
     // the desk is enabled, so a hive that has not opted in sees no new chrome.
@@ -13834,7 +13970,7 @@ function burnAreaChart() {
 
     // Prime both panels and poll them on a modest independent interval. Do not
     // block initial paint: these run after the main poll is already wired.
-    function v4RefreshPanels() { fetchHiveAdvice(); fetchACMMReco(); fetchLifecycle(); fetchApprovals(); }
+    function v4RefreshPanels() { fetchHiveAdvice(); fetchACMMReco(); fetchLifecycle(); fetchPRThroughput(); fetchApprovals(); }
     v4RefreshPanels();
     setInterval(v4RefreshPanels, V4_PANELS_POLL_MS);
 
@@ -14725,7 +14861,7 @@ function burnAreaChart() {
           _kbSetupView = 'none';
         }
         _kbInitialLoad = false;
-        const enabledChanged = !prev || prev.enabled !== _kbCache.enabled;
+        const enabledChanged = !prev || prev.enabled !== _kbCache.enabled || JSON.stringify(prev.primer || null) !== JSON.stringify(_kbCache.primer || null);
         const layersChanged = !prev || JSON.stringify((prev.layers||[]).map(l=>l.type)) !== JSON.stringify((_kbCache.layers||[]).map(l=>l.type));
         const docsChanged = !prev || JSON.stringify((prev._documents||[]).map(d=>d.slug)) !== JSON.stringify((_kbCache._documents||[]).map(d=>d.slug));
         if (!_kbRendered || enabledChanged || layersChanged || docsChanged) {
@@ -15440,7 +15576,14 @@ function burnAreaChart() {
       const badge = document.getElementById('kb-status-badge');
       if (!panel) return;
 
-      if (!_kbCache || !_kbCache.enabled) {
+      // `enabled` is primer registration — whether kicks receive knowledge —
+      // not whether the knowledge API exists (#9231). The API is always up
+      // for the bead synthesizer and vault browsing, so stored facts stay
+      // browsable below while the panel says they are not being primed.
+      const kbPrimer = (_kbCache && _kbCache.primer) || {};
+      const kbPrimed = !!(_kbCache && _kbCache.enabled);
+      const kbHasFacts = !!_kbCache && ((_kbCache.layers || []).length > 0 || (_kbCache.vaults || []).length > 0);
+      if (!_kbCache || (!kbPrimed && !kbHasFacts)) {
         if (badge) { badge.textContent = 'disabled'; badge.style.background = 'var(--muted)'; badge.style.color = 'white'; }
         panel.innerHTML = '<div class="kb-disabled"><div class="fs-3xl mb-4">📚</div><div>Knowledge system not enabled</div><div style="font-size:0.72rem;margin-top:var(--sp-2);color:var(--muted);margin-bottom:var(--sp-5)">Enable the knowledge base to store and retrieve facts across agents.</div><button class="hv-btn btn-primary" data-action="toggleKnowledge" data-arg0="true" data-arg-types="j" title="Enable the knowledge base system. Agents will be able to store and retrieve facts (patterns, gotchas, regressions, decisions) across sessions and layers (personal, project, org, community).">Enable Knowledge</button></div>';
         return;
@@ -15456,8 +15599,16 @@ function burnAreaChart() {
       const layers = _kbCache.layers || [];
       const healthyCount = layers.filter(l => l.healthy).length;
       if (badge) {
-        badge.textContent = healthyCount + '/' + layers.length + ' layers';
-        badge.style.background = healthyCount === layers.length ? 'var(--green)' : (healthyCount > 0 ? 'var(--yellow)' : 'var(--red)');
+        if (!kbPrimed) {
+          badge.textContent = 'not primed';
+          badge.style.background = 'var(--muted)';
+        } else if (kbPrimer.restart_required) {
+          badge.textContent = 'restart required';
+          badge.style.background = 'var(--yellow)';
+        } else {
+          badge.textContent = healthyCount + '/' + layers.length + ' layers';
+          badge.style.background = healthyCount === layers.length ? 'var(--green)' : (healthyCount > 0 ? 'var(--yellow)' : 'var(--red)');
+        }
         badge.style.color = 'white';
       }
 
@@ -15471,8 +15622,17 @@ function burnAreaChart() {
       } else {
         html += '<button class="hv-btn btn-primary btn-sm" data-action="toggleBeadSynth" data-arg0="true" data-arg-types="j" title="Enable the bead synthesizer. Completed beads will be automatically scanned and converted to wiki facts on an hourly schedule.">Enable Synth</button>';
       }
-      html += '<button class="hv-btn btn-danger btn-sm" data-action="toggleKnowledge" data-arg0="false" data-arg-types="j" title="Disable the knowledge base. Agents will no longer inject facts into prompts. Stored facts are preserved for when re-enabled.">Disable</button>';
+      if (kbPrimed) {
+        html += '<button class="hv-btn btn-danger btn-sm" data-action="toggleKnowledge" data-arg0="false" data-arg-types="j" title="Disable the knowledge base. Agents will no longer inject facts into prompts. Stored facts are preserved for when re-enabled.">Disable</button>';
+      } else {
+        html += '<button class="hv-btn btn-primary btn-sm" data-action="toggleKnowledge" data-arg0="true" data-arg-types="j" title="Enable the knowledge base. Agent kicks will be primed with relevant facts from the configured layers, vaults, git sources and the bead synthesizer.">Enable Knowledge</button>';
+      }
       html += '</div>';
+      if (!kbPrimed) {
+        html += '<div class="kb-notice">Knowledge is disabled: no agent kick receives these facts. They are stored and browsable (the bead synthesizer keeps writing here), but they are only injected into kicks once knowledge is enabled.</div>';
+      } else if (kbPrimer.restart_required) {
+        html += '<div class="kb-notice">' + escapeHtml(kbPrimer.restart_reason || 'Restart the hive to finish enabling knowledge.') + '</div>';
+      }
 
       // Stats row
       const totalPages = layers.reduce((sum, l) => sum + (l.total_pages || 0), 0);
@@ -17582,7 +17742,7 @@ function burnAreaChart() {
       renderDebugSection();
       // Restore persisted collapsed state for all collapsible sections
       const COLLAPSIBLE_SECTION_IDS = [
-        'advisory-section', 'hive-advice-section', 'acmm-reco-section', 'lifecycle-section',
+        'advisory-section', 'hive-advice-section', 'acmm-reco-section', 'lifecycle-section', 'pr-throughput-section',
         'runs-section', 'overview-section', 'repos-section', 'beads-section', 'acmm-eval-section',
         'platform-section', 'fleet-report-section', 'audit-section', 'nous-section', 'inception-section',
         'knowledge-section', 'contributors-section', 'debug-section', 'logs-section',
@@ -21965,7 +22125,7 @@ function burnAreaChart() {
         `<div class="config-tab${i === 0 ? ' active' : ''}" data-tab="${t}" data-action="switchConfigTab">${t}</div>`
       ).join('');
       const saveBtn = document.querySelector('.config-save');
-      if (saveBtn) saveBtn.textContent = isCreate ? 'Create Agent' : 'Save';
+      if (saveBtn) saveBtn.textContent = isCreate ? 'Create & close' : 'Save & close';
       if (isCreate) {
         _configState.data = { general: { clearOnKick: true, restartStrategy: 'immediate', staleTimeout: 1200 }, cadences: {} };
         switchConfigTab(tabs[0]);
@@ -24508,6 +24668,10 @@ function burnAreaChart() {
       const allowModels = (hub.contribute_allow_models || []);
       const frameAncestors = (hub.snapshot_frame_ancestors || []);
       const rejectUnknownModels = hub.contribute_reject_unknown_models || false;
+      const minEffort = hub.contribute_min_reasoning_effort || '';
+      const rejectUnknownEffort = hub.contribute_reject_unknown_effort || false;
+      const effortLadder = hub.contribute_reasoning_effort_ladder || ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+      const effortFloorOptions = contributeEffortFloorOptions(effortLadder, minEffort);
       const delegatableRoles = (hub.contribute_delegatable_roles || ['scanner','quality','outreach']).map(function(r) { return String(r || '').toLowerCase(); });
       const helpLinksText = (hub.contribute_help_links || []).map(function(l) { return (l.label || '') + ' | ' + (l.url || ''); }).join('\n');
       const privilegedDelegatableRoles = ['ci-maintainer', 'sec-check', 'architect'];
@@ -24657,7 +24821,20 @@ function burnAreaChart() {
           <div style="display:flex;gap:var(--sp-2)"><input type="text" id="hub-allow-model-input" placeholder="e.g. claude-opus*, /gemini-\\d/" style="flex:1" data-keydown-action="addHubFilter" data-arg0="contribute_allow_models" data-arg1="hub-allow-model-input" data-prevent="1" data-keys="Enter"><button class="hv-btn btn-primary btn-sm" data-action="addHubFilter" data-arg0="contribute_allow_models" data-arg1="hub-allow-model-input">Add</button></div>
         </div>
 
-        <hr style="border-color:var(--border);margin:var(--sp-6) var(--sp-0)">
+        <div class="config-field">
+          <label for="hub-min-reasoning-effort">Effort floor <span class="config-info">i<span class="config-tooltip">Minimum reasoning effort a contributor relay must run at, compared per backend on minimal &lt; low &lt; medium &lt; high &lt; xhigh &lt; max. A floor above a backend's highest level is met by that backend's highest level. Relays below the floor are rejected at connect time. None = no floor.</span></span></label>
+          <select id="hub-min-reasoning-effort" data-change-action="markDirty" data-arg0="hub" data-arg1="contribute_min_reasoning_effort" data-arg-types="s,s,v">
+            <option value=""${minEffort ? '' : ' selected'}>none</option>
+            ${effortFloorOptions.map(function(e) { return '<option value="' + esc(e) + '"' + (e === minEffort ? ' selected' : '') + '>' + esc(e) + '</option>'; }).join('')}
+          </select>
+        </div>
+
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${rejectUnknownEffort ? 'on danger' : ''}" data-action="toggleConfigSwitch" data-section="hub" data-key="contribute_reject_unknown_effort"></div>
+          <span class="config-toggle-label ${rejectUnknownEffort ? 'danger' : ''}">Reject Unknown Effort <span class="config-info">i<span class="config-tooltip">When enabled and an effort floor is set, contributors whose reasoning effort is empty or not recognised for their backend are rejected at connect time. When off they are admitted.</span></span></span>
+        </div>
+
+        <hr class="config-section-rule">
 
         ${renderFilterWithMode({
           label: 'Labels', noun: 'label', unit: 'issue', perLabel: true,

@@ -331,3 +331,27 @@ func (p *Primer) FileStoreNames() []string {
 	}
 	return out
 }
+
+// PrimerSource is one source a primer draws kick facts from.
+type PrimerSource struct {
+	// Name is the file store's registered name, or the layer type for an
+	// HTTP wiki layer (its endpoint is deliberately not exposed).
+	Name  string    `json:"name"`
+	Layer LayerType `json:"layer"`
+	// Kind is "wiki" for an HTTP wiki layer, "store" for a local FileStore
+	// (vault, git source, bead-synth vault).
+	Kind string `json:"kind"`
+}
+
+// Sources lists every source the primer queries: HTTP wiki layers first,
+// then local file stores in registration order.
+func (p *Primer) Sources() []PrimerSource {
+	out := make([]PrimerSource, 0, len(p.layers)+len(p.fileStores))
+	for _, l := range p.layers {
+		out = append(out, PrimerSource{Name: string(l.layerType), Layer: l.layerType, Kind: "wiki"})
+	}
+	for _, s := range p.fileStores {
+		out = append(out, PrimerSource{Name: s.name, Layer: s.layerType, Kind: "store"})
+	}
+	return out
+}

@@ -3,6 +3,7 @@ package config
 import (
 	"sort"
 	"strings"
+	"time"
 
 	"fmt"
 
@@ -224,8 +225,16 @@ type AgentConfig struct {
 	RestartStrategy string `yaml:"restart_strategy" json:"restart_strategy,omitempty"`
 	LaunchCmd       string `yaml:"launch_cmd" json:"launch_cmd,omitempty"`
 	AgentSpec       string `yaml:"agent_spec" json:"agent_spec,omitempty"`
-	DisplayName     string `yaml:"display_name" json:"display_name,omitempty"`
-	Description     string `yaml:"description" json:"description,omitempty"`
+	// BusyNoActivityThreshold is how long a Working pane may go without any
+	// Copilot transcript activity before repeated undeliverable kicks surface
+	// an operator-visible condition. Unset defaults to 30m.
+	BusyNoActivityThreshold time.Duration `yaml:"busy_no_activity_threshold,omitempty" json:"busy_no_activity_threshold,omitempty"`
+	// MaxTurnDuration is an optional visibility-only ceiling for a Working
+	// turn. 0 disables it; exceeding it raises busy-over-ceiling but never
+	// interrupts the agent.
+	MaxTurnDuration time.Duration `yaml:"max_turn_duration,omitempty" json:"max_turn_duration,omitempty"`
+	DisplayName     string        `yaml:"display_name" json:"display_name,omitempty"`
+	Description     string        `yaml:"description" json:"description,omitempty"`
 
 	// Phase 2: config-driven agent behavior fields
 	Role           string              `yaml:"role" json:"role,omitempty"`
@@ -602,6 +611,17 @@ func (a *AgentConfig) SandboxTimeoutS(global AgentSandboxConfig) int {
 		return a.Sandbox.TimeoutS
 	}
 	return global.TimeoutS
+}
+
+const DefaultBusyNoActivityThreshold = 30 * time.Minute
+
+// EffectiveBusyNoActivityThreshold returns the silence threshold for surfacing
+// a Working-but-quiet agent. Non-positive values use the operator-safe default.
+func (a AgentConfig) EffectiveBusyNoActivityThreshold() time.Duration {
+	if a.BusyNoActivityThreshold > 0 {
+		return a.BusyNoActivityThreshold
+	}
+	return DefaultBusyNoActivityThreshold
 }
 
 // GetBeadRole returns the bead role, defaulting to "worker".

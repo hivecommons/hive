@@ -17,7 +17,7 @@ import (
 const issueRejectionWindow = 30 * 24 * time.Hour
 
 // issueRejectionMaxPages bounds the closed-issue scan, same budget as
-// findOpenIssueByTitle: agent-filed issues are recent by construction, and
+// scanOpenIssues: agent-filed issues are recent by construction, and
 // the scan additionally early-exits at the window boundary (sorted by
 // updated desc, and closed_at ≤ updated_at, so past-window updated means
 // past-window closed for everything after it).

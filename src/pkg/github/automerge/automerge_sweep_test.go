@@ -2123,7 +2123,7 @@ func TestSweepQueuedAutoMergesRecordsPRMergedAuditTrail(t *testing.T) {
 	if got.agent != hgithub.AttributionAgentGovernor {
 		t.Errorf("pr_merged agent = %q, want %q", got.agent, hgithub.AttributionAgentGovernor)
 	}
-	for _, want := range []string{"number=7", "method=squash"} {
+	for _, want := range []string{"number=7", "method=squash", "path=" + hgithub.PRAuditPathQueue} {
 		if !strings.Contains(got.detail, want) {
 			t.Errorf("pr_merged detail missing %q: %q", want, got.detail)
 		}
@@ -2168,7 +2168,7 @@ func TestSweepSelfAuthoredAutoMergesRecordsPRMergedAuditTrail(t *testing.T) {
 	if got.agent != hgithub.AttributionAgentGovernor {
 		t.Errorf("pr_merged agent = %q, want %q", got.agent, hgithub.AttributionAgentGovernor)
 	}
-	for _, want := range []string{"number=11", "method=squash"} {
+	for _, want := range []string{"number=11", "method=squash", "path=" + hgithub.PRAuditPathSweep} {
 		if !strings.Contains(got.detail, want) {
 			t.Errorf("pr_merged detail missing %q: %q", want, got.detail)
 		}

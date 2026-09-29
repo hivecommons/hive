@@ -143,7 +143,6 @@ type boot struct {
 	pendingBudgetWindowSeed    []collect.BudgetWindowEntry
 	pendingConvergenceSoakSeed []dashboard.ConvergenceSoakEntry
 	pendingTrendSeed           []dashboard.TrendHistoryEntry
-	primer                     *knowledge.Primer
 
 	// bootAdvisory
 	acmmLevel         int
@@ -166,6 +165,13 @@ type boot struct {
 	quotaAccount         string
 	quotaPoolDir         string
 	explicitQuotaPoolDir bool
+	// knowledgeAPIFallback records that knowledgeAPI is the file-only API
+	// bootKnowledge auto-enables when knowledge.enabled is false, not one
+	// built from the configured layers/engine/curator (#9231).
+	knowledgeAPIFallback bool
+	// knowledgePrimerMu serializes building/publishing the scheduler's kick
+	// primer (knowledgePrimerControl) with the async graph-store wiring.
+	knowledgePrimerMu sync.Mutex
 
 	// bootSupervision
 	quotaReadingPublisher    *rotation.Manager

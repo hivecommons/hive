@@ -1440,6 +1440,7 @@ func (b *boot) wireBootClosures() {
 			Inception:         b.inceptionEngine,
 			Nous:              b.nousState,
 			Scheduler:         b.sched,
+			KnowledgePrimer:   knowledgePrimerControl{b: b},
 			MetricsCollector:  b.metricsCollector,
 			RotationMgr:       b.rotationMgr,
 			HeadroomPublisher: b.quotaReadingPublisher,
@@ -1911,27 +1912,35 @@ func (b *boot) bootGovernor() {
 	}
 
 	if b.cfg.Knowledge.Enabled {
-		layers := convertKnowledgeLayers(b.cfg.Knowledge.Layers)
-		primerCfg := knowledge.PrimerConfig{
-			MaxFacts:      b.cfg.Knowledge.Primer.MaxFacts,
-			Priority:      b.cfg.Knowledge.Primer.Priority,
-			MergeStrategy: b.cfg.Knowledge.Primer.MergeStrategy,
-		}
-		b.primer = knowledge.NewPrimer(layers, primerCfg, b.logger)
-		b.sched.SetPrimer(b.primer)
-		b.logger.Info("knowledge primer enabled",
-			"layers", len(b.cfg.Knowledge.Layers),
-			"max_facts", primerCfg.MaxFacts,
-		)
+		b.sched.SetPrimer(b.newKnowledgePrimer())
 	}
+}
+
+// newKnowledgePrimer builds a kick primer from the configured wiki layers
+// and primer settings, with no file stores registered yet. bootGovernor and
+// the live dashboard toggle (knowledgePrimerControl, #9231) share it so both
+// prime from the same config.
+func (b *boot) newKnowledgePrimer() *knowledge.Primer {
+	layers := convertKnowledgeLayers(b.cfg.Knowledge.Layers)
+	primerCfg := knowledge.PrimerConfig{
+		MaxFacts:      b.cfg.Knowledge.Primer.MaxFacts,
+		Priority:      b.cfg.Knowledge.Primer.Priority,
+		MergeStrategy: b.cfg.Knowledge.Primer.MergeStrategy,
+	}
+	p := knowledge.NewPrimer(layers, primerCfg, b.logger)
+	b.logger.Info("knowledge primer enabled",
+		"layers", len(b.cfg.Knowledge.Layers),
+		"max_facts", primerCfg.MaxFacts,
+	)
+	return p
 }
 
 // bootAdvisory builds the notifier, infers the ACMM level, seeds the
 // GitHub App banner state, opens the mutation-convergence ledger and journal,
-// finds or creates the pinned advisory issue and writes the embedded
-// brainstorm policy to the policy dir. It returns false when main() should
-// return without booting further — the v5 mutation ledger/journal failure
-// paths, which returned from main() before the split and still do.
+// finds or creates the pinned advisory issue and seeds the embedded default
+// policies to the policy dir. It returns false when main() should return
+// without booting further — the v5 mutation ledger/journal failure paths,
+// which returned from main() before the split and still do.
 func (b *boot) bootAdvisory() bool { return b.bootAdvisoryWith(defaultBootAdvisoryDeps()) }
 
 // bootAdvisoryWith is bootAdvisory with its GitHub calls injected; see
@@ -2059,21 +2068,16 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 
 	b.policyDirPath = policyDir(b.cfg.Policies)
 
-	// Write brainstorm policy to disk so the agent can find it.
-	// The policy is embedded in the binary but the agent searches the filesystem.
-	brainstormPolicyDir := b.policyDirPath
-	if err := os.MkdirAll(brainstormPolicyDir, 0o755); err != nil {
-		b.logger.Warn("failed to create brainstorm policy dir", "path", brainstormPolicyDir, "error", err)
-	}
-	if policyData, err := policies.DefaultPolicies.ReadFile("defaults/brainstorm-advisory.md"); err == nil {
-		policyPath := filepath.Join(brainstormPolicyDir, "brainstorm-advisory.md")
-		// Always overwrite — the embedded policy may have been updated
-		// (e.g., inception reaping guard added in bug #113 fix).
-		if err := os.WriteFile(policyPath, policyData, 0o644); err != nil {
-			b.logger.Warn("failed to write brainstorm policy", "path", policyPath, "error", err)
-		} else {
-			b.logger.Info("wrote brainstorm policy to disk", "path", policyPath)
-		}
+	// Seed every embedded default policy to disk so agents that search the
+	// filesystem find them, and keep them in sync with the running image on
+	// every later boot without clobbering a genuine dashboard edit. This
+	// generalizes what used to be a brainstorm-advisory.md-only force-rewrite
+	// (added so an embedded fix, e.g. bug #113's inception reaping guard,
+	// always reached the agent) to every template: a stale seeded copy that
+	// nobody edited now gets refreshed the same way, instead of silently
+	// shadowing embedded policy updates forever (hivecommons/hive#9428).
+	if err := policies.ReconcileSeededDefaults(b.policyDirPath, b.logger); err != nil {
+		b.logger.Warn("failed to seed default policies", "path", b.policyDirPath, "error", err)
 	}
 
 	b.projectCtx = agent.ProjectContext{
@@ -2882,7 +2886,27 @@ func (b *boot) bootStores() {
 		}
 		store.SetHiveID(b.cfg.HiveID)
 		b.beadStores[name] = store
+		if qPath, qErr, quarantined := store.QuarantinedPath(); quarantined {
+			// beads.json was unparseable (e.g. a hand-written file missing a
+			// closing brace, kubestellar/hive#9328) but the store itself
+			// self-healed and is usable again — the operator still needs to
+			// know that this agent's PRIOR beads were lost, so this is ERROR
+			// rather than the routine startup Info line below.
+			b.logger.Error("beads.json was corrupt and has been quarantined; agent's bead store was reset to empty",
+				"agent", name, "quarantined_to", qPath, "parse_error", qErr)
+		}
 		b.logger.Info("beads store initialized", "agent", name, "count", store.Count())
+	}
+
+	// Names attempted by the enabled-agent loop above, success or failure.
+	// The orphan scan below must skip these regardless of outcome: a name
+	// only in beadStores (the old check) let a load FAILURE fall through to
+	// the orphan scan, which re-opens the same directory and re-fails it —
+	// counting one broken beads.json as two failures in
+	// beadStoreLoadFailures (kubestellar/hive#9328).
+	attempted := make(map[string]bool, len(b.cfg.EnabledAgents()))
+	for name := range b.cfg.EnabledAgents() {
+		attempted[name] = true
 	}
 
 	// Scan /data/beads/ for agent directories that have beads.json files on
@@ -2896,8 +2920,8 @@ func (b *boot) bootStores() {
 				continue
 			}
 			name := entry.Name()
-			if _, exists := b.beadStores[name]; exists {
-				continue // already loaded from config
+			if attempted[name] {
+				continue // already attempted (successfully or not) from config
 			}
 			agentBeadsDir := filepath.Join(beadsRootDir, name)
 			beadsFile := filepath.Join(agentBeadsDir, "beads.json")
@@ -2912,6 +2936,10 @@ func (b *boot) bootStores() {
 			}
 			store.SetHiveID(b.cfg.HiveID)
 			b.beadStores[name] = store
+			if qPath, qErr, quarantined := store.QuarantinedPath(); quarantined {
+				b.logger.Error("beads.json was corrupt and has been quarantined; agent's bead store was reset to empty",
+					"agent", name, "quarantined_to", qPath, "parse_error", qErr)
+			}
 			b.logger.Info("orphan beads store loaded from disk", "agent", name, "count", store.Count())
 		}
 	}
@@ -3116,13 +3144,6 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 				continue
 			}
 			b.logger.Info("vault auto-connected", "name", vc.Name, "path", vc.Path, "auto_index", vc.AutoIndex)
-			if b.primer = b.sched.GetPrimer(); b.primer != nil {
-				store := b.knowledgeAPI.GetVaultStore(vc.Path)
-				if store != nil {
-					b.primer.AddFileStore(vc.Name, store, knowledge.LayerPersonal)
-					b.logger.Info("vault registered with primer", "name", vc.Name)
-				}
-			}
 		}
 		if vc.GitSync {
 			// Find the store we just connected so the syncer can trigger reindex
@@ -3148,6 +3169,7 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 				Enabled: true,
 				Engine:  "file",
 			}, b.logger)
+			b.knowledgeAPIFallback = true
 			b.logger.Info("auto-enabled knowledge API for git sources")
 		}
 		gsConfig := knowledge.GitSourceConfig{
@@ -3171,19 +3193,6 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 				"subpath", gsc.Subpath,
 				"layer", gsc.Layer,
 			)
-			// Register the FileStore with the scheduler's primer so agents
-			// get primed with facts from this git source during kicks.
-			if b.primer = b.sched.GetPrimer(); b.primer != nil {
-				for _, gs := range b.knowledgeAPI.GitSources() {
-					if gs.Name == gsc.Name && gs.Ready {
-						store := b.knowledgeAPI.GetGitSourceStore(gsc.Name)
-						if store != nil {
-							b.primer.AddFileStore(gsc.Name, store, knowledge.LayerType(gsc.Layer))
-						}
-						break
-					}
-				}
-			}
 		}
 	}
 
@@ -3194,6 +3203,7 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 				Enabled: true,
 				Engine:  "file",
 			}, b.logger)
+			b.knowledgeAPIFallback = true
 			b.logger.Info("auto-enabled knowledge API for document sources")
 		}
 		docConfig := knowledge.DocSourceConfig{
@@ -3226,13 +3236,11 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 			Enabled: true,
 			Engine:  "file",
 		}, b.logger)
+		b.knowledgeAPIFallback = true
 		b.logger.Info("auto-enabled file-based knowledge API")
 	}
 	if len(b.beadStores) > 0 {
-		synthVaultPath := b.cfg.Knowledge.BeadSynthesizer.VaultPath
-		if synthVaultPath == "" {
-			synthVaultPath = beadSynthVaultDefaultPath
-		}
+		synthVaultPath := b.beadSynthVaultPath()
 		if err := os.MkdirAll(synthVaultPath, 0o755); err != nil {
 			b.logger.Warn("failed to create bead-synth vault dir", "path", synthVaultPath, "error", err)
 		}
@@ -3241,17 +3249,6 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 				b.logger.Warn("failed to auto-connect bead-synth vault", "path", synthVaultPath, "error", connErr)
 			} else {
 				b.logger.Info("auto-connected bead-synth vault", "path", synthVaultPath)
-				if b.primer = b.sched.GetPrimer(); b.primer != nil {
-					store := b.knowledgeAPI.GetVaultStore(synthVaultPath)
-					if store != nil {
-						beadLayer := knowledge.LayerType(b.cfg.Knowledge.BeadSynthesizer.TargetLayer)
-						if beadLayer == "" {
-							beadLayer = knowledge.LayerPersonal
-						}
-						b.primer.AddFileStore("bead-synth-wiki", store, beadLayer)
-						b.logger.Info("bead-synth vault registered with primer", "layer", beadLayer)
-					}
-				}
 			}
 		}
 		var rawGH *gh.Client
@@ -3301,6 +3298,13 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 		}
 	}
 
+	// Register everything connected above with the boot-time primer. With
+	// knowledge.enabled false there is none, and the stores are only primed
+	// once the dashboard toggle builds one (#9231).
+	if p := b.sched.GetPrimer(); p != nil {
+		b.registerKnowledgeStores(p)
+	}
+
 	// Scheduled knowledge promotion (#5430). knowledge.curator.schedule used to
 	// be parsed, defaulted to "daily", and never read. It now drives a real
 	// sweep — but ONLY when knowledge.curator.enabled is explicitly true.
@@ -3332,15 +3336,20 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 			return
 		}
 		b.logger.Info("knowledge graph store opened", "path", knowledgeGraphStorePath)
-		if b.primer = b.sched.GetPrimer(); b.primer != nil {
-			b.primer.SetGraphStore(graphStore)
-		}
+		// Serialized with the live dashboard toggle (knowledgePrimerControl):
+		// a primer it builds either reads this graph store from the API in
+		// registerKnowledgeStores or is already published and wired here.
+		b.knowledgePrimerMu.Lock()
 		if b.knowledgeAPI != nil {
 			b.knowledgeAPI.SetGraphStore(graphStore)
-			if b.primer = b.sched.GetPrimer(); b.primer != nil {
-				b.knowledgeAPI.WireContext7Suggester(b.primer)
+		}
+		if p := b.sched.GetPrimer(); p != nil {
+			p.SetGraphStore(graphStore)
+			if b.knowledgeAPI != nil {
+				b.knowledgeAPI.WireContext7Suggester(p)
 			}
 		}
+		b.knowledgePrimerMu.Unlock()
 		if b.beadSynth != nil {
 			b.beadSynth.SetGraphStore(graphStore)
 		}
@@ -8677,6 +8686,9 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 // (config.DefaultProjectYAMLPath, overridable via HIVE_PROJECT_YAML — the
 // path the bash pipeline stages already honour). Nil-safe: a hive without
 // GitHub credentials runs with a nil client for the life of the process.
+// Also installs review.fix_human_prs (hivecommons/hive#9361), so the
+// review-thread reconciler follows PRs the hive did not open whenever the
+// fixer is already allowed to push to them.
 func installReviewBots(client *github.Client, cfg *config.Config, logger *slog.Logger) {
 	if client == nil || cfg == nil {
 		return
@@ -8686,11 +8698,13 @@ func installReviewBots(client *github.Client, cfg *config.Config, logger *slog.L
 		logger.Warn("classification.review_bots: project file unreadable; review-thread reconciler stays off", "error", err)
 	}
 	client.SetReviewBots(rb)
+	client.SetFixHumanPRs(cfg.Review.FixHumanPRsEnabled())
 	if logger != nil && rb.Enabled() {
 		logger.Info("review-thread reconciler enabled",
 			"review_bots", rb.Logins,
 			"max_attempts_per_thread", rb.MaxAttempts(),
-			"resolve_after_fix", rb.ResolveAfterFixEnabled())
+			"resolve_after_fix", rb.ResolveAfterFixEnabled(),
+			"fix_human_prs", cfg.Review.FixHumanPRsEnabled())
 	}
 }
 
@@ -8904,6 +8918,14 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 	if err != nil && !os.IsNotExist(err) {
 		logger.Warn("review dispatch state unavailable; starting fresh", "error", err)
 	}
+	// classification.review_bots, read the same way installReviewBots reads
+	// it for the thread reconciler (#7360): hive.yaml wins, hive-project.yaml
+	// is the fallback. Feeds the reviewer's read step (#9360); empty/off
+	// leaves ReviewBotLogins empty and the prompt section is skipped.
+	reviewBots, rbErr := cfg.EffectiveReviewBots(os.Getenv("HIVE_PROJECT_YAML"))
+	if rbErr != nil && logger != nil {
+		logger.Warn("classification.review_bots: project file unreadable; reviewer will not see bot findings this pass", "error", rbErr)
+	}
 	artifact, err := review.LoadArtifact("")
 	if err != nil && !os.IsNotExist(err) {
 		logger.Warn("review verdict artifact unavailable for dispatch planning", "error", err)
@@ -8953,6 +8975,10 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			Aliases:        ac.Aliases,
 		})
 	}
+	reviewBotLogins := []string{}
+	if reviewBots.Enabled() {
+		reviewBotLogins = reviewBots.Logins
+	}
 	plan := review.PlanDispatch(prs, artifact, state, review.DispatchOptions{
 		RequireApproval:       cfg.Review.RequireApproval,
 		FanOut:                cfg.Review.FanOut,
@@ -8972,6 +8998,7 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		ProjectOrg:            cfg.Project.Org,
 		AIAuthor:              cfg.EffectiveAIAuthor(),
 		Agents:                agents,
+		ReviewBotLogins:       reviewBotLogins,
 	})
 	if len(plan.ReviewKicks)+len(plan.FixKicks) > 0 {
 		logger.Info("review swarm dispatch planned", "review_kicks", len(plan.ReviewKicks), "fix_kicks", len(plan.FixKicks))

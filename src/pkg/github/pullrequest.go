@@ -259,12 +259,9 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 	// Audit the merge UNCONDITIONALLY so the dashboard audit log shows the full
 	// create→merge loop. The merge is performed by the hive itself (not a single
 	// coding agent), so it is attributed to the governor flow, mirroring the
-	// hive-issue-created attribution in advisory.go.
-	c.recordCreationAudit(AuditActionPRMerged, InvocationMeta{Agent: AttributionAgentGovernor},
-		"repo", owner+"/"+repo,
-		"number", strconv.Itoa(number),
-		"method", mergeMethod,
-		"sha", sha)
+	// hive-issue-created attribution in advisory.go. MergePR's only caller is
+	// the merge-request watcher (the hive-merge relay), hence path=relay.
+	c.RecordPRMergedAudit(owner+"/"+repo, number, mergeMethod, sha, PRAuditPathRelay)
 	return MergePRResult{SHA: sha, Merged: merged, Message: res.GetMessage()}, nil
 }
 

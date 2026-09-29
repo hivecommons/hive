@@ -43,6 +43,14 @@ const signedCommitScratchPrefix = "hive-signed/"
 // head) as opposed to an API failure. Both skip; only the message differs.
 var errSignedCommitSkip = errors.New("signed commit skipped")
 
+// signedHeadMovedError marks the one deliberate skip that is transient: the
+// head moved while the signed commit was being built. It still unwraps to
+// errSignedCommitSkip; the follow-up reconciler (#9364) uses the type to retry
+// on its next pass instead of settling the head as unsignable.
+type signedHeadMovedError struct{ error }
+
+func (e signedHeadMovedError) Unwrap() error { return e.error }
+
 // SetSignedCommits installs the toggle read before every PR-open request. nil
 // (or a func returning false) leaves branches exactly as the agent pushed them.
 func (c *Client) SetSignedCommits(fn func() bool) {
@@ -144,7 +152,7 @@ func (c *Client) signBranch(ctx context.Context, owner, repo, base, head string)
 		return "", 0, fmt.Errorf("re-reading ref heads/%s before update: %w", head, err)
 	}
 	if current.GetObject().GetSHA() != headSHA {
-		return "", 0, fmt.Errorf("%w: %s moved from %s to %s while the signed commit was being built; left as pushed", errSignedCommitSkip, head, headSHA[:7], current.GetObject().GetSHA()[:7])
+		return "", 0, signedHeadMovedError{fmt.Errorf("%w: %s moved from %s to %s while the signed commit was being built; left as pushed", errSignedCommitSkip, head, shortSHA(headSHA), shortSHA(current.GetObject().GetSHA()))}
 	}
 	if _, _, err := c.client.Git.UpdateRef(ctx, owner, repo, &gh.Reference{
 		Ref:    gh.Ptr("refs/heads/" + head),

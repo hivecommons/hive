@@ -138,6 +138,15 @@ func (s *Server) issueBandsConfig() config.DashboardIssueBandsConfig {
 	return config.DashboardIssueBandsConfig{}
 }
 
+func (s *Server) selfAuthorizationHoldActiveForRepo(repo string) bool {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return true
+	}
+	cfg := s.deps.Config
+	level := cfg.EffectiveACMMLevelForRepo(repo)
+	return cfg.SelfAuthorizationHoldEnabledForRepoAtLevel(repo, level)
+}
+
 func (s *Server) hiveAdviceThresholds() hiveadvisor.Thresholds {
 	if s == nil || s.deps == nil || s.deps.Config == nil {
 		return hiveadvisor.Thresholds{}
@@ -188,7 +197,7 @@ func (s *Server) buildHiveAdvisorQueue(status *StatusPayload, now time.Time) hiv
 			IdleDays:       daysSince(issueActivityPR(pr), now),
 		})
 	}
-	for _, item := range overviewIssueItems(status, cfg, overviewFilters{}, now) {
+	for _, item := range overviewIssueItems(status, cfg, overviewFilters{}, now, s.selfAuthorizationHoldActiveForRepo) {
 		issue := item.issue
 		labels := labelSet(issue.Labels)
 		q.Issues = append(q.Issues, hiveadvisor.IssueItem{

@@ -53,33 +53,47 @@ func (c *Client) ListPRCommits(ctx context.Context, repo string, number int) ([]
 		return nil, ErrNoGitHubClient
 	}
 	owner, repoName := c.splitRepo(repo)
+	commits, err := c.listPRRepositoryCommits(ctx, owner, repoName, number)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PRCommit, 0, len(commits))
+	for _, rc := range commits {
+		author := safeGetLogin(rc.GetAuthor())
+		if author == "" {
+			author = rc.GetCommit().GetAuthor().GetName()
+		}
+		message := rc.GetCommit().GetMessage()
+		title := message
+		if i := strings.IndexByte(title, '\n'); i >= 0 {
+			title = title[:i]
+		}
+		out = append(out, PRCommit{
+			SHA:        rc.GetSHA(),
+			Author:     author,
+			Title:      strings.TrimSpace(title),
+			Message:    message,
+			AuthoredAt: prCommitTime(rc),
+		})
+	}
+	return out, nil
+}
+
+// listPRRepositoryCommits is ListPRCommits without the projection: the raw
+// commits, oldest first, nils dropped — for callers that need the parents,
+// the git identities, or the signature verification.
+func (c *Client) listPRRepositoryCommits(ctx context.Context, owner, repoName string, number int) ([]*gh.RepositoryCommit, error) {
 	opts := &gh.ListOptions{PerPage: 100}
-	var out []PRCommit
+	var out []*gh.RepositoryCommit
 	for page := 0; page < maxPRCommitPages; page++ {
 		commits, resp, err := c.client.PullRequests.ListCommits(ctx, owner, repoName, number, opts)
 		if err != nil {
 			return nil, fmt.Errorf("listing commits for %s/%s#%d: %w", owner, repoName, number, err)
 		}
 		for _, rc := range commits {
-			if rc == nil {
-				continue
+			if rc != nil {
+				out = append(out, rc)
 			}
-			author := safeGetLogin(rc.GetAuthor())
-			if author == "" {
-				author = rc.GetCommit().GetAuthor().GetName()
-			}
-			message := rc.GetCommit().GetMessage()
-			title := message
-			if i := strings.IndexByte(title, '\n'); i >= 0 {
-				title = title[:i]
-			}
-			out = append(out, PRCommit{
-				SHA:        rc.GetSHA(),
-				Author:     author,
-				Title:      strings.TrimSpace(title),
-				Message:    message,
-				AuthoredAt: prCommitTime(rc),
-			})
 		}
 		if resp.NextPage == 0 {
 			break

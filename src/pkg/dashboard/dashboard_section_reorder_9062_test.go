@@ -101,7 +101,7 @@ func TestDashboardLayoutNormalizeFutureUnknownAndMissing(t *testing.T) {
 	html := indexHTML(t)
 	script := dashboardLayoutPreamble9062() + jsFunc(t, html, "dashboardLayoutAllIds") + "\n" + jsFunc(t, html, "dashboardLayoutNormalize") + `
 const got = dashboardLayoutNormalize({v:99, main:['faq-section','unknown','governor','faq-section']});
-const want = ['faq-section','governor','runs-section','overview-section','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','platform-section','audit-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section'];
+const want = ['faq-section','runs-section','overview-section','governor','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','platform-section','audit-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section'];
 if (got.v !== 1) throw new Error('version not normalized: '+got.v);
 if (JSON.stringify(got.main) !== JSON.stringify(want)) throw new Error('normalized order '+JSON.stringify(got.main));
 `
@@ -156,9 +156,9 @@ const document = {
 	b.WriteString(`
 dashboardApplyLayout(dashboardLayoutNormalize({v:2, main:['faq-section','governor']}));
 let first = root.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR).slice(0,4).map(e => e.getAttribute('data-dashboard-section')).join(',');
-if (first !== 'faq-section,governor,runs-section,overview-section') throw new Error('page order '+first);
+if (first !== 'faq-section,runs-section,overview-section,governor') throw new Error('page order '+first);
 let nav = navGroup.children.map(e => e.getAttribute('data-section')).join(',');
-if (nav !== 'faq-section,governor,overview-section,repos-section') throw new Error('sidebar order '+nav);
+if (nav !== 'faq-section,overview-section,governor,repos-section') throw new Error('sidebar order '+nav);
 if (oldGroup.hidden !== true) throw new Error('empty old nav group not hidden');
 if (helpGroup.hidden === true) throw new Error('non-section help group hidden');
 dashboardLayoutWrite();
@@ -173,5 +173,31 @@ if (resetA.hidden !== true || resetB.hidden !== true) throw new Error('reset but
 	cmd := exec.Command(node, "-e", b.String())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("node dashboard apply/sidebar failed: %v\n%s\nscript funcs=%s", err, out, regexp.QuoteMeta(strings.Join(funcs, ",")))
+	}
+}
+
+// #9426: a layout saved before newer sections existed must not push those
+// sections below the trailing FAQ — they slot in next to their template
+// neighbours and FAQ stays last unless the operator moved it.
+func TestDashboardLayoutNormalizeKeepsFAQLastForStaleSavedLayout(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — dashboard layout normalization was NOT executed by this run")
+	}
+	html := indexHTML(t)
+	script := dashboardLayoutPreamble9062() + jsFunc(t, html, "dashboardLayoutAllIds") + "\n" + jsFunc(t, html, "dashboardLayoutNormalize") + `
+const stale = {v:1, main:['overview-section','governor','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','platform-section','audit-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','faq-section']};
+const got = dashboardLayoutNormalize(stale).main;
+if (got[got.length-1] !== 'faq-section') throw new Error('FAQ not last: '+JSON.stringify(got));
+const tail = got.slice(-4).join(',');
+if (tail !== 'debug-section,logs-section,agents-section,faq-section') throw new Error('new sections not slotted before FAQ: '+tail);
+if (new Set(got).size !== got.length) throw new Error('duplicate ids: '+JSON.stringify(got));
+const moved = dashboardLayoutNormalize({v:1, main:['faq-section','cost-panel','overview-section']}).main;
+if (moved[0] !== 'faq-section') throw new Error('operator-moved FAQ not respected: '+JSON.stringify(moved));
+if (moved.length !== 19) throw new Error('missing sections not restored: '+moved.length);
+`
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("node dashboard normalize failed: %v\n%s", err, out)
 	}
 }

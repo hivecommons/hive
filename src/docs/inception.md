@@ -170,7 +170,7 @@ for a machine-readable version.
 ## Template variables
 
 The `brainstorm` agent's kick prompt (`pkg/policies/defaults/brainstorm-advisory.md`)
-is built by the scheduler (`pkg/scheduler/scheduler.go`) with these
+is built by the scheduler (`pkg/scheduler/templates.go`, `inceptionVars`) with these
 inception-specific substitutions, documented in full in
 [`policies/README.md`](../policies/README.md):
 

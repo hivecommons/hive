@@ -684,6 +684,8 @@ func (k *KnowledgeAPI) Vaults() []VaultInfo {
 // GetVaultStore returns the underlying FileStore for a vault by root directory.
 // This is used by the git syncer to trigger reindex after pulls.
 func (k *KnowledgeAPI) GetVaultStore(rootDir string) *FileStore {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
 	for _, v := range k.vaults {
 		if v.RootDir() == rootDir {
 			return v
@@ -895,6 +897,8 @@ var (
 
 // GetGitSourceStore returns the underlying FileStore for a git source by name.
 func (k *KnowledgeAPI) GetGitSourceStore(name string) *FileStore {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
 	for _, gs := range k.gitSources {
 		if gs.Config().Name == name && gs.Ready() {
 			return gs.Store()

@@ -175,7 +175,7 @@ type overviewIssueItem struct {
 // overviewIssueItems classifies every open and held issue across the repo
 // cards that pass filters. It is the one walk the CSV/JSON export and the
 // owner-advice queue breakdown both read, so they cannot disagree.
-func overviewIssueItems(status *StatusPayload, cfg config.DashboardIssueBandsConfig, filters overviewFilters, now time.Time) []overviewIssueItem {
+func overviewIssueItems(status *StatusPayload, cfg config.DashboardIssueBandsConfig, filters overviewFilters, now time.Time, selfAuthorizationHoldActive func(string) bool) []overviewIssueItem {
 	var out []overviewIssueItem
 	for _, repo := range status.Repos {
 		repoName := overviewRepoName(repo)
@@ -183,16 +183,16 @@ func overviewIssueItems(status *StatusPayload, cfg config.DashboardIssueBandsCon
 			continue
 		}
 		for _, issue := range frontendRepoIssues(repo, false) {
-			info := IssueBand(issue, false, cfg, now)
+			issue.Repo = nonEmpty(issue.Repo, repoName)
+			info := IssueBand(issue, false, cfg, now, selfAuthorizationHoldActive)
 			if !filters.matchBand(info.Band) || !filters.matchFlags(info.Stale, false) {
 				continue
 			}
-			issue.Repo = nonEmpty(issue.Repo, repoName)
 			out = append(out, overviewIssueItem{issue: issue, info: info})
 		}
 		for _, issue := range frontendRepoIssues(repo, true) {
 			issue.Repo = nonEmpty(issue.Repo, repoName)
-			info := IssueBand(issue, true, cfg, now)
+			info := IssueBand(issue, true, cfg, now, selfAuthorizationHoldActive)
 			info.HoldReason = heldReason(issue.Labels, false, status.HiveID)
 			if !filters.matchBand(info.Band) || !filters.matchFlags(info.Stale, true) {
 				continue
@@ -209,7 +209,7 @@ func (s *Server) overviewIssueRows(status *StatusPayload, cfg config.DashboardIs
 	for _, key := range issueBandOrder {
 		byBand[key] = nil
 	}
-	for _, item := range overviewIssueItems(status, cfg, filters, now) {
+	for _, item := range overviewIssueItems(status, cfg, filters, now, s.selfAuthorizationHoldActiveForRepo) {
 		counts[item.info.Band]++
 		byBand[item.info.Band] = append(byBand[item.info.Band], item)
 	}

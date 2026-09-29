@@ -1421,6 +1421,9 @@ func TestPaneShowsActiveWork(t *testing.T) {
 		want bool
 	}{
 		{"legacy footer hint", "some output\nesc to interrupt", true},
+		{"legacy direct interrupt footer hint", "some output\nesc interrupt", true},
+		{"waiting for background agents footer", "❯\n────────\n ● Waiting for background agents · 500 B esc stop agents", true},
+		{"omp running cancel footer", "⏺ Running… (esc to cancel)\n❯", true},
 		{"live spinner counter (v2.1.204)", "✶ Infusing… (18s · ↓ 94 tokens)", true},
 		{"completed response", "⏺ Done.\n✻ Worked for 26s\n❯ ", false},
 		{"idle prompt", "❯ \n  ⏵⏵ bypass permissions on", false},

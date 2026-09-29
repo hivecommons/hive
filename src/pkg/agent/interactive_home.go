@@ -43,8 +43,8 @@ func sharedAgentHomeForced() bool {
 //
 //   - .claude   — holds .credentials.json (the shared OAuth token) and
 //     settings.json. One login authenticates the fleet.
-//   - .copilot / .config / .codex / .bob / .gemini — per-tool auth+config the
-//     fleet shared safely before this change (none are rewritten wholesale by
+//   - .config / .codex / .bob / .gemini — per-tool auth+config the fleet
+//     shared safely before this change (none are rewritten wholesale by
 //     rename the way .claude.json is). .config is also $XDG_CONFIG_HOME: gh's
 //     hosts.yml and goose's config.yaml (provider keys) live there, so it
 //     stays shared on purpose — it is credential/config state, not session
@@ -55,13 +55,25 @@ func sharedAgentHomeForced() bool {
 // DELIBERATELY NOT BRIDGED: .claude.json (the contended session file — the
 // whole point), .bash_history (same rename contention, zero sharing value),
 // .npm (per-agent npm caches avoid the cross-UID EACCES collisions the shared
-// cache suffered — see installCavemanForAgent), and .local (#6238 — the
+// cache suffered — see installCavemanForAgent), .local (#6238 — the
 // $XDG_DATA_HOME / $XDG_STATE_HOME root; see setupAgentXDGDirs for why it is
-// a REAL per-agent directory with one narrow bridge inside it).
+// a REAL per-agent directory with one narrow bridge inside it), and .copilot
+// (hivecommons/hive#9444 — bridging the whole directory shared
+// .copilot/session-state, the CLI's per-run chat transcripts, across every
+// per-UID agent: any agent's session directory became visible, and mtime-
+// newest, through every OTHER agent's symlinked home. See setupCopilotHome
+// for why it is a REAL per-agent directory with one narrow bridge inside it).
 var interactiveHomeBridgeDirs = []string{
-	".claude", ".copilot", ".config", ".codex", ".bob", ".gemini",
+	".claude", ".config", ".codex", ".bob", ".gemini",
 	".cache",
 }
+
+// copilotConfigFileName is the one file inside ~/.copilot that must stay
+// fleet-shared: Copilot CLI's token map (see copilotConfigHasTokens). Sharing
+// only this file — not the whole directory — keeps the "one login
+// authenticates the fleet" guarantee without also sharing
+// .copilot/session-state (hivecommons/hive#9444).
+const copilotConfigFileName = "config.json"
 
 // xdgDataHomeRel / xdgStateHomeRel are the XDG Base Directory defaults
 // relative to $HOME. They are exported EXPLICITLY (not left to the spec
@@ -178,6 +190,7 @@ func (m *Manager) setupInteractiveHome(agent *AgentProcess, backend string) {
 
 	m.bridgeInteractiveHome(agent.Name, home)
 	m.setupAgentXDGDirs(agent.Name, home, agent.UID)
+	m.setupCopilotHome(agent.Name, home, agent.UID)
 	m.seedClaudeSessionForAgent(agent, home)
 	m.tightenInteractiveHome(agent.Name, home, agent.UID)
 	m.sweepOrphanedClaudeTmp(agent.Name)
@@ -267,6 +280,48 @@ func (m *Manager) setupAgentXDGDirs(agentName, home string, uid int) {
 			filepath.Join(agentXDGDataHome(home), name),
 			filepath.Join(agentXDGDataHome(sharedAgentHome), name))
 	}
+}
+
+// setupCopilotHome makes $HOME/.copilot a REAL per-agent directory, retiring
+// the legacy whole-directory symlink bridge to the shared /data/home/.copilot
+// when one is found, then re-bridging only config.json back into the shared
+// tree (hivecommons/hive#9444).
+//
+// Before this, .copilot rode interactiveHomeBridgeDirs as a bare symlink —
+// same as .claude / .config — which is correct for a directory that holds
+// ONLY credential/config state, but Copilot CLI also keeps its per-run chat
+// transcripts under .copilot/session-state. Bridging the whole directory
+// therefore made every agent's session-state tree the SAME physical
+// directory: any agent's session, and its mtime, showed up while listing
+// ANY other agent's .copilot/session-state — exactly the cross-contamination
+// the issue reports (sec-check/quality sessions found under the scanner's
+// home). Only config.json (the fleet-shared token map read by
+// copilotConfigHasTokens / the auth probe) still needs to be shared; nothing
+// else under .copilot does.
+func (m *Manager) setupCopilotHome(agentName, home string, uid int) {
+	dir := filepath.Join(home, ".copilot")
+	if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		// Legacy whole-directory bridge from before this fix. Removing the
+		// link touches nothing it pointed at (the shared session-state and
+		// config.json live on, reachable by every other agent's own link
+		// until they are re-provisioned too).
+		if rerr := os.Remove(dir); rerr != nil {
+			m.logger.Warn("failed to retire legacy shared .copilot bridge; session-state stays shared for this agent",
+				"agent", agentName, "link", dir, "error", rerr)
+			return
+		}
+		m.logger.Info("retired legacy shared .copilot bridge in favour of a per-agent session-state dir",
+			"agent", agentName, "home", home)
+	}
+	if err := mkdirAllNoFollow(sharedAgentHome, dir, interactiveHomeDirMode); err != nil {
+		m.logger.Warn("failed to create per-agent .copilot dir",
+			"agent", agentName, "dir", dir, "error", err)
+		return
+	}
+	m.ownAgentDir(agentName, dir, uid)
+	m.bridgeHomeEntry(agentName,
+		filepath.Join(dir, copilotConfigFileName),
+		filepath.Join(sharedAgentHome, ".copilot", copilotConfigFileName))
 }
 
 // ownAgentDir gives one freshly created per-agent directory to the agent UID

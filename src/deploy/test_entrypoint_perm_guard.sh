@@ -404,6 +404,173 @@ else
   bad "the bounded repair returns 0 on an absent path" "it must not end the guard"
 fi
 
+# ── 11. No agent is locked out of a file it created mid-sweep (#9226) ────────
+# The repair used to be three separate walks: chmod, then g+s, then
+# `chown dev:node`. A file an agent created while the chmod walk was running
+# was enumerated only by the chown walk, so it went from agent-owned 0600 to
+# dev-owned 0600 and locked out the agent that created it -- copilot's
+# `session.send` failed with "Failed to append to JSONL file ... Permission
+# denied" on its own session.
+#
+# Reproduced deterministically with PATH stubs, since the real chown needs
+# root: the chmod stub creates a fresh owner-only session file on the repair's
+# first chmod (an agent starting a session mid-sweep), and the chown stub
+# records the owner spec and the mode of every path at the moment it would be
+# chowned. Two things must hold: nothing is chowned while group-unwritable,
+# and nothing the test user (an agent, not root) owns is ever handed to dev --
+# the ownership transfer is what turns a mode gap into a lock-out.
+#
+# The chown stub can also swap a path's inode by rename before "chowning" it
+# (an agent atomically rewriting a file mid-sweep). The end state must still
+# be group-writable, or the swapped file stays closed to the agent's peers.
+REAL_CHMOD="$(command -v chmod)"
+RACE_STUB="$WORK/race-stub"
+mkdir -p "$RACE_STUB"
+cat > "$RACE_STUB/chmod" <<STUBEOF
+#!/bin/sh
+if [ -n "\${RACE_NEWFILE:-}" ] && [ ! -e "\$RACE_NEWFILE" ]; then
+  (umask 077; printf 'x\n' > "\$RACE_NEWFILE")
+fi
+for a in "\$@"; do
+  [ -z "\${RACE_CHMOD_FAIL:-}" ] || [ "\$a" != "\$RACE_CHMOD_FAIL" ] || exit 1
+done
+exec "$REAL_CHMOD" "\$@"
+STUBEOF
+cat > "$RACE_STUB/chown" <<'STUBEOF'
+#!/bin/sh
+spec=""
+for p in "$@"; do
+  case "$p" in -*) continue ;; *:*) spec="$p"; continue ;; esac
+  if [ -n "${RACE_SWAP:-}" ] && [ "$p" = "$RACE_SWAP" ] && [ ! -e "$RACE_SWAP.swapped" ]; then
+    : > "$RACE_SWAP.swapped"
+    (umask 077; printf 'y\n' > "$RACE_SWAP.tmp") && mv -f "$RACE_SWAP.tmp" "$RACE_SWAP"
+    continue  # a new inode the repair never enumerated; the end-state check covers it
+  fi
+  printf '%s %s %s %s\n' "$spec" "$(stat -c '%u' "$p" 2>/dev/null || stat -f '%u' "$p")" \
+    "$(stat -c '%a' "$p" 2>/dev/null || stat -f '%Lp' "$p")" "$p" >> "$CHOWN_LOG"
+done
+exit 0
+STUBEOF
+chmod +x "$RACE_STUB/chmod" "$RACE_STUB/chown"
+
+group_rw() {
+  _g="$(printf '%s' "$1" | tail -c 2 | head -c 1)"
+  case "$_g" in 6|7) return 0 ;; *) return 1 ;; esac
+}
+
+for repair in hive_fix_tree_recent hive_fix_tree; do
+  RACE_TREE="$WORK/race-$repair"
+  mkdir -p "$RACE_TREE/session-state/existing"
+  printf 'x\n' > "$RACE_TREE/session-state/existing/events.jsonl"
+  chmod 0600 "$RACE_TREE/session-state/existing/events.jsonl"
+  SWAPPED="$RACE_TREE/session-state/existing/workspace.yaml"
+  printf 'x\n' > "$SWAPPED"
+  NEW_SESSION="$RACE_TREE/session-state/existing/new-events.jsonl"
+  CHOWN_LOG="$WORK/chown-$repair.log"
+  : > "$CHOWN_LOG"
+
+  CHOWN_LOG="$CHOWN_LOG" RACE_NEWFILE="$NEW_SESSION" RACE_SWAP="$SWAPPED" \
+    sh -c 'set -e; . "$1"; PATH="$2:$PATH"; '"$repair"' "$3" 10' \
+    sh "$WORK/guards.local.sh" "$RACE_STUB" "$RACE_TREE" >/dev/null 2>&1
+
+  if [ ! -e "$NEW_SESSION" ] || [ ! -s "$CHOWN_LOG" ] || [ ! -e "$SWAPPED.swapped" ]; then
+    bad "$repair: race harness exercised" \
+        "new file created: $([ -e "$NEW_SESSION" ] && echo yes || echo no); chown log: $(wc -l < "$CHOWN_LOG") lines; swap done: $([ -e "$SWAPPED.swapped" ] && echo yes || echo no)"
+    continue
+  fi
+
+  LOCKED="$(while read -r s u m p; do group_rw "$m" || printf '%s %s\n' "$m" "$p"; done < "$CHOWN_LOG")"
+  if [ -z "$LOCKED" ]; then
+    ok "$repair: every entry is group-writable before it is chowned"
+  else
+    bad "$repair: every entry is group-writable before it is chowned" \
+        "chowned while group-unwritable: $LOCKED"
+  fi
+
+  # Keyed on the owner at chown time, so the check holds whoever runs the
+  # suite: only uid 0 may be handed to dev, every other owner is kept.
+  REOWNED="$(while read -r s u m p; do [ "$u" = 0 ] || case "$s" in :*) ;; *) printf '%s uid=%s %s\n' "$s" "$u" "$p" ;; esac; done < "$CHOWN_LOG")"
+  if [ -z "$REOWNED" ]; then
+    ok "$repair: agent-owned entries keep their owner (regrouped to node only)"
+  else
+    bad "$repair: agent-owned entries keep their owner (regrouped to node only)" \
+        "handed to another owner, so an owner-only mode locks their creator out: $REOWNED"
+  fi
+
+  swapped_mode="$(stat -c '%a' "$SWAPPED" 2>/dev/null || stat -f '%Lp' "$SWAPPED")"
+  if group_rw "$swapped_mode"; then
+    ok "$repair: a path swapped by rename mid-repair ends group-writable (mode $swapped_mode)"
+  else
+    bad "$repair: a path swapped by rename mid-repair ends group-writable" \
+        "mode is $swapped_mode; the swapped file stays closed to the agent's peers"
+  fi
+done
+
+# Root-owned entries are the one class still handed to dev. That transfer must
+# be gated on the entry's own chmod: if the chmod fails and the chown still
+# runs, the result is exactly the dev-owned owner-only file this issue is
+# about. Root-owned files cannot be made unprivileged, so the shipped per-entry
+# script is driven directly, with the chmod stub failing for one path.
+REOWN_DIR="$WORK/reown"
+mkdir -p "$REOWN_DIR"
+printf 'x\n' > "$REOWN_DIR/chmod-fails"
+printf 'x\n' > "$REOWN_DIR/chmod-works"
+chmod 0600 "$REOWN_DIR/chmod-fails" "$REOWN_DIR/chmod-works"
+CHOWN_LOG="$WORK/chown-reown.log"
+: > "$CHOWN_LOG"
+CHOWN_LOG="$CHOWN_LOG" RACE_CHMOD_FAIL="$REOWN_DIR/chmod-fails" \
+  sh -c '. "$1"; PATH="$2:$PATH"; sh -c "$(hive_fix_reown_sh)" sh g+rwX "$3/chmod-fails" "$3/chmod-works"' \
+  sh "$WORK/guards.local.sh" "$RACE_STUB" "$REOWN_DIR" >/dev/null 2>&1
+if grep -q "chmod-fails" "$CHOWN_LOG"; then
+  bad "a root-owned entry whose chmod failed is not handed to dev" \
+      "chowned anyway: $(grep chmod-fails "$CHOWN_LOG")"
+elif grep -qE "^dev:node [0-9]+ 660 $REOWN_DIR/chmod-works\$" "$CHOWN_LOG"; then
+  ok "a root-owned entry whose chmod failed is not handed to dev; its sibling is (after its chmod)"
+else
+  bad "a root-owned entry whose chmod failed is not handed to dev; its sibling is (after its chmod)" \
+      "chown log: $(cat "$CHOWN_LOG")"
+fi
+
+# ── 12. The sweeps never act through a symlink ──────────────────────────────
+# Agents can create symlinks inside the shared dot-dirs, and chmod/chown given
+# a link's path act on its TARGET. A root-run sweep that passes links through
+# would group-open and re-own whatever the link names.
+LINK_TREE="$WORK/link-tree"
+OUTSIDE="$WORK/outside-secret"
+mkdir -p "$LINK_TREE/session-state"
+printf 'secret\n' > "$OUTSIDE"
+chmod 0600 "$OUTSIDE"
+ln -s "$OUTSIDE" "$LINK_TREE/session-state/planted"
+for repair in hive_fix_tree_recent hive_fix_tree; do
+  sh -c 'set -e; . "$1"; '"$repair"' "$2" 10' sh "$WORK/guards.local.sh" "$LINK_TREE" >/dev/null 2>&1
+  outside_mode="$(stat -c '%a' "$OUTSIDE" 2>/dev/null || stat -f '%Lp' "$OUTSIDE")"
+  if [ "$outside_mode" = "600" ]; then
+    ok "$repair: a planted symlink's target is left alone"
+  else
+    bad "$repair: a planted symlink's target is left alone" \
+        "target outside the tree went to mode $outside_mode"
+    chmod 0600 "$OUTSIDE"
+  fi
+done
+
+# Functional: an entry that only matches the chown-worthy window (i.e. was
+# never touched by a chmod-only pass) must still end up group-writable, not
+# just chowned. This is the exact state #9226 describes: dev-owned, 0600.
+RACE_TREE="$WORK/race-tree"
+mkdir -p "$RACE_TREE/session-race"
+RACEFILE="$RACE_TREE/session-race/events.jsonl"
+printf 'x\n' > "$RACEFILE"
+chmod 0600 "$RACEFILE"
+sh -c 'set -e; . "$1"; hive_fix_tree_recent "$2" 10' sh "$WORK/guards.local.sh" "$RACE_TREE" \
+  >/dev/null 2>&1
+race_mode="$(stat -c '%a' "$RACEFILE" 2>/dev/null || stat -f '%Lp' "$RACEFILE")"
+race_group_digit="$(printf '%s' "$race_mode" | tail -c 2 | head -c 1)"
+case "$race_group_digit" in
+  2|3|6|7) ok "a 0600 entry is reopened group-writable in the same pass that would chown it (mode $race_mode)" ;;
+  *) bad "a 0600 entry is reopened group-writable in the same pass that would chown it" \
+         "mode is $race_mode — this is the dev-owned-0600 lockout from #9226" ;;
+esac
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

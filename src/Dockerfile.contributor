@@ -422,9 +422,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
 # No credential is baked in: omp reads the selected model's provider
 # credential from its documented environment variables (ANTHROPIC_API_KEY,
 # OPENAI_API_KEY, …), which the Justfile's container arm already forwards.
-ARG OMP_VERSION=18.3.4
-ARG OMP_SHA256_AMD64=e8d13ea8da6281f183108bc25ae94c4a1a5159a2072d188ea8c30bbfce4735b8
-ARG OMP_SHA256_ARM64=bb058d49dde5bb84e6f1b96aa798d7393d3bce1a6927392694e49120ba2c2619
+ARG OMP_VERSION=18.4.1
+ARG OMP_SHA256_AMD64=494ed1f2c8eb223168d87d3592cf56aa52afe4d35f4191908ba99a0fbe57fad9
+ARG OMP_SHA256_ARM64=357c5a10071beb302bb66a4569d2648946fe4aa508b1cd15d535886ec47d1f38
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64) OMP_ASSET=omp-linux-x64; OMP_SHA256="$OMP_SHA256_AMD64" ;; \
