@@ -1,6 +1,9 @@
 package github
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -377,6 +380,31 @@ func reviewQueueAge(hours int) string {
 		return fmt.Sprintf("%dh", hours)
 	}
 	return fmt.Sprintf("%dd", hours/reviewQueueHoursPerDay)
+}
+
+// reviewQueueVersionHexLen is how many hex characters of the SHA-256 digest
+// ReviewQueueVersion keeps. 64 bits is ample to tell two renders of one
+// hive's queue apart; the version is a change signal, not a security token.
+const reviewQueueVersionHexLen = 16
+
+// ReviewQueueVersion fingerprints a ranked queue so a consumer can tell when
+// the rank changed without diffing it (hivecommons/hive#9590, "keep it
+// fresh"). It hashes every entry in order, so it changes exactly when
+// something the queue shows changes: a PR opens or leaves the queue (merged,
+// closed, turned draft), a new head SHA (which also drops a verdict recorded
+// for the old head), a CI state flip, a verdict recorded for the current head,
+// a class, label, title or hold change, a merge-conflict change (it rides in
+// Reasons), a position change, or an age reason ticking over. Identical
+// queues give identical versions, and the queue is not modified.
+func ReviewQueueVersion(queue []ReviewQueueEntry) string {
+	h := sha256.New()
+	enc := json.NewEncoder(h)
+	for _, e := range queue {
+		// A hash.Hash never returns a write error, and every field of
+		// ReviewQueueEntry is JSON-encodable, so Encode cannot fail here.
+		_ = enc.Encode(e)
+	}
+	return hex.EncodeToString(h.Sum(nil))[:reviewQueueVersionHexLen]
 }
 
 // ReviewQueueFromActionable ranks every open PR the enumeration saw - the

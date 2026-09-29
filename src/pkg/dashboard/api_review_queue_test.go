@@ -162,3 +162,52 @@ func TestReviewConfigPut_PriorityLabels(t *testing.T) {
 		t.Fatal("an absent key must leave priority_labels untouched")
 	}
 }
+
+// The rank is recomputed from the verdict artifact and the last snapshot on
+// every request, so a verdict recorded between eval cycles and a new
+// snapshot are both reflected at once - and the response's version changes
+// exactly then, which is what the dashboard view keys its re-render on.
+func TestHandleReviewQueue_VersionTracksRankInputs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "review-verdicts.json")
+	s := reviewQueueTestServer(t, path)
+
+	page1 := decodeReviewQueue(t, doOwnerGet(s, "/api/review/queue?limit=2"))
+	page2 := decodeReviewQueue(t, doOwnerGet(s, "/api/review/queue?limit=2&offset=2"))
+	if page1.Version == "" || page1.Version != page2.Version {
+		t.Fatalf("version must describe the whole queue, not the page: %q vs %q", page1.Version, page2.Version)
+	}
+	if again := decodeReviewQueue(t, doOwnerGet(s, "/api/review/queue?limit=2")); again.Version != page1.Version {
+		t.Fatalf("unchanged inputs changed the version: %q vs %q", page1.Version, again.Version)
+	}
+
+	// A verdict for the contributor fix's current head lands between cycles.
+	if err := review.WriteArtifact(path, review.Artifact{Items: []review.Aggregate{{
+		Repo: "myorg/repo1", Number: 2, HeadSHA: "h2", Verdict: review.VerdictApprove,
+		Confidence: review.Confidence{Score: review.ConfidenceMax},
+	}}}); err != nil {
+		t.Fatalf("WriteArtifact: %v", err)
+	}
+	reviewed := decodeReviewQueue(t, doOwnerGet(s, "/api/review/queue"))
+	if reviewed.Version == page1.Version {
+		t.Fatal("a new verdict for the current head did not change the version")
+	}
+	fix := reviewed.Items[0]
+	if fix.Number != 2 || !fix.Reviewed || fix.ConfidenceBand != ghpkg.ReviewQueueBandSafe {
+		t.Fatalf("verdict not reflected without an eval cycle: %+v", fix)
+	}
+
+	// The next eval cycle sees a new head on that PR: the verdict no longer
+	// applies and the version moves again.
+	snap := s.deps.Scheduler.GetLastActionable()
+	next := *snap
+	next.PRs.Items = append([]ghpkg.PullRequest(nil), snap.PRs.Items...)
+	next.PRs.Items[1].HeadSHA = "h2-pushed"
+	s.deps.Scheduler = metricsSchedulerStub{actionable: &next}
+	pushed := decodeReviewQueue(t, doOwnerGet(s, "/api/review/queue"))
+	if pushed.Version == reviewed.Version {
+		t.Fatal("a new head SHA did not change the version")
+	}
+	if e := pushed.Items[0]; e.Number != 2 || e.Reviewed {
+		t.Fatalf("verdict for the old head still applied after a push: %+v", e)
+	}
+}

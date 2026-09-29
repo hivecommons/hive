@@ -22,13 +22,19 @@ const (
 
 // reviewQueueResponse is one page of the PR review queue.
 type reviewQueueResponse struct {
-	GeneratedAt time.Time                `json:"generated_at"`
-	SnapshotAt  time.Time                `json:"snapshot_at,omitzero"`
-	Total       int                      `json:"total"`
-	Limit       int                      `json:"limit"`
-	Offset      int                      `json:"offset"`
-	HasMore     bool                     `json:"has_more"`
-	Items       []ghpkg.ReviewQueueEntry `json:"items"`
+	GeneratedAt time.Time `json:"generated_at"`
+	SnapshotAt  time.Time `json:"snapshot_at,omitzero"`
+	// Version fingerprints the WHOLE ranked queue (not just this page) with
+	// ghpkg.ReviewQueueVersion. It changes whenever a rank input the queue
+	// reflects changes - head SHA, CI state, a verdict for the current head,
+	// merge conflicts, hold, a PR opening or leaving - so the dashboard view
+	// re-renders only then instead of on every poll.
+	Version string                   `json:"version"`
+	Total   int                      `json:"total"`
+	Limit   int                      `json:"limit"`
+	Offset  int                      `json:"offset"`
+	HasMore bool                     `json:"has_more"`
+	Items   []ghpkg.ReviewQueueEntry `json:"items"`
 }
 
 // handleReviewQueue serves GET /api/review/queue?limit=N&offset=M: every open
@@ -69,6 +75,7 @@ func (s *Server) handleReviewQueue(w http.ResponseWriter, r *http.Request) {
 	resp := reviewQueueResponse{
 		GeneratedAt: opts.Now.UTC(),
 		SnapshotAt:  actionable.GeneratedAt,
+		Version:     ghpkg.ReviewQueueVersion(queue),
 		Total:       len(queue),
 		Limit:       limit,
 		Offset:      offset,
