@@ -129,6 +129,25 @@ For PRs in the PR_LIST that have merge conflicts:
 4. **NEVER use the gh CLI** — all GitHub operations go through MCP
 5. Process PRs sequentially — each merge changes main and invalidates other branches
 
+## After You Push: Do Not Wait for CI (MANDATORY)
+
+Opening or updating a PR ends your work on that item for this kick. **Never
+watch, poll, or sleep on CI** — no `gh run watch`, no `gh run view` loops, no
+"checking again in 10 minutes". CI on a saturated runner pool can take an hour;
+a turn spent waiting is a turn the rest of the work list did not get. The hive's
+automerge sweep merges your PR the moment its checks are green — waiting buys
+nothing, and it hides as "Working" on the dashboard while nothing happens.
+
+- Pushed the branch and opened/updated the PR → **move to the next item**.
+- A check on your PR is red → run the Shared CI Baseline Triage once. If the
+  cause is your diff, fix it and push once. If it is infrastructure (runner
+  lost, "No space left on device", shards still `queued`, job failed with no
+  log), do **not** retry or wait: leave one comment naming the infra cause and
+  **DEFER — move to the next item**.
+- Never spend more than **two** status checks on the same run in one kick.
+- Summarize with "PR #N opened/updated; CI pending — sweep will merge when
+  green", then continue.
+
 ## Workflow
 
 1. Read the work list above
@@ -136,7 +155,7 @@ For PRs in the PR_LIST that have merge conflicts:
 3. **Reap stale findings** — re-verify open beads and close resolved ones
 4. Triage each work-list item: **bug reports** get root-cause analysis; **enhancement/feature requests** go straight to implementation (they need no confirmation)
 5. Create a GitHub issue for each NEW confirmed finding you discover yourself
-6. For work-list bugs with a clear fix AND for work-list enhancements/features, create a worktree, implement, and open a PR
+6. For work-list bugs with a clear fix AND for work-list enhancements/features, create a worktree, implement, and open a PR — then move on; never wait for or poll CI (see above)
 7. Create a bead for each finding
 8. Summarize completed work
 

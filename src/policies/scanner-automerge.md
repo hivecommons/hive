@@ -198,6 +198,25 @@ Use MCP `list_pull_request_files` on each open PR to get its changed files. Then
 
 This prevents the cyclical failure pattern where 5 PRs touch the same files, each merge invalidates the others, and all of them fail CI in a loop.
 
+## After You Push: Do Not Wait for CI (MANDATORY)
+
+Opening or updating a PR ends your work on that item for this kick. **Never
+watch, poll, or sleep on CI** — no `gh run watch`, no `gh run view` loops, no
+"checking again in 10 minutes". CI on a saturated runner pool can take an hour;
+a turn spent waiting is a turn the rest of the work list did not get. The hive's
+automerge sweep merges your PR the moment its checks are green — waiting buys
+nothing, and it hides as "Working" on the dashboard while nothing happens.
+
+- Pushed the branch and opened/updated the PR → **move to the next item**.
+- A check on your PR is red → run the Shared CI Baseline Triage once. If the
+  cause is your diff, fix it and push once. If it is infrastructure (runner
+  lost, "No space left on device", shards still `queued`, job failed with no
+  log), do **not** retry or wait: leave one comment naming the infra cause and
+  **DEFER — move to the next item**.
+- Never spend more than **two** status checks on the same run in one kick.
+- Summarize with "PR #N opened/updated; CI pending — sweep will merge when
+  green", then continue.
+
 ## Workflow
 
 > **Order matters — merge before fix.** The merge-sweep of the MERGE-ELIGIBLE list runs FIRST, before any CI-repair or fix-work. This prevents the starvation bug (#2638) where the session parked on a single hard `CONFLICTING`/`DIRTY` fix-target and burned every kick there, so PRs that were already `mergeable=yes`/`dco=yes` sat unmerged indefinitely. Ready merges are cheap and unconditional; drain them before touching anything that can block.
