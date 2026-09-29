@@ -32,7 +32,8 @@ const ProxyInjectGHAuthEnv = "HIVE_PROXY_INJECT_GH_AUTH"
 
 // ProxyInjectGHAuthOnValue is the only value that enables injection - the same
 // strict "true" match HIVE_PROXY_ADVISORY_OK uses. ProxyInjectGHAuthOffValue is
-// the explicit opt-out: it behaves exactly like unset, but says so on the pod
+// the explicit opt-out: it always wins, including over the hosted-App default
+// that unset resolves to (ResolveProxyInjectGHAuth), and says so on the pod
 // spec, so a spoke that deliberately runs without injection is visibly a
 // decision rather than an omission (#9586).
 const (
