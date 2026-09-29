@@ -54,6 +54,15 @@ const RedPRStaleAfter = 10 * time.Minute
 // unchanged red SHA.
 const MaxReEngagements = 6
 
+// SharedFailureSiblings is how many OTHER open PRs must be failing the same
+// check for that check to count as shared/base breakage rather than a defect
+// in this PR. It mirrors the rule the agents already follow in
+// hive-baseline-check.sh (src/policies/scanner-automerge.md): a check red on
+// the default branch or on at least three sibling PRs is not this PR's bug.
+// Counting shared breakage as a failed fix attempt is what turned one
+// /mnt/gocache runner outage into twelve needs-human PRs on 2026-09-28.
+const SharedFailureSiblings = 3
+
 // ReEngageCooldown is the minimum spacing between two re-engagements of the
 // SAME red head SHA.
 //
@@ -71,8 +80,20 @@ const MaxReEngagements = 6
 //
 // Spacing re-engagements by RedPRStaleAfter makes each one cost at least as
 // much wall-clock as the staleness signal that justified it, so the six
-// attempts span >=1h and a normally-cadenced agent gets real kicks in between.
+// attempts span >=1h.
+//
+// The spacing is a FLOOR, not the whole story: callers pass the owning agent's
+// effective cadence through ReEngageEligible/TryReEngageAfter so a budget is
+// never spent faster than the owner can answer it (an owner on a 1h cadence
+// would otherwise burn all six re-engagements inside a single cadence window —
+// hivecommons/hive#9472). And a grant is only recorded once a kick has actually
+// been DELIVERED to a fixer, so an unreachable owner cannot consume the budget.
 const ReEngageCooldown = RedPRStaleAfter
+
+// MaxReEngageCooldown caps the owner-cadence-derived spacing so a pathological
+// or mis-configured cadence (a daily kick, say) cannot park a red PR in the
+// automated lane indefinitely without ever reaching a human.
+const MaxReEngageCooldown = time.Hour
 
 // MachineryVersion identifies the GENERATION of the fix-dispatch machinery.
 // Bump it when the kick/repair pipeline changes materially enough that
@@ -95,6 +116,20 @@ type Entry struct {
 	// RedSHAs are the distinct head SHAs observed with failing CI, oldest
 	// first. Length == number of failed fix attempts.
 	RedSHAs []string `json:"red_shas"`
+	// RedTrees are the tree OIDs of the heads recorded in RedSHAs. A `ci:
+	// retrigger` commit is a new SHA over an IDENTICAL tree — no fix was
+	// attempted — so a head whose tree is already recorded does not advance
+	// the attempt count (hivecommons/hive#9473: three "distinct fix attempts"
+	// on a one-file docs PR were the original commit plus two empty
+	// retriggers). Empty when the forge did not report a tree; the SHA then
+	// counts as before.
+	RedTrees []string `json:"red_trees,omitempty"`
+	// SharedAtEscalation names the failing checks that were classified as
+	// shared/base breakage (see Observation.SharedChecks) at the moment this
+	// entry escalated. It is what lets the sweep un-park the PR by itself once
+	// the shared incident clears, instead of waiting for a human to notice
+	// that a runner outage — not the PR — was the cause.
+	SharedAtEscalation []string `json:"shared_at_escalation,omitempty"`
 	// Escalated is set once the escalation actions (comment + label) have
 	// fired, so they never repeat for the same PR.
 	Escalated bool `json:"escalated"`
@@ -125,10 +160,14 @@ type Entry struct {
 	// worked PR never reads as stale.
 	CurRedSHA  string    `json:"cur_red_sha,omitempty"`
 	FirstRedAt time.Time `json:"first_red_at,omitempty"`
-	// ReEngagements counts how many times a fix has been re-dispatched for the
-	// CURRENT red SHA (CurRedSHA). Reset to 0 whenever CurRedSHA changes or the
-	// PR goes green. The re-engagement cap (MaxReEngagements) reads this so a
-	// permanently-red, never-moving PR is not nudged forever.
+	// ReEngagements counts how many fix re-dispatches have been DELIVERED for
+	// the CURRENT red SHA (CurRedSHA) — a kick the owning agent (or the
+	// fallback fixer) actually accepted, not merely an intent to nudge. Reset
+	// to 0 whenever CurRedSHA changes or the PR goes green. The re-engagement
+	// cap (MaxReEngagements) reads this so a permanently-red, never-moving PR
+	// is not nudged forever, and so a PR whose owner was never reachable is
+	// never escalated as "N re-dispatches" that nobody received
+	// (hivecommons/hive#9472).
 	ReEngagements int `json:"re_engagements,omitempty"`
 	// LastReEngagedAt is when the most recent re-engagement was granted for
 	// CurRedSHA. ReEngageCooldown is enforced against it so the budget is
@@ -139,6 +178,13 @@ type Entry struct {
 	// were burned. Older-generation entries are granted amnesty (see
 	// MachineryVersion).
 	Machinery int `json:"machinery,omitempty"`
+	// AutoUnparked records that the sweep itself returned this PR to the
+	// automated lane (green head, or the shared incident behind the
+	// escalation cleared) and asked the caller to take the needs-human label
+	// off. While it is set, a pass that still SEES the label retries the
+	// removal instead of re-escalating and re-commenting. Cleared as soon as
+	// a pass observes the label gone.
+	AutoUnparked bool `json:"auto_unparked,omitempty"`
 
 	// ReviewerPassedSHA / ReviewerPassedAt record the reviewer-lane pass that
 	// Sweep reconciled into this entry: the head SHA the reviewer left on the
@@ -212,6 +258,85 @@ type Observation struct {
 	// entirely outside the hub's view) back into the ledger — see the
 	// reviewer-pass reset in Sweep.
 	Labels []string
+	// Agent is the agent that owns the PR (the one the audit trail records as
+	// having opened it), "" when unattributed. Carried so the re-engagement
+	// paths can kick the OWNER rather than only counting an attempt, and so
+	// the escalation_red hook payload can name it (hivecommons/hive#9474).
+	Agent string
+	// HeadTree is the tree OID of the head commit, "" when unknown. Two red
+	// heads with the same tree are the same attempt (see Entry.RedTrees).
+	HeadTree string
+	// CIRunning reports that the PR is red on a check that has already
+	// completed WHILE other required checks are still running. The failure is
+	// real evidence (it feeds FIX-BEFORE-NEW immediately), but the PR is not
+	// yet "stuck": the staleness clock must not start until CI has settled, or
+	// a slow shard can spend the whole re-engagement budget before the last
+	// check reports (hivecommons/hive#9472).
+	CIRunning bool
+	// FailingChecks names the checks failing on this head, and SharedChecks
+	// the subset of those classified as shared/base breakage by
+	// MarkSharedFailures. Shared is set when EVERY failing check is shared:
+	// nothing about this PR is broken, so Sweep must treat it like Pending —
+	// no attempt counted, no staleness clock, no re-engagement.
+	FailingChecks []string
+	SharedChecks  []string
+	Shared        bool
+}
+
+// MarkSharedFailures classifies each red observation's failing checks as
+// PR-local or shared, in place, using the rule the agents already follow in
+// hive-baseline-check.sh: a check failing on at least SharedFailureSiblings
+// OTHER open PRs in the same enumeration pass is fleet-wide breakage (a broken
+// base branch, a runner outage), not this PR's defect. It costs no API call —
+// the failing-check names of every enumerated PR are already in hand.
+//
+// An observation whose failing checks are ALL shared gets Shared = true; a
+// mixed one keeps its PR-local checks countable and records the shared subset,
+// which is what lets an escalation be un-parked when the shared incident
+// clears without losing a genuine PR-local failure.
+func MarkSharedFailures(obs []Observation) {
+	prsPerCheck := map[string]int{}
+	for _, o := range obs {
+		if !o.Red {
+			continue
+		}
+		for _, c := range uniqueStrings(o.FailingChecks) {
+			prsPerCheck[c]++
+		}
+	}
+	for i := range obs {
+		o := &obs[i]
+		o.SharedChecks = nil
+		o.Shared = false
+		if !o.Red || len(o.FailingChecks) == 0 {
+			continue
+		}
+		checks := uniqueStrings(o.FailingChecks)
+		for _, c := range checks {
+			// prsPerCheck counts this PR too, hence the > comparison: the
+			// threshold is "at least N OTHER PRs".
+			if prsPerCheck[c] > SharedFailureSiblings {
+				o.SharedChecks = append(o.SharedChecks, c)
+			}
+		}
+		o.Shared = len(o.SharedChecks) == len(checks)
+	}
+}
+
+func uniqueStrings(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
 }
 
 // Result reports the ledger's verdict for one observed PR.
@@ -229,6 +354,27 @@ type Result struct {
 	// AddLabels call failed at escalation time. The caller should retry ONLY
 	// the label (never the comment) and then call MarkLabelApplied.
 	NeedsLabel bool
+	// ReEngagements is how many fix kicks were actually DELIVERED for the
+	// current red head SHA. The escalation comment quotes it rather than the
+	// MaxReEngagements constant, so a human is never told about six
+	// re-dispatches that were never sent.
+	ReEngagements int
+	// SharedChecks names the failing checks this pass classified as shared
+	// (base/infra breakage). The escalation comment lists them separately so
+	// the human is not sent looking for a PR-local bug that is not there.
+	SharedChecks []string
+	// Shared reports that EVERY failing check on this head is shared, so the
+	// pass was treated as no-information: no attempt counted, no staleness
+	// clock, no re-engagement.
+	Shared bool
+	// Unparked is set on the pass that automatically returns an escalated PR
+	// to the automated lane — its head went green, or the shared incident
+	// behind its escalation cleared. The caller removes the needs-human label
+	// and posts UnparkReason as a one-line comment.
+	Unparked bool
+	// UnparkReason is the human-readable sentence explaining an Unparked
+	// result. Empty unless Unparked is set.
+	UnparkReason string
 }
 
 // PruneAfter is how long a ledger entry survives after its PR stops
@@ -276,21 +422,67 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 				e = &Entry{Machinery: MachineryVersion}
 				s.entries[key] = e
 			}
+			// Already auto-un-parked on an earlier pass: the label removal has
+			// not landed (or failed). Ask the caller to retry the removal, but
+			// never re-escalate and never comment again.
+			if e.AutoUnparked {
+				e.UpdatedAt = s.now()
+				results[key] = Result{Attempts: len(e.RedSHAs), Unparked: true}
+				continue
+			}
+			// Auto-un-park #1: the head is green. Before this the labeled
+			// branch returned here unconditionally, BEFORE the green branch
+			// below, so a PR that had recovered stayed escalated in the ledger
+			// and on the forge until a human noticed (hivecommons/hive#9473).
+			if !o.Red && !o.Pending {
+				s.unparkLocked(e)
+				results[key] = Result{
+					Unparked:     true,
+					UnparkReason: "CI is green on the current head — returning this PR to the automated lane.",
+				}
+				continue
+			}
+			// Auto-un-park #2: this PR was escalated over shared breakage (a
+			// red base branch, a runner outage) and those checks are no longer
+			// shared. The PR was never the problem, so it must not need a human
+			// to take the label off once the incident clears.
+			if o.Red && len(e.SharedAtEscalation) > 0 && !anyStillShared(o.SharedChecks, e.SharedAtEscalation) {
+				cleared := strings.Join(e.SharedAtEscalation, ", ")
+				s.unparkLocked(e)
+				results[key] = Result{
+					Unparked: true,
+					UnparkReason: fmt.Sprintf(
+						"The shared CI breakage this escalation was raised over (%s) has cleared — returning this PR to the automated lane.",
+						cleared),
+				}
+				continue
+			}
 			e.Escalated = true
 			if !e.LabelApplied {
 				e.LabelApplied = true
 				e.LabelAppliedAt = s.now()
 			}
 			e.Machinery = MachineryVersion
-			if o.Red && o.HeadSHA != "" && !containsSHA(e.RedSHAs, o.HeadSHA) {
-				e.RedSHAs = appendSHA(e.RedSHAs, o.HeadSHA)
+			if o.Red && !o.Shared {
+				s.recordRedHeadLocked(e, o)
 			}
 			if o.Excerpt != "" {
 				e.LastExcerpt = o.Excerpt
 			}
 			e.UpdatedAt = s.now()
-			results[key] = Result{Attempts: len(e.RedSHAs), Escalated: true}
+			results[key] = Result{
+				Attempts:      len(e.RedSHAs),
+				Escalated:     true,
+				ReEngagements: e.ReEngagements,
+				SharedChecks:  o.SharedChecks,
+				Shared:        o.Shared,
+			}
 			continue
+		}
+		// The label is gone: whatever an earlier auto-un-park asked for has
+		// landed, so stop asking for it.
+		if e != nil && e.AutoUnparked {
+			e.AutoUnparked = false
 		}
 		// Label absent but the ledger says we escalated AND confirmed the
 		// label: a human took the label off to return the PR to the automated
@@ -308,18 +500,28 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 			e.UpdatedAt = s.now()
 		}
 
-		if o.Pending {
+		if o.Pending || (o.Red && o.Shared) {
 			// Inconclusive pass: keep the entry exactly as it is. It is
 			// neither a converged loop (which would clear history) nor a new
 			// failed attempt. Report the current state so callers keep
 			// treating an already-escalated PR as hands-off.
+			//
+			// A red pass whose failing checks are ALL shared (a broken base
+			// branch, a fleet-wide runner outage) carries exactly as much
+			// information about this PR's fix loop as a pending one: none. It
+			// used to advance the attempt count, which is how one gocache
+			// outage escalated twelve unrelated PRs in a morning
+			// (hivecommons/hive#9473).
 			if e != nil {
 				e.UpdatedAt = s.now()
 				results[key] = Result{
-					Attempts:   len(e.RedSHAs),
-					Escalated:  e.Escalated,
-					Exhausted:  e.ReEngagements >= MaxReEngagements,
-					NeedsLabel: e.Escalated && !e.LabelApplied,
+					Attempts:      len(e.RedSHAs),
+					Escalated:     e.Escalated,
+					Exhausted:     e.ReEngagements >= MaxReEngagements,
+					NeedsLabel:    e.Escalated && !e.LabelApplied,
+					ReEngagements: e.ReEngagements,
+					SharedChecks:  o.SharedChecks,
+					Shared:        o.Shared,
 				}
 			}
 			continue
@@ -348,6 +550,7 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 			e.Escalated = false
 			e.LabelApplied = false
 			e.RedSHAs = nil
+			e.RedTrees = nil
 		}
 		// Reviewer-verdict reconciliation (#5511, gap G1): the reviewer lane's
 		// REPAIR/DE-ESCALATE verdict is expressed as label edits only —
@@ -367,6 +570,7 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 		if e.Escalated && containsLabel(o.Labels, ReviewerPassedLabel) && !containsLabel(o.Labels, NeedsHumanLabel) {
 			e.Escalated = false
 			e.RedSHAs = nil
+			e.RedTrees = nil
 			e.ReEngagements = 0
 			// Remember WHAT the reviewer left on the branch and WHEN, so a
 			// later re-escalation can hand the human the reviewer's context
@@ -378,19 +582,11 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 				e.ReviewerPassedAt = s.now()
 			}
 		}
-		if o.HeadSHA != "" && !containsSHA(e.RedSHAs, o.HeadSHA) {
-			e.RedSHAs = appendSHA(e.RedSHAs, o.HeadSHA)
-		}
+		s.recordRedHeadLocked(e, o)
 		// Maintain the zero-API staleness clock: a change of red head SHA means
 		// the branch moved (a fix was pushed, still red) — reset the first-seen
 		// time and the per-SHA re-engagement counter so a freshly-pushed red SHA
 		// is treated as "just started", not stale.
-		if o.HeadSHA != "" && o.HeadSHA != e.CurRedSHA {
-			e.CurRedSHA = o.HeadSHA
-			e.FirstRedAt = s.now()
-			e.ReEngagements = 0
-			e.LastReEngagedAt = time.Time{}
-		}
 		if o.Excerpt != "" {
 			e.LastExcerpt = o.Excerpt
 		}
@@ -405,12 +601,21 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 		// exhaustion on an unchanged red SHA is therefore escalation-worthy in
 		// its own right.
 		exhausted := e.ReEngagements >= MaxReEngagements
+		newly := !e.Escalated && (len(e.RedSHAs) >= threshold || exhausted)
+		if newly {
+			// Remember which checks were shared at escalation time so a later
+			// pass can un-park the PR by itself once the shared incident
+			// clears (see the labeled branch above).
+			e.SharedAtEscalation = append([]string(nil), o.SharedChecks...)
+		}
 		results[key] = Result{
-			Attempts:    len(e.RedSHAs),
-			Escalated:   e.Escalated,
-			NewlyEscala: !e.Escalated && (len(e.RedSHAs) >= threshold || exhausted),
-			Exhausted:   exhausted && len(e.RedSHAs) < threshold,
-			NeedsLabel:  e.Escalated && !e.LabelApplied,
+			Attempts:      len(e.RedSHAs),
+			Escalated:     e.Escalated,
+			NewlyEscala:   newly,
+			Exhausted:     exhausted && len(e.RedSHAs) < threshold,
+			NeedsLabel:    e.Escalated && !e.LabelApplied,
+			ReEngagements: e.ReEngagements,
+			SharedChecks:  o.SharedChecks,
 		}
 	}
 	// Prune PRs that left the open set (merged or closed) — but only once
@@ -424,6 +629,74 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 	}
 	s.saveLocked()
 	return results
+}
+
+// recordRedHeadLocked folds one red observation's head into the entry: the
+// distinct-attempt ledger and the zero-API staleness clock.
+//
+// An attempt is counted per TREE, not per commit. A `ci: retrigger` commit is
+// a new head SHA over a byte-identical tree — the agent asked CI to run again,
+// it did not attempt a fix — and counting those as distinct attempts escalated
+// PRs whose only "three attempts" were one real commit and two retriggers
+// (hivecommons/hive#9473). When the forge did not report a tree the SHA counts
+// on its own, exactly as before.
+//
+// The staleness clock only STARTS once CI has settled: a head that is red on a
+// completed check while other required checks are still running is not stuck,
+// it is still reporting, and stamping FirstRedAt then let the re-engagement
+// budget drain before the last shard finished (hivecommons/hive#9472).
+func (s *Store) recordRedHeadLocked(e *Entry, o Observation) {
+	if o.HeadSHA == "" {
+		return
+	}
+	if !containsSHA(e.RedSHAs, o.HeadSHA) && !(o.HeadTree != "" && containsSHA(e.RedTrees, o.HeadTree)) {
+		e.RedSHAs = appendSHA(e.RedSHAs, o.HeadSHA)
+		if o.HeadTree != "" {
+			e.RedTrees = appendSHA(e.RedTrees, o.HeadTree)
+		}
+	}
+	if o.HeadSHA != e.CurRedSHA {
+		e.CurRedSHA = o.HeadSHA
+		e.FirstRedAt = time.Time{}
+		e.ReEngagements = 0
+		e.LastReEngagedAt = time.Time{}
+	}
+	if o.CIRunning {
+		return
+	}
+	if e.FirstRedAt.IsZero() {
+		e.FirstRedAt = s.now()
+	}
+}
+
+// unparkLocked returns an escalated entry to the automated lane: the
+// escalation state and the whole attempt ledger are cleared (a fresh story
+// starts from here) and AutoUnparked is raised so the caller's needs-human
+// removal is retried until a pass observes the label gone.
+func (s *Store) unparkLocked(e *Entry) {
+	e.Escalated = false
+	e.LabelApplied = false
+	e.LabelAppliedAt = time.Time{}
+	e.RedSHAs = nil
+	e.RedTrees = nil
+	e.SharedAtEscalation = nil
+	e.ReEngagements = 0
+	e.LastReEngagedAt = time.Time{}
+	e.CurRedSHA = ""
+	e.FirstRedAt = time.Time{}
+	e.AutoUnparked = true
+	e.UpdatedAt = s.now()
+}
+
+// anyStillShared reports whether any check that was shared when the PR
+// escalated is STILL shared on this pass. False means the incident cleared.
+func anyStillShared(current, atEscalation []string) bool {
+	for _, c := range current {
+		if containsSHA(atEscalation, c) {
+			return true
+		}
+	}
+	return false
 }
 
 // appendSHA appends sha to the distinct red-SHA history, bounded to
@@ -528,11 +801,12 @@ func (s *Store) ObserveRed(obs []Observation) {
 	now := s.now()
 	for _, o := range obs {
 		key := Key(o.Repo, o.Number)
-		if o.Pending {
-			// Inconclusive pass (checks running, or the check fetch failed):
-			// neither red nor green, so the staleness clock keeps whatever
-			// it had. Clearing it here would let a single API error make a
-			// stuck PR look freshly red again on the next pass.
+		if o.Pending || (o.Red && o.Shared) {
+			// Inconclusive pass (checks running, the check fetch failed, or
+			// every failing check is shared/base breakage rather than this
+			// PR's): neither red nor green, so the staleness clock keeps
+			// whatever it had. Clearing it here would let a single API error
+			// make a stuck PR look freshly red again on the next pass.
 			continue
 		}
 		if !o.Red {
@@ -557,9 +831,14 @@ func (s *Store) ObserveRed(obs []Observation) {
 		}
 		if o.HeadSHA != e.CurRedSHA {
 			e.CurRedSHA = o.HeadSHA
-			e.FirstRedAt = now
+			e.FirstRedAt = time.Time{}
 			e.ReEngagements = 0
 			e.LastReEngagedAt = time.Time{}
+		}
+		// The clock starts when CI SETTLES, not when the first shard reports
+		// a failure: see recordRedHeadLocked (hivecommons/hive#9472).
+		if !o.CIRunning && e.FirstRedAt.IsZero() {
+			e.FirstRedAt = now
 		}
 		if o.Excerpt != "" {
 			e.LastExcerpt = o.Excerpt
@@ -595,9 +874,71 @@ func (s *Store) StaleRed(repo string, number int, headSHA string) bool {
 // forever. A changed head SHA resets the counter (via ObserveRed/Sweep), so a
 // PR that is actively being fixed is never blocked by the cap. Returns false
 // once the cap is reached (the distinct-SHA escalation path then owns the PR).
+//
+// Prefer ReEngageEligible + RecordReEngagement on any path that can actually
+// DELIVER a kick: budget must be spent on attempts an agent received, not on
+// intentions (hivecommons/hive#9472).
 func (s *Store) TryReEngage(repo string, number int, headSHA string) bool {
+	return s.TryReEngageAfter(repo, number, headSHA, 0)
+}
+
+// TryReEngageAfter is TryReEngage with an explicit minimum spacing: the caller
+// passes the owning agent's effective cadence so a budget of six attempts
+// cannot be spent inside a single cadence window, where no kick the owner could
+// answer would ever fit between two grants. The effective spacing is
+// max(ReEngageCooldown, cooldown), capped at MaxReEngageCooldown.
+func (s *Store) TryReEngageAfter(repo string, number int, headSHA string, cooldown time.Duration) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.reEngageEligibleLocked(repo, number, headSHA, cooldown) {
+		return false
+	}
+	s.recordReEngagementLocked(repo, number)
+	s.saveLocked()
+	return true
+}
+
+// ReEngageEligible reports whether a fix re-dispatch may be sent for the PR's
+// current red head SHA, WITHOUT spending any budget. Callers that deliver a
+// kick check this first and call RecordReEngagement only once the kick has been
+// accepted, so an owner that is wedged, paused, or unreachable cannot burn the
+// PR's budget and strand it in needs-human having never been asked to fix
+// anything (hivecommons/hive#9472).
+//
+// It is not side-effect free: like TryReEngage it syncs a moved head SHA and
+// applies machinery amnesty, both idempotent.
+func (s *Store) ReEngageEligible(repo string, number int, headSHA string, cooldown time.Duration) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ok := s.reEngageEligibleLocked(repo, number, headSHA, cooldown)
+	s.saveLocked()
+	return ok
+}
+
+// RecordReEngagement spends one unit of the PR's re-engagement budget. Call it
+// only after a fix kick has actually been delivered.
+func (s *Store) RecordReEngagement(repo string, number int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recordReEngagementLocked(repo, number)
+	s.saveLocked()
+}
+
+// EffectiveReEngageCooldown is the spacing actually enforced for an owner whose
+// effective cadence is ownerCadence: never tighter than ReEngageCooldown, never
+// looser than MaxReEngageCooldown.
+func EffectiveReEngageCooldown(ownerCadence time.Duration) time.Duration {
+	cooldown := ReEngageCooldown
+	if ownerCadence > cooldown {
+		cooldown = ownerCadence
+	}
+	if cooldown > MaxReEngageCooldown {
+		cooldown = MaxReEngageCooldown
+	}
+	return cooldown
+}
+
+func (s *Store) reEngageEligibleLocked(repo string, number int, headSHA string, cooldown time.Duration) bool {
 	key := Key(repo, number)
 	e := s.entries[key]
 	if e == nil {
@@ -624,6 +965,7 @@ func (s *Store) TryReEngage(repo string, number int, headSHA string) bool {
 		e.LabelApplied = false
 		e.LabelAppliedAt = time.Time{}
 		e.RedSHAs = nil
+		e.RedTrees = nil
 	}
 	// An escalated (needs-human) entry is out of the automated lane entirely:
 	// re-engaging it would burn budget on a PR the fix loop is standing down
@@ -640,14 +982,20 @@ func (s *Store) TryReEngage(repo string, number int, headSHA string) bool {
 	}
 	// Budget is spent at agent pace, not tick pace: a stale red SHA re-reads as
 	// stale every tick, so without this the whole budget evaporates in minutes.
-	if !e.LastReEngagedAt.IsZero() && s.now().Sub(e.LastReEngagedAt) < ReEngageCooldown {
+	if !e.LastReEngagedAt.IsZero() && s.now().Sub(e.LastReEngagedAt) < EffectiveReEngageCooldown(cooldown) {
 		return false
+	}
+	return true
+}
+
+func (s *Store) recordReEngagementLocked(repo string, number int) {
+	e := s.entries[Key(repo, number)]
+	if e == nil {
+		return
 	}
 	e.ReEngagements++
 	e.LastReEngagedAt = s.now()
 	e.UpdatedAt = s.now()
-	s.saveLocked()
-	return true
 }
 
 // ReEngagements returns how many re-engagements have fired for the PR's current
@@ -703,15 +1051,33 @@ type ReviewerHandoff struct {
 	At  time.Time
 }
 
+// Evidence is everything the escalation comment renders about one PR.
+type Evidence struct {
+	// Attempts is the number of distinct fix attempts (red heads with
+	// distinct trees) recorded for the PR.
+	Attempts int
+	// FailingChecks names the checks red on the head, SharedChecks the subset
+	// of those that are shared/base breakage rather than this PR's defect.
+	FailingChecks []string
+	SharedChecks  []string
+	Excerpt       string
+	// Exhausted selects the wording for the second trigger: the re-engagement
+	// budget ran out on a head SHA that never moved (no fix was ever pushed),
+	// as opposed to the distinct-SHA threshold ("N fix attempts, still red").
+	Exhausted bool
+	// ReEngagements is how many fix kicks were actually DELIVERED. The
+	// exhausted wording quotes it rather than the MaxReEngagements constant:
+	// telling a human about six re-dispatches that were never sent sent them
+	// hunting for a bug in the PR instead of in the delivery path
+	// (hivecommons/hive#9472).
+	ReEngagements int
+}
+
 // CommentBody renders the escalation comment posted on the PR. It leads with
 // the raw CI evidence — the whole point is that a human (or the next agent
 // pass) sees the actual error, not just "CI failed".
-//
-// exhausted selects the wording for the second trigger: the re-engagement
-// budget ran out on a head SHA that never moved (no fix was ever pushed), as
-// opposed to the distinct-SHA threshold ("N fix attempts, still red").
-func CommentBody(attempts int, failingChecks []string, excerpt string, exhausted bool) string {
-	return commentBody(attempts, failingChecks, excerpt, exhausted, nil)
+func CommentBody(ev Evidence) string {
+	return commentBody(ev, nil)
 }
 
 // HandoffCommentBody renders the escalation comment for a PR that has ALREADY
@@ -723,15 +1089,24 @@ func CommentBody(attempts int, failingChecks []string, excerpt string, exhausted
 // not held. This body says both, and points at the reviewer's own audited
 // record rather than restating it (the hub never saw the reviewer's reasoning;
 // claiming to summarise it would be invention).
-func HandoffCommentBody(attempts int, failingChecks []string, excerpt string, exhausted bool, h ReviewerHandoff) string {
-	return commentBody(attempts, failingChecks, excerpt, exhausted, &h)
+func HandoffCommentBody(ev Evidence, h ReviewerHandoff) string {
+	return commentBody(ev, &h)
 }
 
-func commentBody(attempts int, failingChecks []string, excerpt string, exhausted bool, h *ReviewerHandoff) string {
+// UnparkCommentBody renders the one-line note posted when the sweep returns an
+// escalated PR to the automated lane by itself (its head went green, or the
+// shared CI incident behind the escalation cleared).
+func UnparkCommentBody(reason string) string {
+	return fmt.Sprintf("## ✅ Escalation cleared — back in the automated lane\n\n%s\n\nThe `%s` label has been removed; the fix loop owns this PR again.\n",
+		reason, NeedsHumanLabel)
+}
+
+func commentBody(ev Evidence, h *ReviewerHandoff) string {
+	attempts := ev.Attempts
 	var b strings.Builder
 	b.WriteString("## 🛑 Fix loop escalated — human attention needed\n\n")
-	if exhausted {
-		fmt.Fprintf(&b, "This PR has stayed red on the same commit through **%d automated fix re-dispatches** with no new commit pushed (%d distinct red head%s seen). ", MaxReEngagements, attempts, plural(attempts))
+	if ev.Exhausted {
+		fmt.Fprintf(&b, "This PR has stayed red on the same commit through **%d delivered fix re-dispatch%s** with no new commit pushed (%d distinct red head%s seen). ", ev.ReEngagements, plural2(ev.ReEngagements), attempts, plural(attempts))
 	} else {
 		fmt.Fprintf(&b, "This PR has failed CI on **%d distinct fix attempts** (new commits, still red). ", attempts)
 	}
@@ -757,18 +1132,41 @@ func commentBody(attempts int, failingChecks []string, excerpt string, exhausted
 		b.WriteString("ladder: the reviewer work list excludes `" + ReviewerPassedLabel + "` rows permanently, so from\n")
 		b.WriteString("here this PR is a human's or it is nobody's.\n\n")
 	}
-	if len(failingChecks) > 0 {
-		sorted := append([]string(nil), failingChecks...)
-		sort.Strings(sorted)
-		fmt.Fprintf(&b, "**Failing checks:** %s\n\n", strings.Join(sorted, ", "))
+	if len(ev.FailingChecks) > 0 {
+		local, shared := splitShared(ev.FailingChecks, ev.SharedChecks)
+		if len(local) > 0 {
+			fmt.Fprintf(&b, "**Failing checks:** %s\n\n", strings.Join(local, ", "))
+		}
+		if len(shared) > 0 {
+			// Naming these separately is the difference between a human
+			// reading the PR's diff for a bug that is not there and reading
+			// the incident that actually broke the check
+			// (hivecommons/hive#9473).
+			fmt.Fprintf(&b, "**Also red on the base branch / other open PRs (shared breakage, not this PR):** %s\n\n", strings.Join(shared, ", "))
+		}
 	}
-	if excerpt != "" {
+	if ev.Excerpt != "" {
 		b.WriteString("**Raw failure evidence (from check-run annotations):**\n\n```\n")
-		b.WriteString(excerpt)
+		b.WriteString(ev.Excerpt)
 		b.WriteString("\n```\n\n")
 	}
 	b.WriteString("Remove the `needs-human` label after addressing the root cause to return the PR to the automated fix lane.\n")
 	return b.String()
+}
+
+// splitShared partitions the failing checks into PR-local and shared, each
+// sorted, so the comment can name them separately.
+func splitShared(failing, shared []string) (local, sharedOut []string) {
+	for _, c := range uniqueStrings(failing) {
+		if containsSHA(shared, c) {
+			sharedOut = append(sharedOut, c)
+		} else {
+			local = append(local, c)
+		}
+	}
+	sort.Strings(local)
+	sort.Strings(sharedOut)
+	return local, sharedOut
 }
 
 func plural(n int) string {
@@ -776,6 +1174,14 @@ func plural(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+// plural2 is plural for a noun whose plural takes "es" ("re-dispatches").
+func plural2(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "es"
 }
 
 // NeedsHumanLabel is the label applied to escalated PRs. Kick builders exclude

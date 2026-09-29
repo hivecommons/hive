@@ -97,7 +97,7 @@ func TestExcerpt_ReturnsStoredEvidenceOrEmpty(t *testing.T) {
 }
 
 func TestCommentBody_LeadsWithEvidence(t *testing.T) {
-	body := CommentBody(3, []string{"Coverage Suite", "build-gate"}, "ReferenceError: seedMission is not defined", false)
+	body := CommentBody(Evidence{Attempts: 3, FailingChecks: []string{"Coverage Suite", "build-gate"}, Excerpt: "ReferenceError: seedMission is not defined"})
 	for _, want := range []string{"3 distinct fix attempts", "Coverage Suite", "seedMission is not defined", NeedsHumanLabel} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("comment body missing %q:\n%s", want, body)
@@ -544,7 +544,8 @@ func TestSweep_RecordsReviewerPassForHandoff(t *testing.T) {
 // nothing automated is coming after this (#5617 item 3).
 func TestHandoffCommentBody_CarriesReviewerContext(t *testing.T) {
 	at := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
-	body := HandoffCommentBody(2, []string{"build-gate"}, "panic: assignment to entry in nil map", false,
+	body := HandoffCommentBody(
+		Evidence{Attempts: 2, FailingChecks: []string{"build-gate"}, Excerpt: "panic: assignment to entry in nil map"},
 		ReviewerHandoff{SHA: "deadbeef", At: at})
 	for _, want := range []string{
 		"2 distinct fix attempts",
@@ -566,7 +567,7 @@ func TestHandoffCommentBody_CarriesReviewerContext(t *testing.T) {
 	}
 
 	// A FIRST escalation must never claim a reviewer pass that never happened.
-	plain := CommentBody(2, []string{"build-gate"}, "panic: assignment to entry in nil map", false)
+	plain := CommentBody(Evidence{Attempts: 2, FailingChecks: []string{"build-gate"}, Excerpt: "panic: assignment to entry in nil map"})
 	for _, banned := range []string{"A reviewer already adjudicated", "No further automated pass"} {
 		if strings.Contains(plain, banned) {
 			t.Errorf("first-escalation comment must not mention a reviewer pass (%q):\n%s", banned, plain)
@@ -575,7 +576,7 @@ func TestHandoffCommentBody_CarriesReviewerContext(t *testing.T) {
 
 	// Partial records still render: a ledger entry written before the SHA was
 	// observable must not emit an empty backtick pair or a zero timestamp.
-	bare := HandoffCommentBody(1, nil, "", false, ReviewerHandoff{})
+	bare := HandoffCommentBody(Evidence{Attempts: 1}, ReviewerHandoff{})
 	for _, banned := range []string{"``", "0001-01-01"} {
 		if strings.Contains(bare, banned) {
 			t.Errorf("empty hand-off record must omit the field, not render %q:\n%s", banned, bare)
@@ -723,7 +724,7 @@ func TestSweep_UnconfirmedLabelIsRetriedNotTreatedAsUnpark(t *testing.T) {
 }
 
 func TestCommentBody_ExhaustedWording(t *testing.T) {
-	body := CommentBody(1, []string{"test"}, "boom", true)
+	body := CommentBody(Evidence{Attempts: 1, FailingChecks: []string{"test"}, Excerpt: "boom", Exhausted: true, ReEngagements: MaxReEngagements})
 	if !strings.Contains(body, "no new commit pushed") || !strings.Contains(body, "1 distinct red head seen") {
 		t.Fatalf("exhausted wording missing: %s", body)
 	}

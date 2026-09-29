@@ -63,6 +63,22 @@ func redPR(repo string, number int, author, headSHA string) github.PullRequest {
 	}
 }
 
+// fakeKicker records the fix kicks a re-engagement path delivers, and can be
+// told to fail delivery — the case that must never spend a PR's budget
+// (hivecommons/hive#9472).
+type fakeKicker struct {
+	kicks []struct{ agent, message string }
+	err   error
+}
+
+func (k *fakeKicker) Kick(agent, message string) error {
+	if k.err != nil {
+		return k.err
+	}
+	k.kicks = append(k.kicks, struct{ agent, message string }{agent, message})
+	return nil
+}
+
 func actionableWith(prs ...github.PullRequest) *github.ActionableResult {
 	a := &github.ActionableResult{}
 	a.PRs.Items = prs
@@ -154,11 +170,15 @@ func TestRecordRedStaleness(t *testing.T) {
 	})
 }
 
+// discardLogger is the throwaway logger the gate tests hand to paths that log
+// but are not asserted on.
+func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
 func TestMergeReEngageHook(t *testing.T) {
 	t.Run("disabled escalation yields a nil hook", func(t *testing.T) {
 		cfg := escalationTestConfig()
 		cfg.Escalation.Disabled = true
-		if mergeReEngageHook(cfg) != nil {
+		if mergeReEngageHook(cfg, &fakeKicker{}, nil, discardLogger()) != nil {
 			t.Error("hook must be nil when escalation is disabled")
 		}
 	})
@@ -168,7 +188,7 @@ func TestMergeReEngageHook(t *testing.T) {
 		cfg := escalationTestConfig()
 		recordRedStaleness(cfg, actionableWith(redPR("widgets", 7, "hive-agent", "abc")))
 
-		hook := mergeReEngageHook(cfg)
+		hook := mergeReEngageHook(cfg, &fakeKicker{}, nil, discardLogger())
 		if hook == nil {
 			t.Fatal("expected a hook when escalation is enabled")
 		}
@@ -250,7 +270,7 @@ func TestReapStuckRedPRs(t *testing.T) {
 		escalated := map[string]bool{escalation.Key("acme/widgets", 8): true}
 
 		// First pass: nothing is stale yet — nobody gets re-engaged.
-		reapStuckRedPRs(cfg, actionable, escalated, discard)
+		reapStuckRedPRs(cfg, actionable, escalated, &fakeKicker{}, nil, discard)
 		for _, n := range []int{7, 8, 9, 10} {
 			if got := store.ReEngagements("acme/widgets", n); got != 0 {
 				t.Errorf("fresh pass: PR %d re-engagements = %d, want 0", n, got)
@@ -269,7 +289,7 @@ func TestReapStuckRedPRs(t *testing.T) {
 			moved := redPR("widgets", 10, "hive-agent", fmt.Sprintf("xyz%d", i))
 			actionable = actionableWith(actionable.PRs.Items[0], actionable.PRs.Items[1], moved, green)
 			recordRedStaleness(cfg, actionable)
-			reapStuckRedPRs(cfg, actionable, escalated, discard)
+			reapStuckRedPRs(cfg, actionable, escalated, &fakeKicker{}, nil, discard)
 			*clock = clock.Add(escalation.ReEngageCooldown + time.Minute)
 		}
 		if got := store.ReEngagements("acme/widgets", 7); got != escalation.MaxReEngagements {
@@ -294,7 +314,7 @@ func TestReapStuckRedPRs(t *testing.T) {
 		*clock = clock.Add(escalation.RedPRStaleAfter + time.Minute)
 
 		cfg.Escalation.Disabled = true
-		reapStuckRedPRs(cfg, actionable, map[string]bool{}, discard)
+		reapStuckRedPRs(cfg, actionable, map[string]bool{}, &fakeKicker{}, nil, discard)
 		if got := store.ReEngagements("acme/widgets", 7); got != 0 {
 			t.Errorf("disabled reaper re-engaged anyway: %d", got)
 		}

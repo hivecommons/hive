@@ -568,6 +568,19 @@ type PullRequest struct {
 	// four days in the 2026-08 seedMission incident.
 	FailingChecks    []string `json:"failing_checks,omitempty"`
 	CIFailureExcerpt string   `json:"ci_failure_excerpt,omitempty"`
+	// CIChecksRunning reports that CI has NOT settled: at least one non-meta
+	// check on the head is still running. It is set alongside a "failure"
+	// CIStatus when a shard has already failed while others report — the
+	// failure is real evidence (the fix lane uses it at once), but the PR is
+	// not yet stuck, so the escalation staleness clock must not start on it
+	// (hivecommons/hive#9472: a PR could read as stale ten minutes after the
+	// first failure while its last shard was still twelve minutes from
+	// finishing).
+	CIChecksRunning bool `json:"ci_checks_running,omitempty"`
+	// HeadTree is the tree OID of the head commit, fetched only for red PRs.
+	// It is what distinguishes a real fix attempt from a `ci: retrigger`
+	// commit, which is a new SHA over an identical tree (hivecommons/hive#9473).
+	HeadTree string `json:"head_tree,omitempty"`
 	// BaseSHA is the commit on the base branch the PR targets — the tree a
 	// reviewer should read to judge the change in context. It is carried so a
 	// repo-grounded review can be pinned to a specific commit rather than to
@@ -1644,13 +1657,34 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 	case hasFail:
 		pr.CIStatus = ciStatusFailure
 		pr.FailingChecks = failingNames
+		// "Failed, others still running" is a materially different state from
+		// "failed, all done": only the latter means the PR is stuck rather
+		// than still reporting (hivecommons/hive#9472).
+		pr.CIChecksRunning = !allDone
 		pr.CIFailureExcerpt = c.fetchFailureExcerpt(ctx, owner, repoName, failingIDs, failingNames)
+		pr.HeadTree = c.headTreeOID(ctx, owner, repoName, pr)
 	case allDone:
 		pr.CIStatus = ciStatusSuccess
 	default:
 		pr.CIStatus = ciStatusPending
 	}
 	return reported
+}
+
+// headTreeOID returns the tree OID of a red PR's head commit so the escalation
+// ledger can count fix ATTEMPTS rather than commits: an empty `ci: retrigger`
+// commit is a fresh SHA over an identical tree and is not an attempt at a fix
+// (hivecommons/hive#9473). It reuses the duplicate-guard's cached commit→tree
+// lookup, so a head whose tree has already been resolved costs nothing, and a
+// failure is not an error: the ledger falls back to per-SHA counting when the
+// tree is unknown.
+func (c *Client) headTreeOID(ctx context.Context, owner, repoName string, pr *PullRequest) string {
+	tree, err := c.commitTreeSHA(WithRESTCaller(ctx, "hive:head_tree_oid"), owner, repoName, pr.HeadSHA)
+	if err != nil {
+		c.logger.Debug("failed to fetch head commit tree", "repo", pr.Repo, "pr", pr.Number, "error", err)
+		return ""
+	}
+	return tree
 }
 
 // isMetaCheck reports check runs that are merge-gates or deploy-status

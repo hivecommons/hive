@@ -296,11 +296,11 @@ func TestReEngagements_UntrackedPRIsZero(t *testing.T) {
 // pluralize "head" correctly for both one and several distinct red heads — a
 // dangling "2 distinct red head seen" reads as truncation.
 func TestCommentBody_ExhaustedPluralizesDistinctHeads(t *testing.T) {
-	one := CommentBody(1, nil, "", true)
+	one := CommentBody(Evidence{Attempts: 1, Exhausted: true, ReEngagements: MaxReEngagements})
 	if !strings.Contains(one, "1 distinct red head seen") || strings.Contains(one, "heads seen") {
 		t.Fatalf("singular wording wrong:\n%s", one)
 	}
-	two := CommentBody(2, nil, "", true)
+	two := CommentBody(Evidence{Attempts: 2, Exhausted: true, ReEngagements: MaxReEngagements})
 	if !strings.Contains(two, "2 distinct red heads seen") {
 		t.Fatalf("plural wording wrong:\n%s", two)
 	}

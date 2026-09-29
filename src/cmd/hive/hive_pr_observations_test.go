@@ -27,7 +27,7 @@ func TestHivePRObservationsExcludesHumanAuthors(t *testing.T) {
 		{Repo: "hive", Number: 5, Author: "renovate[bot]", HeadSHA: "eee"},
 	}}}
 
-	obs := hivePRObservations(cfg, actionable)
+	obs := hivePRObservations(cfg, actionable, nil)
 
 	if len(obs) != 2 {
 		t.Fatalf("got %d observations, want 2 (agent + non-dependency bot only): %+v", len(obs), obs)
@@ -54,7 +54,7 @@ func TestHivePRObservationsQualifiesRepos(t *testing.T) {
 		{Repo: "otherorg/console", Number: 2, Author: "hive-bee"},
 	}}}
 
-	obs := hivePRObservations(cfg, actionable)
+	obs := hivePRObservations(cfg, actionable, nil)
 
 	if len(obs) != 2 {
 		t.Fatalf("got %d observations, want 2", len(obs))
@@ -80,7 +80,7 @@ func TestHivePRObservationsRedRequiresFailingCheck(t *testing.T) {
 		{Repo: "hive", Number: 3, Author: "hive-bee", HeadSHA: "ccc", CIStatus: "success"},
 	}}}
 
-	obs := hivePRObservations(cfg, actionable)
+	obs := hivePRObservations(cfg, actionable, nil)
 
 	if len(obs) != 3 {
 		t.Fatalf("got %d observations, want 3", len(obs))
@@ -108,7 +108,7 @@ func TestHivePRObservationsMarksPendingWindows(t *testing.T) {
 			CIStatus: "failure", FailingChecks: []string{"build"}},
 	}}}
 
-	obs := hivePRObservations(cfg, actionable)
+	obs := hivePRObservations(cfg, actionable, nil)
 
 	if len(obs) != 3 {
 		t.Fatalf("got %d observations, want 3", len(obs))
@@ -124,7 +124,7 @@ func TestHivePRObservationsMarksPendingWindows(t *testing.T) {
 // A nil enumeration yields nil — the eval cycle calls this before the first
 // successful GitHub pass.
 func TestHivePRObservationsNilActionable(t *testing.T) {
-	if obs := hivePRObservations(observationsTestConfig(), nil); obs != nil {
+	if obs := hivePRObservations(observationsTestConfig(), nil, nil); obs != nil {
 		t.Errorf("hivePRObservations(nil) = %v, want nil", obs)
 	}
 }

@@ -144,9 +144,11 @@ var catalog = map[Transition]catalogEntry{
 		Fields: []string{"repo", "reason", "attrs.merged", "attrs.skipped"},
 	},
 	TransitionEscalationRed: {
-		Name:   TransitionEscalationRed,
-		Doc:    "Escalation observed a red-CI state it reacts to.",
-		Fields: []string{"repo", "agent", "reason", "attrs.pr"},
+		Name: TransitionEscalationRed,
+		Doc: "Escalation observed a red-CI state it reacts to. Agent is the PR's " +
+			"owning agent (scanner when unattributed), so a hook can route a red PR " +
+			"back to whoever would repair it.",
+		Fields: []string{"repo", "agent", "reason", "attrs.pr", "attrs.head_sha", "attrs.excerpt"},
 	},
 	TransitionACMMLevelChange: {
 		Name:   TransitionACMMLevelChange,
