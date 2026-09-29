@@ -97,12 +97,14 @@ kubectl -n hive create secret generic hive-secrets \
 cp src/hive.yaml.example hive.yaml   # then edit org, repos, agents
 kubectl create configmap hive-config -n hive --from-file=hive.yaml=hive.yaml
 kubectl apply -f src/deploy/k8s/pvc.yaml
+kubectl apply -f src/deploy/k8s/dashboard-route-rbac.yaml
+kubectl apply -f src/deploy/k8s/sandbox-job-rbac.yaml
 kubectl apply -f src/deploy/k8s/deployment.yaml
 kubectl apply -f src/deploy/k8s/service.yaml
-kubectl apply -f src/deploy/k8s/dashboard-route-rbac.yaml
 ```
 
-`dashboard-route-rbac.yaml` lets the spoke report `route_exists` in heartbeats.
+`dashboard-route-rbac.yaml` creates the `hive` ServiceAccount the Deployment runs as and lets
+the spoke report `route_exists` in heartbeats, so apply it before the Deployment.
 See [docs/health-checks.md](docs/health-checks.md) for listener probes,
 hub-fronted URL probing, and alert hysteresis.
 
