@@ -186,6 +186,59 @@ func TestDedupePreventsReplay(t *testing.T) {
 	}
 }
 
+func TestHandlerUsesLiveMentionAndReviewBotConfig(t *testing.T) {
+	store := mustStore(t)
+	cfg := config.GitHubMentionsConfig{Enabled: true, MinRole: config.RoleOwner, PerUserPerHour: 5, PerRepoPerHour: 5}
+	bots := config.ReviewBotsConfig{Logins: []string{"alice"}}
+	gh := &fakeGH{app: "hive[bot]"}
+	var audit, kick []string
+	h := NewHandler(Options{
+		ConfigFunc:     func() config.GitHubMentionsConfig { return cfg },
+		ReviewBotsFunc: func() config.ReviewBotsConfig { return bots },
+		Roles: func(login string) (string, bool) {
+			if login == "alice" {
+				return config.RoleReadWrite, true
+			}
+			return "", false
+		},
+		Agents: func() []AgentInfo {
+			return []AgentInfo{{Name: "scanner", Enabled: true, Converse: true, Mention: true, GovernorKick: true}}
+		},
+		GitHub: gh,
+		Store:  store,
+		Kick:   func(agent, msg, source string) error { kick = append(kick, source); return nil },
+		Audit:  func(action, detail, agent string) { audit = append(audit, action+":"+detail) },
+	})
+
+	ev := Event{Repo: "org/repo", Number: 1, NodeID: "live-loop", CommentID: 1, Author: "alice", Body: "@hive ask scanner hi", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := h.Handle(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if len(kick) != 0 || !containsAudit(audit, "guard=loop") {
+		t.Fatalf("review-bot snapshot was not read live: kicks=%v audit=%v", kick, audit)
+	}
+
+	bots = config.ReviewBotsConfig{}
+	ev.NodeID = "live-role"
+	ev.CommentID = 2
+	if err := h.Handle(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if len(kick) != 0 || !containsAudit(audit, "guard=unauthorized") {
+		t.Fatalf("mention role floor was not read live: kicks=%v audit=%v", kick, audit)
+	}
+
+	cfg.MinRole = config.RoleReadWrite
+	ev.NodeID = "live-kick"
+	ev.CommentID = 3
+	if err := h.Handle(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if len(kick) != 1 {
+		t.Fatalf("updated mention config did not allow kick: kicks=%v audit=%v", kick, audit)
+	}
+}
+
 // threadGH models one issue conversation: every reply the responder posts
 // lands on it, and CountMentionReplies sees only the marked ones, exactly as
 // the GitHub client does for App-authored comments.

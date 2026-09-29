@@ -57,7 +57,6 @@ import (
 	"github.com/hivecommons/hive/pkg/loginscan"
 	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/matrix"
-	"github.com/hivecommons/hive/pkg/mention"
 	"github.com/hivecommons/hive/pkg/mint"
 	"github.com/hivecommons/hive/pkg/msteams"
 	"github.com/hivecommons/hive/pkg/notify"
@@ -2752,83 +2751,14 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 		})
 	}
 
-	var mentionStore *mention.Store
 	if b.cfg.GitHub.Mentions.Enabled || b.cfg.GitHub.Actions.OIDC.Enabled {
-		store, err := mention.NewStore("/data/github-mention-triggers.json")
-		if err != nil {
-			// Parse failures self-heal inside NewStore; reaching here means the
-			// file is unreadable or cannot be moved aside, which disables GitHub
-			// mentions and makes Actions OIDC dispatch refuse (503) until fixed.
-			b.logger.Error("mention trigger store unavailable; GitHub mentions disabled and Actions OIDC dispatch will refuse", "error", err)
-		} else {
-			b.mentionStore = store
-			mentionStore = store
-		}
+		// Parse failures self-heal inside NewStore; reaching here means the
+		// file is unreadable or cannot be moved aside, which disables GitHub
+		// mentions and makes Actions OIDC dispatch refuse (503) until fixed.
+		b.ensureMentionStore()
 	}
 
-	if b.ghClient != nil && b.cfg.GitHub.HasUsableApp() && b.cfg.GitHub.Mentions.Enabled && mentionStore != nil {
-		store := mentionStore
-		mentionAgents := func() []mention.AgentInfo {
-			out := make([]mention.AgentInfo, 0, len(b.cfg.Agents))
-			for name, ac := range b.cfg.Agents {
-				out = append(out, mention.AgentInfo{
-					Name:         name,
-					Enabled:      ac.Enabled,
-					Converse:     ac.Converse != nil && *ac.Converse,
-					Mention:      ac.HasEnabledChannel(config.ChannelTypeMention),
-					GovernorKick: ac.UsesGovernorKick(),
-				})
-			}
-			return out
-		}
-		handler := mention.NewHandler(mention.Options{
-			Config:     b.cfg.GitHub.Mentions,
-			Actions:    b.cfg.GitHub.Actions,
-			ReviewBots: b.cfg.Classification.ReviewBots,
-			Roles: func(login string) (string, bool) {
-				return b.cfg.Dashboard.AuthorizedRole(login)
-			},
-			Repos: func() []string {
-				if b.ghClient == nil {
-					return nil
-				}
-				return b.ghClient.ActiveRepositories()
-			},
-			Agents:     mentionAgents,
-			GitHubFunc: func() mention.GitHub { return b.ghClient },
-			Store:      store,
-			Kick: func(agentName, message, source string) error {
-				return b.agentMgr.SendKickWithSource(agentName, message, source)
-			},
-			Audit: func(action, detail, agentName string) {
-				b.dashSrv.AuditLog("system", action, detail, agentName)
-				recordLifecycleFromAudit(b.dashSrv, b.cfg.Project.Org, action, detail, agentName)
-			},
-		})
-		poller := mention.NewPoller(nil, func() []string {
-			if b.ghClient == nil {
-				return nil
-			}
-			return b.ghClient.ActiveRepositories()
-		}, store, handler, b.cfg.GitHub.Mentions.PollIntervalEffective(), b.logger)
-		poller.SetGitHubGetter(func() mention.GitHub { return b.ghClient })
-		if b.cfg.GitHub.Mentions.WebhookEnabled {
-			receiver := mention.NewWebhookReceiver(func() string {
-				return b.cfg.GitHub.Mentions.WebhookSecretEffective()
-			}, poller, b.cfg.GitHub.Mentions.WebhookMinGapEffective(), b.logger)
-			receiver.SetReposFunc(func() []string {
-				if b.ghClient == nil {
-					return nil
-				}
-				return b.ghClient.ActiveRepositories()
-			})
-			b.mentionWebhook = receiver
-		}
-		go poller.Run(b.ctx)
-		responder := mention.NewResponder(store, func() mention.GitHub { return b.ghClient }, mentionAgents, b.cfg.GitHub.Mentions.PerThreadMaxEffective(), b.logger)
-		b.agentMgr.SetKickObserver(responder.HandleAgentEvent)
-		b.logger.Info("GitHub mention trigger poller started", "interval", b.cfg.GitHub.Mentions.PollIntervalEffective())
-	}
+	b.syncMentionRuntime()
 
 	// Seed token sparkline history now that the dashboard server exists
 	if len(b.pendingTokenSeed) > 0 {
@@ -3879,6 +3809,10 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		// threshold — re-sync it alongside the repo list above.
 		b.gov.SetRepoCount(b.cfg.Project.RepoCount())
 		b.agentMgr.SetSandboxConfig(b.cfg.AgentSandbox)
+		if b.cfg.GitHub.Mentions.Enabled || b.cfg.GitHub.Actions.OIDC.Enabled {
+			b.ensureMentionStore()
+		}
+		b.syncMentionRuntime()
 		// Re-run the posture check on reload, not only at boot: flipping the
 		// Security tab's sandbox toggle writes the config and lands here, which
 		// is the exact moment an operator forms the belief that they are now

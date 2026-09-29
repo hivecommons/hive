@@ -12,13 +12,14 @@ import (
 )
 
 type Responder struct {
-	store        *Store
-	github       func() GitHub
-	agents       AgentFunc
-	perThreadMax int
-	logger       *slog.Logger
-	threadMu     sync.Mutex
-	threads      map[string]*sync.Mutex
+	store            *Store
+	github           func() GitHub
+	agents           AgentFunc
+	perThreadMax     int
+	perThreadMaxFunc func() int
+	logger           *slog.Logger
+	threadMu         sync.Mutex
+	threads          map[string]*sync.Mutex
 }
 
 // NewResponder builds the phase-2 completion responder. perThreadMax is
@@ -32,6 +33,13 @@ func NewResponder(store *Store, github func() GitHub, agents AgentFunc, perThrea
 		perThreadMax = config.DefaultMentionPerThreadMax
 	}
 	return &Responder{store: store, github: github, agents: agents, perThreadMax: perThreadMax, logger: logger, threads: map[string]*sync.Mutex{}}
+}
+
+func (r *Responder) SetPerThreadMaxFunc(fn func() int) {
+	if r == nil {
+		return
+	}
+	r.perThreadMaxFunc = fn
 }
 
 func (r *Responder) HandleAgentEvent(agentName, event, detail string) {
@@ -92,14 +100,26 @@ func (r *Responder) HandleAgentEvent(agentName, event, detail string) {
 		r.logger.Warn("mention: completion reply thread count failed", "agent", agentName, "repo", ctx.Repo, "number", ctx.Number, "error", err)
 		return
 	}
-	if count >= r.perThreadMax {
-		r.logger.Info("mention: completion reply skipped at per-thread cap", "agent", agentName, "repo", ctx.Repo, "number", ctx.Number, "count", count, "max", r.perThreadMax)
+	limit := r.perThreadMaxEffective()
+	if count >= limit {
+		r.logger.Info("mention: completion reply skipped at per-thread cap", "agent", agentName, "repo", ctx.Repo, "number", ctx.Number, "count", count, "max", limit)
 		return
 	}
 	if err := gh.CreateIssueComment(context.Background(), ctx.Repo, ctx.Number, completionReply(agentName, kickObserverDetailReason(detail))); err != nil {
 		r.logger.Warn("mention: completion reply failed", "agent", agentName, "repo", ctx.Repo, "number", ctx.Number, "error", err)
 		return
 	}
+}
+
+func (r *Responder) perThreadMaxEffective() int {
+	limit := r.perThreadMax
+	if r.perThreadMaxFunc != nil {
+		limit = r.perThreadMaxFunc()
+	}
+	if limit <= 0 {
+		return config.DefaultMentionPerThreadMax
+	}
+	return limit
 }
 
 func (r *Responder) lockThread(repo string, number int) func() {

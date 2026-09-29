@@ -135,6 +135,52 @@ func TestV6ConformanceAction_DedupesRunAttempt(t *testing.T) {
 	}
 }
 
+func TestV6ConformanceAction_UsesLiveActionsConfig(t *testing.T) {
+	store, err := NewStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := config.GitHubActionsConfig{Enabled: false, IdentityMap: map[string]string{"ci-bot": "alice"}}
+	var audit, kick []string
+	h := NewHandler(Options{
+		Config:      config.GitHubMentionsConfig{Enabled: true, MinRole: config.RoleReadWrite},
+		ActionsFunc: func() config.GitHubActionsConfig { return actions },
+		Roles: func(login string) (string, bool) {
+			if login == "alice" {
+				return config.RoleReadWrite, true
+			}
+			return "", false
+		},
+		Repos: func() []string { return []string{"org/repo"} },
+		Agents: func() []AgentInfo {
+			return []AgentInfo{{Name: "scanner", Enabled: true, Converse: true, Mention: true, GovernorKick: true}}
+		},
+		GitHub: &fakeGH{app: "hive[bot]", actionRun: ActionRun{Repository: "org/repo", Actor: "ci-bot"}},
+		Store:  store,
+		Kick:   func(agent, msg, source string) error { kick = append(kick, source); return nil },
+		Audit:  func(action, detail, agent string) { audit = append(audit, action+":"+detail) },
+	})
+
+	ev := actionEvent("@hive ask scanner review this PR")
+	if err := h.Handle(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if len(kick) != 0 || !containsAudit(audit, "guard=action-disabled") {
+		t.Fatalf("disabled action config was not read live: kicks=%v audit=%v", kick, audit)
+	}
+
+	actions.Enabled = true
+	ev.NodeID = "action-node-live"
+	ev.CommentID = 421
+	ev.Body = "@hive ask scanner review this PR\n<!-- hive:source=action run_id=12345 run_attempt=2 workflow=Nightly hive review actor=ci-bot -->"
+	if err := h.Handle(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if len(kick) != 1 || !strings.Contains(kick[0], SourceAction+":org/repo:12345:2") {
+		t.Fatalf("enabled action config was not read live: kicks=%v audit=%v", kick, audit)
+	}
+}
+
 func TestV6ConformanceAction_IOSCANBlocksPrompt(t *testing.T) {
 	var audit, kick []string
 	h := actionHandler(t, config.GitHubActionsConfig{

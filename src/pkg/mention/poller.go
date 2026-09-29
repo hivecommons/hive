@@ -12,6 +12,7 @@ import (
 type Poller struct {
 	gh       GitHub
 	ghFunc   func() GitHub
+	enabled  func() bool
 	repos    func() []string
 	store    *Store
 	handler  *Handler
@@ -36,12 +37,21 @@ func (p *Poller) SetGitHubGetter(fn func() GitHub) {
 	p.ghFunc = fn
 }
 
+func (p *Poller) SetEnabledFunc(fn func() bool) {
+	p.enabled = fn
+}
+
 func (p *Poller) github() GitHub {
 	if p.ghFunc != nil {
 		return p.ghFunc()
 	}
 	return p.gh
 }
+
+func (p *Poller) isEnabled() bool {
+	return p == nil || p.enabled == nil || p.enabled()
+}
+
 func (p *Poller) Run(ctx context.Context) {
 	p.Poll(ctx)
 	t := time.NewTicker(p.interval)
@@ -59,6 +69,9 @@ func (p *Poller) Poll(ctx context.Context) {
 	if p == nil || p.handler == nil || p.repos == nil {
 		return
 	}
+	if !p.isEnabled() {
+		return
+	}
 	for _, repo := range p.repos() {
 		p.PollRepo(ctx, repo)
 	}
@@ -66,6 +79,9 @@ func (p *Poller) Poll(ctx context.Context) {
 
 func (p *Poller) PollRepo(ctx context.Context, repo string) {
 	if p == nil || p.handler == nil || repo == "" {
+		return
+	}
+	if !p.isEnabled() {
 		return
 	}
 	repo, ok := p.configuredRepo(repo)

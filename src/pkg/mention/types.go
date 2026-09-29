@@ -78,18 +78,21 @@ type AgentInfo struct {
 type AgentFunc func() []AgentInfo
 
 type Options struct {
-	Config     config.GitHubMentionsConfig
-	Actions    config.GitHubActionsConfig
-	ReviewBots config.ReviewBotsConfig
-	Roles      RoleFunc
-	Repos      func() []string
-	Agents     AgentFunc
-	GitHub     GitHub
-	GitHubFunc func() GitHub
-	Store      *Store
-	Kick       KickFunc
-	Audit      AuditFunc
-	Now        func() time.Time
+	Config         config.GitHubMentionsConfig
+	ConfigFunc     func() config.GitHubMentionsConfig
+	Actions        config.GitHubActionsConfig
+	ActionsFunc    func() config.GitHubActionsConfig
+	ReviewBots     config.ReviewBotsConfig
+	ReviewBotsFunc func() config.ReviewBotsConfig
+	Roles          RoleFunc
+	Repos          func() []string
+	Agents         AgentFunc
+	GitHub         GitHub
+	GitHubFunc     func() GitHub
+	Store          *Store
+	Kick           KickFunc
+	Audit          AuditFunc
+	Now            func() time.Time
 }
 
 type Handler struct {
@@ -108,7 +111,7 @@ func NewHandler(opts Options) *Handler {
 }
 
 func (h *Handler) Handle(ctx context.Context, ev Event) error {
-	cfg := h.opts.Config
+	cfg := h.mentionsConfig()
 	if !cfg.Enabled {
 		return nil
 	}
@@ -121,7 +124,7 @@ func (h *Handler) Handle(ctx context.Context, ev Event) error {
 	cleanBody, marker := ExtractActionMarker(ev.Body)
 	if marker.Source != "" {
 		p = Parse(cleanBody, app)
-		if trustedActionCommentAuthor(ev.Author, h.opts.Actions) {
+		if trustedActionCommentAuthor(ev.Author, h.actionsConfig()) {
 			ev.Body = cleanBody
 			ev.Action = marker
 		} else {
@@ -289,6 +292,27 @@ func (h *Handler) github() GitHub {
 	return h.opts.GitHub
 }
 
+func (h *Handler) mentionsConfig() config.GitHubMentionsConfig {
+	if h.opts.ConfigFunc != nil {
+		return h.opts.ConfigFunc()
+	}
+	return h.opts.Config
+}
+
+func (h *Handler) actionsConfig() config.GitHubActionsConfig {
+	if h.opts.ActionsFunc != nil {
+		return h.opts.ActionsFunc()
+	}
+	return h.opts.Actions
+}
+
+func (h *Handler) reviewBotsConfig() config.ReviewBotsConfig {
+	if h.opts.ReviewBotsFunc != nil {
+		return h.opts.ReviewBotsFunc()
+	}
+	return h.opts.ReviewBots
+}
+
 func (h *Handler) authorized(login string, cfg config.GitHubMentionsConfig) bool {
 	for _, s := range cfg.Summoners {
 		if strings.EqualFold(strings.TrimSpace(s), login) {
@@ -303,7 +327,7 @@ func (h *Handler) authorized(login string, cfg config.GitHubMentionsConfig) bool
 }
 
 func (h *Handler) authorizeAction(ctx context.Context, ev Event, p Parsed) (string, bool) {
-	cfg := h.opts.Actions
+	cfg := h.actionsConfig()
 	if !cfg.Enabled {
 		h.decline(ev, "action-disabled", "")
 		return "", false
@@ -336,7 +360,7 @@ func (h *Handler) authorizeAction(ctx context.Context, ev Event, p Parsed) (stri
 	if h.opts.Roles != nil {
 		role, ok = h.opts.Roles(mapped)
 	}
-	if !ok || !config.RoleAtLeast(role, h.opts.Config.MinRoleEffective()) {
+	if !ok || !config.RoleAtLeast(role, h.mentionsConfig().MinRoleEffective()) {
 		h.decline(ev, "identity", "unmapped")
 		return "", false
 	}
@@ -438,7 +462,7 @@ func (h *Handler) loopAuthor(login, app string) bool {
 	if strings.HasSuffix(strings.ToLower(login), "[bot]") {
 		return true
 	}
-	return h.opts.ReviewBots.IsBot(login)
+	return h.reviewBotsConfig().IsBot(login)
 }
 
 func (h *Handler) resolveAgent(named string) (string, error) {
@@ -456,7 +480,7 @@ func (h *Handler) resolveAgent(named string) (string, error) {
 		}
 		return "", fmt.Errorf("agent %q is not configured for mention summons", named)
 	}
-	def := h.opts.Config.DefaultAgent
+	def := h.mentionsConfig().DefaultAgent
 	if def != "" {
 		return h.resolveAgent(def)
 	}
@@ -484,7 +508,7 @@ func (h *Handler) audit(action string, ev Event, agent, extra string) {
 	}
 	parts := []string{"repo=" + ev.Repo, fmt.Sprintf("number=%d", ev.Number), fmt.Sprintf("comment_id=%d", ev.CommentID), "author=" + ev.Author}
 	if ev.Action.Source != "" {
-		parts = append(parts, "source="+h.opts.Actions.SourceLabelEffective(), "actor="+ev.Action.Actor, "run_id="+ev.Action.RunID, "run_attempt="+ev.Action.RunAttempt)
+		parts = append(parts, "source="+h.actionsConfig().SourceLabelEffective(), "actor="+ev.Action.Actor, "run_id="+ev.Action.RunID, "run_attempt="+ev.Action.RunAttempt)
 		if ev.Action.Workflow != "" {
 			parts = append(parts, "workflow="+ev.Action.Workflow)
 		}
