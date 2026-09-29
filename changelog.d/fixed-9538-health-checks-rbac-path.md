@@ -1,0 +1,1 @@
+- `src/docs/health-checks.md` now applies `src/deploy/k8s/dashboard-route-rbac.yaml` ([#9538](https://github.com/hivecommons/hive/issues/9538)). The old `deploy/k8s/` path failed from the repository root.
