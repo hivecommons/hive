@@ -118,6 +118,26 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/markdown; charset=utf-8")
             self.end_headers()
             self.wfile.write(VALID)
+        elif mode == "hub-a":
+            # hivecommons/hive#9442: each hub must be queried with only its
+            # own registration token, never the full comma-separated value.
+            if self.headers.get("Authorization") != "Bearer token-a":
+                self.send_response(401)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(VALID)
+        elif mode == "hub-b":
+            if self.headers.get("Authorization") != "Bearer token-b":
+                self.send_response(401)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(VALID)
         elif mode == "redirect-body":
             self.send_response(302)
             self.send_header("Content-Type", "text/html")
@@ -302,6 +322,64 @@ grep -qx "This file is auto-generated from the hive knowledge base\\." "${HOME_D
   echo "expected two-hub installed agent.md to contain export marker" >&2
   exit 1
 }
+
+rm -f "${HOME_DIR}/agent.md"
+# hivecommons/hive#9442: a contributor connected to two hubs must present
+# each hub's own registration token, not the combined comma-separated value.
+# Before the fix, fetch_knowledge_export always sent the full
+# HIVE_REGISTRATION_TOKEN, so hub A rejected the (token-a,token-b) header and
+# every download failed even though each hub accepted its own token.
+multi_token_output="$(
+  env -i \
+    PATH="${PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="token-a,token-b" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_FETCH=1 \
+    HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_DEST="${HOME_DIR}/agent.md" \
+    HIVE_HUB="http://127.0.0.1:${PORT}/hub-a/contribute,http://127.0.0.1:${PORT}/hub-b/contribute" \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh" 2>&1
+)"
+case "$multi_token_output" in
+  *"knowledge_fetch=installed from http://127.0.0.1:${PORT}/hub-a/api/knowledge/export"* ) ;;
+  *)
+    echo "expected multi-hub knowledge fetch to install from hub A using hub A's own token; got:" >&2
+    echo "$multi_token_output" >&2
+    exit 1
+    ;;
+esac
+case "$multi_token_output" in
+  *"401"* | *"unavailable"* )
+    echo "expected the first-listed hub to authenticate with its own token, not the combined value; got:" >&2
+    echo "$multi_token_output" >&2
+    exit 1
+    ;;
+esac
+grep -qx "This file is auto-generated from the hive knowledge base\." "${HOME_DIR}/agent.md" || {
+  echo "expected multi-hub installed agent.md to contain export marker" >&2
+  exit 1
+}
+
+rm -f "${HOME_DIR}/agent.md"
+# Same reproduction with the second hub listed first, confirming hub B also
+# gets its own token rather than the combined value or hub A's token.
+multi_token_output_reordered="$(
+  env -i \
+    PATH="${PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="token-b,token-a" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_FETCH=1 \
+    HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_DEST="${HOME_DIR}/agent.md" \
+    HIVE_HUB="http://127.0.0.1:${PORT}/hub-b/contribute,http://127.0.0.1:${PORT}/hub-a/contribute" \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh" 2>&1
+)"
+case "$multi_token_output_reordered" in
+  *"knowledge_fetch=installed from http://127.0.0.1:${PORT}/hub-b/api/knowledge/export"* ) ;;
+  *)
+    echo "expected reordered multi-hub knowledge fetch to install from hub B using hub B's own token; got:" >&2
+    echo "$multi_token_output_reordered" >&2
+    exit 1
+    ;;
+esac
 
 rm -f "${HOME_DIR}/agent.md"
 joined_regression_output="$(

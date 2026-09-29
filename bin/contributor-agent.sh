@@ -73,6 +73,23 @@ hub_knowledge_export_urls() {
   done < <(printf '%s\n' "$hubs" | tr ',' '\n')
 }
 
+# hub_registration_tokens splits HIVE_REGISTRATION_TOKEN the same way
+# hub_knowledge_export_urls splits HIVE_HUB, so index N of one lines up with
+# index N of the other (contributor.env's documented one-token-per-hub
+# ordering). Each knowledge fetch must use only its own hub's token
+# (hivecommons/hive#9442) - the combined comma-separated value is never a
+# valid registration token for any single hub.
+hub_registration_tokens() {
+  local tokens="${1:-$HIVE_REGISTRATION_TOKEN}"
+  local token
+
+  while IFS= read -r token; do
+    token="${token#"${token%%[![:space:]]*}"}"
+    token="${token%"${token##*[![:space:]]}"}"
+    printf '%s\n' "$token"
+  done < <(printf '%s\n' "$tokens" | tr ',' '\n')
+}
+
 # KNOWLEDGE_FETCH_REASON is set by fetch_knowledge_export whenever it returns
 # non-zero: one line naming the URL, the HTTP status (or the curl exit code
 # when no status came back) and why the body was rejected. Before #8294 the
@@ -133,6 +150,7 @@ knowledge_fetch_failure_reason() {
 fetch_knowledge_export() {
   local url="$1"
   local dest="$2"
+  local token="${3:-$HIVE_REGISTRATION_TOKEN}"
   local tmp_body tmp_status http_code redirect_url curl_rc
   local -a proto_redir_args
 
@@ -152,7 +170,7 @@ fetch_knowledge_export() {
   curl_rc=0
   curl --silent --show-error "${proto_redir_args[@]}" \
     --max-time "${KNOWLEDGE_FETCH_MAX_TIME:-15}" \
-    --header "Authorization: Bearer ${HIVE_REGISTRATION_TOKEN}" \
+    --header "Authorization: Bearer ${token}" \
     --output "$tmp_body" \
     --write-out "%{http_code} %{redirect_url}" \
     "$url" > "$tmp_status" 2>/dev/null || curl_rc=$?
@@ -513,14 +531,20 @@ if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_FETCH:-}" == "1" ]]; then
   AGENT_MD="${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_DEST:-${HOME}/agent.md}"
   if [[ -n "${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_URL:-}" ]]; then
     KNOWLEDGE_EXPORT_URLS=("$HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_URL")
+    KNOWLEDGE_EXPORT_TOKENS=("${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_TOKEN:-$HIVE_REGISTRATION_TOKEN}")
   else
     KNOWLEDGE_EXPORT_URLS=()
     while IFS= read -r KNOWLEDGE_EXPORT_URL; do
       KNOWLEDGE_EXPORT_URLS+=("$KNOWLEDGE_EXPORT_URL")
     done < <(hub_knowledge_export_urls "$HIVE_HUB")
+    KNOWLEDGE_EXPORT_TOKENS=()
+    while IFS= read -r KNOWLEDGE_EXPORT_TOKEN; do
+      KNOWLEDGE_EXPORT_TOKENS+=("$KNOWLEDGE_EXPORT_TOKEN")
+    done < <(hub_registration_tokens "$HIVE_REGISTRATION_TOKEN")
   fi
-  for KNOWLEDGE_EXPORT_URL in "${KNOWLEDGE_EXPORT_URLS[@]}"; do
-    if fetch_knowledge_export "$KNOWLEDGE_EXPORT_URL" "$AGENT_MD"; then
+  for KNOWLEDGE_EXPORT_INDEX in "${!KNOWLEDGE_EXPORT_URLS[@]}"; do
+    KNOWLEDGE_EXPORT_URL="${KNOWLEDGE_EXPORT_URLS[$KNOWLEDGE_EXPORT_INDEX]}"
+    if fetch_knowledge_export "$KNOWLEDGE_EXPORT_URL" "$AGENT_MD" "${KNOWLEDGE_EXPORT_TOKENS[$KNOWLEDGE_EXPORT_INDEX]:-$HIVE_REGISTRATION_TOKEN}"; then
       echo "knowledge_fetch=installed from ${KNOWLEDGE_EXPORT_URL}"
       exit 0
     fi
@@ -878,9 +902,14 @@ KNOWLEDGE_EXPORT_URLS=()
 while IFS= read -r KNOWLEDGE_EXPORT_URL; do
   KNOWLEDGE_EXPORT_URLS+=("$KNOWLEDGE_EXPORT_URL")
 done < <(hub_knowledge_export_urls "$HIVE_HUB")
+KNOWLEDGE_EXPORT_TOKENS=()
+while IFS= read -r KNOWLEDGE_EXPORT_TOKEN; do
+  KNOWLEDGE_EXPORT_TOKENS+=("$KNOWLEDGE_EXPORT_TOKEN")
+done < <(hub_registration_tokens "$HIVE_REGISTRATION_TOKEN")
 KNOWLEDGE_EXPORT_URL=""
-for KNOWLEDGE_EXPORT_CANDIDATE_URL in "${KNOWLEDGE_EXPORT_URLS[@]}"; do
-  if fetch_knowledge_export "$KNOWLEDGE_EXPORT_CANDIDATE_URL" "$AGENT_MD"; then
+for KNOWLEDGE_EXPORT_INDEX in "${!KNOWLEDGE_EXPORT_URLS[@]}"; do
+  KNOWLEDGE_EXPORT_CANDIDATE_URL="${KNOWLEDGE_EXPORT_URLS[$KNOWLEDGE_EXPORT_INDEX]}"
+  if fetch_knowledge_export "$KNOWLEDGE_EXPORT_CANDIDATE_URL" "$AGENT_MD" "${KNOWLEDGE_EXPORT_TOKENS[$KNOWLEDGE_EXPORT_INDEX]:-$HIVE_REGISTRATION_TOKEN}"; then
     KNOWLEDGE_EXPORT_URL="$KNOWLEDGE_EXPORT_CANDIDATE_URL"
     echo "Agent knowledge downloaded from ${KNOWLEDGE_EXPORT_URL} ($(wc -l < "$AGENT_MD") lines)"
     break
@@ -904,8 +933,9 @@ KNOWLEDGE_REFRESH_SECS=600
   while true; do
     sleep "$KNOWLEDGE_REFRESH_SECS"
     knowledge_refresh_succeeded=0
-    for KNOWLEDGE_EXPORT_CANDIDATE_URL in "${KNOWLEDGE_EXPORT_URLS[@]}"; do
-      if fetch_knowledge_export "$KNOWLEDGE_EXPORT_CANDIDATE_URL" "$AGENT_MD"; then
+    for KNOWLEDGE_EXPORT_INDEX in "${!KNOWLEDGE_EXPORT_URLS[@]}"; do
+      KNOWLEDGE_EXPORT_CANDIDATE_URL="${KNOWLEDGE_EXPORT_URLS[$KNOWLEDGE_EXPORT_INDEX]}"
+      if fetch_knowledge_export "$KNOWLEDGE_EXPORT_CANDIDATE_URL" "$AGENT_MD" "${KNOWLEDGE_EXPORT_TOKENS[$KNOWLEDGE_EXPORT_INDEX]:-$HIVE_REGISTRATION_TOKEN}"; then
         KNOWLEDGE_EXPORT_URL="$KNOWLEDGE_EXPORT_CANDIDATE_URL"
         knowledge_refresh_succeeded=1
         if [[ "$knowledge_refresh_failing" -eq 1 ]]; then
