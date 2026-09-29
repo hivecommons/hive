@@ -40,6 +40,10 @@ func (s *HubServer) StartBackgroundPollers(ctx context.Context) <-chan struct{} 
 	// cycle saying how many hives are stale and how many are stale but
 	// UNREPORTED. Read-only measurement — no alert, no registry write.
 	start(s.StartAdvisoryDiagnostics)
+	// NPS relay pull (#9619): merges standalone hives' NPS responses from the
+	// relay into the admin view. Returns at once unless a relay URL and pull
+	// secret are configured.
+	start(s.StartNPSRelayPull)
 	s.githubActivityMu.Lock()
 	s.githubActivityCtx = ctx
 	feed := s.githubActivityFeed

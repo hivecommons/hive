@@ -4499,6 +4499,17 @@ type HubConfig struct {
 	// data off-box without an explicit operator opt-in. HIVE_NPS_ENABLED
 	// overrides it. Resolve with NPSFeedbackEnabled(), never the raw field.
 	NPSEnabled *bool `yaml:"nps_enabled,omitempty"`
+	// NPSRelayURL is the base URL of the hivecommons NPS relay (issue #9619).
+	// A standalone spoke (NPS enabled, no hub link) registers a self-generated
+	// Ed25519 key at <url>/register and POSTs signed responses here; a hub
+	// pulls from <url>/pending and acks at <url>/ack. Empty (the default)
+	// disables the relay path entirely. HIVE_NPS_RELAY_URL overrides it.
+	// Resolve with EffectiveNPSRelayURL(), never the raw field.
+	NPSRelayURL string `yaml:"nps_relay_url,omitempty"`
+	// NPSRelayPullSecret is the hub's credential for pulling and acking relay
+	// entries (issue #9619). Hub-only and a secret: never logged, and excluded
+	// from JSON. HIVE_NPS_RELAY_PULL_SECRET overrides it.
+	NPSRelayPullSecret string `yaml:"nps_relay_pull_secret,omitempty" json:"-"`
 	// Contribute title/author/label filters use a single list plus a mode:
 	//   - FilterModeAllow ("allow"): allowlist — an item passes ONLY if it
 	//     matches the list (a non-empty list is required for the filter to gate;

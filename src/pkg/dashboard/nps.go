@@ -29,8 +29,13 @@ import (
 // used only locally, as the rate-limit key, and is not in the hub payload.
 //
 // Off by default everywhere except hosted spokes (config.HubConfig
-// .NPSFeedbackEnabled), and inert without a hub link: a standalone hive sends
-// nothing anywhere.
+// .NPSFeedbackEnabled). A standalone hive (no hub link) that opts in forwards
+// to the hivecommons NPS relay instead (issue #9619), but only when the
+// operator has also configured a relay URL (config.HubConfig
+// .NPSRelayConfigured). The relay needs no per-install credential from the
+// operator: the spoke generates and self-registers its own signing key on
+// first use (nps_relay.go). Without opt-in or a relay URL it sends nothing
+// anywhere. The same payload, caps and rate limits apply on both paths.
 
 const (
 	// npsScoreMin / npsScoreMax bound the 4-point emoji scale.
@@ -52,9 +57,11 @@ const (
 	// even reaching it.
 	npsMaxPerHivePerWindow = 10
 
-	// npsForwardTimeout bounds the hub round-trip. The user is waiting on it.
+	// npsForwardTimeout bounds the hub or relay round-trip. The user is
+	// waiting on it.
 	npsForwardTimeout = 10 * time.Second
-	// npsMaxHubResponseBytes caps how much of the hub's reply is read.
+	// npsMaxHubResponseBytes caps how much of the hub's or relay's reply is
+	// read.
 	npsMaxHubResponseBytes = 1 << 12
 	// npsHubIngestPath is the hub route responses are forwarded to
 	// (pkg/hub nps.go npsIngestPath; pkg/dashboard cannot import pkg/hub).
@@ -193,14 +200,17 @@ func (s *Server) npsActor(r *http.Request) (username, role string) {
 }
 
 // npsEnabled reports whether this hive may prompt for and forward NPS
-// feedback: the operator opt-in (hosted spokes default on) AND a hub link to
-// forward over.
+// feedback: the operator opt-in (hosted spokes default on) AND somewhere to
+// forward to - a hub link, or for a standalone hive a configured relay.
 func (s *Server) npsEnabled() bool {
 	if s.deps == nil || s.deps.Config == nil {
 		return false
 	}
 	hub := s.deps.Config.Hub
-	return hub.NPSFeedbackEnabled() && hub.NPSHubLinked() && strings.TrimSpace(s.deps.Config.HiveID) != ""
+	if !hub.NPSFeedbackEnabled() || strings.TrimSpace(s.deps.Config.HiveID) == "" {
+		return false
+	}
+	return hub.NPSHubLinked() || hub.NPSRelayConfigured()
 }
 
 // npsStatusResponse tells the dashboard whether to run the prompt at all.
@@ -230,7 +240,8 @@ type npsSubmitRequest struct {
 	Feedback string `json:"feedback,omitempty"`
 }
 
-// npsHubPayload is exactly what reaches the hub. There is no user field.
+// npsHubPayload is exactly what reaches the hub or the relay. There is no
+// user field.
 type npsHubPayload struct {
 	HiveID           string `json:"hive_id"`
 	Score            int    `json:"score"`
@@ -290,46 +301,88 @@ func (s *Server) handleNPSSubmit(w http.ResponseWriter, r *http.Request) {
 	if status, err := s.forwardNPS(r, payload); err != nil {
 		release()
 		if s.logger != nil {
-			s.logger.Warn("nps: forward to hub failed", "error", err, "hub_status", status)
+			s.logger.Warn("nps: forward failed", "via", s.npsRoute(), "error", err, "upstream_status", status)
 		}
 		if status == http.StatusTooManyRequests {
 			jsonError(w, errNPSHiveLimited.Error(), http.StatusTooManyRequests)
 			return
 		}
-		jsonError(w, "could not deliver feedback to the hub - please try again later", http.StatusBadGateway)
+		jsonError(w, "could not deliver feedback - please try again later", http.StatusBadGateway)
 		return
 	}
 	jsonResponse(w, map[string]any{"ok": true, "category": npsCategory(score)})
 }
 
-// forwardNPS POSTs payload to the hub with the spoke's per-hive heartbeat
-// bearer. It sends no cookie and no identity header: the hub request is built
-// fresh, never copied from the browser's. Returns the hub status (0 when no
-// response) and an error for anything but 2xx.
-func (s *Server) forwardNPS(r *http.Request, payload npsHubPayload) (int, error) {
-	bearer := spoke.SpokeHeartbeatKey()
-	if bearer == "" {
-		return 0, errors.New("no hub credential (HIVE_HEARTBEAT_KEY / HIVE_HUB_SECRET) configured")
+// npsRouteHub / npsRouteRelay name the two forwarding paths in logs.
+const (
+	npsRouteHub   = "hub"
+	npsRouteRelay = "relay"
+)
+
+// npsRoute reports which path a response takes: the hub whenever the spoke
+// has a hub link (a hub-linked hive never uses the relay), else the relay.
+func (s *Server) npsRoute() string {
+	if s.deps.Config.Hub.NPSHubLinked() {
+		return npsRouteHub
 	}
+	return npsRouteRelay
+}
+
+// npsNoRedirectClient never follows a redirect: the hub bearer and the
+// relay's signed requests must reach only the configured endpoint, and a 3xx
+// is a failure here.
+func npsNoRedirectClient() *http.Client {
+	return &http.Client{
+		Timeout: npsForwardTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+// npsIsSuccess reports whether an upstream status is 2xx.
+func npsIsSuccess(status int) bool {
+	return status >= http.StatusOK && status < http.StatusMultipleChoices
+}
+
+// forwardNPS POSTs payload to the hub with the spoke's per-hive heartbeat
+// bearer or, for a standalone hive, to the relay as a request signed with
+// this install's self-registered key (nps_relay.go). It sends no cookie and
+// no identity header: the request is built fresh, never copied from the
+// browser's. Returns the upstream status (0 when no response) and an error
+// for anything but 2xx.
+func (s *Server) forwardNPS(r *http.Request, payload npsHubPayload) (int, error) {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return 0, fmt.Errorf("marshal: %w", err)
 	}
-	hubURL := strings.TrimRight(strings.TrimSpace(s.deps.Config.Hub.URL), "/")
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, hubURL+npsHubIngestPath, bytes.NewReader(data))
+	hub := s.deps.Config.Hub
+	if s.npsRoute() == npsRouteRelay {
+		relayURL := hub.EffectiveNPSRelayURL()
+		if relayURL == "" {
+			return 0, errors.New("no NPS relay configured (hub.nps_relay_url)")
+		}
+		return npsRelayForward(r.Context(), npsNoRedirectClient(), relayURL, data)
+	}
+	bearer := spoke.SpokeHeartbeatKey()
+	if bearer == "" {
+		return 0, errors.New("no hub credential (HIVE_HEARTBEAT_KEY / HIVE_HUB_SECRET) configured")
+	}
+	endpoint := strings.TrimRight(strings.TrimSpace(hub.URL), "/") + npsHubIngestPath
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return 0, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+bearer)
-	resp, err := (&http.Client{Timeout: npsForwardTimeout}).Do(req)
+	resp, err := npsNoRedirectClient().Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("post: %w", err)
 	}
 	defer closeHTTPBody(resp.Body)
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, npsMaxHubResponseBytes))
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return resp.StatusCode, fmt.Errorf("hub answered %d", resp.StatusCode)
+	if !npsIsSuccess(resp.StatusCode) {
+		return resp.StatusCode, fmt.Errorf("upstream answered %d", resp.StatusCode)
 	}
 	return resp.StatusCode, nil
 }

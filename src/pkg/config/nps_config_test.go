@@ -63,3 +63,79 @@ func TestNPSHubLinked(t *testing.T) {
 		}
 	}
 }
+
+// TestValidNPSRelayURL pins the relay URL rule (issue #9619): https only, or
+// plain http to loopback, and never a URL that could smuggle a bearer secret
+// into a query string or userinfo.
+func TestValidNPSRelayURL(t *testing.T) {
+	cases := map[string]string{
+		"":                                     "",
+		"   ":                                  "",
+		"https://docs.hivecommons.dev/api/nps": "https://docs.hivecommons.dev/api/nps",
+		"https://relay.example/api/nps/":       "https://relay.example/api/nps",
+		" https://relay.example ":              "https://relay.example",
+		"http://127.0.0.1:8080/api/nps":        "http://127.0.0.1:8080/api/nps",
+		"http://localhost:9000":                "http://localhost:9000",
+		"http://[::1]:9000":                    "http://[::1]:9000",
+		"http://relay.example/api/nps":         "",
+		"http://10.0.0.5/api/nps":              "",
+		"ftp://relay.example":                  "",
+		"https://user:pw@relay.example":        "",
+		"https://relay.example/api/nps?t=1":    "",
+		"https://relay.example/api/nps#frag":   "",
+		"relay.example/api/nps":                "",
+		"https://":                             "",
+		"://bad":                               "",
+	}
+	for in, want := range cases {
+		if got := ValidNPSRelayURL(in); got != want {
+			t.Errorf("ValidNPSRelayURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestNPSRelaySettingsPrecedence proves each relay setting defaults to empty
+// (relay disabled), reads the config field, and is overridden by its env var.
+func TestNPSRelaySettingsPrecedence(t *testing.T) {
+	t.Setenv(NPSRelayURLEnvVar, "")
+	t.Setenv(NPSRelayPullSecretEnvVar, "")
+
+	var empty HubConfig
+	if empty.EffectiveNPSRelayURL() != "" || empty.EffectiveNPSRelayPullSecret() != "" {
+		t.Fatal("relay settings must default to empty")
+	}
+	if empty.NPSRelayConfigured() {
+		t.Fatal("an empty config must not report the relay as configured")
+	}
+
+	cfg := HubConfig{
+		NPSRelayURL:        "https://cfg.example/api/nps",
+		NPSRelayPullSecret: " cfg-pull ",
+	}
+	if got := cfg.EffectiveNPSRelayURL(); got != "https://cfg.example/api/nps" {
+		t.Errorf("config URL = %q", got)
+	}
+	if got := cfg.EffectiveNPSRelayPullSecret(); got != "cfg-pull" {
+		t.Errorf("config pull secret = %q, want trimmed cfg-pull", got)
+	}
+	// A valid relay URL is all a standalone spoke needs: its signing key is
+	// self-generated, so there is no per-install credential to configure.
+	if !cfg.NPSRelayConfigured() {
+		t.Error("a valid relay URL must report the relay as configured")
+	}
+
+	t.Setenv(NPSRelayURLEnvVar, "https://env.example/api/nps")
+	t.Setenv(NPSRelayPullSecretEnvVar, "env-pull")
+	if got := cfg.EffectiveNPSRelayURL(); got != "https://env.example/api/nps" {
+		t.Errorf("env URL = %q", got)
+	}
+	if got := cfg.EffectiveNPSRelayPullSecret(); got != "env-pull" {
+		t.Errorf("env pull secret = %q", got)
+	}
+
+	// An invalid env URL disables the relay rather than falling back.
+	t.Setenv(NPSRelayURLEnvVar, "http://relay.example")
+	if cfg.EffectiveNPSRelayURL() != "" || cfg.NPSRelayConfigured() {
+		t.Error("a plain-http non-loopback relay URL must disable the relay")
+	}
+}

@@ -18595,7 +18595,7 @@
           "System"
         ],
         "summary": "NPS feedback prompt status",
-        "description": "Whether this hive runs the NPS feedback prompt (issue #9610). enabled is the operator opt-in (on by default only for hosted spokes; HIVE_NPS_ENABLED / hub.nps_enabled override) AND a hub link to forward over. can_submit additionally requires a signed-in, non-read-only user.",
+        "description": "Whether this hive runs the NPS feedback prompt (issue #9610). enabled is the operator opt-in (on by default only for hosted spokes; HIVE_NPS_ENABLED / hub.nps_enabled override) AND somewhere to forward to: a hub link, or for a standalone hive a configured NPS relay (HIVE_NPS_RELAY_URL / hub.nps_relay_url, issue #9619). can_submit additionally requires a signed-in, non-read-only user.",
         "responses": {
           "200": {
             "description": "Prompt status",
@@ -18627,7 +18627,7 @@
           "System"
         ],
         "summary": "Submit an NPS feedback response",
-        "description": "Validates a 1-4 score and optional free text, rate-limits (one per user and a small per-hive cap per 24h), and forwards it to the hub over the spoke's per-hive heartbeat bearer. The hub payload carries the hive ID, score, feedback and dashboard version, never the user. The body cap is enforced on bytes read, not Content-Length.",
+        "description": "Validates a 1-4 score and optional free text, rate-limits (one per user and a small per-hive cap per 24h), and forwards it to the hub over the spoke's per-hive heartbeat bearer or, for a standalone hive with no hub link, to the configured NPS relay, signed with a self-registered Ed25519 install key (issue #9619). The forwarded payload carries the hive ID, score, feedback and dashboard version, never the user. The body cap is enforced on bytes read, not Content-Length.",
         "requestBody": {
           "required": true,
           "content": {
