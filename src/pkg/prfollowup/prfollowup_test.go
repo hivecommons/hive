@@ -245,7 +245,8 @@ func TestRoute_BusyDefersAndRequeues(t *testing.T) {
 	if len(out) != 1 || out[0].Route != RouteDeferred {
 		t.Fatalf("outcomes = %+v, want deferred", out)
 	}
-	if amb := load(t, dir).Journal.Ambiguous(); len(amb) != 1 {
+	deferred := load(t, dir)
+	if amb := deferred.Journal.Ambiguous(); len(amb) != 1 {
 		t.Fatalf("deferred follow-up must stay queued (intended) on disk: %+v", amb)
 	}
 
