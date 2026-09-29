@@ -155,6 +155,9 @@ new value at the same time.
 | `HIVE_KICK_LOG_DIR` | No | `/data/logs/kicks` | Root directory per-kick log archives are written under. On the persistent volume so archives survive restarts, pod rolls, and image upgrades. |
 | `HIVE_KICK_LOG_RETENTION` | No | `10` | Archived kick logs kept per agent. `0` disables archiving entirely. |
 | `HIVE_KICK_LOG_MAX_BYTES` | No | `67108864` (64 MiB) | Per-agent total size cap across archived kick logs. |
+| `HIVE_PR_FOLLOWUP_RESUME` | No | `turn.pr_follow_up.enabled` (default `false`) | Process-level override for PR follow-up session resume ([#9583](https://github.com/hivecommons/hive/issues/9583)): `true` routes CI failures, changes-requested reviews and new review-bot threads on a PR this hive opened back into the CLI session that authored it while that session is still live; `false` is the one-step rollback to the fix-before-new path. See [PR follow-up session resume](design/pr-follow-up-resume.md). |
+| `HIVE_PR_FOLLOWUP_MAX_AGE` | No | `turn.pr_follow_up.max_age`, then `24h` | How long after a PR opens its authoring session stays eligible for resume (Go duration). Invalid or non-positive values fall back to `24h`. |
+| `HIVE_PR_FOLLOWUP_DIR` | No | `/data/turn/pr-followups` | Directory the per-PR follow-up pointers (`pkg/turn` envelopes) are persisted under. On the persistent volume so pointers and queued follow-ups survive restarts. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | No | none | OTLP trace exporter endpoint. Tracing stays disabled while unset. |
 | `HIVE_WIKI_GIT_URL` | No | none | Optional wiki vault URL cloned into `/data/vaults/hive-wiki` on first boot. |
 

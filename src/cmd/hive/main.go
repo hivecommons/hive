@@ -3425,6 +3425,10 @@ func (b *boot) bootSupervision() {
 			// audit stream attributes to the governor flow (#5656). The store
 			// dedupes with the audit-sink bridge by (ref, kind).
 			recordPROpened(b.dashSrv, b.cfg.Project.Org, agentName, repo, number, url)
+			// PR follow-up session resume (#9583, default off): remember
+			// which live CLI session authored this PR so its follow-ups can
+			// resume that conversation instead of a /clear'd fresh kick.
+			recordPRFollowUpPointer(b.cfg, b.agentMgr, agentName, repo, number, url, time.Now(), b.logger)
 		})
 	}
 }
@@ -6496,6 +6500,13 @@ func runEvalCycle(
 	// same way ci-failing.json is, so the scheduler can route each PR back
 	// to its author for a fix + in-thread replies before any new work.
 	writeReviewThreads(ctx, ghClient, actionable, cfg.Project.Org, escalatedPRs, logger)
+
+	// PR follow-up session resume (hivecommons/hive#9583, default off): feed
+	// CI failures, changes-requested reviews and new review-bot threads on a
+	// PR this hive opened back into the CLI session that authored it, while
+	// that session is still live. Anything it cannot resume stays on the
+	// fix-before-new path above, unchanged.
+	routePRFollowUps(ctx, cfg, actionable, escalatedPRs, agentMgr, logger)
 
 	// Stuck-PR reaper (backstop): DELIVER a targeted FIX-BEFORE-NEW kick for any
 	// hive-authored PR that is red on a required check AND stale (its red head
