@@ -56,6 +56,33 @@ type PRRequest struct {
 	// each one (Closes #N / Refs #N) and rejects the request otherwise — a
 	// body that lost its issue line is lost content (see validatePRRequestBody).
 	IssueN []int `json:"issues,omitempty"`
+	// Handoff is an optional compact summary of the reasoning behind the PR
+	// (why, approach, rejected alternatives, repro, files touched). It is not
+	// published anywhere: the PR follow-up feature (hivecommons/hive#9583)
+	// keeps it beside the PR's session pointer and hands it to the fresh
+	// session that picks up a follow-up once the authoring conversation is
+	// gone. When absent, the hive extracts the same fields from the body's
+	// section headings instead.
+	Handoff *PRHandoff `json:"handoff,omitempty"`
+}
+
+// PRHandoff is the structured reasoning an agent may attach to a PR request.
+// Every field is optional free text; consumers bound its size.
+type PRHandoff struct {
+	Why      string   `json:"why,omitempty"`
+	Approach string   `json:"approach,omitempty"`
+	Rejected string   `json:"rejected,omitempty"`
+	Repro    string   `json:"repro,omitempty"`
+	Files    []string `json:"files,omitempty"`
+}
+
+// IsZero reports whether h carries no content at all.
+func (h *PRHandoff) IsZero() bool {
+	if h == nil {
+		return true
+	}
+	return strings.TrimSpace(h.Why) == "" && strings.TrimSpace(h.Approach) == "" &&
+		strings.TrimSpace(h.Rejected) == "" && strings.TrimSpace(h.Repro) == "" && len(h.Files) == 0
 }
 
 // PRResponse is written back next to a consumed request (as <name>.result.json)
@@ -147,6 +174,35 @@ type PRRequestAuthorizer func(agent string, fileUID int) error
 // PROpenedHook is notified when the watcher opens a NEW PR for an agent.
 type PROpenedHook func(agent, repo string, number int, url string)
 type PRRepoPolicyGate func(agent, repo string) error
+
+// PROpenedDetail is everything the watcher knows about a PR it just opened
+// for an agent: the PROpenedHook arguments plus the body it published and the
+// request's optional handoff summary.
+type PROpenedDetail struct {
+	Agent   string
+	Repo    string
+	Number  int
+	URL     string
+	Body    string
+	Handoff *PRHandoff
+}
+
+// PROpenedDetailHook is notified, like PROpenedHook, when the watcher opens a
+// NEW PR for an agent, with the full PROpenedDetail.
+type PROpenedDetailHook func(PROpenedDetail)
+
+// SetPROpenedDetailHook installs (or with nil, removes) the detail hook. Safe
+// to call before or after the watcher starts.
+func (c *Client) SetPROpenedDetailHook(fn PROpenedDetailHook) {
+	if c == nil {
+		return
+	}
+	if fn == nil {
+		c.prOpenedDetailHook.Store(nil)
+		return
+	}
+	c.prOpenedDetailHook.Store(&fn)
+}
 
 // SetPROpenedHook installs (or with nil, removes) the PR-opened hook. Safe
 // to call before or after the watcher starts.
@@ -559,6 +615,9 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		// here, on the path that actually opened it. Own goroutine: an HTTP
 		// post to a tracker must never delay consuming the request file.
 		go (*hook)(req.Agent, req.Repo, res.Number, res.URL)
+	}
+	if hook := c.prOpenedDetailHook.Load(); hook != nil && *hook != nil && !res.AlreadyExisted {
+		go (*hook)(PROpenedDetail{Agent: req.Agent, Repo: req.Repo, Number: res.Number, URL: res.URL, Body: body, Handoff: req.Handoff})
 	}
 	c.recordCreationAudit(AuditActionAgentPRCreated, meta,
 		"repo", req.Repo,
