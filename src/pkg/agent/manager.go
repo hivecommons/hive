@@ -426,6 +426,12 @@ type AgentProcess struct {
 	// not reused for this because it only moves on a COMPLETED launch — a
 	// pending kick must die the moment the operator's restart begins.
 	kickEpoch int
+	// resumeSkipClear is a one-shot flag set by SendResumeKick immediately
+	// before deliverKickLocked, under the same m.mu hold: the next delivery
+	// must NOT type /clear, because it is a PR follow-up resuming the session
+	// that authored the PR (hivecommons/hive#9583). deliverKickLocked consumes
+	// (and resets) it on entry, so it can never leak into a later kick.
+	resumeSkipClear bool
 	// kickHoldUntil / kickHoldReason are the restart/kick loop breaker (#7363):
 	// a restart that destroyed a PRODUCING turn arms a short hold during which
 	// SendKick/SendKickAsync refuse with a reason, so the restart cannot be

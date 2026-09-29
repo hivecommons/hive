@@ -33,6 +33,12 @@ const (
 	// decision is a journaled, re-enterable position rather than in-process
 	// suspended state. See the shape note in the stage-2 design section.
 	OpApprovalWait OpKind = "approval_wait"
+	// OpFollowUpKick delivers one PR follow-up event (a CI failure, a review
+	// submission, new comments) to the agent session that authored the PR
+	// (hivecommons/hive#9583). Journaled before delivery so a restart between
+	// intent and settle re-queues the event instead of dropping it, and a
+	// settled key is never delivered twice.
+	OpFollowUpKick OpKind = "follow_up_kick"
 )
 
 // sideEffectful reports whether a kind mutates external state and therefore
