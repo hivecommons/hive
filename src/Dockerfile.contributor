@@ -177,7 +177,7 @@ RUN mkdir -p /etc/apt/keyrings \
 # npm cache is cleaned in the same layer it's populated (issue #2613,
 # Observation 2 "also minor") so the cache doesn't linger in this layer's
 # diff, mirroring the cleanup already done for the bobshell install below.
-ARG CLAUDE_CODE_VERSION=2.1.283
+ARG CLAUDE_CODE_VERSION=2.1.284
 ARG COPILOT_VERSION=1.0.88
 # --ignore-scripts (kept, deliberately: no arbitrary postinstall runs during
 # the build) skips claude-code's install.cjs, which is what LINKS the platform
@@ -200,7 +200,7 @@ ARG KILO_CLI_VERSION=7.5.6
 # Same ARG name and value as src/Dockerfile so bin/test_backend_smoke.sh can
 # assert the two pins agree — this line was previously an inline hardcode that
 # could (and did) drift from the main image's CODEX_VERSION unnoticed.
-ARG CODEX_VERSION=0.158.0
+ARG CODEX_VERSION=0.159.0
 RUN npm install -g --ignore-scripts --no-fund --no-audit \
     @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
     @github/copilot@${COPILOT_VERSION} \
@@ -227,9 +227,9 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit \
 #
 # No credential is baked in: muse needs META_API_KEY in the environment or a
 # credential at $HOME/.config/muse/auth.json.
-ARG MUSE_VERSION=1.4.0-R4302.1
-ARG MUSE_SHA256_AMD64=ad21c22965f8600b4473b4ab8354ff7cc483d4cb681b46f2952561d855c8ed86
-ARG MUSE_SHA256_ARM64=79cfba1b9e417b370bdb9154a546c524b7f32a34026e6164b6f3f122f0ea3386
+ARG MUSE_VERSION=1.4.1-R4503.1
+ARG MUSE_SHA256_AMD64=8b53c9cdbc025bc2d9068bc7016e2c1e51c3a0c608821da17528ad23be900a12
+ARG MUSE_SHA256_ARM64=a6d46239975adac282aa829d2a5bd1cd3119334c18ecfa776d4377daebddb595
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64|x86_64) MUSE_FILE=muse-x86-linux; MUSE_SHA256="$MUSE_SHA256_AMD64" ;; \
@@ -347,9 +347,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
 # API-key mode, so a fresh container still needs an operator to sign in
 # inside it (or a future credential-mount fix, see Justfile's `agy)` staging
 # case) before it can do unattended work.
-ARG AGY_VERSION=1.2.12-5784551402897408
-ARG AGY_SHA256_AMD64=26c7c4c661d6c9beda734fcf305031056a6ea46e697c4533e8151179724e2950
-ARG AGY_SHA256_ARM64=bd338c9d19ab963d9d2bc027e4e797b470ea84bae02080e4fde4555357ea9444
+ARG AGY_VERSION=1.2.13-6662628811079680
+ARG AGY_SHA256_AMD64=b0f195d37973be7b08c3b705d7fbbcd948dacb4a3c2176ee52ca29f7159bdc21
+ARG AGY_SHA256_ARM64=43bf59be5895475f8a32d4f94f1241f665986ea41a3622579e03b74e1b63dcfb
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64) AGY_PLATFORM=linux-x64; AGY_TARBALL=cli_linux_x64.tar.gz; AGY_SHA256="$AGY_SHA256_AMD64" ;; \
@@ -399,9 +399,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
 # No credential is baked in: omp reads the selected model's provider
 # credential from its documented environment variables (ANTHROPIC_API_KEY,
 # OPENAI_API_KEY, …), which the Justfile's container arm already forwards.
-ARG OMP_VERSION=18.4.1
-ARG OMP_SHA256_AMD64=494ed1f2c8eb223168d87d3592cf56aa52afe4d35f4191908ba99a0fbe57fad9
-ARG OMP_SHA256_ARM64=357c5a10071beb302bb66a4569d2648946fe4aa508b1cd15d535886ec47d1f38
+ARG OMP_VERSION=18.4.3
+ARG OMP_SHA256_AMD64=afcecdff1f421f3c88fb1714c407b3700899b4de3ed003cd8369f52ae6ca87de
+ARG OMP_SHA256_ARM64=f000c2945751f84a8706ba0bafe0de42f67cb3b8681a3703f8d1397fa22c5edd
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64) OMP_ASSET=omp-linux-x64; OMP_SHA256="$OMP_SHA256_AMD64" ;; \

@@ -93,7 +93,7 @@ jobs:
       - name: Identify the committer
         run: |
           git config user.name "hive-release[bot]"
-          git config user.email "hive-release[bot]@users.noreply.github.com"
+          git config user.email "hive-release@hive.kubestellar.io"
 
       - name: Check whether v5 is behind v4
         id: drift

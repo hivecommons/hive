@@ -56,7 +56,7 @@ jobs:
       - name: Identify the committer
         run: |
           git config user.name "hive-release[bot]"
-          git config user.email "hive-release[bot]@users.noreply.github.com"
+          git config user.email "hive-release@hive.kubestellar.io"
 
       - name: Check whether v6 is behind v5
         id: drift

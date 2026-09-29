@@ -107,6 +107,75 @@ func TestFetchFailureExcerpt(t *testing.T) {
 	}
 }
 
+// TestFetchFailureExcerpt_RoundRobinCoversEveryRun guards against
+// hivecommons/hive#9475: with the old excerptMaxRuns == 2, only the first two
+// failing runs (in whatever order the caller passed them) ever contributed
+// evidence, so a noisy shard could crowd out every other failing check. The
+// excerpt must now read up to excerptMaxRuns runs and fill lines round-robin,
+// one per run, before any run gets a second line.
+func TestFetchFailureExcerpt_RoundRobinCoversEveryRun(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/o/r/check-runs/101/annotations", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"annotation_level": "failure", "message": "run-a line 1"},
+			{"annotation_level": "failure", "message": "run-a line 2"},
+			{"annotation_level": "failure", "message": "run-a line 3"},
+		})
+	})
+	mux.HandleFunc("/repos/o/r/check-runs/102/annotations", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"annotation_level": "failure", "message": "run-b line 1"},
+		})
+	})
+	mux.HandleFunc("/repos/o/r/check-runs/103/annotations", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"annotation_level": "failure", "message": "run-c line 1"},
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(t, server, "o", []string{"o/r"})
+	got := c.fetchFailureExcerpt(context.Background(), "o", "r",
+		[]int64{101, 102, 103}, []string{"run-a", "run-b", "run-c"})
+
+	for _, want := range []string{"run-a: run-a line 1", "run-b: run-b line 1", "run-c: run-c line 1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("excerpt missing %q from a covered run: %q", want, got)
+		}
+	}
+	lines := strings.Split(got, "\n")
+	if lines[0] != "run-a: run-a line 1" || lines[1] != "run-b: run-b line 1" || lines[2] != "run-c: run-c line 1" {
+		t.Errorf("excerpt did not fill round-robin (one line per run first), got %v", lines)
+	}
+}
+
+// TestFetchFailureExcerpt_DropsBareExitCodeWhenOtherEvidenceExists confirms
+// that a run's "Process completed with exit code N." annotation — which
+// GitHub Actions attaches to nearly every failing job regardless of cause —
+// does not take a line slot away from a more informative annotation on the
+// same run.
+func TestFetchFailureExcerpt_DropsBareExitCodeWhenOtherEvidenceExists(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/o/r/check-runs/101/annotations", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"annotation_level": "failure", "message": "Process completed with exit code 1."},
+			{"annotation_level": "failure", "message": "TestFoo: assertion failed"},
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(t, server, "o", []string{"o/r"})
+	got := c.fetchFailureExcerpt(context.Background(), "o", "r", []int64{101}, []string{"unit"})
+	if strings.Contains(got, "exit code") {
+		t.Errorf("bare exit-code annotation should be dropped when a real cause exists, got %q", got)
+	}
+	if !strings.Contains(got, "assertion failed") {
+		t.Errorf("excerpt missing the real cause: %q", got)
+	}
+}
+
 // TestFetchFailureExcerpt_APIErrorDegrades confirms the excerpt is enrichment,
 // never a gate: an annotations API error yields "" rather than blocking.
 func TestFetchFailureExcerpt_APIErrorDegrades(t *testing.T) {
