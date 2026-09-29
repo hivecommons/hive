@@ -2641,6 +2641,22 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		"UseWildcardTLS": cluster.servesHostFromWildcard(dashboardHost),
 	}
 
+	// #9586 phase 2: the isolated credential sidecar, rendered only when the
+	// hub switch (HIVE_HOSTED_CRED_SIDECAR) is on - default OFF, including for
+	// new spokes - and this spoke can run it. See provision_cred_sidecar.go.
+	credSidecarKey := provisionCredSidecarKey(h.ID)
+	credSidecarOn := provisionCredSidecarFromEnv(credSidecarInputs{
+		appKeyInSecret: useAppFull,
+		proxyInject:    fmt.Sprint(data["ProxyInjectGHAuth"]),
+		appID:          fmt.Sprint(data["AppID"]),
+		installationID: fmt.Sprint(data["InstallationID"]),
+		requiresSCC:    cluster.RequiresSCC,
+		hmacKey:        credSidecarKey,
+	}, logger)
+	for k, v := range credSidecarTemplateData(credSidecarOn, credSidecarKey, effectiveGitHubBaseURL(h, cluster), effectiveGitHubAPIURL(h, cluster)) {
+		data[k] = v
+	}
+
 	// For NFS storage: auto-create OCI File System + NFS export.
 	// Failures are non-fatal — the admin can create them manually.
 	if cluster.StorageType == storageTypeNFS || cluster.StorageType == "" {
@@ -3196,6 +3212,12 @@ metadata:
 type: Opaque
 stringData:
   dashboard-token: {{.DashboardToken}}
+{{- if .CredSidecar}}
+  # #9586 phase 2: the per-spoke HMAC key the hive proxy signs with and the
+  # credential sidecar verifies with. Projected 0440 with the pod fsGroup like
+  # the App key: readable by dev and the sidecar, by no agent UID.
+  {{.CredSidecarSecretKey}}: "{{.CredSidecarKey}}"
+{{- end}}
 {{- if .UseAppFull}}
   gh-app-key.pem: |
 {{.AppPrivateKey}}
@@ -3292,6 +3314,11 @@ spec:
       labels:
         app: hive
         hive-id: {{.ID}}
+{{- if .CredSidecar}}
+      annotations:
+        # Two containers: keep kubectl exec/logs without -c on the hive one.
+        kubectl.kubernetes.io/default-container: hive
+{{- end}}
     spec:
 {{- if .RequiresSCC}}
       serviceAccountName: hive-sa
@@ -3434,6 +3461,15 @@ spec:
         - name: HIVE_PROXY_INJECT_GH_AUTH
           value: "{{.ProxyInjectGHAuth}}"
 {{- end}}
+{{- if .CredSidecar}}
+        # #9586 phase 2: credential-sidecar mode. The hive process holds no
+        # agent GitHub token; the proxy signs each agent request and sends it
+        # to the cred-sidecar container below over the pod loopback.
+        - name: HIVE_CRED_SIDECAR_URL
+          value: "{{.CredSidecarURL}}"
+        - name: HIVE_CRED_SIDECAR_KEY_FILE
+          value: "{{.CredSidecarKeyFile}}"
+{{- end}}
         - name: DASHBOARD_AUTH_TOKEN
           valueFrom:
             secretKeyRef:
@@ -3545,6 +3581,52 @@ spec:
         - name: secrets
           mountPath: /secrets
           readOnly: true
+{{- if .CredSidecar}}
+      # #9586 phase 2: the isolated GitHub credential holder. Its own container
+      # (own PID and mount namespace), so neither the hive process nor any agent
+      # can read the App key it mounts or the tokens it mints. MUST stay after
+      # the hive container: the hub's reconcilers patch containers[0].
+      - name: cred-sidecar
+        image: ghcr.io/hivecommons/hive:{{.ImageTag}}
+        imagePullPolicy: {{.ImagePullPolicy}}
+        command: ["/usr/local/bin/hive", "credsidecar"]
+        securityContext:
+          runAsUser: {{.CredSidecarUID}}
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        env:
+        - name: HIVE_CRED_SIDECAR_LISTEN
+          value: "{{.CredSidecarListen}}"
+        - name: HIVE_CRED_SIDECAR_KEY_FILE
+          value: "{{.CredSidecarKeyFile}}"
+        - name: HIVE_CRED_SIDECAR_APP_ID
+          value: "{{.AppID}}"
+        - name: HIVE_CRED_SIDECAR_INSTALLATION_ID
+          value: "{{.InstallationID}}"
+        - name: HIVE_CRED_SIDECAR_APP_KEY_FILE
+          value: "{{.CredSidecarAppKeyFile}}"
+{{- if .HasGHE}}
+        - name: HIVE_CRED_SIDECAR_GITHUB_API_URL
+          value: "{{.GitHubAPIURL}}"
+        - name: HIVE_CRED_SIDECAR_GITHUB_HOSTS
+          value: "{{.CredSidecarGitHubHosts}}"
+{{- end}}
+        resources:
+          requests:
+            cpu: {{.CredSidecarCPURequest}}
+            memory: {{.CredSidecarMemRequest}}
+          limits:
+            cpu: {{.CredSidecarCPULimit}}
+            memory: {{.CredSidecarMemLimit}}
+        volumeMounts:
+        - name: cred-sidecar-secrets
+          mountPath: /secrets
+          readOnly: true
+{{- end}}
       volumes:
       - name: config
         configMap:
@@ -3573,6 +3655,19 @@ spec:
           # is the dedicated group that actually splits dev from the agents —
           # the same argument the C6 su-exec fix made for 4750 root:hive-launch.
           defaultMode: 0440
+{{- if .CredSidecar}}
+      # Only the two entries the sidecar needs, never the whole hive-secrets
+      # (dashboard token, other keys). Same 0440 + fsGroup split as above.
+      - name: cred-sidecar-secrets
+        secret:
+          secretName: hive-secrets
+          items:
+          - key: {{.CredSidecarAppKeyName}}
+            path: {{.CredSidecarAppKeyName}}
+          - key: {{.CredSidecarSecretKey}}
+            path: {{.CredSidecarSecretKey}}
+          defaultMode: 0440
+{{- end}}
 ---
 apiVersion: v1
 kind: Service
@@ -3591,6 +3686,36 @@ spec:
     port: {{.DashboardPort}}
     targetPort: {{.DashboardPort}}
   type: ClusterIP
+{{- if .CredSidecar}}
+---
+# #9586 phase 2: admit traffic into the spoke pod only on the two ports the
+# Service exposes. The sidecar listens on loopback and the spoke refuses to
+# start otherwise; this keeps its port, and the hive's MITM proxy port,
+# unreachable from off the pod even if a listen address is ever widened.
+# Egress is deliberately not expressed here: a NetworkPolicy selects PODS, and
+# the sidecar shares the hive pod's network namespace, so "only the sidecar
+# reaches GitHub" cannot be a pod policy. In-pod, the forced-egress redirect
+# sends every agent :443 through the proxy, which in sidecar mode attaches no
+# token (security-model.md, "Isolated credential sidecar").
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hive-cred-sidecar
+  namespace: {{.Namespace}}
+spec:
+  podSelector:
+    matchLabels:
+      app: hive
+      hive-id: {{.ID}}
+  policyTypes:
+  - Ingress
+  ingress:
+  - ports:
+    - protocol: TCP
+      port: {{.TerminalPort}}
+    - protocol: TCP
+      port: {{.DashboardPort}}
+{{- end}}
 {{- if .IsNginxIngress}}
 ---
 apiVersion: networking.k8s.io/v1
