@@ -248,6 +248,12 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/governor/advisory", s.handleGovernorAdvisoryPut)
 	s.mux.HandleFunc("GET /api/config/governor/replan", s.handleGovernorReplanGet)
 	s.mux.HandleFunc("PUT /api/config/governor/replan", s.handleGovernorReplanPut)
+	// Question auto-close (#9584 dashboard follow-up): settings toggle +
+	// hours, plus a read-only live-schedule view backed by
+	// Dependencies.QuestionAutoclose — see api_governor_question_autoclose.go.
+	s.mux.HandleFunc("GET /api/config/governor/question-autoclose", s.handleGovernorQuestionAutocloseGet)
+	s.mux.HandleFunc("PUT /api/config/governor/question-autoclose", s.handleGovernorQuestionAutocloseSet)
+	s.mux.HandleFunc("GET /api/config/governor/question-autoclose/schedule", s.handleGovernorQuestionAutocloseSchedule)
 	s.mux.HandleFunc("GET /api/config/governor/work-source", s.handleGovernorWorkSourceGet)
 	s.mux.HandleFunc("PUT /api/config/governor/work-source", s.handleGovernorWorkSourcePut)
 	s.mux.HandleFunc("PUT /api/config/governor/security", s.handleGovernorSecurity)

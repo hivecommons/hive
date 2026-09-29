@@ -28076,7 +28076,8 @@ function burnAreaChart() {
             </div>
           </div>
         </div>
-        ${renderGovReplanSection((_configState.data || {}).replan || {})}`;
+        ${renderGovReplanSection((_configState.data || {}).replan || {})}
+        ${renderGovQuestionAutocloseSection((_configState.data || {}).question_autoclose || {})}`;
     }
 
     // renderGovReplanSection renders the stall-replan lane settings: the
@@ -28100,6 +28101,82 @@ function burnAreaChart() {
           </div>
           <div class="config-field"><label>Max replans per plan <span class="config-info">i<span class="config-tooltip">Caps replans per plan before the lane stops and escalates to a human. 0 means the default (5).</span></span></label><input type="number" min="0" step="1" value="${rp.max_replans || 0}" placeholder="5" data-change-action="markDirty" data-arg0="replan" data-arg1="max_replans" data-arg-types="s,s,N"></div>
         </div>`;
+    }
+
+    // renderGovQuestionAutocloseSection renders the question auto-close
+    // toggle (hivecommons/hive#9584 dashboard follow-up): once the hive has
+    // answered a `question`-labelled issue, it closes automatically after
+    // an objection window unless the author reacts 👎. Values are marked
+    // dirty under the 'question-autoclose' section, which the generic Save
+    // dispatcher PUTs to /api/config/governor/question-autoclose. The live
+    // schedule table is loaded separately (read-only, its own endpoint) via
+    // loadQuestionAutocloseSchedule, scheduled with setTimeout the same way
+    // renderGovFeatures kicks off loadRotationHeadroom.
+    function renderGovQuestionAutocloseSection(qa) {
+      qa = qa || {};
+      const qaOn = qa.enabled === true;
+      setTimeout(() => { if (qaOn) loadQuestionAutocloseSchedule(); }, 0);
+      return `
+        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Question Auto-Close</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${qaOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="question-autoclose" data-key="enabled"></div>
+            <span class="config-toggle-label">Auto-close answered questions <span class="config-info">i<span class="config-tooltip">Once the hive posts an answer on a question-labelled issue, it closes the issue after the window below unless the author reacts 👎 to the answer. Off by default.</span></span></span>
+          </div>
+          <div class="config-field" style="margin-top:10px"><label>Objection window (hours) <span class="config-info">i<span class="config-tooltip">How long an answered question stays open for the author to object before it is closed. Minimum 1 hour; default 4.</span></span></label><input type="number" min="1" step="1" value="${qa.hours || 4}" placeholder="4" data-change-action="markDirty" data-arg0="question-autoclose" data-arg1="hours" data-arg-types="s,s,N"></div>
+          <div style="margin-top:12px">
+            <div style="font-size:var(--fs-2xs);color:var(--muted);margin-bottom:6px">Live schedule</div>
+            <div id="qa-schedule-host">${qaOn ? '<div style="color:var(--muted);font-size:var(--fs-2xs)">Loading…</div>' : '<div style="color:var(--muted);font-size:var(--fs-2xs)">Enable auto-close to see the live schedule.</div>'}</div>
+          </div>
+        </div>`;
+    }
+
+    // renderQuestionAutocloseScheduleTable renders the live schedule as a
+    // plain text-only table — every field comes from GitHub (repo name,
+    // issue number, timestamps) and is rendered through esc(), never as raw
+    // innerHTML, so an issue in a repo the hive watches cannot inject markup
+    // into the dashboard.
+    function renderQuestionAutocloseScheduleTable(entries) {
+      entries = entries || [];
+      if (entries.length === 0) {
+        return '<div style="color:var(--muted);font-size:var(--fs-2xs)">Nothing scheduled right now.</div>';
+      }
+      const rows = entries.map(e => `
+        <tr>
+          <td style="padding:4px 10px 4px 0">${esc(e.repo || '')}#${esc(String(e.issue || ''))}</td>
+          <td style="padding:4px 10px">${esc(e.answered_at || '')}</td>
+          <td style="padding:4px 10px">${esc(e.closes_at || '')}</td>
+          <td style="padding:4px 0">${esc(e.state || '')}</td>
+        </tr>`).join('');
+      return `
+        <table style="width:100%;border-collapse:collapse;font-size:var(--fs-2xs)">
+          <thead>
+            <tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--border)">
+              <th style="padding:4px 10px 4px 0">Issue</th>
+              <th style="padding:4px 10px">Answered</th>
+              <th style="padding:4px 10px">Closes</th>
+              <th style="padding:4px 0">State</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    // loadQuestionAutocloseSchedule fetches the live schedule and paints it
+    // into the placeholder renderGovQuestionAutocloseSection left behind.
+    // Errors render as plain text via esc(), matching loadRotationHeadroom's
+    // failure path.
+    async function loadQuestionAutocloseSchedule() {
+      const host = document.getElementById('qa-schedule-host');
+      if (!host) return;
+      try {
+        const resp = await fetch('/api/config/governor/question-autoclose/schedule');
+        const data = await resp.json();
+        if (!resp.ok) throw new Error((data && data.error) || ('HTTP ' + resp.status));
+        host.innerHTML = renderQuestionAutocloseScheduleTable(data.entries);
+      } catch (e) {
+        host.innerHTML = '<div style="color:var(--yellow);font-size:var(--fs-2xs)">Schedule unavailable: ' + esc(e.message) + '</div>';
+      }
     }
 
     function projectObservabilityPlatformsChanged(el) {

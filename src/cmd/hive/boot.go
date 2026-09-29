@@ -26,6 +26,7 @@ import (
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/promptsrc"
 	"github.com/hivecommons/hive/pkg/proxy"
+	"github.com/hivecommons/hive/pkg/questionclose"
 	"github.com/hivecommons/hive/pkg/retro"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
@@ -104,6 +105,7 @@ type boot struct {
 	nousState                     *dashboard.NousState
 	inceptionEngine               *knowledge.InceptionEngine
 	rotationMgr                   *rotation.Manager
+	questionAutoclose             *questionclose.Manager
 	wd                            *watchdog.Reconciler
 	onDemandFromPack              map[string]bool
 	refreshDashboard              func()
