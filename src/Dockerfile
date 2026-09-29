@@ -258,12 +258,12 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit \
 # dashboard's codex model discovery (`codex app-server` model/list — pure
 # local stdio, no network, unaffected by the proxy CA) falls back to the
 # static list, and non-codex backends are unaffected.
-ARG CODEX_VERSION=0.158.0
+ARG CODEX_VERSION=0.159.0
 RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_VERSION} && npm cache clean --force || \
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 
 # --- Layer 7: Claude Code (most frequent updates) ---
-ARG CLAUDE_CODE_VERSION=2.1.283
+ARG CLAUDE_CODE_VERSION=2.1.284
 # --ignore-scripts (kept, deliberately: no arbitrary postinstall runs during the
 # build) skips claude-code's install.cjs, which is what LINKS the platform
 # native binary into the package's bin/. The binary itself ships in the
@@ -311,10 +311,10 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # complete the interactive OAuth flow itself). This enables a self-hosted Hive
 # controller to use its configured agy fallback rung without pretending that
 # generic contributor containers can bootstrap Google login.
-ARG AGY_VERSION=1.2.12
-ARG AGY_BUILD=5784551402897408
-ARG AGY_SHA512_AMD64=d5f0fe7433cb7c43ea878c07627a4fdb82d218f3bef5e6436266f5d9fdd2df145523453b9be0c4250391a64a007f5f42f7faff797bc2b2d502e7efb4874e383a
-ARG AGY_SHA512_ARM64=e2f10960197efbf2455edb1284ae686821e244908367f507bcb6a0d0f616e945d3eec5cdf29b41bbcd7f630826d0e9e233f457184d1696fa91e81d6a7ed440c9
+ARG AGY_VERSION=1.2.13
+ARG AGY_BUILD=6662628811079680
+ARG AGY_SHA512_AMD64=7a10134a69c575dc11bdc721322344e9db3bf2c9d890f2d40ff0bffda93d39b6ef1c7c486f491d1ddf08b123deef375c7bbe46b62cd3fbc3cc956b1a3bd22956
+ARG AGY_SHA512_ARM64=a26463715b58b787ef24d377138351b725e980c3dec417faa60ad991c8e676f67c6c83b7158d2ef95569a87ba79d0ef2eb781b6d53ac2dbf991f5443f7a46573
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64|x86_64) AGY_URL_ARCH=x64; AGY_FILE_ARCH=x64; AGY_SHA512="$AGY_SHA512_AMD64" ;; \
@@ -332,9 +332,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # --- Layer 8.27: OMP CLI (Oh My Pi — backend: omp) ---
 # Mirrored from Dockerfile.contributor so hub agents can launch backend: omp.
 # Downloads are optional like Goose/agy, but checksum mismatches are fatal.
-ARG OMP_VERSION=18.4.1
-ARG OMP_SHA256_AMD64=494ed1f2c8eb223168d87d3592cf56aa52afe4d35f4191908ba99a0fbe57fad9
-ARG OMP_SHA256_ARM64=357c5a10071beb302bb66a4569d2648946fe4aa508b1cd15d535886ec47d1f38
+ARG OMP_VERSION=18.4.3
+ARG OMP_SHA256_AMD64=afcecdff1f421f3c88fb1714c407b3700899b4de3ed003cd8369f52ae6ca87de
+ARG OMP_SHA256_ARM64=f000c2945751f84a8706ba0bafe0de42f67cb3b8681a3703f8d1397fa22c5edd
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64|x86_64) OMP_ASSET=omp-linux-x64; OMP_SHA256="$OMP_SHA256_AMD64" ;; \
@@ -372,9 +372,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
 # credential at $HOME/.config/muse/auth.json seeded by an operator
 # (`muse login` / `muse auth set --api-key-stdin`). The image supplies only the
 # binary, exactly as the agy layer does for Google OAuth.
-ARG MUSE_VERSION=1.4.0-R4302.1
-ARG MUSE_SHA256_AMD64=ad21c22965f8600b4473b4ab8354ff7cc483d4cb681b46f2952561d855c8ed86
-ARG MUSE_SHA256_ARM64=79cfba1b9e417b370bdb9154a546c524b7f32a34026e6164b6f3f122f0ea3386
+ARG MUSE_VERSION=1.4.1-R4503.1
+ARG MUSE_SHA256_AMD64=8b53c9cdbc025bc2d9068bc7016e2c1e51c3a0c608821da17528ad23be900a12
+ARG MUSE_SHA256_ARM64=a6d46239975adac282aa829d2a5bd1cd3119334c18ecfa776d4377daebddb595
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64|x86_64) MUSE_FILE=muse-x86-linux; MUSE_SHA256="$MUSE_SHA256_AMD64" ;; \

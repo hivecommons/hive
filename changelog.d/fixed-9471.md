@@ -1,1 +1,0 @@
-- Fixed automated pin-bump and top-up commits (`cli-pin-bump.yml`, `v5-topup.yml`, `v6-topup.yml`) failing DCO because their bracketed `hive-release[bot]@users.noreply.github.com` identity is rejected as malformed; they now sign as `hive-release@hive.kubestellar.io`, and `check-action-pins.sh` gates against the bracketed form recurring (#9471)
