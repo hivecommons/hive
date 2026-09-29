@@ -1,0 +1,1 @@
+- The PR-open precheck now runs the docs guards (`check-docs-links.py`, `check-api-reference-citations.sh`, `check-docs-citations.py`) against a checkout of the candidate head when the diff touches `*.md`, `src/**`, `docs/**`, or `bin/**`, and rejects the request with `precheck` on failure instead of letting CI catch it after the PR opens (#9550, Tier B of #9481).

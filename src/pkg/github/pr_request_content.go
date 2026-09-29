@@ -209,6 +209,9 @@ func (c *Client) prRequestPrecheckFailures(ctx context.Context, owner, repo, hea
 	if reason := prRequestDCOPrecheck(comparison.Commits); reason != "" {
 		reasons = append(reasons, reason)
 	}
+	if reason := c.prRequestDocsGuardPrecheck(ctx, owner, repo, head, comparison.Files); reason != "" {
+		reasons = append(reasons, reason)
+	}
 	return reasons
 }
 
