@@ -186,7 +186,7 @@ Three supported installation paths, all documented in the root `README.md`:
 
 1. **Docker Compose** (default): `git clone`, copy `src/hive.yaml.example` to `src/hive.yaml`, set `HIVE_GITHUB_TOKEN` and a CSPRNG-generated `HIVE_DASHBOARD_TOKEN` in `src/.env`, then `docker compose -f src/docker-compose.yaml up -d` — five commands (README.md "Quick Start (Docker Compose)").
 2. **Podman**: a single script, `bin/hive-podman-setup.sh --rootless` (or `--rootful`), performs preflight checks, configuration, installs four systemd Quadlet units, wires boot persistence, and confirms the gateway answers on its published port before returning (README.md "Quick Start (Podman)").
-3. **Kubernetes**: `kubectl apply` of manifests under `src/deploy/k8s/` (Namespace, Secret, ConfigMap from `hive.yaml`, PVC, Deployment, Service, Ingress), or the equivalent Kustomize base (README.md "Kubernetes Deployment").
+3. **Kubernetes**: `kubectl apply` of manifests under `src/deploy/k8s/` (Namespace, Secret, ConfigMap from `hive.yaml`, PVC, the `hive` ServiceAccount and its RBAC, Deployment, Service, Ingress), or the equivalent Kustomize base (README.md "Kubernetes Deployment").
 
 The minimum working `hive.yaml` needs only four things — `project.org`, at least one repo, one GitHub credential, and one agent block — with every other setting (governor cadences, knowledge, notifications, gateways, hub) optional and defaulted (`src/docs/operator-reference.md` "Minimum required configuration").
 
