@@ -16,6 +16,15 @@ func (s *Scheduler) formatIssueList(issues []github.Issue) string {
 	return out
 }
 
+func hasIssueLabel(labels []string, want string) bool {
+	for _, label := range labels {
+		if strings.EqualFold(strings.TrimSpace(label), want) {
+			return true
+		}
+	}
+	return false
+}
+
 // issueFilterNotice renders the operator's project.issue_filter as prompt text,
 // or "" when no filter is configured. The filter is ENFORCED upstream at
 // enumeration (github.Client.fetchIssues) — filtered issues never reach any
@@ -74,6 +83,11 @@ func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bo
 			}
 			prRef := fmt.Sprintf("%s#%d", issue.ClaimContext.PRRepo, issue.ClaimContext.PRNumber)
 			b.WriteString(fmt.Sprintf("    ↳ merged PR context: %s %s; verify whether the merged work resolved this issue before implementing", prRef, reason))
+			if hasIssueLabel(issue.Labels, github.VerifiedOpenLabel) {
+				b.WriteString("; verified-open: an earlier verification found remaining work — implement the rest")
+			} else {
+				b.WriteString(fmt.Sprintf("; if work remains, label it `%s` (hive then stops re-marking it likely-done)", github.VerifiedOpenLabel))
+			}
 			if issue.ClaimContext.PRURL != "" {
 				b.WriteString(fmt.Sprintf(" (%s)", issue.ClaimContext.PRURL))
 			}

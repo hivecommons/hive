@@ -211,8 +211,8 @@ func (c *Client) verifySettlingPR(ctx context.Context, owner, name, taskRepo str
 	if baseRef := strings.TrimSpace(pr.GetBase().GetRef()); baseRef != "" {
 		if branch, err := c.DefaultBranch(ctx, owner, name); err != nil {
 			return SettleVerification{Reason: "default branch lookup failed"}, err
-		} else if !strings.EqualFold(baseRef, branch) {
-			return SettleVerification{Reason: fmt.Sprintf("PR base branch %q is not default branch %q", baseRef, branch)}, nil
+		} else if !IsConfiguredIssueClosingLine(baseRef, branch) {
+			return SettleVerification{Reason: fmt.Sprintf("PR base branch %q is not a configured line (default %q)", baseRef, branch)}, nil
 		}
 	}
 	claim := IssueClaim{

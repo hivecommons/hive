@@ -156,11 +156,21 @@ func (h *ContributeWSHub) settleIssueFromVerdictWithEvidence(repo string, number
 			// #8876: a verified merged PR is still pending evidence, not resolved,
 			// unless GitHub itself would close the issue or an operator confirms it.
 			shouldClose := false
-			if claim.MergedPR && h.closeAlreadyDoneAllowed(repo) && h.prClosesIssue(ctx, repo, claim.PRNumber, number) {
-				shouldClose = true
+			var closeEvidence ghpkg.PRCloseEvidence
+			if claim.MergedPR && h.closeAlreadyDoneAllowed(repo) {
+				if evidence, ok := h.prCloseEvidence(ctx, repo, claim.PRNumber, number); ok {
+					shouldClose = true
+					closeEvidence = evidence
+				}
 			}
 			if shouldClose {
-				if err := h.markAlreadyDoneIssue(ctx, repo, number, claim, reporter, true); err != nil {
+				var err error
+				if closeEvidence.ConfiguredLineKeyword && h.server != nil && h.server.deps != nil && h.server.deps.GHClient != nil {
+					err = h.server.deps.GHClient.CloseIssueForConfiguredLinePR(ctx, repo, number, claim.PRNumber, closeEvidence)
+				} else {
+					err = h.markAlreadyDoneIssue(ctx, repo, number, claim, reporter, true)
+				}
+				if err != nil {
 					h.logger.Warn("[contribute-ws] already-done verdict mark failed",
 						"repo", repo, "number", number, "ref", ref.String(), "close", shouldClose, "error", err.Error())
 					return verdictDispositionAlreadyDoneVerified
@@ -232,9 +242,9 @@ func (h *ContributeWSHub) markIssuePRClaim(ctx context.Context, repo string, num
 	return h.server.deps.GHClient.AddLabels(ctx, repo, number, []string{label})
 }
 
-func (h *ContributeWSHub) prClosesIssue(ctx context.Context, repo string, prNumber, issueNumber int) bool {
+func (h *ContributeWSHub) prCloseEvidence(ctx context.Context, repo string, prNumber, issueNumber int) (ghpkg.PRCloseEvidence, bool) {
 	if prNumber <= 0 || issueNumber <= 0 || h == nil {
-		return false
+		return ghpkg.PRCloseEvidence{}, false
 	}
 	if h.prClosingVerifier != nil {
 		ok, err := h.prClosingVerifier(ctx, repo, prNumber, issueNumber)
@@ -242,21 +252,21 @@ func (h *ContributeWSHub) prClosesIssue(ctx context.Context, repo string, prNumb
 			if h.logger != nil {
 				h.logger.Warn("[contribute-ws] closing relationship check failed", "repo", repo, "pr", prNumber, "issue", issueNumber, "error", err.Error())
 			}
-			return false
+			return ghpkg.PRCloseEvidence{}, false
 		}
-		return ok
+		return ghpkg.PRCloseEvidence{Closes: ok, GitHubRelation: ok}, ok
 	}
 	if h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
-		return false
+		return ghpkg.PRCloseEvidence{}, false
 	}
-	ok, err := h.server.deps.GHClient.PRClosesIssue(ctx, repo, prNumber, issueNumber)
+	evidence, err := h.server.deps.GHClient.PRCloseEvidence(ctx, repo, prNumber, issueNumber)
 	if err != nil {
 		if h.logger != nil {
 			h.logger.Warn("[contribute-ws] closing relationship check failed", "repo", repo, "pr", prNumber, "issue", issueNumber, "error", err.Error())
 		}
-		return false
+		return ghpkg.PRCloseEvidence{}, false
 	}
-	return ok
+	return evidence, evidence.Closes
 }
 
 func (h *ContributeWSHub) markAlreadyDoneIssue(ctx context.Context, repo string, number int, claim ghpkg.IssueClaim, reporter string, closeIssue bool) error {

@@ -56,6 +56,7 @@ func TestFormatIssueList_IncludesMergedClaimContext(t *testing.T) {
 	issues := []github.Issue{
 		{
 			Repo: "repo1", Number: 42, Title: "fix bug", AgeMinutes: 15,
+			Labels: []string{github.VerifiedOpenLabel},
 			ClaimContext: &github.IssueClaimContext{
 				PRRepo: "repo1", PRNumber: 99, PRURL: "https://github.com/org/repo1/pull/99",
 				Reference: true, MergedPR: true, Decision: "merged_weak_claim_needs_verification",
@@ -69,8 +70,18 @@ func TestFormatIssueList_IncludesMergedClaimContext(t *testing.T) {
 	if !strings.Contains(result, "verify whether the merged work resolved this issue before implementing") {
 		t.Fatalf("missing verification instruction in issue list: %s", result)
 	}
+	if !strings.Contains(result, "verified-open: an earlier verification found remaining work") {
+		t.Fatalf("missing verified-open verdict in issue list: %s", result)
+	}
 	if !strings.Contains(result, "https://github.com/org/repo1/pull/99") {
 		t.Fatalf("missing PR URL in issue list: %s", result)
+	}
+
+	// Without the verdict label the kick tells the agent how to record one.
+	issues[0].Labels = nil
+	result, _ = s.formatIssueListWithPolicy(issues)
+	if !strings.Contains(result, "if work remains, label it `"+github.VerifiedOpenLabel+"`") {
+		t.Fatalf("missing verified-open labeling instruction in issue list: %s", result)
 	}
 }
 
