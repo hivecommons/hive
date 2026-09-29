@@ -6473,6 +6473,13 @@ func runEvalCycle(
 	reapStuckRedPRs(cfg, actionable, escalatedPRs, agentKicker{mgr: agentMgr},
 		agentAvailability(cfg, agentMgr), logger)
 
+	// Release sentinel (hivecommons/hive#9585), opt-in and default OFF: when
+	// the current v<version> tag's CI fails, dispatch a bounded repair round
+	// through the same kick path as the reaper above, or escalate to a human
+	// when the failure is a setting no commit can fix. Never pushes or retags.
+	runReleaseSentinel(ctx, cfg, ghClient, agentKicker{mgr: agentMgr},
+		agentAvailability(cfg, agentMgr), notifier, logger)
+
 	shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
 		PrimaryRepo:     cfg.Project.PrimaryRepo,
 		AIAuthor:        cfg.Project.AIAuthor,
