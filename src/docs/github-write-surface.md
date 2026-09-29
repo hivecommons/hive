@@ -42,6 +42,21 @@ Side effects performed on the same path are covered by the parent operation's
 allowlist entry. For example, `open_pr` can also apply the `hold` label, post
 the level-hold notice, and re-author the branch as a signed commit.
 
+### `review` is COMMENT-only on contributor pull requests
+
+The hive reviews every pull request it is pointed at, but it only adjudicates
+its own. When the PR's author is not one of this hive's accounts
+(`project.ai_author` or the App bot login), the `review` relay rewrites an
+`approve` or `request_changes` request into a `COMMENT` before it reaches
+GitHub, and says so in the request's `.result.json` `note`
+(`review_contributor_guard.go`, hivecommons/hive#9590). An `APPROVE` or
+`REQUEST_CHANGES` is a repository verdict — it satisfies branch-protection
+approval counts and gates merge queues — and belongs to the humans who own the
+repository. A PR whose author cannot be read is treated as a contributor's: the
+relay never resolves "we could not tell" into approving someone else's work.
+There is no setting to turn this off; `review.all_authors` widens what is
+reviewed, never what may be approved.
+
 ## Hive-internal writes (not agent requests)
 
 The hive also writes to GitHub on its own schedule, with no agent request
