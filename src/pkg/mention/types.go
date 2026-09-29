@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -16,6 +17,15 @@ const (
 	SourceMention = "mention"
 	SourceAction  = "action"
 	kickLimit     = 10000
+	// maxDeliveryAttempts bounds how often one mention that passed every guard
+	// is retried after a failed thread count or kick before it is declined, so
+	// a persistently failing mention cannot hold its repo's watermark forever.
+	maxDeliveryAttempts = 3
+	// ReplyMarker tags every mention completion reply the hive posts. The
+	// per-thread cap counts only App-authored comments carrying it, so stage
+	// comments, review summaries and other App comments on the same
+	// conversation never exhaust the mention budget (#9164).
+	ReplyMarker = "<!-- hive:mention-reply -->"
 )
 
 type Event struct {
@@ -36,7 +46,9 @@ type GitHub interface {
 	AppBotLogin() string
 	ListMentionComments(ctx context.Context, repo string, since time.Time) ([]Event, error)
 	CreateMentionAck(ctx context.Context, ev Event, reaction string) error
-	CountAppAuthoredComments(ctx context.Context, repo string, number int) (int, error)
+	// CountMentionReplies returns how many App-authored comments on the issue
+	// or PR conversation carry ReplyMarker.
+	CountMentionReplies(ctx context.Context, repo string, number int) (int, error)
 	CreateIssueComment(ctx context.Context, repo string, number int, body string) error
 }
 
@@ -83,13 +95,16 @@ type Options struct {
 type Handler struct {
 	opts Options
 	lim  *RateLimiter
+
+	mu       sync.Mutex
+	attempts map[string]int // failed delivery attempts per unmarked mention
 }
 
 func NewHandler(opts Options) *Handler {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	return &Handler{opts: opts, lim: NewRateLimiter(opts.Now)}
+	return &Handler{opts: opts, lim: NewRateLimiter(opts.Now), attempts: map[string]int{}}
 }
 
 func (h *Handler) Handle(ctx context.Context, ev Event) error {
@@ -118,11 +133,11 @@ func (h *Handler) Handle(ctx context.Context, ev Event) error {
 		return nil
 	}
 	if h.opts.Store != nil && h.opts.Store.Seen(ev.NodeID) {
-		return h.opts.Store.Mark(ev.Repo, ev.NodeID, ev.UpdatedAt)
+		return nil
 	}
 	actionKey := actionDedupeKey(ev)
 	if actionKey != "" && h.opts.Store != nil && h.opts.Store.Seen(actionKey) {
-		return h.opts.Store.Mark(ev.Repo, ev.NodeID, ev.UpdatedAt)
+		return h.opts.Store.Mark(ev.NodeID)
 	}
 	if ev.Action.Source != "" {
 		if !trustedActionCommentAuthor(ev.Author, h.opts.Actions) {
@@ -147,19 +162,31 @@ func (h *Handler) Handle(ctx context.Context, ev Event) error {
 		h.decline(ev, "unauthorized", "")
 		return h.mark(ev)
 	}
-	if !h.lim.Allow("user:"+strings.ToLower(ev.Author), cfg.PerUserPerHourEffective(), time.Hour) ||
-		!h.lim.Allow("repo:"+strings.ToLower(ev.Repo), cfg.PerRepoPerHourEffective(), time.Hour) {
+	releaseUser, ok := h.lim.Reserve("user:"+strings.ToLower(ev.Author), cfg.PerUserPerHourEffective(), time.Hour)
+	if !ok {
 		h.decline(ev, "rate-limited", "")
 		return h.mark(ev)
 	}
-	if gh != nil && cfg.PerThreadMaxAttemptsEffective() > 0 {
-		count, err := gh.CountAppAuthoredComments(ctx, ev.Repo, ev.Number)
+	releaseRepo, ok := h.lim.Reserve("repo:"+strings.ToLower(ev.Repo), cfg.PerRepoPerHourEffective(), time.Hour)
+	if !ok {
+		h.decline(ev, "rate-limited", "")
+		return h.mark(ev)
+	}
+	// A failed delivery is retried on a later poll; give its tokens back so
+	// the retry does not charge the summoner and the repo a second time.
+	release := func() {
+		releaseUser()
+		releaseRepo()
+	}
+	if gh != nil {
+		limit := cfg.PerThreadMaxEffective()
+		count, err := gh.CountMentionReplies(ctx, ev.Repo, ev.Number)
 		if err != nil {
-			h.decline(ev, "rate-limited", "thread-count-error")
-			return err
+			release()
+			return h.deliveryFailed(ev, "thread-count-failed", err)
 		}
-		if count >= h.opts.ReviewBots.MaxAttempts() {
-			h.decline(ev, "rate-limited", "thread")
+		if count >= limit {
+			h.decline(ev, "thread-cap", fmt.Sprintf("count=%d max=%d", count, limit))
 			return h.mark(ev)
 		}
 	}
@@ -173,11 +200,6 @@ func (h *Handler) Handle(ctx context.Context, ev Event) error {
 		h.decline(ev, "ioscan", ioscanRules(verdict))
 		return h.mark(ev)
 	}
-	if reaction := cfg.AckReactionEffective(); reaction != "" && ev.CommentID != 0 && gh != nil {
-		if err := gh.CreateMentionAck(ctx, ev, reaction); err != nil {
-			return err
-		}
-	}
 	if h.opts.Kick == nil {
 		h.decline(ev, "no-kick", "")
 		return h.mark(ev)
@@ -185,17 +207,54 @@ func (h *Handler) Handle(ctx context.Context, ev Event) error {
 	source := kickSource(ev)
 	if h.opts.Store != nil {
 		if err := h.opts.Store.RecordPending(agent, ev, source, h.opts.Now()); err != nil {
-			return err
+			release()
+			return h.deliveryFailed(ev, "kick-failed", err)
 		}
 	}
 	if err := h.opts.Kick(agent, buildKickMessage(ev, text), source); err != nil {
 		if h.opts.Store != nil {
 			_ = h.opts.Store.ClearPending(agent, source)
 		}
-		return err
+		release()
+		return h.deliveryFailed(ev, "kick-failed", err)
 	}
-	h.audit(AuditKicked, ev, agent, "")
+	// Acknowledge only a delivered kick, so the human never sees 👀 on a
+	// summon that produced no run. The kick has happened, so a failed reaction
+	// (a locked issue answers 403) is recorded but must not trigger a retry
+	// that would kick the agent twice.
+	extra := ""
+	if reaction := cfg.AckReactionEffective(); reaction != "" && ev.CommentID != 0 && gh != nil {
+		if err := gh.CreateMentionAck(ctx, ev, reaction); err != nil {
+			extra = "ack=failed"
+		}
+	}
+	h.audit(AuditKicked, ev, agent, extra)
 	return h.mark(ev)
+}
+
+// deliveryFailed counts a failed delivery of a mention that passed every
+// guard. Until maxDeliveryAttempts it returns the error and leaves the mention
+// unmarked, so the poller lists it again; on the last attempt it declines the
+// mention under guard and marks it, so a mention that can never be delivered
+// stops holding back its repo's watermark.
+func (h *Handler) deliveryFailed(ev Event, guard string, err error) error {
+	key := attemptKey(ev)
+	h.mu.Lock()
+	h.attempts[key]++
+	n := h.attempts[key]
+	h.mu.Unlock()
+	if n < maxDeliveryAttempts {
+		return fmt.Errorf("%s (attempt %d/%d): %w", guard, n, maxDeliveryAttempts, err)
+	}
+	h.decline(ev, guard, fmt.Sprintf("attempts=%d, error=%s", n, truncate(err.Error(), 200)))
+	return h.mark(ev)
+}
+
+func attemptKey(ev Event) string {
+	if id := strings.TrimSpace(ev.NodeID); id != "" {
+		return id
+	}
+	return fmt.Sprintf("%s#%d:%d", strings.ToLower(ev.Repo), ev.Number, ev.CommentID)
 }
 
 func mentionKickSource(ev Event) string {
@@ -453,14 +512,17 @@ func guardDetail(g, d string) string {
 	return "guard=" + g + ", detail=" + d
 }
 func (h *Handler) mark(ev Event) error {
+	h.mu.Lock()
+	delete(h.attempts, attemptKey(ev))
+	h.mu.Unlock()
 	if h.opts.Store == nil {
 		return nil
 	}
-	if err := h.opts.Store.Mark(ev.Repo, ev.NodeID, ev.UpdatedAt); err != nil {
+	if err := h.opts.Store.Mark(ev.NodeID); err != nil {
 		return err
 	}
 	if key := actionDedupeKey(ev); key != "" {
-		return h.opts.Store.Mark(ev.Repo, key, ev.UpdatedAt)
+		return h.opts.Store.Mark(key)
 	}
 	return nil
 }

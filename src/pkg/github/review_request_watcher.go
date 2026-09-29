@@ -689,7 +689,7 @@ func (c *Client) perHeadReviewRefusal(ctx context.Context, req ReviewRequest) st
 		return ""
 	}
 	owner, repoName := c.splitRepo(req.Repo)
-	pr, _, err := c.client.PullRequests.Get(ctx, owner, repoName, req.Number)
+	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:review_request_watcher"), owner, repoName, req.Number)
 	if err != nil || pr.GetHead().GetSHA() == "" {
 		return ""
 	}

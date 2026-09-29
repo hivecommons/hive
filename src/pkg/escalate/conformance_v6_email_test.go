@@ -198,7 +198,7 @@ func TestV6ConformanceEmail_EscalationMailIsScrubbed(t *testing.T) {
 // 3 on the second outbound path, and on the buffer behind it.
 //
 // The digest is the one place this surface *retains* escalation text: `info`
-// and `decision` events sit in EmailSink.dig until the configured send time,
+// and `decision` events sit in the EmailSink digest buffer until the configured send time,
 // up to a day later. Scrubbing only on the way out would leave secrets live in
 // process memory for that whole window and would put them on the wire for any
 // future reader of that buffer, so the buffer is asserted directly.
@@ -213,9 +213,9 @@ func TestV6ConformanceEmail_DigestIsScrubbedInBufferAndOnTheWire(t *testing.T) {
 		t.Fatalf("deliver: %v", err)
 	}
 
-	sink.mu.Lock()
-	buffered := append([]Event(nil), sink.dig...)
-	sink.mu.Unlock()
+	sink.buf.mu.Lock()
+	buffered := append([]Event(nil), sink.buf.dig...)
+	sink.buf.mu.Unlock()
 	if len(buffered) != 1 {
 		t.Fatalf("digest buffer holds %d events, want 1; the buffer assertion would be vacuous", len(buffered))
 	}

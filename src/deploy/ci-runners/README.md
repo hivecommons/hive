@@ -9,10 +9,51 @@ silently lose it.
 | Target | Value |
 | --- | --- |
 | Context | `vllm-d` |
-| Namespace | `arc-systems` |
-| Object | `RunnerDeployment/hivecommons-hive-runners` |
-| Controller | summerwind ARC (`actions.summerwind.dev/v1alpha1`) |
+| Namespace | `arc-v2-hive` (current ARC v2 scale set); `arc-systems` (legacy summerwind patches below) |
+| Object | `AutoscalingRunnerSet/hive-runners` (current); `RunnerDeployment/hivecommons-hive-runners` (legacy) |
+| Controller | ARC v2 `gha-runner-scale-set` (`actions.github.com/v1alpha1`) |
 | Runner labels | `["self-hosted","linux","openshift","hive"]` |
+
+## Incident: node-local ephemeral-storage exhaustion (#9377)
+
+On 2026-09-28, many self-hosted jobs failed before checkout at **Set up job**
+with `No space left on device` while writing
+`/home/runner/_actions/actions/checkout/.../action.yml`. The failure path is on
+the runner pod's node-local `emptyDir`, not the `/mnt/gocache` PVC. During the
+incident the scale set allowed up to 120 runners, but the live pod template had
+only a 2 Gi ephemeral-storage request on the `runner` container, no
+ephemeral-storage request on `dind`, no container ephemeral-storage limits, no
+`emptyDir.sizeLimit` on `/home/runner`, and Docker layers lived in the dind
+container writable layer on the node disk. That let the scheduler overpack a
+node until kubelet/node disk pressure made unrelated new jobs fail while they
+were staging actions.
+
+`autoscalingrunnerset-ephemeral-storage-patch.yaml` bounds the active ARC v2
+scale set:
+
+- `runner`: 10 Gi ephemeral-storage request, 30 Gi limit.
+- `dind`: 10 Gi ephemeral-storage request, 30 Gi limit.
+- `stage-runner` init container: 2 Gi request, 5 Gi limit.
+- `runner-home` (`/home/runner`) capped at 25 Gi, dind `/var/lib/docker` at 25
+  Gi, `/tmp` at 5 Gi per main container, and the dind socket emptyDir at 1 Gi.
+- Hostname topology spread selects only this scale set and uses `maxSkew: 1`
+  with `ScheduleAnyway`, reducing burst pile-ups without deadlocking the queue.
+
+Apply from the repository root with cluster access:
+
+```console
+kubectl -n arc-v2-hive patch autoscalingrunnerset hive-runners \
+  --type merge --patch-file src/deploy/ci-runners/autoscalingrunnerset-ephemeral-storage-patch.yaml
+```
+
+The worker nodes observed during the incident expose about 239,973,624,229
+bytes (~223 GiB) allocatable ephemeral storage each. With 20 Gi requested per
+runner pod (`runner` + `dind`), disk alone fits about 11 runner pods per node.
+If the fleet is seven schedulable worker nodes, a sustainable `maxRunners` is
+about 77 before leaving headroom for system pods and image garbage collection;
+the live value of 120 can still exceed the pool's disk budget during bursts.
+Either reduce `maxRunners` to roughly 70-75 or add nodes/larger local disks
+before relying on the full 120-runner setting.
 
 ## Incident: apt egress failure (#6648)
 

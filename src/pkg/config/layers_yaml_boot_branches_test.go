@@ -7,7 +7,7 @@ import (
 
 // Boot-path branch tests for MergeLayersYAML / MergeLayersWithFallback
 // (pkg/config/layers_yaml.go) plus the PauseIsOperatorOwned ownership
-// predicate (pkg/config/config.go).
+// predicate (pkg/config/agent_config.go).
 //
 // These pin the DEGRADED-boot branches the existing layers_guard_test.go
 // suite does not reach: an unparsable seed, a missing overlay, an overlay

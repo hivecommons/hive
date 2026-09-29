@@ -18,7 +18,7 @@ func (g *stageCommentGH) ListMentionComments(context.Context, string, time.Time)
 	return nil, nil
 }
 func (g *stageCommentGH) CreateMentionAck(context.Context, Event, string) error { return nil }
-func (g *stageCommentGH) CountAppAuthoredComments(context.Context, string, int) (int, error) {
+func (g *stageCommentGH) CountMentionReplies(context.Context, string, int) (int, error) {
 	return 0, nil
 }
 func (g *stageCommentGH) CreateIssueComment(_ context.Context, _ string, _ int, body string) error {
@@ -83,7 +83,7 @@ func TestStageCommenterDoesNotAdvanceMentionWatermark(t *testing.T) {
 	store, _ := NewStore("")
 	repo := "org/repo"
 	before := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
-	if err := store.Mark(repo, "mention-comment-1", before); err != nil {
+	if err := store.Advance(repo, before); err != nil {
 		t.Fatal(err)
 	}
 	gh := &stageCommentGH{}

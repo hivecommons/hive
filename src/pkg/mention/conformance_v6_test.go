@@ -63,7 +63,7 @@ func TestV6ConformanceMention_RepliesRequireConverse(t *testing.T) {
 			gh := &fakeGH{app: "hive[bot]"}
 			r := NewResponder(store, func() GitHub { return gh }, func() []AgentInfo {
 				return []AgentInfo{{Name: "scanner", Enabled: true, Converse: converse}}
-			}, config.ReviewBotsConfig{MaxAttemptsPerThread: 5}, nil)
+			}, 5, nil)
 
 			r.HandleAgentEvent("scanner", "kick-log-archived", "archive source="+source)
 

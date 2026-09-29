@@ -13,14 +13,18 @@ Hive has two active release lines, `v4` and `v5`, plus the `v6` development
 line. Since 2026-09-21 (#7721) **`v5` is the stable line** and **`v4` is the
 feature-frozen maintenance line**; each cuts its own semver tags:
 
-- **`v5` cuts `v5.x.y` tags.** On the `v5` branch, `tagged-release.yml` is
-  pinned to `v5` (trigger, concurrency group `tagged-release-v5`, release PR
-  base, `docker.yml` dispatch). `derive-release-version.sh` bases the next
+- **`v5` cuts `v5.x.y` tags.** `tagged-release.yml` serves the release line
+  it was started from — `github.ref_name`, which is the default branch (`v5`)
+  for its `workflow_run` and `schedule` triggers — in its concurrency group
+  (`tagged-release-v5`), release PR base, and `docker.yml` dispatch, and
+  refuses at its first `decide` step unless that branch is under
+  `release_lines` in `.github/release-lines.yml` (#9154).
+  `derive-release-version.sh` bases the next
   number on the line's own latest `v5.*` tag only, and the **first** tag on a
   line is always `vN.0.0` regardless of the inferred bump — the human chose
   the major when they cut the line. A `v4.*` tag never seeds a `v5` number,
-  and vice versa. The workflow names the line explicitly (`RELEASE_LINE: v5`
-  on the derive step) because its checkout is a detached SHA; without that
+  and vice versa. The workflow names the line explicitly (`RELEASE_LINE`, set
+  from `github.ref_name`) because its checkout is a detached SHA; without that
   variable on a detached checkout the script **refuses** to run rather than
   falling back to the global latest tag — the fall-through that minted a
   stray `v4.73.3` from `v5` on 2026-09-21 (deleted; see #7721).
@@ -29,14 +33,21 @@ feature-frozen maintenance line**; each cuts its own semver tags:
   pinned to `v4` and labels its release PR `v4-freeze-exempt` so the required
   `freeze-gate` check lets the automated release commit land.
 - **`v6` publishes continuous images only** (`v6-latest`, short-SHA, `edge`);
-  no `v6.x` tag exists until that line is cut as a release line.
+  no `v6.x` tag exists until that line is cut as a release line. It is not
+  under `release_lines` yet, so a `tagged-release.yml` or `promote-stable.yml`
+  dispatch from `v6` fails its release-line check instead of releasing or
+  promoting `v5`. The GA cut — `release_lines`, `docker.yml` channel rows on
+  `v5` and `v6` together, the default branch, and these docs — is the
+  checklist in [release-line-guard.md](release-line-guard.md#cutting-a-new-release-line);
+  after it, the same workflow files mint `v6.0.0` with no edit.
 - Channels are independent of tags: `stable`/`candidate`/`latest` follow v5
   (`stable` by digest via `promote-stable.yml`), `edge` follows v6. See
   [release-channels.md](release-channels.md) and the
   [digest-verifiable rollback](release-rollback.md) runbook.
 
-The rest of this page describes the path as it runs on `v5`; the `v4` copy
-differs only in the branch name and the exempt label.
+The rest of this page describes the path as it runs on `v5`, the line it
+serves today; the `v4` copy differs only in the branch name and the exempt
+label.
 
 ## What triggers a release
 
@@ -448,7 +459,7 @@ three SBOM files, using the same `gh release create` asset-upload call.
   released tip (the hourly #5318 backstop), **step 5 emptied `Unreleased`**,
   so `derive-release-version.sh` returns `release=false`. It never chases
   its own tail — belt and suspenders.
-- `concurrency: { group: tagged-release-v5, cancel-in-progress: false }`
+- `concurrency: { group: tagged-release-<line>, cancel-in-progress: false }`
   serializes overlapping runs so two merges landing close together queue
   rather than race two tags for two different commits.
 - A re-run after a partial failure (for example, the images got retagged but

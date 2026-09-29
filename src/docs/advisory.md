@@ -368,6 +368,92 @@ target with no issue up front, and rejects any target other than `github` or
 `linear`; a hand-edited unknown value in `hive.yaml` is reported the same way
 at post time.
 
+## Owner advice
+
+The digest opens with an **Advice** block — the same weekly owner advice the
+dashboard card and `GET /api/hive-advice` show. It is computed by
+`pkg/hiveadvisor` (`Recommend`, `src/pkg/hiveadvisor/hiveadvisor.go`), a pure
+rule table over the status payload.
+
+### What the advice explains
+
+Two families of rules feed the block:
+
+- **Mode-gated rules** read the governor's counters: enable a disabled agent,
+  give idle agents a cadence, widen `HIVE_REPOS`, rebalance toward merge-side
+  agents, and so on. They run only in the governor mode they are written for.
+- **Queue-health rules** read the **Overview chart's per-item band breakdown**
+  — every open and held issue/PR across repo cards, classified by the same
+  `bands.go` classifier the Overview donuts and the `/api/overview/*.csv`
+  exports use ([#9102](https://github.com/hivecommons/hive/issues/9102)).
+  They fire in **every** governor mode, because 70 blocked PRs are a problem
+  whether the governor calls the hive `IDLE` or `SURGE`
+  ([#9103](https://github.com/hivecommons/hive/issues/9103)).
+
+| Rule | Fires when | Says |
+| --- | --- | --- |
+| `reduce-blocked-prs` | Blocked PRs ≥ `blocked_pr_pct` of open PRs | the dominant cause and the first action: *"41 of 70 fail check `go-security-analysis` — fix the check before touching cadence"*, *"N have merge conflicts — rebase or close the oldest"*, or the top blocked-verdict reason |
+| `fix-failing-check` | one check fails on ≥ `check_share_pct` of CI-blocked PRs (at least 2) | the check name and how many PRs it holds |
+| `throttle-lane` | one agent lane produced ≥ `lane_share_pct` of Blocked PRs (at least 2) | the lane to slow down |
+| `clear-human-gate-prs` | Needs-human PRs ≥ `needs_human_pr_pct` of open PRs | how many are held, labelled `needs-human`, or `needs-decision` |
+| `unblock-human-issues` | Needs-human issues ≥ `needs_human_issue_pct` of open issues | the `needs-decision` / `blocked` / `2-discussing` split |
+| `review-stale-prs` | Blocked PRs past `dashboard.issue_bands.stale_days` ≥ `stale_blocked_prs` | stale = no activity past the threshold, not proven dead |
+| `confirm-and-close` | any issue in Confirm & close | how much of the backlog confirming them removes |
+
+Every queue-health recommendation carries:
+
+- **First:** the first five issues/PRs it is about (oldest activity first),
+  each with why it is listed (the failing check, "merge conflict", "held").
+- **Full list:** the matching Overview export, e.g.
+  `/api/overview/prs.csv?band=blocked` (plus a `repo=` link when one repo
+  holds half the blocked PRs). The digest prefixes the link with
+  `dashboard.public_url` (or the hub-delivered `hub.dashboard_url`); with
+  neither set it prints the path as code.
+- **Band rules:** the one-line rule for each band the advice names, the same
+  text the Overview tooltips print — so *Blocked* is read as "blocked sweep
+  verdict, merge conflicts, or failing CI", not the `blocked` label.
+
+### Which count is quoted
+
+The block states both totals because they are different things:
+
+- **Governor actionable queue** (`governor.issues` / `governor.prs` in the
+  status payload): what mode and cadence key on. It excludes held, draft,
+  in-review and human-gated items, so a hive can legitimately report a queue
+  of 0 PRs while the Overview shows 93 open PRs. The mode-gated rules quote
+  it (signal names prefixed `governor_`).
+- **Overview chart**: every open or held item across repo cards. The
+  queue-health rules count this (signal names prefixed `overview_`).
+
+### Freezing the advice, not the numbers
+
+The **set** of recommendations is frozen for seven days (`EpochLength`) unless
+the governor mode changes, so the top-three list does not flicker across eval
+cycles. Their **numbers, item lists and links are recomputed on every
+digest**: "70 blocked" a week after the CI fix would be worse than no advice.
+A frozen recommendation whose trigger no longer holds stays in the list,
+struck through and marked *cleared*, with its stale numbers dropped; a rule
+that starts firing mid-epoch waits for the next epoch. An epoch that froze
+only the "Keep observing" placeholder is not kept once real advice appears.
+
+### Tuning the thresholds
+
+The trigger points are starting values to calibrate against real hives, not
+settled policy. Each is a whole number under `governor.advisory.queue_health`;
+absent keys use the defaults below and never appear in a re-saved `hive.yaml`.
+
+```yaml
+governor:
+  advisory:
+    queue_health:
+      blocked_pr_pct: 50         # Blocked PRs as % of open PRs
+      needs_human_pr_pct: 25     # Needs-human PRs as % of open PRs
+      needs_human_issue_pct: 30  # Needs-human issues as % of open issues
+      stale_blocked_prs: 10      # count of Blocked PRs past stale_days
+      lane_share_pct: 50         # one lane's share of Blocked PRs
+      check_share_pct: 50        # one check's share of CI-blocked PRs
+```
+
 ## Related
 
 - [Advisory digest staleness](advisory-staleness.md) — the other side of the

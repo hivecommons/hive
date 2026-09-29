@@ -27,7 +27,7 @@ DOC="src/docs/podman-standalone-quadlet.md"
 COMPOSE="src/docker-compose.yaml"
 DEPLOY_CONF="src/deploy/hive.yaml"
 EXAMPLE_CONF="src/hive.yaml.example"
-GO_CONFIG="src/pkg/config/config.go"
+GO_CONFIG="src/pkg/config/defaults.go"
 
 pass_count=0
 failures=0

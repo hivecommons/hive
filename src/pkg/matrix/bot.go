@@ -55,6 +55,9 @@ type Config struct {
 	// AllowedUsers is the set of full Matrix IDs permitted to issue commands.
 	// Empty = commands disabled (fail closed) by the chat spine.
 	AllowedUsers []string
+	// PersonaStore persists each author's persona; nil keeps personas in
+	// memory for this process only (hivecommons/hive#9175).
+	PersonaStore chat.PersonaStore
 	// PersonaLearning and AuditSink feed persona learning on the shared chat
 	// spine (hivecommons/hive#8363); both are optional.
 	PersonaLearning chat.PersonaLearningFunc
@@ -103,7 +106,9 @@ type syncResponse struct {
 
 type joinedRoom struct {
 	Timeline struct {
-		Events []matrixEvent `json:"events"`
+		Events    []matrixEvent `json:"events"`
+		Limited   bool          `json:"limited"`
+		PrevBatch string        `json:"prev_batch"`
 	} `json:"timeline"`
 }
 
@@ -149,6 +154,7 @@ func NewBot(cfg Config, logger *slog.Logger) *Bot {
 		DashboardURL:      cfg.DashboardURL,
 		DashboardToken:    cfg.DashboardToken,
 		AllowedUsers:      cfg.AllowedUsers,
+		PersonaStore:      cfg.PersonaStore,
 		PersonaLearning:   cfg.PersonaLearning,
 		AuditSink:         cfg.AuditSink,
 		MessageLimit:      matrixMessageLimit,
@@ -267,6 +273,9 @@ func (b *matrixBackend) Listen(ctx context.Context, deliver func(chat.Message)) 
 		}
 
 		if room, ok := resp.Rooms.Join[b.roomID]; ok {
+			if room.Timeline.Limited {
+				b.logger.Warn("matrix timeline limited", "prev_batch", room.Timeline.PrevBatch)
+			}
 			for _, event := range room.Timeline.Events {
 				if event.Type != "m.room.message" || event.Content.Body == "" || event.EventID == "" {
 					continue
@@ -470,10 +479,22 @@ func markdownToMatrixHTML(s string) string {
 		if strings.HasPrefix(s[i:], "```") {
 			if inFence {
 				out.WriteString("</code></pre>")
+				inFence = false
 			} else {
 				out.WriteString("<pre><code>")
+				inFence = true
+				i += 3
+				// Skip language tag (anything until newline or next backtick)
+				for i < len(s) && s[i] != '\n' && !strings.HasPrefix(s[i:], "```") {
+					i++
+				}
+				// Write newline if present and continue without normal increment
+				if i < len(s) && s[i] == '\n' {
+					out.WriteString("\n")
+					i++
+				}
+				continue
 			}
-			inFence = !inFence
 			i += 3
 			continue
 		}
@@ -503,6 +524,12 @@ func markdownToMatrixHTML(s string) string {
 				continue
 			}
 		}
+		// Handle newlines: add <br /> outside of code blocks
+		if s[i] == '\n' && !inFence && !inCode {
+			out.WriteString("<br />\n")
+			i++
+			continue
+		}
 		r, size := utf8.DecodeRuneInString(s[i:])
 		out.WriteString(html.EscapeString(string(r)))
 		i += size
@@ -513,7 +540,7 @@ func markdownToMatrixHTML(s string) string {
 	if inFence {
 		out.WriteString("</code></pre>")
 	}
-	return strings.ReplaceAll(out.String(), "\n", "<br />\n")
+	return out.String()
 }
 
 func parseMarkdownLink(s string) (text, href string, width int, ok bool) {

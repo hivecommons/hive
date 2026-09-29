@@ -1,6 +1,7 @@
 package standby
 
 import (
+	"strconv"
 	"strings"
 	"time"
 )
@@ -104,9 +105,9 @@ func NormalizeOutcome(s string) OutcomeKind {
 // suspends a configuration, and the same contributor on a different model is a
 // different donor.
 //
-// The rule below reads only Kind. The remaining fields are what makes the
-// ledger an audit record an operator can read, and what lets a caller filter
-// the file down to one key.
+// The rule below reads Kind, and Repo+Number to count each PR once. The
+// remaining fields are what makes the ledger an audit record an operator can
+// read, and what lets a caller filter the file down to one key.
 type Outcome struct {
 	// Key is LedgerKey(contributor, configuration).
 	Key string `json:"key"`
@@ -168,6 +169,12 @@ func OutcomesFor(rows []Outcome, key string) []Outcome {
 //   - open → skipped; not yet an outcome.
 //   - anything else → skipped, for the reason NormalizeOutcome gives.
 //
+// The rule counts PRs, not rows (#9184): when one PR (Repo, Number) carries
+// more than one settled row — a racing reconcile recorded its closure twice —
+// only the newest is read and the older ones are skipped. Rows that name no PR
+// (Repo empty or Number not positive) have no identity to deduplicate on and
+// are each read.
+//
 // The configuration is suspended when streak >= threshold. A threshold of zero
 // or less means DefaultSuspendThreshold: a hive that never set the field gets
 // the documented default, and not a rule that suspends every donor on an empty
@@ -179,8 +186,22 @@ func SuspendState(rows []Outcome, threshold int) (suspended bool, streak int) {
 	if threshold <= 0 {
 		threshold = DefaultSuspendThreshold
 	}
+	var seen map[string]bool
 	for i := len(rows) - 1; i >= 0; i-- {
-		switch NormalizeOutcome(string(rows[i].Kind)) {
+		kind := NormalizeOutcome(string(rows[i].Kind))
+		switch kind {
+		case OutcomeClosedUnmerged, OutcomeMerged, OutcomeMergedAfterRework:
+			if pr, ok := outcomePR(rows[i]); ok {
+				if seen[pr] {
+					continue
+				}
+				if seen == nil {
+					seen = map[string]bool{}
+				}
+				seen[pr] = true
+			}
+		}
+		switch kind {
 		case OutcomeClosedUnmerged:
 			streak++
 		case OutcomeMerged, OutcomeCleared:
@@ -191,6 +212,17 @@ func SuspendState(rows []Outcome, threshold int) (suspended bool, streak int) {
 		}
 	}
 	return streak >= threshold, streak
+}
+
+// outcomePR is the identity of the donated PR a row settles, in the canonical
+// spelling ("org/name#N", repo lowercased) so one PR recorded under two
+// casings is still one PR. ok is false for a row that names no PR.
+func outcomePR(o Outcome) (string, bool) {
+	repo := strings.ToLower(strings.TrimSpace(o.Repo))
+	if repo == "" || o.Number <= 0 {
+		return "", false
+	}
+	return repo + "#" + strconv.Itoa(o.Number), true
 }
 
 // Suspended is SuspendState at the default threshold, for the callers that

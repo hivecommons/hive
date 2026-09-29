@@ -63,7 +63,8 @@ image_probe_succeeds() {
   local image="$1"
   command -v podman >/dev/null 2>&1 || return 1
   podman image inspect --format '{{.Digest}}' "$image" >/dev/null 2>&1 && return 0
-  podman pull "$image" >/dev/null 2>&1
+  note "hivectl bootstrap: pulling ${image} to find the matching hivectl"
+  podman pull "$image" >/dev/null
 }
 
 checkout_branch_channel() {

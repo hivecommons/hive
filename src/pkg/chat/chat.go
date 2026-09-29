@@ -123,7 +123,10 @@ type Config struct {
 	MessageLimit      int
 	SendInterval      time.Duration
 	HeartbeatInterval time.Duration
-	PersonaStore      PersonaStore
+	// PersonaStore holds each author's persona. cmd/hive passes a view of the
+	// shared durable FilePersonaStore; nil falls back to an in-memory map that
+	// is lost on restart (hivecommons/hive#9175).
+	PersonaStore PersonaStore
 	// PersonaLearning returns the live persona learning configuration
 	// (hivecommons/hive#8363). Nil or a disabled result means no signals are
 	// counted and no suggestions are made. It is a func so a Features panel
@@ -343,16 +346,20 @@ func (s *Service) DrainLoop(ctx context.Context) {
 	s.drainLoop(ctx)
 }
 
+// drainLoop delivers queued messages one chunk at a time, paced by
+// sendInterval. Splitting and retry follow the contract documented in
+// send.go; a chunk is only skipped once its retries are exhausted.
 func (s *Service) drainLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case item := <-s.msgQueue:
-			if err := s.backend.Send(item.content); err != nil {
-				s.logger.Warn("chat: send failed", "error", err)
+			for _, chunk := range SplitMessage(item.content, s.messageLimit) {
+				if !s.sendChunk(ctx, chunk) || !sleepContext(ctx, s.sendInterval) {
+					return
+				}
 			}
-			time.Sleep(s.sendInterval)
 		}
 	}
 }

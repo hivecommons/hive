@@ -384,9 +384,9 @@ func TestMergeWatcher_ReEngagesOnRequiredCheckFailure(t *testing.T) {
 	}
 }
 
-func TestMergeWatcher_UnfixableBlockerStillQuarantinesNoReEngage(t *testing.T) {
+func TestMergeWatcher_ConflictBlockerReEngagesAndQuarantines(t *testing.T) {
 	// 405 "not mergeable" is the conflict-family message the base mock returns —
-	// it must NOT trigger re-engagement.
+	// it should re-engage the fix loop, not raise an operator alert.
 	srv := newMergeMockServer(t, http.StatusMethodNotAllowed, nil)
 	defer srv.Close()
 	c := testMergeClient(t, srv.URL)
@@ -401,10 +401,10 @@ func TestMergeWatcher_UnfixableBlockerStillQuarantinesNoReEngage(t *testing.T) {
 	for i := 0; i < mergeRequestMaxAttempts; i++ {
 		c.ProcessMergeRequestsOnce(context.Background())
 	}
-	if calls != 0 {
-		t.Fatalf("unfixable blocker must not re-engage the fix loop, got %d calls", calls)
+	if calls != 1 {
+		t.Fatalf("conflict blocker should re-engage the fix loop once, got %d calls", calls)
 	}
 	if _, err := os.Stat(reqPath + ".exhausted"); err != nil {
-		t.Fatalf("unfixable terminal failure should still quarantine: %v", err)
+		t.Fatalf("conflict terminal failure should still quarantine: %v", err)
 	}
 }

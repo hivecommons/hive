@@ -56,7 +56,7 @@ the floor, T2 adds confinement, T1 adds the unattended-credential story.
 
 1. **List parity.** Add `<name>` to `KNOWN_BACKENDS`, `backend_binary`, and
    `backend_perm_flag` in `config/backends.conf`, and to `CLIBackends` in
-   `src/pkg/config/config.go`, in the same PR. The guard is
+   `src/pkg/config/backends.go`, in the same PR. The guard is
    `TestShellAndGoCLIBackendListsAgree` in
    `src/pkg/config/backend_list_parity_test.go`; a name that legitimately
    lives on one side only goes in `cliBackendExceptions` with a reason, and
@@ -289,7 +289,7 @@ PR [#6379](https://github.com/hivecommons/hive/pull/6379) (Muse Code, carrying
 forward [#6222](https://github.com/hivecommons/hive/pull/6222)) is now recorded
 retroactively as **local path T2** and **pod path not T1**. The merged diff added
 `muse` to `KNOWN_BACKENDS` and `backend_perm_flag` in `config/backends.conf`, to
-`CLIBackends` in `src/pkg/config/config.go`, and to the local posture matrix as
+`CLIBackends` in `src/pkg/config/backends.go`, and to the local posture matrix as
 `postureSandboxed` in
 `src/pkg/dashboard/contribute_local_mode_backend_matrix_test.go`. Its local
 path is T2 because `muse_local_perm_flag_shell` keeps Muse Code's own OS

@@ -223,17 +223,35 @@ func (s *Service) dashboardResume(ctx context.Context, agent string) (string, er
 	return fmt.Sprintf("✅ Resumed %s", agent), nil
 }
 
+// authorizeDashboardRequest attaches the spine's credential for the local
+// dashboard API. It sends X-Hive-Internal, the server-to-server header the
+// dashboard middleware honors on every deployment shape. Authorization: Bearer
+// is deliberately disabled on a direct-route spoke (authorized_users allowlist,
+// no hub proxy) because it carries no per-user identity, so a chat service that
+// sent only the bearer answered 401 there on every command and the SSE stream
+// (#9134). The chat service is the same process as the dashboard and talks to
+// it over localhost, which is exactly the trusted path X-Hive-Internal exists for.
+//
+// A command-triggered request also carries X-Hive-Chat-Actor (the
+// transport-qualified author) so the dashboard audit log attributes the action
+// to the chat user rather than the shared token (#9125); background requests
+// (SSE, heartbeats) carry none.
+func (s *Service) authorizeDashboardRequest(ctx context.Context, req *http.Request) {
+	if s.dashboardToken == "" {
+		return
+	}
+	req.Header.Set("X-Hive-Internal", s.dashboardToken)
+	if author, _ := ctx.Value(commandAuthorContextKey{}).(string); author != "" && s.backend != nil {
+		req.Header.Set("X-Hive-Chat-Actor", s.backend.Name()+":"+author)
+	}
+}
+
 func (s *Service) dashboardGet(ctx context.Context, path string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.dashboardURL+path, nil)
 	if err != nil {
 		return nil, err
 	}
-	if s.dashboardToken != "" {
-		req.Header.Set("Authorization", "Bearer "+s.dashboardToken)
-		if author, _ := ctx.Value(commandAuthorContextKey{}).(string); author != "" && s.backend != nil {
-			req.Header.Set("X-Hive-Chat-Actor", s.backend.Name()+":"+author)
-		}
-	}
+	s.authorizeDashboardRequest(ctx, req)
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -256,12 +274,7 @@ func (s *Service) dashboardPost(ctx context.Context, path string, body []byte) e
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if s.dashboardToken != "" {
-		req.Header.Set("Authorization", "Bearer "+s.dashboardToken)
-		if author, _ := ctx.Value(commandAuthorContextKey{}).(string); author != "" && s.backend != nil {
-			req.Header.Set("X-Hive-Chat-Actor", s.backend.Name()+":"+author)
-		}
-	}
+	s.authorizeDashboardRequest(ctx, req)
 
 	resp, err := s.client.Do(req)
 	if err != nil {

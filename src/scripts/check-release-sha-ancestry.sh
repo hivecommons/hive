@@ -11,7 +11,7 @@
 # image, laundered through the normal build pipeline with legitimate
 # provenance labels. tagged-release.yml, the intended caller, already runs
 # this exact `git merge-base --is-ancestor` check before it ever tags a
-# commit (see its "push_v4" step); the gate job re-verified nothing.
+# commit (see its "push_line" step); the gate job re-verified nothing.
 #
 # This is a standalone, testable helper rather than an inline `run:` block so
 # it can be driven against fixture repos (see test-check-release-sha-ancestry.sh)
