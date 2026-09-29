@@ -287,8 +287,8 @@ func ComputeRepoCost(summary *tokens.AggregateSummary, entries []AuditEntry, now
 	byAgentEvents := map[string][]repoAuditEvent{}
 	var oldest string
 	for _, e := range entries {
-		m := repoRe.FindStringSubmatch(e.Detail)
-		if m == nil {
+		repo, ok := AuditEntryRepo(e)
+		if !ok {
 			continue
 		}
 		t, err := time.Parse(time.RFC3339, e.Timestamp)
@@ -296,7 +296,7 @@ func ComputeRepoCost(summary *tokens.AggregateSummary, entries []AuditEntry, now
 			continue
 		}
 		agent := activityAgent(e)
-		byAgentEvents[agent] = append(byAgentEvents[agent], repoAuditEvent{tsMs: t.UnixMilli(), repo: m[1]})
+		byAgentEvents[agent] = append(byAgentEvents[agent], repoAuditEvent{tsMs: t.UnixMilli(), repo: repo})
 		if oldest == "" || e.Timestamp < oldest {
 			oldest = e.Timestamp
 		}

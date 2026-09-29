@@ -112,6 +112,11 @@ type Config struct {
 	// Convergence toggles the convergence-driven admission surfaces
 	// (kubestellar/hive#3845 follow-ons). Default off → zero behaviour change.
 	Convergence ConvergenceConfig `yaml:"convergence,omitempty" json:"convergence,omitempty"`
+	// WriteSurface configures the audited GitHub write surface
+	// (hivecommons/hive#9587): per-lane allowlists of the relay operations an
+	// agent may ask the hive to perform. Default empty -> every agent keeps
+	// every operation it has today.
+	WriteSurface WriteSurfaceConfig `yaml:"write_surface,omitempty" json:"write_surface,omitempty"`
 	// Publication is the audit campaign's authorized issue publisher opt-in
 	// (hivecommons/hive#8353). Default off → nothing is ever filed.
 	Publication PublicationConfig `yaml:"publication,omitempty" json:"publication,omitempty"`

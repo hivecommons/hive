@@ -275,3 +275,52 @@ func TestAuditLogLoadFromDiskPathUsesInjectedPath(t *testing.T) {
 		t.Fatalf("real user last action was not rebuilt from injected path")
 	}
 }
+
+// LogRecord stores the typed repo/target of a hive-mediated write (#9587) and
+// they survive a JSON round trip; a plain Log line omits both.
+func TestAuditLogLogRecordTypedFields(t *testing.T) {
+	audit := &AuditLog{}
+	audit.LogRecord("", "agent_pr_created", "repo=o/r, number=42", "scanner", "o/r", 42)
+	audit.Log("", "startup", "", "")
+
+	entries := audit.Recent(2)
+	if len(entries) != 2 {
+		t.Fatalf("Recent(2) returned %d entries, want 2", len(entries))
+	}
+	var typed, plain AuditEntry
+	for _, e := range entries {
+		if e.Action == "agent_pr_created" {
+			typed = e
+		} else {
+			plain = e
+		}
+	}
+	if typed.Repo != "o/r" || typed.Target != 42 || typed.User != "system" || typed.Agent != "scanner" {
+		t.Fatalf("typed entry = %#v", typed)
+	}
+	b, err := json.Marshal(typed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back AuditEntry
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.Repo != "o/r" || back.Target != 42 {
+		t.Errorf("typed fields lost in JSON round trip: %s", b)
+	}
+	pb, err := json.Marshal(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(pb, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["repo"]; ok {
+		t.Errorf("plain Log entry serialized a repo field: %s", pb)
+	}
+	if _, ok := raw["target"]; ok {
+		t.Errorf("plain Log entry serialized a target field: %s", pb)
+	}
+}

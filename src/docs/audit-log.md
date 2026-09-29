@@ -31,11 +31,13 @@ One JSON object per line (JSONL), append-only. Written by
 | `action` | `Action` | yes | The action name, e.g. `config_governor_save`, `pr_merged`, `hook_failed`. |
 | `detail` | `Detail` | no (`omitempty`) | Free-form `k=v` pairs joined by `, `. See the parsing note. |
 | `agent` | `Agent` | no (`omitempty`) | The agent the action concerns, when it concerns one. |
+| `repo` | `Repo` | no (`omitempty`) | Repository a hive-mediated GitHub write went to. Set on write entries since [#9587](https://github.com/hivecommons/hive/issues/9587); see [GitHub write surface](github-write-surface.md). |
+| `target` | `Target` | no (`omitempty`) | Issue or PR number that write went to, when it has one. |
 | `user_name` | `UserName` | **API responses only** (`omitempty`) | Display name for an opaque OIDC actor key. Stamped at serve time by `GET /api/audit` — **never written to the file or the ring**. See below. |
 
 Optional fields are omitted entirely rather than emitted empty, so **a consumer
-must treat a missing `detail`, `agent`, or `user_name` as absent, not as an
-empty string**.
+must treat a missing `detail`, `agent`, `repo`, `target`, or `user_name` as
+absent, not as an empty string**.
 
 ### `user_name` exists only on the API surface
 
@@ -61,9 +63,11 @@ repo=hivecommons/hive, number=4911, agent=guide, backend=copilot
 
 Consequences worth knowing before you build on it:
 
-- **`repo` is not a first-class field.** It appears only because each call site
-  passes it explicitly. A new audit site that forgets it drops out of any
-  repo-based analysis silently, with nothing failing.
+- **Prefer the typed `repo` field.** Entries for hive-mediated GitHub writes
+  carry `repo` (and `target`) as first-class fields since #9587, and keep the
+  `repo=` pair in `detail` too. Entries written before that, and entries from
+  audit sites that are not GitHub writes, have the pair only, so fall back to
+  parsing `detail` when the field is absent.
 - **Do not assume a key exists.** Match on the key you need and skip lines that
   lack it, rather than positionally.
 - **Values are not escaped.** A value containing `, ` or `=` will parse

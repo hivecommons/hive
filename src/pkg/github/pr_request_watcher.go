@@ -305,6 +305,12 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 			return
 		}
 	}
+	// Lane write allowlist (#9587). After the authorizer, which is what makes
+	// req.Agent trustworthy; before any GitHub call. Audited as a refusal.
+	if reason, refused := c.refuseWrite(req.Agent, WriteOpOpenPR, req.Repo, 0); refused {
+		c.denyPRRequest(path, req, reason, nowFn)
+		return
+	}
 
 	// Per-repo pause (#6203). Checked here, immediately after authorization and
 	// before any GitHub call, because this relay is the ONLY way an agent can

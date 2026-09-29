@@ -123,6 +123,14 @@
                           "agent": {
                             "type": "string"
                           },
+                          "repo": {
+                            "type": "string",
+                            "description": "Repository a hive-mediated GitHub write went to (#9587). Absent on entries that are not GitHub writes and on entries written before the field existed; those may still carry repo= in detail."
+                          },
+                          "target": {
+                            "type": "integer",
+                            "description": "Issue or PR number a hive-mediated GitHub write went to (#9587). Absent when the write has no numbered target."
+                          },
                           "user_name": {
                             "type": "string",
                             "description": "Hub-delivered display name, stamped at SERVE time only when `user` is an opaque OIDC identity key. The audit ring and the on-disk log keep the raw key, so history survives name changes. Absent when there is no display name to add."

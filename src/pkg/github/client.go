@@ -54,9 +54,14 @@ type Client struct {
 	// value, and what every test constructs) means no scoping, so the client
 	// behaves exactly as it did before.
 	agentServesRepo func(agent, repo string) bool
-	exemptLabels    []string
-	holdLabelsMu    sync.RWMutex
-	holdLabels      []string
+	// agentMayWrite reports whether an agent's lane may perform a write
+	// operation through the request relays (hivecommons/hive#9587). Guarded
+	// by reposMu for the same reason as agentServesRepo. Nil means no
+	// allowlist, so every operation allowed today stays allowed.
+	agentMayWrite func(agent, op string) bool
+	exemptLabels  []string
+	holdLabelsMu  sync.RWMutex
+	holdLabels    []string
 	// issueFilter is the operator's project.issue_filter (require_labels
 	// allow-list) gating which issues become actionable at all. The exclude
 	// polarity is NOT here — it is exemptLabels above (governor.labels.exempt,

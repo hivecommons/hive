@@ -662,6 +662,7 @@ func initGitHubAuth(ctx context.Context, cfg *config.Config, logger *slog.Logger
 		// config, so the hive-open-pr / hive-merge / hive-open-issue relays
 		// refuse an out-of-scope request without a restart.
 		out.Client.SetAgentRepoScopeFunc(cfg.AgentServesRepo)
+		out.Client.SetWriteAllowlistFunc(cfg.AgentMayWrite) // #9587: lane write allowlist, same live-config contract
 		startDocsTokenRefresh(ctx, cfg, appKeyFile, logger)
 		return out
 	}
@@ -676,6 +677,7 @@ func initGitHubAuth(ctx context.Context, cfg *config.Config, logger *slog.Logger
 		out.Client.SetHoldLabels([]string{github.CanonicalHiveHoldLabel(cfg.HiveID)})
 		out.Client.SetRepoPausedFunc(cfg.IsRepoPaused)        // #6203, see the App branch above
 		out.Client.SetAgentRepoScopeFunc(cfg.AgentServesRepo) // #6204, see the App branch above
+		out.Client.SetWriteAllowlistFunc(cfg.AgentMayWrite)   // #9587: lane write allowlist, same live-config contract
 		// PAT path only: introspect the token's granted scopes ONCE, here, so a
 		// too-narrow token is named at boot instead of surfacing hours later as
 		// a generic 403 inside an agent — or, worse, as an empty backlog that
@@ -1146,6 +1148,9 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	}
 	for _, warning := range config.AgentRepoScopeWarnings(b.cfg) {
 		b.logger.Warn("per-repo agent scope", "issue", warning)
+	}
+	for _, warning := range config.WriteSurfaceWarnings(b.cfg) {
+		b.logger.Warn("write surface allowlist", "issue", warning)
 	}
 	startupRepoTargetIssue := config.ValidateRepoTargets(b.cfg)
 	if startupRepoTargetIssue != nil {
@@ -1662,6 +1667,7 @@ func (b *boot) wireBootClosures() {
 				installReviewBots(newClient, b.cfg, b.logger)
 				newClient.SetRepoPausedFunc(b.cfg.IsRepoPaused)        // #6203: a client rebuild must not un-pause repos
 				newClient.SetAgentRepoScopeFunc(b.cfg.AgentServesRepo) // #6204: a client rebuild must not un-scope agents
+				newClient.SetWriteAllowlistFunc(b.cfg.AgentMayWrite)   // #9587: lane write allowlist, same live-config contract
 				installReviewRelaySettings(newClient, b.cfg, b.logger)
 				syncAutoMergePolicyToGitHubClient(b.cfg, newClient)
 				if b.dashSrv != nil {
@@ -2714,9 +2720,11 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	// pr_merged → merged (both automerge sweep paths, MergePR from the
 	// dashboard queue and the merge watcher), see recordLifecycleFromAudit.
 	if b.ghClient != nil {
-		b.ghClient.SetAttributionAudit(func(action, detail, agent string) {
-			b.dashSrv.AuditLog("system", action, detail, agent)
-			recordLifecycleFromAudit(b.dashSrv, b.cfg.Project.Org, action, detail, agent)
+		// Typed sink (#9587): repo and target land as first-class audit
+		// fields alongside the legacy repo=/number= detail pairs.
+		b.ghClient.SetAttributionAuditRecord(func(rec github.AuditRecord) {
+			b.dashSrv.AuditLogRecord("system", rec.Action, rec.Detail, rec.Agent, rec.Repo, rec.Target)
+			recordLifecycleFromAudit(b.dashSrv, b.cfg.Project.Org, rec.Action, rec.Detail, rec.Agent)
 		})
 	}
 
@@ -3859,6 +3867,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 					installReviewBots(newClient, b.cfg, b.logger)
 					newClient.SetRepoPausedFunc(b.cfg.IsRepoPaused)        // #6203: a client rebuild must not un-pause repos
 					newClient.SetAgentRepoScopeFunc(b.cfg.AgentServesRepo) // #6204: a client rebuild must not un-scope agents
+					newClient.SetWriteAllowlistFunc(b.cfg.AgentMayWrite)   // #9587: lane write allowlist, same live-config contract
 					installReviewRelaySettings(newClient, b.cfg, b.logger)
 					syncAutoMergePolicyToGitHubClient(b.cfg, newClient)
 					if b.dashSrv != nil {
@@ -5221,6 +5230,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					installReviewBots(newClient, b.cfg, b.logger)
 					newClient.SetRepoPausedFunc(b.cfg.IsRepoPaused)        // #6203: a client rebuild must not un-pause repos
 					newClient.SetAgentRepoScopeFunc(b.cfg.AgentServesRepo) // #6204: a client rebuild must not un-scope agents
+					newClient.SetWriteAllowlistFunc(b.cfg.AgentMayWrite)   // #9587: lane write allowlist, same live-config contract
 					syncAutoMergePolicyToGitHubClient(b.cfg, newClient)
 					if b.dashSrv != nil {
 						newClient.SetMergeFailureAlertSink(b.dashSrv)
@@ -8291,7 +8301,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 			}
 			detail := fmt.Sprintf("repo=%s, pr=%d, author=%s, queued_by=%s, label=%s, head_sha=%s, merge_sha=%s",
 				event.Repo, event.Number, event.Author, event.QueuedBy, event.Label, event.HeadSHA, event.MergeSHA)
-			dashSrv.AuditLog("system", "automerge-sweep-merged", detail, "")
+			dashSrv.AuditLogRecord("system", "automerge-sweep-merged", detail, "", event.Repo, event.Number)
 		},
 	})
 	if err != nil {
@@ -8339,7 +8349,7 @@ func runTaskListSweepIfDue(ctx context.Context, ghClient *github.Client, dashSrv
 			}
 			detail := fmt.Sprintf("repo=%s, issue=%d, author=%s, boxes=%d",
 				event.Repo, event.Number, event.Author, event.TotalBoxes)
-			dashSrv.AuditLog("system", "task-list-sweep-closed", detail, "")
+			dashSrv.AuditLogRecord("system", "task-list-sweep-closed", detail, "", event.Repo, event.Number)
 		},
 	})
 	if err != nil {
@@ -8385,7 +8395,7 @@ func runSupersessionSweepIfDue(ctx context.Context, ghClient *github.Client, cfg
 			}
 			detail := fmt.Sprintf("repo=%s, pr=%d, issue=%s#%d, closer_pr=%d, action=%s",
 				event.Repo, event.Number, event.IssueRepo, event.Issue, event.CloserPR, event.Action)
-			dashSrv.AuditLog("system", "supersession-sweep-"+event.Action, detail, "")
+			dashSrv.AuditLogRecord("system", "supersession-sweep-"+event.Action, detail, "", event.Repo, event.Number)
 		},
 	})
 	if err != nil {
@@ -8444,7 +8454,7 @@ func runDuplicateSweepIfDue(ctx context.Context, cfg *config.Config, ghClient *g
 			}
 			detail := fmt.Sprintf("repo=%s, survivor=%d, superseded=%d, confidence=%s, commented=%d",
 				event.Repo, event.Survivor, len(event.Superseded), event.Confidence, len(event.Commented))
-			dashSrv.AuditLog("system", "duplicate-sweep-suggested", detail, "")
+			dashSrv.AuditLogRecord("system", "duplicate-sweep-suggested", detail, "", event.Repo, event.Survivor)
 		},
 	})
 	if err != nil {

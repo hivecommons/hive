@@ -298,6 +298,15 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 		c.denyReviewRequest(path, req, err.Error(), nowFn)
 		return
 	}
+	// Lane write allowlist (#9587), keyed on the now-authorized agent name.
+	reviewOp := WriteOpReview
+	if resolveThread {
+		reviewOp = WriteOpResolveThread
+	}
+	if reason, refused := c.refuseWrite(req.Agent, reviewOp, req.Repo, req.Number); refused {
+		c.denyReviewRequest(path, req, reason, nowFn)
+		return
+	}
 
 	// Reviews use the hive's credentials and bypass the agent proxy, just like
 	// the other write relays. Pause applies to every review event.
