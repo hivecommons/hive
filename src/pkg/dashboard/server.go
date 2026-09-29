@@ -596,6 +596,7 @@ type FrontendAgent struct {
 	OffByCadence           bool   `json:"offByCadence"`
 	NoCadence              bool   `json:"noCadence"`
 	NeedsLogin             bool   `json:"needsLogin"`
+	LoginURL               string `json:"loginURL,omitempty"`
 	AuthAvailable          bool   `json:"authAvailable"`
 	AuthKnown              bool   `json:"authKnown"`
 	CLI                    string `json:"cli"`

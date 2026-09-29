@@ -49,10 +49,16 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				tailStart = 0
 			}
 			tail := filtered[tailStart:]
-			showsLogin := paneShowsLoginPrompt(tail)
+			authState := ClassifyAuthPane(tail)
+			showsLogin := authState.NeedsLogin
 			bobKeyRejected := effectiveBackend(agent) == bobBackend && paneShowsBobAPIKeyRejected(tail)
 			quotaExhausted := paneShowsQuotaExhausted(tail)
 			rateLimited := paneShowsStartupRateLimit(tail)
+			if authState.BackendAuthError {
+				m.mu.Lock()
+				m.markProviderErrorLocked(agent, providerErrorMatch{Class: "backend_auth_error", Line: authState.BackendAuthErrorMsg}, time.Now())
+				m.mu.Unlock()
+			}
 			if showsLogin || bobKeyRejected {
 				showsLogin = true
 				loginStreak++
@@ -93,6 +99,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			lastPaneChange := agent.LastPaneChange
 			agent.lastPaneCapture = filtered
 			agent.NeedsLogin = showsLogin
+			agent.LoginURL = authState.LoginURL
 			agent.QuotaExhausted = quotaExhausted
 			agent.paneMu.Unlock()
 

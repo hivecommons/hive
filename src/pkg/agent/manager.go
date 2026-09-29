@@ -314,6 +314,7 @@ type AgentProcess struct {
 	// spend the token-restart budget (see paneShowsStartupRateLimit).
 	lastRateLimitRestart time.Time
 	NeedsLogin           bool // true when pane shows a login prompt
+	LoginURL             string
 	// Starting is snapshot-only: true while the agent is still in the boot
 	// stagger (startupLaunchQueued) or its launch is in progress (launching).
 	// Its State is still "stopped" in that window, which the dashboard used to

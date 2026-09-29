@@ -40,6 +40,12 @@ func TestClassifyProviderError(t *testing.T) {
 			want:      true,
 		},
 		{
+			name:      "inference proxy database 401 is backend auth error",
+			pane:      `● Please run /login · API Error: 401 {"type":"error","error":{"type":"api_error","message":"inference backend returned 401: {"error":{"message":"Authentication Error, Error in connector: Error querying the database: FATAL: remaining connection slots are reserved for roles with the SUPERUSER attribute","type":"auth_error"}}}}`,
+			wantClass: "backend_auth_error",
+			want:      true,
+		},
+		{
 			name:      "auth 403",
 			pane:      `API Error: 403 {"type":"error","error":{"message":"team not allowed to access model"}}`,
 			wantClass: "auth",
@@ -77,7 +83,7 @@ func TestClassifyProviderError(t *testing.T) {
 			if tc.want && got.Class != tc.wantClass {
 				t.Fatalf("classifyProviderError class=%q, want %q", got.Class, tc.wantClass)
 			}
-			if tc.want && !strings.Contains(tc.pane, got.Line) {
+			if tc.want && got.Class != "backend_auth_error" && !strings.Contains(tc.pane, got.Line) {
 				t.Fatalf("error line %q was not captured from pane %q", got.Line, tc.pane)
 			}
 		})

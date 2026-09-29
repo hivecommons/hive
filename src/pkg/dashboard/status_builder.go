@@ -871,6 +871,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			DetailSummary:          detailSummary,
 			StatsConfig:            resolveStatsSources(loadStatsConfig(name), cfg),
 			LastError:              proc.LastError,
+			LoginURL:               proc.LoginURL,
 			StallNudges:            proc.StallNudges,
 			ActionNudges:           proc.ActionNudges,
 			// #4697: transient-API-error retry nudges, surfaced beside the
@@ -905,6 +906,10 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			a.StatusEvidence = "blocked: inference (" + proc.ProviderErrorClass + ")"
 			if line := strings.TrimSpace(proc.ProviderErrorLine); line != "" {
 				a.StatusEvidence += ": " + line
+			}
+			if a.Condition == "" {
+				a.Condition = "ProviderError"
+				a.ConditionMessage = a.StatusEvidence
 			}
 		}
 		if proc.BusyCondition != "" && a.StructuredStatus == "" {

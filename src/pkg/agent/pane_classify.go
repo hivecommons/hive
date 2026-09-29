@@ -188,6 +188,7 @@ var (
 	providerAPIErrorStatusRe = regexp.MustCompile(`(?i)\bAPI Error:\s*(\d{3})\b`)
 	providerRetryingRe       = regexp.MustCompile(`(?i)\bRetrying in \d+s\s+·\s+attempt \d+/\d+\b`)
 	providerHTTPStatusRe     = regexp.MustCompile(`\b(401|403|429|500|502|503|529)\b`)
+	providerMessageRe        = regexp.MustCompile(`(?i)"message"\s*:\s*"([^"]+)`)
 )
 
 func providerErrorBackoffBase() time.Duration {
@@ -242,6 +243,8 @@ func classifyProviderError(pane string) (providerErrorMatch, bool) {
 		case strings.Contains(lower, "overloaded_error") ||
 			(strings.Contains(lower, "overloaded") && providerLineHasAPIContext(lower)):
 			return providerErrorMatch{Class: "overloaded", Line: trimmed}, true
+		case lineShowsInferenceBackend401(lower):
+			return providerErrorMatch{Class: "backend_auth_error", Line: summarizeInferenceBackend401(trimmed)}, true
 		case strings.Contains(lower, `"type":"api_error"`) || strings.Contains(lower, `"type": "api_error"`) ||
 			strings.Contains(lower, "inference backend unreachable"):
 			return providerErrorMatch{Class: "api_error", Line: trimmed}, true
@@ -258,6 +261,43 @@ func classifyProviderError(pane string) (providerErrorMatch, bool) {
 		}
 	}
 	return providerErrorMatch{}, false
+}
+
+func lineShowsInferenceBackend401(lower string) bool {
+	return strings.Contains(lower, "api error: 401") &&
+		(strings.Contains(lower, "inference backend returned 401") ||
+			strings.Contains(lower, "error querying the database") ||
+			strings.Contains(lower, "connection slots"))
+}
+
+func summarizeInferenceBackend401(line string) string {
+	prefix := "Inference backend rejected credentials (401)"
+	lower := strings.ToLower(line)
+	if strings.Contains(lower, "error querying the database") || strings.Contains(lower, "connection slots") {
+		prefix = "Inference backend outage (401)"
+	}
+	msg := inferenceBackendMessage(line)
+	if msg == "" {
+		msg = line
+	}
+	if len(msg) > backendAuthErrorLimit {
+		msg = msg[:backendAuthErrorLimit]
+	}
+	return prefix + ": " + msg
+}
+
+func inferenceBackendMessage(line string) string {
+	matches := providerMessageRe.FindAllStringSubmatch(line, -1)
+	for i := len(matches) - 1; i >= 0; i-- {
+		msg := strings.TrimSpace(matches[i][1])
+		if msg != "" && !strings.Contains(strings.ToLower(msg), "inference backend returned 401") {
+			return msg
+		}
+	}
+	if idx := strings.Index(strings.ToLower(line), "inference backend returned 401:"); idx >= 0 {
+		return strings.TrimSpace(line[idx+len("inference backend returned 401:"):])
+	}
+	return ""
 }
 
 func providerLineHasAPIContext(lower string) bool {
@@ -281,6 +321,44 @@ func providerErrorStatusClass(status string) string {
 	default:
 		return "api_error"
 	}
+}
+
+var loginURLPattern = regexp.MustCompile(`https://[^\s<>"']+`)
+
+var loginURLMarkers = []string{
+	"github.com/login/device",
+	"claude.ai/oauth",
+	"accounts.google.com",
+	"microsoft.com/devicelogin",
+}
+
+func extractLoginURL(pane string) string {
+	for _, raw := range loginURLPattern.FindAllString(pane, -1) {
+		u := strings.TrimRight(raw, `.,;:!?)]}'"│`)
+		lower := strings.ToLower(u)
+		for _, marker := range loginURLMarkers {
+			if strings.Contains(lower, marker) {
+				return u
+			}
+		}
+	}
+	return ""
+}
+
+type AuthPaneState struct {
+	NeedsLogin          bool
+	LoginURL            string
+	BackendAuthError    bool
+	BackendAuthErrorMsg string
+}
+
+func ClassifyAuthPane(lines []string) AuthPaneState {
+	joined := strings.Join(lines, "\n")
+	if match, ok := classifyProviderError(joined); ok && match.Class == "backend_auth_error" {
+		return AuthPaneState{BackendAuthError: true, BackendAuthErrorMsg: match.Line}
+	}
+	needsLogin := paneShowsLoginPrompt(lines)
+	return AuthPaneState{NeedsLogin: needsLogin, LoginURL: extractLoginURL(joined)}
 }
 
 // cliReadyIndicators prove copilot finished startup.

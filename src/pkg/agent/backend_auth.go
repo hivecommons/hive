@@ -111,7 +111,7 @@ func classifyBackendAuthStatus(class, line string) (status string, ok bool) {
 		return BackendAuthForbidden, true
 	case "quota":
 		return BackendAuthQuota, true
-	case "api_error":
+	case "api_error", "backend_auth_error":
 		// Covers classifyProviderError's generic api_error class, including
 		// the literal "inference backend unreachable" text a self-hosted LLM
 		// gateway renders (#6489's shape).
