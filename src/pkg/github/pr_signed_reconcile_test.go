@@ -277,6 +277,63 @@ func TestSignedReconcile_UnverifiedCommitUnderVerifiedHeadSkipsAndComments(t *te
 	if got := c.signedReconcile.settledHead("o/r#77"); got != m.headSHA {
 		t.Errorf("the PR must be recorded settled only once the comment is posted, got %q", got)
 	}
+	// The head is Verified here, so the note must not claim it isn't, and it
+	// must give the person a way out that doesn't need the hive (#9531).
+	assertSignedBlockedGuidance(t, m.posted[0])
+
+	// Next pass: settled, not re-commented.
+	c.reconcileSignedCommits(context.Background())
+	if len(m.posted) != 1 {
+		t.Errorf("the next pass must not repeat the comment, got %d", len(m.posted))
+	}
+
+	// After a restart the in-memory set is gone; the marker on the PR stops a repeat.
+	m.comments = []map[string]any{{"user": map[string]any{"login": reconcileBot}, "body": m.posted[0]}}
+	restarted := signedTestClient(t, strings.TrimSuffix(c.client.BaseURL.String(), "/"), true)
+	restarted.SetAppBotLogin(reconcileBot)
+	restarted.reconcileSignedCommits(context.Background())
+	if len(m.posted) != 1 {
+		t.Errorf("the marker comment must stop a repeat after a restart, got %d", len(m.posted))
+	}
+}
+
+// The unverified agent commit is the PR's first commit (no earlier Verified
+// commit to sign onto) and a person signed their own commit on top. Still
+// blocked, still one comment naming both commits.
+func TestSignedReconcile_FirstCommitUnverifiedUnderVerifiedHumanSkipsAndComments(t *testing.T) {
+	m, c := reconcileFixture(t, true)
+	unverifiedAgent := "eeee0000000000000000000000000000000abc2"
+	m.prCommits = []map[string]any{
+		prCommitJSON(unverifiedAgent, false, "", "quality@hive.kubestellar.io"),
+		prCommitJSON(m.headSHA, true, "alice", "alice@example.com"),
+	}
+
+	c.reconcileSignedCommits(context.Background())
+
+	if m.callIndex("GET /repos/o/r/compare/") >= 0 || m.graphql != nil || m.refPatch != nil {
+		t.Fatalf("a range with a person's commit must not be rewritten:\n%s", strings.Join(m.calls, "\n"))
+	}
+	if len(m.posted) != 1 {
+		t.Fatalf("exactly one comment expected, got %d: %v", len(m.posted), m.posted)
+	}
+	if !strings.Contains(m.posted[0], shortSHA(unverifiedAgent)) || !strings.Contains(m.posted[0], "alice@example.com") {
+		t.Errorf("the comment must name the unsigned commit and the human commit: %q", m.posted[0])
+	}
+	assertSignedBlockedGuidance(t, m.posted[0])
+}
+
+// assertSignedBlockedGuidance checks the blocked note describes the real
+// problem (a non-Verified commit, wherever it sits) and the manual fix.
+func assertSignedBlockedGuidance(t *testing.T, body string) {
+	t.Helper()
+	if strings.Contains(body, "head is not Verified") {
+		t.Errorf("the note must not claim the head is unverified when it may be Verified: %q", body)
+	}
+	for _, want := range []string{"squash the unsigned commit", "drop your own commit"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the note must give the manual fix %q: %q", want, body)
+		}
+	}
 }
 
 // A merge commit can't be expressed by createCommitOnBranch without folding
