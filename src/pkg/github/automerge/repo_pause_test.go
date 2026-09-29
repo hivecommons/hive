@@ -38,15 +38,15 @@ func TestEngineActiveRepos_HonorsClientPause(t *testing.T) {
 // rather than silently sweeping nothing.
 type pauseBlindTransport struct{ repos []string }
 
-func (p pauseBlindTransport) GoGitHub() *gh.Client                            { return gh.NewClient(nil) }
-func (p pauseBlindTransport) Repositories() []string                          { return p.repos }
-func (p pauseBlindTransport) SplitRepo(repo string) (string, string)          { return "acme", repo }
-func (p pauseBlindTransport) AutoMergeLabel() string                          { return "auto-merge" }
-func (p pauseBlindTransport) AppBotLogin() string                             { return testHiveAppBotLogin }
-func (p pauseBlindTransport) IsExemptLabels([]string) bool                    { return false }
-func (p pauseBlindTransport) IsHeldLabels(labels []string) bool               { return hgithub.HasHoldLabel(labels) }
-func (p pauseBlindTransport) UpdateBranch(context.Context, string, int) error { return nil }
-func (p pauseBlindTransport) RecordPRMergedAudit(string, int, string, string) {}
+func (p pauseBlindTransport) GoGitHub() *gh.Client                                    { return gh.NewClient(nil) }
+func (p pauseBlindTransport) Repositories() []string                                  { return p.repos }
+func (p pauseBlindTransport) SplitRepo(repo string) (string, string)                  { return "acme", repo }
+func (p pauseBlindTransport) AutoMergeLabel() string                                  { return "auto-merge" }
+func (p pauseBlindTransport) AppBotLogin() string                                     { return testHiveAppBotLogin }
+func (p pauseBlindTransport) IsExemptLabels([]string) bool                            { return false }
+func (p pauseBlindTransport) IsHeldLabels(labels []string) bool                       { return hgithub.HasHoldLabel(labels) }
+func (p pauseBlindTransport) UpdateBranch(context.Context, string, int) error         { return nil }
+func (p pauseBlindTransport) RecordPRMergedAudit(string, int, string, string, string) {}
 
 func TestEngineActiveRepos_FallsBackWithoutCapability(t *testing.T) {
 	transport := pauseBlindTransport{repos: []string{"widget", "gadget"}}

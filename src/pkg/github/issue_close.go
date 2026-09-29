@@ -21,21 +21,30 @@ func ReporterConfirmationCloseGateReason(issue *gh.Issue) string {
 }
 
 func (c *Client) CloseIssue(ctx context.Context, repo string, number int, opts IssueCloseOptions) error {
+	_, err := c.closeIssue(ctx, repo, number, opts)
+	return err
+}
+
+// closeIssue is CloseIssue that also reports whether the closed number was a
+// pull request (GitHub's issues API closes PRs too), so the issue-request
+// watcher can audit a PR close as pr_closed rather than agent_issue_closed.
+func (c *Client) closeIssue(ctx context.Context, repo string, number int, opts IssueCloseOptions) (bool, error) {
 	if c == nil || c.client == nil {
-		return ErrNoGitHubClient
+		return false, ErrNoGitHubClient
 	}
 	owner, repoName := c.splitRepo(repo)
 	if err := validateRepoRef(owner, repoName); err != nil {
-		return fmt.Errorf("CloseIssue: %w", err)
+		return false, fmt.Errorf("CloseIssue: %w", err)
 	}
 	if number <= 0 {
-		return fmt.Errorf("CloseIssue: issue number is required")
+		return false, fmt.Errorf("CloseIssue: issue number is required")
 	}
 
 	issue, _, err := c.client.Issues.Get(ctx, owner, repoName, number)
 	if err != nil {
-		return fmt.Errorf("reading issue %s/%s#%d before close: %w", owner, repoName, number, err)
+		return false, fmt.Errorf("reading issue %s/%s#%d before close: %w", owner, repoName, number, err)
 	}
+	isPR := issue.IsPullRequest()
 	reason := ReporterConfirmationCloseGateReason(issue)
 	overrideReason := strings.TrimSpace(opts.OverrideReason)
 	if reason != "" && overrideReason == "" {
@@ -49,23 +58,23 @@ func (c *Client) CloseIssue(ctx context.Context, repo string, number int, opts I
 				"repo", owner+"/"+repoName,
 				"issue", number,
 				"reason", reason)
-			return fmt.Errorf("%w: %s", ErrReporterConfirmationRequired, reason)
+			return false, fmt.Errorf("%w: %s", ErrReporterConfirmationRequired, reason)
 		}
 		body := reporterConfirmationRequestComment(issue)
 		if _, _, commentErr := c.client.Issues.CreateComment(ctx, owner, repoName, number, &gh.IssueComment{Body: gh.Ptr(body)}); commentErr != nil {
-			return fmt.Errorf("%w: %s; additionally failed to post confirmation request: %v", ErrReporterConfirmationRequired, reason, commentErr)
+			return false, fmt.Errorf("%w: %s; additionally failed to post confirmation request: %v", ErrReporterConfirmationRequired, reason, commentErr)
 		}
 		c.warn("issue close blocked pending reporter confirmation",
 			"repo", owner+"/"+repoName,
 			"issue", number,
 			"reason", reason)
-		return fmt.Errorf("%w: %s", ErrReporterConfirmationRequired, reason)
+		return false, fmt.Errorf("%w: %s", ErrReporterConfirmationRequired, reason)
 	}
 	if reason != "" {
 		if !opts.SuppressOverrideComment {
 			body := fmt.Sprintf("Reporter-confirmation close override used for this human-filed bug-family issue.\n\nReason: %s", overrideReason)
 			if _, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
-				return fmt.Errorf("posting reporter-confirmation override on %s/%s#%d: %w", owner, repoName, number, err)
+				return false, fmt.Errorf("posting reporter-confirmation override on %s/%s#%d: %w", owner, repoName, number, err)
 			}
 		}
 		c.warn("issue close override used",
@@ -76,9 +85,9 @@ func (c *Client) CloseIssue(ctx context.Context, repo string, number int, opts I
 	}
 
 	if _, _, err := c.client.Issues.Edit(ctx, owner, repoName, number, &gh.IssueRequest{State: gh.Ptr("closed")}); err != nil {
-		return fmt.Errorf("closing issue %s/%s#%d: %w", owner, repoName, number, err)
+		return false, fmt.Errorf("closing issue %s/%s#%d: %w", owner, repoName, number, err)
 	}
-	return nil
+	return isPR, nil
 }
 
 // reporterConfirmationRequestMarker identifies a confirmation request the hive

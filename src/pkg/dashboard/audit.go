@@ -62,6 +62,11 @@ type AuditLog struct {
 	// Rebuilt from the on-disk audit log at startup, and the hub keeps the
 	// running maximum per user, so a spoke restart never regresses it there.
 	lastAction map[string]time.Time
+	// prCounters are the durable all-time PR throughput totals (opened /
+	// merged / closed), bumped at write time in Log. prCountersPath is where
+	// they persist; "" keeps them in memory only (no /data volume, tests).
+	prCounters     PRThroughputCounters
+	prCountersPath string
 }
 
 func newAuditLog() *AuditLog {
@@ -80,6 +85,7 @@ func newAuditLog() *AuditLog {
 			Compress:   true,
 		}
 		a.loadFromDisk()
+		a.loadPRThroughputCounters(prThroughputCountersPath, auditLogPath)
 	}
 
 	return a
@@ -131,6 +137,7 @@ func (a *AuditLog) Log(user, action, detail, agent string) {
 	}
 	a.ring = append(a.ring, entry)
 	a.noteUserAction(entry.User, entry.Timestamp)
+	a.notePRThroughput(entry)
 
 	if a.writer != nil {
 		if data, err := json.Marshal(entry); err == nil {

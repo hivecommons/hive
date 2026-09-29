@@ -2918,8 +2918,10 @@ func (c *Client) IsHeldLabels(labels []string) bool {
 	return c.isHeld(labels)
 }
 
-// RecordPRMergedAudit records the standard PR-merged audit event.
-func (c *Client) RecordPRMergedAudit(repo string, number int, method, sha string) {
+// RecordPRMergedAudit records the standard PR-merged audit event. path names
+// the code path that performed the merge (PRAuditPathSweep, PRAuditPathQueue,
+// PRAuditPathRelay).
+func (c *Client) RecordPRMergedAudit(repo string, number int, method, sha, path string) {
 	if c == nil {
 		return
 	}
@@ -2927,7 +2929,8 @@ func (c *Client) RecordPRMergedAudit(repo string, number int, method, sha string
 		"repo", repo,
 		"number", strconv.Itoa(number),
 		"method", method,
-		"sha", sha)
+		"sha", sha,
+		"path", path)
 }
 
 // RepoWorkBreakdown explains the raw open issue and PR totals for one

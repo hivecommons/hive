@@ -1294,6 +1294,10 @@
     .lc-fleet-stat .val.blocked { color: var(--red); }
     .lc-fleet-stat .lbl { font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-top: var(--sp-1); }
     .lc-window { color: var(--muted); font-size: var(--fs-xs); margin-bottom: var(--sp-5); }
+    .prt-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: var(--sp-4); }
+    .lc-fleet-stat .val.opened { color: var(--blue); }
+    .lc-fleet-stat .val.closed { color: var(--red); }
+    .prt-paths { color: var(--muted); font-size: var(--fs-xs); margin-bottom: var(--sp-2); }
     .lc-journeys { list-style: none; margin: var(--sp-0); padding: var(--sp-0); display: flex; flex-direction: column; gap: var(--sp-2);
       max-height: 320px; overflow-y: auto; }
     .lc-journey { display: flex; align-items: center; gap: var(--sp-4); font-size: 0.78rem; padding: 5px 8px;
@@ -3834,6 +3838,13 @@
       <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="lifecycle-section"><span class="section-chevron">▼</span> 🔀 Lifecycle Timeline</h2>
       <div class="section-body">
         <div id="lifecycle-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:var(--sp-6)"></div>
+      </div>
+    </div>
+
+    <div id="pr-throughput-section" style="margin-top: var(--sp-6); margin-bottom: var(--sp-8); display: none;">
+      <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="pr-throughput-section"><span class="section-chevron">▼</span> 📬 PR Throughput</h2>
+      <div class="section-body">
+        <div id="pr-throughput-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:var(--sp-6)"></div>
       </div>
     </div>
     </div>
@@ -13125,6 +13136,82 @@ function burnAreaChart() {
       } catch (e) { /* transient — leave last render in place */ }
     }
 
+    // PR throughput card (#9427): how many PRs the hive opened, merged and
+    // closed without merging over a selectable window, from
+    // /api/pr-throughput. hours=0 is all time (durable counters).
+    const PRT_WINDOWS = [[1, '1h'], [6, '6h'], [12, '12h'], [24, '24h'], [48, '48h'], [168, '7d'], [0, 'all']];
+    let prtHours = 24;
+    let prtLast = null;
+
+    // Mirrors lcWindowLabel: counts are honest only relative to how much
+    // history backs them, so say so when the data is shorter than the window.
+    function prtWindowLabel(dto) {
+      const fmt = (ms) => {
+        const min = Math.round(ms / 60000);
+        if (min < 60) return min + 'm';
+        const hr = Math.round(min / 60);
+        if (hr < 48) return hr + 'h';
+        return Math.round(hr / 24) + 'd';
+      };
+      const recorded = dto.recorded_since ? Date.parse(dto.recorded_since) : NaN;
+      const coveredMs = Number.isNaN(recorded) ? 0 : Math.max(0, Date.now() - recorded);
+      if (dto.all_time) {
+        return coveredMs > 0 ? `all time — over the last ${fmt(coveredMs)} of recorded history` : 'all time — nothing recorded yet';
+      }
+      const windowMs = (Number(dto.hours) || 0) * 3600000;
+      if (!windowMs) return '';
+      if (coveredMs > 0 && coveredMs < windowMs) {
+        return `over the last ${fmt(coveredMs)} of recorded history (window ${fmt(windowMs)})`;
+      }
+      return `over the last ${fmt(windowMs)}`;
+    }
+
+    function renderPRThroughput(dto) {
+      const section = document.getElementById('pr-throughput-section');
+      const card = document.getElementById('pr-throughput-card');
+      if (!section || !card) return;
+      dto = dto || {};
+      section.style.display = '';
+
+      const buttons = PRT_WINDOWS.map(([h, label]) => `<button type="button" class="${prtHours === h ? 'active' : ''}" data-action="setPRThroughputHours" data-arg0="${h}" title="${h === 0 ? 'All time' : 'Last ' + label}">${label}</button>`).join('');
+      const opened = Number(dto.opened) || 0;
+      const merged = Number(dto.merged) || 0;
+      const closed = Number(dto.closed) || 0;
+      const byPath = dto.merged_by_path || {};
+      const pathLabels = { sweep: 'auto-merge sweep', queue: 'queued by a person', relay: 'merge relay', unknown: 'unrecorded path' };
+      const pathParts = Object.keys(byPath).filter((k) => Number(byPath[k]) > 0).sort()
+        .map((k) => `${Number(byPath[k])} ${escapeHtml(pathLabels[k] || k)}`);
+      const pathsHtml = pathParts.length ? `<div class="prt-paths">Merged by: ${pathParts.join(' · ')}</div>` : '';
+      const label = prtWindowLabel(dto);
+      card.innerHTML = `<div class="prt-head"><div class="lc-window">${escapeHtml(label)}</div><div class="gov-pr-models-toggle">${buttons}</div></div>
+        <div class="lc-fleet">
+          <div class="lc-fleet-stat"><div class="val opened">${opened}</div><div class="lbl">Opened</div></div>
+          <div class="lc-fleet-stat"><div class="val merged">${merged}</div><div class="lbl">Merged</div></div>
+          <div class="lc-fleet-stat"><div class="val closed">${closed}</div><div class="lbl">Closed without merging</div></div>
+        </div>${pathsHtml}`;
+      applySectionCollapse('pr-throughput-section');
+    }
+
+    async function fetchPRThroughput() {
+      const hours = prtHours;
+      try {
+        const r = await fetch(`/api/pr-throughput?hours=${encodeURIComponent(hours)}`);
+        if (!r.ok) return;
+        const dto = await r.json();
+        if (hours !== prtHours) return; // a newer selection is in flight
+        prtLast = dto;
+        renderPRThroughput(dto);
+      } catch (e) { /* transient — leave last render in place */ }
+    }
+
+    function setPRThroughputHours(hours) {
+      const h = Number(hours);
+      prtHours = PRT_WINDOWS.some(([v]) => v === h) ? h : 24;
+      if (prtLast) renderPRThroughput(prtLast);
+      return fetchPRThroughput();
+    }
+    window.setPRThroughputHours = setPRThroughputHours;
+
     // ---- Approvals desk (RFC #4000) -------------------------------------
     // Pending operator-lane approvals. The panel stays hidden entirely unless
     // the desk is enabled, so a hive that has not opted in sees no new chrome.
@@ -13279,7 +13366,7 @@ function burnAreaChart() {
 
     // Prime both panels and poll them on a modest independent interval. Do not
     // block initial paint: these run after the main poll is already wired.
-    function v4RefreshPanels() { fetchHiveAdvice(); fetchACMMReco(); fetchLifecycle(); fetchApprovals(); }
+    function v4RefreshPanels() { fetchHiveAdvice(); fetchACMMReco(); fetchLifecycle(); fetchPRThroughput(); fetchApprovals(); }
     v4RefreshPanels();
     setInterval(v4RefreshPanels, V4_PANELS_POLL_MS);
 
@@ -17036,7 +17123,7 @@ function burnAreaChart() {
       renderDebugSection();
       // Restore persisted collapsed state for all collapsible sections
       const COLLAPSIBLE_SECTION_IDS = [
-        'advisory-section', 'hive-advice-section', 'acmm-reco-section', 'lifecycle-section',
+        'advisory-section', 'hive-advice-section', 'acmm-reco-section', 'lifecycle-section', 'pr-throughput-section',
         'overview-section', 'repos-section', 'beads-section', 'acmm-eval-section',
         'platform-section', 'fleet-report-section', 'audit-section', 'nous-section', 'inception-section',
         'knowledge-section', 'contributors-section', 'debug-section', 'logs-section',

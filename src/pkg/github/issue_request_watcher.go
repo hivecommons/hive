@@ -364,6 +364,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	}
 
 	resp := IssueResponse{At: nowFn().UTC().Format(time.RFC3339)}
+	closedPR := false
 	switch kind {
 	case "claim":
 		// Apply a namespaced ownership label (App bots can't be assignees).
@@ -380,7 +381,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			resp.Number = req.Number
 		}
 	case "close":
-		err = c.CloseIssue(ctx, req.Repo, req.Number, IssueCloseOptions{OverrideReason: req.OverrideReason})
+		closedPR, err = c.closeIssue(ctx, req.Repo, req.Number, IssueCloseOptions{OverrideReason: req.OverrideReason})
 		if err == nil {
 			resp.OK = true
 			resp.Number = req.Number
@@ -445,13 +446,21 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	case "close":
 		action = AuditActionIssueClosed
 	}
-	c.recordCreationAudit(action, meta,
+	extra := []string{
 		"repo", req.Repo,
 		"number", strconv.Itoa(resp.Number),
 		"url", resp.URL,
 		"reused", strconv.FormatBool(resp.AlreadyExisted),
 		"consolidated", strconv.FormatBool(resp.Consolidated),
-		"override_reason", req.OverrideReason)
+		"override_reason", req.OverrideReason,
+	}
+	if closedPR {
+		// The number was a pull request: this is the hive closing a PR
+		// without merging it, counted apart from issue closes.
+		action = AuditActionPRClosed
+		extra = append(extra, "path", PRAuditPathRelay)
+	}
+	c.recordCreationAudit(action, meta, extra...)
 	c.writeIssueResult(path, resp)
 	_ = os.Remove(path)
 	c.issueClearRetry(path)
