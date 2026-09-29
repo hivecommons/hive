@@ -6,13 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"log/slog"
-
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/github"
-
-	"io"
 )
 
 // swapEscalationStore points the package's lazily-loaded singleton at a fresh,
@@ -170,10 +166,6 @@ func TestRecordRedStaleness(t *testing.T) {
 	})
 }
 
-// discardLogger is the throwaway logger the gate tests hand to paths that log
-// but are not asserted on.
-func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
-
 func TestMergeReEngageHook(t *testing.T) {
 	t.Run("disabled escalation yields a nil hook", func(t *testing.T) {
 		cfg := escalationTestConfig()
@@ -253,7 +245,7 @@ func TestClaimingPRRedStale(t *testing.T) {
 }
 
 func TestReapStuckRedPRs(t *testing.T) {
-	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
+	discard := discardLogger()
 
 	t.Run("skips escalated, fresh, and green PRs; re-engages stale red up to the cap", func(t *testing.T) {
 		store, clock := newTestEscalationStore(t)
