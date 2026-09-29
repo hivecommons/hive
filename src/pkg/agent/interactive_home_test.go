@@ -114,6 +114,21 @@ func TestSetupInteractiveHome_CreatesHomeAndBridges(t *testing.T) {
 	if info, err := os.Lstat(filepath.Join(home, ".local")); err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		t.Errorf(".local should be a real per-agent dir: info=%v err=%v", info, err)
 	}
+	// .copilot must be a REAL per-agent directory (hivecommons/hive#9444), not
+	// a whole-directory bridge — sharing it wholesale shared session-state.
+	copilotDir := filepath.Join(home, ".copilot")
+	if info, err := os.Lstat(copilotDir); err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		t.Errorf(".copilot should be a real per-agent dir: info=%v err=%v", info, err)
+	}
+	// Only config.json inside it stays bridged to the shared token map.
+	configLink := filepath.Join(copilotDir, copilotConfigFileName)
+	target, err := os.Readlink(configLink)
+	if err != nil {
+		t.Fatalf("copilot config.json bridge missing: %v", err)
+	}
+	if want := filepath.Join(shared, ".copilot", copilotConfigFileName); target != want {
+		t.Errorf("copilot config.json bridge -> %q, want %q", target, want)
+	}
 }
 
 // --- per-agent XDG data/state (#6238) ------------------------------------------
@@ -240,6 +255,68 @@ func TestSetupAgentXDGDirs_RetiresLegacyBridgeAndSharesOnlyNamedEntries(t *testi
 	}
 	if target, err := os.Readlink(link); err != nil || target != filepath.Join(shared, ".local", "share", "opencode") {
 		t.Errorf("opencode bridge not stable: target=%q err=%v", target, err)
+	}
+}
+
+// TestSetupCopilotHome_RetiresLegacyBridgeAndIsolatesSessionState is the
+// regression test for hivecommons/hive#9444: a pre-fix hive left .copilot as
+// a whole-directory symlink into the shared tree, so one agent's
+// session-state directories were visible — and mtime-comparable — through
+// every OTHER agent's own .copilot/session-state. Re-provisioning must retire
+// that bridge, keep the shared config.json (token map) reachable, and never
+// surface another agent's session dirs through this agent's home.
+func TestSetupCopilotHome_RetiresLegacyBridgeAndIsolatesSessionState(t *testing.T) {
+	shared := withSharedAgentHome(t)
+	m := interactiveHomeTestManager(t)
+	ap := &AgentProcess{Name: "scanner", UID: 1001, Config: config.AgentConfig{Backend: "claude"}}
+	home := interactiveHomePath("scanner")
+
+	// A pre-#9444 home: .copilot is a whole-directory symlink bridge, and the
+	// shared tree already holds another agent's session-state (sec-check).
+	if err := os.MkdirAll(filepath.Join(shared, ".copilot", "session-state", "other-agent-session"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shared, ".copilot", copilotConfigFileName), []byte(`{"copilotTokens":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(shared, ".copilot"), filepath.Join(home, ".copilot")); err != nil {
+		t.Fatal(err)
+	}
+
+	m.setupInteractiveHome(ap, "claude")
+
+	copilotDir := filepath.Join(home, ".copilot")
+	if info, err := os.Lstat(copilotDir); err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		t.Fatalf("legacy .copilot bridge not retired: info=%v err=%v", info, err)
+	}
+	// Another agent's session-state is NOT visible through this agent's home.
+	if _, err := os.Stat(filepath.Join(copilotDir, "session-state", "other-agent-session")); !os.IsNotExist(err) {
+		t.Errorf("another agent's session-state leaked into per-agent .copilot (err=%v)", err)
+	}
+	// The shared session-state directory itself is untouched.
+	if _, err := os.Stat(filepath.Join(shared, ".copilot", "session-state", "other-agent-session")); err != nil {
+		t.Errorf("shared session-state was disturbed: %v", err)
+	}
+	// config.json still bridges to the shared token map.
+	link := filepath.Join(copilotDir, copilotConfigFileName)
+	target, err := os.Readlink(link)
+	if err != nil {
+		t.Fatalf("copilot config.json bridge missing: %v", err)
+	}
+	if want := filepath.Join(shared, ".copilot", copilotConfigFileName); target != want {
+		t.Errorf("copilot config.json bridge -> %q, want %q", target, want)
+	}
+
+	// Idempotent: a second provisioning keeps the real dir and the bridge.
+	m.setupInteractiveHome(ap, "claude")
+	if info, err := os.Lstat(copilotDir); err != nil || info.Mode()&os.ModeSymlink != 0 {
+		t.Errorf(".copilot regressed to a bridge on re-provision: info=%v err=%v", info, err)
+	}
+	if target, err := os.Readlink(link); err != nil || target != filepath.Join(shared, ".copilot", copilotConfigFileName) {
+		t.Errorf("copilot config.json bridge not stable: target=%q err=%v", target, err)
 	}
 }
 
