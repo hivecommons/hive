@@ -20194,6 +20194,84 @@
         }
       }
     },
+    "/api/pr-throughput": {
+      "get": {
+        "tags": [
+          "History"
+        ],
+        "summary": "Get PR throughput counts",
+        "description": "Counts PRs the hive opened (agent_pr_created), merged (pr_merged, split by merge path) and closed without merging (pr_closed) over the last N hours from the audit log, or all time from the durable counters when hours=0. PRs a human closes directly on GitHub are not counted.",
+        "parameters": [
+          {
+            "name": "hours",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Look-back window in hours; default 24, clamped to the audit log retention. 0 = all time from the durable counters."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PRThroughput DTO",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "hours": {
+                      "type": "integer",
+                      "description": "Window actually applied after clamping; 0 means all time."
+                    },
+                    "all_time": {
+                      "type": "boolean"
+                    },
+                    "since": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "Start of the window (all time: oldest event the counters cover). Omitted when nothing is recorded."
+                    },
+                    "recorded_since": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "Oldest PR event the underlying data holds. Omitted when nothing is recorded."
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "audit",
+                        "counters"
+                      ]
+                    },
+                    "opened": {
+                      "type": "integer"
+                    },
+                    "merged": {
+                      "type": "integer"
+                    },
+                    "merged_by_path": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "integer"
+                      },
+                      "description": "Merges by path: sweep, queue, relay, or unknown for entries written before the path field existed."
+                    },
+                    "closed": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "hours is not a non-negative integer"
+          }
+        }
+      }
+    },
     "/api/prompt-history": {
       "get": {
         "tags": [

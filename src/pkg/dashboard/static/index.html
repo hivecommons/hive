@@ -1294,6 +1294,7 @@
     .lc-fleet-stat .val.blocked { color: var(--red); }
     .lc-fleet-stat .lbl { font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-top: var(--sp-1); }
     .lc-window { color: var(--muted); font-size: var(--fs-xs); margin-bottom: var(--sp-5); }
+    .prt-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-6); }
     .prt-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: var(--sp-4); }
     .lc-fleet-stat .val.opened { color: var(--blue); }
     .lc-fleet-stat .val.closed { color: var(--red); }
@@ -3844,7 +3845,7 @@
     <div id="pr-throughput-section" style="margin-top: var(--sp-6); margin-bottom: var(--sp-8); display: none;">
       <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="pr-throughput-section"><span class="section-chevron">▼</span> 📬 PR Throughput</h2>
       <div class="section-body">
-        <div id="pr-throughput-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:var(--sp-6)"></div>
+        <div id="pr-throughput-card" class="prt-card"></div>
       </div>
     </div>
     </div>
