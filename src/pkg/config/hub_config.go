@@ -299,6 +299,14 @@ type HubConfig struct {
 	DisabledTiers            []string               `yaml:"disabled_tiers"`
 	TierLimits               map[string]TierRate    `yaml:"tier_limits"`
 	SnapshotIntervalMin      int                    `yaml:"snapshot_interval_min"`
+	// NPSTiming overrides the dashboard NPS prompt's eligibility rules (issue
+	// #9610). Every zero field keeps the console-identical default; resolve
+	// with EffectiveNPSTiming(), never the raw fields. See nps_options_config.go.
+	NPSTiming NPSTimingConfig `yaml:"nps_timing,omitempty"`
+	// NPSDetractorIssues opts this hive into letting a detractor (score 1)
+	// open a PUBLIC issue from their NPS feedback, with explicit consent.
+	// Default OFF. See nps_options_config.go.
+	NPSDetractorIssues NPSDetractorIssuesConfig `yaml:"nps_detractor_issues,omitempty"`
 }
 
 // Contribute completion-cooldown defaults and clamp bounds. These live in the
