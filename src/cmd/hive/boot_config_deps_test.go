@@ -479,8 +479,8 @@ func TestBootConfigWith_UnrecognizedProxyInjectValueWarnsAndBoots(t *testing.T) 
 	}
 }
 
-// The accepted postures boot normally and quietly: injection on (what a fresh
-// hosted App spoke is provisioned with), the explicit opt-out, and unset.
+// The accepted postures boot normally and quietly: injection on (the explicit
+// opt-in), the explicit opt-out, and unset (off).
 func TestBootConfigWith_ConsistentProxyInjectPostureBoots(t *testing.T) {
 	for _, v := range []string{config.ProxyInjectGHAuthOnValue, config.ProxyInjectGHAuthOffValue, ""} {
 		t.Run("value="+v, func(t *testing.T) {

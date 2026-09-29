@@ -34,14 +34,14 @@
 # /proc/<pid>/environ deliberately. Whether that extraction lane is closed
 # depends on the spoke's HIVE_PROXY_INJECT_GH_AUTH setting (#1861, shipped on
 # v5 as PR #5876):
-#   - "true" (the default for hosted App spokes provisioned after #9586): the
+#   - "true" (opt-in only; injection is never on by default, #9586): the
 #     App token a backend CLI holds (GITHUB_TOKEN, read from the agent's token
 #     cache) is the inert hive-proxy-injected-<agent> placeholder, and the MITM
 #     proxy strips ANY agent-supplied Authorization on GitHub hosts - including
 #     a CLI's own login token - and injects the real scoped token itself. A
 #     smuggled credential is therefore not spendable against GitHub through
 #     the proxy. Closed wherever forced egress keeps agents on the proxy.
-#   - unset or "false" (existing spokes and self-hosted installs): the backend
+#   - unset or "false" (the default on every hive, hosted or not): the backend
 #     CLI's env can carry the agent's REAL scoped token and the proxy forwards
 #     agent-supplied Authorization as-is. The lane is OPEN there until the
 #     spoke opts in.
