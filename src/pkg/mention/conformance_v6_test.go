@@ -23,7 +23,7 @@ const (
 	v6MentionLeakyCanary = "HIVE-CANARY-0123456789abcdef0123456789abcdef0123456789abcdef"
 )
 
-func TestV6ConformanceMention_InboundTextPassesIOSCANBeforeKick(t *testing.T) {
+func TestV6ConformanceMention_InboundTextBlockedByIOSCAN(t *testing.T) {
 	gh := &fakeGH{app: "hive[bot]"}
 	var audit, kick []string
 	h := baseHandler(t, gh, &audit, &kick)
@@ -43,11 +43,8 @@ func TestV6ConformanceMention_InboundTextPassesIOSCANBeforeKick(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(kick) != 1 {
-		t.Fatalf("v6 conformance (ioscan): expected sanitized mention to still be kicked once, got %d audit=%v", len(kick), audit)
-	}
-	if strings.Contains(kick[0], "ignore previous instructions") || !strings.Contains(kick[0], "[ioscan: content withheld") {
-		t.Fatalf("v6 conformance (ioscan): mention kick carried raw inbound text or lacked the ioscan marker:\n%s", kick[0])
+	if len(kick) != 0 {
+		t.Fatalf("v6 conformance (ioscan): blocked mention should not be kicked, got %d audit=%v", len(kick), audit)
 	}
 	if !containsAudit(audit, "guard=ioscan") {
 		t.Fatalf("v6 conformance (ioscan): blocked verdict was not audited, audit=%v", audit)

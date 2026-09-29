@@ -198,6 +198,7 @@ func (h *Handler) Handle(ctx context.Context, ev Event) error {
 	text, verdict := ioscan.EnforceInput(p.Text)
 	if verdict.Blocked {
 		h.decline(ev, "ioscan", ioscanRules(verdict))
+		return h.mark(ev)
 	}
 	if h.opts.Kick == nil {
 		h.decline(ev, "no-kick", "")
