@@ -1,0 +1,1 @@
+- The operator dashboard now keeps the FAQ at the bottom of the default section layout, below the operational panels operators scan first, while preserving any browser-saved custom section order and reset-layout behavior ([#9426](https://github.com/hivecommons/hive/issues/9426)).
