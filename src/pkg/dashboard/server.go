@@ -634,6 +634,14 @@ type FrontendAgent struct {
 	StallNudges      int    `json:"stallNudges,omitempty"`
 	ActionNudges     int    `json:"actionNudges,omitempty"`
 	TransientNudges  int    `json:"transientNudges,omitempty"`
+	// KickDeliveryTimeouts is the CONSECUTIVE count of undeliverable kicks —
+	// the CLI's pane never reached its input prompt within inputPromptTimeout
+	// (#9445: a CLI wedged mid-turn shows Working/spinner forever with no
+	// error, and state=running/busy=working/deepHealth stall_detection all
+	// stay green through it). Reset to 0 the moment a kick IS deliverable
+	// again. LastKickDeliveryTimeoutAt is when the count last incremented.
+	KickDeliveryTimeouts      int    `json:"kickDeliveryTimeouts,omitempty"`
+	LastKickDeliveryTimeoutAt string `json:"lastKickDeliveryTimeoutAt,omitempty"`
 	// KickOutcome is how the last kicked turn ENDED (#7421): "question" (asked
 	// the operator what to do — a defect), "stand-down" (policy refusal —
 	// blocked), "no-op" (reported nothing produced) or "ended". Empty while

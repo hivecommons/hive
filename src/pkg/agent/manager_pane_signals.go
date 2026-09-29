@@ -395,6 +395,8 @@ func (a *AgentProcess) snapshot() AgentProcess {
 	needsLogin := a.NeedsLogin
 	quotaExhausted := a.QuotaExhausted
 	lastPaneChange := a.LastPaneChange
+	kickDeliveryTimeouts := a.KickDeliveryTimeouts
+	lastKickDeliveryTimeoutAt := a.LastKickDeliveryTimeoutAt
 	conds := make([]watchdog.Condition, len(a.WatchdogConditions))
 	copy(conds, a.WatchdogConditions)
 	a.paneMu.RUnlock()
@@ -427,6 +429,8 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		Starting:                  a.startupLaunchQueued || a.launching,
 		QuotaExhausted:            quotaExhausted,
 		LastPaneChange:            lastPaneChange,
+		KickDeliveryTimeouts:      kickDeliveryTimeouts,
+		LastKickDeliveryTimeoutAt: lastKickDeliveryTimeoutAt,
 		WatchdogConditions:        conds,
 		StallNudges:               a.StallNudges,
 		ActionNudges:              a.ActionNudges,

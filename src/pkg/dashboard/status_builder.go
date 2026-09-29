@@ -592,6 +592,13 @@ const (
 	hiddenReasonDisabled      = "disabled-in-config"
 )
 
+// kickDeliveryTimeoutEscalateThreshold is how many CONSECUTIVE undeliverable
+// kicks (#9445: waitForInputPromptForAgentUnless timing out because the pane
+// never reached its input prompt) escalate the card to BLOCKED. N=3 matches
+// the issue's own ask — one delayed prompt is normal on a long turn, three in
+// a row with an unchanged pane is a wedge.
+const kickDeliveryTimeoutEscalateThreshold = 3
+
 func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, govState governor.State) []FrontendAgent {
 	agents, _ := buildAgentsWithHidden(statuses, cfg, govState)
 	return agents
@@ -870,9 +877,10 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			ActionNudges:    proc.ActionNudges,
 			// #4697: transient-API-error retry nudges, surfaced beside the
 			// other two nudge counters.
-			TransientNudges: proc.TransientNudges,
-			Conditions:      proc.WatchdogConditions,
-			WatchdogMode:    watchdogMode,
+			TransientNudges:      proc.TransientNudges,
+			KickDeliveryTimeouts: proc.KickDeliveryTimeouts,
+			Conditions:           proc.WatchdogConditions,
+			WatchdogMode:         watchdogMode,
 
 			UnscheduledInMode: unscheduledInMode,
 			CadenceModes:      cadenceModes,
@@ -902,6 +910,25 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 				a.StatusEvidence += ": " + line
 			}
 		}
+		// #9445: a CLI wedged mid-turn — the model turn is dead but the tmux
+		// session, the CLI process and the pane are all alive — leaves
+		// state=running/busy=working and deepHealth stall_detection green for
+		// hours, with nothing distinguishing it from a genuinely busy agent.
+		// waitForInputPromptForAgentUnless timing out is the only local
+		// signal: the pane never reaches its input prompt, so a kick cannot be
+		// typed in. This is read-only: it never restarts or interrupts, only
+		// surfaces kickDeliveryTimeoutEscalateThreshold consecutive timeouts
+		// the same way a restart storm or start-block escalates, so an
+		// operator sees a visible cue instead of finding out from a `pane
+		// content at timeout` grep after the fact.
+		if proc.KickDeliveryTimeouts >= kickDeliveryTimeoutEscalateThreshold {
+			a.LastKickDeliveryTimeoutAt = formatOptionalTime(proc.LastKickDeliveryTimeoutAt)
+			a.StructuredStatus = "BLOCKED"
+			a.StatusEvidence = fmt.Sprintf(
+				"blocked: cli-wedged (%d consecutive kicks undeliverable, last %s ago)",
+				proc.KickDeliveryTimeouts, time.Since(proc.LastKickDeliveryTimeoutAt).Round(time.Minute))
+		}
+
 		// #6237: an agent whose CLI dies on every launch reported exactly the
 		// same state=running / busy=working as one doing real work — on a live
 		// spoke that hid a total seven-agent outage (restart_count 918) for

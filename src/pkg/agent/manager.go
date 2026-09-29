@@ -322,15 +322,30 @@ type AgentProcess struct {
 	// authenticated CLI sits there producing nothing. Written under paneMu by
 	// pollTmuxOutputForAgent alongside lastPaneCapture; zero until the poller
 	// has seen two differing captures, which reads as "unknown", never "idle".
-	LastPaneChange          time.Time
-	consentSeenAt           time.Time // watcher: when a consent screen was first seen in the pane
-	lastConsentDismiss      time.Time // watcher: cooldown for re-running dismissInferencePrompts
-	lastInferKickAt         time.Time // stall watchdog: when the last kick was delivered to an inference agent
-	lastInferKickPane       string    // stall watchdog: hash of the visible pane just after kick delivery
-	lastInferKickVisible    string    // stall watchdog: visible pane text just after kick delivery
-	stallNudgeSent          bool      // stall watchdog: at most one nudge per kick
-	lastSessionStallRestart time.Time // session-liveness: last restart for a hung Copilot session
-	StallNudges             int       // total post-kick stall nudges sent (surfaced to the dashboard)
+	LastPaneChange time.Time
+	// KickDeliveryTimeouts counts CONSECUTIVE times waitForInputPromptForAgent
+	// ran out inputPromptTimeout waiting for this agent's pane to reach an
+	// input prompt (#9445): a CLI wedged mid-turn shows Working/spinner
+	// forever with no error, so the pane keeps failing the readiness gate on
+	// every kick attempt with nothing else changing — state=running,
+	// busy=working, deepHealth stall_detection pass, all silent. Reset to 0
+	// the moment the gate succeeds (the pane reached a real input prompt),
+	// so an agent that is merely between long turns never accumulates this.
+	// Guarded by paneMu, like LastPaneChange beside it.
+	KickDeliveryTimeouts int
+	// LastKickDeliveryTimeoutAt is when KickDeliveryTimeouts last incremented,
+	// so the dashboard can report how long the wedge has been observed
+	// ("N kicks undeliverable, last Xm ago") instead of only a count. Zero
+	// while KickDeliveryTimeouts is 0. Guarded by paneMu.
+	LastKickDeliveryTimeoutAt time.Time
+	consentSeenAt             time.Time // watcher: when a consent screen was first seen in the pane
+	lastConsentDismiss        time.Time // watcher: cooldown for re-running dismissInferencePrompts
+	lastInferKickAt           time.Time // stall watchdog: when the last kick was delivered to an inference agent
+	lastInferKickPane         string    // stall watchdog: hash of the visible pane just after kick delivery
+	lastInferKickVisible      string    // stall watchdog: visible pane text just after kick delivery
+	stallNudgeSent            bool      // stall watchdog: at most one nudge per kick
+	lastSessionStallRestart   time.Time // session-liveness: last restart for a hung Copilot session
+	StallNudges               int       // total post-kick stall nudges sent (surfaced to the dashboard)
 	// Transient API-error recovery (#4697), for CLI backends. lastTransientNudge
 	// is the cooldown anchor — the poller runs every 3s and the error text stays
 	// on screen after the nudge is typed, so without it one incident would fire
@@ -1076,6 +1091,16 @@ func (m *Manager) waitForInputPromptForAgentUnless(agent *AgentProcess, abort fu
 				"has_bob_placeholder", strings.Contains(output, bobInputPlaceholder),
 				"has_codex_ready", strings.Contains(output, codexInputPromptMarker),
 				"head_500", truncateHead(output, 500), "tail_500", truncateTail(output, 500))
+			// #9445: this timeout is the only local signal a wedged mid-turn
+			// CLI produces — the pane shows Working/spinner with no error and
+			// nothing else here changes. Count it so a repeatedly-undeliverable
+			// kick becomes visible instead of a `pane content at timeout` line
+			// an operator has to notice by hand.
+			now := time.Now()
+			agent.paneMu.Lock()
+			agent.KickDeliveryTimeouts++
+			agent.LastKickDeliveryTimeoutAt = now
+			agent.paneMu.Unlock()
 			return false
 		case <-ticker.C:
 			// A consent/selection screen also contains "❯" but is NOT a
@@ -1095,6 +1120,13 @@ func (m *Manager) waitForInputPromptForAgentUnless(agent *AgentProcess, abort fu
 				continue
 			}
 			if paneShowsInputPrompt(visible) {
+				// The gate succeeded: this agent's pane is not wedged, so any
+				// streak of prior timeouts no longer describes its current
+				// state (#9445).
+				agent.paneMu.Lock()
+				agent.KickDeliveryTimeouts = 0
+				agent.LastKickDeliveryTimeoutAt = time.Time{}
+				agent.paneMu.Unlock()
 				return true
 			}
 		}
