@@ -2091,6 +2091,12 @@
       border-radius: var(--radius-sm); padding: var(--sp-2);
     }
     .nps-card-follow .hv-btn { align-self: flex-end; }
+    .nps-card-consent { display: flex; align-items: flex-start; gap: var(--sp-2); font-size: var(--fs-xs); color: var(--text); }
+    .nps-card-consent[hidden] { display: none; }
+    .nps-card-analytics {
+      display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2);
+      margin-top: var(--sp-4); font-size: var(--fs-xs); color: var(--muted);
+    }
     @media (max-width: 768px) {
       .nps-card { left: var(--sp-4); right: var(--sp-4); width: auto; }
     }
@@ -32180,21 +32186,35 @@ function burnAreaChart() {
     //
     // The eligibility rules are pure functions of (state, now, timing) so
     // nps_ui_test.go can execute them under node without a browser.
+    //
+    // Operator options arrive in the same status response: timing overrides
+    // (hub.nps_timing), an optional GA4 measurement ID (off unless the
+    // operator sets one; gtag.js is loaded only then, only once the card is
+    // about to show, and never for a viewer who opted out; events carry
+    // score, category and feedback LENGTH, never the text), and the opt-in
+    // detractor public issue (score 1, explicit consent, minimum length).
 
     const NPS_STATE_LS_KEY = 'hive-nps-state-v1';
     const NPS_SESSION_COUNT_LS_KEY = 'hive-nps-session-count-v1';
     const NPS_SESSION_MARK_SS_KEY = 'hive-nps-session-counted-v1';
     const NPS_ENGAGED_MS_SS_KEY = 'hive-nps-engaged-ms-v1';
+    // Per-browser analytics opt-out. '1' means never send GA4 events.
+    const NPS_ANALYTICS_OPT_OUT_LS_KEY = 'hive-analytics-opt-out-v1';
+    // Shape of a GA4 measurement ID; the server applies the same pattern.
+    const NPS_GA4_ID_RE = /^G-[A-Z0-9]{4,20}$/;
+    const NPS_GTAG_SRC = 'https://www.googletagmanager.com/gtag/js?id=';
     // How long the thank-you card stays up after a submission.
     const NPS_THANK_YOU_DISPLAY_MS = 2000;
 
     // npsTiming returns the timing/backoff rules, mirroring the console's
-    // useNPSSurvey.ts constants one for one.
-    function npsTiming() {
+    // useNPSSurvey.ts constants one for one, with any operator overrides
+    // (hub.nps_timing, from the status response's timing object) applied.
+    // An override must be a positive integer; anything else keeps the constant.
+    function npsTiming(overrides) {
       const MS_PER_SECOND = 1000;
       const MS_PER_MINUTE = 60 * MS_PER_SECOND;
       const MS_PER_DAY = 24 * 60 * MS_PER_MINUTE;
-      return {
+      const t = {
         MS_PER_DAY: MS_PER_DAY,
         // Never before the 2nd session.
         MIN_SESSIONS_BEFORE_NPS: 2,
@@ -32217,6 +32237,15 @@ function burnAreaChart() {
         // Bound on the submit round-trip (the spoke then calls the hub).
         POST_TIMEOUT_MS: 10 * MS_PER_SECOND,
       };
+      const o = overrides && typeof overrides === 'object' ? overrides : {};
+      const pick = (v, fallback) => (Number.isInteger(v) && v > 0 ? v : fallback);
+      t.MIN_SESSIONS_BEFORE_NPS = pick(o.min_sessions, t.MIN_SESSIONS_BEFORE_NPS);
+      t.SECOND_SESSION_MIN_ENGAGEMENT_MS = pick(o.second_session_min_engagement_ms, t.SECOND_SESSION_MIN_ENGAGEMENT_MS);
+      t.RETURNING_USER_MIN_ENGAGEMENT_MS = pick(o.returning_min_engagement_ms, t.RETURNING_USER_MIN_ENGAGEMENT_MS);
+      t.REPROMPT_DAYS = pick(o.reprompt_days, t.REPROMPT_DAYS);
+      t.DISMISS_RETRY_DAYS = pick(o.dismiss_retry_days, t.DISMISS_RETRY_DAYS);
+      t.MAX_DISMISSALS = pick(o.max_dismissals, t.MAX_DISMISSALS);
+      return t;
     }
 
     function npsDefaultState() {
@@ -32300,6 +32329,44 @@ function burnAreaChart() {
       return 'What would make the hive better for you? (optional)';
     }
 
+    // npsGA4MeasurementID returns the status response's GA4 ID when it is
+    // well-formed, else '' (GA4 off).
+    function npsGA4MeasurementID(status) {
+      const id = status && typeof status.ga4_measurement_id === 'string' ? status.ga4_measurement_id : '';
+      return NPS_GA4_ID_RE.test(id) ? id : '';
+    }
+
+    // npsAnalyticsParams is the ONLY payload builder for the hive_nps_response
+    // event. It takes the feedback text solely to measure it: the result holds
+    // the score, its category and the text's length, never the text.
+    function npsAnalyticsParams(score, feedbackText) {
+      const params = {};
+      if (Number.isInteger(score)) {
+        params.score = score;
+        params.category = npsCategory(score);
+      }
+      params.feedback_length = typeof feedbackText === 'string' ? feedbackText.trim().length : 0;
+      return params;
+    }
+
+    // npsDetractorIssueAllowed: the hive opted in (status.detractor_issue)
+    // and the chosen score is the one allowed to open a public issue.
+    function npsDetractorIssueAllowed(status, score) {
+      const d = status && status.detractor_issue;
+      return !!(d && d.enabled === true && Number.isInteger(d.score) && score === d.score);
+    }
+
+    // npsIssueRequestBody builds the POST /api/feedback/nps/issue body, or
+    // returns null unless every precondition holds: opted in, detractor
+    // score, the consent box ticked, and at least min_feedback_chars of text.
+    function npsIssueRequestBody(status, score, feedbackText, consent) {
+      if (consent !== true || !npsDetractorIssueAllowed(status, score)) return null;
+      const text = typeof feedbackText === 'string' ? feedbackText.trim() : '';
+      const min = Number(status.detractor_issue.min_feedback_chars) || 0;
+      if (text.length < min) return null;
+      return { score: score, feedback: text, consent: true };
+    }
+
     const NPS_OPTIONS = [
       { score: 1, emoji: '\u{1F620}', label: 'Not great' },
       { score: 2, emoji: '\u{1F610}', label: 'Meh' },
@@ -32339,19 +32406,63 @@ function burnAreaChart() {
     function npsAddEngagedMs(delta) {
       try { sessionStorage.setItem(NPS_ENGAGED_MS_SS_KEY, String(npsEngagedMs() + delta)); } catch (e) { /* non-fatal */ }
     }
+    // npsAnalyticsOptedOut: the browser's Global Privacy Control or Do Not
+    // Track signal, or this dashboard's own per-browser opt-out. Unreadable
+    // storage counts as opted out (fail closed).
+    function npsAnalyticsOptedOut() {
+      try {
+        if (typeof navigator !== 'undefined' && (navigator.globalPrivacyControl === true || navigator.doNotTrack === '1')) return true;
+        return localStorage.getItem(NPS_ANALYTICS_OPT_OUT_LS_KEY) === '1';
+      } catch (e) { return true; }
+    }
+    function npsSetAnalyticsOptOut(optOut) {
+      try {
+        if (optOut) localStorage.setItem(NPS_ANALYTICS_OPT_OUT_LS_KEY, '1');
+        else localStorage.removeItem(NPS_ANALYTICS_OPT_OUT_LS_KEY);
+      } catch (e) { /* storage blocked - npsAnalyticsOptedOut already fails closed */ }
+    }
+
+    let _npsGtagId = '';
+    // npsEnsureGtag loads gtag.js once, for a configured ID only. Automatic
+    // page views, Google signals and ad personalization are all off: the only
+    // hits are the hive_nps_* events npsTrack sends.
+    function npsEnsureGtag(id) {
+      if (_npsGtagId) return;
+      _npsGtagId = id;
+      window.dataLayer = window.dataLayer || [];
+      window.gtag = function () { window.dataLayer.push(arguments); };
+      window.gtag('js', new Date());
+      window.gtag('config', id, { send_page_view: false, allow_google_signals: false, allow_ad_personalization_signals: false });
+      const el = document.createElement('script');
+      el.async = true;
+      el.src = NPS_GTAG_SRC + encodeURIComponent(id);
+      document.head.appendChild(el);
+    }
+    // npsTrack sends one hive_nps_* event, or does nothing (returns false)
+    // when GA4 is not configured or the viewer opted out.
+    function npsTrack(status, name, params) {
+      const id = npsGA4MeasurementID(status);
+      if (!id || npsAnalyticsOptedOut()) return false;
+      npsEnsureGtag(id);
+      window.gtag('event', name, params);
+      return true;
+    }
 
     let _npsShownThisLoad = false;
     let _npsCard = null;
     let _npsKeyHandler = null;
+    // The status response and effective timing for this page load.
+    let _npsStatus = null;
+    let _npsTimingActive = null;
+    function npsActiveTiming() { return _npsTimingActive || npsTiming(); }
 
     // initNPSSurvey decides whether this page load may show the prompt and,
     // if so, waits for enough engaged time. At most once per page load.
+    // The status is fetched first because it carries the operator's timing
+    // overrides, which decide the session and backoff checks below.
     async function initNPSSurvey() {
-      const t = npsTiming();
       const sessionCount = npsBumpSessionCount();
-      if (sessionCount < t.MIN_SESSIONS_BEFORE_NPS) return;
-      const state = npsLoadState();
-      if (!state || !npsIsEligible(state, Date.now(), t)) return;
+      if (sessionCount < 1) return; // storage blocked: no prompt
       let status = null;
       try {
         const resp = await fetch('/api/feedback/nps/status');
@@ -32359,6 +32470,12 @@ function burnAreaChart() {
         status = await resp.json();
       } catch (e) { return; }
       if (!status || status.can_submit !== true) return;
+      const t = npsTiming(status.timing);
+      _npsStatus = status;
+      _npsTimingActive = t;
+      if (sessionCount < t.MIN_SESSIONS_BEFORE_NPS) return;
+      const state = npsLoadState();
+      if (!state || !npsIsEligible(state, Date.now(), t)) return;
 
       let lastInput = Date.now();
       let lastTick = Date.now();
@@ -32390,9 +32507,27 @@ function burnAreaChart() {
     }
 
     function dismissNPSSurvey() {
-      const t = npsTiming();
+      const t = npsActiveTiming();
       npsSaveState(npsStateAfterDismiss(npsLoadState() || npsDefaultState(), Date.now(), t));
+      npsTrack(_npsStatus, 'hive_nps_dismissed', {});
       npsCloseCard();
+    }
+
+    // npsOpenIssue files the detractor's public issue after their response
+    // was accepted. Failure is reported but never undoes the response.
+    async function npsOpenIssue(body) {
+      try {
+        const resp = await fetch('/api/feedback/nps/issue', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(String((data && data.error) || ('HTTP ' + resp.status)));
+        showToast('Opened public issue #' + String(Number(data && data.number) || '') + ' - thank you', 'success');
+      } catch (e) {
+        showToast('Could not open the public issue: ' + (e && e.message ? e.message : 'network error'), 'error');
+      }
     }
 
     function npsText(tag, cls, text) {
@@ -32434,6 +32569,20 @@ function burnAreaChart() {
       submit.type = 'button';
       follow.appendChild(prompt);
       follow.appendChild(text);
+      // Opt-in detractor public issue (hub.nps_detractor_issues): a consent
+      // checkbox, unticked by default, shown only for the detractor score.
+      const consentRow = npsText('label', 'nps-card-consent');
+      consentRow.hidden = true;
+      const consent = document.createElement('input');
+      consent.type = 'checkbox';
+      consentRow.appendChild(consent);
+      if (status && status.detractor_issue && status.detractor_issue.enabled === true) {
+        const where = typeof status.detractor_issue.repo === 'string' && status.detractor_issue.repo
+          ? ' in ' + status.detractor_issue.repo : '';
+        consentRow.appendChild(npsText('span', '',
+          'Also open a public issue' + where + ' with this feedback. Anyone can read it; your name is not included.'));
+        follow.appendChild(consentRow);
+      }
       follow.appendChild(submit);
 
       for (const opt of NPS_OPTIONS) {
@@ -32448,24 +32597,35 @@ function burnAreaChart() {
           for (const other of scale.children) other.setAttribute('aria-pressed', 'false');
           b.setAttribute('aria-pressed', 'true');
           prompt.textContent = npsFeedbackPrompt(npsCategory(opt.score));
+          consentRow.hidden = !npsDetractorIssueAllowed(status, opt.score);
+          if (consentRow.hidden) consent.checked = false;
           follow.hidden = false;
         });
         scale.appendChild(b);
       }
       card.appendChild(scale);
       card.appendChild(follow);
+      if (npsGA4MeasurementID(status)) card.appendChild(npsAnalyticsNotice());
 
       submit.addEventListener('click', async () => {
         if (selected === null) return;
+        const feedbackText = text.value.trim();
+        const wantIssue = consent.checked && npsDetractorIssueAllowed(status, selected);
+        const issueBody = wantIssue ? npsIssueRequestBody(status, selected, feedbackText, true) : null;
+        if (wantIssue && !issueBody) {
+          const min = Number(status.detractor_issue.min_feedback_chars) || 0;
+          showToast('Please write at least ' + min + ' characters to open a public issue, or untick the box.', 'error');
+          return;
+        }
         submit.disabled = true;
-        const t = npsTiming();
+        const t = npsActiveTiming();
         try {
           const ctrl = new AbortController();
           const timeout = setTimeout(() => ctrl.abort(), t.POST_TIMEOUT_MS);
           const resp = await fetch('/api/feedback/nps', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ score: selected, feedback: text.value.trim() || undefined }),
+            body: JSON.stringify({ score: selected, feedback: feedbackText || undefined }),
             signal: ctrl.signal,
           });
           clearTimeout(timeout);
@@ -32480,6 +32640,8 @@ function burnAreaChart() {
           }
           if (!resp.ok) throw new Error(String((data && data.error) || ('HTTP ' + resp.status)));
           npsSaveState(npsStateAfterSubmit(Date.now()));
+          npsTrack(status, 'hive_nps_response', npsAnalyticsParams(selected, feedbackText));
+          if (issueBody) npsOpenIssue(issueBody);
           while (card.firstChild) card.removeChild(card.firstChild);
           card.appendChild(npsText('div', 'nps-card-title', 'Thank you!'));
           card.appendChild(npsText('div', 'nps-card-prompt', 'Your feedback helps shape the hive.'));
@@ -32499,6 +32661,32 @@ function burnAreaChart() {
       document.addEventListener('keydown', _npsKeyHandler);
       _npsCard = card;
       document.body.appendChild(card);
+      npsTrack(status, 'hive_nps_survey_shown', {});
+    }
+
+    // npsAnalyticsNotice says, on the card itself, that this prompt sends
+    // anonymous usage events, and lets the viewer turn them off (or back on)
+    // for this browser.
+    function npsAnalyticsNotice() {
+      const row = npsText('div', 'nps-card-analytics');
+      const label = npsText('span', '');
+      const toggle = npsText('button', 'hv-btn btn-ghost btn-sm');
+      toggle.type = 'button';
+      const render = () => {
+        const off = npsAnalyticsOptedOut();
+        label.textContent = off
+          ? 'Usage analytics are off in this browser.'
+          : 'This prompt sends anonymous usage events (never your text) to Google Analytics.';
+        toggle.textContent = off ? 'Turn on' : 'Turn off';
+      };
+      toggle.addEventListener('click', () => {
+        npsSetAnalyticsOptOut(!npsAnalyticsOptedOut());
+        render();
+      });
+      render();
+      row.appendChild(label);
+      row.appendChild(toggle);
+      return row;
     }
 
     // ── Welcome / Getting Started dialog ──────────────────────────────

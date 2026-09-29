@@ -224,7 +224,8 @@ func TestNPSIssueRequiresNPSAndForge(t *testing.T) {
 func TestNPSIssueValidation(t *testing.T) {
 	s, f := npsIssueServer(t, true)
 	if got := npsStatus(t, s, "alice", "owner"); got.DetractorIssue == nil ||
-		got.DetractorIssue.Score != npsDetractorScore || got.DetractorIssue.MinFeedbackChars != npsIssueMinFeedbackRunes {
+		got.DetractorIssue.Score != npsDetractorScore || got.DetractorIssue.MinFeedbackChars != npsIssueMinFeedbackRunes ||
+		got.DetractorIssue.Repo != "acme/widgets" {
 		t.Fatalf("positive control: status should offer detractor issues, got %+v", got.DetractorIssue)
 	}
 	exactlyMin := strings.Repeat("x", npsIssueMinFeedbackRunes)

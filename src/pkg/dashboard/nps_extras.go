@@ -70,11 +70,13 @@ type npsTimingPayload struct {
 	MaxDismissals                int   `json:"max_dismissals"`
 }
 
-// npsDetractorIssueStatus tells the dashboard to offer the consent checkbox.
+// npsDetractorIssueStatus tells the dashboard to offer the consent checkbox,
+// and names the repository so the user knows where the issue would appear.
 type npsDetractorIssueStatus struct {
-	Enabled          bool `json:"enabled"`
-	Score            int  `json:"score"`
-	MinFeedbackChars int  `json:"min_feedback_chars"`
+	Enabled          bool   `json:"enabled"`
+	Score            int    `json:"score"`
+	MinFeedbackChars int    `json:"min_feedback_chars"`
+	Repo             string `json:"repo"`
 }
 
 func npsTimingFromConfig(t config.NPSTimingConfig) *npsTimingPayload {
@@ -97,11 +99,12 @@ func (s *Server) npsStatusExtras(resp *npsStatusResponse) {
 	}
 	resp.Timing = npsTimingFromConfig(s.deps.Config.Hub.EffectiveNPSTiming())
 	resp.GA4MeasurementID = config.NPSGA4MeasurementID()
-	if s.npsDetractorIssueRepo() != "" {
+	if repo := s.npsDetractorIssueRepo(); repo != "" {
 		resp.DetractorIssue = &npsDetractorIssueStatus{
 			Enabled:          true,
 			Score:            npsDetractorScore,
 			MinFeedbackChars: npsIssueMinFeedbackRunes,
+			Repo:             repo,
 		}
 	}
 }
