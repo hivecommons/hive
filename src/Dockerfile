@@ -216,7 +216,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # without any binary surgery. Do NOT re-add the old rm-the-binary hack: the
 # 1.0.78 npm wrapper only spawns the platform binary — deleting it now
 # breaks the CLI outright instead of triggering a fallback.
-ARG COPILOT_VERSION=1.0.88
+ARG COPILOT_VERSION=1.0.89
 # NOTE (#7365): --ignore-scripts is safe here and needs NO vendor follow-up
 # step, unlike Layer 7 (claude-code). The two packages link their platform
 # binary by different mechanisms:
