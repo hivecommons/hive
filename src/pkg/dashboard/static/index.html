@@ -2275,7 +2275,10 @@
       transition: transform 0.2s;
     }
     .config-toggle-switch.on::before { transform: translateX(16px); }
+    .config-toggle-switch.on.danger { background: var(--red); }
     .config-toggle-label { font-size: 0.8rem; color: var(--text); }
+    .config-toggle-label.danger { color: var(--red); font-weight: 600; }
+    .config-section-rule { border: none; border-top: 1px solid var(--border); margin: var(--sp-6) var(--sp-0); }
 
     /* A heading INSIDE a settings section, for a feature with several distinct
        concerns. It groups by whitespace and a quiet label rather than a rule:
@@ -23751,11 +23754,11 @@ function burnAreaChart() {
         </div>
 
         <div class="config-toggle">
-          <div class="config-toggle-switch ${rejectUnknownEffort ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="hub" data-key="contribute_reject_unknown_effort" style="${rejectUnknownEffort ? 'background:var(--red)' : ''}"></div>
-          <span class="config-toggle-label" style="${rejectUnknownEffort ? 'color:var(--red);font-weight:600' : ''}">Reject Unknown Effort <span class="config-info">i<span class="config-tooltip">When enabled and an effort floor is set, contributors whose reasoning effort is empty or not recognised for their backend are rejected at connect time. When off they are admitted.</span></span></span>
+          <div class="config-toggle-switch ${rejectUnknownEffort ? 'on danger' : ''}" data-action="toggleConfigSwitch" data-section="hub" data-key="contribute_reject_unknown_effort"></div>
+          <span class="config-toggle-label ${rejectUnknownEffort ? 'danger' : ''}">Reject Unknown Effort <span class="config-info">i<span class="config-tooltip">When enabled and an effort floor is set, contributors whose reasoning effort is empty or not recognised for their backend are rejected at connect time. When off they are admitted.</span></span></span>
         </div>
 
-        <hr style="border-color:var(--border);margin:var(--sp-6) var(--sp-0)">
+        <hr class="config-section-rule">
 
         ${renderFilterWithMode({
           label: 'Labels', noun: 'label', unit: 'issue', perLabel: true,
