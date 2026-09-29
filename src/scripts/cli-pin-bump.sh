@@ -11,10 +11,12 @@
 # claude-opus-5-5 for six weeks).
 #
 # This script is the mechanical half of the fix. .github/workflows/cli-pin-bump.yml
-# runs it daily, builds the image with the new pin, smokes `<cli> --version`,
-# and opens one PR per CLI. It never guesses a hash: every digest below is
-# computed from the artifact it downloads, and cross-checked against the
-# vendor's published digest wherever one exists.
+# runs it daily and opens one PR per CLI only for major/minor version changes.
+# Patch-only releases are resolved but skipped by default; set
+# HIVE_PIN_INCLUDE_PATCH=1 to force the old "bump every changed version"
+# behavior. It never guesses a hash: every digest below is computed from the
+# artifact it downloads, and cross-checked against the vendor's published
+# digest wherever one exists.
 #
 # Usage:
 #   cli-pin-bump.sh current <cli>            print the version pinned in src/Dockerfile
@@ -40,6 +42,7 @@
 #   HIVE_PIN_WORKDIR             where downloads land (default: mktemp -d, removed on exit)
 #   GH_TOKEN / GITHUB_TOKEN      optional; raises the GitHub API rate limit
 #   HIVE_PIN_HTTP                override the fetch command (tests only)
+#   HIVE_PIN_INCLUDE_PATCH=1     include patch-only bumps (default: skip)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -133,11 +136,12 @@ cross_check() {
 
 read_arg() {
   # read_arg <file> <ARG_NAME> -> value
-  local f="$1" name="$2" line
+  local f="$1" name="$2" line prefix
   line="$(grep -E "^ARG ${name}=" "$f" || true)"
   [ -n "$line" ] || die "no 'ARG ${name}=' line in $f"
   [ "$(printf '%s\n' "$line" | wc -l | tr -d ' ')" = "1" ] || die "more than one 'ARG ${name}=' line in $f"
-  printf '%s\n' "${line#ARG ${name}=}"
+  prefix="ARG ${name}="
+  printf '%s\n' "${line#"$prefix"}"
 }
 
 set_arg() {
@@ -163,11 +167,34 @@ kv_get() {
   printf '%s\n' "$v"
 }
 
-major_of() { printf '%s\n' "${1%%.*}"; }
+major_of() {
+  local v="${1%%,*}"
+  v="${v%%-*}"
+  printf '%s\n' "${v%%.*}"
+}
+
+minor_of() {
+  local v="${1%%,*}"
+  [[ "$v" =~ ^[0-9]+\.([0-9]+)\. ]] || return 1
+  printf '%s\n' "${BASH_REMATCH[1]}"
+}
 
 is_major_bump() {
   # is_major_bump <old> <new> -> prints true/false
   if [ "$(major_of "$1")" != "$(major_of "$2")" ]; then echo true; else echo false; fi
+}
+
+is_patch_only_bump() {
+  # is_patch_only_bump <old> <new> -> true when both parse as the same major.minor.
+  # Versions may carry prerelease/build suffixes (1.2.3-beta.1) or agy's
+  # cask build id (1.2.3,1234 / 1.2.3-1234); only numeric major.minor matters.
+  local old_major new_major old_minor new_minor
+  old_major="$(major_of "$1")"
+  new_major="$(major_of "$2")"
+  old_minor="$(minor_of "$1")" || return 1
+  new_minor="$(minor_of "$2")" || return 1
+  [[ "$old_major" =~ ^[0-9]+$ && "$new_major" =~ ^[0-9]+$ ]] || return 1
+  [ "$old_major" = "$new_major" ] && [ "$old_minor" = "$new_minor" ]
 }
 
 # ---------------------------------------------------------------------------
@@ -448,27 +475,40 @@ cmd_apply() {
 }
 
 cmd_bump() {
-  local cli="$1" out="${2:-/dev/stdout}" kv old new
+  local cli="$1" out="${2:-/dev/stdout}" kv old new old_report new_report
   kv="$WORK/$cli.kv"
   old="$(current_version "$cli")"
   resolve_cli "$cli" > "$kv"
   new="$(kv_get "$kv" VERSION)"
-  # The hub image pins agy as "<version>" while the resolved value is the same
-  # shape, so a plain compare works for every CLI.
-  if [ "$old" = "$new" ]; then
-    printf 'OLD=%s\nNEW=%s\nMAJOR=false\nCHANGED=false\n' "$old" "$new" > "$out"
-    log "$cli: $old is current"
+  old_report="$old"
+  new_report="$new"
+  if [ "$cli" = "agy" ]; then
+    old_report="${old},$(read_arg "$DOCKERFILE" AGY_BUILD)"
+    new_report="${new},$(kv_get "$kv" BUILD)"
+  fi
+  # Most CLIs compare by VERSION. agy also carries a build id, so its
+  # effective upstream version is "<semver>,<build>".
+  if [ "$old_report" = "$new_report" ]; then
+    printf 'OLD=%s\nNEW=%s\nMAJOR=false\nCHANGED=false\n' "$old_report" "$new_report" > "$out"
+    log "$cli: $old_report is current"
+    return 0
+  fi
+  if [ "${HIVE_PIN_INCLUDE_PATCH:-}" != "1" ] && is_patch_only_bump "$old_report" "$new_report"; then
+    printf 'OLD=%s\nNEW=%s\nMAJOR=false\nCHANGED=false\nSKIPPED=patch\n' "$old_report" "$new_report" > "$out"
+    log "$cli: $old_report -> $new_report is a patch release; pins move on major/minor only"
     return 0
   fi
   apply_cli "$cli" "$kv"
-  printf 'OLD=%s\nNEW=%s\nMAJOR=%s\nCHANGED=true\n' "$old" "$new" "$(is_major_bump "$old" "$new")" > "$out"
-  log "$cli: $old -> $new"
+  printf 'OLD=%s\nNEW=%s\nMAJOR=%s\nCHANGED=true\n' "$old_report" "$new_report" "$(is_major_bump "$old_report" "$new_report")" > "$out"
+  log "$cli: $old_report -> $new_report"
 }
 
 main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
-    list) printf '%s\n' $CLIS ;;
+    list)
+      # shellcheck disable=SC2086 # CLIS is a deliberate space-separated list.
+      printf '%s\n' $CLIS ;;
     current) [ $# -eq 1 ] || die "usage: current <cli>"; cmd_current "$1" ;;
     resolve|bump|apply)
       [ $# -ge 1 ] || die "usage: $cmd <cli> ..."

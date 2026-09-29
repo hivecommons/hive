@@ -84,6 +84,9 @@ run() {
   # run <args...>: the script against the fixtures; stdout to $OUT, rc in $RC
   OUT="$(HIVE_PIN_DOCKERFILE="$TMP/Dockerfile" HIVE_PIN_CONTRIB_DOCKERFILE="$TMP/Dockerfile.contributor" \
          HIVE_PIN_PI_TEST="$TMP/pi_test.go" HIVE_PIN_WORKDIR="$TMP/work" \
+         HIVE_PIN_INCLUDE_PATCH="${HIVE_PIN_INCLUDE_PATCH:-}" \
+         STUB_CLAUDE_VERSION="${STUB_CLAUDE_VERSION:-}" \
+         STUB_AGY_VERSION="${STUB_AGY_VERSION:-}" \
          bash "$SCRIPT" "$@" 2>"$TMP/stderr")" && RC=0 || RC=$?
   ERR="$(cat "$TMP/stderr")"
 }
@@ -171,24 +174,51 @@ cat > "$TMP/http-stub.sh" <<'STUB'
 #!/usr/bin/env bash
 url="$1"; out="$2"
 case "$url" in
-  *"/@anthropic-ai/claude-code/latest") printf '{"version":"2.1.280"}' > "$out" ;;
+  *"/@anthropic-ai/claude-code/latest") printf '{"version":"%s"}' "${STUB_CLAUDE_VERSION:-2.1.280}" > "$out" ;;
   *"/@openai/codex/latest") printf '{"version":"0.153.4"}' > "$out" ;;
+  *"/api/cask/antigravity-cli.json")
+    amd64="$(printf 'agy-amd64' | shasum -a 256 | cut -d' ' -f1)"
+    arm64="$(printf 'agy-arm64' | shasum -a 256 | cut -d' ' -f1)"
+    printf '{"version":"%s","variations":{"x86_64_linux":{"sha256":"%s"},"arm64_linux":{"sha256":"%s"}}}' "${STUB_AGY_VERSION:-1.1.20,5905287731871744}" "$amd64" "$arm64" > "$out" ;;
+  *"/linux-x64/cli_linux_x64.tar.gz") printf 'agy-amd64' > "$out" ;;
+  *"/linux-arm/cli_linux_arm64.tar.gz") printf 'agy-arm64' > "$out" ;;
   *) echo "stub: unexpected url $url" >&2; exit 1 ;;
 esac
 STUB
 chmod +x "$TMP/http-stub.sh"
 export HIVE_PIN_HTTP="$TMP/http-stub.sh"
 run bump claude
-[ $RC -eq 0 ] && [ "$OUT" = "$(printf 'OLD=2.1.226\nNEW=2.1.280\nMAJOR=false\nCHANGED=true')" ] \
-  && [ "$(arg Dockerfile.contributor CLAUDE_CODE_VERSION)" = "2.1.280" ] \
-  && pass "bump resolves, applies and reports OLD/NEW/MAJOR/CHANGED" || fail "bump claude" "$OUT $ERR"
+[ $RC -eq 0 ] && [ "$OUT" = "$(printf 'OLD=2.1.226\nNEW=2.1.280\nMAJOR=false\nCHANGED=false\nSKIPPED=patch')" ] \
+  && [ "$(arg Dockerfile CLAUDE_CODE_VERSION)" = "2.1.226" ] \
+  && [ "$(arg Dockerfile.contributor CLAUDE_CODE_VERSION)" = "2.1.226" ] \
+  && pass "patch-only bump reports skipped and leaves Dockerfiles untouched" || fail "patch-only bump" "$OUT $ERR"
+STUB_CLAUDE_VERSION=2.2.0 run bump claude
+[ $RC -eq 0 ] && [ "$OUT" = "$(printf 'OLD=2.1.226\nNEW=2.2.0\nMAJOR=false\nCHANGED=true')" ] \
+  && [ "$(arg Dockerfile.contributor CLAUDE_CODE_VERSION)" = "2.2.0" ] \
+  && pass "minor-version bump still applies" || fail "minor bump" "$OUT $ERR"
 run bump codex
 [ $RC -eq 0 ] && [ "$OUT" = "$(printf 'OLD=0.153.4\nNEW=0.153.4\nMAJOR=false\nCHANGED=false')" ] \
   && pass "bump reports CHANGED=false when the pin is already current" || fail "bump codex" "$OUT $ERR"
 make_fixtures
 sed -i.bak 's/^ARG CLAUDE_CODE_VERSION=.*/ARG CLAUDE_CODE_VERSION=1.9.9/' "$TMP/Dockerfile"
-run bump claude
+STUB_CLAUDE_VERSION=2.1.280 run bump claude
 [ $RC -eq 0 ] && printf '%s' "$OUT" | grep -q '^MAJOR=true$' && pass "a major-version change is flagged MAJOR=true" || fail "major flag" "$OUT"
+make_fixtures
+HIVE_PIN_INCLUDE_PATCH=1 STUB_CLAUDE_VERSION=2.1.280 run bump claude
+[ $RC -eq 0 ] && [ "$OUT" = "$(printf 'OLD=2.1.226\nNEW=2.1.280\nMAJOR=false\nCHANGED=true')" ] \
+  && [ "$(arg Dockerfile CLAUDE_CODE_VERSION)" = "2.1.280" ] \
+  && pass "HIVE_PIN_INCLUDE_PATCH=1 applies a patch-only bump" || fail "patch override" "$OUT $ERR"
+make_fixtures
+run bump agy
+[ $RC -eq 0 ] && [ "$OUT" = "$(printf 'OLD=1.1.19,4894004681244672\nNEW=1.1.20,5905287731871744\nMAJOR=false\nCHANGED=false\nSKIPPED=patch')" ] \
+  && [ "$(arg Dockerfile AGY_VERSION)" = "1.1.19" ] \
+  && [ "$(arg Dockerfile AGY_BUILD)" = "4894004681244672" ] \
+  && pass "agy-shaped version with build id is skipped as patch-only" || fail "agy patch-only" "$OUT $ERR"
+make_fixtures
+HIVE_PIN_INCLUDE_PATCH=1 STUB_AGY_VERSION=1.1.19,5905287731871744 run bump agy
+[ $RC -eq 0 ] && [ "$OUT" = "$(printf 'OLD=1.1.19,4894004681244672\nNEW=1.1.19,5905287731871744\nMAJOR=false\nCHANGED=true')" ] \
+  && [ "$(arg Dockerfile AGY_BUILD)" = "5905287731871744" ] \
+  && pass "HIVE_PIN_INCLUDE_PATCH=1 applies an agy build-only bump" || fail "agy patch override" "$OUT $ERR"
 unset HIVE_PIN_HTTP
 
 echo

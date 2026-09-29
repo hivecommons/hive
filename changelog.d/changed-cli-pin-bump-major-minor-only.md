@@ -1,0 +1,1 @@
+- Changed the CLI pin bump workflow to skip patch-only releases by default and only open PRs for major/minor updates.

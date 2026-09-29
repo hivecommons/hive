@@ -40,7 +40,15 @@ working-state text). The contributor path already writes
 
 ## What `.github/workflows/cli-pin-bump.yml` does
 
-Once a day (`23 5 * * *`) and on `workflow_dispatch`, one job per CLI:
+Once a day (`23 5 * * *`) and on `workflow_dispatch`, one job per CLI checks
+for a new release. The daily automation opens PRs only for **major or minor**
+version changes. Patch-only releases (`X.Y.Z` -> `X.Y.W`, including suffixes
+such as prereleases or agy's build id) are treated as current and skipped so
+routine patch churn does not create PRs. To force a patch bump, dispatch the
+workflow with `include_patch=true` (or run the script with
+`HIVE_PIN_INCLUDE_PATCH=1`).
+
+For eligible major/minor changes, the job:
 
 1. **Resolve.** `src/scripts/cli-pin-bump.sh bump <cli>` asks the CLI's
    source of truth for the latest release and, for download-verified CLIs,
@@ -70,9 +78,9 @@ Labels on a bump PR:
   frozen line.
 - `dependencies`, `no-changelog` - the dependabot convention; a pin bump is
   dependency churn and needs no changelog fragment.
-- `needs-human` - added only for a **major** version change. Patch and minor
-  bumps follow the repo's normal merge-on-green path; a major bump waits for
-  a person to read the release notes.
+- `needs-human` - added only for a **major** version change. Minor bumps follow
+  the repo's normal merge-on-green path; patch bumps are skipped unless an
+  operator explicitly forces one.
 
 The PR then runs the normal gates. The docker workflow builds both images for
 linux/amd64 and linux/arm64, where every hash-verified layer runs
@@ -93,7 +101,8 @@ src/scripts/cli-pin-bump.sh current codex
 # resolve the latest release and its digests without editing anything
 src/scripts/cli-pin-bump.sh resolve goose
 
-# resolve + edit both Dockerfiles; prints OLD=/NEW=/MAJOR=/CHANGED=
+# resolve + edit both Dockerfiles for major/minor changes; patch-only changes
+# print CHANGED=false/SKIPPED=patch unless HIVE_PIN_INCLUDE_PATCH=1 is set
 src/scripts/cli-pin-bump.sh bump claude
 ```
 
@@ -104,7 +113,9 @@ self-test (`src/scripts/test-cli-pin-bump.sh`, run by the workflow's
 `selftest` job on any PR that touches the script or workflow) exercises.
 
 To bump one CLI on demand from the Actions tab, dispatch **CLI pin bump**
-with `cli=<name>`; `all` checks every pin.
+with `cli=<name>`; `all` checks every pin. Leave `include_patch=false` for the
+normal major/minor-only policy, or set `include_patch=true` to force a
+patch-only bump PR.
 
 ## Adding a CLI
 
