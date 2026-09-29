@@ -349,6 +349,11 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		c.denyIssueRequest(path, req, err.Error(), nowFn)
 		return
 	}
+	// Lane write allowlist (#9587), keyed on the now-authorized agent name.
+	if reason, refused := c.refuseWrite(req.Agent, issueRequestWriteOp(kind), req.Repo, req.Number); refused {
+		c.denyIssueRequest(path, req, reason, nowFn)
+		return
+	}
 
 	// The hive fulfils issues, comments and claims with its own credentials,
 	// bypassing the agent proxy. Enforce pause before any of those API calls.
@@ -496,6 +501,21 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		slog.Int("number", resp.Number), slog.Bool("reused", resp.AlreadyExisted),
 		slog.Bool("consolidated", resp.Consolidated),
 		slog.String("agent", req.Agent))
+}
+
+// issueRequestWriteOp maps a validated issue-request kind to its write-surface
+// operation name (#9587).
+func issueRequestWriteOp(kind string) string {
+	switch kind {
+	case "comment":
+		return WriteOpComment
+	case "claim":
+		return WriteOpClaim
+	case "close":
+		return WriteOpCloseIssue
+	default:
+		return WriteOpCreateIssue
+	}
 }
 
 func issueUnsubstitutedTemplatePlaceholder(text string) (string, bool) {

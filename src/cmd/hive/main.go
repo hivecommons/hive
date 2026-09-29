@@ -1138,6 +1138,9 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	for _, warning := range config.AgentRepoScopeWarnings(b.cfg) {
 		b.logger.Warn("per-repo agent scope", "issue", warning)
 	}
+	for _, warning := range config.WriteSurfaceWarnings(b.cfg) {
+		b.logger.Warn("write surface allowlist", "issue", warning)
+	}
 	startupRepoTargetIssue := config.ValidateRepoTargets(b.cfg)
 	if startupRepoTargetIssue != nil {
 		b.logger.Warn("repo target misconfigured — owner action required",
@@ -1741,6 +1744,34 @@ func (b *boot) bootGitHubWith(deps bootGitHubDeps) {
 	// dependencies exist yet apply here; bootAdvisory, bootAgents and
 	// bootDashboard apply the rest as those dependencies come up.
 	b.configureGitHubClient(b.ghClient)
+	b.resolveProxyInjectGHAuth(deps)
+}
+
+// resolveProxyInjectGHAuth applies the #9586 default for proxy-side GitHub
+// auth injection: an existing hosted App spoke with HIVE_PROXY_INJECT_GH_AUTH
+// unset turns injection on here, so the fleet flips through the normal
+// channel rollout rather than by hand. It runs in bootGitHub - the first boot
+// phase, right after credentials resolve and before the proxy (bootProxy) or
+// any agent token mint - because "is App auth live" is only known now.
+//
+// Decided ONCE per process: the proxy snapshots the flag at construction, so
+// a spoke that boots before its App is delivered (ReinitGitHubFunc / the
+// heartbeat app-config path) stays off until its next restart - which every
+// channel upgrade performs. Never fatal.
+func (b *boot) resolveProxyInjectGHAuth(deps bootGitHubDeps) {
+	getenv, setenv := deps.getenv, deps.setenv
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	if setenv == nil {
+		setenv = os.Setenv
+	}
+	d := config.ApplyProxyInjectGHAuthDefault(getenv, setenv, config.ProxyInjectGHAuthInputs{
+		HubMode:  getenv("HIVE_MODE") == "hub",
+		HiveType: b.cfg.Hub.HiveType,
+		AppAuth:  b.cfg.GitHub.HasApp() && b.ghAuth.AppAuth != nil,
+	})
+	b.logger.Info(d.LogLine(), "enabled", d.Enabled, "source", string(d.Source), "env", config.ProxyInjectGHAuthEnv)
 }
 
 // bootGovernor constructs the governor and scheduler, wires the prompt and
@@ -3299,9 +3330,10 @@ func (b *boot) bootSupervision() {
 		claimsInflightLookup(b.issueClaims, b.cfg.Project.Org)))
 	// #9584: close answered question issues unless the author objects (default off).
 	wireQuestionAutoclose(b.ctx, b.cfg, b.sched, func() *github.Client { return b.ghClient }, b.logger)
-	// The pr-request watcher's PR-opened hook (Linear session narration and
-	// the lifecycle timeline) is installed by configureGitHubClient's
-	// dashboard tier (#9614), so a rebuilt client keeps it.
+	// The pr-request watcher's PR-opened hook (Linear session narration, the
+	// lifecycle timeline and the #9583 follow-up session pointer) is installed
+	// by configureGitHubClient's dashboard tier (#9614), so a rebuilt client
+	// keeps it.
 }
 
 func attachReviewLinksForDashboard(payload *dashboard.StatusPayload, logger *slog.Logger) {
@@ -6297,6 +6329,12 @@ func runEvalCycle(
 	// closed (keeps the last known claims) when the GitHub API is unavailable.
 	applyDuplicatePRGuard(ctx, cfg, ghClient, actionable, logger)
 
+	// PR review queue (#9590): stamp each PR's rank, priority and reasons
+	// onto the snapshot so last-actionable.json carries them next to
+	// review_class. Additive only: Items and Held keep their order, and
+	// nothing that gates work reads the stamp.
+	reviewQueue := stampReviewQueue(cfg, actionable, logger)
+
 	lastActionable.Store(actionable)
 	if data, err := json.Marshal(actionable); err == nil {
 		atomicWrite(lastActionablePath, data)
@@ -6341,6 +6379,13 @@ func runEvalCycle(
 	// same way ci-failing.json is, so the scheduler can route each PR back
 	// to its author for a fix + in-thread replies before any new work.
 	writeReviewThreads(ctx, ghClient, actionable, cfg.Project.Org, escalatedPRs, logger)
+
+	// PR follow-up session resume (hivecommons/hive#9583, default off): feed
+	// CI failures, changes-requested reviews and new review-bot threads on a
+	// PR this hive opened back into the CLI session that authored it, while
+	// that session is still live. Anything it cannot resume stays on the
+	// fix-before-new path above, unchanged.
+	routePRFollowUps(ctx, cfg, actionable, escalatedPRs, agentMgr, logger)
 
 	// Stuck-PR reaper (backstop): DELIVER a targeted FIX-BEFORE-NEW kick for any
 	// hive-authored PR that is red on a required check AND stale (its red head
@@ -6418,19 +6463,15 @@ func runEvalCycle(
 	// burning backend tokens far faster than any configured cadence and
 	// bypassing the budget gate; AllowResumeKick bounds resume kicks to one
 	// per cadence interval and respects mode pauses and the budget.
-	// Refused restarts are not silent: the agent sits at an empty prompt
-	// until its slot, so raise a per-agent alert (with an OOM hint when the
-	// cgroup killed the CLI) and clear it once any kick reaches the agent.
-	var resumeHeld []string
-	agentsDue, resumeHeld = mergeResumeKicks(agentsDue, restartedAgents, gov.AllowResumeKick, logger)
+	// Refused restarts are not silent: an interval-throttled agent sits at
+	// an empty prompt until its slot, so raise a per-agent alert (with an OOM
+	// hint when the cgroup killed the CLI). Every cycle, reconcile clears it
+	// once it no longer describes a problem (#9612): kicked, paused/removed,
+	// no longer expected to run, working again, or past its max age.
+	var resumeHeld []spokealerts.ResumeKickHeldAgent
+	agentsDue, resumeHeld = mergeResumeKicks(agentsDue, restartedAgents, gov.AllowResumeKickReason, logger)
 	resumeKickHeldAlerts.Apply(dashSrv, resumeHeld, agentMgr.CrashOOMSuspected)
-	resumeKickHeldAlerts.ClearKicked(dashSrv, func(name string) (time.Time, bool) {
-		st, err := agentMgr.GetStatusFast(name)
-		if err != nil || st == nil || st.LastKick == nil {
-			return time.Time{}, false
-		}
-		return *st.LastKick, true
-	})
+	resumeKickHeldAlerts.Reconcile(dashSrv, resumeKickHeldFacts(agentMgr, gov.ResumeKickVerdict))
 
 	govState := gov.GetState()
 	span.SetAttributes(
@@ -6553,6 +6594,9 @@ func runEvalCycle(
 	reviewPlan := planReviewDispatch(cfg, actionable, agentMgr, beadStores, logger)
 	auditWithheldReviewFixes(reviewPlan, dashSrv, logger)
 	applyHumanDecisionLabels(ctx, cfg, ghClient, actionable, reviewPlan, logger)
+	if ghClient != nil {
+		applyReviewPriorityLabels(ctx, cfg, ghClient, reviewQueue, logger)
+	}
 	messages := sched.BuildKickMessages(kickActionable, agentsDue)
 	reviewKickByMessage := map[string]review.DispatchKick{}
 	for _, k := range append(reviewPlan.ReviewKicks, reviewPlan.FixKicks...) {
@@ -8131,7 +8175,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 			}
 			detail := fmt.Sprintf("repo=%s, pr=%d, author=%s, queued_by=%s, label=%s, head_sha=%s, merge_sha=%s",
 				event.Repo, event.Number, event.Author, event.QueuedBy, event.Label, event.HeadSHA, event.MergeSHA)
-			dashSrv.AuditLog("system", "automerge-sweep-merged", detail, "")
+			dashSrv.AuditLogRecord("system", "automerge-sweep-merged", detail, "", event.Repo, event.Number)
 		},
 	})
 	if err != nil {
@@ -8179,7 +8223,7 @@ func runTaskListSweepIfDue(ctx context.Context, ghClient *github.Client, dashSrv
 			}
 			detail := fmt.Sprintf("repo=%s, issue=%d, author=%s, boxes=%d",
 				event.Repo, event.Number, event.Author, event.TotalBoxes)
-			dashSrv.AuditLog("system", "task-list-sweep-closed", detail, "")
+			dashSrv.AuditLogRecord("system", "task-list-sweep-closed", detail, "", event.Repo, event.Number)
 		},
 	})
 	if err != nil {
@@ -8225,7 +8269,7 @@ func runSupersessionSweepIfDue(ctx context.Context, ghClient *github.Client, cfg
 			}
 			detail := fmt.Sprintf("repo=%s, pr=%d, issue=%s#%d, closer_pr=%d, action=%s",
 				event.Repo, event.Number, event.IssueRepo, event.Issue, event.CloserPR, event.Action)
-			dashSrv.AuditLog("system", "supersession-sweep-"+event.Action, detail, "")
+			dashSrv.AuditLogRecord("system", "supersession-sweep-"+event.Action, detail, "", event.Repo, event.Number)
 		},
 	})
 	if err != nil {
@@ -8284,7 +8328,7 @@ func runDuplicateSweepIfDue(ctx context.Context, cfg *config.Config, ghClient *g
 			}
 			detail := fmt.Sprintf("repo=%s, survivor=%d, superseded=%d, confidence=%s, commented=%d",
 				event.Repo, event.Survivor, len(event.Superseded), event.Confidence, len(event.Commented))
-			dashSrv.AuditLog("system", "duplicate-sweep-suggested", detail, "")
+			dashSrv.AuditLogRecord("system", "duplicate-sweep-suggested", detail, "", event.Repo, event.Survivor)
 		},
 	})
 	if err != nil {

@@ -443,6 +443,10 @@ type AttributionHooks struct {
 	// is still recorded in the hive log via slog so the trail never fully
 	// disappears (only the pre-dashboard startup window can hit this).
 	Audit func(action, detail, agent string)
+	// AuditRecord is the typed form of Audit (#9587): the same entry, plus
+	// first-class Repo and Target fields. When set it is called INSTEAD of
+	// Audit, so a sink wired to both never double-records.
+	AuditRecord func(AuditRecord)
 }
 
 // SetAttributionHooks installs the initial hook set. Safe to call before the
@@ -477,6 +481,17 @@ func (c *Client) SetAttributionAudit(fn func(action, detail, agent string)) {
 	c.attribMu.Lock()
 	defer c.attribMu.Unlock()
 	c.attribution.Audit = fn
+}
+
+// SetAttributionAuditRecord installs the typed audit sink (#9587). It takes
+// precedence over the untyped SetAttributionAudit sink.
+func (c *Client) SetAttributionAuditRecord(fn func(AuditRecord)) {
+	if c == nil {
+		return
+	}
+	c.attribMu.Lock()
+	defer c.attribMu.Unlock()
+	c.attribution.AuditRecord = fn
 }
 
 // attributionMeta resolves launch metadata for an agent name, degrading to
@@ -520,19 +535,27 @@ func (c *Client) recordCreationAudit(action string, m InvocationMeta, extra ...s
 	if c == nil {
 		return
 	}
-	detail := m.AuditDetail(extra...)
+	// Credential material is masked before the entry reaches ANY sink (#9587):
+	// details carry agent-supplied values, and the audit log is durable.
+	rec := auditRecordFor(action, m, extra...)
 	c.attribMu.RLock()
+	auditRecord := c.attribution.AuditRecord
 	audit := c.attribution.Audit
 	c.attribMu.RUnlock()
+	if auditRecord != nil {
+		auditRecord(rec)
+		return
+	}
 	if audit != nil {
-		audit(action, detail, m.Agent)
+		audit(rec.Action, rec.Detail, rec.Agent)
 		return
 	}
 	if c.logger == nil {
 		return // no sink and no logger (e.g. a bare test client) — nothing to do
 	}
 	c.logger.Info("attribution audit (no audit sink wired yet)",
-		slog.String("action", action), slog.String("detail", detail), slog.String("agent", m.Agent))
+		slog.String("action", rec.Action), slog.String("detail", rec.Detail), slog.String("agent", rec.Agent),
+		slog.String("repo", rec.Repo), slog.Int("target", rec.Target))
 }
 
 // ReconcilePRAttribution ensures the PR at prURL carries an attribution trailer

@@ -30,6 +30,13 @@ type AuditEntry struct {
 	Action    string `json:"action"`
 	Detail    string `json:"detail,omitempty"`
 	Agent     string `json:"agent,omitempty"`
+	// Repo and Target are the typed coordinates of a hive-mediated GitHub
+	// write (hivecommons/hive#9587): the repository and the issue/PR number.
+	// Entries written before they existed carry them only as repo=/number=
+	// pairs in Detail; read the repo through AuditEntryRepo, which handles
+	// both.
+	Repo   string `json:"repo,omitempty"`
+	Target int    `json:"target,omitempty"`
 	// UserName is the hub-delivered display name when User is an opaque OIDC
 	// identity key. Stamped at SERVE time only (handleAuditLog) — the ring and
 	// the on-disk log keep the raw key, so history survives name changes.
@@ -242,6 +249,20 @@ func (ac *ActivityCollector) Start(ctx context.Context) {
 
 // repoRe extracts repo=<org/name> from an audit detail string ("k=v, k=v").
 var repoRe = regexp.MustCompile(`(?:^|[,\s])repo=([^,\s]+)`)
+
+// AuditEntryRepo returns the repository an audit entry names. The typed Repo
+// field wins (#9587); entries written before it existed fall back to the
+// repo= pair in Detail, so history keeps attributing across the upgrade.
+func AuditEntryRepo(e AuditEntry) (string, bool) {
+	if e.Repo != "" {
+		return e.Repo, true
+	}
+	if m := repoRe.FindStringSubmatch(e.Detail); m != nil {
+		return m[1], true
+	}
+	return "", false
+}
+
 var agentRe = regexp.MustCompile(`(?:^|[,\s])agent=([^,\s]+)`)
 
 // collect reads the window of output actions from the audit log and rebuilds the
@@ -261,12 +282,11 @@ func (ac *ActivityCollector) collect() {
 	}
 	var unattributed ActivityActionStat
 	for _, e := range entries {
-		m := repoRe.FindStringSubmatch(e.Detail)
-		if m == nil {
+		repo, ok := AuditEntryRepo(e)
+		if !ok {
 			bump(&unattributed, e.Timestamp)
 			continue
 		}
-		repo := m[1]
 		ra := byRepo[repo]
 		if ra == nil {
 			ra = &RepoActivity{Repo: repo}

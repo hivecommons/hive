@@ -1,0 +1,495 @@
+// Package prfollowup keeps each agent-opened PR tied to the CLI session that
+// authored it, and routes follow-up events on that PR (a CI failure, a
+// changes-requested review, new review threads) back into that session as its
+// next turn instead of a fresh, context-cleared dispatch
+// (hivecommons/hive#9583). "Changes requested" is GitHub's review decision;
+// "review threads" are the unresolved review-bot threads from review-threads.json (#7360), which are
+// already filtered to non-hive authors, so the agent's own replies can never
+// trigger another follow-up.
+//
+// It builds on the re-entrant turn model (pkg/turn, RFC #4002) rather than
+// adding a parallel mechanism: the pointer for one PR IS a
+// turn.SessionEnvelope persisted through turn.FileStore, each delivered
+// follow-up is appended to its conversation as a user turn, and every
+// delivery is journaled (turn.OpFollowUpKick) before it happens, so a restart
+// between intent and settle re-queues the event and a settled event is never
+// delivered twice.
+//
+// Eligibility is the pointer itself. A pointer is written only from the
+// PR-request watcher's PR-opened hook, which fires only for a NEW PR the
+// hive's App opened for one of its own agents. A PR with no pointer (a
+// human's PR, another hive's PR, a PR in a repo no hub dispatched work for)
+// is never touched, which closes the #6908 class of bug (an account-scoped
+// sweep reaching PRs no hive authorised) by construction.
+package prfollowup
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/toolapprove"
+	"github.com/hivecommons/hive/pkg/turn"
+)
+
+const (
+	// DirEnvVar overrides the directory pointers are persisted under.
+	DirEnvVar = "HIVE_PR_FOLLOWUP_DIR"
+	// DefaultDir sits on the /data volume beside the contributor turn
+	// envelopes, so pointers survive pod rolls and upgrades.
+	DefaultDir = "/data/turn/pr-followups"
+
+	// sessionIDPrefix namespaces pointer envelopes from any other envelope
+	// kind that may share a store.
+	sessionIDPrefix = "pr-followup:"
+
+	varRepo       = "pr_repo"
+	varNumber     = "pr_number"
+	varURL        = "pr_url"
+	varCLISession = "cli_session"
+
+	// messageTriggerKey tags each follow-up turn appended to the envelope.
+	messageTriggerKey = "trigger"
+	// TriggerFollowUp is the trigger recorded on those turns.
+	TriggerFollowUp = "pr_follow_up"
+
+	// MaxFollowUpsPerPR caps how many follow-ups one PR may feed into its
+	// authoring session. A PR that is still red after this many resumed
+	// rounds is looping; the existing fix-before-new and escalation paths
+	// own it from there.
+	MaxFollowUpsPerPR = 8
+
+	// ciExcerptRunes bounds the CI failure excerpt carried into the kick.
+	ciExcerptRunes = 1500
+	// threadBodyRunes bounds each review-thread excerpt carried into the kick.
+	threadBodyRunes = 500
+	// shortSHALen is how much of a head SHA the kick names.
+	shortSHALen = 7
+
+	// externalRefResumed marks a journal entry delivered into the session.
+	externalRefResumed = "resumed"
+	// fallbackPrefix prefixes the reason recorded on a journal entry that was
+	// handed back to the ordinary fresh-dispatch path.
+	fallbackPrefix = "fallback: "
+)
+
+// Fallback reasons, recorded on the journal entry and in the Outcome.
+const (
+	ReasonExpired      = "session older than max age"
+	ReasonSessionGone  = "authoring session no longer live"
+	ReasonSessionMoved = "agent moved on to other work since the PR opened"
+	ReasonCapReached   = "follow-up cap reached"
+	ReasonNoResumer    = "no agent manager"
+	ReasonSuperseded   = "superseded before delivery"
+)
+
+// Route values reported in Outcome.
+const (
+	RouteResumed  = "resumed"
+	RouteFallback = "fallback"
+	RouteDeferred = "deferred"
+)
+
+// ErrBusy is returned by a Resumer when the authoring session exists but
+// cannot take the follow-up right now. The follow-up stays queued (its journal
+// entry stays intended) and is retried on the next Route call.
+var ErrBusy = errors.New("prfollowup: session busy")
+
+// Resumer is the agent-manager surface Route needs. SessionID names the
+// conversation an agent's CLI currently holds; SendResumeKick delivers a
+// message into exactly that conversation without clearing it, returning an
+// error wrapping ErrBusy for a transient refusal and any other error when the
+// session is gone.
+type Resumer interface {
+	SessionID(agent string) (string, bool)
+	SendResumeKick(agent, message, sessionID string) error
+}
+
+// Dir resolves the pointer directory: DirEnvVar, else DefaultDir.
+func Dir() string {
+	if d := strings.TrimSpace(os.Getenv(DirEnvVar)); d != "" {
+		return d
+	}
+	return DefaultDir
+}
+
+// ThreadsKey keys Options.Threads.
+func ThreadsKey(repo string, number int) string {
+	return repo + "#" + strconv.Itoa(number)
+}
+
+// ThreadsFromReport indexes a review-threads.json report for Options.Threads,
+// dropping PRs escalated to a human.
+func ThreadsFromReport(report github.ReviewThreadsReport) map[string][]github.ReviewThread {
+	out := map[string][]github.ReviewThread{}
+	for _, pr := range report.PRs {
+		if pr.Escalated || len(pr.Threads) == 0 {
+			continue
+		}
+		out[ThreadsKey(pr.Repo, pr.Number)] = pr.Threads
+	}
+	return out
+}
+
+// PointerID is the envelope session ID for one PR.
+func PointerID(repo string, number int) string {
+	return fmt.Sprintf("%s%s#%d", sessionIDPrefix, repo, number)
+}
+
+// Record saves (or re-points) the pointer for a PR an agent just opened.
+// cliSession is the agent's live session ID at that moment; empty means the
+// agent had no resumable session, and the pointer is still written so the PR
+// is known to be this hive's (later follow-ups then fall back).
+func Record(ctx context.Context, dir, agentName, repo string, number int, url, cliSession string, now time.Time) error {
+	if strings.TrimSpace(agentName) == "" || strings.TrimSpace(repo) == "" || number <= 0 {
+		return fmt.Errorf("prfollowup: agent, repo and PR number are required (agent=%q repo=%q number=%d)", agentName, repo, number)
+	}
+	store := turn.FileStore{Dir: dir}
+	id := PointerID(repo, number)
+	env, err := store.Load(ctx, id)
+	switch {
+	case err == nil && pointerIs(env, repo, number):
+		// Same PR seen again: keep its journal and history, re-point.
+	case err == nil || errors.Is(err, fs.ErrNotExist):
+		// New PR, or a filename collision with a different PR (the store
+		// sanitises IDs): start a fresh pointer.
+		env = turn.SessionEnvelope{
+			SessionID:   id,
+			Status:      turn.StatusActive,
+			WorkingRepo: repo,
+			CreatedAt:   now,
+			Variables: map[string]string{
+				varRepo:   repo,
+				varNumber: strconv.Itoa(number),
+			},
+		}
+		env.Messages = append(env.Messages, turn.Message{
+			Role:      turn.RoleSystem,
+			Content:   fmt.Sprintf("PR follow-up pointer: %s#%d was opened by agent %s; follow-up events on it are routed back to this session.", repo, number, agentName),
+			Timestamp: now,
+		})
+	default:
+		return err
+	}
+	env.Agent = toolapprove.AgentIdentity{Name: agentName}
+	env.Variables[varURL] = url
+	env.Variables[varCLISession] = cliSession
+	env.UpdatedAt = now
+	return store.Persist(ctx, env)
+}
+
+// pointerIs guards against the store's filename sanitisation mapping two
+// different PRs onto one file: the envelope must name exactly this PR.
+func pointerIs(env turn.SessionEnvelope, repo string, number int) bool {
+	return env.Variables[varRepo] == repo && env.Variables[varNumber] == strconv.Itoa(number)
+}
+
+// EventKind classifies a follow-up event.
+type EventKind string
+
+const (
+	EventCIFailure        EventKind = "ci_failure"
+	EventChangesRequested EventKind = "changes_requested"
+	EventReviewThread     EventKind = "review_thread"
+)
+
+// Event is one follow-up to deliver. Key is stable for the underlying fact
+// (the red head SHA, the set of reviewers requesting changes, the review
+// thread's node ID), so the journal can tell a new event from one already
+// handled.
+type Event struct {
+	Kind   EventKind
+	Key    string
+	Detail string
+}
+
+// Options configures Route.
+type Options struct {
+	// Dir is the pointer directory (see Dir).
+	Dir string
+	// MaxAge is the resume window measured from the PR's pointer creation.
+	// Zero or negative disables the age check.
+	MaxAge time.Duration
+	// Skip, when non-nil, excludes a PR outright (escalated to a human).
+	Skip func(repo string, number int) bool
+	// Threads holds the unresolved review-bot threads per PR, keyed by
+	// ThreadsKey (from review-threads.json). Nil means none known.
+	Threads map[string][]github.ReviewThread
+	Logger  *slog.Logger
+}
+
+// Outcome reports what Route did for one PR that had pending follow-ups.
+type Outcome struct {
+	Repo   string
+	Number int
+	Agent  string
+	Events []Event
+	Route  string
+	Reason string
+}
+
+// Route walks the open PRs, and for every PR this hive authored (has a
+// pointer) with new follow-up events, either resumes the authoring session
+// with them or records a fallback to the ordinary fresh-dispatch path. It
+// performs no GitHub calls: every signal it reads is already on the PR from
+// the eval tick's enumeration.
+func Route(ctx context.Context, prs []github.PullRequest, r Resumer, opts Options, now time.Time) []Outcome {
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	store := turn.FileStore{Dir: opts.Dir}
+	var outcomes []Outcome
+	for i := range prs {
+		pr := &prs[i]
+		if pr.Draft || pr.FromFork || pr.Number <= 0 || pr.Repo == "" {
+			continue
+		}
+		if opts.Skip != nil && opts.Skip(pr.Repo, pr.Number) {
+			continue
+		}
+		env, err := store.Load(ctx, PointerID(pr.Repo, pr.Number))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue // not a PR this hive's agents opened
+		}
+		if err != nil {
+			logger.Warn("prfollowup: unreadable pointer; leaving PR to the fresh-dispatch path",
+				"repo", pr.Repo, "pr", pr.Number, "error", err)
+			continue
+		}
+		if !pointerIs(env, pr.Repo, pr.Number) || env.Agent.Name == "" {
+			continue
+		}
+		out, changed := routeOne(&env, pr, opts.Threads[ThreadsKey(pr.Repo, pr.Number)], r, opts, now)
+		if changed {
+			env.UpdatedAt = now
+			if err := store.Persist(ctx, env); err != nil {
+				logger.Warn("prfollowup: failed to persist pointer", "repo", pr.Repo, "pr", pr.Number, "error", err)
+			}
+		}
+		if out != nil {
+			level := slog.LevelInfo
+			if out.Route == RouteDeferred {
+				level = slog.LevelDebug // retried every tick while the agent works
+			}
+			logger.Log(ctx, level, "prfollowup: routed PR follow-up", "repo", out.Repo, "pr", out.Number,
+				"agent", out.Agent, "route", out.Route, "reason", out.Reason, "events", len(out.Events))
+			outcomes = append(outcomes, *out)
+		}
+	}
+	return outcomes
+}
+
+// routeOne handles one eligible PR. It returns the outcome (nil when there
+// was nothing to do) and whether env changed and must be persisted.
+func routeOne(env *turn.SessionEnvelope, pr *github.PullRequest, threads []github.ReviewThread, r Resumer, opts Options, now time.Time) (*Outcome, bool) {
+	events := detectEvents(pr, threads)
+	changed := false
+	keyOf := func(ev Event) string {
+		return turn.DeriveIdempotencyKey(env.SessionID, turn.OpIntent{
+			Kind: turn.OpFollowUpKick, Repo: pr.Repo, Target: "#" + strconv.Itoa(pr.Number), Body: ev.Key,
+		})
+	}
+
+	// Pending = detected now and not yet settled. An entry still "intended"
+	// from an earlier call (busy session, or a restart mid-delivery) is
+	// re-queued here; one whose fact no longer holds is settled superseded.
+	var pending []Event
+	live := map[string]bool{}
+	for _, ev := range events {
+		key := keyOf(ev)
+		live[key] = true
+		if e, ok := env.Journal.Lookup(key); ok && !e.Ambiguous() {
+			continue
+		}
+		pending = append(pending, ev)
+	}
+	for _, e := range env.Journal.Ambiguous() {
+		if e.Kind == turn.OpFollowUpKick && !live[e.IdempotencyKey] {
+			env.Journal.Settle(e.IdempotencyKey, turn.OpFailed, "", fallbackPrefix+ReasonSuperseded, now)
+			changed = true
+		}
+	}
+	if len(pending) == 0 {
+		return nil, changed
+	}
+
+	out := &Outcome{Repo: pr.Repo, Number: pr.Number, Agent: env.Agent.Name, Events: pending}
+	intend := func() {
+		for _, ev := range pending {
+			env.Journal.RecordIntent(keyOf(ev), turn.OpIntent{
+				Kind: turn.OpFollowUpKick, Repo: pr.Repo, Target: "#" + strconv.Itoa(pr.Number), Body: ev.Key,
+			}, now)
+		}
+	}
+	settle := func(status turn.OpStatus, ref, errStr string) {
+		for _, ev := range pending {
+			env.Journal.Settle(keyOf(ev), status, ref, errStr, now)
+		}
+	}
+	fallback := func(reason string) (*Outcome, bool) {
+		intend()
+		settle(turn.OpFailed, "", fallbackPrefix+reason)
+		out.Route, out.Reason = RouteFallback, reason
+		return out, true
+	}
+
+	if reason := resumeBlocker(env, r, opts, now); reason != "" {
+		return fallback(reason)
+	}
+	current, _ := r.SessionID(env.Agent.Name)
+
+	// Journal the intent BEFORE the effect: a crash between here and the
+	// settle below leaves the entries intended, and the next call re-queues
+	// them (against a new process, whose session ID can no longer match, so
+	// they fall back rather than being lost or delivered twice).
+	intend()
+	msg := BuildMessage(pr, env.Variables[varURL], pending)
+	if err := r.SendResumeKick(env.Agent.Name, msg, current); err != nil {
+		if errors.Is(err, ErrBusy) {
+			out.Route, out.Reason = RouteDeferred, err.Error()
+			return out, true
+		}
+		settle(turn.OpFailed, "", fallbackPrefix+err.Error())
+		out.Route, out.Reason = RouteFallback, err.Error()
+		return out, true
+	}
+	settle(turn.OpSucceeded, externalRefResumed, "")
+	env.AddMessage(turn.RoleUser, msg)
+	env.Messages[len(env.Messages)-1].Metadata = map[string]string{messageTriggerKey: TriggerFollowUp}
+	env.TurnCount++
+	// The delivered kick is itself a new LastKick, so the session ID moves;
+	// follow it so the NEXT follow-up resumes the same conversation too.
+	if next, ok := r.SessionID(env.Agent.Name); ok {
+		env.Variables[varCLISession] = next
+	}
+	out.Route = RouteResumed
+	return out, true
+}
+
+// resumeBlocker returns why the authoring session cannot be resumed, or ""
+// when it can.
+func resumeBlocker(env *turn.SessionEnvelope, r Resumer, opts Options, now time.Time) string {
+	if opts.MaxAge > 0 && now.Sub(env.CreatedAt) > opts.MaxAge {
+		return ReasonExpired
+	}
+	if env.TurnCount >= MaxFollowUpsPerPR {
+		return ReasonCapReached
+	}
+	if r == nil {
+		return ReasonNoResumer
+	}
+	saved := env.Variables[varCLISession]
+	current, ok := r.SessionID(env.Agent.Name)
+	if !ok || saved == "" {
+		return ReasonSessionGone
+	}
+	if current != saved {
+		return ReasonSessionMoved
+	}
+	return ""
+}
+
+// detectEvents derives the follow-up events visible on pr and its
+// unresolved review-bot threads.
+func detectEvents(pr *github.PullRequest, threads []github.ReviewThread) []Event {
+	var events []Event
+	// A settled red CI: CIChecksRunning means other shards are still
+	// reporting, and the whole failure set is not known yet.
+	if pr.CIStatus == "failure" && !pr.CIChecksRunning && pr.HeadSHA != "" {
+		events = append(events, Event{
+			Kind:   EventCIFailure,
+			Key:    "ci:" + pr.HeadSHA,
+			Detail: ciDetail(pr),
+		})
+	}
+	if pr.Protection != nil && pr.Protection.ReviewDecision == github.ReviewDecisionChangesRequested {
+		by := append([]string(nil), pr.Protection.ChangesRequestedBy...)
+		sort.Strings(by)
+		detail := "A reviewer requested changes."
+		if len(by) > 0 {
+			detail = "Changes requested by " + strings.Join(by, ", ") + "."
+		}
+		events = append(events, Event{
+			Kind:   EventChangesRequested,
+			Key:    "review:" + strings.Join(by, ","),
+			Detail: detail,
+		})
+	}
+	for _, th := range threads {
+		if th.ThreadID == "" {
+			continue
+		}
+		events = append(events, Event{
+			Kind:   EventReviewThread,
+			Key:    "thread:" + th.ThreadID,
+			Detail: threadDetail(th),
+		})
+	}
+	return events
+}
+
+func threadDetail(th github.ReviewThread) string {
+	where := th.Path
+	if th.Line > 0 {
+		where = fmt.Sprintf("%s:%d", th.Path, th.Line)
+	}
+	return fmt.Sprintf("Review comment from %s on %s (thread %s): %s", th.Author, where, th.ThreadID, truncateRunes(strings.TrimSpace(th.Body), threadBodyRunes))
+}
+
+func truncateRunes(s string, n int) string {
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n]) + "..."
+}
+
+func ciDetail(pr *github.PullRequest) string {
+	var b strings.Builder
+	sha := pr.HeadSHA
+	if len(sha) > shortSHALen {
+		sha = sha[:shortSHALen]
+	}
+	fmt.Fprintf(&b, "CI failed on %s", sha)
+	if len(pr.FailingChecks) > 0 {
+		fmt.Fprintf(&b, " (%s)", strings.Join(pr.FailingChecks, ", "))
+	}
+	b.WriteString(".")
+	if ex := strings.TrimSpace(pr.CIFailureExcerpt); ex != "" {
+		ex = truncateRunes(ex, ciExcerptRunes)
+		b.WriteString("\nFailure excerpt:\n")
+		b.WriteString(ex)
+	}
+	return b.String()
+}
+
+// BuildMessage renders the follow-up turn typed into the authoring session.
+// It speaks to the agent as the continuation it is, so the agent picks up
+// its own earlier reasoning rather than re-deriving it.
+func BuildMessage(pr *github.PullRequest, url string, events []Event) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "PR FOLLOW-UP: new activity on %s#%d", pr.Repo, pr.Number)
+	if url == "" {
+		url = pr.URL
+	}
+	if url != "" {
+		fmt.Fprintf(&b, " (%s)", url)
+	}
+	b.WriteString(", the PR you opened earlier in this session. Continue from where you left off.\n")
+	for _, ev := range events {
+		b.WriteString("- ")
+		b.WriteString(ev.Detail)
+		b.WriteString("\n")
+	}
+	b.WriteString("Read the new feedback on the PR, push any fix to the same branch, and reply on the PR. Do not open a new PR.")
+	return b.String()
+}

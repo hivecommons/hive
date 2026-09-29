@@ -55,6 +55,8 @@ var clientSetterAllowlist = map[string]string{
 		"the approval desk through automerge.Options.ApprovalDesk",
 	"SetMergeRequestPolicy": "combined form of SetMergeRequestAllowUnprotectedBaseRepos and " +
 		"SetMergeRequestNoCIAllowedRepos, which syncAutoMergePolicyToGitHubClient calls individually",
+	"SetAttributionAudit": "legacy untyped audit sink, superseded by SetAttributionAuditRecord " +
+		"(#9587), which configureGitHubClient installs and which takes precedence",
 }
 
 // clientResyncSetters may be called directly on b.ghClient outside

@@ -959,28 +959,101 @@ func (g *Governor) budgetExempt(agentName string) bool {
 //     first resume, then waits for the next scheduled slot, bounding worst-
 //     case kick frequency at two per interval (one scheduled + one resume)
 //     instead of one per eval cycle.
+//
+// AllowResumeKickReason returns the same verdict with the refusal reason.
 func (g *Governor) AllowResumeKick(agentName string) bool {
+	allowed, _ := g.AllowResumeKickReason(agentName)
+	return allowed
+}
+
+// ResumeRefusal names why the resume-kick gate refused a crash-restarted
+// agent (#9612). Only ResumeRefusalIntervalThrottle means "a scheduled kick is
+// coming"; every other reason means the agent is idle by configuration (or by
+// budget), so no kick will arrive on its own.
+type ResumeRefusal string
+
+// Resume-kick gate verdicts, in the order the gate checks them.
+const (
+	// ResumeAllowed is the zero value: the gate would grant a resume kick.
+	ResumeAllowed ResumeRefusal = ""
+	// ResumeRefusalUnscheduled: no cadence entry in the current mode (cadence
+	// "off", or no cadence at all), so the governor never timer-kicks it.
+	ResumeRefusalUnscheduled ResumeRefusal = "unscheduled"
+	// ResumeRefusalPausedInMode: the current mode's cadence is "pause".
+	ResumeRefusalPausedInMode ResumeRefusal = "paused_in_mode"
+	// ResumeRefusalNotInterval: the cadence is not a positive interval (a
+	// time-of-day schedule, or a zero interval), so there is no per-interval
+	// resume allowance.
+	ResumeRefusalNotInterval ResumeRefusal = "not_interval"
+	// ResumeRefusalOnDemand: on-demand or non-kick-channel agents are never
+	// timer-kicked.
+	ResumeRefusalOnDemand ResumeRefusal = "on_demand"
+	// ResumeRefusalBudgetExhausted: the weekly budget is exhausted and the
+	// agent is not budget-exempt.
+	ResumeRefusalBudgetExhausted ResumeRefusal = "budget_exhausted"
+	// ResumeRefusalIntervalThrottle: the agent already had its one resume kick
+	// this cadence interval; its next scheduled kick will reach it.
+	ResumeRefusalIntervalThrottle ResumeRefusal = "interval_throttle"
+)
+
+// AllowResumeKickReason is AllowResumeKick with the refusal reason (#9612).
+// The grant is recorded (and so starts the one-per-interval throttle) ONLY
+// when allowed is true.
+func (g *Governor) AllowResumeKickReason(agentName string) (bool, ResumeRefusal) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	cadenceKey, cadence, ok := g.resumeCadenceForAgent(agentName)
-	if !ok || cadence.Paused || (cadence.Interval <= 0 && cadence.Schedule.Mode() == config.CadenceModeInterval) {
-		return false
-	}
-	if ac, ok := g.agents[agentName]; ok && (ac.OnDemand || !ac.UsesGovernorKick()) {
-		return false
-	}
-	if g.budgetExhausted() && !g.budgetExempt(agentName) {
-		return false
-	}
-	if cadence.Schedule.Mode() != config.CadenceModeInterval {
-		return false
-	}
-	if last, ok := g.resumeKicks[cadenceKey]; ok && g.now().Sub(last) < cadence.Interval {
-		return false
+	cadenceKey, _, refusal := g.resumeKickVerdictLocked(agentName)
+	if refusal != ResumeAllowed {
+		return false, refusal
 	}
 	g.resumeKicks[cadenceKey] = g.now()
-	return true
+	return true, ResumeAllowed
+}
+
+// ResumeKickVerdict reports what the resume-kick gate WOULD answer for
+// agentName right now, and the agent's cadence interval in the current mode
+// (0 when it has no interval cadence), WITHOUT recording a grant. It is the
+// read-only view the resume-kick-held banner reconciles against (#9612).
+func (g *Governor) ResumeKickVerdict(agentName string) (ResumeRefusal, time.Duration) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	_, interval, refusal := g.resumeKickVerdictLocked(agentName)
+	return refusal, interval
+}
+
+// resumeKickVerdictLocked applies the AllowResumeKick gates in order and
+// returns the cadence key, the cadence interval, and the first refusal (or
+// ResumeAllowed). It never mutates state. Caller must hold g.mu.
+func (g *Governor) resumeKickVerdictLocked(agentName string) (string, time.Duration, ResumeRefusal) {
+	cadenceKey, cadence, ok := g.resumeCadenceForAgent(agentName)
+	if !ok {
+		return "", 0, ResumeRefusalUnscheduled
+	}
+	interval := cadence.Interval
+	if cadence.Schedule.Mode() != config.CadenceModeInterval {
+		interval = 0
+	}
+	if cadence.Paused {
+		return cadenceKey, interval, ResumeRefusalPausedInMode
+	}
+	if cadence.Interval <= 0 && cadence.Schedule.Mode() == config.CadenceModeInterval {
+		return cadenceKey, interval, ResumeRefusalNotInterval
+	}
+	if ac, ok := g.agents[agentName]; ok && (ac.OnDemand || !ac.UsesGovernorKick()) {
+		return cadenceKey, interval, ResumeRefusalOnDemand
+	}
+	if g.budgetExhausted() && !g.budgetExempt(agentName) {
+		return cadenceKey, interval, ResumeRefusalBudgetExhausted
+	}
+	if cadence.Schedule.Mode() != config.CadenceModeInterval {
+		return cadenceKey, interval, ResumeRefusalNotInterval
+	}
+	if last, ok := g.resumeKicks[cadenceKey]; ok && g.now().Sub(last) < cadence.Interval {
+		return cadenceKey, interval, ResumeRefusalIntervalThrottle
+	}
+	return cadenceKey, interval, ResumeAllowed
 }
 
 func (g *Governor) resumeCadenceForAgent(agentName string) (string, AgentCadence, bool) {

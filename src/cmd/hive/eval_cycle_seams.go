@@ -11,10 +11,13 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/advisory"
+	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/scheduler"
+	"github.com/hivecommons/hive/pkg/spokealerts"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -95,36 +98,100 @@ func (s emptyWorkSource) ListIssues(context.Context) ([]worksource.Issue, error)
 // mergeResumeKicks appends crash-restarted agents to the due list ONLY through
 // the governor's gate (#2573, #2627): unconditional resume kicks let a
 // crash-looping CLI burn tokens on every eval cycle, past any cadence or
-// budget. allow is Governor.AllowResumeKick. An agent already due keeps its
-// single slot; order is governor-due first, then admitted restarts.
+// budget. allow is Governor.AllowResumeKickReason. An agent already due keeps
+// its single slot; order is governor-due first, then admitted restarts.
 //
-// The second result lists the restarted agents the gate REFUSED: they now sit
-// at a fresh prompt with no work until their next scheduled slot, which an
-// operator watching the pane cannot distinguish from a healthy idle agent.
-// The caller surfaces them as a dashboard alert (spokealerts.ResumeKickHeld).
-func mergeResumeKicks(agentsDue, restartedAgents []string, allow func(string) bool, logger *slog.Logger) ([]string, []string) {
+// The second result lists the restarted agents the gate REFUSED, each with the
+// gate's reason (#9612). Only an interval-throttled agent is expected to work
+// and waits on its next scheduled slot, which an operator watching the pane
+// cannot distinguish from a healthy idle agent, so the caller surfaces those
+// as a dashboard alert (spokealerts.ResumeKickHeld). A budget refusal is
+// already covered by the fleet-wide budget-exhausted banner, and a paused,
+// unscheduled, on-demand or non-interval agent is idle by configuration; those
+// are logged here and get no per-agent banner.
+func mergeResumeKicks(agentsDue, restartedAgents []string, allow func(string) (bool, governor.ResumeRefusal), logger *slog.Logger) ([]string, []spokealerts.ResumeKickHeldAgent) {
 	if len(restartedAgents) == 0 {
 		return agentsDue, nil
 	}
 	dueSet := make(map[string]bool, len(agentsDue))
 	for _, a := range agentsDue {
-		agent, _ := config.SplitCadenceTargetKey(a)
-		dueSet[agent] = true
+		name, _ := config.SplitCadenceTargetKey(a)
+		dueSet[name] = true
 	}
-	var held []string
+	var held []spokealerts.ResumeKickHeldAgent
 	for _, a := range restartedAgents {
 		if dueSet[a] {
 			continue
 		}
-		if !allow(a) {
-			logger.Warn("restarted agent NOT resume-kicked (cadence/budget gate); it idles until its next scheduled slot", "agent", a)
-			held = append(held, a)
+		if ok, reason := allow(a); !ok {
+			switch reason {
+			case governor.ResumeRefusalIntervalThrottle:
+				logger.Warn("restarted agent NOT resume-kicked (cadence/budget gate); it idles until its next scheduled slot", "agent", a, "reason", string(reason))
+			case governor.ResumeRefusalBudgetExhausted:
+				logger.Warn("restarted agent NOT resume-kicked (cadence/budget gate); budget exhausted, kicks suspended", "agent", a, "reason", string(reason))
+			default:
+				logger.Info("restarted agent NOT resume-kicked (cadence/budget gate); idle by configuration", "agent", a, "reason", string(reason))
+			}
+			held = append(held, spokealerts.ResumeKickHeldAgent{Agent: a, Reason: reason})
 			continue
 		}
 		agentsDue = append(agentsDue, a)
 		logger.Info("adding restarted agent to kick list", "agent", a)
 	}
 	return agentsDue, held
+}
+
+// resumeKickStatusSource is the subset of *agent.Manager the resume-kick-held
+// reconcile reads.
+type resumeKickStatusSource interface {
+	GetStatusFast(name string) (*agent.AgentProcess, error)
+	AllStatuses() map[string]*agent.AgentProcess
+}
+
+// resumeKickHeldFacts wires the resume-kick-held reconcile (#9612) to the
+// agent manager and the governor gate. Statuses come from GetStatusFast; when
+// that errs (agent unknown OR manager busy) one AllStatuses snapshot, taken
+// lazily at most once per call, settles whether the agent is still in the
+// roster, so a busy manager never reads as a roster removal.
+func resumeKickHeldFacts(status resumeKickStatusSource, gate func(string) (governor.ResumeRefusal, time.Duration)) spokealerts.ResumeKickHeldFacts {
+	var roster map[string]*agent.AgentProcess
+	lookup := func(name string) (*agent.AgentProcess, bool) {
+		if st, err := status.GetStatusFast(name); err == nil && st != nil {
+			return st, true
+		}
+		if roster == nil {
+			roster = status.AllStatuses()
+			if roster == nil {
+				roster = map[string]*agent.AgentProcess{}
+			}
+		}
+		st, ok := roster[name]
+		return st, ok && st != nil
+	}
+	return spokealerts.ResumeKickHeldFacts{
+		LastKick: func(name string) (time.Time, bool) {
+			st, ok := lookup(name)
+			if !ok || st.LastKick == nil {
+				return time.Time{}, false
+			}
+			return *st.LastKick, true
+		},
+		Inactive: func(name string) bool {
+			st, ok := lookup(name)
+			if !ok {
+				return true // no longer in the roster
+			}
+			return st.Paused || st.State == agent.StatePaused || !st.Config.Enabled
+		},
+		WorkedSince: func(name string, since time.Time) bool {
+			st, ok := lookup(name)
+			if !ok {
+				return false
+			}
+			return st.KicksUndeliverable > 0 || st.LastTranscriptActivity.After(since)
+		},
+		Gate: gate,
+	}
 }
 
 // kickSkipReason returns a non-empty reason when the governor must never kick

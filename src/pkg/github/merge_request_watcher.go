@@ -272,6 +272,11 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 		c.denyMergeRequest(path, req, err.Error(), nowFn)
 		return
 	}
+	// Lane write allowlist (#9587), keyed on the now-authorized agent name.
+	if reason, refused := c.refuseWrite(req.Agent, WriteOpMergePR, req.Repo, req.Number); refused {
+		c.denyMergeRequest(path, req, reason, nowFn)
+		return
+	}
 
 	// Per-repo pause (#6203), on the same footing as the PR relay above and for
 	// the same reason: `PUT /pulls/{n}/merge` is hard-denied at the proxy for

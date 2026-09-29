@@ -242,6 +242,10 @@ func (m *Manager) kickChunkPauseUnlocked(agent *AgentProcess, epoch int, d time.
 }
 
 func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string) {
+	// Consume the one-shot resume flag first, before any early return, so a
+	// skipped delivery cannot leave it armed for an unrelated later kick.
+	skipClear := agent.resumeSkipClear
+	agent.resumeSkipClear = false
 	// Claim the pane for the whole of delivery so the pane poller does not
 	// mistake a kick-in-progress for a hung CLI and restart the session out
 	// from under the typist. See AgentProcess.kickDelivering.
@@ -289,7 +293,7 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 		time.Sleep(staleCheckDelay)
 	}
 
-	if agent.Config.ClearOnKick {
+	if agent.Config.ClearOnKick && !skipClear {
 		m.tmuxSendLiteralForAgent(agent, "/clear")
 		time.Sleep(textToEnterDelay)
 		m.tmuxSendEntersForAgent(agent)

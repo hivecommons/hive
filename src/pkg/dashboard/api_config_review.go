@@ -67,6 +67,7 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		AcknowledgeNoFind  *bool     `json:"acknowledge_no_findings"`
 		HumanDecisionLabel *string   `json:"human_decision_label"`
 		ConfidenceScore    *bool     `json:"confidence_score"`
+		PriorityLabels     *bool     `json:"priority_labels"`
 		MaxReviewsPerHead  *int      `json:"max_reviews_per_head"`
 		// Perspectives and PerspectivePrompts travel together: a hive-defined
 		// perspective is only valid once its prompt exists, so validating one
@@ -214,6 +215,9 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ConfidenceScore != nil {
 		cfg.Review.ConfidenceScore = *body.ConfidenceScore
+	}
+	if body.PriorityLabels != nil {
+		cfg.Review.PriorityLabels = *body.PriorityLabels
 	}
 	if body.MaxReviewsPerHead != nil {
 		cfg.Review.MaxReviewsPerHead = *body.MaxReviewsPerHead

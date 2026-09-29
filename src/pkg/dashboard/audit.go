@@ -118,6 +118,14 @@ func (a *AuditLog) loadFromDiskPath(path string) {
 }
 
 func (a *AuditLog) Log(user, action, detail, agent string) {
+	a.LogRecord(user, action, detail, agent, "", 0)
+}
+
+// LogRecord is Log for a hive-mediated GitHub write (#9587): repo and target
+// are stored as typed fields next to the detail string. Empty repo and zero
+// target are omitted from the JSON, so a plain Log line is byte-identical to
+// what it was before these fields existed.
+func (a *AuditLog) LogRecord(user, action, detail, agent, repo string, target int) {
 	if user == "" {
 		user = "system"
 	}
@@ -127,6 +135,8 @@ func (a *AuditLog) Log(user, action, detail, agent string) {
 		Action:    action,
 		Detail:    detail,
 		Agent:     agent,
+		Repo:      repo,
+		Target:    target,
 	}
 
 	a.mu.Lock()
@@ -411,6 +421,12 @@ func (s *Server) auditFromRequest(r *http.Request, action, detail, agent string)
 // config watcher, startup, login detector).
 func (s *Server) AuditLog(user, action, detail, agent string) {
 	s.audit.Log(user, action, detail, agent)
+}
+
+// AuditLogRecord records a hive-mediated GitHub write with its typed repo and
+// target (#9587). See AuditLog.LogRecord.
+func (s *Server) AuditLogRecord(user, action, detail, agent, repo string, target int) {
+	s.audit.LogRecord(user, action, detail, agent, repo, target)
 }
 
 // GetAudit returns the underlying AuditLog for use by background goroutines.

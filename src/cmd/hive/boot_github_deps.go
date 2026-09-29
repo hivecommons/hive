@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"os"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
@@ -14,10 +15,14 @@ import (
 // failure/state hand-off — runs against the returned client.
 type bootGitHubDeps struct {
 	initGitHubAuth func(ctx context.Context, cfg *config.Config, logger *slog.Logger) githubAuth
+	// getenv/setenv back the #9586 injection default
+	// (config.ApplyProxyInjectGHAuthDefault). nil means the process env.
+	getenv func(string) string
+	setenv func(string, string) error
 }
 
 func defaultBootGitHubDeps() bootGitHubDeps {
-	return bootGitHubDeps{initGitHubAuth: initGitHubAuth}
+	return bootGitHubDeps{initGitHubAuth: initGitHubAuth, getenv: os.Getenv, setenv: os.Setenv}
 }
 
 // bootAdvisoryDeps are the effects bootAdvisory performs against GitHub

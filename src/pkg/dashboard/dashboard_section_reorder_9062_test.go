@@ -10,7 +10,7 @@ import (
 var dashboardLayoutIDs9062 = []string{
 	"overview-section", "governor", "advisory-section", "token-panel", "cost-panel",
 	"repos-section", "beads-section", "acmm-eval-section", "approvals-section", "platform-section",
-	"audit-section", "nous-section", "inception-section", "knowledge-section", "contributors-section",
+	"audit-section", "review-queue-section", "nous-section", "inception-section", "knowledge-section", "contributors-section",
 	"debug-section", "logs-section", "agents-section", "faq-section",
 }
 
@@ -38,7 +38,7 @@ func TestDashboardSectionReorderStaticWiring(t *testing.T) {
 	}
 	for _, want := range []string{
 		`hive.dashboard.layout`,
-		`DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','platform-section','audit-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']}`,
+		`DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','platform-section','audit-section','review-queue-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']}`,
 		`id="dashboard-layout-reset"`,
 		`id="dashboard-layout-live" aria-live="polite"`,
 		`class="dashboard-grip"`,

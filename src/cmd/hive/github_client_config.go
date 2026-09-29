@@ -86,6 +86,9 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// config, so the hive-open-pr / hive-merge / hive-open-issue relays
 	// refuse an out-of-scope request without a restart.
 	client.SetAgentRepoScopeFunc(b.cfg.AgentServesRepo)
+	// Lane write allowlist (#9587), same live-config contract as the two
+	// predicates above.
+	client.SetWriteAllowlistFunc(b.cfg.AgentMayWrite)
 	if len(b.cfg.Governor.Labels.Exempt) > 0 {
 		client.SetExemptLabels(b.cfg.Governor.Labels.Exempt)
 		client.SetAutoMergeLabel(normalizedAutoMergeLabel(b.cfg.Governor.Labels.AutoMerge))
@@ -228,13 +231,15 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 		return
 	}
 	client.SetMergeFailureAlertSink(b.dashSrv)
-	// Audit sink for the attribution trail. Every hive-created PR/issue is
-	// recorded here whether or not the trailer toggle is on. The same stream
-	// feeds the lifecycle timeline: agent_pr_created → pr_opened and
-	// pr_merged → merged, see recordLifecycleFromAudit.
-	client.SetAttributionAudit(func(action, detail, agentName string) {
-		b.dashSrv.AuditLog("system", action, detail, agentName)
-		recordLifecycleFromAudit(b.dashSrv, b.cfg.Project.Org, action, detail, agentName)
+	// Typed audit sink (#9587) for the attribution trail: repo and target land
+	// as first-class audit fields alongside the legacy repo=/number= detail
+	// pairs. Every hive-created PR/issue is recorded here whether or not the
+	// trailer toggle is on. The same stream feeds the lifecycle timeline:
+	// agent_pr_created → pr_opened and pr_merged → merged, see
+	// recordLifecycleFromAudit.
+	client.SetAttributionAuditRecord(func(rec github.AuditRecord) {
+		b.dashSrv.AuditLogRecord("system", rec.Action, rec.Detail, rec.Agent, rec.Repo, rec.Target)
+		recordLifecycleFromAudit(b.dashSrv, b.cfg.Project.Org, rec.Action, rec.Detail, rec.Agent)
 	})
 	client.SetPROpenedHook(func(agentName, repo string, number int, url string) {
 		b.dashSrv.LinearAgentPROpened(agentName, repo, number, url)
@@ -243,6 +248,15 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 		// audit stream attributes to the governor flow (#5656). The store
 		// dedupes with the audit-sink bridge by (ref, kind).
 		recordPROpened(b.dashSrv, b.cfg.Project.Org, agentName, repo, number, url)
+		// PR follow-up session resume (#9583, default off): remember which
+		// live CLI session authored this PR so its follow-ups can resume
+		// that conversation instead of a /clear'd fresh kick. The manager may
+		// be nil before bootAgents; the pointer is then session-less.
+		var sessions prFollowUpSessions
+		if b.agentMgr != nil {
+			sessions = b.agentMgr
+		}
+		recordPRFollowUpPointer(b.cfg, sessions, agentName, repo, number, url, time.Now(), b.logger)
 	})
 	client.SetCanaryScanner(b.cfg.Ioscan.IsEnabled() && b.cfg.Ioscan.CanariesEnabled(), b.cfg.Ioscan.FailClosedAtLevel(b.cfg.ACMMLevelOrZero()), ioscan.DefaultCanaries, b.handleCanaryLeak)
 }

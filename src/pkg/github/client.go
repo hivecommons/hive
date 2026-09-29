@@ -54,9 +54,14 @@ type Client struct {
 	// value, and what every test constructs) means no scoping, so the client
 	// behaves exactly as it did before.
 	agentServesRepo func(agent, repo string) bool
-	exemptLabels    []string
-	holdLabelsMu    sync.RWMutex
-	holdLabels      []string
+	// agentMayWrite reports whether an agent's lane may perform a write
+	// operation through the request relays (hivecommons/hive#9587). Guarded
+	// by reposMu for the same reason as agentServesRepo. Nil means no
+	// allowlist, so every operation allowed today stays allowed.
+	agentMayWrite func(agent, op string) bool
+	exemptLabels  []string
+	holdLabelsMu  sync.RWMutex
+	holdLabels    []string
 	// issueFilter is the operator's project.issue_filter (require_labels
 	// allow-list) gating which issues become actionable at all. The exclude
 	// polarity is NOT here — it is exemptLabels above (governor.labels.exempt,
@@ -607,6 +612,16 @@ type PullRequest struct {
 	// src/docs/review-queue-triage.md (#6183). Derived from Title + Labels
 	// at enumeration time; never read by the governor or any agent.
 	ReviewClass ReviewClass `json:"review_class,omitempty"`
+	// ReviewRank, ReviewPriority and ReviewRankReasons are this PR's place in
+	// the PR review queue (StampReviewQueue, hivecommons/hive#9590): its
+	// 1-based position across every open PR (actionable and held), the
+	// label-sized priority, and why it ranked there. Stamped once per eval
+	// cycle before the snapshot is written; zero/empty on snapshots written by
+	// other paths. The list order itself is unchanged. The optional
+	// review.priority_labels toggle is the only writer that acts on them.
+	ReviewRank        int            `json:"review_rank,omitempty"`
+	ReviewPriority    ReviewPriority `json:"review_priority,omitempty"`
+	ReviewRankReasons []string       `json:"review_rank_reasons,omitempty"`
 	// Protection carries the branch-protection facts behind GitHub's
 	// one-word "blocked" state — which required checks are red or absent,
 	// and GitHub's own review decision. It is nil when none of it could be

@@ -1,1 +1,0 @@
-- Persist agent UID allocations across restarts and adopt existing per-agent directory owners so adding an agent no longer shifts established UIDs.
