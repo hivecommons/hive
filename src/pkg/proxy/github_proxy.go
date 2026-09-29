@@ -1386,7 +1386,16 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// forwarding branch — so every byte that reaches GitHub has passed
 		// through it. Blocked requests above never reach upstream and need no
 		// rewrite.
-		p.rewriteGitHubAuth(req, agentName)
+		//
+		// #9586: only for GitHub hosts. This loop also relays api.linear.app
+		// (NeedsInspection), and rewriting there would attach the agent's
+		// hub-held GITHUB token to a request bound for Linear - a real
+		// credential handed to a third party - whenever the Linear lane below
+		// does not overwrite the header (an ADVISORY agent, or a hive with no
+		// Linear credential).
+		if injectsGitHubAuthForHost(host) {
+			p.rewriteGitHubAuth(req, agentName)
+		}
 
 		// Linear: the request passed the tier gate; make sure it reaches
 		// Linear with the hive's CURRENT credential rather than whatever
@@ -1517,6 +1526,8 @@ const loginPathPrefix = "/login/"
 // a prefix (#1861 requirement; a token prefix is enough to fingerprint and
 // correlate credentials across logs).
 func (p *GitHubProxy) rewriteGitHubAuth(req *http.Request, agentName string) {
+	// NOTE: callers must gate on injectsGitHubAuthForHost first; this function
+	// does not know which host the request is bound for.
 	if !p.injectGHAuth {
 		// Flag off (the default): behavior byte-identical to before #1861 —
 		// no header is touched on any path.
@@ -1570,6 +1581,16 @@ func (p *GitHubProxy) rewriteGitHubAuth(req *http.Request, agentName string) {
 		req.Header.Set("Authorization", "token "+token)
 	}
 	p.logger.Debug("proxy auth injection: scoped token attached", "agent", agentName, "injected", true)
+}
+
+// injectsGitHubAuthForHost reports whether a request relayed for host may have
+// its Authorization rewritten by rewriteGitHubAuth (#9586). It is a positive
+// allowlist - the empty host (proxyHTTP's "GitHub implied" convention) and the
+// registered GitHub-family hosts - rather than "anything but Linear", so a
+// non-GitHub host added to the MITM set later can never receive a GitHub token
+// by default.
+func injectsGitHubAuthForHost(host string) bool {
+	return host == "" || IsGitHubHost(host)
 }
 
 func (p *GitHubProxy) inspectCanaryEgress(agentName string, req *http.Request) (reason string, deny bool, detected bool) {

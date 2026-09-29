@@ -329,3 +329,57 @@ func TestHostNeedsMITM_InjectionWidensInterception(t *testing.T) {
 		}
 	}
 }
+
+// TestInjectAuth_NeverAttachesGitHubTokenToLinear (#9586): api.linear.app is
+// relayed through the same request loop as GitHub. With injection on, an
+// agent's hub-held GitHub token must never be attached to a request bound for
+// Linear - not for an ADVISORY agent (the Linear lane attaches nothing) and not
+// on a hive without a Linear credential. Before the host gate, both cases
+// shipped `Authorization: token <github token>` to a third party.
+func TestInjectAuth_NeverAttachesGitHubTokenToLinear(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mode agent.AgentMode
+	}{
+		{"advisory agent", agent.ModeAdvisory},
+		{"issues-only agent without a Linear credential", agent.ModeIssuesOnly},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls []string
+			p := injectionTestProxy(&calls)
+
+			req := relayLinearRequest(t, p, tc.mode, "Bearer agents_own")
+			if got := req.Header.Get("Authorization"); strings.Contains(got, testScopedToken) {
+				t.Fatalf("the agent's GitHub token reached Linear: Authorization = %q", got)
+			}
+			if got := req.Header.Get("Authorization"); got != "Bearer agents_own" {
+				t.Errorf("Linear request must be forwarded as the agent sent it (the pre-injection behavior), got %q", got)
+			}
+			if len(calls) != 0 {
+				t.Errorf("GitHub token source consulted for a Linear request: %v", calls)
+			}
+		})
+	}
+}
+
+// TestInjectsGitHubAuthForHost pins the allowlist: GitHub-implied and
+// registered GitHub hosts only, never Linear or an arbitrary host.
+func TestInjectsGitHubAuthForHost(t *testing.T) {
+	const gheHost = "github.example-enterprise.test"
+	RegisterGitHubHost(gheHost)
+	t.Cleanup(func() { unregisterGitHubHost(gheHost) })
+
+	for host, want := range map[string]bool{
+		"":                  true,
+		"api.github.com":    true,
+		"github.com":        true,
+		gheHost:             true,
+		"api.linear.app":    false,
+		"example.com":       false,
+		"api.anthropic.com": false,
+	} {
+		if got := injectsGitHubAuthForHost(host); got != want {
+			t.Errorf("injectsGitHubAuthForHost(%q) = %v, want %v", host, got, want)
+		}
+	}
+}

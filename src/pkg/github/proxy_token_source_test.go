@@ -9,6 +9,8 @@ package github
 import (
 	"context"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -101,5 +103,70 @@ func TestWriteAgentToken_FlagOffDeliveryUnchanged(t *testing.T) {
 	}
 	if tok, ok := AgentProxyToken(agentName); ok {
 		t.Errorf("flag-off registry holds a token (%q) — the registry must only be fed under the flag", tok)
+	}
+}
+
+// TestInjectionMode_NoRealTokenInAnyAgentReadableCacheFile is the #9586
+// acceptance invariant for the cache side: with injection on, across several
+// agents and a refresh cycle, NO file in the agent-readable token cache
+// directory contains a real token, every agent's token file is exactly its
+// hive-proxy-injected-<agent> placeholder, and the hub-held registry has the
+// real token for the proxy to inject. The GH_TOKEN / GITHUB_TOKEN an agent sees
+// are read from these files (gh-wrapper.sh, git-credential-hive.sh, the
+// manager's GITHUB_TOKEN push), so this also bounds the env lane. The log is
+// checked too: a token in the hive log is one `cat` away for any operator tool.
+func TestInjectionMode_NoRealTokenInAnyAgentReadableCacheFile(t *testing.T) {
+	const realToken = "ghs_realScopedTokenForInvariant"
+	agents := []string{"scanner", "reviewer", "outreach"}
+	t.Setenv(config.ProxyInjectGHAuthEnv, config.ProxyInjectGHAuthOnValue)
+	resetProxyTokenRegistry(t)
+
+	auth, logBuf, closeFn := newFakeAppAuth(t, realToken)
+	defer closeFn()
+	dir := useTempCacheDir(t)
+
+	const refreshCycles = 2 // launch mint + one hourly refresh
+	for cycle := 0; cycle < refreshCycles; cycle++ {
+		for i, name := range agents {
+			if err := auth.WriteAgentToken(context.Background(), name, "advisor", 2001+i); err != nil {
+				t.Fatalf("cycle %d WriteAgentToken(%s): %v", cycle, name, err)
+			}
+		}
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading cache dir: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("cache dir is empty - the invariant below would pass vacuously")
+	}
+	for _, e := range entries {
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatalf("reading %s: %v", e.Name(), err)
+		}
+		if strings.Contains(string(b), realToken) {
+			t.Errorf("agent-readable cache file %s contains the real token under injection", e.Name())
+		}
+	}
+
+	placeholder := regexp.MustCompile(`^hive-proxy-injected-([a-z0-9-]+)$`)
+	for _, name := range agents {
+		b, err := os.ReadFile(AgentTokenCachePath(name))
+		if err != nil {
+			t.Fatalf("reading %s cache: %v", name, err)
+		}
+		m := placeholder.FindStringSubmatch(string(b))
+		if m == nil || m[1] != name {
+			t.Errorf("%s cache = %q, want exactly the placeholder %q", name, b, AgentDummyToken(name))
+		}
+		if got, ok := AgentProxyToken(name); !ok || got != realToken {
+			t.Errorf("AgentProxyToken(%s) = (%q, %v), want the real token", name, got, ok)
+		}
+	}
+
+	if strings.Contains(logBuf.String(), realToken) {
+		t.Error("the real token appeared in the hive log")
 	}
 }

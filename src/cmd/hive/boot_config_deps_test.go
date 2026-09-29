@@ -426,3 +426,65 @@ func TestDefaultBootConfigDeps_AdaptersDelegate(t *testing.T) {
 		t.Fatal("releaseChannel reported a channel with no self image")
 	}
 }
+
+// #9586: a spoke whose credential posture is self-contradictory must refuse to
+// boot BEFORE config load (so no agent, proxy or token mint ever runs under
+// it), with its own exit code and a log line naming the variable to fix.
+func TestBootConfigWith_ContradictoryProxyInjectPostureExits(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+	}{
+		{"injection with self-asserted identity", map[string]string{config.ProxyInjectGHAuthEnv: config.ProxyInjectGHAuthOnValue, config.ProxyAdvisoryOKEnv: "true"}},
+		{"unrecognized injection value", map[string]string{config.ProxyInjectGHAuthEnv: "1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBootConfigFake(t)
+			for k, v := range tc.env {
+				f.env[k] = v
+			}
+			f.deps.loadConfig = func(string) (*config.Config, error) {
+				t.Fatal("config loaded despite a contradictory credential posture")
+				return nil, nil
+			}
+			b := &boot{}
+
+			returned, _, code := runBootConfig(t, b, f.deps)
+			if returned || code != proxyInjectConfigExitCode {
+				t.Fatalf("returned=%v code=%d, want exit(%d)", returned, code, proxyInjectConfigExitCode)
+			}
+			if log := f.log.String(); !strings.Contains(log, "refusing to start") || !strings.Contains(log, config.ProxyInjectGHAuthEnv) {
+				t.Fatalf("missing an actionable refusal naming %s in log:\n%s", config.ProxyInjectGHAuthEnv, log)
+			}
+			if b.cfg != nil {
+				t.Fatal("boot state populated after the refusal")
+			}
+		})
+	}
+}
+
+// The accepted postures boot normally: injection on (what a fresh hosted
+// App spoke is provisioned with), the explicit opt-out, and unset.
+func TestBootConfigWith_ConsistentProxyInjectPostureBoots(t *testing.T) {
+	for _, v := range []string{config.ProxyInjectGHAuthOnValue, config.ProxyInjectGHAuthOffValue, ""} {
+		t.Run("value="+v, func(t *testing.T) {
+			f := newBootConfigFake(t)
+			f.env[config.ProxyInjectGHAuthEnv] = v
+			if returned, ok, code := runBootConfig(t, &boot{}, f.deps); !returned || !ok {
+				t.Fatalf("returned=%v ok=%v code=%d, want a normal boot", returned, ok, code)
+			}
+		})
+	}
+}
+
+// The hub runs no agents, so the spoke guard must not stop it.
+func TestBootConfigWith_HubModeNotGatedByProxyInjectGuard(t *testing.T) {
+	f := newBootConfigFake(t)
+	f.env["HIVE_MODE"] = "hub"
+	f.env[config.ProxyInjectGHAuthEnv] = "1"
+
+	returned, ok, code := runBootConfig(t, &boot{}, f.deps)
+	if !returned || ok || !f.hubRun {
+		t.Fatalf("returned=%v ok=%v code=%d hubRun=%v, want the hub started", returned, ok, code, f.hubRun)
+	}
+}
