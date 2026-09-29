@@ -1,0 +1,1 @@
+- The README Kubernetes ports table now matches the manifests ([#9533](https://github.com/hivecommons/hive/issues/9533)). The hive pod serves the dashboard and `/api/*` on 3002. It no longer lists 3001, which is the hub's port, and it says ttyd on 7681 is loopback only and reached through `/terminal`.
