@@ -21,14 +21,17 @@ import (
 //
 // This pass reconciles instead of hooking pushes. It runs from the PR-request
 // watcher loop, and when github.app_signed_commits is on it walks every open
-// PR the App bot authored. For a PR whose head is not Verified, it finds the
-// newest Verified commit and signs the unverified tail after it, via the
-// same signBranch the open path uses. The base is that commit's sha: compare
-// takes a sha, and the merge base of sha...head is the sha itself. So the
-// result is one GitHub-signed commit on top of the last verified one, with
-// the same tree and the tail's messages and DCO trailers. The open path's
-// guards all still apply: the moved-head check, the mode/size refusals, and
-// the scratch ref.
+// PR the App bot authored. A PR needs signing when any of its commits is
+// unverified, not only when the head is: a person can sign their own commit
+// on top of an agent's unsigned one, which leaves the head Verified while an
+// unsigned commit still sits underneath it. So the pass finds the first
+// unverified commit (oldest to newest) and signs from there through the head,
+// via the same signBranch the open path uses. The base is the commit right
+// before it, if any: compare takes a sha, and the merge base of sha...head is
+// the sha itself. So the result is one GitHub-signed commit on top of the
+// last verified one, with the same tree and the range's messages and DCO
+// trailers. The open path's guards all still apply: the moved-head check,
+// the mode/size refusals, and the scratch ref.
 //
 // It never re-authors a person's work. Before signing, every commit in the
 // tail must be the hive's own: author and committer both either the App bot
@@ -229,24 +232,32 @@ func (c *Client) reconcileSignedPR(ctx context.Context, owner, repo string, pr *
 		// Pushed between the PR list and the commit list; next pass.
 		return ""
 	}
-	if commitVerified(commits[len(commits)-1]) {
-		return headSHA
-	}
 
-	verified := -1
-	for i := len(commits) - 1; i >= 0; i-- {
-		if commitVerified(commits[i]) {
-			verified = i
+	// A verified head is not enough: a person can sign their own commit on
+	// top of an agent's unsigned one, leaving the head Verified while an
+	// unsigned commit still sits underneath it. Find the first unverified
+	// commit, oldest to newest; everything from there through the head is
+	// the range that must be re-authored, or refused as a whole.
+	firstUnverified := -1
+	for i, rc := range commits {
+		if !commitVerified(rc) {
+			firstUnverified = i
 			break
 		}
 	}
-	base := pr.GetBase().GetRef()
-	if verified >= 0 {
-		base = commits[verified].GetSHA()
+	if firstUnverified < 0 {
+		// Every commit, including the head, is Verified.
+		return headSHA
 	}
-	tail := commits[verified+1:]
+
+	base := pr.GetBase().GetRef()
+	if firstUnverified > 0 {
+		base = commits[firstUnverified-1].GetSHA()
+	}
+	tail := commits[firstUnverified:]
 
 	if reason := c.signedTailBlocker(tail); reason != "" {
+		reason = fmt.Sprintf("commit %s is unverified; %s", shortSHA(commits[firstUnverified].GetSHA()), reason)
 		c.warn("signed-commit reconciler: skipped; the PR head stays unsigned", append(logArgs, "reason", reason)...)
 		c.noteSignedSkip(ctx, owner, repo, number, reason)
 		return headSHA

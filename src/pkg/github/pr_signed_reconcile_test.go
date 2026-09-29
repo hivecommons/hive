@@ -210,6 +210,40 @@ func TestSignedReconcile_HumanCommitInTailSkipsAndCommentsOnce(t *testing.T) {
 	}
 }
 
+// A verified head is not enough: a human can sign their own commit on top of
+// an agent's unsigned one, which is invisible to a check that only looks at
+// the newest Verified commit and stops there (#9531). The pass must still
+// find the unverified commit underneath, refuse to rewrite past the human's
+// work, and comment once naming both the unsigned sha and the blocking
+// commit, rather than staying silent because the head itself is Verified.
+func TestSignedReconcile_UnverifiedCommitUnderVerifiedHeadSkipsAndComments(t *testing.T) {
+	m, c := reconcileFixture(t, true)
+	unverifiedAgent := "eeee0000000000000000000000000000000abc1"
+	m.prCommits = []map[string]any{
+		prCommitJSON(verifiedSHA, true, reconcileBot, "1+hive-app[bot]@users.noreply.github.com"),
+		prCommitJSON(unverifiedAgent, false, "", "quality@hive.kubestellar.io"),
+		prCommitJSON(m.headSHA, true, "alice", "alice@example.com"),
+	}
+
+	c.reconcileSignedCommits(context.Background())
+
+	if m.callIndex("GET /repos/o/r/compare/") >= 0 || m.graphql != nil || m.refPatch != nil {
+		t.Fatalf("a verified head over an unverified commit must not be rewritten:\n%s", strings.Join(m.calls, "\n"))
+	}
+	if len(m.posted) != 1 {
+		t.Fatalf("exactly one comment expected, got %d: %v", len(m.posted), m.posted)
+	}
+	if !strings.Contains(m.posted[0], shortSHA(unverifiedAgent)) {
+		t.Errorf("the comment must name the unsigned commit %s: %q", unverifiedAgent, m.posted[0])
+	}
+	if !strings.Contains(m.posted[0], "alice@example.com") {
+		t.Errorf("the comment must name the human commit on top: %q", m.posted[0])
+	}
+	if got := c.signedReconcile.settledHead("o/r#77"); got != m.headSHA {
+		t.Errorf("the PR must be recorded settled only once the comment is posted, got %q", got)
+	}
+}
+
 // A merge commit can't be expressed by createCommitOnBranch without folding
 // the merged-in changes into the PR; skip it like a human commit.
 func TestSignedReconcile_MergeCommitInTailSkips(t *testing.T) {
