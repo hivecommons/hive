@@ -1,0 +1,1 @@
+- CI: the contributor-agent multi-hub token test no longer fails when the random test port contains "401" — the auth-rejection guard now matches "HTTP 401" instead of any "401" substring.

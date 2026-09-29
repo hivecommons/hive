@@ -348,7 +348,9 @@ case "$multi_token_output" in
     ;;
 esac
 case "$multi_token_output" in
-  *"401"* | *"unavailable"* )
+  # "HTTP 401", not bare "401": the random test port (e.g. 40197) can contain
+  # "401" and every line of a successful run prints the URL with that port.
+  *"HTTP 401"* | *"unavailable"* )
     echo "expected the first-listed hub to authenticate with its own token, not the combined value; got:" >&2
     echo "$multi_token_output" >&2
     exit 1
