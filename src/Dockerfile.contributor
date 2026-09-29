@@ -227,9 +227,9 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit \
 #
 # No credential is baked in: muse needs META_API_KEY in the environment or a
 # credential at $HOME/.config/muse/auth.json.
-ARG MUSE_VERSION=1.4.0-R4302.1
-ARG MUSE_SHA256_AMD64=ad21c22965f8600b4473b4ab8354ff7cc483d4cb681b46f2952561d855c8ed86
-ARG MUSE_SHA256_ARM64=79cfba1b9e417b370bdb9154a546c524b7f32a34026e6164b6f3f122f0ea3386
+ARG MUSE_VERSION=1.4.1-R4503.1
+ARG MUSE_SHA256_AMD64=8b53c9cdbc025bc2d9068bc7016e2c1e51c3a0c608821da17528ad23be900a12
+ARG MUSE_SHA256_ARM64=a6d46239975adac282aa829d2a5bd1cd3119334c18ecfa776d4377daebddb595
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64|x86_64) MUSE_FILE=muse-x86-linux; MUSE_SHA256="$MUSE_SHA256_AMD64" ;; \
