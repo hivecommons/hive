@@ -1,0 +1,1 @@
+- Add `issues_by_band` and `prs_by_band` admin MCP read tools, thin wrappers over the `GET /api/overview/{issues,prs}.json` band classifier, so an agent can ask "which issues/PRs are in band X?" without re-implementing the Overview donut's label rules ([#9106](https://github.com/hivecommons/hive/issues/9106)).

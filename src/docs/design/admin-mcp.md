@@ -1,6 +1,6 @@
 # The operator-facing admin MCP
 
-**Status: phase 6 repository, spend, contributor and ops operations implemented, with phase 4 agent operations present.** The admin MCP package, dashboard endpoint, stdio binary, refusal contract, read tools for fleet, agents, leases/claims, plans, audit, settings, readiness, spend, contributors, knowledge, and hive advice, the generic write-operation registry, durable preview-and-confirm flow, and registered write operations through phase 6 — including phase 4 agent operations and phase 5 fleet-level operations — are present. Writes remain disabled unless explicitly enabled, and later phases add more registered write operations on top of the same contract. It belongs to the v6
+**Status: phase 6 repository, spend, contributor and ops operations implemented, with phase 4 agent operations present.** The admin MCP package, dashboard endpoint, stdio binary, refusal contract, read tools for fleet, agents, leases/claims, plans, audit, settings, readiness, spend, contributors, knowledge, hive advice, and issue/PR overview bands, the generic write-operation registry, durable preview-and-confirm flow, and registered write operations through phase 6 — including phase 4 agent operations and phase 5 fleet-level operations — are present. Writes remain disabled unless explicitly enabled, and later phases add more registered write operations on top of the same contract. It belongs to the v6
 dashboard-optional line ([#7563](https://github.com/hivecommons/hive/issues/7563)) and, per
 that line's policy, lands on the `v6` branch only. Tracked by
 [#8697](https://github.com/hivecommons/hive/issues/8697).
@@ -298,6 +298,7 @@ one.
 | repositories | `GET /api/repos/pauses` | |
 | knowledge | `GET /api/knowledge`, `GET /api/knowledge/search`, `GET /api/knowledge/{layer}/{slug}` | Reads only. Writes are excluded — see below. |
 | hive advisor | `POST /api/chat`, `GET /api/chat/messages` | The one path where Hive input-scans the operator's text *for* the client rather than the reverse: `handleDashboardChat` calls `ioscan.EnforceInput` and refuses a blocked message with `chat.dashboard.refused`. |
+| issue/PR bands | `GET /api/overview/issues.json` (`issues_by_band`), `GET /api/overview/prs.json` (`prs_by_band`) | Thin wrappers over #9102's band classifier — see below. |
 | breaker, backup | `GET /api/breaker`, `GET /api/backup/status` | |
 
 **Leases and claims are not the same thing, and an operator wants both.** A `taskLease`
@@ -312,6 +313,21 @@ surfaces the ledger. Answering "why is nobody working this?" needs both.
 
 `GET /api/runs/{key}` resolves its path value against `run.Key` **or** `run.LeaseKey`, and
 falls back to the queued-run snapshot, so an operator can paste either identifier.
+
+**`issues_by_band` / `prs_by_band`** (hive#9106) let an agent ask "which issues are ready to
+close?" without re-implementing the Overview donut's label rules. Both take an optional
+`repo` (`owner/name`), `band`, and `stale`, plus the usual `limit`. `bands[]` — the key,
+human label, rule sentence, and real count for every band — is always returned in full, even
+when `band` filters `rows[]` to one of them, so a caller can map "Confirm & close" to
+`band=done` without knowing the `hive/*` label names. An unknown `band` gets the same
+`{"type":"refusal",...}` shape as `refuse_operation`, listing the valid keys. The tool never
+forwards `band` or `limit` to the Overview endpoint itself — that would compute `bands[]`
+counts and `rows[]` over only the already-filtered subset — so it fetches every band and
+filters/caps `rows[]` itself, disclosing `rows_truncated` and `_admin_mcp.total` the same way
+other capped list fields do. `band=done` includes issues an agent labelled
+`hive/covered-by-pr`, which only means an agent found an *open* PR that references the
+issue, not that it merged: a caller closing "ready" issues from this band must still verify
+the referenced work landed before closing, exactly as the worked example in hive#9106 does.
 
 ### Write
 

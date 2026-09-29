@@ -351,6 +351,8 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 		{ToolKnowledgeRead, "Read knowledge-system health and statistics."},
 		{ToolHiveAdvisor, "Read hive advisor recommendations."},
 		{ToolAgentNudgeStatus, "Read the asynchronous delivery outcome for the latest nudge sent to one agent."},
+		{ToolIssuesByBand, "Read issues grouped by their Overview band (ready, in-progress, agent-filed, waiting, done), e.g. band=done for issues an agent has labelled hive/already-done, hive/covered-by-pr or hive/likely-done that a human has not verified and closed yet. hive/covered-by-pr only means an agent found an open PR that references the issue — check that the PR merged before closing."},
+		{ToolPrsByBand, "Read PRs grouped by their Overview band (waiting, eligible, blocked, in-review, open, draft)."},
 		{ToolWritePreview, "Preview a registered write operation and create a durable pending confirmation."},
 		{ToolWriteConfirm, "Confirm and execute a previously previewed write operation."},
 		{ToolExclusionCatalogue, "Return the askable catalogue of operations deliberately excluded from admin MCP."},
@@ -373,7 +375,8 @@ func AllowedTool(name string) bool {
 	switch name {
 	case ToolHiveStatus, ToolFleetStatus, ToolAgentsList, ToolRunsList, ToolLeasesList, ToolClaimsList,
 		ToolPlansList, ToolAuditLog, ToolSettingsRead, ToolAutonomyReadiness, ToolSpendRead,
-		ToolContributorsList, ToolKnowledgeRead, ToolHiveAdvisor, ToolAgentNudgeStatus, ToolWritePreview, ToolWriteConfirm,
+		ToolContributorsList, ToolKnowledgeRead, ToolHiveAdvisor, ToolAgentNudgeStatus,
+		ToolIssuesByBand, ToolPrsByBand, ToolWritePreview, ToolWriteConfirm,
 		ToolExclusionCatalogue, ToolRefuseOperation:
 		return true
 	}
@@ -404,6 +407,14 @@ func inputSchema(name string) map[string]any {
 	case ToolAgentNudgeStatus:
 		props = map[string]any{"agent": map[string]any{"type": "string", "minLength": 1}}
 		required = []string{"agent"}
+	case ToolIssuesByBand:
+		props["repo"] = map[string]any{"type": "string", "description": "owner/name; unset reads every repo this hive tracks."}
+		props["band"] = map[string]any{"type": "string", "enum": issueBandKeys}
+		props["stale"] = map[string]any{"type": "boolean"}
+	case ToolPrsByBand:
+		props["repo"] = map[string]any{"type": "string", "description": "owner/name; unset reads every repo this hive tracks."}
+		props["band"] = map[string]any{"type": "string", "enum": prBandKeys}
+		props["stale"] = map[string]any{"type": "boolean"}
 	case ToolWritePreview:
 		props = map[string]any{"operation": map[string]any{"type": "string"}, "args": map[string]any{"type": "object"}}
 		required = []string{"operation", "args"}
