@@ -380,6 +380,9 @@ type Server struct {
 	swarmMu             sync.Mutex
 	swarm               *swarmStore
 	swarmAnnouncer      SwarmAnnouncer
+
+	// nps rate-limits NPS feedback submissions (#9610). Zero value is ready.
+	nps npsRateLimiter
 }
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.

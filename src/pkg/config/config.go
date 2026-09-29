@@ -4487,6 +4487,13 @@ type HubConfig struct {
 	// ContributeWallRetentionDays bounds persisted contributor-wall posts on the
 	// hub data volume. 0/unset resolves to the dashboard's 90-day default.
 	ContributeWallRetentionDays int `yaml:"contribute_wall_retention_days,omitempty"`
+	// NPSEnabled opts this hive's dashboard into the NPS feedback prompt, whose
+	// responses are forwarded to the hub (issue #9610). A POINTER so an absent
+	// value means "use the default": ON for hub-provisioned hosted spokes, OFF
+	// for every self-hosted or standalone install, because the hive never sends
+	// data off-box without an explicit operator opt-in. HIVE_NPS_ENABLED
+	// overrides it. Resolve with NPSFeedbackEnabled(), never the raw field.
+	NPSEnabled *bool `yaml:"nps_enabled,omitempty"`
 	// Contribute title/author/label filters use a single list plus a mode:
 	//   - FilterModeAllow ("allow"): allowlist — an item passes ONLY if it
 	//     matches the list (a non-empty list is required for the filter to gate;

@@ -79,6 +79,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/backup/status", s.handleBackupStatus)
 	s.mux.HandleFunc("POST /api/backup", s.handleBackupDownload)
 	s.mux.HandleFunc("POST /api/banner-dismissed", s.handleBannerDismissed)
+	// NPS feedback prompt (#9610): status gates the prompt; submit forwards a
+	// response to the hub over the spoke's authenticated hub link. See nps.go.
+	s.mux.HandleFunc("GET /api/feedback/nps/status", s.handleNPSStatus)
+	s.mux.HandleFunc("POST /api/feedback/nps", s.handleNPSSubmit)
 	s.mux.HandleFunc("GET /api/snapshot/frame-ancestors", s.handleSnapshotFrameAncestors)
 	s.mux.HandleFunc("GET /api/snapshot", s.handleSnapshotAPI)
 	s.mux.HandleFunc("GET /snapshot", s.handleSnapshotPage)

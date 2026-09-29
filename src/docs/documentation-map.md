@@ -102,6 +102,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Large-spoke scale envelope](scale-envelope.md) — the backlog size one spoke is known to work at, why kick-prompt caps are render-side while enumeration is uncapped, and an inventory of every cap that changes behaviour at scale (default, overflow behaviour, and whether it is operator-tunable).
 - [Supervisor agent](supervisor.md) — supervisor policy modes, bead roles, and when to enable the orchestration lane.
 - [Telemetry agent](telemetry.md) — the L5/L6-only opt-in observability agent, ACMM level gating, and the `project_observability` opt-in flow.
+- [NPS feedback prompt](nps.md) - the dashboard's opt-in NPS question: what is collected (no user identity), how it reaches the hub, why only hub admins can read it, and the `hub.nps_enabled` / `HIVE_NPS_ENABLED` switch.
 - [Operations agent](operations.md) — the L5/L6-only opt-in operational-readiness agent (health checks, SLOs, runbooks), ACMM level gating, and the `project_observability` opt-in flow.
 - [Custom dashboard stylesheets](custom-stylesheets.md) — operator-supplied CSS for the dashboard and public snapshot.
 - [Branding a hive](branding.md) — persistent per-deployment name, mark, and colours via `<data>/branding/branding.json` and `custom.css` (`HIVE_BRANDING_JSON`/`HIVE_BRANDING_CSS`); distinct from the per-request `?style=` stylesheets above.
