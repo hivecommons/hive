@@ -189,8 +189,9 @@ chmod +x "$tmp/bin/git" "$tmp/bin/gh" "$tmp/bin/sleep"
 # run_step <scenario> [tag-scenario] [gh006-window] — runs the extracted step;
 # sets rc, output, ghout (the $GITHUB_OUTPUT contents), state dir in $st.
 run_step() {
-  st="$tmp/state.$RANDOM"
-  mkdir -p "$st"
+  # mktemp guarantees a fresh dir; $RANDOM collided across cases and leaked
+  # a prior case's gh_output/attempt counters into later assertions.
+  st="$(mktemp -d "$tmp/state.XXXXXX")"
   : > "$st/out"
   RPR_SCENARIO="$1" RPR_TAG_SCENARIO="${2:-ok}" RPR_STATE="$st" \
     RELEASE_PUSH_GH006_WINDOW="${3:-120}" \

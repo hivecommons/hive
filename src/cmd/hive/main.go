@@ -497,6 +497,10 @@ func nextInstallationID(current int64, ghCfg *spoke.HeartbeatGitHubAppConfig) (n
 
 var githubAppTokenCachePath = github.TokenCachePath
 
+// resumeKickHeldAlerts tracks crash-restarted agents the resume-kick gate
+// refused, so the eval loop can raise and later clear their dashboard alert.
+var resumeKickHeldAlerts = spokealerts.NewResumeKickHeld()
+
 func githubAppTokenHeartbeatFields(cfg *config.Config, detail string) (status, lastMintAt, lastErr string) {
 	if cfg == nil || !cfg.GitHub.HasApp() {
 		return "", "", ""
@@ -6523,7 +6527,19 @@ func runEvalCycle(
 	// burning backend tokens far faster than any configured cadence and
 	// bypassing the budget gate; AllowResumeKick bounds resume kicks to one
 	// per cadence interval and respects mode pauses and the budget.
-	agentsDue = mergeResumeKicks(agentsDue, restartedAgents, gov.AllowResumeKick, logger)
+	// Refused restarts are not silent: the agent sits at an empty prompt
+	// until its slot, so raise a per-agent alert (with an OOM hint when the
+	// cgroup killed the CLI) and clear it once any kick reaches the agent.
+	var resumeHeld []string
+	agentsDue, resumeHeld = mergeResumeKicks(agentsDue, restartedAgents, gov.AllowResumeKick, logger)
+	resumeKickHeldAlerts.Apply(dashSrv, resumeHeld, agentMgr.CrashOOMSuspected)
+	resumeKickHeldAlerts.ClearKicked(dashSrv, func(name string) (time.Time, bool) {
+		st, err := agentMgr.GetStatusFast(name)
+		if err != nil || st == nil || st.LastKick == nil {
+			return time.Time{}, false
+		}
+		return *st.LastKick, true
+	})
 
 	govState := gov.GetState()
 	span.SetAttributes(

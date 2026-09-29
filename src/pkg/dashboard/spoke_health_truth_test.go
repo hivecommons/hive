@@ -181,7 +181,7 @@ func TestSpokeHealthTruthUIWiring(t *testing.T) {
 			why:     "any failing deep check must flip the pill to Degraded",
 		},
 		{
-			snippet: "const isDown = a.state !== 'running' && !isPaused && !isOff && !isOnDemand;",
+			snippet: "const isDown = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting;",
 			why:     "the sidebar dot must treat every non-running, non-paused process state (stopped, failed, idle) as down",
 		},
 		{

@@ -12,7 +12,6 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/hivecommons/hive/internal/testutil"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -214,16 +213,25 @@ func TestBlockedVerdict_WireShape(t *testing.T) {
 		Verdict:          "no_work_needed", VerdictBlocked: true,
 		VerdictReason: "projectbluefin/utah-packages#41 merged the recipes but no factory image carries them yet",
 	})
-	// The completion is booked on the hub's goroutine after the read; wait on
-	// the observable result rather than a fixed sleep (sleep ratchet).
-	testutil.Eventually(t, 2*time.Second, func() bool {
-		p := findContributor(reg["contributor_id"])
-		return p != nil && p.TasksCompleted == 1
-	}, "a blocked verdict is a real conclusion: TasksCompleted should reach 1")
+	// The completion is booked synchronously inside handleTaskComplete, and the
+	// hub's read loop handles one frame at a time. So the reply to a `ready`
+	// sent AFTER the task_complete can only be written once the booking has
+	// finished: reading it is a happens-before edge, not a wall-clock guess.
+	// This replaced a 2s Eventually poll that flaked on a loaded -race runner
+	// (#9275) when the goroutines stalled past the budget. The reply is also
+	// this test's last assertion: the blocked issue is not handed back out.
+	conn.WriteJSON(WSMessage{Type: "ready", Seq: 3})
+	next := readMsg(t, conn)
+	if next.Type != "task_unavailable" || next.Reason != taskUnavailableNoMatchingWork {
+		t.Fatalf("blocked issue must not be re-offered, got %+v", next)
+	}
 
 	p := findContributor(reg["contributor_id"])
 	if p == nil {
 		t.Fatal("contributor not found")
+	}
+	if p.TasksCompleted != 1 {
+		t.Fatalf("a blocked verdict is a real conclusion: TasksCompleted = %d, want 1", p.TasksCompleted)
 	}
 	if p.TasksWithPR != 0 || p.TrustTier != "newcomer" {
 		t.Fatalf("blocked must never count as a PR or promote: TasksWithPR=%d tier=%q", p.TasksWithPR, p.TrustTier)
@@ -245,13 +253,6 @@ func TestBlockedVerdict_WireShape(t *testing.T) {
 	hub.completedMu.Unlock()
 	if !ok || !rec.Blocked || rec.Reporter != "blocked-user" {
 		t.Fatalf("ledger row must be the blocked marker for the reporting contributor, got ok=%v rec=%+v", ok, rec)
-	}
-
-	// The next ready contributor is not handed the same dead end.
-	conn.WriteJSON(WSMessage{Type: "ready", Seq: 3})
-	next := readMsg(t, conn)
-	if next.Type != "task_unavailable" || next.Reason != taskUnavailableNoMatchingWork {
-		t.Fatalf("blocked issue must not be re-offered, got %+v", next)
 	}
 }
 

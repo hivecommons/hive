@@ -95,6 +95,10 @@ type DispatchOptions struct {
 	// WritingGuideSection carries project.writing_guide into review-swarm
 	// prompt builders, matching template-based issue/PR filing kicks.
 	WritingGuideSection string
+	// ReviewBotLogins carries classification.review_bots.logins into the
+	// prompt builder, so reviewers read and answer those bots' unresolved
+	// threads (hivecommons/hive#9360).
+	ReviewBotLogins []string
 	// AllAuthors lifts the agent-authored restriction so every open PR is
 	// eligible for review, whoever opened it.
 	AllAuthors bool
@@ -117,12 +121,6 @@ type DispatchOptions struct {
 	ReviseVerdictsBefore time.Time
 	Agents               []AgentCapability
 	Now                  time.Time
-	// ReviewBotLogins is classification.review_bots.logins, carried into the
-	// read step (hivecommons/hive#9360) so the reviewer also addresses open
-	// Codex/review-bot findings instead of never fetching them. Empty means
-	// the feature is off; PromptOptions.ReviewBotLogins then stays empty too
-	// and the section is skipped.
-	ReviewBotLogins []string
 }
 
 type DispatchState struct {

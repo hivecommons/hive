@@ -261,7 +261,7 @@ func TestPRCapablePolicyDefaultsIncludePRTitleGuidance(t *testing.T) {
 // TestPromptVariableParityForSyncedTemplates pins the specific regression that
 // motivated this file: a template carrying ${GH_AUTH} or ${KNOWLEDGE} in one
 // tree but not the other. The scheduler builds one variable map per kick for
-// every agent (pkg/scheduler/scheduler.go), so these substitute in any
+// every agent (pkg/scheduler/templates.go), so these substitute in any
 // template — a missing occurrence is a silently weaker prompt, not an error.
 func TestPromptVariableParityForSyncedTemplates(t *testing.T) {
 	for _, name := range policyTemplateNames(t) {

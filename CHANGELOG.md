@@ -11,6 +11,95 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-28 (v5.79.0)
+
+### Added
+
+- Added a repo-root `AGENTS.md` (and `CLAUDE.md` alias) telling agents that CI runs the tests: no local `go test`/build/lint, and never run this repo's suite inside an agent pane (#9416).
+
+### Changed
+
+- Scanner policies now forbid running tests, builds or linters locally in any language (`go test`, `npm run build`, `pytest`, …), not just the npm/tsc commands; CI validates and agents read `gh pr checks` (#9416).
+
+## 2026-09-28 (v5.78.2)
+
+### Changed
+
+- Dashboard settings dialogs (Governor, Agent, etc.): the primary action now reads "Save & close" (or "Create & close" for new agents) and automatically closes the dialog on successful save ([#9412](https://github.com/hivecommons/hive/issues/9412)). On save failure, the dialog stays open to let the operator correct the error.
+
+## 2026-09-28 (v5.78.1)
+
+### Changed
+
+- Dashboard shows agents in the post-restart boot stagger as a pulsing "starting" dot instead of down-red "stopped"; `/api/status` agents carry a new `starting` flag ([#9411](https://github.com/hivecommons/hive/pull/9411)).
+
+## 2026-09-28 (v5.78.0)
+
+### Added
+
+- A crash-restarted agent that the resume-kick gate leaves idle now raises a per-agent dashboard alert (with an OOM hint when the container's cgroup `oom_kill` counter rose) that clears once any kick reaches it, instead of silently waiting for its next slot.
+
+### Changed
+
+- OMP image bumped from 18.3.4 to 18.4.1.
+
+## 2026-09-28 (v5.77.1)
+
+### Fixed
+
+- Copilot CLI agents whose session never starts after a kick, or whose turn hangs with no events, are now detected via `events.jsonl` and restarted with the kick re-delivered.
+
+## 2026-09-28 (v5.77.0)
+
+### Added
+
+- Dashboard: URLs in system-alert banners are now rendered as clickable links (#9390).
+
+## 2026-09-28 (v5.76.4)
+
+### Changed
+
+- The changelog-fragment-guard check now pushes a signed-off fragment generated from the PR title to same-repo PRs that lack one (fork PRs get a guidance comment), and the PR template leads with the changelog requirement.
+- The L6 (`Fully Autonomous`) pack's default `governor.cadences` now ship with the hand-tuned r05x matrix instead of the original fast surge/busy cadences ([#9350](https://github.com/hivecommons/hive/issues/9350)): `scanner`/`ci-maintainer`/`quality`/`sec-check`/`guide`/`architect` slow to hourly-or-longer cadences, `reviewer` stays at a flat `30m` to keep draining the PR queue, and `supervisor`/`strategist`/`outreach` are paused by default (opt-in). `architect`/`guide` drop to no cadence or `paused` once the fleet is busy/surging so issue-filing agents stop compounding the backlog when merge throughput is already saturated. `telemetry`/`operations` remain paused (opt-in) in every governor mode, matching L5 and preserving the invariant that operability agents never wake themselves at eligible ACMM levels ([#9372](https://github.com/hivecommons/hive/issues/9372)). Affected agents' `stale_timeout` comments were re-checked against the new longest cadence per mode.
+
+## 2026-09-28 (v5.76.3)
+
+### Fixed
+
+- The review swarm now reads the unresolved threads left by the configured `classification.review_bots` (Codex, Copilot, …) and answers each one in its review — agree, disagree with `file:line`, or cannot verify. A confirmed in-scope P0/P1 bot finding blocks a clean verdict, so a reviewer can no longer call a PR safe while a correct bot finding on the same commit goes unmentioned ([#9360](https://github.com/hivecommons/hive/issues/9360)).
+- Agents no longer open a separate issue (and later a separate, conflicting PR) for every finding in the same file or every site of the same mechanical change ([#9376](https://github.com/hivecommons/hive/issues/9376)). The issue-request watcher now folds a new agent finding whose file references exactly match an open App-bot-filed issue into that issue as a comment, reporting `consolidated: true` in the result file, instead of creating a second issue; it reuses the open-issue scan it already runs, so it costs no extra API calls. The agent policy templates also stop telling agents to file "N workflows" as N issues: the same edit applied at N sites, and findings that edit the same file, are one issue and one PR, and agents are told to comment on an open issue or PR in their work list that already covers the change. See `src/docs/hive-open-issue.md`.
+- Kick-refusal detection no longer fires on echoed kick content. Security-review and scan kicks legitimately list issues titled "prompt injection …"; when the CLI echoed those bullets, the agent was marked as having refused the kick (scanner and reviewer on one spoke), hiding the turn's real output. Structured markdown lines — bullets, table rows, headings, numbered items, bold spans, `#123` references — are now skipped; first-person refusal prose still registers.
+- Dashboard "Merge blocked" alerts now clear on their own once the blocked PR closes or its fork workflow runs are approved / the approval setting is relaxed, instead of waiting for an unrelated App merge or a restart (#9391).
+
+## 2026-09-28 (v5.76.2)
+
+### Fixed
+
+- Fixed the `scale-envelope.md` citation of the issue oldest-first sort in `src/pkg/github/client.go` that drifted after the ranking-tier change and failed the relative-links check on every open PR.
+
+## 2026-09-28 (v5.76.1)
+
+### Fixed
+
+- A hive whose ID contains "hold" (e.g. `hosted-available-oke-11-placeholder-r05x`) no longer treats its own `hive/<id>` provenance label as a hold label. The substring hold rule was parking every issue and PR the hive had ever claimed — excluded from the actionable set, skipped by the automerge sweep, and counted as on hold (69 items on one spoke). Provenance labels are now exempt from hold matching; `hold`, `*hold*`, and `hive-pause/<id>` behave as before.
+
+## 2026-09-28 (v5.76.0)
+
+### Added
+
+- Settings → Features → Auto merge now lists trusted bot authors with a toggle per bot: known dependency bots, bots discovered authoring open PRs in the last scan, and any login typed in manually. Saving writes `auto_merge.trusted_bot_authors`; the auto-merge config API returns a `bot_authors` catalogue.
+
+### Fixed
+
+- The shared-home permission sweep no longer hands agent-owned files to `dev` ([#9226](https://github.com/hivecommons/hive/issues/9226)). The per-entry `chmod`+`chown dev:node` from the earlier #9226 fix still re-owned every file, so an agent's owner-only (`0600`) session file could still end up `dev`-owned and lock its creator out whenever that entry's `chmod` did not take effect first. Files owned by an agent now keep their owner and are only regrouped to `node` and opened to the group. Only root-owned entries are handed to `dev`, and only after that entry's own `chmod` has succeeded.
+- Claude login-expiry renewal warnings no longer mark authenticated agents as needing login, trigger login recovery restarts, or block scheduled kicks ([#9356](https://github.com/hivecommons/hive/issues/9356)).
+- With `github.app_signed_commits` on, agent follow-up pushes to an open PR are now signed too ([#9364](https://github.com/hivecommons/hive/issues/9364)). Before, only the commit made when `hive-open-pr` opened the PR was signed, so a CI fix, review follow-up or rebase left the head unsigned, and the PR could never merge under a `required_signatures` ruleset. The PR-request watcher now runs a reconcile pass, at most once a minute. It re-authors the unsigned tail of each App-authored open PR as one GitHub-signed commit on top of the newest Verified commit, keeping the same tree and the DCO trailers. A tail holding a person's commit or a merge commit is never re-authored; the PR gets one comment explaining why. Agents should `git fetch && git rebase origin/<branch>` before committing again, and never force-push over the signed commit.
+- Agents whose Copilot CLI start-up banner reports "API rate limit exceeded ... Use /login to re-authenticate" are no longer treated as stuck at a login prompt. That banner means GitHub rate-limited the token *validation* call, not that the token was rejected; classifying it as a login prompt burned the three token-restart attempts inside the same rate-limit window and latched the give-up flag, stranding otherwise-healthy agents (quality, reviewer) for hours. The spoke now recognises the banner, leaves the token store alone, and relaunches the agent on a slow (5 min) uncapped cadence until validation succeeds.
+
+### Security
+
+- The 5-minute shared-home permission sweep now skips symlinks ([#9226](https://github.com/hivecommons/hive/issues/9226)). It used to pass recently modified entries to `chmod`/`chown` by path, and both commands dereference symlinks. An agent could therefore plant a link in a shared dot-dir and have the root-run sweep re-own and group-open the link's target.
+
 ## 2026-09-28 (v5.75.0)
 
 ### Added

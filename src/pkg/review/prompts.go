@@ -164,11 +164,10 @@ type PromptOptions struct {
 	ProposeFixesOnly bool
 	// WritingGuideSection is config.ProjectConfig.WritingGuideSection().
 	WritingGuideSection string
-	// ReviewBotLogins carries classification.review_bots.logins into the read
-	// step (hivecommons/hive#9360): the reviewer fetches this PR's unresolved
-	// inline threads and is told to agree, disagree, or say it cannot verify
-	// each one opened by a login in this list, instead of never seeing them.
-	// Empty means the feature is off and the section is skipped entirely.
+	// ReviewBotLogins is config.EffectiveReviewBots().Logins: the external
+	// review bots (Codex, Copilot, …) whose unresolved inline threads the
+	// reviewer must read and answer (hivecommons/hive#9360). Empty means the
+	// hive has not named any, and the prompt says nothing about bot threads.
 	ReviewBotLogins []string
 }
 
@@ -194,7 +193,8 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 	}
 	fmt.Fprintf(&b, "Focus ONLY on %s. Do not duplicate other perspectives unless the issue is severe.\n\n", focus)
 	b.WriteString(scopeContractSection(pr))
-	b.WriteString(buildReadInstruction(pr, opts))
+	b.WriteString(buildReadInstruction(pr))
+	b.WriteString(buildReviewBotFindingsInstruction(pr, opts.ReviewBotLogins))
 	b.WriteString(groundingSection(pr))
 	if p == PerspectivePlanMatch {
 		b.WriteString(planMatchSection(pr))
@@ -236,7 +236,7 @@ func buildProposeOnlyInstruction(pr PullRequest, opts PromptOptions) string {
 // review that costs them time to refute. Name the commands, pin them to the
 // dispatched head, and make "I could not read it" an explicit, honest outcome
 // rather than a reason to guess.
-func buildReadInstruction(pr PullRequest, opts PromptOptions) string {
+func buildReadInstruction(pr PullRequest) string {
 	var b strings.Builder
 	b.WriteString("READ THE PR BEFORE YOU JUDGE IT.\n")
 	b.WriteString("Text of the form `<redacted:…>` marks a place where a secret-shaped literal was masked before you saw it. It is not what the file contains. Never report the masked span as a defect, quote it as code, or reason about its content; if a finding depends on it, say the span was masked and ask a human to check the original.\n")
@@ -258,34 +258,73 @@ func buildReadInstruction(pr PullRequest, opts PromptOptions) string {
 		fmt.Fprintf(&b, "Every citation must be code you actually read at head %s — in the diff or in the files around it. If the PR has moved on since, review the current head and say which revision you read.\n", pr.HeadSHA)
 	}
 	b.WriteString("If you cannot read the diff — fetch failed, or it is too large — return verdict requires_human and say so. Never infer the contents of a diff you did not read: an invented file:line is worse than no review at all.\n\n")
-	b.WriteString(reviewBotThreadsSection(pr, opts.ReviewBotLogins))
 	return b.String()
 }
 
-// reviewBotThreadsSection is the other half of the read step
-// (hivecommons/hive#9360). Before this, the reviewer only ever saw the PR's
-// title, body, files, and diff, so it could — and did — call a PR safe while
-// an external review bot had an unanswered P1 sitting on the same commit,
-// because nothing told it to look. classification.review_bots.logins names
-// the bots this hive treats as authoritative first-comment authors; an empty
-// list means the feature is off, and this whole section is skipped, exactly
-// like the reconciler that already reads the same config key.
-func reviewBotThreadsSection(pr PullRequest, reviewBotLogins []string) string {
-	if len(reviewBotLogins) == 0 {
+// buildReviewBotFindingsInstruction makes the reviewer read and answer the
+// unresolved threads the configured review bots left on the PR
+// (hivecommons/hive#9360).
+//
+// The read step fetches the title, body, files and diff, and nothing else —
+// so a reviewer could post "Confidence: 5/5 (safe)" four minutes after Codex
+// left a correct P1 security finding on the same commit, without a word about
+// it. The maintainer then sees two automated reviews that disagree and no
+// reason to prefer either. The review-thread reconciler (#7360) only routes
+// bot threads to the agent that OPENED a hive PR; nothing ever showed them to
+// the reviewer.
+//
+// A bot finding is evidence to verify, not a verdict to adopt: the reviewer
+// grounds it in the code like one of its own and the scope contract applies
+// unchanged. The reviewer stays comment-only here, as everywhere — answering
+// happens in its own review, never in the bot's thread.
+func buildReviewBotFindingsInstruction(pr PullRequest, logins []string) string {
+	bots := reviewBotMatchLogins(logins)
+	if len(bots) == 0 {
 		return ""
 	}
 	owner, name, ok := strings.Cut(pr.Repo, "/")
 	if !ok {
-		owner, name = pr.Repo, ""
+		owner, name = "<owner>", pr.Repo
+	}
+	quoted := make([]string, len(bots))
+	for i, l := range bots {
+		quoted[i] = `"` + l + `"`
 	}
 	var b strings.Builder
-	b.WriteString("READ OPEN REVIEW-BOT FINDINGS TOO.\n")
-	fmt.Fprintf(&b, "This repo has an external review bot configured (%s). List this PR's inline review threads:\n", strings.Join(reviewBotLogins, ", "))
-	fmt.Fprintf(&b, "  gh api graphql -f query='query{repository(owner:\"%s\",name:\"%s\"){pullRequest(number:%d){reviewThreads(first:100){nodes{isResolved isOutdated path line comments(first:1){nodes{author{login} body url}}}}}}}'\n", owner, name, pr.Number)
-	b.WriteString("For every thread that is NOT resolved, NOT outdated, and whose FIRST comment's author matches one of the logins above, address it explicitly in your review: say whether you agree it is a real, in-scope defect (cite the file:line yourself), disagree (say why), or cannot verify it from what you read.\n")
-	b.WriteString("Treat a bot finding you agree with exactly like one you found yourself: the same scope rule applies. If it is in-scope and severity P0/P1, it blocks a clean or \"safe\" verdict; if it is out-of-scope, or you refute it with evidence, report that but do not let it block. Silence on an open bot finding is not an option — say which of the three it is.\n")
-	b.WriteString("This is comment-only: do not reply in or resolve these threads yourself, whatever you conclude.\n\n")
+	b.WriteString("REVIEW-BOT FINDINGS — answer them before you judge.\n")
+	fmt.Fprintf(&b, "This hive treats these accounts as review bots: %s. Their unresolved inline threads on this PR are findings a maintainer reads next to your review, so a review that is silent about them is incomplete. Fetch them:\n", strings.Join(bots, ", "))
+	fmt.Fprintf(&b, "  gh api graphql --paginate -f owner=%s -f name=%s -F number=%d -f query='query($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{isResolved isOutdated path line comments(first:20){nodes{author{login} body url}}}}}}}' --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not) | select((.comments.nodes[0].author.login // \"\" | ascii_downcase | sub(\"\\\\[bot\\\\]$\"; \"\")) as $a | [%s] | index($a)) | {path, line, isOutdated, comments: [.comments.nodes[] | {author: .author.login, body, url}]}'\n", owner, name, pr.Number, strings.Join(quoted, ","))
+	b.WriteString("Answer EVERY thread that command returns, in your review, by its path:line and link — one line each:\n")
+	b.WriteString("  - agree: you read the code and the finding holds;\n")
+	b.WriteString("  - disagree: say why, citing the file:line that refutes it;\n")
+	b.WriteString("  - cannot verify: say what you would need to decide it.\n")
+	b.WriteString("Treat a bot finding exactly like one of your own. Verify it against the code at head — a bot is as capable of a false positive as you are, and an outdated thread (isOutdated) may describe code that has since changed — and classify it with review_scope under the scope contract.\n")
+	b.WriteString("A bot finding you CONFIRM that is in-scope and severe (the bot's P0/P1, or your high/critical) is an in-scope blocker: put it in findings under the perspective it belongs to, and that perspective must not approve. Never describe the PR as clean or safe while a confirmed in-scope P0/P1 bot finding stands.\n")
+	b.WriteString("A bot finding you refute, or confirm as out-of-scope, is still answered in the review, but — like any out-of-scope finding — it does not lower the verdict.\n")
+	b.WriteString("Do not reply in, react to, or resolve these threads. Your review comment is the only place you answer them.\n")
+	b.WriteString("If the fetch fails, say so in the review and do not claim the PR has no open review-bot findings.\n\n")
 	return b.String()
+}
+
+// reviewBotMatchLogins normalizes the configured review-bot logins into the
+// form the thread filter compares against: lower-case, trimmed, with the
+// "[bot]" suffix removed, because GitHub's GraphQL API reports an App's login
+// without the suffix its REST API and web UI show ("chatgpt-codex-connector"
+// vs "chatgpt-codex-connector[bot]"). A login carrying anything but the
+// characters GitHub allows is dropped rather than quoted into a shell
+// command.
+func reviewBotMatchLogins(logins []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, l := range logins {
+		l = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(l)), "[bot]")
+		if l == "" || seen[l] || strings.TrimLeft(l, "abcdefghijklmnopqrstuvwxyz0123456789-_.") != "" {
+			continue
+		}
+		seen[l] = true
+		out = append(out, l)
+	}
+	return out
 }
 
 func scopeContractSection(pr PullRequest) string {
@@ -422,7 +461,8 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	b.WriteString("These are distinct questions, not one question asked several ways. A change can be correct and still leak a secret, or secure and still not do what its issue asked. Ask each one separately and answer it on its own evidence.\n")
 	b.WriteString("Report each finding under exactly one perspective — whichever it most belongs to. Do not restate one finding under several to look thorough; that is the padding failure mode, multiplied.\n\n")
 	b.WriteString(scopeContractSection(pr))
-	b.WriteString(buildReadInstruction(pr, opts))
+	b.WriteString(buildReadInstruction(pr))
+	b.WriteString(buildReviewBotFindingsInstruction(pr, opts.ReviewBotLogins))
 	if hasPerspective(perspectives, PerspectivePlanMatch) {
 		b.WriteString(planMatchSection(pr))
 	}

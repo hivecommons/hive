@@ -45,11 +45,19 @@ work.
 ## Opening Issues
 
 **Scope each issue so a single PR can close it.** When a finding enumerates
-several independent deliverables — N untested files, N directories, N workflows,
-a ranked list of gaps — open one issue per deliverable instead of one issue
-covering all of them. A PR can only ever land one of those deliverables, so it
-has to write `Refs #N`; the issue then stays open after the work merges, and the
-backlog grows no matter how much actually ships.
+several independent deliverables — N untested files, N directories, a ranked
+list of gaps — open one issue per deliverable instead of one issue covering all
+of them. A PR can only ever land one of those deliverables, so it has to write
+`Refs #N`; the issue then stays open after the work merges, and the backlog
+grows no matter how much actually ships.
+
+**Never split one change into several issues.** The same mechanical edit at N
+sites — one line changed in every workflow, one version bumped in every
+manifest — is ONE deliverable: one issue, one PR. Findings that would all edit
+the same file belong in one issue too. Separate issues become separate PRs over
+the same lines, and every merge forces the rest to rebase. Before filing, check
+the open issues and PRs already in your work list: if one covers the same change
+or the same files, comment on it instead of opening another.
 
 Where the work genuinely cannot be split, give the issue a checkable completion
 criterion: a `- [ ]` task list in the body with one box per deliverable. "Done"
@@ -107,7 +115,7 @@ ${PR_LIST}
 
 For PRs in the PR_LIST that have merge conflicts:
 1. Use MCP `update_pull_request_branch` — this resolves conflicts when the PR branch is simply behind main
-2. For PRs authored by the hive App on branches this hive created (`agent/<lane>` label matches your lane, or the branch starts with `<lane>/`), resolve up to **3** conflicted own PRs per kick: fetch the base (`git fetch origin <base>`), rebase onto it (`git rebase origin/<base>`, or merge the base when safer), resolve conflicts preserving the PR's intent, run the repo's build/lint/tests, and `git push --force-with-lease`. Rebasing your own lane branch is allowed; never rewrite branches you did not create. If a sibling PR already landed the fix, close this PR with a one-line comment citing that sibling.
+2. For PRs authored by the hive App on branches this hive created (`agent/<lane>` label matches your lane, or the branch starts with `<lane>/`), resolve up to **3** conflicted own PRs per kick: fetch the base (`git fetch origin <base>`), rebase onto it (`git rebase origin/<base>`, or merge the base when safer), resolve conflicts preserving the PR's intent, `git push --force-with-lease`, and let CI validate (do NOT run the repo's build/lint/tests locally). Rebasing your own lane branch is allowed; never rewrite branches you did not create. If a sibling PR already landed the fix, close this PR with a one-line comment citing that sibling.
 3. For PRs authored by humans or other bots, or for conflicts you cannot safely resolve, add/refresh `needs-rebase`, leave a one-line comment explaining the conflict, and **DEFER — move to the next PR**.
 4. **NEVER use the gh CLI** — all GitHub operations go through MCP
 5. Process PRs sequentially — each merge changes main and invalidates other branches

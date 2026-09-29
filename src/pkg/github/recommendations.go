@@ -122,7 +122,7 @@ const recommendationsMarkerPrefix = "<!-- hive:recommendations:"
 
 // findRecommendationsIssue locates the hive's OWN recommendations issue.
 //
-// It deliberately does not reuse findOpenIssueByTitle. That helper adopts any
+// It deliberately does not reuse scanOpenIssues. That helper adopts any
 // open issue whose title matches — including a fuzzy canonicalIssueSubject
 // fallback — and the recommendations title is a public constant in a
 // repository where anyone can open issues. Adopting a squatted issue hands

@@ -23,6 +23,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      # Hermetic (local repos + gh double), under a second: a broken check
+      # mislabels every open PR, so it must not ship untested (#9319).
+      - name: Self-test overlap check
+        run: bash .github/scripts/test-pr-overlap.sh
       - name: Check open PR overlap
         env:
           GH_TOKEN: ${{ github.token }}

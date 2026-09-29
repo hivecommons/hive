@@ -302,7 +302,12 @@ type AgentProcess struct {
 	// spend the token-restart budget (see paneShowsStartupRateLimit).
 	lastRateLimitRestart time.Time
 	NeedsLogin           bool // true when pane shows a login prompt
-	QuotaExhausted       bool // true when pane shows provider/monthly quota exhaustion
+	// Starting is snapshot-only: true while the agent is still in the boot
+	// stagger (startupLaunchQueued) or its launch is in progress (launching).
+	// Its State is still "stopped" in that window, which the dashboard used to
+	// paint as down-red on every hive restart even though nothing is wrong.
+	Starting       bool
+	QuotaExhausted bool // true when pane shows provider/monthly quota exhaustion
 	// WatchdogConditions is the k8s-style observed-health condition set the
 	// watchdog reconciler publishes for this agent (RFC #4665): Ready /
 	// Authenticated / Producing with lastTransitionTime + reason. Written by
@@ -317,14 +322,15 @@ type AgentProcess struct {
 	// authenticated CLI sits there producing nothing. Written under paneMu by
 	// pollTmuxOutputForAgent alongside lastPaneCapture; zero until the poller
 	// has seen two differing captures, which reads as "unknown", never "idle".
-	LastPaneChange       time.Time
-	consentSeenAt        time.Time // watcher: when a consent screen was first seen in the pane
-	lastConsentDismiss   time.Time // watcher: cooldown for re-running dismissInferencePrompts
-	lastInferKickAt      time.Time // stall watchdog: when the last kick was delivered to an inference agent
-	lastInferKickPane    string    // stall watchdog: hash of the visible pane just after kick delivery
-	lastInferKickVisible string    // stall watchdog: visible pane text just after kick delivery
-	stallNudgeSent       bool      // stall watchdog: at most one nudge per kick
-	StallNudges          int       // total post-kick stall nudges sent (surfaced to the dashboard)
+	LastPaneChange          time.Time
+	consentSeenAt           time.Time // watcher: when a consent screen was first seen in the pane
+	lastConsentDismiss      time.Time // watcher: cooldown for re-running dismissInferencePrompts
+	lastInferKickAt         time.Time // stall watchdog: when the last kick was delivered to an inference agent
+	lastInferKickPane       string    // stall watchdog: hash of the visible pane just after kick delivery
+	lastInferKickVisible    string    // stall watchdog: visible pane text just after kick delivery
+	stallNudgeSent          bool      // stall watchdog: at most one nudge per kick
+	lastSessionStallRestart time.Time // session-liveness: last restart for a hung Copilot session
+	StallNudges             int       // total post-kick stall nudges sent (surfaced to the dashboard)
 	// Transient API-error recovery (#4697), for CLI backends. lastTransientNudge
 	// is the cooldown anchor — the poller runs every 3s and the error text stays
 	// on screen after the nudge is typed, so without it one incident would fire
@@ -642,8 +648,18 @@ type Manager struct {
 	// manager's crash loop observes those two conditions without restarting
 	// them. Guarded by m.mu, like the agent map it gates work over.
 	deadSessionRecoveryOwnedElsewhere bool
-	sandboxConfig                     config.AgentSandboxConfig
-	sandboxLauncher                   sandbox.Launcher
+
+	// OOM-kill attribution for crash restarts (see oomkill.go). oomMu is its
+	// own mutex: the counter is read on the crash-check path, which already
+	// holds m.mu in read mode at times, and the flag is consumed from the
+	// eval loop.
+	oomMu                sync.Mutex
+	oomKillsSeen         int
+	oomKillsPrimed       bool
+	crashOOMSuspect      map[string]bool
+	oomKillFilesOverride []string
+	sandboxConfig        config.AgentSandboxConfig
+	sandboxLauncher      sandbox.Launcher
 	// sandboxJobLauncherFactory builds the Kubernetes Job launcher for an
 	// agent on sandbox.runtime: job (#6311). Nil means the real in-cluster
 	// launcher; tests inject a fake through setSandboxJobLauncherFactoryForTest.

@@ -8,6 +8,11 @@
 // incident on kubestellar/console: a truncated test-file split kept main red for
 // four days while the scanner iterated blind fix PRs, never seeing the one-line
 // "ReferenceError: seedMission is not defined" buried in the shard logs.
+//
+// Not to be confused with package escalate (pkg/escalate), which carries the
+// typed Event the Spektacular stage runner raises when a run stage exhausts its
+// retry budget. Per-PR fix-attempt counting and re-engagement belong here;
+// run-stage escalation events belong in escalate.
 package escalation
 
 import (
