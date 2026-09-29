@@ -624,7 +624,10 @@ renderAdminNPS({
   promoter_pct: 0, passive_pct: 0, detractor_pct: 100, average_score: 1, score_max: 4,
   trend: [{ month: '2026-09', total: 1, nps_score: -100, average_score: 1 }],
   per_hive: [{ hive_id: 'h1', hive_name: '<b>evil</b>', total: 1, nps_score: -100, average_score: 1 }],
-  recent: [{ hive_id: 'h1', score: 1, category: 'detractor', feedback: hostile, timestamp: '2026-09-29T00:00:00Z' }],
+  recent: [
+    { hive_id: 'h1', score: 1, category: 'detractor', feedback: hostile, timestamp: '2026-09-29T00:00:00Z' },
+    { hive_id: 'solo', score: 4, category: 'promoter', timestamp: '2026-09-29T00:00:00Z', source: 'relay', install_id: '<i>inst</i>' },
+  ],
 });
 let fails = 0;
 function check(name, cond) { if (!cond) { fails++; console.log('FAIL ' + name); } }
@@ -634,6 +637,8 @@ check('hostile hive name is present as literal text', text.includes('<b>evil</b>
 check('only div elements were created', created.every(e => e.tagName === 'DIV'));
 check('the summary shows the NPS score', text.includes('NPS -100'));
 check('the trend bar is sized', created.some(e => e.style.width === '100%'));
+check('a relay response is labeled as an unverified install', text.includes('unverified install <i>inst</i>'));
+check('a direct response is not labeled unverified', (text.match(/unverified install/g) || []).length === 1);
 // Re-render replaces rather than appends.
 renderAdminNPS({ total: 0 });
 check('empty state replaces previous content', !container.textContent.includes(hostile) && container.textContent.includes('No NPS responses yet.'));

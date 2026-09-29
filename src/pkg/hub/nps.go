@@ -105,8 +105,9 @@ type npsRecord struct {
 	// RelayID is the relay's stable id for a pulled entry, the dedupe key
 	// that makes a retried pull idempotent. Empty for direct responses.
 	RelayID string `json:"relay_id,omitempty"`
-	// InstallID is the relay operator's label for the install token that
-	// submitted a relay entry. Empty for direct responses.
+	// InstallID is the self-registered install id (a UUID) whose key signed
+	// a relay entry. It proves continuity of one install, not that the
+	// install is a real or trusted hive. Empty for direct responses.
 	InstallID string `json:"install_id,omitempty"`
 }
 
@@ -349,6 +350,9 @@ type npsRecentResponse struct {
 	Timestamp        string `json:"timestamp"`
 	DashboardVersion string `json:"dashboard_version,omitempty"`
 	Source           string `json:"source,omitempty"`
+	// InstallID is set for relay responses: the unverified, self-registered
+	// install that signed it (#9619).
+	InstallID string `json:"install_id,omitempty"`
 }
 
 // npsAggregation is the GET /api/admin/nps response.
@@ -425,6 +429,7 @@ func buildNPSAggregation(records []npsRecord, names map[string]string) npsAggreg
 			Timestamp:        r.Timestamp,
 			DashboardVersion: r.DashboardVersion,
 			Source:           r.Source,
+			InstallID:        r.InstallID,
 		})
 	}
 	return agg

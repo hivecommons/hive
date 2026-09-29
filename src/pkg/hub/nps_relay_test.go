@@ -128,10 +128,14 @@ func (f *npsFakeRelay) setFailAcks(n int) {
 	f.mu.Unlock()
 }
 
+// npsTestRelayInstallID is the self-registered install id the fake relay
+// stamps on entries (a lowercase UUID, as the relay issues them).
+const npsTestRelayInstallID = "0f8e1c2a-3b4d-4e5f-8a6b-7c8d9e0f1a2b"
+
 func npsRelayTestEntry(id, hiveID string, score int, feedback string) npsRelayEntry {
 	return npsRelayEntry{
 		ID:               id,
-		InstallID:        "acme-lab",
+		InstallID:        npsTestRelayInstallID,
 		HiveID:           hiveID,
 		Score:            score,
 		Feedback:         feedback,
@@ -189,8 +193,18 @@ func TestNPSRelayPullMergesIntoAdminView(t *testing.T) {
 			if r.HiveID != "solo-hive" {
 				t.Errorf("relay response hive = %q", r.HiveID)
 			}
-		} else if r.HiveID != "h1" {
-			t.Errorf("direct response hive = %q", r.HiveID)
+			// The admin view must be able to label it as an unverified,
+			// self-registered install.
+			if r.InstallID != npsTestRelayInstallID {
+				t.Errorf("relay response install_id = %q, want %q", r.InstallID, npsTestRelayInstallID)
+			}
+		} else {
+			if r.HiveID != "h1" {
+				t.Errorf("direct response hive = %q", r.HiveID)
+			}
+			if r.InstallID != "" {
+				t.Errorf("direct response carries an install_id: %q", r.InstallID)
+			}
 		}
 	}
 	if relayed != 2 {
@@ -206,8 +220,8 @@ func TestNPSRelayPullMergesIntoAdminView(t *testing.T) {
 		t.Fatalf("per-hive breakdown for the relay hive = %+v", solo)
 	}
 	for _, r := range npsStored(t) {
-		if r.Source == npsSourceRelay && (r.RelayID == "" || r.InstallID != "acme-lab") {
-			t.Errorf("stored relay record missing its relay id or install label: %+v", r)
+		if r.Source == npsSourceRelay && (r.RelayID == "" || r.InstallID != npsTestRelayInstallID) {
+			t.Errorf("stored relay record missing its relay id or install id: %+v", r)
 		}
 	}
 }

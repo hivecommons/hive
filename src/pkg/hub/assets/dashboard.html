@@ -10110,7 +10110,7 @@
         perHive.forEach(function(h) {
           var row = npsEl('div', 'nps-admin-row');
           row.appendChild(npsEl('div', 'nps-admin-hive-label',
-            (h.hive_name || h.hive_id) + (h.source === 'relay' ? ' (via relay)' : '')));
+            (h.hive_name || h.hive_id) + (h.source === 'relay' ? ' (unverified install)' : '')));
           row.appendChild(npsEl('div', 'nps-admin-row-value', npsTallyText(h)));
           el.appendChild(row);
         });
@@ -10125,7 +10125,7 @@
             (Number(r.score) || 0) + '/' + scoreMax + ' ' + (r.category || '') + ' \u00b7 ' +
             (r.hive_name || r.hive_id || '') + ' \u00b7 ' + (r.timestamp || '') +
             (r.dashboard_version ? ' \u00b7 ' + r.dashboard_version : '') +
-            (r.source === 'relay' ? ' \u00b7 via relay' : '')));
+            (r.source === 'relay' ? ' \u00b7 unverified install ' + String(r.install_id || '') : '')));
           if (r.feedback) item.appendChild(npsEl('div', 'nps-admin-response-text', r.feedback));
           el.appendChild(item);
         });

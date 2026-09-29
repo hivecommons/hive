@@ -22,7 +22,11 @@ import (
 // NPS relay pull, hub side (issue #9619).
 //
 // A standalone hive has no hub link, so an opted-in one posts its NPS
-// responses to a hivecommons-operated relay instead (a Netlify function). The
+// responses to a hivecommons-operated relay instead (a Netlify function),
+// signed with a key it generated and self-registered there. Each entry carries
+// that install id: it proves continuity of one install, not that the install
+// is a real or trusted hive, so the admin view labels these responses
+// "unverified install". The
 // relay has no public read path: the only way to get entries out is this
 // authenticated pull, keyed by a hub pull secret. Every cycle the hub:
 //
@@ -57,7 +61,8 @@ const (
 	npsRelayMaxPullResponseBytes = 1 << 20
 	// npsRelayMaxAckResponseBytes caps the bytes read from an ack response.
 	npsRelayMaxAckResponseBytes = 1 << 12
-	// npsRelayMaxInstallIDRunes caps the stored install label.
+	// npsRelayMaxInstallIDRunes caps the stored install id (the relay sends
+	// a 36-character UUID).
 	npsRelayMaxInstallIDRunes = 64
 	// npsRelayMaxClockSkew is how far in the future a relay timestamp may be
 	// before the hub replaces it with its own receipt time.
