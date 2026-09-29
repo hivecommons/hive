@@ -83,7 +83,20 @@ jobs:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
       - name: Guard shared Go cache (fall back when the runner volume is full)
-        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
+        # The checkout above is pinned to the MEASURED ref, not the branch this
+        # workflow file lives on, so the helper script only exists when that ref
+        # carries it. v4 predates #9338, and calling the missing script exited
+        # 127 before any test ran - every hourly run went red and filed a
+        # "packages below 90% threshold" issue that no test could fix (#9632).
+        # The guard never fails a job by design, so skipping it when absent is
+        # the same "keep original cache settings" outcome.
+        run: |
+          guard="$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
+          if [ -f "$guard" ]; then
+            bash "$guard"
+          else
+            echo "::notice::go-cache-guard.sh not present on the measured ref; keeping default Go cache settings"
+          fi
 
       # The coverage run must NOT abort this job on a test failure: the
       # per-package check below is what turns a failure into a readable report.
@@ -385,7 +398,14 @@ jobs:
             // a broken test, and how #3903 was titled "below 90%" when nothing
             // was below its floor. State the cause up front.
             const cannotScore = /TESTS FAILING|NO TEST FILES/.test(failing);
-            const cause = cannotScore
+            // No measured ref means the coverage step never wrote its outputs:
+            // the job died earlier (checkout, setup, a workflow step, runner).
+            // Calling that "below their coverage floor" sent #9632 to agents
+            // that added tests for a workflow failure (#9645).
+            const neverMeasured = !'${{ needs.coverage.outputs.measured_ref }}';
+            const cause = neverMeasured
+              ? 'The coverage job **failed before any package was measured** (workflow, setup, or runner failure). This is not a coverage shortfall and adding tests will not fix it - open the run log for the failing step.'
+              : cannotScore
               ? 'One or more packages **could not be scored** (tests failing, or no test files). That is a broken-test problem, not a coverage shortfall — fix the tests first; the floor cannot be evaluated until they run.'
               : 'One or more packages are **below their coverage floor**.';
             const detail = failing
