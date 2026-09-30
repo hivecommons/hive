@@ -1,0 +1,1 @@
+- The GitOps example in `src/docs/manual-provisioning.md` now checks the `vllm` rollout in namespace `hive-inference` ([#9729](https://github.com/hivecommons/hive/issues/9729)). It used `-n hive` and failed with `deployments.apps "vllm" not found`.
