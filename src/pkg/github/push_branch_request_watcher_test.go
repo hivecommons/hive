@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -335,5 +336,59 @@ func TestValidatePushBranchDir(t *testing.T) {
 		if err := validatePushBranchDir(bad, 0); err == nil {
 			t.Errorf("validatePushBranchDir(%q) accepted a bad dir", bad)
 		}
+	}
+}
+
+// TestPushBranchGitEnv_NeutralizesRepoLocalExecution verifies the env pairs
+// override every repo-local channel that could make git run a program from
+// the agent-owned checkout (hooks, fsmonitor, credential helpers), and that
+// the auth header rides as an extraHeader on the exact remote.
+func TestPushBranchGitEnv_NeutralizesRepoLocalExecution(t *testing.T) {
+	dir := "/data/agents/lane/repo"
+	remote := "https://github.com/acme/widgets.git"
+	env := pushBranchGitEnv(dir, remote, "AUTHORIZATION: basic abc")
+
+	got := map[string]string{}
+	for _, e := range env {
+		k, v, ok := strings.Cut(e, "=")
+		if ok {
+			got[k] = v
+		}
+	}
+	if got["GIT_TERMINAL_PROMPT"] != "0" {
+		t.Errorf("GIT_TERMINAL_PROMPT = %q, want 0", got["GIT_TERMINAL_PROMPT"])
+	}
+	want := map[string]string{
+		"safe.directory":    dir,
+		"core.hooksPath":    os.DevNull,
+		"core.fsmonitor":    "false",
+		"credential.helper": "",
+		"http." + strings.TrimRight(remote, "/") + ".extraHeader": "AUTHORIZATION: basic abc",
+	}
+	n, err := strconv.Atoi(got["GIT_CONFIG_COUNT"])
+	if err != nil || n != len(want) {
+		t.Fatalf("GIT_CONFIG_COUNT = %q, want %d", got["GIT_CONFIG_COUNT"], len(want))
+	}
+	pairs := map[string]string{}
+	for i := 0; i < n; i++ {
+		pairs[got["GIT_CONFIG_KEY_"+strconv.Itoa(i)]] = got["GIT_CONFIG_VALUE_"+strconv.Itoa(i)]
+	}
+	for k, v := range want {
+		if pairs[k] != v {
+			t.Errorf("config %q = %q, want %q", k, pairs[k], v)
+		}
+	}
+}
+
+// TestPushBranchGitEnv_NoHeader verifies the extraHeader pair is omitted when
+// no credential is available while the neutralizing pairs remain.
+func TestPushBranchGitEnv_NoHeader(t *testing.T) {
+	env := pushBranchGitEnv("/d", "https://github.com/a/b.git", "")
+	joined := strings.Join(env, "\n")
+	if strings.Contains(joined, "extraHeader") {
+		t.Errorf("env contains extraHeader without a credential: %q", joined)
+	}
+	if !strings.Contains(joined, "core.hooksPath") || !strings.Contains(joined, os.DevNull) {
+		t.Errorf("env missing core.hooksPath override: %q", joined)
 	}
 }
