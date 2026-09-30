@@ -7062,25 +7062,36 @@
       if (host.endsWith('.')) host = host.slice(0, -1);
       return HOSTED_HIVE_HOST_SUFFIXES.some(suffix => host.endsWith(suffix));
     }
+    /* renewTerminalAssertion re-mints the spoke-local terminal assertion from
+       the spoke-local hive_session. It resolves { ok } and, on a status the
+       server answered, a deferred `message` — NOT a toast. Renewal is
+       best-effort: a hosted user signed in only through hub SSO has no
+       hive_session yet, so renewal 401s while the handoff that follows
+       (createTerminalHandoff) mints the assertion and opens the terminal fine.
+       Toasting here told exactly those users "Sign in to this hive before
+       opening a terminal" as their terminal opened; openTerminal() shows the
+       message only when the handoff fails too. */
     async function renewTerminalAssertion() {
-      if (!isHostedHiveHost()) return true;
+      if (!isHostedHiveHost()) return { ok: true };
       try {
         const resp = await fetch(TERMINAL_ASSERTION_RENEW_PATH, {
           method: 'POST',
           credentials: 'same-origin',
           cache: 'no-store',
         });
-        if (resp.status === 204) return true;
-        if (resp.status === 401) showToast('Sign in to this hive before opening a terminal.', 'error');
-        else if (resp.status === 403) showToast('Your current hive role cannot open terminals.', 'error');
-        else showToast('Could not refresh terminal access (HTTP ' + resp.status + ').', 'error');
+        if (resp.status === 204) return { ok: true };
+        let message;
+        if (resp.status === 401) message = 'Sign in to this hive before opening a terminal.';
+        else if (resp.status === 403) message = 'Your current hive role cannot open terminals.';
+        else message = 'Could not refresh terminal access (HTTP ' + resp.status + ').';
+        return { ok: false, status: resp.status, message };
       } catch (e) {
         // A rejected fetch is how an expired hosted session shows up (the
         // status branches above never see it); the shared handler decides
         // whether this is "sign in again" or a real failure (#7405).
         await reportFetchFailure('Could not refresh terminal access', e);
       }
-      return false;
+      return { ok: false };
     }
 
     async function dashboardTokenConfigured() {
@@ -7431,7 +7442,7 @@
       const baseUrl = href || terminalUrl(agentName);
       const tab = window.open('about:blank', '_blank');
       if (tab) tab.opener = null;
-      await renewTerminalAssertion();
+      const renewal = await renewTerminalAssertion();
       // Token-secured self-hosted hives do not have a hive_session cookie for
       // assertion renewal, but the handoff POST authenticates with the
       // Authorization header that the fetch wrapper attaches to mutations.
@@ -7441,7 +7452,12 @@
         url.searchParams.set('code', code);
         if (tab) tab.location.href = url.toString();
         else window.open(url.toString(), '_blank', 'noopener');
-      } else if (!(await dashboardTokenConfigured())) {
+        return;
+      }
+      // The handoff could not mint the assertion either, so the renewal's
+      // verdict is now the actionable one — surface it.
+      if (renewal.message) showToast(renewal.message, 'error');
+      if (!(await dashboardTokenConfigured())) {
         if (tab) tab.location.href = baseUrl;
         else window.open(baseUrl, '_blank', 'noopener');
       } else if (tab) {
