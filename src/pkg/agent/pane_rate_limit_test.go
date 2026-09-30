@@ -40,6 +40,50 @@ func TestPaneShowsLoginPrompt_RateLimitedBannerIsNotLogin(t *testing.T) {
 	}
 }
 
+func TestClassifyAuthPaneLoginURLAndBackend401(t *testing.T) {
+	cases := []struct {
+		name             string
+		pane             string
+		wantNeedsLogin   bool
+		wantLoginURL     string
+		wantBackendError bool
+	}{
+		{
+			name:           "real device URL",
+			pane:           "To sign in, use a web browser to open the page https://github.com/login/device\nEnter one-time code ABCD-EFGH",
+			wantNeedsLogin: true,
+			wantLoginURL:   "https://github.com/login/device",
+		},
+		{
+			name:             "inference proxy database 401",
+			pane:             `● Please run /login · API Error: 401 {"type":"error","error":{"type":"api_error","message":"inference backend returned 401: {"error":{"message":"Authentication Error, Error in connector: Error querying the database: FATAL: remaining connection slots are reserved for roles with the SUPERUSER attribute","type":"auth_error"}}}}`,
+			wantBackendError: true,
+		},
+		{
+			name:           "plain login directive without URL",
+			pane:           "● Please run /login",
+			wantNeedsLogin: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ClassifyAuthPane(strings.Split(tc.pane, "\n"))
+			if got.NeedsLogin != tc.wantNeedsLogin {
+				t.Fatalf("NeedsLogin = %v, want %v (state=%+v)", got.NeedsLogin, tc.wantNeedsLogin, got)
+			}
+			if got.LoginURL != tc.wantLoginURL {
+				t.Fatalf("LoginURL = %q, want %q (state=%+v)", got.LoginURL, tc.wantLoginURL, got)
+			}
+			if got.BackendAuthError != tc.wantBackendError {
+				t.Fatalf("BackendAuthError = %v, want %v (state=%+v)", got.BackendAuthError, tc.wantBackendError, got)
+			}
+			if tc.wantBackendError && got.BackendAuthErrorMsg == "" {
+				t.Fatalf("BackendAuthErrorMsg empty (state=%+v)", got)
+			}
+		})
+	}
+}
+
 // The diagnostic path must not rewrite the token store over a rate-limited
 // validation: the credential was never rejected.
 func TestMatchesAuthError_IgnoresRateLimitedValidation(t *testing.T) {

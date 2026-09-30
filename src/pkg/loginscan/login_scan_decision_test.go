@@ -132,6 +132,14 @@ func TestLoginScanDecision_BlockingPromptStandsDown(t *testing.T) {
 	}
 }
 
+func TestLoginScanDecision_BackendAuthErrorStandsDown(t *testing.T) {
+	compiled := defaultLoginRegexps(t)
+	pane := `● Please run /login · API Error: 401 {"type":"error","error":{"type":"api_error","message":"inference backend returned 401: {"error":{"message":"Authentication Error, Error in connector: Error querying the database: FATAL: remaining connection slots are reserved for roles with the SUPERUSER attribute","type":"auth_error"}}}}`
+	if action, re := Decision("claude", pane, compiled, false, 99); action != ActionIgnore || re != nil {
+		t.Fatalf("backend auth outage must not be treated as interactive login, got action=%v pattern=%v", action, re)
+	}
+}
+
 // --- the sighting tracker ---------------------------------------------------
 
 func TestLoginSightingTracker_AccumulatesAndResets(t *testing.T) {

@@ -79,8 +79,10 @@ Prerequisites:
 
 Run:
 
-1. As the allowlisted maintainer, comment on a real managed issue or PR:
-   `@<app-login> ask <agent> v6 readiness live exercise: please acknowledge this thread`.
+1. As the allowlisted maintainer, comment on a real managed issue or PR,
+   mentioning your App's bot handle (for example `@hivecommons-hive`; the
+   `[bot]` suffix is optional):
+   `@<app-handle> ask <agent> v6 readiness live exercise: please acknowledge this thread`.
 2. Wait for the poller or webhook accelerator to handle the comment. Save the
    comment permalink, the 👀 reaction link/screenshot, and the hive log around
    the handling window.
@@ -123,17 +125,22 @@ Prerequisites:
   [GitHub Actions trigger](github-actions-trigger.md#hive-configuration).
 - The smoke is [`hive-action-smoke`](../../.github/workflows/hive-action-smoke.yml),
   a `workflow_dispatch` with inputs `issue`, `prompt`, `transport`
-  (`comment` | `oidc`), `hub_url`, and `audience`. The comment transport posts on
+  (`comment` | `oidc`), `hive_url`, `audience`, and `app_handle`. The comment transport posts on
   an issue **in the repository the workflow runs in**, so run it from a
   repository the live hive manages: this repository if it is in the hive's repo
   list, otherwise a copy of the workflow in a managed repository. Bot actors are
   refused on repositories the hive does not govern.
-- The relay comment body is `@hive status <prompt>` plus a hidden
+- The relay comment body is `@<app-handle> status <prompt>` plus a hidden
   `<!-- hive:source=action … transport=comment -->` marker
   (`.github/actions/hive/action.yml`). The parser matches `@<app-login>` or the
   login without its `[bot]` suffix (`findMention` in
-  `src/pkg/mention/grammar.go`), so the hive's App bot login must be
-  `hive[bot]` for the relay comment to be seen as a mention.
+  `src/pkg/mention/grammar.go`), so `<app-handle>` must be your App's bot
+  handle (for example `@hivecommons-hive`), not a fixed name. Set it once as
+  the `HIVE_APP_HANDLE` repository or organization variable, or pass the
+  `app_handle` input for a single run; the input wins, then the variable, then
+  the backward-compatible default `hive`. A leading `@` and a trailing `[bot]`
+  are both accepted and stripped. Check the relay comment on the issue: if it
+  does not start with your App's handle, the hive will not pick it up.
 - The `github.actor` who dispatches must hold the required Hive role directly,
   or be mapped to a dashboard identity that does through
   `github.actions.identity_map`.
@@ -141,7 +148,8 @@ Prerequisites:
 Run:
 
 1. **Comment relay.** Dispatch `hive-action-smoke` with `transport=comment`
-   and `issue=<real managed issue>`. Save the workflow run URL and the relay
+   and `issue=<real managed issue>` (plus `app_handle=<your App's bot handle>`
+   unless `HIVE_APP_HANDLE` is set). Save the workflow run URL and the relay
    comment permalink.
 2. Wait for the poller or webhook accelerator. Save the 👀 reaction on the relay
    comment and the hive log for the handling window. The kick source is
@@ -153,7 +161,7 @@ Run:
    `action-author`, `action-disabled`, `action-command`, and `action-run`.
 3. Re-run the same workflow attempt and confirm no second kick: reruns are
    deduped by `run_id` and `run_attempt`.
-4. **Hub OIDC dispatch.** Dispatch again with `transport=oidc`, `hub_url`, and
+4. **Hub OIDC dispatch.** Dispatch again with `transport=oidc`, `hive_url`, and
    `audience`. The workflow's "Assert OIDC receipt output" step fails unless the
    hub returned a receipt with `kind: stage_receipt` and
    `stage_receipt.schema_version: stage-receipt/v1`; save the run URL with that

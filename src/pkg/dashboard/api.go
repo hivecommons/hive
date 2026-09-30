@@ -442,6 +442,11 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// audit actions in a trailing window, bucketed per day, plus per-agent
 	// liveness — the data an Observe → Heal decision rests on.
 	s.mux.HandleFunc("GET /api/watchdog/activity", s.handleWatchdogActivity)
+
+	// PR review queue (#9590): every open PR in the governed repos, agent-
+	// or contributor-authored, in one ranked order with the reasons for each
+	// position. Read-only; paged like /api/v1/queue (#6537).
+	s.mux.HandleFunc("GET /api/review/queue", s.handleReviewQueue)
 }
 
 var (
@@ -1420,7 +1425,7 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}
-	if user != "" {
+	if user != "" && !s.syntheticInternalUser(r, user) {
 		req.Header.Set("X-Hive-User", user)
 	}
 	if role != "" {
@@ -1447,6 +1452,12 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)
+}
+
+func (s *Server) syntheticInternalUser(r *http.Request, user string) bool {
+	return strings.TrimSpace(user) == dashboardInternalActorUser &&
+		strings.TrimSpace(r.Header.Get("X-Hive-Internal")) != "" &&
+		s.configuredOwnerUser() == ""
 }
 
 func (s *Server) handleReleaseChannelSwitch(w http.ResponseWriter, r *http.Request) {

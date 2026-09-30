@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -126,7 +127,17 @@ func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 		sandboxWarnings = []string{}
 	}
 
+	// credentialWarnings (#9586): the non-fatal GitHub credential-posture
+	// diagnosis the spoke logs at ERROR on boot - today an unrecognized
+	// HIVE_PROXY_INJECT_GH_AUTH value, which leaves injection OFF and the
+	// agents' real tokens in their caches. Boot deliberately does not refuse
+	// it (auto-deployed upgrades would crash-loop), so this is where the
+	// operator sees it. Read from the process env, the same source the proxy
+	// and the token-divert path read.
+	credentialWarnings := credentialPostureWarnings(os.Getenv)
+
 	return map[string]interface{}{
+		"credentialWarnings":               credentialWarnings,
 		"ioscanEnabled":                    cfg.Ioscan.IsEnabled(),
 		"ioscanFailMode":                   failMode,
 		"ioscanCanaries":                   cfg.Ioscan.CanariesEnabled(),
@@ -144,6 +155,15 @@ func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 		"totalAgents":                      len(cfg.Agents),
 		"sandboxWarnings":                  sandboxWarnings,
 	}
+}
+
+// credentialPostureWarnings returns config.ProxyInjectGHAuthWarnings as an
+// always-non-nil slice, so the JSON field is [] rather than null.
+func credentialPostureWarnings(getenv func(string) string) []string {
+	if w := config.ProxyInjectGHAuthWarnings(getenv); w != nil {
+		return w
+	}
+	return []string{}
 }
 
 func sanitizeStringSlice(in []string) []string {

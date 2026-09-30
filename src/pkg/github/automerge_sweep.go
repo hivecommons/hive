@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"time"
 )
 
 // SetRequiredChecks installs the config-declared required-status-check set
@@ -33,6 +34,24 @@ func (c *Client) configRequiredChecks() (map[string]bool, bool) {
 		return nil, false
 	}
 	return c.requiredChecks, true
+}
+
+func (c *Client) SetAutoMergeMinHeadAge(d time.Duration) {
+	if c == nil {
+		return
+	}
+	c.mergePolicyMu.Lock()
+	defer c.mergePolicyMu.Unlock()
+	c.autoMergeMinHeadAge = d
+}
+
+func (c *Client) configuredAutoMergeMinHeadAge() time.Duration {
+	if c == nil {
+		return 0
+	}
+	c.mergePolicyMu.RLock()
+	defer c.mergePolicyMu.RUnlock()
+	return c.autoMergeMinHeadAge
 }
 
 // StartSelfAuthoredAutoMergeSweep runs a loop that periodically calls

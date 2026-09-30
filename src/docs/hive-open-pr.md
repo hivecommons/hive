@@ -278,6 +278,47 @@ compared file list: if the diff contains no file of that kind, the request is
 rejected (`title claims test but diff contains no test file`). Retitle the PR
 to describe what the diff actually changes.
 
+### `precheck` rejections catch deterministic CI reds before PR creation
+
+Before opening an agent PR, the watcher runs deterministic checks against the
+candidate head. These failures are quarantined as `.rejected` and reported in
+`.result.json` with `"precheck"` in the error string; fix the branch, push, and
+run `hive-open-pr` again.
+
+The always-on Tier A checks reject missing or malformed
+`changelog.d/<category>-<slug>.md` fragments and commits whose DCO
+`Signed-off-by:` trailer does not match the commit author. Tier B runs the docs
+guards when the diff touches Markdown or a file cited by docs:
+the same link/citation commands as the docs workflow (`src/docs`, repo-root
+`docs/`, root Markdown, wiki-vault links, generic docs citations, and
+`api-reference.md` citations). Tier C runs in the hive process in a fresh
+checkout of the PR head under the hive data directory, not inside the agent
+pane: each touched Go package gets a full `go test -count=1` with `-race` when
+the pod has a C compiler available, and the cross-cutting
+`pkg/dashboard/webstatic`, `internal/testutil`, and dashboard OpenAPI parity
+guards run as well. Failure messages include failing test names and the first
+tool error lines so the requesting agent has enough context to amend the branch.
+
+Infrastructure problems do **not** reject a request. Checkout failures, missing
+tools, timeouts, network/download errors, and an unavailable race detector are
+logged by the hive and reported as `precheck_skipped` entries in the successful
+`.result.json`; the PR still opens. If the race detector is unavailable because
+there is no C compiler, Tier C records that skip and falls back to non-race Go
+tests with `CGO_ENABLED=0`.
+
+Operators can disable the extra Tier B/C guards, change their per-run timeout,
+or tune their cache/concurrency:
+
+```yaml
+github:
+  pr_precheck:
+    docs: true          # default true
+    go_tests: true      # default true
+    timeout: 15m        # default 15m; timeout skips, never rejects
+    cache_dir: /data/pr-precheck/gocache
+    max_concurrent: 1   # default 1; serializes Tier C Go checks
+```
+
 ## Diagnosing a PR request that never opens
 
 When the PR does not appear, the request file's `.result.json` is the record of

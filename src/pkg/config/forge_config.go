@@ -101,6 +101,9 @@ type GitHubConfig struct {
 	// changes the mutation cannot express (file modes, symlinks, submodules) or
 	// that are too large — the PR still opens, just unsigned.
 	AppSignedCommits *bool `yaml:"app_signed_commits,omitempty"`
+	// PRPrecheck controls deterministic pre-PR guards the watcher runs in a
+	// fresh checkout of the candidate head before opening an agent PR.
+	PRPrecheck PRPrecheckConfig `yaml:"pr_precheck,omitempty" json:"pr_precheck,omitempty"`
 	// SelfAuthorizationHold controls the #5117 self-authorization hold: when
 	// enabled, an App-authored PR whose only tracked rationale is an
 	// unacknowledged hive-filed issue receives `hold` plus an explanatory

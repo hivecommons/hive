@@ -318,6 +318,7 @@ type AgentProcess struct {
 	// spend the token-restart budget (see paneShowsStartupRateLimit).
 	lastRateLimitRestart time.Time
 	NeedsLogin           bool // true when pane shows a login prompt
+	LoginURL             string
 	// Starting is snapshot-only: true while the agent is still in the boot
 	// stagger (startupLaunchQueued) or its launch is in progress (launching).
 	// Its State is still "stopped" in that window, which the dashboard used to
@@ -752,6 +753,17 @@ func (m *Manager) effectiveUIDMapPath() string {
 	return UIDMapPath
 }
 
+func (m *Manager) saveUIDMap() {
+	if m.uidMap == nil {
+		return
+	}
+	path := m.effectiveUIDMapPath()
+	_ = m.uidMap.Save(path)
+	if path == PersistedUIDMapPath && UIDMapPath != "" && UIDMapPath != path {
+		_ = m.uidMap.Save(UIDMapPath)
+	}
+}
+
 func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, project ProjectContext) *Manager {
 	return NewManagerWithOptions(agents, logger, project)
 }
@@ -794,10 +806,20 @@ func NewManagerWithOptions(agents map[string]config.AgentConfig, logger *slog.Lo
 	claudeToken := claude.ReadAccessToken(claude.CredentialsPath)
 
 	var uidMap *UIDMap
-	if loaded, err := LoadUIDMap(loadUIDMapPath); err == nil {
-		uidMap = loaded
-		logger.Info("UID map loaded", "agents", len(uidMap.Agents), "iptables", uidMap.IptablesActive)
-	} else {
+	selectedUIDMapPath := opts.uidMapPath
+	uidMapCandidates := []string{loadUIDMapPath}
+	if !opts.uidMapPathSet && PersistedUIDMapPath != "" && PersistedUIDMapPath != loadUIDMapPath {
+		uidMapCandidates = []string{PersistedUIDMapPath, loadUIDMapPath}
+	}
+	for _, candidate := range uidMapCandidates {
+		if loaded, err := LoadUIDMap(candidate); err == nil {
+			uidMap = loaded
+			selectedUIDMapPath = candidate
+			logger.Info("UID map loaded", "path", candidate, "agents", len(uidMap.Agents), "iptables", uidMap.IptablesActive)
+			break
+		}
+	}
+	if uidMap == nil {
 		logger.Info("no UID map found, agents will share dev UID", "path", loadUIDMapPath)
 	}
 
@@ -814,7 +836,7 @@ func NewManagerWithOptions(agents map[string]config.AgentConfig, logger *slog.Lo
 		copilotAuthTokenSource:        copilotTokenSource,
 		claudeAuthToken:               claudeToken,
 		uidMap:                        uidMap,
-		uidMapPath:                    opts.uidMapPath,
+		uidMapPath:                    selectedUIDMapPath,
 		kickLogDir:                    kickLogDir,
 		kickLogRetention:              kickLogRetention,
 		kickLogMaxBytes:               kickLogMaxBytes,
@@ -1188,7 +1210,7 @@ func (m *Manager) AddAgent(name string, cfg config.AgentConfig) {
 		if agentUID > 0 {
 			tmuxSocket = "hive-" + name
 		}
-		_ = m.uidMap.Save(m.effectiveUIDMapPath())
+		m.saveUIDMap()
 		// The boot-time migration walk has already finished; publish this
 		// agent's completion marker now or awaitUIDIsolation holds its launch
 		// forever. One tiny same-PVC write on a rare admin action — not the
@@ -1288,7 +1310,7 @@ func (m *Manager) ReconcileAgents(configs map[string]config.AgentConfig) []strin
 			if agentUID > 0 {
 				tmuxSocket = "hive-" + name
 			}
-			_ = m.uidMap.Save(m.effectiveUIDMapPath())
+			m.saveUIDMap()
 			// Same contract as AddAgent: a reconcile-added agent gets its
 			// marker now, or its launch holds forever (the live adjudicator
 			// wedge came through exactly this path).

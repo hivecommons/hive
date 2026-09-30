@@ -197,6 +197,7 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		Branch:    spec.Branch,
 		BaseRef:   baseSHA,
 		Repo:      spec.Org + "/" + spec.Repo,
+		AgentName: spec.Agent,
 		Remote:    pushbroker.DefaultRemote,
 		Minter:    e.Minter,
 		Runner:    e.runner(),

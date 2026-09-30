@@ -20192,6 +20192,86 @@
         }
       }
     },
+    "/api/review/queue": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Ranked PR review queue (agent and contributor PRs)",
+        "description": "Every open PR in the governed repos, agent- or contributor-authored, in one ranked order (class, then confidence band, then CI, then age) with the reasons for each position. Reads only the last enumeration snapshot and the review verdict artifact, so a request never calls GitHub. Paged with limit/offset.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "description": "Page size."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Number of ranked entries to skip."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the review queue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "snapshot_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "total": {
+                      "type": "integer"
+                    },
+                    "limit": {
+                      "type": "integer"
+                    },
+                    "offset": {
+                      "type": "integer"
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid limit or offset"
+          },
+          "500": {
+            "description": "Review verdicts unreadable"
+          }
+        }
+      }
+    },
     "/api/review/outcomes": {
       "get": {
         "tags": [

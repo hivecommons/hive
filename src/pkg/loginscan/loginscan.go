@@ -172,6 +172,9 @@ func Match(backend, paneText string, compiled []*regexp.Regexp) *regexp.Regexp {
 	if agent.PaneShowsBlockingPrompt(backend, paneText) {
 		return nil
 	}
+	if agent.ClassifyAuthPane(strings.Split(paneText, "\n")).BackendAuthError {
+		return nil
+	}
 	for _, re := range compiled {
 		if re.MatchString(paneText) {
 			return re

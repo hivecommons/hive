@@ -160,6 +160,7 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 	s.recordClassified(classifiedIssues)
 	classifiedIssues = s.applyRunTriage(sweepCtx, classifiedIssues)
 	cancelSweep()
+	s.offerQuestions(classifiedIssues)
 
 	var messages []KickMessage
 	for _, targetKey := range agentsDue {
@@ -337,6 +338,7 @@ func (s *Scheduler) buildAgentMessage(agentName string, issues []github.Issue, a
 		// that has it (#6681).
 		message = s.addWorkflowPushCeiling(agentName, message)
 		message = s.addTaskMCPPointer(message, elideStuffed)
+		message = s.addQuestionAnswerContract(agentName, message, issues)
 	}()
 
 	baseName := s.cfg.BaseAgentName(agentName)

@@ -59,9 +59,9 @@ func (g *scriptedGit) Run(_ context.Context, _ string, _ []string, name string, 
 	switch {
 	case key == "var GIT_AUTHOR_IDENT":
 		return []byte("Hive Test <hive@example.com> 1700000000 +0000\n"), nil
-	case strings.HasPrefix(key, "log --format=%H%x00%an%x00%ae%x00%B%x1e "):
+	case strings.HasPrefix(key, "log --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e "):
 		return nil, nil
-	case strings.HasPrefix(key, "log -1 --format=%H%x00%an%x00%ae%x00%B%x1e "):
+	case strings.HasPrefix(key, "log -1 --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e "):
 		return nil, nil
 	case key == "merge-base --is-ancestor origin/main HEAD" || strings.HasPrefix(key, "merge-base --is-ancestor refs/remotes/"):
 		return nil, nil

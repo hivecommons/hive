@@ -27,6 +27,15 @@ github:
 
 `trusted_comment_authors` lists comment authors whose hidden Action marker may select the Actions path; it defaults to `github-actions[bot]`. For that path, Hive reads the marker `run_id` from GitHub before using the marker actor. `identity_map` maps `github.actor` from the checked comment marker or the OIDC `actor` claim to an existing Hive dashboard identity. If omitted, the actor login itself must already have the required Hive role. Bot actors, including `github-actions[bot]`, are refused unless the repository is already governed by the hive and the command is in `allowed_commands`. OIDC dispatch is off by default; when `oidc.enabled` is true, `oidc.audience` is required and must match the workflow input exactly.
 
+## App handle
+
+The comment-relay transport posts a comment that @-mentions the hive's GitHub App, and the hive only acts on it when the mention matches the App's bot login (with or without the `[bot]` suffix). Tell the action your App's bot handle, for example `hivecommons-hive`:
+
+- `app_handle` input on the action step, or
+- a `HIVE_APP_HANDLE` repository or organization variable passed as `app_handle: ${{ inputs.app_handle || vars.HIVE_APP_HANDLE }}` (as `hive-action-smoke` does) or exported as the `HIVE_APP_HANDLE` environment variable for the job.
+
+Resolution order is the `app_handle` input, then `HIVE_APP_HANDLE`, then the backward-compatible default `hive`. A leading `@` and a trailing `[bot]` are accepted and stripped, so `hivecommons-hive`, `@hivecommons-hive`, and `@hivecommons-hive[bot]` all post `@hivecommons-hive`. A value that is not a valid GitHub login fails the step. The OIDC transport does not post a comment and ignores the handle.
+
 ## Review on a PR
 
 ```yaml
@@ -48,6 +57,7 @@ jobs:
         with:
           command: review
           issue: ${{ github.event.pull_request.number }}
+          app_handle: ${{ vars.HIVE_APP_HANDLE }}
           prompt: Please review this PR and reply with findings only.
 ```
 

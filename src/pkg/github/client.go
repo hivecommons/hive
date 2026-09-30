@@ -84,12 +84,14 @@ type Client struct {
 	mergePolicyMu             sync.RWMutex
 	allowUnprotectedBaseRepos map[string]bool
 	noCIAllowedRepos          map[string]bool
+	autoMergeMinHeadAge       time.Duration
 	mergeAlertMu              sync.Mutex
 	mergeAlertSink            MergeFailureAlertSink
 	mergeAlertIDsByRepo       map[string]map[string]mergeAlertEntry
 	mergeAlertLastRevalidate  time.Time
 	logger                    *slog.Logger
 	appAuth                   *AppAuth // nil for token-authenticated clients
+	authToken                 string   // token-authenticated clients only; never log
 	canariesEnabled           bool
 	canaryFailClosed          bool
 	canaryRegistry            *ioscan.CanaryRegistry
@@ -162,6 +164,13 @@ type Client struct {
 	// request without rebuilding the client. nil means off. See
 	// reauthorBranchSigned.
 	prSignedCommits func() bool
+	// prPrecheck runs deterministic docs and touched-package checks in the hive
+	// process before the watcher opens a PR. Nil preserves the legacy Tier A-only
+	// precheck path for tests and unwired clients; production wiring installs the
+	// default-on config-backed options.
+	prPrecheckMu        sync.RWMutex
+	prPrecheckOptions   *PRPrecheckOptions
+	prPrecheckSkippedBy map[string][]string
 	// signedReconcile is the state of the follow-up signing pass (#9364):
 	// last-seen head per open PR, PRs already told why they can't be signed,
 	// and when the pass last ran. See pr_signed_reconcile.go.
@@ -598,6 +607,16 @@ type PullRequest struct {
 	// src/docs/review-queue-triage.md (#6183). Derived from Title + Labels
 	// at enumeration time; never read by the governor or any agent.
 	ReviewClass ReviewClass `json:"review_class,omitempty"`
+	// ReviewRank, ReviewPriority and ReviewRankReasons are this PR's place in
+	// the PR review queue (StampReviewQueue, hivecommons/hive#9590): its
+	// 1-based position across every open PR (actionable and held), the
+	// label-sized priority, and why it ranked there. Stamped once per eval
+	// cycle before the snapshot is written; zero/empty on snapshots written by
+	// other paths. The list order itself is unchanged. The optional
+	// review.priority_labels toggle is the only writer that acts on them.
+	ReviewRank        int            `json:"review_rank,omitempty"`
+	ReviewPriority    ReviewPriority `json:"review_priority,omitempty"`
+	ReviewRankReasons []string       `json:"review_rank_reasons,omitempty"`
 	// Protection carries the branch-protection facts behind GitHub's
 	// one-word "blocked" state — which required checks are red or absent,
 	// and GitHub's own review decision. It is nil when none of it could be
@@ -861,10 +880,11 @@ func NewClient(token string, org string, repos []string, logger *slog.Logger, ap
 	// (see proxytrust.go).
 	client := newTokenClient(token, apiURL)
 	return &Client{
-		client: client,
-		org:    org,
-		repos:  repos,
-		logger: logger,
+		client:    client,
+		org:       org,
+		repos:     repos,
+		logger:    logger,
+		authToken: token,
 	}
 }
 
@@ -2048,6 +2068,14 @@ func (c *Client) EnsureIssueLabel(ctx context.Context, repo, name, color, descri
 	color = strings.TrimSpace(color)
 	if color == "" {
 		color = "8250df"
+	}
+	if def, ok := escalationIssueLabelDefinition(name); ok {
+		if color == "8250df" {
+			color = def.color
+		}
+		if strings.TrimSpace(description) == "" {
+			description = def.description
+		}
 	}
 	_, _, err := c.client.Issues.CreateLabel(ctx, owner, repoName, &gh.Label{
 		Name:        gh.Ptr(name),

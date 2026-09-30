@@ -858,6 +858,11 @@ const (
 	// (selfUpgradeFailureExitCode) so the refusal is legible in the
 	// container's termination state.
 	duplicateProcessExitCode = 18
+	// proxyInjectConfigExitCode marks an exit caused by the #9586 credential
+	// posture guard (config.ValidateProxyInjectGHAuth: injection combined with
+	// HIVE_PROXY_ADVISORY_OK=true). Its own code so a refusing pod's
+	// termination state says "fix the env", not "bug".
+	proxyInjectConfigExitCode = 19
 )
 
 // singletonLockPath resolves where the process singleton lock lives. Every
@@ -1001,6 +1006,26 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	if deps.getenv("HIVE_MODE") == "hub" {
 		deps.runHub(b.logger, b.configPath)
 		return false
+	}
+
+	// #9586: refuse to boot a spoke whose GitHub credential posture is
+	// EXPLOITABLE - injection combined with the advisory-mode self-asserted
+	// identity, where a spoofed agent name would select whose real token gets
+	// injected. Before config load and before any agent or proxy starts, so
+	// nothing is ever minted under it. The hub branch above runs no agents and
+	// is not gated.
+	if err := config.ValidateProxyInjectGHAuth(deps.getenv); err != nil {
+		b.logger.Error("refusing to start: contradictory GitHub credential configuration (#9586)", "error", err.Error())
+		deps.exit(proxyInjectConfigExitCode)
+		return false
+	}
+	// An unrecognized HIVE_PROXY_INJECT_GH_AUTH value is loud but NOT fatal:
+	// spokes auto-deploy within about a minute of a merge, so failing here
+	// would crash-loop any live spoke that already carries such a value. It
+	// keeps today's meaning (injection off); the dashboard Security tab shows
+	// the same diagnosis (securitySectionResponse, credentialWarnings).
+	for _, warning := range config.ProxyInjectGHAuthWarnings(deps.getenv) {
+		b.logger.Error("GitHub credential configuration warning (#9586): agents hold their real token", "warning", warning)
 	}
 
 	var cancel context.CancelFunc
@@ -2374,6 +2399,16 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		// GitHub-signed and authored by the App bot. Read through a func so a
 		// config reload takes effect on the next request.
 		b.ghClient.SetSignedCommits(func() bool { return b.cfg.GitHub.AppSignedCommitsEnabled() })
+		prPrecheckDataRoot := filepath.Dir(b.cfg.Data.MetricsDir)
+		b.ghClient.SetPRPrecheckOptions(&github.PRPrecheckOptions{
+			DocsEnabled:    func() bool { return b.cfg.GitHub.PRPrecheck.DocsEnabled() },
+			GoTestsEnabled: func() bool { return b.cfg.GitHub.PRPrecheck.GoTestsEnabled() },
+			Timeout:        func() time.Duration { return b.cfg.GitHub.PRPrecheck.EffectiveTimeout() },
+			MaxConcurrent:  func() int { return b.cfg.GitHub.PRPrecheck.EffectiveMaxConcurrent() },
+			CacheDir:       b.cfg.GitHub.PRPrecheck.EffectiveCacheDir(prPrecheckDataRoot),
+			WorkRoot:       filepath.Join(prPrecheckDataRoot, "pr-precheck", "checkouts"),
+			CloneBaseURL:   b.cfg.GitHub.ResolvedBaseURL(),
+		})
 		// Fix #2: on a terminal merge failure caused by a failing REQUIRED check,
 		// re-engage the fix loop instead of abandoning the PR. The hook records a
 		// re-engagement under the escalation store's per-red-SHA cap (shared with
@@ -2468,6 +2503,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 
 		autoMergeOpts.MutationBoundary = b.mutationBoundary
 		autoMergeOpts.SelfAuthorizationHoldEnabled = selfAuthorizationHoldEnabled
+		autoMergeOpts.MinHeadAge = b.cfg.AutoMerge.EffectiveMinHeadAge()
 		autoMergeOpts.RepoAutoMergeEnabled = func(repo string) bool { return b.cfg.RepoAutoMergeEnabled(repo) }
 		// Read through b.cfg on every sweep tick so a config reload of
 		// auto_merge.trusted_bot_authors takes effect without a restart.
@@ -3460,6 +3496,8 @@ func (b *boot) bootSupervision() {
 	// human, contributor or another agent holds is withheld from kicks too.
 	b.sched.SetInflightLookup(composeInflight(b.dashSrv.LinearSessionHolder,
 		claimsInflightLookup(b.issueClaims, b.cfg.Project.Org)))
+	// #9584: close answered question issues unless the author objects (default off).
+	wireQuestionAutoclose(b.ctx, b.cfg, b.sched, func() *github.Client { return b.ghClient }, b.logger)
 	if b.ghClient != nil {
 		b.ghClient.SetPROpenedHook(func(agentName, repo string, number int, url string) {
 			b.dashSrv.LinearAgentPROpened(agentName, repo, number, url)
@@ -6738,6 +6776,12 @@ func runEvalCycle(
 	// closed (keeps the last known claims) when the GitHub API is unavailable.
 	applyDuplicatePRGuard(ctx, cfg, ghClient, actionable, logger)
 
+	// PR review queue (#9590): stamp each PR's rank, priority and reasons
+	// onto the snapshot so last-actionable.json carries them next to
+	// review_class. Additive only: Items and Held keep their order, and
+	// nothing that gates work reads the stamp.
+	reviewQueue := stampReviewQueue(cfg, actionable, logger)
+
 	lastActionable.Store(actionable)
 	if data, err := json.Marshal(actionable); err == nil {
 		atomicWrite(lastActionablePath, data)
@@ -6797,6 +6841,13 @@ func runEvalCycle(
 	// PR is never double-dispatched within a red-SHA's budget.
 	reapStuckRedPRs(cfg, actionable, escalatedPRs, agentKicker{mgr: agentMgr},
 		agentAvailability(cfg, agentMgr), logger)
+
+	// Release sentinel (hivecommons/hive#9585), opt-in and default OFF: when
+	// the current v<version> tag's CI fails, dispatch a bounded repair round
+	// through the same kick path as the reaper above, or escalate to a human
+	// when the failure is a setting no commit can fix. Never pushes or retags.
+	runReleaseSentinel(ctx, cfg, ghClient, agentKicker{mgr: agentMgr},
+		agentAvailability(cfg, agentMgr), notifier, logger)
 
 	shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
 		PrimaryRepo:     cfg.Project.PrimaryRepo,
@@ -6989,6 +7040,9 @@ func runEvalCycle(
 	emitReviewHumanEscalations(reviewPlan)
 	auditWithheldReviewFixes(reviewPlan, dashSrv, logger)
 	applyHumanDecisionLabels(ctx, cfg, ghClient, actionable, reviewPlan, logger)
+	if ghClient != nil {
+		applyReviewPriorityLabels(ctx, cfg, ghClient, reviewQueue, logger)
+	}
 	messages := sched.BuildKickMessages(kickActionable, agentsDue)
 	reviewKickByMessage := map[string]review.DispatchKick{}
 	for _, k := range append(reviewPlan.ReviewKicks, reviewPlan.FixKicks...) {

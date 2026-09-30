@@ -172,3 +172,47 @@ func TestSecuritySectionSandboxWarningsEmptyWhenFullyOptedIn(t *testing.T) {
 }
 
 func boolPtrGovSecurityTest(b bool) *bool { return &b }
+
+// TestSecuritySectionSurfacesUnrecognizedProxyInjectValue (#9586): an
+// unrecognized HIVE_PROXY_INJECT_GH_AUTH value does not stop the spoke (an
+// auto-deployed upgrade would crash-loop it), so the Security tab is where the
+// operator must learn that injection is OFF and agents hold real tokens.
+func TestSecuritySectionSurfacesUnrecognizedProxyInjectValue(t *testing.T) {
+	t.Setenv(config.ProxyInjectGHAuthEnv, "TRUE")
+	s, _ := apiServer(t)
+	body := decodeJSON(t, doGet(s, "/api/config/governor"))
+	sec, ok := body["security"].(map[string]any)
+	if !ok {
+		t.Fatalf("security section missing: %#v", body["security"])
+	}
+	warnings, ok := sec["credentialWarnings"].([]any)
+	if !ok || len(warnings) != 1 {
+		t.Fatalf("credentialWarnings = %#v, want exactly one warning", sec["credentialWarnings"])
+	}
+	msg, _ := warnings[0].(string)
+	for _, want := range []string{config.ProxyInjectGHAuthEnv, `"TRUE"`, "OFF"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("credentialWarnings[0] = %q, want it to contain %q", msg, want)
+		}
+	}
+}
+
+// Recognized values (and unset) must produce an empty array, never null and
+// never noise.
+func TestSecuritySectionCredentialWarningsEmptyForRecognizedValues(t *testing.T) {
+	for _, v := range []string{"", config.ProxyInjectGHAuthOnValue, config.ProxyInjectGHAuthOffValue} {
+		t.Run("value="+v, func(t *testing.T) {
+			t.Setenv(config.ProxyInjectGHAuthEnv, v)
+			s, _ := apiServer(t)
+			body := decodeJSON(t, doGet(s, "/api/config/governor"))
+			sec, _ := body["security"].(map[string]any)
+			warnings, ok := sec["credentialWarnings"].([]any)
+			if !ok {
+				t.Fatalf("credentialWarnings missing or not an array: %#v", sec["credentialWarnings"])
+			}
+			if len(warnings) != 0 {
+				t.Errorf("credentialWarnings = %#v, want none for %q", warnings, v)
+			}
+		})
+	}
+}

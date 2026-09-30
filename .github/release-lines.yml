@@ -83,6 +83,11 @@ pinned:
   # sync target inheriting them; v2 is sunset and takes no pushes.
   dco-push-delta.yml: [v5]
   go-security-analysis.yml: [v5, v6]
+  # Unit gate for the reusable hive action's app-handle helper (#9707). The
+  # action and its smoke wiring live only on the v6 development line, so the
+  # push filter watches v6 alone; v4 is feature-frozen and v5 never carried
+  # the action, hence the explicit exclusions.
+  hive-action-tests.yml: [v6, -v4, -v5]
   podman-arm64-lane.yml: []
   podman-contract.yml: []
   podman-rootful-lane.yml: []

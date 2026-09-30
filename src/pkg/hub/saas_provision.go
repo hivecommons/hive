@@ -2481,6 +2481,11 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		"Token":           req.GitHubToken,
 		"UseApp":          useApp,
 		"UseAppFull":      useAppFull,
+		// #9586: new hosted App spokes are born with proxy-side GitHub
+		// credential injection ON, so agents hold only the inert
+		// placeholder; PAT spokes and a hub-level opt-out render the
+		// explicit off value. See provision_proxy_inject.go.
+		"ProxyInjectGHAuth": provisionProxyInjectGHAuthFromEnv(useApp, logger),
 		// AppID / AppSlug follow the hive's GitHub HOST (the App may be on
 		// github.com OR github.ibm.com, per the repos). A GHE hive must get the
 		// cluster's GitHub Enterprise App — not the public github.com App
@@ -3416,6 +3421,18 @@ spec:
             secretKeyRef:
               name: hive-secrets
               key: github-token
+{{- end}}
+{{- if .ProxyInjectGHAuth}}
+        # #9586: proxy-side GitHub credential injection (#1861). "true" on a
+        # fresh App spoke: the hub keeps each agent's scoped token in memory,
+        # the MITM proxy attaches it per UID-identified agent, and the agent's
+        # readable token cache holds only hive-proxy-injected-<agent>. "false"
+        # is the explicit opt-out (PAT spokes, or HIVE_HOSTED_PROXY_INJECT_GH_AUTH
+        # on the hub). Rendered once at provisioning; existing spokes are not
+        # reconciled. The spoke refuses to boot if this is combined with
+        # HIVE_PROXY_ADVISORY_OK=true (config.ValidateProxyInjectGHAuth).
+        - name: HIVE_PROXY_INJECT_GH_AUTH
+          value: "{{.ProxyInjectGHAuth}}"
 {{- end}}
         - name: DASHBOARD_AUTH_TOKEN
           valueFrom:

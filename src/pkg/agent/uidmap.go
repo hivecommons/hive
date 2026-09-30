@@ -16,6 +16,11 @@ import (
 // mutate it.
 var UIDMapPath = "/var/run/hive/uid-map.json"
 
+// PersistedUIDMapPath is the durable source of truth written by the entrypoint
+// on the /data volume. The runtime /var/run copy is still produced for
+// compatibility, but production managers prefer this path when present.
+var PersistedUIDMapPath = "/data/.hive/uid-map.json"
+
 const (
 	baseAgentUID = 2001
 	proxyUserUID = 1001
@@ -40,8 +45,9 @@ func NewUIDMap() *UIDMap {
 	}
 }
 
-// AllocateUIDs assigns UIDs to agent names in alphabetical order,
-// starting from BaseUID. Existing allocations are preserved.
+// AllocateUIDs assigns stable UIDs to agent names. Existing allocations are
+// preserved, and new names receive the next UID above every allocation already
+// present in the map, regardless of alphabetical position.
 func (u *UIDMap) AllocateUIDs(names []string) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -50,9 +56,16 @@ func (u *UIDMap) AllocateUIDs(names []string) {
 	copy(sorted, names)
 	sort.Strings(sorted)
 
-	for i, name := range sorted {
+	maxUID := u.BaseUID - 1
+	for _, uid := range u.Agents {
+		if uid > maxUID {
+			maxUID = uid
+		}
+	}
+	for _, name := range sorted {
 		if _, exists := u.Agents[name]; !exists {
-			u.Agents[name] = u.BaseUID + i
+			maxUID++
+			u.Agents[name] = maxUID
 		}
 	}
 }

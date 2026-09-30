@@ -159,6 +159,12 @@ jobs:
       - name: Entrypoint UID-isolation migration (#5525)
         run: bash deploy/test_entrypoint_uid_isolation.sh
 
+      # #9592: agent UIDs are stable across restarts and roster changes. The
+      # persisted /data map wins, first boot adopts existing PVC owners, and
+      # the guard repairs mismatched per-agent state before launch.
+      - name: Entrypoint stable agent UID allocation (#9592)
+        run: bash deploy/test_entrypoint_uid_stable.sh
+
       # #6287: the token-access audit log (GET /api/token-access) was
       # dev:node 0664 while every agent UID is in group node, so the audited
       # agents could truncate or forge their own trail. Fixed on v5 by #6303

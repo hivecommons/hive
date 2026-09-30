@@ -145,9 +145,12 @@ func (c *Client) validatePRRequestContent(ctx context.Context, req PRRequest) er
 			return &prContentMetadataError{file: file.GetFilename(), line: line, kind: kind}
 		}
 	}
-	if reasons := c.prRequestPrecheckFailures(ctx, owner, repo, head, comparison); len(reasons) > 0 {
-		return &prRequestPrecheckError{reasons: reasons}
+	outcome := c.prRequestPrecheckFailures(ctx, owner, repo, head, comparison)
+	if len(outcome.Reject) > 0 {
+		c.recordPRPrecheckSkipped(req, nil)
+		return &prRequestPrecheckError{reasons: outcome.Reject}
 	}
+	c.recordPRPrecheckSkipped(req, outcome.Skipped)
 	return nil
 }
 
@@ -198,18 +201,21 @@ func addedInternalMetadata(patch string) (line int, kind string, found bool) {
 	return 0, "", false
 }
 
-func (c *Client) prRequestPrecheckFailures(ctx context.Context, owner, repo, head string, comparison *gh.CommitsComparison) []string {
+func (c *Client) prRequestPrecheckFailures(ctx context.Context, owner, repo, head string, comparison *gh.CommitsComparison) prPrecheckOutcome {
 	if comparison == nil {
-		return nil
+		return prPrecheckOutcome{}
 	}
-	var reasons []string
+	var outcome prPrecheckOutcome
 	if reason := prRequestChangelogPrecheck(ctx, c, owner, repo, head, comparison.Files); reason != "" {
-		reasons = append(reasons, reason)
+		outcome.Reject = append(outcome.Reject, reason)
 	}
 	if reason := prRequestDCOPrecheck(comparison.Commits); reason != "" {
-		reasons = append(reasons, reason)
+		outcome.Reject = append(outcome.Reject, reason)
 	}
-	return reasons
+	external := c.runPRRequestExternalPrechecks(ctx, owner, repo, head, comparison.Files)
+	outcome.Reject = append(outcome.Reject, external.Reject...)
+	outcome.Skipped = append(outcome.Skipped, external.Skipped...)
+	return outcome
 }
 
 func prRequestChangelogPrecheck(ctx context.Context, c *Client, owner, repo, head string, files []*gh.CommitFile) string {

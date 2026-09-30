@@ -132,7 +132,10 @@ review:
   confidence_score: true                    # optional; append the 0–5 mergeability line to review comments
   all_authors: true                         # optional; review every open PR, not only agent-authored ones
   fix_human_prs: false                      # optional; let the fixer push commits to PRs Hive did not open (default off)
+  priority_labels: false                    # optional; mirror the PR review queue rank onto review-priority/* labels (default off)
 ```
+
+The confidence score also feeds the **PR review queue** (`GET /api/review/queue`), which ranks every open PR - agent- and contributor-authored - by triage class, confidence band, CI state and age, with the reasons for each position. An unreviewed PR ranks as *needs attention*, never *safe*. See [review-queue-triage.md](review-queue-triage.md#pr-review-queue).
 
 When `review.require_approval` is false or omitted, `merge-eligible.json` is produced as before. When true, a PR is included only if `review-verdicts.json` contains an aggregate `approve` for the same repo, PR number, and head SHA.
 

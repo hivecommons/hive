@@ -92,7 +92,9 @@ table{border-collapse:collapse;margin-top:1rem}td,th{padding:.3rem .9rem;text-al
 	if len(infos) == 0 {
 		_, _ = fmt.Fprint(w, `<p class="muted">No archived kick logs yet. Archives appear after the agent's next kick, restart, or a hive shutdown.</p>`)
 	} else {
-		_, _ = fmt.Fprint(w, `<table><tr><th>archived (UTC)</th><th>trigger</th><th>size</th><th></th></tr>`)
+		// #9580: the column is the archived kick's START time (KickLogInfo.
+		// Timestamp), not when the archive file was written — see kick_logs.go.
+		_, _ = fmt.Fprint(w, `<table><tr><th>kick started (UTC)</th><th>trigger</th><th>size</th><th></th></tr>`)
 		for _, info := range infos {
 			id := html.EscapeString(info.ID)
 			_, _ = fmt.Fprintf(w,

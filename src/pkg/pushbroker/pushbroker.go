@@ -16,6 +16,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/effects"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/gitidentity"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
@@ -94,6 +95,7 @@ type Broker struct {
 	Branch         string
 	BaseRef        string
 	Repo           string
+	AgentName      string
 	Remote         string
 	ProtectedPaths []string
 	Minter         TokenMinter
@@ -358,29 +360,20 @@ var signedOffByRE = regexp.MustCompile(`(?mi)^Signed-off-by:\s*(.*?)\s*<([^<>]+)
 var gitIdentRE = regexp.MustCompile(`^(.*?)\s*<([^<>]*)>`)
 
 func (b *Broker) rejectForgedLaneSignoffs(ctx context.Context, base string, baseExists bool) error {
-	// Read the pinned lane identity via `git var GIT_AUTHOR_IDENT` (#9478),
-	// not `git config user.name`/`user.email`. Every per-agent home bridges
-	// ~/.gitconfig to one shared file and all agents share one working tree
-	// per repo, so a config read reflects whichever agent's config write
-	// landed last, not the identity actually pinned via GIT_AUTHOR_*/
-	// GIT_COMMITTER_* env vars (manager_env.go's agentGitIdentity) that
-	// produced the outgoing commits. `git var` honours those env vars, so it
-	// resolves to the same identity the commits were actually made with.
-	identOut, err := b.git(ctx, "var", "GIT_AUTHOR_IDENT")
+	laneName, laneEmail, err := b.laneGitIdentity(ctx)
 	if err != nil {
-		return fmt.Errorf("reading git author identity for sign-off guard: %w", err)
+		return err
 	}
-	laneName, laneEmail, ok := parseGitIdent(string(identOut))
-	if !ok || laneName == "" || laneEmail == "" {
+	if laneName == "" || laneEmail == "" {
 		return nil
 	}
 
 	var logArgs []string
 	if baseExists {
 		rangeSpec := base + "..HEAD"
-		logArgs = []string{"log", "--format=%H%x00%an%x00%ae%x00%B%x1e", rangeSpec}
+		logArgs = []string{"log", "--format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e", rangeSpec}
 	} else {
-		logArgs = []string{"log", "-1", "--format=%H%x00%an%x00%ae%x00%B%x1e", "HEAD"}
+		logArgs = []string{"log", "-1", "--format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e", "HEAD"}
 	}
 	out, err := b.git(ctx, logArgs...)
 	if err != nil {
@@ -391,21 +384,54 @@ func (b *Broker) rejectForgedLaneSignoffs(ctx context.Context, base string, base
 		if record == "" {
 			continue
 		}
-		parts := strings.SplitN(record, "\x00", 4)
-		if len(parts) < 4 {
+		parts := strings.SplitN(record, "\x00", 6)
+		if len(parts) < 6 {
 			continue
 		}
-		sha, authorName, authorEmail, msg := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2]), parts[3]
-		if sameIdentity(authorName, authorEmail, laneName, laneEmail) {
+		sha := strings.TrimSpace(parts[0])
+		authorName, authorEmail := strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])
+		committerName, committerEmail := strings.TrimSpace(parts[3]), strings.TrimSpace(parts[4])
+		msg := parts[5]
+		authorMatches := sameIdentity(authorName, authorEmail, laneName, laneEmail)
+		committerMatches := sameIdentity(committerName, committerEmail, laneName, laneEmail)
+		if authorMatches && committerMatches {
 			continue
+		}
+		if !authorMatches && b.Logger != nil {
+			b.Logger.Warn("outgoing commit author differs from pushing lane identity",
+				"commit", shortSHA(sha),
+				"author", fmt.Sprintf("%s <%s>", authorName, authorEmail),
+				"lane", fmt.Sprintf("%s <%s>", laneName, laneEmail))
 		}
 		for _, match := range signedOffByRE.FindAllStringSubmatch(msg, -1) {
 			if len(match) == 3 && sameIdentity(strings.TrimSpace(match[1]), strings.TrimSpace(match[2]), laneName, laneEmail) {
-				return fmt.Errorf("pushbroker: refusing to push commit %s authored by %s <%s> with %s's Signed-off-by trailer; leave DCO remediation to the author", shortSHA(sha), authorName, authorEmail, laneName)
+				return fmt.Errorf("pushbroker: refusing to push commit %s authored by %s <%s> and committed by %s <%s> with %s's Signed-off-by trailer; leave DCO remediation to the author", shortSHA(sha), authorName, authorEmail, committerName, committerEmail, laneName)
 			}
 		}
 	}
 	return nil
+}
+
+func (b *Broker) laneGitIdentity(ctx context.Context) (name, email string, err error) {
+	if agentName := strings.TrimSpace(b.AgentName); agentName != "" {
+		name, email, ok := gitidentity.AgentIdentity(agentName)
+		if !ok {
+			return "", "", nil
+		}
+		return name, email, nil
+	}
+	// Compatibility fallback for broker callers that predate AgentName. This
+	// still avoids `git config user.*`: `git var` honours GIT_AUTHOR_* when the
+	// caller has the lane env and otherwise returns git's effective author.
+	identOut, err := b.git(ctx, "var", "GIT_AUTHOR_IDENT")
+	if err != nil {
+		return "", "", fmt.Errorf("reading git author identity for sign-off guard: %w", err)
+	}
+	name, email, ok := parseGitIdent(string(identOut))
+	if !ok {
+		return "", "", nil
+	}
+	return name, email, nil
 }
 
 // parseGitIdent extracts the name/email prefix from a `git var
@@ -544,11 +570,24 @@ func (b *Broker) outgoingDiff(ctx context.Context) (string, error) {
 }
 
 func (b *Broker) git(ctx context.Context, args ...string) ([]byte, error) {
-	out, err := b.runner().Run(ctx, b.Workspace, PushEnv(os.Environ()), "git", args...)
+	out, err := b.runner().Run(ctx, b.Workspace, b.gitEnv(), "git", args...)
 	if err != nil {
 		return out, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return out, nil
+}
+
+func (b *Broker) gitEnv() []string {
+	env := PushEnv(os.Environ())
+	if name, email, ok := gitidentity.AgentIdentity(strings.TrimSpace(b.AgentName)); ok {
+		env = append(env,
+			"GIT_AUTHOR_NAME="+name,
+			"GIT_AUTHOR_EMAIL="+email,
+			"GIT_COMMITTER_NAME="+name,
+			"GIT_COMMITTER_EMAIL="+email,
+		)
+	}
+	return env
 }
 
 func (b *Broker) fail(res Result, err error) (Result, error) {

@@ -63,8 +63,11 @@ const (
 type KickLogInfo struct {
 	// ID is the archive's filename — the handle ReadKickLog accepts.
 	ID string `json:"id"`
-	// Timestamp is when the archive was written (parsed from the filename,
-	// falling back to the file mtime).
+	// Timestamp is when the archived kick STARTED (agent.LastKick at archive
+	// time), parsed from the filename, falling back to the file mtime. #9580:
+	// this used to be when the archive was WRITTEN — which for the "kick"
+	// reason is the NEXT kick's delivery time, often hours after this kick
+	// ran, and useless for lining a kick up against e.g. a budget reset.
 	Timestamp time.Time `json:"timestamp"`
 	// SizeBytes is the archive size on disk.
 	SizeBytes int64 `json:"size_bytes"`
@@ -182,8 +185,18 @@ func (m *Manager) archiveKickLogBytesLocked(agent *AgentProcess, reason string) 
 
 	now := time.Now()
 	kickStarted := "unknown"
+	// filenameTime is the basis for both the archive's filename and the
+	// KickLogInfo.Timestamp it is later parsed back into. #9580: this used to
+	// be `now` (when archiving happened), which for the common "kick" reason
+	// is the delivery time of the NEXT kick — often hours after this archive's
+	// own kick ran. Basing it on the kick's own start makes the past-kicks
+	// menu orderable against things that actually matter (budget resets,
+	// how long ago the kick that produced this log ran), falling back to now
+	// only for the "no kick ever recorded" case a fresh session start hits.
+	filenameTime := now
 	if agent.LastKick != nil {
 		kickStarted = agent.LastKick.UTC().Format(time.RFC3339)
+		filenameTime = *agent.LastKick
 	}
 	header := fmt.Sprintf(
 		"==== hive kick log ====\nagent: %s\narchived: %s\nreason: %s\nkick_started: %s\nkick_prompt: %s\n=======================\n",
@@ -199,7 +212,7 @@ func (m *Manager) archiveKickLogBytesLocked(agent *AgentProcess, reason string) 
 		m.logger.Warn("kick log archive: mkdir failed", "name", agent.Name, "dir", dir, "error", err)
 		return 0
 	}
-	fname := now.UTC().Format(kickLogTimestampFormat) + "-" + sanitizeKickLogComponent(reason) + kickLogSuffix
+	fname := filenameTime.UTC().Format(kickLogTimestampFormat) + "-" + sanitizeKickLogComponent(reason) + kickLogSuffix
 	path := filepath.Join(dir, fname)
 	if err := os.WriteFile(path, []byte(header+content), kickLogFileMode); err != nil {
 		m.logger.Warn("kick log archive: write failed", "name", agent.Name, "path", path, "error", err)

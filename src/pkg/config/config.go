@@ -95,6 +95,9 @@ type Config struct {
 	// Publication is the audit campaign's authorized issue publisher opt-in
 	// (hivecommons/hive#8353). Default off → nothing is ever filed.
 	Publication PublicationConfig `yaml:"publication,omitempty" json:"publication,omitempty"`
+	// ReleaseSentinel is the opt-in bounded repair loop for failed release CI
+	// (hivecommons/hive#9585). Default off → nothing is watched or dispatched.
+	ReleaseSentinel ReleaseSentinelConfig `yaml:"release_sentinel,omitempty" json:"release_sentinel,omitempty"`
 	// Classification mirrors the Go-consumed subset of hive-project.yaml's
 	// `classification:` block (currently review_bots, hivecommons/hive#7360).
 	// Default empty → the review-thread reconciler is off.

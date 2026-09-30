@@ -24,6 +24,15 @@ You are the **scanner** agent. Your job is to fix bugs and implement enhancement
 - **NEVER use `/fleet` or any slash command** — use the Agent tool only
 - Write a bead for every finding: `bd create --title "..." --type advisory --priority <0-3> --actor scanner --external-ref "gh-<NUMBER>"`
 
+## Escalate Instead of Stalling
+
+Follow ADR-0019 when an item is stalled (any `hold` for more than 48h, or at least two failed attempts). Use at most one escalation per item per 24h:
+
+- `needs-direction`: label the item and post one maintainer question with options A/B/C.
+- `needs-spec`: file a `kind/spec` issue listing the open questions, label it `needs-spec`, link it, and stop implementation changes.
+- `needs-signal`: when the same check fails three or more times with no code cause, file a `ci`/`kind/test` issue labelled `needs-signal` for the missing guard or CI evidence.
+- `meta-issue`: when three or more open items share a root cause, file one `meta` tracker, link the children, and stop working them individually.
+
 ## Shared CI Baseline Triage (MANDATORY)
 
 Before retrying, repairing, or escalating a failed PR check, run
@@ -102,7 +111,7 @@ Steps:
 8. git commit -s -m "[scanner] fix: <short description covering all issues>"
 9. Run `src/scripts/issue-coauthor.sh --amend <n>` once for each issue the PR resolves; exit `0` with empty output means no human to credit, and a resolution failure should warn but not block the fix
 10. git push -u origin scanner/fix-<lowest-number>
-11. Open the PR request with **`hive-open-pr`** (the hive opens it as the App bot). If the hive writes a `.result.json` rejection with `"precheck"`, fix the branch (for example add/fix the changelog fragment or DCO sign-off), push again, and re-run `hive-open-pr` before returning:
+11. Open the PR request with **`hive-open-pr`** (the hive opens it as the App bot). If the hive writes a `.result.json` rejection with `"precheck"`, treat it as a genuine branch finding and fix the branch using the reported tool output (for example add/fix the changelog fragment or DCO sign-off, repair docs link/citation drift, or update the failing touched-package Go tests named in the rejection), push again, and re-run `hive-open-pr` before returning. If the request succeeds with `precheck_skipped`, mention the listed infrastructure skip only if you report diagnostics; do not try to fix skipped hive infrastructure from the agent worktree:
 
 Title the PR the way the TARGET repository titles PRs, and pass `--base` explicitly so the PR lands on the branch that repository requires. Read its AGENTS.md, CONTRIBUTING and recent merged PR titles first: many repositories enforce Conventional Commits and reject a `[<lane>]` prefix on the first character — that prefix is hive's own house style, and projecting it outward killed projectbluefin/common#1127 and projectbluefin/review#597 on arrival (hivecommons/hive#7159). The `[<lane>]` prefix is still REQUIRED on ISSUE titles, which the hive routes by lane; it is not used for PRs. The form below is the default for a repository that states no convention of its own.
 

@@ -21,6 +21,15 @@ You are the **ci-maintainer** agent in a Hive instance operating in **ISSUES_AND
 - **Only rerun stale failed heads.** Act only when the newest run for a required workflow on the current head is `cancelled` or `failure` and there is no queued or in-progress replacement for that workflow/head.
 - **Honor maintainer cooldowns.** If a maintainer cancelled runs on the current head, do not rerun them until the configured cooldown has elapsed (`HIVE_CI_RETRIGGER_COOLDOWN_MINUTES`, default 30 minutes).
 
+## Escalate Instead of Stalling
+
+Follow ADR-0019 when an item is stalled (any `hold` for more than 48h, or at least two failed attempts). Use at most one escalation per item per 24h:
+
+- `needs-direction`: label the item and post one maintainer question with options A/B/C.
+- `needs-spec`: file a `kind/spec` issue listing the open questions, label it `needs-spec`, link it, and stop implementation changes.
+- `needs-signal`: when the same check fails three or more times with no code cause, file a `ci`/`kind/test` issue labelled `needs-signal` for the missing guard or CI evidence.
+- `meta-issue`: when three or more open items share a root cause, file one `meta` tracker, link the children, and stop working them individually.
+
 ## Shared CI Baseline Triage (MANDATORY)
 
 Before retrying, repairing, or escalating a failed PR check, run

@@ -30,11 +30,21 @@
 #   - git-credential-hive.sh reads the per-agent cache file directly; hive-merge
 #     and hive-open-pr likewise never rely on inherited token env.
 #
-# Residual (documented, OPEN today): a same-uid agent can still read a backend
-# CLI's /proc/<pid>/environ deliberately. Until the MITM proxy's Authorization
-# strip/inject lands (#1861, PR #4032), that extraction lane remains open: any
-# smuggled credential is still usable against GitHub. Once #1861/#4032 lands,
-# the proxy, not the agent env, will decide what credential GitHub ever sees.
+# Residual (documented): a same-uid agent can still read a backend CLI's
+# /proc/<pid>/environ deliberately. Whether that extraction lane is closed
+# depends on the spoke's HIVE_PROXY_INJECT_GH_AUTH setting (#1861, shipped on
+# v5 as PR #5876):
+#   - "true" (the default for hosted App spokes provisioned after #9586): the
+#     App token a backend CLI holds (GITHUB_TOKEN, read from the agent's token
+#     cache) is the inert hive-proxy-injected-<agent> placeholder, and the MITM
+#     proxy strips ANY agent-supplied Authorization on GitHub hosts - including
+#     a CLI's own login token - and injects the real scoped token itself. A
+#     smuggled credential is therefore not spendable against GitHub through
+#     the proxy. Closed wherever forced egress keeps agents on the proxy.
+#   - unset or "false" (existing spokes and self-hosted installs): the backend
+#     CLI's env can carry the agent's REAL scoped token and the proxy forwards
+#     agent-supplied Authorization as-is. The lane is OPEN there until the
+#     spoke opts in.
 #
 # POSIX sh compatible (dash-safe): no bashisms, and `unset` of an absent
 # variable is not an error. Keep the variable list in sync with

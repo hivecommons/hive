@@ -1,5 +1,5 @@
 name: Hive GitHub Actions trigger
-description: "Dispatch an @hive command by comment relay or OIDC dispatch to the hive's dashboard. OIDC workflows need permissions id-token: write."
+description: "Dispatch a hive command by comment relay or OIDC dispatch to the hive's dashboard. OIDC workflows need permissions id-token: write."
 outputs:
   receipt:
     description: JSON stage receipt returned by the hive dashboard for transport=oidc; empty for comment transport.
@@ -34,6 +34,14 @@ inputs:
     description: OIDC token audience requested from GitHub when transport is oidc.
     required: false
     default: hive
+  app_handle:
+    description: >-
+      Handle of the hive's GitHub App that the comment-relay transport @-mentions, for example
+      hivecommons-hive (with or without a leading "@" or a "[bot]" suffix). Falls back to the
+      HIVE_APP_HANDLE environment variable (set it from vars.HIVE_APP_HANDLE), then to "hive".
+      The hive only picks up the relay comment when this matches its App's bot login.
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
@@ -47,6 +55,8 @@ runs:
         HIVE_TRANSPORT: ${{ inputs.transport }}
         HIVE_DISPATCH_URL: ${{ inputs.hive_url }}
         HIVE_AUDIENCE: ${{ inputs.audience }}
+        HIVE_APP_HANDLE_INPUT: ${{ inputs.app_handle }}
+        HIVE_ACTION_PATH: ${{ github.action_path }}
         GH_TOKEN: ${{ inputs.token || github.token }}
         GITHUB_REPOSITORY_NAME: ${{ github.repository }}
         GITHUB_EVENT_ISSUE_NUMBER: ${{ github.event.issue.number }}
@@ -76,12 +86,11 @@ runs:
 
         case "${HIVE_TRANSPORT}" in
           comment)
-            body="@hive ${HIVE_COMMAND}"
-            if [[ -n "${HIVE_PROMPT}" ]]; then
-              body="${body} ${HIVE_PROMPT}"
-            fi
+            # shellcheck source=app-handle.sh
+            source "${HIVE_ACTION_PATH}/app-handle.sh"
+            app_handle="$(hive_resolve_app_handle "${HIVE_APP_HANDLE_INPUT}" "${HIVE_APP_HANDLE:-}")"
             marker="<!-- hive:source=action run_id=${GITHUB_RUN_ID_VALUE} run_attempt=${GITHUB_RUN_ATTEMPT_VALUE} workflow=${GITHUB_WORKFLOW_NAME} actor=${GITHUB_ACTOR_LOGIN} transport=comment -->"
-            body="${body}"$'\n\n'"${marker}"
+            body="$(hive_relay_comment_body "${app_handle}" "${HIVE_COMMAND}" "${HIVE_PROMPT}" "${marker}")"
 
             gh api \
               --method POST \

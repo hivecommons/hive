@@ -2,6 +2,7 @@ package config
 
 import (
 	"strings"
+	"time"
 
 	"log"
 	"sync"
@@ -224,6 +225,15 @@ type ReviewConfig struct {
 	// by default: a review surface a repo did not ask for is noise, and the
 	// verdict marker already routes the decision.
 	ConfidenceScore bool `yaml:"confidence_score,omitempty" json:"confidence_score,omitempty"`
+	// PriorityLabels mirrors each open PR's place in the PR review queue onto
+	// exactly one review-priority/high|normal|low label (hivecommons/hive#9590;
+	// option 2 of src/docs/review-queue-triage.md), so the order shows up in
+	// plain `gh` searches and outside tools. The governor applies it
+	// mechanically from the computed rank; no agent, and never the PR's
+	// author, writes it. Like HumanDecisionLabel the labels are never created:
+	// a repo that does not already have them is skipped. Off by default: a
+	// label on every PR is churn a repo must ask for.
+	PriorityLabels bool `yaml:"priority_labels,omitempty" json:"priority_labels,omitempty"`
 	// OutOfScopeBacklogDisabled opts out of filing cited out-of-scope review
 	// findings as follow-up issues. Default is enabled: the review can stay
 	// narrow without losing real adjacent defects.
@@ -309,6 +319,11 @@ type AutoMergeConfig struct {
 	// AutoMergeSweepOptions.MaxMerges for the human queue sweep. Zero means
 	// DefaultAutoMergeSweepMaxMerges.
 	MaxMerges int `yaml:"max_merges,omitempty" json:"max_merges,omitempty"`
+	// MinHeadAge is the minimum age of a PR head before automerge may trust an
+	// unknown required-check set. It closes the post-push window where slow
+	// GitHub Actions check-runs have not registered yet. Non-positive values
+	// use DefaultAutoMergeMinHeadAge.
+	MinHeadAge time.Duration `yaml:"min_head_age,omitempty" json:"min_head_age,omitempty"`
 	// RequiredChecks is the operator-declared list of status-check
 	// contexts/check-run names that the self-merge sweep's commitGreen must
 	// gate on, e.g. ["build-gate"]. This is the scope-free alternative to
@@ -351,6 +366,10 @@ type AutoMergeConfig struct {
 	// by exact login, e.g. "dependabot[bot]".
 	TrustedBotAuthors []string `yaml:"trusted_bot_authors,omitempty" json:"trusted_bot_authors,omitempty"`
 }
+
+// DefaultAutoMergeMinHeadAge is the fail-closed post-push quiet period used
+// when auto_merge.min_head_age is unset.
+const DefaultAutoMergeMinHeadAge = 3 * time.Minute
 
 // DefaultTrustedBotAuthors is the TrustedBotAuthors value when the operator
 // declares none. Only dependabot: its PRs are single-dependency bumps whose
@@ -556,4 +575,11 @@ type RecommendationsConfig struct {
 	// kept current regardless, including when the answer becomes "nothing is
 	// ready right now" — that is a useful state to be able to read.
 	MinReadyToOpen int `yaml:"min_ready_to_open,omitempty" json:"min_ready_to_open,omitempty"`
+}
+
+func (a AutoMergeConfig) EffectiveMinHeadAge() time.Duration {
+	if a.MinHeadAge > 0 {
+		return a.MinHeadAge
+	}
+	return DefaultAutoMergeMinHeadAge
 }

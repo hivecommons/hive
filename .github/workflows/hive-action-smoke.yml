@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       issue:
-        description: Issue number to receive the manual @hive status smoke comment or OIDC dispatch context.
+        description: Issue number to receive the manual status smoke comment (mentioning the App handle) or OIDC dispatch context.
         required: true
         type: number
       prompt:
@@ -29,6 +29,14 @@ on:
         required: false
         type: string
         default: hive
+      app_handle:
+        description: >-
+          Handle of the hive's GitHub App that the comment relay @-mentions (for example
+          hivecommons-hive). Empty uses the HIVE_APP_HANDLE repository or organization
+          variable, then "hive".
+        required: false
+        type: string
+        default: ''
 
 permissions:
   id-token: write
@@ -37,7 +45,7 @@ permissions:
 
 jobs:
   status:
-    name: Relay @hive status
+    name: Relay hive status
     runs-on: ubuntu-latest
     steps:
       - name: Check out action
@@ -52,6 +60,7 @@ jobs:
           transport: ${{ inputs.transport }}
           hive_url: ${{ inputs.hive_url }}
           audience: ${{ inputs.audience }}
+          app_handle: ${{ inputs.app_handle || vars.HIVE_APP_HANDLE }}
 
       - name: Assert OIDC receipt output
         if: ${{ inputs.transport == 'oidc' }}

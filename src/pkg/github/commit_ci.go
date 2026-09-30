@@ -88,6 +88,18 @@ type CommitCIState struct {
 	MissingRequired []string
 }
 
+// CommitCIOptions carries policy facts that are known to callers before the
+// commit-status/check-run walk starts.
+type CommitCIOptions struct {
+	Required                map[string]bool
+	RequiredKnown           bool
+	RequiredKnownFromConfig bool
+	ExpectedChecks          map[string]bool
+	MinHeadAge              time.Duration
+	HeadPushedAt            time.Time
+	Now                     func() time.Time
+}
+
 // RequiredStatusCheckContexts returns the set of status-check contexts /
 // check-run names that are actually required for branch, and whether that
 // set could be determined at all. Membership in this set is what makes a
@@ -187,13 +199,16 @@ func resetRequiredChecksForbiddenCacheForTest(now func() time.Time, ttl time.Dur
 // complete for the caller. A non-nil error means the evidence could not be
 // gathered; Reason then names the failing API ("status-check" or
 // "check-runs").
-func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha string, required map[string]bool, requiredKnown bool) (CommitCIState, error) {
+func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha string, opts CommitCIOptions) (CommitCIState, error) {
 	var st CommitCIState
 	if client == nil {
 		st.Reason = "status-check"
 		return st, ErrNoGitHubClient
 	}
+	required := opts.Required
+	requiredKnown := opts.RequiredKnown
 	seen := make(map[string]bool)
+	requiredSuccess := make(map[string]bool)
 	// block records the first blocker; later ones are still walked so that
 	// Evidence/seen are complete for the caller.
 	block := func(reason string) {
@@ -225,6 +240,9 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 			}
 			switch s.GetState() {
 			case "success":
+				if requiredKnown && required[ctxName] {
+					requiredSuccess[ctxName] = true
+				}
 			case "pending":
 				block("status-pending")
 			default: // "failure", "error"
@@ -240,10 +258,10 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		statusOpts.Page = resp.NextPage
 	}
 
-	opts := &gh.ListCheckRunsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+	checkOpts := &gh.ListCheckRunsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
 	var allCheckRuns []*gh.CheckRun
 	for {
-		checkRuns, resp, err := client.Checks.ListCheckRunsForRef(ctx, owner, repo, sha, opts)
+		checkRuns, resp, err := client.Checks.ListCheckRunsForRef(ctx, owner, repo, sha, checkOpts)
 		if err != nil {
 			st.Reason = "check-runs"
 			return st, err
@@ -252,7 +270,7 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		if resp == nil || resp.NextPage == 0 {
 			break
 		}
-		opts.Page = resp.NextPage
+		checkOpts.Page = resp.NextPage
 	}
 	for _, cr := range latestCheckRunsByNameAndApp(allCheckRuns) {
 		name := cr.GetName()
@@ -273,7 +291,11 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 			continue
 		}
 		switch cr.GetConclusion() {
-		case "success", "neutral", "skipped":
+		case "success":
+			if requiredKnown && required[name] {
+				requiredSuccess[name] = true
+			}
+		case "neutral", "skipped":
 		default:
 			if !requiredKnown && isIgnorableCICheck(name) {
 				continue
@@ -290,8 +312,128 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		}
 		sort.Strings(st.MissingRequired)
 	}
+
+	if !requiredKnown && st.Reason == "" {
+		missingExpected := make([]string, 0)
+		for name := range opts.ExpectedChecks {
+			if !seen[name] {
+				missingExpected = append(missingExpected, name)
+			}
+		}
+		sort.Strings(missingExpected)
+		if len(missingExpected) > 0 {
+			block("pending: " + missingExpected[0] + " has not started")
+		}
+	}
+
+	if st.Reason == "" && opts.MinHeadAge > 0 && !opts.HeadPushedAt.IsZero() {
+		now := opts.Now
+		if now == nil {
+			now = time.Now
+		}
+		age := now().Sub(opts.HeadPushedAt)
+		if age < 0 {
+			age = 0
+		}
+		configRequiredAllGreen := opts.RequiredKnownFromConfig && len(required) > 0 && len(requiredSuccess) == len(required) && len(st.MissingRequired) == 0
+		if age < opts.MinHeadAge && !configRequiredAllGreen {
+			block(fmt.Sprintf("pending: head pushed %s ago (< min_head_age)", age.Round(time.Second)))
+		}
+	}
 	st.Green = st.Reason == ""
 	return st, nil
+}
+
+func commitCIReasonIsPending(reason string) bool {
+	return strings.HasSuffix(reason, "-pending") || strings.HasPrefix(reason, "pending: ")
+}
+
+// ExpectedCommitChecksFromRef returns the check-run names that should appear on
+// a candidate commit when the required-checks set is not known. It intentionally
+// ignores meta/allowed-noise checks and reference check-runs that completed as
+// skipped/neutral, because those do not establish work that must start on every
+// candidate head.
+func ExpectedCommitChecksFromRef(ctx context.Context, client *gh.Client, owner, repo, ref string) (map[string]bool, error) {
+	if client == nil {
+		return nil, ErrNoGitHubClient
+	}
+	if strings.TrimSpace(ref) == "" {
+		return nil, nil
+	}
+	opts := &gh.ListCheckRunsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+	var allCheckRuns []*gh.CheckRun
+	for {
+		checkRuns, resp, err := client.Checks.ListCheckRunsForRef(ctx, owner, repo, ref, opts)
+		if err != nil {
+			return nil, err
+		}
+		if checkRuns != nil {
+			allCheckRuns = append(allCheckRuns, checkRuns.CheckRuns...)
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	expected := make(map[string]bool)
+	for _, cr := range latestCheckRunsByNameAndApp(allCheckRuns) {
+		name := cr.GetName()
+		if name == "" || len(cr.PullRequests) == 0 || isMetaCheck(name) || isIgnorableCICheck(name) {
+			continue
+		}
+		if cr.GetStatus() == "completed" {
+			switch cr.GetConclusion() {
+			case "neutral", "skipped":
+				continue
+			}
+		}
+		expected[name] = true
+	}
+	return expected, nil
+}
+
+func ExpectedCommitChecksFromLatestMergedPR(ctx context.Context, client *gh.Client, owner, repo, base string) (map[string]bool, error) {
+	ref, err := LatestMergedPRHead(ctx, client, owner, repo, base)
+	if err != nil || ref == "" {
+		return nil, err
+	}
+	return ExpectedCommitChecksFromRef(ctx, client, owner, repo, ref)
+}
+
+func LatestMergedPRHead(ctx context.Context, client *gh.Client, owner, repo, base string) (string, error) {
+	if client == nil {
+		return "", ErrNoGitHubClient
+	}
+	if strings.TrimSpace(base) == "" {
+		return "", nil
+	}
+	opts := &gh.PullRequestListOptions{
+		State:     "closed",
+		Base:      base,
+		Sort:      "updated",
+		Direction: "desc",
+		ListOptions: gh.ListOptions{
+			PerPage: 30,
+		},
+	}
+	for {
+		prs, resp, err := client.PullRequests.List(ctx, owner, repo, opts)
+		if err != nil {
+			return "", err
+		}
+		for _, pr := range prs {
+			if pr == nil || pr.GetMergedAt().IsZero() {
+				continue
+			}
+			if pr.GetHead() != nil && strings.TrimSpace(pr.GetHead().GetSHA()) != "" {
+				return pr.GetHead().GetSHA(), nil
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			return "", nil
+		}
+		opts.Page = resp.NextPage
+	}
 }
 
 type checkRunIdentity struct {

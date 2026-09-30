@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 )
@@ -154,9 +155,27 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 		// checks still block on protected and unprotected branches alike.
 		required, requiredKnown = nil, false
 	}
-	st, err := EvaluateCommitCI(ctx, c.client, owner, name, sha, required, requiredKnown)
+	var expected map[string]bool
+	if !requiredKnown {
+		expected, _ = ExpectedCommitChecksFromLatestMergedPR(ctx, c.client, owner, name, baseBranch)
+	}
+	var headPushedAt time.Time
+	if updatedAt := pr.GetUpdatedAt(); !updatedAt.IsZero() {
+		headPushedAt = updatedAt.Time
+	}
+	st, err := EvaluateCommitCI(ctx, c.client, owner, name, sha, CommitCIOptions{
+		Required:                required,
+		RequiredKnown:           requiredKnown,
+		RequiredKnownFromConfig: cfgKnown,
+		ExpectedChecks:          expected,
+		MinHeadAge:              c.configuredAutoMergeMinHeadAge(),
+		HeadPushedAt:            headPushedAt,
+	})
 	if err != nil {
 		return mergeCIUnverified, "ci gate: " + st.Reason, fmt.Errorf("ci gate: %s for %s/%s@%s: %w", st.Reason, owner, name, shortSHA(sha), err)
+	}
+	if !st.Green && (strings.HasPrefix(st.Reason, "pending: head pushed ") || (strings.HasPrefix(st.Reason, "pending: ") && strings.HasSuffix(st.Reason, " has not started"))) {
+		c.info("merge-request CI gate blocked fresh or incomplete head", "repo", owner+"/"+name, "pr", number, "sha", sha, "reason", st.Reason)
 	}
 
 	// Workflow runs are the evidence that survives a zero-job failure. A run
@@ -173,7 +192,7 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 	switch {
 	case len(opaque.failed) > 0:
 		return mergeCIRed, fmt.Sprintf("ci gate: required status check has not succeeded: workflow run(s) %s concluded failure without producing a job (zero check runs)", strings.Join(opaque.failed, ", ")), nil
-	case !st.Green && !strings.HasSuffix(st.Reason, "-pending"):
+	case !st.Green && !commitCIReasonIsPending(st.Reason):
 		return mergeCIRed, fmt.Sprintf("ci gate: required status check has not succeeded (%s)", st.Reason), nil
 	case !st.Green:
 		return mergeCIPending, fmt.Sprintf("ci gate: CI still running (%s)", st.Reason), nil

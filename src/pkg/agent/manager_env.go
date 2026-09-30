@@ -12,6 +12,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/gitidentity"
 	"github.com/hivecommons/hive/pkg/jev"
 )
 
@@ -145,9 +146,6 @@ var inferenceQuietCLIEnv = []string{
 	"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
 }
 
-// defaultGitBotEmailDomain matches hive_git_bot_identity in deploy/entrypoint.sh.
-const defaultGitBotEmailDomain = "hive.kubestellar.io"
-
 // agentGitIdentity returns the lane-distinct commit identity
 // "<agent> <agent>@<HIVE_GIT_BOT_EMAIL_DOMAIN>" (#9478). The address is the
 // bracket-free form DCO accepts (see hive_git_bot_identity). The domain is
@@ -155,29 +153,7 @@ const defaultGitBotEmailDomain = "hive.kubestellar.io"
 // name that is not a safe email local-part yields ok=false so the caller
 // leaves git's own resolution untouched rather than export a malformed ident.
 func agentGitIdentity(agentName string) (name, email string, ok bool) {
-	if !isGitIdentToken(agentName, true) {
-		return "", "", false
-	}
-	domain := strings.TrimSpace(os.Getenv("HIVE_GIT_BOT_EMAIL_DOMAIN"))
-	if !isGitIdentToken(domain, false) {
-		domain = defaultGitBotEmailDomain
-	}
-	return agentName, agentName + "@" + domain, true
-}
-
-func isGitIdentToken(s string, allowUnderscore bool) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-':
-		case r == '_' && allowUnderscore:
-		default:
-			return false
-		}
-	}
-	return true
+	return gitidentity.AgentIdentity(agentName)
 }
 
 func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {

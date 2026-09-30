@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -62,6 +63,10 @@ type Options struct {
 	// PRs the self-authored sweep merges alongside the App's own (see
 	// config.AutoMergeConfig.TrustedBotAuthors). nil means App-only.
 	TrustedBotAuthors func() map[string]bool
+	// MinHeadAge is the youngest PR head commit age the sweep may merge when
+	// the required-check set is not config-declared and fully green.
+	MinHeadAge time.Duration
+	Now        func() time.Time
 }
 
 // Engine owns the automerge sweep policy state.
@@ -86,6 +91,10 @@ type Engine struct {
 	selfAuthorizationHoldReleaseLimit int
 	repoAutoMergeEnabled              func(repo string) bool
 	trustedBotAuthors                 func() map[string]bool
+	minHeadAge                        time.Duration
+	now                               func() time.Time
+	evaluatedHeadsMu                  sync.Mutex
+	evaluatedHeads                    map[string]string
 }
 
 // New returns an automerge sweep engine over a GitHub transport client.
@@ -107,6 +116,12 @@ func New(transport Transport, opts Options) *Engine {
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
 		repoAutoMergeEnabled:              opts.RepoAutoMergeEnabled,
 		trustedBotAuthors:                 opts.TrustedBotAuthors,
+		minHeadAge:                        opts.MinHeadAge,
+		now:                               opts.Now,
+		evaluatedHeads:                    make(map[string]string),
+	}
+	if e.now == nil {
+		e.now = time.Now
 	}
 
 	if e.mutation == nil {
@@ -275,6 +290,116 @@ type AutoMergeSweepOptions struct {
 	Audit     func(AutoMergeSweepEvent)
 }
 
+type expectedCheckCache struct {
+	entries map[string]map[string]bool
+}
+
+type expectedCheckCacheContextKey struct{}
+
+func newExpectedCheckCache() *expectedCheckCache {
+	return &expectedCheckCache{entries: make(map[string]map[string]bool)}
+}
+
+func contextWithExpectedCheckCache(ctx context.Context, cache *expectedCheckCache) context.Context {
+	if ctx == nil || cache == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, expectedCheckCacheContextKey{}, cache)
+}
+
+func expectedCheckCacheFromContext(ctx context.Context) *expectedCheckCache {
+	if ctx == nil {
+		return nil
+	}
+	cache, _ := ctx.Value(expectedCheckCacheContextKey{}).(*expectedCheckCache)
+	return cache
+}
+
+func expectedCheckCacheKey(owner, repo, base string) string {
+	return strings.ToLower(strings.TrimSpace(owner)) + "/" + strings.ToLower(strings.TrimSpace(repo)) + "#" + strings.TrimSpace(base)
+}
+
+func (c *expectedCheckCache) cached(owner, repo, base string) (map[string]bool, bool) {
+	if c == nil || strings.TrimSpace(base) == "" {
+		return nil, false
+	}
+	checks, ok := c.entries[expectedCheckCacheKey(owner, repo, base)]
+	return checks, ok
+}
+
+func (c *expectedCheckCache) get(ctx context.Context, client *gh.Client, owner, repo, base, ref string) (map[string]bool, error) {
+	if c == nil || strings.TrimSpace(base) == "" || strings.TrimSpace(ref) == "" {
+		return nil, nil
+	}
+	key := expectedCheckCacheKey(owner, repo, base)
+	if checks, ok := c.entries[key]; ok {
+		return checks, nil
+	}
+	checks, err := hgithub.ExpectedCommitChecksFromRef(ctx, client, owner, repo, ref)
+	if err != nil {
+		return nil, err
+	}
+	c.entries[key] = checks
+	return checks, nil
+}
+
+func (c *Engine) evaluatedHeadKey(owner, repo string, number int) string {
+	return strings.ToLower(strings.TrimSpace(owner)) + "/" + strings.ToLower(strings.TrimSpace(repo)) + "#" + strconv.Itoa(number)
+}
+
+func (c *Engine) previousEvaluatedHead(owner, repo string, number int, current string) string {
+	if c == nil {
+		return ""
+	}
+	c.evaluatedHeadsMu.Lock()
+	defer c.evaluatedHeadsMu.Unlock()
+	prev := c.evaluatedHeads[c.evaluatedHeadKey(owner, repo, number)]
+	if strings.EqualFold(prev, current) {
+		return ""
+	}
+	return prev
+}
+
+func (c *Engine) rememberEvaluatedHead(owner, repo string, number int, sha string) {
+	if c == nil || strings.TrimSpace(sha) == "" {
+		return
+	}
+	c.evaluatedHeadsMu.Lock()
+	defer c.evaluatedHeadsMu.Unlock()
+	if c.evaluatedHeads == nil {
+		c.evaluatedHeads = make(map[string]string)
+	}
+	c.evaluatedHeads[c.evaluatedHeadKey(owner, repo, number)] = sha
+}
+
+func (c *Engine) expectedChecksForPR(ctx context.Context, owner, repo, base string, number int, sha string, cache *expectedCheckCache) (map[string]bool, error) {
+	if prev := c.previousEvaluatedHead(owner, repo, number, sha); prev != "" {
+		checks, err := hgithub.ExpectedCommitChecksFromRef(ctx, c.gh, owner, repo, prev)
+		if err != nil {
+			return nil, nil
+		}
+		return checks, nil
+	}
+	if cache == nil || strings.TrimSpace(base) == "" {
+		return nil, nil
+	}
+	if checks, ok := cache.cached(owner, repo, base); ok {
+		return checks, nil
+	}
+	ref, err := hgithub.LatestMergedPRHead(ctx, c.gh, owner, repo, base)
+	if err != nil || ref == "" {
+		if err == nil {
+			cache.entries[expectedCheckCacheKey(owner, repo, base)] = nil
+		}
+		return nil, nil
+	}
+	checks, err := cache.get(ctx, c.gh, owner, repo, base, ref)
+	if err != nil {
+		return nil, nil
+	}
+	return checks, nil
+}
+
 // MergerAuthorizer reports whether login is trusted to QUEUE a merge — i.e.
 // holds at least config.RoleMerger in the hive's authorized-users allowlist.
 //
@@ -423,6 +548,8 @@ func (c *Engine) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepO
 	result := &AutoMergeSweepResult{}
 	noAppBotLoginWarned := false
 	noMergerAuthzWarned := false
+	expectedChecks := newExpectedCheckCache()
+	ctx = contextWithExpectedCheckCache(ctx, expectedChecks)
 
 	// activeRepos: an operator-paused repo receives no automerges (#6203). This
 	// sweep is hive-driven, not kick-driven, so leaving it on Repositories()
@@ -541,6 +668,8 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 	// See the queued sweep above: paused repos are out of scope for automerge.
 	selfAuthReleaseBudget := c.selfAuthorizationReleaseBudget()
 	branchUpdateAttempts := 0
+	expectedChecks := newExpectedCheckCache()
+	ctx = contextWithExpectedCheckCache(ctx, expectedChecks)
 	for _, repo := range c.activeRepos() {
 		if len(result.Merged) >= maxMerges {
 			break
@@ -869,7 +998,11 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	if pr.GetBase() != nil {
 		baseBranch = pr.GetBase().GetRef()
 	}
-	green, reason, err := c.commitGreen(ctx, owner, repo, baseBranch, evaluatedHeadSHA)
+	var headPushedAt time.Time
+	if updatedAt := pr.GetUpdatedAt(); !updatedAt.IsZero() {
+		headPushedAt = updatedAt.Time
+	}
+	green, reason, err := c.commitGreenForPR(ctx, owner, repo, baseBranch, evaluatedHeadSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx))
 	if err != nil {
 		return AutoMergeSweepEvent{}, reason, err
 	}
@@ -1165,7 +1298,11 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	if pr.GetBase() != nil {
 		baseBranch = pr.GetBase().GetRef()
 	}
-	green, reason, err := c.commitGreen(ctx, owner, repo, baseBranch, headSHA)
+	var headPushedAt time.Time
+	if updatedAt := pr.GetUpdatedAt(); !updatedAt.IsZero() {
+		headPushedAt = updatedAt.Time
+	}
+	green, reason, err := c.commitGreenForPR(ctx, owner, repo, baseBranch, headSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx))
 	if err != nil {
 		return AutoMergeSweepEvent{}, reason, err
 	}
@@ -1336,15 +1473,46 @@ func parseHiveQueueReview(body string) string {
 // shipped conservative behavior is preserved rather than degrading to
 // "always green".
 func (c *Engine) commitGreen(ctx context.Context, owner, repo, branch, sha string) (bool, string, error) {
+	return c.commitGreenForPR(ctx, owner, repo, branch, sha, 0, time.Time{}, nil)
+}
+
+func (c *Engine) commitGreenForPR(ctx context.Context, owner, repo, branch, sha string, prNumber int, headPushedAt time.Time, expectedChecks *expectedCheckCache) (bool, string, error) {
 	// The walk itself lives in hgithub.EvaluateCommitCI so the merge-request
 	// watcher's positive-confirmation gate (#6173) evaluates a SHA with the
 	// identical rules; only the required-set precedence is engine-specific.
-	required, requiredKnown := c.requiredStatusCheckContexts(ctx, owner, repo, branch)
-	st, err := hgithub.EvaluateCommitCI(ctx, c.gh, owner, repo, sha, required, requiredKnown)
+	configRequired, configKnown := c.configRequiredChecks()
+	required, requiredKnown := hgithub.RequiredStatusCheckContexts(ctx, c.gh, owner, repo, branch, configRequired, configKnown)
+	var expected map[string]bool
+	if !requiredKnown && expectedChecks != nil {
+		var err error
+		expected, err = c.expectedChecksForPR(ctx, owner, repo, branch, prNumber, sha, expectedChecks)
+		if err != nil {
+			return false, "check-runs", err
+		}
+	}
+	st, err := hgithub.EvaluateCommitCI(ctx, c.gh, owner, repo, sha, hgithub.CommitCIOptions{
+		Required:                required,
+		RequiredKnown:           requiredKnown,
+		RequiredKnownFromConfig: configKnown,
+		ExpectedChecks:          expected,
+		MinHeadAge:              c.minHeadAge,
+		HeadPushedAt:            headPushedAt,
+		Now:                     c.now,
+	})
 	if err != nil {
 		return false, st.Reason, err
 	}
+	if !st.Green && isFreshHeadOrMissingExpectedReason(st.Reason) && prNumber > 0 {
+		c.info("automerge CI gate blocked PR", "repo", owner+"/"+repo, "pr", prNumber, "sha", sha, "reason", st.Reason)
+	}
+	if prNumber > 0 && !isFreshHeadOrMissingExpectedReason(st.Reason) {
+		c.rememberEvaluatedHead(owner, repo, prNumber, sha)
+	}
 	return st.Green, st.Reason, nil
+}
+
+func isFreshHeadOrMissingExpectedReason(reason string) bool {
+	return strings.HasPrefix(reason, "pending: head pushed ") || (strings.HasPrefix(reason, "pending: ") && strings.HasSuffix(reason, " has not started"))
 }
 
 // requiredStatusCheckContexts returns the set of status-check contexts /

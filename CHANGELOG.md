@@ -11,6 +11,73 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-29 (v5.88.0)
+
+### Added
+
+- **Answered question issues can close themselves** ([#9584](https://github.com/hivecommons/hive/issues/9584)). With `governor.question_autoclose.enabled: true` (or `HIVE_QUESTION_AUTOCLOSE=true`), the scanner answers a `question` issue with one comment that ends in a sanitized opt-out line ("react 👎 to this comment and the issue will stay open"), and Hive closes the issue as `completed` after `governor.question_autoclose.hours` (default 4, `HIVE_QUESTION_AUTOCLOSE_HOURS`) with no extra comment. Only an answer posted by the hive's own identity (App bot login or `project.ai_author`) starts the clock, so pasting the hidden marker cannot close someone else's question. A 👎 from the issue author keeps it open and adds `needs-human`; any new comment, an outside close, removing the question label, or a bug/enhancement/hold label cancels the schedule. The schedule is persisted in `/data/question-autoclose.json` so it survives restarts. Off by default.
+- Opt-in release sentinel ([#9585](https://github.com/hivecommons/hive/issues/9585)): with `release_sentinel.enabled: true` (or `HIVE_RELEASE_SENTINEL_ENABLED=true`) the hive watches the CI of the current `v<version>` release tag and, when a run on the commit the tag points at fails, dispatches a bounded repair round to the ci-maintainer lane through the existing kick path, with the failed steps and `::error` evidence attached. Each release has a durable state record (`awaiting_ci` -> `fixing` -> `green` | `failed` | `superseded`) on the PVC, so a restart resumes mid-repair; runs for a stale SHA never trigger a round; `green` needs every run non-blocking and a published GitHub Release; rounds are capped (default 5) with a per-round timeout. Failures no commit can fix (Actions not permitted to open PRs, missing `workflows` permission, 403s, missing secrets, runs that never started a job) escalate to a human on the first round with nothing dispatched. Default off; this phase never pushes or moves a tag. See `src/docs/release-sentinel.md`.
+
+### Fixed
+
+- Fix archived kick logs being just the TUI's last rendered screen instead of the full run: agent tmux sessions now disable the alternate screen (`alternate-screen off`) so a CLI's alt-screen redraws scroll into scrollback like any other output (#9579). Also fix the past-kicks menu and history page showing an archive's write time (often hours after the kick it covers ran) instead of that kick's own start time (#9580).
+- Persist agent UID allocations across restarts and adopt existing per-agent directory owners so adding an agent no longer shifts established UIDs.
+
+### Security
+
+- Newly provisioned hosted spokes now start with proxy-side GitHub credential injection ON, so agents hold only the inert `hive-proxy-injected-<agent>` placeholder instead of their real scoped token ([#9586](https://github.com/hivecommons/hive/issues/9586), phase 1). The hub renders `HIVE_PROXY_INJECT_GH_AUTH=true` onto every new App-authenticated spoke and the explicit opt-out `false` onto PAT spokes; a hub operator can provision every new spoke with the opt-out via `HIVE_HOSTED_PROXY_INJECT_GH_AUTH=false`, and one spoke opts out by setting `HIVE_PROXY_INJECT_GH_AUTH=false` on its Deployment. Existing spokes and self-hosted installs are unchanged (unset still means off). A spoke now **refuses to start** (exit code 19) when `HIVE_PROXY_INJECT_GH_AUTH=true` is combined with `HIVE_PROXY_ADVISORY_OK=true`, which would let a caller self-assert another agent's identity and receive its injected token. An unrecognized value such as `1` or `TRUE` still means off (no crash loop on upgrade) but is now logged at ERROR on boot and shown in the dashboard Security tab's coherence warnings, since it leaves the real token in the agent's cache. Also fixed: with injection on, an ADVISORY agent's request to Linear, or any agent's on a hive without a Linear credential, carried that agent's GitHub token to `api.linear.app`; the proxy now rewrites `Authorization` only on GitHub hosts.
+
+## 2026-09-29 (v5.87.0)
+
+### Added
+
+- Added PR-request precheck tiers for docs guards and isolated touched-package Go test failures before agent PRs open.
+
+### Fixed
+
+- Prevent automerge from treating freshly pushed heads as green before expected CI check-runs have started.
+
+## 2026-09-29 (v5.86.2)
+
+### Fixed
+
+- Stop the dashboard from claiming an agent terminal has a login URL when an inference backend 401/outage only printed `/login` advice.
+
+## 2026-09-29 (v5.86.1)
+
+### Fixed
+
+- Per-agent homes no longer bridge `~/.gitconfig` to the one shared `/data/home/.gitconfig`, and an existing bridge is retired at launch ([#9478](https://github.com/hivecommons/hive/issues/9478)). That single shared file made the *global* git config fleet-wide, so a `git config --global user.*` by any agent (global outranks the system `/etc/gitconfig`) re-attributed every other lane until the next agent overwrote it. Commit identity is already pinned per lane via `GIT_AUTHOR_*`/`GIT_COMMITTER_*`, and `/etc/gitconfig` still carries the bot identity and the `git-credential-hive.sh` helper for every agent UID, so nothing an agent needs is lost. A real per-agent `.gitconfig` is never touched.
+- Agent launch now logs a WARN naming any global git config layer in an agent's `HOME` that still declares `user.name`/`user.email` ([#9478](https://github.com/hivecommons/hive/issues/9478)). Such a file no longer decides who commits, but it is what `git config --show-origin user.email` reports, so surfacing it keeps a stale fleet-shared identity from misleading the next investigation.
+- Isolated per-agent `~/.gitconfig` files and made pushbroker's lane sign-off guard use the same lane identity as agent commit env vars ([#9478](https://github.com/hivecommons/hive/issues/9478)).
+- Fix the dashboard painting the 🔑 "needs login" badge and offering a "Copy login URL" control for inference/gateway-backed agents whose CLI printed a generic `/login` banner on an upstream 401 (e.g. a gateway database outage) — those backends authenticate by API key and never show an interactive login URL, so clicking Copy correctly reported "No login URL on the terminal right now" while the badge kept insisting one was there (#9576).
+
+## 2026-09-29 (v5.86.0)
+
+### Added
+
+- Add an internal testutil ratchet that prevents pkg/dashboard from gaining new top-level pkg dependencies without an allowlist update and PR justification.
+- Add ADR-0019 and agent policy guidance for escalating stalled work to direction, spec, signal, or meta-issues.
+
+### Fixed
+
+- Ensure dashboard chat commands from owner-authenticated token, internal, and open/dev paths carry a verified user identity instead of falling back to `local`.
+
+## 2026-09-29 (v5.85.2)
+
+### Changed
+
+- Steady Overview chart card sizing, move carousel controls into the gear popover, and make chart transitions more perceptible.
+
+### Fixed
+
+- Pushbroker's DCO sign-off guard (`rejectForgedLaneSignoffs`) now reads the pushing lane's identity via `git var GIT_AUTHOR_IDENT`, which honours the `GIT_AUTHOR_*`/`GIT_COMMITTER_*` environment variables pinned per agent, instead of `git config user.name`/`user.email`, which resolves from the fleet-shared, last-writer-wins `~/.gitconfig` bridge ([#9478](https://github.com/hivecommons/hive/issues/9478)). Previously the guard could compare an outgoing commit against whichever agent's config write landed last rather than the identity that actually produced the commit.
+- `src/docs/health-checks.md` now applies `src/deploy/k8s/dashboard-route-rbac.yaml` ([#9538](https://github.com/hivecommons/hive/issues/9538)). The old `deploy/k8s/` path failed from the repository root.
+- Two docs now cite the right lines in `src/deploy/k8s` ([#9539](https://github.com/hivecommons/hive/issues/9539)): the pod security context in `deployment.yaml` (`src/docs/design/agent-host-confinement.md`) and the Secret keys in `secret.yaml` (`src/docs/move-cross-runtime.md`).
+- The Kubernetes block in `src/README.md` now runs from the repository root, builds the ConfigMap from a copy of `src/hive.yaml.example`, and applies both RBAC manifests before the Deployment ([#9540](https://github.com/hivecommons/hive/issues/9540)). It used to mix `deploy/k8s/` and `src/` paths, so it failed from either directory.
+- CI toolchain installation now keeps apt mirror-fallback work inside each retry slice and tests fallback rewriting against hermetic apt sources instead of the runner's `/etc/apt`.
+- Align the governor threshold settings slider with the scaled pressure-bar thresholds, current pressure marker, and explicit in-force scaling math.
+
 ## 2026-09-29 (v5.85.1)
 
 ### Fixed

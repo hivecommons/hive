@@ -32,6 +32,18 @@ func renderProvisionManifestWithToken(t *testing.T, useApp, useAppFull bool, tok
 
 func renderProvisionManifestWithAuth(t *testing.T, useApp, useAppFull bool, token, appID, installationID string) string {
 	t.Helper()
+	return renderProvisionManifestWithAuthData(t, useApp, useAppFull, token, appID, installationID, nil)
+}
+
+// renderProvisionManifestData renders the App-with-inline-key fixture after
+// letting mutate edit the template data (e.g. drop a key).
+func renderProvisionManifestData(t *testing.T, mutate func(map[string]any)) string {
+	t.Helper()
+	return renderProvisionManifestWithAuthData(t, true, true, "ghp_test", "3568013", "12345", mutate)
+}
+
+func renderProvisionManifestWithAuthData(t *testing.T, useApp, useAppFull bool, token, appID, installationID string, mutate func(map[string]any)) string {
+	t.Helper()
 	tmpl, err := template.New("manifests").Parse(k8sManifestTemplate)
 	if err != nil {
 		t.Fatalf("template does not parse: %v", err)
@@ -77,6 +89,12 @@ func renderProvisionManifestWithAuth(t *testing.T, useApp, useAppFull bool, toke
 		"AdditionalAppKeys": []provisionAppKey{},
 		"Token":             token,
 		"HasPlaceholderIDs": false,
+		// Mirror provisionHive (#9586) with the hub default (no opt-out set),
+		// so every rendered manifest carries the posture a real one does.
+		"ProxyInjectGHAuth": provisionProxyInjectGHAuth(useApp, func(string) string { return "" }, nil),
+	}
+	if mutate != nil {
+		mutate(data)
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {

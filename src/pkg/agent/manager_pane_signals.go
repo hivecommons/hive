@@ -397,6 +397,7 @@ func (a *AgentProcess) snapshot() AgentProcess {
 	copy(pane, a.lastPaneCapture)
 	// NeedsLogin and LastPaneChange are written by the pane poller under paneMu.
 	needsLogin := a.NeedsLogin
+	loginURL := a.LoginURL
 	quotaExhausted := a.QuotaExhausted
 	lastPaneChange := a.LastPaneChange
 	conds := make([]watchdog.Condition, len(a.WatchdogConditions))
@@ -433,6 +434,7 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		LastKickMessage:           a.LastKickMessage,
 		KickOutcome:               a.KickOutcome,
 		NeedsLogin:                needsLogin,
+		LoginURL:                  loginURL,
 		Starting:                  a.startupLaunchQueued || a.launching,
 		QuotaExhausted:            quotaExhausted,
 		LastPaneChange:            lastPaneChange,
