@@ -1,0 +1,1 @@
+- Moved the hive id and the date/time/status-age indicator out of the crowded dashboard top navbar into a new "This hive" section of the avatar (user) menu, with a copy button for the hive id, so the navbar keeps only actionable controls.

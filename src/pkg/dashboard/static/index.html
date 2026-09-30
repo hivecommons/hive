@@ -322,11 +322,6 @@
     .dashboard-custom-style-note button { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: var(--fs-sm); line-height: 1; padding: var(--sp-0); }
     .oc-topbar-right { display: flex; align-items: center; justify-content: flex-end; gap: 14px; min-width: 0; flex: 0 0 auto; flex-wrap: nowrap; }
     .oc-health-badge { --component-status: var(--status-ok); font-weight: 600; } /* pill recipe at end of style block */
-    #oc-hive-id {
-      flex: 0 1 auto; min-width: 0; max-width: 22rem;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    }
-    .oc-topbar-ts { font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; }
     .oc-topbar .git-version { color: var(--muted); }
     .oc-health-badge, #welcome-topbar-btn, #oc-gh-avatar-wrap { flex: 0 0 auto; }
     #oc-gh-avatar-wrap { position: relative; }
@@ -343,6 +338,25 @@
     .avatar-menu-identity .avatar-menu-role { color: var(--muted); font-weight: 500; }
     .avatar-menu-divider { height: 1px; margin: var(--sp-2) var(--sp-0); background: var(--line); }
     .avatar-menu-label { padding: var(--sp-2) var(--sp-6); color: var(--muted); font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
+    .avatar-menu-hive-row {
+      display: flex; align-items: center; gap: var(--sp-2);
+      padding: var(--sp-0) var(--sp-6); font-family: var(--font-mono);
+    }
+    .avatar-menu-hive-id {
+      flex: 1 1 auto; min-width: 0; color: var(--text); font-size: var(--fs-sm);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .avatar-menu-copy-btn {
+      flex: 0 0 auto; padding: var(--sp-1) var(--sp-2); color: var(--muted);
+      background: transparent; border: 1px solid var(--border); border-radius: var(--r-sm);
+      font-size: var(--fs-xs); line-height: 1; cursor: pointer;
+    }
+    .avatar-menu-copy-btn:hover { color: var(--text); background: var(--surface-2); }
+    .avatar-menu-hive-meta {
+      padding: var(--sp-1) var(--sp-6) var(--sp-2); color: var(--muted);
+      font-size: var(--fs-xs); white-space: nowrap;
+    }
+    .avatar-menu-hive-meta .status-stale { margin-left: var(--sp-2); }
     .avatar-menu-item {
       display: block; width: 100%; box-sizing: border-box;
       padding: var(--sp-4) var(--sp-6);
@@ -411,16 +425,11 @@
         gap: 10px; flex-wrap: nowrap; overflow: visible;
       }
       .oc-topbar-right .widget-dl { margin-left: var(--sp-0); margin-right: var(--sp-0); }
-      #oc-hive-id {
-        flex: 0 1 auto; min-width: 0; max-width: 22rem;
-        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      }
     }
 
     @media (min-width: 769px) and (max-width: 900px) {
       body { padding-top: 112px; }
-      .oc-topbar-ts, #oc-git-version { display: none; }
-      #oc-hive-id { max-width: 8rem; }
+      #oc-git-version { display: none; }
     }
 
     /* Light main content area */
@@ -773,9 +782,8 @@
          drops to its own row instead of half-fitting at the edge */
       .oc-topbar-left { flex: 0 0 auto; min-width: 0; }
       .oc-topbar-center { flex-grow: 1; justify-content: center; }
-      .oc-topbar-ts, #oc-git-version, .widget-dl { display: none; }
+      #oc-git-version, .widget-dl { display: none; }
       #oc-project-name { display: none; }
-      #oc-hive-id { max-width: 6rem; }
       /* keep the pill one line so the right group wraps as a unit
          instead of being clipped at the viewport edge */
       .oc-health-badge { white-space: nowrap; }
@@ -3783,14 +3791,25 @@
     </div>
     <div class="oc-topbar-right">
       <span class="oc-health-badge" id="oc-health">● Health OK</span>
-      <span id="oc-hive-id" class="git-version" title="Hive Instance ID" style="cursor:pointer;border:1px solid var(--border);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-sm)" data-action="openConfigDialog" data-arg0="governor"></span>
-      <span class="oc-topbar-ts" id="oc-ts"></span><span class="status-stale" id="oc-status-stale" hidden></span>
       <button class="hv-btn btn-secondary btn btn-primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide">🧭 Guide</button>
       <a href="/api/widget" class="hv-btn btn-secondary btn-sm widget-dl" title="Download Übersicht widget">⬇ Widget</a>
       <div id="oc-gh-avatar-wrap" hidden>
         <img id="oc-gh-avatar" src="" alt="" data-action="toggleGHUserMenu">
         <div id="oc-gh-user-menu" class="avatar-menu" hidden>
           <div class="avatar-menu-identity"><span id="oc-gh-menu-user"></span><span id="oc-gh-menu-role" class="avatar-menu-role"></span></div>
+          <!-- "This hive" (#9816): the hive id and the clock/status-age pills
+               used to live in the top navbar, where they crowded out and
+               clipped the actionable controls (Settings, the fleet breaker
+               pill, …) even though neither is actionable day-to-day. They
+               move here, into the identity area of the avatar menu, instead.
+               The hive id keeps a copy affordance — copy/paste flows (support
+               requests, hub registration) rely on grabbing it verbatim. -->
+          <div class="avatar-menu-label">This hive</div>
+          <div class="avatar-menu-hive-row" title="Hive Instance ID">
+            <span id="oc-gh-menu-hive-id" class="avatar-menu-hive-id"></span>
+            <button type="button" class="avatar-menu-copy-btn" id="oc-gh-menu-hive-id-copy" data-action="copyHiveIdFromMenu" title="Copy hive ID" aria-label="Copy hive ID">⧉</button>
+          </div>
+          <div class="avatar-menu-hive-meta"><span id="oc-gh-menu-ts"></span><span class="status-stale" id="oc-gh-menu-status-stale" hidden></span></div>
           <div class="avatar-menu-divider"></div>
           <!-- This nav avatar is NOT a profile link: its click already opens
                this menu, a different destination, so it keeps that job. The
@@ -7345,6 +7364,18 @@
       } catch { ok = false; }
       ta.remove();
       return ok;
+    }
+
+    /* Copies the hive id from the "This hive" section of the avatar menu
+       (#9816). The id used to sit directly in the topbar with its own
+       click-to-open-settings affordance; here the id is display-only and this
+       button is the copy affordance instead, since support/hub-registration
+       flows need it pasted verbatim. */
+    async function copyHiveIdFromMenu() {
+      const hiveId = window._hiveId || (document.getElementById('oc-gh-menu-hive-id') || {}).textContent || '';
+      if (!hiveId) return;
+      const ok = await writeClipboardText(hiveId);
+      showToast(ok ? 'Hive ID copied to clipboard' : 'Could not copy the hive ID — select and copy it by hand', ok ? 'success' : 'error');
     }
 
     /* The write-side twin of copyTerminalUrl.
@@ -17253,12 +17284,12 @@ function burnAreaChart() {
     function setNavbarClockText(text) {
       const ts = document.getElementById('ts');
       if (ts) ts.textContent = text;
-      const ocTs = document.getElementById('oc-ts');
+      const ocTs = document.getElementById('oc-gh-menu-ts');
       if (ocTs) ocTs.textContent = text;
     }
 
     function updateStatusStaleness(nowMs) {
-      const staleEls = [document.getElementById('status-stale'), document.getElementById('oc-status-stale')].filter(Boolean);
+      const staleEls = [document.getElementById('status-stale'), document.getElementById('oc-gh-menu-status-stale')].filter(Boolean);
       if (!staleEls.length) return;
       const ageMs = _lastStatusPayloadAtMs ? Math.max(0, nowMs - _lastStatusPayloadAtMs) : 0;
       const stale = ageMs > STATUS_STALE_AFTER_MS;
@@ -17329,8 +17360,8 @@ function burnAreaChart() {
       const hiveId = data.hiveId || '';
       const hiveIdBadge = document.getElementById('hive-id-badge');
       if (hiveIdBadge) hiveIdBadge.textContent = hiveId;
-      const ocHiveId = document.getElementById('oc-hive-id');
-      if (ocHiveId) ocHiveId.textContent = hiveId;
+      const ocHiveId = document.getElementById('oc-gh-menu-hive-id');
+      if (ocHiveId) { ocHiveId.textContent = hiveId; window._hiveId = hiveId; }
       // Update Light health badge with hover detail
       const ocHealth = document.getElementById('oc-health');
       if (ocHealth) {

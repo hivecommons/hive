@@ -32,7 +32,7 @@ func TestNavbarClockTicksLocallyAndFlagsStaleStatus(t *testing.T) {
 	html := indexHTML(t)
 	for _, snippet := range []string{
 		`<span class="status-stale" id="status-stale" hidden></span>`,
-		`<span class="status-stale" id="oc-status-stale" hidden></span>`,
+		`<span class="status-stale" id="oc-gh-menu-status-stale" hidden></span>`,
 		"const NAVBAR_CLOCK_TICK_MS = 1000;",
 		"const STATUS_STALE_AFTER_MS = STATUS_EXPECTED_REFRESH_MS * STATUS_STALE_AFTER_POLLS;",
 		"setInterval(tickNavbarClock, NAVBAR_CLOCK_TICK_MS);",
@@ -51,9 +51,9 @@ func TestNavbarClockTicksLocallyAndFlagsStaleStatus(t *testing.T) {
 	script.WriteString(`
 const elements = {
   ts: { textContent: '', hidden: false, title: '' },
-  'oc-ts': { textContent: '', hidden: false, title: '' },
+  'oc-gh-menu-ts': { textContent: '', hidden: false, title: '' },
   'status-stale': { textContent: '', hidden: true, title: '' },
-  'oc-status-stale': { textContent: '', hidden: true, title: '' },
+  'oc-gh-menu-status-stale': { textContent: '', hidden: true, title: '' },
 };
 const document = { getElementById: (id) => elements[id] || null };
 const window = {};
@@ -82,9 +82,9 @@ noteStatusPayloadTimestamp(payload);
 tickNavbarClock(new Date('2026-09-24T00:17:00Z'));
 check('uses hub timezone', _navbarClockTimeZone === 'America/New_York');
 check('clock ticks from Date.now-equivalent, not payload timestamp', /8:17/.test(elements.ts.textContent) && !/8:07/.test(elements.ts.textContent));
-check('topbar clock matches main clock', elements['oc-ts'].textContent === elements.ts.textContent);
+check('avatar menu clock matches main clock', elements['oc-gh-menu-ts'].textContent === elements.ts.textContent);
 check('stale status is visible', elements['status-stale'].hidden === false && /status 10m old/.test(elements['status-stale'].textContent));
-check('topbar stale status is visible', elements['oc-status-stale'].hidden === false && elements['oc-status-stale'].textContent === elements['status-stale'].textContent);
+check('avatar menu stale status is visible', elements['oc-gh-menu-status-stale'].hidden === false && elements['oc-gh-menu-status-stale'].textContent === elements['status-stale'].textContent);
 updateNavbarClockTimeZone({ timeZone: 'Mars/Olympus' });
 check('invalid hub timezone falls back', _navbarClockTimeZone !== 'Mars/Olympus');
 if (fails) { console.log(fails + ' failure(s)'); process.exit(1); }
