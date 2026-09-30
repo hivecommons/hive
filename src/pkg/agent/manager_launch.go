@@ -953,7 +953,7 @@ func backendLaunchCmd(binary, model, backend string, isInference bool, effort st
 }
 
 func codexUnattendedLaunchCmd(binary string) string {
-	return binary + " --dangerously-bypass-approvals-and-sandbox"
+	return binary + " --dangerously-bypass-approvals-and-sandbox -c features.daemon_auto_start=false"
 }
 
 const (

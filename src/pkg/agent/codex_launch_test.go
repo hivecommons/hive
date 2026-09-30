@@ -31,9 +31,15 @@ func TestCodexLaunchCommandLine_Model(t *testing.T) {
 
 func TestCodexLaunchCommandLine_HubPathBypassesApprovalsAndSandbox(t *testing.T) {
 	got := codexLaunchCmd(t, "gpt-6-astra", "xhigh")
-	want := `codex --dangerously-bypass-approvals-and-sandbox --model gpt-6-astra -c model_reasoning_effort="xhigh"`
+	want := `codex --dangerously-bypass-approvals-and-sandbox -c features.daemon_auto_start=false --model gpt-6-astra -c model_reasoning_effort="xhigh"`
 	if got != want {
 		t.Errorf("codex hub launch = %q, want %q", got, want)
+	}
+}
+
+func TestCodexLaunchCommandLine_DisablesDaemonAutoStart(t *testing.T) {
+	if cmd := codexLaunchCmd(t, "gpt-6-astra", ""); !strings.Contains(cmd, "-c features.daemon_auto_start=false") {
+		t.Errorf("codex hub launch must disable daemon_auto_start; cmd: %q", cmd)
 	}
 }
 
