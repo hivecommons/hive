@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"log/slog"
 	"os"
@@ -173,8 +174,12 @@ func TestPRPrecheckCloneURLUsesConfiguredForge(t *testing.T) {
 func TestPRPrecheckAuthHeaderUsesTokenClient(t *testing.T) {
 	c := NewClient("ghs_example", "o", []string{"r"}, slog.Default(), "")
 	header, ok := c.prPrecheckAuthHeader(context.Background())
-	if !ok || header != "Authorization: Bearer ghs_example" {
-		t.Fatalf("auth header = (%q, %v), want token header", header, ok)
+	want := "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:ghs_example"))
+	if !ok || header != want {
+		t.Fatalf("auth header = (%q, %v), want %q", header, ok, want)
+	}
+	if strings.Contains(header, "Bearer") {
+		t.Fatal("git smart-HTTP rejects Bearer tokens with 401; header must be Basic x-access-token")
 	}
 }
 

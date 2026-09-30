@@ -1,0 +1,1 @@
+- PR precheck clones now authenticate with Basic `x-access-token` instead of a Bearer header, which GitHub's git smart-HTTP rejects with 401 — prechecks had been silently skipping their checkout ("checkout skipped … per-agent scoped GitHub token not available") on every PR request.

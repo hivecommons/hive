@@ -3,6 +3,7 @@ package github
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -480,6 +481,11 @@ func (c *Client) checkoutPRHeadForPrecheck(ctx context.Context, opts *PRPrecheck
 	return dir, cleanup, nil
 }
 
+// prPrecheckAuthHeader returns the extraHeader git needs to clone over HTTPS.
+// GitHub's git smart-HTTP endpoints only accept Basic auth
+// (`www-authenticate: Basic realm="GitHub"`); a Bearer token gets a 401, git
+// then falls through to the system credential helper, which refuses without a
+// per-agent token cache, and the precheck silently skips its checkout.
 func (c *Client) prPrecheckAuthHeader(ctx context.Context) (string, bool) {
 	if c == nil {
 		return "", false
@@ -487,14 +493,20 @@ func (c *Client) prPrecheckAuthHeader(ctx context.Context) (string, bool) {
 	if c.appAuth != nil {
 		token, err := c.appAuth.Token(ctx)
 		if err == nil && token != "" {
-			return "Authorization: Bearer " + token, true
+			return gitBasicAuthHeader(token), true
 		}
 		return "", false
 	}
 	if c.authToken != "" {
-		return "Authorization: Bearer " + c.authToken, true
+		return gitBasicAuthHeader(c.authToken), true
 	}
 	return "", false
+}
+
+// gitBasicAuthHeader encodes a GitHub token the way git-over-HTTPS expects it:
+// Basic auth with the conventional x-access-token username.
+func gitBasicAuthHeader(token string) string {
+	return "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:"+token))
 }
 
 func prPrecheckCloneURL(opts *PRPrecheckOptions, owner, repo string) string {
