@@ -198,21 +198,6 @@ type IssueClaim struct {
 	MergedPR bool `json:"merged_pr,omitempty"`
 	// MergedAt is when the claiming PR merged. Zero unless MergedPR is set.
 	MergedAt time.Time `json:"merged_at,omitempty"`
-	// VerifiedAt records when hive saw a follow-up verification outcome for
-	// this weak/merged claim. While PRState and PRHead remain unchanged from the
-	// verified values, FilterClaimedIssues suppresses the issue instead of
-	// asking another agent to verify the same evidence again.
-	VerifiedAt      time.Time `json:"verified_at,omitempty"`
-	VerifiedPRState string    `json:"verified_pr_state,omitempty"`
-	VerifiedPRHead  string    `json:"verified_pr_head,omitempty"`
-	// VerificationRequestedAt records the first kick that asked an agent to
-	// verify this weak/merged claim at the current PR state/head. A later kick
-	// only treats labels such as hive/likely-done as verification if this
-	// request already existed, preventing SyncIssuePRClaimLabels from causing
-	// first-kick self-suppression.
-	VerificationRequestedAt      time.Time `json:"verification_requested_at,omitempty"`
-	VerificationRequestedPRState string    `json:"verification_requested_pr_state,omitempty"`
-	VerificationRequestedHead    string    `json:"verification_requested_head,omitempty"`
 	// Source records how the claim was recovered. Empty for the enumeration
 	// scan (every claim before #7871). ClaimSourceVerdict marks a claim
 	// recovered from a `no_work_needed` verdict reason and verified against
@@ -273,18 +258,6 @@ func claimPRState(c IssueClaim) string {
 
 func claimPRHead(c IssueClaim) string {
 	return strings.TrimSpace(c.PRHead)
-}
-
-func claimVerificationUnchanged(c IssueClaim) bool {
-	return !c.VerifiedAt.IsZero() &&
-		claimPRState(c) == strings.ToLower(strings.TrimSpace(c.VerifiedPRState)) &&
-		claimPRHead(c) == strings.TrimSpace(c.VerifiedPRHead)
-}
-
-func claimVerificationWasRequested(c IssueClaim) bool {
-	return !c.VerificationRequestedAt.IsZero() &&
-		claimPRState(c) == strings.ToLower(strings.TrimSpace(c.VerificationRequestedPRState)) &&
-		claimPRHead(c) == strings.TrimSpace(c.VerificationRequestedHead)
 }
 
 // SettledStale reports whether a settled claim has held its issue for at
@@ -1048,14 +1021,6 @@ func (l *ClaimLedger) anchorFirstObservedLocked(prev map[string]IssueClaim, c Is
 		existing.PRNumber == c.PRNumber && existing.PRRepo == c.PRRepo &&
 		!existing.FirstObservedAt.IsZero() {
 		c.FirstObservedAt = existing.FirstObservedAt
-		if claimPRState(existing) == claimPRState(c) && claimPRHead(existing) == claimPRHead(c) {
-			c.VerifiedAt = existing.VerifiedAt
-			c.VerifiedPRState = existing.VerifiedPRState
-			c.VerifiedPRHead = existing.VerifiedPRHead
-			c.VerificationRequestedAt = existing.VerificationRequestedAt
-			c.VerificationRequestedPRState = existing.VerificationRequestedPRState
-			c.VerificationRequestedHead = existing.VerificationRequestedHead
-		}
 		return c
 	}
 	if c.FirstObservedAt.IsZero() {
@@ -1126,52 +1091,6 @@ func (l *ClaimLedger) Record(c IssueClaim) error {
 	l.insertLocked(l.anchorFirstObservedLocked(l.claims, c))
 	l.mu.Unlock()
 	return l.Save()
-}
-
-// MarkVerified records that a weak/merged claim was verified at its current PR
-// state/head. The mark is intentionally tied to those values so a merge, close,
-// or new commit re-lists the issue once for fresh verification.
-func (l *ClaimLedger) MarkVerified(repo string, issue int, prState, prHead string, now time.Time) {
-	if l == nil || repo == "" || issue <= 0 {
-		return
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if now.IsZero() {
-		now = l.now()
-	}
-	key := claimKey(repo, issue)
-	c, ok := l.claims[key]
-	if !ok {
-		return
-	}
-	c.VerifiedAt = now
-	c.VerifiedPRState = strings.ToLower(strings.TrimSpace(prState))
-	c.VerifiedPRHead = strings.TrimSpace(prHead)
-	l.claims[key] = c
-}
-
-func (l *ClaimLedger) markVerificationRequested(repo string, issue int) {
-	if l == nil || repo == "" || issue <= 0 {
-		return
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	key := claimKey(repo, issue)
-	c, ok := l.claims[key]
-	if !ok {
-		return
-	}
-	state, head := claimPRState(c), claimPRHead(c)
-	if !c.VerificationRequestedAt.IsZero() &&
-		strings.EqualFold(c.VerificationRequestedPRState, state) &&
-		strings.TrimSpace(c.VerificationRequestedHead) == head {
-		return
-	}
-	c.VerificationRequestedAt = l.now()
-	c.VerificationRequestedPRState = state
-	c.VerificationRequestedHead = head
-	l.claims[key] = c
 }
 
 // SetTTL overrides the entry lifetime. Intended for tests.
@@ -1419,12 +1338,6 @@ func removeIssueLabel(labels []string, label string) []string {
 	return out
 }
 
-func issueHasVerificationOutcomeLabel(labels []string) bool {
-	return issueHasLabel(labels, VerifiedOpenLabel) ||
-		issueHasLabel(labels, CoveredByPRLabel) ||
-		issueHasLabel(labels, LikelyDoneLabel)
-}
-
 func annotateIssueWithClaim(issue *Issue, claim IssueClaim) {
 	if issue == nil || claim.PRNumber <= 0 {
 		return
@@ -1482,7 +1395,6 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 			kept = append(kept, issue)
 			continue
 		}
-		originalLabels := append([]string(nil), issue.Labels...)
 		annotateIssueWithClaim(&issue, claim)
 		// Fix #3: release (do NOT suppress) when the claiming PR is red on a
 		// required check AND stale. The claiming PR lives in claim.PRRepo /
@@ -1505,30 +1417,15 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 			}
 			continue
 		}
-		if claimVerificationUnchanged(claim) {
-			suppressed++
-			if logger != nil {
-				logger.Info("suppressing issue: verification unchanged",
-					"repo", issue.Repo, "issue", issue.Number, "claimed_by_pr", claim.PRNumber,
-					"pr_repo", claim.PRRepo, "pr_url", claim.PRURL, "head", claimPRHead(claim))
-			}
-			continue
-		}
-		if (claim.MergedPR || claim.Reference) &&
-			claimVerificationWasRequested(claim) &&
-			issueHasVerificationOutcomeLabel(originalLabels) {
-			ledger.MarkVerified(issue.Repo, issue.Number, claimPRState(claim), claimPRHead(claim), time.Time{})
-			suppressed++
-			if logger != nil {
-				logger.Info("suppressing issue: verification unchanged",
-					"repo", issue.Repo, "issue", issue.Number, "claimed_by_pr", claim.PRNumber,
-					"pr_repo", claim.PRRepo, "pr_url", claim.PRURL, "head", claimPRHead(claim))
-			}
-			continue
-		}
+		// hive/verified-open is the agent's recorded outcome: the merged/reference
+		// PR did NOT finish this issue. Keep it actionable with the claim context
+		// (kickmessage renders "implement the rest" instead of "verify once") and
+		// never suppress it — a merged PR's state cannot change to release it.
+		// hive/likely-done and hive/covered-by-pr are applied automatically by
+		// SyncIssuePRClaimLabels and are therefore NOT verification outcomes (#9691
+		// follow-up: treating them as such froze verified issues indefinitely).
 		if claim.MergedPR {
 			annotated = true
-			ledger.markVerificationRequested(issue.Repo, issue.Number)
 			kept = append(kept, issue)
 			if logger != nil {
 				logger.Info("releasing issue: merged PR claim needs verification",
@@ -1559,7 +1456,6 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 				continue
 			}
 			annotated = true
-			ledger.markVerificationRequested(issue.Repo, issue.Number)
 			kept = append(kept, issue)
 			if logger != nil {
 				logger.Info("keeping issue actionable: open PR weakly claims it",

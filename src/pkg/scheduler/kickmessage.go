@@ -86,11 +86,10 @@ func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bo
 			if issue.ClaimContext.PRURL != "" {
 				b.WriteString(fmt.Sprintf(" (%s)", issue.ClaimContext.PRURL))
 			}
-			b.WriteString(fmt.Sprintf("; verify once: close the issue if resolved, otherwise label %s and implement the remainder; context: %s", github.VerifiedOpenLabel, reason))
 			if hasIssueLabel(issue.Labels, github.VerifiedOpenLabel) {
-				b.WriteString("; verified-open: an earlier verification found remaining work — implement the rest")
+				b.WriteString(fmt.Sprintf("; already verified (%s): remaining work is confirmed — do NOT re-verify, implement the rest", github.VerifiedOpenLabel))
 			} else {
-				b.WriteString(fmt.Sprintf("; if work remains, label it `%s` (hive then stops re-marking it likely-done)", github.VerifiedOpenLabel))
+				b.WriteString(fmt.Sprintf("; verify once: close the issue if resolved, otherwise label it `%s` and implement the remainder (hive then stops asking); context: %s", github.VerifiedOpenLabel, reason))
 			}
 			b.WriteString("\n")
 		}

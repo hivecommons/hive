@@ -64,24 +64,28 @@ func TestFormatIssueList_IncludesMergedClaimContext(t *testing.T) {
 		},
 	}
 	result, _ := s.formatIssueListWithPolicy(issues)
+	if !strings.Contains(result, "merged in repo1#99 (https://github.com/org/repo1/pull/99); already verified ("+github.VerifiedOpenLabel+")") {
+		t.Fatalf("missing verified-open verdict in issue list: %s", result)
+	}
+	if !strings.Contains(result, "do NOT re-verify, implement the rest") {
+		t.Fatalf("verified-open issue must tell the agent to implement, not re-verify: %s", result)
+	}
+	if strings.Contains(result, "verify once") {
+		t.Fatalf("verified-open issue must not ask for another verification: %s", result)
+	}
+
+	// Without the verdict label the kick asks for one verification and tells
+	// the agent how to record the outcome.
+	issues[0].Labels = nil
+	result, _ = s.formatIssueListWithPolicy(issues)
 	if !strings.Contains(result, "merged in repo1#99 (https://github.com/org/repo1/pull/99); verify once: close the issue if resolved") {
 		t.Fatalf("missing merged PR verification instruction in issue list: %s", result)
 	}
+	if !strings.Contains(result, "label it `"+github.VerifiedOpenLabel+"`") {
+		t.Fatalf("missing verified-open labeling instruction in issue list: %s", result)
+	}
 	if !strings.Contains(result, "context: referenced without a closing keyword") {
 		t.Fatalf("missing merged PR context reason in issue list: %s", result)
-	}
-	if !strings.Contains(result, "verified-open: an earlier verification found remaining work") {
-		t.Fatalf("missing verified-open verdict in issue list: %s", result)
-	}
-	if !strings.Contains(result, "https://github.com/org/repo1/pull/99") {
-		t.Fatalf("missing PR URL in issue list: %s", result)
-	}
-
-	// Without the verdict label the kick tells the agent how to record one.
-	issues[0].Labels = nil
-	result, _ = s.formatIssueListWithPolicy(issues)
-	if !strings.Contains(result, "if work remains, label it `"+github.VerifiedOpenLabel+"`") {
-		t.Fatalf("missing verified-open labeling instruction in issue list: %s", result)
 	}
 }
 

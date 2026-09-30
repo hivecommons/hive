@@ -424,8 +424,6 @@ func TestClaimLedgerRoundTripThroughDisk(t *testing.T) {
 		{Repo: "spyre-inference", Issue: 100, PRNumber: 423, PRRepo: "spyre-inference",
 			PRURL: "https://example.test/pull/423", PRAuthor: "clubanderson",
 			PRState: PRStateMerged, PRHead: "abc123",
-			VerifiedAt: now.Add(time.Minute), VerifiedPRState: PRStateMerged, VerifiedPRHead: "abc123",
-			VerificationRequestedAt: now, VerificationRequestedPRState: PRStateMerged, VerificationRequestedHead: "abc123",
 			ObservedAt: now},
 		{Repo: "spyre-inference", Issue: 101, PRNumber: 424, PRRepo: "spyre-inference",
 			PRURL: "https://example.test/pull/424", PRAuthor: "clubanderson", ObservedAt: now},
@@ -457,10 +455,8 @@ func TestClaimLedgerRoundTripThroughDisk(t *testing.T) {
 	if !c.ObservedAt.Equal(now) {
 		t.Errorf("ObservedAt = %v, want %v", c.ObservedAt, now)
 	}
-	if c.PRState != PRStateMerged || c.PRHead != "abc123" ||
-		c.VerifiedPRState != PRStateMerged || c.VerifiedPRHead != "abc123" || !c.VerifiedAt.Equal(now.Add(time.Minute)) ||
-		c.VerificationRequestedPRState != PRStateMerged || c.VerificationRequestedHead != "abc123" || !c.VerificationRequestedAt.Equal(now) {
-		t.Errorf("verification fields lost in round-trip: %+v", c)
+	if c.PRState != PRStateMerged || c.PRHead != "abc123" {
+		t.Errorf("PR state/head lost in round-trip: %+v", c)
 	}
 }
 

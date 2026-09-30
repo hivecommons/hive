@@ -1,0 +1,1 @@
+- Issues behind a merged PR are no longer frozen after the first kick: `hive/likely-done` / `hive/covered-by-pr` are written automatically and are not verification outcomes, and `hive/verified-open` now keeps the issue actionable with an "implement the rest" instruction instead of suppressing it (#9691 follow-up).
