@@ -24,8 +24,10 @@ func TestAdvisorRecordsReadPath(t *testing.T) {
 	if q.Get("agent") != "team/scout" || q.Get("since") != "2026-01-01T00:00:00Z" || q.Get("until") != "2026-02-01T00:00:00Z" {
 		t.Errorf("window/agent not forwarded: %q", path)
 	}
-	if q.Get("limit") != "50" {
-		t.Errorf("limit must be capped at MaxResultLimit: %q", path)
+	// LimitFromArgs treats out-of-range limits as unset (DefaultResultLimit),
+	// the same refusal every other admin MCP read tool applies.
+	if q.Get("limit") != "20" {
+		t.Errorf("out-of-range limit must fall back to DefaultResultLimit: %q", path)
 	}
 
 	fleet := AdvisorRecordsReadPath(map[string]any{"hours": float64(24)})

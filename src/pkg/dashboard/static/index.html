@@ -22851,7 +22851,9 @@ function burnAreaChart() {
         if (tabId === 'Forge App') loadForgeApps();
         // The Features tab's Linear Agent panel loads install/session state
         // from its own endpoint (owner-only; the render is a static shell).
-        if (tabId === 'Features') { loadLinearAgentStatus(); loadAdvisorSettings(); }
+        if (tabId === 'Features') loadLinearAgentStatus();
+        // The Features tab also hosts the advisor lane settings panel.
+        if (tabId === 'Features') loadAdvisorSettings();
         if (tabId === 'Extensions') loadExtensionRelayStatus();
         if (tabId === 'Smart classifier') loadSmartClassifierStats();
         if (tabId === 'Appearance') loadThemeConfig();

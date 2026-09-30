@@ -156,6 +156,8 @@ func TestAdminMCPWritePreviewFailsFastWithoutDashboardBearer(t *testing.T) {
 
 func TestAdminMCPAdvisorRecordsMatchesREST(t *testing.T) {
 	s := advisorTestServer(t)
+	// provider.Read serves through s.mux, so the REST routes must be registered.
+	s.RegisterAPI(testDeps(t))
 	store := advisor.NewStore("")
 	store.Append(advisor.Record{Agent: "scout", Timestamp: "2026-01-01T00:00:00Z", Severity: "concern", Text: "old flag"})
 	store.Append(advisor.Record{Agent: "scout", Timestamp: "2026-03-01T00:00:00Z", Severity: "blocker", Text: "march flag"})
