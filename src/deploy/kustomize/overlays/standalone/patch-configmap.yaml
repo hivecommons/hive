@@ -43,7 +43,10 @@ data:
 
     # ── Agents. backend `litellm` routes to the in-cluster OpenAI-compatible
     #    endpoint shipped by ../../../inference (or any litellm proxy you point
-    #    governor.litellm at). Swap to `vllm` to hit HIVE_VLLM_ENDPOINT directly.
+    #    governor.litellm at). To use `vllm` instead, also set the
+    #    HIVE_VLLM_ENDPOINT env var on the Deployment to
+    #    http://vllm-svc.hive-inference.svc.cluster.local:8000; the base does
+    #    not set it, and unset disables the built-in vLLM route.
     agents:
       supervisor:
         enabled: true
