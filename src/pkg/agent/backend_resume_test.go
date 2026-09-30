@@ -291,3 +291,86 @@ func TestManagerResumeHandle_RunningAgentCapturesBackendSession(t *testing.T) {
 		t.Error("String() is empty for a captured handle")
 	}
 }
+
+func TestCaptureResumeHandle_PiScopesToAgentBucket(t *testing.T) {
+	home := homeForCapture(t)
+	now := time.Now()
+	sessions := filepath.Join(home, ".pi", "agent", "sessions")
+	const ownID = "aaaaaaaa-1111-2222-3333-444444444444"
+	const otherID = "bbbbbbbb-5555-6666-7777-888888888888"
+	writeResumeTranscript(t, filepath.Join(sessions, "--data-agents-scanner--", "2026-09-30T08-05-47-123Z_"+ownID+".jsonl"), now.Add(-time.Hour))
+	// A newer session of another working directory must not be offered.
+	writeResumeTranscript(t, filepath.Join(sessions, "--data-agents-reviewer--", "2026-09-30T09-05-47-123Z_"+otherID+".jsonl"), now)
+	// Not a session file: no timestamp prefix.
+	writeResumeTranscript(t, filepath.Join(sessions, "--data-agents-scanner--", "notes_"+otherID+".jsonl"), now)
+
+	h, ok := CaptureResumeHandleIn("scanner", 0, "pi", "/data/agents/scanner", now)
+	if !ok {
+		t.Fatal("no handle captured for pi")
+	}
+	if h.SessionID != ownID {
+		t.Errorf("session id = %q, want the agent's own bucket's session", h.SessionID)
+	}
+	if h.Command != "pi --session "+ownID {
+		t.Errorf("command = %q", h.Command)
+	}
+	if !h.TranscriptExists() || !BackendSupportsResumeHandle("pi") {
+		t.Errorf("transcript = %q, supported = %v", h.Transcript, BackendSupportsResumeHandle("pi"))
+	}
+	if _, ok := CaptureResumeHandle("scanner", 0, "pi", now); ok {
+		t.Error("pi captured a handle without a working directory to scope it")
+	}
+}
+
+func TestCaptureResumeHandle_OmpHomeRelativeAndAbsoluteBuckets(t *testing.T) {
+	home := homeForCapture(t)
+	now := time.Now()
+	sessions := filepath.Join(home, ".omp", "agent", "sessions")
+	const homeID = "cccccccc-1111-2222-3333-444444444444"
+	const absID = "dddddddd-1111-2222-3333-444444444444"
+	const otherID = "eeeeeeee-1111-2222-3333-444444444444"
+
+	workInHome := filepath.Join(home, "work", "scanner")
+	if err := os.MkdirAll(workInHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeResumeTranscript(t, filepath.Join(sessions, "-work-scanner", "2026-09-30T08-00-00-000Z_"+homeID+".jsonl"), now.Add(-time.Hour))
+	writeResumeTranscript(t, filepath.Join(sessions, "-work-reviewer", "2026-09-30T09-00-00-000Z_"+otherID+".jsonl"), now)
+	// A per-subagent transcript inside the session directory is not a session.
+	writeResumeTranscript(t, filepath.Join(sessions, "-work-scanner", "2026-09-30T08-00-00-000Z_"+homeID, "Explorer.jsonl"), now)
+
+	h, ok := CaptureResumeHandleIn("scanner", 0, "omp", workInHome, now)
+	if !ok {
+		t.Fatal("no handle captured for omp")
+	}
+	if h.SessionID != homeID || h.Command != "omp --resume "+homeID {
+		t.Errorf("handle = %+v, want %s from the home-relative bucket", h, homeID)
+	}
+
+	writeResumeTranscript(t, filepath.Join(sessions, "--data-agents-scanner--", "2026-09-30T08-00-00-000Z_"+absID+".jsonl"), now)
+	h, ok = CaptureResumeHandleIn("scanner", 0, "omp", "/data/agents/scanner", now)
+	if !ok || h.SessionID != absID {
+		t.Fatalf("handle = %+v, ok = %v; want %s from the absolute bucket", h, ok, absID)
+	}
+	if !BackendSupportsResumeHandle("omp") {
+		t.Error("omp does not claim a capturable resume handle")
+	}
+}
+
+func TestTimestampedSessionID_RejectsNonSessionNames(t *testing.T) {
+	for _, name := range []string{
+		"Explorer.jsonl",
+		"notes_aaaaaaaa-1111.jsonl",
+		"2026-09-30T08-00-00-000Z.jsonl",
+		"2026-09-30T08-00-00-000Z_short.jsonl",
+		"2026-09-30T08-00-00-000Z_bad;id-12345.jsonl",
+		"abcd-09-30T08-00-00-000Z_aaaaaaaa-1111.jsonl",
+	} {
+		if id := timestampedSessionID(name); id != "" {
+			t.Errorf("timestampedSessionID(%q) = %q, want no id", name, id)
+		}
+	}
+	if id := timestampedSessionID("2026-09-30T08-00-00-000Z_aaaaaaaa-1111.jsonl"); id != "aaaaaaaa-1111" {
+		t.Errorf("id = %q", id)
+	}
+}

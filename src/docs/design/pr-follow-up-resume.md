@@ -129,17 +129,24 @@ id, because several of these CLIs persist the conversation themselves:
 | copilot | `$HOME/.copilot/session-state/<id>/events.jsonl` | the directory name | `copilot --resume <id>` |
 | codex | `$CODEX_HOME/sessions/<y>/<m>/<d>/rollout-<ts>-<uuid>.jsonl` | the trailing uuid | `codex resume <uuid>` |
 | gemini | `$HOME/.gemini/tmp/<project>/chats/session-<ts>-<id8>.jsonl` | `sessionId` from the file's first (metadata) line, checked against `<id8>` | `gemini --resume <id>` |
+| pi | `$HOME/.pi/agent/sessions/--<cwd>--/<ts>_<id>.jsonl` | the id after the timestamp | `pi --session <id>` |
+| omp | `$HOME/.omp/agent/sessions/<bucket>/<ts>_<id>.jsonl` | the id after the timestamp | `omp --resume <id>` |
 
 `agent.CaptureResumeHandle` names the newest transcript under the agent's own
 HOME when the PR opens (a bounded, read-only walk: 4 directories deep, 2000
 entries). `~/.gemini` is fleet-shared in the per-UID home layout, so the gemini
 walk only enters the project directory that belongs to the agent's own
 working directory (its `.project_root` marker, or the SHA-256 directory name
-older gemini releases used); with no working directory, or an id that is not a
-plain `[A-Za-z0-9_-]` run, no handle is captured. Then
+older gemini releases used). pi and omp bucket sessions by working
+directory too, so their walk only enters the agent's own bucket: pi's
+`--<cwd>--`, and omp's `-<path relative to HOME>` (`-tmp-<relative>` under
+the temp root, pi's form otherwise), with symlinks resolved. With no working
+directory, or an id that is not a plain `[A-Za-z0-9_-]` run, no handle is
+captured. Then
 `prfollowup.RecordWithResume` stores the backend, id,
 transcript path, command and capture time on the PR's pointer. Every other
-backend — including the headless agy runner, whose conversation id lives in a
+backend — goose (its sessions live in a SQLite database, not a transcript file
+named by id), bob (no verified resume flag), and the headless agy runner, whose conversation id lives in a
 `mktemp` file that is deliberately discarded on every relaunch — keeps the
 handoff note alone, exactly as before.
 
@@ -253,6 +260,7 @@ were.
 1. **Transcript-continuity soak.** Acceptance bullet 1 (a review comment
    produces a follow-up from the same session, with visible continuity) needs
    a soak with the flag on against a live review.
-2. **Backend resume ids for the remaining backends** (pi, goose, bob, omp):
-   they expose no stable, capturable transcript id the hive can rely on today.
-   Adding one is a new entry in `backendResumeLayouts` plus its test.
+2. **Backend resume ids for goose and bob**: goose keeps sessions in a SQLite
+   database rather than a transcript file named by id, and bob has no verified
+   resume flag. Adding one is a new entry in `backendResumeLayouts` plus its
+   test.

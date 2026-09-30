@@ -20,7 +20,8 @@ import (
 // behind a PR the agent opened can only be recovered from whatever the
 // backend CLI itself persisted. Several of the CLIs the hive drives do keep
 // a transcript on disk under the agent's HOME and can be pointed back at it
-// by id (claude --resume, copilot --resume, codex resume, gemini --resume).
+// by id (claude --resume, copilot --resume, codex resume, gemini --resume,
+// pi --session, omp --resume).
 // This file captures that id at PR-open time so pkg/prfollowup can store it
 // beside the PR's pointer and hand it to whichever session picks the PR up
 // later.
@@ -94,10 +95,11 @@ type backendResumeLayout struct {
 	idFromFile func(path string) string
 	// project, when set, keeps only the directories directly under root
 	// that belong to the agent's working directory. The backend's session
-	// tree is fleet-shared (a bridged dot-directory), so an unscoped walk
-	// could name another agent's conversation; capture without a working
+	// tree is fleet-shared (a bridged dot-directory) or holds sessions of
+	// several working directories, so an unscoped walk could name another
+	// agent's or another checkout's conversation; capture without a working
 	// directory then yields no handle.
-	project func(dir, workDir string) bool
+	project func(home, dir, workDir string) bool
 }
 
 // backendResumeLayouts holds the backends that expose a capturable resume
@@ -137,6 +139,25 @@ var backendResumeLayouts = map[string]backendResumeLayout{
 		command:    func(id string) string { return "gemini --resume " + id },
 		idFromFile: geminiSessionID,
 		project:    geminiProjectDir,
+	},
+	// pi keeps ~/.pi/agent/sessions/--<cwd>--/<ts>_<id>.jsonl, one bucket
+	// per working directory, and reopens a session with --session <id>.
+	"pi": {
+		root:    func(home, _ string) string { return filepath.Join(home, ".pi", "agent", "sessions") },
+		ext:     ".jsonl",
+		id:      timestampedSessionID,
+		command: func(id string) string { return "pi --session " + id },
+		project: piProjectDir,
+	},
+	// omp (a pi fork) keeps ~/.omp/agent/sessions/<bucket>/<ts>_<id>.jsonl,
+	// bucketed like pi but home-relative for directories under HOME, and
+	// reopens a session with --resume <id>.
+	"omp": {
+		root:    func(home, _ string) string { return filepath.Join(home, ".omp", "agent", "sessions") },
+		ext:     ".jsonl",
+		id:      timestampedSessionID,
+		command: func(id string) string { return "omp --resume " + id },
+		project: ompProjectDir,
 	},
 }
 
@@ -241,11 +262,98 @@ func geminiSessionID(path string) string {
 	return meta.SessionID
 }
 
+// timestampedSessionID pulls the session id off a pi/omp session file name
+// ("2026-09-30T08-05-47-123Z_<id>.jsonl"). Files that do not start with a
+// date (omp's per-subagent transcripts, <AgentId>.jsonl) are not sessions,
+// and an id that is not a plain [A-Za-z0-9_-] token is never offered because
+// it is rendered into a shell command.
+func timestampedSessionID(name string) string {
+	base := strings.TrimSuffix(name, ".jsonl")
+	ts, id, ok := strings.Cut(base, "_")
+	if !ok || len(ts) < 11 || ts[4] != '-' || ts[10] != 'T' {
+		return ""
+	}
+	for _, r := range ts[:4] {
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	if !isSafeResumeID(id) {
+		return ""
+	}
+	return id
+}
+
+// encodeAbsoluteSessionDir is pi's session bucket name for cwd: the path
+// without its leading separator, with separators and colons turned into
+// dashes, wrapped in "--".
+func encodeAbsoluteSessionDir(cwd string) string {
+	trimmed := strings.TrimLeft(filepath.Clean(cwd), `/\`)
+	return "--" + strings.NewReplacer("/", "-", `\`, "-", ":", "-").Replace(trimmed) + "--"
+}
+
+// piProjectDir reports whether a bucket under ~/.pi/agent/sessions belongs to
+// workDir. pi names the bucket after its process cwd, which the OS reports
+// with symlinks resolved, so the canonical path is accepted too.
+func piProjectDir(_, dir, workDir string) bool {
+	name := filepath.Base(dir)
+	return name == encodeAbsoluteSessionDir(workDir) || name == encodeAbsoluteSessionDir(canonicalPath(workDir))
+}
+
+// ompProjectDir reports whether a bucket under ~/.omp/agent/sessions belongs
+// to workDir. omp resolves symlinks, then names the bucket "-<relative>" for
+// a directory under HOME, "-tmp-<relative>" under the temp root, and pi's
+// "--<absolute>--" otherwise (also the name older releases used everywhere).
+func ompProjectDir(home, dir, workDir string) bool {
+	name := filepath.Base(dir)
+	if name == encodeAbsoluteSessionDir(workDir) {
+		return true
+	}
+	cwd := canonicalPath(workDir)
+	if name == encodeAbsoluteSessionDir(cwd) {
+		return true
+	}
+	encode := strings.NewReplacer("/", "-", `\`, "-", ":", "-")
+	relativeName := func(base, prefix string) (string, bool) {
+		if base == "" {
+			return "", false
+		}
+		rel, err := filepath.Rel(canonicalPath(base), cwd)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+			return "", false
+		}
+		if rel == "." {
+			return prefix, true
+		}
+		if strings.HasSuffix(prefix, "-") {
+			return prefix + encode.Replace(rel), true
+		}
+		return prefix + "-" + encode.Replace(rel), true
+	}
+	if want, ok := relativeName(home, "-"); ok {
+		return name == want
+	}
+	if want, ok := relativeName(os.TempDir(), "-tmp"); ok {
+		return name == want
+	}
+	return false
+}
+
+// canonicalPath resolves symlinks in p when it exists, else returns it
+// cleaned.
+func canonicalPath(p string) string {
+	p = filepath.Clean(p)
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return p
+}
+
 // geminiProjectDir reports whether a directory under ~/.gemini/tmp belongs to
 // workDir: current gemini names it by a registry slug and records the
 // project root in a marker file; older releases named it by the SHA-256 of
 // the project root.
-func geminiProjectDir(dir, workDir string) bool {
+func geminiProjectDir(_, dir, workDir string) bool {
 	workDir = filepath.Clean(workDir)
 	if raw, err := os.ReadFile(filepath.Join(dir, geminiProjectRootMarker)); err == nil {
 		return filepath.Clean(strings.TrimSpace(string(raw))) == workDir
@@ -259,7 +367,7 @@ func geminiProjectDir(dir, workDir string) bool {
 // (or has not written one yet). It never fails loudly: a missing tree, an
 // unreadable directory and an unsupported backend are all "no handle", and
 // the PR then keeps the handoff note alone. Backends whose session tree is
-// scoped by project (gemini) need the agent's working directory; use
+// scoped by project (gemini, pi, omp) need the agent's working directory; use
 // CaptureResumeHandleIn for those.
 func CaptureResumeHandle(agentName string, uid int, backend string, now time.Time) (ResumeHandle, bool) {
 	return CaptureResumeHandleIn(agentName, uid, backend, "", now)
@@ -282,7 +390,7 @@ func CaptureResumeHandleIn(agentName string, uid int, backend, workDir string, n
 	if root == "" {
 		return ResumeHandle{}, false
 	}
-	id, path, modTime, ok := newestResumeSession(root, workDir, layout)
+	id, path, modTime, ok := newestResumeSession(root, home, workDir, layout)
 	if !ok {
 		return ResumeHandle{}, false
 	}
@@ -303,7 +411,7 @@ func CaptureResumeHandleIn(agentName string, uid int, backend, workDir string, n
 
 // newestResumeSession walks root for the most recently written session and
 // returns its id, transcript path and modification time.
-func newestResumeSession(root, workDir string, layout backendResumeLayout) (id, path string, modTime time.Time, ok bool) {
+func newestResumeSession(root, home, workDir string, layout backendResumeLayout) (id, path string, modTime time.Time, ok bool) {
 	budget := resumeWalkMaxEntries
 	var walk func(dir string, depth int)
 	walk = func(dir string, depth int) {
@@ -327,7 +435,7 @@ func newestResumeSession(root, workDir string, layout backendResumeLayout) (id, 
 						continue
 					}
 				}
-				if depth == 0 && layout.project != nil && !layout.project(full, workDir) {
+				if depth == 0 && layout.project != nil && !layout.project(home, full, workDir) {
 					continue
 				}
 				walk(full, depth+1)
