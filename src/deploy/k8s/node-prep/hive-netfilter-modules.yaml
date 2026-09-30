@@ -74,7 +74,7 @@ spec:
           privileged: true
         env:
         - name: MODULES
-          value: "xt_REDIRECT xt_owner"
+          value: "xt_mark xt_REDIRECT xt_owner"
         - name: RECHECK_SECONDS
           value: "300"
         command: ["/bin/sh", "-c"]
