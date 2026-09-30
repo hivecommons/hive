@@ -1,0 +1,1 @@
+- Revalidate unversioned hub and spoke static assets and auxiliary HTML pages with content-based ETags so normal reloads pick up changed files after upgrades ([#9674](https://github.com/hivecommons/hive/issues/9674)).

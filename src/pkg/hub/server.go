@@ -1690,7 +1690,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	// unconfigured, which would leave the image 404ing and every unfurled Hive
 	// link showing a blank card.
 	s.mux.HandleFunc("GET /og-card.png", s.handleOGCard)
-	s.mux.Handle("GET /static/", http.FileServerFS(staticFS))
+	s.mux.Handle("GET /static/", webstatic.FileServer(staticFS))
 	s.mux.HandleFunc("GET /", s.handleHubNotFound)
 
 	s.registerOAuth()

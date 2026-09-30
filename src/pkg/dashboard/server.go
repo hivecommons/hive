@@ -1205,7 +1205,7 @@ func (s *Server) Start() error {
 	// ~1.3 MB inline document uncompressed with no cache validators (embed.FS
 	// has a zero ModTime, so not even Last-Modified), forcing a full re-download
 	// on every visit. "/{$}" matches the root path exactly; every other static
-	// path falls through to the plain file server below.
+	// path falls through to the revalidating file server below.
 	var idx *webstatic.IndexDocument
 	if rawIndex, err := fs.ReadFile(staticContent, "index.html"); err == nil {
 		// Strings are baked in ONCE here, unlike custom.css which is read per
@@ -1236,7 +1236,7 @@ func (s *Server) Start() error {
 	// index document itself remains immutable and one-time precompressed.
 	s.mux.HandleFunc("GET /branding/custom.css", s.handleBrandingCSS)
 
-	s.mux.Handle("GET /", http.FileServer(http.FS(staticContent)))
+	s.mux.Handle("GET /", webstatic.FileServer(staticContent))
 
 	// authenticate is outermost so the identity headers it injects from a
 	// per-user session are visible to roleEnforcement's read-only write-gate.
