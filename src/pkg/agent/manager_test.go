@@ -57,7 +57,14 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	tmuxDir, err := os.MkdirTemp(".", ".hive-agent-tmux-*")
+	// The tmux socket dir must live under the SYSTEM temp dir, not "." like
+	// the stub dir above: sockets are bound at TMUX_TMPDIR/tmux-<uid>/<name>,
+	// and sun_path caps the whole path at ~108 bytes. On the hub's PR
+	// precheck the package dir is a deep checkout path
+	// (/data/pr-precheck/checkouts/head-<ts>/src/pkg/agent/...), which pushed
+	// the socket path past the limit and failed every tmux-backed test with
+	// "error connecting ... (File name too long)" (#9673 precheck).
+	tmuxDir, err := os.MkdirTemp("", ".hive-agent-tmux-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "TestMain: tmux MkdirTemp: %v\n", err)
 		_ = os.RemoveAll(dir)
