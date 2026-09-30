@@ -162,9 +162,10 @@ Every write site passes the repository and number it wrote to directly
 (`recordWriteAudit` with a `WriteTarget`), so the typed fields are the values
 the write used, not a re-parse of `detail`. The `repo=` and `number=` pairs
 are still written first in `detail`, in the same order as before, so existing
-parsers keep working. The activity collector and per-repo cost attribution
-([#4836](https://github.com/hivecommons/hive/issues/4836)) read the typed field
-first. They fall back to `detail` for entries written before the field existed.
+parsers keep working. The activity collector, per-repo cost attribution
+([#4836](https://github.com/hivecommons/hive/issues/4836)) and the lifecycle
+timeline (`recordLifecycleFromAudit`) read the typed fields first. They fall
+back to `detail` for entries written before the fields existed.
 
 ## Credential redaction
 
@@ -199,6 +200,3 @@ of them may reduce what an L6 hive can do by default.
   and `request_review`. Each would be a new relay (request file, file-UID
   authorizer, allowlist check, audit), following the existing four. A hive with
   no allowlist would allow them, like every other operation.
-- **Lifecycle timeline reader.** `recordLifecycleFromAudit` still reads
-  `repo=`/`number=` from `detail`. It works, because the pairs are still
-  written, but it could take the typed fields directly.

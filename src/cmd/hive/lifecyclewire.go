@@ -45,12 +45,17 @@ func parseAuditDetail(detail string) map[string]string {
 // automerge sweep paths) already flows through this single sink, so one wire
 // covers them all — including future emitters. The store dedupes by
 // (ref, kind), so overlap with recordPROpened is a refresh, not a dupe.
-func recordLifecycleFromAudit(rec lifecycleRecorder, org, action, detail, agent string) {
+//
+// The work item comes from the typed Repo/Target audit fields (#9587); the
+// legacy repo=/number= detail pairs are the fallback for a record that
+// carries no typed target. Evidence attrs (url, sha, ...) still come from
+// detail, which is the only place they are written.
+func recordLifecycleFromAudit(rec lifecycleRecorder, org string, audit github.AuditRecord) {
 	if rec == nil {
 		return
 	}
 	var kind timeline.Kind
-	switch action {
+	switch audit.Action {
 	case github.AuditActionAgentPRCreated:
 		kind = timeline.KindPROpened
 	case github.AuditActionPRMerged:
@@ -62,19 +67,23 @@ func recordLifecycleFromAudit(rec lifecycleRecorder, org, action, detail, agent 
 	if store == nil {
 		return
 	}
-	kv := parseAuditDetail(detail)
-	number, err := strconv.Atoi(kv["number"])
-	if kv["repo"] == "" || err != nil || number <= 0 {
+	kv := parseAuditDetail(audit.Detail)
+	repo, number := audit.Repo, audit.Target
+	if repo == "" || number <= 0 {
+		repo = kv["repo"]
+		number, _ = strconv.Atoi(kv["number"]) // 0 on a malformed pair
+	}
+	if repo == "" || number <= 0 {
 		return // not attributable to a work item — nothing to journey
 	}
-	ref := timelineRef(org, kv["repo"], number)
-	attrs := map[string]string{"pr_ref": ref, "source": action}
+	ref := timelineRef(org, repo, number)
+	attrs := map[string]string{"pr_ref": ref, "source": audit.Action}
 	for _, key := range []string{"url", "author", "method", "sha", "reused"} {
 		if v := kv[key]; v != "" {
 			attrs[key] = v
 		}
 	}
-	event := timeline.Event{IssueRef: ref, Kind: kind, Agent: agent, Attrs: attrs}
+	event := timeline.Event{IssueRef: ref, Kind: kind, Agent: audit.Agent, Attrs: attrs}
 	_, span := tracing.StartTimelineSpan(context.Background(), event)
 	store.Record(event)
 	span.End()
