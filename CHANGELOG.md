@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-30 (v5.94.2)
+
+### Fixed
+
+- The v5 coverage gates now treat Go 1.20+ tab-prefixed `-cover` output for packages without test files as `NO TEST FILES`, the newly exposed audit/git-identity packages have seed tests, and the PR coverage scorer bounds shard artifacts to packages that exist in the checked-out tree ([#9291](https://github.com/hivecommons/hive/issues/9291), [#9686](https://github.com/hivecommons/hive/issues/9686)).
+- FIX-BEFORE-NEW re-engagement kicks and the red-PR overlay now tell the agent to end the turn after pushing a repair instead of polling CI (#9673).
+- A spoke's first boot on a build with per-agent UIDs no longer crash-loops while it re-owns agent homes ([#9692](https://github.com/hivecommons/hive/issues/9692)). The entrypoint used to run a synchronous `chown -R` over each agent home before the server started, so a spoke with large homes outlasted its startup probe, was killed mid-migration, and started the whole walk over on every restart. The re-own is now incremental and resumable: it only changes entries not already owned by the agent's UID, walks post-order so the top-level entry flips last, and records a per-tree completion marker under `/data/.hive/reown` so later boots skip finished trees with a single `stat`. A pod killed mid-walk resumes with only the entries still mis-owned. Each re-owned tree now logs how many entries changed and how long it took. Newly provisioned hosted spokes also get a 10-minute startup probe budget (was about 160 seconds); existing hosted spokes keep their current probe and are fixed by the resumable re-own.
+
 ## 2026-09-30 (v5.94.1)
 
 ### Fixed

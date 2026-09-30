@@ -319,6 +319,48 @@ else
 fi
 reset_reqs
 
+# --- Section 9: --handoff-* flags (#9583) ---
+echo ""
+echo "--- Handoff note flags ---"
+
+handoff_field() {
+  python3 -c 'import json,sys; h=json.load(open(sys.argv[1])).get("handoff") or {}; v=h.get(sys.argv[2], ""); print(v if not isinstance(v, list) else ",".join(v))' \
+    "$1" "$2"
+}
+has_handoff() {
+  python3 -c 'import json,sys; sys.exit(0 if "handoff" in json.load(open(sys.argv[1])) else 1)' "$1"
+}
+
+check_exit "handoff flags exit 0" 0 \
+  run_script a9 --repo o/r --head h --title T --body B \
+    --handoff-why "flaky test" --handoff-approach="retry with backoff" \
+    --handoff-rejected "sleep" --handoff-repro "go test ./x" \
+    --handoff-files "a.go, b/*.go" --handoff-files=c.md
+REQ="$(find_req a9)"
+check "handoff why" "flaky test" "$(handoff_field "$REQ" why)"
+check "handoff approach (= form)" "retry with backoff" "$(handoff_field "$REQ" approach)"
+check "handoff rejected" "sleep" "$(handoff_field "$REQ" rejected)"
+check "handoff repro" "go test ./x" "$(handoff_field "$REQ" repro)"
+check "handoff files split, trimmed, not globbed, repeatable" "a.go,b/*.go,c.md" "$(handoff_field "$REQ" files)"
+reset_reqs
+
+run_script a9 --repo o/r --head h --title T --body B >/dev/null
+check_exit "no handoff flags writes no handoff object" 1 has_handoff "$(find_req a9)"
+reset_reqs
+
+check_exit "fallback path with handoff exits 0" 0 \
+  run_nopy a9 --repo o/r --head h --title T --body B \
+    --handoff-why "$(printf 'two\nlines "q"')" --handoff-files "a.go,b.go"
+REQ="$(find_req a9)"
+if [ -n "$REQ" ] && python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$REQ" 2>/dev/null; then
+  check "fallback handoff why round-trips" "$(printf 'two\nlines "q"')" "$(handoff_field "$REQ" why)"
+  check "fallback handoff files" "a.go,b.go" "$(handoff_field "$REQ" files)"
+  check "fallback omits empty handoff fields" "" "$(handoff_field "$REQ" approach)"
+else
+  check "fallback handoff request is valid JSON" "valid JSON at \$REQ" "missing or unparseable: $REQ"
+fi
+reset_reqs
+
 # --- Summary ---
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

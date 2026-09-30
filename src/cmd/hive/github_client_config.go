@@ -258,7 +258,7 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 	// recordLifecycleFromAudit.
 	client.SetAttributionAuditRecord(func(rec github.AuditRecord) {
 		b.dashSrv.AuditLogRecord("system", rec.Action, rec.Detail, rec.Agent, rec.Repo, rec.Target)
-		recordLifecycleFromAudit(b.dashSrv, b.cfg.Project.Org, rec.Action, rec.Detail, rec.Agent)
+		recordLifecycleFromAudit(b.dashSrv, b.cfg.Project.Org, rec)
 	})
 	client.SetPROpenedHook(func(agentName, repo string, number int, url string) {
 		b.dashSrv.LinearAgentPROpened(agentName, repo, number, url)

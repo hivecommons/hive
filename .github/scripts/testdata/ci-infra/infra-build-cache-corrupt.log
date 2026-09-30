@@ -1,0 +1,14 @@
+﻿2026-09-29T14:47:22.1537649Z Current runner version: '2.337.0'
+2026-09-29T14:47:22.1543653Z Runner name: 'hive-runners-w7f7t-runner-hsfj5'
+2026-09-29T14:47:22.1544422Z Runner group name: 'Default'
+2026-09-29T14:47:22.1545250Z Machine name: 'hive-runners-w7f7t-runner-hsfj5'
+2026-09-29T14:47:30.9820658Z ##[group]Run go build ./cmd/hive/
+2026-09-29T14:47:30.9821013Z [36;1mgo build ./cmd/hive/[0m
+2026-09-29T14:47:30.9827604Z shell: /usr/bin/bash -e {0}
+2026-09-29T14:47:30.9827857Z env:
+2026-09-29T14:47:30.9828088Z   ACTIONS_CACHE_SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
+2026-09-29T14:47:30.9828390Z   GOTOOLCHAIN: local
+2026-09-29T14:47:30.9828609Z ##[endgroup]
+2026-09-29T14:47:31.8764161Z # github.com/hivecommons/hive/pkg/dashboard
+2026-09-29T14:47:31.8785322Z ##[error]pkg/dashboard/deps.go:27:2: could not import github.com/hivecommons/hive/pkg/scheduler (can't find export data (bufio: buffer full))
+2026-09-29T14:47:31.8813633Z ##[error]Process completed with exit code 1.

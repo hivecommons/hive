@@ -110,7 +110,7 @@ func TestRecordHelpers_NilSafe(t *testing.T) {
 	recordKick(context.Background(), nil, "x")
 	recordPROpened(nil, "org", "a", "repo", 1, "u")
 	recordBlocked(context.Background(), nil, "org", "repo", 1, 3, nil)
-	recordLifecycleFromAudit(nil, "org", "pr_merged", "repo=r, number=1", "")
+	recordLifecycleFromAudit(nil, "org", github.AuditRecord{Action: "pr_merged", Detail: "repo=r, number=1"})
 
 	// nil actionable
 	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
@@ -127,7 +127,7 @@ func TestRecordHelpers_NilSafe(t *testing.T) {
 	recordKick(context.Background(), nilStore, "x")
 	recordPROpened(nilStore, "org", "a", "repo", 1, "u")
 	recordBlocked(context.Background(), nilStore, "org", "repo", 1, 3, nil)
-	recordLifecycleFromAudit(nilStore, "org", "pr_merged", "repo=r, number=1", "")
+	recordLifecycleFromAudit(nilStore, "org", github.AuditRecord{Action: "pr_merged", Detail: "repo=r, number=1"})
 }
 
 func TestIssueRef(t *testing.T) {
@@ -179,10 +179,11 @@ func TestParseAuditDetail(t *testing.T) {
 func TestRecordLifecycleFromAudit_PRMerged(t *testing.T) {
 	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
 
-	recordLifecycleFromAudit(rec, "acme",
-		github.AuditActionPRMerged,
-		"repo=acme/widgets, number=41, method=squash, sha=abc123",
-		"governor")
+	recordLifecycleFromAudit(rec, "acme", github.AuditRecord{
+		Action: github.AuditActionPRMerged,
+		Detail: "repo=acme/widgets, number=41, method=squash, sha=abc123",
+		Agent:  "governor",
+	})
 
 	j, ok := rec.store.Journey("widgets#41")
 	if !ok {
@@ -201,10 +202,11 @@ func TestRecordLifecycleFromAudit_PRMerged(t *testing.T) {
 func TestRecordLifecycleFromAudit_AgentPRCreated(t *testing.T) {
 	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
 
-	recordLifecycleFromAudit(rec, "acme",
-		github.AuditActionAgentPRCreated,
-		"repo=widgets, number=99, author=hive-agent, url=https://github.com/acme/widgets/pull/99, reused=false",
-		"quality")
+	recordLifecycleFromAudit(rec, "acme", github.AuditRecord{
+		Action: github.AuditActionAgentPRCreated,
+		Detail: "repo=widgets, number=99, author=hive-agent, url=https://github.com/acme/widgets/pull/99, reused=false",
+		Agent:  "quality",
+	})
 
 	j, ok := rec.store.Journey("widgets#99")
 	if !ok || j.Current != timeline.KindPROpened {
@@ -215,13 +217,50 @@ func TestRecordLifecycleFromAudit_AgentPRCreated(t *testing.T) {
 	}
 }
 
+// TestRecordLifecycleFromAudit_PrefersTypedFields (#9587): the typed
+// Repo/Target audit fields name the work item, so a record whose detail has no
+// repo=/number= pairs still journeys, and typed fields win over stale pairs.
+// Evidence attrs are still read from detail.
+func TestRecordLifecycleFromAudit_PrefersTypedFields(t *testing.T) {
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+
+	recordLifecycleFromAudit(rec, "acme", github.AuditRecord{
+		Action: github.AuditActionPRMerged,
+		Detail: "method=squash, sha=def456",
+		Agent:  "governor",
+		Repo:   "acme/widgets",
+		Target: 43,
+	})
+	j, ok := rec.store.Journey("widgets#43")
+	if !ok || j.Current != timeline.KindMerged {
+		t.Fatalf("typed-only merged journey = %+v ok=%v", j, ok)
+	}
+	if st := j.Stages[timeline.KindMerged]; st == nil || st.Attrs["sha"] != "def456" {
+		t.Fatalf("merged stage lost detail evidence: %+v", st)
+	}
+
+	recordLifecycleFromAudit(rec, "acme", github.AuditRecord{
+		Action: github.AuditActionAgentPRCreated,
+		Detail: "repo=gadgets, number=1",
+		Agent:  "quality",
+		Repo:   "widgets",
+		Target: 44,
+	})
+	if _, ok := rec.store.Journey("widgets#44"); !ok {
+		t.Fatalf("typed target not used; journeys = %+v", rec.store.Journeys(0))
+	}
+	if _, ok := rec.store.Journey("gadgets#1"); ok {
+		t.Fatal("detail pairs overrode the typed target")
+	}
+}
+
 // TestRecordLifecycleFromAudit_IgnoresOtherActionsAndBadDetails: only the two
 // lifecycle-bearing actions map, and unattributable details are skipped.
 func TestRecordLifecycleFromAudit_IgnoresOtherActionsAndBadDetails(t *testing.T) {
 	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
-	recordLifecycleFromAudit(rec, "acme", "pr_reviewed", "repo=widgets, number=5", "")
-	recordLifecycleFromAudit(rec, "acme", github.AuditActionPRMerged, "no usable pairs", "")
-	recordLifecycleFromAudit(rec, "acme", github.AuditActionPRMerged, "repo=widgets, number=zero", "")
+	recordLifecycleFromAudit(rec, "acme", github.AuditRecord{Action: "pr_reviewed", Detail: "repo=widgets, number=5", Repo: "widgets", Target: 5})
+	recordLifecycleFromAudit(rec, "acme", github.AuditRecord{Action: github.AuditActionPRMerged, Detail: "no usable pairs"})
+	recordLifecycleFromAudit(rec, "acme", github.AuditRecord{Action: github.AuditActionPRMerged, Detail: "repo=widgets, number=zero"})
 	if got := len(rec.store.Journeys(0)); got != 0 {
 		t.Fatalf("journeys = %d, want 0", got)
 	}
@@ -239,8 +278,13 @@ func TestRecordPROpened(t *testing.T) {
 	}
 	// The audit-sink bridge reporting the same creation dedupes into the
 	// same stage instead of a second row.
-	recordLifecycleFromAudit(rec, "acme",
-		github.AuditActionAgentPRCreated, "repo=acme/widgets, number=12", "scanner")
+	recordLifecycleFromAudit(rec, "acme", github.AuditRecord{
+		Action: github.AuditActionAgentPRCreated,
+		Detail: "repo=acme/widgets, number=12",
+		Agent:  "scanner",
+		Repo:   "acme/widgets",
+		Target: 12,
+	})
 	if got := len(rec.store.Journeys(0)); got != 1 {
 		t.Fatalf("double wire made %d journeys, want 1", got)
 	}

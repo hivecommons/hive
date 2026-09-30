@@ -48,6 +48,24 @@ narrow exact-title lookup for this incident are the only exceptions to any
 work-list prohibition on listing PRs/issues; they must not be used to select new
 work.
 
+## After You Push: Do Not Wait for CI (MANDATORY)
+
+Opening or updating a PR ends your work on that item for this kick. **Never
+watch, poll, or sleep on CI** — no `gh run watch`, no `gh run view` loops, no
+"checking again in 10 minutes". A turn spent waiting is a turn the rest of the
+work list did not get. The hive's automerge sweep merges your PR the moment its
+checks are green — waiting buys nothing.
+
+- Pushed the branch and opened/updated the PR → **move to the next item**.
+- A check on your PR is red → triage once. Your diff's fault: fix and push once.
+  Infrastructure (runner lost, "No space left on device", checks still `queued`,
+  job failed with no log): do **not** retry or wait — one comment naming the
+  cause, then **DEFER — move to the next item**.
+- Never spend more than **two** status checks on the same run in one kick.
+- Only push to branches this lane created (`<lane>/...`). Never push commits —
+  not even empty "retrigger" commits — to a human's or another lane's branch;
+  leave a comment instead.
+
 ${KNOWLEDGE}
 
 ## CI Throughput and Merge Order

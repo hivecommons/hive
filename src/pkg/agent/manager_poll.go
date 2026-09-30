@@ -268,6 +268,10 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				m.nudgeIfTransientAPIError(agent, m.captureVisiblePaneForAgent(agent))
 			}
 
+			if !IsInferenceBackend(effectiveBackend(agent)) {
+				m.nudgeIfPollingCI(agent, output, m.captureVisiblePaneForAgent(agent))
+			}
+
 			// Detect copilot hung: if running long enough with no CLI prompt,
 			// launch bare `copilot` to diagnose the error. Only clear the
 			// token if the diagnostic shows an auth error.

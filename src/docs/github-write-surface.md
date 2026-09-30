@@ -44,6 +44,21 @@ Side effects performed on the same path are covered by the parent operation's
 allowlist entry. For example, `open_pr` can also apply the `hold` label, post
 the level-hold notice, and re-author the branch as a signed commit.
 
+### `review` is COMMENT-only on contributor pull requests
+
+The hive reviews every pull request it is pointed at, but it only adjudicates
+its own. When the PR's author is not one of this hive's accounts
+(`project.ai_author` or the App bot login), the `review` relay rewrites an
+`approve` or `request_changes` request into a `COMMENT` before it reaches
+GitHub, and says so in the request's `.result.json` `note`
+(`review_contributor_guard.go`, hivecommons/hive#9590). An `APPROVE` or
+`REQUEST_CHANGES` is a repository verdict — it satisfies branch-protection
+approval counts and gates merge queues — and belongs to the humans who own the
+repository. A PR whose author cannot be read is treated as a contributor's: the
+relay never resolves "we could not tell" into approving someone else's work.
+There is no setting to turn this off; `review.all_authors` widens what is
+reviewed, never what may be approved.
+
 ## Hive-internal writes (not agent requests)
 
 The hive also writes to GitHub on its own schedule, with no agent request
@@ -162,9 +177,10 @@ Every write site passes the repository and number it wrote to directly
 (`recordWriteAudit` with a `WriteTarget`), so the typed fields are the values
 the write used, not a re-parse of `detail`. The `repo=` and `number=` pairs
 are still written first in `detail`, in the same order as before, so existing
-parsers keep working. The activity collector and per-repo cost attribution
-([#4836](https://github.com/hivecommons/hive/issues/4836)) read the typed field
-first. They fall back to `detail` for entries written before the field existed.
+parsers keep working. The activity collector, per-repo cost attribution
+([#4836](https://github.com/hivecommons/hive/issues/4836)) and the lifecycle
+timeline (`recordLifecycleFromAudit`) read the typed fields first. They fall
+back to `detail` for entries written before the fields existed.
 
 ## Credential redaction
 
@@ -199,6 +215,3 @@ of them may reduce what an L6 hive can do by default.
   and `request_review`. Each would be a new relay (request file, file-UID
   authorizer, allowlist check, audit), following the existing four. A hive with
   no allowlist would allow them, like every other operation.
-- **Lifecycle timeline reader.** `recordLifecycleFromAudit` still reads
-  `repo=`/`number=` from `detail`. It works, because the pairs are still
-  written, but it could take the typed fields directly.

@@ -349,8 +349,13 @@ type AgentProcess struct {
 	// on screen after the nudge is typed, so without it one incident would fire
 	// a nudge per tick. transientNudgesThisKick is the per-kick cap; both it and
 	// the cooldown reset on the next kick.
-	lastTransientNudge          time.Time
-	transientNudgesThisKick     int
+	lastTransientNudge      time.Time
+	transientNudgesThisKick int
+	// CI-poll guard (#9673): baseline is the CI-poll command count already in
+	// scrollback when the kick's first poll tick ran (-1 = not yet captured).
+	ciPollBaseline              int
+	ciPollNudgeSent             bool
+	CIPollNudges                int // total CI-polling nudges sent
 	TransientNudges             int // total transient-API-error nudges sent (surfaced to the dashboard)
 	launchGen                   int // increments per launch; stale deliverStartupKick goroutines check it and drop
 	lastInferKickMarks          int // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery

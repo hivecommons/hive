@@ -1,0 +1,37 @@
+﻿2026-09-29T00:12:33.6745662Z Current runner version: '2.337.0'
+2026-09-29T00:12:33.6753613Z Runner name: 'hive-runners-w7f7t-runner-mlqjx'
+2026-09-29T00:12:33.6755032Z Runner group name: 'Default'
+2026-09-29T00:12:33.6756368Z Machine name: 'hive-runners-w7f7t-runner-mlqjx'
+2026-09-29T00:12:39.4777418Z ##[group]Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
+2026-09-29T00:12:39.4778582Z with:
+2026-09-29T00:12:39.4779044Z   version: v2.13.1
+2026-09-29T00:12:39.4779563Z   working-directory: src
+2026-09-29T00:12:39.4780159Z   skip-cache: true
+2026-09-29T00:12:39.4780662Z   install-mode: binary
+2026-09-29T00:12:39.4781359Z   install-only: false
+2026-09-29T00:12:39.4789289Z   verify: true
+2026-09-29T00:12:39.4789789Z   only-new-issues: false
+2026-09-29T00:12:39.4790358Z   skip-save-cache: false
+2026-09-29T00:12:39.4791114Z   cache-invalidation-interval: 7
+2026-09-29T00:12:39.4791772Z   problem-matchers: false
+2026-09-29T00:12:39.4792334Z env:
+2026-09-29T00:12:39.4792782Z   GOTOOLCHAIN: local
+2026-09-29T00:12:39.4793306Z ##[endgroup]
+2026-09-29T00:12:39.6991794Z Finding needed golangci-lint version...
+2026-09-29T00:12:39.6995485Z Installation mode: binary
+2026-09-29T00:12:39.6996260Z Installing golangci-lint binary v2.13.1...
+2026-09-29T00:12:39.6998127Z Downloading binary https://github.com/golangci/golangci-lint/releases/download/v2.13.1/golangci-lint-2.13.1-linux-amd64.tar.gz ...
+2026-09-29T00:12:39.9486015Z [command]/usr/bin/tar xz --overwrite --warning=no-unknown-keyword --overwrite -C /home/runner -f /home/runner/_temp/9796d821-4889-430a-a2b3-f00878a341fd
+2026-09-29T00:12:40.2780629Z Installed golangci-lint into /home/runner/golangci-lint-2.13.1-linux-amd64/golangci-lint in 578ms
+2026-09-29T00:12:40.2785927Z ##[endgroup]
+2026-09-29T00:12:40.2793125Z ##[group]run golangci-lint
+2026-09-29T00:12:40.2800028Z Running [/home/runner/golangci-lint-2.13.1-linux-amd64/golangci-lint config path] in [/home/runner/hive/hive/src] ...
+2026-09-29T00:12:40.3851547Z Running [/home/runner/golangci-lint-2.13.1-linux-amd64/golangci-lint config verify] in [/home/runner/hive/hive/src] ...
+2026-09-29T00:12:40.5123759Z Running [/home/runner/golangci-lint-2.13.1-linux-amd64/golangci-lint run --path-mode=abs] in [/home/runner/hive/hive/src] ...
+2026-09-29T00:24:44.8633238Z 0 issues.
+2026-09-29T00:24:44.8636767Z 
+2026-09-29T00:24:44.8637673Z level=error msg="Timeout exceeded: try increasing it by passing --timeout option"
+2026-09-29T00:24:44.8638545Z 
+2026-09-29T00:24:44.8666042Z ##[error]golangci-lint exit with code 4
+2026-09-29T00:24:44.8677882Z Ran golangci-lint in 724357ms
+2026-09-29T00:24:44.8679004Z ##[endgroup]

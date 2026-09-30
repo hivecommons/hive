@@ -1,0 +1,37 @@
+﻿2026-09-29T13:01:15.7486483Z Current runner version: '2.337.0'
+2026-09-29T13:01:15.7518531Z Runner name: 'hive-runners-w7f7t-runner-xlz7q'
+2026-09-29T13:01:15.7524271Z Runner group name: 'Default'
+2026-09-29T13:01:15.7530780Z Machine name: 'hive-runners-w7f7t-runner-xlz7q'
+2026-09-29T13:02:04.8154090Z ##[group]Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
+2026-09-29T13:02:04.8155930Z with:
+2026-09-29T13:02:04.8156726Z   version: v2.13.1
+2026-09-29T13:02:04.8157593Z   working-directory: src
+2026-09-29T13:02:04.8159445Z   skip-cache: true
+2026-09-29T13:02:04.8160282Z   install-mode: binary
+2026-09-29T13:02:04.8161152Z   install-only: false
+2026-09-29T13:02:04.8180092Z   verify: true
+2026-09-29T13:02:04.8180932Z   only-new-issues: false
+2026-09-29T13:02:04.8181862Z   skip-save-cache: false
+2026-09-29T13:02:04.8182834Z   cache-invalidation-interval: 7
+2026-09-29T13:02:04.8183948Z   problem-matchers: false
+2026-09-29T13:02:04.8184828Z env:
+2026-09-29T13:02:04.8185903Z   GOTOOLCHAIN: local
+2026-09-29T13:02:04.8186789Z ##[endgroup]
+2026-09-29T13:02:07.7784313Z ##[endgroup]
+2026-09-29T13:02:07.7786917Z ##[group]Install
+2026-09-29T13:02:07.7788429Z Finding needed golangci-lint version...
+2026-09-29T13:02:07.7793714Z Installation mode: binary
+2026-09-29T13:02:07.7796248Z Installing golangci-lint binary v2.13.1...
+2026-09-29T13:02:07.7800996Z Downloading binary https://github.com/golangci/golangci-lint/releases/download/v2.13.1/golangci-lint-2.13.1-linux-amd64.tar.gz ...
+2026-09-29T13:02:08.8514692Z [command]/usr/bin/tar xz --overwrite --warning=no-unknown-keyword --overwrite -C /home/runner -f /home/runner/_temp/52647874-94c8-4b2d-b870-3b7a5334403b
+2026-09-29T13:02:10.7424784Z Installed golangci-lint into /home/runner/golangci-lint-2.13.1-linux-amd64/golangci-lint in 2962ms
+2026-09-29T13:02:10.7439880Z ##[endgroup]
+2026-09-29T13:02:10.7463305Z ##[group]run golangci-lint
+2026-09-29T13:02:10.7479478Z Running [/home/runner/golangci-lint-2.13.1-linux-amd64/golangci-lint config path] in [/home/runner/hive/hive/src] ...
+2026-09-29T13:02:11.3311875Z Running [/home/runner/golangci-lint-2.13.1-linux-amd64/golangci-lint config verify] in [/home/runner/hive/hive/src] ...
+2026-09-29T13:02:11.7679605Z Running [/home/runner/golangci-lint-2.13.1-linux-amd64/golangci-lint run --path-mode=abs] in [/home/runner/hive/hive/src] ...
+2026-09-29T13:02:31.8881094Z level=error msg="Running error: context loading failed: no go files to analyze: running `go mod tidy` may solve the problem"
+2026-09-29T13:02:31.8884935Z 
+2026-09-29T13:02:31.8987547Z ##[error]golangci-lint exit with code 5
+2026-09-29T13:02:31.9377115Z Ran golangci-lint in 20121ms
+2026-09-29T13:02:31.9380569Z ##[endgroup]

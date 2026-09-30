@@ -334,8 +334,8 @@ func TestFilterClaimedIssues(t *testing.T) {
 		},
 		{
 			// #8876: an EXTERNAL claim (a contributor's PR) is now surfaced
-			// as a pending label/link, not hidden from the actionable set.
-			name:  "external claim stays actionable with context inside the window",
+			// as a label/link but suppressed to avoid duplicating the open PR.
+			name:  "external open claim is suppressed inside the window",
 			items: []Issue{{Repo: "spyre-inference", Number: 100, AgeMinutes: 5}},
 			claims: []IssueClaim{{
 				Repo: "spyre-inference", Issue: 100,
@@ -346,16 +346,11 @@ func TestFilterClaimedIssues(t *testing.T) {
 				FirstObservedAt: time.Now(),
 				ExternalAuthor:  true,
 			}},
-			wantSuppressed: 0,
-			wantRemaining:  []int{100},
+			wantSuppressed: 1,
+			wantRemaining:  nil,
 		},
 		{
-			// #3768's invariant, now expressed as a BOUND rather than an
-			// absence: a stranger's PR delays the hive's own pipeline at most
-			// one window and can never freeze it. An adversary has to keep
-			// opening new PRs to extend the delay, which PR creation itself
-			// rate-limits.
-			name:  "external claim releases agent work past the window",
+			name:  "external open claim is suppressed past the old weak window",
 			items: []Issue{{Repo: "spyre-inference", Number: 100, AgeMinutes: 5}},
 			claims: []IssueClaim{{
 				Repo: "spyre-inference", Issue: 100,
@@ -366,8 +361,8 @@ func TestFilterClaimedIssues(t *testing.T) {
 				FirstObservedAt: time.Now().Add(-weakClaimDeferWindow - time.Hour),
 				ExternalAuthor:  true,
 			}},
-			wantSuppressed: 0,
-			wantRemaining:  []int{100},
+			wantSuppressed: 1,
+			wantRemaining:  nil,
 		},
 		{
 			name: "SLA violations are recounted after suppression",
@@ -427,7 +422,11 @@ func TestClaimLedgerRoundTripThroughDisk(t *testing.T) {
 	original := NewClaimLedger(path, testLogger())
 	original.Reconcile([]IssueClaim{
 		{Repo: "spyre-inference", Issue: 100, PRNumber: 423, PRRepo: "spyre-inference",
-			PRURL: "https://example.test/pull/423", PRAuthor: "clubanderson", ObservedAt: now},
+			PRURL: "https://example.test/pull/423", PRAuthor: "clubanderson",
+			PRState: PRStateMerged, PRHead: "abc123",
+			VerifiedAt: now.Add(time.Minute), VerifiedPRState: PRStateMerged, VerifiedPRHead: "abc123",
+			VerificationRequestedAt: now, VerificationRequestedPRState: PRStateMerged, VerificationRequestedHead: "abc123",
+			ObservedAt: now},
 		{Repo: "spyre-inference", Issue: 101, PRNumber: 424, PRRepo: "spyre-inference",
 			PRURL: "https://example.test/pull/424", PRAuthor: "clubanderson", ObservedAt: now},
 	}, true)
@@ -457,6 +456,11 @@ func TestClaimLedgerRoundTripThroughDisk(t *testing.T) {
 	}
 	if !c.ObservedAt.Equal(now) {
 		t.Errorf("ObservedAt = %v, want %v", c.ObservedAt, now)
+	}
+	if c.PRState != PRStateMerged || c.PRHead != "abc123" ||
+		c.VerifiedPRState != PRStateMerged || c.VerifiedPRHead != "abc123" || !c.VerifiedAt.Equal(now.Add(time.Minute)) ||
+		c.VerificationRequestedPRState != PRStateMerged || c.VerificationRequestedHead != "abc123" || !c.VerificationRequestedAt.Equal(now) {
+		t.Errorf("verification fields lost in round-trip: %+v", c)
 	}
 }
 
@@ -672,8 +676,10 @@ func prClaimServer(t *testing.T, prs []map[string]any, status int) *httptest.Ser
 func pr(number int, author, title, body string) map[string]any {
 	return map[string]any{
 		"number":   number,
+		"state":    "open",
 		"title":    title,
 		"body":     body,
+		"head":     map[string]any{"ref": fmt.Sprintf("branch-pr%dhead", number), "sha": fmt.Sprintf("head-%d", number)},
 		"user":     map[string]any{"login": author},
 		"html_url": fmt.Sprintf("https://github.com/torch-spyre/spyre-inference/pull/%d", number),
 	}
@@ -763,6 +769,9 @@ func TestFetchClaims(t *testing.T) {
 				}
 				if claims[i].PRURL == "" {
 					t.Errorf("claim[%d] missing PRURL — suppression logs would be undebuggable", i)
+				}
+				if claims[i].PRState != PRStateOpen || claims[i].PRHead == "" {
+					t.Errorf("claim[%d] missing PR state/head: %+v", i, claims[i])
 				}
 				if i < len(tt.wantExternal) && claims[i].ExternalAuthor != tt.wantExternal[i] {
 					t.Errorf("claim[%d].ExternalAuthor = %v, want %v (author %q)",

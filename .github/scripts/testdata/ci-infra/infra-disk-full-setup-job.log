@@ -1,0 +1,18 @@
+2026-09-29T01:34:12.7218159Z Runner name: 'hive-runners-w7f7t-runner-xn9r6'
+2026-09-29T01:34:12.7218942Z Runner group name: 'Default'
+2026-09-29T01:34:12.7219735Z Machine name: 'hive-runners-w7f7t-runner-xn9r6'
+2026-09-29T01:34:12.7224041Z Contents: read
+2026-09-29T01:34:12.7224519Z Metadata: read
+2026-09-29T01:34:12.7224962Z ##[endgroup]
+2026-09-29T01:34:12.7227781Z Cache mode: write
+2026-09-29T01:34:12.7228341Z Prepare workflow directory
+2026-09-29T01:34:12.7539437Z Prepare all required actions
+2026-09-29T01:34:12.7587800Z Getting action download info
+2026-09-29T01:34:12.9325231Z Download action repository 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-09-29T01:34:12.9426765Z Download action repository 'actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e' (SHA:b7ad1dad31e06c5925ef5d2fc7ad053ef454303e)
+2026-09-29T01:34:12.9456320Z Download action repository 'golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a' (SHA:ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a)
+2026-09-29T01:34:12.9897264Z ##[error]System.IO.IOException: No space left on device : '/home/runner/_actions/actions/checkout/3d3c42e5aac5ba805825da76410c181273ba90b1/action.yml'
+   at System.IO.RandomAccess.ReadAtOffset(SafeFileHandle handle, Span`1 buffer, Int64 fileOffset)
+   at System.IO.Strategies.OSFileStreamStrategy.Read(Span`1 buffer)
+   at System.IO.Strategies.BufferedFileStreamStrategy.ReadSpan(Span`1 destination, ArraySegment`1 arraySegment)
+   at System.IO.Strategies.BufferedFileStreamStrategy.Read(Byte[] buffer, Int32 offset, Int32 count)

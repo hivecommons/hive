@@ -1,0 +1,1 @@
+- Every PR-opening lane template (architect, ci-maintainer, guide, quality, reviewer-queue, sec-check, strategist, outreach) now carries the no-CI-wait rule and forbids pushing retrigger commits to branches the lane did not create (#9673).

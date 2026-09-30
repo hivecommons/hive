@@ -405,6 +405,8 @@ func (m *Manager) recordDeliveredKickLocked(agent *AgentProcess, message, trigge
 	// fails immediately be recovered without waiting it out.
 	agent.transientNudgesThisKick = 0
 	agent.lastTransientNudge = time.Time{}
+	agent.ciPollBaseline = -1
+	agent.ciPollNudgeSent = false
 
 	snippet := message
 	const maxSnippetLen = 120
@@ -1209,4 +1211,58 @@ func lineIsCLIChrome(line string) bool {
 		}
 	}
 	return false
+}
+
+const (
+	// ciPollNudgeThreshold is how many CI-status commands a single kick may
+	// run before the agent is told to stop polling (#9673).
+	ciPollNudgeThreshold = 3
+	ciPollNudgeMessage   = "Stop polling CI. Do not run gh run watch/view or gh pr checks again this turn: leave the PR as is and move to the next work-list item. The automerge sweep handles green PRs."
+)
+
+var ciPollCommandRe = regexp.MustCompile(`\bgh (?:run (?:watch|view|list)|pr checks)\b`)
+
+func countCIPollCommands(pane string) int {
+	return len(ciPollCommandRe.FindAllStringIndex(stripExplainLines(pane), -1))
+}
+
+// nudgeIfPollingCI tells an agent that keeps polling CI within one kick to
+// move on. Policy templates already forbid it; this is the harness backstop.
+// Sends at most one nudge per kick, and only at an idle prompt so it never
+// splices into a running response.
+func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible string) {
+	if agent.kickDelivering.Load() || agent.LastKick == nil {
+		return
+	}
+	count := countCIPollCommands(scrollback)
+	m.mu.Lock()
+	if agent.ciPollNudgeSent {
+		m.mu.Unlock()
+		return
+	}
+	if agent.ciPollBaseline < 0 {
+		agent.ciPollBaseline = count
+		m.mu.Unlock()
+		return
+	}
+	if count-agent.ciPollBaseline <= ciPollNudgeThreshold {
+		m.mu.Unlock()
+		return
+	}
+	m.mu.Unlock()
+	if paneShowsActiveWork(visible) || !paneShowsEmptyInputPrompt(visible) {
+		return
+	}
+	if m.tmuxSessionHasAttachedClientForAgent(agent) {
+		return
+	}
+	m.mu.Lock()
+	agent.ciPollNudgeSent = true
+	agent.CIPollNudges++
+	m.mu.Unlock()
+
+	m.logger.Warn("agent is polling CI, sending stop-polling nudge", "name", agent.Name, "polls", count)
+	m.tmuxSendLiteralForAgent(agent, ciPollNudgeMessage)
+	time.Sleep(textToEnterDelay)
+	m.tmuxSendEntersForAgent(agent)
 }

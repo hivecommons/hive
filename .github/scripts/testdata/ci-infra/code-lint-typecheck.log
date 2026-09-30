@@ -1,0 +1,39 @@
+﻿2026-09-29T00:34:29.8963773Z Current runner version: '2.337.0'
+2026-09-29T00:34:29.8969610Z Runner name: 'hive-runners-w7f7t-runner-rd4zn'
+2026-09-29T00:34:29.8970580Z Runner group name: 'Default'
+2026-09-29T00:34:29.8971419Z Machine name: 'hive-runners-w7f7t-runner-rd4zn'
+2026-09-29T00:34:39.3708792Z ##[group]Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
+2026-09-29T00:34:39.3709588Z with:
+2026-09-29T00:34:39.3709898Z   version: v2.13.1
+2026-09-29T00:34:39.3710245Z   working-directory: src
+2026-09-29T00:34:39.3710632Z   skip-cache: true
+2026-09-29T00:34:39.3710964Z   install-mode: binary
+2026-09-29T00:34:39.3711319Z   install-only: false
+2026-09-29T00:34:39.3716472Z   verify: true
+2026-09-29T00:34:39.3716805Z   only-new-issues: false
+2026-09-29T00:34:39.3717188Z   skip-save-cache: false
+2026-09-29T00:34:39.3717773Z   cache-invalidation-interval: 7
+2026-09-29T00:34:39.3718235Z   problem-matchers: false
+2026-09-29T00:34:39.3718615Z env:
+2026-09-29T00:34:39.3718925Z   GOTOOLCHAIN: local
+2026-09-29T00:34:39.3719268Z ##[endgroup]
+2026-09-29T00:34:39.7640563Z Skipping cache restoration
+2026-09-29T00:34:39.7641565Z ##[endgroup]
+2026-09-29T00:34:39.7642190Z ##[group]Install
+2026-09-29T00:34:39.7642972Z Finding needed golangci-lint version...
+2026-09-29T00:34:39.7645730Z Installation mode: binary
+2026-09-29T00:34:39.7646171Z Installing golangci-lint binary v2.13.1...
+2026-09-29T00:34:39.7647268Z Downloading binary https://github.com/golangci/golangci-lint/releases/download/v2.13.1/golangci-lint-2.13.1-linux-amd64.tar.gz ...
+2026-09-29T00:34:40.0003084Z [command]/usr/bin/tar xz --overwrite --warning=no-unknown-keyword --overwrite -C /home/runner -f /home/runner/_temp/af3db06f-843a-49f8-950c-087980dc908e
+2026-09-29T00:34:40.2807912Z Installed golangci-lint into /home/runner/golangci-lint-2.13.1-linux-amd64/golangci-lint in 516ms
+2026-09-29T00:34:40.2810467Z ##[endgroup]
+2026-09-29T00:34:40.2814708Z ##[group]run golangci-lint
+2026-09-29T00:34:40.2818177Z Running [/home/runner/golangci-lint-2.13.1-linux-amd64/golangci-lint config path] in [/home/runner/hive/hive/src] ...
+2026-09-29T00:34:40.3491057Z Running [/home/runner/golangci-lint-2.13.1-linux-amd64/golangci-lint config verify] in [/home/runner/hive/hive/src] ...
+2026-09-29T00:34:40.4322428Z Running [/home/runner/golangci-lint-2.13.1-linux-amd64/golangci-lint run --path-mode=abs] in [/home/runner/hive/hive/src] ...
+2026-09-29T00:37:43.2567217Z /home/runner/hive/hive/src/pkg/discord/bot.go:1: : # github.com/hivecommons/hive/pkg/discord [github.com/hivecommons/hive/pkg/discord.test]
+2026-09-29T00:37:43.2589361Z ##[error]pkg/discord/send_contract_test.go:201:12: undefined: discordRetryAfter
+2026-09-29T00:37:43.2597489Z ##[error]pkg/discord/send_contract_test.go:204:12: undefined: discordRetryAfter
+2026-09-29T00:37:43.2598798Z ##[error]pkg/discord/send_contract_test.go:207:12: undefined: discordRetryAfter
+2026-09-29T00:37:43.2599857Z ##[error]pkg/discord/send_contract_test.go:210:12: undefined: discordRetryAfter (typecheck)
+2026-09-29T00:37:43.2600671Z package discord

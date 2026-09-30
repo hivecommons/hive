@@ -1,1 +1,0 @@
-- FIX-BEFORE-NEW re-engagement kicks and the red-PR overlay now tell the agent to end the turn after pushing a repair instead of polling CI (#9673).

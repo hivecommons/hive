@@ -44,6 +44,10 @@ var reviewRequestPollInterval = 10 * time.Second
 // "resolve_thread". Body is required for request_changes/comment (GitHub
 // rejects an empty non-approve review) and optional for approve.
 //
+// On a pull request this hive did not open, "approve" and "request_changes"
+// are rewritten to a COMMENT before they reach GitHub
+// (review_contributor_guard.go, hivecommons/hive#9590).
+//
 // ThreadID (hivecommons/hive#7360) names one inline review thread — the
 // "PRRT_…" node id review-threads.json lists. With Event "comment" it turns
 // the request into an in-thread REPLY instead of a PR-level review; with
@@ -319,6 +323,18 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 		return
 	}
 
+	// COMMENT-only on contributor PRs (hivecommons/hive#9590). The hive
+	// reviews everyone's work but adjudicates only its own: an APPROVE or
+	// REQUEST_CHANGES aimed at a PR this hive did not open becomes a COMMENT
+	// here, whatever the reviewer asked for. See review_contributor_guard.go.
+	commentOnlyNote := ""
+	apiEvent, state, commentOnlyNote = c.enforceCommentOnlyForContributorPR(ctx, req, apiEvent, state)
+	if commentOnlyNote != "" {
+		// COMMENT is the one review event GitHub refuses with an empty body,
+		// and a downgraded APPROVE may have had none.
+		req.Body = contributorCommentBody(req.Body)
+	}
+
 	// Per-head backstop. Everything above depends on the agent doing the
 	// right thing; this does not. A head that already carries as many hive
 	// reviews as it can legitimately receive (one in combined mode, one per
@@ -440,6 +456,9 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	resp.OK = true
 	resp.Number = req.Number
 	resp.State = state
+	if commentOnlyNote != "" {
+		resp.Note = commentOnlyNote
+	}
 
 	// Record where the review landed so the queue views can link to it. A
 	// failure here is logged and swallowed: the review is already posted, and

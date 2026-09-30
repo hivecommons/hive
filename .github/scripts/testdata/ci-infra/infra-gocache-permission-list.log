@@ -1,0 +1,40 @@
+﻿2026-09-29T11:18:24.9826092Z Current runner version: '2.337.0'
+2026-09-29T11:18:24.9834619Z Runner name: 'hive-runners-w7f7t-runner-wmfts'
+2026-09-29T11:18:24.9835496Z Runner group name: 'Default'
+2026-09-29T11:18:24.9836506Z Machine name: 'hive-runners-w7f7t-runner-wmfts'
+2026-09-29T11:18:36.3614140Z ##[group]Run set -o pipefail
+2026-09-29T11:18:36.3614907Z [36;1mset -o pipefail[0m
+2026-09-29T11:18:36.3615561Z [36;1m# -list compiles the test binary (cached for the run below) and[0m
+2026-09-29T11:18:36.3616603Z [36;1m# prints top-level Test/Example/Fuzz function names. All three kinds[0m
+2026-09-29T11:18:36.3617645Z [36;1m# are included so none can fall out of every slice; Benchmarks are[0m
+2026-09-29T11:18:36.3618781Z [36;1m# not run by `go test` without -bench, matching the unsharded run.[0m
+2026-09-29T11:18:36.3620119Z [36;1mgo test ./pkg/agent -short -list '.*' | grep -E '^(Test|Example|Fuzz)' | LC_ALL=C sort > all-tests.txt[0m
+2026-09-29T11:18:36.3621410Z [36;1mif [ ! -s all-tests.txt ]; then[0m
+2026-09-29T11:18:36.3622479Z [36;1m  echo "::error::go test -list produced no test functions for pkg/agent — refusing to run an empty slice (fail closed)"[0m
+2026-09-29T11:18:36.3623422Z [36;1m  exit 1[0m
+2026-09-29T11:18:36.3623725Z [36;1mfi[0m
+2026-09-29T11:18:36.3624434Z [36;1mawk -v n="$TOTAL" -v i="$IDX" 'NR % n == i - 1' all-tests.txt > slice.txt[0m
+2026-09-29T11:18:36.3625409Z [36;1mecho "slice $IDX/$TOTAL: $(wc -l < slice.txt) of $(wc -l < all-tests.txt) test functions"[0m
+2026-09-29T11:18:36.3626327Z [36;1mRUN="^($(paste -sd'|' slice.txt))$"[0m
+2026-09-29T11:18:36.3627029Z [36;1mSHUFFLE=""[0m
+2026-09-29T11:18:36.3627822Z [36;1mif [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then SHUFFLE="-shuffle=on"; fi[0m
+2026-09-29T11:18:36.3629266Z [36;1mbash "$GITHUB_WORKSPACE/.github/scripts/ci-gotestsum-preserve-coverprofile.sh" \[0m
+2026-09-29T11:18:36.3630591Z [36;1m  gotestsum --format=standard-verbose --rerun-fails=2 --rerun-fails-max-failures=5 \[0m
+2026-09-29T11:18:36.3631577Z [36;1m  --rerun-fails-report=flaky-tests-agent-"$IDX".txt \[0m
+2026-09-29T11:18:36.3632164Z [36;1m  --packages="./pkg/agent" --junitfile junit-agent-"$IDX".xml \[0m
+2026-09-29T11:18:36.3632897Z [36;1m  -- -short -race -count=1 -v $SHUFFLE -run "$RUN" -coverprofile=coverage-agent-"$IDX".out \[0m
+2026-09-29T11:18:36.3633713Z [36;1m  2>&1 | grep --line-buffered -vE '^=== (RUN|PAUSE|CONT) ' | tee test-agent-"$IDX".log[0m
+2026-09-29T11:18:36.3649376Z shell: /usr/bin/bash -e {0}
+2026-09-29T11:18:36.3649745Z env:
+2026-09-29T11:18:36.3650027Z   CGO_ENABLED: 1
+2026-09-29T11:18:36.3650331Z   KUBERNETES_SERVICE_HOST: 
+2026-09-29T11:18:36.3650698Z   KUBERNETES_SERVICE_PORT: 
+2026-09-29T11:18:36.3651395Z   ACTIONS_CACHE_SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
+2026-09-29T11:18:36.3651813Z   GOTOOLCHAIN: local
+2026-09-29T11:18:36.3652111Z   IDX: 1
+2026-09-29T11:18:36.3652367Z   TOTAL: 5
+2026-09-29T11:18:36.3652774Z   HIVE_TEST_REQUIRE_BEHAVIOURAL: 1
+2026-09-29T11:18:36.3653142Z ##[endgroup]
+2026-09-29T11:18:36.4211693Z # ./pkg/agent
+2026-09-29T11:18:36.4213376Z open /mnt/gocache/build/13/139c8a6aaecaad15c602dc0095a2d7b36cb10c87b0473905b4c84f9435da6436-a: permission denied
+2026-09-29T11:18:36.4258025Z ##[error]Process completed with exit code 1.

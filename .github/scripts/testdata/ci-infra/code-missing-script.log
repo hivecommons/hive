@@ -1,0 +1,12 @@
+﻿2026-09-29T05:54:24.1920378Z Current runner version: '2.337.0'
+2026-09-29T05:54:24.1956069Z ##[group]Runner Image Provisioner
+2026-09-29T05:54:24.1957547Z Hosted Compute Agent
+2026-09-29T05:54:24.1958617Z Version: 20260828.587
+2026-09-29T05:54:39.2995848Z ##[group]Run bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
+2026-09-29T05:54:39.2996435Z [36;1mbash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"[0m
+2026-09-29T05:54:39.3259216Z shell: /usr/bin/bash -e {0}
+2026-09-29T05:54:39.3259548Z env:
+2026-09-29T05:54:39.3259800Z   GOTOOLCHAIN: local
+2026-09-29T05:54:39.3260083Z ##[endgroup]
+2026-09-29T05:54:39.3375609Z bash: /home/runner/work/hive/hive/.github/scripts/go-cache-guard.sh: No such file or directory
+2026-09-29T05:54:39.3389442Z ##[error]Process completed with exit code 127.

@@ -24,9 +24,9 @@ const (
 	// without our noticing eventually releases the issue back for work.
 	claimLedgerTTL = 72 * time.Hour
 
-	// weakClaimDeferWindow bounds how long a WEAK claim — an external-authored
-	// PR (#3768) or a non-closing "Refs #N" reference (#3980) — defers agent
-	// dispatch of the issue it covers (kubestellar/hive#4929).
+	// weakClaimDeferWindow bounds how long a non-closing "Refs #N" reference
+	// (#3980) defers agent dispatch of the issue it covers
+	// (kubestellar/hive#4929).
 	//
 	// Weak claims used to be ignored outright on the agent side, on the
 	// reasoning that a PR which never claimed to close the issue must not
@@ -130,6 +130,13 @@ type IssueClaim struct {
 	PRURL string `json:"pr_url"`
 	// PRAuthor is the login that opened the claiming PR.
 	PRAuthor string `json:"pr_author"`
+	// PRState is the claiming pull request's last observed lifecycle state:
+	// "open", "merged", or "closed". It is persisted so one verification of a
+	// weak/merged claim can be reused only while the claim's state is unchanged.
+	PRState string `json:"pr_state,omitempty"`
+	// PRHead is the claiming pull request's last observed head commit SHA. It
+	// invalidates stored verification when new work is pushed to the PR.
+	PRHead string `json:"pr_head,omitempty"`
 	// ObservedAt is when this claim was last confirmed by a live API call.
 	// It is the basis for TTL expiry.
 	ObservedAt time.Time `json:"observed_at"`
@@ -147,10 +154,9 @@ type IssueClaim struct {
 	// ExternalAuthor marks a claim whose PR was opened by an account that is
 	// NOT this hive (kubestellar/hive#3768). External claims exist so the
 	// contribute queue can stop offering an issue that a human contributor's
-	// open PR already fixes. On the agent side, FilterClaimedIssues treats this
-	// as a WEAK claim (kubestellar/hive#4929): it defers dispatch for a bounded
-	// window rather than either freezing it forever or ignoring it outright, so
-	// a stranger's PR still cannot permanently freeze the hive's own pipeline.
+	// open PR already fixes. On the agent side, FilterClaimedIssues suppresses
+	// open external claims unless the PR is red+stale, because dispatching the
+	// same issue would duplicate the contributor's open PR.
 	// The field is omitempty-false so ledgers written before #3768 — which only
 	// ever recorded hive-authored claims — unmarshal as hive-authored (false),
 	// keeping their agent-side suppression intact across the upgrade.
@@ -192,6 +198,21 @@ type IssueClaim struct {
 	MergedPR bool `json:"merged_pr,omitempty"`
 	// MergedAt is when the claiming PR merged. Zero unless MergedPR is set.
 	MergedAt time.Time `json:"merged_at,omitempty"`
+	// VerifiedAt records when hive saw a follow-up verification outcome for
+	// this weak/merged claim. While PRState and PRHead remain unchanged from the
+	// verified values, FilterClaimedIssues suppresses the issue instead of
+	// asking another agent to verify the same evidence again.
+	VerifiedAt      time.Time `json:"verified_at,omitempty"`
+	VerifiedPRState string    `json:"verified_pr_state,omitempty"`
+	VerifiedPRHead  string    `json:"verified_pr_head,omitempty"`
+	// VerificationRequestedAt records the first kick that asked an agent to
+	// verify this weak/merged claim at the current PR state/head. A later kick
+	// only treats labels such as hive/likely-done as verification if this
+	// request already existed, preventing SyncIssuePRClaimLabels from causing
+	// first-kick self-suppression.
+	VerificationRequestedAt      time.Time `json:"verification_requested_at,omitempty"`
+	VerificationRequestedPRState string    `json:"verification_requested_pr_state,omitempty"`
+	VerificationRequestedHead    string    `json:"verification_requested_head,omitempty"`
 	// Source records how the claim was recovered. Empty for the enumeration
 	// scan (every claim before #7871). ClaimSourceVerdict marks a claim
 	// recovered from a `no_work_needed` verdict reason and verified against
@@ -237,6 +258,33 @@ func (c IssueClaim) SettledAt() time.Time {
 		return c.FirstObservedAt
 	}
 	return c.ObservedAt
+}
+
+func claimPRState(c IssueClaim) string {
+	state := strings.ToLower(strings.TrimSpace(c.PRState))
+	if state != "" {
+		return state
+	}
+	if c.MergedPR {
+		return PRStateMerged
+	}
+	return PRStateOpen
+}
+
+func claimPRHead(c IssueClaim) string {
+	return strings.TrimSpace(c.PRHead)
+}
+
+func claimVerificationUnchanged(c IssueClaim) bool {
+	return !c.VerifiedAt.IsZero() &&
+		claimPRState(c) == strings.ToLower(strings.TrimSpace(c.VerifiedPRState)) &&
+		claimPRHead(c) == strings.TrimSpace(c.VerifiedPRHead)
+}
+
+func claimVerificationWasRequested(c IssueClaim) bool {
+	return !c.VerificationRequestedAt.IsZero() &&
+		claimPRState(c) == strings.ToLower(strings.TrimSpace(c.VerificationRequestedPRState)) &&
+		claimPRHead(c) == strings.TrimSpace(c.VerificationRequestedHead)
 }
 
 // SettledStale reports whether a settled claim has held its issue for at
@@ -550,6 +598,31 @@ func headRef(pr *gh.PullRequest) string {
 	return pr.GetHead().GetRef()
 }
 
+// headSHA returns the PR's head commit SHA, guarding the nested pointers.
+func headSHA(pr *gh.PullRequest) string {
+	if pr == nil || pr.GetHead() == nil {
+		return ""
+	}
+	return pr.GetHead().GetSHA()
+}
+
+func observedPRState(pr *gh.PullRequest) string {
+	if pr == nil {
+		return ""
+	}
+	state := strings.ToLower(strings.TrimSpace(pr.GetState()))
+	if state != "" {
+		return state
+	}
+	if !pr.GetMergedAt().Time.IsZero() || pr.GetMerged() {
+		return PRStateMerged
+	}
+	if !pr.GetClosedAt().Time.IsZero() {
+		return PRStateClosed
+	}
+	return PRStateOpen
+}
+
 // issueFromBranchName recovers an issue number from a branch name. It is a
 // heuristic, not a guarantee: it is only consulted when a PR carries no
 // closing-keyword reference at all, and a false positive costs at most one
@@ -673,6 +746,8 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 			PRRepo:          repo,
 			PRURL:           pr.GetHTMLURL(),
 			PRAuthor:        author,
+			PRState:         observedPRState(pr),
+			PRHead:          headSHA(pr),
 			ObservedAt:      now,
 			FirstObservedAt: now,
 			ExternalAuthor:  external,
@@ -756,6 +831,9 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 					continue
 				}
 				prClaims := claimsFromPR(pr, repo, identity, now)
+				for i := range prClaims {
+					prClaims[i].PRState = PRStateOpen
+				}
 				claims = append(claims, prClaims...)
 				history = append(history, prHistoryFromClaims(prClaims, PRStateOpen, now)...)
 			}
@@ -827,6 +905,7 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 				for _, claim := range prClaims {
 					claim.MergedPR = true
 					claim.MergedAt = mergedAt
+					claim.PRState = PRStateMerged
 					// Anchor the weak-claim deferral window at the merge, not
 					// at first observation: a merged `Refs #N` defers its
 					// issue's remainder for weakClaimDeferWindow measured from
@@ -969,6 +1048,14 @@ func (l *ClaimLedger) anchorFirstObservedLocked(prev map[string]IssueClaim, c Is
 		existing.PRNumber == c.PRNumber && existing.PRRepo == c.PRRepo &&
 		!existing.FirstObservedAt.IsZero() {
 		c.FirstObservedAt = existing.FirstObservedAt
+		if claimPRState(existing) == claimPRState(c) && claimPRHead(existing) == claimPRHead(c) {
+			c.VerifiedAt = existing.VerifiedAt
+			c.VerifiedPRState = existing.VerifiedPRState
+			c.VerifiedPRHead = existing.VerifiedPRHead
+			c.VerificationRequestedAt = existing.VerificationRequestedAt
+			c.VerificationRequestedPRState = existing.VerificationRequestedPRState
+			c.VerificationRequestedHead = existing.VerificationRequestedHead
+		}
 		return c
 	}
 	if c.FirstObservedAt.IsZero() {
@@ -980,7 +1067,7 @@ func (l *ClaimLedger) anchorFirstObservedLocked(prev map[string]IssueClaim, c Is
 	return c
 }
 
-// weakDeferExpired reports whether a weak claim's deferral window has elapsed,
+// weakDeferExpired reports whether a reference claim's deferral window has elapsed,
 // i.e. whether the issue should be released back for agent work despite the
 // claiming PR still being open. A claim with no usable anchor is treated as
 // NOT expired: an unanchored claim is one we just started tracking, and
@@ -1039,6 +1126,52 @@ func (l *ClaimLedger) Record(c IssueClaim) error {
 	l.insertLocked(l.anchorFirstObservedLocked(l.claims, c))
 	l.mu.Unlock()
 	return l.Save()
+}
+
+// MarkVerified records that a weak/merged claim was verified at its current PR
+// state/head. The mark is intentionally tied to those values so a merge, close,
+// or new commit re-lists the issue once for fresh verification.
+func (l *ClaimLedger) MarkVerified(repo string, issue int, prState, prHead string, now time.Time) {
+	if l == nil || repo == "" || issue <= 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if now.IsZero() {
+		now = l.now()
+	}
+	key := claimKey(repo, issue)
+	c, ok := l.claims[key]
+	if !ok {
+		return
+	}
+	c.VerifiedAt = now
+	c.VerifiedPRState = strings.ToLower(strings.TrimSpace(prState))
+	c.VerifiedPRHead = strings.TrimSpace(prHead)
+	l.claims[key] = c
+}
+
+func (l *ClaimLedger) markVerificationRequested(repo string, issue int) {
+	if l == nil || repo == "" || issue <= 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	key := claimKey(repo, issue)
+	c, ok := l.claims[key]
+	if !ok {
+		return
+	}
+	state, head := claimPRState(c), claimPRHead(c)
+	if !c.VerificationRequestedAt.IsZero() &&
+		strings.EqualFold(c.VerificationRequestedPRState, state) &&
+		strings.TrimSpace(c.VerificationRequestedHead) == head {
+		return
+	}
+	c.VerificationRequestedAt = l.now()
+	c.VerificationRequestedPRState = state
+	c.VerificationRequestedHead = head
+	l.claims[key] = c
 }
 
 // SetTTL overrides the entry lifetime. Intended for tests.
@@ -1286,6 +1419,12 @@ func removeIssueLabel(labels []string, label string) []string {
 	return out
 }
 
+func issueHasVerificationOutcomeLabel(labels []string) bool {
+	return issueHasLabel(labels, VerifiedOpenLabel) ||
+		issueHasLabel(labels, CoveredByPRLabel) ||
+		issueHasLabel(labels, LikelyDoneLabel)
+}
+
 func annotateIssueWithClaim(issue *Issue, claim IssueClaim) {
 	if issue == nil || claim.PRNumber <= 0 {
 		return
@@ -1319,7 +1458,7 @@ func annotateIssueWithClaim(issue *Issue, claim IssueClaim) {
 //
 // A strong open claim from this hive still suppresses duplicate agent work while
 // the PR is live. Pending evidence that is not safe to treat as resolved — a
-// weak external/reference claim, or any merged PR claim that left the issue open
+// weak reference claim, or any merged PR claim that left the issue open
 // — is kept actionable and annotated with linked PR context/labels (#8876).
 // That lets repo cards and agents see the verified PR without auto-hiding an
 // issue on text evidence alone.
@@ -1343,40 +1482,8 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 			kept = append(kept, issue)
 			continue
 		}
+		originalLabels := append([]string(nil), issue.Labels...)
 		annotateIssueWithClaim(&issue, claim)
-		if claim.MergedPR {
-			annotated = true
-			kept = append(kept, issue)
-			if logger != nil {
-				logger.Info("releasing issue: merged PR claim needs verification",
-					"repo", issue.Repo, "issue", issue.Number, "claimed_by_pr", claim.PRNumber,
-					"pr_repo", claim.PRRepo, "pr_url", claim.PRURL, "merged_at", claim.MergedAt)
-			}
-			continue
-		}
-		// A WEAK claim is one that does not assert a trusted closing relationship:
-		// an EXTERNAL PR the hive did not author (#3768), or a non-closing
-		// "Refs #N" reference (#3980). #8876 makes that evidence visible instead
-		// of hiding the issue: the issue stays actionable with linked PR context and
-		// a pending label for a human/agent to verify.
-		if claim.ExternalAuthor || claim.Reference {
-			annotated = true
-			kept = append(kept, issue)
-			if logger != nil {
-				logger.Info("keeping issue actionable: open PR weakly claims it",
-					"repo", issue.Repo,
-					"issue", issue.Number,
-					"issue_title", issue.Title,
-					"claimed_by_pr", claim.PRNumber,
-					"pr_repo", claim.PRRepo,
-					"pr_url", claim.PRURL,
-					"pr_author", claim.PRAuthor,
-					"external", claim.ExternalAuthor,
-					"reference", claim.Reference,
-				)
-			}
-			continue
-		}
 		// Fix #3: release (do NOT suppress) when the claiming PR is red on a
 		// required check AND stale. The claiming PR lives in claim.PRRepo /
 		// claim.PRNumber (which may differ from the issue's repo for cross-repo
@@ -1394,6 +1501,77 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 					"claimed_by_pr", claim.PRNumber,
 					"pr_repo", claim.PRRepo,
 					"pr_url", claim.PRURL,
+				)
+			}
+			continue
+		}
+		if claimVerificationUnchanged(claim) {
+			suppressed++
+			if logger != nil {
+				logger.Info("suppressing issue: verification unchanged",
+					"repo", issue.Repo, "issue", issue.Number, "claimed_by_pr", claim.PRNumber,
+					"pr_repo", claim.PRRepo, "pr_url", claim.PRURL, "head", claimPRHead(claim))
+			}
+			continue
+		}
+		if (claim.MergedPR || claim.Reference) &&
+			claimVerificationWasRequested(claim) &&
+			issueHasVerificationOutcomeLabel(originalLabels) {
+			ledger.MarkVerified(issue.Repo, issue.Number, claimPRState(claim), claimPRHead(claim), time.Time{})
+			suppressed++
+			if logger != nil {
+				logger.Info("suppressing issue: verification unchanged",
+					"repo", issue.Repo, "issue", issue.Number, "claimed_by_pr", claim.PRNumber,
+					"pr_repo", claim.PRRepo, "pr_url", claim.PRURL, "head", claimPRHead(claim))
+			}
+			continue
+		}
+		if claim.MergedPR {
+			annotated = true
+			ledger.markVerificationRequested(issue.Repo, issue.Number)
+			kept = append(kept, issue)
+			if logger != nil {
+				logger.Info("releasing issue: merged PR claim needs verification",
+					"repo", issue.Repo, "issue", issue.Number, "claimed_by_pr", claim.PRNumber,
+					"pr_repo", claim.PRRepo, "pr_url", claim.PRURL, "merged_at", claim.MergedAt)
+			}
+			continue
+		}
+		// A WEAK claim is one that does not assert a trusted closing relationship:
+		// an EXTERNAL PR the hive did not author (#3768), or a non-closing
+		// "Refs #N" reference (#3980). #8876 makes that evidence visible instead
+		// of hiding the issue: the issue stays actionable with linked PR context and
+		// a pending label for a human/agent to verify.
+		if claim.ExternalAuthor || claim.Reference {
+			if claim.ExternalAuthor && !claim.MergedPR {
+				suppressed++
+				if logger != nil {
+					logger.Info("suppressing issue: open external PR covers it",
+						"repo", issue.Repo,
+						"issue", issue.Number,
+						"issue_title", issue.Title,
+						"claimed_by_pr", claim.PRNumber,
+						"pr_repo", claim.PRRepo,
+						"pr_url", claim.PRURL,
+						"pr_author", claim.PRAuthor,
+					)
+				}
+				continue
+			}
+			annotated = true
+			ledger.markVerificationRequested(issue.Repo, issue.Number)
+			kept = append(kept, issue)
+			if logger != nil {
+				logger.Info("keeping issue actionable: open PR weakly claims it",
+					"repo", issue.Repo,
+					"issue", issue.Number,
+					"issue_title", issue.Title,
+					"claimed_by_pr", claim.PRNumber,
+					"pr_repo", claim.PRRepo,
+					"pr_url", claim.PRURL,
+					"pr_author", claim.PRAuthor,
+					"external", claim.ExternalAuthor,
+					"reference", claim.Reference,
 				)
 			}
 			continue
@@ -1519,6 +1697,9 @@ func ApplyDuplicatePRGuard(
 
 	SyncIssuePRClaimLabels(ctx, client, result, ledger, logger)
 	suppressed := FilterClaimedIssues(result, ledger, redStale, logger)
+	if saveErr := ledger.Save(); saveErr != nil && logger != nil {
+		logger.Warn("duplicate-PR guard: failed to persist filtered claim ledger", "error", saveErr)
+	}
 	if logger != nil {
 		logger.Info("duplicate-PR guard applied",
 			"claims", ledger.Len(),
