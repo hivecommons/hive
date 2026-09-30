@@ -177,6 +177,14 @@ carries the note.
   counts: `resumed`, `fallback` by reason (manager refusals collapse to `kick
   refused`), `skipped` by reason (draft, fork, escalated), `deferred`
   attempts, `handoffs_queued`, `handoffs_delivered`, and `pruned` by reason.
+  When `/metrics` is enabled they are also exported as Prometheus counters:
+  `hive_pr_followup_resumed_total`, `hive_pr_followup_fallback_total{reason}`,
+  `hive_pr_followup_skipped_total{reason}`, `hive_pr_followup_deferred_total`,
+  `hive_pr_followup_handoffs_total{state="queued|delivered"}` and
+  `hive_pr_followup_pointers_pruned_total{reason}`. `cmd/hive` reads
+  `stats.json` through `dashboard.SetPRFollowUpCountersProvider`, so
+  `pkg/dashboard` does not import `pkg/prfollowup`. The series are absent
+  until the counter file exists.
 - **Audit trail.** Every routing decision (`pr_followup_routed`, with
   outcome, reason, event kinds and queued count), skip transition
   (`pr_followup_skipped`) and prune (`pr_followup_pruned`) is written to the
@@ -212,8 +220,5 @@ were.
 2. **`hive-open-pr --handoff`.** The `handoff` object is accepted in the
    request JSON, but the `hive-open-pr` wrapper has no flag for it yet, so
    agents using the wrapper get the note from their PR body sections.
-3. **Counters on `/metrics`.** The counters are in `stats.json` and the audit
-   trail; exposing them as Prometheus series would need a dashboard seam that
-   does not import `pkg/prfollowup`.
-4. **Backend-native resume ids**, if a backend later offers a stable,
+3. **Backend-native resume ids**, if a backend later offers a stable,
    capturable resume handle, could complement the note.

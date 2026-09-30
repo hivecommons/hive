@@ -3851,6 +3851,9 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	// even for authenticated agents (see pkg/agent/authprobe.go).
 	dashboard.SetAgentAuthProvider(b.agentMgr.AgentAuthAvailable)
 
+	// PR follow-up resume counters on /metrics (#9583).
+	dashboard.SetPRFollowUpCountersProvider(prFollowUpMetricsCounters)
+
 	// Release-line drift surface (#6960): report how far the hosted edge line
 	// (v5) has fallen behind the stable default branch (v4). Reuses the hub's
 	// commit-behind compare/cache path; renders "unknown" (never a healthy

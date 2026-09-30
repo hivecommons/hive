@@ -10,6 +10,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/prfollowup"
@@ -233,4 +234,23 @@ func sweepPRFollowUps(ctx context.Context, cfg *config.Config, client *github.Cl
 	}
 	res := prfollowup.Sweep(ctx, opts, now)
 	return &res
+}
+
+// prFollowUpMetricsCounters is the dashboard's /metrics provider for the
+// follow-up counters. It reads stats.json from the pointer directory on each
+// scrape; a missing, never-written or unreadable counter file reports nothing.
+func prFollowUpMetricsCounters() (dashboard.PRFollowUpCounters, bool) {
+	s, err := prfollowup.ReadStats(prfollowup.Dir())
+	if err != nil || s.UpdatedAt.IsZero() {
+		return dashboard.PRFollowUpCounters{}, false
+	}
+	return dashboard.PRFollowUpCounters{
+		Resumed:           s.Resumed,
+		Fallback:          s.Fallback,
+		Skipped:           s.Skipped,
+		Deferred:          s.Deferred,
+		HandoffsQueued:    s.HandoffsQueued,
+		HandoffsDelivered: s.HandoffsDelivered,
+		Pruned:            s.Pruned,
+	}, true
 }
