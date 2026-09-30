@@ -1,0 +1,1 @@
+- Scanner policy templates (`scanner*.md`) now instruct agents to leave a `hive/awaiting-ci` note as a PR comment before moving on after a push, so a human reading the PR directly — not just the dashboard's "Waiting on CI" state — can see the CI wait was deliberate rather than the agent stalling (#9673).
