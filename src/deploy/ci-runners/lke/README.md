@@ -160,10 +160,10 @@ unset GITHUB_TOKEN && gh variable set HIVE_RUNNER_LABELS --repo hivecommons/hive
    `hive-ci-runner=true` labels from the vllm-d nodes.
 4. Optionally rename: uninstall the LKE release, set
    `runnerScaleSetName: hive-runners` in the values file, reinstall, and set
-   `HIVE_RUNNER_LABELS` back to `["self-hosted","hive"]`.
+   `HIVE_RUNNER_LABELS` back to `["hive-runners"]`.
 
 Rollback at any point before step 3 is the same variable set back to
-`["self-hosted","hive"]`; the vllm-d runners pick up the queue on the next job.
+`["hive-runners"]`; the vllm-d runners pick up the queue on the next job.
 
 ## 7. Operating
 
