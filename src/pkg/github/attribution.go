@@ -76,6 +76,10 @@ const (
 	// refused by the relay and never reach this entry. It is distinct from
 	// hive_label_applied, which is the hive labeling on its own initiative.
 	AuditActionAgentLabelApplied = "agent_label_applied"
+	// AuditActionAgentReviewRequested is recorded when the issue-request
+	// watcher asks users and/or teams to review a PR on an agent's behalf
+	// (kind "request_review", #9587). The detail carries who was asked.
+	AuditActionAgentReviewRequested = "agent_review_requested"
 	// AuditActionIssueClosed is recorded when the issue-request watcher closes
 	// an issue on an agent's behalf after the reporter-confirmation gate passes
 	// or an explicit override reason has been posted.

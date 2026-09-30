@@ -21,6 +21,7 @@ const (
 	KindPullRequestMerge  = "pull_request_merge"
 	KindLabelMutation     = "label_mutation"
 	KindReviewSubmit      = "review_submit"
+	KindReviewRequest     = "review_request"
 	KindBranchPush        = "branch_push"
 	KindBranchUpdate      = "branch_update"
 	KindSubIssueLink      = "sub_issue_link"

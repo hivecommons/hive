@@ -29,8 +29,8 @@ const WriteSurfaceAllowAll = "*"
 // explanation and audited as agent_write_refused.
 //
 // Operation names are the pkg/github WriteOp* constants: open_pr,
-// create_issue, comment, claim, close_issue, label, review, resolve_thread,
-// merge_pr.
+// create_issue, comment, claim, close_issue, label, request_review, review,
+// resolve_thread, merge_pr.
 // See docs/github-write-surface.md.
 type WriteSurfaceConfig struct {
 	// Allowlist maps an agent (lane) name to the operations it may perform.
@@ -90,6 +90,7 @@ var KnownWriteOps = []string{
 	"claim",
 	"close_issue",
 	"label",
+	"request_review",
 	"review",
 	"resolve_thread",
 	"merge_pr",

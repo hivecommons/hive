@@ -31,19 +31,22 @@ the **file's owner**, not from anything written inside the file. The watcher
 enforces the same per-agent mode gate (`CanCreateIssues`, mode ≥
 `ISSUES_ONLY`) and UID forge-resistance as the direct `gh` path would need —
 this shim **adds no privilege**. The same `CanCreateIssues` gate covers all
-kinds (issue, comment, claim, close, label): commenting, claiming and
-labeling an issue are all issue-writes under the same tier.
+kinds (issue, comment, claim, close, label, request-review): commenting,
+claiming, labeling and requesting review are all issue-writes under the same
+tier.
 
 ## Usage
 
 Shapes are selected by an optional leading positional keyword (`comment`,
-`claim`, `close` or `label`; the default with no keyword is `issue`):
+`claim`, `close`, `label` or `request-review`; the default with no keyword is
+`issue`):
 
 ```sh
 hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>]
 hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>"
 hive-open-issue claim   --repo <owner/repo> <number|url>
 hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
+hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b] [--team-reviewer t]
 ```
 
 | Flag | Aliases | Applies to | Notes |
@@ -54,8 +57,10 @@ hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove
 | `--body-file` | `-F` | issue, comment | reads body from a file; `-` reads stdin |
 | `--label` | `-l`, `--add-label` | issue, label | repeatable; comma-separated values are split |
 | `--remove-label` | — | label | repeatable; labels to take off the item |
+| `--reviewer` | `--add-reviewer` | request-review | repeatable; comma-separated GitHub logins to ask for a review |
+| `--team-reviewer` | — | request-review | repeatable; team slugs (an `org/` prefix is accepted) to ask for a review |
 | `--parent` | — | issue | issue number in the same repo to link the new issue to as a GitHub sub-issue |
-| `--number` | — | comment, claim, close, label | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
+| `--number` | — | comment, claim, close, label, request-review | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
 | `--dry-run` | `-n` | all | validate the arguments and print the exact request that would be written, then exit `0` **without writing it** — nothing is created, commented, claimed, or closed |
 
 Both `--flag value` and `--flag=value` forms work. Flags `gh` accepts but this
@@ -124,6 +129,16 @@ Hive-controlled labels are refused in both directions: the merge-queue label
 verdict, so an agent may not set them; one reserved label refuses the whole
 request. Use `hive-open-issue claim` to record ownership. See
 [github-write-surface.md](github-write-surface.md).
+
+### `request-review`
+
+`--repo`, a PR number or URL, and at least one `--reviewer` or
+`--team-reviewer` are required. The hive asks those users and teams to review
+the PR and audits it as `agent_review_requested` with the repository and number
+([#9587](https://github.com/hivecommons/hive/issues/9587)). It is the audited
+alternative to `gh pr edit --add-reviewer`. Logins and team slugs are checked
+before any GitHub call; an impossible name, or more than 15 reviewers in total,
+is quarantined as malformed rather than retried.
 
 ## It is asynchronous, by design
 

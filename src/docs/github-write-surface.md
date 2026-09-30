@@ -37,6 +37,7 @@ Each relay authorizes a request in this order. It stops at the first refusal.
 | `claim` | `issue_request_watcher.go` kind `claim` | `hive-open-issue claim` | `agent_issue_claimed` | yes | yes / issue number |
 | `close_issue` | `issue_request_watcher.go` kind `close` | `hive-open-issue close` | `agent_issue_closed` (`pr_closed` when the number is a PR) | yes | yes / issue or PR number |
 | `label` | `issue_request_watcher.go` kind `label` (`.../issue-requests`) | `hive-open-issue label` | `agent_label_applied` | yes | yes / issue or PR number |
+| `request_review` | `issue_request_watcher.go` kind `request_review` (`.../issue-requests`) | `hive-open-issue request-review` | `agent_review_requested` | yes | yes / PR number |
 | `review` | `review_request_watcher.go` events `approve`, `request_changes`, `comment`, `record_verdict`, and thread replies (`.../review-requests`) | `hive-review` | `agent_pr_reviewed` | yes | yes / PR number |
 | `resolve_thread` | `review_request_watcher.go` event `resolve_thread` | `hive-review` | `agent_pr_reviewed` (`state=thread_resolved`) | yes | yes / PR number |
 | `merge_pr` | `merge_request_watcher.go` (`.../merge-requests`) | `hive-merge` | `pr_merged` (`path=relay`, via `MergePR`) | yes | yes / PR number |
@@ -234,13 +235,14 @@ of them may reduce what an L6 hive can do by default.
   write path for that lane. Unlisted lanes and L6 hives keep direct access
   unless the operator turns enforcement on. `git push` needs its own relay
   first (below), or pushes would simply stop.
-- **New operations with no relay yet:** `push_branch` and `request_review`.
-  Each would be a new relay (request file, file-UID authorizer, allowlist
-  check, audit), following the existing ones. A hive with no allowlist would
-  allow them, like every other operation. The standalone `label` operation has
+- **New operation with no relay yet:** `push_branch`. It would be a new relay
+  (request file, file-UID authorizer, allowlist check, audit), following the
+  existing ones. A hive with no allowlist would allow it, like every other
+  operation. The standalone `label` and `request_review` operations have
   landed; see the inventory above.
-- **Routing the `gh` wrapper's label edits through the `label` relay.**
-  `gh issue edit --add-label` still reaches GitHub directly through the proxy;
-  the relay is the audited path an agent can choose. Switching the wrapper over
+- **Routing the `gh` wrapper's label and reviewer edits through the relays.**
+  `gh issue edit --add-label` and `gh pr edit --add-reviewer` still reach
+  GitHub directly through the proxy; the relays are the audited path an agent
+  can choose. Switching the wrapper over
   changes what a direct command does, so it waits on the same sign-off as
   enforcement.

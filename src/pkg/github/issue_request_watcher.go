@@ -72,19 +72,26 @@ const issueRequestMaxAge = 24 * time.Hour
 // "close" closes an issue only after the reporter-confirmation gate passes or
 // OverrideReason records an explicit maintainer override; "label" adds and/or
 // removes plain labels on an existing issue or PR (Number required), refusing
-// the hive-controlled labels listed in issue_request_label.go.
+// the hive-controlled labels listed in issue_request_label.go;
+// "request_review" asks users and/or teams to review an existing PR (Number
+// required), validated in issue_request_review.go.
 type IssueRequest struct {
-	Kind   string   `json:"kind,omitempty"` // "issue" (default) | "comment" | "claim" | "close" | "label"
+	Kind   string   `json:"kind,omitempty"` // "issue" (default) | "comment" | "claim" | "close" | "label" | "request_review"
 	Repo   string   `json:"repo"`
 	Title  string   `json:"title,omitempty"` // issue only
 	Body   string   `json:"body,omitempty"`
 	Labels []string `json:"labels,omitempty"` // issue: labels to create with; label: labels to add
-	Number int      `json:"number,omitempty"` // comment/claim/close/label: issue/PR number
+	Number int      `json:"number,omitempty"` // comment/claim/close/label/request_review: issue/PR number
 	Agent  string   `json:"agent,omitempty"`
 	// RemoveLabels are the labels a "label" request takes OFF the item. It may
 	// be combined with Labels in one request (an add and a remove of the same
 	// state change), and is ignored by every other kind.
 	RemoveLabels []string `json:"remove_labels,omitempty"` // label only
+	// Reviewers and TeamReviewers are the user logins and team slugs a
+	// "request_review" request asks to review the PR. At least one is
+	// required; both are ignored by every other kind.
+	Reviewers     []string `json:"reviewers,omitempty"`      // request_review only
+	TeamReviewers []string `json:"team_reviewers,omitempty"` // request_review only
 	// OverrideReason is required to deliberately close a human-filed bug-family
 	// issue before reporter confirmation (duplicate, not-a-bug, reporter asked).
 	OverrideReason string `json:"override_reason,omitempty"` // close only
@@ -126,6 +133,10 @@ type IssueResponse struct {
 	// re-reading the item.
 	LabelsAdded   []string `json:"labels_added,omitempty"`
 	LabelsRemoved []string `json:"labels_removed,omitempty"`
+	// ReviewersRequested and TeamReviewersRequested report who a
+	// "request_review" request asked, after normalization.
+	ReviewersRequested     []string `json:"reviewers_requested,omitempty"`
+	TeamReviewersRequested []string `json:"team_reviewers_requested,omitempty"`
 	// ParentLinked reports that the created issue was linked as a GitHub
 	// sub-issue of req.Parent. ParentLinkError carries the (non-fatal) reason
 	// when a requested link did not succeed; the issue is still created OK.
@@ -342,6 +353,12 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		} else if len(normalizeLabelList(req.Labels)) == 0 && len(normalizeLabelList(req.RemoveLabels)) == 0 {
 			shapeErr = "label request requires at least one label in labels or remove_labels"
 		}
+	case "request_review":
+		if strings.TrimSpace(req.Repo) == "" || req.Number <= 0 || strings.TrimSpace(req.Agent) == "" {
+			shapeErr = "request_review request requires repo, number, and agent"
+		} else {
+			shapeErr = reviewRequestShapeError(normalizeReviewers(req.Reviewers), normalizeTeamReviewers(req.TeamReviewers))
+		}
 	default:
 		shapeErr = "unknown kind " + strconv.Quote(kind)
 	}
@@ -445,6 +462,16 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			resp.OK = true
 			resp.Number = req.Number
 		}
+	case "request_review":
+		reviewers := normalizeReviewers(req.Reviewers)
+		teams := normalizeTeamReviewers(req.TeamReviewers)
+		err = c.RequestReviewers(ctx, req.Repo, req.Number, reviewers, teams)
+		if err == nil {
+			resp.OK = true
+			resp.Number = req.Number
+			resp.ReviewersRequested = reviewers
+			resp.TeamReviewersRequested = teams
+		}
 	case "close":
 		closedPR, err = c.closeIssue(ctx, req.Repo, req.Number, IssueCloseOptions{OverrideReason: req.OverrideReason})
 		if err == nil {
@@ -526,6 +553,8 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		action = AuditActionIssueClosed
 	case "label":
 		action = AuditActionAgentLabelApplied
+	case "request_review":
+		action = AuditActionAgentReviewRequested
 	}
 	extra := []string{
 		"url", resp.URL,
@@ -537,6 +566,12 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		extra = []string{
 			"added", strings.Join(resp.LabelsAdded, " "),
 			"removed", strings.Join(resp.LabelsRemoved, " "),
+		}
+	}
+	if kind == "request_review" {
+		extra = []string{
+			"reviewers", strings.Join(resp.ReviewersRequested, " "),
+			"team_reviewers", strings.Join(resp.TeamReviewersRequested, " "),
 		}
 	}
 	if closedPR {
@@ -568,6 +603,8 @@ func issueRequestWriteOp(kind string) string {
 		return WriteOpCloseIssue
 	case "label":
 		return WriteOpLabel
+	case "request_review":
+		return WriteOpRequestReview
 	default:
 		return WriteOpCreateIssue
 	}

@@ -21,6 +21,7 @@
 #   hive-open-issue claim   --repo <owner/repo> <number|url>
 #   hive-open-issue close   --repo <owner/repo> <number|url> [--override-reason "..."]
 #   hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
+#   hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b] [--team-reviewer t]
 #
 # --parent <n> links the new issue as a GitHub sub-issue of issue <n> in the
 # same repo (hivecommons/hive#9435), so the parent shows it in a native
@@ -51,6 +52,11 @@
 # records of a person's verdict, not descriptions of the item. Use
 # `hive-open-issue claim` for ownership.
 #
+# "request-review" asks users (--reviewer) and/or teams (--team-reviewer) to
+# review an existing PR through the audited write surface
+# (hivecommons/hive#9587) instead of a direct `gh pr edit --add-reviewer`.
+# The watcher audits it as agent_review_requested.
+#
 # "close" routes manual issue closes through the same reporter-confirmation gate
 # as PR-request closing keywords. Human-filed bug-family issues stay open unless
 # they carry the reporter-confirmed marker or the request includes an explicit
@@ -70,6 +76,7 @@ case "${1:-}" in
   claim) KIND="claim"; shift;;
   close) KIND="close"; shift;;
   label) KIND="label"; shift;;
+  request-review|request_review) KIND="request_review"; shift;;
 esac
 
 REPO=""; TITLE=""; BODY=""; BODY_FILE=""; NUMBER=""
@@ -78,7 +85,9 @@ PARENT=""
 DRY_RUN=0
 LABELS=()
 REMOVE_LABELS=()
-SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --remove-label, --number, --parent, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
+REVIEWERS=()
+TEAM_REVIEWERS=()
+SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --remove-label, --reviewer, --team-reviewer, --number, --parent, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo|-R) REPO="$2"; shift 2;;
@@ -87,6 +96,8 @@ while [ $# -gt 0 ]; do
     --body-file|-F) BODY_FILE="$2"; shift 2;;
     --label|-l|--add-label) LABELS+=("$2"); shift 2;;
     --remove-label) REMOVE_LABELS+=("$2"); shift 2;;
+    --reviewer|--add-reviewer) REVIEWERS+=("$2"); shift 2;;
+    --team-reviewer) TEAM_REVIEWERS+=("$2"); shift 2;;
     --number) NUMBER="$2"; shift 2;;
     --parent) PARENT="$2"; shift 2;;
     --override-reason) OVERRIDE_REASON="$2"; shift 2;;
@@ -96,6 +107,8 @@ while [ $# -gt 0 ]; do
     --body-file=*) BODY_FILE="${1#*=}"; shift;;
     --label=*|--add-label=*) LABELS+=("${1#*=}"); shift;;
     --remove-label=*) REMOVE_LABELS+=("${1#*=}"); shift;;
+    --reviewer=*|--add-reviewer=*) REVIEWERS+=("${1#*=}"); shift;;
+    --team-reviewer=*) TEAM_REVIEWERS+=("${1#*=}"); shift;;
     --number=*) NUMBER="${1#*=}"; shift;;
     --parent=*) PARENT="${1#*=}"; shift;;
     --override-reason=*) OVERRIDE_REASON="${1#*=}"; shift;;
@@ -118,7 +131,7 @@ while [ $# -gt 0 ]; do
       exit 2;;
     *)
       # A bare positional for a comment/claim is the issue/PR number or URL.
-      if { [ "$KIND" = "comment" ] || [ "$KIND" = "claim" ] || [ "$KIND" = "close" ] || [ "$KIND" = "label" ]; } && [ -z "$NUMBER" ]; then
+      if { [ "$KIND" = "comment" ] || [ "$KIND" = "claim" ] || [ "$KIND" = "close" ] || [ "$KIND" = "label" ] || [ "$KIND" = "request_review" ]; } && [ -z "$NUMBER" ]; then
         case "$1" in
           http://*|https://*) NUMBER="$(printf '%s' "$1" | sed -n 's#.*/\(issues\|pull\)/\([0-9][0-9]*\).*#\2#p')";;
           [0-9]*) NUMBER="$1";;
@@ -156,6 +169,15 @@ elif [ "$KIND" = "label" ]; then
   fi
   if [ ${#LABELS[@]} -eq 0 ] && [ ${#REMOVE_LABELS[@]} -eq 0 ]; then
     echo "hive-open-issue: label requires at least one --label or --remove-label" >&2
+    exit 2
+  fi
+elif [ "$KIND" = "request_review" ]; then
+  if [ -z "$REPO" ] || [ -z "$NUMBER" ]; then
+    echo "hive-open-issue: request-review requires --repo and a PR number (or URL)" >&2
+    exit 2
+  fi
+  if [ ${#REVIEWERS[@]} -eq 0 ] && [ ${#TEAM_REVIEWERS[@]} -eq 0 ]; then
+    echo "hive-open-issue: request-review requires at least one --reviewer or --team-reviewer" >&2
     exit 2
   fi
 elif [ "$KIND" = "claim" ] || [ "$KIND" = "close" ]; then
@@ -200,13 +222,19 @@ fi
 
 LABELS_JSON="$(printf '%s\n' "${LABELS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
 REMOVE_LABELS_JSON="$(printf '%s\n' "${REMOVE_LABELS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
-python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" "$REMOVE_LABELS_JSON" <<'PY'
+REVIEWERS_JSON="$(printf '%s\n' "${REVIEWERS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
+TEAM_REVIEWERS_JSON="$(printf '%s\n' "${TEAM_REVIEWERS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
+python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" "$REMOVE_LABELS_JSON" "$REVIEWERS_JSON" "$TEAM_REVIEWERS_JSON" <<'PY'
 import json, os, sys
-temporary, path, kind, repo, title, body, agent, labels, number, dry_run, parent, remove_labels = sys.argv[1:13]
+temporary, path, kind, repo, title, body, agent, labels, number, dry_run, parent, remove_labels, reviewers, team_reviewers = sys.argv[1:15]
 labels = [part.strip() for value in json.loads(labels)
           for part in value.split(",") if part.strip()]
 remove_labels = [part.strip() for value in json.loads(remove_labels)
                  for part in value.split(",") if part.strip()]
+reviewers = [part.strip() for value in json.loads(reviewers)
+             for part in value.split(",") if part.strip()]
+team_reviewers = [part.strip() for value in json.loads(team_reviewers)
+                  for part in value.split(",") if part.strip()]
 req = {"kind": kind, "repo": repo, "agent": agent}
 if kind == "comment":
     req["number"] = int(number)
@@ -223,6 +251,13 @@ elif kind == "label":
         req["labels"] = labels
     if remove_labels:
         req["remove_labels"] = remove_labels
+elif kind == "request_review":
+    # Ask users and/or teams to review a PR (hivecommons/hive#9587).
+    req["number"] = int(number)
+    if reviewers:
+        req["reviewers"] = reviewers
+    if team_reviewers:
+        req["team_reviewers"] = team_reviewers
 elif kind == "close":
     req["number"] = int(number)
     if body:
@@ -259,6 +294,8 @@ elif [ "$KIND" = "close" ]; then
   echo "hive-open-issue: requested close of $REPO#$NUMBER as the App bot"
 elif [ "$KIND" = "label" ]; then
   echo "hive-open-issue: requested label change on $REPO#$NUMBER as the App bot"
+elif [ "$KIND" = "request_review" ]; then
+  echo "hive-open-issue: requested reviewers on $REPO#$NUMBER as the App bot"
 else
   echo "hive-open-issue: requested issue on $REPO as the App bot: $TITLE"
   if [ -n "$PARENT" ] && [ "$PARENT" != "0" ]; then

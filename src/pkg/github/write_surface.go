@@ -40,6 +40,9 @@ const (
 	// merge-queue label, hold labels, the hive/ namespace, human-decision
 	// labels) are refused by the relay whatever the allowlist says.
 	WriteOpLabel = "label"
+	// WriteOpRequestReview asks users and/or teams to review an existing PR
+	// (issue-request watcher, kind "request_review").
+	WriteOpRequestReview = "request_review"
 	// WriteOpReview submits a PR review, replies in a review thread, or
 	// records a verdict (review-request watcher).
 	WriteOpReview = "review"
@@ -60,6 +63,7 @@ func WriteOps() []string {
 		WriteOpClaim,
 		WriteOpCloseIssue,
 		WriteOpLabel,
+		WriteOpRequestReview,
 		WriteOpReview,
 		WriteOpResolveThread,
 		WriteOpMergePR,
