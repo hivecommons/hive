@@ -52,6 +52,35 @@ func TestContributeIngressReconcileMatchesTheTemplate(t *testing.T) {
 	}
 }
 
+// TestTerminalIngressReconcileMatchesTheTemplate pins the hive-terminal
+// reconcile set to what k8sManifestTemplate renders, for the same reason as
+// the hive-contribute one: a converged spoke must be indistinguishable from a
+// freshly provisioned one.
+func TestTerminalIngressReconcileMatchesTheTemplate(t *testing.T) {
+	for _, useWildcard := range []bool{false, true} {
+		blocks := ingressBlocks(t, renderManifestWildcard(t, useWildcard))
+		raw, ok := blocks[terminalIngressName]
+		if !ok {
+			t.Fatalf("useWildcard=%v: no %s Ingress in the template", useWildcard, terminalIngressName)
+		}
+		var doc struct {
+			Metadata struct {
+				Annotations map[string]string `yaml:"annotations"`
+			} `yaml:"metadata"`
+		}
+		if err := yaml.Unmarshal([]byte(raw), &doc); err != nil {
+			t.Fatalf("%s does not parse: %v\n%s", terminalIngressName, err, raw)
+		}
+		want := terminalIngressAuthAnnotations("https://hive.hivecommons.dev", "hosted-hive-x")
+		for key, value := range want {
+			if got := doc.Metadata.Annotations[key]; got != value {
+				t.Errorf("useWildcard=%v: reconcile expects %s = %q but the template renders %q",
+					useWildcard, key, value, got)
+			}
+		}
+	}
+}
+
 // liveIngressJSON is a hive-contribute Ingress as `kubectl get -o json` prints
 // it, with whatever annotations a test wants on it. The rest of the object is
 // the shape provisionHive leaves behind, so the parse is exercised on a real

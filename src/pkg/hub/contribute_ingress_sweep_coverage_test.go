@@ -56,14 +56,19 @@ func TestReconcileContributeIngressPatchesDriftedSpoke(t *testing.T) {
 	// The patch body rides the log as the argument after `-p`; decode it
 	// rather than substring-match, because json.Marshal escapes `&` in the
 	// auth-url as \u0026 on the wire.
-	_, body, found := strings.Cut(logged, " -p ")
-	if !found {
-		t.Fatalf("no -p patch body in kubectl log:\n%s", logged)
-	}
-	got := decodePatch(t, strings.TrimSpace(body))
-	for key, value := range contributeIngressAuthAnnotations(contributeSweepHubURL, "hosted-drift-ci01") {
-		if got[key] != value {
-			t.Errorf("patch should carry %s = %q, got %q", key, value, got[key])
+	// The fake kubectl serves the same drifted document for every Ingress,
+	// so the sweep patches hive-contribute AND hive-terminal — one patch
+	// each, carrying that Ingress's own annotation set.
+	patches := patchBodiesByIngress(t, logged)
+	for _, target := range gatedIngressTargets() {
+		got, ok := patches[target.name]
+		if !ok {
+			t.Fatalf("expected a merge patch on %s, got:\n%s", target.name, logged)
+		}
+		for key, value := range target.want(contributeSweepHubURL, "hosted-drift-ci01") {
+			if got[key] != value {
+				t.Errorf("%s patch should carry %s = %q, got %q", target.name, key, value, got[key])
+			}
 		}
 	}
 	if _, suppressed := s.clusterUnreachableUntil[defaultClusterID]; suppressed {
@@ -77,8 +82,10 @@ func TestReconcileContributeIngressPatchesDriftedSpoke(t *testing.T) {
 func TestReconcileContributeIngressConvergedIsNoOp(t *testing.T) {
 	t.Setenv("HIVE_HUB_PUBLIC_URL", contributeSweepHubURL)
 	s := netAdminSweepServer(t)
+	// hive-terminal's set is a superset of hive-contribute's, so one document
+	// carrying it converges both reads the fake kubectl serves.
 	converged := string(liveIngressJSON(t,
-		contributeIngressAuthAnnotations(contributeSweepHubURL, "hosted-ok-ci02")))
+		terminalIngressAuthAnnotations(contributeSweepHubURL, "hosted-ok-ci02")))
 	logPath := installNetAdminKubectl(t, converged, 0, 0)
 	if err := saveSaaSHive(&SaaSHive{ID: "hosted-ok-ci02", Status: "assigned"}); err != nil {
 		t.Fatal(err)
@@ -87,11 +94,67 @@ func TestReconcileContributeIngressConvergedIsNoOp(t *testing.T) {
 	s.reconcileContributeIngress()
 
 	logged := readKubectlLog(t, logPath)
-	if !strings.Contains(logged, "get ingress "+contributeIngressName) {
-		t.Errorf("expected the live-Ingress read, got:\n%s", logged)
+	for _, target := range gatedIngressTargets() {
+		if !strings.Contains(logged, "get ingress "+target.name) {
+			t.Errorf("expected the live-Ingress read of %s, got:\n%s", target.name, logged)
+		}
 	}
 	if strings.Contains(logged, "patch") {
 		t.Errorf("converged Ingress must not be patched, got:\n%s", logged)
+	}
+}
+
+// patchBodiesByIngress decodes every `kubectl patch ingress <name> ... -p
+// <body>` line in the fake-kubectl log into name → annotations. Decoded rather
+// than substring-matched because json.Marshal escapes `&` in the auth-url.
+func patchBodiesByIngress(t *testing.T, logged string) map[string]map[string]string {
+	t.Helper()
+	out := map[string]map[string]string{}
+	for _, line := range strings.Split(logged, "\n") {
+		_, rest, found := strings.Cut(line, "patch ingress ")
+		if !found {
+			continue
+		}
+		name, _, _ := strings.Cut(rest, " ")
+		_, body, found := strings.Cut(line, " -p ")
+		if !found {
+			t.Fatalf("patch line without -p body: %s", line)
+		}
+		out[name] = decodePatch(t, strings.TrimSpace(body))
+	}
+	return out
+}
+
+// TestReconcileTerminalIngressRepointsStaleHubHost is the /terminal 500 on
+// spokes provisioned under the hub's previous public host: hive-terminal's
+// auth-url and auth-signin still name that host (which now 301s, and nginx
+// turns a 301 auth_request answer into a 500). The sweep must patch exactly
+// the two stale values onto hive-terminal, and leave the headers alone.
+func TestReconcileTerminalIngressRepointsStaleHubHost(t *testing.T) {
+	t.Setenv("HIVE_HUB_PUBLIC_URL", contributeSweepHubURL)
+	s := netAdminSweepServer(t)
+	stale := terminalIngressAuthAnnotations("https://hub.old-host.test", "hosted-stale-ci09")
+	logPath := installNetAdminKubectl(t, string(liveIngressJSON(t, stale)), 0, 0)
+	if err := saveSaaSHive(&SaaSHive{ID: "hosted-stale-ci09", Status: "assigned"}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.reconcileContributeIngress()
+
+	patches := patchBodiesByIngress(t, readKubectlLog(t, logPath))
+	got, ok := patches[terminalIngressName]
+	if !ok {
+		t.Fatalf("expected a merge patch on %s, got patches for %v", terminalIngressName, patches)
+	}
+	want := terminalIngressAuthAnnotations(contributeSweepHubURL, "hosted-stale-ci09")
+	if got[ingressAuthURLAnnotation] != want[ingressAuthURLAnnotation] {
+		t.Errorf("auth-url = %q, want %q", got[ingressAuthURLAnnotation], want[ingressAuthURLAnnotation])
+	}
+	if got[ingressAuthSigninAnnotation] != want[ingressAuthSigninAnnotation] {
+		t.Errorf("auth-signin = %q, want %q", got[ingressAuthSigninAnnotation], want[ingressAuthSigninAnnotation])
+	}
+	if _, present := got[ingressAuthResponseHeadersAnnotation]; present {
+		t.Errorf("auth-response-headers was not stale and must not be in the patch: %v", got)
 	}
 }
 

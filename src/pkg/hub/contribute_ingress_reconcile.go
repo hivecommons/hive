@@ -41,10 +41,22 @@ const (
 	// hosted spoke (k8sManifestTemplate, `name: hive-contribute`).
 	contributeIngressName = "hive-contribute"
 
+	// terminalIngressName is the Ingress that routes /terminal on a hosted
+	// spoke (k8sManifestTemplate, `name: hive-terminal`). It is auth-gated
+	// against the hub exactly like hive-contribute, and it drifted the same
+	// way: spokes provisioned while the hub answered on its previous public
+	// host still point auth-url at that host, which now 301s, and nginx turns
+	// any non-2xx/401/403 auth_request answer into a 500 on /terminal.
+	terminalIngressName = routeBaseTerminal
+
 	// The two nginx annotations #7457 added to that Ingress. Named here so
 	// the sweep's check and its patch can never disagree about the keys.
 	ingressAuthURLAnnotation             = "nginx.ingress.kubernetes.io/auth-url"
 	ingressAuthResponseHeadersAnnotation = "nginx.ingress.kubernetes.io/auth-response-headers"
+	// ingressAuthSigninAnnotation is where nginx sends a browser whose
+	// auth-url check answered 401 — the hub login page. Only the browser-facing
+	// Ingresses (hive, hive-terminal) carry it; XHR-only ones must 401 instead.
+	ingressAuthSigninAnnotation = "nginx.ingress.kubernetes.io/auth-signin"
 
 	// ingressAuthResponseHeaders is the header list every gated Ingress in the
 	// template forwards; hive-contribute carries the same one.
@@ -71,6 +83,34 @@ func contributeIngressAuthAnnotations(hubURL, hiveID string) map[string]string {
 	return map[string]string{
 		ingressAuthURLAnnotation:             hubURL + "/api/saas/auth-check?hive=" + hiveID + "&uri=$request_uri",
 		ingressAuthResponseHeadersAnnotation: ingressAuthResponseHeaders,
+	}
+}
+
+// terminalIngressAuthAnnotations is what the hive-terminal Ingress of hive
+// `hiveID` must carry: the same per-hive auth-url and identity headers as
+// hive-contribute, plus the auth-signin that bounces a signed-out browser to
+// the hub login page. Pinned equal to the template by
+// TestTerminalIngressReconcileMatchesTheTemplate.
+func terminalIngressAuthAnnotations(hubURL, hiveID string) map[string]string {
+	want := contributeIngressAuthAnnotations(hubURL, hiveID)
+	want[ingressAuthSigninAnnotation] = hubURL + "/login?redirect=$scheme://$http_host$request_uri"
+	return want
+}
+
+// gatedIngressTarget names one hub-gated Ingress the sweep converges and the
+// annotations it must carry for a given hub URL and hive.
+type gatedIngressTarget struct {
+	name string
+	want func(hubURL, hiveID string) map[string]string
+}
+
+// gatedIngressTargets lists every Ingress the sweep reconciles, in sweep
+// order. Adding a gated Ingress to k8sManifestTemplate means adding it here,
+// or spokes provisioned before the change never converge.
+func gatedIngressTargets() []gatedIngressTarget {
+	return []gatedIngressTarget{
+		{name: contributeIngressName, want: contributeIngressAuthAnnotations},
+		{name: terminalIngressName, want: terminalIngressAuthAnnotations},
 	}
 }
 
@@ -197,50 +237,16 @@ func (s *HubServer) reconcileContributeIngress() {
 			continue
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), contributeIngressKubectlTimeout)
-		raw, err := kubectlForClusterContext(ctx, cluster, "get", "ingress", contributeIngressName,
-			"-n", ns, "-o", "json").Output()
-		cancel()
-		if err != nil {
-			// Ingress missing (a spoke that predates hive-contribute entirely,
-			// or one mid-teardown), cluster unreachable, or a transient kubectl
-			// error — all non-fatal. Debug, and the next sweep retries.
-			s.logger.Debug("contribute ingress reconcile: could not read hive-contribute ingress",
-				"hive_id", h.ID, "cluster", cluster.ID, "namespace", ns, "error", err)
-			continue
+		for _, target := range gatedIngressTargets() {
+			switch s.reconcileGatedIngress(&h, cluster, ns, target, hubURL) {
+			case gatedIngressConverged:
+				converged++
+			case gatedIngressPatched:
+				patched++
+			case gatedIngressFailed:
+				failures++
+			}
 		}
-		s.markClusterReachable(cluster.ID)
-
-		patch, perr := contributeIngressAnnotationPatch(raw, contributeIngressAuthAnnotations(hubURL, h.ID))
-		if perr != nil {
-			failures++
-			s.logger.Warn("contribute ingress reconcile: could not parse hive-contribute ingress — not patching blind",
-				"hive_id", h.ID, "cluster", cluster.ID, "namespace", ns, "error", perr)
-			continue
-		}
-		if patch == "" {
-			converged++
-			s.logger.Debug("contribute ingress reconcile: hive-contribute already carries the auth-url",
-				"hive_id", h.ID, "cluster", cluster.ID)
-			continue
-		}
-
-		pctx, pcancel := context.WithTimeout(context.Background(), contributeIngressKubectlTimeout)
-		pout, perr := kubectlForClusterContext(pctx, cluster, "patch", "ingress", contributeIngressName,
-			"-n", ns, "--type", "merge", "-p", patch).CombinedOutput()
-		pcancel()
-		if perr != nil {
-			failures++
-			s.markClusterUnreachable(cluster.ID)
-			s.logger.Warn("contribute ingress reconcile: patch failed — will retry next sweep",
-				"hive_id", h.ID, "cluster", cluster.ID, "namespace", ns,
-				"output", strings.TrimSpace(string(pout)), "error", perr)
-			continue
-		}
-		s.markClusterReachable(cluster.ID)
-		patched++
-		s.logger.Info("reconciled auth-url onto hive-contribute ingress (#7517)",
-			"hive_id", h.ID, "cluster", cluster.ID, "namespace", ns)
 	}
 
 	// A sweep that admitted no hives at all on a hub that hosts spokes is a
@@ -260,4 +266,64 @@ func (s *HubServer) reconcileContributeIngress() {
 			"failures", failures, "skipped_by_status", skippedByStatus,
 			"skipped_no_nginx_ingress", skippedNoIngress)
 	}
+}
+
+// gatedIngressOutcome is what reconcileGatedIngress did with one Ingress.
+type gatedIngressOutcome int
+
+const (
+	// gatedIngressSkipped: the Ingress could not be read (missing, teardown,
+	// transient kubectl error) — not counted, retried next sweep.
+	gatedIngressSkipped gatedIngressOutcome = iota
+	gatedIngressConverged
+	gatedIngressPatched
+	gatedIngressFailed
+)
+
+// reconcileGatedIngress reads one hub-gated Ingress of hive `h` in namespace
+// `ns` and merge-patches on any annotation from target.want that is missing
+// or stale. Non-fatal on kubectl errors; a patch failure arms the cluster's
+// unreachable breaker so the rest of the sweep does not pay a timeout per hive.
+func (s *HubServer) reconcileGatedIngress(h *SaaSHive, cluster *ClusterConfig, ns string, target gatedIngressTarget, hubURL string) gatedIngressOutcome {
+	ctx, cancel := context.WithTimeout(context.Background(), contributeIngressKubectlTimeout)
+	raw, err := kubectlForClusterContext(ctx, cluster, "get", "ingress", target.name,
+		"-n", ns, "-o", "json").Output()
+	cancel()
+	if err != nil {
+		// Ingress missing (a spoke that predates it entirely, or one
+		// mid-teardown), cluster unreachable, or a transient kubectl error —
+		// all non-fatal. Debug, and the next sweep retries.
+		s.logger.Debug("gated ingress reconcile: could not read ingress",
+			"hive_id", h.ID, "cluster", cluster.ID, "namespace", ns, "ingress", target.name, "error", err)
+		return gatedIngressSkipped
+	}
+	s.markClusterReachable(cluster.ID)
+
+	patch, perr := contributeIngressAnnotationPatch(raw, target.want(hubURL, h.ID))
+	if perr != nil {
+		s.logger.Warn("gated ingress reconcile: could not parse ingress — not patching blind",
+			"hive_id", h.ID, "cluster", cluster.ID, "namespace", ns, "ingress", target.name, "error", perr)
+		return gatedIngressFailed
+	}
+	if patch == "" {
+		s.logger.Debug("gated ingress reconcile: ingress already carries the auth annotations",
+			"hive_id", h.ID, "cluster", cluster.ID, "ingress", target.name)
+		return gatedIngressConverged
+	}
+
+	pctx, pcancel := context.WithTimeout(context.Background(), contributeIngressKubectlTimeout)
+	pout, perr := kubectlForClusterContext(pctx, cluster, "patch", "ingress", target.name,
+		"-n", ns, "--type", "merge", "-p", patch).CombinedOutput()
+	pcancel()
+	if perr != nil {
+		s.markClusterUnreachable(cluster.ID)
+		s.logger.Warn("gated ingress reconcile: patch failed — will retry next sweep",
+			"hive_id", h.ID, "cluster", cluster.ID, "namespace", ns, "ingress", target.name,
+			"output", strings.TrimSpace(string(pout)), "error", perr)
+		return gatedIngressFailed
+	}
+	s.markClusterReachable(cluster.ID)
+	s.logger.Info("reconciled auth annotations onto gated ingress (#7517)",
+		"hive_id", h.ID, "cluster", cluster.ID, "namespace", ns, "ingress", target.name)
+	return gatedIngressPatched
 }
