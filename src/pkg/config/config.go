@@ -817,16 +817,24 @@ func ValidateWritingGuide(v string) error {
 // issue body, PR body and review comment the agent writes in this session —
 // the variable appears once per template, ahead of the first body template, and
 // the later ones in the same policy are covered by this sentence) and its
-// limit: it governs how the body reads, never what the policy requires it to
-// contain. The quality policy demands evidence and a guide may ask for evidence
-// under a fold; the limit is what keeps those from reading as a contradiction.
+// limit: it governs how the body reads AND how it is laid out — including
+// section order and where a summary sits — never what the policy requires it
+// to contain. Earlier wording pinned the template's section order ("keep every
+// section... the template below asks for"), which left a structural guide (put
+// a plain-language summary first, technical detail after) no way to win against
+// a template that opens with a fixed heading — see hivecommons/hive#9747. The
+// template still owns the checklist of required content; the guide now owns
+// where that content goes. The quality policy demands evidence and a guide may
+// ask for evidence under a fold; the limit is what keeps those from reading as
+// a contradiction.
 func (p *ProjectConfig) WritingGuideSection() string {
 	guide := strings.TrimSpace(p.WritingGuide)
 	if guide == "" {
 		return ""
 	}
 	return "WRITING GUIDE (set by this hive's owner in project.writing_guide). Every issue body, PR body and review comment you write in this session MUST follow it. " +
-		"It governs how the body reads — length, structure, wording — not what it contains: keep every section, field and piece of evidence the template below asks for, and apply the guide to how you write them.\n\n" +
+		"It governs how the body reads and how it is laid out — length, wording, section order, and where a summary or other structure the guide asks for sits, including ahead of the template's sections below. " +
+		"It never changes what the policy requires: every section, field and piece of evidence the template below asks for must still appear somewhere in the body, written and placed the way the guide describes.\n\n" +
 		guide + "\n"
 }
 
