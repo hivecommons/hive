@@ -514,7 +514,7 @@ kubectl kustomize overlays/spyre | less
 # Create the secret first (Option 1 above), then apply:
 kubectl apply -k overlays/spyre/
 kubectl -n hive rollout status deploy/hive     # wait for Ready
-kubectl -n hive rollout status deploy/vllm     # inference backend
+kubectl -n hive-inference rollout status deploy/vllm     # inference backend
 ```
 
 **Changing a config value** — e.g. adding an authorized user or changing the
