@@ -1,0 +1,1 @@
+- Fix v6 readiness runbook Discord step to reference the correct SSE disconnect log line (`chat: dashboard SSE disconnected` not `discord SSE disconnected`); refs #9699 live exercise.

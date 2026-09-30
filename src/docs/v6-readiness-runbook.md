@@ -258,7 +258,7 @@ Run:
    a real agent state transition; save the notification link/screenshot.
 4. Induce one safe disconnect and recovery observation. Prefer briefly
    interrupting the dashboard SSE connection, because the shared spine logs
-   `discord SSE disconnected` and backs off before reconnecting
+   `chat: dashboard SSE disconnected` and backs off before reconnecting
    (`sseLoop`, `src/pkg/chat/notify.go:70-106`). If you instead interrupt Discord REST,
    save the `discord poll failed` log line and the later successful command or
    notification proving recovery (`discordBackend.Listen`, `src/pkg/discord/bot.go:194-236`).
@@ -267,7 +267,7 @@ Evidence checklist:
 
 - [ ] `!status` command link/screenshot and bot reply.
 - [ ] Notification parity screenshot/link after recovery.
-- [ ] `discord SSE disconnected` or `discord poll failed` log line plus
+- [ ] `chat: dashboard SSE disconnected` or `discord poll failed` log line plus
       timestamp of subsequent recovery.
 - [ ] Paste the template as a comment on #7563, tick the Discord row in its
       **v6 readiness bar** section, and link the evidence comment from the row.
