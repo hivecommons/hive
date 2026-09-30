@@ -35,7 +35,7 @@ list_ids() {
 # above the var, unwrapped, searched for the version it claims.
 comment_version() {
   awk -v v="$1" '$0 ~ "^var " v " = " {print buf; exit} /^\/\// {sub(/^\/\/ ?/, ""); buf = buf " " $0; next} {buf=""}' "$MODELS_GO" \
-    | sed -n -E "s/.*$2.*/\\1/p" | head -1
+    | sed -n -E "s@.*$2.*@\\1@p" | head -1
 }
 
 # ver_ge <a> <b>: a >= b by dotted numeric order.
