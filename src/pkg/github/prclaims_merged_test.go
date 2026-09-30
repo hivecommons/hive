@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -36,6 +37,7 @@ func mergedPR(number int, author, title, body string, mergedAt, updatedAt time.T
 		"title":      title,
 		"body":       body,
 		"state":      "closed",
+		"head":       map[string]any{"ref": fmt.Sprintf("merged-pr%dhead", number), "sha": fmt.Sprintf("merged-head-%d", number)},
 		"user":       map[string]any{"login": author},
 		"html_url":   fmt.Sprintf("https://github.com/torch-spyre/spyre-inference/pull/%d", number),
 		"updated_at": updatedAt.Format(time.RFC3339),
@@ -124,6 +126,9 @@ func TestFetchClaimsMergedPRs(t *testing.T) {
 				}
 				if claims[i].MergedAt.IsZero() {
 					t.Errorf("claim[%d].MergedAt is zero", i)
+				}
+				if claims[i].PRState != PRStateMerged || claims[i].PRHead == "" {
+					t.Errorf("claim[%d] missing merged PR state/head: %+v", i, claims[i])
 				}
 				if !claims[i].FirstObservedAt.Equal(claims[i].MergedAt) {
 					t.Errorf("claim[%d].FirstObservedAt = %v, want the merge time %v — the weak deferral window must anchor at the merge",
@@ -295,4 +300,146 @@ func TestFilterClaimedIssuesMergedClaims(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestFilterClaimedIssuesVerificationState(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	mkResult := func(labels ...string) *ActionableResult {
+		return &ActionableResult{Issues: IssueResult{
+			Items: []Issue{{Repo: "spyre-inference", Number: 300, Title: "settled", Labels: labels}},
+			Count: 1,
+		}}
+	}
+	mkLedger := func(head string) *ClaimLedger {
+		ledger := NewClaimLedger(filepath.Join(t.TempDir(), "ledger.json"), testLogger())
+		ledger.SetClock(func() time.Time { return now })
+		ledger.Reconcile([]IssueClaim{{
+			Repo: "spyre-inference", Issue: 300, PRNumber: 501,
+			PRRepo: "spyre-inference", PRURL: "https://github.com/torch-spyre/spyre-inference/pull/501",
+			PRAuthor: "clubanderson", PRState: PRStateMerged, PRHead: head,
+			Reference: true, MergedPR: true, MergedAt: now.Add(-time.Hour),
+			ObservedAt: now, FirstObservedAt: now.Add(-time.Hour),
+		}}, true)
+		return ledger
+	}
+
+	t.Run("merged claim first kick is kept and records verification request", func(t *testing.T) {
+		ledger := mkLedger("head-a")
+		result := mkResult()
+		if got := FilterClaimedIssues(result, ledger, nil, testLogger()); got != 0 {
+			t.Fatalf("suppressed = %d, want 0", got)
+		}
+		if len(result.Issues.Items) != 1 || result.Issues.Items[0].ClaimContext == nil {
+			t.Fatalf("merged claim should be kept with context: %+v", result.Issues.Items)
+		}
+		claim, _ := ledger.Lookup("spyre-inference", 300)
+		if claim.VerificationRequestedAt.IsZero() || claim.VerificationRequestedPRState != PRStateMerged || claim.VerificationRequestedHead != "head-a" {
+			t.Fatalf("verification request not recorded: %+v", claim)
+		}
+	})
+
+	t.Run("same claim with hive verification label is suppressed and marked verified", func(t *testing.T) {
+		ledger := mkLedger("head-a")
+		if got := FilterClaimedIssues(mkResult(), ledger, nil, testLogger()); got != 0 {
+			t.Fatalf("first kick suppressed = %d, want 0", got)
+		}
+		result := mkResult(LikelyDoneLabel)
+		if got := FilterClaimedIssues(result, ledger, nil, testLogger()); got != 1 {
+			t.Fatalf("second kick suppressed = %d, want 1", got)
+		}
+		if len(result.Issues.Items) != 0 {
+			t.Fatalf("verified unchanged issue should be removed, got %+v", result.Issues.Items)
+		}
+		claim, _ := ledger.Lookup("spyre-inference", 300)
+		if claim.VerifiedAt.IsZero() || claim.VerifiedPRState != PRStateMerged || claim.VerifiedPRHead != "head-a" {
+			t.Fatalf("verified state not recorded: %+v", claim)
+		}
+	})
+
+	t.Run("PR head change clears verification state and lists once", func(t *testing.T) {
+		ledger := mkLedger("head-a")
+		if got := FilterClaimedIssues(mkResult(), ledger, nil, testLogger()); got != 0 {
+			t.Fatalf("first kick suppressed = %d, want 0", got)
+		}
+		if got := FilterClaimedIssues(mkResult(LikelyDoneLabel), ledger, nil, testLogger()); got != 1 {
+			t.Fatalf("second kick suppressed = %d, want 1", got)
+		}
+		ledger.Reconcile([]IssueClaim{{
+			Repo: "spyre-inference", Issue: 300, PRNumber: 501,
+			PRRepo: "spyre-inference", PRURL: "https://github.com/torch-spyre/spyre-inference/pull/501",
+			PRAuthor: "clubanderson", PRState: PRStateMerged, PRHead: "head-b",
+			Reference: true, MergedPR: true, MergedAt: now.Add(-time.Hour),
+			ObservedAt: now.Add(time.Minute), FirstObservedAt: now.Add(-time.Hour),
+		}}, true)
+		result := mkResult(LikelyDoneLabel)
+		if got := FilterClaimedIssues(result, ledger, nil, testLogger()); got != 0 {
+			t.Fatalf("changed head suppressed = %d, want 0", got)
+		}
+		claim, _ := ledger.Lookup("spyre-inference", 300)
+		if !claim.VerifiedAt.IsZero() || claim.VerificationRequestedHead != "head-b" {
+			t.Fatalf("head change did not reset verification/request state correctly: %+v", claim)
+		}
+	})
+}
+
+func TestFilterClaimedIssuesOpenExternalClaims(t *testing.T) {
+	now := time.Now()
+	mk := func() (*ActionableResult, *ClaimLedger) {
+		result := &ActionableResult{Issues: IssueResult{
+			Items: []Issue{{Repo: "spyre-inference", Number: 300, Title: "covered"}},
+			Count: 1,
+		}}
+		ledger := NewClaimLedger(filepath.Join(t.TempDir(), "ledger.json"), testLogger())
+		ledger.Reconcile([]IssueClaim{{
+			Repo: "spyre-inference", Issue: 300, PRNumber: 777,
+			PRRepo: "spyre-inference", PRURL: "https://github.com/torch-spyre/spyre-inference/pull/777",
+			PRAuthor: "outside-dev", PRState: PRStateOpen, PRHead: "open-head",
+			ExternalAuthor: true, ObservedAt: now, FirstObservedAt: now,
+		}}, true)
+		return result, ledger
+	}
+
+	t.Run("not red-stale suppresses", func(t *testing.T) {
+		result, ledger := mk()
+		if got := FilterClaimedIssues(result, ledger, nil, testLogger()); got != 1 {
+			t.Fatalf("suppressed = %d, want 1", got)
+		}
+		if len(result.Issues.Items) != 0 {
+			t.Fatalf("open external claim should be removed from kicks, got %+v", result.Issues.Items)
+		}
+	})
+
+	t.Run("red-stale release valve keeps it actionable", func(t *testing.T) {
+		result, ledger := mk()
+		redStale := func(repo string, pr int) bool { return repo == "spyre-inference" && pr == 777 }
+		if got := FilterClaimedIssues(result, ledger, redStale, testLogger()); got != 0 {
+			t.Fatalf("suppressed = %d, want 0", got)
+		}
+		if len(result.Issues.Items) != 1 {
+			t.Fatalf("red-stale external claim should remain actionable, got %+v", result.Issues.Items)
+		}
+	})
+}
+
+func TestFilterClaimedIssuesVerifiedOpenReferenceStillHonorsRedStale(t *testing.T) {
+	now := time.Now()
+	ledger := NewClaimLedger(filepath.Join(t.TempDir(), "ledger.json"), testLogger())
+	ledger.Reconcile([]IssueClaim{{
+		Repo: "spyre-inference", Issue: 300, PRNumber: 778,
+		PRRepo: "spyre-inference", PRURL: "https://github.com/torch-spyre/spyre-inference/pull/778",
+		PRAuthor: "clubanderson", PRState: PRStateOpen, PRHead: "stale-head",
+		Reference: true, ObservedAt: now, FirstObservedAt: now,
+		VerifiedAt: now, VerifiedPRState: PRStateOpen, VerifiedPRHead: "stale-head",
+	}}, true)
+	result := &ActionableResult{Issues: IssueResult{
+		Items: []Issue{{Repo: "spyre-inference", Number: 300, Title: "covered"}},
+		Count: 1,
+	}}
+	redStale := func(repo string, pr int) bool { return repo == "spyre-inference" && pr == 778 }
+	if got := FilterClaimedIssues(result, ledger, redStale, testLogger()); got != 0 {
+		t.Fatalf("suppressed = %d, want 0", got)
+	}
+	if len(result.Issues.Items) != 1 {
+		t.Fatalf("red-stale verified reference should remain actionable, got %+v", result.Issues.Items)
+	}
 }

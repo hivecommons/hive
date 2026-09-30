@@ -1,0 +1,1 @@
+- Kick lists no longer re-request verification of the same covered/likely-done issue every kick; verification state is persisted in the claim ledger and the issue is suppressed until its PR changes (#9691).

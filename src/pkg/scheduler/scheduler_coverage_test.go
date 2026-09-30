@@ -64,11 +64,11 @@ func TestFormatIssueList_IncludesMergedClaimContext(t *testing.T) {
 		},
 	}
 	result, _ := s.formatIssueListWithPolicy(issues)
-	if !strings.Contains(result, "merged PR context: repo1#99 referenced without a closing keyword") {
-		t.Fatalf("missing merged PR context in issue list: %s", result)
+	if !strings.Contains(result, "merged in repo1#99 (https://github.com/org/repo1/pull/99); verify once: close the issue if resolved") {
+		t.Fatalf("missing merged PR verification instruction in issue list: %s", result)
 	}
-	if !strings.Contains(result, "verify whether the merged work resolved this issue before implementing") {
-		t.Fatalf("missing verification instruction in issue list: %s", result)
+	if !strings.Contains(result, "context: referenced without a closing keyword") {
+		t.Fatalf("missing merged PR context reason in issue list: %s", result)
 	}
 	if !strings.Contains(result, "verified-open: an earlier verification found remaining work") {
 		t.Fatalf("missing verified-open verdict in issue list: %s", result)

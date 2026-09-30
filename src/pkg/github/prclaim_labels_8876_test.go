@@ -20,9 +20,7 @@ func TestIssuePRClaimLabels8876_LinkedPRPayloadAndPendingLabels(t *testing.T) {
 	}}, true)
 	result := &ActionableResult{Issues: IssueResult{Items: []Issue{{Repo: "acme/widgets", Number: 7, Title: "fix sleep"}}, Count: 1}}
 
-	if suppressed := FilterClaimedIssues(result, ledger, nil, testLogger()); suppressed != 0 {
-		t.Fatalf("suppressed = %d, want 0", suppressed)
-	}
+	SyncIssuePRClaimLabels(context.Background(), nil, result, ledger, testLogger())
 	issue := result.Issues.Items[0]
 	if !issueHasLabel(issue.Labels, CoveredByPRLabel) || issueHasLabel(issue.Labels, LikelyDoneLabel) {
 		t.Fatalf("labels = %v, want covered-by-pr only", issue.Labels)
@@ -36,6 +34,9 @@ func TestIssuePRClaimLabels8876_LinkedPRPayloadAndPendingLabels(t *testing.T) {
 	}
 	if !json.Valid(raw) || !strings.Contains(string(raw), "linked_prs") {
 		t.Fatalf("issue JSON missing linked_prs: %s", raw)
+	}
+	if suppressed := FilterClaimedIssues(result, ledger, nil, testLogger()); suppressed != 1 {
+		t.Fatalf("suppressed = %d, want 1", suppressed)
 	}
 }
 

@@ -82,14 +82,15 @@ func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bo
 				reason = "was claimed by an external author"
 			}
 			prRef := fmt.Sprintf("%s#%d", issue.ClaimContext.PRRepo, issue.ClaimContext.PRNumber)
-			b.WriteString(fmt.Sprintf("    ↳ merged PR context: %s %s; verify whether the merged work resolved this issue before implementing", prRef, reason))
+			b.WriteString(fmt.Sprintf("    ↳ merged in %s", prRef))
+			if issue.ClaimContext.PRURL != "" {
+				b.WriteString(fmt.Sprintf(" (%s)", issue.ClaimContext.PRURL))
+			}
+			b.WriteString(fmt.Sprintf("; verify once: close the issue if resolved, otherwise label %s and implement the remainder; context: %s", github.VerifiedOpenLabel, reason))
 			if hasIssueLabel(issue.Labels, github.VerifiedOpenLabel) {
 				b.WriteString("; verified-open: an earlier verification found remaining work — implement the rest")
 			} else {
 				b.WriteString(fmt.Sprintf("; if work remains, label it `%s` (hive then stops re-marking it likely-done)", github.VerifiedOpenLabel))
-			}
-			if issue.ClaimContext.PRURL != "" {
-				b.WriteString(fmt.Sprintf(" (%s)", issue.ClaimContext.PRURL))
 			}
 			b.WriteString("\n")
 		}
