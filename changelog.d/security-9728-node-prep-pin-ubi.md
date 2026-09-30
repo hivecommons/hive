@@ -1,0 +1,1 @@
+- The node-prep DaemonSet (`src/deploy/k8s/node-prep/hive-netfilter-modules.yaml`) now pins `ubi9/ubi-minimal:9.8` by digest instead of `:latest` ([#9728](https://github.com/hivecommons/hive/issues/9728)). It runs privileged on every worker node, so a floating tag let new nodes pull an unreviewed image.
