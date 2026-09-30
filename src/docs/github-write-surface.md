@@ -352,8 +352,8 @@ back to `detail` for entries written before the fields existed.
 ## Credential redaction
 
 Audit details include values supplied by agents, such as override reasons,
-repository names and URLs. Before any audit sink sees an entry, the detail and
-the typed `repo` are masked with `[REDACTED]` for:
+repository names and URLs. Before any audit sink sees an entry, the detail,
+the typed `repo` and the typed `agent` are masked with `[REDACTED]` for:
 
 - GitHub tokens (`ghs_`, `ghp_`, `gho_`, `ghu_`, `ghr_`, `github_pat_`);
 - JWTs and AWS access keys;
@@ -361,9 +361,10 @@ the typed `repo` are masked with `[REDACTED]` for:
 - `Bearer` values;
 - the value of any `Authorization` header (`token`, `Basic`, or bare).
 
-The masking reuses `pkg/logscrub`. A test in `pkg/github/write_surface_test.go`
-feeds each of these shapes through every audited slot and asserts that none of
-them survives.
+The masking reuses `pkg/logscrub`. Tests in `pkg/github/write_surface_test.go`
+feed each of these shapes through every audited slot of every record builder
+(relay writes, hive-internal writes, relay refusals and proxy-refused direct
+writes) and assert that none of them survives in any field.
 
 ## Not yet done
 

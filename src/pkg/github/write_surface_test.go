@@ -197,6 +197,40 @@ func TestRecordCreationAudit_RedactsCredentialMaterial(t *testing.T) {
 	}
 }
 
+// The typed agent field is an audited argument too: a relay request or a
+// proxied call names its agent, so a credential pasted there must be masked in
+// the typed field as well as in the detail. Every record builder is covered:
+// the relay audit, the explicit-target write audit, a relay refusal, and a
+// direct write the proxy refused (every argument of which is caller-supplied).
+func TestAuditRecordBuilders_RedactEveryField(t *testing.T) {
+	for _, s := range credentialSamples {
+		t.Run(s.name, func(t *testing.T) {
+			agent := "scanner " + s.text
+			c := testClient(t, "http://127.0.0.1:1")
+			recs := captureAudit(c)
+			c.recordCreationAudit(AuditActionIssueClosed, InvocationMeta{Agent: agent},
+				"repo", "o/r", "number", "3", "result", s.text)
+			c.recordWriteAudit(AuditActionSignedCommitSkipNoted, InvocationMeta{Agent: agent},
+				WriteTarget{Repo: "o/r", Number: 3}, "reason", s.text)
+			c.SetWriteAllowlistFunc(func(string, string) bool { return false })
+			if _, refused := c.refuseWrite(agent, WriteOpOpenPR, "o/"+s.text, 0); !refused {
+				t.Fatal("refuseWrite did not refuse under a deny-all allowlist")
+			}
+			*recs = append(*recs, DirectWriteRefusedAuditRecord(agent, "rest "+s.text, "POST "+s.text,
+				"/repos/o/r/issues?q="+s.text, "o/"+s.text))
+			if len(*recs) != 4 {
+				t.Fatalf("got %d records, want 4", len(*recs))
+			}
+			for _, rec := range *recs {
+				assertNoCredentialMaterial(t, rec)
+				if !strings.HasPrefix(rec.Agent, "scanner") {
+					t.Errorf("%s: redaction dropped the agent name: %q", rec.Action, rec.Agent)
+				}
+			}
+		})
+	}
+}
+
 func TestRedactAuditText_LeavesOrdinaryTextAlone(t *testing.T) {
 	for _, s := range []string{"", "repo=o/r, number=12, state=approved", "reporter asked to close as duplicate of #4"} {
 		if got := redactAuditText(s); got != s {

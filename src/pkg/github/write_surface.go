@@ -236,7 +236,7 @@ func writeAuditRecord(action string, m InvocationMeta, target WriteTarget, extra
 	rec := AuditRecord{
 		Action: action,
 		Detail: redactAuditText(m.AuditDetail(pairs...)),
-		Agent:  m.Agent,
+		Agent:  redactAuditText(m.Agent),
 		Repo:   redactAuditText(repo),
 	}
 	if target.Number > 0 {
@@ -300,7 +300,7 @@ func auditRecordFor(action string, m InvocationMeta, extra ...string) AuditRecor
 	rec := AuditRecord{
 		Action: action,
 		Detail: redactAuditText(m.AuditDetail(extra...)),
-		Agent:  m.Agent,
+		Agent:  redactAuditText(m.Agent),
 	}
 	for i := 0; i+1 < len(extra); i += 2 {
 		switch extra[i] {

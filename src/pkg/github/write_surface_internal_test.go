@@ -62,8 +62,10 @@ func assertTypedWrite(t *testing.T, recs []AuditRecord, action, repo string, tar
 func assertNoCredentialMaterial(t *testing.T, rec AuditRecord) {
 	t.Helper()
 	for _, s := range credentialSamples {
-		if strings.Contains(rec.Detail, s.secret) || strings.Contains(rec.Repo, s.secret) {
-			t.Errorf("%s leaked %s: repo=%q detail=%q", rec.Action, s.name, rec.Repo, rec.Detail)
+		for field, v := range map[string]string{"action": rec.Action, "agent": rec.Agent, "repo": rec.Repo, "detail": rec.Detail} {
+			if strings.Contains(v, s.secret) {
+				t.Errorf("%s leaked %s in %s: %q", rec.Action, s.name, field, v)
+			}
 		}
 	}
 }
