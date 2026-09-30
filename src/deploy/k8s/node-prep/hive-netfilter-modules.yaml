@@ -1,5 +1,5 @@
 # Loads the netfilter kernel modules the hive forced-egress gate needs
-# (xt_REDIRECT, xt_owner) on every worker node, WITHOUT a MachineConfig or a
+# (xt_mark, xt_REDIRECT, xt_owner) on every worker node, WITHOUT a MachineConfig or a
 # node reboot. See src/docs/net-admin-requirement.md ("Missing netfilter
 # modules").
 #
