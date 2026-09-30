@@ -245,21 +245,6 @@ func (c IssueClaim) SettledAt() time.Time {
 	return c.ObservedAt
 }
 
-func claimPRState(c IssueClaim) string {
-	state := strings.ToLower(strings.TrimSpace(c.PRState))
-	if state != "" {
-		return state
-	}
-	if c.MergedPR {
-		return PRStateMerged
-	}
-	return PRStateOpen
-}
-
-func claimPRHead(c IssueClaim) string {
-	return strings.TrimSpace(c.PRHead)
-}
-
 // SettledStale reports whether a settled claim has held its issue for at
 // least SettledClaimStaleAfter as of now (#8003) — the point at which the
 // contribute queue stops describing the hold as "an open pull request
