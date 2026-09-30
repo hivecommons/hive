@@ -35,6 +35,11 @@ const (
 	// WriteOpCloseIssue closes an issue, or a PR without merging it
 	// (issue-request watcher, kind "close").
 	WriteOpCloseIssue = "close_issue"
+	// WriteOpLabel adds or removes plain labels on an existing issue or PR
+	// (issue-request watcher, kind "label"). Hive-controlled labels (the
+	// merge-queue label, hold labels, the hive/ namespace, human-decision
+	// labels) are refused by the relay whatever the allowlist says.
+	WriteOpLabel = "label"
 	// WriteOpReview submits a PR review, replies in a review thread, or
 	// records a verdict (review-request watcher).
 	WriteOpReview = "review"
@@ -54,6 +59,7 @@ func WriteOps() []string {
 		WriteOpComment,
 		WriteOpClaim,
 		WriteOpCloseIssue,
+		WriteOpLabel,
 		WriteOpReview,
 		WriteOpResolveThread,
 		WriteOpMergePR,

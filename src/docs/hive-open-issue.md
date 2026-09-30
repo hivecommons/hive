@@ -1,4 +1,4 @@
-# `hive-open-issue` — create an issue, comment, or claim as the App bot
+# `hive-open-issue` — create an issue, comment, claim, or label as the App bot
 
 `bin/hive-open-issue.sh` is how an agent creates an issue, posts a comment, or
 claims an issue. Agents call it **instead of `gh issue create` /
@@ -31,18 +31,19 @@ the **file's owner**, not from anything written inside the file. The watcher
 enforces the same per-agent mode gate (`CanCreateIssues`, mode ≥
 `ISSUES_ONLY`) and UID forge-resistance as the direct `gh` path would need —
 this shim **adds no privilege**. The same `CanCreateIssues` gate covers all
-three kinds (issue, comment, claim): commenting and claiming an issue are
-both issue-writes under the same tier.
+kinds (issue, comment, claim, close, label): commenting, claiming and
+labeling an issue are all issue-writes under the same tier.
 
 ## Usage
 
-Three shapes, selected by an optional leading positional keyword
-(`comment` or `claim`; the default with no keyword is `issue`):
+Shapes are selected by an optional leading positional keyword (`comment`,
+`claim`, `close` or `label`; the default with no keyword is `issue`):
 
 ```sh
 hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>]
 hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>"
 hive-open-issue claim   --repo <owner/repo> <number|url>
+hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
 ```
 
 | Flag | Aliases | Applies to | Notes |
@@ -51,9 +52,10 @@ hive-open-issue claim   --repo <owner/repo> <number|url>
 | `--title` | `-t` | issue | required for `issue` |
 | `--body` | `-b` | issue, comment | required for `issue` and `comment`; not used by `claim` |
 | `--body-file` | `-F` | issue, comment | reads body from a file; `-` reads stdin |
-| `--label` | `-l` | issue | repeatable |
+| `--label` | `-l`, `--add-label` | issue, label | repeatable; comma-separated values are split |
+| `--remove-label` | — | label | repeatable; labels to take off the item |
 | `--parent` | — | issue | issue number in the same repo to link the new issue to as a GitHub sub-issue |
-| `--number` | — | comment, claim | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
+| `--number` | — | comment, claim, close, label | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
 | `--dry-run` | `-n` | all | validate the arguments and print the exact request that would be written, then exit `0` **without writing it** — nothing is created, commented, claimed, or closed |
 
 Both `--flag value` and `--flag=value` forms work. Flags `gh` accepts but this
@@ -106,6 +108,22 @@ records that this agent is starting work on an issue. Because App bots cannot
 be GitHub assignees, the watcher applies a `hive/claimed-by-<agent>` label
 instead — the visible, auditable ownership signal — and audits it as
 `agent_issue_claimed`.
+
+### `label`
+
+`--repo`, a number or URL, and at least one `--label` or `--remove-label` are
+required. Labels are added first, then removed, and the change is audited as
+`agent_label_applied` with the repository and number
+([#9587](https://github.com/hivecommons/hive/issues/9587)).
+
+Hive-controlled labels are refused in both directions: the merge-queue label
+(`lgtm`, or whatever the hive renamed it to), the hold labels, anything in the
+`hive/` namespace, and the labels that record a human decision
+(`approved-direction`, `design-approved`, `needs-human`, `needs-decision`,
+`blocked`). They are inputs to hive automation or records of someone's
+verdict, so an agent may not set them; one reserved label refuses the whole
+request. Use `hive-open-issue claim` to record ownership. See
+[github-write-surface.md](github-write-surface.md).
 
 ## It is asynchronous, by design
 

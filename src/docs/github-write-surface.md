@@ -36,6 +36,7 @@ Each relay authorizes a request in this order. It stops at the first refusal.
 | `comment` | `issue_request_watcher.go` kind `comment` | `hive-open-issue comment` | `agent_comment_created` | yes | yes / issue or PR number |
 | `claim` | `issue_request_watcher.go` kind `claim` | `hive-open-issue claim` | `agent_issue_claimed` | yes | yes / issue number |
 | `close_issue` | `issue_request_watcher.go` kind `close` | `hive-open-issue close` | `agent_issue_closed` (`pr_closed` when the number is a PR) | yes | yes / issue or PR number |
+| `label` | `issue_request_watcher.go` kind `label` (`.../issue-requests`) | `hive-open-issue label` | `agent_label_applied` | yes | yes / issue or PR number |
 | `review` | `review_request_watcher.go` events `approve`, `request_changes`, `comment`, `record_verdict`, and thread replies (`.../review-requests`) | `hive-review` | `agent_pr_reviewed` | yes | yes / PR number |
 | `resolve_thread` | `review_request_watcher.go` event `resolve_thread` | `hive-review` | `agent_pr_reviewed` (`state=thread_resolved`) | yes | yes / PR number |
 | `merge_pr` | `merge_request_watcher.go` (`.../merge-requests`) | `hive-merge` | `pr_merged` (`path=relay`, via `MergePR`) | yes | yes / PR number |
@@ -58,6 +59,28 @@ repository. A PR whose author cannot be read is treated as a contributor's: the
 relay never resolves "we could not tell" into approving someone else's work.
 There is no setting to turn this off; `review.all_authors` widens what is
 reviewed, never what may be approved.
+
+### `label` refuses hive-controlled labels
+
+The `label` operation adds and removes plain, descriptive labels
+(`bug`, `area/proxy`, …) on an existing issue or PR. It refuses, in both
+directions and before any GitHub call, the labels the hive itself reads back
+as fact (`issue_request_label.go`):
+
+- the merge-queue label under its configured name (`lgtm` by default) — it
+  queues a merge;
+- the hold labels (`hold`, `on-hold`, `hold/review`) — they block one;
+- everything in the `hive/` namespace, including `hive/claimed-by-<agent>`
+  (use `claim`), `hive/covered-by-pr`, `hive/likely-done` and
+  `hive/verified-open`;
+- the labels that record a person's decision or an escalation:
+  `approved-direction`, `design-approved`, `needs-human`, `needs-decision`,
+  `blocked`.
+
+One reserved label refuses the whole request — nothing in it is applied — so a
+batch can never partially land. The refusal is a policy denial like any other:
+`.denied`, a result file naming the labels, and an audit entry. A lane
+allowlist can narrow `label` further but can never widen it to these.
 
 ## Hive-internal writes (not agent requests)
 
@@ -101,7 +124,7 @@ ask the relays to perform:
 ```yaml
 write_surface:
   allowlist:
-    scanner: [create_issue, comment, claim]
+    scanner: [create_issue, comment, claim, label]
     reviewer: [review, resolve_thread, comment]
     outreach: [open_pr, comment]
 ```
@@ -211,7 +234,13 @@ of them may reduce what an L6 hive can do by default.
   write path for that lane. Unlisted lanes and L6 hives keep direct access
   unless the operator turns enforcement on. `git push` needs its own relay
   first (below), or pushes would simply stop.
-- **New operations with no relay yet:** `push_branch`, a standalone `label`,
-  and `request_review`. Each would be a new relay (request file, file-UID
-  authorizer, allowlist check, audit), following the existing four. A hive with
-  no allowlist would allow them, like every other operation.
+- **New operations with no relay yet:** `push_branch` and `request_review`.
+  Each would be a new relay (request file, file-UID authorizer, allowlist
+  check, audit), following the existing ones. A hive with no allowlist would
+  allow them, like every other operation. The standalone `label` operation has
+  landed; see the inventory above.
+- **Routing the `gh` wrapper's label edits through the `label` relay.**
+  `gh issue edit --add-label` still reaches GitHub directly through the proxy;
+  the relay is the audited path an agent can choose. Switching the wrapper over
+  changes what a direct command does, so it waits on the same sign-off as
+  enforcement.

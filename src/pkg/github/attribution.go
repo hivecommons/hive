@@ -70,6 +70,12 @@ const (
 	// rather than an assignee). It is a countable "this agent took work" signal
 	// on the activity trail.
 	AuditActionIssueClaimed = "agent_issue_claimed"
+	// AuditActionAgentLabelApplied is recorded when the issue-request watcher
+	// adds or removes labels on an agent's behalf (kind "label", #9587). The
+	// detail carries the labels added and removed; hive-controlled labels are
+	// refused by the relay and never reach this entry. It is distinct from
+	// hive_label_applied, which is the hive labeling on its own initiative.
+	AuditActionAgentLabelApplied = "agent_label_applied"
 	// AuditActionIssueClosed is recorded when the issue-request watcher closes
 	// an issue on an agent's behalf after the reporter-confirmation gate passes
 	// or an explicit override reason has been posted.
