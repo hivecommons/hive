@@ -473,8 +473,11 @@ _write_surface_enforced() {
   lanes="${lanes#*[}"
   lanes="${lanes//\"/}"
   lanes="${lanes// /}"
-  local IFS=,
-  for entry in $lanes; do
+  # Split on commas with read -a, never an unquoted expansion: a "*" entry
+  # would otherwise glob against the caller's cwd instead of staying literal.
+  local -a lane_entries=()
+  IFS=, read -r -a lane_entries <<<"$lanes"
+  for entry in "${lane_entries[@]}"; do
     entry="${entry,,}"
     if [ "$entry" = "*" ] || [ "$entry" = "$lane" ]; then
       _WS_ENFORCED="yes"
