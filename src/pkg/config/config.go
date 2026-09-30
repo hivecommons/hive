@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	dashboardtheme "github.com/hivecommons/hive/pkg/dashboard/theme"
@@ -6794,7 +6795,9 @@ func (c *Config) saveLocked() error {
 	// github.token in PAT mode), and /data is world-traversable on hive
 	// hosts, so a group/world-readable runtime config hands the dashboard
 	// owner credential to every unprivileged agent user (#5331).
-	if err := os.WriteFile(runtimePath, data, 0o600); err != nil {
+	if guardLivePVCPathUnderTest(runtimePath, defaultRuntimeConfigFile, "RuntimeConfigFile") {
+		// skipped: see guardLivePVCPathUnderTest
+	} else if err := os.WriteFile(runtimePath, data, 0o600); err != nil {
 		// Common cause: init container created the file as root, runtime user
 		// can't overwrite. Remove and retry so runtime state is not silently lost.
 		_ = os.Remove(runtimePath) // best-effort; the retry's own WriteFile error is what's recorded below
@@ -6850,7 +6853,9 @@ func (c *Config) saveLocked() error {
 // A package var (not const) only so tests can point it at a temp dir; it
 // never changes at runtime in production (same convention as
 // DashboardOverlayFile below).
-var RuntimeConfigFile = "/data/hive.yaml.runtime"
+var RuntimeConfigFile = defaultRuntimeConfigFile
+
+const defaultRuntimeConfigFile = "/data/hive.yaml.runtime"
 
 // RuntimeConfigFileLegacy is the pre-rename name of RuntimeConfigFile.
 //
@@ -6874,7 +6879,28 @@ const RuntimeConfigFileLegacy = "/data/hive.yaml.bak"
 //
 // A package var (not const) only so tests can point it at a temp dir; it
 // never changes at runtime in production.
-var DashboardOverlayFile = "/data/hive.yaml.dashboard"
+var DashboardOverlayFile = defaultDashboardOverlayFile
+
+const defaultDashboardOverlayFile = "/data/hive.yaml.dashboard"
+
+// guardLivePVCPathUnderTest reports whether a Save running inside a `go test`
+// binary would write to the PRODUCTION PVC path (the package var still holds
+// its default) and must therefore skip it. On a CI runner /data does not
+// exist and the write fails harmlessly; on a hive host it exists and is
+// writable, so a test config (org "testorg", github.app_id 0, a t.TempDir
+// agents_dir) lands in the live hive's runtime config and dashboard overlay
+// and is what the hive boots from on its next restart. That is exactly what
+// happened when the hub's PR precheck ran the test suite inside the r05x pod:
+// the hive came back as testorg/testrepo with its GitHub App wiped. Tests
+// that exercise these files redirect the var to a temp dir, which disables
+// the guard for them.
+func guardLivePVCPathUnderTest(current, production, label string) bool {
+	if !testing.Testing() || current != production {
+		return false
+	}
+	log.Printf("[config] test binary: refusing to write the live %s at %s — point config.%s at a temp dir to exercise it", label, current, label)
+	return true
+}
 
 // DefaultAgentOverlayDir is the directory Load falls back to for per-agent
 // overlay files (<agent>.yaml) when data.agents_dir is not set in the config.
@@ -6941,6 +6967,9 @@ func (c *Config) saveDashboardOverlay() error {
 		// Docker/LXC mode: RuntimeConfigFile is already the boot-time
 		// source of truth there, so dashboard saves persist without an
 		// overlay.
+		return nil
+	}
+	if guardLivePVCPathUnderTest(DashboardOverlayFile, defaultDashboardOverlayFile, "DashboardOverlayFile") {
 		return nil
 	}
 	data, err := c.dashboardOverlayBytes()

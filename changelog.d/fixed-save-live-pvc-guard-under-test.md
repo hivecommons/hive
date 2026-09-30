@@ -1,0 +1,1 @@
+- `Config.Save` running inside a `go test` binary no longer writes the live `/data/hive.yaml.runtime` / `/data/hive.yaml.dashboard` unless a test redirected those paths; the hub's PR precheck running the suite in-pod had replaced r05x's config with testorg/testrepo and wiped its GitHub App.
