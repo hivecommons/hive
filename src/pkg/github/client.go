@@ -202,6 +202,11 @@ type Client struct {
 	// MergeRequestAuthorizer / F4). nil fails closed. Set by
 	// StartMergeRequestWatcher.
 	mergeAuthz MergeRequestAuthorizer
+	// pushBranchAuthz gates push-branch requests from the push-branch-request
+	// watcher against the per-agent ACMM write-policy (CanPush) +
+	// forge-resistance. nil fails closed. Set by
+	// StartPushBranchRequestWatcher.
+	pushBranchAuthz PushBranchRequestAuthorizer
 	// issueAuthz gates issue-create/comment/claim requests from the issue-request
 	// watcher against the per-agent mode policy (CanCreateIssues) +
 	// forge-resistance. nil fails closed. Set by StartIssueRequestWatcher.

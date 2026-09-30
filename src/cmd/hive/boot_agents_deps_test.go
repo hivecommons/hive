@@ -192,7 +192,7 @@ func TestBootAgentsWith_UsableAppArmsRelaysAfterClientIsConfigured(t *testing.T)
 	if relays == nil || relayClient != b.ghClient {
 		t.Fatal("request relays not started on the App client")
 	}
-	if f.relays.prOpen == nil || f.relays.issueOpen == nil || f.relays.review == nil || f.relays.merge == nil || f.relays.holdLabel == nil {
+	if f.relays.prOpen == nil || f.relays.issueOpen == nil || f.relays.review == nil || f.relays.merge == nil || f.relays.pushBranch == nil || f.relays.holdLabel == nil {
 		t.Fatalf("a relay was armed without its authorizer: %+v", *f.relays)
 	}
 	// The PR relay's authorizer is the manager's own gate: an unknown agent

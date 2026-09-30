@@ -206,7 +206,7 @@ func TestAppDeliveredAfterAppLessBootStartsRelaysAndFulfilsQueuedPR(t *testing.T
 	if _, err := os.Stat(filepath.Join(q.dir, reqName)); !os.IsNotExist(err) {
 		t.Fatalf("fulfilled request still queued (stat err %v)", err)
 	}
-	if r := armedWith.Load(); r == nil || r.prOpen == nil || r.issueOpen == nil || r.review == nil || r.merge == nil || r.holdLabel == nil {
+	if r := armedWith.Load(); r == nil || r.prOpen == nil || r.issueOpen == nil || r.review == nil || r.merge == nil || r.pushBranch == nil || r.holdLabel == nil {
 		t.Fatal("lazily started relays were armed without the manager's authorizers")
 	}
 	if err := armedWith.Load().prOpen("ghost", 0); err == nil {

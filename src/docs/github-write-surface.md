@@ -41,6 +41,7 @@ Each relay authorizes a request in this order. It stops at the first refusal.
 | `review` | `review_request_watcher.go` events `approve`, `request_changes`, `comment`, `record_verdict`, and thread replies (`.../review-requests`) | `hive-review` | `agent_pr_reviewed` | yes | yes / PR number |
 | `resolve_thread` | `review_request_watcher.go` event `resolve_thread` | `hive-review` | `agent_pr_reviewed` (`state=thread_resolved`) | yes | yes / PR number |
 | `merge_pr` | `merge_request_watcher.go` (`.../merge-requests`) | `hive-merge` | `pr_merged` (`path=relay`, via `MergePR`) | yes | yes / PR number |
+| `push_branch` | `push_branch_request_watcher.go` (`.../push-requests`) | `hive-push-branch` | `agent_branch_pushed` (branch and commit in the detail) | yes | yes / none (a branch push has no number) |
 
 Side effects performed on the same path are covered by the parent operation's
 allowlist entry. For example, `open_pr` can also apply the `hold` label, post
@@ -82,6 +83,26 @@ One reserved label refuses the whole request — nothing in it is applied — so
 batch can never partially land. The refusal is a policy denial like any other:
 `.denied`, a result file naming the labels, and an audit entry. A lane
 allowlist can narrow `label` further but can never widen it to these.
+
+### `push_branch` publishes topic branches only
+
+The `push_branch` operation pushes a branch from the agent's own checkout to
+GitHub with the App token (`hive-push-branch --repo <owner/repo> [--branch
+<name>] [--dir <path>] [--force-with-lease]`). It is the audited stand-in for
+a direct `git push`, gated by the same CanPush ACMM check, and it is what
+keeps pushes working for a lane whose direct sandbox writes are refused. Two
+gates are its own:
+
+- the checkout it pushes from must be **owned by the requesting agent's UID**
+  (when per-agent UIDs are in play) — an agent can only publish its own
+  working tree, never a peer's or the hive's;
+- the repository's **default branch is refused**, whatever the allowlist
+  says: agents propose changes through `open_pr` and land them through
+  `merge_pr`; a push straight to the default branch would bypass review and
+  the merge relay's CI gate in one move.
+
+A rework push uses `--force-with-lease`; there is deliberately no plain
+`--force`.
 
 ## Hive-internal writes (not agent requests)
 
@@ -233,13 +254,10 @@ of them may reduce what an L6 hive can do by default.
   proxy refuses GitHub write methods for a lane that opted in (a per-lane
   `write_surface.enforce` flag, default off), and the relays become the only
   write path for that lane. Unlisted lanes and L6 hives keep direct access
-  unless the operator turns enforcement on. `git push` needs its own relay
-  first (below), or pushes would simply stop.
-- **New operation with no relay yet:** `push_branch`. It would be a new relay
-  (request file, file-UID authorizer, allowlist check, audit), following the
-  existing ones. A hive with no allowlist would allow it, like every other
-  operation. The standalone `label` and `request_review` operations have
-  landed; see the inventory above.
+  unless the operator turns enforcement on. The `push_branch` relay (above)
+  is the prerequisite that keeps pushes working for an enforced lane; the
+  standalone `label` and `request_review` operations have landed too, so the
+  inventory now covers every everyday write.
 - **Routing the `gh` wrapper's label and reviewer edits through the relays.**
   `gh issue edit --add-label` and `gh pr edit --add-reviewer` still reach
   GitHub directly through the proxy; the relays are the audited path an agent

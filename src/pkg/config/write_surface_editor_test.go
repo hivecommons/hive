@@ -59,7 +59,7 @@ func TestNormalizeWriteSurfaceAllowlist_Rejects(t *testing.T) {
 		in      map[string][]string
 		wantErr string
 	}{
-		{"unknown op", map[string][]string{"scanner": {"comment", "push_branch"}}, `unknown operation "push_branch"`},
+		{"unknown op", map[string][]string{"scanner": {"comment", "delete_repo"}}, `unknown operation "delete_repo"`},
 		{"empty lane", map[string][]string{"  ": {"comment"}}, "lane name is empty"},
 		{"markup lane", map[string][]string{"<b>x</b>": {"comment"}}, "may contain only"},
 		{"space in lane", map[string][]string{"scan ner": {"comment"}}, "may contain only"},

@@ -121,7 +121,7 @@ func TestWriteSurfacePut_ValidatesBeforeMutating(t *testing.T) {
 		{"malformed", `{nope`, "invalid body"},
 		{"missing key", `{}`, "allowlist is required"},
 		{"null allowlist", `{"allowlist":null}`, "allowlist is required"},
-		{"unknown op", `{"allowlist":{"scanner":["push_branch"]}}`, "unknown operation"},
+		{"unknown op", `{"allowlist":{"scanner":["delete_repo"]}}`, "unknown operation"},
 		{"bad lane", `{"allowlist":{"<img src=x>":["comment"]}}`, "may contain only"},
 		{"wrong type", `{"allowlist":{"scanner":"comment"}}`, "invalid body"},
 	}

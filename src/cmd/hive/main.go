@@ -2355,7 +2355,11 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 			issueOpen: b.agentMgr.AuthorizeIssueOpen,
 			review:    b.agentMgr.AuthorizeReviewRequest,
 			merge:     bindMergeAuthz(b.agentMgr.AuthorizeMerge),
-			logger:    b.logger,
+			// Push relay (#9771): the same forge-resistance + CanPush ACMM
+			// gate a direct `git push` is governed by, so the relay grants
+			// no privilege — it only changes which process performs the push.
+			pushBranch: b.agentMgr.AuthorizePushBranch,
+			logger:     b.logger,
 		})
 		// The ACMM verdict is re-read on every (re)start, so a hand-over
 		// after a level change starts the sweep under the current level.

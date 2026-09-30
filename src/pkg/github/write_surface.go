@@ -11,7 +11,8 @@ import (
 // The audited write surface (hivecommons/hive#9587, phase 1).
 //
 // Every GitHub write an agent asks the hive to perform arrives through one of
-// the request relays (pr-, issue-, review- and merge-request watchers). Each
+// the request relays (pr-, issue-, review-, merge- and push-branch-request
+// watchers). Each
 // relay operation has a fixed name below. Those names are:
 //
 //   - the vocabulary of the per-lane allowlist (config write_surface.allowlist),
@@ -51,6 +52,9 @@ const (
 	WriteOpResolveThread = "resolve_thread"
 	// WriteOpMergePR merges a pull request (merge-request watcher).
 	WriteOpMergePR = "merge_pr"
+	// WriteOpPushBranch pushes an agent's local branch to GitHub
+	// (push-branch-request watcher).
+	WriteOpPushBranch = "push_branch"
 )
 
 // WriteOps returns every relay operation name, in a stable order. Config
@@ -67,6 +71,7 @@ func WriteOps() []string {
 		WriteOpReview,
 		WriteOpResolveThread,
 		WriteOpMergePR,
+		WriteOpPushBranch,
 	}
 }
 

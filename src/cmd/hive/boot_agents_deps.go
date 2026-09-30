@@ -44,16 +44,17 @@ type bootAgentsDeps struct {
 	startPermissionsWatcher func(logger *slog.Logger)
 }
 
-// requestRelays is the authorization the four request watchers are started
+// requestRelays is the authorization the five request watchers are started
 // with. Kept as a struct so a fake can assert every relay was armed with the
 // manager's own gate rather than a permissive stand-in.
 type requestRelays struct {
-	prOpen    github.PRRequestAuthorizer
-	holdLabel func(agentName string) bool
-	issueOpen github.IssueRequestAuthorizer
-	review    github.ReviewRequestAuthorizer
-	merge     github.MergeRequestAuthorizer
-	logger    *slog.Logger
+	prOpen     github.PRRequestAuthorizer
+	holdLabel  func(agentName string) bool
+	issueOpen  github.IssueRequestAuthorizer
+	review     github.ReviewRequestAuthorizer
+	merge      github.MergeRequestAuthorizer
+	pushBranch github.PushBranchRequestAuthorizer
+	logger     *slog.Logger
 }
 
 func defaultBootAgentsDeps() bootAgentsDeps {
@@ -72,6 +73,7 @@ func defaultBootAgentsDeps() bootAgentsDeps {
 				startRequestWatchers(ctx, requestwatch.New(c, r.prOpen, r.issueOpen, r.holdLabel, nil), r.logger),
 				c.StartReviewRequestWatcher(ctx, r.review, nil),
 				c.StartMergeRequestWatcher(ctx, r.merge, nil),
+				c.StartPushBranchRequestWatcher(ctx, r.pushBranch, nil),
 			)
 		},
 		startSelfAuthoredSweep: func(ctx context.Context, c *github.Client, maxMerges int, acmmAllowed bool, acmmLevel *int, opts automerge.Options) <-chan struct{} {

@@ -80,6 +80,12 @@ const (
 	// watcher asks users and/or teams to review a PR on an agent's behalf
 	// (kind "request_review", #9587). The detail carries who was asked.
 	AuditActionAgentReviewRequested = "agent_review_requested"
+	// AuditActionAgentBranchPushed is recorded when the push-branch-request
+	// watcher pushes an agent's local branch to GitHub on its behalf (op
+	// push_branch, #9587). The detail carries the branch and the pushed
+	// commit; a branch push has no issue or PR number, so the typed target
+	// is zero.
+	AuditActionAgentBranchPushed = "agent_branch_pushed"
 	// AuditActionIssueClosed is recorded when the issue-request watcher closes
 	// an issue on an agent's behalf after the reporter-confirmation gate passes
 	// or an explicit override reason has been posted.

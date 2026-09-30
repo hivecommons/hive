@@ -81,7 +81,7 @@ func TestWriteOpsAreDistinctAndRecognized(t *testing.T) {
 			t.Errorf("IsWriteOp(%q) = false", op)
 		}
 	}
-	if IsWriteOp("push_branch") || IsWriteOp("") {
+	if IsWriteOp("delete_repo") || IsWriteOp("") {
 		t.Error("IsWriteOp accepted an operation the relays do not perform")
 	}
 }
@@ -435,4 +435,34 @@ func TestMergeRequestWatcher_RefusesOpOutsideLaneAllowlist(t *testing.T) {
 		t.Errorf("result does not explain the refusal: %+v", resp)
 	}
 	assertRefusalAudited(t, *recs, "scanner", WriteOpMergePR, "o/r", 7)
+}
+
+func TestPushBranchRequestWatcher_RefusesOpOutsideLaneAllowlist(t *testing.T) {
+	c := pushTestClient(t, "http://127.0.0.1:1")
+	calls := withPushExec(t, "cafe1234", nil, "")
+	c.SetWriteAllowlistFunc(allowOnly("scanner", WriteOpOpenPR, WriteOpComment))
+	recs := captureAudit(c)
+	dir := withPushDir(t)
+
+	reqPath, err := WritePushBranchRequest(dir, PushBranchRequest{Repo: "o/r", Branch: "scanner/fix-1", Dir: t.TempDir(), Agent: "scanner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessPushBranchRequestsOnce(context.Background())
+
+	if len(*calls) != 0 {
+		t.Fatalf("%d git calls by a lane not allowed to push, want 0", len(*calls))
+	}
+	if _, err := os.Stat(reqPath + ".denied"); err != nil {
+		t.Errorf("refused push was not quarantined: %v", err)
+	}
+	if resp := readPushBranchResult(t, reqPath); resp.OK || !strings.Contains(resp.Error, "write allowlist") || !strings.Contains(resp.Error, WriteOpPushBranch) {
+		t.Errorf("result does not explain the refusal: %+v", resp)
+	}
+	// A refused push never got a number: typed target is zero, like a refused
+	// open_pr.
+	assertRefusalAudited(t, *recs, "scanner", WriteOpPushBranch, "o/r", 0)
+	if _, ok := findAudit(*recs, AuditActionAgentBranchPushed); ok {
+		t.Error("a refused request was audited as a push")
+	}
 }
