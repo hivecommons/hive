@@ -1,0 +1,1 @@
+- Comments in the `standalone` overlay configmap no longer say the base Deployment sets `HIVE_VLLM_ENDPOINT` ([#9727](https://github.com/hivecommons/hive/issues/9727)). They now name the `vllm-svc` Service and say that switching agents to `vllm` needs `HIVE_VLLM_ENDPOINT` set on the Deployment.
