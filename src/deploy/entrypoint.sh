@@ -349,7 +349,7 @@ hive_reown_path_if_needed() {
   if [ "$_reown_owner" != "$_reown_uid" ] || [ "$_reown_changed" != 0 ]; then
     echo "[entrypoint] re-owned ${_reown_path} ${_reown_owner}→${_reown_uid} (${_reown_changed} entries changed, ${_reown_elapsed}s)"
   else
-    echo "[entrypoint] re-own: ${_reown_path} already owned by ${_reown_uid} (0 entries changed, ${_reown_elapsed}s); marker recorded"
+    echo "[entrypoint] re-own: ${_reown_path} already owned by ${_reown_uid} (0 entries changed, ${_reown_elapsed}s)"
   fi
 }
 
