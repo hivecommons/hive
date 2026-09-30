@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -6796,7 +6797,8 @@ func (c *Config) saveLocked() error {
 	// hosts, so a group/world-readable runtime config hands the dashboard
 	// owner credential to every unprivileged agent user (#5331).
 	if guardLivePVCPathUnderTest(runtimePath, defaultRuntimeConfigFile, "RuntimeConfigFile") {
-		// skipped: see guardLivePVCPathUnderTest
+		// Not written, so not persisted: keep the primary-path error visible.
+		runtimeErr = errLivePVCPathGuarded
 	} else if err := os.WriteFile(runtimePath, data, 0o600); err != nil {
 		// Common cause: init container created the file as root, runtime user
 		// can't overwrite. Remove and retry so runtime state is not silently lost.
@@ -6894,6 +6896,8 @@ const defaultDashboardOverlayFile = "/data/hive.yaml.dashboard"
 // the hive came back as testorg/testrepo with its GitHub App wiped. Tests
 // that exercise these files redirect the var to a temp dir, which disables
 // the guard for them.
+var errLivePVCPathGuarded = errors.New("live PVC config path not written from a test binary")
+
 func guardLivePVCPathUnderTest(current, production, label string) bool {
 	if !testing.Testing() || current != production {
 		return false
@@ -6970,7 +6974,7 @@ func (c *Config) saveDashboardOverlay() error {
 		return nil
 	}
 	if guardLivePVCPathUnderTest(DashboardOverlayFile, defaultDashboardOverlayFile, "DashboardOverlayFile") {
-		return nil
+		return errLivePVCPathGuarded
 	}
 	data, err := c.dashboardOverlayBytes()
 	if err != nil {
