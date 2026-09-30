@@ -11,6 +11,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -389,7 +390,197 @@ func ExpectedCommitChecksFromRef(ctx context.Context, client *gh.Client, owner, 
 		}
 		expected[name] = true
 	}
-	return expected, nil
+	return filterPostMergeOnlyWorkflowChecks(ctx, client, owner, repo, ref, expected), nil
+}
+
+// postMergeOnlyPullRequestTypes are pull_request activity types that can only
+// ever fire after a PR has already been merged or closed (#9794). A workflow
+// whose sole trigger is pull_request restricted to these types can never
+// produce a check run on a PR's pre-merge head, so treating one of its checks
+// as "expected" deadlocks the merge CI gate waiting for something that can
+// never start (hivecommons/hotshot's close-linked-issues.yml, triggered only
+// by `pull_request: types: [closed]`, is the case that surfaced this).
+var postMergeOnlyPullRequestTypes = map[string]bool{
+	"closed": true,
+}
+
+// filterPostMergeOnlyWorkflowChecks removes any check name from expected whose
+// originating workflow's only trigger is a pull_request event restricted to
+// postMergeOnlyPullRequestTypes. Discovering the originating workflow and
+// parsing it both call the GitHub API; any failure along that path (listing
+// workflow runs/jobs, fetching the workflow file, or parsing its YAML) leaves
+// the affected name(s) in expected untouched. Fail-safe here means "keep
+// waiting", never "stop waiting", since a wrongly-dropped check would let the
+// merge gate pass CI that never actually ran.
+func filterPostMergeOnlyWorkflowChecks(ctx context.Context, client *gh.Client, owner, repo, ref string, expected map[string]bool) map[string]bool {
+	if len(expected) == 0 || client == nil {
+		return expected
+	}
+	jobPaths, err := workflowPathsForJobNames(ctx, client, owner, repo, ref, expected)
+	if err != nil || len(jobPaths) == 0 {
+		return expected
+	}
+	postMergeOnlyPath := make(map[string]bool, len(jobPaths))
+	for _, path := range jobPaths {
+		if _, done := postMergeOnlyPath[path]; done {
+			continue
+		}
+		fc, _, _, cerr := client.Repositories.GetContents(ctx, owner, repo, path, &gh.RepositoryContentGetOptions{Ref: ref})
+		if cerr != nil || fc == nil {
+			postMergeOnlyPath[path] = false
+			continue
+		}
+		doc, derr := fc.GetContent()
+		if derr != nil {
+			postMergeOnlyPath[path] = false
+			continue
+		}
+		only, perr := workflowIsPostMergeOnly([]byte(doc))
+		postMergeOnlyPath[path] = perr == nil && only
+	}
+	filtered := make(map[string]bool, len(expected))
+	for name := range expected {
+		if path, ok := jobPaths[name]; ok && postMergeOnlyPath[path] {
+			continue
+		}
+		filtered[name] = true
+	}
+	return filtered
+}
+
+// workflowPathsForJobNames maps each check name in names to the repository
+// path of the workflow file that produced it, by cross-referencing the
+// workflow runs and jobs on ref. Names with no matching job (e.g. checks
+// reported by something other than an Actions workflow) are simply absent
+// from the result, which filterPostMergeOnlyWorkflowChecks treats as
+// "leave unchanged".
+func workflowPathsForJobNames(ctx context.Context, client *gh.Client, owner, repo, ref string, names map[string]bool) (map[string]string, error) {
+	runs, _, err := client.Actions.ListRepositoryWorkflowRuns(ctx, owner, repo, &gh.ListWorkflowRunsOptions{
+		HeadSHA:     ref,
+		ListOptions: gh.ListOptions{PerPage: workflowRunsPerPage},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if runs == nil || len(runs.WorkflowRuns) == 0 {
+		return nil, nil
+	}
+	paths := make(map[string]string)
+	for _, run := range runs.WorkflowRuns {
+		if run == nil || run.GetPath() == "" {
+			continue
+		}
+		remaining := false
+		for name := range names {
+			if _, have := paths[name]; !have {
+				remaining = true
+				break
+			}
+		}
+		if !remaining {
+			break
+		}
+		jobsOpts := &gh.ListWorkflowJobsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+		for {
+			jobs, resp, jerr := client.Actions.ListWorkflowJobs(ctx, owner, repo, run.GetID(), jobsOpts)
+			if jerr != nil {
+				// Leave this run's jobs unmapped rather than failing the whole
+				// lookup; any of its names simply stay in the expected set.
+				break
+			}
+			if jobs != nil {
+				for _, job := range jobs.Jobs {
+					if job == nil {
+						continue
+					}
+					if name := job.GetName(); names[name] {
+						paths[name] = run.GetPath()
+					}
+				}
+			}
+			if resp == nil || resp.NextPage == 0 {
+				break
+			}
+			jobsOpts.Page = resp.NextPage
+		}
+	}
+	return paths, nil
+}
+
+// workflowTriggerEvent is one entry of a workflow file's top-level `on:`
+// block: the event name, plus its `types:` list when present (only
+// pull_request's types are consulted today).
+type workflowTriggerEvent struct {
+	name  string
+	types []string
+}
+
+// parseWorkflowTriggerEvents extracts the top-level `on:` trigger events (and,
+// for pull_request, its `types:` list) from a workflow file's raw YAML. It
+// supports all three shapes GitHub accepts: a bare scalar (`on: push`), a
+// sequence (`on: [push, pull_request]`), and a mapping with per-event config
+// (`on: {pull_request: {types: [closed]}}`).
+func parseWorkflowTriggerEvents(doc []byte) ([]workflowTriggerEvent, error) {
+	var root struct {
+		On yaml.Node `yaml:"on"`
+	}
+	if err := yaml.Unmarshal(doc, &root); err != nil {
+		return nil, err
+	}
+	node := root.On
+	switch node.Kind {
+	case 0:
+		return nil, nil
+	case yaml.ScalarNode:
+		return []workflowTriggerEvent{{name: node.Value}}, nil
+	case yaml.SequenceNode:
+		events := make([]workflowTriggerEvent, 0, len(node.Content))
+		for _, item := range node.Content {
+			events = append(events, workflowTriggerEvent{name: item.Value})
+		}
+		return events, nil
+	case yaml.MappingNode:
+		events := make([]workflowTriggerEvent, 0, len(node.Content)/2)
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			ev := workflowTriggerEvent{name: node.Content[i].Value}
+			if val := node.Content[i+1]; val.Kind == yaml.MappingNode {
+				for j := 0; j+1 < len(val.Content); j += 2 {
+					if val.Content[j].Value == "types" && val.Content[j+1].Kind == yaml.SequenceNode {
+						for _, t := range val.Content[j+1].Content {
+							ev.types = append(ev.types, t.Value)
+						}
+					}
+				}
+			}
+			events = append(events, ev)
+		}
+		return events, nil
+	default:
+		return nil, fmt.Errorf("unsupported \"on:\" node kind %v", node.Kind)
+	}
+}
+
+// workflowIsPostMergeOnly reports whether the workflow described by doc has
+// exactly one trigger, pull_request, restricted to activity types that only
+// fire after a PR is already merged/closed (postMergeOnlyPullRequestTypes).
+// `on: pull_request` with no explicit types (GitHub's default of opened/
+// synchronize/reopened) and any workflow with an additional trigger both
+// return false: this must be conservative, since a false positive here would
+// silence a real, currently-waitable check.
+func workflowIsPostMergeOnly(doc []byte) (bool, error) {
+	events, err := parseWorkflowTriggerEvents(doc)
+	if err != nil {
+		return false, err
+	}
+	if len(events) != 1 || events[0].name != "pull_request" || len(events[0].types) == 0 {
+		return false, nil
+	}
+	for _, t := range events[0].types {
+		if !postMergeOnlyPullRequestTypes[strings.TrimSpace(t)] {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func ExpectedCommitChecksFromLatestMergedPR(ctx context.Context, client *gh.Client, owner, repo, base string) (map[string]bool, error) {

@@ -1,0 +1,1 @@
+- The merge CI gate no longer waits on checks from workflows whose only trigger is `pull_request: types: [closed]` (or another post-merge-only type), which could never start on the pre-merge head and permanently deadlocked `hive-merge` (#9794).
