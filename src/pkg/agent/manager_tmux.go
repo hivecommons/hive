@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // paneCaptureSleep is a pacing var, not a const, for the same reason as the
@@ -53,9 +55,32 @@ var inheritedCredentialEnvVars = []string{
 	"LINEAR_WEBHOOK_SECRET",
 }
 
+// githubTokenEnvVars are the environment variables gh, git tooling and the
+// backends' GitHub MCP servers read a GitHub token from. The hive process may
+// carry real values for any of them (a PAT, the installation token), and a
+// tmux server it starts inherits them globally.
+var githubTokenEnvVars = []string{
+	"GH_TOKEN",
+	"GITHUB_TOKEN",
+	"GH_ENTERPRISE_TOKEN",
+	"GITHUB_ENTERPRISE_TOKEN",
+}
+
+// stripsInheritedGitHubTokens reports whether applySessionEnv must hide every
+// GitHub token the hive process env would otherwise pass to this agent's panes.
+// Agents that cannot push never hold one. With proxy-side injection on
+// (HIVE_PROXY_INJECT_GH_AUTH=true, #9586) no agent may hold a usable GitHub
+// credential in any env var: the only sanctioned GitHub token is the inert
+// placeholder agentEnvPairs re-adds as GITHUB_TOKEN, and gh-wrapper.sh /
+// git-credential-hive.sh read the placeholder from the per-agent cache file.
+func (m *Manager) stripsInheritedGitHubTokens(agent *AgentProcess) bool {
+	return !m.agentMode(agent).CanPush() || config.ProxyInjectGHAuth()
+}
+
 // applySessionEnv populates a freshly created session's environment: it
 // REMOVES every inherited credential first (inheritedCredentialEnvVars for all
-// agents; GH_TOKEN/GITHUB_TOKEN for agents that cannot push), then sets the
+// agents; the GitHub token vars for agents that cannot push, and for every
+// agent under proxy-side injection), then sets the
 // sanctioned per-agent pairs from agentEnvPairs, which re-add exactly the
 // credentials this agent's tier may hold. The removal must come first: a
 // `set-environment -r` after a set would discard the value just set.
@@ -71,9 +96,13 @@ func (m *Manager) applySessionEnv(agent *AgentProcess) {
 	// gh/git tokens: push-capable agents receive their per-agent SCOPED token
 	// as GITHUB_TOKEN from agentEnvPairs below; everyone else must see no
 	// GitHub token at all, including one inherited from the hive process.
-	if !m.agentMode(agent).CanPush() {
-		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-r", "GH_TOKEN").Run()
-		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-r", "GITHUB_TOKEN").Run()
+	// Under proxy-side injection that holds for push-capable agents too: an
+	// inherited GH_TOKEN would outrank the placeholder GITHUB_TOKEN in gh and
+	// hand the agent a real credential (#9586).
+	if m.stripsInheritedGitHubTokens(agent) {
+		for _, k := range githubTokenEnvVars {
+			_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-r", k).Run()
+		}
 	}
 	// Set per-session env vars via tmux set-environment (raw values, no shell quoting).
 	for _, p := range m.agentEnvPairs(agent) {

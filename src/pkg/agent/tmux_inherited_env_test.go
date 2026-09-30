@@ -131,3 +131,99 @@ func TestApplySessionEnv_RemovesInheritedCredentialsFromPanes(t *testing.T) {
 		}
 	}
 }
+
+// With proxy-side GitHub auth injection on (#9586), no agent may hold a
+// usable GitHub credential in any env var — push-capable agents included. A
+// GH_TOKEN inherited from the hive process would outrank the placeholder
+// GITHUB_TOKEN in gh, so it must be removed for every agent. With injection
+// off, push-capable agents keep today's behavior.
+func TestStripsInheritedGitHubTokens(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"pusher":  {Backend: "claude", Mode: "ISSUES_AND_PRS"},
+		"filer":   {Backend: "claude", Mode: "ISSUES_ONLY"},
+		"watcher": {Backend: "claude", Mode: "ADVISORY"},
+	}, discardLogger(), ProjectContext{ACMMLevel: 3})
+
+	cases := []struct {
+		inject string
+		agent  string
+		want   bool
+	}{
+		{"", "pusher", false},
+		{"false", "pusher", false},
+		{"TRUE", "pusher", false},
+		{"true", "pusher", true},
+		{"", "filer", true},
+		{"", "watcher", true},
+		{"true", "filer", true},
+		{"true", "watcher", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.agent+"/"+tc.inject, func(t *testing.T) {
+			t.Setenv(config.ProxyInjectGHAuthEnv, tc.inject)
+			if got := m.stripsInheritedGitHubTokens(m.agents[tc.agent]); got != tc.want {
+				t.Errorf("stripsInheritedGitHubTokens(%s) with %s=%q = %v, want %v", tc.agent, config.ProxyInjectGHAuthEnv, tc.inject, got, tc.want)
+			}
+		})
+	}
+}
+
+// Drives the real applySessionEnv against a real tmux server started with
+// real-looking GitHub tokens in its environment, for a push-capable agent under
+// injection: no inherited GitHub token may reach a pane (#9586).
+func TestApplySessionEnv_InjectionRemovesInheritedGitHubTokensForPushAgents(t *testing.T) {
+	if !tmuxAvailable() {
+		t.Skip("tmux not available")
+	}
+	t.Setenv(config.ProxyInjectGHAuthEnv, config.ProxyInjectGHAuthOnValue)
+	socket := fmt.Sprintf("hinject%d", os.Getpid())
+	const session = "hive-inject"
+	dir := t.TempDir()
+
+	start := exec.Command("tmux", "-L", socket, "new-session", "-d", "-s", session, "-c", dir, "sleep 60")
+	start.Env = append(os.Environ(),
+		"GH_TOKEN=ghp_inherited_leaked",
+		"GITHUB_TOKEN=ghs_inherited_leaked",
+		"GH_ENTERPRISE_TOKEN=ghp_enterprise_leaked",
+		"GITHUB_ENTERPRISE_TOKEN=ghp_enterprise_leaked",
+	)
+	if out, err := start.CombinedOutput(); err != nil {
+		t.Fatalf("starting tmux server: %v: %s", err, out)
+	}
+	t.Cleanup(func() { _ = exec.Command("tmux", "-L", socket, "kill-server").Run() })
+
+	out := filepath.Join(dir, "after.env")
+	m := NewManager(map[string]config.AgentConfig{
+		"pusher": {Backend: "claude", Mode: "ISSUES_AND_PRS"},
+	}, discardLogger(), ProjectContext{ACMMLevel: 3})
+	m.mu.Lock()
+	agent := m.agents["pusher"]
+	agent.UID = 0
+	agent.tmuxSocket = socket
+	agent.tmuxSession = session
+	m.mu.Unlock()
+
+	m.applySessionEnv(agent)
+
+	if err := exec.Command("tmux", "-L", socket, "new-window", "-t", session, "sh -c 'env > "+out+"'").Run(); err != nil {
+		t.Fatalf("new-window: %v", err)
+	}
+	env := testutil.EventuallyValue(t, 5*time.Second, func() (map[string]string, bool) {
+		data, err := os.ReadFile(out)
+		if err != nil || len(data) == 0 {
+			return nil, false
+		}
+		env := map[string]string{}
+		for _, line := range strings.Split(string(data), "\n") {
+			if k, v, ok := strings.Cut(line, "="); ok {
+				env[k] = v
+			}
+		}
+		return env, true
+	}, "pane never wrote its environment to %s", out)
+	for _, k := range githubTokenEnvVars {
+		if v, ok := env[k]; ok {
+			t.Errorf("%s=%q reaches a push-capable agent's pane under proxy injection", k, v)
+		}
+	}
+}
