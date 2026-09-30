@@ -11,6 +11,20 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-30 (v5.95.0)
+
+### Added
+
+- `hive-open-pr` accepts `--handoff-why`, `--handoff-approach`, `--handoff-rejected`, `--handoff-repro` and the repeatable, comma-separated `--handoff-files`. They fill the PR request's optional `handoff` object, a short note on why the PR was made. The hive stores the note next to the PR's authoring-session pointer and gives it to the fresh session that handles review feedback after the original conversation is gone. Before this, agents using the wrapper only got a note built from their PR body's section headings. That fallback still fills any field left empty (#9583).
+- CI failures caused by the self-hosted runner pool are now told apart from code failures ([#9664](https://github.com/hivecommons/hive/issues/9664)). On 2026-09-29 about 160 of 371 failed jobs were runner infrastructure (a shared Go build cache, full disks, runner pods that died) and nothing said so, which sent agents to add tests for a broken workflow. A classifier (`.github/scripts/ci_infra_classify.py`, signatures in `ci-infra-signatures.tsv`, tested against real log excerpts from that day) labels each failed job `infra:<class>` or `code`; `ci-infra-rerun.yml` reruns a run's failed jobs once when every one of them is infra (never for code, never past the first attempt, never for forks; `HIVE_CI_INFRA_RERUN=off` disables it); and the hourly `ci-infra-rate.yml` keeps one tracking issue open while at least 15% of the last 100 CI runs hit an infra failure, with a class x runner breakdown, and closes it when the rate recovers. The scheduled coverage issue is also retitled when the gate failed before measuring anything, so its title no longer claims a coverage shortfall.
+- The spoke dashboard's user menu now has a "My hives ↗" entry, right under "GitHub profile ↗", that opens the hub's My Hives page so people with several hives can switch between their dashboards quickly ([#9696](https://github.com/hivecommons/hive/issues/9696), requested by castrojo). It appears only on hub-linked hives (`hub.enabled` with an http(s) `hub.url`) and stays hidden on standalone installs; `/api/config` carries the target as `my_hives_url`.
+- **Review swarm: COMMENT-only on contributor pull requests** ([#9590](https://github.com/hivecommons/hive/issues/9590), [#9608](https://github.com/hivecommons/hive/issues/9608)). The review relay now refuses to adjudicate work the hive did not open: when a PR's author is not one of this hive's accounts (`project.ai_author` or the App bot login), an `approve` or `request_changes` review request is rewritten to a `COMMENT` before it reaches GitHub, and the request's `.result.json` carries a `note` saying so. An `APPROVE` or `REQUEST_CHANGES` satisfies branch-protection approval counts and gates merge queues, so it belongs to the humans who own the repository; a comment the author can weigh and ignore does not. A PR whose author cannot be read is treated as a contributor's, so a flaky API call never resolves into approving someone else's work. The guard is in the relay rather than in the reviewer's prompt, and there is no setting to turn it off: `review.all_authors` widens what is reviewed, never what may be approved. Hive-authored PRs are unaffected, and a plain `comment` costs no extra API call. See `src/docs/github-write-surface.md`.
+
+### Fixed
+
+- Kick lists no longer re-request verification of the same covered/likely-done issue every kick; verification state is persisted in the claim ledger and the issue is suppressed until its PR changes (#9691).
+- Added table-driven unit tests for previously-uncovered branches named by the #9632 coverage gate: `pkg/tracing`'s `TimelineSpanAttributes`/`parseIntAttr` (PR number/URL attrs and malformed-numeric-attr handling) and `pkg/retro`'s `AutonomyPolicyEngine` (`matchesDemoteOn`'s "either" mode and `boundedLevel`'s upper/lower ACMM clamps), lifting both packages toward their coverage floor (#9632).
+
 ## 2026-09-30 (v5.94.2)
 
 ### Fixed
