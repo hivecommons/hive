@@ -7692,6 +7692,9 @@ func redPRFixKick(o escalation.Observation, rerouted bool) string {
 	b.WriteString("Repair it BEFORE claiming new issues or opening any new PR:\n")
 	fmt.Fprintf(&b, "  gh pr checkout %d --repo %s → fix → git commit -s → git push\n", o.Number, o.Repo)
 	b.WriteString("Push to the SAME branch. Do NOT open a replacement PR.\n")
+	b.WriteString("After the push, STOP: do not watch, poll, or sleep on CI (no gh run watch/view loops).\n")
+	b.WriteString("The automerge sweep merges the PR once it is green; if the failure is infrastructure\n")
+	b.WriteString("(runner lost, no space left, checks still queued) leave one comment and end the turn.\n")
 	if o.HeadSHA != "" {
 		fmt.Fprintf(&b, "\nhead: %s\n", o.HeadSHA)
 	}

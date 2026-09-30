@@ -285,7 +285,9 @@ func formatRedPRFixData(data []byte, agent string) string {
 	b.WriteString("new issues or opening ANY new PR. For each one:\n")
 	b.WriteString("  gh pr checkout <number> → fix using the evidence below → commit -s → git push\n")
 	b.WriteString("Push to the SAME branch. Do NOT open a replacement PR. Do NOT leave these\n")
-	b.WriteString("for a later cycle — every kick will re-list them until they are green.\n\n")
+	b.WriteString("for a later cycle — every kick will re-list them until they are green.\n")
+	b.WriteString("After each push move on: do NOT watch, poll, or sleep on CI (no gh run watch/view loops) —\n")
+	b.WriteString("the sweep merges green PRs; infrastructure failures get one comment and a DEFER.\n\n")
 	for i, pr := range mine {
 		if i >= redPRFixMaxDetailed {
 			b.WriteString(fmt.Sprintf("  … and %d more (full list: %s)\n", len(mine)-i, ciFailingPath))
