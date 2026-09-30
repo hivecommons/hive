@@ -178,7 +178,7 @@ sys.exit(1)'
     continue
   fi
 
-  comment_body=$(printf '%s\nPR #%s has merged (%s) and referenced this issue with a non-closing `%s` rather than a closing keyword.\n\nCan this issue now be closed, or is there remaining work it should keep tracking?' \
+  comment_body=$(printf '%s\nPR #%s has merged (%s) and referenced this issue with a non-closing `%s` rather than a closing keyword.\n\nCan this issue now be closed, or is there remaining work it should keep tracking? The reporter or a maintainer can reply `/fixed` (or "yes, this is fixed") to close it.' \
     "$marker" "$PR_NUMBER" "$pr_url" "Refs #${issue}")
   if [ "$DRY_RUN" = "1" ]; then
     echo "DRY-RUN: would comment on #${issue} for merged PR #${PR_NUMBER}:"

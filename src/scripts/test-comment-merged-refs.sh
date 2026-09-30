@@ -242,6 +242,12 @@ else
   cat "$BODY_LOG" | sed 's/^/      | /'
 fi
 
+if grep -q 'reply `/fixed`' "$BODY_LOG"; then
+  pass "comment tells the reader how to confirm the fix (#9746)"
+else
+  bad "comment body does not mention the /fixed confirmation reply"
+fi
+
 if printf '%s\n' "$output" | grep -q 'Skipping #12: issue state is closed' \
   && printf '%s\n' "$output" | grep -q 'Skipping #13: another open PR references it' \
   && printf '%s\n' "$output" | grep -q 'Skipping #15: sweep comment already exists'; then

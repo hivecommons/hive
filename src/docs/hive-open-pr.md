@@ -233,7 +233,12 @@ unsafe:
   attribution trailer in the body (so agent-filed findings are unaffected), and
   a non-Bot author. The reporter or a maintainer opts back in to auto-close by
   adding `hive: reporter-confirmed` to the issue body or applying it as a
-  label; the downgrade then does not fire and `Closes #N` goes through.
+  label; the downgrade then does not fire and `Closes #N` goes through. Once a
+  downgraded `Refs #N` has merged, the reporter or a maintainer can instead
+  reply `/fixed` (or "yes, this is fixed" on a `hive/likely-done` issue): that
+  applies the same label and closes the issue
+  ([#9746](https://github.com/hivecommons/hive/issues/9746),
+  `.github/workflows/issue-confirm-fixed.yml`).
 
 A downgraded reference says so in the PR body it lands in:
 

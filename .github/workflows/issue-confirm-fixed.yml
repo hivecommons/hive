@@ -1,0 +1,49 @@
+name: Issue Confirm Fixed
+
+# Lets an issue's reporter or a maintainer close it by confirming the fix in a
+# comment (#9746). Once a fix merges with a non-closing `Refs #N`, the issue
+# stays open with `hive/likely-done` and the refs-sweep question ("Can this
+# issue now be closed…?", src/scripts/comment-merged-refs.sh); before this
+# workflow, answering "yes, fixed" did nothing.
+#
+# Accepted: `/fixed` (alias `/close`) on any open issue, or a plain-language
+# confirmation ("yes, this has been fixed") only when the issue is waiting on
+# confirmation. Negation or remaining-work language never closes. The grammar,
+# authorisation (issue author or admin/maintain/write, as for /reopen in
+# issue-reopen-command.yml) and the close itself live in
+# src/scripts/issue-confirm-fixed.sh, tested by
+# src/scripts/test-issue-confirm-fixed.sh.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  confirm:
+    name: Close on reporter/maintainer confirmation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Pull-request comments are out of scope, as for /reopen. Bot comments are
+    # skipped so the refs sweep's own question can never answer itself.
+    if: >-
+      github.event.issue.pull_request == null &&
+      github.event.issue.state == 'open' &&
+      github.event.comment.user.type != 'Bot'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: src/scripts
+
+      - name: Close if the comment confirms the fix
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONFIRM_REPO: ${{ github.repository }}
+          CONFIRM_ISSUE: ${{ github.event.issue.number }}
+          CONFIRM_ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+          CONFIRM_COMMENTER: ${{ github.event.comment.user.login }}
+          CONFIRM_COMMENT_BODY: ${{ github.event.comment.body }}
+        run: src/scripts/issue-confirm-fixed.sh
