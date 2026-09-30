@@ -24,8 +24,9 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// plus pkg/claims for the ranked worker-claim ledger the relay honours and
 	// the /api/claims routes expose (hivecommons/hive#8380), plus pkg/adminmcp for
 	// the phase 1 admin MCP endpoint (hivecommons/hive#8699), plus pkg/logscrub
-	// for Spektacular run output scrubbing.
-	const maxDashboardInternalImports = 48
+	// for Spektacular run output scrubbing, plus pkg/advisor for the advisor
+	// lane record listing the /api/advisor routes serve (hivecommons/hive#9722).
+	const maxDashboardInternalImports = 49
 
 	entries, err := os.ReadDir(".")
 	if err != nil {
