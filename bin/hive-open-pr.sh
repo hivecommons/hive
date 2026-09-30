@@ -40,6 +40,13 @@
 #   # every PR on main in repos whose default branch is not main
 #   # (kubestellar/hive#4928). Pass --base only to target a non-default branch
 #   # deliberately (a release line, a stacked PR).
+#   # --handoff-why / --handoff-approach / --handoff-rejected / --handoff-repro
+#   # <text> and --handoff-files <path[,path...]> (repeatable) attach the
+#   # request's optional "handoff" object: a compact note of the reasoning
+#   # behind the PR that the hive keeps beside the PR's session pointer and
+#   # hands to the fresh session that picks up review feedback once the
+#   # authoring conversation is gone (PR follow-up resume, #9583). Every field
+#   # is optional; one left empty is filled from the body's own sections.
 #
 # On success it prints the request path and returns 0. The PR opens
 # asynchronously (within one watcher tick); poll the .result.json next to the
@@ -120,6 +127,7 @@ EOF_COAUTHOR_ISSUES
 }
 
 REPO=""; HEAD=""; BASE=""; TITLE=""; BODY=""; BODY_FILE=""; ISSUES=""
+H_WHY=""; H_APPROACH=""; H_REJECTED=""; H_REPRO=""; H_FILES=""
 BODY_SET=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -130,6 +138,11 @@ while [ $# -gt 0 ]; do
     --body|-b)  BODY="$2"; BODY_SET=1; shift 2;;
     --body-file|-F) BODY_FILE="$2"; shift 2;;
     --issues|--issue) ISSUES="$ISSUES,$2"; shift 2;;
+    --handoff-why)      H_WHY="$2"; shift 2;;
+    --handoff-approach) H_APPROACH="$2"; shift 2;;
+    --handoff-rejected) H_REJECTED="$2"; shift 2;;
+    --handoff-repro)    H_REPRO="$2"; shift 2;;
+    --handoff-files)    H_FILES="$H_FILES,$2"; shift 2;;
     --repo=*)  REPO="${1#*=}"; shift;;
     --head=*)  HEAD="${1#*=}"; shift;;
     --base=*)  BASE="${1#*=}"; shift;;
@@ -137,6 +150,11 @@ while [ $# -gt 0 ]; do
     --body=*)  BODY="${1#*=}"; BODY_SET=1; shift;;
     --body-file=*) BODY_FILE="${1#*=}"; shift;;
     --issues=*|--issue=*) ISSUES="$ISSUES,${1#*=}"; shift;;
+    --handoff-why=*)      H_WHY="${1#*=}"; shift;;
+    --handoff-approach=*) H_APPROACH="${1#*=}"; shift;;
+    --handoff-rejected=*) H_REJECTED="${1#*=}"; shift;;
+    --handoff-repro=*)    H_REPRO="${1#*=}"; shift;;
+    --handoff-files=*)    H_FILES="$H_FILES,${1#*=}"; shift;;
     # Tolerate value-less flags gh accepts but we don't need.
     --draft|--fill|--web|--no-maintainer-edit) shift;;
     # `--label hold` is in every hold-gated policy template, so it arrives on
@@ -232,15 +250,34 @@ if [ -n "$ISSUES" ]; then
   ISSUE_LIST="${ISSUE_LIST#,}"
 fi
 
+# Normalize --handoff-files into a comma-separated list of non-empty paths.
+# Split with read, not word splitting, so a path is never glob-expanded.
+HANDOFF_FILES=""
+if [ -n "$H_FILES" ]; then
+  IFS=',' read -r -a _handoff_files <<<"$H_FILES"
+  for f in "${_handoff_files[@]}"; do
+    f="${f#"${f%%[![:space:]]*}"}"; f="${f%"${f##*[![:space:]]}"}"
+    if [ -n "$f" ]; then HANDOFF_FILES="$HANDOFF_FILES,$f"; fi
+  done
+fi
+HANDOFF_FILES="${HANDOFF_FILES#,}"
+
 # Write the request as valid JSON. Use python for correct escaping of title/body.
 REQ_FILE="$REQ_DIR/${AGENT}-$(date +%s%N).json"
 if command -v python3 >/dev/null 2>&1; then
-  python3 - "$REQ_FILE" "$REPO" "$HEAD" "$BASE" "$TITLE" "$BODY" "$AGENT" "$ISSUE_LIST" <<'PY'
+  python3 - "$REQ_FILE" "$REPO" "$HEAD" "$BASE" "$TITLE" "$BODY" "$AGENT" "$ISSUE_LIST" \
+    "$H_WHY" "$H_APPROACH" "$H_REJECTED" "$H_REPRO" "$HANDOFF_FILES" <<'PY'
 import json, sys
 path, repo, head, base, title, body, agent, issues = sys.argv[1:9]
+why, approach, rejected, repro, files = sys.argv[9:14]
 req = {"repo":repo,"head":head,"base":base,"title":title,"body":body,"agent":agent}
 if issues:
     req["issues"] = [int(n) for n in issues.split(",")]
+handoff = {k: v for k, v in (("why", why), ("approach", approach), ("rejected", rejected), ("repro", repro)) if v.strip()}
+if files:
+    handoff["files"] = files.split(",")
+if handoff:
+    req["handoff"] = handoff
 json.dump(req, open(path,"w"))
 PY
 else
@@ -292,8 +329,26 @@ else
   E_AGENT=$(esc_or_die "$AGENT")
   ISSUES_JSON=""
   [ -n "$ISSUE_LIST" ] && ISSUES_JSON=",\"issues\":[$ISSUE_LIST]"
-  printf '{"repo":"%s","head":"%s","base":"%s","title":"%s","body":"%s","agent":"%s"%s}\n' \
-    "$E_REPO" "$E_HEAD" "$E_BASE" "$E_TITLE" "$E_BODY" "$E_AGENT" "$ISSUES_JSON" \
+  HANDOFF_FIELDS=""
+  for pair in "why:$H_WHY" "approach:$H_APPROACH" "rejected:$H_REJECTED" "repro:$H_REPRO"; do
+    val="${pair#*:}"
+    [ -n "${val//[$' \t\r\n']/}" ] || continue
+    E_VAL=$(esc_or_die "$val")
+    HANDOFF_FIELDS="$HANDOFF_FIELDS,\"${pair%%:*}\":\"$E_VAL\""
+  done
+  if [ -n "$HANDOFF_FILES" ]; then
+    E_FILES=""
+    IFS=',' read -r -a _handoff_files <<<"$HANDOFF_FILES"
+    for f in "${_handoff_files[@]}"; do
+      E_F=$(esc_or_die "$f")
+      E_FILES="$E_FILES,\"$E_F\""
+    done
+    HANDOFF_FIELDS="$HANDOFF_FIELDS,\"files\":[${E_FILES#,}]"
+  fi
+  HANDOFF_JSON=""
+  [ -n "$HANDOFF_FIELDS" ] && HANDOFF_JSON=",\"handoff\":{${HANDOFF_FIELDS#,}}"
+  printf '{"repo":"%s","head":"%s","base":"%s","title":"%s","body":"%s","agent":"%s"%s%s}\n' \
+    "$E_REPO" "$E_HEAD" "$E_BASE" "$E_TITLE" "$E_BODY" "$E_AGENT" "$ISSUES_JSON" "$HANDOFF_JSON" \
     > "$REQ_FILE"
 fi
 
