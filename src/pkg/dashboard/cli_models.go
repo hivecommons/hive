@@ -248,6 +248,7 @@ func setCopilotSDKHelperPathForTest(t interface {
 var claudeStaticModels = []string{
 	"claude-opus-5-5",
 	"claude-opus-5",
+	"claude-sonnet-5-5",
 	"claude-sonnet-5",
 	"claude-fable-5",
 	"claude-opus-4-8",
@@ -292,6 +293,11 @@ var copilotStaticModels = []string{
 	"o4-mini",
 }
 
+// copilotPinnedCLIModels bounds the Copilot fallback and live lists (copilot
+// 1.0.88). It carries Claude and Gemini ids as well as GPT so an unauthenticated
+// SDK discovery never leaves a GPT-only dropdown. The 5.5 Claude ids are dashed
+// like the rest of the -5 family; that spelling is not verified against a live
+// Copilot catalog, so they are allowlisted but not added to the static fallback.
 var copilotPinnedCLIModels = []string{
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
@@ -306,7 +312,9 @@ var copilotPinnedCLIModels = []string{
 	"gpt-4o",
 	"o3",
 	"o4-mini",
+	"claude-opus-5-5",
 	"claude-opus-5",
+	"claude-sonnet-5-5",
 	"claude-sonnet-5",
 	"claude-fable-5",
 	"claude-opus-4.8",
@@ -366,9 +374,10 @@ var bobStaticModels = []string{bobAutoModel}
 // models — Claude ids are rejected with a ChatGPT account ("model is not
 // supported when using Codex with a ChatGPT account"), so codex must never
 // fall through to the copilot list. The catalog is baked into the CLI binary
-// (per-CLI-version, not per-account); this snapshot matches codex 0.156.1
-// (the bundled catalog in models-manager/src/model_info.rs, read from the
-// 0.156.1 linux-x64 binary): visible ids in picker order (astra is the
+// (per-CLI-version, not per-account); this snapshot was read at codex 0.156.1
+// (the bundled catalog in models-manager/src/model_info.rs, from the 0.156.1
+// linux-x64 binary) and is unchanged for the pinned 0.159.0 as far as could be
+// verified without the binary: visible ids in picker order (astra is the
 // default; GPT-6 Sol and Luna arrived in 0.156.1, #8417), then the hidden
 // ids — hidden entries are still valid --model values (see
 // orderCodexServedModels). gpt-5.2 and gpt-5.4-mini were retired from the
@@ -399,13 +408,14 @@ var geminiStaticModels = []string{
 }
 
 // claudePinnedCLIModels is the closed model set accepted by the Claude Code
-// version pinned in src/Dockerfile (2.1.280 as of #8417/#8426). The Anthropic
+// version pinned in src/Dockerfile (2.1.284, which added claude-sonnet-5-5). The Anthropic
 // account catalog can list models that the installed CLI refuses with "version
 // X or newer is required"; intersecting live and fallback lists with this set
 // keeps the dashboard from offering a value this image cannot launch (#8418).
 var claudePinnedCLIModels = []string{
 	"claude-opus-5-5",
 	"claude-opus-5",
+	"claude-sonnet-5-5",
 	"claude-sonnet-5",
 	"claude-fable-5",
 	"claude-opus-4-8",
@@ -437,6 +447,7 @@ var geminiPinnedCLIModels = []string{
 // model set. "default" (last resort) means goose is unconfigured.
 var piKiroStaticModels = []string{
 	"kiro-api-key/claude-opus-5:high",
+	"kiro-api-key/claude-sonnet-5-5:high",
 	"kiro-api-key/claude-sonnet-5:high",
 	"kiro-api-key/gpt-5.6-sol:high",
 }
@@ -444,7 +455,7 @@ var piKiroStaticModels = []string{
 var gooseProviderStaticModels = map[string][]string{
 	"ollama":     {"llama3.3", "qwen2.5", "deepseek-r1", "default"},
 	"openai":     {"gpt-5.4", "gpt-4.1", "gpt-4o", "o3", "o4-mini"},
-	"anthropic":  {"claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"},
+	"anthropic":  {"claude-opus-4-8", "claude-sonnet-5-5", "claude-sonnet-4-6", "claude-haiku-4-5"},
 	"google":     {"gemini-3-pro-preview", "gemini-2.5-pro", "gemini-2.5-flash"},
 	"databricks": {"databricks-claude-opus", "databricks-meta-llama"},
 }

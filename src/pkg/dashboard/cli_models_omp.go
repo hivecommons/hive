@@ -29,6 +29,7 @@ var ompStaticModels = []string{
 	"openai-codex/gpt-5.6-luna",
 	"anthropic/claude-opus-5",
 	"anthropic/claude-fable-5",
+	"anthropic/claude-sonnet-5-5",
 	"anthropic/claude-sonnet-5",
 	"google-antigravity/gemini-3.7-flash",
 }
@@ -39,6 +40,7 @@ var ompStaticReasoningEfforts = map[string][]string{
 	"openai-codex/gpt-5.6-luna":           {"minimal", "low", "medium", "high", "xhigh", "max"},
 	"anthropic/claude-opus-5":             {"low", "medium", "high", "xhigh", "max"},
 	"anthropic/claude-fable-5":            {"low", "medium", "high", "xhigh", "max"},
+	"anthropic/claude-sonnet-5-5":         {"low", "medium", "high", "xhigh", "max"},
 	"anthropic/claude-sonnet-5":           {"low", "medium", "high", "xhigh", "max"},
 	"google-antigravity/gemini-3.7-flash": {"low", "medium", "high"},
 }
