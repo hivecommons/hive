@@ -76,11 +76,25 @@ func TestFormatPRPrecheckCommandFailureIncludesFailingTestsAndErrors(t *testing.
 	}
 }
 
+func writeDocsScripts(t *testing.T, dir string) {
+	t.Helper()
+	scripts := filepath.Join(dir, "src", "scripts")
+	if err := os.MkdirAll(scripts, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"check-docs-links.py", "check-docs-citations.py", "check-api-reference-citations.sh"} {
+		if err := os.WriteFile(filepath.Join(scripts, name), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestRunPRRequestExternalPrechecksUsesInjectedExec(t *testing.T) {
 	var calls []string
 	execFn := func(ctx context.Context, dir string, env []string, name string, args ...string) (string, error) {
 		calls = append(calls, name+" "+strings.Join(args, " "))
 		if name == "git" {
+			writeDocsScripts(t, args[len(args)-1])
 			return "", nil
 		}
 		if name == "go" && strings.Contains(strings.Join(args, " "), "./pkg/github") {
@@ -315,6 +329,57 @@ func TestRunPRRequestExternalPrechecksMissingDocsToolSkips(t *testing.T) {
 	}
 }
 
+func TestRunPRRequestExternalPrechecksAbsentDocsScriptsSkip(t *testing.T) {
+	var calls []string
+	c := NewClientForTest("http://127.0.0.1", "o", []string{"r"}, slog.Default())
+	c.SetPRPrecheckOptions(&PRPrecheckOptions{
+		DocsEnabled:    func() bool { return true },
+		GoTestsEnabled: func() bool { return false },
+		WorkRoot:       t.TempDir(),
+		Exec: func(ctx context.Context, dir string, env []string, name string, args ...string) (string, error) {
+			calls = append(calls, name)
+			return "", nil
+		},
+		LookPath: func(name string) (string, error) { return "/usr/bin/" + name, nil },
+	})
+	outcome := c.runPRRequestExternalPrechecks(context.Background(), "o", "r", "head", []*gh.CommitFile{
+		{Filename: gh.Ptr("changelog.d/fixed-x.md"), Status: gh.Ptr("added")},
+		{Filename: gh.Ptr("src/docs/x.md"), Status: gh.Ptr("modified")},
+	})
+	if len(outcome.Reject) != 0 {
+		t.Fatalf("reject = %#v, want none", outcome.Reject)
+	}
+	if len(outcome.Skipped) != 3 || !strings.Contains(outcome.Skipped[0], "script not present in target repo") {
+		t.Fatalf("skipped = %#v, want 3 absent-script skips", outcome.Skipped)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("exec calls = %v, want only git clone", calls)
+	}
+}
+
+func TestRunPRRequestExternalPrechecksPresentDocsScriptFailureRejects(t *testing.T) {
+	c := NewClientForTest("http://127.0.0.1", "o", []string{"r"}, slog.Default())
+	c.SetPRPrecheckOptions(&PRPrecheckOptions{
+		DocsEnabled:    func() bool { return true },
+		GoTestsEnabled: func() bool { return false },
+		WorkRoot:       t.TempDir(),
+		Exec: func(ctx context.Context, dir string, env []string, name string, args ...string) (string, error) {
+			if name == "git" {
+				writeDocsScripts(t, args[len(args)-1])
+				return "", nil
+			}
+			return "Error: broken link\n", errors.New("exit status 1")
+		},
+		LookPath: func(name string) (string, error) { return "/usr/bin/" + name, nil },
+	})
+	outcome := c.runPRRequestExternalPrechecks(context.Background(), "o", "r", "head", []*gh.CommitFile{
+		{Filename: gh.Ptr("src/docs/x.md"), Status: gh.Ptr("modified")},
+	})
+	if len(outcome.Reject) == 0 {
+		t.Fatalf("outcome = %#v, want rejection", outcome)
+	}
+}
+
 func TestRunPRRequestExternalPrechecksMissingGoSkips(t *testing.T) {
 	c := NewClientForTest("http://127.0.0.1", "o", []string{"r"}, slog.Default())
 	c.SetPRPrecheckOptions(&PRPrecheckOptions{
@@ -348,6 +413,7 @@ func TestRunPRRequestExternalPrechecksGoInfraSkipStillRunsDocs(t *testing.T) {
 		Exec: func(ctx context.Context, dir string, env []string, name string, args ...string) (string, error) {
 			switch name {
 			case "git":
+				writeDocsScripts(t, args[len(args)-1])
 				return "", nil
 			case "python3":
 				return "Error: broken docs link\n", errors.New("exit status 1")

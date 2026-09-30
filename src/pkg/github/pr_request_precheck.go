@@ -269,14 +269,28 @@ func (c *Client) runPRRequestExternalPrechecks(ctx context.Context, owner, repo,
 			docsSkipped = append(docsSkipped, "docs guards skipped (bash not found)")
 		}
 		if len(docsSkipped) == 0 {
-			commands = append(commands,
-				prPrecheckCommand{name: "python3", kind: "docs", dir: checkout, args: []string{"src/scripts/check-docs-links.py", "src/docs"}},
-				prPrecheckCommand{name: "python3", kind: "docs", dir: checkout, args: []string{"src/scripts/check-docs-links.py", "docs"}},
-				prPrecheckCommand{name: "python3", kind: "docs", dir: checkout, args: []string{"src/scripts/check-docs-links.py", ".", "--no-recurse"}},
-				prPrecheckCommand{name: "python3", kind: "docs", dir: checkout, args: []string{"src/scripts/check-docs-links.py", "src/deploy/data/wiki", "--vault-root"}},
-				prPrecheckCommand{name: "python3", kind: "docs", dir: checkout, args: []string{"src/scripts/check-docs-citations.py", "src/docs"}},
-				prPrecheckCommand{name: "bash", kind: "docs", dir: checkout, args: []string{"src/scripts/check-api-reference-citations.sh"}},
-			)
+			docsCommands := []prPrecheckCommand{
+				{name: "python3", kind: "docs", dir: checkout, args: []string{"src/scripts/check-docs-links.py", "src/docs"}},
+				{name: "python3", kind: "docs", dir: checkout, args: []string{"src/scripts/check-docs-links.py", "docs"}},
+				{name: "python3", kind: "docs", dir: checkout, args: []string{"src/scripts/check-docs-links.py", ".", "--no-recurse"}},
+				{name: "python3", kind: "docs", dir: checkout, args: []string{"src/scripts/check-docs-links.py", "src/deploy/data/wiki", "--vault-root"}},
+				{name: "python3", kind: "docs", dir: checkout, args: []string{"src/scripts/check-docs-citations.py", "src/docs"}},
+				{name: "bash", kind: "docs", dir: checkout, args: []string{"src/scripts/check-api-reference-citations.sh"}},
+			}
+			// The docs guards ship only in the primary repo; a script that is
+			// absent from the target checkout is skipped, not treated as a failure.
+			missing := map[string]bool{}
+			for _, command := range docsCommands {
+				script := command.args[0]
+				if _, err := os.Stat(filepath.Join(checkout, script)); err != nil {
+					if !missing[script] {
+						missing[script] = true
+						docsSkipped = append(docsSkipped, fmt.Sprintf("docs guard %s skipped (script not present in target repo)", script))
+					}
+					continue
+				}
+				commands = append(commands, command)
+			}
 		}
 		for _, skipped := range docsSkipped {
 			c.logPRPrecheckSkip(skipped)
