@@ -1,0 +1,1 @@
+- The `standalone` overlay README and the standalone section of `src/docs/manual-provisioning.md` now list the Gateway API Inference Extension CRDs as a prerequisite ([#9756](https://github.com/hivecommons/hive/issues/9756)). The overlay ships an `InferencePool`, so `kubectl apply -k` on a cluster without the CRDs ended with `no matches for kind "InferencePool"`.
