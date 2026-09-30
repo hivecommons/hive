@@ -1,0 +1,1 @@
+- The LKE CI runner values now pin the privileged dind sidecar to `docker:29.8.1-dind` by digest instead of the floating `docker:dind` tag ([#9759](https://github.com/hivecommons/hive/issues/9759)).
