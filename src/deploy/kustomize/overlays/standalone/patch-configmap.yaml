@@ -65,8 +65,8 @@ data:
       eval_interval_s: 300
       # LiteLLM inference backend (UNDER governor:, per LiteLLMConfig). Point
       # `endpoint` at your OpenAI-compatible proxy. The in-cluster llama.cpp
-      # from ../../../inference is reachable at the HIVE_VLLM_ENDPOINT the base
-      # deployment sets; a dedicated litellm proxy would be its own Service.
+      # from ../../../inference is the vllm-svc Service below; a dedicated
+      # litellm proxy would be its own Service.
       litellm:
         endpoint: http://vllm-svc.hive-inference.svc.cluster.local:8000
         # api_key_env names the ENV VAR holding the key (default
