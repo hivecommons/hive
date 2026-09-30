@@ -17,7 +17,9 @@ This page covers:
 - a per-lane opt-in (`write_surface.enforce`) that makes the relays the only
   write path for a lane by refusing its direct writes at the GitHub proxy and,
   for the same lanes, in the agent sandbox's `gh` wrapper;
-- redaction of credential material in audited arguments and results.
+- redaction of credential material in audited arguments and results;
+- per-lane mention sanitizing of relay-posted bodies
+  (`write_surface.neutralize_mentions`).
 
 By default agents still have their direct write paths (`gh`, the API through
 the proxy, `git push`). An operator removes them lane by lane; see
@@ -297,6 +299,36 @@ check at a file it controls. The list is parsed with bash builtins only —
 every external command is reachable through the agent's own `PATH`. An absent,
 unreadable or unrecognized file enforces **nothing**, which is the documented
 default and leaves the proxy refusal as the enforcement the feature rests on.
+
+## Mention sanitizing
+
+`write_surface.neutralize_mentions` lists the lanes whose relay-posted bodies
+have every GitHub `@mention` rewritten so it notifies no one:
+
+```yaml
+write_surface:
+  neutralize_mentions: [scanner, outreach]
+```
+
+- **Default off.** With no list, every body is posted as the agent wrote it.
+  Some prompts deliberately `@`-mention a person (the reviewer names the PR
+  author so the one person who can act is notified), so sanitizing is opted
+  into per lane rather than applied everywhere.
+- **Per lane.** A replica follows its base agent; `"*"` covers every lane.
+  Names are matched without regard to case or surrounding spaces, and the list
+  is read live from config on every relay request.
+- **What is rewritten:** the agent-supplied body of `comment`, `create_issue`,
+  `open_pr`, `review` and review-thread replies. The rewrite is
+  `advisory.NeutralizeMentions`, the same sanitizer the advisory digest,
+  recommendations and duplicate-sweep posts use: outside code `@user` becomes
+  `` `user` ``; inside inline code and fenced blocks only the `@` is dropped.
+  Email addresses, URLs and `#123` references are left alone.
+- **What is not:** the hive's attribution trailer and confidence line, which
+  are appended after the rewrite, and titles, which GitHub does not scan for
+  mentions.
+
+`neutralize_mentions` is set in `hive.yaml`; the dashboard's Write Surface
+editor leaves it as it is.
 
 ## Audit fields
 

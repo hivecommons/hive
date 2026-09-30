@@ -89,6 +89,9 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// Lane write allowlist (#9587), same live-config contract as the two
 	// predicates above.
 	client.SetWriteAllowlistFunc(b.cfg.AgentMayWrite)
+	// Per-lane mention sanitizing for relay-posted bodies (#9587), same
+	// live-config contract.
+	client.SetMentionNeutralizeFunc(b.cfg.WriteSurfaceNeutralizesMentions)
 	if len(b.cfg.Governor.Labels.Exempt) > 0 {
 		client.SetExemptLabels(b.cfg.Governor.Labels.Exempt)
 		client.SetAutoMergeLabel(normalizedAutoMergeLabel(b.cfg.Governor.Labels.AutoMerge))

@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
@@ -124,6 +125,37 @@ func (c *Client) AgentMayWrite(agent, op string) bool {
 		return true
 	}
 	return may(agent, op)
+}
+
+// SetMentionNeutralizeFunc installs the per-lane mention-sanitizing predicate
+// (#9587). The hive passes config's WriteSurfaceNeutralizesMentions, so a lane
+// listed in config is covered on the very next relay request; nil clears it,
+// which posts every body as the agent wrote it.
+func (c *Client) SetMentionNeutralizeFunc(fn func(agent string) bool) {
+	if c == nil {
+		return
+	}
+	c.reposMu.Lock()
+	defer c.reposMu.Unlock()
+	c.neutralizeMentions = fn
+}
+
+// relayBody returns the body a relay posts for agent: unchanged, or with every
+// GitHub @mention rewritten by advisory.NeutralizeMentions when the agent's
+// lane is listed under write_surface.neutralize_mentions. The relays call it
+// on the agent-supplied text only, before the attribution trailer is
+// appended, so hive-generated additions are never rewritten.
+func (c *Client) relayBody(agent, body string) string {
+	if c == nil || body == "" || strings.TrimSpace(agent) == "" {
+		return body
+	}
+	c.reposMu.RLock()
+	neutralize := c.neutralizeMentions
+	c.reposMu.RUnlock()
+	if neutralize == nil || !neutralize(agent) {
+		return body
+	}
+	return advisory.NeutralizeMentions(body)
 }
 
 // WriteAllowlistReason is the agent- and operator-facing explanation written

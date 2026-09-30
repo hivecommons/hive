@@ -106,3 +106,14 @@ func TestConfigAgentMayWriteSatisfiesAllowlistFunc(t *testing.T) {
 		t.Fatal("an empty config allowlist refused a write")
 	}
 }
+
+// config.WriteSurfaceNeutralizesMentions must keep satisfying the predicate
+// the construction site passes to SetMentionNeutralizeFunc.
+func TestConfigNeutralizeMentionsSatisfiesMentionFunc(t *testing.T) {
+	cfg := &config.Config{}
+	c := &Client{}
+	c.SetMentionNeutralizeFunc(cfg.WriteSurfaceNeutralizesMentions)
+	if got := c.relayBody("scanner", "cc @alice"); got != "cc @alice" {
+		t.Fatalf("an empty config rewrote a body: %q", got)
+	}
+}

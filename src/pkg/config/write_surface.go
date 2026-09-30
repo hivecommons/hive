@@ -50,6 +50,13 @@ type WriteSurfaceConfig struct {
 	// with no entry of its own follows its base agent; "*" enforces every
 	// lane.
 	Enforce []string `yaml:"enforce,omitempty" json:"enforce,omitempty"`
+	// NeutralizeMentions lists the lanes whose relay-posted bodies (comments,
+	// issue and PR bodies, reviews and review-thread replies) have every
+	// GitHub @mention rewritten so it notifies no one (hivecommons/hive#9587).
+	// Default empty: bodies are posted as the agent wrote them, because some
+	// prompts deliberately @-mention the PR author. A replica with no entry
+	// of its own follows its base agent; "*" covers every lane.
+	NeutralizeMentions []string `yaml:"neutralize_mentions,omitempty" json:"neutralize_mentions,omitempty"`
 }
 
 // WriteSurfaceEnforced reports whether the named agent's lane has opted in to
@@ -68,11 +75,36 @@ func (c *Config) WriteSurfaceEnforced(agent string) bool {
 	}
 	writeSurfaceMu.RLock()
 	defer writeSurfaceMu.RUnlock()
-	if len(c.WriteSurface.Enforce) == 0 {
+	return c.writeSurfaceLaneListed(c.WriteSurface.Enforce, agent)
+}
+
+// WriteSurfaceNeutralizesMentions reports whether the named agent's lane has
+// opted in to write_surface.neutralize_mentions, i.e. whether the relays must
+// rewrite @mentions in the bodies it posts. It is the single predicate the
+// relays ask. Like WriteSurfaceEnforced it is strictly opt-in per lane: a nil
+// config, an unnamed agent and an unlisted lane all answer false.
+func (c *Config) WriteSurfaceNeutralizesMentions(agent string) bool {
+	if c == nil {
+		return false
+	}
+	agent = strings.TrimSpace(agent)
+	if agent == "" {
+		return false
+	}
+	writeSurfaceMu.RLock()
+	defer writeSurfaceMu.RUnlock()
+	return c.writeSurfaceLaneListed(c.WriteSurface.NeutralizeMentions, agent)
+}
+
+// writeSurfaceLaneListed reports whether lanes names agent, its base agent,
+// or "*". Names match without regard to case or surrounding spaces. The
+// caller holds writeSurfaceMu and passes a trimmed, non-empty agent.
+func (c *Config) writeSurfaceLaneListed(lanes []string, agent string) bool {
+	if len(lanes) == 0 {
 		return false
 	}
 	base := c.BaseAgentName(agent)
-	for _, lane := range c.WriteSurface.Enforce {
+	for _, lane := range lanes {
 		lane = strings.TrimSpace(lane)
 		if lane == WriteSurfaceAllowAll || strings.EqualFold(lane, agent) || strings.EqualFold(lane, base) {
 			return true

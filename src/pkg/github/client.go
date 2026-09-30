@@ -54,6 +54,11 @@ type Client struct {
 	// value, and what every test constructs) means no scoping, so the client
 	// behaves exactly as it did before.
 	agentServesRepo func(agent, repo string) bool
+	// neutralizeMentions reports whether an agent's lane has opted in to
+	// write_surface.neutralize_mentions (hivecommons/hive#9587). Guarded by
+	// reposMu like agentMayWrite. Nil means no lane is covered, so bodies are
+	// posted as written.
+	neutralizeMentions func(agent string) bool
 	// agentMayWrite reports whether an agent's lane may perform a write
 	// operation through the request relays (hivecommons/hive#9587). Guarded
 	// by reposMu for the same reason as agentServesRepo. Nil means no

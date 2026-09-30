@@ -385,7 +385,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	}
 
 	meta := c.attributionMeta(req.Agent)
-	body := req.Body
+	body := c.relayBody(req.Agent, req.Body)
 	if c.confidenceScoreOn() {
 		body = appendConfidenceLine(body, req.Report, c.perspectives)
 	}
@@ -572,7 +572,7 @@ func (c *Client) handleReviewThreadRequest(ctx context.Context, path string, req
 		err = c.resolveReviewThread(ctx, threadID)
 	} else {
 		state = reviewStateThreadReplied
-		body := req.Body
+		body := c.relayBody(req.Agent, req.Body)
 		if c.attributionTrailerOn() {
 			body = AppendTrailer(body, meta)
 		}

@@ -488,6 +488,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// because the proxy hard-denies direct POST /pulls.
 	meta := c.attributionMeta(req.Agent)
 	meta.RequestedBy = c.resolveRequestedBy(ctx, req.Repo, title, body, req.IssueN)
+	body = c.relayBody(req.Agent, body)
 	if c.attributionTrailerOn() {
 		body = AppendTrailer(body, meta)
 	}

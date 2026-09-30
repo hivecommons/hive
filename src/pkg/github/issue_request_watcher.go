@@ -420,7 +420,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	}
 
 	meta := c.attributionMeta(req.Agent)
-	body := req.Body
+	body := c.relayBody(req.Agent, req.Body)
 	if c.attributionTrailerOn() {
 		body = AppendTrailer(body, meta)
 	}

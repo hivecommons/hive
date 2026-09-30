@@ -142,3 +142,59 @@ func TestSetWriteSurfaceAllowlist_KeepsEnforce(t *testing.T) {
 		t.Error("allowlist edit dropped write_surface.enforce")
 	}
 }
+
+func TestWriteSurfaceNeutralizesMentions_DefaultOff(t *testing.T) {
+	var nilCfg *Config
+	if nilCfg.WriteSurfaceNeutralizesMentions("scanner") {
+		t.Error("nil config must not neutralize mentions")
+	}
+	cfg := &Config{WriteSurface: WriteSurfaceConfig{Enforce: []string{"scanner"}}}
+	if cfg.WriteSurfaceNeutralizesMentions("scanner") {
+		t.Error("an enforce entry alone must not neutralize mentions; it is a separate opt-in")
+	}
+}
+
+func TestWriteSurfaceNeutralizesMentions_ListedLanesOnly(t *testing.T) {
+	cfg := &Config{
+		Agents: map[string]AgentConfig{
+			"scanner":   {},
+			"scanner-2": {ReplicaOf: "scanner"},
+			"reviewer":  {},
+		},
+		WriteSurface: WriteSurfaceConfig{NeutralizeMentions: []string{" Scanner "}},
+	}
+	cases := map[string]bool{
+		"scanner":   true,
+		"SCANNER":   true,
+		"scanner-2": true, // replica follows its base lane
+		"reviewer":  false,
+		"":          false,
+	}
+	for agentName, want := range cases {
+		if got := cfg.WriteSurfaceNeutralizesMentions(agentName); got != want {
+			t.Errorf("WriteSurfaceNeutralizesMentions(%q) = %v, want %v", agentName, got, want)
+		}
+	}
+	if cfg.WriteSurfaceEnforced("scanner") {
+		t.Error("a neutralize_mentions entry must not enforce")
+	}
+}
+
+func TestWriteSurfaceNeutralizesMentions_AllLanes(t *testing.T) {
+	cfg := &Config{WriteSurface: WriteSurfaceConfig{NeutralizeMentions: []string{WriteSurfaceAllowAll}}}
+	if !cfg.WriteSurfaceNeutralizesMentions("anyone") {
+		t.Error(`"*" must cover every lane`)
+	}
+	if cfg.WriteSurfaceNeutralizesMentions("") {
+		t.Error("an unnamed agent is never covered")
+	}
+}
+
+// Replacing the allowlist from the dashboard must not drop neutralize_mentions.
+func TestSetWriteSurfaceAllowlist_KeepsNeutralizeMentions(t *testing.T) {
+	cfg := &Config{WriteSurface: WriteSurfaceConfig{NeutralizeMentions: []string{"scanner"}}}
+	cfg.SetWriteSurfaceAllowlist(map[string][]string{"scanner": {"comment"}})
+	if !cfg.WriteSurfaceNeutralizesMentions("scanner") {
+		t.Error("allowlist edit dropped write_surface.neutralize_mentions")
+	}
+}
