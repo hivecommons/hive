@@ -474,6 +474,30 @@ func sessionCookieDomain(host string) string {
 	return ""
 }
 
+// sessionCookieReaches reports whether the hub session cookie minted for a
+// request served on hubHost is sent by the browser to target: a relative path
+// stays on the hub, and an absolute URL needs a host the cookie's Domain covers
+// (a host-only cookie covers only the hub host itself).
+func sessionCookieReaches(hubHost, target string) bool {
+	if strings.HasPrefix(target, "/") {
+		return true
+	}
+	host, ok := originHost(target)
+	if !ok {
+		return false
+	}
+	host = strings.ToLower(host)
+	if hp, _, err := net.SplitHostPort(hubHost); err == nil {
+		hubHost = hp
+	}
+	hubHost = strings.ToLower(hubHost)
+	domain := strings.TrimPrefix(sessionCookieDomain(hubHost), ".")
+	if domain == "" {
+		return host == hubHost
+	}
+	return host == domain || strings.HasSuffix(host, "."+domain)
+}
+
 // hubSessionCookieValues returns every hive_hub_user value on the request, in
 // jar order. During the .kubestellar.io domain-widening rollout (#4171) a
 // browser may briefly hold TWO copies of the cookie — the legacy

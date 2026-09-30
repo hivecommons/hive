@@ -1,0 +1,1 @@
+- Stop the hub `/login` shortcut from bouncing a signed-in user to a redirect target the session cookie does not reach, which caused an endless redirect loop after GitHub login (#9785).

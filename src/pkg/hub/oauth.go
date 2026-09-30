@@ -209,7 +209,11 @@ func (s *HubServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// accounts stays possible. The target is already validated by
 	// loginRedirectTarget (isTrustedRedirectTarget), so this introduces no new
 	// open-redirect surface.
-	if redirect != "" {
+	// The bounce is only safe when the session cookie will actually reach the
+	// target: otherwise the target answers 401, bounces back here, and the
+	// browser loops until NS_ERROR_REDIRECT_LOOP (#9785). Fall through to a fresh
+	// login, which re-mints the cookie with the right scope, instead.
+	if redirect != "" && sessionCookieReaches(r.Host, redirect) {
 		for _, value := range hubSessionCookieValues(r) {
 			if u, ok := s.verifyHubUserCookie(value); ok && loadSaaSUser(u) != nil {
 				http.Redirect(w, r, redirect, http.StatusSeeOther)
