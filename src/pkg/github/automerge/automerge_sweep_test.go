@@ -1105,6 +1105,9 @@ func TestCommitGreenCachesExpectedReferenceChecksPerRepoBase(t *testing.T) {
 				{"number": 3, "merged_at": nil, "head": map[string]string{"sha": "unmerged"}},
 				{"number": 2, "merged_at": "2026-09-29T16:00:00Z", "head": map[string]string{"sha": "merged-head"}},
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/actions/runs":
+			// Post-merge-only workflow filter probe; no runs means no filtering.
+			json.NewEncoder(w).Encode(map[string]any{"total_count": 0, "workflow_runs": []map[string]any{}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/merged-head/check-runs":
 			referenceFetches++
 			json.NewEncoder(w).Encode(map[string]any{"total_count": 3, "check_runs": []map[string]any{
@@ -1150,6 +1153,9 @@ func TestCommitGreenUsesPreviousEvaluatedHeadBeforeMergedPRFallback(t *testing.T
 			json.NewEncoder(w).Encode(map[string]any{"total_count": 1, "check_runs": []map[string]string{
 				{"name": "build", "status": "completed", "conclusion": "success"},
 			}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/actions/runs":
+			// Post-merge-only workflow filter probe; no runs means no filtering.
+			json.NewEncoder(w).Encode(map[string]any{"total_count": 0, "workflow_runs": []map[string]any{}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/old-head/check-runs":
 			json.NewEncoder(w).Encode(map[string]any{"total_count": 2, "check_runs": []map[string]any{
 				{"name": "build", "status": "completed", "conclusion": "success", "pull_requests": []map[string]any{{"number": 7}}},
