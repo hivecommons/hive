@@ -299,6 +299,10 @@ type AgentConfig struct {
 	// JevMode opts this agent into the Jev typed-decision tool
 	// (hivecommons/hive#8939): "" | off | assist. See ValidJevModes.
 	JevMode string `yaml:"jev_mode,omitempty" json:"jev_mode,omitempty"`
+	// Advisor is this agent's advisor-lane override (#9722): any field of the
+	// fleet-wide advisor block may be changed here, or the agent opted out
+	// entirely with enabled: false. Nil → inherit the fleet default.
+	Advisor *AdvisorOverride `yaml:"advisor,omitempty" json:"advisor,omitempty"`
 	// ExplainMode opts this agent into emitting EXPLAIN-prefixed reasoning
 	// lines alongside its tool calls, so an operator debugging "why did it do
 	// that" has something to read (#3887). Off by default because the

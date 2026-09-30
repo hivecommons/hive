@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
+	"github.com/hivecommons/hive/pkg/advisor"
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
@@ -275,6 +276,13 @@ type Server struct {
 	linearAgentSvc  LinearAgentGateway
 
 	audit *AuditLog
+
+	// advisorRecords holds the advisor lane's review records (#9722); nil
+	// until the composition root wires a store. advisorStatus reports whether
+	// the advisor actually reviews a named agent and why not when it does not
+	// (unsupported backend, not enabled). See api_advisor.go.
+	advisorRecords *advisor.Store
+	advisorStatus  func(agent string) (bool, string)
 
 	// presenceEngagedAt maps a username to the last time their browser
 	// reported ENGAGED presence (tab visible + recent input; see presence.go).

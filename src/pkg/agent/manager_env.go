@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	advisorpkg "github.com/hivecommons/hive/pkg/advisor"
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/gitidentity"
@@ -377,6 +378,13 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	if agent.Config.JevEnabled() {
 		vars = append(vars, agentEnvPair{jev.ModeEnvVar, agent.Config.JevMode, false})
 		vars = append(vars, agentEnvPair{jev.EndpointEnvVar, jev.DefaultEndpoint, false})
+	}
+	// Advisor lane (#9722): the turn-end hook (`hive advisor-hook`) reads the
+	// hive's loopback advise endpoint from this variable. Exported only when
+	// the advisor is on for the agent; it carries no credential — the hive
+	// names the caller from the socket UID, exactly like the Jev endpoint.
+	if m.advisorEnabledFor(agent.Name) {
+		vars = append(vars, agentEnvPair{advisorpkg.EndpointEnvVar, advisorpkg.DefaultEndpoint, false})
 	}
 	// Export the RESOLVED explain mode, not the raw config value, so an agent's
 	// skills and helper scripts see the same answer the kick suffix acted on

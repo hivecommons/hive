@@ -1,6 +1,8 @@
 # The advisor lane
 
-**Status: design only.** Nothing here is implemented yet. It belongs to the v6 line
+**Status: phase 1 implemented** (roles, records, and the Claude Code adapter —
+[#9722](https://github.com/hivecommons/hive/issues/9722)); phases 2–4 are design
+only. It belongs to the v6 line
 ([#7563](https://github.com/hivecommons/hive/issues/7563)) and, per that line's policy, lands on
 the `v6` branch only. Tracked by [#9638](https://github.com/hivecommons/hive/issues/9638).
 

@@ -7627,6 +7627,45 @@
       return `${proto}//${host}/agents/${encodeURIComponent(agentName)}/kicks`;
     }
 
+    // showAdvisorRecords opens the advisor lane's per-agent record list
+    // (#9722): every review the advisor made of this agent's finished turns —
+    // severity and text visible without further clicks, newest first, skips
+    // included — beside the same audit timeline trajectory verdicts land on.
+    async function showAdvisorRecords(agentName) {
+      kbShowModal('🗣 Advisor — ' + escapeHtml(agentName), '<div style="color:var(--muted)">Loading…</div>', { width: '720px' });
+      let bodyHtml = '';
+      try {
+        const res = await fetch('/api/advisor/records?agent=' + encodeURIComponent(agentName) + '&limit=50', { headers: _inceptionAuthHeaders() });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        if (data.active === false) {
+          bodyHtml += `<div style="padding:6px 0;color:var(--muted)">⚠ ${escapeHtml(data.active_reason || 'advisor is not active for this agent')}</div>`;
+        }
+        const records = data.records || [];
+        if (!records.length) {
+          bodyHtml += '<div style="color:var(--muted);padding:8px 0">No advisor records for this agent yet.</div>';
+        }
+        const sevColor = s => s === 'blocker' ? 'var(--danger, #d33)' : (s === 'concern' ? 'var(--warning, #b80)' : 'var(--muted)');
+        bodyHtml += records.map(rec => {
+          const label = rec.skipped ? ('skipped: ' + rec.skipped) : (rec.severity || 'aside');
+          const badges = [];
+          if (rec.interjected) badges.push('interjected');
+          if (rec.downgraded) badges.push('downgraded');
+          const tokens = (rec.input_tokens || 0) + (rec.output_tokens || 0);
+          if (tokens) badges.push(tokens + ' tok');
+          return `<div style="font-size:0.8rem;padding:6px 0;border-top:1px solid var(--border)">
+            <strong style="color:${sevColor(rec.severity)}">${escapeHtml(label)}</strong>
+            ${badges.length ? `<span style="color:var(--muted)"> · ${escapeHtml(badges.join(' · '))}</span>` : ''}
+            <span style="color:var(--muted);float:right">${escapeHtml(rec.ts || '')}</span>
+            ${rec.text ? `<div style="margin-top:2px;white-space:pre-wrap">${escapeHtml(rec.text)}</div>` : ''}
+          </div>`;
+        }).join('');
+      } catch (e) {
+        bodyHtml = `<div style="color:var(--danger, #d33)">Failed to load advisor records: ${escapeHtml(String(e && e.message || e))}</div>`;
+      }
+      kbShowModal('🗣 Advisor — ' + escapeHtml(agentName), bodyHtml, { width: '720px' });
+    }
+
     /* SINGLE source of truth for the 🔑 "needs login" badge. Mirrors the
        server-side precedence rule in pkg/agent/authprobe.go:
 
@@ -7868,7 +7907,7 @@
         const disabledBadge = agentIsDisabled(a) ? ' <span class="status-badge disabled" data-status="neutral" title="Disabled in config — the governor never starts this agent. Configure it with the gear to enable.">disabled</span>' : '';
         return `<div class="agent-card ${cls}${compactCls}" data-agent="${esc(a.name)}">
           <span class="working-indicator"></span>
-          <div class="agent-name"><span class="dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${disabledBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Full log of the latest run as selectable, searchable text">📄 full log</a>`)} <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Archived logs of previous kicks — survives restarts and upgrades">🕘 past kicks</a> <button class="hv-btn btn-danger btn-sm restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
+          <div class="agent-name"><span class="dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${disabledBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Full log of the latest run as selectable, searchable text">📄 full log</a>`)} <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Archived logs of previous kicks — survives restarts and upgrades">🕘 past kicks</a> <button class="hv-btn btn-secondary btn-sm" data-action="showAdvisorRecords" data-arg0="${esc(a.name)}" data-stop="1" title="Advisor reviews of this agent's finished turns — severity and text, newest first">🗣 advisor</button> <button class="hv-btn btn-danger btn-sm restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
           ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence)}
           <div class="agent-state ${isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : a.busy}${pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return statusBadgeHTML('blocked', 'blocked', a.statusEvidence, 'blocked');

@@ -177,6 +177,11 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	if mcpFlags := connectionMCPFlags(launchCfg.Connections, backend); mcpFlags != "" {
 		launchCmd += mcpFlags
 	}
+	// Advisor lane (#9722): project the turn-end hook into the backend at
+	// launch — a settings argument for Claude Code — never a config-file edit.
+	if advisorFlag := m.advisorLaunchFlag(agent, backend, isInference); advisorFlag != "" {
+		launchCmd += advisorFlag
+	}
 
 	if bootstrapPrompt == "" && isInference {
 		bootstrapPrompt = "You are an AI agent. Await further instructions."

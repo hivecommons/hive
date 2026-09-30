@@ -22,6 +22,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/advisor"
 	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/apphealth"
@@ -2247,6 +2248,14 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	b.agentMgr.SetExplainModeDefaultResolver(func() string {
 		return b.cfg.Governor.ResolveExplainModeDefault()
 	})
+	// Advisor lane (#9722): resolved per launch off the live cfg pointer for
+	// the same reason as the explain-mode default above — an advisor enabled
+	// from config reaches the agent on its next launch, no restart. The
+	// launch path projects the Claude Stop hook only for enabled agents on a
+	// supported backend.
+	b.agentMgr.SetAdvisorEnabledResolver(func(agentName string) bool {
+		return b.cfg.AdvisorEnabledFor(agentName)
+	})
 	b.agentMgr.SetRepoAutoMergeEnabledResolver(func(repo string) bool {
 		return b.cfg.RepoAutoMergeEnabled(repo)
 	})
@@ -4359,6 +4368,41 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 				Usage:    inferenceSink,
 				Audit:    b.dashSrv.AgentAuditSink(),
 				Logger:   b.logger,
+			}, b.logger)
+		}
+		// Advisor lane (hivecommons/hive#9722): bind the loopback advise
+		// endpoint the turn-end hook calls. Always bound, like Jev, so an
+		// advisor toggled from config takes effect on the agent's next turn;
+		// the Resolve predicate reads the LIVE config and refuses agents the
+		// advisor is off for. Identity comes from the proxy's UID lookup —
+		// the hook carries no credential — records land in the store the
+		// dashboard lists, and token spend feeds the same inference sink the
+		// translator feeds.
+		if deps.startAdvisor != nil {
+			cfg := b.cfg
+			advisorStore := advisor.NewStore(advisor.DefaultRecordsPath)
+			b.dashSrv.SetAdvisorRecords(advisorStore)
+			b.dashSrv.SetAdvisorStatusResolver(cfg.AdvisorActiveForAgent)
+			deps.startAdvisor(&advisor.Server{
+				Identify: b.githubProxy.IdentifyAgentByUID,
+				Resolve: func(agentName string) (advisor.Runtime, bool) {
+					rt, ok := cfg.ResolveAdvisorRuntime(agentName)
+					if !ok {
+						return advisor.Runtime{}, false
+					}
+					return advisor.Runtime{
+						Endpoint:             rt.Endpoint,
+						APIKey:               rt.APIKey,
+						Model:                rt.Model,
+						Instructions:         rt.Instructions,
+						TimeoutS:             rt.TimeoutS,
+						DailyBudgetTokens:    rt.DailyBudgetTokens,
+						MaxConsecutiveBlocks: rt.MaxConsecutiveBlocks,
+					}, true
+				},
+				Store:  advisorStore,
+				Usage:  inferenceSink,
+				Logger: b.logger,
 			}, b.logger)
 		}
 		if b.cfg.Governor.LiteLLM.LocalProxy {
@@ -9878,6 +9922,11 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		// Run from inside an agent's pane by the jev-decide skill; see
 		// pkg/jev/cli.go. Talks only to the hive's loopback decision endpoint.
 		return true, jev.Run(args[1:], os.Stdin, stdout, stderr)
+	case advisor.HookSubcommand:
+		// Run from inside an agent's session at its turn boundary — the
+		// Claude Code Stop hook in phase 1; see pkg/advisor/cli.go. Talks
+		// only to the hive's loopback advise endpoint and fails open.
+		return true, advisor.RunHook(args[1:], os.Stdin, stdout, stderr)
 	default:
 		return false, 0
 	}

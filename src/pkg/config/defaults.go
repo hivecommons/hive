@@ -77,6 +77,18 @@ func (c *Config) applyDefaults() {
 			c.Governor.Trajectory.OnDivergence = "pause"
 		}
 	}
+	// Advisor lane (#9722): stamp the operator-visible bounds when the lane is
+	// on so a saved config shows the effective timeout and block limit rather
+	// than 0. Resolution (ResolveAdvisorRuntime) applies the same defaults for
+	// per-agent overrides that leave them unset.
+	if c.Advisor.IsEnabled() {
+		if c.Advisor.TimeoutS == 0 {
+			c.Advisor.TimeoutS = DefaultAdvisorTimeoutS
+		}
+		if c.Advisor.MaxConsecutiveBlocks == 0 {
+			c.Advisor.MaxConsecutiveBlocks = DefaultAdvisorMaxConsecutiveBlocks
+		}
+	}
 	if c.Policies.PollInterval == 0 {
 		c.Policies.PollInterval = time.Duration(defaultPollIntervalMins) * time.Minute
 	}

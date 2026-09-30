@@ -37,7 +37,17 @@ type Config struct {
 	Contribute    ContributeConfig       `yaml:"contribute,omitempty" json:"contribute,omitempty"`
 	HiveID        string                 `yaml:"hive_id"`
 	ACMMLevel     *int                   `yaml:"acmm_level,omitempty" json:"acmm_level"`
-	Variables     VariablesConfig        `yaml:"variables,omitempty"`
+	// ModelRoles is the named model-roles map (#9722): a small set of names,
+	// each naming a backend, a model and a reasoning effort, referenced as
+	// "@<role>" wherever hive asks for a model (today: agents' model and the
+	// advisor block). Default empty → nothing changes.
+	ModelRoles map[string]ModelRole `yaml:"model_roles,omitempty" json:"model_roles,omitempty"`
+	// Advisor is the fleet-wide advisor lane block (#9722): a turn-synchronous
+	// second model that reviews each finished turn of an advised agent and can
+	// object before the agent's next step. Opt-in; per-agent overrides live on
+	// AgentConfig.Advisor.
+	Advisor   AdvisorConfig   `yaml:"advisor,omitempty" json:"advisor,omitempty"`
+	Variables VariablesConfig `yaml:"variables,omitempty"`
 	// OTel configures standards-based OTLP trace export. It is the preferred
 	// operator-facing block; Tracing is retained as a legacy alias.
 	OTel    OTelConfig `yaml:"otel,omitempty" json:"otel,omitempty"`

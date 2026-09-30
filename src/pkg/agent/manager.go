@@ -584,6 +584,12 @@ type Manager struct {
 	// bobAPIKeyResolver above: it is read from deliverKickLocked and
 	// agentEnvPairs, both of which already hold m.mu.
 	explainModeDefaultResolver atomic.Pointer[func() string]
+	// advisorEnabledResolver reports whether the advisor lane (#9722) is on
+	// for an agent, resolved at LAUNCH time off the live config so a toggle
+	// takes effect on the next launch without a restart. Read from the launch
+	// and env paths, which hold m.mu — same atomic.Pointer discipline as
+	// explainModeDefaultResolver.
+	advisorEnabledResolver atomic.Pointer[func(agentName string) bool]
 	// repoAutoMergeEnabled resolves the live per-repo auto-merge switch used by
 	// the merge relay. Nil preserves the historic default-on behavior.
 	repoAutoMergeEnabled atomic.Pointer[func(repo string) bool]

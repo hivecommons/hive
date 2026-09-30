@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/hivecommons/hive/pkg/advisor"
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/jev"
 	"github.com/hivecommons/hive/pkg/proxy"
@@ -27,6 +28,9 @@ type bootProxyDeps struct {
 	// startJev binds the loopback Jev decision endpoint agents with
 	// jev_mode: assist call (hivecommons/hive#8939).
 	startJev func(srv *jev.Server, logger *slog.Logger)
+	// startAdvisor binds the loopback advise endpoint the advisor lane's
+	// turn-end hook calls (hivecommons/hive#9722).
+	startAdvisor func(srv *advisor.Server, logger *slog.Logger)
 }
 
 func defaultBootProxyDeps() bootProxyDeps {
@@ -56,6 +60,13 @@ func defaultBootProxyDeps() bootProxyDeps {
 			go func() {
 				if err := srv.ListenAndServe(); err != nil {
 					logger.Error("jev decision endpoint failed", "error", err)
+				}
+			}()
+		},
+		startAdvisor: func(srv *advisor.Server, logger *slog.Logger) {
+			go func() {
+				if err := srv.ListenAndServe(); err != nil {
+					logger.Error("advisor advise endpoint failed", "error", err)
 				}
 			}()
 		},

@@ -90,6 +90,129 @@
     }
   ],
   "paths": {
+    "/api/advisor/records": {
+      "get": {
+        "tags": [
+          "Audit"
+        ],
+        "summary": "Advisor lane review records",
+        "description": "Lists advisor-lane records (issue #9722): one record per advisor review of a hub-launched agent's finished turn, skipped reviews included, newest first. Filterable by agent and RFC3339 since; capped at 200. Requires read-write or higher access.",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Only records for this agent. Also adds the active/active_reason fields."
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Only records at or after this RFC3339 timestamp."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 200
+            },
+            "description": "Maximum records returned (positive, capped at 200)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Advisor records, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "records": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "advisor.Record (src/pkg/advisor/record.go).",
+                        "properties": {
+                          "ts": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "agent": {
+                            "type": "string"
+                          },
+                          "turn": {
+                            "type": "string",
+                            "description": "Backend reference for the reviewed turn (Claude Code session id in phase 1)."
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "severity": {
+                            "type": "string",
+                            "description": "aside, concern or blocker; absent on a skipped review."
+                          },
+                          "text": {
+                            "type": "string"
+                          },
+                          "interjected": {
+                            "type": "boolean"
+                          },
+                          "delivery": {
+                            "type": "string",
+                            "description": "interrupting or non-interrupting."
+                          },
+                          "downgraded": {
+                            "type": "boolean",
+                            "description": "A blocker delivered as an aside because the consecutive-block limit was reached."
+                          },
+                          "input_tokens": {
+                            "type": "integer"
+                          },
+                          "output_tokens": {
+                            "type": "integer"
+                          },
+                          "cost_usd": {
+                            "type": "number"
+                          },
+                          "skipped": {
+                            "type": "string",
+                            "description": "Skip reason when the review did not happen: timeout, unreachable, budget-exhausted, unusable-answer or input-blocked."
+                          },
+                          "heeded": {
+                            "type": "string",
+                            "description": "yes, no or undetermined."
+                          }
+                        }
+                      }
+                    },
+                    "active": {
+                      "type": "boolean",
+                      "description": "Present only with an agent filter: whether the advisor currently reviews the agent."
+                    },
+                    "active_reason": {
+                      "type": "string",
+                      "description": "Why the advisor is not active for the agent (not enabled, or unsupported backend)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid since or limit"
+          },
+          "403": {
+            "description": "Insufficient access"
+          }
+        }
+      }
+    },
     "/api/audit": {
       "get": {
         "tags": [
