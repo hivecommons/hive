@@ -3790,6 +3790,11 @@
                profile gets a menu entry instead, populated by showGHAuthState()
                once the signed-in login is known. -->
           <a href="#" id="oc-gh-menu-profile" class="avatar-menu-item" target="_blank" rel="noopener noreferrer" hidden>GitHub profile ↗</a>
+          <!-- Shortcut back to the hub's My Hives list (#9696), for users who
+               switch between several hives. Hidden until /api/config reports a
+               my_hives_url, which the server leaves empty on a standalone hive
+               with no hub link; renderMyHivesMenuItem() wires it up. -->
+          <a href="#" id="oc-gh-menu-my-hives" class="avatar-menu-item" target="_blank" rel="noopener noreferrer" hidden>My hives ↗</a>
           <a href="/api/docs" target="_blank" class="avatar-menu-item">API Docs ↗</a>
           <div class="avatar-menu-divider"></div>
           <div id="oc-gh-menu-export-label" class="avatar-menu-label" hidden>Export</div>
@@ -21450,6 +21455,10 @@ function burnAreaChart() {
       // else empty). Don't fall back to a raw ai_author — an App-less hive has
       // no author and should render "—", not a stale personal value.
       window._aiAuthor = cfg.ai_author_effective || '';
+      // Hub My Hives page for the user-menu shortcut (#9696). Empty on a
+      // standalone hive, which keeps the entry hidden.
+      window._myHivesURL = cfg.my_hives_url || '';
+      renderMyHivesMenuItem();
       const repoDisplay = cfg.org && cfg.primaryRepo && !cfg.primaryRepo.includes('/')
         ? cfg.org + '/' + cfg.primaryRepo
         : (cfg.primaryRepo || '');
@@ -30589,6 +30598,25 @@ function burnAreaChart() {
         banner.style.display = 'flex';
         if (topBtn) topBtn.style.display = '';
         if (avatarWrap) avatarWrap.hidden = true;
+      }
+    }
+
+    /* renderMyHivesMenuItem (#9696): point the user menu's "My hives" entry at
+       the hub's My Hives page, or hide it when this hive has no hub link. The
+       URL comes from our own /api/config (server-validated), is re-checked to
+       be http(s) here, and is assigned as a property, never interpolated into
+       markup. Called from the boot /api/config fetch; the entry sits in the
+       signed-in-only menu, so no auth state is needed here. */
+    function renderMyHivesMenuItem() {
+      const el = document.getElementById('oc-gh-menu-my-hives');
+      if (!el) return;
+      const url = String(window._myHivesURL || '');
+      if (/^https?:\/\//i.test(url)) {
+        el.href = url;
+        el.hidden = false;
+      } else {
+        el.removeAttribute('href');
+        el.hidden = true;
       }
     }
 
