@@ -14,10 +14,13 @@ This page covers:
   passed explicitly by every write site;
 - audit entries for the hive's own writes, not only the agent relays;
 - a per-lane allowlist enforced by the relays, editable from the dashboard;
+- a per-lane opt-in (`write_surface.enforce`) that makes the relays the only
+  write path for a lane by refusing its direct writes at the GitHub proxy;
 - redaction of credential material in audited arguments and results.
 
-Agents still have their direct write paths (`gh`, the API through the proxy,
-`git push`). Removing those is a later phase; see [Not yet done](#not-yet-done).
+By default agents still have their direct write paths (`gh`, the API through
+the proxy, `git push`). An operator removes them lane by lane; see
+[Enforcing the write surface](#enforcing-the-write-surface).
 
 ## Relay operations
 
@@ -208,6 +211,60 @@ A refused request is handled like every other policy denial:
 
 Refusals are not counted as output activity.
 
+## Enforcing the write surface
+
+`write_surface.enforce` lists the lanes whose **direct** GitHub writes from the
+agent sandbox are refused by the GitHub proxy
+([#9772](https://github.com/hivecommons/hive/issues/9772)). For those lanes the
+relays above are the only way to write:
+
+```yaml
+write_surface:
+  enforce: [scanner, reviewer]
+  allowlist:
+    scanner: [create_issue, comment, claim, label]
+```
+
+- **Default off.** With no `enforce` list nothing changes: every lane keeps
+  its direct access, and an ACMM L6 hive stays fully autonomous. Enforcement
+  starts only when an operator lists a lane, at any ACMM level.
+- **Per lane.** Listing one lane does not affect the others. A replica
+  (`scanner-2`) follows its base agent; `"*"` enforces every lane. Names are
+  matched without regard to case or surrounding spaces. The proxy reads the
+  list live from config, so a change takes effect on the next request.
+- **What is refused** for an enforced lane, whatever its ACMM mode:
+  - every REST write (`POST`, `PUT`, `PATCH`, `DELETE`) to a GitHub host;
+  - every GraphQL mutation (a GraphQL body that cannot be parsed is refused
+    too);
+  - `git push`, at its first round trip
+    (`GET .../info/refs?service=git-receive-pack`) and at
+    `.../git-receive-pack`. To make this possible the proxy intercepts
+    `github.com` (and registered GHE hosts) for an enforced lane, not only
+    `api.github.com`.
+- **What still works:** every read, `git clone`/`git fetch`
+  (`git-upload-pack`), GraphQL queries, the CLI device-flow login, and the
+  hive's own control-plane traffic.
+- **Order.** Repo pause, agent repo scope and the auto-merge policy are checked
+  first, so their more specific reasons win when they also apply. The ACMM mode
+  gate is not consulted for a refused request: enforcement refuses a write the
+  mode would have allowed.
+- **The relays are unaffected.** They run in the hive with the App token, not
+  in the sandbox, so an enforced lane still pushes with `hive-push-branch` and
+  opens PRs with `hive-open-pr`, subject to its `allowlist` entry. List
+  `push_branch` in an enforced lane's allowlist entry (or leave it
+  unrestricted) if it needs to publish branches.
+
+A refused request gets a `403` whose body names `write_surface.enforce` and the
+relay to use instead, counts as a proxy violation, and is audited as
+`agent_write_refused` with the typed `repo` (when the path names one) and
+`via=proxy`, `kind=` (`rest`, `graphql` or `git_push`), `method=`, `path=`
+and `outcome=refused` in the detail. `via=proxy` tells it apart from a relay's
+allowlist refusal, which carries `op=`. The path is redacted like every other
+audited value.
+
+`enforce` is set in `hive.yaml`; the dashboard's Write Surface editor changes
+only the allowlist and leaves `enforce` as it is.
+
 ## Audit fields
 
 Audit entries for these writes carry typed fields next to the legacy `detail`
@@ -249,15 +306,17 @@ These are deliberately out of scope so far. They change what an agent can do,
 so they need operator sign-off first. ACMM L6 is full autonomy by design: none
 of them may reduce what an L6 hive can do by default.
 
-- **Removing direct write access from the agent sandbox.** Agents can still
-  run `gh`, call the API through the proxy, and `git push`. A likely shape: the
-  proxy refuses GitHub write methods for a lane that opted in (a per-lane
-  `write_surface.enforce` flag, default off), and the relays become the only
-  write path for that lane. Unlisted lanes and L6 hives keep direct access
-  unless the operator turns enforcement on. The `push_branch` relay (above)
-  is the prerequisite that keeps pushes working for an enforced lane; the
-  standalone `label` and `request_review` operations have landed too, so the
-  inventory now covers every everyday write.
+- **Removing direct write access by default.** The per-lane opt-in has landed
+  (hivecommons/hive#9772, [above](#enforcing-the-write-surface)): a lane
+  listed under `write_surface.enforce` has its direct REST writes, GraphQL
+  mutations and `git push` refused at the proxy, so the relays are its only
+  write path. What remains is turning enforcement on without an operator
+  listing each lane. That would change what every existing hive's agents can
+  do, so it needs operator sign-off, and it must never apply to an L6 hive by
+  default.
+- **Enforcement outside the proxy.** The refusal lives in the GitHub proxy.
+  A sandbox that can reach GitHub without going through the proxy (forced
+  egress disabled) is not covered.
 - **Routing the `gh` wrapper's label and reviewer edits through the relays**
   has landed (hivecommons/hive#9773): the wrapper translates a pure
   `gh issue edit --add-label`/`--remove-label` or `gh pr edit --add-reviewer`

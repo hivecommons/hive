@@ -26,7 +26,9 @@ const WriteSurfaceAllowAll = "*"
 // surface (hivecommons/hive#9587). The relays (hive-open-pr, hive-open-issue,
 // review and merge requests) consult it after authorizing the request's agent
 // and before any GitHub call; a refused request is quarantined with an
-// explanation and audited as agent_write_refused.
+// explanation and audited as agent_write_refused. Enforce additionally makes
+// the relays the ONLY write path for the lanes it lists: the GitHub proxy
+// refuses their direct writes.
 //
 // Operation names are the pkg/github WriteOp* constants: open_pr,
 // create_issue, comment, claim, close_issue, label, request_review, review,
@@ -39,6 +41,44 @@ type WriteSurfaceConfig struct {
 	// of its own uses its base agent's. An entry that is present but empty
 	// allows nothing.
 	Allowlist map[string][]string `yaml:"allowlist,omitempty" json:"allowlist,omitempty"`
+	// Enforce lists the lanes whose DIRECT GitHub writes from the agent
+	// sandbox are refused by the GitHub proxy (hivecommons/hive#9772): REST
+	// write methods, GraphQL mutations and git push. For those lanes the
+	// relays above become the only write path. Default empty: no lane is
+	// enforced, so every agent keeps its direct access (and an ACMM L6 hive
+	// stays fully autonomous) until an operator lists a lane here. A replica
+	// with no entry of its own follows its base agent; "*" enforces every
+	// lane.
+	Enforce []string `yaml:"enforce,omitempty" json:"enforce,omitempty"`
+}
+
+// WriteSurfaceEnforced reports whether the named agent's lane has opted in to
+// write_surface.enforce, i.e. whether the GitHub proxy must refuse its direct
+// writes. It is the single predicate the proxy asks.
+//
+// It answers false for a nil config, an unnamed agent and any lane not listed:
+// enforcement is strictly opt-in per lane.
+func (c *Config) WriteSurfaceEnforced(agent string) bool {
+	if c == nil {
+		return false
+	}
+	agent = strings.TrimSpace(agent)
+	if agent == "" {
+		return false
+	}
+	writeSurfaceMu.RLock()
+	defer writeSurfaceMu.RUnlock()
+	if len(c.WriteSurface.Enforce) == 0 {
+		return false
+	}
+	base := c.BaseAgentName(agent)
+	for _, lane := range c.WriteSurface.Enforce {
+		lane = strings.TrimSpace(lane)
+		if lane == WriteSurfaceAllowAll || strings.EqualFold(lane, agent) || strings.EqualFold(lane, base) {
+			return true
+		}
+	}
+	return false
 }
 
 // AgentMayWrite reports whether the named agent's lane may perform op through

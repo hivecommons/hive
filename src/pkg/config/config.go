@@ -114,8 +114,9 @@ type Config struct {
 	Convergence ConvergenceConfig `yaml:"convergence,omitempty" json:"convergence,omitempty"`
 	// WriteSurface configures the audited GitHub write surface
 	// (hivecommons/hive#9587): per-lane allowlists of the relay operations an
-	// agent may ask the hive to perform. Default empty -> every agent keeps
-	// every operation it has today.
+	// agent may ask the hive to perform, and the lanes whose direct GitHub
+	// writes the proxy refuses (enforce, #9772). Default empty -> every agent
+	// keeps every operation and every direct write path it has today.
 	WriteSurface WriteSurfaceConfig `yaml:"write_surface,omitempty" json:"write_surface,omitempty"`
 	// Publication is the audit campaign's authorized issue publisher opt-in
 	// (hivecommons/hive#8353). Default off → nothing is ever filed.

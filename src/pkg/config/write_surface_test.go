@@ -89,3 +89,56 @@ func TestWriteSurfaceWarnings(t *testing.T) {
 		t.Errorf("warning does not name the agent, the bad op and the known ops: %q", w[0])
 	}
 }
+
+func TestWriteSurfaceEnforced_DefaultOff(t *testing.T) {
+	var nilCfg *Config
+	if nilCfg.WriteSurfaceEnforced("scanner") {
+		t.Error("nil config must not enforce")
+	}
+	cfg := &Config{WriteSurface: WriteSurfaceConfig{Allowlist: map[string][]string{"scanner": {"comment"}}}}
+	if cfg.WriteSurfaceEnforced("scanner") {
+		t.Error("an allowlist entry alone must not enforce; enforcement is a separate opt-in")
+	}
+}
+
+func TestWriteSurfaceEnforced_ListedLanesOnly(t *testing.T) {
+	cfg := &Config{
+		Agents: map[string]AgentConfig{
+			"scanner":   {},
+			"scanner-2": {ReplicaOf: "scanner"},
+			"reviewer":  {},
+		},
+		WriteSurface: WriteSurfaceConfig{Enforce: []string{" Scanner "}},
+	}
+	cases := map[string]bool{
+		"scanner":   true,
+		"SCANNER":   true,
+		"scanner-2": true, // replica follows its base lane
+		"reviewer":  false,
+		"":          false,
+	}
+	for agentName, want := range cases {
+		if got := cfg.WriteSurfaceEnforced(agentName); got != want {
+			t.Errorf("WriteSurfaceEnforced(%q) = %v, want %v", agentName, got, want)
+		}
+	}
+}
+
+func TestWriteSurfaceEnforced_AllLanes(t *testing.T) {
+	cfg := &Config{WriteSurface: WriteSurfaceConfig{Enforce: []string{WriteSurfaceAllowAll}}}
+	if !cfg.WriteSurfaceEnforced("anyone") {
+		t.Error(`"*" must enforce every lane`)
+	}
+	if cfg.WriteSurfaceEnforced("") {
+		t.Error("an unnamed agent is never enforced")
+	}
+}
+
+// Replacing the allowlist from the dashboard must not drop the enforce list.
+func TestSetWriteSurfaceAllowlist_KeepsEnforce(t *testing.T) {
+	cfg := &Config{WriteSurface: WriteSurfaceConfig{Enforce: []string{"scanner"}}}
+	cfg.SetWriteSurfaceAllowlist(map[string][]string{"scanner": {"push_branch"}})
+	if !cfg.WriteSurfaceEnforced("scanner") {
+		t.Error("allowlist edit dropped write_surface.enforce")
+	}
+}

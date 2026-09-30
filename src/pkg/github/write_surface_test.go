@@ -466,3 +466,21 @@ func TestPushBranchRequestWatcher_RefusesOpOutsideLaneAllowlist(t *testing.T) {
 		t.Error("a refused request was audited as a push")
 	}
 }
+
+// A direct write refused by the proxy under write_surface.enforce (#9772) is
+// the same agent_write_refused action as a relay refusal, with the typed repo
+// set and the agent-supplied path redacted.
+func TestDirectWriteRefusedAuditRecord(t *testing.T) {
+	rec := DirectWriteRefusedAuditRecord("scanner", "rest", "POST", "/repos/o/r/issues?access_token=ghp_abcdefghijklmnopqrstuvwxyz0123456789", "o/r")
+	if rec.Action != AuditActionAgentWriteRefused || rec.Agent != "scanner" || rec.Repo != "o/r" || rec.Target != 0 {
+		t.Fatalf("record = %+v", rec)
+	}
+	for _, want := range []string{"repo=o/r", "via=proxy", "kind=rest", "method=POST", "outcome=refused"} {
+		if !strings.Contains(rec.Detail, want) {
+			t.Errorf("detail %q missing %q", rec.Detail, want)
+		}
+	}
+	if strings.Contains(rec.Detail, "abcdefghijklmnopqrstuvwxyz0123456789") {
+		t.Errorf("credential survived in detail: %q", rec.Detail)
+	}
+}

@@ -3908,6 +3908,15 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// next request.
 		b.githubProxy.SetAgentRepoScopeFunc(b.cfg.AgentServesRepo)
 		b.githubProxy.SetRepoAutoMergeEnabledFunc(b.cfg.RepoAutoMergeEnabled)
+		// Per-lane write_surface.enforce (#9772, default off): a listed lane's
+		// direct GitHub writes are refused here and audited as
+		// agent_write_refused, so the audited relays are its only write path.
+		// Unlisted lanes are unaffected.
+		b.githubProxy.SetWriteSurfaceEnforceFunc(b.cfg.WriteSurfaceEnforced)
+		b.githubProxy.SetWriteRefusedAuditFunc(func(agentName, kind, method, path, repo string) {
+			rec := github.DirectWriteRefusedAuditRecord(agentName, kind, method, path, repo)
+			b.dashSrv.AuditLogRecord("system", rec.Action, rec.Detail, rec.Agent, rec.Repo, rec.Target)
+		})
 		// #1861: the proxy resolves an identified agent to its hub-held scoped
 		// token via the package-level registry WriteAgentToken feeds (NOT via
 		// the appAuth instance, which is replaced on key rotation — a closure

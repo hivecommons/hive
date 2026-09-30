@@ -87,7 +87,9 @@ func IsWriteOp(op string) bool {
 }
 
 // AuditActionAgentWriteRefused is recorded when a relay refuses a request
-// because the agent's lane allowlist does not include the operation. It is
+// because the agent's lane allowlist does not include the operation, and when
+// the GitHub proxy refuses a direct write from a lane under
+// write_surface.enforce (DirectWriteRefusedAuditRecord). It is
 // deliberately NOT in the activity collector's output set: a refused write
 // produced nothing on GitHub.
 const AuditActionAgentWriteRefused = "agent_write_refused"
@@ -147,6 +149,17 @@ func (c *Client) refuseWrite(agent, op, repo string, target int) (string, bool) 
 	c.recordWriteAudit(AuditActionAgentWriteRefused, InvocationMeta{Agent: agent},
 		WriteTarget{Repo: repo, Number: target}, "op", op, "outcome", "refused")
 	return reason, true
+}
+
+// DirectWriteRefusedAuditRecord builds the agent_write_refused entry for a
+// DIRECT GitHub write the proxy refused because the agent's lane is under
+// write_surface.enforce (#9772). It goes through the same builder as the relay
+// refusals, so the typed repo field is set and the detail - which carries the
+// agent-supplied request path - is redacted. via=proxy tells it apart from a
+// relay's allowlist refusal (op=...); kind is rest, graphql or git_push.
+func DirectWriteRefusedAuditRecord(agent, kind, method, path, repo string) AuditRecord {
+	return writeAuditRecord(AuditActionAgentWriteRefused, InvocationMeta{Agent: agent},
+		WriteTarget{Repo: repo}, "via", "proxy", "kind", kind, "method", method, "path", path, "outcome", "refused")
 }
 
 // WriteTarget names what one hive-mediated GitHub write touched. Write sites
