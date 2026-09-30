@@ -394,13 +394,15 @@ the decision follows each one, with the code on `v6` that now carries it.
 
 Issue #8206 adds a second producer for the same mention path: GitHub Actions can post an `@hive` comment that the poller already understands. This is transport A, the comment-relay transport. It deliberately adds no inbound spoke port and no new authorization path.
 
-The repository-local composite action is `hivecommons/hive/.github/actions/hive@v6`. It accepts `command`, optional `issue`, optional `prompt`, and `token`, then posts:
+The repository-local composite action is `hivecommons/hive/.github/actions/hive@v6`. It accepts `command`, optional `issue`, optional `prompt`, optional `app_handle`, and `token`, then posts:
 
 ```text
-@hive <command> <prompt>
+@<app-handle> <command> <prompt>
 
 <!-- hive:source=action run_id=<run_id> run_attempt=<run_attempt> workflow=<workflow> actor=<actor> -->
 ```
+
+`<app-handle>` is the hive's GitHub App handle: the `app_handle` input, else the `HIVE_APP_HANDLE` environment variable (callers pass `vars.HIVE_APP_HANDLE`), else `hive`. A leading `@` and a trailing `[bot]` are stripped (#9707).
 
 The marker is machine-readable only. The mention handler strips it before ioscan, before building the agent kick, and before any human-visible echo. When the marker is present on a comment by a configured `github.actions.trusted_comment_authors` login (default `github-actions[bot]`), Hive checks the marker `run_id` with GitHub before using the marker actor. Comments by other authors continue through the normal mention path. When accepted as an Action comment, the kick source is recorded with the `action` source label instead of `mention`, and the poller dedupes on `run_id` plus `run_attempt` in the same persistent store that tracks seen comment ids.
 
