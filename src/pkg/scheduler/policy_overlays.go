@@ -59,6 +59,12 @@ Before choosing work:
    human review before the hold is lifted again.
 5. Make each new PR title and body name the exact files/functions/cluster it
    claims so the next kick can make the same comparison.
+6. If a PR above is YOURS and its line says ` + "`CHANGES REQUESTED by @… (unaddressed)`" + `,
+   that review comes first, before any new work: ` + "`gh pr checkout <number> --repo <repo>`" + `,
+   address the review on the SAME branch, ` + "`git commit -s`" + `, push, and reply on the PR
+   saying what changed. Never remove ` + "`hold`" + `, never merge it, and never open a
+   replacement PR — a human re-reviews the new head. A line marked
+   ` + "`(addressed …)`" + ` has already been answered: leave it alone.
 
 `
 	if newline := strings.IndexByte(message, '\n'); newline >= 0 {
@@ -476,6 +482,15 @@ func (s *Scheduler) formatHeldPRClaimsWithPolicy(actionable *github.ActionableRe
 	shown := 0
 	failClosed := false
 
+	// Review state comes from the full held PRs (PRs.Held), which HoldItem
+	// does not carry: the hold snapshot has no review decision on it
+	// (hivecommons/hive#9811).
+	heldPRs := make(map[string]*github.PullRequest, len(actionable.PRs.Held))
+	for i := range actionable.PRs.Held {
+		pr := &actionable.PRs.Held[i]
+		heldPRs[fmt.Sprintf("%s#%d", pr.Repo, pr.Number)] = pr
+	}
+
 	repoOrder := make([]string, 0, 8)
 	byRepo := make(map[string][]github.HoldItem)
 	for _, item := range actionable.Hold.Items {
@@ -501,7 +516,8 @@ func (s *Scheduler) formatHeldPRClaimsWithPolicy(actionable *github.ActionableRe
 			if runes := []rune(title); len(runes) > maxHeldPRTitleRunes {
 				title = string(runes[:maxHeldPRTitleRunes])
 			}
-			b.WriteString(fmt.Sprintf("  %s#%d %s\n", item.Repo, item.Number, title))
+			b.WriteString(fmt.Sprintf("  %s#%d %s%s\n", item.Repo, item.Number, title,
+				heldPRReviewSuffix(heldPRs[fmt.Sprintf("%s#%d", item.Repo, item.Number)])))
 			shown++
 		}
 		if omitted := len(items) - limit; omitted > 0 {
@@ -513,6 +529,33 @@ func (s *Scheduler) formatHeldPRClaimsWithPolicy(actionable *github.ActionableRe
 		return "  (none)", failClosed
 	}
 	return strings.TrimSuffix(b.String(), "\n"), failClosed
+}
+
+// heldPRReviewSuffix renders a held PR's human review state for its list
+// line: " — CHANGES REQUESTED by @maintainer (unaddressed)" when a classified
+// change request exists (github.ReviewAddressed decides addressed vs not),
+// otherwise GitHub's review decision (" — APPROVED", " — AWAITING REVIEW",
+// " — CHANGES REQUESTED"). Empty when the PR's review state is unknown, which
+// is what the list said before #9811.
+func heldPRReviewSuffix(pr *github.PullRequest) string {
+	if pr == nil {
+		return ""
+	}
+	if state := pr.ReviewFollowUp; state != nil && !state.SubmittedAt.IsZero() {
+		return " — " + state.Summary()
+	}
+	if pr.Protection == nil {
+		return ""
+	}
+	switch pr.Protection.ReviewDecision {
+	case github.ReviewDecisionApproved:
+		return " — APPROVED"
+	case github.ReviewDecisionReviewRequired:
+		return " — AWAITING REVIEW"
+	case github.ReviewDecisionChangesRequested:
+		return " — CHANGES REQUESTED"
+	}
+	return ""
 }
 
 func (s *Scheduler) independentReviewSection(agentName string) string {

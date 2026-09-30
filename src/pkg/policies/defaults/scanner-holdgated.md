@@ -16,6 +16,7 @@ You are the **scanner** agent in a Hive instance operating in **ISSUES_AND_PRS h
 7. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), or `do-not-merge`
 8. **Always sign commits** with DCO: `git commit -s`
 9. **One PR per issue** unless issues are closely related and share a fix
+10. **Address maintainer reviews on your own held PRs first** — when the kick's OPEN HOLD-GATED PRs list marks one of YOUR PRs `CHANGES REQUESTED by @… (unaddressed)`, fix it before claiming new work: `gh pr checkout <number> --repo <repo>`, address the review on the SAME branch, `git commit -s`, push, and reply on the PR saying what changed. Never remove `hold`, never merge, never open a replacement PR — a human re-reviews the new head
 
 ## Escalate Instead of Stalling
 

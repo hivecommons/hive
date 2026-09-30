@@ -44,14 +44,62 @@ new hive process, a relaunch, a restart teardown, or any delivered kick.
 
 ### Eligibility (the #6908 guard)
 
-The pointer itself is the eligibility check. It is written only on the watcher
-path that opened the PR with the hive's App for one of its own agents. A PR
+The pointer itself is the eligibility check. It is written on the watcher
+path that opened the PR with the hive's App for one of its own agents, and —
+for hold-gated PRs only — by the attribution fallback below. A PR
 without a pointer is never touched, and never even read for comments: a
 human's PR, another hive's PR, or a PR in a repo no hub dispatched. The router
 also re-checks that the envelope names exactly the PR being routed, because
 the file store sanitises IDs and two PRs could share a filename. Drafts, fork
 PRs and PRs escalated to a human are skipped (each skip is counted once per
 transition, and nothing is journaled, so a draft marked ready routes normally).
+
+### Hold-gated PRs with an unaddressed human review (#9802)
+
+At ACMM L3–L5 every PR an agent opens is held, and `fetchPRs` moves held PRs
+out of `PRs.Items` into `PRs.Held`, so a maintainer's **Changes requested**
+review on an agent's own PR used to reach nobody. Held PRs now join the
+follow-up list when all of these hold:
+
+- the PR is hive-opened (App-authored, hive-attributed, or carrying a hive
+  agent) and is neither a draft nor from a fork;
+- GitHub's review decision on it is `CHANGES_REQUESTED`; and
+- that review is **unaddressed** per the shared rule below.
+
+Nothing about the hold changes: the label is never read as permission and
+never removed, the PR stays out of `Items`, the merge sweep and every queue
+count still ignore it, and the hold guard still forces fresh human review of
+the new head. The existing `MaxFollowUpsPerPR` budget and the journal's
+`review:<reviewers>` key cap it at one pass per review, so a disagreement
+cannot loop.
+
+**The addressed rule** (`github.ReviewAddressed`, shared by the router and the
+scheduler's hold-gated PR list so the two can never disagree): a review is
+addressed only when, strictly after it was submitted, there is a **non-merge**
+commit on the head branch or a reply the hive posted on the PR. A
+merge-from-base commit never counts — the held-PR CI/conflict repair path
+(#7438) pushes those to keep a held PR mergeable, and in the motivating case
+(`Danathar/goodreads-mcp#252`) one landed 96 minutes after a review that had
+not been read at all.
+
+**Ownership fallback.** A PR opened before `turn.pr_follow_up.enabled` was on
+for its hive has no pointer. For those, the owning agent is resolved from the
+same audit attribution record the CI-repair path uses (`prFixAgent`:
+`agent_pr_created` audit entries, then the PR's hive agent, an `agent/<name>`
+label, and finally the head-branch prefix — accepted only when it names an
+agent configured on this hive), and a pointer is written with no
+CLI session — so the review reaches that agent's next fresh kick through the
+ordinary handoff path. Limits: the audit window is 14 days, and a PR with
+neither pointer nor attribution is routed to nobody. It is not dropped
+silently — it still appears, with its review state, on the `OPEN HOLD-GATED
+PRs` list in every hold-gated agent's kick, where a human can resolve
+ownership.
+
+**Hold-gated PR list.** Each `OPEN HOLD-GATED PRs` line carries the PR's
+review state: `CHANGES REQUESTED by @<reviewer> (unaddressed)` or
+`(addressed by commit|reply)` from the same rule, otherwise GitHub's decision
+(`APPROVED`, `AWAITING REVIEW`, `CHANGES REQUESTED`); a line with no suffix
+means the review state is unknown.
 
 ### Routing
 

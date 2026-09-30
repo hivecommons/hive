@@ -24,7 +24,11 @@ import (
 //     session + the PR's handoff note.
 //   - routePRFollowUps runs on the eval tick and feeds CI failures,
 //     changes-requested reviews, new review-bot threads and human feedback on
-//     those PRs back into the authoring session. Anything it cannot resume is
+//     those PRs back into the authoring session. Held, hive-opened PRs whose
+//     human "Changes requested" review is still unaddressed join that list
+//     (hivecommons/hive#9809), with ownership falling back to the prFixAgent
+//     attribution record when the PR predates its pointer (#9812); the hold
+//     label and every merge gate are untouched. Anything it cannot resume is
 //     left to the existing fix-before-new path (ci-failing.json /
 //     review-threads.json), which is unchanged; the scheduler adds the PR's
 //     handoff note (and any human feedback) to that fresh kick.
@@ -44,6 +48,11 @@ const (
 	// prFollowUpSweepMaxLookups bounds the PR-state GETs one sweep spends on
 	// pointers whose PR left this tick's open list.
 	prFollowUpSweepMaxLookups = 20
+	// maxHeldReviewFollowUpsPerTick bounds the per-PR GraphQL reads spent
+	// classifying human "Changes requested" reviews on held PRs
+	// (hivecommons/hive#9802). Held PRs with a change request are few; a cap
+	// keeps a repo full of them from dominating a tick's API budget.
+	maxHeldReviewFollowUpsPerTick = 20
 )
 
 // Eval-tick state, like reviewThreadsLastRefresh: the eval tick is the only
@@ -53,6 +62,10 @@ var (
 	prFollowUpCommentsCache       map[string][]github.PRComment
 	prFollowUpLastSweep           time.Time
 )
+
+// prFollowUpAuditPath is the audit-log path the prFixAgent attribution
+// fallback reads; empty means the default location. A test seam only.
+var prFollowUpAuditPath string
 
 // qualifyPRFollowUpRepo returns repo as "owner/name". Config repos and PR
 // requests may name a repo bare; the pointer, the review-thread report and
@@ -150,6 +163,11 @@ func routePRFollowUps(ctx context.Context, cfg *config.Config, client *github.Cl
 	for i := range prs {
 		prs[i].Repo = qualifyPRFollowUpRepo(org, prs[i].Repo)
 	}
+	// Held, hive-opened PRs whose human "Changes requested" review is still
+	// unaddressed join the follow-up list (hivecommons/hive#9809). The hold
+	// itself is untouched: this widens who is TOLD about the review, and
+	// nothing here reads or writes a label or a merge gate.
+	prs = append(prs, heldReviewFollowUpPRs(ctx, cfg, actionable, dir, now, logger)...)
 	var resumer prfollowup.Resumer
 	opts := prfollowup.Options{
 		Dir:    dir,
@@ -171,6 +189,70 @@ func routePRFollowUps(ctx context.Context, cfg *config.Config, client *github.Cl
 	outcomes := prfollowup.Route(ctx, prs, resumer, opts, now)
 	sweepPRFollowUps(ctx, cfg, client, dir, prs, actionable.Hold.Items, agentMgr, now, logger)
 	return outcomes
+}
+
+// heldReviewFollowUpPRs returns the held PRs this tick should feed into
+// follow-up resume: PRs the hive opened whose latest human review requested
+// changes and is still unaddressed (github.ReviewAddressed). The hold gate is
+// not consulted or changed — these PRs stay out of PRs.Items, the merge sweep
+// and every queue count, exactly as HOLD requires (hivecommons/hive#9809).
+//
+// Ownership: follow-up resume keys on the pointer written when the PR opened.
+// A PR opened before turn.pr_follow_up.enabled was on for its hive has none,
+// which is the motivating case (Danathar/goodreads-mcp#252). For those, the
+// owning agent is resolved from the same audit attribution record the held-PR
+// CI-repair path already uses (prFixAgent), and a pointer is written with no
+// CLI session, so Route hands the review to that agent's next fresh kick
+// instead of dropping it (hivecommons/hive#9812). A PR with neither pointer
+// nor attribution is left alone: it still shows up, with its review state, on
+// the hold-gated PR list, where a human can resolve ownership.
+func heldReviewFollowUpPRs(ctx context.Context, cfg *config.Config, actionable *github.ActionableResult, dir string, now time.Time, logger *slog.Logger) []github.PullRequest {
+	org := cfg.Project.Org
+	var out []github.PullRequest
+	var prAgents map[string]string
+	for _, pr := range actionable.PRs.Held {
+		state := pr.ReviewFollowUp
+		if state == nil || state.Addressed || state.SubmittedAt.IsZero() {
+			continue
+		}
+		if !github.PRReviewFollowUpCandidate(pr) {
+			continue // human-opened, draft or fork: never routed
+		}
+		pr.Repo = qualifyPRFollowUpRepo(org, pr.Repo)
+		if _, ok := prfollowup.PointerCreatedAt(ctx, dir, pr.Repo, pr.Number); ok {
+			out = append(out, pr)
+			continue
+		}
+		if prAgents == nil {
+			prAgents = auditPRAgents(org, now.Add(-auditPRAttributionWindow), prFollowUpAuditPath)
+		}
+		agentName := prFixAgent(pr, prAgents[fmt.Sprintf("%s#%d", pr.Repo, pr.Number)])
+		// prFixAgent's head-ref fallback can name something that is not an
+		// agent of this hive; routing to it would drop the review silently.
+		if _, known := cfg.Agents[cfg.BaseAgentName(agentName)]; !known {
+			agentName = ""
+		}
+		if agentName == "" {
+			if logger != nil {
+				logger.Warn("PR follow-up: held PR has an unaddressed changes-requested review but no owning agent; left to the hold-gated PR list",
+					"repo", pr.Repo, "pr", pr.Number, "reviewer", state.Reviewer)
+			}
+			continue
+		}
+		if err := prfollowup.Record(ctx, dir, agentName, pr.Repo, pr.Number, pr.URL, "", now); err != nil {
+			if logger != nil {
+				logger.Warn("PR follow-up: failed to record pointer for a held PR with an unaddressed review",
+					"repo", pr.Repo, "pr", pr.Number, "agent", agentName, "error", err)
+			}
+			continue
+		}
+		if logger != nil {
+			logger.Info("PR follow-up: held PR with an unaddressed changes-requested review attributed from the audit record",
+				"repo", pr.Repo, "pr", pr.Number, "agent", agentName, "reviewer", state.Reviewer)
+		}
+		out = append(out, pr)
+	}
+	return out
 }
 
 // collectPRFollowUpComments fetches human feedback for the open PRs this

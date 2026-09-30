@@ -24,9 +24,13 @@
 // between intent and settle re-queues the event and a settled event is never
 // delivered twice.
 //
-// Eligibility is the pointer itself. A pointer is written only from the
+// Eligibility is the pointer itself. A pointer is written from the
 // PR-request watcher's PR-opened hook, which fires only for a NEW PR the
-// hive's App opened for one of its own agents. A PR with no pointer (a
+// hive's App opened for one of its own agents, and — for a hold-gated PR
+// carrying an unaddressed human "Changes requested" review — from the
+// eval-tick router, which writes one only after the PR has been shown to be
+// hive-opened and its owning agent resolved from the hive's own audit
+// attribution record (hivecommons/hive#9812). A PR with no pointer (a
 // human's PR, another hive's PR, a PR in a repo no hub dispatched work for)
 // is never touched, which closes the #6908 class of bug (an account-scoped
 // sweep reaching PRs no hive authorised) by construction.
@@ -646,6 +650,13 @@ func detectEvents(pr *github.PullRequest, threads []github.ReviewThread, comment
 		if len(by) > 0 {
 			detail = "Changes requested by " + strings.Join(by, ", ") + "."
 		}
+		// A held PR carries the classified review state (#9802): name the
+		// reviewer, when they reviewed, and that nothing has answered it —
+		// the agent would otherwise have to infer it from the branch.
+		if f := pr.ReviewFollowUp; f != nil && !f.Addressed && !f.SubmittedAt.IsZero() {
+			detail += fmt.Sprintf(" The review by @%s (%s) is still unaddressed: no non-merge commit and no reply from you since it was submitted.",
+				f.Reviewer, f.SubmittedAt.UTC().Format(time.RFC3339))
+		}
 		events = append(events, Event{
 			Kind:   EventChangesRequested,
 			Key:    "review:" + strings.Join(by, ","),
@@ -749,5 +760,10 @@ func BuildMessage(pr *github.PullRequest, url string, events []Event) string {
 		b.WriteString("\n")
 	}
 	b.WriteString("Read the new feedback on the PR, push any fix to the same branch, and reply on the PR. Do not open a new PR.")
+	// A held PR is one a human must still review: the fix goes on the same
+	// branch and the hold stays exactly where it is (hivecommons/hive#9802).
+	if f := pr.ReviewFollowUp; f != nil && !f.Addressed {
+		b.WriteString("\nThis PR is hold-gated: never remove the `hold` label and never merge it. Addressing the review on the same branch is the whole job; a human re-reviews the new head.")
+	}
 	return b.String()
 }

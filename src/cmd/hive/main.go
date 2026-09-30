@@ -6293,6 +6293,13 @@ func runEvalCycle(
 	// enriches the held list ONLY for the repair path — held PRs still never
 	// reach the merge sweep, escalation or the queue counts.
 	ghClient.EnrichCIStatus(ctx, actionable.PRs.Held)
+	// A held PR whose review decision is CHANGES_REQUESTED needs one more
+	// fact before anything can act on it: whether the owning agent has
+	// answered that review yet (hivecommons/hive#9802). Bounded to
+	// maxHeldReviewFollowUpsPerTick GraphQL reads per tick, and stamped here
+	// so the snapshot written below — and every consumer reading it, the
+	// follow-up router and the hold-gated PR list alike — sees one answer.
+	ghClient.EnrichPRReviewFollowUp(ctx, actionable.PRs.Held, maxHeldReviewFollowUpsPerTick)
 	// Stale drafts sit in the same dashboard PR column; they get the
 	// review/link signals only — no mergeability or check-run fetches, a
 	// draft is not a merge candidate (hivecommons/hive#8968).

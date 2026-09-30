@@ -678,6 +678,13 @@ type PullRequest struct {
 	CommentCount      int             `json:"comment_count,omitempty"`
 	ReviewThreadCount int             `json:"review_thread_count,omitempty"`
 	LinkedIssues      []PRLinkedIssue `json:"linked_issues,omitempty"`
+	// ReviewFollowUp is the latest human "Changes requested" review on a PR
+	// the hive opened, plus whether the owning agent has answered it
+	// (pr_review_followup.go, hivecommons/hive#9802). Stamped by
+	// EnrichPRReviewFollowUp for held PRs only, and nil for every other PR.
+	// It gates no merge: it decides whether the owning agent is told to go
+	// back to its own held PR, and what the hold-gated PR list says about it.
+	ReviewFollowUp *PRReviewFollowUp `json:"review_follow_up,omitempty"`
 }
 
 // PRLinkedIssue is an issue GitHub reports a PR will close on merge
@@ -816,7 +823,10 @@ type PRResult struct {
 	// This is a SEPARATE list on purpose. Held PRs must not re-enter Items:
 	// the merge sweep, escalation, duplicate-PR guard and the queue counts all
 	// read Items, and the hold is exactly the gate that must keep them out.
-	// Only the CI-repair path reads Held.
+	// Only the CI-repair path and the PR follow-up router read Held — the
+	// latter to hand an unaddressed human "Changes requested" review back to
+	// the agent that opened the PR (hivecommons/hive#9809). Neither touches
+	// the hold label or any merge gate.
 	Held []PullRequest `json:"held,omitempty"`
 }
 

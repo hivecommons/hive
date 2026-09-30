@@ -369,3 +369,111 @@ func TestPRFollowUpWiring_NoResumeHandleIsInert(t *testing.T) {
 		t.Errorf("handle offered with none captured:\n%s", section)
 	}
 }
+
+// heldChangesRequestedActionable is the #252 shape: a hold-gated, hive-opened
+// PR whose maintainer review is classified unaddressed.
+func heldChangesRequestedActionable(addressed bool) *github.ActionableResult {
+	state := &github.PRReviewFollowUp{
+		Reviewer:    "Danathar",
+		SubmittedAt: time.Date(2026, 9, 2, 14, 15, 0, 0, time.UTC),
+	}
+	if addressed {
+		state.Addressed = true
+		state.AddressedBy = github.ReviewAddressedByCommit
+	}
+	return &github.ActionableResult{PRs: github.PRResult{Held: []github.PullRequest{{
+		Repo: "hivecommons/hive", Number: 252, Title: "add the bypass guard",
+		URL: "https://example.invalid/pr/252", HiveAttributed: true, HiveAgent: "sec-check",
+		Protection: &github.ProtectionFacts{
+			ReviewDecision:     github.ReviewDecisionChangesRequested,
+			ChangesRequestedBy: []string{"Danathar"},
+		},
+		ReviewFollowUp: state,
+	}}}}
+}
+
+// A held PR with an unaddressed human change request reaches follow-up
+// resume; an addressed one, and a human's PR, never do
+// (hivecommons/hive#9809).
+func TestPRFollowUpWiring_HeldChangesRequestedRoutes(t *testing.T) {
+	t.Setenv(config.PRFollowUpResumeEnvVar, "true")
+	prFollowUpTestDir(t)
+	redirectReviewThreadsPath(t)
+	cfg := &config.Config{Project: config.ProjectConfig{Org: "hivecommons"}}
+
+	recordPRFollowUpPointer(cfg, nil, github.PROpenedDetail{
+		Agent: "sec-check", Repo: "hivecommons/hive", Number: 252, URL: "https://example.invalid/pr/252",
+	}, time.Now(), discardLogger())
+
+	out := routePRFollowUps(context.Background(), cfg, nil, heldChangesRequestedActionable(false), nil, nil, discardLogger())
+	if len(out) != 1 || out[0].Number != 252 || out[0].Agent != "sec-check" {
+		t.Fatalf("outcomes = %+v, want the held PR routed to sec-check", out)
+	}
+	if len(out[0].Events) != 1 || out[0].Events[0].Kind != prfollowup.EventChangesRequested {
+		t.Fatalf("events = %+v, want one changes-requested event", out[0].Events)
+	}
+	if !strings.Contains(out[0].Events[0].Detail, "still unaddressed") {
+		t.Errorf("event detail must name the unaddressed review: %q", out[0].Events[0].Detail)
+	}
+
+	// Addressed: nothing to do. Human-opened: never ours to route.
+	resetPRFollowUpTickState()
+	if out := routePRFollowUps(context.Background(), cfg, nil, heldChangesRequestedActionable(true), nil, nil, discardLogger()); len(out) != 0 {
+		t.Fatalf("an addressed review routed: %+v", out)
+	}
+	resetPRFollowUpTickState()
+	human := heldChangesRequestedActionable(false)
+	human.PRs.Held[0].HiveAttributed = false
+	human.PRs.Held[0].HiveAgent = ""
+	if out := routePRFollowUps(context.Background(), cfg, nil, human, nil, nil, discardLogger()); len(out) != 0 {
+		t.Fatalf("a human-opened held PR routed: %+v", out)
+	}
+}
+
+// #252 exactly: the PR predates the follow-up pointer, so ownership comes
+// from the prFixAgent attribution record instead (hivecommons/hive#9812). A
+// PR with neither pointer nor attribution is left to the hold-gated list.
+func TestPRFollowUpWiring_HeldPRWithoutPointerUsesAuditAttribution(t *testing.T) {
+	t.Setenv(config.PRFollowUpResumeEnvVar, "true")
+	prFollowUpTestDir(t)
+	redirectReviewThreadsPath(t)
+	auditPath := filepath.Join(t.TempDir(), "audit.jsonl")
+	line := `{"ts":"` + time.Now().UTC().Format(time.RFC3339) + `","user":"app","action":"agent_pr_created","detail":"repo=hivecommons/hive, number=252","agent":"sec-check"}` + "\n"
+	if err := os.WriteFile(auditPath, []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prFollowUpAuditPath = auditPath
+	t.Cleanup(func() { prFollowUpAuditPath = "" })
+	cfg := &config.Config{
+		Project: config.ProjectConfig{Org: "hivecommons"},
+		Agents:  map[string]config.AgentConfig{"sec-check": {}},
+	}
+
+	actionable := heldChangesRequestedActionable(false)
+	actionable.PRs.Held[0].HiveAgent = "" // attribution is the only pointer left
+	out := routePRFollowUps(context.Background(), cfg, nil, actionable, nil, nil, discardLogger())
+	if len(out) != 1 || out[0].Agent != "sec-check" {
+		t.Fatalf("outcomes = %+v, want the pointer-less held PR attributed to sec-check", out)
+	}
+
+	// No pointer, no attribution, no branch or label to read: not routed to
+	// anyone (it stays visible on the hold-gated PR list instead).
+	resetPRFollowUpTickState()
+	prFollowUpAuditPath = filepath.Join(t.TempDir(), "empty.jsonl")
+	orphan := heldChangesRequestedActionable(false)
+	orphan.PRs.Held[0].Number = 253
+	orphan.PRs.Held[0].HiveAgent = ""
+	if out := routePRFollowUps(context.Background(), cfg, nil, orphan, nil, nil, discardLogger()); len(out) != 0 {
+		t.Fatalf("an unattributable held PR routed: %+v", out)
+	}
+
+	// A head-ref guess that names no agent of this hive is not an owner.
+	resetPRFollowUpTickState()
+	stray := heldChangesRequestedActionable(false)
+	stray.PRs.Held[0].Number = 254
+	stray.PRs.Held[0].HiveAgent = ""
+	stray.PRs.Held[0].HeadRef = "fix/bypass-guard"
+	if out := routePRFollowUps(context.Background(), cfg, nil, stray, nil, nil, discardLogger()); len(out) != 0 {
+		t.Fatalf("a held PR attributed to a non-agent routed: %+v", out)
+	}
+}

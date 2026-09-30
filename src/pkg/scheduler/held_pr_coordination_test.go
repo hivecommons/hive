@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
@@ -269,5 +270,54 @@ func TestHeldPRCoordinationPrependsToSingleLineMessage(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, single) {
 		t.Fatalf("original message must be preserved:\n%s", got)
+	}
+}
+
+// A held PR the hive opened whose maintainer review is still unaddressed must
+// say so on its list line, with the rule for acting on it — the #252 case,
+// where the list said only "repo#252 title" and both the owning agent and the
+// scanner read the PR as merely waiting (hivecommons/hive#9811).
+func TestHeldPRCoordinationShowsHumanReviewState(t *testing.T) {
+	s := heldPRCoordinationScheduler(t, 5, "ISSUES_AND_PRS")
+	reviewed := time.Date(2026, 9, 2, 14, 15, 0, 0, time.UTC)
+	actionable := &github.ActionableResult{
+		PRs: github.PRResult{Held: []github.PullRequest{
+			{Repo: "acme/widget", Number: 26, HiveAttributed: true,
+				ReviewFollowUp: &github.PRReviewFollowUp{Reviewer: "Danathar", SubmittedAt: reviewed}},
+			{Repo: "acme/widget", Number: 27, HiveAttributed: true,
+				ReviewFollowUp: &github.PRReviewFollowUp{
+					Reviewer: "Danathar", SubmittedAt: reviewed,
+					Addressed: true, AddressedBy: github.ReviewAddressedByCommit,
+				}},
+			{Repo: "acme/widget", Number: 29, HiveAttributed: true,
+				Protection: &github.ProtectionFacts{ReviewDecision: github.ReviewDecisionApproved}},
+			{Repo: "acme/widget", Number: 30, HiveAttributed: true,
+				Protection: &github.ProtectionFacts{ReviewDecision: github.ReviewDecisionReviewRequired}},
+		}},
+		Hold: github.HoldResult{Items: []github.HoldItem{
+			{Repo: "acme/widget", Number: 26, Type: "pr", Title: "unsafe bypass"},
+			{Repo: "acme/widget", Number: 27, Type: "pr", Title: "already answered"},
+			{Repo: "acme/widget", Number: 28, Type: "pr", Title: "never reviewed"},
+			{Repo: "acme/widget", Number: 29, Type: "pr", Title: "approved"},
+			{Repo: "acme/widget", Number: 30, Type: "pr", Title: "waiting"},
+		}},
+	}
+
+	msg := s.BuildAgentMessage("quality", nil, actionable)
+	for _, want := range []string{
+		"acme/widget#26 unsafe bypass — CHANGES REQUESTED by @Danathar (unaddressed)",
+		"acme/widget#27 already answered — CHANGES REQUESTED by @Danathar (addressed by commit)",
+		"acme/widget#29 approved — APPROVED",
+		"acme/widget#30 waiting — AWAITING REVIEW",
+		"address the review on the SAME branch",
+		"Never remove `hold`",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("kick missing %q:\n%s", want, msg)
+		}
+	}
+	// A PR whose review state is unknown keeps the bare line it always had.
+	if !strings.Contains(msg, "acme/widget#28 never reviewed\n") {
+		t.Errorf("unreviewed held PR must not be annotated:\n%s", msg)
 	}
 }
