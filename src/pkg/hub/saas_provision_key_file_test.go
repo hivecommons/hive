@@ -77,6 +77,10 @@ func renderProvisionManifestWithAuth(t *testing.T, useApp, useAppFull bool, toke
 		"AdditionalAppKeys": []provisionAppKey{},
 		"Token":             token,
 		"HasPlaceholderIDs": false,
+
+		"StartupProbeInitialDelaySeconds": hostedStartupProbeInitialDelaySeconds,
+		"StartupProbePeriodSeconds":       hostedStartupProbePeriodSeconds,
+		"StartupProbeFailureThreshold":    hostedStartupProbeFailureThreshold,
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {

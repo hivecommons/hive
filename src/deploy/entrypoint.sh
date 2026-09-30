@@ -260,14 +260,96 @@ for name in names:
 PY
 }
 
+# hive_reown_marker_path <path> prints the per-tree completion marker for the
+# incremental re-own below (#9692). Markers live under /data/.hive (dev:node
+# 0700), NOT inside the agent's own tree: an agent owns its home, so a marker
+# there could be forged by the very uid it vouches for. The path is flattened
+# into a single file name; agent names never contain "/", so two trees cannot
+# map to one marker.
+hive_reown_marker_path() {
+  _reown_marker_dir="${HIVE_REOWN_MARKER_DIR:-${HIVE_DATA_ROOT:-/data}/.hive/reown}"
+  _reown_marker_key="$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"
+  echo "${_reown_marker_dir}/${_reown_marker_key}.done"
+}
+
+# hive_reown_path_if_needed <path> <uid> gives every entry under <path> to
+# <uid>:node, and runs on PID 1's startup path before the server binds.
+#
+# #9692: this used to be a synchronous `chown -R` of the whole tree whenever
+# the top-level owner differed. On the first boot of the per-agent-UID build a
+# large agent home outlasted the hosted spoke's startup probe, kubelet killed
+# the container mid-walk, and the next boot started the whole tree over, so a
+# spoke could crash-loop on its own migration. It is now:
+#
+#   - incremental: `find \! -uid` selects only entries NOT already owned by
+#     <uid>, so a restarted pod resumes where it was killed instead of
+#     re-chowning what it already did;
+#   - skipped once complete: a marker recording <uid> is written only after a
+#     walk finishes with no error. A later boot whose marker matches AND whose
+#     top-level entry is still owned by <uid> costs one stat;
+#   - post-order (-depth): the top-level entry is changed last, so it still
+#     reads as the old owner until every entry below it has been handed over.
+#
+# Symlinks: `chown -R` without -H/-L changes a symlink itself and never follows
+# it (coreutils forces --no-dereference under -R -P). find's default -P plus
+# `chown -h` is the same contract, so this cannot be steered through a link an
+# agent planted in its own home.
+#
+# Killed at any point: entries already chowned stay chowned, the marker is not
+# yet written (or is written atomically via rename), so the next boot walks
+# again and only touches what is left.
 hive_reown_path_if_needed() {
   _reown_path="$1"
   _reown_uid="$2"
   [ -e "$_reown_path" ] || return 0
   _reown_owner="$(stat -c '%u' "$_reown_path" 2>/dev/null || echo 0)"
-  if [ "$_reown_owner" != "$_reown_uid" ]; then
-    chown -R "${_reown_uid}:node" "$_reown_path" 2>/dev/null || true
-    echo "[entrypoint] re-owned ${_reown_path} ${_reown_owner}→${_reown_uid}"
+  _reown_marker="$(hive_reown_marker_path "$_reown_path")"
+  if [ "$_reown_owner" = "$_reown_uid" ] && [ -f "$_reown_marker" ] \
+     && [ "$(cat "$_reown_marker" 2>/dev/null || true)" = "$_reown_uid" ]; then
+    return 0
+  fi
+
+  _reown_marker_parent="$(dirname "$_reown_marker")"
+  mkdir -p "$_reown_marker_parent" 2>/dev/null || true
+  chmod 0700 "$_reown_marker_parent" 2>/dev/null || true
+  # The changed-entry list only feeds the progress count. If it cannot be
+  # created the walk must still run, so fall back to /dev/null rather than
+  # letting a failed redirect skip the chown.
+  _reown_list="$(mktemp "${_reown_marker}.changed.XXXXXX" 2>/dev/null || echo /dev/null)"
+  _reown_start="$(date +%s)"
+  _reown_ok=0
+  if find "$_reown_path" -depth \! -uid "$_reown_uid" \
+       -exec chown -h "${_reown_uid}:node" {} + -print > "$_reown_list" 2>/dev/null; then
+    _reown_ok=1
+  fi
+  _reown_elapsed=$(( $(date +%s) - _reown_start ))
+  if [ "$_reown_list" = /dev/null ]; then
+    _reown_changed="?"
+  else
+    _reown_changed="$(wc -l < "$_reown_list" 2>/dev/null | tr -d ' ' || true)"
+    rm -f "$_reown_list" 2>/dev/null || true
+  fi
+  [ -n "$_reown_changed" ] || _reown_changed="?"
+
+  if [ "$_reown_ok" != 1 ]; then
+    echo "[entrypoint] WARN: re-own of ${_reown_path} to ${_reown_uid} incomplete (${_reown_changed} entries attempted, ${_reown_elapsed}s); the next boot resumes with only the entries still mis-owned"
+    return 0
+  fi
+
+  _reown_marker_tmp="$(mktemp "${_reown_marker}.tmp.XXXXXX" 2>/dev/null || true)"
+  if [ -n "$_reown_marker_tmp" ] \
+     && printf '%s\n' "$_reown_uid" > "$_reown_marker_tmp" 2>/dev/null \
+     && mv -f "$_reown_marker_tmp" "$_reown_marker" 2>/dev/null; then
+    :
+  else
+    [ -z "$_reown_marker_tmp" ] || rm -f "$_reown_marker_tmp" 2>/dev/null || true
+    echo "[entrypoint] WARN: could not record re-own marker ${_reown_marker}; the next boot re-walks ${_reown_path} (cheap: nothing left to change)"
+  fi
+
+  if [ "$_reown_owner" != "$_reown_uid" ] || [ "$_reown_changed" != 0 ]; then
+    echo "[entrypoint] re-owned ${_reown_path} ${_reown_owner}→${_reown_uid} (${_reown_changed} entries changed, ${_reown_elapsed}s)"
+  else
+    echo "[entrypoint] re-own: ${_reown_path} already owned by ${_reown_uid} (0 entries changed, ${_reown_elapsed}s); marker recorded"
   fi
 }
 

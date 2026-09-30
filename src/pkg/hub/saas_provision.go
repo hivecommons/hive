@@ -2252,6 +2252,30 @@ func provisionAdditionalAppKeys(fleetKeys map[int64]fleetAppKey, primaryAppID st
 	return out
 }
 
+// Hosted spoke startup probe (#9692). The probe gates the container until
+// /api/health answers, and everything the entrypoint does before the server
+// binds counts against it. The old budget (10s + 30 x 5s, about 160s) was
+// smaller than the first-boot per-agent UID re-own on spokes with large agent
+// homes, so kubelet killed the container mid-migration and the rollout
+// stalled. The re-own is now incremental and resumable, and this budget is
+// sized so a first boot has room to finish it in one go. The liveness probe
+// only starts after the startup probe succeeds, so a longer startup budget
+// does not delay detection of a spoke that wedges later.
+const (
+	// hostedStartupBudget is the total time a new container gets to answer
+	// /api/health before kubelet restarts it.
+	hostedStartupBudget = 10 * time.Minute
+
+	// hostedStartupProbeInitialDelaySeconds and hostedStartupProbePeriodSeconds
+	// keep their pre-#9692 values; only the failure threshold grows.
+	hostedStartupProbeInitialDelaySeconds = 10
+	hostedStartupProbePeriodSeconds       = 5
+
+	// hostedStartupProbeFailureThreshold is derived from the budget so the two
+	// can never disagree: (600s - 10s) / 5s = 118 probes.
+	hostedStartupProbeFailureThreshold = (int(hostedStartupBudget/time.Second) - hostedStartupProbeInitialDelaySeconds) / hostedStartupProbePeriodSeconds
+)
+
 // spokeSecretsMountPrefix is where the hive-secrets Secret is projected in the
 // spoke pod. A key_file under this prefix can only resolve to an entry the same
 // manifest puts in that Secret — nothing else ever writes there, because the
@@ -2634,6 +2658,11 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		// per cluster: a host outside the wildcard's single-label scope keeps its
 		// own certificate on a cluster where every other host does not.
 		"UseWildcardTLS": cluster.servesHostFromWildcard(dashboardHost),
+
+		// #9692: startup budget for the hive container, see hostedStartupBudget.
+		"StartupProbeInitialDelaySeconds": hostedStartupProbeInitialDelaySeconds,
+		"StartupProbePeriodSeconds":       hostedStartupProbePeriodSeconds,
+		"StartupProbeFailureThreshold":    hostedStartupProbeFailureThreshold,
 	}
 
 	// For NFS storage: auto-create OCI File System + NFS export.
@@ -3382,12 +3411,15 @@ spec:
           periodSeconds: 5
           failureThreshold: 3
         startupProbe:
+          # #9692: budget comes from hostedStartupBudget. The first boot of a
+          # build that changes per-agent ownership re-owns agent homes before
+          # the server binds; too small a budget crash-loops that migration.
           httpGet:
             path: /api/health
             port: {{.DashboardPort}}
-          initialDelaySeconds: 10
-          periodSeconds: 5
-          failureThreshold: 30
+          initialDelaySeconds: {{.StartupProbeInitialDelaySeconds}}
+          periodSeconds: {{.StartupProbePeriodSeconds}}
+          failureThreshold: {{.StartupProbeFailureThreshold}}
         livenessProbe:
           # /api/livez (not /api/health) so a heartbeat goroutine that dies
           # silently while the HTTP server stays up still gets caught and the
