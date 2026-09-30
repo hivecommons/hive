@@ -1,0 +1,1 @@
+- Claude fallback list (Go + UI) now offers `claude-sonnet-5-5`; the codex static list matches the pinned 0.159.0 catalog (drops retired `gpt-5.4`); token pricing adds Opus 5.5, Opus 5, Sonnet 5.5, GPT-6 Astra/Sol/Luna and the Gemini 3 previews (#9804).

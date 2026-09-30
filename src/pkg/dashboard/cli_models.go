@@ -242,12 +242,14 @@ func setCopilotSDKHelperPathForTest(t interface {
 // cannot run (no API key and no fresh OAuth token in the CLI credentials
 // file) or fails. Live discovery via api.anthropic.com/v1/models is strongly
 // preferred; this is only a floor so the dropdown is never empty. Refreshed
-// 2026-08-03 from a live /v1/models response (11 ids, in API order). Keep it
-// in sync with CLAUDE_CLI_MODELS in static/index.html. Both the canonical
+// 2026-08-03 from a live /v1/models response (11 ids, in API order);
+// claude-sonnet-5-5 added per the Claude Code 2.1.284 changelog (#9804). Keep
+// it in sync with CLAUDE_CLI_MODELS in static/index.html. Both the canonical
 // ids AND the bare aliases the CLI accepts are included.
 var claudeStaticModels = []string{
 	"claude-opus-5-5",
 	"claude-opus-5",
+	"claude-sonnet-5-5",
 	"claude-sonnet-5",
 	"claude-fable-5",
 	"claude-opus-4-8",
@@ -366,13 +368,13 @@ var bobStaticModels = []string{bobAutoModel}
 // models — Claude ids are rejected with a ChatGPT account ("model is not
 // supported when using Codex with a ChatGPT account"), so codex must never
 // fall through to the copilot list. The catalog is baked into the CLI binary
-// (per-CLI-version, not per-account); this snapshot matches codex 0.156.1
-// (the bundled catalog in models-manager/src/model_info.rs, read from the
-// 0.156.1 linux-x64 binary): visible ids in picker order (astra is the
-// default; GPT-6 Sol and Luna arrived in 0.156.1, #8417), then the hidden
-// ids — hidden entries are still valid --model values (see
+// (per-CLI-version, not per-account); this snapshot matches codex 0.159.0
+// (captured 2026-09-30 from a live `codex app-server` model/list exchange
+// against the pinned 0.159.0 binary, #9804): visible ids in picker order
+// (astra is the default; GPT-6 Sol and Luna arrived in 0.156.1, #8417), then
+// the hidden ids — hidden entries are still valid --model values (see
 // orderCodexServedModels). gpt-5.2 and gpt-5.4-mini were retired from the
-// catalog in 0.155.0 and gpt-5.4 moved to hidden.
+// catalog in 0.155.0; gpt-5.4 was retired between 0.156.1 and 0.159.0.
 // Keep in sync with CODEX_CLI_MODELS in static/index.html.
 var codexStaticModels = []string{
 	"gpt-6-astra",
@@ -382,10 +384,9 @@ var codexStaticModels = []string{
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
 	"gpt-5.5",
-	// Hidden in the 0.156.1 picker but still valid --model values.
+	// Hidden in the 0.159.0 picker but still valid --model values.
 	"gpt-daybreak-blue-latest",
 	"gpt-daybreak-red-latest",
-	"gpt-5.4",
 	"codex-auto-review",
 }
 
