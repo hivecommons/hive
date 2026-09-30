@@ -1,0 +1,59 @@
+﻿2026-09-30T00:00:19.0818505Z Current runner version: '2.337.0'
+2026-09-30T00:00:19.0826872Z Runner name: 'hive-runners-ln2px-runner-72kks'
+2026-09-30T00:00:19.0828342Z Runner group name: 'Default'
+2026-09-30T00:00:19.0829605Z Machine name: 'hive-runners-ln2px-runner-72kks'
+2026-09-30T00:00:58.1003185Z ##[group]Run bash .github/scripts/test-ci-install-tool-apt-cache.sh
+2026-09-30T00:00:58.1003755Z [36;1mbash .github/scripts/test-ci-install-tool-apt-cache.sh[0m
+2026-09-30T00:00:58.1010352Z shell: /usr/bin/bash -e {0}
+2026-09-30T00:00:58.1010618Z env:
+2026-09-30T00:00:58.1010855Z   ACTIONS_CACHE_SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
+2026-09-30T00:00:58.1011159Z   GO_CACHE_GUARD_BUILD_CACHE: job
+2026-09-30T00:00:58.1011422Z   GOTOOLCHAIN: local
+2026-09-30T00:00:58.1011681Z   GOCACHE: /home/runner/_temp/go-cache-guard/gocache
+2026-09-30T00:00:58.1012128Z ##[endgroup]
+2026-09-30T00:00:58.1110250Z === ci-install-tool apt .deb cache tests ===
+2026-09-30T00:00:58.2204197Z     | ci-install-tool: apt package cache is absent or for a different package set; using apt network path
+2026-09-30T00:00:58.2205031Z     | ci-install-tool: apt network fetch attempt 1/1 (5s of 5s budget; apt hosts: azure.archive.ubuntu.com)
+2026-09-30T00:00:58.2205794Z     | ci-install-tool: apt-get update did not complete cleanly; attempting package download anyway
+2026-09-30T00:00:58.2206687Z     | ci-install-tool: apt mirror fetch failed; falling back from deb.debian.org/azure.archive.ubuntu.com to archive.ubuntu.com
+2026-09-30T00:00:58.2207740Z     | ci-install-tool: apt-get update did not complete cleanly; attempting package download anyway
+2026-09-30T00:00:58.2208352Z     | ci-install-tool: apt network fetch attempt 1/1 failed with exit 124
+2026-09-30T00:00:58.2210335Z     | ::error::hive-fake-gcc is required for -race tests and could not be installed: apt-get could not install 'gcc libc6-dev'. Tried apt network operations 1 time(s) with 10s per fetch against: archive.ubuntu.com. On the self-hosted 'hive' runners this is normally lost egress to the Ubuntu mirrors (kubestellar/hive#6648/#6870), not a fault in this workflow. See the log for remediations.
+2026-09-30T00:00:58.2211858Z     | 
+2026-09-30T00:00:58.2212364Z     |   hive-fake-gcc is missing and the package manager could not fetch it.
+2026-09-30T00:00:58.2212737Z     | 
+2026-09-30T00:00:58.2213088Z     |   Most likely cause: the runner cannot reach the distro mirrors.
+2026-09-30T00:00:58.2213478Z     |   Remediations, best first:
+2026-09-30T00:00:58.2213963Z     |     1. Bake hive-fake-gcc into the runner image, so this job needs no network at all.
+2026-09-30T00:00:58.2214559Z     |     2. Fix egress from the runner cluster (port 80/443 to the distro mirrors).
+2026-09-30T00:00:58.2227788Z   ok: existing ::error:: remediation is preserved
+2026-09-30T00:01:14.0695765Z ##[group]Run python3 .github/scripts/test-ci-infra.py
+2026-09-30T00:01:14.0696206Z [36;1mpython3 .github/scripts/test-ci-infra.py[0m
+2026-09-30T00:01:14.0703328Z shell: /usr/bin/bash -e {0}
+2026-09-30T00:01:14.0703656Z env:
+2026-09-30T00:01:14.0703896Z   ACTIONS_CACHE_SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
+2026-09-30T00:01:14.0704196Z   GO_CACHE_GUARD_BUILD_CACHE: job
+2026-09-30T00:01:14.0704433Z   GOTOOLCHAIN: local
+2026-09-30T00:01:14.0704681Z   GOCACHE: /home/runner/_temp/go-cache-guard/gocache
+2026-09-30T00:01:14.0704966Z ##[endgroup]
+2026-09-30T00:01:14.2117883Z test_rerun_trigger_matches_script_default (__main__.WorkflowSyncTest.test_rerun_trigger_matches_script_default) ... ok
+2026-09-30T00:01:14.2118611Z 
+2026-09-30T00:01:14.2118846Z ======================================================================
+2026-09-30T00:01:14.2119828Z ERROR: test_builds_commands_and_raises_on_failure (__main__.GhApiTest.test_builds_commands_and_raises_on_failure)
+2026-09-30T00:01:14.2121364Z ----------------------------------------------------------------------
+2026-09-30T00:01:14.2122053Z Traceback (most recent call last):
+2026-09-30T00:01:14.2123382Z   File "/home/runner/hive/hive/.github/scripts/test-ci-infra.py", line 635, in test_builds_commands_and_raises_on_failure
+2026-09-30T00:01:14.2124444Z     api.post("repos/o/r/actions/runs/1/rerun-failed-jobs")
+2026-09-30T00:01:14.2125285Z   File "/home/runner/hive/hive/.github/scripts/ci_infra_actions.py", line 175, in post
+2026-09-30T00:01:14.2126238Z     out = self._call(["-X", "POST", path], body if body is not None else {})
+2026-09-30T00:01:14.2127171Z           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-09-30T00:01:14.2128140Z   File "/home/runner/hive/hive/.github/scripts/ci_infra_actions.py", line 155, in _call
+2026-09-30T00:01:14.2129055Z     raise ApiError("gh api %s failed: %s" % (" ".join(args), err))
+2026-09-30T00:01:14.2130009Z ci_infra_actions.ApiError: gh api -X POST repos/o/r/actions/runs/1/rerun-failed-jobs failed: HTTP 404
+2026-09-30T00:01:14.2130652Z 
+2026-09-30T00:01:14.2130954Z ----------------------------------------------------------------------
+2026-09-30T00:01:14.2131545Z Ran 36 tests in 0.051s
+2026-09-30T00:01:14.2131802Z 
+2026-09-30T00:01:14.2131960Z FAILED (errors=1)
+2026-09-30T00:01:14.2290240Z ##[error]Process completed with exit code 1.
+2026-09-30T00:01:14.2874808Z Post job cleanup.

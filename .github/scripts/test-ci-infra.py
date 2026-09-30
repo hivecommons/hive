@@ -127,6 +127,28 @@ class ClassifierRegionTest(unittest.TestCase):
         )
         self.assertEqual(classifier.classify(noisy, "", SIGS), "code")
 
+    def test_captured_test_output_never_decides_the_verdict(self):
+        # #9666: an installer self-test printed a real-looking apt ::error::
+        # under its "|" capture prefix; the job actually failed on a Python
+        # unittest. A signature matching that apt text must not fire on the
+        # captured copy, whether it sits in a passing step or in the failing
+        # step, and must still fire when the same line is a real column-0
+        # workflow command (positive control).
+        sigs = classifier.parse_signatures(
+            "apt-egress\tstep\tcould not be installed: apt-get could not install\n") + SIGS
+        log, _ = fixture("code-python-test-with-installer-selftest-noise")
+        self.assertEqual(classifier.classify(log, "", sigs), "code")
+        apt = ("::error::hive-fake-gcc is required for -race tests and could not be "
+               "installed: apt-get could not install 'gcc libc6-dev'.")
+        header = STEP_CODE_FAILURE.split("##[error]pkg/github")[0]
+        tail = "2026-09-29T08:34:00.2920000Z ##[error]Process completed with exit code 1.\n"
+        for captured in ("    | " + apt, "    " + apt, "  ##[error]" + apt[len("::error::"):]):
+            with self.subTest(captured=captured):
+                log = header + "2026-09-29T08:34:00.2900000Z " + captured + "\n" + tail
+                self.assertEqual(classifier.classify(log, "", sigs), "code")
+        real = header + "2026-09-29T08:34:00.2900000Z ##[error]" + apt[len("::error::"):] + "\n" + tail
+        self.assertEqual(classifier.classify(real, "", sigs), "infra:apt-egress")
+
     def test_silent_non_list_step_is_code(self):
         log = (
             "2026-09-29T08:34:00.2800000Z ##[group]Run go vet ./...\n"

@@ -16,3 +16,4 @@ code-lint-typecheck	code
 code-test-shuffle-failure	code
 code-missing-script	code
 code-permission-denied-not-gocache	code
+code-python-test-with-installer-selftest-noise	code

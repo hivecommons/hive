@@ -64,6 +64,12 @@ _GROUP_END = "##[endgroup]"
 _ERROR = "##[error]"
 _POST_JOB = "Post job cleanup."
 _PROCESS_EXIT = re.compile(r"^##\[error\]Process completed with exit code \d+\.$")
+# Captured test or self-test output: a harness that prints a child's output
+# under a "|" prefix (ci-install-tool's self-tests), or a workflow command
+# (::error:: / ##[error]) that is indented. The runner only honors workflow
+# commands at column 0, so an indented one is text a test printed, not a
+# failure of this job, and must not decide the verdict (#9664, seen on #9666).
+_CAPTURED_OUTPUT = re.compile(r"^\s+(?:\||::error::|##\[error\])")
 
 
 class SignatureError(ValueError):
@@ -194,7 +200,7 @@ def classify(log_text, annotations_text, signatures):
     same name.
     """
     step = failing_step(log_text or "")
-    step_text = "\n".join(step.output)
+    step_text = "\n".join(line for line in step.output if not _CAPTURED_OUTPUT.match(line))
     script_text = "\n".join(step.script)
     for sig in signatures:
         if sig.scope == SCOPE_STEP:
