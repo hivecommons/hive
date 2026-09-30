@@ -15,7 +15,8 @@ import (
 // #9583 shipped the compact handoff note as the thing that survives. Some of
 // the backend CLIs the hive drives persist the conversation itself and can be
 // pointed back at it by id (claude --resume, copilot --resume, codex resume,
-// gemini --resume, pi --session, omp --resume).
+// gemini --resume, pi --session, omp --resume, goose session --resume
+// --session-id).
 // When the PR opens, cmd/hive captures that id (agent.CaptureResumeHandle)
 // and stores it here beside the pointer.
 //
@@ -38,11 +39,13 @@ const DefaultResumeIDMaxAge = 72 * time.Hour
 // manager reaches it through the Resumer interface, not the other way round).
 type ResumeHandle struct {
 	// Backend is the CLI that owns the conversation ("claude", "copilot",
-	// "codex", "gemini", "pi", "omp").
+	// "codex", "gemini", "pi", "omp", "goose").
 	Backend string
 	// SessionID is that CLI's own conversation id.
 	SessionID string
-	// Transcript is the file the CLI persisted the conversation in.
+	// Transcript is the file the CLI persisted the conversation in. For
+	// goose, whose conversations live in a SQLite store, it is the CLI log
+	// that names the conversation id instead.
 	Transcript string
 	// Command reopens the conversation from a shell.
 	Command string

@@ -131,6 +131,7 @@ id, because several of these CLIs persist the conversation themselves:
 | gemini | `$HOME/.gemini/tmp/<project>/chats/session-<ts>-<id8>.jsonl` | `sessionId` from the file's first (metadata) line, checked against `<id8>` | `gemini --resume <id>` |
 | pi | `$HOME/.pi/agent/sessions/--<cwd>--/<ts>_<id>.jsonl` | the id after the timestamp | `pi --session <id>` |
 | omp | `$HOME/.omp/agent/sessions/<bucket>/<ts>_<id>.jsonl` | the id after the timestamp | `omp --resume <id>` |
+| goose | `$HOME/.local/state/goose/logs/cli/<date>/<launch-ts>.log` (the conversation itself lives in goose's SQLite session store) | the last `"session.id"` span attribute in the newest launch log's tail | `goose session --resume --session-id <id>` |
 
 `agent.CaptureResumeHandle` names the newest transcript under the agent's own
 HOME when the PR opens (a bounded, read-only walk: 4 directories deep, 2000
@@ -142,11 +143,18 @@ directory too, so their walk only enters the agent's own bucket: pi's
 `--<cwd>--`, and omp's `-<path relative to HOME>` (`-tmp-<relative>` under
 the temp root, pi's form otherwise), with symlinks resolved. With no working
 directory, or an id that is not a plain `[A-Za-z0-9_-]` run, no handle is
-captured. Then
+captured. goose keeps its conversations in a SQLite database
+(`~/.local/share/goose/sessions/sessions.db`, WAL mode), which the read-only
+file walk cannot name a session from, so its id comes from the per-launch CLI
+log instead: goose appends tracing spans carrying the conversation id
+(`"session.id"`) at the end of every completed turn (verified against goose
+1.52.0). A goose launch whose first turn has not finished yet has no id in
+its log, and then no handle is captured. Then
 `prfollowup.RecordWithResume` stores the backend, id,
 transcript path, command and capture time on the PR's pointer. Every other
-backend — goose (its sessions live in a SQLite database, not a transcript file
-named by id), bob (no verified resume flag), and the headless agy runner, whose conversation id lives in a
+backend — bob (bobshell 2.0.5 does have `--resume [task-id]`, but its tasks
+live in a SQLite database under the fleet-shared `~/.bob/db/bob.db` and no
+verified file names the task id), and the headless agy runner, whose conversation id lives in a
 `mktemp` file that is deliberately discarded on every relaunch — keeps the
 handoff note alone, exactly as before.
 
@@ -260,7 +268,11 @@ were.
 1. **Transcript-continuity soak.** Acceptance bullet 1 (a review comment
    produces a follow-up from the same session, with visible continuity) needs
    a soak with the flag on against a live review.
-2. **Backend resume ids for goose and bob**: goose keeps sessions in a SQLite
-   database rather than a transcript file named by id, and bob has no verified
-   resume flag. Adding one is a new entry in `backendResumeLayouts` plus its
-   test.
+2. **Backend resume id for bob**: bobshell 2.0.5 resumes a task with
+   `bob --resume <task-id>`, but its tasks live in a SQLite database
+   (`~/.bob/db/bob.db`, fleet-shared via the `~/.bob` symlink), and no
+   verified on-disk file names the task id, so there is nothing the
+   read-only walk can capture yet. Adding it once a capturable source is
+   verified is a new entry in `backendResumeLayouts` plus its test — the
+   goose entry, which reads the id from the backend's CLI log, is the
+   pattern to follow.

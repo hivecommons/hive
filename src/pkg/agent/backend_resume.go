@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -21,7 +22,7 @@ import (
 // backend CLI itself persisted. Several of the CLIs the hive drives do keep
 // a transcript on disk under the agent's HOME and can be pointed back at it
 // by id (claude --resume, copilot --resume, codex resume, gemini --resume,
-// pi --session, omp --resume).
+// pi --session, omp --resume, goose session --resume --session-id).
 // This file captures that id at PR-open time so pkg/prfollowup can store it
 // beside the PR's pointer and hand it to whichever session picks the PR up
 // later.
@@ -49,6 +50,13 @@ const (
 	// geminiProjectRootMarker is the file gemini writes in each project's
 	// temp directory naming the project root it belongs to.
 	geminiProjectRootMarker = ".project_root"
+	// gooseLogTailMaxBytes bounds how much of a goose CLI log's tail is read
+	// to find the session id its tracing spans record. The spans land at the
+	// end of each completed turn, so the id sits near the end of the file.
+	gooseLogTailMaxBytes = 256 << 10
+	// gooseSessionIDKey is the span attribute goose's per-launch CLI log
+	// records the conversation id under (verified against goose 1.52.0).
+	gooseSessionIDKey = `"session.id":"`
 )
 
 // ResumeHandle names a backend-native conversation that can be resumed after
@@ -59,7 +67,9 @@ type ResumeHandle struct {
 	// SessionID is the backend's own conversation id.
 	SessionID string
 	// Transcript is the file the backend persists that conversation in, so a
-	// fresh session can read the reasoning even if resume itself fails.
+	// fresh session can read the reasoning even if resume itself fails. For
+	// goose, whose conversations live in a SQLite store rather than a file
+	// named by id, it is the per-launch CLI log that names the id instead.
 	Transcript string
 	// Command resumes the conversation from a shell in the agent's pane.
 	Command string
@@ -158,6 +168,25 @@ var backendResumeLayouts = map[string]backendResumeLayout{
 		id:      timestampedSessionID,
 		command: func(id string) string { return "omp --resume " + id },
 		project: ompProjectDir,
+	},
+	// goose keeps its conversations in a SQLite database
+	// (~/.local/share/goose/sessions/sessions.db), not in a transcript file
+	// named by id, so the id is read from the per-launch CLI log instead:
+	// ~/.local/state/goose/logs/cli/<date>/<launch-ts>.log records the
+	// conversation id as the "session.id" span attribute at the end of every
+	// completed turn. The log tree is under the agent's own HOME, so no
+	// project scoping is needed. A launch whose first turn has not finished
+	// yet has no id in its log, and then no handle is captured — the PR keeps
+	// the handoff note alone. Verified against goose 1.52.0, which resumes a
+	// session with `goose session --resume --session-id <id>`.
+	"goose": {
+		root: func(home, _ string) string {
+			return filepath.Join(home, ".local", "state", "goose", "logs", "cli")
+		},
+		ext:        ".log",
+		id:         gooseLaunchLogID,
+		command:    func(id string) string { return "goose session --resume --session-id " + id },
+		idFromFile: gooseSessionID,
 	},
 }
 
@@ -278,6 +307,69 @@ func timestampedSessionID(name string) string {
 			return ""
 		}
 	}
+	if !isSafeResumeID(id) {
+		return ""
+	}
+	return id
+}
+
+// gooseLaunchLogID selects goose's per-launch CLI log files
+// ("20260930_095526.log": an 8-digit date, "_", a 6-digit time). The name is
+// the launch timestamp, not the conversation id — gooseSessionID reads the
+// real id from inside the newest log.
+func gooseLaunchLogID(name string) string {
+	base := trimResumeName(name, "", ".log")
+	if len(base) != 15 || base[8] != '_' {
+		return ""
+	}
+	for i, r := range base {
+		if i == 8 {
+			continue
+		}
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	return base
+}
+
+// gooseSessionID reads the conversation id from a goose CLI log: the tracing
+// spans goose appends at the end of every completed turn carry it as the
+// "session.id" attribute. The conversation itself lives in goose's SQLite
+// session store, so this log is the only file that names the id. Only the
+// tail is read, and the LAST occurrence wins, so a launch that opened more
+// than one conversation yields the current one. An id that is not a plain
+// [A-Za-z0-9_-] token is never offered because it is rendered into a shell
+// command.
+func gooseSessionID(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	if info.Size() > gooseLogTailMaxBytes {
+		if _, err := f.Seek(info.Size()-gooseLogTailMaxBytes, io.SeekStart); err != nil {
+			return ""
+		}
+	}
+	tail, err := io.ReadAll(io.LimitReader(f, gooseLogTailMaxBytes))
+	if err != nil {
+		return ""
+	}
+	at := bytes.LastIndex(tail, []byte(gooseSessionIDKey))
+	if at < 0 {
+		return ""
+	}
+	rest := tail[at+len(gooseSessionIDKey):]
+	end := bytes.IndexByte(rest, '"')
+	if end < 0 {
+		return ""
+	}
+	id := string(rest[:end])
 	if !isSafeResumeID(id) {
 		return ""
 	}

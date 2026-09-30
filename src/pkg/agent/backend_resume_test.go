@@ -113,7 +113,7 @@ func TestCaptureResumeHandle_CodexReadsDateBucketedRollouts(t *testing.T) {
 func TestCaptureResumeHandle_UnsupportedAndEmptyBackends(t *testing.T) {
 	homeForCapture(t)
 	now := time.Now()
-	for _, backend := range []string{"agy", "goose", "", "vllm"} {
+	for _, backend := range []string{"agy", "bob", "", "vllm"} {
 		if BackendSupportsResumeHandle(backend) {
 			t.Errorf("backend %q unexpectedly claims a capturable resume handle", backend)
 		}
@@ -372,5 +372,96 @@ func TestTimestampedSessionID_RejectsNonSessionNames(t *testing.T) {
 	}
 	if id := timestampedSessionID("2026-09-30T08-00-00-000Z_aaaaaaaa-1111.jsonl"); id != "aaaaaaaa-1111" {
 		t.Errorf("id = %q", id)
+	}
+}
+
+// writeGooseLog writes a goose per-launch CLI log whose tracing spans carry
+// sessionIDs in order, mirroring goose 1.52.0's
+// ~/.local/state/goose/logs/cli/<date>/<launch-ts>.log layout.
+func writeGooseLog(t *testing.T, path string, modTime time.Time, sessionIDs ...string) {
+	t.Helper()
+	body := `{"timestamp":"2026-09-30T13:55:26Z","level":"INFO","fields":{"message":"CLI command executed","command":"run"},"target":"goose_cli::cli"}` + "\n"
+	for _, id := range sessionIDs {
+		body += `{"spans":[{"gen_ai.agent.name":"goose","session.host":"hive","session.id":"` + id + `","name":"reply"}]}` + "\n"
+	}
+	writeResumeTranscript(t, path, modTime)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	if err := os.Chtimes(path, modTime, modTime); err != nil {
+		t.Fatalf("chtimes %s: %v", path, err)
+	}
+}
+
+func TestCaptureResumeHandle_GooseReadsSessionIDFromNewestCLILog(t *testing.T) {
+	home := homeForCapture(t)
+	now := time.Now()
+	logs := filepath.Join(home, ".local", "state", "goose", "logs", "cli")
+	writeGooseLog(t, filepath.Join(logs, "2026-09-29", "20260929_080547.log"), now.Add(-25*time.Hour), "20260929_1")
+	writeGooseLog(t, filepath.Join(logs, "2026-09-30", "20260930_095526.log"), now, "20260930_1", "20260930_2")
+	// Not a launch log: must never be mistaken for a session.
+	writeGooseLog(t, filepath.Join(logs, "2026-09-30", "install.log"), now.Add(time.Minute), "20260930_9")
+
+	h, ok := CaptureResumeHandle("scanner", 0, "goose", now)
+	if !ok {
+		t.Fatal("no handle captured for goose")
+	}
+	if h.SessionID != "20260930_2" {
+		t.Errorf("session id = %q, want the newest log's last session id", h.SessionID)
+	}
+	if h.Command != "goose session --resume --session-id 20260930_2" {
+		t.Errorf("command = %q", h.Command)
+	}
+	if !h.TranscriptExists() || filepath.Base(h.Transcript) != "20260930_095526.log" {
+		t.Errorf("transcript = %q, want the newest launch log", h.Transcript)
+	}
+	if !BackendSupportsResumeHandle("goose") {
+		t.Error("goose does not claim a capturable resume handle")
+	}
+}
+
+func TestCaptureResumeHandle_GooseNeedsACompletedTurnAndASafeID(t *testing.T) {
+	home := homeForCapture(t)
+	now := time.Now()
+	logs := filepath.Join(home, ".local", "state", "goose", "logs", "cli", "2026-09-30")
+
+	// A launch whose first turn has not finished has no session id in its
+	// log yet: no handle rather than a stale or foreign one.
+	writeGooseLog(t, filepath.Join(logs, "20260930_100000.log"), now)
+	if h, ok := CaptureResumeHandle("scanner", 0, "goose", now); ok {
+		t.Errorf("id-less log produced handle %+v", h)
+	}
+
+	// An id that is unsafe to render into a shell command is never offered.
+	writeGooseLog(t, filepath.Join(logs, "20260930_100100.log"), now.Add(time.Minute), "20260930_1; rm -rf /")
+	if h, ok := CaptureResumeHandle("scanner", 0, "goose", now); ok {
+		t.Errorf("unsafe id produced handle %+v", h)
+	}
+}
+
+func TestGooseLaunchLogID_SelectsOnlyLaunchLogs(t *testing.T) {
+	for _, name := range []string{"install.log", "20260930.log", "2026-09-30_095526.log", "20260930_0955.log", "20260930_09552a.log", "20260930_095526.txt"} {
+		if id := gooseLaunchLogID(name); id != "" {
+			t.Errorf("gooseLaunchLogID(%q) = %q, want no id", name, id)
+		}
+	}
+	if id := gooseLaunchLogID("20260930_095526.log"); id != "20260930_095526" {
+		t.Errorf("id = %q", id)
+	}
+}
+
+func TestGooseSessionID_ReadsTailOfLargeLog(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "20260930_095526.log")
+	filler := strings.Repeat(`{"timestamp":"2026-09-30T13:55:26Z","level":"DEBUG","fields":{"message":"x"}}`+"\n", 8192)
+	body := filler + `{"spans":[{"session.id":"20260930_7","name":"reply"}]}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if id := gooseSessionID(path); id != "20260930_7" {
+		t.Errorf("id = %q, want the id from the log's tail", id)
+	}
+	if id := gooseSessionID(filepath.Join(dir, "missing.log")); id != "" {
+		t.Errorf("missing file yielded id %q", id)
 	}
 }
