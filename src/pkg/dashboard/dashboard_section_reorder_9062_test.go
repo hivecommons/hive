@@ -21,6 +21,7 @@ var DASHBOARD_LAYOUT_REGIONS=['main'];
 var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','platform-section','audit-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']};
 var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
 var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
+var DASHBOARD_LAYOUT_ANCHOR_ID='dashboard-notices';
 var dashboardDragState=null;
 var dashboardKeyboardSnapshot=null;
 `
@@ -116,7 +117,7 @@ func TestDashboardApplyResetAndSidebarSort(t *testing.T) {
 		t.Skip("node not on PATH — dashboard layout apply/sidebar behavior was NOT executed by this run")
 	}
 	html := indexHTML(t)
-	funcs := []string{"dashboardEnsureSections", "dashboardRegionEl", "dashboardCardEl", "dashboardLayoutAnnounce", "dashboardLayoutAllIds", "dashboardLayoutNormalize", "dashboardLayoutCurrent", "dashboardLayoutEquals", "dashboardUpdateResetButton", "dashboardLayoutWrite", "dashboardFirstSection", "dashboardInsertSection", "dashboardApplyLayout", "dashboardSortSidebar", "resetDashboardLayout"}
+	funcs := []string{"dashboardEnsureSections", "dashboardRegionEl", "dashboardCardEl", "dashboardLayoutAnnounce", "dashboardLayoutAllIds", "dashboardLayoutNormalize", "dashboardLayoutCurrent", "dashboardLayoutEquals", "dashboardUpdateResetButton", "dashboardLayoutWrite", "dashboardIsSectionNode", "dashboardTopAnchor", "dashboardPinNoticeAnchor", "dashboardFirstSection", "dashboardInsertSection", "dashboardApplyLayout", "dashboardSortSidebar", "resetDashboardLayout"}
 	var b strings.Builder
 	b.WriteString(dashboardLayoutPreamble9062())
 	b.WriteString(`

@@ -674,6 +674,7 @@
        the agent detail still reaches Governor, Token Usage, etc. (previously
        these were display:none, forcing a click on the nav to get back). */
     body.oc-agent-focused .agent-card.oc-hidden { display: none; }
+    .agent-card.oc-focused { border-color: color-mix(in srgb, var(--indigo) 55%, var(--line)); box-shadow: var(--shadow-raised); }
 
     /* Light card overrides — surface/border/state come from the token
        remap; only the light-specific shadow lives here. */
@@ -3846,7 +3847,8 @@
        many times it has actually been upgraded, and asserting that to an
        operator is worse than saying nothing. Populated by
        renderReleaseStatus() from /api/version's releaseStatus object. -->
-  <div id="release-status" class="release-status" hidden></div>
+  <div id="dashboard-notices">
+    <div id="release-status" class="release-status" hidden></div>
   <div class="dashboard-layout-live" id="dashboard-layout-live" aria-live="polite" aria-atomic="true"></div>
 
   <div id="gh-app-install-banner" class="gh-app-install-banner" hidden>
@@ -3900,6 +3902,7 @@
   <div id="hub-banner" style="display:none"></div>
   <div id="planning-intro" style="display:none"></div>
   <div id="system-alerts-banner" style="display:none"></div>
+  </div>
   <div class="repos" id="overview-section" data-dashboard-section="overview-section">
     <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="overview-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Overview section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> <span class="overview-header">Overview <button type="button" class="hv-btn config-gear btn-sm" data-action="toggleOverviewChartSettings" data-stop="1" title="Configure Overview chart types, carousel timing, and transitions" aria-haspopup="true" aria-expanded="false" aria-controls="overview-chart-settings">⚙️</button></span></h2>
     <div class="overview-settings-popover" id="overview-chart-settings" hidden></div>
@@ -4625,6 +4628,7 @@
     var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','platform-section','audit-section','review-queue-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']};
     var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
     var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
+    var DASHBOARD_LAYOUT_ANCHOR_ID='dashboard-notices';
     var dashboardDragState=null;
     var dashboardKeyboardSnapshot=null;
     function dashboardEnsureSections(){DASHBOARD_LAYOUT_TEMPLATE.main.forEach(function(id){var el=document.getElementById(id);if(el&&!el.getAttribute('data-dashboard-section'))el.setAttribute('data-dashboard-section',id);});}
@@ -4642,9 +4646,12 @@
     function dashboardLayoutEquals(a,b){a=dashboardLayoutNormalize(a);b=dashboardLayoutNormalize(b);if(a.main.length!==b.main.length)return false;for(var i=0;i<a.main.length;i++){if(a.main[i]!==b.main[i])return false;}return true;}
     function dashboardUpdateResetButton(){var show=!dashboardLayoutEquals(dashboardLayoutCurrent(),dashboardLayoutNormalize(null));['dashboard-layout-reset','dashboard-layout-reset-main'].forEach(function(id){var b=document.getElementById(id);if(b)b.hidden=!show;});}
     function dashboardLayoutWrite(){try{localStorage.setItem(DASHBOARD_LAYOUT_KEY,JSON.stringify(dashboardLayoutCurrent()));}catch(e){}dashboardUpdateResetButton();dashboardSortSidebar();}
-    function dashboardFirstSection(region){return region?region.querySelector(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR):null;}
-    function dashboardInsertSection(region,card,before){if(!region||!card)return;if(before)region.insertBefore(card,before);else{var sections=region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR);var last=sections.length?sections[sections.length-1]:null;if(last&&last!==card)last.insertAdjacentElement('afterend',card);else region.appendChild(card);}}
-    function dashboardApplyLayout(layout){var region=dashboardRegionEl('main');if(!region)return;var ids=(layout&&layout.main)||[];for(var i=ids.length-1;i>=0;i--){var card=dashboardCardEl(ids[i]);if(card)region.insertBefore(card,dashboardFirstSection(region));}dashboardUpdateResetButton();dashboardSortSidebar();}
+    function dashboardIsSectionNode(node){return !!(node&&node.getAttribute&&node.getAttribute('data-dashboard-section'));}
+    function dashboardTopAnchor(region){var anchor=document.getElementById(DASHBOARD_LAYOUT_ANCHOR_ID);return anchor&&anchor.parentElement===region?anchor:null;}
+    function dashboardPinNoticeAnchor(region){var anchor=dashboardTopAnchor(region);if(!region||!anchor||!region.children)return;var children=Array.prototype.slice.call(region.children),moved=[];for(var i=0;i<children.length&&children[i]!==anchor;i++){if(dashboardIsSectionNode(children[i]))moved.push(children[i]);}if(!moved.length)return;var ref=anchor.nextElementSibling||null;moved.forEach(function(card){region.insertBefore(card,ref);});}
+    function dashboardFirstSection(region){if(!region)return null;dashboardPinNoticeAnchor(region);var anchor=dashboardTopAnchor(region);if(anchor&&region.children){var after=false,children=Array.prototype.slice.call(region.children);for(var i=0;i<children.length;i++){if(children[i]===anchor){after=true;continue;}if(after&&dashboardIsSectionNode(children[i]))return children[i];}}return region.querySelector(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR);}
+    function dashboardInsertSection(region,card,before){if(!region||!card)return;dashboardPinNoticeAnchor(region);if(before){var anchor=dashboardTopAnchor(region);if(anchor&&region.children){var children=Array.prototype.slice.call(region.children),anchorIdx=children.indexOf(anchor),beforeIdx=children.indexOf(before);if(anchorIdx>=0&&beforeIdx>=0&&beforeIdx<=anchorIdx)before=dashboardFirstSection(region);}region.insertBefore(card,before);dashboardPinNoticeAnchor(region);return;}var sections=region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR);var last=sections.length?sections[sections.length-1]:null;if(last&&last!==card){var siblings=Array.prototype.slice.call(region.children),next=siblings[siblings.indexOf(last)+1]||null;region.insertBefore(card,next);}else region.appendChild(card);dashboardPinNoticeAnchor(region);}
+    function dashboardApplyLayout(layout){var region=dashboardRegionEl('main');if(!region)return;dashboardPinNoticeAnchor(region);var ids=(layout&&layout.main)||[];for(var i=ids.length-1;i>=0;i--){var card=dashboardCardEl(ids[i]);if(card)dashboardInsertSection(region,card,dashboardFirstSection(region));}dashboardUpdateResetButton();dashboardSortSidebar();}
     function dashboardSortSidebar(){var order=dashboardLayoutNormalize(dashboardLayoutCurrent()).main,rank={};order.forEach(function(id,i){rank[id]=i;});var items=Array.prototype.slice.call(document.querySelectorAll('.oc-nav-item[data-section]')).filter(function(item){return rank[item.getAttribute('data-section')]!==undefined;});items.sort(function(a,b){return rank[a.getAttribute('data-section')]-rank[b.getAttribute('data-section')];});var home=document.getElementById('dashboard-section-nav-group')||(items.length&&items[0].closest('.oc-nav-group'));if(!home)return;items.forEach(function(item){home.appendChild(item);});Array.prototype.forEach.call(document.querySelectorAll('.oc-nav-group'),function(group){if(group===home){group.hidden=false;return;}group.hidden=group.querySelectorAll('.oc-nav-item').length===0;});}
     function resetDashboardLayout(){try{localStorage.removeItem(DASHBOARD_LAYOUT_KEY);}catch(e){}dashboardApplyLayout(dashboardLayoutNormalize(null));dashboardLayoutAnnounce('Dashboard section layout reset to the default order.');}
     function dashboardLayoutSlot(region,x,y,skip){var cards=Array.prototype.filter.call(region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR),function(c){return c!==skip;});if(!cards.length)return {region:region,before:null};var best=null,bestDist=Infinity;cards.forEach(function(card){var rect=card.getBoundingClientRect(),before=y<(rect.top+rect.height/2),anchor=before?rect.top:rect.bottom,dist=Math.abs(y-anchor)+Math.abs(x-(rect.left+rect.width/2));if(dist<bestDist){bestDist=dist;best={region:region,before:before?card:card.nextElementSibling};}});return best||{region:region,before:null};}
@@ -4655,7 +4662,7 @@
     function dashboardDragMove(ev){if(!dashboardDragState)return;var x=ev.clientX-dashboardDragState.dx,y=ev.clientY-dashboardDragState.dy;dashboardDragState.ghost.style.setProperty('--dashboard-ghost-x',x+'px');dashboardDragState.ghost.style.setProperty('--dashboard-ghost-y',y+'px');var region=dashboardNearestRegion(ev.clientX,ev.clientY),slot=dashboardLayoutSlot(region,ev.clientX,ev.clientY,dashboardDragState.card);dashboardDragState.slot=slot;dashboardMoveIndicator(slot);}
     function dashboardEndDrag(save){if(!dashboardDragState)return;var st=dashboardDragState;dashboardClearIndicator();if(st.ghost&&st.ghost.parentElement)st.ghost.parentElement.removeChild(st.ghost);st.card.classList.remove('dashboard-drag-source');st.grip.setAttribute('aria-pressed','false');if(save&&st.slot&&st.slot.region){dashboardInsertSection(st.slot.region,st.card,st.slot.before);dashboardLayoutWrite();dashboardLayoutAnnounce(dashboardLayoutCardName(st.card)+' moved.');}else{dashboardLayoutAnnounce('Move cancelled.');}dashboardDragState=null;}
     function dashboardRestoreSnapshot(){if(!dashboardKeyboardSnapshot)return;dashboardApplyLayout(dashboardKeyboardSnapshot);dashboardLayoutWrite();dashboardKeyboardSnapshot=dashboardLayoutCurrent();dashboardLayoutAnnounce('Keyboard reorder cancelled.');}
-    function dashboardMoveCardByKeyboard(card,key){var current=card.parentElement;if(key==='ArrowUp'){var prev=card.previousElementSibling;while(prev&&!prev.matches(DASHBOARD_LAYOUT_CARD_SELECTOR))prev=prev.previousElementSibling;if(prev)current.insertBefore(card,prev);}else if(key==='ArrowDown'){var next=card.nextElementSibling;while(next&&!next.matches(DASHBOARD_LAYOUT_CARD_SELECTOR))next=next.nextElementSibling;if(next)current.insertBefore(next,card);}dashboardLayoutWrite();dashboardLayoutAnnounce(dashboardLayoutCardName(card)+' moved.');}
+    function dashboardMoveCardByKeyboard(card,key){var current=card.parentElement;if(key==='ArrowUp'){var prev=card.previousElementSibling;while(prev&&!prev.matches(DASHBOARD_LAYOUT_CARD_SELECTOR))prev=prev.previousElementSibling;if(prev)dashboardInsertSection(current,card,prev);}else if(key==='ArrowDown'){var next=card.nextElementSibling;while(next&&!next.matches(DASHBOARD_LAYOUT_CARD_SELECTOR))next=next.nextElementSibling;if(next)dashboardInsertSection(current,next,card);}dashboardLayoutWrite();dashboardLayoutAnnounce(dashboardLayoutCardName(card)+' moved.');}
     function initDashboardSectionLayout(){dashboardEnsureSections();dashboardApplyLayout(dashboardLayoutNormalize(dashboardLayoutRead()));var root=dashboardRegionEl('main');if(!root)return;root.addEventListener('click',function(ev){var grip=ev.target.closest&&ev.target.closest(DASHBOARD_LAYOUT_GRIP_SELECTOR);if(grip){ev.preventDefault();ev.stopPropagation();}},true);root.addEventListener('pointerdown',function(ev){var grip=ev.target.closest&&ev.target.closest(DASHBOARD_LAYOUT_GRIP_SELECTOR);if(grip)dashboardStartDrag(ev,grip);});root.addEventListener('pointermove',function(ev){if(dashboardDragState){ev.preventDefault();dashboardDragMove(ev);}});root.addEventListener('pointerup',function(ev){if(dashboardDragState){ev.preventDefault();dashboardEndDrag(true);}});root.addEventListener('pointercancel',function(){dashboardEndDrag(false);});root.addEventListener('keydown',function(ev){var grip=ev.target.closest&&ev.target.closest(DASHBOARD_LAYOUT_GRIP_SELECTOR);if(!grip)return;var key=ev.key,card=grip.closest(DASHBOARD_LAYOUT_CARD_SELECTOR);if(!card)return;if(key===' '||key==='Enter'){ev.preventDefault();var active=grip.getAttribute('aria-pressed')==='true';if(active){dashboardKeyboardSnapshot=dashboardLayoutCurrent();grip.setAttribute('aria-pressed','false');dashboardLayoutAnnounce('Dropped '+dashboardLayoutCardName(card)+'.');}else{dashboardKeyboardSnapshot=dashboardLayoutCurrent();grip.setAttribute('aria-pressed','true');dashboardLayoutAnnounce('Picked up '+dashboardLayoutCardName(card)+'. Use arrow keys to move, Escape to cancel.');}return;}if(key==='Escape'){ev.preventDefault();dashboardRestoreSnapshot();grip.setAttribute('aria-pressed','false');return;}if(key==='ArrowUp'||key==='ArrowDown'){ev.preventDefault();if(!dashboardKeyboardSnapshot)dashboardKeyboardSnapshot=dashboardLayoutCurrent();grip.setAttribute('aria-pressed','true');dashboardMoveCardByKeyboard(card,key);}});root.addEventListener('focusin',function(ev){var grip=ev.target.closest&&ev.target.closest(DASHBOARD_LAYOUT_GRIP_SELECTOR);if(grip)dashboardKeyboardSnapshot=dashboardLayoutCurrent();});root.addEventListener('focusout',function(ev){var grip=ev.target.closest&&ev.target.closest(DASHBOARD_LAYOUT_GRIP_SELECTOR);if(grip){dashboardKeyboardSnapshot=null;grip.setAttribute('aria-pressed','false');}});dashboardUpdateResetButton();}
     document.addEventListener('DOMContentLoaded', initDashboardSectionLayout);
 
@@ -5001,7 +5008,9 @@
       document.body.classList.toggle('oc-agent-focused', isFocused);
       document.body.classList.toggle('oc-strategy-focused', isFocused && STRATEGY_AGENT_NAMES.includes(_ocSelectedAgent));
       document.querySelectorAll('.agent-card').forEach(card => {
-        card.classList.toggle('oc-hidden', isFocused && card.dataset.agent === _ocSelectedAgent);
+        const selected = !!_ocSelectedAgent && card.dataset.agent === _ocSelectedAgent;
+        card.classList.remove('oc-hidden');
+        card.classList.toggle('oc-focused', selected);
       });
     }
 
@@ -5062,6 +5071,7 @@
       document.querySelectorAll('.oc-nav-item').forEach(i => i.classList.remove('active'));
       const active = document.querySelector(`.oc-nav-item[data-agent-nav="${name}"]`);
       if (active) active.classList.add('active');
+      if (window._lastAgents) renderAgents(window._lastAgents);
       ocRenderAgentDetail();
       ocUpdateFocusedState();
       if (name) { ocStartPanePoll(); } else { ocStopPanePoll(); }
@@ -5689,6 +5699,16 @@
       for (const n of order) { if (agentMap[n]) sorted.push(agentMap[n]); }
       for (const a of agents) { if (!order.includes(a.name)) sorted.push(a); }
       return { sorted, groups };
+    }
+
+    function agentsFocusedFirst(agents) {
+      const ordered = Array.isArray(agents) ? agents.slice() : [];
+      if (!_ocSelectedAgent) return ordered;
+      const idx = ordered.findIndex(a => a && a.name === _ocSelectedAgent);
+      if (idx <= 0) return ordered;
+      const focused = ordered.splice(idx, 1)[0];
+      ordered.unshift(focused);
+      return ordered;
     }
 
     function _sidebarReadLayout() {
@@ -7685,7 +7705,7 @@
         if (inp.value) savedInputs[inp.id] = inp.value;
       });
       const { sorted: sortedAgents } = _sortAgentsBySidebar(agents);
-      const cards = sortedAgents.map(a => {
+      const cards = agentsFocusedFirst(sortedAgents).map(a => {
         const isOnDemand = a.onDemand === true;
         // Manual/persisted pause wins over offByCadence — see the agent-detail
         // renderer for the incident this ordering prevents.

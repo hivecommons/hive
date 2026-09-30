@@ -1,0 +1,1 @@
+- Fixed the dashboard so notices and warning banners stay pinned above reordered sections, and selecting an agent from the operations sidebar surfaces that agent's card first without saving a new card order.
