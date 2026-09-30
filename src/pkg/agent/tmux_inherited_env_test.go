@@ -13,6 +13,33 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 )
 
+// envWithout returns the current process environment with each of the given
+// keys removed. These tests start a REAL tmux server with `append(os.Environ(),
+// "KEY=planted-value", ...)`: if the process already carries a real value for
+// one of those keys (as it does when this package's tests run inside a live
+// hive agent's own tmux pane, per AGENTS.md — the agent's env legitimately
+// holds HIVE_ID/HIVE_SHA and, for push-capable agents, a real GitHub token),
+// the duplicate-key entry that wins is unspecified: the planted leak the test
+// is built to detect and strip might never appear, or a real credential could
+// leak into the assertions instead of the inert planted one. Scrubbing first
+// makes what actually reaches the tmux server's global environment fully
+// test-controlled regardless of the host this runs on (#9820).
+func envWithout(keys ...string) []string {
+	drop := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		drop[k] = true
+	}
+	environ := os.Environ()
+	out := make([]string, 0, len(environ))
+	for _, kv := range environ {
+		if k, _, ok := strings.Cut(kv, "="); ok && drop[k] {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
 // A tmux server inherits the environment of the process that starts it, and
 // copies that GLOBAL environment into every pane it forks. The hive process
 // legitimately holds credentials in its environment (the Linear work-source
@@ -41,7 +68,10 @@ func TestApplySessionEnv_RemovesInheritedCredentialsFromPanes(t *testing.T) {
 	// env plus the planted credentials — the package-wide test server was
 	// started elsewhere with whatever env that had.
 	start := exec.Command("tmux", "-L", socket, "new-session", "-d", "-s", session, "-c", dir, "sleep 60")
-	start.Env = append(os.Environ(),
+	start.Env = append(envWithout(
+		"LINEAR_API_KEY", "LINEAR_CLIENT_SECRET", "LINEAR_WEBHOOK_SECRET",
+		"HIVE_GITHUB_TOKEN", "GITHUB_TOKEN", "HIVE_ID", "HIVE_SHA",
+	),
 		"LINEAR_API_KEY=lin_api_leaked",
 		"LINEAR_CLIENT_SECRET=client_secret_leaked",
 		"LINEAR_WEBHOOK_SECRET=webhook_secret_leaked",
@@ -181,7 +211,7 @@ func TestApplySessionEnv_InjectionRemovesInheritedGitHubTokensForPushAgents(t *t
 	dir := t.TempDir()
 
 	start := exec.Command("tmux", "-L", socket, "new-session", "-d", "-s", session, "-c", dir, "sleep 60")
-	start.Env = append(os.Environ(),
+	start.Env = append(envWithout(append(append([]string{}, githubTokenEnvVars...), "HIVE_ID", "HIVE_SHA")...),
 		"GH_TOKEN=ghp_inherited_leaked",
 		"GITHUB_TOKEN=ghs_inherited_leaked",
 		"GH_ENTERPRISE_TOKEN=ghp_enterprise_leaked",
