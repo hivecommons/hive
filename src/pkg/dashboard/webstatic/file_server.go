@@ -27,13 +27,13 @@ func FileServer(files fs.FS) http.Handler {
 			// Missing files, directory listings and net/http's canonicalizing
 			// redirects get no validator, only the revalidation directive.
 			w.Header().Set("Cache-Control", "no-cache")
-			server.ServeHTTP(w, r)
+			server.ServeHTTP(noCacheResponseWriter{w}, r)
 			return
 		}
 		etag, ok := cachedETag(&etags, files, name)
 		if !ok {
 			w.Header().Set("Cache-Control", "no-cache")
-			server.ServeHTTP(w, r)
+			server.ServeHTTP(noCacheResponseWriter{w}, r)
 			return
 		}
 		if WriteCacheHeaders(w, r, etag) {
@@ -43,6 +43,17 @@ func FileServer(files fs.FS) http.Handler {
 		// above) and content types, even though embed.FS has no mtime.
 		server.ServeHTTP(w, r)
 	})
+}
+
+// noCacheResponseWriter re-asserts the revalidation directive as the status is
+// written: since Go 1.23 net/http's file server strips Cache-Control from its
+// error responses (serveError), but here the directive is meant for every
+// response, errors included, so an upgraded binary's 404s are not cached either.
+type noCacheResponseWriter struct{ http.ResponseWriter }
+
+func (w noCacheResponseWriter) WriteHeader(code int) {
+	w.Header().Set("Cache-Control", "no-cache")
+	w.ResponseWriter.WriteHeader(code)
 }
 
 // cachedETag returns the memoized ETagFor validator for name, reading and
