@@ -15,7 +15,8 @@ This page covers:
 - audit entries for the hive's own writes, not only the agent relays;
 - a per-lane allowlist enforced by the relays, editable from the dashboard;
 - a per-lane opt-in (`write_surface.enforce`) that makes the relays the only
-  write path for a lane by refusing its direct writes at the GitHub proxy;
+  write path for a lane by refusing its direct writes at the GitHub proxy and,
+  for the same lanes, in the agent sandbox's `gh` wrapper;
 - redaction of credential material in audited arguments and results.
 
 By default agents still have their direct write paths (`gh`, the API through
@@ -265,6 +266,38 @@ audited value.
 `enforce` is set in `hive.yaml`; the dashboard's Write Surface editor changes
 only the allowlist and leaves `enforce` as it is.
 
+### The same refusal inside the sandbox
+
+The proxy refusal covers traffic that goes **through** the proxy. A sandbox
+whose forced egress is off can reach GitHub without it, so the `gh` wrapper
+makes the same decision one layer earlier, before the write is sent:
+
+- the hive publishes the resolved enforced lanes to
+  `/var/run/hive-metrics/write-surface-enforce.json` at boot and on every
+  config reload (`PublishWriteSurfaceEnforce`). "Resolved" means each
+  configured agent and replica the operator's list enforces, so the sandbox
+  compares a name instead of re-deriving replica inheritance; a list
+  containing `"*"` is published as `"*"`;
+- for a listed lane the wrapper refuses `gh api` with any method other than
+  `GET`, and the write verbs (`issue`/`pr` `create`, `edit`, `comment`,
+  `close`, `reopen`, `develop`, `merge`, `review`, `ready`, and
+  `label create`) on the paths where they would reach GitHub directly. The
+  refusal names the relay that performs the same write under audit;
+- **the relay redirects are unaffected**: `gh issue comment`, `gh issue close`,
+  `gh pr review`, `gh pr create` and a pure `gh issue edit --add-label` are
+  already translated into relay requests before this gate, so an enforced lane
+  keeps working through them. Only the direct fall-through is refused.
+- **every read still works**, including `gh issue view`, `gh pr list` and
+  `gh api` GETs.
+
+The file is written by the hive into a directory no agent UID may write, and
+the path is a constant in the wrapper for the same reason the contributor-mode
+marker is: an environment-selected path would let an enforced agent point the
+check at a file it controls. The list is parsed with bash builtins only —
+every external command is reachable through the agent's own `PATH`. An absent,
+unreadable or unrecognized file enforces **nothing**, which is the documented
+default and leaves the proxy refusal as the enforcement the feature rests on.
+
 ## Audit fields
 
 Audit entries for these writes carry typed fields next to the legacy `detail`
@@ -314,9 +347,15 @@ of them may reduce what an L6 hive can do by default.
   listing each lane. That would change what every existing hive's agents can
   do, so it needs operator sign-off, and it must never apply to an L6 hive by
   default.
-- **Enforcement outside the proxy.** The refusal lives in the GitHub proxy.
-  A sandbox that can reach GitHub without going through the proxy (forced
-  egress disabled) is not covered.
+- **Enforcement outside the proxy.** The refusal now lives in two places: the
+  GitHub proxy and, for the same lanes, the `gh` wrapper inside the sandbox
+  ([above](#the-same-refusal-inside-the-sandbox)), so a sandbox that can reach
+  GitHub without the proxy (forced egress disabled) no longer writes through
+  `gh` unchecked. What remains uncovered is a tool that is neither `gh` nor
+  proxied — a raw `curl` with a token of its own, or an MCP server talking
+  straight to `api.github.com`. Closing that needs the sandbox to hold no
+  GitHub-capable credential at all, which is the "removing direct write access
+  by default" item above.
 - **Routing the `gh` wrapper's label and reviewer edits through the relays**
   has landed (hivecommons/hive#9773): the wrapper translates a pure
   `gh issue edit --add-label`/`--remove-label` or `gh pr edit --add-reviewer`

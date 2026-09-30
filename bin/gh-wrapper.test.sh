@@ -62,9 +62,19 @@ chmod +x "$MOCK_GH"
 # Production deliberately has no environment-variable override for this trust
 # boundary (#3249). Redirect the marker only in the temporary test copy, via a
 # rewrite of the constant (portable across GNU/BSD sed).
-sed "s|CONTRIBUTOR_MODE_MARKER=\"/etc/hive/contributor-mode\"|CONTRIBUTOR_MODE_MARKER=\"${WORK_DIR}/contributor-marker\"|" "$WRAPPER" >"$TEST_WRAPPER"
+# The write-surface enforce list (#9587) is a constant for the same reason, and
+# is redirected the same way: the sandbox check must not be answerable by a
+# path the enforced agent chooses.
+WRITE_SURFACE_FILE="${WORK_DIR}/write-surface-enforce.json"
+sed -e "s|CONTRIBUTOR_MODE_MARKER=\"/etc/hive/contributor-mode\"|CONTRIBUTOR_MODE_MARKER=\"${WORK_DIR}/contributor-marker\"|" \
+    -e "s|WRITE_SURFACE_ENFORCE_FILE=\"/var/run/hive-metrics/write-surface-enforce.json\"|WRITE_SURFACE_ENFORCE_FILE=\"${WRITE_SURFACE_FILE}\"|" \
+    "$WRAPPER" >"$TEST_WRAPPER"
 if ! grep -q "CONTRIBUTOR_MODE_MARKER=\"${WORK_DIR}/contributor-marker\"" "$TEST_WRAPPER"; then
   echo "FATAL: failed to redirect CONTRIBUTOR_MODE_MARKER in the test copy — wrapper constant changed?" >&2
+  exit 1
+fi
+if ! grep -q "WRITE_SURFACE_ENFORCE_FILE=\"${WRITE_SURFACE_FILE}\"" "$TEST_WRAPPER"; then
+  echo "FATAL: failed to redirect WRITE_SURFACE_ENFORCE_FILE in the test copy — wrapper constant changed?" >&2
   exit 1
 fi
 chmod +x "$TEST_WRAPPER"
@@ -999,6 +1009,169 @@ else
   _relay_fail "a failing relay request propagates its exit code to the caller" \
     "expected exit 3, got ${RELAY_RC}"
 fi
+
+echo ""
+echo "=== write_surface.enforce refuses direct writes in the sandbox (#9587) ==="
+
+# A lane the operator lists under write_surface.enforce has the audited relays
+# as its only write path. The GitHub proxy refuses its direct writes (#9772);
+# these cases assert the SAME refusal here in the sandbox, where the write is
+# stopped before it is sent — and, just as importantly, that nothing changes
+# for a lane that is not listed, that reads are never touched, and that the
+# relays themselves keep working.
+WS_AGENT="ghwrapper-test-9587-$$"
+WS_RELAY_BIN="${WORK_DIR}/ws-relay-bin"
+WS_OUTPUT=""
+WS_RC=0
+
+# _ws_publish writes the enforce list the hive would publish. "-" removes it,
+# which is what a hive that enforces nothing (the default) looks like.
+_ws_publish() {
+  if [[ "$1" == "-" ]]; then
+    rm -f "$WRITE_SURFACE_FILE"
+    return 0
+  fi
+  printf '%s\n' "$1" >"$WRITE_SURFACE_FILE"
+}
+
+# _ws_run runs the wrapper as WS_AGENT. PATH deliberately excludes the relay
+# stubs unless the caller puts them back, so a command with a relay redirect
+# reaches the direct path the gate guards.
+_ws_run() {
+  WS_RC=0
+  rm -f "${WORK_DIR}/contributor-marker"
+  WS_OUTPUT="$(env \
+    HIVE_AGENT="$WS_AGENT" \
+    HIVE_AGENT_DISPLAY_NAME="$WS_AGENT" \
+    HIVE_AGENT_ID="$WS_AGENT" \
+    HIVE_AGENT_MODE="" \
+    HIVE_ACMM_LEVEL="0" \
+    MOCK_GH_LOGIN="test-bot[bot]" \
+    GH_TOKEN="test-token-mock" \
+    bash "$TEST_WRAPPER" "$@" 2>&1)" || WS_RC=$?
+}
+
+# _ws_expect asserts the exit code and whether the refusal answered.
+# want_match / want_absent are grep -E patterns; pass "-" to skip either.
+_ws_expect() {
+  local expected_rc="$1" want_match="$2" want_absent="$3" desc="$4"
+  if [[ "$WS_RC" != "$expected_rc" ]]; then
+    echo "FAIL: $desc"
+    echo "  expected exit code $expected_rc, got $WS_RC"
+    echo "  output: $WS_OUTPUT"
+    FAILED=$((FAILED + 1))
+    return 1
+  fi
+  if [[ "$want_match" != "-" ]] && ! grep -qE "$want_match" <<<"$WS_OUTPUT"; then
+    echo "FAIL: $desc"
+    echo "  expected output to match /${want_match}/"
+    echo "  output: $WS_OUTPUT"
+    FAILED=$((FAILED + 1))
+    return 1
+  fi
+  if [[ "$want_absent" != "-" ]] && grep -qE "$want_absent" <<<"$WS_OUTPUT"; then
+    echo "FAIL: $desc"
+    echo "  expected output NOT to match /${want_absent}/"
+    echo "  output: $WS_OUTPUT"
+    FAILED=$((FAILED + 1))
+    return 1
+  fi
+  echo "PASS: $desc"
+  PASSED=$((PASSED + 1))
+}
+
+WS_ENFORCED="{\"version\":1,\"updated_at\":\"2026-09-30T00:00:00Z\",\"lanes\":[\"${WS_AGENT}\"]}"
+WS_OTHER_LANE="{\"version\":1,\"updated_at\":\"2026-09-30T00:00:00Z\",\"lanes\":[\"someone-else\"]}"
+WS_ALL_LANES="{\"version\":1,\"updated_at\":\"2026-09-30T00:00:00Z\",\"lanes\":[\"*\"]}"
+WS_EMPTY="{\"version\":1,\"updated_at\":\"2026-09-30T00:00:00Z\",\"lanes\":[]}"
+WS_FUTURE="{\"version\":99,\"updated_at\":\"2026-09-30T00:00:00Z\",\"lanes\":[\"${WS_AGENT}\"]}"
+
+# Default off: no published list at all, and an explicitly empty one, both
+# leave every direct write exactly as it was.
+_ws_publish -
+_ws_run api repos/test/repo/labels -X POST -f name=bug
+_ws_expect 0 "-" "write_surface.enforce" "no published enforce list leaves a direct gh api write alone"
+
+_ws_publish "$WS_EMPTY"
+_ws_run api repos/test/repo/labels -X POST -f name=bug
+_ws_expect 0 "-" "write_surface.enforce" "an empty enforce list leaves a direct gh api write alone"
+
+_ws_publish "$WS_OTHER_LANE"
+_ws_run api repos/test/repo/labels -X POST -f name=bug
+_ws_expect 0 "-" "write_surface.enforce" "a list naming another lane does not enforce this one"
+
+# An unrecognized schema version is not a licence to guess: the file is
+# ignored, which leaves the lane as it was (the proxy refusal is unaffected).
+_ws_publish "$WS_FUTURE"
+_ws_run api repos/test/repo/labels -X POST -f name=bug
+_ws_expect 0 "-" "write_surface.enforce" "an unknown file version is ignored rather than guessed"
+
+# Listed: every direct write shape is refused, and the refusal names the relay.
+_ws_publish "$WS_ENFORCED"
+_ws_run api repos/test/repo/labels -X POST -f name=bug
+_ws_expect 1 "write_surface.enforce" "-" "an enforced lane's direct gh api write is refused"
+
+_ws_run api graphql -f 'query=mutation { addComment { id } }'
+_ws_expect 1 "write_surface.enforce" "-" "an enforced lane's gh api POST to graphql is refused"
+
+_ws_run issue reopen 42 --repo test/repo
+_ws_expect 1 "write_surface.enforce" "-" "an enforced lane's gh issue reopen is refused"
+
+_ws_run pr ready 7 --repo test/repo
+_ws_expect 1 "write_surface.enforce" "-" "an enforced lane's gh pr ready is refused"
+
+_ws_run label create shiny --repo test/repo
+_ws_expect 1 "write_surface.enforce" "-" "an enforced lane's gh label create is refused"
+
+_ws_run issue close 42 --repo test/repo
+_ws_expect 1 "hive-open-issue close" "-" "a refused close names the relay that performs it"
+
+_ws_run pr review 7 --repo test/repo --approve --body ok
+_ws_expect 1 "hive-review" "-" "a refused review names hive-review"
+
+_ws_publish "$WS_ALL_LANES"
+_ws_run api repos/test/repo/labels -X POST -f name=bug
+_ws_expect 1 "write_surface.enforce" "-" "a \"[*]\" list enforces every lane"
+
+# Names are matched without regard to case, the same as config does.
+_ws_publish "{\"version\":1,\"lanes\":[\"$(printf '%s' "$WS_AGENT" | tr '[:lower:]' '[:upper:]')\"]}"
+_ws_run api repos/test/repo/labels -X POST -f name=bug
+_ws_expect 1 "write_surface.enforce" "-" "an enforced lane is matched without regard to case"
+
+# Reads are never touched — that is the whole point of enforcing the WRITE
+# surface, and an agent that cannot read cannot work.
+_ws_publish "$WS_ENFORCED"
+_ws_run api repos/test/repo/labels
+_ws_expect 0 "-" "write_surface.enforce" "an enforced lane still reads through gh api"
+
+_ws_run issue view 42 --repo test/repo
+_ws_expect 0 "-" "write_surface.enforce" "an enforced lane still views an issue"
+
+_ws_run search issues --repo test/repo bug
+_ws_expect 0 "-" "write_surface.enforce" "an enforced lane still searches"
+
+# The relays are the point of the refusal, so they must keep working for an
+# enforced lane: a close with the relay on PATH is relayed, never refused.
+mkdir -p "$WS_RELAY_BIN"
+cat >"${WS_RELAY_BIN}/hive-open-issue" <<'STUB'
+#!/usr/bin/env bash
+echo "relayed: $*"
+exit 0
+STUB
+chmod +x "${WS_RELAY_BIN}/hive-open-issue"
+WS_RC=0
+WS_OUTPUT="$(env \
+  PATH="${WS_RELAY_BIN}:${PATH}" \
+  HIVE_AGENT="$WS_AGENT" \
+  HIVE_AGENT_DISPLAY_NAME="$WS_AGENT" \
+  HIVE_AGENT_ID="$WS_AGENT" \
+  HIVE_AGENT_MODE="" \
+  HIVE_ACMM_LEVEL="0" \
+  MOCK_GH_LOGIN="test-bot[bot]" \
+  GH_TOKEN="test-token-mock" \
+  bash "$TEST_WRAPPER" issue close 42 --repo test/repo 2>&1)" || WS_RC=$?
+_ws_expect 0 "relayed: close" "write_surface.enforce" \
+  "an enforced lane still closes an issue through the relay"
 
 echo ""
 echo "Results: ${PASSED} passed, ${FAILED} failed"

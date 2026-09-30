@@ -81,6 +81,25 @@ func (c *Config) WriteSurfaceEnforced(agent string) bool {
 	return false
 }
 
+// WriteSurfaceEnforceLanes returns a copy of the configured enforce list, in
+// the order the operator wrote it. It exists so a caller that must publish or
+// display the list (rather than ask about one agent) reads it under the same
+// lock WriteSurfaceEnforced uses, instead of touching the slice directly while
+// a reload swaps it.
+func (c *Config) WriteSurfaceEnforceLanes() []string {
+	if c == nil {
+		return nil
+	}
+	writeSurfaceMu.RLock()
+	defer writeSurfaceMu.RUnlock()
+	if len(c.WriteSurface.Enforce) == 0 {
+		return nil
+	}
+	out := make([]string, len(c.WriteSurface.Enforce))
+	copy(out, c.WriteSurface.Enforce)
+	return out
+}
+
 // AgentMayWrite reports whether the named agent's lane may perform op through
 // the write relays. It is the single predicate the relays ask.
 //

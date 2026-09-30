@@ -2766,6 +2766,11 @@ func (b *boot) bootCollectors() { b.bootCollectorsWith(defaultBootCollectorsDeps
 // and GitHub lookups injected; see bootCollectorsDeps.
 func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	initAgentConfigDrivenSystems(b.cfg)
+	// Carry write_surface.enforce into the agent sandboxes (#9587). The proxy
+	// refusal (#9772) stays the enforcement; this is the copy the gh wrapper
+	// reads, so a lane's direct write is refused even when the request would
+	// never have reached the proxy.
+	b.publishWriteSurfaceEnforce()
 
 	b.tokenCollector = tokens.NewCollector(b.cfg.Data.MetricsDir, b.logger)
 	b.tokenCollector.SetClaudeSessionsDir(b.cfg.Data.ClaudeSessionsDir)
@@ -3730,6 +3735,11 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		b.gov.UpdateAgents(b.cfg.EnabledAgents())
 
 		initAgentConfigDrivenSystems(b.cfg)
+
+		// Republish write_surface.enforce for the sandboxes (#9587). Listing
+		// or unlisting a lane in hive.yaml takes effect on the next gh call,
+		// with no agent relaunch — the same liveness the proxy predicate has.
+		b.publishWriteSurfaceEnforce()
 
 		// Rebuild GitHub App auth when its identity changed. AppAuth captures
 		// app_id/installation_id at construction, so without this a corrected

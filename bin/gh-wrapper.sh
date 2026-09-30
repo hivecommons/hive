@@ -413,6 +413,97 @@ if [ -n "$subcmd" ] && ! _gh_surface_allowed "$subcmd" "$action"; then
   exit 1
 fi
 
+# ── Write-surface enforcement in the sandbox (hivecommons/hive#9587, #9772) ──
+#
+# A lane the operator lists under write_surface.enforce has the audited relays
+# as its ONLY write path: the GitHub proxy refuses its direct REST writes,
+# GraphQL mutations and git pushes. That refusal covers traffic that goes
+# THROUGH the proxy — a sandbox with forced egress disabled never reaches it.
+# This gate is the same decision applied one layer earlier, in the sandbox,
+# where a direct `gh` write is refused before it is sent at all.
+#
+# It is a second lock on the same door, never a new policy: the enforced lanes
+# are published by the hive from write_surface.enforce (pkg/github's
+# PublishWriteSurfaceEnforce), and a hive that lists no lane — the default —
+# publishes an empty list, so nothing here changes what any agent can do.
+#
+# The path is a CONSTANT, like CONTRIBUTOR_MODE_MARKER and for the same reason
+# (#3249): an env-selected path would let an enforced agent point the check at
+# a file it writes. The file lives in the hive-owned metrics directory, not in
+# world-writable /tmp where the mode file sits, so a peer agent cannot plant a
+# list that un-enforces a lane.
+WRITE_SURFACE_ENFORCE_FILE="/var/run/hive-metrics/write-surface-enforce.json"
+
+# _write_surface_enforced reports whether THIS lane is enforced. Parsed with
+# bash builtins only: every external command here is reachable through the
+# agent's own PATH, so a check that shelled out to python3/grep could be
+# answered by a binary the enforced party controls.
+#
+# An absent, unreadable, unparseable or unknown-version file answers NO. That
+# is the documented default (enforcement is opt-in per lane) and it keeps a
+# hive that cannot publish the file working exactly as before; the proxy
+# refusal is the enforcement this feature rests on, and it is unaffected.
+_write_surface_enforced() {
+  if [ -n "${_WS_ENFORCED:-}" ]; then
+    if [ "$_WS_ENFORCED" = "yes" ]; then
+      return 0
+    fi
+    return 1
+  fi
+  _WS_ENFORCED="no"
+  local lane content lanes entry
+  lane="${HIVE_AGENT:-${HIVE_AGENT_ID:-}}"
+  lane="${lane,,}"
+  [ -n "$lane" ] || return 1
+  [ -f "$WRITE_SURFACE_ENFORCE_FILE" ] && [ -r "$WRITE_SURFACE_ENFORCE_FILE" ] || return 1
+  content="$(<"$WRITE_SURFACE_ENFORCE_FILE")" || return 1
+  case "$content" in
+    *'"version":1,'*|*'"version": 1,'*|*'"version":1}'*|*'"version": 1}'*) : ;;
+    *) return 1 ;;
+  esac
+  case "$content" in
+    *'"lanes":'*) : ;;
+    *) return 1 ;;
+  esac
+  lanes="${content#*\"lanes\":}"
+  case "$lanes" in
+    *']'*) lanes="${lanes%%]*}" ;;
+    *) return 1 ;;
+  esac
+  lanes="${lanes#*[}"
+  lanes="${lanes//\"/}"
+  lanes="${lanes// /}"
+  local IFS=,
+  for entry in $lanes; do
+    entry="${entry,,}"
+    if [ "$entry" = "*" ] || [ "$entry" = "$lane" ]; then
+      _WS_ENFORCED="yes"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# _write_surface_refuse_direct refuses a DIRECT GitHub write for an enforced
+# lane and names the relay that performs the same write under audit. It is
+# called at each point where the wrapper would otherwise hand the command to
+# the real gh; a relayed write (hive-open-issue, hive-review, …) never reaches
+# it, because the relay runs in the hive with the App token, not here.
+#
+# $1: what is being refused, $2: the relay to use instead.
+_write_surface_refuse_direct() {
+  local what="$1" instead="$2"
+  _write_surface_enforced || return 0
+  echo "⛔ BLOCKED: ${HIVE_AGENT:-${HIVE_AGENT_ID:-this agent}} is under write_surface.enforce — direct GitHub writes from the agent sandbox are refused (${what})." >&2
+  echo "The audited hive relays are this lane's only write path. Every READ still works." >&2
+  echo "Use instead: ${instead}" >&2
+  echo "Do NOT retry, and do NOT route around this with another CLI, a raw curl or the GitHub MCP — the GitHub proxy refuses the same write and records it. See src/docs/github-write-surface.md." >&2
+  exit 1
+}
+
+# The relays, for a refusal that is not tied to one operation.
+WRITE_SURFACE_RELAYS="hive-open-pr (open a PR), hive-open-issue (issue, comment, claim, label, close, request-review), hive-review, hive-merge, hive-push-branch (push a branch)"
+
 # ── Helpers: author validation for the list gate ──
 
 # Extract the effective --author/-A value from the args array. GitHub CLI uses
@@ -935,6 +1026,13 @@ if [ "$subcmd" = "api" ]; then
     exit 1
   fi
 
+  # An enforced lane's direct writes are refused here as well as at the proxy
+  # (#9587). `gh api` is the most direct write path in the sandbox: it names a
+  # method and a path with nothing in between.
+  if [ "$api_method" != "GET" ]; then
+    _write_surface_refuse_direct "gh api ${api_method}" "$WRITE_SURFACE_RELAYS"
+  fi
+
   for arg in "${args[@]}"; do
     case "$arg" in
       repos/*/issues\?*|repos/*/issues|repos/*/pulls\?*|repos/*/pulls)
@@ -1212,6 +1310,10 @@ if [[ -n "$AGENT_NAME" ]]; then
       if [ "$subcmd" = "issue" ] && ! _contributor_mode && command -v hive-open-issue >/dev/null 2>&1; then
         exec hive-open-issue "${args[@]}" --label "$LABELS_CSV"
       fi
+      # The relay did not take the call (contributor, or the shim is missing).
+      # For an enforced lane there is no direct fallback: the write surface is
+      # the relays or nothing (#9587).
+      _write_surface_refuse_direct "gh ${subcmd} create" "hive-open-issue (file an issue), hive-open-pr (open a PR)"
       _ensure_labels
       # `|| rc=$?` (not `cmd; rc=$?`): this script runs under `set -e`, so a
       # bare failing gh exited the wrapper BEFORE rc was ever read — the
@@ -1352,6 +1454,10 @@ if [[ -n "$AGENT_NAME" ]]; then
           fi
         fi
       fi
+      # An edit the relays cannot express still reaches GitHub directly, which
+      # is exactly what an enforced lane may not do (#9587). Express it as a
+      # label / reviewer request the relays can perform, or leave it to a human.
+      _write_surface_refuse_direct "gh ${subcmd} edit" "hive-open-issue label (labels), hive-open-issue request-review (reviewers)"
       _ensure_labels
       # Label injection is provenance metadata, not a security gate. gh applies
       # an edit atomically, so a missing label (repo not yet ensured, create
@@ -1367,6 +1473,7 @@ if [[ -n "$AGENT_NAME" ]]; then
       exit $rc
       ;;
     pr/merge)
+      _write_surface_refuse_direct "gh pr merge" "hive-merge"
       _ensure_labels
       _extract_item
       if [[ -n "$item_num" ]]; then
@@ -1389,6 +1496,7 @@ if [[ -n "$AGENT_NAME" ]]; then
       if ! _contributor_mode && command -v hive-review >/dev/null 2>&1; then
         exec hive-review "${args[@]}"
       fi
+      _write_surface_refuse_direct "gh pr review" "hive-review"
       # No relay available: fall through to real gh so a review is never lost.
       # `"${args[@]}"`, not `"$@"`: the injected identity belongs on this review
       # as much as on the relayed one, and since _inject_identity now reads a
@@ -1404,6 +1512,7 @@ if [[ -n "$AGENT_NAME" ]]; then
       if [ "$action" = "comment" ] && ! _contributor_mode && command -v hive-open-issue >/dev/null 2>&1; then
         exec hive-open-issue comment "${args[@]}"
       fi
+      _write_surface_refuse_direct "gh ${subcmd} comment" "hive-open-issue comment"
       _ensure_labels
       "$REAL_GH" "${args[@]}"
       exit_code=$?
@@ -1423,9 +1532,19 @@ if [[ -n "$AGENT_NAME" ]]; then
       if ! _contributor_mode && command -v hive-open-issue >/dev/null 2>&1; then
         exec hive-open-issue close "${args[@]}"
       fi
+      _write_surface_refuse_direct "gh issue close" "hive-open-issue close"
       exec "$REAL_GH" "$@"
       ;;
   esac
 fi
+
+# Last stop before the real gh. Everything routed above has already been
+# decided; what reaches here is a read, or a write verb with no arm of its own
+# (`gh issue reopen`, `gh pr ready`, `gh label create`, …). An enforced lane
+# may not perform those directly (#9587); reads are never touched.
+case "$subcmd/$action" in
+  issue/reopen|issue/develop|pr/reopen|pr/ready|label/create)
+    _write_surface_refuse_direct "gh ${subcmd} ${action}" "$WRITE_SURFACE_RELAYS" ;;
+esac
 
 exec "$REAL_GH" "$@"
