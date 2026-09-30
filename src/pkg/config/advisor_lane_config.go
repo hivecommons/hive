@@ -18,10 +18,19 @@ import (
 // instead of a literal model id, e.g. `model: "@advisor"`.
 const ModelRoleRefPrefix = "@"
 
-// AdvisorClaudeBackend is the one backend the advisor lane supports in
-// phase 1 (the Claude Code `Stop` hook adapter). OMP, Copilot CLI and Codex
-// CLI follow in later phases — see the design doc §Phases.
-const AdvisorClaudeBackend = "claude"
+// AdvisorClaudeBackend is the backend of the Claude Code `Stop` hook adapter
+// (phase 1). AdvisorCopilotBackend and AdvisorCodexBackend are the Copilot
+// CLI `agentStop` and Codex CLI `Stop` adapters (phase 3, #9724). OMP follows
+// in phase 2 — see the design doc §Phases.
+const (
+	AdvisorClaudeBackend  = "claude"
+	AdvisorCopilotBackend = "copilot"
+	AdvisorCodexBackend   = "codex"
+)
+
+// AdvisorSupportedBackendList names the supported backends for operator-facing
+// messages.
+const AdvisorSupportedBackendList = AdvisorClaudeBackend + ", " + AdvisorCopilotBackend + ", " + AdvisorCodexBackend
 
 // AdvisorCopilotBlockBound is the smallest bound a supported backend imposes
 // on forced continuations: Copilot CLI force-ends a turn after 8 consecutive
@@ -145,9 +154,13 @@ func (c *Config) AdvisorEnabledFor(agentName string) bool {
 }
 
 // AdvisorSupportedBackend reports whether the advisor lane has an adapter for
-// the backend. Phase 1 ships the Claude Code `Stop` hook adapter only.
+// the backend: the Claude Code, Copilot CLI and Codex CLI turn-end hooks.
 func AdvisorSupportedBackend(backend string) bool {
-	return strings.EqualFold(strings.TrimSpace(backend), AdvisorClaudeBackend)
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case AdvisorClaudeBackend, AdvisorCopilotBackend, AdvisorCodexBackend:
+		return true
+	}
+	return false
 }
 
 // AdvisorActiveForAgent reports whether the advisor actually reviews the
@@ -164,7 +177,7 @@ func (c *Config) AdvisorActiveForAgent(agentName string) (bool, string) {
 		backend = agent.Backend
 	}
 	if !AdvisorSupportedBackend(backend) {
-		return false, fmt.Sprintf("advisor is not active on backend %q (supported: %s)", backend, AdvisorClaudeBackend)
+		return false, fmt.Sprintf("advisor is not active on backend %q (supported: %s)", backend, AdvisorSupportedBackendList)
 	}
 	return true, ""
 }

@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"github.com/hivecommons/hive/pkg/advisor"
 	"github.com/hivecommons/hive/pkg/config"
@@ -77,25 +80,171 @@ func claudeAdvisorSettings() string {
 	return string(data)
 }
 
+// advisorHooksFileName is the hive-owned Copilot hook file, dropped into the
+// hooks directory under the COPILOT_HOME hive points at the agent's own
+// per-agent .copilot directory. codexHooksFileName is Codex's hooks.json in
+// the per-agent CODEX_HOME hive provisions. Neither is a file the operator
+// maintains: config.json and config.toml are never written for the advisor.
+const (
+	copilotAdvisorHooksFileName = "hive-advisor.json"
+	codexHooksFileName          = "hooks.json"
+	advisorHookTimeoutS         = 90
+)
+
+// copilotAdvisorHooksJSON renders the Copilot CLI hook file registering the
+// advisor on `agentStop`. The command asks for the Copilot dialect.
+func copilotAdvisorHooksJSON() []byte {
+	command := fmt.Sprintf("%s %s --format %s", advisorHookRunnerBinary(), advisor.HookSubcommand, advisor.HookFormatCopilot)
+	doc := map[string]any{
+		"version": 1,
+		"hooks": map[string]any{
+			"agentStop": []map[string]any{
+				{"type": "command", "bash": command, "timeoutSec": advisorHookTimeoutS},
+			},
+		},
+	}
+	data, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return nil // cannot happen for this literal shape; fail open regardless
+	}
+	return append(data, '\n')
+}
+
+// codexAdvisorHooksJSON renders the Codex CLI hooks.json registering the
+// advisor's `Stop` hook. Codex speaks the same dialect as Claude Code here.
+func codexAdvisorHooksJSON() []byte {
+	command := fmt.Sprintf("%s %s --format %s", advisorHookRunnerBinary(), advisor.HookSubcommand, advisor.HookFormatCodex)
+	doc := map[string]any{
+		"hooks": map[string]any{
+			"Stop": []map[string]any{
+				{
+					"hooks": []map[string]any{
+						{"type": "command", "command": command, "timeout": advisorHookTimeoutS},
+					},
+				},
+			},
+		},
+	}
+	data, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return nil
+	}
+	return append(data, '\n')
+}
+
+// advisorFileBackend reports whether the backend receives the advisor through
+// hook files in the per-agent home rather than a launch argument.
+func advisorFileBackend(backend string) bool {
+	b := strings.ToLower(strings.TrimSpace(backend))
+	return b == config.AdvisorCopilotBackend || b == config.AdvisorCodexBackend
+}
+
+// advisorCopilotHome is the directory hive points COPILOT_HOME at when the
+// advisor is on for a Copilot agent: the agent's own per-agent .copilot
+// (interactive_home.go), which hive provisions. "" when the agent has no
+// per-agent home to own.
+func advisorCopilotHome(agent *AgentProcess) string {
+	if agent.UID <= 0 || sharedAgentHomeForced() {
+		return ""
+	}
+	return filepath.Join(interactiveHomePath(agent.Name), ".copilot")
+}
+
+// advisorHooksPath returns where the advisor's hook file lives for a
+// file-projected backend, or "" when the agent has no hive-owned home.
+func advisorHooksPath(agent *AgentProcess, backend string) string {
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case config.AdvisorCopilotBackend:
+		home := advisorCopilotHome(agent)
+		if home == "" {
+			return ""
+		}
+		return filepath.Join(home, "hooks", copilotAdvisorHooksFileName)
+	case config.AdvisorCodexBackend:
+		if agent.UID <= 0 {
+			return ""
+		}
+		return filepath.Join(codexHomePath(agent.Name), codexHooksFileName)
+	}
+	return ""
+}
+
+// advisorHooksActive reports whether the advisor projects hook files for this
+// agent on a Copilot or Codex launch.
+func (m *Manager) advisorHooksActive(agent *AgentProcess, backend string) bool {
+	return m.advisorEnabledFor(agent.Name) && advisorFileBackend(backend) && advisorHooksPath(agent, backend) != ""
+}
+
+// provisionAdvisorHooks writes the advisor's hook file into the hive-owned
+// home for a Copilot or Codex launch, or removes a file it wrote earlier when
+// the advisor is now off, so disabling needs nothing but the next launch.
+// Best-effort like the other home provisioning: a failure is logged and the
+// agent launches without the advisor. Call after the homes are provisioned.
+func (m *Manager) provisionAdvisorHooks(agent *AgentProcess, backend string) {
+	if !advisorFileBackend(backend) {
+		return
+	}
+	path := advisorHooksPath(agent, backend)
+	if path == "" {
+		return
+	}
+	user := m.agentExecUserSpec(agent)
+	if !m.advisorHooksActive(agent, backend) {
+		if existing, err := readFileAsUser(user, path); err == nil && strings.Contains(string(existing), advisor.HookSubcommand) {
+			if err := exec.Command("su-exec", user, "rm", "-f", path).Run(); err != nil {
+				m.logger.Warn("failed to remove stale advisor hook file", "agent", agent.Name, "path", path, "error", err)
+			}
+		}
+		return
+	}
+	content := codexAdvisorHooksJSON()
+	if strings.EqualFold(strings.TrimSpace(backend), config.AdvisorCopilotBackend) {
+		content = copilotAdvisorHooksJSON()
+	}
+	if len(content) == 0 {
+		return
+	}
+	if err := exec.Command("su-exec", user, "mkdir", "-p", filepath.Dir(path)).Run(); err != nil {
+		m.logger.Warn("failed to create advisor hook directory; agent launches without the advisor", "agent", agent.Name, "dir", filepath.Dir(path), "error", err)
+		return
+	}
+	if err := writeFileAsUser(user, path, content); err != nil {
+		m.logger.Warn("failed to write advisor hook file; agent launches without the advisor", "agent", agent.Name, "path", path, "error", err)
+	}
+}
+
 // advisorLaunchFlag returns the launch-command suffix that projects the
 // advisor's turn-end hook into the agent's backend, or "" when the advisor is
 // off for the agent, the backend has no adapter yet, or the launch shape
 // cannot carry it. An advisor enabled on an unsupported backend is refused,
 // not silently skipped: the agent still launches normally and the refusal is
-// logged and reported by the dashboard's advisor listing.
+// logged and reported by the dashboard's advisor listing. Copilot carries no
+// launch flag at all (its hooks directory rides COPILOT_HOME, see
+// agentEnvPairs); Codex needs its experimental hooks feature switched on.
 func (m *Manager) advisorLaunchFlag(agent *AgentProcess, backend string, isInference bool) string {
 	if !m.advisorEnabledFor(agent.Name) {
 		return ""
 	}
 	if !config.AdvisorSupportedBackend(backend) {
 		m.logger.Warn("advisor is not active on this backend; agent launches without it",
-			"agent", agent.Name, "backend", backend, "supported", config.AdvisorClaudeBackend)
+			"agent", agent.Name, "backend", backend, "supported", config.AdvisorSupportedBackendList)
 		return ""
 	}
 	if isInference {
 		// Inference-routed Claude runs bare against the translator with a fixed
 		// settings FILE; there is no interactive turn boundary to hook.
 		m.logger.Warn("advisor is not active for inference-routed agents", "agent", agent.Name)
+		return ""
+	}
+	if advisorFileBackend(backend) && advisorHooksPath(agent, backend) == "" {
+		m.logger.Warn("advisor needs a hive-provisioned per-agent home; agent launches without it",
+			"agent", agent.Name, "backend", backend)
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case config.AdvisorCodexBackend:
+		return " -c features.hooks=true"
+	case config.AdvisorCopilotBackend:
 		return ""
 	}
 	settings := claudeAdvisorSettings()

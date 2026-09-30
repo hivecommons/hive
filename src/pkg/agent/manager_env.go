@@ -460,6 +460,13 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		vars = append(vars, agentEnvPair{"CODEX_HOME", codexHomePath(agent.Name), false})
 	}
 
+	// Advisor lane (#9724): Copilot CLI has no hooks launch flag, so hive points
+	// COPILOT_HOME at the agent's own hive-provisioned .copilot directory, whose
+	// hooks directory carries the advisor's hook file.
+	if backend == config.AdvisorCopilotBackend && m.advisorHooksActive(agent, backend) {
+		vars = append(vars, agentEnvPair{"COPILOT_HOME", advisorCopilotHome(agent), false})
+	}
+
 	for _, conn := range agent.Config.Connections {
 		if conn.Type != "api" {
 			continue

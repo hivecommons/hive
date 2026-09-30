@@ -25,10 +25,19 @@ const HookSubcommand = "advisor-hook"
 // the model sees.
 const hookFormatClaude = "claude"
 
-const hookUsage = `usage: hive advisor-hook [--format claude] [--endpoint <url>] [--timeout <dur>]
+// HookFormatCopilot renders the Copilot CLI `agentStop` dialect (camelCase
+// payload, `decision: block` with a reason that becomes the forced next
+// prompt). HookFormatCodex is the Codex CLI `Stop` dialect, which matches
+// Claude Code's payload and answer.
+const (
+	HookFormatCopilot = "copilot"
+	HookFormatCodex   = "codex"
+)
+
+const hookUsage = `usage: hive advisor-hook [--format claude|copilot|codex] [--endpoint <url>] [--timeout <dur>]
 
 Turn-end advisor hook. Reads the backend's hook payload on stdin (Claude
-Code Stop hook JSON in phase 1), sends the finished turn's transcript tail to
+Code / Codex CLI Stop hook JSON, or the Copilot CLI agentStop payload), sends the finished turn's transcript tail to
 the hive's loopback advise endpoint, and prints the verdict in the calling
 backend's hook dialect. Registered by hive at agent launch — never by editing
 a backend's own configuration. On any failure it prints a non-blocking answer
@@ -41,6 +50,13 @@ type claudeStopInput struct {
 	SessionID      string `json:"session_id"`
 	TranscriptPath string `json:"transcript_path"`
 	StopHookActive bool   `json:"stop_hook_active"`
+}
+
+// copilotStopInput is the subset of the Copilot CLI agentStop stdin payload
+// the hook consumes.
+type copilotStopInput struct {
+	SessionID      string `json:"sessionId"`
+	TranscriptPath string `json:"transcriptPath"`
 }
 
 // claudeStopOutput is the Stop-hook answer dialect: decision "block" holds
@@ -57,14 +73,19 @@ func RunHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet(HookSubcommand, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() { fmt.Fprint(stderr, hookUsage) }
-	format := fs.String("format", hookFormatClaude, "hook answer dialect (claude)")
+	format := fs.String("format", hookFormatClaude, "hook answer dialect (claude, copilot, codex)")
 	endpoint := fs.String("endpoint", "", "advise endpoint (default $"+EndpointEnvVar+" or "+DefaultEndpoint+")")
 	timeout := fs.Duration("timeout", 60*time.Second, "how long to wait for the verdict, hub timeout included")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if *format != hookFormatClaude {
-		fmt.Fprintf(stderr, "hive %s: unsupported --format %q (supported: %s)\n", HookSubcommand, *format, hookFormatClaude)
+	decode := decodeClaudeStop
+	switch *format {
+	case hookFormatClaude, HookFormatCodex:
+	case HookFormatCopilot:
+		decode = decodeCopilotStop
+	default:
+		fmt.Fprintf(stderr, "hive %s: unsupported --format %q (supported: %s, %s, %s)\n", HookSubcommand, *format, hookFormatClaude, HookFormatCopilot, HookFormatCodex)
 		return 2
 	}
 	ep := strings.TrimSpace(*endpoint)
@@ -74,12 +95,32 @@ func RunHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if ep == "" {
 		ep = DefaultEndpoint
 	}
-	return runClaudeStopHook(ep, *timeout, stdin, stdout, stderr)
+	return runStopHook(ep, *timeout, decode, stdin, stdout, stderr)
 }
 
-// runClaudeStopHook handles one Claude Code Stop event. Failures never block:
-// the worst an advisor outage can do is print `{}`.
-func runClaudeStopHook(endpoint string, timeout time.Duration, stdin io.Reader, stdout, stderr io.Writer) int {
+// decodeClaudeStop extracts the session and transcript path from a Claude Code
+// or Codex CLI Stop-hook payload.
+func decodeClaudeStop(payload []byte) (session, transcriptPath string, err error) {
+	var in claudeStopInput
+	if err := json.Unmarshal(payload, &in); err != nil {
+		return "", "", err
+	}
+	return in.SessionID, in.TranscriptPath, nil
+}
+
+// decodeCopilotStop extracts the same from a Copilot CLI agentStop payload.
+func decodeCopilotStop(payload []byte) (session, transcriptPath string, err error) {
+	var in copilotStopInput
+	if err := json.Unmarshal(payload, &in); err != nil {
+		return "", "", err
+	}
+	return in.SessionID, in.TranscriptPath, nil
+}
+
+// runStopHook handles one turn-end event (Claude Code / Codex Stop, Copilot
+// agentStop — all answer with the same block-decision JSON). Failures never
+// block: the worst an advisor outage can do is print `{}`.
+func runStopHook(endpoint string, timeout time.Duration, decode func([]byte) (string, string, error), stdin io.Reader, stdout, stderr io.Writer) int {
 	allow := func() int {
 		fmt.Fprintln(stdout, "{}")
 		return 0
@@ -89,16 +130,16 @@ func runClaudeStopHook(endpoint string, timeout time.Duration, stdin io.Reader, 
 		fmt.Fprintf(stderr, "hive %s: reading hook input: %v\n", HookSubcommand, err)
 		return allow()
 	}
-	var in claudeStopInput
-	if err := json.Unmarshal(payload, &in); err != nil {
+	session, transcriptPath, err := decode(payload)
+	if err != nil {
 		fmt.Fprintf(stderr, "hive %s: hook input is not Stop-hook JSON: %v\n", HookSubcommand, err)
 		return allow()
 	}
-	transcript := readTranscriptTail(in.TranscriptPath)
+	transcript := readTranscriptTail(transcriptPath)
 	if strings.TrimSpace(transcript) == "" {
 		return allow() // nothing to review
 	}
-	resp, err := callAdvise(endpoint, Request{Turn: in.SessionID, Transcript: transcript}, timeout)
+	resp, err := callAdvise(endpoint, Request{Turn: session, Transcript: transcript}, timeout)
 	if err != nil {
 		fmt.Fprintf(stderr, "hive %s: %v\n", HookSubcommand, err)
 		return allow()

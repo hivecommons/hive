@@ -1,0 +1,1 @@
+- Add the advisor lane's Copilot CLI (`agentStop`) and Codex CLI (`Stop`) adapters: hook files in hive-owned per-agent homes, `COPILOT_HOME` and `-c features.hooks=true` at launch, with no edits to operator config files (#9724).

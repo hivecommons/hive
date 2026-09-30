@@ -299,6 +299,9 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 		// Provision the per-agent interactive HOME (#4596): directory, shared-
 		// state bridges, signed-in Claude session adoption, legacy tmp sweep.
 		m.setupInteractiveHome(agent, launchBackend)
+		// Advisor lane (#9724): hook files for Copilot/Codex live in the homes
+		// provisioned just above.
+		m.provisionAdvisorHooks(agent, launchBackend)
 	}
 
 	// Session environment: first REMOVE every credential the tmux server

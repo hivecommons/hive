@@ -107,12 +107,16 @@ func TestAdvisorActiveForAgent(t *testing.T) {
 	if active, reason := c.AdvisorActiveForAgent("claude-agent"); !active || reason != "" {
 		t.Fatalf("claude agent: active=%v reason=%q", active, reason)
 	}
-	// Unsupported backend is refused with a reason, not silently skipped.
-	active, reason := c.AdvisorActiveForAgent("copilot-agent")
-	if active {
-		t.Fatal("copilot agent must not be active in phase 1")
+	if active, reason := c.AdvisorActiveForAgent("copilot-agent"); !active || reason != "" {
+		t.Fatalf("copilot agent: active=%v reason=%q", active, reason)
 	}
-	if !strings.Contains(reason, "copilot") || !strings.Contains(reason, AdvisorClaudeBackend) {
+	c.Agents["goose-agent"] = AgentConfig{Backend: "goose"}
+	// Unsupported backend is refused with a reason, not silently skipped.
+	active, reason := c.AdvisorActiveForAgent("goose-agent")
+	if active {
+		t.Fatal("goose agent must not be active")
+	}
+	if !strings.Contains(reason, "goose") || !strings.Contains(reason, AdvisorClaudeBackend) {
 		t.Fatalf("reason must name the backend and the supported set: %q", reason)
 	}
 	if active, _ := c.AdvisorActiveForAgent("off-agent"); active {
@@ -124,9 +128,14 @@ func TestAdvisorSupportedBackend(t *testing.T) {
 	if !AdvisorSupportedBackend("claude") || !AdvisorSupportedBackend(" Claude ") {
 		t.Error("claude must be supported (case/space insensitive)")
 	}
-	for _, b := range []string{"copilot", "codex", "omp", "goose", ""} {
+	for _, b := range []string{"copilot", "codex", " Codex "} {
+		if !AdvisorSupportedBackend(b) {
+			t.Errorf("backend %q must be supported", b)
+		}
+	}
+	for _, b := range []string{"omp", "goose", ""} {
 		if AdvisorSupportedBackend(b) {
-			t.Errorf("backend %q must not be supported in phase 1", b)
+			t.Errorf("backend %q must not be supported", b)
 		}
 	}
 }

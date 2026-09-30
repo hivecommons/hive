@@ -237,3 +237,32 @@ func TestReadTranscriptTailMissing(t *testing.T) {
 		t.Errorf("missing file: %q", got)
 	}
 }
+
+func TestRunHookCopilotAndCodexFormats(t *testing.T) {
+	srv := fakeAdviseServer(t, Response{Severity: SeverityBlocker, Interjected: true, Text: "tests missing"}, nil)
+	defer srv.Close()
+	path := writeTranscript(t, "the agent did a thing")
+
+	copilotIn, err := json.Marshal(copilotStopInput{SessionID: "sess-1", TranscriptPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, _ := runHook(t, []string{"--format", HookFormatCopilot, "--endpoint", srv.URL}, string(copilotIn))
+	if code != 0 || !strings.Contains(stdout, `"decision":"block"`) || !strings.Contains(stdout, "tests missing") {
+		t.Errorf("copilot: exit=%d stdout=%q", code, stdout)
+	}
+	// A Claude-shaped payload has no transcriptPath for Copilot: fail open.
+	code, stdout, _ = runHook(t, []string{"--format", HookFormatCopilot, "--endpoint", srv.URL}, stopInput(t, path))
+	if code != 0 || stdout != "{}" {
+		t.Errorf("copilot wrong payload: exit=%d stdout=%q, want 0 and {}", code, stdout)
+	}
+	code, stdout, _ = runHook(t, []string{"--format", HookFormatCopilot, "--endpoint", srv.URL}, "not json")
+	if code != 0 || stdout != "{}" {
+		t.Errorf("copilot non-JSON: exit=%d stdout=%q", code, stdout)
+	}
+
+	code, stdout, _ = runHook(t, []string{"--format", HookFormatCodex, "--endpoint", srv.URL}, stopInput(t, path))
+	if code != 0 || !strings.Contains(stdout, `"decision":"block"`) {
+		t.Errorf("codex: exit=%d stdout=%q", code, stdout)
+	}
+}
