@@ -127,8 +127,8 @@ Granting `NET_ADMIN` does **not** fix this case — the capability is already
 there; the kernel simply has nothing to grant access *to*. The durable fix is
 loading the modules on the node so they survive a node rebuild — on
 OpenShift/RHCOS, a MachineConfig writing an `/etc/modules-load.d/` drop-in
-(for example `/etc/modules-load.d/hive-netfilter.conf` containing `xt_owner`
-and `xt_REDIRECT`). A MachineConfig rolling-reboots every node in the pool,
+(for example `/etc/modules-load.d/hive-netfilter.conf` containing `xt_mark`,
+`xt_REDIRECT` and `xt_owner`). A MachineConfig rolling-reboots every node in the pool,
 though, which is often unacceptable on a shared or GPU cluster. The no-reboot
 alternative is the node-prep DaemonSet shipped at
 [`src/deploy/k8s/node-prep/hive-netfilter-modules.yaml`](../deploy/k8s/node-prep/hive-netfilter-modules.yaml):
