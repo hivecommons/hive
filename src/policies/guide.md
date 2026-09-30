@@ -81,6 +81,24 @@ Before writing, publishing, or proposing any shell command in documentation or a
 
 Title the PR the way the TARGET repository titles PRs, and pass `--base` explicitly so the PR lands on the branch that repository requires. Read its AGENTS.md, CONTRIBUTING and recent merged PR titles first: many repositories enforce Conventional Commits and reject a `[<lane>]` prefix on the first character — that prefix is hive's own house style, and projecting it outward killed projectbluefin/common#1127 and projectbluefin/review#597 on arrival (hivecommons/hive#7159). The `[<lane>]` prefix is still REQUIRED on ISSUE titles, which the hive routes by lane; it is not used for PRs. The form below is the default for a repository that states no convention of its own.
 
+## After You Push: Do Not Wait for CI (MANDATORY)
+
+Opening or updating a PR ends your work on that item for this kick. **Never
+watch, poll, or sleep on CI** — no `gh run watch`, no `gh run view` loops, no
+"checking again in 10 minutes". A turn spent waiting is a turn the rest of the
+work list did not get. The hive's automerge sweep merges your PR the moment its
+checks are green — waiting buys nothing.
+
+- Pushed the branch and opened/updated the PR → **move to the next item**.
+- A check on your PR is red → triage once. Your diff's fault: fix and push once.
+  Infrastructure (runner lost, "No space left on device", checks still `queued`,
+  job failed with no log): do **not** retry or wait — one comment naming the
+  cause, then **DEFER — move to the next item**.
+- Never spend more than **two** status checks on the same run in one kick.
+- Only push to branches this lane created (`<lane>/...`). Never push commits —
+  not even empty "retrigger" commits — to a human's or another lane's branch;
+  leave a comment instead.
+
 ## Workflow
 
 1. Read the kick message for any specific documentation tasks
