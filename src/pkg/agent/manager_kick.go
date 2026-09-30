@@ -1224,10 +1224,15 @@ const (
 	// pool. Once the kick has run this long AND at least one CI-poll command
 	// has been seen, treat it the same as crossing the count threshold.
 	ciPollNudgeWallClock = 10 * time.Minute
-	ciPollNudgeMessage   = "Stop polling CI. Do not run gh run watch/view or gh pr checks again this turn: leave the PR as is and move to the next work-list item. The automerge sweep handles green PRs."
+	ciPollNudgeMessage   = "Stop polling CI. Do not run gh run watch/view, gh pr checks, or gh pr view --json statusCheckRollup again this turn: leave the PR as is and move to the next work-list item. The automerge sweep handles green PRs."
 )
 
-var ciPollCommandRe = regexp.MustCompile(`\bgh (?:run (?:watch|view|list)|pr checks)\b`)
+// ciPollCommandRe matches the CI-status commands the #9673 guard counts.
+// Alongside `gh run watch|view|list` and `gh pr checks`, agents commonly
+// poll their own PR's checks via `gh pr view --json statusCheckRollup` (and
+// the rarer `gh pr status`) instead — those bypassed the guard entirely
+// before this pattern was added, since neither contains "run" or "checks".
+var ciPollCommandRe = regexp.MustCompile(`\bgh (?:run (?:watch|view|list)\b|pr checks\b|pr view\b[^` + "\n" + `]*\bstatusCheckRollup\b|pr status\b)`)
 
 func countCIPollCommands(pane string) int {
 	return len(ciPollCommandRe.FindAllStringIndex(stripExplainLines(pane), -1))
