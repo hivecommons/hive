@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -209,14 +210,10 @@ func (s *HubServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// accounts stays possible. The target is already validated by
 	// loginRedirectTarget (isTrustedRedirectTarget), so this introduces no new
 	// open-redirect surface.
-	// The bounce is only safe when the session cookie will actually reach the
-	// target: otherwise the target answers 401, bounces back here, and the
-	// browser loops until NS_ERROR_REDIRECT_LOOP (#9785). Fall through to a fresh
-	// login, which re-mints the cookie with the right scope, instead.
-	if redirect != "" && sessionCookieReaches(r.Host, redirect) {
+	if redirect != "" {
 		for _, value := range hubSessionCookieValues(r) {
 			if u, ok := s.verifyHubUserCookie(value); ok && loadSaaSUser(u) != nil {
-				http.Redirect(w, r, redirect, http.StatusSeeOther)
+				s.bounceSignedInLogin(w, r, redirect, value, u)
 				return
 			}
 		}
@@ -239,6 +236,154 @@ func (s *HubServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeProviderPicker(w, providers, redirect)
+}
+
+const (
+	// loginBounceCookieName counts how many times in a row /login has sent a
+	// signed-in browser back to the same host (#9785). __Host- so only the hub
+	// itself can set it: a tenant on <id>.hive.<domain> can write a
+	// Domain=.<domain> cookie, but never a __Host- one, so no tenant can trip
+	// another host's limit.
+	loginBounceCookieName = "__Host-hive_login_bounce"
+	// loginBounceWindow is how long a bounce is remembered. A hosted hive sends
+	// the browser to /login only when its auth-check found no valid session, so
+	// a second arrival for the same host inside this window means the hive
+	// rejected the session the hub just sent it back with.
+	loginBounceWindow = 30 * time.Second
+	// maxLoginBounces is how many consecutive bounces to one host /login
+	// allows before it stops redirecting. Two, not one: the first bounce
+	// re-issues the session cookie (which heals a stale second copy), and a
+	// second leaves room for two tabs opening the same hive at once.
+	maxLoginBounces = 2
+)
+
+// bounceSignedInLogin sends a signed-in user back to redirect without a
+// provider round-trip, and keeps that shortcut from becoming a redirect loop.
+//
+// A hosted hive's ingress sends the browser here (auth-signin) only after the
+// hub's auth-check answered 401 for the cookies the browser sent the HIVE. So a
+// signed-in arrival means the hub and the hive saw different sessions: the
+// browser may hold a copy the hive never gets (a host-only hive_hub_user on the
+// hub host, next to a stale or missing parent-scoped copy), and the hub
+// accepts whichever copy verifies. Bouncing straight back again loops until the
+// browser gives up (NS_ERROR_REDIRECT_LOOP, #9785); re-entering OAuth loops
+// too, through the provider, because the callback mints the cookie with the
+// same scope.
+//
+// So the bounce (1) re-issues the verified session under the parent scope, as
+// handleAuthUser does, so the hive gets the copy the hub just accepted; (2)
+// refuses outright when that scope cannot reach the target at all; and (3)
+// after maxLoginBounces to the same host within loginBounceWindow, stops and
+// explains instead of redirecting.
+func (s *HubServer) bounceSignedInLogin(w http.ResponseWriter, r *http.Request, redirect, sessionValue, user string) {
+	targetHost := ""
+	if !strings.HasPrefix(redirect, "/") || strings.HasPrefix(redirect, "//") {
+		targetHost, _ = originHost(redirect)
+		targetHost = strings.ToLower(targetHost)
+	}
+	if targetHost != "" && !sessionCookieReaches(r.Host, redirect) {
+		s.logger.Warn("login: session cookie cannot reach redirect target; not bouncing",
+			"target_host", targetHost, "hub_host", r.Host, "cookie_domain", sessionCookieDomain(r.Host))
+		s.writeLoginStopPage(w, user, redirect, targetHost, false)
+		return
+	}
+	if targetHost != "" {
+		bounces := loginBounceCount(r, targetHost) + 1
+		if bounces > maxLoginBounces {
+			s.logger.Warn("login: redirect target keeps rejecting the hub session; stopped redirect loop",
+				"target_host", targetHost, "bounces", bounces-1,
+				"session_cookie_copies", len(hubSessionCookieValues(r)))
+			clearLoginBounceCookie(w)
+			s.writeLoginStopPage(w, user, redirect, targetHost, true)
+			return
+		}
+		setLoginBounceCookie(w, targetHost, bounces)
+	}
+	setSessionCookies(w, r, sessionValue)
+	http.Redirect(w, r, redirect, http.StatusSeeOther)
+}
+
+// loginBounceCount returns how many consecutive bounces to host the browser's
+// bounce cookie records, or 0 when it has none or it names another host.
+func loginBounceCount(r *http.Request, host string) int {
+	c, err := r.Cookie(loginBounceCookieName)
+	if err != nil {
+		return 0
+	}
+	countText, cookieHost, ok := strings.Cut(c.Value, "|")
+	if !ok || cookieHost != host {
+		return 0
+	}
+	n, err := strconv.Atoi(countText)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+func setLoginBounceCookie(w http.ResponseWriter, host string, n int) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     loginBounceCookieName,
+		Value:    strconv.Itoa(n) + "|" + host,
+		Path:     "/",
+		MaxAge:   int(loginBounceWindow.Seconds()),
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func clearLoginBounceCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     loginBounceCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// writeLoginStopPage is what /login shows instead of redirecting a signed-in
+// user to a host that will not accept the session. looped reports whether the
+// host rejected repeated bounces (true) or the cookie's scope cannot reach it
+// at all (false). The retry link is rendered only for an http(s) target: a
+// trusted-host check alone would admit javascript://<trusted-host>/..., which a
+// browser ignores in a Location header but runs from an href.
+func (s *HubServer) writeLoginStopPage(w http.ResponseWriter, user, redirect, targetHost string, looped bool) {
+	login, _ := s.displayIdentity(user)
+	why := "the hub's session cookie is not sent to that address, so signing in again here cannot help."
+	if looped {
+		why = "it kept sending you back here to sign in, so the hub stopped redirecting instead of looping. " +
+			"Your browser may be holding an old Hive session cookie that site does not accept."
+	}
+	retry := ""
+	if u, err := url.Parse(redirect); err == nil && (u.Scheme == "https" || u.Scheme == "http") {
+		retry = `<p><a class="btn" href="` + html.EscapeString(redirect) + `">Try again</a></p>`
+	}
+	page := `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Could not open ` + html.EscapeString(targetHost) + ` — Hive</title>
+<style>
+:root{color-scheme:light dark}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0d1117;color:#e6edf3}
+.card{width:min(520px,94vw);padding:40px;border:1px solid #30363d;border-radius:18px;background:#161b22}
+h1{font-size:22px;margin:0 0 14px}
+p{color:#c9d1d9;font-size:15px;line-height:1.5}
+.btn{display:inline-block;padding:10px 18px;border:1px solid #30363d;border-radius:10px;background:#21262d;color:#e6edf3;text-decoration:none;font-weight:600}
+.foot{margin-top:24px;color:#8b949e;font-size:13px;line-height:1.5}
+</style></head><body>
+<div class="card">
+<h1>Signed in, but ` + html.EscapeString(targetHost) + ` did not accept it</h1>
+<p>You are signed in to Hive as <strong>` + html.EscapeString(login) + `</strong>, but ` + html.EscapeString(why) + `</p>
+` + retry + `<div class="foot">If this keeps happening, clear this browser's cookies for <code>` + html.EscapeString(sessionCookieParentDomain()) + `</code>, sign in again, and tell the hive's owner which address you were opening.</div>
+</div></body></html>`
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
 }
 
 // handleProviderLogin starts login for a specific provider named in the path.

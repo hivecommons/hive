@@ -1,9 +1,6 @@
 package hub
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 // #5925 — dibs moves to dibs.hivecommons.dev, with dibs.kubestellar.io demoted
 // to a redirect.
@@ -27,22 +24,6 @@ import (
 //
 // The mirror case is pinned too, because the invariant is symmetric: a future
 // move in either direction has the same failure mode.
-
-// cookieReaches reports whether a browser holding a hive_hub_user cookie that
-// was set on setHost with Domain=cookieDomain would send it to host.
-//
-// This is RFC 6265 §5.1.3 domain-matching, spelled out rather than asserted on
-// the raw Domain string, because the string is not the thing that matters — what
-// every case below is really asking is "does the sibling see the session". An
-// empty cookieDomain is a host-only cookie, which reaches only the exact host
-// that set it.
-func cookieReaches(cookieDomain, setHost, host string) bool {
-	if cookieDomain == "" {
-		return host == setHost
-	}
-	d := strings.TrimPrefix(cookieDomain, ".")
-	return host == d || strings.HasSuffix(host, "."+d)
-}
 
 // TestSessionCookieReachesSiblingOnlyOnSharedRegistrableDomain is the core of
 // #5925: the sibling bridge lives or dies on the hub and the sibling sharing a
@@ -98,7 +79,7 @@ func TestSessionCookieReachesSiblingOnlyOnSharedRegistrableDomain(t *testing.T) 
 				t.Fatalf("sessionCookieDomain(%q) = %q, want %q", tc.hubHost, got, tc.wantDomain)
 			}
 			for sibling, want := range tc.reaches {
-				if reaches := cookieReaches(got, tc.hubHost, sibling); reaches != want {
+				if reaches := cookieDomainMatches(got, tc.hubHost, sibling); reaches != want {
 					t.Errorf("session cookie (Domain=%q) reaches %s = %v, want %v — the dibs SSO "+
 						"bridge (#4171) can resolve a session only for a sibling the browser actually "+
 						"sends hive_hub_user to", got, sibling, reaches, want)
@@ -135,10 +116,10 @@ func TestNoCookieScopeKeepsSiblingOnForeignRegistrableDomain(t *testing.T) {
 			"a Set-Cookie whose Domain does not cover the sending host, so emitting one would be a "+
 			"cookie no browser stores", foreign)
 	}
-	if !cookieReaches(foreign, "dibs.kubestellar.io", "dibs.kubestellar.io") {
+	if !cookieDomainMatches(foreign, "dibs.kubestellar.io", "dibs.kubestellar.io") {
 		t.Error("host-only cookie does not reach its own host — the fallback would be inert")
 	}
-	if cookieReaches(foreign, "dibs.kubestellar.io", "hive.hivecommons.dev") {
+	if cookieDomainMatches(foreign, "dibs.kubestellar.io", "hive.hivecommons.dev") {
 		t.Error("host-only cookie leaked beyond its own host")
 	}
 }
@@ -178,7 +159,7 @@ func TestSiblingMoveKeepsSpokesOnTheSessionCookie(t *testing.T) {
 				t.Fatalf("session cookie went host-only for hub %q — every hosted tenant's dashboard "+
 					"and terminal would log out fleet-wide", tc.hubHost)
 			}
-			if !cookieReaches(domain, tc.hubHost, tc.spokeHost) {
+			if !cookieDomainMatches(domain, tc.hubHost, tc.spokeHost) {
 				t.Fatalf("session cookie (Domain=%q) does not reach spoke %q", domain, tc.spokeHost)
 			}
 		})
