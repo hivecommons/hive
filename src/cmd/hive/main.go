@@ -3951,7 +3951,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		b.tokenCollector.SetCopilotLiveCapture(time.Now().UnixMilli())
 
 		vllmEndpoints := parseEndpointList(os.Getenv("HIVE_VLLM_ENDPOINT"))
-		llmdEndpoints := parseEndpointList(envOrDefault("HIVE_LLMD_ENDPOINT", "http://hive-llm-d-epp.hive-inference.svc.cluster.local:8000"))
+		llmdEndpoints := parseEndpointList(envOrDefault("HIVE_LLMD_ENDPOINT", defaultLLMDEndpoint))
 		inferenceEndpoints := map[string][]string{
 			"vllm":  vllmEndpoints,
 			"llm-d": llmdEndpoints,
