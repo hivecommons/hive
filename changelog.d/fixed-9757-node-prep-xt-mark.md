@@ -1,0 +1,1 @@
+- The node-prep DaemonSet (`src/deploy/k8s/node-prep/hive-netfilter-modules.yaml`) now also loads `xt_mark` ([#9757](https://github.com/hivecommons/hive/issues/9757)). The entrypoint requires `xt_mark` and `xt_REDIRECT`, but the DaemonSet loaded only `xt_REDIRECT` and the optional `xt_owner`, so a node missing `xt_mark` kept exiting 77.
