@@ -172,7 +172,7 @@ new value at the same time.
 | Variable | Required | Default | Purpose |
 |---|---:|---|---|
 | `HIVE_VLLM_ENDPOINT` | No | unset in code; hosted provisioning or an explicit deployment may set a cluster-reachable endpoint | Comma-separated vLLM endpoint list. Unset disables the built-in vLLM gateway route. |
-| `HIVE_LLMD_ENDPOINT` | No | `http://hive-llm-d-epp.hive-inference.svc.cluster.local:8000` in code; `src/deploy/k8s/deployment.yaml` sets `http://llm-d-epp.hive-inference.svc.cluster.local:8000` | Comma-separated llm-d endpoint list. |
+| `HIVE_LLMD_ENDPOINT` | No | `http://hive-llm-d-epp.hive-inference.svc.cluster.local:8000` (code default; `src/deploy/k8s/deployment.yaml` sets the same value) | Comma-separated llm-d endpoint list. |
 | `HIVE_LITELLM_ENDPOINT` | No | YAML `governor.litellm.endpoint`; unset means LiteLLM is unregistered unless `local_proxy` is true | Runtime LiteLLM base URL override. |
 | `HIVE_VLLM_API_KEY` | No | none | Default bearer token for vLLM model discovery when no backend-specific `api_key_env` or file resolves. |
 | `HIVE_LLMD_API_KEY` | No | none | Default bearer token for llm-d model discovery when no backend-specific `api_key_env` or file resolves. |
