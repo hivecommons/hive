@@ -303,7 +303,7 @@ func TestContributePageScriptsSatisfyPerResponseCSP(t *testing.T) {
 func TestDynamicHTMLHandlersStampDocumentCSP(t *testing.T) {
 	for file, wantCalls := range map[string]int{
 		"contribute_landing.go": 1, // handleContributeLanding
-		"api.go":                1, // handleSnapshotPage
+		"api_snapshot.go":       1, // handleSnapshotPage
 	} {
 		src, err := os.ReadFile(file)
 		if err != nil {

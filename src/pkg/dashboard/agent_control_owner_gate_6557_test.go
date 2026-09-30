@@ -138,15 +138,15 @@ func TestAgentControlHandlersPassOwnerGateForVerifiedOwner(t *testing.T) {
 // would miss, and catches a sync merge dropping a gate even if nothing else
 // in the diff looks suspicious.
 func TestAgentControl6557OwnerGateCountFloor(t *testing.T) {
-	body := f16ReadSource(t, "api.go")
+	body := f16ReadSource(t, "api_agent_control.go") + f16ReadSource(t, "api_breaker.go")
 	got := regexp.MustCompile(`requireOwnerRole\(w, r\)`).FindAllString(body, -1)
-	// api.go already carries requireOwnerRole gates for handleEffortSet,
-	// handleBreakerEngage and handleBreakerRelease (3) prior to this fix; this
-	// fix adds exactly 7 more (kick, switch, model, restart, reset-restarts,
-	// pin, unpin).
+	// api_agent_control.go and api_breaker.go (split out of api.go) carry the
+	// requireOwnerRole gates for handleEffortSet, handleBreakerEngage and
+	// handleBreakerRelease (3) prior to this fix; this fix adds exactly 7 more
+	// (kick, switch, model, restart, reset-restarts, pin, unpin).
 	const want = 3 + 7
 	if len(got) < want {
-		t.Errorf("api.go has %d requireOwnerRole gates, want at least %d — a gate was removed "+
+		t.Errorf("agent-control sources have %d requireOwnerRole gates, want at least %d — a gate was removed "+
 			"(audit F14/F16 regressed exactly this way, via a sync merge)", len(got), want)
 	}
 }

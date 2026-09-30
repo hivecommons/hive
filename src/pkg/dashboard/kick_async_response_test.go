@@ -122,14 +122,14 @@ func TestKickPhaseStatusMapsPendingToInFlight(t *testing.T) {
 // protection is that handleKick routes through the async entry point. A future
 // edit that reinstates the inline SendKick reinstates the 504.
 func TestKickHandlerDoesNotCallSynchronousSendKick(t *testing.T) {
-	raw, err := os.ReadFile("api.go")
+	raw, err := os.ReadFile("api_agent_control.go")
 	if err != nil {
-		t.Fatalf("read api.go: %v", err)
+		t.Fatalf("read api_agent_control.go: %v", err)
 	}
 	src := string(raw)
 	start := strings.Index(src, "func (s *Server) handleKick(")
 	if start < 0 {
-		t.Fatal("handleKick not found in api.go")
+		t.Fatal("handleKick not found in api_agent_control.go")
 	}
 	// Slice to the next top-level declaration so the assertions see only this
 	// handler and not the whole file.

@@ -221,16 +221,16 @@ func TestPackSetLevelResponseCarriesMinStatusSeq(t *testing.T) {
 // TestCadenceHandlerResponseCarriesMinStatusSeq asserts the server half of the
 // cadence contract.
 func TestCadenceHandlerResponseCarriesMinStatusSeq(t *testing.T) {
-	src := readSourceFile(t, "api.go")
+	src := readSourceFile(t, "api_agent_config.go")
 
 	idx := strings.Index(src, "func (s *Server) handleAgentConfigCadences(")
 	if idx < 0 {
-		t.Fatal("api.go: handleAgentConfigCadences not found")
+		t.Fatal("api_agent_config.go: handleAgentConfigCadences not found")
 	}
 	// Bound the search to the handler body.
 	end := strings.Index(src[idx:], "\nfunc (s *Server) handleAgentConfigModels(")
 	if end < 0 {
-		t.Fatal("api.go: could not bound handleAgentConfigCadences")
+		t.Fatal("api_agent_config.go: could not bound handleAgentConfigCadences")
 	}
 	body := src[idx : idx+end]
 

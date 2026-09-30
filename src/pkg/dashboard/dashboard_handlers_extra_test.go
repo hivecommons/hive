@@ -1172,7 +1172,7 @@ func TestHandleBeadsCreateSpoofedRoleRejected(t *testing.T) {
 // call from handleBeadsCreate must fail here even if the HTTP tests are
 // reshuffled.
 func TestBeadsCreateOwnerGateInSource(t *testing.T) {
-	body := f16HandlerBody(t, f16ReadSource(t, "api.go"), "handleBeadsCreate")
+	body := f16HandlerBody(t, f16ReadSource(t, "api_beads.go"), "handleBeadsCreate")
 	if !strings.Contains(body, "requireOwnerRole(w, r)") {
 		t.Error("handleBeadsCreate must call requireOwnerRole — bead creation writes into an agent's store (#3914)")
 	}
