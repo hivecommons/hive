@@ -81,6 +81,16 @@ const (
 	varSkip  = "skip_reason"
 	liveFlag = "1"
 
+	// The backend-native resume handle captured when the PR opened
+	// (hivecommons/hive#9606): the CLI's own conversation id, the transcript
+	// it persisted, the command that reopens it, and when it was captured
+	// (the staleness clock).
+	varResumeBackend    = "resume_backend"
+	varResumeID         = "resume_id"
+	varResumeTranscript = "resume_transcript"
+	varResumeCommand    = "resume_command"
+	varResumeAt         = "resume_captured_at"
+
 	// messageTriggerKey tags each follow-up turn appended to the envelope.
 	messageTriggerKey = "trigger"
 	// TriggerFollowUp is the trigger recorded on those turns.
@@ -203,6 +213,14 @@ func Record(ctx context.Context, dir, agentName, repo string, number int, url, c
 // RecordWithNote is Record plus the PR's handoff note (BuildHandoffNote). An
 // empty note leaves any note already saved for the PR in place.
 func RecordWithNote(ctx context.Context, dir, agentName, repo string, number int, url, cliSession, note string, now time.Time) error {
+	return RecordWithResume(ctx, dir, agentName, repo, number, url, cliSession, note, ResumeHandle{}, now)
+}
+
+// RecordWithResume is RecordWithNote plus the backend-native resume handle
+// captured for the authoring conversation (hivecommons/hive#9606). A zero
+// handle leaves any handle already saved for the PR in place, so a re-point
+// from a backend that exposes none never erases one.
+func RecordWithResume(ctx context.Context, dir, agentName, repo string, number int, url, cliSession, note string, resume ResumeHandle, now time.Time) error {
 	storeMu.Lock()
 	defer storeMu.Unlock()
 	if strings.TrimSpace(agentName) == "" || strings.TrimSpace(repo) == "" || number <= 0 {
@@ -241,6 +259,7 @@ func RecordWithNote(ctx context.Context, dir, agentName, repo string, number int
 	if note = strings.TrimSpace(note); note != "" {
 		env.Variables[varNote] = note
 	}
+	setResumeHandle(&env, resume)
 	env.UpdatedAt = now
 	return store.Persist(ctx, env)
 }

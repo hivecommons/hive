@@ -25,6 +25,13 @@ type PRFollowUpConfig struct {
 	// be resumed (Go duration, e.g. "12h"). Empty or invalid means
 	// DefaultPRFollowUpMaxAge. Older follow-ups fall back to a fresh dispatch.
 	MaxAge string `yaml:"max_age,omitempty" json:"max_age,omitempty"`
+	// ResumeIDMaxAge bounds how long a captured backend-native resume id
+	// (hivecommons/hive#9606) is still offered to a later session (Go
+	// duration, e.g. "72h"). Empty or invalid means
+	// DefaultPRFollowUpResumeIDMaxAge. Past it the transcript is assumed
+	// gone or too old to be worth reopening, and only the handoff note is
+	// handed on.
+	ResumeIDMaxAge string `yaml:"resume_id_max_age,omitempty" json:"resume_id_max_age,omitempty"`
 	// Retention bounds how long a PR's pointer and handoff note are kept at
 	// all (Go duration, e.g. "336h"). Pointers are also deleted as soon as
 	// their PR merges or closes; this is the backstop for PRs whose end the
@@ -67,6 +74,16 @@ const (
 	// (auditPRAttributionWindow): past it the PR no longer reaches its
 	// author through those blocks either.
 	DefaultPRFollowUpRetention = 14 * 24 * time.Hour
+	// PRFollowUpResumeIDMaxAgeEnvVar overrides
+	// turn.pr_follow_up.resume_id_max_age.
+	PRFollowUpResumeIDMaxAgeEnvVar = "HIVE_PR_FOLLOWUP_RESUME_ID_MAX_AGE"
+	// DefaultPRFollowUpResumeIDMaxAge is how long a captured backend resume
+	// id stays worth offering. It is longer than DefaultPRFollowUpMaxAge on
+	// purpose: reopening a transcript is a suggestion the agent may decline,
+	// not a live session the hive types into, and a PR under review for a
+	// few days still benefits from the original reasoning. Three days also
+	// stays inside the window the backend CLIs keep their transcripts for.
+	DefaultPRFollowUpResumeIDMaxAge = 72 * time.Hour
 )
 
 // PRFollowUpResumeEnabled reports whether PR follow-ups should try to resume
@@ -105,6 +122,20 @@ func (c *Config) PRFollowUpRetention() time.Duration {
 		return d
 	}
 	return DefaultPRFollowUpRetention
+}
+
+// PRFollowUpResumeIDMaxAge returns how long a captured backend-native resume
+// id is offered, falling back to DefaultPRFollowUpResumeIDMaxAge for an
+// unset, unparsable, or non-positive value.
+func (c *Config) PRFollowUpResumeIDMaxAge() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(PRFollowUpResumeIDMaxAgeEnvVar))
+	if raw == "" && c != nil {
+		raw = strings.TrimSpace(c.Turn.PRFollowUp.ResumeIDMaxAge)
+	}
+	if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+		return d
+	}
+	return DefaultPRFollowUpResumeIDMaxAge
 }
 
 // ReentrantTurnEnabled reports whether agent is enrolled in the pkg/turn

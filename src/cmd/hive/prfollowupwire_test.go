@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -301,5 +302,70 @@ func TestPRFollowUpMetricsCounters_ReadsStatsFile(t *testing.T) {
 	if c.Resumed != 3 || c.Fallback["session gone"] != 2 || c.Deferred != 1 ||
 		c.HandoffsQueued != 4 || c.HandoffsDelivered != 2 || c.Pruned["merged"] != 5 {
 		t.Errorf("counters = %+v", c)
+	}
+}
+
+// fakePRFollowUpResumeSessions is a session source that also exposes a
+// backend-native resume handle, like *agent.Manager does (#9606).
+type fakePRFollowUpResumeSessions struct {
+	fakePRFollowUpSessions
+	handle agent.ResumeHandle
+	ok     bool
+}
+
+func (f fakePRFollowUpResumeSessions) ResumeHandle(string) (agent.ResumeHandle, bool) {
+	return f.handle, f.ok
+}
+
+func TestPRFollowUpWiring_CapturesBackendResumeHandle(t *testing.T) {
+	t.Setenv(config.PRFollowUpResumeEnvVar, "true")
+	dir := prFollowUpTestDir(t)
+	redirectReviewThreadsPath(t)
+	cfg := &config.Config{}
+	transcript := filepath.Join(t.TempDir(), "events.jsonl")
+	if err := os.WriteFile(transcript, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sessions := fakePRFollowUpResumeSessions{
+		fakePRFollowUpSessions: fakePRFollowUpSessions{"scanner": "s1"},
+		handle: agent.ResumeHandle{
+			Backend: "copilot", SessionID: "sess-9606", Transcript: transcript,
+			Command: "copilot --resume sess-9606", CapturedAt: time.Now(),
+		},
+		ok: true,
+	}
+
+	recordPRFollowUpPointer(cfg, sessions, openedDetail("hivecommons/hive"), time.Now(), discardLogger())
+	// No manager on the tick: the PR falls back, and the fresh kick offers
+	// the captured handle beside the handoff note.
+	if out := routePRFollowUps(context.Background(), cfg, nil, redFollowUpActionable(), nil, nil, discardLogger()); len(out) != 1 {
+		t.Fatalf("outcomes = %+v, want one fallback", out)
+	}
+	section := prfollowup.HandoffSectionWithResume(context.Background(), dir, time.Hour, time.Now(), "scanner")
+	for _, want := range []string{"copilot --resume sess-9606", transcript, "Why: the scheduler dropped kicks on reload"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("handoff section missing %q:\n%s", want, section)
+		}
+	}
+}
+
+// A session source without a resume handle (or one whose backend keeps none)
+// records the pointer exactly as before.
+func TestPRFollowUpWiring_NoResumeHandleIsInert(t *testing.T) {
+	t.Setenv(config.PRFollowUpResumeEnvVar, "true")
+	dir := prFollowUpTestDir(t)
+	redirectReviewThreadsPath(t)
+	cfg := &config.Config{}
+
+	none := fakePRFollowUpResumeSessions{fakePRFollowUpSessions: fakePRFollowUpSessions{"scanner": "s1"}}
+	recordPRFollowUpPointer(cfg, none, openedDetail("hivecommons/hive"), time.Now(), discardLogger())
+	if h := capturePRFollowUpResume(fakePRFollowUpSessions{"scanner": "s1"}, "scanner"); h.Valid() {
+		t.Errorf("a plain session source produced a handle: %+v", h)
+	}
+	if out := routePRFollowUps(context.Background(), cfg, nil, redFollowUpActionable(), nil, nil, discardLogger()); len(out) != 1 {
+		t.Fatalf("outcomes = %+v, want one fallback", out)
+	}
+	if section := prfollowup.HandoffSection(context.Background(), dir, "scanner"); strings.Contains(section, "--resume") {
+		t.Errorf("handle offered with none captured:\n%s", section)
 	}
 }

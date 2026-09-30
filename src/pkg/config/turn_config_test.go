@@ -129,3 +129,25 @@ func TestPRFollowUpRetention(t *testing.T) {
 		t.Fatalf("env retention = %v, want the env override 48h", got)
 	}
 }
+
+func TestPRFollowUpResumeIDMaxAge(t *testing.T) {
+	t.Setenv(PRFollowUpResumeIDMaxAgeEnvVar, "")
+	var nilCfg *Config
+	if got := nilCfg.PRFollowUpResumeIDMaxAge(); got != DefaultPRFollowUpResumeIDMaxAge {
+		t.Fatalf("nil config resume id max age = %v, want default %v", got, DefaultPRFollowUpResumeIDMaxAge)
+	}
+	for _, raw := range []string{"", "whenever", "-1h", "0s"} {
+		cfg := &Config{Turn: TurnConfig{PRFollowUp: PRFollowUpConfig{ResumeIDMaxAge: raw}}}
+		if got := cfg.PRFollowUpResumeIDMaxAge(); got != DefaultPRFollowUpResumeIDMaxAge {
+			t.Fatalf("resume_id_max_age %q = %v, want default %v", raw, got, DefaultPRFollowUpResumeIDMaxAge)
+		}
+	}
+	cfg := &Config{Turn: TurnConfig{PRFollowUp: PRFollowUpConfig{ResumeIDMaxAge: "12h"}}}
+	if got := cfg.PRFollowUpResumeIDMaxAge(); got != 12*time.Hour {
+		t.Fatalf("configured resume id max age = %v, want 12h", got)
+	}
+	t.Setenv(PRFollowUpResumeIDMaxAgeEnvVar, "30m")
+	if got := cfg.PRFollowUpResumeIDMaxAge(); got != 30*time.Minute {
+		t.Fatalf("env resume id max age = %v, want the env override 30m", got)
+	}
+}

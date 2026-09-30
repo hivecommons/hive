@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/prfollowup"
 )
@@ -24,7 +25,11 @@ func (s *Scheduler) addPRFollowUpHandoff(agentName string, message string) strin
 	if message == "" || s.cfg == nil || !s.cfg.PRFollowUpResumeEnabled() || !s.isPRCapableAgent(agentName) {
 		return message
 	}
-	section := prfollowup.HandoffSection(context.Background(), prFollowUpDir(), agentName, s.cfg.BaseAgentName(agentName))
+	// The section also offers the backend-native resume handle captured when
+	// the PR opened (#9606), unless it is older than the configured
+	// staleness limit.
+	section := prfollowup.HandoffSectionWithResume(context.Background(), prFollowUpDir(),
+		s.cfg.PRFollowUpResumeIDMaxAge(), time.Now(), agentName, s.cfg.BaseAgentName(agentName))
 	if section == "" {
 		return message
 	}

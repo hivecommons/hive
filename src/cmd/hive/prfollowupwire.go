@@ -70,6 +70,34 @@ type prFollowUpSessions interface {
 	SessionID(name string) (string, bool)
 }
 
+// prFollowUpResumeCapturer is the optional half: a session source that can
+// also name the agent's backend-native resume handle (hivecommons/hive#9606).
+// *agent.Manager implements it; a source that does not simply records a
+// pointer with no handle, which is the pre-#9606 behaviour.
+type prFollowUpResumeCapturer interface {
+	ResumeHandle(name string) (agent.ResumeHandle, bool)
+}
+
+// capturePRFollowUpResume reads the authoring agent's backend resume handle,
+// or a zero handle when the backend keeps none (or no manager is wired yet).
+func capturePRFollowUpResume(sessions prFollowUpSessions, agentName string) prfollowup.ResumeHandle {
+	capturer, ok := sessions.(prFollowUpResumeCapturer)
+	if !ok || capturer == nil {
+		return prfollowup.ResumeHandle{}
+	}
+	h, ok := capturer.ResumeHandle(agentName)
+	if !ok {
+		return prfollowup.ResumeHandle{}
+	}
+	return prfollowup.ResumeHandle{
+		Backend:    h.Backend,
+		SessionID:  h.SessionID,
+		Transcript: h.Transcript,
+		Command:    h.Command,
+		CapturedAt: h.CapturedAt,
+	}
+}
+
 // recordPRFollowUpPointer saves the pointer (and handoff note) for a PR the
 // watcher just opened. Failures are logged, never fatal: without a pointer
 // the PR simply keeps today's fresh-dispatch follow-up path.
@@ -78,12 +106,14 @@ func recordPRFollowUpPointer(cfg *config.Config, sessions prFollowUpSessions, d 
 		return
 	}
 	session := ""
+	resume := prfollowup.ResumeHandle{}
 	if sessions != nil {
 		session, _ = sessions.SessionID(d.Agent)
+		resume = capturePRFollowUpResume(sessions, d.Agent)
 	}
 	repo := qualifyPRFollowUpRepo(cfg.Project.Org, d.Repo)
 	note := prfollowup.BuildHandoffNote(d.Handoff, d.Body)
-	if err := prfollowup.RecordWithNote(context.Background(), prfollowup.Dir(), d.Agent, repo, d.Number, d.URL, session, note, now); err != nil && logger != nil {
+	if err := prfollowup.RecordWithResume(context.Background(), prfollowup.Dir(), d.Agent, repo, d.Number, d.URL, session, note, resume, now); err != nil && logger != nil {
 		logger.Warn("failed to record PR follow-up pointer", "agent", d.Agent, "repo", repo, "pr", d.Number, "error", err)
 	}
 }

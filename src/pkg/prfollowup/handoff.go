@@ -292,13 +292,26 @@ type handoffEntry struct {
 	url     string
 	note    string
 	pending []pendingHandoff
+	// resume is the backend-native resume handle captured when the PR
+	// opened, already checked for staleness (see resume_handle.go); a zero
+	// handle means none is offered.
+	resume ResumeHandle
 }
 
-// HandoffSection renders the PR handoff block for the agent's next kick: for
-// every live PR the agent (any of names) opened, the PR's handoff note and
-// the human feedback that is waiting for it. Empty when there is nothing to
-// hand off. It only reads the store, and takes no lock.
+// HandoffSection renders the PR handoff block for the agent's next kick with
+// the default resume-handle staleness limit. Callers that hold the hive
+// config use HandoffSectionWithResume.
 func HandoffSection(ctx context.Context, dir string, names ...string) string {
+	return HandoffSectionWithResume(ctx, dir, DefaultResumeIDMaxAge, time.Now(), names...)
+}
+
+// HandoffSectionWithResume renders the PR handoff block for the agent's next
+// kick: for every live PR the agent (any of names) opened, the PR's handoff
+// note, the human feedback that is waiting for it, and, when one was captured
+// within resumeMaxAge, the backend command that reopens the conversation that
+// authored it (hivecommons/hive#9606). Empty when there is nothing to hand
+// off. It only reads the store, and takes no lock.
+func HandoffSectionWithResume(ctx context.Context, dir string, resumeMaxAge time.Duration, now time.Time, names ...string) string {
 	if ctx.Err() != nil || strings.TrimSpace(dir) == "" {
 		return ""
 	}
@@ -314,14 +327,14 @@ func HandoffSection(ctx context.Context, dir string, names ...string) string {
 	// No storeMu: pointer files are replaced by atomic rename, so a read sees
 	// a whole old or new envelope, and the kick builder must never wait on
 	// the eval tick (Route holds storeMu while it talks to the agent manager).
-	entries := loadHandoffEntries(dir, want)
+	entries := loadHandoffEntries(dir, want, resumeMaxAge, now)
 	if len(entries) == 0 {
 		return ""
 	}
 	return renderHandoffSection(entries)
 }
 
-func loadHandoffEntries(dir string, want map[string]bool) []handoffEntry {
+func loadHandoffEntries(dir string, want map[string]bool, resumeMaxAge time.Duration, now time.Time) []handoffEntry {
 	files, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
@@ -342,13 +355,14 @@ func loadHandoffEntries(dir string, want map[string]bool) []handoffEntry {
 		}
 		note := env.Variables[varNote]
 		pending := pendingHandoffs(&env)
-		if env.Variables[varLive] != liveFlag || (note == "" && len(pending) == 0) {
+		resume := usableResumeHandle(&env, resumeMaxAge, now)
+		if env.Variables[varLive] != liveFlag || (note == "" && len(pending) == 0 && !resume.Valid()) {
 			continue
 		}
 		number, _ := strconv.Atoi(env.Variables[varNumber])
 		out = append(out, handoffEntry{
 			repo: env.Variables[varRepo], number: number, url: env.Variables[varURL],
-			note: note, pending: pending,
+			note: note, pending: pending, resume: resume,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -358,6 +372,24 @@ func loadHandoffEntries(dir string, want map[string]bool) []handoffEntry {
 		return out[i].number < out[j].number
 	})
 	return out
+}
+
+// usableResumeHandle returns the pointer's resume handle when it is still
+// fresh AND its transcript is still on disk, or a zero handle. A transcript
+// the backend (or a pod roll) has deleted is exactly the "transcript gone"
+// case the staleness policy names, and offering its command would send the
+// agent after a conversation that no longer exists.
+func usableResumeHandle(env *turn.SessionEnvelope, maxAge time.Duration, now time.Time) ResumeHandle {
+	h := resumeHandleOf(env)
+	if !h.Fresh(maxAge, now) {
+		return ResumeHandle{}
+	}
+	if h.Transcript != "" {
+		if _, err := os.Stat(h.Transcript); err != nil {
+			return ResumeHandle{}
+		}
+	}
+	return h
 }
 
 func renderHandoffSection(entries []handoffEntry) string {
@@ -383,6 +415,9 @@ func renderHandoffSection(entries []handoffEntry) string {
 			for _, line := range strings.Split(e.note, "\n") {
 				b.WriteString("      " + line + "\n")
 			}
+		}
+		if line := renderResumeHandle(e.resume, 0, time.Time{}); line != "" {
+			b.WriteString(line)
 		}
 		if len(e.pending) > 0 {
 			b.WriteString("    new human feedback (reply on the PR once for each, then push any fix):\n")

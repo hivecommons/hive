@@ -1,6 +1,6 @@
 # PR follow-up session resume
 
-**Status:** shipped in two slices (v5, default off). Tracking issue:
+**Status:** shipped in three slices (v5, default off). Tracking issue:
 [#9583](https://github.com/hivecommons/hive/issues/9583). Builds on the
 re-entrant turn model ([RFC #4002](reentrant-turn-model.md),
 [#5798](https://github.com/hivecommons/hive/pull/5798),
@@ -31,8 +31,10 @@ hook (`github.Client.SetPROpenedDetailHook`) calls
 `prfollowup.RecordWithNote`. It persists a `turn.SessionEnvelope` with session
 ID `pr-followup:<owner>/<repo>#<n>` under `HIVE_PR_FOLLOWUP_DIR` (default
 `/data/turn/pr-followups`). The envelope records the authoring agent, the
-agent's live CLI session identity (`agent.Manager.SessionID`) and the PR's
-handoff note (below). A repo named bare in config or in the request is
+agent's live CLI session identity (`agent.Manager.SessionID`), the PR's
+handoff note (below) and, when the agent's backend persists one, the
+backend-native resume handle for that conversation (`agent.ResumeHandle`; see
+"Surviving a restart" below). A repo named bare in config or in the request is
 qualified with `project.org`, so the pointer, the router and
 `review-threads.json` all agree on one spelling.
 
@@ -113,15 +115,40 @@ and handed-off comments both count against `MaxFollowUpsPerPR`.
 Two designs were evaluated for keeping the reasoning past the life of one
 conversation.
 
-**(a) Backend-native resume ids.** Rejected for now. None of the backend
-launch commands the hive builds (`backendLaunchCmd`, `toolRulesToLaunchCmd`:
-claude, copilot, gemini, codex, pi, goose, bob, agy, omp) passes a
-resume flag, and the hive does not capture a conversation id for any of them.
-The one backend with a conversation id, the headless agy runner, records it in
-a `mktemp` file that is deliberately discarded on every relaunch so a
-relaunched pane never resumes stale context. Support would have to be built
-and tested per backend, and resuming a whole transcript on every follow-up
-also resumes its full token cost.
+**(a) Backend-native resume ids.** Shipped as an *offer*, not as a relaunch
+([#9606](https://github.com/hivecommons/hive/issues/9606)). No launch command
+the hive builds (`backendLaunchCmd`, `toolRulesToLaunchCmd`: claude, copilot,
+gemini, codex, pi, goose, bob, agy, omp) passes a resume flag, and respawning
+a restarted agent *into* its old transcript would resume that transcript's
+full token cost on every follow-up. What the hive does instead is capture the
+id, because several of these CLIs persist the conversation themselves:
+
+| Backend | Transcript | Resume id | Command offered |
+|---|---|---|---|
+| claude | `$HOME/.claude/projects/<slug>/<id>.jsonl` | the file name | `claude --resume <id>` |
+| copilot | `$HOME/.copilot/session-state/<id>/events.jsonl` | the directory name | `copilot --resume <id>` |
+| codex | `$CODEX_HOME/sessions/<y>/<m>/<d>/rollout-<ts>-<uuid>.jsonl` | the trailing uuid | `codex resume <uuid>` |
+
+`agent.CaptureResumeHandle` names the newest transcript under the agent's own
+HOME when the PR opens (a bounded, read-only walk: 4 directories deep, 2000
+entries), and `prfollowup.RecordWithResume` stores the backend, id,
+transcript path, command and capture time on the PR's pointer. Every other
+backend — including the headless agy runner, whose conversation id lives in a
+`mktemp` file that is deliberately discarded on every relaunch — keeps the
+handoff note alone, exactly as before.
+
+**Staleness** ("transcript gone or too old") is two checks, both at read time:
+the handle must have been captured within `turn.pr_follow_up.resume_id_max_age`
+(default 72h, `HIVE_PR_FOLLOWUP_RESUME_ID_MAX_AGE`), and its transcript file
+must still exist. A handle that fails either is simply not offered; the note
+is unaffected.
+
+**Respawn or resume-for-the-turn?** Neither: the hive never launches a resume
+itself. A fresh session that picks the PR up is *told* the command and the
+transcript path in the `PR HANDOFF` section, next to the note, and decides for
+itself whether reopening the conversation is worth its tokens. That keeps the
+restart path identical for backends with no handle, and keeps the hive out of
+the business of driving backend-specific relaunch flags.
 
 **(b) A compact PR handoff note.** Shipped. When the PR opens, the hive keeps
 a short structured note beside the pointer:
@@ -142,8 +169,10 @@ carries the note: the scheduler's `addPRFollowUpHandoff` overlay prepends a
 `PR HANDOFF` section to every kick of the agent that opened a PR while that PR
 is **live**, meaning it has a standing follow-up fact (red CI, changes
 requested, an open bot thread) or queued human feedback. The section lists
-each such PR with its note and its queued human feedback, and tells the agent
-that quoted feedback is review input, not instructions. At most five PRs are
+each such PR with its note, its queued human feedback and, when one was
+captured and is neither stale nor gone, the backend command that reopens the
+conversation that authored the PR, and tells the agent that quoted feedback is
+review input, not instructions. At most five PRs are
 detailed per kick.
 
 Queued human feedback is dropped once a kick has carried it: each item
@@ -200,13 +229,14 @@ carries the note.
 turn:
   pr_follow_up:
     enabled: true     # default false; also Settings > Features
-    max_age: 24h      # resume window, default 24h
+    max_age: 24h      # live-session resume window, default 24h
+    resume_id_max_age: 72h  # backend resume id offer window, default 72h
     retention: 336h   # pointer lifetime backstop, default 14 days
 ```
 
 `HIVE_PR_FOLLOWUP_RESUME=false` is the one-step rollback and wins over the
-dashboard toggle. `HIVE_PR_FOLLOWUP_MAX_AGE` and `HIVE_PR_FOLLOWUP_RETENTION`
-override the durations. See [env-vars](../env-vars.md).
+dashboard toggle. `HIVE_PR_FOLLOWUP_MAX_AGE`, `HIVE_PR_FOLLOWUP_RETENTION` and
+`HIVE_PR_FOLLOWUP_RESUME_ID_MAX_AGE` override the durations. See [env-vars](../env-vars.md).
 
 With the toggle off nothing changes: no pointer is written, no comment is
 fetched, no counter file is created, and kicks are byte-for-byte what they
@@ -220,5 +250,6 @@ were.
 2. **`hive-open-pr --handoff`.** The `handoff` object is accepted in the
    request JSON, but the `hive-open-pr` wrapper has no flag for it yet, so
    agents using the wrapper get the note from their PR body sections.
-3. **Backend-native resume ids**, if a backend later offers a stable,
-   capturable resume handle, could complement the note.
+3. **Backend resume ids for the remaining backends** (gemini, pi, goose, bob,
+   omp): they expose no stable, capturable transcript id today. Adding one is
+   a new entry in `backendResumeLayouts` plus its test.
