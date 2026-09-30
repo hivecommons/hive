@@ -99,7 +99,7 @@
     }
     .status-stale[hidden] { display: none; }
     .git-version { font-size: 0.65rem; color: var(--muted); margin-left: 10px; font-weight: 400; font-family: var(--font-mono); }
-    .git-version .git-behind { color: var(--yellow); font-weight: 600; }
+    .git-version .git-behind { color: var(--yellow); font-weight: 600; white-space: nowrap; }
     /* Release channel + last upgrade attempt panel (#7092). */
     .release-status { margin: 6px 0 10px; padding: var(--sp-4) var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); background: color-mix(in srgb, var(--border) 12%, transparent); font-size: var(--fs-base); line-height: 1.5; }
     .release-status-row { display: block; }
@@ -288,6 +288,12 @@
     }
     .oc-topbar-left { font-size: 0.85rem; color: var(--muted); display: flex; align-items: center; gap: var(--sp-2); min-width: 0; flex: 1 1 auto; overflow: hidden; }
     #oc-project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* #oc-project-name is the one topbar-left piece that shrinks/ellipsizes;
+       the version badge stays fixed-width and single-line so its hash, channel
+       pill, tracking label, "N behind" and upgrade action never wrap into a
+       vertical stack (#9716). */
+    #oc-git-version { flex: 0 0 auto; white-space: nowrap; }
+    #oc-git-version #spoke-upgrade-btn { white-space: nowrap; }
     /* Drawer toggle. Hidden on desktop; the ≤768px block flips it to
        inline-flex. Lives in .oc-topbar-left because that is the shortest
        topbar group — putting it in center/right would risk wrapping the
@@ -1231,7 +1237,7 @@
     .gov-pr-models-toggle button { border:1px solid var(--border); border-radius:var(--r-pill); background:var(--bg); color:var(--muted); padding:3px 8px; font-size:var(--fs-xs); cursor:pointer; }
     .gov-pr-models-toggle button.active { color:var(--text); border-color:var(--amber); background:color-mix(in srgb, var(--amber) 14%, transparent); }
     .gov-pr-models-empty { color:var(--muted); font-size:var(--fs-base); padding:var(--sp-4) var(--sp-0); }
-    .gov-pr-model-row { display:grid; grid-template-columns:minmax(120px, 1.2fr) minmax(140px, 2fr) minmax(240px, 2fr) auto; gap:10px; align-items:center; margin:7px 0; font-size:0.78rem; }
+    .gov-pr-model-row { display:grid; grid-template-columns:minmax(120px, 1.2fr) minmax(140px, 2fr) minmax(240px, 2fr) 92px; gap:10px; align-items:center; margin:7px 0; font-size:0.78rem; }
     .gov-pr-model-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); font-weight:600; }
     .gov-pr-model-sub { color:var(--muted); font-size:var(--fs-xs); font-weight:400; }
     .gov-pr-model-sub-spaced { margin-top:var(--sp-2); }
@@ -1243,7 +1249,7 @@
     .gov-pr-model-metrics { display:grid; grid-template-columns:repeat(5, minmax(42px, 1fr)); gap:5px; }
     .gov-pr-model-metric { color:var(--text); font-variant-numeric:tabular-nums; text-align:right; }
     .gov-pr-model-metric span { display:block; color:var(--muted); font-size:var(--fs-2xs); text-transform:uppercase; letter-spacing:0.06em; }
-    .gov-pr-model-share { color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums; }
+    .gov-pr-model-share { color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums; text-align:right; }
     .gov-pr-model-table { width:100%; border-collapse:collapse; margin-top:10px; font-size:0.72rem; }
     .gov-pr-model-table th, .gov-pr-model-table td { padding:5px 6px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums; }
     .gov-pr-model-table th:first-child, .gov-pr-model-table td:first-child { text-align:left; }
@@ -1468,7 +1474,7 @@
     .repo-issue-plan.plan-active { --pill-c: var(--blue); }
     .repo-issue-plan.plan-done { --pill-c: var(--green); }
     .repo-issue-plan.plan-queued { --pill-c: var(--muted); }
-    .repo-pr-pill.pill-icon, .repo-issue-pill.pill-icon, .repo-issue-plan.pill-icon { flex: 0 0 auto; padding: 3px 5px; min-width: 1.45rem; justify-content: center; white-space: nowrap; font-size: var(--fs-xs); line-height: 1; }
+    .repo-pr-pill.pill-icon, .repo-issue-pill.pill-icon, .repo-issue-plan.pill-icon { flex: 0 0 auto; padding: 3px 5px; min-width: 1.45rem; min-height: 0; justify-content: center; white-space: nowrap; font-size: var(--fs-xs); line-height: 1; }
     .repo-issue-pill-wrap:hover .repo-issue-plan { opacity: 1; }
     .repo-issue-plan:hover { background: color-mix(in srgb, var(--pill-c) 26%, transparent); }
     .repo-issue-plan:disabled { opacity: 0.5; cursor: default; }
@@ -21082,10 +21088,10 @@ function burnAreaChart() {
           const pillTitle = v.channel
             ? 'Tracking release channel ' + v.channel + (v.branch && v.branch !== 'unknown' ? ' (currently a ' + v.branch + ' build)' : '')
             : 'Built from branch ' + v.branch;
-          html += ` <span title="${escapeHtml(pillTitle)}" style="display:inline-block;padding:1px 7px;margin-left:var(--sp-3);border-radius:var(--r-pill);font-size:var(--fs-2xs);font-weight:600;background:color-mix(in srgb, var(--accent) 16%, transparent);border:1px solid color-mix(in srgb, var(--accent) 40%, transparent);color:var(--accent);vertical-align:middle">${escapeHtml(deliveryLabel)}</span>`;
+          html += ` <span title="${escapeHtml(pillTitle)}" style="display:inline-block;padding:1px 7px;margin-left:var(--sp-3);border-radius:var(--r-pill);font-size:var(--fs-2xs);font-weight:600;background:color-mix(in srgb, var(--accent) 16%, transparent);border:1px solid color-mix(in srgb, var(--accent) 40%, transparent);color:var(--accent);vertical-align:middle;white-space:nowrap">${escapeHtml(deliveryLabel)}</span>`;
         }
         const trackingLabel = versionTrackingLabel(v);
-        html += ` <span title="${escapeHtml(versionTrackingTooltip(v))}" style="display:inline-block;margin-left:var(--sp-3);font-size:0.66rem;color:var(--muted);vertical-align:middle">· ${escapeHtml(trackingLabel)}</span>`;
+        html += ` <span title="${escapeHtml(versionTrackingTooltip(v))}" style="display:inline-block;margin-left:var(--sp-3);font-size:0.66rem;color:var(--muted);vertical-align:middle;white-space:nowrap">· ${escapeHtml(trackingLabel)}</span>`;
         if (v.dirty) html += ' <span class="git-dirty">*</span>';
         // Auto-update health (#6765). The server exposes the spoke's persisted
         // self-upgrade marker; present means an instructed upgrade has NOT
