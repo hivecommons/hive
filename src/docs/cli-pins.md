@@ -80,7 +80,34 @@ Labels on a bump PR:
   dependency churn and needs no changelog fragment.
 - `needs-human` - added only for a **major** version change. Minor bumps follow
   the repo's normal merge-on-green path; patch bumps are skipped unless an
-  operator explicitly forces one.
+  operator explicitly forces one, except for patch-eligible CLIs (below).
+
+### Patch policy
+
+Most CLIs ship features on major/minor releases, so patch-only bumps are
+skipped. **Claude Code is patch-eligible**: it ships new models as 2.1.x
+patches (for example Sonnet 5.5 needs 2.1.284), so skipping patches left the
+image unable to launch models Hive lists. `cli-pin-bump.sh` bumps patch
+releases of the CLIs in `HIVE_PIN_PATCH_ELIGIBLE` (default `claude`; set it to
+empty to restore the strict rule). Add a CLI there when it starts shipping
+models in patches.
+
+### Model lists
+
+A pin change can leave Hive's model lists behind. Two layers cover it:
+
+- `src/scripts/check-cli-model-lists.sh` (self-test:
+  `test-check-cli-model-lists.sh`) fails when a model listed in
+  `src/scripts/cli-model-requirements.txt` (CLI, model id, first version that
+  accepts it) is missing from the allowlist of a CLI pinned at or above that
+  version, and when the "version pinned ... (X" / "matches codex X" comments in
+  `cli_models.go` differ from the Dockerfile pin. Add a requirements line when a
+  CLI release introduces a model. The check runs in the workflow's `selftest`
+  job on PRs touching the pins or lists, and its output goes in every bump PR.
+  It warns instead of failing until the lists are current; set
+  `HIVE_MODEL_CHECK_STRICT=1` to make drift fail.
+- Each bump PR body carries a checklist for what cannot be automated:
+  allowlists/fallbacks, `static/index.html`, and `src/pkg/tokens/pricing.go`.
 
 The PR then runs the normal gates. The docker workflow builds both images for
 linux/amd64 and linux/arm64, where every hash-verified layer runs
@@ -130,8 +157,9 @@ patch-only bump PR.
 
 ## Not covered (yet)
 
-- The workflow does not record each CLI's model list before and after a bump
-  (issue item 3). The dashboard's live probes (`codex app-server` model/list,
+- The workflow does not diff each CLI's full model catalog before and after a
+  bump (catalogs baked into binaries cannot be read at build time; see Model
+  lists above). The dashboard's live probes (`codex app-server` model/list,
   `agy models`, `omp models --json`) remain the source of truth on a running
   hive; a static-catalog refresh, when one is needed, is a hand edit to
   `codexStaticModels` in `src/pkg/dashboard/cli_models.go` and its

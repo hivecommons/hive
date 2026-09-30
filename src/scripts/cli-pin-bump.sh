@@ -42,7 +42,10 @@
 #   HIVE_PIN_WORKDIR             where downloads land (default: mktemp -d, removed on exit)
 #   GH_TOKEN / GITHUB_TOKEN      optional; raises the GitHub API rate limit
 #   HIVE_PIN_HTTP                override the fetch command (tests only)
-#   HIVE_PIN_INCLUDE_PATCH=1     include patch-only bumps (default: skip)
+#   HIVE_PIN_INCLUDE_PATCH=1     include patch-only bumps (default: skip, except
+#                                for the patch-eligible CLIs below)
+#   HIVE_PIN_PATCH_ELIGIBLE      CLIs whose patch releases are bumped anyway
+#                                (default: "claude"; set empty to disable)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -53,6 +56,11 @@ PI_TEST="${HIVE_PIN_PI_TEST:-$ROOT/src/pkg/config/dockerfile_contributor_test.go
 
 # Every CLI this script knows. Order is the order the workflow's matrix uses.
 CLIS="claude codex copilot pi goose agy omp muse bob gh"
+
+# CLIs that ship features (new models) in patch releases: Claude Code's 2.1.x
+# line adds models as patches, so skipping patches leaves the image unable to
+# launch models Hive lists (#9805). See src/docs/cli-pins.md.
+PATCH_ELIGIBLE="${HIVE_PIN_PATCH_ELIGIBLE-claude}"
 
 # Digest lengths in hex characters — a value of any other length is never
 # written into a Dockerfile (the "never guess a hash" guard).
@@ -195,6 +203,12 @@ is_patch_only_bump() {
   new_minor="$(minor_of "$2")" || return 1
   [[ "$old_major" =~ ^[0-9]+$ && "$new_major" =~ ^[0-9]+$ ]] || return 1
   [ "$old_major" = "$new_major" ] && [ "$old_minor" = "$new_minor" ]
+}
+
+is_patch_eligible() {
+  local c
+  for c in $PATCH_ELIGIBLE; do [ "$c" = "$1" ] && return 0; done
+  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -493,7 +507,7 @@ cmd_bump() {
     log "$cli: $old_report is current"
     return 0
   fi
-  if [ "${HIVE_PIN_INCLUDE_PATCH:-}" != "1" ] && is_patch_only_bump "$old_report" "$new_report"; then
+  if [ "${HIVE_PIN_INCLUDE_PATCH:-}" != "1" ] && ! is_patch_eligible "$cli" && is_patch_only_bump "$old_report" "$new_report"; then
     printf 'OLD=%s\nNEW=%s\nMAJOR=false\nCHANGED=false\nSKIPPED=patch\n' "$old_report" "$new_report" > "$out"
     log "$cli: $old_report -> $new_report is a patch release; pins move on major/minor only"
     return 0

@@ -1,0 +1,5 @@
+# <cli> <model id> <first CLI version that accepts it>
+# Read by check-cli-model-lists.sh: once a CLI is pinned at or above the listed
+# version, its allowlist must contain the model. Add a line when a CLI release
+# introduces a model (#9805).
+claude claude-sonnet-5-5 2.1.284

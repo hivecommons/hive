@@ -187,11 +187,16 @@ esac
 STUB
 chmod +x "$TMP/http-stub.sh"
 export HIVE_PIN_HTTP="$TMP/http-stub.sh"
-run bump claude
+HIVE_PIN_PATCH_ELIGIBLE= run bump claude
 [ $RC -eq 0 ] && [ "$OUT" = "$(printf 'OLD=2.1.226\nNEW=2.1.280\nMAJOR=false\nCHANGED=false\nSKIPPED=patch')" ] \
   && [ "$(arg Dockerfile CLAUDE_CODE_VERSION)" = "2.1.226" ] \
   && [ "$(arg Dockerfile.contributor CLAUDE_CODE_VERSION)" = "2.1.226" ] \
   && pass "patch-only bump reports skipped and leaves Dockerfiles untouched" || fail "patch-only bump" "$OUT $ERR"
+run bump claude
+[ $RC -eq 0 ] && [ "$OUT" = "$(printf 'OLD=2.1.226\nNEW=2.1.280\nMAJOR=false\nCHANGED=true')" ] \
+  && [ "$(arg Dockerfile CLAUDE_CODE_VERSION)" = "2.1.280" ] \
+  && pass "claude is patch-eligible: a patch-only bump applies by default" || fail "claude patch-eligible" "$OUT $ERR"
+make_fixtures
 STUB_CLAUDE_VERSION=2.2.0 run bump claude
 [ $RC -eq 0 ] && [ "$OUT" = "$(printf 'OLD=2.1.226\nNEW=2.2.0\nMAJOR=false\nCHANGED=true')" ] \
   && [ "$(arg Dockerfile.contributor CLAUDE_CODE_VERSION)" = "2.2.0" ] \

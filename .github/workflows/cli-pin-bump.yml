@@ -65,6 +65,11 @@ on:
       - '.github/workflows/cli-pin-bump.yml'
       - 'src/scripts/cli-pin-bump.sh'
       - 'src/scripts/test-cli-pin-bump.sh'
+      - 'src/scripts/check-cli-model-lists.sh'
+      - 'src/scripts/test-check-cli-model-lists.sh'
+      - 'src/scripts/cli-model-requirements.txt'
+      - 'src/Dockerfile'
+      - 'src/pkg/dashboard/cli_models.go'
 
 permissions:
   contents: read
@@ -90,6 +95,15 @@ jobs:
           bash -n src/scripts/test-cli-pin-bump.sh
           bash -n .github/scripts/check-bob-launch-flags.sh
           bash src/scripts/test-cli-pin-bump.sh
+          bash -n src/scripts/check-cli-model-lists.sh
+          bash -n src/scripts/test-check-cli-model-lists.sh
+          bash src/scripts/test-check-cli-model-lists.sh
+      # Warn-only until the model lists catch up with the pins (#9804); flip
+      # HIVE_MODEL_CHECK_STRICT to 1 to make drift fail the PR.
+      - name: Model lists match the CLI pins
+        env:
+          HIVE_MODEL_CHECK_STRICT: '0'
+        run: bash src/scripts/check-cli-model-lists.sh
 
   bump:
     name: bump ${{ matrix.cli }}
@@ -279,6 +293,16 @@ jobs:
             echo '```'
             cat "$RUNNER_TEMP/smoke.txt"
             echo '```'
+            echo
+            echo "### Model lists (not automated)"
+            echo
+            echo '```'
+            HIVE_MODEL_CHECK_STRICT=0 bash src/scripts/check-cli-model-lists.sh 2>&1 || true
+            echo '```'
+            echo
+            echo "- [ ] Allowlists and static fallbacks in \`src/pkg/dashboard/cli_models*.go\` match the new pin's model set, and their \"matches CLI version\" comments name it"
+            echo "- [ ] \`static/index.html\` model options updated"
+            echo "- [ ] \`src/pkg/tokens/pricing.go\` has prices for any new model"
             echo
             echo "The docker workflow on this PR builds both images for linux/amd64 and linux/arm64 (every hash-verified layer runs \`sha256sum -c\` / \`sha512sum -c\`), and the backend smoke's pinned lane picks the new CLI up on its next run. See \`src/docs/cli-pins.md\`."
             echo
