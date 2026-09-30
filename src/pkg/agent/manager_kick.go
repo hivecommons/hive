@@ -1218,6 +1218,12 @@ const (
 	// ciPollNudgeThreshold is how many CI-status commands a single kick may
 	// run before the agent is told to stop polling (#9673).
 	ciPollNudgeThreshold = 3
+	// ciPollNudgeWallClock is the other half of the #9673 ask: a single
+	// blocking `gh run watch` can sit under the count threshold (it is one
+	// command) while still burning the whole kick on a saturated runner
+	// pool. Once the kick has run this long AND at least one CI-poll command
+	// has been seen, treat it the same as crossing the count threshold.
+	ciPollNudgeWallClock = 10 * time.Minute
 	ciPollNudgeMessage   = "Stop polling CI. Do not run gh run watch/view or gh pr checks again this turn: leave the PR as is and move to the next work-list item. The automerge sweep handles green PRs."
 )
 
@@ -1231,6 +1237,12 @@ func countCIPollCommands(pane string) int {
 // move on. Policy templates already forbid it; this is the harness backstop.
 // Sends at most one nudge per kick, and only at an idle prompt so it never
 // splices into a running response.
+//
+// Two independent triggers count as "polling CI" (#9673's ask, item 2): more
+// than ciPollNudgeThreshold poll commands this kick, OR at least one poll
+// command with the kick already running longer than ciPollNudgeWallClock — a
+// single `gh run watch` blocks for the whole wait and would otherwise never
+// cross the count threshold.
 func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible string) {
 	if agent.kickDelivering.Load() || agent.LastKick == nil {
 		return
@@ -1242,7 +1254,9 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 		m.mu.Unlock()
 		return
 	}
-	overThreshold := count-agent.ciPollBaseline > ciPollNudgeThreshold
+	newPolls := count - agent.ciPollBaseline
+	overThreshold := newPolls > ciPollNudgeThreshold ||
+		(newPolls > 0 && time.Since(*agent.LastKick) > ciPollNudgeWallClock)
 	alreadyNudged := agent.ciPollNudgeSent
 	m.mu.Unlock()
 

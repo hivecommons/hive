@@ -1,0 +1,1 @@
+- The #9673 CI-poll nudge now also fires on wall-clock time: a single blocking `gh run watch` that has run past 10 minutes this kick nudges the agent to stop polling even though it is only one command, instead of requiring more than 3 poll commands to have been observed.
