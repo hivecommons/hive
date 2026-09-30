@@ -57,6 +57,15 @@ func metricsToken() string {
 //	hive_reviews_by_model_pair_total{hive_id,author_model,review_model,verdict} — review verdicts by author/reviewer model pair
 //	hive_review_outcome_prs{hive_id,reviewed,outcome} — 30d PRs by reviewed cohort and outcome (review effectiveness)
 //	hive_review_outcome_median_hours_to_merge{hive_id,reviewed} — 30d median first-seen→merged hours per cohort
+//	hive_pr_followup_resumed_total{hive_id}                — PR follow-ups resumed into the authoring session
+//	hive_pr_followup_fallback_total{hive_id,reason}        — PR follow-ups sent to the fresh-dispatch path
+//	hive_pr_followup_skipped_total{hive_id,reason}         — PRs entering a skipped state (draft, fork, escalated)
+//	hive_pr_followup_deferred_total{hive_id}               — routing attempts deferred on a busy session
+//	hive_pr_followup_handoffs_total{hive_id,state}         — human-feedback handoffs queued / delivered
+//	hive_pr_followup_pointers_pruned_total{hive_id,reason} — pointers deleted by the sweep
+//
+// The hive_pr_followup_* series (#9583) appear only once the PR follow-up
+// resume feature has written its counter file.
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	// Mandatory bearer auth (#3399, hardened in #3785): the cost/agent series
 	// are business-sensitive, so /metrics FAILS CLOSED when metrics are enabled
@@ -149,6 +158,8 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(&b, "hive_review_outcome_median_hours_to_merge{hive_id=%q,reviewed=%q} %.2f\n", hiveID, s.Cohort, s.Median)
 		}
 	}
+
+	writePRFollowUpMetrics(&b, hiveID, writeHeader)
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	_, _ = w.Write([]byte(b.String()))

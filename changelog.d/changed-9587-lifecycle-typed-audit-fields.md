@@ -1,1 +1,0 @@
-- The lifecycle timeline now takes the work item for `agent_pr_created` and `pr_merged` audit entries from the typed `repo`/`target` audit fields, falling back to the legacy `repo=`/`number=` detail pairs only when a record has no typed target ([#9587](https://github.com/hivecommons/hive/issues/9587)).

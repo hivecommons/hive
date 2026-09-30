@@ -1,1 +1,0 @@
-- The watcher now nudges a CLI agent once per kick when it runs more than three CI-polling commands (`gh run watch/view/list`, `gh pr checks`), telling it to stop polling and move on ([#9673](https://github.com/hivecommons/hive/issues/9673)).

@@ -284,3 +284,22 @@ func TestPRFollowUpResumer_AdaptsManager(t *testing.T) {
 		t.Fatalf("err = %v, want session-gone (a fallback), not busy", err)
 	}
 }
+
+func TestPRFollowUpMetricsCounters_ReadsStatsFile(t *testing.T) {
+	dir := prFollowUpTestDir(t)
+	if _, ok := prFollowUpMetricsCounters(); ok {
+		t.Fatal("counters reported with no stats file")
+	}
+	data := `{"resumed":3,"fallback":{"session gone":2},"deferred":1,"handoffs_queued":4,"handoffs_delivered":2,"pruned":{"merged":5},"updated_at":"2026-09-29T00:00:00Z"}`
+	if err := os.WriteFile(dir+"/"+prfollowup.StatsFile, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, ok := prFollowUpMetricsCounters()
+	if !ok {
+		t.Fatal("counters not reported with a stats file")
+	}
+	if c.Resumed != 3 || c.Fallback["session gone"] != 2 || c.Deferred != 1 ||
+		c.HandoffsQueued != 4 || c.HandoffsDelivered != 2 || c.Pruned["merged"] != 5 {
+		t.Errorf("counters = %+v", c)
+	}
+}
