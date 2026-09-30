@@ -57,3 +57,41 @@ func TestFleetReportEvidenceStillReportsRealCrashState(t *testing.T) {
 		t.Fatal("explicit crash state should still produce crash-loop evidence")
 	}
 }
+
+// #9673: nudgeIfPollingCI's stop-polling nudge count is worth fleet-level
+// visibility (an operator can spot an agent that keeps burning turns on CI
+// despite the harness telling it to stop), even though the per-kick cap
+// keeps a single incident from generating more than one nudge.
+func TestFleetReportEvidenceIncludesCIPollNudges(t *testing.T) {
+	s := &Server{}
+	status := &StatusPayload{Agents: []FrontendAgent{
+		{Name: "scanner", Role: "scanner", State: "running", CIPollNudges: 2},
+	}}
+	var found bool
+	for _, ev := range s.buildFleetReportEvidence(status) {
+		if ev.ErrorClass == "CI-poll nudge" {
+			found = true
+			if ev.Count != 2 {
+				t.Fatalf("Count = %d, want 2", ev.Count)
+			}
+			if ev.Severity != "low" {
+				t.Fatalf("Severity = %q, want %q", ev.Severity, "low")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("nonzero CIPollNudges should produce CI-poll nudge evidence")
+	}
+}
+
+func TestFleetReportEvidenceOmitsCIPollNudgesWhenZero(t *testing.T) {
+	s := &Server{}
+	status := &StatusPayload{Agents: []FrontendAgent{
+		{Name: "scanner", Role: "scanner", State: "running", CIPollNudges: 0},
+	}}
+	for _, ev := range s.buildFleetReportEvidence(status) {
+		if ev.ErrorClass == "CI-poll nudge" {
+			t.Fatalf("zero CIPollNudges should not produce evidence: %#v", ev)
+		}
+	}
+}

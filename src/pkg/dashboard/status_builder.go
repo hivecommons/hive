@@ -885,8 +885,12 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			// #4697: transient-API-error retry nudges, surfaced beside the
 			// other two nudge counters.
 			TransientNudges: proc.TransientNudges,
-			Conditions:      proc.WatchdogConditions,
-			WatchdogMode:    watchdogMode,
+			// #9673: CI-poll stop nudges, surfaced beside the other nudge
+			// counters so a fleet operator can spot an agent that keeps
+			// polling CI after the harness told it to stop.
+			CIPollNudges: proc.CIPollNudges,
+			Conditions:   proc.WatchdogConditions,
+			WatchdogMode: watchdogMode,
 
 			UnscheduledInMode: unscheduledInMode,
 			CadenceModes:      cadenceModes,

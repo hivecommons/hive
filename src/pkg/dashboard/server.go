@@ -650,6 +650,11 @@ type FrontendAgent struct {
 	StallNudges            int    `json:"stallNudges,omitempty"`
 	ActionNudges           int    `json:"actionNudges,omitempty"`
 	TransientNudges        int    `json:"transientNudges,omitempty"`
+	// CIPollNudges (#9673) is the cumulative count of stop-polling nudges
+	// nudgeIfPollingCI has sent this agent, surfaced beside the other nudge
+	// counters so a fleet operator can tell whether an agent is still
+	// burning turns on CI after the harness has already told it to stop.
+	CIPollNudges int `json:"ciPollNudges,omitempty"`
 	// KickOutcome is how the last kicked turn ENDED (#7421): "question" (asked
 	// the operator what to do — a defect), "stand-down" (policy refusal —
 	// blocked), "no-op" (reported nothing produced) or "ended". Empty while

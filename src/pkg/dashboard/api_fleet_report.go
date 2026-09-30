@@ -141,6 +141,13 @@ func (s *Server) buildFleetReportEvidence(status *StatusPayload) []fleetreport.E
 		if strings.Contains(strings.ToLower(a.StructuredStatus), "stalled") || a.StallNudges > 0 {
 			out = append(out, fleetreport.Evidence{Component: "agent-runtime", Agent: a.Name, Lane: a.Role, ErrorClass: "agent stall", Count: maxInt(1, a.StallNudges), Window: 24 * time.Hour, Severity: "medium", Attributable: true})
 		}
+		// #9673: the harness backstop nudges an agent that keeps polling CI
+		// on its own PR, but a nonzero count here means the nudge fired at
+		// least once and is worth fleet-level visibility even though the
+		// per-kick cap keeps any single incident from repeating.
+		if a.CIPollNudges > 0 {
+			out = append(out, fleetreport.Evidence{Component: "agent-runtime", Agent: a.Name, Lane: a.Role, ErrorClass: "CI-poll nudge", Count: a.CIPollNudges, Window: 24 * time.Hour, Severity: "low", Attributable: true})
+		}
 	}
 	return out
 }
