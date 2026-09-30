@@ -3193,6 +3193,10 @@
     .row-end { display: flex; justify-content: flex-end; gap: var(--sp-4); }
     .row-between { display: flex; align-items: center; justify-content: space-between; }
     .muted { color: var(--muted); }
+    .advisor-note { color: var(--muted); padding: var(--sp-2) var(--sp-0); }
+    .advisor-rec { font-size: var(--fs-sm); padding: var(--sp-2) var(--sp-0); border-top: 1px solid var(--border); }
+    .advisor-rec-ts { color: var(--muted); float: right; }
+    .advisor-rec-text { margin-top: var(--sp-1); white-space: pre-wrap; }
     .muted-note { font-size: 0.78rem; color: var(--muted); }
     .muted-xs { font-size: 0.72rem; color: var(--muted); }
     .title-sm { font-size: var(--fs-md); font-weight: 600; color: var(--fg); }
@@ -7632,20 +7636,20 @@
     // severity and text visible without further clicks, newest first, skips
     // included — beside the same audit timeline trajectory verdicts land on.
     async function showAdvisorRecords(agentName) {
-      kbShowModal('🗣 Advisor — ' + escapeHtml(agentName), '<div style="color:var(--muted)">Loading…</div>', { width: '720px' });
+      kbShowModal('🗣 Advisor — ' + escapeHtml(agentName), '<div class="muted">Loading…</div>', { width: '720px' });
       let bodyHtml = '';
       try {
         const res = await fetch('/api/advisor/records?agent=' + encodeURIComponent(agentName) + '&limit=50', { headers: _inceptionAuthHeaders() });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         if (data.active === false) {
-          bodyHtml += `<div style="padding:6px 0;color:var(--muted)">⚠ ${escapeHtml(data.active_reason || 'advisor is not active for this agent')}</div>`;
+          bodyHtml += `<div class="advisor-note">⚠ ${escapeHtml(data.active_reason || 'advisor is not active for this agent')}</div>`;
         }
         const records = data.records || [];
         if (!records.length) {
-          bodyHtml += '<div style="color:var(--muted);padding:8px 0">No advisor records for this agent yet.</div>';
+          bodyHtml += '<div class="advisor-note">No advisor records for this agent yet.</div>';
         }
-        const sevColor = s => s === 'blocker' ? 'var(--danger, #d33)' : (s === 'concern' ? 'var(--warning, #b80)' : 'var(--muted)');
+        const sevClass = s => s === 'blocker' ? 'text-danger' : (s === 'concern' ? 'text-warn' : 'text-muted');
         bodyHtml += records.map(rec => {
           const label = rec.skipped ? ('skipped: ' + rec.skipped) : (rec.severity || 'aside');
           const badges = [];
@@ -7653,15 +7657,15 @@
           if (rec.downgraded) badges.push('downgraded');
           const tokens = (rec.input_tokens || 0) + (rec.output_tokens || 0);
           if (tokens) badges.push(tokens + ' tok');
-          return `<div style="font-size:0.8rem;padding:6px 0;border-top:1px solid var(--border)">
-            <strong style="color:${sevColor(rec.severity)}">${escapeHtml(label)}</strong>
-            ${badges.length ? `<span style="color:var(--muted)"> · ${escapeHtml(badges.join(' · '))}</span>` : ''}
-            <span style="color:var(--muted);float:right">${escapeHtml(rec.ts || '')}</span>
-            ${rec.text ? `<div style="margin-top:2px;white-space:pre-wrap">${escapeHtml(rec.text)}</div>` : ''}
+          return `<div class="advisor-rec">
+            <strong class="${sevClass(rec.severity)}">${escapeHtml(label)}</strong>
+            ${badges.length ? `<span class="muted"> · ${escapeHtml(badges.join(' · '))}</span>` : ''}
+            <span class="advisor-rec-ts">${escapeHtml(rec.ts || '')}</span>
+            ${rec.text ? `<div class="advisor-rec-text">${escapeHtml(rec.text)}</div>` : ''}
           </div>`;
         }).join('');
       } catch (e) {
-        bodyHtml = `<div style="color:var(--danger, #d33)">Failed to load advisor records: ${escapeHtml(String(e && e.message || e))}</div>`;
+        bodyHtml = `<div class="text-danger">Failed to load advisor records: ${escapeHtml(String(e && e.message || e))}</div>`;
       }
       kbShowModal('🗣 Advisor — ' + escapeHtml(agentName), bodyHtml, { width: '720px' });
     }

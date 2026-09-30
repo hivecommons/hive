@@ -8,6 +8,7 @@
 # v6-only seams (admin MCP, log scrub, mentions, output schema, standby, task MCP) added on forward-merge; see hivecommons/hive#9643.
 github.com/hivecommons/hive/pkg/acmmadvisor
 github.com/hivecommons/hive/pkg/adminmcp
+github.com/hivecommons/hive/pkg/advisor
 github.com/hivecommons/hive/pkg/advisory
 github.com/hivecommons/hive/pkg/agent
 github.com/hivecommons/hive/pkg/agentparse
