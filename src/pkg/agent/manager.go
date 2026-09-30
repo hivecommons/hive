@@ -800,7 +800,7 @@ func NewManagerWithOptions(agents map[string]config.AgentConfig, logger *slog.Lo
 	if copilotToken == "" {
 		// Fall back to the token persisted by the dashboard's device-flow login.
 		copilotTokenSource = CopilotTokenSourceDurableFile
-		if data, err := os.ReadFile(CopilotUserTokenPath); err == nil {
+		if data, err := os.ReadFile(copilotUserTokenLoadPath); err == nil {
 			copilotToken = strings.TrimSpace(string(data))
 		}
 	}

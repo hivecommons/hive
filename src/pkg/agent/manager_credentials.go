@@ -26,6 +26,15 @@ const CopilotUserTokenPath = "/data/copilot-user-token"
 
 var copilotUserTokenWatchPath = CopilotUserTokenPath
 
+// copilotUserTokenLoadPath is where NewManager reads the durable Copilot
+// login from when COPILOT_GITHUB_TOKEN is not in the process env. A var as a
+// TEST SEAM (see copilotUserTokenProbePath): on a live hive host the real
+// /data/copilot-user-token exists, so without redirecting it every
+// agentEnvPairs test gains a COPILOT_GITHUB_TOKEN entry and the fixed
+// baseEnvVarCount assertions fail — which is exactly what happens when the
+// hub's own PR precheck runs `go test ./pkg/agent` inside the pod.
+var copilotUserTokenLoadPath = CopilotUserTokenPath
+
 // copilotUserTokenProbePath is the same location as consulted by the
 // AgentAuthState file probe. A var (not the const directly) purely as a TEST
 // SEAM, matching sharedCopilotConfigPath above: on a live hive host the real

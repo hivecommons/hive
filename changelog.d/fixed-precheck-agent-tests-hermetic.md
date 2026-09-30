@@ -1,0 +1,1 @@
+- Hub PR precheck no longer rejects `pkg/agent` PRs on live hives: `NewManager` reads the durable Copilot login through a test seam so `agentEnvPairs` tests stay hermetic when `/data/copilot-user-token` exists, and precheck failure summaries now include the assertion lines under `--- FAIL`.

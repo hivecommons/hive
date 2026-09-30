@@ -72,6 +72,10 @@ func TestMain(m *testing.M) {
 	}
 
 	stubBinDir = dir
+	// Keep NewManager hermetic on hosts that are real hives (the hub's PR
+	// precheck runs this package inside the pod, where /data/copilot-user-token
+	// exists and would add COPILOT_GITHUB_TOKEN to every agentEnvPairs result).
+	copilotUserTokenLoadPath = filepath.Join(dir, "absent-copilot-user-token")
 
 	const stubScript = "#!/bin/sh\nexec cat\n"
 
@@ -509,6 +513,39 @@ func TestAgentEnvPairs_EmptyModelAllowed(t *testing.T) {
 	if !found {
 		t.Error("expected HIVE_MODEL with empty value to be present when model is unset")
 	}
+}
+
+// TestAgentEnvPairs_DurableCopilotLoginInjected pins the durable-file fallback
+// that TestMain redirects away: when COPILOT_GITHUB_TOKEN is absent from the
+// env but the dashboard's device-flow login file exists, NewManager injects it
+// as COPILOT_GITHUB_TOKEN (secret) — one extra pair over the base count.
+func TestAgentEnvPairs_DurableCopilotLoginInjected(t *testing.T) {
+	clearAmbientHiveEnv(t)
+	t.Setenv("COPILOT_GITHUB_TOKEN", "")
+	orig := copilotUserTokenLoadPath
+	copilotUserTokenLoadPath = filepath.Join(t.TempDir(), "copilot-user-token")
+	t.Cleanup(func() { copilotUserTokenLoadPath = orig })
+	if err := os.WriteFile(copilotUserTokenLoadPath, []byte("gho_durable\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ap := &AgentProcess{
+		Name:   "agent",
+		Config: config.AgentConfig{Backend: "gemini", Model: "pro"},
+	}
+	pairs := testEnvPairs(ap)
+	if len(pairs) != baseEnvVarCount+1 {
+		t.Errorf("testEnvPairs() returned %d vars, want %d (base + COPILOT_GITHUB_TOKEN)", len(pairs), baseEnvVarCount+1)
+	}
+	for _, p := range pairs {
+		if p.Key == "COPILOT_GITHUB_TOKEN" {
+			if p.Value != "gho_durable" || !p.Secret {
+				t.Errorf("COPILOT_GITHUB_TOKEN = %+v, want value gho_durable marked secret", p)
+			}
+			return
+		}
+	}
+	t.Error("COPILOT_GITHUB_TOKEN not injected from durable login file")
 }
 
 func TestAgentEnvPairs_BDDirFromBeadsDir(t *testing.T) {

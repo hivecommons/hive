@@ -606,7 +606,10 @@ func formatPRPrecheckCommandFailure(command prPrecheckCommand, output string, er
 func summarizePrecheckOutput(output string) string {
 	lines := strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n")
 	var picked []string
-	failRE := regexp.MustCompile(`^(--- FAIL:|FAIL\b|panic:|fatal error:|DRIFT\b|::error::|Error:|error:)`)
+	// Assertion lines (`manager_test.go:492: got 14, want 13`) are what the
+	// requesting agent needs to act on a failure; without them a rejected PR
+	// request reports only the failing test names and agents loop resubmitting.
+	failRE := regexp.MustCompile(`^(--- FAIL:|FAIL\b|panic:|fatal error:|DRIFT\b|::error::|Error:|error:|\S+_test\.go:\d+: )`)
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "===") {

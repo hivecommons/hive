@@ -529,6 +529,15 @@ func TestDocsPrecheckFailureRejects(t *testing.T) {
 	}
 }
 
+func TestSummarizePrecheckOutputKeepsAssertionLines(t *testing.T) {
+	out := "=== RUN   TestX\n--- FAIL: TestX (0.01s)\n    manager_test.go:492: testEnvPairs() returned 14 vars, want 13\n    some other log line\nFAIL\nFAIL\tgithub.com/hivecommons/hive/pkg/agent\t1.0s\n"
+	got := summarizePrecheckOutput(out)
+	want := "--- FAIL: TestX (0.01s)\nmanager_test.go:492: testEnvPairs() returned 14 vars, want 13\nFAIL\nFAIL\tgithub.com/hivecommons/hive/pkg/agent\t1.0s"
+	if got != want {
+		t.Fatalf("summary = %q, want %q", got, want)
+	}
+}
+
 func TestSummarizePrecheckOutputFallsBackToFirstUsefulLines(t *testing.T) {
 	got := summarizePrecheckOutput("\n ok ignored\nplain diagnostic\nsecond line\n")
 	if got != "plain diagnostic\nsecond line" {
