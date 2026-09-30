@@ -24,8 +24,12 @@ repository touches it.
 
 - **Compute Optimized (1:2) dedicated CPU.** `-race` shards and golangci-lint
   are CPU-bound; shared-CPU steal time is what made the vllm-d shards flaky.
-  Per node: 32 vCPU ÷ (3 CPU runner + 0.25 CPU dind) ≈ 5 busy runners with
-  burst room to their 6+4 CPU limits.
+  Per node: 32 vCPU ÷ (1.5 CPU runner + 0.25 CPU dind requested) ≈ 16
+  scheduled runners, each able to burst to its 6+4 CPU limit. Requests are
+  deliberately below steady-state use because CI jobs are bursty; with 4
+  nodes that is ~64 concurrent runners before the pool autoscaler is needed
+  (at the original 3 CPU request the pool capped at ~36 and jobs sat
+  `Pending: Insufficient cpu`).
 - **No shared RWX volume.** Go promises safe concurrent cache use only on a
   local filesystem. `GOMODCACHE` and the runner tool cache are per-node
   `hostPath`s under `/var/lib/hive-ci/`; `GOCACHE` stays per-job

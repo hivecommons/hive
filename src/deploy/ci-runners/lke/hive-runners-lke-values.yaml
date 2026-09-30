@@ -97,10 +97,14 @@ template:
           - name: ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE
             value: /mnt/toolcache/actions-archive
         resources:
+          # Requests size the bin-packing, limits cap the burst. Runner nodes are
+          # g8-dedicated-64-32 (32 vCPU / 64 GB): at 1.5 CPU + 3 Gi + 15 Gi eph
+          # per runner (plus dind below) a node holds ~16 runners instead of ~9.
+          # CI jobs are bursty, so overcommit on requests is intentional.
           requests:
-            cpu: "3"
-            memory: 4Gi
-            ephemeral-storage: 25Gi
+            cpu: "1500m"
+            memory: 3Gi
+            ephemeral-storage: 15Gi
           limits:
             cpu: "6"
             memory: 16Gi
@@ -133,7 +137,7 @@ template:
           requests:
             cpu: 250m
             memory: 512Mi
-            ephemeral-storage: 20Gi
+            ephemeral-storage: 10Gi
           limits:
             cpu: "4"
             memory: 8Gi

@@ -1,0 +1,1 @@
+- LKE CI runners request 1.5 CPU / 3 Gi / 15 Gi (runner) and 10 Gi eph (dind) instead of 3 CPU / 4 Gi / 25 Gi + 20 Gi, roughly doubling runners per 32-vCPU node; limits are unchanged.
