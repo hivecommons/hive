@@ -140,10 +140,20 @@ class ClassifierRegionTest(unittest.TestCase):
         self.assertEqual(classifier.classify(log, "", sigs), "code")
         apt = ("::error::hive-fake-gcc is required for -race tests and could not be "
                "installed: apt-get could not install 'gcc libc6-dev'.")
-        header = STEP_CODE_FAILURE.split("##[error]pkg/github")[0]
+        # Everything up to and including the step's ##[endgroup] line, so each
+        # composed line below carries exactly one timestamp.
+        endgroup = "##[endgroup]\n"
+        header = STEP_CODE_FAILURE[:STEP_CODE_FAILURE.index(endgroup) + len(endgroup)]
         tail = "2026-09-29T08:34:00.2920000Z ##[error]Process completed with exit code 1.\n"
-        for captured in ("    | " + apt, "    " + apt, "  ##[error]" + apt[len("::error::"):]):
-            with self.subTest(captured=captured):
+        cases = {
+            "harness-pipe-prefix": "    | " + apt,
+            "indented-error-command": "    " + apt,
+            "indented-error-marker": "  ##[error]" + apt[len("::error::"):],
+        }
+        # Label subtests by name, never by the line itself: unittest echoes the
+        # label, and a workflow command in it would become a real annotation.
+        for name, captured in cases.items():
+            with self.subTest(case=name):
                 log = header + "2026-09-29T08:34:00.2900000Z " + captured + "\n" + tail
                 self.assertEqual(classifier.classify(log, "", sigs), "code")
         real = header + "2026-09-29T08:34:00.2900000Z ##[error]" + apt[len("::error::"):] + "\n" + tail
