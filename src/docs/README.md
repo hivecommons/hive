@@ -35,6 +35,7 @@ Start with [Zero to Automation: Getting Started with Hive](getting-started.md). 
 - [Getting started](getting-started.md)
 - [Operator reference](operator-reference.md)
 - [Security model](security-model.md)
+- [Securing your hive: a first-time operator's guide](securing-your-hive.md)
 - [Documentation map](documentation-map.md)
 
 Current docs target branch `v5`; use the [documentation map](documentation-map.md) for v2 → v4 and v4 → v5 migration pointers.

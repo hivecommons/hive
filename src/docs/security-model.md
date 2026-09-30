@@ -6,6 +6,11 @@ Hive's answer is architectural, not aspirational. The project's core design rule
 
 Two companion pages go deeper along their own axis: [security-threat-model.md](security-threat-model.md) is the attacker-oriented view (assets, trust boundaries, threat actors, residual risks), and [security.md](security.md) documents the log-scrubbing and secret-redaction layer. This page is the operator- and evaluator-facing map of the mechanisms themselves.
 
+New to Hive and asking "who can make Hive do what in my repo?" specifically —
+level, reporter trust, and repo scope working together — start with
+[Securing your hive: a first-time operator's guide](securing-your-hive.md)
+instead; it links back to the mechanism pages below for the details.
+
 ## What hive touches
 
 A running hive holds three things you care about:

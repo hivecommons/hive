@@ -167,6 +167,7 @@ Some documents describe planned or design-only work rather than live features. T
 
 ## Security (v4)
 
+- [Securing your hive: a first-time operator's guide](securing-your-hive.md) — decision-oriented walkthrough of ACMM level, reporter trust, and repo scope: starting postures, the #9758/#9762 real-world walk-through, Q&A, a pre-L6 checklist, and a glossary.
 - [Security model — operator guide](security-model.md) — Ed25519-only sessions/SSO, per-hive keys, master key rotation, forced proxy egress and `CAP_NET_ADMIN`, privilege model, and supply-chain posture.
 - [Security threat model](security-threat-model.md) — actors, boundaries, layered defenses, known gaps, and reporting.
 - [Security response process](security-response.md) — who responds to a vulnerability report (the Maintainer Committee, rostered in `OWNERS`), the end-to-end handling flow and the 60-day fix commitment, how membership is added and rotated, the escalation path if a reporter gets no response, and the project's known limits stated plainly.
