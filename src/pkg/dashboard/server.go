@@ -589,8 +589,15 @@ type FrontendAgent struct {
 	// Starting is true while the agent is queued in the post-restart boot
 	// stagger or its launch is in progress. State is still "stopped" then;
 	// the SPA renders this window as "starting" rather than down.
-	Starting               bool   `json:"starting,omitempty"`
-	Busy                   string `json:"busy"`
+	Starting bool   `json:"starting,omitempty"`
+	Busy     string `json:"busy"`
+	// AwaitingCI (#9673 item 3) is true only while Busy=="working" AND the
+	// manager's CI-poll guard sees the agent's recent tool calls as all CI
+	// polls (gh run watch/view/list, gh pr checks) with it currently idle at
+	// the prompt. The SPA renders this as "Waiting on CI" instead of
+	// "Working" so a stalled-on-CI agent no longer looks indistinguishable
+	// from one making progress.
+	AwaitingCI             bool   `json:"awaitingCI,omitempty"`
 	Paused                 bool   `json:"paused"`
 	PausedAt               string `json:"pausedAt,omitempty"`
 	PausedReason           string `json:"pausedReason,omitempty"`

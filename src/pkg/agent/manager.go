@@ -353,9 +353,17 @@ type AgentProcess struct {
 	transientNudgesThisKick int
 	// CI-poll guard (#9673): baseline is the CI-poll command count already in
 	// scrollback when the kick's first poll tick ran (-1 = not yet captured).
-	ciPollBaseline              int
-	ciPollNudgeSent             bool
-	CIPollNudges                int // total CI-polling nudges sent
+	ciPollBaseline  int
+	ciPollNudgeSent bool
+	CIPollNudges    int // total CI-polling nudges sent
+	// AwaitingCI (#9673 item 3): true while the agent has crossed the
+	// CI-poll nudge threshold this kick AND is currently idle at the prompt
+	// (the same signal nudgeIfPollingCI uses to decide whether to nudge).
+	// Recomputed every poll tick, so it self-clears the moment the agent
+	// does something else; reset on every new kick. The dashboard renders
+	// this as "Waiting on CI" instead of "Working" so a stalled-on-CI agent
+	// no longer looks indistinguishable from one making progress.
+	AwaitingCI                  bool
 	TransientNudges             int // total transient-API-error nudges sent (surfaced to the dashboard)
 	launchGen                   int // increments per launch; stale deliverStartupKick goroutines check it and drop
 	lastInferKickMarks          int // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery

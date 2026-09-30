@@ -1,0 +1,1 @@
+- The dashboard now renders "Waiting on CI" instead of "Working" for an agent whose recent tool calls are all CI polls (`gh run watch/view/list`, `gh pr checks`), reusing the harness's stop-polling nudge signal so the two states never disagree ([#9673](https://github.com/hivecommons/hive/issues/9673)).

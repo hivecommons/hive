@@ -407,6 +407,7 @@ func (m *Manager) recordDeliveredKickLocked(agent *AgentProcess, message, trigge
 	agent.lastTransientNudge = time.Time{}
 	agent.ciPollBaseline = -1
 	agent.ciPollNudgeSent = false
+	agent.AwaitingCI = false
 
 	snippet := message
 	const maxSnippetLen = 120
@@ -1236,21 +1237,26 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 	}
 	count := countCIPollCommands(scrollback)
 	m.mu.Lock()
-	if agent.ciPollNudgeSent {
-		m.mu.Unlock()
-		return
-	}
 	if agent.ciPollBaseline < 0 {
 		agent.ciPollBaseline = count
 		m.mu.Unlock()
 		return
 	}
-	if count-agent.ciPollBaseline <= ciPollNudgeThreshold {
-		m.mu.Unlock()
-		return
-	}
+	overThreshold := count-agent.ciPollBaseline > ciPollNudgeThreshold
+	alreadyNudged := agent.ciPollNudgeSent
 	m.mu.Unlock()
-	if paneShowsActiveWork(visible) || !paneShowsEmptyInputPrompt(visible) {
+
+	// idlePrompt is the same idle-at-prompt gate the nudge below requires: the
+	// agent stopped producing new output after its polling ran. AwaitingCI
+	// (#9673 item 3) uses it too, so the dashboard's "Waiting on CI" state
+	// self-clears the instant the agent starts doing something else, rather
+	// than sticking until the next kick.
+	idlePrompt := !paneShowsActiveWork(visible) && paneShowsEmptyInputPrompt(visible)
+	m.mu.Lock()
+	agent.AwaitingCI = overThreshold && idlePrompt
+	m.mu.Unlock()
+
+	if alreadyNudged || !overThreshold || !idlePrompt {
 		return
 	}
 	if m.tmuxSessionHasAttachedClientForAgent(agent) {
