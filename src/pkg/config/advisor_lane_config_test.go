@@ -128,12 +128,12 @@ func TestAdvisorSupportedBackend(t *testing.T) {
 	if !AdvisorSupportedBackend("claude") || !AdvisorSupportedBackend(" Claude ") {
 		t.Error("claude must be supported (case/space insensitive)")
 	}
-	for _, b := range []string{"copilot", "codex", " Codex "} {
+	for _, b := range []string{"omp", " OMP ", "copilot", "codex", " Codex "} {
 		if !AdvisorSupportedBackend(b) {
 			t.Errorf("backend %q must be supported", b)
 		}
 	}
-	for _, b := range []string{"omp", "goose", ""} {
+	for _, b := range []string{"goose", ""} {
 		if AdvisorSupportedBackend(b) {
 			t.Errorf("backend %q must not be supported", b)
 		}

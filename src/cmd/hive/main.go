@@ -2256,6 +2256,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	b.agentMgr.SetAdvisorEnabledResolver(func(agentName string) bool {
 		return b.cfg.AdvisorEnabledFor(agentName)
 	})
+	b.agentMgr.SetAdvisorRolesResolver(func() map[string]config.ModelRole {
+		return b.cfg.ModelRoles
+	})
 	b.agentMgr.SetRepoAutoMergeEnabledResolver(func(repo string) bool {
 		return b.cfg.RepoAutoMergeEnabled(repo)
 	})

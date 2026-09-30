@@ -1,8 +1,9 @@
 # The advisor lane
 
-**Status: phases 1 and 3 implemented** (roles, records, and the Claude Code adapter —
-[#9722](https://github.com/hivecommons/hive/issues/9722); the Copilot CLI and Codex CLI adapters —
-[#9724](https://github.com/hivecommons/hive/issues/9724)); phases 2 and 4 are design
+**Status: phases 1–3 implemented** (roles, records, and the Claude Code adapter —
+[#9722](https://github.com/hivecommons/hive/issues/9722); the OMP adapter —
+[#9723](https://github.com/hivecommons/hive/issues/9723); the Copilot CLI and Codex CLI adapters —
+[#9724](https://github.com/hivecommons/hive/issues/9724)); phase 4 is design
 only. It belongs to the v6 line
 ([#7563](https://github.com/hivecommons/hive/issues/7563)) and, per that line's policy, lands on
 the `v6` branch only. Tracked by [#9638](https://github.com/hivecommons/hive/issues/9638).

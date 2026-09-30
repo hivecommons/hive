@@ -230,6 +230,9 @@ func (m *Manager) advisorLaunchFlag(agent *AgentProcess, backend string, isInfer
 			"agent", agent.Name, "backend", backend, "supported", config.AdvisorSupportedBackendList)
 		return ""
 	}
+	if strings.EqualFold(strings.TrimSpace(backend), config.AdvisorOMPBackend) {
+		return m.ompAdvisorLaunchFlag(agent)
+	}
 	if isInference {
 		// Inference-routed Claude runs bare against the translator with a fixed
 		// settings FILE; there is no interactive turn boundary to hook.

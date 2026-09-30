@@ -20,17 +20,20 @@ const ModelRoleRefPrefix = "@"
 
 // AdvisorClaudeBackend is the backend of the Claude Code `Stop` hook adapter
 // (phase 1). AdvisorCopilotBackend and AdvisorCodexBackend are the Copilot
-// CLI `agentStop` and Codex CLI `Stop` adapters (phase 3, #9724). OMP follows
-// in phase 2 — see the design doc §Phases.
+// CLI `agentStop` and Codex CLI `Stop` adapters (phase 3, #9724).
 const (
 	AdvisorClaudeBackend  = "claude"
 	AdvisorCopilotBackend = "copilot"
 	AdvisorCodexBackend   = "codex"
 )
 
+// AdvisorOMPBackend is the backend of the phase-2 adapter (the OMP
+// `session_stop` extension and `--config` roles overlay).
+const AdvisorOMPBackend = "omp"
+
 // AdvisorSupportedBackendList names the supported backends for operator-facing
 // messages.
-const AdvisorSupportedBackendList = AdvisorClaudeBackend + ", " + AdvisorCopilotBackend + ", " + AdvisorCodexBackend
+const AdvisorSupportedBackendList = AdvisorClaudeBackend + ", " + AdvisorOMPBackend + ", " + AdvisorCopilotBackend + ", " + AdvisorCodexBackend
 
 // AdvisorCopilotBlockBound is the smallest bound a supported backend imposes
 // on forced continuations: Copilot CLI force-ends a turn after 8 consecutive
@@ -154,10 +157,11 @@ func (c *Config) AdvisorEnabledFor(agentName string) bool {
 }
 
 // AdvisorSupportedBackend reports whether the advisor lane has an adapter for
-// the backend: the Claude Code, Copilot CLI and Codex CLI turn-end hooks.
+// the backend: the Claude Code, Copilot CLI and Codex CLI turn-end hooks and
+// the OMP `session_stop` extension.
 func AdvisorSupportedBackend(backend string) bool {
 	switch strings.ToLower(strings.TrimSpace(backend)) {
-	case AdvisorClaudeBackend, AdvisorCopilotBackend, AdvisorCodexBackend:
+	case AdvisorClaudeBackend, AdvisorOMPBackend, AdvisorCopilotBackend, AdvisorCodexBackend:
 		return true
 	}
 	return false

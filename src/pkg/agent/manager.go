@@ -590,6 +590,10 @@ type Manager struct {
 	// and env paths, which hold m.mu — same atomic.Pointer discipline as
 	// explainModeDefaultResolver.
 	advisorEnabledResolver atomic.Pointer[func(agentName string) bool]
+	// advisorRolesResolver returns the live model_roles map the OMP adapter
+	// projects as a --config overlay at launch (#9723). Same discipline as
+	// advisorEnabledResolver.
+	advisorRolesResolver atomic.Pointer[func() map[string]config.ModelRole]
 	// repoAutoMergeEnabled resolves the live per-repo auto-merge switch used by
 	// the merge relay. Nil preserves the historic default-on behavior.
 	repoAutoMergeEnabled atomic.Pointer[func(repo string) bool]

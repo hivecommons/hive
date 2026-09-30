@@ -1,0 +1,1 @@
+- Advisor lane phase 2: OMP agents get the advisor through a hive-owned `session_stop` extension and a `--config` roles overlay, both projected at launch without touching the operator's OMP config.
