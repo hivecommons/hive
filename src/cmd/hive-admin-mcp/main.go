@@ -307,6 +307,9 @@ func readPath(tool string, args map[string]any) (string, bool) {
 		}
 		return "/api/kick/" + url.PathEscape(agent) + "/status", true
 	}
+	if tool == adminmcp.ToolAdvisorRecords {
+		return adminmcp.AdvisorRecordsReadPath(args), true
+	}
 	return adminmcp.ReadPath(tool, adminmcp.LimitFromArgs(args))
 }
 

@@ -98,6 +98,9 @@ func adminMCPReadPath(tool string, args map[string]any) (string, bool) {
 	if tool == adminmcp.ToolIssuesByBand || tool == adminmcp.ToolPrsByBand {
 		return overviewBandReadPath(tool, args), true
 	}
+	if tool == adminmcp.ToolAdvisorRecords {
+		return adminmcp.AdvisorRecordsReadPath(args), true
+	}
 	return adminmcp.ReadPath(tool, adminmcp.LimitFromArgs(args))
 }
 

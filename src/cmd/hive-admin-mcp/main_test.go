@@ -385,3 +385,10 @@ func TestRosterReusesClientPerHive(t *testing.T) {
 		t.Fatal("different hives share one client")
 	}
 }
+
+func TestReadPathAdvisorRecords(t *testing.T) {
+	path, ok := readPath(adminmcp.ToolAdvisorRecords, map[string]any{"agent": "scout", "hours": float64(24)})
+	if !ok || !strings.HasPrefix(path, "/api/advisor/records?") || !strings.Contains(path, "agent=scout") || !strings.Contains(path, "hours=24") {
+		t.Fatalf("path = %q ok=%v", path, ok)
+	}
+}

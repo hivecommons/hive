@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/adminmcp"
+	"github.com/hivecommons/hive/pkg/advisor"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 func TestAdminMCPEndpointUsesDashboardAuthentication(t *testing.T) {
@@ -149,5 +151,43 @@ func TestAdminMCPWritePreviewFailsFastWithoutDashboardBearer(t *testing.T) {
 	h.ServeHTTP(bearer, req)
 	if !strings.Contains(bearer.Body.String(), "confirmation_id") {
 		t.Fatalf("preview with bearer = %s", bearer.Body.String())
+	}
+}
+
+func TestAdminMCPAdvisorRecordsMatchesREST(t *testing.T) {
+	s := advisorTestServer(t)
+	store := advisor.NewStore("")
+	store.Append(advisor.Record{Agent: "scout", Timestamp: "2026-01-01T00:00:00Z", Severity: "concern", Text: "old flag"})
+	store.Append(advisor.Record{Agent: "scout", Timestamp: "2026-03-01T00:00:00Z", Severity: "blocker", Text: "march flag"})
+	store.Append(advisor.Record{Agent: "other", Timestamp: "2026-03-02T00:00:00Z", Severity: "concern", Text: "other flag"})
+	s.SetAdvisorRecords(store)
+
+	args := map[string]any{"agent": "scout", "since": "2026-02-01T00:00:00Z", "until": "2026-04-01T00:00:00Z"}
+	path, ok := adminMCPReadPath(adminmcp.ToolAdvisorRecords, args)
+	if !ok || !strings.HasPrefix(path, "/api/advisor/records?") {
+		t.Fatalf("path = %q ok=%v", path, ok)
+	}
+	provider := dashboardAdminMCPProvider{server: s, role: config.RoleReadWrite}
+	result, err := provider.Read(context.Background(), adminmcp.ToolAdvisorRecords, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _ := result.(map[string]any)
+	records, _ := out["records"].([]any)
+	if len(records) != 1 || records[0].(map[string]any)["text"] != "march flag" {
+		t.Fatalf("admin MCP must return what REST returns for the same agent and window: %#v", result)
+	}
+
+	fleet, err := provider.Read(context.Background(), adminmcp.ToolAdvisorRecords, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := fleet.(map[string]any)["records"].([]any); len(got) != 3 {
+		t.Fatalf("fleet-wide read: %#v", fleet)
+	}
+
+	readOnly := dashboardAdminMCPProvider{server: s, role: config.RoleRead}
+	if _, err := readOnly.Read(context.Background(), adminmcp.ToolAdvisorRecords, args); err == nil {
+		t.Fatal("advisor records must keep the REST read-write floor through admin MCP")
 	}
 }

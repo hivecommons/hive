@@ -96,7 +96,7 @@
           "Audit"
         ],
         "summary": "Advisor lane review records",
-        "description": "Lists advisor-lane records (issue #9722): one record per advisor review of a hub-launched agent's finished turn, skipped reviews included, newest first. Filterable by agent and RFC3339 since; capped at 200. Requires read-write or higher access.",
+        "description": "Lists advisor-lane records (issues #9722, #9725): one record per advisor review of a hub-launched agent's finished turn, skipped reviews included, newest first. Filterable by agent and a time window (RFC3339 since/until, or an hours lookback); capped at 200. The admin MCP advisor_records tool reads this listing. Requires read-write or higher access.",
         "parameters": [
           {
             "name": "agent",
@@ -114,6 +114,25 @@
               "format": "date-time"
             },
             "description": "Only records at or after this RFC3339 timestamp."
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Only records at or before this RFC3339 timestamp."
+          },
+          {
+            "name": "hours",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 720
+            },
+            "description": "Lookback from now in hours; mutually exclusive with since."
           },
           {
             "name": "limit",
@@ -205,10 +224,921 @@
             }
           },
           "400": {
-            "description": "Invalid since or limit"
+            "description": "Invalid since, until, hours or limit"
           },
           "403": {
             "description": "Insufficient access"
+          }
+        }
+      }
+    },
+    "/api/advisor/spend": {
+      "get": {
+        "tags": [
+          "Cost"
+        ],
+        "summary": "Aggregated advisor spend per agent",
+        "description": "Advisor-lane spend per agent (issue #9725) over the same time ranges the Cost section offers: range=hourly|daily|weekly|monthly (24h, 30d, 12w, 12 x 30d windows ending now), or a custom RFC3339 since/until or hours lookback. Each figure equals the sum of the cost on that agent's advisor records for the period, as GET /api/advisor/records returns them. Unbounded when no window is given.",
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "hourly",
+                "daily",
+                "weekly",
+                "monthly"
+              ]
+            },
+            "description": "Preset window matching the Cost section's range selector; exclusive with since/hours."
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "hours",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 720
+            }
+          },
+          {
+            "name": "agent",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Only this agent."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Advisor spend per agent, sorted by agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "range": {
+                      "type": "string",
+                      "description": "The preset name, custom, or all."
+                    },
+                    "since": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "until": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "total_cost_usd": {
+                      "type": "number"
+                    },
+                    "agents": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "advisor.AgentSpend (src/pkg/advisor/window.go): the sum over the agent's advisor records in the window.",
+                        "properties": {
+                          "agent": {
+                            "type": "string"
+                          },
+                          "reviews": {
+                            "type": "integer",
+                            "description": "Advisor records in the window, skipped reviews included."
+                          },
+                          "skipped": {
+                            "type": "integer"
+                          },
+                          "input_tokens": {
+                            "type": "integer"
+                          },
+                          "output_tokens": {
+                            "type": "integer"
+                          },
+                          "cost_usd": {
+                            "type": "number"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid range or window"
+          }
+        }
+      }
+    },
+    "/api/config/advisor": {
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Advisor lane settings",
+        "description": "The fleet advisor block, the named model_roles map, and for every agent its override plus the value in force and where each value comes from (issue #9725). Owner only.",
+        "responses": {
+          "200": {
+            "description": "Advisor settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "fleet": {
+                      "type": "object",
+                      "description": "The fleet advisor block as configured (config.AdvisorConfig).",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "model": {
+                          "type": "string",
+                          "description": "Model id or @role reference."
+                        },
+                        "instructions": {
+                          "type": "string"
+                        },
+                        "daily_budget_tokens": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "timeout_s": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "max_consecutive_blocks": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      }
+                    },
+                    "model_roles": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "backend": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "reasoning_effort": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "defaults": {
+                      "type": "object",
+                      "properties": {
+                        "timeout_s": {
+                          "type": "integer"
+                        },
+                        "max_consecutive_blocks": {
+                          "type": "integer"
+                        },
+                        "block_bound": {
+                          "type": "integer",
+                          "description": "The consecutive-block limit must stay below this."
+                        }
+                      }
+                    },
+                    "agents": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "backend": {
+                            "type": "string"
+                          },
+                          "override": {
+                            "type": "object",
+                            "nullable": true,
+                            "description": "config.AdvisorOverride: unset fields inherit the fleet block; enabled=false opts the agent out.",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              },
+                              "model": {
+                                "type": "string"
+                              },
+                              "instructions": {
+                                "type": "string"
+                              },
+                              "daily_budget_tokens": {
+                                "type": "integer"
+                              },
+                              "timeout_s": {
+                                "type": "integer"
+                              },
+                              "max_consecutive_blocks": {
+                                "type": "integer"
+                              }
+                            }
+                          },
+                          "effective": {
+                            "type": "object",
+                            "description": "config.AdvisorEffective: the value in force at the agent's next launch; sources maps each field to agent, fleet or default.",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              },
+                              "model": {
+                                "type": "string"
+                              },
+                              "resolved_model": {
+                                "type": "string"
+                              },
+                              "instructions": {
+                                "type": "string"
+                              },
+                              "daily_budget_tokens": {
+                                "type": "integer"
+                              },
+                              "timeout_s": {
+                                "type": "integer"
+                              },
+                              "max_consecutive_blocks": {
+                                "type": "integer"
+                              },
+                              "sources": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "string",
+                                  "enum": [
+                                    "agent",
+                                    "fleet",
+                                    "default"
+                                  ]
+                                }
+                              }
+                            }
+                          },
+                          "active": {
+                            "type": "boolean"
+                          },
+                          "active_reason": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner role required"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Edit the fleet advisor block",
+        "description": "Updates the fields present in the body, validates with the hive.yaml checks before mutating, persists, and takes effect at each affected agent's next launch. Owner only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "model": {
+                    "type": "string",
+                    "description": "Model id or @role reference."
+                  },
+                  "instructions": {
+                    "type": "string"
+                  },
+                  "daily_budget_tokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "timeout_s": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "max_consecutive_blocks": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated advisor settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "fleet": {
+                      "type": "object",
+                      "description": "The fleet advisor block as configured (config.AdvisorConfig).",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "model": {
+                          "type": "string",
+                          "description": "Model id or @role reference."
+                        },
+                        "instructions": {
+                          "type": "string"
+                        },
+                        "daily_budget_tokens": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "timeout_s": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "max_consecutive_blocks": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      }
+                    },
+                    "model_roles": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "backend": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "reasoning_effort": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "defaults": {
+                      "type": "object",
+                      "properties": {
+                        "timeout_s": {
+                          "type": "integer"
+                        },
+                        "max_consecutive_blocks": {
+                          "type": "integer"
+                        },
+                        "block_bound": {
+                          "type": "integer",
+                          "description": "The consecutive-block limit must stay below this."
+                        }
+                      }
+                    },
+                    "agents": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "backend": {
+                            "type": "string"
+                          },
+                          "override": {
+                            "type": "object",
+                            "nullable": true,
+                            "description": "config.AdvisorOverride: unset fields inherit the fleet block; enabled=false opts the agent out.",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              },
+                              "model": {
+                                "type": "string"
+                              },
+                              "instructions": {
+                                "type": "string"
+                              },
+                              "daily_budget_tokens": {
+                                "type": "integer"
+                              },
+                              "timeout_s": {
+                                "type": "integer"
+                              },
+                              "max_consecutive_blocks": {
+                                "type": "integer"
+                              }
+                            }
+                          },
+                          "effective": {
+                            "type": "object",
+                            "description": "config.AdvisorEffective: the value in force at the agent's next launch; sources maps each field to agent, fleet or default.",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              },
+                              "model": {
+                                "type": "string"
+                              },
+                              "resolved_model": {
+                                "type": "string"
+                              },
+                              "instructions": {
+                                "type": "string"
+                              },
+                              "daily_budget_tokens": {
+                                "type": "integer"
+                              },
+                              "timeout_s": {
+                                "type": "integer"
+                              },
+                              "max_consecutive_blocks": {
+                                "type": "integer"
+                              },
+                              "sources": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "string",
+                                  "enum": [
+                                    "agent",
+                                    "fleet",
+                                    "default"
+                                  ]
+                                }
+                              }
+                            }
+                          },
+                          "active": {
+                            "type": "boolean"
+                          },
+                          "active_reason": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid edit (same message hive.yaml loading would give); nothing changed"
+          },
+          "403": {
+            "description": "Owner role required"
+          }
+        }
+      }
+    },
+    "/api/config/advisor/roles": {
+      "put": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Replace the model_roles map",
+        "description": "Replaces the named model roles. A role still referenced by the advisor block or an agent override cannot be removed. Owner only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "model_roles": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "object",
+                      "properties": {
+                        "backend": {
+                          "type": "string"
+                        },
+                        "model": {
+                          "type": "string"
+                        },
+                        "reasoning_effort": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated advisor settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "fleet": {
+                      "type": "object",
+                      "description": "The fleet advisor block as configured (config.AdvisorConfig).",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "model": {
+                          "type": "string",
+                          "description": "Model id or @role reference."
+                        },
+                        "instructions": {
+                          "type": "string"
+                        },
+                        "daily_budget_tokens": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "timeout_s": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "max_consecutive_blocks": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      }
+                    },
+                    "model_roles": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "backend": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "reasoning_effort": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "defaults": {
+                      "type": "object",
+                      "properties": {
+                        "timeout_s": {
+                          "type": "integer"
+                        },
+                        "max_consecutive_blocks": {
+                          "type": "integer"
+                        },
+                        "block_bound": {
+                          "type": "integer",
+                          "description": "The consecutive-block limit must stay below this."
+                        }
+                      }
+                    },
+                    "agents": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "backend": {
+                            "type": "string"
+                          },
+                          "override": {
+                            "type": "object",
+                            "nullable": true,
+                            "description": "config.AdvisorOverride: unset fields inherit the fleet block; enabled=false opts the agent out.",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              },
+                              "model": {
+                                "type": "string"
+                              },
+                              "instructions": {
+                                "type": "string"
+                              },
+                              "daily_budget_tokens": {
+                                "type": "integer"
+                              },
+                              "timeout_s": {
+                                "type": "integer"
+                              },
+                              "max_consecutive_blocks": {
+                                "type": "integer"
+                              }
+                            }
+                          },
+                          "effective": {
+                            "type": "object",
+                            "description": "config.AdvisorEffective: the value in force at the agent's next launch; sources maps each field to agent, fleet or default.",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              },
+                              "model": {
+                                "type": "string"
+                              },
+                              "resolved_model": {
+                                "type": "string"
+                              },
+                              "instructions": {
+                                "type": "string"
+                              },
+                              "daily_budget_tokens": {
+                                "type": "integer"
+                              },
+                              "timeout_s": {
+                                "type": "integer"
+                              },
+                              "max_consecutive_blocks": {
+                                "type": "integer"
+                              },
+                              "sources": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "string",
+                                  "enum": [
+                                    "agent",
+                                    "fleet",
+                                    "default"
+                                  ]
+                                }
+                              }
+                            }
+                          },
+                          "active": {
+                            "type": "boolean"
+                          },
+                          "active_reason": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid edit (same message hive.yaml loading would give); nothing changed"
+          },
+          "403": {
+            "description": "Owner role required"
+          }
+        }
+      }
+    },
+    "/api/config/advisor/agent/{name}": {
+      "put": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Set an agent's advisor override",
+        "description": "Sets or clears (override: null) one agent's advisor override; {\"override\":{\"enabled\":false}} opts the agent out. Takes effect at the agent's next launch. Owner only.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "override": {
+                    "type": "object",
+                    "nullable": true,
+                    "description": "config.AdvisorOverride: unset fields inherit the fleet block; enabled=false opts the agent out.",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "model": {
+                        "type": "string"
+                      },
+                      "instructions": {
+                        "type": "string"
+                      },
+                      "daily_budget_tokens": {
+                        "type": "integer"
+                      },
+                      "timeout_s": {
+                        "type": "integer"
+                      },
+                      "max_consecutive_blocks": {
+                        "type": "integer"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated advisor settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "fleet": {
+                      "type": "object",
+                      "description": "The fleet advisor block as configured (config.AdvisorConfig).",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "model": {
+                          "type": "string",
+                          "description": "Model id or @role reference."
+                        },
+                        "instructions": {
+                          "type": "string"
+                        },
+                        "daily_budget_tokens": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "timeout_s": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "max_consecutive_blocks": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      }
+                    },
+                    "model_roles": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "backend": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "reasoning_effort": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "defaults": {
+                      "type": "object",
+                      "properties": {
+                        "timeout_s": {
+                          "type": "integer"
+                        },
+                        "max_consecutive_blocks": {
+                          "type": "integer"
+                        },
+                        "block_bound": {
+                          "type": "integer",
+                          "description": "The consecutive-block limit must stay below this."
+                        }
+                      }
+                    },
+                    "agents": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "backend": {
+                            "type": "string"
+                          },
+                          "override": {
+                            "type": "object",
+                            "nullable": true,
+                            "description": "config.AdvisorOverride: unset fields inherit the fleet block; enabled=false opts the agent out.",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              },
+                              "model": {
+                                "type": "string"
+                              },
+                              "instructions": {
+                                "type": "string"
+                              },
+                              "daily_budget_tokens": {
+                                "type": "integer"
+                              },
+                              "timeout_s": {
+                                "type": "integer"
+                              },
+                              "max_consecutive_blocks": {
+                                "type": "integer"
+                              }
+                            }
+                          },
+                          "effective": {
+                            "type": "object",
+                            "description": "config.AdvisorEffective: the value in force at the agent's next launch; sources maps each field to agent, fleet or default.",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              },
+                              "model": {
+                                "type": "string"
+                              },
+                              "resolved_model": {
+                                "type": "string"
+                              },
+                              "instructions": {
+                                "type": "string"
+                              },
+                              "daily_budget_tokens": {
+                                "type": "integer"
+                              },
+                              "timeout_s": {
+                                "type": "integer"
+                              },
+                              "max_consecutive_blocks": {
+                                "type": "integer"
+                              },
+                              "sources": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "string",
+                                  "enum": [
+                                    "agent",
+                                    "fleet",
+                                    "default"
+                                  ]
+                                }
+                              }
+                            }
+                          },
+                          "active": {
+                            "type": "boolean"
+                          },
+                          "active_reason": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid edit (same message hive.yaml loading would give); nothing changed"
+          },
+          "403": {
+            "description": "Owner role required"
           }
         }
       }
@@ -20908,6 +21838,35 @@
                     },
                     "closed_issues": {
                       "type": "integer"
+                    },
+                    "advisor_by_agent": {
+                      "type": "array",
+                      "description": "Advisor-lane spend per agent over every retained advisor record (issue #9725); GET /api/advisor/spend gives it per time range.",
+                      "items": {
+                        "type": "object",
+                        "description": "advisor.AgentSpend (src/pkg/advisor/window.go): the sum over the agent's advisor records in the window.",
+                        "properties": {
+                          "agent": {
+                            "type": "string"
+                          },
+                          "reviews": {
+                            "type": "integer",
+                            "description": "Advisor records in the window, skipped reviews included."
+                          },
+                          "skipped": {
+                            "type": "integer"
+                          },
+                          "input_tokens": {
+                            "type": "integer"
+                          },
+                          "output_tokens": {
+                            "type": "integer"
+                          },
+                          "cost_usd": {
+                            "type": "number"
+                          }
+                        }
+                      }
                     }
                   }
                 }

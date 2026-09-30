@@ -3197,6 +3197,18 @@
     .advisor-rec { font-size: var(--fs-sm); padding: var(--sp-2) var(--sp-0); border-top: 1px solid var(--border); }
     .advisor-rec-ts { color: var(--muted); float: right; }
     .advisor-rec-text { margin-top: var(--sp-1); white-space: pre-wrap; }
+    .advisor-set-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); margin-top: var(--sp-4); }
+    .advisor-set-wide { grid-column: 1 / -1; }
+    .advisor-set-label { display: block; font-size: var(--fs-xs); color: var(--muted); margin-bottom: var(--sp-1); }
+    .advisor-set-input { width: 100%; box-sizing: border-box; }
+    .advisor-set-actions { display: flex; flex-wrap: wrap; gap: var(--sp-3); margin-top: var(--sp-4); }
+    .advisor-set-h { font-weight: 600; margin-top: var(--sp-6); }
+    .advisor-set-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); margin-top: var(--sp-3); }
+    .advisor-set-table th, .advisor-set-table td { text-align: left; vertical-align: top; padding: var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-0); }
+    .advisor-set-table th { color: var(--muted); font-weight: 600; }
+    .advisor-src { font-size: var(--fs-xs); color: var(--muted); }
+    .advisor-src-agent { color: var(--accent); }
+    .advisor-spend-chip { border-style: dashed; }
     .muted-note { font-size: 0.78rem; color: var(--muted); }
     .muted-xs { font-size: 0.72rem; color: var(--muted); }
     .title-sm { font-size: var(--fs-md); font-weight: 600; color: var(--fg); }
@@ -6838,6 +6850,7 @@
       try { localStorage.setItem('hiveCostCustom', JSON.stringify(_costCustom)); } catch {}
       if (_lastCost) renderCost(_lastCost);
       if (window._lastAgents) renderAgents(window._lastAgents);
+      fetchAdvisorSpend().then(() => { if (window._lastAgents) renderAgents(window._lastAgents); });
     }
 
     async function fetchHistory() {
@@ -7113,15 +7126,41 @@
     // history has no per-agent data covering the window.
     function agentSpendChip(name) {
       const usd = agentWindowSpend(name);
-      if (usd == null) return '';
       const lbl = _costRange === 'custom' ? 'custom range' : `${COST_RANGES[_costRange].label} range`;
-      return `<span class="agent-spend-chip" title="Estimated spend over the ${lbl} — follows the Cost section's timeframe selector (token × list price)">${fmtUSD(usd)}</span>`;
+      const own = usd == null ? '' : `<span class="agent-spend-chip" title="Estimated spend over the ${lbl} — follows the Cost section's timeframe selector (token × list price)">${fmtUSD(usd)}</span>`;
+      return own + advisorSpendChip(name, lbl);
     }
     function agentSpendRow(name) {
       const usd = agentWindowSpend(name);
-      if (usd == null) return '';
       const lbl = _costRange === 'custom' ? 'custom range' : COST_RANGES[_costRange].label;
-      return `<div class="agent-field"><span class="label" title="Estimated cost attributed to this agent over the timeframe selected in the Cost section (token × list price)">spend (${lbl})</span><span class="value">${fmtUSD(usd)}</span></div>`;
+      const own = usd == null ? '' : `<div class="agent-field"><span class="label" title="Estimated cost attributed to this agent over the timeframe selected in the Cost section (token × list price)">spend (${lbl})</span><span class="value">${fmtUSD(usd)}</span></div>`;
+      const adv = _advisorSpend[name];
+      if (!adv || !adv.reviews) return own;
+      return own + `<div class="agent-field"><span class="label" title="Advisor reviews of this agent over the same timeframe — the sum of the cost on its advisor records (GET /api/advisor/spend)">advisor spend (${lbl})</span><span class="value">${fmtUSD(adv.cost_usd || 0)} · ${adv.reviews} review${adv.reviews === 1 ? '' : 's'}${adv.skipped ? ` (${adv.skipped} skipped)` : ''}</span></div>`;
+    }
+
+    // Aggregated advisor spend per agent over the Cost section's active
+    // timeframe (#9725), shown beside the agent's own spend. Keyed by agent;
+    // refetched with the cost poll and whenever the range selector changes.
+    var _advisorSpend = {};
+    async function fetchAdvisorSpend() {
+      try {
+        const win = costWindow();
+        const q = _costRange === 'custom'
+          ? `since=${encodeURIComponent(new Date(win.start).toISOString())}&until=${encodeURIComponent(new Date(win.end).toISOString())}`
+          : `range=${encodeURIComponent(_costRange)}`;
+        const r = await fetch('/api/advisor/spend?' + q);
+        if (!r.ok) return;
+        const data = await r.json();
+        const next = {};
+        for (const a of (data.agents || [])) next[a.agent] = a;
+        _advisorSpend = next;
+      } catch { /* non-critical */ }
+    }
+    function advisorSpendChip(name, lbl) {
+      const adv = _advisorSpend[name];
+      if (!adv || !adv.reviews) return '';
+      return `<span class="agent-spend-chip advisor-spend-chip" title="Advisor spend on this agent over the ${lbl}: ${adv.reviews} review${adv.reviews === 1 ? '' : 's'}">advisor ${fmtUSD(adv.cost_usd || 0)}</span>`;
     }
 
     function agentTokenRow(name, cadence) {
@@ -13431,7 +13470,7 @@ function burnAreaChart() {
 
     async function fetchCost() {
       try {
-        const [resp] = await Promise.all([fetch('/api/cost'), fetchCostHistory(), fetchRepoCost()]);
+        const [resp] = await Promise.all([fetch('/api/cost'), fetchCostHistory(), fetchRepoCost(), fetchAdvisorSpend()]);
         if (!resp.ok) return;
         const cost = await resp.json();
         renderCost(cost);
@@ -14111,6 +14150,7 @@ function burnAreaChart() {
       if (_lastCost) renderCost(_lastCost);
       // Agent cards' spend chips follow this selector as their global filter.
       if (window._lastAgents) renderAgents(window._lastAgents);
+      fetchAdvisorSpend().then(() => { if (window._lastAgents) renderAgents(window._lastAgents); });
     });
 
     // GitHub auth health — sticky banner when 401
@@ -22811,7 +22851,7 @@ function burnAreaChart() {
         if (tabId === 'Forge App') loadForgeApps();
         // The Features tab's Linear Agent panel loads install/session state
         // from its own endpoint (owner-only; the render is a static shell).
-        if (tabId === 'Features') loadLinearAgentStatus();
+        if (tabId === 'Features') { loadLinearAgentStatus(); loadAdvisorSettings(); }
         if (tabId === 'Extensions') loadExtensionRelayStatus();
         if (tabId === 'Smart classifier') loadSmartClassifierStats();
         if (tabId === 'Appearance') loadThemeConfig();
@@ -29183,6 +29223,13 @@ function burnAreaChart() {
             </div>
           </div>
         </div>
+
+        <div class="config-field">
+          <div class="advisor-set-h">Advisor Lane</div>
+          <div class="advisor-note">A second model reviews each agent's turns and speaks up — it never acts. Edit the fleet default, the named model roles, and per-agent overrides or opt-outs here; changes take effect at each affected agent's next launch. What the advisor flagged is on each agent's page and in the <code>advisor_records</code> admin MCP tool.</div>
+          <div id="advisor-settings-panel">Loading…</div>
+          <div class="advisor-set-actions"><button class="hv-btn btn-secondary btn" data-action="loadAdvisorSettings">Refresh</button></div>
+        </div>
         ${renderGovReplanSection((_configState.data || {}).replan || {})}`;
     }
 
@@ -29885,6 +29932,193 @@ function burnAreaChart() {
       } catch (err) {
         out.textContent = `Failed to load Linear agent status: ${err.message}`;
       }
+    }
+
+    // ── Advisor lane Settings (#9725, phase 4 of #9638) ──
+    // Owner-only editor for the fleet advisor block, the named model_roles map
+    // and each agent's override/opt-out, over /api/config/advisor*. Every edit
+    // is validated server-side with the hive.yaml checks and persisted; it
+    // takes effect at the affected agent's next launch. The per-agent table
+    // shows the value in force and where it comes from (agent/fleet/default).
+    let _advisorSettings = null;
+    const ADVISOR_NEXT_LAUNCH = 'takes effect at each affected agent’s next launch';
+
+    async function loadAdvisorSettings() {
+      const out = document.getElementById('advisor-settings-panel');
+      if (!out) return;
+      out.textContent = 'Loading…';
+      try {
+        const res = await fetch('/api/config/advisor', { headers: _inceptionAuthHeaders() });
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        _advisorSettings = await res.json();
+        out.innerHTML = renderAdvisorSettings(_advisorSettings);
+      } catch (err) {
+        out.textContent = 'Failed to load advisor settings: ' + err.message;
+      }
+    }
+
+    function advisorSourceBadge(src) {
+      return `<span class="advisor-src advisor-src-${esc(src || 'default')}">${esc(src || 'default')}</span>`;
+    }
+
+    function renderAdvisorSettings(st) {
+      const f = st.fleet || {};
+      const d = st.defaults || {};
+      const roles = st.model_roles || {};
+      const agents = Array.isArray(st.agents) ? st.agents : [];
+      const fleetOn = f.enabled !== false;
+      const roleNames = Object.keys(roles).sort();
+      const roleRows = roleNames.map(n => {
+        const r = roles[n] || {};
+        return `<tr><td><code>@${esc(n)}</code></td><td>${esc(r.backend || '—')}</td><td><code>${esc(r.model || '')}</code></td><td>${esc(r.reasoning_effort || '—')}</td>
+          <td><button class="hv-btn btn-secondary btn-sm" data-action="removeAdvisorRole" data-arg0="${esc(n)}">Remove</button></td></tr>`;
+      }).join('');
+      const agentRows = agents.map(a => {
+        const e = a.effective || {};
+        const s = e.sources || {};
+        const model = e.resolved_model && e.resolved_model !== e.model ? `${esc(e.model || '')} → ${esc(e.resolved_model)}` : esc(e.resolved_model || e.model || '—');
+        const active = a.active ? '<span class="text-success">active</span>' : `<span class="advisor-src" title="${esc(a.active_reason || '')}">not active</span>`;
+        return `<tr><td><strong>${esc(a.name)}</strong>${a.override ? ' <span class="advisor-src advisor-src-agent">override</span>' : ''}</td><td>${esc(a.backend || '—')}</td><td>${active}</td>
+          <td>${e.enabled ? 'on' : 'off'} ${advisorSourceBadge(s.enabled)}</td>
+          <td><code>${model}</code> ${advisorSourceBadge(s.model)}</td>
+          <td>${e.daily_budget_tokens ? Number(e.daily_budget_tokens).toLocaleString() : 'unlimited'} ${advisorSourceBadge(s.daily_budget_tokens)}</td>
+          <td>${esc(String(e.timeout_s || ''))}s ${advisorSourceBadge(s.timeout_s)}</td>
+          <td>${esc(String(e.max_consecutive_blocks || ''))} ${advisorSourceBadge(s.max_consecutive_blocks)}</td>
+          <td><button class="hv-btn btn-secondary btn-sm" data-action="editAdvisorAgent" data-arg0="${esc(a.name)}">Edit</button></td></tr>`;
+      }).join('');
+      return `<div class="advisor-set-grid">
+          <div><label class="advisor-set-label" for="adv-f-enabled">Fleet default</label>
+            <select id="adv-f-enabled" class="advisor-set-input"><option value="on" ${fleetOn ? 'selected' : ''}>On — every supported agent is reviewed</option><option value="off" ${fleetOn ? '' : 'selected'}>Off — only agents that opt in</option></select></div>
+          <div><label class="advisor-set-label" for="adv-f-model">Advisor model (id or @role)</label>
+            <input id="adv-f-model" class="advisor-set-input" type="text" value="${esc(f.model || '')}" placeholder="trajectory reviewer model"></div>
+          <div><label class="advisor-set-label" for="adv-f-budget">Daily budget (tokens, 0 = unlimited)</label>
+            <input id="adv-f-budget" class="advisor-set-input" type="number" min="0" value="${f.daily_budget_tokens || ''}" placeholder="0"></div>
+          <div><label class="advisor-set-label" for="adv-f-timeout">Review timeout (sec)</label>
+            <input id="adv-f-timeout" class="advisor-set-input" type="number" min="0" value="${f.timeout_s || ''}" placeholder="${esc(String(d.timeout_s || ''))}"></div>
+          <div><label class="advisor-set-label" for="adv-f-blocks">Consecutive-block limit (below ${esc(String(d.block_bound || ''))})</label>
+            <input id="adv-f-blocks" class="advisor-set-input" type="number" min="0" value="${f.max_consecutive_blocks || ''}" placeholder="${esc(String(d.max_consecutive_blocks || ''))}"></div>
+          <div class="advisor-set-wide"><label class="advisor-set-label" for="adv-f-instructions">Instructions for the advisor</label>
+            <textarea id="adv-f-instructions" class="advisor-set-input" rows="3">${esc(f.instructions || '')}</textarea></div>
+        </div>
+        <div class="advisor-set-actions"><button class="hv-btn btn-primary btn" data-action="saveAdvisorFleet">Save fleet default</button></div>
+
+        <div class="advisor-set-h">Model roles</div>
+        <div class="advisor-note">Named models referenced as <code>@role</code> by the advisor block or an agent override. A role still referenced cannot be removed.</div>
+        <table class="advisor-set-table"><thead><tr><th>Role</th><th>Backend</th><th>Model</th><th>Reasoning effort</th><th></th></tr></thead>
+          <tbody>${roleRows || '<tr><td colspan="5" class="advisor-note">No roles defined.</td></tr>'}
+          <tr><td><input id="adv-role-name" class="advisor-set-input" type="text" placeholder="name"></td><td><input id="adv-role-backend" class="advisor-set-input" type="text" placeholder="optional"></td>
+            <td><input id="adv-role-model" class="advisor-set-input" type="text" placeholder="model id"></td><td><input id="adv-role-effort" class="advisor-set-input" type="text" placeholder="optional"></td>
+            <td><button class="hv-btn btn-secondary btn-sm" data-action="addAdvisorRole">Add</button></td></tr></tbody></table>
+
+        <div class="advisor-set-h">Per-agent value in force</div>
+        <div class="advisor-note">Each value is marked with where it comes from: the agent's own <em>agent</em> override, the <em>fleet</em> default above, or the built-in <em>default</em>.</div>
+        <table class="advisor-set-table"><thead><tr><th>Agent</th><th>Backend</th><th>Advisor</th><th>Enabled</th><th>Model</th><th>Budget</th><th>Timeout</th><th>Blocks</th><th></th></tr></thead>
+          <tbody>${agentRows || '<tr><td colspan="9" class="advisor-note">No agents configured.</td></tr>'}</tbody></table>`;
+    }
+
+    async function putAdvisorSettings(path, body, okMsg) {
+      try {
+        const res = await fetch(path, { method: 'PUT', headers: _inceptionAuthHeaders(), body: JSON.stringify(body) });
+        if (!res.ok) { showToast('Advisor settings not saved: ' + await saveErrorMessage(res), 'error'); return false; }
+        _advisorSettings = await res.json();
+        const out = document.getElementById('advisor-settings-panel');
+        if (out) out.innerHTML = renderAdvisorSettings(_advisorSettings);
+        showToast(okMsg + ' — ' + ADVISOR_NEXT_LAUNCH, 'success');
+        return true;
+      } catch (err) {
+        showToast('Advisor settings not saved: ' + err.message, 'error');
+        return false;
+      }
+    }
+
+    function advisorIntField(id) {
+      const el = document.getElementById(id);
+      const v = el ? el.value.trim() : '';
+      return v === '' ? null : Math.max(0, parseInt(v, 10) || 0);
+    }
+    function advisorTextField(id) {
+      const el = document.getElementById(id);
+      return el ? el.value.trim() : '';
+    }
+
+    function saveAdvisorFleet() {
+      const enabledEl = document.getElementById('adv-f-enabled');
+      return putAdvisorSettings('/api/config/advisor', {
+        enabled: !enabledEl || enabledEl.value === 'on',
+        model: advisorTextField('adv-f-model'),
+        instructions: advisorTextField('adv-f-instructions'),
+        daily_budget_tokens: advisorIntField('adv-f-budget') || 0,
+        timeout_s: advisorIntField('adv-f-timeout') || 0,
+        max_consecutive_blocks: advisorIntField('adv-f-blocks') || 0,
+      }, 'Advisor fleet default saved');
+    }
+
+    function addAdvisorRole() {
+      const name = advisorTextField('adv-role-name').replace(/^@/, '');
+      const model = advisorTextField('adv-role-model');
+      if (!name || !model) { showToast('A role needs a name and a model', 'error'); return; }
+      const roles = Object.assign({}, (_advisorSettings || {}).model_roles || {});
+      roles[name] = { backend: advisorTextField('adv-role-backend'), model, reasoning_effort: advisorTextField('adv-role-effort') };
+      return putAdvisorSettings('/api/config/advisor/roles', { model_roles: roles }, `Role @${name} saved`);
+    }
+
+    async function removeAdvisorRole(name) {
+      const ok = await hiveConfirm({ title: 'Remove model role', message: `Remove the @${name} role? Anything still referencing it must be changed first.`, confirmLabel: 'Remove' });
+      if (!ok) return;
+      const roles = Object.assign({}, (_advisorSettings || {}).model_roles || {});
+      delete roles[name];
+      return putAdvisorSettings('/api/config/advisor/roles', { model_roles: roles }, `Role @${name} removed`);
+    }
+
+    function editAdvisorAgent(name) {
+      const a = ((_advisorSettings || {}).agents || []).find(x => x.name === name);
+      if (!a) return;
+      const o = a.override || {};
+      const e = a.effective || {};
+      const en = o.enabled === true ? 'on' : (o.enabled === false ? 'off' : 'inherit');
+      const opt = (v, label) => `<option value="${v}" ${en === v ? 'selected' : ''}>${label}</option>`;
+      const num = (id, label, v, ph) => `<div><label class="advisor-set-label" for="${id}">${label}</label><input id="${id}" class="advisor-set-input" type="number" min="0" value="${v == null ? '' : esc(String(v))}" placeholder="inherit (${esc(String(ph))})"></div>`;
+      kbShowModal(`Advisor — ${esc(name)}`, `
+        <div class="advisor-note">Blank fields inherit the fleet default. ${a.active ? '' : esc(a.active_reason || '')}</div>
+        <div class="advisor-set-grid">
+          <div><label class="advisor-set-label" for="adv-a-enabled">Advisor for this agent</label>
+            <select id="adv-a-enabled" class="advisor-set-input">${opt('inherit', 'Inherit fleet default')}${opt('on', 'On')}${opt('off', 'Off — opt out')}</select></div>
+          <div><label class="advisor-set-label" for="adv-a-model">Model (id or @role)</label>
+            <input id="adv-a-model" class="advisor-set-input" type="text" value="${esc(o.model || '')}" placeholder="inherit (${esc(e.resolved_model || e.model || 'default')})"></div>
+          ${num('adv-a-budget', 'Daily budget (tokens)', o.daily_budget_tokens, e.daily_budget_tokens || 'unlimited')}
+          ${num('adv-a-timeout', 'Review timeout (sec)', o.timeout_s, e.timeout_s)}
+          ${num('adv-a-blocks', 'Consecutive-block limit', o.max_consecutive_blocks, e.max_consecutive_blocks)}
+          <div class="advisor-set-wide"><label class="advisor-set-label" for="adv-a-instructions">Instructions</label>
+            <textarea id="adv-a-instructions" class="advisor-set-input" rows="3" placeholder="inherit">${esc(o.instructions || '')}</textarea></div>
+        </div>
+        <div class="advisor-set-actions">
+          <button class="hv-btn btn-primary btn" data-action="saveAdvisorAgent" data-arg0="${esc(name)}">Save override</button>
+          <button class="hv-btn btn-secondary btn" data-action="clearAdvisorAgent" data-arg0="${esc(name)}">Clear override</button>
+          <button class="hv-btn btn-secondary btn" data-action="kbCloseModal">Cancel</button>
+        </div>`, { width: '640px' });
+    }
+
+    async function saveAdvisorAgent(name) {
+      const override = {};
+      const en = (document.getElementById('adv-a-enabled') || {}).value || 'inherit';
+      if (en !== 'inherit') override.enabled = en === 'on';
+      const model = advisorTextField('adv-a-model');
+      if (model) override.model = model;
+      const instructions = advisorTextField('adv-a-instructions');
+      if (instructions) override.instructions = instructions;
+      for (const [id, key] of [['adv-a-budget', 'daily_budget_tokens'], ['adv-a-timeout', 'timeout_s'], ['adv-a-blocks', 'max_consecutive_blocks']]) {
+        const v = advisorIntField(id);
+        if (v != null) override[key] = v;
+      }
+      const empty = Object.keys(override).length === 0;
+      if (await putAdvisorSettings('/api/config/advisor/agent/' + encodeURIComponent(name), { override: empty ? null : override },
+        empty ? `${name} now inherits the fleet default` : `Advisor override for ${name} saved`)) kbCloseModal();
+    }
+
+    async function clearAdvisorAgent(name) {
+      const ok = await hiveConfirm({ title: 'Clear advisor override', message: `Clear ${name}'s advisor override? It will inherit the fleet default.`, confirmLabel: 'Clear' });
+      if (!ok) return;
+      if (await putAdvisorSettings('/api/config/advisor/agent/' + encodeURIComponent(name), { override: null }, `${name} now inherits the fleet default`)) kbCloseModal();
     }
 
     // linearAgentConnect starts the actor=app OAuth flow: the install endpoint

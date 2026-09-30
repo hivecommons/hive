@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/advisor"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/tokens"
@@ -70,6 +71,11 @@ type costResponse struct {
 	// the UI shows "—" rather than treating it as a real zero denominator.
 	MergedPRs    int `json:"merged_prs"`
 	ClosedIssues int `json:"closed_issues"`
+	// AdvisorByAgent is each agent's advisor-lane spend over the retained
+	// advisor records (#9725), reported beside Estimated.ByAgent rather than
+	// folded into it: the advisor's cost is the lane's, not the agent's
+	// model's. Windowed figures come from GET /api/advisor/spend.
+	AdvisorByAgent []advisor.AgentSpend `json:"advisor_by_agent"`
 }
 
 // costModelEntry is one row of the estimated per-model / per-agent breakdown.
@@ -141,6 +147,10 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 		PriceTableDate: tokens.PriceTableDate(),
 		Disclaimer:     costEstimateDisclaimer,
 		Gateways:       []gatewayCost{},
+		AdvisorByAgent: []advisor.AgentSpend{},
+	}
+	if s.advisorRecords != nil {
+		resp.AdvisorByAgent = s.advisorRecords.SpendByAgent(time.Time{}, time.Time{})
 	}
 
 	// --- Estimated cost from token counts ---

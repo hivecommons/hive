@@ -293,7 +293,8 @@ one.
 | audit | `GET /api/audit`, `GET /api/runs/audit` | `handleAuditLog` requires `RoleAtLeast(role, RoleReadWrite)`, not owner. Both read-only by construction. |
 | settings | `GET /api/config`, `GET /api/config/governor`, `GET /api/packs` | Every setting a write tool can change is readable, so a preview can state a before as well as an after. |
 | autonomy readiness | `GET /api/acmm/evaluation`, `GET /api/acmm-recommendation` | The hive's own assessment, rather than a client-side judgment about level fitness. |
-| spend | `GET /api/cost`, `GET /api/cost/history`, `GET /api/budget/history`, `GET /api/repo-cost` | |
+| spend | `GET /api/cost`, `GET /api/cost/history`, `GET /api/budget/history`, `GET /api/repo-cost`, `GET /api/advisor/spend` | `/api/cost` carries `advisor_by_agent`; `/api/advisor/spend` gives advisor spend per agent over the Cost section's ranges. |
+| advisor records | `GET /api/advisor/records` (`advisor_records`) | "What did the advisor flag" for one agent or the fleet over a window (`agent`, `since`/`until` or `hours`). Same read-write floor as the REST listing; read-only, and the advisor has no write tool ([advisor lane](advisor-lane.md)). |
 | contributors | `GET /api/contributors`, `GET /api/contributors/{id}` | |
 | repositories | `GET /api/repos/pauses` | |
 | knowledge | `GET /api/knowledge`, `GET /api/knowledge/search`, `GET /api/knowledge/{layer}/{slug}` | Reads only. Writes are excluded — see below. |

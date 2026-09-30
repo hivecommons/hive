@@ -350,6 +350,7 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 		{ToolContributorsList, "Read the capped list of contributors known to this hive."},
 		{ToolKnowledgeRead, "Read knowledge-system health and statistics."},
 		{ToolHiveAdvisor, "Read hive advisor recommendations."},
+		{ToolAdvisorRecords, "Read what the advisor lane flagged: advisor review records (severity, text, interjection, cost, skip reason) for one agent or the whole fleet over a time window (since/until or hours). Read-only; the advisor has no write tool."},
 		{ToolAgentNudgeStatus, "Read the asynchronous delivery outcome for the latest nudge sent to one agent."},
 		{ToolIssuesByBand, "Read issues grouped by their Overview band (ready, in-progress, agent-filed, waiting, done), e.g. band=done for issues an agent has labelled hive/already-done, hive/covered-by-pr or hive/likely-done that a human has not verified and closed yet. hive/covered-by-pr only means an agent found an open PR that references the issue — check that the PR merged before closing."},
 		{ToolPrsByBand, "Read PRs grouped by their Overview band (waiting, eligible, blocked, in-review, open, draft)."},
@@ -375,7 +376,7 @@ func AllowedTool(name string) bool {
 	switch name {
 	case ToolHiveStatus, ToolFleetStatus, ToolAgentsList, ToolRunsList, ToolLeasesList, ToolClaimsList,
 		ToolPlansList, ToolAuditLog, ToolSettingsRead, ToolAutonomyReadiness, ToolSpendRead,
-		ToolContributorsList, ToolKnowledgeRead, ToolHiveAdvisor, ToolAgentNudgeStatus,
+		ToolContributorsList, ToolKnowledgeRead, ToolHiveAdvisor, ToolAdvisorRecords, ToolAgentNudgeStatus,
 		ToolIssuesByBand, ToolPrsByBand, ToolWritePreview, ToolWriteConfirm,
 		ToolExclusionCatalogue, ToolRefuseOperation:
 		return true
@@ -407,6 +408,8 @@ func inputSchema(name string) map[string]any {
 	case ToolAgentNudgeStatus:
 		props = map[string]any{"agent": map[string]any{"type": "string", "minLength": 1}}
 		required = []string{"agent"}
+	case ToolAdvisorRecords:
+		props = advisorRecordsSchema()
 	case ToolIssuesByBand:
 		props["repo"] = map[string]any{"type": "string", "description": "owner/name; unset reads every repo this hive tracks."}
 		props["band"] = map[string]any{"type": "string", "enum": issueBandKeys}
@@ -656,6 +659,8 @@ func ReadPath(tool string, limit int) (string, bool) {
 		return "/api/knowledge/stats", true
 	case ToolHiveAdvisor:
 		return "/api/hive-advice", true
+	case ToolAdvisorRecords:
+		return "/api/advisor/records" + suffix, true
 	default:
 		return "", false
 	}

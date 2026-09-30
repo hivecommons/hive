@@ -251,6 +251,48 @@ exists. This ties directly to the ccusage sourcing RFC
 ccusage for the nine covered CLI backends, tier assignment should prefer that
 shared parser over adding one-off scanners.
 
+## Advisor lane
+
+The advisor lane ([design](design/advisor-lane.md), epic
+[#9638](https://github.com/hivecommons/hive/issues/9638)) has a second model
+review each agent's finished turn and speak up; it never acts. Hive registers
+one turn-end hook per backend at launch, so advisor support is per backend.
+Enabling the advisor for an agent on a backend without support is not an error:
+the agent launches normally and the dashboard Settings view, the agent page and
+`GET /api/advisor/records?agent=` report the advisor as *not active on this
+backend* for it, with no records produced.
+
+"Synchronous" means the hook holds the turn until the verdict (or the advisor
+timeout) arrives, so an interjection reaches the model before it continues.
+Every supported backend records the same fields: one record per review,
+including a skipped review, carrying agent, turn reference, advisor model,
+severity, text, whether it interjected, delivery mode, tokens, cost and skip
+reason. Those records feed the agent page, the aggregated advisor spend beside
+agent spend, and the `advisor_records` admin MCP tool.
+
+| Backend | Advisor supported? | Synchronous? | What is recorded |
+| --- | --- | --- | --- |
+| `claude` | Yes: `Stop` hook in the launch settings JSON (phase 1, [#9722](https://github.com/hivecommons/hive/issues/9722)) | Yes | Full record; the turn reference is the Claude Code session id |
+| `omp` | Planned: `session_stop` extension (phase 2, [#9723](https://github.com/hivecommons/hive/issues/9723)); reported not active until it lands | Yes, once landed | Full record, once landed |
+| `copilot` | Planned: `agentStop` hook under `COPILOT_HOME` (phase 3, [#9724](https://github.com/hivecommons/hive/issues/9724)); reported not active until it lands | Yes, once landed; the CLI force-ends a turn after 8 consecutive blocks, so the block limit must stay below 8 | Full record, once landed |
+| `codex` | Planned: experimental `Stop` hook behind `features.hooks` (phase 3, [#9724](https://github.com/hivecommons/hive/issues/9724)); reported not active until it lands | Yes, once landed | Full record, once landed |
+| `goose` | No | n/a | Nothing; reported not active |
+| `pi` | No | n/a | Nothing; reported not active |
+| `bob` | No | n/a | Nothing; reported not active |
+| `aider` | No | n/a | Nothing; reported not active |
+| `gemini` | No | n/a | Nothing; reported not active |
+| `agy` | No | n/a | Nothing; reported not active |
+| `opencode` | No | n/a | Nothing; reported not active |
+| `kilo` | No | n/a | Nothing; reported not active |
+| `muse` | No | n/a | Nothing; reported not active |
+| `vllm` | No: inference backend, no turn-end hook | n/a | Nothing; reported not active |
+| `llm-d` | No: inference backend, no turn-end hook | n/a | Nothing; reported not active |
+| `litellm` | No: inference backend, no turn-end hook | n/a | Nothing; reported not active |
+| `watsonx` | No: inference backend, no turn-end hook | n/a | Nothing; reported not active |
+
+A backend moves into a "Yes" row only with an adapter that answers the hook in
+the backend's own format and a test that the launch carries it.
+
 ## Deprecation path
 
 A backend can be demoted or removed when its upstream CLI breaks Hive's contract
