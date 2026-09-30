@@ -82,6 +82,12 @@ see `src/docs/net-admin-requirement.md` for the full explanation.
 
 ## Install
 
+The `../../../inference` base ships an `InferencePool`
+(`inference.networking.k8s.io/v1`) for the llm-d endpoint picker. Install the
+Gateway API Inference Extension CRDs first. Without them `kubectl apply -k`
+creates everything else and then fails with
+`no matches for kind "InferencePool"`.
+
 ```bash
 # Review the rendered manifests first:
 kubectl kustomize src/deploy/kustomize/overlays/standalone
