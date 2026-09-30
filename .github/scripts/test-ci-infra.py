@@ -624,7 +624,9 @@ class GhApiTest(unittest.TestCase):
 
         def runner(cmd, **kw):
             calls.append((cmd, kw.get("input")))
-            if "fail" in cmd[-1] or (len(cmd) > 4 and "fail" in cmd[4]):
+            # Match the fake failing path exactly: "rerun-failed-jobs"
+            # also contains "fail" and must succeed.
+            if any(arg.endswith("/fail") for arg in cmd):
                 return subprocess.CompletedProcess(cmd, 1, b"", b"HTTP 404")
             return subprocess.CompletedProcess(cmd, 0, b'{"ok": true}', b"")
 
