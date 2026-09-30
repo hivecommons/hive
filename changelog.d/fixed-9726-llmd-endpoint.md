@@ -1,0 +1,1 @@
+- The self-hosted Kubernetes Deployment now sets `HIVE_LLMD_ENDPOINT` to `hive-llm-d-epp.hive-inference`, the same as the code default ([#9726](https://github.com/hivecommons/hive/issues/9726)). It pointed at the retired `llm-d-epp` Service, so llm-d traffic from self-hosted and `standalone` installs went to a Service that no longer ships.
