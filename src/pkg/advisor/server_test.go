@@ -2,8 +2,10 @@ package advisor
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -256,5 +258,54 @@ func TestServerResetsBlockCountOnNonBlocker(t *testing.T) {
 	endpoint = blockChat.URL
 	if _, resp := postAdvise(t, h, "scout", `{"transcript":"t"}`); resp.Severity != SeverityBlocker {
 		t.Fatalf("blocker after reset must deliver again: %+v", resp)
+	}
+}
+
+func TestServerRefusesWhenResolveNil(t *testing.T) {
+	srv := &Server{
+		Identify: func(r *http.Request) string { return r.Header.Get("X-Test-Agent") },
+		Logger:   testLogger(),
+	}
+	rec, _ := postAdvise(t, srv.Handler(), "scout", `{"transcript":"x"}`)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("nil Resolve: status = %d, want 403", rec.Code)
+	}
+}
+
+func TestServerServeAnswersOverTCP(t *testing.T) {
+	srv := newTestServer(NewStore(""), nil, "http://127.0.0.1:1", Runtime{})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := make(chan error, 1)
+	go func() { served <- srv.Serve(ln) }()
+
+	// An unidentified caller over a real TCP connection must still get 403.
+	resp, err := http.Post("http://"+ln.Addr().String()+AdvisePath, "application/json",
+		strings.NewReader(`{"transcript":"x"}`))
+	if err != nil {
+		t.Fatalf("request over Serve listener: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", resp.StatusCode)
+	}
+
+	_ = ln.Close()
+	if err := <-served; err == nil {
+		t.Error("Serve must return an error once its listener closes")
+	}
+}
+
+func TestListenAndServeFailsWhenPortBusy(t *testing.T) {
+	blocker, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", AdvisePort))
+	if err != nil {
+		t.Skipf("cannot occupy port %d to force the bind failure: %v", AdvisePort, err)
+	}
+	defer func() { _ = blocker.Close() }()
+	srv := &Server{Logger: testLogger()}
+	if err := srv.ListenAndServe(); err == nil {
+		t.Error("ListenAndServe must fail while the advise port is taken")
 	}
 }

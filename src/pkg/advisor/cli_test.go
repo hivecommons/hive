@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeAdviseServer answers /v1/advise with the given Response.
@@ -182,5 +183,57 @@ func TestReadTranscriptTail(t *testing.T) {
 	}
 	if len(got) > maxTranscriptChars {
 		t.Errorf("tail exceeds the window: %d", len(got))
+	}
+}
+
+func TestCallAdviseErrors(t *testing.T) {
+	// Refusal carrying a structured error body surfaces its message.
+	refuse := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusForbidden, errorBody{"advisor is not enabled for agent scout"})
+	}))
+	defer refuse.Close()
+	if _, err := callAdvise(refuse.URL, Request{Transcript: "t"}, time.Second); err == nil ||
+		!strings.Contains(err.Error(), "not enabled for agent scout") {
+		t.Errorf("structured refusal: err = %v", err)
+	}
+
+	// Refusal with a non-JSON body falls back to the raw text.
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer plain.Close()
+	if _, err := callAdvise(plain.URL, Request{Transcript: "t"}, time.Second); err == nil ||
+		!strings.Contains(err.Error(), "boom") {
+		t.Errorf("plain refusal: err = %v", err)
+	}
+
+	// A 200 with a malformed body is an error, not a silent allow.
+	garbled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("not json"))
+	}))
+	defer garbled.Close()
+	if _, err := callAdvise(garbled.URL, Request{Transcript: "t"}, time.Second); err == nil ||
+		!strings.Contains(err.Error(), "malformed JSON") {
+		t.Errorf("malformed body: err = %v", err)
+	}
+
+	// An unreachable endpoint reports it as such.
+	if _, err := callAdvise("http://127.0.0.1:1", Request{Transcript: "t"}, time.Second); err == nil ||
+		!strings.Contains(err.Error(), "unreachable") {
+		t.Errorf("unreachable endpoint: err = %v", err)
+	}
+
+	// An endpoint that cannot form a URL fails before any dial.
+	if _, err := callAdvise("http://bad host\x7f", Request{Transcript: "t"}, time.Second); err == nil {
+		t.Error("malformed endpoint must error")
+	}
+}
+
+func TestReadTranscriptTailMissing(t *testing.T) {
+	if got := readTranscriptTail(""); got != "" {
+		t.Errorf("empty path: %q", got)
+	}
+	if got := readTranscriptTail(filepath.Join(t.TempDir(), "absent.jsonl")); got != "" {
+		t.Errorf("missing file: %q", got)
 	}
 }
