@@ -11160,10 +11160,12 @@
     // GET api.anthropic.com/v1/models (see claudeStaticModels in
     // pkg/dashboard/cli_models.go; keep the two lists in sync). Refreshed
     // 2026-08-03 from a live /v1/models response, in API order, plus the bare
-    // aliases the claude CLI accepts as --model values.
+    // aliases the claude CLI accepts as --model values; Sonnet 5.5 added for
+    // Claude Code 2.1.284.
     const CLAUDE_CLI_MODELS = [
       { value: 'claude-opus-5-5', label: 'Opus 5.5' },
       { value: 'claude-opus-5', label: 'Opus 5' },
+      { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
       { value: 'claude-sonnet-5', label: 'Sonnet 5' },
       { value: 'claude-fable-5', label: 'Fable 5' },
       { value: 'claude-opus-4-8', label: 'Opus 4.8' },

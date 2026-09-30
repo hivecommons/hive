@@ -78,6 +78,8 @@ var modelPrices = map[string]ModelPrice{
 	// Fable 5: $10 in / $50 out; cache read $1.00, cache write $12.50.
 	"claude-fable-5": {InputPerMTok: 10.00, OutputPerMTok: 50.00, CacheReadPerMTok: 1.00, CacheWritePerMTok: 12.50},
 	// Sonnet tier: $3 in / $15 out; cache read $0.30, cache write $3.75.
+	// Sonnet 5.5 (Claude Code 2.1.284): $2 in / $10 out; cache read $0.20.
+	"claude-sonnet-5-5": {InputPerMTok: 2.00, OutputPerMTok: 10.00, CacheReadPerMTok: 0.20, CacheWritePerMTok: 2.50},
 	"claude-sonnet-5":   {InputPerMTok: 3.00, OutputPerMTok: 15.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 3.75},
 	"claude-sonnet-4-6": {InputPerMTok: 3.00, OutputPerMTok: 15.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 3.75},
 	"claude-sonnet-4-5": {InputPerMTok: 3.00, OutputPerMTok: 15.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 3.75},

@@ -242,12 +242,14 @@ func setCopilotSDKHelperPathForTest(t interface {
 // cannot run (no API key and no fresh OAuth token in the CLI credentials
 // file) or fails. Live discovery via api.anthropic.com/v1/models is strongly
 // preferred; this is only a floor so the dropdown is never empty. Refreshed
-// 2026-08-03 from a live /v1/models response (11 ids, in API order). Keep it
+// 2026-08-03 from a live /v1/models response (11 ids, in API order); Sonnet
+// 5.5 added for Claude Code 2.1.284. Keep it
 // in sync with CLAUDE_CLI_MODELS in static/index.html. Both the canonical
 // ids AND the bare aliases the CLI accepts are included.
 var claudeStaticModels = []string{
 	"claude-opus-5-5",
 	"claude-opus-5",
+	"claude-sonnet-5-5",
 	"claude-sonnet-5",
 	"claude-fable-5",
 	"claude-opus-4-8",
@@ -280,6 +282,7 @@ var copilotStaticModels = []string{
 	// The -5 family is DASHED in copilot CLI nomenclature; the 4.x family is
 	// DOTTED. Keep in sync with agent.copilotCLIAcceptedModels (#4262).
 	"claude-opus-5",
+	"claude-sonnet-5-5",
 	"claude-sonnet-5",
 	"claude-fable-5",
 	"claude-opus-4.6",
@@ -307,6 +310,7 @@ var copilotPinnedCLIModels = []string{
 	"o3",
 	"o4-mini",
 	"claude-opus-5",
+	"claude-sonnet-5-5",
 	"claude-sonnet-5",
 	"claude-fable-5",
 	"claude-opus-4.8",
@@ -399,13 +403,14 @@ var geminiStaticModels = []string{
 }
 
 // claudePinnedCLIModels is the closed model set accepted by the Claude Code
-// version pinned in src/Dockerfile (2.1.280 as of #8417/#8426). The Anthropic
+// version pinned in src/Dockerfile (2.1.284; 2.1.280 as of #8417/#8426). The Anthropic
 // account catalog can list models that the installed CLI refuses with "version
 // X or newer is required"; intersecting live and fallback lists with this set
 // keeps the dashboard from offering a value this image cannot launch (#8418).
 var claudePinnedCLIModels = []string{
 	"claude-opus-5-5",
 	"claude-opus-5",
+	"claude-sonnet-5-5",
 	"claude-sonnet-5",
 	"claude-fable-5",
 	"claude-opus-4-8",

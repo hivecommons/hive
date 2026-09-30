@@ -1,0 +1,1 @@
+- Claude Sonnet 5.5 (`claude-sonnet-5-5`) is now selectable for the claude backend: added to the pinned allowlist, the static fallback and the dashboard `CLAUDE_CLI_MODELS` fallback (Claude Code 2.1.284), and priced at $2/$10 per Mtok with $0.20/Mtok cache reads. Refs #9804.
