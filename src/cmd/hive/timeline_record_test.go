@@ -278,8 +278,13 @@ func TestRecordPROpened(t *testing.T) {
 	}
 	// The audit-sink bridge reporting the same creation dedupes into the
 	// same stage instead of a second row.
-	recordLifecycleFromAudit(rec, "acme",
-		github.AuditActionAgentPRCreated, "repo=acme/widgets, number=12", "scanner")
+	recordLifecycleFromAudit(rec, "acme", github.AuditRecord{
+		Action: github.AuditActionAgentPRCreated,
+		Detail: "repo=acme/widgets, number=12",
+		Agent:  "scanner",
+		Repo:   "acme/widgets",
+		Target: 12,
+	})
 	if got := len(rec.store.Journeys(0)); got != 1 {
 		t.Fatalf("double wire made %d journeys, want 1", got)
 	}
