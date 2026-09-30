@@ -36,8 +36,8 @@ Each relay authorizes a request in this order. It stops at the first refusal.
 | `comment` | `issue_request_watcher.go` kind `comment` | `hive-open-issue comment` | `agent_comment_created` | yes | yes / issue or PR number |
 | `claim` | `issue_request_watcher.go` kind `claim` | `hive-open-issue claim` | `agent_issue_claimed` | yes | yes / issue number |
 | `close_issue` | `issue_request_watcher.go` kind `close` | `hive-open-issue close` | `agent_issue_closed` (`pr_closed` when the number is a PR) | yes | yes / issue or PR number |
-| `label` | `issue_request_watcher.go` kind `label` (`.../issue-requests`) | `hive-open-issue label` | `agent_label_applied` | yes | yes / issue or PR number |
-| `request_review` | `issue_request_watcher.go` kind `request_review` (`.../issue-requests`) | `hive-open-issue request-review` | `agent_review_requested` | yes | yes / PR number |
+| `label` | `issue_request_watcher.go` kind `label` (`.../issue-requests`) | `hive-open-issue label` (also reached by `gh issue edit --add-label`/`--remove-label` and `gh pr edit --add-label`/`--remove-label`, which the `gh` wrapper translates into this relay) | `agent_label_applied` | yes | yes / issue or PR number |
+| `request_review` | `issue_request_watcher.go` kind `request_review` (`.../issue-requests`) | `hive-open-issue request-review` (also reached by `gh pr edit --add-reviewer`, which the `gh` wrapper translates into this relay) | `agent_review_requested` | yes | yes / PR number |
 | `review` | `review_request_watcher.go` events `approve`, `request_changes`, `comment`, `record_verdict`, and thread replies (`.../review-requests`) | `hive-review` | `agent_pr_reviewed` | yes | yes / PR number |
 | `resolve_thread` | `review_request_watcher.go` event `resolve_thread` | `hive-review` | `agent_pr_reviewed` (`state=thread_resolved`) | yes | yes / PR number |
 | `merge_pr` | `merge_request_watcher.go` (`.../merge-requests`) | `hive-merge` | `pr_merged` (`path=relay`, via `MergePR`) | yes | yes / PR number |
@@ -240,9 +240,8 @@ of them may reduce what an L6 hive can do by default.
   existing ones. A hive with no allowlist would allow it, like every other
   operation. The standalone `label` and `request_review` operations have
   landed; see the inventory above.
-- **Routing the `gh` wrapper's label and reviewer edits through the relays.**
-  `gh issue edit --add-label` and `gh pr edit --add-reviewer` still reach
-  GitHub directly through the proxy; the relays are the audited path an agent
-  can choose. Switching the wrapper over
-  changes what a direct command does, so it waits on the same sign-off as
-  enforcement.
+- **Routing the `gh` wrapper's label and reviewer edits through the relays**
+  has landed (hivecommons/hive#9773): the wrapper translates a pure
+  `gh issue edit --add-label`/`--remove-label` or `gh pr edit --add-reviewer`
+  into a `label` / `request_review` relay request; edits the relays cannot
+  express still fall through to the direct path. See the inventory above.

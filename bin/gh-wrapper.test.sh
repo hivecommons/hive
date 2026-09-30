@@ -843,6 +843,164 @@ else
 fi
 
 echo ""
+echo "=== Label/reviewer edits route through the issue-request relays (#9773) ==="
+
+# A PURE `gh issue edit --add-label` / `gh pr edit --add-reviewer` must become
+# a label / request-review relay request instead of a direct gh call, with the
+# same fall-through-to-gh behavior as the other relay redirects when the edit
+# mixes in flags the relays cannot express, names no explicit item, or comes
+# from a contributor. These cases assert BOTH sides: the relay argv the stub
+# recorded, and whether the mock gh saw the edit at all.
+RELAY_AGENT="ghwrapper-test-9773-$$"
+RELAY_BIN="${WORK_DIR}/relay-bin"
+RELAY_LOG="${WORK_DIR}/relay-log"
+mkdir -p "$RELAY_BIN"
+cat >"${RELAY_BIN}/hive-open-issue" <<'STUB'
+#!/usr/bin/env bash
+# Record each relay invocation as one line of shell-quoted argv, so the
+# assertions can compare the exact request shape the wrapper built.
+python3 -c 'import shlex, sys; print(" ".join(shlex.quote(a) for a in sys.argv[1:]))' "$@" >>"$HIVE_OPEN_ISSUE_LOG"
+if [[ -n "${HIVE_OPEN_ISSUE_FAIL:-}" ]]; then
+  exit "$HIVE_OPEN_ISSUE_FAIL"
+fi
+exit 0
+STUB
+chmod +x "${RELAY_BIN}/hive-open-issue"
+
+RELAY_RC=0
+_relay_run() {
+  local marker="$1"
+  shift
+  : >"$RELAY_LOG"
+  CAPTURE_SEQ=$((CAPTURE_SEQ + 1))
+  CAPTURE_DIR="${WORK_DIR}/argv-${CAPTURE_SEQ}"
+  mkdir -p "$CAPTURE_DIR"
+  if [[ "$marker" == "contributor" ]]; then
+    touch "${WORK_DIR}/contributor-marker"
+  else
+    rm -f "${WORK_DIR}/contributor-marker"
+  fi
+  RELAY_RC=0
+  env \
+    PATH="${RELAY_BIN}:${PATH}" \
+    HIVE_OPEN_ISSUE_LOG="$RELAY_LOG" \
+    HIVE_OPEN_ISSUE_FAIL="${HIVE_OPEN_ISSUE_FAIL:-}" \
+    HIVE_AGENT="$RELAY_AGENT" \
+    HIVE_AGENT_DISPLAY_NAME="$RELAY_AGENT" \
+    HIVE_AGENT_ID="$RELAY_AGENT" \
+    HIVE_AGENT_MODE="" \
+    HIVE_ACMM_LEVEL="0" \
+    MOCK_GH_LOGIN="test-bot[bot]" \
+    GH_TOKEN="test-token-mock" \
+    MOCK_GH_ARGV_DIR="$CAPTURE_DIR" \
+    bash "$TEST_WRAPPER" "$@" >/dev/null 2>&1 || RELAY_RC=$?
+  rm -f "${WORK_DIR}/contributor-marker"
+}
+
+_relay_fail() {
+  echo "FAIL: $1"
+  shift
+  local line
+  for line in "$@"; do echo "  $line"; done
+  FAILED=$((FAILED + 1))
+}
+
+# Assert the stub recorded exactly the given relay invocation(s), in order,
+# and that the mock gh never saw the `<sub> edit` itself.
+_expect_relayed() {
+  local desc="$1" sub="$2"
+  shift 2
+  local got want
+  got="$(cat "$RELAY_LOG" 2>/dev/null || true)"
+  want="$(printf '%s\n' "$@")"
+  if [[ "$got" != "$want" ]]; then
+    _relay_fail "$desc" "relay argv mismatch" "want: ${want//$'\n'/ | }" "got:  ${got//$'\n'/ | }"
+    return 1
+  fi
+  if _capture_invocation "$sub" edit >/dev/null 2>&1; then
+    _relay_fail "$desc" "the edit ALSO reached gh directly — the relay must replace the direct call"
+    return 1
+  fi
+  if [[ "$RELAY_RC" != "0" ]]; then
+    _relay_fail "$desc" "expected exit 0, got ${RELAY_RC}"
+    return 1
+  fi
+  echo "PASS: $desc"
+  PASSED=$((PASSED + 1))
+}
+
+# Assert the relay was NOT used and the edit fell through to gh unchanged.
+_expect_fell_through() {
+  local desc="$1" sub="$2"
+  if [[ -s "$RELAY_LOG" ]]; then
+    _relay_fail "$desc" "unexpected relay call(s): $(cat "$RELAY_LOG")"
+    return 1
+  fi
+  if ! _capture_invocation "$sub" edit >/dev/null 2>&1; then
+    _relay_fail "$desc" "the edit never reached gh — fall-through must not lose the operation"
+    return 1
+  fi
+  echo "PASS: $desc"
+  PASSED=$((PASSED + 1))
+}
+
+_relay_run agent issue edit 42 --repo test/repo --add-label bug,docs
+_expect_relayed "issue edit --add-label relays through hive-open-issue label" issue \
+  'label --repo test/repo 42 --label bug,docs'
+
+_relay_run agent issue edit 42 -R test/repo --remove-label stale --add-label=triaged
+_expect_relayed "issue edit add+remove labels relay in one label request" issue \
+  'label --repo test/repo 42 --label triaged --remove-label stale'
+
+_relay_run agent pr edit 7 --repo test/repo --add-reviewer alice --add-reviewer bob
+_expect_relayed "pr edit --add-reviewer relays through hive-open-issue request-review" pr \
+  'request-review --repo test/repo 7 --reviewer alice,bob'
+
+_relay_run agent pr edit 7 --repo test/repo --add-label docs --add-reviewer alice
+_expect_relayed "pr edit with labels AND reviewers issues both relay requests" pr \
+  'label --repo test/repo 7 --label docs' \
+  'request-review --repo test/repo 7 --reviewer alice'
+
+_relay_run agent issue edit https://github.com/test/repo/issues/42 --repo test/repo --add-label bug
+_expect_relayed "issue edit by URL relays with the URL as the item" issue \
+  'label --repo test/repo https://github.com/test/repo/issues/42 --label bug'
+
+# Mixed edits carry state the relays cannot express — they must reach gh
+# whole, never be half-relayed (an L6 hive keeps its full direct surface).
+_relay_run agent issue edit 42 --repo test/repo --add-label bug --title 'new title'
+_expect_fell_through "issue edit mixing --add-label with --title falls through to gh" issue
+
+_relay_run agent pr edit 7 --repo test/repo --remove-reviewer alice
+_expect_fell_through "pr edit --remove-reviewer (no relay for it) falls through to gh" pr
+
+_relay_run agent pr edit 7 --repo test/repo --add-reviewer alice --milestone v9
+_expect_fell_through "pr edit mixing --add-reviewer with --milestone falls through to gh" pr
+
+# No explicit item: gh resolves the current branch's PR, which the wrapper
+# cannot, so the direct path keeps working.
+_relay_run agent pr edit --repo test/repo --add-reviewer alice
+_expect_fell_through "pr edit with no explicit number falls through to gh" pr
+
+_relay_run agent pr edit my-branch --repo test/repo --add-label docs
+_expect_fell_through "pr edit by branch name falls through to gh" pr
+
+# Contributors edit under their own identity — no relay, same as the other
+# relay redirects.
+_relay_run contributor issue edit 42 --repo test/repo --add-label bug
+_expect_fell_through "contributor issue edit --add-label is NOT relayed" issue
+
+# A refused relay request (reserved label, allowlist) must surface as a
+# non-zero exit, not read as success.
+HIVE_OPEN_ISSUE_FAIL=3 _relay_run agent issue edit 42 --repo test/repo --add-label lgtm
+if [[ "$RELAY_RC" == "3" ]]; then
+  echo "PASS: a failing relay request propagates its exit code to the caller"
+  PASSED=$((PASSED + 1))
+else
+  _relay_fail "a failing relay request propagates its exit code to the caller" \
+    "expected exit 3, got ${RELAY_RC}"
+fi
+
+echo ""
 echo "Results: ${PASSED} passed, ${FAILED} failed"
 if [[ "$FAILED" -gt 0 ]]; then
   exit 1
