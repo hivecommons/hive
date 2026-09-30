@@ -1252,6 +1252,106 @@ if [[ -n "$AGENT_NAME" ]]; then
           fi
         fi
       fi
+      # ── Relay label/reviewer edits through the hive (issue-request watcher) ──
+      # `gh issue edit --add-label` and `gh pr edit --add-reviewer` used to
+      # ride the agent's own token straight through the proxy; the `label` and
+      # `request_review` relays existed only as an opt-in path. A PURE
+      # label/reviewer edit is translated into relay request files here, so it
+      # gets the same file-UID authorizer, lane allowlist, reserved-label
+      # refusal and redacted audit entry as every other relay write
+      # (hivecommons/hive#9773). The relay shim prints the request path and
+      # where the .result.json will appear, so the caller sees the outcome.
+      # An edit that mixes in anything the relays cannot express (--title,
+      # --body, --milestone, --remove-reviewer, assignees, projects, …) falls
+      # through to the direct path UNCHANGED, as does an edit with no explicit
+      # number/URL or no resolvable repo — routing must not reduce what an
+      # ACMM L6 hive can do by default (same contract as hive-open-pr: this
+      # changes WHO performs the write, not WHAT an agent is allowed to do).
+      # Contributors are EXEMPT (they edit under their own identity),
+      # mirroring the other relay redirects.
+      if ! _contributor_mode && command -v hive-open-issue >/dev/null 2>&1; then
+        _re_add=""; _re_remove=""; _re_reviewers=""
+        _re_num=""; _re_repo=""; _re_other=false
+        _re_expect=""; _re_pos=0
+        for a in "${args[@]}"; do
+          if [ -n "$_re_expect" ]; then
+            case "$_re_expect" in
+              add)      _re_add="${_re_add:+${_re_add},}$a" ;;
+              remove)   _re_remove="${_re_remove:+${_re_remove},}$a" ;;
+              reviewer) _re_reviewers="${_re_reviewers:+${_re_reviewers},}$a" ;;
+              repo)     _re_repo="$a" ;;
+              other)    : ;;
+            esac
+            _re_expect=""
+            continue
+          fi
+          case "$a" in
+            --add-label)       _re_expect=add ;;
+            --add-label=*)     _re_add="${_re_add:+${_re_add},}${a#*=}" ;;
+            --remove-label)    _re_expect=remove ;;
+            --remove-label=*)  _re_remove="${_re_remove:+${_re_remove},}${a#*=}" ;;
+            --add-reviewer)    _re_expect=reviewer ;;
+            --add-reviewer=*)  _re_reviewers="${_re_reviewers:+${_re_reviewers},}${a#*=}" ;;
+            --repo|-R)         _re_expect=repo ;;
+            --repo=*)          _re_repo="${a#*=}" ;;
+            -*)
+              # Any other flag is an edit the relays cannot express — use the
+              # SAME flag table as the subcommand extractor (N7 lesson) so a
+              # separated value is never misread as the item number.
+              _re_other=true
+              if gh_flag_takes_value "$a"; then _re_expect=other; fi ;;
+            *)
+              # Positions 1 and 2 are the subcommand and action; the next
+              # positional is the issue/PR number or URL.
+              _re_pos=$((_re_pos + 1))
+              if [ "$_re_pos" -gt 2 ] && [ -z "$_re_num" ]; then _re_num="$a"; fi ;;
+          esac
+        done
+        # The relay resolves a number or URL, not a branch name.
+        case "$_re_num" in
+          [0-9]*|http://*|https://*) : ;;
+          *) _re_num="" ;;
+        esac
+        # `--add-reviewer` is only meaningful on a PR; on `issue edit` gh
+        # itself refuses it, so let gh say so rather than half-relaying.
+        if [ "$subcmd" = "issue" ] && [ -n "$_re_reviewers" ]; then
+          _re_other=true
+        fi
+        if ! $_re_other && [ -n "$_re_num" ] && \
+           { [ -n "$_re_add" ] || [ -n "$_re_remove" ] || [ -n "$_re_reviewers" ]; }; then
+          if [ -z "$_re_repo" ]; then
+            # gh infers the repo from the checkout; the relay request needs it
+            # spelled out. Same inference, from the origin remote.
+            _re_repo="$(git remote get-url origin 2>/dev/null || true)"
+            case "$_re_repo" in
+              git@*)                      _re_repo="${_re_repo#*:}" ;;
+              ssh://*|http://*|https://*) _re_repo="${_re_repo#*://}"; _re_repo="${_re_repo#*/}" ;;
+              *)                          _re_repo="" ;;
+            esac
+            _re_repo="${_re_repo%.git}"
+            case "$_re_repo" in
+              */*) : ;;
+              *)   _re_repo="" ;;
+            esac
+          fi
+          if [ -n "$_re_repo" ]; then
+            # Deliberately NOT the provenance LABELS_CSV: hive/<id> sits in a
+            # namespace the label relay refuses, and the relay's audit entry
+            # already attributes the write to this agent.
+            _re_rc=0
+            if [ -n "$_re_add" ] || [ -n "$_re_remove" ]; then
+              _re_label_args=()
+              [ -n "$_re_add" ] && _re_label_args+=(--label "$_re_add")
+              [ -n "$_re_remove" ] && _re_label_args+=(--remove-label "$_re_remove")
+              hive-open-issue label --repo "$_re_repo" "$_re_num" "${_re_label_args[@]}" || _re_rc=$?
+            fi
+            if [ -n "$_re_reviewers" ]; then
+              hive-open-issue request-review --repo "$_re_repo" "$_re_num" --reviewer "$_re_reviewers" || _re_rc=$?
+            fi
+            exit $_re_rc
+          fi
+        fi
+      fi
       _ensure_labels
       # Label injection is provenance metadata, not a security gate. gh applies
       # an edit atomically, so a missing label (repo not yet ensured, create
