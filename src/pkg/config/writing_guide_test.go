@@ -12,10 +12,10 @@ import (
 // rendering contract has two halves — an unset guide must render NOTHING, so
 // a hive that never sets it gets byte-identical prompts, and a set guide must
 // render its text under a header that scopes it (every issue and PR body) and
-// bounds it: the guide controls how the body reads AND how it is laid out
-// (section order, where a summary goes), but never drops content the policy
-// requires — every template section, field and piece of evidence must still
-// appear somewhere (hivecommons/hive#9747).
+// bounds it: the guide controls how the body reads, while the template keeps
+// every section, field and piece of evidence in its own order. A summary the
+// guide asks for is an addition above the template's first section, never a
+// reason to drop, rename or reorder one (hivecommons/hive#9747).
 
 func TestWritingGuideSection_EmptyRendersNothing(t *testing.T) {
 	for _, guide := range []string{"", "   ", "\n\t\n"} {
@@ -33,8 +33,10 @@ func TestWritingGuideSection_RendersTextUnderAScopedHeader(t *testing.T) {
 		"WRITING GUIDE",
 		"project.writing_guide",
 		"Every issue body, PR body and review comment",
-		"how it is laid out",
-		"every section, field and piece of evidence the template below asks for must still appear",
+		"It governs how the body reads",
+		"keep every section, field and piece of evidence the template below asks for, in the template's order",
+		"never drop, rename or reorder a template section",
+		"before the template's first section, as an addition",
 		"Short sentences. One idea per bullet.\n  Evidence under a <details> block.",
 	} {
 		if !strings.Contains(got, want) {

@@ -52,6 +52,39 @@ func TestKick_WritingGuideLandsAheadOfTheBodyTemplate(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#9747: a guide that asks for a plain-language summary first
+// got a body that was the template and nothing else, because the preamble both
+// granted the guide "structure" and pinned every template section. The kick an
+// agent receives with that guide must say, before the body template, that a
+// leading summary is allowed as an addition and that every template section
+// still follows in the template's order.
+func TestKick_SummaryFirstGuideAddsSummaryAndKeepsTemplateOrder(t *testing.T) {
+	const guide = "People who are not in your head will read this. Write for them. Start by explaining at a high level. " +
+		"The top part of the issue/PR should be easy to read. You can put the technical stuff and required items in a second section afterwards."
+	out := writingGuideKick(t, guide)
+
+	headerAt := strings.Index(out, "WRITING GUIDE (set by this hive's owner")
+	guideAt := strings.Index(out, guide)
+	bodyAt := strings.Index(out, `--body "## Finding`)
+	if headerAt < 0 || guideAt < 0 || bodyAt < 0 {
+		t.Fatalf("kick is missing the guide header (@%d), the guide text (@%d) or the body template (@%d):\n%s", headerAt, guideAt, bodyAt, out)
+	}
+	if !(headerAt < guideAt && guideAt < bodyAt) {
+		t.Fatalf("want header < guide < body template, got %d, %d, %d", headerAt, guideAt, bodyAt)
+	}
+	preamble := out[headerAt:guideAt]
+	for _, want := range []string{
+		"If the guide asks for a summary or overview, write it at the top, before the template's first section, as an addition",
+		"the template's sections still follow in full below it",
+		"in the template's order",
+		"never drop, rename or reorder a template section",
+	} {
+		if !strings.Contains(preamble, want) {
+			t.Errorf("preamble ahead of the summary-first guide is missing %q:\n%s", want, preamble)
+		}
+	}
+}
+
 func TestKick_WritingGuideUnsetChangesNothing(t *testing.T) {
 	out := writingGuideKick(t, "")
 	for _, absent := range []string{"${WRITING_GUIDE}", "WRITING GUIDE"} {
