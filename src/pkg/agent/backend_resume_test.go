@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,7 +113,7 @@ func TestCaptureResumeHandle_CodexReadsDateBucketedRollouts(t *testing.T) {
 func TestCaptureResumeHandle_UnsupportedAndEmptyBackends(t *testing.T) {
 	homeForCapture(t)
 	now := time.Now()
-	for _, backend := range []string{"agy", "gemini", "", "vllm"} {
+	for _, backend := range []string{"agy", "goose", "", "vllm"} {
 		if BackendSupportsResumeHandle(backend) {
 			t.Errorf("backend %q unexpectedly claims a capturable resume handle", backend)
 		}
@@ -122,6 +124,112 @@ func TestCaptureResumeHandle_UnsupportedAndEmptyBackends(t *testing.T) {
 	// A supported backend that has simply never written a transcript.
 	if _, ok := CaptureResumeHandle("scanner", 0, "claude", now); ok {
 		t.Error("claude captured a handle with no session tree on disk")
+	}
+}
+
+// writeGeminiTranscript writes a gemini session file whose first line is the
+// metadata record carrying sessionID.
+func writeGeminiTranscript(t *testing.T, path, sessionID string, modTime time.Time) {
+	t.Helper()
+	writeResumeTranscript(t, path, modTime)
+	body := `{"sessionId":"` + sessionID + `","projectHash":"x"}` + "\n" + `{"type":"user"}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	if err := os.Chtimes(path, modTime, modTime); err != nil {
+		t.Fatalf("chtimes %s: %v", path, err)
+	}
+}
+
+func writeGeminiProjectMarker(t *testing.T, projectDir, root string) {
+	t.Helper()
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", projectDir, err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, geminiProjectRootMarker), []byte(root+"\n"), 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+}
+
+func TestCaptureResumeHandle_GeminiScopesToAgentProject(t *testing.T) {
+	home := homeForCapture(t)
+	now := time.Now()
+	tmp := filepath.Join(home, ".gemini", "tmp")
+	const ownID = "aaaaaaaa-1111-2222-3333-444444444444"
+	const otherID = "bbbbbbbb-5555-6666-7777-888888888888"
+	writeGeminiProjectMarker(t, filepath.Join(tmp, "scanner"), "/data/agents/scanner")
+	writeGeminiTranscript(t, filepath.Join(tmp, "scanner", "chats", "session-2026-09-30T08-00-aaaaaaaa.jsonl"), ownID, now.Add(-time.Hour))
+	// ~/.gemini is fleet-shared: a newer session of another agent's project
+	// must never be offered as this agent's conversation.
+	writeGeminiProjectMarker(t, filepath.Join(tmp, "reviewer"), "/data/agents/reviewer")
+	writeGeminiTranscript(t, filepath.Join(tmp, "reviewer", "chats", "session-2026-09-30T09-00-bbbbbbbb.jsonl"), otherID, now)
+
+	h, ok := CaptureResumeHandleIn("scanner", 0, "gemini", "/data/agents/scanner", now)
+	if !ok {
+		t.Fatal("no handle captured for gemini")
+	}
+	if h.SessionID != ownID {
+		t.Errorf("session id = %q, want the full id from the agent's own project", h.SessionID)
+	}
+	if h.Command != "gemini --resume "+ownID {
+		t.Errorf("command = %q", h.Command)
+	}
+	if !h.TranscriptExists() || !strings.Contains(h.Transcript, filepath.Join("scanner", "chats")) {
+		t.Errorf("transcript = %q", h.Transcript)
+	}
+	if !BackendSupportsResumeHandle("gemini") {
+		t.Error("gemini does not claim a capturable resume handle")
+	}
+}
+
+func TestCaptureResumeHandle_GeminiLegacyHashedProjectDir(t *testing.T) {
+	home := homeForCapture(t)
+	now := time.Now()
+	sum := sha256.Sum256([]byte("/data/agents/scanner"))
+	const id = "cccccccc-1111-2222-3333-444444444444"
+	writeGeminiTranscript(t, filepath.Join(home, ".gemini", "tmp", hex.EncodeToString(sum[:]), "chats", "session-2026-09-30T08-00-cccccccc.jsonl"), id, now)
+
+	h, ok := CaptureResumeHandleIn("scanner", 0, "gemini", "/data/agents/scanner/", now)
+	if !ok || h.SessionID != id {
+		t.Fatalf("handle = %+v, ok = %v; want %s from the hashed project dir", h, ok, id)
+	}
+}
+
+func TestCaptureResumeHandle_GeminiNeedsWorkDirAndValidMetadata(t *testing.T) {
+	home := homeForCapture(t)
+	now := time.Now()
+	project := filepath.Join(home, ".gemini", "tmp", "scanner")
+	writeGeminiProjectMarker(t, project, "/data/agents/scanner")
+	writeGeminiTranscript(t, filepath.Join(project, "chats", "session-2026-09-30T08-00-dddddddd.jsonl"), "dddddddd-1111-2222-3333-444444444444", now)
+
+	if _, ok := CaptureResumeHandle("scanner", 0, "gemini", now); ok {
+		t.Error("gemini captured a handle without a working directory to scope it")
+	}
+	if _, ok := CaptureResumeHandleIn("scanner", 0, "gemini", "/data/agents/other", now); ok {
+		t.Error("gemini captured a handle from a different project")
+	}
+
+	// The newest transcript's id does not match its file name, or is unsafe
+	// to render into a command: no handle rather than a wrong one.
+	for _, bad := range []string{"eeeeeeee-1111-2222-3333-444444444444", "dddddddd; rm -rf /", ""} {
+		writeGeminiTranscript(t, filepath.Join(project, "chats", "session-2026-09-30T09-00-dddddddd.jsonl"), bad, now.Add(time.Minute))
+		if h, ok := CaptureResumeHandleIn("scanner", 0, "gemini", "/data/agents/scanner", now); ok {
+			t.Errorf("sessionId %q produced handle %+v", bad, h)
+		}
+	}
+}
+
+func TestGeminiSessionID_RejectsUnreadableAndMalformed(t *testing.T) {
+	dir := t.TempDir()
+	if id := geminiSessionID(filepath.Join(dir, "missing.jsonl")); id != "" {
+		t.Errorf("missing file yielded id %q", id)
+	}
+	path := filepath.Join(dir, "session-2026-09-30T08-00-ffffffff.jsonl")
+	if err := os.WriteFile(path, []byte("not json\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if id := geminiSessionID(path); id != "" {
+		t.Errorf("malformed metadata yielded id %q", id)
 	}
 }
 
@@ -145,6 +253,23 @@ func TestManagerResumeHandle_NilAndUnknownAgent(t *testing.T) {
 	mgr.agents["scanner"] = &AgentProcess{Name: "scanner", State: StateStopped}
 	if _, ok := mgr.ResumeHandle("scanner"); ok {
 		t.Error("stopped agent returned a resume handle")
+	}
+}
+
+func TestManagerResumeHandle_GeminiUsesAgentWorkDir(t *testing.T) {
+	home := homeForCapture(t)
+	workRoot := t.TempDir()
+	const id = "12345678-1111-2222-3333-444444444444"
+	project := filepath.Join(home, ".gemini", "tmp", "scanner")
+	writeGeminiProjectMarker(t, project, filepath.Join(workRoot, "scanner"))
+	writeGeminiTranscript(t, filepath.Join(project, "chats", "session-2026-09-30T08-00-12345678.jsonl"), id, time.Now())
+	mgr := &Manager{workDir: workRoot, agents: map[string]*AgentProcess{
+		"scanner": {Name: "scanner", State: StateRunning, Config: config.AgentConfig{Backend: "gemini"}},
+	}}
+
+	h, ok := mgr.ResumeHandle("scanner")
+	if !ok || h.SessionID != id || h.Backend != "gemini" {
+		t.Fatalf("handle = %+v, ok = %v", h, ok)
 	}
 }
 

@@ -1,7 +1,12 @@
 package agent
 
 import (
+	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,9 +20,10 @@ import (
 // behind a PR the agent opened can only be recovered from whatever the
 // backend CLI itself persisted. Several of the CLIs the hive drives do keep
 // a transcript on disk under the agent's HOME and can be pointed back at it
-// by id (claude --resume, copilot --resume, codex resume). This file captures
-// that id at PR-open time so pkg/prfollowup can store it beside the PR's
-// pointer and hand it to whichever session picks the PR up later.
+// by id (claude --resume, copilot --resume, codex resume, gemini --resume).
+// This file captures that id at PR-open time so pkg/prfollowup can store it
+// beside the PR's pointer and hand it to whichever session picks the PR up
+// later.
 //
 // Capture is read-only and best effort: it stats the backend's session tree
 // and names the newest transcript. Nothing here launches or changes a CLI —
@@ -34,6 +40,14 @@ const (
 	resumeWalkMaxEntries = 2000
 	// resumeIDMinLen rejects obviously non-id names (a stray "tmp" directory).
 	resumeIDMinLen = 8
+	// resumeIDMaxLen bounds an id read from inside a transcript.
+	resumeIDMaxLen = 128
+	// resumeHeaderMaxBytes bounds how much of a transcript is read to find
+	// the id recorded in its first line.
+	resumeHeaderMaxBytes = 64 << 10
+	// geminiProjectRootMarker is the file gemini writes in each project's
+	// temp directory naming the project root it belongs to.
+	geminiProjectRootMarker = ".project_root"
 )
 
 // ResumeHandle names a backend-native conversation that can be resumed after
@@ -74,6 +88,16 @@ type backendResumeLayout struct {
 	id func(name string) string
 	// command renders the invocation that resumes id.
 	command func(id string) string
+	// idFromFile, when set, reads the real conversation id from the newest
+	// transcript; id then only selects which files are sessions. Used when
+	// the file name carries a shortened id (gemini).
+	idFromFile func(path string) string
+	// project, when set, keeps only the directories directly under root
+	// that belong to the agent's working directory. The backend's session
+	// tree is fleet-shared (a bridged dot-directory), so an unscoped walk
+	// could name another agent's conversation; capture without a working
+	// directory then yields no handle.
+	project func(dir, workDir string) bool
 }
 
 // backendResumeLayouts holds the backends that expose a capturable resume
@@ -102,6 +126,17 @@ var backendResumeLayouts = map[string]backendResumeLayout{
 		ext:     ".jsonl",
 		id:      codexRolloutID,
 		command: func(id string) string { return "codex resume " + id },
+	},
+	// gemini keeps ~/.gemini/tmp/<project>/chats/session-<ts>-<id8>.jsonl.
+	// The file name only carries the first 8 characters of the session id;
+	// the full id is in the transcript's first (metadata) line.
+	"gemini": {
+		root:       func(home, _ string) string { return filepath.Join(home, ".gemini", "tmp") },
+		ext:        ".jsonl",
+		id:         func(name string) string { return trimResumeName(name, "session-", ".jsonl") },
+		command:    func(id string) string { return "gemini --resume " + id },
+		idFromFile: geminiSessionID,
+		project:    geminiProjectDir,
 	},
 }
 
@@ -166,15 +201,80 @@ func looksLikeUUID(s string) bool {
 	return true
 }
 
+// isSafeResumeID reports whether an id read from inside a transcript is safe
+// to render into a shell command: a bounded run of [A-Za-z0-9_-].
+func isSafeResumeID(id string) bool {
+	if len(id) < resumeIDMinLen || len(id) > resumeIDMaxLen {
+		return false
+	}
+	for _, r := range id {
+		if !(r == '-' || r == '_' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')) {
+			return false
+		}
+	}
+	return true
+}
+
+// geminiSessionID reads the full session id from a gemini transcript's first
+// line (its metadata record) and checks it against the shortened id in the
+// file name, so a truncated or foreign file never yields a handle.
+func geminiSessionID(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	line, err := bufio.NewReader(io.LimitReader(f, resumeHeaderMaxBytes)).ReadBytes('\n')
+	if err != nil && err != io.EOF {
+		return ""
+	}
+	var meta struct {
+		SessionID string `json:"sessionId"`
+	}
+	if json.Unmarshal(line, &meta) != nil || !isSafeResumeID(meta.SessionID) {
+		return ""
+	}
+	short := trimResumeName(filepath.Base(path), "session-", ".jsonl")
+	if len(short) < 8 || !strings.HasSuffix(short, meta.SessionID[:8]) {
+		return ""
+	}
+	return meta.SessionID
+}
+
+// geminiProjectDir reports whether a directory under ~/.gemini/tmp belongs to
+// workDir: current gemini names it by a registry slug and records the
+// project root in a marker file; older releases named it by the SHA-256 of
+// the project root.
+func geminiProjectDir(dir, workDir string) bool {
+	workDir = filepath.Clean(workDir)
+	if raw, err := os.ReadFile(filepath.Join(dir, geminiProjectRootMarker)); err == nil {
+		return filepath.Clean(strings.TrimSpace(string(raw))) == workDir
+	}
+	sum := sha256.Sum256([]byte(workDir))
+	return filepath.Base(dir) == hex.EncodeToString(sum[:])
+}
+
 // CaptureResumeHandle names the newest conversation the agent's backend has
 // persisted under its own HOME, or reports false when the backend keeps none
 // (or has not written one yet). It never fails loudly: a missing tree, an
 // unreadable directory and an unsupported backend are all "no handle", and
-// the PR then keeps the handoff note alone.
+// the PR then keeps the handoff note alone. Backends whose session tree is
+// scoped by project (gemini) need the agent's working directory; use
+// CaptureResumeHandleIn for those.
 func CaptureResumeHandle(agentName string, uid int, backend string, now time.Time) (ResumeHandle, bool) {
+	return CaptureResumeHandleIn(agentName, uid, backend, "", now)
+}
+
+// CaptureResumeHandleIn is CaptureResumeHandle for an agent whose CLI runs in
+// workDir. For a project-scoped backend only sessions of that project are
+// considered, and an empty workDir yields no handle.
+func CaptureResumeHandleIn(agentName string, uid int, backend, workDir string, now time.Time) (ResumeHandle, bool) {
 	backend = strings.TrimSpace(backend)
 	layout, ok := backendResumeLayouts[backend]
 	if !ok {
+		return ResumeHandle{}, false
+	}
+	if layout.project != nil && strings.TrimSpace(workDir) == "" {
 		return ResumeHandle{}, false
 	}
 	home := AgentHome(agentName, uid, backend)
@@ -182,9 +282,14 @@ func CaptureResumeHandle(agentName string, uid int, backend string, now time.Tim
 	if root == "" {
 		return ResumeHandle{}, false
 	}
-	id, path, modTime, ok := newestResumeSession(root, layout)
+	id, path, modTime, ok := newestResumeSession(root, workDir, layout)
 	if !ok {
 		return ResumeHandle{}, false
+	}
+	if layout.idFromFile != nil {
+		if id = layout.idFromFile(path); id == "" {
+			return ResumeHandle{}, false
+		}
 	}
 	return ResumeHandle{
 		Backend:    backend,
@@ -198,7 +303,7 @@ func CaptureResumeHandle(agentName string, uid int, backend string, now time.Tim
 
 // newestResumeSession walks root for the most recently written session and
 // returns its id, transcript path and modification time.
-func newestResumeSession(root string, layout backendResumeLayout) (id, path string, modTime time.Time, ok bool) {
+func newestResumeSession(root, workDir string, layout backendResumeLayout) (id, path string, modTime time.Time, ok bool) {
 	budget := resumeWalkMaxEntries
 	var walk func(dir string, depth int)
 	walk = func(dir string, depth int) {
@@ -221,6 +326,9 @@ func newestResumeSession(root string, layout backendResumeLayout) (id, path stri
 						consider(&id, &path, &modTime, &ok, sid, filepath.Join(full, layout.transcript))
 						continue
 					}
+				}
+				if depth == 0 && layout.project != nil && !layout.project(full, workDir) {
+					continue
 				}
 				walk(full, depth+1)
 				continue
@@ -263,8 +371,12 @@ func (m *Manager) ResumeHandle(name string) (ResumeHandle, bool) {
 		return ResumeHandle{}, false
 	}
 	backend, uid := effectiveBackend(agent), agent.UID
+	workDir := ""
+	if m.workDir != "" {
+		workDir = filepath.Join(m.workDir, name)
+	}
 	m.mu.RUnlock()
-	return CaptureResumeHandle(name, uid, backend, time.Now())
+	return CaptureResumeHandleIn(name, uid, backend, workDir, time.Now())
 }
 
 // String renders a handle for logs.
