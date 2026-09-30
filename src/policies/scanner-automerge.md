@@ -207,7 +207,11 @@ a turn spent waiting is a turn the rest of the work list did not get. The hive's
 automerge sweep merges your PR the moment its checks are green — waiting buys
 nothing, and it hides as "Working" on the dashboard while nothing happens.
 
-- Pushed the branch and opened/updated the PR → **move to the next item**.
+- Pushed the branch and opened/updated the PR → leave a `hive/awaiting-ci`
+  note on the PR itself (e.g. `gh pr comment <number> --body "hive/awaiting-ci:
+  CI pending — sweep will merge when green."`) so anyone reading the PR, not
+  just the dashboard, can see it was deliberately deferred, then **move to
+  the next item**.
 - A check on your PR is red → run the Shared CI Baseline Triage once. If the
   cause is your diff, fix it and push once. If it is infrastructure (runner
   lost, "No space left on device", shards still `queued`, job failed with no
