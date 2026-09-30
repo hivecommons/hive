@@ -1,0 +1,1 @@
+- Claude Sonnet 5.5 is now selectable from the static/UI fallback model lists, and list prices were added for Claude Opus 5.5/5, Sonnet 5.5, GPT-6 Astra/Sol/Luna and Gemini 3 Flash preview (#9804).
