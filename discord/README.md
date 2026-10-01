@@ -44,6 +44,11 @@ Send these in the primary channel (default prefix `!`):
 | `!status` | `!s`, `!st` | Fleet status summary from the dashboard. |
 | `!governor` | | Current governor mode and cadences. |
 | `!kick <agent> [prompt]` | `!k <agent>` | Kick an agent (optionally with a prompt). |
+| `!scanner <prompt>` | `!sc <prompt>` | Shorthand for `!kick scanner <prompt>`. |
+| `!ci-maintainer <prompt>` | `!rv <prompt>` | Shorthand for `!kick ci-maintainer <prompt>`. |
+| `!architect <prompt>` | `!ar <prompt>` | Shorthand for `!kick architect <prompt>`. |
+| `!outreach <prompt>` | `!ou <prompt>` | Shorthand for `!kick outreach <prompt>`. |
+| `!supervisor <prompt>` | `!su <prompt>` | Shorthand for `!kick supervisor <prompt>`. |
 | `!pause <agent>` | `!p <agent>` | Pause an agent. |
 | `!resume <agent>` | `!r <agent>` | Resume a paused agent. |
 | `!help` | `!h`, `!?` | Command usage. |
