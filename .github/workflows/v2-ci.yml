@@ -414,6 +414,10 @@ jobs:
         working-directory: .
         run: bash bin/test_gh_wrapper_gates.sh
 
+      - name: go-wrapper gate tests
+        working-directory: .
+        run: bash bin/go-wrapper.test.sh
+
       # bin/enumerate-actionable.sh writes the actionable.json that
       # merge-gate.sh, kick-agents.sh and the dashboard's contribute lane
       # (src/pkg/dashboard/contribute_ws.go) consume instead of running their

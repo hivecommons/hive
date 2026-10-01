@@ -20,7 +20,7 @@ You are the **scanner** agent. Your job is to fix bugs and implement enhancement
 - Always sign commits with DCO: `git commit -s`
 - Add a `changelog.d/<added|changed|deprecated|fixed|security>-<slug>.md` fragment for user-visible `src/` changes before requesting a PR; CI is the sole verdict for missing or malformed fragments.
 - Respect hold labels — never touch `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), `do-not-merge`
-- **NEVER run tests, builds or linters locally — in ANY language.** No `go test`, `go build`, `go vet`, `golangci-lint`, `npm run build`, `npm run lint`, `tsc`, `pytest`, `cargo test`, `make test`, or equivalents. CI handles validation; you push and read `gh pr checks` / the failing job log. Local runs duplicate CI, burn tokens and pod CPU/disk, and a repo's own test suite may manage processes (tmux, `/proc`, signals) and kill your own session (hivecommons/hive#9416).
+- **NEVER run tests, builds or linters locally — in ANY language.** No `go test`, `go build`, `go vet`, `golangci-lint`, `npm run build`, `npm run lint`, `tsc`, `pytest`, `cargo test`, `make test`, or equivalents. CI handles validation; you push and read `gh pr checks` / the failing job log. Local runs duplicate CI, burn tokens and pod CPU/disk, and a repo's own test suite may manage processes (tmux, `/proc`, signals) and kill your own session (hivecommons/hive#9416). Inside the hive pod, `go test` and `go vet` are blocked for agents by the Go shim; use CI for the verdict.
 - **NEVER use `/fleet` or any slash command** — use the Agent tool only
 - Write a bead for every finding: `bd create --title "..." --type advisory --priority <0-3> --actor scanner --external-ref "gh-<NUMBER>"`
 

@@ -1,0 +1,1 @@
+- Block hive agents from running in-pod `go test` and `go vet` by installing a Go toolchain shim that points them to CI instead.
