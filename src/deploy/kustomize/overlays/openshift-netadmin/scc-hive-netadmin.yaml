@@ -14,7 +14,7 @@
 #                              would still reject the pod, so the su-exec set
 #                              is listed too, mirroring deployment.yaml 1:1.
 #                              That 1:1 is machine-checked by
-#                              ../../test_manifest_caps_runtime.sh (#4379):
+#                              src/deploy/test_manifest_caps_runtime.sh (#4379):
 #                              drift here does not fail a grep, it fails
 #                              admission, on the cluster, at deploy time.
 #   runAsUser: RunAsAny        The entrypoint starts as root (iptables REDIRECT,
