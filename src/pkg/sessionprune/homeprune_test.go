@@ -240,3 +240,164 @@ func TestPruneAgentHomesReturnsReadDirErrors(t *testing.T) {
 		t.Errorf("PruneAgentHomes on error = %+v, want zero-valued Result", res)
 	}
 }
+
+// A loose file or symlink directly under root is not an agent home and must be
+// skipped without being descended into.
+func TestPruneAgentHomesSkipsNonDirectoryRootEntries(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-30 * 24 * time.Hour)
+
+	loose := filepath.Join(root, "README")
+	if err := os.WriteFile(loose, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A symlinked "home" pointing at a directory outside root with an aged
+	// cache: ReadDir reports the link as a non-directory, so the sweep must
+	// not reach the cache through it.
+	outside := filepath.Join(t.TempDir(), "real")
+	mkTree(t, filepath.Join(outside, ".cache"), old)
+	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	res, err := PruneAgentHomes(root, 14*24*time.Hour, now, quietLogger())
+	if err != nil {
+		t.Fatalf("PruneAgentHomes: %v", err)
+	}
+	if _, err := os.Stat(loose); err != nil {
+		t.Errorf("loose file under root was removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, ".cache")); err != nil {
+		t.Errorf("aged cache was swept through a symlinked home: %v", err)
+	}
+	if res.Scanned != 0 || res.Removed != 0 {
+		t.Errorf("got %+v, want zero — non-directory root entries are not homes", res)
+	}
+}
+
+// A regular file occupying an allow-listed cache path is not a cache directory
+// and must be left alone; a regular file where a cache's parent should be
+// (.npm as a file) makes Lstat fail with ENOTDIR, which must also keep.
+func TestPruneAgentHomesKeepsNonDirectoryTargets(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-30 * 24 * time.Hour)
+
+	home := filepath.Join(root, "docs")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cacheFile := filepath.Join(home, ".cache")
+	npmFile := filepath.Join(home, ".npm")
+	for _, f := range []string{cacheFile, npmFile} {
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(f, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	res, err := PruneAgentHomes(root, 14*24*time.Hour, now, quietLogger())
+	if err != nil {
+		t.Fatalf("PruneAgentHomes: %v", err)
+	}
+	for _, f := range []string{cacheFile, npmFile} {
+		if _, err := os.Stat(f); err != nil {
+			t.Errorf("regular file at a cache path was removed: %s: %v", f, err)
+		}
+	}
+	if res.Scanned != 0 || res.Removed != 0 || res.Failed != 0 {
+		t.Errorf("got %+v, want zero", res)
+	}
+}
+
+// An agent home that cannot be read is skipped, and the sweep continues across
+// the remaining homes.
+func TestPruneAgentHomesSkipsUnreadableHome(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not deny access")
+	}
+	root := t.TempDir()
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-30 * 24 * time.Hour)
+
+	locked := filepath.Join(root, "locked")
+	mkTree(t, filepath.Join(locked, ".cache"), old)
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	otherCache := filepath.Join(root, "open", ".cache")
+	mkTree(t, otherCache, old)
+
+	res, err := PruneAgentHomes(root, 14*24*time.Hour, now, quietLogger())
+	if err != nil {
+		t.Fatalf("PruneAgentHomes: %v", err)
+	}
+	if _, err := os.Stat(otherCache); !os.IsNotExist(err) {
+		t.Errorf("sweep did not continue past the unreadable home: %v", err)
+	}
+	if res.Removed != 1 || res.Failed != 0 {
+		t.Errorf("got %+v, want Removed=1 Failed=0", res)
+	}
+}
+
+// A target whose contents cannot be walked is kept: deleting on an unreadable
+// path is how a transient failure becomes data loss.
+func TestPruneAgentHomesKeepsTargetWhenWalkFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not deny access")
+	}
+	root := t.TempDir()
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-30 * 24 * time.Hour)
+
+	cache := filepath.Join(root, "walker", ".cache")
+	mkTree(t, cache, old)
+	if err := os.Chmod(cache, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(cache, 0o755) })
+
+	res, err := PruneAgentHomes(root, 14*24*time.Hour, now, quietLogger())
+	if err != nil {
+		t.Fatalf("PruneAgentHomes: %v", err)
+	}
+	if _, err := os.Lstat(cache); err != nil {
+		t.Errorf("unwalkable cache was removed: %v", err)
+	}
+	if res.Scanned != 1 || res.Removed != 0 || res.Failed != 0 {
+		t.Errorf("got %+v, want Scanned=1 Removed=0 Failed=0", res)
+	}
+}
+
+// A removal failure is counted in Failed and does not abort the sweep.
+func TestPruneAgentHomesCountsRemoveFailures(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not deny removal")
+	}
+	root := t.TempDir()
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-30 * 24 * time.Hour)
+
+	home := filepath.Join(root, "pinned")
+	cache := filepath.Join(home, ".cache")
+	mkTree(t, cache, old)
+	// A read-only home permits reading and walking .cache but forbids
+	// unlinking it.
+	if err := os.Chmod(home, 0o500); err != nil {
+		t.Fatalf("chmod home: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(home, 0o755) })
+
+	res, err := PruneAgentHomes(root, 14*24*time.Hour, now, quietLogger())
+	if err != nil {
+		t.Fatalf("PruneAgentHomes: %v", err)
+	}
+	if res.Scanned != 1 || res.Removed != 0 || res.Failed != 1 {
+		t.Errorf("got %+v, want Scanned=1 Removed=0 Failed=1", res)
+	}
+}
