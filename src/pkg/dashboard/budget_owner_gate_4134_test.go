@@ -137,8 +137,10 @@ func TestBudgetSave4134_SpoofedOwnerHeadersDenied(t *testing.T) {
 		r.Header.Set("X-Hive-Role", "owner")
 		r.Header.Set(ownerRoleVerifiedHeader, "true")
 	})
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("spoofed owner headers budget save = %d, want 401; body=%q", w.Code, w.Body.String())
+	// 403, not 401: spoofed identity headers without a proxy proof are refused
+	// without a sign-in challenge (#9785, writeProxyProofRejected).
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("spoofed owner headers budget save = %d, want 403; body=%q", w.Code, w.Body.String())
 	}
 	if got := s.deps.Config.Governor.Budget.TotalTokens; got != 1000 {
 		t.Fatalf("totalTokens = %d, want 1000 (spoofed save must not persist)", got)

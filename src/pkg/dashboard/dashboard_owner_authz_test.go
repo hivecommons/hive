@@ -79,8 +79,11 @@ func TestOwnerOnlyMutationsRejectSpoofedOwnerRoleWithWrongToken(t *testing.T) {
 
 	s.Handler().ServeHTTP(w, req)
 
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("spoofed owner role with wrong token status = %d, want 401", w.Code)
+	// 403, not 401: identity headers without a valid proxy proof are refused
+	// outright and never answered with a sign-in challenge (#9785,
+	// writeProxyProofRejected).
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("spoofed owner role with wrong token status = %d, want 403", w.Code)
 	}
 }
 
@@ -98,8 +101,9 @@ func TestOwnerOnlyMutationsRejectSpoofedOwnerVerificationMarker(t *testing.T) {
 
 	s.Handler().ServeHTTP(w, req)
 
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("spoofed owner verification marker without credential status = %d, want 401", w.Code)
+	// 403, not 401: see TestOwnerOnlyMutationsRejectSpoofedOwnerRoleWithWrongToken.
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("spoofed owner verification marker without credential status = %d, want 403", w.Code)
 	}
 }
 
