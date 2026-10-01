@@ -14,7 +14,7 @@ import (
 func seedStablePromotionChannels(t *testing.T) {
 	t.Helper()
 	stubChannelDigests(t, map[string]string{
-		"v5-latest": "sha256:candidate",
+		"v5-latest": "sha256:v5-latest",
 		"stable":    "sha256:stable",
 		"candidate": "sha256:candidate",
 		"edge":      "sha256:edge",

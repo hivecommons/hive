@@ -337,8 +337,8 @@ blocker_count() {
 }
 
 fetch_stable_promotion_state() {
-  local url=${STABLE_PROMOTION_URL:-$STABLE_PROMOTION_URL_DEFAULT}
-  curl -fsS "$url"
+  local url=${STABLE_PROMOTION_URL:-${STABLE_PROMOTION_URL_DEFAULT:-https://hive.hivecommons.dev/api/hub/release/stable-promotion}}
+  curl -fsS --connect-timeout 5 --max-time 20 --retry 2 "$url"
 }
 
 stable_promotion_preflight() {
@@ -346,7 +346,11 @@ stable_promotion_preflight() {
   if [[ -n ${STABLE_PROMOTION_STATE_JSON:-} ]]; then
     state=$STABLE_PROMOTION_STATE_JSON
   elif ! state=$(fetch_stable_promotion_state 2>/dev/null); then
-    echo "::warning::could not reach stable auto-promotion state at ${STABLE_PROMOTION_URL:-$STABLE_PROMOTION_URL_DEFAULT}; skipping promotion fail-closed"
+    echo "::warning::could not reach stable auto-promotion state at ${STABLE_PROMOTION_URL:-${STABLE_PROMOTION_URL_DEFAULT:-https://hive.hivecommons.dev/api/hub/release/stable-promotion}}; skipping promotion fail-closed"
+    return 1
+  fi
+  if ! jq -e 'type == "object" and has("auto_promote")' <<<"$state" >/dev/null 2>&1; then
+    echo "::warning::could not read valid stable auto-promotion state at ${STABLE_PROMOTION_URL:-${STABLE_PROMOTION_URL_DEFAULT:-https://hive.hivecommons.dev/api/hub/release/stable-promotion}}; skipping promotion fail-closed"
     return 1
   fi
   local auto paused_by paused_at

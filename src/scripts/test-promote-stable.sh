@@ -59,6 +59,12 @@ source <(sed -n '/^stable_promotion_preflight()/,/^}/p' "$promoter")
 # shellcheck source=/dev/null
 source <(sed -n '/^stable_smoke_from_hub()/,/^}/p' "$promoter")
 
+if sed -n '/^fetch_stable_promotion_state()/,/^}/p' "$promoter" | grep -q -- '--connect-timeout 5 --max-time 20 --retry 2'; then
+  pass "hub state fetch has bounded curl timeouts and retries"
+else
+  bad "hub state fetch must bound curl with connect/max timeouts and retries"
+fi
+
 if out=$(STABLE_PROMOTION_STATE_JSON='{"auto_promote":false,"paused_by":"andy","paused_at":"2026-10-01T12:00:00Z"}' stable_promotion_preflight 2>&1); then
   bad "paused stable auto-promotion should skip before evaluation"
 elif grep -q 'paused by andy' <<<"$out"; then
@@ -73,6 +79,14 @@ elif grep -q '::warning::could not reach stable auto-promotion state' <<<"$out";
   pass "unreachable hub fails closed with a warning"
 else
   bad "unreachable hub did not emit the fail-closed warning (output: ${out})"
+fi
+
+if out=$(STABLE_PROMOTION_STATE_JSON='not-json' stable_promotion_preflight 2>&1); then
+  bad "invalid hub state should fail closed and skip promotion"
+elif grep -q '::warning::could not read valid stable auto-promotion state' <<<"$out"; then
+  pass "invalid hub state fails closed with a warning"
+else
+  bad "invalid hub state did not emit the fail-closed warning (output: ${out})"
 fi
 
 healthy_state='{"auto_promote":true,"maintained_hives":[{"id":"h-candidate","image_ref":"ghcr.io/hivecommons/hive:candidate","git_hash":"abcdef1","last_heartbeat_at":"2999-01-01T00:00:00Z","healthy":true,"crash_restarts_24h":0}]}'
