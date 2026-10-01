@@ -356,16 +356,23 @@ build, not a stable claim. The line's promotion bar is
 guard-invariant conformance rows are checked for all eight shipped
 surfaces; the per-surface live exercises remain open.
 
-**Known gap: no promotion mechanism yet.** Even once every readiness-bar
-row is checked, there is currently no way to *promote* `v6` past `edge`:
-`tagged-release.yml`, `promote-stable.yml`, and `.github/release-lines.yml`
-are still byte-identical to `v5` with `v5` hardcoded throughout, and
-`docker.yml` only ever publishes `v6` to `edge`
-([#9154](https://github.com/hivecommons/hive/issues/9154)). The readiness
-runbook is also missing evidence-checklist sections for 5 of the 11 open
-live-exercise rows
-([#9200](https://github.com/hivecommons/hive/issues/9200)). Tracked
-together in [#9227](https://github.com/hivecommons/hive/issues/9227).
+**Known gap: `v6` is not yet a release line, though the dangerous part is
+fixed.** The silent-mismerge risk once described here — `tagged-release.yml`
+and `promote-stable.yml` hardcoded to `v5` regardless of which branch
+triggered them — is resolved: both workflows now derive
+`RELEASE_LINE`/`RELEASE_BRANCH` from `github.ref_name` and refuse to run
+unless that branch is in `.github/release-lines.yml`'s `release_lines` list,
+via a new `check-release-lines.sh --is-release-line` guard
+([#9154](https://github.com/hivecommons/hive/issues/9154), fixed by
+[#9307](https://github.com/hivecommons/hive/pull/9307) on `v6`). What's
+still true: `release_lines` is still `[v4, v5]` — `v6` has not been added —
+and `docker.yml`'s `v6` rows still only ever publish `edge`, never
+`candidate`/`stable`. So promoting `v6` past `edge` remains gated, but it is
+now a **deliberate, unflipped GA gate** guarded against misfiring, not a
+bug blocking the path. The readiness-runbook gap is resolved
+([#9200](https://github.com/hivecommons/hive/issues/9200), closed). Tracked
+together in [#9227](https://github.com/hivecommons/hive/issues/9227), open
+pending a maintainer go/no-go on flipping the gate.
 
 ## Hosted Hive Hub
 
