@@ -37,9 +37,16 @@ var reservedExactLabels = []string{
 
 // reservedLabelPrefixes are namespaces owned by the hive itself: claim
 // ownership (`hive/claimed-by-<agent>`), the PR-claim bookkeeping labels and
-// the verification state labels are all written by hive code paths that read
+// most verification state labels are written by hive code paths that read
 // them back as fact.
 var reservedLabelPrefixes = []string{"hive/"}
+
+// agentRecordableHiveStateLabels are the narrow exceptions agents may add
+// because hive explicitly asks for them as the agent's audited verdict. The
+// relay still refuses removing them and refuses every other hive/* label.
+var agentRecordableHiveStateLabels = []string{
+	VerifiedOpenLabel,
+}
 
 // reservedLabelForAgents reports whether label is refused to the label relay.
 // autoMergeLabel is the hive's configured merge-queue label, which an
@@ -67,6 +74,16 @@ func reservedLabelForAgents(label, autoMergeLabel string) bool {
 	}
 	for _, hold := range HoldLabels {
 		if name == strings.ToLower(strings.TrimSpace(hold)) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentRecordableHiveStateLabel(label string) bool {
+	name := strings.ToLower(strings.TrimSpace(label))
+	for _, allowed := range agentRecordableHiveStateLabels {
+		if name == strings.ToLower(strings.TrimSpace(allowed)) {
 			return true
 		}
 	}
@@ -109,7 +126,21 @@ func (c *Client) reservedLabelRefusal(add, remove []string) (string, bool) {
 	autoMerge := c.AutoMergeLabel()
 	var bad []string
 	seen := map[string]bool{}
-	for _, label := range append(append([]string{}, add...), remove...) {
+	for _, label := range add {
+		if agentRecordableHiveStateLabel(label) {
+			continue
+		}
+		if !reservedLabelForAgents(label, autoMerge) {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(label))
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		bad = append(bad, strings.TrimSpace(label))
+	}
+	for _, label := range remove {
 		if !reservedLabelForAgents(label, autoMerge) {
 			continue
 		}

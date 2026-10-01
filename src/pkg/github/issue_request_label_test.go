@@ -103,7 +103,7 @@ func TestIssueRequestWatcher_LabelRefusesHiveControlledLabels(t *testing.T) {
 	for _, label := range []string{
 		AutoMergeQueuedLabel, "LGTM", "hold", "on-hold", HumanAckLabel,
 		"design-approved", "needs-human", "needs-decision", "blocked",
-		"hive/claimed-by-other", "hive/verified-open",
+		"hive/claimed-by-other", "hive/likely-done",
 	} {
 		t.Run(label, func(t *testing.T) {
 			var added, removed []string
@@ -135,9 +135,9 @@ func TestIssueRequestWatcher_LabelRefusesHiveControlledLabels(t *testing.T) {
 	}
 }
 
-// A reserved label is refused in the remove direction too: taking `hold` off
-// a PR is exactly the escalation the guard exists for.
-func TestIssueRequestWatcher_LabelRefusesReservedRemoval(t *testing.T) {
+// hive/verified-open is the one hive state label agents may add: the kick
+// asks them to record that a merged/reference claim did not finish the issue.
+func TestIssueRequestWatcher_LabelAllowsVerifiedOpenVerdict(t *testing.T) {
 	var added, removed []string
 	srv := newLabelMockServer(t, &added, &removed)
 	defer srv.Close()
@@ -145,19 +145,56 @@ func TestIssueRequestWatcher_LabelRefusesReservedRemoval(t *testing.T) {
 	dir := withIssueDir(t)
 
 	reqPath, err := WriteIssueRequest(dir, IssueRequest{
-		Kind: "label", Repo: "o/r", Number: 7, Agent: "scanner",
-		RemoveLabels: []string{"hold"},
+		Kind: "label", Repo: "o/r", Number: 9804, Agent: "scanner",
+		Labels: []string{"bug", " HIVE/verified-open "},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	c.ProcessIssueRequestsOnce(context.Background())
 
-	if len(removed) != 0 {
-		t.Fatalf("reserved label removal reached GitHub: %v", removed)
+	if got := strings.Join(added, ","); got != "bug,HIVE/verified-open" {
+		t.Fatalf("labels added = %q, want bug and hive/verified-open", got)
 	}
-	if _, err := os.Stat(reqPath + ".denied"); err != nil {
-		t.Errorf("refused removal was not quarantined: %v", err)
+	if len(removed) != 0 {
+		t.Fatalf("unexpected removed labels: %v", removed)
+	}
+	resp := readIssueResultFile(t, reqPath)
+	if !resp.OK || resp.Number != 9804 {
+		t.Fatalf("result = %+v, want ok on #9804", resp)
+	}
+	if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+		t.Error("a fulfilled verified-open label request should be consumed")
+	}
+}
+
+// A reserved label is refused in the remove direction too: taking `hold` off
+// a PR is exactly the escalation the guard exists for.
+func TestIssueRequestWatcher_LabelRefusesReservedRemoval(t *testing.T) {
+	for _, label := range []string{"hold", VerifiedOpenLabel} {
+		t.Run(label, func(t *testing.T) {
+			var added, removed []string
+			srv := newLabelMockServer(t, &added, &removed)
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			dir := withIssueDir(t)
+
+			reqPath, err := WriteIssueRequest(dir, IssueRequest{
+				Kind: "label", Repo: "o/r", Number: 7, Agent: "scanner",
+				RemoveLabels: []string{label},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.ProcessIssueRequestsOnce(context.Background())
+
+			if len(removed) != 0 {
+				t.Fatalf("reserved label removal reached GitHub: %v", removed)
+			}
+			if _, err := os.Stat(reqPath + ".denied"); err != nil {
+				t.Errorf("refused removal was not quarantined: %v", err)
+			}
+		})
 	}
 }
 
