@@ -209,10 +209,10 @@ func TestReleaseLevelHoldIfEligible_ExportedWrapper(t *testing.T) {
 	c.prHoldLabel = func(agent string) bool { return false }
 
 	released, reason, err := c.ReleaseLevelHoldIfEligible(context.Background(), "acme", "widget", heldPRFixture())
-	if err != nil || !released || reason != "level-hold-released" {
-		t.Fatalf("ReleaseLevelHoldIfEligible = (%v, %q, %v), want release", released, reason, err)
+	if err != nil || released || reason != "hold" {
+		t.Fatalf("ReleaseLevelHoldIfEligible = (%v, %q, %v), want held/no release", released, reason, err)
 	}
-	if s.removes != 1 {
-		t.Fatalf("removes=%d, want 1", s.removes)
+	if s.removes != 0 {
+		t.Fatalf("removes=%d, want 0", s.removes)
 	}
 }

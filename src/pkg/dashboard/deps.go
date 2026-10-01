@@ -103,6 +103,9 @@ type Dependencies struct {
 	SkipReloadFunc        func()
 	ReInitFunc            func()
 	EnumerateFunc         func()
+	// OnACMMLevelChanged is called after an in-process runtime level change
+	// has been persisted/applied. Nil means no live component needs to react.
+	OnACMMLevelChanged func(prev, next int)
 	// ReviewConfigApplied is called after PUT /api/config/review has mutated
 	// Config.Review, so the owner of any component that caches review
 	// settings at boot (the GitHub client's revise allowlist and perspective

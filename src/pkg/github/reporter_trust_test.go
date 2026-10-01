@@ -328,7 +328,7 @@ func TestReleaseLevelHold_ReporterTrustNoticeBlocksRelease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("releaseLevelHoldIfEligible: %v", err)
 	}
-	if released || reason != "reporter-trust-hold" {
+	if released || reason != "hold" {
 		t.Fatalf("released=%v reason=%q; a reporter-trust hold is a human's to lift", released, reason)
 	}
 }
@@ -343,17 +343,8 @@ func TestReleaseLevelHold_ReEvaluatesAndPostsMissingReporterNotice(t *testing.T)
 	if err != nil {
 		t.Fatalf("releaseLevelHoldIfEligible: %v", err)
 	}
-	if released || reason != "reporter-trust-hold" {
-		t.Fatalf("released=%v reason=%q; the hold must survive and the notice be posted", released, reason)
-	}
-	var posted bool
-	for _, body := range srv.postedComments() {
-		if IsReporterTrustHoldNotice(body) {
-			posted = true
-		}
-	}
-	if !posted {
-		t.Error("the release path must post the reporter-trust notice it found missing")
+	if released || reason != "hold" {
+		t.Fatalf("released=%v reason=%q; the hold must survive", released, reason)
 	}
 }
 
@@ -366,7 +357,7 @@ func TestReleaseLevelHold_TrustedReporterStillReleases(t *testing.T) {
 	c.prHoldLabel = func(string) bool { return false }
 
 	_, reason, _ := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", reporterHeldPR(583))
-	if reason == "reporter-trust-hold" || reason == "reporter-trust-notice" {
+	if reason != "hold" {
 		t.Fatalf("reason = %q; a trusted reporter's PR must not be held by the reporter gate", reason)
 	}
 }

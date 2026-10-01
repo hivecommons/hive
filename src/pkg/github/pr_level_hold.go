@@ -26,8 +26,8 @@ func levelHoldNotice(agent string) string {
 >
 > This PR was opened by the %q agent while Hive policy required a human checkpoint for that agent. Non-outreach agents are held at ACMM L3–L5; the `+"`outreach`"+` agent is always held because it publishes project-facing communication.
 >
-> Hive will automatically remove the `+"`hold`"+` label once current policy no longer requires a level hold for %q. If this is an outreach PR, a human must review it and remove the label.`,
-		levelHoldMarker(agent), agent, agent)
+> Hive will keep the `+"`hold`"+` label until a human removes it. Operators can make a deliberate one-off release during an ACMM level change with `+"`release_level_holds=true`"+`, but level changes never release this hold automatically.`,
+		levelHoldMarker(agent), agent)
 }
 
 func levelHoldMarker(agent string) string {
@@ -36,6 +36,11 @@ func levelHoldMarker(agent string) string {
 }
 
 func levelHoldAgentFromNotice(body string) (string, bool) {
+	meta, ok := levelHoldMetadataFromNotice(body)
+	return meta.Agent, ok
+}
+
+func levelHoldMetadataFromNotice(body string) (levelHoldNoticeMetadata, bool) {
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, levelHoldNoticePrefix) || !strings.HasSuffix(line, " -->") {
@@ -47,10 +52,11 @@ func levelHoldAgentFromNotice(body string) (string, bool) {
 			continue
 		}
 		if agent := strings.TrimSpace(meta.Agent); agent != "" {
-			return agent, true
+			meta.Agent = agent
+			return meta, true
 		}
 	}
-	return "", false
+	return levelHoldNoticeMetadata{}, false
 }
 
 func (c *Client) ensureLevelHoldNotice(ctx context.Context, repo string, number int, agent string) error {
@@ -82,67 +88,168 @@ func (c *Client) releaseLevelHoldIfEligible(ctx context.Context, owner, repo str
 	if err != nil {
 		return false, "level-hold-comment-check", err
 	}
-	agent := ""
 	for _, comment := range comments {
 		if !c.isTrustedLevelHoldNoticeAuthor(comment) {
 			continue
 		}
-		if parsed, ok := levelHoldAgentFromNotice(comment.GetBody()); ok {
-			agent = parsed
-			break
+		if _, ok := levelHoldAgentFromNotice(comment.GetBody()); ok {
+			return false, "hold", nil
 		}
 	}
-	if agent == "" {
-		return false, "hold", nil
-	}
-	if c.prHoldLabel == nil {
-		return false, "level-hold-policy-unavailable", nil
-	}
-	if c.prHoldLabel(agent) {
-		return false, "level-hold-still-required", nil
-	}
-	// #9665: a reporter-trust hold is a human's to lift, at every level. The
-	// notice is the durable marker; if the App held for that reason but the
-	// notice never landed, re-evaluate and post it now rather than release.
-	if hasReporterTrustNotice(comments, c.appBotLogin) {
-		return false, "reporter-trust-hold", nil
-	}
-	if c.reporterTrustHoldActive(owner + "/" + repo) {
-		reporter := c.EvaluateReporterTrust(ctx, owner+"/"+repo, pr.GetTitle(), pr.GetBody(), nil)
-		if reporter.Held {
-			if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(reporterTrustNotice(reporter))}); err != nil {
-				return false, "reporter-trust-notice", fmt.Errorf("commenting on reporter-trust hold: %w", err)
-			}
-			return false, "reporter-trust-hold", nil
-		}
-	}
-	if c.selfAuthorizationHoldActive(owner + "/" + repo) {
-		selfAuth := c.EvaluateSelfAuthorization(ctx, owner+"/"+repo, pr.GetTitle(), pr.GetBody(), nil)
-		if selfAuth.Held {
-			if !hasSelfAuthorizationNotice(comments, c.appBotLogin) {
-				if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(selfAuthorizationNotice(selfAuth))}); err != nil {
-					return false, "self-authorization-notice", fmt.Errorf("commenting on self-authorization hold: %w", err)
-				}
-			}
-			return false, "self-authorization-hold", nil
-		}
-	}
-	if ok, err := c.latestHoldLabelEventWasByApp(ctx, owner, repo, number); err != nil {
-		return false, "level-hold-event-check", err
-	} else if !ok {
-		return false, "level-hold-not-app-labeled", nil
-	}
-	if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repo, number, url.PathEscape("hold")); err != nil && !githubStatusError(err, http.StatusNotFound) {
-		return false, "level-hold-release", fmt.Errorf("removing level hold label: %w", err)
-	}
-	if c.logger != nil {
-		c.logger.Info("self-authored automerge sweep released level-applied hold", "repo", owner+"/"+repo, "pr", number, "agent", agent)
-	}
-	return true, "level-hold-released", nil
+	return false, "hold", nil
 }
 
 func (c *Client) isTrustedLevelHoldNoticeAuthor(comment *gh.IssueComment) bool {
 	return c.isTrustedAppBotCommentAuthor(comment)
+}
+
+// LevelHoldPR identifies an open PR carrying a Hive App level-hold notice.
+type LevelHoldPR struct {
+	Repo   string `json:"repo"`
+	Number int    `json:"number"`
+	Agent  string `json:"agent,omitempty"`
+}
+
+// PendingLevelHolds lists open PRs across active repositories whose hold label
+// is attributable to the ACMM level gate and whose latest hold-label event was
+// the Hive App applying that hold. Human re-holds are not considered pending
+// level holds; they are a human's to remove.
+func (c *Client) PendingLevelHolds(ctx context.Context) ([]LevelHoldPR, error) {
+	if c == nil {
+		return nil, ErrNoGitHubClient
+	}
+	var pending []LevelHoldPR
+	for _, repoRef := range c.activeRepos() {
+		owner, repo := c.splitRepo(repoRef)
+		opts := &gh.PullRequestListOptions{State: "open", ListOptions: gh.ListOptions{PerPage: 100}}
+		for {
+			prs, resp, err := c.client.PullRequests.List(ctx, owner, repo, opts)
+			if err != nil {
+				return nil, fmt.Errorf("listing open pull requests for %s/%s: %w", owner, repo, err)
+			}
+			for _, pr := range prs {
+				if pr == nil || !HasHoldLabel(extractPRLabels(pr.Labels)) {
+					continue
+				}
+				meta, ok, err := c.levelHoldMetadataForPR(ctx, owner, repo, pr.GetNumber())
+				if err != nil {
+					return nil, err
+				}
+				if !ok {
+					continue
+				}
+				blocked, err := c.levelHoldReleaseBlockedByOtherPolicy(ctx, owner, repo, pr, meta, nil)
+				if err != nil {
+					return nil, err
+				}
+				if blocked {
+					continue
+				}
+				appHeld, err := c.latestHoldLabelEventWasByApp(ctx, owner, repo, pr.GetNumber())
+				if err != nil {
+					return nil, err
+				}
+				if appHeld {
+					pending = append(pending, LevelHoldPR{Repo: owner + "/" + repo, Number: pr.GetNumber(), Agent: meta.Agent})
+				}
+			}
+			if resp.NextPage == 0 {
+				break
+			}
+			opts.Page = resp.NextPage
+		}
+	}
+	return pending, nil
+}
+
+// ReleaseLevelHoldsOnce removes the literal hold label from the level-held PRs
+// currently pending across active repositories and comments with the operator
+// and target level that authorized this deliberate one-off release.
+func (c *Client) ReleaseLevelHoldsOnce(ctx context.Context, level int, actor string) ([]LevelHoldPR, error) {
+	if c == nil {
+		return nil, ErrNoGitHubClient
+	}
+	pending, err := c.PendingLevelHolds(ctx)
+	if err != nil {
+		return nil, err
+	}
+	actor = strings.TrimSpace(actor)
+	if actor == "" {
+		actor = "unknown operator"
+	}
+	for _, pr := range pending {
+		owner, repo := c.splitRepo(pr.Repo)
+		if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repo, pr.Number, url.PathEscape("hold")); err != nil && !githubStatusError(err, http.StatusNotFound) {
+			return pending, fmt.Errorf("removing level hold label on %s#%d: %w", pr.Repo, pr.Number, err)
+		}
+		body := fmt.Sprintf("hold released by operator %s when raising to L%d", actor, level)
+		if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, pr.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+			return pending, fmt.Errorf("commenting on level hold release for %s#%d: %w", pr.Repo, pr.Number, err)
+		}
+		if c.logger != nil {
+			c.logger.Info("level-applied hold released by operator during ACMM level change", "repo", pr.Repo, "number", pr.Number, "agent", pr.Agent, "operator", actor, "level", level)
+		}
+	}
+	return pending, nil
+}
+
+func (c *Client) levelHoldMetadataForPR(ctx context.Context, owner, repo string, number int) (levelHoldNoticeMetadata, bool, error) {
+	comments, err := c.listIssueComments(ctx, owner, repo, number)
+	if err != nil {
+		return levelHoldNoticeMetadata{}, false, err
+	}
+	if hasReporterTrustNotice(comments, c.appBotLogin) || hasSelfAuthorizationNotice(comments, c.appBotLogin) {
+		return levelHoldNoticeMetadata{}, false, nil
+	}
+	for _, comment := range comments {
+		if !c.isTrustedLevelHoldNoticeAuthor(comment) {
+			continue
+		}
+		if meta, ok := levelHoldMetadataFromNotice(comment.GetBody()); ok {
+			return meta, true, nil
+		}
+	}
+	return levelHoldNoticeMetadata{}, false, nil
+}
+
+func (c *Client) levelHoldReleaseBlockedByOtherPolicy(ctx context.Context, owner, repo string, pr *gh.PullRequest, _ levelHoldNoticeMetadata, comments []*gh.IssueComment) (bool, error) {
+	if c == nil || pr == nil {
+		return true, nil
+	}
+	number := pr.GetNumber()
+	if comments == nil {
+		var err error
+		comments, err = c.listIssueComments(ctx, owner, repo, number)
+		if err != nil {
+			return true, err
+		}
+	}
+	repoRef := owner + "/" + repo
+	if hasReporterTrustNotice(comments, c.appBotLogin) {
+		return true, nil
+	}
+	if c.reporterTrustHoldActive(repoRef) {
+		reporter := c.EvaluateReporterTrust(ctx, repoRef, pr.GetTitle(), pr.GetBody(), nil)
+		if reporter.Held {
+			if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(reporterTrustNotice(reporter))}); err != nil {
+				return true, fmt.Errorf("commenting on reporter-trust hold for %s#%d: %w", repoRef, number, err)
+			}
+			return true, nil
+		}
+	}
+	if hasSelfAuthorizationNotice(comments, c.appBotLogin) {
+		return true, nil
+	}
+	if c.selfAuthorizationHoldActive(repoRef) {
+		selfAuth := c.EvaluateSelfAuthorization(ctx, repoRef, pr.GetTitle(), pr.GetBody(), nil)
+		if selfAuth.Held {
+			if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(selfAuthorizationNotice(selfAuth))}); err != nil {
+				return true, fmt.Errorf("commenting on self-authorization hold for %s#%d: %w", repoRef, number, err)
+			}
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func hasSelfAuthorizationNotice(comments []*gh.IssueComment, appBotLogin string) bool {

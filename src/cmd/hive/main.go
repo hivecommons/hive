@@ -1485,6 +1485,7 @@ func (b *boot) wireBootClosures() {
 			HookFire: func(ctx context.Context, p hooks.Payload) {
 				hookDispatcher().Fire(ctx, p)
 			},
+			OnACMMLevelChanged: b.onACMMLevelChanged,
 			RunBurndown: func(ctx context.Context, key string) (*dashboard.RunBurndown, error) {
 				w := b.cfg.Governor.WorkSource.Wavefront
 				if !w.Enabled {
@@ -2361,8 +2362,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 			pushBranch: b.agentMgr.AuthorizePushBranch,
 			logger:     b.logger,
 		})
-		// The ACMM verdict is re-read on every (re)start, so a hand-over
-		// after a level change starts the sweep under the current level.
+		// The ACMM verdict is re-read on every (re)start; the dashboard's
+		// OnACMMLevelChanged hook restarts this generation when a runtime
+		// level change crosses the self-merge boundary.
 		sweepDone := deps.startSelfAuthoredSweep(ctx, client, b.cfg.AutoMerge.MaxMerges, b.cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(b.cfg.ACMMLevel), b.cfg.ACMMLevel, autoMergeOpts)
 		return joinDone(relaysDone, sweepDone)
 	}, b.logger)
@@ -3636,7 +3638,14 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	// Watch hive.yaml for external changes and reload config when modified
 	b.configWatcher = deps.newConfigWatcher(b.configPath, func(newCfg *config.Config) {
 		b.cfgReloadMu.Lock()
-		defer b.cfgReloadMu.Unlock()
+		prevACMMLevel := b.cfg.ACMMLevelOrZero()
+		nextACMMLevel := prevACMMLevel
+		defer func() {
+			b.cfgReloadMu.Unlock()
+			if prevACMMLevel != nextACMMLevel {
+				b.onACMMLevelChanged(prevACMMLevel, nextACMMLevel)
+			}
+		}()
 
 		// Preserve runtime-only fields that are not in the YAML
 		newCfg.HiveID = b.cfg.HiveID
@@ -3676,6 +3685,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 
 		// Swap the in-memory config pointer contents
 		*b.cfg = *newCfg
+		nextACMMLevel = b.cfg.ACMMLevelOrZero()
 
 		// Re-sync subsystems that cache config values
 		b.ghClient.SetRepos(b.cfg.Project.Repos)
@@ -5320,6 +5330,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						b.cfg.GitHub.APIURL = pc.GitHubAPIURL
 					}
 				}
+				prevLevel := b.cfg.ACMMLevelOrZero()
 				level := pc.ACMMLevel
 				b.cfg.ACMMLevel = &level
 
@@ -5336,6 +5347,9 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// (config save writes the overlay hive.yaml, same as level switches).
 				if err := b.cfg.Save(); err != nil {
 					b.logger.Error("failed to save claimed project config", "error", err)
+				}
+				if prevLevel != level {
+					b.onACMMLevelChanged(prevLevel, level)
 				}
 
 			}),

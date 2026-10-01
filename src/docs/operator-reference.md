@@ -169,7 +169,11 @@ higher** (`config.SelfMergeMinACMMLevel`). An unset `acmm_level` fails closed
 `self-authored auto-merge sweep disabled: acmm_level below minimum (or
 auto_merge.self_authored is off)` when either condition blocks it. This
 matches the [ACMM policy matrix](acmm-policy-matrix.md): below L6 all agent
-PRs are hold-gated and nothing merges its own work.
+PRs are hold-gated and nothing merges its own work. Runtime ACMM level changes
+that cross this gate restart the request relay generation, so the sweep starts
+or stops without a pod restart. Promotion into L6 does not release existing
+level-applied holds; use `release_level_holds: true` on `PUT /api/packs/level`
+for a deliberate one-off release, otherwise a human must remove `hold`.
 
 **Eligibility per PR.** The sweep only ever considers open, non-draft PRs
 authored by the App bot login itself (re-verified per PR, not just at listing

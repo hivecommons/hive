@@ -11,6 +11,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hooks"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 )
@@ -582,15 +583,22 @@ func (s *Server) handlePackApply(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid level: "+levelStr, http.StatusBadRequest)
 		return
 	}
+	if _, err := config.ACMMPackByLevel(level); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	s.levelMu.Lock()
-	defer s.levelMu.Unlock()
+	prevLevel := detectACMMLevel(s.deps.Config)
 
 	// Explicit operator pack-apply: force the governor cadences to the target
 	// pack (see ApplyPackForce) so a level switch that adds no new agent still
 	// picks up the new level's cadences instead of keeping the old ones.
 	result, err := s.ApplyPackForce(level)
 	if err != nil {
+		nextLevel := detectACMMLevel(s.deps.Config)
+		s.levelMu.Unlock()
+		s.notifyACMMLevelChanged(prevLevel, nextLevel)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -603,6 +611,8 @@ func (s *Server) handlePackApply(w http.ResponseWriter, r *http.Request) {
 	// Kick the rebuild and hand back the StatusSeq floor so the browser can
 	// reject any snapshot built before this apply (#5492).
 	floor := s.refreshAndPersistSeq()
+	s.levelMu.Unlock()
+	s.notifyACMMLevelChanged(prevLevel, level)
 
 	// packAgents mirrors handlePackSetLevel: the dashboard reads it to scope
 	// ACMM section visibility. It was absent here, so the client always fell
@@ -642,7 +652,8 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Level int `json:"level"`
+		Level             int  `json:"level"`
+		ReleaseLevelHolds bool `json:"release_level_holds"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "level must be an integer between 1 and 6", http.StatusBadRequest)
@@ -656,7 +667,6 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.levelMu.Lock()
-	defer s.levelMu.Unlock()
 
 	level := body.Level
 	packAgents := config.ACMMPackManagedAgentNames()
@@ -701,6 +711,9 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 	packResult, packErr := s.ApplyPackForce(level)
 	if packErr != nil {
 		s.logger.Error("failed to reconcile roster after level change", "level", level, "error", packErr)
+		nextLevel := detectACMMLevel(s.deps.Config)
+		s.levelMu.Unlock()
+		s.notifyACMMLevelChanged(prevLevel, nextLevel)
 		jsonError(w, "level set but roster reconciliation failed: "+packErr.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -782,16 +795,51 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	s.logger.Info("ACMM level set", "level", body.Level, "paused", len(paused), "resumed", len(resumed), "packUpdated", packUpdated)
+	s.levelMu.Unlock()
+	levelHoldsReleased, releaseErr := s.releaseLevelHoldsIfRequested(r, prevLevel, level, body.ReleaseLevelHolds)
+	if releaseErr != nil {
+		jsonError(w, "level set but level-hold release failed: "+releaseErr.Error(), http.StatusInternalServerError)
+		s.notifyACMMLevelChanged(prevLevel, level)
+		return
+	}
+	s.notifyACMMLevelChanged(prevLevel, level)
 	jsonResponse(w, map[string]interface{}{
-		"ok":               true,
-		"level":            body.Level,
-		"packAgents":       packAgentNames,
-		"packUpdated":      packUpdated,
-		"governor_changes": packResult.GovernorChanges,
-		"paused":           paused,
-		"resumed":          resumed,
-		"minStatusSeq":     floor,
+		"ok":                   true,
+		"level":                body.Level,
+		"packAgents":           packAgentNames,
+		"packUpdated":          packUpdated,
+		"governor_changes":     packResult.GovernorChanges,
+		"paused":               paused,
+		"resumed":              resumed,
+		"minStatusSeq":         floor,
+		"level_holds_released": len(levelHoldsReleased),
+		"release_level_holds":  body.ReleaseLevelHolds,
 	})
+}
+
+func (s *Server) notifyACMMLevelChanged(prev, next int) {
+	if prev == next || s == nil || s.deps == nil || s.deps.OnACMMLevelChanged == nil {
+		return
+	}
+	s.deps.OnACMMLevelChanged(prev, next)
+}
+
+func (s *Server) releaseLevelHoldsIfRequested(r *http.Request, prev, next int, release bool) ([]ghpkg.LevelHoldPR, error) {
+	if !release || s == nil || s.deps == nil || s.deps.Config == nil || s.deps.GHClient == nil || !crossesSelfMergeLevel(s.deps.Config, prev, next) {
+		return nil, nil
+	}
+	released, err := s.deps.GHClient.ReleaseLevelHoldsOnce(r.Context(), next, requestUser(r))
+	if err != nil {
+		return released, err
+	}
+	return released, nil
+}
+
+func crossesSelfMergeLevel(cfg *config.Config, prev, next int) bool {
+	if cfg == nil {
+		return false
+	}
+	return !cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(&prev) && cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(&next)
 }
 
 func (s *Server) syncAgentVisibility(level int) (paused, resumed []string) {

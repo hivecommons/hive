@@ -1,0 +1,1 @@
+- automerge: restart the merge sweep on runtime ACMM level change and never auto-release level holds (#9882)

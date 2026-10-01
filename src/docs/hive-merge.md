@@ -141,7 +141,13 @@ gates (required checks green, mergeable, no hold/exempt label, intent tier,
 approval desk, head SHA re-verified at merge time). The default is
 `dependabot[bot]` only; set an explicit empty list to keep the sweep App-only,
 or add other dependency bots you trust. Each merge is recorded with
-`lane=trusted-bot` so audits can tell it from `lane=self-authored`.
+`lane=trusted-bot` so audits can tell it from `lane=self-authored`. Changing
+ACMM level at runtime restarts the relay generation when the L6 self-merge gate
+changes, so the sweep starts or stops under the new level immediately. A
+promotion into L6 never auto-releases existing level-applied `hold` labels; use
+`release_level_holds: true` on `PUT /api/packs/level` for a deliberate one-off
+release. Hub, config-driven, and ordinary dashboard promotions leave those holds
+for human removal.
 
 ```yaml
 auto_merge:

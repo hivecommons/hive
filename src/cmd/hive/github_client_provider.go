@@ -92,6 +92,29 @@ func (b *boot) armRequestRelays(client *github.Client) bool {
 	return b.requestRelays.switchTo(client)
 }
 
+// onACMMLevelChanged re-arms request relays when the level crosses the
+// self-authored auto-merge boundary. The relay generation re-reads the current
+// ACMM verdict when it starts, so this turns a runtime L5↔L6 change into the
+// same safe hand-over used for GitHub App client rebuilds.
+func (b *boot) onACMMLevelChanged(prev, next int) {
+	if b == nil || b.cfg == nil {
+		return
+	}
+	before, after := b.cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(&prev), b.cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(&next)
+	if before == after {
+		return
+	}
+	if b.requestRelays != nil && b.requestRelays.restart() {
+		if b.logger != nil {
+			b.logger.Info("request relays restarted after ACMM level change", "from", prev, "to", next, "self_merge_allowed", after)
+		}
+		return
+	}
+	if b.logger != nil {
+		b.logger.Debug("no request relays to restart after ACMM level change", "from", prev, "to", next, "self_merge_allowed", after)
+	}
+}
+
 // liveTriageCommenter is the scheduler's runs-triage commenter, read through
 // the client provider on every call so the scheduler never holds a captured
 // (possibly nil, possibly stale) client (#9621).

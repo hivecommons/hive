@@ -67,6 +67,29 @@ func (s *requestRelaySupervisor) switchTo(client *github.Client) bool {
 	if client == s.client || s.parent.Err() != nil {
 		return false
 	}
+	s.scheduleLocked(client)
+	return true
+}
+
+// restart schedules a new generation on the currently active client. It uses
+// the same chained hand-over as switchTo: cancel the current generation, wait
+// for it to fully stop, then start the replacement. It returns false when
+// there is no running client to restart or the parent context is shutting down.
+func (s *requestRelaySupervisor) restart() bool {
+	if s == nil || s.start == nil || s.parent == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.client == nil || s.parent.Err() != nil {
+		return false
+	}
+	s.scheduleLocked(s.client)
+	return true
+}
+
+// scheduleLocked starts a generation for client. s.mu must be held.
+func (s *requestRelaySupervisor) scheduleLocked(client *github.Client) {
 	prevDone := s.done
 	if s.cancel != nil {
 		s.cancel()
@@ -92,7 +115,6 @@ func (s *requestRelaySupervisor) switchTo(client *github.Client) bool {
 			<-running
 		}
 	}()
-	return true
 }
 
 // current returns the client the relays were last handed and the number of

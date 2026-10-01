@@ -148,12 +148,12 @@ func TestReleaseLevelHoldWithoutPolicyFailsClosed(t *testing.T) {
 	})
 	c.prHoldLabel = nil
 	released, reason, err := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", heldPR("safe change"))
-	if released || reason != "level-hold-policy-unavailable" || err != nil {
-		t.Fatalf("got (%v, %q, %v), want hold kept while policy is unavailable", released, reason, err)
+	if released || reason != "hold" || err != nil {
+		t.Fatalf("got (%v, %q, %v), want level hold kept", released, reason, err)
 	}
 }
 
-func TestReleaseLevelHoldEventCheckErrorFailsClosed(t *testing.T) {
+func TestReleaseLevelHoldNoLongerChecksEvents(t *testing.T) {
 	c := newLevelHoldGuardClient(t, map[string]http.HandlerFunc{
 		"GET /repos/o/r/issues/7/comments": botComments(levelHoldNotice("quality")),
 		"GET /repos/o/r/issues/7/events": func(w http.ResponseWriter, _ *http.Request) {
@@ -162,16 +162,12 @@ func TestReleaseLevelHoldEventCheckErrorFailsClosed(t *testing.T) {
 	})
 	c.prHoldLabel = func(string) bool { return false }
 	released, reason, err := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", heldPR("safe change"))
-	if released || reason != "level-hold-event-check" || err == nil {
-		t.Fatalf("got (%v, %q, %v), want hold kept with event-check error", released, reason, err)
+	if released || reason != "hold" || err != nil {
+		t.Fatalf("got (%v, %q, %v), want level hold kept without event scan", released, reason, err)
 	}
 }
 
-// TestReleaseLevelHoldIgnoresUnrelatedEventsAcrossPages drives the event scan
-// through nil entries, non-hold labels, non-label event kinds, and a second
-// page whose newer app-applied `labeled` event must win over the older
-// `unlabeled` one on page one.
-func TestReleaseLevelHoldIgnoresUnrelatedEventsAcrossPages(t *testing.T) {
+func TestReleaseLevelHoldIgnoresAppAppliedLevelHold(t *testing.T) {
 	removes := 0
 	c := newLevelHoldGuardClient(t, map[string]http.HandlerFunc{
 		"GET /repos/o/r/issues/7/comments": botComments(levelHoldNotice("quality")),
@@ -215,15 +211,15 @@ func TestReleaseLevelHoldIgnoresUnrelatedEventsAcrossPages(t *testing.T) {
 	})
 	c.prHoldLabel = func(string) bool { return false }
 	released, reason, err := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", heldPR("safe change"))
-	if err != nil || !released || reason != "level-hold-released" {
-		t.Fatalf("got (%v, %q, %v), want release after paginated event scan", released, reason, err)
+	if err != nil || released || reason != "hold" {
+		t.Fatalf("got (%v, %q, %v), want level hold kept", released, reason, err)
 	}
-	if removes != 1 {
-		t.Fatalf("removes=%d, want exactly one label removal", removes)
+	if removes != 0 {
+		t.Fatalf("removes=%d, want no label removal", removes)
 	}
 }
 
-func TestReleaseLevelHoldRemoveLabelErrorFailsClosed(t *testing.T) {
+func TestReleaseLevelHoldDoesNotRemoveLabel(t *testing.T) {
 	c := newLevelHoldGuardClient(t, map[string]http.HandlerFunc{
 		"GET /repos/o/r/issues/7/comments": botComments(levelHoldNotice("quality")),
 		"GET /repos/o/r/issues/7/events": func(w http.ResponseWriter, _ *http.Request) {
@@ -240,12 +236,12 @@ func TestReleaseLevelHoldRemoveLabelErrorFailsClosed(t *testing.T) {
 	})
 	c.prHoldLabel = func(string) bool { return false }
 	released, reason, err := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", heldPR("safe change"))
-	if released || reason != "level-hold-release" || err == nil {
-		t.Fatalf("got (%v, %q, %v), want failed removal reported as an error", released, reason, err)
+	if released || reason != "hold" || err != nil {
+		t.Fatalf("got (%v, %q, %v), want level hold kept without removal", released, reason, err)
 	}
 }
 
-func TestReleaseLevelHoldToleratesLabelAlreadyGone(t *testing.T) {
+func TestReleaseLevelHoldKeepsEvenIfLabelWould404(t *testing.T) {
 	c := newLevelHoldGuardClient(t, map[string]http.HandlerFunc{
 		"GET /repos/o/r/issues/7/comments": botComments(levelHoldNotice("quality")),
 		"GET /repos/o/r/issues/7/events": func(w http.ResponseWriter, _ *http.Request) {
@@ -262,8 +258,8 @@ func TestReleaseLevelHoldToleratesLabelAlreadyGone(t *testing.T) {
 	})
 	c.prHoldLabel = func(string) bool { return false }
 	released, reason, err := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", heldPR("safe change"))
-	if err != nil || !released || reason != "level-hold-released" {
-		t.Fatalf("got (%v, %q, %v), want a racing 404 treated as released", released, reason, err)
+	if err != nil || released || reason != "hold" {
+		t.Fatalf("got (%v, %q, %v), want level hold kept", released, reason, err)
 	}
 }
 
@@ -288,15 +284,12 @@ func TestReleaseLevelHoldSelfAuthNoticeCommentErrorFailsClosed(t *testing.T) {
 	})
 	c.prHoldLabel = func(string) bool { return false }
 	released, reason, err := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", heldPR("Closes #581"))
-	if released || reason != "self-authorization-notice" || err == nil {
-		t.Fatalf("got (%v, %q, %v), want hold kept when the notice cannot be posted", released, reason, err)
-	}
-	if !strings.Contains(err.Error(), "self-authorization hold") {
-		t.Fatalf("err=%v, want it to name the self-authorization notice", err)
+	if released || reason != "hold" || err != nil {
+		t.Fatalf("got (%v, %q, %v), want level hold kept without self-authorization notice write", released, reason, err)
 	}
 }
 
-func TestReleaseLevelHoldSkipsSelfAuthorizationWhenPolicyDisabled(t *testing.T) {
+func TestReleaseLevelHoldKeepsWhenSelfAuthorizationPolicyDisabled(t *testing.T) {
 	c := newLevelHoldGuardClient(t, map[string]http.HandlerFunc{
 		"GET /repos/o/r/issues/7/comments": botComments(levelHoldNotice("quality")),
 		"GET /repos/o/r/issues/7/events": func(w http.ResponseWriter, _ *http.Request) {
@@ -314,8 +307,8 @@ func TestReleaseLevelHoldSkipsSelfAuthorizationWhenPolicyDisabled(t *testing.T) 
 	c.prHoldLabel = func(string) bool { return false }
 	c.SetSelfAuthorizationHoldEnabled(func(string) bool { return false })
 	released, reason, err := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", heldPR("Closes #581"))
-	if err != nil || !released || reason != "level-hold-released" {
-		t.Fatalf("got (%v, %q, %v), want disabled self-authorization policy to let the level hold release", released, reason, err)
+	if err != nil || released || reason != "hold" {
+		t.Fatalf("got (%v, %q, %v), want level hold kept", released, reason, err)
 	}
 }
 
