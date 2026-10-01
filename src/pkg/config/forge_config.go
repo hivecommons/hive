@@ -16,7 +16,11 @@ type PRPrecheckConfig struct {
 	// Docs gates the docs/link/citation guards. Default ON; set false to opt out.
 	Docs *bool `yaml:"docs,omitempty" json:"docs,omitempty"`
 	// GoTests gates touched-package Go tests and cross-cutting ratchets/parity
-	// checks. Default ON; set false to opt out.
+	// checks. Default OFF: the target repo's CI owns test verdicts, and running
+	// `go test` inside the live hive pod lets tests read and mutate production
+	// state under /data (config overlays, the audit log, tmux sessions), which
+	// produced false rejections and clobbered live config (#9824, #9833).
+	// Set true only on a hive whose precheck checkout is isolated from /data.
 	GoTests *bool `yaml:"go_tests,omitempty" json:"go_tests,omitempty"`
 	// Timeout bounds each PR precheck run. Default 15m.
 	Timeout time.Duration `yaml:"timeout,omitempty" json:"timeout,omitempty"`
@@ -32,7 +36,7 @@ func (p PRPrecheckConfig) DocsEnabled() bool {
 }
 
 func (p PRPrecheckConfig) GoTestsEnabled() bool {
-	return p.GoTests == nil || *p.GoTests
+	return p.GoTests != nil && *p.GoTests
 }
 
 func (p PRPrecheckConfig) EffectiveTimeout() time.Duration {

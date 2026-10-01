@@ -96,13 +96,16 @@ Top-level YAML keys accepted by `config.Config`:
 ### GitHub PR-request prechecks (`github.pr_precheck`)
 
 The PR-request watcher can run deterministic checks before it opens an
-agent-authored PR. Tier A changelog/DCO checks are always enforced. The
-configurable Tier B/C checks default on:
+agent-authored PR. Tier A DCO checks are always enforced; the Tier A
+changelog-fragment check applies only when the target repo carries a
+`changelog.d/` directory at the PR head (repos without one — docs, pluk, a
+Java or C project — are left to their own CI). Tier B docs guards default on;
+Tier C Go tests are opt-in:
 
 | Field | Default | Meaning |
 |---|---|---|
 | `github.pr_precheck.docs` | `true` | When a PR diff touches Markdown or a file cited by docs, run the docs link/citation guards used by CI. Checker reports reject the request as `precheck`. |
-| `github.pr_precheck.go_tests` | `true` | For touched Go packages, run full package `go test` plus the dashboard/testutil ratchets in a fresh checkout owned by the hive process, not in the agent pane. |
+| `github.pr_precheck.go_tests` | `false` | Opt-in. For touched Go packages, run full package `go test` plus the dashboard/testutil ratchets in a fresh checkout owned by the hive process. Off by default because the target repo's CI owns test verdicts, and a `go test` inside the live pod can read and mutate production state under `/data` (config overlays, the audit log, tmux sessions) — the cause of false rejections and a clobbered live config (#9824, #9833). Enable only where the precheck checkout is isolated from `/data`. |
 | `github.pr_precheck.timeout` | `15m` | Per-run wall clock bound. A timeout is an infrastructure skip, not a rejection. |
 | `github.pr_precheck.cache_dir` | `<data>/pr-precheck/gocache` | Persistent Go build/module cache root for warm Tier C runs. Checkouts live alongside it under `<data>/pr-precheck/checkouts`, not in `/var/run`. |
 | `github.pr_precheck.max_concurrent` | `1` | Maximum concurrent Tier C Go precheck runs; extra requests queue until a slot is free or their timeout expires. |

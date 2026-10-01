@@ -253,7 +253,24 @@ func prRequestChangelogPrecheck(ctx context.Context, c *Client, owner, repo, hea
 	if len(codeFiles) == 0 || len(fragments) > 0 {
 		return ""
 	}
+	// The fragment convention is hive's own. A target repo that has no
+	// changelog.d/ directory at the PR head (docs, pluk, a Java or C project)
+	// must not be rejected for not following it; its CI owns that call.
+	if !repoUsesChangelogFragments(ctx, c, owner, repo, head) {
+		return ""
+	}
 	return fmt.Sprintf("src/ code changed without a changelog.d fragment: add changelog.d/<added|changed|deprecated|fixed|security>-<slug>.md containing one '- ' bullet, or ask a maintainer to apply the no-changelog label (first code path: %s)", codeFiles[0])
+}
+
+// repoUsesChangelogFragments reports whether the target repo carries a
+// changelog.d/ directory at ref. Without a client it answers true so the
+// in-memory tests of the primary repo keep their strict behaviour.
+func repoUsesChangelogFragments(ctx context.Context, c *Client, owner, repo, ref string) bool {
+	if c == nil || c.client == nil {
+		return true
+	}
+	_, dir, _, err := c.client.Repositories.GetContents(ctx, owner, repo, "changelog.d", &gh.RepositoryContentGetOptions{Ref: ref})
+	return err == nil && dir != nil
 }
 
 func (c *Client) repositoryFileContent(ctx context.Context, owner, repo, ref, file string) (string, error) {

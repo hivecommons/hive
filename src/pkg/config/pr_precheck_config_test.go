@@ -7,13 +7,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestPRPrecheckConfigDefaultsOn(t *testing.T) {
+func TestPRPrecheckConfigDefaults(t *testing.T) {
 	var cfg Config
 	if !cfg.GitHub.PRPrecheck.DocsEnabled() {
 		t.Fatal("docs precheck default = false, want true")
 	}
-	if !cfg.GitHub.PRPrecheck.GoTestsEnabled() {
-		t.Fatal("go_tests precheck default = false, want true")
+	// Tier C is opt-in: CI owns test verdicts and an in-pod `go test` can
+	// read and mutate the live /data volume.
+	if cfg.GitHub.PRPrecheck.GoTestsEnabled() {
+		t.Fatal("go_tests precheck default = true, want false")
 	}
 	if got := cfg.GitHub.PRPrecheck.EffectiveTimeout(); got != DefaultPRPrecheckTimeout {
 		t.Fatalf("timeout default = %s, want %s", got, DefaultPRPrecheckTimeout)

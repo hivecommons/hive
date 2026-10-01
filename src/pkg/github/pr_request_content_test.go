@@ -236,6 +236,8 @@ func TestPRRequestWatcherPrecheckRejectsMissingChangelogFragment(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/1":
 			_, _ = io.WriteString(w, `{"number":1,"title":"bug","body":"please fix","state":"open"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/contents/changelog.d":
+			_ = json.NewEncoder(w).Encode([]map[string]string{{"type": "file", "name": "README.md", "path": "changelog.d/README.md"}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/compare/v5...scanner/fix":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"files": []map[string]string{{"filename": "src/pkg/example/example.go", "status": "modified", "patch": "@@ -1 +1 @@\n+package example"}},
@@ -301,6 +303,47 @@ func TestPRRequestChangelogPrecheckRejectsMalformedFragment(t *testing.T) {
 	})
 	if !strings.Contains(reason, "must start with a '- ' entry bullet") {
 		t.Fatalf("reason = %q", reason)
+	}
+}
+
+// A repo without changelog.d/ (docs, pluk, a Java or C project) is not held
+// to hive's fragment convention: its own CI decides what a PR needs.
+func TestPRRequestChangelogPrecheckSkipsReposWithoutFragmentDir(t *testing.T) {
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "o", []string{"docs"}, slog.Default())
+
+	reason := prRequestChangelogPrecheck(context.Background(), c, "o", "docs", "architect/fix", []*gh.CommitFile{
+		{Filename: gh.Ptr("src/__tests__/EditPageLink.test.tsx"), Status: gh.Ptr("modified")},
+	})
+	if reason != "" {
+		t.Fatalf("reason = %q, want pass for a repo without changelog.d/", reason)
+	}
+	if strings.Join(asked, ",") != "/repos/o/docs/contents/changelog.d" {
+		t.Fatalf("asked = %v, want one changelog.d probe", asked)
+	}
+}
+
+func TestPRRequestChangelogPrecheckStillRequiresFragmentWhenDirExists(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/contents/changelog.d" {
+			_ = json.NewEncoder(w).Encode([]map[string]string{{"type": "file", "name": "README.md", "path": "changelog.d/README.md"}})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "o", []string{"r"}, slog.Default())
+
+	reason := prRequestChangelogPrecheck(context.Background(), c, "o", "r", "scanner/fix", []*gh.CommitFile{
+		{Filename: gh.Ptr("src/pkg/example/example.go"), Status: gh.Ptr("modified")},
+	})
+	if !strings.Contains(reason, "without a changelog.d fragment") {
+		t.Fatalf("reason = %q, want fragment rejection", reason)
 	}
 }
 
