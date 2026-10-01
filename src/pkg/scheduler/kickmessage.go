@@ -443,6 +443,11 @@ func issuePriorityMarker(issue github.Issue) string {
 		return "[human]"
 	}
 	if issue.HumanAcknowledged {
+		if issue.AckParent > 0 {
+			// #9840: acknowledgement inherited from the human-filed (or
+			// acknowledged) parent this issue was split out of.
+			return fmt.Sprintf("[hive-filed+parent-ack #%d]", issue.AckParent)
+		}
 		return "[hive-filed+ack]"
 	}
 	return "[hive-filed]"

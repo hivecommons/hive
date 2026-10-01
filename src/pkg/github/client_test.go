@@ -85,6 +85,9 @@ type wireIssue struct {
 	AuthorAssociation string `json:"author_association,omitempty"`
 	// Setting PullRequest makes IsPullRequest() return true.
 	PullRequest *struct{} `json:"pull_request,omitempty"`
+	// ParentIssueURL is the sub-issue parent GitHub reports (#9840).
+	ParentIssueURL string `json:"parent_issue_url,omitempty"`
+	State          string `json:"state,omitempty"`
 }
 
 func mustMarshal(t *testing.T, v any) []byte {

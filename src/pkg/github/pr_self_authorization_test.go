@@ -25,6 +25,10 @@ type selfAuthIssue struct {
 	Comments    []selfAuthComment
 	Status      int // non-zero to fail the GET
 	FailList    bool
+	// Parent is the same-repo issue GET .../issues/{n}/parent answers with
+	// (#9840); 0 means no parent (404). State is "" (open) or "closed".
+	Parent int
+	State  string
 }
 
 type selfAuthComment struct {
@@ -88,37 +92,16 @@ func (s *selfAuthServer) start(t *testing.T) *httptest.Server {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(out)
 
-		case r.Method == "GET" && strings.Contains(p, "/issues/"):
-			num := issueNumFromPath(p, "")
-			issue := s.issues[num]
-			if issue == nil {
+		case r.Method == "GET" && strings.Contains(p, "/issues/") && strings.HasSuffix(p, "/parent"):
+			child := s.issues[issueNumFromPath(p, "/parent")]
+			if child == nil || child.Parent == 0 {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
-			if issue.Status != 0 {
-				w.WriteHeader(issue.Status)
-				return
-			}
-			labels := make([]map[string]any, 0, len(issue.Labels))
-			for _, l := range issue.Labels {
-				labels = append(labels, map[string]any{"name": l})
-			}
-			assignees := make([]map[string]any, 0, len(issue.Assignees))
-			for _, a := range issue.Assignees {
-				assignees = append(assignees, userJSON(a, ""))
-			}
-			w.Header().Set("Content-Type", "application/json")
-			payload := map[string]any{
-				"number":    num,
-				"user":      userJSON(issue.Author, issue.AuthorType),
-				"labels":    labels,
-				"assignees": assignees,
-				"comments":  len(issue.Comments),
-			}
-			if issue.Association != "" {
-				payload["author_association"] = issue.Association
-			}
-			_ = json.NewEncoder(w).Encode(payload)
+			s.writeIssue(w, child.Parent)
+
+		case r.Method == "GET" && strings.Contains(p, "/issues/"):
+			s.writeIssue(w, issueNumFromPath(p, ""))
 
 		case r.Method == "POST" && strings.HasSuffix(p, "/labels"):
 			body, _ := io.ReadAll(r.Body)
@@ -167,6 +150,46 @@ func (s *selfAuthServer) start(t *testing.T) *httptest.Server {
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// writeIssue serves the fixture for issue num as a GitHub issue payload, or
+// the fixture's configured failure status, or 404 when there is none.
+func (s *selfAuthServer) writeIssue(w http.ResponseWriter, num int) {
+	issue := s.issues[num]
+	if issue == nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	if issue.Status != 0 {
+		w.WriteHeader(issue.Status)
+		return
+	}
+	labels := make([]map[string]any, 0, len(issue.Labels))
+	for _, l := range issue.Labels {
+		labels = append(labels, map[string]any{"name": l})
+	}
+	assignees := make([]map[string]any, 0, len(issue.Assignees))
+	for _, a := range issue.Assignees {
+		assignees = append(assignees, userJSON(a, ""))
+	}
+	state := issue.State
+	if state == "" {
+		state = "open"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	payload := map[string]any{
+		"number":    num,
+		"url":       fmt.Sprintf("https://api.github.com/repos/o/r/issues/%d", num),
+		"state":     state,
+		"user":      userJSON(issue.Author, issue.AuthorType),
+		"labels":    labels,
+		"assignees": assignees,
+		"comments":  len(issue.Comments),
+	}
+	if issue.Association != "" {
+		payload["author_association"] = issue.Association
+	}
+	_ = json.NewEncoder(w).Encode(payload)
 }
 
 func userJSON(login, kind string) map[string]any {
@@ -572,5 +595,99 @@ func TestPRRequestWatcher_HoldGatedLevelPostsAttributableNotice(t *testing.T) {
 		if !strings.Contains(comments[0], want) {
 			t.Errorf("level-hold notice missing %q:\n%s", want, comments[0])
 		}
+	}
+}
+
+// TestEvaluateSelfAuthorization_InheritsParentAcknowledgement is #9840 on
+// the PR side: a PR closing a hive-filed child of a human-filed (or
+// acknowledged) parent is not self-authorized. The same limits as
+// enumeration apply — parent open, unheld, same repo, one level only.
+func TestEvaluateSelfAuthorization_InheritsParentAcknowledgement(t *testing.T) {
+	const botLogin = "kubestellar-hive[bot]"
+	cases := []struct {
+		name     string
+		issues   map[int]*selfAuthIssue
+		wantHeld bool
+	}{{
+		name: "child of a human-filed parent passes",
+		issues: map[int]*selfAuthIssue{
+			581: {Author: botLogin, AuthorType: "Bot", Parent: 500},
+			500: {Author: "hanthor"},
+		},
+	}, {
+		name: "child of a hive-filed parent a human commented on passes",
+		issues: map[int]*selfAuthIssue{
+			581: {Author: botLogin, AuthorType: "Bot", Parent: 500},
+			500: {Author: botLogin, AuthorType: "Bot", Comments: []selfAuthComment{{Author: "hanthor"}}},
+		},
+	}, {
+		name: "child of a hive-filed parent with the label passes",
+		issues: map[int]*selfAuthIssue{
+			581: {Author: botLogin, AuthorType: "Bot", Parent: 500},
+			500: {Author: botLogin, AuthorType: "Bot", Labels: []string{HumanAckLabel}},
+		},
+	}, {
+		name: "child of an unacknowledged hive-filed parent is held",
+		issues: map[int]*selfAuthIssue{
+			581: {Author: botLogin, AuthorType: "Bot", Parent: 500},
+			500: {Author: botLogin, AuthorType: "Bot"},
+		},
+		wantHeld: true,
+	}, {
+		name: "grandchild of a human root is held (one level only)",
+		issues: map[int]*selfAuthIssue{
+			581: {Author: botLogin, AuthorType: "Bot", Parent: 500},
+			500: {Author: botLogin, AuthorType: "Bot", Parent: 400},
+			400: {Author: "hanthor"},
+		},
+		wantHeld: true,
+	}, {
+		name: "closed parent confers nothing",
+		issues: map[int]*selfAuthIssue{
+			581: {Author: botLogin, AuthorType: "Bot", Parent: 500},
+			500: {Author: "hanthor", State: "closed"},
+		},
+		wantHeld: true,
+	}, {
+		name: "held parent confers nothing",
+		issues: map[int]*selfAuthIssue{
+			581: {Author: botLogin, AuthorType: "Bot", Parent: 500},
+			500: {Author: "hanthor", Labels: []string{"hold"}},
+		},
+		wantHeld: true,
+	}, {
+		name: "no parent at all is still the incident",
+		issues: map[int]*selfAuthIssue{
+			581: {Author: botLogin, AuthorType: "Bot"},
+		},
+		wantHeld: true,
+	}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := &selfAuthServer{issues: tc.issues}
+			c := NewClientForTest(srv.start(t).URL, "o", nil, prTestLogger())
+			c.SetAppBotLogin(botLogin)
+			got := c.EvaluateSelfAuthorization(context.Background(), "o/r", "t", "Closes #581", nil)
+			if got.Held != tc.wantHeld {
+				t.Fatalf("Held = %v, want %v (reason %q)", got.Held, tc.wantHeld, got.Reason)
+			}
+		})
+	}
+}
+
+// TestEvaluateSelfAuthorization_UnreadableParentHolds: authorship is known
+// and the parent lookup failed for a reason other than "no parent" — the
+// safe half of the asymmetry is to hold, naming the read failure.
+func TestEvaluateSelfAuthorization_UnreadableParentHolds(t *testing.T) {
+	const botLogin = "kubestellar-hive[bot]"
+	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{
+		581: {Author: botLogin, AuthorType: "Bot", Parent: 500},
+		500: {Author: "hanthor", Status: http.StatusInternalServerError},
+	}}
+	c := NewClientForTest(srv.start(t).URL, "o", nil, prTestLogger())
+	c.SetAppBotLogin(botLogin)
+	got := c.EvaluateSelfAuthorization(context.Background(), "o/r", "t", "Closes #581", nil)
+	if !got.Held || !strings.Contains(got.Reason, "could not be read") {
+		t.Fatalf("Held=%v Reason=%q, want held with a read-failure reason", got.Held, got.Reason)
 	}
 }

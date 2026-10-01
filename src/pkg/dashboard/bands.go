@@ -148,7 +148,10 @@ func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConf
 	}
 	if role != "" {
 		ack := ", not yet acknowledged"
-		if acknowledged {
+		switch {
+		case issue.AckParent > 0:
+			ack = fmt.Sprintf(", acknowledged via parent #%d", issue.AckParent)
+		case acknowledged:
 			ack = ", acknowledged by a human"
 		}
 		signals = append(signals, Signal{Role: role, Label: "agent-filed by " + role + ack})

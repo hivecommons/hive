@@ -190,16 +190,28 @@ func (c *Client) EvaluateSelfAuthorization(ctx context.Context, repo, title, bod
 }
 
 // issueHasHumanAcknowledgement reports whether any person has signalled assent
-// on an agent-filed issue. Four signals count, in ascending cost:
+// on an agent-filed issue. Five signals count, in ascending cost:
 //
 //  1. the approval label, for a maintainer who wants to approve without prose;
 //  2. a human assignee, which is how a maintainer says "yes, and I own it";
 //  3. a human comment;
-//  4. nothing — which is the incident.
+//  4. an open, unheld, same-repo parent issue that is human-filed or carries
+//     one of signals 1–3 itself — the child was split out of approved work
+//     (hivecommons/hive#9840, one level only);
+//  5. nothing — which is the incident.
 //
 // The error is returned rather than swallowed because the caller treats "no
 // acknowledgement found" and "could not look" differently.
 func (c *Client) issueHasHumanAcknowledgement(ctx context.Context, owner, repo string, issue *gh.Issue) (bool, error) {
+	if ok, err := c.issueHasDirectHumanAcknowledgement(ctx, owner, repo, issue); ok || err != nil {
+		return ok, err
+	}
+	return c.parentIssueAcknowledges(ctx, owner, repo, issue)
+}
+
+// issueHasDirectHumanAcknowledgement is signals 1–3 of
+// issueHasHumanAcknowledgement, read from the issue itself only.
+func (c *Client) issueHasDirectHumanAcknowledgement(ctx context.Context, owner, repo string, issue *gh.Issue) (bool, error) {
 	for _, label := range issue.Labels {
 		if strings.EqualFold(label.GetName(), HumanAckLabel) {
 			return true, nil

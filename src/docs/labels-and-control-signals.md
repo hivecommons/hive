@@ -133,6 +133,13 @@ The Governor dialog's Features tab has a "Question Auto-Close" section: a switch
 3. An agent opens a PR citing the issue. If the acknowledgement existed before PR creation, no #5117 hold is applied. At L3-L5, the separate level hold can still apply.
 4. If acknowledgement is added after a PR already has `hold`, remove the PR hold too.
 
+### Splitting a human-filed issue into children
+
+1. A maintainer files an issue. An agent splits it into smaller hive-filed issues, each linked as a GitHub sub-issue of the original through the issue relay's `parent` field (#9435).
+2. The children inherit the parent's acknowledgement (#9840): each ranks in the acknowledged hive-filed tier, the kick list shows `[hive-filed+parent-ack #N]`, the dashboard role badge says "acknowledged via parent #N", and a PR closing a child is not held by #5117. No `approved-direction` is needed on each child.
+3. Inheritance is limited: the parent must be open, in the same repository, not held, and itself human-filed or acknowledged (label, human assignee, or — for the #5117 gate — a human comment). It is one level deep: a grandchild needs its own acknowledgement or an acknowledged child above it. The parent's acknowledgement is read from the parent only, never inherited onward.
+4. To stop it for one child, add `hold` to the child or remove the sub-issue link. Adding `hold` to the parent stops it for every child.
+
 ### Holding an issue
 
 1. Add `hold`/`on-hold`/`hold/review`, or use dashboard `⏸ Hold` to add `hive-pause/<hive-id>`.

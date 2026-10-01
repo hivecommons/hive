@@ -431,18 +431,25 @@ type IssueLinkedPR struct {
 }
 
 type Issue struct {
-	Repo              string    `json:"repo"`
-	Number            int       `json:"number"`
-	Title             string    `json:"title"`
-	Body              string    `json:"body,omitempty"`
-	Author            string    `json:"author"`
-	AuthorIsHuman     bool      `json:"author_is_human,omitempty"`
-	HumanAcknowledged bool      `json:"human_acknowledged,omitempty"`
-	Labels            []string  `json:"labels"`
-	Assignees         []string  `json:"assignees"`
-	Priority          string    `json:"priority,omitempty"`
-	State             string    `json:"state,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
+	Repo              string `json:"repo"`
+	Number            int    `json:"number"`
+	Title             string `json:"title"`
+	Body              string `json:"body,omitempty"`
+	Author            string `json:"author"`
+	AuthorIsHuman     bool   `json:"author_is_human,omitempty"`
+	HumanAcknowledged bool   `json:"human_acknowledged,omitempty"`
+	// AckParent is set, alongside HumanAcknowledged, when a hive-filed issue
+	// has no acknowledgement of its own but is a GitHub sub-issue of an open,
+	// unheld, human-filed or acknowledged issue in the same repo
+	// (hivecommons/hive#9840). It names that parent so the kick list and the
+	// dashboard can say WHY the issue counts as acknowledged. Zero when the
+	// acknowledgement is the issue's own.
+	AckParent int       `json:"ack_parent,omitempty"`
+	Labels    []string  `json:"labels"`
+	Assignees []string  `json:"assignees"`
+	Priority  string    `json:"priority,omitempty"`
+	State     string    `json:"state,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 	// UpdatedAt is GitHub's last-activity timestamp for the issue (new commits
 	// referencing it, comments, label/assignee changes, …). It is the
 	// invalidation signal for the contribute queue's no_work_needed verdict
@@ -1090,22 +1097,18 @@ func (c *Client) splitRepo(repo string) (owner, repoName string) {
 func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (actionable []Issue, held []HoldItem, totalIssues int, breakdown RepoIssueBreakdown, err error) {
 	issueFilter := c.getIssueFilter()
 	owner, repoName := c.splitRepo(repo)
-	opts := &gh.IssueListByRepoOptions{
-		State:       "open",
-		ListOptions: gh.ListOptions{PerPage: 100},
-	}
 
-	var allIssues []*gh.Issue
-	for {
-		issues, resp, err := c.client.Issues.ListByRepo(ctx, owner, repoName, opts)
-		if err != nil {
-			return nil, nil, 0, RepoIssueBreakdown{}, fmt.Errorf("listing issues for %s/%s: %w", owner, repoName, err)
+	// Decoded raw so each child's parent_issue_url survives (go-github v72
+	// drops it); same endpoint, same page size, same number of requests.
+	allIssues, parentOf, err := c.listOpenIssuesWithParents(ctx, owner, repoName)
+	if err != nil {
+		return nil, nil, 0, RepoIssueBreakdown{}, fmt.Errorf("listing issues for %s/%s: %w", owner, repoName, err)
+	}
+	openByNumber := make(map[int]*gh.Issue, len(allIssues))
+	for _, issue := range allIssues {
+		if !issue.IsPullRequest() {
+			openByNumber[issue.GetNumber()] = issue
 		}
-		allIssues = append(allIssues, issues...)
-		if resp.NextPage == 0 {
-			break
-		}
-		opts.ListOptions.Page = resp.NextPage
 	}
 
 	for _, issue := range allIssues {
@@ -1210,6 +1213,10 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 	if unclassified := totalIssues - breakdown.Total(); unclassified > 0 {
 		breakdown.Other += unclassified
 	}
+	// #9840: a hive-filed child of a human-filed (or acknowledged) parent
+	// inherits the parent's acknowledgement. Runs AFTER the hold/exempt/filter
+	// gates, so a held child stays held and a filtered one stays out.
+	c.annotateInheritedAcknowledgement(actionable, openByNumber, parentOf)
 	// #8380: decorate the actionable set with any live issue claim. A no-op
 	// (no fetch, no fields) unless governor.claims.enabled is on.
 	c.annotateIssueClaims(ctx, owner, repoName, actionable, now)
