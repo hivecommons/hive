@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 )
@@ -228,10 +227,4 @@ func (s *HubServer) handleSetStablePromotion(w http.ResponseWriter, r *http.Requ
 	targets := getChannelTargets(getDisplaySHAs(), s.logger)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(s.stablePromotionStatus(targets))
-}
-
-func sameStablePromotionState(a, b StablePromotionState) bool {
-	return a.AutoPromote == b.AutoPromote &&
-		strings.EqualFold(a.UpdatedBy, b.UpdatedBy) &&
-		a.UpdatedAt == b.UpdatedAt
 }
