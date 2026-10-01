@@ -60,8 +60,8 @@ type jamLiveHub struct {
 }
 
 var (
-	jamLiveHubsMu   sync.Mutex
-	jamLiveHubs     = map[string]*jamLiveHub{}
+	jamLiveHubsMu sync.Mutex
+	jamLiveHubs   = map[string]*jamLiveHub{}
 	// SECURITY: same-origin CheckOrigin (shared with contribute_ws). The jam
 	// socket authenticates via the dashboard session cookie, which browsers
 	// also attach cross-site; allowing every Origin here let any web page a

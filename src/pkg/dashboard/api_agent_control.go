@@ -38,7 +38,37 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	deliverKick := func(kickMsg string) (bool, error) {
+		return s.deps.AgentMgr.SendKickAsync(name, kickMsg)
+	}
+
 	if msg == "" && s.deps.Scheduler != nil {
+		if !s.deps.Scheduler.FirstScanDone() {
+			if err := s.deps.AgentMgr.ValidateKick(name); err != nil {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			s.deps.Scheduler.DeferKickUntilFirstScan(name, func(kickMsg string) {
+				started, err := deliverKick(kickMsg)
+				if err != nil {
+					s.deps.Logger.Error("deferred manual kick failed", "agent", name, "error", err)
+					return
+				}
+				if !started {
+					s.deps.Logger.Info("deferred manual kick already in flight", "agent", name)
+					return
+				}
+				s.deps.Governor.RecordKick(name)
+				s.deps.Logger.Info("audit: deferred agent kick delivered", "agent", name, "trigger", "dashboard-api")
+				s.refreshAfterMutation()
+			})
+			s.deps.Logger.Info("audit: agent kick deferred", "agent", name, "trigger", "dashboard-api", "reason", "waiting for first governor scan")
+			s.auditFromRequest(r, "kick_deferred", "", name)
+			jsonStatusResponse(w, http.StatusAccepted, map[string]interface{}{
+				"agent": name, "ok": true, "status": kickStatusDeferred, "reason": "waiting for first governor scan",
+			})
+			return
+		}
 		msg = s.deps.Scheduler.BuildAgentMessageFromLastActionable(name)
 	}
 
@@ -57,7 +87,7 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 	// still return 400 here — and moves only the prompt wait and the typing to
 	// a background goroutine with an exactly-once in-flight guard. The outcome
 	// is reported by GET /api/kick/{agent}/status, off the request path.
-	started, err := s.deps.AgentMgr.SendKickAsync(name, msg)
+	started, err := deliverKick(msg)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -88,6 +118,7 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 // answers; the poll adds the terminal "delivered" and "failed".
 const (
 	kickStatusQueued    = "queued"
+	kickStatusDeferred  = "deferred"
 	kickStatusInFlight  = "in-flight"
 	kickStatusUnknown   = "unknown"
 	kickStatusDelivered = "delivered"

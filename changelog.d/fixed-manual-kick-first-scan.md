@@ -1,0 +1,1 @@
+- Defer generated manual kicks until the first governor scan has populated the scheduler work-list snapshot.

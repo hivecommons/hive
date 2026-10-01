@@ -19336,6 +19336,10 @@ function burnAreaChart() {
           dismissToast(toast, `A kick is already being delivered to ${agent}`, 'info');
           return;
         }
+        if (data.status === 'deferred') {
+          dismissToast(toast, 'Kick deferred — waiting for first governor scan', 'info');
+          return;
+        }
         await reportKickOutcome(agent, toast, `Queued for ${agent}`);
       } catch (e) {
         dismissToast(toast, 'Kick failed: ' + e.message, 'error');

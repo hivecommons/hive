@@ -33,8 +33,8 @@ func withUserSavedPolicyDir(t *testing.T, dir string) {
 //
 // The kick must reflect the NEW copy.
 func TestKickUsesLatestSavedTemplate(t *testing.T) {
-	localDir := t.TempDir()   // stands in for the git-cloned /data/policies repo
-	savedDir := t.TempDir()   // stands in for /data/policies (user-saved overrides)
+	localDir := t.TempDir() // stands in for the git-cloned /data/policies repo
+	savedDir := t.TempDir() // stands in for /data/policies (user-saved overrides)
 	withUserSavedPolicyDir(t, savedDir)
 
 	// Old, git-cloned copy that used to win.

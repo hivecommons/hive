@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/scheduler"
 )
 
 // These tests pin the response contract that makes kubestellar/hive#5325
@@ -94,6 +97,37 @@ func TestKickAcceptedResponseCarriesJSONContentType(t *testing.T) {
 	body := decodeKickJSON(t, rec.Body.String())
 	if got, _ := body["status"].(string); got != kickStatusQueued {
 		t.Errorf("status = %q, want %q", got, kickStatusQueued)
+	}
+}
+
+func TestKickBeforeFirstScanReturnsDeferred(t *testing.T) {
+	s, deps := apiServer(t)
+	sandboxOn := true
+	deps.Config.AgentSandbox = config.AgentSandboxConfig{Enabled: true, Image: "agent-image"}
+	deps.Config.Agents["scanner"] = config.AgentConfig{
+		Backend: "claude", Model: "sonnet", Enabled: true,
+		Sandbox: &config.AgentSandboxOverride{Enabled: &sandboxOn},
+	}
+	deps.AgentMgr = agent.NewManager(deps.Config.Agents, deps.Logger, agent.ProjectContext{Org: "myorg", Repos: []string{"repo1"}})
+	deps.AgentMgr.SetSandboxConfig(deps.Config.AgentSandbox)
+	if err := deps.AgentMgr.Start(context.Background(), "scanner"); err != nil {
+		t.Fatalf("start sandbox scanner: %v", err)
+	}
+	deps.Scheduler = scheduler.New(deps.Config, deps.Logger)
+
+	rec := doPost(s, "/api/kick/scanner", map[string]string{})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("kick before first scan = %d, want 202: %s", rec.Code, rec.Body.String())
+	}
+	body := decodeKickJSON(t, rec.Body.String())
+	if ok, _ := body["ok"].(bool); !ok {
+		t.Fatalf("deferred kick reported ok=false: %v", body)
+	}
+	if got, _ := body["status"].(string); got != kickStatusDeferred {
+		t.Fatalf("status = %q, want %q", got, kickStatusDeferred)
+	}
+	if got, _ := body["reason"].(string); got != "waiting for first governor scan" {
+		t.Fatalf("reason = %q, want first-scan wait reason", got)
 	}
 }
 

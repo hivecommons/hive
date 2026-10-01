@@ -6590,6 +6590,7 @@ func runEvalCycle(
 	kickActionable := applyConvergenceKickAdmission(cfg, dashSrv, actionable, notifier, logger)
 
 	sched.SetLastActionable(kickActionable)
+	agentsDue = sched.FilterFirstScanDeferredAgents(agentsDue)
 	reviewPlan := planReviewDispatch(cfg, actionable, agentMgr, beadStores, logger)
 	auditWithheldReviewFixes(reviewPlan, dashSrv, logger)
 	applyHumanDecisionLabels(ctx, cfg, ghClient, actionable, reviewPlan, logger)

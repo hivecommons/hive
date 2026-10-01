@@ -236,6 +236,7 @@ Delivery has to wait for the agent's CLI to present its input prompt, which is b
 The contract is now:
 
 - **`400`** — a genuine, deterministic precondition failure evaluated inline: unknown agent, paused, stopped, no tmux session, sandbox kick rejected, prompt over 10000 chars.
+- **`202` with `status: "deferred"`** — an auto-generated manual kick was requested before the first governor scan populated the actionable-work snapshot. The kick is deduplicated per agent and delivered after that scan finishes.
 - **`202` with `status: "queued"`** — accepted; a background delivery started.
 - **`202` with `status: "in-flight"`** — a delivery for this agent was already running, so this call was deduplicated. Delivery is exactly-once per agent, which is what makes an operator's retry harmless.
 
