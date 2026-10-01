@@ -1,0 +1,1 @@
+- Fixed dashboard topbar overlap/spacing and moved the hive id, clock, and status-age indicator into the user menu for #9828 and #9816.
