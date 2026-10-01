@@ -41,6 +41,12 @@ func decodeCampaignList(t *testing.T, body []byte) []Campaign {
 }
 
 func TestCampaignsArchiveInceptionOnResetAndResume(t *testing.T) {
+	// LifecycleTimeline is a process-wide singleton (see api.go); without a
+	// reset, a completed/shipped journey recorded by an unrelated test
+	// earlier in this binary (e.g. TestTaskCompleteDrivesWavefrontComplete...)
+	// leaks into allCampaigns() and flakes the exact-length assertions below
+	// depending on test execution order (-shuffle).
+	resetLifecycleStore()
 	s := newMinimalServer(t)
 	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
 	state, err := s.deps.Inception.Start("Prepare bootc-installer for a beta release")
@@ -97,6 +103,10 @@ func TestCampaignsArchiveInceptionOnResetAndResume(t *testing.T) {
 }
 
 func TestCampaignsArchiveCompletedInceptionBeforeStart(t *testing.T) {
+	// See TestCampaignsArchiveInceptionOnResetAndResume: reset the
+	// process-wide lifecycle timeline so a leaked "completed" journey from an
+	// unrelated test can't match this test's search=Completed query.
+	resetLifecycleStore()
 	s := newMinimalServer(t)
 	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
 	first, err := s.deps.Inception.Start("Completed campaign should stay resumable")

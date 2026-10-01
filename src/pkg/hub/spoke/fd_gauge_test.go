@@ -1,8 +1,12 @@
 package spoke
 
 import (
+	"fmt"
 	"os"
 	"testing"
+	"time"
+
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // TestOpenFDCountReportsLiveDescriptors pins the gauge to reality: it must
@@ -26,12 +30,21 @@ func TestOpenFDCountReportsLiveDescriptors(t *testing.T) {
 		}
 		files = append(files, f)
 	}
-	grown := OpenFDCount()
+	// OpenFDCount() reads the whole process's /proc/self/fd (or /dev/fd)
+	// listing, not just this goroutine's descriptors: an unrelated goroutine
+	// elsewhere in the binary closing a descriptor between our baseline read
+	// and this one can transiently dip the count below base+extra even
+	// though the 8 files opened above are still held open. Poll instead of
+	// reading once so that transient dip doesn't flake this assertion.
+	var grown int
+	testutil.EventuallyEveryFunc(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		grown = OpenFDCount()
+		return grown >= base+extra
+	}, func() string {
+		return fmt.Sprintf("OpenFDCount() = %d after opening %d more (baseline %d) — gauge does not track real descriptors", grown, extra, base)
+	})
 	for _, f := range files {
 		f.Close()
-	}
-	if grown < base+extra {
-		t.Fatalf("OpenFDCount() = %d after opening %d more (baseline %d) — gauge does not track real descriptors", grown, extra, base)
 	}
 }
 
