@@ -1,0 +1,1 @@
+- The `backup-exec-restriction` overlay README now describes `src/deploy/k8s` as the hive workload base instead of the hub, and says the backup CronJob is a hub component in `hive-hub` ([#9862](https://github.com/hivecommons/hive/issues/9862)).
