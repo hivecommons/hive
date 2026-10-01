@@ -84,6 +84,14 @@ func TestMain(m *testing.M) {
 	// the production default in api.go, but point package tests at this run's
 	// private directory before any test can construct a dashboard server.
 	promptTemplateSaveDir = filepath.Join(testDataDir, "policies")
+	// Disk counterpart: the data_disk health check samples the REAL /data on
+	// a live hive host or CI runner, which may legitimately sit above a
+	// threshold and would turn every HealthSummary "ok" assertion in this
+	// suite into a function of the host's free space. Pin a healthy fixture;
+	// health_disk_test.go overrides the seam per test to drive the thresholds.
+	dataDiskUsageFn = func() (dataDiskUsage, bool) {
+		return dataDiskUsage{Path: dataVolumePath, TotalBytes: 100 << 30, UsedBytes: 10 << 30}, true
+	}
 
 	code := m.Run()
 	os.RemoveAll(testDataDir)

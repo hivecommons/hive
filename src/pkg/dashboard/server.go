@@ -2857,7 +2857,33 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 		checks["hub_heartbeat"] = hbCheck
 	}
 
-	// 11. Queue trend (is work being processed?)
+	// 11. Data volume headroom (#9869). Omitted when /data cannot be read:
+	// an absent mount is not a full one.
+	if usage, ok := currentDataDiskUsage(); ok {
+		st, detail := dataDiskHealth(usage)
+		diskCheck := map[string]any{
+			"status":      st,
+			"detail":      detail,
+			"path":        usage.Path,
+			"used_pct":    roundTo(usage.Pct(), 1),
+			"used_bytes":  usage.UsedBytes,
+			"total_bytes": usage.TotalBytes,
+		}
+		switch st {
+		case "fail":
+			failCount++
+			if overall == "ok" {
+				overall = "degraded"
+			}
+		case "warn":
+			if overall == "ok" {
+				overall = "degraded"
+			}
+		}
+		checks[healthCheckDataDisk] = diskCheck
+	}
+
+	// 12. Queue trend (is work being processed?)
 	s.statusMu.RLock()
 	if s.status != nil {
 		totalActionable := 0
@@ -3902,7 +3928,22 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		}
 	}
 
-	// 7. Queue
+	// 7. Data volume headroom (#9869). A filling /data used to go unreported
+	// until kubelet evicted the pod; this check is what the hub alert surface
+	// (failingHealthChecks) and the dashboard tooltip see first. Omitted when
+	// /data cannot be read: an absent mount is not a full one.
+	if usage, ok := currentDataDiskUsage(); ok {
+		st, detail := dataDiskHealth(usage)
+		checks = append(checks, check{Name: healthCheckDataDisk, Status: st, Detail: detail})
+		switch st {
+		case "fail":
+			fails++
+		case "warn":
+			warns++
+		}
+	}
+
+	// 8. Queue
 	if status != nil {
 		total := 0
 		for _, repo := range status.Repos {
