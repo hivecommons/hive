@@ -31,7 +31,7 @@ func TestSpokeAutoUpgradeStillExposesManualUpgradeAction(t *testing.T) {
 	for _, want := range []string{
 		"Queued for auto-upgrade</span>",
 		`<button id="spoke-upgrade-btn" data-action="gh27"`,
-		`data-arg0="${escapeHtml(v.latestHash || '')}"`,
+		`data-arg0="${escapeHtml(offeredUpgradeHash || '')}"`,
 		"Upgrade now</button>",
 		"gh27: function (event, A) { selfUpgrade(A[0]); }",
 		"fetch('/api/self-upgrade', {",

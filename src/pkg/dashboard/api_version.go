@@ -103,7 +103,13 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		containerReady := ghcrTagExistsCached(latestShort)
 		resp["latestHash"] = cached
 		resp["latestShort"] = latestShort
-		resp["behind"] = containerReady && cached != versionHash
+		if target.SHA == "" {
+			if target.Source == upgradeTargetSourceBranch {
+				resp["behind"] = containerReady && !sameCommitDashboard(versionHash, cached)
+			} else {
+				resp["behind"] = false
+			}
+		}
 		if cachedMsg != "" {
 			resp["latestMessage"] = cachedMsg
 		}
@@ -122,11 +128,15 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		targetImageReady := ghcrTagExistsCached(target.Short)
 		resp["stableV4ImageReady"] = targetImageReady
 		if sameCommitDashboard(versionHash, target.SHA) {
+			resp["behind"] = false
 			resp["commitsBehind"] = 0
 		} else if targetImageReady {
+			resp["behind"] = true
 			if count, ok := s.commitsBehindStableTip(versionHash, target.SHA); ok {
 				resp["commitsBehind"] = count
 			}
+		} else {
+			resp["behind"] = false
 		}
 	}
 

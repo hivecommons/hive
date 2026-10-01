@@ -600,8 +600,8 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 
 func manualUpgradeNoopReason(currentSHA, targetSHA, channel, imageRef string) string {
 	if channel != "" {
-		return fmt.Sprintf("upgrade not armed — this spoke tracks :%s (%s), and that channel already resolves to the running commit %s; wait for the channel to advance or switch the hive to a newer channel/branch tag",
-			channel, orDash(imageRef), shortSHA(currentSHA))
+		return fmt.Sprintf("upgrade not armed — this spoke tracks :%s (%s), whose current image revision is already the running commit %s (hub-resolved target %s); wait for the channel to advance or switch the hive to a newer channel/branch tag",
+			channel, orDash(imageRef), shortSHA(currentSHA), shortSHA(targetSHA))
 	}
 	return fmt.Sprintf("upgrade not armed — this spoke is already at the reachable target %s", shortSHA(targetSHA))
 }

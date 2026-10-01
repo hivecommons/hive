@@ -117,7 +117,7 @@ func TestHandleUpgradeHiveStableAlreadyAtChannelRefusesNoop(t *testing.T) {
 	if rec.Code != 409 {
 		t.Fatalf("stable no-op upgrade status = %d, want 409 (body=%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "already resolves to the running commit d5a638e") {
+	if !strings.Contains(rec.Body.String(), "current image revision is already the running commit d5a638e") {
 		t.Errorf("response should explain the channel no-op, got %s", rec.Body.String())
 	}
 	s.mu.Lock()

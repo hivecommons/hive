@@ -216,6 +216,147 @@ func TestHandleVersionUsesHubUpgradePolicyTarget(t *testing.T) {
 	}
 }
 
+// Regression for #9832: a release-channel spoke can be current on its channel
+// while its built-from branch has moved on. The spoke dashboard must not offer
+// a manual upgrade to the branch tip when the hub policy says the reachable
+// channel target is already running.
+func TestHandleVersionPolicyTargetCurrentSuppressesBranchTipOffer(t *testing.T) {
+	origHash, origShort, origBranch := versionHash, versionShort, versionBranch
+	versionHash, versionShort, versionBranch = "d5a638ef8947", "d5a638e", "v5"
+	t.Cleanup(func() { versionHash, versionShort, versionBranch = origHash, origShort, origBranch })
+	orig := upgradeMarkerPath
+	upgradeMarkerPath = filepath.Join(t.TempDir(), "no-such-marker")
+	t.Cleanup(func() { upgradeMarkerPath = orig })
+
+	ghcrCacheMu.Lock()
+	ghcrCacheResult["fe66d21"] = true
+	ghcrCacheExpiry["fe66d21"] = time.Now().Add(time.Hour)
+	ghcrCacheResult["d5a638e"] = true
+	ghcrCacheExpiry["d5a638e"] = time.Now().Add(time.Hour)
+	ghcrCacheMu.Unlock()
+	t.Cleanup(func() {
+		ghcrCacheMu.Lock()
+		for _, k := range []string{"fe66d21", "d5a638e"} {
+			delete(ghcrCacheResult, k)
+			delete(ghcrCacheExpiry, k)
+		}
+		ghcrCacheMu.Unlock()
+	})
+
+	branchCompares := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/hivecommons/hive/git/ref/heads/v5", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ref":    "refs/heads/v5",
+			"object": map[string]any{"sha": "fe66d21000000000000000000000000000000000"},
+		})
+	})
+	mux.HandleFunc("/repos/hivecommons/hive/commits/fe66d21000000000000000000000000000000000", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"commit": map[string]any{"message": "branch tip"}})
+	})
+	mux.HandleFunc("/repos/hivecommons/hive/compare/d5a638e...fe66d21", func(w http.ResponseWriter, r *http.Request) {
+		branchCompares++
+		_ = json.NewEncoder(w).Encode(map[string]any{"ahead_by": 42})
+	})
+	ghSrv := httptest.NewServer(mux)
+	t.Cleanup(ghSrv.Close)
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	s := NewServer(0, logger)
+	deps := testDeps(t)
+	deps.Config.Hub.AutoUpgrade = true
+	deps.GHClient = ghpkg.NewClientForTest(ghSrv.URL, "myorg", []string{"repo1"}, logger)
+	s.RegisterAPI(deps)
+
+	s.SetHubUpgradePolicy(&spoke.HeartbeatUpgradePolicy{
+		HubManaged: true, Schedule: "daily", Branch: "v5", Channel: "stable",
+		TargetSHA: "d5a638e", TargetResolved: true,
+	})
+
+	rec := doGet(s, "/api/version")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body["latestShort"] != "fe66d21" {
+		t.Fatalf("latestShort = %v, want branch tip retained for provenance", body["latestShort"])
+	}
+	if body["stableV4Short"] != "d5a638e" || body["behind"] != false || body["commitsBehind"] != float64(0) {
+		t.Fatalf("target/behind = stableV4Short=%v behind=%v commitsBehind=%v, want d5a638e/false/0", body["stableV4Short"], body["behind"], body["commitsBehind"])
+	}
+	if branchCompares != 0 {
+		t.Fatalf("branch compare calls = %d, want 0; branch tip must not drive the offer", branchCompares)
+	}
+}
+
+func TestHandleVersionUnresolvedHubPolicyDoesNotOfferBranchTip(t *testing.T) {
+	origHash, origShort, origBranch := versionHash, versionShort, versionBranch
+	versionHash, versionShort, versionBranch = "d5a638ef8947", "d5a638e", "v5"
+	t.Cleanup(func() { versionHash, versionShort, versionBranch = origHash, origShort, origBranch })
+	orig := upgradeMarkerPath
+	upgradeMarkerPath = filepath.Join(t.TempDir(), "no-such-marker")
+	t.Cleanup(func() { upgradeMarkerPath = orig })
+
+	ghcrCacheMu.Lock()
+	ghcrCacheResult["fe66d21"] = true
+	ghcrCacheExpiry["fe66d21"] = time.Now().Add(time.Hour)
+	ghcrCacheMu.Unlock()
+	t.Cleanup(func() {
+		ghcrCacheMu.Lock()
+		delete(ghcrCacheResult, "fe66d21")
+		delete(ghcrCacheExpiry, "fe66d21")
+		ghcrCacheMu.Unlock()
+	})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/hivecommons/hive/git/ref/heads/v5", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ref":    "refs/heads/v5",
+			"object": map[string]any{"sha": "fe66d21000000000000000000000000000000000"},
+		})
+	})
+	mux.HandleFunc("/repos/hivecommons/hive/commits/fe66d21000000000000000000000000000000000", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"commit": map[string]any{"message": "branch tip"}})
+	})
+	ghSrv := httptest.NewServer(mux)
+	t.Cleanup(ghSrv.Close)
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	s := NewServer(0, logger)
+	deps := testDeps(t)
+	deps.GHClient = ghpkg.NewClientForTest(ghSrv.URL, "myorg", []string{"repo1"}, logger)
+	s.RegisterAPI(deps)
+	s.SetHubUpgradePolicy(&spoke.HeartbeatUpgradePolicy{
+		HubManaged: true, Schedule: "daily", Branch: "v5", Channel: "stable",
+		TargetResolved: false,
+	})
+
+	rec := doGet(s, "/api/version")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body["latestShort"] != "fe66d21" {
+		t.Fatalf("latestShort = %v, want branch tip retained for provenance", body["latestShort"])
+	}
+	if body["behind"] != false {
+		t.Fatalf("behind = %v, want false while the hub's channel target is unresolved", body["behind"])
+	}
+	if _, ok := body["commitsBehind"]; ok {
+		t.Fatalf("commitsBehind present for unresolved hub target: %v", body["commitsBehind"])
+	}
+	target, _ := body["target"].(map[string]any)
+	if target["source"] != upgradeTargetSourceHub || target["resolved"] != false || target["channel"] != "stable" {
+		t.Fatalf("target = %v, want unresolved stable hub target", target)
+	}
+}
+
 // A recorded spoke-side success must not keep claiming "running the target
 // image" after the hub rolled the pod to a newer commit via a floating tag.
 func TestBuildUpgradeAttemptStatusSupersededByLaterRoll(t *testing.T) {
