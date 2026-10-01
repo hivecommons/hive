@@ -1,0 +1,1 @@
+- A maintainer can now un-park a `needs-human` issue by replying `/hive approve` or `/hive decision <text>`: the hive clears `needs-human` and `needs-decision`, adds `approved-direction`, leaves any `hold` untouched, and keeps a "What to reply" block with the available commands on every parked issue.

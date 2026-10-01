@@ -8359,6 +8359,54 @@ func runDuplicateSweepIfDue(ctx context.Context, cfg *config.Config, ghClient *g
 	})
 }
 
+// issueUnparkSweepInterval is the minimum spacing between un-park sweeps. A
+// maintainer who replies "/hive approve" is waiting for something to happen, so
+// this runs more often than the task-list sweep; it only reads the comments of
+// issues that are actually parked, which keeps the API cost proportional to the
+// backlog a person is waiting on.
+const issueUnparkSweepInterval = 5 * time.Minute
+
+// runIssueUnparkSweepIfDue re-queues parked issues a maintainer has answered
+// with a `/hive` command, and keeps the "What to reply" block current on every
+// parked issue (hivecommons/hive#9879). Every gate — human author, live write
+// permission, first-line command, recent unedited comment, per-tick cap — lives
+// inside SweepIssueUnparkCommands; this function is only the scheduler and the
+// dashboard audit sink, mirroring runTaskListSweepIfDue above.
+func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
+	if ghClient == nil {
+		return
+	}
+	now := time.Now()
+	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < issueUnparkSweepInterval {
+		return
+	}
+	if lastRun != nil {
+		*lastRun = now
+	}
+	result, err := ghClient.SweepIssueUnparkCommands(ctx, github.IssueUnparkSweepOptions{
+		MaxActions: github.DefaultIssueUnparkSweepMaxActions,
+		Audit: func(event github.IssueUnparkEvent) {
+			if dashSrv == nil {
+				return
+			}
+			detail := fmt.Sprintf("repo=%s, issue=%d, actor=%s, decision=%s",
+				event.Repo, event.Number, event.Actor, event.Decision)
+			dashSrv.AuditLogRecord("system", "issue-unparked-by-reply", detail, "", event.Repo, event.Number)
+		},
+	})
+	if err != nil {
+		logger.Warn("issue un-park sweep failed", "error", err)
+		return
+	}
+	if result == nil {
+		return
+	}
+	if len(result.Unparked) > 0 || result.Replies > 0 {
+		logger.Info("issue un-park sweep complete",
+			"seen", result.Seen, "unparked", len(result.Unparked), "replies", result.Replies, "skipped", result.Skipped)
+	}
+}
+
 var (
 	ciFailingPath      = "/var/run/hive-metrics/ci-failing.json"
 	intentVerdictsPath = "/var/run/hive-metrics/intent-verdicts.json"
