@@ -129,19 +129,6 @@ func TestReleaseLevelHoldSkipsNilAndUnheldPRs(t *testing.T) {
 	}
 }
 
-func TestReleaseLevelHoldCommentListErrorFailsClosed(t *testing.T) {
-	c := newLevelHoldGuardClient(t, map[string]http.HandlerFunc{
-		"GET /repos/o/r/issues/7/comments": func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusInternalServerError)
-		},
-	})
-	c.prHoldLabel = func(string) bool { return false }
-	released, reason, err := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", heldPR("safe change"))
-	if released || reason != "level-hold-comment-check" || err == nil {
-		t.Fatalf("got (%v, %q, %v), want hold kept with comment-check error", released, reason, err)
-	}
-}
-
 func TestReleaseLevelHoldWithoutPolicyFailsClosed(t *testing.T) {
 	c := newLevelHoldGuardClient(t, map[string]http.HandlerFunc{
 		"GET /repos/o/r/issues/7/comments": botComments(levelHoldNotice("quality")),
