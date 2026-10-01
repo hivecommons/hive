@@ -182,8 +182,11 @@ func TestOwnerOnlyMutationsRejectProoflessHubOwnerRole(t *testing.T) {
 
 	s.Handler().ServeHTTP(w, req)
 
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("proofless hub owner role status = %d, want 401", w.Code)
+	// 403: the request is refused, and the hub-identified caller is not told
+	// to sign in again, which the hosted Ingress would turn into a redirect
+	// loop (#9785, writeProxyProofRejected).
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("proofless hub owner role status = %d, want 403", w.Code)
 	}
 }
 

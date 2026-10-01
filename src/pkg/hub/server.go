@@ -1270,6 +1270,10 @@ type HubServer struct {
 	// spokeProxyAuthMu. See handleSaaSAuthCheck / spokeProxyAuthToken.
 	spokeProxyAuthCache map[string]spokeProxyAuthEntry
 	spokeProxyAuthMu    sync.Mutex
+	// spokeProxyAuthUnresolvedLogged throttles the auth-check's "token could
+	// not be resolved" warning to once per hive per spokeProxyAuthCacheTTL.
+	// Guarded by spokeProxyAuthMu.
+	spokeProxyAuthUnresolvedLogged map[string]time.Time
 
 	// authRolloutSeen records, per hive, which credential FORMAT that spoke last
 	// authenticated with — the readiness signal for #3234.

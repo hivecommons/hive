@@ -275,11 +275,72 @@ func TestMiddleware_F2ProxyProofDefaultRejectsMissingProof(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("missing proof with default enforcement = %d, want 401", w.Code)
+	// 403, not 401: the hub already authenticated this browser, and on a
+	// hosted spoke the Ingress turns a backend 401 into the hub's auth-signin
+	// redirect — the #9785 loop. See writeProxyProofRejected.
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("missing proof with default enforcement = %d, want 403", w.Code)
 	}
 	if !strings.Contains(w.Body.String(), "missing proxy proof header") {
 		t.Fatalf("missing proof error = %q, want clear proxy proof error", w.Body.String())
+	}
+}
+
+// TestMiddleware_ProxyProofRejectedPageIsNot401 pins the #9785 loop breaker:
+// a PAGE request that carries hub identity headers but a missing or wrong
+// X-Hive-Proxy-Auth must answer 403 with a page naming the cause, never 401
+// with the login page. The hosted Ingress runs proxy_intercept_errors with
+// `error_page 401 = auth-signin`, so a 401 here is rewritten into a redirect
+// to the hub's /login; the hub finds its session valid and bounces the browser
+// straight back, and nothing on the hub can break that cycle.
+func TestMiddleware_ProxyProofRejectedPageIsNot401(t *testing.T) {
+	for _, tc := range []struct {
+		name, proof, reason string
+	}{
+		{"missing proof", "", "missing proxy proof header"},
+		{"wrong proof", "not-the-token", "invalid proxy proof header"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newFullServer(t)
+			s.authToken = "shared-secret-token"
+			handler := s.authenticate(recordingHandler(nil, nil))
+			req := httptest.NewRequest("GET", "/", nil)
+			req.Header.Set("X-Hive-User", "KiKaraage")
+			req.Header.Set("X-Hive-Role", "read")
+			if tc.proof != "" {
+				req.Header.Set(proxyAuthHeader, tc.proof)
+			}
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+
+			if w.Code == http.StatusUnauthorized {
+				t.Fatal("proof rejection must not be 401: the hosted Ingress rewrites 401 into an auth-signin redirect and the hub bounces straight back (#9785)")
+			}
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403", w.Code)
+			}
+			body := w.Body.String()
+			if !strings.Contains(body, tc.reason) {
+				t.Fatalf("body must name the cause %q, got %q", tc.reason, body)
+			}
+			if strings.Contains(body, loginPage) {
+				t.Fatal("proof rejection must not render the login page: signing in again cannot fix a hub/spoke token mismatch")
+			}
+			if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
+				t.Fatalf("Cache-Control = %q, want no-store", cc)
+			}
+		})
+	}
+
+	// An anonymous page request (no hub identity at all) still gets the 401
+	// login page: that is the signal the Ingress legitimately turns into
+	// auth-signin for a signed-out browser.
+	s := newFullServer(t)
+	s.authToken = "shared-secret-token"
+	w := httptest.NewRecorder()
+	s.authenticate(recordingHandler(nil, nil)).ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous page request = %d, want 401", w.Code)
 	}
 }
 
