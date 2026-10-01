@@ -1,0 +1,1 @@
+- Hosted contributor profile sign-in now returns grant-less users to the public contributor page, while unauthorized dashboard visits show a clear access-needed page.

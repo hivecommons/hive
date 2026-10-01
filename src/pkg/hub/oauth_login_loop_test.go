@@ -49,6 +49,9 @@ func newLoopBrowser(t *testing.T) *loopBrowser {
 	if err := saveSaaSUser(&SaaSUser{GitHubUsername: "kikaraage", Hives: map[string]string{loopHiveID: "read"}}); err != nil {
 		t.Fatalf("saveSaaSUser: %v", err)
 	}
+	if err := saveSaaSHive(&SaaSHive{ID: loopHiveID, Owner: "castrojo", Status: "running"}); err != nil {
+		t.Fatalf("saveSaaSHive: %v", err)
+	}
 	jar, err := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
 	if err != nil {
 		t.Fatal(err)
@@ -168,6 +171,59 @@ func TestLoginBounce_PersistentRejectionStopsTheLoop(t *testing.T) {
 	b.visit(loopSpokeURL)
 	if want := maxLoginBounces + 1; len(b.loginURLs) != want {
 		t.Errorf("retry after the stop visited /login %d times, want a fresh budget (%d)", len(b.loginURLs), want)
+	}
+}
+
+func TestLoginBounce_UnauthorizedHiveStopsBeforeRedirect(t *testing.T) {
+	b := newLoopBrowser(t)
+	if err := saveSaaSUser(&SaaSUser{GitHubUsername: "kikaraage", Hives: map[string]string{}}); err != nil {
+		t.Fatalf("saveSaaSUser: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, loopReporterLoginURL, nil)
+	req.AddCookie(testAuthCookie("kikaraage"))
+	rec := httptest.NewRecorder()
+
+	b.hub.handleLogin(rec, req)
+
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Fatalf("/login redirected unauthorized user to %q; want an access-denied page before bouncing to the hive", loc)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"not authorized for this hive", "hosted-projectbluefin-knuckle-gjvq.hive.hivecommons.dev", "kikaraage"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("access-denied page missing %q; body=%q", want, body)
+		}
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Error("access-denied page must not be cached")
+	}
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == loginBounceCookieName && c.MaxAge >= 0 {
+			t.Fatalf("unauthorized stop should not leave a bounce cookie: %#v", c)
+		}
+	}
+}
+
+func TestLoginBounce_UnauthorizedPublicAuthReturnStillRedirects(t *testing.T) {
+	b := newLoopBrowser(t)
+	if err := saveSaaSUser(&SaaSUser{GitHubUsername: "kikaraage", Hives: map[string]string{}}); err != nil {
+		t.Fatalf("saveSaaSUser: %v", err)
+	}
+	authReturnURL := "https://hive.hivecommons.dev/login?redirect=https://hosted-projectbluefin-knuckle-gjvq.hive.hivecommons.dev/auth/return?to=%2Fcontribute%2Fprofile"
+	req := httptest.NewRequest(http.MethodGet, authReturnURL, nil)
+	req.AddCookie(testAuthCookie("kikaraage"))
+	rec := httptest.NewRecorder()
+
+	b.hub.handleLogin(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303 redirect to the public auth-return trampoline; body=%q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Location"); !strings.HasPrefix(got, "https://hosted-projectbluefin-knuckle-gjvq.hive.hivecommons.dev/auth/return") {
+		t.Fatalf("Location = %q, want auth-return on the spoke", got)
 	}
 }
 

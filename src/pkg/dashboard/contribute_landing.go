@@ -3090,9 +3090,10 @@ var ccMeUsername='';
 //
 // On a hub-proxied spoke the link goes through /auth/return?to=<this tab>
 // (#7453): "/" is the dashboard, and a visitor who signed in landed there
-// instead of back on the tab they were reading. /auth/return is gated, so
-// the ingress sends an anonymous visitor through the hub login and the spoke
-// then bounces them back to "to" (same-origin paths only). Linking to this
+// instead of back on the tab they were reading. /auth/return asks the hub who
+// is calling, accepts grant-less public identity, sends anonymous visitors to
+// hub login, and then bounces back to "to" (same-origin paths only). Linking
+// to this
 // tab directly would not sign anyone in: /contribute is public, so the
 // ingress never asks. A self-hosted spoke keeps "/" — its device-flow sign-in
 // page is the dashboard root itself.

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -283,10 +284,11 @@ func (s *Server) registerContributeRoutes() {
 	// cites routes by file:line.
 	s.mux.HandleFunc("GET /api/contribute/decisions", s.handleContributeDecisions)
 	// Sign-in return trampoline for the public /contribute pages on a
-	// hub-proxied spoke (#7453). Deliberately NOT a public path: on a hosted
-	// spoke nginx gates it, an anonymous visitor is bounced through the hub
-	// login and comes back here with a session, and the handler sends them on
-	// to the tab they were on. Tail-registered for the same file:line reason.
+	// hub-proxied spoke (#7453). It is public on the spoke and on the hub
+	// auth-check: nginx may forward a signed-in grant-less contributor's
+	// X-Hive-User headers through this trampoline, while a truly anonymous
+	// visitor is sent to the hub login first. Tail-registered for the same
+	// file:line reason.
 	s.mux.HandleFunc("GET /auth/return", s.handleAuthReturn)
 }
 
@@ -302,7 +304,30 @@ func (s *Server) registerContributeRoutes() {
 // scheme), or the visitor is sent to /contribute. Nothing else is trusted from
 // the query.
 func (s *Server) handleAuthReturn(w http.ResponseWriter, r *http.Request) {
+	if s.hubProxied() && strings.TrimSpace(r.Header.Get("X-Hive-User")) == "" {
+		if hubLogin := s.hubLoginReturnURL(r); hubLogin != "" {
+			http.Redirect(w, r, hubLogin, http.StatusFound)
+			return
+		}
+	}
 	http.Redirect(w, r, safeReturnPath(r.URL.Query().Get("to")), http.StatusFound)
+}
+
+func (s *Server) hubLoginReturnURL(r *http.Request) string {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return ""
+	}
+	hubURL := strings.TrimRight(strings.TrimSpace(s.deps.Config.Hub.URL), "/")
+	if hubURL == "" {
+		return ""
+	}
+	if u, err := url.Parse(hubURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return ""
+	}
+	current := s.oauthPublicOrigin(r) + r.URL.RequestURI()
+	q := url.Values{}
+	q.Set("redirect", current)
+	return hubURL + "/login?" + q.Encode()
 }
 
 // authReturnDefault is where /auth/return sends a visitor whose ?to= is

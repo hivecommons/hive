@@ -3,6 +3,7 @@ package dashboard
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -10,7 +11,7 @@ import (
 // #7453, spoke half: the Operations tab's "Sign in with GitHub" link pointed
 // at "/", so a hosted visitor who signed in landed on the dashboard instead of
 // back on the tab they were reading. On a hub-proxied spoke it now goes
-// through the gated /auth/return trampoline, which bounces back to the tab.
+// through the /auth/return trampoline, which bounces back to the tab.
 
 func TestSafeReturnPathAcceptsOnlySameOriginPaths(t *testing.T) {
 	cases := map[string]string{
@@ -34,21 +35,62 @@ func TestSafeReturnPathAcceptsOnlySameOriginPaths(t *testing.T) {
 	}
 }
 
-func TestAuthReturnRedirectsAndIsGated(t *testing.T) {
-	if isPublicPath("/auth/return") {
-		t.Fatal("/auth/return must not be public: the whole point is that the ingress gates it and sends an anonymous visitor through the hub login first")
+func TestAuthReturnRedirectsAndIsPublic(t *testing.T) {
+	if !isPublicPath("/auth/return") {
+		t.Fatal("/auth/return must be public so grant-less signed-in contributors can return to public /contribute tabs")
 	}
 	s, _ := apiServer(t)
-	rec := doOwnerGet(s, "/auth/return?to=%2Fcontribute%2Foperations%23mine")
+
+	rec := doGet(s, "/auth/return?to=%2Fcontribute%2Foperations%23mine")
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status = %d, want 302", rec.Code)
 	}
 	if got := rec.Header().Get("Location"); got != "/contribute/operations#mine" {
 		t.Errorf("Location = %q, want the tab the visitor came from", got)
 	}
-	rec = doOwnerGet(s, "/auth/return?to=https%3A%2F%2Fevil.example%2F")
+	rec = doGet(s, "/auth/return?to=https%3A%2F%2Fevil.example%2F")
 	if got := rec.Header().Get("Location"); rec.Code != http.StatusFound || got != authReturnDefault {
 		t.Errorf("off-origin target: %d %q, want 302 to %s", rec.Code, got, authReturnDefault)
+	}
+}
+
+func TestAuthReturnHubProxiedAnonymousStartsHubLogin(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.Dashboard.HubProxied = true
+	deps.Config.Hub.URL = "https://hive.hivecommons.dev"
+	req := httptest.NewRequest(http.MethodGet, "/auth/return?to=%2Fcontribute%2Fprofile", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Host", "bluefin.example.test")
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302 to hub login", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "https://hive.hivecommons.dev/login?") {
+		t.Fatalf("Location = %q, want hub login", loc)
+	}
+	if !strings.Contains(loc, url.QueryEscape("https://bluefin.example.test/auth/return?to=%2Fcontribute%2Fprofile")) {
+		t.Fatalf("Location = %q, want redirect back to this auth-return URL", loc)
+	}
+}
+
+func TestAuthReturnHubProxiedIdentityReturnsToContributorTab(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.Dashboard.HubProxied = true
+	s.authToken = "shared-secret-token"
+	req := httptest.NewRequest(http.MethodGet, "/auth/return?to=%2Fcontribute%2Fprofile", nil)
+	req.Header.Set("X-Hive-User", "kikaraage")
+	req.Header.Set("X-Hive-Role", "read")
+	req.Header.Set(proxyAuthHeader, s.authToken)
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Location"); rec.Code != http.StatusFound || got != "/contribute/profile" {
+		t.Fatalf("identity return: status=%d Location=%q, want 302 to /contribute/profile", rec.Code, got)
 	}
 }
 

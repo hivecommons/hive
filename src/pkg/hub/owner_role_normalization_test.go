@@ -289,8 +289,8 @@ func TestSaaSAuthCheckStillRejectsStranger(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.handleSaaSAuthCheck(rec, req)
 
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403 (stranger must not gain access via owner elevation)", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 login handoff (stranger must not gain access via owner elevation)", rec.Code)
 	}
 	if got := rec.Header().Get("X-Hive-Role"); got != "" {
 		t.Errorf("X-Hive-Role = %q, want empty for a rejected stranger", got)

@@ -65,23 +65,27 @@ func TestSaaSAuthCheckPublicPathIdentifiesSignedInCaller(t *testing.T) {
 	// A signed-in user with NO grant on this hive: still identified (it is
 	// their own contribution the page shows), with the guest role that grants
 	// nothing beyond anonymous — and still 200, never 403, on a public path.
-	rec = publicPathAuthCheck(t, s, "owned-hive", "/api/contribute/leaderboard", "stranger")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("grant-less user on a public path: status = %d, want 200", rec.Code)
+	for _, uri := range []string{"/api/contribute/leaderboard", "/auth/return?to=%2Fcontribute%2Fprofile"} {
+		rec = publicPathAuthCheck(t, s, "owned-hive", uri, "stranger")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("grant-less user on public path %s: status = %d, want 200", uri, rec.Code)
+		}
+		if got := rec.Header().Get("X-Hive-User"); got != "stranger" {
+			t.Errorf("grant-less user on %s: X-Hive-User = %q, want stranger", uri, got)
+		}
+		if got := rec.Header().Get("X-Hive-Role"); got != publicPathGuestRole {
+			t.Errorf("grant-less user on %s: X-Hive-Role = %q, want %q", uri, got, publicPathGuestRole)
+		}
 	}
-	if got := rec.Header().Get("X-Hive-User"); got != "stranger" {
-		t.Errorf("grant-less user: X-Hive-User = %q, want stranger", got)
-	}
-	if got := rec.Header().Get("X-Hive-Role"); got != publicPathGuestRole {
-		t.Errorf("grant-less user: X-Hive-Role = %q, want %q", got, publicPathGuestRole)
-	}
-	// The gated path is unchanged for that same user: refused.
+	// The gated path is still refused for that same user. It returns 401 so
+	// ingress-nginx sends the browser to /login, where the hub can render the
+	// branded "not authorized for this hive" page rather than a bare nginx 403.
 	req := reqWithUser(http.MethodGet, "/api/saas/auth-check?hive=owned-hive", "", "stranger")
 	req.Header.Set("X-Original-URI", "/api/config/governor")
 	gated := httptest.NewRecorder()
 	s.handleSaaSAuthCheck(gated, req)
-	if gated.Code != http.StatusForbidden {
-		t.Errorf("grant-less user on a gated path: status = %d, want 403 unchanged", gated.Code)
+	if gated.Code != http.StatusUnauthorized {
+		t.Errorf("grant-less user on a gated path: status = %d, want 401 login handoff", gated.Code)
 	}
 }
 
@@ -91,7 +95,7 @@ func TestSaaSAuthCheckPublicPathStaysAnonymousWithoutSession(t *testing.T) {
 	s := newHandlerHub()
 	demotedOwnerFixture(t, s, "spoke-owner", "owned-hive")
 
-	for _, uri := range []string{"/api/contribute/me", "/api/contribute/ws", "/contribute/operations", "/api/leaderboard", "/snapshot/x", ssoHandoffPath, knowledgeExportPath} {
+	for _, uri := range []string{"/api/contribute/me", "/api/contribute/ws", "/contribute/operations", "/api/leaderboard", "/snapshot/x", ssoHandoffPath, knowledgeExportPath, "/auth/return?to=%2Fcontribute%2Fprofile"} {
 		rec := publicPathAuthCheck(t, s, "owned-hive", uri, "")
 		if rec.Code != http.StatusOK {
 			t.Errorf("%s anonymous: status = %d, want 200 — the leaderboard and the contributor relay must stay reachable signed out", uri, rec.Code)
@@ -100,6 +104,22 @@ func TestSaaSAuthCheckPublicPathStaysAnonymousWithoutSession(t *testing.T) {
 			if got := rec.Header().Get(h); got != "" {
 				t.Errorf("%s anonymous: %s = %q, want unset — an anonymous public request must carry no identity and no proof", uri, h, got)
 			}
+		}
+	}
+}
+
+func TestSaaSAuthCheckAuthReturnIsExactPublicPath(t *testing.T) {
+	for _, tc := range []struct {
+		uri  string
+		want bool
+	}{
+		{"/auth/return", true},
+		{"/auth/return?to=%2Fcontribute%2Fprofile", true},
+		{"/auth/return/extra", false},
+		{"/auth/returning", false},
+	} {
+		if got := isSaaSPublicPath(tc.uri); got != tc.want {
+			t.Errorf("isSaaSPublicPath(%q) = %v, want %v", tc.uri, got, tc.want)
 		}
 	}
 }

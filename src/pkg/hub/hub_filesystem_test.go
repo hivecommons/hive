@@ -1491,8 +1491,8 @@ func TestHandleSaaSAuthCheckNoAccess(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected 403, got %d", w.Code)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 login handoff, got %d", w.Code)
 	}
 }
 

@@ -287,6 +287,10 @@ func (s *HubServer) bounceSignedInLogin(w http.ResponseWriter, r *http.Request, 
 		s.writeLoginStopPage(w, user, redirect, targetHost, false)
 		return
 	}
+	if s.writeHiveRedirectAccessDenied(w, user, redirect) {
+		clearLoginBounceCookie(w)
+		return
+	}
 	if targetHost != "" {
 		bounces := loginBounceCount(r, targetHost) + 1
 		if bounces > maxLoginBounces {
@@ -384,6 +388,138 @@ p{color:#c9d1d9;font-size:15px;line-height:1.5}
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
+}
+
+func (s *HubServer) writeHiveRedirectAccessDenied(w http.ResponseWriter, user, redirect string) bool {
+	targetHost, public := hiveRedirectTarget(redirect)
+	if targetHost == "" {
+		return false
+	}
+	if public {
+		return false
+	}
+	hiveID := s.hiveIDForRedirectHost(targetHost)
+	if hiveID == "" || s.userCanOpenHive(user, hiveID) {
+		return false
+	}
+	s.logger.Info("login: signed-in user is not authorized for redirected hive; not bouncing",
+		"target_host", targetHost, "hive_id", hiveID, "user", user)
+	s.writeHiveAccessDeniedPage(w, user, hiveID, targetHost)
+	return true
+}
+
+func hiveRedirectTarget(redirect string) (host string, public bool) {
+	if strings.HasPrefix(redirect, "/") && !strings.HasPrefix(redirect, "//") {
+		return "", false
+	}
+	u, err := url.Parse(redirect)
+	if err != nil {
+		return "", false
+	}
+	return strings.ToLower(u.Hostname()), isSaaSPublicPath(u.RequestURI())
+}
+
+func (s *HubServer) writeHiveAccessDeniedPage(w http.ResponseWriter, user, hiveID, targetHost string) {
+	login, _ := s.displayIdentity(user)
+	contributeURL := "https://" + targetHost + "/contribute"
+	page := `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Access needed for ` + html.EscapeString(targetHost) + ` — Hive</title>
+<style>
+:root{color-scheme:light dark}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0d1117;color:#e6edf3}
+.card{width:min(560px,94vw);padding:40px;border:1px solid #30363d;border-radius:18px;background:#161b22}
+h1{font-size:22px;margin:0 0 14px}
+p{color:#c9d1d9;font-size:15px;line-height:1.5}
+.btn{display:inline-block;padding:10px 18px;border:1px solid #30363d;border-radius:10px;background:#21262d;color:#e6edf3;text-decoration:none;font-weight:600}
+.foot{margin-top:24px;color:#8b949e;font-size:13px;line-height:1.5}
+</style></head><body>
+<div class="card">
+<h1>You are not authorized for this hive</h1>
+<p>You are signed in to Hive as <strong>` + html.EscapeString(login) + `</strong>, but that account is not on the access list for <strong>` + html.EscapeString(targetHost) + `</strong>.</p>
+<p>Signing in again will not change this. Ask the hive owner to add your account to <code>` + html.EscapeString(hiveID) + `</code>, or use a different account that already has access.</p>
+<p><a class="btn" href="/dashboard">Back to the hub</a> <a class="btn" href="` + html.EscapeString(contributeURL) + `">Open contributor pages</a></p>
+<div class="foot">No dashboard session was issued to the hive. The hive's existing authorization checks are unchanged.</div>
+</div></body></html>`
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = w.Write([]byte(page))
+}
+
+func (s *HubServer) hiveIDForRedirectHost(targetHost string) string {
+	host := strings.ToLower(strings.TrimSpace(targetHost))
+	if host == "" {
+		return ""
+	}
+	suffix := "." + hubSpokeDomain()
+	if strings.HasSuffix(host, suffix) {
+		label := strings.TrimSuffix(host, suffix)
+		if (strings.HasPrefix(label, "hosted-") || strings.HasPrefix(label, "saas-")) && s.hiveExists(label) {
+			return label
+		}
+	}
+	for _, h := range listSaaSHives() {
+		if redirectHostMatchesHive(host, claimedVanityURL(&h)) {
+			return h.ID
+		}
+		if redirectHostMatchesHive(host, s.placeholderHostURL(h.ID)) {
+			return h.ID
+		}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for i := range s.registry.Hives {
+		h := s.registry.Hives[i]
+		if redirectHostMatchesHive(host, h.DashboardURL) {
+			return h.ID
+		}
+	}
+	return ""
+}
+
+func (s *HubServer) hiveExists(hiveID string) bool {
+	if loadSaaSHive(hiveID) != nil {
+		return true
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for i := range s.registry.Hives {
+		if s.registry.Hives[i].ID == hiveID {
+			return true
+		}
+	}
+	return false
+}
+
+func redirectHostMatchesHive(host, rawURL string) bool {
+	if rawURL == "" {
+		return false
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(host, u.Hostname())
+}
+
+func (s *HubServer) userCanOpenHive(username, hiveID string) bool {
+	if username == "" || hiveID == "" {
+		return false
+	}
+	if isHubAdmin(username) {
+		return true
+	}
+	if h := loadSaaSHive(hiveID); h != nil && canonicalEqual(h.Owner, username) {
+		return true
+	}
+	user := loadSaaSUser(username)
+	if user == nil {
+		return false
+	}
+	_, ok := user.Hives[hiveID]
+	return ok
 }
 
 // handleProviderLogin starts login for a specific provider named in the path.
@@ -719,6 +855,9 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 
 	if redirect == "" {
 		redirect = "/dashboard"
+	}
+	if s.writeHiveRedirectAccessDenied(w, canonicalID, redirect) {
+		return
 	}
 	http.Redirect(w, r, redirect, http.StatusTemporaryRedirect)
 }

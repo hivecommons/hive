@@ -786,6 +786,7 @@ var publicExactPaths = map[string]struct{}{
 	"/api/style":        {},
 	"/api/theme.css":    {},
 	"/api/themes":       {},
+	"/auth/return":      {},
 	"/components.css":   {},
 	ssoHandoffPath:      {},
 	"/tokens.css":       {},
@@ -1072,7 +1073,10 @@ func (s *HubServer) handleSaaSAuthCheck(w http.ResponseWriter, r *http.Request) 
 		ok = true
 	}
 	if !ok {
-		http.Error(w, "no access to this hive", http.StatusForbidden)
+		// Return 401, not 403, so nginx uses auth-signin and sends the browser
+		// to /login. /login already knows the user is signed in and renders the
+		// branded "not authorized for this hive" page instead of bouncing back.
+		http.Error(w, "no access to this hive", http.StatusUnauthorized)
 		return
 	}
 

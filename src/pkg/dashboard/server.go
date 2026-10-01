@@ -1798,6 +1798,8 @@ func isPublicPath(path string) bool {
 		return true
 	case path == "/api/auth/token":
 		return true
+	case path == "/auth/return":
+		return true
 	case path == "/metrics" && metricsEnabled():
 		// Prometheus scrape target — bypasses dashboard auth only when
 		// explicitly enabled via HIVE_METRICS_ENABLED (Prometheus cannot
