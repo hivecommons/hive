@@ -33,7 +33,7 @@ that apply regardless of which runtime you are moving.
 | Base config | ConfigMap `hive-config` | key `hive.yaml`, mounted at `/etc/hive/hive.yaml` | `src/deploy/k8s/configmap.yaml`, `src/deploy/k8s/kustomization.yaml` |
 | Dashboard-saved config overlay | PVC `hive-data` | `/data/hive.yaml.dashboard` (merged over the ConfigMap seed at boot) | `src/deploy/entrypoint.sh:862,879` |
 | Runtime config (legacy PVC-first path) | PVC `hive-data` | `/data/hive.yaml.runtime` (and legacy `/data/hive.yaml.bak`) | `src/deploy/entrypoint.sh:69-70` |
-| Beads ledgers (per-agent work state) | PVC `hive-data` | `/data/beads/<agent>/` (symlinked to `/home/dev/<agent>-beads`) | `src/deploy/entrypoint.sh:894-903` |
+| Beads ledgers (per-agent work state) | PVC `hive-data` | `/data/beads/<agent>/` (symlinked to `/home/dev/<agent>-beads`) | `src/deploy/entrypoint.sh:1239-1248` |
 | Agent backend credentials / home dirs | PVC `hive-data` | `/data/home` (bind-seeded to `/data/home/.config`, `.bashrc`, `.profile`, per-agent `$HOME`) | `src/deploy/entrypoint.sh:151-169` |
 | Backup encryption key (if the dashboard "Set key" flow was used) | PVC `hive-data` | `/data/secrets/backup_encryption_key`, mode `0600` | `src/docs/backup-restore.md` "Setting the backup encryption key (hosted flow)" |
 | Dashboard auth / bootstrap secrets | Secret `hive-secrets` | keys `HIVE_DASHBOARD_TOKEN`, optionally `bob_api_key` | `src/deploy/k8s/secret.yaml` |
