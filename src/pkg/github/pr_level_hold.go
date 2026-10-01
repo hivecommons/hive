@@ -182,11 +182,6 @@ func (c *Client) ReleaseLevelHoldsOnce(ctx context.Context, level int, actor str
 	return pending, nil
 }
 
-func (c *Client) levelHoldMetadataForPR(ctx context.Context, owner, repo string, number int) (levelHoldNoticeMetadata, bool, error) {
-	meta, ok, _, err := c.levelHoldMetadataAndCommentsForPR(ctx, owner, repo, number)
-	return meta, ok, err
-}
-
 func (c *Client) levelHoldMetadataAndCommentsForPR(ctx context.Context, owner, repo string, number int) (levelHoldNoticeMetadata, bool, []*gh.IssueComment, error) {
 	comments, err := c.listIssueComments(ctx, owner, repo, number)
 	if err != nil {
