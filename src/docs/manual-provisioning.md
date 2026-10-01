@@ -140,7 +140,7 @@ git clone -b v5 https://github.com/hivecommons/hive.git
 cd hive/src/deploy/kustomize/overlays/standalone
 # Edit the placeholders — see "What you must swap" below:
 #   patch-configmap.yaml       (org/repos, owner login, OAuth client id, litellm endpoint)
-#   patch-pvc-storageclass.yaml (your storage class — the PVC is RWO; RWX not needed)
+#   patch-pvc-storageclass.yaml (your storage class — RWO is fine, but network-attached, not local-path)
 # Review the rendered manifests, then apply:
 kubectl kustomize .
 kubectl apply -k .
@@ -176,9 +176,40 @@ kubectl apply -k .
 > (200 = exists). Digests always work.
 
 **Storage.** The base `hive-data` PVC is `ReadWriteOnce`. That is correct for
-the single-replica standalone hive — any block storage class works; you do
-**not** need an RWX class. (RWX is only relevant to the hub-provisioned path
-further down, whose template runs a surge rollout.)
+the single-replica standalone hive — any **network-attached** block storage
+class works; you do **not** need an RWX class. (RWX is only relevant to the
+hub-provisioned path further down, whose template runs a surge rollout.) What
+you must avoid on a multi-node cluster is a **node-local** provisioner — see
+the next section.
+
+#### Multi-node clusters: do not put `/data` on node-local storage
+
+`/data` is the hive's whole state (agent homes, config overlay, audit log,
+knowledge). Where it lives decides which nodes the pod can run on:
+
+| Class type | Examples | Effect on the spoke |
+|---|---|---|
+| **Node-local** (`WaitForFirstConsumer` + hostPath) | `local-path` (Talos, k3s default), `openebs-hostpath`, `hostpath` | The PV is a directory on **one node's disk**. The pod is pinned to that node forever, shares the disk with images and every other local-path PV, and the claim's size is only a label — `local-path` caps **cannot be expanded** by editing the PVC. When that node crosses kubelet's eviction threshold, every pod on it is SIGKILLed on start (exit 137) and the ReplicaSet recreates it in a loop. Observed on a 3-node Talos/AWS spoke ([#9868](https://github.com/hivecommons/hive/issues/9868)): 37 GB of local-path PVs on one node, `hive-data` at 88 % of its cap, no way to move it. |
+| **Network-attached RWO** | AWS `ebs-csi` (`gp3`), AKS `managed-csi`, GKE `pd-balanced`, Ceph `rbd`, Longhorn | The volume follows the pod to any node in its zone, the data is off the node disk, and `allowVolumeExpansion: true` classes grow in place. **Use this for a production spoke.** |
+| **RWX** | cephfs, NFS CSI, EFS, Azure Files | Same as above, plus multi-attach — needed only by the hub-provisioned surge rollout; optional here. |
+
+Check before applying:
+
+```bash
+kubectl get storageclass
+# A production spoke wants a network-attached class, ideally with allowVolumeExpansion: true.
+# If the only class is local-path / openebs-hostpath, install a CSI driver for your cloud
+# first — or accept that the hive is pinned to one node and size that node's disk for it.
+```
+
+If a spoke is already on `local-path` and must move: scale the deployment to
+0, create a new PVC on the network class, copy with a one-off pod that mounts
+both (`kubectl run … --overrides` or a small Job running `cp -a /old/. /new/`),
+point the Deployment's `hive-data` volume at the new claim, scale back up, and
+delete the old PVC once the dashboard shows the agents and config intact. The
+hive does not yet split its stateless API from its stateful agent workers, so
+one pod still carries both; keeping that one pod off node-local storage is
+what lets the scheduler place it where there is room.
 
 **On OpenShift.** The standalone overlay does not create a Route or grant any
 SCC. Two more pieces supply the OpenShift-only deltas:
@@ -414,7 +445,9 @@ To find the right class name:
 ```bash
 kubectl get storageclass
 # Look for one marked (default) or annotated storageclass.kubernetes.io/is-default-class=true
-# The base PVC is ReadWriteOnce, so any block class works (AKS managed-csi, EBS, RBD, ...).
+# The base PVC is ReadWriteOnce, so any NETWORK-ATTACHED block class works (AKS managed-csi, EBS, RBD, ...).
+# Avoid node-local classes (local-path, openebs-hostpath): they pin the pod to one node and cannot
+# be expanded — see "Multi-node clusters: do not put /data on node-local storage" above.
 # On Spyre/ODF clusters, ocs-storagecluster-cephfs (RWX) also works — RWX is allowed, not required.
 ```
 
