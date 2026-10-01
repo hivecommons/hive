@@ -425,8 +425,10 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/restart-spoke", s.requireAuth(s.handleRestartSpoke))
 	s.mux.HandleFunc("GET /api/saas/hive-config/{hiveID}", s.requireAuth(s.handleProxyHiveConfig))
 	s.mux.HandleFunc("GET /api/saas/latest-sha", s.handleLatestSHA)
+	s.mux.HandleFunc("GET /api/hub/release/stable-promotion", s.handleGetStablePromotion)
 	s.mux.HandleFunc("POST /api/saas/hub/upgrade", s.requireAdmin(s.handleHubSelfUpgrade))
 	s.mux.HandleFunc("PUT /api/saas/hub/auto-upgrade", s.requireAdmin(s.handleHubAutoUpgrade))
+	s.mux.HandleFunc("PUT /api/hub/release/stable-promotion", s.requireAdmin(s.handleSetStablePromotion))
 	// Admin upgrade kill switch (upgrade_pause.go): pause hub self-upgrades
 	// and/or ALL automatic spoke image changes, fleet-wide.
 	s.mux.HandleFunc("GET /api/saas/upgrade-pause", s.requireAdmin(s.handleGetUpgradePause))

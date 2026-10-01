@@ -836,6 +836,8 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		hivesView, matched = applyMyHivesQuery(result, query)
 	}
 
+	channelTargets := s.channelTargetsWithStablePromotion(getChannelTargets(getDisplaySHAs(), s.logger))
+	stablePromotion := s.stablePromotionStatus(channelTargets)
 	resp := map[string]any{
 		"hives": hivesView,
 		// The fleet average backs the reference polygon drawn behind every
@@ -868,7 +870,8 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		// them as branch-switch targets. The association is resolved from
 		// registry digests (cached), never hardcoded to a branch name.
 		"release_channels":  ReleaseChannels(),
-		"channel_targets":   getChannelTargets(getDisplaySHAs(), s.logger),
+		"channel_targets":   channelTargets,
+		"stable_promotion":  stablePromotion,
 		"hub_auto_upgrade":  isHubAutoUpgrade(),
 		"hub_upgrade_state": s.hubUpgradeState(),
 		// Kill-switch state rides the top-level payload (NOT the hive-row

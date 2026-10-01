@@ -13,6 +13,7 @@ RUN_LABEL=io.kubestellar.hive.github-actions-run-number
 REVISION_LABEL=org.opencontainers.image.revision
 DOCKER_WORKFLOW_DEFAULT=docker.yml
 REQUIRED_WORKFLOWS_DEFAULT="v2-ci.yml v2-tests.yml"
+STABLE_PROMOTION_URL_DEFAULT="https://hive.hivecommons.dev/api/hub/release/stable-promotion"
 
 usage() {
   cat >&2 <<USAGE
@@ -335,6 +336,78 @@ blocker_count() {
   unset GITHUB_TOKEN && gh issue list -R "$1" --state open --label "${BLOCKER_LABEL:-$BLOCKER_LABEL_DEFAULT}" --json number --limit 100 --jq 'length'
 }
 
+fetch_stable_promotion_state() {
+  local url=${STABLE_PROMOTION_URL:-$STABLE_PROMOTION_URL_DEFAULT}
+  curl -fsS "$url"
+}
+
+stable_promotion_preflight() {
+  local state
+  if [[ -n ${STABLE_PROMOTION_STATE_JSON:-} ]]; then
+    state=$STABLE_PROMOTION_STATE_JSON
+  elif ! state=$(fetch_stable_promotion_state 2>/dev/null); then
+    echo "::warning::could not reach stable auto-promotion state at ${STABLE_PROMOTION_URL:-$STABLE_PROMOTION_URL_DEFAULT}; skipping promotion fail-closed"
+    return 1
+  fi
+  local auto paused_by paused_at
+  auto=$(jq -r '.auto_promote // false' <<<"$state")
+  if [[ $auto != true ]]; then
+    paused_by=$(jq -r '.paused_by // ""' <<<"$state")
+    paused_at=$(jq -r '.paused_at // ""' <<<"$state")
+    echo "::notice::stable auto-promotion paused by ${paused_by:-operator} at ${paused_at:-unknown}; skipping"
+    return 1
+  fi
+  STABLE_PROMOTION_STATE_JSON=$state
+  export STABLE_PROMOTION_STATE_JSON
+  return 0
+}
+
+stable_smoke_from_hub() {
+  local candidate_sha=$1 candidate_digest=$2 soak_hours=${3:-$SOAK_HOURS_DEFAULT}
+  local state=${STABLE_PROMOTION_STATE_JSON:-}
+  [[ -n $state ]] || return 1
+  STABLE_PROMOTION_STATE_JSON="$state" python3 - "$candidate_sha" "$candidate_digest" "$soak_hours" <<'PY'
+import json
+import os
+import sys
+from datetime import datetime, timezone, timedelta
+
+sha, digest, soak_hours = sys.argv[1], sys.argv[2], float(sys.argv[3])
+try:
+    state = json.loads(os.environ["STABLE_PROMOTION_STATE_JSON"])
+except Exception:
+    raise SystemExit(1)
+
+now = datetime.now(timezone.utc)
+window = timedelta(hours=soak_hours)
+matches = []
+for hive in state.get("maintained_hives") or []:
+    hsha = str(hive.get("git_hash") or "")
+    image = str(hive.get("image_ref") or "")
+    if sha and hsha and not (hsha.startswith(sha) or sha.startswith(hsha)):
+        continue
+    if not hsha and digest and digest not in image:
+        continue
+    if not hive.get("healthy"):
+        continue
+    if int(hive.get("crash_restarts_24h") or 0) != 0:
+        continue
+    hb = str(hive.get("last_heartbeat_at") or "").replace("Z", "+00:00")
+    try:
+        seen = datetime.fromisoformat(hb).astimezone(timezone.utc)
+    except Exception:
+        continue
+    if now - seen > window:
+        continue
+    matches.append((hive.get("id") or "unknown", seen.isoformat().replace("+00:00", "Z"), hsha or image))
+
+if not matches:
+    raise SystemExit(1)
+hid, seen, ref = matches[0]
+print(f"hub candidate smoke: maintained hive {hid} healthy on {ref} with heartbeat {seen}, 0 crash restarts/{int(soak_hours)}h")
+PY
+}
+
 collect_required_workflows() {
   local repo=$1 sha=$2 workflow ok=true lines=()
   for workflow in ${REQUIRED_WORKFLOWS:-$REQUIRED_WORKFLOWS_DEFAULT}; do
@@ -390,6 +463,11 @@ promote() {
   local first_digest= first_revision= first_generation= evidence_text green=true blockers smoke decision reason image image_stable_digest
   local max_stable_generation=0 min_stable_generation= stable_all_candidate=true newer_stable=false
   declare -A candidate_digests
+
+  if ! stable_promotion_preflight; then
+    write_output promoted false
+    return 0
+  fi
 
   for image in "${images[@]}"; do
     local ref="${image_prefix}/${image}:${candidate_channel}"
@@ -464,6 +542,14 @@ promote() {
   smoke=${SMOKE_EVIDENCE:-}
   if [[ -z $smoke ]]; then
     smoke=${!SMOKE_VAR_DEFAULT:-}
+  fi
+  if [[ -z $smoke ]]; then
+    if smoke=$(stable_smoke_from_hub "$first_revision" "$first_digest" "${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}"); then
+      echo "smoke_evidence_source=hub"
+      echo "smoke_evidence=${smoke}"
+    else
+      echo "::notice::no maintained candidate hive satisfied the automated smoke gate"
+    fi
   fi
 
   local out

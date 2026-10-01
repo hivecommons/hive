@@ -10,6 +10,13 @@ Hive publishes three **release channels** — moving GHCR image tags an operator
 
 > **Promotion policy:** the channels diverge by release line and maturity. Every green merge to **`v5`** retags **`candidate`** (and `:latest`); **`stable`** advances later by digest through the scheduled/manual stable-promotion workflow after the [stable soak and promotion policy](stable-soak-policy.md) passes. Merges to **`v6`** retag **`edge`**, so `edge` is an active-development v6 build, not a synonym for `stable`. **`v4`** is a maintenance line: its builds publish only `v4-latest` and short-SHA tags, no channel (#7721 Phase 1).
 
+The hub's release-channel block also shows the stable auto-promotion state.
+Hub admins see a play/pause control on the `stable` row: play (the default)
+lets the hourly promotion workflow catch `stable` up to `candidate` after the
+24-hour soak and maintained-hive smoke evidence; pause records who paused and
+when, and the workflow skips without moving tags until resumed. Non-admins see
+a read-only badge.
+
 ## How channels are published
 
 Channels are **retags, not rebuilds**. Each release line's `docker.yml` workflow adds fast-moving channels as extra tags in the same `docker buildx imagetools create` call that publishes the branch's `-latest` and immutable short-SHA tags, so a channel always points at an already-built, multi-arch digest. Builds of branch `v5` publish `candidate`; the separate stable-promotion workflow later retags `stable` by candidate digest after the soak gate passes. Builds of branch `v6` publish `edge`. All three images get their line's channels in both published orgs:

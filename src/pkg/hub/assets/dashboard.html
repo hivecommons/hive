@@ -2906,6 +2906,7 @@
        the UI must render that honestly rather than guessing a branch. */
     var _releaseChannels = [];
     var _channelTargets = [];
+    var _stablePromotion = {auto_promote: true, soak_hours: 24, maintained_hives: []};
     /* Parent domain for hosted-tenant URLs, from the server (hub_spoke_domain).
        Empty until the first payload lands, and the link builders below treat
        empty as "cannot build a URL" rather than falling back to a literal:
@@ -5781,6 +5782,7 @@
         if (data.tracked_branches) _trackedBranchesList = data.tracked_branches;
         if (data.release_channels) _releaseChannels = data.release_channels;
         if (data.channel_targets) _channelTargets = data.channel_targets;
+        if (data.stable_promotion) _stablePromotion = data.stable_promotion;
         if (data.hub_spoke_domain) _hubSpokeDomain = data.hub_spoke_domain;
         if (data.latest_sha_messages) _latestSHAMessages = data.latest_sha_messages;
         if (data.latest_sha_image_status) _latestImageStatus = data.latest_sha_image_status;
@@ -5849,6 +5851,7 @@
           }
           for (var ci = 0; ci < _channelTargets.length; ci++) {
             var ct = _channelTargets[ci] || {};
+            if (ct.channel === 'stable' && ct.stable_promotion) _stablePromotion = ct.stable_promotion;
             var ctTarget;
             if (ct.branch) {
               var ctMsg = _latestSHAMessages[ct.branch] || '';
@@ -5917,7 +5920,8 @@
             if (ctStamp) {
               ctTarget += '<span style="font-size:var(--fs-2xs);font-family:monospace;color:var(--muted);opacity:0.75;margin-left:var(--sp-3)" title="Committed ' + escAttr(ct.committed_at) + ' (UTC)">' + esc(ctStamp) + '</span>';
             }
-            chLines += '<div style="display:flex;align-items:center;gap:var(--sp-3);margin-bottom:var(--sp-1)"><span style="display:inline-block;min-width:' + CHANNEL_NAME_MIN_W_PX + 'px;padding:1px 6px;border-radius:var(--r-pill);font-size:var(--fs-2xs);background:rgba(34,197,94,0.15);color:#4ade80;border:1px solid rgba(34,197,94,0.3);text-align:center" title="Release channel — a moving tag that follows whichever build is currently promoted to this track">' + esc(ct.channel) + '</span><span style="color:var(--muted);opacity:0.6;font-size:0.7rem">-&gt;</span>' + ctTarget + ctDist + '</div>';
+            var stableCtl = (ct.channel === 'stable') ? stablePromotionControlHTML(ct) : '';
+            chLines += '<div style="display:flex;align-items:center;gap:var(--sp-3);margin-bottom:var(--sp-1);flex-wrap:wrap"><span style="display:inline-block;min-width:' + CHANNEL_NAME_MIN_W_PX + 'px;padding:1px 6px;border-radius:var(--r-pill);font-size:var(--fs-2xs);background:rgba(34,197,94,0.15);color:#4ade80;border:1px solid rgba(34,197,94,0.3);text-align:center" title="Release channel — a moving tag that follows whichever build is currently promoted to this track">' + esc(ct.channel) + '</span><span style="color:var(--muted);opacity:0.6;font-size:0.7rem">-&gt;</span>' + ctTarget + ctDist + stableCtl + '</div>';
           }
           if (chLines) {
             chLines = '<div style="font-size:0.7rem;color:var(--muted);margin-bottom:var(--sp-1)">Release channels:</div>' + chLines +
@@ -7621,6 +7625,49 @@
 
     var _hubUpgrading = false;
     var _hubAutoUpgrade = false;
+    function stablePromotionAge(iso) {
+      if (!iso) return '';
+      var t = Date.parse(iso);
+      if (isNaN(t)) return '';
+      var mins = Math.floor((Date.now() - t) / 60000);
+      if (mins < 1) return 'just now';
+      if (mins < 60) return mins + 'm ago';
+      if (mins < 1440) return Math.floor(mins / 60) + 'h ago';
+      return Math.floor(mins / 1440) + 'd ago';
+    }
+    function stablePromotionControlHTML(ct) {
+      var st = _stablePromotion || {auto_promote: true, soak_hours: 24};
+      var on = st.auto_promote !== false;
+      var base = on
+        ? 'auto-promotion: on — stable catches up to candidate after ' + (st.soak_hours || 24) + 'h soak'
+        : 'auto-promotion: paused by ' + (st.paused_by || 'operator') + (st.paused_at ? ' ' + stablePromotionAge(st.paused_at) : '');
+      if (!on && ct && ct.behind) base = '↓' + ct.behind + ' behind — ' + base;
+      var title = base;
+      if (st.maintained_hives && st.maintained_hives.length) {
+        title += ' — candidate smoke hives: ' + st.maintained_hives.length;
+      }
+      if (!_isAdmin) {
+        return '<span class="badge" title="' + escAttr(title) + '" style="border-color:' + (on ? 'rgba(34,197,94,0.35)' : 'rgba(251,191,36,0.45)') + ';color:' + (on ? '#4ade80' : '#fbbf24') + '">' + (on ? 'auto-promotion on' : 'auto-promotion paused') + '</span>';
+      }
+      return '<button class="hv-btn btn-sm" type="button" onclick="toggleStablePromotion(' + (!on) + ')" title="' + escAttr(title) + '" style="padding:2px 8px;border:1px solid ' + (on ? 'rgba(34,197,94,0.35)' : 'rgba(251,191,36,0.45)') + ';background:' + (on ? 'rgba(34,197,94,0.12)' : 'rgba(251,191,36,0.14)') + ';color:' + (on ? '#4ade80' : '#fbbf24') + ';font-size:var(--fs-2xs);line-height:1.4">' + (on ? '⏸ pause stable auto-promotion' : '▶ resume stable auto-promotion') + '</button><span style="font-size:var(--fs-2xs);color:var(--muted)" title="' + escAttr(title) + '">' + esc(on ? 'auto: on' : 'paused') + '</span>';
+    }
+    async function toggleStablePromotion(enabled) {
+      if (!_isAdmin) return;
+      try {
+        var resp = await fetch('/api/hub/release/stable-promotion', {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({auto_promote: !!enabled})
+        });
+        var data = await resp.json();
+        if (!resp.ok) { hiveToast(data.error || 'Failed to update stable auto-promotion', 'error'); return; }
+        _stablePromotion = data;
+        hiveToast('Stable auto-promotion ' + (enabled ? 'resumed' : 'paused'), 'success');
+        loadHives(true);
+      } catch(e) {
+        hiveToast('Error: ' + e.message, 'error');
+      }
+    }
     async function toggleHubAutoUpgrade(enabled) {
       try {
         var resp = await fetch('/api/saas/hub/auto-upgrade', {
