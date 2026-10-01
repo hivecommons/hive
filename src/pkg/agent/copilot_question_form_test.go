@@ -42,14 +42,20 @@ func TestSendKickDismissesCopilotQuestionFormBeforeTyping(t *testing.T) {
 	tmuxSessionExists = func(*Manager, *AgentProcess) bool { return true }
 	defer func() { tmuxSessionExists = origExists }()
 
-	m := NewManager(map[string]config.AgentConfig{
-		"telemetry": {Backend: "copilot"},
-	}, discardLogger(), ProjectContext{})
-	m.mu.Lock()
-	agent := m.agents["telemetry"]
-	agent.State = StateRunning
-	agent.tmuxSession = "hive-telemetry"
-	m.mu.Unlock()
+	agent := &AgentProcess{
+		Name:        "telemetry",
+		Config:      config.AgentConfig{Backend: "copilot"},
+		State:       StateRunning,
+		tmuxSession: "hive-telemetry",
+	}
+	m := &Manager{
+		agents:           map[string]*AgentProcess{"telemetry": agent},
+		idToName:         map[string]string{"telemetry": "telemetry"},
+		logger:           discardLogger(),
+		kickLogDir:       t.TempDir(),
+		kickLogRetention: defaultKickLogRetention,
+		kickLogMaxBytes:  defaultKickLogMaxBytes,
+	}
 
 	var escapes int
 	var events []string
