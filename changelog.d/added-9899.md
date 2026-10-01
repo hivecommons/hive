@@ -1,0 +1,1 @@
+- hub: stable channel auto-promotion with play/pause control (#9899)
