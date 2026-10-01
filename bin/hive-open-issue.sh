@@ -16,7 +16,7 @@
 # forge-resistance as the gh wrapper; this shim adds no privilege.
 #
 # Usage (drop-in for the common gh shapes):
-#   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>]
+#   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>]
 #   hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>"
 #   hive-open-issue claim   --repo <owner/repo> <number|url>
 #   hive-open-issue close   --repo <owner/repo> <number|url> [--override-reason "..."]
@@ -29,6 +29,13 @@
 # large issue into child issues; keep the "Part of #<n>" line in the body too
 # so the link still reads in plain text. A failed link (parent missing, at
 # GitHub's sub-issue cap, …) does not stop the child issue from being created.
+#
+# --blocked-by <n[,n]> (repeatable) records each issue <n> in the same repo as
+# a GitHub "blocked by" dependency of the new issue (hivecommons/hive#9839).
+# Use it when a split has an order: the hive keeps a blocked child out of the
+# ready work until its blockers close, and lifts it automatically when they do
+# — write the order here, not only in a comment. A blocker that cannot be
+# linked is reported in the result and does not stop the create.
 #
 # Every shape accepts --dry-run (-n): validate the arguments, print the exact
 # request that WOULD be written, and exit 0 without writing it — nothing is
@@ -82,12 +89,13 @@ esac
 REPO=""; TITLE=""; BODY=""; BODY_FILE=""; NUMBER=""
 OVERRIDE_REASON=""
 PARENT=""
+BLOCKED_BY=()
 DRY_RUN=0
 LABELS=()
 REMOVE_LABELS=()
 REVIEWERS=()
 TEAM_REVIEWERS=()
-SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --remove-label, --reviewer, --team-reviewer, --number, --parent, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
+SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --remove-label, --reviewer, --team-reviewer, --number, --parent, --blocked-by, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo|-R) REPO="$2"; shift 2;;
@@ -100,6 +108,7 @@ while [ $# -gt 0 ]; do
     --team-reviewer) TEAM_REVIEWERS+=("$2"); shift 2;;
     --number) NUMBER="$2"; shift 2;;
     --parent) PARENT="$2"; shift 2;;
+    --blocked-by) BLOCKED_BY+=("$2"); shift 2;;
     --override-reason) OVERRIDE_REASON="$2"; shift 2;;
     --repo=*) REPO="${1#*=}"; shift;;
     --title=*) TITLE="${1#*=}"; shift;;
@@ -111,6 +120,7 @@ while [ $# -gt 0 ]; do
     --team-reviewer=*) TEAM_REVIEWERS+=("${1#*=}"); shift;;
     --number=*) NUMBER="${1#*=}"; shift;;
     --parent=*) PARENT="${1#*=}"; shift;;
+    --blocked-by=*) BLOCKED_BY+=("${1#*=}"); shift;;
     --override-reason=*) OVERRIDE_REASON="${1#*=}"; shift;;
     --dry-run|-n) DRY_RUN=1; shift;;
     # Tolerate gh flags we don't need; skip a following value only for flags
@@ -224,9 +234,10 @@ LABELS_JSON="$(printf '%s\n' "${LABELS[@]:-}" | python3 -c 'import json,sys; pri
 REMOVE_LABELS_JSON="$(printf '%s\n' "${REMOVE_LABELS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
 REVIEWERS_JSON="$(printf '%s\n' "${REVIEWERS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
 TEAM_REVIEWERS_JSON="$(printf '%s\n' "${TEAM_REVIEWERS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
-python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" "$REMOVE_LABELS_JSON" "$REVIEWERS_JSON" "$TEAM_REVIEWERS_JSON" <<'PY'
+BLOCKED_BY_JSON="$(printf '%s\n' "${BLOCKED_BY[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
+python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" "$REMOVE_LABELS_JSON" "$REVIEWERS_JSON" "$TEAM_REVIEWERS_JSON" "$BLOCKED_BY_JSON" <<'PY'
 import json, os, sys
-temporary, path, kind, repo, title, body, agent, labels, number, dry_run, parent, remove_labels, reviewers, team_reviewers = sys.argv[1:15]
+temporary, path, kind, repo, title, body, agent, labels, number, dry_run, parent, remove_labels, reviewers, team_reviewers, blocked_by = sys.argv[1:16]
 labels = [part.strip() for value in json.loads(labels)
           for part in value.split(",") if part.strip()]
 remove_labels = [part.strip() for value in json.loads(remove_labels)
@@ -272,6 +283,22 @@ else:
     # (hivecommons/hive#9435). Only meaningful for a create.
     if int(parent) > 0:
         req["parent"] = int(parent)
+    # --blocked-by: record GitHub "blocked by" dependencies on the new issue
+    # (hivecommons/hive#9839). Accepts "12", "#12", "12,13", repeated flags.
+    blockers = []
+    for value in json.loads(blocked_by):
+        for part in value.split(","):
+            part = part.strip().lstrip("#")
+            if not part:
+                continue
+            if not part.isdigit():
+                sys.stderr.write("hive-open-issue: --blocked-by expects issue numbers, got %r; nothing was created.\n" % part)
+                sys.exit(2)
+            n = int(part)
+            if n > 0 and n not in blockers:
+                blockers.append(n)
+    if blockers:
+        req["blocked_by"] = blockers
 if dry_run == "1":
     # Honour --dry-run: show exactly what would be queued, write nothing.
     print("hive-open-issue: DRY RUN — no request written, nothing will be created. Would write %s:" % path)

@@ -192,6 +192,33 @@ fi
 rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
+# --- Section 3c: --blocked-by flag ("blocked by" dependency links, #9839) ---
+run_script "blockedbot" --repo "org/repo" --title "Second child" --body "body; lands after #10" \
+  --blocked-by 10 --blocked-by "#11,12" --blocked-by=12
+
+REQ_FILE="$(find_req blockedbot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT_BLOCKED="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('blocked_by'))" "$REQ_FILE")"
+  check "--blocked-by produces de-duplicated JSON blocked_by list" "[10, 11, 12]" "$GOT_BLOCKED"
+else
+  echo "  FAIL: request file not created for --blocked-by test"
+  FAIL=$((FAIL + 1))
+fi
+
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
+# A non-numeric blocker is refused before anything is written.
+set +e
+run_script "badblockedbot" --repo "org/repo" --title "Bad blocker" --body "body" --blocked-by "ten" >/dev/null 2>&1
+BAD_RC=$?
+set -e
+check "--blocked-by refuses a non-numeric blocker (exit 2)" "2" "$BAD_RC"
+check "--blocked-by refusal writes no request" "" "$(find_req badblockedbot)"
+
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
 # --parent=value style also works.
 run_script "eqparentbot" --repo=org/repo --title="Eq parent" --body="body" --parent=42
 

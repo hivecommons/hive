@@ -1,0 +1,1 @@
+- `hive-open-issue --blocked-by <n[,n]>` records the order of split-out child issues as GitHub "blocked by" dependencies, and enumeration reads those links back so an issue with an open blocker is held out of the kick's actionable list (named in a footer with its blockers) until the blocker closes (#9839).
