@@ -1,0 +1,1 @@
+- `/contribute` no longer paints with the operator's dashboard theme and then swaps in the viewer's contributor theme after load (visible colour and border-radius "settling" on every page load); the head now requests the viewer's theme up front and the deferred script no longer cache-busts and re-fetches the stylesheet it already has (#9847).

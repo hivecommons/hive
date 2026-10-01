@@ -16,6 +16,24 @@ import (
 const contributeDashboardAssetLinksHTML = `<link rel="stylesheet" href="/tokens.css">
   <link rel="stylesheet" href="/components.css">`
 
+// contributeDefaultThemeID is the contributor theme a viewer with no stored
+// preference ends on; it MUST stay equal to ME_LEGACY_THEME_IDS[0] in the page
+// script, and the theme-id resolution in contributeThemeLinkHeadHTML MUST stay
+// equal to meThemeID() there, or the first paint and the settled paint diverge
+// again (#9847).
+const contributeDefaultThemeID = "contributor-rank-metal"
+
+// contributeThemeLinkHeadHTML writes the contributor theme stylesheet link in
+// <head>, resolved from the viewer's stored preference BEFORE the parser reaches
+// it, so the stylesheet is parser-inserted (render-blocking) with the final href
+// and nothing has to be swapped after load (#9847). document.write is used on
+// purpose: a link appended via DOM APIs is not render-blocking, and that is the
+// whole point. The %% is for the enclosing Fprintf format string.
+const contributeThemeLinkHeadHTML = `<script>
+(function(){var ids=['contributor-rank-metal','contributor-verdant','contributor-amber-rank','contributor-violet-advisor','contributor-minimal','contributor-rose','contributor-roomy-ranked'],id=ids[0];try{var raw=localStorage.getItem('hive.me.cardStyle')||'',n=parseInt(raw||'1',10);id=(String(n)===String(raw||'1')&&n>=1&&n<=ids.length)?ids[n-1]:(raw||ids[0]);}catch(e){}if(!/^[A-Za-z0-9._-]+$/.test(id))id=ids[0];document.write('<link id="contributor-theme-css" rel="stylesheet" href="/api/theme.css?scope=contributor&theme='+encodeURIComponent(id)+'">');})();
+</script>
+<noscript><link id="contributor-theme-css" rel="stylesheet" href="/api/theme.css?scope=contributor&theme=contributor-rank-metal"></noscript>`
+
 // handleContributeLanding renders the public sign-up page for ClankeR, the
 // contributor relay: it explains the deal, offers per-CLI copy-paste setup
 // commands, and shows a live feed of contributor activity.
@@ -170,7 +188,15 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 		contributorAutoPromoteAt, contributorTrustedAt,
 	)
 
-	themeHeadHTML := `<link id="contributor-theme-css" rel="stylesheet" href="/api/theme.css?scope=contributor">`
+	// #9847: the page used to paint with the operator's dashboard theme and
+	// then, once the deferred script ran, swap the stylesheet for the viewer's
+	// contributor theme (default `contributor-rank-metal`) with a cache-busting
+	// query — every load showed one set of colours/radii settle into another.
+	// The head now requests the theme the viewer will actually end on: the
+	// FOUC guard (which already runs before any stylesheet) reads the same
+	// localStorage key meThemeID() reads and writes the <link> itself, so the
+	// first paint is the final paint. <noscript> keeps a themed page without JS.
+	themeHeadHTML := contributeThemeLinkHeadHTML
 	customStyleHeadHTML := ""
 	customStyleNoticeHTML := ""
 	if rawStyle := strings.TrimSpace(r.URL.Query().Get("style")); rawStyle != "" {
@@ -231,7 +257,7 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 	if s.hubProxied() {
 		hubProxiedJS = "true"
 	}
-	fmt.Fprintf(&page, strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(`<!DOCTYPE html>
+	fmt.Fprintf(&page, strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(`<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Contribute to %s</title>
 <!-- #4549 theme FOUC guard. Runs BEFORE the stylesheet below is parsed, so a
      visitor who pinned a theme never sees a frame of the other one. Kept to the
@@ -246,6 +272,7 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 <script>
 (function(){try{var r=document.documentElement,k='hive-layout-mode',t=localStorage.getItem(k)||localStorage.getItem('hive.contribute.theme')||'auto';if(t==='openclaw')t='light';if(t==='classic')t='dark';var light=t==='light'||(t==='auto'&&window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches);r.classList.toggle('light-mode',!!light);if(t==='light'||t==='dark')r.setAttribute('data-theme',t);else r.removeAttribute('data-theme');}catch(e){}})();
 </script>
+{{CONTRIBUTOR_THEME_LINK}}
 <style>
 /* Michroma display face, base64-embedded (no network fonts). Used ONLY by the
    dossier hero name + rank designation (.dz-heroname / .dz-rankpill .rank-name). */
@@ -3265,7 +3292,11 @@ function meThemeID(){
 function applyContributorTheme(id){
   id=id||ME_LEGACY_THEME_IDS[0];
   var link=document.getElementById('contributor-theme-css');
-  if(link)link.href='/api/theme.css?scope=contributor&theme='+encodeURIComponent(id)+'&v='+Date.now();
+  // The head already requested this theme for the first paint (#9847); only
+  // touch the link when the viewer actually picks a different theme. No
+  // cache-buster: the server sets an ETag and must-revalidate for this URL.
+  var href='/api/theme.css?scope=contributor&theme='+encodeURIComponent(id);
+  if(link&&link.getAttribute('href')!==href)link.href=href;
   var card=document.getElementById('me-card');
   if(card)card.setAttribute('data-theme-id',id);
 }
@@ -7357,7 +7388,7 @@ fetch('/api/version').then(function(r){return r.json()}).then(function(d){
   el.innerHTML=dot+' Hive v'+d.version+' ('+d.short+')' + (d.behind?' · <span style="color:var(--cc-amber)">update available</span>':' · up to date');
 }).catch(function(){});
 </script>
-</body></html>`, "{{HIVE_BRANCH}}", upstreamBranch()), "{{HIVE_HUB_PROXIED}}", hubProxiedJS), "{{KNOWLEDGE_STATE_PROTOCOL_VERSION}}", knowledgeStateProtocolVersionJS), "{{DASHBOARD_ASSET_LINKS}}", contributeDashboardAssetLinksHTML), projectName, webstatic.MichromaFontFaceCSS, themeHeadHTML, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURLJS, projectNameJS, tierTableRows, customStyleNoticeHTML)
+</body></html>`, "{{HIVE_BRANCH}}", upstreamBranch()), "{{HIVE_HUB_PROXIED}}", hubProxiedJS), "{{KNOWLEDGE_STATE_PROTOCOL_VERSION}}", knowledgeStateProtocolVersionJS), "{{DASHBOARD_ASSET_LINKS}}", contributeDashboardAssetLinksHTML), "{{CONTRIBUTOR_THEME_LINK}}", themeHeadHTML), projectName, webstatic.MichromaFontFaceCSS, "", customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURLJS, projectNameJS, tierTableRows, customStyleNoticeHTML)
 	webstatic.ApplyDocumentScriptSrcElem(w, page.Bytes())
 	_, _ = w.Write(page.Bytes())
 }
