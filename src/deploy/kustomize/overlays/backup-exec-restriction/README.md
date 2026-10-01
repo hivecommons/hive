@@ -17,8 +17,9 @@ This overlay enforces the intended restriction at the admission layer.
 ## Scope of this overlay
 
 This overlay is **policy-only**: it renders the Kyverno `ClusterPolicy` and
-nothing else. It does not include `src/deploy/k8s` — that base contains the hub
-Deployment/Service/PVC but *not* `backup-cronjob.yaml`, so including it would
+nothing else. It does not include `src/deploy/k8s`: that base holds the hive
+workload (Deployment/Service/PVC in namespace `hive`), not the hub, and does not
+list `backup-cronjob.yaml`, a hub component in `hive-hub`. Including it would
 have pulled in unrelated manifests while still omitting the workload this
 policy constrains. Apply the backup CronJob yourself, first.
 
