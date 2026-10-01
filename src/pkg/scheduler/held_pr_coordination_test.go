@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
@@ -70,11 +71,40 @@ func TestHeldPRCoordinationReachesCustomizedAndManualKicks(t *testing.T) {
 			t.Errorf("kick missing %q:\n%s", want, msg)
 		}
 	}
+
 	if strings.Contains(msg, "operator-held issue") {
 		t.Fatalf("non-PR hold leaked into occupied PR claims:\n%s", msg)
 	}
 	if strings.Index(msg, "mandatory preflight") > strings.Index(msg, "CUSTOM POLICY BODY") {
 		t.Fatalf("coordination must precede policy work selection:\n%s", msg)
+	}
+}
+
+func TestHeldPRCoordinationShowsHumanReviewState(t *testing.T) {
+	s := heldPRCoordinationScheduler(t, 3, "ISSUES_AND_PRS")
+	reviewAt := time.Date(2026, 9, 30, 14, 15, 0, 0, time.UTC)
+	actionable := &github.ActionableResult{
+		PRs: github.PRResult{Held: []github.PullRequest{{
+			Repo: "acme/widget", Number: 26,
+			Protection: &github.ProtectionFacts{
+				LatestHumanReviewState:       github.ReviewDecisionChangesRequested,
+				LatestHumanReviewBy:          "alice",
+				LatestHumanReviewSubmittedAt: reviewAt,
+			},
+		}}},
+		Hold: github.HoldResult{Total: 1, PRs: 1, Items: []github.HoldItem{
+			{Repo: "acme/widget", Number: 26, Type: "pr", Title: "Test run_main and main exit mapping"},
+		}},
+	}
+	msg := s.BuildAgentMessage("quality", nil, actionable)
+	for _, want := range []string{
+		"acme/widget#26 Test run_main and main exit mapping — CHANGES REQUESTED by @alice (unaddressed)",
+		"address the\nreview on that same branch",
+		"Never remove the hold label",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("kick missing %q:\n%s", want, msg)
+		}
 	}
 }
 

@@ -639,16 +639,20 @@ func detectEvents(pr *github.PullRequest, threads []github.ReviewThread, comment
 			Detail: ciDetail(pr),
 		})
 	}
-	if pr.Protection != nil && pr.Protection.ReviewDecision == github.ReviewDecisionChangesRequested {
+	if pr.Protection != nil && pr.Protection.ReviewDecision == github.ReviewDecisionChangesRequested && !github.HumanReviewAddressed(*pr) {
 		by := append([]string(nil), pr.Protection.ChangesRequestedBy...)
 		sort.Strings(by)
 		detail := "A reviewer requested changes."
 		if len(by) > 0 {
 			detail = "Changes requested by " + strings.Join(by, ", ") + "."
 		}
+		key := "review:" + strings.Join(by, ",")
+		if !pr.Protection.LatestHumanReviewSubmittedAt.IsZero() {
+			key = fmt.Sprintf("%s:%s", key, pr.Protection.LatestHumanReviewSubmittedAt.UTC().Format(time.RFC3339Nano))
+		}
 		events = append(events, Event{
 			Kind:   EventChangesRequested,
-			Key:    "review:" + strings.Join(by, ","),
+			Key:    key,
 			Detail: detail,
 		})
 	}

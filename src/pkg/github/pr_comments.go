@@ -152,6 +152,30 @@ func (c *Client) FetchHumanPRComments(ctx context.Context, repo string, number i
 	return filterHumanPRComments(*data.Repository.PullRequest, since, c.isHumanFeedbackAuthor), nil
 }
 
+// FetchAgentPRComments returns hive-authored PR conversation/review comments
+// left at or after since. It is used only to decide whether a human review has
+// already been answered; human feedback routing continues to use
+// FetchHumanPRComments.
+func (c *Client) FetchAgentPRComments(ctx context.Context, repo string, number int, since time.Time) ([]PRComment, error) {
+	if c == nil {
+		return nil, ErrNoGitHubClient
+	}
+	owner, name := c.splitRepo(repo)
+	var data struct {
+		Repository struct {
+			PullRequest *rawPRConversation `json:"pullRequest"`
+		} `json:"repository"`
+	}
+	vars := map[string]any{"owner": owner, "repo": name, "number": number}
+	if err := c.graphQL(ctx, prConversationQuery, vars, &data); err != nil {
+		return nil, err
+	}
+	if data.Repository.PullRequest == nil {
+		return nil, fmt.Errorf("%s/%s#%d: pull request not found", owner, name, number)
+	}
+	return filterAgentPRComments(*data.Repository.PullRequest, since, c.isAgentCommentAuthor), nil
+}
+
 // isHumanFeedbackAuthor is the per-comment authorship test. It reuses the
 // hive's own identity (the App bot login and project.ai_author, via
 // isHiveLogin) rather than a separate list, and treats every bot account -
@@ -169,6 +193,17 @@ func (c *Client) isHumanFeedbackAuthor(author *rawPRCommentAuthor) bool {
 		return false
 	}
 	return !c.getReviewBots().IsBot(login)
+}
+
+func (c *Client) isAgentCommentAuthor(author *rawPRCommentAuthor, body string) bool {
+	if HasAttributionTrailer(body) {
+		return true
+	}
+	if author == nil {
+		return false
+	}
+	login := strings.TrimSpace(author.Login)
+	return login != "" && c.isHiveLogin(login)
 }
 
 // filterHumanPRComments keeps a comment only when it is non-empty, created at
@@ -217,6 +252,53 @@ func filterHumanPRComments(raw rawPRConversation, since time.Time, isHuman func(
 		if th.IsResolved || th.IsOutdated {
 			continue
 		}
+		line := 0
+		if th.Line != nil {
+			line = *th.Line
+		}
+		for _, rc := range th.Comments.Nodes {
+			if keep(rc) {
+				add(PRCommentInline, rc, th.Path, line)
+			}
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+func filterAgentPRComments(raw rawPRConversation, since time.Time, isAgent func(*rawPRCommentAuthor, string) bool) []PRComment {
+	var out []PRComment
+	keep := func(rc rawPRComment) bool {
+		return rc.Author != nil && strings.TrimSpace(rc.Body) != "" && !rc.CreatedAt.Before(since) && isAgent != nil && isAgent(rc.Author, rc.Body)
+	}
+	add := func(kind PRCommentKind, rc rawPRComment, path string, line int) {
+		out = append(out, PRComment{
+			ID:        string(kind) + ":" + strconv.FormatInt(rc.DatabaseID, 10),
+			Kind:      kind,
+			Author:    rc.Author.Login,
+			Body:      truncateCommentBody(rc.Body),
+			Path:      path,
+			Line:      line,
+			URL:       rc.URL,
+			CreatedAt: rc.CreatedAt,
+		})
+	}
+	for _, rc := range raw.Comments.Nodes {
+		if keep(rc) {
+			add(PRCommentConversation, rc, "", 0)
+		}
+	}
+	for _, rc := range raw.Reviews.Nodes {
+		if keep(rc) {
+			add(PRCommentReview, rc, "", 0)
+		}
+	}
+	for _, th := range raw.ReviewThreads.Nodes {
 		line := 0
 		if th.Line != nil {
 			line = *th.Line

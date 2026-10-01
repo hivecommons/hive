@@ -114,6 +114,46 @@ func TestTruncateCommentBody(t *testing.T) {
 	}
 }
 
+func TestFilterAgentPRComments(t *testing.T) {
+	c := humanCommentTestClient(t, "http://127.0.0.1:1")
+	since := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	after := since.Add(time.Hour)
+	line := 12
+	var raw rawPRConversation
+	raw.Comments.Nodes = []rawPRComment{
+		rawComment(1, "hive[bot]", "Bot", "NONE", "fixed in abc123", after),
+		rawComment(2, "alice", "User", "MEMBER", "still broken", after),
+		rawComment(3, "carol", "User", "MEMBER", "agent reply\n\n"+AttributionTrailerPrefix+" agent=scanner", after.Add(time.Minute)),
+		rawComment(4, "hive[bot]", "Bot", "NONE", "old", since.Add(-time.Minute)),
+	}
+	raw.Reviews.Nodes = []rawPRComment{rawComment(10, "hive[bot]", "Bot", "NONE", "review response", after.Add(2*time.Minute))}
+	th := rawPRCommentThread{Path: "src/a.go", Line: &line}
+	th.Comments.Nodes = []rawPRComment{rawComment(20, "hive[bot]", "Bot", "NONE", "inline response", after.Add(3*time.Minute))}
+	raw.ReviewThreads.Nodes = []rawPRCommentThread{th}
+
+	got := filterAgentPRComments(raw, since, c.isAgentCommentAuthor)
+	var ids []string
+	for _, cm := range got {
+		ids = append(ids, cm.ID)
+	}
+	want := []string{"conversation:1", "conversation:3", "review:10", "inline:20"}
+	if strings.Join(ids, ",") != strings.Join(want, ",") {
+		t.Fatalf("agent comment ids = %v, want %v", ids, want)
+	}
+	if got[3].Path != "src/a.go" || got[3].Line != line {
+		t.Fatalf("inline agent comment = %+v", got[3])
+	}
+	if out := filterAgentPRComments(raw, since, nil); len(out) != 0 {
+		t.Fatalf("no authorship test must route nothing, got %+v", out)
+	}
+	if c.isAgentCommentAuthor(nil, "") {
+		t.Fatal("empty ghost comment is not an agent reply")
+	}
+	if !c.isAgentCommentAuthor(nil, AttributionTrailerPrefix+" agent=scanner") {
+		t.Fatal("attribution trailer should identify an agent reply")
+	}
+}
+
 func TestFetchHumanPRComments(t *testing.T) {
 	since := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	var mu sync.Mutex
@@ -124,6 +164,7 @@ func TestFetchHumanPRComments(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
+
 		var req struct {
 			Query     string         `json:"query"`
 			Variables map[string]any `json:"variables"`
@@ -142,7 +183,7 @@ func TestFetchHumanPRComments(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":{"repository":{"pullRequest":{
 			"comments":{"nodes":[
 				{"databaseId":5,"url":"u5","body":"please add docs","createdAt":"2026-09-02T00:00:00Z","authorAssociation":"MEMBER","author":{"__typename":"User","login":"alice"}},
-				{"databaseId":6,"url":"u6","body":"on it","createdAt":"2026-09-02T00:01:00Z","authorAssociation":"NONE","author":{"__typename":"Bot","login":"hive"}}
+				{"databaseId":6,"url":"u6","body":"on it","createdAt":"2026-09-02T00:01:00Z","authorAssociation":"NONE","author":{"__typename":"Bot","login":"hive[bot]"}}
 			]},
 			"reviews":{"nodes":[]},
 			"reviewThreads":{"nodes":[]}
@@ -171,6 +212,38 @@ func TestFetchHumanPRComments(t *testing.T) {
 	}
 	var nilClient *Client
 	if _, err := nilClient.FetchHumanPRComments(context.Background(), "o/r", 9, since); err == nil {
+		t.Fatal("nil client must be an error")
+	}
+}
+
+func TestFetchAgentPRComments(t *testing.T) {
+	since := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/graphql") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"repository":{"pullRequest":{
+			"comments":{"nodes":[
+				{"databaseId":5,"url":"u5","body":"please add docs","createdAt":"2026-09-02T00:00:00Z","authorAssociation":"MEMBER","author":{"__typename":"User","login":"alice"}},
+				{"databaseId":6,"url":"u6","body":"on it","createdAt":"2026-09-02T00:01:00Z","authorAssociation":"NONE","author":{"__typename":"Bot","login":"hive[bot]"}}
+			]},
+			"reviews":{"nodes":[]},
+			"reviewThreads":{"nodes":[]}
+}}}}`))
+	}))
+	defer srv.Close()
+	c := humanCommentTestClient(t, srv.URL)
+	got, err := c.FetchAgentPRComments(context.Background(), "o/r", 9, since)
+	if err != nil {
+		t.Fatalf("FetchAgentPRComments: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "conversation:6" || got[0].Author != "hive[bot]" {
+		t.Fatalf("comments = %+v, want only hive's", got)
+	}
+	var nilClient *Client
+	if _, err := nilClient.FetchAgentPRComments(context.Background(), "o/r", 9, since); err == nil {
 		t.Fatal("nil client must be an error")
 	}
 }

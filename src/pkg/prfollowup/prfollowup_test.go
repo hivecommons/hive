@@ -358,6 +358,29 @@ func TestDetectEvents_ChangesRequestedWithoutReviewers(t *testing.T) {
 	}
 }
 
+func TestDetectEvents_ChangesRequestedUsesSharedAddressedRule(t *testing.T) {
+	reviewAt := time.Date(2026, 9, 30, 14, 15, 0, 0, time.UTC)
+	pr := github.PullRequest{
+		Protection: &github.ProtectionFacts{
+			ReviewDecision:               github.ReviewDecisionChangesRequested,
+			ChangesRequestedBy:           []string{"alice"},
+			LatestHumanReviewSubmittedAt: reviewAt,
+			LatestHumanReviewState:       github.ReviewDecisionChangesRequested,
+			LatestHumanReviewBy:          "alice",
+			LatestHumanReviewAddressed:   false,
+		},
+		ReviewAddressingCommits: []github.PRCommit{{SHA: "merge", AuthoredAt: reviewAt.Add(time.Minute), ParentCount: 2}},
+	}
+	ev := detectEvents(&pr, nil, nil, time.Time{})
+	if len(ev) != 1 || !strings.Contains(ev[0].Key, reviewAt.Format(time.RFC3339Nano)) {
+		t.Fatalf("events = %+v, want unaddressed review key with submitted_at", ev)
+	}
+	pr.ReviewAddressingCommits = append(pr.ReviewAddressingCommits, github.PRCommit{SHA: "fix", AuthoredAt: reviewAt.Add(2 * time.Minute), ParentCount: 1})
+	if ev := detectEvents(&pr, nil, nil, time.Time{}); len(ev) != 0 {
+		t.Fatalf("addressed review routed: %+v", ev)
+	}
+}
+
 func TestRecord_ValidationRepointAndErrors(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()

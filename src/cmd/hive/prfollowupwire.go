@@ -150,6 +150,8 @@ func routePRFollowUps(ctx context.Context, cfg *config.Config, client *github.Cl
 	for i := range prs {
 		prs[i].Repo = qualifyPRFollowUpRepo(org, prs[i].Repo)
 	}
+	prAgents := auditPRAgents(org, now.Add(-auditPRAttributionWindow), "")
+	prs = append(prs, heldPRFollowUpCandidates(ctx, cfg, client, dir, actionable.PRs.Held, prAgents, now, logger)...)
 	var resumer prfollowup.Resumer
 	opts := prfollowup.Options{
 		Dir:    dir,
@@ -161,6 +163,7 @@ func routePRFollowUps(ctx context.Context, cfg *config.Config, client *github.Cl
 		Comments: collectPRFollowUpComments(ctx, client, dir, prs, now, logger),
 		Logger:   logger,
 	}
+
 	if agentMgr != nil {
 		resumer = prFollowUpResumer{mgr: agentMgr}
 		opts.Audit = agentMgr.RecordAudit
@@ -171,6 +174,78 @@ func routePRFollowUps(ctx context.Context, cfg *config.Config, client *github.Cl
 	outcomes := prfollowup.Route(ctx, prs, resumer, opts, now)
 	sweepPRFollowUps(ctx, cfg, client, dir, prs, actionable.Hold.Items, agentMgr, now, logger)
 	return outcomes
+}
+
+func heldPRFollowUpCandidates(ctx context.Context, cfg *config.Config, client *github.Client, dir string, held []github.PullRequest, prAgents map[string]string, now time.Time, logger *slog.Logger) []github.PullRequest {
+	if cfg == nil || len(held) == 0 {
+		return nil
+	}
+	org := cfg.Project.Org
+	out := make([]github.PullRequest, 0, len(held))
+	fetched := 0
+	for _, pr := range held {
+		pr.Repo = qualifyPRFollowUpRepo(org, pr.Repo)
+		agent := prFixAgent(pr, prAgents[fmt.Sprintf("%s#%d", pr.Repo, pr.Number)])
+		_, hasPointer := prfollowup.PointerCreatedAt(ctx, dir, pr.Repo, pr.Number)
+		if !heldPRNeedsReviewFollowUp(pr) || (!hiveAuthoredPR(pr) && agent == "" && !hasPointer) {
+			continue
+		}
+		if client != nil && fetched < prFollowUpCommentsMaxPRsPerPass {
+			enrichPRReviewAddressing(ctx, client, &pr, logger)
+			fetched++
+		}
+		if github.HumanReviewAddressed(pr) {
+			continue
+		}
+		if !hasPointer {
+			// Older PRs can predate turn.pr_follow_up.enabled. The audit
+			// attribution used by the held-PR CI repair path is the only safe
+			// fallback owner; if it is absent we leave the PR visible in the
+			// hold-gated dashboard/prompt instead of routing it to nobody.
+			if agent == "" {
+				if logger != nil {
+					logger.Warn("PR follow-up: held PR has unaddressed human review but no owning agent attribution", "repo", pr.Repo, "pr", pr.Number)
+				}
+				continue
+			}
+			if err := prfollowup.Record(ctx, dir, agent, pr.Repo, pr.Number, pr.URL, "", now); err != nil && logger != nil {
+				logger.Warn("PR follow-up: failed to record fallback held-PR pointer", "repo", pr.Repo, "pr", pr.Number, "agent", agent, "error", err)
+				continue
+			}
+		}
+		out = append(out, pr)
+	}
+	return out
+}
+
+func heldPRNeedsReviewFollowUp(pr github.PullRequest) bool {
+	if pr.Number <= 0 || pr.Repo == "" || pr.Draft || pr.FromFork || pr.Protection == nil {
+		return false
+	}
+	return pr.Protection.LatestHumanReviewState == github.ReviewDecisionChangesRequested
+}
+
+func enrichPRReviewAddressing(ctx context.Context, client *github.Client, pr *github.PullRequest, logger *slog.Logger) {
+	if client == nil || pr == nil || pr.Protection == nil || pr.Protection.LatestHumanReviewSubmittedAt.IsZero() {
+		return
+	}
+	commits, err := client.ListPRCommits(ctx, pr.Repo, pr.Number)
+	if err != nil {
+		if logger != nil {
+			logger.Warn("PR follow-up: failed to fetch held PR commits for review addressing", "repo", pr.Repo, "pr", pr.Number, "error", err)
+		}
+	} else {
+		pr.ReviewAddressingCommits = commits
+	}
+	replies, err := client.FetchAgentPRComments(ctx, pr.Repo, pr.Number, pr.Protection.LatestHumanReviewSubmittedAt)
+	if err != nil {
+		if logger != nil {
+			logger.Warn("PR follow-up: failed to fetch held PR agent replies for review addressing", "repo", pr.Repo, "pr", pr.Number, "error", err)
+		}
+	} else {
+		pr.ReviewAddressingReplies = replies
+	}
+	pr.Protection.LatestHumanReviewAddressed = github.HumanReviewAddressed(*pr)
 }
 
 // collectPRFollowUpComments fetches human feedback for the open PRs this

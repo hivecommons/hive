@@ -1,0 +1,1 @@
+- Route unaddressed human CHANGES_REQUESTED reviews on held hive PRs back to the owning agent, surface their review state on hold-gated dashboards, and reuse the shared addressed rule for #9802 #9809 #9810 #9811 #9812.

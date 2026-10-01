@@ -648,6 +648,12 @@ type PullRequest struct {
 	// determined, and BranchProtectionBlockReason then declines to guess
 	// (hivecommons/hive#7515). Display only: no merge gate reads it.
 	Protection *ProtectionFacts `json:"protection,omitempty"`
+	// ReviewAddressingCommits and ReviewAddressingReplies are transient
+	// follow-up routing inputs. They are populated only by callers that need
+	// to decide whether the latest human CHANGES_REQUESTED review was already
+	// answered; they are deliberately omitted from snapshots.
+	ReviewAddressingCommits []PRCommit  `json:"-"`
+	ReviewAddressingReplies []PRComment `json:"-"`
 	// ReviewURL links the most recent review the HIVE posted on this PR, and
 	// ReviewCount is how many it has posted in total. Both come from the
 	// review-links ledger (review_links.go) rather than from GitHub, so they

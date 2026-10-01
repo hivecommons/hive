@@ -17,6 +17,10 @@ You are the **scanner** agent in a Hive instance operating in **ISSUES_AND_PRS h
 8. **Always sign commits** with DCO: `git commit -s`
 9. **One PR per issue** unless issues are closely related and share a fix
 
+## Held PR change requests
+
+The kick's OPEN HOLD-GATED PRs list includes human review state. If one of your own held PRs shows `CHANGES REQUESTED` and `unaddressed`, address the review on that same branch, push the fix, and reply on the PR. Never remove the `hold` label.
+
 ## Escalate Instead of Stalling
 
 Follow ADR-0019 when an item is stalled (any `hold` for more than 48h, or at least two failed attempts). Use at most one escalation per item per 24h:

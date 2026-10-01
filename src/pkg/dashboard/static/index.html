@@ -9786,11 +9786,15 @@
       const p = (pr && pr.protection) || {};
       const changesBy = Array.isArray(p.changes_requested_by) ? p.changes_requested_by : [];
       const approvals = Number(p.approvals_given || 0);
+      const latestState = String(p.latest_human_review_state || '').toUpperCase();
+      const latestBy = p.latest_human_review_by ? ' by @' + p.latest_human_review_by : '';
+      const addressed = p.latest_human_review_addressed ? ' addressed' : ' unaddressed';
       const who = changesBy.length ? ' by ' + changesBy.map(l => '@' + l).join(', ') : '';
       const given = approvals ? approvals + ' approval' + (approvals === 1 ? '' : 's') : '';
+      const latest = latestState === 'CHANGES_REQUESTED' ? ' (latest human review' + latestBy + ',' + addressed + ')' : (latestState === 'APPROVED' ? ' (latest human review approved' + latestBy + ')' : '');
       switch (String(p.review_decision || '').toUpperCase()) {
-        case 'APPROVED': return { decision: 'approved', glyph: '👍', label: 'approved on GitHub' + (given ? ' (' + given + ')' : '') };
-        case 'CHANGES_REQUESTED': return { decision: 'changes-requested', glyph: '👎', label: 'changes requested' + who };
+        case 'APPROVED': return { decision: 'approved', glyph: '👍', label: 'approved on GitHub' + (given ? ' (' + given + ')' : '') + latest };
+        case 'CHANGES_REQUESTED': return { decision: 'changes-requested', glyph: '👎', label: 'changes requested' + who + latest };
         case 'REVIEW_REQUIRED': return { decision: 'review-required', glyph: '👀', label: 'approving review required by branch protection' + (given ? ' (' + given + ' given)' : '') };
         default: break;
       }

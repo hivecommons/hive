@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 )
 
 // protectionCollector gathers, once per enrichment pass, the per-repository
@@ -37,6 +38,9 @@ type prReviewState struct {
 	decision           ReviewDecision
 	changesRequestedBy []string
 	approvals          int
+	latestHumanState   ReviewDecision
+	latestHumanBy      string
+	latestHumanAt      time.Time
 	comments           int
 	reviewThreads      int
 	linkedIssues       []PRLinkedIssue
@@ -67,6 +71,9 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 		f.ReviewDecision = rs.decision
 		f.ChangesRequestedBy = rs.changesRequestedBy
 		f.ApprovalsGiven = rs.approvals
+		f.LatestHumanReviewState = rs.latestHumanState
+		f.LatestHumanReviewBy = rs.latestHumanBy
+		f.LatestHumanReviewSubmittedAt = rs.latestHumanAt
 		// Triage signals go on the PR itself, not under Protection: they
 		// are not branch-protection facts, and they are wanted even when
 		// GitHub returned no review decision at all (#8968).
@@ -157,7 +164,7 @@ const reviewDecisionQuery = `query($owner:String!,$name:String!,$cursor:String){
       nodes{
         number
         reviewDecision
-        latestOpinionatedReviews(first:50){nodes{state author{login}}}
+        latestOpinionatedReviews(first:50){nodes{state submittedAt authorAssociation author{__typename login}}}
       }
     }
   }
@@ -177,7 +184,7 @@ const reviewSignalsQuery = `query($owner:String!,$name:String!,$cursor:String){
       nodes{
         number
         reviewDecision
-        latestOpinionatedReviews(first:50){nodes{state author{login}}}
+        latestOpinionatedReviews(first:50){nodes{state submittedAt authorAssociation author{__typename login}}}
         comments(first:1){totalCount}
         reviewThreads(first:1){totalCount}
         closingIssuesReferences(first:20){nodes{number state url repository{nameWithOwner}}}
@@ -198,9 +205,12 @@ type reviewDecisionResponse struct {
 				ReviewDecision           string `json:"reviewDecision"`
 				LatestOpinionatedReviews struct {
 					Nodes []struct {
-						State  string `json:"state"`
-						Author *struct {
-							Login string `json:"login"`
+						State             string    `json:"state"`
+						SubmittedAt       time.Time `json:"submittedAt"`
+						AuthorAssociation string    `json:"authorAssociation"`
+						Author            *struct {
+							Typename string `json:"__typename"`
+							Login    string `json:"login"`
 						} `json:"author"`
 					} `json:"nodes"`
 				} `json:"latestOpinionatedReviews"`
@@ -277,16 +287,24 @@ func (c *Client) fetchReviewDecisions(ctx context.Context, repo string) map[int]
 			}
 			for _, r := range n.LatestOpinionatedReviews.Nodes {
 				login := ""
+				typename := ""
 				if r.Author != nil {
 					login = r.Author.Login
+					typename = r.Author.Typename
 				}
-				switch strings.ToUpper(strings.TrimSpace(r.State)) {
-				case "APPROVED":
+				state := ReviewDecision(strings.ToUpper(strings.TrimSpace(r.State)))
+				switch state {
+				case ReviewDecisionApproved:
 					st.approvals++
-				case "CHANGES_REQUESTED":
+				case ReviewDecisionChangesRequested:
 					if login != "" {
 						st.changesRequestedBy = append(st.changesRequestedBy, login)
 					}
+				}
+				if c.isTrustedHumanReviewAuthor(login, typename, r.AuthorAssociation) && (state == ReviewDecisionApproved || state == ReviewDecisionChangesRequested) && r.SubmittedAt.After(st.latestHumanAt) {
+					st.latestHumanState = state
+					st.latestHumanBy = login
+					st.latestHumanAt = r.SubmittedAt
 				}
 			}
 			out[n.Number] = st
@@ -297,4 +315,21 @@ func (c *Client) fetchReviewDecisions(ctx context.Context, repo string) map[int]
 		vars["cursor"] = resp.Repository.PullRequests.PageInfo.EndCursor
 	}
 	return out
+}
+
+func (c *Client) isTrustedHumanReviewAuthor(login, typename, association string) bool {
+	login = strings.TrimSpace(login)
+	if login == "" || strings.EqualFold(strings.TrimSpace(typename), "Bot") || strings.HasSuffix(strings.ToLower(login), "[bot]") {
+		return false
+	}
+	if !trustedCommentAssociations[strings.ToUpper(strings.TrimSpace(association))] {
+		return false
+	}
+	if c != nil && c.isHiveLogin(login) {
+		return false
+	}
+	if c != nil && c.getReviewBots().IsBot(login) {
+		return false
+	}
+	return true
 }
