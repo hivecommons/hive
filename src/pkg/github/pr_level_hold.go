@@ -83,19 +83,6 @@ func (c *Client) releaseLevelHoldIfEligible(ctx context.Context, owner, repo str
 	if c == nil || pr == nil || !HasHoldLabel(extractPRLabels(pr.Labels)) {
 		return false, "", nil
 	}
-	number := pr.GetNumber()
-	comments, err := c.listIssueComments(ctx, owner, repo, number)
-	if err != nil {
-		return false, "level-hold-comment-check", err
-	}
-	for _, comment := range comments {
-		if !c.isTrustedLevelHoldNoticeAuthor(comment) {
-			continue
-		}
-		if _, ok := levelHoldAgentFromNotice(comment.GetBody()); ok {
-			return false, "hold", nil
-		}
-	}
 	return false, "hold", nil
 }
 
@@ -133,14 +120,14 @@ func (c *Client) PendingLevelHolds(ctx context.Context) ([]LevelHoldPR, error) {
 				if pr == nil || !HasHoldLabel(extractPRLabels(pr.Labels)) {
 					continue
 				}
-				meta, ok, err := c.levelHoldMetadataForPR(ctx, owner, repo, pr.GetNumber())
+				meta, ok, comments, err := c.levelHoldMetadataAndCommentsForPR(ctx, owner, repo, pr.GetNumber())
 				if err != nil {
 					return nil, err
 				}
 				if !ok {
 					continue
 				}
-				blocked, err := c.levelHoldReleaseBlockedByOtherPolicy(ctx, owner, repo, pr, meta, nil)
+				blocked, err := c.levelHoldReleaseBlockedByOtherPolicy(ctx, owner, repo, pr, meta, comments)
 				if err != nil {
 					return nil, err
 				}
@@ -196,22 +183,27 @@ func (c *Client) ReleaseLevelHoldsOnce(ctx context.Context, level int, actor str
 }
 
 func (c *Client) levelHoldMetadataForPR(ctx context.Context, owner, repo string, number int) (levelHoldNoticeMetadata, bool, error) {
+	meta, ok, _, err := c.levelHoldMetadataAndCommentsForPR(ctx, owner, repo, number)
+	return meta, ok, err
+}
+
+func (c *Client) levelHoldMetadataAndCommentsForPR(ctx context.Context, owner, repo string, number int) (levelHoldNoticeMetadata, bool, []*gh.IssueComment, error) {
 	comments, err := c.listIssueComments(ctx, owner, repo, number)
 	if err != nil {
-		return levelHoldNoticeMetadata{}, false, err
+		return levelHoldNoticeMetadata{}, false, nil, err
 	}
 	if hasReporterTrustNotice(comments, c.appBotLogin) || hasSelfAuthorizationNotice(comments, c.appBotLogin) {
-		return levelHoldNoticeMetadata{}, false, nil
+		return levelHoldNoticeMetadata{}, false, comments, nil
 	}
 	for _, comment := range comments {
 		if !c.isTrustedLevelHoldNoticeAuthor(comment) {
 			continue
 		}
 		if meta, ok := levelHoldMetadataFromNotice(comment.GetBody()); ok {
-			return meta, true, nil
+			return meta, true, comments, nil
 		}
 	}
-	return levelHoldNoticeMetadata{}, false, nil
+	return levelHoldNoticeMetadata{}, false, comments, nil
 }
 
 func (c *Client) levelHoldReleaseBlockedByOtherPolicy(ctx context.Context, owner, repo string, pr *gh.PullRequest, _ levelHoldNoticeMetadata, comments []*gh.IssueComment) (bool, error) {

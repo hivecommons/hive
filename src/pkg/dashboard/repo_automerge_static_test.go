@@ -35,7 +35,7 @@ func TestRepoAutoMergeStaticWiring(t *testing.T) {
 			t.Fatalf("static dashboard missing %q", want)
 		}
 	}
-	if strings.Contains(s, "toggleRepoAutoMerge") && (strings.Contains(s, "window.confirm") || strings.Contains(s, "window.alert")) {
+	if strings.Contains(s, "toggleRepoAutoMerge") && (strings.Contains(s, "confirm(") || strings.Contains(s, "alert(")) {
 		t.Fatal("repo auto-merge toggle must not use native browser dialogs")
 	}
 }
