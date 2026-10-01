@@ -213,7 +213,8 @@ _is_agent_paused() {
   # Local equivalent of hive_is_paused (bin/hive-config.sh) against STATE_DIR.
   [[ -f "$STATE_DIR/paused_${agent}" ]] ||
     [[ -f "$STATE_DIR/operator_paused_${agent}" ]] ||
-    [[ -f "$STATE_DIR/cadence_paused_${agent}" ]]
+    [[ -f "$STATE_DIR/cadence_paused_${agent}" ]] ||
+    [[ -f "$STATE_DIR/disk_paused_${agent}" ]]
 }
 
 # Structured audit log — every governor kick decision records pause state
@@ -780,6 +781,41 @@ record_kick() {
   date +%s > "$(last_kick_file "$1")"
 }
 
+# ── Disk-pressure guard (#9869 ask 2) ────────────────────────────────────────
+#
+# "Graceful degradation": when /data is critically full the hive is one burst
+# of writes away from a kubelet DiskPressure eviction (#9869, #9868). Kicking
+# an agent schedules new work — new sessions, new decompositions, new
+# commits — which only adds writes, so the governor stops kicking everyone
+# until the volume recovers. This script never touches the dashboard/API
+# server, so the "keep serving read paths" half of the ask holds without any
+# change here.
+#
+# DATA_DISK_CRITICAL_PCT mirrors dataDiskCriticalPct in
+# src/pkg/dashboard/health_disk.go (the data_disk health check, #9870) — keep
+# the two in sync if either threshold moves.
+DATA_DISK_PATH="${DATA_DISK_PATH:-/data}"
+DATA_DISK_CRITICAL_PCT="${DATA_DISK_CRITICAL_PCT:-95}"
+
+# data_disk_pct_used prints the percentage of DATA_DISK_PATH in use, or
+# nothing (with a non-zero exit) when the path does not exist — a missing
+# mount (e.g. a developer laptop) is not a full disk and must not pause
+# anything.
+data_disk_pct_used() {
+  local path="$1"
+  [[ -d "$path" ]] || return 1
+  df -P "$path" 2>/dev/null | awk 'NR==2 {gsub("%","",$5); print $5}'
+}
+
+# disk_pressure_active reports (via exit status) whether DATA_DISK_PATH is at
+# or above DATA_DISK_CRITICAL_PCT right now.
+disk_pressure_active() {
+  local pct
+  pct=$(data_disk_pct_used "$DATA_DISK_PATH") || return 1
+  [[ -n "$pct" ]] || return 1
+  (( pct >= DATA_DISK_CRITICAL_PCT ))
+}
+
 # ── Per-agent kick dispatch ───────────────────────────────────────────────────
 
 maybe_kick() {
@@ -787,6 +823,16 @@ maybe_kick() {
   local cadence elapsed
   cadence=$(get_cadence "$agent" "$mode")
   elapsed=$(seconds_since_last_kick "$agent")
+
+  # Disk-pressure guard (#9869 ask 2) — reported separately from the
+  # dashboard-pause branch below so the log line tells an operator why,
+  # instead of the generic "DASHBOARD PAUSED".
+  if [[ -f "$STATE_DIR/disk_paused_${agent}" ]]; then
+    touch "$STATE_DIR/was_paused_${agent}"
+    log "SKIP ${agent} (mode=${mode} — DATA DISK CRITICAL, see /api/health/deep data_disk check)"
+    audit_kick "$agent" "SKIP" "disk-critical" "governor"
+    return
+  fi
 
   # Dashboard pause flag — survives governor ticks
   if _is_agent_paused "$agent"; then
@@ -866,6 +912,30 @@ busy_pct=$(( queue_depth * 100 / threshold ))
 prev_mode=$(cat "$STATE_DIR/mode" 2>/dev/null || echo "")
 echo "$mode"      > "$STATE_DIR/mode"
 echo "$busy_pct"  > "$STATE_DIR/busyness_pct"
+
+# Disk-pressure guard — set/clear disk_paused_<agent> for every enabled agent
+# before cadences are written, so both the status file below and maybe_kick
+# see the current state on this tick.
+if disk_pressure_active; then
+  if [[ ! -f "$STATE_DIR/disk_pressure_active" ]]; then
+    _disk_pct=$(data_disk_pct_used "$DATA_DISK_PATH")
+    log "DISK CRITICAL ${DATA_DISK_PATH} at ${_disk_pct}% (>= ${DATA_DISK_CRITICAL_PCT}%) — pausing all governor kicks until it recovers"
+    ntfy "high" "Disk critical" "${DATA_DISK_PATH} at ${_disk_pct}% — governor kicks paused for all agents" "rotating_light"
+    touch "$STATE_DIR/disk_pressure_active"
+  fi
+  for _dp_agent in $AGENTS_ENABLED; do
+    touch "$STATE_DIR/disk_paused_${_dp_agent}"
+  done
+else
+  if [[ -f "$STATE_DIR/disk_pressure_active" ]]; then
+    log "DISK RECOVERED ${DATA_DISK_PATH} below ${DATA_DISK_CRITICAL_PCT}% — resuming governor kicks"
+    ntfy "default" "Disk recovered" "${DATA_DISK_PATH} below ${DATA_DISK_CRITICAL_PCT}% — governor kicks resumed" "white_check_mark"
+    rm -f "$STATE_DIR/disk_pressure_active"
+  fi
+  for _dp_agent in $AGENTS_ENABLED; do
+    rm -f "$STATE_DIR/disk_paused_${_dp_agent}"
+  done
+fi
 
 # Write per-agent cadences for hive status to read
 for _agent in $AGENTS_ENABLED; do

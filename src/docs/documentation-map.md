@@ -7,6 +7,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 ## Operations
 
 - [Manual provisioning](manual-provisioning.md) — heartbeat-only cluster provisioning, hub access roles, and common gotchas.
+- [DiskPressure recovery runbook](diskpressure-recovery-runbook.md) — spoke down with `/data` crash-looping on kubelet eviction: diagnosis, safe deletes, volume expansion/migration, and the health-check/governor-pause/self-janitor that degrade gracefully before it gets there.
 - [Hosted Hive Hub onboarding](hosted-hub.md) — signing in at `https://hive.hivecommons.dev`, requesting a hosted hive, installing the GitHub App, configuring model gateways and Copilot login, reading `/fleet`, and fixing common setup problems.
 - [Self-hosted hub deployment](hub-deployment.md) — `HIVE_MODE=hub`, hub storage, heartbeat secrets, and SaaS spoke registration.
 - [`CAP_NET_ADMIN` and self-hosted spokes](net-admin-requirement.md) — the container runs with or without `NET_ADMIN`; granting it (`--cap-add NET_ADMIN` / `securityContext.capabilities.add`) enables the full forced-proxy-egress gate, and what the degraded best-effort mode means without it.
