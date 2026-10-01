@@ -50,10 +50,9 @@ agent state, config overlays) is on the PVC.
 > against the target before starting, since none is checked automatically:
 
 - A `StorageClass` that supports the access mode your PVC needs. The shipped
-  default (`src/deploy/k8s/pvc.yaml`) is `ReadWriteOnce`, 10Gi; README.md's
-  "Kubernetes Deployment" step 4 recommends an NFS-backed `ReadWriteMany`
-  class only if you want zero-downtime rolling upgrades, which a cluster move
-  is not.
+  default (`src/deploy/k8s/pvc.yaml`) is `ReadWriteOnce`, 10Gi, which is
+  enough because the Deployment is one replica with `strategy: Recreate`
+  (README.md "Kubernetes Deployment" step 4).
 - An ingress controller (or OpenShift Route support) matching what you use on
   the source — the base manifest set ships no Ingress/Route object at all
   (`src/deploy/k8s/kustomization.yaml` lists no Ingress; the OpenShift Route is
