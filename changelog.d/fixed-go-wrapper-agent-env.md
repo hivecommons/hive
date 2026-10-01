@@ -1,0 +1,1 @@
+- go-wrapper shim now recognises agents by HIVE_AGENT (the manager's direct-launch env), so in-sandbox go test is actually blocked

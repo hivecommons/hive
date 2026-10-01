@@ -58,14 +58,30 @@ run_case() {
   fi
 }
 
-run_case "agent go test is blocked" 2 no env HIVE_AGENT_ID=scanner "$WRAPPER" test ./pkg/dashboard/
-run_case "agent go vet is blocked" 2 no env HIVE_AGENT_ID=scanner "$WRAPPER" vet ./...
+run_case "HIVE_AGENT go test is blocked" 2 no env HIVE_AGENT=scanner "$WRAPPER" test ./pkg/dashboard/
+run_case "HIVE_AGENT go vet is blocked" 2 no env HIVE_AGENT=scanner "$WRAPPER" vet ./...
+run_case "HIVE_AGENT_ID go test is blocked" 2 no env HIVE_AGENT_ID=scanner "$WRAPPER" test ./pkg/dashboard/
+run_case "HIVE_AGENT_ID go vet is blocked" 2 no env HIVE_AGENT_ID=scanner "$WRAPPER" vet ./...
+run_case "HIVE_AGENT go build passes through" 0 yes env HIVE_AGENT=scanner "$WRAPPER" build ./cmd/hive
 run_case "agent go build passes through" 0 yes env HIVE_AGENT_ID=scanner "$WRAPPER" build ./cmd/hive
 run_case "agent go version passes through" 0 yes env HIVE_AGENT_ID=scanner "$WRAPPER" version
 run_case "escape hatch allows go test" 0 yes env HIVE_AGENT_ID=scanner HIVE_ALLOW_LOCAL_GO_TEST=1 "$WRAPPER" test ./pkg/dashboard/
-run_case "non-agent go test passes through" 0 yes env -u HIVE_AGENT_ID "$WRAPPER" test ./pkg/dashboard/
+run_case "non-agent go test passes through" 0 yes env -u HIVE_AGENT -u HIVE_AGENT_ID "$WRAPPER" test ./pkg/dashboard/
 run_case "go tool vet is blocked" 2 no env HIVE_AGENT_ID=scanner "$WRAPPER" tool vet ./...
 run_case "go tool test2json passes through" 0 yes env HIVE_AGENT_ID=scanner "$WRAPPER" tool test2json -h
+
+set +e
+HIVE_GO_REAL="$MOCK_GO" MOCK_GO_LOG="$LOG_FILE" HIVE_AGENT=scanner "$WRAPPER" test ./pkg/dashboard/ >"${WORK_DIR}/agent-name-stdout" 2>"${WORK_DIR}/agent-name-stderr"
+agent_name_exit=$?
+set -e
+if [[ "$agent_name_exit" == "2" ]] && grep -q "⛔ BLOCKED: scanner:" "${WORK_DIR}/agent-name-stderr"; then
+  echo "ok - blocked message includes agent name"
+  PASSED=$((PASSED + 1))
+else
+  echo "not ok - blocked message includes agent name" >&2
+  echo "  got exit=$agent_name_exit stderr=$(cat "${WORK_DIR}/agent-name-stderr")" >&2
+  FAILED=$((FAILED + 1))
+fi
 
 set +e
 HIVE_GO_REAL="${WORK_DIR}/missing-go" "$WRAPPER" version >"${WORK_DIR}/missing-stdout" 2>"${WORK_DIR}/missing-stderr"

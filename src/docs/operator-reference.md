@@ -11,12 +11,12 @@ inference, deployment, contributor, and legacy helper-script variables, see
 ## Agent Go toolchain shim
 
 Container images install `bin/go-wrapper.sh` as `go` in the runtime Go toolchain
-and keep the real compiler beside it as `go-real`. When `HIVE_AGENT_ID` is set,
-the shim blocks `go test`, `go vet`, and `go tool vet` inside the hive pod and
-points agents to CI instead, because those commands can read or mutate live
-`/data` state and have killed agent sessions. Human operators can debug inside
-the pod by setting `HIVE_ALLOW_LOCAL_GO_TEST=1`; all other Go subcommands pass
-through unchanged.
+and keep the real compiler beside it as `go-real`. When `HIVE_AGENT` or
+`HIVE_AGENT_ID` is set, the shim blocks `go test`, `go vet`, and `go tool vet`
+inside the hive pod and points agents to CI instead, because those commands can
+read or mutate live `/data` state and have killed agent sessions. Human
+operators can debug inside the pod by setting `HIVE_ALLOW_LOCAL_GO_TEST=1`; all
+other Go subcommands pass through unchanged.
 
 ## Minimum required configuration
 

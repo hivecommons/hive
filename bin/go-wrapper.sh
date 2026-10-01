@@ -2,8 +2,9 @@
 # go wrapper — blocks in-pod Go test/vet execution for hive agents.
 # Installed at /usr/local/go/bin/go, with the real toolchain renamed beside it.
 #
-# Agent identity is signaled by HIVE_AGENT_ID, the same per-agent environment
-# used by gh-wrapper.sh. The hive process itself does not set it.
+# Agent identity can be signaled by HIVE_AGENT or HIVE_AGENT_ID. The Go
+# manager's direct-launch path sets HIVE_AGENT only, while agent-launch.sh sets
+# HIVE_AGENT_ID. Either means this is an agent sandbox.
 
 set -euo pipefail
 
@@ -28,8 +29,9 @@ case "${1:-}" in
     ;;
 esac
 
-if [[ "$is_blocked_subcommand" == "true" && -n "${HIVE_AGENT_ID:-}" && "${HIVE_ALLOW_LOCAL_GO_TEST:-}" != "1" ]]; then
-  echo "⛔ BLOCKED: 'go test'/'go vet' inside the hive pod is disabled for agents. Tests run in the repo's CI: commit, push, open the PR with hive-open-pr, and read the CI result. Running the suite here reads and mutates the live hive's state and has killed agent sessions (hivecommons/hive#9845)." >&2
+AGENT_NAME="${HIVE_AGENT:-${HIVE_AGENT_ID:-}}"
+if [[ "$is_blocked_subcommand" == "true" && -n "$AGENT_NAME" && "${HIVE_ALLOW_LOCAL_GO_TEST:-}" != "1" ]]; then
+  echo "⛔ BLOCKED: ${AGENT_NAME}: 'go test'/'go vet' inside the hive pod is disabled for agents. Tests run in the repo's CI: commit, push, open the PR with hive-open-pr, and read the CI result. Running the suite here reads and mutates the live hive's state and has killed agent sessions (hivecommons/hive#9845)." >&2
   exit 2
 fi
 
