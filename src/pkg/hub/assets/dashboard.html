@@ -7646,10 +7646,11 @@
       if (st.maintained_hives && st.maintained_hives.length) {
         title += ' — candidate smoke hives: ' + st.maintained_hives.length;
       }
+      var stateClass = on ? 'role-badge role-read-write' : 'journey-badge journey-firm';
       if (!_isAdmin) {
-        return '<span class="badge" title="' + escAttr(title) + '" style="border-color:' + (on ? 'rgba(34,197,94,0.35)' : 'rgba(251,191,36,0.45)') + ';color:' + (on ? '#4ade80' : '#fbbf24') + '">' + (on ? 'auto-promotion on' : 'auto-promotion paused') + '</span>';
+        return '<span class="' + stateClass + '" title="' + escAttr(title) + '">' + (on ? 'auto-promotion on' : 'auto-promotion paused') + '</span>';
       }
-      return '<button class="hv-btn btn-sm" type="button" onclick="toggleStablePromotion(' + (!on) + ')" title="' + escAttr(title) + '" style="padding:2px 8px;border:1px solid ' + (on ? 'rgba(34,197,94,0.35)' : 'rgba(251,191,36,0.45)') + ';background:' + (on ? 'rgba(34,197,94,0.12)' : 'rgba(251,191,36,0.14)') + ';color:' + (on ? '#4ade80' : '#fbbf24') + ';font-size:var(--fs-2xs);line-height:1.4">' + (on ? '⏸ pause stable auto-promotion' : '▶ resume stable auto-promotion') + '</button><span style="font-size:var(--fs-2xs);color:var(--muted)" title="' + escAttr(title) + '">' + esc(on ? 'auto: on' : 'paused') + '</span>';
+      return '<button class="hv-btn btn-sm ' + stateClass + '" type="button" onclick="toggleStablePromotion(' + (!on) + ')" title="' + escAttr(title) + '">' + (on ? '⏸ pause stable auto-promotion' : '▶ resume stable auto-promotion') + '</button><span class="filter-summary" title="' + escAttr(title) + '">' + esc(on ? 'auto: on' : 'paused') + '</span>';
     }
     async function toggleStablePromotion(enabled) {
       if (!_isAdmin) return;
