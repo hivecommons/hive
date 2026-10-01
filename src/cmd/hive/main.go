@@ -2221,7 +2221,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		// The agent-manager tier of configureGitHubClient (#9614): the
 		// attribution resolver, the self-authorization hold predicate and the
 		// merge re-engage hook. The App policy hooks (hive identity, the PR
-		// repo policy gate, signed commits, PR prechecks) and the review-relay
+		// repo policy gate, signed commits) and the review-relay
 		// settings were installed by bootGitHub; every rebuild path applies
 		// all of them through the same function.
 		b.applyGitHubClientAgentHooks(b.ghClient)

@@ -32,7 +32,7 @@ var copilotUserTokenWatchPath = CopilotUserTokenPath
 // /data/copilot-user-token exists, so without redirecting it every
 // agentEnvPairs test gains a COPILOT_GITHUB_TOKEN entry and the fixed
 // baseEnvVarCount assertions fail — which is exactly what happens when the
-// hub's own PR precheck runs `go test ./pkg/agent` inside the pod.
+// package tests run inside the pod.
 var copilotUserTokenLoadPath = CopilotUserTokenPath
 
 // copilotUserTokenProbePath is the same location as consulted by the

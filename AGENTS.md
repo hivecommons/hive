@@ -5,9 +5,7 @@ These rules apply to every AI agent (hive agents, Copilot CLI, Claude Code, Code
 ## Testing: CI runs the tests, you do not
 
 - **Do not run `go test`, `go build ./...`, `go vet`, `golangci-lint`, or the docs/citation guards locally.** Commit, push, open the PR, and read the CI results (`gh pr checks <n>`, then the failing job log). CI runs the full matrix with the right toolchain, caches and coverage gates; a local run duplicates it and burns tokens and pod CPU/disk.
-- If CI fails, fix from the job log and push again. Do not "reproduce locally first".
-- If `hive-open-pr` returns a `precheck` rejection, fix the branch from the
-  reported hive-run tool output, push, and re-request the PR.
+- If CI fails, fix from the job log and push again. Do not "reproduce locally first". The hive opens requested PRs; CI is the sole verdict and records failures for agents to iterate on.
 - The only local check worth running is `gofmt -l` on files you changed.
 - **Never run this repository's test suite from inside an agent pane.** Parts of `pkg/agent` and `pkg/dashboard` exercise real process management (tmux, `/proc` sweeps, SIGKILL by uid). Run as an agent user they can kill the agent's own tmux server, CLI and terminal — this is how the scanner lost its session repeatedly (hivecommons/hive#9416).
 

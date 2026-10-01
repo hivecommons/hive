@@ -8,7 +8,7 @@ Fixes #
 
 ## Testing
 
-- [ ] Not run locally: CI/hive prechecks run validation for agent-authored PRs (AGENTS.md forbids local builds/tests in agent panes).
+- [ ] Not run locally: CI runs validation for agent-authored PRs (AGENTS.md forbids local builds/tests in agent panes).
 - [ ] Other / manual verification (explain):
 
 

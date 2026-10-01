@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
@@ -21,7 +20,7 @@ import (
 // Before this existed the rebuild paths each carried their own copy of the
 // setter list, and every copy was shorter than boot's: after a routine
 // credential re-delivery the PR repo policy gate, the self-authorization hold
-// predicate, the hive identity, signed commits, PR prechecks, attribution,
+// predicate, the hive identity, signed commits, attribution,
 // merge re-engage, the canary scanner and the dashboard sinks were silently
 // gone until the pod restarted. #6203 and #6204 each patched one line of that
 // gap; TestGitHubClientSetHooksAllConfigured now fails CI when a new Set*
@@ -115,7 +114,7 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 
 // applyGitHubClientAppPolicyHooks installs the App-only write policy: who
 // counts as the hive, whether PRs may be opened on a repo at all, signed
-// commits and PR prechecks. Gated on a usable App exactly as boot always gated
+// commits. Gated on a usable App exactly as boot always gated
 // them: these govern the App-authored relay paths, which never run without
 // one.
 func (b *boot) applyGitHubClientAppPolicyHooks(client *github.Client) {
@@ -134,16 +133,6 @@ func (b *boot) applyGitHubClientAppPolicyHooks(client *github.Client) {
 	// GitHub-signed and authored by the App bot. Read through a func so a
 	// config reload takes effect on the next request.
 	client.SetSignedCommits(func() bool { return b.cfg.GitHub.AppSignedCommitsEnabled() })
-	prPrecheckDataRoot := filepath.Dir(b.cfg.Data.MetricsDir)
-	client.SetPRPrecheckOptions(&github.PRPrecheckOptions{
-		DocsEnabled:    func() bool { return b.cfg.GitHub.PRPrecheck.DocsEnabled() },
-		GoTestsEnabled: func() bool { return b.cfg.GitHub.PRPrecheck.GoTestsEnabled() },
-		Timeout:        func() time.Duration { return b.cfg.GitHub.PRPrecheck.EffectiveTimeout() },
-		MaxConcurrent:  func() int { return b.cfg.GitHub.PRPrecheck.EffectiveMaxConcurrent() },
-		CacheDir:       b.cfg.GitHub.PRPrecheck.EffectiveCacheDir(prPrecheckDataRoot),
-		WorkRoot:       filepath.Join(prPrecheckDataRoot, "pr-precheck", "checkouts"),
-		CloneBaseURL:   b.cfg.GitHub.ResolvedBaseURL(),
-	})
 }
 
 // prRepoPolicyGate refuses a PR request when the repo's effective ACMM level

@@ -1,0 +1,1 @@
+- Removed the hub-side PR-open precheck gate (changelog fragment, DCO, docs guards, in-pod go test); the hive now always opens the requested PR and CI is the sole verdict (#9481, #9550).

@@ -5,12 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path"
 	"regexp"
 	"strconv"
 	"strings"
-
-	gh "github.com/google/go-github/v72/github"
 )
 
 const githubCompareFileLimit = 300
@@ -74,27 +71,6 @@ func prContentMetadataReason(err error) (string, bool) {
 	return metadataErr.Error(), true
 }
 
-// prRequestPrecheckError is a deterministic pre-PR failure: the branch can be
-// fixed by changing the head, so retrying the same request should not open a PR.
-type prRequestPrecheckError struct {
-	reasons []string
-}
-
-func (e *prRequestPrecheckError) Error() string {
-	if e == nil || len(e.reasons) == 0 {
-		return "precheck failed"
-	}
-	return "precheck failed: " + strings.Join(e.reasons, "; ")
-}
-
-func prRequestPrecheckReason(err error) (string, bool) {
-	var precheckErr *prRequestPrecheckError
-	if !errors.As(err, &precheckErr) {
-		return "", false
-	}
-	return precheckErr.Error(), true
-}
-
 // validatePRRequestContent checks only lines added by the candidate branch.
 // Existing repository prose and deleted metadata do not block a cleanup PR.
 func (c *Client) validatePRRequestContent(ctx context.Context, req PRRequest) error {
@@ -145,12 +121,6 @@ func (c *Client) validatePRRequestContent(ctx context.Context, req PRRequest) er
 			return &prContentMetadataError{file: file.GetFilename(), line: line, kind: kind}
 		}
 	}
-	outcome := c.prRequestPrecheckFailures(ctx, owner, repo, head, comparison)
-	if len(outcome.Reject) > 0 {
-		c.recordPRPrecheckSkipped(req, nil)
-		return &prRequestPrecheckError{reasons: outcome.Reject}
-	}
-	c.recordPRPrecheckSkipped(req, outcome.Skipped)
 	return nil
 }
 
@@ -199,185 +169,4 @@ func addedInternalMetadata(patch string) (line int, kind string, found bool) {
 		}
 	}
 	return 0, "", false
-}
-
-func (c *Client) prRequestPrecheckFailures(ctx context.Context, owner, repo, head string, comparison *gh.CommitsComparison) prPrecheckOutcome {
-	if comparison == nil {
-		return prPrecheckOutcome{}
-	}
-	var outcome prPrecheckOutcome
-	if reason := prRequestChangelogPrecheck(ctx, c, owner, repo, head, comparison.Files); reason != "" {
-		outcome.Reject = append(outcome.Reject, reason)
-	}
-	if reason := prRequestDCOPrecheck(comparison.Commits); reason != "" {
-		outcome.Reject = append(outcome.Reject, reason)
-	}
-	external := c.runPRRequestExternalPrechecks(ctx, owner, repo, head, comparison.Files)
-	outcome.Reject = append(outcome.Reject, external.Reject...)
-	outcome.Skipped = append(outcome.Skipped, external.Skipped...)
-	return outcome
-}
-
-func prRequestChangelogPrecheck(ctx context.Context, c *Client, owner, repo, head string, files []*gh.CommitFile) string {
-	var codeFiles, fragments []string
-	for _, file := range files {
-		if file == nil {
-			continue
-		}
-		name := file.GetFilename()
-		if name == "" {
-			continue
-		}
-		removed := file.GetStatus() == "removed"
-		if isChangelogFragmentPath(name) && !removed {
-			fragments = append(fragments, name)
-		}
-		if isChangelogRelevantCodePath(name) {
-			codeFiles = append(codeFiles, name)
-		}
-	}
-	for _, fragment := range fragments {
-		if reason := validateChangelogFragmentName(fragment); reason != "" {
-			return reason
-		}
-		if c != nil && c.client != nil {
-			content, err := c.repositoryFileContent(ctx, owner, repo, head, fragment)
-			if err != nil {
-				return fmt.Sprintf("could not read changelog fragment %s at %s: %v", fragment, head, err)
-			}
-			if reason := validateChangelogFragmentBody(fragment, content); reason != "" {
-				return reason
-			}
-		}
-	}
-	if len(codeFiles) == 0 || len(fragments) > 0 {
-		return ""
-	}
-	// The fragment convention is hive's own. A target repo that has no
-	// changelog.d/ directory at the PR head (docs, pluk, a Java or C project)
-	// must not be rejected for not following it; its CI owns that call.
-	if !repoUsesChangelogFragments(ctx, c, owner, repo, head) {
-		return ""
-	}
-	return fmt.Sprintf("src/ code changed without a changelog.d fragment: add changelog.d/<added|changed|deprecated|fixed|security>-<slug>.md containing one '- ' bullet, or ask a maintainer to apply the no-changelog label (first code path: %s)", codeFiles[0])
-}
-
-// repoUsesChangelogFragments reports whether the target repo carries a
-// changelog.d/ directory at ref. Without a client it answers true so the
-// in-memory tests of the primary repo keep their strict behaviour.
-func repoUsesChangelogFragments(ctx context.Context, c *Client, owner, repo, ref string) bool {
-	if c == nil || c.client == nil {
-		return true
-	}
-	_, dir, _, err := c.client.Repositories.GetContents(ctx, owner, repo, "changelog.d", &gh.RepositoryContentGetOptions{Ref: ref})
-	return err == nil && dir != nil
-}
-
-func (c *Client) repositoryFileContent(ctx context.Context, owner, repo, ref, file string) (string, error) {
-	content, dir, _, err := c.client.Repositories.GetContents(ctx, owner, repo, file, &gh.RepositoryContentGetOptions{Ref: ref})
-	if err != nil {
-		return "", err
-	}
-	if content == nil || len(dir) > 0 {
-		return "", fmt.Errorf("not a file")
-	}
-	return content.GetContent()
-}
-
-func isChangelogRelevantCodePath(name string) bool {
-	if !strings.HasPrefix(name, "src/") || strings.HasPrefix(name, "src/docs/") || strings.HasSuffix(name, "_test.go") {
-		return false
-	}
-	base := path.Base(name)
-	if (strings.HasPrefix(name, "src/deploy/") || strings.HasPrefix(name, "src/scripts/")) &&
-		(strings.HasPrefix(base, "test-") || strings.HasPrefix(base, "test_")) && strings.HasSuffix(base, ".sh") {
-		return false
-	}
-	return true
-}
-
-func isChangelogFragmentPath(name string) bool {
-	return strings.HasPrefix(name, "changelog.d/") && !strings.Contains(strings.TrimPrefix(name, "changelog.d/"), "/") && strings.HasSuffix(name, ".md") && name != "changelog.d/README.md"
-}
-
-var changelogFragmentNameRE = regexp.MustCompile(`^changelog\.d/(added|changed|deprecated|fixed|security)-[A-Za-z0-9][A-Za-z0-9._-]*\.md$`)
-
-func validateChangelogFragmentName(name string) string {
-	if changelogFragmentNameRE.MatchString(name) {
-		return ""
-	}
-	return fmt.Sprintf("%s: fragment name must be changelog.d/<category>-<slug>.md with category added, changed, deprecated, fixed, or security", name)
-}
-
-func validateChangelogFragmentBody(name, content string) string {
-	for _, line := range strings.Split(content, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-		if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "<!-- release:") || strings.HasPrefix(trimmed, "<!--release:") {
-			return ""
-		}
-		return fmt.Sprintf("%s: a fragment must start with a '- ' entry bullet (or a '<!-- release: ... -->' marker)", name)
-	}
-	return fmt.Sprintf("%s: a fragment must start with a '- ' entry bullet", name)
-}
-
-var commitSignoffRE = regexp.MustCompile(`(?mi)^Signed-off-by:\s*(?:.*?)<([^<>\s]+@[^<>\s]+)>\s*$`)
-
-func githubNoreplyMatchesLogin(email, login string) bool {
-	if email == "" || login == "" || !strings.HasSuffix(email, "@users.noreply.github.com") {
-		return false
-	}
-	local := strings.TrimSuffix(email, "@users.noreply.github.com")
-	if local == login {
-		return true
-	}
-	plus := strings.LastIndex(local, "+")
-	if plus <= 0 || plus == len(local)-1 || local[plus+1:] != login {
-		return false
-	}
-	for _, r := range local[:plus] {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
-}
-
-func prRequestDCOPrecheck(commits []*gh.RepositoryCommit) string {
-	var failures []string
-	for _, commit := range commits {
-		if commit == nil || len(commit.Parents) > 1 {
-			continue
-		}
-		sha := commit.GetSHA()
-		if sha == "" {
-			sha = "unknown"
-		}
-		author := commit.GetCommit().GetAuthor().GetEmail()
-		if author == "" {
-			continue
-		}
-		author = strings.ToLower(strings.TrimSpace(author))
-		login := strings.ToLower(strings.TrimSpace(commit.GetAuthor().GetLogin()))
-		ok := false
-		for _, match := range commitSignoffRE.FindAllStringSubmatch(commit.GetCommit().GetMessage(), -1) {
-			if len(match) <= 1 {
-				continue
-			}
-			signoff := strings.ToLower(strings.TrimSpace(match[1]))
-			if signoff == author || (githubNoreplyMatchesLogin(signoff, login) && githubNoreplyMatchesLogin(author, login)) {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			failures = append(failures, shortSHA(sha))
-		}
-	}
-	if len(failures) == 0 {
-		return ""
-	}
-	return fmt.Sprintf("DCO precheck failed: non-merge commit(s) %s lack a Signed-off-by trailer matching the commit author email", strings.Join(failures, ", "))
 }

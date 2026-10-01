@@ -3782,9 +3782,6 @@ type GitHubConfig struct {
 	// changes the mutation cannot express (file modes, symlinks, submodules) or
 	// that are too large — the PR still opens, just unsigned.
 	AppSignedCommits *bool `yaml:"app_signed_commits,omitempty"`
-	// PRPrecheck controls deterministic pre-PR guards the watcher runs in a
-	// fresh checkout of the candidate head before opening an agent PR.
-	PRPrecheck PRPrecheckConfig `yaml:"pr_precheck,omitempty" json:"pr_precheck,omitempty"`
 	// SelfAuthorizationHold controls the #5117 self-authorization hold: when
 	// enabled, an App-authored PR whose only tracked rationale is an
 	// unacknowledged hive-filed issue receives `hold` plus an explanatory
@@ -6902,7 +6899,7 @@ const defaultDashboardOverlayFile = "/data/hive.yaml.dashboard"
 // writable, so a test config (org "testorg", github.app_id 0, a t.TempDir
 // agents_dir) lands in the live hive's runtime config and dashboard overlay
 // and is what the hive boots from on its next restart. That is exactly what
-// happened when the hub's PR precheck ran the test suite inside the r05x pod:
+// happened when a live hive pod ran the test suite inside r05x:
 // the hive came back as testorg/testrepo with its GitHub App wiped. Tests
 // that exercise these files redirect the var to a temp dir, which disables
 // the guard for them.

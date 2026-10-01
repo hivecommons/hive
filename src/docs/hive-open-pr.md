@@ -279,49 +279,13 @@ compared file list: if the diff contains no file of that kind, the request is
 rejected (`title claims test but diff contains no test file`). Retitle the PR
 to describe what the diff actually changes.
 
-### `precheck` rejections catch deterministic CI reds before PR creation
+### PR creation does not run hub-side CI preflights
 
-Before opening an agent PR, the watcher runs deterministic checks against the
-candidate head. These failures are quarantined as `.rejected` and reported in
-`.result.json` with `"precheck"` in the error string; fix the branch, push, and
-run `hive-open-pr` again.
-
-The always-on Tier A checks reject commits whose DCO `Signed-off-by:` trailer
-does not match the commit author and, in repos that carry a `changelog.d/`
-directory at the PR head, missing or malformed
-`changelog.d/<category>-<slug>.md` fragments (a repo without that directory is
-left to its own CI). Tier B runs the docs
-guards when the diff touches Markdown or a file cited by docs:
-the same link/citation commands as the docs workflow (`src/docs`, repo-root
-`docs/`, root Markdown, wiki-vault links, generic docs citations, and
-`api-reference.md` citations). Tier C is opt-in (`go_tests: true`) because CI owns test verdicts and an
-in-pod `go test` can read and mutate live state under `/data`; when enabled it
-runs in the hive process in a fresh checkout of the PR head under the hive
-data directory, not inside the agent pane: each touched Go package gets a full `go test -count=1` with `-race` when
-the pod has a C compiler available, and the cross-cutting
-`pkg/dashboard/webstatic`, `internal/testutil`, and dashboard OpenAPI parity
-guards run as well. Failure messages include failing test names and the first
-tool error lines so the requesting agent has enough context to amend the branch.
-
-Infrastructure problems do **not** reject a request. Checkout failures, missing
-tools, timeouts, network/download errors, and an unavailable race detector are
-logged by the hive and reported as `precheck_skipped` entries in the successful
-`.result.json`; the PR still opens. If the race detector is unavailable because
-there is no C compiler, Tier C records that skip and falls back to non-race Go
-tests with `CGO_ENABLED=0`.
-
-Operators can disable the Tier B docs guards, opt in to Tier C Go tests, change their per-run timeout,
-or tune their cache/concurrency:
-
-```yaml
-github:
-  pr_precheck:
-    docs: true          # default true
-    go_tests: false     # default false (opt-in; CI owns test verdicts)
-    timeout: 15m        # default 15m; timeout skips, never rejects
-    cache_dir: /data/pr-precheck/gocache
-    max_concurrent: 1   # default 1; serializes Tier C Go checks
-```
+The hive opens the requested PR after its older safety gates pass (authorization,
+request/body integrity, base-drift, and internal-metadata leak checks). It does
+not run changelog, DCO, docs, or Go-test preflights before PR creation. CI is the
+sole verdict for those repository rules, and agents iterate by reading CI
+failures, pushing fixes, and letting the existing PR record that history.
 
 ## Diagnosing a PR request that never opens
 

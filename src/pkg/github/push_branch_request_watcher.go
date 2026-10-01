@@ -1,12 +1,15 @@
 package github
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -82,9 +85,60 @@ type PushBranchResponse struct {
 type PushBranchRequestAuthorizer func(agent string, fileUID int) error
 
 // pushBranchExec runs the watcher's git commands. Package-level seam so tests
-// exercise the watcher without a git binary or network; the default is the
-// same runner the PR prechecks use.
-var pushBranchExec prPrecheckExecFunc = runPRPrecheckCommand
+// exercise the watcher without a git binary or network.
+type pushBranchExecFunc func(ctx context.Context, dir string, env []string, name string, args ...string) (string, error)
+
+var pushBranchExec pushBranchExecFunc = runPushBranchCommand
+
+func runPushBranchCommand(ctx context.Context, dir string, env []string, name string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), env...)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	err := cmd.Run()
+	return out.String(), err
+}
+
+func (c *Client) gitAuthHeader(ctx context.Context) (string, bool) {
+	if c == nil {
+		return "", false
+	}
+	if c.appAuth != nil {
+		token, err := c.appAuth.Token(ctx)
+		if err == nil && token != "" {
+			return gitBasicAuthHeader(token), true
+		}
+		return "", false
+	}
+	if c.authToken != "" {
+		return gitBasicAuthHeader(c.authToken), true
+	}
+	return "", false
+}
+
+// gitBasicAuthHeader encodes a GitHub token the way git-over-HTTPS expects it:
+// Basic auth with the conventional x-access-token username.
+func gitBasicAuthHeader(token string) string {
+	return "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:"+token))
+}
+
+func firstOutputLines(output string, n int) string {
+	lines := strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n")
+	var picked []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		picked = append(picked, trimmed)
+		if len(picked) >= n {
+			break
+		}
+	}
+	return strings.Join(picked, "\n")
+}
 
 // pushBranchNamePattern is the shape of a branch name the relay accepts. It is
 // deliberately narrower than git's own rules: a leading alphanumeric keeps a
@@ -147,8 +201,8 @@ func pushBranchRemoteURL(owner, repo string) string {
 
 // pushBranchGitEnv builds the environment for one git invocation: no terminal
 // prompts, the checkout marked safe (it is owned by the agent's UID, not the
-// hive's), and the App token as an extraHeader on the remote — the same
-// injection checkoutPRHeadForPrecheck uses, so the credential never touches
+// hive's), and the App token as an extraHeader on the remote — a process-local
+// Git config overlay, so the credential never touches
 // the agent-owned working tree's config.
 func pushBranchGitEnv(dir, remote, header string) []string {
 	env := []string{"GIT_TERMINAL_PROMPT=0"}
@@ -325,7 +379,7 @@ func (c *Client) handleOnePushBranchRequest(ctx context.Context, path string, no
 	}
 
 	remote := pushBranchRemoteURL(owner, repoName)
-	header, _ := c.prPrecheckAuthHeader(ctx)
+	header, _ := c.gitAuthHeader(ctx)
 	env := pushBranchGitEnv(req.Dir, remote, header)
 
 	// Resolve the local head being pushed so the audit entry and result name

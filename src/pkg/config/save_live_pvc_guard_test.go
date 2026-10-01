@@ -7,7 +7,7 @@ import (
 )
 
 // The production PVC paths must never be written by a test binary: when the
-// suite runs inside a hive pod (the hub's PR precheck, an agent running
+// suite runs inside a hive pod (an agent running
 // go test) /data is real and writable, and a test config would become the
 // hive's boot config.
 func TestGuardLivePVCPathUnderTest(t *testing.T) {
