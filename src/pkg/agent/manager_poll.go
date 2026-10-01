@@ -16,6 +16,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 
 	var prevLines []string
 	loginStreak := 0
+	tokenRestartProducingLogged := false
 	outcomeTick := 0
 	for {
 		select {
@@ -67,6 +68,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				// require the login line to PERSIST across consecutive polls,
 				// so any poll without one legitimately restarts the count.
 				loginStreak = 0
+				tokenRestartProducingLogged = false
 				// The CAP does not. "No login prompt" is not the same claim as
 				// "the login cleared" — a booting pane shows neither, and a
 				// boot is exactly what a token restart just caused. Resetting
@@ -138,7 +140,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			// where a user authenticates via one agent's terminal and other
 			// agents don't pick up the new token automatically.
 			//
-			// THREE guards, each traced to a live failure (hivecommons/hive,
+			// FIVE guards, each traced to a live failure (hivecommons/hive,
 			// 2026-08-22, scanner restart_count=28 with every kick destroyed):
 			//   1. loginStreak: the login line must persist across consecutive
 			//      polls (~9s). The CLI flashes "Please use /login" during its
@@ -150,52 +152,67 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			//      login agent that was kicked long ago restarts after the
 			//      grace expires; delivered work is never killed mid-scan.
 			//   3. The existing cooldown.
+			//   4. A small, sticky attempt cap.
+			//   5. A quiet-output window: a genuinely stuck login prompt sits
+			//      silent, while an agent still rendering output may simply be
+			//      discussing login/auth work in its answer.
 			if showsLogin && loginStreak >= loginStreakRestartMin && configHasTokens() {
+				now := time.Now()
 				m.mu.RLock()
 				lastKick := agent.LastKick
 				m.mu.RUnlock()
-				if lastKick != nil && time.Since(*lastKick) < tokenRestartKickGrace {
+				if lastKick != nil && now.Sub(*lastKick) < tokenRestartKickGrace {
 					continue
 				}
-				// GUARD 4 (#4596): the restart theory must not be retried
-				// forever. decideTokenRestart owns the attempt accounting so
-				// the rule is unit-testable without a tmux pane.
-				switch agent.decideTokenRestart(time.Now()) {
-				case tokenRestartGiveUp:
-					if !agent.tokenRestartGaveUp {
-						agent.tokenRestartGaveUp = true
-						diag := m.diagnoseStuckLogin(agent)
-						agent.LastError = diag
-						m.logger.Warn("giving up on token-triggered restart: the agent is still at a login prompt",
+				if tokenRestartBlockedByOutput(lastPaneChange, now) {
+					if !tokenRestartProducingLogged {
+						m.logger.Info("token-triggered restart suppressed: agent is producing output",
 							"agent", agent.Name,
-							"attempts", agent.tokenRestartAttempts,
-							"diagnosis", diag,
+							"since_output", now.Sub(lastPaneChange),
 						)
+						tokenRestartProducingLogged = true
 					}
-					// Deliberately NOT `continue`: this disables only the
-					// token-triggered restart. The TLS-error and hung-CLI
-					// detectors further down stay live, so an agent that is
-					// both stuck at a login prompt and hitting a transient
-					// network failure is still recovered by the detector that
-					// can actually help.
-				case tokenRestartWait:
-					// Cooldown has not elapsed; fall through to the other
-					// pane detectors below, exactly as before.
-				case tokenRestartFire:
-					m.logger.Info("auto-restarting agent after token detected in shared config",
-						"agent", agent.Name,
-						"attempt", agent.tokenRestartAttempts,
-						"max_attempts", tokenRestartMaxAttempts,
-					)
-					go func() {
-						if err := m.RestartWithReason(ctx, agent.Name, "login token refreshed"); err != nil {
-							m.logger.Warn("token-triggered restart failed",
+				} else {
+					// GUARD 4 (#4596): the restart theory must not be retried
+					// forever. decideTokenRestart owns the attempt accounting so
+					// the rule is unit-testable without a tmux pane.
+					switch agent.decideTokenRestart(now) {
+					case tokenRestartGiveUp:
+						if !agent.tokenRestartGaveUp {
+							agent.tokenRestartGaveUp = true
+							diag := m.diagnoseStuckLogin(agent)
+							agent.LastError = diag
+							m.logger.Warn("giving up on token-triggered restart: the agent is still at a login prompt",
 								"agent", agent.Name,
-								"error", err,
+								"attempts", agent.tokenRestartAttempts,
+								"diagnosis", diag,
 							)
 						}
-					}()
-					return // stop polling; Restart will spawn a new goroutine
+						// Deliberately NOT `continue`: this disables only the
+						// token-triggered restart. The TLS-error and hung-CLI
+						// detectors further down stay live, so an agent that is
+						// both stuck at a login prompt and hitting a transient
+						// network failure is still recovered by the detector that
+						// can actually help.
+					case tokenRestartWait:
+						// Cooldown has not elapsed; fall through to the other
+						// pane detectors below, exactly as before.
+					case tokenRestartFire:
+						m.logger.Info("auto-restarting agent after token detected in shared config",
+							"agent", agent.Name,
+							"attempt", agent.tokenRestartAttempts,
+							"max_attempts", tokenRestartMaxAttempts,
+						)
+						go func() {
+							if err := m.RestartWithReason(ctx, agent.Name, "login token refreshed"); err != nil {
+								m.logger.Warn("token-triggered restart failed",
+									"agent", agent.Name,
+									"error", err,
+								)
+							}
+						}()
+						return // stop polling; Restart will spawn a new goroutine
+					}
 				}
 			}
 

@@ -1,0 +1,1 @@
+- Suppress token-triggered login restarts while an agent is still producing pane output.

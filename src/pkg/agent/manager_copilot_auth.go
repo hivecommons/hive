@@ -49,7 +49,12 @@ const (
 	tokenRestartMaxAttempts = 3
 	// tokenRestartKickGrace suppresses token-triggered restarts after a kick
 	// delivery so the restart can never destroy just-delivered work.
-	tokenRestartKickGrace      = 10 * time.Minute
+	tokenRestartKickGrace = 10 * time.Minute
+	// tokenRestartQuietWindow suppresses token-triggered restarts while the
+	// pane is still changing. In the 2026-10-01 hosted-available-oke-11
+	// incident, an agent actively investigating a GitHub-login bug mentioned
+	// login prompts in its own output and was repeatedly killed mid-turn.
+	tokenRestartQuietWindow    = 2 * time.Minute
 	expiredTokenHangTimeoutSec = 180 // blank pane after this many seconds triggers token purge + restart
 	tlsErrorRestartCooldownSec = 120 // minimum seconds between TLS-error-triggered restarts per agent
 
