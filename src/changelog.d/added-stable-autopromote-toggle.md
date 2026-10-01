@@ -1,1 +1,1 @@
-- Add a hub play/pause control and API for stable channel auto-promotion with automated maintained-hive smoke evidence.
+- Add stable-channel auto-promotion with hub play/pause control.
