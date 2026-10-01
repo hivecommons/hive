@@ -100,11 +100,10 @@ func newUnparkServer(t *testing.T, owner, repo string, issues []unparkWireIssue,
 		case strings.HasSuffix(path, "/labels") && r.Method == http.MethodPost:
 			var n int
 			fmt.Sscanf(path, "issues/%d/labels", &n)
-			var body struct {
-				Labels []string `json:"labels"`
-			}
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			rec.added[n] = append(rec.added[n], body.Labels...)
+			// go-github posts the label names as a bare JSON array.
+			var labels []string
+			_ = json.NewDecoder(r.Body).Decode(&labels)
+			rec.added[n] = append(rec.added[n], labels...)
 			_ = json.NewEncoder(w).Encode([]wireLabel{})
 
 		case strings.Contains(path, "/labels/") && r.Method == http.MethodDelete:
