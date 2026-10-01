@@ -128,6 +128,12 @@ type ChannelTarget struct {
 	// relative to what is waiting — a commit count alone cannot tell "12
 	// commits from this morning" apart from "12 commits over three weeks".
 	CommittedAt string `json:"committed_at,omitempty"`
+
+	// StablePromotion carries the stable auto-promotion toggle and smoke
+	// summary on the stable row only, so the dashboard can render the
+	// play/pause affordance from the same release-channel payload it already
+	// polls.
+	StablePromotion *StablePromotionStatus `json:"stable_promotion,omitempty"`
 }
 
 // channelDigestTTL bounds how stale a channel→digest association may be. A

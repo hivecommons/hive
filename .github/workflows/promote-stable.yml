@@ -47,6 +47,7 @@ env:
   IMAGE_NAMES: hive hive-contributor hive-hub
   BLOCKER_LABEL: release-blocker
   SMOKE_EVIDENCE: ${{ inputs.smoke-evidence || vars.STABLE_SMOKE_EVIDENCE || '' }}
+  STABLE_PROMOTION_URL: ${{ vars.STABLE_PROMOTION_URL || 'https://hive.hivecommons.dev/api/hub/release/stable-promotion' }}
   EMERGENCY_EXCEPTION_REASON: ${{ inputs.emergency-exception-reason || '' }}
   EMERGENCY_FOLLOWUP_ISSUE: ${{ inputs.emergency-followup-issue || '' }}
 

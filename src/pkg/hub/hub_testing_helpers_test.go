@@ -83,6 +83,7 @@ var hubTestPathVars = []hubTestPathVar{
 	{ptr: &registryPath, prod: registryPath, rel: "hub-registry.json", always: true},
 	{ptr: &hubSecretPath, prod: hubSecretPath, rel: filepath.Join("saas", "hub-secret.key"), always: true},
 	{ptr: &hubBannersPath, prod: hubBannersPath, rel: filepath.Join("saas", "hub-banners.json")},
+	{ptr: &stablePromotionPath, prod: stablePromotionPath, rel: filepath.Join("saas", "stable-promotion.json")},
 	{ptr: &hubGenerationsPath, prod: hubGenerationsPath, rel: filepath.Join("saas", "hub-generations.json")},
 	{ptr: &clustersConfigPath, prod: clustersConfigPath, rel: filepath.Join("saas", "clusters.json")},
 	{ptr: &reachHistoryPath, prod: reachHistoryPath, rel: "reach-history.json"},

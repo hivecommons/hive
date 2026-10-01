@@ -51,6 +51,48 @@ CANDIDATE_AGE_SECONDS=3600 EMERGENCY_EXCEPTION_REASON="security fix risk exceeds
 CANDIDATE_AGE_SECONDS=3600 EMERGENCY_EXCEPTION_REASON="security fix" EMERGENCY_FOLLOWUP_ISSUE= expect_decision hold "emergency exception requires follow-up issue" "follow-up issue"
 GREEN_EVIDENCE=false EMERGENCY_EXCEPTION_REASON="security fix" EMERGENCY_FOLLOWUP_ISSUE=5975 expect_decision hold "emergency exception cannot bypass checks" "green release evidence"
 
+# The workflow consults the hub before evaluating GHCR/GitHub evidence. The
+# hub is the operator's durable play/pause switch and the source of automated
+# maintained-hive smoke evidence.
+# shellcheck source=/dev/null
+source <(sed -n '/^stable_promotion_preflight()/,/^}/p' "$promoter")
+# shellcheck source=/dev/null
+source <(sed -n '/^stable_smoke_from_hub()/,/^}/p' "$promoter")
+
+if out=$(STABLE_PROMOTION_STATE_JSON='{"auto_promote":false,"paused_by":"andy","paused_at":"2026-10-01T12:00:00Z"}' stable_promotion_preflight 2>&1); then
+  bad "paused stable auto-promotion should skip before evaluation"
+elif grep -q 'paused by andy' <<<"$out"; then
+  pass "paused hub toggle skips stable promotion with operator attribution"
+else
+  bad "paused hub toggle did not report attribution (output: ${out})"
+fi
+
+if out=$(STABLE_PROMOTION_URL='http://127.0.0.1:1/nope' stable_promotion_preflight 2>&1); then
+  bad "unreachable hub should fail closed and skip promotion"
+elif grep -q '::warning::could not reach stable auto-promotion state' <<<"$out"; then
+  pass "unreachable hub fails closed with a warning"
+else
+  bad "unreachable hub did not emit the fail-closed warning (output: ${out})"
+fi
+
+healthy_state='{"auto_promote":true,"maintained_hives":[{"id":"h-candidate","image_ref":"ghcr.io/hivecommons/hive:candidate","git_hash":"abcdef1","last_heartbeat_at":"2999-01-01T00:00:00Z","healthy":true,"crash_restarts_24h":0}]}'
+if out=$(STABLE_PROMOTION_STATE_JSON="$healthy_state" stable_smoke_from_hub "abcdef1" "sha256:candidate" 24); then
+  if grep -q 'maintained hive h-candidate healthy' <<<"$out"; then
+    pass "healthy candidate hive synthesizes smoke evidence"
+  else
+    bad "healthy candidate hive evidence text is unclear (output: ${out})"
+  fi
+else
+  bad "healthy candidate hive should satisfy automated smoke evidence"
+fi
+
+empty_state='{"auto_promote":true,"maintained_hives":[]}'
+if STABLE_PROMOTION_STATE_JSON="$empty_state" stable_smoke_from_hub "abcdef1" "sha256:candidate" 24 >/dev/null; then
+  bad "missing candidate hive should not synthesize smoke evidence"
+else
+  pass "missing candidate hive refuses automated smoke evidence"
+fi
+
 
 
 tmp_root="$script_dir/../.test-tmp"
@@ -260,7 +302,7 @@ fi
 echo '[]'
 MOCK
 chmod +x "$inflight/bin/docker" "$inflight/bin/gh"
-out=$(PATH="$inflight/bin:$PATH" REPO=example/repo OWNER=example IMAGE_PREFIX=ghcr.io/example IMAGE_NAMES=hive DRY_RUN=true \
+out=$(PATH="$inflight/bin:$PATH" REPO=example/repo OWNER=example IMAGE_PREFIX=ghcr.io/example IMAGE_NAMES=hive DRY_RUN=true STABLE_PROMOTION_STATE_JSON='{"auto_promote":true}' \
   "$promoter" promote 2>&1) && rc=0 || rc=$?
 if [[ $rc -eq 0 ]] && grep -q '^decision=hold' <<<"$out" && grep -q 'has not completed yet' <<<"$out"; then
   pass "an in-flight candidate run yields an explicit hold instead of a silent exit 1"

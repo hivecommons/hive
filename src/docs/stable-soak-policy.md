@@ -7,7 +7,8 @@ workflow advances `stable` by digest only after the gate below passes.
 ## Goals
 
 - Keep `candidate` fast: it should move on every green `v5` release build.
-- Make `stable` deliberate: it should advance only after observable soak, or by a
+- Make `stable` automatic by default, but deliberate: it should advance after
+  observable soak unless an operator pauses stable auto-promotion, or by a
   documented emergency exception.
 - Preserve rollback safety with immutable short-SHA tags and digest evidence.
 - Give operators clear expectations for bursty release days.
@@ -29,9 +30,11 @@ conditions hold:
 4. **No open blocker:** no open issue or PR label explicitly marks the candidate
    digest, release tag, or included fix set as `blocker`, `regression`, or
    `security` hold for the stable (v5) line.
-5. **Operator smoke signal:** at least one maintained hive has reported a healthy
-   heartbeat on the candidate digest, or the release captain records why a
-   dashboard/heartbeat smoke is not applicable for that digest.
+5. **Maintained-hive smoke signal:** at least one maintained hive tracking
+   `candidate` has reported a healthy heartbeat on the candidate commit within
+   the soak window with zero crash restarts in that window, or the release
+   captain records manual dispatch evidence explaining why dashboard/heartbeat
+   smoke is not applicable for that digest.
 
 The release captain records the promoted digest, candidate tag, stable tag, soak
 start/end time, and smoke evidence in the promotion PR or workflow summary.
@@ -60,10 +63,22 @@ It:
    pull requests, so condition 4's "issue or PR" is enforced by CI only for the
    issue half. A `release-blocker` label on an open PR alone does not hold the
    gate; open an issue when you need the promotion stopped;
-7. requires maintained-hive smoke evidence from the dispatch input or the
-   `STABLE_SMOKE_EVIDENCE` repository variable; and
+7. reads `GET /api/hub/release/stable-promotion`; if the hub is unreachable or
+   the stable line is paused, the workflow skips without moving tags. When
+   playing, the hub's public maintained-hive summary synthesizes smoke evidence
+   for a healthy candidate hive. The manual dispatch `smoke-evidence` input or
+   `STABLE_SMOKE_EVIDENCE` repository variable still overrides that automatic
+   evidence; and
 8. retags `stable` to the candidate digest only when the gate passes and the
    moving-tag generation is newer than the currently published `stable` tag.
+
+The hub dashboard's release-channel block has a play/pause control on the
+`stable` row for hub admins. Play is the default: scheduled runs catch `stable`
+up to `candidate` after the 24-hour lineage soak and automatic smoke evidence.
+Pause records the admin and timestamp, shows "paused" next to any behind count,
+and stops scheduled and manual stable-promotion runs until an admin resumes.
+The public GET endpoint exposes only non-secret channel state and maintained
+hive smoke summaries; the PUT toggle is hub-admin gated and audit logged.
 
 The workflow writes the candidate digest, SHA, generation, candidate first-seen
 time and age, lineage first-seen time and age, checks consulted, blocker count,
