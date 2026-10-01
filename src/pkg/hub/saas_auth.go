@@ -782,14 +782,15 @@ func (s *HubServer) handleUserToken(w http.ResponseWriter, r *http.Request) {
 }
 
 var publicExactPaths = map[string]struct{}{
-	knowledgeExportPath: {},
-	"/api/style":        {},
-	"/api/theme.css":    {},
-	"/api/themes":       {},
-	"/auth/return":      {},
-	"/components.css":   {},
-	ssoHandoffPath:      {},
-	"/tokens.css":       {},
+	knowledgeExportPath:        {},
+	"/api/gh-user-auth/status": {},
+	"/api/style":               {},
+	"/api/theme.css":           {},
+	"/api/themes":              {},
+	"/auth/return":             {},
+	"/components.css":          {},
+	ssoHandoffPath:             {},
+	"/tokens.css":              {},
 }
 
 var publicTreePaths = []string{"/api/contribute", "/api/leaderboard", "/contribute", "/leaderboard", "/snapshot"}

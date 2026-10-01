@@ -28,6 +28,7 @@ func TestCovH2_IsPublicPath(t *testing.T) {
 		"/leaderboard",
 		"/leaderboard/top",
 		"/api/leaderboard",
+		"/api/gh-user-auth/status",
 		"/api/gh-user-auth/start",
 		openRouterCallbackPath,
 		"/sso",

@@ -1,0 +1,1 @@
+- Hosted contributor profile sign-in now lets grant-less signed-in users resolve their public contributor identity.

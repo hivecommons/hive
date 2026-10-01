@@ -3,6 +3,8 @@ package hub
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -65,7 +67,7 @@ func TestSaaSAuthCheckPublicPathIdentifiesSignedInCaller(t *testing.T) {
 	// A signed-in user with NO grant on this hive: still identified (it is
 	// their own contribution the page shows), with the guest role that grants
 	// nothing beyond anonymous — and still 200, never 403, on a public path.
-	for _, uri := range []string{"/api/contribute/leaderboard", "/auth/return?to=%2Fcontribute%2Fprofile"} {
+	for _, uri := range []string{"/api/contribute/leaderboard", "/api/gh-user-auth/status", "/auth/return?to=%2Fcontribute%2Fprofile"} {
 		rec = publicPathAuthCheck(t, s, "owned-hive", uri, "stranger")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("grant-less user on public path %s: status = %d, want 200", uri, rec.Code)
@@ -95,7 +97,7 @@ func TestSaaSAuthCheckPublicPathStaysAnonymousWithoutSession(t *testing.T) {
 	s := newHandlerHub()
 	demotedOwnerFixture(t, s, "spoke-owner", "owned-hive")
 
-	for _, uri := range []string{"/api/contribute/me", "/api/contribute/ws", "/contribute/operations", "/api/leaderboard", "/snapshot/x", ssoHandoffPath, knowledgeExportPath, "/auth/return?to=%2Fcontribute%2Fprofile"} {
+	for _, uri := range []string{"/api/contribute/me", "/api/contribute/ws", "/contribute/operations", "/api/leaderboard", "/snapshot/x", ssoHandoffPath, knowledgeExportPath, "/api/gh-user-auth/status", "/auth/return?to=%2Fcontribute%2Fprofile"} {
 		rec := publicPathAuthCheck(t, s, "owned-hive", uri, "")
 		if rec.Code != http.StatusOK {
 			t.Errorf("%s anonymous: status = %d, want 200 — the leaderboard and the contributor relay must stay reachable signed out", uri, rec.Code)
@@ -120,6 +122,87 @@ func TestSaaSAuthCheckAuthReturnIsExactPublicPath(t *testing.T) {
 	} {
 		if got := isSaaSPublicPath(tc.uri); got != tc.want {
 			t.Errorf("isSaaSPublicPath(%q) = %v, want %v", tc.uri, got, tc.want)
+		}
+	}
+}
+
+func TestSaaSAuthCheckGHUserStatusIsOnlyPublicAuthStatus(t *testing.T) {
+	for _, tc := range []struct {
+		uri  string
+		want bool
+	}{
+		{"/api/gh-user-auth/status", true},
+		{"/api/gh-user-auth/status?fresh=1", true},
+		{"/api/gh-user-auth/start", false},
+		{"/api/gh-user-auth/poll", false},
+		{"/api/gh-user-auth/logout", false},
+		{"/api/gh-user-auth/status/extra", false},
+		{"/api/gh-user-auth/statuses", false},
+	} {
+		if got := isSaaSPublicPath(tc.uri); got != tc.want {
+			t.Errorf("isSaaSPublicPath(%q) = %v, want %v", tc.uri, got, tc.want)
+		}
+	}
+}
+
+func TestContributorLandingFetchesAreExplicitlyClassifiedForSaaSPublicAuth(t *testing.T) {
+	raw, err := os.ReadFile("../dashboard/contribute_landing.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches := regexp.MustCompile(`fetch\('(/api/[^']*)'`).FindAllSubmatch(raw, -1)
+	if len(matches) == 0 {
+		t.Fatal("found no contributor landing API fetches to classify")
+	}
+
+	publicPrefixes := []string{"/api/contribute", "/api/leaderboard"}
+	publicExact := map[string]bool{
+		"/api/gh-user-auth/status": true,
+		"/api/themes":              true,
+	}
+	privatePrefixes := []string{"/api/config/governor", "/api/contributors/"}
+	privateExact := map[string]bool{
+		"/api/role":    true,
+		"/api/version": true,
+	}
+	seen := map[string]bool{}
+	for _, match := range matches {
+		uri := string(match[1])
+		path := uri
+		if i := strings.IndexByte(path, '?'); i >= 0 {
+			path = path[:i]
+		}
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		wantPublic, classified := publicExact[path]
+		if !classified {
+			for _, prefix := range publicPrefixes {
+				if path == prefix || strings.HasPrefix(path, prefix+"/") {
+					wantPublic, classified = true, true
+					break
+				}
+			}
+		}
+		if !classified {
+			if privateExact[path] {
+				wantPublic, classified = false, true
+			}
+		}
+		if !classified {
+			for _, prefix := range privatePrefixes {
+				if path == prefix || strings.HasPrefix(path, prefix) {
+					wantPublic, classified = false, true
+					break
+				}
+			}
+		}
+		if !classified {
+			t.Fatalf("contributor landing fetch %q is not classified as hub-public or hub-private", path)
+		}
+		if got := isSaaSPublicPath(uri); got != wantPublic {
+			t.Errorf("contributor landing fetch %q: isSaaSPublicPath = %v, want %v", uri, got, wantPublic)
 		}
 	}
 }
