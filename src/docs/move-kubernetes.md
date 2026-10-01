@@ -31,7 +31,7 @@ that apply regardless of which runtime you are moving.
 | Hive ID | PVC `hive-data` | `/data/hive-id` | `src/pkg/dashboard/api_hive_id.go:14` (`hiveIDFilePath = "/data/hive-id"`) |
 | GitHub App private key (or PAT) | Secret `hive-secrets` | key `gh-app-key.pem` (or `HIVE_GITHUB_TOKEN`), mounted read-only at `/secrets` | `src/deploy/k8s/secret.yaml`, `src/deploy/k8s/deployment.yaml` (volume `secrets`, `defaultMode: 0440`) |
 | Base config | ConfigMap `hive-config` | key `hive.yaml`, mounted at `/etc/hive/hive.yaml` | `src/deploy/k8s/configmap.yaml`, `src/deploy/k8s/kustomization.yaml` |
-| Dashboard-saved config overlay | PVC `hive-data` | `/data/hive.yaml.dashboard` (merged over the ConfigMap seed at boot) | `src/deploy/entrypoint.sh:533,550` |
+| Dashboard-saved config overlay | PVC `hive-data` | `/data/hive.yaml.dashboard` (merged over the ConfigMap seed at boot) | `src/deploy/entrypoint.sh:862,879` |
 | Runtime config (legacy PVC-first path) | PVC `hive-data` | `/data/hive.yaml.runtime` (and legacy `/data/hive.yaml.bak`) | `src/deploy/entrypoint.sh:69,262,681` |
 | Beads ledgers (per-agent work state) | PVC `hive-data` | `/data/beads/<agent>/` (symlinked to `/home/dev/<agent>-beads`) | `src/deploy/entrypoint.sh:894-903` |
 | Agent backend credentials / home dirs | PVC `hive-data` | `/data/home` (bind-seeded to `/data/home/.config`, `.bashrc`, `.profile`, per-agent `$HOME`) | `src/deploy/entrypoint.sh:151-169` |
