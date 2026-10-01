@@ -1,0 +1,1 @@
+- `src/docs/move-kubernetes.md` now cites the right `src/deploy/entrypoint.sh` lines for the dashboard config overlay, the runtime config, the beads symlinks and `/data/home` ([#9860](https://github.com/hivecommons/hive/issues/9860)).
