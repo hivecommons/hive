@@ -40,10 +40,13 @@ In priority order, all regenerable:
    find /data/home/.copilot -maxdepth 1 -type d -mtime +7 -exec rm -rf {} +
    ```
 2. **CLI caches** (`~/.cache`, `~/.npm`, language-server caches under agent
-   homes) — fully regenerable, never required for correctness.
+   homes) — fully regenerable, never required for correctness. The self-janitor
+   (`PruneAgentHomes`, step 5) sweeps the well-known ones automatically at a
+   14-day age bound; clear by hand if still over budget.
 3. **Old run/session artifacts** outside the pruned session-state tree (dated
-   `*-pre-shared-*` staging directories, old log rotations) — anything with a
-   dated/UUID name under an agent home that is not the live session.
+   `.local-pre-shared-*` staging directories, old log rotations) — anything with
+   a dated/UUID name under an agent home that is not the live session. The
+   janitor reclaims aged `.local-pre-shared-*` snapshots automatically (step 5).
 
 Do **not** delete anything under a path that does not match the above (hub
 state, repo clones in active use, GitHub App credentials).
@@ -83,8 +86,15 @@ to a network-attached class.
   threshold — no manual unpause needed after cleanup. This does not touch the
   dashboard/API server, so read paths stay up throughout.
 - **Self-janitor** (`src/pkg/sessionprune`): bounded, automatic cleanup of
-  aged CLI session-state directories, logged (`session prune complete`) only
-  when it actually removes something.
+  hive-owned regenerable bulk on the same 6h tick, each class age-bounded and
+  logged only when it actually removes something:
+  - aged CLI **session-state directories** (`session prune complete`, 7-day
+    retention by default — `Prune`);
+  - dated **`.local-pre-shared-*` migration snapshots** and well-known
+    **regenerable caches** (`.cache`, `.npm/_cacache`, `.copilot/cache`) under
+    agent homes (`agent home prune complete`, 14-day retention — `PruneAgentHomes`,
+    added for Ask 3 of #9869). It never follows symlinks and never touches
+    credentials, session-state, beads, or repo checkouts.
 
 Related: [#2349](https://github.com/hivecommons/hive/issues/2349) (small
 disks / OKE DiskPressure, same symptom on a different cloud).

@@ -1,0 +1,1 @@
+- Self-janitor now also reclaims dated `.local-pre-shared-*` migration snapshots and well-known regenerable caches (`.cache`, `.npm/_cacache`, `.copilot/cache`) under agent homes, age-bounded (14-day default) and symlink-safe, so a spoke no longer crash-loops on a full hive-data volume from this accumulated bulk ([#9869](https://github.com/hivecommons/hive/issues/9869)).

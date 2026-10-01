@@ -6,6 +6,11 @@
 // them, so a long-lived spoke accumulated ~9,400 entries spanning three months
 // on a shared NFS PVC. That is an unbounded leak, and because the directory is
 // read on session start, it gets slower as it grows.
+//
+// Prune (this file) handles the session-state directories. PruneAgentHomes
+// (homeprune.go) extends the same age-bounded, conservative approach to the
+// other regenerable bulk that piles up under agent homes — dated pre-shared
+// migration snapshots and tool caches (hivecommons/hive#9869).
 package sessionprune
 
 import (

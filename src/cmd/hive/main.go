@@ -1702,12 +1702,14 @@ func (b *boot) wireBootClosures() {
 		}
 
 		maxAge := time.Duration(retentionDays) * 24 * time.Hour
+		homeMaxAge := time.Duration(sessionprune.DefaultHomeRetentionDays) * 24 * time.Hour
 		stop := make(chan struct{})
 
 		go func() {
 			// Run once at startup rather than waiting a full interval. A spoke that
 			// restarts more often than the interval would otherwise never prune.
 			runSessionPrune(b.logger, dir, maxAge)
+			runAgentHomePrune(b.logger, agentHomesRoot, homeMaxAge)
 
 			ticker := time.NewTicker(sessionPruneInterval)
 			defer ticker.Stop()
@@ -1717,6 +1719,7 @@ func (b *boot) wireBootClosures() {
 					return
 				case <-ticker.C:
 					runSessionPrune(b.logger, dir, maxAge)
+					runAgentHomePrune(b.logger, agentHomesRoot, homeMaxAge)
 				}
 			}
 		}()
