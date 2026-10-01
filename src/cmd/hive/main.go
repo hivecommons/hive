@@ -2342,6 +2342,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// Read through b.cfg on every sweep tick so a config reload of
 	// auto_merge.trusted_bot_authors takes effect without a restart.
 	autoMergeOpts.TrustedBotAuthors = func() map[string]bool { return b.cfg.AutoMerge.TrustedBotAuthorSet() }
+	// Human-green is default-on in config, but is still impossible below L6
+	// because the live ACMM level is checked here on every sweep restart.
+	autoMergeOpts.MergeHumanPRsAtL6 = func() bool { return b.cfg.AutoMerge.MergeHumanPRsAtL6Allowed(b.cfg.ACMMLevel) }
 	// Intent tier gate (#6258): the human lane only queues PRs that
 	// survive writeMergeEligible's intent check, but this sweep lists
 	// the App's PRs on its own, so it carries the same policy (same

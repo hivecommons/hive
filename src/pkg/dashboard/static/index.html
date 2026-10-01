@@ -28128,6 +28128,7 @@ function burnAreaChart() {
       const publicationAvailable = f.publicationAvailable === true;
       const publicationMinACMMLevel = f.publicationMinACMMLevel || 3;
       const amSelfOn = am.self_authored !== false; // nil/undefined = enabled
+      const amHumanL6On = am.merge_human_prs_at_l6 !== false; // nil/undefined = enabled
       const amChecks = Array.isArray(am.required_checks) ? am.required_checks : [];
       const amBots = Array.isArray(am.bot_authors) ? am.bot_authors : [];
       const amBotSourceLabel = { known: 'known bot', discovered: 'seen in open PRs', custom: 'added manually' };
@@ -28335,6 +28336,10 @@ function burnAreaChart() {
           <div class="config-toggle">
             <div class="config-toggle-switch ${amSelfOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="auto-merge" data-key="self_authored"></div>
             <span class="config-toggle-label">Auto-merge App-authored PRs <span class="config-info">i<span class="config-tooltip">Controls the self-authored sweep: Hive merges its own green PRs directly since Prow cannot self-approve.</span></span></span>
+          </div>
+          <div class="config-toggle" style="margin-top:10px">
+            <div class="config-toggle-switch ${amHumanL6On ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="auto-merge" data-key="merge_human_prs_at_l6"></div>
+            <span class="config-toggle-label">Auto-merge green human PRs at L6 <span class="config-info">i<span class="config-tooltip">At ACMM L6 or above only, the sweep may merge human-authored PRs that are mergeable, green, unheld, and pass the same intent, repo, approval-desk, and head-SHA recheck gates. Bot accounts not explicitly trusted stay excluded.</span></span></span>
           </div>
           <div class="config-field" style="margin-top:10px">
             <label>Max merges per sweep <span class="config-info">i<span class="config-tooltip">Caps how many PRs one sweep pass may merge. 0 or empty uses the default.</span></span></label>

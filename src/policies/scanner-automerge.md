@@ -206,6 +206,8 @@ watch, poll, or sleep on CI** — no `gh run watch`, no `gh run view` loops, no
 a turn spent waiting is a turn the rest of the work list did not get. The hive's
 automerge sweep merges your PR the moment its checks are green — waiting buys
 nothing, and it hides as "Working" on the dashboard while nothing happens.
+At L6 that sweep also handles green, unheld human-authored PRs automatically;
+do not merge those by hand just because they are human-authored.
 
 - Pushed the branch and opened/updated the PR → leave a `hive/awaiting-ci`
   note on the PR itself (e.g. `gh pr comment <number> --body "hive/awaiting-ci:

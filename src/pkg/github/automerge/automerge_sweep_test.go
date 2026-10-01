@@ -1489,6 +1489,173 @@ func TestSweepSelfAuthoredAutoMergesIgnoresNonAppAuthoredPR(t *testing.T) {
 	}
 }
 
+func TestSweepSelfAuthoredAutoMergesMergesHumanGreenLaneAtL6(t *testing.T) {
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 11, author: "alice", mergeableState: "clean",
+		statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	client.SetAppBotLogin(testHiveAppBotLogin)
+	rec := &recordingBoundary{}
+	c := New(client, Options{
+		MutationBoundary:  rec,
+		MergeHumanPRsAtL6: func() bool { return true },
+	})
+	var audits []AutoMergeSweepEvent
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{
+		Audit: func(event AutoMergeSweepEvent) { audits = append(audits, event) },
+	})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if len(result.Merged) != 1 || len(merged) != 1 || merged[0] != 11 {
+		t.Fatalf("merged result=%v merge calls=%v, want human PR 11 merged", result.Merged, merged)
+	}
+	if len(audits) != 1 || audits[0].Lane != "human-green" || audits[0].Author != "alice" {
+		t.Fatalf("audit events = %#v, want human-green lane for alice", audits)
+	}
+	if len(rec.claims) != 1 || rec.claims[0].Inputs["lane"] != "human-green" {
+		t.Fatalf("mutation claims = %#v, want human-green lane", rec.claims)
+	}
+}
+
+func TestSweepSelfAuthoredAutoMergesSkipsHeldHumanGreenWithoutRelease(t *testing.T) {
+	var logs bytes.Buffer
+	var merged []int
+	var getCounts map[int]int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 11, author: "alice", extraLabels: []string{"hold"},
+		mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged, &getCounts)
+	defer api.Close()
+
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, slog.New(slog.NewTextHandler(&logs, nil)), api.URL)
+	client.SetAppBotLogin(testHiveAppBotLogin)
+	c := New(client, Options{
+		Logger:            slog.New(slog.NewTextHandler(&logs, nil)),
+		MergeHumanPRsAtL6: func() bool { return true },
+	})
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if result.Seen != 1 || result.Skipped != 1 || result.Candidates != 0 || len(result.Merged) != 0 || len(merged) != 0 {
+		t.Fatalf("result=%+v merge calls=%v, want held human PR skipped", result, merged)
+	}
+	if got := getCounts[11]; got != 0 {
+		t.Fatalf("/pulls/11 GET count = %d, want 0 for held human PR from list response", got)
+	}
+	if gotLogs := logs.String(); !strings.Contains(gotLogs, "held=1") {
+		t.Fatalf("logs = %q, want held skip reason", gotLogs)
+	}
+}
+
+func TestSweepSelfAuthoredAutoMergesHumanGreenDisabledIsNotCandidate(t *testing.T) {
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 11, author: "alice", mergeableState: "clean",
+		statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if result.Seen != 1 || result.Skipped != 1 || result.Candidates != 0 || len(result.Merged) != 0 || len(merged) != 0 {
+		t.Fatalf("result=%+v merge calls=%v, want human PR not to be a candidate when lane disabled", result, merged)
+	}
+}
+
+func TestSweepSelfAuthoredAutoMergesHumanGreenL5ConfigIsNotCandidate(t *testing.T) {
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 11, author: "alice", mergeableState: "clean",
+		statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	client.SetAppBotLogin(testHiveAppBotLogin)
+	l5 := 5
+	am := config.AutoMergeConfig{}
+	c := New(client, Options{MergeHumanPRsAtL6: func() bool { return am.MergeHumanPRsAtL6Allowed(&l5) }})
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if result.Seen != 1 || result.Skipped != 1 || result.Candidates != 0 || len(result.Merged) != 0 || len(merged) != 0 {
+		t.Fatalf("result=%+v merge calls=%v, want L5 human PR not to be a candidate", result, merged)
+	}
+}
+
+func TestSweepSelfAuthoredAutoMergesUntrustedBotNotHumanGreen(t *testing.T) {
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 11, author: "renovate[bot]", mergeableState: "clean",
+		statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	client.SetAppBotLogin(testHiveAppBotLogin)
+	c := New(client, Options{
+		TrustedBotAuthors: func() map[string]bool { return map[string]bool{} },
+		MergeHumanPRsAtL6: func() bool { return true },
+	})
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if result.Seen != 1 || result.Skipped != 1 || result.Candidates != 0 || len(result.Merged) != 0 || len(merged) != 0 {
+		t.Fatalf("result=%+v merge calls=%v, want untrusted bot excluded from human-green lane", result, merged)
+	}
+}
+
+func TestSweepSelfAuthoredAutoMergesSkipsDraftHumanGreen(t *testing.T) {
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 11, author: "alice", draft: true, mergeableState: "clean",
+		statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	client.SetAppBotLogin(testHiveAppBotLogin)
+	c := New(client, Options{MergeHumanPRsAtL6: func() bool { return true }})
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if result.Seen != 1 || result.Skipped != 1 || result.Candidates != 0 || len(result.Merged) != 0 || len(merged) != 0 {
+		t.Fatalf("result=%+v merge calls=%v, want draft human PR skipped before candidate fetch", result, merged)
+	}
+}
+
+func TestSweepSelfAuthoredAutoMergesSkipsRedCIHumanGreen(t *testing.T) {
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 11, author: "alice", mergeableState: "clean",
+		statusState: "failure", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	client.SetAppBotLogin(testHiveAppBotLogin)
+	c := New(client, Options{MergeHumanPRsAtL6: func() bool { return true }})
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if result.Seen != 1 || result.Skipped != 1 || result.Candidates != 1 || len(result.Merged) != 0 || len(merged) != 0 {
+		t.Fatalf("result=%+v merge calls=%v, want red-CI human PR fetched then skipped", result, merged)
+	}
+}
+
 func TestSweepSelfAuthoredAutoMergesSkipsHeadChangedSinceEval(t *testing.T) {
 	var merged []int
 	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{

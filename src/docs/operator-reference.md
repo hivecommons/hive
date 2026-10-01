@@ -153,6 +153,7 @@ advanced into the merge path.
 | `auto_merge.required_checks` | unset | Operator-declared status-check contexts / check-run names (e.g. `["build-gate"]`) that the sweep's green gate requires on the head commit. See below. |
 | `auto_merge.allow_unprotected_base` | deprecated no-op | Accepted for compatibility only. [`hive-merge`](hive-merge.md) no longer refuses solely because a base branch has no GitHub branch protection; it may merge into any branch the App can write after positive CI evidence. |
 | `auto_merge.no_ci_ok` | unset (refuse) | **Merge-request watcher key, not a sweep key.** Per-repo opt-in that downgrades only the "unverified" CI verdict (zero statuses, check runs, and workflow runs) to green, for adopted repos with no CI by design. Red and pending verdicts are never downgraded (#6281). See [hive-merge.md](hive-merge.md). |
+| `auto_merge.merge_human_prs_at_l6` | **on** when unset | L6-only human-green lane. When the self-authored sweep is allowed at ACMM L6+, green, mergeable, non-draft, unheld human-authored PRs can merge through the same gates as App/bot PRs. Below L6 this is ignored and cannot enable human PR merging. |
 
 Actionable merge failures surface as dashboard system alerts, deduplicated by
 repo+reason and cleared by the next successful merge in that repo. Alerts name
@@ -171,12 +172,13 @@ auto_merge.self_authored is off)` when either condition blocks it. This
 matches the [ACMM policy matrix](acmm-policy-matrix.md): below L6 all agent
 PRs are hold-gated and nothing merges its own work.
 
-**Eligibility per PR.** The sweep only ever considers open, non-draft PRs
-authored by the App bot login itself (re-verified per PR, not just at listing
-time — it never touches anyone else's PRs), that GitHub reports mergeable, and
-whose head commit is green on the required checks. The head SHA is re-fetched
-and re-verified at the merge step, so a push between evaluation and merge is
-never squashed unchecked.
+**Eligibility per PR.** The sweep only ever considers open, non-draft PRs in
+one admitted lane: the App bot login itself, a configured trusted bot, or (at
+L6+ with `auto_merge.merge_human_prs_at_l6` enabled) a non-bot human author.
+The lane is re-verified per PR, not just at listing time; untrusted `[bot]`
+accounts remain excluded. Every lane must be mergeable, unheld, and green on
+the required checks. The head SHA is re-fetched and re-verified at the merge
+step, so a push between evaluation and merge is never squashed unchecked.
 
 **Why `required_checks` exists.** Asking GitHub which checks a branch actually
 requires (`GetRequiredStatusChecks`) needs the `administration:read` scope,

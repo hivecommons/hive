@@ -144,7 +144,9 @@ What allowed each step, in order:
    `tide` merge queue requires `lgtm`+`approved` labels that only a *human
    reviewer* can apply, and the Forge App can never review its own PR. Hive's
    self-merge sweep exists specifically because of that: it merges the App's
-   own green PRs directly over the REST API, bypassing tide entirely. See
+   own green PRs directly over the REST API, bypassing tide entirely. At L6,
+   the same sweep can also merge green, unheld human PRs via the human-green
+   lane. See
    [operator-reference.md § App self-merge
    sweep](operator-reference.md#app-self-merge-sweep-auto_merge).
 4. **Green CI.** The self-merge sweep only merges PRs that are clean,
@@ -333,9 +335,10 @@ project:
   repos run alongside Hive. `tide` merges PRs that collect `lgtm`+`approved`
   labels from human reviewers; it cannot gate a PR the Forge App opened,
   because the App can't review its own work, so Hive's self-merge sweep
-  merges the App's own green PRs directly, bypassing tide. Human-queued
-  auto-merge (`governor.labels.automerge`, default `lgtm`) is a distinct,
-  human-decision-gated path. See [operator-reference.md § App self-merge
+  merges the App's own green PRs directly, bypassing tide. At L6, the same
+  sweep also merges green, unheld human PRs when the human-green lane is
+  enabled. Human-queued auto-merge (`governor.labels.automerge`, default
+  `lgtm`) is a distinct, human-decision-gated path. See [operator-reference.md § App self-merge
   sweep](operator-reference.md#app-self-merge-sweep-auto_merge).
 - **DCO sign-off** — the Developer Certificate of Origin trailer
   (`Signed-off-by:`) every commit must carry, added by `git commit -s`; agent

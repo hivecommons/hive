@@ -55,6 +55,17 @@ func TestSweepLaneForAuthorNilResolverIsAppOnly(t *testing.T) {
 	}
 }
 
+func TestSweepLaneForAuthorHumanGreenExcludesBots(t *testing.T) {
+	c := newTrustedBotEngine(t, func() map[string]bool { return map[string]bool{} })
+	c.mergeHumanPRsAtL6 = func() bool { return true }
+	if lane, ok := c.sweepLaneForAuthor("alice"); !ok || lane != "human-green" {
+		t.Fatalf("human author should qualify for human-green: got (%q, %v)", lane, ok)
+	}
+	if _, ok := c.sweepLaneForAuthor("renovate[bot]"); ok {
+		t.Fatal("untrusted [bot] author must not qualify for human-green")
+	}
+}
+
 func TestPrefilterSelfAuthoredPRAdmitsTrustedBot(t *testing.T) {
 	c := newTrustedBotEngine(t, func() map[string]bool { return map[string]bool{"dependabot[bot]": true} })
 	pr := selfAuthoredListPR(func(pr *gh.PullRequest) { pr.User = &gh.User{Login: gh.Ptr("dependabot[bot]")} })

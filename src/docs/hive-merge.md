@@ -135,16 +135,20 @@ auto_merge:
 
 ### Trusted bot authors
 
-The self-authored automerge sweep merges the App's own open, CI-green PRs. It
-also merges PRs from `auto_merge.trusted_bot_authors` through the identical
-gates (required checks green, mergeable, no hold/exempt label, intent tier,
-approval desk, head SHA re-verified at merge time). The default is
-`dependabot[bot]` only; set an explicit empty list to keep the sweep App-only,
-or add other dependency bots you trust. Each merge is recorded with
-`lane=trusted-bot` so audits can tell it from `lane=self-authored`.
+The self-authored automerge sweep merges the App's own open, CI-green PRs. At
+L6 and above it also merges human-authored PRs through the same green,
+mergeable, unheld gates when `auto_merge.merge_human_prs_at_l6` is on (the
+default). Separately, it merges PRs from `auto_merge.trusted_bot_authors`
+through the identical gates (required checks green, mergeable, no hold/exempt
+label, intent tier, approval desk, head SHA re-verified at merge time). The
+trusted-bot default is `dependabot[bot]` only; set an explicit empty list to
+keep the bot lane App-only, or add other dependency bots you trust. Each merge
+is recorded with `lane=human-green`, `lane=trusted-bot`, or
+`lane=self-authored` so audits can tell them apart.
 
 ```yaml
 auto_merge:
+  merge_human_prs_at_l6: true
   trusted_bot_authors:
     - dependabot[bot]
     - renovate[bot]

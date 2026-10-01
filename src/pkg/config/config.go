@@ -7570,6 +7570,12 @@ type AutoMergeConfig struct {
 	// (`trusted_bot_authors: []`) disables the lane. Matched case-insensitively
 	// by exact login, e.g. "dependabot[bot]".
 	TrustedBotAuthors []string `yaml:"trusted_bot_authors,omitempty" json:"trusted_bot_authors,omitempty"`
+	// MergeHumanPRsAtL6 enables the L6-only human-green lane in the
+	// self-authored sweep. When enabled and the hive's effective ACMM level is
+	// at least SelfMergeMinACMMLevel, green, mergeable, unheld human-authored
+	// PRs are merged by the sweep through the same gates as App/bot PRs. *bool
+	// keeps unset distinguishable from explicit false; default is ON.
+	MergeHumanPRsAtL6 *bool `yaml:"merge_human_prs_at_l6,omitempty" json:"merge_human_prs_at_l6,omitempty"`
 }
 
 // DefaultAutoMergeMinHeadAge is the fail-closed post-push quiet period used
@@ -7659,6 +7665,13 @@ func (a AutoMergeConfig) SelfAuthoredEnabled() bool {
 	return a.SelfAuthored == nil || *a.SelfAuthored
 }
 
+// MergeHumanPRsAtL6Enabled reports whether the human-green lane is enabled by
+// config. Default ON (nil == enabled); ACMM gating is enforced by
+// MergeHumanPRsAtL6Allowed.
+func (a AutoMergeConfig) MergeHumanPRsAtL6Enabled() bool {
+	return a.MergeHumanPRsAtL6 == nil || *a.MergeHumanPRsAtL6
+}
+
 // ACMMLevelOrZero returns the configured ACMM level, or 0 when unset. It is the
 // convenience the effective-fail-mode and other level-gated lookups use so they
 // need not repeat the nil-pointer dance on cfg.ACMMLevel.
@@ -7696,6 +7709,14 @@ func (a AutoMergeConfig) SelfAuthoredAutoMergeAllowed(acmmLevel *int) bool {
 		return false
 	}
 	return *acmmLevel >= SelfMergeMinACMMLevel
+}
+
+// MergeHumanPRsAtL6Allowed reports whether the human-green lane may admit
+// human-authored PRs. It is impossible below L6 regardless of config, and it is
+// tied to the self-authored sweep being allowed because the lane runs only
+// inside that sweep.
+func (a AutoMergeConfig) MergeHumanPRsAtL6Allowed(acmmLevel *int) bool {
+	return a.SelfAuthoredAutoMergeAllowed(acmmLevel) && a.MergeHumanPRsAtL6Enabled()
 }
 
 // DefaultEscalationThreshold matches escalation.DefaultThreshold; duplicated

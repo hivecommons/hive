@@ -45,18 +45,20 @@ func TestAutoMergeGet_OwnerSeesDefaults(t *testing.T) {
 		t.Fatalf("GET auto-merge: expected 200, got %d", rec.Code)
 	}
 	var body struct {
-		SelfAuthored    bool `json:"self_authored"`
-		SelfAuthoredSet bool `json:"self_authored_set"`
-		MaxMerges       int  `json:"max_merges"`
-		RequiredChecks  []string
+		SelfAuthored         bool `json:"self_authored"`
+		SelfAuthoredSet      bool `json:"self_authored_set"`
+		MergeHumanPRsAtL6    bool `json:"merge_human_prs_at_l6"`
+		MergeHumanPRsAtL6Set bool `json:"merge_human_prs_at_l6_set"`
+		MaxMerges            int  `json:"max_merges"`
+		RequiredChecks       []string
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	// nil SelfAuthored resolves to the effective default (enabled) with the
 	// explicit-choice marker unset.
-	if !body.SelfAuthored || body.SelfAuthoredSet {
-		t.Fatalf("default tri-state wrong: self_authored=%v set=%v", body.SelfAuthored, body.SelfAuthoredSet)
+	if !body.SelfAuthored || body.SelfAuthoredSet || !body.MergeHumanPRsAtL6 || body.MergeHumanPRsAtL6Set {
+		t.Fatalf("default tri-state wrong: self_authored=%v set=%v merge_human=%v merge_human_set=%v", body.SelfAuthored, body.SelfAuthoredSet, body.MergeHumanPRsAtL6, body.MergeHumanPRsAtL6Set)
 	}
 }
 
@@ -90,6 +92,7 @@ func TestAutoMergePut_ValidatesAndApplies(t *testing.T) {
 		"required_checks":        []string{"  ci/test  ", "", "lint"},
 		"allow_unprotected_base": []string{" repo-one ", ""},
 		"no_ci_ok":               []string{" docs-only "},
+		"merge_human_prs_at_l6":  false,
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("valid put: expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -97,6 +100,9 @@ func TestAutoMergePut_ValidatesAndApplies(t *testing.T) {
 	am := s.deps.Config.AutoMerge
 	if am.SelfAuthored == nil || *am.SelfAuthored {
 		t.Fatalf("self_authored not applied: %+v", am.SelfAuthored)
+	}
+	if am.MergeHumanPRsAtL6 == nil || *am.MergeHumanPRsAtL6 {
+		t.Fatalf("merge_human_prs_at_l6 not applied: %+v", am.MergeHumanPRsAtL6)
 	}
 	if am.MaxMerges != 3 {
 		t.Fatalf("max_merges not applied: %d", am.MaxMerges)

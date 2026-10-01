@@ -147,6 +147,7 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		RequiredChecks       []string `json:"required_checks"`
 		AllowUnprotectedBase []string `json:"allow_unprotected_base"`
 		NoCIOK               []string `json:"no_ci_ok"`
+		MergeHumanPRsAtL6    *bool    `json:"merge_human_prs_at_l6"`
 		// TrustedBotAuthors is the FULL desired list; an empty (non-nil) list
 		// disables the trusted-bot lane, absent leaves it untouched.
 		TrustedBotAuthors []string `json:"trusted_bot_authors"`
@@ -199,6 +200,10 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	if body.NoCIOK != nil {
 		cfg.AutoMerge.NoCIOK = normalizeAutoMergeRepoList(body.NoCIOK)
 	}
+	if body.MergeHumanPRsAtL6 != nil {
+		v := *body.MergeHumanPRsAtL6
+		cfg.AutoMerge.MergeHumanPRsAtL6 = &v
+	}
 	if body.TrustedBotAuthors != nil {
 		cfg.AutoMerge.TrustedBotAuthors = normalizeBotLoginList(body.TrustedBotAuthors)
 	}
@@ -239,16 +244,19 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 	if trustedBots == nil {
 		trustedBots = append([]string{}, config.DefaultTrustedBotAuthors...)
 	}
+	mergeHumanPRsAtL6 := am.MergeHumanPRsAtL6Enabled()
 	return map[string]interface{}{
-		"self_authored":           selfAuthored,
-		"self_authored_set":       am.SelfAuthored != nil,
-		"max_merges":              am.MaxMerges,
-		"min_head_age":            am.EffectiveMinHeadAge().String(),
-		"required_checks":         checks,
-		"allow_unprotected_base":  allowUnprotected,
-		"no_ci_ok":                noCIOK,
-		"trusted_bot_authors":     trustedBots,
-		"trusted_bot_authors_set": am.TrustedBotAuthors != nil,
+		"self_authored":             selfAuthored,
+		"self_authored_set":         am.SelfAuthored != nil,
+		"merge_human_prs_at_l6":     mergeHumanPRsAtL6,
+		"merge_human_prs_at_l6_set": am.MergeHumanPRsAtL6 != nil,
+		"max_merges":                am.MaxMerges,
+		"min_head_age":              am.EffectiveMinHeadAge().String(),
+		"required_checks":           checks,
+		"allow_unprotected_base":    allowUnprotected,
+		"no_ci_ok":                  noCIOK,
+		"trusted_bot_authors":       trustedBots,
+		"trusted_bot_authors_set":   am.TrustedBotAuthors != nil,
 	}
 }
 

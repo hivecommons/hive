@@ -88,7 +88,7 @@ Agents open issues AND pull requests. Agent PRs get literal `hold` from the leve
 
 ### L6 — Fully Autonomous (14 agents)
 
-Existing autonomous lanes can open issues, create PRs, and auto-merge on green CI. Non-outreach L6 PRs do not get the level hold, but outreach PRs are still held for human review. Outreach handles community engagement. Reviewer stays advisory even here — its `requires_human` verdict is what pulls a PR out of the auto-merge lane. Adjudicator is the reviewer lane: it repairs, de-escalates, or recommends closing (and may close) escalated `needs-human` hive PRs, and never merges. Telemetry and operations remain paused and use `ISSUES_AND_PRS`, so they never merge their own PRs.
+Existing autonomous lanes can open issues, create PRs, and auto-merge on green CI. Non-outreach L6 PRs do not get the level hold, but outreach PRs are still held for human review. The L6 automerge sweep also admits green, mergeable, unheld human-authored PRs via its `human-green` lane unless `auto_merge.merge_human_prs_at_l6` is turned off; held human PRs remain skipped rather than unheld by the sweep. Outreach handles community engagement. Reviewer stays advisory even here — its `requires_human` verdict is what pulls a PR out of the auto-merge lane. Adjudicator is the reviewer lane: it repairs, de-escalates, or recommends closing (and may close) escalated `needs-human` hive PRs, and never merges. Telemetry and operations remain paused and use `ISSUES_AND_PRS`, so they never merge their own PRs.
 
 | Agent | Mode | Template |
 |-------|------|----------|

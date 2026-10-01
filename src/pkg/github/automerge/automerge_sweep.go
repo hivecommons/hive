@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -63,6 +64,10 @@ type Options struct {
 	// PRs the self-authored sweep merges alongside the App's own (see
 	// config.AutoMergeConfig.TrustedBotAuthors). nil means App-only.
 	TrustedBotAuthors func() map[string]bool
+	// MergeHumanPRsAtL6 reports whether the L6-only human-green lane is
+	// currently enabled. Callers must compute this from config and ACMM level;
+	// a nil hook keeps the sweep App/bot-only.
+	MergeHumanPRsAtL6 func() bool
 	// MinHeadAge is the youngest PR head commit age the sweep may merge when
 	// the required-check set is not config-declared and fully green.
 	MinHeadAge time.Duration
@@ -91,6 +96,7 @@ type Engine struct {
 	selfAuthorizationHoldReleaseLimit int
 	repoAutoMergeEnabled              func(repo string) bool
 	trustedBotAuthors                 func() map[string]bool
+	mergeHumanPRsAtL6                 func() bool
 	minHeadAge                        time.Duration
 	now                               func() time.Time
 	evaluatedHeadsMu                  sync.Mutex
@@ -116,6 +122,7 @@ func New(transport Transport, opts Options) *Engine {
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
 		repoAutoMergeEnabled:              opts.RepoAutoMergeEnabled,
 		trustedBotAuthors:                 opts.TrustedBotAuthors,
+		mergeHumanPRsAtL6:                 opts.MergeHumanPRsAtL6,
 		minHeadAge:                        opts.MinHeadAge,
 		now:                               opts.Now,
 		evaluatedHeads:                    make(map[string]string),
@@ -517,6 +524,7 @@ type AutoMergeSweepEvent struct {
 	HeadSHA  string
 	MergeSHA string
 	Label    string
+	Lane     string
 }
 
 type AutoMergeSweepResult struct {
@@ -688,7 +696,14 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 		repoSeen := 0
 		repoSkipped := 0
 		repoCandidates := 0
+		repoHumanGreenCandidates := 0
 		repoMergedBefore := len(result.Merged)
+		repoHumanGreenMergedBefore := 0
+		for _, event := range result.Merged {
+			if event.Lane == "human-green" {
+				repoHumanGreenMergedBefore++
+			}
+		}
 		repoSkipReasons := make(map[string]int)
 		for _, pr := range prs {
 			if len(result.Merged) >= maxMerges {
@@ -700,6 +715,21 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			}
 			result.Seen++
 			repoSeen++
+			listAuthor := ""
+			if pr != nil {
+				listAuthor = hgithub.SafeGetLogin(pr.GetUser())
+			}
+			lane, laneOK := c.sweepLaneForAuthor(listAuthor)
+			// Human PRs never get sweep-side hold releases: a held human PR is
+			// simply skipped as held, whether or not the L6 human-green lane is
+			// enabled this tick.
+			isHumanAuthor := listAuthor != "" && !strings.HasSuffix(strings.ToLower(listAuthor), "[bot]")
+			if isHumanAuthor && pr != nil && c.isHeld(labelNames(pr.Labels)) {
+				result.Skipped++
+				repoSkipped++
+				repoSkipReasons["held"]++
+				continue
+			}
 			// #5117 hold release must run before the prefilter: the
 			// prefilter skips held PRs outright, and an eligible
 			// self-authorization hold has to be released, not skipped.
@@ -753,6 +783,9 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			}
 			result.Candidates++
 			repoCandidates++
+			if laneOK && lane == "human-green" {
+				repoHumanGreenCandidates++
+			}
 			event, reason, err := c.trySweepSelfAuthoredPR(ctx, repo, owner, repoName, number, branchUpdateAttempts < selfAuthoredSweepMaxBranchUpdates)
 			if reason == "updated-branch" || reason == "update-branch" {
 				branchUpdateAttempts++
@@ -779,18 +812,29 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			}
 		}
 		if repoSeen > 0 || repoCandidates > 0 || len(result.Merged) > repoMergedBefore {
+			repoHumanGreenMergedAfter := 0
+			for _, event := range result.Merged {
+				if event.Lane == "human-green" {
+					repoHumanGreenMergedAfter++
+				}
+			}
 			args := []any{
 				"repo", repo,
 				"seen", repoSeen,
 				"candidates", repoCandidates,
+				"human_green_candidates", repoHumanGreenCandidates,
 				"merged", len(result.Merged) - repoMergedBefore,
+				"human_green_merged", repoHumanGreenMergedAfter - repoHumanGreenMergedBefore,
 				"updated_branches", result.UpdatedBranches,
 				"skipped", repoSkipped,
 			}
-			for _, reason := range []string{"held", "exempt-label", "draft", "closed", "not-app-authored", "missing-head-sha", "updated-branch", "not-mergeable"} {
-				if count := repoSkipReasons[reason]; count > 0 {
-					args = append(args, reason, count)
-				}
+			reasons := make([]string, 0, len(repoSkipReasons))
+			for reason := range repoSkipReasons {
+				reasons = append(reasons, reason)
+			}
+			sort.Strings(reasons)
+			for _, reason := range reasons {
+				args = append(args, reason, repoSkipReasons[reason])
 			}
 			c.info("self-authored automerge sweep tick", args...)
 		}
@@ -1109,6 +1153,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		QueuedBy: "", // no queuer in the self-authored path — the App merges its own PR
 		HeadSHA:  evaluatedHeadSHA,
 		MergeSHA: mergeResult.GetSHA(),
+		Lane:     lane,
 	}
 	c.info("self-authored automerge sweep merged PR", "repo", displayRepo, "pr", number, "author", author, "lane", lane, "merge_sha", event.MergeSHA)
 	return event, "", nil
@@ -1131,9 +1176,10 @@ func (c *Engine) releaseLevelHoldIfEligible(ctx context.Context, owner, repo str
 // enumeration. A nil engine or transport fails closed to the generic set.
 // sweepLaneForAuthor reports which self-authored-sweep lane a PR author falls
 // in: "self-authored" for the App's own login, "trusted-bot" for a login in
-// the operator's trusted_bot_authors set, or ok=false for anyone else. The
-// lane is recorded on the mutation claim and the merge log so audits can tell
-// the two apart; both lanes pass through exactly the same eligibility gates.
+// the operator's trusted_bot_authors set, "human-green" for non-bot humans
+// when that L6-only lane is enabled, or ok=false for anyone else. The lane is
+// recorded on the mutation claim and the merge log so audits can tell them
+// apart; every admitted lane passes through exactly the same eligibility gates.
 func (c *Engine) sweepLaneForAuthor(author string) (string, bool) {
 	author = strings.TrimSpace(author)
 	if author == "" {
@@ -1142,11 +1188,11 @@ func (c *Engine) sweepLaneForAuthor(author string) (string, bool) {
 	if c != nil && c.transport != nil && strings.EqualFold(author, c.transport.AppBotLogin()) {
 		return "self-authored", true
 	}
-	if c == nil || c.trustedBotAuthors == nil {
-		return "", false
-	}
-	if c.trustedBotAuthors()[strings.ToLower(author)] {
+	if c != nil && c.trustedBotAuthors != nil && c.trustedBotAuthors()[strings.ToLower(author)] {
 		return "trusted-bot", true
+	}
+	if c != nil && c.mergeHumanPRsAtL6 != nil && c.mergeHumanPRsAtL6() && !strings.HasSuffix(strings.ToLower(author), "[bot]") {
+		return "human-green", true
 	}
 	return "", false
 }

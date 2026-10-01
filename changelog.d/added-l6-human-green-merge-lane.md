@@ -1,0 +1,1 @@
+- Add an L6-only human-green automerge lane for green, unheld human-authored PRs.
