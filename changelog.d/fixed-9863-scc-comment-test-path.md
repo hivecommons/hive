@@ -1,0 +1,1 @@
+- The `openshift-netadmin` SCC comment now points at `src/deploy/test_manifest_caps_runtime.sh`, the test that checks the SCC mirrors the Deployment capabilities ([#9863](https://github.com/hivecommons/hive/issues/9863)). Its relative path did not resolve.
