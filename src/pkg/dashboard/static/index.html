@@ -11196,10 +11196,12 @@
     // GET api.anthropic.com/v1/models (see claudeStaticModels in
     // pkg/dashboard/cli_models.go; keep the two lists in sync). Refreshed
     // 2026-08-03 from a live /v1/models response, in API order, plus the bare
-    // aliases the claude CLI accepts as --model values.
+    // aliases the claude CLI accepts as --model values; Sonnet 5.5 added per
+    // the Claude Code 2.1.284 changelog (#9804).
     const CLAUDE_CLI_MODELS = [
       { value: 'claude-opus-5-5', label: 'Opus 5.5' },
       { value: 'claude-opus-5', label: 'Opus 5' },
+      { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
       { value: 'claude-sonnet-5', label: 'Sonnet 5' },
       { value: 'claude-fable-5', label: 'Fable 5' },
       { value: 'claude-opus-4-8', label: 'Opus 4.8' },
@@ -11250,10 +11252,12 @@
     // using Codex with a ChatGPT account"), so codex must NOT fall through to
     // the copilot list. The server discovers the live catalog via
     // `codex app-server` model/list (per-CLI-version, baked into the binary);
-    // this is only the pre-discovery fallback. Snapshot of codex 0.156.1:
-    // visible ids in picker order (astra is the default; GPT-6 Sol and Luna
-    // arrived in 0.156.1, #8417), then hidden ids — hidden entries are still
-    // valid --model values. gpt-5.2 and gpt-5.4-mini were retired in 0.155.0.
+    // this is only the pre-discovery fallback. Snapshot of codex 0.159.0
+    // (live model/list capture, 2026-09-30, #9804): visible ids in picker
+    // order (astra is the default; GPT-6 Sol and Luna arrived in 0.156.1,
+    // #8417), then hidden ids — hidden entries are still valid --model
+    // values. gpt-5.2 and gpt-5.4-mini were retired in 0.155.0; gpt-5.4 was
+    // retired between 0.156.1 and 0.159.0.
     // Keep in sync with codexStaticModels in cli_models.go.
     const CODEX_CLI_MODELS = [
       { value: 'gpt-6-astra', label: 'GPT-6 Astra' },
@@ -11265,7 +11269,6 @@
       { value: 'gpt-5.5', label: 'GPT-5.5' },
       { value: 'gpt-daybreak-blue-latest', label: 'GPT Daybreak Blue' },
       { value: 'gpt-daybreak-red-latest', label: 'GPT Daybreak Red' },
-      { value: 'gpt-5.4', label: 'GPT-5.4' },
       { value: 'codex-auto-review', label: 'Codex Auto Review' },
     ];
     // bob (IBM bobshell) selects its own model and has NO usable --model flag:
@@ -11306,6 +11309,7 @@
       { value: 'openai-codex/gpt-5.6-luna', label: 'openai-codex/gpt-5.6-luna' },
       { value: 'anthropic/claude-opus-5', label: 'anthropic/claude-opus-5' },
       { value: 'anthropic/claude-fable-5', label: 'anthropic/claude-fable-5' },
+      { value: 'anthropic/claude-sonnet-5-5', label: 'anthropic/claude-sonnet-5-5' },
       { value: 'anthropic/claude-sonnet-5', label: 'anthropic/claude-sonnet-5' },
       { value: 'google-antigravity/gemini-3.7-flash', label: 'google-antigravity/gemini-3.7-flash' },
     ];

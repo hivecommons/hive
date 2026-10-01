@@ -13,7 +13,9 @@ import (
 // canonicalization exists to absorb.
 var copilotCLIAcceptedModels = []string{
 	// Anthropic — the -5 family is DASHED in CLI nomenclature.
+	"claude-opus-5-5",
 	"claude-opus-5",
+	"claude-sonnet-5-5",
 	"claude-sonnet-5",
 	"claude-fable-5",
 	// Anthropic — the 4.x family is DOTTED.
