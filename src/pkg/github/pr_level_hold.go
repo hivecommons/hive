@@ -107,6 +107,8 @@ func (c *Client) isTrustedLevelHoldNoticeAuthor(comment *gh.IssueComment) bool {
 type LevelHoldPR struct {
 	Repo   string `json:"repo"`
 	Number int    `json:"number"`
+	Title  string `json:"title,omitempty"`
+	URL    string `json:"url,omitempty"`
 	Agent  string `json:"agent,omitempty"`
 }
 
@@ -150,7 +152,7 @@ func (c *Client) PendingLevelHolds(ctx context.Context) ([]LevelHoldPR, error) {
 					return nil, err
 				}
 				if appHeld {
-					pending = append(pending, LevelHoldPR{Repo: owner + "/" + repo, Number: pr.GetNumber(), Agent: meta.Agent})
+					pending = append(pending, LevelHoldPR{Repo: owner + "/" + repo, Number: pr.GetNumber(), Title: pr.GetTitle(), URL: pr.GetHTMLURL(), Agent: meta.Agent})
 				}
 			}
 			if resp.NextPage == 0 {

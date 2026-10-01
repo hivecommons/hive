@@ -200,7 +200,9 @@ Promoting or demoting a running hive between levels is a single operation — th
 hive reconciles its agent roster and per-agent modes to match the target level.
 
 **From the dashboard:** open the Governor config and set the ACMM level. This is
-the normal path.
+the normal path. When a change makes the L6 self-authored merge sweep eligible,
+the dashboard shows an informational modal listing held App-authored PRs and
+the watched repositories' auto-merge toggles; it does not release holds.
 
 **Over the API:** `PUT /api/packs/level` with `{"level": N}` where N is 1–6.
 Level-applied `hold` labels are never released automatically on a level change.
@@ -222,7 +224,11 @@ What happens when the level changes (`handlePackSetLevel` → `ApplyPack`):
    relay generation so the self-authored auto-merge sweep starts or stops under
    the new ACMM verdict without waiting for a pod restart or GitHub App re-save.
    Existing level-applied holds remain held unless this `PUT /api/packs/level`
-   request explicitly included `release_level_holds: true`.
+   request explicitly included `release_level_holds: true`. When the sweep just
+   became eligible, the response includes `self_merge_sweep_active`,
+   `level_holds_pending`, `repos`, and `level_changed_at` so the dashboard can
+   inform the owner what remains held and which repos participate in L6
+   auto-merge.
 
 Notes:
 

@@ -173,7 +173,9 @@ PRs are hold-gated and nothing merges its own work. Runtime ACMM level changes
 that cross this gate restart the request relay generation, so the sweep starts
 or stops without a pod restart. Promotion into L6 does not release existing
 level-applied holds; use `release_level_holds: true` on `PUT /api/packs/level`
-for a deliberate one-off release, otherwise a human must remove `hold`.
+for a deliberate one-off release, otherwise a human must remove `hold`. The
+dashboard's L6 promotion notice lists the currently held App-authored PRs and
+the watched repositories' auto-merge toggles; it is informational only.
 
 **Eligibility per PR.** The sweep only ever considers open, non-draft PRs
 authored by the App bot login itself (re-verified per PR, not just at listing

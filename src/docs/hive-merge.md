@@ -147,7 +147,10 @@ changes, so the sweep starts or stops under the new level immediately. A
 promotion into L6 never auto-releases existing level-applied `hold` labels; use
 `release_level_holds: true` on `PUT /api/packs/level` for a deliberate one-off
 release. Hub, config-driven, and ordinary dashboard promotions leave those holds
-for human removal.
+for human removal. On a dashboard promotion into L6, Hive shows an informational
+modal with the held App-authored PRs and per-repo auto-merge toggles so the
+owner can decide which repositories should participate before manually removing
+`hold`.
 
 ```yaml
 auto_merge:

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
@@ -59,6 +60,11 @@ type ApplyPackResult struct {
 	// therefore NOT re-created. Surfaced so an under-full roster reads as an
 	// honored choice rather than an apply that quietly dropped agents.
 	Tombstoned []string `json:"tombstoned,omitempty"`
+}
+
+type levelChangeRepoAutoMerge struct {
+	Repo      string `json:"repo"`
+	AutoMerge bool   `json:"auto_merge"`
 }
 
 // GovernorChanges reports the governor settings a pack apply actually changed.
@@ -796,14 +802,21 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logger.Info("ACMM level set", "level", body.Level, "paused", len(paused), "resumed", len(resumed), "packUpdated", packUpdated)
 	s.levelMu.Unlock()
+	selfMergeSweepActive := crossesSelfMergeLevel(s.deps.Config, prevLevel, level)
 	levelHoldsReleased, releaseErr := s.releaseLevelHoldsIfRequested(r, prevLevel, level, body.ReleaseLevelHolds)
 	if releaseErr != nil {
 		jsonError(w, "level set but level-hold release failed: "+releaseErr.Error(), http.StatusInternalServerError)
 		s.notifyACMMLevelChanged(prevLevel, level)
 		return
 	}
+	levelHoldsPending, repos, pendingErr := s.levelChangeSweepInfo(r.Context(), selfMergeSweepActive)
+	levelHoldsWarning := ""
+	if pendingErr != nil {
+		levelHoldsWarning = "level-hold inspection failed: " + pendingErr.Error()
+		s.logger.Warn("failed to inspect level-applied holds after ACMM level change", "from", prevLevel, "to", level, "error", pendingErr)
+	}
 	s.notifyACMMLevelChanged(prevLevel, level)
-	jsonResponse(w, map[string]interface{}{
+	response := map[string]interface{}{
 		"ok":                   true,
 		"level":                body.Level,
 		"packAgents":           packAgentNames,
@@ -814,7 +827,17 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 		"minStatusSeq":         floor,
 		"level_holds_released": len(levelHoldsReleased),
 		"release_level_holds":  body.ReleaseLevelHolds,
-	})
+	}
+	if selfMergeSweepActive {
+		response["self_merge_sweep_active"] = true
+		response["level_changed_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+		response["level_holds_pending"] = levelHoldsPending
+		response["repos"] = repos
+		if levelHoldsWarning != "" {
+			response["level_holds_warning"] = levelHoldsWarning
+		}
+	}
+	jsonResponse(w, response)
 }
 
 func (s *Server) notifyACMMLevelChanged(prev, next int) {
@@ -833,6 +856,38 @@ func (s *Server) releaseLevelHoldsIfRequested(r *http.Request, prev, next int, r
 		return released, err
 	}
 	return released, nil
+}
+
+func (s *Server) levelChangeSweepInfo(ctx context.Context, active bool) ([]ghpkg.LevelHoldPR, []levelChangeRepoAutoMerge, error) {
+	if !active || s == nil || s.deps == nil || s.deps.Config == nil {
+		return nil, nil, nil
+	}
+	repos := s.levelChangeRepoAutoMergeStates()
+	if s.deps.GHClient == nil {
+		return nil, repos, nil
+	}
+	pending, err := s.deps.GHClient.PendingLevelHolds(ctx)
+	if err != nil {
+		return nil, repos, err
+	}
+	return pending, repos, nil
+}
+
+func (s *Server) levelChangeRepoAutoMergeStates() []levelChangeRepoAutoMerge {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return nil
+	}
+	cfg := s.deps.Config
+	repos := make([]levelChangeRepoAutoMerge, 0, len(cfg.Project.Repos))
+	for _, repo := range cfg.Project.Repos {
+		repo = strings.TrimSpace(repo)
+		if repo == "" {
+			continue
+		}
+		display := config.QualifyRepo(cfg.Project.Org, repo)
+		repos = append(repos, levelChangeRepoAutoMerge{Repo: display, AutoMerge: cfg.RepoAutoMergeEnabled(repo)})
+	}
+	return repos
 }
 
 func crossesSelfMergeLevel(cfg *config.Config, prev, next int) bool {

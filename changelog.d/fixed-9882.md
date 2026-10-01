@@ -1,1 +1,1 @@
-- automerge: restart the merge sweep on runtime ACMM level change and never auto-release level holds (#9882)
+- automerge: restart the merge sweep on runtime ACMM level change, never auto-release level holds, and inform owners when L6 auto-merge becomes active (#9882)

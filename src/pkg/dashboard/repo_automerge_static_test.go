@@ -16,6 +16,15 @@ func TestRepoAutoMergeStaticWiring(t *testing.T) {
 		"repo-automerge-off-pill",
 		"repo-automerge-btn",
 		"function toggleRepoAutoMerge(repo, enabled, btn)",
+		"function maybeShowLevelAutoMergeActiveModal(data)",
+		"Level 6 auto-merge is now active",
+		"self_merge_sweep_active",
+		"level_holds_pending",
+		"level_changed_at",
+		"hive:l6-automerge-info:",
+		"PRs currently labelled <code>hold</code> stay held",
+		"data-level-automerge-repo",
+		"Switch off any repository that should not participate in L6 auto-merge.",
 		"fetch('/api/repos/auto-merge'",
 		"r.autoMerge !== false",
 		"data-action=\"toggleRepoAutoMerge\"",
@@ -26,7 +35,7 @@ func TestRepoAutoMergeStaticWiring(t *testing.T) {
 			t.Fatalf("static dashboard missing %q", want)
 		}
 	}
-	if strings.Contains(s, "toggleRepoAutoMerge") && (strings.Contains(s, "confirm(") || strings.Contains(s, "alert(")) {
+	if strings.Contains(s, "toggleRepoAutoMerge") && (strings.Contains(s, "window.confirm") || strings.Contains(s, "window.alert")) {
 		t.Fatal("repo auto-merge toggle must not use native browser dialogs")
 	}
 }

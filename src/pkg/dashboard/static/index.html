@@ -2179,6 +2179,13 @@
     .hive-dialog-input { width: 100%; box-sizing: border-box; padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r); background: var(--panel); color: var(--fg); font: inherit; }
     .hive-dialog-error { min-height: 1.2em; margin-top: var(--sp-3); font-size: var(--fs-sm); color: var(--red); }
     .hive-dialog-buttons { display: flex; gap: 10px; justify-content: flex-end; }
+    .level-automerge-dialog { width: min(760px, 94vw); }
+    .level-automerge-list { display: grid; gap: var(--sp-2); margin: var(--sp-4) 0; }
+    .level-automerge-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--r); background: color-mix(in srgb, var(--panel) 92%, var(--fg) 8%); }
+    .level-automerge-row-main { min-width: 0; }
+    .level-automerge-row-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); font-weight: 600; }
+    .level-automerge-row-meta { color: var(--muted); font-size: var(--fs-xs); }
+    .level-automerge-toggle { flex: 0 0 auto; }
     /* .hive-dialog-btn(.primary/.cancel) — primary/ghost buttons (system recipe) */
     .config-modal {
       width: 1200px; max-width: 96vw;
@@ -19073,6 +19080,95 @@ function burnAreaChart() {
         hiveWireDialog(overlay, resolve, undefined, '.primary', null, close => close());
       });
     }
+    function maybeShowLevelAutoMergeActiveModal(data) {
+      if (!data || data.self_merge_sweep_active !== true) return Promise.resolve();
+      const level = Number(data.level || 6);
+      const stamp = String(data.level_changed_at || data.minStatusSeq || Date.now());
+      const storageKey = `hive:l6-automerge-info:${level}:${stamp}`;
+      try {
+        if (localStorage.getItem(storageKey) === '1') return Promise.resolve();
+      } catch (_) {}
+      return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'hive-dialog-overlay';
+        const holds = Array.isArray(data.level_holds_pending) ? data.level_holds_pending : [];
+        const repos = Array.isArray(data.repos) ? data.repos : [];
+        const warningHTML = data.level_holds_warning ? `<p><strong>Hold inspection warning:</strong> ${hiveDialogEscape(data.level_holds_warning)}</p>` : '';
+        const heldHTML = holds.length
+          ? `<div class="level-automerge-list">${holds.map(pr => {
+              const repo = hiveDialogEscape(pr.repo || '');
+              const number = Number(pr.number || 0);
+              const title = hiveDialogEscape(pr.title || '(untitled PR)');
+              const url = hiveDialogEscape(pr.url || '');
+              const agent = pr.agent ? ` · agent/${hiveDialogEscape(pr.agent)}` : '';
+              const link = url ? `<a href="${url}" target="_blank" rel="noopener noreferrer">${repo}#${number}</a>` : `${repo}#${number}`;
+              return `<div class="level-automerge-row"><div class="level-automerge-row-main"><span class="level-automerge-row-title">${title}</span><span class="level-automerge-row-meta">${link}${agent}</span></div></div>`;
+            }).join('')}</div>`
+          : '<p>No currently held App-authored PRs were found.</p>';
+        const repoHTML = repos.length
+          ? `<div class="level-automerge-list">${repos.map((repo, i) => {
+              const name = hiveDialogEscape(repo.repo || '');
+              const enabled = repo.auto_merge !== false;
+              return `<div class="level-automerge-row" data-level-automerge-repo="${name}">
+                <div class="level-automerge-row-main"><span class="level-automerge-row-title">${name}</span><span class="level-automerge-row-meta">Auto-merge ${enabled ? 'enabled' : 'disabled'}</span></div>
+                <button type="button" class="hv-btn ${enabled ? 'btn-secondary' : 'btn-primary'} hive-dialog-btn level-automerge-toggle" data-repo-index="${i}" data-enabled="${enabled ? '1' : '0'}">${enabled ? 'auto-merge off' : 'auto-merge on'}</button>
+              </div>`;
+            }).join('')}</div>`
+          : '<p>No active repositories are configured.</p>';
+        overlay.innerHTML = `<div class="hive-dialog level-automerge-dialog" role="dialog" aria-modal="true" aria-labelledby="level-automerge-title">
+          <div id="level-automerge-title" class="hive-dialog-title">Level 6 auto-merge is now active</div>
+          <div class="hive-dialog-body long">
+            <p>PRs currently labelled <code>hold</code> stay held, including holds Hive applied at the previous level. Hive never removes <code>hold</code> on a level change. Remove <code>hold</code> yourself, or use the PR's Release affordance if available, before L6 can merge those PRs automatically.</p>
+            ${warningHTML}
+            ${heldHTML}
+            <p>The merge sweep only runs on repositories with auto-merge enabled. Switch off any repository that should not participate in L6 auto-merge.</p>
+            ${repoHTML}
+          </div>
+          <div class="hive-dialog-buttons">
+            <button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-initial-focus>Got it</button>
+          </div></div>`;
+        document.body.appendChild(overlay);
+        const markDismissed = () => {
+          try { localStorage.setItem(storageKey, '1'); } catch (_) {}
+        };
+        overlay.querySelectorAll('.level-automerge-toggle').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const idx = Number(btn.dataset.repoIndex || -1);
+            const repo = repos[idx];
+            if (!repo || btn.dataset.busy === '1') return;
+            const nextEnabled = btn.dataset.enabled !== '1';
+            const previous = btn.textContent;
+            btn.dataset.busy = '1';
+            btn.textContent = nextEnabled ? 'Enabling…' : 'Disabling…';
+            try {
+              const resp = await fetch('/api/repos/auto-merge', {
+                method: 'POST',
+                headers: _inceptionAuthHeaders(),
+                body: JSON.stringify({ repo: repo.repo, enabled: nextEnabled })
+              });
+              const resBody = await resp.json().catch(() => ({}));
+              if (!resp.ok) throw new Error(resBody.error || ('HTTP ' + resp.status));
+              repo.auto_merge = nextEnabled;
+              btn.dataset.enabled = nextEnabled ? '1' : '0';
+              btn.classList.toggle('btn-primary', !nextEnabled);
+              btn.classList.toggle('btn-secondary', nextEnabled);
+              btn.textContent = nextEnabled ? 'auto-merge off' : 'auto-merge on';
+              const row = btn.closest('.level-automerge-row');
+              const meta = row && row.querySelector('.level-automerge-row-meta');
+              if (meta) meta.textContent = 'Auto-merge ' + (nextEnabled ? 'enabled' : 'disabled');
+              showToast((nextEnabled ? 'Enabled' : 'Disabled') + ' auto-merge for ' + repo.repo, 'success');
+              fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
+            } catch (e) {
+              showToast('Auto-merge toggle failed: ' + (e && e.message ? e.message : 'network error'), 'error');
+              btn.textContent = previous;
+            } finally {
+              btn.dataset.busy = '';
+            }
+          });
+        });
+        hiveWireDialog(overlay, () => { markDismissed(); resolve(); }, undefined, '.primary', null, close => close());
+      });
+    }
     // makeToastSticky turns a toast into one that never auto-dismisses. Used
     // for errors: a failed save may carry a validation message the user has
     // not finished reading, so it waits for an explicit click or × instead of
@@ -21996,6 +22092,7 @@ function burnAreaChart() {
         }
         showToast(`ACMM level set to L${confirmedLevel} (${name})` + (governorChanges ? ' — governor settings changed' : ''), governorChanges ? 'info' : 'success');
         if (governorChanges) await hiveAlert(governorChanges, 'Governor settings changed');
+        await maybeShowLevelAutoMergeActiveModal(data);
         _acmmPacks = null;
       } catch (err) {
         hideACMMLoading();
