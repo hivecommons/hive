@@ -58,6 +58,16 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	if m := readUpgradeMarker(); m != nil {
 		resp["upgradeMarker"] = m
 	}
+	manualUpgrade := readDashboardUpgradeState()
+	if manualUpgrade != nil && manualUpgrade.State == dashboardUpgradeStateStarted &&
+		manualUpgrade.Target != "" && sameCommitDashboard(versionHash, manualUpgrade.Target) {
+		manualUpgrade.State = dashboardUpgradeStateDone
+		manualUpgrade.UpdatedAt = time.Now().UTC()
+		s.rememberDashboardUpgradeState(*manualUpgrade)
+	}
+	if manualUpgrade != nil {
+		resp["manualUpgrade"] = manualUpgrade
+	}
 
 	s.versionMu.RLock()
 	cached := s.cachedLatestHash
@@ -165,6 +175,11 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		readUpgradeOutcome(), marker, versionHash,
 		lastBeat, beatOK, dashboardHeartbeatStaleAfter,
 	)
+	if marker == nil {
+		if manualAttempt := upgradeAttemptFromDashboardState(manualUpgrade); manualAttempt != nil {
+			releaseStatus.Attempt = *manualAttempt
+		}
+	}
 	if imageSource != spoke.SelfImageSourcePodmanEnv && s.releaseChannelSelectorAvailable(releaseStatus.Channel) {
 		releaseStatus.Channel.SelectorEnabled = true
 		releaseStatus.Channel.SelectorDetail = "Choose stable, candidate, or edge. The hub records your intent and the current channel changes only after the Deployment image lands."
@@ -557,20 +572,58 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	case deploymentRuntimePodmanQuadlet, deploymentRuntimeDockerCompose:
 		if !deployment.UpgradeSupported {
+			s.rememberDashboardUpgradeState(dashboardUpgradeState{
+				State:     dashboardUpgradeStateFailed,
+				UpdatedAt: time.Now().UTC(),
+				Reason:    deployment.Reason,
+			})
+			s.logger.Error("self-upgrade refused by deployment precheck", "runtime", deployment.Runtime, "reason", deployment.Reason)
 			jsonError(w, deployment.Reason, http.StatusConflict)
 			return
 		}
 		if err := s.runStandaloneUpgrade(r, deployment); err != nil {
+			s.rememberDashboardUpgradeState(dashboardUpgradeState{
+				State:     dashboardUpgradeStateFailed,
+				UpdatedAt: time.Now().UTC(),
+				Reason:    err.Error(),
+			})
+			s.logger.Error("self-upgrade failed before rollout", "runtime", deployment.Runtime, "error", err)
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		s.rememberDashboardUpgradeState(dashboardUpgradeState{
+			State:     dashboardUpgradeStateStarted,
+			StartedAt: time.Now().UTC(),
+			UpdatedAt: time.Now().UTC(),
+		})
 		s.auditFromRequest(r, "self_upgrade", deployment.Runtime, "")
 		jsonResponse(w, map[string]any{"status": "upgrading", "runtime": deployment.Runtime})
 		return
 	}
+	target := dashboardUpgradeTargetFromRequest(r)
+	if target != "" {
+		if err := s.precheckKubernetesSelfUpgrade(target); err != nil {
+			s.rememberDashboardUpgradeState(dashboardUpgradeState{
+				State:     dashboardUpgradeStateFailed,
+				Target:    target,
+				UpdatedAt: time.Now().UTC(),
+				Reason:    err.Error(),
+			})
+			s.logger.Error("self-upgrade refused by spoke precheck", "target", target, "error", err)
+			jsonError(w, err.Error(), http.StatusConflict)
+			return
+		}
+	}
 	hubURL := s.deps.Config.Hub.URL
 	hiveID := s.deps.Config.HiveID
 	if hubURL == "" || hiveID == "" {
+		s.rememberDashboardUpgradeState(dashboardUpgradeState{
+			State:     dashboardUpgradeStateFailed,
+			Target:    target,
+			UpdatedAt: time.Now().UTC(),
+			Reason:    "hub URL or hive ID not configured",
+		})
+		s.logger.Error("self-upgrade failed before hub request", "target", target, "reason", "hub URL or hive ID not configured")
 		jsonError(w, "hub URL or hive ID not configured", http.StatusBadRequest)
 		return
 	}
@@ -588,7 +641,15 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 		// and "not authenticated" would mislead a logged-in owner. Name the
 		// missing credential and how to configure it (#4446 honest-error
 		// standard).
-		jsonError(w, "self-upgrade needs this spoke's dashboard token to prove itself to the hub — set DASHBOARD_AUTH_TOKEN (the hive-secrets/dashboard-token secret) and restart the spoke", http.StatusBadRequest)
+		reason := "self-upgrade needs this spoke's dashboard token to prove itself to the hub — set DASHBOARD_AUTH_TOKEN (the hive-secrets/dashboard-token secret) and restart the spoke"
+		s.rememberDashboardUpgradeState(dashboardUpgradeState{
+			State:     dashboardUpgradeStateFailed,
+			Target:    target,
+			UpdatedAt: time.Now().UTC(),
+			Reason:    reason,
+		})
+		s.logger.Error("self-upgrade failed before hub request", "target", target, "reason", reason)
+		jsonError(w, reason, http.StatusBadRequest)
 		return
 	}
 	const upgradeTimeout = 30 * time.Second
@@ -615,7 +676,13 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		s.logger.Warn("self-upgrade: hub request failed", "error", err)
+		s.rememberDashboardUpgradeState(dashboardUpgradeState{
+			State:     dashboardUpgradeStateFailed,
+			Target:    target,
+			UpdatedAt: time.Now().UTC(),
+			Reason:    "hub unreachable: " + err.Error(),
+		})
+		s.logger.Error("self-upgrade: hub request failed", "target", target, "error", err)
 		jsonError(w, "hub unreachable", http.StatusBadGateway)
 		return
 	}
@@ -623,11 +690,40 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	const maxUpgradeResponseBytes = 1 << 16
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxUpgradeResponseBytes))
 	if resp.StatusCode < 300 {
+		now := time.Now().UTC()
+		s.rememberDashboardUpgradeState(dashboardUpgradeState{
+			State:     dashboardUpgradeStateStarted,
+			Target:    target,
+			StartedAt: now,
+			UpdatedAt: now,
+		})
 		s.auditFromRequest(r, "self_upgrade", "", "")
+	} else {
+		reason := upgradeErrorFromHubBody(body, resp.Status)
+		s.rememberDashboardUpgradeState(dashboardUpgradeState{
+			State:     dashboardUpgradeStateFailed,
+			Target:    target,
+			UpdatedAt: time.Now().UTC(),
+			Reason:    reason,
+		})
+		s.logger.Error("self-upgrade: hub refused upgrade", "target", target, "status", resp.Status, "reason", reason)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)
+}
+
+func upgradeErrorFromHubBody(body []byte, fallback string) string {
+	var parsed struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &parsed); err == nil && strings.TrimSpace(parsed.Error) != "" {
+		return strings.TrimSpace(parsed.Error)
+	}
+	if msg := strings.TrimSpace(string(body)); msg != "" {
+		return msg
+	}
+	return fallback
 }
 
 func (s *Server) syntheticInternalUser(r *http.Request, user string) bool {

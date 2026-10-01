@@ -21134,6 +21134,7 @@ function burnAreaChart() {
         // landed. Without this badge an operator could not tell "updated as
         // configured" apart from "auto-update is quietly failing".
         const um = v.upgradeMarker;
+        const mu = v.manualUpgrade;
         if (um && um.failed) {
           const umTitle = `Auto-update FAILED: upgrade to ${um.target || '?'} gave up after ${um.attempts}/${um.maxAttempts} attempts — the image never changed.` +
             (um.lastError ? ` Last error: ${um.lastError}.` : '') +
@@ -21145,6 +21146,13 @@ function burnAreaChart() {
             (um.lastError ? ` Last error: ${um.lastError}.` : '') +
             (um.requestedAt ? ` First requested ${um.requestedAt}.` : '');
           html += ` <span class="git-behind" title="${escapeHtml(umTitle)}">⟳ auto-update retrying ${escapeHtml(String(um.attempts))}/${escapeHtml(String(um.maxAttempts))}</span>`;
+        } else if (mu && mu.state === 'failed') {
+          const muTitle = `Upgrade failed${mu.target ? ' to ' + mu.target : ''}: ${mu.reason || 'no reason recorded'}` +
+            (mu.updatedAt ? ` (${mu.updatedAt})` : '');
+          html += ` <span class="git-behind text-danger" title="${escapeHtml(muTitle)}">⚠ upgrade failed</span>`;
+        } else if (mu && mu.state === 'started') {
+          // The durable server-side state below rehydrates _upgradeInProgress
+          // after reload so the ordinary upgrading badge continues to render.
         }
         const commitsBehindText = v.commitsBehind != null && v.commitsBehind > 0
           ? ` <span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → ${escapeHtml(upgradeTargetLabel(v))}: ${escapeHtml(v.stableV4Short || '?')}">${escapeHtml(String(v.commitsBehind))} behind</span>`
@@ -21159,14 +21167,24 @@ function burnAreaChart() {
               ? ` <span class="text-muted" title="${escapeHtml(upgradeTargetLabel(v))} ${escapeHtml(v.stableV4Short || '?')} has no published image yet — nothing to upgrade to">tip not built yet</span>`
               : ` <span class="git-behind" title="Could not compare this commit with ${escapeHtml(upgradeTargetLabel(v))} ${escapeHtml(v.stableV4Short || '?')}">? behind</span>`)
             : '');
-        if (_upgradeInProgress && v.hash !== _upgradeTargetHash) {
+        if (mu && mu.state === 'started') {
+          _upgradeInProgress = true;
+          _upgradeTargetHash = mu.target || _upgradeTargetHash;
+        } else if (mu && mu.state === 'done') {
+          _upgradeInProgress = false;
+          _upgradeTargetHash = null;
+        }
+        const upgradeCurrentHash = String(v.hash || '').toLowerCase();
+        const upgradeTargetHash = String(_upgradeTargetHash || '').toLowerCase();
+        const upgradeTargetLanded = upgradeTargetHash && (upgradeCurrentHash.startsWith(upgradeTargetHash) || upgradeTargetHash.startsWith(upgradeCurrentHash));
+        if (_upgradeInProgress && !upgradeTargetLanded) {
           html += ` <span class="git-behind" title="Upgrading to ${escapeHtml(v.latestShort || '?')}">⬆ upgrading</span>`;
-        } else if (_upgradeInProgress && v.hash === _upgradeTargetHash) {
+        } else if (_upgradeInProgress && upgradeTargetLanded) {
           _upgradeInProgress = false;
           _upgradeTargetHash = null;
           showToast('Upgrade complete!', 'success');
           html += ' <span class="text-success" title="Up to date with remote">✓</span>';
-        } else if (v.behind) {
+        } else if (v.behind && !(mu && mu.state === 'started')) {
           html += commitsBehindText || ` <span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">⬆</span>`;
           const dep = v.deployment || {};
           const upgradeSupported = dep.upgradeSupported === true;
