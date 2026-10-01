@@ -389,6 +389,31 @@ func paneShowsInputPrompt(output string) bool {
 		strings.Contains(output, "╰─")
 }
 
+// paneShowsCopilotQuestionForm reports whether Copilot CLI is blocking on its
+// interactive ask_user form instead of accepting a kick. Observed live
+// 2026-10-01 on hive's telemetry agent:
+//
+//	○ Asking user Waiting for response
+//	Copilot needs information.
+//	What would you like me to actually do right now?
+//	[Concrete task]  Target repo (if applicable)
+//	Concrete task
+//	e.g. 'Audit observability in hivecommons/pluk and file a telemetry issue' or 'Just explain the policy above'
+//	❯
+//	enter accept · tab next · ctrl+d decline · esc cancel
+//
+// Any one marker is enough because pane captures can be clipped to the visible
+// terminal height. Callers should dismiss this with Escape, never Enter: Enter
+// accepts the empty form as an answer and can start another turn.
+func paneShowsCopilotQuestionForm(output string) bool {
+	if output == "" {
+		return false
+	}
+	return strings.Contains(output, "Copilot needs information.") ||
+		strings.Contains(output, "Asking user") ||
+		strings.Contains(output, "enter accept · tab next · ctrl+d decline · esc cancel")
+}
+
 func (a *AgentProcess) snapshot() AgentProcess {
 	history := make([]KickRecord, len(a.KickHistory))
 	copy(history, a.KickHistory)

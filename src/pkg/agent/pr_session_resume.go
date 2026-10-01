@@ -119,7 +119,25 @@ func (m *Manager) SendResumeKick(name, message, sessionID string) error {
 	if !paneHasCLIMarker(pane) || paneShowsConsentScreen(pane) {
 		return fmt.Errorf("%w: agent %s CLI is not running", ErrResumeSessionGone, name)
 	}
-	if !paneShowsInputPrompt(pane) || paneShowsAgentWorking(pane) {
+	if paneShowsCopilotQuestionForm(pane) {
+		m.mu.Unlock()
+		m.dismissCopilotQuestionFormForKick(agent)
+		ready := m.waitForInputPromptForAgent(agent)
+		m.mu.Lock()
+		agent, ok = m.agents[name]
+		if !ok {
+			return fmt.Errorf("%w: agent %s not found", ErrResumeSessionGone, name)
+		}
+		current, ok = sessionIDLocked(agent)
+		if !ok || current != sessionID {
+			return fmt.Errorf("%w: agent %s is on a different session", ErrResumeSessionGone, name)
+		}
+		if !ready {
+			return fmt.Errorf("%w: agent %s is mid-turn", ErrResumeBusy, name)
+		}
+		pane = m.captureVisiblePaneForAgent(agent)
+	}
+	if !paneShowsInputPrompt(pane) || paneShowsAgentWorking(pane) || paneShowsCopilotQuestionForm(pane) {
 		return fmt.Errorf("%w: agent %s is mid-turn", ErrResumeBusy, name)
 	}
 

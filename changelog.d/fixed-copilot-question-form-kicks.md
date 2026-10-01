@@ -1,0 +1,1 @@
+- Dismiss Copilot CLI question forms with Escape before delivering kicks and end generated kick prompts with an explicit concrete task.

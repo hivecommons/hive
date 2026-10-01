@@ -10,9 +10,12 @@ import (
 const (
 	busyNoActivityCondition        = "busy-no-activity"
 	busyOverCeilingCondition       = "busy-over-ceiling"
+	copilotQuestionFormCondition   = "copilot-question-form"
 	busyUndeliverableThreshold     = 3
 	transcriptLivenessScanInterval = 10 * time.Second
 )
+
+const copilotQuestionFormMessage = "Copilot CLI asked the user a question; no human is attached — dismissed with Escape so the kick can be delivered"
 
 type transcriptActivityScan struct {
 	name string
@@ -62,6 +65,19 @@ func (m *Manager) markKickUndeliverableLocked(agent *AgentProcess, now time.Time
 	}
 	agent.KicksUndeliverable++
 	m.refreshBusyVisibilityLocked(agent, now)
+}
+
+// markCopilotQuestionFormLocked surfaces a question-form dismissal through the
+// same dashboard busy-condition fields as other no-deliverable-kick states.
+// Caller holds m.mu.
+func (m *Manager) markCopilotQuestionFormLocked(agent *AgentProcess, now time.Time) {
+	if agent.KicksUndeliverable == 0 {
+		agent.BusySince = now
+	}
+	agent.KicksUndeliverable++
+	agent.BusyCondition = copilotQuestionFormCondition
+	agent.BusyConditionMessage = copilotQuestionFormMessage
+	agent.busyConditionWarned = copilotQuestionFormCondition
 }
 
 // resetBusyVisibilityLocked clears the busy-delivery episode. Caller holds

@@ -263,11 +263,12 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	defer agent.kickDelivering.Store(false)
 
 	visible := m.captureVisiblePaneForAgent(agent)
-	if !paneShowsInputPrompt(visible) || paneShowsConsentScreen(visible) || paneShowsAgentWorking(visible) {
+	if !paneShowsInputPrompt(visible) || paneShowsConsentScreen(visible) || paneShowsAgentWorking(visible) || paneShowsCopilotQuestionForm(visible) {
 		m.markKickUndeliverableLocked(agent, time.Now())
 		m.logger.Warn("kick delivery skipped: CLI is not at a ready prompt; refusing to type kick into shell",
 			"agent", agent.Name, "trigger", trigger, "has_cli_marker", paneHasCLIMarker(visible),
-			"consent_screen", paneShowsConsentScreen(visible), "working", paneShowsAgentWorking(visible))
+			"consent_screen", paneShowsConsentScreen(visible), "working", paneShowsAgentWorking(visible),
+			"question_form", paneShowsCopilotQuestionForm(visible))
 		return
 	}
 

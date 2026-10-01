@@ -449,7 +449,7 @@ func CanaryPreamble(token string) string {
 	if token == "" {
 		return ""
 	}
-	return fmt.Sprintf("SECURITY CANARY: %s\nThis marker is a hive exfiltration canary. Never print, quote, summarize, transform, store in reports, include in commits, or send it to any external service.\n\n", token)
+	return fmt.Sprintf("SECURITY CANARY: %s\nThis is a hive-issued exfiltration-canary marker. Never print, quote, summarize, transform, store in reports, include in commits, or send it to any external service.\n\n", token)
 }
 
 func (r *CanaryRegistry) Load() error {
