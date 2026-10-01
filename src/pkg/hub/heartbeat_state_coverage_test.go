@@ -133,6 +133,35 @@ func TestHandleHeartbeatHubUpgradeFallback(t *testing.T) {
 	}
 }
 
+func TestHandleHeartbeatPendingMutableFallbackDoesNotClearBeforeDelivery(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	s := newHeartbeatHub()
+	started := time.Now().Add(-time.Minute)
+	s.registry.Hives = []RegistryEntry{{
+		ID:               "h1",
+		GitHash:          "aaaaaaa",
+		Upgrading:        true,
+		UpgradeTarget:    "bbbbbbb",
+		UpgradeStartedAt: started,
+	}}
+	s.heartbeatUpgrade["h1"] = "bbbbbbb"
+
+	rec := postHeartbeat(t, s, `{"hive_id":"h1","git_hash":"aaaaaaa","image_ref":"ghcr.io/hivecommons/hive:v5-latest","upgrading":false}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "bbbbbbb") {
+		t.Fatalf("pending heartbeat target should still be delivered, got %s", rec.Body.String())
+	}
+	s.mu.RLock()
+	entry := s.registry.Hives[0]
+	s.mu.RUnlock()
+	if !entry.Upgrading || entry.UpgradeTarget != "bbbbbbb" || !entry.UpgradeStartedAt.Equal(started) {
+		t.Errorf("pending mutable fallback cleared before delivery: %+v", entry)
+	}
+}
+
 func TestHandleHeartbeatForbidsUnprovisionedHosted(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()

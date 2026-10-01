@@ -9801,11 +9801,15 @@
       const p = (pr && pr.protection) || {};
       const changesBy = Array.isArray(p.changes_requested_by) ? p.changes_requested_by : [];
       const approvals = Number(p.approvals_given || 0);
+      const latestState = String(p.latest_human_review_state || '').toUpperCase();
+      const latestBy = p.latest_human_review_by ? ' by @' + p.latest_human_review_by : '';
+      const addressed = p.latest_human_review_addressed ? ' addressed' : ' unaddressed';
       const who = changesBy.length ? ' by ' + changesBy.map(l => '@' + l).join(', ') : '';
       const given = approvals ? approvals + ' approval' + (approvals === 1 ? '' : 's') : '';
+      const latest = latestState === 'CHANGES_REQUESTED' ? ' (latest human review' + latestBy + ',' + addressed + ')' : (latestState === 'APPROVED' ? ' (latest human review approved' + latestBy + ')' : '');
       switch (String(p.review_decision || '').toUpperCase()) {
-        case 'APPROVED': return { decision: 'approved', glyph: '👍', label: 'approved on GitHub' + (given ? ' (' + given + ')' : '') };
-        case 'CHANGES_REQUESTED': return { decision: 'changes-requested', glyph: '👎', label: 'changes requested' + who };
+        case 'APPROVED': return { decision: 'approved', glyph: '👍', label: 'approved on GitHub' + (given ? ' (' + given + ')' : '') + latest };
+        case 'CHANGES_REQUESTED': return { decision: 'changes-requested', glyph: '👎', label: 'changes requested' + who + latest };
         case 'REVIEW_REQUIRED': return { decision: 'review-required', glyph: '👀', label: 'approving review required by branch protection' + (given ? ' (' + given + ' given)' : '') };
         default: break;
       }
@@ -11211,10 +11215,12 @@
     // GET api.anthropic.com/v1/models (see claudeStaticModels in
     // pkg/dashboard/cli_models.go; keep the two lists in sync). Refreshed
     // 2026-08-03 from a live /v1/models response, in API order, plus the bare
-    // aliases the claude CLI accepts as --model values.
+    // aliases the claude CLI accepts as --model values; Sonnet 5.5 added per
+    // the Claude Code 2.1.284 changelog (#9804).
     const CLAUDE_CLI_MODELS = [
       { value: 'claude-opus-5-5', label: 'Opus 5.5' },
       { value: 'claude-opus-5', label: 'Opus 5' },
+      { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
       { value: 'claude-sonnet-5', label: 'Sonnet 5' },
       { value: 'claude-fable-5', label: 'Fable 5' },
       { value: 'claude-opus-4-8', label: 'Opus 4.8' },
@@ -11265,10 +11271,12 @@
     // using Codex with a ChatGPT account"), so codex must NOT fall through to
     // the copilot list. The server discovers the live catalog via
     // `codex app-server` model/list (per-CLI-version, baked into the binary);
-    // this is only the pre-discovery fallback. Snapshot of codex 0.156.1:
-    // visible ids in picker order (astra is the default; GPT-6 Sol and Luna
-    // arrived in 0.156.1, #8417), then hidden ids — hidden entries are still
-    // valid --model values. gpt-5.2 and gpt-5.4-mini were retired in 0.155.0.
+    // this is only the pre-discovery fallback. Snapshot of codex 0.159.0
+    // (live model/list capture, 2026-09-30, #9804): visible ids in picker
+    // order (astra is the default; GPT-6 Sol and Luna arrived in 0.156.1,
+    // #8417), then hidden ids — hidden entries are still valid --model
+    // values. gpt-5.2 and gpt-5.4-mini were retired in 0.155.0; gpt-5.4 was
+    // retired between 0.156.1 and 0.159.0.
     // Keep in sync with codexStaticModels in cli_models.go.
     const CODEX_CLI_MODELS = [
       { value: 'gpt-6-astra', label: 'GPT-6 Astra' },
@@ -11280,7 +11288,6 @@
       { value: 'gpt-5.5', label: 'GPT-5.5' },
       { value: 'gpt-daybreak-blue-latest', label: 'GPT Daybreak Blue' },
       { value: 'gpt-daybreak-red-latest', label: 'GPT Daybreak Red' },
-      { value: 'gpt-5.4', label: 'GPT-5.4' },
       { value: 'codex-auto-review', label: 'Codex Auto Review' },
     ];
     // bob (IBM bobshell) selects its own model and has NO usable --model flag:
@@ -11321,6 +11328,7 @@
       { value: 'openai-codex/gpt-5.6-luna', label: 'openai-codex/gpt-5.6-luna' },
       { value: 'anthropic/claude-opus-5', label: 'anthropic/claude-opus-5' },
       { value: 'anthropic/claude-fable-5', label: 'anthropic/claude-fable-5' },
+      { value: 'anthropic/claude-sonnet-5-5', label: 'anthropic/claude-sonnet-5-5' },
       { value: 'anthropic/claude-sonnet-5', label: 'anthropic/claude-sonnet-5' },
       { value: 'google-antigravity/gemini-3.7-flash', label: 'google-antigravity/gemini-3.7-flash' },
     ];
@@ -19336,6 +19344,10 @@ function burnAreaChart() {
           dismissToast(toast, `A kick is already being delivered to ${agent}`, 'info');
           return;
         }
+        if (data.status === 'deferred') {
+          dismissToast(toast, 'Kick deferred — waiting for first governor scan', 'info');
+          return;
+        }
         await reportKickOutcome(agent, toast, `Queued for ${agent}`);
       } catch (e) {
         dismissToast(toast, 'Kick failed: ' + e.message, 'error');
@@ -21149,6 +21161,7 @@ function burnAreaChart() {
         // landed. Without this badge an operator could not tell "updated as
         // configured" apart from "auto-update is quietly failing".
         const um = v.upgradeMarker;
+        const mu = v.manualUpgrade;
         if (um && um.failed) {
           const umTitle = `Auto-update FAILED: upgrade to ${um.target || '?'} gave up after ${um.attempts}/${um.maxAttempts} attempts — the image never changed.` +
             (um.lastError ? ` Last error: ${um.lastError}.` : '') +
@@ -21160,6 +21173,13 @@ function burnAreaChart() {
             (um.lastError ? ` Last error: ${um.lastError}.` : '') +
             (um.requestedAt ? ` First requested ${um.requestedAt}.` : '');
           html += ` <span class="git-behind" title="${escapeHtml(umTitle)}">⟳ auto-update retrying ${escapeHtml(String(um.attempts))}/${escapeHtml(String(um.maxAttempts))}</span>`;
+        } else if (mu && mu.state === 'failed') {
+          const muTitle = `Upgrade failed${mu.target ? ' to ' + mu.target : ''}: ${mu.reason || 'no reason recorded'}` +
+            (mu.updatedAt ? ` (${mu.updatedAt})` : '');
+          html += ` <span class="git-behind text-danger" title="${escapeHtml(muTitle)}">⚠ upgrade failed</span>`;
+        } else if (mu && mu.state === 'started') {
+          // The durable server-side state below rehydrates _upgradeInProgress
+          // after reload so the ordinary upgrading badge continues to render.
         }
         const commitsBehindText = v.commitsBehind != null && v.commitsBehind > 0
           ? ` <span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → ${escapeHtml(upgradeTargetLabel(v))}: ${escapeHtml(v.stableV4Short || '?')}">${escapeHtml(String(v.commitsBehind))} behind</span>`
@@ -21174,14 +21194,24 @@ function burnAreaChart() {
               ? ` <span class="text-muted" title="${escapeHtml(upgradeTargetLabel(v))} ${escapeHtml(v.stableV4Short || '?')} has no published image yet — nothing to upgrade to">tip not built yet</span>`
               : ` <span class="git-behind" title="Could not compare this commit with ${escapeHtml(upgradeTargetLabel(v))} ${escapeHtml(v.stableV4Short || '?')}">? behind</span>`)
             : '');
-        if (_upgradeInProgress && v.hash !== _upgradeTargetHash) {
+        if (mu && mu.state === 'started') {
+          _upgradeInProgress = true;
+          _upgradeTargetHash = mu.target || _upgradeTargetHash;
+        } else if (mu && mu.state === 'done') {
+          _upgradeInProgress = false;
+          _upgradeTargetHash = null;
+        }
+        const upgradeCurrentHash = String(v.hash || '').toLowerCase();
+        const upgradeTargetHash = String(_upgradeTargetHash || '').toLowerCase();
+        const upgradeTargetLanded = upgradeTargetHash && (upgradeCurrentHash.startsWith(upgradeTargetHash) || upgradeTargetHash.startsWith(upgradeCurrentHash));
+        if (_upgradeInProgress && !upgradeTargetLanded) {
           html += ` <span class="git-behind" title="Upgrading to ${escapeHtml(v.latestShort || '?')}">⬆ upgrading</span>`;
-        } else if (_upgradeInProgress && v.hash === _upgradeTargetHash) {
+        } else if (_upgradeInProgress && upgradeTargetLanded) {
           _upgradeInProgress = false;
           _upgradeTargetHash = null;
           showToast('Upgrade complete!', 'success');
           html += ' <span class="text-success" title="Up to date with remote">✓</span>';
-        } else if (v.behind) {
+        } else if (v.behind && !(mu && mu.state === 'started')) {
           html += commitsBehindText || ` <span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">⬆</span>`;
           const dep = v.deployment || {};
           const upgradeSupported = dep.upgradeSupported === true;

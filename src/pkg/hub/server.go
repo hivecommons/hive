@@ -1270,6 +1270,10 @@ type HubServer struct {
 	// spokeProxyAuthMu. See handleSaaSAuthCheck / spokeProxyAuthToken.
 	spokeProxyAuthCache map[string]spokeProxyAuthEntry
 	spokeProxyAuthMu    sync.Mutex
+	// spokeProxyAuthUnresolvedLogged throttles the auth-check's "token could
+	// not be resolved" warning to once per hive per spokeProxyAuthCacheTTL.
+	// Guarded by spokeProxyAuthMu.
+	spokeProxyAuthUnresolvedLogged map[string]time.Time
 
 	// authRolloutSeen records, per hive, which credential FORMAT that spoke last
 	// authenticated with — the readiness signal for #3234.
@@ -2459,8 +2463,13 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			// hub auto-rolled mid-switch).
 			channelTarget := isReleaseChannel(h.UpgradeTarget)
 			channelSatisfied := imageTagOf(sanitizeImageRef(payload.ImageRef)) == h.UpgradeTarget
+			pendingHeartbeatTarget := s.heartbeatUpgrade[payload.HiveID]
+			pendingHeartbeatSatisfied := pendingHeartbeatTarget == "" ||
+				sameCommit(payload.GitHash, pendingHeartbeatTarget) ||
+				(registryLatestSHA != "" && sameCommit(payload.GitHash, registryLatestSHA)) ||
+				commitAtOrAheadOfTarget(payload.GitHash, pendingHeartbeatTarget, s.logger)
 			floatingAtLatest := h.Upgrading && !payload.Upgrading && imageTagIsMutable(payload.ImageRef) &&
-				(!channelTarget || channelSatisfied)
+				(!channelTarget || channelSatisfied) && pendingHeartbeatSatisfied
 			if floatingAtLatest {
 				entry.Upgrading = false
 				entry.UpgradeTarget = ""

@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ReviewDecision is GitHub's own aggregate verdict on a PR's reviews, as
@@ -39,6 +40,15 @@ type ProtectionFacts struct {
 	// ChangesRequestedBy are the logins whose latest review on this PR asked
 	// for changes.
 	ChangesRequestedBy []string `json:"changes_requested_by,omitempty"`
+	// LatestHumanReviewState is the newest trusted human opinionated review
+	// (APPROVED or CHANGES_REQUESTED) observed on the PR. GitHub's aggregate
+	// ReviewDecision can stay CHANGES_REQUESTED after an agent pushed or
+	// replied; these fields let routing and dashboards agree on the specific
+	// review that needs to be addressed.
+	LatestHumanReviewState       ReviewDecision `json:"latest_human_review_state,omitempty"`
+	LatestHumanReviewBy          string         `json:"latest_human_review_by,omitempty"`
+	LatestHumanReviewSubmittedAt time.Time      `json:"latest_human_review_submitted_at,omitempty"`
+	LatestHumanReviewAddressed   bool           `json:"latest_human_review_addressed,omitempty"`
 	// ApprovalsGiven counts distinct reviewers whose latest opinionated
 	// review is an approval.
 	ApprovalsGiven int `json:"approvals_given,omitempty"`

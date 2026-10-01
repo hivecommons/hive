@@ -87,6 +87,13 @@ type wireIssue struct {
 	AuthorAssociation string `json:"author_association,omitempty"`
 	// Setting PullRequest makes IsPullRequest() return true.
 	PullRequest *struct{} `json:"pull_request,omitempty"`
+	// IssueDependenciesSummary is GitHub's "blocked by" count block (#9839).
+	IssueDependenciesSummary *wireDepsSummary `json:"issue_dependencies_summary,omitempty"`
+}
+
+type wireDepsSummary struct {
+	BlockedBy      int `json:"blocked_by"`
+	TotalBlockedBy int `json:"total_blocked_by"`
 }
 
 func mustMarshal(t *testing.T, v any) []byte {

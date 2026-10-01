@@ -102,6 +102,13 @@ type IssueRequest struct {
 	// progress bar instead of only a "Part of #N" line in the body
 	// (hivecommons/hive#9435). A failure to link does not fail the create.
 	Parent int `json:"parent,omitempty"` // issue only
+	// BlockedBy lists issue numbers in the same repo that must close before
+	// this one is ready. On an "issue" request the watcher records each as a
+	// GitHub "blocked by" dependency of the new issue after creating it
+	// (hivecommons/hive#9839), so a split's order lives where enumeration can
+	// read it instead of only in prose. A failed link does not fail the
+	// create; linked and failed blockers are both reported in the result.
+	BlockedBy []int `json:"blocked_by,omitempty"` // issue only
 }
 
 // claimLabelPrefix is the label namespace applied for a "claim" request. The
@@ -142,6 +149,11 @@ type IssueResponse struct {
 	// when a requested link did not succeed; the issue is still created OK.
 	ParentLinked    bool   `json:"parent_linked,omitempty"`
 	ParentLinkError string `json:"parent_link_error,omitempty"`
+	// BlockedByLinked lists the req.BlockedBy numbers that were recorded as
+	// GitHub "blocked by" dependencies of the created issue; BlockedByErrors
+	// names each one that could not be, with the reason (#9839).
+	BlockedByLinked []int    `json:"blocked_by_linked,omitempty"`
+	BlockedByErrors []string `json:"blocked_by_errors,omitempty"`
 }
 
 // IssueRequestAuthorizer mirrors PRRequestAuthorizer: it receives the claimed
@@ -531,6 +543,15 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 							slog.String("repo", req.Repo), slog.Int("number", res.Number),
 							slog.Int("parent", req.Parent), slog.String("error", recErr.Error()))
 					}
+				}
+			}
+			// Best-effort GitHub "blocked by" links (#9839), same contract as
+			// the parent link: never a failure of the create.
+			if len(req.BlockedBy) > 0 && !res.Consolidated && res.Number > 0 {
+				resp.BlockedByLinked, resp.BlockedByErrors = c.linkBlockedBy(ctx, req.Repo, res.Number, req.BlockedBy)
+				for _, e := range resp.BlockedByErrors {
+					c.logger.Warn("issue-request watcher: blocked-by link failed, issue still created",
+						slog.String("repo", req.Repo), slog.Int("number", res.Number), slog.String("blocker", e))
 				}
 			}
 		}

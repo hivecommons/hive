@@ -202,6 +202,28 @@ func TestGPT53CodexPriced(t *testing.T) {
 	}
 }
 
+func TestIssue9804DropdownModelsPriced(t *testing.T) {
+	cases := []struct {
+		name   string
+		models []string
+	}{
+		{"claude 5.x", []string{"claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}},
+		{"codex gpt-6", []string{"gpt-6-astra", "gpt-6-sol", "gpt-6-luna"}},
+		{"gemini 3 previews", []string{"gemini-3-pro-preview", "gemini-3-flash-preview"}},
+		{"copilot fallback", []string{"gpt-4.1", "gpt-4o", "o3", "o4-mini", "gemini-2.5-pro"}},
+		{"agy and omp selectors", []string{"gemini-3.7-flash-high", "gemini-3.6-flash-low", "gemini-3.1-pro-high", "claude-opus-4-6-thinking", "gpt-oss-120b-medium", "anthropic/claude-sonnet-5-5"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, model := range tc.models {
+				if _, priced := LookupPrice(model); !priced {
+					t.Errorf("%q should have an exact price entry", model)
+				}
+			}
+		})
+	}
+}
+
 // TestEstimateFromSummary_ModelDedup verifies dotted/dashed spellings of the
 // same model collapse into one cost row (they must stay distinct for CLI
 // launch, but not for cost).

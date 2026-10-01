@@ -42,7 +42,7 @@ Shapes are selected by an optional leading positional keyword (`comment`,
 `issue`):
 
 ```sh
-hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>]
+hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>]
 hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>"
 hive-open-issue claim   --repo <owner/repo> <number|url>
 hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
@@ -60,6 +60,7 @@ hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b]
 | `--reviewer` | `--add-reviewer` | request-review | repeatable; comma-separated GitHub logins to ask for a review |
 | `--team-reviewer` | — | request-review | repeatable; team slugs (an `org/` prefix is accepted) to ask for a review |
 | `--parent` | — | issue | issue number in the same repo to link the new issue to as a GitHub sub-issue |
+| `--blocked-by` | — | issue | repeatable; issue numbers in the same repo the new issue is blocked by, recorded as GitHub "blocked by" dependencies (`#` prefix tolerated) |
 | `--number` | — | comment, claim, close, label, request-review | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
 | `--dry-run` | `-n` | all | validate the arguments and print the exact request that would be written, then exit `0` **without writing it** — nothing is created, commented, claimed, or closed |
 
@@ -100,6 +101,23 @@ body regardless
 (parent missing, GitHub's sub-issue cap reached, a transient API error, …)
 never stops the child issue from being created; the failure is logged and
 recorded on the request's result file (`parent_link_error`) instead.
+
+`--blocked-by <n[,n]>` records that the new issue must wait for issue(s) `n`
+in the same repo, as GitHub "blocked by" dependencies
+(`POST /repos/{owner}/{repo}/issues/{new}/dependencies/blocked_by`), after the
+watcher creates it. When an agent splits an issue into steps that have an
+order — a schema change, then the code that reads it, then the docs — each
+later child names the one(s) before it so the order is recorded where GitHub
+and the hive both read it, not only in prose
+([#9839](https://github.com/hivecommons/hive/issues/9839)). The hive reads the
+same links back on every scan: an issue with an open blocker is kept out of
+the actionable list an agent picks from and named in a short footer with its
+blockers instead; the moment the blocker closes it is offered again with no
+further action. Linking is best-effort like `--parent`: a blocker that cannot
+be resolved is reported on the result file (`blocked_by_errors`, alongside
+`blocked_by_linked`) and never stops the issue from being created. A mutual
+block (A blocked by B, B blocked by A) would hide both forever, so the hive
+drops that pair with a warning and offers both.
 
 ### `comment`
 

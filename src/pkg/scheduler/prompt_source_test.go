@@ -34,8 +34,8 @@ func newPromptSourceCfg(t *testing.T, extraAgent config.AgentConfig, allow bool,
 	}
 	extraAgent.KickTemplate = "gh-agent.md"
 	return &config.Config{
-		Project: config.ProjectConfig{Org: "testorg", Name: "t", PrimaryRepo: "r", Repos: []string{"r"}},
-		Agents:  map[string]config.AgentConfig{"gh-agent": extraAgent},
+		Project:  config.ProjectConfig{Org: "testorg", Name: "t", PrimaryRepo: "r", Repos: []string{"r"}},
+		Agents:   map[string]config.AgentConfig{"gh-agent": extraAgent},
 		Policies: config.PoliciesConfig{LocalDir: dir},
 		Variables: config.VariablesConfig{Security: config.VarSecurityConfig{
 			AllowGitHubPrompt:     allow,

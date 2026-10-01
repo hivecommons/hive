@@ -31,10 +31,10 @@ that apply regardless of which runtime you are moving.
 | Hive ID | PVC `hive-data` | `/data/hive-id` | `src/pkg/dashboard/api_hive_id.go:14` (`hiveIDFilePath = "/data/hive-id"`) |
 | GitHub App private key (or PAT) | Secret `hive-secrets` | key `gh-app-key.pem` (or `HIVE_GITHUB_TOKEN`), mounted read-only at `/secrets` | `src/deploy/k8s/secret.yaml`, `src/deploy/k8s/deployment.yaml` (volume `secrets`, `defaultMode: 0440`) |
 | Base config | ConfigMap `hive-config` | key `hive.yaml`, mounted at `/etc/hive/hive.yaml` | `src/deploy/k8s/configmap.yaml`, `src/deploy/k8s/kustomization.yaml` |
-| Dashboard-saved config overlay | PVC `hive-data` | `/data/hive.yaml.dashboard` (merged over the ConfigMap seed at boot) | `src/deploy/entrypoint.sh:533,550` |
-| Runtime config (legacy PVC-first path) | PVC `hive-data` | `/data/hive.yaml.runtime` (and legacy `/data/hive.yaml.bak`) | `src/deploy/entrypoint.sh:69,262,681` |
-| Beads ledgers (per-agent work state) | PVC `hive-data` | `/data/beads/<agent>/` (symlinked to `/home/dev/<agent>-beads`) | `src/deploy/entrypoint.sh:894-903` |
-| Agent backend credentials / home dirs | PVC `hive-data` | `/data/home` (bind-seeded to `/data/home/.config`, `.bashrc`, `.profile`, per-agent `$HOME`) | `src/deploy/entrypoint.sh:151-169` |
+| Dashboard-saved config overlay | PVC `hive-data` | `/data/hive.yaml.dashboard` (merged over the ConfigMap seed at boot) | `src/deploy/entrypoint.sh:862,879` |
+| Runtime config (legacy PVC-first path) | PVC `hive-data` | `/data/hive.yaml.runtime` (and legacy `/data/hive.yaml.bak`) | `src/deploy/entrypoint.sh:69-70` |
+| Beads ledgers (per-agent work state) | PVC `hive-data` | `/data/beads/<agent>/` (symlinked to `/home/dev/<agent>-beads`) | `src/deploy/entrypoint.sh:1239-1248` |
+| Agent backend credentials / home dirs | PVC `hive-data` | `/data/home` (bind-seeded to `/data/home/.config`, `.bashrc`, `.profile`, per-agent `$HOME`) | `src/deploy/entrypoint.sh:1279-1287` |
 | Backup encryption key (if the dashboard "Set key" flow was used) | PVC `hive-data` | `/data/secrets/backup_encryption_key`, mode `0600` | `src/docs/backup-restore.md` "Setting the backup encryption key (hosted flow)" |
 | Dashboard auth / bootstrap secrets | Secret `hive-secrets` | keys `HIVE_DASHBOARD_TOKEN`, optionally `bob_api_key` | `src/deploy/k8s/secret.yaml` |
 | Own dashboard/ingress route-reader RBAC | Role/RoleBinding `hive-dashboard-route-reader` | in-namespace, lets the hive discover its own served host | `src/deploy/k8s/dashboard-route-rbac.yaml` |
@@ -50,10 +50,9 @@ agent state, config overlays) is on the PVC.
 > against the target before starting, since none is checked automatically:
 
 - A `StorageClass` that supports the access mode your PVC needs. The shipped
-  default (`src/deploy/k8s/pvc.yaml`) is `ReadWriteOnce`, 10Gi; README.md's
-  "Kubernetes Deployment" step 4 recommends an NFS-backed `ReadWriteMany`
-  class only if you want zero-downtime rolling upgrades, which a cluster move
-  is not.
+  default (`src/deploy/k8s/pvc.yaml`) is `ReadWriteOnce`, 10Gi, which is
+  enough because the Deployment is one replica with `strategy: Recreate`
+  (README.md "Kubernetes Deployment" step 4).
 - An ingress controller (or OpenShift Route support) matching what you use on
   the source — the base manifest set ships no Ingress/Route object at all
   (`src/deploy/k8s/kustomization.yaml` lists no Ingress; the OpenShift Route is
@@ -218,7 +217,7 @@ kubectl --context <source> -n hive delete namespace hive
 |---|---|---|
 | 9 | Self-hosted K8s → K8s guide | **DOCUMENTED, NOT EXECUTED** (this document) |
 | 12 | Host-bound settings for self-hosted K8s | **DOCUMENTED, NOT EXECUTED** — step 4 above; no hub auth proxy or `meta.json` is involved for a non-hub-registered self-hosted hive |
-| 13 | Agent backend credential location / re-auth need | `/data/home` is the backend credential and per-agent `$HOME` store (`src/deploy/entrypoint.sh:151-169`) and is carried by the PVC copy in step 3, so a full-PVC copy should not force re-authentication — **UNCONFIRMED**: whether every supported backend (Copilot/Claude/Codex/bob) tolerates being moved to a new pod/host without re-auth was not exercised here; bob specifically requires `bob_api_key` at `/secrets/bob_api_key` rather than an on-disk session (`src/deploy/k8s/secret.yaml` comment), so it is unaffected by a `/data/home` move either way |
+| 13 | Agent backend credential location / re-auth need | `/data/home` is the backend credential and per-agent `$HOME` store (`src/deploy/entrypoint.sh:1279-1287`) and is carried by the PVC copy in step 3, so a full-PVC copy should not force re-authentication — **UNCONFIRMED**: whether every supported backend (Copilot/Claude/Codex/bob) tolerates being moved to a new pod/host without re-auth was not exercised here; bob specifically requires `bob_api_key` at `/secrets/bob_api_key` rather than an on-disk session (`src/deploy/k8s/secret.yaml` comment), so it is unaffected by a `/data/home` move either way |
 | 14 | Backup-key escrow as a pre-move step | **DOCUMENTED, NOT EXECUTED** — step 1 above |
 | 15 | Target cluster prerequisites | **DOCUMENTED, NOT EXECUTED** — "Target cluster prerequisites" section above |
 | 5 | Same image digest required on target | **UNCONFIRMED** — no code path asserts image-digest equality across a restore; inspection only |

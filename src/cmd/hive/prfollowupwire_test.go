@@ -213,6 +213,37 @@ func TestCollectPRFollowUpComments_FetchFailureSkipsPR(t *testing.T) {
 	}
 }
 
+func TestHeldPRFollowUpCandidates_RecordsAttributionFallback(t *testing.T) {
+	t.Setenv(config.PRFollowUpResumeEnvVar, "true")
+	dir := prFollowUpTestDir(t)
+	reviewAt := time.Date(2026, 9, 30, 14, 15, 0, 0, time.UTC)
+	cfg := &config.Config{Project: config.ProjectConfig{Org: "hivecommons"}}
+	held := []github.PullRequest{
+		{
+			Repo: "hive", Number: 9, Title: "fix auth", URL: "https://example.invalid/pr/9", HiveAttributed: true,
+			Protection: &github.ProtectionFacts{
+				ReviewDecision:               github.ReviewDecisionChangesRequested,
+				ChangesRequestedBy:           []string{"alice"},
+				LatestHumanReviewState:       github.ReviewDecisionChangesRequested,
+				LatestHumanReviewBy:          "alice",
+				LatestHumanReviewSubmittedAt: reviewAt,
+			},
+		},
+		{
+			Repo: "hive", Number: 10, Title: "human pr",
+			Protection: &github.ProtectionFacts{LatestHumanReviewState: github.ReviewDecisionChangesRequested},
+		},
+	}
+	candidates := heldPRFollowUpCandidates(context.Background(), cfg, nil, dir, held, map[string]string{"hivecommons/hive#9": "sec-check"}, reviewAt, discardLogger())
+	if len(candidates) != 1 || candidates[0].Repo != "hivecommons/hive" || candidates[0].Number != 9 {
+		t.Fatalf("candidates = %+v, want only attributed held hive PR", candidates)
+	}
+	out := prfollowup.Route(context.Background(), candidates, nil, prfollowup.Options{Dir: dir}, reviewAt)
+	if len(out) != 1 || out[0].Agent != "sec-check" || out[0].Route != prfollowup.RouteFallback || len(out[0].Events) != 1 || out[0].Events[0].Kind != prfollowup.EventChangesRequested {
+		t.Fatalf("route outcomes = %+v, want changes_requested fallback to sec-check", out)
+	}
+}
+
 // The sweep deletes the pointer of a PR that merged after leaving the open
 // list, keeps a hold-gated PR's pointer without a lookup, and runs at most
 // once per interval.

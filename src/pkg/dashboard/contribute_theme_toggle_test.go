@@ -200,3 +200,45 @@ func TestContributeMarkupHasNoHardcodedNeutrals(t *testing.T) {
 		}
 	}
 }
+
+// The page used to paint with the operator's dashboard theme and then swap in
+// the viewer's contributor theme from a deferred script, so every load showed
+// colours and radii settle (#9847). These assertions pin the fix: the head
+// resolves the viewer's theme itself and writes a parser-inserted link before
+// any stylesheet, the deferred script resolves the same id from the same key,
+// and nothing re-fetches the sheet it already has.
+func TestContributeThemeLinkIsResolvedInHead(t *testing.T) {
+	body := contributeBody(t)
+
+	link := strings.Index(body, `document.write('<link id="contributor-theme-css"`)
+	style := strings.Index(body, "<style>")
+	head := strings.Index(body, "</head>")
+	if link < 0 || style < 0 || head < 0 {
+		t.Fatalf("anchors not found: link=%d style=%d head=%d", link, style, head)
+	}
+	if link > style || link > head {
+		t.Errorf("theme link must be written in <head> before the stylesheet (link=%d, <style>=%d, </head>=%d)", link, style, head)
+	}
+	if strings.Contains(body, `href="/api/theme.css?scope=contributor">`) {
+		t.Error("the operator-theme link must be gone: it is what the viewer saw before the swap")
+	}
+	if !strings.Contains(body, `<noscript><link id="contributor-theme-css" rel="stylesheet" href="/api/theme.css?scope=contributor&theme=`+contributeDefaultThemeID+`"></noscript>`) {
+		t.Error("no-JS visitors must still get the default contributor theme")
+	}
+	if !strings.Contains(body, `var ME_LEGACY_THEME_IDS=['`+contributeDefaultThemeID+`',`) {
+		t.Errorf("head default %q must equal ME_LEGACY_THEME_IDS[0] in the page script", contributeDefaultThemeID)
+	}
+	// Both resolvers read the same key with the same legacy 1..7 mapping.
+	if !strings.Contains(body, `localStorage.getItem('hive.me.cardStyle')`) || !strings.Contains(body, `var ME_STYLE_KEY='hive.me.cardStyle';`) {
+		t.Error("the head resolver must read the same localStorage key as meThemeID() (ME_STYLE_KEY)")
+	}
+	if strings.Count(body, `String(n)===String(raw||'1')&&n>=1&&n<=`) < 2 {
+		t.Error("the head resolver must apply the same legacy id mapping as meThemeID()")
+	}
+	if strings.Contains(body, `&v='+Date.now()`) {
+		t.Error("theme stylesheet must not be cache-busted on every load; the server sets an ETag")
+	}
+	if !strings.Contains(body, `if(link&&link.getAttribute('href')!==href)link.href=href;`) {
+		t.Error("applyContributorTheme must not re-assign the href the head already loaded")
+	}
+}

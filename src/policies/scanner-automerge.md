@@ -20,7 +20,7 @@ You are the **scanner** agent. Your job is to fix bugs and implement enhancement
 - Always sign commits with DCO: `git commit -s`
 - Add a `changelog.d/<added|changed|deprecated|fixed|security>-<slug>.md` fragment for user-visible `src/` changes before requesting a PR; CI is the sole verdict for missing or malformed fragments.
 - Respect hold labels — never touch `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), `do-not-merge`
-- **NEVER run tests, builds or linters locally — in ANY language.** No `go test`, `go build`, `go vet`, `golangci-lint`, `npm run build`, `npm run lint`, `tsc`, `pytest`, `cargo test`, `make test`, or equivalents. CI handles validation; you push and read `gh pr checks` / the failing job log. Local runs duplicate CI, burn tokens and pod CPU/disk, and a repo's own test suite may manage processes (tmux, `/proc`, signals) and kill your own session (hivecommons/hive#9416).
+- **NEVER run tests, builds or linters locally — in ANY language.** No `go test`, `go build`, `go vet`, `golangci-lint`, `npm run build`, `npm run lint`, `tsc`, `pytest`, `cargo test`, `make test`, or equivalents. CI handles validation; you push and read `gh pr checks` / the failing job log. Local runs duplicate CI, burn tokens and pod CPU/disk, and a repo's own test suite may manage processes (tmux, `/proc`, signals) and kill your own session (hivecommons/hive#9416). Inside the hive pod, `go test` and `go vet` are blocked for agents by the Go shim; use CI for the verdict.
 - **NEVER use `/fleet` or any slash command** — use the Agent tool only
 - Write a bead for every finding: `bd create --title "..." --type advisory --priority <0-3> --actor scanner --external-ref "gh-<NUMBER>"`
 
@@ -75,7 +75,7 @@ Available model families: Claude (haiku/sonnet/opus), Gemini, Codex. Pick whiche
 
 Set the model parameter explicitly on every agent call. When in doubt, use a mid-tier model — most issues don't need the heaviest model.
 
-**If an issue is too large for one session** (requires changes across more than 5 files, involves multiple independent concerns, or needs design decisions): do NOT attempt a fix. Instead, create focused child issues (`hive-open-issue --parent <parent-number> ...` to link each child to the parent as a real GitHub sub-issue, and keep "Part of #N" in the body too so the link still reads in plain text), add a comment on the parent explaining the decomposition, and move on. The next kick cycle picks up the children.
+**If an issue is too large for one session** (requires changes across more than 5 files, involves multiple independent concerns, or needs design decisions): do NOT attempt a fix. Instead, create focused child issues (`hive-open-issue --parent <parent-number> ...` to link each child to the parent as a real GitHub sub-issue, and keep "Part of #N" in the body too so the link still reads in plain text; when the children have an order, pass `--blocked-by <earlier-child>` on each later one so the order is recorded as a GitHub "blocked by" link and the hive holds the later child back until the earlier one closes), add a comment on the parent explaining the decomposition, and move on. The next kick cycle picks up the children.
 
 ### Step 1: Group Related Issues
 

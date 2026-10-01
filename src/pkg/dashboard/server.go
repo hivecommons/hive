@@ -7,6 +7,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -1360,6 +1361,48 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+// writeProxyProofRejected answers a request that arrived with hub identity
+// headers (X-Hive-User/X-Hive-Role) whose X-Hive-Proxy-Auth proof was missing
+// or did not match this spoke's dashboard token. It is 403, never 401: the
+// hub already authenticated the browser, so the failure is a hub↔spoke
+// misconfiguration (or a forged header) that re-authenticating cannot fix —
+// and on a hosted spoke the Ingress rewrites a backend 401 into the hub's
+// auth-signin redirect, which is how #9785 looped. The page names the cause so
+// the hive's operator can act on it instead of seeing a browser error.
+func writeProxyProofRejected(w http.ResponseWriter, r *http.Request, reason string) {
+	slog.Warn("dashboard: rejected hub-proxied request with unverified proxy proof; hub and spoke dashboard tokens disagree or hub omitted the proof",
+		"reason", reason, "path", r.URL.Path, "user", r.Header.Get("X-Hive-User"))
+	w.Header().Set("Cache-Control", "no-store")
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		jsonStatusResponse(w, http.StatusForbidden, map[string]string{"error": reason})
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = fmt.Fprintf(w, proxyProofRejectedPage, html.EscapeString(reason))
+}
+
+// proxyProofRejectedPage is the HTML writeProxyProofRejected renders for a
+// page request. %s is the escaped rejection reason.
+const proxyProofRejectedPage = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hive — signed in, but this hive could not verify the hub</title>
+<style>
+:root{color-scheme:light dark}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0d1117;color:#e6edf3}
+.card{width:min(520px,94vw);padding:40px;border:1px solid #30363d;border-radius:18px;background:#161b22}
+h1{font-size:22px;margin:0 0 14px}
+p{color:#c9d1d9;font-size:15px;line-height:1.5}
+code{color:#e6edf3}
+.foot{margin-top:24px;color:#8b949e;font-size:13px;line-height:1.5}
+</style></head><body>
+<div class="card">
+<h1>Signed in, but this hive could not verify the hub</h1>
+<p>The Hive hub signed you in, but this hive rejected the hub's identity proof (<code>%s</code>), so it cannot show you the dashboard. Signing in again will not help.</p>
+<div class="foot">This is a configuration mismatch between the hub and this hive, not a problem with your account. Tell the hive's owner: the hub's copy of this hive's dashboard token no longer matches the one the hive is running with.</div>
+</div></body></html>`
+
 // authenticate resolves the caller's identity and enforces authentication. It
 // runs OUTERMOST — before roleEnforcement — so that the X-Hive-User/X-Hive-Role
 // it injects from a per-user session are visible to roleEnforcement's read-only
@@ -1625,12 +1668,20 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		}
 
 		if !trusted {
+			if proxyProofRejectReason != "" {
+				// The hub ALREADY authenticated this browser (it injected
+				// X-Hive-User) and only the proof failed, so signing in again
+				// can never help. This must not be a 401: the hosted Ingress
+				// runs with proxy_intercept_errors and `error_page 401 =
+				// auth-signin`, so a 401 here is turned into a redirect to the
+				// hub's /login, which finds a valid session and bounces the
+				// browser straight back — the redirect loop of #9785, which the
+				// hub cannot break because its own auth-check keeps passing.
+				writeProxyProofRejected(w, r, proxyProofRejectReason)
+				return
+			}
 			if strings.HasPrefix(r.URL.Path, "/api/") {
 				w.Header().Set("Content-Type", "application/json")
-				if proxyProofRejectReason != "" {
-					http.Error(w, fmt.Sprintf(`{"error":%q}`, proxyProofRejectReason), http.StatusUnauthorized)
-					return
-				}
 				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			} else {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -2857,7 +2908,33 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 		checks["hub_heartbeat"] = hbCheck
 	}
 
-	// 11. Queue trend (is work being processed?)
+	// 11. Data volume headroom (#9869). Omitted when /data cannot be read:
+	// an absent mount is not a full one.
+	if usage, ok := currentDataDiskUsage(); ok {
+		st, detail := dataDiskHealth(usage)
+		diskCheck := map[string]any{
+			"status":      st,
+			"detail":      detail,
+			"path":        usage.Path,
+			"used_pct":    roundTo(usage.Pct(), 1),
+			"used_bytes":  usage.UsedBytes,
+			"total_bytes": usage.TotalBytes,
+		}
+		switch st {
+		case "fail":
+			failCount++
+			if overall == "ok" {
+				overall = "degraded"
+			}
+		case "warn":
+			if overall == "ok" {
+				overall = "degraded"
+			}
+		}
+		checks[healthCheckDataDisk] = diskCheck
+	}
+
+	// 12. Queue trend (is work being processed?)
 	s.statusMu.RLock()
 	if s.status != nil {
 		totalActionable := 0
@@ -3902,7 +3979,22 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		}
 	}
 
-	// 7. Queue
+	// 7. Data volume headroom (#9869). A filling /data used to go unreported
+	// until kubelet evicted the pod; this check is what the hub alert surface
+	// (failingHealthChecks) and the dashboard tooltip see first. Omitted when
+	// /data cannot be read: an absent mount is not a full one.
+	if usage, ok := currentDataDiskUsage(); ok {
+		st, detail := dataDiskHealth(usage)
+		checks = append(checks, check{Name: healthCheckDataDisk, Status: st, Detail: detail})
+		switch st {
+		case "fail":
+			fails++
+		case "warn":
+			warns++
+		}
+	}
+
+	// 8. Queue
 	if status != nil {
 		total := 0
 		for _, repo := range status.Repos {

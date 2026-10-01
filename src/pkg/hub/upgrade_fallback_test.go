@@ -82,6 +82,56 @@ func TestHandleUpgradeHiveUnreachableClusterArmsHeartbeatFallback(t *testing.T) 
 	}
 }
 
+func TestHandleUpgradeHiveStableAlreadyAtChannelRefusesNoop(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	stubChannelRevisions(t, map[string]string{"stable": "d5a638e"})
+	seedLatestSHA(t, "v5", "abc9999")
+
+	mkUser(t, "alice")
+	if err := saveSaaSHive(&SaaSHive{
+		ID:             "h-stable",
+		Owner:          "alice",
+		ClusterID:      "vllm-d",
+		TrackedChannel: "stable",
+	}); err != nil {
+		t.Fatalf("save hive: %v", err)
+	}
+	s := &HubServer{
+		hubSecret: testHubSecret,
+		logger:    slog.Default(),
+		clusters:  map[string]ClusterConfig{"vllm-d": {ID: "vllm-d"}},
+	}
+	s.registry.Hives = []RegistryEntry{{
+		ID:            "h-stable",
+		GitBranch:     "v5",
+		GitHash:       "d5a638e",
+		ImageRef:      "ghcr.io/hivecommons/hive:stable",
+		LastHeartbeat: time.Now().UTC().Format(time.RFC3339),
+	}}
+
+	rec := httptest.NewRecorder()
+	req := setPathValue(reqWithUser("POST", "/up", "", "alice"), "id", "h-stable")
+	s.handleUpgradeHive(rec, req)
+
+	if rec.Code != 409 {
+		t.Fatalf("stable no-op upgrade status = %d, want 409 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "already resolves to the running commit d5a638e") {
+		t.Errorf("response should explain the channel no-op, got %s", rec.Body.String())
+	}
+	s.mu.Lock()
+	_, armed := s.heartbeatUpgrade["h-stable"]
+	latched := s.registry.Hives[0].Upgrading
+	s.mu.Unlock()
+	if armed {
+		t.Error("no-op manual upgrade must not arm heartbeat delivery")
+	}
+	if latched {
+		t.Error("no-op manual upgrade must not latch Upgrading")
+	}
+}
+
 // When kubectl cannot deliver AND no image-verified build target exists for
 // the branch, there is genuinely nothing a heartbeat could carry — that is the
 // one remaining hard-failure case, and it must say so rather than pretend.

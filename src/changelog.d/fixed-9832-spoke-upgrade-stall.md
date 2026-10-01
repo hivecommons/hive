@@ -1,0 +1,1 @@
+- Refuse no-op manual upgrades for release-channel spokes and keep heartbeat upgrade latches armed until the target is actually delivered, surfacing the reason instead of silently clearing the request.

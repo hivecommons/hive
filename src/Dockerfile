@@ -477,8 +477,10 @@ RUN cd /opt/hive/proxy && npm install --omit=dev 2>/dev/null || true
 # are invalidated on every commit.
 ARG GIT_HASH=unknown
 
-# Go toolchain for agents that run `go test`, `go build`, etc.
+# Go toolchain for agents. The wrapper below blocks in-pod test/vet
+# execution by agents while preserving build/fmt/mod/etc.
 COPY --from=builder /usr/local/go /usr/local/go
+RUN mv /usr/local/go/bin/go /usr/local/go/bin/go-real
 ENV PATH="/usr/local/go/bin:${PATH}"
 
 COPY --from=builder /hive /usr/local/bin/hive
@@ -553,12 +555,13 @@ COPY bin/hive-review.sh /usr/local/bin/hive-review
 COPY bin/hive-push-branch.sh /usr/local/bin/hive-push-branch
 COPY bin/hive-baseline-check.sh /usr/local/bin/hive-baseline-check.sh
 COPY bin/gh-wrapper.sh /usr/local/bin/gh
+COPY bin/go-wrapper.sh /usr/local/go/bin/go
 # SDK-based copilot model discovery helper (see Layer 3b). Invoked as
 # `node /usr/local/bin/copilot-models.mjs` by the dashboard, so no exec bit.
 COPY bin/copilot-models.mjs /usr/local/bin/copilot-models.mjs
 COPY config/backends.conf /usr/local/etc/hive/backends.conf
 RUN chmod +x /usr/local/bin/ttyd-tmux.sh /usr/local/bin/hive-panes /usr/local/bin/gh-app-token.sh \
-    /usr/local/bin/hive-config.sh /usr/local/bin/agent-launch.sh /usr/local/bin/gh \
+    /usr/local/bin/hive-config.sh /usr/local/bin/agent-launch.sh /usr/local/bin/gh /usr/local/go/bin/go \
     /usr/local/bin/git-credential-hive.sh /usr/local/bin/hive-open-pr /usr/local/bin/hive-open-issue /usr/local/bin/hive-merge /usr/local/bin/hive-review \
     /usr/local/bin/hive-push-branch \
     /usr/local/bin/hive-baseline-check.sh

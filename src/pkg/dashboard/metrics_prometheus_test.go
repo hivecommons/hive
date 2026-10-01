@@ -18,6 +18,8 @@ func (m metricsSchedulerStub) BuildAgentMessage(string, []ghpkg.Issue, *ghpkg.Ac
 	return ""
 }
 func (m metricsSchedulerStub) BuildAgentMessageFromLastActionable(string) string { return "" }
+func (m metricsSchedulerStub) FirstScanDone() bool                               { return true }
+func (m metricsSchedulerStub) DeferKickUntilFirstScan(string, func(string))      {}
 func (m metricsSchedulerStub) GetLastActionable() *ghpkg.ActionableResult        { return m.actionable }
 func (m metricsSchedulerStub) ResolveTemplate(string) scheduler.TemplateResolution {
 	return scheduler.TemplateResolution{}

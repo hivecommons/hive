@@ -204,9 +204,22 @@ func pushBranchRemoteURL(owner, repo string) string {
 // hive's), and the App token as an extraHeader on the remote — a process-local
 // Git config overlay, so the credential never touches
 // the agent-owned working tree's config.
+//
+// Because the watcher runs git inside a tree owned by the requesting agent's
+// UID, every repo-local channel that makes git execute a program must be
+// neutralized: hooks (pre-push runs on every push), core.fsmonitor, and
+// credential helpers are all configurable from the agent-writable .git
+// directory and would otherwise run as the hive's UID with this environment —
+// including the App token header — visible to them. GIT_CONFIG_* pairs have
+// command-line precedence, so they override anything set in the checkout.
 func pushBranchGitEnv(dir, remote, header string) []string {
 	env := []string{"GIT_TERMINAL_PROMPT=0"}
-	pairs := [][2]string{{"safe.directory", dir}}
+	pairs := [][2]string{
+		{"safe.directory", dir},
+		{"core.hooksPath", os.DevNull},
+		{"core.fsmonitor", "false"},
+		{"credential.helper", ""},
+	}
 	if header != "" {
 		pairs = append(pairs, [2]string{"http." + strings.TrimRight(remote, "/") + ".extraHeader", header})
 	}

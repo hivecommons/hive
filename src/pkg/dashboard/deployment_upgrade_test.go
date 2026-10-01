@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"encoding/pem"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 )
@@ -187,6 +189,127 @@ func TestStandaloneSelfUpgradeStillRequiresOwner(t *testing.T) {
 	}
 	if _, err := os.Stat(argsPath); !os.IsNotExist(err) {
 		t.Fatalf("helper ran for non-owner request; stat err=%v", err)
+	}
+}
+
+func TestKubernetesSelfUpgradePrecheckRejectsMissingPatchRBAC(t *testing.T) {
+	clearDeploymentEnv(t)
+	dir := t.TempDir()
+	nsPath := filepath.Join(dir, "namespace")
+	tokenPath := filepath.Join(dir, "token")
+	caPath := filepath.Join(dir, "ca.crt")
+	if err := os.WriteFile(nsPath, []byte("hive-ns"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tokenPath, []byte("token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	api := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"kind":"Deployment"}`))
+		case http.MethodPatch:
+			http.Error(w, "deployments.apps \"hive\" is forbidden", http.StatusForbidden)
+		default:
+			t.Errorf("unexpected method %s", r.Method)
+			http.NotFound(w, r)
+		}
+	}))
+	defer api.Close()
+	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: api.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	oldNS, oldToken, oldCA, oldAPI := kubernetesServiceAccountNamespacePath, kubernetesServiceAccountTokenPath, kubernetesServiceAccountCACertPath, kubernetesAPIServerURL
+	kubernetesServiceAccountNamespacePath = nsPath
+	kubernetesServiceAccountTokenPath = tokenPath
+	kubernetesServiceAccountCACertPath = caPath
+	kubernetesAPIServerURL = api.URL
+	t.Cleanup(func() {
+		kubernetesServiceAccountNamespacePath = oldNS
+		kubernetesServiceAccountTokenPath = oldToken
+		kubernetesServiceAccountCACertPath = oldCA
+		kubernetesAPIServerURL = oldAPI
+	})
+
+	srv := NewServer(0, slog.Default())
+	if err := srv.precheckKubernetesSelfUpgrade(""); err == nil || !strings.Contains(err.Error(), "cannot patch deployment/hive") {
+		t.Fatalf("precheck error = %v, want patch RBAC refusal", err)
+	}
+}
+
+func TestHandleSelfUpgradePersistsHubAcceptedState(t *testing.T) {
+	const hiveID = "hosted-test-hive"
+	statePath := filepath.Join(t.TempDir(), "dashboard-upgrade-state.json")
+	oldStatePath := dashboardUpgradeStatePath
+	dashboardUpgradeStatePath = statePath
+	t.Cleanup(func() { dashboardUpgradeStatePath = oldStatePath })
+
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"upgrading","mode":"heartbeat"}`))
+	}))
+	defer hub.Close()
+
+	srv := NewServer(0, slog.Default())
+	srv.deps = &Dependencies{Config: &config.Config{
+		Hub:        config.HubConfig{URL: hub.URL},
+		HiveID:     hiveID,
+		Dashboard:  config.DashboardConfig{AuthToken: "spoke-token"},
+		Deployment: config.DeploymentConfig{Runtime: "kubernetes"},
+	}, Logger: slog.Default()}
+	req := httptest.NewRequest(http.MethodPost, "/api/self-upgrade", nil)
+	markOwnerRequest(req)
+	w := httptest.NewRecorder()
+	srv.handleSelfUpgrade(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+	st := readDashboardUpgradeState()
+	if st == nil || st.State != dashboardUpgradeStateStarted || st.StartedAt.IsZero() {
+		t.Fatalf("dashboard upgrade state = %+v, want started with timestamp", st)
+	}
+}
+
+func TestHandleVersionSurfacesPersistedManualUpgradeFailure(t *testing.T) {
+	dir := t.TempDir()
+	oldStatePath, oldMarkerPath, oldOutcomePath := dashboardUpgradeStatePath, upgradeMarkerPath, upgradeOutcomePath
+	dashboardUpgradeStatePath = filepath.Join(dir, "dashboard-upgrade-state.json")
+	upgradeMarkerPath = filepath.Join(dir, "missing-marker")
+	upgradeOutcomePath = filepath.Join(dir, "missing-outcome")
+	t.Cleanup(func() {
+		dashboardUpgradeStatePath = oldStatePath
+		upgradeMarkerPath = oldMarkerPath
+		upgradeOutcomePath = oldOutcomePath
+	})
+	writeDashboardUpgradeState(dashboardUpgradeState{
+		State:     dashboardUpgradeStateFailed,
+		Target:    "abc1234",
+		StartedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+		Reason:    "service account cannot patch deployment/hive",
+	})
+
+	srv := NewServer(0, slog.Default())
+	srv.deps = &Dependencies{Config: &config.Config{}, Logger: slog.Default()}
+	req := httptest.NewRequest(http.MethodGet, "/api/version", nil)
+	w := httptest.NewRecorder()
+	srv.handleVersion(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+	var body struct {
+		ManualUpgrade dashboardUpgradeState `json:"manualUpgrade"`
+		ReleaseStatus SpokeReleaseStatus    `json:"releaseStatus"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.ManualUpgrade.State != dashboardUpgradeStateFailed {
+		t.Fatalf("manualUpgrade.state = %q, want failed", body.ManualUpgrade.State)
+	}
+	if body.ReleaseStatus.Attempt.State != upgradeAttemptFailed || !strings.Contains(body.ReleaseStatus.Attempt.Detail, "cannot patch") {
+		t.Fatalf("release attempt = %+v, want failed patch detail", body.ReleaseStatus.Attempt)
 	}
 }
 

@@ -149,6 +149,18 @@ func (a *AgentProcess) decideTokenRestart(now time.Time) tokenRestartAction {
 	return tokenRestartFire
 }
 
+// tokenRestartBlockedByOutput answers whether a token-triggered login restart
+// should be vetoed because the pane is still changing. A genuinely stuck login
+// prompt is silent; recent output means the login text may be the agent's own
+// work, not the CLI awaiting authentication. Zero means the poller has no
+// output-change observation yet, so it is treated as quiet and does not block.
+func tokenRestartBlockedByOutput(lastOutput, now time.Time) bool {
+	if lastOutput.IsZero() {
+		return false
+	}
+	return now.Sub(lastOutput) < tokenRestartQuietWindow
+}
+
 // shouldResetTokenRestartCap answers whether a pane that is NOT showing a login
 // prompt is evidence the login actually CLEARED — the only condition under
 // which the attempt counter and the give-up latch may be re-armed.

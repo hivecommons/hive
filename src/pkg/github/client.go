@@ -647,6 +647,12 @@ type PullRequest struct {
 	// determined, and BranchProtectionBlockReason then declines to guess
 	// (hivecommons/hive#7515). Display only: no merge gate reads it.
 	Protection *ProtectionFacts `json:"protection,omitempty"`
+	// ReviewAddressingCommits and ReviewAddressingReplies are transient
+	// follow-up routing inputs. They are populated only by callers that need
+	// to decide whether the latest human CHANGES_REQUESTED review was already
+	// answered; they are deliberately omitted from snapshots.
+	ReviewAddressingCommits []PRCommit  `json:"-"`
+	ReviewAddressingReplies []PRComment `json:"-"`
 	// ReviewURL links the most recent review the HIVE posted on this PR, and
 	// ReviewCount is how many it has posted in total. Both come from the
 	// review-links ledger (review_links.go) rather than from GitHub, so they
@@ -1089,22 +1095,13 @@ func (c *Client) splitRepo(repo string) (owner, repoName string) {
 func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (actionable []Issue, held []HoldItem, totalIssues int, breakdown RepoIssueBreakdown, err error) {
 	issueFilter := c.getIssueFilter()
 	owner, repoName := c.splitRepo(repo)
-	opts := &gh.IssueListByRepoOptions{
-		State:       "open",
-		ListOptions: gh.ListOptions{PerPage: 100},
-	}
 
-	var allIssues []*gh.Issue
-	for {
-		issues, resp, err := c.client.Issues.ListByRepo(ctx, owner, repoName, opts)
-		if err != nil {
-			return nil, nil, 0, RepoIssueBreakdown{}, fmt.Errorf("listing issues for %s/%s: %w", owner, repoName, err)
-		}
-		allIssues = append(allIssues, issues...)
-		if resp.NextPage == 0 {
-			break
-		}
-		opts.ListOptions.Page = resp.NextPage
+	// #9839: the list call keeps GitHub's issue_dependencies_summary so only
+	// issues that report an open "blocked by" count pay for a per-issue
+	// dependency fetch below.
+	allIssues, blockedCounts, err := c.listOpenIssuesWithBlockedCounts(ctx, owner, repoName)
+	if err != nil {
+		return nil, nil, 0, RepoIssueBreakdown{}, fmt.Errorf("listing issues for %s/%s: %w", owner, repoName, err)
 	}
 
 	// #9840: a hive-filed child the relay split out of a human-filed (or
@@ -1211,6 +1208,20 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 			}
 		}
 
+		// #9839: GitHub "blocked by" links become DependsOn edges. An
+		// unreadable blocker list fails OPEN with a warning: hiding work
+		// behind an error nobody can see is worse than offering it.
+		var dependsOn []IssueDependency
+		if blockedCounts[issue.GetNumber()] > 0 {
+			deps, depErr := c.githubBlockedByDependencies(ctx, owner, repoName, repo, issue.GetNumber())
+			if depErr != nil {
+				c.logger.Warn("issue enumeration: could not read \"blocked by\" dependencies; treating the issue as unblocked this cycle",
+					slog.String("repo", repo), slog.Int("number", issue.GetNumber()), slog.String("error", depErr.Error()))
+			} else {
+				dependsOn = deps
+			}
+		}
+
 		breakdown.Actionable++
 		actionable = append(actionable, Issue{
 			Repo:              repo,
@@ -1228,8 +1239,10 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 			AgeMinutes:        ageMinutes,
 			URL:               issue.GetHTMLURL(),
 			IsTracker:         isTracker(issue.GetTitle(), labels, issue.GetBody()),
+			DependsOn:         dependsOn,
 		})
 	}
+	dropMutualBlocks(actionable, c.logger)
 
 	// Keep an honest fallback if a future exclusion path is added without a
 	// dedicated category. This is the same enumeration snapshot, not a second

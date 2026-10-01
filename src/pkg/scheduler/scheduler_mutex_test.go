@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
@@ -38,14 +39,86 @@ func TestGetSetLastActionable(t *testing.T) {
 	if s.GetLastActionable() != nil {
 		t.Error("initial lastActionable should be nil")
 	}
+	if s.FirstScanDone() {
+		t.Error("initial FirstScanDone should be false")
+	}
 	a := &github.ActionableResult{}
 	s.SetLastActionable(a)
 	if s.GetLastActionable() != a {
 		t.Error("lastActionable should be set")
 	}
+	if !s.FirstScanDone() {
+		t.Error("FirstScanDone should be true after SetLastActionable")
+	}
 	s.SetLastActionable(nil)
 	if s.GetLastActionable() != nil {
 		t.Error("lastActionable should be nil after reset")
+	}
+	if !s.FirstScanDone() {
+		t.Error("FirstScanDone should remain true after reset")
+	}
+}
+
+func TestDeferredKickUntilFirstScanDeliversOnceWithSnapshot(t *testing.T) {
+	cfg := &config.Config{
+		Project: config.ProjectConfig{
+			Org: "testorg", Repos: []string{"testrepo"}, PrimaryRepo: "testrepo", AIAuthor: "bot",
+		},
+		Agents: map[string]config.AgentConfig{
+			"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+		},
+	}
+	s := New(cfg, slog.Default())
+	if s.FirstScanDone() {
+		t.Fatal("FirstScanDone should be false before the first scan")
+	}
+
+	delivered := make(chan string, 1)
+	s.DeferKickUntilFirstScan("scanner", func(msg string) { delivered <- msg })
+	s.DeferKickUntilFirstScan("scanner", func(msg string) { delivered <- msg })
+
+	s.SetLastActionable(&github.ActionableResult{
+		Issues: github.IssueResult{Count: 1, Items: []github.Issue{{
+			Repo:      "testorg/testrepo",
+			Number:    42,
+			Title:     "deferred kick issue",
+			Labels:    []string{"kind/bug"},
+			CreatedAt: time.Now().Add(-time.Hour),
+			URL:       "https://github.com/testorg/testrepo/issues/42",
+		}}},
+	})
+	filtered := s.FilterFirstScanDeferredAgents([]string{"scanner", "scanner|testorg/testrepo", "quality"})
+	if len(filtered) != 1 || filtered[0] != "quality" {
+		t.Fatalf("FilterFirstScanDeferredAgents = %v, want [quality]", filtered)
+	}
+
+	select {
+	case msg := <-delivered:
+		if strings.TrimSpace(msg) == "" {
+			t.Fatal("deferred kick delivered an empty message")
+		}
+		if !strings.Contains(msg, "deferred kick issue") {
+			t.Fatalf("deferred kick message did not include snapshot issue: %s", msg)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("deferred kick was not delivered")
+	}
+
+	select {
+	case msg := <-delivered:
+		t.Fatalf("duplicate deferred kick delivered more than once: %q", msg)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	s2 := New(cfg, slog.Default())
+	s2.DeferKickUntilFirstScan("scanner", func(string) {})
+	s2.SetLastActionable(&github.ActionableResult{})
+	if got := s2.FilterFirstScanDeferredAgents(nil); got != nil {
+		t.Fatalf("empty filter = %v, want nil", got)
+	}
+	filtered = s2.FilterFirstScanDeferredAgents([]string{"scanner"})
+	if len(filtered) != 1 || filtered[0] != "scanner" {
+		t.Fatalf("stale deferred suppression filtered a later kick: %v", filtered)
 	}
 }
 

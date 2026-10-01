@@ -136,7 +136,9 @@ func TestResumeNotPausedAgentIsNoop(t *testing.T) {
 // request.
 func TestKickEmptyPromptFallsBackToSchedulerMessage(t *testing.T) {
 	s, deps := apiServer(t)
-	deps.Scheduler = scheduler.New(deps.Config, deps.Logger)
+	sched := scheduler.New(deps.Config, deps.Logger)
+	sched.SetLastActionable(nil)
+	deps.Scheduler = sched
 
 	rec := doPost(s, "/api/kick/scanner", map[string]string{})
 

@@ -8,6 +8,16 @@ For the full centralized environment variable table, including hub, backup,
 inference, deployment, contributor, and legacy helper-script variables, see
 [Environment variable reference](env-vars.md).
 
+## Agent Go toolchain shim
+
+Container images install `bin/go-wrapper.sh` as `go` in the runtime Go toolchain
+and keep the real compiler beside it as `go-real`. When `HIVE_AGENT` or
+`HIVE_AGENT_ID` is set, the shim blocks `go test`, `go vet`, and `go tool vet`
+inside the hive pod and points agents to CI instead, because those commands can
+read or mutate live `/data` state and have killed agent sessions. Human
+operators can debug inside the pod by setting `HIVE_ALLOW_LOCAL_GO_TEST=1`; all
+other Go subcommands pass through unchanged.
+
 ## Minimum required configuration
 
 Most of `hive.yaml.example` is optional. The smallest config the hive will start
@@ -263,6 +273,7 @@ To relate an image to source, compare the `<git-short-sha>` tag published by the
 ## Governor cadence and budget
 
 - Agent cadences are evaluated from persisted state: the last-kick map lives in `/data/hive-state.json` and is honored across pod restarts — a Deployment roll does **not** re-kick every cadenced agent at boot ([#3817](https://github.com/hivecommons/hive/pull/3817)). A fresh install (no persisted state) still kicks every cadenced agent on the first eval. There is no global default interval; a zero/absent interval means the agent is never cadence-kicked.
+- Manual dashboard/API kicks that rely on Hive's generated work list wait for the first governor scan after boot. Until that scan populates the scheduler snapshot, `POST /api/kick/{agent}` returns `202` with `status: "deferred"` and Hive delivers one deduplicated kick for that agent as soon as the first scan completes.
 - The governor token budget uses a rolling window of `governor.budget.period_days` (default 7 days), with a soft warning at `governor.budget.critical_pct` (default 90%). When spend reaches the limit, kicks are suppressed for all agents except those explicitly budget-exempt.
 - The Governor dashboard **PRs by model** panel includes rework evidence for 7d/30d/all windows: first-pass merge rate, average/worst review rounds, fix attempts, follow-up commits after first review, human change requests, median time to merge, and a top-10 **Most reworked PRs** list. The data is served by `/api/governor/pr-models` from the same cached PR snapshot as the model outcome counts.
 - The **provider** spending limit is a separate signal from the token budget above ([#4294](https://github.com/hivecommons/hive/issues/4294)): the token budget counts what the hive spends, while this is the inference gateway refusing to spend more money — a LiteLLM key past its daily dollar cap, a project out of quota, an account out of credit. It is detected from the gateway's own error body (never from a bare 429, which stays on the ordinary retry path), raises an error-level dashboard alert naming the limit that was hit, and withholds every agent kick while it is in force. It does **not** pause agents: pause state stays a human decision.

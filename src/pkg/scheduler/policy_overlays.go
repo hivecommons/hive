@@ -38,6 +38,9 @@ The PRs below are open and awaiting human review. Their files, functions, and
 tracking-issue clusters are occupied ground even when they have been waiting
 for hours. Review latency is not abandonment.
 
+If one of your own held PRs shows unaddressed CHANGES REQUESTED, address the
+review on that same branch and reply on the PR. Never remove the hold label.
+
 OPEN HOLD-GATED PRs:
 ` + claims + `
 
@@ -478,6 +481,10 @@ func (s *Scheduler) formatHeldPRClaimsWithPolicy(actionable *github.ActionableRe
 
 	repoOrder := make([]string, 0, 8)
 	byRepo := make(map[string][]github.HoldItem)
+	heldPRs := make(map[string]github.PullRequest, len(actionable.PRs.Held))
+	for _, pr := range actionable.PRs.Held {
+		heldPRs[fmt.Sprintf("%s#%d", pr.Repo, pr.Number)] = pr
+	}
 	for _, item := range actionable.Hold.Items {
 		if item.Type != "pr" {
 			continue
@@ -501,18 +508,50 @@ func (s *Scheduler) formatHeldPRClaimsWithPolicy(actionable *github.ActionableRe
 			if runes := []rune(title); len(runes) > maxHeldPRTitleRunes {
 				title = string(runes[:maxHeldPRTitleRunes])
 			}
-			b.WriteString(fmt.Sprintf("  %s#%d %s\n", item.Repo, item.Number, title))
+			reviewState := heldPRReviewState(heldPRs[fmt.Sprintf("%s#%d", item.Repo, item.Number)])
+			if reviewState != "" {
+				reviewState = " — " + reviewState
+			}
+			b.WriteString(fmt.Sprintf("  %s#%d %s%s\n", item.Repo, item.Number, title, reviewState))
 			shown++
 		}
 		if omitted := len(items) - limit; omitted > 0 {
 			b.WriteString(fmt.Sprintf("  ... %d additional open held PRs omitted in %s; STAND DOWN for %s this kick\n", omitted, repo, repo))
 		}
+
 	}
 
 	if shown == 0 {
 		return "  (none)", failClosed
 	}
 	return strings.TrimSuffix(b.String(), "\n"), failClosed
+}
+
+func heldPRReviewState(pr github.PullRequest) string {
+	if pr.Number <= 0 || pr.Protection == nil {
+		return "no review state available"
+	}
+	by := strings.TrimSpace(pr.Protection.LatestHumanReviewBy)
+	if by != "" {
+		by = " by @" + by
+	}
+	switch pr.Protection.LatestHumanReviewState {
+	case github.ReviewDecisionChangesRequested:
+		status := "unaddressed"
+		if github.HumanReviewAddressed(pr) {
+			status = "addressed"
+		}
+		return "CHANGES REQUESTED" + by + " (" + status + ")"
+	case github.ReviewDecisionApproved:
+		return "approved" + by
+	case github.ReviewDecisionNone:
+		if len(pr.RequestedReviewers) > 0 || len(pr.RequestedTeams) > 0 {
+			return "review requested"
+		}
+		return "no human review yet"
+	default:
+		return strings.ToLower(strings.ReplaceAll(string(pr.Protection.LatestHumanReviewState), "_", " ")) + by
+	}
 }
 
 func (s *Scheduler) independentReviewSection(agentName string) string {

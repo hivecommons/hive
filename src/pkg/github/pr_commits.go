@@ -31,6 +31,10 @@ type PRCommit struct {
 	// AuthoredAt is the commit author's timestamp, falling back to the committer
 	// timestamp when GitHub omits it.
 	AuthoredAt time.Time
+	// ParentCount is the number of parents on the commit. A value greater than
+	// one identifies merge-from-base maintenance commits that do not, by
+	// themselves, address a human review.
+	ParentCount int
 }
 
 func prCommitTime(rc *gh.RepositoryCommit) time.Time {
@@ -69,11 +73,12 @@ func (c *Client) ListPRCommits(ctx context.Context, repo string, number int) ([]
 			title = title[:i]
 		}
 		out = append(out, PRCommit{
-			SHA:        rc.GetSHA(),
-			Author:     author,
-			Title:      strings.TrimSpace(title),
-			Message:    message,
-			AuthoredAt: prCommitTime(rc),
+			SHA:         rc.GetSHA(),
+			Author:      author,
+			Title:       strings.TrimSpace(title),
+			Message:     message,
+			AuthoredAt:  prCommitTime(rc),
+			ParentCount: len(rc.Parents),
 		})
 	}
 	return out, nil

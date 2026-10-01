@@ -32,6 +32,9 @@ type Scheduler struct {
 	triageCommenter      TriageCommenter
 	questionAutocloser   QuestionAutocloser
 	lifecycle            timeline.Recorder
+	scanned              bool
+	deferredKicks        map[string]func(string)
+	firstScanDeferred    map[string]bool
 	mu                   sync.RWMutex
 }
 
@@ -154,8 +157,61 @@ func (s *Scheduler) GetInception() *knowledge.InceptionEngine {
 // (via the dashboard API) can prime knowledge from the same issue set.
 func (s *Scheduler) SetLastActionable(a *github.ActionableResult) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.lastActionable = a
+	firstScan := !s.scanned
+	s.scanned = true
+	deferred := s.deferredKicks
+	if firstScan && len(deferred) > 0 {
+		s.firstScanDeferred = make(map[string]bool, len(deferred))
+		for agentName := range deferred {
+			s.firstScanDeferred[agentName] = true
+		}
+	}
+	s.deferredKicks = nil
+	s.mu.Unlock()
+
+	if firstScan {
+		for agentName, deliver := range deferred {
+			if deliver == nil {
+				continue
+			}
+			agentName, deliver := agentName, deliver
+			if s.logger != nil {
+				s.logger.Info("deferred manual kick delivered", "agent", agentName)
+			}
+			go func() {
+				deliver(s.BuildAgentMessageFromLastActionable(agentName))
+			}()
+		}
+	}
+}
+
+// FilterFirstScanDeferredAgents removes agents that already have a deferred
+// manual kick draining for this first scan. That deferred kick carries the same
+// freshly populated work list, so sending the governor's normal kick as well
+// would double-deliver the first-scan prompt.
+func (s *Scheduler) FilterFirstScanDeferredAgents(agents []string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.firstScanDeferred) == 0 {
+		return agents
+	}
+	defer func() { s.firstScanDeferred = nil }()
+	if len(agents) == 0 {
+		return agents
+	}
+	filtered := agents[:0]
+	for _, targetKey := range agents {
+		agentName, _ := config.SplitCadenceTargetKey(targetKey)
+		if s.firstScanDeferred[agentName] {
+			if s.logger != nil {
+				s.logger.Info("governor kick suppressed by deferred manual kick", "agent", agentName, "target", targetKey)
+			}
+			continue
+		}
+		filtered = append(filtered, targetKey)
+	}
+	return filtered
 }
 
 // GetLastActionable returns the most recently cached actionable result.
@@ -163,4 +219,35 @@ func (s *Scheduler) GetLastActionable() *github.ActionableResult {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.lastActionable
+}
+
+// FirstScanDone reports whether the governor has published its first
+// actionable snapshot. The snapshot may legitimately be empty; this separates
+// "no work" from "the first scan has not populated the kick cache yet".
+func (s *Scheduler) FirstScanDone() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.scanned
+}
+
+// DeferKickUntilFirstScan stores one pending manual kick per agent until the
+// first governor scan has populated the scheduler's actionable snapshot.
+func (s *Scheduler) DeferKickUntilFirstScan(agentName string, deliver func(msg string)) {
+	if deliver == nil {
+		return
+	}
+	s.mu.Lock()
+	if s.scanned {
+		s.mu.Unlock()
+		go deliver(s.BuildAgentMessageFromLastActionable(agentName))
+		return
+	}
+	if s.deferredKicks == nil {
+		s.deferredKicks = make(map[string]func(string))
+	}
+	s.deferredKicks[agentName] = deliver
+	s.mu.Unlock()
+	if s.logger != nil {
+		s.logger.Info("manual kick deferred until first governor scan", "agent", agentName)
+	}
 }

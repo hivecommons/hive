@@ -25,6 +25,7 @@ const (
 	KindBranchPush        = "branch_push"
 	KindBranchUpdate      = "branch_update"
 	KindSubIssueLink      = "sub_issue_link"
+	KindDependencyLink    = "dependency_link"
 )
 
 var ErrDenied = errors.New("mutation boundary denied")

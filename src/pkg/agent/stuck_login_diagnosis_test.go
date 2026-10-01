@@ -232,6 +232,61 @@ func TestDecideTokenRestartHonoursCooldown(t *testing.T) {
 	}
 }
 
+func TestTokenRestartQuietWindowGuardsEligibleRestart(t *testing.T) {
+	now := time.Date(2026, 10, 1, 3, 27, 56, 0, time.UTC)
+
+	tests := []struct {
+		name         string
+		lastOutput   time.Time
+		wantFire     bool
+		wantAttempts int
+	}{
+		{
+			name:         "login streak but output five seconds ago",
+			lastOutput:   now.Add(-5 * time.Second),
+			wantFire:     false,
+			wantAttempts: 0,
+		},
+		{
+			name:         "login streak and output three minutes ago",
+			lastOutput:   now.Add(-3 * time.Minute),
+			wantFire:     true,
+			wantAttempts: 1,
+		},
+		{
+			name:         "login streak and unknown output time",
+			lastOutput:   time.Time{},
+			wantFire:     true,
+			wantAttempts: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &AgentProcess{Name: "scanner"}
+			loginStreak := loginStreakRestartMin
+
+			gotFire := simulateEligibleTokenRestart(a, tt.lastOutput, now, loginStreak)
+			if gotFire != tt.wantFire {
+				t.Fatalf("restart fired = %v, want %v", gotFire, tt.wantFire)
+			}
+			if a.tokenRestartAttempts != tt.wantAttempts {
+				t.Fatalf("tokenRestartAttempts = %d, want %d", a.tokenRestartAttempts, tt.wantAttempts)
+			}
+		})
+	}
+}
+
+func simulateEligibleTokenRestart(a *AgentProcess, lastOutput, now time.Time, loginStreak int) bool {
+	if loginStreak < loginStreakRestartMin {
+		return false
+	}
+	if tokenRestartBlockedByOutput(lastOutput, now) {
+		return false
+	}
+	return a.decideTokenRestart(now) == tokenRestartFire
+}
+
 // The counter is reset by the poller when the prompt clears. Pin that a reset
 // genuinely re-arms the restart, so an agent that recovers and later needs a
 // real nudge is not permanently barred by an old streak.

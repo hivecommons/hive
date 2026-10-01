@@ -67,38 +67,50 @@ func (m *Manager) agentSandboxEnabledLocked(agent *AgentProcess) bool {
 	return agent != nil && agent.Config.SandboxEnabled(m.sandboxConfig)
 }
 
-func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) error {
+func (m *Manager) validateSandboxKickLocked(agent *AgentProcess) (string, error) {
 	if agent.Paused || agent.State == StatePaused {
-		return fmt.Errorf("agent %s cannot be kicked: %s", agent.Name, notRunningReason(agent))
+		return "", fmt.Errorf("agent %s cannot be kicked: %s", agent.Name, notRunningReason(agent))
 	}
 	if agent.State == StateStopped {
-		return fmt.Errorf("agent %s cannot be kicked: %s", agent.Name, notRunningReason(agent))
+		return "", fmt.Errorf("agent %s cannot be kicked: %s", agent.Name, notRunningReason(agent))
 	}
 	if agent.State == StateRunning {
-		return fmt.Errorf("agent %s cannot be kicked: sandbox execution already running", agent.Name)
+		return "", fmt.Errorf("agent %s cannot be kicked: sandbox execution already running", agent.Name)
 	}
 	if strings.TrimSpace(m.sandboxConfig.Image) == "" && strings.TrimSpace(agent.Config.SandboxImage(m.sandboxConfig)) == "" {
-		return fmt.Errorf("agent %s sandbox image is not configured", agent.Name)
+		return "", fmt.Errorf("agent %s sandbox image is not configured", agent.Name)
 	}
 	repo := m.project.PrimaryRepo()
 	if repo == "" {
-		return fmt.Errorf("agent %s sandbox execution requires a primary repo", agent.Name)
+		return "", fmt.Errorf("agent %s sandbox execution requires a primary repo", agent.Name)
 	}
 	// Runtime selection (#6311). Resolved BEFORE the agent is marked running,
 	// so a misconfigured runtime refuses the kick the same way a missing image
 	// does, instead of failing it after the state machine has moved.
 	runtime := agent.Config.SandboxRuntime(m.sandboxConfig)
 	if !config.ValidSandboxRuntimes[runtime] {
-		return fmt.Errorf("agent %s sandbox runtime %q is not one hive has (%s or %s)", agent.Name, runtime, config.SandboxRuntimePodman, config.SandboxRuntimeJob)
+		return "", fmt.Errorf("agent %s sandbox runtime %q is not one hive has (%s or %s)", agent.Name, runtime, config.SandboxRuntimePodman, config.SandboxRuntimeJob)
+	}
+	if runtime == config.SandboxRuntimeJob {
+		job := agent.Config.SandboxJob(m.sandboxConfig)
+		if strings.TrimSpace(job.WorkspaceClaim) == "" {
+			return "", fmt.Errorf("agent %s sandbox job runtime requires job.workspace_claim — the PVC hive's sandbox workspace root lives on, mounted RWX so the Job can see it from another node", agent.Name)
+		}
+	}
+	return runtime, nil
+}
+
+func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) error {
+	runtime, err := m.validateSandboxKickLocked(agent)
+	if err != nil {
+		return err
 	}
 	launcher := m.sandboxLauncher
 	if runtime == config.SandboxRuntimeJob {
 		job := agent.Config.SandboxJob(m.sandboxConfig)
-		if strings.TrimSpace(job.WorkspaceClaim) == "" {
-			return fmt.Errorf("agent %s sandbox job runtime requires job.workspace_claim — the PVC hive's sandbox workspace root lives on, mounted RWX so the Job can see it from another node", agent.Name)
-		}
 		launcher = m.jobLauncherLocked(job)
 	}
+	repo := m.project.PrimaryRepo()
 	now := time.Now()
 	agent.State = StateRunning
 	agent.StartedAt = &now

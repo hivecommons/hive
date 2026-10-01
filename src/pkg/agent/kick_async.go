@@ -154,6 +154,25 @@ func (m *Manager) RecordKickDispatchForTest(d KickDispatch) {
 	m.kickDispatches.recordForTest(d)
 }
 
+// ValidateKick checks the fast deterministic preconditions for a kick without
+// claiming an in-flight slot or delivering a prompt. It exists for callers that
+// must delay message construction until another subsystem is ready while still
+// preserving the dashboard API's synchronous 400 contract for non-running
+// agents.
+func (m *Manager) ValidateKick(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	agent, ok := m.agents[name]
+	if !ok {
+		return fmt.Errorf("agent %s not found", name)
+	}
+	if m.agentSandboxEnabledLocked(agent) {
+		_, err := m.validateSandboxKickLocked(agent)
+		return err
+	}
+	return m.validatePaneKickLocked(agent, name)
+}
+
 // SendKickAsync validates a kick's preconditions synchronously and then
 // performs the slow delivery in the background, returning as soon as the kick
 // is queued.
@@ -195,25 +214,9 @@ func (m *Manager) SendKickAsync(name string, message string) (started bool, err 
 		return true, nil
 	}
 
-	if agent.State != StateRunning {
-		m.mu.Unlock()
-		return false, fmt.Errorf("agent %s cannot be kicked: %s", name, notRunningReason(agent))
-	}
-	if remaining := m.providerErrorBackoffRemainingLocked(agent, time.Now()); remaining > 0 {
-		class, line := agent.ProviderErrorClass, agent.ProviderErrorLine
-		m.mu.Unlock()
-		return false, fmt.Errorf("agent %s blocked: inference (%s): %s; next provider probe in %v",
-			name, class, line, remaining.Round(time.Second))
-	}
-	if err := m.restartKickHoldErrLocked(agent, time.Now()); err != nil {
+	if err := m.validatePaneKickLocked(agent, name); err != nil {
 		m.mu.Unlock()
 		return false, err
-	}
-
-	if !m.tmuxSessionExistsForAgent(agent) {
-		session := agent.tmuxSession
-		m.mu.Unlock()
-		return false, fmt.Errorf("tmux session %s not found", session)
 	}
 
 	m.mu.Unlock()
@@ -236,6 +239,24 @@ func (m *Manager) SendKickAsync(name string, message string) (started bool, err 
 	}()
 
 	return true, nil
+}
+
+func (m *Manager) validatePaneKickLocked(agent *AgentProcess, name string) error {
+	if agent.State != StateRunning {
+		return fmt.Errorf("agent %s cannot be kicked: %s", name, notRunningReason(agent))
+	}
+	if remaining := m.providerErrorBackoffRemainingLocked(agent, time.Now()); remaining > 0 {
+		class, line := agent.ProviderErrorClass, agent.ProviderErrorLine
+		return fmt.Errorf("agent %s blocked: inference (%s): %s; next provider probe in %v",
+			name, class, line, remaining.Round(time.Second))
+	}
+	if err := m.restartKickHoldErrLocked(agent, time.Now()); err != nil {
+		return err
+	}
+	if !m.tmuxSessionExistsForAgent(agent) {
+		return fmt.Errorf("tmux session %s not found", agent.tmuxSession)
+	}
+	return nil
 }
 
 // deliverKickAsync is the slow half of SendKickAsync, run on its own
