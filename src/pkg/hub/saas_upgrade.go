@@ -517,12 +517,13 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	var latestSHA, lastHeartbeat string
+	var latestSHA, lastHeartbeat, currentSHA string
 	var found bool
 	for i := range s.registry.Hives {
 		if s.registry.Hives[i].ID == id {
 			found = true
 			lastHeartbeat = s.registry.Hives[i].LastHeartbeat
+			currentSHA = s.registry.Hives[i].GitHash
 			latestSHA = reach.SHA
 			break
 		}
@@ -537,6 +538,19 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 			"would_have_targeted", latestSHA, "last_heartbeat", orDash(lastHeartbeat),
 			"reason", reason)
 		s.noteUncollectibleUpgrade(id, latestSHA, reason)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": reason})
+		return
+	}
+	if currentSHA != "" && latestSHA != "" && (sameCommit(currentSHA, latestSHA) || commitAtOrAheadOfTarget(currentSHA, latestSHA, s.logger)) {
+		s.mu.Unlock()
+		reason := manualUpgradeNoopReason(currentSHA, latestSHA, reach.Channel, regImageRef)
+		s.logger.Warn("manual upgrade not armed — spoke is already at its reachable target",
+			"hive_id", id, "by", username, "cluster", cluster.ID,
+			"current", currentSHA, "reachable_target", latestSHA,
+			"channel", reach.Channel, "image_ref", regImageRef,
+			"reason", reason)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": reason})
@@ -582,6 +596,14 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 	s.recordTimeline(id, TimelineUpgradeStarted, "upgrade requested from the hub dashboard ("+mode+")", username)
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"status":"upgrading","mode":"` + mode + `"}`))
+}
+
+func manualUpgradeNoopReason(currentSHA, targetSHA, channel, imageRef string) string {
+	if channel != "" {
+		return fmt.Sprintf("upgrade not armed — this spoke tracks :%s (%s), and that channel already resolves to the running commit %s; wait for the channel to advance or switch the hive to a newer channel/branch tag",
+			channel, orDash(imageRef), shortSHA(currentSHA))
+	}
+	return fmt.Sprintf("upgrade not armed — this spoke is already at the reachable target %s", shortSHA(targetSHA))
 }
 
 // branchToTag converts a git branch name into a valid Docker image tag.
