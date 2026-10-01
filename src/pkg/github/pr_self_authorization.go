@@ -190,12 +190,15 @@ func (c *Client) EvaluateSelfAuthorization(ctx context.Context, repo, title, bod
 }
 
 // issueHasHumanAcknowledgement reports whether any person has signalled assent
-// on an agent-filed issue. Four signals count, in ascending cost:
+// on an agent-filed issue. Five signals count, in ascending cost:
 //
 //  1. the approval label, for a maintainer who wants to approve without prose;
 //  2. a human assignee, which is how a maintainer says "yes, and I own it";
-//  3. a human comment;
-//  4. nothing — which is the incident.
+//  3. the relay split this issue out of a human-filed or human-acknowledged
+//     parent that is still open (#9840) — the approval was given on the
+//     parent, and splitting it for size does not take it away;
+//  4. a human comment;
+//  5. nothing — which is the incident.
 //
 // The error is returned rather than swallowed because the caller treats "no
 // acknowledgement found" and "could not look" differently.
@@ -210,9 +213,14 @@ func (c *Client) issueHasHumanAcknowledgement(ctx context.Context, owner, repo s
 			return true, nil
 		}
 	}
+	inherited, parentErr := c.inheritedAcknowledgementLive(ctx, owner, repo, issue)
+	if inherited {
+		return true, nil
+	}
 	if issue.GetComments() == 0 {
 		// The issue payload already told us there are none; skip the call.
-		return false, nil
+		// An unreadable parent is the only error left to report.
+		return false, parentErr
 	}
 	comments, _, err := c.client.Issues.ListComments(ctx, owner, repo, issue.GetNumber(), &gh.IssueListCommentsOptions{
 		ListOptions: gh.ListOptions{PerPage: selfAuthCommentPageSize},
@@ -225,7 +233,7 @@ func (c *Client) issueHasHumanAcknowledgement(ctx context.Context, owner, repo s
 			return true, nil
 		}
 	}
-	return false, nil
+	return false, parentErr
 }
 
 // splitRepoRef normalises "owner/repo" or a bare repo name into its two halves,

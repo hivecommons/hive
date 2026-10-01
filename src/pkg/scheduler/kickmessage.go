@@ -443,6 +443,12 @@ func issuePriorityMarker(issue github.Issue) string {
 		return "[human]"
 	}
 	if issue.HumanAcknowledged {
+		if parent, ok := strings.CutPrefix(issue.AckSource, "parent "); ok {
+			// "[hive-filed+parent-ack #9802]": the relay split this child
+			// out of an approved parent (#9840); name it so the ranking is
+			// auditable from the kick line alone.
+			return "[hive-filed+parent-ack " + parent + "]"
+		}
 		return "[hive-filed+ack]"
 	}
 	return "[hive-filed]"

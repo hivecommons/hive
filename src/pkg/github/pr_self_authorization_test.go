@@ -20,11 +20,14 @@ type selfAuthIssue struct {
 	// Association is GitHub's author_association for the author; "" omits
 	// the field, the way an abbreviated payload would.
 	Association string
-	Labels      []string
-	Assignees   []string
-	Comments    []selfAuthComment
-	Status      int // non-zero to fail the GET
-	FailList    bool
+	// State is GitHub's open/closed; "" omits the field. The #9840 parent
+	// check requires an explicit "open".
+	State     string
+	Labels    []string
+	Assignees []string
+	Comments  []selfAuthComment
+	Status    int // non-zero to fail the GET
+	FailList  bool
 }
 
 type selfAuthComment struct {
@@ -114,6 +117,9 @@ func (s *selfAuthServer) start(t *testing.T) *httptest.Server {
 				"labels":    labels,
 				"assignees": assignees,
 				"comments":  len(issue.Comments),
+			}
+			if issue.State != "" {
+				payload["state"] = issue.State
 			}
 			if issue.Association != "" {
 				payload["author_association"] = issue.Association

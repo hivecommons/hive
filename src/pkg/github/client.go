@@ -424,18 +424,24 @@ type IssueLinkedPR struct {
 }
 
 type Issue struct {
-	Repo              string    `json:"repo"`
-	Number            int       `json:"number"`
-	Title             string    `json:"title"`
-	Body              string    `json:"body,omitempty"`
-	Author            string    `json:"author"`
-	AuthorIsHuman     bool      `json:"author_is_human,omitempty"`
-	HumanAcknowledged bool      `json:"human_acknowledged,omitempty"`
-	Labels            []string  `json:"labels"`
-	Assignees         []string  `json:"assignees"`
-	Priority          string    `json:"priority,omitempty"`
-	State             string    `json:"state,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
+	Repo              string `json:"repo"`
+	Number            int    `json:"number"`
+	Title             string `json:"title"`
+	Body              string `json:"body,omitempty"`
+	Author            string `json:"author"`
+	AuthorIsHuman     bool   `json:"author_is_human,omitempty"`
+	HumanAcknowledged bool   `json:"human_acknowledged,omitempty"`
+	// AckSource names where a hive-filed issue's acknowledgement came from
+	// when it was not given on the issue itself: "parent #N" for a child the
+	// relay split out of a human-filed or human-acknowledged parent
+	// (hivecommons/hive#9840). Empty when HumanAcknowledged was earned on the
+	// issue (label, assignee) or is false.
+	AckSource string    `json:"ack_source,omitempty"`
+	Labels    []string  `json:"labels"`
+	Assignees []string  `json:"assignees"`
+	Priority  string    `json:"priority,omitempty"`
+	State     string    `json:"state,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 	// UpdatedAt is GitHub's last-activity timestamp for the issue (new commits
 	// referencing it, comments, label/assignee changes, …). It is the
 	// invalidation signal for the contribute queue's no_work_needed verdict
@@ -1101,6 +1107,23 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 		opts.ListOptions.Page = resp.NextPage
 	}
 
+	// #9840: a hive-filed child the relay split out of a human-filed (or
+	// human-acknowledged) parent inherits that acknowledgement. The parent is
+	// resolved from this same open-issue snapshot, so no extra call per child,
+	// and a closed parent (absent from the snapshot) confers nothing.
+	splitParents, splitErr := LoadSplitParents("")
+	if splitErr != nil {
+		c.logger.Warn("issue enumeration: split-parent ledger unreadable, no inherited acknowledgement this cycle",
+			slog.String("repo", repo), slog.String("error", splitErr.Error()))
+		splitParents = nil
+	}
+	openByNumber := make(map[int]*gh.Issue, len(allIssues))
+	for _, issue := range allIssues {
+		if !issue.IsPullRequest() {
+			openByNumber[issue.GetNumber()] = issue
+		}
+	}
+
 	for _, issue := range allIssues {
 		if issue.IsPullRequest() {
 			continue
@@ -1178,6 +1201,16 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 
 		ageMinutes := int(now.Sub(issue.GetCreatedAt().Time).Minutes())
 
+		authorIsHuman := c.isHumanAuthor(issue.GetUser())
+		acknowledged := c.issueHasCheapHumanAcknowledgement(issue)
+		ackSource := ""
+		if !authorIsHuman && !acknowledged {
+			if parentNum, ok := c.inheritedAcknowledgement(splitParents, owner+"/"+repoName, issue, openByNumber); ok {
+				acknowledged = true
+				ackSource = ackSourceForParent(parentNum)
+			}
+		}
+
 		breakdown.Actionable++
 		actionable = append(actionable, Issue{
 			Repo:              repo,
@@ -1185,8 +1218,9 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 			Title:             issue.GetTitle(),
 			Body:              issue.GetBody(),
 			Author:            safeGetLogin(issue.GetUser()),
-			AuthorIsHuman:     c.isHumanAuthor(issue.GetUser()),
-			HumanAcknowledged: c.issueHasCheapHumanAcknowledgement(issue),
+			AuthorIsHuman:     authorIsHuman,
+			HumanAcknowledged: acknowledged,
+			AckSource:         ackSource,
 			Labels:            labels,
 			Assignees:         extractAssignees(issue.Assignees),
 			CreatedAt:         issue.GetCreatedAt().Time,

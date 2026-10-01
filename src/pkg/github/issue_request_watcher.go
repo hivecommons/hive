@@ -521,6 +521,16 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 						slog.Int("parent", req.Parent), slog.String("error", linkErr.Error()))
 				} else {
 					resp.ParentLinked = true
+					// #9840: remember that the relay made this link, so the
+					// child may inherit the parent's acknowledgement. Only
+					// relay-made links are recorded; a sub-issue link anyone
+					// adds later in the GitHub UI confers nothing.
+					linkOwner, linkRepo := c.splitRepo(req.Repo)
+					if recErr := RecordSplitParent("", linkOwner+"/"+linkRepo, res.Number, req.Parent, req.Agent); recErr != nil {
+						c.logger.Warn("issue-request watcher: sub-issue linked but split-parent ledger write failed; child will not inherit acknowledgement",
+							slog.String("repo", req.Repo), slog.Int("number", res.Number),
+							slog.Int("parent", req.Parent), slog.String("error", recErr.Error()))
+					}
 				}
 			}
 		}

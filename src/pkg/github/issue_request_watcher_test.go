@@ -92,6 +92,11 @@ func withIssueDir(t *testing.T) string {
 	old := issueRequestDirForTest
 	issueRequestDirForTest = dir
 	t.Cleanup(func() { issueRequestDirForTest = old })
+	// The #9840 split-parent ledger is process-global state on /data; keep
+	// each watcher test's writes in its own temp dir.
+	oldLedger := SplitParentsPath
+	SplitParentsPath = filepath.Join(dir, SplitParentsFile)
+	t.Cleanup(func() { SplitParentsPath = oldLedger })
 	return dir
 }
 
@@ -937,6 +942,15 @@ func TestIssueRequestWatcher_LinksParentSubIssue(t *testing.T) {
 	}
 	if !resp.OK || !resp.ParentLinked {
 		t.Fatalf("expected OK result with ParentLinked=true, got %+v", resp)
+	}
+	// #9840: the relay-made link is remembered so the child can inherit the
+	// parent's acknowledgement.
+	children, err := LoadSplitParents(SplitParentsPath)
+	if err != nil {
+		t.Fatalf("LoadSplitParents: %v", err)
+	}
+	if got := splitParentOf(children, "o/r", 99); got != 100 {
+		t.Fatalf("split-parent ledger: parent of o/r#99 = %d, want 100 (%+v)", got, children)
 	}
 }
 
