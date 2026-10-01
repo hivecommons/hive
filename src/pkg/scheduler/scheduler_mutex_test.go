@@ -111,8 +111,20 @@ func TestDeferredKickUntilFirstScanDeliversOnceWithSnapshot(t *testing.T) {
 	}
 
 	s2 := New(cfg, slog.Default())
-	s2.DeferKickUntilFirstScan("scanner", func(string) {})
+	// SetLastActionable delivers any deferred kick on its own goroutine (see
+	// scheduler.go). A no-op callback here would leave that goroutine racing
+	// the NEXT test's redirectPolicySeams against the package-level policy
+	// seams it reads via BuildAgentMessageFromLastActionable (#9881) — wait
+	// for it to actually run so the goroutine is gone before this test
+	// returns.
+	s2Delivered := make(chan struct{}, 1)
+	s2.DeferKickUntilFirstScan("scanner", func(string) { close(s2Delivered) })
 	s2.SetLastActionable(&github.ActionableResult{})
+	select {
+	case <-s2Delivered:
+	case <-time.After(time.Second):
+		t.Fatal("second scheduler's deferred kick was not delivered")
+	}
 	if got := s2.FilterFirstScanDeferredAgents(nil); got != nil {
 		t.Fatalf("empty filter = %v, want nil", got)
 	}

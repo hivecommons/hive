@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -49,15 +50,15 @@ func TestStartCopilotSessionRefreshSeedsAndStops(t *testing.T) {
 		close(done)
 	}()
 
-	deadline := time.After(2 * time.Second)
-	for !copilotCredentialFileHasTokens(path) {
-		select {
-		case <-deadline:
-			cancel()
-			t.Fatal("session refresh loop did not seed copilotTokens")
-		case <-time.After(5 * time.Millisecond):
-		}
-	}
+	// 10s (not a fixed 2s margin) because this only has to observe the file
+	// write, not bound anything else: on a loaded CI runner the refresh
+	// goroutine can be scheduled well behind the 10ms interval it is ticking
+	// on, and a tight fixed deadline was the flake (#9880). testutil.Eventually
+	// returns the moment the condition holds, so the happy path pays nothing
+	// for the larger ceiling.
+	testutil.Eventually(t, 10*time.Second, func() bool {
+		return copilotCredentialFileHasTokens(path)
+	}, "session refresh loop did not seed copilotTokens")
 	cancel()
 	select {
 	case <-done:
