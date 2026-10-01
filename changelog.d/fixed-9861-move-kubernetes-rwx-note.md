@@ -1,0 +1,1 @@
+- The storage prerequisite in `src/docs/move-kubernetes.md` no longer repeats the removed README advice that `ReadWriteMany` gives rolling upgrades ([#9861](https://github.com/hivecommons/hive/issues/9861)). It now says the shipped `ReadWriteOnce` PVC is enough because the Deployment is single-replica `Recreate`.
