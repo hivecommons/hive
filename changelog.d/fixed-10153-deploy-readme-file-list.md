@@ -1,0 +1,1 @@
+- `src/deploy/README.md` now describes `k8s/` correctly and lists the `kustomize/`, `ci-runners/`, `legacy-redirect/`, `dibs-domain-cutover/`, `systemd/` and `data/` directories ([#10153](https://github.com/hivecommons/hive/issues/10153)).
