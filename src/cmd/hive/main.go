@@ -8446,6 +8446,15 @@ func runWaitEscalationSweep(cfg *config.Config, runs runWaitObserver, logger *sl
 	if !ok {
 		sev = escalate.SeverityDecision
 	}
+	// With the default floors (push and chat at page) a decision-severity
+	// wait may reach no sink at all; latching the generation anyway would
+	// spend its only escalation on nothing (hivecommons/hive#10088).
+	if !d.Admits(sev) {
+		if logger != nil {
+			logger.Debug("run checkpoint wait escalation skipped: no escalation sink admits severity", "severity", sev)
+		}
+		return
+	}
 	timeout := time.Duration(cfg.Runs.EffectiveWaitTimeoutSeconds()) * time.Second
 	snapshots := runs.RunWaitSnapshot()
 	obs := make([]escalation.RunObservation, 0, len(snapshots))

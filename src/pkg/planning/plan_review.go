@@ -170,6 +170,12 @@ func ApprovePlan(store *beads.Store, epicID string) error {
 	if err := store.SetMetadata(epicID, MetaPlanStatus, PlanStatusApproved); err != nil {
 		return fmt.Errorf("planning: approving plan for epic %s: %w", epicID, err)
 	}
+	// An approval is the fresh review a stale_plan hold waits for; leaving
+	// the hold in place keeps the run reading waiting_on=human past it
+	// (hivecommons/hive#10087).
+	if err := clearStalePlanHold(store, epicID); err != nil {
+		return fmt.Errorf("planning: clearing stale plan hold on epic %s: %w", epicID, err)
+	}
 	return nil
 }
 

@@ -522,7 +522,10 @@ id is cached for the stage and used for subsequent status/export calls.
   every hub-held stage lease, with `waiting_on=human`,
   `waiting_reason=stage_budget_exhausted` and `waiting_since` set to the
   escalation, so the run-wait escalation sweep (`runs.wait_timeout_seconds`,
-  `runs.wait_severity`) routes it to the configured escalation sinks. The
+  `runs.wait_severity`) routes it to the configured escalation sinks. A
+  generation is marked escalated only when at least one sink admits that
+  severity: with the default `decision` and only push/chat sinks (floor
+  `page`), the sweep waits rather than spending the generation on nothing. The
   executor never relaunches it; a person resets the stage or abandons the run.
   The generations spent (`stage_retries`) and the escalation
   (`stage_escalated_at`) are persisted on the lease, so a restart neither

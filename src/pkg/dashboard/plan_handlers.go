@@ -500,6 +500,9 @@ func (s *Server) handlePlanApprove(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusConflict)
 		return
 	}
+	if err := s.fanOutApprovedRunPlan(r.Context(), store, epicID, runKey); err != nil {
+		s.logger.Warn("[runs] fanning out approved run plan failed", "run", runKey, "epic", epicID, "error", err)
+	}
 	s.auditFromRequest(r, "plan_approve", auditDetail("epic", epicID, "run", runKey, "surface", "plan"), agentName)
 	s.refreshAndPersist()
 	tree, _ := planning.GetPlanTree(store, epicID)

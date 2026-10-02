@@ -146,7 +146,11 @@ func (s *Server) handleCampaignResume(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, campaignResumeResponse{OK: true, Campaign: campaign, State: state, Message: "Inception campaign restored"})
 			return
 		}
-		if campaign.LeaseOwner != "" && campaign.LeaseOwner != requestUser(r) {
+		// A Spektacular run's lease owner is its stage-lease identity
+		// (hive-triage once admitted, then a contributor or executor), never a
+		// dashboard user, and resume only reads the run back; gating it on
+		// that identity refused every operator (hivecommons/hive#10059).
+		if campaign.Type != "spektacular" && campaign.LeaseOwner != "" && campaign.LeaseOwner != requestUser(r) {
 			jsonError(w, "campaign lease held by "+campaign.LeaseOwner, http.StatusConflict)
 			return
 		}
