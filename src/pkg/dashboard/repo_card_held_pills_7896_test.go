@@ -182,7 +182,7 @@ func TestRepoCardHeldPillStructure(t *testing.T) {
 		`<a class="repo-pr-pill repo-pill-main${heldClass}${tintClass}${staleClass}"`,
 		`<a class="repo-issue-pill repo-pill-main${bandClass}${heldClass}${staleClass}"`,
 		// The state chip: ⚠ for the escalation kind of hold, ⏸ otherwise.
-		`<span class="repo-pr-pill needs-human pill-needs-human-badge pill-icon" title="${esc(heldTip)}"`,
+		`<button type="button" class="repo-pr-pill needs-human pill-needs-human-badge pill-icon repo-pill-filter-toggle" title="${esc(heldTip)}"`,
 		"holdToggleChip(cardRepo, p, 'pr', held, canToggleHold, heldTip)",
 		"const text = held ? '▶ Release' : '⏸ Hold';",
 		"Release hold — removes hold label(s)",
@@ -270,7 +270,7 @@ func TestRepoHoldToggleOptimisticRollback(t *testing.T) {
 		jsFunc(t, html, "repoParts") + "\n" +
 		jsFunc(t, html, "updateRepoBreakdownForHold") + "\n" +
 		jsFunc(t, html, "moveRepoItemHold") + "\n" +
-		"async " + jsFunc(t, html, "toggleRepoItemHold") + "\n" +
+		jsFunc(t, html, "toggleRepoItemHold") + "\n" +
 		holdToggleRollbackAssertions
 	path := filepath.Join(t.TempDir(), "hold-toggle.js")
 	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
@@ -304,7 +304,7 @@ func TestRepoHoldToggleSuccessRaisesStatusFloor(t *testing.T) {
 		jsFunc(t, html, "repoParts") + "\n" +
 		jsFunc(t, html, "updateRepoBreakdownForHold") + "\n" +
 		jsFunc(t, html, "moveRepoItemHold") + "\n" +
-		"async " + jsFunc(t, html, "toggleRepoItemHold") + "\n" +
+		jsFunc(t, html, "toggleRepoItemHold") + "\n" +
 		holdToggleSuccessAssertions
 	path := filepath.Join(t.TempDir(), "hold-toggle-success.js")
 	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {

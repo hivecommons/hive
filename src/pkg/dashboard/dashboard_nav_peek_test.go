@@ -34,6 +34,7 @@ let layoutUpdates = 0;
 function dashboardUpdateLayoutMenuState(){ layoutUpdates++; }
 function normalizeSectionCardChrome(){}
 function applySectionBodyCollapse(body, collapsed){ if (body) { body.collapsed = collapsed; body.classList.toggle('collapsed', collapsed); } }
+function replaySparklinesIn(){}
 const localStorage = { data:{}, setItem(k,v){this.data[k]=String(v)}, getItem(k){return Object.prototype.hasOwnProperty.call(this.data,k)?this.data[k]:null}, removeItem(k){delete this.data[k]} };
 class ClassList {
   constructor(){ this.values = new Set(); }

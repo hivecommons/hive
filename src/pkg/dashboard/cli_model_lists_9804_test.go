@@ -129,3 +129,17 @@ func TestIssue9927CopilotListsExcludeRejectedFiveFive(t *testing.T) {
 		})
 	}
 }
+
+// TestIssue9927CopilotStaticOffersDottedFiveFive: the static fallback must
+// offer the dotted 5.5 ids the Copilot CLI accepts so the picker can select
+// them even when live discovery is unavailable.
+func TestIssue9927CopilotStaticOffersDottedFiveFive(t *testing.T) {
+	for _, id := range []string{"claude-opus-5.5", "claude-sonnet-5.5"} {
+		if !contains(copilotStaticModels, id) {
+			t.Errorf("copilotStaticModels missing %q: %v", id, copilotStaticModels)
+		}
+		if !contains(copilotPinnedCLIModels, id) {
+			t.Errorf("copilotPinnedCLIModels missing %q", id)
+		}
+	}
+}

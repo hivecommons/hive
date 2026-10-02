@@ -3014,6 +3014,9 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 		var cached github.ActionableResult
 		if err := json.Unmarshal(data, &cached); err == nil {
 			b.lastActionable.Store(&cached)
+			if b.sched != nil {
+				b.sched.SetLastActionable(&cached)
+			}
 			b.gov.SeedQueueState(cached.Issues.Count, cached.PRs.Count, cached.Hold.Total, cached.Issues.SLAViolations)
 			b.refreshDashboard()
 			b.logger.Info("restored cached actionable data", "issues", cached.Issues.Count, "prs", cached.PRs.Count, "age", time.Since(cached.GeneratedAt).Round(time.Second))
@@ -6804,6 +6807,12 @@ func runEvalCycle(
 	// moves the tag to a merged fix PR only with retag_enabled (also opt-in).
 	runReleaseSentinel(ctx, cfg, ghClient, agentKicker{mgr: agentMgr},
 		agentAvailability(cfg, agentMgr), notifier, logger)
+
+	// Upstream watch (hivecommons/hive#9967), opt-in and default OFF: at most
+	// once per upstream_watch.interval, file a labelled fork issue for each
+	// upstream merged PR or release that still applies to the fork. Opens
+	// issues only, never PRs; the watermark and dedupe index live on the PVC.
+	runUpstreamWatch(ctx, cfg, ghClient, logger)
 
 	shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
 		PrimaryRepo:     cfg.Project.PrimaryRepo,

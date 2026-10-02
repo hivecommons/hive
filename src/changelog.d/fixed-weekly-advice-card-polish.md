@@ -1,0 +1,1 @@
+- Polish the weekly owner advice card counts and band definitions so dashboard text uses muted meta rows and styled band pills.

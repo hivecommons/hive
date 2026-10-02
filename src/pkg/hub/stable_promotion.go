@@ -105,11 +105,8 @@ func (s *HubServer) stablePromotionStatus(targets []ChannelTarget) StablePromoti
 				sha = imageSHA
 			}
 			status.Candidate = StablePromotionBuild{SHA: sha, Digest: t.Digest, BuiltAt: t.CommittedAt}
-			if t.CommittedAt != "" {
-				if built, err := time.Parse(time.RFC3339, t.CommittedAt); err == nil {
-					eligible := built.Add(time.Duration(status.SoakHours) * time.Hour).UTC().Format(time.RFC3339)
-					status.EligibleAt = &eligible
-				}
+			if eligible := stablePromotionEligibleAt(t.CommittedAt); eligible != "" {
+				status.EligibleAt = &eligible
 			}
 		case ReleaseChannelStable:
 			sha := t.SHA
@@ -121,6 +118,50 @@ func (s *HubServer) stablePromotionStatus(targets []ChannelTarget) StablePromoti
 	}
 	status.MaintainedHives = s.maintainedCandidateHives(status.Candidate)
 	return status
+}
+
+// stablePromotionEligibleAt is when the 24-hour lineage soak (rule 1 in
+// docs/stable-soak-policy.md) is satisfied for a candidate built at builtAt,
+// RFC3339 UTC, or "" when builtAt is unknown. The lineage starts at the oldest
+// build after stable, which is never newer than the current candidate, so
+// this is the latest the soak can complete while that lineage is pending.
+func stablePromotionEligibleAt(builtAt string) string {
+	if builtAt == "" {
+		return ""
+	}
+	built, err := time.Parse(time.RFC3339, builtAt)
+	if err != nil {
+		return ""
+	}
+	return built.Add(time.Duration(stablePromotionSoakHours) * time.Hour).UTC().Format(time.RFC3339)
+}
+
+// stableNextPromotionAt is the hub's ETA for the next promotion into the
+// stable channel (#10256), from the same channel targets and soak rule the
+// release-channel block's eligible_at uses, so the spoke and the hub card
+// cannot disagree. Returns "" (unknown) when stable auto-promotion is
+// paused, either channel is unresolved, or nothing is queued (candidate and
+// stable are the same build).
+func stableNextPromotionAt(targets []ChannelTarget) string {
+	if !loadStablePromotionState().AutoPromote {
+		return ""
+	}
+	var candidate, stable *ChannelTarget
+	for i := range targets {
+		switch targets[i].Channel {
+		case ReleaseChannelCandidate:
+			candidate = &targets[i]
+		case ReleaseChannelStable:
+			stable = &targets[i]
+		}
+	}
+	if candidate == nil || stable == nil || candidate.Digest == "" || stable.Digest == "" {
+		return ""
+	}
+	if candidate.Digest == stable.Digest || sameCommit(candidate.SHA, stable.SHA) {
+		return ""
+	}
+	return stablePromotionEligibleAt(candidate.CommittedAt)
 }
 
 func (s *HubServer) channelTargetsWithStablePromotion(targets []ChannelTarget) []ChannelTarget {

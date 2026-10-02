@@ -11,6 +11,59 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-02 (v5.118.0)
+
+### Added
+
+- Dashboard collapsed summaries visual strips (#10262)
+
+### Fixed
+
+- Fix lifecycle timeline rendering (#10250)
+- Make dashboard version rendering tests self-contained so shuffle order does not change their JavaScript fixtures.
+
+## 2026-10-02 (v5.117.0)
+
+### Added
+
+- dashboard: sparklines draw on with a staggered animation when a card expands (#10192)
+- dashboard: sidebar nav peeks collapsed sections open and restores them on the next jump (#10199)
+- dashboard: add throughput stat sparklines (#10208)
+- Add collapsed dashboard section summaries (#10211)
+- Filter repository cards by pill kind (#10224)
+- Promote throughput to top-level dashboard section (#10254)
+- CI: `ci-runner-canary.yml` proves the self-hosted runner pool can run a job every 20 minutes (setup-go/setup-node, tool-cache integrity, dind, disk) with a GitHub-hosted watchdog for pickup and queue stalls, opening one auto-closing `ci-runner-canary` issue when red; the infra classifier gains a `toolcache-clobbered` class so those failures are rerun once instead of read as code breaks (#10234).
+- Add per-mode continuous cadence values so agents can run continuously only in selected governor modes.
+- Dashboard sidebar items now have drag handles that keep the left menu, dashboard sections, and agent cards in the same saved order.
+- upstream watch: when `upstream_watch.enabled` is set, the hive polls each configured upstream and files a labelled `upstream:` issue in the fork for every merged PR or release that still applies, with a durable watermark, marker-based dedupe, dismissal and `max_issues_per_run` cap (#9967, #10002)
+
+### Changed
+
+- Document telemetry data collection (#10203)
+- `ci-runners/lke`: documented the pool-level autoscaler (4–12) and `hive-ci-runner` label that the hand-built `hive-ci` cluster was missing, so autoscaled runner nodes schedule runners; Terraform default floor now matches the live pool; runner pods now pre-warm the node-local Go/Node tool cache under a lock so fresh nodes no longer fail the first wave of `setup-go`/`setup-node` steps (#10234).
+- Animate Overview chart transitions.
+
+### Fixed
+
+- `src/docs/backup-restore.md` now cites the right `src/deploy/entrypoint.sh` lines for the config files read at boot, `hive_harden_runtime_config`, and the beads symlinks and per-agent chown ([#10151](https://github.com/hivecommons/hive/issues/10151)).
+- `src/deploy/README.md` now describes `k8s/` correctly and lists the `kustomize/`, `ci-runners/`, `legacy-redirect/`, `dibs-domain-cutover/`, `systemd/` and `data/` directories ([#10153](https://github.com/hivecommons/hive/issues/10153)).
+- dashboard: keep sidebar version upgrade action visible and clear stale progress (#10183)
+- dashboard: keep Knowledge Base stats in one row (#10209)
+- Fix Governor cadence table disabled and continuous agents (#10210)
+- Restore governor metrics after restart (#10213)
+- Fix Governor card chrome and Overview chart polish (#10216)
+- The dashboard no longer rewrites the saved agent-card layout in browser storage on every render; it now writes only when the order or sizes actually change, so focusing an agent never touches the persisted layout ([#10223](https://github.com/hivecommons/hive/issues/10223)).
+- copilot: offer dotted claude 5.5 ids in static fallback list (#10227)
+- Distinguish Change Throughput actor colors (#10244)
+- Polish weekly advice card metadata (#10248)
+- Arm continuous mode when it is enabled on an idle agent so the first continuous kick is scheduled after one cooldown.
+- Fix dashboard top notices and stale version upgrade state.
+
+### Security
+
+- The `hive-error-pages` and legacy-redirect nginx Deployments now pin `nginx:1.31.6-alpine` by digest instead of the floating `nginx:1-alpine` tag ([#10154](https://github.com/hivecommons/hive/issues/10154)).
+- The inference `model-download` init container now pins `curlimages/curl:8.13.0` by digest, matching the main container ([#10155](https://github.com/hivecommons/hive/issues/10155)).
+
 ## 2026-10-02 (v5.116.0)
 
 ### Added

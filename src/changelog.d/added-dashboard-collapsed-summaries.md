@@ -1,0 +1,1 @@
+- Add collapsed dashboard summaries for every section card, including Project Inception and below-the-fold diagnostic sections.

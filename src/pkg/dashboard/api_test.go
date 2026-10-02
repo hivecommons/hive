@@ -1454,6 +1454,23 @@ func TestHandleAgentConfigCadences_StructuredTimesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestHandleAgentConfigCadences_ContinuousRoundTrip(t *testing.T) {
+	s, _ := apiServer(t)
+	rec := doPut(s, "/api/config/agent/scanner/cadences", map[string]any{"surge": "continuous"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	rec = doGet(s, "/api/config/agent/scanner")
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	cadences := got["cadences"].(map[string]any)
+	if cadences["surge"] != "continuous" {
+		t.Fatalf("surge cadence = %#v, want continuous", cadences["surge"])
+	}
+}
+
 func TestHandleAgentConfigCadences_RejectsMutualExclusion(t *testing.T) {
 	s, _ := apiServer(t)
 	body := map[string]any{"idle": map[string]any{

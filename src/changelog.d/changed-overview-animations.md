@@ -1,0 +1,1 @@
+- Slow down and emphasize Overview KPI and chart transitions while avoiding repeat animations for unchanged data.

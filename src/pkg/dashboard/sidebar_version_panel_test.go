@@ -216,6 +216,7 @@ var _upgradeTargetHash = 'bbb2222abcdef';
 const localStorage = {data:{}, getItem(k){return this.data[k] || null}, setItem(k,v){this.data[k]=String(v)}, removeItem(k){delete this.data[k]}};
 ` + jsFunc(t, html, "versionShortSHA") + "\n" +
 		jsFunc(t, html, "versionSameCommit") + "\n" +
+		jsFunc(t, html, "versionPolicy") + "\n" +
 		jsFunc(t, html, "versionNowMs") + "\n" +
 		jsFunc(t, html, "versionReadUpgradeProgress") + "\n" +
 		jsFunc(t, html, "versionWriteUpgradeProgress") + "\n" +

@@ -20,9 +20,6 @@ func TestVersionProvenanceRendering(t *testing.T) {
 	// throws a ReferenceError, the catch swallows it, and the legacy strip is
 	// never cleared — a silent pass turned into a silent fail.
 	for _, name := range []string{"escapeHtml", "versionDeliveryLabel", "versionTrackingLabel", "versionTrackingTooltip", "upgradeTargetLabel", "versionCompareURL", "versionStatusText", "versionLastUpgradeText", "versionShortSHA", "versionSameCommit", "versionDashHTML", "versionPolicy", "versionManagedSuffix", "versionTrackingSummary", "versionCadenceLabel", "versionStatusSummary", "versionNowMs", "versionReadUpgradeProgress", "versionWriteUpgradeProgress", "versionClearUpgradeProgress", "versionMarkUpgradeComplete", "versionReconcileUpgradeProgress", "versionManualUpgradeActive", "versionElapsedText", "versionUpgradeProgressStatus", "versionBeeProgressHTML", "versionButtonHTML", "renderVersionUpgradeAction", "renderVersionDetails", "renderVersionMenu", "renderVersionChip", "fetchGitVersion"} {
-		if name == "fetchGitVersion" {
-			source.WriteString("async ")
-		}
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')
 	}

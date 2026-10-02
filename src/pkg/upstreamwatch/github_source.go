@@ -111,6 +111,16 @@ func (s *GitHubSource) List(ctx context.Context, since time.Time) ([]Item, error
 	return items, nil
 }
 
+// Upstream returns the resolved upstream as "owner/name", resolving the fork
+// parent on first use exactly as List does.
+func (s *GitHubSource) Upstream(ctx context.Context) (string, error) {
+	up, err := s.resolveUpstream(ctx)
+	if err != nil {
+		return "", err
+	}
+	return up.owner + "/" + up.repo, nil
+}
+
 // resolveUpstream returns the upstream owner/name, falling back to the fork
 // parent when cfg.Upstream was empty. An explicit cfg.Upstream always wins.
 func (s *GitHubSource) resolveUpstream(ctx context.Context) (repoRef, error) {
