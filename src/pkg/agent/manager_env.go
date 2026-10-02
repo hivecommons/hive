@@ -157,6 +157,16 @@ func agentGitIdentity(agentName string) (name, email string, ok bool) {
 	return gitidentity.AgentIdentity(agentName)
 }
 
+// ProxyCACertPath is the egress proxy CA that agents trust through
+// NODE_EXTRA_CA_CERTS and GIT_SSL_CAINFO.
+const ProxyCACertPath = proxyCACertPath
+
+// ProxyURL is the local egress proxy URL agents receive as HTTP(S)_PROXY. It
+// carries no userinfo: the proxy names the caller from the socket UID.
+func ProxyURL() string {
+	return fmt.Sprintf("http://127.0.0.1:%d", proxyListenPort)
+}
+
 func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	model := agent.Config.Model
 	if agent.ModelOverride != "" {
@@ -201,7 +211,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	// Agent identification uses UID-based /proc/net/tcp lookup instead of
 	// Proxy-Authorization headers. GIT_TERMINAL_PROMPT=0 prevents git from
 	// prompting for proxy credentials.
-	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyListenPort)
+	proxyURL := ProxyURL()
 	vars = append(vars, agentEnvPair{"HTTPS_PROXY", proxyURL, false})
 	vars = append(vars, agentEnvPair{"HTTP_PROXY", proxyURL, false})
 	vars = append(vars, agentEnvPair{"HIVE_PROXY_AGENT", agent.Name, false})

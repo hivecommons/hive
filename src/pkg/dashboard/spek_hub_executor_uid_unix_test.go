@@ -129,3 +129,49 @@ func TestSpekHubShareWithExecUserGrantsGroupWriteButNotGitOrSymlinkTargets(t *te
 		t.Errorf("home group bits = %v, want rwx", got)
 	}
 }
+
+func TestSpekHubExecUserEnvRoutesThroughProxy(t *testing.T) {
+	env := []string{
+		"PATH=/usr/bin",
+		"HTTPS_PROXY=http://upstream:3128",
+		"http_proxy=http://upstream:3128",
+		"NO_PROXY=localhost",
+		"NODE_EXTRA_CA_CERTS=/data/proxy-ca-bundle.pem",
+		"HOME=/workspace/hive-spek/home",
+	}
+	got := spekHubExecUserEnv(env, "hive-spek")
+	values := map[string][]string{}
+	for _, entry := range got {
+		key, value, _ := strings.Cut(entry, "=")
+		values[key] = append(values[key], value)
+	}
+	want := map[string]string{
+		"HTTPS_PROXY":         agent.ProxyURL(),
+		"HTTP_PROXY":          agent.ProxyURL(),
+		"HIVE_PROXY_AGENT":    "hive-spek",
+		"GIT_TERMINAL_PROMPT": "0",
+		"NODE_EXTRA_CA_CERTS": "/data/proxy-ca-bundle.pem",
+		"GIT_SSL_CAINFO":      agent.ProxyCACertPath,
+		"NO_PROXY":            "localhost",
+		"PATH":                "/usr/bin",
+		"HOME":                "/workspace/hive-spek/home",
+	}
+	for key, value := range want {
+		if !slices.Equal(values[key], []string{value}) {
+			t.Errorf("%s = %q, want [%q]", key, values[key], value)
+		}
+	}
+	if _, ok := values["http_proxy"]; ok {
+		t.Errorf("lowercase http_proxy from the hive process was forwarded: %q", got)
+	}
+}
+
+func TestSpekHubExecUserEnvDefaultsProxyCA(t *testing.T) {
+	got := spekHubExecUserEnv([]string{"PATH=/usr/bin", "node_extra_ca_certs=/elsewhere.pem"}, "hive-spek")
+	if !slices.Contains(got, "NODE_EXTRA_CA_CERTS="+agent.ProxyCACertPath) {
+		t.Errorf("NODE_EXTRA_CA_CERTS not defaulted to the proxy CA: %q", got)
+	}
+	if slices.Contains(got, "node_extra_ca_certs=/elsewhere.pem") {
+		t.Errorf("non-canonical CA variable forwarded: %q", got)
+	}
+}

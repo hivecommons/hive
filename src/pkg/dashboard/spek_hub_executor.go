@@ -714,6 +714,7 @@ func (e *SpekHubExecutor) runStageCommand(ctx context.Context, worktree string, 
 				return nil, 0, fmt.Errorf("granting the executor user access to the worktree: %w", err)
 			}
 			cmd = spekHubRunAsCommand(cmd, userSpec, home)
+			env = spekHubExecUserEnv(env, e.Identity)
 			defer e.reclaimFromExecUser(userSpec, worktree, home)
 		}
 		var buf spekHubTailWriter
@@ -808,6 +809,49 @@ func spekHubExecUserSpec(identity string) (string, error) {
 func spekHubRunAsCommand(cmd []string, userSpec, home string) []string {
 	wrapped := []string{"su-exec", userSpec, "env", "HOME=" + home, "sh", "-c", `umask 002 && exec "$@"`, "sh"}
 	return append(wrapped, cmd...)
+}
+
+// spekHubExecUserEnv points the CLI running as the executor user at the
+// egress proxy the way the agent manager does for regular agents: explicit
+// HTTP(S)_PROXY (the :443 redirect alone misses non-443 ports and clients
+// that pin a direct connection), the proxy CA, the identity the proxy
+// attributes the UID to, and no interactive git credential prompts.
+// Forwarded proxy settings from the hive process are replaced; CA paths the
+// hive process already exports (e.g. the combined bundle) are kept.
+func spekHubExecUserEnv(env []string, identity string) []string {
+	override := map[string]string{
+		"HTTPS_PROXY":         agent.ProxyURL(),
+		"HTTP_PROXY":          agent.ProxyURL(),
+		"HIVE_PROXY_AGENT":    identity,
+		"GIT_TERMINAL_PROMPT": "0",
+	}
+	defaults := map[string]string{
+		"NODE_EXTRA_CA_CERTS": agent.ProxyCACertPath,
+		"GIT_SSL_CAINFO":      agent.ProxyCACertPath,
+	}
+	out := make([]string, 0, len(env)+len(override)+len(defaults))
+	for _, entry := range env {
+		key, value, _ := strings.Cut(entry, "=")
+		upper := strings.ToUpper(key)
+		if _, ok := override[upper]; ok {
+			continue
+		}
+		if _, ok := defaults[upper]; ok {
+			if key != upper || value == "" {
+				continue
+			}
+			delete(defaults, upper)
+		}
+		out = append(out, entry)
+	}
+	for _, key := range []string{"HTTPS_PROXY", "HTTP_PROXY", "HIVE_PROXY_AGENT", "GIT_TERMINAL_PROMPT", "NODE_EXTRA_CA_CERTS", "GIT_SSL_CAINFO"} {
+		if value, ok := override[key]; ok {
+			out = append(out, key+"="+value)
+		} else if value, ok := defaults[key]; ok {
+			out = append(out, key+"="+value)
+		}
+	}
+	return out
 }
 
 // spekHubShareWithExecUser gives the executor user (primary group node) write
