@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -35,6 +36,12 @@ const (
 	spekHubFailureReason          = "hub_executor_failed"
 	spekHubNonFinalReason         = "hub_executor_cli_exited_nonfinal"
 	spekHubLeaseRenewInterval     = 5 * time.Minute
+	// SpekHubCloneCredentialFilePrefix names the per-clone git credential
+	// store files written beside the shared clones.
+	SpekHubCloneCredentialFilePrefix = ".hive-git-credentials-"
+	// spekHubCloneCredentialMaxAge matches the lifetime of the installation
+	// token a credential file holds; an older file is never in use.
+	spekHubCloneCredentialMaxAge = time.Hour
 )
 
 type SpekHubCloneAuth func(ctx context.Context, repo, dir string) (authArgs []string, token string, cleanup func(), err error)
@@ -264,6 +271,7 @@ func (e *SpekHubExecutor) sweepStaleWorktrees(ctx context.Context) error {
 		}
 	}
 	e.mu.Unlock()
+	e.sweepStaleCloneCredentials(time.Now())
 	root := filepath.Join(currentAgentWorkspaceRoot(), e.Identity, "runs")
 	runDirs, err := os.ReadDir(root)
 	if errors.Is(err, os.ErrNotExist) {
@@ -304,6 +312,38 @@ func (e *SpekHubExecutor) sweepStaleWorktrees(ctx context.Context) error {
 		fence.Close()
 	}
 	return nil
+}
+
+// sweepStaleCloneCredentials removes clone credential files whose in-process
+// cleanup never ran (hub crash or kill during clone/fetch).
+func (e *SpekHubExecutor) sweepStaleCloneCredentials(now time.Time) {
+	root := filepath.Join(currentAgentWorkspaceRoot(), e.Identity)
+	owners, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, owner := range owners {
+		if !owner.IsDir() || owner.Name() == "runs" || owner.Name() == "home" {
+			continue
+		}
+		entries, err := os.ReadDir(filepath.Join(root, owner.Name()))
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasPrefix(entry.Name(), SpekHubCloneCredentialFilePrefix) {
+				continue
+			}
+			info, err := entry.Info()
+			if err != nil || now.Sub(info.ModTime()) < spekHubCloneCredentialMaxAge {
+				continue
+			}
+			path := filepath.Join(root, owner.Name(), entry.Name())
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				e.log().Warn("[spektacular] removing stale clone credential file failed", "path", path, "error", err)
+			}
+		}
+	}
 }
 
 func (e *SpekHubExecutor) sharedRepoDirs() []string {
@@ -516,17 +556,18 @@ const spekHubWaitDelay = 10 * time.Second
 
 func (e *SpekHubExecutor) runStageCommand(ctx context.Context, worktree string, env []string, st spekHubStage, cmd []string) ([]byte, int, error) {
 	logPath := filepath.Join(worktree, ".hive", fmt.Sprintf("spek-stage-%s-%d.log", sanitizeRunPromptPath(st.stage), st.gen))
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-		return nil, 0, err
-	}
 	writeLog := func(out []byte) {
-		if writeErr := os.WriteFile(logPath, out, 0o600); writeErr != nil {
+		if writeErr := writeSpekHubWorktreeFile(logPath, out); writeErr != nil {
 			e.log().Warn("[spektacular] writing hub executor cli log failed", "path", logPath, "error", writeErr)
 		}
 	}
 	if e.Exec == nil {
+		cmd, err := spekHubDropCapsCommand(cmd)
+		if err != nil {
+			return nil, 0, err
+		}
 		var buf spekHubTailWriter
-		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+		f, err := createSpekHubWorktreeFile(logPath)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -748,7 +789,7 @@ func (e *SpekHubExecutor) captureCompletedStage(st spekHubStage, worktree, artif
 	if started.IsZero() {
 		started = ended
 	}
-	promptBytes, _ := os.ReadFile(filepath.Join(worktree, spekHubPromptRelPath))
+	promptBytes, _ := readSpekWorktreeFile(worktree, filepath.Join(worktree, spekHubPromptRelPath))
 	artifactKey := firstRunNonEmpty(status.JoinKey(), artifact)
 	docs, files, interview, notes := collectSpekArtifactFiles(worktree, st.stage, artifactKey)
 	interview = appendSpekHumanInterview(worktree, interview, ended.Format(time.RFC3339Nano))
@@ -1335,6 +1376,10 @@ func spekHubExecutorEnvAllowed(key string) bool {
 		return true
 	case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY":
 		return true
+	// The proxy CA, as regular agents receive it. SSL_CERT_FILE stays out:
+	// it replaces the system bundle and breaks Copilot API TLS.
+	case "NODE_EXTRA_CA_CERTS", "GIT_SSL_CAINFO":
+		return true
 	}
 	return strings.HasPrefix(upper, "LC_")
 }
@@ -1607,11 +1652,41 @@ func (e *SpekHubExecutor) log() *slog.Logger {
 }
 
 func writeSpekHubPrompt(worktree, prompt string) error {
-	path := filepath.Join(worktree, spekHubPromptRelPath)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	return writeSpekHubWorktreeFile(filepath.Join(worktree, spekHubPromptRelPath), []byte(prompt))
+}
+
+func writeSpekHubWorktreeFile(path string, data []byte) error {
+	f, err := createSpekHubWorktreeFile(path)
+	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(prompt), 0o600)
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// createSpekHubWorktreeFile creates a fresh executor-owned file in the reused
+// worktree. The agent can write there, so a symlinked parent directory is
+// refused and any existing entry (a planted symlink or hard link) is unlinked
+// rather than written through.
+func createSpekHubWorktreeFile(path string) (*os.File, error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return nil, fmt.Errorf("refusing to write %s: %s is not a directory", path, dir)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	return os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
 }
 
 func SpekHubStagePrompt(stage, repo string, number int, runKey, title, artifact string) string {

@@ -1053,3 +1053,142 @@ func TestSpekHubExecutorPromptUsesConfiguredBinary(t *testing.T) {
 		}
 	}
 }
+
+func TestSpekHubExecutorEnvForwardsProxyCAButNotSSLCertFile(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	t.Setenv("NODE_EXTRA_CA_CERTS", "/etc/hive/proxy-ca.pem")
+	t.Setenv("GIT_SSL_CAINFO", "/etc/hive/proxy-ca.pem")
+	t.Setenv("SSL_CERT_FILE", "/etc/hive/combined.pem")
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	env, err := e.executorEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byKey := map[string]string{}
+	for _, entry := range env {
+		k, v, _ := strings.Cut(entry, "=")
+		byKey[k] = v
+	}
+	if byKey["NODE_EXTRA_CA_CERTS"] != "/etc/hive/proxy-ca.pem" || byKey["GIT_SSL_CAINFO"] != "/etc/hive/proxy-ca.pem" {
+		t.Fatalf("proxy CA not forwarded: NODE_EXTRA_CA_CERTS=%q GIT_SSL_CAINFO=%q", byKey["NODE_EXTRA_CA_CERTS"], byKey["GIT_SSL_CAINFO"])
+	}
+	if _, ok := byKey["SSL_CERT_FILE"]; ok {
+		t.Fatal("SSL_CERT_FILE reached child env")
+	}
+}
+
+func TestSpekHubExecutorSweepRemovesStaleCloneCredentialFiles(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	ownerDir := filepath.Join(currentAgentWorkspaceRoot(), e.Identity, "myorg")
+	if err := os.MkdirAll(ownerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(ownerDir, SpekHubCloneCredentialFilePrefix+"myorg-repo1-1")
+	fresh := filepath.Join(ownerDir, SpekHubCloneCredentialFilePrefix+"myorg-repo1-2")
+	other := filepath.Join(ownerDir, "notes.txt")
+	for _, path := range []string{stale, fresh, other} {
+		if err := os.WriteFile(path, []byte("https://x-access-token:tok@github.com\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-spekHubCloneCredentialMaxAge - time.Minute)
+	for _, path := range []string{stale, other} {
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.sweepStaleWorktrees(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale credential file still exists: %v", err)
+	}
+	for _, path := range []string{fresh, other} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("%s removed: %v", path, err)
+		}
+	}
+}
+
+func TestWriteSpekHubPromptDoesNotFollowPlantedSymlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink semantics differ on windows")
+	}
+	worktree := t.TempDir()
+	target := filepath.Join(t.TempDir(), "target.txt")
+	if err := os.WriteFile(target, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(worktree, ".hive"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	promptPath := filepath.Join(worktree, spekHubPromptRelPath)
+	if err := os.Symlink(target, promptPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSpekHubPrompt(worktree, "prompt"); err != nil {
+		t.Fatalf("writeSpekHubPrompt: %v", err)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "keep" {
+		t.Fatalf("symlink target overwritten: %q", got)
+	}
+	info, err := os.Lstat(promptPath)
+	if err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("prompt is not a fresh regular file: %v %v", info, err)
+	}
+	if got, _ := os.ReadFile(promptPath); string(got) != "prompt" {
+		t.Fatalf("prompt = %q", got)
+	}
+
+	linkedDir := t.TempDir()
+	worktree2 := t.TempDir()
+	if err := os.Symlink(linkedDir, filepath.Join(worktree2, ".hive")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSpekHubPrompt(worktree2, "prompt"); err == nil {
+		t.Fatal("expected a symlinked .hive directory to be refused")
+	}
+	if _, err := os.Stat(filepath.Join(linkedDir, filepath.Base(spekHubPromptRelPath))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("prompt written through symlinked .hive: %v", err)
+	}
+}
+
+func TestCollectSpekArtifactFilesSkipsSymlinksAndScrubs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink semantics differ on windows")
+	}
+	worktree := t.TempDir()
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.md")
+	if err := os.WriteFile(secret, []byte("outside-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifactDir := filepath.Join(worktree, ".spektacular", "specs", "myorg-repo1-57")
+	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ghp := "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd"
+	if err := os.WriteFile(filepath.Join(artifactDir, "spec.md"), []byte("# Spec\ntoken "+ghp+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(artifactDir, "linked.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(artifactDir, "linked-dir")); err != nil {
+		t.Fatal(err)
+	}
+	docs, files, _, _ := collectSpekArtifactFiles(worktree, StageSpec, "myorg-repo1-57")
+	if len(files) != 1 || len(docs) != 1 || !strings.HasSuffix(files[0].Path, "spec.md") {
+		t.Fatalf("expected only the regular spec file, got files=%+v", files)
+	}
+	for _, text := range []string{files[0].Content, docs[0].Markdown} {
+		if strings.Contains(text, "outside-secret") || strings.Contains(text, ghp) {
+			t.Fatalf("capture leaked symlinked or unscrubbed content: %q", text)
+		}
+	}
+
+	if _, err := readSpekWorktreeFile(worktree, filepath.Join(artifactDir, "linked-dir", "secret.md")); err == nil {
+		t.Fatal("expected a read through a symlinked directory to be refused")
+	}
+}

@@ -2,12 +2,15 @@ package dashboard
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -274,16 +277,16 @@ func collectSpekArtifactFiles(worktree, kind, artifact string) ([]RunDetailStage
 	var notes []string
 	for _, base := range spekArtifactPaths(worktree, kind, artifact) {
 		_ = filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d == nil || d.IsDir() {
+			if err != nil || d == nil || !d.Type().IsRegular() {
 				return nil
 			}
 			rel, _ := filepath.Rel(root, path)
 			rel = filepath.ToSlash(rel)
-			data, err := os.ReadFile(path)
+			data, err := readSpekWorktreeFile(worktree, path)
 			if err != nil {
 				return nil
 			}
-			text, truncated := boundedUTF8(data, spekStageFileMaxTextBytes)
+			text, truncated := boundedUTF8([]byte(scrubSpekHubOutput(string(data))), spekStageFileMaxTextBytes)
 			file := RunDetailStageFile{Path: rel, Bytes: len(data), Truncated: truncated, Text: text, Content: text}
 			files = append(files, file)
 			if strings.HasSuffix(strings.ToLower(rel), ".md") {
@@ -365,4 +368,38 @@ func firstSentence(s string) string {
 		return strings.TrimSpace(s[:idx+1])
 	}
 	return s
+}
+
+var errSpekWorktreeFileOutside = errors.New("worktree file resolves outside the worktree")
+
+// readSpekWorktreeFile reads a regular file the agent wrote in its worktree.
+// Symlinks (at the leaf or in a parent directory) that resolve outside the
+// worktree are refused, so capture cannot be used to publish other files.
+func readSpekWorktreeFile(worktree, path string) ([]byte, error) {
+	root, err := filepath.EvalSymlinks(worktree)
+	if err != nil {
+		return nil, err
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, err
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return nil, errSpekWorktreeFileOutside
+	}
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), path)
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	return io.ReadAll(file)
 }
