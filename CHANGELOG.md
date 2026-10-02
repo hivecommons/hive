@@ -11,6 +11,29 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-02 (v5.116.0)
+
+### Added
+
+- dashboard: unified navbar chip system  one shape, one height, one baseline (#10140)
+- dashboard: contributor cards tinted from avatar colours (album-cover effect) (#10145)
+- dashboard: agent cards in a 3-up grid with drag-to-reorder and resizable cards (#10146)
+- dashboard: shared power switch for agent on/off and continuous in cadence table and settings (#10180)
+
+### Changed
+
+- docs: integration guide  work source providers, clanker (Flue-style), spektacular (#10176)
+- Pinned the CI scripts' transitive minimatch dependency to the ISC-licensed 9.x line for CNCF license allowlist compatibility.
+
+### Fixed
+
+- dashboard: feedback modal layout rework + full disclosure of collected diagnostics (#10141)
+- dashboard: card polish batch  governor chrome, advisory sub-sections, timeline, spacing, repo headers, audit log sizing, Spektacular badge, knowledge facts, notices on top; drop Platform section (#10143)
+- dashboard: overview tiles show their counts again; larger chart stats text (#10144)
+- dashboard: continuous toggle uses the shared agent-power switch (was rendering as a bare bar + knob) (#10149)
+- `docs/HUB_DISASTER_RECOVERY.md` now cites `src/deploy/entrypoint.sh:989-992`, where the entrypoint writes `hive.yaml.runtime` after the merge ([#10152](https://github.com/hivecommons/hive/issues/10152)).
+- issue-template: fix contributor story form schema (#10182)
+
 ## 2026-10-02 (v5.115.1)
 
 ### Fixed

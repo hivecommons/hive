@@ -12,6 +12,7 @@ Thank you for helping improve KubeStellar Hive. This guide is for contributing c
 - Discuss design and review questions in public issues and pull requests so decisions remain public and searchable.
 - Follow the [KubeStellar Code of Conduct](CODE_OF_CONDUCT.md) and [Hive governance](GOVERNANCE.md).
 - Report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
+- Extending Hive? Start with the [Integration guide](src/docs/integration-guide.md) for the current work source, ClankeR/Flue-style external execution, and Spektacular Project Inception seams.
 
 ## Repository layout
 

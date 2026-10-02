@@ -23,6 +23,13 @@ via YAML tags.
 
 Dashboard UI changes should follow the shared [dashboard design system](dashboard-design-system.md), [dashboard glossary and sidebar IA](dashboard-glossary.md), and [ADR-0018](adr/0018-dashboard-design-tokens.md). The token layer is the theme contract for future user theme/background work and the migration path away from static inline styles; `go test ./pkg/dashboard/... -run StyleRatchet -v` ratchets inline styles and raw CSS values so the debt only goes down.
 
+
+## Shared dashboard cards and pinned notices
+
+Top-level dashboard sections use the shared section-card shell for their header, border, collapse state, badges, and collapsed summaries. Notices that must stay above the reorderable dashboard — release channel/upgrade status, install/configuration warnings, and the planning intro — live in the pinned `#dashboard-notices` anchor before Overview so browser-local section reordering cannot move them down the page.
+
+The standalone Platform section is no longer part of the default dashboard layout. Its forge, mint-token-service, and skills facts now appear in **System Diagnostics → Platform**, keeping the information available without consuming a top-level card.
+
 ## Topbar and sidebar status
 
 The light dashboard topbar keeps high-signal operational state only: project name, fleet controls, health, auth, and a compact ACMM autonomy chip such as `L5 · Semi-Autonomous`. The chip is display-only and navigates to the ACMM Evaluation section; changing levels remains in the existing ACMM dialog/sidebar controls.
@@ -40,7 +47,7 @@ and upgrade availability, and the fleet breaker state.
 
 ## Reorder sections
 
-The main dashboard layout is browser-local and display-only. Use the `⠿` grip in each top-level section header to drag a section, or focus the grip and press Space, Up/Down, then Space/Enter to drop; Escape cancels the keyboard move. The working order is auto-saved in `localStorage` as `hive.dashboard.layout`; ACMM-hidden sections keep their slots, feature-disabled sections are excluded, and the sidebar follows the saved order. Section collapse state and repository card display tweaks are captured with saved layout presets. Open the GitHub avatar menu's **Layout** section to save the current working layout as a named preset (default **My layout**), apply/rename/delete up to five saved layouts, export/import a JSON layout, or **Reset layout to default**. Reset asks for confirmation, clears the working layout on this device, and offers a short undo toast. The avatar shows a small dot whenever the working layout differs from the last applied preset or default.
+The main dashboard layout is browser-local and display-only. Use the `⠿` grip in each top-level section header to drag a section, or focus the grip and press Space, Up/Down, then Space/Enter to drop; Escape cancels the keyboard move. The working order is auto-saved in `localStorage` as `hive.dashboard.layout`; ACMM-hidden sections keep their slots, feature-disabled sections are excluded, and the sidebar follows the saved order. Section collapse state and repository card display tweaks are captured with saved layout presets; sidebar jumps temporarily peek collapsed sections open and restore them on the next different jump unless the operator manually keeps the section open. Open the GitHub avatar menu's **Layout** section to save the current working layout as a named preset (default **My layout**), apply/rename/delete up to five saved layouts, export/import a JSON layout, or **Reset layout to default**. Reset asks for confirmation, clears the working layout on this device, and offers a short undo toast. The avatar shows a small dot whenever the working layout differs from the last applied preset or default.
 
 The Strategy Lab (`dashboard.strategy_lab`) is hidden by default while that
 surface is being reworked. Set `dashboard.strategy_lab: true` to show the
@@ -50,8 +57,15 @@ status controls.
 ## Governor card
 
 The dashboard **Governor** card summarizes queue depth, operating mode, budget
-posture, and cadence controls for the hive. Its **PRs by model** section reads
-`GET /api/governor/pr-models` with the selected `7d`, `30d`, or `all` window.
+posture, and cadence controls for the hive. Its collapsible **PRs by model** nested
+sub-section reads `GET /api/governor/pr-models` with the selected `7d`, `30d`,
+or `all` window. The nested header keeps the window/sort toggles visible and its
+collapsed summary shows the current top-ranked model plus model count.
+The cadence table starts each agent row with the same `1`/`0` Agent power
+rocker used in the agent settings panel, so owners can enable or disable an
+agent from the table; disabled rows are dimmed, and read-only viewers see the
+current state without an active control. The Continuous column and Cadences
+settings panel use that same shared rocker component for continuous mode.
 Rows keep the merged/open/closed PR-volume bar, then add compact effectiveness
 columns from the same aggregation used by the contributor Operations **Most
 effective models** panel: merged PRs, first-pass merge rate, verified-PR run
@@ -65,6 +79,8 @@ default row order is effectiveness rank; operators can toggle back to raw PR
 count without changing the selected window.
 
 ## Change Throughput
+
+The Change Throughput panel appears as a nested Hive Advisory sub-section with its header separated from the body card; its subtitle uses the small muted dashboard subtitle style.
 
 The **Change Throughput** section (`pr-throughput-section`) summarizes
 pull/merge requests and issues across tracked forges. It reads
@@ -90,6 +106,14 @@ agent-created issues, agent comments/claims as triage/review signals, and
 agent issue-close events. Historical human issue creation/review/closure is not
 backfilled; the actor matrix and trend chart start accumulating as new audited
 or observed events arrive.
+
+## Project Inception and Knowledge
+
+Project Inception is branded as powered by Spektacular with a linked header pill and body note. Knowledge Base collapsed summaries show the total fact count (the same source as the sidebar badge); layer health stays inside the body with a short explanation that layers are knowledge-source scopes for facts.
+
+## Audit Log
+
+The Audit Log viewport defaults to a taller resizable panel. Browser-local height changes are persisted in `localStorage` under `hive.audit.panel.height`; the entry cap/search controls remain in the card header area above the scrollable table.
 
 ## Hive Chat
 
@@ -190,7 +214,7 @@ Manual arrows and dot indicators are available even when timed rotation is off;
 timed rotation pauses while the panel is hovered or the tab is hidden, and
 reduced-motion users get instant swaps.
 
-The **Repositories** section includes a compact, collapsible pill legend. It is
+The **Repositories** section uses a consistent card header grid: reorder grip, truncated repository name, status badges, labelled auto-merge switch, spacer, and actions. It also includes a compact, collapsible pill legend. It is
 stored per browser in `localStorage` and uses the same pill classes as the cards,
 so theme changes update the legend automatically. The legend lists the issue
 and PR bands (rendered from the shared band table, each with its rule as a

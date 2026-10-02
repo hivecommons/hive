@@ -53,7 +53,7 @@ func TestDashboardFocusedAgentRenderedFirstWithoutPersistingOrder(t *testing.T) 
 		"const ordered = Array.isArray(agents) ? agents.slice() : [];",
 		"const idx = ordered.findIndex(a => a && a.name === _ocSelectedAgent);",
 		"ordered.unshift(focused);",
-		"const cards = agentsFocusedFirst(sortedAgents).map(a => {",
+		"const cards = agentsFocusedFirst(orderedAgents).map(a => {",
 		"if (window._lastAgents) renderAgents(window._lastAgents);",
 		"card.classList.toggle('oc-focused', selected);",
 		"card.classList.remove('oc-hidden');",
@@ -68,7 +68,7 @@ func TestDashboardFocusedAgentRenderedFirstWithoutPersistingOrder(t *testing.T) 
 		t.Fatal("focused agent card ordering must be a view-only reorder, not persisted")
 	}
 	render := jsFunctionBody(t, html, "function renderAgents(agents)")
-	if !strings.Contains(render, "agentsFocusedFirst(sortedAgents).map") {
+	if !strings.Contains(render, "agentsFocusedFirst(orderedAgents).map") {
 		t.Fatal("renderAgents does not keep the selected agent first across status re-renders")
 	}
 }
