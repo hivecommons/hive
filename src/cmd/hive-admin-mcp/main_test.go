@@ -419,12 +419,15 @@ func TestReadPathBandTools(t *testing.T) {
 }
 
 func TestReadProviderIssuesByBandFiltersRowsButKeepsBands(t *testing.T) {
+	// Each tool has its own band vocabulary (issueBandKeys vs prBandKeys), so
+	// pick a filter band and a filler band that are valid for that tool.
 	cases := []struct {
-		tool string
-		kind string
+		tool   string
+		want   string
+		filler string
 	}{
-		{adminmcp.ToolIssuesByBand, "issues"},
-		{adminmcp.ToolPrsByBand, "prs"},
+		{adminmcp.ToolIssuesByBand, "done", "ready"},
+		{adminmcp.ToolPrsByBand, "in-review", "open"},
 	}
 	for _, tc := range cases {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -434,19 +437,19 @@ func TestReadProviderIssuesByBandFiltersRowsButKeepsBands(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"bands": []any{
-					map[string]any{"key": "ready", "label": "Unclaimed", "rule": "no other band matched", "count": 1},
-					map[string]any{"key": "done", "label": "Confirm & close", "rule": "verify and close", "count": 2},
+					map[string]any{"key": tc.filler, "label": "Filler", "rule": "no other band matched", "count": 1},
+					map[string]any{"key": tc.want, "label": "Wanted", "rule": "matches the filter", "count": 2},
 				},
 				"rows": []any{
-					map[string]any{"number": 1, "band": "ready"},
-					map[string]any{"number": 2, "band": "done"},
-					map[string]any{"number": 3, "band": "done"},
+					map[string]any{"number": 1, "band": tc.filler},
+					map[string]any{"number": 2, "band": tc.want},
+					map[string]any{"number": 3, "band": tc.want},
 				},
 			})
 		}))
 		defer server.Close()
 		r := &roster{hives: []hiveConfig{{Name: "active", Address: server.URL, Token: "token"}}, active: 0, timeout: time.Second}
-		result, err := (readProvider{roster: r}).Read(context.Background(), tc.tool, map[string]any{"band": "done"})
+		result, err := (readProvider{roster: r}).Read(context.Background(), tc.tool, map[string]any{"band": tc.want})
 		if err != nil {
 			t.Fatalf("%s: %v", tc.tool, err)
 		}
@@ -460,7 +463,7 @@ func TestReadProviderIssuesByBandFiltersRowsButKeepsBands(t *testing.T) {
 		}
 		rows, ok := body["rows"].([]any)
 		if !ok || len(rows) != 2 {
-			t.Fatalf("%s: rows = %#v, want only the 2 done-band rows", tc.tool, body["rows"])
+			t.Fatalf("%s: rows = %#v, want only the 2 %s-band rows", tc.tool, body["rows"], tc.want)
 		}
 	}
 }
