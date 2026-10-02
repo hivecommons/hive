@@ -291,7 +291,7 @@ discipline):
   tool package, reaching the hive over the dashboard REST API with a dashboard
   token ([#8697](https://github.com/hivecommons/hive/issues/8697),
   [design doc](https://github.com/hivecommons/hive/blob/v6/src/docs/design/admin-mcp.md)).
-  **RFC accepted; nothing merged.** Phase 0
+  **Merged on v6:** the dashboard endpoint, the `hive-admin-mcp` stdio binary, the read tools and the preview-and-confirm write operations ([#8699](https://github.com/hivecommons/hive/issues/8699), [#9160](https://github.com/hivecommons/hive/issues/9160)–[#9163](https://github.com/hivecommons/hive/issues/9163)); operator setup is in [admin-mcp.md](src/docs/admin-mcp.md). Phase 0
   ([#8698](https://github.com/hivecommons/hive/issues/8698)) closes the one gap
   in the line's guard invariant — `handleKick` runs no `ioscan`, so a kick
   prompt in the request body reaches the agent unscanned for every caller, the

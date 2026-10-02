@@ -1,5 +1,7 @@
 # The operator-facing admin MCP
 
+> This is the design record, not the setup guide. To connect a client, see [the admin MCP user guide](../admin-mcp.md).
+
 **Status: phase 6 repository, spend, contributor and ops operations implemented, with phase 4 agent operations present.** The admin MCP package, dashboard endpoint, stdio binary, refusal contract, read tools for fleet, agents, leases/claims, plans, audit, settings, readiness, spend, contributors, knowledge, hive advice, and issue/PR overview bands, the generic write-operation registry, durable preview-and-confirm flow, and registered write operations through phase 6 — including phase 4 agent operations and phase 5 fleet-level operations — are present. Writes remain disabled unless explicitly enabled, and later phases add more registered write operations on top of the same contract. It belongs to the v6
 dashboard-optional line ([#7563](https://github.com/hivecommons/hive/issues/7563)) and, per
 that line's policy, lands on the `v6` branch only. Tracked by
