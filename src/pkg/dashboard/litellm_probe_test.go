@@ -110,3 +110,76 @@ func TestParseModelsResponse_VerbatimIDs(t *testing.T) {
 		}
 	}
 }
+
+// An HTML "403 Forbidden" page comes from an ingress/WAF/VPN proxy in front of
+// the gateway, not from the gateway's auth layer: the probe must say so —
+// naming the URL it tried — instead of claiming the configured key was
+// rejected, which sent a reporter chasing a key that worked fine for
+// /v1/completions (hivecommons/hive#9945).
+func TestProbeLiteLLMModels_HTMLForbiddenBlamesProxyNotKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Server", "nginx")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, "<html>\n<head><title>403 Forbidden</title></head>\n<body><center><h1>403 Forbidden</h1></center></body>\n</html>")
+	}))
+	defer srv.Close()
+
+	_, err := probeLiteLLMModels(srv.URL, "sk-livekeyvalue")
+	if err == nil {
+		t.Fatal("expected an error for an HTTP 403 probe response")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "gateway rejected the configured key") {
+		t.Errorf("HTML 403 must not be attributed to the key: %v", err)
+	}
+	for _, want := range []string{"proxy in front of the gateway", srv.URL + "/v1/models", "nginx", "403 Forbidden"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q missing %q", msg, want)
+		}
+	}
+}
+
+// A JSON auth error IS the gateway speaking, so the key-specific message (and
+// the probed URL) must survive.
+func TestProbeLiteLLMModels_JSONForbiddenStillBlamesKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"error":{"message":"token not found","type":"auth_error"}}`)
+	}))
+	defer srv.Close()
+
+	_, err := probeLiteLLMModels(srv.URL, "sk-livekeyvalue")
+	if err == nil {
+		t.Fatal("expected an error for an HTTP 403 probe response")
+	}
+	for _, want := range []string{"gateway rejected the configured key", srv.URL + "/v1/models", "token not found"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+func TestLooksLikeIntermediaryRejection(t *testing.T) {
+	cases := []struct {
+		name        string
+		contentType string
+		body        string
+		want        bool
+	}{
+		{"html page", "text/html", "<html><title>403 Forbidden</title></html>", true},
+		{"html body without content type", "", "<html>403</html>", true},
+		{"empty body", "", "", true},
+		{"plain text refusal", "text/plain", "access denied", false},
+		{"gateway json", "application/json", `{"error":"token not found"}`, false},
+		{"json body without content type", "", `{"error":"token not found"}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := looksLikeIntermediaryRejection(tc.contentType, tc.body); got != tc.want {
+				t.Errorf("looksLikeIntermediaryRejection(%q, %q) = %v, want %v", tc.contentType, tc.body, got, tc.want)
+			}
+		})
+	}
+}

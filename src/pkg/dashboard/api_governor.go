@@ -1329,6 +1329,30 @@ var litellmKeyMaterialPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\b[0-9a-f]{32,}\b`),
 }
 
+// looksLikeIntermediaryRejection reports whether a non-OK probe response came
+// from something in front of the gateway API (ingress, WAF, VPN proxy, CDN)
+// rather than from the gateway's own auth layer. LiteLLM and other OpenAI-
+// compatible gateways answer auth failures with a JSON error body; an HTML
+// error page (or an empty body) means the request was refused before any API
+// key was evaluated, so blaming the configured key sends the operator chasing
+// a key that is in fact fine (hivecommons/hive#9945).
+func looksLikeIntermediaryRejection(contentType, body string) bool {
+	ct := strings.ToLower(contentType)
+	if strings.Contains(ct, "json") {
+		return false
+	}
+	trimmed := strings.TrimSpace(body)
+	if trimmed == "" {
+		return true
+	}
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		return false
+	}
+	return strings.Contains(ct, "html") ||
+		strings.HasPrefix(strings.ToLower(trimmed), "<html") ||
+		strings.HasPrefix(trimmed, "<")
+}
+
 // redactLiteLLMKeyMaterial removes API-key hints and key hashes from a gateway
 // error body before it is surfaced to the dashboard or logged.
 func redactLiteLLMKeyMaterial(s string) string {
@@ -1387,17 +1411,29 @@ func probeModelsWithHeaders(endpoint, apiKey string, extraHeaders map[string]str
 		// dialog (error bodies can be huge and may echo the key).
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, litellmProbeMaxErrBody))
 		gatewayMsg := redactLiteLLMKeyMaterial(strings.TrimSpace(string(body)))
+		contentType := resp.Header.Get("Content-Type")
 		switch resp.StatusCode {
 		case http.StatusUnauthorized, http.StatusForbidden:
+			// An HTML/empty error body is not a gateway auth answer: some
+			// proxy in front of the endpoint refused GET /v1/models before
+			// the key was ever evaluated. Say so (with the exact URL probed,
+			// the content-type and any Server header) instead of accusing the
+			// key, which may well be valid for inference calls.
+			if looksLikeIntermediaryRejection(contentType, gatewayMsg) {
+				return 0, fmt.Errorf("GET %s was refused with HTTP %d by a proxy in front of the gateway, not by the gateway API"+
+					" (content-type %q, server %q, non-JSON body) — the configured key was probably never evaluated;"+
+					" check that ingress/WAF/VPN rules allow GET /v1/models from the hive: %s",
+					modelsURL, resp.StatusCode, contentType, resp.Header.Get("Server"), gatewayMsg)
+			}
 			// The two auth failures lead users to different fixes.
 			if apiKey == "" {
-				return 0, fmt.Errorf("gateway requires an API key and none is configured (HTTP %d): %s",
-					resp.StatusCode, gatewayMsg)
+				return 0, fmt.Errorf("gateway requires an API key and none is configured (HTTP %d for GET %s): %s",
+					resp.StatusCode, modelsURL, gatewayMsg)
 			}
-			return 0, fmt.Errorf("gateway rejected the configured key (HTTP %d): %s",
-				resp.StatusCode, gatewayMsg)
+			return 0, fmt.Errorf("gateway rejected the configured key (HTTP %d for GET %s): %s",
+				resp.StatusCode, modelsURL, gatewayMsg)
 		default:
-			return 0, fmt.Errorf("gateway returned HTTP %d: %s", resp.StatusCode, gatewayMsg)
+			return 0, fmt.Errorf("gateway returned HTTP %d for GET %s: %s", resp.StatusCode, modelsURL, gatewayMsg)
 		}
 	}
 
