@@ -64,11 +64,18 @@ func (s *Server) registerTerminalProxy() {
 			}
 			pr.Out.URL.Path = p
 			pr.Out.URL.RawPath = ""
+			// The document is rewritten on the way back (#9941,
+			// terminal_clipboard.go), which needs plaintext HTML. Only the
+			// document: the assets keep their compression.
+			if terminalDocumentPath(p) {
+				pr.Out.Header.Set("Accept-Encoding", "identity")
+			}
 			q := pr.Out.URL.Query()
 			q.Del("token")
 			q.Del(terminalHandoffCodeParam)
 			pr.Out.URL.RawQuery = q.Encode()
 		},
+		ModifyResponse: modifyTerminalResponse,
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			s.logger.Error("terminal proxy error", "request", redactedRequestURI(r.URL), "error", err)
 			// Same body the Node proxy returns when ttyd is down — a clear
