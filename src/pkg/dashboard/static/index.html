@@ -1788,6 +1788,9 @@
     .gov-matrix th.mode-active.mode-busy  { background: color-mix(in srgb, var(--yellow) 15%, transparent); }
     .gov-matrix th.mode-active.mode-surge { background: color-mix(in srgb, var(--red) 15%, transparent); }
     .gov-matrix td { padding: 3px 8px; text-align: center; color: var(--muted); border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
+    .gov-matrix td[data-tab="Cadences"], .gov-matrix .gov-agent-name-link { cursor: pointer; }
+    .gov-matrix .gov-agent-name-link { background: none; border: 0; padding: 0; color: inherit; font: inherit; font-weight: inherit; text-align: left; }
+    .gov-matrix .gov-agent-name-link:hover { color: var(--accent); text-decoration: underline; }
     .gov-matrix td:first-child { text-align: left; color: var(--text); font-weight: 600; min-width: 72px; }
     @media (max-width: 480px) {
       .gov-matrix { font-size: 0.65rem; }
@@ -8988,7 +8991,7 @@
           const stateCls = showOnDemand ? ' on-demand' : showOff ? ' off' : showPaused ? ' paused' : '';
           const dot = (isActive && isWorking && !agentPaused && !showOff && !showOnDemand) ? '<span class="active-dot"></span>' : '';
           const badge = showOnDemand ? '<span class="on-demand-badge" data-status="info">on demand</span>' : showOff ? '<span class="off-badge" data-status="neutral" title="No cadence configured for this mode — the governor never kicks this agent while the hive is in it. The agent is still enabled; this is a per-mode schedule gap, not the 0/1 switch.">no cadence</span>' : showPaused ? '<span class="pause-badge" data-status="warn">paused</span>' : val;
-          return `<td class="${colCls}${stateCls}" title="${esc(tip)}">${dot}${badge}</td>`;
+          return `<td class="${colCls}${stateCls}" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(aname)}" data-tab="Cadences" title="${esc(tip)}">${dot}${badge}</td>`;
         }).join('');
         const nameDot = isWorking ? '<span class="agent-dot"></span>' : '';
         const pauseBadge = agentOnDemand ? '<span class="on-demand-badge" data-status="info">on demand</span>' : agentPaused ? '<span class="pause-badge" data-status="warn">paused</span>' : agentOff ? `<span class="off-badge" data-status="neutral">${esc(agentCadenceOffLabel())}</span>` : '';
@@ -8999,7 +9002,7 @@
         const displayLabel = (agentData && agentData.displayName) || aname;
         const cliPinBtn = (agentData && !cliPinned) ? `<button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${aname}" data-pin-type="cli" data-unpin="false" title="Pin CLI">📌</button>` : '';
         const modelPinBtn = (agentData && !modelPinned) ? `<button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${aname}" data-pin-type="model" data-unpin="false" title="Pin model">📌</button>` : '';
-        return `<tr style="cursor:pointer" data-action="openConfigDialog" data-config-type="agent" data-agent="${aname}" data-tab="Cadences" title="Click to adjust ${displayLabel} cadences"><td>${nameDot}${displayLabel}${pauseBadge}</td>${cells}<td>${cChip} ${cliPinBtn}</td><td>${mChip} ${modelPinBtn}</td></tr>`;
+        return `<tr><td>${nameDot}<button type="button" class="gov-agent-name-link" data-action="ocSelectAgent" data-agent="${esc(aname)}" title="Open ${esc(displayLabel)}'s agent card">${esc(displayLabel)}</button>${pauseBadge}</td>${cells}<td>${cChip} ${cliPinBtn}</td><td>${mChip} ${modelPinBtn}</td></tr>`;
       }).join('');
       const headers = modes.map(m => {
         const isActive = m === currentMode;
