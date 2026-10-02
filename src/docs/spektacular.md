@@ -39,6 +39,20 @@ CLI output streams to the scrubbed stage log; only the last 64 KiB stays in
 memory for diagnostics and transcript capture. Sweeps discard held-generation
 and activity entries for obsolete generations once their workers have exited.
 
+The agent CLI receives an allowlisted environment: `PATH`, locale/terminal
+variables, `HTTP(S)_PROXY`/`ALL_PROXY`/`NO_PROXY`, and the proxy CA paths
+`NODE_EXTRA_CA_CERTS`/`GIT_SSL_CAINFO` (not `SSL_CERT_FILE`), plus the
+backend's credentials. On Linux, when the hive process holds inheritable or
+ambient capabilities (the image entrypoint grants `NET_ADMIN`), the CLI is
+launched through `setpriv --inh-caps=-all --ambient-caps=-all --no-new-privs`;
+if `setpriv` is missing or the capability sets cannot be read, the stage is
+not launched. The executor writes its prompt and stage log as fresh files
+(never through a symlink in the reused worktree), and transcript capture only
+reads regular `.spektacular` files that resolve inside the worktree, scrubbing
+their contents like CLI output. Clone credential files
+(`.hive-git-credentials-*` beside the shared clones) older than one hour are
+removed on each sweep, covering a hub that died during clone or fetch.
+
 ## Polling and timeouts
 
 The hub polls stages on a separate serial worker every 30 seconds. Slow polls

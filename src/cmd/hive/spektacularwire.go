@@ -157,7 +157,7 @@ func spektacularCloneAuth(minter pushbroker.TokenMinter) dashboard.SpekHubCloneA
 		if strings.TrimSpace(token) == "" {
 			return nil, "", func() {}, errors.New("empty clone token")
 		}
-		path := filepath.Join(dir, ".hive-git-credentials-"+strings.NewReplacer("/", "-", "#", "-").Replace(strings.TrimSpace(repo))+"-"+strconv.FormatInt(time.Now().UnixNano(), 10))
+		path := filepath.Join(dir, dashboard.SpekHubCloneCredentialFilePrefix+strings.NewReplacer("/", "-", "#", "-").Replace(strings.TrimSpace(repo))+"-"+strconv.FormatInt(time.Now().UnixNano(), 10))
 		if err := os.WriteFile(path, []byte("https://x-access-token:"+token+"@github.com\n"), 0o600); err != nil {
 			return nil, "", func() {}, err
 		}
