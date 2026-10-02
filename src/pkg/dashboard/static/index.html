@@ -2004,12 +2004,22 @@
     .gov-matrix .gov-agent-name-link:hover { color: var(--accent); text-decoration: underline; }
     .gov-matrix td.name-col { text-align: left; color: var(--text); font-weight: 600; min-width: 72px; }
     .gov-matrix .power-col { width: 52px; white-space: nowrap; }
-    .gov-matrix th:nth-last-child(3), .gov-matrix .continuous-col { width: 76px; white-space: nowrap; }
-    .gov-matrix td.power-col, .gov-matrix td.continuous-col { vertical-align: middle; }
+    .gov-matrix td.power-col { vertical-align: middle; }
     .gov-matrix tr.agent-disabled td { opacity: 0.58; }
     .gov-matrix tr.agent-disabled td.power-col { opacity: 1; }
     .gov-matrix tr.agent-disabled td.name-col { color: var(--muted); }
     .gov-matrix td.cadence-disabled-cell, .gov-matrix td.continuous-cadence-note { color: color-mix(in srgb, var(--muted) 72%, var(--bg)); font-style: italic; cursor: default; }
+    .cadence-mode-row { border:1px solid var(--border);border-radius:8px;padding:10px;display:grid;grid-template-columns:minmax(70px, 0.5fr) minmax(210px, 1.4fr) minmax(160px, 1fr);gap:var(--sp-3);align-items:center; }
+    .cadence-mode-label { font-weight:600;text-transform:uppercase;letter-spacing:0.04em;font-size:0.72rem;color:var(--muted); }
+    .cadence-mode-control { display:inline-flex;gap:var(--sp-1);flex-wrap:wrap; }
+    .cadence-mode-control .hv-btn[aria-checked="true"] { background:var(--accent);color:var(--bg);border-color:var(--accent); }
+    .cadence-mode-inline { display:flex;align-items:center;gap:var(--sp-2);min-width:0; }
+    .cadence-mode-inline input { min-width:90px; }
+    .cadence-mode-help { font-size:0.72rem;color:var(--muted); }
+    .cadence-mode-list { display:grid;gap:var(--sp-3); }
+    .cadence-continuous-fields { display:flex;gap:var(--sp-3);flex-wrap:wrap;align-items:flex-end;margin-top:var(--sp-4); }
+    .cadence-mode-presets { display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-bottom:var(--sp-2); }
+    .cadence-day-label { display:inline-flex;gap:3px;align-items:center;margin-right:var(--sp-3); }
     @media (max-width: 480px) {
       .gov-matrix { font-size: 0.65rem; }
       .gov-matrix th { padding: var(--sp-1) var(--sp-2); }
@@ -5878,6 +5888,13 @@
       if (modes.length === 1) return modes[0];
       return modes.slice(0, -1).join(', ') + ' and ' + modes[modes.length - 1];
     }
+    function agentCadenceDisplay(a) {
+      if (a && a.continuous === true) {
+        const mode = String(window._lastStatus?.governor?.mode || '').trim().toUpperCase();
+        return `∞ continuous${mode ? ' (' + mode + ')' : ''}`;
+      }
+      return a && a.cadence ? a.cadence : '—';
+    }
     function agentOffTitle(a) {
       if (a.unscheduledInMode === true && a.offByCadence !== true) {
         const mode = (window._lastStatus?.governor?.mode || '').toLowerCase();
@@ -6089,7 +6106,7 @@
         <div class="oc-detail-fields">
           <div class="oc-detail-field"><div class="label" title="${isInferenceBackendName(a.cli) ? 'Inference backend (self-hosted model server)' : 'The CLI backend running this agent (e.g. claude, copilot, gemini)'}">${isInferenceBackendName(a.cli) ? 'Method' : 'CLI'}</div><div class="value">${isInferenceBackendName(a.cli) ? backendLabel(a.cli) : esc(a.cli || '—')}${(a.pinnedBoth || a.pinnedCli) ? ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="true" style="cursor:pointer" title="Unpin CLI">📌</span>` : ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="false" style="cursor:pointer;opacity:0.3" title="Pin CLI">📌</span>`}</div></div>
           <div class="oc-detail-field"><div class="label" title="The LLM model powering this agent. Governor may change it based on budget.">Model</div><div class="value">${esc(a.model || '—')}${(a.pinnedBoth || a.pinnedModel) ? ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="true" style="cursor:pointer" title="Unpin model">📌</span>` : ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" style="cursor:pointer;opacity:0.3" title="Pin model">📌</span>`}</div></div>
-          <div class="oc-detail-field"><div class="label" title="Time between governor kicks in the current mode. Configured per mode (idle/quiet/busy/surge).">Interval</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : esc(a.cadence || '—')}</div></div>
+          <div class="oc-detail-field"><div class="label" title="Time between governor kicks in the current mode. Configured per mode (idle/quiet/busy/surge).">Interval</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : esc(agentCadenceDisplay(a))}</div></div>
           <div class="oc-detail-field"><div class="label" title="When the governor last kicked (sent a work prompt to) this agent. A kicked work pass often keeps running long after this time — terminal activity between kicks is normally the previous pass still working, not an off-schedule run.">Last Kick</div><div class="value">${esc(a.lastKick || '—')}</div></div>
           <div class="oc-detail-field"><div class="label" title="When the governor will next kick this agent based on its cadence interval. If the previous pass is still running at that time, the kick waits for the CLI's input dialog.">Next Kick</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : esc(a.nextKick || '—')}</div></div>
           <div class="oc-detail-field"><div class="label" title="Total tokens consumed by this agent in the last 24 hours across all sessions.">Tokens (24h)</div><div class="value">${_tokTotal > 0 ? fmtTokens(_tokTotal) : (_tok.sessions > 0 ? _tok.sessions + ' sess' : '—')}</div></div>
@@ -8895,7 +8912,7 @@
         sessionTip = 'No live tmux session \u2014 \u21bb restart asks the supervisor to respawn it.';
       }
       const blockers = agentSchedulingBlockers(a);
-      let sched = a.cadence || '\u2014', schedCls = 'ab-ok';
+      let sched = agentCadenceDisplay(a), schedCls = 'ab-ok';
       let schedTip = 'Governor cadence for the current mode.';
       if (onDemand) {
         sched = 'on demand'; schedCls = '';
@@ -9012,7 +9029,7 @@
            which is exactly what the reader cannot see from here. */
         const disabledBadge = agentIsDisabled(a) ? ' <span class="status-badge disabled" data-status="neutral" title="Disabled in config — the governor never starts this agent. Configure it with the gear to enable.">disabled</span>' : '';
         const continuousBlocked = a.continuousBlocked === 'budget' ? ' Budget guard is holding continuous re-kicks.' : '';
-        const continuousBadge = a.continuous === true ? ` <span class="status-badge" data-status="${a.continuousBlocked ? 'warn' : 'info'}" title="Continuous mode: after a kicked session ends, Hive schedules the next kick after the configured cool-down.${continuousBlocked}">∞ continuous${a.continuousBlocked ? ' held' : ''}</span>` : '';
+        const continuousBadge = a.continuous === true ? ` <span class="status-badge" data-status="${a.continuousBlocked ? 'warn' : 'info'}" title="Continuous mode: after a kicked session ends, Hive schedules the next kick after the configured cool-down.${continuousBlocked}">${esc(agentCadenceDisplay(a))}${a.continuousBlocked ? ' held' : ''}</span>` : '';
         const layoutSize = agentCardLayoutSize(a.name, sortedAgents);
         const layoutHeightAttr = layoutSize.height ? ` data-agent-height="${Math.round(layoutSize.height)}"` : '';
         const agentOrderHandle = `<button type="button" class="dashboard-grip agent-card-order-handle" draggable="true" data-agent-order-grip data-agent="${esc(a.name)}" data-stop="1" aria-label="Drag to reorder ${esc(a.displayName || a.name)}" title="Drag to reorder" aria-pressed="false">⠿</button>`;
@@ -9051,7 +9068,7 @@
           <div class="agent-field"><span class="label" title="The LLM model powering this agent. Governor may change it based on budget or mode. Pin to lock.">model</span><span class="value">${modelChip(a.model, a.govReason, a.pinnedBoth || a.pinnedModel, a.name)}${(a.pinnedBoth || a.pinnedModel) ? '' : ` <button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" title="Pin model — lock current model">📌</button>`}</span></div>
           <div class="agent-field"><span class="label" title="Agent operating mode — controls what GitHub actions this agent can take (advisory, issues, PRs, merge).">mode</span><span class="value">${modeLabel(a)}${a.needsRestart ? ' ' + statusBadgeHTML('needs_context', '⚠ restart needed', 'CLI flags are stale — restart agent to apply new mode', 'needs-context') : ''}</span></div>
           <div class="agent-field"><span class="label" title="Number of HTTP requests blocked by the ACMM proxy for this agent. Non-zero means the agent attempted actions above its mode.">proxy</span><span class="value">${a.proxyViolations > 0 ? '<span style="color:var(--danger)">⛔ ' + a.proxyViolations + ' blocked</span>' : '✓ clean'}</span></div>
-          <div class="agent-field"><span class="label" title="Time between governor kicks for this agent in the current mode. Configured per governor mode (idle/quiet/busy/surge).">interval</span><span class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : a.cadence}</span></div>
+          <div class="agent-field"><span class="label" title="Time between governor kicks for this agent in the current mode. Configured per governor mode (idle/quiet/busy/surge).">interval</span><span class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : esc(agentCadenceDisplay(a))}</span></div>
           <div class="agent-field"><span class="label" title="When the governor last kicked (sent a work prompt to) this agent. A kicked work pass often keeps running long after this time — terminal activity between kicks is normally the previous pass still working, not an off-schedule run.">last kick</span><span class="value">${a.lastKick || '—'}</span></div>
           <div class="agent-field"><span class="label" title="When the governor will next kick this agent based on its cadence interval. If the previous pass is still running at that time, the kick waits for the CLI's input dialog.">next kick</span><span class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : (a.nextKick || '—')}</span></div>
           ${agentTokenRow(a.name, a.cadence)}
@@ -10316,7 +10333,6 @@
         const agentOnDemand = agentData && agentData.onDemand === true;
         const agentDisabled = agentData && agentIsDisabled(agentData);
         const rowClass = agentDisabled ? ' class="agent-disabled"' : '';
-        const continuousOn = agentData && agentData.continuous === true;
         const continuousModes = agentData && Array.isArray(agentData.continuousModes) ? agentData.continuousModes : [];
         const cells = modes.map(m => {
             const val = row[m] || '?';
@@ -10330,7 +10346,7 @@
             const colCls = isActive ? `col-active mode-${m}` : '';
             const stateCls = isContinuous ? ' continuous' : showOnDemand ? ' on-demand' : showOff ? ' off' : showPaused ? ' paused' : '';
             const dot = (isActive && isWorking && !agentPaused && !showOff && !showOnDemand && !agentDisabled && !isContinuous) ? '<span class="active-dot"></span>' : '';
-            const badge = isContinuous ? '<span class="on-demand-badge" data-status="info">continuous</span>' : showOnDemand ? '<span class="on-demand-badge" data-status="info">on demand</span>' : showOff ? '<span class="off-badge" data-status="neutral" title="No cadence configured for this mode — the governor never kicks this agent while the hive is in it. The agent is still enabled; this is a per-mode schedule gap, not the 0/1 switch.">no cadence</span>' : showPaused ? '<span class="pause-badge" data-status="warn">paused</span>' : val;
+            const badge = isContinuous ? '<span class="on-demand-badge" data-status="info">∞ continuous</span>' : showOnDemand ? '<span class="on-demand-badge" data-status="info">on demand</span>' : showOff ? '<span class="off-badge" data-status="neutral" title="No cadence configured for this mode — the governor never kicks this agent while the hive is in it. The agent is still enabled; this is a per-mode schedule gap, not the 0/1 switch.">no cadence</span>' : showPaused ? '<span class="pause-badge" data-status="warn">paused</span>' : val;
             if (agentDisabled) {
               return `<td class="${colCls} cadence-disabled-cell" title="${esc((agentData && (agentData.displayName || agentData.name)) || aname)} is disabled; cadence intervals apply again when the agent is enabled">${badge}</td>`;
             }
@@ -10338,15 +10354,8 @@
           }).join('');
         const nameDot = isWorking ? '<span class="agent-dot"></span>' : '';
         const pauseBadge = agentDisabled ? '<span class="off-badge" data-status="neutral" title="Disabled in config — the governor does not schedule this agent">off</span>' : agentOnDemand ? '<span class="on-demand-badge" data-status="info">on demand</span>' : agentPaused ? '<span class="pause-badge" data-status="warn">paused</span>' : agentOff ? `<span class="off-badge" data-status="neutral">${esc(agentCadenceOffLabel())}</span>` : '';
-        const continuousModeText = continuousModes.length ? ` (${continuousModes.join(', ')})` : '';
-        const continuousBadge = agentData && (agentData.continuous === true || continuousModes.length) ? ` <span class="on-demand-badge" data-status="${agentData.continuousBlocked && agentData.continuousBlocked !== 'not_in_mode' ? 'warn' : 'info'}" title="Continuous mode — re-kick after session end plus cool-down${continuousModeText ? '; modes ' + esc(continuousModes.join(', ')) : ''}${agentData.continuousBlocked === 'budget' ? '; held by budget guard' : agentData.continuousBlocked === 'not_in_mode' ? '; not active in the current governor mode' : ''}">∞ continuous${esc(continuousModeText)}${agentData.continuousBlocked && agentData.continuousBlocked !== 'not_in_mode' ? ' held' : ''}</span>` : '';
+        const continuousBadge = agentData && agentData.continuous === true ? ` <span class="on-demand-badge" data-status="${agentData.continuousBlocked && agentData.continuousBlocked !== 'not_in_mode' ? 'warn' : 'info'}" title="Continuous mode — re-kick after session end plus cool-down${continuousModes.length ? '; modes ' + esc(continuousModes.join(', ')) : ''}${agentData.continuousBlocked === 'budget' ? '; held by budget guard' : ''}">${esc(agentCadenceDisplay(agentData))}${agentData.continuousBlocked && agentData.continuousBlocked !== 'not_in_mode' ? ' held' : ''}</span>` : '';
         const displayLabel = (agentData && agentData.displayName) || aname;
-        const continuousTitle = continuousOn
-          ? `Continuous mode is on for ${displayLabel}: re-kick after a session ends plus cool-down${agentData && agentData.continuousBlocked === 'budget' ? '; currently held by budget guard' : ''}`
-          : `Continuous mode is off for ${displayLabel}; turning it on sets non-quiet cadence cells to continuous, turning it off restores those cells to 1h intervals`;
-        const continuousCell = agentData
-          ? `<td class="continuous-col">${pwrSwitchHtml(continuousOn, ` data-action="setAgentContinuous" data-agent="${esc(aname)}" data-enabled="${continuousOn ? 'true' : 'false'}" data-stop="1"`, `Continuous mode for ${displayLabel}`, continuousTitle, 'gov-continuous-switch')}</td>`
-          : '<td class="continuous-col">—</td>';
         const powerCell = agentData
           ? `<td class="power-col">${agentPowerSwitchHtml(agentData)}</td>`
           : '<td class="power-col">—</td>';
@@ -10356,7 +10365,7 @@
         const mChip = agentData && agentData.model ? modelChip(agentData.model, agentData.govReason, modelPinned, aname) : '';
         const cliPinBtn = (agentData && !cliPinned) ? `<button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${aname}" data-pin-type="cli" data-unpin="false" title="Pin CLI">📌</button>` : '';
         const modelPinBtn = (agentData && !modelPinned) ? `<button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${aname}" data-pin-type="model" data-unpin="false" title="Pin model">📌</button>` : '';
-        return `<tr${rowClass}>${powerCell}<td class="name-col">${nameDot}<button type="button" class="gov-agent-name-link" data-action="ocSelectAgent" data-agent="${esc(aname)}" title="Open ${esc(displayLabel)}'s agent card">${esc(displayLabel)}</button>${pauseBadge}${continuousBadge}</td>${cells}${continuousCell}<td>${cChip} ${cliPinBtn}</td><td>${mChip} ${modelPinBtn}</td></tr>`;
+        return `<tr${rowClass}>${powerCell}<td class="name-col">${nameDot}<button type="button" class="gov-agent-name-link" data-action="ocSelectAgent" data-agent="${esc(aname)}" title="Open ${esc(displayLabel)}'s agent card">${esc(displayLabel)}</button>${pauseBadge}${continuousBadge}</td>${cells}<td>${cChip} ${cliPinBtn}</td><td>${mChip} ${modelPinBtn}</td></tr>`;
       }).join('');
       const headers = modes.map(m => {
         const isActive = m === currentMode;
@@ -10364,7 +10373,7 @@
         return `<th class="${cls}">${m}${isActive ? ' ◀' : ''}</th>`;
       }).join('');
       return `<div class="gov-matrix-wrap"><table class="gov-matrix">
-        <thead><tr><th class="power-col" title="Agent power: 1 enabled, 0 disabled">Power</th><th></th>${headers}<th>Continuous</th><th>method</th><th>model</th></tr></thead>
+        <thead><tr><th class="power-col" title="Agent power: 1 enabled, 0 disabled">Power</th><th></th>${headers}<th>method</th><th>model</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>`;
     }
@@ -21376,7 +21385,6 @@ function burnAreaChart() {
         case 'nousSetScope': nousSetScope(el.dataset.scope || el.dataset.arg0); break;
         case 'toggleConfigSwitch': toggleConfigSwitch(el, el.dataset.section, el.dataset.key); break;
         case 'toggleAgentEnabled': setAgentEnabled(el.dataset.agent, el.dataset.enabled !== 'true'); break;
-        case 'setAgentContinuous': setAgentContinuous(el.dataset.agent, el.dataset.enabled !== 'true'); break;
         case 'loadConvergenceSoak': loadConvergenceSoak(); break;
         case 'loadReviewOutcomes': loadReviewOutcomes(); break;
         case 'loadLinearAgentStatus': loadLinearAgentStatus(); break;
@@ -22231,73 +22239,6 @@ function burnAreaChart() {
           el.dataset.enabled = restore[i] ? 'true' : 'false';
         });
         dismissToast(toast, `Could not ${enable ? 'enable' : 'disable'} ${agent}: ${e.message}`, 'error');
-      }
-    }
-
-    async function setAgentContinuous(agent, enable) {
-      const toast = showToast(`${enable ? 'Enabling' : 'Disabling'} continuous mode for ${agent}...`, 'info', true);
-      const switches = Array.from(document.querySelectorAll(`.gov-continuous-switch[data-agent="${CSS.escape(agent)}"]`));
-      const restore = switches.map(el => el.classList.contains('on'));
-      const paint = (on) => {
-        for (const el of switches) {
-          el.classList.toggle('on', on);
-          el.setAttribute('aria-checked', on ? 'true' : 'false');
-          el.dataset.enabled = on ? 'true' : 'false';
-        }
-      };
-      paint(enable);
-      try {
-        const cadencePayload = enable
-          ? { idle: 'continuous', busy: 'continuous', surge: 'continuous' }
-          : { idle: SECONDS_PER_HOUR, busy: SECONDS_PER_HOUR, surge: SECONDS_PER_HOUR };
-        const res = await fetch(`/api/config/agent/${encodeURIComponent(agent)}/cadences`, {
-          method: 'PUT',
-          headers: _inceptionAuthHeaders(),
-          body: JSON.stringify(cadencePayload)
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || data.ok === false) {
-          switches.forEach((el, i) => {
-            el.classList.toggle('on', restore[i]);
-            el.setAttribute('aria-checked', restore[i] ? 'true' : 'false');
-            el.dataset.enabled = restore[i] ? 'true' : 'false';
-          });
-          dismissToast(toast, `Could not update continuous mode for ${agent}: ${data.error || 'HTTP ' + res.status}`, 'error');
-          return;
-        }
-        if (!enable) {
-          const generalRes = await fetch(`/api/config/agent/${encodeURIComponent(agent)}/general`, {
-            method: 'PUT',
-            headers: _inceptionAuthHeaders(),
-            body: JSON.stringify({ continuous: false })
-          });
-          const generalData = await generalRes.json().catch(() => ({}));
-          if (!generalRes.ok || generalData.ok === false) {
-            switches.forEach((el, i) => {
-              el.classList.toggle('on', restore[i]);
-              el.setAttribute('aria-checked', restore[i] ? 'true' : 'false');
-              el.dataset.enabled = restore[i] ? 'true' : 'false';
-            });
-            dismissToast(toast, `Could not clear legacy continuous mode for ${agent}: ${generalData.error || 'HTTP ' + generalRes.status}`, 'error');
-            return;
-          }
-        }
-        const live = (window._lastAgents || []).find(a => a.name === agent);
-        if (live) {
-          live.continuous = enable;
-          live.continuousModes = enable ? ['idle', 'busy', 'surge'] : [];
-          if (!enable) live.continuousBlocked = '';
-        }
-        const lastData = window._lastStatus || {};
-        if (lastData.governor) renderGovernor(lastData.governor, lastData.cadenceMatrix || [], lastData);
-        dismissToast(toast, `Continuous mode ${enable ? 'enabled for non-quiet modes' : 'reset to 1h intervals'} for ${agent}`, 'success');
-      } catch (e) {
-        switches.forEach((el, i) => {
-          el.classList.toggle('on', restore[i]);
-          el.setAttribute('aria-checked', restore[i] ? 'true' : 'false');
-          el.dataset.enabled = restore[i] ? 'true' : 'false';
-        });
-        dismissToast(toast, `Could not update continuous mode for ${agent}: ${e.message}`, 'error');
       }
     }
 
@@ -27963,12 +27904,19 @@ function burnAreaChart() {
       return (Intl && Intl.DateTimeFormat && Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC';
     }
     function cadenceModeValue(v) {
-      if (String(v).trim && String(v).trim().toLowerCase() === 'continuous') return 'continuous';
+      const text = String(v).trim ? String(v).trim().toLowerCase() : '';
+      if (text === 'continuous') return 'continuous';
+      if (text === 'off' || text === 'pause' || text === 'paused') return 'off';
+      if (!v) return 'off';
+      return 'interval';
+    }
+    function cadenceDetailKind(v) {
       if (v && typeof v === 'object') return v.cron ? 'cron' : 'times';
       return 'interval';
     }
     function cadenceSummary(v) {
-      if (String(v).trim && String(v).trim().toLowerCase() === 'continuous') return 'Continuous after each turn';
+      if (String(v).trim && String(v).trim().toLowerCase() === 'continuous') return '∞ continuous';
+      if (!v) return 'Off';
       if (!v || typeof v !== 'object') return `Every ${cadenceToHuman(v || 0)}`;
       const tz = v.tz || browserTimeZone();
       if (v.cron) return `Cron "${v.cron}" (${tz})`;
@@ -27977,10 +27925,12 @@ function burnAreaChart() {
       return `At ${times || '—'}, ${days} (${tz})`;
     }
     function readCadenceBuilder(mode) {
-      const kind = document.getElementById(`cad-${mode}-kind`)?.value || 'interval';
+      const kind = document.getElementById(`cad-${mode}-kind`)?.value || 'off';
       if (kind === 'continuous') return 'continuous';
-      if (kind === 'interval') return cadenceFromHuman(document.getElementById(`cad-${mode}-interval`)?.value || '30m');
-      if (kind === 'cron') return {
+      if (kind === 'off') return 0;
+      const detail = document.getElementById(`cad-${mode}-detail-kind`)?.value || 'interval';
+      if (detail === 'interval') return cadenceFromHuman(document.getElementById(`cad-${mode}-interval`)?.value || '30m');
+      if (detail === 'cron') return {
         cron: (document.getElementById(`cad-${mode}-cron`)?.value || '30 9 * * 1-5').trim(),
         tz: browserTimeZone()
       };
@@ -27999,41 +27949,93 @@ function burnAreaChart() {
       const summary = document.getElementById(`cad-${mode}-summary`);
       if (summary) summary.textContent = cadenceSummary(value);
     }
-    function cadenceSetPreset(mode, preset) {
+    function cadenceSetKind(arg0, arg1, arg2) {
+      const mode = typeof arg0 === 'string' ? arg0 : arg1;
+      const kind = typeof arg0 === 'string' ? arg1 : arg2;
       if (!_configState.data.cadences) _configState.data.cadences = {};
-      let value;
-      if (preset === 'continuous') {
-        value = 'continuous';
-      } else if (preset === 'hours') {
-        value = 4 * SECONDS_PER_HOUR;
-      } else {
-        value = { times: ['09:00'], days: preset === 'daily' ? [] : ['mon','tue','wed','thu','fri'], tz: browserTimeZone() };
-      }
+      const current = _configState.data.cadences[mode];
+      const value = kind === 'continuous' ? 'continuous' : kind === 'interval' ? (cadenceModeValue(current) === 'interval' && typeof current !== 'object' ? current : SECONDS_PER_HOUR) : 0;
       _configState.data.cadences[mode] = value;
       markDirty('cadences', mode, value);
       renderConfigTab(_configState.tab);
     }
-    function renderCadenceBuilder(mode, value) {
-      const kind = cadenceModeValue(value);
-      const interval = kind === 'interval' ? cadenceToHuman(value || 0) : '30m';
-      const times = kind === 'times' ? (value.times || []).join(',') : '09:00';
-      const cron = kind === 'cron' ? (value.cron || '') : '30 9 * * 1-5';
-      const selectedDays = new Set(kind === 'times' ? (value.days || []) : []);
-      const days = ['mon','tue','wed','thu','fri','sat','sun'].map(d => `<label style="display:inline-flex;gap:3px;align-items:center;margin-right:var(--sp-3)"><input type="checkbox" data-cadence-day="${mode}" value="${d}" ${selectedDays.size===0 || selectedDays.has(d) ? 'checked' : ''} data-change-action="cadenceChanged" data-arg0="${mode}">${d}</label>`).join('');
-      return `<div class="config-field" style="border:1px solid var(--border);border-radius:8px;padding:10px">
-        <label>${mode[0].toUpperCase()+mode.slice(1)} cadence</label>
-        <div style="display:flex;gap:var(--sp-3);flex-wrap:wrap;margin:var(--sp-2) var(--sp-0) var(--sp-4)">
-          <button class="hv-btn btn-danger" type="button" data-action="cadenceSetPreset" data-arg0="${mode}" data-arg1="daily">Daily at…</button>
-          <button class="hv-btn btn-danger" type="button" data-action="cadenceSetPreset" data-arg0="${mode}" data-arg1="weekdays">Weekdays at…</button>
-          <button class="hv-btn btn-danger" type="button" data-action="cadenceSetPreset" data-arg0="${mode}" data-arg1="hours">Every N hours</button>
-          <button class="hv-btn btn-danger" type="button" data-action="cadenceSetPreset" data-arg0="${mode}" data-arg1="continuous">Continuous</button>
+    function cadenceSetPreset(mode, preset) {
+      if (!_configState.data.cadences) _configState.data.cadences = {};
+      const value = preset === 'hours'
+        ? 4 * SECONDS_PER_HOUR
+        : { times: ['09:00'], days: preset === 'daily' ? [] : ['mon','tue','wed','thu','fri'], tz: browserTimeZone() };
+      _configState.data.cadences[mode] = value;
+      markDirty('cadences', mode, value);
+      renderConfigTab(_configState.tab);
+    }
+    function cadenceKindKey(event, mode, kind) {
+      if (event.key === 'Enter' || event.key === ' ') { cadenceSetKind(mode, kind); return; }
+      const order = ['off', 'interval', 'continuous'];
+      const idx = order.indexOf(kind);
+      if (idx < 0) return;
+      const next = (event.key === 'ArrowLeft' || event.key === 'ArrowUp')
+        ? order[(idx + order.length - 1) % order.length]
+        : order[(idx + 1) % order.length];
+      cadenceSetKind(mode, next);
+    }
+    function toggleContinuousAllActiveModes(el) {
+      if (!el || el.classList.contains('disabled') || el.dataset.disabled === 'true') return;
+      const isOn = el.classList.toggle('on');
+      el.setAttribute('aria-checked', isOn ? 'true' : 'false');
+      if (!_configState.data.general) _configState.data.general = {};
+      _configState.data.general.continuous = isOn;
+      markDirty('general', 'continuous', isOn);
+      renderConfigTab(_configState.tab);
+    }
+    function cadenceKindButton(mode, current, kind, label) {
+      const checked = current === kind;
+      return `<button class="hv-btn btn-secondary btn-sm" type="button" role="radio" aria-checked="${checked ? 'true' : 'false'}" tabindex="${checked ? '0' : '-1'}" data-action="cadenceSetKind" data-keydown-action="cadenceKindKey" data-keys="Enter, ,ArrowLeft,ArrowRight,ArrowUp,ArrowDown" data-prevent="1" data-arg0="${mode}" data-arg1="${kind}" data-arg-types="e,s,s">${label}</button>`;
+    }
+    function renderCadenceBuilder(mode, value, legacyContinuous) {
+      const storedKind = cadenceModeValue(value);
+      const legacyActive = legacyContinuous && mode !== 'quiet' && storedKind !== 'continuous';
+      const kind = legacyActive ? 'continuous' : storedKind;
+      const detailKind = kind === 'interval' ? cadenceDetailKind(value) : 'interval';
+      const interval = detailKind === 'interval' && typeof value !== 'object' ? cadenceToHuman(value || 0) : '30m';
+      const times = detailKind === 'times' ? (value.times || []).join(',') : '09:00';
+      const cron = detailKind === 'cron' ? (value.cron || '') : '30 9 * * 1-5';
+      const selectedDays = new Set(detailKind === 'times' ? (value.days || []) : []);
+      const days = ['mon','tue','wed','thu','fri','sat','sun'].map(d => `<label class="cadence-day-label"><input type="checkbox" data-cadence-day="${mode}" value="${d}" ${selectedDays.size===0 || selectedDays.has(d) ? 'checked' : ''} data-change-action="cadenceChanged" data-arg0="${mode}">${d}</label>`).join('');
+      const storedNote = legacyActive ? `Legacy shorthand is making this active mode continuous; turning it off restores the stored ${cadenceSummary(value).toLowerCase()}.` : cadenceSummary(value);
+      const body = kind === 'interval'
+        ? `<div class="cadence-mode-presets">
+            <button class="hv-btn btn-secondary btn-sm" type="button" data-action="cadenceSetPreset" data-arg0="${mode}" data-arg1="daily">Daily at…</button>
+            <button class="hv-btn btn-secondary btn-sm" type="button" data-action="cadenceSetPreset" data-arg0="${mode}" data-arg1="weekdays">Weekdays at…</button>
+            <button class="hv-btn btn-secondary btn-sm" type="button" data-action="cadenceSetPreset" data-arg0="${mode}" data-arg1="hours">Every N hours</button>
+          </div>
+          <div class="cadence-mode-inline">
+            <select id="cad-${mode}-detail-kind" data-change-action="gh39" data-arg0="${mode}">
+              <option value="interval" ${detailKind==='interval'?'selected':''}>Interval</option>
+              <option value="times" ${detailKind==='times'?'selected':''}>Times</option>
+              <option value="cron" ${detailKind==='cron'?'selected':''}>Custom cron</option>
+            </select>
+            ${detailKind === 'interval' ? `<input id="cad-${mode}-interval" type="text" value="${esc(interval)}" placeholder="30m, 4h" data-change-action="cadenceChanged" data-arg0="${mode}">` : ''}
+            ${detailKind === 'times' ? `<input id="cad-${mode}-times" type="text" value="${esc(times)}" placeholder="09:00,17:00" data-change-action="cadenceChanged" data-arg0="${mode}">` : ''}
+            ${detailKind === 'cron' ? `<input id="cad-${mode}-cron" type="text" value="${esc(cron)}" placeholder="30 9 * * 1-5" data-change-action="cadenceChanged" data-arg0="${mode}">` : ''}
+            <span class="cadence-mode-help">Interval and time-of-day modes are mutually exclusive.</span>
+          </div>
+          ${detailKind === 'times' ? `<div>${days}</div>` : ''}
+          ${detailKind === 'cron' ? `<div class="cadence-mode-help">5-field cron. Timezone saved from this browser: ${esc(browserTimeZone())}</div>` : ''}`
+        : kind === 'continuous'
+        ? '<div class="cadence-mode-help">Re-kicks after Hive observes this agent’s session end plus the configured cool-down.</div>'
+        : '<div class="cadence-mode-help">No governor kicks in this mode.</div>';
+      return `<div class="cadence-mode-row">
+        <div class="cadence-mode-label">${mode}</div>
+        <div class="cadence-mode-control" role="radiogroup" aria-label="${esc(mode)} cadence mode">
+          ${cadenceKindButton(mode, kind, 'off', 'Off')}
+          ${cadenceKindButton(mode, kind, 'interval', '⏱ Interval')}
+          ${cadenceKindButton(mode, kind, 'continuous', '∞ Continuous')}
         </div>
-        <select id="cad-${mode}-kind" data-change-action="gh39" data-arg0="${mode}"><option value="interval" ${kind==='interval'?'selected':''}>Interval</option><option value="continuous" ${kind==='continuous'?'selected':''}>Continuous</option><option value="times" ${kind==='times'?'selected':''}>Times</option><option value="cron" ${kind==='cron'?'selected':''}>Custom cron</option></select>
-        ${kind === 'interval' ? `<input id="cad-${mode}-interval" type="text" value="${esc(interval)}" placeholder="30m, 4h, 0=off" data-change-action="cadenceChanged" data-arg0="${mode}">` : ''}
-        ${kind === 'continuous' ? `<div class="text-muted fs-xs mt-3">Continuous re-kicks after Hive observes this agent's turn end plus the configured cool-down.</div>` : ''}
-        ${kind === 'times' ? `<input id="cad-${mode}-times" type="text" value="${esc(times)}" placeholder="09:00,17:00" data-change-action="cadenceChanged" data-arg0="${mode}"><div class="mt-3">${days}</div>` : ''}
-        ${kind === 'cron' ? `<input id="cad-${mode}-cron" type="text" value="${esc(cron)}" placeholder="30 9 * * 1-5" data-change-action="cadenceChanged" data-arg0="${mode}"><div style="font-size:.7rem;color:var(--muted)">5-field cron. Timezone saved from this browser: ${esc(browserTimeZone())}</div>` : ''}
-        <div id="cad-${mode}-summary" style="font-size:.72rem;color:var(--muted);margin-top:var(--sp-3)">${esc(cadenceSummary(value))}</div>
+        <div>
+          <input type="hidden" id="cad-${mode}-kind" value="${esc(kind)}">
+          ${body}
+          <div id="cad-${mode}-summary" class="cadence-mode-help">${esc(storedNote)}</div>
+        </div>
       </div>`;
     }
 
@@ -28064,17 +28066,11 @@ function burnAreaChart() {
           </div>
         </div>
         <div class="config-toggle">
-          ${pwrSwitchHtml(_continuous, ' id="cfg-agent-continuous" data-action="toggleConfigSwitch" data-section="general" data-key="continuous"', 'Agent continuous mode', 'Continuous mode re-kicks only after Hive has observed the CLI back at its input prompt. Takes effect on Save.')}
+          ${pwrSwitchHtml(_continuous, ' id="cfg-agent-continuous" data-action="toggleContinuousAllActiveModes" data-arg-types="t"', 'Continuous in all active modes', 'Shorthand for continuous in every non-QUIET governor mode. Turning it off restores each row to its stored cadence. Takes effect on Save.')}
           <span class="config-toggle-label">
-            <b>Continuous</b> — re-kick when a session ends.
-            <span class="text-muted">Uses the same turn-end signal as kick delivery (the CLI input prompt); never interrupts a busy session and still respects pause, disabled, on-demand, budget/provider holds, and mode pauses.</span>
+            <b>Continuous in all active modes</b> — shorthand for every non-QUIET row.
+            <span class="text-muted">Uses the same turn-end signal as kick delivery (the CLI input prompt); never interrupts a busy session and still respects pause, disabled, on-demand, budget/provider holds, and mode pauses. Turning this off restores the stored per-mode intervals below.</span>
             ${_continuousBudgetNote}
-            <span class="config-inline-field">cool-down (seconds)
-              <input type="number" min="1" step="1" value="${_continuousCooldown}" data-key="continuousCooldown" data-change-action="markDirty" data-arg0="general" data-arg1="continuousCooldown" data-arg-types="s,s,v">
-            </span>
-            <span class="config-inline-field">budget guard (%)
-              <input type="number" min="1" max="100" step="1" value="${_continuousBudgetPct}" data-key="continuousBudgetPct" data-change-action="markDirty" data-arg0="general" data-arg1="continuousBudgetPct" data-arg-types="s,s,v">
-            </span>
           </span>
         </div>
         <div style="font-size:0.78rem;color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:var(--r);padding:10px 12px;margin-bottom:14px">
@@ -28082,13 +28078,22 @@ function burnAreaChart() {
           <b>Continuous.</b> When enabled, cadence no longer decides the next kick while the agent is in a running sequence; the next kick is scheduled from the observed session end plus the cool-down. Turning it off returns to these cadences.
           <b>Why use it.</b> It lets you run the agent slowly when there's little to do and faster when work piles up, controlling token spend.
           <b>Where it shows up.</b> These intervals drive the governor's kick timing and appear in the Governor cadence table.
-          <b>How to configure.</b> Use intervals, exact times in this browser's timezone, or a 5-field cron expression. Interval and time-of-day modes are mutually exclusive.
+          <b>How to configure.</b> Pick Off, Interval, or Continuous for each mode. Continuous mode cells in the Governor cadence table are read-only; edit them here.
         </div>
-        <div class="config-field-row4">
-          ${renderCadenceBuilder('idle', c.idle)}
-          ${renderCadenceBuilder('quiet', c.quiet)}
-          ${renderCadenceBuilder('busy', c.busy)}
-          ${renderCadenceBuilder('surge', c.surge)}
+        <div class="cadence-mode-list">
+          ${renderCadenceBuilder('surge', c.surge, _continuous)}
+          ${renderCadenceBuilder('busy', c.busy, _continuous)}
+          ${renderCadenceBuilder('quiet', c.quiet, _continuous)}
+          ${renderCadenceBuilder('idle', c.idle, _continuous)}
+        </div>
+        <div class="cadence-continuous-fields">
+          <span class="config-inline-field">cool-down (seconds)
+            <input type="number" min="1" step="1" value="${_continuousCooldown}" data-key="continuousCooldown" data-change-action="markDirty" data-arg0="general" data-arg1="continuousCooldown" data-arg-types="s,s,v">
+          </span>
+          <span class="config-inline-field">budget guard (%)
+            <input type="number" min="1" max="100" step="1" value="${_continuousBudgetPct}" data-key="continuousBudgetPct" data-change-action="markDirty" data-arg0="general" data-arg1="continuousBudgetPct" data-arg-types="s,s,v">
+          </span>
+          <span class="cadence-mode-help">Cool-down and budget guard apply to every mode set to Continuous.</span>
         </div>`;
     }
 

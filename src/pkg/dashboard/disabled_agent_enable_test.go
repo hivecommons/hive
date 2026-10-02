@@ -87,17 +87,28 @@ func TestDisabledAgentCadenceMatrixWiring(t *testing.T) {
 func TestContinuousAgentCadenceMatrixWiring(t *testing.T) {
 	html := indexHTML(t)
 	for _, snippet := range []string{
-		`const continuousOn = agentData && agentData.continuous === true;`,
 		`const isContinuous = val === 'continuous';`,
-		`<span class="on-demand-badge" data-status="info">continuous</span>`,
+		`<span class="on-demand-badge" data-status="info">∞ continuous</span>`,
+		`Re-kicks after Hive observes`,
+		`role="radiogroup" aria-label="${esc(mode)} cadence mode"`,
 		`∞ continuous`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("index.html is missing continuous cadence matrix wiring %q", snippet)
 		}
 	}
-	if !strings.Contains(html, `data-arg1="continuous">Continuous</button>`) {
-		t.Error("cadence editor must expose a Continuous preset")
+	for _, removed := range []string{
+		`data-action="setAgentContinuous"`,
+		`gov-continuous-switch`,
+		`<th>Continuous</th>`,
+		`.continuous-col`,
+	} {
+		if strings.Contains(html, removed) {
+			t.Errorf("index.html still renders removed continuous table toggle %q", removed)
+		}
+	}
+	if !strings.Contains(html, `cadenceKindButton(mode, kind, 'continuous', '∞ Continuous')`) || !strings.Contains(html, `∞ Continuous`) {
+		t.Error("cadence editor must expose a segmented Continuous state")
 	}
 }
 

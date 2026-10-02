@@ -2300,7 +2300,7 @@ func buildCadenceMatrix(cfg *config.Config, agentStatuses map[string]*agent.Agen
 			title := cadenceTooltip(rawCadence, lastKick, modeName == currentMode)
 			if agentCfg, ok := cfg.Agents[name]; ok && agentCfg.ContinuousInMode(modeName, rawCadence) {
 				cadence = "continuous"
-				title = "Continuous in " + modeName + ": re-kick after observed turn end plus cool-down"
+				title = "Re-kicks after each session ends, +" + agentCfg.EffectiveContinuousCooldown().String() + " cooldown"
 			}
 			if cadence == "" || cadence == "pause" {
 				cadence = "off"
