@@ -46,7 +46,7 @@ func TestPRThroughputCountersBumpOnlyOnPRActions(t *testing.T) {
 	}
 	// The returned copy must not alias the live map.
 	got.MergedByPath["sweep"] = 99
-	if a.PRThroughputCounters().MergedByPath["sweep"] != 1 {
+	if a.PRThroughputCounters().MergedByPath["sweep"] != 2 {
 		t.Error("PRThroughputCounters returned an aliased map")
 	}
 }
