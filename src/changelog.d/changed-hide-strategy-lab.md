@@ -1,0 +1,1 @@
+- Hide the Strategy Lab dashboard surface by default behind `dashboard.strategy_lab` while it is reworked.
