@@ -160,14 +160,6 @@ func cloneIntMap(in map[string]int) map[string]int {
 	return out
 }
 
-func cloneStringMap(in map[string]string) map[string]string {
-	out := make(map[string]string, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
 // prThroughputMergePath extracts the path= field of a pr_merged detail
 // (sweep / queue / relay), or prThroughputMergePathUnknown when absent.
 func prThroughputMergePath(detail string) string {
