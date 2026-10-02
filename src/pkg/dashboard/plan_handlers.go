@@ -545,7 +545,10 @@ func (s *Server) handlePlanReject(w http.ResponseWriter, r *http.Request) {
 // resetRunLeaseAfterPlanReject sends the rejected plan's run back to plan: a
 // run already past plan is reset to it, and a plan held at its checkpoint has
 // its generation re-minted so a new plan is drafted instead of the run staying
-// parked behind the rejected receipt (hivecommons/hive#10063).
+// parked behind the rejected receipt (hivecommons/hive#10063). The rejected
+// plan's import digest is invalidated first, as an owner reset to plan does:
+// without it a re-drafted plan whose text is unchanged is not re-imported and
+// the owner is handed the rejected plan again.
 func (s *Server) resetRunLeaseAfterPlanReject(store *beads.Store, epicID string) error {
 	if s == nil || s.contributeHub == nil || store == nil {
 		return nil
@@ -553,6 +556,9 @@ func (s *Server) resetRunLeaseAfterPlanReject(store *beads.Store, epicID string)
 	epic, err := store.Get(epicID)
 	if err != nil || epic == nil {
 		return nil
+	}
+	if err := supersedeRunPlanImport(store, epic); err != nil {
+		return err
 	}
 	now := time.Now()
 	held, ok := s.planRejectRunLease(epic, now)
