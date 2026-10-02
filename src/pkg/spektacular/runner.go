@@ -530,10 +530,12 @@ func (r *Runner) ResolveArtifact(ctx context.Context, dir, kind, slug string) (s
 	return list[0].id, nil
 }
 
+// artifactMatchesSlug accepts the bare slug plus both Spektacular id
+// schemes: timestamp (`<id>-<slug>`) and counter (`000001_<slug>`).
 func artifactMatchesSlug(id, slug string) bool {
 	id = ArtifactKey(id)
 	slug = ArtifactKey(slug)
-	return id == slug || strings.HasSuffix(id, "-"+slug)
+	return id == slug || strings.HasSuffix(id, "-"+slug) || strings.HasSuffix(id, "_"+slug)
 }
 
 func (r *Runner) artifactsFromFileList(ctx context.Context, dir, kind string) map[string]time.Time {

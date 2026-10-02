@@ -1,0 +1,1 @@
+- spektacular: hub-executor prompts now steer spec status/file commands to the ID-prefixed spec name and name the plan after the resolved spec id, and artifact resolution matches counter ids (`000001_<slug>`) as well as timestamp ids (#10045, #10050)

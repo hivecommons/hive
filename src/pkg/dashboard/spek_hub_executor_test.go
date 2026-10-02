@@ -137,6 +137,67 @@ func TestSpekHubStagePromptSpecContainsRequiredInstructions(t *testing.T) {
 	}
 }
 
+func TestSpekHubStagePromptSpecUsesIDPrefixedSpecName(t *testing.T) {
+	for _, source := range []string{"github", "linear"} {
+		p := SpekHubStagePromptWithContext(StageSpec, "myorg/repo1", 42, "myorg/repo1#42", "", "myorg-repo1-42", worksource.WorkItemContext{SourceType: source})
+		for _, want := range []string{`spektacular spec new --data '{"name":"myorg-repo1-42"}'`, "`spektacular spec status <spec-id>`", "`<id>-myorg-repo1-42` or `<id>_myorg-repo1-42`", "not `myorg-repo1-42`"} {
+			if !strings.Contains(p, want) {
+				t.Fatalf("%s prompt missing %q:\n%s", source, want, p)
+			}
+		}
+		if strings.Contains(p, "spec status myorg-repo1-42") {
+			t.Fatalf("%s prompt polls the bare slug:\n%s", source, p)
+		}
+	}
+}
+
+func TestSpekHubExecutorPlanPromptNamesPlanAfterResolvedSpec(t *testing.T) {
+	e := &SpekHubExecutor{}
+	st := spekHubStage{stage: StagePlan, repo: "myorg/repo1", number: 42, runKey: "myorg/repo1#42"}
+	for _, specID := range []string{"20261002143509-myorg-repo1-42", "000001_myorg-repo1-42"} {
+		worktree := t.TempDir()
+		specPath := filepath.Join(worktree, ".spektacular", "specs", specID+".md")
+		if err := os.MkdirAll(filepath.Dir(specPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(specPath, []byte("spec"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		p := e.stagePrompt(st, worktree, "myorg-repo1-42")
+		for _, want := range []string{`spektacular plan new --data '{"name":"` + specID + `"}'`, "`spektacular plan status " + specID + "`"} {
+			if !strings.Contains(p, want) {
+				t.Fatalf("prompt missing %q:\n%s", want, p)
+			}
+		}
+		if strings.Contains(p, `"name":"myorg-repo1-42"`) || strings.Contains(p, `"spec":`) {
+			t.Fatalf("plan prompt still names the bare slug:\n%s", p)
+		}
+	}
+	p := e.stagePrompt(st, t.TempDir(), "myorg-repo1-42")
+	if !strings.Contains(p, `plan new --data '{"name":"myorg-repo1-42"}'`) || !strings.Contains(p, "full ID-prefixed name") {
+		t.Fatalf("unresolved plan prompt = %s", p)
+	}
+}
+
+func TestResolveSpekArtifactFromFilesMatchesCounterIDs(t *testing.T) {
+	worktree := t.TempDir()
+	for _, rel := range []string{"specs/000001_myorg-repo1-42.md", "plans/000002_myorg-repo1-42/plan.md", "specs/000003_other-42.md"} {
+		path := filepath.Join(worktree, ".spektacular", filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("doc"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := resolveSpekArtifactFromFiles(worktree, StageSpec, "myorg-repo1-42"); got != "000001_myorg-repo1-42" {
+		t.Fatalf("spec = %q", got)
+	}
+	if got := resolveSpekArtifactFromFiles(worktree, StagePlan, "myorg-repo1-42"); got != "000002_myorg-repo1-42" {
+		t.Fatalf("plan = %q", got)
+	}
+}
+
 func TestSpekHubStagePromptOmitsEmptyTitleQuotes(t *testing.T) {
 	p := SpekHubStagePrompt(StageSpec, "kubestellar/console", 23725, "kubestellar/console#23725", "", "kubestellar-console-23725")
 	if strings.Contains(p, `#23725 ""`) {
@@ -825,8 +886,12 @@ func TestSpekHubExecutorPromptUsesConfiguredBinary(t *testing.T) {
 				t.Run(tc.binary+"/"+stage+"/"+source, func(t *testing.T) {
 					e := &SpekHubExecutor{Config: config.RunsConfig{Spektacular: config.SpektacularConfig{Binary: tc.binary}}}
 					st := spekHubStage{stage: stage, repo: "org/repo", number: 57, runKey: "org/repo#57", workItem: worksource.WorkItemContext{SourceType: source}}
-					prompt := e.stagePrompt(st, "my-artifact")
-					for _, command := range []string{"new --data", "status my-artifact", "file ..."} {
+					prompt := e.stagePrompt(st, t.TempDir(), "my-artifact")
+					status := "status my-artifact"
+					if stage == StageSpec {
+						status = "status <spec-id>"
+					}
+					for _, command := range []string{"new --data", status, "file ..."} {
 						if !strings.Contains(prompt, "`"+tc.command+" "+stage+" "+command) {
 							t.Errorf("prompt missing configured command %s: %s", command, prompt)
 						}
