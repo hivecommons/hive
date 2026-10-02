@@ -110,3 +110,21 @@ func TestNormalizeModelNameCopilotDrift(t *testing.T) {
 		}
 	}
 }
+
+// TestCopilotLaunchModelRejectedFallback covers #9927: stored 5-5 selections
+// launch on the accepted family instead of the CLI's silent fallback.
+func TestCopilotLaunchModelRejectedFallback(t *testing.T) {
+	cases := map[string]string{
+		"claude-opus-5-5":   "claude-opus-5",
+		"claude-sonnet-5-5": "claude-sonnet-5",
+		"claude-sonnet.5.5": "claude-sonnet-5",
+		"claude-fable-5":    "claude-fable-5",
+		"gpt-5.5":           "gpt-5.5",
+		"":                  "",
+	}
+	for in, want := range cases {
+		if got := CopilotLaunchModel(in); got != want {
+			t.Errorf("CopilotLaunchModel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

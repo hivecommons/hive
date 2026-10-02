@@ -103,3 +103,22 @@ func CanonicalizeCopilotModel(id string) string {
 	}
 	return id
 }
+
+// copilotRejectedModelFallbacks maps ids the pinned Copilot CLI 1.0.88 rejects
+// from --model (it silently launches claude-sonnet-5 instead, #9927) to the
+// closest id it accepts, so a previously stored selection launches on the
+// same model family rather than the CLI's arbitrary fallback.
+var copilotRejectedModelFallbacks = map[string]string{
+	"claude-opus-5-5":   "claude-opus-5",
+	"claude-sonnet-5-5": "claude-sonnet-5",
+}
+
+// CopilotLaunchModel returns the id to pass to the copilot CLI's --model flag:
+// the canonical id, with CLI-rejected ids replaced by their accepted family.
+func CopilotLaunchModel(id string) string {
+	id = CanonicalizeCopilotModel(id)
+	if fb, ok := copilotRejectedModelFallbacks[copilotModelKey(id)]; ok {
+		return fb
+	}
+	return id
+}

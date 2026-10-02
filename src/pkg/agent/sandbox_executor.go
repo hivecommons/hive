@@ -423,7 +423,7 @@ func sandboxCommand(cfg configSnapshot, promptRel string) ([]string, error) {
 		if cfg.Model != "" {
 			// Canonicalize separator drift (claude-fable.5 -> claude-fable-5)
 			// so a stored bad id never reaches --model (#4262).
-			cmd += " --model " + shellQuote(CanonicalizeCopilotModel(cfg.Model))
+			cmd += " --model " + shellQuote(CopilotLaunchModel(cfg.Model))
 		}
 	default:
 		cmd = binary

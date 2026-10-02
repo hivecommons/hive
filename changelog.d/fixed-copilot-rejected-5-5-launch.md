@@ -1,0 +1,1 @@
+- A Copilot agent whose stored model is `claude-opus-5-5` or `claude-sonnet-5-5` now launches on `claude-opus-5` / `claude-sonnet-5` explicitly instead of passing an id the pinned Copilot CLI 1.0.88 rejects and silently replaces ([#9927](https://github.com/hivecommons/hive/issues/9927)).

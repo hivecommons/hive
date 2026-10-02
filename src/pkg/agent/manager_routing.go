@@ -244,7 +244,7 @@ func normalizeModelNameForBackend(model, backend string, inferenceRoutable bool)
 		return model
 	}
 	if backend == "copilot" {
-		return CanonicalizeCopilotModel(model)
+		return CopilotLaunchModel(model)
 	}
 	idx := strings.LastIndex(model, "-")
 	if idx < 0 || idx == len(model)-1 {
