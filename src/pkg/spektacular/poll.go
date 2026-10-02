@@ -303,6 +303,11 @@ func (r *Runner) tickStage(ctx context.Context, st Stage, state *stageState, now
 	var nf *NotFoundError
 	if errors.As(err, &nf) && state.lastStatus == "" {
 		resolved, resolveErr := r.ResolveArtifact(ctx, dir, kind, st.Artifact)
+		var resolveNF *NotFoundError
+		if resolveErr != nil && !errors.As(resolveErr, &resolveNF) {
+			r.logger().Warn("[spektacular] resolving run artifact id failed",
+				"run", st.RunKey, "stage", st.Stage, "artifact", st.Artifact, "error", resolveErr)
+		}
 		if resolveErr == nil && resolved != "" && resolved != artifact {
 			status, err = r.statusInDir(ctx, dir, kind, resolved)
 			if err == nil {

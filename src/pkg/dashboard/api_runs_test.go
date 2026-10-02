@@ -963,3 +963,21 @@ func TestRunDetailGroupsWavePRsUnderSingleReviewAction(t *testing.T) {
 		t.Fatalf("wave PRs = %+v", run.ReviewWaves[0].PRs)
 	}
 }
+
+func TestReadRunLogFileBoundsReadToTail(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "spek-stage-spec-1.log")
+	data := strings.Repeat("old line\n", runLogReadMaxBytes/9+10) + "last line\n"
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readRunLogFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) > runLogReadMaxBytes {
+		t.Fatalf("read %d bytes, want at most %d", len(got), runLogReadMaxBytes)
+	}
+	if !strings.HasSuffix(string(got), "last line\n") || !strings.HasPrefix(string(got), "old line\n") {
+		t.Fatalf("tail window should start on a line boundary and end at EOF")
+	}
+}

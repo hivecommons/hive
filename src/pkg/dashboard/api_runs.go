@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -422,6 +423,9 @@ func (s *Server) runLogPath(key, stage string, gen uint64) (string, error) {
 	return cleanPath, nil
 }
 
+// runLogReadMaxBytes bounds how much of a run log one /log request reads.
+const runLogReadMaxBytes = 4 * 1024 * 1024
+
 func readRunLogFile(path string) ([]byte, error) {
 	rootInfo, err := os.Lstat(filepath.Dir(path))
 	if err != nil {
@@ -450,7 +454,20 @@ func readRunLogFile(path string) ([]byte, error) {
 	if !openedInfo.Mode().IsRegular() {
 		return nil, errInvalidRunLog
 	}
-	return io.ReadAll(file)
+	// Only the tail is served, so read at most runLogReadMaxBytes from the end.
+	size := openedInfo.Size()
+	if size <= runLogReadMaxBytes {
+		return io.ReadAll(file)
+	}
+	data := make([]byte, runLogReadMaxBytes)
+	if _, err := file.ReadAt(data, size-runLogReadMaxBytes); err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	// Drop the partial first line the window cut through.
+	if i := bytes.IndexByte(data, '\n'); i >= 0 {
+		data = data[i+1:]
+	}
+	return data, nil
 }
 
 func tailTextLines(text string, lines int) string {

@@ -73,8 +73,12 @@ func NewLeaseRegistryAdapter(reg LeaseRegistry) Registry {
 
 func (a *leaseAdapter) ActiveStages(time.Time) ([]Stage, error) {
 	out := []Stage{}
+	var workDirErr error
 	err := a.reg.VisitActiveStageLeases(func(runKey, key, stage, identity, taskID, repo string, gen uint64, _ time.Time) {
-		workDir, _ := a.reg.ResolveRunStageWorkDir(runKey, stage, identity, repo, gen)
+		workDir, wdErr := a.reg.ResolveRunStageWorkDir(runKey, stage, identity, repo, gen)
+		if wdErr != nil && workDirErr == nil {
+			workDirErr = fmt.Errorf("resolving workdir for run %s stage %s: %w", runKey, stage, wdErr)
+		}
 		artifact := ArtifactKey(runKey)
 		if ref, ok := worksource.ParseKey(runKey); ok && ref.Repo != "" {
 			artifact = RunArtifactName(runKey)
@@ -92,6 +96,9 @@ func (a *leaseAdapter) ActiveStages(time.Time) ([]Stage, error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+	if workDirErr != nil {
+		return nil, workDirErr
 	}
 	// The registry iterates a map; give the runner a stable order so ticks
 	// are reproducible.

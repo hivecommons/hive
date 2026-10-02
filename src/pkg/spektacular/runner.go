@@ -570,7 +570,8 @@ func (r *Runner) ResolveArtifact(ctx context.Context, dir, kind, slug string) (s
 		return "", &ContractError{Kind: kind, Reason: "empty artifact name"}
 	}
 	candidates := map[string]time.Time{}
-	for id, mt := range r.artifactsFromFileList(ctx, dir, kind) {
+	listed, listErr := r.artifactsFromFileList(ctx, dir, kind)
+	for id, mt := range listed {
 		if artifactMatchesSlug(id, slug) {
 			candidates[id] = mt
 		}
@@ -583,6 +584,9 @@ func (r *Runner) ResolveArtifact(ctx context.Context, dir, kind, slug string) (s
 		}
 	}
 	if len(candidates) == 0 {
+		if listErr != nil {
+			return "", fmt.Errorf("listing %s artifacts: %w", kind, listErr)
+		}
 		return "", &NotFoundError{Kind: kind, Name: slug, Message: "no matching artifact id found"}
 	}
 	type candidate struct {
@@ -610,18 +614,18 @@ func artifactMatchesSlug(id, slug string) bool {
 	return id == slug || strings.HasSuffix(id, "-"+slug) || strings.HasSuffix(id, "_"+slug)
 }
 
-func (r *Runner) artifactsFromFileList(ctx context.Context, dir, kind string) map[string]time.Time {
+func (r *Runner) artifactsFromFileList(ctx context.Context, dir, kind string) (map[string]time.Time, error) {
 	out, err := r.execInDir(ctx, dir, []string{kind, verbFile, "list"})
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var raw any
-	if json.Unmarshal(bytes.TrimSpace(out), &raw) != nil {
-		return nil
+	if err := json.Unmarshal(bytes.TrimSpace(out), &raw); err != nil {
+		return nil, err
 	}
 	ids := map[string]time.Time{}
 	collectArtifactStrings(raw, ids)
-	return ids
+	return ids, nil
 }
 
 func collectArtifactStrings(v any, ids map[string]time.Time) {
