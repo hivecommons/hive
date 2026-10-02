@@ -882,6 +882,9 @@
     .gh-app-install-banner .gh-app-btn { display: inline-block; text-decoration: none; white-space: nowrap; }
     .gh-app-install-banner.perm-issue { background: color-mix(in srgb, var(--yellow) 12%, var(--panel)); border-color: var(--yellow); }
     .gh-app-install-banner.perm-issue .gh-app-desc { color: var(--text); }
+    .gh-app-install-banner .gh-app-body { flex: 1; }
+    .issues-disabled-row { display: flex; align-items: center; gap: var(--sp-4); margin-top: var(--sp-2); }
+    .issues-disabled-msg { flex: 1; }
     /* Operator-side failure: informational, not alarming, and not the user's
        fault. Deliberately neutral rather than the red "you must act" styling —
        there is nothing for the reader to do. */
@@ -3916,7 +3919,7 @@
   </div>
   <div id="issues-disabled-banner" class="gh-app-install-banner perm-issue" hidden>
     <span class="fs-2xl">&#9888;&#65039;</span>
-    <div style="flex:1">
+    <div class="gh-app-body">
       <div class="gh-app-title">Issues Disabled on a Watched Repo</div>
       <div class="gh-app-desc" id="issues-disabled-banner-list"></div>
     </div>
@@ -8371,8 +8374,8 @@
         return;
       }
       list.innerHTML = shown.map(function(r) {
-        return '<div style="display:flex;align-items:center;gap:var(--sp-4);margin-top:var(--sp-2)">'
-          + '<span style="flex:1"><strong>' + escapeHtml(r.repo) + '</strong>' + (r.fork ? ' (fork)' : '') + ': ' + escapeHtml(r.message || '') + '</span>'
+        return '<div class="issues-disabled-row">'
+          + '<span class="issues-disabled-msg"><strong>' + escapeHtml(r.repo) + '</strong>' + (r.fork ? ' (fork)' : '') + ': ' + escapeHtml(r.message || '') + '</span>'
           + '<button type="button" class="hv-btn btn-icon btn-sm" data-action="dismissIssuesDisabledRepo" data-arg0="' + escapeHtml(r.repo) + '" title="Dismiss for this repo">✕</button>'
           + '</div>';
       }).join('');
