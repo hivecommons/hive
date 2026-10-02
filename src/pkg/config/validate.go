@@ -67,6 +67,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Publication.Validate(); err != nil {
 		return err
 	}
+	if err := c.Runs.Spektacular.Validate(); err != nil {
+		return err
+	}
 	if err := c.Jev.Validate(); err != nil {
 		return err
 	}
