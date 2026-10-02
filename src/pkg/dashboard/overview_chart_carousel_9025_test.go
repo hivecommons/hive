@@ -47,6 +47,8 @@ func TestOverviewCarouselControlsAndTransitions9025(t *testing.T) {
 	for _, want := range []string{
 		"data-action=\"toggleOverviewChartSettings\"",
 		"id=\"overview-chart-settings\"",
+		"id=\"overview-repo-filter\"",
+		"OVERVIEW_REPOS_KEY = 'hive.overview.repos'",
 		"function toggleOverviewChartSettings()",
 		"data-change-action=\"setOverviewChartRotation\"",
 		"data-change-action=\"setOverviewCarouselInterval\"",
@@ -114,7 +116,7 @@ func TestOverviewCarouselControlsMovedToSettings9025(t *testing.T) {
 	}
 	for _, want := range []string{
 		"overview-chart-download",
-		"title=\"Download CSV\"",
+		"title=\"Download ${format}\"",
 		"aria-label=\"${esc(csvTitle)}\"",
 	} {
 		if !strings.Contains(panel, want) {

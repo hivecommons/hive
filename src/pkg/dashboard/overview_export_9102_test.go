@@ -184,6 +184,14 @@ func TestOverviewExportHandlers9102(t *testing.T) {
 		t.Fatalf("unexpected json shape: kind=%s hive=%s bands=%d rows=%d", body.Kind, body.HiveID, len(body.Bands), len(body.Rows))
 	}
 
+	reposFilters, err := parseOverviewFilters(httptest.NewRequest(http.MethodGet, "/api/overview/prs.json?repos=octo/demo,octo/other", nil), prBandOrder)
+	if err != nil {
+		t.Fatalf("parse repos alias: %v", err)
+	}
+	if !reposFilters.matchRepo("octo/demo") || !reposFilters.matchRepo("octo/other") || reposFilters.matchRepo("octo/nope") {
+		t.Fatalf("repos alias filter did not match expected repos: %#v", reposFilters.repos)
+	}
+
 	csvReq := httptest.NewRequest(http.MethodGet, "/api/overview/issues.csv?band=agent-filed", nil)
 	csvReq.Header.Set("Authorization", "Bearer secret")
 	csvRec := httptest.NewRecorder()

@@ -122,7 +122,7 @@ func parseOverviewFilters(r *http.Request, validBands []string) (overviewFilters
 			return filters, fmt.Errorf("unknown band %q; valid bands: %s", strings.Join(bad, ","), strings.Join(validBands, ", "))
 		}
 	}
-	repos := splitQueryValues(r.URL.Query()["repo"])
+	repos := splitQueryValues(append(r.URL.Query()["repo"], r.URL.Query()["repos"]...))
 	if len(repos) > 0 {
 		filters.repos = map[string]bool{}
 		for _, repo := range repos {

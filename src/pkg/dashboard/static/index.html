@@ -1621,7 +1621,7 @@
     .repo-pr-pill .pill-role { font-size:var(--fs-2xs); font-weight:700; letter-spacing:0.02em; text-transform:uppercase; margin-left:3px; opacity:0.85; }
     .overview-card { position: relative; margin: var(--sp-0) var(--sp-0) var(--sp-6); padding: var(--sp-5); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2); }
     .overview-header { display: inline-flex; align-items: center; gap: var(--sp-2); }
-    .overview-settings-popover { position: absolute; z-index: 40; right: var(--sp-5); top: calc(var(--sp-5) + var(--sp-8)); width: min(34rem, calc(100vw - var(--sp-8))); padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r); background: var(--panel); box-shadow: var(--shadow-lg); }
+    .overview-settings-popover { position: absolute; z-index: 40; right: var(--sp-5); top: calc(var(--sp-5) + var(--sp-8)); width: min(38rem, calc(100vw - var(--sp-8))); max-height: min(42rem, calc(100vh - var(--sp-10))); overflow: auto; padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r); background: var(--panel); box-shadow: var(--shadow-lg); }
     .overview-settings-popover[hidden] { display: none; }
     .overview-settings-title { font-size: var(--fs-sm); font-weight: 800; margin-bottom: var(--sp-3); }
     .overview-settings-section { display: grid; gap: var(--sp-3); padding-top: var(--sp-3); margin-top: var(--sp-3); border-top: 1px solid var(--border); }
@@ -1631,8 +1631,16 @@
     .overview-settings-row input, .overview-settings-row select { accent-color: var(--accent); }
     .overview-settings-field { display: grid; gap: var(--sp-1); color: var(--muted); font-size: var(--fs-xs); }
     .overview-settings-field input, .overview-settings-field select, .overview-chart-select { min-width: 0; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg); color: var(--text); padding: var(--sp-1) var(--sp-2); font: inherit; }
-    .overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--sp-5); align-items: start; }
-    .overview-chart-card { --overview-chart-card-min-height: 18rem; position: relative; display: grid; grid-template-columns: minmax(200px, 240px) minmax(0, 1fr); align-items: start; gap: var(--sp-4); min-width: 0; min-height: var(--overview-chart-card-min-height); overflow: hidden; }
+    .overview-repo-filter { display: grid; gap: var(--sp-2); max-height: 12rem; overflow: auto; padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg); }
+    .overview-settings-links { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+    .overview-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-4); }
+    .overview-kpi { display: grid; gap: var(--sp-1); text-align: left; border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); color: var(--text); padding: var(--sp-3); cursor: pointer; }
+    .overview-kpi:hover { border-color: var(--accent); }
+    .overview-kpi-value { font-size: var(--fs-lg); font-weight: 800; font-variant-numeric: tabular-nums; }
+    .overview-kpi-label { color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+    .overview-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-5); align-items: stretch; }
+    .overview-chart-card { --overview-chart-card-min-height: 14rem; position: relative; display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); align-items: center; gap: var(--sp-4); min-width: 0; min-height: var(--overview-chart-card-min-height); overflow: hidden; }
+    .overview-chart-card + .overview-chart-card { border-left: 1px solid var(--border); padding-left: var(--sp-5); }
     .overview-chart-meta { min-width: 0; padding-right: var(--sp-7); }
     .overview-chart-download { position: absolute; top: var(--sp-2); right: var(--sp-2); display: inline-flex; align-items: center; justify-content: center; width: var(--sp-7); height: var(--sp-7); padding: var(--sp-0); }
     .overview-chart-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); font-size: var(--fs-xs); }
@@ -1705,13 +1713,22 @@
     .overview-chart-total { fill: var(--text); font-size: var(--fs-sm); font-weight: 800; text-anchor: middle; dominant-baseline: central; }
     .overview-chart-total-caption { fill: var(--muted); font-size: var(--fs-2xs); text-anchor: middle; dominant-baseline: central; }
     .overview-chart-legend { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; max-width: 22rem; }
-    .overview-chart-legend-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--sp-2); color: var(--muted); font-size: var(--fs-xs); }
+    .overview-chart-legend-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--sp-2); color: var(--muted); font-size: var(--fs-xs); border: 0; background: transparent; text-align: left; width: 100%; padding: var(--sp-1); border-radius: var(--r-sm); cursor: pointer; }
+    .overview-chart-legend-row:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
     .overview-chart-swatch { width: 0.75rem; height: 0.75rem; border-radius: var(--r-pill); background: var(--slice-c); box-shadow: 0 0 0 1px color-mix(in srgb, var(--slice-c) 45%, transparent); }
     .overview-chart-legend-label { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .overview-chart-legend-count { font-variant-numeric: tabular-nums; text-align: right; }
     .overview-band-download { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 0 var(--sp-1); line-height: 1; }
     .overview-band-download:hover { color: var(--text); }
     .overview-empty { color: var(--muted); font-size: var(--fs-sm); padding: var(--sp-5); border: 1px dashed var(--border); border-radius: var(--r); text-align: center; }
+    @media (max-width: 900px) {
+      .overview-grid { grid-template-columns: 1fr; }
+      .overview-chart-card + .overview-chart-card { border-left: 0; border-top: 1px solid var(--border); padding-left: var(--sp-0); padding-top: var(--sp-5); }
+    }
+    @media (max-width: 640px) {
+      .overview-chart-card { grid-template-columns: 1fr; justify-items: center; }
+      .overview-chart-meta { width: 100%; padding-right: var(--sp-0); }
+    }
     .overview-issue-ready { --slice-c: var(--status-info); }
     .overview-issue-in-progress { --slice-c: var(--status-warn); }
     .overview-issue-agent-filed { --slice-c: var(--acmm-level-5); }
@@ -10178,6 +10195,49 @@
       return (repo && (repo.full || repo.name)) || '';
     }
 
+    function overviewAllRepoNames(repos) {
+      return Array.from(new Set((repos || []).map(overviewRepoName).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    }
+
+    function overviewSavedRepoNames() {
+      try {
+        const raw = localStorage.getItem(OVERVIEW_REPOS_KEY);
+        if (raw === null) return null;
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.map(v => String(v)).filter(Boolean) : null;
+      } catch { return null; }
+    }
+
+    function saveOverviewRepoNames(repos) {
+      try { localStorage.setItem(OVERVIEW_REPOS_KEY, JSON.stringify(repos || [])); } catch {}
+    }
+
+    function overviewSelectedRepoNames(repos) {
+      const all = overviewAllRepoNames(repos);
+      const saved = overviewSavedRepoNames();
+      if (saved === null) return all;
+      const allowed = new Set(all);
+      return saved.filter(repo => allowed.has(repo));
+    }
+
+    function overviewFilterRepos(repos) {
+      const selected = overviewSelectedRepoNames(repos);
+      const selectedSet = new Set(selected);
+      return (repos || []).filter(repo => selectedSet.has(overviewRepoName(repo)));
+    }
+
+    function overviewRepoSubtitleSuffix(repos, selected) {
+      const all = overviewAllRepoNames(repos);
+      if (!all.length) return 'no configured repos';
+      if ((selected || []).length === all.length) return 'all repos';
+      if ((selected || []).length === 1) return selected[0];
+      return 'across ' + (selected || []).length + ' of ' + all.length + ' repos';
+    }
+
+    function overviewRepoOrgs(repos) {
+      return Array.from(new Set(overviewAllRepoNames(repos).map(name => name.split('/')[0]).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    }
+
     function overviewIssueBandSlices(repos) {
       const counts = new Map(OVERVIEW_ISSUE_BAND_ORDER.map(band => [band, 0]));
       const items = new Map(OVERVIEW_ISSUE_BAND_ORDER.map(band => [band, []]));
@@ -10260,9 +10320,21 @@
     }
 
     function overviewExportURL(kind, band) {
-      const path = '/api/overview/' + (kind === 'pr' || kind === 'prs' ? 'prs' : 'issues') + '.csv';
+      let format = 'csv';
+      try {
+        const saved = JSON.parse(localStorage.getItem(OVERVIEW_CHARTS_KEY) || '{}') || {};
+        if (OVERVIEW_EXPORT_FORMATS.includes(saved.exportFormat)) format = saved.exportFormat;
+      } catch {}
+      const path = '/api/overview/' + (kind === 'pr' || kind === 'prs' ? 'prs' : 'issues') + '.' + format;
       const params = new URLSearchParams();
       if (band) params.set('band', band);
+      const repos = typeof _overviewLastRepos !== 'undefined' ? _overviewLastRepos : [];
+      const selected = overviewSelectedRepoNames(repos);
+      const all = overviewAllRepoNames(repos);
+      if (all.length && selected.length < all.length) {
+        if (selected.length) selected.forEach(repo => params.append('repo', repo));
+        else params.set('repo', '__none__');
+      }
       // Links use the same token accepted by the API; cookie auth needs no query.
       let token = '';
       try { token = localStorage.getItem('hive-token') || ''; } catch {}
@@ -10283,11 +10355,18 @@
       };
     }
 
-    function renderOverviewDonut(title, subtitle, slices) {
+    function overviewSliceLabel(count, percentLabel, state) {
+      const mode = (state && state.labelMode) || 'both';
+      if (mode === 'counts') return String(count);
+      if (mode === 'percent') return percentLabel;
+      return count + ' · ' + percentLabel;
+    }
+
+    function renderOverviewDonut(title, subtitle, slices, history, state) {
       const visible = (slices || []).filter(s => s.count > 0);
       const total = visible.reduce((n, s) => n + s.count, 0);
       if (!total) {
-        return `<div class="overview-chart-card"><div><div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-empty">No matching items in this view.</div></div></div>`;
+        return `<div class="overview-chart-card"><div><div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-empty">Nothing actionable — the hive is caught up</div></div></div>`;
       }
       let offset = 0;
       const sliceHtml = visible.map(s => {
@@ -10297,14 +10376,14 @@
         offset += percent;
         const percentLabel = percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + '%';
         const text = percent >= OVERVIEW_CHART_LABEL_MIN_PERCENT
-          ? `<text class="overview-chart-label" text-anchor="${point.anchor}" x="${point.x.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" y="${point.y.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}">${s.count} · ${percentLabel}</text>`
+          ? `<text class="overview-chart-label" text-anchor="${point.anchor}" x="${point.x.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" y="${point.y.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}">${esc(overviewSliceLabel(s.count, percentLabel, state))}</text>`
           : '';
         return `<circle class="overview-chart-slice ${esc(s.className)}" cx="${OVERVIEW_CHART_CENTER}" cy="${OVERVIEW_CHART_CENTER}" r="${OVERVIEW_CHART_RADIUS}" pathLength="${OVERVIEW_CHART_FULL}" stroke-width="${OVERVIEW_CHART_STROKE}" stroke-dasharray="${percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)} ${OVERVIEW_CHART_FULL}" stroke-dashoffset="${dashOffset.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" transform="rotate(${OVERVIEW_CHART_START_ANGLE} ${OVERVIEW_CHART_CENTER} ${OVERVIEW_CHART_CENTER})"><title>${esc(s.label)}: ${s.count}${s.rule ? ' — ' + esc(s.rule) : ''}</title></circle>${text}`;
       }).join('');
       const legendHtml = visible.map(s => {
         const percent = (s.count / total) * OVERVIEW_CHART_PERCENT_SCALE;
         const percentLabel = percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + '%';
-        return `<div class="overview-chart-legend-row" title="${esc(s.label + (s.rule ? ': ' + s.rule : ''))}"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${s.count} (${percentLabel})</span></div>`;
+        return `<div class="overview-chart-legend-row" data-action="overviewNavigateBand" data-arg0="" data-arg1="${esc(s.key)}" data-stop="1" title="${esc(s.label + (s.rule ? ': ' + s.rule : ''))}"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${esc(overviewSliceLabel(s.count, percentLabel, state))}</span></div>`;
       }).join('');
       return `<div class="overview-chart-card"><svg class="overview-chart-svg" viewBox="0 0 ${OVERVIEW_CHART_VIEWBOX} ${OVERVIEW_CHART_VIEWBOX}" role="img" aria-label="${esc(title)}"><circle class="overview-chart-track" cx="${OVERVIEW_CHART_CENTER}" cy="${OVERVIEW_CHART_CENTER}" r="${OVERVIEW_CHART_RADIUS}" stroke-width="${OVERVIEW_CHART_STROKE}"></circle>${sliceHtml}<text class="overview-chart-total" x="${OVERVIEW_CHART_CENTER}" y="${OVERVIEW_CHART_CENTER + OVERVIEW_CHART_TOTAL_VALUE_Y_OFFSET}">${total}</text><text class="overview-chart-total-caption" x="${OVERVIEW_CHART_CENTER}" y="${OVERVIEW_CHART_CENTER + OVERVIEW_CHART_TOTAL_CAPTION_Y_OFFSET}">total</text></svg><div><div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${legendHtml}</div></div></div>`;
     }
@@ -10320,6 +10399,10 @@
     const OVERVIEW_CAROUSEL_DEFAULT_MS = 30000;
     const OVERVIEW_HISTORY_MAX_SAMPLES = 288;
     const OVERVIEW_HISTORY_MIN_SAMPLE_MS = 60000;
+    const OVERVIEW_REPOS_KEY = 'hive.overview.repos';
+    const OVERVIEW_EXPORT_FORMATS = ['csv', 'json'];
+    const OVERVIEW_LABEL_MODES = ['both', 'counts', 'percent'];
+    const OVERVIEW_TIME_BASES = ['updated', 'created'];
     const OVERVIEW_BAR_MIN_PERCENT = 1.5;
     const OVERVIEW_STACK_W = 220, OVERVIEW_STACK_H = 86, OVERVIEW_STACK_X = 10, OVERVIEW_STACK_Y = 36, OVERVIEW_STACK_BAR_W = 200, OVERVIEW_STACK_BAR_H = 18;
     const OVERVIEW_LINE_W = 220, OVERVIEW_LINE_H = 150, OVERVIEW_LINE_PAD = 12;
@@ -10337,7 +10420,7 @@
     function overviewDefaultChartState() {
       const enabled = {};
       OVERVIEW_CHART_TYPES.forEach(type => { enabled[type] = type === 'donut'; });
-      return { enabled, carousel: false, intervalMs: OVERVIEW_CAROUSEL_DEFAULT_MS, transition: 'fade', duration: 'normal', active: { issue: 'donut', pr: 'donut' }, history: { issue: [], pr: [] } };
+      return { enabled, carousel: false, intervalMs: OVERVIEW_CAROUSEL_DEFAULT_MS, transition: 'fade', duration: 'normal', active: { issue: 'donut', pr: 'donut' }, history: { issue: [], pr: [] }, labelMode: 'both', showKPIs: true, exportFormat: 'csv', timeBasis: 'updated' };
     }
 
     function overviewChartsState() {
@@ -10352,7 +10435,10 @@
       const transition = OVERVIEW_TRANSITIONS.includes(saved.transition) ? saved.transition : base.transition;
       const duration = OVERVIEW_DURATIONS.includes(saved.duration) ? saved.duration : base.duration;
       const history = saved.history && typeof saved.history === 'object' ? saved.history : base.history;
-      return { enabled, carousel: !!saved.carousel, intervalMs, transition, duration, active, history };
+      const labelMode = OVERVIEW_LABEL_MODES.includes(saved.labelMode) ? saved.labelMode : base.labelMode;
+      const exportFormat = OVERVIEW_EXPORT_FORMATS.includes(saved.exportFormat) ? saved.exportFormat : base.exportFormat;
+      const timeBasis = OVERVIEW_TIME_BASES.includes(saved.timeBasis) ? saved.timeBasis : base.timeBasis;
+      return { enabled, carousel: !!saved.carousel, intervalMs, transition, duration, active, history, labelMode, showKPIs: saved.showKPIs !== false, exportFormat, timeBasis };
     }
 
     function saveOverviewChartsState(state) {
@@ -10389,15 +10475,16 @@
       return 'overview-transition-' + name;
     }
 
-    function overviewLegendHTML(slices, kind) {
+    function overviewLegendHTML(slices, kind, state) {
       const total = (slices || []).reduce((n, s) => n + s.count, 0);
       const visible = (slices || []).filter(s => s.count > 0);
-      if (!total) return '<div class="overview-empty">No matching items in this view.</div>';
+      if (!total) return '<div class="overview-empty">Nothing actionable — the hive is caught up</div>';
       return visible.map(s => {
         const percent = (s.count / total) * OVERVIEW_CHART_PERCENT_SCALE;
         const percentLabel = percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + '%';
-        const download = kind ? `<a class="overview-band-download" href="${esc(overviewExportURL(kind, s.key))}" data-stop="1" title="Export ${esc(s.label)} as CSV" aria-label="Export ${esc(s.label)} as CSV">⬇</a>` : '';
-        return `<div class="overview-chart-legend-row" title="${esc(s.label + (s.rule ? ': ' + s.rule : ''))}"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${s.count} (${percentLabel})</span>${download}</div>`;
+        const format = ((state && state.exportFormat) || 'csv').toUpperCase();
+        const download = kind ? `<a class="overview-band-download" href="${esc(overviewExportURL(kind, s.key))}" data-action="overviewDownload" data-stop="1" title="Export ${esc(s.label)} as ${format}" aria-label="Export ${esc(s.label)} as ${format}">⬇</a>` : '';
+        return `<div class="overview-chart-legend-row" data-action="overviewNavigateBand" data-arg0="${esc(kind || '')}" data-arg1="${esc(s.key)}" data-stop="1" title="${esc(s.label + (s.rule ? ': ' + s.rule : ''))}"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${esc(overviewSliceLabel(s.count, percentLabel, state))}</span>${download}</div>`;
       }).join('');
     }
 
@@ -10499,11 +10586,11 @@
       return `<div class="overview-hbar" role="img" aria-label="${esc(title)}">${htmlRows}</div>`;
     }
 
-    function renderOverviewDonutSVG(title, subtitle, slices) {
-      const html = renderOverviewDonut(title, subtitle, slices);
+    function renderOverviewDonutSVG(title, subtitle, slices, history, state) {
+      const html = renderOverviewDonut(title, subtitle, slices, history, state);
       const start = html.indexOf('<svg');
       const end = html.indexOf('</svg>');
-      return start >= 0 && end >= start ? html.slice(start, end + '</svg>'.length) : '<div class="overview-empty">No matching items in this view.</div>';
+      return start >= 0 && end >= start ? html.slice(start, end + '</svg>'.length) : '<div class="overview-empty">Nothing actionable — the hive is caught up</div>';
     }
 
     const overviewChartRenderers = {
@@ -10517,7 +10604,7 @@
 
     function renderOverviewChartBody(type, title, subtitle, slices, kind, state) {
       const renderer = overviewChartRenderers[type] || overviewChartRenderers.donut;
-      return renderer(title, subtitle, slices, kind === 'issue' ? state.history.issue : state.history.pr);
+      return renderer(title, subtitle, slices, kind === 'issue' ? state.history.issue : state.history.pr, state);
     }
 
     // One dot per chart type (the ◀ ▶ domain); ticked types are the ones auto-play rotates through.
@@ -10538,9 +10625,53 @@
       const body = renderOverviewChartBody(active, title, subtitle, slices, kind, state);
       const total = (slices || []).reduce((n, s) => n + s.count, 0);
       const csvKind = kind === 'pr' ? 'prs' : 'issues';
-      const csvTitle = total ? ('Download ' + (kind === 'pr' ? 'PRs' : 'issues') + ' as CSV') : 'No matching items to download';
-      const download = `<a class="hv-btn btn-icon btn-sm overview-export-csv overview-chart-download" href="${esc(overviewExportURL(csvKind))}" data-stop="1" title="Download CSV" aria-label="${esc(csvTitle)}">⬇︎</a>`;
-      return `<div class="overview-chart-card ${panelClass}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${download}${body}<div class="overview-chart-meta"><div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices, csvKind)}</div></div></div>`;
+      const format = (state.exportFormat || 'csv').toUpperCase();
+      const csvTitle = total ? ('Download ' + (kind === 'pr' ? 'PRs' : 'issues') + ' as ' + format) : 'No matching items to download';
+      const download = `<a class="hv-btn btn-icon btn-sm overview-export-csv overview-chart-download" href="${esc(overviewExportURL(csvKind))}" data-stop="1" title="Download ${format}" aria-label="${esc(csvTitle)}">⬇︎</a>`;
+      return `<div class="overview-chart-card ${panelClass}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${download}${body}<div class="overview-chart-meta"><div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices, csvKind, state)}</div></div></div>`;
+    }
+
+    function overviewMedianAgeLabel(slices, state) {
+      const ages = (slices || []).flatMap(s => (s.items || []).map(item => {
+        const raw = (item && (item.item || item.issue || item.pr)) || item || {};
+        const basis = state.timeBasis === 'created' ? (raw.created_at || raw.updated_at) : (raw.updated_at || raw.created_at);
+        const t = Date.parse(basis || '');
+        return Number.isFinite(t) ? Math.max(0, (Date.now() - t) / 60000) : overviewItemAgeMinutes(item);
+      })).filter(n => Number.isFinite(n)).sort((a, b) => a - b);
+      if (!ages.length) return '—';
+      const median = ages[Math.floor(ages.length / 2)];
+      if (median < 60) return Math.round(median) + 'm';
+      if (median < 1440) return Math.round(median / 60) + 'h';
+      return Math.round(median / 1440) + 'd';
+    }
+
+    function renderOverviewKPIs(repos, issueSlices, prSlices, state) {
+      if (!state.showKPIs) return '';
+      const openIssues = (repos || []).reduce((n, r) => n + (r.actionableIssues || []).length + (r.heldIssues || []).length, 0);
+      const openPRs = (repos || []).reduce((n, r) => n + (r.openPrs || []).length + (r.heldPrs || []).length, 0);
+      const actionableNow = (issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft'].includes(s.key)).reduce((n, s) => n + s.count, 0);
+      const held = (repos || []).reduce((n, r) => n + (r.heldIssues || []).length + (r.heldPrs || []).length, 0);
+      const blockedNeedsHuman = (prSlices || []).filter(s => s.key === 'blocked' || s.key === 'waiting').reduce((n, s) => n + s.count, 0)
+        + (issueSlices || []).filter(s => s.key === 'waiting').reduce((n, s) => n + s.count, 0);
+      const age = overviewMedianAgeLabel((issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft'].includes(s.key)), state);
+      const cards = [
+        ['Open issues', openIssues, 'Actionable plus held issues in the selected repos.'],
+        ['Open PRs', openPRs, 'Open plus held pull requests in the selected repos.'],
+        ['Actionable now', actionableNow, 'Items in bands that can move without waiting.'],
+        ['Held', held, 'Issues and PRs deliberately paused by a hold.'],
+        ['Blocked / needs-human', blockedNeedsHuman, 'Waiting, blocked, or escalated work needing a person or dependency.'],
+        ['Median age', age, 'Median selected actionable item age by the configured time basis.']
+      ];
+      return `<div class="overview-kpis">${cards.map(([label, value, tip]) => `<button type="button" class="overview-kpi" data-action="ocNavigate" data-arg0="repos-section" data-stop="1" title="${esc(tip)}"><span class="overview-kpi-value">${esc(value)}</span><span class="overview-kpi-label">${esc(label)}</span></button>`).join('')}</div>`;
+    }
+
+    function overviewRepoFilterHTML(repos) {
+      const all = overviewAllRepoNames(repos);
+      const selected = new Set(overviewSelectedRepoNames(repos));
+      const orgs = overviewRepoOrgs(repos);
+      const orgLinks = orgs.length > 1 ? `<div class="overview-settings-links">${orgs.map(org => `<button type="button" class="hv-btn btn-sm" data-action="setOverviewRepoOrg" data-arg0="${esc(org)}" data-stop="1">Org: ${esc(org)}</button>`).join('')}</div>` : '';
+      const rows = all.map(repo => `<label class="overview-settings-row"><input type="checkbox" data-change-action="setOverviewRepoFilter" data-arg0="${esc(repo)}" data-arg-types="s,c"${selected.has(repo) ? ' checked' : ''}>${esc(repo)}</label>`).join('');
+      return `<div class="overview-settings-section"><div class="overview-settings-card-title">Repos</div><div class="overview-settings-links"><button type="button" class="hv-btn btn-sm" data-action="setOverviewReposAll" data-stop="1">All</button><button type="button" class="hv-btn btn-sm" data-action="setOverviewReposNone" data-stop="1">None</button></div>${orgLinks}<div id="overview-repo-filter" class="overview-repo-filter" role="group" aria-label="Repos">${rows || '<div class="overview-empty">No repos configured.</div>'}</div></div>`;
     }
 
     function renderOverviewSettingsPopover(state) {
@@ -10548,6 +10679,9 @@
       if (!el) return;
       const typeRows = OVERVIEW_CHART_TYPES.map(type => `<label class="overview-settings-row"><input type="checkbox" data-change-action="setOverviewChartRotation" data-arg0="${esc(type)}" data-arg-types="s,c"${state.enabled[type] ? ' checked' : ''}>${esc(OVERVIEW_CHART_TYPE_LABELS[type])}<span>in rotation</span></label>`).join('');
       const durationOptions = OVERVIEW_DURATIONS.map(d => `<option value="${esc(d)}"${state.duration === d ? ' selected' : ''}>${esc(d)}</option>`).join('');
+      const exportOptions = OVERVIEW_EXPORT_FORMATS.map(f => `<option value="${esc(f)}"${state.exportFormat === f ? ' selected' : ''}>${esc(f.toUpperCase())}</option>`).join('');
+      const labelOptions = OVERVIEW_LABEL_MODES.map(m => `<option value="${esc(m)}"${state.labelMode === m ? ' selected' : ''}>${esc(m === 'both' ? 'counts + percentages' : m)}</option>`).join('');
+      const timeOptions = OVERVIEW_TIME_BASES.map(t => `<option value="${esc(t)}"${state.timeBasis === t ? ' selected' : ''}>${esc(t)} time</option>`).join('');
       const seconds = Math.round(state.intervalMs / 1000);
       const cardControls = (kind, label) => {
         const enabled = overviewEnabledTypes(state);
@@ -10555,7 +10689,7 @@
         const autoTitle = state.carousel ? 'Auto-play on — rotates every ' + Math.round(overviewCarouselDwellMs(state) / 1000) + 's through the ticked charts. Click to pause.' : 'Auto-play off — click to rotate through the ticked charts every ' + Math.round(overviewCarouselDwellMs(state) / 1000) + 's';
         return `<div class="overview-settings-section" aria-label="${esc(label)} chart controls"><div class="overview-settings-card-title">${esc(label)}</div><div class="overview-chart-controls"><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselPrev" data-arg0="${kind}" data-stop="1" title="Previous ${esc(label)} chart" aria-label="Previous ${esc(label)} chart">◀</button><label class="overview-settings-field">Chart type<select class="overview-chart-select" data-change-action="setOverviewChartType" data-arg0="${kind}" data-arg-types="s,v" title="${esc(label)} chart type">${overviewChartTypeOptions(active)}</select></label><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselNext" data-arg0="${kind}" data-stop="1" title="Next ${esc(label)} chart" aria-label="Next ${esc(label)} chart">▶</button>${renderOverviewDots(enabled, active)}<span class="overview-chart-controls-sep"></span><button type="button" class="overview-carousel-arrow" data-action="toggleOverviewCarousel" data-stop="1" aria-pressed="${state.carousel ? 'true' : 'false'}" title="${esc(autoTitle)}" aria-label="${esc(autoTitle)}">${state.carousel ? '⏸ auto' : '⏵ auto'}</button><label class="overview-settings-field">Transition<select class="overview-chart-select" data-change-action="setOverviewTransition" data-arg-types="v" title="Transition between charts">${overviewTransitionOptions(state.transition)}</select></label></div></div>`;
       };
-      setIfChanged(el, `<div class="overview-settings-title">Overview charts</div><div class="overview-settings-grid">${typeRows}</div><label class="overview-settings-field">Interval (seconds)<input type="number" min="5" max="300" step="5" value="${seconds}" data-change-action="setOverviewCarouselInterval" data-arg-types="N"></label><label class="overview-settings-field">Duration<select data-change-action="setOverviewDuration" data-arg-types="v">${durationOptions}</select></label>${cardControls('issue', 'Issues')}${cardControls('pr', 'PRs')}`);
+      setIfChanged(el, `<div class="overview-settings-title">Overview charts</div><div class="overview-settings-grid">${typeRows}</div><div class="overview-settings-grid"><label class="overview-settings-field">Interval (seconds)<input type="number" min="5" max="300" step="5" value="${seconds}" data-change-action="setOverviewCarouselInterval" data-arg-types="N"></label><label class="overview-settings-field">Duration<select data-change-action="setOverviewDuration" data-arg-types="v">${durationOptions}</select></label><label class="overview-settings-field">Export format<select data-change-action="setOverviewExportFormat" data-arg-types="v">${exportOptions}</select></label><label class="overview-settings-field">Donut labels<select data-change-action="setOverviewLabelMode" data-arg-types="v">${labelOptions}</select></label><label class="overview-settings-field">Age basis<select data-change-action="setOverviewTimeBasis" data-arg-types="v">${timeOptions}</select></label><label class="overview-settings-row"><input type="checkbox" data-change-action="setOverviewKPIs" data-arg-types="c"${state.showKPIs ? ' checked' : ''}>Show KPI strip</label></div><div class="overview-settings-links"><button type="button" class="hv-btn btn-sm" data-action="resetOverviewSettings" data-stop="1">Reset to defaults</button></div>${overviewRepoFilterHTML(_overviewLastRepos || [])}${cardControls('issue', 'Issues')}${cardControls('pr', 'PRs')}`);
     }
 
     function rerenderOverviewChartsFromState(state) {
@@ -10607,6 +10741,64 @@
       const state = overviewChartsState();
       if (OVERVIEW_DURATIONS.includes(value)) state.duration = value;
       rerenderOverviewChartsFromState(state);
+    }
+
+    function setOverviewExportFormat(value) {
+      const state = overviewChartsState();
+      if (OVERVIEW_EXPORT_FORMATS.includes(value)) state.exportFormat = value;
+      rerenderOverviewChartsFromState(state);
+    }
+
+    function setOverviewLabelMode(value) {
+      const state = overviewChartsState();
+      if (OVERVIEW_LABEL_MODES.includes(value)) state.labelMode = value;
+      rerenderOverviewChartsFromState(state);
+    }
+
+    function setOverviewTimeBasis(value) {
+      const state = overviewChartsState();
+      if (OVERVIEW_TIME_BASES.includes(value)) state.timeBasis = value;
+      rerenderOverviewChartsFromState(state);
+    }
+
+    function setOverviewKPIs(checked) {
+      const state = overviewChartsState();
+      state.showKPIs = !!checked;
+      rerenderOverviewChartsFromState(state);
+    }
+
+    function setOverviewRepoFilter(repo, checked) {
+      const all = overviewAllRepoNames(_overviewLastRepos || []);
+      const selected = new Set(overviewSelectedRepoNames(_overviewLastRepos || []));
+      if (checked) selected.add(repo); else selected.delete(repo);
+      saveOverviewRepoNames(all.filter(name => selected.has(name)));
+      renderOverviewCharts(_overviewLastRepos || []);
+    }
+
+    function setOverviewReposAll() {
+      saveOverviewRepoNames(overviewAllRepoNames(_overviewLastRepos || []));
+      renderOverviewCharts(_overviewLastRepos || []);
+    }
+
+    function setOverviewReposNone() {
+      saveOverviewRepoNames([]);
+      renderOverviewCharts(_overviewLastRepos || []);
+    }
+
+    function setOverviewRepoOrg(org) {
+      const selected = overviewAllRepoNames(_overviewLastRepos || []).filter(repo => repo.split('/')[0] === org);
+      saveOverviewRepoNames(selected);
+      renderOverviewCharts(_overviewLastRepos || []);
+    }
+
+    function resetOverviewSettings() {
+      saveOverviewChartsState(overviewDefaultChartState());
+      try { localStorage.removeItem(OVERVIEW_REPOS_KEY); } catch {}
+      renderOverviewCharts(_overviewLastRepos || []);
+    }
+
+    function overviewNavigateBand(kind, band) {
+      ocNavigate('repos-section');
     }
 
     function setOverviewChartType(kind, type) {
@@ -10664,15 +10856,19 @@
       _overviewLastRepos = Array.isArray(repos) ? repos : [];
       _overviewCarouselTimers.splice(0).forEach(id => clearInterval(id));
       const state = overviewChartsState();
-      const issueSlices = overviewIssueBandSlices(repos);
-      const prSlices = overviewPRBandSlices(repos);
+      const selectedRepos = overviewFilterRepos(_overviewLastRepos);
+      const selectedNames = overviewSelectedRepoNames(_overviewLastRepos);
+      const repoSuffix = overviewRepoSubtitleSuffix(_overviewLastRepos, selectedNames);
+      const issueSlices = overviewIssueBandSlices(selectedRepos);
+      const prSlices = overviewPRBandSlices(selectedRepos);
       const issueSampled = overviewSampleHistory('issue', issueSlices, state);
       const prSampled = overviewSampleHistory('pr', prSlices, state);
       const sampled = issueSampled || prSampled;
       const total = issueSlices.concat(prSlices).reduce((n, s) => n + s.count, 0);
+      const kpis = renderOverviewKPIs(selectedRepos, issueSlices, prSlices, state);
       const html = total
-        ? `<div class="overview-grid">${renderOverviewPanel('issue', 'Issues by band', 'Actionable and held issues in the current repo view · hover a band for its rule', issueSlices, state)}${renderOverviewPanel('pr', 'PRs by band', 'Open and held pull requests in the current repo view · hover a band for its rule', prSlices, state)}</div>`
-        : '<div class="overview-empty">No repository issues or pull requests match the current hive view yet.</div>';
+        ? `${kpis}<div class="overview-grid">${renderOverviewPanel('issue', 'Issues by band', 'Actionable and held issues ' + repoSuffix + ' · hover a band for its rule', issueSlices, state)}${renderOverviewPanel('pr', 'PRs by band', 'Open and held pull requests ' + repoSuffix + ' · hover a band for its rule', prSlices, state)}</div>`
+        : `${kpis}<div class="overview-empty">Nothing actionable — the hive is caught up</div>`;
       if (sampled) saveOverviewChartsState(state);
       setIfChanged(el, html);
       renderOverviewSettingsPopover(state);

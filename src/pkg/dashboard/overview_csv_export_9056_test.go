@@ -9,7 +9,7 @@ func TestOverviewCSVExportStaticWiring9056(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
 		`class="hv-btn btn-icon btn-sm overview-export-csv overview-chart-download" href="${esc(overviewExportURL(csvKind))}"`,
-		`title="Download CSV" aria-label="${esc(csvTitle)}"`,
+		`title="Download ${format}" aria-label="${esc(csvTitle)}"`,
 		`class="overview-band-download" href="${esc(overviewExportURL(kind, s.key))}"`,
 	} {
 		if !strings.Contains(html, want) {

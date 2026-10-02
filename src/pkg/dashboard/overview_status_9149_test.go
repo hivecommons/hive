@@ -100,10 +100,13 @@ const OVERVIEW_ISSUE_BAND_ORDER = ['ready', 'in-progress', 'agent-filed', 'waiti
 const PR_BAND_ORDER = ['waiting', 'eligible', 'blocked', 'in-review', 'open', 'draft'];
 const OVERVIEW_CHART_PERCENT_SCALE = 100;
 const OVERVIEW_CHART_DECIMAL_PLACES = 1;
+const OVERVIEW_REPOS_KEY = 'hive.overview.repos';
+const OVERVIEW_CHARTS_KEY = 'hive-overview-charts';
+const OVERVIEW_EXPORT_FORMATS = ['csv', 'json'];
 let token = '';
 const localStorage = {getItem: () => token};
 `)
-	for _, name := range []string{"issueBandSpec", "issueBandLabel", "issueBandRule", "issueBandTip", "issueBandRank", "issueUpdatedAt", "issueIsStale", "groupedRepoIssues", "prBandSpec", "prBandLabel", "prBandRule", "prBandTip", "prBandRank", "prUpdatedAt", "prCreatedAt", "prReviewClassRank", "prIsStale", "groupedRepoPRs", "overviewRepoName", "overviewIssueBandSlices", "overviewPRBandSlices", "overviewExportURL", "esc", "prSignalHTML", "overviewLegendHTML"} {
+	for _, name := range []string{"issueBandSpec", "issueBandLabel", "issueBandRule", "issueBandTip", "issueBandRank", "issueUpdatedAt", "issueIsStale", "groupedRepoIssues", "prBandSpec", "prBandLabel", "prBandRule", "prBandTip", "prBandRank", "prUpdatedAt", "prCreatedAt", "prReviewClassRank", "prIsStale", "groupedRepoPRs", "overviewRepoName", "overviewAllRepoNames", "overviewSavedRepoNames", "overviewSelectedRepoNames", "overviewIssueBandSlices", "overviewPRBandSlices", "overviewSliceLabel", "overviewExportURL", "esc", "prSignalHTML", "overviewLegendHTML"} {
 		script.WriteString(jsFunc(t, html, name))
 		script.WriteByte('\n')
 	}

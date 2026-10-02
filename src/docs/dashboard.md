@@ -115,12 +115,14 @@ rule.
 ## Repository card legend, issue bands, and PR bands
 
 The collapsible **Overview** section above Repositories summarizes the same
-client-side issue and PR bands across the current repository view. Its SVG
+client-side issue and PR bands across the selected repository view. Its SVG
 charts reuse the repository-card classifiers for actionable plus held
-issues/PRs, so their totals match the visible band counters and respect any
-repo filtering without a separate API call. Operators can view each Issues or
-PRs panel as a donut, pie, horizontal bar, single 100% stacked bar, line/spark
-trend, or age histogram. Every shape is still driven by the same band slices and
+issues/PRs, so their totals match the visible band counters and respect the
+Overview settings repo filter without a separate API call. A compact KPI strip
+shows open issues, open PRs, actionable now, held, blocked/needs-human, and the
+median actionable age. Operators can view each Issues or PRs panel as a donut,
+pie, horizontal bar, single 100% stacked bar, line/spark trend, or age
+histogram. Every shape is still driven by the same band slices and
 server-provided classifications. Hovering a chart element, an Overview legend
 row, or a repository-card band header shows its rule from the Go band specs
 carried in `/api/status` as `overview_bands`. Each actionable/held issue and PR
@@ -128,7 +130,9 @@ carries `band`, `signals`, `stale`, and `held`; the browser does not classify
 labels or timestamps again. Full SSE updates carry the same fields.
 
 The Issues and PRs panels link directly to `/api/overview/issues.csv` and
-`/api/overview/prs.csv`; non-empty legend rows add a `band` query filter.
+`/api/overview/prs.csv` by default, or to the matching `.json` endpoints when
+JSON export is selected; non-empty legend rows add a `band` query filter and
+repo-filtered views add one or more `repo` query filters.
 Exports use the current cached snapshot and the same Go classifier as the
 page, so a download reflects the latest server state even between page updates.
 Automation can use the corresponding `.json` endpoints and optional `band`,
@@ -137,9 +141,13 @@ pages include their API token in the download link's query string.
 
 The Overview header's ⚙️ popover stores browser-local chart preferences under
 `hive-overview-charts`: which chart types are in rotation, whether the carousel
-is enabled, the 5-second to 5-minute interval, transition style, duration, and
-the bounded client-side line/spark history. The default remains donut-only with
-the carousel off, a 30-second interval, fade transition, and normal duration.
+is enabled, the 5-second to 5-minute interval, transition style, duration, donut
+label mode, KPI visibility, export format, default age basis, and the bounded
+client-side line/spark history. The repo multi-select is stored separately under
+`hive.overview.repos`, with All/None shortcuts and an Org shortcut when the
+hive spans multiple GitHub organizations. The default remains donut-only with
+the carousel off, a 30-second interval, fade transition, normal duration, KPI
+strip on, CSV exports, updated-time age basis, and all repos selected.
 Manual arrows and dot indicators are available even when timed rotation is off;
 timed rotation pauses while the panel is hovered or the tab is hidden, and
 reduced-motion users get instant swaps.
