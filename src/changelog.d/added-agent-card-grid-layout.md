@@ -1,0 +1,1 @@
+- Restore agent cards to a responsive three-up dashboard grid with persisted drag reordering and resizable card layouts.

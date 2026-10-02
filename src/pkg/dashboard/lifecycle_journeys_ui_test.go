@@ -49,7 +49,7 @@ func TestLifecycleJourneysPanelPinned(t *testing.T) {
 		`<div class="val blocked">`,
 		// Fetch path + calm empty state.
 		"'/api/lifecycle-timeline?limit=50'",
-		"No lifecycle journeys yet",
+		"No lifecycle events in the last 6h.",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("lifecycle journeys panel missing snippet %q", snippet)

@@ -104,7 +104,6 @@ func TestDashboardSectionRenderersRefreshSharedShell(t *testing.T) {
 		"function renderAuditTable(entries)":        "audit-section",
 		"function renderReviewQueue(data)":          "review-queue-section",
 		"function renderFAQ()":                      "faq-section",
-		"function renderPlatform(plat)":             "platform-section",
 		"function renderInception()":                "inception-section",
 		"function renderKnowledge()":                "knowledge-section",
 		"function renderDebugSection()":             "debug-section",
@@ -139,6 +138,104 @@ func TestDashboardSectionChromeHasNoSectionSpecificOverrides(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Fatalf("shared dashboard card CSS is missing %q", want)
 		}
+	}
+}
+
+func TestDashboardCardPolishBatchStaticContracts(t *testing.T) {
+	html := indexHTML(t)
+	if strings.Contains(html, `'platform-section':`) || strings.Contains(html, `id="platform-section"`) || strings.Contains(strings.Join(dashboardLayoutTemplateIDs(t, html), ","), "platform-section") {
+		t.Fatal("Platform must not be a top-level dashboard section")
+	}
+	for _, want := range []string{
+		"function platformFactTiles(plat)",
+		`class="platform-diagnostics"`,
+		`#audit-panel.audit-resizable`,
+		`resize: vertical`,
+		`AUDIT_PANEL_HEIGHT_KEY = 'hive.audit.panel.height'`,
+		`ResizeObserver`,
+		`⚡ Powered by Spektacular`,
+		`https://github.com/jumppad-labs/spektacular`,
+		`Project inception runs on <a href="https://github.com/jumppad-labs/spektacular"`,
+		`summary: '0 facts'`,
+		"kbFactsLabel(kbTotalFactsFromStats",
+		"No lifecycle events in the last 6h.",
+		"function lcJourneyHasContent(j)",
+		"repo-header-badges",
+		"repo-header-actions",
+		`id="governor-pr-models-section"`,
+		"PRS BY MODEL",
+		"gov-pr-models-subtitle",
+		"gov-pr-models-summary",
+		"collapsedSummary",
+		"applySectionCollapse('governor-pr-models-section')",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("dashboard polish contract missing %q", want)
+		}
+	}
+	govCSS := html[strings.Index(html, "/* Governor uses the shared dash-card shell"):strings.Index(html, ".gov-title")]
+	if strings.Contains(govCSS, "box-shadow") || strings.Contains(govCSS, "padding: var(--sp-6)") || strings.Contains(html, "body.light-mode .governor,") {
+		t.Fatal("Governor outer container still draws card chrome instead of leaving it to .dash-card")
+	}
+}
+
+func TestGovernorPRModelsNestedSubsectionIsCollapsible(t *testing.T) {
+	html := indexHTML(t)
+	body := jsFunctionBody(t, html, "function renderGovernorPRModelsTile()")
+	for _, want := range []string{
+		`id="governor-pr-models-section"`,
+		`class="section-label section-header-toggle gov-pr-models-subheader"`,
+		`data-action="toggleSection"`,
+		`data-keydown-action="sectionHeaderKey"`,
+		`data-arg0="governor-pr-models-section"`,
+		`PRS BY MODEL`,
+		`gov-pr-models-subtitle`,
+		`gov-pr-models-summary`,
+		`#1 ${escapeHtml(topModel)} · ${modelCount} model`,
+		`<span class="gov-pr-models-toggle" data-stop="1">${buttons}${sortButtons}</span>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("Governor PRs-by-model subsection missing %q", want)
+		}
+	}
+	renderGovernor := jsFunctionBody(t, html, "function renderGovernor(gov, cadenceMatrix, data)")
+	if !strings.Contains(renderGovernor, "applySectionCollapse('governor-pr-models-section')") {
+		t.Fatal("Governor render does not re-apply nested PRs-by-model collapse state")
+	}
+	apply := jsFunctionBody(t, html, "function applySectionCollapse(sectionId)")
+	if !strings.Contains(apply, "section.classList.toggle('collapsed', collapsed)") {
+		t.Fatal("nested subsection collapse state is not reflected on the section for collapsed summaries")
+	}
+}
+
+func TestAdvisoryNestedSubsectionsUseSeparatedHeaderPattern(t *testing.T) {
+	html := indexHTML(t)
+	for _, id := range []string{"advisory-digest-section", "hive-advice-section", "fleet-report-section", "acmm-reco-section", "lifecycle-section", "pr-throughput-section"} {
+		idx := strings.Index(html, `id="`+id+`"`)
+		if idx < 0 {
+			t.Fatalf("missing advisory subsection %s", id)
+		}
+		window := html[idx:]
+		if len(window) > 700 {
+			window = window[:700]
+		}
+		if !strings.Contains(window, "advisory-subsection") {
+			t.Fatalf("%s does not use advisory-subsection spacing pattern", id)
+		}
+		if id != "advisory-digest-section" && !strings.Contains(window, "advisory-subsection-card") {
+			t.Fatalf("%s body card does not start below its header", id)
+		}
+	}
+}
+
+func TestDashboardNoticesContainReleaseAndPlanningAboveOverview(t *testing.T) {
+	html := indexHTML(t)
+	notices := strings.Index(html, `id="dashboard-notices"`)
+	release := strings.Index(html, `id="release-status"`)
+	planning := strings.Index(html, `id="planning-intro"`)
+	overview := strings.Index(html, `data-dashboard-section="overview-section"`)
+	if notices < 0 || release < notices || planning < notices || overview < 0 || release > overview || planning > overview {
+		t.Fatalf("release status and planning notice must be inside pinned notices above Overview")
 	}
 }
 

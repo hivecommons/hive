@@ -36,6 +36,7 @@ Start with [Zero to Automation: Getting Started with Hive](getting-started.md). 
 - [Operator reference](operator-reference.md)
 - [Release channels](release-channels.md) — what `stable`, `candidate`, and `edge` each mean and what to expect from them.
 - [Security model](security-model.md)
+- [Data collection and telemetry](telemetry.md)
 - [Securing your hive: a first-time operator's guide](securing-your-hive.md)
 - [Community and support](community.md)
 - [Documentation map](documentation-map.md)
