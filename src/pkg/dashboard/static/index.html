@@ -6535,9 +6535,17 @@
       });
       let custom = Object.keys(sizes).length > 0 || order.length !== def.length;
       for (let i = 0; !custom && i < order.length; i++) custom = order[i] !== def[i];
+      // Normalizing runs on every render; only touch storage when the
+      // persisted layout actually changes.
       try {
-        if (custom) localStorage.setItem(agentLayoutHiveKey(), JSON.stringify({ v: AGENT_CARD_LAYOUT_VERSION, order, sizes }));
-        else localStorage.removeItem(agentLayoutHiveKey());
+        const key = agentLayoutHiveKey();
+        const prev = localStorage.getItem(key);
+        if (custom) {
+          const next = JSON.stringify({ v: AGENT_CARD_LAYOUT_VERSION, order, sizes });
+          if (prev !== next) localStorage.setItem(key, next);
+        } else if (prev !== null) {
+          localStorage.removeItem(key);
+        }
       } catch {}
     }
 

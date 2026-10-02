@@ -190,7 +190,9 @@ func TestRepoCardWidthStore(t *testing.T) {
 }
 
 // A minimal browser: the localStorage the store persists into, and the
-// _lastStatus the per-hive key is derived from.
+// _lastStatus the per-hive key is derived from. setRepoCardWidth also pokes
+// the user-menu layout status (#10005); that is DOM work outside the store
+// rules under test, so it is a no-op here.
 const repoCardWidthHarness = `
 const _store = new Map();
 const localStorage = {
@@ -199,6 +201,7 @@ const localStorage = {
   removeItem: (k) => { _store.delete(k); },
 };
 const window = { _lastStatus: { hiveId: 'hive-bold-hawk' } };
+function dashboardUpdateLayoutMenuState() {}
 `
 
 const repoCardWidthAssertions = `

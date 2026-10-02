@@ -1,0 +1,1 @@
+- The dashboard no longer rewrites the saved agent-card layout in browser storage on every render; it now writes only when the order or sizes actually change, so focusing an agent never touches the persisted layout ([#10223](https://github.com/hivecommons/hive/issues/10223)).

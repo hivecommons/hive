@@ -15,7 +15,13 @@ func TestVersionProvenanceRendering(t *testing.T) {
 	}
 	html := indexHTML(t)
 	var source strings.Builder
-	for _, name := range []string{"escapeHtml", "versionDeliveryLabel", "versionTrackingLabel", "versionTrackingTooltip", "upgradeTargetLabel", "versionCompareURL", "versionStatusText", "versionLastUpgradeText", "renderVersionMenu", "renderVersionChip", "fetchGitVersion"} {
+	for _, name := range []string{
+		"escapeHtml", "versionDeliveryLabel", "versionTrackingLabel", "versionTrackingTooltip", "upgradeTargetLabel", "versionCompareURL", "versionStatusText", "versionLastUpgradeText",
+		"versionNowMs", "versionReadUpgradeProgress", "versionWriteUpgradeProgress", "versionClearUpgradeProgress", "versionMarkUpgradeComplete", "versionReconcileUpgradeProgress", "versionElapsedText", "versionScheduleUpgradePoll",
+		"versionShortSHA", "versionSameCommit", "versionDashHTML", "versionPolicy", "versionManagedSuffix", "versionTrackingSummary", "versionCadenceLabel", "versionStatusSummary",
+		"versionUpgradeProgressStatus", "versionBeeProgressHTML", "versionButtonHTML", "renderVersionUpgradeAction", "renderVersionDetails", "versionManualUpgradeActive",
+		"renderVersionMenu", "renderVersionChip", "fetchGitVersion",
+	} {
 		if name == "fetchGitVersion" {
 			source.WriteString("async ")
 		}
@@ -39,6 +45,15 @@ const elements = {
 const document = { getElementById: id => elements[id] || null };
 const window = {};
 let payload, calls = 0, _upgradeInProgress = false, _upgradeTargetHash = null;
+const VERSION_UPGRADE_STORAGE_KEY = 'hive.version.upgradeProgress';
+const VERSION_UPGRADE_DONE_MS = 30000;
+const VERSION_UPGRADE_LONG_MS = 15 * 60 * 1000;
+const VERSION_UPGRADE_POLL_MS = 5000;
+let _versionUpgradePollTimer = null;
+const localStorage = { data: {}, getItem(k) { return this.data[k] ?? null; }, setItem(k, v) { this.data[k] = String(v); }, removeItem(k) { delete this.data[k]; } };
+function setTimeout() { return 1; }
+function clearTimeout() {}
+function relativeAge() { return '2h ago'; }
 function showToast() {}
 function renderReleaseStatus() {}
 async function fetch(url) {
@@ -67,8 +82,8 @@ async function render(overrides = {}) {
     const ref = 'ghcr.io/hivecommons/hive:' + channel;
     const { chip, menu } = await render({ channel, tracking: 'floating', imageRef: ref });
     assert.ok(chip.includes('>' + channel + ' (v5)</span>'));
-    assert.ok(menu.includes('Channel</span><strong>' + channel + ' (v5)</strong>'));
-    assert.ok(menu.includes('>floating</strong>'));
+    assert.ok(menu.includes('Channel</span><strong title="' + channel + ' (v5)">' + channel + ' (v5)</strong>'));
+    assert.ok(menu.includes('Tracking: floating (mutable tag)'));
     assert.ok(menu.includes('Channel: ' + channel));
     assert.ok(menu.includes('Built from: v5'));
     assert.ok(menu.includes('Image: ' + ref));
@@ -76,22 +91,23 @@ async function render(overrides = {}) {
   let out = await render({ tracking: 'floating', imageRef: 'hive:v5-latest' });
   assert.ok(out.chip.includes('>v5</span>'));
   assert.ok(!out.menu.includes('Channel:'));
-  assert.ok(out.menu.includes('>floating</strong>'));
+  assert.ok(out.menu.includes('Tracking: floating (mutable tag)'));
   out = await render({ tracking: 'pinned', imageRef: 'hive:a1b2c3d' });
-  assert.ok(out.menu.includes('>pinned</strong>'));
+  assert.ok(out.menu.includes('>pinned a1b2c3d</strong>'));
+  assert.ok(out.menu.includes('Tracking: pinned (immutable tag or digest)'));
   assert.ok(out.menu.includes('Built from: v5'));
   out = await render({ channel: 'stable', tracking: 'pinned', imageRef: 'hive:stable@sha256:' + 'a'.repeat(64) });
   assert.ok(out.chip.includes('>stable (v5)</span>'));
-  assert.ok(out.menu.includes('>pinned</strong>'));
+  assert.ok(out.menu.includes('>pinned a1b2c3d</strong>'));
   for (const tracking of [undefined, 'unknown', 'unexpected']) {
     out = await render({ tracking });
-    assert.ok(out.menu.includes('>tracking unknown</strong>'));
+    assert.ok(out.menu.includes('Tracking: unknown (authoritative image reference unavailable)'));
     assert.ok(!out.menu.includes('Image:'));
   }
   out = await render({ channel: 'edge', branch: 'unknown', tracking: 'floating' });
   assert.ok(out.chip.includes('>edge</span>'));
   out = await render({ branch: 'unknown' });
-  assert.ok(out.menu.includes('>tracking unknown</strong>'));
+  assert.ok(out.menu.includes('Tracking: unknown (authoritative image reference unavailable)'));
   out = await render({ channel: '<img src=x onerror="boom">', branch: 'v5"', imageRef: '<script>alert(1)</script>', tracking: 'pinned' });
   assert.ok(!out.chip.includes('<img'));
   assert.ok(!out.menu.includes('<script>'));
@@ -99,20 +115,23 @@ async function render(overrides = {}) {
   assert.ok(out.menu.includes('&quot;'));
   out = await render({ behind: true, latestHash: 'b2c3d4e', latestShort: 'b2c3d4e', commitsBehind: 2, tracking: 'pinned', deployment: { runtime: 'docker-compose', upgradeSupported: true } });
   assert.ok(out.chip.includes('oc-version-update-dot'));
-  assert.ok(out.menu.includes('2 behind'));
+  assert.ok(out.menu.includes('upgrade available → b2c3d4e'));
   assert.ok(out.menu.includes('Compare with target'));
-  assert.ok(out.menu.includes('↑ Upgrade'));
-  out = await render({ upgradeMarker: { failed: true, target: 'b2c3d4e', attempts: 3, maxAttempts: 3 }, tracking: 'floating' });
-  assert.ok(out.menu.includes('Auto-update failed'));
+  assert.ok(out.menu.includes('Upgrade to b2c3d4e'));
+  assert.ok(out.menu.includes('data-action="gh27"'));
+  out = await render({ upgradeMarker: { failed: true, target: 'b2c3d4e', attempts: 3, maxAttempts: 3 }, autoUpdate: { state: 'failed' }, tracking: 'floating' });
+  assert.ok(out.menu.includes('upgrade failed'));
   assert.ok(out.legacy.includes('auto-update failed'));
-  out = await render({ behind: true, autoUpgrade: true, tracking: 'floating', deployment: { runtime: 'kubernetes', upgradeSupported: true } });
+  out = await render({ behind: true, autoUpgrade: true, latestHash: 'b2c3d4e', latestShort: 'b2c3d4e', tracking: 'floating', deployment: { runtime: 'kubernetes', upgradeSupported: true } });
   assert.ok(out.legacy.includes('Queued for auto-upgrade'));
   // #6904: the passive badge no longer hides the owner's manual escape hatch.
   assert.ok(out.menu.includes('spoke-upgrade-btn'));
-  assert.ok(out.menu.includes('Upgrade now'));
+  assert.ok(out.menu.includes('Upgrade to b2c3d4e'));
+  assert.ok(out.menu.includes('data-action="gh27"'));
   out = await render({ behind: true, latestHash: 'b2c3d4e', latestShort: 'b2c3d4e', tracking: 'floating', deployment: { runtime: 'unknown', upgradeSupported: false, reason: 'deployment runtime is not explicitly configured' } });
-  assert.ok(out.menu.includes('manual update required'));
-  assert.ok(!out.menu.includes('spoke-upgrade-btn'));
+  assert.ok(out.menu.includes('deployment runtime is not explicitly configured (unknown)'));
+  assert.ok(out.menu.includes('disabled aria-disabled="true"'));
+  assert.ok(!out.menu.includes('data-action="gh27"'));
   out = await render({ latestHash: 'a1b2c3d0123456789', tracking: 'floating' });
   assert.ok(out.menu.includes('Up to date'));
   assert.ok(!out.chip.includes('oc-version-update-dot'));
