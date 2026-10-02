@@ -79,6 +79,7 @@ global.document = {
   getElementById() { return makeEl(); },
   querySelectorAll(sel) { return registry[sel] || []; },
 };
+function strategyLabEnabled() { return true; }
 
 // L5, pack roster that surfaces supervisor but NOT the custom "review" agent —
 // exactly what the server sends as acmmPackAgents. status.agents (from which

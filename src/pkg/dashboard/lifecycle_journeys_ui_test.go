@@ -26,6 +26,13 @@ func TestLifecycleJourneysPanelPinned(t *testing.T) {
 		"dto.journeys",
 		`<li class="lc-journey">`,
 		`<ul class="lc-journeys">`,
+		`aria-expanded=`,
+		`data-keydown-action="toggleLifecycleJourney"`,
+		"lcExpandedJourneys",
+		"lifecycleExpandAll",
+		"lifecycleCollapseAll",
+		"lcRenderDetails",
+		`target="_blank" rel="noopener"`,
 		// Fixed stage axis + chips through the shared kind→color mapping.
 		"LC_STAGE_AXIS",
 		"['enumerated', 'classified', 'kicked', 'pr_opened', 'merged', 'blocked']",

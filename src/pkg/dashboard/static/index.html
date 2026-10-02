@@ -1337,8 +1337,13 @@
     .prt-breakdown ol { margin: 0; padding-left: 1.2rem; }
     .lc-journeys { list-style: none; margin: var(--sp-0); padding: var(--sp-0); display: flex; flex-direction: column; gap: var(--sp-2);
       max-height: 320px; overflow-y: auto; }
-    .lc-journey { display: flex; align-items: center; gap: var(--sp-4); font-size: 0.78rem; padding: 5px 8px;
-      border-radius: var(--r); background: var(--bg); border: 1px solid var(--border); }
+    .lc-journey { font-size: 0.78rem; border-radius: var(--r); background: var(--bg); border: 1px solid var(--border); overflow: hidden; }
+    .lc-journey-summary { display: flex; align-items: center; gap: var(--sp-4); width: 100%; padding: 5px 8px; cursor: pointer; }
+    .lc-journey-summary:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+    .lc-row-chevron { flex: 0 0 auto; width: 1rem; color: var(--muted); transition: transform 0.15s ease; text-align: center; }
+    .lc-journey-summary[aria-expanded="true"] .lc-row-chevron { transform: rotate(90deg); }
+    .lc-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: var(--sp-3); }
+    .lc-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
     .lc-kind { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
       padding: 2px 7px; border-radius: 8px; }
     .lc-kind.neutral { background: color-mix(in srgb, var(--muted) 16%, transparent); color: var(--muted); }
@@ -1352,6 +1357,18 @@
     .lc-stage.past { opacity: 0.55; }
     .lc-journey .lc-agent { color: var(--muted); font-size: 0.72rem; }
     .lc-journey .lc-time { color: var(--muted); font-size: 0.7rem; margin-left: auto; flex: 0 0 auto; }
+    .lc-detail { border-top: 1px solid var(--border); padding: var(--sp-4) var(--sp-5) var(--sp-5) calc(var(--sp-5) + 1rem); color: var(--muted); background: color-mix(in srgb, var(--bg) 72%, var(--card-bg)); }
+    .lc-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-4); }
+    .lc-detail-field { min-width: 0; }
+    .lc-detail-label { font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 2px; }
+    .lc-detail-value { color: var(--text); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+    .lc-detail-value a { color: var(--blue); text-decoration: none; }
+    .lc-detail-value a:hover { text-decoration: underline; }
+    .lc-stage-list { display: flex; flex-direction: column; gap: var(--sp-2); margin: var(--sp-0); padding: var(--sp-0); list-style: none; }
+    .lc-stage-detail { display: grid; grid-template-columns: minmax(88px, 0.7fr) minmax(160px, 1.3fr) minmax(110px, 0.8fr); gap: var(--sp-3); align-items: baseline; font-size: var(--fs-xs); }
+    .lc-stage-detail .stamp { color: var(--text); }
+    .lc-stage-detail .delta { color: var(--muted); font-size: var(--fs-2xs); }
+    .lc-detail-note { margin-top: var(--sp-3); font-size: var(--fs-xs); overflow-wrap: anywhere; }
     .lc-empty { color: var(--muted); font-size: 0.85rem; padding: var(--sp-3) var(--sp-0); }
 
     /* Repos */
@@ -13593,14 +13610,134 @@ function burnAreaChart() {
       return `over the last ${fmt(windowMs)}`;
     }
 
+    const lcExpandedJourneys = new Set();
+    let lcLastDTO = null;
+    let lcScrollTop = 0;
+
+    function lcJourneyKey(j) {
+      return String((j && (j.id || j.ref)) || '');
+    }
+
+    function lcStageLabel(kind) {
+      const labels = {
+        enumerated: 'Enumerated', classified: 'Classified', kicked: 'Kicked', pr_opened: 'PR opened',
+        merged: 'Merged', blocked: 'Blocked', stage_completed: 'Stage completed', stage_receipt: 'Stage receipt',
+        stage_approval: 'Stage approval'
+      };
+      return labels[kind] || String(kind || '').replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+    }
+
+    function lcAbsTime(ms) {
+      const n = Number(ms) || 0;
+      if (!n) return '';
+      try { return new Date(n).toLocaleString(); } catch (e) { return ''; }
+    }
+
+    function lcDuration(ms) {
+      const n = Number(ms) || 0;
+      if (n <= 0) return '';
+      const sec = Math.round(n / 1000);
+      if (sec < 60) return sec + 's';
+      const min = Math.round(sec / 60);
+      if (min < 60) return min + 'm';
+      const hr = Math.round(min / 60);
+      if (hr < 48) return hr + 'h';
+      return Math.round(hr / 24) + 'd';
+    }
+
+    function lcCaptureScroll() {
+      const list = document.querySelector('#lifecycle-card .lc-journeys');
+      if (list) lcScrollTop = list.scrollTop;
+    }
+
+    function lcRestoreScroll() {
+      const list = document.querySelector('#lifecycle-card .lc-journeys');
+      if (list) list.scrollTop = lcScrollTop;
+    }
+
+    function toggleLifecycleJourney(key) {
+      if (!key) return;
+      lcCaptureScroll();
+      if (lcExpandedJourneys.has(key)) lcExpandedJourneys.delete(key);
+      else lcExpandedJourneys.add(key);
+      if (lcLastDTO) renderLifecycle(lcLastDTO);
+    }
+
+    function lifecycleExpandAll() {
+      lcCaptureScroll();
+      const journeys = Array.isArray(lcLastDTO && lcLastDTO.journeys) ? lcLastDTO.journeys : [];
+      journeys.forEach((j) => { const key = lcJourneyKey(j); if (key) lcExpandedJourneys.add(key); });
+      if (lcLastDTO) renderLifecycle(lcLastDTO);
+    }
+
+    function lifecycleCollapseAll() {
+      lcCaptureScroll();
+      const journeys = Array.isArray(lcLastDTO && lcLastDTO.journeys) ? lcLastDTO.journeys : [];
+      journeys.forEach((j) => { const key = lcJourneyKey(j); if (key) lcExpandedJourneys.delete(key); });
+      if (lcLastDTO) renderLifecycle(lcLastDTO);
+    }
+
+    function lcLinkHtml(link) {
+      if (!link || !link.url) return '';
+      const label = link.label || link.kind || link.url;
+      return `<a href="${escapeHtml(link.url)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`;
+    }
+
+    function lcDetailField(label, value) {
+      if (value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0)) return '';
+      const html = Array.isArray(value) ? value.map((v) => String(v)).join(' · ') : String(value);
+      return `<div class="lc-detail-field"><div class="lc-detail-label">${escapeHtml(label)}</div><div class="lc-detail-value">${html}</div></div>`;
+    }
+
+    function lcRenderDetails(j) {
+      const d = (j && j.details) || {};
+      const cls = d.classification || {};
+      const clsParts = [];
+      if (cls.band) clsParts.push(`band ${escapeHtml(cls.band)}`);
+      if (cls.lane) clsParts.push(`lane ${escapeHtml(cls.lane)}`);
+      if (cls.tier && cls.tier !== cls.band) clsParts.push(`tier ${escapeHtml(cls.tier)}`);
+      if (cls.model) clsParts.push(`model ${escapeHtml(cls.model)}`);
+      const links = Array.isArray(d.links) ? d.links.map(lcLinkHtml).filter(Boolean) : [];
+      const fields = [
+        lcDetailField('Agent', escapeHtml(d.agent || j.agent || '—')),
+        lcDetailField('Current stage age', escapeHtml(lcDuration(d.timeInCurrentStageMs) || '—')),
+        lcDetailField('Classification', clsParts.join(' · ')),
+        lcDetailField('Links', links),
+        lcDetailField('Kick IDs', (d.kickIds || []).map(escapeHtml)),
+        lcDetailField('Run/log IDs', (d.runLogIds || []).map(escapeHtml)),
+        lcDetailField('Blocked reason', escapeHtml(d.blockedReason || ''))
+      ].filter(Boolean).join('');
+      const stageDetails = Array.isArray(d.stages) ? d.stages : [];
+      const stagesHtml = stageDetails.map((st) => {
+        const kind = st.kind || '';
+        const when = [lcAbsTime(st.lastAt), v4RelTime(st.lastAt)].filter(Boolean).join(' · ');
+        const delta = lcDuration(st.durationSincePreviousMs);
+        const agent = st.agent ? ` · ${escapeHtml(st.agent)}` : '';
+        const count = Number(st.count) > 1 ? ` ×${Number(st.count)}` : '';
+        return `<li class="lc-stage-detail">
+          <span class="lc-kind ${v4KindClass(kind)}">${escapeHtml(st.label || lcStageLabel(kind))}${count}</span>
+          <span class="stamp">${escapeHtml(when || '—')}</span>
+          <span class="delta">${delta ? '+' + escapeHtml(delta) + ' from previous' : 'first stage'}${agent}</span>
+        </li>`;
+      }).join('');
+      const reasonHtml = cls.reason ? `<div class="lc-detail-note"><strong>Reason:</strong> ${escapeHtml(cls.reason)}</div>` : '';
+      const gridHtml = fields ? `<div class="lc-detail-grid">${fields}</div>` : '';
+      const timelineHtml = stagesHtml ? `<ul class="lc-stage-list">${stagesHtml}</ul>` : '<div class="lc-empty">No stage detail recorded yet.</div>';
+      return `<div class="lc-detail">${gridHtml}${timelineHtml}${reasonHtml}</div>`;
+    }
+
     // PANEL B — lifecycle journeys + fleet health. One row per work item:
     // reached stage chips in journey order (current stage colored, earlier
-    // ones dimmed), latest agent, last activity.
+    // ones dimmed), latest agent, last activity. Rows expand inline with
+    // server-derived details from journey.details while keeping the collapsed
+    // density unchanged.
     function renderLifecycle(dto) {
       const section = document.getElementById('lifecycle-section');
       const card = document.getElementById('lifecycle-card');
       if (!section || !card) return;
+      lcCaptureScroll();
       dto = dto || {};
+      lcLastDTO = dto;
       const fleet = dto.fleet || {};
       const journeys = Array.isArray(dto.journeys) ? dto.journeys : [];
 
@@ -13609,11 +13746,15 @@ function burnAreaChart() {
       const inFlight = Number(fleet.inFlight) || 0;
       const merged = Number(fleet.merged) || 0;
       const blocked = Number(fleet.blocked) || 0;
-      const fleetHtml = `<div class="lc-fleet">
+      const controlsHtml = `<div class="gov-pr-models-toggle lc-controls" aria-label="Lifecycle row controls">
+        <button type="button" data-action="lifecycleExpandAll" data-stop="1" title="Show details for every visible lifecycle row">Expand all</button>
+        <button type="button" data-action="lifecycleCollapseAll" data-stop="1" title="Hide details for every visible lifecycle row">Collapse all</button>
+      </div>`;
+      const fleetHtml = `<div class="lc-head"><div class="lc-fleet">
         <div class="lc-fleet-stat"><div class="val inflight">${inFlight}</div><div class="lbl">In flight</div></div>
         <div class="lc-fleet-stat"><div class="val merged">${merged}</div><div class="lbl">Merged</div></div>
         <div class="lc-fleet-stat"><div class="val blocked">${blocked}</div><div class="lbl">Blocked</div></div>
-      </div>`;
+      </div>${controlsHtml}</div>`;
       const windowLabel = lcWindowLabel(fleet);
       const windowHtml = windowLabel ? `<div class="lc-window">${escapeHtml(windowLabel)}</div>` : '';
 
@@ -13626,6 +13767,8 @@ function burnAreaChart() {
           const stages = j.stages || {};
           const current = j.current || '';
           const ref = escapeHtml(j.ref || '');
+          const key = lcJourneyKey(j);
+          const expanded = key && lcExpandedJourneys.has(key);
           const chips = LC_STAGE_AXIS.filter((k) => stages[k]).map((k) => {
             const st = stages[k] || {};
             const isCurrent = k === current;
@@ -13639,13 +13782,17 @@ function burnAreaChart() {
           const agentHtml = agent ? `<span class="lc-agent">${agent}</span>` : '';
           const timeHtml = rel ? `<span class="lc-time">${escapeHtml(rel)}</span>` : '';
           return `<li class="lc-journey">
-            <span class="lc-ref">${ref || '—'}</span>
-            <span class="lc-stages">${chips}</span>${agentHtml}${timeHtml}
+            <div class="lc-journey-summary" role="button" tabindex="0" data-action="toggleLifecycleJourney" data-keydown-action="toggleLifecycleJourney" data-keys="Enter, " data-prevent="1" data-arg0="${escapeHtml(key)}" aria-expanded="${expanded ? 'true' : 'false'}" aria-label="${expanded ? 'Collapse' : 'Expand'} lifecycle details for ${ref || 'journey'}">
+              <span class="lc-row-chevron" aria-hidden="true">›</span>
+              <span class="lc-ref">${ref || '—'}</span>
+              <span class="lc-stages">${chips}</span>${agentHtml}${timeHtml}
+            </div>${expanded ? lcRenderDetails(j) : ''}
           </li>`;
         }).join('')}</ul>`;
       }
 
       card.innerHTML = fleetHtml + windowHtml + listHtml;
+      lcRestoreScroll();
       applySectionCollapse('lifecycle-section');
     }
 
