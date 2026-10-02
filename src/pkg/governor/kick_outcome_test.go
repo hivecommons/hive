@@ -140,6 +140,7 @@ func TestOutcomeStampsKickHistory(t *testing.T) {
 	if len(hist) != 2 {
 		t.Fatalf("history = %d records, want 2", len(hist))
 	}
+
 	if hist[0].Outcome != "" || !hist[0].Timestamp.Equal(first) {
 		t.Errorf("older kick was stamped: %+v", hist[0])
 	}
@@ -166,3 +167,108 @@ func TestOutcomeStampsKickHistory(t *testing.T) {
 		t.Error("a restored outcome must never earn an early re-kick (its observation time is not persisted)")
 	}
 }
+
+func continuousTestGovernor(now *time.Time, agent config.AgentConfig, cadence config.Cadence) *Governor {
+	if agent.Backend == "" {
+		agent.Backend = "claude"
+	}
+	agent.Continuous = true
+	g := New(config.GovernorConfig{Modes: map[string]config.ModeConfig{
+		"idle": {Cadences: map[string]config.Cadence{"scanner": cadence}},
+	}}, map[string]config.AgentConfig{"scanner": agent}, slog.Default())
+	g.now = func() time.Time { return *now }
+	g.Evaluate(0, 0, 0, 0)
+	return g
+}
+
+func TestContinuousOutcomeSchedulesAfterCooldown(t *testing.T) {
+	now := time.Date(2026, 10, 2, 14, 0, 0, 0, time.UTC)
+	g := continuousTestGovernor(&now, config.AgentConfig{Enabled: true, ContinuousCooldown: 90 * time.Second}, "6h")
+	g.RecordKick("scanner")
+	kickAt := now
+	now = now.Add(10 * time.Minute)
+	g.RecordKickOutcome("scanner", KickOutcomeEnded, "", kickAt, now)
+
+	st := g.GetState().Continuous["scanner"]
+	if want := now.Add(90 * time.Second); !st.NextKick.Equal(want) {
+		t.Fatalf("continuous next kick = %v, want %v", st.NextKick, want)
+	}
+	if contains(g.Evaluate(0, 0, 0, 0), "scanner") {
+		t.Fatal("continuous kick fired before cooldown")
+	}
+	now = st.NextKick
+	if !contains(g.Evaluate(0, 0, 0, 0), "scanner") {
+		t.Fatal("continuous kick did not fire after cooldown")
+	}
+}
+
+func TestContinuousBusyTurnDoesNotUseCadence(t *testing.T) {
+	now := time.Date(2026, 10, 2, 14, 0, 0, 0, time.UTC)
+	g := continuousTestGovernor(&now, config.AgentConfig{Enabled: true, ContinuousCooldown: time.Minute}, "30m")
+	g.RecordKick("scanner")
+	now = now.Add(time.Hour)
+	if contains(g.Evaluate(0, 0, 0, 0), "scanner") {
+		t.Fatal("continuous mode must not cadence-kick while the previous turn has not ended")
+	}
+}
+
+func TestContinuousDoesNotScheduleWhenBlocked(t *testing.T) {
+	cases := []struct {
+		name    string
+		agent   config.AgentConfig
+		cadence config.Cadence
+	}{
+		{name: "paused by mode", agent: config.AgentConfig{Enabled: true}, cadence: "pause"},
+		{name: "disabled", agent: config.AgentConfig{Enabled: false}, cadence: "6h"},
+		{name: "operator paused", agent: config.AgentConfig{Enabled: true, Paused: true}, cadence: "6h"},
+		{name: "on demand", agent: config.AgentConfig{Enabled: true, OnDemand: true}, cadence: "6h"},
+	}
+	for _, tc := range cases {
+		now := time.Date(2026, 10, 2, 14, 0, 0, 0, time.UTC)
+		g := continuousTestGovernor(&now, tc.agent, tc.cadence)
+		g.RecordKick("scanner")
+		g.RecordKickOutcome("scanner", KickOutcomeEnded, "", now, now.Add(time.Minute))
+		if st := g.GetState().Continuous["scanner"]; !st.NextKick.IsZero() {
+			t.Errorf("%s: scheduled next kick despite blocker: %+v", tc.name, st)
+		}
+	}
+}
+
+func TestContinuousFailedKickBacksOffAndCaps(t *testing.T) {
+	now := time.Date(2026, 10, 2, 14, 0, 0, 0, time.UTC)
+	g := continuousTestGovernor(&now, config.AgentConfig{Enabled: true, ContinuousCooldown: time.Minute}, "6h")
+	g.RecordKick("scanner")
+	g.RecordKickOutcome("scanner", KickOutcomeEnded, "", now, now)
+
+	for i := 0; i < 10; i++ {
+		g.RecordKickFailure("scanner", errString("CLI did not reach input prompt"), now)
+		now = g.GetState().Continuous["scanner"].BackoffUntil
+	}
+	st := g.GetState().Continuous["scanner"]
+	if st.Backoff != continuousBackoffCap {
+		t.Fatalf("backoff = %v, want capped at %v", st.Backoff, continuousBackoffCap)
+	}
+	if st.LastError == "" || st.Failures != 10 {
+		t.Fatalf("backoff status incomplete: %+v", st)
+	}
+}
+
+func TestContinuousOffRestoresCadenceDue(t *testing.T) {
+	now := time.Date(2026, 10, 2, 14, 0, 0, 0, time.UTC)
+	g := continuousTestGovernor(&now, config.AgentConfig{Enabled: true, ContinuousCooldown: time.Hour}, "30m")
+	g.RecordKick("scanner")
+	kickAt := now
+	g.RecordKickOutcome("scanner", KickOutcomeEnded, "", kickAt, now.Add(time.Minute))
+	if contains(g.Evaluate(0, 0, 0, 0), "scanner") {
+		t.Fatal("continuous cooldown should suppress cadence while enabled")
+	}
+	g.UpdateAgents(map[string]config.AgentConfig{"scanner": {Backend: "claude", Enabled: true}})
+	now = kickAt.Add(31 * time.Minute)
+	if !contains(g.Evaluate(0, 0, 0, 0), "scanner") {
+		t.Fatal("turning continuous off should restore normal cadence scheduling")
+	}
+}
+
+type errString string
+
+func (e errString) Error() string { return string(e) }

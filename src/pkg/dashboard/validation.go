@@ -212,6 +212,13 @@ func validateAgentGeneralInput(body map[string]interface{}) error {
 			}
 		}
 	}
+	if v, ok := body["continuousCooldown"]; ok {
+		if f, ok := v.(float64); ok {
+			if f <= 0 {
+				return fmt.Errorf("continuousCooldown must be positive seconds")
+			}
+		}
+	}
 	return nil
 }
 

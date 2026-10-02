@@ -634,6 +634,9 @@ type FrontendAgent struct {
 	LastKickAt             string `json:"lastKickAt,omitempty"`
 	NextKick               string `json:"nextKick,omitempty"`
 	NextKickIn             string `json:"nextKickIn,omitempty"`
+	Continuous             bool   `json:"continuous,omitempty"`
+	ContinuousBackoff      string `json:"continuousBackoff,omitempty"`
+	ContinuousBackoffUntil string `json:"continuousBackoffUntil,omitempty"`
 	KicksUndeliverable     int    `json:"kicksUndeliverable,omitempty"`
 	BusySince              string `json:"busySince,omitempty"`
 	LastTranscriptActivity string `json:"lastTranscriptActivity,omitempty"`

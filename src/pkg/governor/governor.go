@@ -166,20 +166,34 @@ type BudgetTransitions struct {
 }
 
 type State struct {
-	Mode          Mode                    `json:"mode"`
-	RepoModes     map[string]Mode         `json:"repo_modes,omitempty"`
-	QueueIssues   int                     `json:"queue_issues"`
-	QueuePRs      int                     `json:"queue_prs"`
-	QueueHold     int                     `json:"queue_hold"`
-	Cadences      map[string]AgentCadence `json:"-"`
-	LastKick      map[string]time.Time    `json:"last_kick"`
-	LastEval      time.Time               `json:"last_eval"`
-	SLAViolations int                     `json:"sla_violations"`
+	Mode          Mode                       `json:"mode"`
+	RepoModes     map[string]Mode            `json:"repo_modes,omitempty"`
+	QueueIssues   int                        `json:"queue_issues"`
+	QueuePRs      int                        `json:"queue_prs"`
+	QueueHold     int                        `json:"queue_hold"`
+	Cadences      map[string]AgentCadence    `json:"-"`
+	LastKick      map[string]time.Time       `json:"last_kick"`
+	Continuous    map[string]ContinuousState `json:"continuous,omitempty"`
+	LastEval      time.Time                  `json:"last_eval"`
+	SLAViolations int                        `json:"sla_violations"`
 	// BudgetExhausted mirrors the budget gate as of the last eval: the
 	// weekly limit is set and window spend has reached it, so kicks for
 	// non-exempt agents are suppressed.
 	BudgetExhausted bool `json:"budget_exhausted"`
 }
+
+// ContinuousState is the governor's in-memory schedule/backoff for one agent
+// whose config has continuous: true. It is exposed through status so operators
+// can see both the planned re-kick and any backoff after an undeliverable kick.
+type ContinuousState struct {
+	NextKick     time.Time     `json:"nextKick,omitempty"`
+	BackoffUntil time.Time     `json:"backoffUntil,omitempty"`
+	Backoff      time.Duration `json:"backoff,omitempty"`
+	Failures     int           `json:"failures,omitempty"`
+	LastError    string        `json:"lastError,omitempty"`
+}
+
+const continuousBackoffCap = 30 * time.Minute
 
 const (
 	modeHistoryCapacity = 100
@@ -263,9 +277,10 @@ func New(cfg config.GovernorConfig, agents map[string]config.AgentConfig, logger
 		cfg:    cfg,
 		agents: agents,
 		state: State{
-			Mode:     ModeIdle,
-			Cadences: make(map[string]AgentCadence),
-			LastKick: make(map[string]time.Time),
+			Mode:       ModeIdle,
+			Cadences:   make(map[string]AgentCadence),
+			LastKick:   make(map[string]time.Time),
+			Continuous: make(map[string]ContinuousState),
 		},
 		logger:       logger,
 		modeHistory:  []ModeChange{initialChange},
@@ -814,6 +829,27 @@ func (g *Governor) agentsDueForKick() []string {
 		if cadence.Paused {
 			continue
 		}
+		if ac, ok := g.agents[agentName]; ok && ac.Continuous {
+			st, ok := g.state.Continuous[agentName]
+			if !ok || st.NextKick.IsZero() || now.Before(st.NextKick) {
+				continue
+			}
+			if !st.BackoffUntil.IsZero() && now.Before(st.BackoffUntil) {
+				continue
+			}
+			if _, _, blocked := g.continuousBlockerLocked(agentName); blocked != "" {
+				continue
+			}
+			if exhausted && !exempt[agentName] {
+				suppressed++
+				continue
+			}
+			if _, ok := selected[agentName]; !ok {
+				agentOrder = append(agentOrder, agentName)
+			}
+			selected[agentName] = candidate{key: cadenceKey, last: g.state.LastKick[cadenceKey], interval: cadence.Interval}
+			continue
+		}
 		if cadence.Interval == 0 && cadence.Schedule.Mode() == config.CadenceModeInterval {
 			continue
 		}
@@ -881,6 +917,33 @@ func (g *Governor) agentsDueForKick() []string {
 	}
 
 	return due
+}
+
+func (g *Governor) continuousBlockerLocked(agentName string) (string, AgentCadence, string) {
+	cadenceKey, cadence, ok := g.resumeCadenceForAgent(agentName)
+	if !ok {
+		return "", AgentCadence{}, "unscheduled"
+	}
+	if cadence.Paused {
+		return cadenceKey, cadence, "paused_in_mode"
+	}
+	ac, ok := g.agents[agentName]
+	if !ok {
+		return cadenceKey, cadence, "unknown_agent"
+	}
+	if !ac.Enabled {
+		return cadenceKey, cadence, "disabled"
+	}
+	if ac.Paused {
+		return cadenceKey, cadence, "paused"
+	}
+	if ac.OnDemand || !ac.UsesGovernorKick() {
+		return cadenceKey, cadence, "on_demand"
+	}
+	if g.budgetExhausted() && !g.budgetExempt(agentName) {
+		return cadenceKey, cadence, "budget_exhausted"
+	}
+	return cadenceKey, cadence, ""
 }
 
 // AgentEligibleForCELKick reports whether an agent selected by an ADDITIVE CEL
@@ -1080,6 +1143,15 @@ func (g *Governor) RecordKickForRepo(agentName, repo string) {
 	now := g.now()
 	key := config.CadenceTargetKey(agentName, repo)
 	g.state.LastKick[key] = now
+	if ac, ok := g.agents[agentName]; ok && ac.Continuous {
+		st := g.state.Continuous[agentName]
+		st.NextKick = time.Time{}
+		st.BackoffUntil = time.Time{}
+		st.Backoff = 0
+		st.Failures = 0
+		st.LastError = ""
+		g.state.Continuous[agentName] = st
+	}
 	g.appendKickHistory(KickRecord{Timestamp: now, Agent: agentName, Repo: repo})
 	if hasReport {
 		g.agentReports[agentName] = report
@@ -1156,6 +1228,10 @@ func (g *Governor) GetState() State {
 	for k, v := range g.state.LastKick {
 		lastKick[k] = v
 	}
+	continuous := make(map[string]ContinuousState, len(g.state.Continuous))
+	for k, v := range g.state.Continuous {
+		continuous[k] = v
+	}
 	return State{
 		Mode:            g.state.Mode,
 		RepoModes:       repoModes,
@@ -1164,6 +1240,7 @@ func (g *Governor) GetState() State {
 		QueueHold:       g.state.QueueHold,
 		Cadences:        cadences,
 		LastKick:        lastKick,
+		Continuous:      continuous,
 		LastEval:        g.state.LastEval,
 		SLAViolations:   g.state.SLAViolations,
 		BudgetExhausted: g.state.BudgetExhausted,
