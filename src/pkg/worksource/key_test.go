@@ -101,3 +101,23 @@ func TestParseKeyRefusesMalformedInput(t *testing.T) {
 		t.Errorf("ParseKey should trim the external form too, got %+v ok=%v", ref, ok)
 	}
 }
+
+func TestRefArtifactSlug(t *testing.T) {
+	cases := map[string]string{
+		"Owner/Repo#42":      "owner-repo-42",
+		"owner/repo!ENG-123": "owner-repo-eng-123",
+		"x/y#7":              "x-y-7",
+	}
+	for in, want := range cases {
+		ref, ok := ParseKey(in)
+		if !ok {
+			t.Fatalf("ParseKey(%q) failed", in)
+		}
+		if got := ref.ArtifactSlug(); got != want {
+			t.Errorf("ArtifactSlug(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := (Ref{}).ArtifactSlug(); got != "run" {
+		t.Errorf("empty ref slug = %q, want run", got)
+	}
+}

@@ -20,7 +20,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -116,30 +115,7 @@ func RunArtifactName(runKey string) string {
 	if !ok || ref.Repo == "" {
 		return ArtifactKey(runKey)
 	}
-	id := ref.ExternalID
-	if ref.Number > 0 {
-		id = strconv.Itoa(ref.Number)
-	}
-	raw := strings.ToLower(ref.Repo + "-" + id)
-	var b strings.Builder
-	lastDash := false
-	for _, r := range raw {
-		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
-		if ok {
-			b.WriteRune(r)
-			lastDash = false
-			continue
-		}
-		if !lastDash {
-			b.WriteByte('-')
-			lastDash = true
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		return "run"
-	}
-	return out
+	return ref.ArtifactSlug()
 }
 
 // markdownExt returns the markdown extension name carries, or "".

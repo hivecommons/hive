@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/knowledge"
-	"github.com/hivecommons/hive/pkg/spektacular"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -424,13 +423,13 @@ func campaignFromRun(run Run) Campaign {
 
 // campaignArtifactID adjusts runKeyOfLease's output for issue-numbered runs
 // (worksource "owner/repo#N" keys), which carry no dedicated artifact slug:
-// Spektacular addresses them as RunArtifactName's "owner-repo-n" spelling,
+// Spektacular addresses them as the "owner-repo-n" ArtifactSlug spelling,
 // not the bare worksource key, so the resume command and id must match that
 // (hivecommons/hive#10091). Runs keyed by an embedded "!external" slug already
 // resolve to that slug above and are left untouched.
 func campaignArtifactID(id string) string {
 	if ref, ok := worksource.ParseKey(id); ok && ref.Number > 0 {
-		return spektacular.RunArtifactName(id)
+		return ref.ArtifactSlug()
 	}
 	return id
 }
