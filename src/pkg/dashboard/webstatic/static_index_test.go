@@ -218,7 +218,7 @@ func TestStaticTerminalHostedApexWiring(t *testing.T) {
 	}
 }
 
-func TestStaticContinuousTogglesUsePowerSwitchMarkup(t *testing.T) {
+func TestStaticCadenceTableTogglesUsePowerSwitchMarkup(t *testing.T) {
 	body, err := os.ReadFile("../static/index.html")
 	if err != nil {
 		t.Fatal(err)
@@ -226,17 +226,23 @@ func TestStaticContinuousTogglesUsePowerSwitchMarkup(t *testing.T) {
 	html := string(body)
 	for _, want := range []string{
 		"function pwrSwitchHtml(on, attrs, ariaLabel, title, extraClass = '')",
-		"return pwrSwitchHtml(on, action, `${who} enabled`, title, canEdit ? '' : 'readonly');",
+		"return pwrSwitchHtml(on, action, `${who} enabled`, title, `agent-power-switch${canEdit ? '' : ' readonly'}`);",
+		"`<td class=\"power-col\">${agentPowerSwitchHtml(agentData)}</td>`",
+		"<th class=\"power-col\" title=\"Agent power: 1 enabled, 0 disabled\">Power</th>",
+		"const rowClass = agentDisabled ? ' class=\"agent-disabled\"' : '';",
+		".agent-power-switch[data-agent=",
+		"${pwrSwitchHtml(_enabled, ' data-action=\"toggleConfigSwitch\" data-section=\"general\" data-key=\"enabled\"'",
 		"pwrSwitchHtml(continuousOn, ` data-action=\"setAgentContinuous\"",
 		"'gov-continuous-switch'",
 		"${pwrSwitchHtml(_continuous, ' id=\"cfg-agent-continuous\" data-action=\"toggleConfigSwitch\" data-section=\"general\" data-key=\"continuous\"'",
 		"<span class=\"pwr-mark\">1</span><span class=\"pwr-lever\"></span><span class=\"pwr-mark\">0</span>",
 		"<th>Continuous</th>",
-		".gov-matrix th:nth-last-child(3), .gov-matrix .continuous-col",
+		".gov-matrix .power-col { width: 52px; white-space: nowrap; }",
+		".gov-matrix th:nth-last-child(3), .gov-matrix .continuous-col { width: 76px; white-space: nowrap; }",
 		"data-stop=\"1\"",
 	} {
 		if !strings.Contains(html, want) {
-			t.Fatalf("static dashboard continuous switch markup missing %q", want)
+			t.Fatalf("static dashboard cadence table switch markup missing %q", want)
 		}
 	}
 	for _, old := range []string{

@@ -1907,7 +1907,7 @@
     @media (max-width: 768px) {
       /* Wide enough that the longest pill ("on demand") fits without
          ellipsis; the wrapper scrolls horizontally to reach method/model. */
-      .gov-matrix { min-width: 620px; }
+      .gov-matrix { min-width: 680px; }
     }
     .gov-matrix { margin-top: 14px; width: 100%; border-collapse: collapse; font-size: 0.72rem; table-layout: fixed; }
     .gov-matrix th { color: var(--muted); font-weight: 600; padding: 3px 8px; text-align: center; border-bottom: 1px solid var(--border); }
@@ -1924,15 +1924,18 @@
     .gov-matrix td[data-tab="Cadences"], .gov-matrix .gov-agent-name-link { cursor: pointer; }
     .gov-matrix .gov-agent-name-link { background: none; border: 0; padding: 0; color: inherit; font: inherit; font-weight: inherit; text-align: left; }
     .gov-matrix .gov-agent-name-link:hover { color: var(--accent); text-decoration: underline; }
-    .gov-matrix td:first-child { text-align: left; color: var(--text); font-weight: 600; min-width: 72px; }
-    .gov-matrix th:nth-last-child(3), .gov-matrix .continuous-col { width: 1%; white-space: nowrap; }
-    .gov-matrix td.continuous-col { vertical-align: middle; }
+    .gov-matrix td.name-col { text-align: left; color: var(--text); font-weight: 600; min-width: 72px; }
+    .gov-matrix .power-col { width: 52px; white-space: nowrap; }
+    .gov-matrix th:nth-last-child(3), .gov-matrix .continuous-col { width: 76px; white-space: nowrap; }
+    .gov-matrix td.power-col, .gov-matrix td.continuous-col { vertical-align: middle; }
+    .gov-matrix tr.agent-disabled td { opacity: 0.58; }
+    .gov-matrix tr.agent-disabled td.power-col { opacity: 1; }
     @media (max-width: 480px) {
       .gov-matrix { font-size: 0.65rem; }
       .gov-matrix th { padding: var(--sp-1) var(--sp-2); }
       .gov-matrix th.mode-active { padding: 3px 6px; }
       .gov-matrix td { padding: var(--sp-1) var(--sp-2); }
-      .gov-matrix td:first-child { min-width: 56px; }
+      .gov-matrix td.name-col { min-width: 56px; }
     }
     .gov-matrix td.col-active { font-weight: 700; color: var(--text); }
     .gov-matrix td.col-active.mode-idle  { background: color-mix(in srgb, var(--green) 8%, transparent); color: var(--green); }
@@ -8070,9 +8073,9 @@
           ? `${who} is enabled (1). Switch to 0 to disable it — the governor stops scheduling it in every mode, independently of pause.`
           : `${who} is disabled (0). Switch to 1 to enable it — it returns to its configured per-mode cadences.`;
       const action = canEdit
-        ? ` data-action="toggleAgentEnabled" data-agent="${esc(a.name)}" data-enabled="${on ? 'true' : 'false'}"`
+        ? ` data-action="toggleAgentEnabled" data-agent="${esc(a.name)}" data-enabled="${on ? 'true' : 'false'}" data-stop="1"`
         : '';
-      return pwrSwitchHtml(on, action, `${who} enabled`, title, canEdit ? '' : 'readonly');
+      return pwrSwitchHtml(on, action, `${who} enabled`, title, `agent-power-switch${canEdit ? '' : ' readonly'}`);
     }
     /* Returns linkHtml unchanged for any agent that can have a session, and an
        inert chip carrying the reason for one that cannot. */
@@ -9964,6 +9967,8 @@
         const agentPaused = agentData && agentData.paused === true;
         const agentOff = agentData && agentData.offByCadence === true && !agentPaused;
         const agentOnDemand = agentData && agentData.onDemand === true;
+        const agentDisabled = agentData && agentIsDisabled(agentData);
+        const rowClass = agentDisabled ? ' class="agent-disabled"' : '';
         const cells = modes.map(m => {
           const val = row[m] || '?';
           const tip = row[`${m}Title`] || `Click to adjust ${aname} ${m} cadence`;
@@ -9989,13 +9994,16 @@
         const continuousCell = agentData
           ? `<td class="continuous-col">${pwrSwitchHtml(continuousOn, ` data-action="setAgentContinuous" data-agent="${esc(aname)}" data-enabled="${continuousOn ? 'true' : 'false'}" data-stop="1"`, `Continuous mode for ${displayLabel}`, continuousTitle, 'gov-continuous-switch')}</td>`
           : '<td class="continuous-col">—</td>';
+        const powerCell = agentData
+          ? `<td class="power-col">${agentPowerSwitchHtml(agentData)}</td>`
+          : '<td class="power-col">—</td>';
         const cliPinned = agentData && (agentData.pinnedBoth || agentData.pinnedCli);
         const modelPinned = agentData && (agentData.pinnedBoth || agentData.pinnedModel);
         const cChip = agentData && agentData.cli ? cliChip(agentData.cli, cliPinned, aname) : '?';
         const mChip = agentData && agentData.model ? modelChip(agentData.model, agentData.govReason, modelPinned, aname) : '';
         const cliPinBtn = (agentData && !cliPinned) ? `<button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${aname}" data-pin-type="cli" data-unpin="false" title="Pin CLI">📌</button>` : '';
         const modelPinBtn = (agentData && !modelPinned) ? `<button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${aname}" data-pin-type="model" data-unpin="false" title="Pin model">📌</button>` : '';
-        return `<tr><td>${nameDot}<button type="button" class="gov-agent-name-link" data-action="ocSelectAgent" data-agent="${esc(aname)}" title="Open ${esc(displayLabel)}'s agent card">${esc(displayLabel)}</button>${pauseBadge}${continuousBadge}</td>${cells}${continuousCell}<td>${cChip} ${cliPinBtn}</td><td>${mChip} ${modelPinBtn}</td></tr>`;
+        return `<tr${rowClass}>${powerCell}<td class="name-col">${nameDot}<button type="button" class="gov-agent-name-link" data-action="ocSelectAgent" data-agent="${esc(aname)}" title="Open ${esc(displayLabel)}'s agent card">${esc(displayLabel)}</button>${pauseBadge}${continuousBadge}</td>${cells}${continuousCell}<td>${cChip} ${cliPinBtn}</td><td>${mChip} ${modelPinBtn}</td></tr>`;
       }).join('');
       const headers = modes.map(m => {
         const isActive = m === currentMode;
@@ -10003,7 +10011,7 @@
         return `<th class="${cls}">${m}${isActive ? ' ◀' : ''}</th>`;
       }).join('');
       return `<div class="gov-matrix-wrap"><table class="gov-matrix">
-        <thead><tr><th></th>${headers}<th>Continuous</th><th>method</th><th>model</th></tr></thead>
+        <thead><tr><th class="power-col" title="Agent power: 1 enabled, 0 disabled">Power</th><th></th>${headers}<th>Continuous</th><th>method</th><th>model</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>`;
     }
@@ -21577,7 +21585,7 @@ function burnAreaChart() {
        is put back exactly where it was. */
     async function setAgentEnabled(agent, enable) {
       const toast = showToast(`${enable ? 'Enabling' : 'Disabling'} ${agent}...`, 'info', true);
-      const switches = Array.from(document.querySelectorAll(`.pwr-switch[data-agent="${CSS.escape(agent)}"]`));
+      const switches = Array.from(document.querySelectorAll(`.agent-power-switch[data-agent="${CSS.escape(agent)}"]`));
       const restore = switches.map(el => el.classList.contains('on'));
       const paint = (on) => {
         for (const el of switches) {
@@ -27339,7 +27347,7 @@ function burnAreaChart() {
         : '';
       return `
         <div style="display:flex;align-items:center;gap:var(--sp-5);margin-bottom:14px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--r)">
-          <div class="pwr-switch${_enabled ? ' on' : ''}" data-action="toggleConfigSwitch" data-section="general" data-key="enabled" role="switch" aria-checked="${_enabled ? 'true' : 'false'}" aria-label="Agent enabled" title="Master power for this agent. 0 removes it from governor scheduling in every mode, whatever the cadences below say. Takes effect on Save."><span class="pwr-mark">1</span><span class="pwr-lever"></span><span class="pwr-mark">0</span></div>
+          ${pwrSwitchHtml(_enabled, ' data-action="toggleConfigSwitch" data-section="general" data-key="enabled"', 'Agent enabled', 'Master power for this agent. 0 removes it from governor scheduling in every mode, whatever the cadences below say. Takes effect on Save.', 'agent-power-switch')}
           <div style="font-size:0.78rem;line-height:1.5">
             <b>Agent power.</b> <code>1</code> = enabled, <code>0</code> = disabled.
             <span class="text-muted">A disabled agent is never kicked in any mode, no matter what the cadences below say. This is separate from pausing, which is a temporary operator hold.</span>
