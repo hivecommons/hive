@@ -712,6 +712,32 @@ func (h *ContributeWSHub) completeImplementStage(identity, taskID string, now ti
 	return true
 }
 
+// releaseImplementStageUnverified is the task_complete path for an implement
+// lease whose reported PR did NOT verify (#10090): the lease is revoked so the
+// relay cannot re-adopt it and the per-stage worktree is removed because nothing
+// owns it any more, but no stage_completed event fires — the run stays open for
+// a later generation to finish it properly.
+func (h *ContributeWSHub) releaseImplementStageUnverified(identity, taskID string) {
+	if h == nil || identity == "" || taskID == "" {
+		return
+	}
+	h.leaseMu.Lock()
+	var released *taskLease
+	if l := h.leaseForLocked(identity, taskID); l != nil {
+		copied := *l
+		released = &copied
+	}
+	h.leaseMu.Unlock()
+	h.revokeLease(identity, taskID)
+	if released == nil || released.stage == "" {
+		return
+	}
+	if err := removeRunStageWorktree(released.identity, leaseWorkKey(released), released.stage, released.gen); err != nil {
+		h.logger.Warn("[contribute-ws] unverified run-stage worktree cleanup failed",
+			"identity", identity, "task", taskID, "stage", released.stage, "error", err)
+	}
+}
+
 func (h *ContributeWSHub) postCompletionPRComment(ctx context.Context, task *WSTaskAssign, item worksource.WorkItemContext, prURL string) {
 	prURL = strings.TrimSpace(prURL)
 	if h == nil || h.server == nil || task == nil || task.Stage != StageImplement || task.SourceType != worksource.SourceTypeRun || prURL == "" {
