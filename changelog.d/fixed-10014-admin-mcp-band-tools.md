@@ -1,0 +1,1 @@
+- Fix the stdio `hive-admin-mcp` server returning "unsupported admin MCP read tool" for every `issues_by_band` / `prs_by_band` call by sharing the dashboard's band-read path and result post-processing through `pkg/adminmcp`.

@@ -208,6 +208,9 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 	if err != nil {
 		return nil, err
 	}
+	if tool == adminmcp.ToolIssuesByBand || tool == adminmcp.ToolPrsByBand {
+		return adminmcp.BandReadResult(tool, data, args)
+	}
 	return adminmcp.CapResult(data, adminmcp.LimitFromArgs(args)), nil
 }
 
@@ -306,6 +309,9 @@ func readPath(tool string, args map[string]any) (string, bool) {
 			return "", false
 		}
 		return "/api/kick/" + url.PathEscape(agent) + "/status", true
+	}
+	if tool == adminmcp.ToolIssuesByBand || tool == adminmcp.ToolPrsByBand {
+		return adminmcp.BandReadPath(tool, args), true
 	}
 	if tool == adminmcp.ToolAdvisorRecords {
 		return adminmcp.AdvisorRecordsReadPath(args), true

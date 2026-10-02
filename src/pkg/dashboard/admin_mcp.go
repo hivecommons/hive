@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/adminmcp"
@@ -96,36 +95,12 @@ func adminMCPReadPath(tool string, args map[string]any) (string, bool) {
 		return "/api/kick/" + url.PathEscape(agent) + "/status", true
 	}
 	if tool == adminmcp.ToolIssuesByBand || tool == adminmcp.ToolPrsByBand {
-		return overviewBandReadPath(tool, args), true
+		return adminmcp.BandReadPath(tool, args), true
 	}
 	if tool == adminmcp.ToolAdvisorRecords {
 		return adminmcp.AdvisorRecordsReadPath(args), true
 	}
 	return adminmcp.ReadPath(tool, adminmcp.LimitFromArgs(args))
-}
-
-// overviewBandReadPath builds the GET /api/overview/{issues,prs}.json request
-// for the issues_by_band / prs_by_band tools. It deliberately never forwards
-// `band` or `limit`: the endpoint would compute bands[] counts and rows over
-// only the band-filtered subset, so BandReadResult fetches every band and
-// applies the tool's own band filter and cap afterwards instead.
-func overviewBandReadPath(tool string, args map[string]any) string {
-	kind := "issues"
-	if tool == adminmcp.ToolPrsByBand {
-		kind = "prs"
-	}
-	values := url.Values{}
-	if repo := adminMCPStringArg(args, "repo"); repo != "" {
-		values.Set("repo", repo)
-	}
-	if stale, ok := args["stale"].(bool); ok {
-		values.Set("stale", strconv.FormatBool(stale))
-	}
-	path := "/api/overview/" + kind + ".json"
-	if encoded := values.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
-	return path
 }
 
 func decodeAdminMCPJSON(data []byte) (any, error) {

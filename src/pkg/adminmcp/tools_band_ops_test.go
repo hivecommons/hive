@@ -97,6 +97,26 @@ func TestBandReadResultWithoutBandReturnsEveryRow(t *testing.T) {
 	}
 }
 
+func TestBandReadPathOmitsBandAndLimit(t *testing.T) {
+	path := BandReadPath(ToolIssuesByBand, map[string]any{"repo": "owner/name", "band": "done", "stale": true, "limit": float64(5)})
+	if !strings.HasPrefix(path, "/api/overview/issues.json?") {
+		t.Fatalf("path = %q", path)
+	}
+	if !strings.Contains(path, "repo=owner%2Fname") || !strings.Contains(path, "stale=true") {
+		t.Fatalf("path = %q, want repo and stale forwarded", path)
+	}
+	if strings.Contains(path, "band=") || strings.Contains(path, "limit=") {
+		t.Fatalf("path = %q, must not forward band or limit — the tool filters/caps rows itself so bands[] keeps its real counts", path)
+	}
+}
+
+func TestBandReadPathPrsWithoutFilters(t *testing.T) {
+	path := BandReadPath(ToolPrsByBand, map[string]any{})
+	if path != "/api/overview/prs.json" {
+		t.Fatalf("path = %q", path)
+	}
+}
+
 func TestIssuesByBandAndPrsByBandToolsAreListedAsReadOnly(t *testing.T) {
 	for _, tc := range []struct {
 		tool string

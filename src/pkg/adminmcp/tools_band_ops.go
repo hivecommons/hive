@@ -2,6 +2,8 @@ package adminmcp
 
 import (
 	"fmt"
+	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -88,6 +90,32 @@ func BandReadResult(tool string, data any, args map[string]any) (any, error) {
 		out["rows"] = rows
 	}
 	return out, nil
+}
+
+// BandReadPath builds the GET /api/overview/{issues,prs}.json request for the
+// issues_by_band / prs_by_band tools. It deliberately never forwards `band` or
+// `limit`: the endpoint would compute bands[] counts and rows over only the
+// band-filtered subset, so BandReadResult fetches every band and applies the
+// tool's own band filter and cap afterwards instead. Both the dashboard and
+// stdio admin MCP servers share this so the path can't drift between them
+// again (#10014, following #9160).
+func BandReadPath(tool string, args map[string]any) string {
+	kind := "issues"
+	if tool == ToolPrsByBand {
+		kind = "prs"
+	}
+	values := url.Values{}
+	if repo := strings.TrimSpace(stringArg(args, "repo")); repo != "" {
+		values.Set("repo", repo)
+	}
+	if stale, ok := args["stale"].(bool); ok {
+		values.Set("stale", strconv.FormatBool(stale))
+	}
+	path := "/api/overview/" + kind + ".json"
+	if encoded := values.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return path
 }
 
 func containsBand(bands []string, band string) bool {
