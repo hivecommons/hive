@@ -3542,6 +3542,120 @@ test('an idle non-active hub cannot assign work until the poll slot reaches it',
   } finally { teardown(relay); }
 });
 
+test('disabled flags are optional for legacy projections but otherwise strictly position-aligned', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  try {
+    assert.deepStrictEqual(relay.hubListFromEnv(MULTI_HUB_ENV).map(h => h.disabled), [false, false]);
+    for (const flags of ['true', 'false,true,false', 'true,', 'false,typo']) {
+      assert.throws(() => relay.hubListFromEnv({ ...MULTI_HUB_ENV, HIVE_HUB_DISABLED: flags }), /HIVE_HUB_DISABLED/);
+    }
+    const entries = relay.hubListFromEnv({ ...MULTI_HUB_ENV, HIVE_HUB_DISABLED: 'true,false' });
+    assert.deepStrictEqual(entries.map(h => [h.token, h.disabled]), [['tok-a', true], ['tok-b', false]]);
+  } finally { teardown(relay); }
+});
+
+for (const strategy of ['ranked', 'spread', 'neediest']) {
+  test(`${strategy} excludes disabled hives at startup, between tasks and on fallback`, () => {
+    const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_COMMONS_STRATEGY: strategy,
+      HIVE_HUB_DISABLED: 'true,false', HIVE_COMMONS_SPREAD_MIX_EVERY: '0',
+      HIVE_COMMONS_NEEDIEST_REFRESH_MS: '0' } });
+    try {
+      const { hubs, sentA, sentB } = attachHubSinks(relay);
+      relay.setCliReady(true);
+      hubs[0].lastNeediestScore = 100;
+      hubs[1].lastNeediestScore = 0;
+      for (const hub of hubs) relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hub);
+      assert.ok(sentB.some(m => m.type === 'ready'), 'startup selects the enabled hive');
+      for (const reason of ['task_complete', 'unavailable', 'task_complete']) {
+        for (const hub of hubs) hub.readyOutstanding = false;
+        relay.sendReadyForNextTask(reason);
+      }
+      relay.requestWork(hubs[0], 'stale_callback');
+      relay.sendTo(hubs[0], { type: 'ready' });
+      assert.ok(!sentA.some(m => m.type === 'ready'), 'disabled hive never solicited');
+      assert.strictEqual(hubs[0].regToken, 'tok-a');
+      assert.strictEqual(hubs[1].regToken, 'tok-b');
+      relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 'late', repo: 'o/r', number: 1 }), hubs[0]);
+      assert.strictEqual(relay.getCurrentTask(), null);
+      assert.ok(sentA.some(m => m.type === 'task_failed' && m.reason.includes('disabled')));
+      hubs[1].disabled = true;
+      sentB.length = 0;
+      for (const reason of ['task_complete', 'unavailable']) relay.sendReadyForNextTask(reason);
+      assert.ok(!sentB.some(m => m.type === 'ready'), 'all disabled remains idle');
+    } finally { teardown(relay); }
+  });
+}
+
+test('disabling all profiles live keeps the task on its original hive and re-enables without registration', () => {
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(scratchRoot, 'disable-'));
+  const envFile = path.join(dir, 'contributor.env');
+  const projection = `HIVE_HUB=${MULTI_HUB_ENV.HIVE_HUB}\nHIVE_REGISTRATION_TOKEN=tok-a,tok-b\n`;
+  const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_CONTRIBUTOR_ENV: envFile } });
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+    relay.setCliReady(true);
+    for (const hub of hubs) relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hub);
+    relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 'running', repo: 'o/r', number: 1, kind: 'issue', title: 'work' }), hubs[0]);
+    const task = relay.getCurrentTask();
+    assert.ok(task);
+    fs.writeFileSync(envFile, projection + 'HIVE_HUB_DISABLED=true,true\n');
+    sentA.length = 0;
+    sentB.length = 0;
+    relay.reloadHubsFromProjection();
+    assert.strictEqual(relay.getCurrentTask(), task);
+    assert.strictEqual(task._hub, hubs[0]);
+    assert.strictEqual(relay.getHubs()[0], hubs[0], 'no disconnect/re-registration');
+    relay.sendTo(task._hub, { type: 'task_complete', task_id: task.task_id });
+    assert.ok(sentA.some(m => m.type === 'task_complete'), 'completion still reaches original hive');
+    assert.ok(!sentA.concat(sentB).some(m => m.type === 'ready'));
+    fs.writeFileSync(envFile, projection + 'HIVE_HUB_DISABLED=false,false\n');
+    relay.reloadHubsFromProjection();
+    assert.ok(relay.getHubs().every(h => !h.disabled));
+    assert.strictEqual(hubs[0].regToken, 'tok-a');
+    assert.ok(!sentA.concat(sentB).some(m => m.type === 'ready'), 'resume must still wait for in-flight task');
+  } finally { teardown(relay); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('profiles sharing a hub URL retain independent disabled flags and connections on reload', () => {
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(scratchRoot, 'shared-hub-'));
+  const envFile = path.join(dir, 'contributor.env');
+  const shared = { ...MULTI_HUB_ENV, HIVE_HUB: 'wss://hub-a.example/contribute,wss://hub-a.example/contribute' };
+  const relay = loadRelay({ env: { ...shared, HIVE_CONTRIBUTOR_ENV: envFile } });
+  try {
+    const { hubs } = attachHubSinks(relay);
+    const original = hubs.slice();
+    const socket = original[0].ws;
+    fs.writeFileSync(envFile, `HIVE_HUB=${shared.HIVE_HUB}\nHIVE_REGISTRATION_TOKEN=tok-a,tok-b\nHIVE_HUB_DISABLED=true,false\n`);
+    relay.reloadHubsFromProjection();
+    assert.strictEqual(relay.getHubs()[0], original[0]);
+    assert.strictEqual(relay.getHubs()[1], original[1]);
+    assert.strictEqual(original[0].ws, socket, 'disabled connection stays available for in-flight work');
+    assert.deepStrictEqual(relay.getHubs().map(h => h.disabled), [true, false]);
+  } finally { teardown(relay); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('an all-disabled relay resumes solicitation on an enable reload', () => {
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(scratchRoot, 'enable-'));
+  const envFile = path.join(dir, 'contributor.env');
+  const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_CONTRIBUTOR_ENV: envFile, HIVE_HUB_DISABLED: 'true,true' } });
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+    relay.setCliReady(true);
+    for (const hub of hubs) relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hub);
+    assert.ok(!sentA.concat(sentB).some(m => m.type === 'ready'));
+    fs.writeFileSync(envFile, `HIVE_HUB=${MULTI_HUB_ENV.HIVE_HUB}\nHIVE_REGISTRATION_TOKEN=tok-a,tok-b\nHIVE_HUB_DISABLED=true,false\n`);
+    relay.reloadHubsFromProjection();
+    assert.ok(!sentA.some(m => m.type === 'ready'));
+    assert.ok(sentB.some(m => m.type === 'ready'), 'enabled hive is solicited without restart');
+  } finally { teardown(relay); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('ranked Commons routing returns to the highest-ranked subscribed hive between tasks', () => {
   const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_COMMONS_STRATEGY: 'ranked' } });
   try {

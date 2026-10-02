@@ -90,6 +90,8 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
 	cmd.AddCommand(newHivesSessionCommand(env))
 	cmd.AddCommand(newHivesMoveCommand(env))
 	cmd.AddCommand(newHivesStrategyCommand(env))
+	cmd.AddCommand(newHivesEnabledCommand(env, false))
+	cmd.AddCommand(newHivesEnabledCommand(env, true))
 	cmd.AddCommand(newHivesWebCommand(env))
 	cmd.AddCommand(newHivesRenameCommand(env))
 	cmd.AddCommand(newHivesRemoveCommand(env))
@@ -158,6 +160,7 @@ func commit(deps *hivesDeps, set *hivectl.ProfileSet) error {
 // ── list ────────────────────────────────────────────────────────────────────
 
 type hivesListRow struct {
+	Disabled      bool   `json:"disabled" yaml:"disabled"`
 	Name          string `json:"name" yaml:"name"`
 	Hub           string `json:"hub" yaml:"hub"`
 	ContributorID string `json:"contributor_id,omitempty" yaml:"contributor_id,omitempty"`
@@ -207,6 +210,7 @@ func (e *commandEnv) runHivesList(cmd *cobra.Command, check bool) error {
 	rows := make([]hivesListRow, 0, len(set.Profiles))
 	for _, p := range set.Ordered() {
 		row := hivesListRow{
+			Disabled:      p.Disabled,
 			Name:          p.Name,
 			Hub:           p.Hub,
 			ContributorID: p.ContributorID,
@@ -245,7 +249,11 @@ func printHivesTable(out io.Writer, rows []hivesListRow, check bool) {
 		if row.Active {
 			marker = "*"
 		}
-		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s", marker, row.Name, row.Hub, dashIfEmpty(row.ContributorID), dashIfEmpty(row.Session), dashIfEmpty(row.AddedAt), dashIfEmpty(row.LastSeen))
+		name := row.Name
+		if row.Disabled {
+			name += " (disabled)"
+		}
+		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s", marker, name, row.Hub, dashIfEmpty(row.ContributorID), dashIfEmpty(row.Session), dashIfEmpty(row.AddedAt), dashIfEmpty(row.LastSeen))
 		if check {
 			state := "-"
 			if row.Reachable != nil {
@@ -951,6 +959,45 @@ func (e *commandEnv) runHivesStrategy(cmd *cobra.Command, strategy string) error
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  no running relay found; the next relay start will use this strategy")
 	}
 	return nil
+}
+
+func newHivesEnabledCommand(env *commandEnv, disabled bool) *cobra.Command {
+	verb := "enable"
+	if disabled {
+		verb = "disable"
+	}
+	return &cobra.Command{
+		Use:   verb + " <name>",
+		Short: verb + " new work for a saved hive without changing its credentials",
+		Args:  argsExact(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			deps, err := env.hivesDeps()
+			if err != nil {
+				return err
+			}
+			set, err := loadProfiles(cmd, deps, false)
+			if err != nil {
+				return err
+			}
+			if err := set.SetDisabled(args[0], disabled); err != nil {
+				return err
+			}
+			if err := commit(deps, set); err != nil {
+				return err
+			}
+			result, err := signalHivesRelay(cmd, deps)
+			if err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ Hive %s %sd; credentials retained\n", args[0], verb)
+			if result.Running {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  running relay signaled; in-flight work finishes on its original hive")
+			} else {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  no running relay found; applies on next start")
+			}
+			return nil
+		},
+	}
 }
 
 // ── rename ──────────────────────────────────────────────────────────────────
