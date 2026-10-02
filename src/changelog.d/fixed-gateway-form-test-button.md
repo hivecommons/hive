@@ -1,0 +1,1 @@
+- dashboard: the Model Gateways add/edit form now has a Test button that probes the endpoint with the entered values before saving, and its Cancel button no longer renders clipped over Save (#9914).

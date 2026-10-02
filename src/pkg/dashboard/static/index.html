@@ -23653,8 +23653,8 @@ function burnAreaChart() {
         if (cached && cached.fallback) {
           // Discovery still is not working (bad key/region/project): say so
           // rather than letting unverified aliases masquerade as discovered.
-          _gatewayProbeResults[method] = { ok: false, error: 'model discovery did not return a live list — check the key and try Test.' };
-          showToast(`${method} gateway saved, but model discovery did not return a live list — check the key and try Test.`, 'error');
+          _gatewayProbeResults[method] = { ok: false, error: 'model discovery did not return a live list — check the key and click Test on the gateway card.' };
+          showToast(`${method} gateway saved, but model discovery did not return a live list — check the key and click Test on the gateway card.`, 'error');
           continue;
         }
         showToast(`${method}: ${models.length} model${models.length === 1 ? '' : 's'} discovered`, 'success');
@@ -23760,7 +23760,8 @@ function burnAreaChart() {
             <div id="gw-default-model-field">${gatewayDefaultModelFieldHtml(gw.default_model || '')}</div>
           </div>
           <div style="display:flex;gap:var(--sp-4);justify-content:flex-end;margin-top:14px">
-            <button class="hv-btn btn-icon btn-sm" type="button" data-action="closeGatewayForm">Cancel</button>
+            <button class="hv-btn btn-secondary btn-sm" type="button" data-action="closeGatewayForm">Cancel</button>
+            <button class="hv-btn btn-secondary btn-sm" type="button" id="gw-form-test" data-action="testGatewayForm" title="Probe the endpoint with the values entered above (a blank key uses the stored key)">Test</button>
             <button class="hv-btn btn-primary btn-sm" type="button" data-action="saveGateway" data-arg0="${isEdit ? 'true' : 'false'}" data-arg-types="j">Save</button>
           </div>
           <div id="gw-form-result" style="display:none;font-size:var(--fs-sm);margin-top:10px;white-space:pre-wrap"></div>
@@ -23866,6 +23867,31 @@ function burnAreaChart() {
       _gatewayModelProbeTimer = setTimeout(function() {
         probeGatewayFormModels();
       }, GATEWAY_MODEL_PROBE_DEBOUNCE_MS);
+    }
+
+    // testGatewayForm is the form-level "Test": it probes the endpoint with
+    // the values currently typed (a blank key falls back to the stored key of
+    // this gateway, server-side) and reports OK/failure inline, so a bad key
+    // or endpoint is diagnosable BEFORE saving. The card-level Test only
+    // exists after a gateway is saved, which left the edit form with a toast
+    // saying "try Test" and no Test to click (#9914).
+    async function testGatewayForm() {
+      const epEl = document.getElementById('gw-endpoint');
+      if (!epEl || !epEl.value.trim()) { showGatewayFormProbeError('Enter an endpoint URL first.'); return; }
+      const btn = document.getElementById('gw-form-test');
+      const el = document.getElementById('gw-form-result');
+      if (btn) btn.disabled = true;
+      if (el) { el.style.display = 'block'; el.style.color = 'var(--muted)'; el.textContent = 'Testing…'; }
+      try {
+        await probeGatewayFormModels();
+        if (el && el.style.display !== 'block') {
+          el.style.display = 'block';
+          el.style.color = '';
+          el.innerHTML = gatewayProbeHTML({ ok: true, model_count: _gatewayFormModels.length });
+        }
+      } finally {
+        if (btn) btn.disabled = false;
+      }
     }
 
     async function probeGatewayFormModels() {
