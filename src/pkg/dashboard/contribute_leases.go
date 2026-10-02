@@ -567,6 +567,18 @@ func (h *ContributeWSHub) emitLeaseStageTransitionAt(from, to, reason string, re
 	if reset {
 		attrs["reset"] = "true"
 	}
+	// Timeline stages merge attrs per (ref, kind), so a plain advance blanks
+	// the reason/reset left by an earlier reset instead of inheriting them.
+	timelineAttrs := make(map[string]string, len(attrs)+2)
+	for k, v := range attrs {
+		timelineAttrs[k] = v
+	}
+	if reason == "" {
+		timelineAttrs["reason"] = ""
+	}
+	if !reset {
+		timelineAttrs["reset"] = ""
+	}
 	eventAt := int64(0)
 	if !at.IsZero() {
 		eventAt = at.UnixMilli()
@@ -576,7 +588,7 @@ func (h *ContributeWSHub) emitLeaseStageTransitionAt(from, to, reason string, re
 		Kind:     timeline.KindStageCompleted,
 		Agent:    l.identity,
 		At:       eventAt,
-		Attrs:    attrs,
+		Attrs:    timelineAttrs,
 	})
 	payload := hooks.Payload{
 		Transition: hooks.TransitionStageCompleted,

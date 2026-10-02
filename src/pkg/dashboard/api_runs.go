@@ -993,7 +993,7 @@ func (s *Server) activeRunLeaseSnapshots(now time.Time) ([]runLeaseSnapshot, err
 		out = append(out, runLeaseSnapshot{
 			identity: l.identity, taskID: l.taskID, repo: repo, number: l.number,
 			key: key, leaseKey: stageLeaseKey, stageRunKey: stageRunKey, stage: l.stage, gen: l.gen, expiresAt: l.expiresAt,
-			title: title, stageStarted: info.startedAt, leaseHeartbeat: l.expiresAt.Add(-leaseTTL), serverSideLease: h.isPendingStageIdentity(l.identity),
+			title: title, stageStarted: info.startedAt, leaseHeartbeat: leaseHeartbeatAt(l.expiresAt, now), serverSideLease: h.isPendingStageIdentity(l.identity),
 			claimedBy: l.claimedBy, claimExpiresAt: l.claimExpiresAt, claimPosted: l.claimPosted,
 			triageVerdict: l.triageVerdict, triageRationale: l.triageRationale,
 			workItem:         l.workItem.Normalized(),
@@ -1775,4 +1775,15 @@ func (s *Server) stageCompletionsByIdentity() map[string]int {
 		out[st.Agent] += st.Count
 	}
 	return out
+}
+
+// leaseHeartbeatAt derives the last renewal from the expiry, clamped to now: a
+// checkpoint hold extends expiry past leaseTTL, which would otherwise put the
+// derived heartbeat in the future.
+func leaseHeartbeatAt(expiresAt, now time.Time) time.Time {
+	hb := expiresAt.Add(-leaseTTL)
+	if hb.After(now) {
+		return now
+	}
+	return hb
 }
