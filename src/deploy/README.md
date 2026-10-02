@@ -17,7 +17,7 @@ Use it indirectly through the dashboard terminal link. If a terminal pane says i
 ## Other files
 
 - `entrypoint.sh` — container startup, config layering, proxy/agent setup, and long-lived process supervision.
-- `k8s/` — namespace, deployment, service, PVC, Secret, ConfigMap, and route/RBAC manifests.
+- `k8s/` — the Kustomize base (`kustomization.yaml`) with namespace, deployment, service, PVC, Secret, ConfigMap and RBAC manifests, plus the custom error backend (`error-pages.yaml`), the hub backup CronJob (`backup-cronjob.yaml`) and the node-prep DaemonSet (`node-prep/`), which are applied separately. The OpenShift Route lives in `kustomize/overlays/openshift/`.
 - `inference/` — sample in-cluster OpenAI-compatible inference deployment and RBAC.
 - `docker-compose.architect.yaml`, `hive-quickstart.yaml`, `hive-level*.yaml`, `architect-only.yaml`, `hive.yaml` — example deployment/configuration manifests.
 - `blue-green-deploy.sh`, `bootstrap-lxc.sh`, `create-lxc.sh` — operational scripts for **Docker Compose** deployments (LXC bootstrap and a blue-green Compose upgrade). Not "non-Kubernetes" generally: none of the three shells out to `podman` or reads `HIVE_DEPLOY_RUNTIME`, so none of them applies to the Quadlet stack in `quadlet/` below. See [Deployment helper scripts](../docs/deployment-scripts.md) for each script's scope and where a Podman operator should go instead.
