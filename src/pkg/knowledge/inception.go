@@ -80,6 +80,7 @@ func (e *InceptionEngine) Start(rawIdea string) (*InceptionState, error) {
 	if len(slug) < 8 {
 		slug = slug + "-" + fmt.Sprintf("%d", time.Now().UnixMilli()%100000)
 	}
+	slug = e.uniqueCampaignSlugLocked(slug)
 
 	if e.api != nil {
 		ctx := context.Background()
@@ -149,6 +150,7 @@ func (e *InceptionEngine) StartBrownfield(repoURL string) (*InceptionState, erro
 	}
 
 	slug := slugify("scan-" + repoBaseName(repoURL))
+	slug = e.uniqueCampaignSlugLocked(slug)
 
 	e.clearWikiVault()
 
@@ -1285,6 +1287,21 @@ func (e *InceptionEngine) RestoreCampaignArchive(id string) (*InceptionState, er
 	cp := copyInceptionState(e.state)
 	e.logger.Info("inception campaign restored", "campaign", archive.ID, "phase", cp.Phase)
 	return cp, nil
+}
+
+// uniqueCampaignSlugLocked appends a numeric disambiguator when an archive
+// with the given slug already exists, so starting a new inception whose idea
+// text (or brownfield repo basename) collides with an earlier one does not
+// silently archive onto — and overwrite the state and wiki of — the earlier
+// campaign (hivecommons/hive#10084). Callers already hold e.mu.
+func (e *InceptionEngine) uniqueCampaignSlugLocked(slug string) string {
+	base := slug
+	for n := 2; ; n++ {
+		if _, err := e.readArchiveLocked(slug); err != nil {
+			return slug
+		}
+		slug = fmt.Sprintf("%s-%d", base, n)
+	}
 }
 
 func (e *InceptionEngine) archiveFromStateLocked(now time.Time) *InceptionCampaignArchive {
