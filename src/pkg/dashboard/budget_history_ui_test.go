@@ -67,9 +67,9 @@ func TestBudgetHistoryChartWiredIntoDashboard(t *testing.T) {
 
 // The cost-section trend graphs in the issue's screenshot "lack horizontal
 // and vertical axes, making them impossible to understand". Pin that the
-// 30-day fact/cost charts render through the axis-labeled helper and that
-// the tiny inline sparklines carry a scale tooltip (they are too small for
-// drawn axes).
+// 30-day cost chart renders through the axis-labeled helper, while compact
+// stat-tile sparklines carry a scale tooltip (they are too small for drawn
+// axes).
 func TestSparklinesCarryAxesOrScaleTooltips(t *testing.T) {
 	b, err := staticFS.ReadFile("static/index.html")
 	if err != nil {
@@ -78,8 +78,8 @@ func TestSparklinesCarryAxesOrScaleTooltips(t *testing.T) {
 	html := string(b)
 
 	for _, snippet := range []string{
-		"axisSparkSvg(_factHistory",
 		"axisSparkSvg(_costHistory",
+		"sparkSvg(values, 'var(--blue)', times)",
 		// sparkSvg + miniSparkSvg embed an SVG <title> stating the range.
 		"<title>range ${fmtSparkVal(min)}",
 		// The sparkSvg tooltip states the real time span when the caller has
