@@ -67,6 +67,39 @@ func TestDisabledAgentSidebarEnableWiring(t *testing.T) {
 	}
 }
 
+func TestDisabledAgentCadenceMatrixWiring(t *testing.T) {
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		`const agents = _sidebarAgents();`,
+		`const statusAgentSet = new Set(agents.map(a => a.name));`,
+		`agentDisabled ? '<span class="off-badge" data-status="neutral" title="Disabled in config — the governor does not schedule this agent">off</span>'`,
+		"return `<td class=\"${colCls} cadence-disabled-cell\"",
+		`<td class="power-col">${agentPowerSwitchHtml(agentData)}</td>`,
+		`.gov-matrix tr.agent-disabled td.name-col { color: var(--muted); }`,
+		`.gov-matrix td.cadence-disabled-cell, .gov-matrix td.continuous-cadence-note`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Errorf("index.html is missing disabled-agent cadence matrix wiring %q", snippet)
+		}
+	}
+}
+
+func TestContinuousAgentCadenceMatrixWiring(t *testing.T) {
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		`const continuousOn = agentData && agentData.continuous === true;`,
+		"<td class=\"continuous-cadence-note\" colspan=\"${modes.length}\" title=\"Cadence intervals are kept and apply again when continuous mode is turned off\">runs back-to-back · cadence not used</td>",
+		`∞ continuous`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Errorf("index.html is missing continuous cadence matrix wiring %q", snippet)
+		}
+	}
+	if strings.Contains(html, `continuous-cadence-note" data-action="openConfigDialog"`) {
+		t.Error("continuous cadence note must not be editable")
+	}
+}
+
 // TestConfiguredAgentsCarryResolvedMode pins the field the sidebar needs to
 // show what a disabled agent WOULD do once enabled. A disabled agent has no
 // runtime entry, so if buildConfiguredAgents omits the mode the badge silently
