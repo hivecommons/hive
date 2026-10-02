@@ -1,0 +1,1 @@
+- `POST /api/inception/approve` now admits the Spektacular run before marking the inception complete, so an admission failure no longer leaves the inception `complete` with `brainstorm` un-paused; a half-specified `repo`/`issue_number` target is rejected with 400, and success reports `admitted` plus the admitted `run_key`, which is also recorded on the inception state (#10114).

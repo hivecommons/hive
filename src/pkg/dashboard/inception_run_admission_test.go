@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -118,11 +119,61 @@ func TestInceptionApproveRequiresExplicitRepoTarget(t *testing.T) {
 	disableSpekHubExecutorForRelayTests(s)
 	driveInceptionToScaffold(t, s)
 
-	if rec := doPost(s, "/api/inception/approve", map[string]interface{}{"issue_number": 8290}); rec.Code != http.StatusOK {
-		t.Fatalf("approve: %d body=%s", rec.Code, rec.Body.String())
+	for _, body := range []map[string]interface{}{{"issue_number": 8290}, {"repo": "repo1"}} {
+		if rec := doPost(s, "/api/inception/approve", body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("approve %v: got %d body=%s, want 400", body, rec.Code, rec.Body.String())
+		}
 	}
 	if got := pendingRunStages(t, s); got != 0 {
 		t.Fatalf("pending stages = %d, want 0", got)
+	}
+	if st := s.deps.Inception.GetState(); st == nil || st.Phase != knowledge.PhaseScaffold {
+		t.Fatalf("half-specified target changed inception state: %+v", st)
+	}
+}
+
+func TestInceptionApproveReportsAdmittedRunKey(t *testing.T) {
+	s, _, _ := covFInceptionServer(t)
+	s.contributeHub.persistTaskLedgers = false
+	s.deps.Config.Runs.Spektacular.Enabled = true
+	disableSpekHubExecutorForRelayTests(s)
+	driveInceptionToScaffold(t, s)
+
+	rec := doPost(s, "/api/inception/approve", map[string]interface{}{"repo": "repo1", "issue_number": 8290})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("approve: %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		OK       bool   `json:"ok"`
+		Admitted bool   `json:"admitted"`
+		RunKey   string `json:"run_key"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v body=%s", err, rec.Body.String())
+	}
+	if !resp.OK || !resp.Admitted || resp.RunKey != "myorg/repo1#8290" {
+		t.Fatalf("response = %+v, want admitted run_key myorg/repo1#8290", resp)
+	}
+	st := s.deps.Inception.GetState()
+	if st == nil || st.Phase != knowledge.PhaseComplete || st.AdmittedRunKey != "myorg/repo1#8290" {
+		t.Fatalf("state = %+v, want complete with admitted_run_key", st)
+	}
+}
+
+func TestInceptionApproveAdmissionFailureLeavesInceptionIncomplete(t *testing.T) {
+	s, _, _ := covFInceptionServer(t)
+	s.deps.Config.Runs.Spektacular.Enabled = true
+	disableSpekHubExecutorForRelayTests(s)
+	driveInceptionToScaffold(t, s)
+	hub := s.contributeHub
+	s.contributeHub = nil
+	rec := doPost(s, "/api/inception/approve", map[string]interface{}{"repo": "repo1", "issue_number": 8290})
+	s.contributeHub = hub
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("approve: got %d body=%s, want 503", rec.Code, rec.Body.String())
+	}
+	if st := s.deps.Inception.GetState(); st == nil || st.Phase != knowledge.PhaseScaffold || st.AdmittedRunKey != "" {
+		t.Fatalf("failed admission changed inception state: %+v", st)
 	}
 }
 
