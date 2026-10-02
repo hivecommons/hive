@@ -202,6 +202,99 @@ func TestContinuousOutcomeSchedulesAfterCooldown(t *testing.T) {
 	}
 }
 
+func TestContinuousUpdateAgentsEnableArmsIdleAgent(t *testing.T) {
+	now := time.Date(2026, 10, 2, 14, 0, 0, 0, time.UTC)
+	g := New(config.GovernorConfig{Modes: map[string]config.ModeConfig{
+		"idle": {Cadences: map[string]config.Cadence{"scanner": "6h"}},
+	}}, map[string]config.AgentConfig{
+		"scanner": {Backend: "claude", Enabled: true},
+	}, slog.Default())
+	g.now = func() time.Time { return now }
+	g.Evaluate(0, 0, 0, 0)
+	g.RecordKick("scanner")
+	kickAt := now
+	now = now.Add(10 * time.Minute)
+	g.RecordKickOutcome("scanner", KickOutcomeEnded, "", kickAt, now)
+
+	now = now.Add(5 * time.Minute)
+	g.UpdateAgents(map[string]config.AgentConfig{
+		"scanner": {Backend: "claude", Enabled: true, Continuous: true, ContinuousCooldown: 2 * time.Minute},
+	})
+	st := g.GetState().Continuous["scanner"]
+	if want := now.Add(2 * time.Minute); !st.NextKick.Equal(want) {
+		t.Fatalf("continuous next kick after enable = %v, want %v", st.NextKick, want)
+	}
+	if contains(g.Evaluate(0, 0, 0, 0), "scanner") {
+		t.Fatal("continuous kick fired before enable cooldown")
+	}
+	now = st.NextKick
+	if !contains(g.Evaluate(0, 0, 0, 0), "scanner") {
+		t.Fatal("continuous kick did not fire after enable cooldown")
+	}
+}
+
+func TestContinuousUpdateAgentsDisableClearsState(t *testing.T) {
+	now := time.Date(2026, 10, 2, 14, 0, 0, 0, time.UTC)
+	g := continuousTestGovernor(&now, config.AgentConfig{Enabled: true, ContinuousCooldown: time.Minute}, "6h")
+	g.RecordKick("scanner")
+	g.RecordKickOutcome("scanner", KickOutcomeEnded, "", now, now)
+	if _, ok := g.GetState().Continuous["scanner"]; !ok {
+		t.Fatal("continuous state was not created")
+	}
+	g.UpdateAgents(map[string]config.AgentConfig{
+		"scanner": {Backend: "claude", Enabled: true},
+	})
+	if _, ok := g.GetState().Continuous["scanner"]; ok {
+		t.Fatal("continuous state survived disabling continuous mode")
+	}
+}
+
+func TestContinuousUpdateAgentsEnableBlockedSetsBlocked(t *testing.T) {
+	now := time.Date(2026, 10, 2, 14, 0, 0, 0, time.UTC)
+	g := New(config.GovernorConfig{Modes: map[string]config.ModeConfig{
+		"idle": {Cadences: map[string]config.Cadence{"scanner": "pause"}},
+	}}, map[string]config.AgentConfig{
+		"scanner": {Backend: "claude", Enabled: true},
+	}, slog.Default())
+	g.now = func() time.Time { return now }
+	g.Evaluate(0, 0, 0, 0)
+
+	g.UpdateAgents(map[string]config.AgentConfig{
+		"scanner": {Backend: "claude", Enabled: true, Continuous: true, ContinuousCooldown: time.Minute},
+	})
+	st := g.GetState().Continuous["scanner"]
+	if st.Blocked != "paused_in_mode" {
+		t.Fatalf("continuous blocked = %q, want paused_in_mode", st.Blocked)
+	}
+	if !st.NextKick.IsZero() {
+		t.Fatalf("continuous next kick scheduled despite paused cadence: %+v", st)
+	}
+}
+
+func TestContinuousBootArmsWithoutDoubleKick(t *testing.T) {
+	now := time.Date(2026, 10, 2, 14, 0, 0, 0, time.UTC)
+	g := New(config.GovernorConfig{Modes: map[string]config.ModeConfig{
+		"idle": {Cadences: map[string]config.Cadence{"scanner": "6h"}},
+	}}, map[string]config.AgentConfig{
+		"scanner": {Backend: "claude", Enabled: true, Continuous: true, ContinuousCooldown: time.Minute},
+	}, slog.Default())
+	g.now = func() time.Time { return now }
+
+	due := g.Evaluate(0, 0, 0, 0)
+	if len(due) != 1 || due[0] != "scanner" {
+		t.Fatalf("initial continuous boot due = %v, want scanner", due)
+	}
+	st := g.GetState().Continuous["scanner"]
+	if want := now.Add(time.Minute); !st.NextKick.Equal(want) {
+		t.Fatalf("initial continuous next kick = %v, want %v", st.NextKick, want)
+	}
+	g.RecordKick("scanner")
+	now = now.Add(time.Minute)
+	if contains(g.Evaluate(0, 0, 0, 0), "scanner") {
+		t.Fatal("continuous arm caused a second kick while initial boot turn had no outcome")
+	}
+}
+
 func TestContinuousBusyTurnDoesNotUseCadence(t *testing.T) {
 	now := time.Date(2026, 10, 2, 14, 0, 0, 0, time.UTC)
 	g := continuousTestGovernor(&now, config.AgentConfig{Enabled: true, ContinuousCooldown: time.Minute}, "30m")

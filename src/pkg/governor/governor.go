@@ -316,7 +316,27 @@ func (g *Governor) UpdateConfig(cfg config.GovernorConfig) {
 func (g *Governor) UpdateAgents(agents map[string]config.AgentConfig) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	oldAgents := g.agents
 	g.agents = agents
+	g.updateCadences()
+	now := g.now()
+	for agentName, st := range g.state.Continuous {
+		ac, ok := agents[agentName]
+		if !ok || !ac.Continuous {
+			delete(g.state.Continuous, agentName)
+			continue
+		}
+		g.state.Continuous[agentName] = st
+	}
+	for agentName, ac := range agents {
+		if !ac.Continuous {
+			continue
+		}
+		if old, ok := oldAgents[agentName]; ok && old.Continuous {
+			continue
+		}
+		g.armContinuousIfIdleLocked(agentName, now)
+	}
 }
 
 // ModeChangeObserver is notified after a mode change has been committed to the
@@ -841,11 +861,20 @@ func (g *Governor) agentsDueForKick() []string {
 				g.state.Continuous[agentName] = st
 			} else {
 				st, ok := g.state.Continuous[agentName]
+				allowCadenceDue := false
 				if ok && st.Blocked == "budget" && st.NextKick.IsZero() {
 					st.Blocked = ""
 					g.state.Continuous[agentName] = st
 				} else {
-					if !ok || st.NextKick.IsZero() || now.Before(st.NextKick) {
+					if !ok || st.NextKick.IsZero() {
+						_, noPriorKick := g.armContinuousIfIdleLocked(agentName, now)
+						if !noPriorKick {
+							continue
+						}
+						allowCadenceDue = true
+						st = g.state.Continuous[agentName]
+					}
+					if !allowCadenceDue && now.Before(st.NextKick) {
 						continue
 					}
 					if !st.BackoffUntil.IsZero() && now.Before(st.BackoffUntil) {
@@ -932,6 +961,62 @@ func (g *Governor) agentsDueForKick() []string {
 	}
 
 	return due
+}
+
+// armContinuousIfIdleLocked seeds the first continuous re-kick when continuous
+// mode becomes effective while the agent is idle. It refuses to arm while the
+// most recent kick has no recorded outcome yet, which is the governor's signal
+// that the kicked turn may still be running. Callers must hold g.mu.
+func (g *Governor) armContinuousIfIdleLocked(agentName string, at time.Time) (bool, bool) {
+	ac, ok := g.agents[agentName]
+	if !ok || !ac.Continuous {
+		return false, false
+	}
+	if at.IsZero() {
+		at = g.now()
+	}
+	if g.state.Continuous == nil {
+		g.state.Continuous = make(map[string]ContinuousState)
+	}
+	st := g.state.Continuous[agentName]
+	if !st.NextKick.IsZero() {
+		return false, false
+	}
+	cadenceKey, _, blocker := g.continuousBlockerLocked(agentName)
+	if blocker != "" {
+		st.NextKick = time.Time{}
+		st.Blocked = continuousBlockerStatus(blocker)
+		g.state.Continuous[agentName] = st
+		return false, false
+	}
+	idle, noPriorKick := g.continuousIdleForCadenceLocked(agentName, cadenceKey)
+	if !idle {
+		return false, false
+	}
+	cooldown := ac.EffectiveContinuousCooldown()
+	st.NextKick = at.Add(cooldown)
+	st.BackoffUntil = time.Time{}
+	st.Backoff = 0
+	st.Failures = 0
+	st.LastError = ""
+	st.Blocked = ""
+	g.state.Continuous[agentName] = st
+	if g.logger != nil {
+		g.logger.Info("continuous armed on enable", "agent", agentName, "cadence_key", cadenceKey, "cooldown", cooldown.String(), "next_kick", st.NextKick.UTC().Format(time.RFC3339))
+	}
+	return true, noPriorKick
+}
+
+func (g *Governor) continuousIdleForCadenceLocked(agentName, cadenceKey string) (bool, bool) {
+	lastKick := g.state.LastKick[cadenceKey]
+	if lastKick.IsZero() {
+		return true, true
+	}
+	rec, ok := g.kickOutcomes[agentName]
+	if !ok {
+		return false, false
+	}
+	return !rec.At.Before(lastKick), false
 }
 
 func (g *Governor) continuousBlockerLocked(agentName string) (string, AgentCadence, string) {
