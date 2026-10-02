@@ -223,6 +223,10 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) TickResult {
 			// advanced at most once.
 			state.seeded = false
 			state.gen = st.Gen
+			// The resolved document id is per generation too: a retry may
+			// have created a newer timestamped document, so re-resolve it
+			// from the lease's artifact rather than polling the old one.
+			state.artifact = ""
 			state.lastStatus = ""
 			state.seenFinal = false
 			state.advanced = false

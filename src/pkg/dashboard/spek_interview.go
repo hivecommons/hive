@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -25,6 +27,9 @@ const (
 	spekInterviewRequestRelPath = ".hive/spek-interview-request.json"
 	spekInterviewAnswersRelPath = ".hive/spek-interview-answers.json"
 	spekInterviewSchemaVersion  = "hive-spek-interview/v1"
+	// The request file is agent-written and re-read on every Tick, GET and
+	// /api/runs projection, so it (and the answers file) is read bounded.
+	spekInterviewMaxFileBytes = 1 << 20
 )
 
 type SpekInterviewQuestion struct {
@@ -129,17 +134,29 @@ func clearConsumedSpekInterview(worktree string, consumed []byte) error {
 	if err := json.Unmarshal(consumed, &old); err != nil {
 		return err
 	}
+	return clearSpekInterviewRoundLocked(worktree, old.RequestID)
+}
+
+// clearSpekInterviewRound removes the request and answers files of one round,
+// leaving any newer round in place.
+func clearSpekInterviewRound(worktree, requestID string) error {
+	spekInterviewMu.Lock()
+	defer spekInterviewMu.Unlock()
+	return clearSpekInterviewRoundLocked(worktree, requestID)
+}
+
+func clearSpekInterviewRoundLocked(worktree, requestID string) error {
 	req, _, _, err := readSpekInterviewFiles(worktree)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err == nil && req.RequestID == old.RequestID {
+	if err == nil && req.RequestID == requestID {
 		if err := os.Remove(filepath.Join(worktree, spekInterviewRequestRelPath)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
 	path := filepath.Join(worktree, spekInterviewAnswersRelPath)
-	data, err := os.ReadFile(path)
+	data, err := readSpekInterviewFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -150,16 +167,32 @@ func clearConsumedSpekInterview(worktree string, consumed []byte) error {
 	if err := json.Unmarshal(data, &current); err != nil {
 		return err
 	}
-	if current.RequestID == old.RequestID {
+	if current.RequestID == requestID {
 		return os.Remove(path)
 	}
 	return nil
 }
 
+func readSpekInterviewFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, spekInterviewMaxFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > spekInterviewMaxFileBytes {
+		return nil, fmt.Errorf("%s exceeds %d bytes", filepath.Base(path), spekInterviewMaxFileBytes)
+	}
+	return data, nil
+}
+
 func readSpekInterviewFiles(worktree string) (SpekInterviewRequest, SpekInterviewAnswers, time.Time, error) {
 	var req SpekInterviewRequest
 	reqPath := filepath.Join(worktree, spekInterviewRequestRelPath)
-	data, err := os.ReadFile(reqPath)
+	data, err := readSpekInterviewFile(reqPath)
 	if err != nil {
 		return req, SpekInterviewAnswers{}, time.Time{}, err
 	}
@@ -175,7 +208,7 @@ func readSpekInterviewFiles(worktree string) (SpekInterviewRequest, SpekIntervie
 	fingerprint := sha256.Sum256(append(append([]byte(nil), data...), []byte(askedAt.UTC().Format(time.RFC3339Nano))...))
 	req.RequestID = hex.EncodeToString(fingerprint[:])
 	var answers SpekInterviewAnswers
-	if answerData, answerErr := os.ReadFile(filepath.Join(worktree, spekInterviewAnswersRelPath)); answerErr == nil {
+	if answerData, answerErr := readSpekInterviewFile(filepath.Join(worktree, spekInterviewAnswersRelPath)); answerErr == nil {
 		if err := json.Unmarshal(answerData, &answers); err != nil {
 			answers = SpekInterviewAnswers{}
 		}
@@ -293,6 +326,13 @@ func (s *Server) handleRunInterviewPost(w http.ResponseWriter, r *http.Request) 
 	spekInterviewMu.Lock()
 	defer spekInterviewMu.Unlock()
 	key := pathRunKey(r)
+	// The agent writes the request and then exits; answers posted before it
+	// has exited would make the executor judge a non-final document and spend
+	// a generation, so they are refused until the executor releases the run.
+	if s.stageExecutorExecuting(key, StageSpec) || s.stageExecutorExecuting(key, StagePlan) {
+		jsonError(w, "the agent is still running; answer once it has exited", http.StatusConflict)
+		return
+	}
 	payload, err := s.RunInterviewPayload(key)
 	if err != nil {
 		jsonError(w, err.Error(), runInterviewStatus(err))
