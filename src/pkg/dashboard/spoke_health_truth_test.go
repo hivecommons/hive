@@ -177,8 +177,8 @@ func TestSpokeHealthTruthUIWiring(t *testing.T) {
 			why:     "the header pill must render the deep checks from the status payload, not just the repo-workflow health map",
 		},
 		{
-			snippet: "'● Degraded'",
-			why:     "any failing deep check must flip the pill to Degraded",
+			snippet: `ocHealth.innerHTML = '<span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Degraded</span>';`,
+			why:     "any failing deep check must flip the navbar chip to Degraded while preserving the shared chip slots",
 		},
 		{
 			snippet: "const isDown = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting;",

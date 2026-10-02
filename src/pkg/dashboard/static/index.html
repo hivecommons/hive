@@ -109,9 +109,9 @@
     /* .widget-dl / .layout-toggle — ghost buttons (system recipe at end of
        the style block); only placement-specific properties live here. */
     .widget-dl { display: inline-flex; align-items: center; text-decoration: none; margin-left: auto; margin-right: auto; white-space: nowrap; }
-    .layout-toggle { margin-left: var(--sp-5); margin-right: var(--sp-4); }
+    .layout-toggle:not(.nav-chip) { margin-left: var(--sp-5); margin-right: var(--sp-4); }
     /* Icon-only theme toggle: square-ish, centered glyph, larger for tap target. */
-    .layout-toggle { min-width: 34px; padding-left: var(--sp-4); padding-right: var(--sp-4); font-size: 1rem; line-height: 1; text-align: center; }
+    .layout-toggle:not(.nav-chip) { min-width: 34px; padding-left: var(--sp-4); padding-right: var(--sp-4); font-size: 1rem; line-height: 1; text-align: center; }
 
     /* ── Light mode ── */
     body.light-mode {
@@ -297,17 +297,15 @@
       gap: var(--sp-5);
       padding: var(--sp-0) var(--sp-7); z-index: 99;
     }
-    .oc-topbar-left { font-size: 0.85rem; color: var(--muted); display: flex; align-items: center; gap: var(--sp-2); min-width: 0; flex: 1 1 auto; overflow: hidden; }
-    #oc-project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    #acmm-badge {
-      flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--sp-2);
-      max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      cursor: pointer; border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
-      padding: var(--sp-1) var(--sp-4); border-radius: var(--r-pill);
-      background: color-mix(in srgb, var(--amber) 14%, transparent); color: var(--amber);
-      font-size: var(--fs-xs); font-weight: 700; text-decoration: none;
+    .oc-topbar-left { font-size: 0.85rem; color: var(--muted); display: flex; align-items: center; gap: var(--nav-chip-gap, 8px); min-width: 0; flex: 1 1 auto; overflow: hidden; }
+    .oc-project-title {
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: var(--text); font-size: 0.88rem; font-weight: 700; letter-spacing: -0.01em;
     }
-    #acmm-badge:hover { background: color-mix(in srgb, currentColor 18%, transparent); }
+    .oc-topbar-left .nav-chip-group, .oc-topbar-right .nav-chip-group {
+      display: inline-flex; align-items: center; gap: var(--nav-chip-gap, 8px); min-width: 0;
+    }
+    #acmm-badge { overflow: hidden; text-overflow: ellipsis; }
     #oc-git-version { position: relative; display: block; margin: var(--sp-0); font-family: var(--font-sans); min-width: 0; }
     #oc-git-version #spoke-upgrade-btn { width: 100%; justify-content: center; white-space: normal; }
     .oc-version-chip {
@@ -362,31 +360,24 @@
        inline-flex. Lives in .oc-topbar-left because that is the shortest
        topbar group — putting it in center/right would risk wrapping the
        topbar to a third row and breaking the padding-top:104px assumption
-       that the ≤600px block relies on. 44px min for a real tap target. */
+       that the ≤600px block relies on. */
     #oc-drawer-toggle {
       display: none;
-      align-items: center; justify-content: center;
-      min-width: 44px; min-height: 44px;
       margin-left: -10px;
-      background: none; border: 0; padding: var(--sp-0);
-      color: var(--text); cursor: pointer;
-      font-size: 1.15rem; line-height: 1;
-      border-radius: 8px;
     }
-    #oc-drawer-toggle:active { background: var(--panel-strong); }
     #oc-drawer-backdrop { display: none; }
-    .oc-topbar-center { display: flex; align-items: center; gap: var(--sp-3); flex: 0 0 auto; }
-    .dashboard-custom-style-note { display: inline-flex; align-items: center; gap: var(--sp-3); max-width: 240px; padding: 3px 8px; border: 1px solid rgba(128,191,255,0.35); border-radius: var(--r-pill); background: rgba(128,191,255,0.10); color: var(--text); font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .oc-topbar-center { display: flex; align-items: center; gap: var(--nav-chip-gap, 8px); flex: 0 0 auto; }
+    .dashboard-custom-style-note { overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
     .dashboard-custom-style-note.warn { border-color: color-mix(in srgb, var(--status-warn) 45%, transparent); background: color-mix(in srgb, var(--status-warn) 12%, transparent); }
     .dashboard-custom-style-note button { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: var(--fs-sm); line-height: 1; padding: var(--sp-0); }
-    .oc-topbar-right { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-4); min-width: 0; flex: 0 0 auto; flex-wrap: nowrap; }
-    .oc-health-badge { --component-status: var(--status-ok); font-weight: 600; } /* pill recipe at end of style block */
+    .oc-topbar-right { display: flex; align-items: center; justify-content: flex-end; gap: var(--nav-chip-gap, 8px); min-width: 0; flex: 0 0 auto; flex-wrap: nowrap; }
+    .oc-health-badge { --nav-chip-color: var(--status-ok); }
     #oc-settings-btn { flex: 0 0 auto; }
     .oc-topbar .git-version { color: var(--muted); }
     .oc-health-badge, #welcome-topbar-btn, #oc-gh-avatar-wrap { flex: 0 0 auto; }
     #oc-gh-avatar-wrap { position: relative; }
     #oc-gh-avatar-wrap.layout-unsaved::after { content: ''; position: absolute; top: calc(-1 * var(--sp-1)); right: calc(-1 * var(--sp-1)); width: var(--sp-3); height: var(--sp-3); border-radius: var(--r-pill); background: var(--amber); border: var(--line-width) solid var(--panel); box-shadow: var(--shadow-soft); }
-    #oc-gh-avatar { width: 28px; height: 28px; border-radius: 50%; cursor: pointer; border: 2px solid var(--green); vertical-align: middle; }
+    #oc-gh-avatar { object-fit: cover; cursor: pointer; border-color: var(--green); vertical-align: middle; }
     .avatar-menu {
       position: absolute; right: 0; top: 34px; z-index: 9999;
       min-width: 240px; max-width: min(340px, calc(100vw - 24px));
@@ -431,46 +422,14 @@
     .avatar-menu-layout-action:hover { color: var(--text); background: var(--surface-2); }
     .avatar-menu-caption { display: block; margin-top: var(--sp-1); color: var(--muted); font-size: var(--fs-xs); font-weight: 500; white-space: nowrap; }
     .avatar-menu-signout { color: var(--red); }
-    /* Guide button — the Getting Started reopen affordance. Deliberately the
-       most prominent control in the topbar (amber accent tint on the shared
-       .btn base, ID specificity wins over the ghost recipe) so new operators
-       discover the hive-journey checklist. It also gets the one-shot
-       attn-shimmy on load — see triggerAttentionShimmy(). */
-    #welcome-topbar-btn {
-      background: color-mix(in srgb, var(--amber) 16%, transparent);
-      border-color: var(--amber);
-      color: var(--amber);
-      font-weight: 600;
-    }
-    #welcome-topbar-btn:hover {
-      background: color-mix(in srgb, var(--amber) 28%, transparent);
-      border-color: var(--amber);
-      color: var(--amber);
-    }
-
-    /* Fleet breaker status chip: one pill-shaped button in .oc-topbar-left so
-       state and action stay together without wrapping the topbar. */
-    #fleet-breaker-wrap { display: inline-flex; align-items: center; margin-left: 10px; }
-    #fleet-breaker-btn2 {
-      --component-status: var(--status-ok);
-      align-items: center; background: color-mix(in srgb, var(--component-status) 12%, transparent);
-      border: 1px solid color-mix(in srgb, var(--component-status) 40%, transparent);
-      border-radius: var(--r-pill); color: var(--component-status); cursor: pointer;
-      display: inline-flex; font-size: var(--fs-xs); font-weight: 600; gap: var(--sp-2);
-      line-height: 1.5; text-decoration: none; white-space: nowrap;
-      transition: background .15s, border-color .15s, color .15s;
-    }
-    #fleet-breaker-btn2[data-status="ok"] { --component-status: var(--status-ok); }
-    #fleet-breaker-btn2[data-status="error"] { --component-status: var(--status-error); }
-    #fleet-breaker-btn2 svg { display: block; width: 12px; height: 12px; fill: currentColor; }
-    #fleet-breaker-btn2:hover:not(:disabled), #fleet-breaker-btn2:focus-visible:not(:disabled) {
-      background: color-mix(in srgb, var(--component-status) 20%, transparent);
-      border-color: color-mix(in srgb, var(--component-status) 62%, transparent);
-    }
+    /* Guide button remains the topbar CTA through the shared primary chip
+       recipe; its size/shape intentionally match every other nav chip. */
+    #fleet-breaker-wrap { display: inline-flex; align-items: center; }
+    #fleet-breaker-btn2[data-status="ok"] { --nav-chip-color: var(--status-ok); }
+    #fleet-breaker-btn2[data-status="error"] { --nav-chip-color: var(--status-error); }
+    #fleet-breaker-dot, #fleet-breaker-icon { transition: color .15s, transform .15s; }
     #fleet-breaker-btn2:hover:not(:disabled) #fleet-breaker-icon,
     #fleet-breaker-btn2:focus-visible:not(:disabled) #fleet-breaker-icon { color: var(--text); transform: scale(1.08); }
-    #fleet-breaker-btn2:disabled { cursor: default; opacity: .7; }
-    #fleet-breaker-dot, #fleet-breaker-icon { display: inline-flex; align-items: center; transition: color .15s, transform .15s; }
 
     @media (max-width: 1280px) {
       body { padding-top: 88px; }
@@ -483,10 +442,7 @@
       #oc-project-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       #acmm-badge, #fleet-breaker-wrap, .oc-topbar-center, .oc-health-badge,
       #welcome-topbar-btn, .widget-dl, #oc-gh-avatar-wrap { flex: 0 0 auto; }
-      .oc-topbar-right {
-        flex: 1 1 100%; justify-content: flex-end;
-        gap: 10px; flex-wrap: nowrap; overflow: visible;
-      }
+      .oc-topbar-right { flex: 1 1 100%; justify-content: flex-end; flex-wrap: nowrap; overflow: visible; }
       .oc-topbar-right .widget-dl { margin-left: var(--sp-0); margin-right: var(--sp-0); }
     }
 
@@ -847,6 +803,8 @@
       .oc-topbar-center { flex-grow: 1; justify-content: center; }
       .widget-dl { display: none; }
       #oc-project-name { display: none; }
+      .oc-topbar .nav-chip--action .nav-chip__label,
+      .oc-topbar .nav-chip--primary .nav-chip__label { display: none; }
       /* keep the pill one line so the right group wraps as a unit
          instead of being clipped at the viewport edge */
       .oc-health-badge { white-space: nowrap; }
@@ -2267,8 +2225,7 @@
     /* An action inside a sticky toast (e.g. "Sign in" on the session-expired
        toast, #7405). It must stay clickable without the click-anywhere
        dismissal swallowing it — see showSessionExpiredToast. */
-    .toast-action { margin-left: 10px; padding: 2px 9px; font-size: 0.72rem; line-height: 1.4; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-sm); cursor: pointer; vertical-align: middle; }
-    .toast-action:hover { border-color: var(--accent); color: var(--accent); }
+    .toast-action { margin-left: 10px; vertical-align: middle; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
     .feedback-fab { position: fixed; right: 18px; bottom: 86px; z-index: 9002; box-shadow: var(--shadow-raised); }
@@ -3147,8 +3104,8 @@
        Existing classes remain as thin aliases for test/JS hooks, but visuals
        route through the four recipes: entity chips, status badges, action chips,
        and count badges. Status color comes from --component-status/data-status. */
-    .status-badge, .pause-badge, .off-badge, .on-demand-badge, .oc-health-badge,
-    .summary-age, #fleet-breaker-btn2,
+    .status-badge, .pause-badge, .off-badge, .on-demand-badge,
+    .summary-age,
     .model-chip, .token-model-chip, .repo-issue-pill, .repo-pr-pill,
     .ind-tag, .kb-type-badge, .kb-layer-badge, .kb-src-type,
     .nous-config-pill, .oc-nav-count {
@@ -3168,26 +3125,25 @@
       padding: 3px 6px; font-size: var(--fs-2xs); font-weight: 800; line-height: 1;
       overflow: hidden; text-overflow: ellipsis;
     }
-    .status-badge, .pause-badge, .off-badge, .on-demand-badge, .oc-health-badge,
-    .summary-age, #fleet-breaker-btn2 {
+    .status-badge, .pause-badge, .off-badge, .on-demand-badge,
+    .summary-age {
       --component-status: var(--pill-c, var(--status-neutral));
       background: color-mix(in srgb, var(--component-status) 12%, transparent);
       border-color: color-mix(in srgb, var(--component-status) 40%, transparent);
       color: var(--component-status);
     }
-    .status-badge[data-status="ok"], .pause-badge[data-status="ok"], .off-badge[data-status="ok"], .on-demand-badge[data-status="ok"], .summary-age[data-status="ok"], #fleet-breaker-btn2[data-status="ok"] { --component-status: var(--status-ok); }
-    .status-badge[data-status="warn"], .pause-badge[data-status="warn"], .off-badge[data-status="warn"], .on-demand-badge[data-status="warn"], .summary-age[data-status="warn"], #fleet-breaker-btn2[data-status="warn"] { --component-status: var(--status-warn); }
-    .status-badge[data-status="attention"], .pause-badge[data-status="attention"], .off-badge[data-status="attention"], .on-demand-badge[data-status="attention"], .summary-age[data-status="attention"], #fleet-breaker-btn2[data-status="attention"] { --component-status: var(--status-attention); }
-    .status-badge[data-status="error"], .pause-badge[data-status="error"], .off-badge[data-status="error"], .on-demand-badge[data-status="error"], .summary-age[data-status="error"], #fleet-breaker-btn2[data-status="error"] { --component-status: var(--status-error); }
-    .status-badge[data-status="info"], .pause-badge[data-status="info"], .off-badge[data-status="info"], .on-demand-badge[data-status="info"], .summary-age[data-status="info"], #fleet-breaker-btn2[data-status="info"] { --component-status: var(--status-info); }
-    .status-badge[data-status="neutral"], .pause-badge[data-status="neutral"], .off-badge[data-status="neutral"], .on-demand-badge[data-status="neutral"], .summary-age[data-status="neutral"], #fleet-breaker-btn2[data-status="neutral"] { --component-status: var(--status-neutral); }
+    .status-badge[data-status="ok"], .pause-badge[data-status="ok"], .off-badge[data-status="ok"], .on-demand-badge[data-status="ok"], .summary-age[data-status="ok"] { --component-status: var(--status-ok); }
+    .status-badge[data-status="warn"], .pause-badge[data-status="warn"], .off-badge[data-status="warn"], .on-demand-badge[data-status="warn"], .summary-age[data-status="warn"] { --component-status: var(--status-warn); }
+    .status-badge[data-status="attention"], .pause-badge[data-status="attention"], .off-badge[data-status="attention"], .on-demand-badge[data-status="attention"], .summary-age[data-status="attention"] { --component-status: var(--status-attention); }
+    .status-badge[data-status="error"], .pause-badge[data-status="error"], .off-badge[data-status="error"], .on-demand-badge[data-status="error"], .summary-age[data-status="error"] { --component-status: var(--status-error); }
+    .status-badge[data-status="info"], .pause-badge[data-status="info"], .off-badge[data-status="info"], .on-demand-badge[data-status="info"], .summary-age[data-status="info"] { --component-status: var(--status-info); }
+    .status-badge[data-status="neutral"], .pause-badge[data-status="neutral"], .off-badge[data-status="neutral"], .on-demand-badge[data-status="neutral"], .summary-age[data-status="neutral"] { --component-status: var(--status-neutral); }
     .nous-config-pill { background: color-mix(in srgb, var(--brand) 8%, transparent); border-color: color-mix(in srgb, var(--brand) 35%, transparent); color: var(--brand); cursor: pointer; }
     /* sidebar count badges use the shared .badge-count recipe; JS marks zero counts with data-zero. */
     .oc-nav-count { margin-left: auto; flex-shrink: 0; }
     /* pill size steps */
     .token-model-chip { padding: 4px 10px; font-size: var(--fs-sm); }
     .nous-config-pill { padding: 3px 10px; font-size: var(--fs-sm); }
-    .oc-health-badge { padding: 3px 12px; font-size: var(--fs-sm); }
     @media (max-width: 480px) {
       .pause-badge { font-size: var(--fs-2xs); padding: 0 5px; margin-left: var(--sp-1); }
     }
@@ -3948,38 +3904,40 @@
   <!-- Light top bar (hidden by default) -->
   <header id="oc-topbar" class="oc-topbar">
     <div class="oc-topbar-left">
-      <button id="oc-drawer-toggle" type="button" aria-label="Open menu"
+      <button id="oc-drawer-toggle" class="nav-chip nav-chip--icon nav-chip--action" type="button" aria-label="Open menu"
               aria-expanded="false" aria-controls="oc-sidebar"
               title="Menu">&#9776;</button>
-      <span id="oc-project-name"></span>
-      <button type="button" id="acmm-badge" data-action="ocNavigate" data-arg0="acmm-eval-section" title="View the current ACMM autonomy level"></button>
+      <span id="oc-project-name" class="oc-project-title"></span>
+      <span class="nav-chip-group" aria-label="Hive status">
+        <button type="button" id="acmm-badge" class="nav-chip nav-chip--level nav-chip--gold" data-action="ocNavigate" data-arg0="acmm-eval-section" title="View the current ACMM autonomy level" aria-label="View ACMM autonomy level"></button>
       <!-- Fleet breaker status chip. Kept in .oc-topbar-left, the shortest group,
            so it cannot wrap the topbar to a third row. State + owner-gating are
            rendered by _renderFleetBreaker; read-only viewers see the disabled
            status chip while owners can toggle it. -->
       <span id="fleet-breaker-wrap" style="display:none">
-        <button type="button" id="fleet-breaker-btn2" class="hv-btn fleet-breaker-chip"
+        <button type="button" id="fleet-breaker-btn2" class="nav-chip nav-chip--status nav-chip--ok fleet-breaker-chip"
                 data-action="toggleFleetBreaker" data-status="ok" aria-pressed="false"
                 title="Fleet breaker: pause every running agent at once. Releasing restores only the agents this breaker paused — on-demand agents and any agent you paused yourself are never touched."
                 aria-label="Fleet breaker: running — click to pause all agents">
-          <span id="fleet-breaker-dot" aria-hidden="true">●</span>
-          <span id="fleet-breaker-pill">running</span>
-          <span id="fleet-breaker-icon" aria-hidden="true"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg></span>
+          <span id="fleet-breaker-dot" class="nav-chip__dot" aria-hidden="true">●</span>
+          <span id="fleet-breaker-pill" class="nav-chip__label">running</span>
+          <span id="fleet-breaker-icon" class="nav-chip__icon" aria-hidden="true"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg></span>
         </button>
       </span>
-      <button type="button" class="hv-btn btn-secondary btn-sm feedback-bug-btn" id="feedback-bug-btn" data-action="openFeedbackModal" data-arg0="reports" title="Feedback reports" aria-label="Feedback reports">🐛<span class="feedback-pill" id="feedback-unread-pill" hidden>0</span></button>
+      <button type="button" class="nav-chip nav-chip--icon nav-chip--action feedback-bug-btn" id="feedback-bug-btn" data-action="openFeedbackModal" data-arg0="reports" title="Feedback reports" aria-label="Feedback reports"><span class="nav-chip__icon" aria-hidden="true">🐛</span><span class="feedback-pill" id="feedback-unread-pill" hidden>0</span></button>
+      </span>
     </div>
     <div class="oc-topbar-center">
-      <button type="button" class="hv-btn btn-secondary btn-sm" id="oc-settings-btn" data-action="openConfigDialog" data-arg0="governor" title="Settings — governor, agents, thresholds, and all hive settings" aria-label="Settings">⚙️ Settings</button>
-      <span id="dashboard-custom-style-note" class="dashboard-custom-style-note" style="display:none" role="status"></span>
+      <button type="button" class="nav-chip nav-chip--action" id="oc-settings-btn" data-action="openConfigDialog" data-arg0="governor" title="Settings — governor, agents, thresholds, and all hive settings" aria-label="Settings"><span class="nav-chip__icon" aria-hidden="true">⚙</span><span class="nav-chip__label">Settings</span></button>
+      <span id="dashboard-custom-style-note" class="nav-chip nav-chip--status nav-chip--neutral dashboard-custom-style-note" style="display:none" role="status"></span>
       <!-- Agent Logs hidden (redundant with per-agent output) -->
-      <button class="hv-btn btn-icon btn-sm layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
+      <button class="nav-chip nav-chip--icon nav-chip--action layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
     </div>
     <div class="oc-topbar-right">
-      <span class="oc-health-badge" id="oc-health">● Health OK</span>
-      <button class="hv-btn btn-secondary btn btn-primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide">🧭 Guide</button>
+      <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
+      <button class="nav-chip nav-chip--primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide"><span class="nav-chip__icon" aria-hidden="true">🧭</span><span class="nav-chip__label">Guide</span></button>
       <div id="oc-gh-avatar-wrap" hidden>
-        <img id="oc-gh-avatar" src="" alt="" data-action="toggleGHUserMenu">
+        <img id="oc-gh-avatar" class="nav-chip nav-chip--icon" src="" alt="" data-action="toggleGHUserMenu" title="GitHub account menu" aria-label="GitHub account menu">
         <div id="oc-gh-user-menu" class="avatar-menu" hidden>
           <div class="avatar-menu-identity"><span id="oc-gh-menu-user"></span><span id="oc-gh-menu-role" class="avatar-menu-role"></span></div>
           <div class="avatar-menu-label">This hive</div>
@@ -4032,7 +3990,7 @@
           <button class="avatar-menu-item avatar-menu-signout" data-action="ghLogout">Sign out</button>
         </div>
       </div>
-      <button class="hv-btn btn-primary gh-auth-btn btn-sm" id="oc-gh-login-btn" data-action="startGHLogin" style="display:none">Sign in</button>
+      <button class="nav-chip nav-chip--primary gh-auth-btn" id="oc-gh-login-btn" data-action="startGHLogin" style="display:none" title="Sign in" aria-label="Sign in">Sign in</button>
     </div>
   </header>
 
@@ -18721,20 +18679,23 @@ function burnAreaChart() {
         if (deepFailNames.length > 0) {
           // Any failing deep check ⇒ the spoke itself is degraded — same
           // verdict the hub renders for this hive's row.
-          ocHealth.textContent = '● Degraded';
-          ocHealth.style.color = 'var(--red)';
-          ocHealth.style.background = 'var(--red-bg)';
-          ocHealth.style.borderColor = 'var(--red-border)';
+          ocHealth.dataset.status = 'error';
+          ocHealth.innerHTML = '<span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Degraded</span>';
+          ocHealth.style.color = '';
+          ocHealth.style.background = '';
+          ocHealth.style.borderColor = '';
         } else if (failing.length > 0) {
-          ocHealth.textContent = `● ${failing.length} Issue${failing.length > 1 ? 's' : ''}`;
-          ocHealth.style.color = 'var(--red)';
-          ocHealth.style.background = 'var(--red-bg)';
-          ocHealth.style.borderColor = 'var(--red-border)';
+          ocHealth.dataset.status = 'error';
+          ocHealth.innerHTML = '<span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">' + failing.length + ' Issue' + (failing.length > 1 ? 's' : '') + '</span>';
+          ocHealth.style.color = '';
+          ocHealth.style.background = '';
+          ocHealth.style.borderColor = '';
         } else {
-          ocHealth.textContent = '● Health OK';
-          ocHealth.style.color = 'var(--green)';
-          ocHealth.style.background = 'var(--green-bg)';
-          ocHealth.style.borderColor = 'var(--green-border)';
+          ocHealth.dataset.status = 'ok';
+          ocHealth.innerHTML = '<span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span>';
+          ocHealth.style.color = '';
+          ocHealth.style.background = '';
+          ocHealth.style.borderColor = '';
         }
       }
       renderGhRateLimits(data.ghRateLimits || {});
@@ -20532,7 +20493,7 @@ function burnAreaChart() {
       if (opts.actionLabel && typeof opts.onAction === 'function') {
         const action = document.createElement('button');
         action.type = 'button';
-        action.className = 'toast-action';
+        action.className = 'nav-chip nav-chip--action toast-action';
         action.textContent = opts.actionLabel;
         action.addEventListener('click', (e) => { e.stopPropagation(); opts.onAction(); dismissToast(el, null, null, true); });
         el.appendChild(action);
@@ -20699,7 +20660,7 @@ function burnAreaChart() {
       if (_sessionExpiredToast && _sessionExpiredToast.parentNode) return _sessionExpiredToast;
       const el = showToast(SESSION_EXPIRED_MESSAGE, 'error');
       const btn = document.createElement('button');
-      btn.className = 'toast-action';
+      btn.className = 'nav-chip nav-chip--action toast-action';
       btn.textContent = 'Sign in';
       // The sticky toast dismisses on any click inside it; the action must not
       // be swallowed by that.
