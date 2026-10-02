@@ -495,6 +495,38 @@ func removeRunStageWorktreeByPath(path string) error {
 	return os.RemoveAll(path)
 }
 
+// spekHubRunKeyMarkerFile records which run key owns a run worktree. The
+// worktree/lock/artifact slot is named after sanitizeRunPromptPath(runKey),
+// which collapses distinct run keys onto the same slug (e.g. "foo/bar-baz#1"
+// and "foo-bar/baz#1" both become "foo-bar-baz-1"), so two unrelated runs can
+// otherwise silently share one worktree, lock and Spektacular project. The
+// marker lets a later prepare detect the collision instead of reusing another
+// run's checkout (hivecommons/hive#10080).
+const spekHubRunKeyMarkerFile = ".hive-run-key"
+
+// verifySpekHubRunWorktreeOwner rejects reusing a run worktree whose slug
+// already belongs to a different run key. A worktree created before this
+// marker existed has none yet and is adopted the next time it is prepared.
+func verifySpekHubRunWorktreeOwner(worktree, runKey string) error {
+	data, err := os.ReadFile(filepath.Join(worktree, spekHubRunKeyMarkerFile))
+	if err != nil {
+		return nil
+	}
+	if owner := strings.TrimSpace(string(data)); owner != "" && owner != runKey {
+		return fmt.Errorf("run worktree slug collision: %q is owned by run %q, refusing to reuse it for %q", worktree, owner, runKey)
+	}
+	return nil
+}
+
+// recordSpekHubRunWorktreeOwner writes the marker verifySpekHubRunWorktreeOwner
+// reads. A write failure only loses collision detection for this generation,
+// so it is logged, not fatal.
+func (e *SpekHubExecutor) recordSpekHubRunWorktreeOwner(worktree, runKey string) {
+	if err := os.WriteFile(filepath.Join(worktree, spekHubRunKeyMarkerFile), []byte(runKey), 0o644); err != nil {
+		e.log().Warn("[spektacular] recording run worktree owner failed", "run", runKey, "worktree", worktree, "error", err)
+	}
+}
+
 func spekHubRunWorktreePath(identity, runKey string) string {
 	if identity == "" || runKey == "" {
 		return ""
@@ -1543,15 +1575,21 @@ func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage)
 	if err := os.MkdirAll(filepath.Dir(repoDir), 0o755); err != nil {
 		return err
 	}
+	worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
+	if err := verifySpekHubRunWorktreeOwner(worktree, st.runKey); err != nil {
+		// Never succeeds on a retry without operator intervention, so it
+		// spends the generation like the repo path check above.
+		return err
+	}
 	authArgs, _, cleanup, err := e.cloneAuthArgs(ctx, st.repo, filepath.Dir(repoDir))
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-	worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
 	if err := e.syncRunWorktree(ctx, st, repoDir, worktree, authArgs); err != nil {
 		return err
 	}
+	e.recordSpekHubRunWorktreeOwner(worktree, st.runKey)
 	if _, err := os.Stat(filepath.Join(worktree, ".spektacular")); errors.Is(err, os.ErrNotExist) {
 		copied, copyErr := copyPreviousSpektacularProject(e.Identity, st.runKey, worktree)
 		if copyErr != nil {

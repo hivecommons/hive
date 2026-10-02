@@ -1,0 +1,1 @@
+- Spektacular hub executor: refuse to reuse a run worktree/lock whose slug collided with a different run key (e.g. `foo/bar-baz#1` and `foo-bar/baz#1` both sanitize to `foo-bar-baz-1`) instead of silently sharing the other run's checkout, Spektacular project and lock ([#10080](https://github.com/hivecommons/hive/issues/10080)).
