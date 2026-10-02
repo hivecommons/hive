@@ -1,0 +1,1 @@
+- dashboard: move PR author from governor strip into user menu (#9986)
