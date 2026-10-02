@@ -1,0 +1,1 @@
+- `ci-runners/lke`: documented the pool-level autoscaler (4–12) and `hive-ci-runner` label that the hand-built `hive-ci` cluster was missing, so autoscaled runner nodes schedule runners; Terraform default floor now matches the live pool.
