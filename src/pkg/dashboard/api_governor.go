@@ -1,7 +1,9 @@
 package dashboard
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -1448,10 +1450,10 @@ func probeModelsWithHeaders(endpoint, apiKey string, extraHeaders map[string]str
 			// the gateway directly while the hive's egress takes a different,
 			// disallowed path (hivecommons/hive#9945).
 			if looksLikeIntermediaryRejection(contentType, gatewayMsg) {
-				return 0, fmt.Errorf("GET %s was refused with HTTP %d by a proxy in front of the gateway, not by the gateway API"+
+				return 0, &probeEdgeRejectedError{fmt.Errorf("GET %s was refused with HTTP %d by a proxy in front of the gateway, not by the gateway API"+
 					" (content-type %q, server %q, non-JSON body) — the configured key was probably never evaluated;"+
 					" check that ingress/WAF/VPN rules allow GET /v1/models from the hive%s: %s",
-					modelsURL, resp.StatusCode, contentType, resp.Header.Get("Server"), describeEgressProxy(req), gatewayMsg)
+					modelsURL, resp.StatusCode, contentType, resp.Header.Get("Server"), describeEgressProxy(req), gatewayMsg)}
 			}
 			// The two auth failures lead users to different fixes.
 			if apiKey == "" {
@@ -1477,6 +1479,60 @@ func probeModelsWithHeaders(endpoint, apiKey string, extraHeaders map[string]str
 		return 0, fmt.Errorf("gateway returned a non-OpenAI /v1/models response")
 	}
 	return len(models), nil
+}
+
+// probeEdgeRejectedError marks a /v1/models probe failure that an ingress,
+// WAF or VPN proxy in front of the gateway produced (an HTML/empty 401/403),
+// so callers can tell "the edge blocked model listing" apart from "the
+// gateway rejected the key" and try the inference path instead.
+type probeEdgeRejectedError struct{ err error }
+
+func (e *probeEdgeRejectedError) Error() string { return e.err.Error() }
+func (e *probeEdgeRejectedError) Unwrap() error { return e.err }
+
+// probeLiteLLMInference sends a minimal 1-token chat completion for model to
+// {endpoint}/v1/chat/completions — the same path the inference translator
+// uses. It is the Test Connection fallback for gateways whose edge blocks
+// GET /v1/models while allowing inference: an operator whose key works for
+// completions from their laptop must not be told the configuration is broken
+// just because model listing is filtered (hivecommons/hive#9945).
+func probeLiteLLMInference(endpoint, apiKey, model string) error {
+	chatURL := strings.TrimRight(endpoint, "/") + "/v1/chat/completions"
+	payload, err := json.Marshal(map[string]interface{}{
+		"model":      model,
+		"messages":   []map[string]string{{"role": "user", "content": "ping"}},
+		"max_tokens": 1,
+	})
+	if err != nil {
+		return fmt.Errorf("building request: %w", err)
+	}
+	req, err := http.NewRequest("POST", chatURL, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("building request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	client := &http.Client{Timeout: litellmProbeTimeout, CheckRedirect: noRedirectToPrivate}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("cannot reach gateway for POST %s%s: %w", chatURL, describeEgressProxy(req), err)
+	}
+	defer closeHTTPBody(resp.Body)
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, litellmProbeMaxErrBody))
+	gatewayMsg := redactLiteLLMKeyMaterial(strings.TrimSpace(string(body)))
+	contentType := resp.Header.Get("Content-Type")
+	if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) &&
+		looksLikeIntermediaryRejection(contentType, gatewayMsg) {
+		return fmt.Errorf("POST %s (model %q) was also refused with HTTP %d by a proxy in front of the gateway"+
+			" (server %q), so inference from the hive is blocked too, not just model listing%s: %s",
+			chatURL, model, resp.StatusCode, resp.Header.Get("Server"), describeEgressProxy(req), gatewayMsg)
+	}
+	return fmt.Errorf("POST %s (model %q) returned HTTP %d: %s", chatURL, model, resp.StatusCode, gatewayMsg)
 }
 
 // redactSecret removes any occurrence of a secret value from a message so
@@ -1577,6 +1633,25 @@ func (s *Server) liteLLMProbeResult(lc *config.LiteLLMConfig, overrideKey string
 	}
 	n, err := probeLiteLLMModels(ep, probeKey)
 	if err != nil {
+		// When an edge proxy (not the gateway) refused GET /v1/models, the
+		// configuration may still be perfectly good for inference — exactly
+		// what the operator verified from their laptop. Test the inference
+		// path the hive actually uses with the default model before
+		// declaring the connection failed (hivecommons/hive#9945).
+		var edgeErr *probeEdgeRejectedError
+		if errors.As(err, &edgeErr) && lc.DefaultModel != "" {
+			infErr := probeLiteLLMInference(ep, probeKey, lc.DefaultModel)
+			if infErr == nil {
+				return map[string]interface{}{
+					"ok":                true,
+					"models":            0,
+					"modelsListBlocked": true,
+					"inferenceModel":    lc.DefaultModel,
+					"warning":           redactSecret(err.Error(), probeKey),
+				}
+			}
+			err = fmt.Errorf("%w; fallback inference check with default model also failed: %v", err, infErr)
+		}
 		return map[string]interface{}{"ok": false, "error": redactSecret(err.Error(), probeKey)}
 	}
 	result := map[string]interface{}{"ok": true, "models": n}

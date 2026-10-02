@@ -20032,6 +20032,11 @@ function burnAreaChart() {
               showResult('Saved, but the connection test failed: ' + data.probe.error + '\nFix the endpoint or key and Save & Test again.', false);
               return;
             }
+            if (data.probe && data.probe.ok && data.probe.modelsListBlocked) {
+              showToast(`LiteLLM configured — inference with ${data.probe.inferenceModel} works, but model listing (GET /v1/models) is blocked in front of the gateway`, 'info');
+              close(true);
+              return;
+            }
             const n = data.probe && data.probe.ok ? data.probe.models : null;
             showToast(n === null ? 'LiteLLM endpoint saved' : `LiteLLM configured — ${n} model${n === 1 ? '' : 's'} available`, 'success');
             close(true);
@@ -22634,6 +22639,11 @@ function burnAreaChart() {
     // {ok:false, error}) from the save/test endpoints. Live results only —
     // the server never counts static fallback aliases here.
     function litellmProbeMessage(probe) {
+      if (probe.ok && probe.modelsListBlocked) {
+        // /v1/models was refused by a proxy in front of the gateway, but a
+        // 1-token inference call with the default model succeeded (#9945).
+        return { ok: true, msg: `LiteLLM OK — inference with ${probe.inferenceModel} works, but model listing is blocked: ${probe.warning}` };
+      }
       if (probe.ok) {
         const base = `LiteLLM OK — ${probe.models} model${probe.models === 1 ? '' : 's'} available`;
         // probe.usable: the gateway advertises the full catalog but this key's
