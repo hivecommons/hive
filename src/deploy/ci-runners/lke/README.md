@@ -128,15 +128,17 @@ inherit it. If the pool was created outside Terraform, `terraform import` it
 Symptom to watch for: `autoscalingrunnersets` shows `PENDING` ≫ 0 for more
 than ~5 minutes while `kubectl get nodes` stays flat.
 
-Expect a short burst of red jobs right after a scale-out. Runners share the
-node-local `/var/lib/hive-ci/toolcache` hostPath, and on a brand-new node it
-is empty, so the first ~9 concurrent `actions/setup-go` steps race to extract
-the same Go release into it. The losers fail with
-`ENOENT: no such file or directory, copyfile '…/go/api/go1.10.txt'` or
-`Command failed:  version`. Once one extraction finishes the node is warm and
-the failures stop; just re-run the failed jobs. If this becomes noisy,
-pre-warm the cache with a node-prep DaemonSet instead of relying on the first
-jobs to populate it.
+Fresh nodes also start with an empty node-local `/var/lib/hive-ci/toolcache`.
+Without coordination the first ~10 concurrent `actions/setup-go` /
+`setup-node` steps race to extract the same release into it and clobber each
+other (`ENOENT … copyfile '…/go/api/go1.10.txt'`, `Command failed:  version`,
+`npm: command not found` — hivecommons/hive#10234). The `warm-toolcache` init
+container in `hive-runners-lke-values.yaml` closes this: every runner pod
+takes a node-wide `flock`, the first one downloads Go `GO_VERSION` and Node
+`NODE_VERSION` into the cache layout setup-* expect (`<tool>/<ver>/x64` +
+`x64.complete`), and the rest skip. Bump those two env values when `src/go.mod`
+or the `node-version: '22'` resolution moves; a stale value only forfeits the
+protection for that tool.
 
 ## 4. ARC controller and system services
 
