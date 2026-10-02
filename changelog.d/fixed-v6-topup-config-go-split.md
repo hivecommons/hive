@@ -1,0 +1,1 @@
+- Fixed `v6 Top-up` auto-resolving the guaranteed `src/pkg/config/config.go` forward-merge conflict (v6 split it into topical files in #9386, so every v5 edit to the old monolith conflicts) the same way it already handles `discord/` deletions, instead of failing for a human on every v5 push (#9956)

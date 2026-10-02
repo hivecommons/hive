@@ -86,20 +86,39 @@ jobs:
           if git merge --no-ff --signoff origin/v5 \
                -m "🌱 Forward-merge v5 into v6 (${{ steps.drift.outputs.behind }} commits)"; then
             echo "conflict=false" >> "$GITHUB_OUTPUT"
-          # v6 removed discord/ (#9277) while v5 still develops it, so every v5
-          # discord commit is a guaranteed modify/delete conflict. When the ONLY
-          # conflicts are v5 edits to files v6 deleted under discord/, keep the
-          # deletion and finish the merge instead of paging a human. Anything
-          # else (content conflicts, deletions outside discord/) still fails
-          # loudly below.
+          # Two guaranteed, permanent conflicts get auto-resolved instead of
+          # paging a human every time:
+          #   - v6 removed discord/ (#9277) while v5 still develops it, so
+          #     every v5 discord commit is a modify/delete conflict there.
+          #     Keep v6's deletion.
+          #   - v6 split src/pkg/config/config.go into topical files (#9386)
+          #     and kept a slim config.go, while v5 keeps growing the old
+          #     monolith, so every v5 edit to it conflicts here too (#9956).
+          #     v6's file already carries the equivalent behavior in the
+          #     split files, so keep v6's side.
+          # When the ONLY conflicts match one of those two patterns, resolve
+          # them and finish the merge. Anything else (other content
+          # conflicts, deletions outside discord/) still fails loudly below.
           elif unmerged="$(git status --porcelain | grep -E '^(DD|AU|UD|UA|DU|AA|UU) ' || true)" \
                && [ -n "$unmerged" ] \
-               && ! printf '%s\n' "$unmerged" | grep -qvE '^DU discord/'; then
-            printf '%s\n' "$unmerged" | awk '{print $2}' | xargs git rm -q --
+               && ! printf '%s\n' "$unmerged" | grep -qvE '^DU discord/|^UU src/pkg/config/config\.go$'; then
+            resolved=0
+            while IFS= read -r entry; do
+              [ -n "$entry" ] || continue
+              status="${entry%% *}"
+              file="${entry#* }"
+              if [ "$status" = "DU" ]; then
+                git rm -q -- "$file"
+              else
+                git checkout --ours -- "$file"
+                git add -- "$file"
+              fi
+              resolved=$((resolved + 1))
+            done <<<"$unmerged"
             # --cleanup=strip: --no-edit would otherwise keep the "# Conflicts:"
             # comment lines git leaves in MERGE_MSG.
             git commit --no-edit --signoff --cleanup=strip
-            echo "Auto-resolved: kept v6's deletion of $(printf '%s\n' "$unmerged" | wc -l | tr -d ' ') discord/ file(s) v5 modified."
+            echo "Auto-resolved: kept v6's side of ${resolved} known-structural conflict(s) (discord/ deletions, src/pkg/config/config.go split)."
             echo "conflict=false" >> "$GITHUB_OUTPUT"
           else
             # Inventory the conflict BEFORE aborting (#7337): hunk and line
