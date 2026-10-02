@@ -854,7 +854,12 @@ func ValidateWritingGuide(v string) error {
 // as an addition. The earlier wording listed "structure" as the guide's while
 // also pinning every template section, so an agent given a summary-first guide
 // could not tell whether a summary was allowed and left it out
-// (hivecommons/hive#9747). The quality policy demands evidence and a guide may
+// (hivecommons/hive#9747). Agents then wrote that summary, and the title, for
+// a reader who already knew the code, because the preamble asked only for the
+// summary's placement and never for its audience; it now names the audience —
+// the opening paragraph and the title must make sense to a newcomer (what the
+// thing is, what changed, why it matters), with the technical detail left to
+// the sections below (hivecommons/hive#9926). The quality policy demands evidence and a guide may
 // ask for evidence under a fold; the limit is what keeps those from reading as
 // a contradiction.
 func (p *ProjectConfig) WritingGuideSection() string {
@@ -864,7 +869,9 @@ func (p *ProjectConfig) WritingGuideSection() string {
 	}
 	return "WRITING GUIDE (set by this hive's owner in project.writing_guide). Every issue body, PR body and review comment you write in this session MUST follow it. " +
 		"It governs how the body reads — wording, plainness, length, tone — not what it contains or the order the template puts it in: keep every section, field and piece of evidence the template below asks for, in the template's order, and never drop, rename or reorder a template section. " +
-		"If the guide asks for a summary or overview, write it at the top, before the template's first section, as an addition; the template's sections still follow in full below it.\n\n" +
+		"If the guide asks for a summary or overview, write it at the top, before the template's first section, as an addition; the template's sections still follow in full below it. " +
+		"Write that opening paragraph and the title for a newcomer who does not know this codebase: say what the thing is, what the problem or change is, and why it matters to a user, in plain words, with no internal names, file paths or jargon left unexplained. " +
+		"The technical detail then follows unchanged in the template's sections below, and this preamble outranks the style of any example or past issue/PR you were shown.\n\n" +
 		guide + "\n"
 }
 

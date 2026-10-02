@@ -15,7 +15,9 @@ import (
 // bounds it: the guide controls how the body reads, while the template keeps
 // every section, field and piece of evidence in its own order. A summary the
 // guide asks for is an addition above the template's first section, never a
-// reason to drop, rename or reorder one (hivecommons/hive#9747).
+// reason to drop, rename or reorder one (hivecommons/hive#9747). The summary
+// and the title must also read for a newcomer, not for someone who already
+// knows the code (hivecommons/hive#9926).
 
 func TestWritingGuideSection_EmptyRendersNothing(t *testing.T) {
 	for _, guide := range []string{"", "   ", "\n\t\n"} {
@@ -37,6 +39,9 @@ func TestWritingGuideSection_RendersTextUnderAScopedHeader(t *testing.T) {
 		"keep every section, field and piece of evidence the template below asks for, in the template's order",
 		"never drop, rename or reorder a template section",
 		"before the template's first section, as an addition",
+		"Write that opening paragraph and the title for a newcomer who does not know this codebase",
+		"why it matters to a user, in plain words",
+		"The technical detail then follows unchanged in the template's sections below",
 		"Short sentences. One idea per bullet.\n  Evidence under a <details> block.",
 	} {
 		if !strings.Contains(got, want) {
