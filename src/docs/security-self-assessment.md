@@ -634,7 +634,7 @@ project-level compliance signals:
   Dockerfiles, workflow definitions, deploy manifests, SUID contract checks,
   and key/cookie/session handling), and every entry names all three current
   maintainers (`@clubanderson`, `@hanthor`, `@Danathar`). The remaining
-  repo-side step is enabling "Require review from Code Owners" in `v4` branch
+  repo-side step is enabling "Require review from Code Owners" in `v5` branch
   protection; until that is enabled, CODEOWNERS is still advisory rather than
   enforced — see [Known weaknesses](#three-most-significant-known-weaknesses).
 
@@ -967,7 +967,7 @@ repository and answered below. Where the answer is "no," it says no.
   written from itself rather than checked against the programme's API.
 
 - **What is the current OpenSSF Scorecard result?** Intentionally not frozen
-  into this document — the workflow runs weekly and on every push to `v4`,
+  into this document — the workflow runs weekly and on the configured branch pushes,
   and a reviewer should read the live result rather than a stale number.
   This is the one item from the original list that remains deliberately
   unanswered here, and the reason is that quoting it would make the document
