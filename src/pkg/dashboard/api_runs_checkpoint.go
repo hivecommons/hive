@@ -178,6 +178,21 @@ func (s *Server) handleRunCheckpointDecision(w http.ResponseWriter, r *http.Requ
 		}
 		s.auditFromRequest(r, "design_reject", auditDetail("epic", payload.PlanEpicID, "run", payload.RunKey, "surface", "run_checkpoint"), agentName)
 	default:
+		// Retry the plan lease this checkpoint names at the reviewed
+		// generation first, as approve advances it, rather than finding it
+		// again through the epic's metadata: a held plan's reject re-mints
+		// it or refuses, never answers 200 with the run still parked
+		// (hivecommons/hive#10063).
+		if payload.Stage == StagePlan {
+			if _, err := s.retryCheckpointLease(payload.RunKey, StagePlan, payload.Gen, now); err != nil {
+				status := runResetErrorStatus(err)
+				if errors.Is(err, errRunCheckpointNotHeld) {
+					status = http.StatusConflict
+				}
+				jsonError(w, err.Error(), status)
+				return
+			}
+		}
 		if err := planning.RejectPlan(store, payload.PlanEpicID); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return

@@ -1,0 +1,1 @@
+- runs: rejecting a plan at the run checkpoint now re-mints the exact plan generation the owner reviewed, and refuses with a conflict instead of answering success when that run is no longer held there (#10061, #10062, #10063)
