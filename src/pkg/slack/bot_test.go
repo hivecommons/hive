@@ -722,32 +722,75 @@ func TestSplitSlackMessageBalancesFencedParagraphs(t *testing.T) {
 	}
 }
 
+// ackFailConn wraps a dialed net.Conn so the write carrying the socket ack
+// fails deterministically: once a read has surfaced the ackMarker (the
+// envelope_id of the message the server sent), every later write on this
+// conn errors. This replaces timing against a real TCP teardown — whether a
+// post-close write observes the RST before the local kernel accepts it into
+// its send buffer is a race, which made this test flake (hivecommons/hive#9935).
+type ackFailConn struct {
+	net.Conn
+	ackMarker  []byte
+	mu         sync.Mutex
+	seen       []byte
+	failWrites atomic.Bool
+}
+
+func (c *ackFailConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.mu.Lock()
+		c.seen = append(c.seen, p[:n]...)
+		if bytes.Contains(c.seen, c.ackMarker) {
+			c.failWrites.Store(true)
+		}
+		c.mu.Unlock()
+	}
+	return n, err
+}
+
+func (c *ackFailConn) Write(p []byte) (int, error) {
+	if c.failWrites.Load() {
+		return 0, errors.New("simulated ack write failure")
+	}
+	return c.Conn.Write(p)
+}
+
 func TestConsumeSocketAckFailureSkipsDelivery(t *testing.T) {
-	upgrader := websocket.Upgrader{}
 	apiBase := ""
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/apps.connections.open":
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "url": strings.Replace(apiBase+"/socket", "http", "ws", 1)})
 		case "/socket":
-			conn, err := upgrader.Upgrade(w, r, nil)
+			conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
 			if err != nil {
 				return
 			}
+			defer conn.Close()
 			payload, _ := json.Marshal(eventPayload{Event: slackEvent{Type: "message", Channel: "C1", Text: "!kick scanner", User: "U1", TS: "1"}})
 			_ = conn.WriteJSON(socketEnvelope{EnvelopeID: "needs-ack", Type: "events_api", Payload: payload})
-			if tcp, ok := conn.UnderlyingConn().(*net.TCPConn); ok {
-				_ = tcp.SetLinger(0)
-			}
-			_ = conn.UnderlyingConn().Close()
 		}
 	}))
 	defer ts.Close()
 	apiBase = ts.URL
 
 	b := newTestBot(ts.URL)
+	dialer := websocket.Dialer{
+		NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			return &ackFailConn{Conn: conn, ackMarker: []byte("needs-ack")}, nil
+		},
+	}
+	b.dial = dialer.DialContext
+
 	queue := make(chan chat.Message, 10)
-	_ = consumeOnce(context.Background(), b, queue)
+	if err := consumeOnce(context.Background(), b, queue); err == nil {
+		t.Fatal("consumeOnce = nil, want error from simulated ack write failure")
+	}
 	if len(queue) != 0 {
 		t.Fatalf("delivered = %d, want 0 when ack fails", len(queue))
 	}

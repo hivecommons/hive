@@ -1,0 +1,1 @@
+- Made TestConsumeSocketAckFailureSkipsDelivery deterministic by injecting a wrapped net.Conn that fails the socket ack write once it has observed the envelope on the wire, instead of racing a real TCP teardown (#9935)
