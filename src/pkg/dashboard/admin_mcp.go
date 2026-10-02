@@ -60,10 +60,38 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 	if p.server == nil {
 		return nil, fmt.Errorf("%w: dashboard server unavailable", adminmcp.ErrForbidden)
 	}
+	if tool == adminmcp.ToolReviewQueue {
+		issuesPath, prsPath := adminmcp.ReviewQueueReadPaths(args)
+		issues, err := p.get(tool, issuesPath)
+		if err != nil {
+			return nil, err
+		}
+		prs, err := p.get(tool, prsPath)
+		if err != nil {
+			return nil, err
+		}
+		return adminmcp.ReviewQueueResult(issues, prs, args)
+	}
 	path, ok := adminMCPReadPath(tool, args)
 	if !ok {
 		return nil, fmt.Errorf("%w: unsupported admin MCP read tool", adminmcp.ErrForbidden)
 	}
+	data, err := p.get(tool, path)
+	if err != nil {
+		return nil, err
+	}
+	if tool == adminmcp.ToolIssuesByBand || tool == adminmcp.ToolPrsByBand {
+		return adminmcp.BandReadResult(tool, data, args)
+	}
+	if tool == adminmcp.ToolGovernorSetup {
+		return adminmcp.GovernorSetupProposal(data)
+	}
+	return adminmcp.CapResult(data, adminmcp.LimitFromArgs(args)), nil
+}
+
+// get serves one admin MCP read through the dashboard mux as the caller and
+// decodes the JSON answer.
+func (p dashboardAdminMCPProvider) get(tool, path string) (any, error) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	if p.user != "" {
@@ -76,62 +104,7 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 	if rec.Code < http.StatusOK || rec.Code >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("admin MCP read %s returned HTTP %d", tool, rec.Code)
 	}
-	data, err := decodeAdminMCPJSON(rec.Body.Bytes())
-	if err != nil {
-		return nil, err
-	}
-	if tool == adminmcp.ToolIssuesByBand || tool == adminmcp.ToolPrsByBand {
-		return adminmcp.BandReadResult(tool, rekeyOverviewBandRows(data), args)
-	}
-	return adminmcp.CapResult(data, adminmcp.LimitFromArgs(args)), nil
-}
-
-// rekeyOverviewBandRows rewrites each row's "band" field from the Overview
-// display label (e.g. "Confirm & close") that overviewIssueCSVRow /
-// overviewPRCSVRow set it to, back to the band key (e.g. "done") the
-// response's own bands[] already carries alongside that label. Without this,
-// adminmcp.BandReadResult's band argument — documented and validated against
-// the band keys — never matches a row's band field, so band=<key> always
-// returns zero rows (#10018). The CSV/JSON Overview export itself is
-// unaffected: rekeyOverviewBandRows only edits the decoded copy admin MCP
-// feeds to BandReadResult, not the HTTP response already written to rec.
-func rekeyOverviewBandRows(data any) any {
-	body, ok := data.(map[string]any)
-	if !ok {
-		return data
-	}
-	bands, ok := body["bands"].([]any)
-	if !ok {
-		return data
-	}
-	labelToKey := make(map[string]string, len(bands))
-	for _, raw := range bands {
-		spec, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		key, _ := spec["key"].(string)
-		label, _ := spec["label"].(string)
-		if key != "" && label != "" {
-			labelToKey[label] = key
-		}
-	}
-	rows, ok := body["rows"].([]any)
-	if !ok {
-		return data
-	}
-	for _, raw := range rows {
-		row, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		if label, ok := row["band"].(string); ok {
-			if key, ok := labelToKey[label]; ok {
-				row["band"] = key
-			}
-		}
-	}
-	return data
+	return decodeAdminMCPJSON(rec.Body.Bytes())
 }
 
 func adminMCPReadPath(tool string, args map[string]any) (string, bool) {
