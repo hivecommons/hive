@@ -1302,6 +1302,11 @@ func applyRunArtifactStatus(run *Run, events []timeline.Event) {
 	if run.ArtifactName != "" && run.ArtifactID != "" && run.DocumentStatus != "" && run.CurrentStep != "" {
 		return
 	}
+	// The implement stage has no Spektacular document; falling back to any
+	// stage would report the plan document's status as implement's (#10121).
+	if preferredStage == StageImplement {
+		return
+	}
 	preferredStage = ""
 	for _, ev := range events {
 		if apply(ev) {
