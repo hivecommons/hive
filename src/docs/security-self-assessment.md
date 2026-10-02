@@ -20,7 +20,7 @@ application ([cncf/sandbox#516](https://github.com/cncf/sandbox/issues/516)).
 > | "Have you red teamed `ioscan`? Is this perfect defense or partial mitigation?" | Answered, then **measured**: [ioscan-red-team.md](ioscan-red-team.md) runs a 43-payload adversarial corpus and publishes the result — **42% withheld, 58% reached the agent**, with the containment credited to the network deny rules and verified across all four ACMM modes on every test run ([#6685](https://github.com/hivecommons/hive/issues/6685)). |
 > | "What is redaction for? What about base64-encoded exfiltration?" | Log scrubbing re-scoped as log hygiene, explicitly **not** an exfiltration control. Running the question against the canary path found a real gap — the egress check was substring-only — filed as [#6686](https://github.com/hivecommons/hive/issues/6686) and **since fixed**: the proxy now decodes and normalizes outbound bodies before matching canaries. |
 > | "Get an OpenSSF passing badge." | **Already held, and this document was wrong to imply otherwise.** [Project 14261](https://www.bestpractices.dev/projects/14261) reached **passing** (100%) on 2026-08-27 — four days before the review — and `README.md` was displaying it throughout. The badge entry has since been corrected: 70 URLs in its criteria justifications still pointed at the pre-migration `kubestellar` org. Tracked in [#6684](https://github.com/hivecommons/hive/issues/6684). |
-> | "This is a huge risk. Why not mitigate it?" | Half was mitigated: the roster went from **one maintainer to three**, across three affiliations, with a documented security-response process. The unmitigated half — unenforced code ownership — is now stated as the largest remaining process risk, with scoped enforcement tracked in [#6687](https://github.com/hivecommons/hive/issues/6687). |
+> | "This is a huge risk. Why not mitigate it?" | Half was mitigated: the roster went from **one maintainer to three**, across three affiliations, with a documented security-response process. The unmitigated half — unenforced code ownership — is now stated as the largest remaining process risk, with scoped CODEOWNERS added but branch protection still unenforced. |
 > | "Looks like AI generated this — you should know the answer." | The "Case studies: not applicable" claim was simply **wrong**: `ADOPTERS.md` lists seven adopters, three in production, one running at ACMM L5/L6 across 43 repositories. Replaced with the real table. |
 > | "Go through the open questions and figure them out." | The open-questions section is gone. Every item was run down against the repository and answered in [Questions resolved since first review](#questions-resolved-since-first-review) — including two answers that are "no." |
 >
@@ -35,7 +35,7 @@ application ([cncf/sandbox#516](https://github.com/cncf/sandbox/issues/516)).
 > | "Where are GitHub tokens and inference keys stored? What is compromised if an operator is? What threatens install/update?" | New [Credentials: where they live and what falls with them](#credentials-where-they-live-and-what-falls-with-them) — a storage table, a blast-radius table per actor, and the supply-chain facts for install/upgrade. |
 > | "How does hive authenticate a contributor/relay?" | New [Contributor relay authentication](#contributor-relay-authentication). |
 > | "Were threats identified on the hub↔spoke interface?" | New [Hub ↔ spoke interface](#hub--spoke-interface) with a threat table. The finding that hub→spoke config pushes relied on TLS alone ([#7082](https://github.com/hivecommons/hive/issues/7082)) is now **mitigated**: responses are Ed25519-signed with the hub's existing key and bound to `hive_id` plus a monotonic `seq`, rolled out log-only before enforcing. |
-> | "What would `fail_mode: closed` and canaries-on by default cost? Are they partial mitigations? Plans?" | The document's own framing was wrong: `open` **redacts** and continues, it does not pass injection through. Corrected in three places. Defaults plan tracked in [#7083](https://github.com/hivecommons/hive/issues/7083). |
+> | "What would `fail_mode: closed` and canaries-on by default cost? Are they partial mitigations? Plans?" | The document's own framing was wrong: `open` **redacts** and continues, it does not pass injection through. Corrected in three places. Defaults shipped in [#7095](https://github.com/hivecommons/hive/pull/7095) after being tracked in [#7083](https://github.com/hivecommons/hive/issues/7083). |
 > | "The red-team section duplicates `ioscan-red-team.md`." | Cut to a summary that links out. |
 > | "The image bundles every CLI backend — by design?" | Yes; stated as a tradeoff with its cost and the roadmap under [Security relevant components](#security-relevant-components). |
 > | "Some sections are dense." | Long paragraphs in the critical-components and weaknesses sections broken up or replaced with tables; a stale "no adversarial testing has occurred" answer in the appendix corrected. |
@@ -65,7 +65,7 @@ writing) wherever a specific mechanism is asserted.
 | Assessment Stage | Complete |
 | Software | [hivecommons/hive](https://github.com/hivecommons/hive) |
 | Security Provider | No — Hive is not itself a security product. It is an agent-orchestration platform whose core value proposition includes constraining the blast radius of the AI agents it runs; see [Overview](#overview) below. |
-| Languages | Go (core: dashboard, hub, proxy, scheduler, agent orchestration — `src/go.mod`); JavaScript (dashboard UI, served inline, no separate SPA build — see `dashboard/`); Shell/Python (deterministic pipeline scripts under `src/bin/`, 45 scripts per [`bin/README.md`](https://github.com/hivecommons/hive/blob/v4/bin/README.md)) |
+| Languages | Go (core: dashboard, hub, proxy, scheduler, agent orchestration — `src/go.mod`); JavaScript (dashboard UI, served inline, no separate SPA build — see `dashboard/`); Shell/Python (deterministic pipeline scripts under `bin/`, indexed in [`bin/README.md`](https://github.com/hivecommons/hive/blob/v4/bin/README.md)) |
 | SBOM | Tagged releases publish standalone SPDX JSON SBOM release assets for `hive`, `hive-contributor`, and `hive-hub` (`hive-v<version>-sbom.spdx.json`, `hive-contributor-v<version>-sbom.spdx.json`, `hive-hub-v<version>-sbom.spdx.json`) generated by Syft against the already-published GHCR images; see [releases.md](releases.md#software-bill-of-materials-sbom). These are deliberately **out-of-band** files, not in-image attestations. `docker.yml` keeps `provenance: false`/`sbom: false` (`docker.yml:295,346,631,818`) because `build-push-action` attestations force an OCI image index and reintroduced the #3760 container-runtime crash loop. The guard in `src/scripts/check-no-image-attestations.sh` asserts the image builds keep plain manifests. |
 | Security links | See table below |
 
@@ -84,8 +84,8 @@ writing) wherever a specific mechanism is asserted.
 
 Hive orchestrates fleets of AI coding-agent processes (backends: Claude,
 GitHub Copilot, Gemini, Goose, Bob, Agy) that autonomously maintain software
-projects hosted on GitHub (and GitHub Enterprise/GitLab/Gitea via the
-"Forge App" abstraction) — filing issues, opening pull requests, reviewing
+projects hosted on GitHub and GitHub Enterprise — filing issues, opening pull
+requests, reviewing
 code, and, at the highest autonomy setting, merging. Agents run as CLI
 subprocesses inside tmux sessions, in a container or Kubernetes pod, and
 authenticate to the source-control provider with a GitHub App installation
@@ -275,7 +275,7 @@ any external contributor's PR and is never merge-eligible on its own.
 - Hive does not sandbox agent code execution at the level of per-run
   containers or microVMs today — agents share one container's process
   namespace, separated by per-UID isolation, not process/kernel isolation.
-  This is a documented, open, tracked gap (issue #2804 — see
+  This is a documented gap (issue #2804; see
   `security-threat-model.md` "Residual risks and known gaps").
 - Hive does not provide a general-purpose network content firewall. The MITM
   proxy inspects `api.github.com` (and, per `src/pkg/proxy/rules.go:78-80`,
@@ -305,37 +305,34 @@ control removes it; the controls bound the consequences.
 |---|---|---|
 | Attacker text talks an agent into **merging** malicious code | `PUT /pulls/{n}/merge` is **hard-denied for every ACMM mode** at the proxy (`rules.go:215-226`), as is the GraphQL merge mutation. The agent never holds a credential path to merge; `hive-merge` runs as Hive with a SHA-pinned eligibility binding. | `ioscan`. A sufficiently clever prompt defeats a scanner; it does not defeat a rule table the model never sees. |
 | Attacker text talks an agent into **opening a PR** with a backdoor | `POST /pulls` is likewise hard-denied for every mode. PR creation goes through `hive-open-pr` as the App bot, attribution-stamped and audit-logged. | Nothing prevents the *content* of a legitimately-created PR from being attacker-influenced. Review it like any other PR. |
-| Attacker exfiltrates your **secrets** via the agent | Mode-tiered tokens mean low-tier agents never hold code-write credentials. Optional `ioscan` canaries detect prompt contents echoed into outbound GitHub writes at the proxy, including base64/hex/URL-encoded, reversed and split spellings of the token. | Canaries are **default-off**, and their transform list is finite — an encoding it does not model still passes. `git-receive-pack` bodies are unscannable, and non-GitHub egress is tunneled without inspection. |
-| Agent burns your **inference budget** in a loop | Seven-day rolling token budget suppresses kicks on exhaustion. | Nothing caps the *rate* within budget. |
+| Attacker exfiltrates your **secrets** via the agent | Mode-tiered tokens mean low-tier agents never hold code-write credentials. `ioscan` canaries, which default on unless an operator sets `canaries: false`, detect prompt contents echoed into outbound GitHub writes at the proxy, including base64/hex/URL-encoded, reversed and split spellings of the token. | Canaries are not exhaustive: their transform list is finite, so an encoding it does not model still passes. `git-receive-pack` bodies are unscannable, and non-GitHub egress is tunneled without inspection. |
+| Agent burns your **inference budget** in a loop | A configurable token-budget window (default seven days) suppresses kicks on exhaustion. | Nothing caps the *rate* within budget. |
 | Compromised agent attacks **other agents** on the same spoke | Per-UID separation stops tmux attach and token-file reads. | Shared container/kernel. See weakness #2. |
 
 **The three settings that actually determine your exposure**, in order:
 
-1. **Your ACMM level.** At L1–L3 an agent can observe and file issues but
-   cannot write code; at L6 it can merge. This single dial moves prompt
+1. **Your ACMM level.** At L1–L2 an agent does not write code; at L3
+   `quality` may open hold-gated PRs; only L6 auto-merges. This single dial moves prompt
    templates, credential scope, CLI tool-denies and proxy rules together. It
    is the control to reason about first, and it is the one an operator
    chooses rather than inherits.
 2. **Whether the governed repository is public.** A private repository with
    trusted collaborators collapses most of the untrusted-input surface. The
    threat model above is substantially a *public-repository* threat model.
-3. **Whether you enabled `ioscan.canaries` and `fail_mode: closed`.** Both
-   default off. Be precise about what the defaults do: `fail_mode: open`
+3. **Whether you accept or override the `ioscan` canary and fail-mode defaults.**
+   `ioscan.canaries` now defaults on everywhere (set `canaries: false` to opt
+   out). `ioscan.fail_mode` has a level-aware default: it stays `open` at
+   ACMM L1–L4, and resolves to `closed` at ACMM L5/L6 via the L5/L6 packs,
+   where agents can merge. An explicit per-hive `fail_mode` overrides the
+   level default either way. Be precise about what those modes do: `open`
    **redacts** a Critical finding and continues the kick — it does not pass
    the injection through; `closed` blocks the kick and writes an
    `ioscan_fail_closed` audit entry. The cost of `closed` is that every
-   Critical false positive becomes a stalled queue item needing an operator.
-   Canaries add a per-kick marker and an egress scan. Both are partial
-   mitigations (see below); a security-sensitive deployment should enable
-   both. The project's plan is to make canaries the default everywhere and
-   `closed` the default at ACMM ≥ L5, where agents can merge
-   ([#7083](https://github.com/hivecommons/hive/issues/7083)). **Update — this
-   shipped in [#7095](https://github.com/hivecommons/hive/pull/7095):**
-   `ioscan.canaries` now defaults on everywhere (set `canaries: false` to opt
-   out), and `fail_mode` now defaults to `closed` at ACMM L5/L6 via the L5/L6
-   packs while staying `open` at L1–L4, with an explicit per-hive `fail_mode`
-   overriding the level default either way. The stalled-queue-item cost above
-   is therefore now a default at L5/L6, not an opt-in.
+   Critical false positive becomes a stalled queue item needing an operator;
+   that cost is now the default at L5/L6. Canaries add a per-kick marker and
+   an egress scan. Both are partial mitigations (see below), and the current
+   defaults shipped in [#7095](https://github.com/hivecommons/hive/pull/7095)
+   after being tracked in [#7083](https://github.com/hivecommons/hive/issues/7083).
 
 **What we would tell a new operator.** Start at L1–L3 on a repository you
 would not mind an agent filing a bad issue on. Read the attribution trailers
@@ -353,11 +350,11 @@ choose an autonomy level with that outcome in mind rather than the happy path.
 ## Self-assessment use
 
 This self-assessment is created by the Hive maintainers to perform an initial
-evaluation of the project's security posture as part of the CNCF Incubation
+evaluation of the project's security posture as part of the CNCF Sandbox
 application process. It is not a substitute for a third-party audit or
 penetration test — neither has been performed on this project to date (see
 [Security issue resolution](#security-issue-resolution)). TAG-Security and
-the CNCF community may use it to assess Hive for Incubation and may request
+the CNCF community may use it to assess Hive for Sandbox and may request
 a joint or independent assessment building on it. This document reflects the
 project's understanding of its own architecture at the time of writing and
 carries no warranty; it should not be relied upon exclusively to assess a
@@ -434,7 +431,7 @@ repository writes:
    is default-off and its contribution is unmeasured; the corpus covers the
    input path only.
 
-   **Exfiltration detection (`ioscan.canaries`, default off).** A per-agent
+   **Exfiltration detection (`ioscan.canaries`, default on unless opted out).** A per-agent
    `HIVE-CANARY-<48 hex>` token is planted in the agent's prompt, and the
    egress proxy scans outbound GitHub request bodies for it
    (`github_proxy.go:1179-1205`): a hit is positive evidence that prompt
@@ -496,8 +493,8 @@ repository writes:
   transcript tail and can pause/alert on divergence. Explicitly semantic
   oversight, not a structural control, and fails open on reviewer outage
   (per `security-threat-model.md` residual risks).
-- **Token budget** — a seven-day rolling token budget that suppresses kicks
-  on exhaustion, limiting denial-of-wallet from a runaway or compromised
+- **Token budget** — a configurable token-budget window (default seven days)
+  that suppresses kicks on exhaustion, limiting denial-of-wallet from a runaway or compromised
   agent loop.
 - **Log scrubbing** (`src/pkg/logscrub`, `security.md`) — redacts eight
   categories from Hive's own structured log output: GitHub token prefixes
@@ -551,7 +548,7 @@ repository writes:
   (`src/Dockerfile:8,50,78`; `actions/checkout@3d3c42e...` in
   `.github/workflows/docker.yml:85,280,318`); `npm install --ignore-scripts`
   for all global AI-CLI installs.
-- **OpenSSF Scorecard** — runs weekly and on push to `main`/`v4`
+- **OpenSSF Scorecard** — runs weekly and on the configured branch pushes
   (`.github/workflows/scorecard.yml`), via a shared reusable workflow pinned
   by commit SHA.
 
@@ -561,7 +558,7 @@ Hive does not currently hold any formal security certification (e.g.
 FIPS, Common Criteria, SOC 2) and makes no claim to one. Relevant
 project-level compliance signals:
 
-- **OpenSSF Scorecard**: automated, runs weekly and on push to `main`/`v4`
+- **OpenSSF Scorecard**: automated, runs weekly and on the configured branch pushes
   (`scorecard.yml`, via a SHA-pinned reusable workflow in
   `hivecommons/infra`); results publish to the repository's code-scanning
   alerts. No specific score floor is gated in CI at present.
@@ -600,13 +597,12 @@ project-level compliance signals:
 - **Language and structure**: Go (`src/`, `go 1.26.6` per `src/go.mod:3`) for
   the core dashboard/hub/proxy/scheduler/agent-orchestration code; a JS
   dashboard UI served inline (no separate SPA build step); Python/Shell for
-  the deterministic pre-kick pipeline (45 scripts, indexed in
-  `bin/README.md`).
-- **Branch model**: `v4` is the sole actively maintained line;
-  `v2` was retired in August 2026 (`src/docs/documentation-map.md`, `migration-v2-v4.md`).
+  the deterministic pre-kick pipeline (indexed in `bin/README.md`).
+- **Branch model**: `v5` is the actively maintained line; `v4` is no longer
+  maintained, and `v2` was retired in August 2026 (`src/docs/documentation-map.md`, `migration-v2-v4.md`).
 - **CI gating**: PR-triggered test execution runs from
   `.github/workflows/v2-tests.yml` (name is a historical artifact of the
-  branch-rename; it is the workflow that gates `v4` PRs) as a sharded
+  branch-rename; it is the workflow that gates maintained-line PRs) as a sharded
   `go test -short -race -count=1` run, with an hourly full-suite monitor in
   `coverage-hourly.yml` that additionally auto-files an issue on a coverage
   regression. Coverage floors are intentionally duplicated between the two
@@ -638,7 +634,7 @@ project-level compliance signals:
   Dockerfiles, workflow definitions, deploy manifests, SUID contract checks,
   and key/cookie/session handling), and every entry names all three current
   maintainers (`@clubanderson`, `@hanthor`, `@Danathar`). The remaining
-  repo-side step is enabling "Require review from Code Owners" in `v4` branch
+  repo-side step is enabling "Require review from Code Owners" in `v5` branch
   protection; until that is enabled, CODEOWNERS is still advisory rather than
   enforced — see [Known weaknesses](#three-most-significant-known-weaknesses).
 
@@ -669,8 +665,8 @@ project-level compliance signals:
 
 Hive is an independent project in the [hivecommons](https://github.com/hivecommons)
 org (transferred out of the KubeStellar org on 2026-09-03, where it was
-incubated as a subproject). It interoperates with, but does not depend on: GitHub/GitHub Enterprise/GitLab/Gitea (via the "Forge App"
-abstraction), several AI coding-agent CLI backends (Claude Code, GitHub
+incubated as a subproject). It interoperates with, but does not depend on: GitHub/GitHub Enterprise; GitLab/Gitea adapters exist but are not wired
+for production use. It also interoperates with several AI coding-agent CLI backends (Claude Code, GitHub
 Copilot CLI, Gemini, Goose, Bob/bobshell, Agy), and self-hosted inference
 gateways (LiteLLM, vLLM, llm-d, watsonx) reached only through an in-pod
 credential-translating proxy (`security-model.md` Layer 3). It is
@@ -700,9 +696,10 @@ page deliberately does not restate the roster, pointing at `OWNERS` instead
 so a second list cannot drift.
 
 Remaining gaps, stated rather than implied: there is **no published
-CVSS-scoring policy** and **no maximum time-to-fix SLA** beyond asking
+CVSS-scoring policy** and **no private-report time-to-fix SLA** beyond the
+60-day public-vulnerability commitment in `security-response.md` and asking
 reporters for "a reasonable opportunity to remediate." The acknowledgement
-target is a commitment; time-to-fix is not.
+target is a commitment; private-report time-to-fix is not.
 
 ### Incident response
 
@@ -736,9 +733,11 @@ because a self-assessment that only lists strengths is not credible:
    issue authors can place arbitrary text in titles, labels, bodies, and
    comments that Hive may include in a kick"*). `ioscan`'s deterministic
    rules and optional semantic classifier reduce this materially. The
-   **default `ioscan.fail_mode` is `open`** (`ioscan.md:11` — *"open (default)
-   redacts"*): a Critical finding is redacted and the kick continues, rather
-   than the kick being blocked. The redaction itself is deterministic and does
+   **default `ioscan.fail_mode` is level-aware** (`ioscan.md:10-11`): it is
+   `open` at ACMM L1–L4, where a Critical finding is redacted and the kick
+   continues, and `closed` at ACMM L5/L6 via the L5/L6 packs, where a Critical
+   finding blocks the kick. An explicit per-hive `fail_mode` overrides the
+   level default either way. The redaction itself is deterministic and does
    not depend on any model call. The semantic
    (LLM-judge) classifier layer is explicitly **fail-open on errors/timeouts
    by design** (`ioscan.md:26`, ADR-0008: *"Classifier failures and budget
@@ -753,7 +752,7 @@ because a self-assessment that only lists strengths is not credible:
    turning reviewer outages into scheduler outages."*
 
 2. **Shared-container execution is a materially weaker isolation boundary
-   than per-run sandboxing, and this is an open, tracked gap.** Agents run as
+   than per-run sandboxing, and this remains a documented gap.** Agents run as
    separate Unix UIDs inside one Hive container/pod, not in separate
    containers or microVMs. Per-UID separation (`security-model.md` Layer 4)
    stops one agent from attaching to another's tmux session or reading its
@@ -763,11 +762,10 @@ because a self-assessment that only lists strengths is not credible:
    every other agent in the pod. `security-threat-model.md` names this
    directly under "Residual risks and known gaps": *"Shared-container
    execution remains a material risk... it is not equivalent to per-run
-   containers or microVMs,"* tracked in open issue
-   [#2804](https://github.com/hivecommons/hive/issues/2804), which — per the
-   same doc — also proposes moving live GitHub write credentials out of the
+   containers or microVMs,"* and issue
+   [#2804](https://github.com/hivecommons/hive/issues/2804) also proposed moving live GitHub write credentials out of the
    agent sandbox entirely (*"current agents can still need live credentials
-   to push/open PRs"*). Until #2804 lands, a compromised agent process that
+   to push/open PRs"*). Until that gap is closed, a compromised agent process that
    evades the network/token controls still executes inside the same
    container as every other agent on that spoke.
 
@@ -790,7 +788,7 @@ because a self-assessment that only lists strengths is not credible:
    Dockerfiles, CI workflows, deploy manifests, SUID contract checks, proxy
    policy, and key/cookie/session handling — and lists all three current
    maintainers on every entry. But "Require review from Code Owners" still
-   has to be enabled in `v4` branch protection after the scoped file lands.
+   has to be enabled in `v5` branch protection.
    Until then, a change to the MITM proxy's deny-rule table — the control
    this document credits as the thing an attacker cannot argue with — can
    merge on green CI with no human security reviewer.
@@ -856,7 +854,7 @@ development, not externally reported vulnerabilities.
 ### Open SSF best practices
 
 An [OpenSSF Scorecard](https://github.com/hivecommons/hive/blob/v4/.github/workflows/scorecard.yml)
-workflow runs weekly and on push to `main`/`v4`, publishing to the
+workflow runs weekly and on the configured branch pushes, publishing to the
 repository's code-scanning alerts. This assessment deliberately does not
 freeze a numeric score into the text — it moves independently of this
 document — and a reviewer should pull the current result.
@@ -919,7 +917,7 @@ was wrong on the facts and is corrected here.
 Hive is the flagship of the [Hive Commons](https://hivecommons.dev) project
 family and originated as a subproject of [KubeStellar](https://github.com/kubestellar)
 (CNCF Sandbox), which remains its first production adopter. It interoperates
-with, but is not a vendor dependency of: GitHub/GitHub Enterprise/GitLab/Gitea, and multiple AI CLI
+with, but is not a vendor dependency of: GitHub/GitHub Enterprise, with GitLab/Gitea adapters not wired for production use, and multiple AI CLI
 backend vendors (Anthropic Claude Code, GitHub Copilot CLI, Google Gemini,
 Block Goose, IBM Bob). See [landscape.md](landscape.md)
 for a maintained comparison against nearby agentic-orchestration tools.
@@ -969,7 +967,7 @@ repository and answered below. Where the answer is "no," it says no.
   written from itself rather than checked against the programme's API.
 
 - **What is the current OpenSSF Scorecard result?** Intentionally not frozen
-  into this document — the workflow runs weekly and on every push to `v4`,
+  into this document — the workflow runs weekly and on the configured branch pushes,
   and a reviewer should read the live result rather than a stale number.
   This is the one item from the original list that remains deliberately
   unanswered here, and the reason is that quoting it would make the document
@@ -988,12 +986,10 @@ repository and answered below. Where the answer is "no," it says no.
   `ioscan` in this document are now measured rather than asserted, but
   measured by the people who built it.
 
-- **Will CODEOWNERS enforcement be enabled?** Resolved: the live `v4` branch
+- **Will CODEOWNERS enforcement be enabled?** Resolved: the live `v5` branch
   protection currently requires **no** pull-request reviews at all, and
   enforcement was blocked on the fact that the project's own automation
   merges green PRs. The intended resolution is scoped enforcement over
-  security-critical paths only, tracked in
-  [#6687](https://github.com/hivecommons/hive/issues/6687) along with
-  expanding `CODEOWNERS` from one owner to the three current maintainers.
-  It is a commitment with an issue behind it, not a plan to remain advisory
-  indefinitely.
+  security-critical paths only, with `CODEOWNERS` expanded from one owner to
+  the three current maintainers. It is a commitment, not a plan to remain
+  advisory indefinitely.

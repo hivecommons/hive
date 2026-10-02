@@ -179,6 +179,109 @@ func TestSaveWritesDashboardOverlayInK8sMode(t *testing.T) {
 	}
 }
 
+func TestSaveWritesDashboardOverlayBeforeReloadCanSeeOldAgentLayer(t *testing.T) {
+	dir := t.TempDir()
+	sourcePath := filepath.Join(dir, "hive.yaml")
+	overlayPath := filepath.Join(dir, "hive.yaml.dashboard")
+	runtimePath := filepath.Join(dir, "hive.yaml.runtime")
+
+	origOverlay, origRuntime := DashboardOverlayFile, RuntimeConfigFile
+	DashboardOverlayFile, RuntimeConfigFile = overlayPath, runtimePath
+	t.Cleanup(func() { DashboardOverlayFile, RuntimeConfigFile = origOverlay, origRuntime })
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+
+	oldLayer := `
+project:
+  org: testorg
+  repos: [repo1]
+github:
+  token: ghp_test123456789
+agents:
+  quality:
+    backend: copilot
+    enabled: true
+    kick_template: quality-advisory.md
+    mode: ADVISORY
+`
+	if err := os.WriteFile(sourcePath, []byte(oldLayer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(overlayPath, []byte(oldLayer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &Config{
+		SourcePath: sourcePath,
+		Project:    ProjectConfig{Org: "testorg", Repos: []string{"repo1"}},
+		GitHub:     GitHubConfig{Token: "ghp_test123456789"},
+		Agents: map[string]AgentConfig{
+			"quality": {
+				Backend:      "copilot",
+				Enabled:      true,
+				KickTemplate: "quality-holdgated.md",
+				Mode:         "ISSUES_AND_PRS",
+			},
+		},
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	merged, err := LoadWithDashboardOverlay(sourcePath)
+	if err != nil {
+		t.Fatalf("LoadWithDashboardOverlay: %v", err)
+	}
+	if got := merged.Agents["quality"].KickTemplate; got != "quality-holdgated.md" {
+		t.Fatalf("merged kick_template = %q, want quality-holdgated.md", got)
+	}
+
+	primary, err := Load(sourcePath)
+	if err != nil {
+		t.Fatalf("Load primary: %v", err)
+	}
+	overlay, err := Load(overlayPath)
+	if err != nil {
+		t.Fatalf("Load overlay: %v", err)
+	}
+	if got := overlay.Agents["quality"].KickTemplate; got != primary.Agents["quality"].KickTemplate {
+		t.Fatalf("overlay kick_template = %q, primary = %q", got, primary.Agents["quality"].KickTemplate)
+	}
+}
+
+func TestSaveWritesDashboardOverlayEvenWhenPrimaryWriteFails(t *testing.T) {
+	dir := t.TempDir()
+	sourcePath := filepath.Join(dir, "hive.yaml")
+	overlayPath := filepath.Join(dir, "hive.yaml.dashboard")
+	runtimePath := filepath.Join(dir, "hive.yaml.runtime")
+	if err := os.Mkdir(sourcePath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	origOverlay, origRuntime := DashboardOverlayFile, RuntimeConfigFile
+	DashboardOverlayFile, RuntimeConfigFile = overlayPath, runtimePath
+	t.Cleanup(func() { DashboardOverlayFile, RuntimeConfigFile = origOverlay, origRuntime })
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+
+	cfg := &Config{
+		SourcePath: sourcePath,
+		Project:    ProjectConfig{Org: "testorg", Repos: []string{"repo1"}},
+		GitHub:     GitHubConfig{Token: "ghp_test123456789"},
+		Agents: map[string]AgentConfig{
+			"quality": {Backend: "copilot", Enabled: true, KickTemplate: "quality-holdgated.md"},
+		},
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save with durable PVC layers: %v", err)
+	}
+	overlay, err := Load(overlayPath)
+	if err != nil {
+		t.Fatalf("Load overlay: %v", err)
+	}
+	if got := overlay.Agents["quality"].KickTemplate; got != "quality-holdgated.md" {
+		t.Fatalf("overlay kick_template = %q, want quality-holdgated.md", got)
+	}
+}
+
 func TestSaveSkipsDashboardOverlayOutsideK8s(t *testing.T) {
 	dir := t.TempDir()
 	origOverlay, origRuntime := DashboardOverlayFile, RuntimeConfigFile

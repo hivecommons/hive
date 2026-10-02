@@ -15,6 +15,31 @@ import (
 // only the last 1-2 on the PVC. Serializing every Save() closes the race.
 var saveMu sync.Mutex
 
+var (
+	saveObserverMu sync.Mutex
+	saveObserver   func()
+)
+
+// SetSaveObserver registers a callback invoked immediately before a valid
+// Config.Save begins writing files. The main process uses this to arm the
+// config watcher with SkipNext for every programmatic save, so the fsnotify
+// event from the primary config write does not reload a stale snapshot over
+// the already-correct in-memory config. Passing nil clears the observer.
+func SetSaveObserver(fn func()) {
+	saveObserverMu.Lock()
+	defer saveObserverMu.Unlock()
+	saveObserver = fn
+}
+
+func notifySaveObserver() {
+	saveObserverMu.Lock()
+	fn := saveObserver
+	saveObserverMu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+
 // dashboardAuthTokenFile is the mounted Secret key used by hosted spokes when
 // the token is not injected as an env var. Tests redirect it to a hermetic path.
 var dashboardAuthTokenFile = "/secrets/dashboard-token"

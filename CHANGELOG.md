@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-02 (v5.110.3)
+
+### Fixed
+
+- config: write the dashboard overlay before the primary path and skip self-triggered reloads (#9921)
+
+### Security
+
+- security-self-assessment: match ioscan canary/fail_mode defaults shipped in #7095 (#9922)
+
 ## 2026-10-02 (v5.110.2)
 
 ### Fixed
