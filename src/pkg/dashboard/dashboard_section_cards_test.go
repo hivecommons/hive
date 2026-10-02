@@ -178,6 +178,9 @@ func TestDashboardCardPolishBatchStaticContracts(t *testing.T) {
 	if strings.Contains(govCSS, "box-shadow") || strings.Contains(govCSS, "padding: var(--sp-6)") || strings.Contains(html, "body.light-mode .governor,") {
 		t.Fatal("Governor outer container still draws card chrome instead of leaving it to .dash-card")
 	}
+	if regexp.MustCompile(`(?s)\.governor(?:\.[\w-]+)?\s*>\s*\.dash-card\.governor-card\s*\{[^}]*(?:border|outline|box-shadow)`).MatchString(html) {
+		t.Fatal("Governor must not override shared dash-card border, outline, or shadow in any state")
+	}
 }
 
 func TestGovernorPRModelsNestedSubsectionIsCollapsible(t *testing.T) {
@@ -331,4 +334,71 @@ func utf8DecodeRuneInString(s string) (rune, int) {
 		return r, i
 	}
 	return 0, 0
+}
+
+func TestSidebarDragHandlesSharePersistedOrder(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		`data-nav-order-grip`,
+		`function dashboardSidebarLayoutFromDom()`,
+		`function dashboardApplyOrderFromSidebar()`,
+		`dashboardApplyLayout(layout);dashboardLayoutWrite()`,
+		`function agentCardLayoutSetOrder(order, agents)`,
+		`function agentSidebarSaveOrderFromDom()`,
+		`agentSidebarSaveOrderFromDom();`,
+		`ocUpdateSidebarAgents();`,
+		`Alt+↑/↓`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("sidebar/card order sharing is missing %q", want)
+		}
+	}
+
+	dashboardApply := jsFunctionBody(t, html, "function dashboardApplyOrderFromSidebar()")
+	for _, want := range []string{"dashboardSidebarLayoutFromDom()", "dashboardApplyLayout(layout)", "dashboardLayoutWrite()"} {
+		if !strings.Contains(dashboardApply, want) {
+			t.Fatalf("dashboard sidebar reorder does not update the persisted dashboard layout: missing %q", want)
+		}
+	}
+
+	agentSidebar := jsFunctionBody(t, html, "function agentSidebarSaveOrderFromDom()")
+	for _, want := range []string{".oc-nav-item[data-agent-nav]", "agentCardLayoutSetOrder(order, agents)", "renderAgents(window._lastAgents)"} {
+		if !strings.Contains(agentSidebar, want) {
+			t.Fatalf("agent sidebar reorder does not update the agent card layout store: missing %q", want)
+		}
+	}
+
+	agentCard := jsFunctionBody(t, html, "function agentOrderSaveFromDom(grid)")
+	if !strings.Contains(agentCard, "ocUpdateSidebarAgents()") {
+		t.Fatal("agent card reorder does not refresh the sidebar from the same order")
+	}
+	applySnapshot := jsFunctionBody(t, html, "function dashboardApplySnapshotState(state)")
+	if !strings.Contains(applySnapshot, "ocUpdateSidebarAgents()") {
+		t.Fatal("restoring a saved layout does not refresh the agent sidebar order")
+	}
+}
+
+func TestLayoutResetRestoresSidebarAndCardDefaults(t *testing.T) {
+	html := indexHTML(t)
+	reset := jsFunctionBody(t, html, "async function resetDashboardLayout()")
+	for _, want := range []string{
+		"localStorage.removeItem(DASHBOARD_LAYOUT_KEY)",
+		"dashboardLayoutExtraKeys().forEach",
+		"dashboardApplyLayout(dashboardLayoutNormalize(null))",
+		"renderAgents(((window._lastStatus||{}).agents)||",
+	} {
+		if !strings.Contains(reset, want) {
+			t.Fatalf("dashboard reset no longer restores shared layout defaults: missing %q", want)
+		}
+	}
+	extraKeys := jsFunctionBody(t, html, "function dashboardLayoutExtraKeys()")
+	if !strings.Contains(extraKeys, "hive-agent-card-layout:") {
+		t.Fatal("dashboard reset does not clear the shared agent card/sidebar order key")
+	}
+	resetAgents := jsFunctionBody(t, html, "function resetAgentCardLayout()")
+	for _, want := range []string{"localStorage.removeItem(agentLayoutHiveKey())", "renderAgents(window._lastAgents)", "ocUpdateSidebarAgents()"} {
+		if !strings.Contains(resetAgents, want) {
+			t.Fatalf("agent layout reset does not refresh both card and sidebar defaults: missing %q", want)
+		}
+	}
 }

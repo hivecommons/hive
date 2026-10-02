@@ -131,6 +131,34 @@ func CadenceModesIn(modes map[string]ModeConfig, agentName, baseName string) []s
 	return out
 }
 
+// ContinuousModesIn lists the governor modes where agentConfig is continuous:
+// either the mode's cadence value is the literal "continuous", or the legacy
+// agent-level continuous bool applies to that non-quiet mode.
+func ContinuousModesIn(modes map[string]ModeConfig, agentName, baseName string, agentConfig AgentConfig) []string {
+	out := []string{}
+	for key, mode := range modes {
+		cadence := Cadence("")
+		if c, ok := mode.Cadences[agentName]; ok {
+			cadence = c
+		} else if baseName != "" && baseName != agentName {
+			if c, ok := mode.Cadences[baseName]; ok {
+				cadence = c
+			}
+		}
+		if agentConfig.ContinuousInMode(key, cadence) {
+			out = append(out, key)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		ti, tj := modes[out[i]].Threshold, modes[out[j]].Threshold
+		if ti != tj {
+			return ti < tj
+		}
+		return out[i] < out[j]
+	})
+	return out
+}
+
 // ModeSchedules is ModeSchedulesIn for this config's governor modes, resolving
 // the agent's replica base itself. A nil config reports true: "cannot tell"
 // must not become "unscheduled" on the operator's screen.
@@ -147,6 +175,15 @@ func (c *Config) CadenceModes(agentName string) []string {
 		return []string{}
 	}
 	return CadenceModesIn(c.Governor.Modes, agentName, c.BaseAgentName(agentName))
+}
+
+// ContinuousModes is ContinuousModesIn for this config's governor modes.
+func (c *Config) ContinuousModes(agentName string) []string {
+	if c == nil {
+		return []string{}
+	}
+	agentConfig := c.Agents[agentName]
+	return ContinuousModesIn(c.Governor.Modes, agentName, c.BaseAgentName(agentName), agentConfig)
 }
 
 // ExpectedActive reports whether the governor's CURRENT mode schedules this

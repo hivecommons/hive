@@ -17,7 +17,7 @@ Use it indirectly through the dashboard terminal link. If a terminal pane says i
 ## Other files
 
 - `entrypoint.sh` — container startup, config layering, proxy/agent setup, and long-lived process supervision.
-- `k8s/` — namespace, deployment, service, PVC, Secret, ConfigMap, and route/RBAC manifests.
+- `k8s/` — the Kustomize base (`kustomization.yaml`) with namespace, deployment, service, PVC, Secret, ConfigMap and RBAC manifests, plus the custom error backend (`error-pages.yaml`), the hub backup CronJob (`backup-cronjob.yaml`) and the node-prep DaemonSet (`node-prep/`), which are applied separately. The OpenShift Route lives in `kustomize/overlays/openshift/`.
 - `inference/` — sample in-cluster OpenAI-compatible inference deployment and RBAC.
 - `docker-compose.architect.yaml`, `hive-quickstart.yaml`, `hive-level*.yaml`, `architect-only.yaml`, `hive.yaml` — example deployment/configuration manifests.
 - `blue-green-deploy.sh`, `bootstrap-lxc.sh`, `create-lxc.sh` — operational scripts for **Docker Compose** deployments (LXC bootstrap and a blue-green Compose upgrade). Not "non-Kubernetes" generally: none of the three shells out to `podman` or reads `HIVE_DEPLOY_RUNTIME`, so none of them applies to the Quadlet stack in `quadlet/` below. See [Deployment helper scripts](../docs/deployment-scripts.md) for each script's scope and where a Podman operator should go instead.
@@ -25,6 +25,15 @@ Use it indirectly through the dashboard terminal link. If a terminal pane says i
 - `probe_podman_volume_persistence.sh` — characterises the `hive-data` named volume under SELinux enforcing (#4376): its label and MCS category, the copy-up ownership change, survival across container removal and unit recreation, and the named-volume/bind-mount contrast. Needs an enforcing host and reports `78` rather than a vacuous pass elsewhere; its static section (no `:z`/`:Z` on the volume line, `:Z` on the config and secret bind mounts) runs anywhere. See [the characterisation](../docs/podman-volume-persistence.md).
 - `probe_boot_transaction_coupling.sh` — measures whether a `WantedBy=default.target` `Type=notify` unit that never becomes ready holds the SYSTEM manager's boot for its whole `TimeoutStartSec` (#4478). It does, and the control that makes that mean something is a third case: the same unit with the same timeout, left out of `default.target.wants/`, finishes the boot at once. That was the rootful/rootless split before #4478, when the Quadlet generator installed that symlink in both modes and only the system manager's `default.target` was the boot transaction. A fourth case measures the shape the units ship with since the fix — `WantedBy=hive-boot.target` plus `hive-boot-gate.service` — and asserts the boot finishes at once while the unit still auto-starts, still records `Result=timeout`, and still restarts. Runs in throwaway systemd containers rather than by rebooting a host, needs only `podman` and registry access, and skips cleanly without either. See [the lifecycle page](../docs/podman-quadlet-lifecycle.md#the-fix-shipped-for-4478-measured-the-same-way).
 - `test_*.sh` — shell tests for entrypoint/runtime deployment behavior.
+
+## Other directories
+
+- `kustomize/overlays/`: the `standalone` (self-hosted, hub-less), `openshift`, `openshift-netadmin` and `backup-exec-restriction` overlays on top of `k8s/` and `inference/`. See the [standalone overlay README](kustomize/overlays/standalone/README.md).
+- `ci-runners/`: manifests for the self-hosted GitHub Actions runners that serve this repository. See [its README](ci-runners/README.md).
+- `legacy-redirect/`: the hub legacy-host redirect that keeps the request path and query (#6430). See [its README](legacy-redirect/README.md).
+- `dibs-domain-cutover/`: staged manifests for moving dibs to `dibs.hivecommons.dev` (#5925). See [its README](dibs-domain-cutover/README.md).
+- `systemd/`: `hive-boot.target` and `hive-boot-gate.service`, which the Quadlet units in `quadlet/` install against (#4478).
+- `data/`: seed data for agents, restrictions (`restrictions.conf`) and the wiki.
 
 ## Deployment contract tests
 

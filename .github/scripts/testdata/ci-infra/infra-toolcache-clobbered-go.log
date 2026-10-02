@@ -1,0 +1,19 @@
+##[group]Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+with:
+  cache: false
+  go-version-file: src/go.mod
+  check-latest: false
+  token: ***
+env:
+  CGO_ENABLED: 1
+  KUBERNETES_SERVICE_HOST: 
+  KUBERNETES_SERVICE_PORT: 
+  ACTIONS_CACHE_SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
+  GO_CACHE_GUARD_BUILD_CACHE: job
+##[endgroup]
+Setup go version spec 1.26.6
+Found in cache @ /mnt/toolcache/hostedtoolcache/go/1.26.6/x64
+Added go to the path
+Successfully set up Go version 1.26.6
+/bin/sh: 1: version: not found
+##[error]Command failed:  version

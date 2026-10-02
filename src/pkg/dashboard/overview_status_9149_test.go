@@ -106,7 +106,7 @@ const OVERVIEW_EXPORT_FORMATS = ['csv', 'json'];
 let token = '';
 const localStorage = {getItem: () => token};
 `)
-	for _, name := range []string{"issueBandSpec", "issueBandLabel", "issueBandRule", "issueBandTip", "issueBandRank", "issueUpdatedAt", "issueIsStale", "groupedRepoIssues", "prBandSpec", "prBandLabel", "prBandRule", "prBandTip", "prBandRank", "prUpdatedAt", "prCreatedAt", "prReviewClassRank", "prIsStale", "groupedRepoPRs", "overviewRepoName", "overviewAllRepoNames", "overviewSavedRepoNames", "overviewSelectedRepoNames", "overviewIssueBandSlices", "overviewPRBandSlices", "overviewSliceLabel", "overviewExportURL", "esc", "prSignalHTML", "overviewLegendHTML"} {
+	for _, name := range []string{"issueBandSpec", "issueBandLabel", "issueBandRule", "issueBandTip", "issueBandRank", "issueUpdatedAt", "issueIsStale", "repoItemNeedsHuman", "gHasNeedsHuman", "groupedRepoIssues", "prBandSpec", "prBandLabel", "prBandRule", "prBandTip", "prBandRank", "prUpdatedAt", "prCreatedAt", "prReviewClassRank", "prIsStale", "groupedRepoPRs", "overviewRepoName", "overviewAllRepoNames", "overviewSavedRepoNames", "overviewSelectedRepoNames", "overviewIssueBandSlices", "overviewPRBandSlices", "overviewSliceLabel", "overviewExportURL", "esc", "prSignalHTML", "overviewLegendHTML"} {
 		script.WriteString(jsFunc(t, html, name))
 		script.WriteByte('\n')
 	}

@@ -42,6 +42,7 @@ quiet:
 func TestCadenceRejectsInvalidForms(t *testing.T) {
 	cases := []string{
 		`{interval: 5m, times: ["09:00"], tz: UTC}`,
+		`{interval: continuous}`,
 		`{times: ["25:00"], tz: UTC}`,
 		`{times: ["09:00"], tz: Mars/Olympus}`,
 		`{cron: "nope", tz: UTC}`,
@@ -52,6 +53,36 @@ func TestCadenceRejectsInvalidForms(t *testing.T) {
 		if err := yaml.Unmarshal([]byte(tc), &c); err == nil {
 			t.Fatalf("expected %s to be rejected", tc)
 		}
+	}
+}
+
+func TestCadenceContinuousLiteral(t *testing.T) {
+	var c Cadence
+	if err := yaml.Unmarshal([]byte(`continuous`), &c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Mode() != CadenceModeContinuous || !c.IsContinuous() {
+		t.Fatalf("mode = %s continuous=%v", c.Mode(), c.IsContinuous())
+	}
+	if c.IsPaused() {
+		t.Fatal("continuous cadence must not be treated as paused")
+	}
+	if next, ok := c.NextAfter(time.Date(2026, 10, 2, 14, 0, 0, 0, time.UTC)); ok || !next.IsZero() {
+		t.Fatalf("continuous next = %v ok=%v, want none", next, ok)
+	}
+	data, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != `"continuous"` {
+		t.Fatalf("continuous JSON = %s", data)
+	}
+	var upper Cadence
+	if err := json.Unmarshal([]byte(`"Continuous"`), &upper); err != nil {
+		t.Fatal(err)
+	}
+	if upper.Mode() != CadenceModeContinuous {
+		t.Fatalf("upper mode = %s, want continuous", upper.Mode())
 	}
 }
 

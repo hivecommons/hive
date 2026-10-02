@@ -1,0 +1,6 @@
+##[group]Run npm ci --ignore-scripts --no-audit --no-fund
+[36;1mnpm ci --ignore-scripts --no-audit --no-fund[0m
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+/home/runner/_temp/aab1b7b9-b806-4e67-b315-767fa821ec52.sh: line 1: npm: command not found
+##[error]Process completed with exit code 127.

@@ -1,0 +1,1 @@
+- CI runner canary: queued runs older than 6h are reported as GitHub-side zombies and no longer fail the watchdog (uncancellable August runs tripped the first run, #10273).

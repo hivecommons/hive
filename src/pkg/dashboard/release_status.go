@@ -74,6 +74,9 @@ const (
 	// upgradeAttemptInProgress — an instructed upgrade is in flight and has not
 	// landed yet (below the attempt budget).
 	upgradeAttemptInProgress = "in_progress"
+	// upgradeAttemptSuperseded — an in-flight request is no longer live truth:
+	// the hive moved past it or it aged out without a completion signal.
+	upgradeAttemptSuperseded = "superseded"
 )
 
 // UpgradeAttemptStatus is the JSON contract for "what happened on the last

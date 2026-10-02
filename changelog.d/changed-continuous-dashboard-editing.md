@@ -1,0 +1,1 @@
+- Move continuous cadence editing into the agent settings Cadences form and render read-only `∞ continuous` chips in the Governor cadence table.

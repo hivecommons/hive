@@ -58,13 +58,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	if m := readUpgradeMarker(); m != nil {
 		resp["upgradeMarker"] = m
 	}
-	manualUpgrade := readDashboardUpgradeState()
-	if manualUpgrade != nil && manualUpgrade.State == dashboardUpgradeStateStarted &&
-		manualUpgrade.Target != "" && sameCommitDashboard(versionHash, manualUpgrade.Target) {
-		manualUpgrade.State = dashboardUpgradeStateDone
-		manualUpgrade.UpdatedAt = time.Now().UTC()
-		s.rememberDashboardUpgradeState(*manualUpgrade)
-	}
+	manualUpgrade := s.reconcileDashboardUpgradeState(readDashboardUpgradeState(), versionHash, time.Now().UTC())
 	if manualUpgrade != nil {
 		resp["manualUpgrade"] = manualUpgrade
 	}
@@ -227,6 +221,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 const dashboardHeartbeatStaleAfter = 6 * time.Minute
 
 const dashboardVersionTipCacheTTL = 5 * time.Minute
+const dashboardUpgradeInProgressMaxAge = 30 * time.Minute
 
 // upgradeTargetSource labels where /api/version's target came from (#7262).
 const (
@@ -446,6 +441,69 @@ func (s *Server) commitsBehindStableTip(base, head string) (int, bool) {
 	return count, true
 }
 
+func (s *Server) reconcileDashboardUpgradeState(st *dashboardUpgradeState, runningSHA string, now time.Time) *dashboardUpgradeState {
+	if st == nil || st.State != dashboardUpgradeStateStarted {
+		return st
+	}
+	runningSHA = strings.TrimSpace(runningSHA)
+	target := strings.TrimSpace(st.Target)
+	next := *st
+	markDone := func(reason string) *dashboardUpgradeState {
+		next.State = dashboardUpgradeStateDone
+		if runningSHA != "" {
+			next.Target = runningSHA
+		}
+		next.UpdatedAt = now
+		next.Reason = reason
+		s.rememberDashboardUpgradeState(next)
+		return &next
+	}
+	markSuperseded := func(reason string) *dashboardUpgradeState {
+		next.State = dashboardUpgradeStateSuperseded
+		next.UpdatedAt = now
+		next.Reason = reason
+		s.rememberDashboardUpgradeState(next)
+		return &next
+	}
+	if target != "" && sameCommitDashboard(runningSHA, target) {
+		return markDone("")
+	}
+	if target != "" && s.dashboardCommitAtOrAhead(runningSHA, target) {
+		return markDone("running commit " + shortSHADashboard(runningSHA) + " is at or ahead of requested target " + shortSHADashboard(target))
+	}
+	if st.StartedFrom != "" && runningSHA != "" && !sameCommitDashboard(runningSHA, st.StartedFrom) {
+		reason := "running commit changed from " + shortSHADashboard(st.StartedFrom) + " to " + shortSHADashboard(runningSHA)
+		if target == "" {
+			return markDone(reason)
+		}
+		return markSuperseded(reason + " instead of requested target " + shortSHADashboard(target))
+	}
+	startedAt := st.StartedAt
+	if startedAt.IsZero() {
+		startedAt = st.UpdatedAt
+	}
+	if !startedAt.IsZero() && now.Sub(startedAt) >= dashboardUpgradeInProgressMaxAge {
+		return markSuperseded("no completion signal arrived within " + dashboardUpgradeInProgressMaxAge.String())
+	}
+	return st
+}
+
+func (s *Server) dashboardCommitAtOrAhead(runningSHA, targetSHA string) bool {
+	runningSHA = strings.TrimSpace(runningSHA)
+	targetSHA = strings.TrimSpace(targetSHA)
+	if runningSHA == "" || targetSHA == "" {
+		return false
+	}
+	if sameCommitDashboard(runningSHA, targetSHA) {
+		return true
+	}
+	if s == nil || s.deps == nil || s.deps.GHClient == nil || s.deps.Ctx == nil {
+		return false
+	}
+	aheadBy, err := s.deps.GHClient.CompareAheadBy(s.deps.Ctx, "hivecommons", "hive", targetSHA, runningSHA)
+	return err == nil && aheadBy > 0
+}
+
 // commitBehindRetryAfter is how long a failed base...head compare is left
 // alone before the status builder asks GitHub again.
 const commitBehindRetryAfter = 5 * time.Minute
@@ -611,9 +669,10 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.rememberDashboardUpgradeState(dashboardUpgradeState{
-			State:     dashboardUpgradeStateStarted,
-			StartedAt: time.Now().UTC(),
-			UpdatedAt: time.Now().UTC(),
+			State:       dashboardUpgradeStateStarted,
+			StartedFrom: versionHash,
+			StartedAt:   time.Now().UTC(),
+			UpdatedAt:   time.Now().UTC(),
 		})
 		s.auditFromRequest(r, "self_upgrade", deployment.Runtime, "")
 		jsonResponse(w, map[string]any{"status": "upgrading", "runtime": deployment.Runtime})
@@ -711,10 +770,11 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	if resp.StatusCode < 300 {
 		now := time.Now().UTC()
 		s.rememberDashboardUpgradeState(dashboardUpgradeState{
-			State:     dashboardUpgradeStateStarted,
-			Target:    target,
-			StartedAt: now,
-			UpdatedAt: now,
+			State:       dashboardUpgradeStateStarted,
+			Target:      target,
+			StartedFrom: versionHash,
+			StartedAt:   now,
+			UpdatedAt:   now,
 		})
 		s.auditFromRequest(r, "self_upgrade", "", "")
 	} else {

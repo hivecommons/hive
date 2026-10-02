@@ -768,7 +768,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 		nextKick := computeNextKickFromCadence(proc.LastKick, cadenceValue)
 		nextKickIn := computeNextKickETA(proc.LastKick, cadenceValue)
 		continuousState := govState.Continuous[name]
-		if agentCfg, ok := cfg.Agents[name]; ok && agentCfg.Continuous && !continuousState.NextKick.IsZero() {
+		if agentCfg, ok := cfg.Agents[name]; ok && agentCfg.ContinuousInMode(currentMode, cadenceValue) && !continuousState.NextKick.IsZero() {
 			nextKick = formatHumanTime(continuousState.NextKick)
 			if d := time.Until(continuousState.NextKick); d > 0 {
 				nextKickIn = formatETA(d)
@@ -844,6 +844,12 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 		}
 
 		agentCfg := proc.Config
+		continuousModes := cfg.ContinuousModes(name)
+		continuousNow := agentCfg.ContinuousInMode(currentMode, modeCadence)
+		continuousBlocked := continuousState.Blocked
+		if !continuousNow && len(continuousModes) > 0 {
+			continuousBlocked = "not_in_mode"
+		}
 		a := FrontendAgent{
 			Name:            name,
 			ID:              agentID,
@@ -885,9 +891,10 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			LastKickAt:      lastKickAt,
 			NextKick:        nextKick,
 			NextKickIn:      nextKickIn,
-			Continuous:      agentCfg.Continuous,
+			Continuous:      continuousNow,
 			FrontendAgentContinuous: FrontendAgentContinuous{
-				ContinuousBlocked: continuousState.Blocked,
+				ContinuousBlocked: continuousBlocked,
+				ContinuousModes:   continuousModes,
 				ContinuousKicks:   continuousState.Kicks,
 				ContinuousTokens:  continuousState.TokensConsumed,
 			},
@@ -944,7 +951,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			if line := strings.TrimSpace(proc.ProviderErrorLine); line != "" {
 				a.StatusEvidence += ": " + line
 			}
-			if agentCfg.Continuous && !continuousState.BackoffUntil.IsZero() && time.Now().Before(continuousState.BackoffUntil) {
+			if continuousNow && !continuousState.BackoffUntil.IsZero() && time.Now().Before(continuousState.BackoffUntil) {
 				a.ContinuousBackoff = continuousState.Backoff.Round(time.Second).String()
 				a.ContinuousBackoffUntil = continuousState.BackoffUntil.UTC().Format(time.RFC3339)
 				if a.Condition == "" {
@@ -1092,32 +1099,41 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 	}
 
 	return FrontendAgent{
-		Name:             name,
-		ID:               agentID,
-		DisplayName:      agentCfg.DisplayName,
-		Description:      agentCfg.Description,
-		Role:             agentCfg.Role,
-		SortOrder:        agentCfg.GetSortOrder(),
-		Emoji:            agentCfg.Emoji,
-		Color:            agentCfg.Color,
-		BeadRole:         agentCfg.GetBeadRole(),
-		Managed:          agentCfg.Managed,
-		ReplicaBase:      agentCfg.ReplicaOf,
-		ReplicaIndex:     agentCfg.ReplicaIndex,
-		ReplicaCount:     agentCfg.ReplicaCount,
-		OnDemand:         onDemand,
-		Sandboxed:        agentCfg.SandboxEnabled(cfg.AgentSandbox),
-		Session:          name,
-		State:            string(agent.StateStopped),
-		Busy:             "idle",
-		Paused:           agentCfg.Paused,
-		OffByCadence:     false,
-		NoCadence:        noCadence,
-		CLI:              cli,
-		Model:            model,
-		ReasoningEffort:  agentCfg.ReasoningEffort,
-		Cadence:          cadenceDisplay(cadenceValue),
-		Continuous:       agentCfg.Continuous,
+		Name:            name,
+		ID:              agentID,
+		DisplayName:     agentCfg.DisplayName,
+		Description:     agentCfg.Description,
+		Role:            agentCfg.Role,
+		SortOrder:       agentCfg.GetSortOrder(),
+		Emoji:           agentCfg.Emoji,
+		Color:           agentCfg.Color,
+		BeadRole:        agentCfg.GetBeadRole(),
+		Managed:         agentCfg.Managed,
+		ReplicaBase:     agentCfg.ReplicaOf,
+		ReplicaIndex:    agentCfg.ReplicaIndex,
+		ReplicaCount:    agentCfg.ReplicaCount,
+		OnDemand:        onDemand,
+		Sandboxed:       agentCfg.SandboxEnabled(cfg.AgentSandbox),
+		Session:         name,
+		State:           string(agent.StateStopped),
+		Busy:            "idle",
+		Paused:          agentCfg.Paused,
+		OffByCadence:    false,
+		NoCadence:       noCadence,
+		CLI:             cli,
+		Model:           model,
+		ReasoningEffort: agentCfg.ReasoningEffort,
+		Cadence:         cadenceDisplay(cadenceValue),
+		Continuous:      agentCfg.ContinuousInMode(currentMode, cadenceValue),
+		FrontendAgentContinuous: FrontendAgentContinuous{
+			ContinuousBlocked: func() string {
+				if agentCfg.ContinuousInMode(currentMode, cadenceValue) || len(cfg.ContinuousModes(name)) == 0 {
+					return ""
+				}
+				return "not_in_mode"
+			}(),
+			ContinuousModes: cfg.ContinuousModes(name),
+		},
 		GovBackend:       cli,
 		GovModel:         model,
 		StatsConfig:      resolveStatsSources(loadStatsConfig(name), cfg),
@@ -2341,6 +2357,10 @@ func buildCadenceMatrix(cfg *config.Config, agentStatuses map[string]*agent.Agen
 			rawCadence := mode.Cadences[name]
 			cadence := cadenceDisplay(rawCadence)
 			title := cadenceTooltip(rawCadence, lastKick, modeName == currentMode)
+			if agentCfg, ok := cfg.Agents[name]; ok && agentCfg.ContinuousInMode(modeName, rawCadence) {
+				cadence = "continuous"
+				title = "Re-kicks after each session ends, +" + agentCfg.EffectiveContinuousCooldown().String() + " cooldown"
+			}
 			if cadence == "" || cadence == "pause" {
 				cadence = "off"
 			}
