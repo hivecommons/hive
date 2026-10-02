@@ -13,18 +13,28 @@ workflow advances `stable` by digest only after the gate below passes.
 - Preserve rollback safety with immutable short-SHA tags and digest evidence.
 - Give operators clear expectations for bursty release days.
 
-## Proposed promotion rule
+## Promotion rule
+
+This rule is what the `Promote Stable Channel` workflow enforces today. In this
+document a *build* is one successful `docker.yml` run on `v5`; its *generation*
+is that run's number and its *digest* is the image it published. Only the
+current `candidate` build is ever promoted.
 
 A `v5` build may be promoted from `candidate` to `stable` only when all of these
 conditions hold:
 
-1. **Minimum lineage soak:** the oldest un-promoted candidate generation after
-   the current `stable` generation was published has aged at least 24 hours.
-   Frequent `v5` merges may keep moving `candidate`, but they do not reset this
-   lineage timer.
-2. **Current candidate only:** the digest being promoted must still be the
-   current `candidate` when the gate decides and again immediately before any
-   tag is moved.
+1. **Minimum lineage soak:** the oldest build published after the current
+   `stable` build has aged at least 24 hours. Frequent `v5` merges may keep
+   moving `candidate`, but they do not reset this lineage timer. The soak is
+   measured on the oldest build in the lineage, not on the build being
+   promoted: if B2 is the oldest build after `stable` (B1) and is 24 hours old
+   when B52 is `candidate`, B52 can be promoted even though it is minutes old.
+2. **Current candidate only:** the build being promoted is whichever one is the
+   current `candidate` when the gate decides, and it must still be the current
+   `candidate` immediately before any tag is moved. This does not require
+   `candidate` to be quiet for 24 hours; a run that loses the race to a newer
+   build leaves `stable` unchanged and the next hourly run evaluates the new
+   `candidate`.
 3. **Green release evidence:** build, lint, unit tests, changelog/release guards,
    and non-flaky required checks are passing or skipped by policy.
 4. **No open blocker:** no open issue or PR label explicitly marks the candidate
