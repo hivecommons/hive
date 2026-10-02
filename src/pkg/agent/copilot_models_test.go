@@ -53,19 +53,23 @@ func TestCanonicalizeCopilotModel(t *testing.T) {
 	}
 }
 
-// TestCanonicalizeCopilotModelRejectedFiveFivePassthrough covers #9927: the
-// pinned Copilot CLI 1.0.88 rejects claude-opus-5-5/claude-sonnet-5-5 from
-// --model and silently falls back to claude-sonnet-5. They were removed from
-// copilotCLIAcceptedModels so the picker no longer offers them (see
-// copilotPinnedCLIModels in pkg/dashboard/cli_models.go); canonicalization
-// must now pass them through verbatim rather than treating them as aliases.
-func TestCanonicalizeCopilotModelRejectedFiveFivePassthrough(t *testing.T) {
-	for _, id := range []string{"claude-opus-5-5", "claude-sonnet-5-5"} {
-		if got := CanonicalizeCopilotModel(id); got != id {
-			t.Errorf("CanonicalizeCopilotModel(%q) = %q, want unchanged (model removed from copilotCLIAcceptedModels, #9927)", id, got)
-		}
-		if canonical, found := copilotModelByKey[copilotModelKey(id)]; found {
-			t.Errorf("copilotCLIAcceptedModels still contains %q (-> %q), which Copilot CLI 1.0.88 rejects (#9927)", id, canonical)
+// TestCanonicalizeCopilotModelFiveFiveDashToDot covers #9927: the pinned
+// Copilot CLI 1.0.88 rejects the DASHED claude-opus-5-5/claude-sonnet-5-5
+// spelling from --model and silently falls back to claude-sonnet-5. The
+// DOTTED claude-opus-5.5/claude-sonnet-5.5 are the CLI's actual accepted ids
+// (consistent with every other X.Y id in copilotCLIAcceptedModels), so
+// canonicalization must rewrite a dashed input to the dotted, accepted form
+// rather than passing the rejected spelling through verbatim.
+func TestCanonicalizeCopilotModelFiveFiveDashToDot(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"claude-opus-5-5", "claude-opus-5.5"},
+		{"claude-sonnet-5-5", "claude-sonnet-5.5"},
+		{"claude-opus-5.5", "claude-opus-5.5"},
+		{"claude-sonnet-5.5", "claude-sonnet-5.5"},
+	}
+	for _, tc := range tests {
+		if got := CanonicalizeCopilotModel(tc.in); got != tc.want {
+			t.Errorf("CanonicalizeCopilotModel(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }

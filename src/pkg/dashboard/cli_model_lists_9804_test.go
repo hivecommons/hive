@@ -100,11 +100,14 @@ func TestIssue9804OmpSonnet55ReasoningLevels(t *testing.T) {
 }
 
 // TestIssue9927CopilotListsExcludeRejectedFiveFive guards against
-// re-introducing claude-opus-5-5/claude-sonnet-5-5 into any list the copilot
-// backend's picker or static fallback draws from: the pinned Copilot CLI
-// 1.0.88 rejects both ids from --model and silently launches claude-sonnet-5
-// instead (#9927). This is a copilot-only restriction — the claude backend's
-// lists (claudePinnedCLIModels, claudeStaticModels) legitimately keep
+// re-introducing the DASHED claude-opus-5-5/claude-sonnet-5-5 into any list
+// the copilot backend's picker or static fallback draws from: the pinned
+// Copilot CLI 1.0.88 rejects that dashed spelling from --model and silently
+// launches claude-sonnet-5 instead (#9927). The CLI's actual accepted ids for
+// that model are the DOTTED claude-opus-5.5/claude-sonnet-5.5, which
+// copilotPinnedCLIModels legitimately carries — only the dashed spelling is
+// banned here. This is a copilot-only restriction — the claude backend's
+// lists (claudePinnedCLIModels, claudeStaticModels) legitimately keep dashed
 // claude-sonnet-5-5 for Claude Code 2.1.284 and are exercised by
 // TestIssue9804AllowlistsKeepLiveSonnet55 above.
 func TestIssue9927CopilotListsExcludeRejectedFiveFive(t *testing.T) {
