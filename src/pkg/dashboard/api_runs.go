@@ -662,8 +662,8 @@ func summarizeAuditPublication(res convergenceaudit.Result) *auditPublicationSum
 }
 
 // handleRunReset serves POST /api/runs/{key}/reset (#8350): move a run's lease
-// back to an earlier stage, minting a new generation so the relay working the
-// old generation cannot resume it, and record why.
+// back to an earlier stage (or restart an escalated stage), minting a new
+// generation so the old relay cannot resume it, and record why.
 //
 // OWNER-ONLY. This is the only backwards stage move; a read-write member being
 // able to knock a run out of implement would undo an owner's plan approval
@@ -708,7 +708,10 @@ func (s *Server) handleRunReset(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "triage_fix can only retire a spec-stage run", http.StatusBadRequest)
 			return
 		}
-		s.contributeHub.revokeLease(held.identity, held.taskID)
+		if err := s.contributeHub.retireRun(held, runResetReasonTriageFix); err != nil {
+			jsonError(w, err.Error(), runResetErrorStatus(err))
+			return
+		}
 		s.LifecycleTimeline().Record(timeline.Event{
 			IssueRef: key,
 			Kind:     timeline.KindStageCompleted,
@@ -750,7 +753,7 @@ func runResetErrorStatus(err error) int {
 	switch {
 	case errors.Is(err, errLeaseNotFound):
 		return http.StatusNotFound
-	case errors.Is(err, errLeaseExpired):
+	case errors.Is(err, errLeaseExpired), errors.Is(err, errLeaseGenStale):
 		return http.StatusConflict
 	case errors.Is(err, errLeaseStageInvalid), errors.Is(err, errLeaseResetReason):
 		return http.StatusBadRequest
@@ -1110,8 +1113,11 @@ func runCheckpointPolicyForConfig(cfg *config.Config, stage string) runCheckpoin
 
 func completedRunFromJourney(j timeline.Journey, includeTimeline bool, plan runPlanSnapshot) (Run, bool) {
 	stage := j.Stages[timeline.KindStageCompleted]
-	if stage == nil || stage.Attrs == nil ||
-		stage.Attrs["stage_from"] != StageImplement || stage.Attrs["stage_to"] != "completed" {
+	if stage == nil || stage.Attrs == nil {
+		return Run{}, false
+	}
+	abandoned := stage.Attrs["abandoned"] == "true"
+	if !abandoned && (stage.Attrs["stage_from"] != StageImplement || stage.Attrs["stage_to"] != "completed") {
 		return Run{}, false
 	}
 	gen, _ := strconv.ParseUint(stage.Attrs["gen"], 10, 64)
@@ -1129,6 +1135,10 @@ func completedRunFromJourney(j timeline.Journey, includeTimeline bool, plan runP
 		PlanEpicID:     plan.epicID,
 		WaveIDs:        append([]string(nil), plan.waveIDs...),
 		Stages:         completedRunStages(gen),
+	}
+	if abandoned {
+		run.State, run.Stage = runRetiredAbandoned, stage.Attrs["stage_from"]
+		run.Stages = leaseRunStages(run.Stage, gen)
 	}
 	if title := stage.Attrs["title"]; title != "" {
 		run.Title = scrubRunTitle(title)

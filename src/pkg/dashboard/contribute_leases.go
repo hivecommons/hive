@@ -256,6 +256,9 @@ func (h *ContributeWSHub) recordLeaseForKeyStage(identity, taskID, repo string, 
 	removedAdmissions := map[string]*taskLease{}
 	if stage != "" {
 		runKey := runKeyOfLease(key, repo)
+		if h.retiredRuns[runKey] == runRetiredAbandoned {
+			return fmt.Errorf("run %s was abandoned", runKey)
+		}
 		for admissionKey, l := range h.leases {
 			if l != nil && l.identity != identity && runKeyOfLease(leaseWorkKey(l), l.repo) == runKey && l.stage == stage && h.isStagePlaceholderIdentity(l.identity) {
 				triageVerdict, triageRationale = l.triageVerdict, l.triageRationale
@@ -416,8 +419,8 @@ func (h *ContributeWSHub) stageLeaseEscalated(identity, taskID string) bool {
 // window from now, and persists before anything observes the change: a save
 // failure rolls the in-memory record back and surfaces the error, so the
 // registry on disk and in memory never disagree about which stage a run is in.
-// `to` must be a strictly earlier stage; the same stage is refused (that is a
-// retry) and a later stage is refused (that is an advance).
+// `to` must be an earlier stage, or the current stage when escalated. An owner
+// can restart an exhausted stage with a fresh budget; ordinary retries cannot.
 func (h *ContributeWSHub) resetLeaseStage(identity, taskID, to, reason string, now time.Time) (taskLease, error) {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -479,7 +482,7 @@ func (h *ContributeWSHub) mutateLeaseStage(identity, taskID, to string, mode lea
 			h.leaseMu.Unlock()
 			return taskLease{}, fmt.Errorf("%w: unknown stage %q", errLeaseStageInvalid, to)
 		}
-		if leaseStageIndex(to) >= leaseStageIndex(l.stage) {
+		if leaseStageIndex(to) > leaseStageIndex(l.stage) || (to == l.stage && l.stageEscalatedAt.IsZero()) {
 			h.leaseMu.Unlock()
 			return taskLease{}, fmt.Errorf("%w: reset from %q to %q is not a move to an earlier stage", errLeaseStageInvalid, l.stage, to)
 		}
@@ -1007,6 +1010,8 @@ type persistedLease struct {
 	// record unchanged.
 	StageRetries     int        `json:"stage_retries,omitempty"`
 	StageEscalatedAt *time.Time `json:"stage_escalated_at,omitempty"`
+	// Retirement tombstones share the atomic lease ledger, but never expire.
+	RetiredReason string `json:"retired_reason,omitempty"`
 }
 
 // setLeaseClaim records an issue claim on an existing lease (#8380). A lease
@@ -1068,7 +1073,10 @@ func (h *ContributeWSHub) saveLeasesLocked() error {
 		return nil
 	}
 	now := time.Now()
-	records := make([]persistedLease, 0, len(h.leases))
+	records := make([]persistedLease, 0, len(h.leases)+len(h.retiredRuns))
+	for key, reason := range h.retiredRuns {
+		records = append(records, persistedLease{Key: key, RetiredReason: reason})
+	}
 	for _, l := range h.leases {
 		if l == nil || l.expiresAt.IsZero() || now.After(l.expiresAt) {
 			continue
@@ -1211,6 +1219,13 @@ func (h *ContributeWSHub) loadLeases() {
 		h.leases = make(map[string]*taskLease)
 	}
 	for _, rec := range records {
+		if rec.Key != "" && rec.RetiredReason != "" {
+			if h.retiredRuns == nil {
+				h.retiredRuns = make(map[string]string)
+			}
+			h.retiredRuns[rec.Key] = rec.RetiredReason
+			continue
+		}
 		// gen == 0 could never be matched by lookupLease (it refuses clientGen 0),
 		// so such a record is unusable; drop it rather than hold an issue hostage.
 		if rec.Identity == "" || rec.TaskID == "" || rec.Gen == 0 {

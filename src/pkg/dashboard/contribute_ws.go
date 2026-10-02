@@ -1106,11 +1106,12 @@ type ContributeWSHub struct {
 	// release path (revokeLease: disconnect, ready-abandon, complete, fail, operator
 	// requeue, lease-TTL expiry), so a released task can never be re-adopted. Guarded
 	// by leaseMu.
-	leases   map[string]*taskLease
-	leaseMu  sync.Mutex
-	stopCh   chan struct{}
-	doneCh   chan struct{}
-	stopOnce sync.Once
+	retiredRuns map[string]string // guarded by leaseMu; persisted with leases
+	leases      map[string]*taskLease
+	leaseMu     sync.Mutex
+	stopCh      chan struct{}
+	doneCh      chan struct{}
+	stopOnce    sync.Once
 }
 
 // leaseExpiredReason is the reason pushed to a relay whose task lease expired without
