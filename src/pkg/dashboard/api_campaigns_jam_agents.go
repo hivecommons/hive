@@ -192,9 +192,17 @@ func (s *Server) campaignJamAgentPrompt(r *http.Request, agent, spec string, thr
 	if section == "" {
 		section = "(unspecified)"
 	}
+	section, ok := s.enforceJamAgentInput(r, agent, truncateRunes(section, jamAgentMaxCommentRunes))
+	if !ok {
+		return nil, false
+	}
 	fmt.Fprintf(&b, "SECTION: %s\n", section)
 	if title := strings.TrimSpace(thread.Title); title != "" {
-		fmt.Fprintf(&b, "THREAD_TITLE: %s\n", truncateRunes(title, jamAgentMaxCommentRunes))
+		title, ok := s.enforceJamAgentInput(r, agent, truncateRunes(title, jamAgentMaxCommentRunes))
+		if !ok {
+			return nil, false
+		}
+		fmt.Fprintf(&b, "THREAD_TITLE: %s\n", title)
 	}
 	if spec = strings.TrimSpace(spec); spec != "" {
 		text, ok := s.enforceJamAgentInput(r, agent, truncateRunes(spec, jamAgentMaxSpecRunes))
@@ -209,11 +217,15 @@ func (s *Server) campaignJamAgentPrompt(r *http.Request, agent, spec string, thr
 	}
 	b.WriteString("\nTHREAD:\n")
 	for _, c := range comments {
+		author, ok := s.enforceJamAgentInput(r, agent, truncateRunes(strings.TrimSpace(c.Author.Name), jamAgentMaxCommentRunes))
+		if !ok {
+			return nil, false
+		}
 		text, ok := s.enforceJamAgentInput(r, agent, truncateRunes(strings.TrimSpace(c.Body), jamAgentMaxCommentRunes))
 		if !ok {
 			return nil, false
 		}
-		fmt.Fprintf(&b, "- %s (%s): %s\n", c.Author.Name, c.Author.Type, text)
+		fmt.Fprintf(&b, "- %s (%s): %s\n", author, c.Author.Type, text)
 	}
 	if steer != "" {
 		text, ok := s.enforceJamAgentInput(r, agent, truncateRunes(steer, jamAgentMaxPromptRunes))

@@ -138,6 +138,9 @@ func TestJamProjectSyncAuthRestrictsGitHubToken(t *testing.T) {
 		{name: "localhost http allowed", endpoint: "http://localhost:8080/graphql", wantToken: customToken},
 		{name: "unsupported scheme rejected", endpoint: "ftp://sync.example.com/graphql", wantErr: true},
 		{name: "invalid url rejected", endpoint: "not a url", wantErr: true},
+		{name: "github host on a non-default port gets custom token, not GITHUB_TOKEN", endpoint: "https://api.github.com:8443/other", wantToken: customToken},
+		{name: "github host with userinfo gets custom token, not GITHUB_TOKEN", endpoint: "https://user@api.github.com/graphql", wantToken: customToken},
+		{name: "github host with a different path gets custom token, not GITHUB_TOKEN", endpoint: "https://api.github.com/other", wantToken: customToken},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

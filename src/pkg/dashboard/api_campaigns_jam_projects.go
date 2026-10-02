@@ -22,10 +22,12 @@ const (
 )
 
 // jamProjectSyncAuth resolves the sync endpoint and the bearer token it may
-// receive. GITHUB_TOKEN is only ever sent to api.github.com over https; a
-// custom endpoint gets HIVE_JAM_PROJECT_SYNC_TOKEN instead, and plain http is
-// allowed only for loopback hosts so no credential crosses the network in
-// cleartext (#8811).
+// receive. GITHUB_TOKEN is only ever sent to the canonical
+// https://api.github.com/graphql endpoint; any other endpoint — including a
+// look-alike that merely shares the api.github.com host on a different port,
+// path or with userinfo set — gets HIVE_JAM_PROJECT_SYNC_TOKEN instead, and
+// plain http is allowed only for loopback hosts so no credential crosses the
+// network in cleartext (#8811).
 func jamProjectSyncAuth(endpoint string) (string, string, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Host == "" {
@@ -41,7 +43,7 @@ func jamProjectSyncAuth(endpoint string) (string, string, error) {
 	default:
 		return "", "", fmt.Errorf("%s must use https", jamProjectSyncEndpointEnv)
 	}
-	if u.Scheme == "https" && strings.EqualFold(host, jamProjectSyncGitHubHost) {
+	if jamProjectSyncIsCanonicalGitHub(u) {
 		token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
 		if token == "" {
 			return "", "", errors.New("GITHUB_TOKEN required for GitHub Projects sync")
@@ -49,6 +51,17 @@ func jamProjectSyncAuth(endpoint string) (string, string, error) {
 		return u.String(), token, nil
 	}
 	return u.String(), strings.TrimSpace(os.Getenv(jamProjectSyncTokenEnv)), nil
+}
+
+// jamProjectSyncIsCanonicalGitHub reports whether u is exactly the
+// documented default endpoint (https://api.github.com/graphql, no userinfo,
+// no non-default port): the only shape GITHUB_TOKEN may be sent to. A URL
+// that merely resolves to the same host — a different port, a different
+// path, or one carrying userinfo — is treated as a distinct, non-GitHub
+// endpoint (hivecommons/hive#10113).
+func jamProjectSyncIsCanonicalGitHub(u *url.URL) bool {
+	return u.Scheme == "https" && u.User == nil && u.Port() == "" &&
+		strings.EqualFold(u.Hostname(), jamProjectSyncGitHubHost) && u.Path == "/graphql"
 }
 
 func jamProjectSyncLoopback(host string) bool {
