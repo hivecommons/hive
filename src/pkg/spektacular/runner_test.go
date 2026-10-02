@@ -370,6 +370,54 @@ func TestTickResolvesTimestampedArtifactAfterNotFound(t *testing.T) {
 	}
 }
 
+func TestTickReresolvesArtifactAfterGenerationChange(t *testing.T) {
+	// Generation 1 resolves an older timestamped document that never goes
+	// final; the retry generation leaves a newer document in the same work
+	// dir. The runner must re-resolve rather than keep polling the old id.
+	const oldID = "20260925160000-kubestellar-console-23725"
+	const newID = "20260925163042-kubestellar-console-23725"
+	reg := newFakeRegistry(StageSpec)
+	reg.stage.RunKey = "kubestellar/console#23725"
+	reg.stage.Artifact = "kubestellar-console-23725"
+	var mu sync.Mutex
+	listing := `["` + oldID + `.md"]`
+	var statused []string
+	exec := func(_ context.Context, _ string, args []string) ([]byte, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(args) >= 3 && args[1] == verbFile && args[2] == "list" {
+			return []byte(listing), nil
+		}
+		if len(args) >= 3 && args[1] == verbStatus {
+			statused = append(statused, args[2])
+			switch args[2] {
+			case oldID:
+				return []byte(statusJSON(KindSpec, oldID, DocumentDraft)), nil
+			case newID:
+				return []byte(statusJSON(KindSpec, newID, DocumentFinal)), nil
+			}
+			return []byte(`{"error":true,"code":"artifact_not_found","message":"missing","resource":"` + args[2] + `"}`), errors.New("exit status 1")
+		}
+		return nil, fmt.Errorf("unexpected args: %v", args)
+	}
+	r := &Runner{Exec: exec, Poll: testPoll, Registry: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if res := r.Tick(context.Background(), t0); res.Advanced != 0 || res.Errors != 0 {
+		t.Fatalf("gen1 tick = %+v", res)
+	}
+	mu.Lock()
+	listing = `["` + oldID + `.md","` + newID + `.md"]`
+	mu.Unlock()
+	reg.mu.Lock()
+	reg.stage.Gen = 2
+	reg.mu.Unlock()
+	if res := r.Tick(context.Background(), t0.Add(testPoll)); res.Advanced != 1 || res.Errors != 0 {
+		t.Fatalf("gen2 tick = %+v (status calls %v)", res, statused)
+	}
+	if last := statused[len(statused)-1]; last != newID {
+		t.Fatalf("gen2 polled %q, want %q (status calls %v)", last, newID, statused)
+	}
+}
+
 func TestStatus_JoinsByBareNameAcrossSpellings(t *testing.T) {
 	// The lease may still carry a file address; the CLI is always asked for
 	// the bare name, and a status answered under the bare name matches a

@@ -362,7 +362,9 @@ func (e *SpekHubExecutor) sweepStaleWorktrees(ctx context.Context) error {
 			if live[path] {
 				continue
 			}
-			if err := e.removeWorktree(ctx, repos, path); err != nil {
+			if err := e.removeWorktree(ctx, repos, path); errors.Is(err, errSpekHubFenceBusy) {
+				e.log().Debug("[spektacular] stale worktree removal deferred; shared clone busy", "path", path, "error", err)
+			} else if err != nil {
 				e.log().Warn("[spektacular] removing stale worktree failed", "path", path, "error", err)
 			}
 		}
@@ -460,11 +462,18 @@ func (e *SpekHubExecutor) sharedRepoDirs() []string {
 func (e *SpekHubExecutor) removeWorktree(ctx context.Context, repos []string, path string) error {
 	var last error
 	for _, repo := range repos {
-		if _, err := e.runner()(ctx, repo, spekGitEnv(os.Environ()), "git", "worktree", "remove", "--force", path); err == nil {
-			return nil
-		} else {
-			last = err
+		// A launch may be cloning, fetching or adding a worktree in this
+		// clone; leave the path for a later sweep rather than race it.
+		lock, err := acquireSpekHubFence(spekHubRepoLockPath(repo))
+		if err != nil {
+			return fmt.Errorf("shared clone %s: %w", repo, err)
 		}
+		_, err = e.runner()(ctx, repo, spekGitEnv(os.Environ()), "git", "worktree", "remove", "--force", path)
+		lock.Close()
+		if err == nil {
+			return nil
+		}
+		last = err
 	}
 	if err := removeRunStageWorktreeByPath(path); err != nil {
 		if last != nil {
@@ -594,6 +603,13 @@ func (e *SpekHubExecutor) executeStage(parent context.Context, st spekHubStage) 
 		if err := e.captureCompletedStage(st, worktree, artifact, status, nil, now, nil, receiptDir, spekCaptureAlreadyFinal); err != nil {
 			e.log().Warn("[spektacular] stage transcript capture failed", "run", st.runKey, "stage", st.stage, "gen", st.gen, "error", err)
 		}
+		// The capture above has recorded any answered round; clear it so the
+		// next stage in this shared worktree is not prompted with it.
+		if e.stageInterviewMode() != "auto" {
+			if err := clearConsumedSpekInterview(worktree, readSpekInterviewAnswers(worktree)); err != nil {
+				e.log().Warn("[spektacular] clearing consumed interview failed", "run", st.runKey, "error", err)
+			}
+		}
 		e.holdGeneration(st)
 		e.Server.tickStageRunner(time.Now().UTC())
 		return nil
@@ -631,18 +647,31 @@ func (e *SpekHubExecutor) executeStage(parent context.Context, st spekHubStage) 
 	}
 	e.log().Info("[spektacular] hub executor finished stage", "run", st.runKey, "stage", st.stage, "gen", st.gen, "worktree", worktree, "pid", pid, "exit_code", exitCode, "duration", time.Since(started).String())
 	e.recordStageProgress(st, "cli_exited", map[string]string{"backend": e.backend(), "pid": strconv.Itoa(pid), "exit_code": strconv.Itoa(exitCode), "duration": time.Since(started).String(), "worktree": worktree})
+	postCtx, postCancel := context.WithTimeout(parent, spekHubPostExitTimeout)
+	defer postCancel()
+	postCtx = context.WithValue(postCtx, spekHubFenceContextKey{}, fence)
 	if e.stageInterviewMode() != "auto" {
 		if req, _, pending, askedAt, ok := spekInterviewPending(worktree); ok {
-			e.recordInterviewWait(st, taskID, worktree, req, pending, askedAt)
-			return nil
+			final := false
+			if err == nil {
+				_, final = e.finalArtifact(postCtx, worktree, env, st.stage, artifact)
+			}
+			if !final {
+				e.recordInterviewWait(st, taskID, worktree, req, pending, askedAt)
+				return nil
+			}
+			// The document is already final, so the request is moot: capture
+			// this pass and drop the request instead of holding the run (and
+			// the next stage in this shared worktree) on a human answer.
+			e.log().Info("[spektacular] discarding interview request left beside a final document", "run", st.runKey, "stage", st.stage, "gen", st.gen, "questions", len(pending))
+			if cleanupErr := clearSpekInterviewRound(worktree, req.RequestID); cleanupErr != nil {
+				e.log().Warn("[spektacular] discarding interview request failed", "run", st.runKey, "error", cleanupErr)
+			}
 		}
 	}
 	if err != nil {
 		return fmt.Errorf("agent CLI failed: %w: %s", err, tailString(string(out), spekHubOutputTailBytes))
 	}
-	postCtx, postCancel := context.WithTimeout(parent, spekHubPostExitTimeout)
-	defer postCancel()
-	postCtx = context.WithValue(postCtx, spekHubFenceContextKey{}, fence)
 	if err := e.afterCLIExit(postCtx, st, taskID, worktree, env, artifact, out, started, statusHistory(), receiptDir); err != nil {
 		// The CLI exited but whether it reached final is unknown; treat the
 		// generation as spent rather than relaunching it on every tick. If the
@@ -655,6 +684,9 @@ func (e *SpekHubExecutor) executeStage(parent context.Context, st spekHubStage) 
 // spekHubWaitDelay bounds how long exec.Cmd.Wait may block on inherited
 // pipes after the stage process itself has exited or been killed.
 const spekHubWaitDelay = 10 * time.Second
+
+// spekHubRepoLockPoll is how often a launch retries a busy shared-clone lock.
+const spekHubRepoLockPoll = 200 * time.Millisecond
 
 func (e *SpekHubExecutor) runStageCommand(ctx context.Context, worktree string, env []string, st spekHubStage, cmd []string) ([]byte, int, error) {
 	logPath := filepath.Join(worktree, ".hive", fmt.Sprintf("spek-stage-%s-%d.log", sanitizeRunPromptPath(st.stage), st.gen))
@@ -1438,36 +1470,9 @@ func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage)
 		return err
 	}
 	defer cleanup()
-	runGit := func(dir string, args ...string) error {
-		full := append([]string{}, authArgs...)
-		full = append(full, args...)
-		out, err := e.runner()(ctx, dir, spekGitEnv(os.Environ()), "git", full...)
-		if err != nil {
-			return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, tailString(string(out), spekHubOutputTailBytes))
-		}
-		return nil
-	}
-	if _, err := os.Stat(filepath.Join(repoDir, ".git")); err != nil {
-		if err := runGit(filepath.Dir(repoDir), "clone", "--no-checkout", e.cloneURL(st.repo), filepath.Base(repoDir)); err != nil {
-			return err
-		}
-	}
-	if err := runGit(repoDir, "fetch", "origin", "HEAD"); err != nil {
-		return err
-	}
 	worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
-	if _, err := os.Stat(worktree); errors.Is(err, os.ErrNotExist) {
-		if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
-			return err
-		}
-		// A swept directory can leave git with a "missing but already
-		// registered" worktree entry that makes `worktree add` refuse.
-		if err := runGit(repoDir, "worktree", "prune"); err != nil {
-			e.log().Warn("[spektacular] git worktree prune failed", "repo", repoDir, "error", err)
-		}
-		if err := runGit(repoDir, "worktree", "add", "--detach", worktree, "FETCH_HEAD"); err != nil {
-			return err
-		}
+	if err := e.syncRunWorktree(ctx, st, repoDir, worktree, authArgs); err != nil {
+		return err
 	}
 	if _, err := os.Stat(filepath.Join(worktree, ".spektacular")); errors.Is(err, os.ErrNotExist) {
 		copied, copyErr := copyPreviousSpektacularProject(e.Identity, st.runKey, worktree)
@@ -1488,6 +1493,86 @@ func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage)
 		e.log().Warn("[spektacular] migrate of existing Spektacular project failed", "run", st.runKey, "worktree", worktree, "error", err, "output", tailString(string(out), spekHubOutputTailBytes))
 	}
 	return nil
+}
+
+// syncRunWorktree clones/fetches the shared clone and creates or refreshes the
+// run worktree. Every git command on the shared clone runs under its repo lock
+// so concurrent runs and the sweep never interleave on one clone (#10107).
+func (e *SpekHubExecutor) syncRunWorktree(ctx context.Context, st spekHubStage, repoDir, worktree string, authArgs []string) error {
+	lock, err := waitSpekHubRepoLock(ctx, repoDir)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	gitOut := func(dir string, args ...string) (string, error) {
+		full := append([]string{}, authArgs...)
+		full = append(full, args...)
+		out, err := e.runner()(ctx, dir, spekGitEnv(os.Environ()), "git", full...)
+		if err != nil {
+			return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, tailString(string(out), spekHubOutputTailBytes))
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+	runGit := func(dir string, args ...string) error {
+		_, err := gitOut(dir, args...)
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, ".git")); err != nil {
+		if err := runGit(filepath.Dir(repoDir), "clone", "--no-checkout", e.cloneURL(st.repo), filepath.Base(repoDir)); err != nil {
+			return err
+		}
+	}
+	if err := runGit(repoDir, "fetch", "origin", "HEAD"); err != nil {
+		return err
+	}
+	if _, err := os.Stat(worktree); errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
+			return err
+		}
+		// A swept directory can leave git with a "missing but already
+		// registered" worktree entry that makes `worktree add` refuse.
+		if err := runGit(repoDir, "worktree", "prune"); err != nil {
+			e.log().Warn("[spektacular] git worktree prune failed", "repo", repoDir, "error", err)
+		}
+		return runGit(repoDir, "worktree", "add", "--detach", worktree, "FETCH_HEAD")
+	}
+	if _, err := os.Stat(filepath.Join(worktree, ".git")); err != nil {
+		return nil
+	}
+	// The run worktree is reused across stages and generations; move it to
+	// the freshly fetched commit so a later stage reads current code (#10105).
+	// FETCH_HEAD is per worktree, so resolve it in the shared clone. A plain
+	// checkout keeps the untracked .spektacular/ and .hive/ files and refuses
+	// rather than overwrite local changes; then the old checkout is kept.
+	head, err := gitOut(repoDir, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
+	if err == nil {
+		err = runGit(worktree, "checkout", "--detach", head)
+	}
+	if err != nil {
+		e.log().Warn("[spektacular] refreshing run worktree failed; keeping its current checkout", "run", st.runKey, "worktree", worktree, "error", err)
+	}
+	return nil
+}
+
+// spekHubRepoLockPath is the lock serialising git on one shared clone. It sits
+// beside the clone so neither git nor the sweep removes it.
+func spekHubRepoLockPath(repoDir string) string {
+	return filepath.Join(filepath.Dir(repoDir), "."+filepath.Base(repoDir)+".executor.lock")
+}
+
+// waitSpekHubRepoLock blocks until the shared clone's lock is held or ctx ends.
+func waitSpekHubRepoLock(ctx context.Context, repoDir string) (*os.File, error) {
+	for {
+		lock, err := acquireSpekHubFence(spekHubRepoLockPath(repoDir))
+		if !errors.Is(err, errSpekHubFenceBusy) {
+			return lock, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(spekHubRepoLockPoll):
+		}
+	}
 }
 
 // validateSpekHubRepoPath rejects a repo that cannot be joined under the

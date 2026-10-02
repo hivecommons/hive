@@ -861,6 +861,117 @@ func TestSpekHubExecutorPrepareWorkspaceRecoversSweptButRegisteredWorktree(t *te
 	}
 }
 
+func spekHubRealGitExec(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+	if name == "git" {
+		cmd := exec.CommandContext(ctx, name, args...)
+		cmd.Dir = dir
+		cmd.Env = env
+		return cmd.CombinedOutput()
+	}
+	if name == "spektacular" {
+		return nil, os.MkdirAll(filepath.Join(dir, ".spektacular"), 0o755)
+	}
+	return []byte("ok"), nil
+}
+
+func TestSpekHubExecutorPrepareWorkspaceRefreshesExistingRunWorktree(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	remote := makeBareRepo(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	e.CloneURL = func(string) string { return remote }
+	e.Exec = spekHubRealGitExec
+	st := spekHubStage{runKey: "myorg/repo1#57", stage: StageSpec, repo: spekRepo, gen: 1}
+	if err := e.prepareWorkspace(context.Background(), st); err != nil {
+		t.Fatalf("spec prepareWorkspace: %v", err)
+	}
+	worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
+	artifact := filepath.Join(worktree, ".spektacular", "specs", "myorg-repo1-57.md")
+	if err := os.MkdirAll(filepath.Dir(artifact), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifact, []byte("# spec"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The default branch advances while the spec waits for approval.
+	work := filepath.Join(t.TempDir(), "push")
+	for _, args := range [][]string{
+		{"clone", remote, work},
+		{"-C", work, "-c", "user.email=hive@example.com", "-c", "user.name=Hive", "commit", "--allow-empty", "-m", "advance"},
+		{"-C", work, "push", "origin", "HEAD"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	want, err := exec.Command("git", "-C", work, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.stage, st.gen = StagePlan, 2
+	if err := e.prepareWorkspace(context.Background(), st); err != nil {
+		t.Fatalf("plan prepareWorkspace: %v", err)
+	}
+	got, err := exec.Command("git", "-C", worktree, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(got)) != strings.TrimSpace(string(want)) {
+		t.Fatalf("run worktree HEAD = %s, want the fetched %s", got, want)
+	}
+	if _, err := os.Stat(artifact); err != nil {
+		t.Fatalf("refresh lost the untracked spec artifact: %v", err)
+	}
+}
+
+func TestSpekHubExecutorSharedCloneLockSerialisesLaunchAndSweep(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	repoDir := filepath.Join(currentAgentWorkspaceRoot(), e.Identity, filepath.FromSlash(spekRepo))
+	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var gitCalls []string
+	e.Exec = func(_ context.Context, _ string, _ []string, name string, args ...string) ([]byte, error) {
+		if name == "git" {
+			gitCalls = append(gitCalls, strings.Join(args, " "))
+		}
+		return []byte("ok"), nil
+	}
+	lock, err := acquireSpekHubFence(spekHubRepoLockPath(repoDir))
+	if err != nil {
+		t.Fatalf("hold shared clone lock: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*spekHubRepoLockPoll)
+	defer cancel()
+	st := spekHubStage{runKey: "myorg/repo1#57", stage: StageSpec, repo: spekRepo, gen: 1}
+	if err := e.prepareWorkspace(ctx, st); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("prepareWorkspace with the clone locked = %v, want it to wait for the lock", err)
+	}
+	stale := runStageWorktreePath(e.Identity, "myorg/repo1#58", StageSpec, 1)
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.sweepStaleWorktrees(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(gitCalls) != 0 {
+		t.Fatalf("git ran on a locked shared clone: %v", gitCalls)
+	}
+	if _, err := os.Stat(stale); err != nil {
+		t.Fatalf("sweep removed a worktree while the shared clone was locked: %v", err)
+	}
+	lock.Close()
+	if err := e.sweepStaleWorktrees(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(gitCalls, "worktree remove --force "+stale) {
+		t.Fatalf("git calls after unlock = %v, want worktree remove", gitCalls)
+	}
+	if err := e.prepareWorkspace(context.Background(), st); err != nil {
+		t.Fatalf("prepareWorkspace after unlock: %v", err)
+	}
+}
+
 func makeBareRepo(t *testing.T) string {
 	t.Helper()
 	work := t.TempDir()
