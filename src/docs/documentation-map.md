@@ -15,6 +15,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Operator reference](operator-reference.md) — top-level config blocks, hive flags/env, GitHub token scopes, and image provenance.
 - [Token mint](token-mint.md) — the opt-in `mint:` block (`pkg/mint`): what a minted token grants, key lifecycle, and the trust boundary an operator must get right before enabling it. Companion to [ADR-0007](adr/0007-token-mint.md).
 - [Changelog](../../CHANGELOG.md) — recent user-visible changes and release notes.
+- [Work-source terminology](work-source-terminology.md) — glossary and audit notes for keeping user-facing copy neutral across GitHub, GitLab, Gitea, Linear, Jira, and future work sources.
 - [Release channels](release-channels.md) — `stable`/`candidate`/`edge` moving image tags, per-line channel ownership (`v5` → `candidate`/`latest`, `v6` → `edge`, `v4` → none), switching a hive to a channel, and the version pill.
 - [Digest-verifiable rollback](release-rollback.md) - the operator runbook for pinning a hive back to a prior immutable short-SHA build for all three images (`hive`, `hive-contributor`, `hive-hub`), stopping the hub automation that would undo it, and verifying by digest rather than by tag that the pin landed on the running spoke.
 - [v5 GA readiness bar](v5-ga.md) — measurable release-train, migration, safety, and governance criteria that must be evidenced before v5 can be promoted beyond the active-development `edge` channel.

@@ -3732,7 +3732,7 @@
     </div>
     <div class="oc-nav-group">
       <div class="oc-nav-label">Resources</div>
-      <a class="oc-nav-item" data-section="repos-section" data-action="ocNavigate" data-arg0="repos-section"><span class="oc-nav-emoji">📦</span><span class="oc-nav-text">Repos</span><span id="repos-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
+      <a class="oc-nav-item" data-section="repos-section" data-action="ocNavigate" data-arg0="repos-section"><span class="oc-nav-emoji">📦</span><span class="oc-nav-text">Projects</span><span id="repos-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item" data-section="beads-section" data-action="ocNavigate" data-arg0="beads-section"><span class="oc-nav-emoji">🔮</span><span class="oc-nav-text">Beads</span><span id="beads-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item" data-section="contributors-section" data-action="ocNavigate" data-arg0="contributors-section"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
     </div>
@@ -3900,7 +3900,7 @@
     <span class="fs-2xl">&#9888;&#65039;</span>
     <div style="flex:1">
       <div class="gh-app-title">GitHub App Not Installed</div>
-      <div class="gh-app-desc">This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your repository; this hive checks every few minutes and will configure itself, or you can paste the Installation ID below.</div>
+      <div class="gh-app-desc">This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your project; this hive checks every few minutes and will configure itself, or you can paste the Installation ID below.</div>
     </div>
     <!-- autocomplete=off + name-less: Firefox form history would otherwise
          offer/refill a stored value and, on Linux, could clear the field on a
@@ -3939,15 +3939,15 @@
   <div id="repo-target-banner" class="gh-app-install-banner perm-issue" hidden>
     <span class="fs-2xl">&#9888;&#65039;</span>
     <div style="flex:1">
-      <div class="gh-app-title">Repo Target Misconfigured</div>
+      <div class="gh-app-title">Project Target Misconfigured</div>
       <div class="gh-app-desc" id="repo-target-banner-desc">Expected org/repo.</div>
     </div>
-    <button type="button" class="hv-btn btn-primary gh-app-btn" data-action="gh1">Fix in Repos</button>
+    <button type="button" class="hv-btn btn-primary gh-app-btn" data-action="gh1">Fix in Projects</button>
   </div>
   <div id="issues-disabled-banner" class="gh-app-install-banner perm-issue" hidden>
     <span class="fs-2xl">&#9888;&#65039;</span>
     <div class="gh-app-body">
-      <div class="gh-app-title">Issues Disabled on a Watched Repo</div>
+      <div class="gh-app-title">Issues Disabled on a Watched Project</div>
       <div class="gh-app-desc" id="issues-disabled-banner-list"></div>
     </div>
   </div>
@@ -4019,7 +4019,7 @@
   <div class="cost-usage mb-8" id="cost-panel" data-dashboard-section="cost-panel"></div>
 
   <div class="repos" id="repos-section" data-dashboard-section="repos-section">
-    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Repositories section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> Repositories <span id="repos-host-badge" title="Every repo in this hive is on this single GitHub host" style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3)"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: automated fix attempts exhausted — operator review required"></span> <button class="hv-btn btn-secondary btn" id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1" title="Scan the monitored repositories for issue/PR changes now instead of waiting for the governor's next eval cycle (read-only — no agents are kicked; server-debounced)">🔄 Rescan</button> <button class="hv-btn btn-secondary btn" id="repos-reset-layout-btn" data-action="resetRepoCardWidths" data-stop="1" title="Reset repository card widths and tile order to the default layout (this browser only)" style="display:none">↔️ Reset layout</button> <button class="hv-btn config-gear btn-sm" data-action="gh1" data-stop="1" title="Manage monitored repositories">⚙️</button></h2>
+    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Projects section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> Projects <span id="repos-host-badge" title="Every project in this hive is on this provider host" style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3)"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: automated fix attempts exhausted — operator review required"></span> <button class="hv-btn btn-secondary btn" id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1" title="Scan monitored projects for issue and pull request changes now instead of waiting for the governor's next eval cycle (read-only — no agents are kicked; server-debounced)">🔄 Rescan</button> <button class="hv-btn btn-secondary btn" id="repos-reset-layout-btn" data-action="resetRepoCardWidths" data-stop="1" title="Reset project card widths and tile order to the default layout (this browser only)" style="display:none">↔️ Reset layout</button> <button class="hv-btn config-gear btn-sm" data-action="gh1" data-stop="1" title="Manage monitored projects">⚙️</button></h2>
     <div class="section-body">
       <div id="repos-legend" class="repo-legend"></div>
       <!-- Read-only view of project.issue_filter: which issues agents may
@@ -4263,7 +4263,7 @@
           <li><strong>L3 — Quality-Gated (Measured):</strong> quality may open hold-gated test/CI PRs; CI-maintainer watches build health.</li>
           <li><strong>L4 — Security-Aware (Adaptive):</strong> sec-check joins; delivery agents may file issues; only quality, sec-check, and ci-maintainer may open hold-gated PRs.</li>
           <li><strong>L5 — Semi-Autonomous:</strong> most lanes may open issues and hold-gated PRs; humans batch-review and remove holds. The reviewer agent joins and works the queue every 30 minutes.</li>
-          <li><strong>L6 — Fully Autonomous:</strong> eligible App-authored PRs can auto-merge on green CI. Auto-merge is off below L6; switching to L6 turns it on for all active repos, and owners can toggle individual repos off or back on afterward. Reviewer still never merges, and a <code>requires_human</code> or reject verdict pulls a PR out of the auto-merge lane.</li>
+          <li><strong>L6 — Fully Autonomous:</strong> eligible App-authored PRs can auto-merge when checks pass. Auto-merge is off below L6; switching to L6 turns it on for all active repos, and owners can toggle individual repos off or back on afterward. Reviewer still never merges, and a <code>requires_human</code> or reject verdict pulls a PR out of the auto-merge lane.</li>
         </ul>
         <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">Promotion adds agents and capability; demotion narrows them again. Hive also removes only level-owned holds when the level no longer calls for them — a hold you applied is never removed automatically. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/review-queue-triage.md" target="_blank" rel="noopener noreferrer">review queue triage</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-pr.md" target="_blank" rel="noopener noreferrer">hive-open-pr</a>.</p>
 
@@ -4295,7 +4295,7 @@
         <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">Claims are issue writes, so they require the same ACMM issue-writing permission as comments and issue creation. The optional claim-expiry feature is default-off under <code>governor.claims.enabled</code>; when off, ordinary work assignment still relies on the existing queue/lease rules.</p>
 
         <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">How much GitHub footprint should I expect?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">At L2, expect only the 🐝 Hive Advisory Report issue and its digest comment. Higher levels add App-bot authored issues, comments, PRs, hold labels, review verdicts, claim labels, and — at L6 — auto-merge on green CI for eligible App-authored PRs. Visible PR attribution is on by default and can be hidden with <code>governor.attribution_trailer</code>, but the audit entry is always written. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-issue.md" target="_blank" rel="noopener noreferrer">hive-open-issue</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-pr.md" target="_blank" rel="noopener noreferrer">hive-open-pr</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/audit-log.md" target="_blank" rel="noopener noreferrer">audit log</a>.</p>
+        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">At L2, expect only the 🐝 Hive Advisory Report issue and its digest comment. Higher levels add App-bot authored issues, comments, PRs, hold labels, review verdicts, claim labels, and — at L6 — auto-merge when checks pass for eligible App-authored PRs. Visible PR attribution is on by default and can be hidden with <code>governor.attribution_trailer</code>, but the audit entry is always written. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-issue.md" target="_blank" rel="noopener noreferrer">hive-open-issue</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-pr.md" target="_blank" rel="noopener noreferrer">hive-open-pr</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/audit-log.md" target="_blank" rel="noopener noreferrer">audit log</a>.</p>
         <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6);color:var(--muted)">Two GitHub-adjacent Features toggles are intentionally default-off. Audit finding publication requires <code>publication.enabled</code> and still refuses sensitive findings unless <code>publication.private_channel</code> is configured. Plan-match reviews require <code>review.plan_match.enabled</code>; without it, reviewer runs do not spend cycles scoring PRs against run trailers. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/audit-campaign.md" target="_blank" rel="noopener noreferrer">audit campaign</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md#which-levels-may-publish-audit-findings" target="_blank" rel="noopener noreferrer">publication level rules</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/planning-intelligence.md" target="_blank" rel="noopener noreferrer">planning intelligence</a>.</p>
 
         <h3 style="font-size:1rem;margin:18px 0 8px">Cost, cadence and models</h3>
@@ -8334,7 +8334,7 @@
         if (isPermIssue) {
           banner.classList.add('perm-issue');
           if (title) title.textContent = 'GitHub App — Insufficient Permissions';
-          if (desc) desc.textContent = 'The app is installed but cannot write to this repository.';
+          if (desc) desc.textContent = 'The app is installed but cannot write to this project.';
           // Never fall back to a public github.com URL: on GitHub Enterprise
           // that sends the user to the wrong GitHub entirely and their org
           // admin never sees the request. Prefer the server-computed install
@@ -8380,7 +8380,7 @@
           if (title) title.textContent = isGHE ? 'GitHub App Not Installed on ' + data.githubBaseURL.replace('https://', '') : 'GitHub App Not Installed';
           if (desc) desc.textContent = isGHE
             ? 'This hive cannot post advisory reports. Install the GitHub App on your GHE org; this hive checks every few minutes and will configure itself, or you can paste the Installation ID below.'
-            : 'This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your repository; this hive checks every few minutes and will configure itself, or you can paste the Installation ID below.';
+            : 'This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your project; this hive checks every few minutes and will configure itself, or you can paste the Installation ID below.';
           /* A GitHub Enterprise host whose App slug was never configured yields
              an EMPTY install URL from the server, deliberately: the public
              "kubestellar-hive" slug names no App on an enterprise host, so a
@@ -8421,7 +8421,7 @@
       if (!banner) return;
       if (data && data.repoTargetMisconfigured) {
         var desc = document.getElementById('repo-target-banner-desc');
-        if (desc) desc.textContent = data.repoTargetIssue || 'Repo target misconfigured — expected org/repo. Fix in Settings → Repos.';
+        if (desc) desc.textContent = data.repoTargetIssue || 'Project target misconfigured — expected owner/name. Fix in Settings → Projects.';
         banner.removeAttribute('hidden');
         banner.style.cssText = 'display:flex !important';
       } else {
@@ -8555,7 +8555,7 @@
       el.style.display = 'block';
       el.innerHTML = '<div style="background:rgba(124,58,237,0.10);border:1px solid rgba(124,58,237,0.32);border-radius:8px;padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-4);display:flex;align-items:center;gap:10px;font-size:0.85rem">'
         + '<span style="font-size:1.1rem">🧭</span>'
-        + '<span style="flex:1;color:var(--text)"><strong>New: plan a GitHub issue.</strong> Add the <code>plan</code> label to any issue on GitHub — or click <strong>⧉ Plan</strong> on an issue below — and the architect breaks it into a reviewable task plan you approve before work starts.</span>'
+        + '<span style="flex:1;color:var(--text)"><strong>New: plan an issue.</strong> Add the <code>plan</code> label to any issue — or click <strong>⧉ Plan</strong> on an issue below — and the architect breaks it into a reviewable task plan you approve before work starts.</span>'
         + '<button class="hv-btn btn-icon btn-sm" data-action="dismissPlanningIntro" title="Dismiss">✕</button>'
         + '</div>';
     }
@@ -8916,7 +8916,7 @@
         <div class="gov-grid">
           <div class="gov-stat" title="TIMER — is the governor's evaluation loop alive?&#10;&#10;WHAT: The governor re-evaluates mode and kicks due agents on a fixed cadence. This shows whether that loop is running.&#10;&#10;HOW: 'active' if the governor reported a heartbeat within its expected interval; 'starting' during boot before the first tick; 'DEAD' if no heartbeat has arrived — agents will NOT be kicked automatically until it recovers."><div class="label">timer</div><div class="val ${cls}">${gov.active ? '● active' : (isStarting ? '⏳ starting' : '⚠ DEAD')}</div></div>
           <div class="gov-stat" title="MODE — the governor's current activity level.&#10;&#10;WHAT: Sets how aggressively agents are scheduled. idle → quiet → busy → surge, each with faster cadences.&#10;&#10;HOW: Derived from queue pressure — actionable issues + open PRs — against the thresholds shown on the gauge below: 0–${CLASSIC_THRESH_QUIET-1}=idle, ${CLASSIC_THRESH_QUIET}–${CLASSIC_THRESH_BUSY-1}=quiet, ${CLASSIC_THRESH_BUSY}–${CLASSIC_THRESH_SURGE-1}=busy, ≥${CLASSIC_THRESH_SURGE}=surge. Thresholds are configurable in Governor settings."><div class="label">mode</div><div class="val" style="color:${modeColor}">${escapeHtml(gov.mode)}</div></div>
-          <div class="gov-stat" title="ACTIONABLE ISSUES — open work the agents can pick up.&#10;&#10;WHAT: The issue half of the queue pressure that drives the governor mode (pressure = issues + open PRs). The sparkline shows its recent trend.&#10;&#10;HOW: Count of open GitHub issues across all monitored KubeStellar repos, MINUS any labeled hold / do-not-merge / wontfix / blocked."><div class="label">actionable issues</div><div class="spark-row"><span class="val">${issueCount}</span>${issuesSpark}</div></div>
+          <div class="gov-stat" title="ACTIONABLE ISSUES — open work the agents can pick up.&#10;&#10;WHAT: The issue half of the queue pressure that drives the governor mode (pressure = issues + open PRs). The sparkline shows its recent trend.&#10;&#10;HOW: Count of open issues across all monitored KubeStellar projects, MINUS any labeled hold / do-not-merge / wontfix / blocked."><div class="label">actionable issues</div><div class="spark-row"><span class="val">${issueCount}</span>${issuesSpark}</div></div>
           <div class="gov-stat" title="PRS — open pull requests in flight.&#10;&#10;WHAT: How many PRs are currently open across the fleet. The sparkline shows the recent trend.&#10;&#10;HOW: Count of open pull requests across all monitored KubeStellar repos at the last scan (includes both agent-authored and human PRs; does not subtract held PRs)."><div class="label">PRs</div><div class="spark-row"><span class="val">${gov.prs}</span>${prsSpark}</div></div>
           <div class="gov-stat" title="${itmTitle}"><div class="label">MTTR</div><div class="spark-row"><span class="val">${formatFixTime(itmMedian)}</span>${itmSpark}</div></div>
           <div class="gov-stat" title="${holdTooltip}"><div class="label">on hold</div><div class="spark-row"><span class="val">${holdTotal}</span>${holdSpark}</div></div>
@@ -9246,7 +9246,7 @@
         const resp = await fetch('/api/prs/' + encodeURIComponent(owner) + '/' + encodeURIComponent(repo) + '/' + number + '/queue-automerge', { method: 'POST' });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
-        showToast('Queued #' + number + ' for auto-merge on green CI', 'success');
+        showToast('Queued #' + number + ' for auto-merge when checks pass', 'success');
         if (btn) { btn.textContent = '🔀'; btn.disabled = true; btn.title = 'Queued for Hive auto-merge'; btn.setAttribute('aria-label', 'Queued for Hive auto-merge'); }
         fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
       } catch (e) {
@@ -10690,7 +10690,7 @@
         badge.textContent = isPublic ? 'github.com' : hostLabel + ' · Enterprise';
         badge.style.background = isPublic ? 'color-mix(in srgb, var(--green) 15%, transparent)' : 'color-mix(in srgb, var(--indigo) 15%, transparent)';
         badge.style.color = isPublic ? 'var(--green)' : 'var(--indigo)';
-        badge.title = 'Every repo in this hive is on ' + hostLabel + (isPublic ? '' : ' (GitHub Enterprise)') + ' — this hive is single-host';
+        badge.title = 'Every project in this hive is on ' + hostLabel + (isPublic ? '' : ' (GitHub Enterprise)') + ' — this hive is single-host';
       }
       // Section-header escalation counter: "· N need human review". Escalated
       // PRs (needs-human label from the escalation ledger) previously had no
@@ -10825,7 +10825,7 @@
                         ? '<span class="repo-pr-pill mergeable pill-icon" title="Queued for Hive auto-merge" aria-label="Queued for Hive auto-merge">🔀</span>'
                         : (notMergeable
                             ? `<button class="repo-pr-pill pill-icon" disabled title="${esc(notMergeableTip)}" aria-label="${esc(notMergeableTip)}">🔀</button>`
-                            : `<button class="hv-btn repo-pr-pill pill-icon btn-primary" data-action="queuePRAutoMerge" data-arg0="${esc(owner)}" data-arg1="${esc(repoName)}" data-arg2="${p.number}" data-arg-types="s,s,j,t" data-stop="1" data-prevent="1" title="Queue auto-merge on green CI" aria-label="Queue auto-merge on green CI">🔀</button>`))
+                            : `<button class="hv-btn repo-pr-pill pill-icon btn-primary" data-action="queuePRAutoMerge" data-arg0="${esc(owner)}" data-arg1="${esc(repoName)}" data-arg2="${p.number}" data-arg-types="s,s,j,t" data-stop="1" data-prevent="1" title="Queue auto-merge when checks pass" aria-label="Queue auto-merge when checks pass">🔀</button>`))
                     : ''));
           const heldTip = held ? heldReason(p) : '';
           const holdBtn = holdToggleChip(cardRepo, p, 'pr', held, canToggleHold, heldTip);
@@ -10957,7 +10957,7 @@
     function resetRepoCardWidths() {
       try { localStorage.removeItem(repoCardWidthKey()); localStorage.removeItem(REPO_ORDER_KEY); } catch {}
       repaintReposForWidth();
-      showToast('Repository card layout reset to the default', 'info');
+      showToast('Project card layout reset to the default', 'info');
     }
 
     function repoOrderSaveFromDom(grid) {
@@ -11039,7 +11039,7 @@
         repoOrderClearIndicator(grid);
         grid.insertBefore(drag.card, slot.before || null);
         repoOrderSaveFromDom(grid);
-        showToast('Repository tile order saved', 'info');
+        showToast('Project tile order saved', 'info');
         cleanup();
       });
       grid.addEventListener('dragend', cleanup);
@@ -11186,22 +11186,22 @@
         let d = {};
         try { d = await r.json(); } catch { d = {}; }
         if (!r.ok) {
-          showToast('Repository rescan failed: ' + (d.error || ('HTTP ' + r.status)), 'error');
+          showToast('Project rescan failed: ' + (d.error || ('HTTP ' + r.status)), 'error');
           return;
         }
         // The server republishes the status snapshot as part of the scan, so
         // re-fetch it here rather than waiting for the next poll to repaint.
         await refreshStatus();
         if (d.status === 'debounced') {
-          showToast('Repositories are already up to date - next scan in ' + (d.retry_after_s || 0) + 's', 'info');
+          showToast('Projects are already up to date - next scan in ' + (d.retry_after_s || 0) + 's', 'info');
         } else if (d.status === 'in-progress') {
-          showToast('A repository scan is already running', 'info');
+          showToast('A project scan is already running', 'info');
         } else {
           const n = d.repos || 0;
-          showToast('Scanned ' + n + ' repositor' + (n === 1 ? 'y' : 'ies') + ' - ' + (d.issues || 0) + ' issues, ' + (d.prs || 0) + ' PRs', 'success');
+          showToast('Scanned ' + n + ' project' + (n === 1 ? '' : 's') + ' - ' + (d.issues || 0) + ' issues, ' + (d.prs || 0) + ' PRs', 'success');
         }
       } catch (e) {
-        showToast('Repository rescan failed: ' + e.message, 'error');
+        showToast('Project rescan failed: ' + e.message, 'error');
       } finally {
         if (btn) { btn.disabled = false; btn.textContent = prev; }
       }
@@ -14549,7 +14549,7 @@ function burnAreaChart() {
       h += '<div class="nous-config-output-modes">';
       const outModes = [
         { id: 'state-only', label: 'State Only', desc: 'Write to files, read in dashboard' },
-        { id: 'issue', label: 'Issue', desc: 'Open GitHub issue with proposal' },
+        { id: 'issue', label: 'Issue', desc: 'Open issue with proposal' },
         { id: 'issue+pr', label: 'Issue + PR', desc: 'Open issue and PR pair' },
       ];
       for (const om of outModes) {
@@ -18602,7 +18602,7 @@ function burnAreaChart() {
       return `
         <div style="max-width:600px;margin:0 auto;text-align:center;padding:40px 0">
           <div style="font-size:1.2rem;margin-bottom:var(--sp-5)">🔍</div>
-          <div style="font-size:0.85rem;color:var(--muted)">Scanning repository...</div>
+          <div style="font-size:0.85rem;color:var(--muted)">Scanning project...</div>
           <div style="font-size:0.78rem;color:var(--muted);margin-top:var(--sp-2)">${escapeHtml(_inceptionState.repo_url || '')}</div>
           <div class="mt-6"><button class="hv-btn btn-danger btn-sm" data-action="resetInception">Cancel</button></div>
         </div>`;
@@ -25168,7 +25168,7 @@ function burnAreaChart() {
         </div>
         <div class="config-field">
           <label>Description <span class="config-info">i<span class="config-tooltip">A short description of what this agent is responsible for. Shown as hover text on the sidebar agent list. Helps operators and collaborators understand each agent's role at a glance.</span></span></label>
-          <textarea id="cfg-agent-desc" rows="2" style="width:100%;resize:vertical;font-size:var(--fs-sm)" placeholder="e.g. Triages GitHub issues and dispatches fix agents" data-change-action="markDirty" data-arg0="general" data-arg1="description" data-arg-types="s,s,v">${esc(g.description || (isCreate ? '' : AGENT_DESCRIPTIONS[agentName]) || '')}</textarea>
+          <textarea id="cfg-agent-desc" rows="2" style="width:100%;resize:vertical;font-size:var(--fs-sm)" placeholder="e.g. Triages issues and dispatches fix agents" data-change-action="markDirty" data-arg0="general" data-arg1="description" data-arg-types="s,s,v">${esc(g.description || (isCreate ? '' : AGENT_DESCRIPTIONS[agentName]) || '')}</textarea>
         </div>
         <div class="config-field-row">
           <div class="config-field">
@@ -29434,12 +29434,12 @@ function burnAreaChart() {
 
       return `
         <p style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:14px">
-          Choose where hive reads work items from. Steps 03–07 (fix agent, PR, review, merge) are
-          unaffected — agents still open pull requests on GitHub.
+          Choose where hive reads work items from. Steps 03–07 (fix agent, change request, review, merge) are
+          unaffected — agents still open pull requests or merge requests through the connected forge.
         </p>
 
         <div class="config-field mb-7">
-          <label>Work source <span class="config-info">i<span class="config-tooltip">GitHub Issues is the default and requires no config. GitHub Projects, Linear, and Jira are opt-in — add credentials below after selecting.</span></span></label>
+          <label>Work source <span class="config-info">i<span class="config-tooltip">Issues is the default work-source concept; GitHub Issues is used when no alternate source is configured. GitHub Projects, Linear, and Jira are opt-in — add credentials below after selecting.</span></span></label>
           <select data-change-action="gh61">${typeOpts}</select>
         </div>
 
@@ -29494,8 +29494,8 @@ function burnAreaChart() {
             <div class="config-toggle-switch ${lin.assigned_only ? 'on' : ''}" data-action="wsLinearToggleAssignedOnly" data-arg-types="t"></div>
             <span class="config-toggle-label">Assigned only <span style="color:var(--muted);font-weight:400">— enumerate only issues assigned or delegated to the Hive app (requires a connected Linear agent)</span></span>
           </div>
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:var(--sp-3) var(--sp-0) var(--sp-4)">Teams <span class="config-info">i<span class="config-tooltip">Each Linear team maps to the GitHub repo (owner/name) agents clone for its issues. States narrows enumeration to those workflow states (e.g. "Todo, In Progress") — without it the whole backlog is counted and can push the governor into SURGE. Projects override the repo per Linear project.</span></span></div>
-          ${linTeams.length === 0 ? `<p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-4)">No teams yet — add one so hive knows which repo each team's issues belong to.</p>` : ''}
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:var(--sp-3) var(--sp-0) var(--sp-4)">Teams <span class="config-info">i<span class="config-tooltip">Each Linear team maps to the source repository (owner/name) agents clone for its issues. States narrows enumeration to those workflow states (e.g. "Todo, In Progress") — without it the whole backlog is counted and can push the governor into SURGE. Projects override the repo per Linear project.</span></span></div>
+          ${linTeams.length === 0 ? `<p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-4)">No teams yet — add one so hive knows which source repository each team's issues belong to.</p>` : ''}
           ${linTeams.map((t, i) => `
           <div style="border:1px solid var(--border);border-radius:var(--r);padding:10px;margin-bottom:var(--sp-4)">
             <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:var(--sp-4);align-items:end">
@@ -29504,7 +29504,7 @@ function burnAreaChart() {
                 <input type="text" placeholder="ENG" value="${esc(t.key||'')}" data-change-action="wsLinearTeamEdit" data-arg0="${i}" data-arg1="key" data-arg-types="j,s,w">
               </div>
               <div class="config-field m-0">
-                <label>Repo</label>
+                <label>Source repository</label>
                 <input type="text" placeholder="my-org/my-repo" value="${esc(t.repo||'')}" data-change-action="wsLinearTeamEdit" data-arg0="${i}" data-arg1="repo" data-arg-types="j,s,w">
               </div>
               <button type="button" class="hv-btn btn-danger btn-secondary btn-sm" data-action="wsLinearTeamRemove" data-arg0="${i}" data-arg-types="j">Remove</button>
@@ -29517,7 +29517,7 @@ function burnAreaChart() {
               <label style="font-size:var(--fs-sm);display:flex;align-items:center;gap:var(--sp-3);white-space:nowrap"><input type="checkbox" ${t.cycles === 'current' ? 'checked' : ''} data-change-action="wsLinearTeamEdit" data-arg0="${i}" data-arg1="cycles" data-arg-types="j,s,c"> Current cycle only</label>
             </div>
             <div class="config-field" style="margin:var(--sp-4) var(--sp-0) var(--sp-0)">
-              <label>Projects <span class="config-info">i<span class="config-tooltip">Optional per-project repo overrides, comma-separated as name=owner/repo (or just name to use the team repo).</span></span></label>
+              <label>Projects <span class="config-info">i<span class="config-tooltip">Optional per-project source repository overrides, comma-separated as name=owner/repo (or just name to use the team default).</span></span></label>
               <input type="text" placeholder="Billing=my-org/billing, Website" value="${esc((t.projects||[]).map(pr => pr.repo ? pr.name + '=' + pr.repo : pr.name).join(', '))}" data-change-action="wsLinearTeamEdit" data-arg0="${i}" data-arg1="projects" data-arg-types="j,s,w">
             </div>
           </div>`).join('')}
@@ -29585,7 +29585,7 @@ function burnAreaChart() {
             <input type="text" placeholder="project = ENG AND status = Todo" value="${esc(jira.jql||'')}" data-change-action="markWorkSourceDirty" data-arg0="jira.jql" data-arg-types="s,w">
           </div>
           <div class="config-field">
-            <label>Repo <span class="config-info">i<span class="config-tooltip">GitHub repo (owner/name) agents clone for these issues.</span></span></label>
+            <label>Repo <span class="config-info">i<span class="config-tooltip">Source repository (owner/name) agents clone for these issues.</span></span></label>
             <input type="text" placeholder="my-org/my-repo" value="${esc(jira.repo||'')}" data-change-action="markWorkSourceDirty" data-arg0="jira.repo" data-arg-types="s,w">
           </div>
           <div class="config-field">
@@ -29596,7 +29596,7 @@ function burnAreaChart() {
 
         ${type === '' ? `
         <div style="font-size:var(--fs-sm);color:var(--muted);background:color-mix(in srgb,var(--accent) 7%,transparent);border:1px solid color-mix(in srgb,var(--accent) 20%,transparent);border-radius:var(--r);padding:10px 12px">
-          <b>Using GitHub Issues</b> — hive reads open issues from the repos listed in the Repos tab. No additional configuration needed.
+          <b>Using default issues</b> — hive reads open issues from the projects listed in the Projects tab. No additional work-source configuration is needed.
         </div>` : ''}`;
     }
 
@@ -32552,7 +32552,7 @@ function burnAreaChart() {
         title: 'Welcome to your hive',
         // Reading this step is step one — opening the dialog completes it.
         auto: () => true,
-        body: 'Your hive is a fleet of AI <strong>agents</strong> that work your repositories — triaging issues, writing fixes, opening PRs. The <strong>governor</strong> paces them automatically as the workload changes (idle → quiet → busy → surge). This checklist covers the one-time choices that make the hive productive, and it updates itself as you complete them.'
+        body: 'Your hive is a fleet of AI <strong>agents</strong> that work your projects — triaging issues, writing fixes, opening PRs. The <strong>governor</strong> paces them automatically as the workload changes (idle → quiet → busy → surge). This checklist covers the one-time choices that make the hive productive, and it updates itself as you complete them.'
       },
       {
         id: 'github-app',
@@ -32566,8 +32566,8 @@ function burnAreaChart() {
           if (ghAppIsOperatorSide(data.githubAppState)) return null;
           return data.githubAppRequired !== true;
         },
-        body: 'The <strong>Forge App</strong> is the app Hive installs on your forge (your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — on GitHub.com and GitHub Enterprise it is a GitHub App. It unlocks issues, advisory reports, and PRs on your primary repo; without it the hive can only observe. ⏰ <strong>Do this in your first session:</strong> hosted hives that never finish this step are reclaimed (reaped) on a timer — the hive disappears from the hub and its URL stops working. If that happens, request a new hive from the hub and complete this step right away. On GitHub Enterprise the install page lives on your enterprise host, not github.com. Full instructions: <a href="https://github.com/hivecommons/hive/blob/v4/src/docs/github-app-setup.md" target="_blank" rel="noopener noreferrer">Forge App (GitHub App) setup</a>.',
-        autoNote: 'Checks itself once the app is detected on your repository.',
+        body: 'The <strong>Forge App</strong> is the app Hive installs on your forge (your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — on GitHub.com and GitHub Enterprise it is a GitHub App. It unlocks issues, advisory reports, and PRs on your primary project; without it the hive can only observe. ⏰ <strong>Do this in your first session:</strong> hosted hives that never finish this step are reclaimed (reaped) on a timer — the hive disappears from the hub and its URL stops working. If that happens, request a new hive from the hub and complete this step right away. On GitHub Enterprise the install page lives on your enterprise host, not github.com. Full instructions: <a href="https://github.com/hivecommons/hive/blob/v4/src/docs/github-app-setup.md" target="_blank" rel="noopener noreferrer">Forge App (GitHub App) setup</a>.',
+        autoNote: 'Checks itself once the app is detected on your project.',
         actions: [
           { label: 'Install GitHub App', action: 'welcomeInstallGitHubApp' },
           { label: 'Re-check', action: 'welcomeRecheckGitHubApp', actionArgTypes: 'e' }
@@ -32617,10 +32617,10 @@ function burnAreaChart() {
       },
       {
         id: 'repos',
-        title: 'Add repos &amp; mark the primary',
+        title: 'Add projects &amp; mark the primary',
         auto: () => window._primaryRepo ? true : false,
-        body: 'Settings → <strong>Repos</strong>: add every repository the agents should watch, and set the <strong>primary</strong> repo — it hosts the advisory issue and default markings.',
-        autoNote: 'Checks itself once a primary repo is set.',
+        body: 'Settings → <strong>Projects</strong>: add every project the agents should watch, and set the <strong>primary</strong> project — it hosts the advisory issue and default markings.',
+        autoNote: 'Checks itself once a primary project is set.',
         actions: [{ label: 'Show me', action: 'welcomeShowConfigTab', actionArg: 'Repos' }]
       },
       {

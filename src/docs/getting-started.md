@@ -1,6 +1,6 @@
 # Zero to Automation: Getting Started with Hive
 
-Hive is a team of AI agents that watch your repo and help improve it — finding bugs, adding tests, writing docs. It works in **levels (L1–L6)**: at low levels agents only *suggest* things, and at high levels they can open and even merge pull requests. You climb the levels as you build trust in what the agents produce — over **weeks per level, not days**. And here's the most important thing to know before you start: **the goal is trust, not level.**
+Hive is a team of AI agents that watch your project and help improve it — finding bugs, adding tests, writing docs. It works in **levels (L1–L6)**: at low levels agents only *suggest* things, and at high levels they can open and even merge pull requests. You climb the levels as you build trust in what the agents produce — over **weeks per level, not days**. And here's the most important thing to know before you start: **the goal is trust, not level.**
 
 ## The Hive Way
 
@@ -10,7 +10,7 @@ The biggest mistake new users make: seeing agent output and either (a) panicking
 
 ## Trust > Level. Always.
 
-> You do not need to reach L6. Ever. L6 is full automation — agents merging code without human review. Some teams run at L4 or L5 indefinitely and that is completely fine. The number doesn't matter. What matters is whether you trust what the agents are producing. A team that runs at L3 with high confidence is in a better place than a team that jumped to L6 and is now drowning in agent PRs they don't understand.
+> You do not need to reach L6. Ever. L6 is full automation — agents merging code without human review. Some teams run at L4 or L5 indefinitely and that is completely fine. The number doesn't matter. What matters is whether you trust what the agents are producing. A team that runs at L3 with high confidence is in a better place than a team that jumped to L6 and is now drowning in agent change requests they don't understand.
 >
 > **The goal is trust, not level.**
 
@@ -128,7 +128,7 @@ Read it like a weekly digest, not a to-do list. You don't have to act on everyth
 
 Every issue a hive agent opens has the agent's name in the title — for example `[scanner] Possible nil pointer dereference in handler.go:142` or `[quality] Missing test coverage for payment flow`.
 
-When you see a new issue in your repo, check the title prefix — it tells you which agent filed it and what kind of finding it is:
+When you see a new issue in your project, check the title prefix — it tells you which agent filed it and what kind of finding it is:
 
 - `[scanner]` = bugs
 - `[quality]` = test gaps
@@ -266,7 +266,7 @@ See [sandbox-isolation.md](sandbox-isolation.md) for the full threat model, the 
 
 **Be patient:** The first sec-check run can take a full cadence cycle to appear. And yes — you'll get more issues and PRs at this level. Still review them one by one. The literal `hold` label exists precisely so nothing merges without you.
 
-**When to move up:** **4–5 weeks.** Let sec-check find and fix security issues. Watch the pattern of what agents propose. Trust is earned slowly — move up when you're approving most agent PRs without changes.
+**When to move up:** **4–5 weeks.** Let sec-check find and fix security issues. Watch the pattern of what agents propose. Trust is earned slowly — move up when you're approving most agent change requests without changes.
 
 ## L5 — Propose and Review
 
@@ -283,13 +283,13 @@ See [sandbox-isolation.md](sandbox-isolation.md) for the full threat model, the 
 
 **Using the findings:** Batch-review on a schedule (say, twice a week). Approve the PRs you like, decline the ones you don't, 👍 the issues that match your roadmap.
 
-> 💡 **Tip: batch-review in one sitting.** Reviewing ten agent PRs in a single hour teaches you the agents' patterns faster than reviewing one per day. Patterns jump out when the PRs sit side by side — repeated habits, favorite files, blind spots.
+> 💡 **Tip: batch-review in one sitting.** Reviewing ten agent change requests in a single hour teaches you the agents' patterns faster than reviewing one per day. Patterns jump out when the PRs sit side by side — repeated habits, favorite files, blind spots.
 
 **Building tests:** By now, quality should have already added tests for your main flows. If it hasn't, go back to L3 habits before moving on — L6 depends on it.
 
 **Be patient:** With everything un-paused, the dashboard gets busy. Give new agents a heartbeat cycle before judging their output.
 
-**When to move up:** Only when you **genuinely trust the agents' judgment** — meaning you've reviewed enough of their PRs to know they're consistently doing the right thing, and your test suite is strong enough that green CI genuinely means "safe to ship." There's no calendar for this one.
+**When to move up:** Only when you **genuinely trust the agents' judgment** — meaning you've reviewed enough of their PRs to know they're consistently doing the right thing, and your test suite is strong enough that passing checks genuinely means "safe to ship." There's no calendar for this one.
 
 ## L6 — Full Automation
 
@@ -302,7 +302,7 @@ See [sandbox-isolation.md](sandbox-isolation.md) for the full threat model, the 
 
 ⚠️ **Cadence check:** You can shorten cadences now if your token budget allows — but 12h/1d still works fine. Faster isn't better if you're not reading the output.
 
-Telemetry and operations don't auto-enable just because you reached L6 — they carry the same opt-in requirement here as at L5 (**Settings → Project Observability**). If you enabled them at L5, they stay on and switch to full mode (auto-merge on green CI) like the rest of your roster.
+Telemetry and operations don't auto-enable just because you reached L6 — they carry the same opt-in requirement here as at L5 (**Settings → Project Observability**). If you enabled them at L5, they stay on and switch to full mode (auto-merge when checks pass) like the rest of your roster.
 
 **Using the findings:** Spot-check merged PRs weekly. 👍 issues to steer agent priorities.
 

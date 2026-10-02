@@ -5,13 +5,13 @@
   <meta charset="UTF-8">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍯</text></svg>">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta property="og:title" content="Get started — put your repo on autopilot">
+  <meta property="og:title" content="Get started — put your project on autopilot">
   <meta property="og:description" content="Request a hosted hive in three steps, self-host with Docker Compose, or contribute compute to a public hive. No Kubernetes, no setup.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://hive.hivecommons.dev/get-started">
   <link rel="canonical" href="https://hive.hivecommons.dev/get-started">
   <meta name="description" content="Get started with Hive — request a hosted hive in three steps, self-host with Docker Compose, or contribute compute to a public hive.">
-  <title>Get started — put your repo on autopilot</title>
+  <title>Get started — put your project on autopilot</title>
   <link rel="stylesheet" href="/tokens.css">
   <link rel="stylesheet" href="/components.css">
   <style>
@@ -301,18 +301,18 @@
         </div>
       </div>
 
-      <!-- Step 2: Add repositories by URL.
+      <!-- Step 2: Add projects by URL.
            The typed URL is the ONLY input here, by design. The old picker
            listed repos from the requester's github.com OAuth token, which
            could never see a GitHub Enterprise repo and could never generalize
            to another forge. A URL needs no permission on the requester's
            account and describes any forge. -->
       <div class="wizard-panel" id="panel-2">
-        <h2>Your repository</h2>
-        <p>Paste the URL of the repository the hive should manage. You can add more later from your dashboard.</p>
+        <h2>Your project</h2>
+        <p>Paste the URL of the project or source repository the hive should manage. You can add more later from your dashboard.</p>
         <div>
           <label for="repo-manual" style="display:block;font-size:0.86rem;color:var(--muted);margin-bottom:var(--sp-3)">
-            Repository URL
+            Project URL
           </label>
           <!-- No "Add" button: onboarding expects ONE repo, so Continue commits
                the typed URL and advances (commitManualRepo). The input is not
@@ -326,7 +326,7 @@
           <div id="repo-manual-err" style="display:none;margin-top:var(--sp-3);font-size:0.8rem;color:var(--red)"></div>
           <p style="font-size:0.8rem;margin-top:var(--sp-4);margin-bottom:var(--sp-0)">
             With or without <code>https://</code>. Works for public GitHub and for GitHub Enterprise
-            (<code>github.ibm.com</code> and similar) &mdash; we record which instance the repo lives on
+            (<code>github.ibm.com</code> and similar) &mdash; we record which instance the project lives on
             and provision against it. Examples: <code>github.com/my-org/my-repo</code>,
             <code>https://github.ibm.com/my-org/my-repo</code>.
           </p>
@@ -352,7 +352,7 @@
         <div class="acmm-options" id="acmm-options"></div>
 
         <!-- Who is asking. These live on step 3 rather than step 2 because
-             step 2 is "Your repository" — it asks about the project, and its
+             step 2 is "Your project" — it asks about the project, and its
              one input is parsed as a repo URL. These describe the PERSON, and
              they sit directly above the summary and the submit button, which
              is where a requester expects to identify themselves before sending.
@@ -407,7 +407,7 @@
 
         <div id="request-summary" style="margin:var(--sp-7) var(--sp-0);padding:var(--sp-6);background:#080b0f85;border:1px solid var(--line);border-radius:.7rem;font-size:0.85rem">
           <div class="mb-4"><strong>Summary</strong></div>
-          <div class="text-muted">Repo: <span class="text-default" id="summary-repos">none added</span></div>
+          <div class="text-muted">Project: <span class="text-default" id="summary-repos">none added</span></div>
           <div class="text-muted">GitHub: <span class="text-default" id="summary-forge">github.com</span></div>
           <div class="text-muted">ACMM Level: <span class="text-default" id="summary-acmm"></span></div>
           <div class="text-muted">Name: <span class="text-default" id="summary-name">&mdash;</span></div>
@@ -422,7 +422,7 @@
         <p style="font-size:0.8rem;margin-top:var(--sp-2)">
           <strong>What happens next:</strong> an admin reviews your request. Once your hive is provisioned,
           its dashboard will prompt you to install the Hive GitHub App &mdash; with a link pointing at the
-          right GitHub instance for your repos. Nothing to install before then.
+          right provider instance for your project. Nothing to install before then.
         </p>
         <div style="display:flex;gap:var(--sp-5);margin-top:var(--sp-6)">
           <button class="hv-btn btn-secondary btn-secondary" onclick="goToStep(2)">← Back</button>
@@ -437,7 +437,7 @@
     <div class="section-heading">
       <p class="section-label">Self-host</p>
       <h2>Your agents, your infrastructure <span class="badge badge-ready">Ready</span></h2>
-      <p>Run Hive v2 on your own machine with Docker Compose. Your agents, your repos, your infrastructure.</p>
+      <p>Run Hive v2 on your own machine with Docker Compose. Your agents, your projects, your infrastructure.</p>
     </div>
     <div class="alt-card">
       <pre><code>git clone https://github.com/hivecommons/hive.git
@@ -517,11 +517,11 @@ just contribute-hive              # start taking tasks</code></pre>
        the dashboard of the hive they receive. */
     var ACMM_LEVELS = [
       {level: 1, label: 'L1 — Inception (Assisted)',            desc: 'Start a new feature with spec-driven tooling. Agents look, plan and report; they never write to your repo.'},
-      {level: 2, label: 'L2 — Advisory (Instructed)',           desc: 'Advisory beads, no GitHub writes. Agents follow the house rules you set for the project.'},
+      {level: 2, label: 'L2 — Advisory (Instructed)',           desc: 'Advisory beads, no provider writes. Agents follow the house rules you set for the project.'},
       {level: 3, label: 'L3 — Quality-Gated (Measured)',        desc: 'Improve quality through better test coverage. Agents open hold-gated PRs that raise coverage behind CI gates; every PR waits for a human.'},
       {level: 4, label: 'L4 — Security-Aware (Adaptive)',       desc: 'Agents open issues and hold-gated PRs, plus security checks. Still a human on every merge.'},
       {level: 5, label: 'L5 — Semi-Autonomous (Semi-Automated)', desc: 'PRs carry a hold label for batch review, so you approve in groups rather than one at a time.'},
-      {level: 6, label: 'L6 — Fully Autonomous',                desc: 'Auto-merge on green CI. Only for repos with CI you already trust.'}
+      {level: 6, label: 'L6 — Fully Autonomous',                desc: 'Auto-merge when checks pass. Only for projects with checks you already trust.'}
     ];
     /* L3 Quality-Gated is the recommended entry point: it is the first level that
        produces useful work (test-coverage PRs) while still gating every merge
@@ -715,9 +715,9 @@ just contribute-hive              # start taking tasks</code></pre>
        handleRequestProvision (pkg/hub/saas.go) rejects a request whose org or
        repos is empty, so advancing with no repo would walk the user to the final
        step and fail there. Refusing here reports it where it can be fixed. */
-    var REPO_REQUIRED_MSG = 'Enter the repository your hive should manage — for example github.com/my-org/my-repo';
+    var REPO_REQUIRED_MSG = 'Enter the project your hive should manage — for example github.com/my-org/my-repo';
     /* Shown when the field holds something that is not a repository reference. */
-    var REPO_UNPARSEABLE_MSG = 'Enter a repository URL — for example github.com/my-org/my-repo or https://github.ibm.com/my-org/my-repo';
+    var REPO_UNPARSEABLE_MSG = 'Enter a project URL — for example github.com/my-org/my-repo or https://github.ibm.com/my-org/my-repo';
 
     /* Contact-field caps, mirroring maxContactNameLen / maxContactSlackIDLen in
        pkg/hub/saas.go. They are also the maxlength on the two inputs; the

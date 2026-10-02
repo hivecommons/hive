@@ -652,8 +652,8 @@
             <p class="hero-lede">Give a mediocre model good tests and enough turns around the loop, and it will get there. The tests do the reasoning &mdash; so coverage, not model choice, is what earns the next of six autonomy levels. You decide when to raise it.</p>
           </div>
           <div class="hero-slide is-active">
-            <h1>Put your repo on autopilot</h1>
-            <p class="hero-lede">The autonomous development lifecycle (ADLC), self-hosted and yours: a fleet of AI agents triages issues, writes the fixes, opens the PRs, and merges them on green &mdash; so you spend your time on the work you actually love.</p>
+            <h1>Put your project on autopilot</h1>
+            <p class="hero-lede">The autonomous development lifecycle (ADLC), self-hosted and yours: a fleet of AI agents triages issues, writes the fixes, opens the pull requests or merge requests, and merges them when checks pass &mdash; so you spend your time on the work you actually love.</p>
           </div>
           <div class="hero-slide">
             <h1>You earn automation with test coverage</h1>
@@ -669,7 +669,7 @@
           </div>
           <div class="hero-slide">
             <h1>The AI maintainer you own outright</h1>
-            <p class="hero-lede">Free, open-source, and self-hosted. Point it at your repo, bring your own model, and run the whole fleet on your own terms &mdash; no per-seat license, no data leaving your cluster.</p>
+            <p class="hero-lede">Free, open-source, and self-hosted. Point it at your project, bring your own model, and run the whole fleet on your own terms &mdash; no per-seat license, no data leaving your cluster.</p>
           </div>
         </div>
 
@@ -699,7 +699,7 @@
             <span>merged PRs referencing a named CVE</span>
           </div>
         </div>
-        <p class="hero-proof-note" id="hero-proof-note">The <strong>90% coverage gate</strong> is enforced on Hive's own build. The other figures are <span id="proof-live-label">live</span> across every repo Hive manages &mdash; the fleet of <a href="#hives">public hives</a> below &mdash; aggregated over their spokes' contributions. <a href="/learn" target="_blank" rel="noopener">Learn how earned autonomy works</a>.</p>
+        <p class="hero-proof-note" id="hero-proof-note">The <strong>90% coverage gate</strong> is enforced on Hive's own build. The other figures are <span id="proof-live-label">live</span> across every project Hive manages &mdash; the fleet of <a href="#hives">public hives</a> below &mdash; aggregated over their spokes' contributions. <a href="/learn" target="_blank" rel="noopener">Learn how earned autonomy works</a>.</p>
         <p class="hero-sub-links">Already running a hive? <a href="/dashboard">Open your dashboard</a> &middot; <a href="/learn">Learn the concepts</a></p>
       </div>
 
@@ -759,7 +759,7 @@
       <div class="section-heading">
         <p class="section-label">Works with your stack</p>
         <h2>Plug in wherever your work already lives</h2>
-        <p>Hive meets your repos, your backlog, and your identity provider where they are &mdash; no migration required. Point it at the source control you already use, pull work from the trackers your team already fills, and sign in with the accounts you already have.</p>
+        <p>Hive meets your projects, your backlog, and your identity provider where they are &mdash; no migration required. Point it at the source control you already use, pull work from the trackers your team already fills, and sign in with the accounts you already have.</p>
       </div>
       <div class="stack-groups">
         <div class="stack-group">
@@ -846,7 +846,7 @@
               <td class="cap">Self-hosted work sources</td>
               <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">GitHub, Linear, Jira Cloud, Jira Data Center</span></td>
               <td><span class="c-part">GitHub-native</span></td>
-              <td><span class="c-part">GitHub issues/PRs + MCP</span></td>
+              <td><span class="c-part">GitHub issues / pull requests + MCP</span></td>
               <td><span class="c-yes">&#10003;</span><span class="c-note">Jira, Linear, GitHub, GitLab, Bitbucket</span></td>
               <td><span class="c-part">Planner / Jira cloud</span></td>
             </tr>
@@ -909,7 +909,7 @@
             <tr>
               <td class="cap">Durable work ledger &amp; reviewed DAG plans</td>
               <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Git-backed beads + plan review gate</span></td>
-              <td><span class="c-no">&#10007;</span><span class="c-note">GitHub issues/PRs as state</span></td>
+              <td><span class="c-no">&#10007;</span><span class="c-note">GitHub issues / pull requests as state</span></td>
               <td><span class="c-part">Task plan in PR / issue</span></td>
               <td><span class="c-yes">&#10003;</span><span class="c-note">Planning workspace</span></td>
               <td><span class="c-yes">&#10003;</span><span class="c-note">Task lists / work breakdown</span></td>
@@ -961,15 +961,15 @@
       <div class="section-heading">
         <p class="section-label">How it works</p>
         <h2>Coverage first, then autonomy</h2>
-        <p>Point a hive at your repository and start at L1, where agents only advise. Strong test coverage is what earns the confidence to go further &mdash; but the autonomy level never rises on its own. You (the admin) choose to raise it, and only then do agents take on more: filing issues, opening hold-gated PRs, and eventually merging on green. Coverage tells you when it's safe to level up; the decision is always yours. A governor decides minute by minute how hard they work based on your queue depth. Hive doesn&rsquo;t replace maintainers; it earns its way into the work.</p>
+        <p>Point a hive at your project and start at L1, where agents only advise. Strong test coverage is what earns the confidence to go further &mdash; but the autonomy level never rises on its own. You (the admin) choose to raise it, and only then do agents take on more: filing issues, opening hold-gated pull requests, and eventually merging when checks pass. Coverage tells you when it's safe to level up; the decision is always yours. A governor decides minute by minute how hard they work based on your queue depth. Hive doesn&rsquo;t replace maintainers; it earns its way into the work.</p>
       </div>
       <div class="loop-rail">
-        <div class="loop-step"><span>01</span><h3>Issue filed</h3><p style="font-size:.86rem">A bug report, feature request, or dependency alert lands on the repo.</p></div>
+        <div class="loop-step"><span>01</span><h3>Issue filed</h3><p style="font-size:.86rem">A bug report, feature request, or dependency alert lands in the work source.</p></div>
         <div class="loop-step"><span>02</span><h3>Triage</h3><p style="font-size:.86rem">The scanner agent reads, labels, and assigns the issue within minutes.</p></div>
-        <div class="loop-step"><span>03</span><h3>Fix agent</h3><p style="font-size:.86rem">A specialized agent writes the fix in an isolated worktree, opens a PR.</p></div>
-        <div class="loop-step"><span>04</span><h3>Coverage gate</h3><p style="font-size:.86rem">The deterministic pipeline gates the merge &mdash; build, lint, and a per-package coverage threshold. Roughly 1 in 7 agent PRs is rejected here.</p></div>
+        <div class="loop-step"><span>03</span><h3>Fix agent</h3><p style="font-size:.86rem">A specialized agent writes the fix in an isolated worktree, opens a pull request or merge request.</p></div>
+        <div class="loop-step"><span>04</span><h3>Coverage gate</h3><p style="font-size:.86rem">The deterministic pipeline gates the merge &mdash; build, lint, and a per-package coverage threshold. Roughly 1 in 7 agent change requests is rejected here.</p></div>
         <div class="loop-step"><span>05</span><h3>Review</h3><p style="font-size:.86rem">Reviewer agents check post-merge state, GA4 regressions, and invariant drift.</p></div>
-        <div class="loop-step"><span>06</span><h3>Merge</h3><p style="font-size:.86rem">PRs merge on green CI at the autonomy level you allow. No human approval needed at L6.</p></div>
+        <div class="loop-step"><span>06</span><h3>Merge</h3><p style="font-size:.86rem">Change requests merge when checks pass at the autonomy level you allow. No human approval needed at L6.</p></div>
         <div class="loop-step"><span>07</span><h3>Rerun</h3><p style="font-size:.86rem">The loop restarts. Security patches, dep updates, and test fixes happen continuously.</p></div>
       </div>
     </section>
@@ -1019,11 +1019,11 @@
         <div class="install-list">
           <div class="install-step">
             <span>1</span>
-            <div><h3>Login with GitHub</h3><p style="font-size:.88rem">Authenticate so we can provision your hive and install the GitHub App on your repos.</p></div>
+            <div><h3>Login with GitHub</h3><p style="font-size:.88rem">Authenticate so we can provision your hive and connect your work source and provider app.</p></div>
           </div>
           <div class="install-step">
             <span>2</span>
-            <div><h3>Install the Hive App</h3><p style="font-size:.88rem">Grant the Hive GitHub App access to the repositories you want maintained.</p></div>
+            <div><h3>Install the Hive App</h3><p style="font-size:.88rem">Grant the Hive provider app access to the projects you want maintained.</p></div>
           </div>
           <div class="install-step">
             <span>3</span>
@@ -1054,7 +1054,7 @@
         <li>You control the autonomy level. Start at L1 Inception and upgrade when you&rsquo;re ready.</li>
         <li>Deterministic pipeline filters before LLMs. Build, lint, test, and policy checks gate every change.</li>
         <li>All agent actions are logged. Full transparency in the dashboard and GitHub activity.</li>
-        <li>Hosted hives are isolated. Your code stays in your repos &mdash; the hive reads issues and opens PRs.</li>
+        <li>Hosted hives are isolated. Your code stays in your projects &mdash; the hive reads issues and opens PRs.</li>
       </ul>
     </section>
 
@@ -1117,7 +1117,7 @@
         <h2>Explore the ecosystem</h2>
       </div>
       <div class="link-grid">
-        <a href="https://github.com/hivecommons/hive" target="_blank"><span>Source code</span><p>GitHub repo</p></a>
+        <a href="https://github.com/hivecommons/hive" target="_blank"><span>Source code</span><p>source repository</p></a>
         <a href="https://arxiv.org/abs/2604.09388" target="_blank"><span>ACMM Paper</span><p>Autonomy framework</p></a>
         <a href="/learn"><span>Architecture</span><p>How hive works</p></a>
         <a href="https://hivecommons.dev" target="_blank"><span>Hive Commons</span><p>Project home</p></a>
@@ -1354,11 +1354,11 @@
       var names = {1:'Inception',2:'Advisory',3:'Quality-Gated',4:'Security-Aware',5:'Semi-Autonomous',6:'Fully Autonomous'};
       var tips = {
         1:'L1 Inception — Advisory only. Agents suggest but take no action.',
-        2:'L2 Advisory — Advisory beads only, no GitHub writes.',
+        2:'L2 Advisory — Advisory beads only, no provider writes.',
         3:'L3 Quality-Gated — Quality agent opens hold-gated test PRs. CI gates.',
         4:'L4 Security-Aware — Agents open issues, sec-check joins. Still hold-gated.',
         5:'L5 Semi-Autonomous — PRs carry a hold label, batch-reviewed by humans.',
-        6:'L6 Fully Autonomous — Auto-merge on green CI.'
+        6:'L6 Fully Autonomous — auto-merge when checks pass.'
       };
       return '<span class="acmm-badge acmm-' + level + '" title="' + esc(tips[level] || '') + '">L' + level + ' ' + esc(names[level] || '') + '</span>';
     }

@@ -260,7 +260,7 @@
     <section class="section-pad">
       <p class="section-label">Learn</p>
       <h1>How Hive works</h1>
-      <p class="lede">Hive is an open source AI agent orchestration system. A fleet of specialized agents autonomously maintains software repositories &mdash; open source or private &mdash; triaging issues, writing fixes, opening PRs, and merging on green CI. A governor dynamically adjusts agent pace based on issue queue depth, and a deterministic pipeline gates every change.</p>
+      <p class="lede">Hive is an open source AI agent orchestration system. A fleet of specialized agents autonomously maintains software projects &mdash; open source or private &mdash; triaging issues, writing fixes, opening pull/merge requests, and merging when checks pass. A governor dynamically adjusts agent pace based on issue queue depth, and a deterministic pipeline gates every change.</p>
       <div style="margin-top:1.6rem;display:flex;gap:.8rem;flex-wrap:wrap">
         <a class="hv-btn btn-primary button primary" href="/get-started">Request a Hive</a>
         <a class="hv-btn btn-ghost button tertiary" href="https://arxiv.org/abs/2604.09388" target="_blank">Read the ACMM paper</a>
@@ -276,11 +276,11 @@
       </div>
       <div class="acmm-grid">
         <div class="acmm-card"><span class="level lv-1">L1 &mdash; Inception (Assisted)</span><h3>Inception &amp; advisory</h3><p>An interactive brainstorm agent turns ideas into project scaffolding; a guide agent audits docs. Every action needs human approval. No feedback loops.</p></div>
-        <div class="acmm-card"><span class="level lv-2">L2 &mdash; Advisory (Instructed)</span><h3>Observe &amp; report</h3><p>Agents produce advisory findings on the dashboard and a tracking issue. No GitHub issues or PRs. They observe and report; humans decide what to act on.</p></div>
+        <div class="acmm-card"><span class="level lv-2">L2 &mdash; Advisory (Instructed)</span><h3>Observe &amp; report</h3><p>Agents produce advisory findings on the dashboard and a tracking issue. No provider writes. They observe and report; humans decide what to act on.</p></div>
         <div class="acmm-card"><span class="level lv-3">L3 &mdash; Quality-Gated (Measured)</span><h3>Quality &amp; test coverage</h3><p>The quality agent opens issues and hold-gated PRs about testing gaps, coverage, and CI health. Every PR keeps a <code>hold</code> label &mdash; no agent merges. This measurement foundation is what earns automation in the levels above.</p></div>
         <div class="acmm-card"><span class="level lv-4">L4 &mdash; Security-Aware (Adaptive)</span><h3>Closed-loop, issues</h3><p>All agents now file issues &mdash; bugs, doc gaps, workflow failures, vulnerabilities. Security agent joins. Still no PRs; the loop is closing.</p></div>
         <div class="acmm-card"><span class="level lv-5">L5 &mdash; Semi-Autonomous (Semi-Automated)</span><h3>Hold-gated PRs</h3><p>All agents open PRs, each auto-labeled <code>hold</code> for human batch-review. Architect (RFCs) and strategist join. The system proposes; it does not merge on its own.</p></div>
-        <div class="acmm-card"><span class="level lv-6">L6 &mdash; Fully Autonomous</span><h3>Merge on green CI</h3><p>Agents open PRs and auto-merge on green CI &mdash; no <code>hold</code> label. Outreach agent handles community engagement. Highest trust; governor at fastest cadence.</p></div>
+        <div class="acmm-card"><span class="level lv-6">L6 &mdash; Fully Autonomous</span><h3>Merge when checks pass</h3><p>Agents open pull/merge requests and auto-merge when checks pass &mdash; no <code>hold</code> label. Outreach agent handles community engagement. Highest trust; governor at fastest cadence.</p></div>
       </div>
     </section>
 
@@ -387,7 +387,7 @@ flowchart LR
       </div>
       <div class="agent-grid">
         <div class="agent-card"><span>Supervisor</span><p>Agent health monitoring, sweep analysis, stall detection.</p></div>
-        <div class="agent-card"><span>Scanner</span><p>Triages issues, dispatches fixes, opens and merges PRs.</p></div>
+        <div class="agent-card"><span>Scanner</span><p>Triages issues, dispatches fixes, opens and merges pull/merge requests.</p></div>
         <div class="agent-card"><span>Guide</span><p>Documentation gaps, onboarding analysis, advisory reviews.</p></div>
         <div class="agent-card"><span>CI-Maintainer</span><p>CI/CD health, workflow fixes, build monitoring.</p></div>
         <div class="agent-card"><span>Quality</span><p>Test coverage, integration tests, quality gates.</p></div>
