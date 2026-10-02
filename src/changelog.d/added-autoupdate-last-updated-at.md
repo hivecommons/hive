@@ -1,0 +1,1 @@
+- Dashboard auto-update status now reports when the hive was last updated: `/api/version`'s `autoUpdate` object carries a new `lastUpdatedAt` time (from the last landed upgrade) and weaves it into the up-to-date and behind detail lines, so operators can see the timing of autoupdates (#10038).

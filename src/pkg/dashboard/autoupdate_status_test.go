@@ -88,6 +88,59 @@ func TestBuildAutoUpdateStatusStates(t *testing.T) {
 	}
 }
 
+// TestBuildAutoUpdateStatusLastUpdatedAt pins #10038: when a landed upgrade has
+// been recorded, the status answers "when was this hive last updated" both as a
+// machine-readable lastUpdatedAt field and woven into the human detail, and it
+// stays absent (not guessed) when no upgrade has ever landed.
+func TestBuildAutoUpdateStatusLastUpdatedAt(t *testing.T) {
+	landed := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	wantAt := landed.Format(time.RFC3339)
+
+	t.Run("up to date surfaces the landed time", func(t *testing.T) {
+		got := buildAutoUpdateStatus(autoUpdateInputs{
+			Enabled:       true,
+			TargetBranch:  "v5",
+			CommitsBehind: func() *int { n := 0; return &n }(),
+			LastUpdate:    &upgradeOutcome{TargetSHA: "abc1234", CompletedAt: landed},
+		})
+		if got.State != autoUpdateStateUpToDate {
+			t.Fatalf("state = %q, want up_to_date", got.State)
+		}
+		if got.LastUpdatedAt != wantAt {
+			t.Fatalf("lastUpdatedAt = %q, want %q", got.LastUpdatedAt, wantAt)
+		}
+		if !strings.Contains(got.Detail, wantAt) {
+			t.Fatalf("detail %q does not mention the last-updated time %q", got.Detail, wantAt)
+		}
+	})
+
+	t.Run("behind still reports when it was last updated", func(t *testing.T) {
+		got := buildAutoUpdateStatus(autoUpdateInputs{
+			Enabled:       true,
+			TargetBranch:  "v5",
+			CommitsBehind: func() *int { n := 7; return &n }(),
+			LastUpdate:    &upgradeOutcome{TargetSHA: "abc1234", CompletedAt: landed},
+		})
+		if got.State != autoUpdateStateBehind {
+			t.Fatalf("state = %q, want behind", got.State)
+		}
+		if got.LastUpdatedAt != wantAt || !strings.Contains(got.Detail, wantAt) {
+			t.Fatalf("behind state dropped the last-updated time: %+v", got)
+		}
+	})
+
+	t.Run("never updated stays absent", func(t *testing.T) {
+		got := buildAutoUpdateStatus(autoUpdateInputs{
+			Enabled:       true,
+			TargetBranch:  "v5",
+			CommitsBehind: func() *int { n := 0; return &n }(),
+		})
+		if got.LastUpdatedAt != "" {
+			t.Fatalf("lastUpdatedAt = %q, want empty when nothing has landed", got.LastUpdatedAt)
+		}
+	})
+}
+
 func TestNormalizeAutoUpdatePeriod(t *testing.T) {
 	for in, want := range map[string]string{
 		"instant": "instant",
