@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -305,6 +306,9 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	// (#9172). The apply below replaces pointer and slice fields rather than
 	// writing through them, so a shallow copy is a faithful "before".
 	runsBefore := cfg.Runs
+	// Struct copy of the whole config, restored if the save fails so a 500
+	// does not leave unsaved, unwired changes live (#10122).
+	cfgBefore := *cfg
 	if body.IoscanEnabled != nil {
 		v := *body.IoscanEnabled
 		cfg.Ioscan.Enabled = &v
@@ -517,6 +521,7 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if err := s.saveConfig(); err != nil {
 		// A 200 here told the operator a read-only config volume had saved
 		// their change (#9172).
+		*cfg = cfgBefore
 		s.logger.Error("failed to persist config after features update", "error", err)
 		jsonError(w, "failed to save config: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -638,7 +643,7 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"spektacularBinary":                   cfg.Runs.Spektacular.Binary,
 		"spektacularPollS":                    int(cfg.Runs.Spektacular.PollInterval().Seconds()),
 		"spektacularHubExecutor":              cfg.Runs.Spektacular.HubExecutorEnabled(),
-		"spektacularHubExecutorBackend":       cfg.Runs.Spektacular.HubExecutor.BackendOrDefault(""),
+		"spektacularHubExecutorBackend":       cfg.Runs.Spektacular.HubExecutor.BackendOrDefault(defaultHubExecutorBackend(cfg)),
 		"spektacularHubExecutorModel":         cfg.Runs.Spektacular.HubExecutor.Model,
 		"spektacularHubExecutorTimeoutS":      int(cfg.Runs.Spektacular.HubExecutor.Timeout().Seconds()),
 		"spektacularHubExecutorMaxConcurrent": cfg.Runs.Spektacular.HubExecutor.MaxConcurrentOrDefault(),
@@ -1445,4 +1450,21 @@ func (s *Server) linearStoredViewerID() func() (string, string) {
 		return nil
 	}
 	return s.deps.LinearStoredViewerID
+}
+
+// defaultHubExecutorBackend mirrors cmd/hive's defaultAgentBackend so the
+// card shows the backend the executor is actually built with (#10126).
+func defaultHubExecutorBackend(cfg *config.Config) string {
+	names := make([]string, 0, len(cfg.Agents))
+	for name := range cfg.Agents {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		a := cfg.Agents[name]
+		if a.Enabled && strings.TrimSpace(a.Backend) != "" {
+			return strings.TrimSpace(a.Backend)
+		}
+	}
+	return config.DefaultSpektacularHubExecutorBackend
 }
