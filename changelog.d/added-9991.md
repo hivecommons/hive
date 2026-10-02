@@ -1,0 +1,1 @@
+- dashboard: expandable lifecycle timeline rows with stage details (#9991)
