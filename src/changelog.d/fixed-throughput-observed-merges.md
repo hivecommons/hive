@@ -1,0 +1,1 @@
+- Fix Change Throughput to count forge-observed human and automation merges/closures without double-counting hive-performed merges.

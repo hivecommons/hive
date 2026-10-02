@@ -126,11 +126,22 @@ func (a *AuditLog) Log(user, action, detail, agent string) {
 // target are omitted from the JSON, so a plain Log line is byte-identical to
 // what it was before these fields existed.
 func (a *AuditLog) LogRecord(user, action, detail, agent, repo string, target int) {
+	a.logRecordAt(time.Now().UTC().Format(time.RFC3339), user, action, detail, agent, repo, target)
+}
+
+func (a *AuditLog) LogRecordAt(timestamp, user, action, detail, agent, repo string, target int) {
+	if _, err := time.Parse(time.RFC3339, timestamp); err != nil {
+		timestamp = time.Now().UTC().Format(time.RFC3339)
+	}
+	a.logRecordAt(timestamp, user, action, detail, agent, repo, target)
+}
+
+func (a *AuditLog) logRecordAt(timestamp, user, action, detail, agent, repo string, target int) {
 	if user == "" {
 		user = "system"
 	}
 	entry := AuditEntry{
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Timestamp: timestamp,
 		User:      user,
 		Action:    action,
 		Detail:    detail,
@@ -145,9 +156,11 @@ func (a *AuditLog) LogRecord(user, action, detail, agent, repo string, target in
 	if len(a.ring) >= auditRingCap {
 		a.ring = a.ring[1:]
 	}
+	if prThroughputActions[entry.Action] && !a.notePRThroughput(entry) && prThroughputTerminalAction(entry.Action) {
+		return
+	}
 	a.ring = append(a.ring, entry)
 	a.noteUserAction(entry.User, entry.Timestamp)
-	a.notePRThroughput(entry)
 
 	if a.writer != nil {
 		if data, err := json.Marshal(entry); err == nil {
@@ -427,6 +440,12 @@ func (s *Server) AuditLog(user, action, detail, agent string) {
 // target (#9587). See AuditLog.LogRecord.
 func (s *Server) AuditLogRecord(user, action, detail, agent, repo string, target int) {
 	s.audit.LogRecord(user, action, detail, agent, repo, target)
+}
+
+// AuditLogRecordAt records an observed forge event at the forge's terminal
+// timestamp instead of the poll time.
+func (s *Server) AuditLogRecordAt(timestamp, user, action, detail, agent, repo string, target int) {
+	s.audit.LogRecordAt(timestamp, user, action, detail, agent, repo, target)
 }
 
 // GetAudit returns the underlying AuditLog for use by background goroutines.

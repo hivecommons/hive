@@ -192,8 +192,9 @@ type Client struct {
 	prOpenedHook atomic.Pointer[PROpenedHook]
 	// prOpenedDetailHook is the richer sibling of prOpenedHook (body and
 	// handoff summary included), used by PR follow-up resume (#9583).
-	prOpenedDetailHook atomic.Pointer[PROpenedDetailHook]
-	prRepoPolicyGate   atomic.Pointer[PRRepoPolicyGate]
+	prOpenedDetailHook     atomic.Pointer[PROpenedDetailHook]
+	prTerminalObservedHook atomic.Pointer[PRTerminalObservedHook]
+	prRepoPolicyGate       atomic.Pointer[PRRepoPolicyGate]
 	// mergeAuthz gates merge requests from the merge-request watcher against the
 	// per-agent ACMM merge-policy (CanMerge) + forge-resistance AND the merge
 	// TARGET (pinned SHA + governor merge-eligible membership; see

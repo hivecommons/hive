@@ -252,6 +252,23 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 		b.dashSrv.AuditLogRecord("system", rec.Action, rec.Detail, rec.Agent, rec.Repo, rec.Target)
 		recordLifecycleFromAudit(b.dashSrv, b.cfg.Project.Org, rec)
 	})
+	client.SetPRTerminalObservedHook(func(obs github.PRTerminalObservation) {
+		ts := obs.ObservedAt.UTC().Format(time.RFC3339)
+		switch obs.State {
+		case github.PRStateMerged:
+			path := obs.Attribution
+			if path == "" {
+				path = "other_automation"
+			}
+			b.dashSrv.AuditLogRecordAt(ts, "system", github.AuditActionPRMerged,
+				fmt.Sprintf("repo=%s, number=%d, path=%s, actor=%s", obs.Repo, obs.Number, path, obs.Actor),
+				github.AttributionAgentGovernor, obs.Repo, obs.Number)
+		case github.PRStateClosed:
+			b.dashSrv.AuditLogRecordAt(ts, "system", github.AuditActionPRClosed,
+				fmt.Sprintf("repo=%s, number=%d, reason=observed_closed", obs.Repo, obs.Number),
+				github.AttributionAgentGovernor, obs.Repo, obs.Number)
+		}
+	})
 	client.SetPROpenedHook(func(agentName, repo string, number int, url string) {
 		b.dashSrv.LinearAgentPROpened(agentName, repo, number, url)
 		// Same typed hook feeds the lifecycle timeline: the watcher fires

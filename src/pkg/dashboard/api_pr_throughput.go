@@ -49,12 +49,13 @@ type PRThroughput struct {
 	Source string `json:"source"`
 	// Opened counts PRs the hive's agents created (agent_pr_created).
 	Opened int `json:"opened"`
-	// Merged counts merges the hive performed (pr_merged), split by the path
-	// that performed them in MergedByPath: sweep, queue, relay, or unknown for
-	// entries written before the path field existed.
+	// Merged counts terminal merge states the hive observed for tracked PRs
+	// (pr_merged), split by attribution in MergedByPath: relay, sweep, human,
+	// other_automation, or unknown for entries written before attribution
+	// existed.
 	Merged       int            `json:"merged"`
 	MergedByPath map[string]int `json:"merged_by_path"`
-	// Closed counts PRs the hive closed without merging (pr_closed).
+	// Closed counts PRs observed closed without merging (pr_closed).
 	Closed int `json:"closed"`
 
 	Buckets       []PRThroughputBucket `json:"buckets"`
@@ -269,9 +270,28 @@ func prThroughputBuckets(entries []AuditEntry, since, until time.Time, bucketSiz
 	if len(buckets) == 0 {
 		return buckets
 	}
-	for _, e := range entries {
+	sorted := append([]AuditEntry(nil), entries...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		ti, _ := prThroughputTime(sorted[i])
+		tj, _ := prThroughputTime(sorted[j])
+		return ti.Before(tj)
+	})
+	seenTerminal := map[string]bool{}
+	for _, e := range sorted {
 		t, ok := prThroughputTime(e)
-		if !ok || t.Before(since) || t.After(until) || !prThroughputEntryMatchesRepo(e, repo) {
+		if !ok || t.After(until) || !prThroughputEntryMatchesRepo(e, repo) {
+			continue
+		}
+		if prThroughputTerminalAction(e.Action) {
+			key := prThroughputPRKey(e)
+			if key != "" {
+				if seenTerminal[key] {
+					continue
+				}
+				seenTerminal[key] = true
+			}
+		}
+		if t.Before(since) {
 			continue
 		}
 		bt := t.Truncate(bucketSize)
@@ -308,12 +328,19 @@ func summarizePRThroughput(entries []AuditEntry, since, until time.Time, repo st
 		tj, _ := prThroughputTime(sorted[j])
 		return ti.Before(tj)
 	})
+	seenTerminal := map[string]bool{}
 	for _, e := range sorted {
 		t, ok := prThroughputTime(e)
 		if !ok || !prThroughputActions[e.Action] || !prThroughputEntryMatchesRepo(e, repo) {
 			continue
 		}
 		key := prThroughputPRKey(e)
+		if prThroughputTerminalAction(e.Action) && key != "" {
+			if seenTerminal[key] {
+				continue
+			}
+			seenTerminal[key] = true
+		}
 		if e.Action == ghpkg.AuditActionAgentPRCreated && key != "" {
 			openedAt[key] = t
 		}

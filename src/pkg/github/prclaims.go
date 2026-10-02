@@ -850,6 +850,12 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 						closedAt = pr.GetUpdatedAt().Time
 					}
 					if !closedAt.Before(mergedCutoff) {
+						c.emitPRTerminalObserved(PRTerminalObservation{
+							Repo:       repo,
+							Number:     pr.GetNumber(),
+							State:      PRStateClosed,
+							ObservedAt: closedAt,
+						})
 						history = append(history,
 							prHistoryFromClaims(claimsFromPR(pr, repo, identity, now), PRStateClosed, now)...)
 					}
@@ -858,6 +864,15 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 				if mergedAt.Before(mergedCutoff) {
 					continue
 				}
+				mergedBy := safeGetLogin(pr.GetMergedBy())
+				c.emitPRTerminalObserved(PRTerminalObservation{
+					Repo:        repo,
+					Number:      pr.GetNumber(),
+					State:       PRStateMerged,
+					ObservedAt:  mergedAt,
+					Actor:       mergedBy,
+					Attribution: prTerminalMergeAttribution(mergedBy, identity, c.appBotLogin),
+				})
 				prClaims := claimsFromPR(pr, repo, identity, now)
 				history = append(history, prHistoryFromClaims(prClaims, PRStateMerged, now)...)
 				for _, claim := range prClaims {

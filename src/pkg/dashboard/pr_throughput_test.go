@@ -35,7 +35,7 @@ func TestPRThroughputCountersBumpOnlyOnPRActions(t *testing.T) {
 	if got.Opened != 1 || got.Merged != 3 || got.Closed != 1 {
 		t.Fatalf("counters = %+v, want opened=1 merged=3 closed=1", got)
 	}
-	want := map[string]int{"sweep": 1, "queue": 1, prThroughputMergePathUnknown: 1}
+	want := map[string]int{"sweep": 2, prThroughputMergePathUnknown: 1}
 	for k, v := range want {
 		if got.MergedByPath[k] != v {
 			t.Errorf("merged_by_path[%s] = %d, want %d (all=%v)", k, got.MergedByPath[k], v, got.MergedByPath)
@@ -156,7 +156,7 @@ func TestPRThroughputMergePath(t *testing.T) {
 		want   string
 	}{
 		{"repo=o/r, number=1, method=squash, sha=abc, path=sweep", "sweep"},
-		{"repo=o/r, number=1, path=queue", "queue"},
+		{"repo=o/r, number=1, path=queue", "sweep"},
 		{"path=relay", "relay"},
 		{"repo=o/r, number=1, method=squash", prThroughputMergePathUnknown},
 		{"path=", prThroughputMergePathUnknown},
@@ -166,6 +166,31 @@ func TestPRThroughputMergePath(t *testing.T) {
 		if got := prThroughputMergePath(tt.detail); got != tt.want {
 			t.Errorf("prThroughputMergePath(%q) = %q, want %q", tt.detail, got, tt.want)
 		}
+	}
+}
+
+func TestPRThroughputObservedHumanMergeCountsOnce(t *testing.T) {
+	a := &AuditLog{}
+	a.LogRecordAt("2026-10-02T12:00:00Z", "system", ghpkg.AuditActionPRMerged, "repo=o/r, number=11, path=human, actor=alice", "governor", "o/r", 11)
+
+	got := a.PRThroughputCounters()
+	if got.Merged != 1 || got.MergedByPath["human"] != 1 {
+		t.Fatalf("observed human merge counters = %+v, want merged=1 human=1", got)
+	}
+}
+
+func TestPRThroughputSweepThenObservedMergeDedupes(t *testing.T) {
+	a := &AuditLog{}
+	a.LogRecordAt("2026-10-02T12:00:00Z", "system", ghpkg.AuditActionPRMerged, "repo=o/r, number=12, path=sweep", "governor", "o/r", 12)
+	a.LogRecordAt("2026-10-02T12:01:00Z", "system", ghpkg.AuditActionPRMerged, "repo=o/r, number=12, path=other_automation, actor=hive[bot]", "governor", "o/r", 12)
+
+	got := a.PRThroughputCounters()
+	if got.Merged != 1 || got.MergedByPath["sweep"] != 1 || got.MergedByPath["other_automation"] != 0 {
+		t.Fatalf("deduped merge counters = %+v, want one sweep merge", got)
+	}
+	window := buildPRThroughputWindow(a.RecentWithPrefixSince(time.Time{}, ""), time.Date(2026, 10, 2, 13, 0, 0, 0, time.UTC), 24, "")
+	if window.Merged != 1 || window.MergedByPath["sweep"] != 1 {
+		t.Fatalf("deduped window = %+v, want one sweep merge", window)
 	}
 }
 
@@ -400,7 +425,7 @@ func TestHandlePRThroughputAllTimeUsesCounters(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("status = %d", code)
 	}
-	if !body.AllTime || body.Source != prThroughputSourceCounters || body.Opened != 1 || body.Merged != 1 || body.MergedByPath["queue"] != 1 {
+	if !body.AllTime || body.Source != prThroughputSourceCounters || body.Opened != 1 || body.Merged != 1 || body.MergedByPath["sweep"] != 1 {
 		t.Fatalf("all-time body = %+v", body)
 	}
 	if body.RecordedSince == "" {

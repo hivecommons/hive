@@ -4099,7 +4099,8 @@
     </div>
 
     <div id="pr-throughput-section" style="margin-top: var(--sp-6); margin-bottom: var(--sp-8); display: none;">
-      <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="pr-throughput-section"><span class="section-chevron">▼</span> 📬 PR Throughput</h2>
+      <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="pr-throughput-section"><span class="section-chevron">▼</span> 📬 Change Throughput</h2>
+      <p class="section-subtitle">pull/merge requests across tracked forges</p>
       <div class="section-body">
         <div id="pr-throughput-card" class="prt-card"></div>
       </div>
@@ -14256,7 +14257,7 @@ function burnAreaChart() {
       } catch (e) { /* transient — leave last render in place */ }
     }
 
-    // PR throughput card (#9427): how many PRs the hive opened, merged and
+    // Change throughput card (#9427): how many PRs the hive opened, merged and
     // closed without merging over a selectable window, from
     // /api/pr-throughput. hours=0 is all time (durable counters).
     const PRT_WINDOWS = [[1, '1h'], [6, '6h'], [12, '12h'], [24, '24h'], [48, '48h'], [168, '7d'], [0, 'all']];
@@ -14295,7 +14296,7 @@ function burnAreaChart() {
       if (prtRepo) names.add(prtRepo);
       const opts = ['<option value="">All repos</option>'];
       [...names].sort((a,b) => a.localeCompare(b)).forEach(n => opts.push(`<option value="${escapeHtml(n)}"${n.toLowerCase() === String(prtRepo).toLowerCase() ? ' selected' : ''}>${escapeHtml(n)}</option>`));
-      return `<select class="prt-repo-select" data-change-action="setPRThroughputRepo" data-arg-types="v" title="Filter PR throughput to one repository">${opts.join('')}</select>`;
+      return `<select class="prt-repo-select" data-change-action="setPRThroughputRepo" data-arg-types="v" title="Filter Change Throughput to one repository">${opts.join('')}</select>`;
     }
 
     function prtSeriesSpark(dto, field, color) {
@@ -14340,7 +14341,7 @@ function burnAreaChart() {
       const merged = Number(dto.merged) || 0;
       const closed = Number(dto.closed) || 0;
       const byPath = dto.merged_by_path || {};
-      const pathLabels = { sweep: 'auto-merge sweep', queue: 'queued by a person', relay: 'merge relay', unknown: 'unrecorded path' };
+      const pathLabels = { sweep: 'auto-merge sweep', queue: 'auto-merge sweep', relay: 'merge relay', human: 'human', other_automation: 'other automation', unknown: 'unrecorded path' };
       const pathParts = Object.keys(byPath).filter((k) => Number(byPath[k]) > 0).sort()
         .map((k) => `${Number(byPath[k])} ${escapeHtml(pathLabels[k] || k)}`);
       const pathsHtml = pathParts.length ? `<div class="prt-paths">Merged by: ${pathParts.join(' · ')}</div>` : '';
@@ -14359,9 +14360,9 @@ function burnAreaChart() {
       const label = prtWindowLabel(dto);
       card.innerHTML = `<div class="prt-head"><div class="lc-window">${escapeHtml(label)}</div><div class="prt-controls"><div class="gov-pr-models-toggle">${buttons}</div>${prtRepoOptions()}<button type="button" class="hv-btn btn-secondary btn-sm" data-action="exportPRThroughputCSV" title="Download bucket series as CSV">CSV</button></div></div>
         <div class="lc-fleet">
-          <div class="lc-fleet-stat" title="PRs opened by hive agents in the selected range"><div class="val opened">${opened}</div><div class="lbl">Opened</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'opened', 'var(--blue)')}</span></div>
-          <div class="lc-fleet-stat" title="PRs merged by the hive in the selected range"><div class="val merged">${merged}</div><div class="lbl">Merged</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'merged', 'var(--green)')}</span></div>
-          <div class="lc-fleet-stat" title="PRs closed by the hive without merging in the selected range"><div class="val closed">${closed}</div><div class="lbl">Closed without merging</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'closed', 'var(--red)')}</span></div>
+          <div class="lc-fleet-stat" title="Pull/merge requests opened by hive agents in the selected range"><div class="val opened">${opened}</div><div class="lbl">Opened</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'opened', 'var(--blue)')}</span></div>
+          <div class="lc-fleet-stat" title="Pull/merge requests observed merged in the selected range"><div class="val merged">${merged}</div><div class="lbl">Merged</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'merged', 'var(--green)')}</span></div>
+          <div class="lc-fleet-stat" title="Pull/merge requests observed closed without merging in the selected range"><div class="val closed">${closed}</div><div class="lbl">Closed without merging</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'closed', 'var(--red)')}</span></div>
         </div>${metricsHtml}${pathsHtml}${breakdowns ? `<div class="prt-breakdowns">${breakdowns}</div>` : ''}`;
       applySectionCollapse('pr-throughput-section');
     }

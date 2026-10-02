@@ -22,6 +22,13 @@ var prThroughputCountersPath = "/data/pr-throughput-counters.json"
 // field (written before the field existed).
 const prThroughputMergePathUnknown = "unknown"
 
+const (
+	prThroughputMergePathSweep           = "sweep"
+	prThroughputMergePathRelay           = "relay"
+	prThroughputMergePathHuman           = "human"
+	prThroughputMergePathOtherAutomation = "other_automation"
+)
+
 // prThroughputActions are the audit actions the PR throughput counts are
 // built from: a PR the hive opened, merged, or closed without merging.
 var prThroughputActions = map[string]bool{
@@ -39,6 +46,10 @@ type PRThroughputCounters struct {
 	Merged       int            `json:"merged"`
 	MergedByPath map[string]int `json:"merged_by_path,omitempty"`
 	Closed       int            `json:"closed"`
+	// Terminal remembers merged/closed PRs already counted, keyed as
+	// lower(repo)#number, so a forge-observed terminal state cannot double-count
+	// a merge/close the hive already audited through a relay or sweep path.
+	Terminal map[string]string `json:"terminal,omitempty"`
 	// Since is the RFC3339 timestamp of the oldest event the counters cover —
 	// how far back "all time" actually goes.
 	Since string `json:"since,omitempty"`
@@ -48,11 +59,12 @@ type PRThroughputCounters struct {
 }
 
 type PRThroughputRepoCounters struct {
-	Opened       int            `json:"opened"`
-	Merged       int            `json:"merged"`
-	MergedByPath map[string]int `json:"merged_by_path,omitempty"`
-	Closed       int            `json:"closed"`
-	Since        string         `json:"since,omitempty"`
+	Opened       int               `json:"opened"`
+	Merged       int               `json:"merged"`
+	MergedByPath map[string]int    `json:"merged_by_path,omitempty"`
+	Closed       int               `json:"closed"`
+	Terminal     map[string]string `json:"terminal,omitempty"`
+	Since        string            `json:"since,omitempty"`
 }
 
 // clone returns a deep copy safe to hand out of the AuditLog lock.
@@ -62,10 +74,12 @@ func (c PRThroughputCounters) clone() PRThroughputCounters {
 	for k, v := range c.MergedByPath {
 		out.MergedByPath[k] = v
 	}
+	out.Terminal = cloneStringMap(c.Terminal)
 	if len(c.ByRepo) > 0 {
 		out.ByRepo = make(map[string]PRThroughputRepoCounters, len(c.ByRepo))
 		for k, v := range c.ByRepo {
 			v.MergedByPath = cloneIntMap(v.MergedByPath)
+			v.Terminal = cloneStringMap(v.Terminal)
 			out.ByRepo[k] = v
 		}
 	}
@@ -76,6 +90,9 @@ func (c PRThroughputCounters) clone() PRThroughputCounters {
 // throughput action at all.
 func (c *PRThroughputCounters) add(e AuditEntry) bool {
 	if !prThroughputActions[e.Action] {
+		return false
+	}
+	if !c.rememberTerminal(e) {
 		return false
 	}
 	c.addTotals(e)
@@ -110,6 +127,9 @@ func (c *PRThroughputCounters) addTotals(e AuditEntry) {
 }
 
 func (c *PRThroughputRepoCounters) add(e AuditEntry) {
+	if !c.rememberTerminal(e) {
+		return
+	}
 	switch e.Action {
 	case ghpkg.AuditActionAgentPRCreated:
 		c.Opened++
@@ -129,7 +149,7 @@ func (c *PRThroughputRepoCounters) add(e AuditEntry) {
 
 func (c PRThroughputCounters) forRepo(repo string) PRThroughputCounters {
 	rc := c.ByRepo[strings.ToLower(repo)]
-	return PRThroughputCounters{Opened: rc.Opened, Merged: rc.Merged, MergedByPath: cloneIntMap(rc.MergedByPath), Closed: rc.Closed, Since: rc.Since}
+	return PRThroughputCounters{Opened: rc.Opened, Merged: rc.Merged, MergedByPath: cloneIntMap(rc.MergedByPath), Closed: rc.Closed, Terminal: cloneStringMap(rc.Terminal), Since: rc.Since}
 }
 
 func cloneIntMap(in map[string]int) map[string]int {
@@ -140,13 +160,64 @@ func cloneIntMap(in map[string]int) map[string]int {
 	return out
 }
 
+func cloneStringMap(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
 // prThroughputMergePath extracts the path= field of a pr_merged detail
 // (sweep / queue / relay), or prThroughputMergePathUnknown when absent.
 func prThroughputMergePath(detail string) string {
 	if p := strings.TrimSpace(parseAuditDetailAttrs(detail)["path"]); p != "" {
+		if p == ghpkg.PRAuditPathQueue {
+			return prThroughputMergePathSweep
+		}
 		return p
 	}
 	return prThroughputMergePathUnknown
+}
+
+func prThroughputTerminalAction(action string) bool {
+	return action == ghpkg.AuditActionPRMerged || action == ghpkg.AuditActionPRClosed
+}
+
+func (c *PRThroughputCounters) rememberTerminal(e AuditEntry) bool {
+	if !prThroughputTerminalAction(e.Action) {
+		return true
+	}
+	key := prThroughputPRKey(e)
+	if key == "" {
+		return true
+	}
+	if c.Terminal == nil {
+		c.Terminal = map[string]string{}
+	}
+	if _, exists := c.Terminal[key]; exists {
+		return false
+	}
+	c.Terminal[key] = e.Action
+	return true
+}
+
+func (c *PRThroughputRepoCounters) rememberTerminal(e AuditEntry) bool {
+	if !prThroughputTerminalAction(e.Action) {
+		return true
+	}
+	key := prThroughputPRKey(e)
+	if key == "" {
+		return true
+	}
+	if c.Terminal == nil {
+		c.Terminal = map[string]string{}
+	}
+	if _, exists := c.Terminal[key]; exists {
+		return false
+	}
+	c.Terminal[key] = e.Action
+	return true
 }
 
 // loadPRThroughputCounters restores the counters from countersPath and makes
@@ -162,6 +233,9 @@ func (a *AuditLog) loadPRThroughputCounters(countersPath, auditPath string) {
 		var c PRThroughputCounters
 		if json.Unmarshal(data, &c) == nil {
 			a.prCounters = c
+			if a.hydratePRThroughputTerminalKeysLocked(auditPath) {
+				a.persistPRThroughputCountersLocked()
+			}
 			return
 		}
 	}
@@ -173,13 +247,45 @@ func (a *AuditLog) loadPRThroughputCounters(countersPath, auditPath string) {
 	a.persistPRThroughputCountersLocked()
 }
 
+func (a *AuditLog) hydratePRThroughputTerminalKeysLocked(auditPath string) bool {
+	changed := false
+	for _, e := range a.actionsSince(time.Time{}, func(action string) bool { return prThroughputTerminalAction(action) }, nil, auditPath) {
+		key := prThroughputPRKey(e)
+		if key == "" {
+			continue
+		}
+		if a.prCounters.Terminal == nil {
+			a.prCounters.Terminal = map[string]string{}
+		}
+		if _, exists := a.prCounters.Terminal[key]; exists {
+			continue
+		}
+		a.prCounters.Terminal[key] = e.Action
+		if repo, ok := collect.AuditEntryRepo(e); ok {
+			if a.prCounters.ByRepo == nil {
+				a.prCounters.ByRepo = map[string]PRThroughputRepoCounters{}
+			}
+			repoKey := strings.ToLower(repo)
+			rc := a.prCounters.ByRepo[repoKey]
+			if rc.Terminal == nil {
+				rc.Terminal = map[string]string{}
+			}
+			rc.Terminal[key] = e.Action
+			a.prCounters.ByRepo[repoKey] = rc
+		}
+		changed = true
+	}
+	return changed
+}
+
 // notePRThroughput bumps and persists the counters for a PR throughput audit
 // entry. Callers must hold a.mu.
-func (a *AuditLog) notePRThroughput(e AuditEntry) {
+func (a *AuditLog) notePRThroughput(e AuditEntry) bool {
 	if !a.prCounters.add(e) {
-		return
+		return false
 	}
 	a.persistPRThroughputCountersLocked()
+	return true
 }
 
 // persistPRThroughputCountersLocked writes the counters atomically (temp file

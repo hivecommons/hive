@@ -62,6 +62,16 @@ sort controls; the selected column and direction are saved in browser
 default row order is effectiveness rank; operators can toggle back to raw PR
 count without changing the selected window.
 
+## Change Throughput
+
+The **Change Throughput** section (`pr-throughput-section`) summarizes
+pull/merge requests across tracked forges. It reads `GET /api/pr-throughput`
+for selectable windows and repository filters, keeps the historical
+`/api/pr-throughput` path and `pr-throughput-*` element IDs for compatibility,
+and reports opened, observed merged, and observed closed-without-merging
+terminal states. Merge attribution is shown as merge relay, auto-merge sweep,
+human, other automation, or unrecorded path.
+
 ## Hive Chat
 
 The floating **🐝 Hive Chat** panel is a command-first dashboard assistant. Type

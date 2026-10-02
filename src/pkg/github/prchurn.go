@@ -3,6 +3,7 @@ package github
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -110,6 +111,52 @@ func (r IssuePRRecord) terminal() bool {
 type ClaimScan struct {
 	Claims  []IssueClaim
 	History []IssuePRRecord
+}
+
+// PRTerminalObservation reports a terminal PR state seen by the regular PR
+// poller. It is not a forge write: the dashboard audit sink uses it to count
+// human and external-automation merges/closes that Hive did not perform.
+type PRTerminalObservation struct {
+	Repo        string
+	Number      int
+	State       string
+	ObservedAt  time.Time
+	Actor       string
+	Attribution string
+}
+
+type PRTerminalObservedHook func(PRTerminalObservation)
+
+func (c *Client) SetPRTerminalObservedHook(fn PRTerminalObservedHook) {
+	if c == nil {
+		return
+	}
+	c.prTerminalObservedHook.Store(&fn)
+}
+
+func (c *Client) emitPRTerminalObserved(obs PRTerminalObservation) {
+	if c == nil {
+		return
+	}
+	hook := c.prTerminalObservedHook.Load()
+	if hook == nil || *hook == nil {
+		return
+	}
+	(*hook)(obs)
+}
+
+func prTerminalMergeAttribution(actor string, identity HiveIdentity, appBotLogin string) string {
+	login := strings.TrimSpace(actor)
+	if login == "" {
+		return "other_automation"
+	}
+	if identity.Matches(login) || (appBotLogin != "" && strings.EqualFold(login, appBotLogin)) {
+		return "other_automation"
+	}
+	if strings.HasSuffix(strings.ToLower(login), "[bot]") {
+		return "other_automation"
+	}
+	return "human"
 }
 
 // prHistoryFromClaims projects the issues one pull request is linked to into
