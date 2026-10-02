@@ -1,0 +1,1 @@
+- Discord bot: quote hyphenated `ci-maintainer` key in `agent-identities.js` so the bot starts; add `node --check` CI guard for `discord/**` to prevent similar syntax errors.

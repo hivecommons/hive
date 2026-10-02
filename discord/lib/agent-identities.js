@@ -1,6 +1,6 @@
 const AGENTS = {
   scanner:    { emoji: '\u{1F50D}', label: 'scanner',    color: 0x3498db },
-  ci-maintainer:   { emoji: '✅',    label: 'ci-maintainer',   color: 0x2ecc71 },
+  'ci-maintainer':   { emoji: '✅',    label: 'ci-maintainer',   color: 0x2ecc71 },
   architect:  { emoji: '\u{1F3D7}', label: 'architect',  color: 0x9b59b6 },
   outreach:   { emoji: '\u{1F310}', label: 'outreach',   color: 0xe67e22 },
   supervisor: { emoji: '\u{1F451}', label: 'supervisor', color: 0xe74c3c },
