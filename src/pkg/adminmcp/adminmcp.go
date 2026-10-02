@@ -354,6 +354,8 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 		{ToolAgentNudgeStatus, "Read the asynchronous delivery outcome for the latest nudge sent to one agent."},
 		{ToolIssuesByBand, "Read issues grouped by their Overview band (ready, in-progress, agent-filed, waiting, done), e.g. band=done for issues an agent has labelled hive/already-done, hive/covered-by-pr or hive/likely-done that a human has not verified and closed yet. hive/covered-by-pr only means an agent found an open PR that references the issue — check that the PR merged before closing."},
 		{ToolPrsByBand, "Read PRs grouped by their Overview band (waiting, eligible, blocked, in-review, open, draft)."},
+		{ToolReviewQueue, "Read what needs a human now: one prioritised list merged across issues and PRs (held, labelled for a human decision, sweep verdict outstanding, confirm-and-close candidates, agent-filed with no approved direction), each row with a one-line reason. Ordering is deterministic and returned with the answer; page with offset/next_offset. Read-only; it never merges."},
+		{ToolGovernorSetup, "Propose a governor setup for this hive from its repo count, cadence scope, thresholds and budget: one recommendation per setting with a one-line reason and the write operation and args that apply it through write_preview. Read-only; nothing changes until a write is confirmed."},
 		{ToolWritePreview, "Preview a registered write operation and create a durable pending confirmation."},
 		{ToolWriteConfirm, "Confirm and execute a previously previewed write operation."},
 		{ToolExclusionCatalogue, "Return the askable catalogue of operations deliberately excluded from admin MCP."},
@@ -377,7 +379,7 @@ func AllowedTool(name string) bool {
 	case ToolHiveStatus, ToolFleetStatus, ToolAgentsList, ToolRunsList, ToolLeasesList, ToolClaimsList,
 		ToolPlansList, ToolAuditLog, ToolSettingsRead, ToolAutonomyReadiness, ToolSpendRead,
 		ToolContributorsList, ToolKnowledgeRead, ToolHiveAdvisor, ToolAdvisorRecords, ToolAgentNudgeStatus,
-		ToolIssuesByBand, ToolPrsByBand, ToolWritePreview, ToolWriteConfirm,
+		ToolIssuesByBand, ToolPrsByBand, ToolReviewQueue, ToolGovernorSetup, ToolWritePreview, ToolWriteConfirm,
 		ToolExclusionCatalogue, ToolRefuseOperation:
 		return true
 	}
@@ -418,6 +420,10 @@ func inputSchema(name string) map[string]any {
 		props["repo"] = map[string]any{"type": "string", "description": "owner/name; unset reads every repo this hive tracks."}
 		props["band"] = map[string]any{"type": "string", "enum": prBandKeys}
 		props["stale"] = map[string]any{"type": "boolean"}
+	case ToolReviewQueue:
+		props = reviewQueueSchema()
+	case ToolGovernorSetup:
+		props = map[string]any{}
 	case ToolWritePreview:
 		props = map[string]any{"operation": map[string]any{"type": "string"}, "args": map[string]any{"type": "object"}}
 		required = []string{"operation", "args"}
@@ -647,7 +653,7 @@ func ReadPath(tool string, limit int) (string, bool) {
 		return "/api/plans" + suffix, true
 	case ToolAuditLog:
 		return "/api/audit", true
-	case ToolSettingsRead:
+	case ToolSettingsRead, ToolGovernorSetup:
 		return "/api/config/governor", true
 	case ToolAutonomyReadiness:
 		return "/api/nous/status", true

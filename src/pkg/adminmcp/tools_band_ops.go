@@ -57,7 +57,7 @@ func BandReadResult(tool string, data any, args map[string]any) (any, error) {
 			Reason:    fmt.Sprintf("unknown band %q; valid bands: %s", band, strings.Join(validBands, ", ")),
 		}, nil
 	}
-	body, ok := data.(map[string]any)
+	body, ok := rekeyBandRows(data).(map[string]any)
 	if !ok {
 		return CapResult(data, LimitFromArgs(args)), nil
 	}
@@ -116,6 +116,54 @@ func BandReadPath(tool string, args map[string]any) string {
 		path += "?" + encoded
 	}
 	return path
+}
+
+// rekeyBandRows rewrites each row's "band" field from the Overview display
+// label (e.g. "Confirm & close") that the Overview row builders set it to, back
+// to the band key (e.g. "done") the response's own bands[] carries alongside
+// that label. Without this the band argument — documented and validated
+// against the band keys — never matches a row, so band=<key> always returns
+// zero rows (#10018). It runs here rather than in one provider so the
+// dashboard and stdio servers cannot drift apart again. Rows already carrying
+// a key are left alone. data is the caller's freshly decoded copy, so it is
+// edited in place.
+func rekeyBandRows(data any) any {
+	body, ok := data.(map[string]any)
+	if !ok {
+		return data
+	}
+	bands, ok := body["bands"].([]any)
+	if !ok {
+		return data
+	}
+	labelToKey := make(map[string]string, len(bands))
+	for _, raw := range bands {
+		spec, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		key, _ := spec["key"].(string)
+		label, _ := spec["label"].(string)
+		if key != "" && label != "" {
+			labelToKey[label] = key
+		}
+	}
+	rows, ok := body["rows"].([]any)
+	if !ok {
+		return data
+	}
+	for _, raw := range rows {
+		row, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if label, ok := row["band"].(string); ok {
+			if key, ok := labelToKey[label]; ok {
+				row["band"] = key
+			}
+		}
+	}
+	return data
 }
 
 func containsBand(bands []string, band string) bool {
