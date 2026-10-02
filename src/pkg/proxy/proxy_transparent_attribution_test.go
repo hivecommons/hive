@@ -398,6 +398,9 @@ func TestTransparentTLSTunnelFailuresClose(t *testing.T) {
 // ClientHello read gives up and the handler returns.
 func TestTransparentTLSTruncatedClientHelloReturns(t *testing.T) {
 	p := newAttributionProxy(t, nil)
+	// The truncated hello degrades to the default host, which is tunnelled;
+	// keep the test hermetic instead of dialling the real network.
+	p.tunnelDial = func(string) (net.Conn, error) { return nil, errors.New("test: unreachable") }
 	client, server := loopbackPair(t)
 	// A handshake record header declaring 200 bytes, of which none follow, then
 	// EOF: readClientHelloRecord must fail rather than block.

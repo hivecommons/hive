@@ -11,6 +11,20 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-02 (v5.119.0)
+
+### Added
+
+- hub: heartbeat upgrade policy carries `next_update_at`, the expected time of the next promotion into the `stable` channel (#10256)
+
+### Changed
+
+- Move continuous cadence editing into the agent settings Cadences form and render read-only `∞ continuous` chips in the Governor cadence table.
+
+### Fixed
+
+- CI runner canary: queued runs older than 6h are reported as GitHub-side zombies and no longer fail the watchdog (uncancellable August runs tripped the first run, #10273).
+
 ## 2026-10-02 (v5.118.0)
 
 ### Added
