@@ -74,6 +74,10 @@ pinned:
   # dco-post-merge.yml above: v4 is the line whose pushes it audits, v5 the
   # sync target inheriting them; v2 is sunset and takes no pushes.
   dco-push-delta.yml: [v5]
+  # FOSSA license scanning runs on the active CNCF onboarding line only;
+  # v4 is feature-frozen and not being imported as the initial Hive Commons
+  # CNCF FOSSA project.
+  fossa.yml: [-v4]
   go-security-analysis.yml: [v5, v6]
   podman-arm64-lane.yml: []
   podman-contract.yml: []

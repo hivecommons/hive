@@ -1,0 +1,1 @@
+- Add a FOSSA license scan workflow and README badge.

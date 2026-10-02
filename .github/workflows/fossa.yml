@@ -1,0 +1,28 @@
+name: FOSSA license scan
+
+on:
+  push:
+    branches:
+      - v5
+  pull_request:
+    branches:
+      - v5
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fossa:
+    name: FOSSA license scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Run FOSSA scan
+        uses: fossas/fossa-action@29693cc50323968e039056be419b32989fc5880c # v2.0.0
+        with:
+          api-key: ${{ secrets.FOSSA_API_KEY }}
+          run-tests: ${{ github.event_name == 'pull_request' }}
+          test-diff-revision: ${{ github.event.pull_request.base.sha }}
