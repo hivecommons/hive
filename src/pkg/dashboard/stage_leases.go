@@ -930,7 +930,14 @@ func (s *Server) resetRunPlanForReplan(runKey string) error {
 			return err
 		}
 	}
-	if epic.Meta(runPlanDigestMeta) == "" {
+	return supersedeRunPlanImport(store, epic)
+}
+
+// supersedeRunPlanImport invalidates a run epic's import digest so the next
+// plan ImportRunPlan receives replaces the superseded one even when its text
+// is unchanged. An epic with no imported plan is left alone.
+func supersedeRunPlanImport(store *beads.Store, epic *beads.Bead) error {
+	if store == nil || epic == nil || epic.Meta(runPlanDigestMeta) == "" {
 		return nil
 	}
 	return store.SetMetadata(epic.ID, runPlanDigestMeta, runPlanDigestReplan)
