@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -41,6 +42,17 @@ type PRThroughputCounters struct {
 	// Since is the RFC3339 timestamp of the oldest event the counters cover —
 	// how far back "all time" actually goes.
 	Since string `json:"since,omitempty"`
+	// ByRepo mirrors the all-time counters per repository for repo-filtered
+	// all-time dashboard views. It is additive; older files simply load without it.
+	ByRepo map[string]PRThroughputRepoCounters `json:"by_repo,omitempty"`
+}
+
+type PRThroughputRepoCounters struct {
+	Opened       int            `json:"opened"`
+	Merged       int            `json:"merged"`
+	MergedByPath map[string]int `json:"merged_by_path,omitempty"`
+	Closed       int            `json:"closed"`
+	Since        string         `json:"since,omitempty"`
 }
 
 // clone returns a deep copy safe to hand out of the AuditLog lock.
@@ -49,6 +61,13 @@ func (c PRThroughputCounters) clone() PRThroughputCounters {
 	out.MergedByPath = make(map[string]int, len(c.MergedByPath))
 	for k, v := range c.MergedByPath {
 		out.MergedByPath[k] = v
+	}
+	if len(c.ByRepo) > 0 {
+		out.ByRepo = make(map[string]PRThroughputRepoCounters, len(c.ByRepo))
+		for k, v := range c.ByRepo {
+			v.MergedByPath = cloneIntMap(v.MergedByPath)
+			out.ByRepo[k] = v
+		}
 	}
 	return out
 }
@@ -59,6 +78,20 @@ func (c *PRThroughputCounters) add(e AuditEntry) bool {
 	if !prThroughputActions[e.Action] {
 		return false
 	}
+	c.addTotals(e)
+	if repo, ok := collect.AuditEntryRepo(e); ok {
+		if c.ByRepo == nil {
+			c.ByRepo = map[string]PRThroughputRepoCounters{}
+		}
+		key := strings.ToLower(repo)
+		rc := c.ByRepo[key]
+		rc.add(e)
+		c.ByRepo[key] = rc
+	}
+	return true
+}
+
+func (c *PRThroughputCounters) addTotals(e AuditEntry) {
 	switch e.Action {
 	case ghpkg.AuditActionAgentPRCreated:
 		c.Opened++
@@ -74,7 +107,37 @@ func (c *PRThroughputCounters) add(e AuditEntry) bool {
 	if c.Since == "" || (e.Timestamp != "" && e.Timestamp < c.Since) {
 		c.Since = e.Timestamp
 	}
-	return true
+}
+
+func (c *PRThroughputRepoCounters) add(e AuditEntry) {
+	switch e.Action {
+	case ghpkg.AuditActionAgentPRCreated:
+		c.Opened++
+	case ghpkg.AuditActionPRMerged:
+		c.Merged++
+		if c.MergedByPath == nil {
+			c.MergedByPath = map[string]int{}
+		}
+		c.MergedByPath[prThroughputMergePath(e.Detail)]++
+	case ghpkg.AuditActionPRClosed:
+		c.Closed++
+	}
+	if c.Since == "" || (e.Timestamp != "" && e.Timestamp < c.Since) {
+		c.Since = e.Timestamp
+	}
+}
+
+func (c PRThroughputCounters) forRepo(repo string) PRThroughputCounters {
+	rc := c.ByRepo[strings.ToLower(repo)]
+	return PRThroughputCounters{Opened: rc.Opened, Merged: rc.Merged, MergedByPath: cloneIntMap(rc.MergedByPath), Closed: rc.Closed, Since: rc.Since}
+}
+
+func cloneIntMap(in map[string]int) map[string]int {
+	out := make(map[string]int, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // prThroughputMergePath extracts the path= field of a pr_merged detail

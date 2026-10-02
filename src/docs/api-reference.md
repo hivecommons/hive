@@ -493,7 +493,7 @@ always resolved server-side from the validated token.
 | `GET` | `/api/history` | Dashboard auth/session | History | `pkg/dashboard/api.go:70` |
 | `GET` | `/api/timeline` | Dashboard auth/session | Timeline | `pkg/dashboard/api.go:72` |
 | `GET` | `/api/lifecycle-timeline` | Dashboard auth/session | Issue→PR lifecycle journeys plus derived stage timeline | `pkg/dashboard/api.go:73` |
-| `GET` | `/api/pr-throughput` | Dashboard auth/session | PR throughput: PRs the hive opened (`agent_pr_created`), merged (`pr_merged`, split by `merged_by_path`: `sweep`/`queue`/`relay`/`unknown`) and closed without merging (`pr_closed`) over `?hours=N` (default 24, capped at the audit retention; `hours=0` = all time from durable counters in `/data/pr-throughput-counters.json`), plus `recorded_since` — how far back the data goes | `pkg/dashboard/api.go:74` |
+| `GET` | `/api/pr-throughput` | Dashboard auth/session | PR throughput: PRs the hive opened (`agent_pr_created`), merged (`pr_merged`, split by `merged_by_path`: `sweep`/`queue`/`relay`/`unknown`) and closed without merging (`pr_closed`) over `?hours=N` (default 24, capped at audit retention; `hours=0` = all time from durable counters in `/data/pr-throughput-counters.json`) with optional exact case-insensitive `?repo=owner/name`, bucketed `buckets`, velocity metrics (`opened_per_day`, `merged_per_day`, merge ratio, net backlog), time-to-merge percentiles when open timestamps are available, previous-window trends, top agents/repos/reasons, plus `recorded_since` | `pkg/dashboard/api.go:74` |
 
 
 | `GET` | `/api/convergence/soak` | Owner only | Convergence Soak Status | `pkg/dashboard/api.go:227` |

@@ -199,7 +199,7 @@ func TestBuildPRThroughputWindow(t *testing.T) {
 		{hours: 168, opened: 2, merged: 3, closed: 1, byPath: map[string]int{"sweep": 1, "relay": 1, prThroughputMergePathUnknown: 1}},
 	}
 	for _, tt := range tests {
-		got := buildPRThroughputWindow(entries, now, tt.hours)
+		got := buildPRThroughputWindow(entries, now, tt.hours, "")
 		if got.Hours != tt.hours || got.AllTime || got.Source != prThroughputSourceAudit {
 			t.Errorf("hours=%d: envelope = %+v", tt.hours, got)
 		}
@@ -223,7 +223,7 @@ func TestBuildPRThroughputWindow(t *testing.T) {
 		}
 	}
 
-	empty := buildPRThroughputWindow(nil, now, 1)
+	empty := buildPRThroughputWindow(nil, now, 1, "")
 	if empty.RecordedSince != "" || empty.MergedByPath == nil {
 		t.Errorf("empty window = %+v, want no recorded_since and a non-nil map", empty)
 	}
@@ -233,7 +233,7 @@ func TestBuildPRThroughputAllTime(t *testing.T) {
 	got := buildPRThroughputAllTime(PRThroughputCounters{
 		Opened: 10, Merged: 7, Closed: 2, Since: "2026-01-01T00:00:00Z",
 		MergedByPath: map[string]int{"sweep": 4, "relay": 3},
-	})
+	}, nil, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), "")
 	if !got.AllTime || got.Hours != 0 || got.Source != prThroughputSourceCounters {
 		t.Fatalf("envelope = %+v", got)
 	}
@@ -243,8 +243,95 @@ func TestBuildPRThroughputAllTime(t *testing.T) {
 	if got.Since != "2026-01-01T00:00:00Z" || got.RecordedSince != "2026-01-01T00:00:00Z" {
 		t.Fatalf("since/recorded_since = %q/%q", got.Since, got.RecordedSince)
 	}
-	if empty := buildPRThroughputAllTime(PRThroughputCounters{}); empty.MergedByPath == nil {
+	if empty := buildPRThroughputAllTime(PRThroughputCounters{}, nil, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), ""); empty.MergedByPath == nil {
 		t.Error("merged_by_path must be a non-nil map")
+	}
+}
+
+func TestBuildPRThroughputAnalytics(t *testing.T) {
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	entries := []AuditEntry{
+		{Timestamp: rfc3339(now.Add(-3 * time.Hour)), Action: ghpkg.AuditActionAgentPRCreated, Detail: "repo=O/R, number=1", Agent: "alpha"},
+		{Timestamp: rfc3339(now.Add(-90 * time.Minute)), Action: ghpkg.AuditActionPRMerged, Detail: "repo=o/r, number=1, path=sweep", Agent: "alpha"},
+		{Timestamp: rfc3339(now.Add(-80 * time.Minute)), Action: ghpkg.AuditActionAgentPRCreated, Detail: "repo=o/r, number=2", Agent: "beta"},
+		{Timestamp: rfc3339(now.Add(-70 * time.Minute)), Action: ghpkg.AuditActionPRClosed, Detail: "repo=o/r, number=2, reason=stale", Agent: "beta"},
+		{Timestamp: rfc3339(now.Add(-7 * time.Hour)), Action: ghpkg.AuditActionPRMerged, Detail: "repo=o/r, number=9, path=relay", Agent: "alpha"},
+		{Timestamp: rfc3339(now.Add(-50 * time.Minute)), Action: ghpkg.AuditActionAgentPRCreated, Detail: "repo=o/other, number=3", Agent: "gamma"},
+	}
+	got := buildPRThroughputWindow(entries, now, 6, "o/r")
+	if got.Opened != 2 || got.Merged != 1 || got.Closed != 1 {
+		t.Fatalf("filtered counts = %d/%d/%d", got.Opened, got.Merged, got.Closed)
+	}
+	if got.BucketSeconds != int((15*time.Minute).Seconds()) || len(got.Buckets) == 0 {
+		t.Fatalf("buckets = seconds %d len %d", got.BucketSeconds, len(got.Buckets))
+	}
+	if got.Metrics.MedianTimeToMerge == nil || *got.Metrics.MedianTimeToMerge != 1.5 {
+		t.Fatalf("median TTM = %v, want 1.5", got.Metrics.MedianTimeToMerge)
+	}
+	if got.Metrics.P90TimeToMerge == nil || *got.Metrics.P90TimeToMerge != 1.5 {
+		t.Fatalf("p90 TTM = %v, want 1.5", got.Metrics.P90TimeToMerge)
+	}
+	if got.Metrics.MergeRatio == nil || *got.Metrics.MergeRatio != 0.5 {
+		t.Fatalf("merge ratio = %v, want .5", got.Metrics.MergeRatio)
+	}
+	if got.Metrics.NetBacklogChange != 0 {
+		t.Fatalf("net backlog = %d, want 0", got.Metrics.NetBacklogChange)
+	}
+	if got.Metrics.Trend.MergedPct == nil || *got.Metrics.Trend.MergedPct != 0 {
+		t.Fatalf("merged trend = %v, want 0", got.Metrics.Trend.MergedPct)
+	}
+	if len(got.MergedByAgent) != 1 || got.MergedByAgent[0].Name != "alpha" || got.MergedByAgent[0].Count != 1 {
+		t.Fatalf("merged_by_agent = %+v", got.MergedByAgent)
+	}
+	if len(got.ClosedReasons) != 1 || got.ClosedReasons[0].Name != "stale" {
+		t.Fatalf("closed_reasons = %+v", got.ClosedReasons)
+	}
+}
+
+func TestPRThroughputBucketsAlignAndEmpty(t *testing.T) {
+	since := time.Date(2026, 10, 2, 12, 7, 0, 0, time.UTC)
+	until := since.Add(20 * time.Minute)
+	entries := []AuditEntry{{Timestamp: rfc3339(since.Add(time.Minute)), Action: ghpkg.AuditActionAgentPRCreated, Detail: "repo=o/r, number=1"}}
+	buckets := prThroughputBuckets(entries, since, until, 5*time.Minute, "")
+	if len(buckets) == 0 || buckets[0].T != "2026-10-02T12:05:00Z" {
+		t.Fatalf("first bucket = %+v, want aligned 12:05", buckets)
+	}
+	if buckets[0].Opened != 1 {
+		t.Fatalf("first bucket opened = %d, want 1", buckets[0].Opened)
+	}
+	if got := prThroughputBuckets(nil, until, since, 5*time.Minute, ""); got != nil {
+		t.Fatalf("empty range buckets = %+v, want nil", got)
+	}
+}
+
+func TestPRThroughputPercentilesAndEmptyTrend(t *testing.T) {
+	if percentileHours(nil, 0.5) != nil {
+		t.Fatal("empty percentile must be nil")
+	}
+	one := percentileHours([]float64{2}, 0.9)
+	if one == nil || *one != 2 {
+		t.Fatalf("one-sample percentile = %v", one)
+	}
+	twoMedian := percentileHours([]float64{1, 3}, 0.5)
+	if twoMedian == nil || *twoMedian != 2 {
+		t.Fatalf("two-sample median = %v", twoMedian)
+	}
+	twoP90 := percentileHours([]float64{1, 3}, 0.9)
+	if twoP90 == nil || *twoP90 < 2.79 || *twoP90 > 2.81 {
+		t.Fatalf("two-sample p90 = %v", twoP90)
+	}
+	if pctChange(5, 0) != nil {
+		t.Fatal("trend from empty previous window must be nil")
+	}
+}
+
+func TestPRThroughputAllTimeRepoCounters(t *testing.T) {
+	var counters PRThroughputCounters
+	counters.add(AuditEntry{Timestamp: "2026-01-01T00:00:00Z", Action: ghpkg.AuditActionAgentPRCreated, Detail: "repo=O/R, number=1"})
+	counters.add(AuditEntry{Timestamp: "2026-01-02T00:00:00Z", Action: ghpkg.AuditActionPRMerged, Detail: "repo=o/other, number=2, path=relay"})
+	got := buildPRThroughputAllTime(counters, nil, time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC), "o/r")
+	if got.Opened != 1 || got.Merged != 0 || got.Repo != "o/r" {
+		t.Fatalf("repo all-time = %+v", got)
 	}
 }
 
@@ -286,6 +373,7 @@ func TestHandlePRThroughput(t *testing.T) {
 		{query: "?hours=99999", wantCode: http.StatusOK, wantHours: prThroughputMaxHours, wantOpen: 2},
 		{query: "?hours=-1", wantCode: http.StatusBadRequest},
 		{query: "?hours=abc", wantCode: http.StatusBadRequest},
+		{query: "?repo=not-a-full-name", wantCode: http.StatusBadRequest},
 	}
 	for _, tt := range tests {
 		code, body := getPRThroughput(t, s, tt.query)
