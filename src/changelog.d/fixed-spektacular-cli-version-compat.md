@@ -1,0 +1,1 @@
+- spektacular: hub workspaces run `spektacular migrate` on an existing `.spektacular/` project instead of failing every verb with `upgrade_required`, `init` gets a valid project name for repos such as `hive.github.io` or `Console.UI`, and the runner accepts Spektacular 0.23+/0.24 `plan export` objects and extension-less `file read` paths (#10046, #10051, #10052)

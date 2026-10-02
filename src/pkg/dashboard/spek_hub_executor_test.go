@@ -618,6 +618,93 @@ func TestSpekHubExecutorSweepKeepsRunWorktreeWhileUnclaimedLeaseExists(t *testin
 	}
 }
 
+func TestSpekProjectName(t *testing.T) {
+	for repo, want := range map[string]string{
+		"myorg/repo1":               "repo1",
+		"myorg/hive.github.io":      "hive-github-io",
+		"myorg/.github":             "github",
+		"myorg/Console.UI":          "console-ui",
+		"myorg/my_repo":             "my_repo",
+		"myorg/_x":                  "x",
+		"myorg/...":                 "project",
+		"kubestellar/Kube Stellar!": "kube-stellar-",
+	} {
+		if got := spekProjectName(repo); got != want {
+			t.Errorf("spekProjectName(%q) = %q, want %q", repo, got, want)
+		}
+	}
+}
+
+// A `.spektacular/` committed to the target repo may come from another
+// Spektacular version; every verb then fails with upgrade_required until
+// `migrate` runs, so prepareWorkspace migrates instead of skipping init.
+func TestSpekHubExecutorPrepareWorkspaceMigratesExistingProject(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		migrateErr error
+	}{
+		{"migrated", nil},
+		{"migrate fails", errors.New("exit status 1")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, s, _, _ := spekHub(t)
+			remote := makeBareRepo(t)
+			e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+			e.CloneURL = func(string) string { return remote }
+			st := spekHubStage{runKey: "myorg/hive.github.io#57", stage: StageSpec, repo: "myorg/hive.github.io", gen: 1}
+			worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
+			if err := os.MkdirAll(filepath.Join(worktree, ".spektacular"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			var spekCalls []string
+			e.Exec = func(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+				if name == "git" {
+					cmd := exec.CommandContext(ctx, name, args...)
+					cmd.Dir = dir
+					cmd.Env = env
+					return cmd.CombinedOutput()
+				}
+				if name != "spektacular" || dir != worktree {
+					return nil, fmt.Errorf("unexpected invocation %q in %q", name, dir)
+				}
+				spekCalls = append(spekCalls, strings.Join(args, " "))
+				return []byte(`{"error":true,"code":"internal_error","message":"boom"}`), tc.migrateErr
+			}
+			if _, err := e.prepareWorkspace(context.Background(), st); err != nil {
+				t.Fatalf("prepareWorkspace: %v", err)
+			}
+			if strings.Join(spekCalls, ";") != "migrate" {
+				t.Fatalf("spektacular calls = %v, want only migrate", spekCalls)
+			}
+		})
+	}
+}
+
+func TestSpekHubExecutorPrepareWorkspaceInitSanitizesProjectName(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	remote := makeBareRepo(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "claude", "", nil, nil)
+	e.CloneURL = func(string) string { return remote }
+	var spekCalls []string
+	e.Exec = func(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+		if name == "git" {
+			cmd := exec.CommandContext(ctx, name, args...)
+			cmd.Dir = dir
+			cmd.Env = env
+			return cmd.CombinedOutput()
+		}
+		spekCalls = append(spekCalls, strings.Join(args, " "))
+		return nil, os.MkdirAll(filepath.Join(dir, ".spektacular"), 0o755)
+	}
+	st := spekHubStage{runKey: "myorg/Console.UI#57", stage: StageSpec, repo: "myorg/Console.UI", gen: 1}
+	if _, err := e.prepareWorkspace(context.Background(), st); err != nil {
+		t.Fatalf("prepareWorkspace: %v", err)
+	}
+	if strings.Join(spekCalls, ";") != "init claude --name console-ui" {
+		t.Fatalf("spektacular calls = %v", spekCalls)
+	}
+}
+
 func TestSpekHubExecutorPrepareWorkspaceRecoversSweptButRegisteredWorktree(t *testing.T) {
 	_, s, _, _ := spekHub(t)
 	remote := makeBareRepo(t)
