@@ -84,7 +84,11 @@ Live Jam mode upgrades `/api/campaigns/{id}/jam/ws` to a WebSocket so signed-in
 participants can see who is present and which section each person is editing.
 Live spec edits carry the sender's last seen spec revision; stale edits are
 rejected with a conflict message instead of overwriting newer work, so
-reconnecting clients can refresh and merge intentionally.
+reconnecting clients can refresh and merge intentionally. `POST
+/api/campaigns/{id}/jam` applies the same rule: once a campaign has a spec
+revision, the request must carry the matching `base_revision_id` or it is
+rejected with `409`. Empty spec content is refused on both paths, and the
+socket reads under the same hard frame limit as the contribute hub.
 
 Maintainers can opt a campaign into GitHub Projects sync from the Jam tab. The
 sync publishes the current spec, recorded decisions, and derived suggestion
