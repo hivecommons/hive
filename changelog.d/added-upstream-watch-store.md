@@ -1,0 +1,1 @@
+- Upstream watch now has durable state: a per-repo watermark and last-run time, a filed-ref dedupe index and dismissal tracking, persisted atomically so a hub restart never re-scans or refiles.
