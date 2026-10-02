@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -228,5 +229,81 @@ func TestPostGitHubProjectDraftsUsesProjectsV2Mutation(t *testing.T) {
 	}
 	if err := postGitHubProjectDrafts(api.URL, "tok", campaignProjectSyncPayload{}); err == nil {
 		t.Fatal("missing project_id err = nil, want error")
+	}
+}
+
+// TestPostGitHubProjectDraftsRejectsNonNodeIDProjectID covers
+// hivecommons/hive#10086: a GitHub Projects v2 node id is always "PVT_…"; a
+// project number or a project URL pasted into project_id by mistake must be
+// rejected locally with an actionable message instead of reaching the real
+// API only to come back as an opaque GraphQL error.
+func TestPostGitHubProjectDraftsRejectsNonNodeIDProjectID(t *testing.T) {
+	var calls int
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_, _ = w.Write([]byte(`{"data":{"addProjectV2DraftIssue":{"projectItem":{"id":"PVTI_1"}}}}`))
+	}))
+	t.Cleanup(api.Close)
+
+	cases := []string{"7", "https://github.com/orgs/hivecommons/projects/7", "PVT"}
+	for _, projectID := range cases {
+		payload := campaignProjectSyncPayload{ProjectID: projectID, Items: []CampaignProjectItem{{Type: "spec", Title: "t"}}}
+		if err := postGitHubProjectDrafts(api.URL, "tok", payload); err == nil {
+			t.Fatalf("project_id %q err = nil, want rejection", projectID)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("rejected project_id still reached the API %d times", calls)
+	}
+}
+
+// TestCampaignJamProjectSyncStoreFailuresReport5xx covers hivecommons/hive#10083:
+// the project-sync GET and POST handlers loaded/mutated the shared Jam store
+// the same way the thread and agent-invite handlers do, but still reported
+// every store error (corrupt campaign-jam.json) as a client-error 400 instead
+// of deferring to campaignJamStatus like api_campaigns_jam_agents.go was
+// fixed to do in #10268. A corrupt store is a server-side fault, not a bad
+// request, for every Jam endpoint — including project sync.
+func TestCampaignJamProjectSyncStoreFailuresReport5xx(t *testing.T) {
+	s := jamTestServer(t)
+	seed := jamPostAs(t, s, "/api/campaigns/spec-sync-store/jam", "read-write", "alice", map[string]any{
+		"spec_content": "## Goals\nShip together",
+	}, false)
+	if seed.Code != http.StatusOK {
+		t.Fatalf("seed = %d body=%s", seed.Code, seed.Body.String())
+	}
+	enable := jamPostAs(t, s, "/api/campaigns/spec-sync-store/jam/project-sync", "owner", "maintainer", map[string]any{
+		"action":      "enable",
+		"project_url": "https://github.com/orgs/hivecommons/projects/7",
+	}, true)
+	if enable.Code != http.StatusOK {
+		t.Fatalf("enable sync = %d body=%s", enable.Code, enable.Body.String())
+	}
+
+	path, err := s.campaignJamPath()
+	if err != nil {
+		t.Fatalf("jam path: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"campaigns": {"spec`), 0o600); err != nil {
+		t.Fatalf("truncate jam store: %v", err)
+	}
+
+	get := doOwnerGet(s, "/api/campaigns/spec-sync-store/jam/project-sync")
+	if get.Code != http.StatusInternalServerError {
+		t.Fatalf("project-sync get on corrupt store = %d body=%s, want 500", get.Code, get.Body.String())
+	}
+
+	disablePost := jamPostAs(t, s, "/api/campaigns/spec-sync-store/jam/project-sync", "owner", "maintainer", map[string]any{
+		"action": "disable",
+	}, true)
+	if disablePost.Code != http.StatusInternalServerError {
+		t.Fatalf("project-sync disable on corrupt store = %d body=%s, want 500", disablePost.Code, disablePost.Body.String())
+	}
+
+	syncPost := jamPostAs(t, s, "/api/campaigns/spec-sync-store/jam/project-sync", "owner", "maintainer", map[string]any{
+		"action": "sync",
+	}, true)
+	if syncPost.Code != http.StatusInternalServerError {
+		t.Fatalf("project-sync sync on corrupt store = %d body=%s, want 500", syncPost.Code, syncPost.Body.String())
 	}
 }

@@ -94,7 +94,7 @@ type campaignProjectSyncPayload struct {
 func (s *Server) handleCampaignJamProjectSyncGet(w http.ResponseWriter, r *http.Request) {
 	state, err := s.loadCampaignJam(campaignIDFromRequest(r))
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	jsonResponse(w, map[string]any{"ok": true, "project_sync": state.ProjectSync})
@@ -117,7 +117,7 @@ func (s *Server) handleCampaignJamProjectSyncPost(w http.ResponseWriter, r *http
 			return updateCampaignProjectSync(state, req, action)
 		})
 		if err != nil {
-			jsonError(w, err.Error(), http.StatusBadRequest)
+			jsonError(w, err.Error(), campaignJamStatus(err))
 			return
 		}
 		jsonResponse(w, map[string]any{"ok": true, "jam": state, "project_sync": state.ProjectSync})
@@ -169,7 +169,7 @@ func updateCampaignProjectSync(state *CampaignJamState, req campaignProjectSyncR
 func (s *Server) syncCampaignJamProject(w http.ResponseWriter, r *http.Request, id string) {
 	state, err := s.loadCampaignJam(id)
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	if state.ProjectSync == nil || !state.ProjectSync.Enabled {
@@ -205,7 +205,7 @@ func (s *Server) syncCampaignJamProject(w http.ResponseWriter, r *http.Request, 
 		return nil
 	})
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	s.auditFromRequest(r, "campaign_jam_project_sync", auditDetail("campaign", id), "")
@@ -283,6 +283,16 @@ func postGitHubProjectDrafts(endpoint, token string, payload campaignProjectSync
 	projectID := strings.TrimSpace(payload.ProjectID)
 	if projectID == "" {
 		return errors.New("project_id (GitHub Projects v2 node id, PVT_…) required to sync to GitHub Projects")
+	}
+	// Every GitHub Projects v2 node id is prefixed "PVT_"; a classic project
+	// number or a project URL copied into project_id by mistake is never
+	// valid here. Catching that locally gives a clear, actionable error
+	// instead of letting the real API return an opaque GraphQL error for it —
+	// the same confusing-failure symptom the non-GitHub hiveJamProjectSync
+	// mutation produced before this endpoint called the real API at all
+	// (hivecommons/hive#10086).
+	if !strings.HasPrefix(projectID, "PVT_") {
+		return fmt.Errorf("project_id %q is not a GitHub Projects v2 node id (expected a PVT_… id, not a project number or URL)", projectID)
 	}
 	const mutation = "mutation($input: AddProjectV2DraftIssueInput!) { addProjectV2DraftIssue(input: $input) { projectItem { id } } }"
 	for _, item := range payload.Items {
