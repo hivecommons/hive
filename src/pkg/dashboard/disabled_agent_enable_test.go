@@ -88,15 +88,16 @@ func TestContinuousAgentCadenceMatrixWiring(t *testing.T) {
 	html := indexHTML(t)
 	for _, snippet := range []string{
 		`const continuousOn = agentData && agentData.continuous === true;`,
-		"<td class=\"continuous-cadence-note\" colspan=\"${modes.length}\" title=\"Cadence intervals are kept and apply again when continuous mode is turned off\">runs back-to-back · cadence not used</td>",
+		`const isContinuous = val === 'continuous';`,
+		`<span class="on-demand-badge" data-status="info">continuous</span>`,
 		`∞ continuous`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("index.html is missing continuous cadence matrix wiring %q", snippet)
 		}
 	}
-	if strings.Contains(html, `continuous-cadence-note" data-action="openConfigDialog"`) {
-		t.Error("continuous cadence note must not be editable")
+	if !strings.Contains(html, `data-arg1="continuous">Continuous</button>`) {
+		t.Error("cadence editor must expose a Continuous preset")
 	}
 }
 

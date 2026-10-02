@@ -228,13 +228,14 @@ type Governor struct {
 	mu     sync.RWMutex
 	logger *slog.Logger
 
-	modeHistory  []ModeChange
-	evalHistory  []EvalSnapshot
-	kickHistory  []KickRecord
-	agentReports map[string]AgentReportRecord
-	kickOutcomes map[string]KickOutcomeRecord
-	budget       BudgetInfo
-	now          func() time.Time
+	modeHistory                   []ModeChange
+	evalHistory                   []EvalSnapshot
+	kickHistory                   []KickRecord
+	agentReports                  map[string]AgentReportRecord
+	kickOutcomes                  map[string]KickOutcomeRecord
+	budget                        BudgetInfo
+	now                           func() time.Time
+	continuousAllowInitialCadence bool
 
 	// repoCount is how many repos this hive watches, used to scale the DEFAULT
 	// mode thresholds (#3498). Set via SetRepoCount; defaults to 1 so a
@@ -308,6 +309,8 @@ func (g *Governor) UpdateConfig(cfg config.GovernorConfig) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.cfg = cfg
+	g.updateCadences()
+	g.syncContinuousModeStateLocked(g.now())
 	// New config can change both the explicit thresholds and the scaling curve,
 	// either of which can invert the ladder.
 	g.warnIfLadderInvertedLocked()
@@ -316,23 +319,16 @@ func (g *Governor) UpdateConfig(cfg config.GovernorConfig) {
 func (g *Governor) UpdateAgents(agents map[string]config.AgentConfig) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	oldAgents := g.agents
 	g.agents = agents
 	g.updateCadences()
 	now := g.now()
-	for agentName, st := range g.state.Continuous {
-		ac, ok := agents[agentName]
-		if !ok || !ac.Continuous {
+	for agentName := range g.state.Continuous {
+		if _, ok := agents[agentName]; !ok || !g.agentContinuousInCurrentModeLocked(agentName) {
 			delete(g.state.Continuous, agentName)
-			continue
 		}
-		g.state.Continuous[agentName] = st
 	}
-	for agentName, ac := range agents {
-		if !ac.Continuous {
-			continue
-		}
-		if old, ok := oldAgents[agentName]; ok && old.Continuous {
+	for agentName := range agents {
+		if !g.agentContinuousInCurrentModeLocked(agentName) {
 			continue
 		}
 		g.armContinuousIfIdleLocked(agentName, now)
@@ -387,6 +383,7 @@ func (g *Governor) EvaluateWithRepoDepths(queueIssues, queuePRs, queueHold, slaV
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
+	firstEval := g.state.LastEval.IsZero()
 	g.state.QueueIssues = queueIssues
 	g.state.QueuePRs = queuePRs
 	g.state.QueueHold = queueHold
@@ -429,12 +426,20 @@ func (g *Governor) EvaluateWithRepoDepths(queueIssues, queuePRs, queueHold, slaV
 	}
 
 	g.updateCadences()
+	if modeChanged {
+		g.syncContinuousModeStateLocked(g.now())
+	}
 
 	if modeChanged {
 		for _, cadence := range g.state.Cadences {
 			agentName := cadence.Agent
 			if cadence.Paused {
 				g.logger.Info("agent cadence: paused by mode",
+					"agent", agentName,
+					"mode", g.state.Mode,
+				)
+			} else if cadence.Schedule.Mode() == config.CadenceModeContinuous {
+				g.logger.Info("agent cadence: active continuous",
 					"agent", agentName,
 					"mode", g.state.Mode,
 				)
@@ -456,7 +461,9 @@ func (g *Governor) EvaluateWithRepoDepths(queueIssues, queuePRs, queueHold, slaV
 
 	g.state.BudgetExhausted = g.budgetExhausted()
 
+	g.continuousAllowInitialCadence = firstEval
 	due := g.agentsDueForKick()
+	g.continuousAllowInitialCadence = false
 
 	snap := EvalSnapshot{
 		Timestamp:     time.Now().UnixMilli(),
@@ -684,6 +691,10 @@ func (g *Governor) addCadenceForTarget(cadences map[string]AgentCadence, modeNam
 	}
 
 	entry := AgentCadence{Agent: agentName, Repo: repo, Schedule: cadence}
+	if cadence.Mode() == config.CadenceModeContinuous {
+		cadences[key] = entry
+		return
+	}
 	if cadence.Mode() == config.CadenceModeInterval {
 		dur, err := time.ParseDuration(cadence.Interval())
 		if err != nil {
@@ -853,7 +864,7 @@ func (g *Governor) agentsDueForKick() []string {
 		if cadence.Paused {
 			continue
 		}
-		if ac, ok := g.agents[agentName]; ok && ac.Continuous {
+		if ac, ok := g.agents[agentName]; ok && g.agentContinuousInCurrentModeLocked(agentName) {
 			if g.continuousBudgetBlockedLocked(ac) {
 				st := g.state.Continuous[agentName]
 				st.Blocked = "budget"
@@ -874,6 +885,9 @@ func (g *Governor) agentsDueForKick() []string {
 						allowCadenceDue = true
 						st = g.state.Continuous[agentName]
 					}
+					if !allowCadenceDue && g.continuousAllowInitialCadence && now.Before(st.NextKick) && g.state.LastKick[cadenceKey].IsZero() {
+						allowCadenceDue = true
+					}
 					if !allowCadenceDue && now.Before(st.NextKick) {
 						continue
 					}
@@ -893,6 +907,9 @@ func (g *Governor) agentsDueForKick() []string {
 					continue
 				}
 			}
+		}
+		if cadence.Schedule.Mode() == config.CadenceModeContinuous {
+			continue
 		}
 		if cadence.Interval == 0 && cadence.Schedule.Mode() == config.CadenceModeInterval {
 			continue
@@ -969,7 +986,7 @@ func (g *Governor) agentsDueForKick() []string {
 // that the kicked turn may still be running. Callers must hold g.mu.
 func (g *Governor) armContinuousIfIdleLocked(agentName string, at time.Time) (bool, bool) {
 	ac, ok := g.agents[agentName]
-	if !ok || !ac.Continuous {
+	if !ok || !g.agentContinuousInCurrentModeLocked(agentName) {
 		return false, false
 	}
 	if at.IsZero() {
@@ -1007,6 +1024,32 @@ func (g *Governor) armContinuousIfIdleLocked(agentName string, at time.Time) (bo
 	return true, noPriorKick
 }
 
+func (g *Governor) syncContinuousModeStateLocked(now time.Time) {
+	if g.state.Continuous == nil {
+		g.state.Continuous = make(map[string]ContinuousState)
+	}
+	for agentName := range g.state.Continuous {
+		if !g.agentContinuousInCurrentModeLocked(agentName) {
+			delete(g.state.Continuous, agentName)
+		}
+	}
+	for agentName := range g.agents {
+		if g.agentContinuousInCurrentModeLocked(agentName) {
+			g.armContinuousIfIdleLocked(agentName, now)
+		}
+	}
+}
+
+func (g *Governor) agentContinuousInCurrentModeLocked(agentName string) bool {
+	ac, ok := g.agents[agentName]
+	if !ok {
+		return false
+	}
+	modeName := modeToConfigKey(g.state.Mode)
+	cadence, _ := g.resolveCadence(modeName, agentName)
+	return ac.ContinuousInMode(modeName, cadence)
+}
+
 func (g *Governor) continuousIdleForCadenceLocked(agentName, cadenceKey string) (bool, bool) {
 	lastKick := g.state.LastKick[cadenceKey]
 	if lastKick.IsZero() {
@@ -1023,6 +1066,9 @@ func (g *Governor) continuousBlockerLocked(agentName string) (string, AgentCaden
 	cadenceKey, cadence, ok := g.resumeCadenceForAgent(agentName)
 	if !ok {
 		return "", AgentCadence{}, "unscheduled"
+	}
+	if !g.agentContinuousInCurrentModeLocked(agentName) {
+		return cadenceKey, cadence, "not_in_mode"
 	}
 	if cadence.Paused {
 		return cadenceKey, cadence, "paused_in_mode"
@@ -1265,7 +1311,7 @@ func (g *Governor) RecordKickForRepo(agentName, repo string) {
 	now := g.now()
 	key := config.CadenceTargetKey(agentName, repo)
 	g.state.LastKick[key] = now
-	if ac, ok := g.agents[agentName]; ok && ac.Continuous {
+	if _, ok := g.agents[agentName]; ok && g.agentContinuousInCurrentModeLocked(agentName) {
 		st := g.state.Continuous[agentName]
 		if !st.NextKick.IsZero() && !now.Before(st.NextKick) {
 			st.Kicks++
@@ -1537,6 +1583,8 @@ func (g *Governor) SetMode(m Mode) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.state.Mode = m
+	g.updateCadences()
+	g.syncContinuousModeStateLocked(g.now())
 }
 
 func (g *Governor) SeedLastEval(t time.Time) {

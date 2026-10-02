@@ -1622,6 +1622,17 @@ func (a AgentConfig) EffectiveContinuousBudgetPct() int {
 	return DefaultContinuousBudgetPct
 }
 
+// ContinuousInMode reports whether this agent should run in continuous mode
+// while the governor is in modeName. The legacy continuous bool remains a
+// shorthand for every non-QUIET mode; a per-mode cadence value of "continuous"
+// opts in exactly that mode.
+func (a AgentConfig) ContinuousInMode(modeName string, cadence Cadence) bool {
+	if cadence.IsContinuous() {
+		return true
+	}
+	return a.Continuous && !strings.EqualFold(strings.TrimSpace(modeName), "quiet")
+}
+
 const cadenceTargetSeparator = "|"
 
 // CadenceTargetKey returns the persisted governor cadence/last-kick key for an

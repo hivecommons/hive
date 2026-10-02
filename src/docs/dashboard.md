@@ -64,8 +64,10 @@ collapsed summary shows the current top-ranked model plus model count.
 The cadence table starts each agent row with the same `1`/`0` Agent power
 rocker used in the agent settings panel, so owners can enable or disable an
 agent from the table; disabled rows are dimmed, and read-only viewers see the
-current state without an active control. The Continuous column and Cadences
-settings panel use that same shared rocker component for continuous mode.
+current state without an active control. Each per-mode cadence selector includes
+Continuous alongside interval/off/time choices; the Continuous column is a
+shortcut that sets all non-quiet mode cells to `continuous` or restores default
+intervals.
 Rows keep the merged/open/closed PR-volume bar, then add compact effectiveness
 columns from the same aggregation used by the contributor Operations **Most
 effective models** panel: merged PRs, first-pass merge rate, verified-PR run

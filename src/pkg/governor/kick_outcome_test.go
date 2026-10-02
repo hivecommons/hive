@@ -295,6 +295,72 @@ func TestContinuousBootArmsWithoutDoubleKick(t *testing.T) {
 	}
 }
 
+func TestContinuousPerModeOnlyInSurge(t *testing.T) {
+	now := time.Date(2026, 10, 2, 14, 0, 0, 0, time.UTC)
+	g := New(config.GovernorConfig{Modes: map[string]config.ModeConfig{
+		"idle":  {Cadences: map[string]config.Cadence{"scanner": "6h"}},
+		"busy":  {Cadences: map[string]config.Cadence{"scanner": "1h"}},
+		"surge": {Cadences: map[string]config.Cadence{"scanner": "continuous"}},
+	}}, map[string]config.AgentConfig{
+		"scanner": {Backend: "claude", Enabled: true, ContinuousCooldown: time.Minute},
+	}, slog.Default())
+	g.now = func() time.Time { return now }
+	g.SetMode(ModeBusy)
+	if _, ok := g.GetState().Continuous["scanner"]; ok {
+		t.Fatal("busy mode must not schedule continuous state for surge-only continuous cadence")
+	}
+	if _, _, blocker := g.continuousBlockerLocked("scanner"); blocker != "not_in_mode" {
+		t.Fatalf("blocker = %q, want not_in_mode", blocker)
+	}
+}
+
+func TestContinuousPerModeModeTransitionArmsAndClears(t *testing.T) {
+	now := time.Date(2026, 10, 2, 14, 0, 0, 0, time.UTC)
+	g := New(config.GovernorConfig{Modes: map[string]config.ModeConfig{
+		"busy":  {Cadences: map[string]config.Cadence{"scanner": "1h"}},
+		"surge": {Cadences: map[string]config.Cadence{"scanner": "continuous"}},
+	}}, map[string]config.AgentConfig{
+		"scanner": {Backend: "claude", Enabled: true, ContinuousCooldown: 2 * time.Minute},
+	}, slog.Default())
+	g.now = func() time.Time { return now }
+	g.SetMode(ModeBusy)
+	g.RecordKick("scanner")
+	kickAt := now
+	now = now.Add(5 * time.Minute)
+	g.RecordKickOutcome("scanner", KickOutcomeEnded, "", kickAt, now)
+
+	now = now.Add(time.Minute)
+	g.SetMode(ModeSurge)
+	st := g.GetState().Continuous["scanner"]
+	if want := now.Add(2 * time.Minute); !st.NextKick.Equal(want) {
+		t.Fatalf("surge transition next kick = %v, want %v", st.NextKick, want)
+	}
+	g.SetMode(ModeBusy)
+	if _, ok := g.GetState().Continuous["scanner"]; ok {
+		t.Fatal("leaving the continuous mode must clear continuous state")
+	}
+}
+
+func TestContinuousBoolShorthandAllNonQuietModes(t *testing.T) {
+	ac := config.AgentConfig{Continuous: true}
+	for _, tc := range []struct {
+		mode string
+		want bool
+	}{
+		{mode: "idle", want: true},
+		{mode: "busy", want: true},
+		{mode: "surge", want: true},
+		{mode: "quiet", want: false},
+	} {
+		if got := ac.ContinuousInMode(tc.mode, "1h"); got != tc.want {
+			t.Fatalf("ContinuousInMode(%q) = %v, want %v", tc.mode, got, tc.want)
+		}
+	}
+	if !(config.AgentConfig{}).ContinuousInMode("quiet", "continuous") {
+		t.Fatal("explicit continuous cadence must opt quiet mode in")
+	}
+}
+
 func TestContinuousBusyTurnDoesNotUseCadence(t *testing.T) {
 	now := time.Date(2026, 10, 2, 14, 0, 0, 0, time.UTC)
 	g := continuousTestGovernor(&now, config.AgentConfig{Enabled: true, ContinuousCooldown: time.Minute}, "30m")
