@@ -1,0 +1,1 @@
+- dashboard: make Add agent discoverable (#9995)
