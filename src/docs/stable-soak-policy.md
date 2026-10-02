@@ -90,6 +90,15 @@ and stops scheduled and manual stable-promotion runs until an admin resumes.
 The public GET endpoint exposes only non-secret channel state and maintained
 hive smoke summaries; the PUT toggle is hub-admin gated and audit logged.
 
+Hives on the `stable` channel also receive the hub's expected time of the next
+promotion as `next_update_at` in the heartbeat upgrade policy
+([#10256](https://github.com/hivecommons/hive/issues/10256)). It is the end of
+the 24-hour lineage soak measured from the current `candidate` build — the
+latest the soak can finish, since the oldest build after `stable` is never
+newer — and the hourly run promotes at or after it once the other conditions
+pass. It is omitted (unknown) while stable is paused, when `candidate` and
+`stable` are the same build, or when the channels have not resolved.
+
 The workflow writes the candidate digest, SHA, generation, candidate first-seen
 time and age, lineage first-seen time and age, checks consulted, blocker count,
 smoke evidence, decision, and any exception note to the GitHub Actions step

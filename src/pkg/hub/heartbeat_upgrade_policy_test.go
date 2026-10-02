@@ -3,6 +3,7 @@ package hub
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 // #7262: the heartbeat must carry the hub's upgrade posture so the spoke's
@@ -146,5 +147,119 @@ func TestHeartbeatResponseUpgradePolicyWireShape(t *testing.T) {
 	}
 	if round.UpgradePolicy == nil || !round.UpgradePolicy.HubManaged || round.UpgradePolicy.Schedule != AutoUpgradeModeWeekly || round.UpgradePolicy.TargetSHA != "abc1234" {
 		t.Errorf("round-trip lost the policy: %+v", round.UpgradePolicy)
+	}
+}
+
+// #10256: a stable-channel hive learns when the hub expects the next
+// promotion into stable — the same soak deadline the hub card's eligible_at
+// shows — and every case the rule cannot settle is omitted, never guessed.
+
+func stablePolicyFor(t *testing.T, s *HubServer, imageRef, channel string) *HeartbeatUpgradePolicy {
+	t.Helper()
+	saas := &SaaSHive{AutoUpgrade: true, TrackedChannel: channel}
+	payload := &HeartbeatPayload{HiveID: "h", GitBranch: "v5", GitHash: "0ba47d0", ImageRef: imageRef}
+	got := s.heartbeatUpgradePolicy(payload, saas, false, false, "v5", "")
+	if got == nil {
+		t.Fatal("policy = nil")
+	}
+	return got
+}
+
+func TestHeartbeatUpgradePolicyNextUpdateAtForStableChannel(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	seedStablePromotionChannels(t)
+	s := &HubServer{logger: targetingLogger()}
+
+	// Cold cache: the heartbeat never resolves channels itself.
+	if got := stablePolicyFor(t, s, "ghcr.io/hivecommons/hive:stable", ReleaseChannelStable); got.NextUpdateAt != "" {
+		t.Fatalf("NextUpdateAt = %q before channels resolved, want unknown", got.NextUpdateAt)
+	}
+
+	targets := getChannelTargets(getDisplaySHAs(), s.logger)
+	want := stablePromotionEligibleAt(targetFor(targets, ReleaseChannelCandidate).CommittedAt)
+	if want == "" {
+		t.Fatal("seeded candidate has no commit date")
+	}
+	got := stablePolicyFor(t, s, "ghcr.io/hivecommons/hive:stable", ReleaseChannelStable)
+	if got.NextUpdateAt != want {
+		t.Errorf("NextUpdateAt = %q, want the candidate soak deadline %q", got.NextUpdateAt, want)
+	}
+	if status := s.stablePromotionStatus(targets); status.EligibleAt == nil || *status.EligibleAt != got.NextUpdateAt {
+		t.Errorf("NextUpdateAt %q disagrees with the hub card's eligible_at %v", got.NextUpdateAt, status.EligibleAt)
+	}
+	if _, err := time.Parse(time.RFC3339, got.NextUpdateAt); err != nil {
+		t.Errorf("NextUpdateAt %q is not RFC3339: %v", got.NextUpdateAt, err)
+	}
+
+	if got := stablePolicyFor(t, s, "ghcr.io/hivecommons/hive:candidate", ReleaseChannelCandidate); got.NextUpdateAt != "" {
+		t.Errorf("candidate hive NextUpdateAt = %q, want unknown — candidate moves on every green build", got.NextUpdateAt)
+	}
+
+	if err := saveStablePromotionState(StablePromotionState{AutoPromote: false, UpdatedBy: hubAdminUsername}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stablePolicyFor(t, s, "ghcr.io/hivecommons/hive:stable", ReleaseChannelStable); got.NextUpdateAt != "" {
+		t.Errorf("NextUpdateAt = %q while stable auto-promotion is paused, want unknown", got.NextUpdateAt)
+	}
+}
+
+func TestStableNextPromotionAtUnknownWhenNothingQueued(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	builtAt := time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
+	queued := []ChannelTarget{
+		{Channel: ReleaseChannelStable, SHA: "0ba47d0", Digest: "sha256:stable"},
+		{Channel: ReleaseChannelCandidate, SHA: "d5a638e", Digest: "sha256:candidate", CommittedAt: builtAt},
+	}
+	if got, want := stableNextPromotionAt(queued), stablePromotionEligibleAt(builtAt); got != want || got == "" {
+		t.Fatalf("queued candidate: got %q, want %q", got, want)
+	}
+
+	for name, targets := range map[string][]ChannelTarget{
+		"same digest": {
+			{Channel: ReleaseChannelStable, SHA: "0ba47d0", Digest: "sha256:same"},
+			{Channel: ReleaseChannelCandidate, SHA: "0ba47d0", Digest: "sha256:same", CommittedAt: builtAt},
+		},
+		"same commit": {
+			{Channel: ReleaseChannelStable, SHA: "0ba47d0", Digest: "sha256:a"},
+			{Channel: ReleaseChannelCandidate, SHA: "0ba47d0", Digest: "sha256:b", CommittedAt: builtAt},
+		},
+		"stable unresolved": {
+			{Channel: ReleaseChannelStable},
+			{Channel: ReleaseChannelCandidate, SHA: "d5a638e", Digest: "sha256:candidate", CommittedAt: builtAt},
+		},
+		"candidate date unknown": {
+			{Channel: ReleaseChannelStable, SHA: "0ba47d0", Digest: "sha256:stable"},
+			{Channel: ReleaseChannelCandidate, SHA: "d5a638e", Digest: "sha256:candidate"},
+		},
+	} {
+		if got := stableNextPromotionAt(targets); got != "" {
+			t.Errorf("%s: got %q, want unknown", name, got)
+		}
+	}
+}
+
+func TestHeartbeatUpgradePolicyNextUpdateAtWireShape(t *testing.T) {
+	raw, err := json.Marshal(HeartbeatUpgradePolicy{Channel: ReleaseChannelStable, TargetResolved: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := m["next_update_at"]; present {
+		t.Errorf("next_update_at present when unknown: %s", raw)
+	}
+	raw, err = json.Marshal(HeartbeatUpgradePolicy{NextUpdateAt: "2026-10-03T13:00:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	if string(m["next_update_at"]) != `"2026-10-03T13:00:00Z"` {
+		t.Errorf("next_update_at = %s, want the RFC3339 ETA", m["next_update_at"])
 	}
 }
