@@ -6969,8 +6969,6 @@
         return `${x.toFixed(1)},${y.toFixed(1)}`;
       });
       const lastPt = String(opts.lastPoint || points[points.length - 1]).split(',');
-      const title = opts.title || `${opts.label || 'sparkline'} · range ${fmtSparkVal(min)}–${fmtSparkVal(max)} · ${sparklineValueSummary(values)}`;
-      const aria = opts.ariaLabel || `${opts.label || 'sparkline'}: range ${fmtSparkVal(min)} to ${fmtSparkVal(max)}, ${sparklineValueSummary(values)}`;
       const latest = values[values.length - 1];
       const scaleText = `range ${fmtSparkVal(min)}–${fmtSparkVal(max)} · latest ${fmtSparkVal(latest)}`;
       const detailText = opts.title || sparklineValueSummary(values);
