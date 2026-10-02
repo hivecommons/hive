@@ -1379,6 +1379,31 @@ func probeLiteLLMModels(endpoint, apiKey string) (int, error) {
 	return probeModelsWithHeaders(endpoint, apiKey, nil)
 }
 
+// probeProxyFunc resolves the egress proxy (if any) Go's default transport
+// would route a request through — normally http.ProxyFromEnvironment, which
+// honours HTTPS_PROXY/https_proxy. Overridable in tests so a probe can be
+// made to believe it went through a specific proxy without actually needing
+// one configured in the environment.
+var probeProxyFunc = http.ProxyFromEnvironment
+
+// describeEgressProxy reports, in a short clause suitable for appending to an
+// error message, whether req would be sent through an egress proxy. A hive
+// hub pod's egress path can differ from a reporter's laptop (which talks to
+// the gateway directly) when HTTPS_PROXY is set on the hub but not on the
+// laptop, or vice versa — the mismatch is exactly what sends an operator
+// chasing a "bad key" that works fine from their own machine
+// (hivecommons/hive#9945). Any userinfo in the proxy URL is redacted before
+// it is ever included in a message.
+func describeEgressProxy(req *http.Request) string {
+	proxyURL, err := probeProxyFunc(req)
+	if err != nil || proxyURL == nil {
+		return " (no HTTPS_PROXY egress proxy was configured on the hub; the hive's own egress network path, not your laptop's VPN, is what the gateway saw)"
+	}
+	return fmt.Sprintf(" — the hive sent this request through the egress proxy %s (HTTPS_PROXY), which is not on the path your laptop used;"+
+		" check that this proxy (or the hive's egress network) is allowed to reach the gateway",
+		proxyURL.Redacted())
+}
+
 // probeModelsWithHeaders is probeLiteLLMModels with an optional set of extra
 // request headers (e.g. watsonx's X-IBM-Project-ID). apiKey, when non-empty, is
 // still sent as the Bearer — for watsonx the caller passes the minted IAM token
@@ -1402,7 +1427,7 @@ func probeModelsWithHeaders(endpoint, apiKey string, extraHeaders map[string]str
 	client := &http.Client{Timeout: litellmProbeTimeout, CheckRedirect: noRedirectToPrivate}
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("cannot reach gateway: %w", err)
+		return 0, fmt.Errorf("cannot reach gateway%s: %w", describeEgressProxy(req), err)
 	}
 	defer closeHTTPBody(resp.Body)
 
@@ -1418,12 +1443,15 @@ func probeModelsWithHeaders(endpoint, apiKey string, extraHeaders map[string]str
 			// proxy in front of the endpoint refused GET /v1/models before
 			// the key was ever evaluated. Say so (with the exact URL probed,
 			// the content-type and any Server header) instead of accusing the
-			// key, which may well be valid for inference calls.
+			// key, which may well be valid for inference calls. Also name the
+			// hub's own egress proxy (if any) — a reporter's laptop can reach
+			// the gateway directly while the hive's egress takes a different,
+			// disallowed path (hivecommons/hive#9945).
 			if looksLikeIntermediaryRejection(contentType, gatewayMsg) {
 				return 0, fmt.Errorf("GET %s was refused with HTTP %d by a proxy in front of the gateway, not by the gateway API"+
 					" (content-type %q, server %q, non-JSON body) — the configured key was probably never evaluated;"+
-					" check that ingress/WAF/VPN rules allow GET /v1/models from the hive: %s",
-					modelsURL, resp.StatusCode, contentType, resp.Header.Get("Server"), gatewayMsg)
+					" check that ingress/WAF/VPN rules allow GET /v1/models from the hive%s: %s",
+					modelsURL, resp.StatusCode, contentType, resp.Header.Get("Server"), describeEgressProxy(req), gatewayMsg)
 			}
 			// The two auth failures lead users to different fixes.
 			if apiKey == "" {

@@ -1,0 +1,1 @@
+- Test Connection for LiteLLM now names the hub's egress proxy (HTTPS_PROXY) when a 401/403 comes from a proxy in front of the gateway, so a cluster egress path that differs from your laptop's is visible in the error ([#9945](https://github.com/hivecommons/hive/issues/9945)).

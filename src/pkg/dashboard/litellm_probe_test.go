@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -158,6 +159,74 @@ func TestProbeLiteLLMModels_JSONForbiddenStillBlamesKey(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q missing %q", err.Error(), want)
 		}
+	}
+}
+
+// When the hub's egress would route the probe through an environment proxy
+// (HTTPS_PROXY/https_proxy, honoured by http.ProxyFromEnvironment via the
+// probeProxyFunc seam), an HTML/empty 401/403 must name that proxy — the
+// reporter's laptop has no such proxy and reaches LiteLLM directly, so the
+// proxy identity is the one fact that tells them the paths differ
+// (hivecommons/hive#9945).
+func TestProbeLiteLLMModels_HTMLForbiddenNamesEgressProxyWhenConfigured(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Server", "nginx")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, "<html><body>403 Forbidden</body></html>")
+	}))
+	defer srv.Close()
+
+	proxyURL, err := url.Parse("http://user:secret@proxy.example:3128")
+	if err != nil {
+		t.Fatalf("parsing test proxy URL: %v", err)
+	}
+	origProbeProxyFunc := probeProxyFunc
+	probeProxyFunc = func(*http.Request) (*url.URL, error) { return proxyURL, nil }
+	defer func() { probeProxyFunc = origProbeProxyFunc }()
+
+	_, probeErr := probeLiteLLMModels(srv.URL, "sk-livekeyvalue")
+	if probeErr == nil {
+		t.Fatal("expected an error for an HTTP 403 probe response")
+	}
+	msg := probeErr.Error()
+	if !strings.Contains(msg, "proxy.example:3128") {
+		t.Errorf("error %q does not name the configured egress proxy", msg)
+	}
+	if !strings.Contains(msg, "HTTPS_PROXY") {
+		t.Errorf("error %q does not mention HTTPS_PROXY", msg)
+	}
+	if strings.Contains(msg, "secret") || strings.Contains(msg, "user:secret") {
+		t.Errorf("error %q leaks proxy userinfo", msg)
+	}
+}
+
+// When no egress proxy applies, the message must not claim one does, but
+// should note that the hive's own network path (not the laptop's VPN) is
+// what the gateway saw.
+func TestProbeLiteLLMModels_HTMLForbiddenNoProxyConfigured(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Server", "nginx")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, "<html><body>403 Forbidden</body></html>")
+	}))
+	defer srv.Close()
+
+	origProbeProxyFunc := probeProxyFunc
+	probeProxyFunc = func(*http.Request) (*url.URL, error) { return nil, nil }
+	defer func() { probeProxyFunc = origProbeProxyFunc }()
+
+	_, err := probeLiteLLMModels(srv.URL, "sk-livekeyvalue")
+	if err == nil {
+		t.Fatal("expected an error for an HTTP 403 probe response")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "HTTPS_PROXY egress proxy was configured") == false {
+		t.Errorf("error %q does not note the absence of an egress proxy: %v", msg, err)
+	}
+	if strings.Contains(msg, "://") && strings.Contains(msg, "egress proxy http") {
+		t.Errorf("error %q wrongly names a proxy URL when none is configured", msg)
 	}
 }
 
