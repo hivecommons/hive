@@ -163,6 +163,11 @@ func (s *Server) handleRunCheckpointDecision(w http.ResponseWriter, r *http.Requ
 				return
 			}
 		}
+		// Fan-out waits for approval so its implement leases cannot mask
+		// the plan checkpoint (hivecommons/hive#10089).
+		if err := s.fanOutApprovedRunPlan(r.Context(), store, payload.PlanEpicID, payload.RunKey); err != nil {
+			s.logger.Warn("[runs] fanning out approved run plan failed", "run", payload.RunKey, "epic", payload.PlanEpicID, "error", err)
+		}
 		s.auditFromRequest(r, "plan_approve", auditDetail("epic", payload.PlanEpicID, "run", payload.RunKey, "surface", "run_checkpoint"), agentName)
 	case payload.Stage == StageSpec:
 		// Re-mint the spec generation so the design is drafted again, and

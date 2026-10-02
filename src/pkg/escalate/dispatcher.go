@@ -125,6 +125,27 @@ func (d *Dispatcher) Context() context.Context {
 	return d.ctx
 }
 
+// Admits reports whether Dispatch would hand an event of severity sev to at
+// least one registered sink. Dispatch delivers asynchronously and returns
+// nothing, so a producer that latches "already escalated" checks this first
+// rather than spending its latch on an event every sink's floor would drop.
+func (d *Dispatcher) Admits(sev Severity) bool {
+	if d == nil {
+		return false
+	}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.closed {
+		return false
+	}
+	for _, w := range d.sinks {
+		if SeverityAtLeast(sev, w.min) {
+			return true
+		}
+	}
+	return false
+}
+
 func (d *Dispatcher) Dispatch(ev Event) {
 	if d == nil || !ev.valid() {
 		return
