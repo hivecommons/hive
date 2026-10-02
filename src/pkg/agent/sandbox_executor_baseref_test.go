@@ -69,8 +69,8 @@ func (r *baseRefRunner) Run(ctx context.Context, dir string, env []string, name 
 		return []byte("1\n"), nil
 	case joined == "rev-parse --verify basesha":
 		return []byte("basesha\n"), nil
-	case joined == "diff --name-only basesha...HEAD":
-		return []byte("file.txt\n"), nil
+	case joined == "diff --name-only -z basesha...HEAD":
+		return []byte("file.txt\x00"), nil
 	case joined == "diff --no-ext-diff basesha...HEAD":
 		return []byte("diff --git a/file.txt b/file.txt\n"), nil
 	case strings.Contains(joined, "push ") && strings.Contains(joined, " origin HEAD:refs/heads/"):

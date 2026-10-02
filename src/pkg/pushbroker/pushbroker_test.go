@@ -97,9 +97,18 @@ func TestBrokerRejectsProtectedPathsWithQuotedNames(t *testing.T) {
 			writeCommit(t, dir, "README.md", "hello\n")
 			b.BaseRef = strings.TrimSpace(runGitOutput(t, dir, "rev-parse", "HEAD"))
 		}
+		// Base-less diff-tree only inspects HEAD, so land all three in one commit.
 		for _, rel := range quoted {
-			writeCommit(t, dir, rel, "name: ci\n")
+			path := filepath.Join(dir, rel)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("name: ci\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			runGit(t, dir, "add", rel)
 		}
+		runGit(t, dir, "commit", "-m", "quoted names")
 		res, err := b.Run(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "protected paths changed") {
 			t.Fatalf("withBase=%v: Run error = %v, want protected path rejection", withBase, err)
