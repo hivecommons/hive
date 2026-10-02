@@ -853,6 +853,51 @@ func TestTick_PlanFallbackReadsResolvedArtifactID(t *testing.T) {
 	}
 }
 
+// Projects configured with `spec.id_method: counter` name artifacts
+// `000001_<slug>`; the resolver must find them so a final document advances.
+func TestTick_ResolvesCounterArtifactID(t *testing.T) {
+	const slug, resolved = "kubestellar-console-23725", "000001_kubestellar-console-23725"
+	reg := newFakeRegistry(StageSpec)
+	reg.stage.RunKey = "kubestellar/console#23725"
+	reg.stage.Artifact = slug
+	exec := func(_ context.Context, _ string, args []string) ([]byte, error) {
+		switch {
+		case len(args) >= 3 && args[1] == verbFile && args[2] == "list":
+			return []byte(`["` + resolved + `.md"]`), nil
+		case len(args) >= 3 && args[1] == verbStatus && args[2] == slug:
+			return []byte(`{"error":true,"code":"artifact_not_found","message":"missing","resource":"` + slug + `"}`), errors.New("exit status 1")
+		case len(args) >= 3 && args[1] == verbStatus && args[2] == resolved:
+			return []byte(statusJSON(KindSpec, resolved, DocumentFinal)), nil
+		}
+		return nil, fmt.Errorf("unexpected args: %v", args)
+	}
+	r := &Runner{Exec: exec, Poll: testPoll, Registry: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
+		t.Fatalf("tick = %+v", res)
+	}
+	if reg.stage.Stage != StagePlan {
+		t.Fatalf("stage = %q, want plan", reg.stage.Stage)
+	}
+}
+
+func TestArtifactMatchesSlug(t *testing.T) {
+	for _, tc := range []struct {
+		id   string
+		want bool
+	}{
+		{"my-slug", true},
+		{"20261002143509-my-slug", true},
+		{"000001_my-slug", true},
+		{"000001_my-slug.md", true},
+		{"000001_other-slug", false},
+		{"my-slug-2", false},
+	} {
+		if got := artifactMatchesSlug(tc.id, "my-slug"); got != tc.want {
+			t.Errorf("artifactMatchesSlug(%q) = %v, want %v", tc.id, got, tc.want)
+		}
+	}
+}
+
 func TestTick_PlanFinalWithFailedExportDoesNotAdvance(t *testing.T) {
 	reg := newFakeRegistry(StagePlan)
 	ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, DocumentFinal)}, exportErr: errors.New("exit status 2")}
