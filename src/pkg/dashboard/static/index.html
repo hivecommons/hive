@@ -27686,7 +27686,7 @@ function burnAreaChart() {
         </div>
 
         <hr style="border-color:var(--border);margin:var(--sp-6) var(--sp-0)">
-        <h4 style="font-size:0.8rem;color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-4)">Telemetry</h4>
+        <h4 style="font-size:var(--fs-base);color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-4)">Telemetry</h4>
         <div class="config-field" id="hub-telemetry-omit">
           <label>Withheld from hub heartbeat <span class="config-info">i<span class="config-tooltip">Set hub.heartbeat_omit in hive.yaml to withhold identifier classes from the heartbeat and task-status push. Upgrade and config delivery keep working; the hub simply shows less.</span></span></label>
           ${renderHubTelemetryOmit(hub.heartbeat_omit)}
@@ -27863,7 +27863,7 @@ function burnAreaChart() {
       (omitted || []).forEach(function(c) { set[c] = true; });
       return '<div style="display:flex;flex-direction:column;gap:var(--sp-2)">' + HEARTBEAT_OMIT_CLASSES.map(function(c) {
         var off = !!set[c[0]];
-        return '<div style="font-size:0.78rem;color:var(--text)"><span style="display:inline-block;min-width:7.5rem">' + esc(c[1]) + '</span>' +
+        return '<div style="font-size:var(--fs-sm);color:var(--text)"><span style="display:inline-block;min-width:7.5rem">' + esc(c[1]) + '</span>' +
           '<span style="font-weight:600;color:' + (off ? 'var(--green)' : 'var(--muted)') + '">' + (off ? 'Withheld' : 'Sent') + '</span>' +
           '<span style="color:var(--muted)"> — ' + esc(c[2]) + '</span></div>';
       }).join('') + '</div>';
