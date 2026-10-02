@@ -1,0 +1,1 @@
+- dashboard: hide Strategy Lab behind dashboard.strategy_lab (default off) (#9993)
