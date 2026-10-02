@@ -16,11 +16,11 @@ func TestFleetBreakerRendersAsSingleStatusChipButton(t *testing.T) {
 		t.Fatal("fleet breaker still renders a separate status pill before the toggle button")
 	}
 	for _, snippet := range []string{
-		`<button type="button" id="fleet-breaker-btn2" class="hv-btn fleet-breaker-chip"`,
+		`<button type="button" id="fleet-breaker-btn2" class="nav-chip nav-chip--status nav-chip--ok fleet-breaker-chip"`,
 		`data-action="toggleFleetBreaker"`,
 		`aria-pressed="false"`,
-		`<span id="fleet-breaker-dot" aria-hidden="true">●</span>`,
-		`<span id="fleet-breaker-pill">running</span>`,
+		`<span id="fleet-breaker-dot" class="nav-chip__dot" aria-hidden="true">●</span>`,
+		`<span id="fleet-breaker-pill" class="nav-chip__label">running</span>`,
 		`btn.setAttribute('aria-label', canToggle`,
 		`btn.disabled = !canToggle`,
 		`btn.setAttribute('aria-disabled', canToggle ? 'false' : 'true')`,
