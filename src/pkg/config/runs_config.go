@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"time"
 )
@@ -237,6 +238,17 @@ func (s SpektacularConfig) HubExecutorEnabled() bool {
 		return false
 	}
 	return s.HubExecutor.Enabled == nil || *s.HubExecutor.Enabled
+}
+
+// Validate rejects interview values other than empty, "auto" or "human" so a
+// typo is reported instead of silently selecting human.
+func (s SpektacularConfig) Validate() error {
+	switch strings.TrimSpace(strings.ToLower(s.Interview)) {
+	case "", "auto", "human":
+		return nil
+	default:
+		return fmt.Errorf("runs.spektacular.interview: invalid value %q (must be auto or human)", s.Interview)
+	}
 }
 
 func (s SpektacularConfig) InterviewMode() string {
