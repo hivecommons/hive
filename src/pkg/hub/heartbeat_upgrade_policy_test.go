@@ -169,7 +169,9 @@ func TestHeartbeatUpgradePolicyNextUpdateAtForStableChannel(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	seedStablePromotionChannels(t)
-	s := &HubServer{logger: targetingLogger()}
+	// newHubServerForTest redirects stablePromotionPath into t.TempDir(); a
+	// bare &HubServer{} would leave saveStablePromotionState writing to /data.
+	s := newHubServerForTest(t, withHubLogger(targetingLogger()))
 
 	// Cold cache: the heartbeat never resolves channels itself.
 	if got := stablePolicyFor(t, s, "ghcr.io/hivecommons/hive:stable", ReleaseChannelStable); got.NextUpdateAt != "" {
