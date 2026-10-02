@@ -1,0 +1,1 @@
+- dashboard: `/api/version`'s `autoUpdate` object carries `nextUpdateAt` (the hub's expected next-update time, omitted when unknown) and the version menu and Hub tab show it as "Next update" (#10257, #10258)
