@@ -1192,3 +1192,16 @@ func TestCollectSpekArtifactFilesSkipsSymlinksAndScrubs(t *testing.T) {
 		t.Fatal("expected a read through a symlinked directory to be refused")
 	}
 }
+
+func TestSpekHubCappedWriterDropsOutputPastLimit(t *testing.T) {
+	var sb strings.Builder
+	w := &spekHubCappedWriter{dst: &sb, limit: 10}
+	for _, chunk := range []string{"12345", "6789012345", "more"} {
+		if n, err := w.Write([]byte(chunk)); err != nil || n != len(chunk) {
+			t.Fatalf("Write(%q) = %d, %v; want full length", chunk, n, err)
+		}
+	}
+	if want := "1234567890" + spekHubLogTruncatedMarker; sb.String() != want {
+		t.Fatalf("log = %q, want %q", sb.String(), want)
+	}
+}

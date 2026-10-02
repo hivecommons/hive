@@ -34,10 +34,14 @@ const (
 	spekHubOutputTailBytes        = 64 * 1024
 	spekHubLastErrorMaxBytes      = 2 * 1024
 	spekHubLogPartialLineMaxBytes = 64 * 1024
-	spekHubExecutorTier           = "trusted"
-	spekHubFailureReason          = "hub_executor_failed"
-	spekHubNonFinalReason         = "hub_executor_cli_exited_nonfinal"
-	spekHubLeaseRenewInterval     = 5 * time.Minute
+	// spekHubLogMaxBytes caps the per-generation CLI log on disk; output
+	// past it is dropped and a single marker line is appended.
+	spekHubLogMaxBytes        = 32 * 1024 * 1024
+	spekHubLogTruncatedMarker = "\n[hive] log truncated: size limit reached\n"
+	spekHubExecutorTier       = "trusted"
+	spekHubFailureReason      = "hub_executor_failed"
+	spekHubNonFinalReason     = "hub_executor_cli_exited_nonfinal"
+	spekHubLeaseRenewInterval = 5 * time.Minute
 	// SpekHubCloneCredentialFilePrefix names the per-clone git credential
 	// store files written beside the shared clones.
 	SpekHubCloneCredentialFilePrefix = ".hive-git-credentials-"
@@ -686,7 +690,7 @@ func (e *SpekHubExecutor) runStageCommand(ctx context.Context, worktree string, 
 			return nil, 0, err
 		}
 		defer f.Close()
-		logWriter := newSpekHubScrubWriter(f)
+		logWriter := newSpekHubScrubWriter(&spekHubCappedWriter{dst: f, limit: spekHubLogMaxBytes})
 		c := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
 		c.Dir = worktree
 		c.Env = env
@@ -848,6 +852,36 @@ func (e *SpekHubExecutor) reclaimFromExecUser(userSpec, worktree, home string) {
 	if err != nil {
 		e.log().Warn("[spektacular] restoring group access to executor files failed", "worktree", worktree, "error", err, "output", tailString(string(out), spekHubOutputTailBytes))
 	}
+}
+
+// spekHubCappedWriter forwards at most limit bytes to dst, then swallows the
+// rest so a chatty agent cannot fill the disk; the caller's writes still
+// succeed and the executor's in-memory tail is unaffected.
+type spekHubCappedWriter struct {
+	dst     io.Writer
+	limit   int64
+	written int64
+	capped  bool
+}
+
+func (w *spekHubCappedWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	if w.capped {
+		return n, nil
+	}
+	if room := w.limit - w.written; int64(len(p)) > room {
+		p = p[:room]
+		w.capped = true
+	}
+	m, err := w.dst.Write(p)
+	w.written += int64(m)
+	if err != nil {
+		return m, err
+	}
+	if w.capped {
+		_, err = io.WriteString(w.dst, spekHubLogTruncatedMarker)
+	}
+	return n, err
 }
 
 type spekHubScrubWriter struct {
@@ -1349,7 +1383,7 @@ func (e *SpekHubExecutor) recordNonFinal(st spekHubStage, taskID string, status 
 }
 
 func resolveSpekArtifactFromFiles(worktree, kind, slug string) string {
-	slug = sanitizeRunPromptPath(slug)
+	slug = worksource.CapArtifactSlug(sanitizeRunPromptPath(slug))
 	rootName := "specs"
 	if kind == StagePlan {
 		rootName = "plans"
@@ -1953,7 +1987,7 @@ func (e *SpekHubExecutor) artifact(runKey string) string {
 	if e.Artifact != nil {
 		return e.Artifact(runKey)
 	}
-	return sanitizeRunPromptPath(runKey)
+	return worksource.CapArtifactSlug(sanitizeRunPromptPath(runKey))
 }
 
 func (e *SpekHubExecutor) backend() string {

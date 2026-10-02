@@ -44,7 +44,12 @@ empty, `.` or `..` segments, so the shared clone path cannot leave the
 executor workspace.
 
 CLI output streams to the scrubbed stage log; only the last 64 KiB stays in
-memory for diagnostics and transcript capture. Sweeps discard held-generation
+memory for diagnostics and transcript capture. The on-disk log is capped at
+32 MiB per generation (output past the cap is dropped and a marker line is
+appended), and `GET /api/runs/{key}/log` reads at most the last 4 MiB of it
+before taking the requested tail. Artifact slugs derived from run keys are
+capped at Spektacular's 64-character name limit, keeping the trailing
+run number. Sweeps discard held-generation
 and activity entries for obsolete generations once their workers have exited.
 
 The agent CLI receives an allowlisted environment: `PATH`, locale/terminal
@@ -672,7 +677,12 @@ artifact reach the runner through the CLI boundary (`Runner.Exec`), which is
 also the seam tests replace. The only filesystem fallback is timestamped-id
 discovery: when `status <slug>` says `artifact_not_found`, Hive may inspect
 `.spektacular/specs` or `.spektacular/plans` file names to find an id equal to
-the slug or ending in `-<slug>`, then asks the CLI for that resolved id.
+the slug or ending in `-<slug>`, then asks the CLI for that resolved id. When
+several ids share a slug, the file modification time ranks them (newest wins;
+ids reported only by `file list` carry no time and lose to a file with one);
+this is selection among name matches, never progress or staleness, which stay
+with the status document. A failing `file list` is reported by the resolver
+rather than treated as "not found" when the directory walk finds nothing.
 `TestNoDirectFileAccess` in `pkg/spektacular` keeps direct body reads out of
 the runner.
 

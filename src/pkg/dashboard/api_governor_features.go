@@ -220,6 +220,10 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "run wait timeout must be positive", http.StatusBadRequest)
 		return
 	}
+	if body.SpektacularInterview != nil && !validSpektacularInterview(*body.SpektacularInterview) {
+		jsonError(w, "spektacular interview must be auto or human", http.StatusBadRequest)
+		return
+	}
 	if body.RunWaitSeverity != nil {
 		if !validRunWaitSeverity(*body.RunWaitSeverity) {
 			jsonError(w, "run wait severity must be info, decision, or page", http.StatusBadRequest)
@@ -687,6 +691,15 @@ func trimStringSlice(in []string) []string {
 func validRotationTier(tier string) bool {
 	switch tier {
 	case "T1", "T2", "T3":
+		return true
+	default:
+		return false
+	}
+}
+
+func validSpektacularInterview(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "auto", "human":
 		return true
 	default:
 		return false

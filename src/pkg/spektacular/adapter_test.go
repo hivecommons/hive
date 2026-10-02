@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ type fakeLeaseRegistry struct {
 	expiresAt  time.Time
 	present    bool
 	visitErr   error
+	workDirErr error
 	advanceErr error
 	importErr  error
 	advances   []map[string]string
@@ -47,6 +49,9 @@ func (f *fakeLeaseRegistry) VisitActiveStageLeases(visit func(runKey, key, stage
 }
 
 func (f *fakeLeaseRegistry) ResolveRunStageWorkDir(_, _, _, _ string, _ uint64) (string, error) {
+	if f.workDirErr != nil {
+		return "", f.workDirErr
+	}
 	if f.workDir != "" {
 		return f.workDir, nil
 	}
@@ -221,5 +226,24 @@ func TestLeaseAdapter_SameInstantTickAfterAdvanceIsNoOp(t *testing.T) {
 	// And again a same-instant tick is inert.
 	if res := r.Tick(context.Background(), now); res != (TickResult{}) {
 		t.Fatalf("second same-instant tick = %+v", res)
+	}
+}
+
+func TestLeaseAdapter_ActiveStagesSurfacesWorkDirError(t *testing.T) {
+	boom := errors.New("workdir unavailable")
+	reg := &fakeLeaseRegistry{runKey: testRunKey, stage: StageSpec, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true, workDirErr: boom}
+	if _, err := NewLeaseRegistryAdapter(reg).ActiveStages(t0); !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want it to wrap %v", err, boom)
+	}
+}
+
+func TestLeaseAdapter_ActiveStagesCapsLongRunArtifactName(t *testing.T) {
+	reg := &fakeLeaseRegistry{runKey: "some-organization/" + strings.Repeat("very-long-repository-name-", 4) + "x#123", stage: StageSpec, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true}
+	stages, err := NewLeaseRegistryAdapter(reg).ActiveStages(t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stages[0].Artifact; len(got) != 64 || !strings.HasSuffix(got, "-x-123") {
+		t.Fatalf("artifact = %q (len %d), want 64 chars ending in -x-123", got, len(got))
 	}
 }
