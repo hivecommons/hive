@@ -1,13 +1,12 @@
 # Hive maintainers and reviewers.
 #
 # This file is the machine-readable form of the Maintainer Committee recorded in
-# GOVERNANCE-HIVE.md upstream:
-# https://github.com/kubestellar/kubestellar/blob/main/GOVERNANCE-HIVE.md#current-maintainers
+# GOVERNANCE.md and the Hive Commons organization maintainer roster:
+# https://github.com/hivecommons/.github/blob/main/MAINTAINERS.md#current-maintainers
 #
-# The two files MUST agree. A change here without the matching upstream change
+# These files MUST agree. A change here without the matching governance change
 # (or vice versa) is a governance drift bug, not a housekeeping detail — CNCF
-# maturity review checks that code ownership matches documented governance
-# roles.
+# maturity review checks that code ownership matches documented governance roles.
 #
 # Roles:
 #   approvers — may approve and merge. Members of the Maintainer Committee.
@@ -16,23 +15,29 @@
 #               normal path onto the committee.
 #
 # Adding or removing anyone here follows the maintainer lifecycle in
-# GOVERNANCE-HIVE.md: nomination by an existing maintainer, lazy consensus of
-# the committee, and a PR against BOTH this file and the upstream table.
+# GOVERNANCE.md: nomination by an existing maintainer, lazy consensus of the
+# committee, and a PR against all maintainer records.
 # Affiliation changes must be reflected within 30 days.
 
 # Maintainer roster. Affiliation is recorded because CNCF maturity review asks
 # for it; "independent" is a legitimate entry and is not a lesser status.
 #
-#   clubanderson  Andy Anderson    IBM
-#   hanthor       James Reilly     Universal Blue
-#   Danathar      Doug Baggett     independent
+#   clubanderson     Andy Anderson    IBM
+#   hanthor          James Reilly     Universal Blue
+#   Danathar         Doug Baggett     independent
+#   nicholasjackson  Nic Jackson      IBM
+#   abuelsaad        Kelly Abuelsaad  IBM
 
 approvers:
   - clubanderson
   - hanthor
   - Danathar
+  - nicholasjackson
+  - abuelsaad
 
 reviewers:
   - clubanderson
   - hanthor
   - Danathar
+  - nicholasjackson
+  - abuelsaad
