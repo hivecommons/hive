@@ -218,6 +218,15 @@
       margin-top: auto;
     }
     .oc-sidebar-footer .layout-toggle { width: 100%; text-align: center; padding: var(--sp-4); margin: var(--sp-0); }
+    .oc-agent-actions {
+      display: flex; gap: var(--sp-2); padding: var(--sp-4) var(--sp-5);
+      margin: var(--sp-3) var(--sp-0) var(--sp-0);
+      border-top: 1px solid var(--border);
+      background: var(--bg-soft);
+      position: sticky; bottom: var(--sp-0); z-index: var(--z-sticky);
+    }
+    .oc-agent-actions .oc-agent-add-btn { flex: 1 1 auto; }
+    .oc-agent-actions .oc-agent-group-btn { flex: 0 0 auto; }
 
     /* System resource gauges */
     .system-gauges {
@@ -3688,7 +3697,7 @@
       <a class="oc-nav-item" data-section="overview-section" data-action="ocNavigate" data-arg0="overview-section"><span class="oc-nav-emoji">🍩</span><span class="oc-nav-text">Overview</span></a>
       <a class="oc-nav-item active" data-section="governor" data-action="ocNavigate" data-arg0="governor"><span class="oc-nav-emoji">📊</span><span class="oc-nav-text">Governor</span></a>
     </div>
-    <div class="oc-nav-group">
+    <div class="oc-nav-group" id="oc-agent-nav-group">
       <div class="oc-tree-toggle" data-action="ocToggleAgentTree" data-arg-types="t">
         <span class="oc-tree-arrow">▼</span> <span>Agents</span>
       </div>
@@ -3699,9 +3708,9 @@
         <div><span id="nous-sb-scope" style="font-weight:600"></span> · <span id="nous-sb-mode"></span></div>
         <div id="nous-sb-phase" style="opacity:0.8"></div>
       </div>
-      <div style="display:flex;gap:var(--sp-2);margin:4px 10px">
-        <a class="oc-nav-item" style="color:var(--muted);font-style:italic;flex:1" data-action="openAddAgentDialog">+ agent</a>
-        <a class="oc-nav-item" style="color:var(--muted);font-style:italic;flex:1" data-action="ocAddSidebarGroup">+ group</a>
+      <div class="oc-agent-actions" aria-label="Agent actions">
+        <button type="button" class="hv-btn btn-primary btn-sm oc-agent-add-btn" data-action="openAddAgentDialog" title="Add a new agent from a template or from scratch">＋ Add agent</button>
+        <button type="button" class="hv-btn btn-secondary btn-sm oc-agent-group-btn" data-action="ocAddSidebarGroup" title="Create a sidebar group for organizing agents">＋ Group</button>
       </div>
     </div>
     <div class="oc-nav-group">
@@ -4182,6 +4191,7 @@
   <div id="agents-section" data-dashboard-section="agents-section">
     <div style="display:flex;align-items:center;gap:var(--sp-4);margin-bottom:var(--sp-4)">
       <button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Agents section" aria-pressed="false">⠿</button><h2 style="margin:var(--sp-0); cursor:pointer" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="agents-section"><span class="section-chevron">▼</span> Agents</h2>
+      <button class="hv-btn btn-secondary btn-sm" id="agents-add-btn" data-action="openAddAgentDialog" data-stop="1" title="Add a new agent from a template or from scratch">＋ Add agent</button>
       <button class="hv-btn btn-danger btn-sm" id="agents-compact-all-btn" data-action="toggleAllAgentsCompact" data-stop="1" title="Toggle all agent cards between compact and expanded view"></button>
     </div>
     <div class="section-body">
@@ -4681,7 +4691,7 @@
     function dashboardFirstSection(region){if(!region)return null;dashboardPinNoticeAnchor(region);var anchor=dashboardTopAnchor(region);if(anchor&&region.children){var after=false,children=Array.prototype.slice.call(region.children);for(var i=0;i<children.length;i++){if(children[i]===anchor){after=true;continue;}if(after&&dashboardIsSectionNode(children[i]))return children[i];}}return region.querySelector(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR);}
     function dashboardInsertSection(region,card,before){if(!region||!card)return;dashboardPinNoticeAnchor(region);if(before){var anchor=dashboardTopAnchor(region);if(anchor&&region.children){var children=Array.prototype.slice.call(region.children),anchorIdx=children.indexOf(anchor),beforeIdx=children.indexOf(before);if(anchorIdx>=0&&beforeIdx>=0&&beforeIdx<=anchorIdx)before=dashboardFirstSection(region);}region.insertBefore(card,before);dashboardPinNoticeAnchor(region);return;}var sections=region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR);var last=sections.length?sections[sections.length-1]:null;if(last&&last!==card){var siblings=Array.prototype.slice.call(region.children),next=siblings[siblings.indexOf(last)+1]||null;region.insertBefore(card,next);}else region.appendChild(card);dashboardPinNoticeAnchor(region);}
     function dashboardApplyLayout(layout){var region=dashboardRegionEl('main');if(!region)return;dashboardPinNoticeAnchor(region);var ids=(layout&&layout.main)||[];for(var i=ids.length-1;i>=0;i--){if(dashboardFeatureSectionHidden(ids[i]))continue;var card=dashboardCardEl(ids[i]);if(card)dashboardInsertSection(region,card,dashboardFirstSection(region));}dashboardUpdateResetButton();dashboardSortSidebar();}
-    function dashboardSortSidebar(){var order=dashboardLayoutNormalize(dashboardLayoutCurrent()).main,rank={};order.forEach(function(id,i){rank[id]=i;});var items=Array.prototype.slice.call(document.querySelectorAll('.oc-nav-item[data-section]')).filter(function(item){return rank[item.getAttribute('data-section')]!==undefined;});items.sort(function(a,b){return rank[a.getAttribute('data-section')]-rank[b.getAttribute('data-section')];});var home=document.getElementById('dashboard-section-nav-group')||(items.length&&items[0].closest('.oc-nav-group'));if(!home)return;items.forEach(function(item){home.appendChild(item);});Array.prototype.forEach.call(document.querySelectorAll('.oc-nav-group'),function(group){if(group===home){group.hidden=false;return;}group.hidden=group.querySelectorAll('.oc-nav-item').length===0;});}
+    function dashboardSortSidebar(){var order=dashboardLayoutNormalize(dashboardLayoutCurrent()).main,rank={};order.forEach(function(id,i){rank[id]=i;});var items=Array.prototype.slice.call(document.querySelectorAll('.oc-nav-item[data-section]')).filter(function(item){return rank[item.getAttribute('data-section')]!==undefined;});items.sort(function(a,b){return rank[a.getAttribute('data-section')]-rank[b.getAttribute('data-section')];});var home=document.getElementById('dashboard-section-nav-group')||(items.length&&items[0].closest('.oc-nav-group'));if(!home)return;items.forEach(function(item){home.appendChild(item);});Array.prototype.forEach.call(document.querySelectorAll('.oc-nav-group'),function(group){if(group===home||group.id==='oc-agent-nav-group'){group.hidden=false;return;}group.hidden=group.querySelectorAll('.oc-nav-item').length===0;});}
     function resetDashboardLayout(){try{localStorage.removeItem(DASHBOARD_LAYOUT_KEY);}catch(e){}dashboardApplyLayout(dashboardLayoutNormalize(null));dashboardLayoutAnnounce('Dashboard section layout reset to the default order.');}
     function dashboardLayoutSlot(region,x,y,skip){var cards=Array.prototype.filter.call(region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR),function(c){return c!==skip;});if(!cards.length)return {region:region,before:null};var best=null,bestDist=Infinity;cards.forEach(function(card){var rect=card.getBoundingClientRect(),before=y<(rect.top+rect.height/2),anchor=before?rect.top:rect.bottom,dist=Math.abs(y-anchor)+Math.abs(x-(rect.left+rect.width/2));if(dist<bestDist){bestDist=dist;best={region:region,before:before?card:card.nextElementSibling};}});return best||{region:region,before:null};}
     function dashboardNearestRegion(x,y){return dashboardRegionEl('main');}
@@ -7798,6 +7808,12 @@
         if (inp.value) savedInputs[inp.id] = inp.value;
       });
       const { sorted: sortedAgents } = _sortAgentsBySidebar(agents);
+      if (sortedAgents.length === 0) {
+        setIfChanged(el, emptyStateCard('🤖', 'Add your first agent',
+          'Agents are the workers that scan repos, review changes, keep CI healthy, and write docs. Start from a quick template or build one from scratch. ' +
+          '<br><button type="button" class="hv-btn btn-primary btn-sm" data-action="openAddAgentDialog" title="Add a new agent from a template or from scratch">＋ Add your first agent</button>'));
+        return;
+      }
       const cards = agentsFocusedFirst(sortedAgents).map(a => {
         const isOnDemand = a.onDemand === true;
         // Manual/persisted pause wins over offByCadence — see the agent-detail
@@ -21869,6 +21885,13 @@ function burnAreaChart() {
     const AGENT_PROMPTS_TAB = 'Prior Prompts';
     const AGENT_CONFIG_TABS = ['General', 'Cadences', 'Pipeline', 'Hooks', 'Restrictions', 'Channels', 'Tools', 'Connections', 'Stats', 'Prompt Template', AGENT_PROMPTS_TAB, 'Export'];
     const AGENT_CREATE_TABS = ['Import', 'General', 'Cadences', 'Channels', 'Tools', 'Prompt Template'];
+    const AGENT_QUICK_START_TEMPLATES = [
+      { id: 'scanner', name: 'scanner', displayName: 'Scanner', role: 'scanner', emoji: '🔎', backend: 'copilot', kickTemplate: 'scanner-advisory.md', description: 'Finds bugs, triages issues, and turns actionable findings into work.' },
+      { id: 'reviewer', name: 'reviewer', displayName: 'Reviewer', role: 'reviewer', emoji: '🧐', backend: 'copilot', kickTemplate: 'reviewer-advisory.md', description: 'Reviews open pull requests for correctness, safety, and test coverage.' },
+      { id: 'quality', name: 'quality', displayName: 'Quality', role: 'quality', emoji: '🧪', backend: 'copilot', kickTemplate: 'quality-advisory.md', description: 'Improves test coverage, catches regressions, and keeps quality signals healthy.' },
+      { id: 'ci-maintainer', name: 'ci-maintainer', displayName: 'CI Maintainer', role: 'ci-maintainer', emoji: '🛠️', backend: 'copilot', kickTemplate: 'ci-maintainer-advisory.md', description: 'Maintains workflows, investigates failed checks, and reduces flaky CI.' },
+      { id: 'guide', name: 'guide', displayName: 'Guide', role: 'guide', emoji: '🧭', backend: 'copilot', kickTemplate: 'guide-advisory.md', description: 'Keeps README, onboarding, architecture, and contributor docs understandable.' },
+    ];
     // 'Bob' holds the hive-wide credential for the IBM bobshell CLI backend.
     // It is deliberately NOT part of 'Model Gateways': a gateway is an
     // OpenAI-compatible inference ENDPOINT (endpoint + default_model, routed
@@ -22513,7 +22536,15 @@ function burnAreaChart() {
       // Field-by-field reference on the docs site (documents the same v2 schema
       // as the example, and explains the ref+path "v2/src" URL). See #1929/#1930.
       var docsURL = 'https://docs.kubestellar.io/hive/agent-definition-yaml';
+      var quickStarts = AGENT_QUICK_START_TEMPLATES.map(function(t) {
+        return '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="applyAgentQuickStart" data-arg0="' + esc(t.id) + '" title="' + esc(t.description) + '">' + esc(t.emoji) + ' ' + esc(t.displayName) + '</button>';
+      }).join('');
       return '<div style="max-width:600px;margin:0 auto">' +
+        '<div style="background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:var(--r);padding:var(--sp-5);margin-bottom:var(--sp-6)">' +
+          '<div style="font-weight:700;color:var(--text);margin-bottom:var(--sp-2)">Start with a template, then tune it</div>' +
+          '<p class="fs-base text-muted" style="margin:var(--sp-0) var(--sp-0) var(--sp-4)">Pick a common agent role to prefill the create form, or import/paste a full definition below.</p>' +
+          '<div style="display:flex;flex-wrap:wrap;gap:var(--sp-2)">' + quickStarts + '</div>' +
+        '</div>' +
         '<p class="fs-base text-muted mb-6">Import an agent from a YAML definition file. <a class="text-accent" href="' + docsURL + '" target="_blank" rel="noopener">Field reference ↗</a> · <a class="text-accent" href="' + exampleURL + '" target="_blank" rel="noopener">example definition ↗</a></p>' +
         '<div class="config-field mb-5">' +
           '<label>Import from URL</label>' +
@@ -22540,6 +22571,36 @@ function burnAreaChart() {
     }
 
     var _pendingImportData = null;
+
+    function applyAgentQuickStart(templateID) {
+      var t = AGENT_QUICK_START_TEMPLATES.find(function(x) { return x.id === templateID; });
+      if (!t || !_configState.isCreate) return;
+      if (!_configState.data.general) _configState.data.general = {};
+      Object.assign(_configState.data.general, {
+        displayName: t.displayName,
+        description: t.description,
+        emoji: t.emoji,
+        role: t.role,
+        kickTemplate: t.kickTemplate,
+        cliPinValue: t.backend,
+        cliPinned: true,
+        launchCmd: 'agent-launch.sh --backend ' + t.backend,
+      });
+      markDirty('_create', 'name', t.name);
+      markDirty('general', 'displayName', t.displayName);
+      markDirty('general', 'description', t.description);
+      markDirty('general', 'emoji', t.emoji);
+      markDirty('general', 'role', t.role);
+      markDirty('general', 'kickTemplate', t.kickTemplate);
+      markDirty('general', 'cliPinValue', t.backend);
+      markDirty('general', 'cliPinned', true);
+      markDirty('general', 'launchCmd', 'agent-launch.sh --backend ' + t.backend);
+      switchConfigTab('General');
+      var nameInput = document.getElementById('cfg-create-name');
+      if (nameInput) nameInput.value = t.name;
+      updateConfigAgentName(t.displayName);
+      showToast(t.displayName + ' template loaded — review the fields, then save', 'success');
+    }
 
     async function previewImportFromURL() {
       var url = (document.getElementById('import-url-input') || {}).value;
@@ -32324,8 +32385,8 @@ function burnAreaChart() {
         id: 'add-agent',
         title: 'Add a custom agent',
         auto: null,
-        body: 'The built-in agents are a starting point, not a limit. The <strong>+ agent</strong> control (in the agents bar) opens a create dialog where you name your own agent, pick its method and model, and give it a prompt template and cadences — or <strong>Import</strong> one from the community registry. Build a specialist for whatever your repo needs: a docs writer, a dependency bumper, a release-notes drafter.',
-        actions: [{ label: '+ Add an agent', action: 'welcomeAddAgent' }]
+        body: 'The built-in agents are a starting point, not a limit. Use <strong>＋ Add agent</strong> in the Agents sidebar, the Agents section header, or this guide to open the create dialog. Start from scanner/reviewer/quality/CI/guide templates, then pick the method, model, prompt template, and cadences — or <strong>Import</strong> one from the community registry.',
+        actions: [{ label: '＋ Add an agent', action: 'welcomeAddAgent' }]
       },
       {
         id: 'acmm',
