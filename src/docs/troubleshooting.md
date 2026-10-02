@@ -470,6 +470,8 @@ The browser terminal is a live `tmux` attach rendered by ttyd/xterm.js, which me
 
 With the selection made, **⌘C** (macOS) or **Ctrl+Shift+C** (Linux/Windows) copies it; the terminal page now answers that gesture itself, as it does the browser's Edit ▸ Copy. A plain **Ctrl+C** is deliberately left alone — it is still SIGINT for the agent's pane. Pasting in is the browser's own: **⌘V** or **Ctrl+Shift+V**.
 
+**An ordinary drag inside an agent CLI selects in the CLI, not the terminal.** Agent CLIs turn mouse reporting on, so tmux hands a plain drag to the application, which copies its selection with an OSC 52 escape (and may toast a tmux paste hint). The browser terminal now forwards that copy to your clipboard ([#9941](https://github.com/hivecommons/hive/issues/9941)); if your browser refused the write, press ⌘C or Ctrl+Shift+C once on the terminal and the CLI's last copy is put on the clipboard from inside that keystroke.
+
 **For a login URL, prefer the dashboard's 🔑 *Copy login URL* button** on the agent card. It captures the pane server-side and rejoins wrapped lines, so the OAuth URL arrives whole; a Shift-drag selection of a wrapped URL copies the wrap's newlines with it and the link silently fails at the identity provider.
 
 ## The dashboard says the next kick is later, but the agent is visibly working now

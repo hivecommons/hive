@@ -215,6 +215,14 @@ attach_with() {
   # runs its own private tmux server, and the binding must persist so the
   # NEXT wheel scroll — possibly before any browser attach — also hides it.
   "${run[@]}" tmux -S "$TMUX_SOCKET" bind-key -n WheelUpPane if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -eH' 2>/dev/null || true
+  # #9941: the agent CLI owns the mouse, so a drag selects in the CLI, which
+  # copies with an OSC 52 escape. tmux's default set-clipboard (external)
+  # swallows an application's OSC 52 into tmux's own paste buffer, so the
+  # browser clipboard never changed. `on` forwards it to this attached client,
+  # where the dashboard's injected terminal script writes it to the browser
+  # clipboard (src/pkg/dashboard/terminal_clipboard.go). Server-wide and not
+  # restored, like the wheel rebind above.
+  "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -s set-clipboard on 2>/dev/null || true
   "${run[@]}" tmux -S "$TMUX_SOCKET" attach-session -t "$SESSION" || exit_code=$?
   "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -t "$SESSION" mouse "$prev_mouse" 2>/dev/null || true
   if [ -n "$prev_history" ]; then

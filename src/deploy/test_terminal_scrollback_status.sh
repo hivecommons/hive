@@ -315,6 +315,14 @@ fi
 tmux -S "$VSOCK" kill-server 2>/dev/null
 tmux -S "$SOCK" send-keys -t t -X cancel 2>/dev/null
 
+# #9941: the agent CLI's OSC 52 copy must reach the browser, not dead-end in
+# tmux's paste buffer — both attach paths turn set-clipboard on.
+for f in "$ATTACH" "$BIN_ATTACH"; do
+  grep -q 'set-option -s set-clipboard on' "$f" \
+    && pass "${f#"${ROOT}"/} forwards the application's OSC 52 copy to the browser" \
+    || fail "${f#"${ROOT}"/} sets set-clipboard on" "an agent CLI's copy stays in tmux's buffer"
+done
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

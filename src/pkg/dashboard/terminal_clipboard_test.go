@@ -135,3 +135,21 @@ func TestTerminalDocumentPath(t *testing.T) {
 		}
 	}
 }
+
+// #9941 follow-up: the agent CLI owns the mouse, so an ordinary drag is the
+// application's selection and arrives as an OSC 52 copy that ttyd 1.7.7 has
+// no handler for. The injected script must handle OSC 52 and let a later copy
+// gesture fall back to the application's last copy.
+func TestTerminalClipboardScriptHandlesOsc52(t *testing.T) {
+	for _, want := range []string{
+		"term.parser.registerOscHandler(52,",
+		"if (!payload || payload === '?') return '';",
+		"new TextDecoder('utf-8').decode(bytes)",
+		"return selectedText() || appCopiedText;",
+		"term.hiveOsc52Registered = true;",
+	} {
+		if !strings.Contains(terminalClipboardScript, want) {
+			t.Errorf("clipboard script is missing %q", want)
+		}
+	}
+}

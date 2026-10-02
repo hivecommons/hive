@@ -92,6 +92,10 @@ tmux set-option -gt "$SESSION" status-interval "$TTYD_STATUS_INTERVAL" 2>/dev/nu
 # flag, hence || true, and simply keeps the marker). Server-wide by nature and
 # deliberately not restored on detach, so the NEXT wheel scroll also hides it.
 tmux bind-key -n WheelUpPane if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -eH' 2>/dev/null || true
+# #9941: forward the agent CLI's OSC 52 copy to the browser instead of keeping
+# it in tmux's paste buffer (the default set-clipboard, external, does that).
+# Server-wide and not restored, like the wheel rebind above.
+tmux set-option -s set-clipboard on 2>/dev/null || true
 EXIT_CODE=0
 tmux attach-session -t "$SESSION" || EXIT_CODE=$?
 tmux set-option -t "$SESSION" mouse "$PREV_MOUSE" 2>/dev/null || true
