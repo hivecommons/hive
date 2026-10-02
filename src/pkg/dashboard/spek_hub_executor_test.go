@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -112,7 +113,7 @@ func TestSpekHubExecutorPrepareWorkspaceCreatesCloneAndWorktree(t *testing.T) {
 				return nil, fmt.Errorf("unexpected executable %q", name)
 			}
 			st := spekHubStage{runKey: "myorg/repo1#57", stage: StageSpec, repo: spekRepo, gen: 1}
-			if _, err := e.prepareWorkspace(context.Background(), st); err != nil {
+			if err := e.prepareWorkspace(context.Background(), st); err != nil {
 				t.Fatalf("prepareWorkspace: %v", err)
 			}
 			if _, err := os.Stat(filepath.Join(currentAgentWorkspaceRoot(), e.Identity, filepath.FromSlash(spekRepo), ".git")); err != nil {
@@ -395,6 +396,51 @@ func TestSpekInitAgentMapsCopilotToSupportedInitAgent(t *testing.T) {
 	}
 }
 
+func TestSpekInitAgentMatchesLaunchedBinary(t *testing.T) {
+	cases := map[string]string{
+		"claude":        "claude",
+		" Claude ":      "claude",
+		"litellm":       "claude",
+		"bob":           "bob",
+		"codex":         "codex",
+		"aider":         "codex",
+		"opencode":      "codex",
+		"gemini":        "codex",
+		"not-a-backend": "claude",
+	}
+	for backend, want := range cases {
+		if got := spekInitAgent(backend); got != want {
+			t.Errorf("spekInitAgent(%q) = %q, want %q", backend, got, want)
+		}
+	}
+}
+
+func TestSpekHubExecutorBobAPIKeyReadsGovernorConfig(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "bob", "", nil, nil)
+	keyFile := filepath.Join(t.TempDir(), "bob-key")
+	if err := os.WriteFile(keyFile, []byte("bob-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if s.deps.Config == nil {
+		s.deps.Config = &config.Config{}
+	}
+	s.deps.Config.Governor.Bob.APIKeyFile = keyFile
+	if got := e.bobAPIKey(); got != "bob-secret" {
+		t.Fatalf("bobAPIKey() = %q, want bob-secret", got)
+	}
+	env, err := e.executorEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(env, config.BobAPIKeyEnvVar+"=bob-secret") {
+		t.Fatalf("bob key not injected: %v", env)
+	}
+	if got := (&SpekHubExecutor{}).bobAPIKey(); got != "" {
+		t.Fatalf("bobAPIKey() without server = %q, want empty", got)
+	}
+}
+
 func TestSpekHubExecutorFailureRecordsAuditTimelineAndHoldsGeneration(t *testing.T) {
 	_, s, _, _ := spekHub(t)
 	e := NewSpekHubExecutor(s, config.RunsConfig{MaxStageRetries: 1, Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
@@ -418,7 +464,7 @@ func TestSpekHubExecutorFailureRecordsAuditTimelineAndHoldsGeneration(t *testing
 	}
 }
 
-func TestSpekHubExecutorEnvUsesAllowlistedValuesAndRunToken(t *testing.T) {
+func TestSpekHubExecutorEnvUsesAllowlistedValuesWithoutCloneToken(t *testing.T) {
 	_, s, _, _ := spekHub(t)
 	t.Setenv("GITHUB_TOKEN", "old")
 	t.Setenv("GH_TOKEN", "old")
@@ -430,7 +476,7 @@ func TestSpekHubExecutorEnvUsesAllowlistedValuesAndRunToken(t *testing.T) {
 	t.Setenv("LC_ALL", "C.UTF-8")
 	t.Setenv("HTTPS_PROXY", "http://proxy.example")
 	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
-	env, err := e.executorEnv("readonly-run-token")
+	env, err := e.executorEnv()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,10 +491,7 @@ func TestSpekHubExecutorEnvUsesAllowlistedValuesAndRunToken(t *testing.T) {
 	if byKey["PATH"] != "/usr/bin" || byKey["LANG"] != "C.UTF-8" || byKey["LC_ALL"] != "C.UTF-8" || byKey["HTTPS_PROXY"] != "http://proxy.example" {
 		t.Fatalf("expected allowlisted process values, got PATH=%q LANG=%q LC_ALL=%q HTTPS_PROXY=%q", byKey["PATH"], byKey["LANG"], byKey["LC_ALL"], byKey["HTTPS_PROXY"])
 	}
-	if byKey["GH_TOKEN"] != "readonly-run-token" || byKey["GITHUB_TOKEN"] != "readonly-run-token" {
-		t.Fatalf("run tokens not set from clone token: GH=%q GITHUB=%q", byKey["GH_TOKEN"], byKey["GITHUB_TOKEN"])
-	}
-	for _, key := range []string{"HIVE_HUB_TOKEN", "HIVE_DASHBOARD_TOKEN", "UNLISTED_VALUE"} {
+	for _, key := range []string{"GH_TOKEN", "GITHUB_TOKEN", "HIVE_HUB_TOKEN", "HIVE_DASHBOARD_TOKEN", "UNLISTED_VALUE"} {
 		if _, ok := byKey[key]; ok {
 			t.Fatalf("%s reached child env", key)
 		}
@@ -636,14 +679,14 @@ func TestSpekHubExecutorPrepareWorkspaceRecoversSweptButRegisteredWorktree(t *te
 		return []byte("ok"), nil
 	}
 	st := spekHubStage{runKey: "myorg/repo1#57", stage: StagePlan, repo: spekRepo, gen: 3}
-	if _, err := e.prepareWorkspace(context.Background(), st); err != nil {
+	if err := e.prepareWorkspace(context.Background(), st); err != nil {
 		t.Fatalf("first prepareWorkspace: %v", err)
 	}
 	// Simulate the sweep deleting the directory without telling git.
 	if err := os.RemoveAll(spekHubRunWorktreePath(e.Identity, st.runKey)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.prepareWorkspace(context.Background(), st); err != nil {
+	if err := e.prepareWorkspace(context.Background(), st); err != nil {
 		t.Fatalf("prepareWorkspace after sweep: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(spekHubRunWorktreePath(e.Identity, st.runKey), ".git")); err != nil {

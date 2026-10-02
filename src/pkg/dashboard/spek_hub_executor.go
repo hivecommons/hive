@@ -416,8 +416,7 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 	}
 	stopRenew := e.startRenewing(ctx, taskID)
 	defer stopRenew()
-	appToken, err := e.prepareWorkspace(ctx, st)
-	if err != nil {
+	if err := e.prepareWorkspace(ctx, st); err != nil {
 		return err
 	}
 	if err := e.Server.contributeHub.renewLease(e.Identity, taskID, time.Now().UTC()); err != nil {
@@ -432,7 +431,7 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 	}
 	e.recordStageProgress(st, "worktree_prepared", map[string]string{"worktree": worktree, "backend": e.backend()})
 	artifact := e.artifact(st.runKey)
-	env, err := e.executorEnv(appToken)
+	env, err := e.executorEnv()
 	if err != nil {
 		return err
 	}
@@ -1128,14 +1127,17 @@ func (e *SpekHubExecutor) startRenewing(ctx context.Context, taskID string) func
 	return func() { close(done); <-joined }
 }
 
-func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage) (string, error) {
+// prepareWorkspace clones/fetches the repo and adds the run worktree. The clone
+// credential is used only for these git calls; it is never handed to the
+// agent CLI.
+func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage) error {
 	repoDir := filepath.Join(currentAgentWorkspaceRoot(), e.Identity, filepath.FromSlash(st.repo))
 	if err := os.MkdirAll(filepath.Dir(repoDir), 0o755); err != nil {
-		return "", err
+		return err
 	}
-	authArgs, appToken, cleanup, err := e.cloneAuthArgs(ctx, st.repo, filepath.Dir(repoDir))
+	authArgs, _, cleanup, err := e.cloneAuthArgs(ctx, st.repo, filepath.Dir(repoDir))
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer cleanup()
 	runGit := func(dir string, args ...string) error {
@@ -1149,16 +1151,16 @@ func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage)
 	}
 	if _, err := os.Stat(filepath.Join(repoDir, ".git")); err != nil {
 		if err := runGit(filepath.Dir(repoDir), "clone", "--no-checkout", e.cloneURL(st.repo), filepath.Base(repoDir)); err != nil {
-			return "", err
+			return err
 		}
 	}
 	if err := runGit(repoDir, "fetch", "origin", "HEAD"); err != nil {
-		return "", err
+		return err
 	}
 	worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
 	if _, err := os.Stat(worktree); errors.Is(err, os.ErrNotExist) {
 		if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
-			return "", err
+			return err
 		}
 		// A swept directory can leave git with a "missing but already
 		// registered" worktree entry that makes `worktree add` refuse.
@@ -1166,20 +1168,20 @@ func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage)
 			e.log().Warn("[spektacular] git worktree prune failed", "repo", repoDir, "error", err)
 		}
 		if err := runGit(repoDir, "worktree", "add", "--detach", worktree, "FETCH_HEAD"); err != nil {
-			return "", err
+			return err
 		}
 	}
 	if _, err := os.Stat(filepath.Join(worktree, ".spektacular")); errors.Is(err, os.ErrNotExist) {
 		if copied, copyErr := copyPreviousSpektacularProject(e.Identity, st.runKey, worktree); copyErr != nil {
 			e.log().Warn("[spektacular] copying previous Spektacular project failed", "run", st.runKey, "worktree", worktree, "error", copyErr)
 		} else if copied {
-			return appToken, nil
+			return nil
 		}
 		if _, err := e.runner()(ctx, worktree, spekGitEnv(os.Environ()), e.binary(), "init", spekInitAgent(e.backend()), "--name", filepath.Base(st.repo)); err != nil {
-			return "", err
+			return err
 		}
 	}
-	return appToken, nil
+	return nil
 }
 
 func copyPreviousSpektacularProject(identity, runKey, worktree string) (bool, error) {
@@ -1242,7 +1244,7 @@ func (e *SpekHubExecutor) cloneAuthArgs(ctx context.Context, repo, dir string) (
 	return e.CloneAuth(ctx, repo, dir)
 }
 
-func (e *SpekHubExecutor) executorEnv(appToken string) ([]string, error) {
+func (e *SpekHubExecutor) executorEnv() ([]string, error) {
 	home := filepath.Join(currentAgentWorkspaceRoot(), e.Identity, "home")
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		return nil, err
@@ -1250,16 +1252,21 @@ func (e *SpekHubExecutor) executorEnv(appToken string) ([]string, error) {
 	env := allowedSpekHubExecutorEnv(os.Environ())
 	env = spekGitEnv(env)
 	env = append(env, "HOME="+home, "npm_config_cache="+filepath.Join(home, ".npm-cache"))
-	creds, err := agent.HeadlessCredentialEnv(e.backend())
+	creds, err := agent.HeadlessCredentialEnv(e.backend(), agent.HeadlessCredentialSources{BobAPIKey: e.bobAPIKey})
 	if err != nil {
 		e.log().Warn("[spektacular] headless credential env unavailable", "backend", e.backend(), "error", err)
 	} else {
 		env = append(env, creds...)
 	}
-	if tok := strings.TrimSpace(appToken); tok != "" {
-		env = append(env, "GH_TOKEN="+tok, "GITHUB_TOKEN="+tok)
-	}
 	return env, nil
+}
+
+func (e *SpekHubExecutor) bobAPIKey() string {
+	if e.Server == nil || e.Server.deps == nil || e.Server.deps.Config == nil {
+		return ""
+	}
+	bob := e.Server.deps.Config.Governor.Bob
+	return bob.ResolveAPIKey()
 }
 
 func allowedSpekHubExecutorEnv(env []string) []string {
@@ -1619,14 +1626,19 @@ func spekHubStagePromptWithBinary(stage, repo string, number int, runKey, title,
 	return b.String()
 }
 
+// spekInitAgent picks the `spektacular init` agent (claude, codex or bob) that
+// matches the CLI binary the stage launch actually execs. Other CLIs read the
+// AGENTS.md convention that the codex init writes.
 func spekInitAgent(backend string) string {
-	switch strings.ToLower(strings.TrimSpace(backend)) {
-	case "bob":
-		return "bob"
-	case "codex", "copilot":
-		return "codex"
-	default:
+	binary, err := agent.HeadlessBackendBinary(strings.ToLower(strings.TrimSpace(backend)))
+	if err != nil {
 		return "claude"
+	}
+	switch binary {
+	case "claude", "bob":
+		return binary
+	default:
+		return "codex"
 	}
 }
 

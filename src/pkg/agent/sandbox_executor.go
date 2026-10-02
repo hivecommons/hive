@@ -410,10 +410,13 @@ func sandboxCommand(cfg configSnapshot, promptRel string) ([]string, error) {
 	if backend == "" {
 		backend = "claude"
 	}
-	binary := sandboxBackendBinary(backend)
+	binary, err := sandboxBackendBinary(backend)
+	if err != nil {
+		return nil, err
+	}
 	var cmd string
 	switch backend {
-	case "goose", "pi":
+	case "goose":
 		cmd = binary + " run -s"
 		if cfg.Model != "" {
 			cmd += " --model " + shellQuote(cfg.Model)
@@ -424,6 +427,13 @@ func sandboxCommand(cfg configSnapshot, promptRel string) ([]string, error) {
 			// Canonicalize separator drift (claude-fable.5 -> claude-fable-5)
 			// so a stored bad id never reaches --model (#4262).
 			cmd += " --model " + shellQuote(CopilotLaunchModel(cfg.Model))
+		}
+	case codexBackend:
+		// The interactive codex TUI refuses a non-terminal stdin; `exec` is
+		// its non-interactive mode and reads the prompt from stdin.
+		cmd = codexUnattendedLaunchCmd(binary + " exec")
+		if cfg.Model != "" {
+			cmd += " --model " + shellQuote(cfg.Model)
 		}
 	default:
 		cmd = binary
@@ -439,23 +449,30 @@ func sandboxCommand(cfg configSnapshot, promptRel string) ([]string, error) {
 
 // HeadlessPromptCommand returns the same backend-specific unattended launch
 // command the sandbox executor uses, reading its prompt from promptRel.
+//
+// Inference backends are refused: the regular launcher routes them through
+// hive's inference translator with per-agent routing env, which a headless
+// launch outside the agent manager does not have, so the claude CLI would
+// otherwise silently talk to the wrong endpoint.
 func HeadlessPromptCommand(backend, model, promptRel string) ([]string, error) {
+	if IsInferenceBackend(backend) {
+		return nil, fmt.Errorf("backend %s requires hive inference routing, which headless launches do not provide", backend)
+	}
 	return sandboxCommand(configSnapshot{Backend: backend, Model: model}, promptRel)
 }
 
-func sandboxBackendBinary(backend string) string {
-	switch backend {
-	case "copilot":
-		return "copilot"
-	case "gemini":
-		return "gemini"
-	case "goose", "pi":
-		return "goose"
-	case "bob":
-		return "bob"
-	default:
-		return "claude"
+// HeadlessBackendBinary returns the CLI binary name a headless launch of
+// backend execs. It uses the same backend->binary mapping as the agent
+// launcher (backendBinaryName); an empty backend means claude.
+func HeadlessBackendBinary(backend string) (string, error) {
+	return sandboxBackendBinary(backend)
+}
+
+func sandboxBackendBinary(backend string) (string, error) {
+	if backend == "" {
+		return "claude", nil
 	}
+	return backendBinaryName(backend)
 }
 
 func writeSandboxPrompt(workspace, message string) error {
