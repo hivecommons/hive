@@ -105,7 +105,7 @@ For self-hosted Podman Quadlet spokes the selector is intentionally unavailable 
 
 - **Bulk actions cannot set a channel.** The bulk *Switch branch* action validates against real branches only and rejects channel names (`unknown branch`); it also never writes the tracked channel. Switching to a channel is per-hive.
 - **A manual Upgrade on a channel-tracking hive resolves through the channel tag.** If `:stable`/`:candidate`/`:edge` already points at the commit the spoke is running, the hub refuses the click with a visible explanation instead of arming a no-op heartbeat upgrade. Operators who need a newer build must wait for the channel to advance or switch the hive to a newer channel/branch tag.
-- **The spoke dashboard offer uses that same target.** `/api/version` keeps reporting the branch tip for provenance, but the `behind` flag, behind count, and Upgrade button are measured against the hub-delivered upgrade policy when present. A `:stable` spoke therefore does not offer "Upgrade available → <branch tip>" while `:stable` itself still points at the running commit.
+- **The spoke dashboard offer uses that same target.** `/api/version` keeps reporting the branch tip for provenance, but the `behind` flag, behind count, and Upgrade button are measured against the hub-delivered upgrade policy when present. A `:stable` spoke therefore does not offer "Upgrade available → `<branch tip>`" while `:stable` itself still points at the running commit.
 
 ## Channel-aware upgrade targeting
 
