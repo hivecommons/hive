@@ -26,6 +26,10 @@ Use it indirectly through the dashboard terminal link. If a terminal pane says i
 - `probe_boot_transaction_coupling.sh` — measures whether a `WantedBy=default.target` `Type=notify` unit that never becomes ready holds the SYSTEM manager's boot for its whole `TimeoutStartSec` (#4478). It does, and the control that makes that mean something is a third case: the same unit with the same timeout, left out of `default.target.wants/`, finishes the boot at once. That was the rootful/rootless split before #4478, when the Quadlet generator installed that symlink in both modes and only the system manager's `default.target` was the boot transaction. A fourth case measures the shape the units ship with since the fix — `WantedBy=hive-boot.target` plus `hive-boot-gate.service` — and asserts the boot finishes at once while the unit still auto-starts, still records `Result=timeout`, and still restarts. Runs in throwaway systemd containers rather than by rebooting a host, needs only `podman` and registry access, and skips cleanly without either. See [the lifecycle page](../docs/podman-quadlet-lifecycle.md#the-fix-shipped-for-4478-measured-the-same-way).
 - `test_*.sh` — shell tests for entrypoint/runtime deployment behavior.
 
+## Other directories
+
+- `kustomize/overlays/`: the `standalone` (self-hosted, hub-less), `openshift`, `openshift-netadmin` and `backup-exec-restriction` overlays on top of `k8s/` and `inference/`. See the [standalone overlay README](kustomize/overlays/standalone/README.md).
+
 ## Deployment contract tests
 
 Four guards cover different parts of the standalone stack and deliberately do
