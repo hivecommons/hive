@@ -84,6 +84,28 @@ func TestDisabledAgentCadenceMatrixWiring(t *testing.T) {
 	}
 }
 
+func TestDisabledAgentCardGridWiring(t *testing.T) {
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		`function agentsWithDisabledConfigured(runtimeAgents)`,
+		`runtime.push({ ...configured, configDisabled: true, state: configured.state || 'stopped', busy: configured.busy || 'idle' });`,
+		`const cardAgents = agentsWithDisabledConfigured(agents);`,
+		`const disabledCard = agentIsDisabled(a);`,
+		`const cls = disabledCard ? 'agent-card--off'`,
+		`const dotCls = disabledCard ? 'off'`,
+		`const dotState = disabledCard ? 'off' : isOff ? 'off-healthy' : dotCls;`,
+		`const headerActions = disabledCard ? configButton : enabledHeaderActions;`,
+		`${disabledCard ? '' : terminalCopyHintHtml(`,
+		"${disabledCard ? `<div class=\"agent-card-details agent-card-details--off\"",
+		`powered off — switch to 1 to enable`,
+		`.agent-card.agent-card--off`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Errorf("index.html is missing disabled-agent card grid wiring %q", snippet)
+		}
+	}
+}
+
 func TestContinuousAgentCadenceMatrixWiring(t *testing.T) {
 	html := indexHTML(t)
 	for _, snippet := range []string{

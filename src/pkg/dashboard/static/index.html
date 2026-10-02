@@ -1212,6 +1212,9 @@
     .agent-card.on-demand .agent-state { color: var(--indigo); }
     .agent-card.off { border-left-color: color-mix(in srgb, var(--muted) 60%, var(--bg)); opacity: 0.6; }
     .agent-card.off .agent-state { color: color-mix(in srgb, var(--muted) 60%, var(--bg)); }
+    .agent-card.agent-card--off { border-left-color: var(--status-neutral); opacity: 0.62; filter: saturate(0.45); }
+    .agent-card.agent-card--off .agent-name, .agent-card.agent-card--off .agent-state, .agent-card.agent-card--off .agent-card-details { color: var(--muted); }
+    .agent-card.agent-card--off .agent-card-details { min-height: 0; resize: none; }
     .pause-badge { --component-status: var(--status-error); margin-left: var(--sp-2); vertical-align: middle; } /* pill recipe */
     .pause-info { cursor: help; font-size: 0.7rem; margin-left: var(--sp-2); opacity: 0.8; position: relative; display: inline-block; }
     .pause-info:hover .pause-tooltip { display: block; }
@@ -6803,15 +6806,19 @@
       _sidebarAttachDragHandlers();
     }
 
-    function _sidebarAgents() {
-      const runtime = [...(window._lastAgents || [])];
+    function agentsWithDisabledConfigured(runtimeAgents) {
+      const runtime = [...(runtimeAgents || [])];
       const runtimeNames = new Set(runtime.map(a => a.name));
       for (const configured of (window._configuredAgents || [])) {
         if (!configured.enabled && !runtimeNames.has(configured.name)) {
-          runtime.push({ ...configured, configDisabled: true });
+          runtime.push({ ...configured, configDisabled: true, state: configured.state || 'stopped', busy: configured.busy || 'idle' });
         }
       }
       return runtime;
+    }
+
+    function _sidebarAgents() {
+      return agentsWithDisabledConfigured(window._lastAgents || []);
     }
 
     applyLayout(getLayout());
@@ -8589,7 +8596,8 @@
       el.querySelectorAll('.kick-prompt').forEach(inp => {
         if (inp.value) savedInputs[inp.id] = inp.value;
       });
-      const { sorted: sortedAgents } = _sortAgentsBySidebar(agents);
+      const cardAgents = agentsWithDisabledConfigured(agents);
+      const { sorted: sortedAgents } = _sortAgentsBySidebar(cardAgents);
       if (sortedAgents.length === 0) {
         setIfChanged(el, emptyStateCard('🤖', 'Add your first agent',
           'Agents are the workers that scan repos, review changes, keep CI healthy, and write docs. Start from a quick template or build one from scratch. ' +
@@ -8599,15 +8607,16 @@
       const orderedAgents = agentLayoutApplyOrder(sortedAgents);
       agentCardLayoutUpdateResetButton(sortedAgents);
       const cards = agentsFocusedFirst(orderedAgents).map(a => {
+        const disabledCard = agentIsDisabled(a);
         const isOnDemand = a.onDemand === true;
         // Manual/persisted pause wins over offByCadence — see the agent-detail
         // renderer for the incident this ordering prevents.
         const isPaused = a.paused === true && !isOnDemand;
-        const isOff = agentHeldByMode(a) && !isPaused && !isOnDemand;
+        const isOff = agentHeldByMode(a) && !isPaused && !isOnDemand && !disabledCard;
         // Down = process not alive — anything but 'running'. 'stopped'-only
         // matching rendered crash-looping ('failed') agents green (#2465).
         const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
-        const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting;
+        const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting && !disabledCard;
         const needsLogin = _agentNeedsLogin(a, isStopped);
         const STALE_MS = 1200000; // 20 minutes
         const isStale = a.summaryUpdated && !isPaused && a.busy === 'working' && (Date.now() - new Date(a.summaryUpdated).getTime()) > STALE_MS;
@@ -8616,12 +8625,12 @@
         else if (a.structuredStatus === 'NEEDS_CONTEXT') statusCls = 'status-needs-context';
         else if (isStale) statusCls = 'status-stale';
         const isOnDemandIdle = isOnDemand && a.busy !== 'working';
-        const cls = needsLogin ? 'needs-login' : isStarting ? 'starting' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isStopped ? 'stopped' : `${a.busy} ${statusCls}`.trim();
+        const cls = disabledCard ? 'agent-card--off' : needsLogin ? 'needs-login' : isStarting ? 'starting' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isStopped ? 'stopped' : `${a.busy} ${statusCls}`.trim();
         // Down + unauthenticated CLI = attention-token needs-login (same formula as the
         // card's Login button above), not plain down-red (#2465).
-        const dotCls = (isStopped && needsLogin) ? 'needs-login' : isStarting ? 'starting' : isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
+        const dotCls = disabledCard ? 'off' : (isStopped && needsLogin) ? 'needs-login' : isStarting ? 'starting' : isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
         // Healthy-but-governor-paused → hollow green dot (see detail-header renderer).
-        const dotState = isOff ? 'off-healthy' : dotCls;
+        const dotState = disabledCard ? 'off' : isOff ? 'off-healthy' : dotCls;
         const canToggle = a.beadRole !== 'supervisor';
         const canPauseToggle = canToggle && dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
         /* RESUME LEADS (#5594). A paused agent's card offers its pause toggle
@@ -8677,12 +8686,15 @@
         const agentOrderHandle = `<button type="button" class="dashboard-grip agent-card-order-handle" draggable="true" data-agent-order-grip data-agent="${esc(a.name)}" data-stop="1" aria-label="Drag to reorder ${esc(a.displayName || a.name)}" title="Drag to reorder" aria-pressed="false">⠿</button>`;
         const agentSpanTip = `Drag or use ← / → to set ${a.displayName || a.name} to span 1, 2, or 3 columns; Esc resets width`;
         const agentSpanHandle = `<button type="button" class="agent-card-resize-col" data-agent-resize-col data-agent="${esc(a.name)}" data-stop="1" aria-label="${esc(agentSpanTip)}" title="${esc(agentSpanTip)}" aria-valuemin="1" aria-valuemax="3" aria-valuenow="${layoutSize.span || 1}"></button>`;
+        const configButton = `<button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button>`;
+        const enabledHeaderActions = `${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Full log of the latest run as selectable, searchable text">📄 full log</a>`)} <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Archived logs of previous kicks — survives restarts and upgrades">🕘 past kicks</a> <button class="hv-btn btn-danger btn-sm restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> ${configButton}`;
+        const headerActions = disabledCard ? configButton : enabledHeaderActions;
         return `<div class="agent-card ${cls}${compactCls}" data-agent="${esc(a.name)}" data-agent-order-key="${esc(a.name)}" data-agent-span="${layoutSize.span || 1}">
           ${agentSpanHandle}
           <span class="working-indicator"></span>
-          <div class="agent-name">${agentOrderHandle}<span class="dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${disabledBadge}${continuousBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Full log of the latest run as selectable, searchable text">📄 full log</a>`)} <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Archived logs of previous kicks — survives restarts and upgrades">🕘 past kicks</a> <button class="hv-btn btn-danger btn-sm restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
-          ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence)}
-          <div class="agent-state ${isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : (a.busy === 'working' && a.awaitingCI) ? 'Waiting on CI' : a.busy}${pauseInfoIcon(a)}${(() => {
+          <div class="agent-name">${agentOrderHandle}<span class="dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${disabledBadge}${continuousBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${headerActions}</div>
+          ${disabledCard ? '' : terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence)}
+          <div class="agent-state ${disabledCard ? 'off' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${disabledCard ? 'disabled' : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : (a.busy === 'working' && a.awaitingCI) ? 'Waiting on CI' : a.busy}${disabledCard ? '' : pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return statusBadgeHTML('blocked', 'blocked', a.statusEvidence, 'blocked');
             if (a.structuredStatus === 'NEEDS_CONTEXT') return statusBadgeHTML('needs_context', 'needs context', a.statusEvidence, 'needs-context');
             if (a.structuredStatus === 'DONE_WITH_CONCERNS') return statusBadgeHTML('needs_attention', 'concerns', a.statusEvidence, 'done-concerns');
@@ -8705,7 +8717,7 @@
             const prefix = retrying ? 'retrying: ' : '';
             return `<div class="agent-error" title="${esc(a.lastError)}">⚠ ${esc(prefix)}${esc(a.lastError)}</div>`;
           })()}
-          <div class="agent-card-details" data-agent-resize-y data-agent="${esc(a.name)}"${layoutHeightAttr}>
+          ${disabledCard ? `<div class="agent-card-details agent-card-details--off" data-agent-resize-y data-agent="${esc(a.name)}"${layoutHeightAttr}><div class="agent-field"><span class="label" title="Disabled agents remain configured but the governor does not schedule them.">status</span><span class="value">powered off — switch to 1 to enable</span></div></div>` : `<div class="agent-card-details" data-agent-resize-y data-agent="${esc(a.name)}"${layoutHeightAttr}>
           <div class="agent-field"><span class="label" title="${isInferenceBackendName(a.cli) ? 'Inference backend (self-hosted model server)' : 'The CLI backend running this agent (e.g. claude, copilot). Pin to prevent governor from switching it.'}">${isInferenceBackendName(a.cli) ? 'method' : 'cli'}</span><span class="value">${cliChip(a.cli, a.pinnedBoth || a.pinnedCli, a.name)}${(a.pinnedBoth || a.pinnedCli) ? '' : ` <button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="false" title="Pin CLI — lock current backend">📌</button>`}</span></div>
           <div class="agent-field"><span class="label" title="The LLM model powering this agent. Governor may change it based on budget or mode. Pin to lock.">model</span><span class="value">${modelChip(a.model, a.govReason, a.pinnedBoth || a.pinnedModel, a.name)}${(a.pinnedBoth || a.pinnedModel) ? '' : ` <button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" title="Pin model — lock current model">📌</button>`}</span></div>
           <div class="agent-field"><span class="label" title="Agent operating mode — controls what GitHub actions this agent can take (advisory, issues, PRs, merge).">mode</span><span class="value">${modeLabel(a)}${a.needsRestart ? ' ' + statusBadgeHTML('needs_context', '⚠ restart needed', 'CLI flags are stale — restart agent to apply new mode', 'needs-context') : ''}</span></div>
@@ -8746,7 +8758,7 @@
             </select>
             ${effortSelectHtml(a)}
           </div>
-          </div>
+          </div>`}
         </div>`;
       });
       const html = cards.join('');
