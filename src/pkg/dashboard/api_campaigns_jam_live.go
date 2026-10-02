@@ -84,7 +84,7 @@ func (s *Server) handleCampaignJamWebSocket(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		return
 	}
-	actor := jamActorFromRequest(r, r.URL.Query().Get("agent"), r.URL.Query().Get("model"))
+	actor := jamActorFromRequest(r)
 	client := &jamLiveClient{
 		id:       jamID("client"),
 		campaign: campaignID,

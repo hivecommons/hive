@@ -213,14 +213,14 @@ func (s *Server) handleCampaignJamPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state, err := s.mutateCampaignJam(id, func(state *CampaignJamState) error {
-		recordJamRevision(state, req.SpecContent, strings.TrimSpace(req.Reason), jamActorFromRequest(r, req.Agent, req.Model), nil)
+		recordJamRevision(state, req.SpecContent, strings.TrimSpace(req.Reason), jamActorFromRequest(r), nil)
 		return nil
 	})
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.auditFromRequest(r, "campaign_jam_revision", auditDetail("campaign", id), strings.TrimSpace(req.Agent))
+	s.auditFromRequest(r, "campaign_jam_revision", auditDetail("campaign", id), "")
 	jsonResponse(w, map[string]any{"ok": true, "jam": state})
 }
 
@@ -245,7 +245,7 @@ func (s *Server) handleCampaignJamThreadsPost(w http.ResponseWriter, r *http.Req
 	}
 	state, err := s.mutateCampaignJam(id, func(state *CampaignJamState) error {
 		now := jamNow()
-		actor := jamActorFromRequest(r, req.Agent, req.Model)
+		actor := jamActorFromRequest(r)
 		if strings.TrimSpace(req.ThreadID) != "" {
 			for i := range state.Threads {
 				if state.Threads[i].ID == strings.TrimSpace(req.ThreadID) {
@@ -298,7 +298,7 @@ func (s *Server) handleCampaignJamSuggestionsPost(w http.ResponseWriter, r *http
 	}
 	action := firstRunNonEmpty(strings.TrimSpace(req.Action), "create")
 	state, err := s.mutateCampaignJam(id, func(state *CampaignJamState) error {
-		actor := jamActorFromRequest(r, req.Agent, req.Model)
+		actor := jamActorFromRequest(r)
 		switch action {
 		case "create":
 			section := strings.TrimSpace(req.Section)
@@ -351,7 +351,7 @@ func (s *Server) handleCampaignJamPollsPost(w http.ResponseWriter, r *http.Reque
 	}
 	action := firstRunNonEmpty(strings.TrimSpace(req.Action), "create")
 	state, err := s.mutateCampaignJam(id, func(state *CampaignJamState) error {
-		actor := jamActorFromRequest(r, req.Agent, req.Model)
+		actor := jamActorFromRequest(r)
 		switch action {
 		case "create":
 			return createJamPoll(state, req, actor)
@@ -676,13 +676,11 @@ func jamDiff(before, after string) string {
 	return "- " + before + "\n+ " + after
 }
 
-func jamActorFromRequest(r *http.Request, agent, model string) CampaignJamActor {
-	agent = strings.TrimSpace(agent)
-	model = strings.TrimSpace(model)
-	if agent != "" {
-		return CampaignJamActor{Type: "agent", Name: agent, Agent: agent, Model: model}
-	}
-	return CampaignJamActor{Type: "human", Name: requestUser(r), Model: model}
+// Jam callers are attributed only to their authenticated dashboard identity.
+// Legacy agent/model request fields are ignored; agent attribution is reserved
+// for server-generated model output in handleCampaignJamAgentsPost.
+func jamActorFromRequest(r *http.Request) CampaignJamActor {
+	return CampaignJamActor{Type: "human", Name: requestUser(r)}
 }
 
 func jamNow() string {
