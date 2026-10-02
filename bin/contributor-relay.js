@@ -72,6 +72,7 @@ const {
   paneShowsTransientAPIError,
   paneShowsUnretryableAPIError,
   paneQuotaExhaustion,
+  headlessQuotaExhaustion,
   paneShowsLoginRequiredError,
   paneUnknownAPIErrorLine,
   classifyPane,
@@ -3600,6 +3601,12 @@ function runHeadlessTask(task) {
         setPiInvocationState('failed');
         console.error(`Headless task ${task.task_id} failed: ${reason}`);
         writeHeadlessStatus(HEADLESS_STATE_FAILED, { task_id: task.task_id, task_gen: task.task_gen, result: 'failed', reason });
+        const quota = wasTimedOut || spawnError ? null : headlessQuotaExhaustion(diagnostic, BACKEND);
+        if (quota) {
+          enterQuotaHold(quota);
+          failCurrentTask(reason, { permanent: false, kind: 'environment', skipReady: true });
+          return;
+        }
         failCurrentTask(reason, {
           permanent: false,
           kind: BACKEND === 'pi' ? 'environment' : undefined,

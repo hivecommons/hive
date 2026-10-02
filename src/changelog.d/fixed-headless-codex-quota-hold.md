@@ -1,0 +1,1 @@
+- Headless Codex usage-limit exits (`ERROR: You’ve hit your usage limit.`) now enter the relay quota hold instead of failing the task and immediately requesting more work (#10040).
