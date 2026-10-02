@@ -21,7 +21,7 @@ func TestDashboardBandActionsStaticWiring9019(t *testing.T) {
 		`<div class="repo-issue-band-title" title="${esc(g.tip)}">`,
 		`<div class="repo-pr-band-title" title="${esc(g.tip)}">`,
 		// Overview legend rows and slices carry the rule.
-		`<div class="overview-chart-legend-row" title="${esc(s.label + (s.rule ? ': ' + s.rule : ''))}">`,
+		`<div class="overview-chart-legend-row" data-action="overviewNavigateBand"`,
 		"<title>${esc(s.label)}: ${s.count}${s.rule ? ' — ' + esc(s.rule) : ''}</title>",
 		"hover a band for its rule",
 	} {

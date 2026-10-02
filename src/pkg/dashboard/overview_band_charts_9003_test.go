@@ -15,7 +15,7 @@ func TestOverviewBandChartsStaticWiring9003(t *testing.T) {
 		"applySectionCollapse('overview-section')",
 		"function overviewIssueBandSlices(repos)",
 		"function overviewPRBandSlices(repos)",
-		"function renderOverviewDonut(title, subtitle, slices)",
+		"function renderOverviewDonut(title, subtitle, slices, history, state)",
 		"groupedRepoIssues(issues)",
 		"groupedRepoPRs(r.openPrs || [], r.heldPrs || [])",
 		"(r.actionableIssues || []).concat(r.heldIssues || [])",

@@ -1,0 +1,1 @@
+- Make the dashboard Overview card a first-class workspace summary with centered chart layout, repo/org filtering, KPI strip, configurable labels, and CSV/JSON exports.

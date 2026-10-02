@@ -19,8 +19,8 @@ func TestOverviewChartPolish(t *testing.T) {
 		"function overviewTransitionOptions(selected)",
 		`data-change-action="setOverviewTransition" data-arg-types="v" title="Transition between charts"`,
 		".overview-chart-controls .overview-chart-select { font-size: var(--fs-xs);",
-		".overview-chart-card { --overview-chart-card-min-height: 18rem;",
-		"grid-template-columns: minmax(200px, 240px) minmax(0, 1fr); align-items: start;",
+		".overview-chart-card { --overview-chart-card-min-height: 14rem;",
+		"grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); align-items: center;",
 		".overview-chart-download { position: absolute;",
 		".overview-duration-normal { --overview-transition-duration: 1000ms; }",
 	} {
