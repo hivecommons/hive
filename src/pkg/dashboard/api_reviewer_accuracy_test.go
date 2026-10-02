@@ -52,7 +52,7 @@ func TestHandleReviewerAccuracy(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &sum); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if sum.WindowDays != 7 || sum.Samples != 1 {
+	if sum.WindowDays != 7 || sum.Samples != 1 || sum.RecordedVerdicts != 1 {
 		t.Fatalf("summary = %+v", sum)
 	}
 	if len(sum.Perspectives) != 1 || sum.Perspectives[0].Blocks != 1 || sum.Perspectives[0].FalseBlocks != 0 {

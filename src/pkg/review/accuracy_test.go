@@ -11,6 +11,7 @@ func TestSummarizeReviewerAccuracyByPerspectiveAndModel(t *testing.T) {
 		"acme/a#1": {Repo: "acme/a", Number: 1, FirstSeenAt: now.Add(-2 * time.Hour), Outcome: OutcomeMerged, OutcomeAt: now.Add(-time.Hour)},
 		"acme/a#2": {Repo: "acme/a", Number: 2, FirstSeenAt: now.Add(-2 * time.Hour), Outcome: OutcomeMerged, OutcomeAt: now.Add(-time.Hour)},
 		"acme/a#3": {Repo: "acme/a", Number: 3, FirstSeenAt: now.Add(-2 * time.Hour), Outcome: OutcomeClosed, OutcomeAt: now.Add(-time.Hour)},
+		"acme/a#5": {Repo: "acme/a", Number: 5, FirstSeenAt: now.Add(-2 * time.Hour), Outcome: OutcomeOpen},
 	}}
 	artifact := Artifact{Items: []Aggregate{
 		{
@@ -29,12 +30,20 @@ func TestSummarizeReviewerAccuracyByPerspectiveAndModel(t *testing.T) {
 			Repo: "acme/a", Number: 4, HeadSHA: "old", ReviewModel: "reviewer-b", Verdict: VerdictApprove,
 			Perspectives: map[Perspective]Verdict{PerspectiveSecurity: VerdictApprove}, Confidence: Confidence{Score: 5}, RecordedAt: now.Add(-60 * 24 * time.Hour),
 		},
+		{
+			Repo: "acme/a", Number: 5, HeadSHA: "open", ReviewModel: "reviewer-c", Verdict: VerdictApprove,
+			Perspectives: map[Perspective]Verdict{PerspectiveCorrectness: VerdictApprove}, Confidence: Confidence{Score: 5}, RecordedAt: now.Add(-time.Hour),
+		},
+		{
+			Repo: "acme/a", Number: 6, HeadSHA: "missing", ReviewModel: "reviewer-c", Verdict: VerdictApprove,
+			Perspectives: map[Perspective]Verdict{PerspectiveCorrectness: VerdictApprove}, Confidence: Confidence{Score: 5}, RecordedAt: now.Add(-time.Hour),
+		},
 	}}
 	sum := SummarizeReviewerAccuracy(now, 30*24*time.Hour, artifact, ledger, map[string]ReviewerAccuracyEvidence{
 		"acme/a#1": {ReworkedAfterApproval: true},
 		"acme/a#2": {MergedUnchangedAfterBlock: true},
 	})
-	if sum.Samples != 3 || sum.WindowDays != 30 {
+	if sum.Samples != 3 || sum.RecordedVerdicts != 5 || sum.MissingOutcomes != 2 || sum.WindowDays != 30 {
 		t.Fatalf("summary counts = %+v", sum)
 	}
 	correctness := findAccuracyGroup(t, sum.Perspectives, "correctness")

@@ -21,11 +21,13 @@ type ReviewerAccuracyEvidence struct {
 }
 
 type ReviewerAccuracySummary struct {
-	GeneratedAt    time.Time               `json:"generated_at"`
-	WindowDays     int                     `json:"window_days"`
-	Samples        int                     `json:"samples"`
-	Perspectives   []ReviewerAccuracyGroup `json:"perspectives"`
-	ReviewerModels []ReviewerAccuracyGroup `json:"reviewer_models"`
+	GeneratedAt      time.Time               `json:"generated_at"`
+	WindowDays       int                     `json:"window_days"`
+	Samples          int                     `json:"samples"`
+	RecordedVerdicts int                     `json:"recorded_verdicts"`
+	MissingOutcomes  int                     `json:"missing_outcomes"`
+	Perspectives     []ReviewerAccuracyGroup `json:"perspectives"`
+	ReviewerModels   []ReviewerAccuracyGroup `json:"reviewer_models"`
 }
 
 type ReviewerAccuracyGroup struct {
@@ -68,15 +70,22 @@ func SummarizeReviewerAccuracy(now time.Time, window time.Duration, artifact Art
 	perspectives := map[string]*accuracyAccumulator{}
 	models := map[string]*accuracyAccumulator{}
 	seen := map[string]bool{}
+	seenRecorded := map[string]bool{}
+	missingOutcomes := map[string]bool{}
 	for _, item := range artifact.Items {
 		if item.RecordedAt.IsZero() || item.RecordedAt.Before(since) {
 			continue
 		}
+		key := reviewKey(item.Repo, item.Number, item.HeadSHA)
+		if !seenRecorded[key] {
+			seenRecorded[key] = true
+			sum.RecordedVerdicts++
+		}
 		outcome := ledger.Items[outcomeKey(item.Repo, item.Number)]
-		if outcome == nil {
+		if outcome == nil || outcome.Outcome == OutcomeOpen {
+			missingOutcomes[key] = true
 			continue
 		}
-		key := reviewKey(item.Repo, item.Number, item.HeadSHA)
 		if !seen[key] {
 			seen[key] = true
 			sum.Samples++
@@ -96,6 +105,7 @@ func SummarizeReviewerAccuracy(now time.Time, window time.Duration, artifact Art
 		}
 		accuracyAcc(models, model).add(item.Verdict, item.Confidence.Score, outcome, ev)
 	}
+	sum.MissingOutcomes = len(missingOutcomes)
 	sum.Perspectives = finishAccuracyGroups(perspectives)
 	sum.ReviewerModels = finishAccuracyGroups(models)
 	return sum
