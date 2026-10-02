@@ -457,7 +457,7 @@ func (s *Server) AdmitTriagedRunRefWithContext(ref worksource.Ref, ctx worksourc
 		title:           ctx.Title,
 		tier:            "triage",
 		stage:           StageSpec,
-		gen:             1,
+		gen:             nextRunAdmissionGen(runKey),
 		triageVerdict:   strings.TrimSpace(verdict),
 		triageRationale: strings.TrimSpace(rationale),
 		workItem:        ctx,
@@ -468,6 +468,30 @@ func (s *Server) AdmitTriagedRunRefWithContext(ref worksource.Ref, ctx worksourc
 		return fmt.Errorf("persisting admitted run lease for %s: %w", taskID, err)
 	}
 	return nil
+}
+
+// nextRunAdmissionGen returns the generation a freshly admitted spec lease
+// starts at. Generations increase monotonically across a run's stages and key
+// its receipts, so a re-admitted run key must start past every generation an
+// earlier run already wrote; otherwise a stale receipt makes the new stage look
+// finished and parked at its checkpoint before any work.
+func nextRunAdmissionGen(runKey string) uint64 {
+	entries, err := os.ReadDir(filepath.Join(runReceiptsDir, sanitizeReceiptSegment(runKey)))
+	if err != nil {
+		return 1
+	}
+	var maxGen uint64
+	for _, entry := range entries {
+		_, rest, ok := strings.Cut(entry.Name(), "-gen")
+		if !ok {
+			continue
+		}
+		raw, _, _ := strings.Cut(rest, ".")
+		if gen, err := strconv.ParseUint(raw, 10, 64); err == nil && gen > maxGen {
+			maxGen = gen
+		}
+	}
+	return maxGen + 1
 }
 
 // RunTriageFixRetired reports whether an owner reset retired this triaged run
