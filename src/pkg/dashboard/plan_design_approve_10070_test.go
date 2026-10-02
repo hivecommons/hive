@@ -3,6 +3,7 @@ package dashboard
 import (
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ import (
 func designApproveTestServer(t *testing.T, repo string, number int) (*Server, *beads.Store, *beads.Bead, string) {
 	t.Helper()
 	srv, store, _ := planServer(t)
+	srv.contributeHub.taskLeasesFile = filepath.Join(t.TempDir(), "task-leases.json")
 	epic, err := store.Create("design epic", beads.TypeEpic, beads.PriorityHigh, "architect", "")
 	if err != nil {
 		t.Fatalf("create epic: %v", err)
