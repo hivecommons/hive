@@ -10,9 +10,13 @@
 # Contract encoded here (see src/docs/spektacular.md):
 #   spektacular <spec|plan> status <name>           (bare name, no extension;
 #                                                    the CLI has no --json flag)
-#     -> {"error":false,"kind","name","artifact_id","document_status":"draft"|"final"|"stale",
+#     -> {"error":false,"kind","name","artifact_id",
+#         "document_status":"draft"|"final"|"superseded"|"archived"|"stale",
 #         "current_step","completed_steps":[],"created_at","updated_at",
 #         "closed_at","spec","plan"}
+#        0.22 emits draft, final, superseded and archived (and "" for an
+#        artifact without the frontmatter key, which counts as open); stale
+#        is only emitted by 0.23+.
 #        created_at / closed_at are frontmatter dates emitted as RFC3339
 #        midnight UTC, "" when unset; updated_at is workflow activity only
 #        while the in-progress state matches the artifact, otherwise a file
@@ -30,7 +34,8 @@
 #
 # Environment:
 #   SPEK_FAKE_SCENARIO  draft-final | never-final | final-then-draft |
-#                       final-no-updated-at | stale-plan | missing
+#                       final-no-updated-at | stale-plan | superseded |
+#                       archived | missing
 #   SPEK_FAKE_STATE     path of the per-scenario call counter file
 set -eu
 
@@ -105,6 +110,9 @@ case "$scenario" in
     ;;
   stale-plan)
     status=stale
+    ;;
+  superseded|archived)
+    status="$scenario"
     ;;
   draft-final|*)
     if [ "$count" -le 2 ]; then status=draft; else status=final; fi

@@ -110,7 +110,7 @@ func (a *leaseAdapter) ActiveStages(time.Time) ([]Stage, error) {
 func (a *leaseAdapter) Advance(_ context.Context, st Stage, status ArtifactStatus, receipt outputschema.StageReceipt, plan *Plan, now time.Time) error {
 	if plan != nil {
 		if err := a.reg.ImportRunPlan(st.RunKey, st.Repo, RenderTaskList(*plan)); err != nil {
-			return err
+			return &PlanImportError{RunKey: st.RunKey, Artifact: status.JoinKey(), Err: err}
 		}
 	}
 	data, err := json.MarshalIndent(receipt, "", "  ")

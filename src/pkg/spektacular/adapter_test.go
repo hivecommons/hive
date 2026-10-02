@@ -24,6 +24,7 @@ type fakeLeaseRegistry struct {
 	present    bool
 	visitErr   error
 	advanceErr error
+	importErr  error
 	advances   []map[string]string
 	receipts   [][]byte
 	refusals   []map[string]string
@@ -76,6 +77,9 @@ func (f *fakeLeaseRegistry) RecordStageProgress(_ string, _ string, attrs map[st
 }
 
 func (f *fakeLeaseRegistry) ImportRunPlan(_, _, taskList string) error {
+	if f.importErr != nil {
+		return f.importErr
+	}
 	f.plans = append(f.plans, taskList)
 	return nil
 }
@@ -136,6 +140,24 @@ func TestLeaseAdapter_AdvanceAndRefuseThroughPrimitives(t *testing.T) {
 	r4 := &Runner{Exec: (&scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentFinal)}}).exec, Poll: testPoll, Registry: NewLeaseRegistryAdapter(reg4), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	if res := r4.Tick(context.Background(), t0); res.Errors != 1 || res.Advanced != 0 {
 		t.Fatalf("advance error tick = %+v", res)
+	}
+}
+
+func TestLeaseAdapter_FailedPlanImportRefusesWithReason(t *testing.T) {
+	reg := &fakeLeaseRegistry{stage: StagePlan, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true, importErr: errors.New("no bead store configured for plan import")}
+	ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, DocumentFinal)}, exportJSON: exportJSON}
+	r := &Runner{Exec: ex.exec, Poll: testPoll, Registry: NewLeaseRegistryAdapter(reg), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if res := r.Tick(context.Background(), t0); res.Refused != 1 || res.Errors != 0 || res.Advanced != 0 {
+		t.Fatalf("tick = %+v", res)
+	}
+	if len(reg.advances) != 0 || reg.stage != StagePlan {
+		t.Fatalf("advanced despite failed import: advances=%d stage=%q", len(reg.advances), reg.stage)
+	}
+	if len(reg.refusals) != 1 || reg.refusals[0][AttrReason] != RefusePlanImportFailed || reg.refusals[0][AttrDocumentStatus] != string(DocumentFinal) {
+		t.Fatalf("refusals = %+v", reg.refusals)
+	}
+	if res := r.Tick(context.Background(), t0.Add(testPoll)); res.Polled != 0 {
+		t.Fatalf("parked tick = %+v", res)
 	}
 }
 

@@ -430,7 +430,7 @@ func TestStatus_OtherErrorsAreTyped(t *testing.T) {
 		"bad json":        {`{not json`, new(*ContractError)},
 		"kind mismatch":   {statusJSON(KindPlan, testRunKey, DocumentDraft), new(*ContractError)},
 		"name mismatch":   {statusJSON(KindSpec, "other-name", DocumentDraft), new(*ContractError)},
-		"unknown status":  {statusJSON(KindSpec, testRunKey, DocumentStatus("archived")), new(*ContractError)},
+		"unknown status":  {statusJSON(KindSpec, testRunKey, DocumentStatus("withdrawn")), new(*ContractError)},
 		"exec plain fail": {`ERR:{"nope":true}`, new(*ContractError)},
 	}
 	for name, tc := range cases {
@@ -898,15 +898,85 @@ func TestArtifactMatchesSlug(t *testing.T) {
 	}
 }
 
-func TestTick_PlanFinalWithFailedExportDoesNotAdvance(t *testing.T) {
+func TestStatus_AcceptsEveryCLIDocumentStatus(t *testing.T) {
+	for _, status := range []DocumentStatus{DocumentDraft, DocumentFinal, DocumentStale, DocumentSuperseded, DocumentArchived} {
+		ex := &scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, status)}}
+		got, err := (&Runner{Exec: ex.exec}).Status(context.Background(), KindSpec, testRunKey)
+		if err != nil || got.DocumentStatus != status {
+			t.Fatalf("status %q: got %q err=%v", status, got.DocumentStatus, err)
+		}
+	}
+	// A document without a document_status key is open; the CLI prints "".
+	ex := &scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, "")}}
+	got, err := (&Runner{Exec: ex.exec}).Status(context.Background(), KindSpec, testRunKey)
+	if err != nil || got.DocumentStatus != DocumentDraft {
+		t.Fatalf("blank status: got %q err=%v", got.DocumentStatus, err)
+	}
+}
+
+func TestTick_SupersededOrArchivedDocumentParksLease(t *testing.T) {
+	cases := map[DocumentStatus]string{
+		DocumentSuperseded: RefuseReplacedDocument,
+		DocumentArchived:   RefuseArchivedDocument,
+	}
+	for status, reason := range cases {
+		t.Run(string(status), func(t *testing.T) {
+			reg := newFakeRegistry(StagePlan)
+			ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, status)}, exportJSON: exportJSON}
+			r := newRunner(reg, ex)
+			if res := r.Tick(context.Background(), t0); res.Refused != 1 || res.Errors != 0 || res.Advanced != 0 {
+				t.Fatalf("tick = %+v", res)
+			}
+			if len(reg.refusals) != 1 || reg.refusals[0] != reason {
+				t.Fatalf("refusals = %v, want [%s]", reg.refusals, reason)
+			}
+			if res := r.Tick(context.Background(), t0.Add(testPoll)); res.Polled != 0 || ex.statusCalls() != 1 {
+				t.Fatalf("parked tick = %+v status calls = %d", res, ex.statusCalls())
+			}
+		})
+	}
+}
+
+func TestTick_PlanFinalWithFailedExportRefusesAndParks(t *testing.T) {
 	reg := newFakeRegistry(StagePlan)
 	ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, DocumentFinal)}, exportErr: errors.New("exit status 2")}
 	r := newRunner(reg, ex)
-	if res := r.Tick(context.Background(), t0); res.Advanced != 0 || res.Errors != 1 {
+	if res := r.Tick(context.Background(), t0); res.Advanced != 0 || res.Refused != 1 || res.Errors != 0 {
 		t.Fatalf("tick = %+v", res)
 	}
 	if len(reg.advances) != 0 {
 		t.Fatal("advanced without a plan export")
+	}
+	if len(reg.refusals) != 1 || reg.refusals[0] != RefusePlanImportFailed {
+		t.Fatalf("refusals = %v", reg.refusals)
+	}
+	// Parked: later polls neither call the CLI again nor re-refuse.
+	calls := len(ex.calls)
+	if res := r.Tick(context.Background(), t0.Add(3*testPoll)); res.Polled != 0 || res.Refused != 0 || len(ex.calls) != calls {
+		t.Fatalf("parked tick = %+v calls %d -> %d", res, calls, len(ex.calls))
+	}
+	// A new generation (operator reset or executor retry) looks again.
+	reg.stage.Gen = 2
+	ex.exportErr = nil
+	ex.exportJSON = exportJSON
+	if res := r.Tick(context.Background(), t0.Add(4*testPoll)); res.Advanced != 1 {
+		t.Fatalf("post-reset tick = %+v", res)
+	}
+}
+
+func TestTick_PlanImportRejectedByRegistryRefuses(t *testing.T) {
+	reg := newFakeRegistry(StagePlan)
+	reg.advanceErr = &PlanImportError{RunKey: testRunKey, Artifact: testRunKey, Err: errors.New("no bead store configured for plan import")}
+	ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, DocumentFinal)}, exportJSON: exportJSON}
+	r := newRunner(reg, ex)
+	if res := r.Tick(context.Background(), t0); res.Refused != 1 || res.Errors != 0 || res.Advanced != 0 {
+		t.Fatalf("tick = %+v", res)
+	}
+	if len(reg.refusals) != 1 || reg.refusals[0] != RefusePlanImportFailed {
+		t.Fatalf("refusals = %v", reg.refusals)
+	}
+	if res := r.Tick(context.Background(), t0.Add(testPoll)); res.Polled != 0 {
+		t.Fatalf("parked tick = %+v", res)
 	}
 }
 
@@ -1230,6 +1300,19 @@ func TestFixture_FinalThenDraftAndNeverFinal(t *testing.T) {
 	}
 	if len(reg2.advances) != 0 || len(reg2.refusals) != 0 || reg2.stage.Gen != 1 {
 		t.Fatalf("fixture never-final: advances=%d refusals=%v gen=%d", len(reg2.advances), reg2.refusals, reg2.stage.Gen)
+	}
+}
+
+func TestFixture_SupersededAndArchivedPark(t *testing.T) {
+	for scenario, reason := range map[string]string{"superseded": RefuseReplacedDocument, "archived": RefuseArchivedDocument} {
+		reg := newFakeRegistry(StagePlan)
+		r := &Runner{Exec: fixtureExec(t, scenario), Poll: testPoll, Registry: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+		if res := r.Tick(context.Background(), t0); res.Refused != 1 || res.Errors != 0 || res.Advanced != 0 {
+			t.Fatalf("fixture %s: %+v", scenario, res)
+		}
+		if len(reg.refusals) != 1 || reg.refusals[0] != reason {
+			t.Fatalf("fixture %s: refusals = %v", scenario, reg.refusals)
+		}
 	}
 }
 

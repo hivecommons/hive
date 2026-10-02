@@ -199,6 +199,25 @@ func TestResolveSpekArtifactFromFilesMatchesCounterIDs(t *testing.T) {
 	}
 }
 
+func TestSpekHubStagePromptGitHubDoesNotRequireGhCLI(t *testing.T) {
+	p := SpekHubStagePromptWithContext(StageSpec, "myorg/repo1", 57, "myorg/repo1#57", "Do thing", "myorg-repo1-57", worksource.WorkItemContext{
+		SourceType: "github",
+		Body:       "Captured issue body",
+	})
+	for _, want := range []string{"Issue description:\nCaptured issue body", "https://api.github.com/repos/myorg/repo1/issues/57", "myorg/repo1#57"} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, p)
+		}
+	}
+	if strings.Contains(p, "gh issue view") {
+		t.Fatalf("hub prompt must not ask for gh issue view; the executor env has no gh token:\n%s", p)
+	}
+	p = SpekHubStagePrompt(StagePlan, "myorg/repo1", 57, "myorg/repo1#57", "Do thing", "myorg-repo1-57")
+	if strings.Contains(p, "gh issue view") || strings.Contains(p, "Issue description:") || !strings.Contains(p, "https://api.github.com/repos/myorg/repo1/issues/57") {
+		t.Fatalf("prompt without a captured body:\n%s", p)
+	}
+}
+
 func TestSpekHubStagePromptOmitsEmptyTitleQuotes(t *testing.T) {
 	p := SpekHubStagePrompt(StageSpec, "kubestellar/console", 23725, "kubestellar/console#23725", "", "kubestellar-console-23725")
 	if strings.Contains(p, `#23725 ""`) {
