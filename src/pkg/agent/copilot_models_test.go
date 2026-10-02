@@ -112,12 +112,20 @@ func TestNormalizeModelNameCopilotDrift(t *testing.T) {
 }
 
 // TestCopilotLaunchModelRejectedFallback covers #9927: stored 5-5 selections
-// launch on the accepted family instead of the CLI's silent fallback.
+// launch on the CLI-accepted DOTTED id instead of silently downgrading to the
+// bare -5 family. CopilotLaunchModel used to re-downgrade an already-correctly
+// -canonicalized claude-opus-5.5/claude-sonnet-5.5 back to claude-opus-5/
+// claude-sonnet-5 via a stale rejected-id map left over from before #9943
+// restored the dotted spelling — silently discarding the 5.5 selection at
+// launch and reproducing the original bug. CopilotLaunchModel is now just
+// CanonicalizeCopilotModel, so it must agree with
+// TestCanonicalizeCopilotModelFiveFiveDashToDot for every dashed/dotted 5.5
+// spelling.
 func TestCopilotLaunchModelRejectedFallback(t *testing.T) {
 	cases := map[string]string{
-		"claude-opus-5-5":   "claude-opus-5",
-		"claude-sonnet-5-5": "claude-sonnet-5",
-		"claude-sonnet.5.5": "claude-sonnet-5",
+		"claude-opus-5-5":   "claude-opus-5.5",
+		"claude-sonnet-5-5": "claude-sonnet-5.5",
+		"claude-sonnet.5.5": "claude-sonnet-5.5",
 		"claude-fable-5":    "claude-fable-5",
 		"gpt-5.5":           "gpt-5.5",
 		"":                  "",

@@ -104,21 +104,21 @@ func CanonicalizeCopilotModel(id string) string {
 	return id
 }
 
-// copilotRejectedModelFallbacks maps ids the pinned Copilot CLI 1.0.88 rejects
-// from --model (it silently launches claude-sonnet-5 instead, #9927) to the
-// closest id it accepts, so a previously stored selection launches on the
-// same model family rather than the CLI's arbitrary fallback.
-var copilotRejectedModelFallbacks = map[string]string{
-	"claude-opus-5-5":   "claude-opus-5",
-	"claude-sonnet-5-5": "claude-sonnet-5",
-}
-
-// CopilotLaunchModel returns the id to pass to the copilot CLI's --model flag:
-// the canonical id, with CLI-rejected ids replaced by their accepted family.
+// CopilotLaunchModel returns the id to pass to the copilot CLI's --model
+// flag: the canonical, CLI-accepted id.
+//
+// This used to additionally downgrade claude-opus-5-5/claude-sonnet-5-5 to
+// the bare claude-opus-5/claude-sonnet-5 family via a copilotRejectedModelFallbacks
+// map, from when #9933 believed the pinned Copilot CLI 1.0.88 had no accepted
+// spelling for Opus/Sonnet 5.5 at all. #9943 found the dotted
+// claude-opus-5.5/claude-sonnet-5.5 IS accepted and taught
+// CanonicalizeCopilotModel to rewrite the rejected dashed input to it — but
+// left the stale downgrade map in place here, keyed by the separator-collapsed
+// form that also matches the now-canonical dotted id. So CopilotLaunchModel
+// kept silently discarding the 5.5 selection at launch and running 5 instead,
+// reproducing the exact bug #9943 was supposed to close (#9927). Canonicalizing
+// is now sufficient: an id this function returns is always one
+// copilotCLIAcceptedModels already lists as accepted.
 func CopilotLaunchModel(id string) string {
-	id = CanonicalizeCopilotModel(id)
-	if fb, ok := copilotRejectedModelFallbacks[copilotModelKey(id)]; ok {
-		return fb
-	}
-	return id
+	return CanonicalizeCopilotModel(id)
 }
