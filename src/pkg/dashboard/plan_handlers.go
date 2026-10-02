@@ -257,6 +257,20 @@ func (s *Server) handlePlanDesignApprove(w http.ResponseWriter, r *http.Request)
 		jsonError(w, "design has not been posted yet", http.StatusBadRequest)
 		return
 	}
+	runKey := s.runKeyForEpic(repo, strconv.Itoa(number), epic.Meta(planning.MetaRunKey))
+	if epic.Meta(planning.MetaDesignVia) == planning.DesignViaSpektacular {
+		// Check readiness before touching GitHub or the epic: a spec run
+		// still executing (no parked checkpoint receipt yet) must refuse
+		// here instead of applying the approval label and marking the epic
+		// approved first, which left the forge/epic state diverged from the
+		// 409 toast the owner saw (hivecommons/hive#10070). A spec that has
+		// already parked at its checkpoint is ready, even though its lease
+		// stage is still "spec" until the checkpoint advances it.
+		if _, held := s.heldSpecCheckpointLease(runKey, time.Now()); !held && s.activeRunStage(runKey) == StageSpec {
+			jsonError(w, "Spektacular spec artifact is not ready for design approval yet", http.StatusConflict)
+			return
+		}
+	}
 	if s.deps == nil || s.deps.GHClient == nil {
 		jsonError(w, "github client not initialized", http.StatusServiceUnavailable)
 		return
@@ -269,13 +283,6 @@ func (s *Server) handlePlanDesignApprove(w http.ResponseWriter, r *http.Request)
 	if err := planning.ApproveDesign(store, epicID); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
-	}
-	runKey := s.runKeyForEpic(repo, strconv.Itoa(number), epic.Meta(planning.MetaRunKey))
-	if epic.Meta(planning.MetaDesignVia) == planning.DesignViaSpektacular {
-		if s.activeRunStage(runKey) == StageSpec {
-			jsonError(w, "Spektacular spec artifact is not ready for design approval yet", http.StatusConflict)
-			return
-		}
 	}
 	s.auditFromRequest(r, "design_approved", auditDetail("epic", epicID, "label", label, "run", runKey, "surface", "design"), agentName)
 	s.refreshAndPersist()

@@ -1,0 +1,1 @@
+- Fix dashboard `POST /api/plan/{epic}/design/approve` applying the approval label and marking the epic design-approved before checking whether the Spektacular spec artifact is ready, so a 409 no longer leaves the forge/epic state diverged from what it reports (#10070).
