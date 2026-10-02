@@ -61,6 +61,21 @@ their contents like CLI output. Clone credential files
 (`.hive-git-credentials-*` beside the shared clones) older than one hour are
 removed on each sweep, covering a hub that died during clone or fetch.
 
+With per-agent UID isolation active (the entrypoint wrote a UID map), the CLI
+does not run as the hive uid. The entrypoint allocates a UID for the executor
+identity (`hive-<identity>`, e.g. `hive-hive-spek`) when
+`runs.spektacular.enabled` is set, and the executor launches the CLI through
+`su-exec` as that user with the executor `HOME` and `umask 002`. That user
+cannot read the GitHub App key or clone credential files, its `:443` traffic
+goes through the proxy redirect and is attributed to the executor identity,
+and cancellation kills its process group through `su-exec`. Before launch the
+executor grants group write on the worktree and `HOME` (never through a
+symlink), leaves the worktree's `.git` entry alone and sets the sticky bit on
+the worktree root so the CLI cannot swap the gitdir pointer; after exit it
+restores group write on whatever the CLI created. If the map has no UID for
+the identity (Spektacular enabled after boot; restart hive) or `su-exec` is
+missing, the stage is not launched.
+
 ## Polling and timeouts
 
 The hub polls stages on a separate serial worker every 30 seconds. Slow polls
