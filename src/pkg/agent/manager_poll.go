@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -213,6 +214,31 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 						}()
 						return // stop polling; Restart will spawn a new goroutine
 					}
+				}
+			}
+
+			// Surface a Copilot CLI startup banner showing it rejected the
+			// configured --model id and silently substituted another one
+			// (#9927). This is NOT a transient error — the CLI will make the
+			// same substitution every launch until the configured model is
+			// corrected — so this only sets LastError for visibility; it
+			// never triggers a restart (one would just reproduce the same
+			// banner). Gated to fire once per distinct requested id so a
+			// persistently-wrong config does not re-log every ~3s poll;
+			// copilotModelFallbackRequested is cleared on (re)launch
+			// alongside LastError so a corrected model re-arms detection.
+			if effectiveBackend(agent) == "copilot" {
+				if requested, running, found := paneShowsCopilotModelFallback(filtered); found && requested != agent.copilotModelFallbackRequested {
+					agent.copilotModelFallbackRequested = requested
+					agent.LastError = fmt.Sprintf(
+						"Copilot CLI rejected model %q from --model and is running %q instead; update this agent's model",
+						requested, running,
+					)
+					m.logger.Warn("copilot CLI substituted the configured model",
+						"agent", agent.Name,
+						"requested_model", requested,
+						"running_model", running,
+					)
 				}
 			}
 

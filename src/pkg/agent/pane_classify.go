@@ -70,6 +70,36 @@ func paneShowsFatalNetworkError(lines []string) bool {
 	return false
 }
 
+// copilotModelFallbackRe matches the Copilot CLI's startup banner when the
+// id passed to --model is one the pinned CLI rejects, e.g.:
+//
+//	Model "claude-sonnet-5-5" from --model flag is not available. Using "claude-sonnet-5" instead.
+//
+// The CLI then silently runs the substituted model for the whole session
+// with no further indication (#9927). copilotPinnedCLIModels/
+// copilotCLIAcceptedModels (pkg/dashboard/cli_models.go,
+// pkg/agent/copilot_models.go) keep the picker from offering an id this CLI
+// rejects, but this is the defense-in-depth catch for a model that reaches
+// --model some other way — a stale stored config from before #9933/#9943, a
+// hand-edited hive.yaml, or a future CLI pin that drops support for a
+// currently-accepted id. Matched case-sensitively: the CLI always quotes the
+// ids verbatim, and a loose match risks tripping on an agent quoting this
+// same sentence while discussing the bug.
+var copilotModelFallbackRe = regexp.MustCompile(`Model "([^"]+)" from --model flag is not available\. Using "([^"]+)" instead\.`)
+
+// paneShowsCopilotModelFallback reports the requested and actually-running
+// model ids when the pane shows the Copilot CLI silently substituted a
+// different model than the one configured (#9927). ok is false when no such
+// banner is present.
+func paneShowsCopilotModelFallback(lines []string) (requested, running string, ok bool) {
+	for _, line := range lines {
+		if m := copilotModelFallbackRe.FindStringSubmatch(line); m != nil {
+			return m[1], m[2], true
+		}
+	}
+	return "", "", false
+}
+
 // agentIsProducing reports whether an agent is still rendering output, and so
 // vetoes the fatal-network restart in the poll loop.
 //

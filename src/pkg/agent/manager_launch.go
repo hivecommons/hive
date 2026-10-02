@@ -231,6 +231,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		now := time.Now()
 		agent.State = StateRunning
 		agent.LastError = ""
+		agent.copilotModelFallbackRequested = ""
 		agent.lastLaunchFailureBanner = ""
 		agent.StartedAt = &now
 
@@ -325,6 +326,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	// stale "no API key" reason lingering after a key-save relaunch would
 	// send an operator chasing a problem that no longer exists.
 	agent.LastError = ""
+	agent.copilotModelFallbackRequested = ""
 	agent.lastLaunchFailureBanner = ""
 	agent.StartedAt = &now
 	agent.launchGen++

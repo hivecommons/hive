@@ -326,6 +326,40 @@ func TestPaneShowsFatalNetworkErrorUnit(t *testing.T) {
 	}
 }
 
+// TestPaneShowsCopilotModelFallbackUnit covers #9927: the Copilot CLI's
+// startup banner when --model names an id the pinned CLI rejects, and the
+// substituted model it silently ran instead.
+func TestPaneShowsCopilotModelFallbackUnit(t *testing.T) {
+	banner := []string{
+		"Copilot v1.0.88 uses AI.",
+		`Model "claude-sonnet-5-5" from --model flag is not available. Using "claude-sonnet-5" instead.`,
+		"❯",
+	}
+	requested, running, ok := paneShowsCopilotModelFallback(banner)
+	if !ok {
+		t.Fatal("should detect the model fallback banner")
+	}
+	if requested != "claude-sonnet-5-5" {
+		t.Errorf("requested model = %q, want claude-sonnet-5-5", requested)
+	}
+	if running != "claude-sonnet-5" {
+		t.Errorf("running model = %q, want claude-sonnet-5", running)
+	}
+
+	normalLines := []string{
+		"normal output",
+		"❯",
+		"/ commands · ? help",
+	}
+	if _, _, ok := paneShowsCopilotModelFallback(normalLines); ok {
+		t.Error("should not detect a fallback banner in normal output")
+	}
+
+	if _, _, ok := paneShowsCopilotModelFallback(nil); ok {
+		t.Error("nil pane should not show a fallback banner")
+	}
+}
+
 func TestSeedRestartCountUnit(t *testing.T) {
 	m := NewManager(map[string]config.AgentConfig{
 		"scanner": {Backend: "claude"},
