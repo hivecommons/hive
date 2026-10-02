@@ -3,6 +3,7 @@ package dashboard
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -254,12 +255,11 @@ func TestCampaignJamStoreFailuresKeepStateAndReport5xx(t *testing.T) {
 		t.Fatalf("read jam store: %v", err)
 	}
 
-	// Occupy the temp path with a directory so the staged write fails: the
-	// previously persisted state must survive untouched instead of being
-	// truncated the way the old in-place write did.
-	if err := os.Mkdir(path+".tmp", 0o755); err != nil {
-		t.Fatalf("occupy temp path: %v", err)
-	}
+	// Fail the staged write at the rename: the previously persisted state
+	// must survive untouched instead of being truncated the way the old
+	// in-place write did, and the staged temp file must be cleaned up.
+	campaignJamRename = func(string, string) error { return errors.New("injected rename failure") }
+	t.Cleanup(func() { campaignJamRename = os.Rename })
 	blocked := jamPostAs(t, s, "/api/campaigns/spec-6/jam/threads", "read-write", "alice", map[string]any{
 		"section": "Goals",
 		"body":    "second thread",
@@ -274,9 +274,8 @@ func TestCampaignJamStoreFailuresKeepStateAndReport5xx(t *testing.T) {
 	if !bytes.Equal(before, after) {
 		t.Fatalf("failed write changed the store:\nbefore:\n%s\nafter:\n%s", before, after)
 	}
-	if err := os.Remove(path + ".tmp"); err != nil {
-		t.Fatalf("free temp path: %v", err)
-	}
+	assertNoCampaignJamTempFiles(t, path)
+	campaignJamRename = os.Rename
 
 	if err := os.WriteFile(path, []byte(`{"campaigns": {"spec`), 0o600); err != nil {
 		t.Fatalf("truncate jam store: %v", err)
@@ -300,8 +299,24 @@ func TestCampaignJamWriteLeavesNoTempFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("jam path: %v", err)
 	}
-	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
-		t.Fatalf("temp jam file still present after write: err=%v", err)
+	assertNoCampaignJamTempFiles(t, path)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat jam store: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("jam store mode = %o, want 600", perm)
+	}
+}
+
+func assertNoCampaignJamTempFiles(t *testing.T, path string) {
+	t.Helper()
+	leftovers, err := filepath.Glob(path + ".*.tmp")
+	if err != nil {
+		t.Fatalf("glob temp files: %v", err)
+	}
+	if len(leftovers) > 0 {
+		t.Fatalf("temp jam files left beside the store: %v", leftovers)
 	}
 }
 
