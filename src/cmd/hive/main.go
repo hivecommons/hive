@@ -1355,15 +1355,7 @@ func (b *boot) wireBootClosures() {
 	}
 
 	b.dashboardURLForFreshHeartbeat = func() string {
-		if b.cfg.Hub.DashboardURL != "" {
-			return b.cfg.Hub.DashboardURL
-		}
-		if b.cfg.HiveID != "" && b.cfg.Hub.URL != "" {
-			if u, err := url.Parse(b.cfg.Hub.URL); err == nil && u.Host != "" {
-				return fmt.Sprintf("https://%s.%s", b.cfg.HiveID, u.Host)
-			}
-		}
-		return fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port)
+		return resolveSpokeDashboardURL(b.cfg, func() string { return spoke.SpokeServedHost(b.ctx) })
 	}
 
 	b.leaderboardForHeartbeat = func() []spoke.LeaderboardEntry {
@@ -1399,21 +1391,7 @@ func (b *boot) wireBootClosures() {
 	}
 
 	b.dashboardURLForHeartbeat = func() string {
-		if b.cfg.Hub.DashboardURL != "" {
-			return b.cfg.Hub.DashboardURL
-		}
-		// Prefer the host our OWN Route/Ingress actually serves. The synthesised
-		// "<hiveID>.<hub host>" below is only correct when this spoke is fronted by
-		// the hub's wildcard domain; pull-only clusters must report their live host.
-		if host := spoke.SpokeServedHost(b.ctx); host != "" {
-			return "https://" + host
-		}
-		if b.cfg.HiveID != "" && b.cfg.Hub.URL != "" {
-			if u, err := url.Parse(b.cfg.Hub.URL); err == nil && u.Host != "" {
-				return fmt.Sprintf("https://%s.%s", b.cfg.HiveID, u.Host)
-			}
-		}
-		return fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port)
+		return resolveSpokeDashboardURL(b.cfg, func() string { return spoke.SpokeServedHost(b.ctx) })
 	}
 
 	b.dashboardDependencies = func() *dashboard.Dependencies {
@@ -2103,6 +2081,36 @@ func (b *boot) taskMCPURLForAgents() string {
 		return ""
 	}
 	return strings.TrimRight(b.dashboardURLForFreshHeartbeat(), "/") + taskmcp.EndpointPath
+}
+
+// resolveSpokeDashboardURL is the single resolver for the URL of THIS spoke's
+// dashboard, shared by both heartbeat paths and the task MCP URL handed to
+// hub-launched agents so they cannot drift (#10282). servedHost reports the
+// host the spoke's own Route/Ingress serves ("" when unknown).
+//
+// The synthesised "<hiveID>.<hub host>" is only correct when this spoke is
+// fronted by the hub's wildcard domain, so it is used only when the hub is
+// enabled and nothing more specific is known. A hub-disabled spoke (whose
+// hub.url still carries a default) falls back to the local dashboard port,
+// which co-located agents can always reach.
+func resolveSpokeDashboardURL(cfg *config.Config, servedHost func() string) string {
+	if cfg.Hub.Enabled && cfg.Hub.DashboardURL != "" {
+		return cfg.Hub.DashboardURL
+	}
+	if cfg.Dashboard.PublicURL != "" {
+		return cfg.Dashboard.PublicURL
+	}
+	if servedHost != nil {
+		if host := servedHost(); host != "" {
+			return "https://" + host
+		}
+	}
+	if cfg.Hub.Enabled && cfg.HiveID != "" && cfg.Hub.URL != "" {
+		if u, err := url.Parse(cfg.Hub.URL); err == nil && u.Host != "" {
+			return fmt.Sprintf("https://%s.%s", cfg.HiveID, u.Host)
+		}
+	}
+	return fmt.Sprintf("http://localhost:%d", cfg.Dashboard.Port)
 }
 
 // taskMCPLaunchTokenForAgents mints the lease-scoped bearer one launch
