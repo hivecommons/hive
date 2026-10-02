@@ -1,0 +1,1 @@
+- `docs/HUB_DISASTER_RECOVERY.md` now cites `src/deploy/entrypoint.sh:989-992`, where the entrypoint writes `hive.yaml.runtime` after the merge ([#10152](https://github.com/hivecommons/hive/issues/10152)).
