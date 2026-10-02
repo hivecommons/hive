@@ -39,6 +39,31 @@ import (
 // only the last 1-2 on the PVC. Serializing every Save() closes the race.
 var saveMu sync.Mutex
 
+var (
+	saveObserverMu sync.Mutex
+	saveObserver   func()
+)
+
+// SetSaveObserver registers a callback invoked immediately before a valid
+// Config.Save begins writing files. The main process uses this to arm the
+// config watcher with SkipNext for every programmatic save, so the fsnotify
+// event from the primary config write does not reload a stale snapshot over
+// the already-correct in-memory config. Passing nil clears the observer.
+func SetSaveObserver(fn func()) {
+	saveObserverMu.Lock()
+	defer saveObserverMu.Unlock()
+	saveObserver = fn
+}
+
+func notifySaveObserver() {
+	saveObserverMu.Lock()
+	fn := saveObserver
+	saveObserverMu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+
 // dashboardAuthTokenFile is the mounted Secret key used by hosted spokes when
 // the token is not injected as an env var. Tests redirect it to a hermetic path.
 var dashboardAuthTokenFile = "/secrets/dashboard-token"
@@ -6753,6 +6778,18 @@ func (c *Config) saveLocked() error {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
 
+	notifySaveObserver()
+
+	// Write the dashboard overlay before touching the watched primary config.
+	// The fsnotify watcher reloads from LoadWithDashboardOverlay(c.SourcePath)
+	// after the primary write has been quiet for debounceDelay. On slow PVCs,
+	// writing the overlay last allowed that reload to see the previous overlay
+	// and resurrect old whole-agent entries (kick_template/mode/model) over the
+	// freshly reconciled in-memory config. Installing the atomic overlay first
+	// means any reload triggered by the primary write observes the same agent
+	// layer this Save is about to persist.
+	overlayErr := c.saveDashboardOverlay()
+
 	// Open the existing file (preserving its inode) rather than creating a
 	// temp file and renaming. Rename breaks Docker bind mounts because it
 	// replaces the inode — the host file is never updated, so acmm_level
@@ -6761,15 +6798,14 @@ func (c *Config) saveLocked() error {
 	// #3961: a source-path failure must NOT abort the save. On deployments
 	// that mount the config read-only (a ConfigMap mounted straight at
 	// /etc/hive/hive.yaml — the issue's k3s case), this write can NEVER
-	// succeed, and returning here skipped exactly the two layers that DO
-	// survive a pod restart: the PVC runtime config (which the entrypoint
-	// boots from in both K8s steady state and Docker/LXC) and the dashboard
-	// overlay (the K8s first-boot/reprovision merge input). The old early
-	// return therefore made every runtime change — pause state, operator
-	// model/backend ownership, ACMM level, gateway saves — evaporate on
-	// every restart, while spamming "failed to persist" on every save.
-	// Record the failure, keep writing the durable layers, and report
-	// success iff the state will actually survive a restart.
+	// succeed, and returning here would skip the remaining durable layer.
+	// The dashboard overlay has already been attempted so a watcher reload
+	// cannot beat it; the PVC runtime config is still written below. Together
+	// those are the layers that survive a pod restart (runtime is the K8s
+	// recovery copy and Docker/LXC boot input; the dashboard overlay is the
+	// K8s first-boot/reprovision merge input). Record the source failure, keep
+	// writing the runtime layer, and report success iff the state will actually
+	// survive a restart.
 	var srcErr error
 	f, err := os.OpenFile(c.SourcePath, os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
@@ -6825,8 +6861,6 @@ func (c *Config) saveLocked() error {
 			log.Printf("[config] warning: failed to tighten permissions on %s: %v", runtimePath, chmodErr)
 		}
 	}
-
-	overlayErr := c.saveDashboardOverlay()
 
 	if srcErr == nil {
 		return nil
