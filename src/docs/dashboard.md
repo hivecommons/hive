@@ -61,6 +61,11 @@ posture, and cadence controls for the hive. Its collapsible **PRs by model** nes
 sub-section reads `GET /api/governor/pr-models` with the selected `7d`, `30d`,
 or `all` window. The nested header keeps the window/sort toggles visible and its
 collapsed summary shows the current top-ranked model plus model count.
+The cadence table starts each agent row with the same `1`/`0` Agent power
+rocker used in the agent settings panel, so owners can enable or disable an
+agent from the table; disabled rows are dimmed, and read-only viewers see the
+current state without an active control. The Continuous column and Cadences
+settings panel use that same shared rocker component for continuous mode.
 Rows keep the merged/open/closed PR-volume bar, then add compact effectiveness
 columns from the same aggregation used by the contributor Operations **Most
 effective models** panel: merged PRs, first-pass merge rate, verified-PR run

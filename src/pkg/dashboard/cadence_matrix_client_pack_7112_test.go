@@ -106,6 +106,9 @@ const cadenceMatrixPackAssertions = `
 function esc(s) { return String(s == null ? '' : s); }
 function cliChip() { return ''; }
 function modelChip() { return ''; }
+function agentIsDisabled(a) { return a && a.enabled === false; }
+function pwrSwitchHtml(on, attrs, ariaLabel, title, extraClass) { return '<span class="pwr-switch ' + (extraClass || '') + '"' + (attrs || '') + '></span>'; }
+function agentPowerSwitchHtml(a) { return pwrSwitchHtml(!agentIsDisabled(a), ' data-agent="' + esc(a.name) + '"', esc(a.name) + ' enabled', '', 'agent-power-switch'); }
 function _sortAgentsBySidebar(agents) { return { sorted: agents.slice() }; }
 
 global.window = {
@@ -147,6 +150,9 @@ const cadenceMatrixFailOpenAssertions = `
 function esc(s) { return String(s == null ? '' : s); }
 function cliChip() { return ''; }
 function modelChip() { return ''; }
+function agentIsDisabled(a) { return a && a.enabled === false; }
+function pwrSwitchHtml(on, attrs, ariaLabel, title, extraClass) { return '<span class="pwr-switch ' + (extraClass || '') + '"' + (attrs || '') + '></span>'; }
+function agentPowerSwitchHtml(a) { return pwrSwitchHtml(!agentIsDisabled(a), ' data-agent="' + esc(a.name) + '"', esc(a.name) + ' enabled', '', 'agent-power-switch'); }
 function _sortAgentsBySidebar(agents) { return { sorted: agents.slice() }; }
 
 global.window = {
