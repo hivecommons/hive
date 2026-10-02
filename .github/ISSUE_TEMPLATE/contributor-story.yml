@@ -1,0 +1,69 @@
+name: Contributor story
+about: Share a Hive Commons contributor story for hivecommons.dev/stories
+title: "📖 contributor story: "
+labels: [contributor-story, docs]
+assignees: ""
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for sharing your story. Maintainers review issues with the `contributor-story` label and may promote verified stories to hivecommons.dev/stories.
+  - type: input
+    id: name
+    attributes:
+      label: Name or handle
+      description: What should maintainers call you while reviewing this story?
+      placeholder: "@octocat or Ada Lovelace"
+    validations:
+      required: true
+  - type: input
+    id: profile
+    attributes:
+      label: GitHub, GitLab, or other profile URL
+      placeholder: "https://github.com/octocat"
+    validations:
+      required: false
+  - type: input
+    id: project
+    attributes:
+      label: Project or hive you contributed to
+      placeholder: "Hive, Project Bluefin, KubeStellar Console, ..."
+    validations:
+      required: true
+  - type: dropdown
+    id: role
+    attributes:
+      label: Role
+      options:
+        - first-time contributor
+        - returning contributor
+        - maintainer
+        - operator
+    validations:
+      required: true
+  - type: textarea
+    id: story
+    attributes:
+      label: Your story
+      description: Share what you tried to do, what Hive or the relay did, and what changed for you.
+      placeholder: |
+        What did you try to do?
+        What did Hive or the relay do?
+        What changed for you afterward?
+    validations:
+      required: true
+  - type: checkboxes
+    id: quote_ok
+    attributes:
+      label: Can we quote you by name?
+      options:
+        - label: "Yes"
+          required: false
+  - type: input
+    id: link
+    attributes:
+      label: Link to the PR or issue
+      description: Public links help maintainers verify and publish the story.
+      placeholder: "https://github.com/hivecommons/hive/pull/1492"
+    validations:
+      required: false
