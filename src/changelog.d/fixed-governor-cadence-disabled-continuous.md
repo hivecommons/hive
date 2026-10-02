@@ -1,0 +1,1 @@
+- Fixed the Governor cadence table so disabled agents remain visible and continuous-mode agents show that cadence intervals are not used.
