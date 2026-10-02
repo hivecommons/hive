@@ -1,0 +1,1 @@
+- `src/docs/backup-restore.md` now cites the right `src/deploy/entrypoint.sh` lines for the config files read at boot, `hive_harden_runtime_config`, and the beads symlinks and per-agent chown ([#10151](https://github.com/hivecommons/hive/issues/10151)).
