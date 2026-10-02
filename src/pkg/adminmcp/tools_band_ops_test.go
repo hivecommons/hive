@@ -154,3 +154,28 @@ func TestIssuesByBandAndPrsByBandToolsAreListedAsReadOnly(t *testing.T) {
 		}
 	}
 }
+
+// TestBandReadResultMatchesLabelShapedRows pins #10018 for every provider:
+// the Overview export puts the band display label in each row, so the band
+// key filter must match through bands[] rather than on the raw row field.
+func TestBandReadResultMatchesLabelShapedRows(t *testing.T) {
+	data := sampleOverviewIssuesResponse()
+	data["rows"] = []any{
+		map[string]any{"number": float64(1), "band": "Unclaimed"},
+		map[string]any{"number": float64(2), "band": "Confirm & close"},
+		map[string]any{"number": float64(3), "band": "Confirm & close"},
+	}
+	out, err := BandReadResult(ToolIssuesByBand, data, map[string]any{"band": "done"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, ok := out.(map[string]any)["rows"].([]any)
+	if !ok || len(rows) != 2 {
+		t.Fatalf("rows = %#v, want the 2 Confirm & close rows", out.(map[string]any)["rows"])
+	}
+	for _, row := range rows {
+		if band := row.(map[string]any)["band"]; band != "done" {
+			t.Fatalf("row band = %#v, want the band key", band)
+		}
+	}
+}

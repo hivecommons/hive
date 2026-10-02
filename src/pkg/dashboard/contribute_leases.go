@@ -567,6 +567,12 @@ func (h *ContributeWSHub) emitLeaseStageTransitionAt(from, to, reason string, re
 	if reset {
 		attrs["reset"] = "true"
 	}
+	// A retry re-mints the same stage (from == to); mark it so consumers can
+	// tell it from a real advance.
+	retry := !reset && from == to
+	if retry {
+		attrs["retry"] = "true"
+	}
 	// Timeline stages merge attrs per (ref, kind), so a plain advance blanks
 	// the reason/reset left by an earlier reset instead of inheriting them.
 	timelineAttrs := make(map[string]string, len(attrs)+2)
@@ -578,6 +584,9 @@ func (h *ContributeWSHub) emitLeaseStageTransitionAt(from, to, reason string, re
 	}
 	if !reset {
 		timelineAttrs["reset"] = ""
+	}
+	if !retry {
+		timelineAttrs["retry"] = ""
 	}
 	eventAt := int64(0)
 	if !at.IsZero() {
