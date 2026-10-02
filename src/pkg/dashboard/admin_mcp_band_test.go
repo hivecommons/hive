@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/adminmcp"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 func TestAdminMCPIssuesByBandReadPathOmitsBandAndLimit(t *testing.T) {
@@ -45,10 +46,13 @@ func TestDashboardAdminMCPIssuesByBandFiltersRowsButKeepsBands(t *testing.T) {
 				map[string]any{"key": "ready", "label": "Unclaimed", "rule": "no other band matched", "count": 1},
 				map[string]any{"key": "done", "label": "Confirm & close", "rule": "verify and close", "count": 2},
 			},
+			// Rows carry the display label, matching overviewIssueCSVRow /
+			// overviewPRCSVRow (#10018) — not the "ready"/"done" keys a
+			// hand-built key-shaped fixture would use.
 			"rows": []any{
-				map[string]any{"number": 1, "band": "ready"},
-				map[string]any{"number": 2, "band": "done"},
-				map[string]any{"number": 3, "band": "done"},
+				map[string]any{"number": 1, "band": "Unclaimed"},
+				map[string]any{"number": 2, "band": "Confirm & close"},
+				map[string]any{"number": 3, "band": "Confirm & close"},
 			},
 		})
 	})
@@ -68,6 +72,12 @@ func TestDashboardAdminMCPIssuesByBandFiltersRowsButKeepsBands(t *testing.T) {
 	rows, ok := body["rows"].([]any)
 	if !ok || len(rows) != 2 {
 		t.Fatalf("rows = %#v, want only the 2 done-band rows", body["rows"])
+	}
+	for _, row := range rows {
+		m := row.(map[string]any)
+		if m["band"] != "done" {
+			t.Fatalf("row band = %#v, want the rekeyed band key \"done\", not its display label", m["band"])
+		}
 	}
 }
 
@@ -99,5 +109,58 @@ func TestDashboardAdminMCPIssuesByBandRefusesUnknownBand(t *testing.T) {
 	}
 	if env.Data.Type != "refusal" || env.Data.Kind != adminmcp.RefusalKindInvalidArgument || !strings.Contains(env.Data.Reason, "ready") {
 		t.Fatalf("refusal = %+v", env.Data)
+	}
+}
+
+// TestDashboardAdminMCPBandFilterMatchesRowKeyNotLabel feeds the real
+// overviewIssueCSVRow/overviewPRCSVRow row builders through the dashboard's
+// Overview endpoints (rather than hand-built "band": "done"-shaped fixtures)
+// so a regression where rows carry the display label instead of the band
+// key (#10018) fails here instead of only in production.
+func TestDashboardAdminMCPBandFilterMatchesRowKeyNotLabel(t *testing.T) {
+	s := NewServerWithAuth(0, "secret", nil)
+	s.deps = &Dependencies{Config: &config.Config{HiveID: "h1", Dashboard: config.DashboardConfig{AuthToken: "secret"}}}
+	s.statusMu.Lock()
+	s.status = parityStatus9102(t)
+	s.statusMu.Unlock()
+
+	provider := dashboardAdminMCPProvider{server: s, authorization: "Bearer secret"}
+
+	issues, err := provider.Read(context.Background(), adminmcp.ToolIssuesByBand, map[string]any{"band": "done"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issueBody, ok := issues.(map[string]any)
+	if !ok {
+		t.Fatalf("issues result = %#v", issues)
+	}
+	issueRows, ok := issueBody["rows"].([]any)
+	if !ok || len(issueRows) == 0 {
+		t.Fatalf("rows = %#v, want the hive/likely-done issue (#6) to match band=done", issueBody["rows"])
+	}
+	for _, row := range issueRows {
+		m := row.(map[string]any)
+		if m["band"] != "done" {
+			t.Fatalf("row band = %#v, want the band key \"done\" not its display label", m["band"])
+		}
+	}
+
+	prs, err := provider.Read(context.Background(), adminmcp.ToolPrsByBand, map[string]any{"band": "blocked"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prBody, ok := prs.(map[string]any)
+	if !ok {
+		t.Fatalf("prs result = %#v", prs)
+	}
+	prRows, ok := prBody["rows"].([]any)
+	if !ok || len(prRows) == 0 {
+		t.Fatalf("rows = %#v, want the failing-CI PR (#12) to match band=blocked", prBody["rows"])
+	}
+	for _, row := range prRows {
+		m := row.(map[string]any)
+		if m["band"] != "blocked" {
+			t.Fatalf("row band = %#v, want the band key \"blocked\" not its display label", m["band"])
+		}
 	}
 }

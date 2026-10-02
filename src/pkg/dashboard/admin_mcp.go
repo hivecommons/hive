@@ -81,9 +81,57 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 		return nil, err
 	}
 	if tool == adminmcp.ToolIssuesByBand || tool == adminmcp.ToolPrsByBand {
-		return adminmcp.BandReadResult(tool, data, args)
+		return adminmcp.BandReadResult(tool, rekeyOverviewBandRows(data), args)
 	}
 	return adminmcp.CapResult(data, adminmcp.LimitFromArgs(args)), nil
+}
+
+// rekeyOverviewBandRows rewrites each row's "band" field from the Overview
+// display label (e.g. "Confirm & close") that overviewIssueCSVRow /
+// overviewPRCSVRow set it to, back to the band key (e.g. "done") the
+// response's own bands[] already carries alongside that label. Without this,
+// adminmcp.BandReadResult's band argument — documented and validated against
+// the band keys — never matches a row's band field, so band=<key> always
+// returns zero rows (#10018). The CSV/JSON Overview export itself is
+// unaffected: rekeyOverviewBandRows only edits the decoded copy admin MCP
+// feeds to BandReadResult, not the HTTP response already written to rec.
+func rekeyOverviewBandRows(data any) any {
+	body, ok := data.(map[string]any)
+	if !ok {
+		return data
+	}
+	bands, ok := body["bands"].([]any)
+	if !ok {
+		return data
+	}
+	labelToKey := make(map[string]string, len(bands))
+	for _, raw := range bands {
+		spec, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		key, _ := spec["key"].(string)
+		label, _ := spec["label"].(string)
+		if key != "" && label != "" {
+			labelToKey[label] = key
+		}
+	}
+	rows, ok := body["rows"].([]any)
+	if !ok {
+		return data
+	}
+	for _, raw := range rows {
+		row, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if label, ok := row["band"].(string); ok {
+			if key, ok := labelToKey[label]; ok {
+				row["band"] = key
+			}
+		}
+	}
+	return data
 }
 
 func adminMCPReadPath(tool string, args map[string]any) (string, bool) {
