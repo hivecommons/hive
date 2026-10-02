@@ -3801,6 +3801,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 
 		b.refreshDashboard()
 	}, b.logger)
+	config.SetSaveObserver(b.configWatcher.SkipNext)
 	b.dashSrv.SetSkipReloadFunc(b.configWatcher.SkipNext)
 	deps.startConfigWatcher(b.ctx, b.configWatcher)
 

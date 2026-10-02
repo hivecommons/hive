@@ -74,6 +74,60 @@ func TestWatcher_ReloadsOnChange(t *testing.T) {
 	}
 }
 
+func TestSaveObserverSkipsProgrammaticSaveAndAllowsNextExternalReload(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hive.yaml")
+	if err := os.WriteFile(path, []byte(minimalValidYAML("initial-org", "ghp_tok")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	origRuntime := RuntimeConfigFile
+	RuntimeConfigFile = filepath.Join(dir, "hive.yaml.runtime")
+	t.Cleanup(func() { RuntimeConfigFile = origRuntime })
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	restoreSAToken := SetSATokenFileForTest(filepath.Join(dir, "no-such-sa-token"))
+	t.Cleanup(restoreSAToken)
+
+	reloaded := make(chan string, 1)
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	w := NewWatcher(path, func(cfg *Config) {
+		reloaded <- cfg.Project.Org
+	}, logger)
+
+	SetSaveObserver(w.SkipNext)
+	t.Cleanup(func() { SetSaveObserver(nil) })
+
+	cfg := &Config{
+		SourcePath: path,
+		Project:    ProjectConfig{Org: "programmatic-org", Repos: []string{"repo-a"}},
+		GitHub:     GitHubConfig{Token: "ghp_tok"},
+		Agents:     map[string]AgentConfig{"worker": {Backend: "claude", Enabled: true}},
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	w.reload()
+	select {
+	case org := <-reloaded:
+		t.Fatalf("programmatic save reloaded %q, want skip", org)
+	default:
+	}
+
+	if err := os.WriteFile(path, []byte(minimalValidYAML("external-org", "ghp_tok")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w.reload()
+	select {
+	case org := <-reloaded:
+		if org != "external-org" {
+			t.Fatalf("external reload org = %q, want external-org", org)
+		}
+	default:
+		t.Fatal("external edit did not reload after the one skipped save")
+	}
+}
+
 func TestWatcher_CancelStops(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hive.yaml")
