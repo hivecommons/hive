@@ -27,6 +27,15 @@ The light dashboard topbar keeps high-signal operational state only: project nam
 
 Build/version details live in the bottom-left sidebar chip. The collapsed chip shows the short SHA, release channel, and an orange `↑` marker only when an upgrade is available. Open the chip for the full commit link, channel/tracking state, compare/release-notes links, last upgrade status when reported, copy-version, and the manual upgrade action. On small screens the sidebar is reachable through the hamburger drawer, so the version menu remains available without returning the long version strip to the topbar.
 
+## Übersicht widget
+
+The account/avatar menu's **Export → ⬇ Widget** row downloads `GET /api/widget`
+with the same dashboard authentication as the rest of the API. The compact
+payload mirrors the headline dashboard readouts: agent names and
+running/paused/busy/next-kick state, governor mode, ACMM level, actionable
+issue/open PR counts, 7-day PR throughput (opened/merged/closed), spoke version
+and upgrade availability, and the fleet breaker state.
+
 ## Reorder sections
 
 The main dashboard section order is browser-local and display-only. Use the `⠿` grip in each top-level section header to drag a section, or focus the grip and press Space, Up/Down, then Space/Enter to drop; Escape cancels the keyboard move. The order is saved in `localStorage` as `hive.dashboard.layout`, ACMM-hidden sections keep their slots, feature-disabled sections are excluded, the sidebar follows the saved order, and **Reset layout** restores the default v5 order without changing collapse state.
