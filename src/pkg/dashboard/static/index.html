@@ -147,6 +147,7 @@
         background: color-mix(in srgb, var(--amber) 30%, transparent);
       }
     }
+
     .oc-sidebar-resize.dragging {
       background: color-mix(in srgb, var(--amber) 30%, transparent);
     }
@@ -9518,14 +9519,21 @@
         const nameDot = isWorking ? '<span class="agent-dot"></span>' : '';
         const pauseBadge = agentOnDemand ? '<span class="on-demand-badge" data-status="info">on demand</span>' : agentPaused ? '<span class="pause-badge" data-status="warn">paused</span>' : agentOff ? `<span class="off-badge" data-status="neutral">${esc(agentCadenceOffLabel())}</span>` : '';
         const continuousBadge = agentData && agentData.continuous === true ? ` <span class="on-demand-badge" data-status="${agentData.continuousBlocked ? 'warn' : 'info'}" title="Continuous mode — re-kick after session end plus cool-down${agentData.continuousBlocked === 'budget' ? '; held by budget guard' : ''}">∞ continuous${agentData.continuousBlocked ? ' held' : ''}</span>` : '';
+        const displayLabel = (agentData && agentData.displayName) || aname;
+        const continuousOn = agentData && agentData.continuous === true;
+        const continuousTitle = continuousOn
+          ? `Continuous mode is on for ${displayLabel}: re-kick after a session ends plus cool-down${agentData && agentData.continuousBlocked === 'budget' ? '; currently held by budget guard' : ''}`
+          : `Continuous mode is off for ${displayLabel}`;
+        const continuousCell = agentData
+          ? `<td class="continuous-col"><span class="config-toggle-switch gov-continuous-switch ${continuousOn ? 'on' : ''}" role="switch" aria-checked="${continuousOn ? 'true' : 'false'}" aria-label="Continuous mode for ${esc(displayLabel)}" title="${esc(continuousTitle)}" data-action="setAgentContinuous" data-agent="${esc(aname)}" data-enabled="${continuousOn ? 'true' : 'false'}"></span></td>`
+          : '<td class="continuous-col">—</td>';
         const cliPinned = agentData && (agentData.pinnedBoth || agentData.pinnedCli);
         const modelPinned = agentData && (agentData.pinnedBoth || agentData.pinnedModel);
         const cChip = agentData && agentData.cli ? cliChip(agentData.cli, cliPinned, aname) : '?';
         const mChip = agentData && agentData.model ? modelChip(agentData.model, agentData.govReason, modelPinned, aname) : '';
-        const displayLabel = (agentData && agentData.displayName) || aname;
         const cliPinBtn = (agentData && !cliPinned) ? `<button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${aname}" data-pin-type="cli" data-unpin="false" title="Pin CLI">📌</button>` : '';
         const modelPinBtn = (agentData && !modelPinned) ? `<button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${aname}" data-pin-type="model" data-unpin="false" title="Pin model">📌</button>` : '';
-        return `<tr><td>${nameDot}<button type="button" class="gov-agent-name-link" data-action="ocSelectAgent" data-agent="${esc(aname)}" title="Open ${esc(displayLabel)}'s agent card">${esc(displayLabel)}</button>${pauseBadge}${continuousBadge}</td>${cells}<td>${cChip} ${cliPinBtn}</td><td>${mChip} ${modelPinBtn}</td></tr>`;
+        return `<tr><td>${nameDot}<button type="button" class="gov-agent-name-link" data-action="ocSelectAgent" data-agent="${esc(aname)}" title="Open ${esc(displayLabel)}'s agent card">${esc(displayLabel)}</button>${pauseBadge}${continuousBadge}</td>${cells}${continuousCell}<td>${cChip} ${cliPinBtn}</td><td>${mChip} ${modelPinBtn}</td></tr>`;
       }).join('');
       const headers = modes.map(m => {
         const isActive = m === currentMode;
@@ -9533,7 +9541,7 @@
         return `<th class="${cls}">${m}${isActive ? ' ◀' : ''}</th>`;
       }).join('');
       return `<div class="gov-matrix-wrap"><table class="gov-matrix">
-        <thead><tr><th></th>${headers}<th>method</th><th>model</th></tr></thead>
+        <thead><tr><th></th>${headers}<th>Continuous</th><th>method</th><th>model</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>`;
     }
@@ -20108,6 +20116,7 @@ function burnAreaChart() {
         case 'nousSetScope': nousSetScope(el.dataset.scope || el.dataset.arg0); break;
         case 'toggleConfigSwitch': toggleConfigSwitch(el, el.dataset.section, el.dataset.key); break;
         case 'toggleAgentEnabled': setAgentEnabled(el.dataset.agent, el.dataset.enabled !== 'true'); break;
+        case 'setAgentContinuous': setAgentContinuous(el.dataset.agent, el.dataset.enabled !== 'true'); break;
         case 'loadConvergenceSoak': loadConvergenceSoak(); break;
         case 'loadReviewOutcomes': loadReviewOutcomes(); break;
         case 'loadLinearAgentStatus': loadLinearAgentStatus(); break;
@@ -20957,6 +20966,52 @@ function burnAreaChart() {
           el.dataset.enabled = restore[i] ? 'true' : 'false';
         });
         dismissToast(toast, `Could not ${enable ? 'enable' : 'disable'} ${agent}: ${e.message}`, 'error');
+      }
+    }
+
+    async function setAgentContinuous(agent, enable) {
+      const toast = showToast(`${enable ? 'Enabling' : 'Disabling'} continuous mode for ${agent}...`, 'info', true);
+      const switches = Array.from(document.querySelectorAll(`.gov-continuous-switch[data-agent="${CSS.escape(agent)}"]`));
+      const restore = switches.map(el => el.classList.contains('on'));
+      const paint = (on) => {
+        for (const el of switches) {
+          el.classList.toggle('on', on);
+          el.setAttribute('aria-checked', on ? 'true' : 'false');
+          el.dataset.enabled = on ? 'true' : 'false';
+        }
+      };
+      paint(enable);
+      try {
+        const res = await fetch(`/api/config/agent/${encodeURIComponent(agent)}/general`, {
+          method: 'PUT',
+          headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ continuous: enable })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) {
+          switches.forEach((el, i) => {
+            el.classList.toggle('on', restore[i]);
+            el.setAttribute('aria-checked', restore[i] ? 'true' : 'false');
+            el.dataset.enabled = restore[i] ? 'true' : 'false';
+          });
+          dismissToast(toast, `Could not update continuous mode for ${agent}: ${data.error || 'HTTP ' + res.status}`, 'error');
+          return;
+        }
+        const live = (window._lastAgents || []).find(a => a.name === agent);
+        if (live) {
+          live.continuous = enable;
+          if (!enable) live.continuousBlocked = '';
+        }
+        const lastData = window._lastStatus || {};
+        if (lastData.governor) renderGovernor(lastData.governor, lastData.cadenceMatrix || [], lastData);
+        dismissToast(toast, `Continuous mode ${enable ? 'enabled' : 'disabled'} for ${agent}`, 'success');
+      } catch (e) {
+        switches.forEach((el, i) => {
+          el.classList.toggle('on', restore[i]);
+          el.setAttribute('aria-checked', restore[i] ? 'true' : 'false');
+          el.dataset.enabled = restore[i] ? 'true' : 'false';
+        });
+        dismissToast(toast, `Could not update continuous mode for ${agent}: ${e.message}`, 'error');
       }
     }
 
