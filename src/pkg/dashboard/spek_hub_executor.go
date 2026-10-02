@@ -449,7 +449,7 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 		return nil
 	}
 	var interviewAnswers []byte
-	prompt := e.stagePrompt(st, artifact)
+	prompt := e.stagePrompt(st, worktree, artifact)
 	if e.stageInterviewMode() != "auto" {
 		interviewAnswers = readSpekInterviewAnswers(worktree)
 		prompt += spekInterviewPromptBlock(st.stage, artifact, interviewAnswers)
@@ -545,6 +545,13 @@ func (e *SpekHubExecutor) runStageCommand(ctx context.Context, worktree string, 
 		e.log().Info("[spektacular] hub executor process started", "run", st.runKey, "stage", st.stage, "gen", st.gen, "worktree", worktree, "pid", pid)
 		e.recordStageProgress(st, "cli_launched", map[string]string{"backend": e.backend(), "pid": strconv.Itoa(pid), "worktree": worktree})
 		err = c.Wait()
+		// The process has exited: reap any orphan still holding the output
+		// pipe or the inherited fence fd, then judge the run by the exit
+		// status rather than by pipe EOF (ErrWaitDelay implies exit 0).
+		spekHubKillProcessGroup(c)
+		if errors.Is(err, exec.ErrWaitDelay) {
+			err = nil
+		}
 		if closeErr := logWriter.Close(); closeErr != nil {
 			e.log().Warn("[spektacular] flushing hub executor cli log failed", "path", logPath, "error", closeErr)
 		}
@@ -1073,7 +1080,8 @@ func resolveSpekArtifactFromFiles(worktree, kind, slug string) string {
 		}
 		rel, _ := filepath.Rel(root, path)
 		id := bareArtifactName(filepath.ToSlash(rel))
-		if id == slug || strings.HasSuffix(id, "-"+slug) {
+		// Timestamp ids are `<id>-<slug>`; counter ids are `000001_<slug>`.
+		if id == slug || strings.HasSuffix(id, "-"+slug) || strings.HasSuffix(id, "_"+slug) {
 			mt := time.Time{}
 			if info, statErr := d.Info(); statErr == nil {
 				mt = info.ModTime()
@@ -1170,16 +1178,44 @@ func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(worktree, ".spektacular")); errors.Is(err, os.ErrNotExist) {
-		if copied, copyErr := copyPreviousSpektacularProject(e.Identity, st.runKey, worktree); copyErr != nil {
+		copied, copyErr := copyPreviousSpektacularProject(e.Identity, st.runKey, worktree)
+		if copyErr != nil {
 			e.log().Warn("[spektacular] copying previous Spektacular project failed", "run", st.runKey, "worktree", worktree, "error", copyErr)
-		} else if copied {
+		}
+		if !copied || copyErr != nil {
+			if _, err := e.runner()(ctx, worktree, spekGitEnv(os.Environ()), e.binary(), "init", spekInitAgent(e.backend()), "--name", spekProjectName(st.repo)); err != nil {
+				return "", err
+			}
 			return appToken, nil
 		}
-		if _, err := e.runner()(ctx, worktree, spekGitEnv(os.Environ()), e.binary(), "init", spekInitAgent(e.backend()), "--name", filepath.Base(st.repo)); err != nil {
-			return "", err
-		}
+	}
+	// A project committed to the repo (or copied from an earlier generation)
+	// may come from another Spektacular version, which gates every verb behind
+	// `upgrade_required` until `migrate` runs.
+	if out, err := e.runner()(ctx, worktree, spekGitEnv(os.Environ()), e.binary(), "migrate"); err != nil {
+		e.log().Warn("[spektacular] migrate of existing Spektacular project failed", "run", st.runKey, "worktree", worktree, "error", err, "output", tailString(string(out), spekHubOutputTailBytes))
 	}
 	return appToken, nil
+}
+
+// spekProjectName turns a repo basename into a name `spektacular init`
+// accepts: lowercase letters, digits, '-' or '_', starting with a letter or
+// digit (`hive.github.io` -> `hive-github-io`, `.github` -> `github`).
+func spekProjectName(repo string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(filepath.Base(repo)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	name := strings.TrimLeft(b.String(), "-_")
+	if name == "" {
+		return "project"
+	}
+	return name
 }
 
 func copyPreviousSpektacularProject(identity, runKey, worktree string) (bool, error) {
@@ -1493,7 +1529,14 @@ func (e *SpekHubExecutor) binary() string {
 	return e.Config.Spektacular.BinaryOrDefault()
 }
 
-func (e *SpekHubExecutor) stagePrompt(st spekHubStage, artifact string) string {
+func (e *SpekHubExecutor) stagePrompt(st spekHubStage, worktree, artifact string) string {
+	if st.stage == StagePlan {
+		// Spektacular resolves a plan's spec by the plan name, so the plan
+		// must be named after the full ID-prefixed spec, not the bare slug.
+		if spec := resolveSpekArtifactFromFiles(worktree, StageSpec, artifact); spec != "" {
+			artifact = spec
+		}
+	}
 	return spekHubStagePromptWithBinary(st.stage, st.repo, st.number, st.runKey, st.title, artifact, st.workItem, e.binary())
 }
 
@@ -1586,6 +1629,13 @@ func spekHubStagePromptWithBinary(stage, repo string, number int, runKey, title,
 	if title != "" {
 		titleText = " " + strconv.Quote(title)
 	}
+	// Spektacular stores documents under an ID-prefixed name (`<id>-<slug>`
+	// or `000001_<slug>`) and only resolves that full name, so the prompt
+	// must steer every status/file command (and the plan name) to it.
+	stageNoun, cliSteps := "spec", fmt.Sprintf("Use the `%[1]s` CLI configured for this run: run `%[1]s spec new --data '{\"name\":\"%[2]s\"}'` (if `.spektacular/specs/` already holds a spec named `<id>-%[2]s` or `<id>_%[2]s`, continue that spec instead of creating another). Spektacular stores the spec under that ID-prefixed name — the spec file name under `.spektacular/specs/` without `.md` (e.g. `20260102150405-%[2]s`), referred to below as `<spec-id>`; every other spec command needs `<spec-id>`, not `%[2]s`. Follow each step it returns (`%[1]s spec status <spec-id>` shows the current step and its instruction; `%[1]s spec file ...` reads/writes the spec document) until the spec's `document_status` is `final`. Do not implement code, do not commit, do not push, do not open PRs. Stop when `%[1]s spec status <spec-id>` reports `document_status: final`.", cli, artifact)
+	if stage == StagePlan {
+		stageNoun, cliSteps = "plan", fmt.Sprintf("Use the `%[1]s` CLI configured for this run: run `%[1]s plan new --data '{\"name\":\"%[2]s\"}'`, then follow each step it returns (`%[1]s plan status %[2]s` shows the current step and its instruction; `%[1]s plan file ...` reads/writes the plan document under `%[2]s/`) until the plan's `document_status` is `final`. The plan name must be the spec's full ID-prefixed name (the spec file name under `.spektacular/specs/` without `.md`); if `%[2]s` is not, use that full spec name in every plan command instead, otherwise the plan cannot find its spec and `plan file write` is rejected. Do not implement code, do not commit, do not push, do not open PRs. Stop when `%[1]s plan status %[2]s` reports `document_status: final`.", cli, artifact)
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Hive-Run: %s\n\n", runKey)
 	sourceType := strings.TrimSpace(item.SourceType)
@@ -1602,20 +1652,10 @@ func spekHubStagePromptWithBinary(stage, repo string, number int, runKey, title,
 		} else {
 			b.WriteString("\n")
 		}
-		switch stage {
-		case StagePlan:
-			fmt.Fprintf(&b, "You are authoring a Spektacular plan for the source work item above in this repository checkout. Use the target repository %s for code changes and PRs. Use the `%s` CLI configured for this run: run `%s plan new --data '{\"name\":\"%s\",\"spec\":\"%s\"}'`, then follow each step it returns (`%s plan status %s` shows the current step and its instruction; `%s plan file ...` reads/writes the plan document) until the plan's `document_status` is `final`. Do not implement code, do not commit, do not push, do not open PRs. Stop when `%s plan status %s` reports `document_status: final`.", item.Repo, cli, cli, artifact, artifact, cli, artifact, cli, cli, artifact)
-		default:
-			fmt.Fprintf(&b, "You are authoring a Spektacular spec for the source work item above in this repository checkout. Use the target repository %s for code changes and PRs. Use the `%s` CLI configured for this run: run `%s spec new --data '{\"name\":\"%s\"}'`, then follow each step it returns (`%s spec status %s` shows the current step and its instruction; `%s spec file ...` reads/writes the spec document) until the spec's `document_status` is `final`. Do not implement code, do not commit, do not push, do not open PRs. Stop when `%s spec status %s` reports `document_status: final`.", item.Repo, cli, cli, artifact, cli, artifact, cli, cli, artifact)
-		}
+		fmt.Fprintf(&b, "You are authoring a Spektacular %s for the source work item above in this repository checkout. Use the target repository %s for code changes and PRs. %s", stageNoun, item.Repo, cliSteps)
 		return b.String()
 	}
-	switch stage {
-	case StagePlan:
-		fmt.Fprintf(&b, "You are authoring a Spektacular plan for GitHub issue %s%s in this repository checkout. Read the issue with `gh issue view %d --repo %s` (if `gh` is available; otherwise use the GitHub API) and the relevant code. Use the `%s` CLI configured for this run: run `%s plan new --data '{\"name\":\"%s\",\"spec\":\"%s\"}'`, then follow each step it returns (`%s plan status %s` shows the current step and its instruction; `%s plan file ...` reads/writes the plan document) until the plan's `document_status` is `final`. Do not implement code, do not commit, do not push, do not open PRs. Stop when `%s plan status %s` reports `document_status: final`.", issue, titleText, number, repo, cli, cli, artifact, artifact, cli, artifact, cli, cli, artifact)
-	default:
-		fmt.Fprintf(&b, "You are authoring a Spektacular spec for GitHub issue %s%s in this repository checkout. Read the issue with `gh issue view %d --repo %s` (if `gh` is available; otherwise use the GitHub API) and the relevant code. Use the `%s` CLI configured for this run: run `%s spec new --data '{\"name\":\"%s\"}'`, then follow each step it returns (`%s spec status %s` shows the current step and its instruction; `%s spec file ...` reads/writes the spec document) until the spec's `document_status` is `final`. Do not implement code, do not commit, do not push, do not open PRs. Stop when `%s spec status %s` reports `document_status: final`.", issue, titleText, number, repo, cli, cli, artifact, cli, artifact, cli, cli, artifact)
-	}
+	fmt.Fprintf(&b, "You are authoring a Spektacular %s for GitHub issue %s%s in this repository checkout. Read the issue with `gh issue view %d --repo %s` (if `gh` is available; otherwise use the GitHub API) and the relevant code. %s", stageNoun, issue, titleText, number, repo, cliSteps)
 	return b.String()
 }
 

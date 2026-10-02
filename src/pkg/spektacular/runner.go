@@ -48,7 +48,7 @@ const (
 
 // Verb names of the Spektacular CLI the runner invokes. The status verb is
 // the #8301 contract as confirmed on jumppad-labs/spektacular#45; the export
-// verb is still an open ask recorded in docs/spektacular.md.
+// verb shipped in Spektacular 0.23 and is absent from 0.22 and earlier.
 //
 // The CLI has no `--json` flag anywhere (its only global flag is `--fields`):
 // every verb already prints JSON, and an unknown flag is a usage error. The
@@ -68,6 +68,12 @@ const (
 const (
 	errorCodeArtifactNotFound = "artifact_not_found"
 	errorCodeNotFound         = "not_found"
+	// Spektacular 0.23+ addresses `file read` paths without the document
+	// extension and rejects `<name>.md` / `<name>/plan.md` with this code.
+	errorCodeUnexpectedExtension = "unexpected_extension"
+	// Spektacular 0.23+ `plan export` rejects a plan.md without
+	// `#### - [ ] Task:` headings; Hive's plan.md fallback may still parse it.
+	errorCodePlanStructureInvalid = "plan_structure_invalid"
 )
 
 // Artifact name normalisation. Spektacular addresses a spec as
@@ -272,6 +278,71 @@ type PlanTask struct {
 	Title     string   `json:"title"`
 	DependsOn []string `json:"depends_on,omitempty"`
 	Execution string   `json:"execution,omitempty"`
+}
+
+// UnmarshalJSON accepts both export shapes: the pre-0.23 string fields and
+// Spektacular 0.23+'s objects, `repo: {"name","location"}` and
+// `execution: {"type","reason"}`.
+func (t *PlanTask) UnmarshalJSON(data []byte) error {
+	type planTaskAlias PlanTask
+	var raw struct {
+		planTaskAlias
+		Repo      json.RawMessage `json:"repo,omitempty"`
+		Execution json.RawMessage `json:"execution,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*t = PlanTask(raw.planTaskAlias)
+	var repo struct {
+		Name     string `json:"name"`
+		Location string `json:"location"`
+	}
+	if err := unmarshalStringOrObject(raw.Repo, &t.Repo, &repo); err != nil {
+		return fmt.Errorf("repo: %w", err)
+	}
+	if t.Repo == "" {
+		t.Repo = planTaskRepo(repo.Name, repo.Location)
+	}
+	var execution struct {
+		Type string `json:"type"`
+	}
+	if err := unmarshalStringOrObject(raw.Execution, &t.Execution, &execution); err != nil {
+		return fmt.Errorf("execution: %w", err)
+	}
+	if t.Execution == "" {
+		t.Execution = strings.TrimSpace(execution.Type)
+	}
+	return nil
+}
+
+func unmarshalStringOrObject(data json.RawMessage, str *string, obj any) error {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || bytes.Equal(data, []byte("null")) {
+		return nil
+	}
+	if data[0] == '"' {
+		return json.Unmarshal(data, str)
+	}
+	return json.Unmarshal(data, obj)
+}
+
+// planTaskRepo picks the owner/repo spelling from a 0.23+ repo object: name
+// when it already is owner/repo, otherwise a GitHub location, otherwise name.
+func planTaskRepo(name, location string) string {
+	name = strings.TrimSpace(name)
+	if strings.Contains(name, "/") {
+		return name
+	}
+	loc := strings.TrimSpace(location)
+	for _, prefix := range []string{"https://github.com/", "http://github.com/", "git@github.com:", "github.com/"} {
+		loc = strings.TrimPrefix(loc, prefix)
+	}
+	loc = strings.TrimSuffix(strings.TrimSuffix(loc, "/"), ".git")
+	if parts := strings.Split(loc, "/"); len(parts) == 2 && parts[0] != "" && parts[1] != "" && !strings.Contains(loc, ":") {
+		return loc
+	}
+	return name
 }
 
 // Plan is the structured plan export the runner hands to Hive's planner so no
@@ -530,10 +601,12 @@ func (r *Runner) ResolveArtifact(ctx context.Context, dir, kind, slug string) (s
 	return list[0].id, nil
 }
 
+// artifactMatchesSlug accepts the bare slug plus both Spektacular id
+// schemes: timestamp (`<id>-<slug>`) and counter (`000001_<slug>`).
 func artifactMatchesSlug(id, slug string) bool {
 	id = ArtifactKey(id)
 	slug = ArtifactKey(slug)
-	return id == slug || strings.HasSuffix(id, "-"+slug)
+	return id == slug || strings.HasSuffix(id, "-"+slug) || strings.HasSuffix(id, "_"+slug)
 }
 
 func (r *Runner) artifactsFromFileList(ctx context.Context, dir, kind string) map[string]time.Time {
@@ -623,8 +696,8 @@ func artifactIDFromPath(path string) string {
 
 // ExportPlan invokes `spektacular plan export <name> --format json` and returns the
 // structured task list of a final plan. It is the one verb beyond #8301 the
-// runner needs and is still an open ask on the Spektacular side; the fixture
-// encodes its assumed shape.
+// runner needs; Spektacular 0.23+ ships it (with object-valued task repo and
+// execution, which PlanTask accepts alongside the older string shape).
 func (r *Runner) ExportPlan(ctx context.Context, name string) (Plan, error) {
 	return r.exportPlanInDir(ctx, "", name)
 }
@@ -650,9 +723,9 @@ func (r *Runner) exportPlanInDir(ctx context.Context, dir, name string) (Plan, e
 }
 
 // ExportPlanWithFallback preserves `spektacular plan export <name> --format json` as the
-// primary task-list source. Until upstream ships that verb, an
-// unknown-subcommand response falls back to Hive's documented on-disk plan
-// artifact convention: `<name>/tasks.json` first, then `<name>/plan.md`, both
+// primary task-list source. When the CLI lacks that verb (0.22 and earlier)
+// or rejects the plan structure, it falls back to Hive's documented on-disk
+// plan artifact convention: `<name>/tasks.json` first, then `<name>/plan.md`, both
 // read through `spektacular plan file read` so the CLI still owns store
 // access.
 func (r *Runner) ExportPlanWithFallback(ctx context.Context, name string) (Plan, error) {
@@ -705,7 +778,7 @@ func (r *Runner) exportPlanFallbackInDir(ctx context.Context, dir, name string) 
 	if err == nil {
 		return parsePlanJSON(name, bytes.TrimSpace(out), "tasks.json")
 	}
-	if !isNotFound(err) {
+	if !isNotFound(err) && !isUnexpectedExtension(err) {
 		return Plan{}, err
 	}
 	planPath := name + "/plan.md"
@@ -717,27 +790,43 @@ func (r *Runner) exportPlanFallbackInDir(ctx context.Context, dir, name string) 
 }
 
 func (r *Runner) readPlanFileInDir(ctx context.Context, dir, name, path string) ([]byte, error) {
-	out, execErr := r.execInDir(ctx, dir, []string{KindPlan, verbFile, verbRead, path})
+	return r.readFileInDir(ctx, dir, KindPlan, name, path)
+}
+
+func (r *Runner) readSpecFileInDir(ctx context.Context, dir, name, path string) ([]byte, error) {
+	return r.readFileInDir(ctx, dir, KindSpec, name, path)
+}
+
+// readFileInDir reads path through `<kind> file read`. Pre-0.23 CLIs want the
+// extension (`<name>.md`, `<name>/plan.md`); 0.23+ rejects it with
+// unexpected_extension, so the read is retried once without it.
+func (r *Runner) readFileInDir(ctx context.Context, dir, kind, name, path string) ([]byte, error) {
+	out, err := r.readFileOnceInDir(ctx, dir, kind, name, path)
+	if err == nil || !isUnexpectedExtension(err) {
+		return out, err
+	}
+	bare := strings.TrimSuffix(path, filepath.Ext(path))
+	if bare == path || bare == "" {
+		return out, err
+	}
+	return r.readFileOnceInDir(ctx, dir, kind, name, bare)
+}
+
+func (r *Runner) readFileOnceInDir(ctx context.Context, dir, kind, name, path string) ([]byte, error) {
+	out, execErr := r.execInDir(ctx, dir, []string{kind, verbFile, verbRead, path})
 	if execErr != nil {
-		return nil, classifyExecError(KindPlan, name, out, execErr)
+		return nil, classifyExecError(kind, name, out, execErr)
 	}
 	trimmed := bytes.TrimSpace(out)
 	if env, message, isErr := parseErrorEnvelope(trimmed); isErr {
-		return nil, classifyEnvelope(KindPlan, name, env, message)
+		return nil, classifyEnvelope(kind, name, env, message)
 	}
 	return out, nil
 }
 
-func (r *Runner) readSpecFileInDir(ctx context.Context, dir, name, path string) ([]byte, error) {
-	out, execErr := r.execInDir(ctx, dir, []string{KindSpec, verbFile, verbRead, path})
-	if execErr != nil {
-		return nil, classifyExecError(KindSpec, name, out, execErr)
-	}
-	trimmed := bytes.TrimSpace(out)
-	if env, message, isErr := parseErrorEnvelope(trimmed); isErr {
-		return nil, classifyEnvelope(KindSpec, name, env, message)
-	}
-	return out, nil
+func isUnexpectedExtension(err error) bool {
+	var ve *VerbError
+	return errors.As(err, &ve) && strings.EqualFold(ve.Code, errorCodeUnexpectedExtension)
 }
 
 func parsePlanJSON(name string, data []byte, source string) (Plan, error) {
@@ -984,6 +1073,7 @@ func planExportUnavailable(err error) bool {
 		code := strings.ToLower(ve.Code)
 		msg := strings.ToLower(ve.Message)
 		return code == "unknown_subcommand" || code == "unknown_command" ||
+			code == errorCodePlanStructureInvalid ||
 			(strings.Contains(msg, "unknown") && strings.Contains(msg, "export")) ||
 			exportFlagRejected(msg)
 	}

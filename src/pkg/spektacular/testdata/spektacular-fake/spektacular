@@ -22,10 +22,11 @@
 #        {"error":true,"code":"artifact_not_found","message":"...",
 #         "resource":"<name>","next_action":"..."} on stdout
 #   spektacular plan export <name> --format json
-#                                    (still an open ask on the Spektacular
-#                                     side; shape assumed)
+#                                    (Spektacular 0.23+ shape: repo and
+#                                     execution are objects)
 #     -> {"error":false,"kind":"plan","name",
-#         "tasks":[{"ref","title","depends_on","execution"}]}
+#         "tasks":[{"ref","title","repo":{"name","location"},"depends_on",
+#                   "execution":{"type","reason"}}]}
 #
 # Environment:
 #   SPEK_FAKE_SCENARIO  draft-final | never-final | final-then-draft |
@@ -73,7 +74,7 @@ if [ "$verb" = "export" ]; then
   if [ "$kind" != "plan" ]; then
     usage_error "only plans export"
   fi
-  printf '{"error":false,"kind":"plan","name":"%s","tasks":[{"ref":"T1","title":"Add encoding helpers","execution":"agent_suitable"},{"ref":"T2","title":"Wire helpers into the parser","depends_on":["T1"],"execution":"agent_suitable"},{"ref":"T3","title":"Sign off on the public API","depends_on":["T2"],"execution":"human_required"}]}\n' "$name"
+  printf '{"error":false,"kind":"plan","name":"%s","tasks":[{"ref":"T1","title":"Add encoding helpers","repo":{"name":"myorg/repo1","location":"."},"execution":{"type":"agent_suitable","reason":"code change"}},{"ref":"T2","title":"Wire helpers into the parser","depends_on":["T1"],"execution":{"type":"agent_suitable","reason":"code change"}},{"ref":"T3","title":"Sign off on the public API","depends_on":["T2"],"execution":{"type":"human_required","reason":"sign-off"}}]}\n' "$name"
   exit 0
 fi
 

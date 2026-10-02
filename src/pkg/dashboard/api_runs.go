@@ -818,9 +818,9 @@ func (s *Server) activeRuns(includeTimeline bool) ([]Run, error) {
 			run.WaitingSince = firstRunNonEmpty(interview.AskedAt, run.WaitingSince)
 			run.CurrentStep = firstRunNonEmpty(run.CurrentStep, worksource.RunWaitingReasonInterviewQuestions)
 		}
-		// A spec run admitted without a design epic has no plan snapshot to
-		// flag its checkpoint, so a parked spec receipt is the signal
-		// (hivecommons/hive#9182).
+		// A parked spec receipt is the Spec checkpoint signal, both for a run
+		// admitted without a design epic (hivecommons/hive#9182) and for a
+		// pending design, which is not reviewable before it (#10061).
 		if run.WaitingOn != RunWaitingOnHuman && lease.stage == StageSpec {
 			if since, held := s.runCheckpointHeldSince(lease.stageRunKey, StageSpec, lease.gen); held {
 				run.WaitingOn = RunWaitingOnHuman
@@ -1033,8 +1033,10 @@ func runFromLease(lease runLeaseSnapshot, plan runPlanSnapshot, hold runHumanRev
 	if lease.stage == StageSpec && (plan.state == planning.PlanStateDesignReview || plan.state == planning.PlanStateDesignStuck) {
 		planNeedsHuman = false
 	}
+	// A pending Spektacular design is not reviewable until its spec receipt
+	// parks the stage; activeRuns checks the receipt (hivecommons/hive#10061).
 	if lease.stage == StageSpec && plan.epicID != "" && plan.designVia == planning.DesignViaSpektacular && plan.designStatus != planning.DesignStatusApproved {
-		planNeedsHuman = true
+		planNeedsHuman = false
 	}
 	if plan.epicID != "" && planNeedsHuman {
 		if decision := runCheckpointPolicyForConfig(cfg, lease.stage); decision.blocks {

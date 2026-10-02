@@ -226,7 +226,9 @@ same campaign path. The Spec checkpoint is the design-approval gate: when
 key), a final Spec parks the lease at `stage=spec`, surfaces
 `waiting_on=human` / `waiting_reason=checkpoint_enabled` in `/api/runs`, and
 requires an owner to approve or reject the `/api/runs/{key}/checkpoint` payload
-before Plan can start. Approving moves the reviewed spec generation to Plan
+before Plan can start. Until the Spec receipt exists the run is still drafting
+and the checkpoint cannot be decided. Rejecting re-mints the Spec generation
+and marks the design `requested` again, so a revised spec is drafted. Approving moves the reviewed spec generation to Plan
 first, then marks the design approved and applies the approved label/status on
 the work item. A failed label or status write does not undo or fail the
 approval: it is logged, audited as `design_signal_failed`, and recorded on the
@@ -307,7 +309,13 @@ first, the relay path is unchanged and takes precedence. Otherwise, when
 admission lease as `hive-spek`, clones the repository under
 `/data/agents/hive-spek/<owner>/<repo>`, creates one detached worktree per run
 under `/data/agents/hive-spek/runs/<run>/work`, initializes a `.spektacular/`
-project if needed, and runs the configured agent CLI headlessly with
+project if needed (`spektacular init <agent> --name <name>`, where the name is
+the repo basename lowercased with every character outside `a-z0-9_-` replaced
+by `-` and leading `-`/`_` dropped, so `hive.github.io` becomes
+`hive-github-io`), runs `spektacular migrate` on a project that already exists
+(committed to the repo or copied from an earlier generation, possibly by a
+different Spektacular version, which otherwise fails every verb with
+`upgrade_required`; a failed migrate is logged and preparation continues), and runs the configured agent CLI headlessly with
 instructions to author the spec or plan only.
 
 By default (`runs.spektacular.interview: human`), Spektacular interview,
@@ -494,21 +502,32 @@ When a `plan` reaches `final` the runner runs
 spektacular plan export <name> --format json
 ```
 
-(requested upstream in
+(shipped in Spektacular 0.23, requested in
 [spektacular#50](https://github.com/hivecommons/spektacular/issues/50)) and
 admits the returned tasks through `planning.DecomposeFromOutput` with
 `AutoApprove: false`. Spek's structure is rendered verbatim into the
 planner's task-list shape (`[T1] title (depends: T2) [agent_suitable]`); no
 model is asked to redecompose an already-structured plan.
 
-Until that export verb exists, Hive falls back only when export is unavailable
-(for example `unknown_subcommand` for `plan export`). The fallback reads the
-plan artifact through Spek's existing store boundary:
+Spektacular 0.23+ emits each task's `repo` as `{"name","location"}` and
+`execution` as `{"type","reason"}`; Hive accepts those objects as well as the
+older string fields (the repo is `name` when it is `owner/repo`, otherwise an
+`owner/repo` derived from a GitHub `location`, otherwise `name`).
+
+Hive falls back only when export is unavailable (`unknown_subcommand` for
+`plan export`, or 0.22's `unknown flag: --format`) or when 0.23+ rejects the
+plan with `plan_structure_invalid` (no `#### - [ ] Task:` headings). The
+fallback reads the plan artifact through Spek's existing store boundary:
 
 ```
 spektacular plan file read <name>/tasks.json
 spektacular plan file read <name>/plan.md
 ```
+
+Spektacular 0.23+ addresses `file read` paths without the extension and
+answers `unexpected_extension` for `<name>.md` or `<name>/plan.md`; Hive then
+retries the same read once without the extension (`<name>/plan`, and
+`<name>` for the spec body).
 
 The preferred fallback file is `<name>/tasks.json`, using the same shape Hive
 asked upstream to standardize:
@@ -639,13 +658,11 @@ Changed:
    ever grows documents whose completion matters, the verb has to widen
    first.
 
-Still open:
-
 10. `spektacular plan export <name> --format json` printing `{kind: "plan",
     name, tasks: [{id, title, repo, depends_on, execution}]}` for a final plan
-    is still an upstream ask
-    ([spektacular#50](https://github.com/hivecommons/spektacular/issues/50)).
-    Until it lands, Hive advances final plans through the documented
+    ([spektacular#50](https://github.com/hivecommons/spektacular/issues/50))
+    shipped in 0.23 with object-valued `repo` and `execution`. On 0.22 and
+    earlier Hive advances final plans through the documented
     `<name>/tasks.json` or `<name>/plan.md` fallback contract above.
 
 Scenarios: `draft-final` (draft, draft, final), `never-final`,
