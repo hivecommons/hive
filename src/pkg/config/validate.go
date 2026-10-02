@@ -57,6 +57,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.validateGitHubActivityNotifications(); err != nil {
 		return err
 	}
+	if err := c.validateUpstreamWatch(); err != nil {
+		return err
+	}
 	if normalized, err := ValidateSnapshotFrameAncestors(c.Dashboard.SnapshotFrameAncestors); err != nil {
 		return err
 	} else {

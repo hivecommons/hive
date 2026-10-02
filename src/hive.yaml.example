@@ -83,6 +83,20 @@ project:
   #   to look at. Short sentences. One idea per bullet. Put evidence under a
   #   <details> block and keep it to about 300 words outside that block.
 
+# Optional upstream watch for forked repos (src/docs/upstream-watch.md). Off by
+# default. Keys under repos must be listed in project.repos. If `upstream` is
+# omitted it is resolved from the GitHub fork parent at runtime.
+# upstream_watch:
+#   enabled: true
+#   interval: 6h                       # default 6h
+#   repos:
+#     repo-one:
+#       upstream: origin-owner/thing   # optional owner/repo
+#       sources: [releases, prs]       # default: both
+#       pr_labels: [bug, security]     # empty = all merged PRs
+#       max_issues_per_run: 5          # omit = no cap
+#       label: upstream/port           # default upstream/port
+
 ioscan:
   enabled: true                           # default: true; scans untrusted text before agent kicks
   fail_mode: open                         # default: open at L1–L4, closed at ACMM L5–L6 (packs); open redacts, closed blocks Critical injection kicks and canary leaks

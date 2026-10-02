@@ -133,6 +133,9 @@ type Config struct {
 	// (hivecommons/hive#7469 capability B). Default off → zero behaviour
 	// change and no GitHub traffic.
 	DuplicateSweep DuplicateSweepConfig `yaml:"duplicate_sweep,omitempty" json:"duplicate_sweep,omitempty"`
+	// UpstreamWatch declares per-repo upstreams and filters for the fork
+	// upstream watch (hivecommons/hive#9966). Default off.
+	UpstreamWatch UpstreamWatchConfig `yaml:"upstream_watch,omitempty" json:"upstream_watch,omitempty"`
 	// AgentSandbox configures the phase-1 credential-free sandbox runner. It is
 	// disabled by default and agents must opt in individually.
 	AgentSandbox AgentSandboxConfig `yaml:"agent_sandbox,omitempty" json:"agent_sandbox,omitempty"`
@@ -5827,6 +5830,7 @@ const (
 )
 
 func (c *Config) applyDefaults() {
+	c.applyUpstreamWatchDefaults()
 	// Runs before any review default so the pointer is settled on every load
 	// path (boot, reload, dashboard save) and Save() persists the explicit
 	// value, after which this is a no-op for the life of the hive.
