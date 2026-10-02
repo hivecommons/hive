@@ -1784,8 +1784,20 @@
     .sparkline { display: inline-block; vertical-align: middle; margin-left: var(--sp-3); flex-shrink: 0; }
     .sparkline svg { display: block; overflow: visible; }
     .sparkline--flush { margin-left: var(--sp-0); margin-top: var(--sp-2); }
+    .sparkline--tight { margin-left: var(--sp-2); }
+    .cell-spark { display: inline-block; vertical-align: middle; margin-left: var(--sp-2); }
     .sparkline-line { stroke-dashoffset: 0; }
+    .sparkline-area { opacity: 0.14; }
     .sparkline-dot { transform-box: fill-box; transform-origin: center; }
+    .sparkline.is-redrawing .sparkline-line { will-change: stroke-dashoffset; }
+    .sparkline.is-redrawing .sparkline-area { opacity: 0; }
+    .sparkline.is-redrawing .sparkline-dot { opacity: 0; transform: scale(0.3); }
+    .sparkline.is-glowing svg { filter: drop-shadow(0 0 5px var(--sparkline-glow, currentColor)); }
+    @media (prefers-reduced-motion: reduce) {
+      .sparkline.is-redrawing .sparkline-line,
+      .sparkline.is-redrawing .sparkline-area,
+      .sparkline.is-redrawing .sparkline-dot { transition: none !important; animation: none !important; }
+    }
     .spark-row { display: flex; align-items: center; gap: var(--sp-3); overflow: hidden; }
 
     /* Beads */
@@ -5285,6 +5297,7 @@
       if (card) card.classList.toggle('collapsed', collapsed);
       if (section) section.classList.toggle('collapsed', collapsed);
       if (header) header.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      if (!collapsed && section) replaySparklinesIn(section, { force: true });
     }
     /** Apply persisted collapsed state to a section after render */
     function applySectionCollapse(sectionId) {
@@ -5302,6 +5315,7 @@
       if (card) card.classList.toggle('collapsed', collapsed);
       if (section) section.classList.toggle('collapsed', collapsed);
       if (header) header.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      if (!collapsed && section) replaySparklinesIn(section);
     }
     var _dashboardNavPeekSectionId = null;
     function navPeekExpand(sectionId) {
@@ -6912,6 +6926,11 @@
       return 'oldest → newest';
     }
 
+    const SPARKLINE_ANIMATION_MS = 620;
+    const SPARKLINE_STAGGER_MS = 25;
+    const SPARKLINE_MAX_STAGGER_MS = 325;
+    const _sparklineLastKeys = new Map();
+
     function sparklineSeriesKey(series) {
       if (!Array.isArray(series)) return '';
       return series.map(v => {
@@ -6919,6 +6938,9 @@
         if (!Number.isFinite(n)) return 'x';
         return Number.isInteger(n) ? String(n) : n.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
       }).join('|');
+    }
+    function sparklineReducedMotion() {
+      return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     }
     function sparklineValueSummary(values) {
       if (!values || !values.length) return 'no data';
@@ -6949,20 +6971,78 @@
       const lastPt = String(opts.lastPoint || points[points.length - 1]).split(',');
       const title = opts.title || `${opts.label || 'sparkline'} · range ${fmtSparkVal(min)}–${fmtSparkVal(max)} · ${sparklineValueSummary(values)}`;
       const aria = opts.ariaLabel || `${opts.label || 'sparkline'}: range ${fmtSparkVal(min)} to ${fmtSparkVal(max)}, ${sparklineValueSummary(values)}`;
+      const latest = values[values.length - 1];
+      const scaleText = `range ${fmtSparkVal(min)}–${fmtSparkVal(max)} · latest ${fmtSparkVal(latest)}`;
+      const detailText = opts.title || sparklineValueSummary(values);
+      const title = detailText && !String(detailText).includes(scaleText) ? `${scaleText} · ${detailText}` : detailText || scaleText;
+      const titleDetail = title.replace(scaleText + ' · ', '').replace(scaleText, '');
+      const ariaDetail = opts.ariaLabel || `${opts.label || 'sparkline'}: ${sparklineValueSummary(values)}`;
+      const aria = `${scaleText}; ${ariaDetail}`;
+      const key = sparklineSeriesKey(values);
       const id = opts.id || `${opts.label || 'sparkline'}:${opts.color || ''}`;
       const lineAttrs = opts.lineAttrs || '';
       const dot = opts.dot === false ? '' : `<circle class="sparkline-dot" cx="${lastPt[0]}" cy="${lastPt[1]}" r="${opts.dotRadius || 2}" fill="${opts.dotColor || opts.color || 'currentColor'}"/>`;
+      const area = opts.area ? `<polygon class="sparkline-area" points="${points[0].split(',')[0]},${H - padY} ${points.join(' ')} ${lastPt[0]},${H - padY}" fill="${opts.areaColor || opts.color || 'currentColor'}"/>` : '';
       const svgClass = opts.svgClass ? ` class="${escapeHtml(opts.svgClass)}"` : '';
       const titleAttr = opts.svgTitle ? ` title="${escapeHtml(opts.svgTitle)}"` : '';
-      const svg = `<svg${svgClass} width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${escapeHtml(aria)}" data-sparkline-id="${escapeHtml(id)}" data-sparkline-key="${escapeHtml(sparklineSeriesKey(values))}"${titleAttr}>` +
-        `<title>${escapeHtml(title)}</title>` +
-        (opts.before || '') +
+      const svg = `<svg${svgClass} width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${escapeHtml(aria)}" data-sparkline-id="${escapeHtml(id)}" data-sparkline-key="${escapeHtml(key)}"${titleAttr}>` +
+        `<title>range ${fmtSparkVal(min)}–${fmtSparkVal(max)} · latest ${fmtSparkVal(latest)}${titleDetail ? ` · ${escapeHtml(titleDetail)}` : ''}</title>` +
+        (opts.before || '') + area +
         `<polyline class="sparkline-line" points="${points.join(' ')}" fill="none" stroke="${opts.color || 'currentColor'}" stroke-width="${opts.strokeWidth || 1.5}" stroke-linecap="round" stroke-linejoin="round"${lineAttrs}/>` +
         dot + (opts.after || '') + `</svg>`;
-      const cls = ['sparkline', opts.wrapperClass || ''].filter(Boolean).join(' ');
-      const html = opts.wrapper === false ? svg : `<span class="${escapeHtml(cls)}"${opts.wrapperTitle ? ` title="${escapeHtml(opts.wrapperTitle)}"` : ''}>${svg}</span>`;
-      if (el && el.nodeType === 1) el.innerHTML = html;
+      const html = opts.wrapper === false ? svg : `<span class="${['sparkline', opts.wrapperClass || ''].filter(Boolean).map(escapeHtml).join(' ')}"${opts.wrapperTitle ? ` title="${escapeHtml(opts.wrapperTitle)}"` : ''}>${svg}</span>`;
+      if (el && el.nodeType === 1) {
+        el.innerHTML = html;
+        replaySparklinesIn(el, { force: true });
+      }
       return html;
+    }
+
+    function sparklineSvgVisible(svg) {
+      if (!svg || !svg.isConnected) return false;
+      const shell = svg.closest('.dash-card, .section-body, [data-dashboard-section], section');
+      if (shell && shell.classList && shell.classList.contains('collapsed')) return false;
+      const body = svg.closest('.dash-card-body, .section-body');
+      if (body && body.classList && body.classList.contains('collapsed')) return false;
+      if (svg.getClientRects && svg.getClientRects().length === 0) return false;
+      return true;
+    }
+    function animateSparklineSvg(svg, length) {
+      const line = svg && svg.querySelector('.sparkline-line');
+      if (!line || sparklineReducedMotion()) return;
+      const wrap = svg.closest('.sparkline') || svg;
+      const area = svg.querySelector('.sparkline-area');
+      const dot = svg.querySelector('.sparkline-dot');
+      const len = length || (line.getTotalLength ? line.getTotalLength() : 0);
+      if (!len) return;
+      wrap.style.setProperty('--sparkline-glow', line.getAttribute('stroke') || 'currentColor');
+      wrap.classList.add('is-redrawing', 'is-glowing');
+      line.style.strokeDasharray = String(len);
+      line.style.strokeDashoffset = String(len);
+      line.animate([{ strokeDashoffset: len }, { strokeDashoffset: 0 }], { duration: SPARKLINE_ANIMATION_MS, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'forwards' });
+      if (area) area.animate([{ opacity: 0 }, { opacity: 0.14 }], { duration: SPARKLINE_ANIMATION_MS - 120, delay: 90, easing: 'ease-out', fill: 'forwards' });
+      if (dot) dot.animate([{ opacity: 0, transform: 'scale(0.35)' }, { opacity: 1, transform: 'scale(1.35)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 220, delay: SPARKLINE_ANIMATION_MS - 140, easing: 'cubic-bezier(.2,1.8,.4,1)', fill: 'forwards' });
+      setTimeout(() => {
+        line.style.strokeDasharray = '';
+        line.style.strokeDashoffset = '';
+        wrap.classList.remove('is-redrawing', 'is-glowing');
+      }, SPARKLINE_ANIMATION_MS + 80);
+    }
+    function replaySparklinesIn(root, opts) {
+      opts = opts || {};
+      if (!root || sparklineReducedMotion()) return;
+      const svgs = Array.from(root.querySelectorAll ? root.querySelectorAll('svg[data-sparkline-key]') : []);
+      const runnable = [];
+      for (const svg of svgs) {
+        if (!sparklineSvgVisible(svg)) continue;
+        const id = svg.getAttribute('data-sparkline-id') || '';
+        const key = svg.getAttribute('data-sparkline-key') || '';
+        if (!opts.force && id && _sparklineLastKeys.get(id) === key) continue;
+        _sparklineLastKeys.set(id, key);
+        const line = svg.querySelector('.sparkline-line');
+        runnable.push({ svg, length: line && line.getTotalLength ? line.getTotalLength() : 0 });
+      }
+      runnable.forEach((item, i) => setTimeout(() => animateSparklineSvg(item.svg, item.length), Math.min(i * SPARKLINE_STAGGER_MS, SPARKLINE_MAX_STAGGER_MS)));
     }
 
     function sparkSvg(rawValues, color, times, id) {
@@ -7020,7 +7100,7 @@
     // muted). One helper routes every historyData-backed sparkline through the
     // same getHistorySeries + sparkSvg path.
     function sparkline(name, color) {
-      return sparkSvg(getHistorySeries(name), color || SPARKLINE_COLORS[name] || 'var(--muted)', getHistoryTimes());
+      return sparkSvg(getHistorySeries(name), color || SPARKLINE_COLORS[name] || 'var(--muted)', getHistoryTimes(), `history:${name}`);
     }
 
     function restartSparkSvg(agentName) {
@@ -7029,7 +7109,7 @@
         .filter(e => e.v != null);
       const series = entries.map(e => e.v);
       if (series.length < 2 || Math.max(...series) === 0) return '';
-      return sparkSvg(series, 'var(--red)', entries.map(e => e.t));
+      return sparkSvg(series, 'var(--red)', entries.map(e => e.t), `agent:${agentName}:restarts`);
     }
 
     // ── Fact count sparkline (30-day server-side history) ──
@@ -7060,20 +7140,19 @@
         const y = PAD_T + plotH - ((v - min) / range) * plotH;
         return `${x.toFixed(1)},${y.toFixed(1)}`;
       });
-      const lastPt = pts[pts.length - 1].split(',');
       const fmtDate = t => { const d = new Date(t); return isNaN(d) ? '' : `${d.getMonth() + 1}/${d.getDate()}`; };
       const t0 = fmtDate(getT(entries[0])), t1 = fmtDate(getT(entries[entries.length - 1]));
       const AXIS_TXT = `font-size="7" fill="var(--muted)"`;
-      return `<span class="sparkline" style="margin-left:var(--sp-0);margin-top:var(--sp-2)" title="${title}"><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">` +
-        `<line x1="${PAD_L}" y1="${PAD_T}" x2="${PAD_L}" y2="${PAD_T + plotH}" stroke="var(--border)" stroke-width="1"/>` +
+      const axes = `<line x1="${PAD_L}" y1="${PAD_T}" x2="${PAD_L}" y2="${PAD_T + plotH}" stroke="var(--border)" stroke-width="1"/>` +
         `<line x1="${PAD_L}" y1="${PAD_T + plotH}" x2="${W - PAD_R}" y2="${PAD_T + plotH}" stroke="var(--border)" stroke-width="1"/>` +
         `<text x="${PAD_L - 3}" y="${PAD_T + 6}" text-anchor="end" ${AXIS_TXT}>${fmtV(max)}</text>` +
         `<text x="${PAD_L - 3}" y="${PAD_T + plotH}" text-anchor="end" ${AXIS_TXT}>${fmtV(min)}</text>` +
         `<text x="${PAD_L}" y="${H - 3}" text-anchor="start" ${AXIS_TXT}>${t0}</text>` +
-        `<text x="${W - PAD_R}" y="${H - 3}" text-anchor="end" ${AXIS_TXT}>${t1}</text>` +
-        `<polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>` +
-        `<circle cx="${lastPt[0]}" cy="${lastPt[1]}" r="2" fill="${color}"/>` +
-        `</svg></span>`;
+        `<text x="${W - PAD_R}" y="${H - 3}" text-anchor="end" ${AXIS_TXT}>${t1}</text>`;
+      return renderSparkline(null, values, {
+        width: W, height: H, color, points: pts, min, max, before: axes,
+        title, wrapperTitle: title, wrapperClass: 'sparkline--flush', label: title,
+      });
     }
     function factSparkSvg() {
       return axisSparkSvg(_factHistory, e => e.count, e => e.t, fmtSparkVal, 'var(--blue)',
@@ -7245,12 +7324,12 @@
       if (!values || values.length < 2) return '';
       const W = 56, H = 14;
       const max = Math.max(...values), min = Math.min(...values);
-      const range = (max - min) || max || 1;
-      const pts = values.map((v, i) =>
-        `${(i / (values.length - 1) * W).toFixed(1)},${(H - ((v - min) / range) * (H - 2) - 1).toFixed(1)}`);
       const win = costWindow();
       const title = `${label || 'sparkline'} · ${costRangeTitle(win.start, win.end, win.bucketMs)} · values ${fmtSparkVal(min)}–${fmtSparkVal(max)} · latest ${fmtSparkVal(values[values.length - 1])}`;
-      return `<svg class="cell-spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><title>${esc(title)}</title><polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      return renderSparkline(null, values, {
+        width: W, height: H, color, min, max, strokeWidth: 1.2, dot: false,
+        title, ariaLabel: title, label: label || 'sparkline', id: `cell:${label || 'sparkline'}`, wrapper: false, svgClass: 'cell-spark',
+      });
     }
 
     // Cumulative series for one model's field ('i' input, 'o' output, 'usd')
@@ -7853,7 +7932,7 @@
         const hasHistData = histSeries.some(v => v > 0);
         const trendSeries = hasHistData ? histSeries : (window._trendData || []).map(s => s[trendField] || 0);
         const trendTimes = hasHistData ? getHistoryTimes() : (window._trendData || []).map(s => s.t ?? s.timestamp);
-        const spark = sparkSvg(trendSeries, color, trendTimes);
+        const spark = sparkSvg(trendSeries, color, trendTimes, `agent-stat:${name}:${statKey}`);
         return `<span class="ind-dot-item"><span class="ind-num">${icon}${v || 0}</span><span class="ind-dlabel">${label} ${spark}</span></span>`;
       }
 
@@ -9949,7 +10028,7 @@
       const itmCount = itm.count || 0;
       const FIX_TIME_SPARK_COLOR = 'var(--muted)'; /* sparkline tint only — the value itself is neutral */
       const itmHistory = (itm.history || []).map(h => h.median || h.avg);
-      const itmSpark = sparkSvg(itmHistory, FIX_TIME_SPARK_COLOR, (itm.history || []).map(h => h.t));
+      const itmSpark = sparkSvg(itmHistory, FIX_TIME_SPARK_COLOR, (itm.history || []).map(h => h.t), 'governor:mttr');
       const itmExplain = 'MTTR — how fast issues get resolved.\n\nWHAT: The headline figure is the MEDIAN time from an issue being opened to the fixing PR being merged. Lower is better; the sparkline shows the recent trend.\n\nHOW: For every issue closed by a merged PR in the last 30 days, we measure (merge time − open time). The tile shows the median of those durations; the breakdown below lists avg / p90 / fastest / slowest and the sample size.\n\n';
       const itmTitle = itmCount > 0 ? itmExplain + `median: ${formatFixTime(itmMedian)} | avg: ${formatFixTime(itmAvg)} | p90: ${formatFixTime(itm.p90_minutes)} | fastest: ${formatFixTime(itm.fastest_minutes)} | slowest: ${formatFixTime(itm.slowest_minutes)} | ${itmCount} fixes in last 30d` : itmExplain + 'No fixes recorded in the last 30 days yet.';
 
@@ -11974,8 +12053,8 @@
       const resetBtn = document.getElementById('repos-reset-layout-btn');
       if (resetBtn) resetBtn.style.display = (Object.keys(repoCardWidths()).length || repoOrderHasCustom(repos)) ? 'inline-block' : 'none';
       setIfChanged(el, repos.map(r => {
-        const iSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.issues ?? 0), 'var(--blue)', getHistoryTimes());
-        const pSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.prs ?? 0), 'var(--purple)', getHistoryTimes());
+        const iSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.issues ?? 0), 'var(--blue)', getHistoryTimes(), `repo:${r.name}:issues`);
+        const pSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.prs ?? 0), 'var(--purple)', getHistoryTimes(), `repo:${r.name}:prs`);
         const repoUrl = (window._githubBaseUrl || 'https://github.com') + '/' + (r.full || r.name);
         // The card's width comes from the stored map on EVERY repaint, not
         // from a one-time assignment on the element: this HTML replaces the
@@ -13893,7 +13972,7 @@ function burnAreaChart() {
 
       const modelChips = models.map(([name, m]) => {
         const mTotal = m.input + m.output + m.cacheRead;
-        const mSpark = sparkSvg(historyData.map(s => s.tokenModels?.[name] ?? 0), 'var(--purple)', getHistoryTimes());
+        const mSpark = sparkSvg(historyData.map(s => s.tokenModels?.[name] ?? 0), 'var(--purple)', getHistoryTimes(), `token-model:${name}`);
         return `<div class="token-model-chip">
           <span class="mname">${esc(name)}</span>
           <span class="mcount">${fmtTokens(mTotal)} tokens · ${m.messages} msgs</span>
@@ -13922,10 +14001,9 @@ function burnAreaChart() {
           if (act.length >= 2) {
             const mx = Math.max(...act, 1);
             const mn = Math.min(...act);
-            const rng = (mx - mn) || mx || 1;
-            const pts = act.map((v, i) => `${(i / (act.length - 1)) * MINI_W},${MINI_H - ((v - mn) / rng) * (MINI_H - 2) - 1}`).join(' ');
             const clr = _getAgentColor(s.agent);
-            miniSpark = `<span class="sparkline" style="margin-left:var(--sp-2)"><svg width="${MINI_W}" height="${MINI_H}" viewBox="0 0 ${MINI_W} ${MINI_H}"><title>session activity per interval — range ${fmtSparkVal(mn)}–${fmtSparkVal(mx)}, oldest → newest</title><polyline points="${pts}" fill="none" stroke="${clr}" stroke-width="1.2" opacity="0.7"/></svg></span>`;
+            const title = `session activity per interval — range ${fmtSparkVal(mn)}–${fmtSparkVal(mx)}, oldest → newest`;
+            miniSpark = renderSparkline(null, act, { width: MINI_W, height: MINI_H, color: clr, min: mn, max: mx, strokeWidth: 1.2, dot: false, wrapperClass: 'sparkline--tight', lineAttrs: ' opacity="0.7"', title, ariaLabel: title, label: 'session activity', id: `session:${s.id}:activity` });
           }
           return `<div class="token-session-row" style="padding-left:var(--sp-5)">
             <span class="sid">${esc(s.id)}</span>
@@ -13960,7 +14038,7 @@ function burnAreaChart() {
         const aData = ba[name];
         const aTotal = aData ? (aData.input || 0) + (aData.output || 0) + (aData.cacheRead || 0) : 0;
         const clr = _getAgentColor(name);
-        const aSpark = sparkSvg(historyData.map(s => s.tokens?.[name] ?? 0), clr, getHistoryTimes());
+        const aSpark = sparkSvg(historyData.map(s => s.tokens?.[name] ?? 0), clr, getHistoryTimes(), `token-agent:${name}`);
         return `<div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(aTotal)}</span>${aSpark}</div><div class="tlabel">${name}</div></div>`;
       }).join('');
 
@@ -15059,9 +15137,11 @@ function burnAreaChart() {
       const values = buckets.map(b => Number(b[field]) || 0);
       const times = buckets.map(b => Date.parse(b.t));
       if (values.length < 2) return '';
-      const base = sparkSvg(values, color, times, `pr-throughput:${field}`);
       const details = buckets.slice(-8).map(b => `${fmtSparkTime(Date.parse(b.t))}: ${Number(b[field]) || 0}`).join(' · ');
-      return base.replace('<svg ', `<svg title="${escapeHtml(details)}" `);
+      return renderSparkline(null, values, {
+        color, title: details, svgTitle: details, ariaLabel: details,
+        label: `change throughput ${field}`, id: `change-throughput:${field}`,
+      });
     }
 
     function prtFmtRate(v) { return (Number(v) || 0).toFixed((Number(v) || 0) >= 10 ? 0 : 1) + '/day'; }
@@ -19119,17 +19199,16 @@ function burnAreaChart() {
       return 'var(--red)';                                     // red — critical
     }
 
-    function sysGaugeMiniSpark(values, color) {
+    function sysGaugeMiniSpark(values, color, name) {
       if (!values || values.length < 2) return '';
       const max = Math.max(...values, 1);
-      const pts = values.map((v, i) => {
-        const x = (i / (values.length - 1)) * SYS_GAUGE_SPARK_W;
-        const y = SYS_GAUGE_SPARK_H - (v / max) * (SYS_GAUGE_SPARK_H - 1) - 0.5;
-        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      return renderSparkline(null, values, {
+        width: SYS_GAUGE_SPARK_W, height: SYS_GAUGE_SPARK_H, color, min: 0, max,
+        strokeWidth: 1, dot: false, wrapper: false, lineAttrs: ' opacity="0.3"',
+        title: `${name || 'system'} gauge sparkline · latest ${fmtSparkVal(values[values.length - 1])}%`,
+        ariaLabel: `${name || 'system'} gauge sparkline latest ${fmtSparkVal(values[values.length - 1])}%`,
+        label: `${name || 'system'} gauge sparkline`, id: `sys-${name || 'gauge'}`,
       });
-      return `<svg width="${SYS_GAUGE_SPARK_W}" height="${SYS_GAUGE_SPARK_H}" viewBox="0 0 ${SYS_GAUGE_SPARK_W} ${SYS_GAUGE_SPARK_H}">` +
-        `<polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" opacity="0.3"/>` +
-        `</svg>`;
     }
 
     function renderSystemGauges(sysRes) {
@@ -19165,7 +19244,7 @@ function burnAreaChart() {
           : `Disk: ${diskPct.toFixed(0)}% used`;
       }
       const diskSpark = document.getElementById('sys-spark-disk');
-      if (diskSpark) diskSpark.innerHTML = sysGaugeMiniSpark(_sysGaugeHistory.disk, diskColor);
+      if (diskSpark) diskSpark.innerHTML = sysGaugeMiniSpark(_sysGaugeHistory.disk, diskColor, 'disk');
 
       // Memory
       const memPct = sysRes.memPct || 0;
@@ -19194,7 +19273,7 @@ function burnAreaChart() {
           : `Memory: ${memPct.toFixed(0)}% used`;
       }
       const memSpark = document.getElementById('sys-spark-mem');
-      if (memSpark) memSpark.innerHTML = sysGaugeMiniSpark(_sysGaugeHistory.mem, memColor);
+      if (memSpark) memSpark.innerHTML = sysGaugeMiniSpark(_sysGaugeHistory.mem, memColor, 'memory');
 
       // CPU
       const cpuPct = sysRes.cpuPct || 0;
@@ -19217,7 +19296,9 @@ function burnAreaChart() {
           : `CPU: ${cpuPct.toFixed(0)}% average`;
       }
       const cpuSpark = document.getElementById('sys-spark-cpu');
-      if (cpuSpark) cpuSpark.innerHTML = sysGaugeMiniSpark(_sysGaugeHistory.cpu, cpuColor);
+      if (cpuSpark) cpuSpark.innerHTML = sysGaugeMiniSpark(_sysGaugeHistory.cpu, cpuColor, 'cpu');
+      const debugSection = document.getElementById('debug-section');
+      if (debugSection) replaySparklinesIn(debugSection);
     }
 
     let _hashScrollPending = false;
