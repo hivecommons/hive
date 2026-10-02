@@ -1516,6 +1516,7 @@ func collectFreshStatsWithTimeout(ctx context.Context, collect FreshStatusCollec
 // handling — including hub-instructed upgrades. A separate ad-hoc POST would
 // drift from this one over time and silently lose those behaviours.
 func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPayload, logger *slog.Logger) *HeartbeatResponse {
+	payload = redactHeartbeat(payload)
 	body, err := json.Marshal(payload)
 	if err != nil {
 		logger.Warn("hub heartbeat marshal failed", "error", err)
@@ -2618,7 +2619,7 @@ func StartTaskStatusPush(ctx context.Context, hubURL string, collect TaskStatusC
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			payload := collect()
+			payload := redactTaskStatus(collect())
 			if payload == nil {
 				continue
 			}
