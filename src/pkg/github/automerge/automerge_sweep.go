@@ -287,6 +287,31 @@ const (
 
 var hiveQueueReviewRE = regexp.MustCompile(`(?i)^Approved by @([A-Za-z0-9-]+) for Hive auto-merge on green CI\.`)
 
+// forwardMergeHeadRe matches the branches the v5-topup / v6-topup workflows
+// (and the humans who hand-resolve their conflicts) use for line-to-line
+// forward-merges, e.g. "sync/v5-to-v6" or a scanner-namespaced variant like
+// "scanner/sync-v5-to-v6-9919". Squashing one of these erases the source
+// line's ancestry and makes every later top-up re-conflict on the same
+// hunks (#9957, #9956).
+var forwardMergeHeadRe = regexp.MustCompile(`sync/?-?v\d+-to-v\d+`)
+
+// mergeMethodFor returns the GitHub merge method the sweep should use for pr.
+// Forward-merge PRs between release lines must land as true merge commits so
+// the target line keeps the source line's ancestry; everything else keeps the
+// repository's squash convention.
+func mergeMethodFor(pr *gh.PullRequest) string {
+	if pr == nil {
+		return "squash"
+	}
+	if forwardMergeHeadRe.MatchString(pr.GetHead().GetRef()) {
+		return "merge"
+	}
+	if strings.Contains(strings.ToLower(pr.GetTitle()), "forward-merge") {
+		return "merge"
+	}
+	return "squash"
+}
+
 type AutoMergeSweepOptions struct {
 	MaxMerges int
 	Audit     func(AutoMergeSweepEvent)
@@ -1072,18 +1097,19 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, "head-changed-since-eval", nil
 	}
 
+	method := mergeMethodFor(pr)
 	var mergeResult *gh.PullRequestMergeResult
 	_, err = effects.Execute(ctx, c.mutation, effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindPullRequestMerge,
 		Target: fmt.Sprintf("%d", number),
 		Actor:  "automerge",
-		Inputs: map[string]string{"method": "squash", "expect_sha": evaluatedHeadSHA, "lane": lane},
+		Inputs: map[string]string{"method": method, "expect_sha": evaluatedHeadSHA, "lane": lane},
 	}, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
 		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, "", &gh.PullRequestOptions{
 			SHA:         evaluatedHeadSHA,
-			MergeMethod: "squash",
+			MergeMethod: method,
 		})
 		if apiErr != nil {
 			return effects.Result{}, apiErr
@@ -1101,7 +1127,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// health verdict is judged on them. When the fleet's merges moved to this
 	// sweep, the unaudited path made merging hives read as "no merge in Nd"
 	// red on /fleet (observed live on kubestellar/console, 2026-08-26).
-	c.transport.RecordPRMergedAudit(owner+"/"+repo, number, "squash", mergeResult.GetSHA(), hgithub.PRAuditPathSweep)
+	c.transport.RecordPRMergedAudit(owner+"/"+repo, number, method, mergeResult.GetSHA(), hgithub.PRAuditPathSweep)
 	event := AutoMergeSweepEvent{
 		Repo:     displayRepo,
 		Number:   number,
@@ -1339,18 +1365,19 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		return AutoMergeSweepEvent{}, deskReason, nil
 	}
 
+	method := mergeMethodFor(pr)
 	var mergeResult *gh.PullRequestMergeResult
 	_, err = effects.Execute(ctx, c.mutation, effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindPullRequestMerge,
 		Target: fmt.Sprintf("%d", number),
 		Actor:  "automerge",
-		Inputs: map[string]string{"method": "squash", "expect_sha": headSHA, "lane": "queued"},
+		Inputs: map[string]string{"method": method, "expect_sha": headSHA, "lane": "queued"},
 	}, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
 		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, "", &gh.PullRequestOptions{
 			SHA:         headSHA,
-			MergeMethod: "squash",
+			MergeMethod: method,
 		})
 		if apiErr != nil {
 			return effects.Result{}, apiErr
@@ -1366,7 +1393,7 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	// Same audit obligation as the self-authored path above: pr_merged on
 	// the trail is what makes this merge count as hive output. path=queue:
 	// a person queued this PR; the sweep only carried the merge out.
-	c.transport.RecordPRMergedAudit(owner+"/"+repo, number, "squash", mergeResult.GetSHA(), hgithub.PRAuditPathQueue)
+	c.transport.RecordPRMergedAudit(owner+"/"+repo, number, method, mergeResult.GetSHA(), hgithub.PRAuditPathQueue)
 	event := AutoMergeSweepEvent{
 		Repo:     displayRepo,
 		Number:   number,
