@@ -45,7 +45,8 @@ func TestSpekHubExecutorClaimPreservesTriageAndSkipsRelayLease(t *testing.T) {
 	e := NewSpekHubExecutor(s, config.RunsConfig{MaxStageRetries: 2, Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
 	e.Exec = func(_ context.Context, _ string, _ []string, name string, args ...string) ([]byte, error) {
 		if name == "spektacular" && len(args) >= 3 && args[1] == "status" {
-			return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","artifact_id":"` + args[2] + `","document_status":"draft"}`), nil
+			// The pinned 0.22 CLI does not emit artifact_id (#10074).
+			return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","document_status":"draft"}`), nil
 		}
 		return []byte("ok"), nil
 	}
@@ -418,6 +419,53 @@ func TestSpekHubExecutorCapturesStageTranscriptAndDocument(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(runReceiptsDir, sanitizeReceiptSegment(st.runKey), spekStageDocumentFile(StageSpec, 2))); err != nil {
 		t.Fatalf("document sidecar missing: %v", err)
+	}
+}
+
+// TestSpekHubExecutorCaptureWithoutArtifactIDUsesName pins the pinned CLI's
+// actual payload (#10074): Spektacular 0.22 answers status without
+// artifact_id, so the capture has to join on the bare name.
+func TestSpekHubExecutorCaptureWithoutArtifactIDUsesName(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	oldReceipts := runReceiptsDir
+	runReceiptsDir = filepath.Join(t.TempDir(), "receipts")
+	t.Cleanup(func() { runReceiptsDir = oldReceipts })
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	e.Exec = func(_ context.Context, _ string, _ []string, name string, args ...string) ([]byte, error) {
+		if name == "spektacular" && len(args) >= 3 && args[1] == "status" {
+			return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","document_status":"final","current_step":"finished"}`), nil
+		}
+		return []byte("ok"), nil
+	}
+	status, err := e.spekStatus(context.Background(), t.TempDir(), nil, StageSpec, "myorg-repo1-57")
+	if err != nil {
+		t.Fatalf("spekStatus: %v", err)
+	}
+	if status.ArtifactID != "" || status.JoinKey() != "myorg-repo1-57" {
+		t.Fatalf("0.22 status join key = %q (artifact_id %q)", status.JoinKey(), status.ArtifactID)
+	}
+	st := spekHubStage{runKey: "myorg/repo1#57", stage: StageSpec, taskID: "task", gen: 3}
+	worktree := t.TempDir()
+	specPath := filepath.Join(worktree, ".spektacular", "specs", "myorg-repo1-57.md")
+	if err := os.MkdirAll(filepath.Dir(specPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(specPath, []byte("# Spec\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.captureCompletedStage(st, worktree, "myorg-repo1-57", status, []byte("agent output"), time.Now().Add(-time.Minute), nil, runReceiptsDir, "session"); err != nil {
+		t.Fatalf("captureCompletedStage: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(runReceiptsDir, sanitizeReceiptSegment(st.runKey), spekStageTranscriptFile(StageSpec, 3)))
+	if err != nil {
+		t.Fatalf("transcript sidecar missing: %v", err)
+	}
+	var cap RunDetailStageCapture
+	if err := json.Unmarshal(raw, &cap); err != nil {
+		t.Fatalf("decode capture: %v", err)
+	}
+	if len(cap.Documents) != 1 || cap.Documents[0].Content == "" {
+		t.Fatalf("document not captured without artifact_id: %+v", cap)
 	}
 }
 
@@ -1066,7 +1114,8 @@ func TestSpekHubExecutorDoesNotRelaunchWhenDocumentAlreadyFinal(t *testing.T) {
 			return []byte("ok"), nil
 		case "spektacular":
 			if len(args) >= 3 && args[1] == "status" {
-				return []byte(`{"error":false,"kind":"plan","name":"myorg-repo1-57","artifact_id":"` + args[2] + `","document_status":"final"}`), nil
+				// 0.22 shape: the join key is the name, not an artifact_id.
+				return []byte(`{"error":false,"kind":"plan","name":"myorg-repo1-57","document_status":"final"}`), nil
 			}
 			return []byte("ok"), nil
 		}
