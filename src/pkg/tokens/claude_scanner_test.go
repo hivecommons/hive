@@ -220,6 +220,44 @@ func TestScanClaudeSessions_ProjectDirStructure(t *testing.T) {
 	}
 }
 
+// TestScanClaudeSessions_CwdOverridesMismatchedDirName is the regression test
+// for hivecommons/hive#10142: a live hive's ~/.claude/projects directory
+// names didn't match the "-data-agents-<name>" pattern AgentFromTmuxEnv
+// assumes (Claude's own project-dir encoding is not something hive controls),
+// so every session fell back to "unknown" even though the session content
+// itself (the "cwd" field every native entry carries) pointed at a real
+// agent work dir. Attribution must prefer that embedded cwd over the
+// directory-name guess.
+func TestScanClaudeSessions_CwdOverridesMismatchedDirName(t *testing.T) {
+	projectsDir := t.TempDir()
+	// A hash-like directory name that does NOT follow the
+	// "-data-agents-<name>" convention, so AgentFromTmuxEnv returns "".
+	projectHash := filepath.Join(projectsDir, "a1b2c3d4e5f6")
+	os.MkdirAll(projectHash, 0o755)
+
+	content := strings.Join([]string{
+		`{"type":"human","timestamp":"2025-01-01T00:00:00Z","cwd":"/data/agents/scanner","message":{"text":"triage all open bugs"}}`,
+		`{"type":"assistant","timestamp":"2025-01-01T00:01:00Z","cwd":"/data/agents/scanner","message":{"model":"sonnet","usage":{"input_tokens":200,"output_tokens":100}}}`,
+	}, "\n") + "\n"
+
+	os.WriteFile(filepath.Join(projectHash, "session1.jsonl"), []byte(content), 0o600)
+
+	agg, err := ScanClaudeSessionsWithPathDetection(projectsDir)
+	if err != nil {
+		t.Fatalf("ScanClaudeSessionsWithPathDetection error: %v", err)
+	}
+
+	if agg.SessionCount != 1 {
+		t.Fatalf("SessionCount = %d, want 1", agg.SessionCount)
+	}
+	if agg.Sessions[0].Agent != "scanner" {
+		t.Errorf("Agent = %q, want 'scanner' (from the entry's cwd field)", agg.Sessions[0].Agent)
+	}
+	if _, ok := agg.ByAgent["unknown"]; ok {
+		t.Errorf("ByAgent unexpectedly has an 'unknown' bucket: %+v", agg.ByAgent)
+	}
+}
+
 func TestScanClaudeSessions_SubagentFiles(t *testing.T) {
 	projectsDir := t.TempDir()
 	projectHash := filepath.Join(projectsDir, "some-project-hash")
