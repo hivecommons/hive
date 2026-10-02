@@ -336,7 +336,9 @@
     .avatar-menu-divider { height: 1px; margin: var(--sp-2) var(--sp-0); background: var(--line); }
     .avatar-menu-label { padding: var(--sp-2) var(--sp-6); color: var(--muted); font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
     .avatar-menu-hive-row { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-0) var(--sp-6); font-family: var(--font-mono); }
-    #oc-hive-id {
+    .avatar-menu-hive-field { display: flex; min-width: 0; flex: 1 1 auto; align-items: baseline; gap: var(--sp-2); }
+    .avatar-menu-hive-key { flex: 0 0 auto; color: var(--muted); font-family: var(--font-sans); font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+    #oc-hive-id, #oc-gh-menu-pr-author {
       flex: 1 1 auto; min-width: 0; max-width: 22rem; color: var(--text); font-size: var(--fs-sm);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
@@ -3802,6 +3804,10 @@
           <div class="avatar-menu-hive-row" title="Hive Instance ID">
             <span id="oc-hive-id"></span>
             <button type="button" class="avatar-menu-copy-btn" id="oc-gh-menu-hive-id-copy" data-action="copyHiveIdFromMenu" title="Copy hive ID" aria-label="Copy hive ID">⧉</button>
+          </div>
+          <div class="avatar-menu-hive-row" title="PR AUTHOR — the GitHub identity this hive's agents open PRs and push commits as.&#10;&#10;WHAT: Either the configured project.ai_author, or the GitHub App bot ('&lt;slug&gt;[bot]') when the hive runs in App-authored mode.&#10;&#10;HOW: Reported by the spoke as ai_author_effective. A '[bot]' value means PRs are authored by the App installation, not a personal account.">
+            <span class="avatar-menu-hive-field"><span class="avatar-menu-hive-key">PR author</span><span id="oc-gh-menu-pr-author">—</span></span>
+            <button type="button" class="avatar-menu-copy-btn" id="oc-gh-menu-pr-author-copy" data-action="copyPRAuthorFromMenu" title="Copy PR author" aria-label="Copy PR author">⧉</button>
           </div>
           <div class="avatar-menu-hive-meta"><span id="oc-ts"></span><span class="status-stale" id="oc-status-stale" hidden></span></div>
           <div class="avatar-menu-divider"></div>
@@ -7374,6 +7380,19 @@
       showToast(ok ? 'Hive ID copied to clipboard' : 'Could not copy the hive ID — select and copy it by hand', ok ? 'success' : 'error');
     }
 
+    function renderPRAuthorInMenu() {
+      const el = document.getElementById('oc-gh-menu-pr-author');
+      if (!el) return;
+      el.textContent = (window._aiAuthor || '').trim() || '—';
+    }
+
+    async function copyPRAuthorFromMenu() {
+      const author = (document.getElementById('oc-gh-menu-pr-author') || {}).textContent || '';
+      if (!author.trim() || author.trim() === '—') return;
+      const ok = await writeClipboardText(author.trim());
+      showToast(ok ? 'PR author copied to clipboard' : 'Could not copy the PR author — select and copy it by hand', ok ? 'success' : 'error');
+    }
+
     /* The write-side twin of copyTerminalUrl.
 
        Copying OUT of the dashboard terminal is broken (#5188) and this is the
@@ -8853,7 +8872,6 @@
             return `<div class="gov-stat" style="cursor:pointer" data-action="openPlanList" title="${escapeHtml(tip)}"><div class="label">planning</div><div class="val${alertCls}">${escapeHtml(valTxt)}${pending > 0 ? ` <span style="opacity:.6;font-size:.7em">+${pending}</span>` : ''}</div></div>`;
           })()}
           <div class="gov-stat" title="NEXT RUN — when the governor next wakes up.&#10;&#10;WHAT: The next scheduled moment the governor will re-evaluate mode and kick any agents that are due.&#10;&#10;HOW: Computed from the last governor evaluation plus the configured evaluation interval. If that moment has already passed, this tile says due now / overdue instead of showing a stale past timestamp."><div class="label">next run</div><div class="val">${escapeHtml(formatGovernorNextRun(gov))}</div></div>
-          <div class="gov-stat" title="PR AUTHOR — the GitHub identity this hive's agents open PRs and push commits as.&#10;&#10;WHAT: Either the configured project.ai_author, or the GitHub App bot ('<slug>[bot]') when the hive runs in App-authored mode.&#10;&#10;HOW: Reported by the spoke as ai_author_effective. A '[bot]' value means PRs are authored by the App installation, not a personal account."><div class="label">PR author</div><div class="val">${escapeHtml(window._aiAuthor || '—')}</div></div>
         </div>
         <div class="temp-gauge" style="cursor:pointer" data-action="gh5" title="Click to adjust governor thresholds">
           <div class="temp-gauge-label"><span>Pressure: ${govPressure} (${issueCount} issues + ${prCount} PRs)</span><span>max ${maxQ}</span></div>
@@ -21685,12 +21703,13 @@ function burnAreaChart() {
         renderGitHubAppInstallIdHint(window._lastStatus || null);
       }
       // Who agents author PRs/commits as — the App bot ("<slug>[bot]") when this
-      // hive runs App-authored mode, else the configured ai_author. Surfaced on
-      // the governor card so operators can see the write identity at a glance.
+      // hive runs App-authored mode, else the configured ai_author. Surfaced in
+      // the user menu so operators can find the write identity near their own.
       // ai_author_effective already incorporates ai_author (else the App bot,
       // else empty). Don't fall back to a raw ai_author — an App-less hive has
       // no author and should render "—", not a stale personal value.
       window._aiAuthor = cfg.ai_author_effective || '';
+      renderPRAuthorInMenu();
       // Hub My Hives page for the user-menu shortcut (#9696). Empty on a
       // standalone hive, which keeps the entry hidden.
       window._myHivesURL = cfg.my_hives_url || '';

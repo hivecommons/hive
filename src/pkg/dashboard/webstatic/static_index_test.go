@@ -218,6 +218,30 @@ func TestStaticTerminalHostedApexWiring(t *testing.T) {
 	}
 }
 
+func TestStaticDashboardPRAuthorUserMenuWiring(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		`id="oc-gh-menu-pr-author"`,
+		`id="oc-gh-menu-pr-author-copy"`,
+		`data-action="copyPRAuthorFromMenu"`,
+		"function renderPRAuthorInMenu()",
+		"async function copyPRAuthorFromMenu()",
+		"window._aiAuthor = cfg.ai_author_effective || '';",
+		"renderPRAuthorInMenu();",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("PR author user-menu wiring missing %q", want)
+		}
+	}
+	if strings.Contains(html, `<div class="gov-stat" title="PR AUTHOR`) {
+		t.Fatal("governor strip still renders the PR AUTHOR tile")
+	}
+}
+
 func TestStaticDashboardFAQDefaultsAfterOperationalSections(t *testing.T) {
 	body, err := os.ReadFile("../static/index.html")
 	if err != nil {
