@@ -9235,7 +9235,7 @@ func loadNousStateFromPaths(logger *slog.Logger, governorDir, snapshotDir string
 		"principleCount":  len(state.Principles),
 		"baseline_target": dashboard.NousBaselineTarget,
 		"snapshotTarget":  dashboard.NousBaselineTarget,
-		"baseline_pct":    float64(snapshotCount) * 100 / dashboard.NousBaselineTarget,
+		"baseline_pct":    dashboard.NousBaselinePct(snapshotCount),
 	}
 
 	return state

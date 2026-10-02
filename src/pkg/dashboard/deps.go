@@ -242,6 +242,18 @@ type NousPrinciple struct {
 
 const NousBaselineTarget = 672
 
+// NousBaselinePct reports baseline-collection progress as a percentage,
+// capped at 100 once count reaches NousBaselineTarget. count keeps growing
+// after that (snapshots are never pruned), but "percent complete" should not
+// (hivecommons/hive#10026).
+func NousBaselinePct(count int) float64 {
+	pct := float64(count) * 100 / NousBaselineTarget
+	if pct > 100 {
+		return 100
+	}
+	return pct
+}
+
 type NousSnapshot struct {
 	Timestamp     string            `json:"timestamp"`
 	Mode          string            `json:"mode"`
@@ -307,7 +319,7 @@ func (ns *NousState) refreshStatus() {
 
 	ns.Status["snapshots"] = count
 	ns.Status["snapshotCount"] = count
-	ns.Status["baseline_pct"] = float64(count) * 100 / NousBaselineTarget
+	ns.Status["baseline_pct"] = NousBaselinePct(count)
 	ns.Status["baseline_target"] = NousBaselineTarget
 	ns.Status["snapshotTarget"] = NousBaselineTarget
 	ns.Status["phase"] = ns.Phase
