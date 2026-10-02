@@ -1,0 +1,1 @@
+- Add a third-party integration guide for work source providers, ClankeR/Flue-style external execution, and Spektacular Project Inception.
