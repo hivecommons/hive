@@ -94,6 +94,15 @@
   --badge-pad-y: 1px;
   --badge-pad-x: 8px;
   --badge-count-min-w: 18px;
+  --nav-chip-h: 28px;
+  --nav-chip-px: 10px;
+  --nav-chip-gap: 8px;
+  --nav-chip-radius: 999px;
+  --nav-chip-border: 1px;
+  --nav-chip-font-size: var(--fs-sm);
+  --nav-chip-font-weight: var(--fw-semibold);
+  --nav-chip-icon: 14px;
+  --nav-chip-max: 220px;
   --status-dot-size: 8px;
   --table-cell-pad-y: 6px;
   --table-cell-pad-x: 8px;

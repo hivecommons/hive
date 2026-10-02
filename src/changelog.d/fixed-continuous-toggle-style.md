@@ -1,0 +1,1 @@
+- Fixed the dashboard Continuous toggles so they reuse the shared Agent power switch instead of rendering as a clipped track and knob.

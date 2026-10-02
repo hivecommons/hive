@@ -156,8 +156,8 @@ func TestCadenceDialogCarriesThePowerSwitch(t *testing.T) {
 		t.Fatal("could not bound renderAgentCadences")
 	}
 	body := html[idx : idx+end]
-	if !strings.Contains(body, "pwr-switch") {
-		t.Error("the cadence dialog must show the master power switch beside the per-mode intervals")
+	if !strings.Contains(body, "pwrSwitchHtml(_enabled") {
+		t.Error("the cadence dialog must show the shared master power switch beside the per-mode intervals")
 	}
 	// Inside the dialog the switch commits through the dirty bag on Save,
 	// unlike the card's immediate action — same markup, dialog semantics.

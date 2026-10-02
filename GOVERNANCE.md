@@ -1,10 +1,20 @@
 # Hive Project Governance
 
-Hive is a KubeStellar subproject. The canonical umbrella governance for the subproject is maintained in the main KubeStellar repository at [GOVERNANCE-HIVE.md](https://github.com/kubestellar/kubestellar/blob/main/GOVERNANCE-HIVE.md). This file summarizes how that governance applies in this repository.
+Hive is a CNCF Sandbox project in the Hive Commons organization. The historical KubeStellar governance file now points here and to the Hive Commons organization governance records.
 
 ## Maintainers and authority
 
-The Hive maintainer committee owns day-to-day decisions for this repository: issue triage, PR review, merge decisions, release readiness, security response coordination, and project-specific policy changes. Current maintainer ownership is reflected in [OWNERS](OWNERS) and in the upstream governance document.
+The Hive maintainer committee owns day-to-day decisions for this repository: issue triage, PR review, merge decisions, release readiness, security response coordination, and project-specific policy changes. Current maintainer ownership is reflected in [OWNERS](OWNERS) and the Hive Commons organization [MAINTAINERS.md](https://github.com/hivecommons/.github/blob/main/MAINTAINERS.md).
+
+Current maintainers:
+
+| GitHub | Name | Affiliation |
+| ------ | ---- | ----------- |
+| @clubanderson | Andy Anderson | IBM |
+| @hanthor | James Reilly | Universal Blue |
+| @Danathar | Doug Baggett | independent |
+| @nicholasjackson | Nic Jackson | IBM |
+| @kellyaa | Kelly Abuelsaad | IBM |
 
 Routine changes use lazy consensus through GitHub review. Maintainers may merge when CI and review expectations are satisfied, DCO sign-off is present, and no unresolved objection remains.
 
@@ -13,7 +23,7 @@ Routine changes use lazy consensus through GitHub review. Maintainers may merge 
 1. Proposals are opened as GitHub issues or pull requests.
 2. Discussion happens in public on the issue or PR whenever possible.
 3. Maintainers seek consensus. For routine changes, no objection after review is treated as approval.
-4. Controversial or cross-project decisions may be escalated to the KubeStellar governance process.
+4. Controversial or cross-project decisions may be escalated to the Hive Commons maintainer committee.
 
 ## Contributor ladder
 

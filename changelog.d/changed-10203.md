@@ -1,0 +1,1 @@
+- Document telemetry data collection (#10203)

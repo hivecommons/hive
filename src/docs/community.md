@@ -11,6 +11,7 @@ For setup help, contributor relay questions, first-run guidance, and community d
 - [Hive Commons website](https://hivecommons.dev)
 - [Hosted Hive Hub](https://hive.hivecommons.dev)
 - [Contributor portal](https://hive.hivecommons.dev/contribute)
+- [Integration guide](integration-guide.md) for extending Hive with work sources, ClankeR/Flue-style external execution, and Spektacular-compatible Project Inception tooling
 - [Source repository](https://github.com/hivecommons/hive)
 - [Issue tracker](https://github.com/hivecommons/hive/issues)
 

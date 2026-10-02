@@ -1,0 +1,1 @@
+- Added sidebar section navigation peeking so collapsed dashboard sections open for the jump and restore on the next different jump unless manually kept open.
