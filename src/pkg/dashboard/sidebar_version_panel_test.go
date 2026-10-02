@@ -55,6 +55,11 @@ const out = renderVersionDetails({hash:'07d99d8426ec7b5ae364e25abcdef0123456789'
 if (!out.includes('>07d99d8<')) throw new Error('short sha missing: '+out);
 if (!out.includes('title="07d99d8426ec7b5ae364e25abcdef0123456789"')) throw new Error('full sha title missing: '+out);
 for (const row of ['Tracking','Status','Cadence']) if (!out.includes('>'+row+'</span>')) throw new Error('missing row '+row+': '+out);
+if (!out.includes('>Next update</span>') || !out.includes('>unknown</strong>')) throw new Error('next update unknown row missing: '+out);
+const eta = renderVersionDetails({hash:'abcdef1234567890', short:'abcdef1', autoUpdate:{state:'behind', enabled:true, nextUpdateAt:'2026-10-03T13:00:00Z'}}, {deliveryLabel:'stable'});
+if (!eta.includes('2026-10-03T13:00:00Z') || eta.includes('>unknown</strong>')) throw new Error('next update time missing: '+eta);
+const off = renderVersionDetails({hash:'abcdef1234567890', short:'abcdef1', autoUpdate:{state:'disabled', enabled:false}}, {deliveryLabel:'stable'});
+if (off.includes('Next update')) throw new Error('next update shown while disabled: '+off);
 const fallback = renderVersionDetails({hash:'abcdef1234567890', short:'abcdef1', branch:'v5', channel:'candidate', tracking:'', autoUpdate:{state:'unknown'}}, {deliveryLabel:''});
 if (!fallback.includes('candidate (v5)')) throw new Error('tracking fallback missing: '+fallback);
 const empty = renderVersionDetails({hash:'abcdef1234567890', short:'abcdef1', tracking:'unknown', autoUpdate:{state:'unknown'}}, {deliveryLabel:''});
