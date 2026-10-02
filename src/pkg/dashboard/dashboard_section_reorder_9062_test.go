@@ -22,6 +22,14 @@ var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','advisory-sec
 var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
 var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
 var DASHBOARD_LAYOUT_ANCHOR_ID='dashboard-notices';
+var DASHBOARD_LAYOUT_PRESETS_KEY='hive.layout.presets';
+var DASHBOARD_LAYOUT_APPLIED_KEY='hive.layout.applied';
+var DASHBOARD_LAYOUT_SNAPSHOT_VERSION=1;
+var DASHBOARD_LAYOUT_PRESET_LIMIT=5;
+var DASHBOARD_LAYOUT_DEFAULT_NAME='My layout';
+const SECTION_LS_PREFIX='hive-section-collapsed-';
+const AGENT_COMPACT_LS_PREFIX='hive-agent-compact-';
+const ALL_AGENTS_COMPACT_KEY='hive-all-agents-compact';
 var dashboardDragState=null;
 var dashboardKeyboardSnapshot=null;
 var window={_lastStatus:{features:{strategy_lab:true}}};
@@ -44,7 +52,9 @@ func TestDashboardSectionReorderStaticWiring(t *testing.T) {
 	for _, want := range []string{
 		`hive.dashboard.layout`,
 		`DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','platform-section','audit-section','review-queue-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']}`,
-		`id="dashboard-layout-reset"`,
+		`id="oc-gh-menu-layout-save"`,
+		`id="oc-gh-menu-layout-reset"`,
+		`id="oc-gh-menu-layout-export"`,
 		`id="dashboard-layout-live" aria-live="polite"`,
 		`class="dashboard-grip"`,
 		`data-dashboard-grip`,
@@ -138,12 +148,12 @@ func TestDashboardApplyResetAndSidebarSort(t *testing.T) {
 		t.Skip("node not on PATH — dashboard layout apply/sidebar behavior was NOT executed by this run")
 	}
 	html := indexHTML(t)
-	funcs := []string{"dashboardEnsureSections", "dashboardRegionEl", "dashboardCardEl", "dashboardLayoutAnnounce", "dashboardLayoutAllIds", "dashboardLayoutNormalize", "dashboardLayoutCurrent", "dashboardLayoutEquals", "dashboardUpdateResetButton", "dashboardLayoutWrite", "dashboardIsSectionNode", "dashboardTopAnchor", "dashboardPinNoticeAnchor", "dashboardFirstSection", "dashboardInsertSection", "dashboardApplyLayout", "dashboardSortSidebar", "resetDashboardLayout"}
+	funcs := []string{"dashboardEnsureSections", "dashboardRegionEl", "dashboardCardEl", "dashboardLayoutAnnounce", "dashboardLayoutAllIds", "dashboardLayoutNormalize", "dashboardLayoutCurrent", "dashboardLayoutEquals", "dashboardLayoutExtraKeys", "dashboardLayoutSnapshot", "dashboardNormalizeSnapshot", "dashboardSnapshotEquals", "dashboardLayoutDefaultSnapshot", "dashboardReadLayoutPresets", "dashboardWriteLayoutPresets", "dashboardReadAppliedLayout", "dashboardMarkAppliedLayout", "dashboardUpdateLayoutMenuState", "dashboardUpdateResetButton", "dashboardLayoutWrite", "dashboardIsSectionNode", "dashboardTopAnchor", "dashboardPinNoticeAnchor", "dashboardFirstSection", "dashboardInsertSection", "dashboardApplyLayout", "dashboardSortSidebar", "resetDashboardLayout"}
 	var b strings.Builder
 	b.WriteString(dashboardLayoutPreamble9062())
 	b.WriteString(`
 class El {
-  constructor(id, attr, val){ this.id=id; this.children=[]; this.parentElement=null; this.attrs={}; this.style={}; this.hidden=false; if(attr)this.attrs[attr]=val; }
+  constructor(id, attr, val){ this.id=id; this.children=[]; this.parentElement=null; this.attrs={}; this.style={}; this.hidden=false; this.textContent=''; this.innerHTML=''; this.classList={toggle(){},add(){},remove(){},contains(){return false}}; if(attr)this.attrs[attr]=val; }
   getAttribute(n){ return this.attrs[n] || null; }
   setAttribute(n,v){ this.attrs[n]=v; }
   appendChild(ch){ if(ch.parentElement) ch.parentElement.children=ch.parentElement.children.filter(x=>x!==ch); ch.parentElement=this; this.children.push(ch); return ch; }
@@ -152,7 +162,12 @@ class El {
   querySelectorAll(sel){ if(sel === ':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR) return this.children.filter(c=>c.attrs['data-dashboard-section']); if(sel === '.oc-nav-item') return this.children.filter(c=>c.attrs['data-section'] || c.attrs['class']==='oc-nav-item'); return []; }
   closest(sel){ return sel === '.oc-nav-group' ? this.parentElement : null; }
 }
-const localStorage = {data:{}, setItem(k,v){this.data[k]=String(v)}, getItem(k){return this.data[k] ?? null}, removeItem(k){delete this.data[k]}};
+const localStorage = {data:{}, setItem(k,v){this.data[k]=String(v)}, getItem(k){return this.data[k] ?? null}, removeItem(k){delete this.data[k]}, key(i){return Object.keys(this.data)[i] || null}, get length(){return Object.keys(this.data).length}};
+function isSectionCollapsed(sectionId){ return localStorage.getItem(SECTION_LS_PREFIX + sectionId) === '1'; }
+function applySectionCollapse(){}
+function hiveConfirm(){ return Promise.resolve(true); }
+function showToast(){ return {appendChild(){}}; }
+function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 const root = new El('hive-dashboard-root');
 const sectionMap = {};
 DASHBOARD_LAYOUT_TEMPLATE.main.forEach(id => { const el = new El(id, 'data-dashboard-section', id); sectionMap[id]=el; root.appendChild(el); });
@@ -162,10 +177,11 @@ const helpGroup = new El('help-group');
 const navItems = ['faq-section','governor','overview-section','repos-section'].map((id, i) => { const el = new El('nav-'+id, 'data-section', id); (i < 2 ? navGroup : oldGroup).appendChild(el); return el; });
 const help = new El('help-link'); help.attrs['class']='oc-nav-item'; helpGroup.appendChild(help);
 const groups = [navGroup, oldGroup, helpGroup];
-const resetA = new El('dashboard-layout-reset');
-const resetB = new El('dashboard-layout-reset-main');
+const layoutStatus = new El('oc-gh-menu-layout-status');
+const layoutWrap = new El('oc-gh-avatar-wrap');
+const layoutList = new El('oc-gh-menu-layout-list');
 const document = {
-  getElementById(id){ return id === 'hive-dashboard-root' ? root : (id === 'dashboard-section-nav-group' ? navGroup : (id === 'dashboard-layout-reset' ? resetA : (id === 'dashboard-layout-reset-main' ? resetB : null))); },
+  getElementById(id){ return id === 'hive-dashboard-root' ? root : (id === 'dashboard-section-nav-group' ? navGroup : (id === 'oc-gh-menu-layout-status' ? layoutStatus : (id === 'oc-gh-avatar-wrap' ? layoutWrap : (id === 'oc-gh-menu-layout-list' ? layoutList : null)))); },
   querySelector(sel){ const m = sel.match(/^\[data-dashboard-section="(.+)"\]$/); return m ? sectionMap[m[1]] : null; },
   querySelectorAll(sel){ if (sel === '.oc-nav-item[data-section]') return navItems; if (sel === '.oc-nav-group') return groups; return []; }
 };
@@ -175,6 +191,7 @@ const document = {
 		b.WriteByte('\n')
 	}
 	b.WriteString(`
+(async function(){
 dashboardApplyLayout(dashboardLayoutNormalize({v:2, main:['faq-section','governor']}));
 let first = root.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR).slice(0,4).map(e => e.getAttribute('data-dashboard-section')).join(',');
 if (first !== 'faq-section,overview-section,governor,advisory-section') throw new Error('page order '+first);
@@ -184,12 +201,13 @@ if (oldGroup.hidden !== true) throw new Error('empty old nav group not hidden');
 if (helpGroup.hidden === true) throw new Error('non-section help group hidden');
 dashboardLayoutWrite();
 if (JSON.parse(localStorage.data[DASHBOARD_LAYOUT_KEY]).main[0] !== 'faq-section') throw new Error('layout not written');
-if (resetA.hidden !== false || resetB.hidden !== false) throw new Error('reset buttons not visible');
-resetDashboardLayout();
+if (layoutStatus.textContent !== 'Layout: custom (unsaved)') throw new Error('layout status '+layoutStatus.textContent);
+await resetDashboardLayout();
 first = root.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR).slice(0,3).map(e => e.getAttribute('data-dashboard-section')).join(',');
 if (first !== 'overview-section,governor,advisory-section') throw new Error('reset order '+first);
 if (localStorage.data[DASHBOARD_LAYOUT_KEY] !== undefined) throw new Error('reset did not remove storage');
-if (resetA.hidden !== true || resetB.hidden !== true) throw new Error('reset buttons not hidden');
+if (layoutStatus.textContent !== 'Layout: default') throw new Error('reset status '+layoutStatus.textContent);
+})();
 `)
 	cmd := exec.Command(node, "-e", b.String())
 	if out, err := cmd.CombinedOutput(); err != nil {

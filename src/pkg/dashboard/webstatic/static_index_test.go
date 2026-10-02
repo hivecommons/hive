@@ -265,6 +265,41 @@ func TestStaticAddAgentDiscoverabilityWiring(t *testing.T) {
 	}
 }
 
+func TestStaticDashboardLayoutUserMenuWiring(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		`id="oc-gh-menu-layout-save"`,
+		`id="oc-gh-menu-layout-saved"`,
+		`id="oc-gh-menu-layout-list"`,
+		`id="oc-gh-menu-layout-reset"`,
+		`id="oc-gh-menu-layout-export"`,
+		`id="oc-gh-menu-layout-import"`,
+		`id="oc-gh-menu-layout-status"`,
+		"function dashboardLayoutSnapshot",
+		"function saveDashboardLayoutPreset",
+		"function exportDashboardLayoutJSON",
+		"function importDashboardLayoutJSON",
+		"Layout: default",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("dashboard layout user-menu wiring missing %q", want)
+		}
+	}
+	for _, gone := range []string{
+		`id="dashboard-layout-reset"`,
+		`id="dashboard-layout-reset-main"`,
+		`>↕️ Reset layout</button>`,
+	} {
+		if strings.Contains(html, gone) {
+			t.Fatalf("dashboard layout reset control should only live in the user menu; found %q", gone)
+		}
+	}
+}
+
 func TestStaticDashboardFAQDefaultsAfterOperationalSections(t *testing.T) {
 	body, err := os.ReadFile("../static/index.html")
 	if err != nil {

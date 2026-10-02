@@ -352,6 +352,7 @@
     .oc-topbar .git-version { color: var(--muted); }
     .oc-health-badge, #welcome-topbar-btn, #oc-gh-avatar-wrap { flex: 0 0 auto; }
     #oc-gh-avatar-wrap { position: relative; }
+    #oc-gh-avatar-wrap.layout-unsaved::after { content: ''; position: absolute; top: calc(-1 * var(--sp-1)); right: calc(-1 * var(--sp-1)); width: var(--sp-3); height: var(--sp-3); border-radius: var(--r-pill); background: var(--amber); border: var(--line-width) solid var(--panel); box-shadow: var(--shadow-soft); }
     #oc-gh-avatar { width: 28px; height: 28px; border-radius: 50%; cursor: pointer; border: 2px solid var(--green); vertical-align: middle; }
     .avatar-menu {
       position: absolute; right: 0; top: 34px; z-index: 9999;
@@ -388,6 +389,13 @@
       white-space: nowrap;
     }
     .avatar-menu-item:hover { background: var(--surface-2); }
+    .avatar-menu-layout-status { padding: var(--sp-1) var(--sp-6) var(--sp-3); color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; }
+    .avatar-menu-layout-list { display: grid; gap: var(--sp-1); padding: var(--sp-1) var(--sp-6) var(--sp-3); }
+    .avatar-menu-layout-snapshot { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: var(--sp-1); align-items: center; color: var(--text); font-size: var(--fs-xs); }
+    .avatar-menu-layout-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .avatar-menu-layout-empty { color: var(--muted); font-size: var(--fs-xs); }
+    .avatar-menu-layout-action { padding: var(--sp-1) var(--sp-2); border: var(--line-width) solid var(--border); border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-xs); cursor: pointer; }
+    .avatar-menu-layout-action:hover { color: var(--text); background: var(--surface-2); }
     .avatar-menu-caption { display: block; margin-top: var(--sp-1); color: var(--muted); font-size: var(--fs-xs); font-weight: 500; white-space: nowrap; }
     .avatar-menu-signout { color: var(--red); }
     /* Guide button — the Getting Started reopen affordance. Deliberately the
@@ -3895,7 +3903,6 @@
       <span id="dashboard-custom-style-note" class="dashboard-custom-style-note" style="display:none" role="status"></span>
       <!-- Agent Logs hidden (redundant with per-agent output) -->
       <button class="hv-btn btn-icon btn-sm layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
-      <button type="button" class="hv-btn btn-secondary btn-sm" id="dashboard-layout-reset" hidden data-action="resetDashboardLayout" title="Reset section order to the default layout">↕️ Reset layout</button>
     </div>
     <div class="oc-topbar-right">
       <span class="oc-health-badge" id="oc-health">● Health OK</span>
@@ -3931,6 +3938,15 @@
           <a href="/api/widget" id="oc-gh-menu-widget" class="avatar-menu-item" title="Download Übersicht widget">⬇ Widget</a>
           <a href="/api/config/download" id="oc-gh-menu-download" class="avatar-menu-item" hidden>Download hive.yaml</a>
           <a href="/api/config/export" id="oc-gh-menu-config-export" class="avatar-menu-item" hidden>Export effective config (JSON)</a>
+          <div class="avatar-menu-divider"></div>
+          <div class="avatar-menu-label">Layout</div>
+          <button class="avatar-menu-item" type="button" id="oc-gh-menu-layout-save" data-action="saveDashboardLayoutPreset">Save layout</button>
+          <button class="avatar-menu-item" type="button" id="oc-gh-menu-layout-saved" data-action="toggleDashboardLayoutPresets" aria-expanded="false">Saved layouts ▸</button>
+          <div class="avatar-menu-layout-list" id="oc-gh-menu-layout-list" hidden></div>
+          <button class="avatar-menu-item" type="button" id="oc-gh-menu-layout-reset" data-action="resetDashboardLayout">Reset layout to default</button>
+          <button class="avatar-menu-item" type="button" id="oc-gh-menu-layout-export" data-action="exportDashboardLayoutJSON">Export layout (JSON)</button>
+          <button class="avatar-menu-item" type="button" id="oc-gh-menu-layout-import" data-action="importDashboardLayoutJSON">Import layout…</button>
+          <div class="avatar-menu-layout-status" id="oc-gh-menu-layout-status">Layout: default</div>
           <div id="oc-gh-menu-backup-divider" class="avatar-menu-divider" hidden></div>
           <div id="oc-gh-menu-backup-label" class="avatar-menu-label" hidden>Backup</div>
           <!-- Owner-only self-service backup. Shown only for role === 'owner',
@@ -3957,7 +3973,6 @@
     <span class="git-version" id="hive-id-badge" title="Hive Instance ID" style="cursor:pointer;border:1px solid var(--border);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-sm)" data-action="openConfigDialog" data-arg0="governor"></span>
     <span class="git-version" id="acmm-main-badge" title="Click to change maturity level" style="cursor:pointer;border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);background:color-mix(in srgb, var(--amber) 14%, transparent);color:var(--amber);font-weight:600" data-action="openACMMDialog"></span>
     <button class="hv-btn btn-icon btn-sm layout-toggle" id="layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
-    <button type="button" class="hv-btn btn-secondary btn-sm" id="dashboard-layout-reset-main" hidden data-action="resetDashboardLayout" title="Reset section order to the default layout">↕️ Reset layout</button>
   </h1>
 
   <!-- Release channel + last upgrade attempt (#7092). Findable on the spoke's
@@ -4869,6 +4884,7 @@
         if (collapsed) localStorage.setItem('hive-cost-collapsed', '1');
         else localStorage.removeItem('hive-cost-collapsed');
       }
+      dashboardUpdateLayoutMenuState();
     }
     /** Remove the expanded max-height cap after the max-height transition finishes. */
     function releaseSectionMaxHeightAfterTransition(body) {
@@ -4942,6 +4958,11 @@
     var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
     var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
     var DASHBOARD_LAYOUT_ANCHOR_ID='dashboard-notices';
+    var DASHBOARD_LAYOUT_PRESETS_KEY='hive.layout.presets';
+    var DASHBOARD_LAYOUT_APPLIED_KEY='hive.layout.applied';
+    var DASHBOARD_LAYOUT_SNAPSHOT_VERSION=1;
+    var DASHBOARD_LAYOUT_PRESET_LIMIT=5;
+    var DASHBOARD_LAYOUT_DEFAULT_NAME='My layout';
     var dashboardDragState=null;
     var dashboardKeyboardSnapshot=null;
     function dashboardFeatureEnabled(name){try{return !!(window._lastStatus&&window._lastStatus.features&&window._lastStatus.features[name]===true);}catch(e){return false;}}
@@ -4960,8 +4981,29 @@
     // appended after the trailing FAQ section (#9426).
     function dashboardLayoutNormalize(saved){var valid=dashboardLayoutAllIds(),seen={},out={v:DASHBOARD_LAYOUT_VERSION,main:[]};var arr=saved&&Array.isArray(saved.main)?saved.main:[];arr.forEach(function(id){if(valid.indexOf(id)<0||seen[id])return;seen[id]=true;out.main.push(id);});var tpl=valid;tpl.forEach(function(id,i){if(seen[id])return;seen[id]=true;var at=-1;for(var j=i-1;j>=0&&at<0;j--){at=out.main.indexOf(tpl[j]);}if(at>=0){out.main.splice(at+1,0,id);return;}var before=out.main.length;for(var k=i+1;k<tpl.length;k++){var idx=out.main.indexOf(tpl[k]);if(idx>=0){before=idx;break;}}out.main.splice(before,0,id);});return out;}
     function dashboardLayoutEquals(a,b){a=dashboardLayoutNormalize(a);b=dashboardLayoutNormalize(b);if(a.main.length!==b.main.length)return false;for(var i=0;i<a.main.length;i++){if(a.main[i]!==b.main[i])return false;}return true;}
-    function dashboardUpdateResetButton(){var show=!dashboardLayoutEquals(dashboardLayoutCurrent(),dashboardLayoutNormalize(null));['dashboard-layout-reset','dashboard-layout-reset-main'].forEach(function(id){var b=document.getElementById(id);if(b)b.hidden=!show;});}
+    function dashboardLayoutExtraKeys(){var keys=[];try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i)||'';if(k.indexOf('hive-repo-card-widths:')===0||k.indexOf(AGENT_COMPACT_LS_PREFIX)===0||k===ALL_AGENTS_COMPACT_KEY||k.indexOf('hive.repo.tile.order')===0||k.indexOf('hive.repo-tile.order')===0||k.indexOf('hive.repoTile.order')===0||k.indexOf('hive.dashboard.repoTileOrder')===0)keys.push(k);}}catch(e){}keys.sort();return keys;}
+    function dashboardLayoutSnapshot(){var collapsed={},extras={};dashboardLayoutAllIds().forEach(function(id){if(isSectionCollapsed(id))collapsed[id]=true;});dashboardLayoutExtraKeys().forEach(function(k){try{var v=localStorage.getItem(k);if(v!==null)extras[k]=v;}catch(e){}});return {v:DASHBOARD_LAYOUT_SNAPSHOT_VERSION,layout:dashboardLayoutNormalize(dashboardLayoutCurrent()),collapsed:collapsed,extras:extras};}
+    function dashboardNormalizeSnapshot(value){var src=value&&typeof value==='object'?value:{};var layout=src.layout?src.layout:src;var collapsed={},extras={};if(src.collapsed&&typeof src.collapsed==='object'&&!Array.isArray(src.collapsed)){dashboardLayoutAllIds().forEach(function(id){if(src.collapsed[id])collapsed[id]=true;});}if(src.extras&&typeof src.extras==='object'&&!Array.isArray(src.extras)){Object.keys(src.extras).forEach(function(k){if(/^hive[-.]repo/.test(k)||k.indexOf(AGENT_COMPACT_LS_PREFIX)===0||k===ALL_AGENTS_COMPACT_KEY)extras[k]=String(src.extras[k]);});}return {v:DASHBOARD_LAYOUT_SNAPSHOT_VERSION,layout:dashboardLayoutNormalize(layout),collapsed:collapsed,extras:extras};}
+    function dashboardSnapshotEquals(a,b){a=dashboardNormalizeSnapshot(a);b=dashboardNormalizeSnapshot(b);if(!dashboardLayoutEquals(a.layout,b.layout))return false;var ac=Object.keys(a.collapsed).sort(),bc=Object.keys(b.collapsed).sort();if(JSON.stringify(ac)!==JSON.stringify(bc))return false;var ae=Object.keys(a.extras).sort(),be=Object.keys(b.extras).sort();if(JSON.stringify(ae)!==JSON.stringify(be))return false;for(var i=0;i<ae.length;i++){if(a.extras[ae[i]]!==b.extras[ae[i]])return false;}return true;}
+    function dashboardLayoutDefaultSnapshot(){return dashboardNormalizeSnapshot({layout:null,collapsed:{},extras:{}});}
+    function dashboardReadLayoutPresets(){try{var raw=localStorage.getItem(DASHBOARD_LAYOUT_PRESETS_KEY);var arr=raw?JSON.parse(raw):[];return Array.isArray(arr)?arr.filter(function(p){return p&&p.id&&p.state;}).slice(0,DASHBOARD_LAYOUT_PRESET_LIMIT):[];}catch(e){return [];}}
+    function dashboardWriteLayoutPresets(presets){try{localStorage.setItem(DASHBOARD_LAYOUT_PRESETS_KEY,JSON.stringify((presets||[]).slice(0,DASHBOARD_LAYOUT_PRESET_LIMIT)));}catch(e){}dashboardRenderLayoutPresets();}
+    function dashboardReadAppliedLayout(){try{var raw=localStorage.getItem(DASHBOARD_LAYOUT_APPLIED_KEY);return raw?JSON.parse(raw):null;}catch(e){return null;}}
+    function dashboardMarkAppliedLayout(kind,name,id,state){var applied={kind:kind||'custom',name:name||'',id:id||'',state:dashboardNormalizeSnapshot(state||dashboardLayoutSnapshot())};try{localStorage.setItem(DASHBOARD_LAYOUT_APPLIED_KEY,JSON.stringify(applied));}catch(e){}dashboardUpdateLayoutMenuState();}
+    function dashboardUpdateLayoutMenuState(){var status=document.getElementById('oc-gh-menu-layout-status'),wrap=document.getElementById('oc-gh-avatar-wrap');var current=dashboardLayoutSnapshot(),applied=dashboardReadAppliedLayout(),base=applied&&applied.state?applied:{kind:'default',name:'',state:dashboardLayoutDefaultSnapshot()};var same=dashboardSnapshotEquals(current,base.state);var label='Layout: ';if(base.kind==='default')label+=same?'default':'custom (unsaved)';else label+=(base.name||'custom')+(same?'':' (modified)');if(status)status.textContent=label;if(wrap)wrap.classList.toggle('layout-unsaved',!same);dashboardRenderLayoutPresets();}
+    function dashboardUpdateResetButton(){dashboardUpdateLayoutMenuState();}
     function dashboardLayoutWrite(){try{localStorage.setItem(DASHBOARD_LAYOUT_KEY,JSON.stringify(dashboardLayoutCurrent()));}catch(e){}dashboardUpdateResetButton();dashboardSortSidebar();}
+    function dashboardApplySnapshotState(state){state=dashboardNormalizeSnapshot(state);try{localStorage.setItem(DASHBOARD_LAYOUT_KEY,JSON.stringify(state.layout));dashboardLayoutAllIds().forEach(function(id){if(state.collapsed[id])localStorage.setItem(SECTION_LS_PREFIX+id,'1');else localStorage.removeItem(SECTION_LS_PREFIX+id);});var keep=state.extras||{};dashboardLayoutExtraKeys().forEach(function(k){if(!Object.prototype.hasOwnProperty.call(keep,k))localStorage.removeItem(k);});Object.keys(keep).forEach(function(k){localStorage.setItem(k,keep[k]);});}catch(e){}dashboardApplyLayout(state.layout);dashboardLayoutAllIds().forEach(applySectionCollapse);if(typeof repaintReposForWidth==='function')repaintReposForWidth();if(typeof renderAgents==='function')renderAgents(((window._lastStatus||{}).agents)||[]);dashboardUpdateLayoutMenuState();}
+    function dashboardRenderLayoutPresets(){var list=document.getElementById('oc-gh-menu-layout-list');if(!list)return;var presets=dashboardReadLayoutPresets();if(!presets.length){list.innerHTML='<div class="avatar-menu-layout-empty">No saved layouts yet.</div>';return;}list.innerHTML=presets.map(function(p){return '<div class="avatar-menu-layout-snapshot"><span class="avatar-menu-layout-name" title="'+esc(p.name||DASHBOARD_LAYOUT_DEFAULT_NAME)+'">'+esc(p.name||DASHBOARD_LAYOUT_DEFAULT_NAME)+'</span><button type="button" class="avatar-menu-layout-action" data-action="applyDashboardLayoutPreset" data-arg0="'+esc(p.id)+'">Apply</button><button type="button" class="avatar-menu-layout-action" data-action="renameDashboardLayoutPreset" data-arg0="'+esc(p.id)+'">Rename</button><button type="button" class="avatar-menu-layout-action" data-action="deleteDashboardLayoutPreset" data-arg0="'+esc(p.id)+'">Delete</button></div>';}).join('');}
+    function toggleDashboardLayoutPresets(){var list=document.getElementById('oc-gh-menu-layout-list'),btn=document.getElementById('oc-gh-menu-layout-saved');if(!list)return;list.hidden=!list.hidden;if(btn){btn.setAttribute('aria-expanded',String(!list.hidden));btn.textContent=list.hidden?'Saved layouts ▸':'Saved layouts ▾';}dashboardRenderLayoutPresets();}
+    async function saveDashboardLayoutPreset(){var name=(await hivePrompt({title:'Save dashboard layout',message:'Name this layout snapshot.',defaultValue:DASHBOARD_LAYOUT_DEFAULT_NAME,confirmLabel:'Save'}));name=String(name||'').trim();if(!name)return;var presets=dashboardReadLayoutPresets(),now=new Date().toISOString(),state=dashboardLayoutSnapshot(),existing=presets.find(function(p){return (p.name||'').toLowerCase()===name.toLowerCase();});if(existing){existing.state=state;existing.updatedAt=now;}else{presets.unshift({id:'layout-'+Date.now().toString(36),name:name,createdAt:now,updatedAt:now,state:state});}presets=presets.slice(0,DASHBOARD_LAYOUT_PRESET_LIMIT);dashboardWriteLayoutPresets(presets);var saved=presets.find(function(p){return (p.name||'').toLowerCase()===name.toLowerCase();})||presets[0];dashboardMarkAppliedLayout('preset',saved.name,saved.id,saved.state);showToast('Layout saved as '+saved.name,'success');}
+    function applyDashboardLayoutPreset(id){var p=dashboardReadLayoutPresets().find(function(x){return x.id===id;});if(!p)return;dashboardApplySnapshotState(p.state);dashboardMarkAppliedLayout('preset',p.name,p.id,p.state);dashboardLayoutAnnounce('Applied layout '+p.name+'.');showToast('Layout applied: '+p.name,'success');}
+    async function renameDashboardLayoutPreset(id){var presets=dashboardReadLayoutPresets(),p=presets.find(function(x){return x.id===id;});if(!p)return;var name=(await hivePrompt({title:'Rename layout',message:'New layout name.',defaultValue:p.name||DASHBOARD_LAYOUT_DEFAULT_NAME,confirmLabel:'Rename'}));name=String(name||'').trim();if(!name)return;p.name=name;p.updatedAt=new Date().toISOString();dashboardWriteLayoutPresets(presets);var applied=dashboardReadAppliedLayout();if(applied&&applied.id===id)dashboardMarkAppliedLayout('preset',p.name,p.id,p.state);}
+    async function deleteDashboardLayoutPreset(id){var presets=dashboardReadLayoutPresets(),p=presets.find(function(x){return x.id===id;});if(!p)return;if(!await hiveConfirm({title:'Delete saved layout?',message:'Delete "'+(p.name||DASHBOARD_LAYOUT_DEFAULT_NAME)+'"? The current working layout will not change.',confirmLabel:'Delete',danger:true}))return;dashboardWriteLayoutPresets(presets.filter(function(x){return x.id!==id;}));var applied=dashboardReadAppliedLayout();if(applied&&applied.id===id)dashboardMarkAppliedLayout('custom','', '', dashboardLayoutSnapshot());}
+    function dashboardDownloadJSON(filename,obj){var blob=new Blob([JSON.stringify(obj,null,2)+'\n'],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(function(){URL.revokeObjectURL(url);},1000);}
+    function exportDashboardLayoutJSON(){dashboardDownloadJSON('hive-dashboard-layout.json',dashboardLayoutSnapshot());showToast('Layout JSON exported','success');}
+    function importDashboardLayoutJSON(){var input=document.createElement('input');input.type='file';input.accept='application/json,.json';input.addEventListener('change',function(){var file=input.files&&input.files[0];if(!file)return;var reader=new FileReader();reader.onload=function(){try{var parsed=JSON.parse(String(reader.result||''));var state=dashboardNormalizeSnapshot(parsed);dashboardApplySnapshotState(state);dashboardMarkAppliedLayout('custom','', '', state);showToast('Layout imported','success');}catch(e){showToast('Layout import failed: invalid JSON','error');}};reader.readAsText(file);});input.click();}
+    async function resetDashboardLayout(){var before=dashboardLayoutSnapshot();if(!await hiveConfirm({title:'Reset layout to default?',message:'This clears your working dashboard section order, collapsed sections, and saved layout display tweaks on this device. You can undo for a few seconds after reset.',confirmLabel:'Reset layout',danger:true}))return;try{localStorage.removeItem(DASHBOARD_LAYOUT_KEY);dashboardLayoutAllIds().forEach(function(id){localStorage.removeItem(SECTION_LS_PREFIX+id);});dashboardLayoutExtraKeys().forEach(function(k){localStorage.removeItem(k);});}catch(e){}dashboardApplyLayout(dashboardLayoutNormalize(null));dashboardLayoutAllIds().forEach(applySectionCollapse);if(typeof repaintReposForWidth==='function')repaintReposForWidth();dashboardMarkAppliedLayout('default','', '', dashboardLayoutDefaultSnapshot());dashboardLayoutAnnounce('Dashboard layout reset to the default.');showToast('Dashboard layout reset to default','info',{actionLabel:'Undo',autoDismissMs:10000,onAction:function(){dashboardApplySnapshotState(before);dashboardMarkAppliedLayout('custom','', '', before);dashboardLayoutAnnounce('Dashboard layout reset undone.');}});}
     function dashboardIsSectionNode(node){return !!(node&&node.getAttribute&&node.getAttribute('data-dashboard-section'));}
     function dashboardTopAnchor(region){var anchor=document.getElementById(DASHBOARD_LAYOUT_ANCHOR_ID);return anchor&&anchor.parentElement===region?anchor:null;}
     function dashboardPinNoticeAnchor(region){var anchor=dashboardTopAnchor(region);if(!region||!anchor||!region.children)return;var children=Array.prototype.slice.call(region.children),moved=[];for(var i=0;i<children.length&&children[i]!==anchor;i++){if(dashboardIsSectionNode(children[i]))moved.push(children[i]);}if(!moved.length)return;var ref=anchor.nextElementSibling||null;moved.forEach(function(card){region.insertBefore(card,ref);});}
@@ -4969,7 +5011,6 @@
     function dashboardInsertSection(region,card,before){if(!region||!card)return;dashboardPinNoticeAnchor(region);if(before){var anchor=dashboardTopAnchor(region);if(anchor&&region.children){var children=Array.prototype.slice.call(region.children),anchorIdx=children.indexOf(anchor),beforeIdx=children.indexOf(before);if(anchorIdx>=0&&beforeIdx>=0&&beforeIdx<=anchorIdx)before=dashboardFirstSection(region);}region.insertBefore(card,before);dashboardPinNoticeAnchor(region);return;}var sections=region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR);var last=sections.length?sections[sections.length-1]:null;if(last&&last!==card){var siblings=Array.prototype.slice.call(region.children),next=siblings[siblings.indexOf(last)+1]||null;region.insertBefore(card,next);}else region.appendChild(card);dashboardPinNoticeAnchor(region);}
     function dashboardApplyLayout(layout){var region=dashboardRegionEl('main');if(!region)return;dashboardPinNoticeAnchor(region);var ids=(layout&&layout.main)||[];for(var i=ids.length-1;i>=0;i--){if(dashboardFeatureSectionHidden(ids[i]))continue;var card=dashboardCardEl(ids[i]);if(card)dashboardInsertSection(region,card,dashboardFirstSection(region));}dashboardUpdateResetButton();dashboardSortSidebar();}
     function dashboardSortSidebar(){var order=dashboardLayoutNormalize(dashboardLayoutCurrent()).main,rank={};order.forEach(function(id,i){rank[id]=i;});var items=Array.prototype.slice.call(document.querySelectorAll('.oc-nav-item[data-section]')).filter(function(item){return rank[item.getAttribute('data-section')]!==undefined;});items.sort(function(a,b){return rank[a.getAttribute('data-section')]-rank[b.getAttribute('data-section')];});var home=document.getElementById('dashboard-section-nav-group')||(items.length&&items[0].closest('.oc-nav-group'));if(!home)return;items.forEach(function(item){home.appendChild(item);});Array.prototype.forEach.call(document.querySelectorAll('.oc-nav-group'),function(group){if(group===home||group.id==='oc-agent-nav-group'){group.hidden=false;return;}group.hidden=group.querySelectorAll('.oc-nav-item').length===0;});}
-    function resetDashboardLayout(){try{localStorage.removeItem(DASHBOARD_LAYOUT_KEY);}catch(e){}dashboardApplyLayout(dashboardLayoutNormalize(null));dashboardLayoutAnnounce('Dashboard section layout reset to the default order.');}
     function dashboardLayoutSlot(region,x,y,skip){var cards=Array.prototype.filter.call(region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR),function(c){return c!==skip;});if(!cards.length)return {region:region,before:null};var best=null,bestDist=Infinity;cards.forEach(function(card){var rect=card.getBoundingClientRect(),before=y<(rect.top+rect.height/2),anchor=before?rect.top:rect.bottom,dist=Math.abs(y-anchor)+Math.abs(x-(rect.left+rect.width/2));if(dist<bestDist){bestDist=dist;best={region:region,before:before?card:card.nextElementSibling};}});return best||{region:region,before:null};}
     function dashboardNearestRegion(x,y){return dashboardRegionEl('main');}
     function dashboardMoveIndicator(slot){var indicator=dashboardDragState&&dashboardDragState.indicator;if(!indicator||!slot||!slot.region)return;dashboardInsertSection(slot.region,indicator,slot.before);}
@@ -5003,6 +5044,7 @@
       if (!compact) localStorage.removeItem(ALL_AGENTS_COMPACT_KEY);
       const card = document.querySelector(`.agent-card[data-agent="${agentName}"]`);
       if (card) card.classList.toggle('compact', compact);
+      dashboardUpdateLayoutMenuState();
     }
     /** Toggle all agent cards compact/expanded */
     function toggleAllAgentsCompact() {
@@ -5021,6 +5063,7 @@
       // Update button text
       const btn = document.getElementById('agents-compact-all-btn');
       if (btn) btn.textContent = localStorage.getItem(ALL_AGENTS_COMPACT_KEY) === '1' ? '⊞ Expand All' : '⊟ Compact All';
+      dashboardUpdateLayoutMenuState();
     }
 
     // ── Fleet breaker (kill-switch) ──
@@ -10068,6 +10111,7 @@
         if (Object.keys(widths).length) localStorage.setItem(repoCardWidthKey(), JSON.stringify(widths));
         else localStorage.removeItem(repoCardWidthKey());
       } catch {}
+      dashboardUpdateLayoutMenuState();
     }
 
     // A pill title is cut twice: here, to MAX_PILL_TITLE_LEN characters, and
@@ -11400,6 +11444,7 @@
     function resetRepoCardWidths() {
       try { localStorage.removeItem(repoCardWidthKey()); localStorage.removeItem(REPO_ORDER_KEY); } catch {}
       repaintReposForWidth();
+      dashboardUpdateLayoutMenuState();
       showToast('Project card layout reset to the default', 'info');
     }
 
@@ -20170,10 +20215,21 @@ function burnAreaChart() {
       el.addEventListener('click', () => dismissToast(el, null, null, true));
     }
     function showToast(msg, type = 'info', persistent = false, autoDismissMs = 0) {
+      const opts = (persistent && typeof persistent === 'object') ? persistent : {};
+      if (persistent && typeof persistent === 'object') persistent = !!opts.persistent;
+      if (opts.autoDismissMs !== undefined) autoDismissMs = opts.autoDismissMs;
       const container = document.getElementById('toast-container');
       const el = document.createElement('div');
       el.className = `toast ${type}`;
       el.textContent = msg;
+      if (opts.actionLabel && typeof opts.onAction === 'function') {
+        const action = document.createElement('button');
+        action.type = 'button';
+        action.className = 'toast-action';
+        action.textContent = opts.actionLabel;
+        action.addEventListener('click', (e) => { e.stopPropagation(); opts.onAction(); dismissToast(el, null, null, true); });
+        el.appendChild(action);
+      }
       container.appendChild(el);
       if (persistent) {
         const spinner = document.createElement('span');
