@@ -27,7 +27,9 @@ func TestReadmittedRunStartsPastStaleReceipts(t *testing.T) {
 		t.Fatal("first spec not held after its receipt")
 	}
 
-	later := now.Add(leaseTTL + time.Minute)
+	// The held spec checkpoint extends the first lease by the checkpoint hold
+	// duration, not leaseTTL; admission is a no-op while that lease is live.
+	later := now.Add(s.runCheckpointHoldDuration() + time.Minute)
 	if err := s.AdmitTriagedRun("myorg/repo1", 8450, "feature", "spec", "re-triaged", later); err != nil {
 		t.Fatalf("re-admit: %v", err)
 	}
