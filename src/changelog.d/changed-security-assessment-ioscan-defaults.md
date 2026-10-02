@@ -1,0 +1,1 @@
+- The Hive security self-assessment now matches the shipped `ioscan` defaults from #7095: canaries default on, and `ioscan.fail_mode` defaults to `closed` at ACMM L5/L6 while staying `open` at L1–L4.
