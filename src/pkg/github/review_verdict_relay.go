@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -154,6 +155,9 @@ func (c *Client) writeOneVerdict(req ReviewRequest, report review.PerspectiveRep
 func verdictDispatchAuthorized(report review.PerspectiveReport, req ReviewRequest) (bool, string, string) {
 	state, err := review.LoadDispatchState("")
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return advisoryVerdictAuthorized(report, req)
+		}
 		return false, "dispatch_state_unavailable", ""
 	}
 	now := time.Now().UTC()
@@ -180,6 +184,17 @@ func verdictDispatchAuthorized(report review.PerspectiveReport, req ReviewReques
 		return true, "", r.HeadSHA
 	}
 	return false, "no_matching_dispatch", ""
+}
+
+func advisoryVerdictAuthorized(report review.PerspectiveReport, req ReviewRequest) (bool, string, string) {
+	head := strings.TrimSpace(report.HeadSHA)
+	if head == "" {
+		return false, "missing_head_sha_without_dispatch", ""
+	}
+	if sameVerdictAuthor(verdictAuthorAgent("", report), req.Agent) {
+		return false, "author_self_approval", ""
+	}
+	return true, "", head
 }
 
 func pendingReviewMatchesVerdict(p review.PendingReview, report review.PerspectiveReport, req ReviewRequest) bool {

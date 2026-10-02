@@ -228,6 +228,46 @@ func TestRefreshReviewVerdicts_CollectsReportsIntoArtifact(t *testing.T) {
 	}
 }
 
+func TestRefreshReviewVerdicts_CollectsAdvisoryReportsIntoArtifact(t *testing.T) {
+	dir := redirectReviewPaths(t)
+	report := review.PerspectiveReport{
+		AgentReport: outputschema.AgentReport{
+			Lane:       "review-swarm",
+			Kind:       outputschema.KindReview,
+			Findings:   []outputschema.Finding{},
+			PRsOpened:  []outputschema.PROpened{},
+			BeadsFiled: []outputschema.BeadFiled{},
+			Summary:    "advisory review summary",
+		},
+		Perspective: review.PerspectiveCorrectness,
+		Verdict:     review.VerdictApprove,
+		Repo:        "hivecommons/hive",
+		Number:      4321,
+		HeadSHA:     reviewTestSHA,
+	}
+	raw, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("marshal report: %v", err)
+	}
+	reportPath := filepath.Join(dir, review.ReviewReportFilePrefix+"correctness"+review.ReviewReportFileSuffix)
+	if err := os.WriteFile(reportPath, raw, 0o644); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+
+	refreshReviewVerdicts(&config.Config{}, restoreTestLogger())
+
+	artifact, err := review.LoadArtifact("")
+	if err != nil {
+		t.Fatalf("load refreshed artifact: %v", err)
+	}
+	if len(artifact.Items) != 1 || artifact.Items[0].HeadSHA != reviewTestSHA {
+		t.Fatalf("advisory artifact = %+v, want one aggregate at %s", artifact.Items, reviewTestSHA)
+	}
+	if artifact.Items[0].Perspectives[review.PerspectiveCorrectness] != review.VerdictApprove {
+		t.Errorf("correctness perspective verdict = %q, want approve", artifact.Items[0].Perspectives[review.PerspectiveCorrectness])
+	}
+}
+
 func TestPersistReviewDispatchState_EmptyPlanWritesNothing(t *testing.T) {
 	redirectReviewPaths(t)
 	persistReviewDispatchState(review.DispatchPlan{}, nil, restoreTestLogger())

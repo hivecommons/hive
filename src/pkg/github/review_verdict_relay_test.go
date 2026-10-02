@@ -36,6 +36,20 @@ func validVerdictJSON(t *testing.T, repo string, number int, perspective, verdic
 	return string(raw)
 }
 
+func validVerdictJSONWithHead(t *testing.T, repo string, number int, perspective, verdict, headSHA string) string {
+	t.Helper()
+	var report map[string]any
+	if err := json.Unmarshal([]byte(validVerdictJSON(t, repo, number, perspective, verdict)), &report); err != nil {
+		t.Fatalf("unmarshal verdict fixture: %v", err)
+	}
+	report["head_sha"] = headSHA
+	raw, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return string(raw)
+}
+
 func withVerdictDispatchState(t *testing.T, state review.DispatchState) {
 	t.Helper()
 	dir := t.TempDir()
@@ -145,6 +159,48 @@ func TestRecordReviewVerdictRejectsNoDispatch(t *testing.T) {
 
 	if matches, _ := filepath.Glob(filepath.Join(dir, "*")); len(matches) != 0 {
 		t.Fatalf("verdict without dispatch was recorded: %v", matches)
+	}
+}
+
+func TestRecordReviewVerdictAcceptsAdvisoryVerdictWithoutDispatchState(t *testing.T) {
+	dir := t.TempDir()
+	oldPath, oldLegacy := review.ReviewDispatchStatePath, review.LegacyReviewDispatchStatePath
+	review.ReviewDispatchStatePath = filepath.Join(dir, "missing", review.ReviewDispatchStateFile)
+	review.LegacyReviewDispatchStatePath = filepath.Join(dir, "missing-legacy", review.ReviewDispatchStateFile)
+	t.Cleanup(func() {
+		review.ReviewDispatchStatePath, review.LegacyReviewDispatchStatePath = oldPath, oldLegacy
+	})
+	reportDir := filepath.Join(dir, "reports")
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSONWithHead(t, "o/r", 1, "correctness", "approve", "abc123")
+
+	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, reportDir)
+
+	artifact, err := review.Collect(reportDir, review.AggregateOptions{})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(artifact.Items) != 1 || artifact.Items[0].HeadSHA != "abc123" {
+		t.Fatalf("advisory verdict was not collected with its head SHA: %+v", artifact.Items)
+	}
+}
+
+func TestRecordReviewVerdictRejectsAdvisoryVerdictWithoutHead(t *testing.T) {
+	dir := t.TempDir()
+	oldPath, oldLegacy := review.ReviewDispatchStatePath, review.LegacyReviewDispatchStatePath
+	review.ReviewDispatchStatePath = filepath.Join(dir, "missing", review.ReviewDispatchStateFile)
+	review.LegacyReviewDispatchStatePath = filepath.Join(dir, "missing-legacy", review.ReviewDispatchStateFile)
+	t.Cleanup(func() {
+		review.ReviewDispatchStatePath, review.LegacyReviewDispatchStatePath = oldPath, oldLegacy
+	})
+	reportDir := filepath.Join(dir, "reports")
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSON(t, "o/r", 1, "correctness", "approve")
+
+	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, reportDir)
+
+	if matches, _ := filepath.Glob(filepath.Join(reportDir, "*")); len(matches) != 0 {
+		t.Fatalf("headless advisory verdict was recorded: %v", matches)
 	}
 }
 

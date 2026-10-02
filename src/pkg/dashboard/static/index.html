@@ -8688,7 +8688,10 @@
       const modelLine = models.slice(0, 4).map(g => `${escapeHtml(g.name || 'unknown')}: FA ${pct(g.false_approve_rate)} (${g.false_approvals || 0}/${g.approvals || 0}) · FB ${pct(g.false_block_rate)} (${g.false_blocks || 0}/${g.blocks || 0})`).join('<br>');
       const conf = models.flatMap(g => (g.confidence_buckets || []).map(b => ({...b, model: g.name || 'unknown'}))).slice(0, 8);
       const confLine = conf.length ? `<div class="gov-pr-model-reworked"><div class="gov-pr-model-reworked-title">Confidence calibration by model</div><ol>${conf.map(b => `<li>${escapeHtml(b.model)} score ${escapeHtml(b.bucket)}: merge ${pct(b.merge_rate)} · bad ${pct(b.bad_outcome_rate)} · n=${b.samples || 0}</li>`).join('')}</ol></div>` : '';
-      const table = perspectives.length ? `<table class="gov-pr-model-table" aria-label="Reviewer accuracy by perspective"><thead><tr><th>Perspective</th><th>false approve</th><th>false block</th><th>sample</th></tr></thead><tbody>${perspectives.map(row).join('')}</tbody></table>` : '<div class="gov-pr-models-empty">No calibrated verdicts in the window yet.</div>';
+      const empty = (data.recorded_verdicts || 0) > 0
+        ? `<div class="gov-pr-models-empty">${data.recorded_verdicts || 0} reviewer verdict${(data.recorded_verdicts || 0) === 1 ? '' : 's'} recorded, but no merged/closed PR outcomes resolved yet.</div>`
+        : '<div class="gov-pr-models-empty">No reviewer verdicts recorded in the window yet.</div>';
+      const table = perspectives.length ? `<table class="gov-pr-model-table" aria-label="Reviewer accuracy by perspective"><thead><tr><th>Perspective</th><th>false approve</th><th>false block</th><th>sample</th></tr></thead><tbody>${perspectives.map(row).join('')}</tbody></table>` : empty;
       return `<div class="gov-pr-models">
         <div class="gov-pr-models-head"><div><div class="gov-pr-models-title">Reviewer accuracy</div><div class="gov-pr-model-sub">${data.samples || 0} verdict sample${(data.samples || 0) === 1 ? '' : 's'} · last ${data.window_days || 30}d</div></div></div>
         ${table}
