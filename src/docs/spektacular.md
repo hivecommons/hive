@@ -96,7 +96,9 @@ items to the linked project; inbound project status updates are recorded on the
 campaign without rewriting local Jam decisions. Sync failures are kept with
 retry guidance so the dashboard shows what to fix before trying again.
 
-Sync posts to `https://api.github.com/graphql` with the hive's `GITHUB_TOKEN`.
+Sync posts to `https://api.github.com/graphql` with the hive's `GITHUB_TOKEN`,
+creating one Projects v2 draft issue per item (`addProjectV2DraftIssue`); this
+needs the project's node id (`PVT_…`) as `project_id`.
 `HIVE_JAM_PROJECT_SYNC_URL` overrides the endpoint; an override must use
 `https` (plain `http` is accepted only for loopback hosts) and never receives
 `GITHUB_TOKEN`. Set `HIVE_JAM_PROJECT_SYNC_TOKEN` to give a custom endpoint its

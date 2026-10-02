@@ -14,6 +14,7 @@ import (
 )
 
 const (
+	inboundProjectItemTitle   = "Inbound project status"
 	jamProjectSyncEndpointEnv = "HIVE_JAM_PROJECT_SYNC_URL"
 	jamProjectSyncTokenEnv    = "HIVE_JAM_PROJECT_SYNC_TOKEN"
 	jamProjectSyncDefaultURL  = "https://api.github.com/graphql"
@@ -159,7 +160,7 @@ func updateCampaignProjectSync(state *CampaignJamState, req campaignProjectSyncR
 		state.ProjectSync.LastError = ""
 		state.ProjectSync.RetryAdvice = ""
 		state.ProjectSync.PublishedItems = append(state.ProjectSync.PublishedItems, CampaignProjectItem{
-			Type: itemType, Title: "Inbound project status", Status: status, ExternalID: externalID, UpdatedAt: now,
+			Type: itemType, Title: inboundProjectItemTitle, Status: status, ExternalID: externalID, UpdatedAt: now,
 		})
 	}
 	return nil
@@ -194,7 +195,13 @@ func (s *Server) syncCampaignJamProject(w http.ResponseWriter, r *http.Request, 
 		state.ProjectSync.LastSyncAt = jamNow()
 		state.ProjectSync.LastError = ""
 		state.ProjectSync.RetryAdvice = ""
-		state.ProjectSync.PublishedItems = payload.Items
+		kept := make([]CampaignProjectItem, 0, len(payload.Items))
+		for _, item := range state.ProjectSync.PublishedItems {
+			if item.Title == inboundProjectItemTitle {
+				kept = append(kept, item)
+			}
+		}
+		state.ProjectSync.PublishedItems = append(kept, payload.Items...)
 		return nil
 	})
 	if err != nil {
@@ -260,11 +267,42 @@ func postCampaignProjectSync(payload campaignProjectSyncPayload) error {
 	if err != nil {
 		return err
 	}
-	body := map[string]any{
-		"query":     "mutation HiveJamProjectSync($input: JSON!) { hiveJamProjectSync(input: $input) { ok } }",
-		"variables": map[string]any{"input": payload},
+	if u, perr := url.Parse(endpoint); perr == nil && jamProjectSyncIsCanonicalGitHub(u) {
+		return postGitHubProjectDrafts(endpoint, token, payload)
 	}
-	raw, err := json.Marshal(body)
+	return jamProjectSyncGraphQL(endpoint, token,
+		"mutation HiveJamProjectSync($input: JSON!) { hiveJamProjectSync(input: $input) { ok } }",
+		map[string]any{"input": payload})
+}
+
+// postGitHubProjectDrafts publishes each item as a draft issue through
+// GitHub's real Projects v2 API (addProjectV2DraftIssue). It needs the
+// project's GraphQL node id (PVT_…); a project URL alone cannot be resolved
+// to one without extra scopes, so it is rejected with an actionable message.
+func postGitHubProjectDrafts(endpoint, token string, payload campaignProjectSyncPayload) error {
+	projectID := strings.TrimSpace(payload.ProjectID)
+	if projectID == "" {
+		return errors.New("project_id (GitHub Projects v2 node id, PVT_…) required to sync to GitHub Projects")
+	}
+	const mutation = "mutation($input: AddProjectV2DraftIssueInput!) { addProjectV2DraftIssue(input: $input) { projectItem { id } } }"
+	for _, item := range payload.Items {
+		title := strings.TrimSpace(item.Title)
+		if title == "" {
+			title = item.Type
+		}
+		input := map[string]any{"projectId": projectID, "title": title}
+		if item.Body != "" {
+			input["body"] = item.Body
+		}
+		if err := jamProjectSyncGraphQL(endpoint, token, mutation, map[string]any{"input": input}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func jamProjectSyncGraphQL(endpoint, token, query string, variables map[string]any) error {
+	raw, err := json.Marshal(map[string]any{"query": query, "variables": variables})
 	if err != nil {
 		return err
 	}
