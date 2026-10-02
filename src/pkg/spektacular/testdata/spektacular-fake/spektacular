@@ -10,7 +10,7 @@
 # Contract encoded here (see src/docs/spektacular.md):
 #   spektacular <spec|plan> status <name>           (bare name, no extension;
 #                                                    the CLI has no --json flag)
-#     -> {"error":false,"kind","name","artifact_id",
+#     -> {"error":false,"kind","name",["artifact_id" only with SPEK_FAKE_ARTIFACT_ID=1],
 #         "document_status":"draft"|"final"|"superseded"|"archived"|"stale",
 #         "current_step","completed_steps":[],"created_at","updated_at",
 #         "closed_at","spec","plan"}
@@ -36,8 +36,17 @@
 #   SPEK_FAKE_SCENARIO  draft-final | never-final | final-then-draft |
 #                       final-no-updated-at | stale-plan | superseded |
 #                       archived | missing
+#   SPEK_FAKE_VERSION   version printed by --version (default 0.22.0)
+#   SPEK_FAKE_ARTIFACT_ID  set to 1 to emit artifact_id in status payloads;
+#                       0.22.0 does not emit it, 0.23+ does
 #   SPEK_FAKE_STATE     path of the per-scenario call counter file
 set -eu
+
+# Version probe (Probe runs `spektacular --version`); the pinned release.
+if [ "${1:-}" = "--version" ]; then
+  echo "spektacular ${SPEK_FAKE_VERSION:-0.22.0}"
+  exit 0
+fi
 
 kind="${1:-}"; verb="${2:-}"; name="${3:-}"; extra="${4:-}"; format="${5:-}"
 scenario="${SPEK_FAKE_SCENARIO:-draft-final}"
@@ -90,6 +99,9 @@ fi
 count=$((count + 1))
 printf '%s' "$count" > "$state"
 
+aid=''
+if [ "${SPEK_FAKE_ARTIFACT_ID:-}" = "1" ]; then aid=$(printf '"artifact_id":"%s",' "$name"); fi
+
 with_updated=1
 case "$scenario" in
   missing)
@@ -138,9 +150,9 @@ plan=''
 if [ "$kind" = "plan" ]; then plan="$name"; fi
 
 if [ "$with_updated" -eq 1 ]; then
-  printf '{"error":false,"kind":"%s","name":"%s","artifact_id":"%s","document_status":"%s","current_step":"%s","completed_steps":%s,"created_at":"2026-09-21T00:00:00Z","updated_at":"2026-09-22T13:3%s:00Z","closed_at":%s,"spec":"","plan":"%s"}\n' \
-    "$kind" "$name" "$name" "$status" "$step" "$steps" "$count" "$closed" "$plan"
+  printf '{"error":false,"kind":"%s","name":"%s",%s"document_status":"%s","current_step":"%s","completed_steps":%s,"created_at":"2026-09-21T00:00:00Z","updated_at":"2026-09-22T13:3%s:00Z","closed_at":%s,"spec":"","plan":"%s"}\n' \
+    "$kind" "$name" "$aid" "$status" "$step" "$steps" "$count" "$closed" "$plan"
 else
-  printf '{"error":false,"kind":"%s","name":"%s","artifact_id":"%s","document_status":"%s","current_step":"%s","completed_steps":%s,"created_at":"2026-09-21T00:00:00Z","closed_at":%s,"spec":"","plan":"%s"}\n' \
-    "$kind" "$name" "$name" "$status" "$step" "$steps" "$closed" "$plan"
+  printf '{"error":false,"kind":"%s","name":"%s",%s"document_status":"%s","current_step":"%s","completed_steps":%s,"created_at":"2026-09-21T00:00:00Z","closed_at":%s,"spec":"","plan":"%s"}\n' \
+    "$kind" "$name" "$aid" "$status" "$step" "$steps" "$closed" "$plan"
 fi
