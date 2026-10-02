@@ -953,3 +953,25 @@ func TestSettleStageGeneration_EscalationSurvivesStalledLease(t *testing.T) {
 		t.Fatal("escalated lease was pruned by the cleanup tick after a stall")
 	}
 }
+
+func TestLeaseStageAdvanceClearsStaleResetAttrsOnTimeline(t *testing.T) {
+	hub, srv := covK2Hub(t)
+	now := time.Now()
+	if err := hub.recordLeaseForKeyStage("c-reset", "task-reset", "myorg/repo1", 8350,
+		"myorg/repo1#8350", "contributor", StageImplement, resetTestStartGen, now); err != nil {
+		t.Fatalf("record staged lease: %v", err)
+	}
+	reset, err := hub.resetLeaseStage("c-reset", "task-reset", StagePlan, "plan rejected", now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("reset implement -> plan: %v", err)
+	}
+	hub.emitLeaseStageTransitionAt(StagePlan, StageImplement, "", false, reset, now.Add(2*time.Minute))
+	j, ok := srv.LifecycleTimeline().Journey("myorg/repo1#8350")
+	if !ok {
+		t.Fatal("journey not recorded")
+	}
+	stage := j.Stages[timeline.KindStageCompleted]
+	if stage == nil || stage.Attrs["stage_to"] != StageImplement || stage.Attrs["reason"] != "" || stage.Attrs["reset"] != "" {
+		t.Fatalf("advance inherited reset attrs: %+v", stage)
+	}
+}

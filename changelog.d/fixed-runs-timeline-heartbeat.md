@@ -1,0 +1,1 @@
+- Runs: a checkpoint-held lease no longer reports `activity.lease_heartbeat_at` in the future (the derived heartbeat is clamped to now), and a normal stage advance no longer inherits the `reason`/`reset` attributes of an earlier owner reset on the lifecycle timeline. (#10120, #10117)
