@@ -1,6 +1,6 @@
 # Hive
 
-AI agent orchestrator for GitHub repositories. A single Go binary that enumerates issues and PRs, classifies them by complexity, and dispatches work to AI agents (Claude, Copilot, Gemini, Goose) on adaptive cadences.
+AI agent orchestrator for connected work sources and source repositories. A single Go binary that enumerates issues and pull/merge requests, classifies them by complexity, and dispatches work to AI agents (Claude, Copilot, Gemini, Goose) on adaptive cadences.
 
 ## Quick Start (Docker)
 

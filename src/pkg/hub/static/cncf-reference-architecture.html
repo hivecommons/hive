@@ -227,7 +227,7 @@
       <!-- ── Organization ── -->
       <section id="org">
         <h2><span class="num">02</span> Organization &amp; team</h2>
-        <p><strong>Hive</strong> is an open-source, self-hostable platform — part of the Hive Commons org (<a href="https://github.com/hivecommons/hive"><code>github.com/hivecommons/hive</code></a>) — that keeps software repositories maintained by running a fleet of AI coding agents — triaging issues, writing fixes, opening PRs, and merging on green CI — under a human-controlled autonomy dial and permissions enforced in depth. It runs as a cloud-native workload: each hive is a Kubernetes deployment, and a hosted hub coordinates a fleet of self-hosted spokes.</p>
+        <p><strong>Hive</strong> is an open-source, self-hostable platform — part of the Hive Commons org (<a href="https://github.com/hivecommons/hive"><code>github.com/hivecommons/hive</code></a>) — that keeps software projects maintained by running a fleet of AI coding agents — triaging issues, writing fixes, opening pull requests or merge requests, and merging when checks pass — under a human-controlled autonomy dial and permissions enforced in depth. It runs as a cloud-native workload: each hive is a Kubernetes deployment, and a hosted hub coordinates a fleet of self-hosted spokes.</p>
         <p>Hive is run in production by more than one open-source community:</p>
         <ul>
           <li>The <strong>KubeStellar Console</strong> team (<a href="https://github.com/kubestellar/console"><code>kubestellar/console</code></a>) runs a hive against the console's repositories — the flagship end user, where Hive is dogfooded daily.</li>
@@ -239,7 +239,7 @@
       <!-- ── Overview ── -->
       <section id="overview">
         <h2><span class="num">03</span> Architecture overview &amp; goals</h2>
-        <p><strong>The goal:</strong> let a fleet of AI coding agents maintain a repository autonomously — triage issues, write fixes, open PRs, merge on green CI — while keeping a human firmly in control of <em>how much</em> autonomy is granted, and enforcing those limits with technical controls rather than trust.</p>
+        <p><strong>The goal:</strong> let a fleet of AI coding agents maintain a project autonomously — triage issues, write fixes, open pull/merge requests, merge when checks pass — while keeping a human firmly in control of <em>how much</em> autonomy is granted, and enforcing those limits with technical controls rather than trust.</p>
 
         <p>A hive runs as a <strong>single container</strong> on Kubernetes with three long-lived processes: a <strong>Go orchestrator</strong> (governor loop, agent manager, dashboard API, an in-process MITM GitHub proxy, hub heartbeat), a <strong>Node.js proxy</strong> (the public front door), and <strong>ttyd</strong> (a web terminal onto the agents' <code>tmux</code> sessions).</p>
 
@@ -253,7 +253,7 @@
           <div class="diagram">
             <pre class="mermaid">
 flowchart LR
-    github["GitHub<br/>issues · PRs"] --> gov["Governor<br/>queue depth → mode → kick"]
+    github["Work sources<br/>issues · PRs/MRs"] --> gov["Governor<br/>queue depth → mode → kick"]
     gov --> pipe["Deterministic pipeline<br/>classify · merge-gate · enforce"]
     pipe --> agents["AI agents (tmux)<br/>Claude · Copilot · Gemini · Goose"]
     agents --> guard["Guardrails<br/>tool deny · scoped token · MITM proxy"]
@@ -269,11 +269,11 @@ flowchart LR
         <p>Raising the level is always a human decision. Each rung is a concrete, enforced permission change.</p>
         <div class="ladder">
           <div class="rung" style="--rung:var(--status-neutral)"><span class="lvl">L1</span><span class="rd"><b>Inception (Assisted)</b> — project inception &amp; advisory only; every action needs human approval.</span></div>
-          <div class="rung" style="--rung:var(--acmm-level-3)"><span class="lvl">L2</span><span class="rd"><b>Advisory (Instructed)</b> — observe and report findings as beads; no GitHub writes.</span></div>
+          <div class="rung" style="--rung:var(--acmm-level-3)"><span class="lvl">L2</span><span class="rd"><b>Advisory (Instructed)</b> — observe and report findings as beads; no provider writes.</span></div>
           <div class="rung" style="--rung:var(--acmm-level-2)"><span class="lvl">L3</span><span class="rd"><b>Quality-Gated (Measured)</b> — the quality agent opens hold-gated PRs about testing gaps, coverage, and CI health. This measurement foundation is what earns automation above.</span></div>
           <div class="rung" style="--rung:var(--acmm-level-1)"><span class="lvl">L4</span><span class="rd"><b>Security-Aware (Adaptive)</b> — all agents file issues (bugs, docs, workflows, vulns); still no PRs.</span></div>
           <div class="rung" style="--rung:var(--brand)"><span class="lvl">L5</span><span class="rd"><b>Semi-Autonomous (Semi-Automated)</b> — all agents open PRs, each auto-labeled <code>hold</code> for human batch-review. The system proposes; it does not merge.</span></div>
-          <div class="rung" style="--rung:var(--acmm-level-6)"><span class="lvl">L6</span><span class="rd"><b>Fully Autonomous</b> — agents open PRs and <b>auto-merge on green CI</b>; no <code>hold</code> label.</span></div>
+          <div class="rung" style="--rung:var(--acmm-level-6)"><span class="lvl">L6</span><span class="rd"><b>Fully Autonomous</b> — agents open PRs and <b>auto-merge when checks pass</b>; no <code>hold</code> label.</span></div>
         </div>
 
         <h3>Enforcement in depth</h3>
@@ -319,7 +319,7 @@ flowchart LR
           </div>
           <div class="card">
             <div class="ch"><span class="dot">🔁</span> Multi-stage CI</div>
-            <p>CI is a pipeline that validates at multiple stages — not a single check that opens the merge door. That's what makes "merge on green" a real signal, not a rubber stamp.</p>
+            <p>CI is a pipeline that validates at multiple stages — not a single check that opens the merge door. That's what makes "merge when checks pass" a real signal, not a rubber stamp.</p>
           </div>
           <div class="card">
             <div class="ch"><span class="dot">📝</span> Issues are prompts</div>
@@ -369,7 +369,7 @@ flowchart LR
         <h2><span class="num">07</span> The "glue" we had to build</h2>
         <p>Most of the interesting engineering is in the glue that makes agents safe and coordinated:</p>
         <ul>
-          <li>A <strong>deterministic shell/Go pipeline</strong> that enumerates, classifies, clusters, and merge-gates GitHub work before agents run.</li>
+          <li>A <strong>deterministic shell/Go pipeline</strong> that enumerates, classifies, clusters, and merge-gates provider work before agents run.</li>
           <li>A <strong><code>gh</code> wrapper</strong> that injects scoped tokens and blocks writes exceeding an agent's tier — the shell-level twin of the proxy.</li>
           <li>An <strong>in-process MITM proxy</strong> (with <code>iptables</code> egress redirection and a self-signed CA in the container trust store) that gates <code>api.github.com</code> by agent mode and repo allowlist; agent identity is resolved from the connection's owning UID via <code>/proc/net/tcp</code>.</li>
           <li>An <strong>inference translator</strong> that reroutes Anthropic-shaped calls to OpenAI-shaped gateways so one agent CLI works across backends.</li>

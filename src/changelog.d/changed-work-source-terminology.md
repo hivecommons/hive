@@ -1,0 +1,1 @@
+- Neutralize user-facing work-source terminology so GitHub-specific wording is reserved for GitHub-specific setup and implementation details.
