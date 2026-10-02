@@ -188,7 +188,7 @@ func TestRepoTargetBannerPinsFixCTA(t *testing.T) {
 		"data.repoTargetMisconfigured",
 		"data.repoTargetIssue",
 		"openConfigDialog('governor',null,'Repos')",
-		"Fix in Repos",
+		"Fix in Projects",
 	}
 	for _, snippet := range required {
 		if !strings.Contains(html, snippet) {
