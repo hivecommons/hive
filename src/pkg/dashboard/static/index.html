@@ -1386,6 +1386,8 @@
       outline: 2px solid var(--amber); outline-offset: -2px;
     }
     .repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+    .repo-card-order-handle { margin-right:var(--sp-0); cursor:grab; }
+    .repo-card-order-handle.dragging { cursor:grabbing; }
     /* Per-repo agent pause (#6203). A paused repo KEEPS its card — that is the
        point of pause over deleting it from project.repos — so the card has to
        say so, or a deliberately quiet repo looks exactly like an idle one. The
@@ -2914,6 +2916,7 @@
     .dashboard-section-ghost { position:fixed; z-index:12000; pointer-events:none; opacity:0.85; transform:translate3d(var(--dashboard-ghost-x),var(--dashboard-ghost-y),0); box-shadow:var(--shadow-elevated); max-height:40vh; overflow:hidden; }
     .dashboard-drag-source { opacity:0.45; }
     .dashboard-drop-indicator { height:3px; border-radius:var(--r-pill); background:var(--accent); margin:var(--sp-3) 0; box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+    .repo-grid > .dashboard-drop-indicator { flex:0 0 4px; width:4px; height:auto; min-height:6rem; align-self:stretch; margin:var(--sp-0); }
     .section-chevron {
       display: inline-block; font-size: 0.7em; transition: transform 200ms ease;
       color: var(--muted); flex-shrink: 0;
@@ -3993,7 +3996,7 @@
   <div class="cost-usage mb-8" id="cost-panel" data-dashboard-section="cost-panel"></div>
 
   <div class="repos" id="repos-section" data-dashboard-section="repos-section">
-    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Repositories section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> Repositories <span id="repos-host-badge" title="Every repo in this hive is on this single GitHub host" style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3)"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: automated fix attempts exhausted — operator review required"></span> <button class="hv-btn btn-secondary btn" id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1" title="Scan the monitored repositories for issue/PR changes now instead of waiting for the governor's next eval cycle (read-only — no agents are kicked; server-debounced)">🔄 Rescan</button> <button class="hv-btn btn-secondary btn" id="repos-reset-layout-btn" data-action="resetRepoCardWidths" data-stop="1" title="Reset every repository card to the default width, discarding the widths you dragged (this browser only)" style="display:none">↔️ Reset layout</button> <button class="hv-btn config-gear btn-sm" data-action="gh1" data-stop="1" title="Manage monitored repositories">⚙️</button></h2>
+    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Repositories section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> Repositories <span id="repos-host-badge" title="Every repo in this hive is on this single GitHub host" style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3)"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: automated fix attempts exhausted — operator review required"></span> <button class="hv-btn btn-secondary btn" id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1" title="Scan the monitored repositories for issue/PR changes now instead of waiting for the governor's next eval cycle (read-only — no agents are kicked; server-debounced)">🔄 Rescan</button> <button class="hv-btn btn-secondary btn" id="repos-reset-layout-btn" data-action="resetRepoCardWidths" data-stop="1" title="Reset repository card widths and tile order to the default layout (this browser only)" style="display:none">↔️ Reset layout</button> <button class="hv-btn config-gear btn-sm" data-action="gh1" data-stop="1" title="Manage monitored repositories">⚙️</button></h2>
     <div class="section-body">
       <div id="repos-legend" class="repo-legend"></div>
       <!-- Read-only view of project.issue_filter: which issues agents may
@@ -9732,6 +9735,7 @@
     const REPO_CARD_NUDGE_W = 16;
     const REPO_CARD_NUDGE_BIG_W = 64;
     const REPO_CARD_WIDTH_KEY_PREFIX = 'hive-repo-card-widths:';
+    const REPO_ORDER_KEY = 'hive.repoOrder.v1';
 
     /** One stored map per hive, so two hives in one browser do not collide. */
     function repoCardWidthKey() {
@@ -9816,11 +9820,58 @@
       return Math.max(REPO_CARD_DEFAULT_W, Math.floor((grid.clientWidth - (cols - 1) * gap) / cols));
     }
 
+    function repoOrderName(full) { return String(full || '').trim().toLowerCase(); }
+    function repoOrderDefault(repos) { return (repos || []).map(r => repoOrderName(r && (r.full || r.name))).filter(Boolean); }
+    function repoOrderRead() {
+      let raw = null;
+      try { raw = localStorage.getItem(REPO_ORDER_KEY); } catch { return []; }
+      const parsed = safeJsonParse(raw || '[]', []);
+      return Array.isArray(parsed) ? parsed.map(repoOrderName).filter(Boolean) : [];
+    }
+    function repoOrderWrite(order, defaultOrder) {
+      const clean = [];
+      const seen = new Set();
+      (order || []).forEach(name => { const key = repoOrderName(name); if (key && !seen.has(key)) { seen.add(key); clean.push(key); } });
+      const def = defaultOrder || [];
+      let custom = clean.length !== def.length;
+      for (let i = 0; !custom && i < clean.length; i++) custom = clean[i] !== def[i];
+      try {
+        if (custom) localStorage.setItem(REPO_ORDER_KEY, JSON.stringify(clean));
+        else localStorage.removeItem(REPO_ORDER_KEY);
+      } catch {}
+    }
+    function repoOrderNormalize(repos) {
+      const def = repoOrderDefault(repos);
+      const valid = new Set(def);
+      const out = [];
+      const seen = new Set();
+      repoOrderRead().forEach(name => { if (valid.has(name) && !seen.has(name)) { seen.add(name); out.push(name); } });
+      def.forEach(name => { if (!seen.has(name)) { seen.add(name); out.push(name); } });
+      repoOrderWrite(out, def);
+      return out;
+    }
+    function repoOrderApply(repos) {
+      repos = repos || [];
+      const byName = new Map();
+      repos.forEach(r => { const key = repoOrderName(r && (r.full || r.name)); if (key && !byName.has(key)) byName.set(key, r); });
+      const out = [];
+      repoOrderNormalize(repos).forEach(name => { if (byName.has(name)) out.push(byName.get(name)); });
+      return out;
+    }
+    function repoOrderHasCustom(repos) {
+      const def = repoOrderDefault(repos);
+      const current = repoOrderNormalize(repos);
+      if (current.length !== def.length) return true;
+      for (let i = 0; i < current.length; i++) if (current[i] !== def[i]) return true;
+      return false;
+    }
+
     // The card being dragged right now, or null. renderRepos() holds its
     // repaint while this is set: a governor cycle landing mid-drag would
     // replace the node under the pointer and drop the pointer capture with
     // it, so the card would stop following the cursor.
     let _repoResizeDrag = null;
+    let _repoOrderDrag = null;
 
     // planWaitingLines renders planning.waiting_on_human as one line per plan
     // ("review  owner/repo#12  Title"), for tooltips. Empty string when none.
@@ -10580,7 +10631,8 @@
     }
 
     function renderRepos(repos) {
-      if (_repoResizeDrag) return;
+      if (_repoResizeDrag || _repoOrderDrag) return;
+      repos = repoOrderApply(repos || []);
       const el = document.getElementById('repos');
       const showPlan = planningAllowed();
       const showDesign = showPlan && dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
@@ -10632,7 +10684,7 @@
       // "Reset layout" only appears once there is a layout to reset (#8000) —
       // a hive whose cards are all at the default has nothing for it to do.
       const resetBtn = document.getElementById('repos-reset-layout-btn');
-      if (resetBtn) resetBtn.style.display = Object.keys(repoCardWidths()).length ? 'inline-block' : 'none';
+      if (resetBtn) resetBtn.style.display = (Object.keys(repoCardWidths()).length || repoOrderHasCustom(repos)) ? 'inline-block' : 'none';
       setIfChanged(el, repos.map(r => {
         const iSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.issues ?? 0), 'var(--blue)', getHistoryTimes());
         const pSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.prs ?? 0), 'var(--purple)', getHistoryTimes());
@@ -10646,6 +10698,7 @@
         const prBreakdown = formatRepoWorkBreakdown(r.workBreakdown?.prs, r.prs, 'prs');
         ensureRepoHoldPermission(cardRepo);
         const canToggleHold = repoHoldPermissionKnown(cardRepo);
+        const cardRepoKey = repoOrderName(cardRepo);
         const cardW = repoCardWidth(cardRepo);
         const MAX_PILL_TITLE_LEN = pillTitleLimit(cardW || layoutW);
         const heldIssueKeys = new Set((r.heldIssues || []).map(i => String(i.number)));
@@ -10825,14 +10878,15 @@
         // the arrow-key nudge is announced rather than silent.
         const resizeTip = 'Drag to set the width of the ' + cardRepo + ' card — double-click to reset it; ← / → nudge it when focused (Shift for a bigger step, Esc resets)';
         const resizeHandle = `<div class="repo-card-resize" role="separator" aria-orientation="vertical" tabindex="0" data-repo="${esc(cardRepo)}" aria-label="${esc(resizeTip)}" title="${esc(resizeTip)}" aria-valuemin="${REPO_CARD_MIN_W}" aria-valuemax="${REPO_CARD_MAX_W}" aria-valuenow="${cardW || REPO_CARD_DEFAULT_W}"></div>`;
+        const orderHandle = `<button type="button" class="dashboard-grip repo-card-order-handle" draggable="true" data-repo-order-grip data-repo="${esc(cardRepoKey)}" data-stop="1" aria-label="Drag to reorder" title="Drag to reorder" aria-pressed="false">⠿</button>`;
         // Per-repo pause (#6203) styling keys off the pill rendered inside the
         // card (.repo-card:has(.repo-paused-pill)); the card's open tag is pinned
         // verbatim by TestRepoCardResizeHandleMarkup (#8000).
         return `
-        <div class="repo-card${cardW ? ' repo-card-sized' : ''}"${cardW ? ` style="flex-basis:${cardW}px"` : ''}>
+        <div class="repo-card${cardW ? ' repo-card-sized' : ''}" data-repo-order-key="${esc(cardRepoKey)}"${cardW ? ` style="flex-basis:${cardW}px"` : ''}>
           ${resizeHandle}
           <div style="font-size:var(--fs-2xs);font-weight:600;letter-spacing:0.02em;color:${isPublic ? 'var(--muted)' : 'var(--indigo)'};margin-bottom:var(--sp-1)" title="This repo lives on ${esc(hostLabel)}${isPublic ? '' : ' (GitHub Enterprise), not public github.com'}">${esc(hostLabel)}${isPublic ? '' : ' · Enterprise'}</div>
-          <div class="repo-name"><a href="${esc(repoUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a>${swarmPill}${pausedPill}${swarmBtn}${autoMergeBtn}${pauseBtn}</div>
+          <div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a>${swarmPill}${pausedPill}${swarmBtn}${autoMergeBtn}${pauseBtn}</div>
           <div class="repo-stats">
             <div class="repo-stat"><a href="${esc(repoUrl)}/issues" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.issues >= 0 ? r.issues : '?'}</span>${iSpark}</div><div class="label">issues</div></a>${issueBreakdown}</div>
             <div class="repo-stat"><a href="${esc(repoUrl)}/pulls" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a>${prBreakdown}</div>
@@ -10869,12 +10923,119 @@
       renderRepos(((window._lastStatus || {}).repos) || []);
     }
 
-    /** Header action: put every card back to the default width. */
+    /** Header action: put every card back to the default width and order. */
     function resetRepoCardWidths() {
-      try { localStorage.removeItem(repoCardWidthKey()); } catch {}
+      try { localStorage.removeItem(repoCardWidthKey()); localStorage.removeItem(REPO_ORDER_KEY); } catch {}
       repaintReposForWidth();
-      showToast('Repository card widths reset to the default', 'info');
+      showToast('Repository card layout reset to the default', 'info');
     }
+
+    function repoOrderSaveFromDom(grid) {
+      const order = Array.from(grid.querySelectorAll('.repo-card[data-repo-order-key]')).map(card => card.getAttribute('data-repo-order-key')).filter(Boolean);
+      repoOrderWrite(order, repoOrderDefault(((window._lastStatus || {}).repos) || []));
+      const resetBtn = document.getElementById('repos-reset-layout-btn');
+      if (resetBtn) resetBtn.style.display = (Object.keys(repoCardWidths()).length || repoOrderHasCustom(((window._lastStatus || {}).repos) || [])) ? 'inline-block' : 'none';
+    }
+
+    function repoOrderNextCard(card) {
+      let next = card ? card.nextElementSibling : null;
+      while (next && !next.classList.contains('repo-card')) next = next.nextElementSibling;
+      return next;
+    }
+
+    function repoOrderDropSlot(grid, x, y, skip) {
+      const cards = Array.from(grid.querySelectorAll('.repo-card[data-repo-order-key]')).filter(card => card !== skip);
+      let best = null, bestDist = Infinity;
+      cards.forEach(card => {
+        const rect = card.getBoundingClientRect();
+        const horizontal = Math.abs(y - (rect.top + rect.height / 2)) < rect.height;
+        const before = horizontal ? x < (rect.left + rect.width / 2) : y < (rect.top + rect.height / 2);
+        const anchorX = before ? rect.left : rect.right;
+        const anchorY = rect.top + rect.height / 2;
+        const dist = Math.abs(x - anchorX) + Math.abs(y - anchorY);
+        if (dist < bestDist) { bestDist = dist; best = { before: before ? card : repoOrderNextCard(card) }; }
+      });
+      return best || { before: null };
+    }
+
+    function repoOrderMoveIndicator(grid, indicator, slot) {
+      if (!grid || !indicator || !slot) return;
+      grid.insertBefore(indicator, slot.before || null);
+    }
+
+    function repoOrderClearIndicator(grid) {
+      if (grid) grid.querySelectorAll(':scope > .dashboard-drop-indicator').forEach(el => el.remove());
+    }
+
+    (function initRepoCardOrder() {
+      const grid = document.getElementById('repos');
+      if (!grid) return;
+      const handleOf = (e) => (e.target && e.target.closest) ? e.target.closest('[data-repo-order-grip]') : null;
+      function cleanup() {
+        if (!_repoOrderDrag) return;
+        _repoOrderDrag.card.classList.remove('dashboard-drag-source');
+        _repoOrderDrag.handle.classList.remove('dragging');
+        _repoOrderDrag.handle.setAttribute('aria-pressed', 'false');
+        repoOrderClearIndicator(grid);
+        _repoOrderDrag = null;
+      }
+      grid.addEventListener('dragstart', (e) => {
+        const handle = handleOf(e);
+        if (!handle) return;
+        const card = handle.closest('.repo-card');
+        if (!card) return;
+        const indicator = document.createElement('div');
+        indicator.className = 'dashboard-drop-indicator';
+        _repoOrderDrag = { handle, card, indicator };
+        card.classList.add('dashboard-drag-source');
+        handle.classList.add('dragging');
+        handle.setAttribute('aria-pressed', 'true');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', card.getAttribute('data-repo-order-key') || '');
+      });
+      grid.addEventListener('dragover', (e) => {
+        if (!_repoOrderDrag) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        const slot = repoOrderDropSlot(grid, e.clientX, e.clientY, _repoOrderDrag.card);
+        _repoOrderDrag.slot = slot;
+        repoOrderMoveIndicator(grid, _repoOrderDrag.indicator, slot);
+      });
+      grid.addEventListener('drop', (e) => {
+        if (!_repoOrderDrag) return;
+        e.preventDefault();
+        const drag = _repoOrderDrag;
+        const slot = drag.slot || repoOrderDropSlot(grid, e.clientX, e.clientY, drag.card);
+        repoOrderClearIndicator(grid);
+        grid.insertBefore(drag.card, slot.before || null);
+        repoOrderSaveFromDom(grid);
+        showToast('Repository tile order saved', 'info');
+        cleanup();
+      });
+      grid.addEventListener('dragend', cleanup);
+      grid.addEventListener('keydown', (e) => {
+        const handle = handleOf(e);
+        if (!handle) return;
+        const card = handle.closest('.repo-card');
+        if (!card) return;
+        if (e.key === ' ' || e.key === 'Enter') {
+          e.preventDefault();
+          handle.setAttribute('aria-pressed', handle.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
+          return;
+        }
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowUp' && e.key !== 'ArrowRight' && e.key !== 'ArrowDown') return;
+        e.preventDefault();
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+          const prev = card.previousElementSibling && card.previousElementSibling.classList.contains('repo-card') ? card.previousElementSibling : null;
+          if (prev) grid.insertBefore(card, prev);
+        } else {
+          const next = card.nextElementSibling && card.nextElementSibling.classList.contains('repo-card') ? card.nextElementSibling : null;
+          if (next) grid.insertBefore(card, next.nextElementSibling);
+        }
+        repoOrderSaveFromDom(grid);
+        handle.focus();
+      });
+    })();
 
     (function initRepoCardResize() {
       const grid = document.getElementById('repos');
