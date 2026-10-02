@@ -29,7 +29,8 @@ func DefaultWriteOps() []WriteOp {
 		agentModelOp{}, agentBackendOp{}, agentEffortOp{}, agentInteractionTierOp{},
 	}
 	ops := append(agentOps, repoOpsWriteOps()...)
-	return append(ops, fleetWriteOps()...)
+	ops = append(ops, fleetWriteOps()...)
+	return append(ops, governorWriteOps()...)
 }
 
 type agentPauseOp struct{}

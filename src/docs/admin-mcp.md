@@ -179,7 +179,8 @@ Registered operations:
   `agent.interaction_tier`
 - `fleet.autonomy_level`
 - `plan.propose`, `plan.approve`, `plan.reject`
-- `governor.feature_settings`
+- `governor.feature_settings`, `governor.thresholds`,
+  `governor.threshold_scaling`
 - `repository.pause`, `repository.resume`, `repository.item_hold`
 - `budget.update`, `budget.reset`, `budget.ignore`
 - `contributor.trust`, `contributor.agent_role`,

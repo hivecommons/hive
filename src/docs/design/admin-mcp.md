@@ -417,6 +417,15 @@ Phase 5 registers the fleet-level write operations under that contract:
 - `governor.feature_settings` wraps `PUT /api/config/governor/features`, preserves the
   endpoint's pointer-field partial update contract, and calls out protective toggles such as
   ioscan, claims, checkpoint gates, and autonomy automation before confirmation.
+- `governor.thresholds` and `governor.threshold_scaling` wrap
+  `PUT /api/config/governor/thresholds` and `PUT /api/config/governor/threshold-scaling`, the
+  mode ladder an owner setting up a new hive actually has to pick. Thresholds are the one
+  governor write whose stated effect exceeds the fields it names: writing any threshold clears
+  `governor.thresholds_source`, so the WHOLE set becomes operator-owned absolutes that repo-count
+  scaling no longer multiplies (#4037), and the preview says so. Both previews name the direction
+  of the change in operator terms — a lower effective threshold engages a busier mode at a
+  shallower queue, which raises agent cadence and spend — because the number alone does not tell
+  an owner what it buys.
 
 ## Deliberately absent, and why
 
