@@ -258,20 +258,26 @@ func (b *Broker) validate() error {
 	return nil
 }
 
+// changedFiles lists the paths the outgoing commits touch. Every git call
+// uses -z: without it git C-quotes any path containing a non-ASCII byte, a
+// control character, `"` or `\` and wraps it in double quotes, and that
+// leading quote would defeat the prefix match in ProtectedPathViolations
+// (`".github/workflows/d\303\251pl.yml"` is not under `.github/workflows/`).
+// NUL-separated output carries the exact on-disk path instead.
 func (b *Broker) changedFiles(ctx context.Context) ([]string, error) {
 	if base := strings.TrimSpace(b.BaseRef); base != "" {
 		if _, err := b.git(ctx, "rev-parse", "--verify", base); err == nil {
-			out, err := b.git(ctx, "diff", "--name-only", base+"...HEAD")
-			return splitLines(out), err
+			out, err := b.git(ctx, "diff", "--name-only", "-z", base+"...HEAD")
+			return splitNUL(out), err
 		}
 	}
 	base := b.remoteRef()
 	if _, err := b.git(ctx, "rev-parse", "--verify", base); err == nil {
-		out, err := b.git(ctx, "diff", "--name-only", base+"...HEAD")
-		return splitLines(out), err
+		out, err := b.git(ctx, "diff", "--name-only", "-z", base+"...HEAD")
+		return splitNUL(out), err
 	}
-	out, err := b.git(ctx, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "HEAD")
-	return splitLines(out), err
+	out, err := b.git(ctx, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", "HEAD")
+	return splitNUL(out), err
 }
 
 func (b *Broker) pushBase(ctx context.Context) (string, bool) {
@@ -674,6 +680,19 @@ func splitLines(out []byte) []string {
 	for _, p := range parts {
 		if p = strings.TrimSpace(p); p != "" {
 			files = append(files, p)
+		}
+	}
+	return files
+}
+
+// splitNUL splits -z (NUL-terminated) git output into paths. Paths are kept
+// byte-for-byte: a path may legitimately contain spaces or newlines, so only
+// the NUL separator and empty records are dropped.
+func splitNUL(out []byte) []string {
+	var files []string
+	for _, p := range bytes.Split(out, []byte{0}) {
+		if len(p) != 0 {
+			files = append(files, string(p))
 		}
 	}
 	return files
