@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -281,23 +282,56 @@ func TestCampaignReviseSpektacularRunCreatesLinkedRevision(t *testing.T) {
 	}
 }
 
-func TestCampaignReleaseSpektacularRunLease(t *testing.T) {
-	s, _ := runsTestServer(t)
-	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
-	if err := s.contributeHub.recordLeaseForKeyStage("alice", "task-8665", "myorg/repo1", 8665, "myorg/repo1!stable-spec-8665:plan", "contributor", StagePlan, 3, time.Now()); err != nil {
-		t.Fatalf("record lease: %v", err)
-	}
+func TestCampaignReleasePreservesSpektacularRunLease(t *testing.T) {
+	for _, stage := range []string{StageSpec, StagePlan, StageImplement} {
+		t.Run(stage, func(t *testing.T) {
+			s, _ := runsTestServer(t)
+			s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
+			leaseKey := "myorg/repo1!stable-spec-8665:" + stage
+			if err := s.contributeHub.recordLeaseForKeyStage("alice", "task-8665", "myorg/repo1", 8665, leaseKey, "contributor", stage, 3, time.Now()); err != nil {
+				t.Fatalf("record lease: %v", err)
+			}
+			before, ok := s.contributeHub.runLeaseHolder(leaseKey, time.Now())
+			if !ok {
+				t.Fatal("missing initial stage lease")
+			}
+			list := doOwnerGet(s, "/api/campaigns")
+			campaigns := decodeCampaignList(t, list.Body.Bytes())
+			if len(campaigns) != 1 {
+				t.Fatalf("initial campaigns = %+v, want one run-backed campaign", campaigns)
+			}
+			campaign := campaigns[0]
 
-	blocked := doOwnerPostAsUser(s, "/api/campaigns/stable-spec-8665/release", "bob", map[string]string{})
-	if blocked.Code != http.StatusConflict {
-		t.Fatalf("bob release = %d body=%s, want conflict", blocked.Code, blocked.Body.String())
-	}
-	released := doOwnerPostAsUser(s, "/api/campaigns/stable-spec-8665/release", "alice", map[string]string{})
-	if released.Code != http.StatusOK {
-		t.Fatalf("alice release = %d body=%s", released.Code, released.Body.String())
-	}
-	if _, ok := s.contributeHub.runLeaseHolder("myorg/repo1!stable-spec-8665:plan", time.Now()); ok {
-		t.Fatalf("spektacular run lease still held after release")
+			// No timeline history: losing the stage lease would drop the run.
+			for _, user := range []string{"alice", "bob"} {
+				for _, id := range []string{campaign.ID, campaign.RunKey} {
+					released := doOwnerPostAsUser(s, "/api/campaigns/"+url.PathEscape(id)+"/release", user, map[string]string{})
+					after, ok := s.contributeHub.runLeaseHolder(leaseKey, time.Now())
+					if !ok || after.identity != before.identity || after.taskID != before.taskID || after.stage != before.stage || after.gen != before.gen || !after.expiresAt.Equal(before.expiresAt) {
+						t.Fatalf("release changed stage lease: before=%+v after=%+v held=%v", before, after, ok)
+					}
+					if released.Code != http.StatusConflict || !strings.Contains(released.Body.String(), "run-backed campaigns cannot be released here") {
+						t.Fatalf("%s release %q = %d body=%s, want explicit conflict", user, id, released.Code, released.Body.String())
+					}
+					list = doOwnerGet(s, "/api/campaigns")
+					campaigns = decodeCampaignList(t, list.Body.Bytes())
+					if len(campaigns) != 1 || campaigns[0].ID != campaign.ID || campaigns[0].LeaseOwner != "alice" || campaigns[0].CurrentStage != stage {
+						t.Fatalf("campaign disappeared or changed after release: %+v", campaigns)
+					}
+					runRec := doOwnerGet(s, "/api/runs/"+url.PathEscape(campaign.RunKey))
+					if runRec.Code != http.StatusOK {
+						t.Fatalf("run after release = %d body=%s", runRec.Code, runRec.Body.String())
+					}
+					var run Run
+					if err := json.Unmarshal(runRec.Body.Bytes(), &run); err != nil {
+						t.Fatalf("decode run: %v", err)
+					}
+					if run.Stage != stage || run.Assignee != "alice" || run.Gen != 3 {
+						t.Fatalf("run changed after release: %+v", run)
+					}
+				}
+			}
+		})
 	}
 }
 
