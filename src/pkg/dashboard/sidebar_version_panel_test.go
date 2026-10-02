@@ -188,8 +188,7 @@ function clearTimeout(){}
 		jsFunc(t, html, "versionWriteUpgradeProgress") + "\n" +
 		jsFunc(t, html, "versionRecordUpgradeStart") + "\n" +
 		jsFunc(t, html, "versionScheduleUpgradePoll") + "\n" +
-		// selfUpgrade is an async function; jsFunc starts at "function".
-		"async " + jsFunc(t, html, "selfUpgrade") + `
+		jsFunc(t, html, "selfUpgrade") + `
 selfUpgrade('bbb2222abcdef');
 if (!btn.disabled || btn.textContent !== 'Upgrading…' || btn.attrs['aria-disabled'] !== 'true') throw new Error('button not disabled as upgrading: '+JSON.stringify(btn));
 const stored = JSON.parse(localStorage.data[VERSION_UPGRADE_STORAGE_KEY] || '{}');

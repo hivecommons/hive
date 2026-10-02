@@ -1,0 +1,1 @@
+- Make dashboard version rendering tests self-contained so shuffle order does not change their JavaScript fixtures.

@@ -74,7 +74,7 @@ const rows = [
 let state = writeRepoPillFilterState({ mode: 'any', kinds: ['needs-human'] });
 assert.deepEqual(repoPillFilterRowCounts(rows, state), { shown: 2, total: 4 });
 assert.equal(repoPillFilterMatches(['pr:ci'], state), false);
-assert.equal(repoPillFilterMatches(['pr:needs-human', 'pr:ci'], state), true);
+assert.equal(repoPillFilterMatches(['needs-human', 'pr:needs-human', 'pr:ci'], state), true);
 state = writeRepoPillFilterState({ mode: 'all', kinds: ['pr:needs-human', 'pr:ci'] });
 assert.deepEqual(repoPillFilterRowCounts(rows, state), { shown: 1, total: 4 });
 assert.equal(repoPillFilterHiddenClass(['pr:ci'], state), ' repo-pill-row-filtered-hidden');

@@ -67,12 +67,13 @@ const localStorage = {data:{}, writes:0, setItem(k,v){this.writes++; this.data[k
 	b.WriteString(`
 const agents = [{name:'scanner'}, {name:'builder'}, {name:'docs'}];
 localStorage.data['hive-agent-card-layout:hive-a'] = JSON.stringify({v:1, order:['docs','scanner','builder'], sizes:{scanner:{span:3,height:260}}});
-let ordered = agentLayoutApplyOrder(agents).map(a => a.name).join(',');
+let orderedAgents = agentLayoutApplyOrder(agents);
+let ordered = orderedAgents.map(a => a.name).join(',');
 if (ordered !== 'docs,scanner,builder') throw new Error('persisted order not applied: '+ordered);
 let before = localStorage.data['hive-agent-card-layout:hive-a'];
 let writes = localStorage.writes;
 _ocSelectedAgent = 'builder';
-let focused = agentsFocusedFirst(agentLayoutApplyOrder(agents)).map(a => a.name).join(',');
+let focused = agentsFocusedFirst(orderedAgents).map(a => a.name).join(',');
 if (focused !== 'builder,docs,scanner') throw new Error('focused agent not rendered first: '+focused);
 if (localStorage.data['hive-agent-card-layout:hive-a'] !== before) throw new Error('focused render mutated stored order');
 if (localStorage.writes !== writes) throw new Error('focused render persisted unexpectedly');

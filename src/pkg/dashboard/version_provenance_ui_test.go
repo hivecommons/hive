@@ -22,9 +22,6 @@ func TestVersionProvenanceRendering(t *testing.T) {
 		"versionUpgradeProgressStatus", "versionBeeProgressHTML", "versionButtonHTML", "renderVersionUpgradeAction", "renderVersionDetails", "versionManualUpgradeActive",
 		"renderVersionMenu", "renderVersionChip", "fetchGitVersion",
 	} {
-		if name == "fetchGitVersion" {
-			source.WriteString("async ")
-		}
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')
 	}

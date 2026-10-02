@@ -270,7 +270,7 @@ func TestRepoHoldToggleOptimisticRollback(t *testing.T) {
 		jsFunc(t, html, "repoParts") + "\n" +
 		jsFunc(t, html, "updateRepoBreakdownForHold") + "\n" +
 		jsFunc(t, html, "moveRepoItemHold") + "\n" +
-		"async " + jsFunc(t, html, "toggleRepoItemHold") + "\n" +
+		jsFunc(t, html, "toggleRepoItemHold") + "\n" +
 		holdToggleRollbackAssertions
 	path := filepath.Join(t.TempDir(), "hold-toggle.js")
 	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
@@ -304,7 +304,7 @@ func TestRepoHoldToggleSuccessRaisesStatusFloor(t *testing.T) {
 		jsFunc(t, html, "repoParts") + "\n" +
 		jsFunc(t, html, "updateRepoBreakdownForHold") + "\n" +
 		jsFunc(t, html, "moveRepoItemHold") + "\n" +
-		"async " + jsFunc(t, html, "toggleRepoItemHold") + "\n" +
+		jsFunc(t, html, "toggleRepoItemHold") + "\n" +
 		holdToggleSuccessAssertions
 	path := filepath.Join(t.TempDir(), "hold-toggle-success.js")
 	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {

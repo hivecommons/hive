@@ -148,7 +148,7 @@ func TestDashboardApplyResetAndSidebarSort(t *testing.T) {
 		t.Skip("node not on PATH — dashboard layout apply/sidebar behavior was NOT executed by this run")
 	}
 	html := indexHTML(t)
-	funcs := []string{"dashboardEnsureSections", "dashboardRegionEl", "dashboardCardEl", "dashboardLayoutAnnounce", "dashboardLayoutAllIds", "dashboardLayoutNormalize", "dashboardLayoutCurrent", "dashboardLayoutEquals", "dashboardLayoutExtraKeys", "dashboardLayoutSnapshot", "dashboardNormalizeSnapshot", "dashboardSnapshotEquals", "dashboardLayoutDefaultSnapshot", "dashboardReadLayoutPresets", "dashboardWriteLayoutPresets", "dashboardReadAppliedLayout", "dashboardMarkAppliedLayout", "dashboardRenderLayoutPresets", "dashboardUpdateLayoutMenuState", "dashboardUpdateResetButton", "dashboardLayoutWrite", "dashboardIsSectionNode", "dashboardTopAnchor", "dashboardPinNoticeAnchor", "dashboardFirstSection", "dashboardInsertSection", "dashboardApplyLayout", "dashboardSortSidebar", "resetDashboardLayout"}
+	funcs := []string{"dashboardEnsureSections", "dashboardRegionEl", "dashboardCardEl", "dashboardLayoutAnnounce", "dashboardLayoutAllIds", "dashboardLayoutNormalize", "dashboardLayoutCurrent", "dashboardLayoutEquals", "dashboardLayoutExtraKeys", "dashboardLayoutSnapshot", "dashboardNormalizeSnapshot", "dashboardSnapshotEquals", "dashboardLayoutDefaultSnapshot", "dashboardReadLayoutPresets", "dashboardWriteLayoutPresets", "dashboardReadAppliedLayout", "dashboardMarkAppliedLayout", "dashboardRenderLayoutPresets", "dashboardUpdateLayoutMenuState", "dashboardUpdateResetButton", "dashboardLayoutWrite", "dashboardIsSectionNode", "dashboardTopAnchor", "dashboardPinNoticeAnchor", "dashboardFirstSection", "dashboardInsertSection", "dashboardApplyLayout", "dashboardSidebarNavItems", "dashboardSortSidebar", "resetDashboardLayout"}
 	var b strings.Builder
 	b.WriteString(dashboardLayoutPreamble9062())
 	b.WriteString(`
@@ -166,6 +166,7 @@ const localStorage = {data:{}, setItem(k,v){this.data[k]=String(v)}, getItem(k){
 function isSectionCollapsed(sectionId){ return localStorage.getItem(SECTION_LS_PREFIX + sectionId) === '1'; }
 function applySectionCollapse(){}
 function hiveConfirm(){ return Promise.resolve(true); }
+function dashboardEnsureSidebarHandles(){}
 function showToast(){ return {appendChild(){}}; }
 function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 const root = new El('hive-dashboard-root');
@@ -187,12 +188,6 @@ const document = {
 };
 `)
 	for _, name := range funcs {
-		// jsFunc starts at the `function` keyword, so an `async function`
-		// (resetDashboardLayout awaits hiveConfirm since #10005) needs its
-		// modifier restored or node rejects the body's `await`.
-		if name == "resetDashboardLayout" {
-			b.WriteString("async ")
-		}
 		b.WriteString(jsFunc(t, html, name))
 		b.WriteByte('\n')
 	}
