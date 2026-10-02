@@ -73,7 +73,12 @@ identity (`hive-<identity>`, e.g. `hive-hive-spek`) when
 `su-exec` as that user with the executor `HOME` and `umask 002`. That user
 cannot read the GitHub App key or clone credential files, its `:443` traffic
 goes through the proxy redirect and is attributed to the executor identity,
-and cancellation kills its process group through `su-exec`. Before launch the
+and cancellation kills its process group through `su-exec`. Like regular
+agents, the CLI is also pointed at the egress proxy explicitly:
+`HTTP(S)_PROXY` is set to the local proxy (replacing any forwarded value),
+`HIVE_PROXY_AGENT` names the executor identity, `GIT_TERMINAL_PROMPT=0`, and
+`NODE_EXTRA_CA_CERTS`/`GIT_SSL_CAINFO` default to the proxy CA when the hive
+process does not export them. Before launch the
 executor grants group write on the worktree and `HOME` (never through a
 symlink), leaves the worktree's `.git` entry alone and sets the sticky bit on
 the worktree root so the CLI cannot swap the gitdir pointer; after exit it
