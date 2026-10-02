@@ -71,6 +71,11 @@ type HubConfig struct {
 	AutoUpgrade         bool   `yaml:"auto_upgrade"`
 	AutoUpgradeMode     string `yaml:"auto_upgrade_mode,omitempty"`
 	ContributeSuspended bool   `yaml:"contribute_suspended"`
+	// HeartbeatOmit lists sensitive-identifier classes withheld from the hub
+	// heartbeat and task-status push: repos, users, task_titles,
+	// dashboard_urls. Upgrade/config delivery is unaffected. See
+	// docs/telemetry.md and HeartbeatOmitClasses.
+	HeartbeatOmit []string `yaml:"heartbeat_omit,omitempty" json:"heartbeat_omit,omitempty"`
 	// ContributeWallEnabled opts a hive into the public contributor wall on
 	// /contribute. Default false so no deployment gets a public posting surface
 	// without an operator decision.
