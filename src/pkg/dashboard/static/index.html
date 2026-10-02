@@ -1312,9 +1312,20 @@
     .lc-window { color: var(--muted); font-size: var(--fs-xs); margin-bottom: var(--sp-5); }
     .prt-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-6); }
     .prt-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: var(--sp-4); }
+    .prt-controls { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+    .prt-repo-select { max-width: 220px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); }
     .lc-fleet-stat .val.opened { color: var(--blue); }
     .lc-fleet-stat .val.closed { color: var(--red); }
+    .prt-tile-spark { display:block; margin-top: var(--sp-2); min-height: 20px; }
+    .prt-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--sp-2); margin: var(--sp-3) 0; }
+    .prt-metric { background: color-mix(in srgb, var(--bg) 85%, transparent); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-2) var(--sp-3); }
+    .prt-metric .mval { font-size: var(--fs-sm); font-weight: 700; color: var(--text); }
+    .prt-metric .mlbl { font-size: var(--fs-2xs); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
     .prt-paths { color: var(--muted); font-size: var(--fs-xs); margin-bottom: var(--sp-2); }
+    .prt-breakdowns { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--sp-3); margin-top: var(--sp-2); }
+    .prt-breakdown { color: var(--muted); font-size: var(--fs-xs); }
+    .prt-breakdown b { color: var(--text); display:block; margin-bottom: var(--sp-1); }
+    .prt-breakdown ol { margin: 0; padding-left: 1.2rem; }
     .lc-journeys { list-style: none; margin: var(--sp-0); padding: var(--sp-0); display: flex; flex-direction: column; gap: var(--sp-2);
       max-height: 320px; overflow-y: auto; }
     .lc-journey { display: flex; align-items: center; gap: var(--sp-4); font-size: 0.78rem; padding: 5px 8px;
@@ -13471,7 +13482,9 @@ function burnAreaChart() {
     // closed without merging over a selectable window, from
     // /api/pr-throughput. hours=0 is all time (durable counters).
     const PRT_WINDOWS = [[1, '1h'], [6, '6h'], [12, '12h'], [24, '24h'], [48, '48h'], [168, '7d'], [0, 'all']];
+    const PRT_REPO_STORAGE_KEY = 'hive.prThroughput.repo';
     let prtHours = 24;
+    let prtRepo = (() => { try { return localStorage.getItem(PRT_REPO_STORAGE_KEY) || ''; } catch { return ''; } })();
     let prtLast = null;
 
     // Mirrors lcWindowLabel: counts are honest only relative to how much
@@ -13486,15 +13499,55 @@ function burnAreaChart() {
       };
       const recorded = dto.recorded_since ? Date.parse(dto.recorded_since) : NaN;
       const coveredMs = Number.isNaN(recorded) ? 0 : Math.max(0, Date.now() - recorded);
+      const repo = dto.repo ? ` · ${dto.repo}` : '';
       if (dto.all_time) {
-        return coveredMs > 0 ? `all time — over the last ${fmt(coveredMs)} of recorded history` : 'all time — nothing recorded yet';
+        return (coveredMs > 0 ? `all time — over the last ${fmt(coveredMs)} of recorded history` : 'all time — nothing recorded yet') + repo;
       }
       const windowMs = (Number(dto.hours) || 0) * 3600000;
-      if (!windowMs) return '';
+      if (!windowMs) return repo;
       if (coveredMs > 0 && coveredMs < windowMs) {
-        return `over the last ${fmt(coveredMs)} of recorded history (window ${fmt(windowMs)})`;
+        return `over the last ${fmt(coveredMs)} of recorded history (window ${fmt(windowMs)})${repo}`;
       }
-      return `over the last ${fmt(windowMs)}`;
+      return `over the last ${fmt(windowMs)}${repo}`;
+    }
+
+    function prtRepoOptions() {
+      const names = new Set();
+      ((window._lastStatus || {}).repos || []).forEach(r => { const n = r.full || r.name; if (n) names.add(n); });
+      if (prtRepo) names.add(prtRepo);
+      const opts = ['<option value="">All repos</option>'];
+      [...names].sort((a,b) => a.localeCompare(b)).forEach(n => opts.push(`<option value="${escapeHtml(n)}"${n.toLowerCase() === String(prtRepo).toLowerCase() ? ' selected' : ''}>${escapeHtml(n)}</option>`));
+      return `<select class="prt-repo-select" data-change-action="setPRThroughputRepo" data-arg-types="v" title="Filter PR throughput to one repository">${opts.join('')}</select>`;
+    }
+
+    function prtSeriesSpark(dto, field, color) {
+      const buckets = Array.isArray(dto.buckets) ? dto.buckets : [];
+      const values = buckets.map(b => Number(b[field]) || 0);
+      const times = buckets.map(b => Date.parse(b.t));
+      if (values.length < 2) return '';
+      const base = sparkSvg(values, color, times);
+      const details = buckets.slice(-8).map(b => `${fmtSparkTime(Date.parse(b.t))}: ${Number(b[field]) || 0}`).join(' · ');
+      return base.replace('<svg ', `<svg title="${escapeHtml(details)}" `);
+    }
+
+    function prtFmtRate(v) { return (Number(v) || 0).toFixed((Number(v) || 0) >= 10 ? 0 : 1) + '/day'; }
+    function prtFmtHours(v) {
+      if (v == null || !isFinite(Number(v))) return '—';
+      const h = Number(v);
+      if (h < 1) return Math.round(h * 60) + 'm';
+      if (h < 48) return h.toFixed(h >= 10 ? 0 : 1) + 'h';
+      return (h / 24).toFixed(1) + 'd';
+    }
+    function prtFmtPct(v) { return v == null || !isFinite(Number(v)) ? '—' : Math.round(Number(v) * 100) + '%'; }
+    function prtTrend(v, inverse) {
+      if (v == null || !isFinite(Number(v))) return '—';
+      const n = Number(v);
+      const good = inverse ? n <= 0 : n >= 0;
+      return `<span style="color:${good ? 'var(--green)' : 'var(--red)'}">${n >= 0 ? '▲' : '▼'} ${Math.abs(n).toFixed(0)}%</span>`;
+    }
+    function prtTopList(title, items) {
+      if (!Array.isArray(items) || !items.length) return '';
+      return `<div class="prt-breakdown"><b>${escapeHtml(title)}</b><ol>${items.map(i => `<li>${escapeHtml(i.name)} · ${Number(i.count) || 0}</li>`).join('')}</ol></div>`;
     }
 
     function renderPRThroughput(dto) {
@@ -13513,23 +13566,38 @@ function burnAreaChart() {
       const pathParts = Object.keys(byPath).filter((k) => Number(byPath[k]) > 0).sort()
         .map((k) => `${Number(byPath[k])} ${escapeHtml(pathLabels[k] || k)}`);
       const pathsHtml = pathParts.length ? `<div class="prt-paths">Merged by: ${pathParts.join(' · ')}</div>` : '';
+      const m = dto.metrics || {};
+      const metricsHtml = `<div class="prt-metrics">
+        <div class="prt-metric" title="Merged PRs divided by selected window length, normalized to one day."><div class="mval">${escapeHtml(prtFmtRate(m.merged_per_day))}</div><div class="mlbl">merge velocity</div></div>
+        <div class="prt-metric" title="Opened PRs divided by selected window length, normalized to one day."><div class="mval">${escapeHtml(prtFmtRate(m.opened_per_day))}</div><div class="mlbl">open velocity</div></div>
+        <div class="prt-metric" title="Median elapsed time from PR open audit event to merge audit event for PRs merged in this range. Shows — until matching open timestamps exist."><div class="mval">${escapeHtml(prtFmtHours(m.median_time_to_merge_hours))}</div><div class="mlbl">median TTM</div></div>
+        <div class="prt-metric" title="90th percentile elapsed time from PR open to merge for PRs merged in this range."><div class="mval">${escapeHtml(prtFmtHours(m.p90_time_to_merge_hours))}</div><div class="mlbl">p90 TTM</div></div>
+        <div class="prt-metric" title="Merged divided by opened in this range."><div class="mval">${escapeHtml(prtFmtPct(m.merge_ratio))}</div><div class="mlbl">merge ratio</div></div>
+        <div class="prt-metric" title="Opened minus merged minus closed without merging; positive means backlog grew."><div class="mval">${Number(m.net_backlog_change) || 0}</div><div class="mlbl">net backlog</div></div>
+        <div class="prt-metric" title="Merged count compared with the previous equal-length window."><div class="mval">${prtTrend(m.trend && m.trend.merged_pct, false)}</div><div class="mlbl">merged trend</div></div>
+        <div class="prt-metric" title="Median time-to-merge compared with the previous equal-length window; down is better."><div class="mval">${prtTrend(m.trend && m.trend.median_time_to_merge_pct, true)}</div><div class="mlbl">TTM trend</div></div>
+      </div>`;
+      const breakdowns = [prtTopList('Merged by agent', dto.merged_by_agent), prtTopList('Top repos', dto.top_repos), prtTopList('Close reasons', dto.closed_reasons)].filter(Boolean).join('');
       const label = prtWindowLabel(dto);
-      card.innerHTML = `<div class="prt-head"><div class="lc-window">${escapeHtml(label)}</div><div class="gov-pr-models-toggle">${buttons}</div></div>
+      card.innerHTML = `<div class="prt-head"><div class="lc-window">${escapeHtml(label)}</div><div class="prt-controls"><div class="gov-pr-models-toggle">${buttons}</div>${prtRepoOptions()}<button type="button" class="hv-btn btn-secondary btn-sm" data-action="exportPRThroughputCSV" title="Download bucket series as CSV">CSV</button></div></div>
         <div class="lc-fleet">
-          <div class="lc-fleet-stat"><div class="val opened">${opened}</div><div class="lbl">Opened</div></div>
-          <div class="lc-fleet-stat"><div class="val merged">${merged}</div><div class="lbl">Merged</div></div>
-          <div class="lc-fleet-stat"><div class="val closed">${closed}</div><div class="lbl">Closed without merging</div></div>
-        </div>${pathsHtml}`;
+          <div class="lc-fleet-stat" title="PRs opened by hive agents in the selected range"><div class="val opened">${opened}</div><div class="lbl">Opened</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'opened', 'var(--blue)')}</span></div>
+          <div class="lc-fleet-stat" title="PRs merged by the hive in the selected range"><div class="val merged">${merged}</div><div class="lbl">Merged</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'merged', 'var(--green)')}</span></div>
+          <div class="lc-fleet-stat" title="PRs closed by the hive without merging in the selected range"><div class="val closed">${closed}</div><div class="lbl">Closed without merging</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'closed', 'var(--red)')}</span></div>
+        </div>${metricsHtml}${pathsHtml}${breakdowns ? `<div class="prt-breakdowns">${breakdowns}</div>` : ''}`;
       applySectionCollapse('pr-throughput-section');
     }
 
     async function fetchPRThroughput() {
       const hours = prtHours;
+      const repo = prtRepo;
       try {
-        const r = await fetch(`/api/pr-throughput?hours=${encodeURIComponent(hours)}`);
+        let url = `/api/pr-throughput?hours=${encodeURIComponent(hours)}`;
+        if (repo) url += `&repo=${encodeURIComponent(repo)}`;
+        const r = await fetch(url);
         if (!r.ok) return;
         const dto = await r.json();
-        if (hours !== prtHours) return; // a newer selection is in flight
+        if (hours !== prtHours || repo !== prtRepo) return; // a newer selection is in flight
         prtLast = dto;
         renderPRThroughput(dto);
       } catch (e) { /* transient — leave last render in place */ }
@@ -13541,7 +13609,24 @@ function burnAreaChart() {
       if (prtLast) renderPRThroughput(prtLast);
       return fetchPRThroughput();
     }
+    function setPRThroughputRepo(repo) {
+      prtRepo = String(repo || '').trim();
+      try { prtRepo ? localStorage.setItem(PRT_REPO_STORAGE_KEY, prtRepo) : localStorage.removeItem(PRT_REPO_STORAGE_KEY); } catch {}
+      if (prtLast) renderPRThroughput(prtLast);
+      return fetchPRThroughput();
+    }
+    function exportPRThroughputCSV() {
+      const dto = prtLast || {};
+      const rows = [['t','opened','merged','closed']].concat((dto.buckets || []).map(b => [b.t || '', b.opened || 0, b.merged || 0, b.closed || 0]));
+      const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n') + '\n';
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+      a.download = 'pr-throughput-' + (prtRepo ? prtRepo.replace(/[^a-z0-9._-]+/ig, '-') : 'all') + '.csv';
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
     window.setPRThroughputHours = setPRThroughputHours;
+    window.setPRThroughputRepo = setPRThroughputRepo;
+    window.exportPRThroughputCSV = exportPRThroughputCSV;
 
     // ---- Approvals desk (RFC #4000) -------------------------------------
     // Pending operator-lane approvals. The panel stays hidden entirely unless
