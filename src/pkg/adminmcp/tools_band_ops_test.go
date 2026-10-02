@@ -179,3 +179,76 @@ func TestBandReadResultMatchesLabelShapedRows(t *testing.T) {
 		}
 	}
 }
+
+// TestBandReadResultFiltersHeldWithoutShrinkingBands pins the #10018 held/
+// paging follow-up: a `held` argument must filter rows before the limit cap
+// (not after, and not by relying on the caller to inspect held=true/false on
+// an already-capped page), while bands[] keeps reporting every row's real
+// count regardless of the held filter.
+func TestBandReadResultFiltersHeldWithoutShrinkingBands(t *testing.T) {
+	data := sampleOverviewIssuesResponse()
+	data["rows"] = []any{
+		map[string]any{"number": float64(1), "band": "done", "held": false},
+		map[string]any{"number": float64(2), "band": "done", "held": true},
+		map[string]any{"number": float64(3), "band": "done", "held": true},
+		map[string]any{"number": float64(4), "band": "done", "held": false},
+	}
+	out, err := BandReadResult(ToolIssuesByBand, data, map[string]any{"band": "done", "held": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("result = %#v", out)
+	}
+	bands, ok := body["bands"].([]any)
+	if !ok || len(bands) != 2 {
+		t.Fatalf("bands = %#v, want both bands unaffected by the held filter", body["bands"])
+	}
+	rows, ok := body["rows"].([]any)
+	if !ok || len(rows) != 2 {
+		t.Fatalf("rows = %#v, want only the 2 held rows", body["rows"])
+	}
+	for _, row := range rows {
+		if held := row.(map[string]any)["held"]; held != true {
+			t.Fatalf("row held = %#v, want true", held)
+		}
+	}
+}
+
+// TestBandReadResultHeldFiltersAheadOfLimitCap pins the issue's documented
+// gap: capping rows at the limit before a client-side held check would drop
+// held rows a hive with more than MaxResultLimit open issues/PRs needs to
+// see. Filtering held before the cap, as BandReadResult now does, keeps them.
+func TestBandReadResultHeldFiltersAheadOfLimitCap(t *testing.T) {
+	data := sampleOverviewIssuesResponse()
+	rows := make([]any, 0, 3)
+	rows = append(rows, map[string]any{"number": float64(1), "band": "done", "held": true})
+	for n := 2; n <= 3; n++ {
+		rows = append(rows, map[string]any{"number": float64(n), "band": "done", "held": false})
+	}
+	data["rows"] = rows
+	out, err := BandReadResult(ToolIssuesByBand, data, map[string]any{"band": "done", "held": true, "limit": float64(1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := out.(map[string]any)
+	got, ok := body["rows"].([]any)
+	if !ok || len(got) != 1 {
+		t.Fatalf("rows = %#v, want the single held row", body["rows"])
+	}
+	if got[0].(map[string]any)["number"] != float64(1) {
+		t.Fatalf("rows = %#v, want the held row (#1), not an unheld row dropped by the cap first", got)
+	}
+}
+
+// TestBandReadPathNeverForwardsHeld pins that `held`, like `band` and
+// `limit`, is filtered client-side by BandReadResult rather than sent to the
+// Overview endpoint — forwarding it would make the endpoint's own bands[]
+// counts reflect only held (or only unheld) rows instead of the full shape.
+func TestBandReadPathNeverForwardsHeld(t *testing.T) {
+	path := BandReadPath(ToolIssuesByBand, map[string]any{"held": true})
+	if strings.Contains(path, "held=") {
+		t.Fatalf("path = %q, must not forward held — the tool filters rows itself so bands[] keeps its real counts", path)
+	}
+}
