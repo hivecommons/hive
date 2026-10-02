@@ -975,3 +975,28 @@ func TestLeaseStageAdvanceClearsStaleResetAttrsOnTimeline(t *testing.T) {
 		t.Fatalf("advance inherited reset attrs: %+v", stage)
 	}
 }
+
+func TestLeaseStageRetryMarksTimelineEvent(t *testing.T) {
+	hub, srv := covK2Hub(t)
+	now := time.Now()
+	if err := hub.recordLeaseForKeyStage("c-retry", "task-retry", "myorg/repo1", 10106,
+		"myorg/repo1#10106", "contributor", StageSpec, resetTestStartGen, now); err != nil {
+		t.Fatalf("record staged lease: %v", err)
+	}
+	l, err := hub.retryLeaseStage("c-retry", "task-retry", resetTestStartGen, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	j, ok := srv.LifecycleTimeline().Journey("myorg/repo1#10106")
+	if !ok {
+		t.Fatal("journey not recorded")
+	}
+	if got := j.Stages[timeline.KindStageCompleted].Attrs["retry"]; got != "true" {
+		t.Fatalf("retry attr = %q, want true", got)
+	}
+	hub.emitLeaseStageTransitionAt(StageSpec, StagePlan, "", false, l, now.Add(2*time.Minute))
+	j, _ = srv.LifecycleTimeline().Journey("myorg/repo1#10106")
+	if got := j.Stages[timeline.KindStageCompleted].Attrs["retry"]; got != "" {
+		t.Fatalf("advance inherited retry attr %q", got)
+	}
+}
