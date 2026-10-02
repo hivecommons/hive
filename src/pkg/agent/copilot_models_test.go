@@ -53,6 +53,23 @@ func TestCanonicalizeCopilotModel(t *testing.T) {
 	}
 }
 
+// TestCanonicalizeCopilotModelRejectedFiveFivePassthrough covers #9927: the
+// pinned Copilot CLI 1.0.88 rejects claude-opus-5-5/claude-sonnet-5-5 from
+// --model and silently falls back to claude-sonnet-5. They were removed from
+// copilotCLIAcceptedModels so the picker no longer offers them (see
+// copilotPinnedCLIModels in pkg/dashboard/cli_models.go); canonicalization
+// must now pass them through verbatim rather than treating them as aliases.
+func TestCanonicalizeCopilotModelRejectedFiveFivePassthrough(t *testing.T) {
+	for _, id := range []string{"claude-opus-5-5", "claude-sonnet-5-5"} {
+		if got := CanonicalizeCopilotModel(id); got != id {
+			t.Errorf("CanonicalizeCopilotModel(%q) = %q, want unchanged (model removed from copilotCLIAcceptedModels, #9927)", id, got)
+		}
+		if canonical, found := copilotModelByKey[copilotModelKey(id)]; found {
+			t.Errorf("copilotCLIAcceptedModels still contains %q (-> %q), which Copilot CLI 1.0.88 rejects (#9927)", id, canonical)
+		}
+	}
+}
+
 // TestCanonicalizeCopilotModelIdempotent: applying canonicalization twice must
 // equal applying it once — it is applied at discovery, model-set, AND launch,
 // so a value that has already been normalized flows through all three.

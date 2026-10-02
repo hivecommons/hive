@@ -294,11 +294,15 @@ var copilotStaticModels = []string{
 	"o4-mini",
 }
 
-// copilotPinnedCLIModels bounds the Copilot fallback and live lists (copilot 1.0.88).
-// It carries Claude and Gemini ids as well as GPT so an unauthenticated SDK
-// discovery keeps the same multi-provider fallback policy instead of collapsing
-// to GPT-only. 5.5 Claude ids are dashed like the rest of the -5 family and
-// are allowlisted for live catalogs, but not forced into the static fallback.
+// copilotPinnedCLIModels bounds the Copilot fallback and live lists (copilot
+// 1.0.88). It carries Claude and Gemini ids as well as GPT so an
+// unauthenticated SDK discovery keeps the same multi-provider fallback policy
+// instead of collapsing to GPT-only. claude-opus-5-5 and claude-sonnet-5-5
+// are deliberately NOT listed: the pinned 1.0.88 CLI rejects both with
+// `Model "..." from --model flag is not available. Using "claude-sonnet-5"
+// instead.` and silently launches Sonnet 5 (#9927). Re-add them only once a
+// pinned Copilot CLI version is confirmed to accept them (see
+// agent.copilotCLIAcceptedModels, which must stay in sync with this list).
 var copilotPinnedCLIModels = []string{
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
@@ -313,9 +317,7 @@ var copilotPinnedCLIModels = []string{
 	"gpt-4o",
 	"o3",
 	"o4-mini",
-	"claude-opus-5-5",
 	"claude-opus-5",
-	"claude-sonnet-5-5",
 	"claude-sonnet-5",
 	"claude-fable-5",
 	"claude-opus-4.8",

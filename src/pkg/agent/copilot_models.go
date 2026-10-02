@@ -11,11 +11,14 @@ import (
 // spelling is known to drift in the catalog. Note the deliberate mix: the
 // -5 family is DASHED, older families are DOTTED — exactly the drift the
 // canonicalization exists to absorb.
+//
+// claude-opus-5-5 and claude-sonnet-5-5 are deliberately absent: the pinned
+// Copilot CLI 1.0.88 rejects both from --model and silently falls back to
+// claude-sonnet-5 (#9927). Keep in sync with copilotPinnedCLIModels in
+// pkg/dashboard/cli_models.go.
 var copilotCLIAcceptedModels = []string{
 	// Anthropic — the -5 family is DASHED in CLI nomenclature.
-	"claude-opus-5-5",
 	"claude-opus-5",
-	"claude-sonnet-5-5",
 	"claude-sonnet-5",
 	"claude-fable-5",
 	// Anthropic — the 4.x family is DOTTED.

@@ -81,7 +81,6 @@ func TestIssue9804AllowlistsKeepLiveSonnet55(t *testing.T) {
 		model string
 	}{
 		{"claude pinned CLI allowlist", claudePinnedCLIModels, "claude-sonnet-5-5"},
-		{"copilot pinned CLI allowlist", copilotPinnedCLIModels, "claude-sonnet-5-5"},
 		{"pi/kiro fallback", piKiroStaticModels, "kiro-api-key/claude-sonnet-5-5:high"},
 		{"goose anthropic fallback", gooseProviderStaticModels["anthropic"], "claude-sonnet-5-5"},
 	}
@@ -97,5 +96,33 @@ func TestIssue9804AllowlistsKeepLiveSonnet55(t *testing.T) {
 func TestIssue9804OmpSonnet55ReasoningLevels(t *testing.T) {
 	if got := ompStaticReasoningEfforts["anthropic/claude-sonnet-5-5"]; !equalStrings(got, []string{"low", "medium", "high", "xhigh", "max"}) {
 		t.Fatalf("Sonnet 5.5 OMP reasoning levels = %v", got)
+	}
+}
+
+// TestIssue9927CopilotListsExcludeRejectedFiveFive guards against
+// re-introducing claude-opus-5-5/claude-sonnet-5-5 into any list the copilot
+// backend's picker or static fallback draws from: the pinned Copilot CLI
+// 1.0.88 rejects both ids from --model and silently launches claude-sonnet-5
+// instead (#9927). This is a copilot-only restriction — the claude backend's
+// lists (claudePinnedCLIModels, claudeStaticModels) legitimately keep
+// claude-sonnet-5-5 for Claude Code 2.1.284 and are exercised by
+// TestIssue9804AllowlistsKeepLiveSonnet55 above.
+func TestIssue9927CopilotListsExcludeRejectedFiveFive(t *testing.T) {
+	rejected := []string{"claude-opus-5-5", "claude-sonnet-5-5"}
+	cases := []struct {
+		name string
+		list []string
+	}{
+		{"copilot pinned CLI allowlist", copilotPinnedCLIModels},
+		{"copilot static fallback", copilotStaticModels},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, bad := range rejected {
+				if contains(tc.list, bad) {
+					t.Fatalf("%s still offers %q, which Copilot CLI 1.0.88 rejects: %v", tc.name, bad, tc.list)
+				}
+			}
+		})
 	}
 }
