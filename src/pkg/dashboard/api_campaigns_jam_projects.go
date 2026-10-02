@@ -94,7 +94,7 @@ type campaignProjectSyncPayload struct {
 func (s *Server) handleCampaignJamProjectSyncGet(w http.ResponseWriter, r *http.Request) {
 	state, err := s.loadCampaignJam(campaignIDFromRequest(r))
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	jsonResponse(w, map[string]any{"ok": true, "project_sync": state.ProjectSync})
@@ -117,7 +117,7 @@ func (s *Server) handleCampaignJamProjectSyncPost(w http.ResponseWriter, r *http
 			return updateCampaignProjectSync(state, req, action)
 		})
 		if err != nil {
-			jsonError(w, err.Error(), http.StatusBadRequest)
+			jsonError(w, err.Error(), campaignJamStatus(err))
 			return
 		}
 		jsonResponse(w, map[string]any{"ok": true, "jam": state, "project_sync": state.ProjectSync})
@@ -169,7 +169,7 @@ func updateCampaignProjectSync(state *CampaignJamState, req campaignProjectSyncR
 func (s *Server) syncCampaignJamProject(w http.ResponseWriter, r *http.Request, id string) {
 	state, err := s.loadCampaignJam(id)
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	if state.ProjectSync == nil || !state.ProjectSync.Enabled {
@@ -205,7 +205,7 @@ func (s *Server) syncCampaignJamProject(w http.ResponseWriter, r *http.Request, 
 		return nil
 	})
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	s.auditFromRequest(r, "campaign_jam_project_sync", auditDetail("campaign", id), "")
