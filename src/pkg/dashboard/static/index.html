@@ -8201,9 +8201,10 @@
            between "switched off" and "crashed" is the absence of a session,
            which is exactly what the reader cannot see from here. */
         const disabledBadge = agentIsDisabled(a) ? ' <span class="status-badge disabled" data-status="neutral" title="Disabled in config — the governor never starts this agent. Configure it with the gear to enable.">disabled</span>' : '';
+        const continuousBadge = a.continuous === true ? ' <span class="status-badge" data-status="info" title="Continuous mode: after a kicked session ends, Hive schedules the next kick after the configured cool-down.">∞ continuous</span>' : '';
         return `<div class="agent-card ${cls}${compactCls}" data-agent="${esc(a.name)}">
           <span class="working-indicator"></span>
-          <div class="agent-name"><span class="dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${disabledBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Full log of the latest run as selectable, searchable text">📄 full log</a>`)} <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Archived logs of previous kicks — survives restarts and upgrades">🕘 past kicks</a> <button class="hv-btn btn-danger btn-sm restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
+          <div class="agent-name"><span class="dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${disabledBadge}${continuousBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Full log of the latest run as selectable, searchable text">📄 full log</a>`)} <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Archived logs of previous kicks — survives restarts and upgrades">🕘 past kicks</a> <button class="hv-btn btn-danger btn-sm restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
           ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence)}
           <div class="agent-state ${isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : (a.busy === 'working' && a.awaitingCI) ? 'Waiting on CI' : a.busy}${pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return statusBadgeHTML('blocked', 'blocked', a.statusEvidence, 'blocked');
@@ -9325,6 +9326,7 @@
         }).join('');
         const nameDot = isWorking ? '<span class="agent-dot"></span>' : '';
         const pauseBadge = agentOnDemand ? '<span class="on-demand-badge" data-status="info">on demand</span>' : agentPaused ? '<span class="pause-badge" data-status="warn">paused</span>' : agentOff ? `<span class="off-badge" data-status="neutral">${esc(agentCadenceOffLabel())}</span>` : '';
+        const continuousBadge = agentData && agentData.continuous === true ? ' <span class="on-demand-badge" data-status="info" title="Continuous mode — re-kick after session end plus cool-down">∞ continuous</span>' : '';
         const cliPinned = agentData && (agentData.pinnedBoth || agentData.pinnedCli);
         const modelPinned = agentData && (agentData.pinnedBoth || agentData.pinnedModel);
         const cChip = agentData && agentData.cli ? cliChip(agentData.cli, cliPinned, aname) : '?';
@@ -9332,7 +9334,7 @@
         const displayLabel = (agentData && agentData.displayName) || aname;
         const cliPinBtn = (agentData && !cliPinned) ? `<button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${aname}" data-pin-type="cli" data-unpin="false" title="Pin CLI">📌</button>` : '';
         const modelPinBtn = (agentData && !modelPinned) ? `<button class="hv-btn pin-toggle btn-icon btn-sm" data-action="togglePin" data-agent="${aname}" data-pin-type="model" data-unpin="false" title="Pin model">📌</button>` : '';
-        return `<tr><td>${nameDot}<button type="button" class="gov-agent-name-link" data-action="ocSelectAgent" data-agent="${esc(aname)}" title="Open ${esc(displayLabel)}'s agent card">${esc(displayLabel)}</button>${pauseBadge}</td>${cells}<td>${cChip} ${cliPinBtn}</td><td>${mChip} ${modelPinBtn}</td></tr>`;
+        return `<tr><td>${nameDot}<button type="button" class="gov-agent-name-link" data-action="ocSelectAgent" data-agent="${esc(aname)}" title="Open ${esc(displayLabel)}'s agent card">${esc(displayLabel)}</button>${pauseBadge}${continuousBadge}</td>${cells}<td>${cChip} ${cliPinBtn}</td><td>${mChip} ${modelPinBtn}</td></tr>`;
       }).join('');
       const headers = modes.map(m => {
         const isActive = m === currentMode;
@@ -26171,6 +26173,9 @@ function burnAreaChart() {
       const _agentName = _configState.agent || '';
       const _live = (window._lastAgents || []).find(a => a.name === _agentName);
       const _enabled = !(_live && _live.enabled === false);
+      const _general = (_configState.data && _configState.data.general) || {};
+      const _continuous = _general.continuous === true;
+      const _continuousCooldown = Number(_general.continuousCooldown || 60);
       return `
         <div style="display:flex;align-items:center;gap:var(--sp-5);margin-bottom:14px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--r)">
           <div class="pwr-switch${_enabled ? ' on' : ''}" data-action="toggleConfigSwitch" data-section="general" data-key="enabled" role="switch" aria-checked="${_enabled ? 'true' : 'false'}" aria-label="Agent enabled" title="Master power for this agent. 0 removes it from governor scheduling in every mode, whatever the cadences below say. Takes effect on Save."><span class="pwr-mark">1</span><span class="pwr-lever"></span><span class="pwr-mark">0</span></div>
@@ -26179,8 +26184,19 @@ function burnAreaChart() {
             <span class="text-muted">A disabled agent is never kicked in any mode, no matter what the cadences below say. This is separate from pausing, which is a temporary operator hold.</span>
           </div>
         </div>
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${_continuous ? 'on' : ''}" id="cfg-agent-continuous" data-action="toggleConfigSwitch" data-section="general" data-key="continuous" role="switch" aria-checked="${_continuous ? 'true' : 'false'}" title="Continuous mode re-kicks only after Hive has observed the CLI back at its input prompt. Takes effect on Save."></div>
+          <span class="config-toggle-label">
+            <b>Continuous</b> — re-kick when a session ends.
+            <span class="text-muted">Uses the same turn-end signal as kick delivery (the CLI input prompt); never interrupts a busy session and still respects pause, disabled, on-demand, budget/provider holds, and mode pauses.</span>
+            <span class="config-inline-field">cool-down (seconds)
+              <input type="number" min="1" step="1" value="${_continuousCooldown}" data-key="continuousCooldown" data-change-action="markDirty" data-arg0="general" data-arg1="continuousCooldown" data-arg-types="s,s,v">
+            </span>
+          </span>
+        </div>
         <div style="font-size:0.78rem;color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:var(--r);padding:10px 12px;margin-bottom:14px">
           <b>What this is.</b> How often the governor kicks this agent, set separately for each queue-depth mode (idle, quiet, busy, surge).
+          <b>Continuous.</b> When enabled, cadence no longer decides the next kick while the agent is in a running sequence; the next kick is scheduled from the observed session end plus the cool-down. Turning it off returns to these cadences.
           <b>Why use it.</b> It lets you run the agent slowly when there's little to do and faster when work piles up, controlling token spend.
           <b>Where it shows up.</b> These intervals drive the governor's kick timing and appear in the Governor cadence table.
           <b>How to configure.</b> Use intervals, exact times in this browser's timezone, or a 5-field cron expression. Interval and time-of-day modes are mutually exclusive.

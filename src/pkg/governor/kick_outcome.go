@@ -80,6 +80,7 @@ func (g *Governor) RecordKickOutcome(agentName, kind, reason string, kickAt, at 
 		rec.Rekicked = true
 	}
 	g.kickOutcomes[agentName] = rec
+	g.scheduleContinuousLocked(agentName, at)
 
 	// Stamp the most recent kick-history record for this agent so the history
 	// stops counting a fruitless kick as a kick.
@@ -87,6 +88,7 @@ func (g *Governor) RecordKickOutcome(agentName, kind, reason string, kickAt, at 
 		if g.kickHistory[i].Agent != agentName || g.kickHistory[i].Timestamp.After(at) {
 			continue
 		}
+
 		g.kickHistory[i].Outcome = kind
 		g.kickHistory[i].OutcomeReason = reason
 		break
@@ -105,6 +107,77 @@ func (g *Governor) RecordKickOutcome(agentName, kind, reason string, kickAt, at 
 		g.logger.Warn("kick produced no work: the agent reported nothing opened", attrs...)
 	default:
 		g.logger.Debug("kick turn ended", attrs...)
+	}
+}
+
+func (g *Governor) scheduleContinuousLocked(agentName string, endedAt time.Time) {
+	ac, ok := g.agents[agentName]
+	if !ok || !ac.Continuous {
+		return
+	}
+	if endedAt.IsZero() {
+		endedAt = g.now()
+	}
+	cadenceKey, _, blocker := g.continuousBlockerLocked(agentName)
+	if blocker != "" {
+		if g.logger != nil {
+			g.logger.Info("continuous re-kick not scheduled", "agent", agentName, "reason", blocker)
+		}
+		return
+	}
+	if g.state.Continuous == nil {
+		g.state.Continuous = make(map[string]ContinuousState)
+	}
+	cooldown := ac.EffectiveContinuousCooldown()
+	st := g.state.Continuous[agentName]
+	st.NextKick = endedAt.Add(cooldown)
+	st.BackoffUntil = time.Time{}
+	st.Backoff = 0
+	st.Failures = 0
+	st.LastError = ""
+	g.state.Continuous[agentName] = st
+	if g.logger != nil {
+		g.logger.Info("continuous re-kick scheduled", "agent", agentName, "cadence_key", cadenceKey, "cooldown", cooldown.String(), "next_kick", st.NextKick.UTC().Format(time.RFC3339))
+	}
+}
+
+// RecordKickFailure backs off a continuous-mode agent whose scheduled kick
+// could not be delivered (for example, the CLI did not reach its input prompt).
+// Cadence-mode agents are intentionally unaffected.
+func (g *Governor) RecordKickFailure(agentName string, err error, at time.Time) {
+	if agentName == "" {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	ac, ok := g.agents[agentName]
+	if !ok || !ac.Continuous {
+		return
+	}
+	if at.IsZero() {
+		at = g.now()
+	}
+	if g.state.Continuous == nil {
+		g.state.Continuous = make(map[string]ContinuousState)
+	}
+	st := g.state.Continuous[agentName]
+	nextBackoff := ac.EffectiveContinuousCooldown()
+	if st.Backoff > 0 {
+		nextBackoff = st.Backoff * 2
+	}
+	if nextBackoff > continuousBackoffCap {
+		nextBackoff = continuousBackoffCap
+	}
+	st.Failures++
+	st.Backoff = nextBackoff
+	st.BackoffUntil = at.Add(nextBackoff)
+	st.NextKick = st.BackoffUntil
+	if err != nil {
+		st.LastError = err.Error()
+	}
+	g.state.Continuous[agentName] = st
+	if g.logger != nil {
+		g.logger.Warn("continuous re-kick backed off after failed kick", "agent", agentName, "failures", st.Failures, "backoff", nextBackoff.String(), "next_kick", st.NextKick.UTC().Format(time.RFC3339), "error", st.LastError)
 	}
 }
 

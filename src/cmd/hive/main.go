@@ -6716,6 +6716,9 @@ func runEvalCycle(
 					persistReviewDispatchState(reviewPlan, deliveredReviewKicks, logger)
 				}
 			},
+			onFailed: func(msg scheduler.KickMessage, err error) {
+				gov.RecordKickFailure(msg.Agent, err, time.Now())
+			},
 			onDelivered: func(msg scheduler.KickMessage) {
 				gov.RecordKickForRepo(msg.Agent, msg.Repo)
 				dashSrv.AuditLog("governor", "kick", "trigger=governor-eval", msg.Agent)

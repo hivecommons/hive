@@ -429,6 +429,10 @@ type kickDispatchDeps struct {
 	// was withheld or failed: governor repo accounting, audit log, lifecycle
 	// timeline, token snapshot.
 	onDelivered func(msg scheduler.KickMessage)
+	// onFailed runs when a kick was selected but could not be delivered. The
+	// continuous-mode scheduler uses this to exponential-backoff instead of
+	// returning the same due agent on every eval while the CLI is stalled.
+	onFailed func(msg scheduler.KickMessage, err error)
 	// markProbeReleased stamps the provider-budget probe. Called at most once
 	// per dispatch, and only after a kick actually goes out.
 	markProbeReleased func(at time.Time)
@@ -470,6 +474,9 @@ func dispatchAgentKicks(msgs []scheduler.KickMessage, releaseProbe bool, deps ki
 		if err := deps.sendKick(msg.Agent, msg.Message); err != nil {
 			endSpan(err)
 			logger.Warn("failed to send kick", "agent", msg.Agent, "error", err)
+			if deps.onFailed != nil {
+				deps.onFailed(msg, err)
+			}
 			continue
 		}
 		deps.onReviewDelivered(msg)

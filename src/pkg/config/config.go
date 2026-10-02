@@ -1326,6 +1326,13 @@ type AgentConfig struct {
 	Paused      bool `yaml:"paused" json:"paused,omitempty"`
 	ClearOnKick bool `yaml:"clear_on_kick" json:"clear_on_kick"`
 	CLIPinned   bool `yaml:"cli_pinned" json:"cli_pinned,omitempty"`
+	// Continuous makes this agent re-enter work promptly after a kicked turn has
+	// genuinely ended. It is intentionally per-agent and opt-in: cadence still
+	// starts/guards the agent, but while continuous is on the next governor kick
+	// is driven by the manager's "back at input prompt" turn-end signal plus
+	// ContinuousCooldown, never by interrupting a running session.
+	Continuous         bool          `yaml:"continuous,omitempty" json:"continuous,omitempty"`
+	ContinuousCooldown time.Duration `yaml:"continuous_cooldown,omitempty" json:"continuous_cooldown,omitempty"`
 
 	// ModelOwner / BackendOwner record WHO last set Model / Backend. An ACMM
 	// pack owns these fields until an operator changes them in the Governor
@@ -1589,6 +1596,19 @@ func (a AgentConfig) CadenceScopeMode() string {
 
 // UsesRepoScopedCadence reports whether this agent opts into per-repo timer scheduling.
 func (a AgentConfig) UsesRepoScopedCadence() bool { return a.CadenceScopeMode() == CadenceScopePerRepo }
+
+const DefaultContinuousCooldown = time.Minute
+
+// EffectiveContinuousCooldown returns the per-agent minimum delay between a
+// detected turn end and the next continuous-mode kick. A non-positive setting
+// falls back to a safe one-minute cool-down so an agent that instantly reports
+// no work cannot tight-loop.
+func (a AgentConfig) EffectiveContinuousCooldown() time.Duration {
+	if a.ContinuousCooldown > 0 {
+		return a.ContinuousCooldown
+	}
+	return DefaultContinuousCooldown
+}
 
 const cadenceTargetSeparator = "|"
 
