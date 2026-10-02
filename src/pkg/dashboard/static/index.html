@@ -59,6 +59,12 @@
       --green-bg: rgba(116, 223, 154, 0.15); --green-border: rgba(116, 223, 154, 0.35);
       --red-bg: rgba(255, 126, 126, 0.15); --red-border: rgba(255, 126, 126, 0.35);
       --prt-actor-hive: var(--green); --prt-actor-human: var(--purple); --prt-actor-other: var(--muted);
+      --anim-chart-slow: 1200ms;
+      --anim-band-grow: 900ms;
+      --anim-kpi-count: 800ms;
+      --anim-chart-stagger: 150ms;
+      --anim-band-stagger: 80ms;
+      --anim-ease-out-cubic: cubic-bezier(0.22, 1, 0.36, 1);
     }
     * { margin: var(--sp-0); padding: var(--sp-0); box-sizing: border-box; }
     /* ── Deliberate monospace: data surfaces only. UI chrome uses --font-ui. ── */
@@ -1741,6 +1747,24 @@
     .overview-chart-bar-value, .overview-chart-axis-label { fill: var(--muted); font-size: var(--fs-2xs); dominant-baseline: central; }
     .overview-chart-fill { fill: var(--slice-c); }
     .overview-chart-line { fill: none; stroke: var(--slice-c); stroke-width: 1.5; }
+    .overview-chart-area { opacity: 1; transition: opacity var(--anim-band-grow) var(--anim-ease-out-cubic); transition-delay: var(--anim-chart-slow); }
+    .overview-animate .overview-stack-segment { animation: overview-stack-grow var(--anim-band-grow) var(--anim-ease-out-cubic) both; transform-box: fill-box; transform-origin: left center; }
+    .overview-animate .overview-line-draw { stroke-dasharray: 100; stroke-dashoffset: 100; animation: overview-line-draw var(--anim-chart-slow) var(--anim-ease-out-cubic) both; }
+    .overview-animate .overview-stack-segment.overview-stagger-1 { animation-delay: calc(1 * var(--anim-band-stagger)); }
+    .overview-animate .overview-stack-segment.overview-stagger-2 { animation-delay: calc(2 * var(--anim-band-stagger)); }
+    .overview-animate .overview-stack-segment.overview-stagger-3 { animation-delay: calc(3 * var(--anim-band-stagger)); }
+    .overview-animate .overview-stack-segment.overview-stagger-4 { animation-delay: calc(4 * var(--anim-band-stagger)); }
+    .overview-animate .overview-stack-segment.overview-stagger-5 { animation-delay: calc(5 * var(--anim-band-stagger)); }
+    .overview-animate .overview-stack-segment.overview-stagger-6 { animation-delay: calc(6 * var(--anim-band-stagger)); }
+    .overview-animate .overview-stack-segment.overview-stagger-7 { animation-delay: calc(7 * var(--anim-band-stagger)); }
+    .overview-animate .overview-line-draw.overview-stagger-1 { animation-delay: calc(1 * var(--anim-chart-stagger)); }
+    .overview-animate .overview-line-draw.overview-stagger-2 { animation-delay: calc(2 * var(--anim-chart-stagger)); }
+    .overview-animate .overview-line-draw.overview-stagger-3 { animation-delay: calc(3 * var(--anim-chart-stagger)); }
+    .overview-animate .overview-line-draw.overview-stagger-4 { animation-delay: calc(4 * var(--anim-chart-stagger)); }
+    .overview-animate .overview-line-draw.overview-stagger-5 { animation-delay: calc(5 * var(--anim-chart-stagger)); }
+    .overview-animate .overview-line-draw.overview-stagger-6 { animation-delay: calc(6 * var(--anim-chart-stagger)); }
+    .overview-animate .overview-line-draw.overview-stagger-7 { animation-delay: calc(7 * var(--anim-chart-stagger)); }
+    .overview-animate .overview-chart-area { opacity: 0; animation: overview-area-fade var(--anim-band-grow) var(--anim-ease-out-cubic) both; animation-delay: var(--anim-chart-slow); }
     .overview-chart-point { fill: var(--slice-c); }
     .overview-chart-hist-cell { fill: var(--slice-c); }
     .overview-panel-in { animation-duration: var(--overview-transition-duration, 1000ms); animation-timing-function: ease; animation-fill-mode: both; }
@@ -1780,7 +1804,11 @@
     @keyframes overview-flip-out { from { opacity: 1; transform: rotateX(0); } to { opacity: 0; transform: rotateX(70deg); } }
     @keyframes overview-blur-in { from { opacity: 0; filter: blur(0.35rem); } to { opacity: 1; filter: blur(0); } }
     @keyframes overview-blur-out { from { opacity: 1; filter: blur(0); } to { opacity: 0; filter: blur(0.35rem); } }
+    @keyframes overview-stack-grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+    @keyframes overview-line-draw { to { stroke-dashoffset: 0; } }
+    @keyframes overview-area-fade { to { opacity: 1; } }
     @media (prefers-reduced-motion: reduce) { .overview-panel-in, .overview-panel-out { animation: none; } }
+    @media (prefers-reduced-motion: reduce) { .overview-animate .overview-stack-segment, .overview-animate .overview-line-draw, .overview-animate .overview-chart-area { animation: none; } .overview-animate .overview-line-draw { stroke-dashoffset: 0; } .overview-animate .overview-chart-area { opacity: 1; } }
     .overview-chart-title { color: var(--text); font-size: var(--fs-sm); font-weight: 800; margin-bottom: var(--sp-2); }
     .overview-chart-subtitle { color: var(--muted); font-size: var(--fs-base); margin-bottom: var(--sp-4); }
     .overview-chart-svg { width: 100%; max-width: 260px; height: auto; overflow: visible; }
@@ -5377,6 +5405,7 @@
       if (section) section.classList.toggle('collapsed', collapsed);
       if (header) header.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
       if (!collapsed && section) replaySparklinesIn(section, { force: true });
+      if (sectionId === 'overview-section' && !collapsed) triggerOverviewAnimations('expand');
     }
     /** Apply persisted collapsed state to a section after render */
     function applySectionCollapse(sectionId) {
@@ -11777,7 +11806,74 @@
     const _overviewCarouselTimers = [];
     const _overviewHoverState = { issue: false, pr: false };
     const _overviewCarouselState = { issue: 0, pr: 0 };
+    const _overviewKPIValues = {};
+    let _overviewAnimationDataSignature = '';
     let _overviewLastRepos = [];
+
+    function overviewPrefersReducedMotion() {
+      return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    }
+
+    function overviewCssDurationMs(name, fallback) {
+      const root = document.documentElement;
+      const raw = root && window.getComputedStyle ? window.getComputedStyle(root).getPropertyValue(name).trim() : '';
+      const match = /^([0-9.]+)(ms|s)$/.exec(raw);
+      if (!match) return fallback;
+      const value = Number(match[1]);
+      if (!Number.isFinite(value)) return fallback;
+      return match[2] === 's' ? value * 1000 : value;
+    }
+
+    function overviewAnimationSignature(issueSlices, prSlices, selectedNames) {
+      const pack = slices => (slices || []).map(s => [s.key, Number(s.count || 0)]);
+      return JSON.stringify({ repos: selectedNames || [], issues: pack(issueSlices), prs: pack(prSlices) });
+    }
+
+    function overviewShouldAnimateData(signature) {
+      const changed = signature !== _overviewAnimationDataSignature;
+      _overviewAnimationDataSignature = signature;
+      return changed;
+    }
+
+    function triggerOverviewAnimations(reason) {
+      const el = document.getElementById('overview-card');
+      if (!el) return;
+      el.classList.remove('overview-animate');
+      void el.offsetWidth;
+      const reduced = overviewPrefersReducedMotion();
+      if (!reduced) el.classList.add('overview-animate');
+      animateOverviewKPIs(el, { fromZero: reason === 'expand', reduced });
+    }
+
+    function animateOverviewKPIs(root, options) {
+      const opts = options || {};
+      const reduced = !!opts.reduced || overviewPrefersReducedMotion();
+      const fromZero = !!opts.fromZero;
+      const nodes = root ? root.querySelectorAll('[data-overview-kpi-value]') : [];
+      nodes.forEach(node => {
+        const key = node.getAttribute('data-overview-kpi-key') || '';
+        const target = Number(node.getAttribute('data-overview-kpi-value'));
+        if (!key || !Number.isFinite(target)) return;
+        const prior = Number(_overviewKPIValues[key]);
+        const start = fromZero || !Number.isFinite(prior) ? 0 : prior;
+        _overviewKPIValues[key] = target;
+        if (reduced || start === target || !window.requestAnimationFrame) {
+          node.textContent = String(target);
+          return;
+        }
+        const duration = overviewCssDurationMs('--anim-kpi-count', 800);
+        const started = performance.now();
+        const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+        const tick = now => {
+          const t = Math.min(1, (now - started) / duration);
+          node.textContent = String(Math.round(start + (target - start) * easeOutCubic(t)));
+          if (t < 1) window.requestAnimationFrame(tick);
+          else node.textContent = String(target);
+        };
+        node.textContent = String(Math.round(start));
+        window.requestAnimationFrame(tick);
+      });
+    }
 
     function overviewDefaultChartState() {
       const enabled = {};
@@ -11897,9 +11993,9 @@
       const total = visible.reduce((n, s) => n + s.count, 0);
       if (!total) return renderOverviewBar(title, subtitle, slices);
       let x = OVERVIEW_STACK_X;
-      const bars = visible.map(s => {
+      const bars = visible.map((s, idx) => {
         const w = (s.count / total) * OVERVIEW_STACK_BAR_W;
-        const out = `<rect class="overview-chart-fill ${esc(s.className)}" x="${x.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" y="${OVERVIEW_STACK_Y}" width="${w.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" height="${OVERVIEW_STACK_BAR_H}" rx="3"><title>${esc(s.label)}: ${s.count}${s.rule ? ' — ' + esc(s.rule) : ''}</title></rect>`;
+        const out = `<rect class="overview-chart-fill overview-stack-segment overview-stagger-${idx} ${esc(s.className)}" x="${x.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" y="${OVERVIEW_STACK_Y}" width="${w.toFixed(OVERVIEW_CHART_DECIMAL_PLACES)}" height="${OVERVIEW_STACK_BAR_H}" rx="3"><title>${esc(s.label)}: ${s.count}${s.rule ? ' — ' + esc(s.rule) : ''}</title></rect>`;
         x += w;
         return out;
       }).join('');
@@ -11911,13 +12007,13 @@
       if (samples.length < 2) return renderOverviewBar(title, subtitle, slices);
       const max = Math.max(1, ...samples.flatMap(sample => (slices || []).map(s => Number((sample.counts || {})[s.key] || 0))));
       const denom = Math.max(1, samples.length - 1);
-      const lines = (slices || []).map(s => {
+      const lines = (slices || []).map((s, idx) => {
         const points = samples.map((sample, idx) => {
           const x = OVERVIEW_LINE_PAD + idx * ((OVERVIEW_LINE_W - OVERVIEW_LINE_PAD * 2) / denom);
           const y = OVERVIEW_LINE_H - OVERVIEW_LINE_PAD - (Number((sample.counts || {})[s.key] || 0) / max) * (OVERVIEW_LINE_H - OVERVIEW_LINE_PAD * 2);
           return x.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + ',' + y.toFixed(OVERVIEW_CHART_DECIMAL_PLACES);
         }).join(' ');
-        return `<polyline class="overview-chart-line ${esc(s.className)}" points="${points}"><title>${esc(s.label)}${s.rule ? ' — ' + esc(s.rule) : ''}</title></polyline>`;
+        return `<polyline class="overview-chart-line overview-line-draw overview-stagger-${idx} ${esc(s.className)}" pathLength="100" points="${points}"><title>${esc(s.label)}${s.rule ? ' — ' + esc(s.rule) : ''}</title></polyline>`;
       }).join('');
       return `<svg class="overview-chart-svg" viewBox="0 0 ${OVERVIEW_LINE_W} ${OVERVIEW_LINE_H}" role="img" aria-label="${esc(title)}">${lines}</svg>`;
     }
@@ -12017,14 +12113,18 @@
         + (issueSlices || []).filter(s => s.key === 'waiting').reduce((n, s) => n + Number(s.count || 0), 0);
       const age = overviewMedianAgeLabel((issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft', 'blocked'].includes(s.key)), state);
       const cards = [
-        ['Open issues', openIssues, 'Actionable plus held issues in the selected repos.'],
-        ['Open PRs', openPRs, 'Open plus held pull requests in the selected repos.'],
-        ['Actionable now', actionableNow, 'Items in bands that can move without waiting.'],
-        ['Held', held, 'Issues and PRs deliberately paused by a hold.'],
-        ['Blocked / needs-human', blockedNeedsHuman, 'Waiting, blocked, or escalated work needing a person or dependency.'],
-        ['Median age', age, 'Median selected actionable item age by the configured time basis.']
+        ['open-issues', 'Open issues', openIssues, 'Actionable plus held issues in the selected repos.'],
+        ['open-prs', 'Open PRs', openPRs, 'Open plus held pull requests in the selected repos.'],
+        ['actionable-now', 'Actionable now', actionableNow, 'Items in bands that can move without waiting.'],
+        ['held', 'Held', held, 'Issues and PRs deliberately paused by a hold.'],
+        ['blocked-needs-human', 'Blocked / needs-human', blockedNeedsHuman, 'Waiting, blocked, or escalated work needing a person or dependency.'],
+        ['median-age', 'Median age', age, 'Median selected actionable item age by the configured time basis.']
       ];
-      return `<div class="overview-kpis">${cards.map(([label, value, tip]) => `<button type="button" class="overview-kpi" data-action="ocNavigate" data-arg0="repos-section" data-stop="1" title="${esc(tip)}"><span class="overview-kpi-value">${esc(String(value ?? '—'))}</span><span class="overview-kpi-label">${esc(label)}</span></button>`).join('')}</div>`;
+      return `<div class="overview-kpis">${cards.map(([key, label, value, tip]) => {
+        const n = Number(value);
+        const attrs = Number.isFinite(n) ? ` data-overview-kpi-key="${esc(key)}" data-overview-kpi-value="${n}"` : '';
+        return `<button type="button" class="overview-kpi" data-action="ocNavigate" data-arg0="repos-section" data-stop="1" title="${esc(tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span><span class="overview-kpi-label">${esc(label)}</span></button>`;
+      }).join('')}</div>`;
     }
 
     function overviewRepoFilterHTML(repos) {
@@ -12223,6 +12323,8 @@
       const repoSuffix = overviewRepoSubtitleSuffix(_overviewLastRepos, selectedNames);
       const issueSlices = overviewIssueBandSlices(selectedRepos);
       const prSlices = overviewPRBandSlices(selectedRepos);
+      const animationSignature = overviewAnimationSignature(issueSlices, prSlices, selectedNames);
+      const dataChanged = overviewShouldAnimateData(animationSignature);
       const issueSampled = overviewSampleHistory('issue', issueSlices, state);
       const prSampled = overviewSampleHistory('pr', prSlices, state);
       const sampled = issueSampled || prSampled;
@@ -12233,6 +12335,11 @@
         : `${kpis}<div class="overview-empty">Nothing actionable — the hive is caught up</div>`;
       if (sampled) saveOverviewChartsState(state);
       setIfChanged(el, html);
+      if (dataChanged && !isSectionCollapsed('overview-section')) {
+        triggerOverviewAnimations('data');
+      } else {
+        animateOverviewKPIs(el, { reduced: true });
+      }
       renderOverviewSettingsPopover(state);
       scheduleOverviewCarousel('issue', state);
       scheduleOverviewCarousel('pr', state);
