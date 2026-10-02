@@ -96,7 +96,7 @@ ask which layer set any given field.
 #### `hive.yaml.runtime` is a snapshot, not a restore source
 
 The name misleads. `hive.yaml.runtime` is written by the entrypoint **after** the merge
-(`src/deploy/entrypoint.sh:150`) — it is a snapshot of the *result*, not an
+(`src/deploy/entrypoint.sh:989-992`) — it is a snapshot of the *result*, not an
 input. On variant-C hives nothing reads it during a normal boot.
 
 It has exactly one non-redundant role: the **disaster fallback** at

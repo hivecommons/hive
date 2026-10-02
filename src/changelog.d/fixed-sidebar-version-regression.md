@@ -1,0 +1,1 @@
+- Keep the dashboard sidebar version Upgrade button visible in every state, clear stale upgrade progress, and prevent empty/clipped version panel rows.

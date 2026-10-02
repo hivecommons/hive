@@ -41,8 +41,8 @@ func TestOverviewDonutLabelsStayInsideSVG(t *testing.T) {
 		"const OVERVIEW_CHART_LABEL_POLE_DEGREES = 12;",
 		"anchor: nearPole ? 'middle' : (cos > 0 ? 'start' : 'end')",
 		`<text class="overview-chart-label" text-anchor="${point.anchor}"`,
-		".overview-chart-svg { width: 100%; max-width: 240px; height: auto; overflow: hidden; }",
-		"grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);",
+		".overview-chart-svg { width: 100%; max-width: 260px; height: auto; overflow: visible; }",
+		"grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing %q", want)

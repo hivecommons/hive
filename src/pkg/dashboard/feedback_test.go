@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -30,6 +31,9 @@ func TestFeedbackRedactsAndBuildsFallbackURL(t *testing.T) {
 	body := buildFeedbackIssueBody(req)
 	if strings.Contains(body, "ghp_secret") || strings.Contains(body, "abc.def") || strings.Contains(body, "user@example.com") || strings.Contains(body, "opensesame") || strings.Contains(body, "private/repo") {
 		t.Fatalf("feedback body leaked sensitive data:\n%s", body)
+	}
+	if !strings.Contains(body, "## Diagnostics included") || !strings.Contains(body, "Recent failed /api calls") {
+		t.Fatalf("feedback body missing diagnostics disclosure:\n%s", body)
 	}
 	if !strings.Contains(feedbackFallbackURL(req), "github.com/hivecommons/hive/issues/new") {
 		t.Fatalf("fallback did not target hive repo")
@@ -109,6 +113,32 @@ func TestFeedbackStaticUIWiring(t *testing.T) {
 	if strings.Contains(open, "window.prompt") || strings.Contains(open, "alert(") || strings.Contains(open, "confirm(") {
 		t.Fatal("feedback modal uses a native browser dialog")
 	}
+	for _, want := range []string{
+		".feedback-modal { max-width: 720px",
+		"max-height: 90vh",
+		".feedback-body { flex:1 1 auto; min-height:0; overflow-y:auto; padding:var(--sp-8);",
+		".feedback-footer { position: sticky; bottom:0;",
+		"class=\"feedback-footer\"",
+		"class=\"feedback-body\"",
+		"class=\"feedback-diagnostics-fieldset\"",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("feedback modal layout missing %q", want)
+		}
+	}
+	if strings.Contains(open, "<details open") {
+		t.Fatal("feedback preview should be collapsed by default")
+	}
+	if !strings.Contains(open, `<details class="feedback-preview-shell">`) {
+		t.Fatal("feedback preview details element missing")
+	}
+	if !strings.Contains(open, "overlay.addEventListener('click', function(e) { if (e.target === overlay) closeFeedbackModal(); });") {
+		t.Fatal("feedback modal does not close on backdrop click")
+	}
+	escapeHandler := regexp.MustCompile(`(?s)document\.addEventListener\('keydown', \(e\) => \{.*?if \(e\.key !== 'Escape'\) return;.*?const feedbackOverlay = document\.getElementById\('feedback-overlay'\);.*?if \(feedbackOverlay\) \{ closeFeedbackModal\(\); return; \}`).FindString(html)
+	if escapeHandler == "" {
+		t.Fatal("Escape keydown handler is not wired to closeFeedbackModal")
+	}
 	submit := jsFunctionBody(t, html, "async function submitFeedbackReport()")
 	if !strings.Contains(submit, "fetch('/api/feedback/report'") {
 		t.Fatal("feedback submit does not post to the feedback endpoint")
@@ -116,6 +146,52 @@ func TestFeedbackStaticUIWiring(t *testing.T) {
 	unread := jsFunctionBody(t, html, "function feedbackUnreadCount(items)")
 	if !strings.Contains(unread, "updated_at > item.last_seen_updated_at") {
 		t.Fatal("feedback unread pill is not derived from updated_at > last_seen_updated_at")
+	}
+}
+
+func TestFeedbackDiagnosticDisclosureMatchesPayload(t *testing.T) {
+	b, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(b)
+	constBlockStart := strings.Index(html, "const FEEDBACK_DIAGNOSTIC_FIELDS = [")
+	if constBlockStart < 0 {
+		t.Fatal("missing FEEDBACK_DIAGNOSTIC_FIELDS")
+	}
+	constBlockEnd := strings.Index(html[constBlockStart:], "    ];")
+	if constBlockEnd < 0 {
+		t.Fatal("unterminated FEEDBACK_DIAGNOSTIC_FIELDS")
+	}
+	constBlock := html[constBlockStart : constBlockStart+constBlockEnd]
+	keyRe := regexp.MustCompile(`key: '([^']+)'([^}]+)}`)
+	var disclosedPayloadKeys []string
+	for _, m := range keyRe.FindAllStringSubmatch(constBlock, -1) {
+		if strings.Contains(m[2], "optionalProject") || strings.Contains(m[2], "outsideDiagnostics") {
+			continue
+		}
+		disclosedPayloadKeys = append(disclosedPayloadKeys, m[1])
+	}
+	collect := jsFunctionBody(t, html, "async function collectFeedbackDiagnostics()")
+	call := regexp.MustCompile(`feedbackDiagnosticPayloadFromValues\(\{([^;]+)\}\);`).FindStringSubmatch(collect)
+	if call == nil {
+		t.Fatal("collectFeedbackDiagnostics does not derive its payload from feedbackDiagnosticPayloadFromValues")
+	}
+	payloadKeyRe := regexp.MustCompile(`([a-z_]+):`)
+	var collectedKeys []string
+	for _, m := range payloadKeyRe.FindAllStringSubmatch(call[1], -1) {
+		collectedKeys = append(collectedKeys, m[1])
+	}
+	if strings.Join(disclosedPayloadKeys, ",") != strings.Join(collectedKeys, ",") {
+		t.Fatalf("disclosure keys %v != diagnostics payload keys %v", disclosedPayloadKeys, collectedKeys)
+	}
+	for _, want := range []string{"agents[].repo", "agents[].org", "console_errors", "failed_api_calls"} {
+		if !strings.Contains(constBlock, "key: '"+want+"'") {
+			t.Fatalf("diagnostics disclosure missing %s", want)
+		}
+	}
+	if !strings.Contains(html, "function renderFeedbackDiagnosticsDisclosure()") || !strings.Contains(html, "FEEDBACK_DIAGNOSTIC_FIELDS.map") {
+		t.Fatal("diagnostics disclosure is not rendered from FEEDBACK_DIAGNOSTIC_FIELDS")
 	}
 }
 

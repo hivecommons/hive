@@ -438,7 +438,7 @@ through the authenticated `/terminal` proxy on 3002.
 
 ## Configuration
 
-All runtime config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See [src/hive.yaml.example](src/hive.yaml.example) for the full reference, [src/docs/env-vars.md](src/docs/env-vars.md) for the centralized environment variable reference, [src/docs/agent-configuration.md](src/docs/agent-configuration.md) for agent configuration, [src/AGENT-DEFINITION.md](src/AGENT-DEFINITION.md) for the portable agent YAML format, [src/docs/supervisor.md](src/docs/supervisor.md) for the supervisor agent, [src/docs/telemetry.md](src/docs/telemetry.md) and [src/docs/operations.md](src/docs/operations.md) for the L5/L6-only opt-in observability and operational-readiness agents, [docs/backend-setup.md](docs/backend-setup.md) for CLI backends, [docs/inference-backends.md](docs/inference-backends.md) for model gateways, [docs/migration-v1-v2.md](docs/migration-v1-v2.md) for v1→v2 migration, and [src/docs/migration-v2-v4.md](src/docs/migration-v2-v4.md) for upgrading a v2 deployment to v4.
+All runtime config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See [src/hive.yaml.example](src/hive.yaml.example) for the full reference, [src/docs/env-vars.md](src/docs/env-vars.md) for the centralized environment variable reference, [src/docs/agent-configuration.md](src/docs/agent-configuration.md) for agent configuration, [src/AGENT-DEFINITION.md](src/AGENT-DEFINITION.md) for the portable agent YAML format, [src/docs/supervisor.md](src/docs/supervisor.md) for the supervisor agent, [src/docs/telemetry.md](src/docs/telemetry.md) for data collection and the L5/L6-only opt-in observability agent, and [src/docs/operations.md](src/docs/operations.md) for operational readiness, [docs/backend-setup.md](docs/backend-setup.md) for CLI backends, [docs/inference-backends.md](docs/inference-backends.md) for model gateways, [docs/migration-v1-v2.md](docs/migration-v1-v2.md) for v1→v2 migration, and [src/docs/migration-v2-v4.md](src/docs/migration-v2-v4.md) for upgrading a v2 deployment to v4.
 
 The top-level deterministic shell pipeline uses a separate project file,
 `config/hive-project.yaml.example`; see [config/README.md](config/README.md)
@@ -620,7 +620,7 @@ Recent user-visible changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ## Security
 
-Please see [SECURITY.md](SECURITY.md) for the vulnerability disclosure process. Do not report security vulnerabilities through public issues or pull requests.
+Please see [SECURITY.md](SECURITY.md) for the vulnerability disclosure process. Data collection and telemetry paths are documented in [src/docs/telemetry.md](src/docs/telemetry.md). Do not report security vulnerabilities through public issues or pull requests.
 
 ---
 
