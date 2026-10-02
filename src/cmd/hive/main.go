@@ -3468,10 +3468,12 @@ func (b *boot) bootDashboardAPI() { b.bootDashboardAPIWith(defaultBootDashboardA
 // injected; see bootDashboardAPIDeps.
 func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	deps.registerAPI(b.dashSrv, b.dashboardDependencies())
-	var spekCloneAuth dashboard.SpekHubCloneAuth
-	if b.appAuth != nil {
-		spekCloneAuth = spektacularCloneAuth(pushbroker.GitHubAppMinter{Auth: b.appAuth, Tier: pushbroker.ReadOnlyTier})
-	}
+	spekCloneAuth := lazySpektacularCloneAuth(func() pushbroker.TokenMinter {
+		if b.appAuth == nil {
+			return nil
+		}
+		return pushbroker.GitHubAppMinter{Auth: b.appAuth, Tier: pushbroker.ReadOnlyTier}
+	})
 	wireSpektacularRunnerWithCloneAuth(b.cfg, b.dashSrv, b.logger, spekCloneAuth)
 	// #9172: Extensions/Features edits to runs.spektacular apply live.
 	b.dashSrv.SetSpektacularReconfigureFn(func() bool {

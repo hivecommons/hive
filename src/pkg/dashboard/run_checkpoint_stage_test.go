@@ -160,3 +160,47 @@ func TestSpecCheckpointApproveRefusesWithoutHeldLease(t *testing.T) {
 		t.Fatal("advancing a spec checkpoint with no held spec lease succeeded")
 	}
 }
+
+// Rejecting a held plan of a run-imported epic (run key, no issue number)
+// re-mints the plan generation instead of leaving the run parked behind the
+// rejected receipt (hivecommons/hive#10063).
+func TestPlanCheckpointRejectRetriesHeldPlan(t *testing.T) {
+	hub, s, store, _ := spekHub(t)
+	now := time.Now()
+	spekLease(t, hub, StagePlan, now)
+	epic := spekDraftEpic(t, store)
+	if err := s.AdvanceStageLease(spekIdentity, spekTaskID, StageImplement, now, []byte(`{}`), map[string]string{stageAttrRunKey: spekRunKey}); err != nil {
+		t.Fatalf("held plan advance: %v", err)
+	}
+	payload := planCheckpoint(t, s)
+
+	rec := doOwnerPost(s, "/api/runs/"+url.PathEscape(payload.RunKey)+"/checkpoint", runCheckpointDecisionRequest{Action: runCheckpointDecisionReject, Gen: payload.Gen})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reject plan checkpoint = %d body=%s", rec.Code, rec.Body.String())
+	}
+	stage, gen := spekLeaseState(hub)
+	if stage != StagePlan || gen <= spekGen {
+		t.Fatalf("lease after plan reject = %s gen %d, want plan past gen %d", stage, gen, spekGen)
+	}
+	if s.runCheckpointStageHeld(spekRunKey, StagePlan, gen) {
+		t.Fatal("retried plan generation is still held")
+	}
+	if got, _ := store.Get(epic.ID); got.Meta(planning.MetaPlanStatus) != planning.PlanStatusDraft {
+		t.Fatalf("plan status after reject = %q, want draft", got.Meta(planning.MetaPlanStatus))
+	}
+}
+
+// A plan still being drafted has no receipt to reject past: the lease keeps
+// its generation.
+func TestPlanRejectLeavesUnheldPlanLease(t *testing.T) {
+	hub, s, store, _ := spekHub(t)
+	spekLease(t, hub, StagePlan, time.Now())
+	epic := spekDraftEpic(t, store)
+
+	if err := s.resetRunLeaseAfterPlanReject(store, epic.ID); err != nil {
+		t.Fatalf("resetRunLeaseAfterPlanReject: %v", err)
+	}
+	if stage, gen := spekLeaseState(hub); stage != StagePlan || gen != spekGen {
+		t.Fatalf("lease after reject of unheld plan = %s gen %d, want plan gen %d", stage, gen, spekGen)
+	}
+}

@@ -111,14 +111,26 @@ func (s *Server) handleRunCheckpointDecision(w http.ResponseWriter, r *http.Requ
 	// The checkpoint's stage picks the decision, never the epic's design
 	// metadata: a design epic whose Spec checkpoint was skipped still reaches
 	// the plan checkpoint with design_status pending (hivecommons/hive#9181).
+	now := time.Now()
+	var held taskLease
 	if payload.Stage == StageSpec {
 		epic, err := store.Get(payload.PlanEpicID)
 		if err != nil || epic.Meta(planning.MetaDesignVia) != planning.DesignViaSpektacular {
 			jsonError(w, "spec checkpoint has no Spektacular design to decide", http.StatusConflict)
 			return
 		}
+		// A design is decidable only once its spec receipt has parked the
+		// stage (hivecommons/hive#10061).
+		var ok bool
+		if held, ok = s.heldSpecCheckpointLease(payload.RunKey, now); !ok {
+			jsonError(w, errRunCheckpointNotHeld.Error(), http.StatusConflict)
+			return
+		}
+		if held.gen != payload.Gen {
+			jsonError(w, "stale checkpoint generation", http.StatusConflict)
+			return
+		}
 	}
-	now := time.Now()
 	switch {
 	case action == runCheckpointDecisionApprove && payload.Stage == StageSpec:
 		// Advance the exact generation the owner reviewed first: it is the
@@ -153,7 +165,14 @@ func (s *Server) handleRunCheckpointDecision(w http.ResponseWriter, r *http.Requ
 		}
 		s.auditFromRequest(r, "plan_approve", auditDetail("epic", payload.PlanEpicID, "run", payload.RunKey, "surface", "run_checkpoint"), agentName)
 	case payload.Stage == StageSpec:
-		if err := store.SetMetadata(payload.PlanEpicID, planning.MetaDesignStatus, planning.DesignStatusQueued); err != nil {
+		// Re-mint the spec generation so the design is drafted again, and
+		// mark it requested - the status the design label loop also writes,
+		// so the next governor cycle cannot undo it (hivecommons/hive#10062).
+		if _, err := s.contributeHub.retryLeaseStage(held.identity, held.taskID, held.gen, now); err != nil {
+			jsonError(w, err.Error(), runResetErrorStatus(err))
+			return
+		}
+		if err := store.SetMetadata(payload.PlanEpicID, planning.MetaDesignStatus, planning.DesignStatusRequested); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -314,7 +333,7 @@ func (s *Server) runCheckpointRun(key string) (Run, error) {
 		if run.WaitingOn != RunWaitingOnHuman {
 			return Run{}, errRunCheckpointNotHeld
 		}
-		if run.PlanEpicID == "" {
+		if run.PlanEpicID == "" || run.Stage == StageSpec {
 			if _, held := s.heldSpecCheckpointLease(run.Key, time.Now()); !held {
 				return Run{}, errRunCheckpointNotHeld
 			}

@@ -532,6 +532,10 @@ func (s *Server) handlePlanReject(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]interface{}{"ok": true, "status": "draft", "plan": tree})
 }
 
+// resetRunLeaseAfterPlanReject sends the rejected plan's run back to plan: a
+// run already past plan is reset to it, and a plan held at its checkpoint has
+// its generation re-minted so a new plan is drafted instead of the run staying
+// parked behind the rejected receipt (hivecommons/hive#10063).
 func (s *Server) resetRunLeaseAfterPlanReject(store *beads.Store, epicID string) error {
 	if s == nil || s.contributeHub == nil || store == nil {
 		return nil
@@ -540,21 +544,48 @@ func (s *Server) resetRunLeaseAfterPlanReject(store *beads.Store, epicID string)
 	if err != nil || epic == nil {
 		return nil
 	}
-	repo, number := strings.TrimSpace(epic.Meta(planning.MetaIssueRepo)), strings.TrimSpace(epic.Meta(planning.MetaIssueNumber))
-	if repo == "" || number == "" {
-		return nil
-	}
-	key := worksource.Ref{Repo: repo, ExternalID: number}.Key()
-	if n, err := strconv.Atoi(number); err == nil && n > 0 {
-		key = worksource.Ref{Repo: repo, Number: n}.Key()
-	}
 	now := time.Now()
-	held, ok := s.contributeHub.runLeaseHolder(key, now)
-	if !ok || leaseStageIndex(held.stage) <= leaseStageIndex(StagePlan) {
+	held, ok := s.planRejectRunLease(epic, now)
+	if !ok {
 		return nil
 	}
-	_, err = s.contributeHub.resetLeaseStage(held.identity, held.taskID, StagePlan, "plan rejected", now)
+	switch {
+	case leaseStageIndex(held.stage) > leaseStageIndex(StagePlan):
+		_, err = s.contributeHub.resetLeaseStage(held.identity, held.taskID, StagePlan, "plan rejected", now)
+	case held.stage == StagePlan && s.runCheckpointStageHeld(runKeyOfLease(leaseWorkKey(&held), held.repo), StagePlan, held.gen):
+		_, err = s.contributeHub.retryLeaseStage(held.identity, held.taskID, held.gen, now)
+	}
 	return err
+}
+
+// planRejectRunLease finds the live run lease of a plan epic: by its issue
+// ref, or by its run key for epics ImportRunPlan minted without an issue
+// number.
+func (s *Server) planRejectRunLease(epic *beads.Bead, now time.Time) (taskLease, bool) {
+	repo, number := strings.TrimSpace(epic.Meta(planning.MetaIssueRepo)), strings.TrimSpace(epic.Meta(planning.MetaIssueNumber))
+	if repo != "" && number != "" {
+		key := worksource.Ref{Repo: repo, ExternalID: number}.Key()
+		if n, err := strconv.Atoi(number); err == nil && n > 0 {
+			key = worksource.Ref{Repo: repo, Number: n}.Key()
+		}
+		if held, ok := s.contributeHub.runLeaseHolder(key, now); ok {
+			return held, true
+		}
+	}
+	runKey := strings.TrimSpace(epic.Meta(planning.MetaRunKey))
+	if runKey == "" {
+		return taskLease{}, false
+	}
+	leaseKey := ""
+	_ = s.VisitActiveStageLeases(func(rk, key, _, _, _, leaseRepo string, _ uint64, expiresAt time.Time) {
+		if leaseKey == "" && !now.After(expiresAt) && s.sameRunKey(runKey, rk, leaseRepo) {
+			leaseKey = key
+		}
+	})
+	if leaseKey == "" {
+		return taskLease{}, false
+	}
+	return s.contributeHub.runLeaseHolder(leaseKey, now)
 }
 
 // handlePlanChild serves POST /api/plan/{epicID}/child/{childID}: edit a child

@@ -9,6 +9,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/pushbroker"
 )
 
 func TestWireSpektacularRunner_DefaultOffAndOptIn(t *testing.T) {
@@ -112,4 +113,34 @@ func TestRewireSpektacular_DefersWhileExecutorBusy(t *testing.T) {
 	if !rewireSpektacular(cfg, srv, logger, nil) || srv.StageExecutor() != nil {
 		t.Fatal("idle executor was not removed once the stage finished")
 	}
+}
+
+type stubCloneMinter struct{ token string }
+
+func (m stubCloneMinter) MintPushToken(context.Context, string) (string, error) { return m.token, nil }
+
+func TestLazySpektacularCloneAuthResolvesMinterPerLaunch(t *testing.T) {
+	var current pushbroker.TokenMinter
+	auth := lazySpektacularCloneAuth(func() pushbroker.TokenMinter { return current })
+	dir := t.TempDir()
+
+	args, token, cleanup, err := auth(context.Background(), "o/r", dir)
+	if err != nil || args != nil || token != "" {
+		t.Fatalf("no minter: args=%v token=%q err=%v, want anonymous clone", args, token, err)
+	}
+	cleanup()
+
+	current = stubCloneMinter{token: "tok-1"}
+	args, token, cleanup, err = auth(context.Background(), "o/r", dir)
+	if err != nil || token != "tok-1" || len(args) != 2 {
+		t.Fatalf("minter arrived late: args=%v token=%q err=%v", args, token, err)
+	}
+	cleanup()
+
+	current = stubCloneMinter{token: "tok-2"}
+	_, token, cleanup, err = auth(context.Background(), "o/r", dir)
+	if err != nil || token != "tok-2" {
+		t.Fatalf("rebuilt minter not used: token=%q err=%v", token, err)
+	}
+	cleanup()
 }
