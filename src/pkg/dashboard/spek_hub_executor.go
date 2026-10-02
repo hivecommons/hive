@@ -189,6 +189,18 @@ func (e *SpekHubExecutor) Status() FrontendSpektacularHubExecutor {
 	return FrontendSpektacularHubExecutor{Running: e.runningLocked(), LastError: spekHubLastErrorSummary(e.lastError)}
 }
 
+// Stopped reports whether Stop has been called. Exported for cmd/hive's
+// rewire tests (hivecommons/hive#10069): the keep-executor path must never
+// stop the executor it means to keep running.
+func (e *SpekHubExecutor) Stopped() bool {
+	if e == nil {
+		return false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.stopped
+}
+
 func (e *SpekHubExecutor) IsExecuting(runKey, stage string) bool {
 	if e == nil {
 		return false
