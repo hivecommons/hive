@@ -130,6 +130,10 @@ var transientAPIErrorPatterns = []string{
 	// incomplete." Same remedy — the request never completed, so repeating
 	// it can succeed.
 	"stalled mid-stream",
+	// And the wording reported in hivecommons/hive#9940: "API Error: the
+	// response stopped arriving. The response above may be incomplete."
+	// Same cut-off-mid-stream failure, no HTTP status, same remedy.
+	"response stopped arriving",
 	"connection error",
 	"request timed out",
 	"overloaded_error",

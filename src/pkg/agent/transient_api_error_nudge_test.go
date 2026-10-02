@@ -77,6 +77,13 @@ func TestPaneShowsTransientAPIError(t *testing.T) {
 			lines: []string{"API Error: Response stalled mid-stream. The response above may be incomplete."},
 			want:  true,
 		},
+		{
+			// hivecommons/hive#9940: the same mid-stream cut-off with yet
+			// another Claude Code wording, and again no HTTP status.
+			name:  "the #9940 report, verbatim",
+			lines: []string{"API Error: the response stopped arriving. The response above may be incomplete."},
+			want:  true,
+		},
 		{name: "connection error", lines: []string{"API Error: Connection error"}, want: true},
 		{name: "request timeout", lines: []string{"API Error: Request timed out"}, want: true},
 		{name: "500", lines: []string{"API Error: 500 Internal Server Error"}, want: true},
@@ -88,6 +95,7 @@ func TestPaneShowsTransientAPIError(t *testing.T) {
 		{name: "ordinary output", lines: []string{"● Reading manager.go", "❯ "}, want: false},
 		{name: "prose mentions report", lines: []string{"The user reported Connection lost mid-response earlier.", "❯ "}, want: false},
 		{name: "prose mentions stall", lines: []string{"Investigating why the response stalled mid-stream yesterday.", "❯ "}, want: false},
+		{name: "prose mentions stopped arriving", lines: []string{"Yesterday the response stopped arriving halfway through.", "❯ "}, want: false},
 		{name: "prose mentions overloaded", lines: []string{"The provider may be Overloaded; investigate.", "❯ "}, want: false},
 		{name: "numeric substring under API chrome", lines: []string{"API Error: request id 15003 failed validation"}, want: false},
 		{name: "empty", lines: nil, want: false},
