@@ -1,0 +1,1 @@
+- The inference `model-download` init container now pins `curlimages/curl:8.13.0` by digest, matching the main container ([#10155](https://github.com/hivecommons/hive/issues/10155)).
