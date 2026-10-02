@@ -3846,7 +3846,6 @@
     <div class="oc-topbar-right">
       <span class="oc-health-badge" id="oc-health">● Health OK</span>
       <button class="hv-btn btn-secondary btn btn-primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide">🧭 Guide</button>
-      <a href="/api/widget" class="hv-btn btn-secondary btn-sm widget-dl" title="Download Übersicht widget">⬇ Widget</a>
       <div id="oc-gh-avatar-wrap" hidden>
         <img id="oc-gh-avatar" src="" alt="" data-action="toggleGHUserMenu">
         <div id="oc-gh-user-menu" class="avatar-menu" hidden>
@@ -3875,6 +3874,7 @@
           <a href="/api/docs" target="_blank" class="avatar-menu-item">API Docs ↗</a>
           <div class="avatar-menu-divider"></div>
           <div id="oc-gh-menu-export-label" class="avatar-menu-label" hidden>Export</div>
+          <a href="/api/widget" id="oc-gh-menu-widget" class="avatar-menu-item" title="Download Übersicht widget">⬇ Widget</a>
           <a href="/api/config/download" id="oc-gh-menu-download" class="avatar-menu-item" hidden>Download hive.yaml</a>
           <a href="/api/config/export" id="oc-gh-menu-config-export" class="avatar-menu-item" hidden>Export effective config (JSON)</a>
           <div id="oc-gh-menu-backup-divider" class="avatar-menu-divider" hidden></div>
@@ -3904,7 +3904,6 @@
     <span class="git-version" id="acmm-main-badge" title="Click to change maturity level" style="cursor:pointer;border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);background:color-mix(in srgb, var(--amber) 14%, transparent);color:var(--amber);font-weight:600" data-action="openACMMDialog"></span>
     <button class="hv-btn btn-icon btn-sm layout-toggle" id="layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
     <button type="button" class="hv-btn btn-secondary btn-sm" id="dashboard-layout-reset-main" hidden data-action="resetDashboardLayout" title="Reset section order to the default layout">↕️ Reset layout</button>
-    <a href="/api/widget" class="hv-btn btn-secondary btn-sm widget-dl" title="Download Übersicht widget">⬇ Widget</a>
   </h1>
 
   <!-- Release channel + last upgrade attempt (#7092). Findable on the spoke's
@@ -31378,7 +31377,7 @@ function burnAreaChart() {
           const exportEl = document.getElementById('oc-gh-menu-config-export');
           if (exportEl) exportEl.hidden = !isOwner;
           const exportLabel = document.getElementById('oc-gh-menu-export-label');
-          if (exportLabel) exportLabel.hidden = !isOwner;
+          if (exportLabel) exportLabel.hidden = false;
           const bkEl = document.getElementById('oc-gh-menu-backup');
           if (bkEl) bkEl.hidden = !isOwner;
           const bkDivider = document.getElementById('oc-gh-menu-backup-divider');

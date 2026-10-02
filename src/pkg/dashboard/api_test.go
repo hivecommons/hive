@@ -279,6 +279,40 @@ func TestHandleWidget(t *testing.T) {
 	if result["issues"] == nil {
 		t.Error("expected issues key in widget")
 	}
+	for _, key := range []string{"agents", "governor", "acmmLevel", "openPRs", "openIssues", "prThroughput7d", "spoke", "fleetBreaker"} {
+		if result[key] == nil {
+			t.Errorf("expected %s key in widget", key)
+		}
+	}
+}
+
+func TestHandleWidget_AuthHandlingUnchanged(t *testing.T) {
+	const token = "widget-token"
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	s := NewServerWithAuth(0, token, logger)
+	s.RegisterAPI(testDeps(t))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/widget", nil)
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want 401", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/widget", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bearer status = %d, want 200", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/widget?token=widget-token", nil)
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("query token status = %d, want 401", rec.Code)
+	}
 }
 
 func TestHandleTokens_NilCollector(t *testing.T) {

@@ -2828,6 +2828,11 @@ func TestHandleWidget_AllFields(t *testing.T) {
 	if result["paused"] == nil {
 		t.Error("expected paused count")
 	}
+	for _, key := range []string{"agents", "governor", "acmmLevel", "prThroughput7d", "spoke", "fleetBreaker"} {
+		if result[key] == nil {
+			t.Errorf("expected %s", key)
+		}
+	}
 }
 
 // ---- handlePane: with agent output ----

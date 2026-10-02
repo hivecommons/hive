@@ -967,26 +967,108 @@ func filterJourneysByACMMLevel(journeys []timeline.Journey, level int) []timelin
 
 func (s *Server) handleWidget(w http.ResponseWriter, r *http.Request) {
 	state := s.deps.Governor.GetState()
-	statuses := s.deps.AgentMgr.AllStatuses()
 
+	s.statusMu.RLock()
+	status := s.status
+	s.statusMu.RUnlock()
+
+	agents := []map[string]any{}
 	running := 0
 	paused := 0
-	for _, a := range statuses {
-		switch a.State {
-		case "running":
+	busy := 0
+	frontendAgents := []FrontendAgent(nil)
+	if status != nil {
+		frontendAgents = status.Agents
+	} else {
+		frontendAgents = buildAgents(s.deps.AgentMgr.AllStatuses(), s.deps.Config, state)
+	}
+	for _, a := range frontendAgents {
+		if a.State == "running" {
 			running++
-		case "paused":
+		}
+		if a.Paused || a.State == "paused" {
 			paused++
 		}
+		if strings.TrimSpace(a.Busy) != "" {
+			busy++
+		}
+		agents = append(agents, map[string]any{
+			"name":       a.Name,
+			"display":    nonEmpty(a.DisplayName, a.Name),
+			"state":      a.State,
+			"paused":     a.Paused || a.State == "paused",
+			"busy":       a.Busy,
+			"next_kick":  a.NextKick,
+			"nextKick":   a.NextKick,
+			"nextKickIn": a.NextKickIn,
+		})
 	}
 
+	openIssues, openPRs := state.QueueIssues, state.QueuePRs
+	acmmLevel := 0
+	if s.deps != nil && s.deps.Config != nil {
+		acmmLevel = s.deps.Config.ACMMLevelOrZero()
+	}
+	if status != nil {
+		openIssues, openPRs = 0, 0
+		acmmLevel = status.ACMMLevel
+		for _, repo := range status.Repos {
+			openIssues += len(repo.ActionableIssues)
+			openPRs += len(repo.OpenPrs)
+		}
+	}
+	governorSummary := map[string]any{"mode": state.Mode}
+	if status != nil {
+		governorSummary["nextKick"] = status.Governor.NextKick
+		governorSummary["nextKickAt"] = status.Governor.NextKickAt
+		governorSummary["nextKickIn"] = status.Governor.NextKickIn
+	}
+
+	throughput := PRThroughput{Hours: 168, Source: "audit"}
+	if s.audit != nil {
+		throughput = buildPRThroughputWindow(prThroughputEntries(s.audit), time.Now().UTC(), 168, "")
+	}
+
+	breakerEngaged := false
+	breakerAgents := []string{}
+	if s.deps != nil && s.deps.AgentMgr != nil {
+		breakerEngaged, breakerAgents = s.deps.AgentMgr.BreakerState()
+	}
+
+	upgradeAvailable := false
+	s.versionMu.RLock()
+	if s.cachedLatestHash != "" && versionHash != "" {
+		upgradeAvailable = !sameCommitDashboard(versionHash, s.cachedLatestHash)
+	}
+	s.versionMu.RUnlock()
+
 	jsonResponse(w, map[string]interface{}{
-		"mode":      state.Mode,
-		"issues":    state.QueueIssues,
-		"prs":       state.QueuePRs,
-		"running":   running,
-		"paused":    paused,
-		"last_eval": state.LastEval,
+		"mode":       state.Mode,
+		"issues":     openIssues,
+		"prs":        openPRs,
+		"running":    running,
+		"paused":     paused,
+		"busy":       busy,
+		"last_eval":  state.LastEval,
+		"agents":     agents,
+		"governor":   governorSummary,
+		"acmmLevel":  acmmLevel,
+		"openPRs":    openPRs,
+		"openIssues": openIssues,
+		"prThroughput7d": map[string]any{
+			"opened": throughput.Opened,
+			"merged": throughput.Merged,
+			"closed": throughput.Closed,
+			"hours":  throughput.Hours,
+		},
+		"spoke": map[string]any{
+			"version":          nonEmpty(versionShort, versionHash),
+			"upgradeAvailable": upgradeAvailable,
+		},
+		"fleetBreaker": map[string]any{
+			"engaged": breakerEngaged,
+			"agents":  breakerAgents,
+		},
 	})
 }
 
