@@ -300,11 +300,13 @@ func (c *Config) SetReporterTrustHoldForRepos(values map[string]*bool) {
 	}
 }
 
-// RepoAutoMergeEnabled resolves project.repo_policies[].auto_merge for repo.
-// Unset means enabled so existing hives keep their prior L6 behavior.
+// RepoAutoMergeEnabled resolves the effective per-repo auto-merge switch.
+// Auto-merge is fail-closed below L6, regardless of the stored per-repo
+// override. At L6, an unset repo override means enabled so hives keep their
+// prior fully-autonomous behavior until an owner switches a repo off.
 func (c *Config) RepoAutoMergeEnabled(repo string) bool {
-	if c == nil {
-		return true
+	if c == nil || c.ACMMLevelOrZero() < SelfMergeMinACMMLevel {
+		return false
 	}
 	if rp, ok := c.RepoPolicyFor(repo); ok && rp.AutoMerge != nil {
 		return *rp.AutoMerge

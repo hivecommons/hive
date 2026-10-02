@@ -107,11 +107,48 @@ func TestHandlePackSetLevelDefaultLeavesLevelHolds(t *testing.T) {
 	if len(body.LevelHoldsPending) != 1 || body.LevelHoldsPending[0].Repo != "testorg/testrepo" || body.LevelHoldsPending[0].Number != 11 || body.LevelHoldsPending[0].Title != "level hold" || body.LevelHoldsPending[0].URL == "" {
 		t.Fatalf("pending holds = %+v, want testorg/testrepo#11 with title/url", body.LevelHoldsPending)
 	}
-	if len(body.Repos) != 1 || body.Repos[0].Repo != "testorg/testrepo" || body.Repos[0].AutoMerge {
-		t.Fatalf("repos = %+v, want testorg/testrepo auto_merge=false", body.Repos)
+	if len(body.Repos) != 1 || body.Repos[0].Repo != "testorg/testrepo" || !body.Repos[0].AutoMerge {
+		t.Fatalf("repos = %+v, want testorg/testrepo auto_merge=true after switching to L6", body.Repos)
+	}
+	if !srv.deps.Config.RepoAutoMergeEnabled("testrepo") {
+		t.Fatal("setting L6 did not turn repo auto-merge on")
 	}
 	if calls.removes != 0 || calls.releaseComments != 0 {
 		t.Fatalf("default level change removed/commented level holds: removes=%d comments=%d", calls.removes, calls.releaseComments)
+	}
+}
+
+func TestHandlePackSetLevelEnablesAutoMergeForActiveReposOnly(t *testing.T) {
+	srv, _ := newLevelHoldGuardDashboardServer(t, false)
+	setDashboardACMMLevel(t, srv, 5)
+	srv.deps.Config.Project.Repos = []string{"testrepo", "paused"}
+	if _, err := srv.deps.Config.SetRepoPausedAndSave("paused", true, "owner", "maintenance"); err != nil {
+		t.Fatal(err)
+	}
+	disabled := false
+	for _, repo := range []string{"testrepo", "paused"} {
+		if _, err := srv.deps.Config.SetRepoAutoMergeForRepoAndSave(repo, &disabled); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	req := httptest.NewRequest("PUT", "/api/packs/level", strings.NewReader(`{"level":6}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	markOwnerRequest(req)
+	srv.handlePackSetLevel(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	}
+	if !srv.deps.Config.RepoAutoMergeEnabled("testrepo") {
+		t.Fatal("active repo auto-merge was not enabled at L6")
+	}
+	if srv.deps.Config.RepoAutoMergeEnabled("paused") {
+		t.Fatal("paused repo should not become effectively auto-merge enabled")
+	}
+	if rp, ok := srv.deps.Config.RepoPolicyFor("paused"); !ok || rp.AutoMerge == nil || *rp.AutoMerge {
+		t.Fatalf("paused repo stored auto_merge = %+v, want explicit false left untouched", rp.AutoMerge)
 	}
 }
 

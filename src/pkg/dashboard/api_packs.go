@@ -727,6 +727,10 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 	paused, resumed := s.syncAgentVisibility(level)
 	s.deps.AgentMgr.SyncModeFiles(level)
 
+	if level >= config.SelfMergeMinACMMLevel {
+		s.enableAutoMergeForActiveRepos()
+	}
+
 	s.persistOnly()
 	// refreshAfterMutationSeq (not the bare refreshAsync) so the mutation epoch
 	// is bumped and the caller gets the StatusSeq floor. Without the floor, the
@@ -838,6 +842,23 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	jsonResponse(w, response)
+}
+
+func (s *Server) enableAutoMergeForActiveRepos() {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return
+	}
+	cfg := s.deps.Config
+	enabled := true
+	for _, repo := range cfg.ActiveRepos() {
+		repo = strings.TrimSpace(repo)
+		if repo == "" {
+			continue
+		}
+		if _, err := cfg.SetRepoAutoMergeForRepoAndSave(repo, &enabled); err != nil && s.logger != nil {
+			s.logger.Error("failed to enable repo auto-merge for ACMM L6", "repo", repo, "error", err)
+		}
+	}
 }
 
 func (s *Server) notifyACMMLevelChanged(prev, next int) {
