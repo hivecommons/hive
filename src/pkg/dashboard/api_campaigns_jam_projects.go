@@ -284,6 +284,16 @@ func postGitHubProjectDrafts(endpoint, token string, payload campaignProjectSync
 	if projectID == "" {
 		return errors.New("project_id (GitHub Projects v2 node id, PVT_…) required to sync to GitHub Projects")
 	}
+	// Every GitHub Projects v2 node id is prefixed "PVT_"; a classic project
+	// number or a project URL copied into project_id by mistake is never
+	// valid here. Catching that locally gives a clear, actionable error
+	// instead of letting the real API return an opaque GraphQL error for it —
+	// the same confusing-failure symptom the non-GitHub hiveJamProjectSync
+	// mutation produced before this endpoint called the real API at all
+	// (hivecommons/hive#10086).
+	if !strings.HasPrefix(projectID, "PVT_") {
+		return fmt.Errorf("project_id %q is not a GitHub Projects v2 node id (expected a PVT_… id, not a project number or URL)", projectID)
+	}
 	const mutation = "mutation($input: AddProjectV2DraftIssueInput!) { addProjectV2DraftIssue(input: $input) { projectItem { id } } }"
 	for _, item := range payload.Items {
 		title := strings.TrimSpace(item.Title)

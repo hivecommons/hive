@@ -1,0 +1,1 @@
+- Reject a Jam GitHub Projects sync `project_id` that is not a Projects v2 node id (e.g. a project number or project URL pasted in by mistake) locally with an actionable error, instead of sending it to the real `addProjectV2DraftIssue` mutation and surfacing whatever opaque GraphQL error GitHub returns for it (#10086).

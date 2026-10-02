@@ -232,6 +232,31 @@ func TestPostGitHubProjectDraftsUsesProjectsV2Mutation(t *testing.T) {
 	}
 }
 
+// TestPostGitHubProjectDraftsRejectsNonNodeIDProjectID covers
+// hivecommons/hive#10086: a GitHub Projects v2 node id is always "PVT_…"; a
+// project number or a project URL pasted into project_id by mistake must be
+// rejected locally with an actionable message instead of reaching the real
+// API only to come back as an opaque GraphQL error.
+func TestPostGitHubProjectDraftsRejectsNonNodeIDProjectID(t *testing.T) {
+	var calls int
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_, _ = w.Write([]byte(`{"data":{"addProjectV2DraftIssue":{"projectItem":{"id":"PVTI_1"}}}}`))
+	}))
+	t.Cleanup(api.Close)
+
+	cases := []string{"7", "https://github.com/orgs/hivecommons/projects/7", "PVT"}
+	for _, projectID := range cases {
+		payload := campaignProjectSyncPayload{ProjectID: projectID, Items: []CampaignProjectItem{{Type: "spec", Title: "t"}}}
+		if err := postGitHubProjectDrafts(api.URL, "tok", payload); err == nil {
+			t.Fatalf("project_id %q err = nil, want rejection", projectID)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("rejected project_id still reached the API %d times", calls)
+	}
+}
+
 // TestCampaignJamProjectSyncStoreFailuresReport5xx covers hivecommons/hive#10083:
 // the project-sync GET and POST handlers loaded/mutated the shared Jam store
 // the same way the thread and agent-invite handlers do, but still reported
