@@ -1,6 +1,7 @@
 package spektacular
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1251,6 +1252,14 @@ func TestUpdatedAtNeverDecides(t *testing.T) {
 
 func fixtureExec(t *testing.T, scenario string) ExecFunc {
 	t.Helper()
+	return fixtureExecVersion(t, scenario, "0.22.0")
+}
+
+// fixtureExecVersion drives the in-tree fake as a specific Spektacular
+// release: 0.22 has no `plan export`, never reports `stale` and never emits
+// artifact_id, so a test wanting any of those must ask for 0.23+ (#10074).
+func fixtureExecVersion(t *testing.T, scenario, version string) ExecFunc {
+	t.Helper()
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh not available")
 	}
@@ -1263,7 +1272,127 @@ func fixtureExec(t *testing.T, scenario string) ExecFunc {
 	return func(ctx context.Context, dir string, args []string) ([]byte, error) {
 		t.Setenv("SPEK_FAKE_SCENARIO", scenario)
 		t.Setenv("SPEK_FAKE_STATE", state)
+		t.Setenv("SPEK_FAKE_VERSION", version)
 		return inner(ctx, dir, args)
+	}
+}
+
+// fixtureStore runs the fake's `init` and `<kind> new` verbs in a fresh
+// directory and returns the directory plus the ID-prefixed artifact name the
+// CLI minted for slug — the id Hive has to resolve, never the slug itself.
+func fixtureStore(t *testing.T, kind, slug, version string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	run := fixtureExecVersion(t, "draft-final", version)
+	if _, err := run(context.Background(), dir, []string{"init", "copilot", "--name", "proj"}); err != nil {
+		t.Fatalf("fixture init: %v", err)
+	}
+	out, err := run(context.Background(), dir, []string{kind, "new", "--data", `{"name":"` + slug + `"}`})
+	if err != nil {
+		t.Fatalf("fixture %s new: %v", kind, err)
+	}
+	var created struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(out), &created); err != nil {
+		t.Fatalf("fixture %s new output %q: %v", kind, out, err)
+	}
+	if created.Name == slug || !strings.HasSuffix(created.Name, "-"+slug) {
+		t.Fatalf("fixture %s new minted %q, want a timestamped id for %q", kind, created.Name, slug)
+	}
+	return dir, created.Name
+}
+
+// TestFixture_StoreBackedResolutionAndRead drives the resolver and the file
+// verbs through the fake binary instead of a scriptedExec stub (#10074): the
+// store holds a timestamped id, so the bare slug is artifact_not_found and
+// `file list` is what turns it into the real artifact name.
+func TestFixture_StoreBackedResolutionAndRead(t *testing.T) {
+	dir, id := fixtureStore(t, KindSpec, "hcl-encoding-helpers", "0.22.0")
+	r := &Runner{Exec: fixtureExec(t, "draft-final")}
+	if _, err := r.statusInDir(context.Background(), dir, KindSpec, "hcl-encoding-helpers"); !isNotFound(err) {
+		t.Fatalf("bare slug status against a timestamped store: %v (%T)", err, err)
+	}
+	resolved, err := r.ResolveArtifact(context.Background(), dir, KindSpec, "hcl-encoding-helpers")
+	if err != nil || resolved != id {
+		t.Fatalf("ResolveArtifact = %q, %v; want %q", resolved, err, id)
+	}
+	st, err := r.statusInDir(context.Background(), dir, KindSpec, id)
+	if err != nil || st.DocumentStatus != DocumentDraft {
+		t.Fatalf("resolved status = %+v, %v", st, err)
+	}
+	if st.ArtifactID != "" {
+		t.Fatalf("0.22 does not emit artifact_id, got %q", st.ArtifactID)
+	}
+	body, err := r.readSpecInDir(context.Background(), dir, id)
+	if err != nil || !strings.Contains(body, id) {
+		t.Fatalf("spec file read = %q, %v", body, err)
+	}
+}
+
+// TestFixture_FileReadExtensionDiffersByVersion pins the retry in
+// readFileInDir against both CLIs: 0.22 wants the extension, 0.23+ rejects it
+// with unexpected_extension and is served the bare path.
+func TestFixture_FileReadExtensionDiffersByVersion(t *testing.T) {
+	dir, id := fixtureStore(t, KindSpec, "hcl-encoding-helpers", "0.23.1")
+	r := &Runner{Exec: fixtureExecVersion(t, "draft-final", "0.23.1")}
+	if _, err := r.readFileOnceInDir(context.Background(), dir, KindSpec, id, id+".md"); !isUnexpectedExtension(err) {
+		t.Fatalf("0.23 file read with an extension: %v (%T)", err, err)
+	}
+	body, err := r.readSpecInDir(context.Background(), dir, id)
+	if err != nil || !strings.Contains(body, id) {
+		t.Fatalf("0.23 spec read after the retry = %q, %v", body, err)
+	}
+	st, err := r.statusInDir(context.Background(), dir, KindSpec, id)
+	if err != nil || st.ArtifactID != id {
+		t.Fatalf("0.23 status = %+v, %v; want artifact_id %q", st, err, id)
+	}
+}
+
+// TestFixture_PlanExportIsVersionGated pins that the pinned 0.22 CLI has no
+// export verb: the runner falls back to the plan document through
+// `plan file read`, and only 0.23+ answers the export with UUID task ids.
+func TestFixture_PlanExportIsVersionGated(t *testing.T) {
+	dir, id := fixtureStore(t, KindPlan, "hcl-encoding-helpers", "0.22.0")
+	planDoc := "---\ndocument_status: final\n---\n\n- [T1] Add encoding helpers (repo: myorg/repo1) [agent_suitable]\n- [T2] Wire helpers into the parser (depends: T1) [agent_suitable]\n"
+	if err := os.WriteFile(filepath.Join(dir, ".spektacular", "plans", id, "plan.md"), []byte(planDoc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := &Runner{Exec: fixtureExec(t, "draft-final")}
+	if _, err := r.exportPlanInDir(context.Background(), dir, id); !planExportUnavailable(err) {
+		t.Fatalf("0.22 plan export: %v (%T)", err, err)
+	}
+	plan, err := r.exportPlanWithFallbackInDir(context.Background(), dir, id)
+	if err != nil || len(plan.Tasks) != 2 || plan.Tasks[0].Repo != testRepo {
+		t.Fatalf("0.22 fallback plan = %+v, %v", plan, err)
+	}
+
+	r23 := &Runner{Exec: fixtureExecVersion(t, "draft-final", "0.23.1")}
+	exported, err := r23.exportPlanInDir(context.Background(), dir, id)
+	if err != nil || len(exported.Tasks) != 3 {
+		t.Fatalf("0.23 plan export = %+v, %v", exported, err)
+	}
+	if exported.Tasks[0].Ref != "" || exported.Tasks[0].ID == "" {
+		t.Fatalf("0.23 identifies tasks by UUID id, got %+v", exported.Tasks[0])
+	}
+	if exported.Tasks[1].DependsOn[0] != exported.Tasks[0].ID {
+		t.Fatalf("0.23 depends_on must reference task ids: %+v", exported.Tasks)
+	}
+	if _, err := r23.exportPlanInDir(context.Background(), dir, "hcl-encoding-helpers"); !isNotFound(err) {
+		t.Fatalf("0.23 export of an unresolved slug: %v (%T)", err, err)
+	}
+}
+
+// TestFixture_StaleNeedsAModernCLI pins that the stale document_status is not
+// something the pinned release can produce.
+func TestFixture_StaleNeedsAModernCLI(t *testing.T) {
+	r := &Runner{Exec: fixtureExec(t, "stale-plan")}
+	if _, err := r.Status(context.Background(), KindPlan, testRunKey); err == nil {
+		t.Fatal("0.22 cannot report stale; the fixture must refuse the scenario")
+	}
+	st, err := (&Runner{Exec: fixtureExecVersion(t, "stale-plan", "0.23.1")}).Status(context.Background(), KindPlan, testRunKey)
+	if err != nil || st.DocumentStatus != DocumentStale {
+		t.Fatalf("0.23 stale status = %+v, %v", st, err)
 	}
 }
 
@@ -1277,8 +1406,9 @@ func TestFixture_DraftFinalThroughBinaryExec(t *testing.T) {
 	if advanced != 1 || reg.stage.Stage != StagePlan {
 		t.Fatalf("fixture draft-final: advanced=%d stage=%q", advanced, reg.stage.Stage)
 	}
-	// The plan export assumption round-trips through the real CLI boundary too.
-	plan, err := r.ExportPlan(context.Background(), testRunKey)
+	// The plan export assumption round-trips through the real CLI boundary
+	// too — on a CLI that has the verb, which 0.22 does not.
+	plan, err := (&Runner{Exec: fixtureExecVersion(t, "draft-final", "0.23.1")}).ExportPlan(context.Background(), testRunKey)
 	if err != nil || len(plan.Tasks) != 3 {
 		t.Fatalf("fixture export: %v %+v", err, plan)
 	}
