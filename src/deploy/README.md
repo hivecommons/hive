@@ -32,6 +32,8 @@ Use it indirectly through the dashboard terminal link. If a terminal pane says i
 - `ci-runners/`: manifests for the self-hosted GitHub Actions runners that serve this repository. See [its README](ci-runners/README.md).
 - `legacy-redirect/`: the hub legacy-host redirect that keeps the request path and query (#6430). See [its README](legacy-redirect/README.md).
 - `dibs-domain-cutover/`: staged manifests for moving dibs to `dibs.hivecommons.dev` (#5925). See [its README](dibs-domain-cutover/README.md).
+- `systemd/`: `hive-boot.target` and `hive-boot-gate.service`, which the Quadlet units in `quadlet/` install against (#4478).
+- `data/`: seed data for agents, restrictions (`restrictions.conf`) and the wiki.
 
 ## Deployment contract tests
 
