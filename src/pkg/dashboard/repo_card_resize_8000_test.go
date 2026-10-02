@@ -98,7 +98,7 @@ func TestRepoCardResizeHandleMarkup(t *testing.T) {
 	// The width reaches the card as an inline flex-basis emitted WITH the
 	// card HTML, so the governor's repaint reapplies it from the stored map
 	// instead of throwing it away.
-	if !strings.Contains(html, "<div class=\"repo-card${cardW ? ' repo-card-sized' : ''}\"${cardW ? ` style=\"flex-basis:${cardW}px\"` : ''}>") {
+	if !strings.Contains(html, "<div class=\"repo-card${cardW ? ' repo-card-sized' : ''}\" data-repo-order-key=\"${esc(cardRepoKey)}\"${cardW ? ` style=\"flex-basis:${cardW}px\"` : ''}>") {
 		t.Error("the repo card does not carry its stored width in the rendered HTML")
 	}
 	if !strings.Contains(html, "const cardW = repoCardWidth(cardRepo);") {
@@ -114,7 +114,7 @@ func TestRepoCardResizeHandleMarkup(t *testing.T) {
 	}
 	// A repaint landing mid-drag would replace the node under the pointer and
 	// drop the pointer capture with it.
-	if !strings.Contains(html, "      if (_repoResizeDrag) return;") {
+	if !strings.Contains(html, "      if (_repoResizeDrag || _repoOrderDrag) return;") {
 		t.Error("renderRepos does not hold its repaint while a card is being dragged")
 	}
 }
@@ -143,7 +143,7 @@ func TestRepoCardResizeInteractionsAreWired(t *testing.T) {
 		`id="repos-reset-layout-btn" data-action="resetRepoCardWidths"`,
 		"function resetRepoCardWidths() {",
 		// It only appears once there is a layout to reset.
-		"if (resetBtn) resetBtn.style.display = Object.keys(repoCardWidths()).length ? 'inline-block' : 'none';",
+		"if (resetBtn) resetBtn.style.display = (Object.keys(repoCardWidths()).length || repoOrderHasCustom(repos)) ? 'inline-block' : 'none';",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("index.html is missing %q", snippet)

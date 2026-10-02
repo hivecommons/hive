@@ -365,3 +365,22 @@ func TestNotificationsTabRendersEventCheckboxesAndSlack(t *testing.T) {
 		}
 	}
 }
+
+func TestStaticIndexRepoTileReorderHandle(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		"const REPO_ORDER_KEY = 'hive.repoOrder.v1';",
+		`class="dashboard-grip repo-card-order-handle" draggable="true" data-repo-order-grip`,
+		`aria-label="Drag to reorder" title="Drag to reorder"`,
+		"function repoOrderApply(repos)",
+		"repoOrderSaveFromDom(grid);",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("static dashboard repo tile reorder wiring missing %q", want)
+		}
+	}
+}

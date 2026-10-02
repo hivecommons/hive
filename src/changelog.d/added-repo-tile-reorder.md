@@ -1,0 +1,1 @@
+- Add dashboard repository tile drag handles for per-browser ordering.
