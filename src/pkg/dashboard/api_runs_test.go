@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/timeline"
 )
@@ -600,8 +602,9 @@ func TestRunImplementTaskCompleteEndsRunAndFiresHook(t *testing.T) {
 		taskAssignedAt: now,
 	}
 	session := &wsSession{h: s.contributeHub, contributor: conn}
+	deps.GHClient = verifiedPRGHClient(t, repo, identity, 77)
 
-	session.handleTaskComplete(WSMessage{Type: "task_complete", TaskID: taskID, TaskGen: gen, Result: "completed"})
+	session.handleTaskComplete(WSMessage{Type: "task_complete", TaskID: taskID, TaskGen: gen, Result: "completed", PRURL: "https://github.com/" + repo + "/pull/77"})
 
 	runs, err := s.activeRuns(true)
 	if err != nil {
@@ -626,6 +629,94 @@ func TestRunImplementTaskCompleteEndsRunAndFiresHook(t *testing.T) {
 	}
 	if hooks[0].StageFrom != StageImplement || hooks[0].StageTo != "completed" || hooks[0].Gen != gen {
 		t.Fatalf("stage_completed hook = %+v", hooks[0])
+	}
+}
+
+// verifiedPRGHClient returns a GitHub client whose PR lookups resolve to one
+// open PR in repo authored by author, so verifyReportedPRDetail reports
+// Verified for "https://github.com/<repo>/pull/<number>".
+func verifiedPRGHClient(t *testing.T, repo, author string, number int) *ghpkg.Client {
+	t.Helper()
+	org, name, _ := strings.Cut(repo, "/")
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"number":   number,
+			"html_url": "https://github.com/" + repo + "/pull/" + strconv.Itoa(number),
+			"title":    "implement gap",
+			"state":    "open",
+			"user":     map[string]any{"login": author},
+			"base": map[string]any{
+				"repo": map[string]any{
+					"name":      name,
+					"full_name": repo,
+					"owner":     map[string]any{"login": org},
+				},
+			},
+		})
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+	return ghpkg.NewClientForTest(ts.URL, org, []string{name}, logger)
+}
+
+// TestRunImplementTaskCompleteUnverifiedPRLeavesRunOpen pins #10090: a
+// task_complete whose reported PR does not verify (here: no PR at all)
+// releases the implement lease but must not move the run to completed or
+// fire the stage_completed hook.
+func TestRunImplementTaskCompleteUnverifiedPRLeavesRunOpen(t *testing.T) {
+	s, deps := runsTestServer(t)
+	capture := &hookCapture{}
+	deps.HookFire = capture.fire
+	now := time.Now().Add(-time.Minute)
+	const (
+		identity = "alice"
+		taskID   = "task-implement-unverified"
+		repo     = "myorg/repo1"
+		number   = 8461
+		key      = "myorg/repo1#8461"
+		gen      = uint64(3)
+	)
+	if err := s.contributeHub.recordLeaseForKeyStage(identity, taskID, repo, number, key, "contributor", StageImplement, gen, now); err != nil {
+		t.Fatalf("record lease: %v", err)
+	}
+	setAgentWorkspaceRootForTest(t, t.TempDir())
+	worktree := runStageWorktreePath(identity, key, StageImplement, gen)
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	conn := &ContributorConnection{
+		profile:        &ContributorProfile{ContributorID: identity, GitHubUsername: identity},
+		currentTask:    &WSTaskAssign{TaskID: taskID, Kind: "run", Stage: StageImplement, Repo: repo, Number: number, Key: key, Title: "implement gap 3"},
+		currentTaskGen: gen,
+		taskAssignedAt: now,
+	}
+	session := &wsSession{h: s.contributeHub, contributor: conn}
+
+	session.handleTaskComplete(WSMessage{Type: "task_complete", TaskID: taskID, TaskGen: gen, Result: "completed"})
+
+	runs, err := s.activeRuns(true)
+	if err != nil {
+		t.Fatalf("activeRuns: %v", err)
+	}
+	for _, run := range runs {
+		if run.Key == key && run.State == "completed" {
+			t.Fatalf("unverified completion completed the run: %+v", run)
+		}
+	}
+	if hooks := capture.all(); len(hooks) != 0 {
+		t.Fatalf("unverified completion fired stage_completed hooks: %+v", hooks)
+	}
+	s.contributeHub.leaseMu.Lock()
+	lease := s.contributeHub.leaseForLocked(identity, taskID)
+	s.contributeHub.leaseMu.Unlock()
+	if lease != nil {
+		t.Fatalf("implement lease still held after unverified completion: %+v", lease)
+	}
+	if _, err := os.Stat(worktree); !os.IsNotExist(err) {
+		t.Fatalf("worktree still exists or stat failed: %v", err)
 	}
 }
 
