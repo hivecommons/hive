@@ -1,0 +1,1 @@
+- dashboard: auto-merge toggle switch, on only at Level 6 (#9987)
