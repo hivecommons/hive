@@ -26184,15 +26184,15 @@ function burnAreaChart() {
             <span class="text-muted">A disabled agent is never kicked in any mode, no matter what the cadences below say. This is separate from pausing, which is a temporary operator hold.</span>
           </div>
         </div>
-        <div style="display:flex;align-items:center;gap:var(--sp-5);margin-bottom:14px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--r)">
+        <div class="config-toggle">
           <div class="config-toggle-switch ${_continuous ? 'on' : ''}" id="cfg-agent-continuous" data-action="toggleConfigSwitch" data-section="general" data-key="continuous" role="switch" aria-checked="${_continuous ? 'true' : 'false'}" title="Continuous mode re-kicks only after Hive has observed the CLI back at its input prompt. Takes effect on Save."></div>
-          <div style="font-size:0.78rem;line-height:1.5;flex:1">
+          <span class="config-toggle-label">
             <b>Continuous</b> — re-kick when a session ends.
             <span class="text-muted">Uses the same turn-end signal as kick delivery (the CLI input prompt); never interrupts a busy session and still respects pause, disabled, on-demand, budget/provider holds, and mode pauses.</span>
-          </div>
-          <label style="font-size:0.72rem;color:var(--muted)">cool-down (seconds)
-            <input type="number" min="1" step="1" value="${_continuousCooldown}" style="width:90px;margin-left:6px" data-change-action="markDirty" data-arg0="general" data-arg1="continuousCooldown" data-arg-types="s,s,v">
-          </label>
+            <span class="config-inline-field">cool-down (seconds)
+              <input type="number" min="1" step="1" value="${_continuousCooldown}" data-key="continuousCooldown" data-change-action="markDirty" data-arg0="general" data-arg1="continuousCooldown" data-arg-types="s,s,v">
+            </span>
+          </span>
         </div>
         <div style="font-size:0.78rem;color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:var(--r);padding:10px 12px;margin-bottom:14px">
           <b>What this is.</b> How often the governor kicks this agent, set separately for each queue-depth mode (idle, quiet, busy, surge).
