@@ -15,7 +15,7 @@ func TestVersionProvenanceRendering(t *testing.T) {
 	}
 	html := indexHTML(t)
 	var source strings.Builder
-	for _, name := range []string{"escapeHtml", "versionDeliveryLabel", "versionTrackingLabel", "versionTrackingTooltip", "upgradeTargetLabel", "fetchGitVersion"} {
+	for _, name := range []string{"escapeHtml", "versionDeliveryLabel", "versionTrackingLabel", "versionTrackingTooltip", "upgradeTargetLabel", "versionCompareURL", "versionStatusText", "versionLastUpgradeText", "renderVersionMenu", "renderVersionChip", "fetchGitVersion"} {
 		if name == "fetchGitVersion" {
 			source.WriteString("async ")
 		}
@@ -30,9 +30,17 @@ func TestVersionProvenanceRendering(t *testing.T) {
 
 const versionProvenanceAssertions = `
 const assert = require('node:assert/strict');
-const elements = { 'git-version': {}, 'oc-git-version': {} };
-const document = { getElementById: id => elements[id] };
+const elements = {
+  'git-version': {},
+  'oc-git-version': {},
+  'oc-version-chip': { setAttribute() {}, focus() {} },
+  'oc-version-menu': { hidden: true }
+};
+const document = { getElementById: id => elements[id] || null };
+const window = {};
 let payload, calls = 0, _upgradeInProgress = false, _upgradeTargetHash = null;
+function showToast() {}
+function renderReleaseStatus() {}
 async function fetch(url) {
   assert.equal(url, '/api/version', 'browser must only read the version API');
   calls++;
@@ -40,63 +48,73 @@ async function fetch(url) {
 }
 async function render(overrides = {}) {
   payload = { hash: 'a1b2c3d0123456789', short: 'a1b2c3d', branch: 'v5', ...overrides };
-  elements['git-version'].innerHTML = '';
-  elements['oc-git-version'].innerHTML = '';
+  elements['git-version'].innerHTML = 'stale';
+  elements['oc-version-chip'].innerHTML = '';
+  elements['oc-version-menu'].innerHTML = '';
   const before = calls;
   await fetchGitVersion();
   assert.equal(calls, before + 1);
-  const html = elements['git-version'].innerHTML;
-  assert.equal(html, elements['oc-git-version'].innerHTML);
-  assert.ok(html.includes('/commit/a1b2c3d0123456789'));
-  assert.ok(html.includes('>a1b2c3d</a>'));
-  return html;
+  assert.equal(elements['git-version'].innerHTML, '', 'legacy heading version strip should stay empty');
+  const chip = elements['oc-version-chip'].innerHTML;
+  const menu = elements['oc-version-menu'].innerHTML;
+  assert.ok(menu.includes('/commit/a1b2c3d0123456789'));
+  assert.ok(menu.includes('a1b2c3d0123456789'));
+  assert.ok(chip.includes('a1b2c3d'));
+  return { chip, menu, legacy: window._lastVersionHTML || '' };
 }
 (async () => {
   for (const channel of ['stable', 'candidate', 'edge']) {
     const ref = 'ghcr.io/hivecommons/hive:' + channel;
-    const html = await render({ channel, tracking: 'floating', imageRef: ref });
-    assert.ok(html.includes('>' + channel + ' (v5)</span>'));
-    assert.ok(html.includes('· floating</span>'));
-    assert.ok(html.includes('Channel: ' + channel));
-    assert.ok(html.includes('Built from: v5'));
-    assert.ok(html.includes('Image: ' + ref));
+    const { chip, menu } = await render({ channel, tracking: 'floating', imageRef: ref });
+    assert.ok(chip.includes('>' + channel + ' (v5)</span>'));
+    assert.ok(menu.includes('Channel</span><strong>' + channel + ' (v5)</strong>'));
+    assert.ok(menu.includes('>floating</strong>'));
+    assert.ok(menu.includes('Channel: ' + channel));
+    assert.ok(menu.includes('Built from: v5'));
+    assert.ok(menu.includes('Image: ' + ref));
   }
-  let html = await render({ tracking: 'floating', imageRef: 'hive:v5-latest' });
-  assert.ok(html.includes('>v5</span>'));
-  assert.ok(!html.includes('Channel:'));
-  assert.ok(html.includes('· floating</span>'));
-  html = await render({ tracking: 'pinned', imageRef: 'hive:a1b2c3d' });
-  assert.ok(html.includes('· pinned</span>'));
-  assert.ok(html.includes('Built from branch v5'));
-  html = await render({ channel: 'stable', tracking: 'pinned', imageRef: 'hive:stable@sha256:' + 'a'.repeat(64) });
-  assert.ok(html.includes('>stable (v5)</span>'));
-  assert.ok(html.includes('· pinned</span>'));
+  let out = await render({ tracking: 'floating', imageRef: 'hive:v5-latest' });
+  assert.ok(out.chip.includes('>v5</span>'));
+  assert.ok(!out.menu.includes('Channel:'));
+  assert.ok(out.menu.includes('>floating</strong>'));
+  out = await render({ tracking: 'pinned', imageRef: 'hive:a1b2c3d' });
+  assert.ok(out.menu.includes('>pinned</strong>'));
+  assert.ok(out.menu.includes('Built from: v5'));
+  out = await render({ channel: 'stable', tracking: 'pinned', imageRef: 'hive:stable@sha256:' + 'a'.repeat(64) });
+  assert.ok(out.chip.includes('>stable (v5)</span>'));
+  assert.ok(out.menu.includes('>pinned</strong>'));
   for (const tracking of [undefined, 'unknown', 'unexpected']) {
-    html = await render({ tracking });
-    assert.ok(html.includes('· tracking unknown</span>'));
-    assert.ok(!html.includes('Image:'));
+    out = await render({ tracking });
+    assert.ok(out.menu.includes('>tracking unknown</strong>'));
+    assert.ok(!out.menu.includes('Image:'));
   }
-  html = await render({ channel: 'edge', branch: 'unknown', tracking: 'floating' });
-  assert.ok(html.includes('>edge</span>'));
-  html = await render({ branch: 'unknown' });
-  assert.ok(html.includes('· tracking unknown</span>'));
-  html = await render({ channel: '<img src=x onerror="boom">', branch: 'v5"', imageRef: '<script>alert(1)</script>', tracking: 'pinned' });
-  assert.ok(!html.includes('<img'));
-  assert.ok(!html.includes('<script>'));
-  assert.ok(html.includes('&lt;script&gt;'));
-  assert.ok(html.includes('&quot;'));
-  html = await render({ behind: true, latestHash: 'b2c3d4e', latestShort: 'b2c3d4e', commitsBehind: 2, tracking: 'pinned', deployment: { runtime: 'docker-compose', upgradeSupported: true } });
-  assert.ok(html.includes('2 behind</span>'));
-  assert.ok(html.includes('Upgrade available'));
-  html = await render({ behind: true, autoUpgrade: true, tracking: 'floating', deployment: { runtime: 'kubernetes', upgradeSupported: true } });
-  assert.ok(html.includes('Queued for auto-upgrade'));
+  out = await render({ channel: 'edge', branch: 'unknown', tracking: 'floating' });
+  assert.ok(out.chip.includes('>edge</span>'));
+  out = await render({ branch: 'unknown' });
+  assert.ok(out.menu.includes('>tracking unknown</strong>'));
+  out = await render({ channel: '<img src=x onerror="boom">', branch: 'v5"', imageRef: '<script>alert(1)</script>', tracking: 'pinned' });
+  assert.ok(!out.chip.includes('<img'));
+  assert.ok(!out.menu.includes('<script>'));
+  assert.ok(out.menu.includes('&lt;script&gt;'));
+  assert.ok(out.menu.includes('&quot;'));
+  out = await render({ behind: true, latestHash: 'b2c3d4e', latestShort: 'b2c3d4e', commitsBehind: 2, tracking: 'pinned', deployment: { runtime: 'docker-compose', upgradeSupported: true } });
+  assert.ok(out.chip.includes('oc-version-update-dot'));
+  assert.ok(out.menu.includes('2 behind'));
+  assert.ok(out.menu.includes('Compare with target'));
+  assert.ok(out.menu.includes('↑ Upgrade'));
+  out = await render({ upgradeMarker: { failed: true, target: 'b2c3d4e', attempts: 3, maxAttempts: 3 }, tracking: 'floating' });
+  assert.ok(out.menu.includes('Auto-update failed'));
+  assert.ok(out.legacy.includes('auto-update failed'));
+  out = await render({ behind: true, autoUpgrade: true, tracking: 'floating', deployment: { runtime: 'kubernetes', upgradeSupported: true } });
+  assert.ok(out.legacy.includes('Queued for auto-upgrade'));
   // #6904: the passive badge no longer hides the owner's manual escape hatch.
-  assert.ok(html.includes('spoke-upgrade-btn'));
-  assert.ok(html.includes('Upgrade now'));
-  html = await render({ behind: true, latestHash: 'b2c3d4e', latestShort: 'b2c3d4e', tracking: 'floating', deployment: { runtime: 'unknown', upgradeSupported: false, reason: 'deployment runtime is not explicitly configured' } });
-  assert.ok(html.includes('manual update required'));
-  assert.ok(!html.includes('spoke-upgrade-btn'));
-  html = await render({ latestHash: 'a1b2c3d0123456789', tracking: 'floating' });
-  assert.ok(html.includes('Up to date with remote'));
+  assert.ok(out.menu.includes('spoke-upgrade-btn'));
+  assert.ok(out.menu.includes('Upgrade now'));
+  out = await render({ behind: true, latestHash: 'b2c3d4e', latestShort: 'b2c3d4e', tracking: 'floating', deployment: { runtime: 'unknown', upgradeSupported: false, reason: 'deployment runtime is not explicitly configured' } });
+  assert.ok(out.menu.includes('manual update required'));
+  assert.ok(!out.menu.includes('spoke-upgrade-btn'));
+  out = await render({ latestHash: 'a1b2c3d0123456789', tracking: 'floating' });
+  assert.ok(out.menu.includes('Up to date'));
+  assert.ok(!out.chip.includes('oc-version-update-dot'));
 })().catch(err => { console.error(err); process.exitCode = 1; });
 `

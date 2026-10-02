@@ -298,12 +298,33 @@
     }
     .oc-topbar-left { font-size: 0.85rem; color: var(--muted); display: flex; align-items: center; gap: var(--sp-2); min-width: 0; flex: 1 1 auto; overflow: hidden; }
     #oc-project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    /* #oc-project-name is the one topbar-left piece that shrinks/ellipsizes;
-       the version badge stays fixed-width and single-line so its hash, channel
-       pill, tracking label, "N behind" and upgrade action never wrap into a
-       vertical stack (#9716). */
-    #oc-git-version { flex: 0 0 auto; white-space: nowrap; }
-    #oc-git-version #spoke-upgrade-btn { white-space: nowrap; }
+    #acmm-badge {
+      flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--sp-2);
+      max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      cursor: pointer; border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
+      padding: var(--sp-1) var(--sp-4); border-radius: var(--r-pill);
+      background: color-mix(in srgb, var(--amber) 14%, transparent); color: var(--amber);
+      font-size: var(--fs-xs); font-weight: 700; text-decoration: none;
+    }
+    #acmm-badge:hover { background: color-mix(in srgb, currentColor 18%, transparent); }
+    #oc-git-version { position: relative; display: block; margin: var(--sp-0); font-family: var(--font-sans); }
+    #oc-git-version #spoke-upgrade-btn { width: 100%; justify-content: center; white-space: nowrap; }
+    .oc-version-chip {
+      width: 100%; display: flex; align-items: center; gap: var(--sp-2); min-height: 32px;
+      padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-pill);
+      background: color-mix(in srgb, var(--panel) 82%, transparent); color: var(--text);
+      cursor: pointer; font: inherit; font-size: var(--fs-xs); text-align: left;
+    }
+    .oc-version-chip:hover, .oc-version-chip[aria-expanded="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
+    .oc-version-sha { font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; }
+    .oc-version-channel { flex: 0 1 auto; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 7px; border-radius: var(--r-pill); color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 36%, transparent); font-weight: 700; }
+    .oc-version-update-dot { flex: 0 0 auto; color: var(--amber); font-weight: 900; margin-left: auto; }
+    .oc-version-menu { left: 0; right: auto; bottom: calc(100% + 8px); top: auto; min-width: 280px; width: min(360px, calc(100vw - 24px)); }
+    .oc-version-menu .avatar-menu-item { white-space: normal; }
+    .oc-version-row { display: flex; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-2) var(--sp-6); color: var(--muted); font-size: var(--fs-sm); }
+    .oc-version-row strong { min-width: 0; text-align: right; overflow-wrap: anywhere; }
+    .oc-version-row strong, .oc-version-row a { color: var(--text); }
+    .oc-version-actions { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) var(--sp-6); }
     /* Drawer toggle. Hidden on desktop; the ≤768px block flips it to
        inline-flex. Lives in .oc-topbar-left because that is the shortest
        topbar group — putting it in center/right would risk wrapping the
@@ -420,7 +441,7 @@
       }
       .oc-topbar-left { flex: 1 1 260px; }
       #oc-project-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      #oc-git-version, #fleet-breaker-wrap, .oc-topbar-center, .oc-health-badge,
+      #acmm-badge, #fleet-breaker-wrap, .oc-topbar-center, .oc-health-badge,
       #welcome-topbar-btn, .widget-dl, #oc-gh-avatar-wrap { flex: 0 0 auto; }
       .oc-topbar-right {
         flex: 1 1 100%; justify-content: flex-end;
@@ -431,7 +452,7 @@
 
     @media (min-width: 769px) and (max-width: 900px) {
       body { padding-top: 112px; }
-      #oc-git-version { display: none; }
+      #acmm-badge { display: none; }
     }
 
     /* Light main content area */
@@ -784,7 +805,7 @@
          drops to its own row instead of half-fitting at the edge */
       .oc-topbar-left { flex: 0 0 auto; min-width: 0; }
       .oc-topbar-center { flex-grow: 1; justify-content: center; }
-      #oc-git-version, .widget-dl { display: none; }
+      .widget-dl { display: none; }
       #oc-project-name { display: none; }
       /* keep the pill one line so the right group wraps as a unit
          instead of being clipped at the viewport edge */
@@ -3207,12 +3228,10 @@
     .row-card { cursor: pointer; padding: var(--sp-5); margin-bottom: var(--sp-2); background: var(--surface-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); transition: border-color var(--duration-fast); }
     .error-note { color: var(--red); font-size: var(--fs-base); }
     .repo-chip-btn { padding: var(--sp-1) var(--sp-4); border-radius: var(--r-sm); border: 1px solid var(--line-strong); background: var(--bg); cursor: pointer; font-size: 0.72rem; color: var(--text); }
-    /* ACMM level badges — interactive controls that open the level selector,
-       not status labels. Ghost-button affordance: amber outline at rest,
-       brighter tint + solid border + underline on hover. Amber remaps per
-       theme, so this reads correctly in both light and dark modes. */
-    #acmm-badge, #acmm-sidebar-badge { transition: background 0.15s, border-color 0.15s; }
-    #acmm-badge:hover, #acmm-sidebar-badge:hover {
+    /* ACMM level badges share level tinting. The sidebar/main badges open the
+       level selector; the topbar badge is display-only and jumps to ACMM Eval. */
+    #acmm-badge, #acmm-main-badge, #acmm-sidebar-badge { transition: background 0.15s, border-color 0.15s; }
+    #acmm-main-badge:hover, #acmm-sidebar-badge:hover {
       background: color-mix(in srgb, var(--amber) 26%, transparent);
       border-color: var(--amber);
       text-decoration: underline;
@@ -3781,6 +3800,12 @@
       </div>
     </div>
     <div class="oc-sidebar-footer">
+      <div id="oc-git-version" class="git-version oc-version-wrap">
+        <button type="button" id="oc-version-chip" class="oc-version-chip" data-action="toggleVersionMenu" aria-haspopup="true" aria-expanded="false" aria-controls="oc-version-menu" title="Version and update details">
+          <span class="oc-version-sha">version</span>
+        </button>
+        <div id="oc-version-menu" class="avatar-menu oc-version-menu" hidden role="menu" aria-label="Version and update details"></div>
+      </div>
     </div>
   </nav>
 
@@ -3796,7 +3821,7 @@
               aria-expanded="false" aria-controls="oc-sidebar"
               title="Menu">&#9776;</button>
       <span id="oc-project-name"></span>
-      <span id="oc-git-version" class="git-version"></span>
+      <button type="button" id="acmm-badge" data-action="ocNavigate" data-arg0="acmm-eval-section" title="View the current ACMM autonomy level"></button>
       <!-- Fleet breaker — circular play/pause + status pill (agent queue-suspend
            pattern). Kept in .oc-topbar-left, the shortest group, so it cannot
            wrap the topbar to a third row. State + owner-gating rendered by
@@ -3876,7 +3901,7 @@
   <h1><span class="bee">🐝</span> KubeStellar Hive Dashboard&nbsp;<span id="project-name">for KubeStellar/Console</span> <span class="timestamp" id="ts"></span><span class="status-stale" id="status-stale" hidden></span>
     <span class="git-version" id="git-version"></span>
     <span class="git-version" id="hive-id-badge" title="Hive Instance ID" style="cursor:pointer;border:1px solid var(--border);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-sm)" data-action="openConfigDialog" data-arg0="governor"></span>
-    <span class="git-version" id="acmm-badge" title="Click to change maturity level" style="cursor:pointer;border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);background:color-mix(in srgb, var(--amber) 14%, transparent);color:var(--amber);font-weight:600" data-action="openACMMDialog"></span>
+    <span class="git-version" id="acmm-main-badge" title="Click to change maturity level" style="cursor:pointer;border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);background:color-mix(in srgb, var(--amber) 14%, transparent);color:var(--amber);font-weight:600" data-action="openACMMDialog"></span>
     <button class="hv-btn btn-icon btn-sm layout-toggle" id="layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
     <button type="button" class="hv-btn btn-secondary btn-sm" id="dashboard-layout-reset-main" hidden data-action="resetDashboardLayout" title="Reset section order to the default layout">↕️ Reset layout</button>
     <a href="/api/widget" class="hv-btn btn-secondary btn-sm widget-dl" title="Download Übersicht widget">⬇ Widget</a>
@@ -21643,61 +21668,96 @@ function burnAreaChart() {
       return branch + ' tip';
     }
 
+    function versionCompareURL(currentHash, targetHash) {
+      if (!currentHash || !targetHash) return '';
+      return 'https://github.com/hivecommons/hive/compare/' + encodeURIComponent(String(currentHash)) + '...' + encodeURIComponent(String(targetHash));
+    }
+
+    function versionStatusText(v, offeredUpgradeShort) {
+      if (v.commitsBehind != null && v.commitsBehind > 0) return String(v.commitsBehind) + ' behind';
+      if (v.behind) return 'Upgrade available' + (offeredUpgradeShort ? ' → ' + offeredUpgradeShort : '');
+      if (v.stableV4ImageReady === false) return 'tip not built yet';
+      if (v.latestHash) return 'Up to date';
+      return 'Version current';
+    }
+
+    function versionLastUpgradeText(v) {
+      const rs = v && v.releaseStatus;
+      const at = rs && rs.attempt ? rs.attempt : null;
+      if (at && at.state && at.state !== 'never') {
+        const when = at.completedAt || at.at || '';
+        return 'Last upgrade: ' + at.state.replace('_', ' ') + (when ? ' · ' + when : '');
+      }
+      const mu = v && v.manualUpgrade;
+      if (mu && mu.state) return 'Manual upgrade: ' + mu.state + (mu.updatedAt ? ' · ' + mu.updatedAt : '');
+      return '';
+    }
+
+    function renderVersionMenu(v, ctx) {
+      const menu = document.getElementById('oc-version-menu');
+      if (!menu) return;
+      const fullHash = String(v.hash || 'unknown');
+      const shortHash = String(v.short || fullHash.slice(0, 7) || 'unknown');
+      const deliveryLabel = ctx.deliveryLabel || 'unknown';
+      const trackingLabel = ctx.trackingLabel || versionTrackingLabel(v);
+      const targetHash = ctx.offeredUpgradeHash || v.latestHash || '';
+      const targetShort = ctx.offeredUpgradeShort || v.latestShort || '';
+      const compareURL = versionCompareURL(fullHash, targetHash);
+      const lastUpgrade = versionLastUpgradeText(v);
+      const commitURL = 'https://github.com/hivecommons/hive/commit/' + encodeURIComponent(fullHash);
+      const statusText = ctx.statusText || versionStatusText(v, targetShort);
+      const detailsText = [
+        'Hive ' + shortHash,
+        'hash ' + fullHash,
+        'channel ' + deliveryLabel,
+        'tracking ' + trackingLabel,
+        statusText
+      ].filter(Boolean).join('\n');
+      window._versionCopyText = detailsText;
+      let html = '';
+      html += '<div class="avatar-menu-label">Version</div>';
+      html += '<div class="oc-version-row"><span>Current</span><strong><a href="' + escapeHtml(commitURL) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(fullHash) + '</a></strong></div>';
+      html += '<div class="oc-version-row"><span>Channel</span><strong>' + escapeHtml(deliveryLabel || 'unknown') + '</strong></div>';
+      html += '<div class="oc-version-row"><span>Tracking</span><strong title="' + escapeHtml(versionTrackingTooltip(v)) + '">' + escapeHtml(trackingLabel) + '</strong></div>';
+      html += '<div class="oc-version-row"><span>Status</span><strong>' + escapeHtml(statusText) + '</strong></div>';
+      if (lastUpgrade) html += '<div class="oc-version-row"><span>History</span><strong>' + escapeHtml(lastUpgrade) + '</strong></div>';
+      if (compareURL && (v.behind || (v.commitsBehind != null && v.commitsBehind > 0))) {
+        html += '<a class="avatar-menu-item" href="' + escapeHtml(compareURL) + '" target="_blank" rel="noopener noreferrer">Compare with target ↗</a>';
+      }
+      html += '<a class="avatar-menu-item" href="https://github.com/hivecommons/hive/releases" target="_blank" rel="noopener noreferrer">Changelog / release notes ↗</a>';
+      html += '<div class="avatar-menu-divider"></div>';
+      html += '<div class="oc-version-actions">';
+      if (ctx.upgradeHTML) html += ctx.upgradeHTML;
+      else if (ctx.manualUpdateHTML) html += ctx.manualUpdateHTML;
+      html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="copyVersionFromMenu">Copy version</button>';
+      html += '</div>';
+      menu.innerHTML = html;
+    }
+
+    function renderVersionChip(v, ctx) {
+      const chip = document.getElementById('oc-version-chip');
+      if (!chip) return;
+      const shortHash = String(v.short || v.hash || 'unknown').slice(0, 12);
+      const channel = ctx.deliveryLabel || (v.branch && v.branch !== 'unknown' ? String(v.branch) : 'unknown');
+      const updateDot = ctx.hasUpgrade ? '<span class="oc-version-update-dot" title="Upgrade available">↑</span>' : '';
+      chip.innerHTML = '<span class="oc-version-sha">' + escapeHtml(shortHash) + '</span>' +
+        (channel ? '<span class="oc-version-channel">' + escapeHtml(channel) + '</span>' : '') + updateDot;
+      chip.title = 'Hive version ' + shortHash + (ctx.hasUpgrade ? ' — upgrade available' : '') + '. Click for details.';
+    }
+
     async function fetchGitVersion() {
       try {
         const res = await fetch('/api/version');
         const v = await res.json();
         const el = document.getElementById('git-version');
         const ocEl = document.getElementById('oc-git-version');
-        const commitTooltip = v.latestMessage ? escapeHtml(v.latestMessage) : escapeHtml(v.hash);
-        let html = `<a href="https://github.com/hivecommons/hive/commit/${escapeHtml(v.hash)}" target="_blank" style="color:inherit;text-decoration:none" title="${commitTooltip}">${escapeHtml(v.short)}</a>`;
-        // Delivery and tracking are deliberately separate: "stable (v5)"
-        // identifies the channel/build, while "floating" says whether that
-        // deployment will follow the tag when it moves.
         const deliveryLabel = versionDeliveryLabel(v);
-        if (deliveryLabel) {
-          const pillTitle = v.channel
-            ? 'Tracking release channel ' + v.channel + (v.branch && v.branch !== 'unknown' ? ' (currently a ' + v.branch + ' build)' : '')
-            : 'Built from branch ' + v.branch;
-          html += ` <span title="${escapeHtml(pillTitle)}" style="display:inline-block;padding:1px 7px;margin-left:var(--sp-3);border-radius:var(--r-pill);font-size:var(--fs-2xs);font-weight:600;background:color-mix(in srgb, var(--accent) 16%, transparent);border:1px solid color-mix(in srgb, var(--accent) 40%, transparent);color:var(--accent);vertical-align:middle;white-space:nowrap">${escapeHtml(deliveryLabel)}</span>`;
-        }
         const trackingLabel = versionTrackingLabel(v);
-        html += ` <span title="${escapeHtml(versionTrackingTooltip(v))}" style="display:inline-block;margin-left:var(--sp-3);font-size:0.66rem;color:var(--muted);vertical-align:middle;white-space:nowrap">· ${escapeHtml(trackingLabel)}</span>`;
-        if (v.dirty) html += ' <span class="git-dirty">*</span>';
-        // Auto-update health (#6765). The server exposes the spoke's persisted
-        // self-upgrade marker; present means an instructed upgrade has NOT
-        // landed. Without this badge an operator could not tell "updated as
-        // configured" apart from "auto-update is quietly failing".
         const um = v.upgradeMarker;
         const mu = v.manualUpgrade;
-        if (um && um.failed) {
-          const umTitle = `Auto-update FAILED: upgrade to ${um.target || '?'} gave up after ${um.attempts}/${um.maxAttempts} attempts — the image never changed.` +
-            (um.lastError ? ` Last error: ${um.lastError}.` : '') +
-            (um.requestedAt ? ` First requested ${um.requestedAt}.` : '') +
-            ' Check that the spoke can get/patch its own Deployment (hive-self-upgrade Role/RoleBinding) and that the deployment tracks a tag carrying the target SHA.';
-          html += ` <span class="git-behind text-danger" title="${escapeHtml(umTitle)}">⚠ auto-update failed</span>`;
-        } else if (um) {
-          const umTitle = `Auto-update in progress: upgrading to ${um.target || '?'} — attempt ${um.attempts} of ${um.maxAttempts} has not landed yet (the pod restarted on the same image); retrying with backoff.` +
-            (um.lastError ? ` Last error: ${um.lastError}.` : '') +
-            (um.requestedAt ? ` First requested ${um.requestedAt}.` : '');
-          html += ` <span class="git-behind" title="${escapeHtml(umTitle)}">⟳ auto-update retrying ${escapeHtml(String(um.attempts))}/${escapeHtml(String(um.maxAttempts))}</span>`;
-        } else if (mu && mu.state === 'failed') {
-          const muTitle = `Upgrade failed${mu.target ? ' to ' + mu.target : ''}: ${mu.reason || 'no reason recorded'}` +
-            (mu.updatedAt ? ` (${mu.updatedAt})` : '');
-          html += ` <span class="git-behind text-danger" title="${escapeHtml(muTitle)}">⚠ upgrade failed</span>`;
-        } else if (mu && mu.state === 'started') {
-          // The durable server-side state below rehydrates _upgradeInProgress
-          // after reload so the ordinary upgrading badge continues to render.
-        }
         const commitsBehindText = v.commitsBehind != null && v.commitsBehind > 0
           ? ` <span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → ${escapeHtml(upgradeTargetLabel(v))}: ${escapeHtml(v.stableV4Short || '?')}">${escapeHtml(String(v.commitsBehind))} behind</span>`
           : (v.commitsBehind == null && v.stableV4Hash && String(v.short || '').toLowerCase() !== String(v.stableV4Short || '').toLowerCase()
-            // commitsBehind is null for two unrelated reasons (#4804). If the
-            // stable tip has no published image, that is a KNOWN state — there
-            // is nothing to upgrade to and the compare was never attempted —
-            // so say that in muted text instead of a yellow "? behind" that
-            // contradicts the ✓. Only a genuine compare failure keeps the "?".
-            // Strict === false so older servers without the field keep "?".
             ? (v.stableV4ImageReady === false
               ? ` <span class="text-muted" title="${escapeHtml(upgradeTargetLabel(v))} ${escapeHtml(v.stableV4Short || '?')} has no published image yet — nothing to upgrade to">tip not built yet</span>`
               : ` <span class="git-behind" title="Could not compare this commit with ${escapeHtml(upgradeTargetLabel(v))} ${escapeHtml(v.stableV4Short || '?')}">? behind</span>`)
@@ -21716,41 +21776,90 @@ function burnAreaChart() {
         const offeredUpgradeShort = (v.target && v.target.short) || v.stableV4Short || (hasHubTarget ? '' : (v.latestShort || 'latest'));
         const offeredUpgradeLabel = upgradeTargetLabel(v) || 'target';
         const upgradeTargetLanded = upgradeTargetHash && (upgradeCurrentHash.startsWith(upgradeTargetHash) || upgradeTargetHash.startsWith(upgradeCurrentHash));
-        if (_upgradeInProgress && !upgradeTargetLanded) {
-          html += ` <span class="git-behind" title="Upgrading to ${escapeHtml(offeredUpgradeShort || '?')}">⬆ upgrading</span>`;
+        let compactStatusHTML = '';
+        let statusText = '';
+        let upgradeHTML = '';
+        let manualUpdateHTML = '';
+        const dep = v.deployment || {};
+        const upgradeSupported = dep.upgradeSupported === true;
+        const runtimeLabel = dep.runtime ? String(dep.runtime) : 'unknown runtime';
+        if (um && um.failed) {
+          statusText = 'Auto-update failed' + (um.target ? ' → ' + um.target : '');
+          compactStatusHTML = '<span class="git-behind text-danger" title="Auto-update failed">⚠ auto-update failed</span>';
+        } else if (um) {
+          statusText = 'Auto-update retrying ' + String(um.attempts) + '/' + String(um.maxAttempts);
+          compactStatusHTML = '<span class="git-behind" title="Auto-update retrying">⟳ auto-update retrying ' + escapeHtml(String(um.attempts)) + '/' + escapeHtml(String(um.maxAttempts)) + '</span>';
+        } else if (mu && mu.state === 'failed') {
+          statusText = 'Upgrade failed' + (mu.target ? ' → ' + mu.target : '');
+          compactStatusHTML = '<span class="git-behind text-danger" title="Upgrade failed">⚠ upgrade failed</span>';
+        } else if (_upgradeInProgress && !upgradeTargetLanded) {
+          statusText = 'Upgrading' + (offeredUpgradeShort ? ' → ' + offeredUpgradeShort : '');
+          compactStatusHTML = `<span class="git-behind" title="Upgrading to ${escapeHtml(offeredUpgradeShort || '?')}">⬆ upgrading</span>`;
         } else if (_upgradeInProgress && upgradeTargetLanded) {
           _upgradeInProgress = false;
           _upgradeTargetHash = null;
           showToast('Upgrade complete!', 'success');
-          html += ' <span class="text-success" title="Up to date with remote">✓</span>';
+          statusText = 'Up to date';
+          compactStatusHTML = '<span class="text-success" title="Up to date with remote">✓</span>';
         } else if (v.behind && !(mu && mu.state === 'started')) {
-          html += commitsBehindText || ` <span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">⬆</span>`;
-          const dep = v.deployment || {};
-          const upgradeSupported = dep.upgradeSupported === true;
-          const runtimeLabel = dep.runtime ? String(dep.runtime) : 'unknown runtime';
+          statusText = versionStatusText(v, offeredUpgradeShort);
+          compactStatusHTML = commitsBehindText || `<span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">⬆</span>`;
           if (!upgradeSupported) {
             const why = dep.reason ? String(dep.reason) : 'deployment runtime is unknown';
-            html += ` <span style="color:var(--muted);font-size:var(--fs-xs);margin-left:var(--sp-3);white-space:nowrap;padding:1px 7px;border-radius:var(--r-pill);border:1px solid var(--border)" title="${escapeHtml(why)}">manual update required (${escapeHtml(runtimeLabel)})</span>`;
+            manualUpdateHTML = `<span style="color:var(--muted);font-size:var(--fs-xs);white-space:nowrap;padding:1px 7px;border-radius:var(--r-pill);border:1px solid var(--border)" title="${escapeHtml(why)}">manual update required (${escapeHtml(runtimeLabel)})</span>`;
           } else if (v.autoUpgrade && !um) {
-            // Hub-managed: keep the passive state badge, but do not gate the
-            // owner's manual escape hatch on the schedule. This mirrors the hub
-            // dashboard's state/action split.
-            html += ` <span style="color:var(--muted);font-size:var(--fs-xs);margin-left:var(--sp-3);white-space:nowrap;padding:1px 7px;border-radius:var(--r-pill);border:1px solid var(--border)" title="This hive is upgraded automatically by the hub (auto-upgrade). Current: ${escapeHtml(v.short || '?')} → ${escapeHtml(offeredUpgradeLabel)}: ${escapeHtml(offeredUpgradeShort)}">Queued for auto-upgrade</span>`;
-            html += ` <button id="spoke-upgrade-btn" data-action="gh27" class="hv-btn btn-primary btn-sm" data-arg0="${escapeHtml(offeredUpgradeHash || '')}" data-mouseover-action="gh28" data-mouseout-action="gh29" title="Upgrade ${escapeHtml(runtimeLabel)} deployment to ${escapeHtml(offeredUpgradeLabel)} ${escapeHtml(offeredUpgradeShort)} now instead of waiting for auto-upgrade">Upgrade now</button>`;
+            compactStatusHTML += ` <span style="color:var(--muted);font-size:var(--fs-xs);margin-left:var(--sp-3);white-space:nowrap;padding:1px 7px;border-radius:var(--r-pill);border:1px solid var(--border)" title="This hive is upgraded automatically by the hub (auto-upgrade). Current: ${escapeHtml(v.short || '?')} → ${escapeHtml(offeredUpgradeLabel)}: ${escapeHtml(offeredUpgradeShort)}">Queued for auto-upgrade</span>`;
+            upgradeHTML = `<button id="spoke-upgrade-btn" data-action="gh27" class="hv-btn btn-primary btn-sm" data-arg0="${escapeHtml(offeredUpgradeHash || '')}" data-mouseover-action="gh28" data-mouseout-action="gh29" title="Upgrade ${escapeHtml(runtimeLabel)} deployment to ${escapeHtml(offeredUpgradeLabel)} ${escapeHtml(offeredUpgradeShort)} now instead of waiting for auto-upgrade">Upgrade now</button>`;
           } else {
-            // Manual path: name the action AND the target — "Upgrade available →
-            // <sha>" — with a hover state, so the button cannot be misread as a
-            // status label (real feedback: owners could not find how to upgrade).
-            html += ` <button id="spoke-upgrade-btn" data-action="gh27" class="hv-btn btn-primary btn-sm" data-arg0="${escapeHtml(offeredUpgradeHash || '')}" data-mouseover-action="gh28" data-mouseout-action="gh29" title="${escapeHtml(runtimeLabel)}: current ${escapeHtml(v.short || '?')} → ${escapeHtml(offeredUpgradeLabel)} ${escapeHtml(offeredUpgradeShort)}">↑ Upgrade available → ${escapeHtml(offeredUpgradeShort)}</button>`;
+            upgradeHTML = `<button id="spoke-upgrade-btn" data-action="gh27" class="hv-btn btn-primary btn-sm" data-arg0="${escapeHtml(offeredUpgradeHash || '')}" data-mouseover-action="gh28" data-mouseout-action="gh29" title="${escapeHtml(runtimeLabel)}: current ${escapeHtml(v.short || '?')} → ${escapeHtml(offeredUpgradeLabel)} ${escapeHtml(offeredUpgradeShort)}">↑ Upgrade → ${escapeHtml(offeredUpgradeShort)}</button>`;
           }
         } else if (v.latestHash) {
-          html += ' <span class="text-success" title="Up to date with remote">✓</span>';
+          statusText = 'Up to date';
+          compactStatusHTML = '<span class="text-success" title="Up to date with remote">✓</span>';
         }
-        if (!v.behind) html += commitsBehindText;
-        el.innerHTML = html;
-        if (ocEl) ocEl.innerHTML = html;
+        if (!v.behind) compactStatusHTML += commitsBehindText;
+        if (!statusText) statusText = versionStatusText(v, offeredUpgradeShort);
+        const hasUpgrade = !!(v.behind && offeredUpgradeHash && !(mu && mu.state === 'started'));
+        const legacyHTML = compactStatusHTML;
+        if (el) el.innerHTML = '';
+        if (ocEl) {
+          renderVersionChip(v, { deliveryLabel, trackingLabel, hasUpgrade });
+          renderVersionMenu(v, { deliveryLabel, trackingLabel, offeredUpgradeHash, offeredUpgradeShort, upgradeHTML, manualUpdateHTML, hasUpgrade, statusText });
+        }
+        window._lastVersionHTML = legacyHTML;
         renderReleaseStatus(v.releaseStatus);
       } catch (_) {}
+    }
+
+    function closeVersionMenu() {
+      const menu = document.getElementById('oc-version-menu');
+      const chip = document.getElementById('oc-version-chip');
+      if (menu) menu.hidden = true;
+      if (chip) chip.setAttribute('aria-expanded', 'false');
+    }
+
+    function toggleVersionMenu() {
+      const menu = document.getElementById('oc-version-menu');
+      const chip = document.getElementById('oc-version-chip');
+      if (!menu || !chip) return;
+      const nextHidden = !menu.hidden ? true : false;
+      menu.hidden = nextHidden;
+      chip.setAttribute('aria-expanded', nextHidden ? 'false' : 'true');
+      if (!nextHidden) {
+        const first = menu.querySelector('button, a, [tabindex]:not([tabindex="-1"])');
+        if (first) first.focus();
+      }
+    }
+
+    async function copyVersionFromMenu() {
+      const text = window._versionCopyText || '';
+      if (!text) return;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(text);
+        showToast('Version copied', 'success');
+      } catch (e) {
+        showToast('Could not copy version', 'error');
+      }
     }
 
     // renderReleaseStatus paints the #7092 panel: the release channel this hive
@@ -22562,7 +22671,13 @@ function burnAreaChart() {
         el.style.background = 'color-mix(in srgb, ' + c + ' 14%, transparent)';
         el.style.borderColor = 'color-mix(in srgb, ' + c + ' 45%, transparent)';
       };
-      const badge = document.getElementById('acmm-badge');
+      const topbarBadge = document.getElementById('acmm-badge');
+      if (topbarBadge) {
+        topbarBadge.innerHTML = escapeHtml(acmmLevelLabel(level).replace(' ', ' · '));
+        topbarBadge.title = 'ACMM ' + acmmLevelLabel(level) + ' — click to view ACMM Evaluation';
+        tint(topbarBadge);
+      }
+      const badge = document.getElementById('acmm-main-badge');
       if (badge) { badge.innerHTML = html; tint(badge); }
       const sbBadge = document.getElementById('acmm-sidebar-badge');
       if (sbBadge) { sbBadge.innerHTML = html; tint(sbBadge); }
@@ -24682,7 +24797,7 @@ function burnAreaChart() {
         <h4 style="font-size:0.8rem;color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-4)">Auto-update</h4>
         <div class="config-toggle" id="hub-autoupdate-toggle-row">
           <div class="config-toggle-switch ${hub.auto_upgrade ? 'on' : ''}" id="hub-autoupdate-toggle" data-action="toggleConfigSwitch" data-section="hub" data-key="auto_upgrade"></div>
-          <span class="config-toggle-label">Automatic Updates <span id="hub-autoupdate-managed-by"></span><span class="config-info">i<span class="config-tooltip" id="hub-autoupdate-toggle-tip">When on, this hive is rolled forward to new versions automatically on the configured schedule. When off, upgrades are applied manually from the version badge at the top of the dashboard. On a hub-managed hive the hub owns this setting and the switch is read-only.</span></span></span>
+          <span class="config-toggle-label">Automatic Updates <span id="hub-autoupdate-managed-by"></span><span class="config-info">i<span class="config-tooltip" id="hub-autoupdate-toggle-tip">When on, this hive is rolled forward to new versions automatically on the configured schedule. When off, upgrades are applied manually from the version chip at the bottom of the sidebar. On a hub-managed hive the hub owns this setting and the switch is read-only.</span></span></span>
         </div>
         <div class="config-field">
           <label>Update schedule <span class="config-info">i<span class="config-tooltip">The cadence applied to this hive's auto-updates, as reported by the hub on every heartbeat. "Unknown" means the hub has not yet told this spoke its schedule.</span></span></label>
@@ -31307,6 +31422,25 @@ function burnAreaChart() {
       if (wrap && !wrap.contains(e.target)) {
         document.getElementById('oc-gh-user-menu').hidden = true;
       }
+    });
+
+    document.addEventListener('click', function(e) {
+      const wrap = document.getElementById('oc-git-version');
+      if (wrap && !wrap.contains(e.target)) closeVersionMenu();
+    });
+
+    document.addEventListener('keydown', function(e) {
+      const menu = document.getElementById('oc-version-menu');
+      const chip = document.getElementById('oc-version-chip');
+      if (!menu || menu.hidden) return;
+      if (e.key === 'Escape') { e.preventDefault(); closeVersionMenu(); if (chip) chip.focus(); return; }
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      const items = Array.from(menu.querySelectorAll('button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'));
+      if (!items.length) return;
+      e.preventDefault();
+      const idx = items.indexOf(document.activeElement);
+      const next = e.key === 'ArrowDown' ? (idx + 1) % items.length : (idx <= 0 ? items.length - 1 : idx - 1);
+      items[next].focus();
     });
 
     /* Owner-only self-service backup.

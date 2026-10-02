@@ -433,3 +433,44 @@ func TestStaticIndexRepoTileReorderHandle(t *testing.T) {
 		}
 	}
 }
+
+func TestStaticTopbarACMMAndSidebarVersionPlacement(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	topbarStart := strings.Index(html, `<header id="oc-topbar"`)
+	if topbarStart < 0 {
+		t.Fatal("static dashboard is missing the light topbar")
+	}
+	versionPos := strings.Index(html, `id="oc-git-version"`)
+	if versionPos < 0 {
+		t.Fatal("static dashboard is missing the sidebar version chip container")
+	}
+	if versionPos > topbarStart {
+		t.Fatal("#oc-git-version moved back into/after the topbar; version details belong in the sidebar footer")
+	}
+	topbarEnd := strings.Index(html[topbarStart:], `</header>`)
+	if topbarEnd < 0 {
+		t.Fatal("static dashboard topbar is not closed")
+	}
+	topbar := html[topbarStart : topbarStart+topbarEnd]
+	for _, want := range []string{
+		`id="acmm-badge" data-action="ocNavigate" data-arg0="acmm-eval-section"`,
+		`id="oc-version-chip"`,
+		`id="oc-version-menu"`,
+		`aria-expanded="false" aria-controls="oc-version-menu"`,
+	} {
+		haystack := html
+		if strings.Contains(want, "acmm-badge") {
+			haystack = topbar
+		}
+		if !strings.Contains(haystack, want) {
+			t.Fatalf("static dashboard placement missing %q", want)
+		}
+	}
+	if strings.Contains(topbar, `id="oc-git-version"`) || strings.Contains(topbar, `id="spoke-upgrade-btn"`) {
+		t.Fatal("topbar still contains the inline version/upgrade strip")
+	}
+}
