@@ -14327,3 +14327,15 @@ test('operator messages use reverse video on TTY when color is enabled', () => {
     teardown(relay);
   }
 });
+
+test('#10040 headless Codex usage-limit refusal is a quota hold, not an ordinary failure', () => {
+  const refusal = 'ERROR: You’ve hit your usage limit. Upgrade to Pro or try again at Oct 6th, 2026 10:34 PM.';
+  const hit = paneClassifier.headlessQuotaExhaustion(refusal, 'codex');
+  assert.strictEqual(hit.requiresRecovery, true);
+  assert.strictEqual(hit.resetMs, null);
+  assert.match(hit.line, /usage limit/);
+  assert.strictEqual(paneClassifier.headlessQuotaExhaustion(refusal, 'claude'), null);
+  assert.strictEqual(paneClassifier.headlessQuotaExhaustion('echo "' + refusal + '"', 'codex'), null);
+  assert.strictEqual(paneClassifier.headlessQuotaExhaustion('ERROR: build failed', 'codex'), null);
+  assert.strictEqual(paneClassifier.headlessQuotaExhaustion('', 'codex'), null);
+});

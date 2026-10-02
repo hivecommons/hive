@@ -230,6 +230,18 @@ function codexQuotaExhaustion(text) {
 // this repo's own sources contain every string in the list — park its relay.
 // Codex's ■ refusal, agy's ⚠ banner, or Claude's "API Error:" chrome, plus the
 // wording. Two independent signals, never one.
+// headlessQuotaExhaustion classifies a failed headless CLI's final diagnostic
+// line. `codex exec` prints "ERROR: You've hit your usage limit..." on stderr
+// rather than the TUI's ■ banner. Only the last non-empty line counts, so
+// quoted refusal text earlier in task output cannot park the relay. The reset
+// text has no timezone, so recovery is always required.
+function headlessQuotaExhaustion(diagnostic, backend) {
+  if (backend !== 'codex') return null;
+  const line = String(diagnostic || '').trim();
+  if (!/^ERROR:\s+You[’']ve hit your usage limit\./i.test(line)) return null;
+  return { line: line.slice(0, 500), resetMs: null, requiresRecovery: true };
+}
+
 function paneQuotaExhaustion(text) {
   const codex = codexQuotaExhaustion(text);
   if (codex) return codex;
@@ -1108,6 +1120,7 @@ module.exports = {
   paneHoldsUnsubmittedPrompt,
   paneShowsTransientAPIError,
   paneShowsUnretryableAPIError,
+  headlessQuotaExhaustion,
   // Quota exhaustion as a distinct, TIME-BOUNDED sub-case of the unretryable
   // set (#6541) — what lets the relay stop asking for work and come back.
   paneQuotaExhaustion,
