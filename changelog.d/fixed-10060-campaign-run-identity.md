@@ -1,0 +1,1 @@
+- Preserve exact Spektacular run IDs when revising campaigns, preventing phantom rows and slug collisions; releasing a revise lease now leaves the live stage lease intact.

@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -950,7 +951,7 @@ func (e *InceptionEngine) ListCampaignArchives() ([]InceptionCampaignArchive, er
 		if !entry.IsDir() {
 			continue
 		}
-		archive, err := e.readArchiveLocked(entry.Name())
+		archive, err := e.readArchiveDirectoryLocked(entry.Name())
 		if err != nil {
 			e.logger.Warn("skipping corrupt inception campaign archive", "campaign", entry.Name(), "error", err)
 			continue
@@ -1073,15 +1074,23 @@ func (e *InceptionEngine) ReviseCampaignArchive(id, owner string, now time.Time)
 func (e *InceptionEngine) ReviseExternalCampaign(id, title, source, engine, campaignType, owner string, repos []string, now time.Time) (*InceptionCampaignArchive, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	id = slugify(strings.TrimSpace(id))
+	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil, fmt.Errorf("campaign id required")
+	}
+	for _, component := range strings.Split(id, "/") {
+		if component == "." || component == ".." {
+			return nil, fmt.Errorf("invalid campaign id")
+		}
 	}
 	if now.IsZero() {
 		now = time.Now()
 	}
 	owner = campaignOwner(owner)
 	if existing, err := e.readArchiveLocked(id); err == nil {
+		if existing.State != nil || existing.Type == "inception" {
+			return nil, fmt.Errorf("campaign %q is an inception campaign", id)
+		}
 		if existing.Lease != nil && existing.Lease.Owner == owner && existing.Lease.Surface == "revise" && now.Before(existing.Lease.ExpiresAt) {
 			return &existing, nil
 		}
@@ -1303,7 +1312,7 @@ func (e *InceptionEngine) writeArchiveLocked(archive *InceptionCampaignArchive) 
 	if archive == nil || archive.State == nil {
 		return nil
 	}
-	root := filepath.Join(e.dataDir, inceptionCampaignsDir, slugify(archive.ID))
+	root := filepath.Join(e.dataDir, inceptionCampaignsDir, campaignArchiveDirectory(archive.ID))
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return fmt.Errorf("creating campaign archive: %w", err)
 	}
@@ -1340,7 +1349,7 @@ func (e *InceptionEngine) writeArchiveStateLocked(archive *InceptionCampaignArch
 	if archive == nil {
 		return nil
 	}
-	root := filepath.Join(e.dataDir, inceptionCampaignsDir, slugify(archive.ID))
+	root := filepath.Join(e.dataDir, inceptionCampaignsDir, campaignArchiveDirectory(archive.ID))
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return fmt.Errorf("creating campaign archive: %w", err)
 	}
@@ -1407,12 +1416,33 @@ func (e *InceptionEngine) copyWikiToArchiveLocked(root string) ([]string, error)
 	return files, nil
 }
 
+// campaignArchiveDirectory preserves legacy slug directories, but encodes all
+// other IDs losslessly in a namespace that slugify cannot produce.
+func campaignArchiveDirectory(id string) string {
+	if id != "" && id == slugify(id) {
+		return id
+	}
+	return "_" + base64.RawURLEncoding.EncodeToString([]byte(id))
+}
+
 func (e *InceptionEngine) readArchiveLocked(id string) (InceptionCampaignArchive, error) {
-	id = slugify(strings.TrimSpace(id))
+	id = strings.TrimSpace(id)
 	if id == "" {
 		return InceptionCampaignArchive{}, fmt.Errorf("campaign id required")
 	}
-	data, err := os.ReadFile(filepath.Join(e.dataDir, inceptionCampaignsDir, id, inceptionArchiveState))
+	return e.readArchiveDirectoryLocked(campaignArchiveDirectory(id))
+}
+
+func (e *InceptionEngine) readArchiveDirectoryLocked(directory string) (InceptionCampaignArchive, error) {
+	id := directory
+	if strings.HasPrefix(directory, "_") {
+		decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(directory, "_"))
+		if err != nil {
+			return InceptionCampaignArchive{}, err
+		}
+		id = string(decoded)
+	}
+	data, err := os.ReadFile(filepath.Join(e.dataDir, inceptionCampaignsDir, directory, inceptionArchiveState))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return InceptionCampaignArchive{}, fmt.Errorf("campaign %q not found", id)
@@ -1430,7 +1460,7 @@ func (e *InceptionEngine) readArchiveLocked(id string) (InceptionCampaignArchive
 }
 
 func (e *InceptionEngine) restoreArchiveWikiLocked(id string) error {
-	archiveWiki := filepath.Join(e.dataDir, inceptionCampaignsDir, slugify(id), inceptionArchiveWiki)
+	archiveWiki := filepath.Join(e.dataDir, inceptionCampaignsDir, campaignArchiveDirectory(id), inceptionArchiveWiki)
 	entries, err := os.ReadDir(archiveWiki)
 	if err != nil {
 		if os.IsNotExist(err) {

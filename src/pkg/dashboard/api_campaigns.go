@@ -179,7 +179,8 @@ func (s *Server) handleCampaignRelease(w http.ResponseWriter, r *http.Request) {
 		if campaign.ID != id && campaign.RunKey != id {
 			continue
 		}
-		if campaign.RunKey != "" && campaign.Type == "spektacular" {
+		// A revised run has a separate archive lease, not a stage lease.
+		if campaign.RunKey != "" && campaign.Type == "spektacular" && campaign.Revision == 0 {
 			if s.contributeHub == nil {
 				jsonError(w, "run lease registry unavailable", http.StatusServiceUnavailable)
 				return
@@ -324,6 +325,15 @@ func (s *Server) allCampaigns(r *http.Request) ([]Campaign, error) {
 		}
 		for _, run := range runs {
 			campaign := campaignFromRun(run)
+			if revision, ok := byID[campaign.ID]; ok && revision.Type == campaign.Type {
+				// Keep the live run's stage and artifacts while exposing its durable
+				// revision and the independently releasable revise lease.
+				campaign.Revision = revision.Revision
+				campaign.RevisionOf = revision.RevisionOf
+				if revision.Revision > 0 {
+					campaign.LeaseOwner = revision.LeaseOwner
+				}
+			}
 			byID[campaign.ID] = campaign
 		}
 	}
