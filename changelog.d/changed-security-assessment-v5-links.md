@@ -1,0 +1,1 @@
+- The security self-assessment now points reviewer evidence at v5 and describes heartbeat response verification as opt-in enforcement.
