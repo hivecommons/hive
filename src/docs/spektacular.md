@@ -195,7 +195,8 @@ The dashboard exposes `spektacularHubExecutor`,
 `spektacularHubExecutorBackend`, `spektacularHubExecutorModel`, and
 `spektacularHubExecutorTimeoutS`, and
 `spektacularHubExecutorMaxConcurrent` through
-`GET/PUT /api/config/governor/features`.
+`PUT /api/config/governor/features`; read them from the `features` key of
+`GET /api/config/governor` (there is no `GET` route on the `/features` path).
 
 On hosted hives the same no-file path is used to start work. Operators can:
 
@@ -223,9 +224,11 @@ server through the `LeaseRegistry` interface.
 On v6, design mode is admitted through the same run machinery as `!runs spec`.
 `hive-design`, the dashboard 📐 button, and `!runs design <owner/repo#n>` create
 or find the work item's Spektacular `spec` lease and link it to the Hive epic
-bead. GitHub issues use `owner/repo#N`; Jira and Linear items use the
-source-neutral `<repo>!<external-id>` key so non-GitHub work sources enter the
-same campaign path. The Spec checkpoint is the design-approval gate: when
+bead. GitHub issues use `owner/repo#N`. The dashboard 📐 button and
+`!runs design` (which posts to `/api/runs/spec`) accept only that
+`owner/repo#N` target and reject anything else. Jira and Linear items use the
+source-neutral `<repo>!<external-id>` key, but only the label loop carries that
+external id through, so non-GitHub design runs start from the label loop alone. The Spec checkpoint is the design-approval gate: when
 `runs.checkpoints.spec` is enabled (the fail-closed default, including an absent
 key), a final Spec parks the lease at `stage=spec`, surfaces
 `waiting_on=human` / `waiting_reason=checkpoint_enabled` in `/api/runs`, and
@@ -307,8 +310,10 @@ parks the lease for operator action rather than polling in an unrelated cwd.
 
 The first `spec` lease that admission creates (`run/spec` label, triage,
 `POST /api/runs/spec`, `!runs spec`) is owned by `hive-triage` and has no
-checkout yet by construction. If a run-stage-capable contributor relay claims it
-first, the relay path is unchanged and takes precedence. Otherwise, when
+checkout yet by construction. While the hub executor is enabled (the default
+whenever Spektacular is enabled and `hub_executor.enabled` is unset), spec and
+plan stages are deliberately hidden from relay worksource offers
+(`PendingRunStages`), so a relay cannot claim them first. When
 `runs.spektacular.hub_executor.enabled` is true, the hub claims the unclaimed
 admission lease as `hive-spek`, clones the repository under
 `/data/agents/hive-spek/<owner>/<repo>`, creates one detached worktree per run
