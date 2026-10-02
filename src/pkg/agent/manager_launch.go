@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -310,7 +311,11 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	envCmd := m.buildEnvPrefix(agent)
 	fullCmd := envCmd + launchCmd
 	if agentUsesAgyHeadless(backend, agent) {
+		// The headless shim runs no CLI at launch (agy starts per kick), so
+		// there is no exit status to echo; crashExitCode reports "unknown".
 		fullCmd = agyHeadlessFullLaunchCmd(envCmd, launchCmd)
+	} else {
+		fullCmd = withCLIExitEcho(fullCmd)
 	}
 
 	// A previously spilled kick can leave bash in PS2 quote-continuation
@@ -1051,6 +1056,22 @@ func agyHeadlessFullLaunchCmd(envPrefix, launchCmd string) string {
 	return "export " + envPrefix + "; " + launchCmd
 }
 
+// cliExitMarker prefixes the line bash prints into the pane the moment the
+// CLI process returns, carrying its exit status. The launch line is typed
+// into an interactive shell, so the status is otherwise lost the instant the
+// prompt redraws; this is the only place it can be observed. The crash
+// detector reads it back (crashExitCode) and attaches it to the bare-shell
+// log line. The wording must match no entry of cliPaneMarkers, or a dead CLI
+// would look alive.
+const cliExitMarker = "hive: CLI exited rc="
+
+// withCLIExitEcho appends the exit-status echo to a fully assembled launch
+// line. `$?` is expanded by the shell after the CLI returns; the typed line
+// itself shows the literal `$?`, which crashExitCode skips.
+func withCLIExitEcho(fullCmd string) string {
+	return fullCmd + `; echo "` + cliExitMarker + `$?"`
+}
+
 // agentUsesAgyHeadless reports whether an agent on the given effective backend
 // runs through the headless shim. An operator LaunchCmd replaces the shim, so
 // such an agent keeps the ordinary type-into-the-TUI kick path.
@@ -1155,18 +1176,47 @@ func agyEffortFromModel(model string) string {
 }
 
 // connectionMCPFlags builds MCP-related launch flags from connection configs.
+//
+// Claude Code has no `--mcp-server` flag (2.1.x: `error: unknown option
+// '--mcp-server'`, which exited the CLI before it drew a prompt and left every
+// Claude agent in the bare-shell crash loop). It loads servers through
+// `--mcp-config`, which takes JSON files or inline JSON strings, so every mcp
+// connection becomes one inline `{"mcpServers": {...}}` document.
 func connectionMCPFlags(conns []config.ConnectionConfig, backend string) string {
+	if backend != "claude" {
+		return ""
+	}
 	var flags string
-	for _, conn := range conns {
+	for i, conn := range conns {
 		if conn.Type != "mcp" || conn.URI == "" {
 			continue
 		}
-		switch backend {
-		case "claude":
-			flags += fmt.Sprintf(" --mcp-server '%s'", conn.URI)
-		}
+		flags += " --mcp-config " + shellQuote(claudeMCPConfigJSON(conn, i))
 	}
 	return flags
+}
+
+// claudeMCPConfigJSON renders one connection as a Claude Code --mcp-config
+// document. The task MCP endpoint and operator-declared servers are all HTTP
+// transports; the launch credential stays in the URL query (taskmcp.TokenQueryParam)
+// so the dashboard-side scope resolution is unchanged.
+func claudeMCPConfigJSON(conn config.ConnectionConfig, index int) string {
+	name := strings.TrimSpace(conn.Name)
+	if name == "" {
+		name = "mcp-" + strconv.Itoa(index)
+	}
+	doc := map[string]map[string]map[string]string{
+		"mcpServers": {name: {"type": "http", "url": conn.URI}},
+	}
+	// SetEscapeHTML(false): the task MCP URL carries `&`-joined query
+	// parameters; keep them literal so the launch line stays greppable.
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(doc); err != nil {
+		return ""
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // taskMCPLaunchToken asks the boot-owned minter for this launch's scoped
