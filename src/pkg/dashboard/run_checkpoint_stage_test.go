@@ -261,3 +261,59 @@ func TestRetryCheckpointLeasePinsReviewedGeneration(t *testing.T) {
 		t.Fatalf("lease after retry = %s gen %d, want plan past gen %d", stage, gen, spekGen)
 	}
 }
+
+// Rejecting a plan at its checkpoint supersedes the imported plan, so the plan
+// the re-minted generation drafts replaces the rejected children even when its
+// text is unchanged (hivecommons/hive#10063).
+func TestPlanCheckpointRejectSupersedesImportedPlan(t *testing.T) {
+	const taskList = "1. [T1] x [agent_suitable]"
+	hub, s, store, _ := spekHub(t)
+	now := time.Now()
+	spekLease(t, hub, StagePlan, now)
+	epic := spekDraftEpic(t, store)
+	if err := s.ImportRunPlan(spekRunKey, spekRepo, taskList); err != nil {
+		t.Fatalf("ImportRunPlan: %v", err)
+	}
+	rejected := runPlanChildren(store, epic.ID)
+	if len(rejected) != 1 {
+		t.Fatalf("imported children = %d, want 1", len(rejected))
+	}
+	if err := s.AdvanceStageLease(spekIdentity, spekTaskID, StageImplement, now, []byte(`{}`), map[string]string{stageAttrRunKey: spekRunKey}); err != nil {
+		t.Fatalf("held plan advance: %v", err)
+	}
+	payload := planCheckpoint(t, s)
+
+	rec := doOwnerPost(s, "/api/runs/"+url.PathEscape(payload.RunKey)+"/checkpoint", runCheckpointDecisionRequest{Action: runCheckpointDecisionReject, Gen: payload.Gen})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reject plan checkpoint = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got, _ := store.Get(epic.ID); got.Meta(runPlanDigestMeta) != runPlanDigestReplan {
+		t.Fatalf("import digest after reject = %q, want %q", got.Meta(runPlanDigestMeta), runPlanDigestReplan)
+	}
+	if err := s.ImportRunPlan(spekRunKey, spekRepo, taskList); err != nil {
+		t.Fatalf("re-import after reject: %v", err)
+	}
+	if got, _ := store.Get(rejected[0].ID); got.Status != beads.StatusClosed {
+		t.Fatalf("rejected child status after re-import = %q, want closed", got.Status)
+	}
+	if got := openRunPlanChildCount(store, epic.ID); got != 1 {
+		t.Fatalf("open children after re-import = %d, want 1", got)
+	}
+}
+
+// The plan page's reject runs the same hook, and supersedes the imported plan
+// even when the run's lease is already gone (hivecommons/hive#10063).
+func TestPlanRejectSupersedesImportedPlanWithoutLease(t *testing.T) {
+	_, s, store, _ := spekHub(t)
+	epic := spekDraftEpic(t, store)
+	if err := s.ImportRunPlan(spekRunKey, spekRepo, "1. [T1] x [agent_suitable]"); err != nil {
+		t.Fatalf("ImportRunPlan: %v", err)
+	}
+
+	if err := s.resetRunLeaseAfterPlanReject(store, epic.ID); err != nil {
+		t.Fatalf("resetRunLeaseAfterPlanReject: %v", err)
+	}
+	if got, _ := store.Get(epic.ID); got.Meta(runPlanDigestMeta) != runPlanDigestReplan {
+		t.Fatalf("import digest after reject = %q, want %q", got.Meta(runPlanDigestMeta), runPlanDigestReplan)
+	}
+}

@@ -1308,6 +1308,31 @@ func TestSpecCheckpointApproveAdvancesToPlan(t *testing.T) {
 	}
 }
 
+// Rejecting a design's spec forgets the rejected artifact digest, so the spec
+// the re-minted generation drafts is posted to the work item again even when
+// its text is unchanged (hivecommons/hive#10062).
+func TestSpecCheckpointRejectClearsDesignArtifactDigest(t *testing.T) {
+	hub, s, store, _ := spekHub(t)
+	now := time.Now()
+	spekLease(t, hub, StageSpec, now)
+	epic := spekDesignEpic(t, store)
+	if err := store.SetMetadata(epic.ID, planning.MetaDesignArtifactDigest, designArtifactDigest("rejected spec")); err != nil {
+		t.Fatalf("record design artifact digest: %v", err)
+	}
+	if err := s.AdvanceStageLease(spekIdentity, spekTaskID, StagePlan, now, []byte(`{}`), map[string]string{stageAttrRunKey: spekRunKey}); err != nil {
+		t.Fatalf("held spec advance: %v", err)
+	}
+
+	checkpointKey := spekRepo + "!" + spekRunKey + ":" + StageSpec
+	rec := doOwnerPost(s, "/api/runs/"+url.PathEscape(checkpointKey)+"/checkpoint", runCheckpointDecisionRequest{Action: runCheckpointDecisionReject, Gen: spekGen})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reject spec checkpoint = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got, _ := store.Get(epic.ID); got.Meta(planning.MetaDesignArtifactDigest) != "" {
+		t.Fatalf("design artifact digest after reject = %q, want cleared", got.Meta(planning.MetaDesignArtifactDigest))
+	}
+}
+
 // Rejecting a design's spec re-mints the spec generation so a revised spec is
 // drafted, and marks the design requested (hivecommons/hive#10062).
 func TestSpecCheckpointRejectRetriesDesignSpec(t *testing.T) {

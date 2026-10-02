@@ -182,6 +182,10 @@ func (s *Server) handleRunCheckpointDecision(w http.ResponseWriter, r *http.Requ
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if err := clearDesignArtifactDigest(store, payload.PlanEpicID); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		s.auditFromRequest(r, "design_reject", auditDetail("epic", payload.PlanEpicID, "run", payload.RunKey, "surface", "run_checkpoint", "reason", strings.TrimSpace(req.Reason)), agentName)
 	default:
 		// Retry the plan lease this checkpoint names at the reviewed

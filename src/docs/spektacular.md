@@ -285,7 +285,9 @@ key), a final Spec parks the lease at `stage=spec`, surfaces
 requires an owner to approve or reject the `/api/runs/{key}/checkpoint` payload
 before Plan can start. Until the Spec receipt exists the run is still drafting
 and the checkpoint cannot be decided. Rejecting re-mints the Spec generation
-and marks the design `requested` again, so a revised spec is drafted. Approving moves the reviewed spec generation to Plan
+and marks the design `requested` again, and forgets the rejected artifact
+digest so the redrafted spec is posted to the work item even when its text is
+unchanged, so a revised spec is drafted. Approving moves the reviewed spec generation to Plan
 first, then marks the design approved and applies the approved label/status on
 the work item. A failed label or status write does not undo or fail the
 approval: it is logged, audited as `design_signal_failed`, and recorded on the
