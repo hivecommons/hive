@@ -6420,6 +6420,12 @@ func runEvalCycle(
 	runReleaseSentinel(ctx, cfg, ghClient, agentKicker{mgr: agentMgr},
 		agentAvailability(cfg, agentMgr), notifier, logger)
 
+	// Upstream watch (hivecommons/hive#9967), opt-in and default OFF: at most
+	// once per upstream_watch.interval, file a labelled fork issue for each
+	// upstream merged PR or release that still applies to the fork. Opens
+	// issues only, never PRs; the watermark and dedupe index live on the PVC.
+	runUpstreamWatch(ctx, cfg, ghClient, logger)
+
 	shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
 		PrimaryRepo:     cfg.Project.PrimaryRepo,
 		AIAuthor:        cfg.Project.AIAuthor,

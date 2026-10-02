@@ -1,0 +1,1 @@
+- upstream watch: when `upstream_watch.enabled` is set, the hive polls each configured upstream and files a labelled `upstream:` issue in the fork for every merged PR or release that still applies, with a durable watermark, marker-based dedupe, dismissal and `max_issues_per_run` cap (#9967, #10002)
