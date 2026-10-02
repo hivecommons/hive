@@ -1,0 +1,1 @@
+- security-self-assessment: match ioscan canary/fail_mode defaults shipped in #7095 (#9922)
