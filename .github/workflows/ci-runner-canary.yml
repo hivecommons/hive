@@ -36,6 +36,10 @@ concurrency:
 env:
   CANARY_PICKUP_MINUTES: "10"
   QUEUE_STALL_MINUTES: "15"
+  # Older than this and still queued is a GitHub-side zombie (runs from
+  # 2026-08-06 were found queued on 2026-10-02, uncancellable), not a pool
+  # outage; the pool cannot have been dead that long unnoticed.
+  QUEUE_ZOMBIE_HOURS: "6"
   MIN_FREE_DISK_GB: "20"
 
 jobs:
@@ -111,11 +115,13 @@ jobs:
         env:
           CANARY_PICKUP_MINUTES: ${{ env.CANARY_PICKUP_MINUTES }}
           QUEUE_STALL_MINUTES: ${{ env.QUEUE_STALL_MINUTES }}
+          QUEUE_ZOMBIE_HOURS: ${{ env.QUEUE_ZOMBIE_HOURS }}
         with:
           script: |
             const {owner, repo} = context.repo;
             const pickupMs = Number(process.env.CANARY_PICKUP_MINUTES) * 60_000;
             const stallMs = Number(process.env.QUEUE_STALL_MINUTES) * 60_000;
+            const zombieMs = Number(process.env.QUEUE_ZOMBIE_HOURS) * 3_600_000;
             const sleep = ms => new Promise(r => setTimeout(r, ms));
             const failures = [];
 
@@ -123,10 +129,13 @@ jobs:
             //    threshold means the pool is not draining.
             const queued = await github.paginate(github.rest.actions.listWorkflowRunsForRepo,
               {owner, repo, status: 'queued', per_page: 100});
-            const stalled = queued.filter(r => Date.now() - Date.parse(r.created_at) > stallMs);
-            core.info(`queued runs: ${queued.length}, stalled > ${process.env.QUEUE_STALL_MINUTES}m: ${stalled.length}`);
+            const age = r => Date.now() - Date.parse(r.created_at);
+            const zombies = queued.filter(r => age(r) > zombieMs);
+            const stalled = queued.filter(r => age(r) > stallMs && age(r) <= zombieMs);
+            core.info(`queued runs: ${queued.length}, stalled > ${process.env.QUEUE_STALL_MINUTES}m: ${stalled.length}, ignored zombies > ${process.env.QUEUE_ZOMBIE_HOURS}h: ${zombies.length}`);
+            for (const z of zombies) core.warning(`ignoring zombie queued run ${z.html_url} (${z.name}, created ${z.created_at})`);
             if (stalled.length > 0) {
-              const oldest = stalled.map(r => Date.parse(r.created_at)).sort()[0];
+              const oldest = Math.min(...stalled.map(r => Date.parse(r.created_at)));
               failures.push(`${stalled.length} workflow run(s) queued for more than ${process.env.QUEUE_STALL_MINUTES} minutes (oldest ${Math.round((Date.now() - oldest) / 60_000)}m): ${stalled.slice(0, 5).map(r => r.html_url).join(' ')}`);
             }
 
