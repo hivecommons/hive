@@ -461,6 +461,17 @@ Press **`q`** (or `Esc`) to leave copy-mode and resume following output.
 
 If the status bar shows `[live]` and output really has stopped, the agent is idle between kicks — check its next scheduled kick on the dashboard before assuming a fault.
 
+## Copying text out of the browser terminal
+
+The browser terminal is a live `tmux` attach rendered by ttyd/xterm.js, which means **two** things own the mouse and neither is your browser:
+
+1. **tmux mouse mode owns an ordinary drag** (it is what makes the scroll wheel page back through history). Hold **⇧ Shift** while dragging to bypass it and make a normal terminal selection.
+2. **xterm.js keeps that selection in its own model, not in the page**, so until [#9941](https://github.com/hivecommons/hive/issues/9941) the browser's Copy command had nothing of the pane to copy — ⌘C appeared to work and pasted whatever the clipboard already held, most visibly in Firefox.
+
+With the selection made, **⌘C** (macOS) or **Ctrl+Shift+C** (Linux/Windows) copies it; the terminal page now answers that gesture itself, as it does the browser's Edit ▸ Copy. A plain **Ctrl+C** is deliberately left alone — it is still SIGINT for the agent's pane. Pasting in is the browser's own: **⌘V** or **Ctrl+Shift+V**.
+
+**For a login URL, prefer the dashboard's 🔑 *Copy login URL* button** on the agent card. It captures the pane server-side and rejoins wrapped lines, so the OAuth URL arrives whole; a Shift-drag selection of a wrapped URL copies the wrap's newlines with it and the link silently fails at the identity provider.
+
 ## The dashboard says the next kick is later, but the agent is visibly working now
 
 The agent-card **last kick** / **next kick** fields describe when work is *started*, not how long it runs. A kick sends one prompt into the agent's CLI; the resulting work pass then runs as long as it needs — often hours for a deep quality or scan pass. So an agent visibly busy at 01:47 with `last kick 8:12 PM` and `next kick 2:12 AM` is not off schedule: it is still working through the pass that began at 20:12. (These fields were labelled "last run" / "next run" before [#4399](https://github.com/hivecommons/hive/issues/4399), which invited exactly this misreading.)

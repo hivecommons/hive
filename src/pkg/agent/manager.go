@@ -297,6 +297,14 @@ type AgentProcess struct {
 	// to observe.
 	kickDelivering   atomic.Bool
 	lastTokenRestart time.Time // cooldown for auto-restart after token detection
+	// copilotModelFallbackRequested is the --model id (if any) the poller has
+	// already surfaced via LastError for paneShowsCopilotModelFallback
+	// (#9927): a restart cannot fix a rejected id — the CLI will substitute
+	// the same way again — so this only gates the log line/LastError write to
+	// once per distinct requested id, not an actual remediation. Cleared
+	// alongside LastError on every (re)launch so a corrected model re-arms
+	// detection.
+	copilotModelFallbackRequested string
 	// tokenRestartAttempts counts CONSECUTIVE token-triggered restarts that did
 	// not clear the login prompt. The restart is a falsifiable theory — "a valid
 	// token exists, the agent just has not picked it up yet" — and this is what

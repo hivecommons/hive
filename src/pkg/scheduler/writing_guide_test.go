@@ -85,6 +85,28 @@ func TestKick_SummaryFirstGuideAddsSummaryAndKeepsTemplateOrder(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#9926: with the #9747 fix live, agents did add the summary
+// but still wrote it — and the title — for someone who already knew the code,
+// so the opening named internal parts and never said why a user should care.
+// The kick must spell the audience out: the title and the first paragraph are
+// for a newcomer, the technical detail stays in the sections below, and the
+// preamble outranks the style of the examples and recalled work it ships with.
+func TestKick_WritingGuideDemandsNewcomerReadableTitleAndOpening(t *testing.T) {
+	out := writingGuideKick(t, "Write for people who are not in your head.")
+
+	for _, want := range []string{
+		"Write that opening paragraph and the title for a newcomer who does not know this codebase",
+		"say what the thing is, what the problem or change is, and why it matters to a user, in plain words",
+		"with no internal names, file paths or jargon left unexplained",
+		"The technical detail then follows unchanged in the template's sections below",
+		"this preamble outranks the style of any example or past issue/PR you were shown",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("kick is missing %q — agents keep writing the summary and title for insiders without it", want)
+		}
+	}
+}
+
 func TestKick_WritingGuideUnsetChangesNothing(t *testing.T) {
 	out := writingGuideKick(t, "")
 	for _, absent := range []string{"${WRITING_GUIDE}", "WRITING GUIDE"} {

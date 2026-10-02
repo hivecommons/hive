@@ -11,6 +11,52 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-02 (v5.110.9)
+
+### Fixed
+
+- The automerge sweep no longer squashes forward-merge PRs between release lines ([#9957](https://github.com/hivecommons/hive/issues/9957)). `automerge_sweep.go` hard-coded `MergeMethod: "squash"` at both merge sites with no check of head branch or title, which is correct for feature PRs but wrong for the `🌱 Forward-merge v5 into v6` PRs that `v5-topup.yml` / `v6-topup.yml` open on `sync/v*-to-v*` branches: squashing one copies the source line's content into the target but discards its ancestry, so the next top-up replays the same commits and re-conflicts on the same hunks (as happened with #9932). A new `mergeMethodFor` helper now classifies the PR by head branch (`sync/v5-to-v6`, `scanner/sync-v5-to-v6-9919`) or a "forward-merge" title and routes those to a true merge commit, while every other PR keeps the repository's squash convention.
+
+## 2026-10-02 (v5.110.8)
+
+### Fixed
+
+- Test Connection for LiteLLM now names the hub's egress proxy (HTTPS_PROXY) when a 401/403 comes from a proxy in front of the gateway, so a cluster egress path that differs from your laptop's is visible in the error ([#9945](https://github.com/hivecommons/hive/issues/9945)).
+
+## 2026-10-02 (v5.110.7)
+
+### Fixed
+
+- Copying text out of an agent's browser terminal now works ([#9941](https://github.com/hivecommons/hive/issues/9941)). The terminal is ttyd 1.7.7/xterm.js, which keeps its selection in its own model rather than in the page and only ever copied from an `execCommand('copy')` fired on selection *change* — a call Firefox refuses outside a user gesture and ttyd swallows, so ⌘C silently pasted whatever the clipboard already held instead of the selected pane text. The dashboard's terminal proxy now injects a small clipboard handler into ttyd's document, so ⌘C, Ctrl+Shift+C and the browser's Edit ▸ Copy all write the real selection (a plain Ctrl+C is untouched and still sends SIGINT). The keyboard hint on the agent card names the macOS keystroke too, and `src/docs/troubleshooting.md` documents the Shift-drag selection that tmux mouse mode otherwise swallows.
+
+### Security
+
+- The sandbox push broker now lists changed files with `git diff --name-only -z` and splits on NUL, so a path git would otherwise C-quote (non-ASCII bytes, tabs, `"` or `\` in the name) reaches the protected-path guard verbatim. Before, the surrounding quotes git added to such names made the `.github/workflows/`, `policies/`, `OWNERS` and `gh-wrapper.sh` prefix checks miss them and the push went through. [#9947](https://github.com/hivecommons/hive/issues/9947)
+
+## 2026-10-02 (v5.110.6)
+
+### Fixed
+
+- The LiteLLM **Test Connection** probe no longer blames your API key for a rejection it never saw ([#9945](https://github.com/hivecommons/hive/issues/9945)). When an ingress, WAF or VPN proxy in front of the gateway answers `GET /v1/models` with an HTML error page (the classic nginx `403 Forbidden`), the dialog said "gateway rejected the configured key", sending operators to re-check a key that worked fine for `/v1/completions` from their laptop. The probe now recognises a non-JSON/empty auth-failure body as a proxy refusal and reports the exact URL it tried, the response content-type and `Server` header, and the body excerpt — and every probe error now names the probed `/v1/models` URL, so a path the gateway exposes but the edge blocks is visible at a glance.
+- The dashboard now surfaces it when the Copilot CLI's startup banner shows it rejected the configured `--model` id and silently substituted a different model ([#9927](https://github.com/hivecommons/hive/issues/9927)). `copilotPinnedCLIModels`/`copilotCLIAcceptedModels` (#9933, #9943) already keep the picker from offering an id the pinned CLI rejects, but a stale stored config, a hand-edited `hive.yaml`, or a future CLI pin dropping support for a currently-accepted id could still trigger the same silent substitution with no indication. The agent's `LastError` now reports the requested and actually-running model ids so the mismatch is visible instead of quietly running a different model than the one chosen.
+
+## 2026-10-02 (v5.110.5)
+
+### Fixed
+
+- **Agents cut off with "the response stopped arriving" are nudged again** — Claude Code has yet another wording for the mid-stream cut-off it once called "Connection lost mid-response" (#4697), then "Connection closed mid-response" (#7855), then "Response stalled mid-stream" (#6134): `API Error: the response stopped arriving. The response above may be incomplete.` It carries no HTTP status, so nothing in the transient-error allowlist matched and an agent showing it sat idle at `❯` with a half-finished run until the next scheduled kick — which is what the FMA quality agent's terminal was reporting. `response stopped arriving` is now in both the hub's and the contributor relay's allowlists, so the same failure gets the same remedy: an immediate retry of the request that never completed ([#9940](https://github.com/hivecommons/hive/issues/9940)).
+- The Copilot backend's model picker offers `claude-opus-5.5` / `claude-sonnet-5.5` again ([#9927](https://github.com/hivecommons/hive/issues/9927)). The pinned Copilot CLI 1.0.88 does accept Sonnet 5.5 and Opus 5.5, but only under the dotted id spelling (matching every other `X.Y` id the CLI accepts, like `claude-opus-4.6` or `gpt-5.5`) — the dashed `claude-opus-5-5` / `claude-sonnet-5-5` spelling it actually rejects was removed entirely rather than corrected. Both dotted ids are restored to `copilotPinnedCLIModels` and `agent.copilotCLIAcceptedModels`, and canonicalization now rewrites a dashed input to the dotted, CLI-accepted form instead of dropping the model.
+
+## 2026-10-02 (v5.110.4)
+
+### Changed
+
+- A `project.writing_guide` now gets issues and PRs an outsider can read: the kick preamble tells agents that the title and the opening paragraph are written for a newcomer who does not know the codebase — what the thing is, what the problem or change is, and why it matters to a user, in plain words with no unexplained internal names, paths or jargon — and that the technical detail follows unchanged in the template's sections below, with the preamble outranking the style of any example or recalled past issue/PR. Since [#9748](https://github.com/hivecommons/hive/pull/9748) agents did add the summary, but wrote it (and the title) for someone who already knew the code, so a reader could not tell what the change was for ([#9926](https://github.com/hivecommons/hive/issues/9926)).
+
+### Fixed
+
+- The Copilot backend's model picker no longer offers `claude-opus-5-5` / `claude-sonnet-5-5` ([#9927](https://github.com/hivecommons/hive/issues/9927)). The pinned Copilot CLI 1.0.88 rejects both from `--model` and silently launches `claude-sonnet-5` instead, so an agent could end up running a different model than the one chosen in the dashboard without any indication. Both ids are removed from `copilotPinnedCLIModels` and `agent.copilotCLIAcceptedModels`; the Claude backend's own Sonnet 5.5 support (added for Claude Code 2.1.284, #9804) is unaffected.
+
 ## 2026-10-02 (v5.110.3)
 
 ### Fixed

@@ -8,17 +8,26 @@ import (
 // accepts, in the CLI's own nomenclature. This is the alias target set for
 // CanonicalizeCopilotModel — NOT an allowlist: ids absent from this list are
 // passed through unchanged, so it only needs to cover ids whose separator
-// spelling is known to drift in the catalog. Note the deliberate mix: the
-// -5 family is DASHED, older families are DOTTED — exactly the drift the
-// canonicalization exists to absorb.
+// spelling is known to drift in the catalog. Note the deliberate mix: bare
+// generation numbers (claude-opus-5) have no separator to drift; every X.Y
+// minor-version id — Claude's 4.x AND 5.5, GPT's 5.x, Gemini's — is DOTTED.
+//
+// claude-opus-5-5 and claude-sonnet-5-5 (DASHED) are deliberately absent:
+// #9927 found the pinned Copilot CLI 1.0.88 rejects that dashed spelling
+// from --model and silently falls back to claude-sonnet-5. The dotted
+// claude-opus-5.5 / claude-sonnet-5.5 below are the CLI's actual accepted
+// ids for that model (consistent with every other X.Y id in this list) and
+// restore the alias so a dashed input still reaches the CLI as a dotted,
+// accepted id instead of being dropped entirely. Keep in sync with
+// copilotPinnedCLIModels in pkg/dashboard/cli_models.go.
 var copilotCLIAcceptedModels = []string{
-	// Anthropic — the -5 family is DASHED in CLI nomenclature.
-	"claude-opus-5-5",
+	// Anthropic — bare generation numbers are separator-free.
 	"claude-opus-5",
-	"claude-sonnet-5-5",
 	"claude-sonnet-5",
 	"claude-fable-5",
-	// Anthropic — the 4.x family is DOTTED.
+	// Anthropic — every X.Y minor version, including 5.5, is DOTTED.
+	"claude-opus-5.5",
+	"claude-sonnet-5.5",
 	"claude-opus-4.8",
 	"claude-opus-4.7",
 	"claude-opus-4.6",

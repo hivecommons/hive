@@ -7493,7 +7493,7 @@
        tooltip, dismissible for good. The login-blocked row keeps its full
        sentence — that one reports whether a login URL was actually seen, so it
        earns the space and always wins over the persisted dismissal. */
-    const TERMINAL_KEYBOARD_COPY_HINT = 'Selecting text in the terminal: hold ⇧ (Shift) while dragging — tmux mouse mode owns an ordinary drag. Then Ctrl+Shift+C copies and Ctrl+Shift+V pastes.';
+    const TERMINAL_KEYBOARD_COPY_HINT = 'Selecting text in the terminal: hold ⇧ (Shift) while dragging — tmux mouse mode owns an ordinary drag. Then ⌘C (macOS) or Ctrl+Shift+C copies, and ⌘V or Ctrl+Shift+V pastes.';
     function terminalCopyHintHtml(needsLogin, sessionUnavailable, agentName, loginURL, backendAuthStatus, backendAuthLastError, statusEvidence) {
       if (sessionUnavailable) return '';
       const backendDetail = backendAuthLastError || ((statusEvidence || '').includes('backend_auth_error') ? statusEvidence : '');

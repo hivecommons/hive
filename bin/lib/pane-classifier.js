@@ -86,6 +86,9 @@ const TRANSIENT_API_ERROR_PATTERNS = [
   'connection closed mid-response',
   // And its "Response stalled mid-stream" sibling, already in the Go list.
   'stalled mid-stream',
+  // "API Error: the response stopped arriving. The response above may be
+  // incomplete." — the same cut-off mid-stream failure (hivecommons/hive#9940).
+  'response stopped arriving',
   'connection error',
   'request timed out',
   'overloaded_error',

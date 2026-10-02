@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -108,5 +109,146 @@ func TestParseModelsResponse_VerbatimIDs(t *testing.T) {
 		if m != want[i] {
 			t.Errorf("models[%d] = %q, want %q", i, m, want[i])
 		}
+	}
+}
+
+// An HTML "403 Forbidden" page comes from an ingress/WAF/VPN proxy in front of
+// the gateway, not from the gateway's auth layer: the probe must say so —
+// naming the URL it tried — instead of claiming the configured key was
+// rejected, which sent a reporter chasing a key that worked fine for
+// /v1/completions (hivecommons/hive#9945).
+func TestProbeLiteLLMModels_HTMLForbiddenBlamesProxyNotKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Server", "nginx")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, "<html>\n<head><title>403 Forbidden</title></head>\n<body><center><h1>403 Forbidden</h1></center></body>\n</html>")
+	}))
+	defer srv.Close()
+
+	_, err := probeLiteLLMModels(srv.URL, "sk-livekeyvalue")
+	if err == nil {
+		t.Fatal("expected an error for an HTTP 403 probe response")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "gateway rejected the configured key") {
+		t.Errorf("HTML 403 must not be attributed to the key: %v", err)
+	}
+	for _, want := range []string{"proxy in front of the gateway", srv.URL + "/v1/models", "nginx", "403 Forbidden"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q missing %q", msg, want)
+		}
+	}
+}
+
+// A JSON auth error IS the gateway speaking, so the key-specific message (and
+// the probed URL) must survive.
+func TestProbeLiteLLMModels_JSONForbiddenStillBlamesKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"error":{"message":"token not found","type":"auth_error"}}`)
+	}))
+	defer srv.Close()
+
+	_, err := probeLiteLLMModels(srv.URL, "sk-livekeyvalue")
+	if err == nil {
+		t.Fatal("expected an error for an HTTP 403 probe response")
+	}
+	for _, want := range []string{"gateway rejected the configured key", srv.URL + "/v1/models", "token not found"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+// When the hub's egress would route the probe through an environment proxy
+// (HTTPS_PROXY/https_proxy, honoured by http.ProxyFromEnvironment via the
+// probeProxyFunc seam), an HTML/empty 401/403 must name that proxy — the
+// reporter's laptop has no such proxy and reaches LiteLLM directly, so the
+// proxy identity is the one fact that tells them the paths differ
+// (hivecommons/hive#9945).
+func TestProbeLiteLLMModels_HTMLForbiddenNamesEgressProxyWhenConfigured(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Server", "nginx")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, "<html><body>403 Forbidden</body></html>")
+	}))
+	defer srv.Close()
+
+	proxyURL, err := url.Parse("http://user:secret@proxy.example:3128")
+	if err != nil {
+		t.Fatalf("parsing test proxy URL: %v", err)
+	}
+	origProbeProxyFunc := probeProxyFunc
+	probeProxyFunc = func(*http.Request) (*url.URL, error) { return proxyURL, nil }
+	defer func() { probeProxyFunc = origProbeProxyFunc }()
+
+	_, probeErr := probeLiteLLMModels(srv.URL, "sk-livekeyvalue")
+	if probeErr == nil {
+		t.Fatal("expected an error for an HTTP 403 probe response")
+	}
+	msg := probeErr.Error()
+	if !strings.Contains(msg, "proxy.example:3128") {
+		t.Errorf("error %q does not name the configured egress proxy", msg)
+	}
+	if !strings.Contains(msg, "HTTPS_PROXY") {
+		t.Errorf("error %q does not mention HTTPS_PROXY", msg)
+	}
+	if strings.Contains(msg, "secret") || strings.Contains(msg, "user:secret") {
+		t.Errorf("error %q leaks proxy userinfo", msg)
+	}
+}
+
+// When no egress proxy applies, the message must not claim one does, but
+// should note that the hive's own network path (not the laptop's VPN) is
+// what the gateway saw.
+func TestProbeLiteLLMModels_HTMLForbiddenNoProxyConfigured(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Server", "nginx")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, "<html><body>403 Forbidden</body></html>")
+	}))
+	defer srv.Close()
+
+	origProbeProxyFunc := probeProxyFunc
+	probeProxyFunc = func(*http.Request) (*url.URL, error) { return nil, nil }
+	defer func() { probeProxyFunc = origProbeProxyFunc }()
+
+	_, err := probeLiteLLMModels(srv.URL, "sk-livekeyvalue")
+	if err == nil {
+		t.Fatal("expected an error for an HTTP 403 probe response")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "HTTPS_PROXY egress proxy was configured") == false {
+		t.Errorf("error %q does not note the absence of an egress proxy: %v", msg, err)
+	}
+	if strings.Contains(msg, "://") && strings.Contains(msg, "egress proxy http") {
+		t.Errorf("error %q wrongly names a proxy URL when none is configured", msg)
+	}
+}
+
+func TestLooksLikeIntermediaryRejection(t *testing.T) {
+	cases := []struct {
+		name        string
+		contentType string
+		body        string
+		want        bool
+	}{
+		{"html page", "text/html", "<html><title>403 Forbidden</title></html>", true},
+		{"html body without content type", "", "<html>403</html>", true},
+		{"empty body", "", "", true},
+		{"plain text refusal", "text/plain", "access denied", false},
+		{"gateway json", "application/json", `{"error":"token not found"}`, false},
+		{"json body without content type", "", `{"error":"token not found"}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := looksLikeIntermediaryRejection(tc.contentType, tc.body); got != tc.want {
+				t.Errorf("looksLikeIntermediaryRejection(%q, %q) = %v, want %v", tc.contentType, tc.body, got, tc.want)
+			}
+		})
 	}
 }

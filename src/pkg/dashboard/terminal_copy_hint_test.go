@@ -29,7 +29,9 @@ func TestTerminalCopyHints(t *testing.T) {
 		// a rendered sentence. Losing the ⇧/Ctrl+Shift+C content entirely
 		// would strand operators on a terminal they cannot select out of.
 		"const TERMINAL_KEYBOARD_COPY_HINT = 'Selecting text in the terminal: hold ⇧ (Shift) while dragging",
-		"Ctrl+Shift+C copies and Ctrl+Shift+V pastes.",
+		// #9941: the Mac keystroke is named too — the hint used to offer only
+		// the Linux combo to an operator holding ⌘.
+		"Then ⌘C (macOS) or Ctrl+Shift+C copies, and ⌘V or Ctrl+Shift+V pastes.",
 		`title="${esc(TERMINAL_KEYBOARD_COPY_HINT)}"`,
 		// The login-blocked row only claims a URL after the pane extractor found
 		// one; otherwise it says the prompt has no visible URL.

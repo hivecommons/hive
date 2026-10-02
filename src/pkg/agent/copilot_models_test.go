@@ -53,6 +53,27 @@ func TestCanonicalizeCopilotModel(t *testing.T) {
 	}
 }
 
+// TestCanonicalizeCopilotModelFiveFiveDashToDot covers #9927: the pinned
+// Copilot CLI 1.0.88 rejects the DASHED claude-opus-5-5/claude-sonnet-5-5
+// spelling from --model and silently falls back to claude-sonnet-5. The
+// DOTTED claude-opus-5.5/claude-sonnet-5.5 are the CLI's actual accepted ids
+// (consistent with every other X.Y id in copilotCLIAcceptedModels), so
+// canonicalization must rewrite a dashed input to the dotted, accepted form
+// rather than passing the rejected spelling through verbatim.
+func TestCanonicalizeCopilotModelFiveFiveDashToDot(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"claude-opus-5-5", "claude-opus-5.5"},
+		{"claude-sonnet-5-5", "claude-sonnet-5.5"},
+		{"claude-opus-5.5", "claude-opus-5.5"},
+		{"claude-sonnet-5.5", "claude-sonnet-5.5"},
+	}
+	for _, tc := range tests {
+		if got := CanonicalizeCopilotModel(tc.in); got != tc.want {
+			t.Errorf("CanonicalizeCopilotModel(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 // TestCanonicalizeCopilotModelIdempotent: applying canonicalization twice must
 // equal applying it once — it is applied at discovery, model-set, AND launch,
 // so a value that has already been normalized flows through all three.

@@ -84,6 +84,54 @@ func TestBrokerRejectsProtectedPaths(t *testing.T) {
 	}
 }
 
+// Git C-quotes paths holding non-ASCII bytes, `"`, `\` or control characters
+// when listing them line-by-line; the surrounding quotes used to hide such a
+// file from the protected-path guard. Both the base-less diff-tree path and
+// the BaseRef diff path must see the raw name.
+func TestBrokerRejectsProtectedPathsWithQuotedNames(t *testing.T) {
+	quoted := []string{".github/workflows/dépl.yml", `policies/a"b.md`, "policies/c\td.md"}
+	for _, withBase := range []bool{false, true} {
+		dir := initRepo(t)
+		b := &Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: &recordingRunner{}}
+		if withBase {
+			writeCommit(t, dir, "README.md", "hello\n")
+			b.BaseRef = strings.TrimSpace(runGitOutput(t, dir, "rev-parse", "HEAD"))
+		}
+		// Base-less diff-tree only inspects HEAD, so land all three in one commit.
+		for _, rel := range quoted {
+			path := filepath.Join(dir, rel)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("name: ci\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			runGit(t, dir, "add", rel)
+		}
+		runGit(t, dir, "commit", "-m", "quoted names")
+		res, err := b.Run(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "protected paths changed") {
+			t.Fatalf("withBase=%v: Run error = %v, want protected path rejection", withBase, err)
+		}
+		if res.Pushed {
+			t.Fatalf("withBase=%v: broker pushed protected files: %+v", withBase, res)
+		}
+		if strings.Join(res.ProtectedReject, "\x00") != strings.Join(quoted, "\x00") {
+			t.Fatalf("withBase=%v: ProtectedReject=%q want %q", withBase, res.ProtectedReject, quoted)
+		}
+	}
+}
+
+func TestSplitNUL(t *testing.T) {
+	if got := splitNUL(nil); got != nil {
+		t.Fatalf("splitNUL(nil)=%v want nil", got)
+	}
+	got := splitNUL([]byte("a b\x00\x00c\nd\x00"))
+	if strings.Join(got, "|") != "a b|c\nd" {
+		t.Fatalf("splitNUL=%q", got)
+	}
+}
+
 func TestBrokerRejectsEmptyOutgoingCommitBeforePush(t *testing.T) {
 	dir := initRepo(t)
 	runGit(t, dir, "commit", "--allow-empty", "-m", "ci: retrigger tests")
