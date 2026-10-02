@@ -223,14 +223,16 @@ func TestVanityRepairKickRunsForHiveWithExistingVanityURL(t *testing.T) {
 
 	s.kickVanityURLRepairAsync(h.ID)
 
-	deadline := time.Now().Add(waitTimeout)
-	for time.Now().Before(deadline) {
-		if _, inFlight := s.vanityRepairInFlight.Load(h.ID); inFlight {
-			return // the reconcile pass was spawned, which is the contract here
-		}
-		time.Sleep(10 * time.Millisecond)
+	// The reconcile pass never reaches the blocked servability seam, so it can
+	// finish before any in-flight poll observes it. Drain the background repair
+	// and assert on its persisted outcome instead: with no readable live route
+	// it records a failure; with one it adopts the live host.
+	provisionWG.Wait()
+
+	got := loadSaaSHive(h.ID)
+	if got.LastVanityRepairFailureAt.IsZero() && got.VanityURL == h.VanityURL {
+		t.Error("kick spawned no repair for a hive with a vanity URL, so a stale host could never be reconciled")
 	}
-	t.Error("kick spawned no repair for a hive with a vanity URL, so a stale host could never be reconciled")
 }
 
 // A successful repair must not write through a record loaded before its slow
