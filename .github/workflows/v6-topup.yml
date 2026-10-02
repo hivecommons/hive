@@ -86,6 +86,21 @@ jobs:
           if git merge --no-ff --signoff origin/v5 \
                -m "🌱 Forward-merge v5 into v6 (${{ steps.drift.outputs.behind }} commits)"; then
             echo "conflict=false" >> "$GITHUB_OUTPUT"
+          # v6 removed discord/ (#9277) while v5 still develops it, so every v5
+          # discord commit is a guaranteed modify/delete conflict. When the ONLY
+          # conflicts are v5 edits to files v6 deleted under discord/, keep the
+          # deletion and finish the merge instead of paging a human. Anything
+          # else (content conflicts, deletions outside discord/) still fails
+          # loudly below.
+          elif unmerged="$(git status --porcelain | grep -E '^(DD|AU|UD|UA|DU|AA|UU) ' || true)" \
+               && [ -n "$unmerged" ] \
+               && ! printf '%s\n' "$unmerged" | grep -qvE '^DU discord/'; then
+            printf '%s\n' "$unmerged" | awk '{print $2}' | xargs git rm -q --
+            # --cleanup=strip: --no-edit would otherwise keep the "# Conflicts:"
+            # comment lines git leaves in MERGE_MSG.
+            git commit --no-edit --signoff --cleanup=strip
+            echo "Auto-resolved: kept v6's deletion of $(printf '%s\n' "$unmerged" | wc -l | tr -d ' ') discord/ file(s) v5 modified."
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
           else
             # Inventory the conflict BEFORE aborting (#7337): hunk and line
             # counts per file so the human sizing the resolution doesn't

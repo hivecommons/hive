@@ -1,0 +1,1 @@
+- Config saves now install the Kubernetes dashboard overlay before rewriting the watched primary config and arm the watcher to skip self-triggered reloads, preventing stale overlay agent fields from resurrecting after ApplyPack reconciles a hosted spoke.
