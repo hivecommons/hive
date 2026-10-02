@@ -1946,6 +1946,8 @@
     .gov-matrix .gov-agent-name-link { background: none; border: 0; padding: 0; color: inherit; font: inherit; font-weight: inherit; text-align: left; }
     .gov-matrix .gov-agent-name-link:hover { color: var(--accent); text-decoration: underline; }
     .gov-matrix td:first-child { text-align: left; color: var(--text); font-weight: 600; min-width: 72px; }
+    .gov-matrix th:nth-last-child(3), .gov-matrix .continuous-col { width: 1%; white-space: nowrap; }
+    .gov-matrix td.continuous-col { vertical-align: middle; }
     @media (max-width: 480px) {
       .gov-matrix { font-size: 0.65rem; }
       .gov-matrix th { padding: var(--sp-1) var(--sp-2); }
@@ -7859,6 +7861,11 @@
       const mode = (window._lastStatus && window._lastStatus.governor && window._lastStatus.governor.mode || '').toLowerCase();
       return mode ? `no cadence in ${mode}` : 'no cadence in this mode';
     }
+    function pwrSwitchHtml(on, attrs, ariaLabel, title, extraClass = '') {
+      const cls = `pwr-switch${on ? ' on' : ''}${extraClass ? ' ' + extraClass : ''}`;
+      const titleAttr = title ? ` title="${esc(title)}"` : '';
+      return `<span class="${cls}"${attrs || ''} role="switch" aria-checked="${on ? 'true' : 'false'}" aria-label="${esc(ariaLabel)}"${titleAttr}><span class="pwr-mark">1</span><span class="pwr-lever"></span><span class="pwr-mark">0</span></span>`;
+    }
     function agentPowerSwitchHtml(a) {
       const on = !agentIsDisabled(a);
       const who = a.displayName || a.name;
@@ -7871,7 +7878,7 @@
       const action = canEdit
         ? ` data-action="toggleAgentEnabled" data-agent="${esc(a.name)}" data-enabled="${on ? 'true' : 'false'}"`
         : '';
-      return `<span class="pwr-switch${on ? ' on' : ''}${canEdit ? '' : ' readonly'}"${action} role="switch" aria-checked="${on ? 'true' : 'false'}" aria-label="${esc(who)} enabled" title="${esc(title)}"><span class="pwr-mark">1</span><span class="pwr-lever"></span><span class="pwr-mark">0</span></span>`;
+      return pwrSwitchHtml(on, action, `${who} enabled`, title, canEdit ? '' : 'readonly');
     }
     /* Returns linkHtml unchanged for any agent that can have a session, and an
        inert chip carrying the reason for one that cannot. */
@@ -9595,7 +9602,7 @@
           ? `Continuous mode is on for ${displayLabel}: re-kick after a session ends plus cool-down${agentData && agentData.continuousBlocked === 'budget' ? '; currently held by budget guard' : ''}`
           : `Continuous mode is off for ${displayLabel}`;
         const continuousCell = agentData
-          ? `<td class="continuous-col"><span class="config-toggle-switch gov-continuous-switch ${continuousOn ? 'on' : ''}" role="switch" aria-checked="${continuousOn ? 'true' : 'false'}" aria-label="Continuous mode for ${esc(displayLabel)}" title="${esc(continuousTitle)}" data-action="setAgentContinuous" data-agent="${esc(aname)}" data-enabled="${continuousOn ? 'true' : 'false'}"></span></td>`
+          ? `<td class="continuous-col">${pwrSwitchHtml(continuousOn, ` data-action="setAgentContinuous" data-agent="${esc(aname)}" data-enabled="${continuousOn ? 'true' : 'false'}" data-stop="1"`, `Continuous mode for ${displayLabel}`, continuousTitle, 'gov-continuous-switch')}</td>`
           : '<td class="continuous-col">—</td>';
         const cliPinned = agentData && (agentData.pinnedBoth || agentData.pinnedCli);
         const modelPinned = agentData && (agentData.pinnedBoth || agentData.pinnedModel);
@@ -26944,7 +26951,7 @@ function burnAreaChart() {
           </div>
         </div>
         <div class="config-toggle">
-          <div class="config-toggle-switch ${_continuous ? 'on' : ''}" id="cfg-agent-continuous" data-action="toggleConfigSwitch" data-section="general" data-key="continuous" role="switch" aria-checked="${_continuous ? 'true' : 'false'}" title="Continuous mode re-kicks only after Hive has observed the CLI back at its input prompt. Takes effect on Save."></div>
+          ${pwrSwitchHtml(_continuous, ' id="cfg-agent-continuous" data-action="toggleConfigSwitch" data-section="general" data-key="continuous"', 'Agent continuous mode', 'Continuous mode re-kicks only after Hive has observed the CLI back at its input prompt. Takes effect on Save.')}
           <span class="config-toggle-label">
             <b>Continuous</b> — re-kick when a session ends.
             <span class="text-muted">Uses the same turn-end signal as kick delivery (the CLI input prompt); never interrupts a busy session and still respects pause, disabled, on-demand, budget/provider holds, and mode pauses.</span>

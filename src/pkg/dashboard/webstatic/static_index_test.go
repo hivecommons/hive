@@ -218,6 +218,37 @@ func TestStaticTerminalHostedApexWiring(t *testing.T) {
 	}
 }
 
+func TestStaticContinuousTogglesUsePowerSwitchMarkup(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		"function pwrSwitchHtml(on, attrs, ariaLabel, title, extraClass = '')",
+		"return pwrSwitchHtml(on, action, `${who} enabled`, title, canEdit ? '' : 'readonly');",
+		"pwrSwitchHtml(continuousOn, ` data-action=\"setAgentContinuous\"",
+		"'gov-continuous-switch'",
+		"${pwrSwitchHtml(_continuous, ' id=\"cfg-agent-continuous\" data-action=\"toggleConfigSwitch\" data-section=\"general\" data-key=\"continuous\"'",
+		"<span class=\"pwr-mark\">1</span><span class=\"pwr-lever\"></span><span class=\"pwr-mark\">0</span>",
+		"<th>Continuous</th>",
+		".gov-matrix th:nth-last-child(3), .gov-matrix .continuous-col",
+		"data-stop=\"1\"",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("static dashboard continuous switch markup missing %q", want)
+		}
+	}
+	for _, old := range []string{
+		"<span class=\"config-toggle-switch gov-continuous-switch",
+		"<div class=\"config-toggle-switch ${_continuous ? 'on' : ''}\" id=\"cfg-agent-continuous\"",
+	} {
+		if strings.Contains(html, old) {
+			t.Fatalf("continuous toggle still uses old horizontal config switch markup %q", old)
+		}
+	}
+}
+
 func TestStaticDashboardPRAuthorUserMenuWiring(t *testing.T) {
 	body, err := os.ReadFile("../static/index.html")
 	if err != nil {
