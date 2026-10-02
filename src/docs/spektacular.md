@@ -544,8 +544,12 @@ task list, the final plan stays parked and the runner logs the import error.
 The epic is found by its `run_key` metadata (or created with it, bound to the
 run key as its external ref). Its plan is a DRAFT: the run-stage work source
 lists `implement` only after `ApprovePlan` (`POST /api/plans/{id}/approve`)
-sets `plan_status` to `approved`. A run whose epic already carries a plan is
-not re-imported.
+sets `plan_status` to `approved`. Importing the same plan again is a no-op,
+but a regenerated plan replaces the previously imported children and returns
+the epic to draft for review. An owner reset back to `plan` (or earlier)
+returns an approved plan to draft, so the re-run plan stage is held at the
+checkpoint again. An epic that already carries children from another planner
+is not re-imported.
 
 ## Defensive handling of the open questions
 

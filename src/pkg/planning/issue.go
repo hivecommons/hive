@@ -121,7 +121,7 @@ func IssueRef(issue github.Issue) string {
 // The epic carries the issue title, the body in Notes (so BuildPrompt/epicBody
 // pick it up), the issue's labels in "labels" metadata (so the classifier can
 // route it), and issue_repo/issue_number/issue_url/source metadata for tracing.
-// It creates NO children and sets NO plan_status — decomposition is a separate,
+// It creates NO children (plan_status starts as draft) — decomposition is a separate,
 // caller-driven step (kick architect + plan-review), keeping this pure and cheap.
 func EpicFromIssue(store *beads.Store, issue github.Issue, body string) (*beads.Bead, error) {
 	if store == nil {

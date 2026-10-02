@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -470,7 +471,11 @@ func (s *Server) populateRunBurndown(r *http.Request, run *Run) error {
 	if s == nil || s.deps == nil || s.deps.RunBurndown == nil || run == nil {
 		return nil
 	}
-	burndown, err := s.deps.RunBurndown(r.Context(), run.Key)
+	ctx := context.Background()
+	if r != nil {
+		ctx = r.Context()
+	}
+	burndown, err := s.deps.RunBurndown(ctx, run.Key)
 	if err != nil {
 		return err
 	}
@@ -733,6 +738,12 @@ func (s *Server) handleRunReset(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonError(w, err.Error(), runResetErrorStatus(err))
 		return
+	}
+	if leaseStageIndex(lease.stage) <= leaseStageIndex(StagePlan) {
+		if err := s.resetRunPlanForReplan(key); err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	s.auditFromRequest(r, auditActionRunStageReset, auditDetail(
 		"run", key, "stage_from", held.stage, "stage_to", lease.stage,
