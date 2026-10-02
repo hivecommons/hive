@@ -44,7 +44,7 @@ func TestDashboardSparklineSharedRendererAndAnimationHooks(t *testing.T) {
 
 func TestDashboardSparklineReplayWiredToSectionExpansion(t *testing.T) {
 	html := indexHTML(t)
-	toggle := jsFunctionBody(t, html, "function toggleSection(sectionId, maybeSectionId)")
+	toggle := jsFunctionBody(t, html, "function toggleSection(sectionId, maybeSectionId, opts)")
 	if !strings.Contains(toggle, "replaySparklinesIn(section, { force: true })") {
 		t.Fatal("section expand toggle does not force replay sparklines in the expanded card")
 	}
