@@ -105,7 +105,13 @@ Notes on the state machine, verified from `pkg/knowledge/inception.go`:
    either `issue_url` or `repo`/`issue_number` in the approve body to admit
    the linked issue as the first `spec` stage. Inception does not create or
    guess an issue number on its own; if the approve request does not name one,
-   completion remains a no-op for run admission.
+   completion remains a no-op for run admission. Supplying only one of `repo`
+   and `issue_number` is rejected with 400. The run is admitted before the
+   inception is marked complete, so an admission failure leaves the phase at
+   `scaffold` and the approve can be retried. The response is
+   `{"ok": true, "admitted": <bool>, "run_key": "<owner/repo#N>"}` (`run_key`
+   only when a run was admitted), and the key is recorded on the inception
+   state as `admitted_run_key`.
 8. If anything goes wrong, `POST /api/inception/reset` first archives the
    current state and wiki files as an Inception campaign, then clears the
    active state and state file. The Campaigns list can restore that archived

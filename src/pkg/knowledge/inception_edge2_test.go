@@ -817,3 +817,30 @@ func TestSubmitAnswersPartialOK(t *testing.T) {
 		t.Error("answer not recorded")
 	}
 }
+
+func TestAdvanceToCompleteWithRunRecordsRunKey(t *testing.T) {
+	e := NewInceptionEngine(t.TempDir(), nil, nil)
+	e.Start("Test")
+	if err := e.CanAdvanceToComplete(); err == nil {
+		t.Fatal("CanAdvanceToComplete should reject capture phase")
+	}
+	e.mu.Lock()
+	e.state.Phase = PhaseScaffold
+	e.mu.Unlock()
+	if err := e.CanAdvanceToComplete(); err != nil {
+		t.Fatalf("CanAdvanceToComplete in scaffold: %v", err)
+	}
+	if st := e.GetState(); st.Phase != PhaseScaffold {
+		t.Fatalf("CanAdvanceToComplete mutated phase to %s", st.Phase)
+	}
+	if err := e.AdvanceToCompleteWithRun("org/repo#7"); err != nil {
+		t.Fatalf("AdvanceToCompleteWithRun: %v", err)
+	}
+	// A retry without a run key keeps the recorded one.
+	if err := e.AdvanceToComplete(); err != nil {
+		t.Fatalf("AdvanceToComplete retry: %v", err)
+	}
+	if st := e.GetState(); st.Phase != PhaseComplete || st.AdmittedRunKey != "org/repo#7" {
+		t.Fatalf("state = phase %s run %q, want complete org/repo#7", st.Phase, st.AdmittedRunKey)
+	}
+}

@@ -814,17 +814,42 @@ func (e *InceptionEngine) ProduceScaffold(ctx context.Context) (*ScaffoldResult,
 
 // AdvanceToComplete marks the inception as complete (scaffold approved).
 func (e *InceptionEngine) AdvanceToComplete() error {
+	return e.AdvanceToCompleteWithRun("")
+}
+
+// CanAdvanceToComplete reports, without changing state, whether
+// AdvanceToComplete would accept the current phase. Callers that perform side
+// effects before completing (such as admitting a run) check it first.
+func (e *InceptionEngine) CanAdvanceToComplete() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	return e.checkCanCompleteLocked()
+}
 
+func (e *InceptionEngine) checkCanCompleteLocked() error {
 	if e.state == nil {
 		return fmt.Errorf("no inception in progress")
 	}
 	if e.state.Phase != PhaseScaffold && e.state.Phase != PhaseComplete {
 		return fmt.Errorf("cannot approve in phase %s — must be in scaffold phase", e.state.Phase)
 	}
+	return nil
+}
+
+// AdvanceToCompleteWithRun marks the inception as complete and records the
+// run admitted for it. An empty runKey keeps any previously recorded key.
+func (e *InceptionEngine) AdvanceToCompleteWithRun(runKey string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if err := e.checkCanCompleteLocked(); err != nil {
+		return err
+	}
 
 	e.state.Phase = PhaseComplete
+	if runKey = strings.TrimSpace(runKey); runKey != "" {
+		e.state.AdmittedRunKey = runKey
+	}
 	now := time.Now()
 	e.state.PhaseChangedAt = &now
 	e.state.ProposedFacts = nil
