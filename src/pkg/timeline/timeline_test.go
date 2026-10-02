@@ -746,3 +746,95 @@ func TestPersistFailureKeepsJourneysAndThrottlesLogging(t *testing.T) {
 		t.Fatalf("recovered persist wrote %d journeys, want all 3 (dirty state retried)", got)
 	}
 }
+
+func TestSnapshotAddsExpandableJourneyDetails(t *testing.T) {
+	s := NewStoreWithCap(10)
+	base := int64(1_700_000_000_000)
+	s.Record(Event{IssueRef: "org/repo#7", Kind: KindEnumerated, At: base})
+	s.Record(Event{IssueRef: "org/repo#7", Kind: KindClassified, At: base + 60_000, Attrs: map[string]string{
+		"lane": "docs", "tier": "L2", "model": "mini", "reason": "small docs change",
+	}})
+	s.Record(Event{IssueRef: "org/repo#7", Kind: KindKicked, Agent: "scanner", At: base + 120_000, Attrs: map[string]string{
+		"kick_id": "kick-7", "pr_number": "77", "event.id": "evt-7",
+	}})
+	s.Record(Event{IssueRef: "org/repo#7", Kind: KindStageCompleted, Agent: "runner", At: base + 150_000, Attrs: map[string]string{
+		"run_key": "org/repo#7", "gen": "4", "path": "receipts/org-repo-7.json",
+	}})
+	s.Record(Event{IssueRef: "org/repo#7", Kind: KindBlocked, At: base + 180_000, Attrs: map[string]string{
+		"reason": "needs maintainer input", "run_log_id": "log-7",
+	}})
+
+	dto := s.Snapshot(1, time.Hour)
+	if len(dto.Journeys) != 1 {
+		t.Fatalf("journeys = %d, want 1", len(dto.Journeys))
+	}
+	d := dto.Journeys[0].Details
+	if d == nil {
+		t.Fatal("details missing")
+	}
+	if d.Agent != "runner" {
+		t.Fatalf("agent = %q, want runner", d.Agent)
+	}
+	if d.Classification == nil || d.Classification.Band != "L2" || d.Classification.Lane != "docs" || d.Classification.Model != "mini" || d.Classification.Reason != "small docs change" {
+		t.Fatalf("classification = %+v", d.Classification)
+	}
+	if d.BlockedReason != "needs maintainer input" {
+		t.Fatalf("blocked reason = %q", d.BlockedReason)
+	}
+	if d.TimeInCurrentStage <= 0 {
+		t.Fatalf("time in current stage = %d, want positive", d.TimeInCurrentStage)
+	}
+	if len(d.Stages) != 5 {
+		t.Fatalf("stages = %d, want 5: %+v", len(d.Stages), d.Stages)
+	}
+	if d.Stages[1].Kind != KindClassified || d.Stages[1].DurationSincePreviousMs != 60_000 {
+		t.Fatalf("classified detail = %+v", d.Stages[1])
+	}
+	if d.Stages[3].Label != "Stage completed" || d.Stages[3].Agent != "runner" {
+		t.Fatalf("stage-completed detail = %+v", d.Stages[3])
+	}
+	if len(d.Links) != 2 || d.Links[0].URL != "https://github.com/org/repo/issues/7" || d.Links[1].URL != "https://github.com/org/repo/pull/77" {
+		t.Fatalf("links = %+v", d.Links)
+	}
+	if len(d.KickIDs) != 2 || d.KickIDs[0] != "kick-7" || d.KickIDs[1] != "evt-7" {
+		t.Fatalf("kick ids = %+v", d.KickIDs)
+	}
+	if len(d.RunLogIDs) != 4 || d.RunLogIDs[0] != "log-7" || d.RunLogIDs[1] != "org/repo#7" || d.RunLogIDs[2] != "4" || d.RunLogIDs[3] != "receipts/org-repo-7.json" {
+		t.Fatalf("run/log ids = %+v", d.RunLogIDs)
+	}
+	if d.Attrs["reason"] == "small docs change" && d.BlockedReason != "needs maintainer input" {
+		t.Fatal("classification reason leaked into blocked reason")
+	}
+}
+
+func TestJourneyDetailsHelpersCoverFallbacks(t *testing.T) {
+	stages := map[Kind]*Stage{
+		Kind("custom_stage"): {FirstAt: 30, LastAt: 30, Count: 1},
+		KindStageReceipt:     {FirstAt: 20, LastAt: 20, Count: 1, Attrs: map[string]string{"issue_url": "javascript:alert(1)", "html_url": "ftp://example.invalid/pr"}},
+		KindStageApproval:    {FirstAt: 25, LastAt: 25, Count: 1, Attrs: map[string]string{"issue.html_url": "https://example.invalid/issue", "pr_url": "https://example.invalid/pr"}},
+		KindClassified:       {FirstAt: 10, LastAt: 10, Count: 1, Attrs: map[string]string{"classification_band": "risk", "classification_reason": "fallback reason"}},
+	}
+	j := Journey{Ref: "not-a-github-ref", Current: Kind("custom_stage"), LastAt: 30, Stages: stages}
+	d := buildJourneyDetails(j, 40)
+	if d.Classification == nil || d.Classification.Band != "risk" || d.Classification.Reason != "fallback reason" {
+		t.Fatalf("classification fallback = %+v", d.Classification)
+	}
+	if len(d.Links) != 2 || d.Links[0].URL != "https://example.invalid/issue" || d.Links[1].URL != "https://example.invalid/pr" {
+		t.Fatalf("safe links = %+v", d.Links)
+	}
+	if d.Stages[0].Label != "Classified" || d.Stages[len(d.Stages)-1].Label != "Custom stage" {
+		t.Fatalf("ordered labels = %+v", d.Stages)
+	}
+	if reason := blockedReason(map[Kind]*Stage{KindBlocked: {Attrs: map[string]string{"waiting_on": "human"}}}, map[string]string{"reason": "other"}); reason != "human" {
+		t.Fatalf("blocked waiting_on = %q", reason)
+	}
+	if reason := blockedReason(nil, map[string]string{"block_reason": "paused"}); reason != "paused" {
+		t.Fatalf("blocked fallback = %q", reason)
+	}
+	if repo, num := splitRef("org/repo#abc"); repo != "" || num != "" {
+		t.Fatalf("invalid ref split = %q %q", repo, num)
+	}
+	if safeExternalURL("mailto:ops@example.invalid") != "" || normalizeNumber("#42") != "42" || stageLabel(Kind("")) != "Unknown" {
+		t.Fatal("helper fallback mismatch")
+	}
+}

@@ -1,0 +1,1 @@
+- Add expandable lifecycle timeline rows with stage details, links, and timing context.

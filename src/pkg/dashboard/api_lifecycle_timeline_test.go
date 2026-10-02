@@ -95,6 +95,59 @@ func TestHandleLifecycleTimelineWithJourneys(t *testing.T) {
 	}
 }
 
+func TestHandleLifecycleTimelineIncludesDetails(t *testing.T) {
+	resetLifecycleStore()
+	s := newTestServer()
+	store := s.LifecycleTimeline()
+	store.Record(timeline.Event{IssueRef: "org/repo#7", Kind: timeline.KindEnumerated, At: 1_700_000_000_000})
+	store.Record(timeline.Event{IssueRef: "org/repo#7", Kind: timeline.KindClassified, At: 1_700_000_060_000, Attrs: map[string]string{
+		"lane": "docs", "tier": "L2", "model": "mini", "reason": "small documentation change",
+	}})
+	store.Record(timeline.Event{IssueRef: "org/repo#7", Kind: timeline.KindKicked, Agent: "scanner", At: 1_700_000_120_000, Attrs: map[string]string{
+		"kick_id": "kick-7", "pr_number": "77",
+	}})
+	store.Record(timeline.Event{IssueRef: "org/repo#7", Kind: timeline.KindBlocked, At: 1_700_000_180_000, Attrs: map[string]string{
+		"reason": "needs maintainer input", "run_key": "run-7",
+	}})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/lifecycle-timeline", nil)
+	rr := httptest.NewRecorder()
+	s.handleLifecycleTimeline(rr, req)
+
+	var dto timeline.TimelineDTO
+	if err := json.Unmarshal(rr.Body.Bytes(), &dto); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(dto.Journeys) != 1 {
+		t.Fatalf("journeys = %d, want 1", len(dto.Journeys))
+	}
+	details := dto.Journeys[0].Details
+	if details == nil {
+		t.Fatal("details missing")
+	}
+	if details.Agent != "scanner" {
+		t.Fatalf("agent = %q, want scanner", details.Agent)
+	}
+	if details.Classification == nil || details.Classification.Band != "L2" || details.Classification.Lane != "docs" || details.Classification.Reason != "small documentation change" {
+		t.Fatalf("classification = %+v", details.Classification)
+	}
+	if details.BlockedReason != "needs maintainer input" {
+		t.Fatalf("blocked reason = %q", details.BlockedReason)
+	}
+	if len(details.Stages) != 4 || details.Stages[1].DurationSincePreviousMs != 60_000 {
+		t.Fatalf("stage details = %+v", details.Stages)
+	}
+	if len(details.Links) != 2 || details.Links[0].URL != "https://github.com/org/repo/issues/7" || details.Links[1].URL != "https://github.com/org/repo/pull/77" {
+		t.Fatalf("links = %+v", details.Links)
+	}
+	if len(details.KickIDs) != 1 || details.KickIDs[0] != "kick-7" {
+		t.Fatalf("kick ids = %+v", details.KickIDs)
+	}
+	if len(details.RunLogIDs) == 0 || details.RunLogIDs[0] != "run-7" {
+		t.Fatalf("run/log ids = %+v", details.RunLogIDs)
+	}
+}
+
 func TestHandleLifecycleTimelineFiltersOperabilityAgentsBelowL5(t *testing.T) {
 	resetLifecycleStore()
 	s := newTestServer()
