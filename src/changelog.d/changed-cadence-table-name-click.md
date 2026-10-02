@@ -1,0 +1,1 @@
+- Cadence table agent names now open the agent card; cadence cells still open cadence settings.

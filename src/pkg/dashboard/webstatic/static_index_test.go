@@ -344,6 +344,32 @@ func TestStaticPlanReviewWiring(t *testing.T) {
 	}
 }
 
+func TestStaticCadenceMatrixNameOpensAgentCard(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		`data-action="ocSelectAgent" data-agent="${esc(aname)}" title="Open ${esc(displayLabel)}'s agent card"`,
+		`data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(aname)}" data-tab="Cadences"`,
+		`.gov-matrix td[data-tab="Cadences"], .gov-matrix .gov-agent-name-link { cursor: pointer; }`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("cadence matrix name/cadence wiring missing %q", want)
+		}
+	}
+	for _, banned := range []string{
+		"return `<tr style=\"cursor:pointer\"",
+		"return `<tr data-action=\"openConfigDialog\"",
+		"return `<tr data-tab=\"Cadences\"",
+	} {
+		if strings.Contains(html, banned) {
+			t.Fatalf("cadence matrix row still carries click-target wiring %q", banned)
+		}
+	}
+}
+
 func TestNotificationsTabRendersEventCheckboxesAndSlack(t *testing.T) {
 	body, err := os.ReadFile("../static/index.html")
 	if err != nil {
