@@ -170,8 +170,7 @@ RUN (ARCH="${TARGETARCH:-$(uname -m)}" && \
     tar -xzf "/tmp/${SPEKTACULAR_ASSET}" -C /tmp spektacular && \
     install -m 0755 /tmp/spektacular /usr/local/bin/spektacular && \
     rm -f "/tmp/${SPEKTACULAR_ASSET}" /tmp/spektacular-checksums.txt /tmp/spektacular.sha256 /tmp/spektacular && \
-    spektacular --version) || \
-    echo "WARN: spektacular install failed — long-running runs (runs.spektacular) will be unavailable"
+    spektacular --version) || exit 1
 
 # The NodeSource GPG key is downloaded to a file and its SHA-256 verified
 # BEFORE being dearmored/trusted (issue #3821), mirroring the
