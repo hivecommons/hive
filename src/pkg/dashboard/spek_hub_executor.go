@@ -545,6 +545,13 @@ func (e *SpekHubExecutor) runStageCommand(ctx context.Context, worktree string, 
 		e.log().Info("[spektacular] hub executor process started", "run", st.runKey, "stage", st.stage, "gen", st.gen, "worktree", worktree, "pid", pid)
 		e.recordStageProgress(st, "cli_launched", map[string]string{"backend": e.backend(), "pid": strconv.Itoa(pid), "worktree": worktree})
 		err = c.Wait()
+		// The process has exited: reap any orphan still holding the output
+		// pipe or the inherited fence fd, then judge the run by the exit
+		// status rather than by pipe EOF (ErrWaitDelay implies exit 0).
+		spekHubKillProcessGroup(c)
+		if errors.Is(err, exec.ErrWaitDelay) {
+			err = nil
+		}
 		if closeErr := logWriter.Close(); closeErr != nil {
 			e.log().Warn("[spektacular] flushing hub executor cli log failed", "path", logPath, "error", closeErr)
 		}

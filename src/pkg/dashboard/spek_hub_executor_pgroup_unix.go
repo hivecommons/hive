@@ -22,3 +22,13 @@ func spekHubConfigureProcessGroup(c *exec.Cmd) {
 		return nil
 	}
 }
+
+// spekHubKillProcessGroup SIGKILLs whatever remains of the stage's process
+// group once the stage process itself has exited, so orphans cannot keep the
+// worktree fence flock held.
+func spekHubKillProcessGroup(c *exec.Cmd) {
+	if c.Process == nil {
+		return
+	}
+	_ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
+}

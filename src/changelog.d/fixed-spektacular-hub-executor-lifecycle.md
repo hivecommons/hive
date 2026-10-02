@@ -1,0 +1,1 @@
+- spektacular: a hub agent that exits 0 but leaves a child holding the output pipe is no longer recorded as failed and its orphans are killed so the worktree lock is released, and hub executor clone credentials are now resolved at launch time so a GitHub App that arrives or is rebuilt later is used.
