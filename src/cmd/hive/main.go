@@ -6640,6 +6640,7 @@ func runEvalCycle(
 					"class", class,
 					"retry_in", remaining.Round(time.Second),
 					"error", line)
+				gov.RecordKickFailure(msg.Agent, fmt.Errorf("provider inference backoff (%s): %s", class, line), time.Now())
 				continue
 			}
 			filtered = append(filtered, msg)

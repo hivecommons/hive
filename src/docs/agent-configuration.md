@@ -208,6 +208,8 @@ spec omits `launch_cmd`, Hive still builds the backend command normally.
     continuous_cooldown: 60s     # optional cool-down before that re-kick;
                                  #   default 60s, exponential backoff on
                                  #   undeliverable kicks
+    continuous_budget_pct: 80    # optional token-budget guard; default 80%
+                                 #   of governor.budget.total_tokens
     clear_on_kick: true          # default true; false keeps session context across kicks
     stale_timeout: 28800         # seconds of silence before the agent counts as stale —
                                  #   must exceed its longest cadence
@@ -585,7 +587,7 @@ governor:
 - **Per-agent, per-mode intervals.** Anything Go's duration parser accepts works (`5m`, `2h`) for interval mode.
 - **Pausing.** The value `pause` (or `paused`) suspends an agent for that mode without disabling it.
 - **On-demand agents** (`on_demand: true`) are skipped by the governor timer entirely — they run only when explicitly triggered (the inception workflow drives `brainstorm` this way).
-- **Continuous agents** (`continuous: true`) still need an active cadence entry in the current mode, but cadence no longer decides the next kick while continuous mode is on. Instead, the manager waits until the kicked CLI is genuinely back at its input prompt, records that turn end, and the governor schedules the next kick at `ended_at + continuous_cooldown` (default `60s`). Turning continuous off immediately returns the agent to normal cadence timing. Continuous never interrupts a busy turn and still respects `enabled: false`, operator/fleet-breaker pause, governor-mode `pause`/`off` (including QUIET-mode pauses), on-demand, non-kick channels, budget/provider holds, and upgrade/restart holds; failed deliveries such as "CLI did not reach input prompt" use capped exponential backoff.
+- **Continuous agents** (`continuous: true`) still need an active cadence entry in the current mode, but cadence no longer decides the next kick while continuous mode is on. Instead, the manager waits until the kicked CLI is genuinely back at its input prompt, records that turn end, and the governor schedules the next kick at `ended_at + continuous_cooldown` (default `60s`). Turning continuous off immediately returns the agent to normal cadence timing. Continuous never interrupts a busy turn and still respects `enabled: false`, operator/fleet-breaker pause, governor-mode `pause`/`off` (including QUIET-mode pauses), on-demand, non-kick channels, budget/provider holds, provider rate-limit/quota backoff, and upgrade/restart holds; failed deliveries such as "CLI did not reach input prompt" use capped exponential backoff. `continuous_budget_pct` (default `80`) stops only the continuous re-kick loop when the current token-budget window reaches that percentage of `governor.budget.total_tokens`; normal cadence resumes, and `/api/status` reports `continuousBlocked: "budget"` plus per-agent `continuousKicks` and `continuousTokens` counters.
 - **Budget.** When the weekly token budget is exhausted, kicks are suppressed hive-wide (exempt agents excepted) until the period rolls over.
 
 Set `stale_timeout` with your cadences in mind: an agent kicked every 4h with a 30-minute stale timeout will look dead between kicks. The shipped packs use "longest cadence × 2".

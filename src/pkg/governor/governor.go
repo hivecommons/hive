@@ -186,11 +186,15 @@ type State struct {
 // whose config has continuous: true. It is exposed through status so operators
 // can see both the planned re-kick and any backoff after an undeliverable kick.
 type ContinuousState struct {
-	NextKick     time.Time     `json:"nextKick,omitempty"`
-	BackoffUntil time.Time     `json:"backoffUntil,omitempty"`
-	Backoff      time.Duration `json:"backoff,omitempty"`
-	Failures     int           `json:"failures,omitempty"`
-	LastError    string        `json:"lastError,omitempty"`
+	NextKick       time.Time     `json:"nextKick,omitempty"`
+	BackoffUntil   time.Time     `json:"backoffUntil,omitempty"`
+	Backoff        time.Duration `json:"backoff,omitempty"`
+	Failures       int           `json:"failures,omitempty"`
+	LastError      string        `json:"lastError,omitempty"`
+	Blocked        string        `json:"blocked,omitempty"`
+	Kicks          int64         `json:"kicks,omitempty"`
+	TokensConsumed int64         `json:"tokensConsumed,omitempty"`
+	TokenBaseline  int64         `json:"-"`
 }
 
 const continuousBackoffCap = 30 * time.Minute
@@ -830,25 +834,36 @@ func (g *Governor) agentsDueForKick() []string {
 			continue
 		}
 		if ac, ok := g.agents[agentName]; ok && ac.Continuous {
-			st, ok := g.state.Continuous[agentName]
-			if !ok || st.NextKick.IsZero() || now.Before(st.NextKick) {
-				continue
+			if g.continuousBudgetBlockedLocked(ac) {
+				st := g.state.Continuous[agentName]
+				st.Blocked = "budget"
+				st.NextKick = time.Time{}
+				g.state.Continuous[agentName] = st
+			} else {
+				st, ok := g.state.Continuous[agentName]
+				if ok && st.Blocked == "budget" && st.NextKick.IsZero() {
+					st.Blocked = ""
+					g.state.Continuous[agentName] = st
+				} else {
+					if !ok || st.NextKick.IsZero() || now.Before(st.NextKick) {
+						continue
+					}
+					if !st.BackoffUntil.IsZero() && now.Before(st.BackoffUntil) {
+						continue
+					}
+					if _, _, blocked := g.continuousBlockerLocked(agentName); blocked != "" {
+						st.Blocked = continuousBlockerStatus(blocked)
+						st.NextKick = time.Time{}
+						g.state.Continuous[agentName] = st
+						continue
+					}
+					if _, ok := selected[agentName]; !ok {
+						agentOrder = append(agentOrder, agentName)
+					}
+					selected[agentName] = candidate{key: cadenceKey, last: g.state.LastKick[cadenceKey], interval: cadence.Interval}
+					continue
+				}
 			}
-			if !st.BackoffUntil.IsZero() && now.Before(st.BackoffUntil) {
-				continue
-			}
-			if _, _, blocked := g.continuousBlockerLocked(agentName); blocked != "" {
-				continue
-			}
-			if exhausted && !exempt[agentName] {
-				suppressed++
-				continue
-			}
-			if _, ok := selected[agentName]; !ok {
-				agentOrder = append(agentOrder, agentName)
-			}
-			selected[agentName] = candidate{key: cadenceKey, last: g.state.LastKick[cadenceKey], interval: cadence.Interval}
-			continue
 		}
 		if cadence.Interval == 0 && cadence.Schedule.Mode() == config.CadenceModeInterval {
 			continue
@@ -943,7 +958,29 @@ func (g *Governor) continuousBlockerLocked(agentName string) (string, AgentCaden
 	if g.budgetExhausted() && !g.budgetExempt(agentName) {
 		return cadenceKey, cadence, "budget_exhausted"
 	}
+	if g.continuousBudgetBlockedLocked(ac) {
+		return cadenceKey, cadence, "budget"
+	}
 	return cadenceKey, cadence, ""
+}
+
+func (g *Governor) continuousBudgetBlockedLocked(ac config.AgentConfig) bool {
+	if g.budget.WeeklyLimit <= 0 || g.budget.IgnoreAll {
+		return false
+	}
+	pct := ac.EffectiveContinuousBudgetPct()
+	threshold := g.budget.WeeklyLimit * int64(pct) / percentDenominator
+	if threshold <= 0 {
+		threshold = 1
+	}
+	return g.budget.CurrentSpend >= threshold
+}
+
+func continuousBlockerStatus(blocker string) string {
+	if blocker == "budget_exhausted" {
+		return "budget"
+	}
+	return blocker
 }
 
 // AgentEligibleForCELKick reports whether an agent selected by an ADDITIVE CEL
@@ -1145,6 +1182,11 @@ func (g *Governor) RecordKickForRepo(agentName, repo string) {
 	g.state.LastKick[key] = now
 	if ac, ok := g.agents[agentName]; ok && ac.Continuous {
 		st := g.state.Continuous[agentName]
+		if !st.NextKick.IsZero() && !now.Before(st.NextKick) {
+			st.Kicks++
+			st.TokenBaseline = g.budget.ByAgent[agentName]
+			st.Blocked = ""
+		}
 		st.NextKick = time.Time{}
 		st.BackoffUntil = time.Time{}
 		st.Backoff = 0
@@ -1542,6 +1584,7 @@ func (g *Governor) UpdateBudgetFromTotals(totalTokens int64, byAgent map[string]
 	for k, v := range byAgent {
 		g.budget.ByAgent[k] = v
 	}
+	g.updateContinuousTokenCountersLocked()
 	for k, v := range byModel {
 		g.budget.ByModel[k] = v
 	}
@@ -1562,6 +1605,21 @@ func (g *Governor) UpdateBudgetFromTotals(totalTokens int64, byAgent map[string]
 	}
 
 	return trans
+}
+
+func (g *Governor) updateContinuousTokenCountersLocked() {
+	for agentName, st := range g.state.Continuous {
+		if st.Kicks == 0 {
+			continue
+		}
+		current := g.budget.ByAgent[agentName]
+		if current <= st.TokenBaseline {
+			continue
+		}
+		st.TokensConsumed += current - st.TokenBaseline
+		st.TokenBaseline = current
+		g.state.Continuous[agentName] = st
+	}
 }
 
 // SeedBudgetWindowBaseline restores the window baseline from a persisted

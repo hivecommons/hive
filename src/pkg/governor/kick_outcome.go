@@ -120,6 +120,13 @@ func (g *Governor) scheduleContinuousLocked(agentName string, endedAt time.Time)
 	}
 	cadenceKey, _, blocker := g.continuousBlockerLocked(agentName)
 	if blocker != "" {
+		if g.state.Continuous == nil {
+			g.state.Continuous = make(map[string]ContinuousState)
+		}
+		st := g.state.Continuous[agentName]
+		st.NextKick = time.Time{}
+		st.Blocked = continuousBlockerStatus(blocker)
+		g.state.Continuous[agentName] = st
 		if g.logger != nil {
 			g.logger.Info("continuous re-kick not scheduled", "agent", agentName, "reason", blocker)
 		}
@@ -135,6 +142,7 @@ func (g *Governor) scheduleContinuousLocked(agentName string, endedAt time.Time)
 	st.Backoff = 0
 	st.Failures = 0
 	st.LastError = ""
+	st.Blocked = ""
 	g.state.Continuous[agentName] = st
 	if g.logger != nil {
 		g.logger.Info("continuous re-kick scheduled", "agent", agentName, "cadence_key", cadenceKey, "cooldown", cooldown.String(), "next_kick", st.NextKick.UTC().Format(time.RFC3339))
@@ -175,6 +183,7 @@ func (g *Governor) RecordKickFailure(agentName string, err error, at time.Time) 
 	if err != nil {
 		st.LastError = err.Error()
 	}
+	st.Blocked = ""
 	g.state.Continuous[agentName] = st
 	if g.logger != nil {
 		g.logger.Warn("continuous re-kick backed off after failed kick", "agent", agentName, "failures", st.Failures, "backoff", nextBackoff.String(), "next_kick", st.NextKick.UTC().Format(time.RFC3339), "error", st.LastError)

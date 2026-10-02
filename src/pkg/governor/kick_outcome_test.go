@@ -253,6 +253,55 @@ func TestContinuousFailedKickBacksOffAndCaps(t *testing.T) {
 	}
 }
 
+func TestContinuousBudgetThresholdFallsBackToCadence(t *testing.T) {
+	now := time.Date(2026, 10, 2, 14, 0, 0, 0, time.UTC)
+	g := continuousTestGovernor(&now, config.AgentConfig{
+		Enabled:             true,
+		ContinuousCooldown:  time.Minute,
+		ContinuousBudgetPct: 80,
+	}, "30m")
+	g.SetBudgetLimit(1000)
+	g.SeedBudget(800, map[string]int64{"scanner": 800}, nil, now)
+	g.RecordKick("scanner")
+	kickAt := now
+	now = now.Add(time.Minute)
+	g.RecordKickOutcome("scanner", KickOutcomeEnded, "", kickAt, now)
+
+	st := g.GetState().Continuous["scanner"]
+	if st.Blocked != "budget" {
+		t.Fatalf("continuous blocked = %q, want budget", st.Blocked)
+	}
+	if !st.NextKick.IsZero() {
+		t.Fatalf("continuous next kick scheduled despite budget threshold: %+v", st)
+	}
+	now = kickAt.Add(31 * time.Minute)
+	if !contains(g.Evaluate(0, 0, 0, 0), "scanner") {
+		t.Fatal("budget-held continuous mode should fall back to normal cadence")
+	}
+}
+
+func TestContinuousCountersTrackKicksAndTokens(t *testing.T) {
+	now := time.Date(2026, 10, 2, 14, 0, 0, 0, time.UTC)
+	g := continuousTestGovernor(&now, config.AgentConfig{Enabled: true, ContinuousCooldown: time.Minute}, "6h")
+	g.SeedBudget(0, map[string]int64{"scanner": 100}, nil, now)
+	g.RecordKick("scanner")
+	g.RecordKickOutcome("scanner", KickOutcomeEnded, "", now, now)
+	now = now.Add(time.Minute)
+	if !contains(g.Evaluate(0, 0, 0, 0), "scanner") {
+		t.Fatal("continuous kick should be due")
+	}
+	g.RecordKick("scanner")
+	g.UpdateBudgetFromTotals(250, map[string]int64{"scanner": 250}, nil)
+
+	st := g.GetState().Continuous["scanner"]
+	if st.Kicks != 1 {
+		t.Fatalf("continuous kicks = %d, want 1", st.Kicks)
+	}
+	if st.TokensConsumed != 150 {
+		t.Fatalf("continuous tokens = %d, want 150", st.TokensConsumed)
+	}
+}
+
 func TestContinuousOffRestoresCadenceDue(t *testing.T) {
 	now := time.Date(2026, 10, 2, 14, 0, 0, 0, time.UTC)
 	g := continuousTestGovernor(&now, config.AgentConfig{Enabled: true, ContinuousCooldown: time.Hour}, "30m")

@@ -1,0 +1,1 @@
+- Gate continuous-mode re-kicks on the token-budget threshold and expose continuous kick/token counters in status.

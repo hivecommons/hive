@@ -1331,8 +1331,9 @@ type AgentConfig struct {
 	// starts/guards the agent, but while continuous is on the next governor kick
 	// is driven by the manager's "back at input prompt" turn-end signal plus
 	// ContinuousCooldown, never by interrupting a running session.
-	Continuous         bool          `yaml:"continuous,omitempty" json:"continuous,omitempty"`
-	ContinuousCooldown time.Duration `yaml:"continuous_cooldown,omitempty" json:"continuous_cooldown,omitempty"`
+	Continuous          bool          `yaml:"continuous,omitempty" json:"continuous,omitempty"`
+	ContinuousCooldown  time.Duration `yaml:"continuous_cooldown,omitempty" json:"continuous_cooldown,omitempty"`
+	ContinuousBudgetPct int           `yaml:"continuous_budget_pct,omitempty" json:"continuous_budget_pct,omitempty"`
 
 	// ModelOwner / BackendOwner record WHO last set Model / Backend. An ACMM
 	// pack owns these fields until an operator changes them in the Governor
@@ -1598,6 +1599,7 @@ func (a AgentConfig) CadenceScopeMode() string {
 func (a AgentConfig) UsesRepoScopedCadence() bool { return a.CadenceScopeMode() == CadenceScopePerRepo }
 
 const DefaultContinuousCooldown = time.Minute
+const DefaultContinuousBudgetPct = 80
 
 // EffectiveContinuousCooldown returns the per-agent minimum delay between a
 // detected turn end and the next continuous-mode kick. A non-positive setting
@@ -1608,6 +1610,16 @@ func (a AgentConfig) EffectiveContinuousCooldown() time.Duration {
 		return a.ContinuousCooldown
 	}
 	return DefaultContinuousCooldown
+}
+
+// EffectiveContinuousBudgetPct returns the token-budget threshold at which
+// continuous mode stops scheduling fresh re-kicks. A zero config value means
+// the safe default, not "disabled".
+func (a AgentConfig) EffectiveContinuousBudgetPct() int {
+	if a.ContinuousBudgetPct > 0 {
+		return a.ContinuousBudgetPct
+	}
+	return DefaultContinuousBudgetPct
 }
 
 const cadenceTargetSeparator = "|"

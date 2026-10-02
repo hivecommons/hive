@@ -149,6 +149,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		if agent.ContinuousCooldown < 0 {
 			return fmt.Errorf("agent %s: continuous_cooldown must be positive", name)
 		}
+		if agent.ContinuousBudgetPct < 0 || agent.ContinuousBudgetPct > 100 {
+			return fmt.Errorf("agent %s: continuous_budget_pct must be 0 (default) or between 1 and 100", name)
+		}
 		if err := ValidateKickTemplateName(agent.KickTemplate); err != nil {
 			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.sourceFile), err)
 		}
