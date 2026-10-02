@@ -345,6 +345,10 @@ func TestBrokerHonorsRemoteProtectedPathAndClockOverrides(t *testing.T) {
 		replies: map[string]string{
 			"rev-parse HEAD": "abc123\n",
 			"diff-tree --root --no-commit-id --name-only -r -z HEAD": "docs/notes.md\x00",
+			// A clone whose push remote is "upstream": the default scripted
+			// reply names remote.origin, which the hostile-config gate would
+			// reject as a key outside the allowlist for this remote.
+			"config --list -z --show-scope": "local\x00core.bare\nfalse\x00local\x00remote.upstream.url\nhttps://github.com/hivecommons/hive.git\x00",
 		},
 		fails: map[string]error{"rev-parse --verify refs/remotes/upstream/work": errors.New("unknown revision")},
 	}
