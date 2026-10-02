@@ -168,3 +168,16 @@ func defaultAgentBackend(cfg *config.Config) string {
 	}
 	return config.DefaultSpektacularHubExecutorBackend
 }
+
+// lazySpektacularCloneAuth resolves the minter at launch time so an App that
+// arrives or is rebuilt after boot is used by the hub executor. With no
+// minter it clones anonymously, as an unset CloneAuth does.
+func lazySpektacularCloneAuth(minter func() pushbroker.TokenMinter) dashboard.SpekHubCloneAuth {
+	return func(ctx context.Context, repo, dir string) ([]string, string, func(), error) {
+		auth := spektacularCloneAuth(minter())
+		if auth == nil {
+			return nil, "", func() {}, nil
+		}
+		return auth(ctx, repo, dir)
+	}
+}
