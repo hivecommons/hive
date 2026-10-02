@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -666,6 +668,18 @@ func (e *SpekHubExecutor) runStageCommand(ctx context.Context, worktree string, 
 		if err != nil {
 			return nil, 0, err
 		}
+		userSpec, err := spekHubExecUserSpec(e.Identity)
+		if err != nil {
+			return nil, 0, err
+		}
+		if userSpec != "" {
+			home := spekHubExecutorHome(e.Identity)
+			if err := spekHubShareWithExecUser(worktree, home); err != nil {
+				return nil, 0, fmt.Errorf("granting the executor user access to the worktree: %w", err)
+			}
+			cmd = spekHubRunAsCommand(cmd, userSpec, home)
+			defer e.reclaimFromExecUser(userSpec, worktree, home)
+		}
 		var buf spekHubTailWriter
 		f, err := createSpekHubWorktreeFile(logPath)
 		if err != nil {
@@ -679,7 +693,7 @@ func (e *SpekHubExecutor) runStageCommand(ctx context.Context, worktree string, 
 		// The agent CLI is `sh -c …` that forks node grandchildren. Kill the
 		// whole group on timeout/cancel and bound Wait so an orphan holding
 		// the inherited output pipe cannot pin the executor slot forever.
-		spekHubConfigureProcessGroup(c)
+		spekHubConfigureProcessGroup(c, userSpec)
 		spekHubInheritFence(c, ctx)
 		c.WaitDelay = spekHubWaitDelay
 		w := io.MultiWriter(&buf, logWriter)
@@ -700,7 +714,7 @@ func (e *SpekHubExecutor) runStageCommand(ctx context.Context, worktree string, 
 		// The process has exited: reap any orphan still holding the output
 		// pipe or the inherited fence fd, then judge the run by the exit
 		// status rather than by pipe EOF (ErrWaitDelay implies exit 0).
-		spekHubKillProcessGroup(c)
+		spekHubKillProcessGroup(c, userSpec)
 		if errors.Is(err, exec.ErrWaitDelay) {
 			err = nil
 		}
@@ -714,6 +728,126 @@ func (e *SpekHubExecutor) runStageCommand(ctx context.Context, worktree string, 
 	out = []byte(scrubSpekHubOutput(string(out)))
 	writeLog(out)
 	return out, 0, err
+}
+
+// spekHubUIDMapPaths lists the UID maps the entrypoint writes, durable copy
+// first (the same order the agent manager loads them in).
+var spekHubUIDMapPaths = func() []string {
+	return []string{agent.PersistedUIDMapPath, agent.UIDMapPath}
+}
+
+// spekHubExecUserSpec returns the su-exec user spec the stage CLI runs as, or
+// "" when the deployment has no per-agent UID isolation. With isolation
+// active, the CLI must not run as the hive uid (which can read the GitHub App
+// key, is exempt from the forced-egress redirect, and holds NET_ADMIN), so a
+// missing executor UID or su-exec fails the launch instead of falling back.
+func spekHubExecUserSpec(identity string) (string, error) {
+	var uidMap *agent.UIDMap
+	for _, path := range spekHubUIDMapPaths() {
+		if loaded, err := agent.LoadUIDMap(path); err == nil {
+			uidMap = loaded
+			break
+		}
+	}
+	if uidMap == nil {
+		return "", nil
+	}
+	uid := uidMap.LookupByName(identity)
+	if uid <= 0 {
+		return "", fmt.Errorf("per-agent UID isolation is active but the hub executor identity %q has no UID; restart hive so the entrypoint provisions it", identity)
+	}
+	if _, err := exec.LookPath("su-exec"); err != nil {
+		return "", fmt.Errorf("su-exec unavailable to run the agent CLI as the hub executor user: %w", err)
+	}
+	name := "hive-" + identity
+	if _, err := user.Lookup(name); err == nil {
+		return name, nil
+	}
+	return fmt.Sprintf("%d:%d", uid, os.Getgid()), nil
+}
+
+// spekHubRunAsCommand runs cmd as userSpec with the executor HOME (su-exec
+// resets HOME from passwd) and a group-writable umask, so the hive uid can
+// still update and remove what the CLI writes.
+func spekHubRunAsCommand(cmd []string, userSpec, home string) []string {
+	wrapped := []string{"su-exec", userSpec, "env", "HOME=" + home, "sh", "-c", `umask 002 && exec "$@"`, "sh"}
+	return append(wrapped, cmd...)
+}
+
+// spekHubShareWithExecUser gives the executor user (primary group node) write
+// access to the stage worktree and its HOME. The worktree's .git entry is left
+// as is and the worktree root gets the sticky bit, so the CLI cannot replace
+// the gitdir pointer that hive's own git and spektacular commands trust.
+func spekHubShareWithExecUser(worktree, home string) error {
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		return err
+	}
+	if err := spekHubGrantGroupWrite(home, ""); err != nil {
+		return err
+	}
+	if err := spekHubGrantGroupWrite(worktree, ".git"); err != nil {
+		return err
+	}
+	info, err := os.Lstat(worktree)
+	if err != nil {
+		return err
+	}
+	return os.Chmod(worktree, info.Mode()|os.ModeSticky|0o070)
+}
+
+// spekHubGrantGroupWrite adds group rw (and x for directories and
+// executables) to every hive-owned regular file and directory under dir. It
+// works through os.Root so a symlink planted by the CLI cannot redirect the
+// chmod outside dir. Entries owned by the executor user are skipped.
+func spekHubGrantGroupWrite(dir, skip string) error {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return fs.WalkDir(root.FS(), ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if path == "." {
+				return err
+			}
+			return nil
+		}
+		if skip != "" && path == skip {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !d.IsDir() && !d.Type().IsRegular() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		mode := info.Mode() | 0o060
+		if d.IsDir() || info.Mode().Perm()&0o100 != 0 {
+			mode |= 0o010
+		}
+		if mode == info.Mode() {
+			return nil
+		}
+		if err := root.Chmod(path, mode); err != nil && !errors.Is(err, fs.ErrPermission) && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return nil
+	})
+}
+
+// reclaimFromExecUser makes what the CLI created group-writable again (a tool
+// may create entries with an explicit 0755/0644 mode that umask cannot widen),
+// so worktree reuse and sweeping keep working as the hive uid.
+func (e *SpekHubExecutor) reclaimFromExecUser(userSpec, worktree, home string) {
+	script := `find "$@" -user "$(id -u)" \( -type d -o -type f \) -exec chmod g+rwX {} +`
+	out, err := exec.Command("su-exec", userSpec, "sh", "-c", script, "sh", worktree, home).CombinedOutput()
+	if err != nil {
+		e.log().Warn("[spektacular] restoring group access to executor files failed", "worktree", worktree, "error", err, "output", tailString(string(out), spekHubOutputTailBytes))
+	}
 }
 
 type spekHubScrubWriter struct {
@@ -1451,8 +1585,12 @@ func (e *SpekHubExecutor) cloneAuthArgs(ctx context.Context, repo, dir string) (
 	return e.CloneAuth(ctx, repo, dir)
 }
 
+func spekHubExecutorHome(identity string) string {
+	return filepath.Join(currentAgentWorkspaceRoot(), identity, "home")
+}
+
 func (e *SpekHubExecutor) executorEnv() ([]string, error) {
-	home := filepath.Join(currentAgentWorkspaceRoot(), e.Identity, "home")
+	home := spekHubExecutorHome(e.Identity)
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		return nil, err
 	}
@@ -1794,7 +1932,7 @@ func (e *SpekHubExecutor) runner() func(context.Context, string, []string, strin
 		cmd := exec.CommandContext(ctx, name, args...)
 		cmd.Dir = dir
 		cmd.Env = env
-		spekHubConfigureProcessGroup(cmd)
+		spekHubConfigureProcessGroup(cmd, "")
 		spekHubInheritFence(cmd, ctx)
 		cmd.WaitDelay = spekHubWaitDelay
 		cmd.Stdout = &buf
