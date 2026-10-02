@@ -323,6 +323,11 @@ type Server struct {
 	stageRunnerMu   sync.Mutex
 	stageExecutor   StageExecutor
 	stageExecutorMu sync.Mutex
+	// planCheckpointApproveMu serializes a plan checkpoint's approve, lease
+	// advance and rollback so a concurrent approval refused by the generation
+	// fence cannot roll back the plan another approval already advanced
+	// (hivecommons/hive#10119).
+	planCheckpointApproveMu sync.Mutex
 
 	spektacularMu     sync.RWMutex
 	spektacularStatus *FrontendSpektacular

@@ -138,24 +138,24 @@ func ListPlans(stores map[string]*beads.Store) []PlanSummary {
 		if store == nil {
 			continue
 		}
-		all := store.List(beads.ListFilter{})
-
+		// Read under the store lock: List hands out live *Bead pointers that
+		// a concurrent ApprovePlan/SetMetadata mutates in place.
 		total := make(map[string]int)
 		open := make(map[string]int)
-		for _, b := range all {
+		store.ReadEach(beads.ListFilter{}, func(b *beads.Bead) {
 			epicID := b.Meta(MetaParentEpic)
 			if epicID == "" {
-				continue
+				return
 			}
 			total[epicID]++
 			if b.Status == beads.StatusOpen || b.Status == beads.StatusInProgress {
 				open[epicID]++
 			}
-		}
+		})
 
-		for _, b := range all {
+		store.ReadEach(beads.ListFilter{}, func(b *beads.Bead) {
 			if b.Type != beads.TypeEpic || b.Meta(MetaPlanStatus) == "" {
-				continue
+				return
 			}
 			p := PlanSummary{
 				EpicID:            b.ID,
@@ -177,7 +177,7 @@ func ListPlans(stores map[string]*beads.Store) []PlanSummary {
 			}
 			p.State = PlanStateOf(p)
 			out = append(out, p)
-		}
+		})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if a, b := listOrder(out[i]), listOrder(out[j]); a != b {

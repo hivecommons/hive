@@ -17469,10 +17469,15 @@ function burnAreaChart() {
         if (p.predicted) {
           html += `<div style="font-size:0.72rem;color:var(--yellow)">Predicted: ${escapeHtml(JSON.stringify(p.predicted))}</div>`;
         }
-        html += '<div style="margin-top:10px">';
-        html += '<button class="hv-btn btn-primary nous-btn nous-btn-approve" data-action="nousApprove" title="Approve this experiment proposal and start running it. The governor will apply the proposed parameter changes for the configured experiment duration.">Apply</button>';
-        html += '<button class="hv-btn btn-danger nous-btn nous-btn-reject" data-action="nousReject" title="Reject this experiment proposal. Nous will discard it and generate a new hypothesis based on collected data.">Reject</button>';
-        html += '</div></div>';
+        if (runLink && runLink.key) {
+          html += '<div class="text-muted" style="margin-top:10px">Approved — the proposal is running as the Spektacular run above.</div>';
+        } else {
+          html += '<div style="margin-top:10px">';
+          html += '<button class="hv-btn btn-primary nous-btn nous-btn-approve" data-action="nousApprove" title="Approve this experiment proposal and start running it. The governor will apply the proposed parameter changes for the configured experiment duration.">Apply</button>';
+          html += '<button class="hv-btn btn-danger nous-btn nous-btn-reject" data-action="nousReject" title="Reject this experiment proposal. Nous will discard it and generate a new hypothesis based on collected data.">Reject</button>';
+          html += '</div>';
+        }
+        html += '</div>';
       }
 
       // Principles
@@ -17567,7 +17572,7 @@ function burnAreaChart() {
       try {
         const r = await fetch('/api/nous/approve', { method: 'POST' });
         const j = await r.json();
-        if (j.ok) { showToast(j.run && j.run.key ? 'Spektacular run admitted: ' + j.run.key : 'Experiment approved and started', 'success'); fetchNousStatus(); }
+        if (j.ok) { showToast(j.run && j.run.key ? (j.status === 'already_approved' ? 'Spektacular run already admitted: ' : 'Spektacular run admitted: ') + j.run.key : 'Experiment approved and started', 'success'); fetchNousStatus(); }
         else showToast(j.error || 'Approve failed', 'error');
       } catch (e) { showToast('Approve failed: ' + e.message, 'error'); }
     }
