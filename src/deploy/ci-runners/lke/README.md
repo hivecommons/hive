@@ -128,6 +128,16 @@ inherit it. If the pool was created outside Terraform, `terraform import` it
 Symptom to watch for: `autoscalingrunnersets` shows `PENDING` ≫ 0 for more
 than ~5 minutes while `kubectl get nodes` stays flat.
 
+Expect a short burst of red jobs right after a scale-out. Runners share the
+node-local `/var/lib/hive-ci/toolcache` hostPath, and on a brand-new node it
+is empty, so the first ~9 concurrent `actions/setup-go` steps race to extract
+the same Go release into it. The losers fail with
+`ENOENT: no such file or directory, copyfile '…/go/api/go1.10.txt'` or
+`Command failed:  version`. Once one extraction finishes the node is warm and
+the failures stop; just re-run the failed jobs. If this becomes noisy,
+pre-warm the cache with a node-prep DaemonSet instead of relying on the first
+jobs to populate it.
+
 ## 4. ARC controller and system services
 
 ```sh
