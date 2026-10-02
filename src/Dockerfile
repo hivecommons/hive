@@ -653,8 +653,7 @@ RUN (ARCH="${TARGETARCH:-$(uname -m)}" && \
     tar -xzf "/tmp/${SPEKTACULAR_ASSET}" -C /tmp spektacular && \
     install -m 0755 /tmp/spektacular /usr/local/bin/spektacular && \
     rm -f "/tmp/${SPEKTACULAR_ASSET}" /tmp/spektacular-checksums.txt /tmp/spektacular.sha256 /tmp/spektacular && \
-    spektacular --version) || \
-    echo "WARN: spektacular install failed — long-running runs (runs.spektacular) will be unavailable"
+    spektacular --version) || exit 1
 # pluk (TypeScript): structured event streaming for AI agent tmux sessions
 ARG PLUK_VERSION=0.8.0
 RUN (npm install -g --ignore-scripts --no-fund --no-audit "@hivecommons/pluk@${PLUK_VERSION}" || \
