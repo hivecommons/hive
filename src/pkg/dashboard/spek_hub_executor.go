@@ -1800,10 +1800,13 @@ func (e *SpekHubExecutor) executorEnv() ([]string, error) {
 	env = append(env, "HOME="+home, "npm_config_cache="+filepath.Join(home, ".npm-cache"))
 	creds, err := agent.HeadlessCredentialEnv(e.backend(), agent.HeadlessCredentialSources{BobAPIKey: e.bobAPIKey})
 	if err != nil {
-		e.log().Warn("[spektacular] headless credential env unavailable", "backend", e.backend(), "error", err)
-	} else {
-		env = append(env, creds...)
+		// A missing credential means the agent cannot authenticate; launching
+		// it anyway only burns the stage budget on a predictable failure.
+		// The caller wraps this as a spekHubInfraError so it backs off and
+		// retries instead of spending a generation (hivecommons/hive#10077).
+		return nil, fmt.Errorf("headless credential env unavailable for backend %s: %w", e.backend(), err)
 	}
+	env = append(env, creds...)
 	return env, nil
 }
 
